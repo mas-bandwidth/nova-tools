@@ -98,7 +98,7 @@ func TestLockFilePersistentCollisionPreservesActualErrorAndDoesNotFalselyAssertL
 	require.True(t, errors.Is(err, errAccessDenied), "err does not wrap expected access denied error (%v)", err)
 	require.False(t, errors.Is(err, ErrLockHeld), "err wraps ErrLockHeld (%v); permanent failure must not falsely report lock held", err)
 	require.NotContains(t, err.Error(), "is held by process", "err falsely asserts live process holder: %v", err)
-	require.False(t, !strings.Contains(err.Error(), "the lock at") || !strings.Contains(err.Error(), "could not be taken"), "err does not carry expected failure sentence: %v", err)
+	require.True(t, strings.Contains(err.Error(), "the lock at") && strings.Contains(err.Error(), "could not be taken"), "err does not carry expected failure sentence: %v", err)
 }
 
 // TestLockFileImmediateNonblockingRejectsCollisionImmediately verifies that with wait=0,

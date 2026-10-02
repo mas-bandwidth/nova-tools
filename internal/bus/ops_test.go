@@ -111,7 +111,8 @@ func TestWriteRefusesToOverwrite(t *testing.T) {
 	require.NoError(t, err)
 	back, err := ParseNote(p.Path, string(raw))
 	require.NoError(t, err, "what was written does not parse: %v", err)
-	require.False(t, back.Header.ID != p.Note.Header.ID || back.Header.Date != p.Note.Header.Date, "the written note lost its Id or Date")
+	require.Equal(t, p.Note.Header.ID, back.Header.ID, "the written note lost its Id or Date")
+	require.Equal(t, p.Note.Header.Date, back.Header.Date, "the written note lost its Id or Date")
 	if back.Header.From != "Ada (day shift, the west host, the shared account)" {
 		require.Equal(t, "Ada (day shift, the west host, the shared account)", back.Header.From, "the author's own From line was rewritten to %q", back.Header.From)
 	}
@@ -145,7 +146,7 @@ func TestPlanReceipts(t *testing.T) {
 	// A note with an id is recorded BY id; a legacy note by the only name it has.
 	want := []string{"bo-abcdef012345", "from-bo/2026-09-06-legacy-note.md"}
 	if strings.Join(plan.Record, "|") != strings.Join(want, "|") {
-		require.False(t, strings.Join(plan.Record, "|") != strings.Join(want, "|"), "Record = %v, want %v", plan.Record, want)
+		require.Equal(t, strings.Join(want, "|"), strings.Join(plan.Record, "|"), "Record = %v, want %v", plan.Record, want)
 	}
 	require.NoError(t, plan.Append(root))
 	raw, err := os.ReadFile(filepath.Join(root, "from-ada", ReceiptsName))
@@ -173,7 +174,8 @@ func TestPlanReceipts(t *testing.T) {
 	plan2, err := PlanReceipts(tab, ada, []string{"bo-abcdef012345"}, now)
 	require.NoError(t, err)
 	if len(plan2.Record) != 0 || len(plan2.Already) != 1 {
-		require.False(t, len(plan2.Record) != 0 || len(plan2.Already) != 1, "a second receipt: record=%v already=%v", plan2.Record, plan2.Already)
+		require.Equal(t, 0, len(plan2.Record), "a second receipt: record=%v already=%v", plan2.Record, plan2.Already)
+		require.Equal(t, 1, len(plan2.Already), "a second receipt: record=%v already=%v", plan2.Record, plan2.Already)
 	}
 	// And a note recorded by id is not recordable again under its path.
 	plan3, err := PlanReceipts(tab, ada, []string{"from-bo/2026-09-07T0001Z-a-question-abcdef012345.md"}, now)

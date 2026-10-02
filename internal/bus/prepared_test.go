@@ -28,7 +28,7 @@ func TestMakeAndValidatePreparedArtifact(t *testing.T) {
 	if art.Schema != PreparedSchema {
 		require.Equal(t, PreparedSchema, art.Schema, "art.Schema = %q, want %q", art.Schema, PreparedSchema)
 	}
-	require.False(t, !strings.HasSuffix(art.Note, "\n"), "art.Note must end with LF")
+	require.True(t, strings.HasSuffix(art.Note, "\n"), "art.Note must end with LF")
 	if len(art.SHA256) != 64 {
 		require.Equal(t, 64, len(art.SHA256), "art.SHA256 length = %d, want 64", len(art.SHA256))
 	}
@@ -41,7 +41,7 @@ func TestMakeAndValidatePreparedArtifact(t *testing.T) {
 	gotArt, gotP, err := ValidatePreparedArtifact(raw, root, c, "Ada")
 	require.NoError(t, err, "ValidatePreparedArtifact: %v", err)
 	if gotArt.ID != art.ID || gotP.Note.Header.ID != art.ID {
-		require.False(t, gotArt.ID != art.ID || gotP.Note.Header.ID != art.ID, "id mismatch: got %q, want %q", gotArt.ID, art.ID)
+		require.True(t, gotArt.ID == art.ID && gotP.Note.Header.ID == art.ID, "id mismatch: got %q, want %q", gotArt.ID, art.ID)
 	}
 
 	// Failure: malformed json
@@ -208,7 +208,7 @@ func TestSendPreparedArtifactAlreadyPublished(t *testing.T) {
 	// First send: should publish
 	res1, err := SendPreparedArtifact(clone, "origin", "main", p, art, 3)
 	require.NoError(t, err, "SendPreparedArtifact first send: %v", err)
-	require.False(t, !res1.Pushed || res1.State != "published", "res1 = %+v, want published", res1)
+	require.True(t, res1.Pushed && res1.State == "published", "res1 = %+v, want published", res1)
 
 	headBefore, err := git(bare, "rev-parse", "main")
 	require.NoError(t, err)
@@ -216,7 +216,7 @@ func TestSendPreparedArtifactAlreadyPublished(t *testing.T) {
 	// Second send: should detect already-published without second commit or push
 	res2, err := SendPreparedArtifact(clone, "origin", "main", p, art, 3)
 	require.NoError(t, err, "SendPreparedArtifact retry: %v", err)
-	require.False(t, !res2.Pushed || res2.Attempts != 0 || res2.State != "already-published", "res2 = %+v, want already-published with attempts=0", res2)
+	require.True(t, res2.Pushed && res2.Attempts == 0 && res2.State == "already-published", "res2 = %+v, want already-published with attempts=0", res2)
 
 	headAfter, err := git(bare, "rev-parse", "main")
 	require.NoError(t, err)
@@ -246,7 +246,7 @@ func TestSendPreparedArtifactRefusals(t *testing.T) {
 	// Verify dirty file is preserved
 	{
 		data, err := os.ReadFile(filepath.Join(clone, "unrelated.txt"))
-		require.False(t, err != nil || string(data) != "dirty content\n", "SendPreparedArtifact failed to preserve unrelated dirty file")
+		require.True(t, err == nil && string(data) == "dirty content\n", "SendPreparedArtifact failed to preserve unrelated dirty file")
 	}
 	os.Remove(filepath.Join(clone, "unrelated.txt"))
 
@@ -296,15 +296,15 @@ func TestSendPreparedArtifactInterruptedRecoveries(t *testing.T) {
 	// SendPreparedArtifact should recover the partial write, append INDEX, commit and push
 	res, err := SendPreparedArtifact(clone, "origin", "main", p, art, 3)
 	require.NoError(t, err, "recovery after note save: %v", err)
-	require.False(t, !res.Pushed || res.State != "published", "res = %+v, want published", res)
+	require.True(t, res.Pushed && res.State == "published", "res = %+v, want published", res)
 
 	// Verify exactly one note and one INDEX line on remote
 	noteOnRemote, err := git(bare, "show", "main:"+art.Path)
-	require.False(t, err != nil || noteOnRemote != art.Note, "note on remote: %v, content = %q", err, noteOnRemote)
+	require.True(t, err == nil && noteOnRemote == art.Note, "note on remote: %v, content = %q", err, noteOnRemote)
 	indexOnRemote, err := git(bare, "show", "main:"+IndexPath(p.Sender.Lane))
 	require.NoError(t, err)
 	if strings.Count(indexOnRemote, art.ID) != 1 {
-		require.False(t, strings.Count(indexOnRemote, art.ID) != 1, "expected exactly 1 index entry for %s, got:\n%s", art.ID, indexOnRemote)
+		require.Equal(t, 1, strings.Count(indexOnRemote, art.ID), "expected exactly 1 index entry for %s, got:\n%s", art.ID, indexOnRemote)
 	}
 }
 
@@ -331,12 +331,12 @@ func TestSendPreparedArtifactConcurrentRemoteLanding(t *testing.T) {
 	art2, err := MakePreparedArtifact(p2)
 	require.NoError(t, err)
 	res2, err := SendPreparedArtifact(bench2, "origin", "main", p2, art2, 3)
-	require.False(t, err != nil || !res2.Pushed, "bench2 send failed: %v", err)
+	require.True(t, err == nil && res2.Pushed, "bench2 send failed: %v", err)
 
 	// Bench 1 sends its prepared note; it will encounter a non-fast-forward push, fetch, rebase, and succeed
 	res1, err := SendPreparedArtifact(bench1, "origin", "main", p1, art1, 5)
 	require.NoError(t, err, "bench1 send failed: %v", err)
-	require.False(t, !res1.Pushed || res1.State != "published", "res1 = %+v, want published", res1)
+	require.True(t, res1.Pushed && res1.State == "published", "res1 = %+v, want published", res1)
 
 	// Both notes must be on the remote branch
 	if _, err := git(bare, "show", "main:"+art1.Path); err != nil {
@@ -426,7 +426,7 @@ func TestStellaPreparedPreservesUnrelatedAttributeEdit(t *testing.T) {
 		require.NotContains(t, remote, sentinel, "published unrelated dirty attribute content during prepared delivery")
 	}
 	now, _ := os.ReadFile(path)
-	require.False(t, string(now) != string(want), "refusal changed unrelated dirty attribute content")
+	require.Equal(t, string(want), string(now), "refusal changed unrelated dirty attribute content")
 }
 
 func TestStellaPreparedRefusesUnknownArtifactField(t *testing.T) {
@@ -752,7 +752,7 @@ func TestSendPreparedProcessDeathRecovery(t *testing.T) {
 
 			// Verify exact note on bare remote
 			remoteNote, err := git(bare, "show", "main:"+p.Path)
-			require.False(t, err != nil || remoteNote != a.Note, "bare remote missing note or note mismatch: %v", err)
+			require.True(t, err == nil && remoteNote == a.Note, "bare remote missing note or note mismatch: %v", err)
 
 			// Verify bare remote contains EXACTLY ONE index line
 			remoteIndex, err := git(bare, "show", "main:"+IndexPath(p.Sender.Lane))
@@ -886,7 +886,7 @@ func TestSendPreparedChildExecutionAndRecovery(t *testing.T) {
 
 	// Verify on bare remote
 	remoteNote, err := git(bare, "show", "main:"+p.Path)
-	require.False(t, err != nil || remoteNote != a.Note, "bare remote missing note after child send: %v", err)
+	require.True(t, err == nil && remoteNote == a.Note, "bare remote missing note after child send: %v", err)
 
 	// 2. Fresh recovery child confirms delivery via already-published
 	recCmd := exec.Command(os.Args[0], "-test.run=TestSendPreparedRecoveryHelper")
@@ -945,7 +945,7 @@ func TestRowanProbeStaleIndexLock(t *testing.T) {
 	_, err := SendPreparedArtifact(clone, "origin", "main", p, a, 1)
 	require.Error(t, err, "expected error with index.lock present")
 	if !strings.Contains(err.Error(), "index is locked") || !strings.Contains(err.Error(), a.ID) {
-		require.False(t, !strings.Contains(err.Error(), "index is locked") || !strings.Contains(err.Error(), a.ID), "expected bounded index lock refusal with prepared ID %q, got: %v", a.ID, err)
+		require.True(t, strings.Contains(err.Error(), "index is locked") && strings.Contains(err.Error(), a.ID), "expected bounded index lock refusal with prepared ID %q, got: %v", a.ID, err)
 	}
 }
 
@@ -963,9 +963,9 @@ func TestPreparedDeliveryRecoversEmptyOrPartialGitattributes(t *testing.T) {
 
 	// Verify remote received note, index, and complete .gitattributes with union rules
 	noteRemote, err := git(bare, "show", "main:"+p.Path)
-	require.False(t, err != nil || noteRemote != a.Note, "remote note mismatch: %v", err)
+	require.True(t, err == nil && noteRemote == a.Note, "remote note mismatch: %v", err)
 	attrsRemote, err := git(bare, "show", "main:"+AttributesName)
-	require.False(t, err != nil || !strings.Contains(attrsRemote, "from-*/INDEX merge=union"), "remote .gitattributes missing union rule: %v\n%s", err, attrsRemote)
+	require.True(t, err == nil && strings.Contains(attrsRemote, "from-*/INDEX merge=union"), "remote .gitattributes missing union rule: %v\n%s", err, attrsRemote)
 }
 
 func TestPreparedDeliveryRecoversPartialNoteOnDisk(t *testing.T) {
@@ -983,7 +983,7 @@ func TestPreparedDeliveryRecoversPartialNoteOnDisk(t *testing.T) {
 	require.True(t, res.Pushed, "expected note to be pushed")
 
 	noteRemote, err := git(bare, "show", "main:"+p.Path)
-	require.False(t, err != nil || noteRemote != a.Note, "remote note mismatch: %v", err)
+	require.True(t, err == nil && noteRemote == a.Note, "remote note mismatch: %v", err)
 }
 
 func TestPreparedDeliveryRecoversPartialIndexOnDisk(t *testing.T) {
@@ -1002,7 +1002,7 @@ func TestPreparedDeliveryRecoversPartialIndexOnDisk(t *testing.T) {
 	require.True(t, res.Pushed, "expected note to be pushed")
 
 	idxRemote, err := git(bare, "show", "main:"+IndexPath(p.Sender.Lane))
-	require.False(t, err != nil || !strings.Contains(idxRemote, line), "remote index missing completed line: %v\n%s", err, idxRemote)
+	require.True(t, err == nil && strings.Contains(idxRemote, line), "remote index missing completed line: %v\n%s", err, idxRemote)
 }
 
 func TestPreparedDeliveryRefusesUnrelatedForeignGitattributes(t *testing.T) {
@@ -1027,5 +1027,5 @@ func TestPreparedDeliveryRefusesConflictingNoteOnDisk(t *testing.T) {
 
 	_, err := SendPreparedArtifact(clone, "origin", "main", p, a, 1)
 	require.Error(t, err, "expected error on conflicting note content")
-	require.False(t, !strings.Contains(err.Error(), "conflicting") && !strings.Contains(err.Error(), "unrelated dirty changes"), "unexpected error message: %v", err)
+	require.True(t, strings.Contains(err.Error(), "conflicting") || strings.Contains(err.Error(), "unrelated dirty changes"), "unexpected error message: %v", err)
 }

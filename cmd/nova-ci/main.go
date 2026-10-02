@@ -227,7 +227,7 @@ func main() {
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
 	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
-	// before anything is read, run or written (the CLI style's rule (b), #4505),
+	// before anything is read, run or written,
 	// with that verb's own exit codes (verbflag.Recover would quote the whole
 	// table).
 	defer func() {

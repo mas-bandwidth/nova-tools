@@ -222,7 +222,7 @@ func realDeps() deps {
 
 func run(args []string, stdout, stderr io.Writer, d deps) (code int) {
 	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
-	// before anything is dialed or written (the CLI style's rule (b), #4505),
+	// before anything is dialed or written, so a reader can review a verb before any side effect,
 	// with the verb's effect and worked example (verbExtra).
 	defer verbflag.RecoverWith(stdout, toolName, banner(), &code, verbExtra)
 	ctx := context.Background()

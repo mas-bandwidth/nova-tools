@@ -14,8 +14,8 @@ import (
 
 // The server lands what the readers passed (run --land): the last of the sprint's
 // writers outside the server was a coordinator's `land` run beside it, racing the
-// tick's accepts for the merge queue (the fleet pass of 2026-10-01 18:31 ET: 49 queued
-// and 2 landed while landings were refused round after round). Here one landing runs
+// tick's accepts for the merge queue: cards queue up and landings are refused
+// round after round while both write. Here one landing runs
 // at a time, in the server's own process: land's reads and its report take the server's
 // line of control (cmdLand, a.serial), its git runs outside it, and nothing else writes
 // the merge queue between them but the server itself.

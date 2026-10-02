@@ -81,7 +81,7 @@ func binaryPackages(t *testing.T) []string {
 			}
 			return nil
 		})
-		require.False(t, err != nil, err)
+		require.NoError(t, err, err)
 	}
 	sort.Strings(order)
 	// The floor: the five packages of the binary's own graph. Fewer
@@ -90,7 +90,7 @@ func binaryPackages(t *testing.T) []string {
 		"cmd/nova-tokens", "internal/tokens", "internal/oneline",
 		"internal/bounded", "internal/buildinfo",
 	} {
-		require.False(t, !seen[must], "the import walk did not reach %s; it was looking in the wrong place and would have passed by checking nothing (found %v)", must, order)
+		require.True(t, seen[must], "the import walk did not reach %s; it was looking in the wrong place and would have passed by checking nothing (found %v)", must, order)
 	}
 	return order
 }
@@ -98,7 +98,7 @@ func binaryPackages(t *testing.T) []string {
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	root, err := filepath.Abs(filepath.Join("..", ".."))
-	require.False(t, err != nil, err)
+	require.NoError(t, err, err)
 	return root
 }
 
@@ -195,7 +195,7 @@ func TestNoPackageOfThisBinaryTalksToANetworkOrRunsGit(t *testing.T) {
 			for _, imp := range f.Imports {
 				ip := strings.Trim(imp.Path.Value, `"`)
 				assert.False(t, ip == "net" || strings.HasPrefix(ip, "net/"), "%s imports %q; this tool talks to no network, and a publisher is a separate spec gate (rule 16)", path, ip)
-				assert.False(t, ip == "os/exec" && path != theOneSubprocess, "%s imports os/exec; the one subprocess is sqlite3 and it lives in %s (rule 19)", path, theOneSubprocess)
+				assert.True(t, ip != "os/exec" || path == theOneSubprocess, "%s imports os/exec; the one subprocess is sqlite3 and it lives in %s (rule 19)", path, theOneSubprocess)
 			}
 		}
 		for name, body := range pkgText(t, pkg) {
@@ -243,7 +243,7 @@ func TestNamesGitKnowsAProgramNameFromASubstring(t *testing.T) {
 		"git", "GIT", "git.exe", "/usr/bin/git", "git push", `C:\bin\git.exe`,
 		"git -C x push", "/opt/homebrew/bin/git", "  git  ",
 	} {
-		assert.False(t, !namesGit(yes), "namesGit(%q) is false; that is a program to run", yes)
+		assert.True(t, namesGit(yes), "namesGit(%q) is false; that is a program to run", yes)
 	}
 	for _, no := range []string{
 		"github.com/mas-bandwidth/nova-tools/internal/oneline",
@@ -321,11 +321,11 @@ func TestNoVerbTouchesACheckoutOrItsRemote(t *testing.T) {
 	}
 	{
 		after := readTree(t, bare)
-		assert.False(t, after.digest != beforeBare.digest, "the remote changed; this tool does not push, fetch or talk to a network (rule 16): diff: %s", diffTrees(beforeBare, after))
+		assert.Equal(t, beforeBare.digest, after.digest, "the remote changed; this tool does not push, fetch or talk to a network (rule 16): diff: %s", diffTrees(beforeBare, after))
 	}
 	{
 		after := readTree(t, filepath.Join(bus, ".git"))
-		assert.False(t, after.digest != beforeGit.digest, "the checkout's .git changed; the bus is read as files and nothing else (rule 16): diff: %s", diffTrees(beforeGit, after))
+		assert.Equal(t, beforeGit.digest, after.digest, "the checkout's .git changed; the bus is read as files and nothing else (rule 16): diff: %s", diffTrees(beforeGit, after))
 	}
 }
 
@@ -381,7 +381,7 @@ func TestConcurrentWritersDoNotMutateTheBareRemote(t *testing.T) {
 	wg.Wait()
 	close(errs)
 	for err := range errs {
-		require.False(t, err != nil, err)
+		require.NoError(t, err, err)
 	}
 
 	before := readTree(t, bare)
@@ -424,7 +424,7 @@ func gitRun(t *testing.T, git, dir string, args ...string) {
 	t.Helper()
 	{
 		err := gitRunErr(git, dir, args...)
-		require.False(t, err != nil, err)
+		require.NoError(t, err, err)
 	}
 }
 
@@ -451,7 +451,7 @@ func readTree(t *testing.T, root string) treeSnapshot {
 		names = append(names, rel)
 		return nil
 	})
-	require.False(t, err != nil, err)
+	require.NoError(t, err, err)
 	sort.Strings(names)
 	files := make(map[string]string, len(names))
 	for _, rel := range names {
@@ -516,7 +516,7 @@ func TestDiffTreesReportsDifferences(t *testing.T) {
 	}
 	diff := diffTrees(a, b)
 	want := "added added, modified mod (was 11111111..now 22222222), removed del"
-	assert.False(t, diff != want, "diffTrees = %q; want %q", diff, want)
+	assert.Equal(t, want, diff, "diffTrees = %q; want %q", diff, want)
 }
 
 // The records namespace is not a verb. SPEC-TOKENS' verb list has none that writes
@@ -539,8 +539,8 @@ func TestTheRecordsNamespaceIsNotAVerbUntilItsGateIsDecided(t *testing.T) {
 		wantContains(t, r.stderr, "run: nova-tokens help")
 	}
 	ents, err := os.ReadDir(out)
-	require.False(t, err != nil, err)
-	assert.False(t, len(ents) != 0, "a refused verb wrote %d entries under --out", len(ents))
+	require.NoError(t, err, err)
+	assert.Equal(t, 0, len(ents), "a refused verb wrote %d entries under --out", len(ents))
 	// And the banner does not advertise it: a usage block naming a verb the tool refuses
 	// is a first run that fails on its own instructions.
 	assert.False(t, strings.Contains(usage, "records"), "the usage banner names a records verb this tool refuses")

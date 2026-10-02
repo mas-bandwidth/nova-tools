@@ -13,8 +13,8 @@ import (
 
 // ParseAuthors reads a verb→author mapping. One verb per line:
 //
-//	nova-check links = Rowan
-//	nova-fuse lift quarantine = Stella
+//	<tool> <verb> = <author>
+//	<tool> <verb> = <author>
 //	# blank lines and # comments are ignored
 //
 // The left of the `=` is the verb exactly as docs/CLI.md spells it, tool
@@ -126,7 +126,7 @@ func AuthorsFromGit(ctx context.Context, repo string, verbs []Verb, run Runner, 
 // under cmd/<tool>. A bare key (the tool's own invocation, `verb=-`) has no
 // word to search for, so it is placed by the commit that first added a file
 // under cmd/<tool>: the commit that introduced the tool, and with it the bare
-// invocation (nova-tools #3160).
+// invocation, which nothing before that commit could have established.
 func authorArgs(v Verb) []string {
 	words := strings.Fields(v.Verb)
 	if len(words) == 0 {

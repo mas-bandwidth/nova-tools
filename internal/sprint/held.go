@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// The no-stall rule (docs/SPEC-SPRINT.md section 9, rule 12): every primary
+// The no-stall rule: every primary
 // that has not landed and is on the table is held by something that will move
 // it or tell the coordinator about it. Exactly what holds it is one of:
 //
@@ -108,7 +108,7 @@ type Finding struct {
 func (f Finding) String() string { return "stalled: " + f.What + ": " + f.Why }
 
 // CheckHeld is the no-stall rule as a rule of check: each stall is one
-// violation of rule 12.
+// violation.
 func CheckHeld(h HeldState, now time.Time) []Violation {
 	var out []Violation
 	for _, f := range Unheld(h, now) {

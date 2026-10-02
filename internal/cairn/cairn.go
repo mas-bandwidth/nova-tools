@@ -1,5 +1,5 @@
 // Package cairn is the mechanical half of nova-cairn, the optional
-// checkpoint tool from nova-tools #248.
+// checkpoint tool.
 //
 // It opens session records, appends the friend's exact words with a real
 // clock stamp, stable identifiers and source pointers, and builds a bounded
@@ -156,9 +156,9 @@ func sessionFile(store, session string) string {
 }
 
 // benchFile is the other store shape this tool reads: one markdown file per
-// session directly under the store, kept and appended by hand. Rowan's bench
+// session directly under the store, kept and appended by hand. The bench
 // has kept its cairns that way since before the tool existed
-// (`cairns/<session>.md`), and on 2026-09-18 an append into it refused with
+// and an append into such a file once refused with
 // `no such session; open first` while the record sat right there. The refusal
 // was false, and its remedy was worse than the defect: `open` would have
 // written a second record under sessions/ and split one session in two.
@@ -486,7 +486,7 @@ func Append(store, session, id, text, source string, now time.Time, publish stri
 	// AN ENTRY WITH NO --source CARRIES THE SESSION'S. open --source names
 	// where the record points back to; an append that names nothing else came
 	// from the same place, so the entry records that pointer and index and
-	// receipt read it back. The dogfood finding (2026-09-18): open carried
+	// receipt read it back. The read is what carries the session's
 	// --source session:x, and every entry line then printed source= empty.
 	// The read comes BEFORE any entry or pointer write, so a log that cannot
 	// be read refuses with nothing written.

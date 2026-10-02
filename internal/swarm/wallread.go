@@ -8,7 +8,7 @@ package swarm
 // making progress therefore cost its WHOLE deadline before anybody looked, and the
 // coordinator watching it saw nothing at all in the meantime.
 //
-// MEASURED, 2026-09-19, on hulk (landlock abi 4) and on the Studio's own dead card:
+// Measurements show that a wall refusal does not stop a card and must be reported immediately:
 //
 //   - A wall refusal does NOT stop a card. Three probe cards inside the real wall
 //     (`wallprobewrite`, `wallprobeexec`, `wallprobehang`) each took a refusal -- rc=2 and
@@ -16,7 +16,7 @@ package swarm
 //     rc=2 and `Permission denied` on a write to /tmp -- and each read the tool error, went
 //     on, and published a correct RESULT.md in 13-35 seconds. The model routes around the
 //     wall; killing a card at its first refusal would kill working cards.
-//   - The card that DID die (`js-under-20-bytes`, 2026-09-19, rc=-1 wall=1200.04s, no
+//   - A card that stops without the record named by the next line (
 //     RESULT.md) was not stopped by the wall at all. Its ONE `Operation not permitted` is
 //     line 5 of its log -- the harness's own startup banner, before STEP 1 -- and the card
 //     then worked for SIXTEEN more model steps past it. Its last three log lines are a
@@ -41,7 +41,7 @@ import (
 // PermissionDeniedMark is the kernel's refusal on linux. landlock denies a write outside the
 // write set with EACCES, and the C library spells that `Permission denied` -- so the marks
 // this package had (`SANDBOX REFUSED`, `Operation not permitted`) named NO linux refusal at
-// all. Measured inside the swarm's own wall on hulk: `sh: 1: cannot create
+// all; the path check below therefore requires a path such as `
 // /tmp/nova-wall-probe-swarm: Permission denied`. Like OperationNotPermittedMark it counts
 // only ON A PATH: `Permission denied` with no path in the line is some other permission, and
 // a card's own test output is full of sentences.

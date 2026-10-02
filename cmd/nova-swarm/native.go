@@ -857,7 +857,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// supervisor pins the harness's output to it, and a `batch` pins its runner's stdout to
 	// it, which is where the NATIVE OK line lands -- and a third writer at one path is how
 	// evidence gets cut out from under a reader. This capture has its own name and one
-	// writer, and `harness=silent` (#604) is asked OF THIS FILE: whether the child itself
+	// writer, and `harness=silent` is asked OF THIS FILE: whether the child itself
 	// said anything at all.
 	//
 	// It is opened O_APPEND and never truncated, so a second writer at the same path (a
@@ -885,15 +885,15 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// calls on the child's output with no timestamps of its own; this recorder stamps each
 	// report as it arrives, so the card's minutes can be read per phase afterwards.
 	timeline := swarm.NewTimeline()
-	// THE CARD READ WHILE IT IS STILL TALKING (the wall-hang lane, 2026-09-19). Every wall
+	// THE CARD READ WHILE IT IS STILL TALKING. Every wall
 	// question below this point is asked of a FILE once the child is gone; this reader is in
 	// the capture chain, so a refusal is named on errOut the moment the child prints it
 	// rather than at the reap, and the idle watch has a verdict to carry without re-reading
 	// anything. It decides nothing on its own: a card that takes a refusal and goes on to
 	// publish is done, and this line having been printed takes nothing away from it.
 	reader := swarm.NewWallReader(cfg.label, func(line string) { fmt.Fprintln(errOut, line) })
-	// THE SHELL-DENIAL VERDICT IS TAKEN FROM THE PARENT'S OWN COPY (review finding on #1478,
-	// the #1892 class). `<job>/harness-output.log` is in the card's --write directory and is
+	// THE SHELL-DENIAL VERDICT IS TAKEN FROM THE PARENT'S OWN COPY, because
+	// `<job>/harness-output.log` is in the card's --write directory and is
 	// its cwd: a card can replace that name after it prints the denial, and a file read after
 	// Wait would then find nothing. This reader sees the bytes as they arrive, so no later
 	// rewrite, unlink or read error of that file can turn a denial into an OK.
@@ -913,14 +913,14 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	if cfg.noWall {
 		res.wall = swarm.SandboxNoneByFlag
 	}
-	// THE LAUNCH GRACE (issue #900). A harness that dies inside this window with a
+	// THE LAUNCH GRACE. A harness that dies inside this window with a
 	// provider server error in its own output is a launch that did not take: the provider
 	// answered before the request began, and the slot was spent on nothing. The SAME card
 	// is retried -- 5-20s jittered, then 30-60s -- and each launch writes its own usage row
 	// (attempt=1,2,3). A failure past the grace is a real run that failed and is not
 	// retried.
 	//
-	// EACH LAUNCH OWNS ITS PROCESS GROUP (issue #779). The child is the leader of a group
+	// EACH LAUNCH OWNS ITS PROCESS GROUP. The child is the leader of a group
 	// of its own, so the deadline -- and a TERM from outside -- kill the WHOLE tree the card
 	// started, not merely the leader while its grandchildren keep running past the wall. A
 	// TERM from outside is the same cleanup as the deadline: reap the group, fold the usage
@@ -952,7 +952,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// startRetries is how many times a failed start has been launched again (harnessStartWaits)
 	startRetries := 0
 
-	// THE LIVE SAMPLER (SPEC-SWARM rule 13d, issue #1545). It is started HERE, once for the
+	// THE LIVE SAMPLER. It is started HERE, once for the
 	// whole job and not once per launch, because the budget it watches is the job's: "the
 	// observed sum is over the whole job, every launch counted from the first launch's
 	// start, so a retry begins with what the earlier launches spent and no retry resets
@@ -963,7 +963,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// budget "the deadline is the only stop", so a sample would open `sqlite3` every few
 	// seconds to answer a question nobody asked. That is a cost, not a behaviour: the
 	// NATIVE OK line's `budget=` comes from the FINAL read of each launch either way, which
-	// rule 13d is explicit about ("`<spent>` is the sum over every launch at the final read,
+	// the budget spec is explicit about ("`<spent>` is the sum over every launch at the final read,
 	// never the sum at the stop").
 	//
 	// IT IS BESIDE THE SELECT BELOW AND NEVER INSIDE IT, so the deadline and a TERM end the
@@ -1012,8 +1012,8 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		done := make(chan error, 1)
 		go func() { done <- cmd.Wait() }()
 		deadlineC, stopDeadline := nativeDeadline(cfg.deadline)
-		// THE IDLE WATCH (the wall-hang lane, 2026-09-19). `batch` has watched its cards
-		// for idleness since issue #593 -- log growth AND the process tree's CPU, so a
+		// THE IDLE WATCH. `batch` watches its cards
+		// for idleness -- log growth AND the process tree's CPU, so a
 		// `go test` that prints nothing for minutes is not mistaken for a dead card --
 		// and `native`, the verb every card on every bench actually runs through, never
 		// had it. A card that stopped making progress cost its WHOLE deadline before
@@ -1048,9 +1048,9 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			// The card is still and its tree is spending nothing. It is ended HERE, with
 			// what the watch saw, instead of at the deadline with nothing at all.
 			//
-			// AND IT IS REAPED, NOT SHOT (review finding on #1831: "Idle kill is
-			// `KillGroup`, not `swarm.Reap` (TERM-wait-KILL) ... Batch idle already Reaps
-			// so native can fold usage"). A bare KillGroup is a SIGKILL no process can
+			// AND IT IS REAPED, NOT SHOT: a batch's idle end already reaps so the run can
+			// fold its usage, and an idle end here is ended the same way -- `swarm.Reap`
+			// (TERM-wait-KILL). A bare KillGroup is a SIGKILL no process can
 			// handle: the harness never flushes the turn it was in and never writes the
 			// usage row this run then has to score with dashes. The TERM path three lines
 			// below already Reaps, and an idle end is the same kind of ending -- the
@@ -1079,20 +1079,20 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			res.rc = -1
 			res.terminated = true
 		case word := <-sampler.Fired():
-			// THE BUDGET FIRED (SPEC-SWARM rule 13d). "When it is true `native` ends the
+			// THE BUDGET FIRED. The budget spec is plain: "When it is true `native` ends the
 			// card the way it ends one on a TERM from outside: a terminate to the card's
 			// whole process group, a wait, then a kill of the group, after which no process
 			// of that group is alive, grandchildren and a harness that ignores the
 			// terminate included." That is swarm.Reap, which is the TERM case's own call
 			// one line above and NOT the deadline's immediate KillGroup: the terminate
-			// exists so the card has its one moment to publish, and rule 13d keeps what it
+			// exists so the card has its one moment to publish, and the budget spec keeps what it
 			// published byte for byte.
 			stopDeadline()
 			swarm.Reap(pgid, started, swarm.TerminateGrace)
 			<-done
 			// `rc=-1` on the line, as it is for a deadline and for a TERM; the ROW's `rc`
 			// is a dash, which writeNativeUsage already writes for any rc below zero
-			// (rule 12's closed list, amended by decision 14).
+			// (a dash is one of the row's closed list of rc values).
 			res.rc = -1
 			res.stopped = word
 		}
@@ -1115,7 +1115,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		} else if res.rc != 0 {
 			res.end = swarm.EndFailed
 		}
-		// A LAUNCH A BUDGET ENDED SAYS SO IN ITS OWN ROW (rule 13d): `end=budget` for a
+		// A LAUNCH A BUDGET ENDED SAYS SO IN ITS OWN ROW: `end=budget` for a
 		// budget that fired, and `end=budget-unverifiable` for a source the tool stopped
 		// being able to see. It is THIS launch's end, and only the stopping launch carries
 		// it -- an earlier launch that died on a provider 5xx keeps its own word.
@@ -1125,16 +1125,16 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 				res.end = swarm.EndUnverifiable
 			}
 		}
-		// ONE USAGE ROW PER LAUNCH (issue #900), so the cost of a retried card is each
+		// ONE USAGE ROW PER LAUNCH, so the cost of a retried card is each
 		// attempt once, and a fast failure whose provider reported nothing keeps dashes.
 		var launchUsage swarm.ProviderUsage
 		launchEnd := time.Now()
 		launchUsage, res.usageReason, res.usageState, res.usage = writeNativeUsage(cfg, dataHome, provider, cfg.model[len(provider)+1:], attemptStart, launchEnd, previousLaunchEnd, res.rc, attempt, res.end, errOut)
 		// The floor for the NEXT launch's window: its rows begin where this launch's ended,
-		// so that adding a job's rows counts each launch once (rule 13d).
+		// so that adding a job's rows counts each launch once.
 		previousLaunchEnd = launchEnd
 		// THE LINE IS THE JOB'S: this launch's final read is ADDED to what the earlier
-		// launches were finally reported to have used. Rule 13d's worked example is two
+		// launches were finally reported to have used. A worked example is two
 		// launches at 40 and 70 under `--tokens 100`: the rows keep 40 and 70, and the line
 		// prints 110/100. A launch whose read reported nothing adds nothing and leaves the
 		// job's `observed` where it was, because a zero here would be a measurement the

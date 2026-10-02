@@ -45,9 +45,9 @@ const (
 // TypeNames are the five names as a source, a bus line and a day file spell them.
 var TypeNames = [NTypes]string{"input", "output", "cache_write", "cache_read", "reasoning"}
 
-// Dash is the cell of a type the source did not report. It is not a zero, and the
-// difference is the whole of rule 15: a zero is a measurement and a dash is an absence,
-// and a zero that meant "not measured" would sum into a month claiming to be complete.
+// Dash is the cell of a type the source did not report. It is not a zero: a zero is a
+// measurement and a dash is an absence, and a zero that meant "not measured" would sum
+// into a month claiming to be complete.
 const Dash = "-"
 
 // TypeByName resolves one of the five names.
@@ -151,7 +151,8 @@ type Row struct {
 }
 
 // Bases is the day bases that fed this row, sorted. More than one is a row that is not
-// written (rule 17).
+// written: a row must carry one day basis, and a mixed row is named and left out of the
+// file and the counts.
 func (r *Row) Bases() []string { return sortedKeys(r.bases) }
 
 // Sources is the sorted, comma-joinable labels that fed this row.
@@ -173,13 +174,11 @@ type Folder struct {
 	days  map[string]bool
 
 	// idLabel is which source first fed each message id, and overlaps counts the ids two
-	// sources both fed. SPEC-TOKENS says the fold "deliberately does not check … that two
-	// sources overlap", and the numbers here still do not change: two declarations of one
-	// tree still double the day, exactly as the spec says. What changes is that the run
-	// SAYS SO. (Measured 2026-09-11: ~/.claude/projects/<session>/subagents/agent-*.jsonl
-	// and /private/tmp/.../tasks/*.output were the same 10,281 messages, the fold reported
-	// 2,932,982,350 cache_read against the correct 1,502,293,166, written=true, check OK,
-	// sum OK.)
+	// sources both fed. The fold deliberately does not check whether two sources overlap,
+	// and the numbers still do not change: two declarations of one tree still double the
+	// day. What changes is that the run SAYS SO -- overlaps names every pair of sources
+	// that shared ids -- so a doubled day prints its doubling instead of passing as
+	// green.
 	idLabel  map[string]string
 	overlaps map[[2]string]int
 }
@@ -316,14 +315,12 @@ const (
 
 // applies says which Stat fields a kind can have. The fold prints a dash for the rest.
 var applies = map[string]map[string]bool{
-	// A transcript's and a database's `unparsed` is a DASH, because SPEC-TOKENS says so
-	// in the TOKENS SOURCE paragraph: "a transcript has no unparsed lines ... a dash is
-	// an absence where a zero is a measurement". A line whose stamp this tool cannot
-	// read IS counted and printed -- one TOKENS UNPARSED line naming the label, and the
-	// unparsed= total on TOKENS FAIL (rule 3) -- so nothing is lost by the dash; what the
-	// column would claim is that a clean transcript was MEASURED for unparsed lines, and
-	// the spec reserves the zero for that. The PR proposes striking the spec's clause; if
-	// it is struck, these two become `"unparsed": true` and the column is the measurement.
+	// A transcript's and a database's `unparsed` is a DASH: a transcript has no unparsed
+	// lines, and a dash is an absence where a zero is a measurement. A line whose stamp
+	// this tool cannot read IS counted and printed -- one TOKENS UNPARSED line naming the
+	// label, and the unparsed= total on TOKENS FAIL -- so nothing is lost by the dash;
+	// what the column would claim is that a clean transcript was MEASURED for unparsed
+	// lines, and the zero is reserved for exactly that.
 	KindClaude:   {"files": true, "unreadable": true, "messages": true, "dup": true, "noid": true, "rows": true},
 	KindOpenCode: {"files": true, "unreadable": true, "messages": true, "dup": true, "noid": true, "rows": true},
 	KindSwarm:    {"files": true, "unreadable": true, "messages": true, "dup": true, "noid": true, "nousage": true, "unparsed": true, "rows": true},
@@ -389,12 +386,11 @@ type Source struct {
 
 // AddMessage puts one message into this source's stream, collapsed onto its id.
 //
-// This is rule 4, and it is written ONCE: "A Claude Code transcript repeats a message id
-// on every streamed line; the last line for an id carries the message's final usage, and
-// that is the one counted. Within one source, a second occurrence of an id is dup=<n>,
-// never a second count. A message with no id is counted in noid=<n> and not folded."
-// claude.go and opencode.go each kept their own byID/order/dup loop, and two copies of one
-// rule are two rules (lesson 113).
+// A streamed transcript repeats a message id on every line; the last line for an id
+// carries the message's final usage, and that is the one counted. Within one source, a
+// second occurrence of an id is dup=<n>, never a second count. A message with no id is
+// counted in noid=<n> and not folded. The rule is written ONCE, here, and every reader
+// collapses through it: two copies of one rule are two rules.
 func (s *Source) AddMessage(id string, m Message) {
 	if id == "" {
 		s.Stat.NoID++
@@ -426,9 +422,9 @@ func (s *Source) Collapse() {
 func (s *Source) ReportsList() string {
 	if len(s.Reports) == 0 {
 		// A lane that folded no row reports no type, and the field's value is a dash
-		// like every other absence on this line. It used to render as nothing at all --
-		// `reports= day_basis=utc` -- which is a field with no value in a grammar whose
-		// every field has one.
+		// like every other absence on this line: rendering nothing at all would print
+		// `reports= day_basis=utc`, a field with no value in a grammar whose every
+		// field has one.
 		return Dash
 	}
 	names := make([]string, 0, len(s.Reports))
@@ -481,10 +477,11 @@ var AllTypes = []Type{Input, Output, CacheWrite, CacheRead, Reasoning}
 // ClaudeTypes is what a Claude Code transcript carries: no reasoning count exists in it.
 var ClaudeTypes = []Type{Input, Output, CacheWrite, CacheRead}
 
-// ValidDay reports whether s is a YYYY-MM-DD day ON THE CALENDAR. The shape alone was
-// the whole test, so `--day 2026-13-40` was accepted, wrote 2026-13-40.tsv, passed
-// `check`, and left MissingDays walking from a day that does not exist. time.Parse is the
-// range check, and the round trip refuses what it normalises (2026-02-30 -> 2026-03-02).
+// ValidDay reports whether s is a YYYY-MM-DD day ON THE CALENDAR. The shape alone is not
+// enough: an impossible day that passes the shape check would be written as a day file,
+// pass `check`, and leave MissingDays walking from a day that does not exist. time.Parse
+// is the range check, and the round trip refuses what it normalises
+// (2026-02-30 -> 2026-03-02).
 func ValidDay(s string) bool {
 	if len(s) != 10 || s[4] != '-' || s[7] != '-' {
 		return false

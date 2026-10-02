@@ -32,8 +32,8 @@ type Batch struct {
 	HaveRounds bool
 }
 
-// BatchPrefix is what makes a merged pull request a batch. Glenn, 2026-09-18:
-// integration batches only — nothing else enters the queue.
+// BatchPrefix is what makes a merged pull request a batch: integration batches
+// only — nothing else enters the queue.
 const BatchPrefix = "integration-"
 
 // Batches turns merged pull requests into batches, taking each one's rounds

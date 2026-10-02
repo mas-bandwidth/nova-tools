@@ -21,7 +21,7 @@ func TestGitErrorCapsTheEmbeddedOutput(t *testing.T) {
 		"an error carrying %d bytes of git output renders %d bytes; the ceiling is %d",
 		len(huge), len(text), gitOutputCap)
 	if !strings.HasPrefix(text, "git push origin main: exit status 1: hint:") {
-		assert.False(t, !strings.HasPrefix(text, "git push origin main: exit status 1: hint:"), "the head of the error is gone: %q", text[:60])
+		assert.True(t, strings.HasPrefix(text, "git push origin main: exit status 1: hint:"), "the head of the error is gone: %q", text[:60])
 	}
 	assert.Contains(t, text, "...+", "the cut is not marked, so a reader cannot tell there was more: %q", text)
 	assert.NotContains(t, oneline.Err(g), "\n", "the rendered error is not one line")

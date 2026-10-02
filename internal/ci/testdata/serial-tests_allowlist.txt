@@ -34,7 +34,7 @@ cmd/nova-cairn/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints serial: t.C
 cmd/nova-check/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints serial: t.Chdir
 cmd/nova-check/issue2296_test.go:TestIssue2296 serial: os.Setenv
 cmd/nova-check/issue2296_test.go:TestNoCodeStagedRefusals serial: os.Setenv
-cmd/nova-check/issue2311_test.go:TestIssue2311 serial: swaps package var main.dogfoodClock, swaps package var main.dogfoodGitRunner, swaps package var main.dogfoodHelpRunner
+cmd/nova-check/record_and_optional_checks_test.go:TestIssue2311 serial: swaps package var main.dogfoodClock, swaps package var main.dogfoodGitRunner, swaps package var main.dogfoodHelpRunner
 cmd/nova-fuse/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints serial: t.Chdir
 cmd/nova-fuse/main_test.go:TestEnvironmentCannotRedirectOrLiftAnything serial: t.Setenv
 cmd/nova-fuse/main_test.go:TestNoDefaultBoxRefusesToGuess serial: t.Setenv
@@ -175,11 +175,11 @@ internal/update/delivery_test.go:TestTheBusIsHandedFiniteBoundsOutOfTheRemaining
 internal/update/delivery_test.go:TestTheBusOwnWordsReachTheCallerBoundedToOneLine serial: t.Setenv
 internal/update/fleetdrift_test.go:TestReportStorePrintsOneDriftLineForTheStaleBench serial: t.Setenv
 internal/update/inventory_spec_test.go:TestSnapshotIsBoundedByTheClock serial: swaps package var update.snapshotChildTimeout
-internal/update/issue2288_test.go:TestIssue2288 serial: t.Setenv
-internal/update/issue2288_test.go:TestMovedEmptyDiffIsNotARefusal serial: t.Setenv
-internal/update/issue2288_test.go:TestMovedIsBoundedByTheClock serial: t.Setenv
-internal/update/issue2288_test.go:TestMovedNeverInfersARename serial: t.Setenv
-internal/update/issue2288_test.go:TestMovedReadsTheBuildNeverAList serial: t.Setenv
+internal/update/moved_reads_each_build_test.go:TestIssue2288 serial: t.Setenv
+internal/update/moved_reads_each_build_test.go:TestMovedEmptyDiffIsNotARefusal serial: t.Setenv
+internal/update/moved_reads_each_build_test.go:TestMovedIsBoundedByTheClock serial: t.Setenv
+internal/update/moved_reads_each_build_test.go:TestMovedNeverInfersARename serial: t.Setenv
+internal/update/moved_reads_each_build_test.go:TestMovedReadsTheBuildNeverAList serial: t.Setenv
 internal/update/process_functional_test.go:TestJoinInterruptionNegativeControlWithoutKillFails serial: t.Setenv
 internal/update/process_functional_test.go:TestJoinReporterDeathAfterRemoteConfirmationDoesNotPublishTwice serial: swaps package var update.jobMap, t.Setenv
 internal/update/process_functional_test.go:TestJoinReporterDeathWithPendingSavedFinishesTheSameReport serial: swaps package var update.jobMap, t.Setenv
@@ -194,9 +194,9 @@ internal/update/slow_test.go:TestJoinLostConfirmationRecoversWithoutASecondNote 
 internal/update/slow_test.go:TestJoinRealBusPublishesOneNoteAndOneIndexRow serial: t.Setenv
 internal/update/slow_test.go:TestJoinRefusedPushRecoversToOneNoteWithTheSameID serial: t.Setenv
 internal/update/slow_test.go:TestPendingBeforeDispatchAndQuietRetry serial: t.Setenv
-internal/update/stella_deadline_test.go:TestDeadlineHealthyChildUnderLoadIsFullyDrained serial: t.Setenv
-internal/update/stella_deadline_unix_test.go:TestDeadlineEscapedPipeGrandchildReturnsInsideBudget serial: t.Setenv
-internal/update/stella_snapshot_functional_test.go:TestStellaTwoSnapshotsOneDirectoryPreservesKilledWritersTemp serial: swaps package var update.jobMap, t.Setenv
+internal/update/healthy_child_under_load_drained_functional_test.go:TestDeadlineHealthyChildUnderLoadIsFullyDrained serial: t.Setenv
+internal/update/escaped_pipe_returns_within_budget_unix_functional_test.go:TestDeadlineEscapedPipeGrandchildReturnsInsideBudget serial: t.Setenv
+internal/update/snapshot_killed_writer_temp_preserved_functional_test.go:TestStellaTwoSnapshotsOneDirectoryPreservesKilledWritersTemp serial: swaps package var update.jobMap, t.Setenv
 internal/update/update_test.go:TestApplyOnlyNamedEntryAndExactTarget serial: t.Setenv
 internal/update/update_test.go:TestCheckCapsAndFilterActuallyAvoidsReads serial: t.Setenv
 internal/update/process_transport_functional_test.go:TestHealthyCommandWithLingeringGrandchildStillReads serial: t.Setenv

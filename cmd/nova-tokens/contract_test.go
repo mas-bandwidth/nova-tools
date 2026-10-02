@@ -24,17 +24,17 @@ import (
 func pkgFiles(t *testing.T, pkg string) map[string]*ast.File {
 	t.Helper()
 	root, err := filepath.Abs(filepath.Join("..", ".."))
-	require.False(t, err != nil, err)
+	require.NoError(t, err, err)
 	fset := token.NewFileSet()
 	out := map[string]*ast.File{}
 	ents, err := os.ReadDir(filepath.Join(root, pkg))
-	require.False(t, err != nil, err)
+	require.NoError(t, err, err)
 	for _, e := range ents {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
 			continue
 		}
 		f, err := parser.ParseFile(fset, filepath.Join(root, pkg, e.Name()), nil, parser.ParseComments)
-		require.False(t, err != nil, err)
+		require.NoError(t, err, err)
 		out[e.Name()] = f
 	}
 	require.False(t, len(out) == 0, "no source files under %s; this tripwire was looking in the wrong place and would have passed by checking nothing", pkg)
@@ -44,16 +44,16 @@ func pkgFiles(t *testing.T, pkg string) map[string]*ast.File {
 func pkgText(t *testing.T, pkg string) map[string]string {
 	t.Helper()
 	root, err := filepath.Abs(filepath.Join("..", ".."))
-	require.False(t, err != nil, err)
+	require.NoError(t, err, err)
 	ents, err := os.ReadDir(filepath.Join(root, pkg))
-	require.False(t, err != nil, err)
+	require.NoError(t, err, err)
 	out := map[string]string{}
 	for _, e := range ents {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
 			continue
 		}
 		raw, err := os.ReadFile(filepath.Join(root, pkg, e.Name()))
-		require.False(t, err != nil, err)
+		require.NoError(t, err, err)
 		out[e.Name()] = string(raw)
 	}
 	return out
@@ -113,14 +113,14 @@ func TestNothingInThisToolRemovesAFile(t *testing.T) {
 						ok, used[path+" "+forbidden] = true, true
 					}
 				}
-				assert.False(t, !ok, "%s calls %s; this tool deletes, truncates and trims nothing -- not a month file, not a log, not a stray (rule 9). A file THIS RUN makes is carved out by name in this test and in the spec, or it is a bug", path, forbidden)
+				assert.True(t, ok, "%s calls %s; this tool deletes, truncates and trims nothing -- not a month file, not a log, not a stray (rule 9). A file THIS RUN makes is carved out by name in this test and in the spec, or it is a bug", path, forbidden)
 			}
 		}
 	}
 	// A carve-out nothing uses any more is a hole left open in the tripwire.
 	for path, names := range allowed {
 		for _, n := range names {
-			assert.False(t, !used[path+" "+n], "%s no longer calls %s; drop the carve-out rather than leaving the tripwire open on that file (rule 9)", path, n)
+			assert.True(t, used[path+" "+n], "%s no longer calls %s; drop the carve-out rather than leaving the tripwire open on that file (rule 9)", path, n)
 		}
 	}
 }
@@ -135,10 +135,10 @@ func TestRule9EmptierListMatchesTheSpec(t *testing.T) {
 	t.Parallel()
 
 	root, err := filepath.Abs(filepath.Join("..", ".."))
-	require.False(t, err != nil, err)
+	require.NoError(t, err, err)
 	specPath := filepath.Join(root, "docs", "SPEC-TOKENS.md")
 	raw, err := os.ReadFile(specPath)
-	require.False(t, err != nil, err)
+	require.NoError(t, err, err)
 	spec := string(raw)
 
 	// Rule 9's block: from its numbered opening to rule 10's.
@@ -195,10 +195,10 @@ func TestRule9EmptierListMatchesTheSpec(t *testing.T) {
 	inSpec := map[string]bool{}
 	for _, w := range want {
 		inSpec[w] = true
-		assert.False(t, !have[w], "rule 9 names %s as a call that can empty a file and rule9Emptiers does not carry it; the tripwire is open on that call. Add it to the list in %s, or change rule 9 in docs/SPEC-TOKENS.md -- never one alone", w, "cmd/nova-tokens/contract_test.go")
+		assert.True(t, have[w], "rule 9 names %s as a call that can empty a file and rule9Emptiers does not carry it; the tripwire is open on that call. Add it to the list in %s, or change rule 9 in docs/SPEC-TOKENS.md -- never one alone", w, "cmd/nova-tokens/contract_test.go")
 	}
 	for _, e := range rule9Emptiers {
-		assert.False(t, !inSpec[e], "rule9Emptiers carries %s and rule 9 does not name it; spec and tripwire have drifted. Name it in rule 9 of docs/SPEC-TOKENS.md, or drop it from the list -- never one alone", e)
+		assert.True(t, inSpec[e], "rule9Emptiers carries %s and rule 9 does not name it; spec and tripwire have drifted. Name it in rule 9 of docs/SPEC-TOKENS.md, or drop it from the list -- never one alone", e)
 	}
 }
 
@@ -215,7 +215,7 @@ func TestTheOnlySubprocessIsSqlite3AndThereIsNoNetwork(t *testing.T) {
 		for _, imp := range f.Imports {
 			path := strings.Trim(imp.Path.Value, `"`)
 			assert.False(t, path == "net" || strings.HasPrefix(path, "net/"), "internal/tokens/%s imports %q; this tool talks to no network", name, path)
-			assert.False(t, path == "os/exec" && name != "opencode.go", "internal/tokens/%s imports os/exec; the one subprocess is sqlite3, and it lives in opencode.go (rule 19)", name)
+			assert.True(t, path != "os/exec" || name == "opencode.go", "internal/tokens/%s imports os/exec; the one subprocess is sqlite3, and it lives in opencode.go (rule 19)", name)
 		}
 	}
 	text := pkgText(t, "internal/tokens")
@@ -247,7 +247,7 @@ func TestOnlyRepoGoCarriesTheAttributionRule(t *testing.T) {
 	// Every reader reaches a repo name through that one function.
 	for _, reader := range []string{"claude.go", "opencode.go", "swarm.go", "bus.go"} {
 		body := pkgText(t, "internal/tokens")[reader]
-		assert.False(t, !strings.Contains(body, "rules.Attribute"), "internal/tokens/%s does not call the attribution function", reader)
+		assert.True(t, strings.Contains(body, "rules.Attribute"), "internal/tokens/%s does not call the attribution function", reader)
 	}
 }
 
@@ -297,7 +297,7 @@ func TestEachDeclaredFileIsOpenedOncePerRun(t *testing.T) {
 	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "g="+tr), 0)
 	{
 		got := tokens.Opens() - before
-		assert.False(t, got != 12, "%d source opens for 12 files; the fold is one pass over each declared file", got)
+		assert.Equal(t, int64(12), got, "%d source opens for 12 files; the fold is one pass over each declared file", got)
 	}
 }
 
@@ -521,7 +521,7 @@ func TestAMonthWithNoDayFilesSumsToDashesNotZeros(t *testing.T) {
 	total := lineWith(r.stdout, "SUM TOTAL")
 	require.False(t, total == "", "no SUM TOTAL line over an empty month:\n%s%s", r.stdout, r.stderr)
 	for _, want := range []string{"input=-", "output=-", "cache_write=-", "cache_read=-", "reasoning=-"} {
-		assert.False(t, !strings.Contains(total, want), "SUM TOTAL over a month with no day files is %q; want %s -- a type no source reported is a dash, never 0 (rule 15)", total, want)
+		assert.True(t, strings.Contains(total, want), "SUM TOTAL over a month with no day files is %q; want %s -- a type no source reported is a dash, never 0 (rule 15)", total, want)
 	}
 }
 
@@ -611,18 +611,18 @@ func TestNoFunctionAddsOneTypeColumnIntoAnother(t *testing.T) {
 	t.Parallel()
 
 	root, err := filepath.Abs(filepath.Join("..", ".."))
-	require.False(t, err != nil, err)
+	require.NoError(t, err, err)
 	checked := 0
 	for _, pkg := range []string{"internal/tokens", "cmd/nova-tokens"} {
 		ents, err := os.ReadDir(filepath.Join(root, pkg))
-		require.False(t, err != nil, err)
+		require.NoError(t, err, err)
 		for _, e := range ents {
 			if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
 				continue
 			}
 			fset := token.NewFileSet()
 			f, err := parser.ParseFile(fset, filepath.Join(root, pkg, e.Name()), nil, 0)
-			require.False(t, err != nil, err)
+			require.NoError(t, err, err)
 			for _, d := range f.Decls {
 				fn, ok := d.(*ast.FuncDecl)
 				if !ok || fn.Body == nil {
@@ -659,7 +659,7 @@ func TestNoFunctionAddsOneTypeColumnIntoAnother(t *testing.T) {
 					checked++
 					want := exprText(fset, into)
 					for _, got := range typeExprs(fset, from) {
-						assert.False(t, got != want, "%s/%s:%d writes the %s column from %s; the five types are kept apart and no function adds one type column into another (rule 15)",
+						assert.Equal(t, want, got, "%s/%s:%d writes the %s column from %s; the five types are kept apart and no function adds one type column into another (rule 15)",
 							pkg, e.Name(), fset.Position(n.Pos()).Line, want, got)
 					}
 					return true

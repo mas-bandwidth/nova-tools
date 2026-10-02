@@ -8,11 +8,10 @@ import (
 )
 
 // driveLetterRE is a Windows drive-letter prefix, `C:` or `c:`, with or without the
-// slash after it. IT IS LEXICAL AND NOT `filepath.VolumeName`, ON PURPOSE (#1853, Emma's
-// item-4 dogfood): a card is linted on the bench that cuts it and run on another, so a
-// rule that answers differently on darwin and on windows is a rule a card can walk
-// through by being written on the right machine. `C:/Windows/system32` is an absolute
-// path on every bench that reads this card, whatever the bench's own separator is.
+// slash after it. This check is purely lexical and deliberately avoids `filepath.VolumeName`.
+// A rule that answers differently on Darwin and Windows is a rule a card can walk through by
+// being written on the right machine. `C:/Windows/system32` is an absolute path on every
+// bench that reads this card, whatever the bench's own separator is.
 var driveLetterRE = regexp.MustCompile(`^[A-Za-z]:`)
 
 // maxPaths is the cap on a card's PATHS: line. Eight globs is enough to name a fix's
@@ -22,8 +21,8 @@ var driveLetterRE = regexp.MustCompile(`^[A-Za-z]:`)
 const maxPaths = 8
 
 // ValidatePaths is the PATHS: line's own rule. It is checked at `cut`, before a card is
-// admitted, and again here before the line is used to judge a diff: a bound that is
-// validated only at the point it is written is a bound that any later edit removes.
+// admitted, and again here before the line is used to judge a diff.
+// Path validation ensures that constraints are consistently enforced.
 //
 // No `..`, because a glob that climbs out of the repository bounds nothing. No absolute
 // path, for the same reason and because a card's paths are repo-relative by definition.
