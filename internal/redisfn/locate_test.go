@@ -142,7 +142,7 @@ func TestExplainWritesTheOriginOfEveryLineTheErrorNames(t *testing.T) {
 func TestExplainLeavesAnErrorItHasNothingToSayAboutAsItIs(t *testing.T) {
 	t.Parallel()
 	if got := two().Explain(nil); got != nil {
-		assert.Nil(t, got, "Explain(nil) = %v", got)
+		assert.NoError(t, got, "Explain(nil) = %v", got)
 	}
 	plain := text("ERR value is not an integer or out of range")
 	if got := two().Explain(plain); got != error(plain) {

@@ -716,7 +716,7 @@ func TestExplain(t *testing.T) {
 			assert.True(t, again == got, "Explain of its own error = %v; want it unchanged", again)
 		}
 		if wrapped := fmt.Errorf("verb: %w", got); conn.Explain(wrapped) != wrapped {
-			assert.True(t, conn.Explain(wrapped) == wrapped, "Explain of its own error, wrapped, is not the wrapped error")
+			assert.Fail(t, "Explain of its own error, wrapped, is not the wrapped error")
 		}
 		for _, shown := range errorsText(got) {
 			if strings.Contains(shown, "s3cret") {
