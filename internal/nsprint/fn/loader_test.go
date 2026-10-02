@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 var localDecl = regexp.MustCompile(`^local\s+(function\s+[A-Za-z_][A-Za-z0-9_]*|[A-Za-z_][A-Za-z0-9_]*(\s*,\s*[A-Za-z_][A-Za-z0-9_]*)*)`)
@@ -26,13 +28,13 @@ func countLocals(t *testing.T, source string) (active, sum int, largest string) 
 			continue
 		case line == blockOpen && prev != "":
 			if inBlock != "" {
-				t.Fatalf("line %d: block %q opens inside %q", i+1, prev, inBlock)
+				require.Equal(t, "", inBlock, "line %d: block %q opens inside %q", i+1, prev, inBlock)
 			}
 			inBlock, block = prev, 0
 			continue
 		case strings.HasPrefix(line, blockClose):
 			if name := strings.TrimPrefix(line, blockClose); name != inBlock {
-				t.Fatalf("line %d: block %q closes, open is %q", i+1, name, inBlock)
+				require.Equal(t, inBlock, name, "line %d: block %q closes, open is %q", i+1, name, inBlock)
 			}
 			if block > most {
 				most, largest = block, inBlock
@@ -56,7 +58,7 @@ func countLocals(t *testing.T, source string) (active, sum int, largest string) 
 		}
 	}
 	if inBlock != "" {
-		t.Fatalf("block %q never closes", inBlock)
+		require.Equal(t, "", inBlock, "block %q never closes", inBlock)
 	}
 	return outside + most, sum, largest
 }
@@ -72,15 +74,15 @@ func TestLibraryLocalsUnderLimit(t *testing.T) {
 
 	source, err := Source()
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	active, sum, largest := countLocals(t, source)
 	t.Logf("active locals %d (largest file %s), unscoped sum %d, limit %d", active, largest, sum, MaxLocals)
 	if active > MaxLocals {
-		t.Fatalf("nova_sprint main function holds %d locals at once (largest file %s), over %d (Lua refuses above 200); move helpers into a table or split the file", active, largest, MaxLocals)
+		require.LessOrEqual(t, active, MaxLocals, "nova_sprint main function holds %d locals at once (largest file %s), over %d (Lua refuses above 200); move helpers into a table or split the file", active, largest, MaxLocals)
 	}
 	if active == sum && sum > 1 {
-		t.Fatalf("no file is block-scoped (active %d = sum %d); Source must wrap each file in its own do-block", active, sum)
+		require.Failf(t, "assertion failed", "no file is block-scoped (active %d = sum %d); Source must wrap each file in its own do-block", active, sum)
 	}
 }
 
@@ -96,6 +98,6 @@ func TestCountLocalsSeesTheOldShape(t *testing.T) {
 	}
 	active, _, _ := countLocals(t, flat.String())
 	if active <= MaxLocals {
-		t.Fatalf("unblocked chunk counts %d locals, want > %d (the guard must see the pre-fix shape)", active, MaxLocals)
+		require.Greater(t, active, MaxLocals, "unblocked chunk counts %d locals, want > %d (the guard must see the pre-fix shape)", active, MaxLocals)
 	}
 }
