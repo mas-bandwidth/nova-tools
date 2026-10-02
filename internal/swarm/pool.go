@@ -12,16 +12,11 @@ that pretended to would be the most dangerous thing in the pool.
 package swarm
 
 import (
-	"crypto/rand"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
-	"time"
 )
 
 // The four states a task's files sit in. A task is in exactly one of them, and the move
@@ -131,177 +126,6 @@ type Sidecar struct {
 	Verdict     *Verdict `json:"verdict,omitempty"`
 }
 
-// BudgetWord is what a RUN line prints for this task's token budget ceiling.
-func (s Sidecar) BudgetWord() string {
-	if s.Unmetered {
-		return "unmetered"
-	}
-	return fmt.Sprint(s.Tokens)
-}
-
-// NewID is the task id: a UTC stamp, the label, and a random half, so that two adds in one
-// second cannot collide -- nova-bus's id lesson, which cost a lost note.
-func NewID(now time.Time, label string) string {
-	var b [3]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		// The OS random source failing is not a reason to write a colliding id; the
-		// clock's nanoseconds are a poorer half, and they are named as such.
-		return fmt.Sprintf("%s-%s-n%06d", now.UTC().Format("20060102T150405Z"), Slug(label), now.Nanosecond()%1000000)
-	}
-	return fmt.Sprintf("%s-%s-%s", now.UTC().Format("20060102T150405Z"), Slug(label), hex.EncodeToString(b[:]))
-}
-
-// Slug reduces a caller's label to the characters an id may hold. An id is a file name, a
-// directory name and a field on an event line, so it holds no separator, no space and no
-// "=" -- and never becomes nothing.
-func Slug(label string) string {
-	var b strings.Builder
-	for _, r := range label {
-		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
-			b.WriteRune(r)
-		case r >= 'A' && r <= 'Z':
-			b.WriteRune(r + 32)
-		case r == '-' || r == '_':
-			b.WriteByte('-')
-		default:
-			b.WriteByte('-')
-		}
-	}
-	s := strings.Trim(b.String(), "-")
-	for strings.Contains(s, "--") {
-		s = strings.ReplaceAll(s, "--", "-")
-	}
-	if s == "" {
-		return "task"
-	}
-	if len(s) > 40 {
-		s = strings.Trim(s[:40], "-")
-	}
-	return s
-}
-
-// taskFile and sidecarFile are the two files a task is.
-func (p *Pool) taskFile(state, id string) string    { return p.Path(state, id+".task") }
-func (p *Pool) sidecarFile(state, id string) string { return p.Path(state, id+".json") }
-
-// Add writes a task's text and its sidecar into pending/.
-func (p *Pool) Add(text []byte, sc Sidecar) error {
-	if err := writeAtomic(p.taskFile(Pending, sc.ID), text, 0o644); err != nil {
-		return err
-	}
-	return p.WriteSidecar(Pending, sc)
-}
-
-// WriteSidecar writes a task's sidecar in the state it is in, whole, through a temporary
-// file and a rename.
-func (p *Pool) WriteSidecar(state string, sc Sidecar) error {
-	raw, err := json.MarshalIndent(sc, "", "  ")
-	if err != nil {
-		return err
-	}
-	return writeAtomic(p.sidecarFile(state, sc.ID), append(raw, '\n'), 0o644)
-}
-
-// ReadSidecar reads one task's sidecar from a named state.
-func (p *Pool) ReadSidecar(state, id string) (Sidecar, error) {
-	var sc Sidecar
-	// Both files a task IS are written by writeAtomic, from this process and from `note`,
-	// `requeue` and `finalize` in others, while the dispatcher polls them. The read side
-	// waits out the same collision the write side already waits out (fileretry.go).
-	raw, err := readFileSteady(p.sidecarFile(state, id))
-	if err != nil {
-		return sc, err
-	}
-	if err := json.Unmarshal(raw, &sc); err != nil {
-		return sc, fmt.Errorf("%s: %w", p.sidecarFile(state, id), err)
-	}
-	return sc, nil
-}
-
-// Text reads one task's text from a named state.
-func (p *Pool) Text(state, id string) ([]byte, error) {
-	return readFileSteady(p.taskFile(state, id))
-}
-
-// List returns every task in a state, in id order -- which is time order, because the id
-// begins with its UTC stamp.
-func (p *Pool) List(state string) ([]Sidecar, error) {
-	entries, err := os.ReadDir(p.Path(state))
-	if err != nil {
-		return nil, err
-	}
-	var out []Sidecar
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".task") {
-			continue
-		}
-		id := strings.TrimSuffix(name, ".task")
-		sc, err := p.ReadSidecar(state, id)
-		if err != nil {
-			// A task file with no readable sidecar is still a task, and saying so is
-			// better than dropping it out of every count.
-			sc = Sidecar{ID: id, RC: -1}
-		}
-		out = append(out, sc)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out, nil
-}
-
-// Where finds the state a task's files are in.
-func (p *Pool) Where(id string) (string, bool) {
-	for _, state := range []string{Running, Pending, Done, Failed, RoutedOut} {
-		if _, err := os.Stat(p.taskFile(state, id)); err == nil {
-			return state, true
-		}
-	}
-	return "", false
-}
-
-// Claim moves a task from one state to another, and the move IS the claim: rename is
-// atomic within a directory, so two dispatchers racing for one pending task produce one
-// winner and one ErrNotExist. The task text is read AFTER the rename, from the path this
-// dispatcher renamed to, never from the pending path it no longer owns.
-func (p *Pool) Claim(id, from, to string) error {
-	if err := os.Rename(p.taskFile(from, id), p.taskFile(to, id)); err != nil {
-		return err
-	}
-	// The sidecar follows its task. A failure here leaves the claim standing, which is
-	// right: the task is this dispatcher's, and a sidecar it can rewrite.
-	// ignored: the claim stands without its sidecar, which this dispatcher can rewrite (see the comment above)
-	_ = os.Rename(p.sidecarFile(from, id), p.sidecarFile(to, id))
-	return nil
-}
-
-// ClaimNext claims the oldest pending task, or reports that there is none.
-func (p *Pool) ClaimNext() (Sidecar, []byte, bool, error) {
-	pending, err := p.List(Pending)
-	if err != nil {
-		return Sidecar{}, nil, false, err
-	}
-	for _, sc := range pending {
-		switch err := p.Claim(sc.ID, Pending, Running); {
-		case err == nil:
-			text, err := p.Text(Running, sc.ID)
-			if err != nil {
-				return Sidecar{}, nil, false, err
-			}
-			fresh, err := p.ReadSidecar(Running, sc.ID)
-			if err == nil {
-				sc = fresh
-			}
-			return sc, text, true, nil
-		case errors.Is(err, os.ErrNotExist):
-			continue // another dispatcher won the rename; take the next one
-		default:
-			return Sidecar{}, nil, false, err
-		}
-	}
-	return Sidecar{}, nil, false, nil
-}
-
 // syncFile is how a durable record is flushed before it is renamed or linked into
 // place: (*os.File).Sync. This package's unit tests replace it with a no-op
 // (fsync_test.go): on macOS Sync is F_FULLFSYNC, tens of milliseconds a write, and
@@ -353,10 +177,4 @@ func writeAtomic(path string, data []byte, mode os.FileMode) error {
 		return err
 	}
 	return nil
-}
-
-// Stopped reports whether a person has asked this pool to stop.
-func (p *Pool) Stopped() bool {
-	_, err := os.Stat(p.Path(StopFile))
-	return err == nil
 }

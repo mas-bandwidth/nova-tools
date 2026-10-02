@@ -2,16 +2,13 @@ package swarm
 
 import (
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -113,80 +110,7 @@ func Nonce() (string, error) {
 	return hex.EncodeToString(b[:]), nil
 }
 
-// NewExitAttest mints the per-launch attestation secret, drawn from the OS random source in
-// the supervisor's own memory and never written anywhere a worker can read. Only its hash
-// (ExitAttestHash) reaches the slot file before the launch, and the secret itself reaches
-// <job>/exit.json only inside endWith, after the job's process group is dead.
-func NewExitAttest() (string, error) {
-	var b [32]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return "", fmt.Errorf("the OS random source would not supply an exit attestation: %w", err)
-	}
-	return hex.EncodeToString(b[:]), nil
-}
-
-// ExitAttestHash is sha256(secret) in hex, the only form of the attestation that is written
-// into the slot file (a file in neither the read set nor the write set).
-func ExitAttestHash(secret string) string {
-	sum := sha256.Sum256([]byte(secret))
-	return hex.EncodeToString(sum[:])
-}
-
-// ExitAttestOK is whether a reader holds the secret that produced the slot file's hash. A
-// nonce match without this is a record a worker could have written, and is never reclaim.
-func ExitAttestOK(secret, hash string) bool {
-	if secret == "" || hash == "" {
-		return false
-	}
-	return ExitAttestHash(secret) == hash
-}
-
 func (p *Pool) slotPath(n int) string { return p.Path(Slots, strconv.Itoa(n)+".json") }
-
-// ReadSlot reads one slot file.
-func (p *Pool) ReadSlot(n int) (SlotFile, error) { return p.ReadSlotBy(n, time.Time{}) }
-
-// ReadSlotBy reads one slot file under a caller's deadline: a caller that polls this file
-// inside a bound of its own (the launch handshake) lends that bound to the collision wait,
-// so the retries live INSIDE the caller's clock instead of being added to it. The zero time
-// is "no bound of mine", and reads exactly like ReadSlot.
-func (p *Pool) ReadSlotBy(n int, budget time.Time) (SlotFile, error) {
-	var sf SlotFile
-	raw, err := readFileSteadyBy(p.slotPath(n), budget)
-	if err != nil {
-		return sf, err
-	}
-	if err := json.Unmarshal(raw, &sf); err != nil {
-		return sf, fmt.Errorf("%s: %w", p.slotPath(n), err)
-	}
-	return sf, nil
-}
-
-// SlotNumbers lists the slots that have a file, in number order. An unreadable name is
-// returned too, as a number that will fail to parse into a decision and be quarantined --
-// a file this tool cannot read is never a free slot.
-func (p *Pool) SlotNumbers() ([]int, []string, error) {
-	entries, err := os.ReadDir(p.Path(Slots))
-	if err != nil {
-		return nil, nil, err
-	}
-	var out []int
-	var bad []string
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".json") {
-			continue
-		}
-		n, err := strconv.Atoi(strings.TrimSuffix(name, ".json"))
-		if err != nil {
-			bad = append(bad, name)
-			continue
-		}
-		out = append(out, n)
-	}
-	sort.Ints(out)
-	return out, bad, nil
-}
 
 // Reserve writes a slot file in the `reserved` state, under slots.lock, and refuses a slot
 // whose file exists in ANY state: the runner never allocates over an existing file, so the
@@ -244,53 +168,6 @@ func (p *Pool) claimFree(workers int, quarantine map[int]bool, job, nonce string
 	return 0, fmt.Errorf("no free slot among %d: every one holds a file", workers)
 }
 
-// Identify is the supervisor's compare-and-swap (rule 18, step 3): under slots.lock, read
-// the slot file, require that it STILL reads `reserved` with the nonce this supervisor was
-// handed, and only then rename the identity into place. On any other content the supervisor
-// aborts before it spawns anything.
-func (p *Pool) Identify(n int, nonce string, id SlotFile) error {
-	release, err := p.TakeLock(SlotsLock, SlotsWait)
-	if err != nil {
-		return err
-	}
-	defer release()
-	cur, err := p.ReadSlot(n)
-	if err != nil {
-		return fmt.Errorf("reservation changed: the slot file is gone or unreadable (%s)", redactedReason(err))
-	}
-	if cur.State != SlotReserved || cur.Nonce != nonce {
-		return fmt.Errorf("reservation changed: slot %d reads state=%s nonce=%s", n, cur.State, cur.Nonce)
-	}
-	id.Job, id.JobDir, id.Nonce, id.RunnerPid, id.RunnerStarted = cur.Job, cur.JobDir, cur.Nonce, cur.RunnerPid, cur.RunnerStarted
-	id.ReservedAt, id.State = cur.ReservedAt, SlotLaunched
-	return writeSlot(p.slotPath(n), id)
-}
-
-// Orphan rewrites a reservation whose runner is dead to `orphaned`, KEEPING THE NONCE --
-// under slots.lock, after re-reading the file and rechecking that it still says `reserved`
-// with the nonce first read. If it now reads `launched`, the supervisor's identify landed
-// first and the caller follows the adopt path instead, which is what the bool reports: an
-// orphaning never overwrites an identify that just completed.
-func (p *Pool) Orphan(n int, nonce string) (adopted bool, sf SlotFile, err error) {
-	release, lockErr := p.TakeLock(SlotsLock, SlotsWait)
-	if lockErr != nil {
-		return false, SlotFile{}, lockErr
-	}
-	defer release()
-	cur, err := p.ReadSlot(n)
-	if err != nil {
-		return false, SlotFile{}, err
-	}
-	if cur.State == SlotLaunched {
-		return true, cur, nil
-	}
-	if cur.State != SlotReserved || cur.Nonce != nonce {
-		return false, cur, fmt.Errorf("slot %d changed under the recovery: state=%s nonce=%s", n, cur.State, cur.Nonce)
-	}
-	cur.State = SlotOrphaned
-	return false, cur, writeSlot(p.slotPath(n), cur)
-}
-
 // Free releases a slot: a rename made under slots.lock, and then the removal. Every release
 // -- reclaim, unknown, launch-failed, unlaunched, free-on-finalize -- comes through here.
 func (p *Pool) Free(n int) error {
@@ -310,35 +187,6 @@ func (p *Pool) Free(n int) error {
 	return os.Remove(gone)
 }
 
-// FreeIf releases a slot only when the file still carries the launch nonce that
-// selected it. Recovery must never free a newer reservation that reused the number.
-func (p *Pool) FreeIf(n int, nonce string) error {
-	release, err := p.TakeLock(SlotsLock, SlotsWait)
-	if err != nil {
-		return err
-	}
-	defer release()
-	path := p.slotPath(n)
-	sf, err := p.ReadSlot(n)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		return err
-	}
-	if sf.Nonce != nonce {
-		return fmt.Errorf("slot %d nonce changed under recovery", n)
-	}
-	gone := path + ".freed"
-	if err := renameSteady(path, gone); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		return err
-	}
-	return os.Remove(gone)
-}
-
 func writeSlot(path string, sf SlotFile) error {
 	raw, err := json.MarshalIndent(sf, "", "  ")
 	if err != nil {
@@ -347,17 +195,7 @@ func writeSlot(path string, sf SlotFile) error {
 	return writeAtomic(path, append(raw, '\n'), 0o644)
 }
 
-// WriteJSON writes one of this package's small records whole, through a temporary file,
-// fsync and a rename, so that a reader sees a whole record or none.
-func WriteJSON(path string, v any) error {
-	raw, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
-		return err
-	}
-	return writeAtomic(path, append(raw, '\n'), 0o644)
-}
-
-// ReadJSON reads one of them back.
+// ReadJSON reads one of this package's small records back.
 func ReadJSON(path string, v any) error {
 	raw, err := readFileSteady(path)
 	if err != nil {
@@ -366,12 +204,9 @@ func ReadJSON(path string, v any) error {
 	return json.Unmarshal(raw, v)
 }
 
-// The job directory's three durable records.
-func PidPath(jobDir string) string     { return filepath.Join(jobDir, "pid") }
-func ExitPath(jobDir string) string    { return filepath.Join(jobDir, "exit.json") }
-func AbortedPath(jobDir string) string { return filepath.Join(jobDir, "aborted.json") }
-func NotePath(jobDir string) string    { return filepath.Join(jobDir, "note") }
-func ResultPath(jobDir string) string  { return filepath.Join(jobDir, "RESULT.md") }
+// The job directory's durable records.
+func ExitPath(jobDir string) string   { return filepath.Join(jobDir, "exit.json") }
+func ResultPath(jobDir string) string { return filepath.Join(jobDir, "RESULT.md") }
 
 // Decision is what a recovering dispatcher does about one slot file, and the words are the
 // ones rule 17 uses.
@@ -393,71 +228,3 @@ const (
 	DecideQuarantine = "quarantine"
 )
 
-// Decide reads one slot file and decides it with NO GUESS. Every branch here is rule 17's,
-// and the default is quarantine: a slot this tool cannot decide is never allocated, is
-// named on STATUS OK quarantined=, and is a person's to clear.
-// aliveGroupOf is rule 17's last liveness question: with the leader dead, is anything of
-// this job still running? The job's pid is handed to the process layer with the start stamp
-// the slot file recorded, because a platform with no process groups has only that stamp to
-// tell this job's harness from whoever holds its number now.
-func aliveGroupOf(sf SlotFile) bool {
-	return GroupAlive(sf.JobPgid, sf.JobStarted) || GroupAlive(sf.Pgid, sf.PidStarted)
-}
-
-func (p *Pool) Decide(n int) Decision {
-	sf, err := p.ReadSlot(n)
-	if err != nil {
-		return Decision{Slot: n, Kind: DecideQuarantine, Reason: "slot file unreadable: " + redactedReason(err)}
-	}
-	d := Decision{Slot: n, File: sf}
-	switch sf.State {
-	case SlotReserved, SlotOrphaned:
-		// A reservation is AMBIGUOUS while its launch is unproven: no child has identified
-		// itself, and a spawned supervisor paused before its identify cannot be proven
-		// absent by a dead runner. So launch absence must be ESTABLISHED, by an aborted.json
-		// carrying this nonce with no survivors, by the runner's own kill, or by a person.
-		if sf.State == SlotReserved && Alive(sf.RunnerPid, sf.RunnerStarted) {
-			d.Kind, d.Reason = DecideQuarantine, "reserved by a runner that is still alive (pid "+strconv.Itoa(sf.RunnerPid)+")"
-			return d
-		}
-		var ab AbortedRecord
-		if err := ReadJSON(AbortedPath(sf.JobDir), &ab); err == nil && ab.Nonce == sf.Nonce {
-			if ab.Survivors > 0 {
-				d.Kind, d.Reason = DecideQuarantine, fmt.Sprintf("aborted, survivors=%d", ab.Survivors)
-				return d
-			}
-			d.Kind, d.Reason = DecideUnlaunched, "aborted before launch, survivors=0"
-			return d
-		}
-		d.Kind, d.Reason = DecideQuarantine, "reserved, launch unproven"
-		return d
-	case SlotLaunched:
-		switch {
-		case Alive(sf.Pid, sf.PidStarted) && StartStamp(sf.Pid) == sf.PidStarted:
-			d.Kind, d.Reason = DecideAdopt, "pid alive under its recorded start stamp"
-			return d
-		case Alive(sf.Pid, ""):
-			d.Kind, d.Reason = DecideQuarantine, "pid "+strconv.Itoa(sf.Pid)+" is alive under a different start stamp (pid reuse)"
-			return d
-		case aliveGroupOf(sf):
-			d.Kind, d.Reason = DecideQuarantine, "the leader is dead and a process in its group is alive"
-			return d
-		}
-		var ex ExitRecord
-		switch err := ReadJSON(ExitPath(sf.JobDir), &ex); {
-		case err == nil && ex.Nonce == sf.Nonce && ExitAttestOK(ex.Attest, sf.ExitAttest):
-			d.Kind, d.Reason, d.Exit = DecideReclaim, "the group is dead and exit.json carries this launch's nonce", &ex
-			return d
-		case err == nil && ex.Nonce == sf.Nonce:
-			d.Kind, d.Reason = DecideQuarantine, "exit.json carries this launch's nonce but not its attestation"
-			return d
-		case err == nil:
-			d.Kind, d.Reason = DecideQuarantine, "exit.json carries a nonce from another launch"
-			return d
-		}
-		d.Kind, d.Reason = DecideUnknown, "the group is dead and there is no exit.json"
-		return d
-	}
-	d.Kind, d.Reason = DecideQuarantine, "slot file holds an unknown state "+strconv.Quote(sf.State)
-	return d
-}
