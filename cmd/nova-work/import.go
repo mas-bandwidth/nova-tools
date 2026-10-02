@@ -128,6 +128,11 @@ func runImport(args []string, stdout, stderr io.Writer, q workgh.Query) int {
 	fmt.Fprintf(stdout, "IMPORT OK org=%s out=%s repos=%d issues=%d comments=%d references=%d linked_prs=%d bytes=%d sha256=%s calls=%d points=%d rest=0 seconds=%.1f dry_run=%t\n",
 		oneline.Field(*org), oneline.Field(outField), cnt.Repos, cnt.Issues, cnt.Comments, cnt.References, cnt.LinkedPRs,
 		len(data), sum(data), f.Calls, f.Points, now().Sub(start).Seconds(), *dry)
+	if *dry {
+		// A dry run is not offline: it reads what the import reads. Say so on
+		// the run itself, not only in the help.
+		fmt.Fprintf(stdout, "IMPORT NOTE the dry run read GitHub as the import does (calls=%d, read-only) and wrote nothing\n", f.Calls)
+	}
 	return 0
 }
 

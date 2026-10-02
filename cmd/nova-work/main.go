@@ -33,9 +33,10 @@ const banner = `nova-work: every issue of an organization's repositories in one 
 
 how it works: import reads issues through your gh login, read-only, and writes
 one tree file: a (work-tree ...) record holding each repository and every field
-of each issue. verify reads GitHub again and prints one MISSING, EXTRA or DRIFT
-line per difference; no lines is the proof. The calls are counted and checked
-against --max-calls before any issue is read.
+of each issue. --dry-run reads GitHub exactly as the import does (every issue,
+read-only, the same calls) and writes nothing. verify reads GitHub again and
+prints one MISSING, EXTRA or DRIFT line per difference; no lines is the proof.
+The calls are counted and checked against --max-calls before any issue is read.
 first run: needs gh logged in (gh auth status) and ORG and REPO set to one
 repository you can read; then the lines under example:, in order.
 
@@ -55,8 +56,8 @@ exit: 0 done, or verify found no difference; 1 verify found differences, or
 import's own round trip through the file failed; 2 could not run.
 
 In a scratch directory, export ORG=<an organization> REPO=<one of its
-repositories> first. The dry run plans the calls and writes nothing; the import
-writes ./tree.lisp; the verify reads GitHub again against it.
+repositories> first. The dry run reads GitHub as the import does and writes
+nothing; the import writes ./tree.lisp; the verify reads GitHub again against it.
 
 example:
   nova-work import --org $ORG --repo $ORG/$REPO --page-size 15 --dry-run
@@ -82,7 +83,9 @@ flags:
                        every repository of --org.
   --out <file>         the tree file to write (created or replaced; its
                        directory must exist). Required unless --dry-run.
-  --dry-run            fetch and check everything, write nothing.
+  --dry-run            read GitHub exactly as the import does (every issue,
+                       read-only, the calls PLAN counts), check the round
+                       trip, and write nothing. It needs gh and the network.
   --max-calls <n>      the GitHub call budget of the run (default 1500; 0 is
                        refused). The plan's estimate is checked against it
                        before the first issue is read.
@@ -96,7 +99,8 @@ output (stdout): PLAN OK, then REPO OK per repository, then
   IMPORT OK org= out= repos= issues= comments= references= linked_prs= bytes=
   sha256= calls= points= rest=0 seconds= dry_run=
 calls are GraphQL calls; points are what GitHub charged for them; rest is REST
-calls, always 0. Failures go to stderr as IMPORT FAIL <reason>.
+calls, always 0. A dry run ends with IMPORT NOTE naming the calls it read and
+that it wrote nothing. Failures go to stderr as IMPORT FAIL <reason>.
 
 exit: 0 the tree is written (or, with --dry-run, fetched and checked); 1 the
 encoded tree did not read back equal to what was fetched, nothing written;

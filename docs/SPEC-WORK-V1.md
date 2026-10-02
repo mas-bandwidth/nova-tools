@@ -135,8 +135,9 @@ repository. Before anything is written it encodes the tree, reads the bytes back
 strict reader and compares the result with what was fetched: any difference is `IMPORT FAIL` at
 exit 1 and nothing is written. The file is written through a temporary file and a rename. The
 last line is `IMPORT OK` with the counts, the bytes, the file's SHA-256, `calls=` (GraphQL calls),
-`points=` (what GitHub charged for them) and `rest=0`. `--dry-run` does all of it and writes
-nothing.
+`points=` (what GitHub charged for them) and `rest=0`. `--dry-run` does all of it, reading
+GitHub exactly as the import does (every issue, the same calls), and writes nothing; its last line
+is `IMPORT NOTE` saying so.
 
 **verify** reads the tree, reads the same repositories from GitHub again, and compares them with
 `workfile.Diff`. Every difference is one line on stdout:

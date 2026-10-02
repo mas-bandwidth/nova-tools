@@ -67,6 +67,24 @@ func TestImportThenVerifyIsZeroDifferences(t *testing.T) {
 	require.Contains(t, res.Stdout, "out=-", "dry run exit %d\n%s%s", res.Code, res.Stdout, res.Stderr)
 }
 
+// TestTheDryRunSaysWhatItReads: a dry run is not offline. It reads GitHub as
+// the import does (every call of the recording) and writes nothing, and the
+// run, the verb's help and the banner each say so, so no reader takes it for
+// an offline rehearsal.
+func TestTheDryRunSaysWhatItReads(t *testing.T) {
+	t.Parallel()
+	res := workTool(replay(t)).Run("import", "--org", "mas-bandwidth", "--repo", "mas-bandwidth/reliable", "--page-size", "15", "--dry-run")
+	require.Equal(t, 0, res.Code, "dry run exit %d\n%s%s", res.Code, res.Stdout, res.Stderr)
+	assert.Contains(t, res.Stdout, " calls=3 ", "the dry run made fewer calls than the import makes:\n%s", res.Stdout)
+	assert.Contains(t, res.Stdout, "IMPORT NOTE the dry run read GitHub as the import does (calls=3, read-only) and wrote nothing\n", "the run does not say what it read:\n%s", res.Stdout)
+
+	for _, args := range [][]string{{"import", "-h"}, {"help"}} {
+		help := workTool(nil).Run(args...)
+		require.Equal(t, 0, help.Code, "%v exit %d", args, help.Code)
+		assert.Regexp(t, `(?s)--dry-run.{0,20}reads?\s+GitHub\s+(exactly\s+)?as\s+the\s+import\s+does.*writes?\s+nothing`, help.Stdout, "%v does not say a dry run reads GitHub and writes nothing:\n%s", args, help.Stdout)
+	}
+}
+
 // TestTheBudgetIsCheckedBeforeTheIssuesAreRead: a plan past --max-calls is
 // refused at exit 2 after the listing, before any issue is read.
 func TestTheBudgetIsCheckedBeforeTheIssuesAreRead(t *testing.T) {
