@@ -1,8 +1,9 @@
 package main
 
 import (
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // A misspelled flag is one line, `unknown flag --x; run: nova-sprint help <verb>`, for
@@ -23,11 +24,10 @@ func TestMisspelledFlagIsOneCleanLine(t *testing.T) {
 		{"add --stream s1 --brief", "nova-sprint add: --brief wants a value; run: nova-sprint help add\n"},
 	} {
 		code, out, errs := ta.do(c.line)
-		if code != 2 || out != "" || errs != c.want {
-			t.Errorf("%s: exit %d, out %q, err %q; want exit 2 and exactly %q", c.line, code, out, errs, c.want)
-		}
-		if strings.Contains(errs, "not defined") || strings.Contains(errs, "takes no words") {
-			t.Errorf("%s: the flag package's words are in the line: %q", c.line, errs)
-		}
+		assert.Equal(t, 2, code, "%s: exit %d, out %q, err %q; want exit 2 and exactly %q", c.line, code, out, errs, c.want)
+		assert.Empty(t, out, "%s: exit %d, out %q, err %q; want exit 2 and exactly %q", c.line, code, out, errs, c.want)
+		assert.Equal(t, c.want, errs, "%s: exit %d, out %q, err %q; want exit 2 and exactly %q", c.line, code, out, errs, c.want)
+		assert.NotContains(t, errs, "not defined", "%s: the flag package's words are in the line", c.line)
+		assert.NotContains(t, errs, "takes no words", "%s: the flag package's words are in the line", c.line)
 	}
 }
