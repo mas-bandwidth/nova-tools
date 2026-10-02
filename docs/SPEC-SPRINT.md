@@ -323,8 +323,11 @@ and it is the coordinator's decision, receipted.
   fleet"). The member runs its width; the rest wait in its ready column, and
   its loop takes a freed lane's next card in the same pass that reports the
   finish. The fleet table shows it in the width
-  column beside working; the footer row sums the widths, the fleet's total
-  width (eight machines of 64 total 512). The row is the truth: the member's
+  column beside working; the footer row sums the widths of the members up, the
+  fleet's total width that can take a card (eight machines of 64 up total 512),
+  and folds ready, working, done and ok% over the same members: a held or down
+  member's numbers show on its own row and not in the total (the owner,
+  2026-10-02: "width 132?!"). The row is the truth: the member's
   loop (`nova-swarm member`) reads its width with its queue every tick
   (`queue --as <m> --json` carries `width`) and runs that many; its `--width`
   is a twin's override.

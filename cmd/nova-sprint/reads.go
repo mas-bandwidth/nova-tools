@@ -563,6 +563,10 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 		case sprint.Merge:
 			t = mergeAll(t)
 		}
+		if logical == sprint.Fleet {
+			parts = append(parts, fleetText(t))
+			continue
+		}
 		// every table shows, every stream row in it, empty or not
 		parts = append(parts, ntable.Render(t, ntable.RenderOpts{Title: logical}))
 	}
@@ -655,6 +659,51 @@ func allOf(t ntable.Table, texts map[string]string) ntable.Table {
 	}
 	t.Columns, t.Rows = cols, []ntable.Row{all}
 	return t
+}
+
+// fleetText is the fleet table as the view's text draws it (the owner,
+// 2026-10-02, at a total of 132 over members of which 52 could take a card:
+// "width 132?!"): every member's row as stored, and a footer that sums only the
+// members whose status is up, so ready, working, width, done and ok% are the
+// fleet that can take a card; a held or down member's numbers show on its own
+// row and not in the total. Display only: the stored table, its rows and where
+// --json are as they were. The footer is the table layer's own fold over the up
+// rows, drawn at the widths of the whole table so the two line up.
+func fleetText(t ntable.Table) string {
+	up := t
+	up.Rows = nil
+	for _, r := range t.Rows {
+		if r.Texts[sprint.Status] == sprint.Up {
+			up.Rows = append(up.Rows, r)
+		}
+	}
+	opts := ntable.RenderOpts{Title: sprint.Fleet}
+	// the widths that hold every cell of both renderings, read off each one's rule
+	var drawn []string
+	for _, c := range t.Columns {
+		if !t.IsHidden(c.Name) {
+			drawn = append(drawn, c.Name)
+		}
+	}
+	opts.Widths = map[string]int{}
+	for _, text := range []string{ntable.Render(t, opts), ntable.Render(up, opts)} {
+		lines := strings.Split(text, "\n")
+		if len(lines) < 2 {
+			continue
+		}
+		for k, seg := range strings.Split(lines[1], "-+-") {
+			switch {
+			case k == 0:
+				opts.LabelWidth = max(opts.LabelWidth, len(seg))
+			case k-1 < len(drawn):
+				opts.Widths[drawn[k-1]] = max(opts.Widths[drawn[k-1]], len(seg))
+			}
+		}
+	}
+	all := strings.Split(strings.TrimSuffix(ntable.Render(t, opts), "\n"), "\n")
+	ups := strings.Split(strings.TrimSuffix(ntable.Render(up, opts), "\n"), "\n")
+	all[len(all)-1] = ups[len(ups)-1]
+	return strings.Join(all, "\n") + "\n"
 }
 
 // whereHeader is the one line under the title of the where view: STOPPED when
