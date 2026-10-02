@@ -832,6 +832,11 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 			other++
 		}
 		fmt.Fprintln(stdout, groupLine(g, now))
+		if g.Kind == sprint.Judgment && g.What != "" {
+			for _, l := range strings.Split(g.What, "\n") {
+				fmt.Fprintf(stdout, "  %s\n", oneline.Escape(l))
+			}
+		}
 		if g.Hint != "" {
 			fmt.Fprintf(stdout, "  %s\n", oneline.Escape(g.Hint))
 		}
@@ -975,7 +980,7 @@ func groupLine(g sprint.Group, now time.Time) string {
 		}
 		l += "  (" + strings.Join(ps, ",") + more + ")"
 	}
-	if g.What != "" {
+	if g.What != "" && g.Kind != sprint.Judgment {
 		l += "  " + g.What
 	}
 	if len(g.Commands) > 0 {
