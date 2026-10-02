@@ -215,7 +215,7 @@ func (s *liveSampler) readOnce() {
 	if s.reached != "" {
 		return
 	}
-	// THE CARD BUDGET, BESIDE THE TOKEN BUDGET and asked first, so that a card which
+	// RULE 13b's CARD BUDGET, BESIDE THE TOKEN BUDGET and asked first, so that a card which
 	// crossed both is named by the one the description set: `stopped=` says WHICH budget
 	// fired, and a cache-read runaway reported as `stopped=tokens` would send its reader to
 	// the wrong prompt.
