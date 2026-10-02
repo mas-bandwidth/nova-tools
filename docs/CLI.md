@@ -1672,7 +1672,10 @@ passed. The default budget is 60 seconds per package; a package over it is a
 not a TestEvent is refused at exit 2, and so is a float flag that is not a finite
 number (`NaN`, `Inf`). `--json` prints the same verdict as one JSON object
 (`{"result":{...},"facts":{...},"items":[...]}`), and a refusal as that object
-with `"status":"refused"` on stdout. CI exceptions belong in the
+with `"status":"refused"` on stdout. A run with more than `--max` finding
+lines (20 by default) prints the first `--max` and one `CI-SLOW MORE
+shown=<n> total=<n>` line naming the flag that prints the rest; `--max 0`
+prints every finding. CI exceptions belong in the
 dated project policy, not in an assumed higher tool default.
 
 A refusal is one line, `nova-ci <verb> REFUSED: <every problem>; run: <next
