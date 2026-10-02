@@ -51,10 +51,7 @@ type SlotLease struct {
 
 // Units is how many share units this lease occupies. Missing or zero weight is 1.
 func (l SlotLease) Units() int {
-	if l.Weight < 1 {
-		return 1
-	}
-	return l.Weight
+	return max(l.Weight, 1)
 }
 
 // Stranded reports a live-until lease whose holder is gone: the seat is still
@@ -340,9 +337,7 @@ func takeSlotLeases(store, owner string, k, weight int, kind string, dur time.Du
 	if k < 1 {
 		return nil, 0, 0, 0, "", false, fmt.Errorf("n is at least 1, got %d", k)
 	}
-	if weight < 1 {
-		weight = 1
-	}
+	weight = max(weight, 1)
 	if dur <= 0 {
 		return nil, 0, 0, 0, "", false, fmt.Errorf("for is a positive duration")
 	}
