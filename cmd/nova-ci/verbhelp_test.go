@@ -23,9 +23,10 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 		{Verb: "github receipt", Flags: []string{"--redis", "{addr}", "--from-runner"}},
 		{Verb: "github"},
 		{Verb: "cost", Flags: []string{"--redis", "{addr}"}},
+		{Verb: "flake", Flags: []string{"--package", "{dir}/pkg", "--test", "TestFoo"}},
 		{Verb: "version"},
 	})
-	testverbhelp.HelpVerb(t, ciRun, "nova-ci", "slowtests", "functional", "cost", "version")
+	testverbhelp.HelpVerb(t, ciRun, "nova-ci", "slowtests", "functional", "cost", "version", "flake")
 }
 
 func ciRun(args []string, stdout, stderr io.Writer) int {

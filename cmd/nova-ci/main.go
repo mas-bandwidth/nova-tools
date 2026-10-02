@@ -17,6 +17,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/ci"
 	"github.com/mas-bandwidth/nova-tools/internal/ci/functional"
 	"github.com/mas-bandwidth/nova-tools/internal/ci/slowtests"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
@@ -107,11 +108,18 @@ usage:
                       count-mismatched listing, a listing that is not the
                       forge's).
 
+  nova-ci flake --package <pkg> --test <pattern> [--runs <n>] [--timeout <duration>]
+                      isolated test flake detection: run test up to --runs
+                      times in separate processes and emit a STABLE, FLAKE or
+                      FAIL receipt line; exit 0 stable, 1 flake or steady
+                      failure detected, 2 bad arguments or cannot run.
+
 exit codes: 0 inside budget or measured, 2 a CI-SLEEPS line, a CI-SLOW
             line under --enforce, or the invocation could not run (bad flag,
             unreadable stdin, partial listing); local adds 1 for a red test or
-            a package that did not build, and github receipt and cost add 1 for
-            a write the store refused or a close failure.
+            a package that did not build, github receipt and cost add 1 for
+            a write the store refused or a close failure, and flake adds 1 for
+            a flake or steady failure detected.
 
 example:
   nova-ci help
@@ -155,6 +163,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
 		return cmdGitHub(args[1:], stdout, stderr, os.Getenv)
 	case "cost":
 		return cmdCost(args[1:], stdin, stdout, stderr, openCostStore)
+	case "flake":
+		return cmdFlake(args[1:], stdout, stderr, ci.ExecTestRunner)
 	case "help", "-h", "--help":
 		if args[0] == "help" && len(args) > 1 && args[1] != "help" && !verbflag.IsHelp(args[1]) {
 			return run(append(args[1:], "--help"), stdin, stdout, stderr)
