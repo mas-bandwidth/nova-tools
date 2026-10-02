@@ -145,7 +145,9 @@ func TestRule2EveryRowNamesItsSources(t *testing.T) {
 	assert.Equal(t, "bus:emma,claude:glenn", cols[10], "want both labels sorted")
 	for _, line := range strings.Split(strings.TrimSpace(day), "\n")[2:] {
 		c := strings.Split(line, "\t")
-		assert.True(t, len(c) == len(tokens.Columns) && c[10] != "", "a row has an empty sources column: %q", line)
+		if assert.Len(t, c, len(tokens.Columns), "a row is not every column: %q", line) {
+			assert.NotEmpty(t, c[10], "a row has an empty sources column: %q", line)
+		}
 	}
 
 	// A duplicate label across two flags is exit 2 naming it.
@@ -173,9 +175,9 @@ func TestRule3AnUnreadableSourceIsCountedAndPrintedAndExitsOne(t *testing.T) {
 // read is counted and printed, never skipped silently." The count is for lines that do
 // not parse as JSON. A Claude Code user turn writes
 // `"message":{"role":"user","content":"<a string>"}` -- valid JSON, and a type mismatch
-// against a reader that declares content an array of blocks. Measured 2026-09-11 on a
-// clean bench: 1,260 of 1,278 files flagged, TOKENS UNREADABLE, exit 1, and the remedy
-// printed ("open those files to this group") impossible to act on.
+// against a reader that declares content an array of blocks. Such a reader flags nearly
+// every transcript file TOKENS UNREADABLE, exit 1, with a remedy ("open those files to this
+// group") nobody can act on.
 func TestRule3AValidLineIsNeverCountedAsNotJSON(t *testing.T) {
 	t.Parallel()
 	b := newBench(t)
@@ -259,16 +261,15 @@ func TestRule6TheSubjectIsExactAndAnUnparsedLineIsPrinted(t *testing.T) {
 	assert.NotContains(t, day, "\t1\t", "a near-miss note's numbers were folded")
 }
 
-// TestANearMissSubjectIsNamedAndNeverVanishes pins lesson 30 on the whole run rather than
-// on a lane that also holds a real note: a friend whose subject is one token short used to
-// get TOKENS OK, days=0, "nothing was wrong" -- byte-identical to a lane holding nothing
-// at all, with `files=` the only trace. Counting it in a field nobody printed was the same
-// silence. It is an unparsed note now: named with its id, counted, exit 1, and the one
-// remedy line is about the subject.
+// TestANearMissSubjectIsNamedAndNeverVanishes pins the near miss on the whole run rather
+// than on a lane that also holds a real note: a note whose subject is one token short must
+// not get TOKENS OK, days=0, "nothing was wrong" -- byte-identical to a lane holding nothing
+// at all -- and counting it in a field nobody prints is the same silence. It is an unparsed
+// note: named with its id, counted, exit 1, and the one remedy line is about the subject.
 //
 // TestALaneThatFoldedNothingPrintsADashForReports, on the same lane: every field of the
 // source line has a value. A lane whose only note is a near miss, or whose day is a
-// conflict, reports no type at all and printed `reports= day_basis=utc`.
+// conflict, reports no type at all, and its reports= is a dash, never empty.
 func TestANearMissSubjectIsNamedAndNeverVanishes(t *testing.T) {
 	t.Parallel()
 	b := newBench(t)
@@ -515,8 +516,8 @@ func TestRule10ANumberBecomingADashShrinksAndADashBecomingANumberDoesNot(t *test
 }
 
 // foldPools writes two swarm pools, one row each, and returns out, repos, poolA, poolB.
-// poolA is claude-x on serialize; poolB is mercury-2.5 on serialize, the pair Rowan measured
-// at tip when a swarm-only fold erased the other source's row.
+// poolA is claude-x on serialize; poolB is mercury-2.5 on serialize: the pair on which a
+// swarm-only fold that recomputed the file whole would erase the other source's row.
 func foldPools(t *testing.T, aIn, aOut, bIn, bOut string) (out, repos, poolA, poolB string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -548,10 +549,10 @@ func (p pooled) day() string {
 	return testkit.ReadFile(p.t, filepath.Join(p.out, "2026-09-14.tsv"))
 }
 
-// R1, the issue: a swarm-only fold into a day file that holds another source's row keeps
-// that row. Measured at tip before the fix: exit 0, written=true, no SHRANK, and the
-// claude-x row simply gone -- because the totals ROSE, so rule 10's day-total comparison
-// saw nothing.
+// A swarm-only fold into a day file that holds another source's row keeps that row. A fold
+// that recomputed the file whole would exit 0, written=true, no SHRANK, with the claude-x
+// row simply gone -- because the totals ROSE, so rule 10's day-total comparison sees
+// nothing.
 func TestIssue268AFoldKeepsARowNoDeclaredSourceWrote(t *testing.T) {
 	t.Parallel()
 	p := newPooled(t)
@@ -668,11 +669,11 @@ func TestIssue273ExplicitDayQuietSourcePreservesOtherSources(t *testing.T) {
 	require.NoError(t, os.Remove(filepath.Join(p.glenn, "usage", "j1.tsv")))
 	r := p.fold(both...).ExitErr(1, "TOKENS SHRANK date=2026-09-14 type=input file=2410 now=2000 written=false")
 	assert.Equal(t, before, p.day(), "refused shrink modified file")
-	// TestIssue273QuietSourceNamedOnSelectedDay: the fold already refused the day under
-	// rule 10; #273's repair is that the quiet source itself is named, not only the totals.
+	// The fold refuses the day under rule 10, and the quiet source itself is named, not only
+	// the totals.
 	assert.Contains(t, r.Stdout+r.Stderr, "TOKENS QUIET label=swarm:glenn day=2026-09-14")
 
-	// With --allow-shrink: freddy's rows (2000) are written and glenn's row is removed;
+	// With --allow-shrink: the second pool's rows (2000) are written and the first pool's row is removed;
 	// SHRANK and DAY agree that written=true.
 	p.fold(append(both, "--allow-shrink")...).ExitErr(0, "TOKENS SHRANK date=2026-09-14 type=input file=2410 now=2000 written=true").
 		Out("TOKENS DAY date=2026-09-14", "written=true")
@@ -879,13 +880,16 @@ func TestRule16And19TheDatabaseIsCopiedAndQueriedReadOnlyUnderATimeout(t *testin
 	holds(t, argv, "-readonly", "-json", "$.providerID", "$.modelID", "$.tokens.input", "$.tokens.cache.write", "$.tokens.reasoning", "$.path.cwd", "directory FROM session")
 	for _, tok := range strings.Fields(argv) {
 		// filepath.IsAbs, not a leading slash: on windows an absolute path starts
-		// with a drive letter, and the leading-slash reading made this clause
+		// with a drive letter, and a leading-slash reading would make this clause
 		// vacuous there.
-		assert.False(t, filepath.IsAbs(tok) && !strings.HasPrefix(tok, scratch), "sqlite3 was pointed at %q, outside --scratch", tok)
+		if filepath.IsAbs(tok) {
+			assert.True(t, strings.HasPrefix(tok, scratch), "sqlite3 was pointed at %q, outside --scratch", tok)
+		}
 	}
 	after, err := os.Stat(db)
 	require.NoError(t, err)
-	assert.True(t, after.ModTime().Equal(before.ModTime()) && after.Size() == before.Size(), "the live database changed")
+	assert.True(t, after.ModTime().Equal(before.ModTime()), "the live database changed: its modification time moved")
+	assert.Equal(t, before.Size(), after.Size(), "the live database changed: its size moved")
 	// --scratch is required with --opencode and refused without it.
 	b.fold("--opencode", "bench="+db).Exit(2)
 	b.transcript("a.jsonl", msg("m", "2026-09-11T10:00:00Z", "f", map[string]int{"input_tokens": 1}))
@@ -980,7 +984,8 @@ func TestRule20ReportPrintsTheBodyAndNothingElse(t *testing.T) {
 	r := b.report("--claude", "g="+b.tr, "--note", note).Exit(0)
 	for _, line := range strings.Split(strings.TrimSuffix(r.Stdout, "\n"), "\n") {
 		assert.Len(t, strings.Split(line, "\t"), 6, "a report line is six fields: %q", line)
-		assert.False(t, strings.ContainsAny(line, "~#"), "a report line carries ~ or #: %q", line)
+		assert.NotContains(t, line, "~", "a report line carries ~: %q", line)
+		assert.NotContains(t, line, "#", "a report line carries #: %q", line)
 	}
 	r.NotOut("reasoning").Out("2026-09-11\temma\tgemini\tschema\tinput\t100", "2026-09-11\temma\tgemini\tschema\tcache_write\t0").
 		Err("REPORT OK who=emma day=2026-09-11", "subject=tokens 2026-09-11 at=2026-09-11T23:55:02Z build=")
@@ -1165,8 +1170,8 @@ func TestRule20ABusNoteWithSixAndSevenFieldLinesForOneKeyIsMixed(t *testing.T) {
 // TestReportCountsAndPrintsEverythingItDropped pins rule 20's "the same sources and the
 // same attribution as fold" on the part that is not a row: a transcript line whose stamp
 // this tool cannot read, and a message with no id. Both are counted by the reader and
-// dropped before the body, and `report` used to print neither -- REPORT OK, exit 0, and a
-// friend pasting a short day onto the bus with nothing anywhere saying so.
+// dropped before the body, and `report` prints both: otherwise REPORT OK, exit 0, and a
+// short day posted to the bus with nothing anywhere saying so.
 func TestReportCountsAndPrintsEverythingItDropped(t *testing.T) {
 	t.Parallel()
 	b := newBench(t)
@@ -1246,10 +1251,10 @@ func TestASwarmFileWithALeadingBlankLineStillValidatesItsHeader(t *testing.T) {
 }
 
 // TestABusNoteWithAHeadingReportsTheFileLineNumber pins the grammar's `line=<n>`: it is
-// the line in the FILE. The number was computed from the count of parsed header KEYS, so
-// a note with the leading `# heading` nova-bus writes -- or a repeated or malformed header
-// line -- reported every body line early. Every fixture in this package writes a plain
-// five-key header with no heading, which is the one shape the old arithmetic got right.
+// the line in the FILE, never a count of parsed header KEYS, which would report every body
+// line early for a note with the leading `# heading` nova-bus writes -- or a repeated or
+// malformed header line. Every other fixture in this package writes a plain five-key
+// header with no heading, the one shape that count would get right.
 func TestABusNoteWithAHeadingReportsTheFileLineNumber(t *testing.T) {
 	t.Parallel()
 	b := newBench(t)
@@ -1266,10 +1271,10 @@ func TestABusNoteWithAHeadingReportsTheFileLineNumber(t *testing.T) {
 }
 
 // TestAFailedDayWriteIsInsideTheUnreadableCap pins rule 11's contract on the one listing
-// that grows after its own cap used to close: "every listing is capped at --max ... one
-// MORE line naming the remedy; every count is uncapped". A day file this run cannot write
-// is an unreadable, and it is appended after the MORE line had already been printed -- so
-// with no earlier unreadable the listing was truncated with no MORE line at all.
+// that can grow late: "every listing is capped at --max ... one MORE line naming the
+// remedy; every count is uncapped". A day file this run cannot write is an unreadable, and
+// it arrives after every source's unreadables, so the listing's MORE line is printed only
+// after the last line either can get.
 func TestAFailedDayWriteIsInsideTheUnreadableCap(t *testing.T) {
 	t.Parallel()
 	b := newBench(t)

@@ -1343,3 +1343,5 @@ cmd/nova-tokens/polish_test.go the compaction of 2026-10-02 made it the report r
 cmd/nova-tokens/verbhelp_test.go the compaction of 2026-10-02 moved TestEveryVerbAnswersHelpAndTouchesNothing, whole, into help_test.go
 cmd/nova-tokens/spec_drift_363_test.go the compaction of 2026-10-02 made it a row of help_test.go's TestTheSpecPromisesWhatTheToolPrints
 cmd/nova-tokens/eff85_efficiency_card_test.go the compaction of 2026-10-02 made it a row of help_test.go's TestTheSpecPromisesWhatTheToolPrints
+cmd/nova-tokens/audit_test.go renamed to cmd/nova-tokens/escape_test.go for the contract it pins (every printed argument escaped); both tests kept whole
+cmd/nova-tokens/audit_repairs_test.go renamed to cmd/nova-tokens/path_refusal_test.go for the contract it pins (a path a flag cannot use is refused); both tests kept whole

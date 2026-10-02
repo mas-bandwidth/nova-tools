@@ -36,7 +36,7 @@ func TestTheDayFileRoundTripsByteIdentically(t *testing.T) {
 		assert.EqualValuesf(t, text, again, "the round trip is not byte-identical:\n%q\n%q", text, again)
 	}
 	// A zero is written as a zero and an absence as a dash, and the two are different.
-	assert.Truef(t, strings.Contains(text, "\t100\t-\t-\t0\t-\t"), "the cells are not `100 - - 0 -`:\n%s", text)
+	assert.Containsf(t, text, "\t100\t-\t-\t0\t-\t", "the cells are not `100 - - 0 -`")
 }
 
 func TestDayWritersRefuseSymlinkedOutputDirectory(t *testing.T) {
@@ -65,15 +65,18 @@ func TestDayWritersRefuseSymlinkedOutputDirectory(t *testing.T) {
 				require.NoError(t, os.Symlink(target, link))
 				{
 					err := write(link + suffix)
-					assert.Falsef(t, err == nil || !strings.Contains(err.Error(), "symlink"), "write through symlink error=%v, want symlink refusal", err)
+					assert.ErrorContainsf(t, err, "symlink", "write through symlink, want symlink refusal")
 				}
 				info, err := os.Lstat(link)
-				require.Falsef(t, err != nil || info.Mode()&os.ModeSymlink == 0, "output link changed: %v / %v", info, err)
+				require.NoErrorf(t, err, "output link changed")
+				require.NotZerof(t, info.Mode()&os.ModeSymlink, "output link changed: %v", info)
 				entries, err := os.ReadDir(target)
-				require.Falsef(t, err != nil || len(entries) != 2, "target directory changed: %v / %v", entries, err)
+				require.NoErrorf(t, err, "target directory changed")
+				require.Lenf(t, entries, 2, "target directory changed: %v", entries)
 				for _, file := range []string{day.Day + FileSuffix, LockName} {
 					got, err := os.ReadFile(filepath.Join(target, file))
-					assert.Falsef(t, err != nil || string(got) != "unchanged:"+file, "target %s changed: %q / %v", file, got, err)
+					assert.NoErrorf(t, err, "target %s changed", file)
+					assert.Equalf(t, "unchanged:"+file, string(got), "target %s changed", file)
 				}
 			})
 		}
@@ -105,10 +108,13 @@ func TestDayWritersRefuseParentSymlinkedOutputDirectory(t *testing.T) {
 				require.NoError(t, os.Symlink(target, link))
 				out := filepath.Join(link, "child") + suffix
 				err := write(out)
-				require.Falsef(t, err == nil || !strings.Contains(err.Error(), "symlink"), "write through parent symlink error=%v, want symlink refusal", err)
-				require.Falsef(t, name == "lock" && !strings.Contains(err.Error(), "lock"), "lock error=%v, want mention of lock", err)
+				require.ErrorContainsf(t, err, "symlink", "write through parent symlink, want symlink refusal")
+				if name == "lock" {
+					require.ErrorContainsf(t, err, "lock", "lock error, want mention of lock")
+				}
 				info, err := os.Lstat(link)
-				require.Falsef(t, err != nil || info.Mode()&os.ModeSymlink == 0, "parent link changed: %v / %v", info, err)
+				require.NoErrorf(t, err, "parent link changed")
+				require.NotZerof(t, info.Mode()&os.ModeSymlink, "parent link changed: %v", info)
 				entries, err := os.ReadDir(child)
 				require.NoError(t, err)
 				require.Lenf(t, entries, 0, "referent child directory changed: %d entries, want 0: %v", len(entries), entries)
@@ -137,7 +143,8 @@ func TestDayWritersAcceptRealOutputDirectorySpellings(t *testing.T) {
 			day := &DayFile{Day: "2026-09-11", Build: "fixture"}
 			require.NoError(t, day.Save(out))
 			got, err := os.ReadFile(Path(out, day.Day))
-			require.Falsef(t, err != nil || string(got) != day.Render(), "saved day=%q (%v), want %q", got, err, day.Render())
+			require.NoError(t, err)
+			require.Equalf(t, day.Render(), string(got), "the saved day")
 		})
 	}
 }
@@ -146,7 +153,9 @@ func TestAnUnversionedFileRefuses(t *testing.T) {
 	t.Parallel()
 
 	_, findings := ParseDayFile("2026-09-11", "date\tmodel\trepo\n")
-	assert.Falsef(t, len(findings) != 1 || !strings.Contains(findings[0].Reason, Version), "an unversioned file gives %v; it wants one finding naming the version line", findings)
+	if assert.Lenf(t, findings, 1, "an unversioned file gives %v; it wants one finding naming the version line", findings) {
+		assert.Containsf(t, findings[0].Reason, Version, "it wants one finding naming the version line")
+	}
 }
 
 func TestTheShrinkComparisonWithADashOnEitherSide(t *testing.T) {
@@ -159,7 +168,8 @@ func TestTheShrinkComparisonWithADashOnEitherSide(t *testing.T) {
 	// reasoning: a number in the file and a dash now -- the source went quiet.
 	got := Shrinks(was, now, "2026-09-11")
 	require.Lenf(t, got, 2, "%d shrinks, want two (input lower, reasoning gone): %v", len(got), got)
-	assert.Falsef(t, got[0].Now != "60" || got[1].Now != Dash, "the two shrinks are %v", got)
+	assert.Equalf(t, "60", got[0].Now, "the two shrinks are %v", got)
+	assert.Equalf(t, Dash, got[1].Now, "the two shrinks are %v", got)
 	// The other direction is coverage arriving, not a shrink.
 	var thin, fat Counts
 	thin.Set(Input, 10)
@@ -171,7 +181,7 @@ func TestTheShrinkComparisonWithADashOnEitherSide(t *testing.T) {
 	}
 }
 
-// R5 (issue #268): the merge itself -- retained, replaced, blended, collision. A retained
+// The merge itself -- retained, replaced, blended, collision. A retained
 // row comes back byte for byte, because the fold that wrote it is the only run that could
 // compute it and this one must not touch it.
 func TestMergeDayRetainsReplacesAndRefuses(t *testing.T) {
@@ -189,7 +199,9 @@ func TestMergeDayRetainsReplacesAndRefuses(t *testing.T) {
 	merged, retained, partials := MergeDay(old, fresh, []string{"swarm:freddy"})
 	require.Lenf(t, partials, 0, "partials on a clean merge: %v", partials)
 	assert.EqualValuesf(t, 1, retained, "retained=%d, want 1", retained)
-	require.Falsef(t, len(merged) != 2 || merged[0].Model != "claude-x" || merged[1].Model != "mercury-2.5", "merged rows are not the two, sorted by (model, repo): %v", merged)
+	require.Lenf(t, merged, 2, "merged rows are not the two: %v", merged)
+	require.Equalf(t, "claude-x", merged[0].Model, "merged rows are not sorted by (model, repo): %v", merged)
+	require.Equalf(t, "mercury-2.5", merged[1].Model, "merged rows are not sorted by (model, repo): %v", merged)
 	{
 		got, _ := merged[0].Counts.Get(Input)
 		assert.EqualValuesf(t, 410, got, "the retained row's input is %d, want 410 -- byte for byte is the promise", got)
@@ -203,20 +215,24 @@ func TestMergeDayRetainsReplacesAndRefuses(t *testing.T) {
 	old = []DayRow{row("claude-x", "serialize.rs", 410, "swarm:freddy", "swarm:glenn")}
 	fresh = []DayRow{row("mercury-2.5", "serialize.rs", 2000, "swarm:freddy")}
 	_, _, partials = MergeDay(old, fresh, []string{"swarm:freddy"})
-	require.Falsef(t, len(partials) != 1 || partials[0].Model != "claude-x", "a blended row was not refused: %v", partials)
+	require.Lenf(t, partials, 1, "a blended row was not refused: %v", partials)
+	require.Equalf(t, "claude-x", partials[0].Model, "a blended row was not refused: %v", partials)
 	assert.EqualValuesf(t, PartialBlended, partials[0].Why, "why=%q, want %q", partials[0].Why, PartialBlended)
 
 	// A collision: a retained row and a recomputed row with the same (model, repo).
 	old = []DayRow{row("claude-x", "serialize.rs", 410, "swarm:glenn")}
 	fresh = []DayRow{row("claude-x", "serialize.rs", 2000, "swarm:freddy")}
 	_, _, partials = MergeDay(old, fresh, []string{"swarm:freddy"})
-	require.Falsef(t, len(partials) != 1 || partials[0].Why != PartialCollision, "a collision was not refused: %v", partials)
+	require.Lenf(t, partials, 1, "a collision was not refused: %v", partials)
+	require.Equalf(t, PartialCollision, partials[0].Why, "a collision was not refused: %v", partials)
 
 	// Full replacement: nothing retained, and the merge is exactly this run's rows.
 	old = []DayRow{row("claude-x", "serialize.rs", 410, "swarm:glenn")}
 	fresh = []DayRow{row("claude-x", "serialize.rs", 900, "swarm:glenn")}
 	merged, retained, partials = MergeDay(old, fresh, []string{"swarm:glenn"})
-	require.Falsef(t, len(partials) != 0 || retained != 0 || len(merged) != 1, "full replacement is not today's behaviour: %d rows, retained=%d, %v", len(merged), retained, partials)
+	require.Emptyf(t, partials, "full replacement refused a row: %v", partials)
+	require.Zerof(t, retained, "full replacement retained a row")
+	require.Lenf(t, merged, 1, "full replacement is exactly this run's rows: %v", merged)
 	{
 		got, _ := merged[0].Counts.Get(Input)
 		assert.EqualValuesf(t, 900, got, "input %d, want 900 (replaced, not summed)", got)
@@ -272,7 +288,8 @@ func TestTheUnattributedTallyCountsOnlyWhatFellToOther(t *testing.T) {
 	rules.AttributeInputs([]string{"/w/elsewhere/a.go"}, "")
 	{
 		n := rules.TotalUnattributed()
-		require.Falsef(t, n != 0 || len(rules.Unattributed()) != 0, "the tally ran without being asked for: total=%d stems=%v", n, rules.Unattributed())
+		require.Zerof(t, n, "the tally ran without being asked for")
+		require.Emptyf(t, rules.Unattributed(), "the tally ran without being asked for")
 	}
 	rules.WatchUnattributed()
 	rules.AttributeInputs([]string{"/w/schema/a.go"}, "")               // named: not tallied
@@ -286,7 +303,11 @@ func TestTheUnattributedTallyCountsOnlyWhatFellToOther(t *testing.T) {
 		assert.EqualValuesf(t, 3, n, "unattributed total = %d, want 3", n)
 	}
 	got := rules.Unattributed()
-	assert.Falsef(t, len(got) != 2 || got[0].Stem != "/home/nova/tree" || got[0].Count != 2 || got[1].Stem != "/home/nova/other-tree", "the tally is %v; it wants the heaviest tree first, keyed by the tree", got)
+	if assert.Lenf(t, got, 2, "the tally is %v; it wants two trees", got) {
+		assert.Equalf(t, "/home/nova/tree", got[0].Stem, "it wants the heaviest tree first, keyed by the tree")
+		assert.EqualValuesf(t, 2, got[0].Count, "the heaviest tree's count")
+		assert.Equalf(t, "/home/nova/other-tree", got[1].Stem, "it wants the other tree second")
+	}
 }
 
 // TestTheUnattributedTallyScopesToFilteredDay: when FilterDay is set, only messages
@@ -346,7 +367,8 @@ func TestTheUnattributedTallyIsBoundedAndKeepsItsTotal(t *testing.T) {
 	}
 	{
 		top := rules.Unattributed()[0]
-		assert.Falsef(t, top.Stem != "/home/nova/t000000" || top.Count != 6, "the heaviest stem is %v; a stem already held keeps counting past the ceiling", top)
+		assert.Equalf(t, "/home/nova/t000000", top.Stem, "the heaviest stem is %v", top)
+		assert.EqualValuesf(t, 6, top.Count, "a stem already held keeps counting past the ceiling")
 	}
 }
 
@@ -379,17 +401,17 @@ func TestAMalformedRulesLineIsNamed(t *testing.T) {
 	path := filepath.Join(dir, "repos.tsv")
 	os.WriteFile(path, []byte("schema\t(^|/)schema($|/)\nthis line has no tab\n"), 0o644)
 	_, err := LoadRules(path)
-	assert.Falsef(t, err == nil || !strings.Contains(err.Error(), "line 2"), "a malformed rules line gives %v; it wants the line number", err)
+	assert.ErrorContainsf(t, err, "line 2", "a malformed rules line wants the line number")
 }
 
 func TestMissingDaysAreNamedAndNeverFilled(t *testing.T) {
 	t.Parallel()
 
 	got := MissingDays([]string{"2026-09-07", "2026-09-08", "2026-09-10"})
-	assert.Falsef(t, len(got) != 1 || got[0] != "2026-09-09", "missing days are %v, want [2026-09-09]", got)
+	assert.Equalf(t, []string{"2026-09-09"}, got, "missing days")
 	{
 		n := MissingDays([]string{"2026-02-27", "2026-03-02"})
-		assert.Falsef(t, len(n) != 2 || n[0] != "2026-02-28" || n[1] != "2026-03-01", "across a month end the missing days are %v", n)
+		assert.Equalf(t, []string{"2026-02-28", "2026-03-01"}, n, "across a month end the missing days")
 	}
 	{
 		n := MissingDays([]string{"2026-09-11"})
@@ -405,11 +427,11 @@ func TestTheFoldLockIsExclusiveAndNamesItsHolder(t *testing.T) {
 	require.NoError(t, err)
 	{
 		pid := HolderPID(filepath.Join(dir, LockName))
-		assert.False(t, pid == Dash, "the lock file holds no pid, so a waiter could not name the holder")
+		assert.NotEqual(t, Dash, pid, "the lock file holds no pid, so a waiter could not name the holder")
 	}
 	_, err = TakeFoldLock(dir, 50*time.Millisecond)
 	require.Error(t, err, "a second fold took the lock")
-	assert.Truef(t, strings.Contains(err.Error(), LockName), "the refusal does not name the lock: %v", err)
+	assert.ErrorContainsf(t, err, LockName, "the refusal does not name the lock")
 	release()
 	release() // safe more than once
 	again, err := TakeFoldLock(dir, LockWait)
@@ -431,13 +453,15 @@ func TestTheBusGrammarIsOneGrammar(t *testing.T) {
 	assert.Truef(t, strings.HasSuffix(zoned, "\tday_basis=America/Los_Angeles"), "a zoned line does not carry its basis: %q", zoned)
 	subject := Subject("2026-09-11", "2026-09-11T23:55:02Z", "b", []string{"emma-000000000001", "emma-000000000002"})
 	p, ok := ParseSubject(subject)
-	assert.Falsef(t, !ok || p.day != "2026-09-11" || len(p.supersedes) != 2 || p.badSet != "", "the subject %q does not parse back: %+v ok=%v", subject, p, ok)
-	// `at=` is an RFC 3339 UTC stamp: `at=garbage build=b` was taken for a tokens note,
-	// and the fold validates every note's Date: against that stamp.
+	assert.Truef(t, ok, "the subject %q does not parse back", subject)
+	assert.Equalf(t, "2026-09-11", p.day, "the subject %q does not parse back: %+v", subject, p)
+	assert.Lenf(t, p.supersedes, 2, "the subject %q does not parse back: %+v", subject, p)
+	assert.Emptyf(t, p.badSet, "the subject %q does not parse back: %+v", subject, p)
+	// `at=` is an RFC 3339 UTC stamp, so `at=garbage build=b` is not a tokens note, and
+	// the fold validates every note's Date: against that stamp.
 	// Rule 6 names ONE trailer in ONE order, `at=<stamp> build=<id>[ supersedes=<set>]`,
-	// and says any other text after the date is not a tokens note. The keys used to be
-	// accepted in any order and any position, so three arrangements nobody wrote were
-	// tokens notes. A day is a date on the calendar too: 2026-02-30 is not one.
+	// and says any other text after the date is not a tokens note, so the keys in another
+	// order or position are not one. A day is a date on the calendar too: 2026-02-30 is not one.
 	for _, bad := range []string{"Tokens 2026-09-11", "tokens 2026-09-11 (rough)", "tokens 2026-09-11 at=x",
 		"tokens 11-09-2026", "tokens 2026-09-11 at=garbage build=b", "tokens 2026-09-11 at=2026-09-11T23:55:02-07:00 build=b",
 		"tokens 2026-09-11 build=b at=2026-09-11T23:55:02Z",
@@ -452,7 +476,7 @@ func TestTheBusGrammarIsOneGrammar(t *testing.T) {
 	}
 	{
 		p, _ := ParseSubject("tokens 2026-09-11 at=2026-09-11T23:55:02Z build=b supersedes=emma-000000000002,emma-000000000001")
-		assert.False(t, p.badSet == "", "an unsorted predecessor set was accepted")
+		assert.NotEmpty(t, p.badSet, "an unsorted predecessor set was accepted")
 	}
 }
 
@@ -494,15 +518,16 @@ func TestASourceLineFieldIsADashWhereItIsNotAMeasurement(t *testing.T) {
 	// with it in the output. The lines themselves are not lost: a transcript line whose
 	// stamp does not parse is one TOKENS UNPARSED line naming the label and is in the
 	// unparsed= total on TOKENS FAIL (rule 3). Striking the spec's clause is a spec
-	// decision, and the PR body carries it as one; this assertion moves with the spec.
+	// decision; this assertion moves with the spec.
 	assert.EqualValues(t, Dash, s.StatField("unparsed"), "the spec says a transcript has no unparsed lines, so the column is a dash")
 	b := &Source{Kind: KindBus}
-	assert.False(t, b.StatField("dup") != Dash || b.StatField("comments") != "0", "a bus lane has no duplicate ids and does have comments")
+	assert.Equal(t, Dash, b.StatField("dup"), "a bus lane has no duplicate ids")
+	assert.Equal(t, "0", b.StatField("comments"), "a bus lane does have comments")
 }
 
-// L10a: readSource is the one whole-file read, and it had no ceiling, so one oversized
-// ledger or bus file took the process's memory. A file over the cap must be refused by
-// name rather than read.
+// readSource is the one whole-file read, and without a ceiling one oversized ledger or bus
+// file would take the process's memory. A file over the cap must be refused by name rather
+// than read.
 func TestReadSourceRefusesAnOversizedFile(t *testing.T) {
 	t.Parallel()
 
@@ -517,12 +542,11 @@ func TestReadSourceRefusesAnOversizedFile(t *testing.T) {
 	require.NoError(t, f.Close())
 	_, err = readSource(path)
 	require.Errorf(t, err, "readSource read %d bytes with no cap", capInTest+1)
-	assert.Truef(t, strings.Contains(err.Error(), path), "the refusal must name the path: %v", err)
-	assert.Truef(t, strings.Contains(err.Error(), fmt.Sprint(capInTest)), "the refusal must name the cap %d: %v", capInTest, err)
+	assert.ErrorContainsf(t, err, path, "the refusal must name the path")
+	assert.ErrorContainsf(t, err, fmt.Sprint(capInTest), "the refusal must name the cap %d", capInTest)
 }
 
-// L10b: onCycle marked a node seen, walked its predecessors, then deleted it on the way
-// out, so a diamond was re-walked once per path. A node already proven acyclic must stay
+// onCycle must not re-walk a diamond once per path: a node already proven acyclic stays
 // memoized, which the walk's own seen map must show; the answer is unchanged.
 func TestOnCycleDoesNotRewalkAProvenAcyclicDiamond(t *testing.T) {
 	t.Parallel()
@@ -537,7 +561,7 @@ func TestOnCycleDoesNotRewalkAProvenAcyclicDiamond(t *testing.T) {
 	assert.Lenf(t, seen, len(all), "onCycle left %d of %d nodes proven: it re-walked an acyclic node", len(seen), len(all))
 }
 
-// L10b: the memo must not hide a cycle. A diamond with a back edge still reports true.
+// The memo must not hide a cycle. A diamond with a back edge still reports true.
 func TestOnCycleStillSeesARealCycle(t *testing.T) {
 	t.Parallel()
 
@@ -633,7 +657,7 @@ func TestCheckReportsUnrelatedTempAsStray(t *testing.T) {
 
 	res2, err := Check(out, CheckOptions{})
 	require.NoErrorf(t, err, "Check failed: %v", err)
-	assert.Falsef(t, len(res2.Strays) != 1 || res2.Strays[0] != unrelatedPath, "Check strays = %v, want [%s]", res2.Strays, unrelatedPath)
+	assert.Equalf(t, []string{unrelatedPath}, res2.Strays, "Check strays")
 }
 
 // A day file written while the `units` column existed still reads: the twelfth cell is
@@ -657,9 +681,11 @@ func TestALegacyTwelveColumnDayFileReadsWithTheUnitsColumnIgnored(t *testing.T) 
 	}
 	{
 		cw, ok := r.Counts.Get(CacheWrite)
-		assert.Falsef(t, !ok || cw != 3, "cache_write = %d,%v, want 3,true", cw, ok)
+		assert.True(t, ok, "cache_write is reported")
+		assert.EqualValuesf(t, 3, cw, "cache_write")
 	}
-	assert.Falsef(t, r.Rough != 1 || strings.Join(r.Sources, ",") != "bus:a,claude:b", "rough %d sources %v", r.Rough, r.Sources)
+	assert.EqualValuesf(t, 1, r.Rough, "rough")
+	assert.Equalf(t, "bus:a,claude:b", strings.Join(r.Sources, ","), "sources")
 
 	out := d.Render()
 	lines := strings.Split(strings.TrimSpace(out), "\n")
@@ -676,7 +702,7 @@ func TestALegacyTwelveColumnDayFileReadsWithTheUnitsColumnIgnored(t *testing.T) 
 		"2026-09-21\tm1\tschema\t1\t1\t-\t-\t-\t0\tutc\ta\n2026-09-21\tm1\tschema\t1\t1\t-\t-\t-\t0\tutc\ta\n"
 	{
 		_, f := ParseDayFile("2026-09-21", dup)
-		assert.False(t, len(f) == 0, "a second (model, repo) row in an eleven-column file was accepted")
+		assert.NotEmpty(t, f, "a second (model, repo) row in an eleven-column file was accepted")
 	}
 }
 

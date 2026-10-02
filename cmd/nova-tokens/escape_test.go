@@ -35,7 +35,7 @@ var tokensAudit = audit.Config{
 		"main.go|report|body":        "the report's stdout IS the artifact: every line of it was rendered by tokens.BodyLine, which puts each of its stored fields through oneline.Field, and the lines are joined with \\n by this function. Escaping the join again would escape those newlines and destroy the note body this verb exists to print",
 	},
 	Imports: []string{
-		// the verb-help seam (the CLI style's rule (b), #4505): on -h it prints only flag names,
+		// the verb-help seam (the CLI style's rule (b)): on -h it prints only flag names,
 		// their usage literals and lines of this package's own usage const, to the stdout run
 		// hands it; it never prints an argument, so nothing it writes can carry a newline in.
 		`"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"`,
@@ -58,7 +58,7 @@ var tokensAudit = audit.Config{
 		// at the print site; record prints nothing itself.
 		`"context"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/record"`,
-		// ledger.go's seat (#3461): redisauth.Auth (a leaf: no net, no os/exec) resolves the ACL user and the password from
+		// ledger.go's seat: redisauth.Auth (a leaf: no net, no os/exec) resolves the ACL user and the password from
 		// the environment, the one config nova-sprint dials with; it holds no writer and
 		// returns strings and an error this package prints through oneline.Err.
 		`"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"`,

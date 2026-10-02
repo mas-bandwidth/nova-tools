@@ -15,8 +15,8 @@ import (
 )
 
 // TestHelpListsOneSumForm pins that the bare help banner carries the one `sum` form, the
-// --out/--month report, on its own synopsis line (#3464: a bare continuation once made two
-// calls read as one). The `usage:` block ends at the first blank line, so the pasteable
+// --out/--month report, on its own synopsis line (a bare continuation would make two calls
+// read as one). The `usage:` block ends at the first blank line, so the pasteable
 // example lines below it are not counted as synopsis lines.
 func TestHelpListsOneSumForm(t *testing.T) {
 	t.Parallel()
@@ -29,7 +29,7 @@ func TestHelpListsOneSumForm(t *testing.T) {
 
 // Every verb answers -h and --help with its own help on stdout at exit 0, and
 // none of them reads a transcript or writes a day file (the CLI style's rule
-// (b), #4505).
+// (b)).
 func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 	t.Parallel()
 	out := []string{"--out", "{dir}/out"}
@@ -67,17 +67,15 @@ func TestEveryVerbFlagHasADescription(t *testing.T) {
 	}
 }
 
-// This is #1451 in nova-tokens: a bare verb that names what is wrong and not the door.
-// ONBOARDING.md point 1: an invocation the tool cannot run prints
-// `<tool>[ <verb>]: <what was wrong>; run: <tool> help`. The missing-flag and bad-value
-// refusals were collected and printed with no door, leaving the reader no place to look.
+// A bare verb names what is wrong and the door (ONBOARDING point 1): an invocation the tool
+// cannot run prints `<tool>[ <verb>]: <what was wrong>; run: <tool> help`. A missing-flag or
+// bad-value refusal printed with no door leaves the reader no place to look.
 // The verbs are read from the tool's own help banner (a line opening `  nova-tokens <verb>`
 // with a flag; version, whose line has none, is no refusal when bare) and each is run with
 // no flags. A bad refusal that said "refusing to guess" and dumped the whole banner (which
 // names help) would pass a check for "help" anywhere, so the door is pinned as the literal
-// end of every refusal line, once. `version <stray>` is the site PR #1749 disclosed as owed:
-// a bare version prints the version, so its stray argument is the refusal, and it still says
-// what was wrong.
+// end of every refusal line, once. `version <stray>` is a row too: a bare version prints the
+// version, so its stray argument is the refusal, and it still says what was wrong.
 func TestIssue1451EveryRefusalNamesTheDoor(t *testing.T) {
 	t.Parallel()
 
@@ -94,7 +92,8 @@ func TestIssue1451EveryRefusalNamesTheDoor(t *testing.T) {
 			t.Parallel()
 			r := novaTokens.Do(t, args...).Exit(2)
 			for _, line := range strings.Split(strings.TrimSuffix(r.Stderr, "\n"), "\n") {
-				assert.True(t, strings.HasSuffix(line, door) && strings.Count(line, door) == 1, "a refusal line does not end in the door, once: %q", line)
+				assert.True(t, strings.HasSuffix(line, door), "a refusal line does not end in the door: %q", line)
+				assert.Equal(t, 1, strings.Count(line, door), "a refusal line names the door more than once: %q", line)
 			}
 			if args[0] == "version" {
 				r.Err(`takes no positional arguments, got "extra"`)
@@ -109,17 +108,16 @@ func TestTheSpecPromisesWhatTheToolPrints(t *testing.T) {
 	t.Parallel()
 	spec := testkit.ReadFile(t, filepath.Join("..", "..", "docs", "SPEC-TOKENS.md"))
 
-	// #363 (Go cards 109-115), spec-versus-code drift: every verb the binary accepts and every
-	// first-two-token line it prints is promised by the verbs block and the output grammar.
-	// Card 110 struck `publish`; the binary since gained `profiles` and `session`.
+	// Spec-versus-code drift: every verb the binary accepts and every first-two-token line it
+	// prints is promised by the verbs block and the output grammar.
 	t.Run("363 every verb and token it prints", func(t *testing.T) {
 		t.Parallel()
 		for _, want := range []string{"nova-tokens profiles", "nova-tokens session", "PROFILES OK", "PROFILES MODEL", "SESSION turns="} {
-			assert.Contains(t, spec, want, "the binary accepts or prints it but docs/SPEC-TOKENS.md does not promise it (#363)")
+			assert.Contains(t, spec, want, "the binary accepts or prints it but docs/SPEC-TOKENS.md does not promise it")
 		}
 	})
 
-	// CARD #85, the efficiency card, 2026-09-12: what the tool pays once and what it pays
+	// The efficiency section: what the tool pays once and what it pays
 	// again. One walk of the sources per run behind `--all`, a bounded coordinator read whose
 	// day line carries the shares, and a `--timeout` that bounds one source and not the run.
 	// The section is prose, so whitespace is collapsed: a phrase is checked for its words, not

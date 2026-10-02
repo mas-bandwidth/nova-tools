@@ -69,9 +69,9 @@ func TestHelpFoldExampleIsComparedToOutput(t *testing.T) {
 	})
 
 	// Every example line runs, as printed, after the setup line above the block in an
-	// otherwise empty directory, and exits 0. nova-tools #1455 measured 28 of 61 pasted
-	// example lines exiting 2 because the line names an input the reader has not made; an
-	// example exiting 2 is a broken example (ONBOARDING point 1). The banner is read AS
+	// otherwise empty directory, and exits 0. An example line that names an input the
+	// reader has not made exits 2, and an example exiting 2 is a broken example
+	// (ONBOARDING point 1). The banner is read AS
 	// SOURCE, the `usage` beside this test, because the lines under test are the ones a
 	// reader pastes. No line here pushes, publishes, contacts a forge, acts on a machine or
 	// needs a key, so none is skipped by name: a skip would be a hole. SCOPE, said out loud:
@@ -79,7 +79,7 @@ func TestHelpFoldExampleIsComparedToOutput(t *testing.T) {
 	t.Run("every example line runs as printed", func(t *testing.T) {
 		t.Parallel()
 		setup := onboarding.SetupLine(usage)
-		require.True(t, strings.HasPrefix(setup, "mkdir -p ./transcripts"), "the usage banner has no fixture setup line above the block, so a stranger pasting it names inputs they have not made (nova-tools #1455)")
+		require.True(t, strings.HasPrefix(setup, "mkdir -p ./transcripts"), "the usage banner has no fixture setup line above the block, so a stranger pasting it names inputs they have not made")
 		assert.NotContains(t, setup, "cmd/nova-tokens/testdata", "the setup still depends on a source checkout")
 		root := t.TempDir()
 		exit, out := sh(root, setup)

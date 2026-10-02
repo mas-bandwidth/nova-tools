@@ -115,8 +115,8 @@ func overflowingDays(t *testing.T, out string) string {
 // pairs. The spec's own example is twenty models, which does not overflow the model
 // listing at all -- and its table still shows a MORE line under it. One more model is what
 // makes both caps and both MORE lines real, and the pair count moves with it. September has
-// THIRTY days: the fixture once wrote a 2026-09-31.tsv and the month read it as a day,
-// because a day used to be a shape and not a date on the calendar.
+// THIRTY days: a 2026-09-31.tsv is not a day, because a day is a date on the calendar and
+// not a shape.
 func aFullMonth(t *testing.T, out string) string {
 	t.Helper()
 	files := map[string]string{}

@@ -24,7 +24,7 @@ import (
 // --auto` repacks a bare repository's objects directory after a push; in a detached
 // maintenance process that keeps running once push returns, it mutates the remote
 // asynchronously and a snapshot taken before it settles sees loose objects become a pack
-// file, which is the intermittent "the remote changed" mutation #205 saw in CI. Eight
+// file, which reads as an intermittent "the remote changed" mutation. Eight
 // writers push to one bare remote concurrently, and the remote's tree -- per relative path
 // -- must not move for a second once they have all returned. The fixture turns
 // receive.autogc, gc.auto and maintenance.auto off (the repair, as

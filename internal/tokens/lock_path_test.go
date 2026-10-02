@@ -37,10 +37,13 @@ func TestFoldLockSymlinkPreservesTarget(t *testing.T) {
 			if missing {
 				assert.Truef(t, os.IsNotExist(readErr), "created symlink target: %q (%v)", raw, readErr)
 			} else {
-				assert.Falsef(t, readErr != nil || string(raw) != body, "target changed: %q (%v)", raw, readErr)
+				assert.NoErrorf(t, readErr, "target changed: %q", raw)
+				assert.Equalf(t, body, string(raw), "target changed")
 			}
 			info, lstatErr := os.Lstat(link)
-			assert.Falsef(t, lstatErr != nil || info.Mode()&os.ModeSymlink == 0, "link changed: %v (%v)", info, lstatErr)
+			if assert.NoErrorf(t, lstatErr, "link changed: %v", info) {
+				assert.NotZerof(t, info.Mode()&os.ModeSymlink, "link changed: %v", info)
+			}
 		})
 	}
 }
@@ -56,5 +59,6 @@ func TestFoldLockRefusesDirectory(t *testing.T) {
 	}
 	require.Error(t, err, "directory lock was accepted")
 	info, statErr := os.Lstat(path)
-	require.Falsef(t, statErr != nil || !info.IsDir(), "directory changed: %v (%v)", info, statErr)
+	require.NoErrorf(t, statErr, "directory changed: %v", info)
+	require.Truef(t, info.IsDir(), "directory changed: %v", info)
 }

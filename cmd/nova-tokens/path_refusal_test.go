@@ -12,7 +12,7 @@ import (
 )
 
 // A path that is not what its flag wants is refused, exit 2, naming the flag and the path,
-// and the run writes nothing: a regular file at --out is never overwritten (#1502), and a
+// and the run writes nothing: a regular file at --out is never overwritten, and a
 // fold.lock that is a symlink is refused before anything is written through it, whether its
 // target exists or not.
 func TestEveryPathAFlagCannotUseIsRefused(t *testing.T) {

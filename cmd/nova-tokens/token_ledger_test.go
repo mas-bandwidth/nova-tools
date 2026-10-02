@@ -57,7 +57,7 @@ func gpt(day, repo string, cells ...int64) tokens.DayRow {
 }
 
 // TestTheMonthlyTokenReportFromTheRedisLedgerEqualsTheFoldedTsv is docs/SPEC-STATE.md's
-// test 17 (#2201; recut of #3243 on Redis under #2623, Postgres retired): the day rows the
+// test 17: the day rows the
 // fold writes are indexed into tokens:ledger:<day>, `report --redis` is a GROUP BY over the
 // month's day hashes, and it equals the folded day TSVs for every one of the five types and
 // every (day, model, repo) -- while the day files themselves are left byte for byte as the
@@ -155,7 +155,7 @@ func TestTheMonthlyTokenReportFromTheRedisLedgerEqualsTheFoldedTsv(t *testing.T)
 
 // The store's answers short of a full month. A report names what it wants rather than
 // guessing a month, and one report has one source; `ledger` wants its store named, and a
-// day with no file is a NO naming the fold. #3462: a month with no indexed calendar-day
+// day with no file is a NO naming the fold. A month with no indexed calendar-day
 // keys is REPORT NO exit 1, and a month with only some days indexed names indexed and
 // missing on the OK line. No row writes to the store.
 func TestReportAndLedgerOnAStoreShortOfTheMonth(t *testing.T) {
@@ -198,8 +198,8 @@ func TestReportAndLedgerOnAStoreShortOfTheMonth(t *testing.T) {
 	}
 }
 
-// TestLedgerAndReportDialAsTheAclUser (#3461): the fleet Redis has its default user off and
-// the bench password is the ACL user bench's, so a seat password without its user is
+// TestLedgerAndReportDialAsTheAclUser: a store with its default user off holds the bench
+// password as the ACL user bench's, so a seat password without its user is
 // WRONGPASS. `--user bench --password-env X` connects as bench for both verbs; the same seat
 // comes from NOVA_SPRINT_REDIS_USER when no --user is given (the one config nova-sprint
 // uses); a user whose password variable is empty is refused before any dial. And first: the
@@ -234,10 +234,9 @@ func TestLedgerAndReportDialAsTheAclUser(t *testing.T) {
 	require.NotContains(t, r.Stderr+r.Stdout, "sesame", "a refusal printed the password")
 }
 
-// TestLedgerMonthPipelinesWritesAndDropsSuperfluousPing pins rowan-7fbdefecf56e:
-// `ledger --month` pipelines day hash writes in one round trip and openLedger drops
-// the superfluous PING that report --redis and ledger --day previously paid (before it,
-// a PING and a transaction per day in a loop: 24 trips for 23 days).
+// TestLedgerMonthPipelinesWritesAndDropsSuperfluousPing pins the round trips:
+// `ledger --month` pipelines day hash writes in one round trip and openLedger sends no
+// PING, so a month is never a PING and a transaction per day in a loop.
 func TestLedgerMonthPipelinesWritesAndDropsSuperfluousPing(t *testing.T) {
 	t.Parallel()
 

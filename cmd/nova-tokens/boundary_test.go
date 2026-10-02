@@ -90,8 +90,8 @@ func repoRoot(t *testing.T) string {
 
 // spawners are the ways a Go program can start another program. exec.Command is the ordinary
 // one; the rest are the floor beneath it, and a tripwire that knows only the first is a
-// tripwire that a publisher can walk around without hiding (#146's whole-PR read planted an
-// os.StartProcess with a built path and both tripwires passed).
+// tripwire that a publisher can walk around without hiding: an os.StartProcess with a built
+// path passes a tripwire that knows only exec.Command.
 //
 // syscall's IMPORT is not forbidden: internal/tokens/lock_unix.go needs syscall.Flock for the
 // fold lock (rule 8). The call names are.
@@ -170,8 +170,11 @@ func TestNoPackageOfThisBinaryTalksToANetworkOrRunsGit(t *testing.T) {
 			for _, imp := range f.Imports {
 				imports[imp.Path] = true
 				ip := strings.Trim(imp.Path.Value, `"`)
-				assert.False(t, ip == "net" || strings.HasPrefix(ip, "net/"), "%s imports %q; this tool talks to no network, and a publisher is a separate spec gate (rule 16)", path, ip)
-				assert.False(t, ip == "os/exec" && path != theOneSubprocess, "%s imports os/exec; the one subprocess is sqlite3 and it lives in %s (rule 19)", path, theOneSubprocess)
+				assert.NotEqual(t, "net", ip, "%s imports %q; this tool talks to no network, and a publisher is a separate spec gate (rule 16)", path, ip)
+				assert.False(t, strings.HasPrefix(ip, "net/"), "%s imports %q; this tool talks to no network, and a publisher is a separate spec gate (rule 16)", path, ip)
+				if ip == "os/exec" {
+					assert.Equal(t, theOneSubprocess, path, "%s imports os/exec; the one subprocess is sqlite3 and it lives in %s (rule 19)", path, theOneSubprocess)
+				}
 			}
 			// The literals, in the syntax tree rather than the text, so an import path is an
 			// import path and not a string that happens to hold a program name.

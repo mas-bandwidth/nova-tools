@@ -56,7 +56,7 @@ func TestCheckIsGreenOnTheReportsTokensDirectoryAsItIs(t *testing.T) {
 		// 2026-08-03.
 		{"as it is", nil, nil, 0, []string{"CHECK OK", "files=16", "first=2026-07-29", "last=2026-09-18", "missing=0", "stray=0", "gap=36", "notes=4"},
 			nil, nil, []string{"CHECK MISSING", "CHECK STRAY"}},
-		// --strict is the old reading, whole: the same forty findings, so a person who wants
+		// --strict names every gap and every note: the same forty findings, so a person who wants
 		// them has them and nobody had to argue about which ones to keep. The strays are
 		// named by path, and the archive DIRECTORY is one of them.
 		{"--strict restores every finding", nil, []string{"--strict", "--max", "0"}, 1, []string{"CHECK FAIL files=", "missing=36", "stray=4", "bad=0"},

@@ -19,12 +19,12 @@ func grokUsage(session, model string, in, out int, more string) string {
 	return fmt.Sprintf(`{"sessionId": %q, "updatedAt": "2026-09-12T00:06:00Z", "session": {}, "turns": [{"turnNumber": 1, "endedAt": "2026-09-12T00:05:00Z", "inputTokens": %d, "outputTokens": %d, %s"primaryModelId": %q}]}`, session, in, out, more, model)
 }
 
-// #626, Johnny's dogfood: a `grok usage` export folds through --provider xai to ONE day-file
+// A `grok usage` export folds through --provider xai to ONE day-file
 // row for its turn, carrying its input, output and cost columns, and check accepts the day.
 // The turn's cost, costUsdTicks, is 77 micro-dollar ticks (the unit the ledger's usd= holds,
 // per the spec's "from the usage `usd` column or a cost tick the source reported"), so the
-// model's one cost row of the day carries usd=0.000077. Before the fix the tokens folded and
-// the cost was dropped: TOKENS AVG printed usd=0 where the source had reported a tick.
+// model's one cost row of the day carries usd=0.000077, never usd=0 where the source
+// reported a tick.
 func TestGrokUsageFoldsToOneRowWithInOutUsd(t *testing.T) {
 	t.Parallel()
 
@@ -61,7 +61,7 @@ func TestGrokUsageFoldsToOneRowWithInOutUsd(t *testing.T) {
 	}
 }
 
-// TestXaiProviderOneUsageFileFoldsRow is #2671: --provider xai names one
+// TestXaiProviderOneUsageFileFoldsRow: --provider xai names one
 // usage.json. A fixture file folds to one ledger row. A missing path is
 // *XaiUsageMissingError, and a directory is not walked. A session store
 // planted under HOME is never opened, nor a sibling usage.json the flag does not name.

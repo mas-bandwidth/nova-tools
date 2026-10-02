@@ -99,11 +99,12 @@ func TestSessionRowIsTheCoordinatorsOwnLine(t *testing.T) {
 	sum, err := ReadClaudeSession(writeFixtureSession(t, t.TempDir()))
 	require.NoError(t, err)
 	days := sum.DayList()
-	require.Falsef(t, len(days) != 1 || days[0] != "2026-09-16", "days=%v, want one day 2026-09-16", days)
+	require.Equalf(t, []string{"2026-09-16"}, days, "days=%v, want one day 2026-09-16", days)
 	rows := sum.Rows(days[0])
 	require.Lenf(t, rows, 1, "rows=%d, want one row for the one model the transcript names", len(rows))
 	row := rows[0]
-	assert.Falsef(t, row.Model != "claude-opus-5/coordinator" || row.Repo != CoordinatorRepo, "row is (%s, %s), want (claude-opus-5/coordinator, %s): the model the transcript names", row.Model, row.Repo, CoordinatorRepo)
+	assert.Equalf(t, "claude-opus-5/coordinator", row.Model, "row is (%s, %s): the model the transcript names", row.Model, row.Repo)
+	assert.Equalf(t, CoordinatorRepo, row.Repo, "row is (%s, %s): the repo is %s", row.Model, row.Repo, CoordinatorRepo)
 	assert.EqualValuesf(t, Dash, row.Counts.Cell(Reasoning), "the reasoning cell is %q, want %q: a transcript reports none", row.Counts.Cell(Reasoning), Dash)
 	for _, c := range []struct {
 		t    Type
@@ -114,7 +115,7 @@ func TestSessionRowIsTheCoordinatorsOwnLine(t *testing.T) {
 			assert.EqualValuesf(t, c.want, got, "%s cell=%s, want %s", TypeNames[c.t], got, c.want)
 		}
 	}
-	assert.Falsef(t, len(row.Sources) != 1 || row.Sources[0] != SessionLabel, "sources=%v, want [%s]: every number names the flag that wrote it", row.Sources, SessionLabel)
+	assert.Equalf(t, []string{SessionLabel}, row.Sources, "every number names the flag that wrote it")
 }
 
 // TestSessionSplitsAcrossMidnight: a window that runs past midnight is two rows on two days,
@@ -133,11 +134,14 @@ func TestSessionSplitsAcrossMidnight(t *testing.T) {
 	require.NoError(t, err)
 	{
 		got := sum.DayList()
-		require.Falsef(t, len(got) != 2 || got[0] != "2026-09-16" || got[1] != "2026-09-17", "days=%v, want the two days the turns fell on", got)
+		require.Equalf(t, []string{"2026-09-16", "2026-09-17"}, got, "want the two days the turns fell on")
 	}
-	assert.Falsef(t, sum.Days["2026-09-16"].Input != 10 || sum.Days["2026-09-17"].Input != 20, "the days carry %d and %d, want 10 and 20", sum.Days["2026-09-16"].Input, sum.Days["2026-09-17"].Input)
+	assert.EqualValuesf(t, 10, sum.Days["2026-09-16"].Input, "the first day's input")
+	assert.EqualValuesf(t, 20, sum.Days["2026-09-17"].Input, "the second day's input")
 	// The undated turn is in the totals and in no day, and it is COUNTED so a reader knows.
-	assert.Falsef(t, sum.Turns != 3 || sum.Input != 35 || sum.Unstamped != 1, "turns=%d input=%d unstamped=%d, want 3, 35 and 1", sum.Turns, sum.Input, sum.Unstamped)
+	assert.EqualValuesf(t, 3, sum.Turns, "turns")
+	assert.EqualValuesf(t, 35, sum.Input, "input")
+	assert.EqualValuesf(t, 1, sum.Unstamped, "unstamped")
 }
 
 // TestSessionRowsAreBookedUnderTheModelTheTranscriptNames: a transcript of one model is that
@@ -161,15 +165,18 @@ func TestSessionRowsAreBookedUnderTheModelTheTranscriptNames(t *testing.T) {
 		require.EqualValuesf(t, "", why, "a transcript naming a model on every turn is bookable, got %q", why)
 	}
 	rows := sum.Rows("2026-09-16")
-	require.Falsef(t, len(rows) != 2 || rows[0].Model != "claude-opus-5/coordinator" || rows[1].Model != "other-model-9/coordinator", "rows=%+v, want one row per model, sorted", rows)
-	assert.Falsef(t, rows[0].Counts.Cell(Input) != "4" || rows[1].Counts.Cell(Input) != "3", "each model's row carries its own turns: %s and %s, want 4 and 3", rows[0].Counts.Cell(Input), rows[1].Counts.Cell(Input))
+	require.Lenf(t, rows, 2, "rows=%+v, want one row per model", rows)
+	require.Equalf(t, "claude-opus-5/coordinator", rows[0].Model, "rows=%+v, want one row per model, sorted", rows)
+	require.Equalf(t, "other-model-9/coordinator", rows[1].Model, "rows=%+v, want one row per model, sorted", rows)
+	assert.Equalf(t, "4", rows[0].Counts.Cell(Input), "each model's row carries its own turns")
+	assert.Equalf(t, "3", rows[1].Counts.Cell(Input), "each model's row carries its own turns")
 
 	none, err := ReadClaudeSession(write(`{"timestamp":"2026-09-16T09:00:00Z","message":{"id":"a","usage":{"input_tokens":3,"output_tokens":1}}}
 `))
 	require.NoError(t, err)
 	{
 		why := none.UnbookableReason()
-		assert.Truef(t, strings.Contains(why, "names no model on any of its 1 turns"), "a transcript that names no model is unbookable with a named reason, got %q", why)
+		assert.Containsf(t, why, "names no model on any of its 1 turns", "a transcript that names no model is unbookable with a named reason")
 	}
 	{
 		got := none.Rows("2026-09-16")
@@ -182,6 +189,6 @@ func TestSessionRowsAreBookedUnderTheModelTheTranscriptNames(t *testing.T) {
 	require.NoError(t, err)
 	{
 		why := some.UnbookableReason()
-		assert.Truef(t, strings.Contains(why, "names no model on 1 of its 2 turns"), "a turn with no model is not booked under another's, got %q", why)
+		assert.Containsf(t, why, "names no model on 1 of its 2 turns", "a turn with no model is not booked under another's")
 	}
 }

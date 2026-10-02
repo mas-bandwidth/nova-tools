@@ -201,12 +201,10 @@ func fakeSqlite3(t *testing.T, sessions, messages, parts string) (logPath string
 
 // The fake sqlite3 is THIS TEST BINARY under another name, re-entered through TestMain.
 //
-// It used to be a /bin/sh script, which Windows has no way to execute and no way to find
-// without the .exe suffix: every OpenCode test skipped there, and rule 19's own stub was
-// not even a program, so the fold refused ("sqlite3 is not on PATH") instead of timing out
-// and the rule went untested on a whole platform (measured in CI 2026-09-11). A copy of
-// the test binary is a real executable on all three, and the behaviour is written once, in
-// Go, rather than twice in two shell dialects.
+// A /bin/sh script would not do: Windows has no way to execute it and no way to find it
+// without the .exe suffix, so every OpenCode test would skip there and rule 19 would go
+// untested on a whole platform. A copy of the test binary is a real executable on all
+// three, and the behaviour is written once, in Go, rather than twice in two shell dialects.
 const (
 	fakeSqlite3Env = "NOVA_TOKENS_FAKE_SQLITE3"
 	fakeArgvLog    = "argv.log"
@@ -238,7 +236,7 @@ func fakeSqlite3OnPath(t *testing.T, mode string) {
 // not a test run at all but the stub sqlite3 the run under test just executed.
 //
 // With asToolEnv set it is nova-tokens itself, on the process's real stdout and stderr, so
-// a test can see what a library writes to os.Stderr behind run's injected streams (#3463).
+// a test can see what a library writes to os.Stderr behind run's injected streams.
 func TestMain(m *testing.M) {
 	if mode := os.Getenv(fakeSqlite3Env); mode != "" {
 		os.Exit(fakeSqlite3Main(mode, os.Args[1:], os.Stdout))

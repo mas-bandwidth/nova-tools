@@ -42,8 +42,8 @@ func grammarPairs(s string) map[string]string {
 // grammarAdmits reports whether spec is an enumeration, `<a|b|c>`, and whether it admits v.
 // A literal member matches exactly. A member in angle brackets -- `<zone>` in
 // `<utc|mixed|<zone>>` -- is a PLACEHOLDER for a class of values, and is checked by its
-// class: the grammar used to spell that member `zone`, a word the tool has never printed,
-// and the zone name it does print was admitted by nothing. `<zone>` is the zone an export
+// class, never as the literal word `zone`, which the tool never prints. `<zone>` is the
+// zone an export
 // declares, as rule 17 and rule 13 accept it: non-empty, no whitespace, and not one of the
 // literal members beside it (`utc` spelled out is refused by rule 6); a placeholder this
 // test knows no class for admits anything. A one-letter member is a placeholder too
@@ -131,7 +131,7 @@ func TestTheOutputGrammarAdmitsTheLinesTheToolPrints(t *testing.T) {
 		novaTokens.Do(t, "check", "--out", out3))
 
 	// A partial-source fold: produces a TOKENS PARTIAL line when a row was blended across
-	// declared and undeclared sources (#268).
+	// declared and undeclared sources.
 	out4, poolA, poolB := outs("out4"), outs("poolA"), outs("poolB")
 	swarmUsage(t, poolA, "j1", swarmRow("j1", "1", "-", "claude-x", "serialize", "2026-09-14T01:00:00Z", "410", "100", "0", "0", "-"))
 	swarmUsage(t, poolB, "j2", swarmRow("j2", "1", "-", "claude-x", "serialize", "2026-09-14T02:00:00Z", "2000", "420", "0", "0", "-"))

@@ -15,9 +15,9 @@ import (
 // asToolEnv makes the test binary run as nova-tokens (TestMain).
 const asToolEnv = "NOVA_TOKENS_AS_TOOL"
 
-// #3463: `report --redis` at an address nothing listens on exited 1 with the right typed
-// line, but go-redis's own logger wrote four untyped, local-time "connection pool: failed
-// to dial after 5 attempts" lines to the process's stderr ahead of it. run's stderr is an
+// `report --redis` at an address nothing listens on exits 1 with the right typed line, and
+// go-redis's own logger must not write untyped, local-time "connection pool: failed to
+// dial after 5 attempts" lines to the process's stderr ahead of it. run's stderr is an
 // injected writer and the library writes to os.Stderr, so an in-process test cannot see the
 // leak: this runs the tool as its own process and holds the WHOLE stderr to the one line.
 func TestReportRedisDialFailureStderrIsTheOneFailedLine(t *testing.T) {

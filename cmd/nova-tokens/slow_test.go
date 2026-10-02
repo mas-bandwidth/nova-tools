@@ -5,8 +5,8 @@
 // waited. Ten seconds of this package's 13 s.
 //
 // These tests are behind the `slow` build tag: the PR test jobs do not build them and
-// .github/workflows/nightly-slow.yml does (#516, Glenn's two-minute rule -- a package's
-// tests answer in a minute). Nothing here is skipped or weakened; it runs nightly, whole.
+// .github/workflows/nightly-slow.yml does (a package's tests answer in a minute, two at
+// most). Nothing here is skipped or weakened; it runs nightly, whole.
 
 package main
 
@@ -36,7 +36,7 @@ func TestASecondFoldWaitsAndThenRefusesNamingTheHolder(t *testing.T) {
 	b.fold("--claude", "g="+b.tr).Exit(2).Err("fold.lock", "pid ")
 	// fixed-waits-allowlist.txt names this measurement as slow_test.go:38; keep it there.
 	waited := time.Since(start)
-	assert.True(t, waited >= 500*time.Millisecond, "the second fold refused after %s; it is supposed to wait for the first", waited)
+	assert.GreaterOrEqual(t, waited, 500*time.Millisecond, "the second fold refused after %s; it is supposed to wait for the first", waited)
 	assert.NoFileExists(t, filepath.Join(b.out, "2026-09-11.tsv"), "the refused fold wrote a day file")
 }
 

@@ -44,10 +44,9 @@ func TestAFoldThatDropsMessagesWithNoID(t *testing.T) {
 	})
 }
 
-// Issue #181 (daily retained token collection, cross-bench backfill and task-stage joins): a
-// failed attempt followed by success retains both costs. SPEC-TOKENS rule 14 says a row for a
-// second attempt (attempt=2) is its own row; the swarm reader deduped by job alone, so a
-// retried attempt folded as dup=<n> and its tokens never reached the day file.
+// A failed attempt followed by success retains both costs. SPEC-TOKENS rule 14 says a row for
+// a second attempt (attempt=2) is its own row; a reader that deduped by job alone would fold
+// a retried attempt as dup=<n>, and its tokens would never reach the day file.
 func TestIssue181SwarmRetryAttemptIsItsOwnRow(t *testing.T) {
 	t.Parallel()
 
@@ -91,5 +90,6 @@ func TestAvgLinesPerModelAndAll(t *testing.T) {
 	}
 	// Sorted by usd_per_mtok descending: deepseek (100), gpt (10.2875), zero (no rate, last).
 	at := func(model string) int { return strings.Index(r.Stderr, model) }
-	assert.True(t, at("deepseek/deepseek-v3") < at("openai/gpt-4o") && at("openai/gpt-4o") < at("x/zero"), "AVG lines are not sorted by usd_per_mtok descending: %s", r)
+	assert.Less(t, at("deepseek/deepseek-v3"), at("openai/gpt-4o"), "AVG lines are not sorted by usd_per_mtok descending: %s", r)
+	assert.Less(t, at("openai/gpt-4o"), at("x/zero"), "AVG lines are not sorted by usd_per_mtok descending: %s", r)
 }

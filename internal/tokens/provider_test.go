@@ -75,8 +75,7 @@ func TestXaiUsageJSONShapeParses(t *testing.T) {
 // the 5 token types (every present field is a Measure; every absent field
 // has Counts.has[type] == false), and CacheWrite / Reasoning must NOT be
 // counted as 0 -- which a refactor that folds "missing is zero" would.
-// Without this guard a future change could re-introduce the failure mode
-// nova-tools #450 was filed about.
+// Without this guard a future change could fold a missing count as zero.
 func TestXaiUsageJSONShapeParsesMissingKeysNotZero(t *testing.T) {
 	t.Parallel()
 
@@ -125,14 +124,17 @@ func TestXaiUsageJSONShapeParsesMissingKeysNotZero(t *testing.T) {
 
 	{
 		got, ok := m.Counts.Get(Input)
-		assert.Falsef(t, !ok || got != 1000, "input = (%d, %v), want (1000, true)", got, ok)
+		assert.True(t, ok, "input is reported")
+		assert.EqualValues(t, 1000, got, "input")
 	}
 	{
 		got, ok := m.Counts.Get(Output)
-		assert.Falsef(t, !ok || got != 100, "output = (%d, %v), want (100, true)", got, ok)
+		assert.True(t, ok, "output is reported")
+		assert.EqualValues(t, 100, got, "output")
 	}
 	{
 		got, ok := m.Counts.Get(CacheRead)
-		assert.Falsef(t, !ok || got != 800, "cache_read = (%d, %v), want (800, true)", got, ok)
+		assert.True(t, ok, "cache_read is reported")
+		assert.EqualValues(t, 800, got, "cache_read")
 	}
 }

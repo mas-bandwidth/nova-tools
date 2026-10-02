@@ -57,12 +57,11 @@ func pkgFiles(t *testing.T, pkg string) map[string]*ast.File {
 // quietly deleted from this list would otherwise take its tripwire with it and go green.
 var rule9Emptiers = []string{"os.Remove", "os.RemoveAll", "os.Truncate", ".Truncate(", "os.Create(", "os.WriteFile(", "os.O_TRUNC", "syscall.Unlink("}
 
-// Rule 9 and demanded test 8: this tool removes NOTHING. The prototype removed the old
-// month files on every real run and noted it in a list capped at six.
+// Rule 9 and demanded test 8: this tool removes NOTHING.
 //
 // Rule 9 says "deletes, truncates or trims", and a tripwire that searches only for the three
-// removal names is hollow for the middle word: `f.Truncate(0)` on the lock and `os.Create`
-// on the scratch copy both truncate and both walked past it. Every call that can empty a
+// removal names is hollow for the middle word: `f.Truncate(0)` on a lock and `os.Create`
+// on a scratch copy both truncate and both would walk past it. Every call that can empty a
 // file is searched for, in every package of the binary (binaryPackages, boundary_test.go),
 // and the ones the tool is allowed are carved out here BY FILE, with the reason -- each one
 // a file THIS RUN makes, never a file the tool was given.
@@ -145,15 +144,17 @@ walk:
 }
 
 // Rule 5 and demanded test 4's source half: ONE attribution rule, in one function, and no
-// reader carrying a regexp of its own. The prototype had two tables in two scripts and
-// they disagreed about three repos.
+// reader carrying a regexp of its own: two tables drift apart, and then two readers
+// attribute one path to two repos.
 func TestOnlyRepoGoCarriesTheAttributionRule(t *testing.T) {
 	t.Parallel()
 
 	text := pkgText(t, "internal/tokens")
 	for name, body := range text {
 		if name != "repo.go" && name != "bus.go" { // bus.go's regexps are the note GRAMMAR, not a repo table
-			assert.False(t, strings.Contains(body, "regexp.MustCompile") || strings.Contains(body, "regexp.Compile"), "internal/tokens/%s compiles a regexp; the repo table is the caller's file and the rule is one function in repo.go", name)
+			for _, compile := range []string{"regexp.MustCompile", "regexp.Compile"} {
+				assert.NotContains(t, body, compile, "internal/tokens/%s compiles a regexp; the repo table is the caller's file and the rule is one function in repo.go", name)
+			}
 		}
 	}
 	for _, reader := range []string{"claude.go", "opencode.go", "swarm.go", "bus.go"} {
@@ -161,9 +162,8 @@ func TestOnlyRepoGoCarriesTheAttributionRule(t *testing.T) {
 	}
 }
 
-// Rule 15's source half: no reader writes a literal zero for a type it did not read. Every
-// DeepSeek row and every Claude reasoning cell in the prototype said zero when nothing had
-// measured them.
+// Rule 15's source half: no reader writes a literal zero for a type it did not read, because
+// a zero there claims a measurement nothing made.
 func TestNoReaderWritesAZeroForATypeItDidNotRead(t *testing.T) {
 	t.Parallel()
 
@@ -173,8 +173,8 @@ func TestNoReaderWritesAZeroForATypeItDidNotRead(t *testing.T) {
 }
 
 // Demanded test 15's first clause: "a source test asserts no function adds one type column
-// into another". Every DeepSeek row in the prototype that said zero and every cell that
-// carried its neighbour's number came from exactly this. A write of one type may only read
+// into another". A cell that carries its neighbour's number comes from exactly this. A
+// write of one type may only read
 // THAT type: `c.Set(Input, c.n[Output])` is the shape this forbids. A type column is the
 // index of an array a type column lives in (a map keyed by anything else is not one), and a
 // type expression is one of the five type constants, such an index, or the argument of a
@@ -337,9 +337,9 @@ func TestWhatOneRunPrintsAndWrites(t *testing.T) {
 				cwd(msg("p3", "2026-09-11T10:02:00Z", "f", in(4), "/elsewhere/a.go")),
 			}},
 			day: []string{"f\tserialize\t3\t", "f\tother\t4\t"}, notDay: []string{"f\tschema\t"}},
-		// noid= was a number on a green TOKENS SOURCE line and reached nothing else -- not the
-		// exit code, not TOKENS NOTE. 100% of a file's usage can be dropped that way under
-		// TOKENS OK (lesson 95: a number is not a sentence).
+		// noid= alone is a number on a green TOKENS SOURCE line that reaches nothing else --
+		// not the exit code, not TOKENS NOTE -- and all of a file's usage can be dropped that
+		// way under TOKENS OK, so the remedy line says it in words.
 		{name: "messages with no id reach the remedy line",
 			files: map[string][]string{"a.jsonl": {msg("", t0, "f", in(9000), "/x/schema/a.go"), msg("m1", "2026-09-11T10:00:01Z", "f", in(1), "/x/schema/a.go")}},
 			out:   map[string][]string{"TOKENS SOURCE": {"noid=1"}, "TOKENS NOTE": {"no id", "claude:g", "!nothing was wrong"}}},
@@ -370,13 +370,10 @@ func TestWhatOneRunPrintsAndWrites(t *testing.T) {
 				return b.fold("--swarm", "d="+pool)
 			},
 			out: map[string][]string{"nousage=1": nil}, notOut: []string{"UNREADABLE"}, notErr: []string{"UNREADABLE"}},
-		// The spec declares a collapse nothing pinned: "It does not detect overlap between
-		// sources." Measured 2026-09-11 on the real bench: ~/.claude/projects/<session>/
-		// subagents/agent-*.jsonl and /private/tmp/.../tasks/*.output are the SAME messages,
-		// and declaring both reported 2,932,982,350 cache_read against the correct
-		// 1,502,293,166 -- written=true, check OK, sum OK, and nothing anywhere said the day had
-		// been doubled. The numbers still double, because that is what the spec says this tool
-		// does; the run now says so, naming the two labels and the count.
+		// The spec declares a collapse: "It does not detect overlap between sources." Two
+		// declared directories holding the same transcripts double the day -- written=true,
+		// check OK, sum OK. The numbers still double, because that is what the spec says this
+		// tool does; the run says so, naming the two labels and the count.
 		{name: "two sources over one tree: one of them alone",
 			files: map[string][]string{"a.jsonl": {fable}},
 			out:   map[string][]string{"TOKENS NOTE": {"nothing was wrong"}}, day: []string{"fable\tschema\t100\t"}},

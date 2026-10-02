@@ -22,5 +22,6 @@ func TestFoldLockRefusesFIFO(t *testing.T) {
 	}
 	require.Error(t, err, "FIFO lock was accepted")
 	info, statErr := os.Lstat(path)
-	require.Falsef(t, statErr != nil || info.Mode()&os.ModeNamedPipe == 0, "FIFO changed: %v (%v)", info, statErr)
+	require.NoErrorf(t, statErr, "FIFO changed: %v", info)
+	require.NotZerof(t, info.Mode()&os.ModeNamedPipe, "FIFO changed: %v", info)
 }
