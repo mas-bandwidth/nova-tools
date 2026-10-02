@@ -1899,35 +1899,46 @@ The user needs `FUNCTION LIST` for `fn check`, and `FUNCTION LIST` and `FUNCTION
 
 ## nova-cairn
 
-Keeps explicit session checkpoints, their source pointers and a bounded index.
-It stores the caller's words; it does not summarize or consolidate memory.
+Keeps a session's words as local checkpoints: the exact words, their source
+pointers and a bounded index. Publication intent is recorded, not carried out:
+there is no transport, and every line says `published=false`. It stores the
+caller's words; it does not summarize or consolidate memory.
 See [SPEC-CAIRN.md](SPEC-CAIRN.md).
 
 ```sh
 nova-cairn open --store ./checkpoints --session session-1 --publish never
-nova-cairn append --store ./checkpoints --session session-1 --entry note-1 --text "the words to keep" --publish never
+nova-cairn append --store ./checkpoints --session session-1 --entry note-1 --text "the words to keep"
 nova-cairn index --store ./checkpoints --max 20
 nova-cairn receipt --store ./checkpoints --session session-1 --entry note-1 [--text]
 ```
 
+The publication policy is named once, at `open` (`never`, `manual`, `deferred`
+or `immediate`; these examples choose local-only `never`), and an `append` with
+no `--publish` carries it; an `append --publish` names the entry's own. Successful
+writes report `persisted=true` and `published=false` whatever the policy.
+
 Reuse stable session and entry IDs for retries. The same ID and bytes are a
-duplicate; different bytes under an existing ID refuse. Each write requires an
-explicit publication policy. These examples choose local-only `never`. The current
-slice implements no transport: successful writes report `persisted=true` and
-`published=false`, even when another publication policy is recorded.
+duplicate (`duplicate=true`, nothing written); different bytes under an existing
+ID are a conflict at exit 1, and the line names the `receipt --text` that reads
+what the ID holds. A re-`open` naming the recorded policy (and source, when it
+names one) changes nothing; one naming another is a conflict at exit 1 that names
+the `open` matching the record. A missing entry or session is refused at exit 2
+naming the `index` that lists what is there. `open --dry-run` and `append
+--dry-run` make every check the write would and write nothing: the line adds
+`dry_run=true`, and a new entry says `persisted=false`.
 
 Every line names the entry's `source=`. `open --source <ptr>` records the
 session's pointer; an `append` with no `--source` carries that pointer, and an
 `append --source` names the entry's own. `index` and `receipt` print what the
 entry holds, and `source=-` is an entry with no pointer at all.
-`receipt --text` also includes the stored words as a `text` fact in plain and
-JSON output. Nested entries return their exact stored text; bench-file entries
-return the whitespace-trimmed indexed section body.
+`receipt --text` also prints the stored words as a `text` fact, quoted with its
+spaces kept (`text="the words to keep"`); JSON carries them as a plain string.
 
-Two store shapes are read. The tool's own is `sessions/<id>.md` with `entries/`
-and `log.jsonl` beside it. A **bench store** keeps one markdown file per session
-directly under the store — `cairns/<session>.md`, the shape a friend appending
-by hand already has — and is read as it stands:
+Two store shapes are read. The tool's own, the nested shape, is `sessions/<id>.md`
+with `entries/` and `log.jsonl` beside it; it is what `open` creates. A **flat
+store** keeps one markdown file per session directly under the store
+(`cairns/<session>.md`, the shape notes appended by hand already have), an
+interoperability mode read as it stands:
 
 ```sh
 # cairns/b9395d11.md exists, written by hand; this lays down the fixture the tests use
@@ -1935,17 +1946,20 @@ mkdir -p cairns && cp internal/cairn/testdata/bench-b9395d11.md cairns/b9395d11.
 nova-cairn append --store ./cairns --session b9395d11 --entry beat-1405 --publish manual --text "the words to keep"
 ```
 
-`open` on such a record is a no-op (it never writes a second record under
+`open` on a flat record is a no-op (it never writes a second record under
 `sessions/`, which would split one session in two), and `append` lands a dated
 `## <stamp> — <entry>` section at the end of the file, one blank line between
 sections, the words byte-for-byte under the heading. Nothing appears beside the
 file: no `entries/`, no `log.jsonl`, no index. Retries and conflicts read that
 section, so the same ID with the same words adds nothing and the same ID with
-different words still refuses. `index` and `receipt` read stored entries and so
-cover the tool's own shape only; a bench record's entries are its sections, and
-the coverage ledger counts the file. An append addressing a session neither
-shape holds refuses with the whole remedy verb: `open first: nova-cairn open
---store <dir> --session <id> --publish <policy>`.
+different words is still a conflict. `index` and `receipt` read flat records too:
+a flat record's entries are its dated sections, its byte counts and `--text` are
+the whitespace-trimmed section body, and since the format stores no source or
+policy they print `source=-` and `publish=unknown` (an `append` with no
+`--publish` says `publish=unknown` for the same reason). The coverage ledger
+counts the file. An append addressing a session neither shape holds refuses with
+the whole remedy verb: `open first: nova-cairn open --store <dir> --session <id>
+--publish <policy>`.
 
 
 ## nova-table
