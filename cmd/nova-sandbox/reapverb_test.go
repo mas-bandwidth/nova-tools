@@ -151,6 +151,7 @@ func TestReapKillsWhatHeldAnOrphanedVolumeAndDeletesIt(t *testing.T) {
 			}
 		})
 	}
+	t.Run("escalation", reapSurvivors)
 }
 
 // The marker is the run verb's, written before the command starts, so that a reap after a
