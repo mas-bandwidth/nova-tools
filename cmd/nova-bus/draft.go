@@ -238,8 +238,8 @@ func draftOpenReadFailure(busDir string, me bus.Participant, maxWords int, haveM
 
 // draftOutPreflight is every refusal writeDraftOut can know before it writes, read-only,
 // so the real run and the dry run refuse alike: a path that is there without --overwrite,
-// a directory, a path Lstat cannot read, and a parent that is missing or is not a
-// directory. It prints the refusal and returns its exit code, or 0 when the write may go.
+// a directory, a path Lstat cannot read, a parent that is missing or is not a directory,
+// and a parent this process cannot create a file in. It prints the refusal and returns its exit code, or 0 when the write may go.
 func draftOutPreflight(path string, overwrite bool, stderr io.Writer) int {
 	fi, err := os.Lstat(path)
 	switch {
@@ -256,6 +256,12 @@ func draftOutPreflight(path string, overwrite bool, stderr io.Writer) int {
 	parent := filepath.Dir(path)
 	if pi, err := os.Stat(parent); err != nil || !pi.IsDir() {
 		fmt.Fprintf(stderr, "DRAFT REFUSED: write %s: the directory %s is not there; make it, or name a file in a directory that is; run: nova-bus draft -h\n", oneline.Field(path), oneline.Field(parent))
+		return 2
+	}
+	// The write creates a file in the parent (and, under --overwrite, removes one there
+	// first): both need the parent to accept a new entry, which its mode can refuse.
+	if err := canCreateIn(parent); err != nil {
+		fmt.Fprintf(stderr, "DRAFT REFUSED: write %s: the directory %s does not let this process create a file in it (%s); name a directory you can write; run: nova-bus draft -h\n", oneline.Field(path), oneline.Field(parent), oneline.Err(err))
 		return 2
 	}
 	return 0

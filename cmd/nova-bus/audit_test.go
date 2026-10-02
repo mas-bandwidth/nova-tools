@@ -130,6 +130,10 @@ var messageBusAudit = audit.Config{
 		// sort orders the missing required flags' names so one bare verb's refusal lines
 		// come in one order on every run; it holds no writer and reaches no stream.
 		`"sort"`,
+		// syscall is canCreateIn's: access(2) asks the kernel whether a directory accepts a
+		// new entry; it holds no writer and reaches no stream.
+		`"syscall"`,
+		`"io/fs"`,
 
 		`"github.com/mas-bandwidth/nova-tools/internal/bus"`,
 		// errors is reply.go's: errors.Is over the two sentinel refusals a no-replace

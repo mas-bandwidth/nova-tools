@@ -5,11 +5,13 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -89,6 +91,20 @@ func TestEveryDryRunIsTheRealRunWithoutItsWrites(t *testing.T) {
 			tc{"draft --out/a file already there", func(t *testing.T, root string) {
 				require.NoError(t, os.WriteFile(filepath.Join(scratch(root), "d.md"), []byte("mine\n"), 0o644))
 			}, draft(func(root string) string { return filepath.Join(scratch(root), "d.md") })},
+			tc{"draft --out/a parent this process cannot create in", func(t *testing.T, root string) {
+				if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+					t.Skip("a directory without write permission cannot be made here")
+				}
+				ro := filepath.Join(scratch(root), "ro")
+				require.NoError(t, os.Mkdir(ro, 0o755))
+				testkit.Unwritable(t, ro)
+			}, draft(func(root string) string { return filepath.Join(scratch(root), "ro", "d.md") })},
+			tc{"draft --out/a dangling symlink", func(t *testing.T, root string) {
+				require.NoError(t, os.Symlink(filepath.Join(scratch(root), "nowhere"), filepath.Join(scratch(root), "link.md")))
+			}, draft(func(root string) string { return filepath.Join(scratch(root), "link.md") })},
+			tc{"draft --out/a name that is a directory", func(t *testing.T, root string) {
+				require.NoError(t, os.Mkdir(filepath.Join(scratch(root), "dir.md"), 0o755))
+			}, draft(func(root string) string { return filepath.Join(scratch(root), "dir.md") })},
 		)
 	}
 	for _, c := range cases {
@@ -132,6 +148,11 @@ func treeBytes(t *testing.T, root string) map[string]string {
 		if d.IsDir() {
 			out[rel+"/"] = ""
 			return nil
+		}
+		if d.Type()&os.ModeSymlink != 0 { // a link is its target, never followed
+			target, err := os.Readlink(p)
+			out[rel] = "-> " + target
+			return err
 		}
 		b, err := os.ReadFile(p)
 		out[rel] = string(b)
