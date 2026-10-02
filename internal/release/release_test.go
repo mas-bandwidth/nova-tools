@@ -15,6 +15,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
@@ -278,7 +281,7 @@ func installRun(t *testing.T, s *fakeSSH, machine string) string {
 			return run
 		}
 	}
-	t.Fatalf("%s was never given a release install: %v", machine, s.runs)
+	require.FailNowf(t, "assertion failed", "%s was never given a release install: %v", machine, s.runs)
 	return ""
 }
 
@@ -286,7 +289,7 @@ func at(t *testing.T) time.Time {
 	t.Helper()
 	when, err := time.Parse(time.RFC3339, "2026-09-18T09:00:00Z")
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	return when
 }
@@ -334,13 +337,13 @@ func TestCutRefusesAShaWhoseChecksAreNotGreen(t *testing.T) {
 				"--version", "v0.16.0", "--changelog", filepath.Join(t.TempDir(), "CHANGELOG.md")},
 				&out, &errs, cutDeps(t, f))
 			if code != 2 {
-				t.Fatalf("green-gate did not refuse: code=%d out=%s errs=%s", code, out.String(), errs.String())
+				require.Equal(t, 2, code, "green-gate did not refuse: code=%d out=%s errs=%s", code, out.String(), errs.String())
 			}
 			if !strings.Contains(errs.String(), "CUT REFUSED") || !strings.Contains(errs.String(), tc.wants) {
-				t.Fatalf("refusal does not name the evidence: %s", errs.String())
+				require.FailNowf(t, "assertion failed", "refusal does not name the evidence: %s", errs.String())
 			}
 			if len(f.tagged) != 0 {
-				t.Fatalf("a red sha was tagged: %v", f.tagged)
+				require.Len(t, f.tagged, 0, "a red sha was tagged: %v", f.tagged)
 			}
 		})
 	}
@@ -367,25 +370,25 @@ func TestCutWritesTheChangelogTagsAndSaysWhatItDid(t *testing.T) {
 	f := cutForge()
 	path := filepath.Join(t.TempDir(), "CHANGELOG.md")
 	if err := os.WriteFile(path, []byte("# nova-tools changelog\n\n## v0.15.10 — 2026-09-17\n\n- #1 older\n"), 0o644); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	var out, errs bytes.Buffer
 	code := Run("nova-update", []string{"cut", "--repo", "mas-bandwidth/nova-tools", "--from", "main",
 		"--version", "v0.16.0", "--changelog", path}, &out, &errs, cutDeps(t, f))
 	if code != 0 {
-		t.Fatalf("code=%d errs=%s", code, errs.String())
+		require.Equal(t, 0, code, "code=%d errs=%s", code, errs.String())
 	}
 	// The one line a person reads off the terminal.
 	want := "RELEASE CUT version=v0.16.0 sha=abc123abc123def prs=2"
 	if !strings.Contains(out.String(), want) {
-		t.Fatalf("no cut line %q in:\n%s", want, out.String())
+		require.Contains(t, out.String(), want, "no cut line %q in:\n%s", want, out.String())
 	}
 	if len(f.tagged) != 1 || f.tagged[0] != "v0.16.0 abc123abc123def" {
-		t.Fatalf("tagged %v", f.tagged)
+		require.FailNowf(t, "assertion failed", "tagged %v", f.tagged)
 	}
 	body, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	got := string(body)
 	// The previous tag is the HIGHEST version tag, not the first one listed:
@@ -401,19 +404,19 @@ func TestCutWritesTheChangelogTagsAndSaysWhatItDid(t *testing.T) {
 		"#1305",
 	} {
 		if !strings.Contains(got, s) {
-			t.Errorf("the new section does not carry %q:\n%s", s, got)
+			assert.Contains(t, got, s, "the new section does not carry %q:\n%s", s, got)
 		}
 	}
 	// Prepended, never overwritten: the old section is still there and the new
 	// one is above it.
 	if !strings.Contains(got, "## v0.15.10 — 2026-09-17") {
-		t.Fatalf("the previous section was lost:\n%s", got)
+		require.Contains(t, got, "## v0.15.10 — 2026-09-17", "the previous section was lost:\n%s", got)
 	}
 	if strings.Index(got, "## v0.16.0") > strings.Index(got, "## v0.15.10") {
-		t.Fatalf("the new section is below the old one:\n%s", got)
+		require.FailNowf(t, "assertion failed", "the new section is below the old one:\n%s", got)
 	}
 	if !strings.HasPrefix(got, "# nova-tools changelog\n") {
-		t.Fatalf("the file's title was displaced:\n%s", got)
+		require.FailNowf(t, "assertion failed", "the file's title was displaced:\n%s", got)
 	}
 }
 
@@ -424,16 +427,16 @@ func TestCutCountsOnlyCommitsThatNameAPullRequest(t *testing.T) {
 
 	prs := PullRequests(cutForge().commits["v0.15.10...abc123abc123def"])
 	if len(prs) != 2 {
-		t.Fatalf("prs=%d %v", len(prs), prs)
+		require.Len(t, prs, 2, "prs=%d %v", len(prs), prs)
 	}
 	sort.Slice(prs, func(i, j int) bool { return prs[i].Number < prs[j].Number })
 	if prs[0].Number != 1253 || prs[0].Title != "feat: nova-pulse hygiene, the path-safe bench cleanup verbs (#1142)" {
-		t.Fatalf("first pr %+v", prs[0])
+		require.FailNowf(t, "assertion failed", "first pr %+v", prs[0])
 	}
 	// The batch's members come out of its own body, so a batch line does not
 	// hide five pieces of work behind one number.
 	if got := fmt.Sprint(prs[1].Members); got != "[1301 1305]" {
-		t.Fatalf("members %s", got)
+		require.Equal(t, "[1301 1305]", got, "members %s", got)
 	}
 }
 
@@ -446,16 +449,16 @@ func TestCutDryRunWritesNothingAndTagsNothing(t *testing.T) {
 	code := Run("nova-update", []string{"cut", "--repo", "o/n", "--from", "main", "--version", "v0.16.0",
 		"--changelog", path, "--dry-run"}, &out, &errs, cutDeps(t, f))
 	if code != 0 {
-		t.Fatalf("code=%d errs=%s", code, errs.String())
+		require.Equal(t, 0, code, "code=%d errs=%s", code, errs.String())
 	}
 	if !strings.Contains(out.String(), "RELEASE CUT version=v0.16.0") || !strings.Contains(out.String(), "dry-run=yes") {
-		t.Fatalf("dry run says nothing about itself: %s", out.String())
+		require.FailNowf(t, "assertion failed", "dry run says nothing about itself: %s", out.String())
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatalf("--dry-run wrote %s", path)
+		require.FailNowf(t, "assertion failed", "--dry-run wrote %s", path)
 	}
 	if len(f.tagged) != 0 {
-		t.Fatalf("--dry-run tagged %v", f.tagged)
+		require.Len(t, f.tagged, 0, "--dry-run tagged %v", f.tagged)
 	}
 }
 
@@ -464,12 +467,12 @@ func TestCutRefusesAVersionNoLaterStepCouldCheck(t *testing.T) {
 
 	for _, v := range []string{"", "0.16.0", "v0.16", "v0.16.0 rc1", "v0.16.0%s", "v0.16=0"} {
 		if err := ValidVersion(v); err == nil {
-			t.Errorf("accepted %q", v)
+			assert.Error(t, err, "accepted %q", v)
 		}
 	}
 	for _, v := range []string{"v0.16.0", "v1.0.0-rc1", "v0.15.3-0.20260918044559-d576bf6bbabb"} {
 		if err := ValidVersion(v); err != nil {
-			t.Errorf("refused %q: %v", v, err)
+			assert.NoError(t, err, "refused %q: %v", v, err)
 		}
 	}
 }
@@ -480,15 +483,15 @@ func TestEveryReleaseVerbNamesItsMissingFlagsAtOnce(t *testing.T) {
 	var out, errs bytes.Buffer
 	code := Run("nova-update", []string{"cut"}, &out, &errs, Deps{})
 	if code != 2 {
-		t.Fatal(code)
+		require.Equal(t, 2, code, code)
 	}
 	for _, flag := range []string{"--repo", "--from", "--version", "--changelog"} {
 		if !strings.Contains(errs.String(), flag) {
-			t.Fatalf("missing %s: %s", flag, errs.String())
+			require.Contains(t, errs.String(), flag, "missing %s: %s", flag, errs.String())
 		}
 	}
 	if strings.Count(errs.String(), "\n") > 1 {
-		t.Fatalf("the refusal printed a banner: %s", errs.String())
+		require.FailNowf(t, "assertion failed", "the refusal printed a banner: %s", errs.String())
 	}
 }
 
@@ -501,15 +504,15 @@ func sourceTree(t *testing.T) string {
 	dir := t.TempDir()
 	for _, tool := range []string{"nova-update", "nova-bus", "nova-swarm"} {
 		if err := os.MkdirAll(filepath.Join(dir, "cmd", tool), 0o755); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 		if err := os.WriteFile(filepath.Join(dir, "cmd", tool, "main.go"), []byte("package main\n"), 0o644); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 	}
 	// Not a nova tool: the build loop ships cmd/nova-*, so this must not appear.
 	if err := os.MkdirAll(filepath.Join(dir, "cmd", "helper"), 0o755); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	return dir
 }
@@ -523,54 +526,54 @@ func TestBuildStampsEveryToolAndWritesOneChecksumFile(t *testing.T) {
 	code := Run("nova-update", []string{"build", "--version", "v0.16.0", "--out", out, "--source", source},
 		&o, &e, Deps{Toolchain: tc})
 	if code != 0 {
-		t.Fatalf("code=%d errs=%s", code, e.String())
+		require.Equal(t, 0, code, "code=%d errs=%s", code, e.String())
 	}
 	if len(tc.calls) != 3 {
-		t.Fatalf("built %d packages: %v", len(tc.calls), tc.calls)
+		require.Len(t, tc.calls, 3, "built %d packages: %v", len(tc.calls), tc.calls)
 	}
 	for _, call := range tc.calls {
 		if !strings.Contains(call, "-trimpath") {
-			t.Fatalf("no -trimpath: %s", call)
+			require.Contains(t, call, "-trimpath", "no -trimpath: %s", call)
 		}
 		// The stamp is what makes `nova-X version` answer the release rather
 		// than `devel`; an empty -X is a legal linker flag and was #118.
 		if !strings.Contains(call, "-ldflags -s -w -X main.version=v0.16.0") {
-			t.Fatalf("no version stamp: %s", call)
+			require.Contains(t, call, "-ldflags -s -w -X main.version=v0.16.0", "no version stamp: %s", call)
 		}
 		if !strings.Contains(call, "cmd/nova-") {
-			t.Fatalf("built something that is not a nova tool: %s", call)
+			require.Contains(t, call, "cmd/nova-", "built something that is not a nova tool: %s", call)
 		}
 	}
 	plat := runtime.GOOS + "-" + runtime.GOARCH
 	dir := filepath.Join(out, "v0.16.0", plat)
 	sums, err := os.ReadFile(filepath.Join(dir, "SHA256SUMS"))
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if n := strings.Count(strings.TrimSpace(string(sums)), "\n") + 1; n != 3 {
-		t.Fatalf("SHA256SUMS has %d lines:\n%s", n, sums)
+		require.Equal(t, 3, n, "SHA256SUMS has %d lines:\n%s", n, sums)
 	}
 	// The checksum file cannot list itself, and every line is over a file that
 	// is really there with really that hash.
 	if strings.Contains(string(sums), "SHA256SUMS") {
-		t.Fatalf("SHA256SUMS lists itself:\n%s", sums)
+		require.NotContains(t, string(sums), "SHA256SUMS", "SHA256SUMS lists itself:\n%s", sums)
 	}
 	for _, line := range strings.Split(strings.TrimSpace(string(sums)), "\n") {
 		want, name, ok := strings.Cut(line, "  ")
 		if !ok {
-			t.Fatalf("not a sha256sum line: %q", line)
+			require.True(t, ok, "not a sha256sum line: %q", line)
 		}
 		body, err := os.ReadFile(filepath.Join(dir, name))
 		if err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 		sum := sha256.Sum256(body)
 		if got := hex.EncodeToString(sum[:]); got != want {
-			t.Fatalf("%s: %s recorded, %s on disk", name, want, got)
+			require.Equal(t, want, got, "%s: %s recorded, %s on disk", name, want, got)
 		}
 	}
 	if !strings.Contains(o.String(), "RELEASE BUILT version=v0.16.0") || !strings.Contains(o.String(), "tools=3") {
-		t.Fatalf("no build line: %s", o.String())
+		require.FailNowf(t, "assertion failed", "no build line: %s", o.String())
 	}
 }
 
@@ -582,15 +585,15 @@ func TestBuildRefusesWhenOneToolDoesNotCompile(t *testing.T) {
 	code := Run("nova-update", []string{"build", "--version", "v0.16.0", "--out", out, "--source", source},
 		&o, &e, Deps{Toolchain: &fakeToolchain{fail: "nova-swarm"}})
 	if code != 1 {
-		t.Fatalf("code=%d", code)
+		require.Equal(t, 1, code, "code=%d", code)
 	}
 	if !strings.Contains(e.String(), "nova-swarm") {
-		t.Fatalf("the failure does not name the tool: %s", e.String())
+		require.Contains(t, e.String(), "nova-swarm", "the failure does not name the tool: %s", e.String())
 	}
 	// A half-built directory must not carry a checksum file: SHA256SUMS over
 	// two of three tools is a file that agrees with itself and with nothing.
 	if _, err := os.Stat(filepath.Join(out, "v0.16.0", runtime.GOOS+"-"+runtime.GOARCH, "SHA256SUMS")); err == nil {
-		t.Fatal("a failed build still wrote SHA256SUMS")
+		require.Error(t, err, "a failed build still wrote SHA256SUMS")
 	}
 }
 
@@ -601,7 +604,7 @@ func TestBuildRefusesASourceTreeWithNoNovaTools(t *testing.T) {
 	code := Run("nova-update", []string{"build", "--version", "v0.16.0", "--out", t.TempDir(), "--source", t.TempDir()},
 		&o, &e, Deps{Toolchain: &fakeToolchain{}})
 	if code != 2 || !strings.Contains(e.String(), "no cmd/nova-") {
-		t.Fatalf("code=%d errs=%s", code, e.String())
+		require.FailNowf(t, "assertion failed", "code=%d errs=%s", code, e.String())
 	}
 }
 
@@ -638,26 +641,26 @@ func assertRunnable(t *testing.T, path string) {
 	t.Helper()
 	info, err := os.Stat(path)
 	if err != nil {
-		t.Fatalf("%s was not installed: %v", filepath.Base(path), err)
+		require.NoError(t, err, "%s was not installed: %v", filepath.Base(path), err)
 	}
 	if !info.Mode().IsRegular() {
-		t.Fatalf("%s is not a regular file: %v", filepath.Base(path), info.Mode())
+		require.FailNowf(t, "assertion failed", "%s is not a regular file: %v", filepath.Base(path), info.Mode())
 	}
 	// The fixture toolchain writes "binary <name> <build args>", so this also
 	// says the bytes are the ARTIFACT's and not a leftover or an empty file --
 	// a check every platform can make, and a stronger one than the mode bit.
 	body, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("%s cannot be read back: %v", filepath.Base(path), err)
+		require.NoError(t, err, "%s cannot be read back: %v", filepath.Base(path), err)
 	}
 	if !strings.HasPrefix(string(body), "binary "+filepath.Base(path)+" ") {
-		t.Fatalf("%s does not hold the built artifact's bytes: %q", filepath.Base(path), body)
+		require.FailNowf(t, "assertion failed", "%s does not hold the built artifact's bytes: %q", filepath.Base(path), body)
 	}
 	if runtime.GOOS == "windows" {
 		return // no execute bit exists here; the checks above are the whole answer
 	}
 	if info.Mode().Perm()&0o111 == 0 {
-		t.Fatalf("%s is not executable: %v", filepath.Base(path), info.Mode())
+		require.FailNowf(t, "assertion failed", "%s is not executable: %v", filepath.Base(path), info.Mode())
 	}
 }
 
@@ -665,7 +668,7 @@ func platformOf(t *testing.T, flagValue string) (string, string) {
 	t.Helper()
 	goos, goarch, err := Platform(flagValue)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	return goos, goarch
 }
@@ -680,10 +683,10 @@ func built(t *testing.T, version, platform string, tools ...string) string {
 	source := t.TempDir()
 	for _, tool := range tools {
 		if err := os.MkdirAll(filepath.Join(source, "cmd", tool), 0o755); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 		if err := os.WriteFile(filepath.Join(source, "cmd", tool, "main.go"), []byte("package main\n"), 0o644); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 	}
 	args := []string{"build", "--version", version, "--out", out, "--source", source}
@@ -692,7 +695,7 @@ func built(t *testing.T, version, platform string, tools ...string) string {
 	}
 	var o, e bytes.Buffer
 	if code := Run("nova-update", args, &o, &e, Deps{Toolchain: &fakeToolchain{}}); code != 0 {
-		t.Fatalf("fixture build: %d %s", code, e.String())
+		require.Equal(t, 0, code, "fixture build: %d %s", code, e.String())
 	}
 	return out
 }
@@ -713,13 +716,13 @@ func TestBuildNamesArtifactsForTheTargetNotTheHost(t *testing.T) {
 			dir := ArtifactDir(built(t, "v0.16.0", tc.platform, "nova-bus"), "v0.16.0", goos, goarch)
 			arts, err := ReadSums(dir)
 			if err != nil {
-				t.Fatal(err)
+				require.NoError(t, err, err)
 			}
 			if len(arts) != 1 || arts[0].Name != tc.want {
-				t.Fatalf("%s built %v, want %s", tc.platform, arts, tc.want)
+				require.FailNowf(t, "assertion failed", "%s built %v, want %s", tc.platform, arts, tc.want)
 			}
 			if _, err := os.Stat(filepath.Join(dir, tc.want)); err != nil {
-				t.Fatalf("%s is not on disk: %v", tc.want, err)
+				require.NoError(t, err, "%s is not on disk: %v", tc.want, err)
 			}
 		})
 	}
@@ -747,7 +750,7 @@ func TestInstallVerifiesRenamesAndSkipsWhatIsAlreadyCurrent(t *testing.T) {
 			// is written under the name the TARGET installs it as.
 			current := ToolFile("nova-wake", goos)
 			if err := testbin.WriteExecutable(filepath.Join(bin, current), []byte("old"), 0o755); err != nil {
-				t.Fatal(err)
+				require.NoError(t, err, err)
 			}
 			args := []string{"install", "--from", from, "--version", "v0.16.0", "--bin", bin}
 			if platform != "" {
@@ -763,10 +766,10 @@ func TestInstallVerifiesRenamesAndSkipsWhatIsAlreadyCurrent(t *testing.T) {
 				return "", fmt.Errorf("no such file")
 			}})
 			if code != 0 {
-				t.Fatalf("code=%d errs=%s", code, e.String())
+				require.Equal(t, 0, code, "code=%d errs=%s", code, e.String())
 			}
 			if want := "RELEASE INSTALLED version=v0.16.0 tools=2 skipped=1"; !strings.Contains(o.String(), want) {
-				t.Fatalf("no install line %q in:\n%s", want, o.String())
+				require.Contains(t, o.String(), want, "no install line %q in:\n%s", want, o.String())
 			}
 			// THE PROBE ASKS THE REAL FILE. On windows that is nova-bus.exe,
 			// and a probe that ran `nova-bus` would be asking after a path
@@ -776,7 +779,7 @@ func TestInstallVerifiesRenamesAndSkipsWhatIsAlreadyCurrent(t *testing.T) {
 			sort.Strings(probed)
 			sort.Strings(wantProbed)
 			if strings.Join(probed, ",") != strings.Join(wantProbed, ",") {
-				t.Fatalf("probed %v, want %v", probed, wantProbed)
+				require.FailNowf(t, "assertion failed", "probed %v, want %v", probed, wantProbed)
 			}
 			for _, tool := range []string{"nova-bus", "nova-swarm"} {
 				assertRunnable(t, filepath.Join(bin, ToolFile(tool, goos)))
@@ -784,16 +787,16 @@ func TestInstallVerifiesRenamesAndSkipsWhatIsAlreadyCurrent(t *testing.T) {
 			// Skipped means untouched, not overwritten with the same bytes.
 			body, err := os.ReadFile(filepath.Join(bin, current))
 			if err != nil || string(body) != "old" {
-				t.Fatalf("a skipped tool was rewritten: %q %v", body, err)
+				require.FailNowf(t, "assertion failed", "a skipped tool was rewritten: %q %v", body, err)
 			}
 			// The temporary name never survives the verb.
 			entries, err := os.ReadDir(bin)
 			if err != nil {
-				t.Fatal(err)
+				require.NoError(t, err, err)
 			}
 			for _, entry := range entries {
 				if strings.HasPrefix(entry.Name(), ".") {
-					t.Fatalf("a temporary file was left behind: %s", entry.Name())
+					require.FailNowf(t, "assertion failed", "a temporary file was left behind: %s", entry.Name())
 				}
 			}
 		})
@@ -807,22 +810,22 @@ func TestInstallRefusesABinaryThatDoesNotMatchItsChecksum(t *testing.T) {
 	from := built(t, "v0.16.0", "", "nova-bus", "nova-swarm")
 	dir := ArtifactDir(from, "v0.16.0", goos, goarch)
 	if err := testbin.WriteExecutable(filepath.Join(dir, ToolFile("nova-bus", goos)), []byte("tampered"), 0o755); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	bin := t.TempDir()
 	var o, e bytes.Buffer
 	code := Run("nova-update", []string{"install", "--from", from, "--version", "v0.16.0", "--bin", bin},
 		&o, &e, Deps{VersionOf: func(context.Context, string) (string, error) { return "", fmt.Errorf("absent") }})
 	if code != 2 {
-		t.Fatalf("code=%d out=%s", code, o.String())
+		require.Equal(t, 2, code, "code=%d out=%s", code, o.String())
 	}
 	if !strings.Contains(e.String(), "nova-bus") || !strings.Contains(e.String(), "INSTALL REFUSED") {
-		t.Fatalf("refusal: %s", e.String())
+		require.FailNowf(t, "assertion failed", "refusal: %s", e.String())
 	}
 	// NOTHING is installed when one file fails: the set is verified whole
 	// before the first rename, so a bad artifact cannot land beside good ones.
 	if entries, err := os.ReadDir(bin); err != nil || len(entries) != 0 {
-		t.Fatalf("a refused install still wrote %v (%v)", entries, err)
+		require.FailNowf(t, "assertion failed", "a refused install still wrote %v (%v)", entries, err)
 	}
 }
 
@@ -833,7 +836,7 @@ func TestInstallRefusesAVersionThatWasNeverBuilt(t *testing.T) {
 	code := Run("nova-update", []string{"install", "--from", built(t, "v0.16.0", "", "nova-bus"),
 		"--version", "v0.17.0", "--bin", t.TempDir()}, &o, &e, Deps{})
 	if code != 2 || !strings.Contains(e.String(), "v0.17.0") {
-		t.Fatalf("code=%d errs=%s", code, e.String())
+		require.FailNowf(t, "assertion failed", "code=%d errs=%s", code, e.String())
 	}
 }
 
@@ -845,7 +848,7 @@ func machinesFile(t *testing.T, lines string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "machines")
 	if err := os.WriteFile(path, []byte(lines), 0o644); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	return path
 }
@@ -883,19 +886,19 @@ func TestAdoptSendsInstallsAndWritesOneReceiptPerMachine(t *testing.T) {
 			}
 			var o, e bytes.Buffer
 			if code := Run("nova-update", args, &o, &e, Deps{SSH: s}); code != 0 {
-				t.Fatalf("code=%d errs=%s", code, e.String())
+				require.Equal(t, 0, code, "code=%d errs=%s", code, e.String())
 			}
 			for _, machine := range []string{"hulk", "vision", "mini"} {
 				want := "RELEASE ADOPTED machine=" + machine + " version=v0.16.0 tools="
 				if !strings.Contains(o.String(), want) {
-					t.Fatalf("no receipt for %s:\n%s", machine, o.String())
+					require.Contains(t, o.String(), want, "no receipt for %s:\n%s", machine, o.String())
 				}
 			}
 			if !strings.Contains(o.String(), "RELEASE ADOPT OK machines=3 adopted=3 refused=0") {
-				t.Fatalf("no verdict line:\n%s", o.String())
+				require.Contains(t, o.String(), "RELEASE ADOPT OK machines=3 adopted=3 refused=0", "no verdict line:\n%s", o.String())
 			}
 			if len(s.sends) != 3 {
-				t.Fatalf("sends=%v", s.sends)
+				require.Len(t, s.sends, 3, "sends=%v", s.sends)
 			}
 			// The release installs ITSELF: the nova-update that runs the
 			// remote install is the one just sent, so a bench with no
@@ -910,13 +913,13 @@ func TestAdoptSendsInstallsAndWritesOneReceiptPerMachine(t *testing.T) {
 				"--platform " + goos + "-" + goarch,
 			} {
 				if !strings.Contains(run, part) {
-					t.Fatalf("the remote command does not carry %q: %s", part, run)
+					require.Contains(t, run, part, "the remote command does not carry %q: %s", part, run)
 				}
 			}
 			// Remote paths are slash paths whatever this host is, so a
 			// darwin or windows coordinator adopts a Linux bench correctly.
 			if strings.Contains(run, `\`) {
-				t.Fatalf("the remote command carries a backslash path: %s", run)
+				require.NotContains(t, run, `\`, "the remote command carries a backslash path: %s", run)
 			}
 		})
 	}
@@ -933,7 +936,7 @@ func TestAdoptRefusesAReleaseWithNoUpdateForTheTarget(t *testing.T) {
 		"--from", built(t, "v0.16.0", "windows-amd64", "nova-bus"), "--bin", "/b", "--dest", "/d",
 		"--platform", "windows-amd64", "--no-certify"}, &o, &e, Deps{SSH: &fakeSSH{}})
 	if code != 2 || !strings.Contains(e.String(), "nova-update.exe") {
-		t.Fatalf("code=%d errs=%s", code, e.String())
+		require.FailNowf(t, "assertion failed", "code=%d errs=%s", code, e.String())
 	}
 }
 
@@ -951,10 +954,10 @@ func TestAdoptRefusesOneMachineAndStillReportsTheRest(t *testing.T) {
 		"--ssh", "/usr/bin/ssh", "--from", from, "--bin", "/home/nova/.local/bin",
 		"--dest", "/home/nova/nova-bench/build", "--no-certify"}, &o, &e, Deps{SSH: s})
 	if code != 1 {
-		t.Fatalf("code=%d", code)
+		require.Equal(t, 1, code, "code=%d", code)
 	}
 	if !strings.Contains(o.String(), "RELEASE ADOPTED machine=hulk") {
-		t.Fatalf("the machine that worked has no receipt:\n%s", o.String())
+		require.Contains(t, o.String(), "RELEASE ADOPTED machine=hulk", "the machine that worked has no receipt:\n%s", o.String())
 	}
 	line := ""
 	for _, l := range strings.Split(e.String(), "\n") {
@@ -963,14 +966,14 @@ func TestAdoptRefusesOneMachineAndStillReportsTheRest(t *testing.T) {
 		}
 	}
 	if line == "" {
-		t.Fatalf("no refusal for vision:\n%s", e.String())
+		require.FailNowf(t, "assertion failed", "no refusal for vision:\n%s", e.String())
 	}
 	// A refusal with no remedy is a line that tells somebody to go and find out.
 	if !strings.Contains(line, "Connection refused") || !strings.Contains(line, "ssh ") {
-		t.Fatalf("the refusal carries no cause and remedy: %s", line)
+		require.FailNowf(t, "assertion failed", "the refusal carries no cause and remedy: %s", line)
 	}
 	if !strings.Contains(e.String(), "adopted=1 refused=1") {
-		t.Fatalf("the verdict does not count both:\n%s", e.String())
+		require.Contains(t, e.String(), "adopted=1 refused=1", "the verdict does not count both:\n%s", e.String())
 	}
 }
 
@@ -986,7 +989,7 @@ func TestAdoptRefusesAMachineWhoseInstallSaidNothing(t *testing.T) {
 	code := Run("nova-update", []string{"adopt", "--no-certify", "--version", "v0.16.0", "--machines", machinesFile(t, "hulk\n"),
 		"--ssh", "/usr/bin/ssh", "--from", from, "--bin", "/b", "--dest", "/d", "--no-certify"}, &o, &e, Deps{SSH: s})
 	if code != 1 || !strings.Contains(e.String(), "RELEASE REFUSED machine=hulk") {
-		t.Fatalf("code=%d errs=%s", code, e.String())
+		require.FailNowf(t, "assertion failed", "code=%d errs=%s", code, e.String())
 	}
 }
 
@@ -1000,10 +1003,10 @@ func TestAdoptRefusesAMachineNameThatIsNotOne(t *testing.T) {
 		"--machines", machinesFile(t, "hulk; rm -rf /\n"), "--ssh", "/usr/bin/ssh",
 		"--from", from, "--bin", "/b", "--dest", "/d", "--no-certify"}, &o, &e, Deps{SSH: s})
 	if code != 2 {
-		t.Fatalf("code=%d out=%s", code, o.String())
+		require.Equal(t, 2, code, "code=%d out=%s", code, o.String())
 	}
 	if len(s.runs) != 0 || len(s.sends) != 0 {
-		t.Fatalf("a bad machine name still reached ssh: %v %v", s.runs, s.sends)
+		require.FailNowf(t, "assertion failed", "a bad machine name still reached ssh: %v %v", s.runs, s.sends)
 	}
 }
 
@@ -1015,7 +1018,7 @@ func TestAdoptRefusesAnEmptyMachineList(t *testing.T) {
 		"--machines", machinesFile(t, "# nobody\n\n"), "--ssh", "/usr/bin/ssh",
 		"--from", built(t, "v0.16.0", "", "nova-update"), "--bin", "/b", "--dest", "/d", "--no-certify"}, &o, &e, Deps{SSH: &fakeSSH{}})
 	if code != 2 || !strings.Contains(e.String(), "no machine") {
-		t.Fatalf("code=%d errs=%s", code, e.String())
+		require.FailNowf(t, "assertion failed", "code=%d errs=%s", code, e.String())
 	}
 }
 
@@ -1036,23 +1039,23 @@ func TestAForgeReadThatFillsTheCeilingSaysSoRatherThanKilled(t *testing.T) {
 	args := []string{"api", "repos/o/n/compare/v0.15.2...head"}
 	err := apiError(args, true, fmt.Errorf("signal: killed"))
 	if err == nil {
-		t.Fatal("a capture that hit the ceiling was reported as success")
+		require.Error(t, err, "a capture that hit the ceiling was reported as success")
 	}
 	if strings.Contains(err.Error(), "killed") {
-		t.Fatalf("the refusal still names the signal: %v", err)
+		require.NotContains(t, err.Error(), "killed", "the refusal still names the signal: %v", err)
 	}
 	for _, s := range []string{"ceiling", "nearer tag", "compare"} {
 		if !strings.Contains(err.Error(), s) {
-			t.Errorf("the refusal does not carry %q: %v", s, err)
+			assert.Contains(t, err.Error(), s, "the refusal does not carry %q: %v", s, err)
 		}
 	}
 	// An ordinary failure is still an ordinary failure, with gh's own words.
 	err = apiError(args, false, fmt.Errorf("HTTP 404"))
 	if err == nil || !strings.Contains(err.Error(), "404") {
-		t.Fatalf("a real failure lost its cause: %v", err)
+		require.FailNowf(t, "assertion failed", "a real failure lost its cause: %v", err)
 	}
 	if err := apiError(args, false, nil); err != nil {
-		t.Fatalf("a read that answered was reported as an error: %v", err)
+		require.NoError(t, err, "a read that answered was reported as an error: %v", err)
 	}
 }
 
@@ -1065,17 +1068,17 @@ func TestReleaseRefusesAnUnknownSubverbAndNamesTheFive(t *testing.T) {
 
 	var o, e bytes.Buffer
 	if code := Run("nova-update", []string{"ship"}, &o, &e, Deps{}); code != 2 {
-		t.Fatal(code)
+		require.Equal(t, 2, code, code)
 	}
 	for _, verb := range []string{"cut", "build", "install", "adopt", "pull"} {
 		if !strings.Contains(e.String(), verb) {
-			t.Fatalf("the refusal does not name %s: %s", verb, e.String())
+			require.Contains(t, e.String(), verb, "the refusal does not name %s: %s", verb, e.String())
 		}
 	}
 	o.Reset()
 	e.Reset()
 	if code := Run("nova-update", nil, &o, &e, Deps{}); code != 2 {
-		t.Fatal(code)
+		require.Equal(t, 2, code, code)
 	}
 }
 
@@ -1090,14 +1093,14 @@ func TestProgressGoesToStderrAndReceiptsToStdout(t *testing.T) {
 	var o, e bytes.Buffer
 	if code := Run("nova-update", []string{"adopt", "--no-certify", "--version", "v0.16.0", "--machines", machinesFile(t, "hulk\n"),
 		"--ssh", "/usr/bin/ssh", "--from", from, "--bin", "/b", "--dest", "/d", "--no-certify"}, &o, &e, Deps{SSH: s}); code != 0 {
-		t.Fatalf("%d %s", code, e.String())
+		require.FailNowf(t, "assertion failed", "%d %s", code, e.String())
 	}
 	if !strings.Contains(e.String(), "release: ") {
-		t.Fatalf("no progress on stderr: %q", e.String())
+		require.Contains(t, e.String(), "release: ", "no progress on stderr: %q", e.String())
 	}
 	for _, line := range strings.Split(strings.TrimSpace(o.String()), "\n") {
 		if line != "" && !strings.HasPrefix(line, "RELEASE ") {
-			t.Fatalf("stdout carries something that is not a receipt: %q", line)
+			require.FailNowf(t, "assertion failed", "stdout carries something that is not a receipt: %q", line)
 		}
 	}
 }
@@ -1122,7 +1125,7 @@ func TestAdoptFetchesTheReleaseFromAnotherMachine(t *testing.T) {
 	// The digest the cut recorded, which reached this host through git.
 	digest, err := fileSum(filepath.Join(served, SumsFile))
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	s := &fakeSSH{
 		serves: map[string]string{"hulk": served},
@@ -1139,29 +1142,29 @@ func TestAdoptFetchesTheReleaseFromAnotherMachine(t *testing.T) {
 		"--bin", "~/.local/bin", "--dest", "~/nova-bench/build",
 		"--platform", "linux-amd64"}, &o, &e, Deps{SSH: s})
 	if code != 0 {
-		t.Fatalf("code=%d errs=%s", code, e.String())
+		require.Equal(t, 0, code, "code=%d errs=%s", code, e.String())
 	}
 	// ONE fetch, from the build host, and then a push to each machine: the
 	// machines never talk to each other and never need to.
 	if len(s.fetches) != 1 || !strings.Contains(s.fetches[0], "hulk: /home/nova/nova-bench/release/v0.16.0/linux-amd64") {
-		t.Fatalf("fetches=%v", s.fetches)
+		require.FailNowf(t, "assertion failed", "fetches=%v", s.fetches)
 	}
 	if len(s.sends) != 2 {
-		t.Fatalf("sends=%v", s.sends)
+		require.Len(t, s.sends, 2, "sends=%v", s.sends)
 	}
 	for _, machine := range []string{"vision", "mini"} {
 		if !strings.Contains(o.String(), "RELEASE ADOPTED machine="+machine+" version=v0.16.0") {
-			t.Fatalf("no receipt for %s:\n%s", machine, o.String())
+			require.Contains(t, o.String(), "RELEASE ADOPTED machine="+machine+" version=v0.16.0", "no receipt for %s:\n%s", machine, o.String())
 		}
 	}
 	// The staged copy is a real copy, verified here before any of it moved on.
 	if _, err := ReadSums(ArtifactDir(stage, "v0.16.0", goos, goarch)); err != nil {
-		t.Fatalf("the release was not staged: %v", err)
+		require.NoError(t, err, "the release was not staged: %v", err)
 	}
 	// A leading ~ survives to the remote shell, which is what lets one --bin
 	// name three different home directories.
 	if run := installRun(t, s, "vision"); !strings.Contains(run, "--bin ~/.local/bin") {
-		t.Fatalf("the tilde did not survive: %s", run)
+		require.Contains(t, run, "--bin ~/.local/bin", "the tilde did not survive: %s", run)
 	}
 }
 
@@ -1173,7 +1176,7 @@ func TestAdoptRefusesARemoteFromWithNoStage(t *testing.T) {
 		"--machines", machinesFile(t, "vision\n"), "--ssh", "/usr/bin/ssh",
 		"--from", "hulk:/releases", "--bin", "/b", "--dest", "/d"}, &o, &e, Deps{SSH: &fakeSSH{}})
 	if code != 2 || !strings.Contains(e.String(), "--stage") {
-		t.Fatalf("code=%d errs=%s", code, e.String())
+		require.FailNowf(t, "assertion failed", "code=%d errs=%s", code, e.String())
 	}
 }
 
@@ -1186,14 +1189,14 @@ func TestAdoptRefusesAFetchThatDoesNotMatchItsChecksums(t *testing.T) {
 	onHulk := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
 	dir := ArtifactDir(onHulk, "v0.16.0", goos, goarch)
 	if err := testbin.WriteExecutable(filepath.Join(dir, "nova-bus"), []byte("truncated"), 0o755); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	s := &fakeSSH{serves: map[string]string{"hulk": dir}}
 	// The checksum FILE is untouched, so its digest still matches what the cut
 	// recorded: this is the case where the bits alone were damaged in flight.
 	digest, err := fileSum(filepath.Join(dir, SumsFile))
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	var o, e bytes.Buffer
 	code := Run("nova-update", []string{"adopt", "--no-certify", "--version", "v0.16.0",
@@ -1201,10 +1204,10 @@ func TestAdoptRefusesAFetchThatDoesNotMatchItsChecksums(t *testing.T) {
 		"--from", "hulk:/releases", "--stage", t.TempDir(), "--expect-sums", digest,
 		"--bin", "/b", "--dest", "/d", "--platform", "linux-amd64"}, &o, &e, Deps{SSH: s})
 	if code != 2 || !strings.Contains(e.String(), "nova-bus") {
-		t.Fatalf("code=%d errs=%s", code, e.String())
+		require.FailNowf(t, "assertion failed", "code=%d errs=%s", code, e.String())
 	}
 	if len(s.sends) != 0 {
-		t.Fatalf("a bad fetch was still pushed to a machine: %v", s.sends)
+		require.Len(t, s.sends, 0, "a bad fetch was still pushed to a machine: %v", s.sends)
 	}
 }
 
@@ -1225,7 +1228,7 @@ func TestRemoteFromTellsAHostFromAWindowsPath(t *testing.T) {
 	} {
 		host, dir, remote := RemoteFrom(tc.in)
 		if host != tc.host || dir != tc.dir || remote != tc.remote {
-			t.Errorf("%q -> (%q, %q, %v), want (%q, %q, %v)", tc.in, host, dir, remote, tc.host, tc.dir, tc.remote)
+			assert.Failf(t, "assertion failed", "%q -> (%q, %q, %v), want (%q, %q, %v)", tc.in, host, dir, remote, tc.host, tc.dir, tc.remote)
 		}
 	}
 }
@@ -1239,7 +1242,7 @@ func TestMachinesFileCarriesPerMachineOverrides(t *testing.T) {
 	machines, err := Machines(strings.NewReader(
 		"# the fleet\nhulk\n\nvision\t~/bin\t~/stage\nnova@mini\t/opt/nova/bin\n"))
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	want := []Machine{
 		{Name: "hulk"},
@@ -1247,7 +1250,7 @@ func TestMachinesFileCarriesPerMachineOverrides(t *testing.T) {
 		{Name: "nova@mini", Bin: "/opt/nova/bin"},
 	}
 	if fmt.Sprint(machines) != fmt.Sprint(want) {
-		t.Fatalf("got %v, want %v", machines, want)
+		require.FailNowf(t, "assertion failed", "got %v, want %v", machines, want)
 	}
 }
 
@@ -1263,7 +1266,7 @@ func TestMachinesFileRefusesAShapeItCannotMean(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := Machines(strings.NewReader(tc.in))
 			if err == nil || !strings.Contains(err.Error(), tc.wants) {
-				t.Fatalf("got %v, want a refusal naming %q", err, tc.wants)
+				require.FailNowf(t, "assertion failed", "got %v, want a refusal naming %q", err, tc.wants)
 			}
 		})
 	}
@@ -1283,18 +1286,18 @@ func TestAdoptUsesEachMachinesOwnBinAndDest(t *testing.T) {
 		"--ssh", "/usr/bin/ssh", "--from", from, "--bin", "~/.local/bin",
 		"--dest", "~/nova-bench/build", "--platform", "linux-amd64"}, &o, &e, Deps{SSH: s})
 	if code != 0 {
-		t.Fatalf("code=%d errs=%s", code, e.String())
+		require.Equal(t, 0, code, "code=%d errs=%s", code, e.String())
 	}
 	hulk, vision := installRun(t, s, "hulk"), installRun(t, s, "vision")
 	if !strings.Contains(hulk, "--bin ~/.local/bin") || !strings.Contains(hulk, "~/nova-bench/build") {
-		t.Fatalf("hulk did not get the flags' values: %s", hulk)
+		require.FailNowf(t, "assertion failed", "hulk did not get the flags' values: %s", hulk)
 	}
 	if !strings.Contains(vision, "--bin /opt/nova/bin") || !strings.Contains(vision, "/opt/nova/stage") {
-		t.Fatalf("vision did not get its own columns: %s", vision)
+		require.FailNowf(t, "assertion failed", "vision did not get its own columns: %s", vision)
 	}
 	// And the receipt says where the tools actually went on that machine.
 	if !strings.Contains(o.String(), "machine=vision version=v0.16.0 tools=2 skipped=0 retired=0 sent=yes bin=/opt/nova/bin") {
-		t.Fatalf("the receipt does not carry that machine's bin:\n%s", o.String())
+		require.Contains(t, o.String(), "machine=vision version=v0.16.0 tools=2 skipped=0 retired=0 sent=yes bin=/opt/nova/bin", "the receipt does not carry that machine's bin:\n%s", o.String())
 	}
 }
 
@@ -1311,34 +1314,34 @@ func TestInstallRetiresStaleCopiesOfWhatItInstalled(t *testing.T) {
 	// Two stale tools of ours, one tool of somebody else's, one directory.
 	for _, name := range []string{ToolFile("nova-bus", goos), ToolFile("nova-swarm", goos), "gopls"} {
 		if err := testbin.WriteExecutable(filepath.Join(goBin, name), []byte("stale"), 0o755); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 	}
 	if err := os.MkdirAll(filepath.Join(goBin, "nova-keep-me"), 0o755); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	var o, e bytes.Buffer
 	code := Run("nova-update", []string{"install", "--from", from, "--version", "v0.16.0",
 		"--bin", bin, "--retire", goBin}, &o, &e,
 		Deps{VersionOf: func(context.Context, string) (string, error) { return "", fmt.Errorf("absent") }})
 	if code != 0 {
-		t.Fatalf("code=%d errs=%s", code, e.String())
+		require.Equal(t, 0, code, "code=%d errs=%s", code, e.String())
 	}
 	if !strings.Contains(o.String(), "tools=2 skipped=0 retired=2") {
-		t.Fatalf("the receipt does not count the retirement:\n%s", o.String())
+		require.Contains(t, o.String(), "tools=2 skipped=0 retired=2", "the receipt does not count the retirement:\n%s", o.String())
 	}
 	for _, name := range []string{ToolFile("nova-bus", goos), ToolFile("nova-swarm", goos)} {
 		if _, err := os.Stat(filepath.Join(goBin, name)); !os.IsNotExist(err) {
-			t.Fatalf("%s was not retired: %v", name, err)
+			require.FailNowf(t, "assertion failed", "%s was not retired: %v", name, err)
 		}
 	}
 	// NARROW: only a name this run installed, only a regular file. Somebody
 	// else's tool and a directory that happens to be called nova-* stay.
 	if _, err := os.Stat(filepath.Join(goBin, "gopls")); err != nil {
-		t.Fatalf("a tool that is not ours was removed: %v", err)
+		require.NoError(t, err, "a tool that is not ours was removed: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(goBin, "nova-keep-me")); err != nil {
-		t.Fatalf("a directory was removed: %v", err)
+		require.NoError(t, err, "a directory was removed: %v", err)
 	}
 	// And what was installed is untouched.
 	assertRunnable(t, filepath.Join(bin, ToolFile("nova-bus", goos)))
@@ -1355,7 +1358,7 @@ func TestInstallRefusesToRetireTheDirectoryItInstalledInto(t *testing.T) {
 		"--bin", bin, "--retire", bin}, &o, &e,
 		Deps{VersionOf: func(context.Context, string) (string, error) { return "", fmt.Errorf("absent") }})
 	if code != 2 || !strings.Contains(e.String(), "--retire") {
-		t.Fatalf("code=%d errs=%s", code, e.String())
+		require.FailNowf(t, "assertion failed", "code=%d errs=%s", code, e.String())
 	}
 	goos, _ := platformOf(t, "")
 	assertRunnable(t, filepath.Join(bin, ToolFile("nova-bus", goos)))
@@ -1370,7 +1373,7 @@ func TestInstallWithNoRetireDirectoryIsNotAFailure(t *testing.T) {
 		"--bin", t.TempDir(), "--retire", filepath.Join(t.TempDir(), "no-go-bin-here")}, &o, &e,
 		Deps{VersionOf: func(context.Context, string) (string, error) { return "", fmt.Errorf("absent") }})
 	if code != 0 || !strings.Contains(o.String(), "retired=0") {
-		t.Fatalf("code=%d out=%s errs=%s", code, o.String(), e.String())
+		require.FailNowf(t, "assertion failed", "code=%d out=%s errs=%s", code, o.String(), e.String())
 	}
 }
 
@@ -1387,13 +1390,13 @@ func TestAdoptPassesRetireToEachMachineAndCountsIt(t *testing.T) {
 		"--bin", "~/.local/bin", "--dest", "~/build", "--retire", "~/go/bin",
 		"--platform", "linux-amd64"}, &o, &e, Deps{SSH: s})
 	if code != 0 {
-		t.Fatalf("code=%d errs=%s", code, e.String())
+		require.Equal(t, 0, code, "code=%d errs=%s", code, e.String())
 	}
 	if run := installRun(t, s, "hulk"); !strings.Contains(run, "--retire ~/go/bin") {
-		t.Fatalf("the remote install was not told to retire: %s", run)
+		require.Contains(t, run, "--retire ~/go/bin", "the remote install was not told to retire: %s", run)
 	}
 	if !strings.Contains(o.String(), "retired=18") {
-		t.Fatalf("the receipt does not carry the retirement:\n%s", o.String())
+		require.Contains(t, o.String(), "retired=18", "the receipt does not carry the retirement:\n%s", o.String())
 	}
 }
 
@@ -1404,11 +1407,11 @@ func TestReleaseHelpCarriesTheMachinesFormatAndTheAdoptRule(t *testing.T) {
 
 	var o, e bytes.Buffer
 	if code := Run("nova-update", []string{"help"}, &o, &e, Deps{}); code != 0 {
-		t.Fatal(code)
+		require.Equal(t, 0, code, code)
 	}
 	for _, s := range []string{"one machine per line", "TAB", "user@host", "expands a leading ~", "host:dir", "--retire"} {
 		if !strings.Contains(o.String(), s) {
-			t.Errorf("the help does not carry %q:\n%s", s, o.String())
+			assert.Contains(t, o.String(), s, "the help does not carry %q:\n%s", s, o.String())
 		}
 	}
 	// And the three gates (Johnny's decisions on SPEC-RELEASE, #1337), because
@@ -1416,14 +1419,14 @@ func TestReleaseHelpCarriesTheMachinesFormatAndTheAdoptRule(t *testing.T) {
 	// gate they meet at the worst moment.
 	for _, s := range []string{"--security-read", "RELEASE CUT SENSITIVE", "sums=", "THE TAG STAYS"} {
 		if !strings.Contains(o.String(), s) {
-			t.Errorf("the help does not carry %q:\n%s", s, o.String())
+			assert.Contains(t, o.String(), s, "the help does not carry %q:\n%s", s, o.String())
 		}
 	}
 	// The sensitive list is COMPOSED into the help from the one list, so the
 	// help cannot fall behind the gate.
 	for _, prefix := range SensitivePaths {
 		if !strings.Contains(o.String(), prefix) {
-			t.Errorf("the help does not name the sensitive path %q:\n%s", prefix, o.String())
+			assert.Contains(t, o.String(), prefix, "the help does not name the sensitive path %q:\n%s", prefix, o.String())
 		}
 	}
 }
@@ -1474,10 +1477,10 @@ func TestAdoptRefusesAPathTheRemoteShellWouldReadAsSyntax(t *testing.T) {
 				var o, e bytes.Buffer
 				code := Run("nova-update", args, &o, &e, Deps{SSH: s})
 				if code != 2 {
-					t.Fatalf("%s %q was accepted: code=%d out=%s", flag, bad, code, o.String())
+					require.Equal(t, 2, code, "%s %q was accepted: code=%d out=%s", flag, bad, code, o.String())
 				}
 				if len(s.runs)+len(s.sends)+len(s.fetches) != 0 {
-					t.Fatalf("%s %q reached ssh: runs=%v sends=%v", flag, bad, s.runs, s.sends)
+					require.Equal(t, 0, len(s.runs)+len(s.sends)+len(s.fetches), "%s %q reached ssh: runs=%v sends=%v", flag, bad, s.runs, s.sends)
 				}
 			})
 		}
@@ -1497,13 +1500,13 @@ func TestAdoptRefusesAHostilePathInTheMachinesFile(t *testing.T) {
 		"--from", from, "--bin", "~/.local/bin", "--dest", "~/build",
 		"--platform", "linux-amd64"}, &o, &e, Deps{SSH: s})
 	if code != 2 || !strings.Contains(e.String(), "vision") {
-		t.Fatalf("code=%d errs=%s", code, e.String())
+		require.FailNowf(t, "assertion failed", "code=%d errs=%s", code, e.String())
 	}
 	// Not even the FIRST machine was touched: the whole file is validated
 	// before any of it is acted on, so a bad line does not leave half a fleet
 	// adopted and half refused.
 	if len(s.runs)+len(s.sends) != 0 {
-		t.Fatalf("a hostile column still reached ssh: %v %v", s.runs, s.sends)
+		require.Equal(t, 0, len(s.runs)+len(s.sends), "a hostile column still reached ssh: %v %v", s.runs, s.sends)
 	}
 }
 
@@ -1512,7 +1515,7 @@ func TestValidRemotePathTakesWhatItShould(t *testing.T) {
 
 	for _, good := range []string{"/home/nova/.local/bin", "~/.local/bin", "/opt/nova-tools/bin", "~/go/bin", "/a+b/c-d_e.f@g"} {
 		if err := ValidRemotePath("--bin", good); err != nil {
-			t.Errorf("refused %q: %v", good, err)
+			assert.NoError(t, err, "refused %q: %v", good, err)
 		}
 	}
 }
@@ -1526,24 +1529,24 @@ func TestSSHOptionsForbidAgentForwardingAndKeysOnArgv(t *testing.T) {
 
 	joined := strings.Join(SSHOptions, " ")
 	if !strings.Contains(joined, "ForwardAgent=no") {
-		t.Fatalf("ForwardAgent=no is not said out loud: %s", joined)
+		require.Contains(t, joined, "ForwardAgent=no", "ForwardAgent=no is not said out loud: %s", joined)
 	}
 	if !strings.Contains(joined, "BatchMode=yes") {
-		t.Fatalf("BatchMode=yes is missing: %s", joined)
+		require.Contains(t, joined, "BatchMode=yes", "BatchMode=yes is missing: %s", joined)
 	}
 	for _, never := range []string{"ForwardAgent=yes", "-i ", "IdentityFile", "-A", "StrictHostKeyChecking=no", "Password"} {
 		if strings.Contains(joined, never) {
-			t.Fatalf("the ssh options carry %q: %s", never, joined)
+			require.NotContains(t, joined, never, "the ssh options carry %q: %s", never, joined)
 		}
 	}
 	// And the whole composed argv for a real machine carries none of them.
 	argv := ExecSSH{Path: "/usr/bin/ssh"}.sshArgs("hulk")
 	if argv[len(argv)-1] != "hulk" {
-		t.Fatalf("the machine is not the last argument: %v", argv)
+		require.FailNowf(t, "assertion failed", "the machine is not the last argument: %v", argv)
 	}
 	for _, a := range argv {
 		if a == "-i" || a == "-A" || strings.HasSuffix(a, ".key") || strings.HasSuffix(a, ".pem") {
-			t.Fatalf("a key or an agent flag reached argv: %v", argv)
+			require.FailNowf(t, "assertion failed", "a key or an agent flag reached argv: %v", argv)
 		}
 	}
 }
@@ -1567,16 +1570,16 @@ func TestAdoptRefusesAFetchedReleaseWhoseSumsAreNotTheOnesCut(t *testing.T) {
 		"--from", "hulk:/releases", "--stage", t.TempDir(), "--expect-sums", cutDigest,
 		"--bin", "~/.local/bin", "--dest", "~/build", "--platform", "linux-amd64"}, &o, &e, Deps{SSH: s})
 	if code != 2 {
-		t.Fatalf("a substituted release was adopted: code=%d out=%s", code, o.String())
+		require.Equal(t, 2, code, "a substituted release was adopted: code=%d out=%s", code, o.String())
 	}
 	if !strings.Contains(e.String(), cutDigest) {
-		t.Fatalf("the refusal does not name the digest the release was cut with: %s", e.String())
+		require.Contains(t, e.String(), cutDigest, "the refusal does not name the digest the release was cut with: %s", e.String())
 	}
 	if !strings.Contains(e.String(), "was cut with") || strings.Count(e.String(), "digest") < 2 {
-		t.Fatalf("the refusal does not name both digests: %s", e.String())
+		require.FailNowf(t, "assertion failed", "the refusal does not name both digests: %s", e.String())
 	}
 	if len(s.sends) != 0 {
-		t.Fatalf("a release that failed the digest was still pushed: %v", s.sends)
+		require.Len(t, s.sends, 0, "a release that failed the digest was still pushed: %v", s.sends)
 	}
 }
 
@@ -1591,10 +1594,10 @@ func TestAdoptRefusesARemoteFromWithNoDigestToCheckAgainst(t *testing.T) {
 		"--from", "hulk:/releases", "--stage", t.TempDir(),
 		"--bin", "~/.local/bin", "--dest", "~/build", "--platform", "linux-amd64"}, &o, &e, Deps{SSH: s})
 	if code != 2 || !strings.Contains(e.String(), "--expect-sums") {
-		t.Fatalf("code=%d errs=%s", code, e.String())
+		require.FailNowf(t, "assertion failed", "code=%d errs=%s", code, e.String())
 	}
 	if len(s.fetches) != 0 {
-		t.Fatalf("a release was fetched with nothing to check it against: %v", s.fetches)
+		require.Len(t, s.fetches, 0, "a release was fetched with nothing to check it against: %v", s.fetches)
 	}
 }
 
@@ -1608,27 +1611,27 @@ func TestCutRecordsTheSumsDigestTheAdoptWillCheck(t *testing.T) {
 	sums := filepath.Join(ArtifactDir(out, "v0.16.0", goos, goarch), SumsFile)
 	want, err := fileSum(sums)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	path := filepath.Join(t.TempDir(), "CHANGELOG.md")
 	var o, e bytes.Buffer
 	code := Run("nova-update", []string{"cut", "--repo", "o/n", "--from", "main",
 		"--version", "v0.16.0", "--changelog", path, "--sums", sums}, &o, &e, cutDeps(t, cutForge()))
 	if code != 0 {
-		t.Fatalf("code=%d errs=%s", code, e.String())
+		require.Equal(t, 0, code, "code=%d errs=%s", code, e.String())
 	}
 	body, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if !strings.Contains(string(body), SumsDigestPrefix+want) {
-		t.Fatalf("the section does not record the digest %s:\n%s", want, body)
+		require.Contains(t, string(body), SumsDigestPrefix+want, "the section does not record the digest %s:\n%s", want, body)
 	}
 	if !strings.Contains(string(body), "--expect-sums "+want) {
-		t.Fatalf("the section does not say how to use it:\n%s", body)
+		require.Contains(t, string(body), "--expect-sums "+want, "the section does not say how to use it:\n%s", body)
 	}
 	if !strings.Contains(o.String(), "sums="+want) {
-		t.Fatalf("the cut line does not carry the digest: %s", o.String())
+		require.Contains(t, o.String(), "sums="+want, "the cut line does not carry the digest: %s", o.String())
 	}
 	// And that digest is exactly what adopt accepts for the same artifacts.
 	s := &fakeSSH{
@@ -1642,7 +1645,7 @@ func TestCutRecordsTheSumsDigestTheAdoptWillCheck(t *testing.T) {
 		"--from", "hulk:/releases", "--stage", t.TempDir(), "--expect-sums", want,
 		"--bin", "~/.local/bin", "--dest", "~/build", "--platform", "linux-amd64"},
 		&o, &e, Deps{SSH: s}); code != 0 {
-		t.Fatalf("the digest the cut wrote was not accepted: %d %s", code, e.String())
+		require.FailNowf(t, "assertion failed", "the digest the cut wrote was not accepted: %d %s", code, e.String())
 	}
 }
 
@@ -1658,11 +1661,11 @@ func TestInstallChecksBeforeItTouchesAnything(t *testing.T) {
 	dir = filepath.Dir(dir)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	platDir := filepath.Join(dir, entries[0].Name())
 	if err := testbin.WriteExecutable(filepath.Join(platDir, ToolFile("nova-bus", goos)), []byte("swapped"), 0o755); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	bin := t.TempDir()
 	probed := 0
@@ -1673,13 +1676,13 @@ func TestInstallChecksBeforeItTouchesAnything(t *testing.T) {
 			return "", fmt.Errorf("absent")
 		}})
 	if code != 2 {
-		t.Fatalf("code=%d", code)
+		require.Equal(t, 2, code, "code=%d", code)
 	}
 	if probed != 0 {
-		t.Fatalf("the version probe ran %d times before the checksum was checked", probed)
+		require.Equal(t, 0, probed, "the version probe ran %d times before the checksum was checked", probed)
 	}
 	if entries, err := os.ReadDir(bin); err != nil || len(entries) != 0 {
-		t.Fatalf("something was written before the checksum passed: %v %v", entries, err)
+		require.FailNowf(t, "assertion failed", "something was written before the checksum passed: %v %v", entries, err)
 	}
 }
 
@@ -1696,11 +1699,11 @@ func TestRetireRefusesTheLiveStamp(t *testing.T) {
 			"--bin", t.TempDir(), "--retire", target}, &o, &e,
 			Deps{VersionOf: func(context.Context, string) (string, error) { return "", fmt.Errorf("absent") }})
 		if code != 2 || !strings.Contains(e.String(), "stamp") {
-			t.Fatalf("--retire %s: code=%d errs=%s", target, code, e.String())
+			require.FailNowf(t, "assertion failed", "--retire %s: code=%d errs=%s", target, code, e.String())
 		}
 		// The stamp is still whole: a refused retire removed nothing.
 		if _, err := ReadSums(ArtifactDir(from, "v0.16.0", goos, goarch)); err != nil {
-			t.Fatalf("the stamp was damaged by a refused retire: %v", err)
+			require.NoError(t, err, "the stamp was damaged by a refused retire: %v", err)
 		}
 	}
 }
@@ -1717,20 +1720,20 @@ func TestSendCarriesOnlyWhatTheChecksumFileNames(t *testing.T) {
 	dir := ArtifactDir(from, "v0.16.0", goos, goarch)
 	for _, stray := range []string{"deploy.key", "notes.txt", ".env"} {
 		if err := os.WriteFile(filepath.Join(dir, stray), []byte("secret"), 0o600); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 	}
 	var buf bytes.Buffer
 	arts, err := ReadSums(dir)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	allowed := map[string]bool{SumsFile: true}
 	for _, a := range arts {
 		allowed[a.Name] = true
 	}
 	if err := writeTar(&buf, dir, "linux-amd64", allowed); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	sent := map[string]bool{}
 	tr := tar.NewReader(&buf)
@@ -1743,16 +1746,16 @@ func TestSendCarriesOnlyWhatTheChecksumFileNames(t *testing.T) {
 	}
 	for _, stray := range []string{"deploy.key", "notes.txt", ".env"} {
 		if sent[stray] {
-			t.Fatalf("%s was sent to the machine; the tar carried %v", stray, sent)
+			require.FailNowf(t, "assertion failed", "%s was sent to the machine; the tar carried %v", stray, sent)
 		}
 	}
 	for _, a := range arts {
 		if !sent[a.Name] {
-			t.Fatalf("%s was not sent; the tar carried %v", a.Name, sent)
+			require.FailNowf(t, "assertion failed", "%s was not sent; the tar carried %v", a.Name, sent)
 		}
 	}
 	if !sent[SumsFile] {
-		t.Fatalf("the checksum file was not sent: %v", sent)
+		require.FailNowf(t, "assertion failed", "the checksum file was not sent: %v", sent)
 	}
 }
 
@@ -1772,10 +1775,10 @@ func TestAdoptTreatsRemoteOutputAsDataNotAsACommand(t *testing.T) {
 		"--machines", machinesFile(t, "hulk\n"), "--ssh", "/usr/bin/ssh", "--from", from,
 		"--bin", "~/.local/bin", "--dest", "~/build", "--platform", "linux-amd64"}, &o, &e, Deps{SSH: s})
 	if code != 1 || !strings.Contains(e.String(), "RELEASE REFUSED machine=hulk") {
-		t.Fatalf("code=%d errs=%s", code, e.String())
+		require.FailNowf(t, "assertion failed", "code=%d errs=%s", code, e.String())
 	}
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
-		t.Fatalf("the remote's output was executed: %v", err)
+		require.FailNowf(t, "assertion failed", "the remote's output was executed: %v", err)
 	}
 }
 
@@ -1791,15 +1794,15 @@ func TestAdoptRunsTheBinaryItSentByAbsolutePath(t *testing.T) {
 		"--machines", machinesFile(t, "hulk\n"), "--ssh", "/usr/bin/ssh", "--from", from,
 		"--bin", "~/.local/bin", "--dest", "~/nova-bench/build", "--platform", "linux-amd64"},
 		&o, &e, Deps{SSH: s}); code != 0 {
-		t.Fatalf("code=%d errs=%s", code, e.String())
+		require.FailNowf(t, "assertion failed", "code=%d errs=%s", code, e.String())
 	}
 	command := strings.TrimPrefix(installRun(t, s, "hulk"), "hulk: ")
 	first := strings.Fields(command)[0]
 	if first != "~/nova-bench/build/v0.16.0/linux-amd64/nova-update" {
-		t.Fatalf("the remote command does not name the sent binary by path: %q", first)
+		require.Equal(t, "~/nova-bench/build/v0.16.0/linux-amd64/nova-update", first, "the remote command does not name the sent binary by path: %q", first)
 	}
 	if !strings.HasPrefix(first, "/") && !strings.HasPrefix(first, "~/") {
-		t.Fatalf("the remote binary would resolve against $PATH: %q", first)
+		require.FailNowf(t, "assertion failed", "the remote binary would resolve against $PATH: %q", first)
 	}
 }
 
@@ -1821,13 +1824,13 @@ func TestAdoptInfersTheVersionWhenThereIsOnlyOne(t *testing.T) {
 		"--ssh", "/usr/bin/ssh", "--from", from, "--bin", "~/.local/bin", "--dest", "~/build",
 		"--platform", "linux-amd64"}, &o, &e, Deps{SSH: s})
 	if code != 0 {
-		t.Fatalf("code=%d errs=%s", code, e.String())
+		require.Equal(t, 0, code, "code=%d errs=%s", code, e.String())
 	}
 	if !strings.Contains(o.String(), "version=v0.16.0") {
-		t.Fatalf("the inferred version is not in the receipt:\n%s", o.String())
+		require.Contains(t, o.String(), "version=v0.16.0", "the inferred version is not in the receipt:\n%s", o.String())
 	}
 	if !strings.Contains(e.String(), "v0.16.0") {
-		t.Fatalf("the inference was silent; it should say what it chose:\n%s", e.String())
+		require.Contains(t, e.String(), "v0.16.0", "the inference was silent; it should say what it chose:\n%s", e.String())
 	}
 }
 
@@ -1839,7 +1842,7 @@ func TestAdoptRefusesToGuessBetweenTwoVersionsAndNamesThem(t *testing.T) {
 	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
 	second := built(t, "v0.17.0", "linux-amd64", "nova-bus", "nova-update")
 	if err := os.Rename(filepath.Join(second, "v0.17.0"), filepath.Join(from, "v0.17.0")); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	s := &fakeSSH{}
 	var o, e bytes.Buffer
@@ -1847,15 +1850,15 @@ func TestAdoptRefusesToGuessBetweenTwoVersionsAndNamesThem(t *testing.T) {
 		"--ssh", "/usr/bin/ssh", "--from", from, "--bin", "~/.local/bin", "--dest", "~/build",
 		"--platform", "linux-amd64"}, &o, &e, Deps{SSH: s})
 	if code != 2 {
-		t.Fatalf("it guessed: code=%d out=%s", code, o.String())
+		require.Equal(t, 2, code, "it guessed: code=%d out=%s", code, o.String())
 	}
 	for _, v := range []string{"v0.16.0", "v0.17.0", "--version"} {
 		if !strings.Contains(e.String(), v) {
-			t.Fatalf("the refusal does not name %s: %s", v, e.String())
+			require.Contains(t, e.String(), v, "the refusal does not name %s: %s", v, e.String())
 		}
 	}
 	if len(s.runs)+len(s.sends) != 0 {
-		t.Fatalf("a guess still reached ssh: %v %v", s.runs, s.sends)
+		require.Equal(t, 0, len(s.runs)+len(s.sends), "a guess still reached ssh: %v %v", s.runs, s.sends)
 	}
 }
 
@@ -1867,7 +1870,7 @@ func TestAdoptRefusesAnEmptyArtifactRoot(t *testing.T) {
 		"--ssh", "/usr/bin/ssh", "--from", t.TempDir(), "--bin", "~/.local/bin", "--dest", "~/build",
 		"--platform", "linux-amd64"}, &o, &e, Deps{SSH: &fakeSSH{}})
 	if code != 2 || !strings.Contains(e.String(), "no release") {
-		t.Fatalf("code=%d errs=%s", code, e.String())
+		require.FailNowf(t, "assertion failed", "code=%d errs=%s", code, e.String())
 	}
 }
 
@@ -1882,10 +1885,10 @@ func TestBuildTakesSeveralPlatformsAtOnce(t *testing.T) {
 	code := Run("nova-update", []string{"build", "--version", "v0.16.0", "--out", out, "--source", source,
 		"--platform", "linux-amd64,darwin-arm64", "--platform", "windows-amd64"}, &o, &e, Deps{Toolchain: tc})
 	if code != 0 {
-		t.Fatalf("code=%d errs=%s", code, e.String())
+		require.Equal(t, 0, code, "code=%d errs=%s", code, e.String())
 	}
 	if len(tc.calls) != 9 { // 3 tools x 3 platforms
-		t.Fatalf("built %d packages, want 9: %v", len(tc.calls), tc.calls)
+		require.FailNowf(t, "assertion failed", "built %d packages, want 9: %v", len(tc.calls), tc.calls)
 	}
 	for _, tcase := range []struct{ platform, tool string }{
 		{"linux-amd64", "nova-bus"},
@@ -1894,21 +1897,21 @@ func TestBuildTakesSeveralPlatformsAtOnce(t *testing.T) {
 	} {
 		goos, goarch, err := Platform(tcase.platform)
 		if err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 		arts, err := ReadSums(ArtifactDir(out, "v0.16.0", goos, goarch))
 		if err != nil {
-			t.Fatalf("%s: %v", tcase.platform, err)
+			require.NoError(t, err, "%s: %v", tcase.platform, err)
 		}
 		var names []string
 		for _, a := range arts {
 			names = append(names, a.Name)
 		}
 		if !strings.Contains(strings.Join(names, ","), tcase.tool) {
-			t.Fatalf("%s holds %v, want %s", tcase.platform, names, tcase.tool)
+			require.Contains(t, strings.Join(names, ","), tcase.tool, "%s holds %v, want %s", tcase.platform, names, tcase.tool)
 		}
 		if !strings.Contains(o.String(), "platform="+tcase.platform) {
-			t.Fatalf("no receipt for %s:\n%s", tcase.platform, o.String())
+			require.Contains(t, o.String(), "platform="+tcase.platform, "no receipt for %s:\n%s", tcase.platform, o.String())
 		}
 	}
 }
@@ -1920,7 +1923,7 @@ func TestBuildRefusesAPlatformListItCannotRead(t *testing.T) {
 	code := Run("nova-update", []string{"build", "--version", "v0.16.0", "--out", t.TempDir(),
 		"--source", sourceTree(t), "--platform", "linux-amd64,nonsense"}, &o, &e, Deps{Toolchain: &fakeToolchain{}})
 	if code != 2 || !strings.Contains(e.String(), "nonsense") {
-		t.Fatalf("code=%d errs=%s", code, e.String())
+		require.FailNowf(t, "assertion failed", "code=%d errs=%s", code, e.String())
 	}
 }
 
@@ -1935,10 +1938,10 @@ func TestBuildVerifiesTheChecksumsItJustWrote(t *testing.T) {
 	code := Run("nova-update", []string{"build", "--version", "v0.16.0", "--out", out, "--source", source},
 		&o, &e, Deps{Toolchain: &fakeToolchain{}})
 	if code != 0 {
-		t.Fatalf("code=%d errs=%s", code, e.String())
+		require.Equal(t, 0, code, "code=%d errs=%s", code, e.String())
 	}
 	if !strings.Contains(o.String(), "verified=3") {
-		t.Fatalf("the build does not say what it verified:\n%s", o.String())
+		require.Contains(t, o.String(), "verified=3", "the build does not say what it verified:\n%s", o.String())
 	}
 }
 
@@ -1962,23 +1965,23 @@ func TestAdoptDryRunProbesEveryMachineAndStreamsNothing(t *testing.T) {
 		"--from", from, "--bin", "~/.local/bin", "--dest", "~/build",
 		"--platform", "linux-amd64", "--dry-run"}, &o, &e, Deps{SSH: s})
 	if code != 1 { // mini could not be reached; that is a finding, not a success
-		t.Fatalf("code=%d out=%s errs=%s", code, o.String(), e.String())
+		require.FailNowf(t, "assertion failed", "code=%d out=%s errs=%s", code, o.String(), e.String())
 	}
 	if len(s.sends) != 0 {
-		t.Fatalf("--dry-run streamed a release: %v", s.sends)
+		require.Len(t, s.sends, 0, "--dry-run streamed a release: %v", s.sends)
 	}
 	// One line per machine, saying what it found and what it would do.
 	if !strings.Contains(o.String(), "RELEASE WOULD ADOPT machine=hulk") || !strings.Contains(o.String(), "installed=v0.15.3") {
-		t.Fatalf("no probe line for hulk:\n%s", o.String())
+		require.FailNowf(t, "assertion failed", "no probe line for hulk:\n%s", o.String())
 	}
 	if !strings.Contains(o.String(), "machine=vision") || !strings.Contains(o.String(), "action=skip") {
-		t.Fatalf("vision is already current and the probe does not say so:\n%s", o.String())
+		require.FailNowf(t, "assertion failed", "vision is already current and the probe does not say so:\n%s", o.String())
 	}
 	if !strings.Contains(e.String(), "mini") {
-		t.Fatalf("the unreachable machine is not reported:\n%s", e.String())
+		require.Contains(t, e.String(), "mini", "the unreachable machine is not reported:\n%s", e.String())
 	}
 	if !strings.Contains(e.String(), "dry-run=yes") && !strings.Contains(o.String(), "dry-run=yes") {
-		t.Fatalf("the verdict does not say it was a dry run:\n%s\n%s", o.String(), e.String())
+		require.FailNowf(t, "assertion failed", "the verdict does not say it was a dry run:\n%s\n%s", o.String(), e.String())
 	}
 }
 
@@ -1991,7 +1994,7 @@ func TestAdoptStreamsNothingToAMachineThatAlreadyHasTheRelease(t *testing.T) {
 	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
 	localSums, err := os.ReadFile(filepath.Join(ArtifactDir(from, "v0.16.0", goos, goarch), SumsFile))
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	s := &fakeSSH{
 		// hulk answers the probe with the same checksum file it was sent
@@ -2008,24 +2011,24 @@ func TestAdoptStreamsNothingToAMachineThatAlreadyHasTheRelease(t *testing.T) {
 		"--from", from, "--bin", "~/.local/bin", "--dest", "~/build",
 		"--platform", "linux-amd64"}, &o, &e, Deps{SSH: s})
 	if code != 0 {
-		t.Fatalf("code=%d errs=%s", code, e.String())
+		require.Equal(t, 0, code, "code=%d errs=%s", code, e.String())
 	}
 	if len(s.sends) != 1 || !strings.HasPrefix(s.sends[0], "vision:") {
-		t.Fatalf("the wrong set was streamed: %v", s.sends)
+		require.FailNowf(t, "assertion failed", "the wrong set was streamed: %v", s.sends)
 	}
 	if !strings.Contains(o.String(), "machine=hulk") || !strings.Contains(o.String(), "sent=no") {
-		t.Fatalf("hulk's receipt does not say the stream was skipped:\n%s", o.String())
+		require.FailNowf(t, "assertion failed", "hulk's receipt does not say the stream was skipped:\n%s", o.String())
 	}
 	if !strings.Contains(e.String(), "already holds v0.16.0 (2/2)") {
-		t.Fatalf("already holds did not print the verified count:\n%s", e.String())
+		require.Contains(t, e.String(), "already holds v0.16.0 (2/2)", "already holds did not print the verified count:\n%s", e.String())
 	}
 	if !strings.Contains(o.String(), "machine=vision") || !strings.Contains(o.String(), "sent=yes") {
-		t.Fatalf("vision's receipt does not say it was streamed:\n%s", o.String())
+		require.FailNowf(t, "assertion failed", "vision's receipt does not say it was streamed:\n%s", o.String())
 	}
 	// Both machines still get the install: the bits being there is not the
 	// same fact as the tools being installed from them.
 	if len(s.runs) < 2 {
-		t.Fatalf("a machine was skipped entirely: %v", s.runs)
+		require.FailNowf(t, "assertion failed", "a machine was skipped entirely: %v", s.runs)
 	}
 }
 
@@ -2041,7 +2044,7 @@ func TestAdoptDoesNotTrustAPartialReleaseDir(t *testing.T) {
 	local := ArtifactDir(from, "v0.16.0", goos, goarch)
 	localSums, err := os.ReadFile(filepath.Join(local, SumsFile))
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	for _, tc := range []struct {
 		name    string
@@ -2064,16 +2067,16 @@ func TestAdoptDoesNotTrustAPartialReleaseDir(t *testing.T) {
 				"--from", from, "--bin", "~/.local/bin", "--dest", "~/build",
 				"--platform", "linux-amd64", "--no-certify"}, &o, &e, Deps{SSH: s})
 			if code != 0 {
-				t.Fatalf("code=%d errs=%s", code, e.String())
+				require.Equal(t, 0, code, "code=%d errs=%s", code, e.String())
 			}
 			if strings.Contains(e.String(), "streaming nothing") {
-				t.Fatalf("a partial release dir was trusted as complete:\n%s", e.String())
+				require.NotContains(t, e.String(), "streaming nothing", "a partial release dir was trusted as complete:\n%s", e.String())
 			}
 			if len(s.sends) != 1 {
-				t.Fatalf("the partial dir was not re-streamed: sends=%v errs=%s", s.sends, e.String())
+				require.Len(t, s.sends, 1, "the partial dir was not re-streamed: sends=%v errs=%s", s.sends, e.String())
 			}
 			if !strings.HasSuffix(s.sends[0], "-> ~/build/v0.16.0.partial") {
-				t.Fatalf("the stream did not land in <version>.partial/: %v", s.sends)
+				require.FailNowf(t, "assertion failed", "the stream did not land in <version>.partial/: %v", s.sends)
 			}
 			promoted := false
 			for _, run := range s.runs {
@@ -2082,10 +2085,10 @@ func TestAdoptDoesNotTrustAPartialReleaseDir(t *testing.T) {
 				}
 			}
 			if !promoted {
-				t.Fatalf("the verified .partial dir was not renamed into place: %v", s.runs)
+				require.True(t, promoted, "the verified .partial dir was not renamed into place: %v", s.runs)
 			}
 			if !strings.Contains(o.String(), "sent=yes") {
-				t.Fatalf("the receipt does not say the stream ran:\n%s", o.String())
+				require.Contains(t, o.String(), "sent=yes", "the receipt does not say the stream ran:\n%s", o.String())
 			}
 		})
 	}
@@ -2104,17 +2107,17 @@ func TestVerbHelpPrintsThatVerbsUsage(t *testing.T) {
 				var o, e bytes.Buffer
 				code := Run("nova-update", []string{verb, flagSpelling}, &o, &e, Deps{})
 				if code != 0 {
-					t.Fatalf("code=%d errs=%s", code, e.String())
+					require.Equal(t, 0, code, "code=%d errs=%s", code, e.String())
 				}
 				if strings.Contains(o.String()+e.String(), "help requested") {
-					t.Fatalf("the flag package's sentinel leaked: %s%s", o.String(), e.String())
+					require.NotContains(t, o.String()+e.String(), "help requested", "the flag package's sentinel leaked: %s%s", o.String(), e.String())
 				}
 				if !strings.Contains(o.String(), "nova-update release "+verb+" ") {
-					t.Fatalf("%s's usage is not what was printed:\n%s", verb, o.String())
+					require.Contains(t, o.String(), "nova-update release "+verb+" ", "%s's usage is not what was printed:\n%s", verb, o.String())
 				}
 				// ONE verb's usage, not all five: the person asked about one.
 				if strings.Count(o.String(), "nova-update release ") != 1 {
-					t.Fatalf("%s --help printed more than its own line:\n%s", verb, o.String())
+					require.FailNowf(t, "assertion failed", "%s --help printed more than its own line:\n%s", verb, o.String())
 				}
 			})
 		}
@@ -2131,17 +2134,17 @@ func TestVerifyArtifactsReportsWhatItActuallyChecked(t *testing.T) {
 	dir := ArtifactDir(from, "v0.16.0", goos, goarch)
 	arts, err := ReadSums(dir)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	n, err := VerifyArtifacts(dir, arts)
 	if err != nil || n != 3 {
-		t.Fatalf("checked %d of 3: %v", n, err)
+		require.FailNowf(t, "assertion failed", "checked %d of 3: %v", n, err)
 	}
 	// One bad artifact stops the count where it stopped the check.
 	if err := testbin.WriteExecutable(filepath.Join(dir, ToolFile("nova-bus", goos)), []byte("changed"), 0o755); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if n, err := VerifyArtifacts(dir, arts); err == nil || n == 3 {
-		t.Fatalf("a changed artifact was counted as verified: n=%d err=%v", n, err)
+		require.FailNowf(t, "assertion failed", "a changed artifact was counted as verified: n=%d err=%v", n, err)
 	}
 }

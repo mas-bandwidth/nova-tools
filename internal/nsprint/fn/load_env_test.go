@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -63,23 +64,23 @@ func TestLibraryLoadsInTheLoadTimeEnvironment(t *testing.T) {
 	t.Parallel()
 	src, err := Source()
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	_, body, _ := strings.Cut(src, "\n") // the shebang line is the store's, not Lua's
 	L, registered := loadEnv(t)
 	if err := L.DoString(body); err != nil {
-		t.Fatalf("the library does not load: %v", err)
+		require.NoError(t, err, "the library does not load: %v", err)
 	}
 	if len(*registered) == 0 {
-		t.Fatal("the library registered no function")
+		require.NotEqual(t, 0, len(*registered), "the library registered no function")
 	}
 	want, err := Spec().Functions()
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	got := append([]string(nil), *registered...)
 	sort.Strings(got)
 	if !slices.Equal(got, want) {
-		t.Fatalf("the library registers %v at load; its files name %v", got, want)
+		require.Equal(t, want, got, "the library registers %v at load; its files name %v", got, want)
 	}
 }
