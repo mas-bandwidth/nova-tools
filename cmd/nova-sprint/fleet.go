@@ -33,9 +33,11 @@ measured), the highest of the last `+sprint.LoadWindow.String()+`.
 fleet sync makes the fleet match nova-config's machine rows in one step (--pg,
 else NOVA_PG_DSN, as nova-config takes it): a member the table lacks is added
 at its width (the row's width, nova-config machine set <m> --width <n>), a
-width that differs is set, a width of 0 is no member, a row
-the inventory no longer names is held and its cards are dealt to the members
-that stay; nothing else changes, and a second sync writes nothing. --check
+width that differs is set, a width of 0 is no member and its row is held and
+its cards are dealt to the members that stay; a row with no machine row is held
+the same way and removed (its row and width out of the fleet) once no card stays
+on it, and comes back when its machine row does; nothing else changes, and a
+second sync writes nothing. --check
 prints the drift and writes nothing: exit 0 none, 2 some, 3 the config cannot
 be read.`) + "\n"
 }
@@ -63,6 +65,10 @@ func (a *app) fleetStep(st *store.Store, op, member, who string, width int) stor
 	switch op {
 	case "up":
 		r.Op = "release"
+		// a member a sync removed in this epoch comes back with its own control
+		// card, placed again before the step reads it (store.RejoinMembers)
+		// ignored: a rejoin that failed leaves the card off the table, and the step's create of it is refused by the store, naming the member
+		_, _ = st.RejoinMembers(context.Background(), []string{member})
 		// the release counts as a beat (docs/SPEC-SPRINT.md section 5): the
 		// member's last beat is now, so the next tick within the beat window
 		// finds it up

@@ -456,9 +456,18 @@ and it is the coordinator's decision, receipted.
   one with width 0 is none. The sync
   writes only what differs: a member the table lacks is added at its width,
   down until it beats (presence brings it up, as for `fleet up`); a member whose
-  width differs has its width set; a row the inventory no longer names is held,
-  never deleted, and its unfinished work cards are dealt to the members that
-  stay up (the same move as `fleet down`). A member that stays has its status
+  width differs has its width set; a row whose machine has width 0 is held,
+  and its unfinished work cards are dealt to the members that stay up (the
+  same move as `fleet down`); a row with no machine row at all is held the same
+  way and, when no card stays on it after that redeal (no withdrawn card, and no
+  finished card that is the live work of a primary on the table and not
+  landed), removed in the same run: the step takes its control card off the
+  table, held by the sync, and the verb deletes its row and its beat record, so
+  its width leaves the fleet's total, one line saying so; while cards stay on
+  it, it stays held and a NOTE line says so, and a later sync removes it. A
+  machine row that comes back places the same control card again before the
+  step (the table layer's cell add; a batch never places a removed card) and
+  the sync releases it, and `fleet up` does the same for a removed member. A member that stays has its status
   untouched, and the deal's rolling index moves only with the cards a held
   member's redeal places. A hold is marked by who made it (the control card's
   `held_by`): the sync marks the holds it makes, and releases them when the
@@ -469,9 +478,10 @@ and it is the coordinator's decision, receipted.
   writes nothing: exit 0 when there is none, 2 when there is, 3 when the config
   or the sprint store cannot be read, or the config holds no machine row (a store that is not the fleet's would
   hold every member down). It is the coordinator's verb, like every fleet move.
-  The sync adds no state: each move is one `fleet up` or `fleet down` already
-  makes, for many members in one plan, and the drift it reports is exactly the
-  plan it writes.
+  Each move but the removal is one `fleet up` or `fleet down` already makes,
+  for many members in one plan, and the drift it reports is the plan it writes
+  (a hold of a member with no machine row is a removal when its cards all find
+  room).
 - The tick's first part (presence) applies one change of derived status a
   tick, ups first: a member going down has its unfinished work cards dealt to
   the members up, or withdrawn when none is; a member coming up levels the

@@ -248,6 +248,13 @@ func (r *Redis) RowsDel(ctx context.Context, table string, rows []string) error 
 	return nil
 }
 
+// Place puts a record that is on no cell back into the cell, through the table
+// layer's cell add, one write.
+func (r *Redis) Place(ctx context.Context, table, row, col, id string, score float64) error {
+	_, err := ntable.CellAdd(ctx, r.C, table, row, col, id, score, r.writeOpts())
+	return err
+}
+
 func (r *Redis) RowSet(ctx context.Context, table, row string, texts map[string]string) error {
 	_, err := ntable.RowSet(ctx, r.C, table, row, texts, r.writeOpts())
 	return err

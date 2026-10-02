@@ -680,6 +680,39 @@ func (m *Mem) RowsDel(_ context.Context, table string, rows []string) error {
 
 // writeEpoch refuses a write pinned to an epoch that is not the table's
 // active one, as the table layer refuses a stale epoch.
+// Place puts a record of the active epoch that is on no cell back into an owned
+// cell, as the table layer's cell add does; a record placed already, of another
+// epoch, or absent is refused.
+func (m *Mem) Place(_ context.Context, table, row, col, id string, score float64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.Calls["place"]++
+	t, err := m.table(table)
+	if err != nil {
+		return err
+	}
+	if err := m.writeEpoch(t); err != nil {
+		return err
+	}
+	mm := t.members[id]
+	switch {
+	case mm == nil:
+		return refusal("NOTMEMBER", "member "+id+": no member record")
+	case mm.epoch != m.active(t):
+		return refusal("MEMBEREPOCH", fmt.Sprintf("member %s belongs to epoch %d, the active epoch is %d", id, mm.epoch, m.active(t)))
+	case mm.placed:
+		return refusal("MEMBEREXISTS", "member "+id+": placed at "+place(mm))
+	case !t.owned(m.active(t), row, col):
+		return refusal("NOCOL", "member "+id+": no owned cell "+row+":"+col)
+	}
+	mm.placed, mm.row, mm.col, mm.score = true, row, col, score
+	mm.rev++
+	t.rev++
+	t.wrote[m.active(t)] = true
+	t.changes = append(t.changes, memChange{epoch: m.active(t), before: t.rev - 1, after: t.rev, verb: "cell_add", ids: []string{id}})
+	return nil
+}
+
 func (m *Mem) writeEpoch(t *memTable) error {
 	m.touch(m.epoch)
 	if a := m.active(t); m.epoch != a {

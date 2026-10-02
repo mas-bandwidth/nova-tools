@@ -39,6 +39,10 @@ type Backend interface {
 	// which first refuses a stream that holds one, its control card going with
 	// its merge row (sprint.StreamRemove).
 	RowsDel(ctx context.Context, table string, rows []string) error
+	// Place puts a record that is on no cell back into a cell at the score, as
+	// the table layer's cell add does (a batch never places a removed member):
+	// a fleet member whose control card a sync took off rejoins (RejoinMembers).
+	Place(ctx context.Context, table, row, col, id string, score float64) error
 	RowSet(ctx context.Context, table, row string, texts map[string]string) error
 	ViewSet(ctx context.Context, v ntable.View) error
 	ViewDelete(ctx context.Context, name string) error
