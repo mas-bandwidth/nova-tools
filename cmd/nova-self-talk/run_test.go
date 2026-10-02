@@ -10,4 +10,3 @@ import (
 func run(args []string, stdout, stderr io.Writer) int {
 	return runStdin(args, strings.NewReader(""), stdout, stderr)
 }
-
