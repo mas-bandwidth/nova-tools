@@ -127,6 +127,9 @@ func Add(s *Snapshot, r AddReq) Plan {
 	if !ValidID(r.Stream) {
 		return refuseAll(fmt.Sprintf("stream %q wants letters, digits, _ and -", r.Stream))
 	}
+	if RemovedStream(s, r.Stream) {
+		return refuseAll(fmt.Sprintf("stream %s was removed in this epoch (stream remove), and the table layer never places its control card again; nothing was changed; add under another stream, or run: nova-sprint clear --confirm sprint, then add", r.Stream))
+	}
 	if r.Sentinel && len(ids) != 1 {
 		return refuseAll("a sentinel is admitted one at a time: add --stream <s> --sentinel <id>")
 	}

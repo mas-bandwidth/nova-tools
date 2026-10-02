@@ -29,9 +29,9 @@ const (
 var verbClasses = map[string]string{
 	"init": classCoordinator, "add": classCoordinator, "quack": classCoordinator, "release": classCoordinator, "resolve": classCoordinator,
 	"start": classCoordinator, "stop": classCoordinator, "ask": classCoordinator, "accept": classCoordinator,
-	"rework": classCoordinator, "return": classCoordinator, "drop": classCoordinator, "rank": classCoordinator,
+	"rework": classCoordinator, "return": classCoordinator, "drop": classCoordinator, "rank": classCoordinator, "brief": classCoordinator, "move": classCoordinator,
 	"resume": classCoordinator, "land": classCoordinator, "fleet up": classCoordinator, "fleet down": classCoordinator,
-	"fleet level": classCoordinator, "fleet sync": classCoordinator, "reader add": classCoordinator, "reader away": classCoordinator, "reader up": classCoordinator, "reader remove": classCoordinator, "wait": classCoordinator,
+	"fleet level": classCoordinator, "fleet sync": classCoordinator, "reader add": classCoordinator, "reader away": classCoordinator, "reader up": classCoordinator, "reader remove": classCoordinator, "stream remove": classCoordinator, "wait": classCoordinator,
 	"ack": classCoordinator, "clear": classCoordinator, "teardown": classCoordinator, "repair": classCoordinator,
 	"goal set": classCoordinator, "goal drop": classCoordinator, "play": classCoordinator,
 

@@ -1,0 +1,143 @@
+package sprint
+
+import (
+	"fmt"
+
+	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+)
+
+// The coordinator's edits of a STOPPED sprint's primaries that have not
+// started (the owner, 2026-10-01: "What other things should you be able to do
+// to mutate a stopped sprint" / "I don't want you manually hopping in and
+// working around it and doing manual stuff."): brief replaces a primary's
+// brief, move takes primaries to another stream. Each is a pure plan of a
+// snapshot, refused on a RUNNING machine and for a card that has started.
+
+// stoppedOnly is the refusal of an edit on a RUNNING machine.
+func stoppedOnly(what string) string {
+	return "the machine is RUNNING, and " + what + " only on a STOPPED sprint; nothing was changed; run: nova-sprint stop"
+}
+
+// unstarted is why a primary may not be edited: "" when it is a primary
+// placed waiting or ready that no work card was ever dealt for (its attempt
+// is 0). A card dealt, working, in review, merging or landed keeps what it
+// has (keeps names it).
+func unstarted(s *Snapshot, id, keeps string) string {
+	c := s.Work.Placed(id)
+	switch {
+	case c == nil:
+		return "no primary " + id + " on the work table; nothing was changed"
+	case IsSentinel(c):
+		return id + " is a sentinel, not a primary; nothing was changed"
+	case c.Col != Waiting && c.Col != Ready:
+		return fmt.Sprintf("%s is %s: a card dealt, working, in review, merging or landed keeps %s; nothing was changed", id, c.Col, keeps)
+	case c.Int("attempt") > 0:
+		return fmt.Sprintf("%s is %s with attempt %d dealt: a card dealt keeps %s; nothing was changed", id, c.Col, c.Int("attempt"), keeps)
+	}
+	return ""
+}
+
+// BriefReq replaces the brief of a primary that has not started.
+type BriefReq struct {
+	ID, Brief, Who string
+}
+
+// Brief replaces a primary's brief (nova-sprint brief): on a STOPPED machine
+// only, for a primary waiting or ready with no work card dealt. The card keeps
+// its id, stream, score and needs; the command line holds the brief to the
+// card lint, and the store to its bound, as add's.
+func Brief(s *Snapshot, r BriefReq) Plan {
+	var p Plan
+	p.on(s)
+	why := unstarted(s, r.ID, "its brief")
+	if s.Running {
+		why = stoppedOnly("a brief is replaced")
+	}
+	if why != "" {
+		p.refuse(r.ID, why)
+		return p
+	}
+	c := s.Work.Placed(r.ID)
+	p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, setEntry(c, map[string]string{"brief": r.Brief}))},
+		Moved: fmt.Sprintf("%s brief replaced (%d bytes) stream=%s %s", c.ID, len(r.Brief), c.Row, c.Col)})
+	return p
+}
+
+// MoveReq moves primaries that have not started to another stream, placed as
+// add places cards: Before, After or Score, else at the end of the line.
+type MoveReq struct {
+	IDs           []string
+	Stream        string
+	Score         *float64
+	Before, After string
+	Who           string
+}
+
+// MoveCards takes primaries to another stream (nova-sprint move): on a STOPPED
+// machine only, each a primary waiting or ready with no work card dealt and
+// not of the stream already; all or none. The destination is placed exactly as
+// add places cards (Add, on the snapshot without the moved cards): the stream
+// made as add makes one when it is new, the cards in line by --before,
+// --after or --score, else at the end, waiting or ready by their needs and the
+// stream's sentinels, a reached sentinel behind them no longer reached, a
+// cycle of needs refused; a ready card the destination would put behind a
+// sentinel is refused by the lifecycle (Lawful: ready -> waiting is only the
+// effect of inserting a sentinel). A moved card is the same card moved, not a new one:
+// its id, brief, needs and admission stay, and a need naming it still holds.
+func MoveCards(s *Snapshot, r MoveReq) Plan {
+	var p Plan
+	p.on(s)
+	view := *s
+	view.Work = s.Work.Frozen()
+	moving := map[string]*Card{}
+	var cards []CardAdd
+	for _, id := range r.IDs {
+		why := unstarted(s, id, "its stream")
+		c := s.Work.Placed(id)
+		switch {
+		case s.Running:
+			why = stoppedOnly("a card is moved")
+		case why != "":
+		case moving[id] != nil:
+			why = "named twice"
+		case c.Row == r.Stream:
+			why = id + " is in stream " + r.Stream + " already; its place in line changes with nova-sprint rank; nothing was changed"
+		}
+		if why != "" {
+			p.refuse(id, why)
+			continue
+		}
+		moving[id] = c
+		view.Work.Drop(id)
+		cards = append(cards, CardAdd{ID: id, Brief: c.F("brief"), Needs: without(Split(c.F("needs")), Split(c.F("waived"))), File: id})
+	}
+	if len(cards) == 0 {
+		return p
+	}
+	q := Add(&view, AddReq{Stream: r.Stream, Cards: cards, Score: r.Score, Before: r.Before, After: r.After, Who: r.Who})
+	p.Rows, p.Notes, p.inserting = q.Rows, q.Notes, q.inserting
+	p.Refused = append(p.Refused, q.Refused...)
+	for _, u := range q.Units {
+		var notes []Note
+		for _, n := range u.Notes {
+			// a need dropped was the card's before it moved: its judgment is open already
+			if n.Type != NBlocked || moving[u.Key] == nil {
+				notes = append(notes, n)
+			}
+		}
+		u.Notes = notes
+		for i, ch := range u.Changes {
+			c := moving[ch.Entry.ID]
+			if ch.Table != Work || ch.Entry.Create == nil || c == nil {
+				continue
+			}
+			to := ch.Entry.Create
+			score := to.Score
+			u.Changes[i] = change(Work, ntable.BatchMemberEntry{ID: c.ID, Expect: at(c),
+				Move: &ntable.MemberMoveOp{Row: to.Row, Col: to.Col, Score: &score}, Set: map[string]string{"stream": to.Row}})
+			u.Moved = "moved from stream " + c.Row + " " + c.Col + ": " + u.Moved
+		}
+		p.Units = append(p.Units, u)
+	}
+	return p
+}
