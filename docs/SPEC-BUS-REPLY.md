@@ -265,7 +265,7 @@ lane name and hex — `ada-3f9a1c2b8d40` — so it is one path segment by
 construction, while `--reply-to` may resolve a note without an `Id:` line to a repo-relative
 path, and a path holds `/`. A filename built from one would put the draft in a
 directory nobody named, or in none at all. **A target with no `Id:` line gets a
-derived id instead**, stated here so nobody has to guess it: the literal
+derived id instead**, stated here so nobody has to guess it: the literal `legacy-`
 prefix followed by the first 12 lowercase hex digits of the SHA-256 of the
 target's repo-relative path, exactly as the path appears on the `Re:` line the
 draft writes. It is one segment, it is deterministic, and two targets without an `Id:` line
