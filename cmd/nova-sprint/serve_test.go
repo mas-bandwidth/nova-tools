@@ -11,6 +11,7 @@ import (
 
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -488,4 +489,25 @@ func TestTheServerDoesNotListenOnEveryNetwork(t *testing.T) {
 		assert.Error(t, err, addr)
 	}
 	assert.Empty(t, out.String(), "nothing was started")
+}
+
+// brief --rules sent to the server's loopback listener (the coordinator's verbs) is
+// answered and replaces the brief: before the nil-store guard in cmdBrief the verb
+// panicked inside the handler, and net/http's recovery closed the connection, so the
+// coordinator got no answer at all while the server lived on.
+func TestBriefWithRulesThroughTheServer(t *testing.T) {
+	t.Parallel()
+	r := newServerRig(t, "init --readers reader-a,reader-b --members m1", "add --stream a --count 1 --brief-file "+writeBrief(t, "the old work"))
+	srv := httptest.NewServer(localHandler{r.a})
+	t.Cleanup(srv.Close)
+	dir := t.TempDir()
+	rules, brief := filepath.Join(dir, "rules.txt"), filepath.Join(dir, "new.md")
+	require.NoError(t, os.WriteFile(rules, []byte("Be careful.\n"), 0o600))
+	require.NoError(t, os.WriteFile(brief, []byte("the new work\n\nBe careful.\n"), 0o600))
+	c := sprintwire.Client{Addr: strings.TrimPrefix(srv.URL, "http://"), HTTP: srv.Client()}
+	res, err := c.Do(context.Background(), []string{"brief", "a-1", "--rules", rules, "--brief-file", brief, "--actor", "boss"})
+	require.NoError(t, err, "the server answered nothing")
+	require.Len(t, res, 1)
+	assert.Equal(t, 0, res[0].Code, "%s%s", res[0].Stdout, res[0].Stderr)
+	assert.Contains(t, res[0].Stdout, "a-1 brief replaced")
 }

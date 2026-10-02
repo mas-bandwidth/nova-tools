@@ -39,6 +39,11 @@
 # fleet. The view-all line is the frame of where --all: every table, readers and merge
 # after work as before. No table changes shape; where --json carries every table and
 # every row of it either way. Held by TestSprintTablesAreLocked.
+# Note, 2026-10-02 (nova-tools#5096 item 16): the progress line above the tables shows
+# held=N, the cards held back behind a sentinel not released or admitted held, and its
+# ETA is over the rest. No table's shape changes and this lock does not cover that line;
+# it is recorded here because it is output Glenn sees, which he asked for in words:
+# "I'd like to really really load up the sprint in waiting, and stick sentinels in".
 #
 # Change, 2026-10-02, the where view's title line, not a table: Glenn, 5:15 PM: "We need
 # to make handover MORE SMOOTH."; 5:20 PM: "you can be given coordinator status, or you

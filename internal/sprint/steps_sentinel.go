@@ -16,6 +16,47 @@ import (
 // IsSentinel says the primary is a sentinel.
 func IsSentinel(c *Card) bool { return c.F("kind") == "sentinel" }
 
+// IsHeld says the primary was admitted held (add --held): it stays waiting,
+// never reached and never dealt, until the coordinator's release, so a wave
+// can be loaded behind a sentinel with nothing before it and nothing fires
+// (nova-tools#5096 item 15).
+func IsHeld(c *Card) bool { return c.F(FieldHeld) != "" }
+
+// FieldHeld is the stamp of a primary admitted held.
+const FieldHeld = "held"
+
+// HeldBack is how many primaries no tick moves on its own: every sentinel not
+// released, every card admitted held, and every waiting card that waits,
+// through a need or its place in line, on one of those. where shows them as
+// held=N and its ETA is over the rest, the dealable cards (nova-tools#5096
+// item 16). Everything it counts is waiting, so a snapshot of the work
+// table's waiting column is enough.
+func HeldBack(s *Snapshot) int {
+	memo := map[string]bool{}
+	var back func(c *Card) bool
+	back = func(c *Card) bool {
+		if v, ok := memo[c.ID]; ok {
+			return v
+		}
+		memo[c.ID] = false // a cycle holds nothing back by itself
+		v := IsSentinel(c) || IsHeld(c)
+		for _, n := range WaitsFor(s, c, nil) {
+			if w := s.Work.Placed(n); !v && w != nil && w.Col == Waiting {
+				v = back(w)
+			}
+		}
+		memo[c.ID] = v
+		return v
+	}
+	n := 0
+	for _, c := range s.Work.Column(Waiting) {
+		if back(c) {
+			n++
+		}
+	}
+	return n
+}
+
 // streamLine is the stream's primaries on the table, in work order.
 func streamLine(s *Snapshot, stream string) []*Card {
 	var out []*Card
@@ -238,7 +279,7 @@ func SentinelsDue(s *Snapshot, who string) Plan {
 	var p Plan
 	p.on(s)
 	for _, c := range s.Work.Column(Waiting) {
-		if IsSentinel(c) && c.F("reached") == "" && len(WaitsFor(s, c, nil)) == 0 && Reachable(s, c, nil) {
+		if IsSentinel(c) && !IsHeld(c) && c.F("reached") == "" && len(WaitsFor(s, c, nil)) == 0 && Reachable(s, c, nil) {
 			p.Units = append(p.Units, reachUnit(s, c, nil, who))
 		}
 	}
@@ -261,7 +302,10 @@ type ReleaseReq struct {
 // and, in the same step, moves every waiting primary whose needs have all now
 // landed to ready, and marks reached every sentinel that is now due. It
 // closes the judgments open on each sentinel and always writes that it
-// landed, by whom, why, and how many cards are now ready.
+// landed, by whom, why, and how many cards are now ready. A held sentinel
+// (add --held) with nothing left to wait for is released as a reached one; a
+// held primary has its hold cleared, and goes to ready when it waits for
+// nothing else.
 func Release(s *Snapshot, r ReleaseReq) Plan {
 	var p Plan
 	p.on(s)
@@ -284,25 +328,29 @@ func Release(s *Snapshot, r ReleaseReq) Plan {
 	case r.Who != r.Coordinator:
 		return refuseAll("release is the coordinator's alone: " + r.Coordinator + ", not " + orDash(r.Who))
 	}
-	landing := map[string]bool{}
+	landing, unheld := map[string]bool{}, map[string]bool{}
 	var chosen []*Card
 	for _, id := range r.IDs {
 		c := s.Work.Card(id)
 		switch {
-		case landing[id]:
+		case landing[id] || unheld[id]:
 			p.refuse(id, "named twice")
 			continue
 		case !c.Placed():
 			p.refuse(id, "not on the table")
 			continue
-		case !IsSentinel(c):
-			p.refuse(id, "not a sentinel: a primary lands by merging")
+		case !IsSentinel(c) && !IsHeld(c):
+			p.refuse(id, "not a sentinel or a held card: a primary lands by merging")
 			continue
 		case c.Col != Waiting:
 			p.refuse(id, "is "+c.Col+", not a sentinel waiting to be released")
 			continue
+		case !IsSentinel(c):
+			unheld[id] = true
+			p.Units = append(p.Units, releaseHeld(s, c, r))
+			continue
 		}
-		if w := WaitsFor(s, c, nil); len(w) > 0 || c.F("reached") == "" && HasBefore(s, c) {
+		if w := WaitsFor(s, c, nil); len(w) > 0 || c.F("reached") == "" && !IsHeld(c) && HasBefore(s, c) {
 			var st []string
 			for _, n := range w {
 				st = append(st, n+" ("+orDash(s.StateOf(n))+")")
@@ -335,12 +383,16 @@ func Release(s *Snapshot, r ReleaseReq) Plan {
 		n.What = fmt.Sprintf("sentinel %s landed, released by %s: %d cards are now ready; %s", c.ID, r.Who, ready, r.Reason)
 		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.Row,
 			Changes: []Change{change(Work, moveEntry(c, c.Row, Landed, map[string]string{
-				"landed": stamp(s.Now), "released": stamp(s.Now), "released_by": r.Who, "release_reason": r.Reason}))},
+				"landed": stamp(s.Now), "released": stamp(s.Now), "released_by": r.Who, "release_reason": r.Reason}, FieldHeld))},
 			Notes: []Note{n}, Closes: closesFor(s.Open, nil, c.ID),
 			Moved: fmt.Sprintf("sentinel %s waiting -> landed (released by %s); %d cards are now ready", c.ID, r.Who, ready)})
 	}
-	if len(chosen) == 0 {
+	if len(chosen) == 0 && len(unheld) == 0 {
 		return p
+	}
+	if len(chosen) == 0 {
+		answered(&p, s, r.Answers, r.Who)
+		return Lawful(p)
 	}
 	p.Units = append(p.Units, after...)
 	settle(&p, s, r.Who, nil, nil, landing)
@@ -348,4 +400,16 @@ func Release(s *Snapshot, r ReleaseReq) Plan {
 	// (TickDone), which says so and stops the machine.
 	answered(&p, s, r.Answers, r.Who)
 	return Lawful(p)
+}
+
+// releaseHeld is release of a held primary (add --held): its hold cleared,
+// with who and why, and waiting -> ready when it waits for nothing else.
+func releaseHeld(s *Snapshot, c *Card, r ReleaseReq) Unit {
+	set := map[string]string{"released": stamp(s.Now), "released_by": r.Who, "release_reason": r.Reason}
+	if w := WaitsFor(s, c, nil); len(w) > 0 {
+		return Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, setEntry(c, set, FieldHeld))},
+			Moved: fmt.Sprintf("%s released by %s; it waits for %s", c.ID, r.Who, strings.Join(w, ","))}
+	}
+	return Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, moveEntry(c, c.Row, Ready, set, FieldHeld))},
+		Moved: fmt.Sprintf("%s waiting -> ready (released by %s)", c.ID, r.Who)}
 }

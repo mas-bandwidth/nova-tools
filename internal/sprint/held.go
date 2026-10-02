@@ -412,6 +412,9 @@ func (c *held) tickOn(pr *Card) string {
 // tick, that names the primary, its stopped stream, or its stream while it
 // merges there; "" when none.
 func (c *held) judgment(pr *Card) string {
+	if IsHeld(pr) {
+		return "held by the coordinator (add --held) until release"
+	}
 	if j := c.judged[pr.ID]; len(j) > 0 {
 		return "open: " + strings.Join(j, ", ")
 	}
@@ -585,7 +588,7 @@ func (c *held) overdueUnmarked() []Finding {
 func (c *held) decisions(pr *Card) []string {
 	var out []string
 	switch {
-	case IsSentinel(pr) && (pr.F("reached") != "" || !HasBefore(c.s, pr)):
+	case IsHeld(pr) || IsSentinel(pr) && (pr.F("reached") != "" || !HasBefore(c.s, pr)):
 		out = []string{"release", "drop"}
 	case pr.Col == Ready:
 		out = []string{"fleet up", "drop"}
