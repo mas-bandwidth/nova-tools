@@ -706,7 +706,7 @@ exactly, on every commit, by a parse COUNT: see SPEC.md, "nova-bus", the complex
 
 ## What this deliberately is not
 
-`nova-check` is the record layer and nothing above it. It proves the files were present, whole, sized, linked, prose and in floor-set agreement when the check ran. It does not prove a model read them or acts from them, and it cannot detect a hostile input or a compromised reader; those defenses stay doctrine. What it closes is narrower and real: a posture resting on records nothing checked.
+`nova-check` is the record layer and nothing above it. It proves the files were present, whole, sized, linked, prose and in floor-set agreement when the check runs. It does not prove a model read them or acts from them, and it cannot detect a hostile input or a compromised reader; those defenses stay doctrine. What it closes is narrower and real: a posture resting on records nothing checked.
 
 `nova-self-talk` reads sentence shapes, not a mind. It keeps no ratio and cannot see register, irony or an unmarked quotation, and it says so on every run, because a green from a partial check reads exactly like a green from a complete one.
 
@@ -1143,9 +1143,11 @@ $ nova-sandbox run --name j1 --scratch C:\nova --timeout 30m --memory 4g --cpu 5
   fallback: containment that only holds inside WSL is containment on a machine
   the card was not sent to.
 
-**This is not measured on a Windows machine.** The estate has none. The verb's sequence is proven against a fake on every host. The
-(AppContainer) is built the verb refuses there with `reason=no_sandbox` naming
-the half that is missing — a place without a wall is hygiene, not containment.
+**This is not measured on a Windows machine.** The estate has none. The verb's
+sequence is proven against a fake on every host, the binary cross-compiles and
+vets for `GOOS=windows`, and until the **wall** (AppContainer) is built the verb
+refuses there with `reason=no_sandbox` naming the half that is missing — a place
+without a wall is hygiene, not containment.
 
 **A card that builds Go wants `--go`**, which adds the toolchain's own two roots
 to the read set — `GOROOT` and `GOMODCACHE`, as `go env` reports them — so that
