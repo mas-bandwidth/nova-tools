@@ -6,7 +6,7 @@ import (
 )
 
 // ResultFormat is the RESULT-FORMAT paragraph a worker's brief carries for a
-// typed card of kind. Since nova-tools#3689 it is the two-line contract: the
+// typed card of kind. It describes the two-line contract: the
 // model writes line 1 (this card's line 1, verbatim) and line 2 (`DONE`,
 // `ABSTAIN <why>` or `BLOCKED <why>`) and an optional note; the card wrapper
 // writes every field it knows or computes (WrapperOwned, the Gates rows) into
