@@ -90,7 +90,7 @@ func TestXaiProviderOneUsageFileFoldsRow(t *testing.T) {
 	wantExit(t, miss, 1)
 	{
 		opened := tokens.Opens() - before
-		assert.True(t, opened == 0, "a missing xai path opened %d source files; that is a scan", opened)
+		assert.Zero(t, opened, "a missing xai path opened %d source files; that is a scan", opened)
 	}
 	wantContains(t, miss.stderr, "TOKENS UNREADABLE")
 	wantContains(t, miss.stderr, "does not scan a session store")
@@ -109,7 +109,7 @@ func TestXaiProviderOneUsageFileFoldsRow(t *testing.T) {
 	assert.False(t, errors.Is(err, os.ErrNotExist), "a directory that is there unwrapped as not-exist: %v", err)
 	{
 		opened := tokens.Opens() - before
-		assert.True(t, opened == 0, "reading the sessions directory opened %d files", opened)
+		assert.Zero(t, opened, "reading the sessions directory opened %d files", opened)
 	}
 	outDir := mkdir(t, filepath.Join(dir, "out-dir"))
 	before = tokens.Opens()
@@ -117,7 +117,7 @@ func TestXaiProviderOneUsageFileFoldsRow(t *testing.T) {
 	wantExit(t, dirFold, 1)
 	{
 		opened := tokens.Opens() - before
-		assert.True(t, opened == 0, "fold of a directory opened %d source files; that is a scan", opened)
+		assert.Zero(t, opened, "fold of a directory opened %d source files; that is a scan", opened)
 	}
 	wantContains(t, dirFold.stderr, "does not scan a directory")
 	require.False(t, strings.Contains(dirFold.all(), bait), "a directory flag folded the session store:\n%s", dirFold.all())
