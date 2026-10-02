@@ -158,3 +158,30 @@ func TestTheSpecStatesTheCheckBoundTheCodeHas(t *testing.T) {
 		assert.Contains(t, section, want)
 	}
 }
+
+// The bus's code names only tools that exist: a comment that sends a reader to a nova-*
+// tool this repository does not build is a dangling reference.
+func TestTheBusCodeNamesOnlyToolsThatExist(t *testing.T) {
+	t.Parallel()
+	known := map[string]bool{"nova-tools": true} // the repository itself
+	entries, err := os.ReadDir(filepath.Join("..", "..", "cmd"))
+	require.NoError(t, err)
+	for _, e := range entries {
+		known[e.Name()] = e.IsDir()
+	}
+	name := regexp.MustCompile(`nova-[a-z][a-z-]*[a-z]`)
+	for _, dir := range []string{".", filepath.Join("..", "..", "internal", "bus")} {
+		files, err := filepath.Glob(filepath.Join(dir, "*.go"))
+		require.NoError(t, err)
+		for _, f := range files {
+			if strings.HasSuffix(f, "_test.go") {
+				continue
+			}
+			raw, err := os.ReadFile(f)
+			require.NoError(t, err)
+			for _, n := range name.FindAllString(string(raw), -1) {
+				assert.True(t, known[n], "%s names %s, which is no tool under cmd/", f, n)
+			}
+		}
+	}
+}

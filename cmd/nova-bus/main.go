@@ -2939,10 +2939,9 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprint(stderr, "WAIT REFUSED: --beat-lease must be a positive duration like 10m; run: nova-bus wait -h\n")
 		return 2
 	}
-	// THE BUS CARRIES NOTES, NEVER BEATS (#3144). On 2026-09-23, 393 of 500 bus commits
-	// were `beat <friend>`: every clone pulled them and every bus monitor woke on them.
-	// Presence is friend:<name> in Redis, written by the friend's runtime (nova-friend;
-	// `nova-wake beat` is gone too). --beat and
+	// THE BUS CARRIES NOTES, NEVER BEATS. Beat commits were most of a busy bus's history,
+	// and every clone pulled them and every bus monitor woke on them. Presence is
+	// friend:<name> in Redis, written by each participant's own runtime. --beat and
 	// --beat-lease stay parseable so a caller's argv does not break, and say so once.
 	if f.set("beat") || f.set("beat-lease") {
 		fmt.Fprint(stderr, "WAIT NOTE --beat and --beat-lease are retired and ignored: the bus carries notes, never beats; presence is friend:<name> in Redis, written by the friend's own runtime (nova-tools #3144)\n")
@@ -3249,7 +3248,7 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, idleExit int, next s
 	// NO BEAT IS WRITTEN OR PUSHED HERE (#3144). Until 2026-09-24 every tick rewrote
 	// from-<lane>/BEAT and every --beat pushed it as its own `beat <name>` commit: 79% of
 	// the bus's commits, pulled by every clone. Presence is friend:<name> in Redis, written
-	// by the friend's runtime (nova-friend); a wait leaves the checkout exactly as its polls left it.
+	// by each participant's own runtime; a wait leaves the checkout exactly as its polls left it.
 	for {
 		polls++
 		elapsed := clock.Now().Sub(start).Round(time.Millisecond)
