@@ -14,7 +14,7 @@ import (
 //
 // A worker description optionally carries `max_turns` and `max_cache_read`.
 // The supervisor samples usage every --usage-interval beside the token
-// budget; when a running task's cache_read exceeds max_cache_read,
+// budget (rule 13); when a running task's cache_read exceeds max_cache_read,
 // or its turn count exceeds max_turns, the supervisor stops the task on the
 // existing stop path used for the deadline, the job moves to failed/ with
 // end=budget in usage.tsv, and the task's report carries
@@ -34,8 +34,8 @@ func CardCacheRead(u ProviderUsage) (int, bool) {
 
 // CountCardTurnsIn counts a job's assistant turns against a NAMED log: the log's
 // assistant lines, or the usage row count where the log has fewer, because the two routes keep the
-// harness's words in two different files: the log to count is
-// `<job>/harness-output.log`, since
+// harness's words in two different files: rule 13d names this log and rule 13b counts the
+// turns in it, so the log to count is `<job>/harness-output.log`, since
 // `native` never writes `harness.log`.
 //
 // THE NAMES ARE NOT INTERCHANGEABLE. `harness.log` has two owners on the native route
@@ -89,7 +89,7 @@ func PromptDefectLine(id string, cacheRead, max, turns int) string {
 		id, cacheRead, max, turns)
 }
 
-// THE MEASURED STARTUP COST. A 2k cap was smaller
+// THE MEASURED STARTUP COST. A measured run showed a 2k cap smaller
 // than the harness's own first context, so every card carrying it would have
 // died at once, at load, before doing any work. A card budget is only a budget
 // if it is above what the harness spends before the card's first turn; a
