@@ -145,11 +145,16 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 			fmt.Fprintf(stderr, "INBOX REFUSED: reading only what changed, and moving a cursor, need git; %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus inbox -h"))
 			return 2
 		}
-		release, code := lockCheckout("INBOX", o.busDir, stderr)
-		if code != 0 {
-			return code
+		// A dry run takes no checkout lock: the lock is a file in .git, and a dry run
+		// writes nothing. It reads without the exclusion, so a run writing at the same
+		// moment can make its plan stale; the plan is still one the real run would make.
+		if !o.dryRun {
+			release, code := lockCheckout("INBOX", o.busDir, stderr)
+			if code != 0 {
+				return code
+			}
+			defer release()
 		}
-		defer release()
 	}
 	code, r := inboxListing(o, stdout, stderr, now)
 	// r.Bounded is the listing that did not run: the since-walk stopped at --max-commits,

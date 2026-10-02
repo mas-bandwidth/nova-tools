@@ -2000,10 +2000,10 @@ holds none, the first verb loads it (first contact, never replacing a library
 the store holds) and its `trips=` counts the load; for a fresh local Redis,
 follow [Start locally](nova-table/README.md#start-locally), or the `first run:`
 lines of `nova-table help`, which start a throwaway one. With no store at all,
-every verb that writes runs under `--dry-run`: it checks its arguments and
-prints the call it would send, dialling nothing
+every verb that writes runs under `--dry-run`: it makes every check the real
+run makes before sending and prints the command it would send, dialling nothing
 (`nova-table create demo --columns ready,working,done --dry-run` prints
-`TABLE DRY-RUN verb=create arg1=demo columns=ready,working,done redis=- dialled=0 written=0`).
+`TABLE DRY-RUN verb=create arg1=demo columns=ready,working,done sends="FCALL ns_table_create" redis=- dialled=0 written=0`).
 A verb that finds no store at its address refuses at exit 2 naming the address,
 what came back, and the command that starts a throwaway store.
 

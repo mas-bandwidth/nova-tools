@@ -30,7 +30,7 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	legacyBefore := f.fs.String("legacy-before", "", "a finding about the header of a note dated before this UTC date (YYYY-MM-DD, midnight at its start) or UTC instant (RFC 3339, e.g. 2026-09-09T18:07:00Z) warns instead of failing")
 	rebuildIndex := f.fs.Bool("rebuild-index", false, "with --full, rewrite each lane's INDEX from the notes on disk")
 	dryRun := f.fs.Bool("dry-run", false, "with --rebuild-index, print each lane's count and write nothing")
-	maxFindings := f.fs.Int("max", defaultCheckMax, "findings to print before one BUS MORE line naming the rest (default 20, 0 = all)")
+	maxFindings := f.fs.Int("max", defaultCheckMax, "findings of each class to print before one BUS MORE line per class names the rest of it (default 20, 0 = all)")
 	gitSeconds := f.fs.Int("git-timeout", defaultGitTimeoutSeconds, "how long one git subprocess may take before this run gives up on it")
 	if !f.parse(args, stderr, map[string]*string{"bus": busDir}) {
 		return 2
@@ -182,20 +182,21 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// THE CAP, AND THE COUNT THAT IS NEVER CAPPED. A check that fails 1,059 times
 	// printed all 1,059 lines, most of them one class repeating, and a reader holding the
 	// wall could not tell the loud kind from the one finding that mattered. So the report
-	// is capped at --max findings, one BUS MORE line says what the cap held back and names
-	// the flag that lifts it, and one BUS CHECK line counts every finding by class before
+	// is capped at --max findings PER CLASS (docs/SPEC.md, the common cap rule: where one
+	// verb runs several checks into one stream, the loud kind must not eat the quiet one),
+	// one BUS MORE line per class says what the cap held back of it and names the flag that
+	// lifts it, and one BUS CHECK line counts every finding by class before
 	// the exit -- the listing is capped, the counting never is, and the class the cap ate
 	// is still on the line. The cap governs what is PRINTED and nothing else: the exit
 	// code and the counts come from the whole walk, exactly as an uncapped run said them.
 	counts := bus.CountCheckFindings(problems)
-	shown := len(problems)
-	if *maxFindings > 0 && shown > *maxFindings {
-		shown = *maxFindings
-	}
-	for i, p := range problems {
-		if i == shown {
-			break
+	printed := map[string]int{}
+	for _, p := range problems {
+		class := bus.ProblemClass(p)
+		if *maxFindings > 0 && printed[class] >= *maxFindings {
+			continue
 		}
+		printed[class]++
 		// A WARN GOES TO STDOUT, and it went to stderr. The grammar says which stream a
 		// line is on and the rule is one sentence: FAIL lines and refusals to stderr,
 		// everything else to stdout. A WARN is neither -- it is a finding that was
@@ -209,8 +210,10 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 		fmt.Fprintf(stderr, "BUS FAIL %s: %s\n", oneline.Escape(p.Where), oneline.Escape(p.Reason))
 	}
-	if shown < len(problems) {
-		fmt.Fprintf(stderr, "BUS MORE shown=%d total=%d remedy=%s\n", shown, len(problems), oneline.Quote("--max 0"))
+	for _, cc := range counts.Class {
+		if printed[cc.Class] < cc.Count {
+			fmt.Fprintf(stderr, "BUS MORE kind=%s shown=%d total=%d remedy=%s\n", oneline.Field(cc.Class), printed[cc.Class], cc.Count, oneline.Quote("--max 0"))
+		}
 	}
 	// THE CAP'S OWN LINES GO WHERE THE FAIL LINES GO, and no further than they do. The
 	// findings report's gate half is the BUS FAIL lines on stderr, and the two lines that

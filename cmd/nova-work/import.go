@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 	"github.com/mas-bandwidth/nova-tools/internal/workfile"
 	"github.com/mas-bandwidth/nova-tools/internal/workgh"
@@ -146,21 +147,34 @@ func (g github) importTree(c *tool.Call) *tool.Out {
 // importAgain is the import as it was asked, with --max-calls set to n: the
 // remedy of a run the budget stopped.
 func importAgain(c *tool.Call, n int) string {
-	cmd := []string{"nova-work", "import", "--org", c.Str("org")}
-	for _, r := range repos(c) {
-		cmd = append(cmd, "--repo", r)
-	}
-	if c.Str("out") != "" {
-		cmd = append(cmd, "--out", c.Str("out"))
-	} else {
-		cmd = append(cmd, "--dry-run")
-	}
-	for _, name := range []string{"page-size", "gh", "timeout"} {
-		if c.Given(name) {
-			cmd = append(cmd, "--"+name, fmt.Sprint(c.Get(name)))
+	return again(c, "import", []string{"org", "repo", "out", "dry-run", "page-size", "gh", "timeout", "max-calls"},
+		map[string]string{"max-calls": fmt.Sprint(n)})
+}
+
+// again is the verb as it was asked, every flag given in the order named,
+// with set's values in place of the ones given: a remedy that keeps the run's
+// inputs (CLI-STYLE (k)). Every value is one shell word (oneline.ShellWord),
+// so a path with a blank, a quote or a $ is pasted back as that path.
+func again(c *tool.Call, verb string, order []string, set map[string]string) string {
+	cmd := []string{"nova-work", verb}
+	for _, name := range order {
+		v, override := set[name]
+		switch {
+		case name == "repo":
+			for _, r := range repos(c) {
+				cmd = append(cmd, "--repo", oneline.ShellWord(r))
+			}
+		case name == "dry-run":
+			if c.Bool("dry-run") {
+				cmd = append(cmd, "--dry-run")
+			}
+		case override:
+			cmd = append(cmd, "--"+name, oneline.ShellWord(v))
+		case c.Given(name):
+			cmd = append(cmd, "--"+name, oneline.ShellWord(fmt.Sprint(c.Get(name))))
 		}
 	}
-	return strings.Join(append(cmd, "--max-calls", fmt.Sprint(n)), " ")
+	return strings.Join(cmd, " ")
 }
 
 // scope is the repositories a run reads: every repository of org, or the

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 	"github.com/mas-bandwidth/nova-tools/internal/workgh"
 )
@@ -224,7 +225,7 @@ func (g github) open(c *tool.Call, verb string) (workgh.Query, string, *tool.Out
 
 // ghRemedy is the next command when GitHub did not answer: the login check of
 // the gh this run used.
-func ghRemedy(path string) string { return path + " auth status" }
+func ghRemedy(path string) string { return oneline.ShellWord(path) + " auth status" }
 
 func sum(b []byte) string {
 	s := sha256.Sum256(b)

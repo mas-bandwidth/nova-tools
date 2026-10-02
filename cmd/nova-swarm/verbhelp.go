@@ -39,6 +39,7 @@ var verbEffect = map[string]string{
 	"doctor":       "inspection: reads, writes nothing",
 	"lint":         "inspection: reads, writes nothing",
 	"template":     "inspection: prints a template, writes nothing",
+	"worker":       "inspection: reads, writes nothing",
 	"worker check": "inspection: reads, writes nothing",
 	"native":       "delivery: runs the card's harness, which calls the model's provider, and writes the job directory under --root",
 	"member":       "delivery: joins a sprint's fleet through --server, runs its cards as native children, pushes their commits and opens their pull requests",

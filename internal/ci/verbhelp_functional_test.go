@@ -17,8 +17,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/mas-bandwidth/nova-tools/internal/dogfood"
 )
 
 // The verb-help rule (the CLI style's rule (b), #4505), held for EVERY living
@@ -91,21 +89,6 @@ func helpStatesExitCodes(tool, help string) bool {
 	return false
 }
 
-// usageVerbs are the verbs a banner's own usage block names: the lines above
-// its first `example:` (an example line is an invocation with arguments, not
-// a verb), through the dogfood ledger's parser, less the bare tool and help.
-func usageVerbs(tool, banner string) []string {
-	block, _, _ := strings.Cut(banner, "\nexample:\n")
-	var verbs []string
-	for _, v := range dogfood.ParseHelp(block) {
-		if v.Tool != tool || v.Verb == "" || v.Verb == "help" {
-			continue
-		}
-		verbs = append(verbs, v.Verb)
-	}
-	return verbs
-}
-
 // everyVerbAnswersHelp returns each verb's help as it printed it at exit 0,
 // for the tool-answers walk, and false for a deprecated tool it does not test.
 func everyVerbAnswersHelp(t *testing.T, root, tool, bin, banner string) (map[string]string, bool) {
@@ -114,8 +97,8 @@ func everyVerbAnswersHelp(t *testing.T, root, tool, bin, banner string) (map[str
 		return nil, false // deprecated: never tested (internal/pkgselect/DEPRECATED)
 	}
 	helps := map[string]string{}
-	verbs := usageVerbs(tool, banner)
-	require.NotEmpty(t, verbs, "`%s help` names no verb in its usage block; the verb-help check would pass by checking nothing", tool)
+	verbs, err := bannerVerbs(tool, banner)
+	require.NoError(t, err)
 	_, byDesign := helpRefusedByDesign[tool]
 	for _, verb := range verbs {
 		dir := t.TempDir()

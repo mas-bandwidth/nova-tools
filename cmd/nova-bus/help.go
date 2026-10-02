@@ -78,7 +78,7 @@ var effects = map[string]string{
 	"draft":   "local write: with --out writes that one file, and with --reply-to fetches the bus and writes one draft into --draft-dir; without either it prints the skeleton and writes nothing (--dry-run with --out writes nothing)",
 	"prepare": "inspection: reads the bus and prints the prepared artifact on stdout; writes nothing",
 	"send":    "delivery: commits the note and pushes it to --remote (--no-push commits only; --dry-run prints the shaped note and writes nothing)",
-	"reply":   "delivery: commits the reply and pushes it to --remote (--dry-run writes nothing)",
+	"reply":   "delivery: commits the reply and pushes it to --remote (--dry-run runs every check of the real run and writes nothing; it fetches nothing, so it resolves --re against the checkout as it stands)",
 	"inbox":   "delivery: with --advance, commits your cursor and pushes it to --remote; without it, reads the checkout and writes nothing (--dry-run with --advance prints the cursor it would write and writes nothing)",
 	"receipt": "delivery: commits a receipt in your lane and pushes it to --remote (--no-push commits only; --dry-run prints what it would record and writes nothing)",
 	"close":   "delivery: commits receipts closing every open note dated before --before and pushes them (--dry-run writes nothing)",

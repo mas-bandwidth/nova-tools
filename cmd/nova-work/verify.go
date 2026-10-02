@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 	"github.com/mas-bandwidth/nova-tools/internal/workfile"
 	"github.com/mas-bandwidth/nova-tools/internal/workgh"
@@ -19,7 +20,7 @@ import (
 func (g github) verifyTree(c *tool.Call) *tool.Out {
 	path := c.Str("tree")
 	start := g.now()
-	tree, data, refused := readTree(path, c.Int("max-bytes"))
+	tree, data, refused := readTree(c, "tree")
 	if refused != nil {
 		return refused
 	}
@@ -82,9 +83,9 @@ func (g github) verifyTree(c *tool.Call) *tool.Out {
 // verifyAgainst is verify with a second tree where GitHub stands: the same
 // comparison, no gh, no network.
 func verifyAgainst(c *tool.Call, path string, tree *workfile.Tree, data []byte, against string, start time.Time, g github) *tool.Out {
-	other, otherData, refused := readTree(against, c.Int("max-bytes"))
+	other, otherData, refused := readTree(c, "against")
 	if refused != nil {
-		return refused.Fact("against", against)
+		return refused
 	}
 	scope := repos(c)
 	fresh := &workfile.Tree{Source: other.Source, Org: other.Org}
@@ -123,24 +124,32 @@ func differences(o *tool.Out, diffs []workfile.Difference) *tool.Out {
 	return o.Fact("differences", len(diffs)).Fact("missing", kinds["MISSING"]).Fact("extra", kinds["EXTRA"]).Fact("drift", kinds["DRIFT"])
 }
 
-// readTree reads and decodes a tree file of at most maxBytes, or returns the
-// refusal naming why it cannot be read.
-func readTree(path string, maxBytes int) (*workfile.Tree, []byte, *tool.Out) {
+// readTree reads and decodes the tree file the flag names (--tree or
+// --against), of at most --max-bytes, or returns the refusal naming why it
+// cannot be read and what to run next; a path in a remedy is one shell word.
+func readTree(c *tool.Call, flag string) (*workfile.Tree, []byte, *tool.Out) {
+	path, maxBytes := c.Str(flag), c.Int("max-bytes")
+	refuse := func(why, remedy string) *tool.Out {
+		o := tool.Refuse(why)
+		o.Remedy = remedy
+		return o.Fact(flag, path)
+	}
 	fi, err := os.Stat(path)
 	if err != nil {
-		return nil, nil, withTree(tool.Refuse(err.Error()), path, "nova-work import --org <org> --out "+path)
+		return nil, nil, refuse(err.Error()+"; import writes a tree file with --out", "nova-work import -h")
 	}
 	if fi.Size() > int64(maxBytes) {
-		return nil, nil, withTree(tool.Refuse(fmt.Sprintf("the tree is %d bytes, past --max-bytes=%d", fi.Size(), maxBytes)), path,
-			fmt.Sprintf("nova-work verify --tree %s --max-bytes %d", path, fi.Size()))
+		return nil, nil, refuse(fmt.Sprintf("the file is %d bytes, past --max-bytes=%d", fi.Size(), maxBytes),
+			again(c, "verify", []string{"tree", "against", "repo", "max", "max-calls", "page-size", "gh", "timeout", "max-bytes"},
+				map[string]string{"max-bytes": fmt.Sprint(fi.Size())}))
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, nil, withTree(tool.Refuse(err.Error()), path, "ls -l "+path)
+		return nil, nil, refuse(err.Error(), "ls -l -- "+oneline.ShellWord(path))
 	}
 	tree, err := workfile.Decode(path, data, workfile.Limits(maxBytes))
 	if err != nil {
-		return nil, nil, withTree(tool.Refuse(err.Error()), path, "nova-work verify -h")
+		return nil, nil, refuse(err.Error(), "nova-work verify -h")
 	}
 	return tree, data, nil
 }
