@@ -224,7 +224,7 @@ const HostMax = 40
 // defaults file and read back by a program.
 func ValidHost(host string) error {
 	if host == "" {
-		return errors.New("--host: empty; a host is the machine's short name, such as `air` or `studio`")
+		return errors.New("--host: empty; a host is the machine's short name, such as `bench-a` or `laptop`")
 	}
 	if len(host) > HostMax {
 		return fmt.Errorf("--host %q: longer than %d characters", truncate(host, HostMax), HostMax)
