@@ -381,8 +381,7 @@ func (m *Member) Drain() { m.drain = true }
 
 // Running is how many lanes the member holds: one for every launch from its start until
 // its card is reported (a spent launch holds none). A child that has exited holds its lane
-// until the report, so the cards a member has working never pass its width (the owner,
-// A child that has exited holds its lane until reported, ensuring that active working set cards never exceed the configured width.
+// until the report, ensuring that active working set cards never exceed the configured width.
 func (m *Member) Running() int {
 	n := 0
 	for _, l := range m.running {
@@ -1115,8 +1114,7 @@ func (m *Member) refuseStaging(p Packet, why string) bool {
 
 // failLaunch reports a taken work card this member cannot launch (no model, a
 // slot it cannot make) as a failed finish with the reason, so the store sees it
-// at once and opens the failed-work judgment; a card left working would be
-// started again every tick, the refusal only in this log, until judged late.
+// at once and opens the failed-work judgment.
 func (m *Member) failLaunch(p Packet, why error) {
 	args := []string{"finish", "--as", m.cfg.As, p.Card + "@" + strconv.Itoa(p.Gen), "--failed",
 		"--report", cut("launch refused: " + oneLine(why.Error())), "--epoch", strconv.FormatUint(p.Epoch, 10)}
