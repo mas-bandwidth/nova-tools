@@ -20,6 +20,12 @@
 # friend of nova-config's friend rows, its status up, down or held by the fleet's rule,
 # drawn by where after merge and before fleet and never stored as a table. Held by
 # TestSprintTablesAreLocked.
+#
+# Note, 2026-10-02 (nova-tools#5096 item 16): the progress line above the tables shows
+# held=N, the cards held back behind a sentinel not released or admitted held, and its
+# ETA is over the rest. No table's shape changes and this lock does not cover that line;
+# it is recorded here because it is output Glenn sees, which he asked for in words:
+# "I'd like to really really load up the sprint in waiting, and stick sentinels in".
 work.waiting count sum shown
 work.ready count sum shown
 work.working count sum shown

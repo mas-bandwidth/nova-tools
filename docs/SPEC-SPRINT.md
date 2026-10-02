@@ -75,6 +75,16 @@ the title is the word `STOPPED` when the machine is stopped, and the summary
 line (landed / all primaries, percent, ETA, with no machine text) when it is
 running; a RUNNING machine that has not ticked for 5 s shows
 `STOPPED`, with no count of seconds. Every count cell is an ordered set.
+The summary line shows `held=N` after the percent when cards are held back:
+waiting behind a sentinel not released, admitted held (`add --held`), or
+waiting on one of those through a need (`sprint.HeldBack`, read from the work
+table's waiting cells alone; `where --json` carries it as `held`). The ETA is
+over the dealable cards, the ones neither landed nor held, so loading a wave in
+waiting behind sentinels leaves the estimate where it was (nova-tools#5096
+item 16; the owner: "I'd like to really really load up the sprint in waiting,
+and stick sentinels in"): `3/10 30.0% held=4 -> ETA 12m`. The verbs' sprint
+line, printed after every step, reads no cards and keeps the ETA over every
+card left.
 
 The stored view `sprint` (`nova-table watch --view sprint`) says the same:
 its summary line is `STOPPED`, and nothing more (no counts, no percent, no

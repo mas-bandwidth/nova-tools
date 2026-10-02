@@ -28,7 +28,7 @@ func TestTheSprintLineEstimatesItsETAFromTheCardsLeftAndTheAverageTimeToLand(t *
 	t.Parallel()
 	line := func(ready, landed int64, since time.Duration, started bool) string {
 		w := etaWork(ready, landed)
-		return summary(w, etaMinutes(w, since, started))
+		return summary(w, 0, etaMinutes(w, 0, since, started))
 	}
 	// 250 of 1000 landed in 5 minutes is 1.2 s a card: the 750 left take 15 minutes
 	assert.Equal(t, "250/1000 25.0% -> ETA 15m", line(750, 250, 5*time.Minute, true))
@@ -38,6 +38,43 @@ func TestTheSprintLineEstimatesItsETAFromTheCardsLeftAndTheAverageTimeToLand(t *
 	assert.Equal(t, "0/3 0.0% -> ETA", line(3, 0, time.Minute, true), "nothing landed: no rate to estimate from")
 	assert.Equal(t, "1/3 33.3% -> ETA", line(2, 1, 0, false), "no first start known: no estimate")
 	assert.Equal(t, "3/3 100.0% done", line(0, 3, time.Minute, true), "every card landed: done, no ETA")
+}
+
+// The ETA is over the dealable cards (nova-tools#5096 item 16, the wave-2 card builder:
+// "where's ETA counts held cards as dealable (2h38m to 3h30m on adding held work)"; the
+// coordinator, quoting Glenn: "I'd like to really really load up the sprint in waiting,
+// and stick sentinels in"): the cards behind a sentinel not released, or admitted held,
+// show apart as held=N, and the cards left that the estimate counts are the rest.
+func TestTheETAIsOverDealableCardsAndHeldCardsShowApart(t *testing.T) {
+	t.Parallel()
+	line := func(ready, landed, held int64, since time.Duration) string {
+		w := etaWork(ready, landed)
+		return summary(w, held, etaMinutes(w, held, since, true))
+	}
+	// 250 landed in 5 minutes is 1.2 s a card: of the 750 left, 500 are held, and the
+	// 250 dealable take 5 minutes
+	assert.Equal(t, "250/1000 25.0% held=500 -> ETA 5m", line(750, 250, 500, 5*time.Minute))
+	assert.Equal(t, "1/3 33.3% held=2 -> ETA", line(2, 1, 2, time.Minute), "every card left is held: nothing to estimate")
+	assert.Equal(t, "250/1000 25.0% -> ETA 15m", line(750, 250, 0, 5*time.Minute), "none held: the line as before")
+}
+
+// where shows the held cards of the table on its header line and in --json, and the
+// tables below it are as they were: a held sentinel and the wave behind it are held, a
+// card of another stream is not.
+func TestWhereShowsHeldCardsApart(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1 --coordinator lead")
+	ta.ok("add --stream w --sentinel gate --held --actor lead")
+	ta.ok("add --stream w a b --actor lead")
+	ta.ok("add --stream v c --actor lead")
+	ta.ok("add --stream v d --needs a --actor lead")
+	ta.ok("start --actor lead") // a STOPPED machine's header is STOPPED alone
+	assert.Contains(t, ta.ok("where"), "0/5 0.0% held=4 -> ETA", "where's header")
+	var w whereView
+	ta.json("where", &w)
+	assert.Equal(t, int64(4), w.Held, "where --json: %+v", w)
+	assert.Equal(t, "3", w.Tables[sprint.Work]["w"][sprint.Waiting], "the work table is as it was: %+v", w.Tables)
 }
 
 // The view shows the largest estimate of the last 10 s, so the value is stable (Glenn,

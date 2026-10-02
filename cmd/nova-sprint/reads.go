@@ -30,29 +30,37 @@ import (
 // seconds ("47m", "1h12m"); before that, or with no start known, the word
 // alone. Every primary landed, it has no ETA: it is done (errata 3 amendment 6).
 // eta is the minutes left (etaMinutes, or the view's held value), 0 when there
-// is no estimate.
-func summary(t ntable.Table, eta int64) string {
+// is no estimate. held is the cards no tick moves on its own (sprint.HeldBack:
+// behind a sentinel not released, or admitted held), shown apart as held=N
+// when there are any; the ETA leaves them out (nova-tools#5096 item 16).
+func summary(t ntable.Table, held, eta int64) string {
 	landed, all := counts(t)
+	line := progress(t)
+	if held > 0 {
+		line += fmt.Sprintf(" held=%d", held)
+	}
 	switch {
 	case all > 0 && landed == all:
 		return progress(t) + " done"
 	case eta >= 60:
-		return fmt.Sprintf("%s -> ETA %dh%dm", progress(t), eta/60, eta%60)
+		return fmt.Sprintf("%s -> ETA %dh%dm", line, eta/60, eta%60)
 	case eta > 0:
-		return fmt.Sprintf("%s -> ETA %dm", progress(t), eta)
+		return fmt.Sprintf("%s -> ETA %dm", line, eta)
 	}
-	return progress(t) + " -> ETA"
+	return line + " -> ETA"
 }
 
-// etaMinutes is the estimate of the minutes left, rounded up: the cards left,
-// each at since over the cards landed; 0 when there is none (nothing landed,
-// nothing left, or no first start known).
-func etaMinutes(t ntable.Table, since time.Duration, started bool) int64 {
+// etaMinutes is the estimate of the minutes left, rounded up: the dealable
+// cards left (all but the landed and the held), each at since over the cards
+// landed; 0 when there is none (nothing landed, nothing dealable left, or no
+// first start known).
+func etaMinutes(t ntable.Table, held int64, since time.Duration, started bool) int64 {
 	landed, all := counts(t)
-	if !started || landed <= 0 || landed >= all {
+	left := all - landed - held
+	if !started || landed <= 0 || left <= 0 {
 		return 0
 	}
-	return int64(math.Ceil(float64(since) * float64(all-landed) / float64(landed) / float64(time.Minute)))
+	return int64(math.Ceil(float64(since) * float64(left) / float64(landed) / float64(time.Minute)))
 }
 
 // etaHold is how long the view holds an estimate: it shows the largest of the
@@ -369,6 +377,7 @@ type whereView struct {
 	At          time.Time                               `json:"at"`
 	Landed      int64                                   `json:"landed"`
 	All         int64                                   `json:"all"`
+	Held        int64                                   `json:"held,omitempty"` // behind a sentinel not released, or admitted held: not in the ETA
 	Summary     string                                  `json:"summary"`
 	Tables      map[string]map[string]map[string]string `json:"tables"` // table -> row -> column -> cell as printed
 	Streams     []sprint.StreamClock                    `json:"streams"`
@@ -532,8 +541,13 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 		v.Cleared = es.Cleared
 	}
 	v.Landed, v.All = counts(shapes[0])
+	held, err := st.HeldBack(ctx)
+	if err != nil {
+		return whereView{}, "", err
+	}
+	v.Held = int64(held)
 	since, started := st.SinceFirstStart(ctx)
-	v.Summary = summary(shapes[0], a.heldETA(now, etaMinutes(shapes[0], since, started)))
+	v.Summary = summary(shapes[0], v.Held, a.heldETA(now, etaMinutes(shapes[0], v.Held, since, started)))
 
 	if f.Pending != nil {
 		v.Pending = f.Pending.ID

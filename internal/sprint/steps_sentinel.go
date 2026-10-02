@@ -25,6 +25,38 @@ func IsHeld(c *Card) bool { return c.F(FieldHeld) != "" }
 // FieldHeld is the stamp of a primary admitted held.
 const FieldHeld = "held"
 
+// HeldBack is how many primaries no tick moves on its own: every sentinel not
+// released, every card admitted held, and every waiting card that waits,
+// through a need or its place in line, on one of those. where shows them as
+// held=N and its ETA is over the rest, the dealable cards (nova-tools#5096
+// item 16). Everything it counts is waiting, so a snapshot of the work
+// table's waiting column is enough.
+func HeldBack(s *Snapshot) int {
+	memo := map[string]bool{}
+	var back func(c *Card) bool
+	back = func(c *Card) bool {
+		if v, ok := memo[c.ID]; ok {
+			return v
+		}
+		memo[c.ID] = false // a cycle holds nothing back by itself
+		v := IsSentinel(c) || IsHeld(c)
+		for _, n := range WaitsFor(s, c, nil) {
+			if w := s.Work.Placed(n); !v && w != nil && w.Col == Waiting {
+				v = back(w)
+			}
+		}
+		memo[c.ID] = v
+		return v
+	}
+	n := 0
+	for _, c := range s.Work.Column(Waiting) {
+		if back(c) {
+			n++
+		}
+	}
+	return n
+}
+
 // streamLine is the stream's primaries on the table, in work order.
 func streamLine(s *Snapshot, stream string) []*Card {
 	var out []*Card
