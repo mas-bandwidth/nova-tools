@@ -10,8 +10,10 @@
 \*         directory), working (the child at work), reported (the child ended
 \*         and the member sent its finish or return), refused (the sprint
 \*         refused the report: the slot is kept), orphan (the member died with
-\*         the slot staged or working: no live claim), accepted (the sprint took
-\*         the word, or its queue let the card go: tagged for the cleaner), kept
+\*         the slot staged, working or accepted: the accepted tag is the
+\*         member's memory only and the crash lost it; no live claim), accepted
+\*         (the sprint took the word, or its queue let the card go: tagged for
+\*         the cleaner), kept
 \*         (retired: the checkout gone, the done entry under <slots>/done),
 \*         gone (the done entry removed)
 \*   held  the sprint's queue holds the card as this member's
@@ -38,10 +40,11 @@
 \*
 \* BROKEN names a reversed witness, a rule as it could be written wrong, that
 \* TLC must break: "sweepworking" (the sweep retires a slot whose claim is live),
-\* "refusedremoved" (a refused report retires the slot at once), "capignored"
-\* (the cap round evicts nothing), "takesoverfull" (a card is staged while the
-\* slots are full), "noexpire" (a done entry is never removed: the day never
-\* passes). "none" is the design.
+\* "sweepskipsorphan" (the sweep skips an orphan: a crash-left or
+\* accepted-then-crashed leftover is never re-found), "refusedremoved" (a refused
+\* report retires the slot at once), "capignored" (the cap round evicts nothing),
+\* "takesoverfull" (a card is staged while the slots are full), "noexpire" (a
+\* done entry is never removed: the day never passes). "none" is the design.
 \*
 \* WHAT IS NOT MODELLED. The pid file and the ten minutes still (both say
 \* "nothing runs it" in the code, here ~held and no live claim), the shared Go
@@ -91,9 +94,11 @@ Run(s) ==
   /\ measured' = FALSE
   /\ UNCHANGED <<held, acc, from, born, n, full, over>>
 
-\* The member dies: the slot stays with no live claim.
+\* The member dies: the slot stays with no live claim. An accepted slot's tag
+\* is the member's memory only, so the crash loses it and the checkout is left
+\* for the sweep to re-find (cmd/nova-swarm slotclean.go, sweep).
 Crash(s) ==
-  /\ st[s] \in {"staged", "working"}
+  /\ st[s] \in {"staged", "working", "accepted"}
   /\ st' = [st EXCEPT ![s] = "orphan"]
   /\ measured' = FALSE
   /\ UNCHANGED <<held, acc, from, born, n, full, over>>
@@ -148,10 +153,13 @@ Retire(s) ==
   /\ UNCHANGED <<held, acc, full, over>>
 
 \* The sweep retires a slot the queue no longer holds and nothing runs: a crash
-\* or a kill left it, or a refusal kept it. The sprint's letting go is its word.
+\* or a kill left it (a staged, working or accepted-then-crashed slot: an
+\* orphan, no live claim), or a refusal kept it. The sprint's letting go is its
+\* word.
 Sweep(s) ==
   /\ ~held[s]
-  /\ \/ st[s] \in {"refused", "orphan"}
+  /\ \/ st[s] = "refused"
+     \/ Broken # "sweepskipsorphan" /\ st[s] = "orphan"
      \/ Broken = "sweepworking" /\ st[s] \in {"staged", "working"}
   /\ st' = [st EXCEPT ![s] = "kept"]
   /\ from' = [from EXCEPT ![s] = st[s]]
@@ -193,9 +201,10 @@ Next ==
                         \/ Retire(s) \/ Sweep(s) \/ Expire(s)
   \/ CapRound
 
-\* The cleaner is fair to what is tagged and to the day: a tagged launch is
-\* retired and a done entry expires, whatever else goes on.
-Spec == Init /\ [][Next]_vars /\ \A s \in Slots : WF_vars(Retire(s)) /\ WF_vars(Expire(s))
+\* The cleaner is fair to what is tagged, to the leftover the sweep re-finds and
+\* to the day: a tagged launch is retired, a leftover is swept and a done entry
+\* expires, whatever else goes on.
+Spec == Init /\ [][Next]_vars /\ \A s \in Slots : WF_vars(Retire(s)) /\ WF_vars(Sweep(s)) /\ WF_vars(Expire(s))
 
 TypeOK ==
   /\ st \in [Slots -> States]
@@ -219,6 +228,7 @@ CapHeld == measured => (Size <= Cap \/ Kept = {})
 \* No card is staged while the slots are full.
 TakesRefusedOverCap == ~over
 
-\* Every accepted slot is eventually removed.
+\* Every accepted slot is eventually removed, even one a crash left for the
+\* sweep to re-find.
 EveryAcceptedGoes == \A s \in Slots : (st[s] = "accepted") ~> (st[s] = "gone")
 =============================================================================

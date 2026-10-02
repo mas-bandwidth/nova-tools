@@ -293,3 +293,4 @@ MCMemberSlotBrokenRefusedRemoved.cfg	MCMemberSlot.tla	invariant	CheckoutGoneOnly
 MCMemberSlotBrokenCapIgnored.cfg	MCMemberSlot.tla	invariant	CapHeld	ignore-terminal	memberslot	required	-
 MCMemberSlotBrokenTakesOverFull.cfg	MCMemberSlot.tla	invariant	TakesRefusedOverCap	ignore-terminal	memberslot	required	-
 MCMemberSlotBrokenNoExpire.cfg	MCMemberSlot.tla	temporal	EveryAcceptedGoes	ignore-terminal	memberslot	required	-
+MCMemberSlotBrokenSweepSkipsOrphan.cfg	MCMemberSlot.tla	temporal	EveryAcceptedGoes	ignore-terminal	memberslot	required	-
