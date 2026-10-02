@@ -176,7 +176,9 @@ func TestWhereFrameHoldsOnlyTheHeaderAndTheTables(t *testing.T) {
 	lines := strings.Split(frame, "\n")
 	require.Equal(t, []string{"SPRINT TABLE", "", "STOPPED", ""}, lines[:4], "the head of the frame")
 	for _, l := range lines[4:] {
-		assert.False(t, l != "" && !strings.Contains(l, " | ") && !strings.Contains(l, "-+-"), "a line that is not a table's: %q\n%s", l, frame)
+		// a table's line holds a cell divider or a rule's joint; the friends table's
+		// summary row is a blank label and its blank cell, "<label> |"
+		assert.False(t, l != "" && !strings.Contains(l, " | ") && !strings.Contains(l, "-+-") && !strings.HasSuffix(l, " |"), "a line that is not a table's: %q\n%s", l, frame)
 	}
 	for _, gone := range []string{"pending", "stalled", "REMINDERS", "friend-a", "coordinator", "since", "op-left"} {
 		assert.NotContains(t, frame, gone, "the frame shows %q", gone)
@@ -187,6 +189,8 @@ func TestWhereFrameHoldsOnlyTheHeaderAndTheTables(t *testing.T) {
 		got := strings.Join(rowsOf(tableOf(frame, name)), ",")
 		assert.Equal(t, want, got, "table %s: rows, in the frame:\n%s", name, frame)
 	}
+	// the fixture has no friend: the friends table is its header, one rule and its summary row
+	assert.Equal(t, "friends | status\n--------+-------\n        |", tableOf(frame, "friends"), "the frame:\n%s", frame)
 	// the view for a program keeps all of it
 	var w whereView
 	ta.json("where", &w)

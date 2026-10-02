@@ -73,6 +73,23 @@ Both loops name the identity every child commits under, `--identity
 <owner>,<name>,<email>`, in their argv, so no file is written into a pool by
 hand; a loop without it reads the pool's `identity.tsv`.
 
+The friends are nova-config's friend rows: `nova-sprint friend sync --actor ada`
+copies their names into the sprint's friends table, and each friend says it is
+there by beating from its own machinery, beside its harness, every few seconds
+(the same window and misses as a member's beat; `where` shows it `up`, `down`,
+or `held` while `nova-sprint friend down <friend>` holds it). On any harness the
+wrapper that starts the friend adds one line before it, with
+`NOVA_SPRINT_SERVER` (the run loop's loopback address) or `NOVA_SPRINT_REDIS`
+set for the friend:
+
+```
+while :; do nova-sprint friend beat friend-a >/dev/null 2>&1; sleep 5; done &
+trap 'kill $!' EXIT
+```
+
+so the beat stops when the friend's harness does, and the friend is down three
+windows later.
+
 The inventory reads the store `NOVA_SPRINT_REDIS` names (or `--redis`); export
 it, and `NOVA_MACHINE` when the machine running the play is a row, before the
 first play. `ANSIBLE_INVENTORY_UNPARSED_FAILED=true` (or `[inventory]

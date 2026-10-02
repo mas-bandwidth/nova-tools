@@ -541,7 +541,7 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 	v.Machine = st.MachineLine(ctx)
 	var b strings.Builder
 	b.WriteString("SPRINT TABLE\n\n" + whereHeader(v.Summary, v.Machine) + "\n\n")
-	var parts []string
+	parts := map[string]string{}
 	for i, t := range shapes {
 		logical := sprint.ViewOrder[i]
 		rows := map[string]map[string]string{}
@@ -564,9 +564,22 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 			t = mergeAll(t)
 		}
 		// every table shows, every stream row in it, empty or not
-		parts = append(parts, ntable.Render(t, ntable.RenderOpts{Title: logical}))
+		parts[logical] = ntable.Render(t, ntable.RenderOpts{Title: logical})
 	}
-	b.WriteString(strings.Join(parts, "\n"))
+	friends, err := st.FriendRows(ctx, now)
+	if err != nil {
+		return whereView{}, "", err
+	}
+	v.Tables[sprint.Friends] = map[string]map[string]string{}
+	for _, f := range friends {
+		v.Tables[sprint.Friends][f.Name] = map[string]string{sprint.Status: f.Status}
+	}
+	parts[sprint.Friends] = friendsText(friends)
+	var shown []string
+	for _, t := range sprint.ShownOrder {
+		shown = append(shown, parts[t])
+	}
+	b.WriteString(strings.Join(shown, "\n"))
 	a.goalsView(ctx, st, &v)
 	for _, c := range clocks {
 		if c.Stalled(now, stale) {
@@ -574,6 +587,27 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 		}
 	}
 	return v, b.String(), nil
+}
+
+// friendsText is the friends table as the view draws it (sprint.FriendsDef):
+// its header, a rule, a row per friend in the order given, then a rule and the
+// summary row, whose cell is blank, as the fleet table's status cell is (the
+// table's one column is text, which has no fold, so the table layer draws no
+// footer of its own). With no friend it is the header, its one rule and the
+// summary row, as every empty table is (ntable.Render).
+func friendsText(friends []store.FriendRow) string {
+	t := sprint.FriendsDef()
+	for _, f := range friends {
+		t.Rows = append(t.Rows, ntable.Row{Key: f.Name, Texts: map[string]string{sprint.Status: f.Status}})
+	}
+	text := ntable.Render(t, ntable.RenderOpts{Title: sprint.Friends})
+	header, rest, _ := strings.Cut(text, "\n")
+	rule, _, _ := strings.Cut(rest, "\n")
+	label, _, _ := strings.Cut(header, " | ")
+	if len(friends) > 0 {
+		text += rule + "\n"
+	}
+	return text + strings.Repeat(" ", len(label)) + " |\n"
 }
 
 // allRow is the label of the one row the view draws for the readers and the
