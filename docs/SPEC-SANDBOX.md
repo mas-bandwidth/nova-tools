@@ -26,13 +26,13 @@ Landlock on Linux; other platforms refuse to run the command.
 |---|---|
 | a worker with the bench's credentials can read `~/.ssh`, the `gh` config, the keychain and the shell history | rules 3, 4 |
 | shared inputs get read **and write** reach because there is only one list | rules 3, 4 |
-| forcing a dedicated OS user per line is an administrative burden nobody will carry | rule 2 |
+| forcing a dedicated OS user per line is an administrative burden nobody will carry |
 | a sandbox that silently does nothing on a platform it does not support | rules 1, 11 |
 | a credential file readable inside the wall | rules 6, 10 |
-| `/tmp` on macOS is a symlink to `/private/tmp`, and a policy written against the unresolved path grants nothing | rule 5 |
+| `/tmp` on macOS is a symlink to `/private/tmp`, and a policy written against the unresolved path grants nothing |
 | a deny-by-default policy makes the inherited temp directory unwritable and half a toolchain dies on its first scratch file | rule 8 |
-| OpenCode's `external_directory` is relative to the harness cwd, so a job directory that is not the cwd is "external" to itself | rule 13 |
-| 120 native cards each download the Go toolchain and every module into their own data home, up to 5 GB per slot, and the runners fill their disk (#1048) | rule 17: an explicitly named shared cache directory in the write set |
+| The harness's `external_directory` is relative to the harness cwd, so a job directory that is not the cwd is "external" to itself |
+| 120 native cards each download the Go toolchain and every module into their own data home, up to 5 GB per slot, and the runners fill their disk | rule 17: an explicitly named shared cache directory in the write set |
 | the wall stands and the job's first `git status` dies on `~/.gitconfig`, which reads as a broken sandbox | rule 9: the caller sets `HOME` to the per-job data home, and a `HOME` outside both lists is a refusal |
 
 ## The rules, numbered
@@ -304,7 +304,7 @@ The test requirements are listed under **Tests this spec demands**.
     check that comes back the wrong way is `PROBE REFUSED` at exit 1 naming
     the check. The last two are not decoration: a wall that denies the work
     too is broken, and a two-check probe would call it a pass. **`--secret` is
-    optional (issue #881).** A caller whose key is delivered by `nova-secrets
+    optional **. A caller whose key is delivered by `nova-secrets
     exec` into the environment has **no key file** for the wall to protect —
     the key is never a file on disk — so the probe runs its other four checks
     and no `read_secret` step is invented; the `secret_inside_allow` check of
