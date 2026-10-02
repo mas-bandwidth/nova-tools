@@ -83,7 +83,6 @@ internal/ci/testdata/generality/internal/tokens.txt the Go scan's ledger: each r
 internal/ci/testdata/generality/internal/typedrec.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality/internal/update.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality/internal/worklang.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
-internal/ci/testdata/generality/internal/yield.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality/tools/ghrelease.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality_text_fixtures_allowlist.txt exact recorded fixture and ledger paths are identifiers, including source directory names; reasons remain required and stale entries fail
 internal/tlc/testdata/temporal-new.log captured TLC model checker output

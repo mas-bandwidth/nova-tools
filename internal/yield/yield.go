@@ -1,5 +1,5 @@
-// Package yield is the one place a process steps behind CI (nova-tools#4293,
-// Glenn 2026-09-26 ~12:00 PM ET: "CI over work is a permanent setting. It's
+// Package yield is the one place a process steps behind CI. CI over work is a
+// permanent setting because work creates more CI, so without this, it is
 // a GOOD idea. because work creates more CI, so without this, it is
 // unstable").
 //

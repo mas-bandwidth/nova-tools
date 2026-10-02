@@ -8,7 +8,7 @@ import (
 )
 
 // alreadyBehind is whether a failed setpriority to n leaves the point made: the
-// kernel refused to RAISE the priority (EACCES or EPERM: an unprivileged process
+// kernel refused to raise the priority (EACCES or EPERM: an unprivileged process
 // may not lower its nice) of a process or thread whose nice is already n or
 // more. It is judged per process on darwin and per thread on Linux, never by one
 // thread's reading for the rest; any other failure is a failure.
