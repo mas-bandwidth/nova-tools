@@ -30,13 +30,13 @@ invariant), and the unit tests below are green.
 (work-tree "v1"
  :source "github"
  :org "<org>"
- :fetched "2026-01-01T00:00:00Z"
+ :fetched "..."
  :repos
  ((repo "<org>/<repo>"
    :url "https://github.com/<org>/<repo>"
    :archived false
    :issues
-   ((issue 7
+   ((issue
       :url "https://github.com/<org>/<repo>/issues/7"
       :node-id "I_..."
       :title "..."
