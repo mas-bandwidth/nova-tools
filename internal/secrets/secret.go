@@ -17,11 +17,6 @@ import (
 // place, so no caller can produce a "helpfully" partial one.
 const Redacted = "[redacted]"
 
-// DetailWithheld replaces a WHOLE detail line found to contain credential material.
-// Deliberately not a surgical redaction: cutting the secret out of the middle of a
-// string and printing the rest is how a truncated secret gets printed.
-const DetailWithheld = "[detail withheld: it contained credential material]"
-
 // MinLeakFragment is how many consecutive bytes of a secret count as a leak. Six, not
 // "the whole value", because the leak that actually happens is a truncated one.
 const MinLeakFragment = 6
@@ -86,13 +81,4 @@ func Leaks(text string, s Secret) bool {
 		}
 	}
 	return false
-}
-
-// SafeDetail gates a human-readable detail line against a secret. It returns the line,
-// or DetailWithheld, and whether it withheld.
-func SafeDetail(detail string, s Secret) (string, bool) {
-	if Leaks(detail, s) {
-		return DetailWithheld, true
-	}
-	return detail, false
 }
