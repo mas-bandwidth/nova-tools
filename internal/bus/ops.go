@@ -81,12 +81,15 @@ func PrepareWith(t *Bus, text string, now time.Time, opts SendOptions) (Prepared
 	tol := tolerate(c, text, as)
 	n, parseProblems := parseLines("", tol.lines, tol.at, 0)
 	problems := append(tol.problems, parseProblems...)
-	// A header that would not PARSE has no From, To or Subject to check, and a run that
-	// went on to check them would report a missing To line to somebody whose To line is
-	// there and misspelled. The line-level findings are all reported; the rest waits for a
-	// header.
+	// A header that would not PARSE may be missing a line only because an unknown key is
+	// that line misspelled, so an ABSENT From, To or Subject is not reported beside it. What
+	// the lines that did parse say IS reported, in the same run: a To naming nobody and a Re
+	// naming nothing beside the unknown key, so one run names every problem it can see.
 	if len(parseProblems) > 0 {
-		return p, problemsOf(problems)
+		problems = append(problems, n.Header.problems(c, false)...)
+		sender, _ := c.ResolveOne(n.Header.From)
+		_, reProblems := resolveReSubjects(t, sender, &n.Header)
+		return p, problemsOf(append(problems, reProblems...))
 	}
 	if n.Header.ID != "" {
 		problems = append(problems, fmt.Errorf("this draft already carries an %s line (%q); send assigns the id, and a note is sent once", KeyID, n.Header.ID))
