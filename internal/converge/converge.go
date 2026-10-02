@@ -279,6 +279,15 @@ func LoadState(path string) (State, error) {
 // Save writes the state file, whole, through a temporary file in the same
 // directory: a tick killed halfway through leaves the previous tick's memory
 // rather than half of this one's.
+// PlanSave is Save with nothing written: every check the write makes, and the
+// same error.
+func PlanSave(path string) error {
+	if strings.TrimSpace(path) == "" {
+		return nil
+	}
+	return atomicfile.Check(filepath.Clean(path), 0o600, atomicfile.ExactMode())
+}
+
 func (s State) Save(path string) error {
 	if strings.TrimSpace(path) == "" {
 		return nil

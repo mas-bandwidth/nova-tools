@@ -388,17 +388,18 @@ func liftQuarantine(box, surface string, dry bool, stdout, stderr io.Writer) int
 		return 1
 	}
 
+	// A dry run is this run's own plan: the same write, checked and not made, so it
+	// refuses exactly where the write would.
+	if err := writeOrPlan(dry, box, b); err != nil {
+		fmt.Fprintf(stderr, "LIFT FAIL quarantine=%s: could not write box: %s (the box was not replaced, so the quarantine still stands)\n",
+			oneline.Field(fuse.Surface(surface)), oneline.Err(err))
+		return 1
+	}
 	if dry {
 		for _, n := range slices.Sorted(maps.Keys(removed)) {
 			fmt.Fprintf(stdout, "LIFT OK quarantine=%s dry_run=true: would lift it; nothing written, it still stands\n", oneline.Field(n))
 		}
 		return 0
-	}
-
-	if err := fuse.WriteBox(box, b); err != nil {
-		fmt.Fprintf(stderr, "LIFT FAIL quarantine=%s: could not write box: %s (the box was not replaced, so the quarantine still stands)\n",
-			oneline.Field(fuse.Surface(surface)), oneline.Err(err))
-		return 1
 	}
 
 	// Re-read. The exit code of a remedy is not evidence the remedy worked.
@@ -556,22 +557,20 @@ func cmdLockdown(rest []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 
 	b, readErr := fuse.ReadBox(box)
-	if dry {
-		what := "blow the lockdown in the box there"
-		switch {
-		case errors.Is(readErr, fuse.ErrNoBox):
-			what = "make a box there holding a blown lockdown"
-		case readErr != nil:
-			what = "keep the unreadable box's bytes beside it and replace it with a blown lockdown"
-		}
-		fmt.Fprintf(stdout, "LOCKDOWN OK dry_run=true: nothing written, the lockdown is not blown; a real run would %s: %s\n", oneline.Escape(what), oneline.Escape(reason))
-		return 0
-	}
-	if errors.Is(readErr, fuse.ErrNoBox) {
+	what := "blow the lockdown in the box there"
+	switch {
+	case dry && errors.Is(readErr, fuse.ErrNoBox):
+		what = "make a box there holding a blown lockdown"
+		b = fuse.Box{Quarantine: map[string]fuse.Fuse{}}
+	case dry && readErr != nil:
+		what = "keep the unreadable box's bytes beside it and replace it with a blown lockdown"
+		b = fuse.Box{Quarantine: map[string]fuse.Fuse{}}
+	case dry:
+	case errors.Is(readErr, fuse.ErrNoBox):
 		// A fuse you cannot blow is not a fuse: with no box there, the lockdown makes
 		// one. Nothing is less blocked than before, since no box already refused.
 		b = fuse.Box{Quarantine: map[string]fuse.Fuse{}}
-	} else if readErr != nil {
+	case readErr != nil:
 		// Proceed anyway, and this direction is safe to argue precisely: before, an
 		// unreadable box made every caller refuse; after, a recorded lockdown makes every
 		// caller refuse. Nothing is less blocked than it was, and the box becomes readable
@@ -587,9 +586,13 @@ func cmdLockdown(rest []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 
 	b.Lockdown = &fuse.Fuse{At: stamp(now), Reason: reason}
-	if err := fuse.WriteBox(box, b); err != nil {
+	if err := writeOrPlan(dry, box, b); err != nil {
 		fmt.Fprintf(stderr, "LOCKDOWN FAIL could not write box: %s (the write is temp-file + rename, so a failure cannot leave it torn; stop by hand and tell the person you work with now)\n", oneline.Err(err))
 		return 1
+	}
+	if dry {
+		fmt.Fprintf(stdout, "LOCKDOWN OK dry_run=true: nothing written, the lockdown is not blown; a real run would %s: %s\n", oneline.Escape(what), oneline.Escape(reason))
+		return 0
 	}
 
 	// The exit code of a remedy is not evidence the remedy worked; the state afterwards
@@ -641,15 +644,14 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprintf(stderr, "nova-fuse quarantine REFUSED: %s -- refusing to narrow an unreadable box: while unreadable it already blocks EVERY surface, and a fresh box holding only this one quarantine would UNBLOCK the rest; blow lockdown instead (`lockdown --box %s \"<reason>\"`), or repair the box by hand with the person you work with; run: nova-fuse help\n", oneline.Err(readErr), oneline.Escape(box))
 		return 2
 	}
+	b.Quarantine[surface] = fuse.Fuse{At: stamp(now), Reason: reason}
+	if err := writeOrPlan(dry, box, b); err != nil {
+		fmt.Fprintf(stderr, "QUARANTINE FAIL %s: could not write box: %s (the box was not replaced; stop reading that surface by hand and tell the person you work with)\n", oneline.Field(surface), oneline.Err(err))
+		return 1
+	}
 	if dry {
 		fmt.Fprintf(stdout, "QUARANTINE OK %s dry_run=true: nothing written, the surface is not quarantined; a real run would record: %s\n", oneline.Field(surface), oneline.Escape(reason))
 		return 0
-	}
-
-	b.Quarantine[surface] = fuse.Fuse{At: stamp(now), Reason: reason}
-	if err := fuse.WriteBox(box, b); err != nil {
-		fmt.Fprintf(stderr, "QUARANTINE FAIL %s: could not write box: %s (the box was not replaced; stop reading that surface by hand and tell the person you work with)\n", oneline.Field(surface), oneline.Err(err))
-		return 1
 	}
 
 	// Re-read. The exit code of a remedy is not evidence the remedy worked. And ask for the
@@ -696,19 +698,22 @@ func cmdInit(rest []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "INIT FAIL box=%s: something is already there, and init never replaces a box (a blown lockdown is replaced only in a live conversation with the person you work with); read it with %s\n", oneline.Field(box), oneline.Escape(boxRemedy("status", box)))
 		return 1
 	}
+	// A dry run is this run's own plan: the creation's every check, refusing where
+	// it would, and nothing written.
+	create := fuse.CreateBox
 	if dry {
-		if _, err := os.Lstat(box); err == nil {
-			return exists()
-		}
-		fmt.Fprintf(stdout, "INIT OK box=%s dry_run=true: nothing written; a real run would make an empty box there\n", oneline.Field(box))
-		return 0
+		create = fuse.PlanCreateBox
 	}
-	if err := fuse.CreateBox(box); err != nil {
+	if err := create(box); err != nil {
 		if errors.Is(err, fs.ErrExist) {
 			return exists()
 		}
 		fmt.Fprintf(stderr, "INIT FAIL box=%s: could not make the box: %s\n", oneline.Field(box), oneline.Err(err))
 		return 1
+	}
+	if dry {
+		fmt.Fprintf(stdout, "INIT OK box=%s dry_run=true: nothing written; a real run would make an empty box there\n", oneline.Field(box))
+		return 0
 	}
 	// Re-read. The exit code of a remedy is not evidence the remedy worked.
 	after, err := fuse.ReadBox(box)
@@ -788,4 +793,13 @@ func keepableReason(raw string) string {
 		return folded
 	}
 	return oneline.Escape(strings.TrimSpace(raw))
+}
+
+// writeOrPlan writes the box, or for a dry run makes every check the write
+// would and writes nothing, returning the error the write would.
+func writeOrPlan(dry bool, box string, b fuse.Box) error {
+	if dry {
+		return fuse.PlanWriteBox(box)
+	}
+	return fuse.WriteBox(box, b)
 }
