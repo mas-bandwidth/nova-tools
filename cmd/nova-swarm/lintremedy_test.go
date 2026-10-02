@@ -75,8 +75,7 @@ func TestLintRulesPrintsEveryRuleAndItsRemedy(t *testing.T) {
 		rest, ok := strings.CutPrefix(line, "LINT RULE ")
 		require.True(t, ok, "every line of the listing is one rule: %q", line)
 		name, remedy, ok := strings.Cut(rest, " remedy=")
-		if !ok || strings.TrimSpace(remedy) == "" {
-			t.Errorf("a rule is listed with no remedy: %q", line)
+		if !assert.True(t, ok, "a rule is listed with no remedy: %q", line) || !assert.NotEqual(t, "", strings.TrimSpace(remedy), "a rule is listed with no remedy: %q", line) {
 			continue
 		}
 		seen[strings.TrimSpace(name)] = true
