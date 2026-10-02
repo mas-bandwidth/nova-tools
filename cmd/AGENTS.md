@@ -19,6 +19,6 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `nova-swarm/` | native card runner, sprint member and card lint CLI | `go test ./cmd/nova-swarm` | `go test ./cmd/nova-swarm` |
 | `nova-table/` | tables of ordered sets, text and percentages over Redis | `go test ./cmd/nova-table` | `go test ./cmd/nova-table` |
 | `nova-tokens/` | token consumption metering and budgeting CLI | `go test ./cmd/nova-tokens` | `go test ./cmd/nova-tokens` |
-| `nova-update/` | binary release update CLI | `go test ./cmd/nova-update` | `go test ./cmd/nova-update` |
-| `nova-version/` | build identity and version CLI | `go test ./cmd/nova-version` | `go test ./cmd/nova-version` |
+| `nova-update/` | compare installed tools with their latest releases, update one when asked, and cut and adopt releases of these tools | `go test ./cmd/nova-update` | `go test ./cmd/nova-update` |
+| `nova-version/` | report which version of each tool is installed, record it, and compare two records or two revisions | `go test ./cmd/nova-version` | `go test ./cmd/nova-version` |
 | `nova-work/` | every issue of every repository of an organization in one tree file, imported read-only and verified field for field | `go test ./cmd/nova-work` | `go test ./cmd/nova-work` |

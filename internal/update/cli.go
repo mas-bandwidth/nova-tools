@@ -24,15 +24,25 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
-// Environment supplies deterministic clock/network seams. Nil values use the
-// machine clock and a credential-free, redirect-bounded HTTP client.
+// Environment is the run's seams. A zero value is production: the machine
+// clock, a credential-free, redirect-bounded HTTP client, a background context
+// and no hooks.
 type Environment struct {
-	Now         func() time.Time
-	Client      *http.Client
-	Context     context.Context
+	// Now is the clock every took= and at= field reads.
+	Now func() time.Time
+	// Client asks the github:, npm:, brew: and ollama: sources.
+	Client *http.Client
+	// Context is the parent of the run's --budget deadline.
+	Context context.Context
+	// WorkerStart is a test hook: called as each of readEntries' workers starts,
+	// so a test can hold the pool and see the reads run in parallel.
 	WorkerStart func(id int)
-	JobAttempt  func(index int)
-	DrainTimer  func(time.Duration) (<-chan time.Time, func() bool)
+	// JobAttempt is a test hook: called before each entry is offered to the
+	// workers, so a test can see an entry wait while every worker is busy.
+	JobAttempt func(index int)
+	// DrainTimer is a test hook: the timer that bounds a child's output drain
+	// after the child exits or is killed, so a test fires it instead of waiting.
+	DrainTimer func(time.Duration) (<-chan time.Time, func() bool)
 }
 type options struct {
 	file, host, snapshot, as, to, bus, remote, branch, target, adopt, store string
@@ -101,10 +111,10 @@ func flagProblem(f *flag.FlagSet, err error) error {
 
 // updateVerbs is SPEC-UPDATE's verbs block, byte for byte,
 // including its placeholder spellings: <k> not <kind>, <v> not <version>,
-// <who,who> not <recipients>, <r> and <b> for the remote and the branch, and the
-// report line's alternation showing that --send is the one that needs a bus. A
-// change here belongs in the spec first, and TestHelpIsTheSpecsVerbsBlock reads
-// the spec file and compares the two. nova-version's usage lines are its
+// <who,who> not <recipients>, <r> and <b> for the remote and the branch. Report
+// has one line per shape: the plain report, the draft, and the send, which is the
+// one that needs a bus. A change here belongs in the spec first, and
+// TestHelpIsTheSpecsVerbsBlock reads the spec file and compares the two. nova-version's usage lines are its
 // verbs' own (versiontool.go). The release verbs are one line here; their own
 // lines are release.Verbs, printed by `nova-update help release`.
 const updateVerbs = `usage:
@@ -112,11 +122,13 @@ nova-update example [--out <path>]
 nova-update check --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
 nova-update status --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
 nova-update apply --file <path> <name> [--version <v>] [--dry-run] [--timeout <d>]
-nova-update report --file <path> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who> | --send --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
+nova-update report --file <path> [--host <label>] [--snapshot <path>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
+nova-update report --file <path> --draft --as <friend> --to <who,who>
+nova-update report --file <path> --send --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b>
 nova-update report --store <host:port> [--timeout <d>]
 nova-update watch --adopt <checks.tsv> [--bus <path> --remote <r> --branch <b> --as <friend> --to <who,who>] [--host <label>] [--timeout <d>] [--budget <d>]
 nova-update adoption --file <path> [--as <friend>] [--max <n>]
-nova-update release <cut|build|install|adopt|pull> ...   nova-tools' own release pipeline: nova-update help release prints its usage lines
+nova-update release <cut|build|install|adopt|pull> ...   cut, build and adopt a release of these tools; nova-update help release prints its lines
 nova-update help`
 
 // manifestShape is the one sentence that says what the file --file names holds:
@@ -130,13 +142,13 @@ const manifestShape = "one line per tool, six tab-separated fields name kind ins
 // what the tool does (line 1, the README's sentence), how it works, and the
 // first run (ONBOARDING.md point 6).
 const (
-	updateOpening = `nova-update: compare installed tools with their latest releases, and update one when asked
+	updateOpening = `nova-update: compare installed tools with their latest releases, update one when asked, and cut and adopt releases of these tools
 
 how it works: the manifest is a tab-separated file you write, one tool per line:
 how to read its installed version, where its latest release is published, and
 the command that installs it. check and report compare the two; apply runs one
 named entry's command and reads the version again, nothing else. The release
-verbs build, publish and install nova-tools' own releases.
+verbs build, publish and install releases of these tools.
 first run: the binary alone; the lines under example: write a one-tool manifest
 (Go) to ./versions.tsv and read it; they install nothing.`
 )
@@ -150,16 +162,16 @@ func helpText(name string) string {
 }
 
 func help(name string, w io.Writer) {
-	// SPEC-UPDATE's "The verbs" block says these lines are what help prints,
-	// BYTE FOR BYTE, and names one string in the binary as the reason the spec
-	// and the help cannot drift apart. This is that string.
+	// The verbs block is SPEC-UPDATE's, byte for byte (updateVerbs). A verb's
+	// own notes are behind `help <verb>` (verbDetail), not here.
 	fmt.Fprintf(w, "%s\n\n", updateOpening)
 	fmt.Fprintln(w, updateVerbs)
-	fmt.Fprintf(w, "%s version (or --version)\nDefaults: --max 20 (0 = all), --timeout 5s, --budget 60s. Repeat --kind to select kinds. Every verb but watch and release takes --json: the same result as one JSON object on stdout. A result's first line is the verb, OK, FAIL or REFUSED, and the run's counts; `<verb> -h` lists a verb's flags and effect.\n", name)
-	note := "Report needs no bus or network. Updates require an explicit apply name. status is check with every entry shown, current ones too. apply --dry-run prints the plan and writes nothing. "
-	note += "Cross-process delivery recovery needs --snapshot; without it, each send is a new intention. Do not prepare again while pending; retry the saved artifact. A snapshot uses a sibling .lock file for a kernel lock; its presence never means a process is running."
-	fmt.Fprintln(w, note)
-	fmt.Fprintf(w, "\nLocals: latest=local:<path> runs that binary (or argv) on this host to read the version; e.g., local:/usr/local/bin/nova-update or local:go version. The installed column can be a version string (v1.2.3), a single command name found on PATH, or a full argv.\n")
+	fmt.Fprintf(w, "%s version (or --version)\n\n", name)
+	fmt.Fprint(w, "Defaults: --max 20 (0 lists all), --timeout 5s, --budget 60s; repeat --kind to select several kinds.\n"+
+		"Every verb but watch and release takes --json: the same result as one JSON object on stdout.\n"+
+		"A result's first line is the verb, OK, FAIL or REFUSED, and the run's counts.\n"+
+		"Updates require an explicit apply name; apply --dry-run prints the plan and writes nothing.\n"+
+		"help <verb> or <verb> -h prints a verb's flags, its effect and its notes.\n")
 	fmt.Fprint(w, twoBinaries())
 	fmt.Fprint(w, manifestHelp(name))
 	fmt.Fprintf(w, "\n%s\n\nexample:\n", exitCodes(name))
@@ -172,37 +184,46 @@ func help(name string, w io.Writer) {
 // divide the work, so a reader who finds both on a PATH knows which to reach for;
 // nova-version's banner says the same in its how text (versiontool.go). They are
 // two builds sharing this package: neither one's verbs are a subset of the other's.
+// No line opens with a tool's name, which would read as a usage line.
 func twoBinaries() string {
-	// The line opens with "Both", not the tool's name: a banner line that opens
-	// with the name is read as a usage line naming a verb ("and").
-	return "\nBoth nova-update and nova-version read this manifest: they are two binaries that share the manifest reader and report (report prints the same lines under either). " +
-		"Use nova-update to ASK whether what you depend on is current and to CHANGE it: check and status (installed against latest, one line per finding; status shows the current ones too), apply (install the one entry you name, or print the plan with --dry-run), watch (run a file of adoption checks and post the receipt), adoption (list who adopted which tool) and release (cut, build, install, adopt and pull a nova-tools release). " +
-		"Use nova-version to RECORD what is installed: snapshot, diff, moved and send are nova-version's.\n"
+	return "\nThese two binaries, nova-update and nova-version, read the same manifest and print the same report.\n" +
+		"Use nova-update to ask whether a tool is current and to change it:\n" +
+		"check, status, apply, watch, adoption and release are nova-update's.\n" +
+		"Use nova-version to record what is installed: snapshot, diff, moved and send are nova-version's.\n"
 }
 
 // manifestHelp is the manifest format in six lines, under the `report` example line so
 // `report -h` quotes it (verbflag.Excerpt reads a verb's lines with the lines indented
 // beneath them): the rule-2 file --file names, the same for both tools.
 func manifestHelp(name string) string {
-	return "\nTHE MANIFEST is the file --file names, written by hand, the same for both tools:\n" +
+	return "\nThe manifest is the file --file names, written by hand, the same for both tools:\n" +
 		"  " + name + " report --file versions.tsv     the six lines that say what versions.tsv holds:\n" +
 		"      1. line 1 is the header, byte for byte: " + tabbed(Header) + "; every other line is six fields, one tab between, none empty; a line starting # is a comment\n" +
 		"      2. kind is harness, engine, model, tool or pin; name is unique in the file; owner is who answers for it\n" +
 		"      3. installed is a version (v1.2.3), a command name on PATH, or an argv whose first line of output carries the version (single spaces, no quotes)\n" +
-		"      4. latest is github:<owner>/<repo>, npm:<package>, brew:<formula>, ollama:<model>:<tag> (kind model), local:<argv> (a pin takes this only), or - for not known yet\n" +
-		"      5. apply is the argv that updates it, or none; a run prints EVERY problem of the file at once, each with its line, never the first alone\n" +
+		"      4. latest is github:<owner>/<repo>, npm:<package>, brew:<formula>, ollama:<model>:<tag> (kind model), local:<argv> (run on this host; a pin takes this only), or - for not known yet\n" +
+		"      5. apply is the argv that updates it, or none; a run prints every problem of the file at once, each with its line\n" +
 		"      6. example: go<TAB>tool<TAB>go version<TAB>local:go version<TAB>none<TAB>me\n"
 }
 
+// reportNotes is what `report -h` adds about delivery: how a prepared note
+// survives a process that dies before the bus took it.
+const reportNotes = `notes: a plain report needs no bus and no network.
+--snapshot names a state file that carries a prepared note across processes:
+retry the saved note, and never prepare again while one is pending.
+Without --snapshot, each send is a new note.
+The snapshot's sibling .lock file holds a kernel lock; the file being there never means a process runs.
+`
+
 // verbDetail is what `<verb> -h` adds to the verb's usage lines and flags: the
 // manifest's rules for the verbs that read one (report's are quoted from the
-// banner already) and the verb's effect, one of inspection, local write or
-// delivery (STANDARD §2, "its effects are explicit").
+// banner already), report's delivery notes, and the verb's effect, one of
+// inspection, local write or delivery (STANDARD §2, "its effects are explicit").
 func verbDetail(name, verb string) string {
 	effects := map[string]string{
 		"check":    "inspection: reads each tool's installed version and asks its latest source (github:, npm:, brew: and ollama: are network reads); writes nothing",
-		"status":   "inspection: the reads of check; writes nothing",
-		"apply":    "local write: runs the named entry's apply command, which installs; --dry-run starts no process and writes nothing",
+		"status":   "inspection: the reads of check, with every entry shown, the current ones too; writes nothing",
+		"apply":    "local write: runs the apply command of the one entry named, which installs; --dry-run starts no install process and writes nothing, after the version reads have run",
 		"report":   "inspection: reads each installed version, no latest, no network; --snapshot writes its state file (local write); --send delivers the note through nova-bus (delivery); --store reads the fleet's Redis",
 		"watch":    "inspection: runs each check's command; with --bus and its four companions, delivery: the receipt goes out through nova-bus",
 		"adoption": "inspection: reads the ledger, writes nothing",
@@ -212,6 +233,9 @@ func verbDetail(name, verb string) string {
 	detail := ""
 	if verb == "check" || verb == "status" || verb == "apply" {
 		detail = strings.TrimPrefix(manifestHelp(name), "\n")
+	}
+	if verb == "report" {
+		detail = reportNotes
 	}
 	if verb == "watch" {
 		detail = "lines: ADOPT OK or ADOPT REFUSED per check; ADOPT ESCALATE names a refused check's owner, for whoever answers refusals (this tool files nothing); " +
@@ -225,9 +249,12 @@ func verbDetail(name, verb string) string {
 
 // exitCodes is nova-update's exit-code paragraph, for the verbs it has (check, apply,
 // report); nova-version's is its Tool's ExitTable (versiontool.go), and neither names a
-// verb of the other.
+// verb of the other. `<verb> -h` quotes it, up to the blank line after it.
 func exitCodes(name string) string {
-	return "exit codes: 0 every entry current, an apply that left the box on the target (or an apply --dry-run that printed its plan), a report whose every entry answered; 1 the tool said NO (anything STALE, NEWER, DIFFERENT or UNKNOWN, an apply whose after is not the target, a report with an UNKNOWN or a send that was refused or unconfirmed); 2 could not run (a refusal naming the remedy)."
+	return "exit codes:\n" +
+		"  0 every entry current; an apply that left the box on the target, or an apply --dry-run that printed its plan; a report whose every entry answered\n" +
+		"  1 the tool said no: an entry STALE, NEWER, DIFFERENT or UNKNOWN; an apply whose after is not the target; a report with an UNKNOWN; a send refused or unconfirmed\n" +
+		"  2 could not run: a refusal naming the remedy"
 }
 func interspersed(f *flag.FlagSet, args []string) []string {
 	var flags, positionals []string
@@ -292,7 +319,7 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 		return VersionTool(stamp, env).Run(args, nil, out, errs)
 	}
 	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
-	// before any manifest, bus or store is read (the CLI style's rule (b), #4505).
+	// before any manifest, bus or store is read (STANDARD §3, help is never a refusal).
 	defer verbflag.RecoverWith(out, name, helpText(name), &rc, func(verb string) string { return verbDetail(name, verb) })
 	door, asked := name+" help", verbflag.BoolAsked(args, "json")
 	if len(args) == 0 {
@@ -355,7 +382,7 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 	f.BoolVar(&asJSON, "json", false, "print the result as one JSON object instead of lines")
 	if verb == "apply" {
 		f.StringVar(&o.target, "version", "", "the version to install, when the entry's apply argv holds {version}; default: the latest its source reports")
-		f.BoolVar(&o.dryRun, "dry-run", false, "print the plan and install nothing: no process starts")
+		f.BoolVar(&o.dryRun, "dry-run", false, "print the plan and install nothing: the install command does not start; the version reads run")
 	} else {
 		f.DurationVar(&o.budget, "budget", o.budget, "the whole run's deadline, such as 60s")
 		f.IntVar(&o.max, "max", 20, "lines listed per kind before one MORE line stands for the rest; 0 lists all")
@@ -368,8 +395,8 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 	}
 	if err := verbflag.Parse(f, interspersed(f, args)); err != nil {
 		// `<tool> <verb> --help` never lands here: verbflag.Parse raises that
-		// verb's help, which Run prints on stdout at exit 0 (asking is not an
-		// error; darwin dogfood, 2026-09-18).
+		// verb's help, which Run prints on stdout at exit 0; asking is not an
+		// error.
 		return emit(refused(verb, name+" "+verb+" -h", flagProblem(f, err).Error()), verbflag.BoolAsked(args, "json"), 0, out, errs)
 	}
 	if o.store != "" {
@@ -391,8 +418,8 @@ func reportDeliveryFlags(f *flag.FlagSet, o *options) {
 	f.StringVar(&o.branch, "branch", "", "the bus branch")
 }
 
-// storeReport is `report --store` (#3880): every bench's nova-sprint build from
-// its beat, so it takes no manifest, snapshot or note and never runs ssh.
+// storeReport is `report --store`: every bench's nova-sprint build from its
+// beat, so it takes no manifest, snapshot or note and never runs ssh.
 func storeReport(name string, o options, positional []string, env Environment) *tool.Out {
 	help := name + " report -h"
 	if o.file != "" || o.snapshot != "" || o.draft || o.send || o.host != "" || len(positional) != 0 {
@@ -466,7 +493,7 @@ func checked(name, verb string, o options, positional []string, env Environment)
 		return apply(entries, positional[0], help, o, env)
 	}
 	// kinds= names the kinds the run read: those of the selected entries, never
-	// a kind the file does not hold (ledger U13).
+	// a kind the file does not hold.
 	selected := []Entry{}
 	present := map[string]bool{}
 	for _, e := range entries {
@@ -643,7 +670,8 @@ func apply(entries []Entry, name, help string, o options, env Environment) *tool
 	}
 	// --dry-run is the plan this function is about to take, printed and not taken
 	// (SPEC-UPDATE rule 13): every refusal above has passed, the target and the argv
-	// are the ones below, and no process starts.
+	// are the ones below, and the install process does not start. The version
+	// reads have already run: the installed one above, and a `local:` latest.
 	if o.dryRun {
 		return applyDryRun(*e, before, target, args)
 	}
@@ -670,9 +698,9 @@ func apply(entries []Entry, name, help string, o options, env Environment) *tool
 
 // applyDryRun is what `apply` would do to one entry, done to none of it: the entry's
 // item as `status` shows it (installed against the target the real run would
-// install), and the plan, the argv the real run's RUN item carries. No process starts
-// and nothing is written; it exits 0, the plan having been made (SPEC-UPDATE rule 13,
-// `--dry-run`).
+// install), and the plan, the argv the real run's RUN item carries. The install
+// process does not start and nothing is written; the version reads have already
+// run. It exits 0, the plan having been made (SPEC-UPDATE rule 13, `--dry-run`).
 func applyDryRun(e Entry, before Read, target string, argv []string) *tool.Out {
 	r := entryRead{Entry: e, Installed: before, Latest: Read{Version: target, Source: e.Latest}}
 	state, _ := verdict(r)
@@ -689,11 +717,10 @@ func applyDryRun(e Entry, before Read, target string, argv []string) *tool.Out {
 
 // movedChildTimeout is the default deadline one child of `moved` gets, and
 // `--timeout` is how a caller changes it. It is snapshot's thirty seconds, not
-// report's five, for the same measured reason (#890): every binary this verb
-// reads is one it built a moment ago, so the platform's one-time assessment of
-// a never-seen executable is charged to the first exec of every tool at every
-// revision. A five-second bound here refused healthy builds and sent the reader
-// to repair a revision that was fine.
+// report's five, for the same reason: every binary this verb reads is one it
+// built a moment ago, and a platform's first exec of a never-seen executable is
+// slow. A five-second bound refuses healthy builds and sends the reader to
+// repair a revision that is fine.
 var movedChildTimeout = 30 * time.Second
 
 // movedBudget bounds the whole run -- two checkouts, two builds and every
@@ -701,14 +728,12 @@ var movedChildTimeout = 30 * time.Second
 // `snapshot` already take.
 var movedBudget = 60 * time.Second
 
-// movedVerb is SPEC-VERSION's TOOLS MOVED note (#2288): it compares two
-// revisions by BUILDING both and reading what each build's own `help` prints,
-// never a hand-written list. The hurt it removes is the ADOPT EVERYTHING note,
-// which named four `--decide` flags that were still on open PRs (#1141): a list
-// a person wrote can announce a flag no binary ever answered, and a reader
-// cannot tell that from a reading. Here every announced verb and flag was
-// parsed off a `<tool> help` this run executed, so a flag on no binary's help
-// cannot be announced (SPEC-VERSION rules 2 and 10). A tool that vanishes is
+// movedVerb is SPEC-VERSION's TOOLS MOVED note: it compares two revisions by
+// building both and reading what each build's own `help` prints, never a
+// hand-written list. A list a person writes can announce a flag no binary ever
+// answered, and a reader cannot tell that from a reading. Here every announced
+// verb and flag was parsed off a `<tool> help` this run executed, so a flag on
+// no binary's help cannot be announced (SPEC-VERSION rules 2 and 10). A tool that vanishes is
 // deleted and one that appears is added; a rename is counted only when a commit
 // message or a MOVED file states it and the builds confirm it (rule 2); an
 // empty diff is three zeros, exit 0, never a refusal (rule 3).
@@ -905,8 +930,8 @@ type movedInv map[string]map[string]map[string]bool
 // usage line (SPEC-VERSION's block names nova-update's in nova-version's help)
 // cannot add that tool to THIS revision's inventory, and a line that is not a
 // usage line -- the defaults, the notes, the examples -- contributes nothing.
-// This function is the whole of "never a hand-written list" (#2288): whatever
-// these lines do not print, the note cannot announce.
+// This function is the whole of "never a hand-written list": whatever these
+// lines do not print, the note cannot announce.
 func parseMovedHelp(tool, help string) map[string]map[string]bool {
 	verbs := map[string]map[string]bool{}
 	for _, line := range strings.Split(help, "\n") {

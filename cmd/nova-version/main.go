@@ -1,7 +1,9 @@
-// Command nova-version reports installed tool identities and shares the update
-// reader: local stdout by default, optional prepared bus delivery. The contract
-// is docs/SPEC-VERSION.md. The tool is internal/update's VersionTool on
-// internal/tool, and its help banner ends in the runnable block below, which
+// Command nova-version reports which version of each tool is installed, records
+// it, and compares two records or two revisions. The tool is internal/update's
+// VersionTool on internal/tool, sharing nova-update's manifest reader and
+// report. Its contracts are docs/SPEC-VERSION.md for moved, snapshot --bin and
+// diff, and docs/SPEC-UPDATE.md for example, report, send and snapshot --file.
+// Its help banner ends in the runnable block below, which
 // cmd/nova-version/slow_test.go runs, as printed, with the binary alone.
 //
 //	example:

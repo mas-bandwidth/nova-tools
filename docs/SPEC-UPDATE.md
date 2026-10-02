@@ -410,15 +410,17 @@ nova-update example [--out <path>]
 nova-update check --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
 nova-update status --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
 nova-update apply --file <path> <name> [--version <v>] [--dry-run] [--timeout <d>]
-nova-update report --file <path> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who> | --send --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
+nova-update report --file <path> [--host <label>] [--snapshot <path>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
+nova-update report --file <path> --draft --as <friend> --to <who,who>
+nova-update report --file <path> --send --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b>
 nova-update report --store <host:port> [--timeout <d>]
 nova-update watch --adopt <checks.tsv> [--bus <path> --remote <r> --branch <b> --as <friend> --to <who,who>] [--host <label>] [--timeout <d>] [--budget <d>]
 nova-update adoption --file <path> [--as <friend>] [--max <n>]
-nova-update release <cut|build|install|adopt|pull> ...   nova-tools' own release pipeline: nova-update help release prints its usage lines
+nova-update release <cut|build|install|adopt|pull> ...   cut, build and adopt a release of these tools; nova-update help release prints its lines
 nova-update help
 ```
 
-Those ten usage lines are the string `nova-update help` prints, byte for byte, under the
+Those usage lines are the string `nova-update help` prints, byte for byte, under the
 banner's opening (what the tool does, how it works, the first run): one string
 in the binary, so the spec and the help cannot drift apart. The release pipeline is one
 line there, so a reader of the manifest verbs is not handed it: its five usage lines are

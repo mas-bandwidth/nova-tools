@@ -1287,7 +1287,7 @@ no user, no variable is read unless `--password-env` names it.
 
 ## nova-update
 
-`nova-update` checks declared versions and applies one chosen update: bounded reads, explicit UNKNOWN results, no automatic installation. The contract is [docs/SPEC-UPDATE.md](SPEC-UPDATE.md).
+`nova-update` compares installed tools with their latest releases, updates one when asked, and cuts and adopts releases of these tools. Reads are bounded, an unanswered read is UNKNOWN, and nothing is installed unless `apply` names it. The contracts are [SPEC-UPDATE.md](SPEC-UPDATE.md) for `example`, `check`, `status`, `apply`, `report`, `watch` and `adoption`, and [SPEC-RELEASE.md](SPEC-RELEASE.md) for `release`.
 
 ### First run
 
@@ -1441,7 +1441,7 @@ the date and `--reason`. `--dry-run` says what would be deleted and deletes noth
 
 ## nova-version
 
-`nova-version` reports installed tool identities and shares the update reader: local stdout by default, optional prepared bus delivery. The contract is [docs/SPEC-UPDATE.md](SPEC-UPDATE.md).
+`nova-version` reports which version of each tool is installed, records it, and compares two records or two revisions. It shares nova-update's manifest reader and report. The contracts are [SPEC-VERSION.md](SPEC-VERSION.md) for `moved`, `snapshot --bin` and `diff`, and [SPEC-UPDATE.md](SPEC-UPDATE.md) for `example`, `report`, `send` and `snapshot --file`.
 
 ### First run
 
