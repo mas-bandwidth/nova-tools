@@ -19,12 +19,12 @@ func TestTheHelpReportExampleIsWhatItPrints(t *testing.T) {
 
 	line := "nova-tokens report --who ada --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts"
 	examples, err := onboarding.ExampleLines(usage, "nova-tokens")
-	require.False(t, err != nil, err)
+	require.NoError(t, err, err)
 	found := false
 	for _, ex := range examples {
 		found = found || ex == line
 	}
-	require.False(t, !found, "the help's example block does not hold %q:\n  %s", line, strings.Join(examples, "\n  "))
+	require.True(t, found, "the help's example block does not hold %q:\n  %s", line, strings.Join(examples, "\n  "))
 	bench := t.TempDir()
 	copyExampleTree(t, filepath.Join("testdata", "example-bench"), bench)
 	args := strings.Fields(strings.ReplaceAll(strings.TrimPrefix(line, "nova-tokens "), "./", bench+"/"))
