@@ -12,7 +12,11 @@
 # SHA256SUMS whole and skips a tool already answering the version, and every
 # tool nova-tools once shipped and ships no more (fleet/retired-tools.txt, by
 # exact name) is removed from the bin directory; --check lists each as
-# WOULD-REMOVE. A platform already built at the version is not built again. The configuration store is
+# WOULD-REMOVE. A platform already built at the version is not built again.
+# The build and the install each remove, last, the old version directories of
+# their own root (the build's out, the machine's release directory), keeping
+# the version just made, the one installed before it and the 3 newest besides;
+# a removal that fails never fails the play (internal/release/prune.go). The configuration store is
 # migrated to the build's schema (`nova-config migrate`) before the library
 # is loaded by the store_deployer machine (the fleet's coordinator) with
 # `nova-redis fn load`, under the seat that holds the deploy user's password;
