@@ -136,7 +136,9 @@ func nearest(got string, names []string) string {
 
 // opening is the banner's first three answers: what the tool does (line 1,
 // the README's sentence), how it works, and the first run (ONBOARDING.md
-// point 6).
+// point 6): what a first run needs, what runs with no store (help, -h, every
+// write under --dry-run), the commands that start a throwaway store, and
+// what the refusal says when there is none.
 const opening = `nova-table: tables whose cells are ordered sets, kept in Redis and drawn as text
 
 how it works: a table is rows and columns in one Redis store; each cell is an
@@ -144,8 +146,18 @@ ordered set of members (a card, a job, any id). A column's projection prints
 the set's count, its members, a text or a percentage, and the footer folds each
 column. Every write names the epoch it read and prints a receipt; a view stacks
 tables into one frame that watch redraws in place.
-first run: needs a Redis you may write to: export NOVA_REDIS_ADDR=127.0.0.1:6379
-(or pass --redis), then run the lines under example: in order.`
+first run: needs a Redis 7 or later you may write to; an empty one is enough (the first verb loads
+the functions nova-table calls). With no store at all, help and -h answer, and every verb that writes
+runs under --dry-run: it checks its arguments and prints the call it would send, dialling nothing:
+  nova-table create demo --columns ready,working,done --dry-run
+A throwaway store, with redis-server on PATH (stop it: redis-cli -s "$d/redis.sock" shutdown nosave):
+  d=$(mktemp -d)
+  redis-server --port 0 --unixsocket "$d/redis.sock" --save '' --appendonly no --daemonize yes
+  for _ in $(seq 50); do redis-cli -s "$d/redis.sock" ping >/dev/null 2>&1 && break; sleep 0.1; done
+  unset NOVA_SEAT NOVA_SPRINT_SEAT NOVA_SPRINT_REDIS_USER; export NOVA_SPRINT_REDIS="$d/redis.sock"
+then run the lines under example: in order (or give each verb --redis <host:port or socket path>).
+A verb that finds no store refuses at exit 2 naming the address it tried, what came back, and
+this throwaway command (LIST REFUSED: redis at <addr> ...: unreachable: ...; run: d=$(mktemp -d) ...).`
 
 func helpCommand(path []string, out, errout io.Writer) int {
 	name := strings.Join(path, " ")

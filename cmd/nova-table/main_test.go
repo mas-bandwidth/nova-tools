@@ -166,3 +166,34 @@ func TestSeatWordsNameTheSeat(t *testing.T) {
 	require.ErrorIs(t, err, err.err, "reworded: %v", err)
 	require.Equal(t, want, err.Error(), "reworded: %v", err)
 }
+
+// TestNoStoreRefusalsNameTheFirstTry: a verb with no store to reach is
+// refused naming what was tried and the way to a first try: the one command
+// that starts a throwaway local store when redis-server is on PATH (quoted,
+// printing the --redis to give), else that none is there and that a verb
+// that writes runs with no store under --dry-run.
+func TestNoStoreRefusalsNameTheFirstTry(t *testing.T) {
+	t.Parallel()
+	found := func(string) (string, error) { return "/opt/redis bin/redis-server", nil }
+	missing := func(string) (string, error) { return "", errors.New("not found") }
+	unreachable := "redis at /tmp/x.sock as the default user, no password: unreachable: dial unix /tmp/x.sock: connect: no such file or directory; next: start the store or correct the address, which was given to this tool"
+	got := firstTry(unreachable, found)
+	assert.True(t, strings.HasPrefix(got, unreachable+"; for a first try, start a throwaway store"), got)
+	assert.True(t, strings.HasSuffix(got, `; run: d=$(mktemp -d) && '/opt/redis bin/redis-server' --port 0 --unixsocket "$d/redis.sock" --save '' --appendonly no --daemonize yes && echo "--redis $d/redis.sock"`), got)
+	got = firstTry(unreachable, missing)
+	assert.Contains(t, got, "no redis-server is on PATH")
+	assert.Contains(t, got, "under --dry-run")
+	assert.True(t, strings.HasSuffix(got, "; run: nova-table help"), got)
+
+	// no address at all: refused before any dial, with the same way forward
+	for name, look := range map[string]func(string) (string, error){"on PATH": found, "not on PATH": missing} {
+		app := &application{getenv: func(string) string { return "" }, lookPath: look}
+		var out, errout bytes.Buffer
+		code := app.dispatch([]string{"list", "--redis", ""}, &out, &errout)
+		assert.EqualValues(t, 2, code, name)
+		assert.Empty(t, out.String(), name)
+		assert.True(t, strings.HasPrefix(errout.String(), "LIST REFUSED: --redis <addr> is required"), "%s: %q", name, errout.String())
+		assert.Contains(t, errout.String(), "for a first try", name)
+		assert.Equal(t, 1, strings.Count(errout.String(), "\n"), name)
+	}
+}

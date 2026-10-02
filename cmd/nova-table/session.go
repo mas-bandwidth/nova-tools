@@ -32,6 +32,8 @@ type application struct {
 	// getenv is the environment the login is read from (login); nil is the
 	// process's. A test hands its own, so it runs in parallel.
 	getenv func(string) string
+	// lookPath finds a program on PATH (firstTry); nil is exec.LookPath.
+	lookPath func(string) (string, error)
 }
 
 // env is the environment the login is read from.

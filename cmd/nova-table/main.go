@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"regexp"
 	"slices"
 	"strconv"
@@ -421,9 +422,32 @@ func (app *application) client(ctx context.Context, verb, addr string, stderr io
 	}
 	conn, err := open(ctx, addr, app.env())
 	if err != nil {
-		return nil, nil, refuse(stderr, verb, err.Error())
+		text := err.Error()
+		if strings.TrimSpace(addr) == "" || redisconn.Classify(err) == redisconn.Unreachable {
+			text = firstTry(text, app.lookPath)
+		}
+		return nil, nil, refuse(stderr, verb, text)
 	}
 	return &connection{Conn: conn}, conn.Client(), 0
+}
+
+// firstTry adds to a refusal for a store that is not there (no address, or
+// none answering at it) the way to a first try, checked here rather than left
+// to the reader: with redis-server on PATH, the one command that starts a
+// throwaway local store and prints the --redis that reaches it; without one,
+// that it is missing, and that every verb that writes runs with no store
+// under --dry-run.
+func firstTry(why string, lookPath func(string) (string, error)) string {
+	if lookPath == nil {
+		lookPath = exec.LookPath
+	}
+	bin, err := lookPath("redis-server")
+	if err != nil {
+		return why + "; for a first try, no redis-server is on PATH to start a throwaway store (it wants Redis 7 or later), " +
+			"and every verb that writes runs with no store under --dry-run; run: nova-table help"
+	}
+	return why + "; for a first try, start a throwaway store and give each verb the --redis this prints; run: d=$(mktemp -d) && '" +
+		strings.ReplaceAll(bin, "'", `'\''`) + `' --port 0 --unixsocket "$d/redis.sock" --save '' --appendonly no --daemonize yes && echo "--redis $d/redis.sock"`
 }
 
 // field is a value of a key=value field: quoted when it holds a space, a

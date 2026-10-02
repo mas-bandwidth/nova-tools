@@ -115,3 +115,37 @@ func TestADryRunOfEveryWriteExampleDialsNothing(t *testing.T) {
 		assert.Contains(t, errout, "CREATE REFUSED: --columns: ")
 	})
 }
+
+// TestTheBannerSaysWhatAFirstRunNeeds: the banner's first-run lines name the
+// store a first run needs, the commands that start a throwaway one (and stop
+// it), the environment that points every verb at it, and a line that runs
+// with no store at all, which does: it exits 0 and dials nothing.
+func TestTheBannerSaysWhatAFirstRunNeeds(t *testing.T) {
+	t.Parallel()
+	code, banner, _ := runTable("help")
+	require.EqualValues(t, 0, code)
+	head, _, ok := strings.Cut(banner, "\nusage:\n")
+	require.True(t, ok)
+	for _, want := range []string{
+		"first run: needs a Redis 7 or later",
+		"every verb that writes\nruns under --dry-run",
+		`redis-server --port 0 --unixsocket "$d/redis.sock" --save '' --appendonly no --daemonize yes`,
+		`redis-cli -s "$d/redis.sock" shutdown nosave`,
+		`unset NOVA_SEAT NOVA_SPRINT_SEAT NOVA_SPRINT_REDIS_USER; export NOVA_SPRINT_REDIS="$d/redis.sock"`,
+		"refuses at exit 2 naming the address it tried",
+	} {
+		assert.Contains(t, head, want)
+	}
+	var dry string
+	for _, l := range strings.Split(head, "\n") {
+		if strings.HasPrefix(l, "  nova-table ") && strings.HasSuffix(l, "--dry-run") {
+			dry = strings.TrimSpace(l)
+		}
+	}
+	require.NotEmpty(t, dry, "the first run names no line that runs with no store")
+	words, err := shellWords(dry)
+	require.NoError(t, err)
+	code, out, errout := runTable(append(words[1:], "--redis", t.TempDir()+"/no-store.sock")...)
+	assert.EqualValues(t, 0, code, "%q", errout)
+	assert.Contains(t, out, "TABLE DRY-RUN verb=create arg1=demo columns=ready,working,done ")
+}
