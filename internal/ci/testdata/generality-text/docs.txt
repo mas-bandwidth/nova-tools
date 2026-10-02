@@ -3,7 +3,7 @@
 docs/CLI.md:johnny 1
 docs/CLI.md:mas-bandwidth 4
 docs/CLI.md:mini 2
-docs/CLI.md:rowan 11
+docs/CLI.md:rowan 15
 docs/CLI.md:space 2
 docs/CLI.md:stella 6
 docs/CLI.md:studio 2

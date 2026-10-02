@@ -205,10 +205,10 @@ travel.
 ```
 $ nova-check convergence --repo mas-bandwidth/nova-tools \
     --ledger ~/rowan-new/reports/pitstop-tests-2026-09-17.md \
-    --receipts ~/docs/dogfood \
-    --retired ~/docs/bin/retired/README.md \
-    --bin ~/docs/bin --repo-dir . \
-    --since 2026-09-18T00:00:00Z --state ~/docs/convergence.json
+    --receipts ~/rowan-working/dogfood \
+    --retired ~/rowan-working/bin/retired/README.md \
+    --bin ~/rowan-working/bin --repo-dir . \
+    --since 2026-09-18T00:00:00Z --state ~/rowan-working/convergence.json
 CONVERGENCE LANDING now=2 before=5 ratio=0.40 trend=contracting measure=rounds-per-batch batches=4 per-hour=0.25
 CONVERGENCE CLASSES now=29 before=27 ratio=1.07 trend=contracting measure=class-test-index-entries rev=04bb4e1c9f2a
 CONVERGENCE SCRIPTS now=42 before=66 ratio=0.64 trend=contracting measure=scripts-left-in-bin retired-in-window=24
