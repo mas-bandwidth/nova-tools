@@ -228,3 +228,56 @@ func TestSourcesUnattributedCountsEveryTokenOfAMessage(t *testing.T) {
 	wantContains(t, r.stdout, "SOURCES UNATTRIBUTED stem=/home/nova/elsewhere tokens=1")
 	wantContains(t, lineWith(r.stdout, "SOURCES OK"), "unattributed=2")
 }
+
+// TestSourcesDayScopeAppliesToStatisticsAndTallies: sources --day must filter statistics
+// (messages, rows) to only the requested day, while --all covers every day.
+func TestSourcesDayScopeAppliesToStatisticsAndTallies(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	tr := mkdir(t, filepath.Join(dir, "tr"))
+	repos := reposFile(t, dir) // names schema and serialize
+
+	// Write transcript with messages on two distinct days:
+	// Day 2026-09-11: 2 messages on repo "schema" (1 row)
+	// Day 2026-09-12: 1 message on repo "schema", 1 message on repo "serialize" (2 rows)
+	lines := []string{
+		msg("m1", "2026-09-11T10:00:00Z", "fable", map[string]int{"input_tokens": 10}, "/x/schema/a.go"),
+		msg("m2", "2026-09-11T11:00:00Z", "fable", map[string]int{"input_tokens": 20}, "/x/schema/b.go"),
+		msg("m3", "2026-09-12T10:00:00Z", "fable", map[string]int{"input_tokens": 30}, "/x/schema/c.go"),
+		msg("m4", "2026-09-12T11:00:00Z", "fable", map[string]int{"input_tokens": 40}, "/x/serialize/d.go"),
+	}
+	write(t, filepath.Join(tr, "a.jsonl"), strings.Join(lines, "\n")+"\n")
+
+	// 1. Inspecting 2026-09-11: exactly 2 messages and 1 row
+	r1 := invoke(t, "sources", "--repos", repos, "--day", "2026-09-11", "--claude", "bench="+tr)
+	wantExit(t, r1, 0)
+	wantContains(t, lineWith(r1.stdout, "SOURCES SOURCE bench"), "messages=2")
+	wantContains(t, lineWith(r1.stdout, "SOURCES SOURCE bench"), "rows=1")
+	wantContains(t, lineWith(r1.stdout, "SOURCES OK"), "messages=2")
+	wantContains(t, lineWith(r1.stdout, "SOURCES OK"), "rows=1")
+
+	// 2. Inspecting 2026-09-12: exactly 2 messages and 2 rows
+	r2 := invoke(t, "sources", "--repos", repos, "--day", "2026-09-12", "--claude", "bench="+tr)
+	wantExit(t, r2, 0)
+	wantContains(t, lineWith(r2.stdout, "SOURCES SOURCE bench"), "messages=2")
+	wantContains(t, lineWith(r2.stdout, "SOURCES SOURCE bench"), "rows=2")
+	wantContains(t, lineWith(r2.stdout, "SOURCES OK"), "messages=2")
+	wantContains(t, lineWith(r2.stdout, "SOURCES OK"), "rows=2")
+
+	// 3. Inspecting 2026-09-13 (a day with no messages): 0 messages, 0 rows
+	r3 := invoke(t, "sources", "--repos", repos, "--day", "2026-09-13", "--claude", "bench="+tr)
+	wantExit(t, r3, 0)
+	wantContains(t, lineWith(r3.stdout, "SOURCES SOURCE bench"), "messages=0")
+	wantContains(t, lineWith(r3.stdout, "SOURCES SOURCE bench"), "rows=0")
+	wantContains(t, lineWith(r3.stdout, "SOURCES OK"), "messages=0")
+	wantContains(t, lineWith(r3.stdout, "SOURCES OK"), "rows=0")
+
+	// 4. Inspecting --all: all 4 messages and 3 rows across the sources
+	rAll := invoke(t, "sources", "--repos", repos, "--all", "--claude", "bench="+tr)
+	wantExit(t, rAll, 0)
+	wantContains(t, lineWith(rAll.stdout, "SOURCES SOURCE bench"), "messages=4")
+	wantContains(t, lineWith(rAll.stdout, "SOURCES SOURCE bench"), "rows=3")
+	wantContains(t, lineWith(rAll.stdout, "SOURCES OK"), "messages=4")
+	wantContains(t, lineWith(rAll.stdout, "SOURCES OK"), "rows=3")
+}

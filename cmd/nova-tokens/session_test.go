@@ -156,3 +156,34 @@ func TestSessionRefusesATranscriptThatNamesNoModel(t *testing.T) {
 	wantExit(t, r, 0)
 	wantContains(t, r.stdout, "SESSION turns=1")
 }
+
+// TestSessionRefusesUnreadableDayFile: an unreadable existing day file in a writable output
+// directory must not be merged against empty state or overwritten; session must refuse and
+// write nothing.
+func TestSessionRefusesUnreadableDayFile(t *testing.T) {
+	t.Parallel()
+
+	out := t.TempDir()
+	existing := "nova-tokens v1 day=2026-09-11 at=2026-09-11T00:00:00Z build=test turns=- sources=emma\n" +
+		"date\tmodel\trepo\tinput\toutput\tcache_write\tcache_read\treasoning\trough\tday_basis\tsources\n" +
+		"2026-09-11\tdeepseek-v4-flash\tnova-tools\t100\t10\t-\t-\t-\t0\tutc\temma\n"
+	dayPath := filepath.Join(out, "2026-09-11.tsv")
+	if err := os.WriteFile(dayPath, []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	release := makeUnreadable(t, dayPath)
+	r := invoke(t, "session", "--claude-session", writeSession(t), "--out", out)
+	wantExit(t, r, 1)
+	wantContains(t, r.stderr, "TOKENS REFUSED: cannot read")
+	wantContains(t, r.stderr, "2026-09-11.tsv")
+
+	release()
+	raw, err := os.ReadFile(dayPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != existing {
+		t.Fatalf("unreadable day file was modified:\ngot:\n%s\nwant:\n%s", string(raw), existing)
+	}
+}

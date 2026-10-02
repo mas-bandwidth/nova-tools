@@ -1029,6 +1029,23 @@ func cmdSources(args []string, stdout, stderr io.Writer, now time.Time) int {
 		rules.WatchUnattributed()
 	}
 	sources := sf.read(rules, now)
+	if !*all {
+		for _, s := range sources {
+			var dayStream []tokens.Message
+			keys := map[tokens.Key]bool{}
+			for _, m := range s.Stream {
+				if m.Day == *day {
+					dayStream = append(dayStream, m)
+					keys[tokens.Key{Day: m.Day, Model: m.Model, Repo: m.Repo}] = true
+				}
+			}
+			s.Stream = dayStream
+			if tokens.Applies(s.Kind, "messages") {
+				s.Stat.Messages = len(dayStream)
+			}
+			s.Stat.Rows = len(keys)
+		}
+	}
 
 	srcList := bounded.Capped(stdout, *max, "SOURCES", "source", maxRemedy("sources"))
 	unreadable := bounded.Capped(stderr, *max, "SOURCES", "unreadable", maxRemedy("sources"))
@@ -1362,18 +1379,7 @@ func aggFields(a *tokens.Agg) string {
 }
 
 func validMonth(m string) bool {
-	if len(m) != 7 || m[4] != '-' {
-		return false
-	}
-	for i, r := range m {
-		if i == 4 {
-			continue
-		}
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return true
+	return tokens.ValidMonth(m)
 }
 
 // ----------------------------------------------------------------------------- check

@@ -511,6 +511,23 @@ func TestValidDayIsACalendarCheck(t *testing.T) {
 	}
 }
 
+// TestValidMonthIsACalendarCheck: a month is a calendar month (01-12), not just seven characters
+// with a hyphen.
+func TestValidMonthIsACalendarCheck(t *testing.T) {
+	t.Parallel()
+
+	for _, good := range []string{"2026-01", "2026-09", "2026-12", "1999-02"} {
+		if !ValidMonth(good) {
+			t.Errorf("%s is a month", good)
+		}
+	}
+	for _, bad := range []string{"2026-13", "2026-00", "2026-9", "2026-99", "not-a-month", "2026/01", "2026-a1"} {
+		if ValidMonth(bad) {
+			t.Errorf("%s is not a month", bad)
+		}
+	}
+}
+
 func TestASourceLineFieldIsADashWhereItIsNotAMeasurement(t *testing.T) {
 	t.Parallel()
 

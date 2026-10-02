@@ -493,6 +493,27 @@ func ValidDay(s string) bool {
 	return err == nil && t.Format(dayLayout) == s
 }
 
+// ValidMonth reports whether s is a YYYY-MM calendar month.
+func ValidMonth(s string) bool {
+	if len(s) != 7 || s[4] != '-' {
+		return false
+	}
+	for i, r := range s {
+		if i == 4 {
+			continue
+		}
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	month := s[5:7]
+	if month < "01" || month > "12" {
+		return false
+	}
+	t, err := time.Parse("2006-01", s)
+	return err == nil && t.Format("2006-01") == s
+}
+
 // ValidZone reports whether s is a day_basis a day file may carry: a zone name with no
 // whitespace, and never the word utc, which the six-field form already says.
 func ValidZone(s string) bool {
