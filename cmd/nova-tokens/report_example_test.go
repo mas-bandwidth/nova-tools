@@ -38,8 +38,8 @@ func TestTheHelpReportExampleIsWhatItPrints(t *testing.T) {
 		"2026-09-11\tada\tclaude-fable-5-1\tserialize\tinput\t430",
 		"2026-09-11\tada\tclaude-fable-5-1\tserialize\toutput\t58",
 		"2026-09-11\tada\tclaude-fable-5-1\tserialize\tcache_read\t4000",
-		"! TOKENS AVG day=2026-09-11 model=claude-fable-5-1 tokens=250131 usd=0 usd_per_mtok=0.0000",
-		"! TOKENS AVG-ALL day=2026-09-11 tokens=250131 usd=0 usd_per_mtok=0.0000",
+		"! TOKENS AVG day=2026-09-11 model=claude-fable-5-1 tokens=250131 usd=- usd_per_mtok=-",
+		"! TOKENS AVG-ALL day=2026-09-11 tokens=250131 usd=- usd_per_mtok=-",
 		"! REPORT OK who=ada day=2026-09-11 rows=7 at=2026-09-11T23:55:02Z build=devel subject=tokens 2026-09-11 at=2026-09-11T23:55:02Z build=devel",
 	}}
 	for _, p := range onboarding.Compare(step, onboarding.Result{Code: r.exit, Stdout: r.stdout, Stderr: r.stderr}, []onboarding.Norm{onboarding.Version()}) {

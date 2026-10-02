@@ -142,7 +142,7 @@ func ReadSwarm(label, pool string, rules *Rules) *Source {
 			}
 			if u := cells[cols["usd"]]; u != "" && u != Dash {
 				if micro, ok := ParseMicro(u); ok {
-					m.Usd = micro
+					m.Usd, m.Priced = micro, true
 				}
 			}
 			s.Stream = append(s.Stream, m)

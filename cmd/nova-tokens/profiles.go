@@ -11,9 +11,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // SWARM PROFILES MEASUREMENT (the overshoot ledger from every job's usage.tsv).
@@ -66,7 +63,7 @@ func parseCardBudget(promptPath string) (int64, bool) {
 // profileSwarmRoot is the `profiles` verb: it walks the card usage files under a root and
 // prints one line per model, then the total. The budget is read from each card's own prompt,
 // so an overshoot is one card's own ceiling, not a guess from the fold.
-func profileSwarmRoot(root string, stdout, stderr io.Writer, r *refusals) int {
+func profileSwarmRoot(root string, s *sink, stderr io.Writer, r *refusals) int {
 	if root == "" {
 		r.add("--swarm-root is required; it wants the directory the swarm batches live under; refusing to guess")
 		return r.print(stderr)
@@ -113,12 +110,11 @@ func profileSwarmRoot(root string, stdout, stderr io.Writer, r *refusals) int {
 		m := models[name]
 		totalCards += m.cards
 		totalOver += m.overshoot
-		fmt.Fprintf(stdout, "PROFILES MODEL model=%s cards=%d median_out=%s overshoot=%d\n",
-			oneline.Field(name), m.cards, oneline.Field(medianOut(m.outs)), m.overshoot)
+		fmt.Fprintln(s.out(), s.line("PROFILES", "MODEL", "", "model", name, "cards", m.cards, "median_out", medianOut(m.outs), "overshoot", m.overshoot))
 	}
-	fmt.Fprintf(stdout, "PROFILES OK models=%d cards=%d overshoot=%d\n",
-		len(models), totalCards, totalOver)
-	return 0
+	counts := []any{"models", len(models), "cards", totalCards, "overshoot", totalOver}
+	fmt.Fprintf(s.out(), "PROFILES OK%s\n", s.factFields(counts...))
+	return s.done(0, 0)
 }
 
 // medianOut is the median of the known output-token counts, or `-` when none reported one.
@@ -140,12 +136,9 @@ func medianOut(outs []int64) string {
 func cmdProfiles(args []string, stdout, stderr io.Writer, now time.Time) int {
 	fs := newFlagSet("profiles")
 	swarmRoot := fs.String("swarm-root", "", "root containing the swarm pool profiles")
-	if err := verbflag.Parse(fs, args); err != nil {
-		return refuse(stderr, " profiles", oneline.Cap(err.Error(), oneline.TailBytes))
-	}
-	if code, refused := noPositional(fs, stderr, "profiles"); refused {
+	s, code, ok := start(fs, args, "PROFILES", stdout, stderr)
+	if !ok {
 		return code
 	}
-	r := &refusals{token: "PROFILES"}
-	return profileSwarmRoot(*swarmRoot, stdout, stderr, r)
+	return profileSwarmRoot(*swarmRoot, s, stderr, &refusals{token: "PROFILES", s: s})
 }

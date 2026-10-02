@@ -464,7 +464,7 @@ func TestTheRecordsNamespaceIsNotAVerbUntilItsGateIsDecided(t *testing.T) {
 	} {
 		r := invoke(t, args...)
 		wantExit(t, r, 2)
-		wantContains(t, r.stderr, `unknown subcommand "records"`)
+		wantContains(t, r.stderr, `unknown verb "records"; did you mean report?`)
 		wantContains(t, r.stderr, "run: nova-tokens help")
 	}
 	ents, err := os.ReadDir(out)

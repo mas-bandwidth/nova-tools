@@ -133,6 +133,7 @@ type Message struct {
 	Rough    int    // how many `~` bus lines this message stands for
 	Turn     bool   // counted into turns= (the sources that count messages)
 	Usd      int64  // micro-dollars, from a usage `usd` column or a cost tick; 0 where absent
+	Priced   bool   // a source reported Usd for this message; false is "no cost given", never a zero cost
 	Provider string // the provider prefix for model= on an AVG line; "" where unknown
 }
 
@@ -147,6 +148,7 @@ type Row struct {
 	Counts   Counts
 	Rough    int
 	Usd      int64  // micro-dollars summed over the messages that fed the row
+	Priced   bool   // some message that fed the row reported a cost; false: Usd is no measurement
 	Provider string // the provider prefix of the messages that fed the row; "" where unknown
 	bases    map[string]bool
 	sources  map[string]bool
@@ -236,6 +238,7 @@ func (f *Folder) Add(label string, m Message) {
 	r.Counts.Add(m.Counts)
 	r.Rough += m.Rough
 	r.Usd += m.Usd
+	r.Priced = r.Priced || m.Priced
 	if m.Provider != "" {
 		r.Provider = m.Provider
 	}
