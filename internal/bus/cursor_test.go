@@ -20,21 +20,24 @@ func TestCursorRoundTripsAndRefusesWhatIsNotACommit(t *testing.T) {
 	root := writeBus(t, nil)
 	// A lane with no CURSOR is a reader who has not read yet, and that is not an error.
 	got, err := ReadCursor(root, "from-ada")
-	require.False(t, err != nil || got.Commit != "", "a lane with no cursor: %+v, %v", got, err)
+	require.NoError(t, err, "a lane with no cursor: %+v, %v", got, err)
+	require.Equal(t, "", got.Commit, "a lane with no cursor: %+v, %v", got, err)
 	sha := "0123456789abcdef0123456789abcdef01234567"
 	require.NoError(t, WriteCursor(root, "from-ada", sha, 2, "", at("2026-09-09T12:34:56Z")))
 	got, err = ReadCursor(root, "from-ada")
 	require.NoError(t, err)
-	require.False(t, got.Commit != sha || got.Stamp != "2026-09-09T12:34:56Z", "round trip gave %+v", got)
+	require.Equal(t, sha, got.Commit, "round trip gave %+v", got)
+	require.Equal(t, "2026-09-09T12:34:56Z", got.Stamp, "round trip gave %+v", got)
 	// The count of what the run was carrying comes back with it, and says so: a cursor
 	// written before that field existed is Counted false and is trusted rather than
 	// compared against an OPEN file it never claimed anything about.
-	require.False(t, !got.Counted || got.Open != 2, "the carried count did not round trip: %+v", got)
+	require.True(t, got.Counted, "the carried count did not round trip: %+v", got)
+	require.Equal(t, 2, got.Open, "the carried count did not round trip: %+v", got)
 	// The commit is written FIRST, the stamp second, the count third: a cursor's subject
 	// is the commit.
 	{
 		line := readFile(t, root, CursorPath("from-ada"))
-		require.False(t, line != sha+" 2026-09-09T12:34:56Z open=2\n", "the cursor line is %q", line)
+		require.Equal(t, sha+" 2026-09-09T12:34:56Z open=2\n", line, "the cursor line is %q", line)
 	}
 	// A cursor file anyone with push access could have edited into an option to git is
 	// refused where it is READ, before it can become a git argument.
@@ -57,11 +60,18 @@ func TestCursorRoundTripsAndRefusesWhatIsNotACommit(t *testing.T) {
 	// so: nobody claimed anything about an OPEN file, so nothing is compared against one.
 	write(t, root, CursorPath("from-ada"), sha+" 2026-09-09T12:34:56Z\n")
 	old, err := ReadCursor(root, "from-ada")
-	require.False(t, err != nil || old.Commit != sha || old.Counted || old.Open != 0, "a cursor written before the count: %+v, %v", old, err)
+	require.NoError(t, err, "a cursor written before the count: %+v, %v", old, err)
+	require.Equal(t, sha, old.Commit, "a cursor written before the count: %+v, %v", old, err)
+	require.False(t, old.Counted, "a cursor written before the count: %+v, %v", old, err)
+	require.Equal(t, 0, old.Open, "a cursor written before the count: %+v, %v", old, err)
 	// A cursor with one token (commit-only) is documented valid. It must read without panicking.
 	write(t, root, CursorPath("from-ada"), sha+"\n")
 	commitOnly, err := ReadCursor(root, "from-ada")
-	require.False(t, err != nil || commitOnly.Commit != sha || commitOnly.Stamp != "" || commitOnly.Counted || commitOnly.Open != 0, "a commit-only cursor: %+v, %v", commitOnly, err)
+	require.NoError(t, err, "a commit-only cursor: %+v, %v", commitOnly, err)
+	require.Equal(t, sha, commitOnly.Commit, "a commit-only cursor: %+v, %v", commitOnly, err)
+	require.Equal(t, "", commitOnly.Stamp, "a commit-only cursor: %+v, %v", commitOnly, err)
+	require.False(t, commitOnly.Counted, "a commit-only cursor: %+v, %v", commitOnly, err)
+	require.Equal(t, 0, commitOnly.Open, "a commit-only cursor: %+v, %v", commitOnly, err)
 	// Two lines is a cursor that has been merged badly, and is a refusal rather than a
 	// guess about which of the two reads is the real one.
 	write(t, root, CursorPath("from-ada"), sha+" 2026-09-09T12:34:56Z\n"+sha+" 2026-09-09T12:35:56Z\n")
@@ -78,7 +88,8 @@ func TestOpenListRoundTripsItsDisplayLineAndKeepsItsOrder(t *testing.T) {
 	root := writeBus(t, nil)
 	{
 		got, err := ReadOpen(root, "from-ada")
-		require.False(t, err != nil || got != nil, "a lane with no OPEN: %+v, %v", got, err)
+		require.NoError(t, err, "a lane with no OPEN: %+v, %v", got, err)
+		require.Nil(t, got, "a lane with no OPEN: %+v, %v", got, err)
 	}
 	want := []OpenEntry{
 		{ID: "bo-abcdef012345", Kind: OpenNote, From: "Bo", Addr: "to",
@@ -93,20 +104,20 @@ func TestOpenListRoundTripsItsDisplayLineAndKeepsItsOrder(t *testing.T) {
 	got, err := ReadOpen(root, "from-ada")
 	require.NoError(t, err)
 	if len(got) != len(want) {
-		require.False(t, len(got) != len(want), "read back %d entries, wrote %d", len(got), len(want))
+		require.Equal(t, len(want), len(got), "read back %d entries, wrote %d", len(got), len(want))
 	}
 	for i := range want {
 		// ORDER, not a set. The order is the order a reader's open notes arrived in, and
 		// keeping it is what makes the file's diff between two runs the notes that
 		// actually opened and closed.
 		if got[i] != want[i] {
-			require.False(t, got[i] != want[i], "entry %d round-tripped as %+v, wrote %+v", i, got[i], want[i])
+			require.Equal(t, want[i], got[i], "entry %d round-tripped as %+v, wrote %+v", i, got[i], want[i])
 		}
 	}
 	raw := readFile(t, root, OpenPath("from-ada"))
 	// The version header is the first line, and it is what stops a v1 list being read as a
 	// v2 one -- see TestAnOpenListWrittenBeforeV2IsRefusedAtTheRead.
-	require.False(t, !strings.HasPrefix(raw, OpenHeader+"\n"), "the open list does not begin with its version header: %q", raw)
+	require.True(t, strings.HasPrefix(raw, OpenHeader+"\n"), "the open list does not begin with its version header: %q", raw)
 	// A legacy note's id is "-", a path holding a space rides in its own tab-separated
 	// field, and every line here is the same EIGHT fields: none of these notes carries a
 	// Host line, so none of them writes the ninth. That is the compatibility claim in one
@@ -114,7 +125,7 @@ func TestOpenListRoundTripsItsDisplayLineAndKeepsItsOrder(t *testing.T) {
 	for _, line := range strings.Split(strings.TrimRight(raw, "\n"), "\n")[1:] {
 		{
 			n := strings.Count(line, "\t")
-			require.False(t, n != openFieldsV2-1, "the line holds %d tabs, want %d: %q", n, openFieldsV2-1, line)
+			require.Equal(t, openFieldsV2-1, n, "the line holds %d tabs, want %d: %q", n, openFieldsV2-1, line)
 		}
 	}
 	require.Contains(t, raw, "-\tnote\t-\tBo\tcc\t-\tfrom-bo/a legacy note.md\t", "the legacy entry is not <-> <kind> <heard> ... : %q", raw)
@@ -124,7 +135,7 @@ func TestOpenListRoundTripsItsDisplayLineAndKeepsItsOrder(t *testing.T) {
 	require.NoError(t, WriteOpen(root, "from-ada", nil))
 	{
 		_, err := os.Stat(filepath.Join(root, filepath.FromSlash(OpenPath("from-ada"))))
-		require.False(t, !os.IsNotExist(err), "an empty OPEN list left a file behind: %v", err)
+		require.True(t, os.IsNotExist(err), "an empty OPEN list left a file behind: %v", err)
 	}
 	// And every shape that is not an entry is refused where it is read, rather than being
 	// guessed at into a listing.
@@ -216,7 +227,8 @@ func TestAnOpenListWrittenBeforeV2IsRefusedAtTheRead(t *testing.T) {
 	}
 	{
 		got, err := ReadOpen(root, "from-ada")
-		require.False(t, err != nil || len(got) != 1, "a v2 open list did not read back: %+v, %v", got, err)
+		require.NoError(t, err, "a v2 open list did not read back: %+v, %v", got, err)
+		require.Equal(t, 1, len(got), "a v2 open list did not read back: %+v, %v", got, err)
 	}
 }
 
@@ -234,11 +246,11 @@ func TestIndexLineIsFiveFieldsAndCannotBeForged(t *testing.T) {
 	line := IndexLine(e)
 	{
 		n := strings.Count(line, "\t")
-		require.False(t, n != indexFields-1, "the line holds %d tabs, want %d: %q", n, indexFields-1, line)
+		require.Equal(t, indexFields-1, n, "the line holds %d tabs, want %d: %q", n, indexFields-1, line)
 	}
 	require.NotContains(t, line, "Bo\tQuill", "a tab in a name was not escaped: %q", line)
 	// An absent list is "-" and never empty, so no line ever ends in an invisible tab.
-	require.False(t, !strings.HasSuffix(line, "\t-"), "an absent Re was not written as a dash: %q", line)
+	require.True(t, strings.HasSuffix(line, "\t-"), "an absent Re was not written as a dash: %q", line)
 
 	root := writeBus(t, nil)
 	require.NoError(t, AppendIndexLine(root, e))
