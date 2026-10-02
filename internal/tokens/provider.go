@@ -42,7 +42,7 @@ const zoneDeclaration = "# timezone:"
 // declared: `--provider google:ada=<file>` says this file is Google's export and Ada
 // downloaded it. One union of every provider's column names would accept a Google export
 // declared as xAI and write `provider:xai` beside numbers that parser never read -- the
-// column that makes a number traceable naming the wrong source (measured 2026-09-11).
+// column that makes a number traceable naming the wrong source.
 //
 // The names are the ones this family has seen; a real export that spells a column
 // differently is TOKENS UNREADABLE naming the parser and the column, which is a question
@@ -91,7 +91,7 @@ func ParserColumns(kind string) []string {
 }
 
 // ReadProvider reads one billing export with the parser its kind names. The label on
-// every row it feeds is `<kind>:<name>` -- `google:ada` -- so two friends' exports from
+// every row it feeds is `<kind>:<name>` -- `google:ada` -- so two people's exports from
 // one provider are two sources.
 func ReadProvider(kind, name, path string, _ *Rules) *Source {
 	s := &Source{Label: Label(kind, name), Kind: KindProvider, Path: path, Basis: UTC}
@@ -385,10 +385,10 @@ func readXaiJSON(kind, path, text string, s *Source) *Source {
 			}
 		}
 		// The turn's cost is its costUsdTicks: an integer count of micro-dollar
-		// ticks, the unit the fold's usd= holds (rule 20: the cost is "from the
-		// usage `usd` column or a cost tick the source reported"). A lexeme that
-		// is not a non-negative integer is an absence rather than a guess, and
-		// such a message is not Priced: usd= prints - where no source reported one.
+		// ticks, the unit the fold's usd= holds (the cost is "from the usage `usd`
+		// column or a cost tick the source reported"). A lexeme that is not a
+		// non-negative integer is an absence rather than a guess, and such a message
+		// is not Priced: usd= prints - where no source reported one.
 		if v, ok := turn["costUsdTicks"].(json.Number); ok {
 			if n, err := strconv.ParseInt(v.String(), 10, 64); err == nil && n >= 0 {
 				m.Usd, m.Priced = n, true

@@ -11,8 +11,8 @@ import (
 // is this verb's whole job, so it exits 0 over a month with gaps and `missing=<n>` is the
 // answer.
 //
-// A dash adds nothing and is COUNTED. It is never read as zero, because a zero that meant
-// "not measured" would sum into a month claiming to be complete, and rule 15 is the whole
+// A dash adds nothing and is counted. It is never read as zero, because a zero that meant
+// "not measured" would sum into a month claiming to be complete, and that is the whole
 // reason the cell is a dash in the first place.
 
 // Agg is one grouping's totals.
@@ -52,14 +52,14 @@ func (a *Agg) add(r DayRow, key string) {
 }
 
 // Cell is one type's total as a month prints it: the number, or `-` when NO row in this
-// grouping reported that type at all. A zero there would be the number rule 15 forbids --
-// "a type the source did not report is `-` in the cell, never 0" -- summed into a month
+// grouping reported that type at all. A zero there would be the number SPEC-TOKENS forbids
+// -- "a type the source did not report is `-` in the cell, never 0" -- summed into a month
 // claiming to be complete, and the dashes= tuple beside it is a correction a reader has to
 // know the column order of.
 func (a *Agg) Cell(t Type) string {
 	// No rows at all is the same absence as every row a dash: a month with no day files
-	// had nothing that could report a type, and printing 0 there would be the one "not
-	// measured" zero rule 15 forbids.
+	// had nothing that could report a type, and printing 0 there would be the "not
+	// measured" zero the dash exists to prevent.
 	if a.Dashes[t] == a.Rows {
 		return Dash
 	}

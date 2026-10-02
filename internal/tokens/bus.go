@@ -16,17 +16,17 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-// --bus <dir>: friends' self-reports.
+// --bus <dir>: self-reports from other machines, one tokens note per lane-day.
 //
-// The tool reads the checkout AS FILES. It never pulls, fetches, pushes, runs git, or
+// The tool reads the checkout as files. It never pulls, fetches, pushes, runs git, or
 // talks to a network: a fold whose numbers depended on a network call would be a fold
-// nobody could reproduce, and the order of two competing notes is now in the notes
+// nobody could reproduce, and the order of two competing notes is in the notes
 // themselves (`supersedes=`) rather than in a commit history, which is a fact about a
-// checkout and not about which number the friend meant.
+// checkout and not about which number the sender meant.
 //
-// THE PARSER BELOW IS THE SERIALIZER `report` WRITES WITH. They live in one file so that
-// one grammar cannot become two, which is exactly how the prototype ended up accepting
-// two body shapes and telling them apart by whether the fifth field was a word.
+// The parser below is the serializer `report` writes with. They live in one file so that
+// one grammar cannot become two: two grammars drift into accepting two body shapes told
+// apart by guesswork.
 
 // BusDateLayout is how nova-bus writes a note's Date line.
 const BusDateLayout = "Mon Jan  2 15:04:05 UTC 2006"
@@ -98,10 +98,10 @@ func ParseSubject(subject string) (parsedSubject, bool) {
 	if trailer == "" {
 		return p, true
 	}
-	// The trailer is ONE shape in ONE order: `at=<stamp> build=<id>[ supersedes=<set>]`.
-	// Accepting the keys in any order or position made `tokens <day> build=b at=<stamp>`
-	// and `tokens <day> supersedes=x at=... build=...` tokens notes, though rule 6 names
-	// exactly one arrangement and says any other text after the date is not one.
+	// The trailer is one shape in one order: `at=<stamp> build=<id>[ supersedes=<set>]`.
+	// `tokens <day> build=b at=<stamp>` and `tokens <day> supersedes=x at=... build=...`
+	// are not tokens notes: the spec names exactly one arrangement and says any other text
+	// after the date is not one.
 	toks := strings.Split(trailer, " ")
 	keys := []string{"at", "build", "supersedes"}
 	for i, tok := range toks {
@@ -144,9 +144,9 @@ func ParseSubject(subject string) (parsedSubject, bool) {
 	if p.at == "" || p.build == "" {
 		return parsedSubject{}, false
 	}
-	// Rule 6 names the trailer exactly: `at=<RFC 3339 UTC> build=<id>`. `at=garbage` was
-	// accepted as a tokens note, and the fold's own at= is what a note's Date: is
-	// validated against -- a stamp nobody parsed is not a stamp.
+	// The spec names the trailer exactly: `at=<RFC 3339 UTC> build=<id>`, so `at=garbage`
+	// is not a tokens note, and a note's Date: is validated against the fold's own at= --
+	// a stamp nobody parsed is not a stamp.
 	if t, err := time.Parse(time.RFC3339, p.at); err != nil || !strings.HasSuffix(p.at, "Z") || !t.Equal(t.UTC()) {
 		return parsedSubject{}, false
 	}
@@ -229,9 +229,9 @@ func ReadBus(dir string, rules *Rules, at time.Time) []*Source {
 				s.unreadable(path, err.Error())
 				continue
 			}
-			// files= is what this lane OPENED, tokens note or not: a lane of near-miss
-			// subjects printed byte-identical output to a lane holding nothing at all
-			// (lesson 30). The near miss itself comes back from readNote as a dead note
+			// files= is what this lane opened, tokens note or not, so a lane of near-miss
+			// subjects never prints the same output as a lane holding nothing at all.
+			// The near miss itself comes back from readNote as a dead note
 			// and is counted and printed like any other unparsed one; a file that is
 			// simply another piece of the lane's traffic is nil here and is only a file.
 			s.Stat.Files++
@@ -284,8 +284,8 @@ func laneNames(dir string) ([]string, error) {
 }
 
 // readNote parses one file. It returns nil when the file is not a tokens note at all —
-// the subject is the whole test, exact, because the prototype's case-insensitive match
-// with any text after the date folded notes nobody meant as a report.
+// the subject is the whole test, exact, because a case-insensitive match with any text
+// after the date would fold notes nobody meant as a report.
 func readNote(lane, path, text string, rules *Rules, at time.Time) *note {
 	header, body, headerLines, bodyStart := splitNote(text)
 	subject, ok := ParseSubject(header["Subject"])
@@ -295,10 +295,10 @@ func readNote(lane, path, text string, rules *Rules, at time.Time) *note {
 		if !near {
 			return nil
 		}
-		// A NEAR MISS is not an ordinary note of the lane: it names tokens and a day, so
-		// a friend meant it as a report. Counting it silently made the lane print the
-		// same bytes as a lane holding nothing at all (lesson 30), so it is an unparsed
-		// note with its id -- counted, printed, exit 1 -- and it still folds nothing.
+		// A near miss is not an ordinary note of the lane: it names tokens and a day, so
+		// its sender meant it as a report. Counted silently, the lane would print the
+		// same bytes as a lane holding nothing at all, so it is an unparsed note with its
+		// id -- counted, printed, exit 1 -- and it still folds nothing.
 		n := &note{lane: lane, path: path, id: header["Id"], zones: map[string]bool{}}
 		if n.id == "" {
 			n.id = filepath.Base(path)
@@ -475,9 +475,9 @@ func foldLane(s *Source, lane string, notes []*note, all map[string]*note) {
 		}
 	}
 
-	// Rule 6: "the successor is validated whole -- header, `Date:`, every body line --
-	// before it replaces anything." A note with an unparsed BODY line was not dead, so a
-	// half-read correction replaced its predecessor and the lane-day folded from it.
+	// The successor is validated whole -- header, `Date:`, every body line -- before it
+	// replaces anything, so a half-read correction never replaces its predecessor: a note
+	// with an unparsed body line supersedes nothing.
 	superseded := map[string]string{}
 	for _, n := range notes {
 		if !n.clean() {
@@ -488,9 +488,9 @@ func foldLane(s *Source, lane string, notes []*note, all map[string]*note) {
 		}
 	}
 
-	// Every basis the lane's LINES carried, utc included. Dropping the utc member here
-	// made a lane of one six-field line (utc, rule 6) and one seven-field line print the
-	// zone rather than `mixed`, which is the one thing this field is for.
+	// Every basis the lane's lines carried, utc included: a lane of one six-field line
+	// (utc) and one seven-field line is `mixed`, never the zone, and saying `mixed` is the
+	// one thing this field is for.
 	laneZones := map[string]bool{}
 	byDay := map[string][]*note{}
 	for _, n := range notes {

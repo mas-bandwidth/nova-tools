@@ -2,21 +2,30 @@
 // file per day, keyed exactly by (day, model, repo), with the five token types kept apart,
 // and those day files summed into a month.
 //
-// It exists because we have an obligation to report token spend, and the first thing that
-// shape was built as — three scripts of Python under zsh — produced nine day files and
-// every way it could fail at once: five paths defaulted inside the script, so a run on
-// another bench folded the wrong bench; the old month files were REMOVED on every real
-// run; nine unreadable files were one line at the bottom of a summary and the run exited
-// 0; a day could shrink silently the moment a source went quiet; two repo-attribution
-// tables in two scripts disagreed about three repos; five different caps, none a flag,
-// none with a remedy; and `today` was the script's own clock printed as a fact about the
-// day. Every verb and every refusal here is one of those closed.
+// The invariants every verb keeps:
+//
+//   - Every source is declared by a flag, and every row names the sources that fed it. No
+//     path has a default and no environment variable stands in for one.
+//   - A type no source reported is a dash, never 0: a dash is an absence and a zero is a
+//     measurement.
+//   - A fold merges into a day file by source: it recomputes the rows its declared sources
+//     wrote and carries every other row over unchanged.
+//   - A day whose totals would shrink is refused and left as it was; --allow-shrink is the
+//     caller's act.
+//   - A source that could not be read is named and the run exits 1, and every day the run
+//     could compute is still written.
+//
+// The verbs:
 //
 //	fold      read the declared sources, write one file per day, refuse a day that shrinks
-//	report    a friend on another machine folds their own day and prints the body of a note
+//	report    fold one machine's own sources for one day and print the body of a tokens
+//	          note; with --redis, a month from the ledger store
+//	ledger    index folded day files into the Redis ledger store
 //	sum       a month is a sum of day files; it asserts nothing and is never a gate
 //	check     the gate: every file parses, every row has every column, a missing day is named
 //	sources   what a fold would count, before it writes
+//	profiles  per-model output and budget overshoots over a swarm root's card usage files
+//	session   one Claude Code session window, summed per turn and optionally folded
 //
 // It never estimates, never fills a gap, and never removes a file. Everything it reads is
 // DATA: a transcript, a database row, a usage file, a bus note — none of them is an
@@ -190,8 +199,8 @@ func (s *sourceFlags) check(c *tool.Call) {
 		for _, it := range l.items {
 			any = true
 			// A provider's label is `<kind>:<label>`; every other flag's is the label
-			// itself. Uniqueness is on the label -- the friend or the bench -- across
-			// every kind, because the sources column names one of them per source.
+			// itself. Uniqueness is on the label, whose spend the source is, across every
+			// kind, because the sources column names one label per source.
 			name := it.label
 			if l.kind == "provider" {
 				if _, after, ok := strings.Cut(it.label, ":"); ok {
@@ -275,12 +284,12 @@ func (s *sourceFlags) check(c *tool.Call) {
 // An OpenCode database is read from a COPY, never in place: the live file is the one
 // OpenCode is writing, and sqlite3 even read-only keeps a WAL index (-shm) beside the file
 // it opens, while reading it as immutable would skip rows still in the WAL and count a
-// different day. A run that writes copies into --scratch/opencode-<label>/, replacing what
-// is there, and leaves the copy (rule 16). A run that writes nothing (private: sources, and
-// every --dry-run) copies into a directory of its own made under --scratch
-// (.nova-tokens-dry-run-*, new and private to the run, so no file there is ever truncated)
-// and removes it before returning, so --scratch is as it was. A copy it could not remove
-// is named in the returned notes.
+// different day; sources are read-only. A run that writes copies into
+// --scratch/opencode-<label>/, replacing what is there, and leaves the copy. A run that
+// writes nothing (private: sources, and every --dry-run) copies into a directory of its own
+// made under --scratch (.nova-tokens-dry-run-*, new and private to the run, so no file there
+// is ever truncated) and removes it before returning, so --scratch is as it was. A copy it
+// could not remove is named in the returned notes.
 func (s *sourceFlags) read(rules *tokens.Rules, now time.Time, private bool) (out []*tokens.Source, notes []string) {
 	for _, it := range s.claude.items {
 		out = append(out, tokens.ReadClaude(it.label, it.value, rules))
@@ -404,7 +413,7 @@ func cmdFold(now time.Time) tool.Verb {
 }
 
 // foldDetail is what fold's -h says above its flags.
-const foldDetail = `EXIT 1 STILL WRITES. A fold with one unreadable file writes every day it could compute
+const foldDetail = `Exit 1 still writes. A fold with one unreadable file writes every day it could compute
 and exits 1: the exit code is about the claim, and written=true on the TOKENS DAY line is
 about the files. A day that would go backwards is refused (TOKENS SHRANK) and left as it
 was; --allow-shrink is the person's act. A fold merges into the day file by SOURCE: it
@@ -456,7 +465,7 @@ func fold(c *tool.Call, now time.Time) *tool.Out {
 	}
 	conflictDays := map[string]bool{}
 	// The labels this run declared: exactly what lands in a row's sources column, and so
-	// exactly the rows this fold is entitled to recompute (rule 10).
+	// exactly the rows this fold is entitled to recompute.
 	declared := make([]string, 0, len(sources))
 	for _, src := range sources {
 		declared = append(declared, src.Label)
@@ -540,8 +549,8 @@ func fold(c *tool.Call, now time.Time) *tool.Out {
 			case readErr == nil && len(findings) == 0:
 				// Merge by source BEFORE anything else touches the file: a row no declared
 				// source wrote is carried over, a row they all wrote is replaced, and a row
-				// this fold can neither keep nor recompute refuses the day. Rule 10 then
-				// compares the file with the MERGED file, which is like with like.
+				// this fold can neither keep nor recompute refuses the day. The shrink
+				// refusal then compares the file with the MERGED file, which is like with like.
 				merged, retained, partials := tokens.MergeDay(old.Rows, file.Rows, declared)
 				for _, pt := range partials {
 					partial = true
@@ -617,8 +626,8 @@ func fold(c *tool.Call, now time.Time) *tool.Out {
 	if dryRun {
 		counts = append(counts, "dry_run", true)
 	}
-	// A FOLD THAT DROPPED EVERY MESSAGE FOLDED NOTHING, AND A GATE READING THE EXIT CODE MUST
-	// SEE IT. Some messages dropped is a TOKENS NOTE (the day is short and the note says
+	// A fold that dropped every message folded nothing, and a gate reading the exit code must
+	// see it. Some messages dropped is a TOKENS NOTE (the day is short and the note says
 	// so); every message dropped, with none folded, is a fold that did not do its job:
 	// exit 1 with the counts.
 	dropped, of, allDropped := allMessagesDropped(sources)
@@ -785,6 +794,7 @@ func remedy(sources []*tokens.Source, overlaps []tokens.Overlap, unreadable, unp
 	return "nothing was wrong; nova-tokens check --out " + out + " is the gate"
 }
 
+// firstUnreadableLabel is the label of the first source with an unreadable file, or "-".
 func firstUnreadableLabel(sources []*tokens.Source) string {
 	for _, s := range sources {
 		if len(s.Unreadables) > 0 {
@@ -794,12 +804,10 @@ func firstUnreadableLabel(sources []*tokens.Source) string {
 	return "-"
 }
 
-// firstUnparsed names the kind of the first source with an unparsed line and what it was
-// reading, so that the one remedy line is the remedy for the thing that failed.
-// noidAndDup is the sentence for spend that was read and then dropped: a message with no
-// id is not folded (rule 4) and a repeated id is counted once. Both are numbers on a green
-// TOKENS SOURCE line and nowhere else, and 100% of a file's usage can be a message with no
-// id (lesson 95: a number is not a sentence).
+// noidAndDup is the sentence for spend that was read and then dropped: a message is
+// counted by its id, so one with no id is not folded, and a repeated id is counted once.
+// Both are numbers on a green TOKENS SOURCE line and nowhere else, and all of a file's
+// usage can be messages with no id, so the remedy line says it in words.
 func noidAndDup(sources []*tokens.Source) string {
 	noid, dup, label := 0, 0, "-"
 	for _, s := range sources {
@@ -814,14 +822,14 @@ func noidAndDup(sources []*tokens.Source) string {
 	if noid == 0 {
 		return ""
 	}
-	return "a source fed " + strconv.Itoa(noid) + " messages with no id (" + label + "): a message is counted by its id (rule 4), and one with none is noid= and is not folded"
+	return "a source fed " + strconv.Itoa(noid) + " messages with no id (" + label + "): a message is counted by its id, and one with none is noid= and is not folded"
 }
 
 // allDroppedWhy is the tail of the TOKENS FAIL line for a fold that dropped every message.
 const allDroppedWhy = "no message had an id, so none was folded (a message is counted by its id: a transcript's message.id, an opencode message id, a swarm row's job); run: nova-tokens sources <the same source flags> --day <d> to see noid= per source"
 
 // allMessagesDropped says whether the sources read at least one message and dropped every
-// one of them for having no id (rule 4): the count dropped, the count read (dropped, plus
+// one of them for having no id: the count dropped, the count read (dropped, plus
 // the messages folded), and whether that is the whole of it. Some dropped and some folded
 // is false: the TOKENS NOTE names that one.
 func allMessagesDropped(sources []*tokens.Source) (dropped, of int, all bool) {
@@ -833,6 +841,9 @@ func allMessagesDropped(sources []*tokens.Source) (dropped, of int, all bool) {
 	return dropped, dropped + folded, dropped > 0 && folded == 0
 }
 
+// firstUnparsed names the kind of the first source with an unparsed line, the note it was
+// reading, and the remedy the reader wrote for it, so that the one remedy line is the
+// remedy for the thing that failed.
 func firstUnparsed(sources []*tokens.Source) (kind, note, own string) {
 	for _, s := range sources {
 		if len(s.Unparseds) > 0 {
@@ -842,6 +853,7 @@ func firstUnparsed(sources []*tokens.Source) (kind, note, own string) {
 	return "", "-", ""
 }
 
+// firstConflictLabel is the label of the first source with a lane-day conflict, or "-".
 func firstConflictLabel(sources []*tokens.Source) string {
 	for _, s := range sources {
 		if len(s.Conflicts) > 0 {
@@ -1045,15 +1057,14 @@ func checkMonth(c *tool.Call) {
 // strs reads a repeatable flag.
 func strs(c *tool.Call, name string) []string { return c.Get(name).([]string) }
 
-// report is the verb for a friend on another machine, and the first user of this tool
-// is not this bench. It folds that machine's own sources for one day, the same sources and
-// the same attribution as fold, and prints EXACTLY the body lines of a tokens note and
+// report is the verb for a machine whose spend is reported over the bus rather than folded
+// where it happened. It folds that machine's own sources for one day, the same sources and
+// the same attribution as fold, and prints exactly the body lines of a tokens note and
 // nothing else: no heading, no stamp, no comment. The stamp and the build id go on the
 // subject, which it prints on its one OK line.
 //
-// THIS IS THE ONE PLACE IN THE FAMILY WHERE THE OK LINE LEAVES STDOUT, because here stdout
-// is the artifact. The spec says so in as many words, which is the exception SPEC.md's
-// Conventions allow when a spec states one.
+// This is the one verb whose OK line goes to stderr, because here stdout is the artifact;
+// SPEC-TOKENS states the exception, as SPEC.md's Conventions require.
 func report(c *tool.Call, now time.Time) *tool.Out {
 	dryRun := c.DryRun()
 	s := newSink(c, "report")
@@ -1074,10 +1085,9 @@ func report(c *tool.Call, now time.Time) *tool.Out {
 			folder.Add(src.Label, m)
 		}
 	}
-	// Rule 20: report "folds that machine's own sources for one day, the same sources and
-	// the same attribution as fold", and that includes what the fold SAYS about them: an
-	// unreadable file, a line that did not parse and a message with no id each leave a
-	// line here (rule 3: counted and printed, never skipped silently).
+	// report folds the same sources with the same attribution as fold, and that includes
+	// what the fold says about them: an unreadable file, a line that did not parse and a
+	// message with no id each leave a line here, counted and printed, never skipped.
 	unreadable, unparsed := 0, 0
 	for _, src := range sources {
 		for _, u := range src.Unreadables {
@@ -1126,7 +1136,7 @@ func report(c *tool.Call, now time.Time) *tool.Out {
 	s.fact("day", day)
 	s.fact("rows", lines)
 	if lines == 0 || len(mixed) > 0 {
-		// A friend with nothing to show says so, and never sends zeros. A REPORT FAIL
+		// A report with nothing to show says so, and never sends zeros. A REPORT FAIL
 		// writes nothing: an existing --note file is left byte-unchanged. A mixed key is a
 		// FAIL for the day, and the rest of the body is still printed: the spec's sentence
 		// is "no line for that key", not no line for any key.
@@ -1216,10 +1226,10 @@ func report(c *tool.Call, now time.Time) *tool.Out {
 	s.fact("at", stamp(now))
 	s.fact("build", buildVersion())
 	s.fact("subject", tool.Text(subject))
-	// Rule 3, and the exit table: "a declared source with an unreadable file" is exit 1,
-	// and a line that did not parse is the same wall under fold. The body still printed and
-	// --note still landed -- exit 1 still writes -- but a friend about to paste this onto
-	// the bus is told it does not cover what it claims.
+	// The exit table: a declared source with an unreadable file is exit 1, and so is a
+	// line that did not parse, as under fold. The body still printed and --note still
+	// landed (exit 1 still writes), but whoever posts this to the bus is told it does not
+	// cover what it claims.
 	if unreadable > 0 || unparsed > 0 {
 		return s.done(1, max)
 	}
@@ -1360,11 +1370,10 @@ func checkOptions(c *tool.Call) tokens.CheckOptions {
 // day and any stray, and it prints the count line either way. A missing day is NAMED and
 // never filled: nobody folded it, and this tool does not invent what nobody measured.
 //
-// What `missing` and `stray` MEAN is internal/tokens/check.go's paragraph, and the short
+// What `missing` and `stray` mean is internal/tokens/check.go's paragraph, and the short
 // of it is that a calendar gap and a person's README are counted here (gap=, notes=) and
-// named only under --strict or a --no-spend list. A gate that cannot go green is a gate
-// people learn to skip, and this one could not: 40 findings on reports/tokens, none of
-// them work anybody would do.
+// named only under --strict or a --no-spend list. A gate that cannot go green on a real
+// directory is a gate people learn to skip.
 func check(c *tool.Call, now time.Time) *tool.Out {
 	out, max := c.Str("out"), c.Int("max")
 	res, err := tokens.Check(out, checkOptions(c)) // its problems were refused before the verb ran
@@ -1411,7 +1420,7 @@ func check(c *tool.Call, now time.Time) *tool.Out {
 		fmt.Fprintf(s.err(), "CHECK FAIL stale last=%s through=%s\n", oneline.Field(last), oneline.Field(c.Str("through")))
 		s.item("stale", "last", last, "through", c.Str("through"))
 	}
-	// A GATE THAT CANNOT GO RED IS NO GATE. An --out holding no day file has nothing in it
+	// A gate that cannot go red is no gate. An --out holding no day file has nothing in it
 	// to pass, and a green over nothing reads exactly like a green over a month: it is a
 	// finding, with the fold that makes the first file as its remedy.
 	empty := res.Files == 0

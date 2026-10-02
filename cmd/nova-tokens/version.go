@@ -1,13 +1,11 @@
 // nova-tokens version: which build wrote a day file.
 //
-// A day file carries the build id of the fold that wrote it (rule 12), so the first question
-// after two day files disagree is which build wrote each -- an id scheme, a header, a push
-// protocol that two senders have to implement identically. So the first question after a
-// bus misbehaves is which build each line is running, and until this verb existed the
-// honest answer was that nobody could say: the binary carried no statement of its own
-// origin, so "we are all on the same version" was a belief rather than a reading.
+// A day file carries the build id of the fold that wrote it (the tool stamps, never a
+// person), so the first question after two day files disagree is which build wrote each.
+// The same holds for a bus note, whose subject carries the build id of the report that
+// wrote it: "we are all on the same version" is a reading, never a belief.
 //
-// The version is NOT a constant maintained by hand. A hand-maintained constant is wrong
+// The version is not a constant maintained by hand. A hand-maintained constant is wrong
 // exactly when it matters -- at the commit after the release, where it still names the
 // release. It is read from the build itself, in this order:
 //
@@ -22,7 +20,7 @@
 // rather than inventing a number, because a version string nobody can trace is worse than
 // no version string at all: it invites the comparison it cannot support.
 //
-// ONE LINE, FOUR TOKENS. Every field goes through oneline.Field, so what is printed is
+// One line, four tokens. Every field goes through oneline.Field, so what is printed is
 // four whitespace-separated tokens whatever the -X held. A version stamped with a newline
 // or a space in it would otherwise make the one line that says which build is running say
 // two things, or say a build time as if it were an architecture -- and the -X value is the

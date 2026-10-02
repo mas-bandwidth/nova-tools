@@ -13,15 +13,15 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
-// SWARM PROFILES MEASUREMENT (the overshoot ledger from every job's usage.tsv).
+// The swarm profiles measurement: the overshoot ledger from every job's usage.tsv.
 //
 // A native run writes one card's usage.tsv beside its RESULT.md and one PROMPT.md -- the
 // card -- in the same job directory. The card's own budget line is "YOUR TOKEN BUDGET IS
 // <n>" (or the word `unmetered`, which is no number). This verb walks every card under a
 // swarm root and folds, per model, the card count, the median `tokens_out`, and the count
-// of cards whose output exceeded their own budget line: the overshoot the bounded-contract
-// review observed before its next checkpoint. It makes no policy and writes nothing; it is a
-// measurement, so a budget the card does not carry is an absence, never an overshoot.
+// of cards whose output exceeded their own budget line. It makes no policy and writes
+// nothing; it is a measurement, so a budget the card does not carry is an absence, never
+// an overshoot.
 
 // budgetLineMarker is the one card sentence this verb reads, transcribed from worker.go's
 // Prompt: "YOUR TOKEN BUDGET IS <n>. The machinery ends the job at the budget it can see."

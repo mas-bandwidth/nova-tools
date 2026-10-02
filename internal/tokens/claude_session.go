@@ -1,14 +1,13 @@
 package tokens
 
-// The coordinator's own session, folded (G5 of pit stop 3, #828).
+// The coordinator's own session, folded.
 //
-// How the coordinator could be more efficient needs a number: every worker's spend is on a
-// swarm CARD line and in the ledger, and the coordinator's own window -- the single most
-// expensive line on a bench -- is otherwise measured by hand.
+// Every worker's spend is on a swarm card line and in the ledger; the coordinator's own
+// window, often the most expensive line of all, is not, unless this reader folds it.
 //
 // This reader folds one Claude Code session jsonl into the four counts and one weighted
-// equivalent, so the coordinator is a model line in the daily ledger like everybody else
-// (SPEC-PULSE, "Rate and convergence" rule 8: the coordinator is a friend).
+// equivalent, so the coordinator's window is a model line in the daily ledger like every
+// worker's.
 //
 // WEIGHTED is the comparable number. A cache read is not a fresh input token and an output
 // token is not one either, so a raw sum of the four flatters a window that reads a huge
@@ -44,7 +43,7 @@ const CoordinatorSeat = "/coordinator"
 func CoordinatorModelOf(model string) string { return model + CoordinatorSeat }
 
 // CoordinatorRepo is the repo cell of that row. A coordinator's turns are not one repo's
-// work -- they are the bench's -- and a row attributed to whichever repo a tool call
+// work -- they span every repo -- and a row attributed to whichever repo a tool call
 // happened to name would move the cost around from day to day.
 const CoordinatorRepo = "coordinator"
 

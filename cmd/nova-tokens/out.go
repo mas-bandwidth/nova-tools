@@ -2,10 +2,10 @@ package main
 
 // One verb's result in its two renderings (docs/STANDARD.md section 2: one value, lines or
 // --json). A verb writes each typed line through a sink: as text the line goes to the stream
-// it belongs to, exactly as this tool has always printed it; under --json the same values
-// are an item, a fact or a note of one tool.Out, printed on stdout as one object when the
-// verb ends. The lines are this tool's own (TOKENS DAY, SUM PAIR, CHECK MISSING), which is
-// why the text is not the skeleton's renderer: the skeleton names every line by its verb.
+// it belongs to; under --json the same values are an item, a fact or a note of one
+// tool.Out, printed on stdout as one object when the verb ends. The lines are this tool's
+// own (TOKENS DAY, SUM PAIR, CHECK MISSING), which is why the text is not the skeleton's
+// renderer: the skeleton names every line by its verb.
 
 import (
 	"fmt"

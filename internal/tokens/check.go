@@ -9,31 +9,28 @@ import (
 	"strings"
 )
 
-// `check` is the GATE. It verifies what rule 13 says and nothing else: it does not ask
-// whether a day's numbers are plausible, or whether a source was declared that day. A
-// missing day is NAMED and never filled.
+// `check` is the gate. It verifies what SPEC-TOKENS says `check` verifies and nothing else:
+// every day file parses and every row has every column. It does not ask whether a day's
+// numbers are plausible, or whether a source was declared that day. A missing day is named
+// and never filled.
 //
-// A GATE THAT CANNOT GO GREEN IS NOT A GATE. Measured on this repository's own
-// reports/tokens, 2026-09-18: 16 day files, 36 findings of `missing` for the 36 calendar
-// days nobody worked between 2026-07-30 and 2026-09-06, and 4 findings of `stray` for the
-// README, the collator's log, the pre-nova-tokens archive and a session note a person put
-// there on purpose. Every one of the 40 was correct by the old reading, and not one of
-// them was work anybody would do -- so the gate was a line people had learned to skip.
-// Two readings changed:
+// A gate that cannot go green is not a gate. A real directory of day files holds calendar
+// days nobody worked and files a person keeps beside the day files on purpose; naming each
+// of those as a finding makes a gate people learn to skip. So two readings hold:
 //
-//	A CALENDAR GAP IS A FACT, NOT A FINDING. A day with no file is `missing` only when
+//	A calendar gap is a fact, not a finding. A day with no file is `missing` only when
 //	something this run can read says there was spend on it: --strict says every gap
 //	counts, and --no-spend <file> names the days that had none and counts the rest. With
 //	neither, the gap is counted on the CHECK line as gap=<n> and nothing is named --
 //	because `check` reads day files, and a day file nobody wrote is not evidence that
 //	anybody worked that day.
 //
-//	A NON-DAY ENTRY A PERSON PUT THERE IS A NOTE, NOT A STRAY. A `*.md`, a `*.log` and a
-//	`pre-*` archive directory are counted as notes=<n> and left alone. --strict restores
-//	the old reading, where every entry that is not a day file is named.
+//	A non-day entry a person put there is a note, not a stray. A `*.md`, a `*.log` and a
+//	`pre-*` archive directory are counted as notes=<n> and left alone. --strict names
+//	every entry that is not a day file.
 //
 // Neither door removes anything and neither invents a number: both counts stay on the
-// CHECK line, so a person who wants the old list types --strict and gets it back whole.
+// CHECK line, so a person who wants every gap and every note named types --strict.
 
 // FileFinding is one thing wrong with one file.
 type FileFinding struct {
@@ -154,10 +151,10 @@ func namedMissing(gaps []string, opt CheckOptions) []string {
 }
 
 // AllowedNote is the allowlist: the non-day entries a person keeps beside their day files.
-// It is deliberately a list of SHAPES and not of names — a tool with `README.md` compiled
-// into it would be a tool that special-cases one bench's directory — and every shape here
-// is one this repository's own reports/tokens holds: a README and a session note (`*.md`),
-// a collator's log (`*.log`), and the archive of what the day files replaced (`pre-*/`).
+// It is deliberately a list of shapes and not of names — a tool with `README.md` compiled
+// into it would be a tool that special-cases one directory — and the shapes are the ones a
+// person keeps beside day files: a README or a session note (`*.md`), a collator's log
+// (`*.log`), and the archive of what the day files replaced (`pre-*/`).
 func AllowedNote(name string, dir bool) bool {
 	if dir {
 		return strings.HasPrefix(name, "pre-")

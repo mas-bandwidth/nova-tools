@@ -20,7 +20,7 @@ import (
 // goes through internal/atomicfile to a unique temporary sibling in the same directory
 // and lands by one atomic rename, with best-effort parent-directory fsync. Whole is not
 // the same as recomputed -- a fold recomputes the rows ITS OWN declared sources wrote and
-// carries the rest of the file's rows over unchanged (MergeDay, #268). Unique temporary
+// carries the rest of the file's rows over unchanged (MergeDay). Unique temporary
 // sibling files guarantee that temporary files never collide; fold locking (lock.go)
 // serializes concurrent final updates. A stranded temporary left by an interrupted fold is
 // preserved, and `check` steps over valid day-file temporaries so wreckage of a killed
@@ -30,7 +30,8 @@ import (
 // not this is refused by `sum` and named by `check`, and the repair is `fold --day <d>`.
 const Version = "nova-tokens v1"
 
-// TempSuffix is the legacy fixed temp name, recognized by check for earlier files.
+// TempSuffix is the fixed temporary name a day file may have been written through; check
+// counts a <day>.tsv.tmp as a day file's temporary, never a stray.
 const TempSuffix = ".tsv.tmp"
 
 // FileSuffix is a day file's extension.
@@ -184,15 +185,15 @@ func Shrinks(old, now Counts, day string) []Shrink {
 	return out
 }
 
-// The merge, and why the fold is no longer a whole recomputation of the file (#268).
+// The merge, and why the fold is not a whole recomputation of the file.
 //
 // A fold declares SOURCES, and a day file's rows each name the sources that wrote them.
 // A run that declares one source and recomputes the file whole ERASES every row the other
-// sources wrote, and rule 10 cannot see it: the shrink comparison is over the day's per-type
-// TOTALS, so a run whose own numbers are bigger than what it deleted writes a smaller file
-// with a bigger total and says written=true: a day holding `claude-x 410` folded with
-// only `--swarm bo=<pool>` (mercury-2.5, 2000) would come back holding the mercury row
-// alone, exit 0, no TOKENS SHRANK.
+// sources wrote, and the shrink refusal cannot see it: the comparison is over the day's
+// per-type TOTALS, so a run whose own numbers are bigger than what it deleted writes a
+// smaller file with a bigger total and says written=true: a day holding `claude-x 410`
+// folded with only `--swarm bo=<pool>` (mercury-2.5, 2000) would come back holding the
+// mercury row alone, exit 0, no TOKENS SHRANK.
 //
 // So the fold merges by source instead. This run's rows replace the rows its own sources
 // wrote; a row no declared source wrote is kept exactly as it is; and the two rows that
@@ -263,10 +264,9 @@ func MergeDay(old, fresh []DayRow, declared []string) (rows []DayRow, retained i
 		case in > 0:
 			// replaced: this run recomputed every source that wrote it. A (model, repo)
 			// this run no longer reports at all is a row that drops out of the merged
-			// file. If overall day totals fall or become unknown, rule 10 catches the
-			// shrink; but if another declared source rises by more than this row's
-			// totals, day-total comparison cannot see the per-source quiet shrink
-			// (preserved as follow-up).
+			// file. If overall day totals fall or become unknown, the shrink refusal
+			// catches it; but if another declared source rises by more than this row's
+			// totals, the day-total comparison cannot see the per-source quiet shrink.
 		default:
 			if computed[r.Model+"\t"+r.Repo] {
 				partials = append(partials, partialOf(r, folded, PartialCollision))
@@ -336,9 +336,9 @@ func ParseDayFile(name, text string) (DayFile, []Finding) {
 			f = append(f, Finding{Line: 1, Reason: "the version line carries no `" + want + "=`; it wants " + Version + " day=… at=… build=… turns=<n or -> sources=…"})
 		}
 	}
-	// Rule 13: "the version line carries `turns=` as an integer or `-`". An EMPTY value is
-	// present but says nothing, and a NEGATIVE one is not a count of messages; both read
-	// clean when the check was only `!= "" && != Dash`.
+	// The version line carries `turns=` as an integer or `-`. An empty value is present
+	// but says nothing, and a negative one is not a count of messages; a check of only
+	// `!= "" && != Dash` would read both as clean.
 	if _, ok := fields["turns"]; ok && d.Turns != Dash {
 		n, err := strconv.Atoi(d.Turns)
 		switch {
@@ -353,12 +353,12 @@ func ParseDayFile(name, text string) (DayFile, []Finding) {
 	if d.Day != name {
 		f = append(f, Finding{Line: 1, Reason: "the version line says day=" + d.Day + " and the file is named " + name})
 	}
-	// EITHER WIDTH. A file whose header is the eleven names is read as it is written. A file
+	// Either width. A file whose header is the eleven names is read as it is written. A file
 	// whose header is the twelve (LegacyColumns) was written while the `units` column
 	// existed: its twelfth cell is ignored, and the rows that column alone kept apart, which
 	// sit next to each other because the file is sorted, are read as the one (model, repo)
-	// row they add up to. Anything else is the refusal it always was, and it names the
-	// header a fold writes today.
+	// row they add up to. Anything else is refused, and the refusal names the header a
+	// fold writes.
 	width, legacy := len(Columns), false
 	if len(lines) >= 2 && lines[1] == LegacyHeaderLine {
 		width, legacy = len(LegacyColumns), true

@@ -56,14 +56,14 @@ type Rules struct {
 // already held keep rising and no NEW stem is admitted, so the top of the list -- which is
 // what the flag is for -- is unaffected, and TotalUnattributed still counts every token.
 //
-// Measured 2026-09-18 on this bench's own transcripts: 2,256 files, 122,056 unattributed
-// tokens, and over 4,096 distinct stems -- so the first ceiling tried was one a real bench
-// reached on its first run. 50,000 stems is about 3 MB of strings and is a guard against a
-// pathological tree rather than a limit on an ordinary one.
+// An ordinary machine's transcripts (a few thousand files) name several thousand distinct
+// stems, so a ceiling of a few thousand is reached on a first run. 50,000 stems is about
+// 3 MB of strings and is a guard against a pathological tree rather than a limit on an
+// ordinary one.
 const stemLimit = 50000
 
-// stemDepth is how many leading path elements a stem keeps. Three is where a tree is named
-// on a bench -- /Users/ada/work-3, /home/ci/actions-runner -- and a tally
+// stemDepth is how many leading path elements a stem keeps. Three is where a working tree
+// is named -- /Users/ada/work-3, /home/ci/actions-runner -- and a tally
 // keyed by the whole file path would be a list of FILES rather than a list of candidate
 // rules: one unnamed tree would arrive as a hundred stems, one per directory in it, and the
 // top of the list would say nothing.

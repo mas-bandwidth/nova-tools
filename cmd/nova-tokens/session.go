@@ -1,13 +1,13 @@
 package main
 
-// The session verb: the coordinator's own window, folded (G5 of pit stop 3, #828).
+// The session verb: the coordinator's own window, folded.
 //
-// It is a VERB OF ITS OWN and not a flag on fold, deliberately. fold's source flags are
+// It is a verb of its own and not a flag on fold, deliberately. fold's source flags are
 // declared once, in sourceFlags, and shared by fold, sources and report, so a flag added
 // for one of them is a flag the other two must also mean something by; and a session file
 // is not a source in that sense -- it is ONE file, read once, folded into one model row,
-// and nothing about a month or a set of friends. A verb keeps fold's surface exactly as it
-// was and keeps the new thing readable on its own line.
+// and nothing about a month or a set of reporters. A verb of its own keeps fold's surface
+// unchanged and keeps the session readable on its own line.
 
 import (
 	"fmt"
@@ -111,7 +111,7 @@ func session(c *tool.Call, now time.Time) *tool.Out {
 		return s.done(0, 0)
 	}
 
-	// THE ROW IS BOOKED UNDER THE MODEL THE TRANSCRIPT NAMES. A transcript that names none has
+	// The row is booked under the model the transcript names. A transcript that names none has
 	// no honest row, and the refusal says so before anything is created or written.
 	if why := sum.UnbookableReason(); why != "" {
 		return refuseVerb("session", why)

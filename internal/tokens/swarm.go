@@ -13,9 +13,8 @@ import (
 //
 // SPEC-SWARM rule 12 writes one usage file per job under <pool>/usage/, OUTSIDE the
 // directory `reclaim` removes and before the job's files move. That is the whole reason
-// this is a source: DeepSeek's two batches on 2026-09-11 went unaccounted because their
-// per-job data homes were reclaimed with the jobs, and a sidecar written before the move
-// is counted after the directory is gone.
+// this is a source: a job's per-job data home is reclaimed with the job, and a sidecar
+// written before the move is still counted after the directory is gone.
 //
 // Nothing under done/, failed/ or running/ is OPENED. A job directory there with no usage
 // file is counted by its NAME alone, so the answer is the same before and after reclaim.
@@ -102,9 +101,8 @@ func ReadSwarm(label, pool string, rules *Rules) *Source {
 				continue
 			}
 			// One row per (job, attempt): a failed attempt followed by a retry
-			// retains both costs (SPEC-TOKENS rule 14: a row for a second attempt
-			// is its own row). Only a repeated row for the same attempt is a
-			// duplicate, never a retry.
+			// retains both costs (a row for a second attempt is its own row). Only a
+			// repeated row for the same attempt is a duplicate, never a retry.
 			if seen[job+"\x00"+cells[cols["attempt"]]] {
 				s.Stat.Dup++
 				continue

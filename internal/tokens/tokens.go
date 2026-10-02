@@ -8,8 +8,8 @@ The shape of the thing is one sentence. Each source hands the fold a stream of m
 exactly by (day, model, repo), with the five token types kept apart and a type no source
 reported left as a dash. What differs per source kind is only how the stream is produced,
 which is why the attribution rule, the dash rule and the sum rule are each written once
-here rather than once per reader: the prototype this replaces had two copies of the
-attribution table in two scripts and they disagreed about three repos.
+here rather than once per reader: two copies of an attribution table drift apart, and
+then two readers attribute one path to two repos.
 
 Nothing in this package removes a file, and nothing in it runs a program except the one
 subprocess the OpenCode reader declares.
@@ -48,7 +48,7 @@ const (
 var TypeNames = [NTypes]string{"input", "output", "cache_write", "cache_read", "reasoning"}
 
 // Dash is the cell of a type the source did not report. It is not a zero, and the
-// difference is the whole of rule 15: a zero is a measurement and a dash is an absence,
+// difference is the whole rule: a zero is a measurement and a dash is an absence,
 // and a zero that meant "not measured" would sum into a month claiming to be complete.
 const Dash = "-"
 
@@ -170,7 +170,7 @@ type Row struct {
 }
 
 // Bases is the day bases that fed this row, sorted. More than one is a row that is not
-// written (rule 17).
+// written: one row is dated on one basis.
 func (r *Row) Bases() []string { return sortedKeys(r.bases) }
 
 // Sources is the sorted, comma-joinable labels that fed this row.
@@ -193,12 +193,9 @@ type Folder struct {
 
 	// idLabel is which source first fed each message id, and overlaps counts the ids two
 	// sources both fed. SPEC-TOKENS says the fold "deliberately does not check … that two
-	// sources overlap", and the numbers here still do not change: two declarations of one
-	// tree still double the day, exactly as the spec says. What changes is that the run
-	// SAYS SO. (Measured 2026-09-11: ~/.claude/projects/<session>/subagents/agent-*.jsonl
-	// and /private/tmp/.../tasks/*.output were the same 10,281 messages, the fold reported
-	// 2,932,982,350 cache_read against the correct 1,502,293,166, written=true, check OK,
-	// sum OK.)
+	// sources overlap", and the numbers here do not change: two declarations of one tree
+	// double the day, exactly as the spec says, and the day file, check and sum are all
+	// green about it. What the overlap count adds is that the run says so.
 	idLabel  map[string]string
 	overlaps map[[2]string]int
 }
@@ -343,10 +340,10 @@ var applies = map[string]map[string]bool{
 	// in the TOKENS SOURCE paragraph: "a transcript has no unparsed lines ... a dash is
 	// an absence where a zero is a measurement". A line whose stamp this tool cannot
 	// read IS counted and printed -- one TOKENS UNPARSED line naming the label, and the
-	// unparsed= total on TOKENS FAIL (rule 3) -- so nothing is lost by the dash; what the
-	// column would claim is that a clean transcript was MEASURED for unparsed lines, and
-	// the spec reserves the zero for that. The PR proposes striking the spec's clause; if
-	// it is struck, these two become `"unparsed": true` and the column is the measurement.
+	// unparsed= total on TOKENS FAIL -- so nothing is lost by the dash; what the column
+	// would claim is that a clean transcript was MEASURED for unparsed lines, and the spec
+	// reserves the zero for that. If the spec's clause is struck, these two become
+	// `"unparsed": true` and the column is the measurement.
 	KindClaude:   {"files": true, "unreadable": true, "messages": true, "dup": true, "noid": true, "rows": true},
 	KindOpenCode: {"files": true, "unreadable": true, "messages": true, "dup": true, "noid": true, "rows": true},
 	KindSwarm:    {"files": true, "unreadable": true, "messages": true, "dup": true, "noid": true, "nousage": true, "unparsed": true, "rows": true},
@@ -382,7 +379,7 @@ type Conflict struct {
 	Notes      []string
 }
 
-// Touched is the one comment shape a friend's note may carry, and it adds no numbers.
+// Touched is the one comment shape a bus note may carry, and it adds no numbers.
 type Touched struct {
 	Label, Day string
 	Repos      []string
@@ -412,12 +409,13 @@ type Source struct {
 
 // AddMessage puts one message into this source's stream, collapsed onto its id.
 //
-// This is rule 4, and it is written ONCE: "A Claude Code transcript repeats a message id
-// on every streamed line; the last line for an id carries the message's final usage, and
-// that is the one counted. Within one source, a second occurrence of an id is dup=<n>,
-// never a second count. A message with no id is counted in noid=<n> and not folded."
-// claude.go and opencode.go each kept their own byID/order/dup loop, and two copies of one
-// rule are two rules (lesson 113).
+// This is the count-by-id rule, and it is written ONCE: "A Claude Code transcript repeats
+// a message id on every streamed line; the last line for an id carries the message's final
+// usage, and that is the one counted. Within one source, a second occurrence of an id is
+// dup=<n>, never a second count. A message with no id is counted in noid=<n> and not
+// folded."
+// claude.go and opencode.go both call it rather than keep a byID/order/dup loop each,
+// because two copies of one rule are two rules.
 func (s *Source) AddMessage(id string, m Message) {
 	if id == "" {
 		s.Stat.NoID++
@@ -449,9 +447,9 @@ func (s *Source) Collapse() {
 func (s *Source) ReportsList() string {
 	if len(s.Reports) == 0 {
 		// A lane that folded no row reports no type, and the field's value is a dash
-		// like every other absence on this line. It used to render as nothing at all --
-		// `reports= day_basis=utc` -- which is a field with no value in a grammar whose
-		// every field has one.
+		// like every other absence on this line, never nothing at all (`reports=
+		// day_basis=utc`), which is a field with no value in a grammar whose every field
+		// has one.
 		return Dash
 	}
 	names := make([]string, 0, len(s.Reports))
@@ -504,10 +502,10 @@ var AllTypes = []Type{Input, Output, CacheWrite, CacheRead, Reasoning}
 // ClaudeTypes is what a Claude Code transcript carries: no reasoning count exists in it.
 var ClaudeTypes = []Type{Input, Output, CacheWrite, CacheRead}
 
-// ValidDay reports whether s is a YYYY-MM-DD day ON THE CALENDAR. The shape alone was
-// the whole test, so `--day 2026-13-40` was accepted, wrote 2026-13-40.tsv, passed
-// `check`, and left MissingDays walking from a day that does not exist. time.Parse is the
-// range check, and the round trip refuses what it normalises (2026-02-30 -> 2026-03-02).
+// ValidDay reports whether s is a YYYY-MM-DD day ON THE CALENDAR. The shape alone is not
+// the test: `--day 2026-13-40` would write 2026-13-40.tsv, pass `check`, and leave
+// MissingDays walking from a day that does not exist. time.Parse is the range check, and
+// the round trip refuses what it normalises (2026-02-30 -> 2026-03-02).
 func ValidDay(s string) bool {
 	if len(s) != 10 || s[4] != '-' || s[7] != '-' {
 		return false
@@ -644,8 +642,8 @@ func UsdPerMtok(micro, tokens int64) string {
 // opens counts every source file this process has opened. The fold's cost is ONE PASS over
 // each declared file -- there is no index and no incremental mode, and a day file is
 // recomputed whole from the sources every time -- and a count is what a test can pin where
-// a time cannot: the prototype read 2,497 files in about ten seconds, and that number is a
-// fact about a disk rather than about this code.
+// a time cannot: how long a few thousand files take to read is a fact about a disk rather
+// than about this code.
 var opens atomic.Int64
 
 // Opens is how many source files have been opened since the process started.
