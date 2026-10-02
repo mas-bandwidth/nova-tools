@@ -487,7 +487,7 @@ func TestDogfoodRecordUsageNamesTheVerbList(t *testing.T) {
 	}
 	line := ""
 	for _, l := range strings.Split(stdout, "\n") {
-		if strings.Contains(l, "dogfood record") {
+		if strings.HasPrefix(strings.TrimSpace(l), "nova-check dogfood record ") {
 			line = l
 			break
 		}
