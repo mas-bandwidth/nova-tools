@@ -8,7 +8,7 @@
 // never happened.
 //
 // That is not hypothetical. CI's `make test` exports GOFLAGS=-json. On
-// The inner `go test` inherits GOFLAGS=-json, so its output comes
+// a CI run, the inner `go test` inherits GOFLAGS=-json, so its output comes
 // back as a JSON stream with no `--- PASS:` line in it, and the parser counted
 // the run that stayed green as red: `MUTATE <sha> red=1 green=1 PASS` became
 // `red=2 green=0`, and three legs of integration-4 failed on a tool that was
