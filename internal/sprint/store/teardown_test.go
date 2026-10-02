@@ -43,13 +43,12 @@ func TestTeardownLeavesTheKeysAsBeforeInit(t *testing.T) {
 	}
 	_, err = h.st.Teardown(h.ctx)
 	require.NoError(t, err)
-	if after := m.Keys(h.st.Names); !slices.Equal(after, before) {
-		t.Fatalf("after teardown:\n%s\nbefore init:\n%s", strings.Join(after, "\n"), strings.Join(before, "\n"))
-	}
+	after := m.Keys(h.st.Names)
+	require.Equal(t, before, after, "after teardown:\n%s\nbefore init:\n%s", strings.Join(after, "\n"), strings.Join(before, "\n"))
 	work()
 	_, err = h.st.Teardown(h.ctx)
 	require.NoError(t, err)
-	after := m.Keys(h.st.Names)
+	after = m.Keys(h.st.Names)
 	require.True(t, slices.Equal(after, before), "after the second teardown: %v", after)
 }
 

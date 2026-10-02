@@ -45,8 +45,9 @@ func TestAckOfBrokenReadsIsRefused(t *testing.T) {
 	// open per card and cause: the second broken read writes no second
 	require.Len(t, nids, 1, "open %v", nids)
 	r := p.do("ack", AckStep(sprint.AckReq{Notes: nids, Reason: "looked"}))
-	if len(r.Moved) != 0 || len(r.Refused) != 1 || !strings.Contains(r.Refused[0].Why, "nova-sprint rework --group") {
-		t.Errorf("ack of the broken reads: %+v", r)
+	assert.Empty(t, r.Moved, "ack of the broken reads: %+v", r)
+	if assert.Len(t, r.Refused, 1, "ack of the broken reads: %+v", r) {
+		assert.Contains(t, r.Refused[0].Why, "nova-sprint rework --group", "ack of the broken reads: %+v", r)
 	}
 	o := p.openOn("s1-1")
 	assert.Len(t, o, 1, "after the refused ack: %v", o)
@@ -68,8 +69,9 @@ func TestCIGreenLeavesTheBrokenReadOpen(t *testing.T) {
 	require.Len(t, r.Refused, 1, "ack of a broken read: %+v", r)
 	p.do("ci green", CIStep(sprint.CIReq{Sel: ids("s1-1"), Run: "r2"}))
 	o := p.openOn("s1-1")
-	if len(o) != 1 || o[0].Note.Type != sprint.NReadBroken {
-		t.Errorf("ci green closes ci red and leaves the broken read open; open is %v", o)
+	assert.Len(t, o, 1, "ci green closes ci red and leaves the broken read open; open is %v", o)
+	if assert.NotEmpty(t, o) {
+		assert.Equal(t, sprint.NReadBroken, o[0].Note.Type, "ci green closes ci red and leaves the broken read open; open is %v", o)
 	}
 }
 
@@ -166,9 +168,7 @@ func TestReturnAndDropAnswerTheStreamJudgmentsThatListThem(t *testing.T) {
 					refusedAnswer = refusedAnswer || r.Key == nid
 				}
 				t.Logf("%s %s: listed=%v moved=%v refused=%v", verb, kind, listed, res.Moved, res.Refused)
-				if listed && refusedAnswer {
-					t.Errorf("%s is a listed decision of %q and --answers naming it is refused", verb, o[0].Note.Type)
-				}
+				assert.False(t, listed && refusedAnswer, "%s is a listed decision of %q and --answers naming it is refused", verb, o[0].Note.Type)
 				a := p.do("ack stopped", AckStep(sprint.AckReq{Notes: []string{nid}, Reason: "x"}))
 				assert.Len(t, a.Refused, 1, "ack of a stopped stream's judgment: %+v", a)
 				rr := p.do("resume", ResumeStep(sprint.ResumeReq{Stream: "s1", Did: "fixed"}))
@@ -190,9 +190,9 @@ func TestAskAnotherAnswersABrokenRead(t *testing.T) {
 	p.read(rs[1].F("reader"), rs[1].ID, "broken")
 	br := p.noteOf("s1-1", sprint.NReadBroken)
 	r := p.do("ask another --answers broken", AskStep(sprint.AskReq{Sel: ids("s1-1"), Another: true, Answers: []string{br}}))
-	if len(r.Moved) != 1 || len(r.Refused) != 0 || p.noteOf("s1-1", sprint.NReadBroken) != "" {
-		t.Errorf("ask --another --answers <broken read>: moved=%v refused=%v; open after: %v", r.Moved, r.Refused, p.openOn("s1-1"))
-	}
+	assert.Len(t, r.Moved, 1, "ask --another --answers <broken read>: moved=%v refused=%v; open after: %v", r.Moved, r.Refused, p.openOn("s1-1"))
+	assert.Empty(t, r.Refused, "ask --another --answers <broken read>: moved=%v refused=%v; open after: %v", r.Moved, r.Refused, p.openOn("s1-1"))
+	assert.Equal(t, "", p.noteOf("s1-1", sprint.NReadBroken), "ask --another --answers <broken read>: moved=%v refused=%v; open after: %v", r.Moved, r.Refused, p.openOn("s1-1"))
 }
 
 // A repair that skipped accept's work entry leaves the merge card queued and
@@ -247,9 +247,9 @@ func TestReworkOrReturnTakesAnOrphanMergeCardOff(t *testing.T) {
 					}
 				}
 			}
-			if res := p.do("accept", AcceptStep(sprint.AcceptReq{Sel: ids("s1-1")})); len(res.Moved) != 1 || p.state("s1-1") != sprint.Merging {
-				t.Fatalf("accept after %s: %+v", verb, res)
-			}
+			res = p.do("accept", AcceptStep(sprint.AcceptReq{Sel: ids("s1-1")}))
+			require.Len(t, res.Moved, 1, "accept after %s: %+v", verb, res)
+			require.Equal(t, sprint.Merging, p.state("s1-1"), "accept after %s: %+v", verb, res)
 		})
 	}
 }
@@ -266,9 +266,9 @@ func TestEveryTextFieldIsBounded(t *testing.T) {
 		t.Helper()
 		res, err := p.st.Run(p.ctx, step)
 		refused := len(res.Refused) > 0 && strings.Contains(res.Refused[0].Why, "over the bound")
-		if err != nil || len(res.Moved) != 0 && !refused || !refused {
-			t.Errorf("%s over 8 KiB: %+v %v", name, res, err)
-		}
+		assert.NoError(t, err, "%s over 8 KiB: %+v %v", name, res, err)
+		assert.Empty(t, res.Moved, "%s over 8 KiB: %+v %v", name, res, err)
+		assert.True(t, refused, "%s over 8 KiB: %+v %v", name, res, err)
 	}
 	over("return reason", ReturnStep(sprint.ReturnReq{Sel: ids("s1-1"), Reason: long}))
 	over("ci note", CIStep(sprint.CIReq{Sel: ids("s1-1"), Red: true, Note: long}))
@@ -292,18 +292,17 @@ func TestTheEngineHoldsEveryPlanToTheLifecycle(t *testing.T) {
 		return sprint.Plan{Units: []sprint.Unit{{Key: c.ID, Stream: c.Row, Changes: []sprint.Change{{Table: sprint.Work, Entry: e}}, Moved: "review -> landed"}}}
 	}
 	r := p.do("through Lawful", Step{Verb: "mutant", Load: All, Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Lawful(illegal(s)) }})
-	if len(r.Moved) != 0 || p.state("s1-1") != sprint.Review {
-		t.Errorf("Lawful let review -> landed through: %+v", r)
-	}
+	assert.Empty(t, r.Moved, "Lawful let review -> landed through: %+v", r)
+	assert.Equal(t, sprint.Review, p.state("s1-1"), "Lawful let review -> landed through: %+v", r)
 	r = p.do("not through Lawful", Step{Verb: "mutant", Load: All, Plan: illegal})
-	if len(r.Moved) != 0 || len(r.Refused) != 1 || p.state("s1-1") != sprint.Review {
-		t.Errorf("the engine applied a plan that skips Lawful: moved=%v refused=%v state=%s", r.Moved, r.Refused, p.state("s1-1"))
-	}
+	assert.Empty(t, r.Moved, "the engine applied a plan that skips Lawful: moved=%v refused=%v state=%s", r.Moved, r.Refused, p.state("s1-1"))
+	assert.Len(t, r.Refused, 1, "the engine applied a plan that skips Lawful: moved=%v refused=%v state=%s", r.Moved, r.Refused, p.state("s1-1"))
+	assert.Equal(t, sprint.Review, p.state("s1-1"), "the engine applied a plan that skips Lawful: moved=%v refused=%v state=%s", r.Moved, r.Refused, p.state("s1-1"))
 	create := func(s *sprint.Snapshot) sprint.Plan {
 		e := ntable.BatchMemberEntry{ID: "zz", Expect: &ntable.MemberExpect{Absent: true}, Create: &ntable.MemberCreateOp{Row: "s1", Col: sprint.Merging, Score: 9}}
 		return sprint.Plan{Units: []sprint.Unit{{Key: "zz", Stream: "s1", Changes: []sprint.Change{{Table: sprint.Work, Entry: e}}}}}
 	}
-	if r := p.do("admitted merging", Step{Verb: "mutant", Load: All, Plan: create}); len(r.Moved) != 0 || p.snap().Work.Card("zz") != nil {
-		t.Errorf("a primary admitted merging: %+v", r)
-	}
+	r = p.do("admitted merging", Step{Verb: "mutant", Load: All, Plan: create})
+	assert.Empty(t, r.Moved, "a primary admitted merging: %+v", r)
+	assert.Nil(t, p.snap().Work.Card("zz"), "a primary admitted merging: %+v", r)
 }

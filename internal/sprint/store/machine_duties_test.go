@@ -45,14 +45,16 @@ func TestCRResolveBoundLeavesTheRestWaitingForever(t *testing.T) {
 	h.crTicks(5, "after a minute")
 	s := h.snap()
 	waiting := s.Work.Column(sprint.Waiting)
-	if len(waiting) > 0 {
-		var open []string
-		for _, o := range h.openOf(sprint.NBlocked) {
-			open = append(open, o.Subject())
-		}
-		t.Fatalf("STALL: %d primaries still waiting with their only need landed (e.g. %s), no judgment names them (blocked open: %d)",
-			len(waiting), waiting[0].ID, len(open))
+	var open []string
+	for _, o := range h.openOf(sprint.NBlocked) {
+		open = append(open, o.Subject())
 	}
+	var firstWaiting string
+	if len(waiting) > 0 {
+		firstWaiting = waiting[0].ID
+	}
+	require.Empty(t, waiting, "STALL: %d primaries still waiting with their only need landed (e.g. %s), no judgment names them (blocked open: %d)",
+		len(waiting), firstWaiting, len(open))
 }
 
 // PROBE A1b: the resolve part loses every plan to other writers ("the sprint
@@ -174,9 +176,7 @@ func TestCRAckOfWorkFailedLeavesAPrimaryWithNoJudgment(t *testing.T) {
 	h.tick(24 * time.Hour)
 	h.crTicks(3, "after ack")
 	open, _ := h.m.OpenNotes(h.ctx)
-	if len(open) == 0 && h.state("s1-1") == sprint.Review {
-		t.Errorf("A: s1-1 in review (failed), judgment acked, no open judgment, no actor; the tick never re-raises")
-	}
+	assert.False(t, len(open) == 0 && h.state("s1-1") == sprint.Review, "A: s1-1 in review (failed), judgment acked, no open judgment, no actor; the tick never re-raises")
 }
 
 // PROBE D2: an ack of a tick judgment whose condition still holds is refused:
@@ -195,9 +195,9 @@ func TestCRAckedTickJudgmentComesBack(t *testing.T) {
 		h.tick(time.Minute + time.Second)
 		h.machine()
 	}
-	if n := h.written(sprint.NNoMember); n != 1 || len(h.openOf(sprint.NNoMember)) != 1 {
-		t.Fatalf("written %d, open %d", n, len(h.openOf(sprint.NNoMember)))
-	}
+	n := h.written(sprint.NNoMember)
+	require.Equal(t, 1, n, "written %d, open %d", n, len(h.openOf(sprint.NNoMember)))
+	require.Len(t, h.openOf(sprint.NNoMember), 1, "written %d, open %d", n, len(h.openOf(sprint.NNoMember)))
 }
 
 // PROBE 3: every member down with cards in ready and working; a member up.
@@ -218,9 +218,8 @@ func TestCRAllMembersDownThenOneUp(t *testing.T) {
 	up := h.must(FleetStep(sprint.FleetReq{Op: "release", Member: "m2"}))
 	h.crTicks(2, "one up")
 	s = h.snap()
-	if n := s.Fleet.Count("m2", sprint.Ready); n != 6 {
-		t.Fatalf("m2 ready %d; the up: %+v; m2 %v; ready %d", n, up.Moved, s.MemberCtl("m2").Fields, len(s.Work.Column(sprint.Ready)))
-	}
+	n = s.Fleet.Count("m2", sprint.Ready)
+	require.Equal(t, 6, n, "m2 ready %d; the up: %+v; m2 %v; ready %d", n, up.Moved, s.MemberCtl("m2").Fields, len(s.Work.Column(sprint.Ready)))
 	require.Empty(t, h.openOf(sprint.NNoMember), "no-member still open")
 	for i := 0; i < 10; i++ {
 		h.work("m2")
@@ -246,8 +245,8 @@ func TestCRThousandReadyThreeMembers(t *testing.T) {
 		res := h.machine()
 		ticks++
 		for _, p := range res.Parts {
-			if p.Name == "deal" && len(p.Moved) > 3*sprint.DefaultWidth {
-				t.Fatalf("tick %d dealt %d", ticks, len(p.Moved))
+			if p.Name == "deal" {
+				require.LessOrEqual(t, len(p.Moved), 3*sprint.DefaultWidth, "tick %d dealt %d", ticks, len(p.Moved))
 			}
 			for _, m := range p.Moved {
 				if p.Name == "deal" {
@@ -268,9 +267,7 @@ func TestCRThousandReadyThreeMembers(t *testing.T) {
 	s := h.snap()
 	for i := 1; i < len(dealtOrder); i++ {
 		a, b := s.Work.Card(dealtOrder[i-1]), s.Work.Card(dealtOrder[i])
-		if a.Score > b.Score {
-			t.Fatalf("order: %s (%v) dealt before %s (%v)", a.ID, a.Score, b.ID, b.Score)
-		}
+		require.LessOrEqual(t, a.Score, b.Score, "order: %s (%v) dealt before %s (%v)", a.ID, a.Score, b.ID, b.Score)
 	}
 	h.clean("thousand")
 }

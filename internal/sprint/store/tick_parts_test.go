@@ -150,9 +150,9 @@ func TestTheTickLevelsUnevenQueues(t *testing.T) {
 	h.startMachine()
 	h.machine()
 	s = h.snap()
-	if a, b := s.Fleet.Count("m1", sprint.Ready), s.Fleet.Count("m2", sprint.Ready); a-b > 1 || b-a > 1 {
-		t.Fatalf("not levelled: %d %d", a, b)
-	}
+	a, b = s.Fleet.Count("m1", sprint.Ready), s.Fleet.Count("m2", sprint.Ready)
+	require.LessOrEqual(t, a-b, 1, "not levelled: %d %d", a, b)
+	require.LessOrEqual(t, b-a, 1, "not levelled: %d %d", a, b)
 	h.quiet("levelled")
 	h.clean("levelled")
 }
@@ -174,9 +174,9 @@ func TestTheTickFinishesAPendingOperationPastItsGrace(t *testing.T) {
 	require.NotNil(t, h.m.Pending(), "nothing pending")
 	h.tick(2 * time.Minute)
 	res := h.machine()
-	if len(res.Repaired) != 1 || res.Repaired[0].Done != RepairFinished || h.m.Pending() != nil {
-		t.Fatalf("the tick's repair: %+v pending %v", res.Repaired, h.m.Pending())
-	}
+	require.Len(t, res.Repaired, 1, "the tick's repair: %+v pending %v", res.Repaired, h.m.Pending())
+	require.Equal(t, RepairFinished, res.Repaired[0].Done, "the tick's repair: %+v pending %v", res.Repaired, h.m.Pending())
+	require.Nil(t, h.m.Pending(), "the tick's repair: %+v pending %v", res.Repaired, h.m.Pending())
 	h.clean("repaired")
 }
 
@@ -197,9 +197,9 @@ func TestTheTickResumesACrossStopWhenTheCardLands(t *testing.T) {
 	h.must(MergeStep(sprint.MergeReq{Stream: "s2"}))
 	h.machine()
 	s := h.snap()
-	if st := s.StreamCtl("s1").F("state"); st != sprint.StreamMerging || s.Merge.Placed("a").Col != sprint.Queued {
-		t.Fatalf("after b landed: s1 %s, a %s", st, s.Merge.Placed("a").Col)
-	}
+	st = s.StreamCtl("s1").F("state")
+	require.Equal(t, string(sprint.StreamMerging), st, "after b landed: s1 %s, a %s", st, s.Merge.Placed("a").Col)
+	require.Equal(t, sprint.Queued, s.Merge.Placed("a").Col, "after b landed: s1 %s, a %s", st, s.Merge.Placed("a").Col)
 	require.Equal(t, 1, h.written(sprint.NResumed), "resumed notes %d, the cross stop still open %d", h.written(sprint.NResumed), len(h.openOf(sprint.NCross)))
 	require.Empty(t, h.openOf(sprint.NCross), "resumed notes %d, the cross stop still open %d", h.written(sprint.NResumed), len(h.openOf(sprint.NCross)))
 	h.quiet("resumed")
@@ -217,9 +217,9 @@ func TestABrokenInvariantIsOneJudgmentUntilItHolds(t *testing.T) {
 		Create: &ntable.MemberCreateOp{Row: "m2", Col: sprint.Working, Score: 1}, Set: map[string]string{"kind": "work", "primary": "s1-1", "gen": "1"}})
 	h.machine()
 	open := h.openOf(sprint.NInvariant)
-	if len(open) == 0 || !strings.Contains(open[0].Note.What, "rule") || open[0].Subject() != "s1-1" {
-		t.Fatalf("the invariant judgment: %+v", open)
-	}
+	require.NotEmpty(t, open, "the invariant judgment: %+v", open)
+	require.Contains(t, open[0].Note.What, "rule", "the invariant judgment: %+v", open)
+	require.Equal(t, "s1-1", open[0].Subject(), "the invariant judgment: %+v", open)
 	n := h.written(sprint.NInvariant)
 	h.tick(2 * time.Minute)
 	h.machine()
@@ -276,9 +276,9 @@ func TestDeadlinesCountRunningTimeAndNotifyOnce(t *testing.T) {
 	// ask writes: one judgment per read card
 	h.tick(sprint.DeadlineUnbegun + time.Minute)
 	h.machine()
-	if n := len(h.snap().Readers.Column(sprint.Asked)); n != 4 || len(h.openOf(sprint.NReadLate)) != n {
-		t.Fatalf("the late read cards: %d asked, %d open", n, len(h.openOf(sprint.NReadLate)))
-	}
+	n := len(h.snap().Readers.Column(sprint.Asked))
+	require.Equal(t, 4, n, "the late read cards: %d asked, %d open", n, len(h.openOf(sprint.NReadLate)))
+	require.Len(t, h.openOf(sprint.NReadLate), n, "the late read cards: %d asked, %d open", n, len(h.openOf(sprint.NReadLate)))
 	// N6: a merging stream with no merge step
 	h.readAll()
 	h.run(AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{Stream: "s1"}}))
@@ -318,9 +318,9 @@ func TestStopLetsTheTickInFlightFinish(t *testing.T) {
 	require.Nil(t, h.m.Pending(), "the tick in flight: moved %v, pending %v", res.Moved(), h.m.Pending())
 	h.clean("stopped mid-tick")
 	h.tick(time.Second)
-	if res := h.machine(); res.State != Stopped || len(res.Parts) > 0 {
-		t.Fatalf("a tick began after the stop: %+v", res)
-	}
+	res = h.machine()
+	require.Equal(t, Stopped, res.State, "a tick began after the stop: %+v", res)
+	require.Empty(t, res.Parts, "a tick began after the stop: %+v", res)
 }
 
 func TestOutsideActorsWorkWhileStopped(t *testing.T) {
@@ -395,7 +395,7 @@ func sprintOf(t *testing.T, n, stopAt int) *harness {
 			return h
 		}
 	}
-	t.Fatalf("not landed after 400 rounds")
+	require.FailNow(t, "not landed after 400 rounds")
 	return nil
 }
 
@@ -462,12 +462,9 @@ func TestTheTickAndAVerbRaceSafely(t *testing.T) {
 		h.clean(fmt.Sprintf("race %d", i))
 		s := h.snap()
 		for _, id := range []string{"s1-1", "s1-2"} {
-			if s.Work.Placed(id) != nil && len(dropped.Refused) == 0 {
-				t.Fatalf("race %d: %s is still on the table and the drop was not refused: %+v", i, id, dropped)
-			}
-			if c := s.Fleet.Card(id + ".w1"); c.Placed() && s.Work.Placed(id) == nil {
-				t.Fatalf("race %d: a live work card of a dropped primary", i)
-			}
+			require.False(t, s.Work.Placed(id) != nil && len(dropped.Refused) == 0, "race %d: %s is still on the table and the drop was not refused: %+v", i, id, dropped)
+			c := s.Fleet.Card(id + ".w1")
+			require.False(t, c.Placed() && s.Work.Placed(id) == nil, "race %d: a live work card of a dropped primary", i)
 		}
 		require.Equal(t, sprint.Working, s.StateOf("s1-3"), "race %d: s1-3 %s s1-4 %s", i, s.StateOf("s1-3"), s.StateOf("s1-4"))
 		require.Equal(t, sprint.Working, s.StateOf("s1-4"), "race %d: s1-3 %s s1-4 %s", i, s.StateOf("s1-3"), s.StateOf("s1-4"))

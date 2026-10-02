@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -31,13 +32,13 @@ func TestProbe1bStaleFinishWithoutGeneration(t *testing.T) {
 		"by selection, alone": {Failed: true, Report: "stale"},
 	} {
 		res := h.run(FinishStep(r))
-		if len(res.Moved) != 0 || len(res.Refused) != 1 {
-			t.Errorf("%s: a finish naming no generation moved: %v refused %v", name, res.Moved, res.Refused)
-		}
+		assert.Empty(t, res.Moved, "%s: a finish naming no generation moved: %v refused %v", name, res.Moved, res.Refused)
+		assert.Len(t, res.Refused, 1, "%s: a finish naming no generation moved: %v refused %v", name, res.Moved, res.Refused)
 	}
-	if got := h.snap().Fleet.Card("s1-1.w1"); got.Col != sprint.Working || got.Int("gen") != 3 || h.state("s1-1") != sprint.Working {
-		t.Fatalf("a refused finish changed the card: %s gen %d, primary %s", got.Col, got.Int("gen"), h.state("s1-1"))
-	}
+	got := h.snap().Fleet.Card("s1-1.w1")
+	require.Equal(t, sprint.Working, got.Col, "a refused finish changed the card: %s gen %d, primary %s", got.Col, got.Int("gen"), h.state("s1-1"))
+	require.Equal(t, 3, got.Int("gen"), "a refused finish changed the card: %s gen %d, primary %s", got.Col, got.Int("gen"), h.state("s1-1"))
+	require.Equal(t, sprint.Working, h.state("s1-1"), "a refused finish changed the card: %s gen %d, primary %s", got.Col, got.Int("gen"), h.state("s1-1"))
 	h.must(FinishStep(sprint.FinishReq{As: first, Sel: sprint.Sel{IDs: []string{"s1-1.w1"}}, Gens: map[string]int{"s1-1.w1": 3}}))
 	h.clean("finished at the live generation")
 }
@@ -52,17 +53,21 @@ func TestStartAfterAWithdrawalDealsTheSameCardThroughTheStore(t *testing.T) {
 	before := h.snap().Fleet.Card("s1-1.w1")
 	h.must(FleetStep(sprint.FleetReq{Op: "down", Member: "m1"}))
 	h.must(FleetStep(sprint.FleetReq{Op: "down", Member: "m2"}))
-	if c := h.snap().Fleet.Card("s1-1.w1"); c.Col != sprint.Withdrawn || h.state("s1-1") != sprint.Ready {
-		t.Fatalf("withdrawn: card %s:%s, primary %s", c.Row, c.Col, h.state("s1-1"))
-	}
+	c := h.snap().Fleet.Card("s1-1.w1")
+	require.Equal(t, sprint.Withdrawn, c.Col, "withdrawn: card %s:%s, primary %s", c.Row, c.Col, h.state("s1-1"))
+	require.Equal(t, sprint.Ready, h.state("s1-1"), "withdrawn: card %s:%s, primary %s", c.Row, c.Col, h.state("s1-1"))
 	h.clean("withdrawn")
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m2"}))
 	h.must(DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
 	s := h.snap()
 	c, pr := s.Fleet.Card("s1-1.w1"), s.Work.Card("s1-1")
-	if c.Row != "m2" || c.Col != sprint.Ready || c.Int("gen") <= before.Int("gen")+1 || c.Score != before.Score || pr.F("work") != c.ID || pr.Int("attempt") != 1 || s.Fleet.Card("s1-1.w2") != nil {
-		t.Fatalf("dealt again: %s:%s gen %d (was %d) score %v (was %v); primary work %s attempt %d", c.Row, c.Col, c.Int("gen"), before.Int("gen"), c.Score, before.Score, pr.F("work"), pr.Int("attempt"))
-	}
+	require.Equal(t, "m2", c.Row, "dealt again: %s:%s gen %d (was %d) score %v (was %v); primary work %s attempt %d", c.Row, c.Col, c.Int("gen"), before.Int("gen"), c.Score, before.Score, pr.F("work"), pr.Int("attempt"))
+	require.Equal(t, sprint.Ready, c.Col, "dealt again: %s:%s gen %d (was %d) score %v (was %v); primary work %s attempt %d", c.Row, c.Col, c.Int("gen"), before.Int("gen"), c.Score, before.Score, pr.F("work"), pr.Int("attempt"))
+	require.Greater(t, c.Int("gen"), before.Int("gen")+1, "dealt again: %s:%s gen %d (was %d) score %v (was %v); primary work %s attempt %d", c.Row, c.Col, c.Int("gen"), before.Int("gen"), c.Score, before.Score, pr.F("work"), pr.Int("attempt"))
+	require.Equal(t, before.Score, c.Score, "dealt again: %s:%s gen %d (was %d) score %v (was %v); primary work %s attempt %d", c.Row, c.Col, c.Int("gen"), before.Int("gen"), c.Score, before.Score, pr.F("work"), pr.Int("attempt"))
+	require.Equal(t, c.ID, pr.F("work"), "dealt again: %s:%s gen %d (was %d) score %v (was %v); primary work %s attempt %d", c.Row, c.Col, c.Int("gen"), before.Int("gen"), c.Score, before.Score, pr.F("work"), pr.Int("attempt"))
+	require.Equal(t, 1, pr.Int("attempt"), "dealt again: %s:%s gen %d (was %d) score %v (was %v); primary work %s attempt %d", c.Row, c.Col, c.Int("gen"), before.Int("gen"), c.Score, before.Score, pr.F("work"), pr.Int("attempt"))
+	require.Nil(t, s.Fleet.Card("s1-1.w2"), "dealt again: %s:%s gen %d (was %d) score %v (was %v); primary work %s attempt %d", c.Row, c.Col, c.Int("gen"), before.Int("gen"), c.Score, before.Score, pr.F("work"), pr.Int("attempt"))
 	h.must(TakeStep(sprint.TakeReq{As: "m2", Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: c.Int("gen")}}))
 	h.must(FinishStep(sprint.FinishReq{As: "m2", Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: c.Int("gen")}}))
 	h.clean("finished")

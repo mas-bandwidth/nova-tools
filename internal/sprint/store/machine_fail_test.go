@@ -36,9 +36,8 @@ func TestCRTickFailsAtEveryCallAndRecovers(t *testing.T) {
 		}
 		where := fmt.Sprintf("fail %q (call %d)", fired, k)
 		line := h.st.MachineLine(h.ctx)
-		if strings.Contains(line, "failed") || strings.Contains(line, "(") {
-			t.Errorf("%s: tick error %v and the line carries a suffix: %q", where, terr, line)
-		}
+		assert.NotContains(t, line, "failed", "%s: tick error %v and the line carries a suffix: %q", where, terr, line)
+		assert.NotContains(t, line, "(", "%s: tick error %v and the line carries a suffix: %q", where, terr, line)
 		for i := 0; i < 3; i++ {
 			h.tick(2 * time.Minute) // past the grace
 			_, err := h.st.Tick(h.ctx)

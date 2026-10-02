@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -178,9 +177,8 @@ func TestTheLifeOfAStreamThroughTheStore(t *testing.T) {
 	}
 	// the display cells
 	shapes, _ := h.m.Shapes(h.ctx, []string{"t-merge", "t-fleet"})
-	if shapes[0].Rows[0].Texts[sprint.StateCol] != sprint.StreamLanded || shapes[0].Rows[0].Texts[sprint.CI] != "green" {
-		t.Errorf("merge display cells: %v", shapes[0].Rows[0].Texts)
-	}
+	assert.Equal(t, sprint.StreamLanded, shapes[0].Rows[0].Texts[sprint.StateCol], "merge display cells: %v", shapes[0].Rows[0].Texts)
+	assert.Equal(t, "green", shapes[0].Rows[0].Texts[sprint.CI], "merge display cells: %v", shapes[0].Rows[0].Texts)
 	fleet := shapes[1]
 	got := ntable.CellText(fleet.Columns, fleet.Rows[0], fleet.Column(sprint.OkPct))
 	assert.Equal(t, "100.0%", got, "fleet ok%%: %q", got)
@@ -196,9 +194,9 @@ func TestALargeSetIsOneOperationInChunks(t *testing.T) {
 	h.setup(300)
 	before := h.m.Calls["apply"]
 	res := h.must(DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 1000}}))
-	if len(res.Moved) != 300 || h.m.Calls["apply"]-before != 6 || h.m.Calls["acquire"] == 0 {
-		t.Fatalf("moved %d in %d manifests", len(res.Moved), h.m.Calls["apply"]-before)
-	}
+	require.Len(t, res.Moved, 300, "moved %d in %d manifests", len(res.Moved), h.m.Calls["apply"]-before)
+	require.Equal(t, 6, h.m.Calls["apply"]-before, "moved %d in %d manifests", len(res.Moved), h.m.Calls["apply"]-before)
+	require.NotEqual(t, 0, h.m.Calls["acquire"], "moved %d in %d manifests", len(res.Moved), h.m.Calls["apply"]-before)
 	s := h.snap()
 	require.Equal(t, 300, s.Work.Count("s1", sprint.Working), "working %d, m1 ready %d", s.Work.Count("s1", sprint.Working), s.Fleet.Count("m1", sprint.Ready))
 	require.Equal(t, 150, s.Fleet.Count("m1", sprint.Ready), "working %d, m1 ready %d", s.Work.Count("s1", sprint.Working), s.Fleet.Count("m1", sprint.Ready))
@@ -225,19 +223,22 @@ func TestD1APendingOperationIsFinishedFirst(t *testing.T) {
 	require.NotNil(t, h.m.Pending(), "a lost reply on the work table: %v, pending %v", err, h.m.Pending())
 	h.m.Fail = nil
 	rep, _, err := h.st.Check(h.ctx, 1)
-	if err != nil || rep.Pending == "" || !rep.InFlight || len(rep.Violations) != 0 {
-		t.Fatalf("check with the start in flight: %+v %v", rep, err)
-	}
+	require.NoError(t, err, "check with the start in flight: %+v %v", rep, err)
+	require.NotEmpty(t, rep.Pending, "check with the start in flight: %+v %v", rep, err)
+	require.True(t, rep.InFlight, "check with the start in flight: %+v %v", rep, err)
+	require.Empty(t, rep.Violations, "check with the start in flight: %+v %v", rep, err)
 	h.tick(2 * time.Minute)
 	rep, _, err = h.st.Check(h.ctx, 3)
-	if err != nil || rep.Pending == "" || rep.InFlight || len(rep.Violations) != 1 || rep.Violations[0].Rule != 10 {
-		t.Fatalf("check with the start cut: %+v %v", rep, err)
-	}
+	require.NoError(t, err, "check with the start cut: %+v %v", rep, err)
+	require.NotEmpty(t, rep.Pending, "check with the start cut: %+v %v", rep, err)
+	require.False(t, rep.InFlight, "check with the start cut: %+v %v", rep, err)
+	require.Len(t, rep.Violations, 1, "check with the start cut: %+v %v", rep, err)
+	require.Equal(t, 10, rep.Violations[0].Rule, "check with the start cut: %+v %v", rep, err)
 	// the next verb, whatever it is, finishes it first
 	res := h.must(TakeStep(sprint.TakeReq{As: "m1", Sel: sprint.Sel{Limit: 1}}))
-	if len(res.Repaired) != 1 || !strings.Contains(res.Repaired[0], "finished") || h.m.Pending() != nil {
-		t.Fatalf("the take did not finish the pending start: %+v", res)
-	}
+	require.Len(t, res.Repaired, 1, "the take did not finish the pending start: %+v", res)
+	require.Contains(t, res.Repaired[0], "finished", "the take did not finish the pending start: %+v", res)
+	require.Nil(t, h.m.Pending(), "the take did not finish the pending start: %+v", res)
 	require.Equal(t, sprint.Working, h.state("s1-1"), "s1-1 is %s", h.state("s1-1"))
 	h.clean("finished")
 }
@@ -303,17 +304,17 @@ func TestAnotherWriterBetweenReadAndWriteMeansAFreshPlan(t *testing.T) {
 	h.setup(3)
 	other := &Store{B: h.m, Names: h.st.Names, Actor: "other", Now: h.st.Now, NewID: func() string { return "o" }, Sleep: h.st.Sleep}
 	r := &racer{Backend: h.m, at: "acquire", do: func() {
-		if _, err := other.Run(h.ctx, DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}})); err != nil {
-			t.Error(err)
-		}
+		_, err := other.Run(h.ctx, DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
+		assert.NoError(t, err)
 	}}
 	st := *h.st
 	st.B = r
 	res, err := st.Run(h.ctx, DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-1", "s1-2"}}}))
 	require.NoError(t, err)
-	if res.Attempts != 2 || len(res.Moved) != 1 || len(res.Refused) != 1 || res.Refused[0].Key != "s1-1" {
-		t.Fatalf("after the race: %+v", res)
-	}
+	require.Equal(t, 2, res.Attempts, "after the race: %+v", res)
+	require.Len(t, res.Moved, 1, "after the race: %+v", res)
+	require.Len(t, res.Refused, 1, "after the race: %+v", res)
+	require.Equal(t, "s1-1", res.Refused[0].Key, "after the race: %+v", res)
 	h.clean("raced")
 }
 
@@ -360,14 +361,16 @@ func TestALaterMemberChangedIsSkippedByRepair(t *testing.T) {
 	// the card skipped, and the work table's stream index its deal would have
 	// moved (a manifest none of whose member changes applied leaves its
 	// properties where they were)
-	if err != nil || len(rr) != 1 || rr[0].Done != RepairSkipped || len(rr[0].Skipped) != 2 || !strings.Contains(rr[0].Skipped[0], "s1-1") ||
-		!strings.Contains(rr[0].Skipped[1], "table property "+sprint.PropStreamIndex) {
-		t.Fatalf("repair of a cut operation: %+v %v", rr, err)
-	}
+	require.NoError(t, err, "repair of a cut operation: %+v %v", rr, err)
+	require.Len(t, rr, 1, "repair of a cut operation: %+v %v", rr, err)
+	require.Equal(t, RepairSkipped, rr[0].Done, "repair of a cut operation: %+v %v", rr, err)
+	require.Len(t, rr[0].Skipped, 2, "repair of a cut operation: %+v %v", rr, err)
+	require.Contains(t, rr[0].Skipped[0], "s1-1", "repair of a cut operation: %+v %v", rr, err)
+	require.Contains(t, rr[0].Skipped[1], "table property "+sprint.PropStreamIndex, "repair of a cut operation: %+v %v", rr, err)
 	require.Nil(t, h.m.Pending(), "repair left the fence held")
-	if c := h.snap().Work.Card("s1-1"); c.F("brief") != "changed" || c.Col != sprint.Ready {
-		t.Fatalf("repair overwrote the newer state: %s %s", c.Col, c.F("brief"))
-	}
+	c := h.snap().Work.Card("s1-1")
+	require.Equal(t, "changed", c.F("brief"), "repair overwrote the newer state: %s %s", c.Col, c.F("brief"))
+	require.Equal(t, sprint.Ready, c.Col, "repair overwrote the newer state: %s %s", c.Col, c.F("brief"))
 	h.tick(2 * time.Minute)
 	_, err = h.st.Run(h.ctx, FleetStep(sprint.FleetReq{Op: "up", Member: "m3"}))
 	require.NoError(t, err, "a verb after the repair: %v", err)
@@ -398,14 +401,14 @@ func TestAnUnappliedPendingOperationIsAbandonedAfterTheGrace(t *testing.T) {
 		OperationID: "intruder", Members: []ntable.BatchMemberEntry{{ID: "s1-1.w1", Expect: &ntable.MemberExpect{Absent: true},
 			Create: &ntable.MemberCreateOp{Row: "m1", Col: sprint.DoneOK, Score: 1}}}})
 	require.NoError(t, err)
-	if _, err := h.st.Run(h.ctx, FleetStep(sprint.FleetReq{Op: "up", Member: "m3"})); err == nil || h.m.Pending() == nil {
-		t.Fatalf("within the grace the operation is its writer's: %v", err)
-	}
+	_, err = h.st.Run(h.ctx, FleetStep(sprint.FleetReq{Op: "up", Member: "m3"}))
+	require.Error(t, err, "within the grace the operation is its writer's: %v", err)
+	require.NotNil(t, h.m.Pending(), "within the grace the operation is its writer's: %v", err)
 	h.tick(2 * time.Minute)
 	res := h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m3"}))
-	if h.m.Pending() != nil || len(res.Repaired) != 1 || !strings.Contains(res.Repaired[0], "abandoned") {
-		t.Fatalf("past the grace: %+v", res)
-	}
+	require.Nil(t, h.m.Pending(), "past the grace: %+v", res)
+	require.Len(t, res.Repaired, 1, "past the grace: %+v", res)
+	require.Contains(t, res.Repaired[0], "abandoned", "past the grace: %+v", res)
 	require.Equal(t, sprint.Ready, h.state("s1-1"), "an abandoned deal moved its primary")
 	notes, _, _ := h.m.NotesSince(h.ctx, "", 1000)
 	found := false
@@ -428,9 +431,9 @@ func TestD3ARetriedFinishReturnsTheOriginal(t *testing.T) {
 	step.CallerOp = "worker-7"
 	first := h.must(step)
 	again := h.must(step)
-	if !again.Replay || len(again.Moved) != len(first.Moved) || again.Op != first.Op {
-		t.Fatalf("retry: %+v, first %+v", again, first)
-	}
+	require.True(t, again.Replay, "retry: %+v, first %+v", again, first)
+	require.Len(t, again.Moved, len(first.Moved), "retry: %+v, first %+v", again, first)
+	require.Equal(t, first.Op, again.Op, "retry: %+v, first %+v", again, first)
 	n := h.snap().Fleet.Count(m, sprint.DoneFailed)
 	require.Equal(t, 1, n, "failed counted %d times", n)
 	open, _ := h.m.OpenNotes(h.ctx)
@@ -473,9 +476,9 @@ func TestMemRefusesAsTheBatchDoes(t *testing.T) {
 	r1, err := h.m.Apply(h.ctx, ok)
 	require.NoError(t, err)
 	r2, err := h.m.Apply(h.ctx, ok)
-	if err != nil || !r2.Replay || r2.After != r1.After {
-		t.Fatalf("replay: %+v %v", r2, err)
-	}
+	require.NoError(t, err, "replay: %+v %v", r2, err)
+	require.True(t, r2.Replay, "replay: %+v %v", r2, err)
+	require.Equal(t, r1.After, r2.After, "replay: %+v %v", r2, err)
 	ok.Members[0].Set["x"] = "2"
 	_, err = h.m.Apply(h.ctx, ok)
 	require.Equal(t, "OPCONFLICT", refusalCode(err), "other bytes under the id: %v", err)
@@ -539,9 +542,9 @@ func TestAReceiptThisBuildCannotReadIsUnknown(t *testing.T) {
 	st := *h.st
 	st.B = unreadable{h.m}
 	_, err := st.Run(h.ctx, FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
-	if !errors.Is(err, ErrUnknown) || !strings.Contains(err.Error(), "do not match this build") || !strings.Contains(err.Error(), "nova-redis fn load") {
-		t.Fatalf("an unreadable receipt: %v", err)
-	}
+	require.ErrorIs(t, err, ErrUnknown, "an unreadable receipt: %v", err)
+	require.Contains(t, err.Error(), "do not match this build", "an unreadable receipt: %v", err)
+	require.Contains(t, err.Error(), "nova-redis fn load", "an unreadable receipt: %v", err)
 	require.NotNil(t, h.m.Pending(), "an unreadable receipt was counted as applied: the operation left the fence")
 }
 
@@ -560,9 +563,9 @@ func TestAckWritesOneDecidedNote(t *testing.T) {
 			decided = append(decided, n)
 		}
 	}
-	if len(decided) != 1 || decided[0].What != "ack: a flaky runner" || decided[0].Answers != open[0].Note.ID {
-		t.Fatalf("decided notes: %+v", decided)
-	}
+	require.Len(t, decided, 1, "decided notes: %+v", decided)
+	require.Equal(t, "ack: a flaky runner", decided[0].What, "decided notes: %+v", decided)
+	require.Equal(t, open[0].Note.ID, decided[0].Answers, "decided notes: %+v", decided)
 }
 
 // checkTwin is every harness's CheckTwin: the twin a part planned on is the
@@ -588,9 +591,9 @@ func TestADecidedNoteNamesItsPrimariesInOrder(t *testing.T) {
 	notes, _, _ := h.m.NotesSince(h.ctx, "", 1000)
 	for _, n := range notes {
 		if n.Kind == sprint.Decided && n.Answers == open[0].Note.ID {
-			if want := []string{"s1-1", "s1-2", "s1-3"}; !slices.Equal(n.Primaries, want) || n.Count != 3 {
-				t.Fatalf("the decided note names %v (%d), want %v", n.Primaries, n.Count, want)
-			}
+			want := []string{"s1-1", "s1-2", "s1-3"}
+			require.Equal(t, want, n.Primaries, "the decided note names %v (%d), want %v", n.Primaries, n.Count, want)
+			require.Equal(t, 3, n.Count, "the decided note names %v (%d), want %v", n.Primaries, n.Count, want)
 			return
 		}
 	}
@@ -606,9 +609,9 @@ func TestAStepSetsTheProgressClockOfTheStreamsItMoved(t *testing.T) {
 	h.tick(time.Minute)
 	h.must(DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 2}}))
 	progress, err := h.m.Progress(h.ctx)
-	if at := progress["s1"]; err != nil || !at.Equal(h.now) {
-		t.Fatalf("the progress of s1 is %v (%v), want the deal's time %v: %v", at, err, h.now, progress)
-	}
+	at := progress["s1"]
+	require.NoError(t, err, "the progress of s1 is %v (%v), want the deal's time %v: %v", at, err, h.now, progress)
+	require.True(t, at.Equal(h.now), "the progress of s1 is %v (%v), want the deal's time %v: %v", at, err, h.now, progress)
 }
 
 // logReads is a store that counts the reads of its log.

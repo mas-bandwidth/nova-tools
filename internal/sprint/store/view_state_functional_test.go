@@ -73,11 +73,10 @@ func TestTheViewSaysStoppedAloneOnARealStore(t *testing.T) {
 
 	// No view: nothing shows the machine, and start and stop still work.
 	_, err = ntable.ViewDelete(h.ctx, c, h.st.Names.View())
-	require.NoError(t, err)
-	if _, after, _, err := h.st.SetMachine(h.ctx, true); err != nil || !after.Running() {
-		t.Fatalf("start with no view: %v %+v", err, after)
-	}
-	if _, after, _, err := h.st.SetMachine(h.ctx, false); err != nil || after.Running() {
-		t.Fatalf("stop with no view: %v %+v", err, after)
-	}
+	_, mAfter, _, err := h.st.SetMachine(h.ctx, true)
+	require.NoError(t, err, "start with no view: %v %+v", err, mAfter)
+	require.True(t, mAfter.Running(), "start with no view: %v %+v", err, mAfter)
+	_, mAfter, _, err = h.st.SetMachine(h.ctx, false)
+	require.NoError(t, err, "stop with no view: %v %+v", err, mAfter)
+	require.False(t, mAfter.Running(), "stop with no view: %v %+v", err, mAfter)
 }

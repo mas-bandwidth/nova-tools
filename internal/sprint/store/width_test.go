@@ -66,9 +66,8 @@ func TestOneTickDealsTheWholeReadyColumnToWidth(t *testing.T) {
 	require.Equal(t, 150, working, "after one tick: ready %d, working %d, want 0 and 150", ready, working)
 	for _, m := range widthMembers {
 		n := heldBy(s, m)
-		if n != 18 && n != 19 || by[m] != n {
-			t.Fatalf("%s holds %d (dealt %d this tick), want 18 or 19 round the fleet: %v", m, n, by[m], by)
-		}
+		require.True(t, n == 18 || n == 19, "%s holds %d (dealt %d this tick), want 18 or 19 round the fleet: %v", m, n, by[m], by)
+		require.Equal(t, n, by[m], "%s holds %d (dealt %d this tick), want 18 or 19 round the fleet: %v", m, n, by[m], by)
 		require.Equal(t, 64, s.Width(m), "%s width %d", m, s.Width(m))
 	}
 	require.Equal(t, 0, res.Due, "due %d after a deal the fleet had room for", res.Due)
@@ -82,9 +81,9 @@ func TestOneTickDealsFiveHundred(t *testing.T) {
 	h := widthSprint(t, 64, 167) // 501 ready, the room 512
 	res := h.machine()
 	s := h.snap()
-	if r, w := len(s.Work.Column(sprint.Ready)), len(s.Work.Column(sprint.Working)); r != 0 || w != 501 {
-		t.Fatalf("ready %d, working %d, want 0 and 501", r, w)
-	}
+	r, w := len(s.Work.Column(sprint.Ready)), len(s.Work.Column(sprint.Working))
+	require.Equal(t, 0, r, "ready %d, working %d, want 0 and 501", r, w)
+	require.Equal(t, 501, w, "ready %d, working %d, want 0 and 501", r, w)
 	for _, p := range res.Parts {
 		require.Empty(t, p.Refused, "part %s refused %v", p.Name, p.Refused)
 	}

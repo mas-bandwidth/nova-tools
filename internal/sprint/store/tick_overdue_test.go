@@ -90,15 +90,13 @@ func TestASilentCoordinatorIsVisible(t *testing.T) {
 			}
 			for _, c := range s.Merge.Cell(st, sprint.Stuck) {
 				needs++
-				if !named[sprint.StreamSubject(st)] {
-					t.Errorf("seed %d: %s is stuck in a stopped stream, and no open overdue judgment names the stream", seed, c.ID)
-				}
+				assert.True(t, named[sprint.StreamSubject(st)], "seed %d: %s is stuck in a stopped stream, and no open overdue judgment names the stream", seed, c.ID)
 			}
 			for _, c := range s.Work.Cell(st, sprint.Waiting) {
 				if !named[c.ID] && len(sprint.Split(c.F("needs"))) > 0 {
 					for _, n := range sprint.Split(c.F("needs")) {
-						if nc := s.Work.Card(n); nc != nil && !nc.Placed() && nc.F("outcome") == "dropped" {
-							t.Errorf("seed %d: %s is blocked on %s, dropped, and no open overdue judgment names it", seed, c.ID, n)
+						if nc := s.Work.Card(n); nc != nil && !nc.Placed() {
+							assert.NotEqual(t, "dropped", nc.F("outcome"), "seed %d: %s is blocked on %s, dropped, and no open overdue judgment names it", seed, c.ID, n)
 						}
 					}
 				}
@@ -109,8 +107,8 @@ func TestASilentCoordinatorIsVisible(t *testing.T) {
 		h.tick(time.Minute)
 		h.machine()
 		for id, n := range h.overdueLines() {
-			if n != lines[id] && lines[id] > 0 {
-				t.Errorf("seed %d: judgment %s marked overdue again (%d lines)", seed, id, n)
+			if lines[id] > 0 {
+				assert.Equal(t, lines[id], n, "seed %d: judgment %s marked overdue again (%d lines)", seed, id, n)
 			}
 		}
 		h.clean("silent coordinator")

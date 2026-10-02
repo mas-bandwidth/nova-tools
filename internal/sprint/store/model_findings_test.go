@@ -5,7 +5,6 @@ package store
 
 import (
 	"fmt"
-	"strings"
 	"testing"
 	"time"
 
@@ -53,25 +52,25 @@ func TestModelAckCannotSilenceACard(t *testing.T) {
 	require.Len(t, open, 1, "after two ok reads: %+v", open)
 	require.Equal(t, string(sprint.NReadyToAccept), open[0].Note.Type, "after two ok reads: %+v", open)
 	res := h.run(AckStep(sprint.AckReq{Notes: []string{open[0].Note.ID}, Reason: "looked"}))
-	if len(res.Moved) != 0 || len(res.Refused) != 1 || !strings.Contains(res.Refused[0].Why, "ack does not answer") ||
-		!strings.Contains(res.Refused[0].Why, "nova-sprint accept --group "+open[0].Note.ID) {
-		t.Fatalf("the ack that silences s1-1: %+v", res)
-	}
-	if again := h.openOn("s1-1"); len(again) != 1 || again[0].Note.ID != open[0].Note.ID {
-		t.Fatalf("after the refused ack: %+v", again)
-	}
+	require.Empty(t, res.Moved, "the ack that silences s1-1: %+v", res)
+	require.Len(t, res.Refused, 1, "the ack that silences s1-1: %+v", res)
+	require.Contains(t, res.Refused[0].Why, "ack does not answer", "the ack that silences s1-1: %+v", res)
+	require.Contains(t, res.Refused[0].Why, "nova-sprint accept --group "+open[0].Note.ID, "the ack that silences s1-1: %+v", res)
+	again := h.openOn("s1-1")
+	require.Len(t, again, 1, "after the refused ack: %+v", again)
+	require.Equal(t, open[0].Note.ID, again[0].Note.ID, "after the refused ack: %+v", again)
 	// Returned to review: ack does not answer it either.
 	h.must(AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
 	h.must(ReturnStep(sprint.ReturnReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "hold it"}))
 	ret := h.openOn("s1-1")
 	require.Len(t, ret, 1, "returned: %+v", ret)
 	require.Equal(t, string(sprint.NReturned), ret[0].Note.Type, "returned: %+v", ret)
-	if res := h.run(AckStep(sprint.AckReq{Notes: []string{ret[0].Note.ID}, Reason: "looked"})); len(res.Refused) != 1 || len(res.Moved) != 0 {
-		t.Fatalf("ack of returned: %+v", res)
-	}
-	if held := h.openOn("s1-1"); len(held) != 1 || held[0].Note.Type != sprint.NReturned {
-		t.Fatalf("returned, after the refused ack: %+v", held)
-	}
+	res = h.run(AckStep(sprint.AckReq{Notes: []string{ret[0].Note.ID}, Reason: "looked"}))
+	require.Len(t, res.Refused, 1, "ack of returned: %+v", res)
+	require.Empty(t, res.Moved, "ack of returned: %+v", res)
+	held := h.openOn("s1-1")
+	require.Len(t, held, 1, "returned, after the refused ack: %+v", held)
+	require.Equal(t, sprint.NReturned, held[0].Note.Type, "returned, after the refused ack: %+v", held)
 	h.clean("M1")
 }
 
@@ -112,16 +111,16 @@ func TestAckOfAReachedSentinelIsRefused(t *testing.T) {
 	require.Equal(t, sprint.Landed, h.state("s1-1"), "s1-1 %s, reached %d", h.state("s1-1"), len(reached))
 	require.Len(t, reached, 1, "s1-1 %s, reached %d", h.state("s1-1"), len(reached))
 	res := h.run(AckStep(sprint.AckReq{Notes: []string{reached[0].Note.ID}, Reason: "looked"}))
-	if len(res.Moved) != 0 || len(res.Refused) != 1 || !strings.Contains(res.Refused[0].Why, "nova-sprint release stop") {
-		t.Fatalf("ack of sentinel reached: %+v", res)
-	}
+	require.Empty(t, res.Moved, "ack of sentinel reached: %+v", res)
+	require.Len(t, res.Refused, 1, "ack of sentinel reached: %+v", res)
+	require.Contains(t, res.Refused[0].Why, "nova-sprint release stop", "ack of sentinel reached: %+v", res)
 	for i := 0; i < 5; i++ {
 		h.tick(time.Hour)
 		h.machine()
 	}
-	if len(h.openOf(sprint.NSentinelReached)) != 1 || h.state("stop") != sprint.Waiting || h.state("after") != sprint.Waiting {
-		t.Fatalf("after the refused ack: reached %d, stop %s, after %s", len(h.openOf(sprint.NSentinelReached)), h.state("stop"), h.state("after"))
-	}
+	require.Len(t, h.openOf(sprint.NSentinelReached), 1, "after the refused ack: reached %d, stop %s, after %s", len(h.openOf(sprint.NSentinelReached)), h.state("stop"), h.state("after"))
+	require.Equal(t, sprint.Waiting, h.state("stop"), "after the refused ack: reached %d, stop %s, after %s", len(h.openOf(sprint.NSentinelReached)), h.state("stop"), h.state("after"))
+	require.Equal(t, sprint.Waiting, h.state("after"), "after the refused ack: reached %d, stop %s, after %s", len(h.openOf(sprint.NSentinelReached)), h.state("stop"), h.state("after"))
 	h.must(ReleaseStep(sprint.ReleaseReq{IDs: []string{"stop"}, Reason: "green", Coordinator: "tester", Who: "tester", Answers: []string{reached[0].Note.ID}}))
 	h.machine()
 	require.Equal(t, sprint.Landed, h.state("stop"), "after the release: stop %s after %s", h.state("stop"), h.state("after"))
@@ -141,9 +140,8 @@ func TestModelNoMemberJudgmentAfterAClear(t *testing.T) {
 	h.must(FleetStep(sprint.FleetReq{Op: "hold", Member: "m2"}))
 	h.machine()
 	require.Len(t, h.openOf(sprint.NNoMember), 1, "no member before the clear: %d", len(h.openOf(sprint.NNoMember)))
-	if _, err := h.st.Clear(h.ctx); err != nil {
-		t.Fatal(err)
-	}
+	_, err := h.st.Clear(h.ctx)
+	require.NoError(t, err)
 	h.startMachine()
 	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"p3"}}))
 	h.machine()
@@ -157,9 +155,10 @@ func TestModelNoMemberJudgmentAfterAClear(t *testing.T) {
 			open = append(open, o)
 		}
 	}
-	if pinned.PinnedEpoch() != 1 || len(open) != 1 || sprint.IDEpoch(open[0].Note.ID) != 1 || h.state("p3") != sprint.Ready {
-		t.Fatalf("after the clear: open %+v, p3 %s", open, h.state("p3"))
-	}
+	require.Equal(t, uint64(1), pinned.PinnedEpoch(), "after the clear: open %+v, p3 %s", open, h.state("p3"))
+	require.Len(t, open, 1, "after the clear: open %+v, p3 %s", open, h.state("p3"))
+	require.Equal(t, uint64(1), sprint.IDEpoch(open[0].Note.ID), "after the clear: open %+v, p3 %s", open, h.state("p3"))
+	require.Equal(t, sprint.Ready, h.state("p3"), "after the clear: open %+v, p3 %s", open, h.state("p3"))
 	h.clean("M2")
 }
 
@@ -174,9 +173,10 @@ func TestModelAskAnotherBeforeTheFirstAsk(t *testing.T) {
 	h.must(TakeStep(sprint.TakeReq{As: c.Row, Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: 1}}))
 	h.must(FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: 1}}))
 	res := h.run(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Another: true}))
-	if len(res.Moved) != 0 || len(res.Refused) != 1 || !strings.Contains(res.Refused[0].Why, "nova-sprint ask s1-1") || !strings.Contains(res.Refused[0].Why, "tick") {
-		t.Fatalf("ask --another before the first ask: %+v", res)
-	}
+	require.Empty(t, res.Moved, "ask --another before the first ask: %+v", res)
+	require.Len(t, res.Refused, 1, "ask --another before the first ask: %+v", res)
+	require.Contains(t, res.Refused[0].Why, "nova-sprint ask s1-1", "ask --another before the first ask: %+v", res)
+	require.Contains(t, res.Refused[0].Why, "tick", "ask --another before the first ask: %+v", res)
 	n := len(h.snap().Readers.Of("s1-1"))
 	require.Equal(t, 0, n, "asked of %d readers", n)
 }
@@ -201,9 +201,9 @@ func orphanInMerging(t *testing.T) (*harness, string) {
 		return sprint.Plan{Notes: []sprint.Note{n}}
 	}})
 	open := h.openOf(sprint.NRepairSkipped)
-	if len(open) != 1 || h.state("s1-1") != sprint.Merging || h.snap().Merge.Card("s1-1").Placed() {
-		t.Fatalf("the orphan: open %v, s1-1 %s", open, h.state("s1-1"))
-	}
+	require.Len(t, open, 1, "the orphan: open %v, s1-1 %s", open, h.state("s1-1"))
+	require.Equal(t, sprint.Merging, h.state("s1-1"), "the orphan: open %v, s1-1 %s", open, h.state("s1-1"))
+	require.False(t, h.snap().Merge.Card("s1-1").Placed(), "the orphan: open %v, s1-1 %s", open, h.state("s1-1"))
 	return h, open[0].Note.ID
 }
 
@@ -214,13 +214,13 @@ func orphanInMerging(t *testing.T) (*harness, string) {
 func TestAnOrphanInMergingIsNeverSilent(t *testing.T) {
 	t.Parallel()
 	h, id := orphanInMerging(t)
-	if res := h.run(AckStep(sprint.AckReq{Notes: []string{id}, Reason: "looked"})); len(res.Refused) != 1 || len(h.openOf(sprint.NRepairSkipped)) != 1 {
-		t.Fatalf("the ack that silences the orphan: %+v", res)
-	}
-	if res := h.run(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: "f", Answers: []string{id}})); len(res.Refused) == 0 || len(h.openOf(sprint.NRepairSkipped)) != 1 {
-		t.Fatalf("rework of the orphan: %+v", res)
-	}
-	res := h.run(ReturnStep(sprint.ReturnReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "no merge card", Answers: []string{id}}))
+	res := h.run(AckStep(sprint.AckReq{Notes: []string{id}, Reason: "looked"}))
+	require.Len(t, res.Refused, 1, "the ack that silences the orphan: %+v", res)
+	require.Len(t, h.openOf(sprint.NRepairSkipped), 1, "the ack that silences the orphan: %+v", res)
+	res = h.run(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: "f", Answers: []string{id}}))
+	require.NotEmpty(t, res.Refused, "rework of the orphan: %+v", res)
+	require.Len(t, h.openOf(sprint.NRepairSkipped), 1, "rework of the orphan: %+v", res)
+	res = h.run(ReturnStep(sprint.ReturnReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "no merge card", Answers: []string{id}}))
 	require.Empty(t, res.Refused, "return of the orphan: %+v, s1-1 %s", res, h.state("s1-1"))
 	require.Equal(t, sprint.Review, h.state("s1-1"), "return of the orphan: %+v, s1-1 %s", res, h.state("s1-1"))
 	h.clean("returned")
@@ -262,9 +262,9 @@ func TestAnAckOfSeveralIsAllOrNothing(t *testing.T) {
 	require.Len(t, open, 1, "blocked: %+v", open)
 	require.Equal(t, string(sprint.NBlocked), open[0].Note.Type, "blocked: %+v", open)
 	r := h.run(AckStep(sprint.AckReq{Notes: []string{open[0].Note.ID, "no-such-note"}, Reason: "not needed"}))
-	if len(r.Refused) != 2 || len(r.Moved) != 0 || !strings.Contains(fmt.Sprint(r.Refused), "all or none") {
-		t.Fatalf("a partial ack: %+v", r)
-	}
+	require.Len(t, r.Refused, 2, "a partial ack: %+v", r)
+	require.Empty(t, r.Moved, "a partial ack: %+v", r)
+	require.Contains(t, fmt.Sprint(r.Refused), "all or none", "a partial ack: %+v", r)
 	require.Len(t, h.openOn("late"), 1, "the refused ack closed the judgment or moved the card: %s %+v", h.state("late"), h.openOn("late"))
 	require.Equal(t, sprint.Waiting, h.state("late"), "the refused ack closed the judgment or moved the card: %s %+v", h.state("late"), h.openOn("late"))
 	h.clean("all or nothing")
@@ -309,9 +309,7 @@ func TestTwoBlockedJudgmentsOnOneSentinelWaiveOnce(t *testing.T) {
 			ids = append(ids, o.Note.ID)
 		}
 	}
-	if len(ids) != 2 {
-		t.Fatalf("blocked judgments on stop: %+v", h.openOn("stop"))
-	}
+	require.Len(t, ids, 2, "blocked judgments on stop: %+v", h.openOn("stop"))
 	// the plan itself, before the engine's one-per-cause: one change of stop
 	// and one reached note
 	s, err := h.st.Load(h.ctx, All, tickExtras)
@@ -331,9 +329,9 @@ func TestTwoBlockedJudgmentsOnOneSentinelWaiveOnce(t *testing.T) {
 			}
 		}
 	}
-	if len(plan.Refused) != 0 || changes != 1 || planned != 1 {
-		t.Fatalf("the ack's plan: %d changes of stop, %d reached notes, refused %v", changes, planned, plan.Refused)
-	}
+	require.Empty(t, plan.Refused, "the ack's plan: %d changes of stop, %d reached notes, refused %v", changes, planned, plan.Refused)
+	require.Equal(t, 1, changes, "the ack's plan: %d changes of stop, %d reached notes, refused %v", changes, planned, plan.Refused)
+	require.Equal(t, 1, planned, "the ack's plan: %d changes of stop, %d reached notes, refused %v", changes, planned, plan.Refused)
 	h.must(AckStep(sprint.AckReq{Notes: ids, Reason: "not needed"}))
 	notes, _, _ := h.m.NotesSince(h.ctx, "", 100000)
 	reached := 0

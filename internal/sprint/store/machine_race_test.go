@@ -119,9 +119,7 @@ func TestCRTickRacesEveryVerbAtEveryCall(t *testing.T) {
 			where := fmt.Sprintf("%s at call %d", name, k)
 			assert.NoError(t, terr, "%s: the tick failed: %v", where, terr)
 			assert.NoError(t, verr, "%s: the verb failed: %v", where, verr)
-			if len(vres.Moved) == 0 && len(vres.Refused) == 0 {
-				t.Errorf("%s: the verb neither moved nor was refused: %+v", where, vres)
-			}
+			assert.True(t, len(vres.Moved) > 0 || len(vres.Refused) > 0, "%s: the verb neither moved nor was refused: %+v", where, vres)
 			for _, r := range vres.Refused {
 				assert.NotEmpty(t, r.Why, "%s: refused without a reason: %+v", where, r)
 			}
@@ -138,13 +136,12 @@ func TestCRTickRacesEveryVerbAtEveryCall(t *testing.T) {
 					if !ok {
 						_, _, _, f, ok = h.m.Record(h.st.Names.Table(sprint.Work), id)
 					}
-					if !ok || f["outcome"] != "dropped" {
-						t.Errorf("%s: %s lost (record %v %v)", where, id, ok, f)
-					}
+					assert.True(t, ok, "%s: %s lost (record %v %v)", where, id, ok, f)
+					assert.Equal(t, "dropped", f["outcome"], "%s: %s lost (record %v %v)", where, id, ok, f)
 					continue
 				}
-				if !c.Placed() && c.F("outcome") != "dropped" {
-					t.Errorf("%s: %s off the table without an outcome: %v", where, id, c.Fields)
+				if !c.Placed() {
+					assert.Equal(t, "dropped", c.F("outcome"), "%s: %s off the table without an outcome: %v", where, id, c.Fields)
 				}
 				live := 0
 				for _, fc := range s.Fleet.Of(id) {
@@ -152,9 +149,8 @@ func TestCRTickRacesEveryVerbAtEveryCall(t *testing.T) {
 						live++
 					}
 				}
-				if live > 1 || (c.Placed() && c.Col == sprint.Working) != (live == 1) {
-					t.Errorf("%s: %s in %s with %d live work cards", where, id, c.Col, live)
-				}
+				assert.LessOrEqual(t, live, 1, "%s: %s in %s with %d live work cards", where, id, c.Col, live)
+				assert.Equal(t, live == 1, c.Placed() && c.Col == sprint.Working, "%s: %s in %s with %d live work cards", where, id, c.Col, live)
 				if c.Placed() && c.Col == sprint.Review && c.F("result") != "failed" {
 					n := 0
 					for _, rc := range s.Readers.Of(id) {
@@ -177,8 +173,8 @@ func TestCRTickRacesEveryVerbAtEveryCall(t *testing.T) {
 				}
 			}
 			for k2, v := range seen {
-				if v > 1 && !strings.HasPrefix(k2, sprint.NWorkFailed) {
-					t.Errorf("%s: judgment written %d times: %s", where, v, k2)
+				if !strings.HasPrefix(k2, sprint.NWorkFailed) {
+					assert.LessOrEqual(t, v, 1, "%s: judgment written %d times: %s", where, v, k2)
 				}
 			}
 		}

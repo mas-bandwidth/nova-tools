@@ -84,11 +84,13 @@ func TestLateWritersOfEveryKind(t *testing.T) {
 	for name, step := range steps {
 		step.Epoch = &held
 		res, err := h.st.Run(h.ctx, step)
-		if err != nil || len(res.Moved) != 0 || len(res.Refused) != 1 || !strings.Contains(res.Refused[0].Why, "cleared at") {
-			t.Errorf("late %s: %+v %v", name, res, err)
+		assert.NoError(t, err, "late %s: %+v %v", name, res, err)
+		assert.Empty(t, res.Moved, "late %s: %+v %v", name, res, err)
+		if assert.Len(t, res.Refused, 1, "late %s: %+v %v", name, res, err) {
+			assert.Contains(t, res.Refused[0].Why, "cleared at", "late %s: %+v %v", name, res, err)
 		}
-		if got := h.image(); got != img {
-			t.Errorf("late %s changed the store:\n%s\nwas\n%s", name, got, img)
+		got := h.image()
+		if !assert.Equal(t, img, got, "late %s changed the store:\n%s\nwas\n%s", name, got, img) {
 			img = got
 		}
 	}
@@ -141,14 +143,10 @@ func TestClearInTheMiddleOfAStep(t *testing.T) {
 			s := h.snap()
 			require.Equal(t, uint64(1), s.Epoch, "epoch %d", s.Epoch)
 			for _, c := range s.Work.Cards() {
-				if c.Placed() {
-					t.Errorf("new epoch holds %s at %s", c.ID, c.Col)
-				}
+				assert.False(t, c.Placed(), "new epoch holds %s at %s", c.ID, c.Col)
 			}
 			for _, c := range s.Fleet.Cards() {
-				if c.Placed() && c.Col != sprint.Ctl {
-					t.Errorf("new epoch fleet holds %s at %s", c.ID, c.Col)
-				}
+				assert.False(t, c.Placed() && c.Col != sprint.Ctl, "new epoch fleet holds %s at %s", c.ID, c.Col)
 			}
 			h.clean("after the clear mid-step")
 			// the old epoch: is it one consistent state (both or neither)?
@@ -199,9 +197,8 @@ func TestEmptyClearsThenTeardown(t *testing.T) {
 	}
 	_, err = h.st.Teardown(h.ctx)
 	require.NoError(t, err)
-	if after := m.Keys(h.st.Names); !slices.Equal(after, before) {
-		t.Fatalf("after teardown:\n%s", strings.Join(after, "\n"))
-	}
+	after := m.Keys(h.st.Names)
+	require.Equal(t, before, after, "after teardown:\n%s", strings.Join(after, "\n"))
 }
 
 // The old epoch's records are unchanged by the new epoch's run of the same
@@ -275,8 +272,8 @@ func TestRowAddedDuringClearIsKept(t *testing.T) {
 	_, err := st.Clear(h.ctx)
 	require.NoError(t, err)
 	s := h.snap()
-	if !slices.Contains(s.Fleet.Rows(), "m3") || s.MemberCtl("m3").F("status") != sprint.Up {
-		t.Errorf("a member brought up before the advance was lost by the clear: rows %v", s.Fleet.Rows())
+	if assert.Contains(t, s.Fleet.Rows(), "m3", "a member brought up before the advance was lost by the clear: rows %v", s.Fleet.Rows()) {
+		assert.Equal(t, sprint.Up, s.MemberCtl("m3").F("status"), "a member brought up before the advance was lost by the clear: rows %v", s.Fleet.Rows())
 	}
 	assert.Equal(t, string(sprint.Down), s.MemberCtl("m1").F("status"), "m1 taken down before the advance is up again at the new epoch")
 	h.clean("after the clear")
@@ -298,9 +295,9 @@ func TestAnOwedRestoreIsPerformedFirst(t *testing.T) {
 				// a writer takes the old epoch's fence just before the advance,
 				// and dies
 				f, _ := h.m.ReadFence(h.ctx)
-				if ok, err := h.m.Acquire(h.ctx, f.Gen, dead); !ok || err != nil {
-					t.Errorf("acquire: %v %v", ok, err)
-				}
+				ok, err := h.m.Acquire(h.ctx, f.Gen, dead)
+				assert.True(t, ok, "acquire: %v %v", ok, err)
+				assert.NoError(t, err, "acquire: %v %v", ok, err)
 			}}
 			h.m.Fail = func(p string) error {
 				if strings.HasPrefix(p, "apply ") {
@@ -311,27 +308,30 @@ func TestAnOwedRestoreIsPerformedFirst(t *testing.T) {
 			_, err := st.Clear(h.ctx)
 			require.Error(t, err, "the clear was not cut")
 			h.m.Fail = nil
-			if es, _ := h.m.Epoch(h.ctx); es.N != 1 || !es.Owed {
-				t.Fatalf("after the cut: %+v", es)
-			}
-			if p := h.m.AtEpoch(0, true).(*Mem).Pending(); p == nil || p.ID != dead.ID {
-				t.Fatalf("the old epoch's fence: %+v", p)
-			}
+			es, _ := h.m.Epoch(h.ctx)
+			require.Equal(t, uint64(1), es.N, "after the cut: %+v", es)
+			require.True(t, es.Owed, "after the cut: %+v", es)
+			p := h.m.AtEpoch(0, true).(*Mem).Pending()
+			require.NotNil(t, p, "the old epoch's fence: %+v", p)
+			require.Equal(t, dead.ID, p.ID, "the old epoch's fence: %+v", p)
 			switch next {
 			case "verb":
 				h.must(AddStep(sprint.AddReq{Stream: "s2", Count: 1}))
 			case "tick":
 				h.machine()
 			}
-			if es, _ := h.m.Epoch(h.ctx); es.N != 1 || es.Owed {
-				t.Fatalf("after the %s: %+v", next, es)
-			}
+			es, _ = h.m.Epoch(h.ctx)
+			require.Equal(t, uint64(1), es.N, "after the %s: %+v", next, es)
+			require.False(t, es.Owed, "after the %s: %+v", next, es)
 			s := h.snap()
 			require.Equal(t, string(sprint.StreamWaiting), s.StreamCtl("s1").F("state"), "the shape is not restored by the %s", next)
 			require.Equal(t, string(sprint.Up), s.MemberCtl("m2").F("status"), "the shape is not restored by the %s", next)
-			if p := h.m.AtEpoch(0, true).(*Mem).Pending(); p != nil {
-				t.Fatalf("the old epoch still holds the fence of %s", p.ID)
+			p = h.m.AtEpoch(0, true).(*Mem).Pending()
+			var pID string
+			if p != nil {
+				pID = p.ID
 			}
+			require.Nil(t, p, "the old epoch still holds the fence of %s", pID)
 			h.clean("restored")
 		})
 	}

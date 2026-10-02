@@ -384,12 +384,10 @@ func TestCRFortyPrimariesLandByTheTick(t *testing.T) {
 		if !ok {
 			s := w.h.snap()
 			open, _ := w.h.m.OpenNotes(w.h.ctx)
-			t.Errorf("seed %d: not landed after %d rounds: landed %d of %d; open %v; streams %s %s %s", seed, r, w.landed(), w.all(), openBy(open),
+			assert.True(t, ok, "seed %d: not landed after %d rounds: landed %d of %d; open %v; streams %s %s %s", seed, r, w.landed(), w.all(), openBy(open),
 				s.StreamCtl("s1").F("state"), s.StreamCtl("s2").F("state"), s.StreamCtl("s3").F("state"))
 		}
-		if len(w.holderFail) > 0 {
-			t.Errorf("seed %d: holders: %d failures, first: %v", seed, len(w.holderFail), w.holderFail[:min(5, len(w.holderFail))])
-		}
+		assert.Empty(t, w.holderFail, "seed %d: holders: %d failures, first: %v", seed, len(w.holderFail), w.holderFail[:min(5, len(w.holderFail))])
 		for _, st := range []string{"s1", "s2", "s3"} {
 			got := w.h.snap().StreamCtl(st).F("state")
 			assert.Equal(t, string(sprint.StreamLanded), got, "seed %d: stream %s is %s", seed, st, got)
@@ -410,8 +408,7 @@ func TestCRStopAtEveryPoint(t *testing.T) {
 		w := crSprint(t, 5)
 		w.stopAt, w.stopFor = at, 3
 		r, ok := w.runTo(600, time.Second)
-		if !ok {
-			t.Errorf("stop at %d: not landed after %d rounds", at, r)
+		if !assert.True(t, ok, "stop at %d: not landed after %d rounds", at, r) {
 			continue
 		}
 		got := map[string]bool{}
@@ -425,8 +422,6 @@ func TestCRStopAtEveryPoint(t *testing.T) {
 			n := w.h.written(typ)
 			assert.LessOrEqual(t, n, 0, "stop at %d: %s written %d times (stopped time counted?)", at, typ, n)
 		}
-		if len(w.holderFail) > 0 {
-			t.Errorf("stop at %d: holders: %v", at, w.holderFail[:min(3, len(w.holderFail))])
-		}
+		assert.Empty(t, w.holderFail, "stop at %d: holders: %v", at, w.holderFail[:min(3, len(w.holderFail))])
 	}
 }

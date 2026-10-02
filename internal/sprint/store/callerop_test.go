@@ -1,8 +1,6 @@
 package store
 
 import (
-	"errors"
-	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -25,9 +23,11 @@ func TestACallerOpOfAnotherVerbIsAConflict(t *testing.T) {
 	take.CallerOp = "op-A"
 	res, err := h.st.Run(h.ctx, take)
 	var ce *OpConflictError
-	if !errors.As(err, &ce) || ce.Recorded != "deal" || res.Replay || len(res.Moved) != 0 || !strings.Contains(err.Error(), "deal") {
-		t.Fatalf("take under start's operation id: %+v %v", res, err)
-	}
+	require.ErrorAs(t, err, &ce, "take under start's operation id: %+v %v", res, err)
+	require.Equal(t, "deal", ce.Recorded, "take under start's operation id: %+v %v", res, err)
+	require.False(t, res.Replay, "take under start's operation id: %+v %v", res, err)
+	require.Empty(t, res.Moved, "take under start's operation id: %+v %v", res, err)
+	require.Contains(t, err.Error(), "deal", "take under start's operation id: %+v %v", res, err)
 	h.nothingWritten(before)
 	again := h.must(start)
 	require.True(t, again.Replay, "start's own retry: %+v", again)
@@ -46,14 +46,15 @@ func TestACallerOpWithOtherArgumentsIsAConflict(t *testing.T) {
 		return s
 	}
 	first := h.must(add(1))
-	if again := h.must(add(1)); !again.Replay || again.Op != first.Op {
-		t.Fatalf("the same add again: %+v", again)
-	}
+	again := h.must(add(1))
+	require.True(t, again.Replay, "the same add again: %+v", again)
+	require.Equal(t, first.Op, again.Op, "the same add again: %+v", again)
 	before := h.revisions()
 	res, err := h.st.Run(h.ctx, add(2))
-	var ce *OpConflictError
-	if !errors.As(err, &ce) || !ce.OtherArgs || ce.Recorded != "add" || res.Replay {
-		t.Fatalf("add with other arguments under the same id: %+v %v", res, err)
-	}
+	var ce2 *OpConflictError
+	require.ErrorAs(t, err, &ce2, "add with other arguments under the same id: %+v %v", res, err)
+	require.True(t, ce2.OtherArgs, "add with other arguments under the same id: %+v %v", res, err)
+	require.Equal(t, "add", ce2.Recorded, "add with other arguments under the same id: %+v %v", res, err)
+	require.False(t, res.Replay, "add with other arguments under the same id: %+v %v", res, err)
 	h.nothingWritten(before)
 }
