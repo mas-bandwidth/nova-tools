@@ -1225,3 +1225,10 @@ cmd/nova-swarm/recovery_test.go no test was left in it: its twelve helpers were 
 internal/swarm/cardbudget_functional_test.go its one test drove the pool route's harness.log turn count and RESULT.md PROMPT-DEFECT append (CountCardTurns, AppendPromptDefect), which no command reaches; the native route's CountCardTurnsIn and OverCardBudget keep their own tests
 internal/swarm/batch_helpers_test.go no test was left in it: its three card fixture helpers (itoa, writeCard, writeCards) were reached by nothing (deadcode -test, tags functional,swarmtest,slow, darwin, linux and windows)
 internal/swarm/benchpull_test.go no test was left in it: stepClock, its one type, was reached by nothing (deadcode -test, tags functional,swarmtest,slow, darwin, linux and windows)
+internal/swarm/slot_race_test.go its one test (skipped since #4221) drove the pool's slot files (OpenPool, Reserve, claimFree, Free), which no command reaches; the pool and its slot files are deleted
+internal/swarm/reap_test.go its tests drove ReapSlots and ReapAtTaskEnd, the pool's slot reaper, which no command reaches; both are deleted
+internal/swarm/prewarm_functional_test.go its one test drove CacheEnv, which no command reaches; native builds the child's cache environment itself, and cmd/nova-swarm native_test.go holds the private Lisp overlay it carries
+internal/swarm/f2_forged_exit_test.go its one test marshalled PidRecord, a record no command writes or reads; the type is deleted
+internal/swarm/d5_ratelimit_test.go its one test drove rateLimitedOutcome, the pool's finish-step 429 rewrite, which no command reaches; it is deleted
+internal/swarm/delta2_ratelimit_reap_test.go its one test drove rateLimitedOutcome and reapEnd, which no command reaches; both are deleted
+cmd/nova-swarm/fixture_guards_test.go its tests guarded the bench's add and run helpers, which drove the `add` and `run` verbs nova-swarm no longer has; the helpers and the slow tests that used them are deleted

@@ -1,9 +1,8 @@
 # Migrated counted package ledger; original row keys preserved.
-# ceiling: 50
+# ceiling: 48
 internal/swarm/cardbudget.go:stella 1
 internal/swarm/fence.go:rowan 1
 internal/swarm/fileretry.go:stella 1
-internal/swarm/inputlimit.go:freddy 1
 internal/swarm/inputlimit.go:space 1
 internal/swarm/lease.go:stella 2
 internal/swarm/lintbase.go:rowan 1
@@ -13,7 +12,6 @@ internal/swarm/lintdepends.go:mas-bandwidth 2
 internal/swarm/lintdepends.go:space 2
 internal/swarm/lintheader.go:emma 4
 internal/swarm/lintheader.go:rowan 2
-internal/swarm/lock.go:stella 1
 internal/swarm/lock.go:studio 1
 internal/swarm/nativeasked.go:emma 1
 internal/swarm/nativeasked.go:glenn 1
