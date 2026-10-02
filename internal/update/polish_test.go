@@ -95,7 +95,7 @@ func TestEveryUpdateRefusalEndsInACommandToRun(t *testing.T) {
 		{"no verb", nil, []string{"UPDATE REFUSED: no verb given; " + verbs + "; run: nova-update help"}},
 		{"unknown verb", []string{"bogus"}, []string{`UPDATE REFUSED: unknown verb "bogus"; ` + verbs + "; run: nova-update help"}},
 		{"help of an unknown verb", []string{"help", "bogus"}, []string{`unknown verb "bogus"`}},
-		{"version with an argument", []string{"version", "x"}, []string{"; run: nova-update version"}},
+		{"version with an argument", []string{"version", "x"}, []string{"VERSION REFUSED: takes no positional arguments", "; run: nova-update help"}},
 		{"misspelled flag", []string{"check", "--fiel", "x"}, []string{"CHECK REFUSED: unknown flag --fiel; the flags are --budget, --file, --json, --kind, --max, --timeout; run: nova-update check -h"}},
 		{"bad duration", []string{"status", "--file", dash, "--timeout", "abc"}, []string{`--timeout wants a duration (5s, 2m), got "abc"`, "; run: nova-update status -h"}},
 		{"bad kind", []string{"check", "--file", dash, "--kind", "bogus"}, []string{"unknown kind bogus (use harness,engine,model,tool,pin)", "; run: nova-update check -h"}},

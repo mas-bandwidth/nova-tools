@@ -265,7 +265,7 @@ func TestMovedReadsTheBuildNeverAList(t *testing.T) {
 	dry := filepath.Join(t.TempDir(), "dry.txt")
 	code, stdout, _ = b.run(t, Environment{}, "moved", "--from", "aaaa1", "--to", "bbbb2", "--repo", b.repo, "--out", dry, "--dry-run")
 	assert.Equal(t, 0, code)
-	assert.Contains(t, stdout, "dry_run=true")
+	assert.Equal(t, 1, strings.Count(stdout, "dry_run=true"), "the skeleton says it once")
 	assert.Contains(t, stdout, "MOVED from=aaaa1 to=bbbb2 at=")
 	assert.Contains(t, stdout, "\nadded=--decide tool=nova-secrets verb=seat\n")
 	assert.NoFileExists(t, dry)

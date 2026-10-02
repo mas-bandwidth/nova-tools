@@ -349,15 +349,15 @@ func TestUnitBudgetsJudgeTheTestNotTheLoad(t *testing.T) {
 		for _, enforce := range []bool{false, true} {
 			want := 0
 			if enforce {
-				want = 2
+				want = 1 // the check ran and said no; 2 is input it could not read
 			}
 			out, code := judge(slow, load, enforce)
 			if code != want || !strings.Contains(out, slowLine) || !strings.Contains(out, "CI-LOAD load=") {
 				t.Errorf("a 1.4 s test, %s, enforce %v: exit %d, want %d with its CI-SLOW and CI-LOAD lines:\n%s", name, enforce, code, want, out)
 			}
 			out, code = judge(sleeps, load, enforce)
-			if code != 2 || !strings.Contains(out, "CI-SLEEPS test=TestWaitsOnTheClock package=example.com/sleepy") {
-				t.Errorf("an unledgered SLEEPS skip, %s, enforce %v: exit %d, want 2:\n%s", name, enforce, code, out)
+			if code != 1 || !strings.Contains(out, "CI-SLEEPS test=TestWaitsOnTheClock package=example.com/sleepy") {
+				t.Errorf("an unledgered SLEEPS skip, %s, enforce %v: exit %d, want 1:\n%s", name, enforce, code, out)
 			}
 		}
 	}

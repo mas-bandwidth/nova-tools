@@ -60,8 +60,8 @@ func TestSlowTestsOverBudgetNamesThePackageAndSlowestTests(t *testing.T) {
 {"Action":"pass","Package":"example.com/pkg","Elapsed":75.3}
 `
 	report := Sum(slowEvents(t, fixture), slowBudget)
-	if got, want := report.ExitCode(), 2; got != want {
-		t.Errorf("ExitCode = %d, want %d (a package is over budget)", got, want)
+	if got, want := report.ExitCode(), 1; got != want {
+		t.Errorf("ExitCode = %d, want %d (a package is over budget: the check said no)", got, want)
 	}
 	lines := report.OverLines()
 	if len(lines) != 1 {
@@ -174,7 +174,7 @@ func TestSlowTestsJudgesPackagesAndTestsAgainstTheirRows(t *testing.T) {
 {"Action":"pass","Package":"example.com/m/cmd/fast","Elapsed":2.5}
 `
 	report := Judge(slowEvents(t, fixture), Budgets{Package: 2, Test: 1, Rows: rows})
-	if got, want := report.ExitCode(), 2; got != want {
+	if got, want := report.ExitCode(), 1; got != want {
 		t.Errorf("ExitCode = %d, want %d", got, want)
 	}
 	want := []string{
@@ -272,8 +272,8 @@ func TestSlowTestsManySmallTestsNameThePackageAndItsTopThree(t *testing.T) {
 	if got := report.OverLines(); len(got) != 1 || got[0] != want {
 		t.Errorf("OverLines = %q, want only %q", got, want)
 	}
-	if report.ExitCode() != 2 {
-		t.Errorf("ExitCode = %d, want 2", report.ExitCode())
+	if report.ExitCode() != 1 {
+		t.Errorf("ExitCode = %d, want 1", report.ExitCode())
 	}
 }
 
@@ -318,15 +318,15 @@ func TestSlowTestsVerdictIsTheSameAtAnyLoad(t *testing.T) {
 			name    string
 			enforce bool
 			code    int
-		}{{"pull request", false, 0}, {"nightly", true, 2}} {
+		}{{"pull request", false, 0}, {"nightly", true, 1}} {
 			lines, code := Verdict(Judge(slowEvents(t, timeOnly), b), load, leg.enforce, "ledger.txt")
 			want := append(append([]string{}, slowLines...), load.LoadLine())
 			if code != leg.code || strings.Join(lines, "\n") != strings.Join(want, "\n") {
 				t.Errorf("%s, %s leg: exit %d lines\n%s\nwant exit %d lines\n%s", name, leg.name, code, strings.Join(lines, "\n"), leg.code, strings.Join(want, "\n"))
 			}
 			lines, code = Verdict(Judge(slowEvents(t, sleeps), b), load, leg.enforce, "ledger.txt")
-			if code != 2 || !strings.Contains(strings.Join(lines, "\n"), sleepsLine) {
-				t.Errorf("%s, %s leg, a SLEEPS skip: exit %d lines\n%s\nwant exit 2 with %q", name, leg.name, code, strings.Join(lines, "\n"), sleepsLine)
+			if code != 1 || !strings.Contains(strings.Join(lines, "\n"), sleepsLine) {
+				t.Errorf("%s, %s leg, a SLEEPS skip: exit %d lines\n%s\nwant exit 1 with %q", name, leg.name, code, strings.Join(lines, "\n"), sleepsLine)
 			}
 		}
 	}

@@ -4,7 +4,25 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+// The bare form answers an unknown flag as bad_flag, never no_command, naming the
+// flags it takes; and that list is the parser's: each flag in it parses as a flag.
+func TestTheBareFormNamesAnUnknownFlagAndItsFlags(t *testing.T) {
+	t.Parallel()
+	bad := parse([]string{"--wrte", "./x", "--", "true"}).bad
+	require.Len(t, bad, 1)
+	assert.Equal(t, "bad_flag", bad[0].Reason)
+	for _, f := range bareFlags {
+		got := parse([]string{f, "v", "--", "true"}).bad
+		for _, r := range got {
+			assert.NotContains(t, r.Text, "unknown flag", "%s is in bareFlags and the parser refuses it", f)
+		}
+	}
+}
 
 // A misspelled flag is one refusal line, `unknown flag --x; run: nova-sandbox help <verb>`,
 // and the value it was given is not a second mistake: `--wrte ./x` used to draw a second
@@ -18,7 +36,8 @@ func TestMisspelledFlagIsOneCleanLine(t *testing.T) {
 	}{
 		{"policy with a value", badTexts(parseVerb("policy", []string{"--read", "/a", "--wrte", "./x", "--write", "/b"})), "unknown flag --wrte; run: nova-sandbox help policy"},
 		{"probe with a value", badTexts(parseVerb("probe", []string{"--wrte", "./x"})), "unknown flag --wrte; run: nova-sandbox help probe"},
-		{"the bare form", badTexts(parse([]string{"--wrte", "./x", "--"})), "unknown flag --wrte; run: nova-sandbox help"},
+		{"the bare form", badTexts(parse([]string{"--wrte", "./x", "--"})), "unknown flag --wrte; the flags are " + strings.Join(bareFlags, ", ") +
+			"; did you mean --write?; run: nova-sandbox help"},
 		{"a flag given as --x=y", badTexts(parseVerb("policy", []string{"--wrte=./x"})), "unknown flag --wrte; run: nova-sandbox help policy"},
 		{"a flag with no value", badTexts(parseVerb("policy", []string{"--wrte", "--write", "/b"})), "unknown flag --wrte; run: nova-sandbox help policy"},
 		{"run", runBad(parseRun([]string{"--nmae", "x", "--size", "8g"})), "unknown flag --nmae; run: nova-sandbox help run"},

@@ -28,7 +28,7 @@ func TestSlowThing(t *testing.T) {
 	require.NoError(t, err, "slowtests.Parse: %v", err)
 
 	report := slowtests.Sum(events, 60*time.Second)
-	require.Equal(t, 2, report.ExitCode(), "exit code = %d, want 2; the package is over budget", report.ExitCode())
+	require.Equal(t, 1, report.ExitCode(), "exit code = %d, want 1; the package is over budget", report.ExitCode())
 
 	lines := report.OverLines()
 	require.Len(t, lines, 1, "over lines = %d, want 1: %v", len(lines), lines)
