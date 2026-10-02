@@ -212,8 +212,8 @@ func ValidSlug(slug string) error {
 	return nil
 }
 
-// HostMax is how long a Host value may be. A host is a machine's short name -- `air`,
-// `studio`, `hulk` -- and it is printed on an inbox line beside the sender, so it is
+// HostMax is how long a Host value may be. A host is a machine's short name -- one
+// segment without spaces -- and it is printed on an inbox line beside the sender, so it is
 // bounded rather than left to whatever a defaults file holds.
 const HostMax = 40
 
@@ -296,7 +296,7 @@ type ReceiptPlan struct {
 // PlanReceipts resolves the targets a caller wants to mark heard.
 //
 // A receipt records the note's ID when it has one and its PATH when it does not, so a
-// receipt for a legacy note is as good a receipt as any other. A note already answered by
+// receipt for a legacy note, which is a current input format without an id, is as good a receipt as any other. A note already answered by
 // a reply is still receivable -- the two are different records and the answered rule
 // accepts either -- but a target already in this lane's RECEIPTS is reported and not
 // written twice.
@@ -384,20 +384,9 @@ func (plan ReceiptPlan) Message(me Participant) string {
 // the INBOX OPEN line's large-list remedy names beside the normal reply-or-receipt path,
 // but as a real hand rather than the cursor advance that leaves the notes carried.
 //
-// IT WAS ONE FILE PER CLOSED NOTE UNTIL #1540, and that is what broke it. Every receipt in
-// a run carries the same subject -- the stamp -- so every one got the same slug and the
-// same minute, leaving the id as the only thing telling two filenames apart; and the id is
-// a hash over (from, date, to, cc, re, subject, kind, body), so two open notes sharing a
-// TARGET ID produced the same id, the same path, and `file exists` at the second Save. A
-// hand-made id reused by a sender is enough, and one was: on the coordinator's lane
-//
-//	$ nova-bus close --before 2026-09-18T12:00:00Z --dry-run
-//	CLOSE OK closed=2964 kept=184 commit=-
-//	$ nova-bus close --before 2026-09-18T12:00:00Z --remote origin --branch main
-//	CLOSE FAIL from-rowan/...-42cb99b820c2.md: open ...: file exists
-//
-// -- no commit, the cursor untouched, thousands of receipts unwritten, and the remedy the
-// tool's own INBOX WALK line prescribes unusable on the lane that needed it most.
+// A close run writes one receipt per sender lane. Each receipt carries every target from
+// that lane, so duplicate targets are removed before writing and identical filenames cannot
+// arise from notes that share a target id.
 //
 // One receipt per lane removes the collision by construction rather than by retrying
 // against it: two receipts in a run differ in To AND in Re AND in body, so they cannot hash
@@ -447,7 +436,7 @@ func PlanClose(t *Bus, me Participant, before time.Time, now time.Time) (ClosePl
 			senders = append(senders, item.From)
 		}
 		// A target named twice -- two notes sharing a hand-made id -- is closed once. It
-		// used to be receipted twice, into one filename.
+		// is recorded once: the seen key keeps the first occurrence and drops every later one.
 		if key := item.From + "\x00" + target; !seen[key] {
 			seen[key] = true
 			targets[item.From] = append(targets[item.From], target)
