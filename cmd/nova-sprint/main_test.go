@@ -179,7 +179,7 @@ func TestTheCommandDrivesAStreamToLanded(t *testing.T) {
 	out := ta.ok("init --readers reader-a,reader-b,reader-c --members m1,m2")
 	require.Contains(t, out, "INIT OK tables=work,readers,merge,fleet view=sprint", "init")
 	out = ta.ok("add --stream s1 --count 4")
-	require.Contains(t, out, "ADD OK moved=4", "add")
+	require.Contains(t, out, "ADD OK stream=s1 cards=4 before=- moved=4", "add")
 	require.Contains(t, out, "\nSTOPPED  0/4 0.0%", "add")
 	require.NotContains(t, out, "-> ETA", "add")
 	ta.clean()

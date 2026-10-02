@@ -728,6 +728,9 @@ func (a *app) report(ctx context.Context, verbName string, c common, st *store.S
 		status = "FAIL"
 	}
 	fields := fmt.Sprintf("moved=%d refused=%d notes=%d", len(res.Moved), len(res.Refused), res.Notes)
+	if verbName == "add" {
+		fields = fmt.Sprintf("stream=%s cards=%d before=%s %s", oneline.Field(c.addStream), len(res.Moved), oneline.Field(dashed(c.addBefore)), fields)
+	}
 	if res.Op != "" {
 		fields += " op=" + oneline.Escape(res.Op)
 	}
@@ -1032,6 +1035,8 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	if *brief == "" && *sentinel == "" {
 		c.says = append(c.says, "the cards have no brief, so a worker is handed no task with them; give each one before it is dealt, on a STOPPED machine: nova-sprint brief <id> --brief-file <path>")
 	}
+	c.addStream = *stream
+	c.addBefore = *before
 	if len(rs) == 1 {
 		return a.runStep("add", *c, st, store.AddStep(rs[0]), stdout, stderr)
 	}
@@ -1106,6 +1111,8 @@ func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, se
 	for _, cd := range cards {
 		c.says = append(c.says, unfilledSays("the brief of "+cd.ID, cd.Brief)...)
 	}
+	c.addStream = stream
+	c.addBefore = before
 	return a.runStep("add", *c, st, store.AddStep(r), stdout, stderr)
 }
 

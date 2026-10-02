@@ -223,6 +223,10 @@ type common struct {
 	// set, adds to it from the step's result.
 	says  []string
 	after func(ctx context.Context, st *store.Store, res store.Result) []string
+	// addStream and addBefore are add's own: its result line names them
+	// (stream=<s> cards=<n> before=<sentinel>).
+	addStream string
+	addBefore string
 }
 
 func (c *common) register(fs flagSet, getenv func(string) string) {
