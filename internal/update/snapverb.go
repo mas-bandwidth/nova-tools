@@ -123,6 +123,7 @@ func parseVersionLine(s string) (stamp, revision, platform string, src buildinfo
 }
 
 // snapshotVerb has two shapes. With --file <manifest> it scopes to the ADOPTED
+// rule-2 manifest, reading its entries the way report does,
 // and reports how many answer -- the adopted sixteen -- never how many nova-*
 // executables sit in a bin directory or on PATH. With --bin/--out it inventories
 // a directory of binaries by running each one's own `version`. Every path comes
@@ -185,7 +186,7 @@ func snapshotVerb(c *tool.Call, env Environment) *tool.Out {
 				// this line offered; the other is that the bound was spent on the
 				// platform's one-time assessment of an executable this machine has
 				// never run, which is what every binary in a freshly installed
-				// --bin is not. Sending somebody to `go build` a package that
+				// --bin is. Sending somebody to `go build` a package that
 				// builds cleanly is a dead end, so the flag is named too.
 				reason = "timeout after " + timeout.String()
 				remedy = "repair the build there (go build ./cmd/" + e.Name() + "), or raise --timeout: the first run of a newly installed binary is assessed by the platform and that cost is charged to this deadline"
