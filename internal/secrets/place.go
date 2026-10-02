@@ -125,22 +125,33 @@ func storeHead(storeDir string) string {
 	return head
 }
 
+// removeUnder removes the private snapshot directory. Tests replace it to make the
+// removal fail deterministically; shipped commands always use safepath.RemoveUnder.
+var removeUnder = safepath.RemoveUnder
+
 // decryptSnapshot decrypts sealed, the seat file's bytes as place read them ONCE, from a
 // private copy, never from the store's pathname a second time: the bytes sops decrypts are
 // then exactly the bytes the receipt's blob id names, whatever happens to the store's file
 // meanwhile (a reseal between two reads would deliver the old value under the new blob).
 // The copy keeps the file's name, which sops reads the format from, at mode 0600 in a
-// fresh 0700 directory under the process's temp dir, removed on every path out.
+// fresh 0700 directory under the process's temp dir, and its removal is tried on every
+// path out. A copy left behind is never left silently: a failed removal is returned,
+// joined by errors.Join with the decrypt's or the write's own error when that step had
+// already failed, and the plaintext is zeroed and not returned, so no caller places a
+// value read through a snapshot that is still on disk.
 func decryptSnapshot(sopsPath, keyPath, file string, sealed []byte) (out []byte, err error) {
 	dir, err := os.MkdirTemp("", "nova-secrets-place-*")
 	if err != nil {
 		return nil, fmt.Errorf("cannot make a private snapshot directory for %s: %w", file, err)
 	}
 	defer func() {
-		// A copy of sealed bytes left behind is reported, never left silently.
-		if rmErr := safepath.RemoveUnder(os.TempDir(), dir); rmErr != nil && err == nil {
-			out, err = nil, fmt.Errorf("cannot remove the private snapshot %s: %w; remove it: rm -r %s", dir, rmErr, dir)
+		rmErr := removeUnder(os.TempDir(), dir)
+		if rmErr == nil {
+			return
 		}
+		clear(out)
+		out = nil
+		err = errors.Join(err, fmt.Errorf("cannot remove the private snapshot %s: %w; remove it: rm -r %s", dir, rmErr, dir))
 	}()
 	snapshot := filepath.Join(dir, filepath.Base(file))
 	if err := os.WriteFile(snapshot, sealed, 0o600); err != nil {
