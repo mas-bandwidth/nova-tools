@@ -166,10 +166,12 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 		return a.readFailed("queue", err, stderr)
 	}
 	epoch := st.PinnedEpoch()
+	isReader := false
 	if *as != "" {
 		// the reader's own queue is its beat (docs/SPEC-SPRINT.md section 6):
-		// a name that is no reader's row writes none
-		if _, err := st.ReaderBeat(ctx, *as); err != nil {
+		// a name that is no reader's row writes none, and the answer says so
+		// (reader), for the reader loop to say whose verb makes the row
+		if isReader, err = st.ReaderBeat(ctx, *as); err != nil {
 			return a.readFailed("queue", err, stderr)
 		}
 	}
@@ -242,6 +244,9 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 		out := map[string]any{"as": *as, "stream": *stream, "epoch": epoch, "cards": cards}
 		if width > 0 {
 			out["width"] = width // the member runs this many: the fleet row is the truth
+		}
+		if *as != "" {
+			out["reader"] = isReader // --as is a row of the readers table
 		}
 		b, _ := json.Marshal(out)
 		fmt.Fprintln(stdout, string(b))
