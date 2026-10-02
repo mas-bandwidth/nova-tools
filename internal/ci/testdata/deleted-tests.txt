@@ -1222,3 +1222,7 @@ internal/ci/testdata/scripthide_allowlist.txt counted rows move without growth i
 internal/ci/testdata/testify_allowlist.txt counted rows move without growth into per-package shards; the same class scanner and shrink-only update remain
 internal/sprint/route_test.go the weighted draw's salt-parity test goes with the weighted draw and its mixer: the deal takes a tier's route by a rolling index modulo its array, pinned in internal/sprint/store/route_test.go
 cmd/nova-swarm/recovery_test.go no test was left in it: its twelve helpers were reached by nothing (deadcode -test, tags functional,slow, darwin, linux and windows); waitForFile, its one live helper, moves beside its one user, native_idle_test.go
+internal/ghevent/event_test.go the webhook decoder it drove (ghevent.Decode, Accept) is gone: its last command caller, internal/nsprint/webhook, went in #4866; Publish and Fields keep their tests in internal/cireceipt
+internal/ghevent/disposition_text_test.go the webhook decoder it drove (ghevent.Decode) is gone with event_test.go; the DISPOSITION parser keeps its tests in internal/typedrec and internal/textbody
+internal/ci/testdata/generality-text/internal/ghevent/testdata.txt its four rows named the decoder's fixtures under internal/ghevent/testdata, deleted with the decoder; no row was left
+internal/ci/testdata/testify/internal/ghevent.txt its one row counted the bare assertions in the decoder's tests, deleted with the decoder; internal/ghevent has no test file left
