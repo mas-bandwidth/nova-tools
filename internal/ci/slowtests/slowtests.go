@@ -105,8 +105,8 @@ type Row struct {
 }
 
 // MaxHeadroom is the most a row's budget may exceed its own measurement: three
-// times, the ratio run 36261817989 (2026-09-26) put on a busy Studio against the
-// same tests idle is 1.0-1.2 s over 0.9 s, well inside it.
+// times; measured ratios on loaded runners stay around 1.0-1.2 per 0.9 second
+// baselines, leaving comfortable room.
 const MaxHeadroom = 3.0
 
 // SleepRow is one line of the SLEEPS ledger: `pkg<TAB>test<TAB>where`, a
@@ -119,8 +119,8 @@ type SleepRow struct {
 }
 
 // SleepsMarker is the text a unit test's t.Skip starts with when it is skipped
-// for a sleep or a wall-clock wait (nova-tools #4221); go test -json carries it
-// as an output event of the skipped test.
+// for a sleep or a wall-clock wait; go test -json carries it as an output event
+// of the skipped test.
 const SleepsMarker = "SLEEPS:"
 
 // Sleeper is one test skipped with the SLEEPS marker that the ledger does not
@@ -222,8 +222,7 @@ func ParseAllowlist(r io.Reader) ([]Row, error) {
 }
 
 // Benches are the machines a row may name as where it was measured: the
-// self-hosted runner groups and hosts ci.yml's test legs run on (space, and the
-// studio group over air, batman, studio and superman). internal/ci's
+// self-hosted runner groups ci.yml's test legs run on. internal/ci's
 // TestMeasuredBenchesAreCIRunners holds each to ci.yml.
 var Benches = []string{"space", "studio", "superman", "batman", "air"}
 
@@ -461,8 +460,7 @@ func (r Report) SleepsLines(ledger string) []string {
 
 // Load is the host's run-queue load average and its logical CPU count when a
 // run is judged. It is a MEASUREMENT printed beside the times, never an input
-// to the verdict: a budget verdict is the same on any machine (Rowan's ruling
-// on nova-tools#4413, 2026-09-26), so the load only tells a reader what the
+// to the verdict: a budget verdict is the same on any machine, so the load only tells a reader what the
 // box was doing while the times were taken. Known is false when the host has
 // no load average to read (Windows) or the read failed; Why then says so.
 type Load struct {
