@@ -1314,3 +1314,19 @@ deprecated/internal/workreconcile/reconcile_test.go deprecated/ removed 2026-10-
 deprecated/internal/workreconcile/sprint_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
 deprecated/internal/workreconcile/types_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
 internal/ci/sizetable_test.go dead: its only helper readSizeTable had no caller; the size tables it read are checked nowhere else (dead-code pass 2026-10-01)
+cmd/nova-swarm/slots_admission_2033_test.go the slots verb is retired (no workflow, fleet play, Makefile, tool or binary ran it; native reads no slot store since #3877); it drove slots take --kind and slots list
+cmd/nova-swarm/slots_init_test.go the slots verb is retired with the file slot store it made; it drove slots init and take
+cmd/nova-swarm/slots_release_force_usage_test.go the slots verb is retired; it held the banner's slots release --force line, which went with the verb
+internal/swarm/slot_admission_2033_test.go the file slot store and its admission weight went with the slots verb; TestCardKindFromTextReadsTypedHeaderAndPullKind moved to resultformat_test.go beside CardKindFromText
+internal/swarm/slot_lease_spec_test.go it pinned docs/SPEC-SWARM.md's Bench slot leases section, replaced by Bench capacity when the slots verb retired
+internal/swarm/slot_take_race_test.go the file slot store (TakeSlotLeases, ReleaseSlotLeasesByID) went with the slots verb, its one caller
+internal/swarm/slots_identity_test.go the file slot store (TakeSlotLeases, ReleaseSlotLeasesByID) went with the slots verb, its one caller
+internal/swarm/slots_race_1900_test.go the file slot store and its store lock went with the slots verb, its one caller
+internal/swarm/slots_steal_1902_functional_test.go the file slot store (ReleaseSlotLeasesForcing) went with the slots verb, its one caller
+internal/swarm/slots_steal_1902_test.go the file slot store (ReleaseSlotLeasesForcing) went with the slots verb, its one caller
+internal/swarm/slots_test.go the file slot store went with the slots verb, its one caller
+internal/swarm/lock_test.go internal/swarm's file lock (takeFileLock) had one caller, the slot store, which went with the slots verb
+cmd/nova-swarm/profile_test.go the profile verb is retired (no workflow, play, Makefile, tool or binary ran it); its TestProfilePrintsPhases went with it, and TestNativeRunWritesTimeline moved whole to native_timeline_test.go
+internal/swarm/contract_test.go the verify verb is retired (no workflow, play, Makefile, tool or binary ran it) with contract.go, CheckResult and WriteReceipt, which only it reached; a member judges a finish's RESULT.md (member.Judge)
+internal/swarm/signature_test.go the failure-signature table was read only by CheckResult, retired with nova-swarm verify; signature.go and the spec's table went with it
+internal/swarm/result_collision_test.go it held readFileSteadyBy's collision wait; the steady read had one caller left, nova-swarm verify, and went with it (renameSteady keeps the wait)

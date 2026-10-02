@@ -34,15 +34,6 @@ const Dash = "-"
 // UsageRow is one job's row.
 type UsageRow map[string]string
 
-// Int reads a numeric column, reporting whether it is a number at all -- a dash is not.
-func (r UsageRow) Int(name string) (int, bool) {
-	n, err := strconv.Atoi(strings.TrimSpace(r[name]))
-	if err != nil {
-		return 0, false
-	}
-	return n, true
-}
-
 // ProviderUsage is what the harness's own accounting said, read from the data home the
 // dispatcher exported for THIS job -- one job, one database, which is why slots exist.
 type ProviderUsage struct {

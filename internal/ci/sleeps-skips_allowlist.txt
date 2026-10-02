@@ -33,7 +33,6 @@ cmd/nova-update	TestHelpExampleLinesRunAsPrinted	#4221 measured over 5 s on the 
 internal/bus	TestTwoConcurrentRunsSerialiseOnOneCheckout	#4221 calls time.Sleep
 internal/swarm	TestOSProcessTreeCPUAccrual	#4221 calls time.Sleep
 internal/swarm	TestPausePointThreadDirected	#4221 calls time.Sleep
-internal/swarm	TestConcurrentTakesKeepEveryTake	#4221 measured over 5 s on the 2026-09-25 PR run
 internal/update	TestMovedIsBoundedByTheClock	#4221 waits on the wall clock, failed on a 2026-09-25 run
 internal/update	TestRemoveStaleGitTransactionLocksNamesOnly	#4221 calls time.Sleep
 internal/update	TestStellaTwoSnapshotsOneDirectoryPreservesKilledWritersTemp	#4221 calls time.Sleep
@@ -41,7 +40,6 @@ cmd/nova-sandbox	TestTheAgentSocketIsUnreachable	seed #4413: time.After at main_
 internal/sandbox	TestAncestorsTerminatesOnAWindowsPath	seed #4413: time.After at winpath_test.go:77
 internal/swarm	TestFriendSequencePlantedResultIsRefused	seed #4413: time.After at planted_gather_test.go:81
 internal/swarm	TestReadFileSteadyDoesNotBlockOnAFIFO	seed #4413: time.After at symlink_fifo_test.go:145
-internal/swarm	TestReadJSONDoesNotBlockOnAFIFO	seed #4413: time.After at symlink_fifo_test.go:169
 internal/swarm	idleBench.tick	seed #4413: time.After at nativeidle_test.go:76 and 1 more
 internal/update	TestHelperProcess	seed #4413: time.Sleep at update_test.go:50 and 2 more
 internal/update	TestRule25SnapshotSurvivesAReporterKilledWhileWriting	seed #4413: time.NewTimer at rules_test.go:259 and 1 more

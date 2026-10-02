@@ -9,14 +9,6 @@ import (
 // Behaviours the 2026-10-02 break-it probes found no unit test for: each test
 // here goes red when its line is broken.
 
-// The header tokens come in one byte-stable order: by name.
-func TestCardHeaderChecksAreInNameOrder(t *testing.T) {
-	t.Parallel()
-	for range 32 {
-		require.Equal(t, []string{"kind-declared", "paths-declared", "paused", "test-named"}, CardHeaderChecks())
-	}
-}
-
 // An unknown leg names the fleet's leg table in name order, however many legs
 // it holds.
 func TestLegInFleetNamesTheTableInNameOrder(t *testing.T) {

@@ -99,18 +99,13 @@ type Report struct {
 	Bytes         int
 }
 
-// HashBytes is a revision's identity: the SHA-256 of its bytes. There is no mtime anywhere
-// in this tool -- two revisions with one mtime are two hashes, and an mtime a filesystem
-// rounds is not an identity (rule 16).
-func HashBytes(data []byte) string {
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
-}
-
 // ParseReport reads one RESULT.md into a Report. It never returns a finding from a report
 // it classifies malformed.
 func ParseReport(data []byte) Report {
-	r := Report{Hash: HashBytes(data), Bytes: len(data), Class: ClassPlanOnly}
+	// A revision's identity is the SHA-256 of its bytes, never an mtime: two revisions with
+	// one mtime are two hashes, and an mtime a filesystem rounds is not an identity (rule 16).
+	sum := sha256.Sum256(data)
+	r := Report{Hash: hex.EncodeToString(sum[:]), Bytes: len(data), Class: ClassPlanOnly}
 	lines := strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
 	section := ""
 	inHead := false

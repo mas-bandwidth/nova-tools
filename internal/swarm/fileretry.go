@@ -80,17 +80,6 @@ func steadyTransient(err error) bool {
 	return transientIO(err)
 }
 
-// readFileSteady reads a whole file, waiting out a transient collision with a concurrent
-// atomic replace of the same path. A file that is NOT THERE is an answer, not a collision:
-// it returns immediately, so `os.IsNotExist` callers keep the meaning they had.
-//
-// It reads through readRegular (regular.go), so a path that is a SYMLINK or a FIFO is an
-// answer too -- refused at once, never followed and never waited on. That is every
-// dispatcher read of a worker-writable record: this function, and ReadJSON through it.
-func readFileSteady(path string) ([]byte, error) {
-	return readFileSteadyBy(wallClock, path, time.Time{})
-}
-
 // steadyClock is what a steady wait reads the time from and spends it on.
 type steadyClock struct {
 	now   func() time.Time
@@ -100,26 +89,13 @@ type steadyClock struct {
 // wallClock is the real one, the only one outside a test.
 var wallClock = steadyClock{now: time.Now, sleep: time.Sleep}
 
-// readFileSteadyBy is readFileSteady under a caller's deadline: the collision wait gets the
-// smaller of this package's window and what the caller has left.
-func readFileSteadyBy(c steadyClock, path string, budget time.Time) ([]byte, error) {
-	deadline := steadyDeadline(c.now(), budget)
-	for {
-		raw, err := readRegular(path)
-		if err == nil || !steadyTransient(err) || !c.now().Before(deadline) {
-			return raw, err
-		}
-		c.sleep(steadyPoll)
-	}
-}
-
 // renameSteady renames, waiting out a reader that has the destination open. The caller's
 // error is the LAST one, so a path that is genuinely wrong still reports what is wrong
 // with it.
 func renameSteady(from, to string) error { return renameSteadyBy(wallClock, from, to, time.Time{}) }
 
-// renameSteadyBy is renameSteady under a caller's deadline, on the same terms as
-// readFileSteadyBy.
+// renameSteadyBy is renameSteady under a caller's deadline: the collision wait gets the
+// smaller of this package's window and what the caller has left.
 func renameSteadyBy(c steadyClock, from, to string, budget time.Time) error {
 	deadline := steadyDeadline(c.now(), budget)
 	for {

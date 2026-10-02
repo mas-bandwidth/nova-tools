@@ -12,6 +12,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // Issue #1665 / PR #2421: Worker Boundary Identity Delivery.
@@ -215,10 +217,11 @@ func TestNativeRefusesMissingPoolIdentityBeforeHarness(t *testing.T) {
 	require.Equal(t, 2, rc, "native run exit = %d, want 2 (refusal);\nstdout:\n%s\nstderr:\n%s", rc, stdout.String(), stderr.String())
 	require.Contains(t, stderr.String(), "NATIVE REFUSED", "stderr does not contain NATIVE REFUSED:\n%s", stderr.String())
 	require.Contains(t, stderr.String(), "refusing to launch under nobody's name", "stderr does not contain expected refusal message:\n%s", stderr.String())
-	// #3193: the refusal names identity.tsv and the one remedy, the fleet converge.
+	// #3193: the refusal names the remedy any adopter has: --identity, or the identity.tsv it
+	// says the shape of; never one fleet's own tooling.
 	line := stderr.String()
-	require.Contains(t, line, "identity.tsv", "the refusal does not name identity.tsv and the remedy `make -C fleet converge`:\n%s", line)
-	require.Contains(t, line, "make -C fleet converge", "the refusal does not name identity.tsv and the remedy `make -C fleet converge`:\n%s", line)
+	require.Contains(t, line, swarm.PoolIdentityRemedy, "the refusal does not carry the pool identity remedy:\n%s", line)
+	require.NotContains(t, line, "rowan-tools", "the refusal names one fleet's tooling:\n%s", line)
 
 	// Verify harness was never started: neither native.log nor harness-output.log was created.
 	nativeLog := filepath.Join(slot, "native.log")
@@ -293,10 +296,11 @@ func TestNativeRefusesMalformedPoolIdentityBeforeHarness(t *testing.T) {
 	require.Equal(t, 2, rc, "native run exit = %d, want 2 (refusal);\nstdout:\n%s\nstderr:\n%s", rc, stdout.String(), stderr.String())
 	require.Contains(t, stderr.String(), "NATIVE REFUSED", "stderr does not contain NATIVE REFUSED:\n%s", stderr.String())
 	require.Contains(t, stderr.String(), "refusing to launch under nobody's name", "stderr does not contain expected refusal message:\n%s", stderr.String())
-	// #3193: the refusal names identity.tsv and the one remedy, the fleet converge.
+	// #3193: the refusal names the remedy any adopter has: --identity, or the identity.tsv it
+	// says the shape of; never one fleet's own tooling.
 	line := stderr.String()
-	require.Contains(t, line, "identity.tsv", "the refusal does not name identity.tsv and the remedy `make -C fleet converge`:\n%s", line)
-	require.Contains(t, line, "make -C fleet converge", "the refusal does not name identity.tsv and the remedy `make -C fleet converge`:\n%s", line)
+	require.Contains(t, line, swarm.PoolIdentityRemedy, "the refusal does not carry the pool identity remedy:\n%s", line)
+	require.NotContains(t, line, "rowan-tools", "the refusal names one fleet's tooling:\n%s", line)
 
 	// Verify harness was never started: neither native.log nor harness-output.log was created.
 	nativeLog := filepath.Join(slot, "native.log")

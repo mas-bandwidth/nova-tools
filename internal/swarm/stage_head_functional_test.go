@@ -59,7 +59,7 @@ func newHeadRig(t *testing.T) *headRig {
 func (g *headRig) stage(t *testing.T, sha, commitOnly string, refAt bool) (StageResult, error) {
 	t.Helper()
 	target := filepath.Join(g.root, "jobs", "c", "repo")
-	return StageCard(StageOptions{
+	return StageCard(StageOptions{Identity: testStageIdentity,
 		Card: []byte("c: the card\nbase-repo: " + headTestURL + "\nbase-sha: " + sha + "\n"), TargetDir: target,
 		JobDir: filepath.Dir(target), BenchHome: g.home, BenchName: "testhost", Timeout: 30 * time.Second,
 		fetchRetryDelay: time.Millisecond,

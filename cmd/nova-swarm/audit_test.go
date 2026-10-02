@@ -96,13 +96,6 @@ var swarmAudit = audit.Config{
 		// author writes -- and the worker name from the description, so nothing
 		// but Field-escaped fields can come back.
 		"swarm.PublicRefusalLine",
-		// l.Line (nova-tools#2033) is SlotLease.Line: every field of the SLOT list
-		// row -- id, owner, label, until, state, kind, weight, stranded -- goes
-		// through oneline.Field (or a numeric verb) inside internal/swarm before
-		// the string returns, so cmdSlotsList printing it whole cannot write past
-		// the escape. TestSlotsListMarksADeadHolderStrandedWithItsLabel is the
-		// behavioural test for this site.
-		"l.Line",
 	},
 	Imports: []string{
 		// the verb-help seam (the CLI style's rule (b), #4505): on -h it prints only flag names,

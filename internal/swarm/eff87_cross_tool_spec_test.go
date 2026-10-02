@@ -14,9 +14,8 @@ import (
 // of the same work paid for once per tool, and its contract lives in the spec:
 // one reference checkout per bench behind a per-job `--reference`/`--dissociate`
 // clone, and the prompt text the workers run owned by the tool's templates
-// rather than a shell script. This doc test reads the section out of the spec
-// the way TestBenchSlotLeasesSectionNamesItsRules reads the Bench slot leases
-// section: the spec is the one place the contract is written.
+// rather than a shell script. This doc test reads the section out of the spec:
+// the spec is the one place the contract is written.
 func TestCrossToolEfficiencyCardNamesItsRules(t *testing.T) {
 	t.Parallel()
 

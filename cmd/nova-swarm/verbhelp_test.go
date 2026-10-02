@@ -19,19 +19,12 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 	testverbhelp.Check(t, swarmRun, []testverbhelp.Case{
 		{Verb: "version"},
 		{Verb: "doctor", Flags: []string{"--path", "{dir}/nova-swarm", "--local", "{dir}/local"}},
-		{Verb: "verify", Flags: []string{"--result", "{dir}/result"}},
 		{Verb: "lint", Flags: []string{"--card", "{dir}/card"}},
 		{Verb: "template", Flags: []string{"--name", "read-pr"}},
-		{Verb: "profile", Flags: []string{"--jobs", "{dir}/jobs/*"}},
 		{Verb: "native", Flags: []string{"--card", "{dir}/card", "--slot", "{dir}/slot", "--root", "{dir}/root"}},
-		{Verb: "slots"},
-		{Verb: "slots init", Flags: []string{"--store", "{dir}/store"}},
-		{Verb: "slots take", Flags: []string{"--store", "{dir}/store", "--owner", "o"}},
-		{Verb: "slots release", Flags: []string{"--store", "{dir}/store", "--owner", "o"}},
-		{Verb: "slots list", Flags: []string{"--store", "{dir}/store"}},
 		{Verb: "worker check"},
 	})
-	testverbhelp.HelpVerb(t, swarmRun, "nova-swarm", "version", "native", "slots take", "worker")
+	testverbhelp.HelpVerb(t, swarmRun, "nova-swarm", "version", "native", "worker check", "worker")
 }
 
 func swarmRun(args []string, stdout, stderr io.Writer) int {

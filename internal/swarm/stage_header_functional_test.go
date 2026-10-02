@@ -30,7 +30,7 @@ func TestStageCardStagesThePushedHeaderFromTheMirror(t *testing.T) {
 	jobDir := filepath.Join(root, "jobs", "card-1")
 	target := filepath.Join(jobDir, "repo")
 
-	res, err := StageCard(StageOptions{
+	res, err := StageCard(StageOptions{Identity: testStageIdentity,
 		Card:      pushedHeader(first),
 		TargetDir: target,
 		JobDir:    jobDir,
@@ -46,8 +46,8 @@ func TestStageCardStagesThePushedHeaderFromTheMirror(t *testing.T) {
 	require.Equal(t, first, head, "<job>/repo HEAD = %s, want base-sha %s (dev tip is %s)", head, first, second)
 	require.Equal(t, first, res.BaseSha, "res.BaseSha = %q, want %q", res.BaseSha, first)
 	b := strings.TrimSpace(execCmd(t, target, "git", "rev-parse", "--abbrev-ref", "HEAD"))
-	require.Equal(t, "rowan/s00-0302-quack-hulk-flash", b, "branch = %q (res %q), want rowan/s00-0302-quack-hulk-flash", b, res.Branch)
-	require.Equal(t, b, res.Branch, "branch = %q (res %q), want rowan/s00-0302-quack-hulk-flash", b, res.Branch)
+	require.Equal(t, "test-owner/s00-0302-quack-hulk-flash", b, "branch = %q (res %q), want test-owner/s00-0302-quack-hulk-flash", b, res.Branch)
+	require.Equal(t, b, res.Branch, "branch = %q (res %q), want test-owner/s00-0302-quack-hulk-flash", b, res.Branch)
 	_, err = os.Stat(filepath.Join(target, ".git", "objects", "info", "alternates"))
 	require.True(t, os.IsNotExist(err), "staging did not dissociate from the mirror: %v", err)
 	origin := strings.TrimSpace(execCmd(t, target, "git", "remote", "get-url", "origin"))
@@ -64,7 +64,7 @@ func TestStageCardChecksOutTheBaseRefWithoutASha(t *testing.T) {
 	jobDir := filepath.Join(root, "jobs", "card-2")
 	target := filepath.Join(jobDir, "repo")
 	card := []byte("RESULT: ref-card sha=000000000000\nREPO: mas-bandwidth/nova-tools\nBASE: dev\n")
-	res, err := StageCard(StageOptions{Card: card, TargetDir: target, JobDir: jobDir, BenchHome: benchHome, BenchName: "hulk", Timeout: 30 * time.Second})
+	res, err := StageCard(StageOptions{Identity: testStageIdentity, Card: card, TargetDir: target, JobDir: jobDir, BenchHome: benchHome, BenchName: "hulk", Timeout: 30 * time.Second})
 	require.NoError(t, err, "StageCard: %v", err)
 	head := strings.TrimSpace(execCmd(t, target, "git", "rev-parse", "HEAD"))
 	require.Equal(t, second, head, "HEAD = %s res=%+v, want the dev tip %s", head, res, second)

@@ -14,9 +14,8 @@ import (
 // the card is one of the seven-tool efficiency cards and records two measured
 // operations of nova-swarm -- the per-job clone and the waits a job holds -- as
 // normative contract (status and triage measurements were excised with the dead
-// pool verbs). This doc test reads the section out of the spec the way
-// TestBenchSlotLeasesSectionNamesItsRules does: the spec is the one place the
-// contract is written.
+// pool verbs). This doc test reads the section out of the spec: the spec is the
+// one place the contract is written.
 func TestEfficiencyCardSectionNamesItsTwoMeasuredOperations(t *testing.T) {
 	t.Parallel()
 

@@ -16,9 +16,8 @@ import (
 // nova-sprint fleet sync moves it to the fleet table as it reads.
 //
 // It is the static share, the same on every read of the same row. It is not
-// the room left now: the CI legs running on the machine and every other child
-// are taken off at the take, by a lease from the machine's one slot store
-// (nova-swarm slots take, internal/swarm.TakeSlotLeases), never here.
+// the room left now: the cards already running on the machine are counted at
+// the sprint's take (docs/SPEC-SPRINT.md), never here.
 //
 // A machine with width 1 or more is a member of the sprint's fleet; width 0
 // is no member: the sprint's width is a whole number from 1

@@ -58,3 +58,14 @@ func TestCardPromptLeavesUntypedCardsAlone(t *testing.T) {
 		assert.Equal(t, card, got, "CardPrompt(%q) = %q, want the card unchanged", card, got)
 	}
 }
+
+func TestCardKindFromTextReadsTypedHeaderAndPullKind(t *testing.T) {
+	t.Parallel()
+
+	got := CardKindFromText("RESULT: c1 sha=aaaaaaaaaaaa\nKIND: schema\nbody\n")
+	assert.Equal(t, "schema", got, "KIND: header: got %q", got)
+	got = CardKindFromText(":kind go\n:repo owner/name\n")
+	assert.Equal(t, "go", got, ":kind field: got %q", got)
+	got = CardKindFromText("a card with no kind\n")
+	assert.Empty(t, got, "untyped: got %q", got)
+}
