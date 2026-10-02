@@ -226,7 +226,13 @@ func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, time.Now().UTC())) 
 // run is the whole tool, with its streams and clock injected so the tests can drive it.
 // The clock is an argument and NOT a flag: the stamp on a day file is when the tool
 // computed it, and a stamp a caller could set would be a stamp nobody could trust.
-func run(args []string, stdout, stderr io.Writer, now time.Time) (code int) {
+func run(args []string, stdout, stderr io.Writer, now time.Time) int {
+	return runWith(args, stdout, stderr, now, newPrivateDir)
+}
+
+// runWith is run with the one thing a run makes that a test must be able to refuse: the
+// private directory a run that writes nothing copies an OpenCode database into.
+func runWith(args []string, stdout, stderr io.Writer, now time.Time, newPrivate privateDir) (code int) {
 	// `<verb> -h` and `help <verb>` print that verb's help, its effect included, on stdout
 	// at exit 0, before anything is read or written (the CLI style's rule (b)).
 	defer verbflag.RecoverWith(stdout, "nova-tokens", usage, &code, effectOf)
@@ -244,9 +250,9 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) (code int) {
 		fmt.Fprintf(stdout, "%s", usage)
 		return 0
 	case "fold":
-		return cmdFold(rest, stdout, stderr, now)
+		return cmdFold(rest, stdout, stderr, now, newPrivate)
 	case "report":
-		return cmdReport(rest, stdout, stderr, now)
+		return cmdReport(rest, stdout, stderr, now, newPrivate)
 	case "ledger":
 		return cmdLedger(rest, stdout, stderr)
 	case "sum":
@@ -254,7 +260,7 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) (code int) {
 	case "check":
 		return cmdCheck(rest, stdout, stderr, now)
 	case "sources":
-		return cmdSources(rest, stdout, stderr, now)
+		return cmdSources(rest, stdout, stderr, now, newPrivate)
 	case "profiles":
 		return cmdProfiles(rest, stdout, stderr, now)
 	case "session":
@@ -336,6 +342,8 @@ type sourceFlags struct {
 	scratch  string
 	timeout  int
 	repos    string
+	// newPrivate makes the private copy directory under --scratch (newPrivateDir).
+	newPrivate privateDir
 }
 
 func (s *sourceFlags) declare(fs *flag.FlagSet, withSwarmAndBus bool) {
@@ -470,12 +478,10 @@ func (s *sourceFlags) read(rules *tokens.Rules, now time.Time, private bool) (ou
 	}
 	scratch := s.scratch
 	if private && len(s.opencode.items) > 0 {
-		dir, err := os.MkdirTemp(s.scratch, ".nova-tokens-dry-run-")
+		dir, err := s.newPrivate(s.scratch)
 		if err != nil {
 			for _, it := range s.opencode.items {
-				src := &tokens.Source{Label: tokens.Label(tokens.KindOpenCode, it.label), Kind: tokens.KindOpenCode, Path: it.value, Basis: tokens.UTC}
-				src.Unreadables = append(src.Unreadables, tokens.Unreadable{Label: src.Label, Path: it.value, Why: "a private copy directory under --scratch: " + err.Error()})
-				out = append(out, src)
+				out = append(out, tokens.UnreadableOpenCode(it.label, it.value, "a private copy directory under --scratch: "+err.Error()))
 			}
 			scratch = ""
 		} else {
@@ -586,7 +592,7 @@ var foldLists = []struct {
 // a row mixed two day bases, a lane-day had competing reports, or a day would have shrunk
 // -- and it still writes the rest, because the exit code is about the claim. Under
 // --dry-run it reads and decides exactly the same and writes nothing, the lock included.
-func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
+func cmdFold(args []string, stdout, stderr io.Writer, now time.Time, newPrivate privateDir) int {
 	fs := newFlagSet("fold")
 	out := fs.String("out", "", "directory for daily token files")
 	day := fs.String("day", "", "one UTC day to fold as YYYY-MM-DD")
@@ -633,6 +639,7 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 		defer release()
 	}
 
+	sf.newPrivate = newPrivate
 	sources, copyNotes := sf.read(rules, now, *dryRun)
 	folder := tokens.NewFolder()
 	for _, src := range sources {
@@ -1033,7 +1040,7 @@ func firstConflictLabel(sources []*tokens.Source) string {
 // second reader would drift -- prints what each yielded, and writes nothing. It exists so
 // a person can see what a fold would count before it writes, and it exits 0 whenever it
 // ran, because asserting is not its job.
-func cmdSources(args []string, stdout, stderr io.Writer, now time.Time) int {
+func cmdSources(args []string, stdout, stderr io.Writer, now time.Time, newPrivate privateDir) int {
 	fs := newFlagSet("sources")
 	day := fs.String("day", "", "one UTC day to inspect as YYYY-MM-DD")
 	all := fs.Bool("all", false, "inspect every day named by the sources")
@@ -1065,6 +1072,7 @@ func cmdSources(args []string, stdout, stderr io.Writer, now time.Time) int {
 			rules.FilterDay(*day)
 		}
 	}
+	sf.newPrivate = newPrivate
 	sources, copyNotes := sf.read(rules, now, true)
 	if !*all {
 		// When --day is specified (without --all), message counts, row keys, and unattributed
@@ -1141,7 +1149,7 @@ func cmdSources(args []string, stdout, stderr io.Writer, now time.Time) int {
 // THIS IS THE ONE PLACE IN THE FAMILY WHERE THE OK LINE LEAVES STDOUT, because here stdout
 // is the artifact. The spec says so in as many words, which is the exception SPEC.md's
 // Conventions allow when a spec states one.
-func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
+func cmdReport(args []string, stdout, stderr io.Writer, now time.Time, newPrivate privateDir) int {
 	fs := newFlagSet("report")
 	who := fs.String("who", "", "name to write in each note body row")
 	day := fs.String("day", "", "one UTC day to report as YYYY-MM-DD")
@@ -1197,6 +1205,7 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	sorted := slices.Sorted(slices.Values(supersedes))
 
+	sf.newPrivate = newPrivate
 	sources, copyNotes := sf.read(rules, now, *dryRun)
 	folder := tokens.NewFolder()
 	for _, src := range sources {

@@ -81,10 +81,26 @@ var messageCounts = []struct {
 	{"cache_read", CacheRead}, {"reasoning", Reasoning},
 }
 
-// ReadOpenCode copies the database into scratch and reads it there.
-func ReadOpenCode(label, dbPath, scratch string, timeout time.Duration, rules *Rules) *Source {
+// openCodeSource is the Source one declared database is before anything is read: the
+// one file it names, and the five types an OpenCode message carries.
+func openCodeSource(label, dbPath string) *Source {
 	s := &Source{Label: Label(KindOpenCode, label), Kind: KindOpenCode, Path: dbPath, Reports: AllTypes, Basis: UTC}
 	s.Stat.Files = 1
+	return s
+}
+
+// UnreadableOpenCode is a declared database that could not be read at all, for a reason
+// found before the reader ran (no place to copy it to): the same Source the reader
+// returns when its own copy fails, its one unreadable counted on every line that names it.
+func UnreadableOpenCode(label, dbPath, why string) *Source {
+	s := openCodeSource(label, dbPath)
+	s.unreadable(dbPath, why)
+	return s
+}
+
+// ReadOpenCode copies the database into scratch and reads it there.
+func ReadOpenCode(label, dbPath, scratch string, timeout time.Duration, rules *Rules) *Source {
+	s := openCodeSource(label, dbPath)
 
 	copyDir := filepath.Join(scratch, "opencode-"+label)
 	if err := os.MkdirAll(copyDir, 0o755); err != nil {

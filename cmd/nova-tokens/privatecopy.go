@@ -13,6 +13,16 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
+// privateDir makes the directory a run that writes nothing copies an OpenCode database
+// into, under --scratch, and returns its path.
+type privateDir func(scratch string) (string, error)
+
+// newPrivateDir is that directory: new to the run and private to it (os.MkdirTemp), so
+// no file in --scratch is ever replaced or truncated.
+func newPrivateDir(scratch string) (string, error) {
+	return os.MkdirTemp(scratch, ".nova-tokens-dry-run-")
+}
+
 // copyNote prints each private copy a read could not remove, as a NOTE on stderr: the run
 // meant to leave --scratch as it was, and says where it did not.
 func copyNote(s *sink, token string, notes []string) {
