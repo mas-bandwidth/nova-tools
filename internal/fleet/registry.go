@@ -1,17 +1,11 @@
 // Package fleet holds the machines registry: the one file that says what each machine in
 // the fleet IS, and therefore what may be placed on it.
 //
-// THE LOCK (Glenn, 2026-09-18): runner hosts are CI-only. No card, no probe and no load may
-// be placed on a machine that serves the merge group's shards. A card and a CI shard on one
-// host make the shard slow, the gate red and the queue stop -- this was measured all through
-// 2026-09-17, when the merge group's darwin legs starved behind the coordination bench's own
-// children and nothing landed for twenty minutes at a time.
+// The runner/bench lock prevents cards from running on CI-only hosts.
+// A card and a CI shard on one host make the shard slow and the gate red.
 //
-// The registry exists because a bench name reached a machine as a bare string: `--bench
-// batman` was a hostname the fill loop would happily ssh to, and nothing in the tools knew
-// that batman is six CI runners and not a card bench. Now a machine name is RESOLVED: a verb
-// asks the registry for the row, and a name the registry does not carry is refused by name,
-// with the reason and the remedy on the line.
+// The registry resolves machine names to their roles. A bare name string is refused
+// if it does not appear in the registry, with the reason and remedy on the line.
 //
 // The file is data, tab separated, kept in git beside the lanes file:
 //
@@ -65,8 +59,7 @@ var knownRoles = map[string]bool{
 const ReasonUnknown = "unknown-machine"
 
 // allowSharedPrefix is how a machine that is BOTH runner and bench says why. The exception
-// is dated because it is meant to end: when the pull worker runs cards in containers, the
-// runner role comes off hulk and vision and the note goes with it.
+// is dated because it is meant to end.
 const allowSharedPrefix = "allow-shared="
 
 // Machine is one line of the registry.
