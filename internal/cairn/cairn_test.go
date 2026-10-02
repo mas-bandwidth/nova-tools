@@ -135,11 +135,11 @@ func TestUnreadableExistingEntryRefusedOnAppendAndRead(t *testing.T) {
 
 	entryFile := filepath.Join(store, "entries", "s", "e1.json")
 	require.NoError(t, os.Chmod(entryFile, 0o000), "chmod unreadable")
-	t.Cleanup(func() { _ = os.Chmod(entryFile, 0o644) })
+	t.Cleanup(func() { require.NoError(t, os.Chmod(entryFile, 0o644), "restore mode on cleanup") })
 
-	// If running as root (e.g. in some container environments), chmod 0000 may still be readable.
+	// If running on a filesystem/platform where chmod 0000 remains readable.
 	if _, err := os.ReadFile(entryFile); err == nil {
-		t.Skip("skipping unreadable permission test: running as root / superuser")
+		t.Skip("skipping unreadable permission test: file remains readable despite mode 0000 on this filesystem/platform")
 	}
 
 	// C1: Appending with different prose or same id must refuse due to unreadable existing state
@@ -172,8 +172,11 @@ func TestCorruptStampRejectedByReaders(t *testing.T) {
 	now := time.Now().UTC()
 	require.NoError(t, Open(store, "s", "src", now, "manual"), "Open")
 
+	entriesDir := filepath.Join(store, "entries", "s")
+	require.NoError(t, os.MkdirAll(entriesDir, 0o755))
+
 	// Store an entry with valid JSON but an invalid RFC 3339 timestamp.
-	entryFile := filepath.Join(store, "entries", "s", "e-bad.json")
+	entryFile := filepath.Join(entriesDir, "e-bad.json")
 	corruptContent := `{"session":"s","id":"e-bad","stamp":"2026-99-28T01:02:03Z","source":"src","publish":"manual","text":"some words"}`
 	require.NoError(t, os.WriteFile(entryFile, []byte(corruptContent), 0o644))
 
@@ -202,7 +205,7 @@ func TestCorruptStampRejectedByReaders(t *testing.T) {
 	require.Contains(t, err.Error(), "invalid stamp", "EntryText error must mention invalid stamp, got %v", err)
 
 	// Malformed JSON must also be rejected by Receipt and Index.
-	entryBroken := filepath.Join(store, "entries", "s", "e-broken.json")
+	entryBroken := filepath.Join(entriesDir, "e-broken.json")
 	require.NoError(t, os.WriteFile(entryBroken, []byte(`{"session":"s",`), 0o644))
 	_, err = Receipt(store, "s", "e-broken")
 	require.Error(t, err)
