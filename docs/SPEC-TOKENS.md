@@ -131,8 +131,8 @@ near the end, and the sections below say how each is met.
    nothing. No verb deletes, truncates or trims any file, including any log.
    The exception is a file THIS RUN makes: the fold's own `fold.lock`, the copy under `--scratch`, the temporary file
    `internal/atomicfile` writes through before rename (removed on failure or
-   cleanup), and, on a platform with no flock, the lock sentinel the release
-   removes. The report and the ledgers are written through the same atomicfile. A file the tool was given is
+   cleanup). The fold's own `fold.lock` is emptied, never removed: its body is
+   the holder stamp `internal/filelock` writes on taking and clears on release. The report and the ledgers are written through the same atomicfile. A file the tool was given is
    never one of them, and the tripwire that enforces this searches for every
    call that can empty a file -- `os.Remove`, `os.RemoveAll`, `os.Truncate`,
    `.Truncate(`, `os.Create(`, `os.WriteFile(`, `os.O_TRUNC` (the flag that
@@ -1294,9 +1294,9 @@ pin all three by executing them.
    and rename under the output lock, the shrink comparison with `-` on either
    side. Tests: round trip is byte-identical; an unversioned file refuses;
    demanded tests 8, 10, 12, 13, 18.
-2. **`internal/tokens/lock.go`**: `flock` on `<out>/fold.lock` (LockFileEx
-   on Windows), a bounded jittered wait with the sleeper injected, exit 2
-   naming the holder. Tests: demanded test 8's lock half.
+2. **`internal/tokens/lock.go`**: `internal/filelock` on `<out>/fold.lock`
+   (flock; LockFileEx on Windows; tla/FileLock.tla), a bounded jittered wait,
+   exit 2 naming the holder's pid from its stamp. Tests: demanded test 8's lock half.
 3. **`internal/tokens/message.go`**: the one message shape every source
    produces, with each of the five types either a count or absent, the
    source's `reports` set and the day basis, and the fold function over a
