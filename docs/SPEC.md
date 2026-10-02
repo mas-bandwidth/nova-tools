@@ -3096,7 +3096,7 @@ change set plus the open list under `--since`.
 
 `REFUSED` is a `FAIL` with no path slot, because what it refuses is the state of
 the CHECKOUT rather than anything in the note: it is the branch-ahead guard
-below, a cursor that is not on this history, a `--legacy-before` that
+below, a cursor that is not on this history, a `--before` that
 would move a reader's line earlier, or a FIRST `--advance` over a history nobody
 has said what to do with (see **the first advance** below). `INBOX UNREADABLE` names a file on the bus this tool cannot parse — not
 necessarily one addressed to the caller, because a file with no `To:` line
@@ -3814,7 +3814,7 @@ inbox, and is not reported — only a note whose whole address resolves to an em
 list has no reader. It is a report and never a failure; `check` is the gate and
 says the same thing about the header in its own words. `send` refuses an unknown
 recipient, so nothing this tool writes can become one of these: they are the
-legacy notes and the ones typed by hand in a browser, which is exactly the
+notes typed by hand in a browser, which is exactly the
 writing this bus's form exists to allow.
 
 ### The push protocol
@@ -4036,7 +4036,7 @@ same two reasons, as an `INDEX` line.
 <id|->  <kind>  <heard|->  <from|->  <addr|->  <date|->  <path>  <subject|->
 ```
 
-- **id** — the note's id, or `-` for a legacy note, which is addressed by path;
+- **id** — the note's id, or `-` for a note addressed by path;
 - **kind** — `note`, `receipt` or `unreadable`, decided when the note went open.
   `receipt` is the receipt heuristic's answer or a `Kind:` line's, taken once:
   the body is not read again, so the threshold that classified an entry is the
@@ -4306,7 +4306,7 @@ is still shaped by the line.
 reasonable — nothing written before tomorrow was written under the tool, so the
 open list starts at zero. And it stays at zero: a date is midnight at its
 **start**, so every note sent that same afternoon is dated before tomorrow's
-midnight and is therefore legacy — lines writing to each other all day, and not
+midnight and is therefore before — lines writing to each other all day, and not
 one note on anybody's open list, not even under `--full`. **A `--legacy-before` date in the future
 hides every note written today**, because midnight tomorrow is after all of them;
 give the instant you switched instead. Recovering is one command — the same
@@ -4389,7 +4389,7 @@ bus as read and leaves you what arrives after that moment, or pass
 today behind the line — a date is midnight at its **START**, so tomorrow's date
 is a moment AFTER every note anybody sends today, and a reader who pasted such a
 line would lose the whole switch day: the notes their friends were writing to
-them while they read the refusal would be legacy before they arrived. A guard
+them while they read the refusal would be before they arrived. A guard
 that hands out that shape is the fastest way to spread it. The instant draws the line where
 the reader actually is: history behind, news in front.
 
@@ -4787,7 +4787,7 @@ run, not the first.
 
 **A lane's `README.md` is not a note.** It ends in `.md` and it sits in a lane,
 so a walk that parsed it would fail, tell every reader `INBOX UNREADABLE` about it
-forever, and fail `check` at every date — the legacy tolerance cannot forgive
+forever, and fail `check` at every date — the tolerance cannot forgive
 it, because a README genuinely cannot say when it was written and genuinely is
 not a note. So a lane may hold exactly one non-note, non-state file, under
 exactly that name: the file a person opening the lane in a browser reads first.
@@ -4926,7 +4926,7 @@ answerable by its path, so an answer written by hand, by path, keeps working.
 - **No sweep verb.** `--legacy-before` is a TOLERANCE and not a repair, in both
   verbs: `check`'s forgives an old note's header, `inbox`'s leaves an old note
   off one reader's open list, and neither fixes anything or touches a note. It is
-  a line drawn once rather than machinery. There is no verb that repairs legacy
+  a line drawn once rather than machinery. There is no verb that repairs old
   headers and re-points orphaned `Re:` lines; one would want a person watching it.
 - **It refuses to run over a dirty checkout, so write your drafts elsewhere.**
   `send` needs the bus's working tree clean but for the note it is about to
