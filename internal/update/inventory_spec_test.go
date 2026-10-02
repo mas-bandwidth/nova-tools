@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
@@ -298,21 +299,23 @@ func TestDiffRefusesANonSnapshotFile(t *testing.T) {
 
 // 11. TestSnapshotIsBoundedByTheClock.
 func TestSnapshotIsBoundedByTheClock(t *testing.T) {
-	old := snapshotChildTimeout
-	snapshotChildTimeout = 20 * time.Millisecond
-	t.Cleanup(func() { snapshotChildTimeout = old })
-	bin := t.TempDir()
-	specScript(t, bin, "nova-slow", "sleep 5\nprintf 'nova-slow v1.0.0 linux/amd64 go1.0\\n'")
-	out := filepath.Join(t.TempDir(), "s.tsv")
-	env := Environment{Now: func() time.Time { return time.Date(2026, 9, 17, 0, 0, 0, 0, time.UTC) }}
-	code, _, stderr := specRun(t, env, "snapshot", "--bin", bin, "--out", out)
-	if code != 2 {
-		require.EqualValuesf(t, 2, code, "exit %d stderr=%s", code, stderr)
-	}
-	need(t, stderr, "nova-slow", snapshotChildTimeout.String())
-	if _, err := os.Stat(out); err == nil {
-		require.Errorf(t, err, "a partial --out was written")
-	}
+	synctest.Test(t, func(t *testing.T) {
+		old := snapshotChildTimeout
+		snapshotChildTimeout = 20 * time.Millisecond
+		t.Cleanup(func() { snapshotChildTimeout = old })
+		bin := t.TempDir()
+		specScript(t, bin, "nova-slow", "printf 'nova-slow v1.0.0 linux/amd64 go1.0\\n'")
+		out := filepath.Join(t.TempDir(), "s.tsv")
+		env := Environment{Process: deadlineFake(t, 20*time.Millisecond), Now: func() time.Time { return time.Date(2026, 9, 17, 0, 0, 0, 0, time.UTC) }}
+		code, _, stderr := specRun(t, env, "snapshot", "--bin", bin, "--out", out)
+		if code != 2 {
+			require.EqualValuesf(t, 2, code, "exit %d stderr=%s", code, stderr)
+		}
+		need(t, stderr, "nova-slow", snapshotChildTimeout.String())
+		if _, err := os.Stat(out); err == nil {
+			require.Errorf(t, err, "a partial --out was written")
+		}
+	})
 }
 
 // 13. TestSnapshotTakesItsBoundsFromFlags.
@@ -325,29 +328,33 @@ func TestSnapshotTakesItsBoundsFromFlags(t *testing.T) {
 	t.Parallel()
 
 	t.Run("timeout bounds one binary", func(t *testing.T) {
-		bin := t.TempDir()
-		specScript(t, bin, "nova-slow", "sleep 30\nprintf 'nova-slow v1.0.0 linux/amd64 go1.0\\n'")
-		out := filepath.Join(t.TempDir(), "s.tsv")
-		code, _, stderr := specRun(t, Environment{}, "snapshot", "--bin", bin, "--out", out, "--timeout", "20ms")
-		if code != 2 {
-			require.EqualValuesf(t, 2, code, "exit %d stderr=%s", code, stderr)
-		}
-		need(t, stderr, "nova-slow", "20ms")
-		if _, err := os.Stat(out); err == nil {
-			require.Error(t, err, "a partial --out was written")
-		}
+		synctest.Test(t, func(t *testing.T) {
+			bin := t.TempDir()
+			specScript(t, bin, "nova-slow", "printf 'nova-slow v1.0.0 linux/amd64 go1.0\\n'")
+			out := filepath.Join(t.TempDir(), "s.tsv")
+			code, _, stderr := specRun(t, Environment{Process: deadlineFake(t, 20*time.Millisecond)}, "snapshot", "--bin", bin, "--out", out, "--timeout", "20ms")
+			if code != 2 {
+				require.EqualValuesf(t, 2, code, "exit %d stderr=%s", code, stderr)
+			}
+			need(t, stderr, "nova-slow", "20ms")
+			if _, err := os.Stat(out); err == nil {
+				require.Error(t, err, "a partial --out was written")
+			}
+		})
 	})
 	t.Run("budget bounds the run", func(t *testing.T) {
-		bin := t.TempDir()
-		for _, n := range []string{"nova-a", "nova-b", "nova-c", "nova-d"} {
-			specScript(t, bin, n, "sleep 30\nprintf '"+n+" v1.0.0 linux/amd64 go1.0\\n'")
-		}
-		out := filepath.Join(t.TempDir(), "s.tsv")
-		code, _, stderr := specRun(t, Environment{}, "snapshot", "--bin", bin, "--out", out, "--timeout", "10s", "--budget", "30ms")
-		if code != 2 {
-			require.EqualValuesf(t, 2, code, "exit %d stderr=%s", code, stderr)
-		}
-		need(t, stderr, "budget", "30ms")
+		synctest.Test(t, func(t *testing.T) {
+			bin := t.TempDir()
+			for _, n := range []string{"nova-a", "nova-b", "nova-c", "nova-d"} {
+				specScript(t, bin, n, "printf '"+n+" v1.0.0 linux/amd64 go1.0\\n'")
+			}
+			out := filepath.Join(t.TempDir(), "s.tsv")
+			code, _, stderr := specRun(t, Environment{Process: deadlineFake(t, 30*time.Millisecond)}, "snapshot", "--bin", bin, "--out", out, "--timeout", "30s", "--budget", "30ms")
+			if code != 2 {
+				require.EqualValuesf(t, 2, code, "exit %d stderr=%s", code, stderr)
+			}
+			need(t, stderr, "budget", "30ms")
+		})
 	})
 	t.Run("a bound must be positive", func(t *testing.T) {
 		bin := t.TempDir()
