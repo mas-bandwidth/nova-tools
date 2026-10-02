@@ -5,10 +5,10 @@ docs/CLI.md:freddy 1
 docs/CLI.md:johnny 2
 docs/CLI.md:mas-bandwidth 4
 docs/CLI.md:mini 2
-docs/CLI.md:rowan 16
+docs/CLI.md:rowan 15
 docs/CLI.md:space 2
 docs/CLI.md:stella 6
-docs/CLI.md:studio 3
+docs/CLI.md:studio 2
 docs/CONTRIBUTING.md:glenn 1
 docs/CONTRIBUTING.md:mas-bandwidth 1
 docs/MODELS.md:mini 1
