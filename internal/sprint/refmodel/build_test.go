@@ -4,6 +4,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/refmodel"
 )
@@ -181,9 +183,8 @@ func show(ms []refmodel.Move) string {
 func (w *world) land(t *testing.T, id string) {
 	t.Helper()
 	c := w.s.Work.Card(id)
-	if c == nil || c.Col != sprint.Merging {
-		t.Fatalf("land %s: it is not merging", id)
-	}
+	require.NotNil(t, c, "land %s: it is not merging", id)
+	require.Equal(t, sprint.Merging, c.Col, "land %s: it is not merging", id)
 	c.Col = sprint.Landed
 	c.Rev++
 	w.s.Work.Put(c)

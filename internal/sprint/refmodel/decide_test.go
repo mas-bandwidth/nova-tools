@@ -48,9 +48,10 @@ func briefs(ms []refmodel.Move) []string {
 // read only of moves that are the ones expected.
 func expect(t *testing.T, got []refmodel.Move, want ...string) {
 	t.Helper()
-	if !slices.Equal(briefs(got), want) {
-		t.Fatalf("moves:\n got %q\nwant %q\nfull:%s", briefs(got), want, show(got))
+	if want == nil {
+		want = []string{}
 	}
+	require.Equal(t, want, briefs(got), "moves:\n got %q\nwant %q\nfull:%s", briefs(got), want, show(got))
 }
 
 func TestStrangersAreToldOnceEachInNameOrder(t *testing.T) {
@@ -62,12 +63,9 @@ func TestStrangersAreToldOnceEachInNameOrder(t *testing.T) {
 	expect(t, got,
 		"notice an unknown machine is beating []",
 		"notice an unknown machine is beating []")
-	if got[0].Words != "an unknown machine is beating: x1; add it with nova-sprint fleet up x1" || !strings.Contains(got[1].Words, "x2") {
-		t.Errorf("the words: %q, %q", got[0].Words, got[1].Words)
-	}
-	if !slices.Equal(got[0].Attrs, []string{"who=machine"}) {
-		t.Errorf("the notice is not the machine's: %v", got[0].Attrs)
-	}
+	assert.Equal(t, "an unknown machine is beating: x1; add it with nova-sprint fleet up x1", got[0].Words, "the words: %q, %q", got[0].Words, got[1].Words)
+	assert.Contains(t, got[1].Words, "x2", "the words: %q, %q", got[0].Words, got[1].Words)
+	assert.Equal(t, []string{"who=machine"}, got[0].Attrs, "the notice is not the machine's: %v", got[0].Attrs)
 	snap.Untold = nil
 	expect(t, refmodel.StrangerMoves(snap, later(0)))
 }
@@ -93,12 +91,11 @@ func TestPresenceTakesAMemberDownAndDealsItsCards(t *testing.T) {
 	for _, m := range got {
 		byCard[m.Card] = m
 	}
-	if s := byCard["s1-1.w1"].Set; !slices.Contains(s, "gen=2") || !slices.Contains(s, "member=m2") || !slices.Contains(s, "redeals=1") {
-		t.Errorf("a card taken and redealt is a new generation of the new member, and counts one redeal: %v", s)
-	}
-	if !slices.Contains(byCard["s1-1.w1"].Unset, "taken") {
-		t.Errorf("a redealt card is no longer taken: %v", byCard["s1-1.w1"].Unset)
-	}
+	s := byCard["s1-1.w1"].Set
+	assert.Contains(t, s, "gen=2", "a card taken and redealt is a new generation of the new member, and counts one redeal: %v", s)
+	assert.Contains(t, s, "member=m2", "a card taken and redealt is a new generation of the new member, and counts one redeal: %v", s)
+	assert.Contains(t, s, "redeals=1", "a card taken and redealt is a new generation of the new member, and counts one redeal: %v", s)
+	assert.Contains(t, byCard["s1-1.w1"].Unset, "taken", "a redealt card is no longer taken: %v", byCard["s1-1.w1"].Unset)
 }
 
 func TestPresenceBringsAMemberUpWhenItBeatsAndLevelsTheQueues(t *testing.T) {
@@ -136,14 +133,11 @@ func TestResolveReadiesAWaitingPrimaryWhoseNeedsLanded(t *testing.T) {
 	w.addOne(t, "s1", "s1-3", "s1-2")
 	w.drive(t, "s1-1", sprint.Merging)
 	w.land(t, "s1-1") // landed, and not by a step that moves what waited on it
-	if w.state("s1-2") != sprint.Waiting || w.state("s1-3") != sprint.Waiting {
-		t.Fatalf("the fixture: s1-2 is %s, s1-3 is %s", w.state("s1-2"), w.state("s1-3"))
-	}
+	require.Equal(t, sprint.Waiting, w.state("s1-2"), "the fixture: s1-2 is %s, s1-3 is %s", w.state("s1-2"), w.state("s1-3"))
+	require.Equal(t, sprint.Waiting, w.state("s1-3"), "the fixture: s1-2 is %s, s1-3 is %s", w.state("s1-2"), w.state("s1-3"))
 	got := refmodel.ResolveMoves(w.snapshot(w.fresh()), later(0))
 	expect(t, got, "move work s1-2 s1:waiting>s1:ready")
-	if got[0].Words != "s1-2 waiting -> ready" {
-		t.Errorf("the words: %q", got[0].Words)
-	}
+	assert.Equal(t, "s1-2 waiting -> ready", got[0].Words, "the words: %q", got[0].Words)
 }
 
 func TestResolveRaisesABlockedJudgmentOnceForADroppedNeed(t *testing.T) {
@@ -159,9 +153,7 @@ func TestResolveRaisesABlockedJudgmentOnceForADroppedNeed(t *testing.T) {
 	snap.Tables = withoutJudgments(snap.Tables, sprint.NBlocked)
 	got := refmodel.ResolveMoves(snap, later(0))
 	expect(t, got, "open a primary is blocked on something dropped [s1-2]")
-	if !slices.Equal(got[0].Attrs, []string{"count=1", "needs=s1-1", "who=machine"}) {
-		t.Errorf("the blocked judgment names its need: %v", got[0].Attrs)
-	}
+	assert.Equal(t, []string{"count=1", "needs=s1-1", "who=machine"}, got[0].Attrs, "the blocked judgment names its need: %v", got[0].Attrs)
 }
 
 func TestResolveReachesASentinelWhoseNeedsLanded(t *testing.T) {
@@ -199,9 +191,9 @@ func TestResumeGoesOnWhenTheCardAStreamNeededLanded(t *testing.T) {
 	w.add(t, "s2", 1)
 	w.drive(t, "s1-1", sprint.Merging)
 	w.must(t, sprint.MergeStep(w.s, sprint.MergeReq{Stream: "s1", Batch: 1, Cross: "s1-1=s2-1", Who: merger}))
-	if ctl := w.s.StreamCtl("s1"); ctl.F("state") != sprint.StreamStopped || ctl.F("cause") != "cross" {
-		t.Fatalf("the fixture: s1 is %s, cause %s", ctl.F("state"), ctl.F("cause"))
-	}
+	ctl := w.s.StreamCtl("s1")
+	require.Equal(t, sprint.StreamStopped, ctl.F("state"), "the fixture: s1 is %s, cause %s", ctl.F("state"), ctl.F("cause"))
+	require.Equal(t, "cross", ctl.F("cause"), "the fixture: s1 is %s, cause %s", ctl.F("state"), ctl.F("cause"))
 	// the card it needs has not landed: nothing to resume
 	expect(t, refmodel.ResumeMoves(w.snapshot(w.fresh()), later(0)))
 	w.drive(t, "s2-1", sprint.Landed)
@@ -245,12 +237,11 @@ func TestDealTellsOnceWhenNoMemberIsUp(t *testing.T) {
 	w.must(t, sprint.FleetStep(w.s, sprint.FleetReq{Op: "hold", Member: "m1", Who: coordinator}))
 	got := refmodel.DealMoves(w.snapshot(nil), later(0))
 	expect(t, got, "open no fleet member is up [stream:]")
-	if got[0].Stream != "" || !slices.Contains(got[0].Attrs, "stream_level=yes") || !strings.HasPrefix(got[0].Words, "2 primaries wait to be dealt") {
-		t.Errorf("the judgment is about the sprint, and counts what waits: %+v", got[0])
-	}
-	if want := []string{"fleet beat", "fleet up", "wait"}; !slices.Equal(got[0].Decisions, want) {
-		t.Errorf("the decisions offered: %q, want %q", got[0].Decisions, want)
-	}
+	assert.Empty(t, got[0].Stream, "the judgment is about the sprint, and counts what waits: %+v", got[0])
+	assert.Contains(t, got[0].Attrs, "stream_level=yes", "the judgment is about the sprint, and counts what waits: %+v", got[0])
+	assert.True(t, strings.HasPrefix(got[0].Words, "2 primaries wait to be dealt"), "the judgment is about the sprint, and counts what waits: %+v", got[0])
+	want := []string{"fleet beat", "fleet up", "wait"}
+	assert.Equal(t, want, got[0].Decisions, "the decisions offered: %q, want %q", got[0].Decisions, want)
 }
 
 // A card is dealt again after a take of it ended up to three times: withdrawn
@@ -284,8 +275,8 @@ func TestDealStopsAtTheRedealBound(t *testing.T) {
 		w.s.Fleet.Put(wc)
 		got := refmodel.DealMoves(w.snapshot(nil), later(0))
 		expect(t, got, tc.want)
-		if tc.ended && tc.redeals == "3" && !slices.Equal(got[0].Decisions, []string{"rework with a fix", "drop", "wait"}) {
-			t.Errorf("the decisions offered at the bound: %q", got[0].Decisions)
+		if tc.ended && tc.redeals == "3" {
+			assert.Equal(t, []string{"rework with a fix", "drop", "wait"}, got[0].Decisions, "the decisions offered at the bound: %q", got[0].Decisions)
 		}
 	}
 }
@@ -302,9 +293,8 @@ func TestLevelMovesTheNewestFromTheLongestRoundTheFleet(t *testing.T) {
 	w.s.Fleet.Put(ctl)
 	got := refmodel.LevelMoves(w.snapshot(w.fresh()), later(0))
 	expect(t, got, "prop fleet deal_index=2", "move fleet s1-2.w1 m1:ready>m2:ready")
-	if !slices.Contains(got[1].Set, "gen=2") || !slices.Contains(got[1].Set, "member=m2") {
-		t.Errorf("a card dealt again is the next generation, of its new member: %v", got[1].Set)
-	}
+	assert.Contains(t, got[1].Set, "gen=2", "a card dealt again is the next generation, of its new member: %v", got[1].Set)
+	assert.Contains(t, got[1].Set, "member=m2", "a card dealt again is the next generation, of its new member: %v", got[1].Set)
 }
 
 func TestAskAsksTwoReadersOfAPrimaryInReview(t *testing.T) {
@@ -373,8 +363,10 @@ func TestCheckRaisesAJudgmentForABrokenRule(t *testing.T) {
 	wc.Row, wc.Col = "", "" // the live work card of a working primary is gone
 	w.s.Fleet.Put(wc)
 	got := refmodel.CheckMoves(w.snapshot(w.fresh()), later(0))
-	if len(got) == 0 || got[0].Kind != refmodel.KindOpen || got[0].Type != sprint.NInvariant || !slices.Contains(got[0].Subjects, "s1-1") {
-		t.Errorf("a broken rule is one judgment on its card:%s", show(got))
+	if assert.NotEmpty(t, got, "a broken rule is one judgment on its card:%s", show(got)) {
+		assert.Equal(t, refmodel.KindOpen, got[0].Kind, "a broken rule is one judgment on its card:%s", show(got))
+		assert.Equal(t, sprint.NInvariant, got[0].Type, "a broken rule is one judgment on its card:%s", show(got))
+		assert.Contains(t, got[0].Subjects, "s1-1", "a broken rule is one judgment on its card:%s", show(got))
 	}
 }
 
@@ -395,12 +387,10 @@ func TestDeadlinesJudgeAWorkCardNotTakenPastFifteenMinutes(t *testing.T) {
 	expect(t, refmodel.DeadlineMoves(snap, later(15*time.Minute)))
 	got := refmodel.DeadlineMoves(snap, later(15*time.Minute+time.Second))
 	expect(t, got, "open a work card is past its deadline [s1-1]")
-	if got[0].Card != "s1-1.w1" || !strings.Contains(got[0].Words, "not taken") {
-		t.Errorf("the judgment names the card and what is late: %+v", got[0])
-	}
-	if want := []string{"fleet down m1", "wait", "drop"}; !slices.Equal(got[0].Decisions, want) {
-		t.Errorf("the decisions offered: %q, want %q", got[0].Decisions, want)
-	}
+	assert.Equal(t, "s1-1.w1", got[0].Card, "the judgment names the card and what is late: %+v", got[0])
+	assert.Contains(t, got[0].Words, "not taken", "the judgment names the card and what is late: %+v", got[0])
+	want := []string{"fleet down m1", "wait", "drop"}
+	assert.Equal(t, want, got[0].Decisions, "the decisions offered: %q, want %q", got[0].Decisions, want)
 }
 
 func TestDeadlinesCountRunningTimeOnly(t *testing.T) {
@@ -430,9 +420,8 @@ func TestDeadlinesJudgeAReadCardNotBegun(t *testing.T) {
 	expect(t, got,
 		"open a read card is past its deadline [s1-1]",
 		"open a read card is past its deadline [s1-1]")
-	if want := []string{"ask --another", "wait", "drop"}; !slices.Equal(got[0].Decisions, want) {
-		t.Errorf("the decisions offered: %q, want %q", got[0].Decisions, want)
-	}
+	want := []string{"ask --another", "wait", "drop"}
+	assert.Equal(t, want, got[0].Decisions, "the decisions offered: %q, want %q", got[0].Decisions, want)
 }
 
 func TestDeadlinesJudgeAStreamWithNoMergeStep(t *testing.T) {
@@ -444,9 +433,8 @@ func TestDeadlinesJudgeAStreamWithNoMergeStep(t *testing.T) {
 	expect(t, refmodel.DeadlineMoves(snap, later(30*time.Minute)))
 	got := refmodel.DeadlineMoves(snap, later(30*time.Minute+time.Second))
 	expect(t, got, "open a stream has had no merge step past its deadline [stream:s1]")
-	if want := []string{"merge --stream s1", "look", "wait"}; !slices.Equal(got[0].Decisions, want) {
-		t.Errorf("the decisions offered: %q, want %q", got[0].Decisions, want)
-	}
+	want := []string{"merge --stream s1", "look", "wait"}
+	assert.Equal(t, want, got[0].Decisions, "the decisions offered: %q, want %q", got[0].Decisions, want)
 }
 
 func TestOverdueMarksAJudgmentOncePastTenMinutes(t *testing.T) {
@@ -459,9 +447,7 @@ func TestOverdueMarksAJudgmentOncePastTenMinutes(t *testing.T) {
 		p, _ := sprint.TickDeal(w.s, sprint.TickReq{})
 		return p.Notes
 	}()})
-	if len(w.s.Open) != 1 {
-		t.Fatalf("the fixture: %d open", len(w.s.Open))
-	}
+	require.Len(t, w.s.Open, 1, "the fixture: %d open", len(w.s.Open))
 	snap := w.snapshot(nil)
 	expect(t, refmodel.OverdueMoves(snap, later(10*time.Minute)))
 	got := refmodel.OverdueMoves(snap, later(10*time.Minute+time.Second))
@@ -484,12 +470,10 @@ func TestRemindPushesEachPersonDueAndRaisesAFailingRoute(t *testing.T) {
 	expect(t, got,
 		"open a reminder could not be delivered [stream:]",
 		"push bob")
-	if got[1].Words != "REMINDER 5 to bob over file:/x/bob" || got[1].To != "file:/x/bob" {
-		t.Errorf("the push: %+v", got[1])
-	}
-	if want := []string{"goal set cyd --to <route>", "goal drop cyd", "ack"}; !slices.Equal(got[0].Decisions, want) {
-		t.Errorf("the decisions offered of the failing route: %q, want %q", got[0].Decisions, want)
-	}
+	assert.Equal(t, "REMINDER 5 to bob over file:/x/bob", got[1].Words, "the push: %+v", got[1])
+	assert.Equal(t, "file:/x/bob", got[1].To, "the push: %+v", got[1])
+	want := []string{"goal set cyd --to <route>", "goal drop cyd", "ack"}
+	assert.Equal(t, want, got[0].Decisions, "the decisions offered of the failing route: %q, want %q", got[0].Decisions, want)
 	// once the judgment is written the record says so, and the tick has nothing more to write
 	snap.Goals.Noted = snap.Goals.Failing()
 	expect(t, refmodel.RemindMoves(snap, later(0)), "push bob")
@@ -516,18 +500,14 @@ func TestAStoppedMachineMovesNothing(t *testing.T) {
 	w.add(t, "s1", 3)
 	snap := w.snapshot(w.fresh())
 	snap.Untold = []string{"x1"}
-	if len(refmodel.Decide(snap, later(0))) == 0 {
-		t.Fatal("the fixture: a running machine has something to do")
-	}
+	require.NotEmpty(t, refmodel.Decide(snap, later(0)), "the fixture: a running machine has something to do")
 	snap.Running = false
 	for _, d := range refmodel.Duties {
-		if got := d.Moves(snap, later(time.Hour)); len(got) > 0 {
-			t.Errorf("%s moves while the machine is STOPPED:%s", d.Name, show(got))
-		}
+		got := d.Moves(snap, later(time.Hour))
+		assert.Empty(t, got, "%s moves while the machine is STOPPED:%s", d.Name, show(got))
 	}
-	if got := refmodel.Decide(snap, later(time.Hour)); len(got) > 0 {
-		t.Errorf("Decide moves while the machine is STOPPED:%s", show(got))
-	}
+	got := refmodel.Decide(snap, later(time.Hour))
+	assert.Empty(t, got, "Decide moves while the machine is STOPPED:%s", show(got))
 }
 
 func TestDecideIsEveryDutyInTheTicksOrder(t *testing.T) {
@@ -544,21 +524,15 @@ func TestDecideIsEveryDutyInTheTicksOrder(t *testing.T) {
 		ms := d.Moves(snap, now)
 		want = append(want, ms...)
 		for _, m := range ms {
-			if m.Duty != d.Name {
-				t.Errorf("%s made a move of duty %s", d.Name, m.Duty)
-			}
+			assert.Equal(t, d.Name, m.Duty, "%s made a move of duty %s", d.Name, m.Duty)
 			seen[d.Name] = true
 		}
 	}
-	if !seen[refmodel.DutyStrangers] || !seen[refmodel.DutyDeal] {
-		t.Fatalf("the fixture: strangers and deal have moves: %v", seen)
-	}
-	if ok, diff := refmodel.Equal(got, want); !ok {
-		t.Errorf("Decide is not its duties: %s", diff)
-	}
-	if !slices.IsSortedFunc(got, func(a, b refmodel.Move) int { return rank(a) - rank(b) }) {
-		t.Errorf("the moves are not in the ticks order by duty:%s", show(got))
-	}
+	require.True(t, seen[refmodel.DutyStrangers], "the fixture: strangers and deal have moves: %v", seen)
+	require.True(t, seen[refmodel.DutyDeal], "the fixture: strangers and deal have moves: %v", seen)
+	ok, diff := refmodel.Equal(got, want)
+	assert.True(t, ok, "Decide is not its duties: %s", diff)
+	assert.True(t, slices.IsSortedFunc(got, func(a, b refmodel.Move) int { return rank(a) - rank(b) }), "the moves are not in the ticks order by duty:%s", show(got))
 }
 
 // rank is the position of a move's duty in the tick's order.
@@ -579,13 +553,11 @@ func TestDecideReadsTheTimeItIsGivenAndNotTheSnapshots(t *testing.T) {
 	snap := w.snapshot(nil)
 	snap.Beats = nil                   // no beats read: the presence duty does nothing
 	snap.Tables.Now = later(time.Hour) // the snapshot's own clock is not read
-	if got := refmodel.Decide(snap, later(time.Minute)); len(got) != 0 {
-		t.Errorf("a card dealt a minute ago is not late:%s", show(got))
-	}
+	got := refmodel.Decide(snap, later(time.Minute))
+	assert.Empty(t, got, "a card dealt a minute ago is not late:%s", show(got))
 	snap.Tables.Now = t0
-	if got := refmodel.Decide(snap, later(time.Hour)); len(got) == 0 {
-		t.Error("a card dealt an hour ago is late")
-	}
+	got = refmodel.Decide(snap, later(time.Hour))
+	assert.NotEmpty(t, got, "a card dealt an hour ago is late")
 }
 
 func TestEveryPartOfTheTickIsADutyAndEveryDutyIsNamedInOrder(t *testing.T) {
@@ -595,9 +567,7 @@ func TestEveryPartOfTheTickIsADutyAndEveryDutyIsNamedInOrder(t *testing.T) {
 		names[d.Name] = true
 	}
 	for _, p := range sprint.TickParts {
-		if !names[p.Name] {
-			t.Errorf("the tick's part %s is no duty: Decide would leave it out", p.Name)
-		}
+		assert.True(t, names[p.Name], "the tick's part %s is no duty: Decide would leave it out", p.Name)
 	}
 	want := []string{refmodel.DutyLevel, refmodel.DutyLevelReads, refmodel.DutyResolve, refmodel.DutyDeal, refmodel.DutyAccept, refmodel.DutyAsk, refmodel.DutyResume,
 		refmodel.DutyStrangers, refmodel.DutyPresence, refmodel.DutyCheck, refmodel.DutyDeadlines, refmodel.DutyOverdue, refmodel.DutyDone, refmodel.DutyRemind}
@@ -605,9 +575,7 @@ func TestEveryPartOfTheTickIsADutyAndEveryDutyIsNamedInOrder(t *testing.T) {
 	for _, d := range refmodel.Duties {
 		got = append(got, d.Name)
 	}
-	if !slices.Equal(got, want) {
-		t.Errorf("the duties are %v, want %v", got, want)
-	}
+	assert.Equal(t, want, got, "the duties are %v, want %v", got, want)
 	// the parts run in the order of their duties
 	var parts []string
 	for _, p := range sprint.TickParts {
@@ -619,9 +587,7 @@ func TestEveryPartOfTheTickIsADutyAndEveryDutyIsNamedInOrder(t *testing.T) {
 			inDuties = append(inDuties, n)
 		}
 	}
-	if !slices.Equal(parts, inDuties) {
-		t.Errorf("the tick's parts run %v; the duties have them as %v", parts, inDuties)
-	}
+	assert.Equal(t, inDuties, parts, "the tick's parts run %v; the duties have them as %v", parts, inDuties)
 }
 
 func TestASnapshotThatLacksATableIsRefusedInWords(t *testing.T) {
@@ -636,8 +602,9 @@ func TestASnapshotThatLacksATableIsRefusedInWords(t *testing.T) {
 		cut(&snap)
 		func() {
 			defer func() {
-				if r := recover(); r == nil || !strings.Contains(fmt.Sprint(r), "refmodel:") {
-					t.Errorf("%s: deciding did not refuse in words: %v", name, r)
+				r := recover()
+				if assert.NotNil(t, r, "%s: deciding did not refuse in words: %v", name, r) {
+					assert.Contains(t, fmt.Sprint(r), "refmodel:", "%s: deciding did not refuse in words: %v", name, r)
 				}
 			}()
 			refmodel.Decide(snap, later(0))
@@ -645,7 +612,6 @@ func TestASnapshotThatLacksATableIsRefusedInWords(t *testing.T) {
 	}
 	snap := w.snapshot(w.fresh())
 	snap.Tables, snap.Running = nil, false
-	if got := refmodel.Decide(snap, later(0)); len(got) != 0 {
-		t.Errorf("a STOPPED machine decides nothing, whatever it holds:%s", show(got))
-	}
+	got := refmodel.Decide(snap, later(0))
+	assert.Empty(t, got, "a STOPPED machine decides nothing, whatever it holds:%s", show(got))
 }

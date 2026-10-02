@@ -10,6 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/refmodel"
 )
@@ -95,13 +98,9 @@ func TestDumpSeesEveryPartOfASnapshot(t *testing.T) {
 	} {
 		c := base.Clone()
 		change(&c)
-		if dump(c) == dump(base) {
-			t.Errorf("a change to the %s of a snapshot is not in its dump", name)
-		}
+		assert.NotEqual(t, dump(base), dump(c), "a change to the %s of a snapshot is not in its dump", name)
 	}
-	if dump(base.Clone()) != dump(base) {
-		t.Error("a clone does not dump as its snapshot does")
-	}
+	assert.Equal(t, dump(base), dump(base.Clone()), "a clone does not dump as its snapshot does")
 }
 
 func TestACloneSharesNothingWithItsSnapshot(t *testing.T) {
@@ -130,9 +129,8 @@ func TestACloneSharesNothingWithItsSnapshot(t *testing.T) {
 		c.Goals.Noted = map[string]string{"zed": "1"}
 		c.Untold = append(c.Untold, "zed")
 		c.Stopped = append(c.Stopped, sprint.Span{})
-		if after := dump(s.snap); after != before {
-			t.Fatalf("what was done to a clone changed its snapshot:\n%s", firstDifference(before, after))
-		}
+		after := dump(s.snap)
+		require.Equal(t, before, after, "what was done to a clone changed its snapshot:\n%s", firstDifference(before, after))
 	}
 }
 
@@ -160,27 +158,21 @@ func TestDecideIsDeterministicAndLeavesItsSnapshotAlone(t *testing.T) {
 		before := dump(s.snap)
 		got := refmodel.Decide(s.snap, s.now)
 		first := lines(got)
-		if again := lines(refmodel.Decide(s.snap, s.now)); !slices.Equal(first, again) {
-			t.Fatalf("snapshot %d: the same snapshot at the same time gave two decisions:\n%s\n%s", i, strings.Join(first, "\n"), strings.Join(again, "\n"))
-		}
-		if after := dump(s.snap); after != before {
-			t.Fatalf("snapshot %d: deciding changed the snapshot:\n%s", i, firstDifference(before, after))
-		}
+		again := lines(refmodel.Decide(s.snap, s.now))
+		require.Equal(t, first, again, "snapshot %d: the same snapshot at the same time gave two decisions:\n%s\n%s", i, strings.Join(first, "\n"), strings.Join(again, "\n"))
+		after := dump(s.snap)
+		require.Equal(t, before, after, "snapshot %d: deciding changed the snapshot:\n%s", i, firstDifference(before, after))
 		// Decide copies the snapshot once for every duty; each duty asked alone
 		// copies it for itself, and the moves are the same
 		var alone []refmodel.Move
 		for _, d := range refmodel.Duties {
 			alone = append(alone, d.Moves(s.snap, s.now)...)
 		}
-		if ok, diff := refmodel.Equal(got, alone); !ok {
-			t.Fatalf("snapshot %d: Decide, on one copy of the snapshot, is not the duties each on a copy of its own: %s", i, diff)
-		}
-		if !slices.IsSortedFunc(got, func(a, b refmodel.Move) int { return rank(a) - rank(b) }) {
-			t.Fatalf("snapshot %d: the duties are out of the tick's order:%s", i, show(got))
-		}
-		if ok, diff := refmodel.Equal(got, slices.Clone(got)); !ok {
-			t.Fatalf("snapshot %d: the moves are not equal to themselves: %s", i, diff)
-		}
+		ok, diff := refmodel.Equal(got, alone)
+		require.True(t, ok, "snapshot %d: Decide, on one copy of the snapshot, is not the duties each on a copy of its own: %s", i, diff)
+		require.True(t, slices.IsSortedFunc(got, func(a, b refmodel.Move) int { return rank(a) - rank(b) }), "snapshot %d: the duties are out of the tick's order:%s", i, show(got))
+		ok, diff = refmodel.Equal(got, slices.Clone(got))
+		require.True(t, ok, "snapshot %d: the moves are not equal to themselves: %s", i, diff)
 	}
 }
 
@@ -191,15 +183,12 @@ func TestEveryDutyIsDeterministicAndLeavesItsSnapshotAlone(t *testing.T) {
 		clone := s.snap.Clone()
 		for _, d := range refmodel.Duties {
 			one := lines(d.Moves(s.snap, s.now))
-			if two := lines(d.Moves(s.snap, s.now)); !slices.Equal(one, two) {
-				t.Fatalf("snapshot %d: the duty %s gave two decisions", i, d.Name)
-			}
-			if viaClone := lines(d.Moves(clone, s.now)); !slices.Equal(one, viaClone) {
-				t.Fatalf("snapshot %d: a clone of the snapshot is decided differently by the duty %s", i, d.Name)
-			}
-			if after := dump(s.snap); after != before {
-				t.Fatalf("snapshot %d: the duty %s changed the snapshot:\n%s", i, d.Name, firstDifference(before, after))
-			}
+			two := lines(d.Moves(s.snap, s.now))
+			require.Equal(t, one, two, "snapshot %d: the duty %s gave two decisions", i, d.Name)
+			viaClone := lines(d.Moves(clone, s.now))
+			require.Equal(t, one, viaClone, "snapshot %d: a clone of the snapshot is decided differently by the duty %s", i, d.Name)
+			after := dump(s.snap)
+			require.Equal(t, before, after, "snapshot %d: the duty %s changed the snapshot:\n%s", i, d.Name, firstDifference(before, after))
 		}
 	}
 }
@@ -217,9 +206,8 @@ func TestThePlannersDoNotModifyWhatTheyRead(t *testing.T) {
 		for _, p := range sprint.TickParts {
 			plan, _ := p.Fn(c.Tables, sprint.TickReq{Who: sprint.MachineActor, Beats: c.Beats})
 			sprint.Applied(c.Tables, plan)
-			if after := dump(c); after != before {
-				t.Fatalf("snapshot %d: the tick's part %s changed what it read:\n%s", i, p.Name, firstDifference(before, after))
-			}
+			after := dump(c)
+			require.Equal(t, before, after, "snapshot %d: the tick's part %s changed what it read:\n%s", i, p.Name, firstDifference(before, after))
 		}
 	}
 }

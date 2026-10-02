@@ -10,6 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/refmodel"
 )
@@ -75,9 +78,7 @@ func TestEveryFieldOfANoteIsCarriedOrLeftOutInWords(t *testing.T) {
 		}
 	}
 	for name := range noteCarry {
-		if !seen[name] {
-			t.Errorf("a test says a move carries %s, which the note does not have", name)
-		}
+		assert.True(t, seen[name], "a test says a move carries %s, which the note does not have", name)
 	}
 }
 
@@ -269,29 +270,23 @@ func TestAMoveHoldsEveryFieldOfANoteThatIsSet(t *testing.T) {
 			n := filled(kind)
 			set(&n)
 			ms := refmodel.PlanMoves(refmodel.DutyDeal, tabs, sprint.Plan{Notes: []sprint.Note{n}})
-			if len(ms) != 1 {
-				t.Fatalf("%s note on its %s: %d moves", kind, way, len(ms))
-			}
-			if bad := checkNoteMove(n, ms[0]); len(bad) > 0 {
-				t.Errorf("%s note on its %s:\n  %s", kind, way, strings.Join(bad, "\n  "))
-			}
+			require.Len(t, ms, 1, "%s note on its %s: %d moves", kind, way, len(ms))
+			bad := checkNoteMove(n, ms[0])
+			assert.Empty(t, bad, "%s note on its %s:\n  %s", kind, way, strings.Join(bad, "\n  "))
 			// every field a move holds as an attr is set, but a note is a stream's or the sprint's or neither: one flag or none
 			want := countCarried("attr") - 2
 			if way != "primaries" {
 				want++
 			}
-			if got := len(attrsOf(n)); got != want {
-				t.Errorf("%s note on its %s: %d attrs, want %d: the fixture leaves a field unset", kind, way, got, want)
-			}
+			got := len(attrsOf(n))
+			assert.Equal(t, want, got, "%s note on its %s: %d attrs, want %d: the fixture leaves a field unset", kind, way, got, want)
 			up := refmodel.PlanMoves(refmodel.DutyDeal, tabs, sprint.Plan{Updates: []sprint.Note{n}})
-			if len(up) != 1 || up[0].Kind != refmodel.KindUpdate || !slices.Contains(up[0].Attrs, "id="+n.ID) || up[0].Card != n.Card {
-				t.Errorf("%s note on its %s: its update is not the note with its id in the attrs and its card kept: %+v", kind, way, up)
-			}
-			if len(up) == 1 {
+			if assert.Len(t, up, 1, "%s note on its %s: its update is not the note with its id in the attrs and its card kept: %+v", kind, way, up) {
+				assert.Equal(t, refmodel.KindUpdate, up[0].Kind, "%s note on its %s: its update is not the note with its id in the attrs and its card kept: %+v", kind, way, up)
+				assert.Contains(t, up[0].Attrs, "id="+n.ID, "%s note on its %s: its update is not the note with its id in the attrs and its card kept: %+v", kind, way, up)
+				assert.Equal(t, n.Card, up[0].Card, "%s note on its %s: its update is not the note with its id in the attrs and its card kept: %+v", kind, way, up)
 				bad := checkNoteMove(n, withKind(up[0], kindOfNote(n.Kind), n.ID))
-				if len(bad) > 0 {
-					t.Errorf("%s note on its %s, as an update:\n  %s", kind, way, strings.Join(bad, "\n  "))
-				}
+				assert.Empty(t, bad, "%s note on its %s, as an update:\n  %s", kind, way, strings.Join(bad, "\n  "))
 			}
 		}
 	}
@@ -363,12 +358,9 @@ func TestTheMoveOfEachNoteAndCloseOfTodaysPlansHasEveryFieldOfIt(t *testing.T) {
 			notes = append(notes, plan.Notes...)
 			for _, n := range notes {
 				ms := refmodel.PlanMoves(duty, tabs, sprint.Plan{Notes: []sprint.Note{n}})
-				if len(ms) != 1 {
-					t.Fatalf("sample %d, %s: a note gives %d moves", i, duty, len(ms))
-				}
-				if bad := checkNoteMove(n, ms[0]); len(bad) > 0 {
-					t.Fatalf("sample %d, %s: the move of the note %q lacks:\n  %s", i, duty, n.What, strings.Join(bad, "\n  "))
-				}
+				require.Len(t, ms, 1, "sample %d, %s: a note gives %d moves", i, duty, len(ms))
+				bad := checkNoteMove(n, ms[0])
+				require.Empty(t, bad, "sample %d, %s: the move of the note %q lacks:\n  %s", i, duty, n.What, strings.Join(bad, "\n  "))
 				seen[ms[0].Kind]++
 				if len(n.Decisions) > 0 {
 					seen["a note with decisions"]++
@@ -379,20 +371,17 @@ func TestTheMoveOfEachNoteAndCloseOfTodaysPlansHasEveryFieldOfIt(t *testing.T) {
 			}
 			for _, n := range plan.Updates {
 				ms := refmodel.PlanMoves(duty, tabs, sprint.Plan{Updates: []sprint.Note{n}})
-				if len(ms) != 1 || ms[0].Kind != refmodel.KindUpdate || !slices.Contains(ms[0].Attrs, "id="+n.ID) {
-					t.Fatalf("sample %d, %s: an update is not the move that names the judgment it rewrites: %s", i, duty, show(ms))
-				}
-				if bad := checkNoteMove(n, withKind(ms[0], kindOfNote(n.Kind), n.ID)); len(bad) > 0 {
-					t.Fatalf("sample %d, %s: the update of %q lacks:\n  %s", i, duty, n.What, strings.Join(bad, "\n  "))
-				}
+				require.Len(t, ms, 1, "sample %d, %s: an update is not the move that names the judgment it rewrites: %s", i, duty, show(ms))
+				require.Equal(t, refmodel.KindUpdate, ms[0].Kind, "sample %d, %s: an update is not the move that names the judgment it rewrites: %s", i, duty, show(ms))
+				require.Contains(t, ms[0].Attrs, "id="+n.ID, "sample %d, %s: an update is not the move that names the judgment it rewrites: %s", i, duty, show(ms))
+				bad := checkNoteMove(n, withKind(ms[0], kindOfNote(n.Kind), n.ID))
+				require.Empty(t, bad, "sample %d, %s: the update of %q lacks:\n  %s", i, duty, n.What, strings.Join(bad, "\n  "))
 				seen["update"]++
 			}
 		}
 	}
 	for _, kind := range []string{refmodel.KindOpen, refmodel.KindNotice, refmodel.KindHold, "update", "close", "close in a unit", "a note with decisions"} {
-		if seen[kind] < minSamplesWithMoves {
-			t.Errorf("only %d of %s in the plans of the samples: the test does not try them (%v)", seen[kind], kind, seen)
-		}
+		assert.GreaterOrEqual(t, seen[kind], minSamplesWithMoves, "only %d of %s in the plans of the samples: the test does not try them (%v)", seen[kind], kind, seen)
 	}
 }
 
@@ -401,9 +390,11 @@ func TestTheMoveOfEachNoteAndCloseOfTodaysPlansHasEveryFieldOfIt(t *testing.T) {
 func one(t *testing.T, i int, duty string, tabs *sprint.Snapshot, p sprint.Plan, o sprint.Open, seen map[string]int, how string) {
 	t.Helper()
 	ms := refmodel.PlanMoves(duty, tabs, p)
-	if len(ms) != 1 || ms[0].Kind != refmodel.KindClose || ms[0].Card != o.Note.ID || !slices.Equal(ms[0].Subjects, []string{o.Subject()}) ||
-		ms[0].Type != o.Note.Type || ms[0].Stream != o.Note.Stream {
-		t.Fatalf("sample %d, %s: a %s of %s on %s is not the one move that closes it: %s", i, duty, how, o.Note.ID, o.Subject(), show(ms))
-	}
+	require.Len(t, ms, 1, "sample %d, %s: a %s of %s on %s is not the one move that closes it: %s", i, duty, how, o.Note.ID, o.Subject(), show(ms))
+	require.Equal(t, refmodel.KindClose, ms[0].Kind, "sample %d, %s: a %s of %s on %s is not the one move that closes it: %s", i, duty, how, o.Note.ID, o.Subject(), show(ms))
+	require.Equal(t, o.Note.ID, ms[0].Card, "sample %d, %s: a %s of %s on %s is not the one move that closes it: %s", i, duty, how, o.Note.ID, o.Subject(), show(ms))
+	require.Equal(t, []string{o.Subject()}, ms[0].Subjects, "sample %d, %s: a %s of %s on %s is not the one move that closes it: %s", i, duty, how, o.Note.ID, o.Subject(), show(ms))
+	require.Equal(t, o.Note.Type, ms[0].Type, "sample %d, %s: a %s of %s on %s is not the one move that closes it: %s", i, duty, how, o.Note.ID, o.Subject(), show(ms))
+	require.Equal(t, o.Note.Stream, ms[0].Stream, "sample %d, %s: a %s of %s on %s is not the one move that closes it: %s", i, duty, how, o.Note.ID, o.Subject(), show(ms))
 	seen[how]++
 }

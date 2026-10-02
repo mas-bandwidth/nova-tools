@@ -5,6 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/refmodel"
 )
@@ -26,13 +29,11 @@ func theClose(t *testing.T, got []refmodel.Move, typ, id string, subjects ...str
 			closes = append(closes, m)
 		}
 	}
-	if len(closes) != 1 {
-		t.Fatalf("want one close, got %d:%s", len(closes), show(got))
-	}
+	require.Len(t, closes, 1, "want one close, got %d:%s", len(closes), show(got))
 	c := closes[0]
-	if c.Type != typ || c.Card != id || !slices.Equal(c.Subjects, subjects) {
-		t.Errorf("the close is of %q %s on %v, want %q %s on %v", c.Type, c.Card, c.Subjects, typ, id, subjects)
-	}
+	assert.Equal(t, typ, c.Type, "the close is of %q %s on %v, want %q %s on %v", c.Type, c.Card, c.Subjects, typ, id, subjects)
+	assert.Equal(t, id, c.Card, "the close is of %q %s on %v, want %q %s on %v", c.Type, c.Card, c.Subjects, typ, id, subjects)
+	assert.Equal(t, subjects, c.Subjects, "the close is of %q %s on %v, want %q %s on %v", c.Type, c.Card, c.Subjects, typ, id, subjects)
 	return c
 }
 
@@ -54,9 +55,7 @@ func TestDealClosesTheJudgmentForNoMemberWhenAMemberIsUp(t *testing.T) {
 	w.must(t, sprint.FleetStep(w.s, sprint.FleetReq{Op: "hold", Member: "m1", Who: coordinator}))
 	w.applyPart(t, "deal", 0)
 	ids := openIDs(w, sprint.NNoMember)
-	if len(ids) != 1 {
-		t.Fatalf("the fixture: %d judgments for no member", len(ids))
-	}
+	require.Len(t, ids, 1, "the fixture: %d judgments for no member", len(ids))
 	expect(t, refmodel.DealMoves(w.snapshot(nil), later(0))) // the judgment is open: nothing is raised again
 	w.must(t, sprint.FleetStep(w.s, sprint.FleetReq{Op: "up", Member: "m1", Who: coordinator}))
 	got := refmodel.DealMoves(w.snapshot(nil), later(0))
@@ -81,9 +80,7 @@ func TestAskClosesTheJudgmentForTooFewReadersWhenAReaderIsAdded(t *testing.T) {
 	w.finish(t, "s1-1", false)
 	w.applyPart(t, "ask", 0)
 	ids := openIDs(w, sprint.NCannotAsk)
-	if len(ids) != 1 {
-		t.Fatalf("the fixture: %d judgments that it cannot ask", len(ids))
-	}
+	require.Len(t, ids, 1, "the fixture: %d judgments that it cannot ask", len(ids))
 	w.s.Readers.SetRows(append(w.s.Readers.Rows(), "reader-b"))
 	got := refmodel.AskMoves(w.snapshot(w.fresh()), later(0))
 	// today's tick also raises "stranded in review" here: it plans the close of
@@ -107,9 +104,7 @@ func TestDeadlinesCloseALatenessWhenTheCardIsTaken(t *testing.T) {
 	w.deal(t, "s1-1")
 	w.applyPart(t, "deadlines", 15*time.Minute+time.Second)
 	ids := openIDs(w, sprint.NWorkLate)
-	if len(ids) != 1 {
-		t.Fatalf("the fixture: %d lateness judgments", len(ids))
-	}
+	require.Len(t, ids, 1, "the fixture: %d lateness judgments", len(ids))
 	// still late: the judgment stays, and the tick has nothing to write
 	expect(t, refmodel.DeadlineMoves(w.snapshot(nil), later(16*time.Minute)))
 	w.take(t, "s1-1")
@@ -129,9 +124,7 @@ func TestCheckClosesAnInvariantWhenTheRuleHoldsAgain(t *testing.T) {
 	w.s.Fleet.Put(wc)
 	w.applyPart(t, "check", 0)
 	ids := openIDs(w, sprint.NInvariant)
-	if len(ids) != 1 {
-		t.Fatalf("the fixture: %d invariant judgments", len(ids))
-	}
+	require.Len(t, ids, 1, "the fixture: %d invariant judgments", len(ids))
 	// the primary is also stalled until a judgment holds it: the next check
 	// closes that one, and then there is nothing more to say while it is broken
 	w.applyPart(t, "check", 0)
@@ -151,9 +144,7 @@ func TestOverdueClosesTheHoldWhenItsJudgmentCloses(t *testing.T) {
 	w.must(t, sprint.FleetStep(w.s, sprint.FleetReq{Op: "hold", Member: "m1", Who: coordinator}))
 	w.applyPart(t, "deal", 0) // the judgment for no member up, written at t0
 	w.applyPart(t, "overdue", 10*time.Minute+time.Second)
-	if len(w.s.Acked) != 1 {
-		t.Fatalf("the fixture: %d holds", len(w.s.Acked))
-	}
+	require.Len(t, w.s.Acked, 1, "the fixture: %d holds", len(w.s.Acked))
 	hold := w.s.Acked[0]
 	expect(t, refmodel.OverdueMoves(w.snapshot(nil), later(11*time.Minute))) // marked once: nothing more to write
 	w.closeAll(slices.Clone(w.s.Open))                                       // the judgment closes: a member came up, say
@@ -172,9 +163,7 @@ func TestResolveClosesTheJudgmentForAMissingNeedWhenTheNeedIsOnTheTable(t *testi
 	w.s.Work.Put(c)
 	w.applyPart(t, "resolve", 0)
 	ids := openIDs(w, sprint.NMissingNeed)
-	if len(ids) != 1 {
-		t.Fatalf("the fixture: %d judgments for a missing need", len(ids))
-	}
+	require.Len(t, ids, 1, "the fixture: %d judgments for a missing need", len(ids))
 	w.addOne(t, "s1", "s1-9") // it is there now, and has not landed
 	got := refmodel.ResolveMoves(w.snapshot(nil), later(0))
 	expect(t, got, "close a primary is blocked on something missing [s1-2]")
@@ -188,9 +177,7 @@ func TestRemindClosesTheJudgmentForAFailingRouteWhenItIsReached(t *testing.T) {
 	goals := sprint.Goals{People: []sprint.Goal{failing}}
 	w.must(t, sprint.Applied(w.s, sprint.RemindNotes(w.s, goals, sprint.MachineActor))) // the judgment is written
 	ids := openIDs(w, sprint.NRemindFailed)
-	if len(ids) != 1 {
-		t.Fatalf("the fixture: %d judgments for a failing route", len(ids))
-	}
+	require.Len(t, ids, 1, "the fixture: %d judgments for a failing route", len(ids))
 	snap := w.snapshot(w.fresh())
 	reached := failing
 	reached.Fail = "" // a delivery arrived

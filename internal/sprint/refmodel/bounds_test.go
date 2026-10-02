@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/refmodel"
 )
@@ -57,9 +59,7 @@ func TestResolveMovesTwoThousandAndLeavesTheRestDue(t *testing.T) {
 		// the oldest are the ones moved: the last waiter is left for the next tick
 		last := fmt.Sprintf("s2-%d", waiters)
 		left := !slices.ContainsFunc(got, func(m refmodel.Move) bool { return m.Card == last })
-		if left != (waiters > 2000) {
-			t.Errorf("%d waiters: %s left for the next tick is %v", waiters, last, left)
-		}
+		assert.Equal(t, waiters > 2000, left, "%d waiters: %s left for the next tick is %v", waiters, last, left)
 	}
 }
 
