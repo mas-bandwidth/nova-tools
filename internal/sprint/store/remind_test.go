@@ -100,8 +100,9 @@ func TestReminderTickIsIdempotent(t *testing.T) {
 		require.Empty(t, res.Parts, "a second tick right after: %+v", res)
 	}
 	after, _ := os.Stat(path)
-	require.True(t, after.ModTime().Equal(before.ModTime()), "a second tick changed something: %+v then %+v", g, h.goal("friend-a"))
-	require.Equal(t, g, h.goal("friend-a"), "a second tick changed something: %+v then %+v", g, h.goal("friend-a"))
+	if !after.ModTime().Equal(before.ModTime()) || h.goal("friend-a") != g {
+		require.Failf(t, "", "a second tick changed something: %+v then %+v", g, h.goal("friend-a"))
+	}
 }
 
 func TestReminderNothingWhileStoppedAndStoppedTimeDoesNotCount(t *testing.T) {
@@ -179,9 +180,9 @@ func TestReminderFailingRouteWritesOneJudgmentAndSuccessCloses(t *testing.T) {
 		refused += len(p.Refused)
 	}
 	open := h.openOf(sprint.NRemindFailed)
-	require.Equal(t, 1, refused, "the first failure: refused %d, open %d, notes %d", refused, len(open), res.Notes())
-	require.Len(t, open, 1, "the first failure: refused %d, open %d, notes %d", refused, len(open), res.Notes())
-	require.Equal(t, 1, h.written(sprint.NRemindFailed), "the first failure: refused %d, open %d, notes %d", refused, len(open), res.Notes())
+	if refused != 1 || len(open) != 1 || h.written(sprint.NRemindFailed) != 1 {
+		require.Failf(t, "", "the first failure: refused %d, open %d, notes %d", refused, len(open), res.Notes())
+	}
 	n := open[0].Note
 	require.Equal(t, sprint.Judgment, n.Kind, "the judgment: %+v", n)
 	require.Contains(t, n.What, "friend-a", "the judgment: %+v", n)
@@ -191,7 +192,9 @@ func TestReminderFailingRouteWritesOneJudgmentAndSuccessCloses(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		h.tick(sprint.RemindEvery)
 		h.machine()
-		require.Equal(t, 1, h.written(sprint.NRemindFailed), "a second judgment: written %d", h.written(sprint.NRemindFailed))
+		if n := h.written(sprint.NRemindFailed); n != 1 {
+			require.Failf(t, "", "a second judgment: written %d", n)
+		}
 	}
 	open = h.openOf(sprint.NRemindFailed)
 	require.Len(t, open, 1, "open judgments: %d", len(open))

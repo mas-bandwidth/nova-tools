@@ -27,10 +27,9 @@ func TestTheTickEndWakesTheCoordinatorOnce(t *testing.T) {
 	_, from, err := h.m.Tails(h.ctx)
 	require.NoError(t, err)
 	h.landThrough("s1", "s1-1", "s1-2")
-	res = h.machine()
-	require.NotEmpty(t, res.Done, "the done tick: done %q, tick end %d, written %d", res.Done, res.TickEnd, h.written(sprint.NTickEnd))
-	require.Equal(t, 1, res.TickEnd, "the done tick: done %q, tick end %d, written %d", res.Done, res.TickEnd, h.written(sprint.NTickEnd))
-	require.Equal(t, 1, h.written(sprint.NTickEnd), "the done tick: done %q, tick end %d, written %d", res.Done, res.TickEnd, h.written(sprint.NTickEnd))
+	if res := h.machine(); res.Done == "" || res.TickEnd != 1 || h.written(sprint.NTickEnd) != 1 {
+		require.Failf(t, "", "the done tick: done %q, tick end %d, written %d", res.Done, res.TickEnd, h.written(sprint.NTickEnd))
+	}
 	notes, _, err := h.m.NotesSince(h.ctx, from, 1000)
 	require.NoError(t, err)
 	last := notes[len(notes)-1]
@@ -48,9 +47,10 @@ func TestTheTickEndWakesTheCoordinatorOnce(t *testing.T) {
 	}
 	// the machine stopped: a start and a tick with nothing addressed since
 	h.startMachine()
-	res = h.machine()
-	require.Equal(t, 1, res.TickEnd, "the tick after a start of a done sprint: %+v, %d tick ends", res, h.written(sprint.NTickEnd))
-	require.Equal(t, 2, h.written(sprint.NTickEnd), "the tick after a start of a done sprint: %+v, %d tick ends", res, h.written(sprint.NTickEnd))
+	if res := h.machine(); res.TickEnd != 1 || h.written(sprint.NTickEnd) != 2 {
+		// the start says the sprint done again (the done part), and wakes once
+		require.Failf(t, "", "the tick after a start of a done sprint: %+v, %d tick ends", res, h.written(sprint.NTickEnd))
+	}
 	_, tail, err := h.m.Tails(h.ctx)
 	require.NoError(t, err)
 	waiter := &Store{B: h.m, Names: h.st.Names, Actor: h.st.Actor, Now: h.st.Now, NewID: h.st.NewID, Sleep: h.tick}

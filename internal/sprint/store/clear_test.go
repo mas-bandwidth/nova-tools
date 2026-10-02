@@ -117,9 +117,9 @@ func TestClearStopsTheSprintAndClearsAllWork(t *testing.T) {
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 3}))
 	h.through("s1-1", "s1-2", "s1-3")
 	h.must(MergeStep(sprint.MergeReq{Stream: "s1"}))
-	s := h.snap()
-	require.Equal(t, sprint.Landed, s.StateOf("s1-1"), "the same ids again: %s %s", s.StateOf("s1-1"), s.StateOf("s1-3"))
-	require.Equal(t, sprint.Landed, s.StateOf("s1-3"), "the same ids again: %s %s", s.StateOf("s1-1"), s.StateOf("s1-3"))
+	if s := h.snap(); s.StateOf("s1-1") != sprint.Landed || s.StateOf("s1-3") != sprint.Landed {
+		require.Failf(t, "", "the same ids again: %s %s", s.StateOf("s1-1"), s.StateOf("s1-3"))
+	}
 	h.clean("landed again")
 
 	// Clear twice in a row.
@@ -233,10 +233,9 @@ func TestATickInFlightAtAClearIsRefusedAsStale(t *testing.T) {
 		assert.NoError(t, err, "clear: %v", err)
 	}}
 	res, err := loop.Tick(h.ctx)
-	require.NoError(t, err, "the tick at a clear: stale %q moved %v err %v", res.Stale, res.Moved(), err)
-	require.True(t, done, "the tick at a clear: stale %q moved %v err %v", res.Stale, res.Moved(), err)
-	require.NotEmpty(t, res.Stale, "the tick at a clear: stale %q moved %v err %v", res.Stale, res.Moved(), err)
-	require.Empty(t, res.Moved(), "the tick at a clear: stale %q moved %v err %v", res.Stale, res.Moved(), err)
+	if err != nil || !done || res.Stale == "" || len(res.Moved()) != 0 {
+		require.Failf(t, "", "the tick at a clear: stale %q moved %v err %v", res.Stale, res.Moved(), err)
+	}
 	require.Equal(t, Running, cleared.Machine, "clear: %+v", cleared)
 	require.Equal(t, uint64(1), cleared.To, "clear: %+v", cleared)
 	old := h.st.At(0)

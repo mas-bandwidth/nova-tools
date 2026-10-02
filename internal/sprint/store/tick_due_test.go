@@ -118,9 +118,9 @@ func TestATickThatWentStaleLeavesAFullReadDue(t *testing.T) {
 	_, hb, _ = h.st.Machine(h.ctx)
 	require.True(t, hb.Full.IsZero(), "a tick whose part lost every attempt left no full read due: %+v", hb)
 	h.tick(time.Second)
-	res := h.machine()
-	require.False(t, res.Idle, "the next tick: idle=%v, s1-1 asked of %d", res.Idle, len(h.snap().Readers.Of("s1-1")))
-	require.Equal(t, 2, len(h.snap().Readers.Of("s1-1")), "the next tick: idle=%v, s1-1 asked of %d", res.Idle, len(h.snap().Readers.Of("s1-1")))
+	if res := h.machine(); res.Idle || len(h.snap().Readers.Of("s1-1")) != 2 {
+		require.Failf(t, "", "the next tick: idle=%v, s1-1 asked of %d", res.Idle, len(h.snap().Readers.Of("s1-1")))
+	}
 }
 
 // The heartbeat's count of failed ticks in a row counts, and a success

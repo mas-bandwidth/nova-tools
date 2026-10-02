@@ -245,9 +245,9 @@ func TestAudit2ClosedAckedTickJudgmentHoldsForEver(t *testing.T) {
 		h.must(CIStep(sprint.CIReq{Sel: sprint.Sel{IDs: []string{"s1-2"}}, Run: fmt.Sprint("r", i), Red: i%2 == 1}))
 		h.readInbox()
 	}
-	s := h.snap()
-	require.Equal(t, sprint.Working, s.StateOf("s1-1"), "s1-1 %s", s.StateOf("s1-1"))
-	require.Equal(t, sprint.Working, s.Fleet.Placed(c.ID).Col, "s1-1 %s", s.StateOf("s1-1"))
+	if s := h.snap(); s.StateOf("s1-1") != sprint.Working || s.Fleet.Placed(c.ID).Col != sprint.Working {
+		require.Failf(t, "", "s1-1 %s", s.StateOf("s1-1"))
+	}
 	h.a2Names("s1-1", "work card taken twelve hours ago, its deadline waited on for 30 minutes")
 	n := h.written(sprint.NWorkLate)
 	require.GreaterOrEqual(t, n, 2, "the deadline was not raised again after the wait: written %d", n)
@@ -411,8 +411,9 @@ func TestAudit2ClosedClearLeavesTheMachineStoppedSilently(t *testing.T) {
 		due = due || g.Type == sprint.NStoppedWithDue && strings.Contains(g.What, "3 moves are due") && g.Commands[0].Lines[0] == "nova-sprint start"
 		note = note || g.Type == sprint.NMachineStopped
 	}
-	require.True(t, due, "the new epoch's inbox: moves due %v, stopped note %v: %+v", due, note, h.a2Inbox().Groups)
-	require.True(t, note, "the new epoch's inbox: moves due %v, stopped note %v: %+v", due, note, h.a2Inbox().Groups)
+	if !due || !note {
+		require.Failf(t, "", "the new epoch's inbox: moves due %v, stopped note %v: %+v", due, note, h.a2Inbox().Groups)
+	}
 }
 
 // DEFECT E. A sprint set up and never started has no STOPPED span (init

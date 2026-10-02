@@ -126,10 +126,10 @@ func TestRepairNeverAbandonsAnOperationThatApplied(t *testing.T) {
 	t.Logf("worker's finish: moved %v err %v; tick: repaired %+v err %v", wres.Moved, werr, tres.Repaired, terr)
 	h.clean("after")
 	require.Equal(t, sprint.Review, h.state("s1-1"), "s1-1 is %s", h.state("s1-1"))
-	n := h.written(sprint.NWorkFailed)
-	require.Equal(t, 1, n, "the finish applied (s1-1 in review, failed): work came back failed written %d, open %d", n, len(h.openOf(sprint.NWorkFailed)))
-	require.Len(t, h.openOf(sprint.NWorkFailed), 1, "the finish applied (s1-1 in review, failed): work came back failed written %d, open %d", n, len(h.openOf(sprint.NWorkFailed)))
-	n = h.written(sprint.NAbandoned)
+	if n := h.written(sprint.NWorkFailed); n != 1 || len(h.openOf(sprint.NWorkFailed)) != 1 {
+		require.Failf(t, "", "the finish applied (s1-1 in review, failed): work came back failed written %d, open %d", n, len(h.openOf(sprint.NWorkFailed)))
+	}
+	n := h.written(sprint.NAbandoned)
 	require.Equal(t, 0, n, "an operation that applied was released as abandoned (%d)", n)
 	require.NoError(t, werr, "the worker was told: %v", werr)
 	h.machine()
@@ -170,9 +170,9 @@ func TestRepairAbandonsAnOperationNoneOfWhichApplied(t *testing.T) {
 	require.NoError(t, err, "repair: %+v %v", rr, err)
 	require.Len(t, rr, 1, "repair: %+v %v", rr, err)
 	require.Equal(t, RepairAbandoned, rr[0].Done, "repair: %+v %v", rr, err)
-	require.Equal(t, sprint.Working, h.state("s1-1"), "s1-1 %s, abandoned %d, skips %d", h.state("s1-1"), h.written(sprint.NAbandoned), len(h.skipNotes()))
-	require.Equal(t, 1, h.written(sprint.NAbandoned), "s1-1 %s, abandoned %d, skips %d", h.state("s1-1"), h.written(sprint.NAbandoned), len(h.skipNotes()))
-	require.Empty(t, h.skipNotes(), "s1-1 %s, abandoned %d, skips %d", h.state("s1-1"), h.written(sprint.NAbandoned), len(h.skipNotes()))
+	if h.state("s1-1") != sprint.Working || h.written(sprint.NAbandoned) != 1 || len(h.skipNotes()) != 0 {
+		require.Failf(t, "", "s1-1 %s, abandoned %d, skips %d", h.state("s1-1"), h.written(sprint.NAbandoned), len(h.skipNotes()))
+	}
 	h.clean("abandoned")
 }
 
@@ -226,9 +226,9 @@ func TestRepairAppliesWhatHoldsOfAFirstManifestPastTheGrace(t *testing.T) {
 	require.Equal(t, string(sprint.DoneFailed), h.snap().Fleet.Card(other.ID).Col, "the entry that held: %s %s", h.snap().Fleet.Card(other.ID).Col, h.state(other.F("primary")))
 	require.Equal(t, sprint.Review, h.state(other.F("primary")), "the entry that held: %s %s", h.snap().Fleet.Card(other.ID).Col, h.state(other.F("primary")))
 	skips := h.skipNotes()
-	require.Equal(t, 0, h.written(sprint.NAbandoned), "skip judgments %+v, abandoned %d", skips, h.written(sprint.NAbandoned))
-	require.Len(t, skips, 1, "skip judgments %+v, abandoned %d", skips, h.written(sprint.NAbandoned))
-	require.Contains(t, skips[0].What, c.ID, "skip judgments %+v, abandoned %d", skips, h.written(sprint.NAbandoned))
+	if h.written(sprint.NAbandoned) != 0 || len(skips) != 1 || !strings.Contains(skips[0].What, c.ID) {
+		require.Failf(t, "", "skip judgments %+v, abandoned %d", skips, h.written(sprint.NAbandoned))
+	}
 	// The card whose entry was skipped is left half-moved, named in the skip
 	// judgment; check says so, and the judgment's drop restores the rules.
 	rep, _, err := h.st.Check(h.ctx, 5)

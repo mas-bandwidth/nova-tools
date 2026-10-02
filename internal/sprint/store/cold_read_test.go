@@ -157,7 +157,9 @@ func TestAFinishWithoutItsGenerationIsRefused(t *testing.T) {
 	p.do("take by first's new worker", TakeStep(sprint.TakeReq{As: first, Sel: ids("s1-1.w1"), Gens: map[string]int{"s1-1.w1": c.Int("gen")}}))
 	// the old worker (holding generation 1) reports with --as only
 	res := p.do("old worker's finish, --as only", FinishStep(sprint.FinishReq{As: first, Sel: ids("s1-1.w1"), Failed: true, Report: "stale"}))
-	assert.Empty(t, res.Moved, "a finish from generation 1 was accepted for a card at generation %s because the request named no generation: %v", c.F("gen"), res.Moved)
+	if len(res.Moved) != 0 {
+		assert.Failf(t, "", "a finish from generation 1 was accepted for a card at generation %s because the request named no generation: %v", c.F("gen"), res.Moved)
+	}
 	// and by selection (no id at all)
 }
 

@@ -38,9 +38,9 @@ func TestATickInFlightAtAClearWritesNothing(t *testing.T) {
 			require.NotEmpty(t, res.Stale, "the tick at a clear: stale %q parts %+v err %v", res.Stale, res.Parts, err)
 			got := withoutMachine(h.image())
 			require.Equal(t, img, got, "the tick wrote after the clear:\n%s\nwas\n%s", got, img)
-			m, _, _ := h.st.Machine(h.ctx)
-			require.False(t, m.Running(), "after the clear: machine %s, %+v", m.StateWord(), cleared)
-			require.Equal(t, uint64(1), cleared.To, "after the clear: machine %s, %+v", m.StateWord(), cleared)
+			if m, _, _ := h.st.Machine(h.ctx); m.Running() || cleared.To != 1 {
+				require.Failf(t, "", "after the clear: machine %s, %+v", m.StateWord(), cleared)
+			}
 			h.clean("after the tick")
 		})
 	}

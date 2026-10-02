@@ -84,9 +84,9 @@ func TestResumeAfterRedWantsWhatWasDone(t *testing.T) {
 	}
 	require.Equal(t, string(sprint.StreamStopped), h.snap().StreamCtl("s1").F("state"), "a refused resume moved the stream")
 	h.must(ResumeStep(sprint.ResumeReq{Stream: "s1", Did: "reverted the suspect"}))
-	s := h.snap().StreamCtl("s1")
-	require.Equal(t, sprint.StreamMerging, s.F("state"), "resume with did: state %s did %q", s.F("state"), s.F("did"))
-	require.Equal(t, "reverted the suspect", s.F("did"), "resume with did: state %s did %q", s.F("state"), s.F("did"))
+	if s := h.snap().StreamCtl("s1"); s.F("state") != sprint.StreamMerging || s.F("did") != "reverted the suspect" {
+		require.Failf(t, "", "resume with did: state %s did %q", s.F("state"), s.F("did"))
+	}
 	h.clean("resumed")
 }
 

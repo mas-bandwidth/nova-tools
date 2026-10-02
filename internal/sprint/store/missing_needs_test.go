@@ -150,9 +150,9 @@ func TestRestoredMissingNeedIsNotWaivedAndItsJudgmentCloses(t *testing.T) {
 				require.Len(t, h.nOpenOf(sprint.NBlocked, "waiter"), 1, "dropped need was hidden by former missing judgment")
 			}
 			c := h.snap().Work.Card("waiter")
-			require.Equal(t, sprint.Waiting, c.Col, "wrong recovery: card=%+v notes=%+v", c, h.nOpenOf(sprint.NMissingNeed, "waiter"))
-			require.Empty(t, c.F("waived"), "wrong recovery: card=%+v notes=%+v", c, h.nOpenOf(sprint.NMissingNeed, "waiter"))
-			require.Empty(t, h.nOpenOf(sprint.NMissingNeed, "waiter"), "wrong recovery: card=%+v notes=%+v", c, h.nOpenOf(sprint.NMissingNeed, "waiter"))
+			if c.Col != sprint.Waiting || c.F("waived") != "" || len(h.nOpenOf(sprint.NMissingNeed, "waiter")) != 0 {
+				require.Failf(t, "", "wrong recovery: card=%+v notes=%+v", c, h.nOpenOf(sprint.NMissingNeed, "waiter"))
+			}
 			h.clean("dependency exists again")
 		})
 	}

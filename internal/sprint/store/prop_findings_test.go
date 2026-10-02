@@ -91,9 +91,9 @@ func TestTheTickClosingALateReadWritesWhatThePrimaryNeeds(t *testing.T) {
 	h.must(ReadStep(sprint.ReadReq{As: cards[1].Row, Verdict: "ok", Finding: "f", Sel: sprint.Sel{IDs: []string{cards[1].ID}}}))
 	h.tick(time.Second)
 	h.machine() // closes the late read
-	got := h.judgmentsOn("p2")
-	require.NotEmpty(t, got, "after the late read closed, open on p2: %v, late reads %d", got, len(h.openOf(sprint.NReadLate)))
-	require.Empty(t, h.openOf(sprint.NReadLate), "after the late read closed, open on p2: %v, late reads %d", got, len(h.openOf(sprint.NReadLate)))
+	if got := h.judgmentsOn("p2"); len(got) == 0 || len(h.openOf(sprint.NReadLate)) != 0 {
+		require.Failf(t, "", "after the late read closed, open on p2: %v, late reads %d", got, len(h.openOf(sprint.NReadLate)))
+	}
 	h.clean("the late read closed")
 	h.quiet("the tick again")
 }
@@ -127,9 +127,9 @@ func TestTheTickClosingTheOnlyLateReadWritesWhatThePrimaryNeeds(t *testing.T) {
 	h.must(ReadStep(sprint.ReadReq{As: cards[1].Row, Verdict: "ok", Finding: "f", Sel: sprint.Sel{IDs: []string{cards[1].ID}}}))
 	h.tick(time.Second)
 	h.machine() // closes the late read
-	exhausted := h.openOf(sprint.NReadsExhausted)
-	require.Len(t, exhausted, 1, "after the late read closed, reads exhausted: %v; open on p2: %v", exhausted, h.judgmentsOn("p2"))
-	require.Empty(t, h.openOf(sprint.NReadLate), "after the late read closed, reads exhausted: %v; open on p2: %v", exhausted, h.judgmentsOn("p2"))
+	if got := h.openOf(sprint.NReadsExhausted); len(got) != 1 || len(h.openOf(sprint.NReadLate)) != 0 {
+		require.Failf(t, "", "after the late read closed, reads exhausted: %v; open on p2: %v", got, h.judgmentsOn("p2"))
+	}
 	h.clean("the late read closed")
 	h.quiet("the tick again")
 }

@@ -231,9 +231,9 @@ func TestTheRedealBoundEndsTheTakeAndAbandonLoop(t *testing.T) {
 		h.machine()
 	}
 	c := h.snap().Fleet.Card("s1-1.w1")
-	require.Equal(t, sprint.MaxRedeals, c.Int("redeals"), "after ten abandonments: %s at %s:%s gen %d redeals %d", c.ID, c.Row, c.Col, c.Int("gen"), c.Int("redeals"))
-	require.Equal(t, sprint.Withdrawn, c.Col, "after ten abandonments: %s at %s:%s gen %d redeals %d", c.ID, c.Row, c.Col, c.Int("gen"), c.Int("redeals"))
-	require.LessOrEqual(t, c.Int("gen"), sprint.MaxRedeals+2, "after ten abandonments: %s at %s:%s gen %d redeals %d", c.ID, c.Row, c.Col, c.Int("gen"), c.Int("redeals"))
+	if c.Int("redeals") != sprint.MaxRedeals || c.Col != sprint.Withdrawn || c.Int("gen") > sprint.MaxRedeals+2 {
+		require.Failf(t, "", "after ten abandonments: %s at %s:%s gen %d redeals %d", c.ID, c.Row, c.Col, c.Int("gen"), c.Int("redeals"))
+	}
 	st := h.state("s1-1")
 	require.Equal(t, sprint.Ready, st, "s1-1 is %s at its bound", st)
 	bound := h.openOf(sprint.NBound)
@@ -250,18 +250,16 @@ func TestTheRedealBoundEndsTheTakeAndAbandonLoop(t *testing.T) {
 	require.Contains(t, redeals[2], "redeal 3 of 3", "the redeal lines: %q", redeals)
 	h.tick(time.Minute)
 	h.machine()
-	c2 := h.snap().Fleet.Card("s1-1.w1")
-	require.Equal(t, c.Int("gen"), c2.Int("gen"), "dealt again past its bound: %s:%s gen %d", c2.Row, c2.Col, c2.Int("gen"))
-	require.Equal(t, sprint.Withdrawn, c2.Col, "dealt again past its bound: %s:%s gen %d", c2.Row, c2.Col, c2.Int("gen"))
+	if c2 := h.snap().Fleet.Card("s1-1.w1"); c2.Int("gen") != c.Int("gen") || c2.Col != sprint.Withdrawn {
+		require.Failf(t, "", "dealt again past its bound: %s:%s gen %d", c2.Row, c2.Col, c2.Int("gen"))
+	}
 	res := h.run(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Answers: []string{bound[0].Note.ID}}))
 	require.NotEmpty(t, res.Refused, "rework at the bound with no fix: %+v", res)
 	h.must(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: "run it on a quieter machine", Answers: []string{bound[0].Note.ID}}))
 	w2 := h.snap().Fleet.Card("s1-1.w2")
-	require.NotNil(t, w2, "reworked at the bound: %+v, s1-1 %s, bound open %d", w2, h.state("s1-1"), len(h.openOf(sprint.NBound)))
-	require.Equal(t, sprint.Ready, w2.Col, "reworked at the bound: %+v, s1-1 %s, bound open %d", w2, h.state("s1-1"), len(h.openOf(sprint.NBound)))
-	require.Equal(t, 0, w2.Int("redeals"), "reworked at the bound: %+v, s1-1 %s, bound open %d", w2, h.state("s1-1"), len(h.openOf(sprint.NBound)))
-	require.Equal(t, sprint.Working, h.state("s1-1"), "reworked at the bound: %+v, s1-1 %s, bound open %d", w2, h.state("s1-1"), len(h.openOf(sprint.NBound)))
-	require.Empty(t, h.openOf(sprint.NBound), "reworked at the bound: %+v, s1-1 %s, bound open %d", w2, h.state("s1-1"), len(h.openOf(sprint.NBound)))
+	if w2 == nil || w2.Col != sprint.Ready || w2.Int("redeals") != 0 || h.state("s1-1") != sprint.Working || len(h.openOf(sprint.NBound)) != 0 {
+		require.Failf(t, "", "reworked at the bound: %+v, s1-1 %s, bound open %d", w2, h.state("s1-1"), len(h.openOf(sprint.NBound)))
+	}
 	h.clean("reworked at the bound")
 }
 

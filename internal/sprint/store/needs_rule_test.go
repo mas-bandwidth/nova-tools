@@ -120,25 +120,24 @@ func TestStampsOnEveryPath(t *testing.T) {
 	h.nDo(FleetStep(sprint.FleetReq{Op: "down", Member: wc.Row}))
 	s = h.snap()
 	wc2 := s.Fleet.Card("s1-1.w1")
-	require.Equal(t, sprint.Ready, wc2.Col, "redeal after down: %s:%s dealt=%q (was %q) taken=%q", wc2.Row, wc2.Col, wc2.F("dealt"), wc.F("dealt"), wc2.F("taken"))
-	require.Empty(t, wc2.F("taken"), "redeal after down: %s:%s dealt=%q (was %q) taken=%q", wc2.Row, wc2.Col, wc2.F("dealt"), wc.F("dealt"), wc2.F("taken"))
-	require.NotEqual(t, wc.F("dealt"), wc2.F("dealt"), "redeal after down: %s:%s dealt=%q (was %q) taken=%q", wc2.Row, wc2.Col, wc2.F("dealt"), wc.F("dealt"), wc2.F("taken"))
-	require.NotEmpty(t, wc2.F("dealt"), "redeal after down: %s:%s dealt=%q (was %q) taken=%q", wc2.Row, wc2.Col, wc2.F("dealt"), wc.F("dealt"), wc2.F("taken"))
+	if wc2.Col != sprint.Ready || wc2.F("taken") != "" || wc2.F("dealt") == wc.F("dealt") || wc2.F("dealt") == "" {
+		require.Failf(t, "", "redeal after down: %s:%s dealt=%q (was %q) taken=%q", wc2.Row, wc2.Col, wc2.F("dealt"), wc.F("dealt"), wc2.F("taken"))
+	}
 	// the last member down: withdrawn, taken and dealt unset
 	h.nDo(FleetStep(sprint.FleetReq{Op: "down", Member: wc2.Row}))
 	s = h.snap()
 	wc3 := s.Fleet.Card("s1-1.w1")
-	require.Equal(t, sprint.Withdrawn, wc3.Col, "withdrawn: %s dealt=%q taken=%q", wc3.Col, wc3.F("dealt"), wc3.F("taken"))
-	require.Empty(t, wc3.F("dealt"), "withdrawn: %s dealt=%q taken=%q", wc3.Col, wc3.F("dealt"), wc3.F("taken"))
-	require.Empty(t, wc3.F("taken"), "withdrawn: %s dealt=%q taken=%q", wc3.Col, wc3.F("dealt"), wc3.F("taken"))
+	if wc3.Col != sprint.Withdrawn || wc3.F("dealt") != "" || wc3.F("taken") != "" {
+		require.Failf(t, "", "withdrawn: %s dealt=%q taken=%q", wc3.Col, wc3.F("dealt"), wc3.F("taken"))
+	}
 	// up again, start deals the same card again: dealt stamped
 	h.nDo(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
 	h.nDo(DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
 	s = h.snap()
 	wc4 := s.Fleet.Card("s1-1.w1")
-	require.Equal(t, sprint.Ready, wc4.Col, "re-deal after withdrawal: %s dealt=%q withdrawn=%q", wc4.Col, wc4.F("dealt"), wc4.F("withdrawn"))
-	require.Equal(t, nStamp(h.now.Add(-time.Minute)), wc4.F("dealt"), "re-deal after withdrawal: %s dealt=%q withdrawn=%q", wc4.Col, wc4.F("dealt"), wc4.F("withdrawn"))
-	require.Empty(t, wc4.F("withdrawn"), "re-deal after withdrawal: %s dealt=%q withdrawn=%q", wc4.Col, wc4.F("dealt"), wc4.F("withdrawn"))
+	if wc4.Col != sprint.Ready || wc4.F("dealt") != nStamp(h.now.Add(-time.Minute)) || wc4.F("withdrawn") != "" {
+		require.Failf(t, "", "re-deal after withdrawal: %s dealt=%q withdrawn=%q", wc4.Col, wc4.F("dealt"), wc4.F("withdrawn"))
+	}
 	// level: more cards on m1, m2 comes up, the newest moves with dealt new
 	h.nDo(AddStep(sprint.AddReq{Stream: "s1", Count: 3}))
 	h.nDo(DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-2", "s1-3", "s1-4"}}}))
@@ -161,8 +160,9 @@ func TestStampsOnEveryPath(t *testing.T) {
 	rcs := s.Readers.Of("s1-1")
 	require.Len(t, rcs, 3, "%d read cards", len(rcs))
 	for _, rc := range rcs {
-		require.NotEmpty(t, rc.F("asked"), "%s asked=%q begun=%q", rc.ID, rc.F("asked"), rc.F("begun"))
-		require.Empty(t, rc.F("begun"), "%s asked=%q begun=%q", rc.ID, rc.F("asked"), rc.F("begun"))
+		if rc.F("asked") == "" || rc.F("begun") != "" {
+			require.Failf(t, "", "%s asked=%q begun=%q", rc.ID, rc.F("asked"), rc.F("begun"))
+		}
 	}
 	h.nDo(ReadStep(sprint.ReadReq{As: rcs[0].Row, Begin: true, Sel: sprint.Sel{IDs: []string{rcs[0].ID}}}))
 	h.nDo(ReadStep(sprint.ReadReq{As: rcs[1].Row, Verdict: "broken", Finding: "x", Sel: sprint.Sel{IDs: []string{rcs[1].ID}}}))
@@ -184,8 +184,9 @@ func TestStampsOnEveryPath(t *testing.T) {
 	for _, rc := range s.Readers.Of("s1-1") {
 		if rc.Int("attempt") == 2 {
 			again++
-			require.NotEmpty(t, rc.F("asked"), "re-ask %s asked=%q begun=%q", rc.ID, rc.F("asked"), rc.F("begun"))
-			require.Empty(t, rc.F("begun"), "re-ask %s asked=%q begun=%q", rc.ID, rc.F("asked"), rc.F("begun"))
+			if rc.F("asked") == "" || rc.F("begun") != "" {
+				require.Failf(t, "", "re-ask %s asked=%q begun=%q", rc.ID, rc.F("asked"), rc.F("begun"))
+			}
 		}
 	}
 	require.Equal(t, 2, again, "re-asked %d", again)

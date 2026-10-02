@@ -118,9 +118,9 @@ func TestAckOfAReachedSentinelIsRefused(t *testing.T) {
 		h.tick(time.Hour)
 		h.machine()
 	}
-	require.Len(t, h.openOf(sprint.NSentinelReached), 1, "after the refused ack: reached %d, stop %s, after %s", len(h.openOf(sprint.NSentinelReached)), h.state("stop"), h.state("after"))
-	require.Equal(t, sprint.Waiting, h.state("stop"), "after the refused ack: reached %d, stop %s, after %s", len(h.openOf(sprint.NSentinelReached)), h.state("stop"), h.state("after"))
-	require.Equal(t, sprint.Waiting, h.state("after"), "after the refused ack: reached %d, stop %s, after %s", len(h.openOf(sprint.NSentinelReached)), h.state("stop"), h.state("after"))
+	if len(h.openOf(sprint.NSentinelReached)) != 1 || h.state("stop") != sprint.Waiting || h.state("after") != sprint.Waiting {
+		require.Failf(t, "", "after the refused ack: reached %d, stop %s, after %s", len(h.openOf(sprint.NSentinelReached)), h.state("stop"), h.state("after"))
+	}
 	h.must(ReleaseStep(sprint.ReleaseReq{IDs: []string{"stop"}, Reason: "green", Coordinator: "tester", Who: "tester", Answers: []string{reached[0].Note.ID}}))
 	h.machine()
 	require.Equal(t, sprint.Landed, h.state("stop"), "after the release: stop %s after %s", h.state("stop"), h.state("after"))
@@ -155,10 +155,9 @@ func TestModelNoMemberJudgmentAfterAClear(t *testing.T) {
 			open = append(open, o)
 		}
 	}
-	require.Equal(t, uint64(1), pinned.PinnedEpoch(), "after the clear: open %+v, p3 %s", open, h.state("p3"))
-	require.Len(t, open, 1, "after the clear: open %+v, p3 %s", open, h.state("p3"))
-	require.Equal(t, uint64(1), sprint.IDEpoch(open[0].Note.ID), "after the clear: open %+v, p3 %s", open, h.state("p3"))
-	require.Equal(t, sprint.Ready, h.state("p3"), "after the clear: open %+v, p3 %s", open, h.state("p3"))
+	if pinned.PinnedEpoch() != 1 || len(open) != 1 || sprint.IDEpoch(open[0].Note.ID) != 1 || h.state("p3") != sprint.Ready {
+		require.Failf(t, "", "after the clear: open %+v, p3 %s", open, h.state("p3"))
+	}
 	h.clean("M2")
 }
 
@@ -201,9 +200,9 @@ func orphanInMerging(t *testing.T) (*harness, string) {
 		return sprint.Plan{Notes: []sprint.Note{n}}
 	}})
 	open := h.openOf(sprint.NRepairSkipped)
-	require.Len(t, open, 1, "the orphan: open %v, s1-1 %s", open, h.state("s1-1"))
-	require.Equal(t, sprint.Merging, h.state("s1-1"), "the orphan: open %v, s1-1 %s", open, h.state("s1-1"))
-	require.False(t, h.snap().Merge.Card("s1-1").Placed(), "the orphan: open %v, s1-1 %s", open, h.state("s1-1"))
+	if len(open) != 1 || h.state("s1-1") != sprint.Merging || h.snap().Merge.Card("s1-1").Placed() {
+		require.Failf(t, "", "the orphan: open %v, s1-1 %s", open, h.state("s1-1"))
+	}
 	return h, open[0].Note.ID
 }
 
@@ -309,7 +308,9 @@ func TestTwoBlockedJudgmentsOnOneSentinelWaiveOnce(t *testing.T) {
 			ids = append(ids, o.Note.ID)
 		}
 	}
-	require.Len(t, ids, 2, "blocked judgments on stop: %+v", h.openOn("stop"))
+	if len(ids) != 2 {
+		require.Failf(t, "", "blocked judgments on stop: %+v", h.openOn("stop"))
+	}
 	// the plan itself, before the engine's one-per-cause: one change of stop
 	// and one reached note
 	s, err := h.st.Load(h.ctx, All, tickExtras)

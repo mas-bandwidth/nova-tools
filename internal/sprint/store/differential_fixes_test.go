@@ -130,9 +130,9 @@ func TestARefusedAddWritesNothing(t *testing.T) {
 	res := h.run(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"b1"}, Needs: []string{"a1"}}))
 	require.NotEmpty(t, res.Refused, "add with a need that does not exist: %+v", res)
 	s := h.snap()
-	require.False(t, s.Work.HasRow("s2"), "the refused add declared s2: work %v merge %v", s.Work.Rows(), s.Merge.Rows())
-	require.False(t, s.Merge.HasRow("s2"), "the refused add declared s2: work %v merge %v", s.Work.Rows(), s.Merge.Rows())
-	require.Equal(t, before, h.m.Revision("t-work"), "the refused add declared s2: work %v merge %v", s.Work.Rows(), s.Merge.Rows())
+	if s.Work.HasRow("s2") || s.Merge.HasRow("s2") || h.m.Revision("t-work") != before {
+		require.Failf(t, "", "the refused add declared s2: work %v merge %v", s.Work.Rows(), s.Merge.Rows())
+	}
 }
 
 // 7. A merge step on a stream with nothing queued is refused and writes
@@ -188,9 +188,9 @@ func TestAConflictStopClearsANeed(t *testing.T) {
 	h.through("x")
 	h.persistNeed("x", "y", "s2")
 	h.must(MergeStep(sprint.MergeReq{Stream: "s1", Batch: 1, Conflict: "x"}))
-	m := h.snap().Merge.Card("x")
-	require.Equal(t, sprint.Stuck, m.Col, "x stopped by a conflict: %s need=%q", m.Col, m.F("need_card"))
-	require.Equal(t, "", m.F("need_card"), "x stopped by a conflict: %s need=%q", m.Col, m.F("need_card"))
+	if m := h.snap().Merge.Card("x"); m.Col != sprint.Stuck || m.F("need_card") != "" {
+		require.Failf(t, "", "x stopped by a conflict: %s need=%q", m.Col, m.F("need_card"))
+	}
 	h.clean("conflict")
 }
 

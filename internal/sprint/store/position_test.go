@@ -39,7 +39,9 @@ func TestSentinelsByPositionStoreNothing(t *testing.T) {
 			if c.Row != st {
 				continue
 			}
-			require.Empty(t, c.F("needs"), "%s stores needs %q", c.ID, c.F("needs"))
+			if c.F("needs") != "" {
+				require.Failf(t, "", "%s stores needs %q", c.ID, c.F("needs"))
+			}
 			switch {
 			case sprint.IsSentinel(c):
 				gates++
@@ -75,10 +77,9 @@ func TestSentinelsByPositionStoreNothing(t *testing.T) {
 	mark := len(h.lines())
 	res := h.must(ReleaseStep(sprint.ReleaseReq{IDs: []string{"a-gate-1"}, Reason: "go", Coordinator: "tester", Who: "tester"}))
 	s = h.snap()
-	st := s.StateOf("a-101")
-	require.Equal(t, sprint.Ready, st, "released a-gate-1: a-101 %s a-200 %s a-201 %s (%v)", st, s.StateOf("a-200"), s.StateOf("a-201"), res.Moved[:1])
-	require.Equal(t, sprint.Ready, s.StateOf("a-200"), "released a-gate-1: a-101 %s a-200 %s a-201 %s (%v)", st, s.StateOf("a-200"), s.StateOf("a-201"), res.Moved[:1])
-	require.Equal(t, sprint.Waiting, s.StateOf("a-201"), "released a-gate-1: a-101 %s a-200 %s a-201 %s (%v)", st, s.StateOf("a-200"), s.StateOf("a-201"), res.Moved[:1])
+	if st := s.StateOf("a-101"); st != sprint.Ready || s.StateOf("a-200") != sprint.Ready || s.StateOf("a-201") != sprint.Waiting {
+		require.Failf(t, "", "released a-gate-1: a-101 %s a-200 %s a-201 %s (%v)", st, s.StateOf("a-200"), s.StateOf("a-201"), res.Moved[:1])
+	}
 	moves := 0
 	for _, l := range h.lines()[mark:] {
 		if l.Note == nil && l.Table == sprint.Work {
@@ -100,10 +101,9 @@ func TestAStopInsertedIntoTheMiddleOfALine(t *testing.T) {
 	mark := len(h.lines())
 	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"stop"}, Sentinel: true, After: "s1-500"}))
 	s := h.snap()
-	require.Equal(t, sprint.Ready, s.StateOf("s1-500"), "inserted: s1-500 %s s1-501 %s stop needs %q", s.StateOf("s1-500"), s.StateOf("s1-501"), s.Work.Card("stop").F("needs"))
-	require.Equal(t, sprint.Waiting, s.StateOf("s1-501"), "inserted: s1-500 %s s1-501 %s stop needs %q", s.StateOf("s1-500"), s.StateOf("s1-501"), s.Work.Card("stop").F("needs"))
-	require.Equal(t, sprint.Waiting, s.StateOf("s1-1000"), "inserted: s1-500 %s s1-501 %s stop needs %q", s.StateOf("s1-500"), s.StateOf("s1-501"), s.Work.Card("stop").F("needs"))
-	require.Empty(t, s.Work.Card("stop").F("needs"), "inserted: s1-500 %s s1-501 %s stop needs %q", s.StateOf("s1-500"), s.StateOf("s1-501"), s.Work.Card("stop").F("needs"))
+	if s.StateOf("s1-500") != sprint.Ready || s.StateOf("s1-501") != sprint.Waiting || s.StateOf("s1-1000") != sprint.Waiting || s.Work.Card("stop").F("needs") != "" {
+		require.Failf(t, "", "inserted: s1-500 %s s1-501 %s stop needs %q", s.StateOf("s1-500"), s.StateOf("s1-501"), s.Work.Card("stop").F("needs"))
+	}
 	var sets []sprint.Line
 	for _, l := range h.lines()[mark:] {
 		if l.Note == nil && l.Table == sprint.Work {

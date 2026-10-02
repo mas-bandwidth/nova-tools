@@ -373,7 +373,9 @@ func dealRingMemberDownAndLevel(t *testing.T, h *harness) {
 	require.Len(t, r.deals, 12, "dealt %d cards, want 12", len(r.deals))
 	s := h.snap()
 	dealAt, _ := s.Fleet.Prop(sprint.PropDealIndex)
-	require.Equal(t, "12", dealAt, "deal_index after 12 deals: %q, want 12 (past %s)", dealAt, indexPast(ringMembers, dealAt))
+	if dealAt != "12" {
+		require.Failf(t, "", "deal_index after 12 deals: %q, want 12 (past %s)", dealAt, indexPast(ringMembers, dealAt))
+	}
 
 	// 2. m2..m8 take and finish their cards; m1 keeps its 2 ready cards
 	for _, m := range ringMembers[1:] {
@@ -409,7 +411,9 @@ func dealRingMemberDownAndLevel(t *testing.T, h *harness) {
 		require.Equal(t, 0, n, "%s ready count: %d, want 0 (shortest queue by name would have chosen m2/m3)", m, n)
 	}
 	dealAt, _ = s.Fleet.Prop(sprint.PropDealIndex)
-	require.Equal(t, "14", dealAt, "deal_index after member down redeals: %q, want 14 (past %s)", dealAt, indexPast(ringMembers, dealAt))
+	if dealAt != "14" {
+		require.Failf(t, "", "deal_index after member down redeals: %q, want 14 (past %s)", dealAt, indexPast(ringMembers, dealAt))
+	}
 
 	// 4. While m1 is down, deal 9 cards across the 7 up members (m2..m8)
 	// From deal_index counter 14 (past m6), the first round is 7 cards (m7, m8, m2, m3, m4, m5, m6),
@@ -422,7 +426,9 @@ func dealRingMemberDownAndLevel(t *testing.T, h *harness) {
 	t.Logf("deal while m1 down tick: %s", r)
 	s = h.snap()
 	dealAt, _ = s.Fleet.Prop(sprint.PropDealIndex)
-	require.Equal(t, "24", dealAt, "deal_index after 9 deals: %q, want 24 (past %s)", dealAt, indexPast(ringMembers, dealAt))
+	if dealAt != "24" {
+		require.Failf(t, "", "deal_index after 9 deals: %q, want 24 (past %s)", dealAt, indexPast(ringMembers, dealAt))
+	}
 	n = s.Fleet.Count("m7", sprint.Ready)
 	require.Equal(t, 2, n, "m7 ready count: %d, want 2", n)
 	n = s.Fleet.Count("m8", sprint.Ready)
@@ -444,7 +450,9 @@ func dealRingMemberDownAndLevel(t *testing.T, h *harness) {
 	n = s.Fleet.Count("m1", sprint.Ready)
 	require.Equal(t, 1, n, "m1 ready count after levelling: %d, want 1", n)
 	dealAt, _ = s.Fleet.Prop(sprint.PropDealIndex)
-	require.Equal(t, "25", dealAt, "deal_index after levelling: %q, want 25 (past %s)", dealAt, indexPast(ringMembers, dealAt))
+	if dealAt != "25" {
+		require.Failf(t, "", "deal_index after levelling: %q, want 25 (past %s)", dealAt, indexPast(ringMembers, dealAt))
+	}
 }
 
 func TestMemberDownRedealsAndLevelGoRoundTheFleet(t *testing.T) {

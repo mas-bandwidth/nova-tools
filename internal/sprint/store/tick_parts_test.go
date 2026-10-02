@@ -174,9 +174,9 @@ func TestTheTickFinishesAPendingOperationPastItsGrace(t *testing.T) {
 	require.NotNil(t, h.m.Pending(), "nothing pending")
 	h.tick(2 * time.Minute)
 	res := h.machine()
-	require.Len(t, res.Repaired, 1, "the tick's repair: %+v pending %v", res.Repaired, h.m.Pending())
-	require.Equal(t, RepairFinished, res.Repaired[0].Done, "the tick's repair: %+v pending %v", res.Repaired, h.m.Pending())
-	require.Nil(t, h.m.Pending(), "the tick's repair: %+v pending %v", res.Repaired, h.m.Pending())
+	if len(res.Repaired) != 1 || res.Repaired[0].Done != RepairFinished || h.m.Pending() != nil {
+		require.Failf(t, "", "the tick's repair: %+v pending %v", res.Repaired, h.m.Pending())
+	}
 	h.clean("repaired")
 }
 
@@ -197,9 +197,9 @@ func TestTheTickResumesACrossStopWhenTheCardLands(t *testing.T) {
 	h.must(MergeStep(sprint.MergeReq{Stream: "s2"}))
 	h.machine()
 	s := h.snap()
-	st = s.StreamCtl("s1").F("state")
-	require.Equal(t, string(sprint.StreamMerging), st, "after b landed: s1 %s, a %s", st, s.Merge.Placed("a").Col)
-	require.Equal(t, sprint.Queued, s.Merge.Placed("a").Col, "after b landed: s1 %s, a %s", st, s.Merge.Placed("a").Col)
+	if st := s.StreamCtl("s1").F("state"); st != sprint.StreamMerging || s.Merge.Placed("a").Col != sprint.Queued {
+		require.Failf(t, "", "after b landed: s1 %s, a %s", st, s.Merge.Placed("a").Col)
+	}
 	require.Equal(t, 1, h.written(sprint.NResumed), "resumed notes %d, the cross stop still open %d", h.written(sprint.NResumed), len(h.openOf(sprint.NCross)))
 	require.Empty(t, h.openOf(sprint.NCross), "resumed notes %d, the cross stop still open %d", h.written(sprint.NResumed), len(h.openOf(sprint.NCross)))
 	h.quiet("resumed")
@@ -276,9 +276,9 @@ func TestDeadlinesCountRunningTimeAndNotifyOnce(t *testing.T) {
 	// ask writes: one judgment per read card
 	h.tick(sprint.DeadlineUnbegun + time.Minute)
 	h.machine()
-	n := len(h.snap().Readers.Column(sprint.Asked))
-	require.Equal(t, 4, n, "the late read cards: %d asked, %d open", n, len(h.openOf(sprint.NReadLate)))
-	require.Len(t, h.openOf(sprint.NReadLate), n, "the late read cards: %d asked, %d open", n, len(h.openOf(sprint.NReadLate)))
+	if n := len(h.snap().Readers.Column(sprint.Asked)); n != 4 || len(h.openOf(sprint.NReadLate)) != n {
+		require.Failf(t, "", "the late read cards: %d asked, %d open", n, len(h.openOf(sprint.NReadLate)))
+	}
 	// N6: a merging stream with no merge step
 	h.readAll()
 	h.run(AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{Stream: "s1"}}))

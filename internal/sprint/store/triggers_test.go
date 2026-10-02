@@ -113,12 +113,11 @@ func TestTriggerReturnedPrimaryIsAJudgment(t *testing.T) {
 	h.through("s1-1")
 	h.must(ReturnStep(sprint.ReturnReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "suspect"}))
 	h.readInbox()
-	got := h.judgmentsOn("s1-1")
-	require.Equal(t, sprint.Review, h.state("s1-1"), "s1-1 is %s with %v open", h.state("s1-1"), got)
-	require.Len(t, got, 1, "s1-1 is %s with %v open", h.state("s1-1"), got)
-	require.Equal(t, sprint.NReturned, got[0], "s1-1 is %s with %v open", h.state("s1-1"), got)
+	if got := h.judgmentsOn("s1-1"); h.state("s1-1") != sprint.Review || len(got) != 1 || got[0] != sprint.NReturned {
+		require.Failf(t, "", "s1-1 is %s with %v open", h.state("s1-1"), got)
+	}
 	h.must(AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
-	got = h.judgmentsOn("s1-1")
+	got := h.judgmentsOn("s1-1")
 	require.Empty(t, got, "accept left %v open", got)
 	h.clean("accepted again")
 }

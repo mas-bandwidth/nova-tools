@@ -183,9 +183,9 @@ func TestNoMemberUpWithdrawsTheCards(t *testing.T) {
 	h.machine()
 	h.machine()
 	s := h.snap()
-	n := len(s.Fleet.Column(sprint.Withdrawn))
-	require.Equal(t, 2, n, "withdrawn %d, up %v; want both cards withdrawn and nobody up", n, s.UpMembers())
-	require.Empty(t, s.UpMembers(), "withdrawn %d, up %v; want both cards withdrawn and nobody up", n, s.UpMembers())
+	if n := len(s.Fleet.Column(sprint.Withdrawn)); n != 2 || len(s.UpMembers()) != 0 {
+		require.Failf(t, "", "withdrawn %d, up %v; want both cards withdrawn and nobody up", n, s.UpMembers())
+	}
 	h.clean("every member silent")
 }
 

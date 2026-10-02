@@ -40,13 +40,12 @@ func TestAStepWritesATablePropertyWithItsMembers(t *testing.T) {
 	h.setup(2)
 	calls := 0
 	h.must(dealWithProp(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}, func(string, bool) string { return "m1" }, &calls))
-	v, ok := propOf(t, h, "probe_index")
-	require.True(t, ok, "after the deal: deal_index %q %v, s1-1 %s", v, ok, h.state("s1-1"))
-	require.Equal(t, "m1", v, "after the deal: deal_index %q %v, s1-1 %s", v, ok, h.state("s1-1"))
-	require.Equal(t, sprint.Working, h.state("s1-1"), "after the deal: deal_index %q %v, s1-1 %s", v, ok, h.state("s1-1"))
+	if v, ok := propOf(t, h, "probe_index"); !ok || v != "m1" || h.state("s1-1") != sprint.Working {
+		require.Failf(t, "", "after the deal: deal_index %q %v, s1-1 %s", v, ok, h.state("s1-1"))
+	}
 	// the next deal reads it and moves it on
 	h.must(dealWithProp(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-2"}}}, func(was string, _ bool) string { return was + "+" }, &calls))
-	v, _ = propOf(t, h, "probe_index")
+	v, _ := propOf(t, h, "probe_index")
 	require.Equal(t, "m1+", v, "deal_index %q, want m1+", v)
 }
 

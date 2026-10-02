@@ -188,9 +188,9 @@ func TestOneBudgetPerStep(t *testing.T) {
 	before := a.slept()
 	for b.next(1000) {
 	}
-	require.LessOrEqual(t, b.slept(), RetryBudget, "two loops of one step: %s then %s, budget %s", before, b.slept(), RetryBudget)
-	require.GreaterOrEqual(t, b.slept(), before, "two loops of one step: %s then %s, budget %s", before, b.slept(), RetryBudget)
-	require.Equal(t, a.slept(), b.slept(), "two loops of one step: %s then %s, budget %s", before, b.slept(), RetryBudget)
+	if b.slept() > RetryBudget || b.slept() < before || a.slept() != b.slept() {
+		require.Failf(t, "", "two loops of one step: %s then %s, budget %s", before, b.slept(), RetryBudget)
+	}
 	other := st.retry(context.Background())
 	require.True(t, other.next(2), "another step has a budget of its own")
 	require.True(t, other.next(2), "another step has a budget of its own")

@@ -137,10 +137,10 @@ func TestRepairSkipsWhatNoLongerHoldsAndReleases(t *testing.T) {
 	require.Equal(t, RepairSkipped, rr[0].Done, "repair: %+v %v", rr, err)
 	require.Nil(t, h.m.Pending(), "the fence is still held")
 	s := h.snap()
-	c := s.Work.Card("s1-1")
-	require.Equal(t, sprint.Ready, c.Col, "s1-1 overwritten: %s brief=%s", c.Col, c.F("brief"))
-	require.Equal(t, "outside", c.F("brief"), "s1-1 overwritten: %s brief=%s", c.Col, c.F("brief"))
-	c = s.Work.Card("s1-2")
+	if c := s.Work.Card("s1-1"); c.Col != sprint.Ready || c.F("brief") != "outside" {
+		require.Failf(t, "", "s1-1 overwritten: %s brief=%s", c.Col, c.F("brief"))
+	}
+	c := s.Work.Card("s1-2")
 	require.Equal(t, sprint.Working, c.Col, "s1-2, whose expectation held, is %s", c.Col)
 	ns := h.skipNotes()
 	require.Len(t, ns, 1, "%d skip judgments", len(ns))
