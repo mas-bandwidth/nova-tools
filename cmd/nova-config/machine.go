@@ -14,9 +14,9 @@ import (
 )
 
 // The machine kind's two queries beside its six verbs: self, the machine's
-// own name, and width, the room the sprint's member on a machine has. Both
+// own name, and width, the width of the sprint's member on a machine. Both
 // read the one inventory and type nothing into it (docs/SPEC-CONFIG.md, "The
-// sprint's width"; internal/config/kind.go, the machine kind's four fields).
+// sprint's width"; internal/config/kind.go, the machine kind's fields).
 
 // Exit codes of machine self. They are the family's: 0 done, 2 a finding (the
 // name is no machine row) or an invocation that could not run, 3 the name or
@@ -64,7 +64,7 @@ func runMachineSelf(ctx context.Context, args []string, stdout, stderr io.Writer
 			return exitCannotRead
 		}
 		if !found {
-			fmt.Fprintf(stderr, "%s %s: %q is no machine row; run: %s machine add %s --user <login> --seat <seat> --slots <n> --as <friend>\n", tool, verb, name, tool, name)
+			fmt.Fprintf(stderr, "%s %s: %q is no machine row; run: %s machine add %s --user <login> --seat <seat> --slots <n> --width <n> --as <friend>\n", tool, verb, name, tool, name)
 			return 2
 		}
 	}
@@ -91,42 +91,24 @@ func machineLoops(ctx context.Context, st config.Store, machine string) ([]strin
 
 func oneLine(err error) string { return strings.Join(strings.Fields(err.Error()), " ") }
 
-// widths reads every machine row's width: the rows from the store, and the
-// friends' beats from Redis when a friend row carries slots (Redis is given
-// by --redis, else NOVA_SPRINT_REDIS, else NOVA_REDIS_ADDR).
-func widths(ctx context.Context, st config.Store, redisFlag string, d deps) ([]config.MachineWidth, error) {
-	var hosts config.HostReader
-	if addr := liveRedisAddress(redisFlag, d.getenv); addr != "" {
-		rs, err := d.openRedis(ctx, addr)
-		if err != nil {
-			return nil, err
-		}
-		defer rs.Close()
-		hosts = rs
-	}
-	return config.Widths(ctx, st, hosts)
-}
-
 // widthJSON is one machine's width as a program reads it.
 type widthJSON struct {
 	Machine string `json:"machine"`
-	Slots   int    `json:"slots"`
-	Charged int    `json:"charged"`
 	Width   int    `json:"width"`
 	Member  bool   `json:"member"`
 }
 
 func toJSON(w config.MachineWidth) widthJSON {
-	return widthJSON{Machine: w.Machine, Slots: w.Slots, Charged: w.Charged, Width: w.Width, Member: w.Member()}
+	return widthJSON{Machine: w.Machine, Width: w.Width, Member: w.Member()}
 }
 
 // runMachineWidth is `machine width <name>`: the width of the sprint's member
-// on the machine, its slots less the friend slots charged to it, and whether
-// it is a member (width above 0).
+// on the machine, the row's width field, and whether it is a member (width
+// above 0). It reads the machine rows alone and opens no Redis.
 func runMachineWidth(ctx context.Context, args []string, stdout, stderr io.Writer, d deps) int {
 	const verb = "machine width"
 	fs := verbflag.New(verb)
-	pg, redisFlag, _ := connFlags(fs, true, false)
+	pg, _, _ := connFlags(fs, false, false)
 	asJSON := fs.Bool("json", false, "print one JSON object for a program instead of the line")
 	name, rest := nameAndRest(mustMachine(), args)
 	if err := fs.Parse(rest); err != nil {
@@ -149,7 +131,7 @@ func runMachineWidth(ctx context.Context, args []string, stdout, stderr io.Write
 		return refuse(stderr, verb, err.Error())
 	}
 	defer st.Close()
-	ws, err := widths(ctx, st, *redisFlag, d)
+	ws, err := config.Widths(ctx, st)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}

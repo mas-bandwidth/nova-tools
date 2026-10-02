@@ -1692,7 +1692,7 @@ nova-config <kind> show <name>                                           # one l
 nova-config <kind> history <name>                                        # every change to the row: who, when, what changed
 nova-config <kind> <verb> -h                                             # the verb's usage line and every flag it takes
 nova-config machine list|show <name> [--redis <addr>]                    # with a Redis, each line ends in the machine's live measured facts from its beat (os, arch, cores, memory_gb, beat=<t> or beat=none)
-nova-config machine width <name> [--pg <dsn>] [--redis <addr>] [--json]  # the room the sprint's member has: slots less the slots of the friends charged to the machine (every friend with no beat on the store is charged to the coordinator machine); above 0 it is a member (a Redis when a friend row carries slots)
+nova-config machine width <name> [--pg <dsn>] [--json]                  # the width of the sprint's member on the machine: the row's width field (machine set <name> --width <n>), what nova-sprint fleet sync sets; above 0 it is a member; no Redis
 nova-config machine self [--check] [--pg <dsn>]                          # this machine's own name (NOVA_MACHINE, else the tailnet's name, else the hostname's first label); --check exits 2 when it is no machine row, 3 when unreadable
 nova-config fleet set --store <m> --coordinator <m> --as <friend>       # the one fleet row: no name, no add, remove or list
 nova-config sprint set --coordinator <friend> --as <friend>              # the one sprint row: who coordinates; set it to hand over
@@ -1705,7 +1705,7 @@ nova-config tier set flash|pro --routes <route,route,...> --as <friend>   # the 
 nova-config route set|remove|list|show|history                            # the one grammar, as for every kind
 ```
 
-`nova-config` is the one tool for the fleet's permanent, non-ephemeral configuration: Postgres (schema `config`) is the permanent store, and `apply` writes it into Redis so Redis is always a rebuildable copy. The kinds are `machine` (user, seat, slots, runners; the name is the tailnet host), `fleet` (one row: the store and coordinator machines), `friend` (slots, tiers, roles), `sprint` (one row: the coordinating friend), `loop` (a supervised process on one machine: machine, argv, seat, keys, every or keepalive, width, enabled; apply writes `loop:<name>` and the set `loops`, which the plays read) `route` (one way to run a flash or pro tier: tier, provider, model, tokens, deadline, enabled; apply writes `route:<name>` and the set `routes`, which the deal reads) and `tier` (one row each for flash and pro, made by migrate: routes, the ordered route array the deal takes at the tier's index; apply writes `tier:<name>` and the set `tiers`); the contract is [SPEC-CONFIG.md](SPEC-CONFIG.md) and the guide is [nova-config/README.md](nova-config/README.md).
+`nova-config` is the one tool for the fleet's permanent, non-ephemeral configuration: Postgres (schema `config`) is the permanent store, and `apply` writes it into Redis so Redis is always a rebuildable copy. The kinds are `machine` (user, seat, slots, runners, width; the name is the tailnet host), `fleet` (one row: the store and coordinator machines), `friend` (slots, tiers, roles), `sprint` (one row: the coordinating friend), `loop` (a supervised process on one machine: machine, argv, seat, keys, every or keepalive, width, enabled; apply writes `loop:<name>` and the set `loops`, which the plays read) `route` (one way to run a flash or pro tier: tier, provider, model, tokens, deadline, enabled; apply writes `route:<name>` and the set `routes`, which the deal reads) and `tier` (one row each for flash and pro, made by migrate: routes, the ordered route array the deal takes at the tier's index; apply writes `tier:<name>` and the set `tiers`); the contract is [SPEC-CONFIG.md](SPEC-CONFIG.md) and the guide is [nova-config/README.md](nova-config/README.md).
 
 ### First run
 
@@ -1721,7 +1721,7 @@ The real first run needs a Postgres and a Redis — local prerequisites: a throw
 ```sh
 export NOVA_PG_DSN=postgres://nova_config@127.0.0.1:5432/nova
 nova-config migrate
-nova-config machine add studio --user glenn --seat studio --slots 64 --as rowan
+nova-config machine add studio --user glenn --seat studio --slots 64 --width 32 --as rowan
 nova-config fleet set --store studio --coordinator studio --as rowan
 nova-config friend add rowan --slots 32 --tiers frontier,pro --roles builder --as rowan
 nova-config sprint set --coordinator rowan --as rowan

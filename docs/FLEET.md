@@ -25,7 +25,7 @@ run it as `</dev/null 2>&1 | cat`, or it may stop with "Non-blocking file
 handles".
 
 ```
-nova-config machine add bench-a --user nova --seat bench-a --slots 2 --as ada
+nova-config machine add bench-a --user nova --seat bench-a --slots 2 --width 2 --as ada
 nova-config fleet set --store bench-a --coordinator bench-a --as ada
 nova-config loop add member-bench-a --machine bench-a --argv '["nova-swarm","member","--as","bench-a","--server","bench-a:6390","--harness","opencode","--root","nova-bench/member","--identity","ada,Ada Bench,ada@example.com"]' --keepalive true --seat bench-a --keys NOVA_REDIS_BENCH_PASSWORD --width 2 --as ada
 nova-config loop add reader-1 --machine bench-a --argv '["nova-swarm","member","--as","reader-1","--server","bench-a:6390","--reader","--width","8","--harness","opencode","--root","nova-bench/reader-1","--identity","ada,Ada Bench,ada@example.com"]' --keepalive true --seat bench-a --keys NOVA_REDIS_BENCH_PASSWORD --as ada
@@ -49,7 +49,9 @@ The member and reader loops name the sprint's server, `--server`: the run loop
 the coordinator starts with `nova-sprint run --listen bench-a:6390`, the one
 writer; a member sends its verbs there and opens no store. The member loop
 names no width and no model. Its width is its fleet row's
-(`nova-config machine` slots, made the row by `fleet sync`; `nova-sprint fleet
+(`nova-config machine` width, set directly with `nova-config machine set <m>
+--width <n>` and made the row by `fleet sync`; nothing else, no friend row and
+not the machine's slots, takes part; `nova-sprint fleet
 up <m> --width n` changes it live), read every tick; each card's model, budget
 and deadline are the route the deal drew for it from the routes `apply` writes
 (here one flash and one pro: a pro card runs on `openrouter/x-ai/grok-4`, a

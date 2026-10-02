@@ -93,7 +93,7 @@ usage:
   nova-config <kind> history <name>
   nova-config <kind> <verb> -h        prints the verb's usage line and every flag it takes
   nova-config machine list|show <name> [--redis <addr>]   with Redis, each line ends in the machine's live measured facts (its beat); show names the machine's loops (loops=<a,b>)
-  nova-config machine width <name> [--pg <dsn>] [--redis <addr>] [--json]   the room the sprint's member on the machine has: its slots less the slots of the friends charged to it; a machine with width above 0 is a member. The friends' machines come from their beats, so a Redis is needed when a friend row carries slots
+  nova-config machine width <name> [--pg <dsn>] [--json]   the width of the sprint's member on the machine: the row's width field (machine set <name> --width <n>), what nova-sprint fleet sync sets; a machine with width above 0 is a member; no other row and no Redis takes part
   nova-config machine self [--check] [--pg <dsn>]          prints this machine's own name as the config keys it (NOVA_MACHINE, else the tailnet's name for the host when a tailnet is running, else the hostname's first label) and opens no store; --check reads the machine rows and exits 2 when the name is none of them, 3 when the name or the rows cannot be read (exit codes of this verb: 0 printed, 2 not a row or usage, 3 unreadable)
   nova-config fleet set --<field> <value> ... --as <friend>    the one fleet row (store, coordinator machine): no name, no add, remove or list
   nova-config sprint set --coordinator <friend> --as <friend>  the one sprint row: who coordinates; set it to hand over
@@ -117,7 +117,7 @@ the friend making the change (env NOVA_FRIEND); every write is a row in
 config.history with it (omitted on apply --check).
 
 A machine's row is the declared facts something reads (user, seat, slots,
-runners); its name is the tailnet host ssh reaches. Measured facts (os, arch,
+runners, width); its name is the tailnet host ssh reaches. Measured facts (os, arch,
 cores, memory) are never typed: machine list and show print them live from
 the machine's beat when --redis (or NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR) is
 given, beat=none when it has none. A friend's row is what someone decides
@@ -182,7 +182,6 @@ type pgStore interface {
 type redisSide interface {
 	config.Applier
 	config.BeatReader
-	config.HostReader
 	// Snapshot is the applied state inventory prints.
 	Snapshot(ctx context.Context) (*config.Snapshot, error)
 	Close() error

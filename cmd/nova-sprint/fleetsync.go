@@ -19,9 +19,9 @@ import (
 // fleet sync: the fleet table made to match nova-config's inventory
 // (docs/SPEC-SPRINT.md, section 5, "The fleet from the inventory"). The
 // inventory is the machine rows of nova-config and their widths
-// (config.Widths: slots less the friend slots charged to the machine); this
-// verb reads them through the config package, by the config tool's own address
-// rules (config.ResolveDSN), and types no machine name and no width.
+// (config.Widths: each row's width field, set directly); this verb reads them
+// through the config package, by the config tool's own address rules
+// (config.ResolveDSN), and types no machine name and no width.
 //
 // It is one step (sprint.FleetReq, Op sync): the members missing come up at
 // their width, the widths that differ are set, and the members the inventory
@@ -40,14 +40,13 @@ const (
 	exitDrift      = 2
 )
 
-// inventoryFn reads every machine row's width from nova-config: the address
-// of the config store (its --pg, else NOVA_PG_DSN) and the Redis the friends'
-// beats are read from when a friend carries slots.
-type inventoryFn func(ctx context.Context, pg, redisAddr string) ([]config.MachineWidth, error)
+// inventoryFn reads every machine row's width from nova-config, given the
+// address of the config store (its --pg, else NOVA_PG_DSN).
+type inventoryFn func(ctx context.Context, pg string) ([]config.MachineWidth, error)
 
-// readInventory is the real inventoryFn: Postgres by config.ResolveDSN, Redis
-// by the sprint's own address, both bounded.
-func (a *app) readInventory(ctx context.Context, pg, redisAddr string) ([]config.MachineWidth, error) {
+// readInventory is the real inventoryFn: Postgres by config.ResolveDSN,
+// bounded.
+func (a *app) readInventory(ctx context.Context, pg string) ([]config.MachineWidth, error) {
 	dsn, err := config.ResolveDSN(pg, a.getenv)
 	if err != nil {
 		return nil, err
@@ -66,29 +65,7 @@ func (a *app) readInventory(ctx context.Context, pg, redisAddr string) ([]config
 	if all, err := config.Migrations(); err == nil && have < len(all) {
 		return nil, fmt.Errorf("schema config is at version %d and this binary carries %d; run: nova-config migrate", have, len(all))
 	}
-	return config.Widths(ctx, st, lazyHosts{a: a, addr: redisAddr})
-}
-
-// lazyHosts reads the friends' beats from Redis, dialled only when a friend
-// carries slots.
-type lazyHosts struct {
-	a    *app
-	addr string
-}
-
-func (l lazyHosts) FriendHosts(ctx context.Context, names []string) (map[string]string, error) {
-	if l.addr == "" {
-		return nil, errors.New("--redis <addr> is needed to read the friends' beats (or NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR)")
-	}
-	conn, ok := l.a.conns[l.addr]
-	if !ok {
-		var err error
-		if conn, err = l.a.openConn(ctx, l.addr); err != nil {
-			return nil, err
-		}
-		l.a.conns[l.addr] = conn
-	}
-	return (&config.RedisApplier{Client: conn.Client()}).FriendHosts(ctx, names)
+	return config.Widths(ctx, st)
 }
 
 // syncReport is fleet sync's --json output, one shape whether the verb
@@ -141,7 +118,7 @@ func (a *app) cmdFleetSync(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, name, err.Error())
 	}
 	ctx := context.Background()
-	ws, err := a.inventory(ctx, *pg, c.redis)
+	ws, err := a.inventory(ctx, *pg)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s %s: the config cannot be read: %s; nothing was changed\n", prog, name, oneline.WithRemedy(err.Error(), "nova-config machine list"))
 		return exitCannotRead

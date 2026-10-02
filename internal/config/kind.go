@@ -192,12 +192,13 @@ var Kinds = []*Kind{
 	{
 		Name:  KindMachine,
 		Table: "machines",
-		Doc:   "a machine of the fleet, named by its tailnet host: the login, the seat, and how many cards and runners it takes",
+		Doc:   "a machine of the fleet, named by its tailnet host: the login, the seat, its ceiling, its runners, and the sprint member's width on it",
 		Fields: []Field{
 			{Name: "user", Type: TypeText, Required: true, Help: "the login the plays and seals use on it (ssh <user>@<name>)"},
 			{Name: "seat", Type: TypeText, Required: true, Help: "its nova-secrets seat: the identity it opens secrets as, one <seat>.yaml in the store"},
-			{Name: "slots", Type: TypeInt, Required: true, Help: "how many cards it may run at once, the machine ceiling (machine:<m>:ceiling); 0 runs none"},
+			{Name: "slots", Type: TypeInt, Required: true, Help: "the machine ceiling apply writes to machine:<m>:ceiling, which the friends' desired slots must fit under; not the sprint's width"},
 			{Name: "runners", Type: TypeInt, Help: "how many CI runners it hosts; 0 (the default) hosts none"},
+			{Name: "width", Type: TypeInt, Help: "the most work cards the sprint's member on it runs at once, what nova-sprint fleet sync sets; 0 (the default) is no member"},
 		},
 	},
 	{
@@ -220,7 +221,7 @@ var Kinds = []*Kind{
 		Table: "friends",
 		Doc:   "an AI friend: how wide she runs, which tiers she can do, and her roles",
 		Fields: []Field{
-			{Name: "slots", Type: TypeInt, Required: true, Help: "her desired slots, under the ceiling of the machine her beat reports"},
+			{Name: "slots", Type: TypeInt, Required: true, Help: "her desired slots, under the ceiling of the machine her beat reports; no machine's width"},
 			{Name: "tiers", Type: TypeList, Enum: Tiers, Required: true, Help: "which tiers she can do: comma list of " + strings.Join(Tiers, ", ")},
 			{Name: "roles", Type: TypeList, Enum: FriendRoles, Help: "comma list of " + strings.Join(FriendRoles, ", ") + " (who coordinates is the sprint row's)"},
 		},

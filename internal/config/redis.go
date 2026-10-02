@@ -831,25 +831,3 @@ func (a *RedisApplier) Beats(ctx context.Context, names []string) (map[string]*B
 	}
 	return out, nil
 }
-
-// FriendHosts is where each named friend runs now, in one pipelined round
-// trip: the host her own beat reports (FriendBeatKey), "" when she has none.
-// It is the reader Widths charges her slots by.
-func (a *RedisApplier) FriendHosts(ctx context.Context, names []string) (map[string]string, error) {
-	out := make(map[string]string, len(names))
-	if len(names) == 0 {
-		return out, nil
-	}
-	pipe := a.Client.Pipeline()
-	cmds := make([]*redis.StringCmd, len(names))
-	for i, f := range names {
-		cmds[i] = pipe.HGet(ctx, FriendBeatKey(f), "host")
-	}
-	if err := redisconn.Exec(ctx, pipe); err != nil {
-		return nil, fmt.Errorf("redis: read friends' beats: %w", err)
-	}
-	for i, f := range names {
-		out[f] = cmds[i].Val()
-	}
-	return out, nil
-}

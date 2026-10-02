@@ -15,7 +15,7 @@ internal/cairn 1
 internal/cardhdr 13
 internal/check 3
 internal/ci/slowtests 2
-internal/config 14
+internal/config 13
 internal/converge 1
 internal/dogfood 1
 internal/fleet 4

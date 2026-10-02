@@ -686,7 +686,7 @@ Postgres and a throwaway Redis.
 
 ```text
 $ nova-config kinds
-CONFIG KIND name=machine table=config.machines fields=user,seat,slots,runners required=user,seat,slots rows=many
+CONFIG KIND name=machine table=config.machines fields=user,seat,slots,runners,width required=user,seat,slots rows=many
 CONFIG KIND name=fleet table=config.fleet fields=store,coordinator required=- rows=one
 CONFIG KIND name=friend table=config.friends fields=slots,tiers,roles required=slots,tiers rows=many
 CONFIG KIND name=sprint table=config.sprint fields=coordinator required=- rows=one
@@ -707,7 +707,8 @@ MIGRATION version=8 file=0008_tier.sql lines=18
 MIGRATION version=9 file=0009_route_prices.sql lines=23
 MIGRATION version=10 file=0010_sprint_reader_tier.sql lines=6
 MIGRATION version=11 file=0011_sprint_drop_reader_tier.sql lines=4
-CONFIG MIGRATE print=11 pg=-
+MIGRATION version=12 file=0012_machine_width.sql lines=17
+CONFIG MIGRATE print=12 pg=-
 
 $ nova-config machine add -h
 usage: nova-config machine add [flags]
@@ -718,8 +719,9 @@ flags:
   --pg <string>  Postgres DSN postgres://user@host:port/db with no password (env NOVA_PG_DSN); the password comes from the variable NOVA_PG_PASSWORD_ENV names
   --runners <string>  how many CI runners it hosts; 0 (the default) hosts none
   --seat <string>  its nova-secrets seat: the identity it opens secrets as, one <seat>.yaml in the store
-  --slots <string>  how many cards it may run at once, the machine ceiling (machine:<m>:ceiling); 0 runs none
+  --slots <string>  the machine ceiling apply writes to machine:<m>:ceiling, which the friends' desired slots must fit under; not the sprint's width
   --user <string>  the login the plays and seals use on it (ssh <user>@<name>)
+  --width <string>  the most work cards the sprint's member on it runs at once, what nova-sprint fleet sync sets; 0 (the default) is no member
 exit codes: 0 done, 1 refused, 2 usage
 ```
 

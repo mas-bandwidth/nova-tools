@@ -45,8 +45,6 @@ type fakeRedis struct {
 	revs  map[string]int64
 	log   []string
 	beats map[string]*config.Beat
-	// hosts is where each friend's own beat says she runs.
-	hosts map[string]string
 	opens int
 	// snapshots counts inventory's reads; hang holds every Snapshot until
 	// its context ends, like a store that never answers.
@@ -55,7 +53,7 @@ type fakeRedis struct {
 }
 
 func newFakeRedis() *fakeRedis {
-	return &fakeRedis{views: map[string]map[string]config.View{}, revs: map[string]int64{}, beats: map[string]*config.Beat{}, hosts: map[string]string{}}
+	return &fakeRedis{views: map[string]map[string]config.View{}, revs: map[string]int64{}, beats: map[string]*config.Beat{}}
 }
 func (f *fakeRedis) Read(_ context.Context, kind string) (map[string]config.View, int64, error) {
 	out := map[string]config.View{}
@@ -76,13 +74,6 @@ func (f *fakeRedis) Beats(_ context.Context, names []string) (map[string]*config
 		if b := f.beats[n]; b != nil {
 			out[n] = b
 		}
-	}
-	return out, nil
-}
-func (f *fakeRedis) FriendHosts(_ context.Context, names []string) (map[string]string, error) {
-	out := map[string]string{}
-	for _, n := range names {
-		out[n] = f.hosts[n]
 	}
 	return out, nil
 }
@@ -155,7 +146,7 @@ type harness struct {
 }
 
 func newHarness() *harness {
-	return &harness{hostname: "elsewhere.example", store: &memStore{Mem: config.NewMem(), version: 11}, redis: newFakeRedis(), env: map[string]string{}}
+	return &harness{hostname: "elsewhere.example", store: &memStore{Mem: config.NewMem(), version: 12}, redis: newFakeRedis(), env: map[string]string{}}
 }
 
 func (h *harness) deps() deps {
@@ -240,7 +231,7 @@ func TestKindsAndMigratePrintNeedNoStore(t *testing.T) {
 	require.Equal(t, 0, code, "migrate --print: %d %q %q", code, out, errs)
 	require.Equal(t, "", errs, "migrate --print: %d %q %q", code, out, errs)
 	require.True(t, strings.HasPrefix(out, "MIGRATION version=1 file=0001_schema.sql "), "migrate --print: %d %q %q", code, out, errs)
-	require.True(t, strings.HasSuffix(out, "CONFIG MIGRATE print=11 pg=-\n"), "migrate --print: %d %q %q", code, out, errs)
+	require.True(t, strings.HasSuffix(out, "CONFIG MIGRATE print=12 pg=-\n"), "migrate --print: %d %q %q", code, out, errs)
 	require.Equal(t, 0, h.opens, "kinds or migrate --print opened the store")
 }
 
@@ -399,17 +390,17 @@ func TestTheSixVerbsEndToEndOnTheFake(t *testing.T) {
 	out, _ = step(0, "machine", "add", "hulk", "--user", "gaffer", "--seat", "swarm-hulk", "--slots", "40", "--runners", "0")
 	require.Equal(t, "CONFIG ADD kind=machine name=hulk rev=7\n", out, "machine add hulk: %q", out)
 	out, _ = step(0, "machine", "list")
-	require.Equal(t, "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0\nMACHINE name=studio user=glenn seat=studio slots=64 runners=1\nCONFIG LIST kind=machine rows=2\n", out, "machine list: %q", out)
+	require.Equal(t, "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0 width=0\nMACHINE name=studio user=glenn seat=studio slots=64 runners=1 width=0\nCONFIG LIST kind=machine rows=2\n", out, "machine list: %q", out)
 	require.Equal(t, 0, h.redis.opens, "a list with no --redis opened Redis")
 	h.redis.beats["hulk"] = &config.Beat{Cores: "64", At: "2026-09-27T03:00:00Z"}
 	out, _ = step(0, "machine", "list", "--redis", "127.0.0.1:6379")
-	require.Equal(t, "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0 os=- arch=- cores=64 memory_gb=- beat=2026-09-27T03:00:00Z\nMACHINE name=studio user=glenn seat=studio slots=64 runners=1 beat=none\nCONFIG LIST kind=machine rows=2\n", out, "machine list --redis: %q", out)
+	require.Equal(t, "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0 width=0 os=- arch=- cores=64 memory_gb=- beat=2026-09-27T03:00:00Z\nMACHINE name=studio user=glenn seat=studio slots=64 runners=1 width=0 beat=none\nCONFIG LIST kind=machine rows=2\n", out, "machine list --redis: %q", out)
 	h.env["NOVA_SPRINT_REDIS"] = "127.0.0.1:6379"
 	out, _ = step(0, "machine", "show", "hulk")
-	require.True(t, strings.HasPrefix(out, "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0 created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z loops=- os=- arch=- cores=64 memory_gb=- beat=2026-09-27T03:00:00Z\n"), "machine show with NOVA_SPRINT_REDIS: %q", out)
+	require.True(t, strings.HasPrefix(out, "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0 width=0 created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z loops=- os=- arch=- cores=64 memory_gb=- beat=2026-09-27T03:00:00Z\n"), "machine show with NOVA_SPRINT_REDIS: %q", out)
 	delete(h.env, "NOVA_SPRINT_REDIS")
 	out, _ = step(0, "machine", "show", "studio")
-	require.Equal(t, "MACHINE name=studio user=glenn seat=studio slots=64 runners=1 created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z loops=-\n", out, "machine show without a Redis: %q", out)
+	require.Equal(t, "MACHINE name=studio user=glenn seat=studio slots=64 runners=1 width=0 created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z loops=-\n", out, "machine show without a Redis: %q", out)
 
 	// The fleet: one row, there from the start, set without a name, its
 	// history the sets alone.
@@ -458,16 +449,16 @@ func TestApplyStatusAndMigrateOnTheFakes(t *testing.T) {
 	require.Equal(t, "CONFIG STATUS pg=nova_config@127.0.0.1:5432/nova schema=0 redis=-\n", out, "status before migrate: %q %q", out, errs)
 	require.Contains(t, errs, "run: nova-config migrate", "status before migrate: %q %q", out, errs)
 	out, _ = step(0, "migrate")
-	require.Equal(t, "CONFIG MIGRATE pg=nova_config@127.0.0.1:5432/nova from=0 to=11 applied=11\n", out, "migrate: %q", out)
+	require.Equal(t, "CONFIG MIGRATE pg=nova_config@127.0.0.1:5432/nova from=0 to=12 applied=12\n", out, "migrate: %q", out)
 	out, _ = step(0, "migrate")
-	require.Equal(t, "CONFIG MIGRATE pg=nova_config@127.0.0.1:5432/nova from=11 to=11 applied=0\n", out, "migrate twice: %q", out)
+	require.Equal(t, "CONFIG MIGRATE pg=nova_config@127.0.0.1:5432/nova from=12 to=12 applied=0\n", out, "migrate twice: %q", out)
 	step(0, "machine", "add", "studio", "--user", "glenn", "--seat", "studio", "--slots", "64")
 	step(0, "friend", "add", "rowan", "--slots", "32", "--tiers", "frontier", "--roles", "builder")
 	step(0, "friend", "add", "stella", "--slots", "32", "--tiers", "frontier,pro")
 	step(0, "fleet", "set", "--coordinator", "studio")
 	step(0, "sprint", "set", "--coordinator", "rowan")
 	out, errs = step(1, "status")
-	require.Equal(t, "CONFIG STATUS pg=nova_config@127.0.0.1:5432/nova schema=11 machine=1 machine_rev=1 fleet_rev=4 friend=2 friend_rev=3 sprint_rev=5 loop=0 loop_rev=0 route=0 route_rev=0 tier=2 tier_rev=0 redis=127.0.0.1:6379 machine_applied=0 fleet_applied=0 friend_applied=0 sprint_applied=0 loop_applied=0 route_applied=0 tier_applied=0\n", out, "status behind: %q %q", out, errs)
+	require.Equal(t, "CONFIG STATUS pg=nova_config@127.0.0.1:5432/nova schema=12 machine=1 machine_rev=1 fleet_rev=4 friend=2 friend_rev=3 sprint_rev=5 loop=0 loop_rev=0 route=0 route_rev=0 tier=2 tier_rev=0 redis=127.0.0.1:6379 machine_applied=0 fleet_applied=0 friend_applied=0 sprint_applied=0 loop_applied=0 route_applied=0 tier_applied=0\n", out, "status behind: %q %q", out, errs)
 	require.Contains(t, errs, "Redis is not at Postgres's revision for 4 kind(s); run: nova-config apply", "status behind: %q %q", out, errs)
 	delete(h.env, "NOVA_FRIEND")
 	out, _ = step(0, "apply", "--check")
