@@ -45,5 +45,5 @@ func TestHelpNeverReachesTheBareWrap(t *testing.T) {
 // command of a wrap.
 func TestHelpForAVerbIsHelpWhateverFollowsIt(t *testing.T) {
 	t.Parallel()
-	testverbhelp.HelpWhateverFollows(t, sandboxRun, usage, "nova-sandbox")
+	testverbhelp.HelpWhateverFollows(t, novaSandbox.NoStdin(), usage, "nova-sandbox")
 }
