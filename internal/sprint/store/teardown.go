@@ -23,7 +23,7 @@ var sprintKeys = []string{keyFence, keyGen, keyInbox, keyLog, keyNotes, keyOpen,
 
 // machineKeys are the machine's records and the people's goals: one for the
 // whole sprint, under its prefix, never per epoch, so a clear keeps them.
-var machineKeys = []string{keyMachine, keyHeartbeat, keyStuck, keyCoordinator, keyGoals, keyStrangers, keyTickEnd, keyRules, keyFriends, keyDropDebt}
+var machineKeys = []string{keyMachine, keyHeartbeat, keyStuck, keyCoordinator, keyGoals, keyStrangers, keyTickEnd, keyRules, keyFriends, keyDropDebt, keySeat, keyOwner}
 
 // residueSuffixes are the keys of a table the table layer's drop keeps: its
 // revision, definition record and change log; and its operation records,
@@ -44,7 +44,7 @@ type Epochs struct {
 	// have a beat record and a hold (readers.go).
 	Readers []string
 	// Friends is every friend of the roster: each may have a beat record
-	// (friends.go).
+	// and a jobs record (friends.go).
 	Friends []string
 }
 
@@ -100,7 +100,7 @@ func TeardownKeys(names sprint.Names, ids map[string][]string, epochs Epochs) []
 		keys = append(keys, names.Key(readerBeatKey(r)), names.Key(readerAwayKey(r)))
 	}
 	for _, f := range epochs.Friends {
-		keys = append(keys, names.Key(friendBeatKey(f)))
+		keys = append(keys, names.Key(friendBeatKey(f)), names.Key(friendJobsKey(f)))
 	}
 	return append(keys, names.EpochKey())
 }

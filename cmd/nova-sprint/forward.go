@@ -2,18 +2,15 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"path/filepath"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 )
 
@@ -243,78 +240,4 @@ func absolutePaths(argv []string) []string {
 		}
 	})
 	return argv
-}
-
-// tickEndPoll is how often inbox --wait through the server reads the log for a tick end.
-const tickEndPoll = time.Second
-
-// inboxWaitAt is inbox --wait through the sprint's server, which never runs a wait. What
-// inbox --wait waits on is the next tick-end note (store.WaitTickEnd): here the log's
-// tick-end notes (log --json, as far back as the wait and a poll) are read every
-// tickEndPoll on this process's clock, until one comes that the first read did not show
-// or --timeout passes; then the inbox is read, and printed as inbox --wait prints it.
-func (a *app) inboxWaitAt(addr string, fs *flag.FlagSet, args []string, atEpoch int64, timeout time.Duration, asJSON bool, stdout, stderr io.Writer) int {
-	if atEpoch >= 0 || timeout <= 0 {
-		return refuse(stderr, "inbox", "--wait waits on the sprint's epoch for at most a --timeout above zero")
-	}
-	ctx := context.Background()
-	lastTickEnd := func() (last string, code int) {
-		res, err := a.ask(ctx, addr, []string{"log"}, []string{"--json", "--since", (timeout + tickEndPoll).String()})
-		if err != nil {
-			return "", a.unanswered("inbox --wait", addr, err, stderr)
-		}
-		if res.Code != 0 {
-			a.answer(res, stdout, stderr)
-			return "", res.Code
-		}
-		var log struct {
-			Lines []sprint.Line `json:"lines"`
-		}
-		if err := json.Unmarshal([]byte(res.Stdout), &log); err != nil {
-			return "", a.readFailed("inbox --wait", fmt.Errorf("the server's log is not JSON: %w", err), stderr)
-		}
-		for _, l := range log.Lines {
-			if l.Note != nil && l.Note.Type == sprint.NTickEnd {
-				last = l.Note.ID
-			}
-		}
-		return last, 0
-	}
-	from, code := lastTickEnd()
-	if code != 0 {
-		return code
-	}
-	woke := false
-	for end := a.now().Add(timeout); !woke && a.now().Before(end); {
-		a.sleep(min(end.Sub(a.now()), tickEndPoll))
-		var last string
-		last, code = lastTickEnd()
-		if code != 0 {
-			return code
-		}
-		woke = last != "" && last != from
-	}
-	if !woke {
-		// the timeout is said where inbox --wait says it: stdout, or stderr under --json
-		w := stdout
-		if asJSON {
-			w = stderr
-		}
-		fmt.Fprintf(w, "inbox --wait: no tick end in %s\n", timeout)
-	}
-	// The wait woke or timed out: read the inbox itself.
-	res, err := a.ask(ctx, addr, []string{"inbox"}, without(fs, args, "wait", "timeout"))
-	if err != nil {
-		return a.unanswered("inbox", addr, err, stderr)
-	}
-	var out map[string]json.RawMessage
-	if !asJSON || res.Code != 0 || json.Unmarshal([]byte(res.Stdout), &out) != nil {
-		a.answer(res, stdout, stderr)
-		return res.Code
-	}
-	// --json carries woke, as inbox --wait's does
-	out["woke"], _ = json.Marshal(woke) // ignored: a bool always encodes
-	b, _ := json.Marshal(out)           // ignored: a map of raw JSON the server encoded
-	a.answer(sprintwire.Result{Stdout: string(b) + "\n", Stderr: res.Stderr}, stdout, stderr)
-	return 0
 }

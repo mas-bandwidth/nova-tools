@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
 // The steps of review: ask and read (mechanical, and the readers' own), and
@@ -303,6 +304,15 @@ func Read(s *Snapshot, r ReadReq) Plan {
 	}
 	if len(readers) > 1 && !named(sel) {
 		p.refuse("read", "a read by selection names one reader: --as <reader>; several readers name their cards")
+		return p
+	}
+	// A broken read names its defect, or it is no read (docs/SPEC-CARD-CONTRACT.md
+	// section 3): the one rule (typedrec.NamesADefect) the gh shim refuses the review by
+	// and the member hands the read back by, consulted here too, at the record, so no path
+	// writes a broken verdict and a judgment on nothing. Refused, the read stays the
+	// reader's, in its column, to report with a finding or to hand back.
+	if !r.Begin && !r.Return && r.Verdict == "broken" && !typedrec.NamesADefect(r.Finding) {
+		p.refuse("read", "a broken read names its defect: a finding line naming the file (file:line), the line, or the card's STEP or RULE the work breaks, and what to change: read --as <reader> --broken <card> --finding <text>; a read with no verdict is handed back: read --as <reader> --return <card> --reason <text>")
 		return p
 	}
 	from := []string{Asked, Reading}
@@ -886,6 +896,14 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 			set[FieldTier] = r.Tier
 			c = withField(c, FieldTier, r.Tier)
 		}
+		// the head a reader passed: a next attempt that finds nothing to do at it goes back to
+		// review there, not to the coordinator as failed work (FieldPassedHead, Finish)
+		unset := []string{"readers"}
+		if len(okReaders(s, c)) > 0 && c.F("result") != "failed" {
+			set[FieldPassedHead] = c.F("head")
+		} else {
+			unset = append(unset, FieldPassedHead)
+		}
 		var u Unit
 		// the next member round the fleet with room (width.go; tla/DirtyTick.tla, WidthRespected):
 		// none up, or none below its width, and the primary waits ready for the tick's deal
@@ -895,7 +913,7 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		}
 		if m != "" {
 			var why string
-			u, why = deal(s, c, fix, m, q, ri, set, given, "readers")
+			u, why = deal(s, c, fix, m, q, ri, set, given, unset...)
 			if why != "" {
 				p.refuse(c.ID, why)
 				stays()
@@ -910,7 +928,7 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 			if len(up) > 0 {
 				later = "no fleet member has room: the tick deals it when one has"
 			}
-			u = Unit{Key: c.ID, Stream: c.Row, Changes: append(retire, change(Work, moveEntry(c, c.Row, Ready, set, "result", "readers"))),
+			u = Unit{Key: c.ID, Stream: c.Row, Changes: append(retire, change(Work, moveEntry(c, c.Row, Ready, set, append(unset, "result")...))),
 				Moved: c.ID + " review -> ready (rework; " + later + ")"}
 		}
 		if r.Tier != "" {

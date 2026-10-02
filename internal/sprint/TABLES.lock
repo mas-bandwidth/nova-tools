@@ -27,6 +27,26 @@
 # status is up only; a held or down member's numbers show on its own row and not in the
 # total. No column, fold or row changes here: the shape below is the same. Held by
 # TestTheFleetFooterSumsOnlyTheMembersUp (cmd/nova-sprint).
+#
+# Change, 2026-10-02, asked by Glenn in words: "please give friends in the friends
+# table the same ready, working, width, done, ok%, status that we have for machines,
+# but no load, since they don't correspond to a machine (at the moment...)" and "you
+# can even use the inbox/outbox standard in friend's working dirs". The friends table
+# takes the fleet table's columns but load: ready and working count a friend's job
+# cards (friend sync reads each friend's working directory, inbox/<job> and
+# outbox/<job>/REPORT.md, and writes the cards into the store; the view never reads
+# the directories), width is her width as text (1, one job at a time), ok and failed
+# (hidden) count her jobs done, done and ok% are the same formulas as the fleet's with
+# the footer pooling ok%, and status stays up, down or held by the fleet's rule. Held by
+# TestSprintTablesAreLocked.
+#
+# Change, 2026-10-02, the where view's title line, not a table: Glenn, 5:15 PM: "We need
+# to make handover MORE SMOOTH."; 5:20 PM: "you can be given coordinator status, or you
+# can take it (with my permission only)". The seat's holder shows beside the title,
+# "SPRINT TABLE  coordinator rowan", and after a take "(taken 5:21 PM)" until the next
+# handover is given (Rowan's brief of that hour, nova-tools#5096 item 28). The progress
+# line under it and every table are as they were; no column changed, so the lines below
+# are unchanged. Held by TestTheSeatIsTakenWithTheOwnersName and the where goldens.
 work.waiting count sum shown
 work.ready count sum shown
 work.working count sum shown
@@ -57,5 +77,12 @@ fleet.withdrawn count sum hidden
 fleet.ok count sum hidden
 fleet.failed count sum hidden
 fleet.ctl first none hidden
+friends.ready count sum shown
+friends.working count sum shown
+friends.width text sum shown
+friends.done sum(ok+failed) sum shown
+friends.okpct pct(ok/ok+failed) pooled shown label=ok%
 friends.status text none shown
+friends.ok count sum hidden
+friends.failed count sum hidden
 view work readers merge friends fleet

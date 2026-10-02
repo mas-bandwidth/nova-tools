@@ -167,6 +167,11 @@ func (st *Store) Wait(ctx context.Context, noteID string, at time.Time) (res Res
 	if err != nil {
 		return res, false, err
 	}
+	if _, ok := sprint.StaleStream(noteID); ok {
+		// a stream's stale judgment: a step that quiets the stream until the time
+		res, err = st.Run(ctx, WaitStep(sprint.WaitReq{Note: noteID, Until: at, Who: st.Actor}))
+		return res, true, err
+	}
 	open, err := st.B.OpenNotes(ctx)
 	if err != nil {
 		return res, false, err

@@ -729,6 +729,9 @@ const (
 	ancestryParents   = "git rev-list --parents -n 1 HEAD"
 	ancestryFetchDev  = "git fetch --no-tags --filter=blob:none --unshallow origin +dev:refs/remotes/origin/dev"
 	ancestryFetchPlan = "git fetch --no-tags --filter=blob:none origin +sprint/foundation:refs/remotes/origin/sprint/foundation"
+	ancestryFetchUnsh = "git fetch --no-tags --filter=blob:none --unshallow origin +sprint/foundation:refs/remotes/origin/sprint/foundation"
+	ancestryLsRemote  = "git ls-remote --exit-code --heads origin sprint/foundation"
+	ancestryAbsentErr = "fatal: couldn't find remote ref sprint/foundation\n"
 )
 
 // A shallow checkout is completed; a complete one takes a plain fetch (--unshallow
@@ -758,13 +761,43 @@ func TestFetchAncestryPromotionSkipsAOneParentCommit(t *testing.T) {
 	if code != 0 || out != "a one-parent commit: no promotion to read\n" || f.called("git fetch") {
 		t.Errorf("one parent on a push: exit %d, stdout %q, calls %v", code, out, f.calls)
 	}
-	f = newSelFake(map[string]selReply{ancestryParents: {out: "abc123 def456 fed789\n"}, ancestryShallow: {out: "false\n"}, ancestryFetchPlan: {}})
+	f = newSelFake(map[string]selReply{ancestryParents: {out: "abc123 def456 fed789\n"}, ancestryLsRemote: {out: "abc123\trefs/heads/sprint/foundation\n"}, ancestryShallow: {out: "false\n"}, ancestryFetchPlan: {}})
 	if code, out, _ := selRun(func(e env, a []string) int { return fetchAncestryVerb(e, a, f.host()) }, "", map[string]string{"GITHUB_EVENT_NAME": "merge_group"}, "--promotion", "sprint/foundation"); code != 0 || out != "" || !f.called("git fetch") {
 		t.Errorf("a merge commit: exit %d, stdout %q, calls %v", code, out, f.calls)
 	}
-	f = newSelFake(map[string]selReply{ancestryShallow: {out: "false\n"}, ancestryFetchPlan: {}})
+	f = newSelFake(map[string]selReply{ancestryLsRemote: {out: "abc123\trefs/heads/sprint/foundation\n"}, ancestryShallow: {out: "false\n"}, ancestryFetchPlan: {}})
 	if code, _, _ := selRun(func(e env, a []string) int { return fetchAncestryVerb(e, a, f.host()) }, "", map[string]string{"GITHUB_EVENT_NAME": "pull_request"}, "--promotion", "sprint/foundation"); code != 0 || f.called("git rev-list") || !f.called("git fetch") {
 		t.Errorf("a pull request: exit %d, calls %v; want a fetch and no parent count", code, f.calls)
+	}
+}
+
+// The promotion branch is optional: dev is the integration branch, and
+// sprint/foundation exists only while a promotion is in flight. A --promotion
+// fetch of a branch origin does not have says so and exits 0 (nothing to
+// read); the classtests rule then excuses nothing, which is the safe side.
+// Any other ls-remote failure, and a plain (non-promotion) fetch of a missing
+// branch, stay red.
+func TestFetchAncestryPromotionSaysSoWhenTheBranchIsAbsent(t *testing.T) {
+	t.Parallel()
+	f := newSelFake(map[string]selReply{
+		ancestryParents:   {out: "abc123 def456 fed789\n"},
+		ancestryLsRemote:  {code: 2},
+		ancestryShallow:   {out: "true\n"},
+		ancestryFetchUnsh: {err: ancestryAbsentErr, code: 128},
+	})
+	code, out, errb := selRun(func(e env, a []string) int { return fetchAncestryVerb(e, a, f.host()) }, "", map[string]string{"GITHUB_EVENT_NAME": "push"}, "--promotion", "sprint/foundation")
+	if code != 0 || out != "origin has no branch sprint/foundation: no promotion to read\n" || errb != "" || f.called("git fetch") {
+		t.Errorf("absent branch: exit %d, stdout %q, stderr %q, calls %v; want 0, the saying, and no fetch", code, out, errb, f.calls)
+	}
+	// ls-remote failing for another reason (the network) is not "absent".
+	f = newSelFake(map[string]selReply{ancestryParents: {out: "abc123 def456 fed789\n"}, ancestryLsRemote: {err: "fatal: unable to access\n", code: 128}})
+	if code, _, errb := selRun(func(e env, a []string) int { return fetchAncestryVerb(e, a, f.host()) }, "", map[string]string{"GITHUB_EVENT_NAME": "push"}, "--promotion", "sprint/foundation"); code != 1 || !strings.Contains(errb, "unable to access") {
+		t.Errorf("ls-remote failure: exit %d, stderr %q; want 1", code, errb)
+	}
+	// Without --promotion a missing branch is a failure, as before (dev's fetch on main).
+	f = newSelFake(map[string]selReply{ancestryShallow: {out: "true\n"}, ancestryFetchDev: {err: "fatal: couldn't find remote ref dev\n", code: 128}})
+	if code, _, _ := selRun(func(e env, a []string) int { return fetchAncestryVerb(e, a, f.host()) }, "", nil, "dev"); code != 1 {
+		t.Errorf("plain fetch of a missing branch: exit %d; want 1", code)
 	}
 }
 

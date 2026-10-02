@@ -193,6 +193,9 @@ type OpRecord struct {
 	// entry is applied once (sprint.Drain).
 	Queue []sprint.QueuedChange `json:"queue,omitempty"`
 	Drain int                   `json:"drain,omitempty"`
+	// Seat is the seat's change (store/seat.go): its commit sets the
+	// coordinator to its holder and records it as the seat's last change.
+	Seat *sprint.SeatChange `json:"seat,omitempty"`
 }
 
 // Tables is the stored table names of the record's manifests, in order.
