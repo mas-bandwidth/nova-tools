@@ -77,7 +77,6 @@ type InventoryLoop struct {
 	Keys      []string `json:"keys"`
 	Every     int      `json:"every"`
 	Keepalive bool     `json:"keepalive"`
-	Width     int      `json:"width"`
 	Enabled   bool     `json:"enabled"`
 	Log       string   `json:"log"`
 }
@@ -229,11 +228,6 @@ func parseLoop(name string, v View) (InventoryLoop, error) {
 	if l.Every, err = strconv.Atoi(orZero(v["every"])); err != nil || l.Every < 0 {
 		return bad("every", "is not a count of seconds")
 	}
-	if l.Width, err = strconv.Atoi(orZero(v["width"])); err != nil || l.Width < 0 {
-		return bad("width", "is not a count")
-	}
-	// the unit runs the command with the row's width (LoopCommand)
-	l.Argv = LoopCommand(l.Argv, l.Width)
 	if l.Keepalive, err = strconv.ParseBool(orFalse(v["keepalive"])); err != nil {
 		return bad("keepalive", "is not true or false")
 	}
@@ -325,7 +319,6 @@ type fixture struct {
 		Keys      []string `yaml:"keys"`
 		Every     int      `yaml:"every"`
 		Keepalive bool     `yaml:"keepalive"`
-		Width     int      `yaml:"width"`
 		Enabled   *bool    `yaml:"enabled"`
 	} `yaml:"loops"`
 }
@@ -380,8 +373,8 @@ func LoadFixture(path string) (*Snapshot, error) {
 			snap.Loops[n] = View{
 				"name": n, "machine": l.Machine, "argv": string(argv), "seat": l.Seat,
 				"keys": strings.Join(keys, ","), "every": strconv.Itoa(l.Every),
-				"keepalive": strconv.FormatBool(l.Keepalive), "width": strconv.Itoa(l.Width),
-				"enabled": strconv.FormatBool(enabled), "log": LoopLog(n),
+				"keepalive": strconv.FormatBool(l.Keepalive),
+				"enabled":   strconv.FormatBool(enabled), "log": LoopLog(n),
 			}
 		}
 	}

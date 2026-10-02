@@ -28,7 +28,7 @@ handles".
 nova-config machine add bench-a --user nova --seat bench-a --slots 2 --width 2 --as ada
 nova-config fleet set --store bench-a --coordinator bench-a --as ada
 nova-config loop add member-bench-a --machine bench-a --argv '["nova-swarm","member","--as","bench-a","--server","bench-a:6390","--harness","opencode","--root","nova-bench/member","--identity","ada,Ada Bench,ada@example.com"]' --keepalive true --as ada
-nova-config loop add reader-1 --machine bench-a --argv '["nova-swarm","member","--as","reader-1","--server","bench-a:6390","--reader","--harness","opencode","--root","nova-bench/reader-1","--identity","ada,Ada Bench,ada@example.com"]' --keepalive true --width 8 --as ada
+nova-config loop add reader-bench-a --machine bench-a --argv '["nova-swarm","member","--as","reader-bench-a","--server","bench-a:6390","--reader","--harness","opencode","--root","nova-bench/reader","--identity","ada,Ada Bench,ada@example.com"]' --keepalive true --as ada
 nova-config route add flash-a --tier flash --provider deepseek --model deepseek-v4-flash --tokens 200000 --deadline 900 --as ada
 nova-config route add pro-a --tier pro --provider openrouter --model x-ai/grok-4 --tokens 400000 --deadline 1800 --as ada
 nova-config apply --as ada
@@ -60,11 +60,14 @@ card's own `model:` line. `nova-sprint routes` shows what each route's attempts
 did.
 
 A reader is a loop record the same as a member: `nova-swarm member --reader`
-under the readers row of its `--as` name (`nova-sprint init --readers reader-1`,
-or `nova-sprint reader add reader-1`), with its width, the most reads it runs at
-once: the loop row's `--width`, which the inventory renders as the command's
-`--width` (`nova-config loop set reader-1 --width 16 --as ada`, then `apply`
-and `loops.yml`; the argv is never edited for it). It names no model either: the ask draws each read card's route from the
+under the readers row of its `--as` name (`nova-sprint init --readers
+reader-bench-a`, or `nova-sprint reader add reader-bench-a`). It is named for
+its machine, `reader-<m>`, one reader per machine, and it runs at the
+machine's width, the fleet row's, read with its queue every tick exactly as
+the member on the machine reads its own (the owner, 2026-10-02: "why not just
+have as many readers as workers per-machine"): no loop row carries a width,
+and an argv that spells `--width` is refused by `loop add` and `loop set`. A
+machine of width 0 (no member) reads nothing either. It names no model either: the ask draws each read card's route from the
 tier of the card it reads, the tier its work was dealt on (flash when line 1
 names none), at that tier's rolling index, and
 the packet hands the reader its model, budget and deadline; a reader started
@@ -153,8 +156,7 @@ names none. `docs/CLI.md` ("The store's ACL") has the verbs' lines.
 ## loops.yml
 
 One unit per record of `nova_loops`, from the record's fields and the host's
-layout: the command is the record's `argv`, which the inventory renders with
-the loop row's width as its `--width` when the width is above 0 (a bare program is the installed
+layout: the command is the record's `argv`, word for word (a bare program is the installed
 tool, `~/` the login's home) behind `nova-secrets exec --as <seat> --only
 <keys> --require=<key>...` when the record names keys; its output goes to the
 record's log under `~/nova-bench/loops/`, which the play creates.

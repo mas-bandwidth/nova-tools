@@ -166,10 +166,12 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 		return a.readFailed("queue", err, stderr)
 	}
 	epoch := st.PinnedEpoch()
+	isReader := false
 	if *as != "" {
 		// the reader's own queue is its beat (docs/SPEC-SPRINT.md section 6):
 		// a name that is no reader's row writes none
-		if _, err := st.ReaderBeat(ctx, *as); err != nil {
+		var err error
+		if isReader, err = st.ReaderBeat(ctx, *as); err != nil {
 			return a.readFailed("queue", err, stderr)
 		}
 	}
@@ -222,6 +224,17 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 			add(t.table, own)
 			mine = append(mine, own...)
 		}
+		// a reader runs at its machine's width: reader-<m>'s is m's fleet row's
+		// (sprint.ReaderMachine), read here as the member's own is above
+		if m, ok := sprint.ReaderMachine(*as); isReader && ok {
+			ctl, err := st.ReadCells(ctx, sprint.Fleet, m, sprint.Ctl)
+			if err != nil {
+				return a.readFailed("queue", err, stderr)
+			}
+			if len(ctl) > 0 {
+				width = sprint.MemberWidth(ctl[0])
+			}
+		}
 		at := want.of(mine)
 		need := make([]*sprint.Card, len(at))
 		for k, i := range at {
@@ -241,7 +254,7 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 		}
 		out := map[string]any{"as": *as, "stream": *stream, "epoch": epoch, "cards": cards}
 		if width > 0 {
-			out["width"] = width // the member runs this many: the fleet row is the truth
+			out["width"] = width // the worker runs this many: the fleet row is the truth
 		}
 		b, _ := json.Marshal(out)
 		fmt.Fprintln(stdout, string(b))

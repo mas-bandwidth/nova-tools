@@ -9,11 +9,10 @@ fleet: {store: "", coordinator: ""}
 loops:
   member-local:
     machine: localhost
-    argv: [nova-swarm, member, --as, localhost, --width, "2"]
+    argv: [nova-swarm, member, --as, localhost]
     seat: seat-local
     keys: [API_KEY]
     keepalive: true
-    width: 2
   tick-local:
     machine: localhost
     argv: ["~/bin/tick", --once, "50%"]

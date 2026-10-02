@@ -214,20 +214,24 @@ only. The plays render one unit per row from the Redis view apply writes.
 | field | type | required | who reads it | Redis |
 | --- | --- | --- | --- | --- |
 | `machine` | ref machine | yes | the plays: the machine the unit is installed on | `loop:<l>` |
-| `argv` | argv | yes | the plays: the unit's command, word for word, with `width` as its `--width` | `loop:<l>` |
+| `argv` | argv | yes | the plays: the unit's command, word for word; a `nova-swarm member` argv spells no `--width`, its width is its machine row's (`Check`) | `loop:<l>` |
 | `seat` | text | | the plays: the nova-secrets seat on that machine the unit opens its secrets from; empty when it needs none | `loop:<l>` |
 | `keys` | keys | | the plays: the names of the secrets the unit opens from the seat; empty when none, and a non-empty list needs a seat | `loop:<l>` |
 | `every` | int | (0) | the plays: seconds between runs of a periodic unit | `loop:<l>` |
 | `keepalive` | bool | (false) | the plays: a long-running unit, restarted when it exits | `loop:<l>` |
-| `width` | int | (0) | the plays, through the inventory: above 0 the value of the command's `--width` (the argv's last one replaced, or appended when it has none, `LoopCommand`); 0 runs the argv as written. A reader loop's width; a work member's is its machine row's | `loop:<l>` |
 | `enabled` | bool | (true) | the plays: false writes the unit and does not start it | `loop:<l>` |
 
 The kind's `Check`: exactly one of `every` above 0 and `keepalive` true (a
-loop runs every n seconds or is kept alive), and `keys` only with a `seat`.
-The command a unit runs is `LoopCommand(argv, width)`: the inventory's
-`nova_loops` argv and `loop show`'s `command=`; migration 0013 set each
-existing row's `width` to the `--width` its argv carried, 0 when none, so the
-rule changed no command.
+loop runs every n seconds or is kept alive), `keys` only with a `seat`, and a
+`nova-swarm member` argv (a reader's too) that spells no `--width` before any
+`--`: a worker's width is its machine row's, moved to the fleet row by `fleet
+sync` and read with its queue every tick, a member's own row and a reader's
+the row of the machine it is named for (`reader-<m>`, docs/SPEC-SPRINT.md
+section 6); the refusal names the rule and `machine set <m> --width <n>`.
+Migration 0013 had made a loop's width a field its command ran with;
+migration 0014 removed the field, took `--width` out of every member argv that
+carried one and removed the second reader rows (`reader-<m>-2`), one reader
+per machine.
 The log path is derived from the name, `~/nova-bench/loops/<name>.log`
 (`LoopLog`), and is never typed. A machine a loop names cannot be removed
 (`machine m1 is the --machine of loop member-m1`); `machine show <m>` names
@@ -487,7 +491,7 @@ CONFIG MIGRATE pg=<user@host:port/db>|file=<path> from=<v> to=<v> applied=<n> [d
 CONFIG STATUS pg=<...>|file=<path> schema=<v> <kind>=<rows> <kind>_rev=<r> ... redis=<addr> <kind>_applied=<r> ...   (a singleton: <kind>_rev alone)
 CONFIG DRY-RUN op=<op> kind=<k> name=<n> actor=<a> wrote=nothing <field>=<v>|<field>=<before>><after> ...   (add, set, remove --dry-run)
 NOTE machine=<m> width=0: no sprint member, ...; run: nova-config machine set <m> --width <n> ...   (machine add with no --width)
-LOOP name=<n> <field>=<v> ... created=<t> updated=<t> command=<json>   (loop show: the words the unit runs)
+LOOP name=<n> <field>=<v> ... created=<t> updated=<t>   (loop show; the argv is the words the unit runs)
 CONFIG KIND name=<k> table=config.<t> fields=<f,...> required=<f,...> rows=many|one
 CONFIG KINDS count=<n>
 ```

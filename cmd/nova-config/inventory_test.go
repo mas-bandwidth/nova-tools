@@ -58,7 +58,7 @@ func TestInventoryPrintsTheAppliedState(t *testing.T) {
 	h.redis.views[config.KindFleet] = map[string]config.View{config.KindFleet: {"store": "bench-02", "coordinator": "bench-01"}}
 	h.redis.views["loop"] = map[string]config.View{"member-02": {
 		"name": "member-02", "machine": "bench-02", "argv": `["nova-swarm","member"]`, "seat": "seat-a", "keys": "API_KEY",
-		"every": "0", "keepalive": "true", "width": "2", "enabled": "true", "log": "~/nova-bench/loops/member-02.log",
+		"every": "0", "keepalive": "true", "enabled": "true", "log": "~/nova-bench/loops/member-02.log",
 	}}
 	h.redis.revs["loop"] = 1
 	h.redis.beats["bench-02"] = &config.Beat{OS: "linux", Arch: "amd64"}

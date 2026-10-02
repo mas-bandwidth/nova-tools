@@ -205,17 +205,16 @@ func TestMemberWithNoFlagsRefusesAndNamesEachMissingOne(t *testing.T) {
 	}
 }
 
-// TestMemberWithAWidthOfZeroRefuses pins that zero is not "unlimited": a reader
-// names its width and is refused 0; a member's --width is an override of its
-// fleet row's and is refused below 0.
-func TestMemberWithAWidthOfZeroRefuses(t *testing.T) {
+// TestMemberWithAWidthBelowZeroRefuses pins that --width is an override of the
+// fleet row's width, a member's or a reader's, and is refused below 0.
+func TestMemberWithAWidthBelowZeroRefuses(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {
 		width string
 		extra []string
 		want  string
 	}{
-		{"0", []string{"--reader"}, "--width is required and is at least 1"},
+		{"-1", []string{"--reader"}, "--width is an override of the fleet row's width and is at least 1"},
 		{"-1", nil, "--width is an override of the fleet row's width and is at least 1"},
 	} {
 		args := memberFull(t.TempDir())

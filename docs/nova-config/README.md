@@ -252,34 +252,30 @@ a JSON array, the program first, so a word may hold a blank and nothing is
 split by a shell; a secret is never in it, it goes by name in `--keys`:
 
 ```
-nova-config loop add reader-m1 --machine m1 --argv '["/opt/bin/nova-swarm","member","--reader"]' --keepalive true --seat s-m1 --keys A_KEY,B_KEY --width 2 --as a1
+nova-config loop add reader-m1 --machine m1 --argv '["/opt/bin/nova-swarm","member","--as","reader-m1","--reader"]' --keepalive true --seat s-m1 --keys A_KEY,B_KEY --as a1
 CONFIG ADD kind=loop name=reader-m1 rev=12
 nova-config loop add refresh-m1 --machine m1 --argv '["/opt/bin/refresh","--once"]' --every 60 --as a1
 CONFIG ADD kind=loop name=refresh-m1 rev=13
 nova-config loop list
-LOOP name=reader-m1 machine=m1 argv=["/opt/bin/nova-swarm","member","--reader"] seat=s-m1 keys=A_KEY,B_KEY every=0 keepalive=true width=2 enabled=true
-LOOP name=refresh-m1 machine=m1 argv=["/opt/bin/refresh","--once"] seat=- keys=- every=60 keepalive=false width=0 enabled=true
+LOOP name=reader-m1 machine=m1 argv=["/opt/bin/nova-swarm","member","--as","reader-m1","--reader"] seat=s-m1 keys=A_KEY,B_KEY every=0 keepalive=true enabled=true
+LOOP name=refresh-m1 machine=m1 argv=["/opt/bin/refresh","--once"] seat=- keys=- every=60 keepalive=false enabled=true
 CONFIG LIST kind=loop rows=2
-nova-config loop set reader-m1 --width 16 --as a1
-CONFIG SET kind=loop name=reader-m1 rev=14 changed=width
-nova-config loop show reader-m1
-LOOP name=reader-m1 machine=m1 argv=["/opt/bin/nova-swarm","member","--reader"] seat=s-m1 keys=A_KEY,B_KEY every=0 keepalive=true width=16 enabled=true created=2026-09-30T02:00:00Z updated=2026-09-30T02:10:00Z command=["/opt/bin/nova-swarm","member","--reader","--width","16"]
+nova-config loop set reader-m1 --argv '["/opt/bin/nova-swarm","member","--as","reader-m1","--reader","--width","16"]' --as a1
+nova-config loop set REFUSED: loop reader-m1: its argv carries --width, and a nova-swarm member's width (a reader's too) is its machine row's, read from the fleet row every tick; drop --width from the argv and set the machine's: machine set <m> --width <n>; run: nova-config loop show reader-m1
 nova-config machine show m1
 MACHINE name=m1 user=u1 seat=s-m1 slots=4 runners=0 created=2026-09-30T02:00:00Z updated=2026-09-30T02:00:00Z loops=reader-m1,refresh-m1
 ```
 
 `--every <seconds>` runs it periodically and `--keepalive true` keeps a
-long-running one up; a loop has exactly one of the two. `--width` is the
-`--width` the command runs with, set as one value and never by editing the
-argv: above 0 it replaces the argv's own `--width` (the last one before any
-`--`), or is appended when the argv has none; 0, the default, runs the argv
-as written. `loop show` prints the command the unit runs as `command=`, and
-the inventory hands the plays that command as the loop's `argv`
-(`LoopCommand`, `internal/config/kind.go`). It is a reader loop's width; a
-work member's width is its machine row's (`machine set <m> --width <n>`, moved
-to the fleet table by `nova-sprint fleet sync`), so its loop leaves the field
-0. Migration 0013 set each existing row's field to the `--width` its argv
-carried (0 when none), so no command changed. `--enabled false` writes the unit and
+long-running one up; a loop has exactly one of the two. A loop has no width:
+a `nova-swarm member`'s, a reader's too, is its machine row's (`machine set <m>
+--width <n>`, moved to the fleet table by `nova-sprint fleet sync` and read by
+the worker with its queue every tick; a reader is named for its machine,
+`reader-<m>`, one per machine, and runs at that machine's width), so an argv
+that spells `--width` is refused naming the rule. The argv is the command the
+unit runs, word for word. Migration 0014 took `--width` out of every member
+argv that carried one, removed the second reader rows (`reader-<m>-2`) and
+dropped the width field 0013 had added. `--enabled false` writes the unit and
 does not start it. `--keys` needs a `--seat`. Its log is
 `~/nova-bench/loops/<name>.log`, derived from the name and never typed. A
 machine a loop names cannot be removed until the loop is.

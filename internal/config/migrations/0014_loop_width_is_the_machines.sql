@@ -1,0 +1,43 @@
+-- 0014: a loop carries no width of its own (internal/config/kind.go: Kinds,
+-- "loop", and memberArgvSpellsWidth). A nova-swarm member's width, and a
+-- reader's too, is its machine row's (machine set <m> --width <n>), moved to
+-- the fleet row by nova-sprint fleet sync and read by the worker with its
+-- queue every tick: a member its own row's, a reader its machine's, the one
+-- reader on machine m being named reader-<m> (the owner, 2026-10-02: "The
+-- reader widths seem to be very ad-hoc, unlike the machine widths"; "why not
+-- just have as many readers as workers per-machine"). Until now a reader's
+-- width was its loop row's: the width column 0013 filled from the argv, and
+-- the argv's own --width before that, set by hand per reader and cut by hand
+-- under load; and a machine ran two reader identities, reader-<m> and
+-- reader-<m>-2, a workaround for reads returned with no verdict holding a
+-- reader's lanes.
+--
+-- So, in order: the second reader rows (reader-<m>-2) are removed, one reader
+-- per machine; every nova-swarm member argv that spells a width (--width n,
+-- -width n, --width=n, -width=n, before any --) has it taken out, the rest of
+-- the argv kept word for word in its canonical compact JSON, another
+-- program's --width left as its own; and the loops' width column goes. The
+-- width each reader ran at is not carried anywhere: from this version it is
+-- the machine's, as the member's is. A row's history (config.history) is not
+-- written by a migration, as 0013's was not.
+DELETE FROM config.loops WHERE name ~ '^reader-.+-2$';
+
+UPDATE config.loops AS l
+   SET argv = (
+     SELECT '[' || string_agg(to_jsonb(e.t)::text, ',' ORDER BY e.i) || ']'
+       FROM jsonb_array_elements_text(l.argv::jsonb) WITH ORDINALITY AS e(t, i)
+       LEFT JOIN jsonb_array_elements_text(l.argv::jsonb) WITH ORDINALITY AS p(t, i) ON p.i = e.i - 1
+      WHERE NOT (e.i > 2
+                 AND e.i < COALESCE((SELECT min(d.i) FROM jsonb_array_elements_text(l.argv::jsonb) WITH ORDINALITY AS d(t, i)
+                                      WHERE d.t = '--' AND d.i > 2), 2147483647)
+                 AND (e.t IN ('--width', '-width') OR e.t ~ '^--?width=' OR p.t IN ('--width', '-width')))
+   )
+ WHERE l.argv::jsonb ->> 0 ~ '(^|/)nova-swarm$'
+   AND l.argv::jsonb ->> 1 = 'member'
+   AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(l.argv::jsonb) WITH ORDINALITY AS w(t, i)
+                WHERE w.i > 2
+                  AND w.i < COALESCE((SELECT min(d.i) FROM jsonb_array_elements_text(l.argv::jsonb) WITH ORDINALITY AS d(t, i)
+                                       WHERE d.t = '--' AND d.i > 2), 2147483647)
+                  AND (w.t IN ('--width', '-width') OR w.t ~ '^--?width='));
+
+ALTER TABLE config.loops DROP COLUMN IF EXISTS width;
