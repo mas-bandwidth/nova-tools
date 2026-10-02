@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"path/filepath"
 	"regexp"
@@ -145,9 +146,10 @@ func TestVersionAndItsAliasPrintTheBuildIdentity(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			res := workTool(nil).Run(tc.arg)
-			assert.Equal(t, 0, res.Code, "%s: exit %d, stdout %q, stderr %q; want the identity line at exit 0", tc.arg, res.Code, res.Stdout, res.Stderr)
-			assert.True(t, strings.HasPrefix(res.Stdout, "nova-work "), "%s: stdout %q lacks prefix", tc.arg, res.Stdout)
-			assert.Empty(t, res.Stderr, "%s: stderr not empty: %q", tc.arg, res.Stderr)
+			diag := fmt.Sprintf("%s: exit %d, stdout %q, stderr %q; want the identity line at exit 0", tc.arg, res.Code, res.Stdout, res.Stderr)
+			assert.Equal(t, 0, res.Code, diag)
+			assert.True(t, strings.HasPrefix(res.Stdout, "nova-work "), diag)
+			assert.Empty(t, res.Stderr, diag)
 		})
 	}
 }
