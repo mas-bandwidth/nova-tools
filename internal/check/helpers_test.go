@@ -50,7 +50,6 @@ func wantFailures(t *testing.T, failures []Failure, want []string) {
 	}
 }
 
-
 // brief renders a value for a test failure the way the tools render one for a
 // caller: one line, escaped, and capped, so a large or hostile string in a
 // fixture cannot turn a failure message into a screenful.
