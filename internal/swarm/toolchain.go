@@ -12,8 +12,7 @@ import (
 
 // THE BENCH TOOLCHAIN ROOTS, measured by a schema dogfood loop.
 //
-// TWO CONTRACTS CONTRADICT EACH OTHER, and every Go card dies in the gap on the bench where
-// they were first measured. The
+// TWO CONTRACTS CONTRADICT EACH OTHER, and every Go card dies in the gap between them. The
 // bench provisioning standard puts the toolchain in a USER directory -- Go and sbcl under
 // `~/sdk`, the standard's own PATH entry `~/go/bin`, the module cache at `~/go/pkg/mod` --
 // while the native wall named NO toolchain root at all and pinned `GOTOOLCHAIN=local`. So
