@@ -577,10 +577,11 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 }
 
 // allRow is the label of the one row the view draws for the readers and the
-// merge tables.
-const allRow = "all"
+// merge tables: blank, as the work table's footer is (the owner, 2026-10-02:
+// "please remove 'all'").
+const allRow = ""
 
-// readersAll is the readers table as the view's text draws it: one row, all,
+// readersAll is the readers table as the view's text draws it: one row, unlabelled,
 // whose cells are the sums over every reader (hidden rows, readers away or down,
 // counted as the footer counted them), and no footer, which would say the same
 // thing twice (the owner, 2026-10-01: "change the table to just be one row, sum
@@ -634,7 +635,7 @@ func worst(rows []ntable.Row, col string, order ...string) (string, int) {
 	return w, n
 }
 
-// allOf is the table as one row, all, whose count cells are the sums over every
+// allOf is the table as one row, unlabelled, whose count cells are the sums over every
 // row (an unread set prints "?", as the footer's sum did) and whose text cells
 // are texts, with no footer: the stored table, its rows and where --json are as
 // they were.
