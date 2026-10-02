@@ -307,22 +307,21 @@ The test requirements are listed under **Tests this spec demands**.
     optional (issue #881).** A caller whose key is delivered by `nova-secrets
     exec` into the environment has **no key file** for the wall to protect —
     the key is never a file on disk — so the probe runs its other four checks
-    and no `read_secret` step is invented; the `secret_inside_allow` check of
-    rule 6 is skipped for the same reason. **The probe
+    and no `read_secret` step is invented; the `secret_inside_allow` check is
+    skipped for the same reason. **The probe
     takes no command**, and that is why the last check reads the probe's own
     binary: `probe` re-executes `os.Executable()` under the policy it just
     generated, so the resolved command of that wrapped run is `nova-sandbox`
     itself, its directory is the root "the directory of the resolved command"
     by construction, and the file is certain to exist and be readable on all
     three platforms with no `PATH` lookup, no caller command and no guessed
-    path. The re-exec is the probe's alone — the exec verb never re-execs
-    (rule 12) — and the child is the same binary with an internal verb, never
-    a shell.
+    path. The re-exec is the probe's alone — the exec verb never re-execs —
+    and the child is the same binary with an internal verb, never a shell.
 11. **This tool has no way to run a command unwalled.** There is no
     `--no-sandbox`, no environment variable and no config file: a
     `nova-sandbox --no-sandbox` is `SANDBOX REFUSED reason=bad_flag:
     unknown flag --no-sandbox; the flags are --read, ...; run: nova-sandbox help` at
-    exit 125, like any other flag the tool does not have. A wall this tool cannot build is a refusal (rule 1),
+    exit 125, like any other flag the tool does not have. A wall this tool cannot build is a refusal,
     and it stays a refusal — a tool whose whole reason is containment does not
     ship the switch that turns containment off.
 12. **The exec verb is transparent, and what happens to the tool's own process
@@ -415,7 +414,8 @@ nova-sandbox version
 nova-sandbox help
 ```
 
-`probe` is rule 10 and is the verb a caller runs **once before the first task**,
+`probe` proves the wall before the work runs and is the verb a caller
+runs **once before the first task**,
 not per task: it costs a process and it answers a question about the machine,
 not about the job. A caller checks the probe result before starting work.
 
@@ -489,9 +489,9 @@ What the verb does, in order, and there is no other order:
    the container refusal (`reason=no_container`) drops its `--container` advice,
    because a container named by hand fails the same way one call later.
 3. **Run.** The volume is the run's **only `--write`**, so the seatbelt profile
-   of the darwin section allows writes there and nowhere else; rule 8's temp
+   of the darwin section allows writes there and nowhere else; the temp
    directory defaults inside it, which puts `TMPDIR` on the volume too. The
-   working directory is `<volume>/work` and rule 9's `HOME` is `<volume>/home`,
+   working directory is `<volume>/work` and the child's `HOME` is `<volume>/home`,
    both made by the tool, both thrown away with the volume. `--read` passes
    through unchanged, so a shared toolchain or reference checkout is still read
    in place and never copied.
@@ -534,7 +534,7 @@ the deadline ended the run, not which signal did it.
 
 **No sudo.** `diskutil apfs addVolume` and `diskutil apfs deleteVolume` on the
 boot container are the ordinary user's to run:
-rule 2 holds here as it does everywhere else, and a verb
+the no-root rule holds here as it does everywhere else, and a verb
 that needed root would be a different thing than the one measured.
 
 **Every other platform REFUSES**, with `reason=no_sandbox` and one remedy line
@@ -565,7 +565,7 @@ neither is guessed — both are asked of the toolchain that is actually on the
 `PATH`, with `internal/goenv`'s cleaned environment, because a `GOFLAGS` inherited
 from a Makefile can reshape a `go` command's output under the reader's feet. A
 path `go env` names that is **not there** — an empty module cache on a machine
-that has never downloaded a module — is skipped with a note, not refused: rule 5's
+that has never downloaded a module — is skipped with a note, not refused: the
 refusal-for-absence is about the paths the *caller* named.
 
 Without it, a card names both by hand in every argv, which is a step that will be
@@ -623,8 +623,8 @@ The disposable-volume implementation serializes creation and verifies cleanup.
 
    exit 125. The cause is **outside this tool**, and was isolated without it: an
    `addVolume` that runs while another one is running leaves the new volume's
-   root `root:wheel drwxr-xr-x` instead of belonging to the caller, with
-   drwxrwxr-x`, and it **does not settle** — still denied two seconds later.
+   root owned `root:wheel` with mode `drwxr-xr-x` instead of the caller's
+   `drwxrwxr-x`, and it **does not settle** — still denied two seconds later.
    Uncontended, the root is the caller's and writable the instant `diskutil
    info` reports a mount point. The same four runs staggered twelve seconds
    apart all passed **with their execution overlapping**, so it is *creation*
@@ -637,7 +637,7 @@ The disposable-volume implementation serializes creation and verifies cleanup.
    a path a contained command could write, because a lock anyone can write is a
    lock anyone can take), and after the mount it asks: is this root **mine**, and
    can I **write** it. There is no repair to apply — `chown` on another user's
-   directory needs root, which rule 2 does not have — so a root that is not the
+   directory needs root, which this tool does not have — so a root that is not the
    caller's means the volume is **deleted and made again**, up to three times,
    and then the tool **refuses and names it** rather than letting the run die at
    `mkdir` with `permission denied` and no cause. The lock waits, with a
@@ -744,8 +744,8 @@ It is printed before `SANDBOX DONE`, because it happens before the delete.
 present** — a read card writes no bundle and that is not a failure.
 `--artifact <relpath>` replaces that set, repeatable, each path relative to the
 card's working directory. An artifact the **caller named** and did not write is
-a refusal, the same way rule 5 refuses a `--read` the caller named that is not
-there; a default that is absent is skipped. A directory is taken whole, one row
+a refusal, the same way a `--read` the caller named that is not there is
+refused; a default that is absent is skipped. A directory is taken whole, one row
 per regular file, with its shape kept.
 
 **Nothing escapes the volume.** A process the card started can outlive the
@@ -1075,14 +1075,14 @@ itself) is on darwin an exit **71 carrying `sandbox-exec`'s own message on
 stderr**, which is why 71 is listed above with 125–127 as a number the tool
 cannot claim.
 
-`127` is about the **caller's** `PATH`, not the policy's: rule 5 resolves the
+`127` is about the **caller's** `PATH`, not the policy's: the tool resolves the
 command to an absolute path before the wrap, so the lookup happens outside the
 wall and a `127` means the tool could not find the command at all. A command
 that is found and then dies inside the wall for want of its interpreter or a
 shared library exits `126` or dies by signal. There is **no** `SANDBOX NOTE`
 on that failure: on linux
 the tool is inside the wall it applied by the time the command runs, so it can
-print no more than the command's own status (rule 12), which is what `SANDBOX
+print no more than the command's own status, which is what `SANDBOX
 DONE exit=<n>` says and all it says, and a promise the tool
 can keep on one platform and not the other two is worse than no promise. The
 remedy is printed where it can be printed on all three — the usage banner and
@@ -1136,11 +1136,9 @@ EGRESS DENIED host=<name>
 ```
 
 `version` is SPEC.md's Conventions line, not a shape of its own: the four tokens
-every binary in the set prints, and then this tool's two named extras.
-be `SANDBOX VERSION tool=… version=… backend=… platform=…`, which no reader of a
-version line could take apart — `nova-version snapshot` could not inventory a bin
-holding this binary at all. The backend and the platform a sandbox is
-judged by are not lost; they are said in the grammar the whole set shares.
+every binary in the set prints, and then this tool's two named extras. The
+backend and the platform a sandbox is judged by are not lost; they are said in
+the grammar the whole set shares.
 
 `SANDBOX OK` is printed **before** the command starts, so a log that ends in a
 crash still says what the wall was; its `OK` says the wall is up and the command
