@@ -1,0 +1,6 @@
+# tool-answers: the mistakes this tool does not yet answer with the way forward; each row's count only falls
+# ceiling: 4
+cmd/nova-self-talk:bare 1 the bare refusal predates the REFUSED word (tool ledger X4)
+cmd/nova-self-talk:dry-run 1 verbs whose -h states no effect, or that write with no --dry-run (tool ledger X12)
+cmd/nova-self-talk:unknown-flag 1 the unknown-flag answer predates the rule (tool ledger X2)
+cmd/nova-self-talk:unknown-verb 1 an unknown verb is opened as a file to scan (tool ledger X3, X8)

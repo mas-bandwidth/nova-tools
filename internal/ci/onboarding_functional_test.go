@@ -47,6 +47,10 @@ func TestEveryCommandMeetsTheOnboardingStandard(t *testing.T) {
 		t.Fatal(err)
 	}
 	found := 0
+	// The tool-answers rule is measured on the same binaries and held to its
+	// ledger once every subtest has finished (toolanswers_class_test.go).
+	answers := newToolAnswers(t)
+	t.Cleanup(func() { answers.check(t, found) })
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
@@ -55,6 +59,7 @@ func TestEveryCommandMeetsTheOnboardingStandard(t *testing.T) {
 		tool := e.Name()
 		t.Run(tool, func(t *testing.T) {
 			t.Parallel()
+			answers.begin()
 			_, firstRunErr := onboarding.FirstRun(transcripts, tool)
 			if branch, inFlight := notYetOnTheStandard[tool]; inFlight && firstRunErr != nil {
 				t.Skipf("%s is being brought up to this standard on branch %s; delete its entry from notYetOnTheStandard when that branch merges (%v)", tool, branch, firstRunErr)
@@ -98,8 +103,12 @@ func TestEveryCommandMeetsTheOnboardingStandard(t *testing.T) {
 			if exit != 0 {
 				t.Errorf("`%s help` exits %d, want 0; stderr: %s", tool, exit, helpErr)
 			}
-			// Every verb of it answers -h with that verb's help (verbhelp_functional_test.go).
-			everyVerbAnswersHelp(t, root, tool, bin, banner)
+			// Every verb of it answers -h with that verb's help (verbhelp_functional_test.go),
+			// and every mistake with the way forward (toolanswers_functional_test.go).
+			if helps, living := everyVerbAnswersHelp(t, root, tool, bin, banner); living {
+				measureToolAnswers(t, answers, tool, bin, banner, stderr, helps)
+			}
+			answers.settle()
 
 			// (d) The banner answers the three questions a stranger brings, before
 			// the usage lines (docs/ONBOARDING.md point 6): line 1 says in one

@@ -4,9 +4,11 @@
 // used to write for itself lives here once: the verb dispatch, the banner (what
 // the tool is, how it works, its usage lines, its exit codes, a runnable
 // example block), `help` and `<verb> -h`, the `version` verb, the standard
-// flags (--json on every verb; --max, --actor, --op and --redis where a verb
-// opts in), refusing to guess (every problem of one invocation named at once),
-// and the refusal line with its remedy. A command holds only what its verbs do.
+// flags (--json on every verb; --max, --actor, --op, --redis and --dry-run
+// where a verb opts in), refusing to guess (every problem of one invocation
+// named at once), and the refusal line with its remedy: an unknown verb or
+// flag is answered with the nearest name and the ones there are, and a verb
+// group's -h lists its verbs. A command holds only what its verbs do.
 package tool
 
 import (
@@ -15,6 +17,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -35,15 +39,18 @@ type Tool struct {
 	Stamp     string // the build stamp (-ldflags -X main.version), for version
 }
 
-// Verb is one verb of a tool.
+// Verb is one verb of a tool. A name of two words ("fn load") puts the verb in
+// a group ("fn"): `<tool> fn -h` lists the group's verbs at exit 0.
 type Verb struct {
-	Name    string
-	Usage   string         // the usage line(s) after the tool's name, one form per line
-	Example string         // runnable line(s) after the tool's name, for the banner's example block
-	Effect  Effect         // what running it does to the world, stated in `help <verb>`
-	Detail  string         // lines `help <verb>` prints above its flags: a format, a worked example
-	Flags   func(f *Flags) // declares the verb's flags; nil declares none
-	Run     func(c *Call) *Out
+	Name      string
+	Usage     string         // the usage line(s) after the tool's name, one form per line
+	Example   string         // runnable line(s) after the tool's name, for the banner's example block
+	Effect    Effect         // what running it does to the world, stated in `help <verb>`
+	Detail    string         // lines `help <verb>` prints above its flags: a format, a worked example
+	ExitTable string         // this verb's exit codes, quoted by its -h; "" quotes the tool's
+	DryRun    bool           // the verb takes --dry-run and honours it (Call.DryRun): it plans and writes nothing
+	Flags     func(f *Flags) // declares the verb's flags; nil declares none
+	Run       func(c *Call) *Out
 }
 
 // Effect is what running a verb does beyond printing: one of the three below,
@@ -66,7 +73,7 @@ func (t *Tool) Main() int { return t.Run(os.Args[1:], os.Stdin, os.Stdout, os.St
 func (t *Tool) Run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
 	defer t.help(stdout, &code)
 	if len(args) == 0 {
-		return t.emit(nil, Refuse("no verb given; the verbs are "+strings.Join(t.names(), ", ")), false, stdout, stderr)
+		return t.emit(nil, Refuse("no verb given; the verbs are "+listOf(t.names())), false, stdout, stderr)
 	}
 	switch args[0] {
 	case "help", "-h", "--help":
@@ -78,13 +85,132 @@ func (t *Tool) Run(args []string, stdin io.Reader, stdout, stderr io.Writer) (co
 	case "--version":
 		args = append([]string{"version"}, args[1:]...)
 	}
-	for _, v := range t.verbs() {
-		if v.Name == args[0] {
-			return t.call(v, args[1:], stdin, stdout, stderr)
+	var match *Verb
+	for _, v := range t.verbs() { // the longest name the words begin with: "fn load" over "fn"
+		if words := strings.Fields(v.Name); len(args) >= len(words) && strings.Join(args[:len(words)], " ") == v.Name &&
+			(match == nil || len(v.Name) > len(match.Name)) {
+			match = &v
 		}
 	}
-	return t.emit(nil, Refuse(fmt.Sprintf("unknown verb %q; the verbs are %s", args[0], strings.Join(t.names(), ", "))),
-		verbflag.BoolAsked(args, "json"), stdout, stderr)
+	if match != nil {
+		return t.call(*match, args[len(strings.Fields(match.Name)):], stdin, stdout, stderr)
+	}
+	asJSON := verbflag.BoolAsked(args, "json")
+	if members := t.group(args[0]); len(members) > 0 {
+		return t.inGroup(args, members, asJSON, stdout, stderr)
+	}
+	o := Refuse(fmt.Sprintf("unknown verb %q;%s the verbs are %s", args[0], didYouMean(args[0], t.names()), listOf(t.names())))
+	return t.emit(nil, o, asJSON, stdout, stderr)
+}
+
+// group is the verbs whose name's first word is word and has more after it.
+func (t *Tool) group(word string) []string {
+	var members []string
+	for _, n := range t.names() {
+		if rest, ok := strings.CutPrefix(n, word+" "); ok && rest != "" {
+			members = append(members, n)
+		}
+	}
+	return members
+}
+
+// inGroup answers a group with no verb of it matched: help (`<group> -h`,
+// `help <group>`) lists the group's usage at exit 0, since help is never a
+// refusal; a bare group or an unknown verb of it is refused with its verbs.
+func (t *Tool) inGroup(args, members []string, asJSON bool, stdout, stderr io.Writer) int {
+	g := args[0]
+	if len(args) > 1 && verbflag.IsHelp(args[1]) {
+		fmt.Fprintf(stdout, "usage: %s %s <verb> [flags]\n", t.Name, g)
+		for _, v := range t.verbs() {
+			if slices.Contains(members, v.Name) {
+				for _, l := range lines(v.Usage) {
+					fmt.Fprintf(stdout, "  %s %s\n", t.Name, l)
+				}
+			}
+		}
+		fmt.Fprintf(stdout, "`%s %s <verb> -h` lists a verb's flags.\nexit codes: %s\n", t.Name, g, t.ExitTable)
+		return 0
+	}
+	why := g + " wants one of its verbs;"
+	if len(args) > 1 && !strings.HasPrefix(args[1], "-") {
+		why = fmt.Sprintf("unknown verb %q in %s;%s", g+" "+args[1], g, didYouMean(g+" "+args[1], members))
+	}
+	o := Refuse(why + " the verbs are " + listOf(members))
+	o.Remedy = t.Name + " " + g + " -h"
+	return t.emit(nil, o, asJSON, stdout, stderr)
+}
+
+// listMax bounds a list in a refusal to one readable line; help lists the rest.
+const listMax = 16
+
+// listOf is names joined, at most listMax of them, with how many more there are.
+func listOf(names []string) string {
+	if len(names) <= listMax {
+		return strings.Join(names, ", ")
+	}
+	return fmt.Sprintf("%s and %d more", strings.Join(names[:listMax], ", "), len(names)-listMax)
+}
+
+// didYouMean is " did you mean <name>?" for the one name nearest to got
+// within a third of its length (dashes aside, rounded up) in edits, else "".
+func didYouMean(got string, names []string) string {
+	best, bestD := "", (len(strings.TrimLeft(got, "-"))+2)/3+1
+	for _, n := range names {
+		if d := distance(got, n); d < bestD {
+			best, bestD = n, d
+		}
+	}
+	if best == "" {
+		return ""
+	}
+	return " did you mean " + best + "?"
+}
+
+// distance is the Levenshtein edit distance between a and b, by bytes.
+func distance(a, b string) int {
+	row := make([]int, len(b)+1)
+	for j := range row {
+		row[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		diag := row[0]
+		row[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			diag, row[j] = row[j], min(row[j]+1, row[j-1]+1, diag+cost)
+		}
+	}
+	return row[len(b)]
+}
+
+// flagErrRe finds the flag a parse error names: "for flag -x", "for -x", "argument: -x".
+var flagErrRe = regexp.MustCompile(`(?:for flag|for|argument:) -+([^\s:]+)`)
+
+// FlagRefusal turns a flag-parse error from verb's flag set into what an AI
+// acts on in one turn: an unknown flag names the nearest flag and the flags
+// the verb takes, never the flag package's stock line; a flag with a bad or
+// missing value says what that flag wants. A tool not yet on this package
+// prints it as `<VERB> REFUSED: <FlagRefusal>; run: <tool> <verb> -h`.
+func FlagRefusal(verb string, fs *flag.FlagSet, err error) string {
+	var names []string
+	fs.VisitAll(func(f *flag.Flag) { names = append(names, "--"+f.Name) })
+	if bad, ok := strings.CutPrefix(err.Error(), "flag provided but not defined: "); ok {
+		bad = "--" + strings.TrimLeft(bad, "-")
+		if len(names) == 0 {
+			return "unknown flag " + bad + "; " + verb + " takes no flags"
+		}
+		return "unknown flag " + bad + ";" + didYouMean(bad, names) + " " + verb + " takes " + listOf(names)
+	}
+	s := err.Error()
+	if m := flagErrRe.FindStringSubmatchIndex(s); m != nil {
+		if f := fs.Lookup(s[m[2]:m[3]]); f != nil {
+			return strings.TrimRight(s[:m[2]], "-") + "--" + s[m[2]:] + "; --" + f.Name + " wants " + f.Usage
+		}
+	}
+	return s
 }
 
 // help is deferred by Run: a verb's -h (verbflag's Help) prints that verb's
@@ -101,6 +227,7 @@ func (t *Tool) help(stdout io.Writer, code *int) {
 	}
 	var b strings.Builder
 	verbflag.Print(&b, t.Name, t.Banner(), h.FS)
+	help := b.String()
 	effect, detail := Effect("unstated"), ""
 	for _, v := range t.verbs() {
 		if v.Name == h.FS.Name() {
@@ -108,12 +235,15 @@ func (t *Tool) help(stdout io.Writer, code *int) {
 			if v.Effect != "" {
 				effect = v.Effect
 			}
+			if v.ExitTable != "" { // the verb's own codes stand where the tool's would
+				help = strings.Replace(help, "\nexit codes: "+t.ExitTable+"\n", "\nexit codes: "+v.ExitTable+"\n", 1)
+			}
 		}
 	}
 	if detail != "" {
 		detail += "\n"
 	}
-	fmt.Fprintf(stdout, "%seffect: %s\n", verbflag.Insert(b.String(), detail), effect)
+	fmt.Fprintf(stdout, "%seffect: %s\n", verbflag.Insert(help, detail), effect)
 	*code = 0
 }
 
@@ -157,6 +287,11 @@ func (t *Tool) Problems() []string {
 		if !strings.HasPrefix(e, "inspection") && !strings.HasPrefix(e, "local write") && !strings.HasPrefix(e, "delivery") {
 			p = append(p, fmt.Sprintf("%s %s: the effect %q is not inspection, local write or delivery", t.Name, v.Name, e))
 		}
+		v.flags().VisitAll(func(f *flag.Flag) {
+			if strings.TrimSpace(f.Usage) == "" {
+				p = append(p, fmt.Sprintf("%s %s: --%s has no description; say what it wants", t.Name, v.Name, f.Name))
+			}
+		})
 	}
 	return p
 }
@@ -230,7 +365,9 @@ func (t *Tool) call(v Verb, args []string, stdin io.Reader, stdout, stderr io.Wr
 	f := v.flags()
 	c := &Call{Stdin: stdin, Stdout: stdout, Stderr: stderr, flags: f, given: map[string]bool{}}
 	if err := verbflag.Parse(f.FlagSet, args); err != nil {
-		return t.emit(&v, Refuse(oneline.Cap(err.Error(), oneline.TailBytes)), !f.prints && verbflag.BoolAsked(args, "json"), stdout, stderr)
+		o := Refuse(oneline.Cap(FlagRefusal(v.Name, f.FlagSet, err), oneline.TailBytes))
+		o.Remedy = t.Name + " " + v.Name + " -h"
+		return t.emit(&v, o, !f.prints && verbflag.BoolAsked(args, "json"), stdout, stderr)
 	}
 	f.Visit(func(fl *flag.Flag) { c.given[fl.Name] = true })
 	asJSON := !f.prints && c.Bool("json")
@@ -258,6 +395,14 @@ func (t *Tool) call(v Verb, args []string, stdin io.Reader, stdout, stderr io.Wr
 	if o == nil {
 		o = Fail("the verb returned no result") // never silent
 	}
+	if c.Given("dry-run") && c.Bool("dry-run") {
+		switch {
+		case !c.dryRead: // a tool bug its own tests meet: the verb ran as if for real
+			o = Fail("--dry-run was given and the verb never read it (Call.DryRun); it may have written")
+		case o.Status == OK:
+			o.Fact("dry_run", true)
+		}
+	}
 	if f.max {
 		o.capItems(c.Int("max"))
 	}
@@ -269,6 +414,9 @@ func (v Verb) flags() *Flags {
 	f := &Flags{FlagSet: verbflag.New(v.Name)}
 	if v.Flags != nil {
 		v.Flags(f)
+	}
+	if v.DryRun {
+		f.Bool("dry-run", false, "print what the verb would write and write nothing")
 	}
 	if !f.prints {
 		f.Bool("json", false, "print the result as one JSON object instead of lines")
@@ -359,6 +507,16 @@ type Call struct {
 	flags          *Flags
 	given          map[string]bool
 	problems       []string
+	dryRead        bool
+}
+
+// DryRun reports whether --dry-run was given (only a Verb with DryRun takes
+// it). A verb reads it before it writes and, when it is set, returns the plan
+// the real run would carry out, from the same code path, and writes nothing;
+// the skeleton adds dry_run=true to the OK line.
+func (c *Call) DryRun() bool {
+	c.dryRead = true
+	return c.given["dry-run"] && c.Bool("dry-run")
 }
 
 // Get is a declared flag's value, for a flag.Value of the verb's own (a flag.Getter).
