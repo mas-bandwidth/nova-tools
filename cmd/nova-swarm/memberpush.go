@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -111,7 +112,7 @@ func (g *gitPusher) Push(p member.Packet, r member.Result) member.Push {
 	verify := []string{"rev-parse", "--verify", "-q", "--end-of-options", head + "^{commit}"}
 	res, err := g.run(ctx, repo, nil, verify...)
 	full := strings.TrimSpace(string(res.Stdout))
-	refused := ""
+	refused, claimed := "", "" // claimed: the head the result named, when the checkout's own was taken for it
 	if err != nil || len(full) < 40 {
 		refused = "the result's head " + head + " is not a commit on the checkout's branches"
 	} else if res, err := g.run(ctx, repo, nil, "for-each-ref", "--count=1", "--format=%(refname)", "--contains", full, ns+"/"); err != nil || strings.TrimSpace(string(res.Stdout)) == "" {
@@ -136,10 +137,7 @@ func (g *gitPusher) Push(p member.Packet, r member.Result) member.Push {
 		if tip == "" {
 			return member.Push{Refused: refused}
 		}
-		if g.notes != nil {
-			fmt.Fprintf(g.notes, "NOTE push %s head: the result named %s, which is no commit of the checkout; the checkout's own head %s was pushed\n", oneline.Field(p.Card), oneline.Field(head), oneline.Field(tip))
-		}
-		full = tip
+		claimed, full = head, tip
 	}
 	if serr != nil || !typedrec.IsFullSha(base) {
 		return member.Push{None: "no staged commit is recorded for this launch to count the child's commits from"}
@@ -170,6 +168,10 @@ func (g *gitPusher) Push(p member.Packet, r member.Result) member.Push {
 		}
 		wait(pushWaits[try])
 	}
+	if claimed != "" && g.notes != nil {
+		// said only once the push has landed: a push refused after this point is a failure
+		fmt.Fprintf(g.notes, "NOTE push %s head: the result named %s, which is no commit of the checkout; the checkout's own head %s was pushed\n", oneline.Field(p.Card), oneline.Field(claimed), oneline.Field(full))
+	}
 	pu := member.Push{Sha: full}
 	if strings.TrimSpace(r.Title) != "" {
 		pu.PR, pu.PRNote = g.openPR(url, ref, p.Branch, r.Title, r.Body)
@@ -194,8 +196,18 @@ func (g *gitPusher) checkoutTip(ctx context.Context, repo, ns, base string) stri
 			continue
 		}
 		seen[sha] = true
-		if _, err := g.run(ctx, repo, nil, "merge-base", "--is-ancestor", "--end-of-options", base, sha); err == nil {
+		_, err := g.run(ctx, repo, nil, "merge-base", "--is-ancestor", "--end-of-options", base, sha)
+		var exit *exec.ExitError
+		switch {
+		case err == nil:
 			tips = append(tips, sha)
+		case errors.As(err, &exit) && exit.ExitCode() == 1:
+			// not a descendant of the staged commit: no candidate
+		default:
+			// git could not say (a broken object, the disk, a timeout): a tip that was
+			// not judged is never left out as if it were no descendant, or the other
+			// would look like the one line of work
+			return ""
 		}
 	}
 	if len(tips) != 1 {

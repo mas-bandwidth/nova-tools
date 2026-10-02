@@ -1199,8 +1199,11 @@ func (m *Member) haveWords() string {
 	for id := range m.running {
 		have = append(have, id)
 	}
-	for id := range m.returnedAt {
-		if _, ours := m.running[id]; !ours {
+	for id, at := range m.returnedAt {
+		// a read this reader handed back is held to be its own only until it may begin it
+		// again (ReadStageRetry): past that it wants the packet, and a card named here for
+		// ever would never be sent one and never be begun again
+		if _, ours := m.running[id]; !ours && m.passNow.Before(at.Add(ReadStageRetry)) {
 			have = append(have, id)
 		}
 	}

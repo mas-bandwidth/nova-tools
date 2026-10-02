@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -252,6 +253,36 @@ func TestAReadReturnedAMomentAgoTakesNoLaneOfTheAsk(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"queue --as r --json --packets 1 --have p000.r1.r,p001.r1.r,p002.r1.r"}, s.queues())
 	assert.Equal(t, []string{"p000.r1.r", "p001.r1.r", "p002.r1.r", "p003.r1.r"}, g.r.started(), "the freed lane began the next read, not the returned one")
+}
+
+// A read this reader handed back is named in --have only until it may begin it again
+// (ReadStageRetry): past that it is asked for like any other, its packet comes, and it is
+// begun again. Named for ever, the server would never send its packet and the read, still
+// asked of this reader, would never be begun again (Stella's finding on 3bb54ac3).
+func TestAReturnedReadIsAskedForAgainOnceItMayBeBegun(t *testing.T) {
+	t.Parallel()
+	s := &packetServer{epoch: 7}
+	s.cards = append(s.cards, readCard(0))
+	g := packetRig(Config{As: "r", Width: 1, Reader: true}, s)
+	_, err := g.tickAt(t, 0)
+	require.NoError(t, err)
+	require.Equal(t, []string{"p000.r1.r"}, g.r.started())
+	g.r.child("p000.r1.r").end(Result{Ran: false, Report: "no verdict"})
+	_, err = g.tickAt(t, 0)
+	require.NoError(t, err)
+	require.Contains(t, g.out.String(), "read p000.r1.r: returned")
+
+	s.forget()
+	_, err = g.tickAt(t, 1) // inside the retry time: still held, not begun
+	require.NoError(t, err)
+	assert.Equal(t, []string{"queue --as r --json --packets 1 --have p000.r1.r"}, s.queues())
+	assert.Equal(t, []string{"p000.r1.r"}, g.r.started(), "not begun again before the retry time")
+
+	s.forget()
+	_, err = g.tickAt(t, int64(ReadStageRetry/time.Second))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"queue --as r --json --packets 1"}, s.queues(), "past the retry time it is no longer named as held")
+	assert.Equal(t, []string{"p000.r1.r", "p000.r1.r"}, g.r.started(), "its packet came and it was begun again")
 }
 
 // TestARestartedMemberAsksForItsWorkingCardsAndRecoversThem: a member that starts with three
