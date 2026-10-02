@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+	"github.com/stretchr/testify/require"
 )
 
 func findRepoRoot() (string, error) {
@@ -47,9 +48,7 @@ func TestPausePointThreadDirected(t *testing.T) {
 	afterPath := filepath.Join(dir, "after.txt")
 
 	repoRoot, err := findRepoRoot()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	// The probe is committed at internal/swarm/testprobe (build tag
 	// swarmtest); the test never writes into the repository tree.
@@ -57,9 +56,8 @@ func TestPausePointThreadDirected(t *testing.T) {
 	cmd := exec.Command("go", "build", "-tags", "swarmtest", "-o", binFile, "./internal/swarm/testprobe")
 	cmd.Dir = repoRoot
 	cmd.Env = append(goenv.Clean(os.Environ()), "CGO_ENABLED=1")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("build probe: %v\n%s", err, out)
-	}
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "build probe: %v\n%s", err, out)
 
 	for i := 0; i < 200; i++ {
 		if err := os.Remove(markPath); err != nil && !os.IsNotExist(err) {
@@ -75,9 +73,7 @@ func TestPausePointThreadDirected(t *testing.T) {
 			"NOVA_SWARM_PAUSE_MARK="+markPath,
 			"PROBE_DIR="+dir,
 		)
-		if err := child.Start(); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, child.Start())
 
 		for waited := 0; waited < 3000; waited++ {
 			if _, err := os.Stat(markPath); err == nil {

@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // These tests exec whole programs -- the fake runner this package builds
@@ -28,13 +30,11 @@ func TestFakeRunnerRecordsItsArgv(t *testing.T) {
 	card := filepath.Join(dir, "card.md")
 	root := filepath.Join(dir, "root")
 	cmd := exec.Command(runner, "card-f", "1", "m", card, root, "unmetered")
-	if got, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("the recording runner: %v\n%s", err, got)
-	}
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, "the recording runner: %v\n%s", err, output)
 	want := strings.Join([]string{runner, "card-f", "1", "m", card, root, "unmetered"}, "\n") + "\n"
-	if got := string(readTestFile(t, out)); got != want {
-		t.Fatalf("the recorded argv is %q, want %q", got, want)
-	}
+	got := string(readTestFile(t, out))
+	require.Equal(t, want, got, "the recorded argv is %q, want %q", got, want)
 }
 
 // TestFakeRunnerPublishesAWholeFileWriteAtomically: a `write` step must not create the
@@ -47,28 +47,21 @@ func TestFakeRunnerPublishesAWholeFileWriteAtomically(t *testing.T) {
 	t.Parallel()
 
 	raw, err := os.ReadFile(filepath.Join("testdata", "fakerunner", "main.go"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	src := string(raw)
 	const sig = "func (r *runner) writeFile(path, body string, appendTo bool) {"
 	i := strings.Index(src, sig)
-	if i < 0 {
-		t.Fatal("testdata/fakerunner/main.go no longer has writeFile; the atomic whole-file write lived there")
-	}
+	require.GreaterOrEqual(t, i, 0, "testdata/fakerunner/main.go no longer has writeFile; the atomic whole-file write lived there")
 	fn := src[i:]
 	if j := strings.Index(fn[len(sig):], "\nfunc "); j >= 0 {
 		fn = fn[:len(sig)+j]
 	}
-	if !strings.Contains(fn, "os.CreateTemp") || !strings.Contains(fn, "os.Rename") {
-		t.Fatal("writeFile no longer publishes a whole-file write by temp+rename; result-after-deadline can observe RESULT.md created and still empty")
-	}
+	require.Contains(t, fn, "os.CreateTemp", "writeFile no longer publishes a whole-file write by temp+rename; result-after-deadline can observe RESULT.md created and still empty")
+	require.Contains(t, fn, "os.Rename", "writeFile no longer publishes a whole-file write by temp+rename; result-after-deadline can observe RESULT.md created and still empty")
 
 	dir := t.TempDir()
 	secret := filepath.Join(dir, "outside")
-	if err := os.WriteFile(secret, []byte("a secret the write must not touch\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(secret, []byte("a secret the write must not touch\n"), 0o644))
 	dest := filepath.Join(dir, "RESULT.md")
 	if err := os.Link(secret, dest); err != nil {
 		t.Logf("hard link unavailable (%v); writeFile's source still names CreateTemp and Rename", err)
@@ -78,22 +71,17 @@ func TestFakeRunnerPublishesAWholeFileWriteAtomically(t *testing.T) {
 	card := filepath.Join(dir, "card.md")
 	root := filepath.Join(dir, "root")
 	cmd := exec.Command(runner, "card-f", "1", "m", card, root, "unmetered")
-	if got, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("the writing runner: %v\n%s", err, got)
-	}
-	if got := string(readTestFile(t, secret)); got != "a secret the write must not touch\n" {
-		t.Fatalf("the write landed in place through a planted hard link and overwrote the other name: %q", got)
-	}
-	if got := string(readTestFile(t, dest)); got != "the published body\n" {
-		t.Fatalf("the published file is %q, want the body", got)
-	}
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, "the writing runner: %v\n%s", err, output)
+	got := string(readTestFile(t, secret))
+	require.Equal(t, "a secret the write must not touch\n", got, "the write landed in place through a planted hard link and overwrote the other name: %q", got)
+	got = string(readTestFile(t, dest))
+	require.Equal(t, "the published body\n", got, "the published file is %q, want the body", got)
 }
 
 func readTestFile(t *testing.T, path string) string {
 	t.Helper()
 	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("reading %s: %v", path, err)
-	}
+	require.NoError(t, err, "reading %s: %v", path, err)
 	return string(raw)
 }
