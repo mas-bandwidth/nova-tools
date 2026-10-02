@@ -7,14 +7,13 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
-// THE LIVE SAMPLER, IN THE PROCESS THAT HOLDS THE CARD'S DEADLINE (SPEC-SWARM rule 13d,
-// issue #1545).
+// THE LIVE SAMPLER, IN THE PROCESS THAT HOLDS THE CARD'S DEADLINE.
 //
 // "There is no supervisor on this route and none is spawned. While a launch runs, `native`
-// reads the harness's own database under the job's data home (rule 13's source, at both
+// reads the harness's own database under the job's data home (at both
 // spellings, read-only) every `--usage-interval` seconds."
 //
-// WHY IT IS A GOROUTINE AND NOT A CASE IN THE LAUNCH'S SELECT. Rule 13d: "a sample is never
+// WHY IT IS A GOROUTINE AND NOT A CASE IN THE LAUNCH'S SELECT. "A sample is never
 // in the deadline's way: a read is given 5 seconds whatever the interval, no sample starts
 // while one is unanswered, a read still unanswered at its limit is abandoned and counted as
 // a failed read, and the deadline and a TERM from outside end the card at their own instants
@@ -29,10 +28,10 @@ import (
 // a read already in flight is abandoned where it stands. What the sampler has learnt is read
 // back under a mutex, which is the only thing the two goroutines share.
 //
-// IT NEVER SAMPLES usage.tsv (rule 13d): "that row is written after a launch's process group
+// IT NEVER SAMPLES usage.tsv: "that row is written after a launch's process group
 // is dead, so it is the record of a stop and cannot be the cause of one."
 
-// THE STOP WORDS rule 13d names, and they are the `stopped=` field's whole vocabulary:
+// THE STOP WORDS, the `stopped=` field's whole vocabulary:
 // "A card the machinery stopped under this rule carries one more field, and its value names
 // the budget: `stopped=tokens`, `stopped=max_turns`, `stopped=max_cache_read`, or
 // `stopped=unverifiable`. It is a key of its own."
@@ -43,8 +42,8 @@ const (
 	stoppedUnverifiable = "unverifiable"
 )
 
-// unverifiableSamples is how many CONSECUTIVE failed reads end a card (rule 13, quoted by
-// 13d): "a read that fails ... on three consecutive samples ends the card exactly as the
+// unverifiableSamples is how many CONSECUTIVE failed reads end a card: "a read that fails
+// ... on three consecutive samples ends the card exactly as the
 // budget does ... two failures and then an answer end nothing".
 const unverifiableSamples = 3
 
@@ -52,8 +51,8 @@ const unverifiableSamples = 3
 type liveSampler struct {
 	dataHome string
 	interval time.Duration
-	// THE BUDGETS THIS SAMPLER WATCHES. tokens/unmetered are rule 13's, worker carries rule
-	// 13b's max_turns and max_cache_read, and logPath is the capture the turn count is
+	// THE BUDGETS THIS SAMPLER WATCHES. tokens/unmetered belong to the token budget, worker
+	// carries the card budget's max_turns and max_cache_read, and logPath is the capture the turn count is
 	// asked of -- `<job>/harness-output.log` on this route and never `harness.log`.
 	tokens    int
 	unmetered bool
@@ -65,7 +64,7 @@ type liveSampler struct {
 	once sync.Once
 	// fired carries the ONE stop word this sampler ever sends, and it is buffered and sent
 	// at most once: the launch's select reads it, ends the card, and nothing after that can
-	// re-stop a card that is already stopping. A stop is terminal (rule 13d), so a second
+	// re-stop a card that is already stopping. A stop is terminal, so a second
 	// word would have nowhere to go and a send that blocked would leak this goroutine.
 	fired     chan string
 	firedOnce sync.Once
@@ -73,12 +72,12 @@ type liveSampler struct {
 	mu sync.Mutex
 	// spent, observed and partial are the last ANSWER a sample got, folded the way the
 	// line folds them. They are the JOB's running figures: the data home is the job's, so
-	// a read of it counts every launch that has run into it so far, which is rule 13d's
+	// a read of it counts every launch that has run into it so far --
 	// "every launch counted from the first launch's start" with no arithmetic of its own.
 	spent    int
 	observed bool
 	partial  bool
-	// failures is the number of CONSECUTIVE reads that failed. Rule 13d ends a card on the
+	// failures is the number of CONSECUTIVE reads that failed. A card ends on the
 	// third; two failures and then an answer end nothing, so an answer resets it.
 	failures int
 	// lastErr is the reason the most recent failed read gave, for the line that reports an
@@ -95,10 +94,10 @@ type liveSampler struct {
 	// ask the question again without a channel.
 	reached string
 	// defect is the PROMPT-DEFECT line a card budget's stop owes, built at the instant the
-	// budget fired, from the figures that fired it. Rule 13d prints it on native's own
-	// stdout AFTER the NATIVE OK line and writes it into no file (decision 16): a created
-	// RESULT.md without the contract line would score the card `line1-mismatch`, and 13d
-	// promises the published report is kept byte for byte.
+	// budget fired, from the figures that fired it. The line prints on native's own
+	// stdout AFTER the NATIVE OK line and writes it into no file: a created
+	// RESULT.md without the contract line would score the card `line1-mismatch`, so the
+	// published report is kept byte for byte.
 	defect string
 }
 
@@ -126,16 +125,16 @@ func startLiveSampler(dataHome string, interval time.Duration, cfg nativeRunConf
 func (s *liveSampler) Fired() <-chan string { return s.fired }
 
 // fire sends the stop word, once and never blocking. A sampler that has already fired says
-// nothing more: rule 13d's stop is terminal.
+// nothing more: a stop is terminal.
 func (s *liveSampler) fire(word string) {
 	s.firedOnce.Do(func() { s.fired <- word })
 }
 
-// StopWordAtFinal is the "once more before any relaunch" test of rule 13d asked of the
-// job's FINAL reads as well as the samples: "The stop is rule 13's `spent >= n`, tested at
+// StopWordAtFinal is the "once more before any relaunch" test asked of the
+// job's FINAL reads as well as the samples: "The stop is `spent >= n`, tested at
 // every sample and once more before any relaunch." A launch that dies fast, before any
 // interval has elapsed, leaves no sample behind, so StopWord alone would be "" and a first
-// launch that reached the budget alone would buy a second one (review finding 6 on #1635).
+// launch that reached the budget alone would buy a second one.
 // spent is the job's sum of every launch's final read, and observed says whether any of
 // those reads answered; a word already reached by a sample is kept, so a card budget that
 // fired first still names itself.
@@ -173,13 +172,13 @@ func (s *liveSampler) loop() {
 
 // readOnce takes one reading and folds it. The read is bounded by swarm.LiveSampleLimit
 // inside ReadJobUsageLive, so an abandoned read returns here as an ordinary error and is
-// counted as a failed read, which is what rule 13d asks for.
+// counted as a failed read.
 func (s *liveSampler) readOnce() {
 	s.enter()
 	usage, err := swarm.ReadJobUsageLive(s.dataHome)
 	s.leave()
-	// THE CARD'S OWN TURN COUNT is read OUTSIDE the lock, because it opens a file: rule 13b
-	// counts the harness log's assistant turns, "or the usage row count where the log has
+	// THE CARD'S OWN TURN COUNT is read OUTSIDE the lock, because it opens a file: the count is
+	// the harness log's assistant turns, "or the usage row count where the log has
 	// fewer", and on this route the log is `<job>/harness-output.log`.
 	turns := 0
 	if err == nil && s.worker != nil && s.worker.HasCardBudget() {
@@ -189,7 +188,7 @@ func (s *liveSampler) readOnce() {
 	defer s.mu.Unlock()
 	s.samples++
 	if err != nil {
-		// A READ THAT FAILS, which rule 13 and 13d keep apart from a source that has
+		// A READ THAT FAILS, which the sampler keeps apart from a source that has
 		// reported nothing: the first ends a card on the third in a row, the second
 		// leaves the budget unable to fire and the deadline to end the job.
 		s.failures++
@@ -216,7 +215,7 @@ func (s *liveSampler) readOnce() {
 	if s.reached != "" {
 		return
 	}
-	// RULE 13b's CARD BUDGET, BESIDE THE TOKEN BUDGET and asked first, so that a card which
+	// THE CARD BUDGET, BESIDE THE TOKEN BUDGET and asked first, so that a card which
 	// crossed both is named by the one the description set: `stopped=` says WHICH budget
 	// fired, and a cache-read runaway reported as `stopped=tokens` would send its reader to
 	// the wrong prompt.
@@ -232,7 +231,7 @@ func (s *liveSampler) readOnce() {
 			return
 		}
 	}
-	// THE TOKEN BUDGET: rule 13's `spent >= n`, so a sum exactly equal to the budget ends
+	// THE TOKEN BUDGET: `spent >= n`, so a sum exactly equal to the budget ends
 	// the card. A partial observation can reach it and stop the card, and can never show
 	// that the card stayed under it, which is what the plus on the line says.
 	if !s.unmetered && s.tokens > 0 && seen > 0 && sum >= s.tokens {
@@ -248,8 +247,8 @@ func (s *liveSampler) watching() bool {
 	return (!s.unmetered && s.tokens > 0) || (s.worker != nil && s.worker.HasCardBudget())
 }
 
-// label is the id the PROMPT-DEFECT line names. Rule 13b spells the line
-// `PROMPT-DEFECT task=<id> ...` and rule 13d does not re-say what the id is on this route,
+// label is the id the PROMPT-DEFECT line names. The line is spelled
+// `PROMPT-DEFECT task=<id> ...` and the id is not re-said on this route,
 // so it is the CARD'S LABEL -- the same token `NATIVE OK label=` carries one line above it,
 // which is the only id a reader of native's stdout has to join the two by.
 func (s *liveSampler) label() string {
@@ -295,7 +294,7 @@ func (s *liveSampler) Observed() (spent int, observed, partial bool, failures in
 }
 
 // Counts is how many samples were answered and whether any two ever overlapped. It exists
-// for the tests that hold rule 13d's "no sample starts while one is unanswered".
+// for the tests that hold "no sample starts while one is unanswered".
 func (s *liveSampler) Counts() (answered, maxInFlight int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
