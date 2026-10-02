@@ -31,7 +31,9 @@ func outsideFile(t *testing.T, dir string) string {
 	return v
 }
 
-// Finding 2: a report that is a symlink is not this job's report.
+// Finding 2: a report that is a symlink is not this job's report. readRegular is the read
+// every worker-writable record goes through (the name is the steady read's, which went with
+// nova-swarm verify).
 func TestReadFileSteadyRefusesASymlink(t *testing.T) {
 	t.Parallel()
 
@@ -40,7 +42,7 @@ func TestReadFileSteadyRefusesASymlink(t *testing.T) {
 	require.NoError(t, os.MkdirAll(job, 0o755))
 	v := outsideFile(t, dir)
 	plantLink(t, v, ResultPath(job))
-	raw, err := readFileSteady(ResultPath(job))
+	raw, err := readRegular(ResultPath(job))
 	require.Error(t, err, "the dispatcher read through a planted symlink and got %q", string(raw))
 	require.False(t, missing(err), "a planted symlink must not read as a record that is simply gone")
 }
@@ -77,7 +79,8 @@ func TestWriteAtomicDoesNotWriteThroughAPlantedTemp(t *testing.T) {
 	require.True(t, fi.Mode().IsRegular(), "the rename moved the planted link over the record's own path")
 }
 
-// Finding 4: a FIFO is not a record, and it must never park the dispatcher.
+// Finding 4: a FIFO is not a record, and it must never park the dispatcher (readRegular, as
+// above).
 func TestReadFileSteadyDoesNotBlockOnAFIFO(t *testing.T) {
 	t.Parallel()
 
@@ -87,7 +90,7 @@ func TestReadFileSteadyDoesNotBlockOnAFIFO(t *testing.T) {
 	plantFIFO(t, ResultPath(job))
 	done := make(chan error, 1)
 	go func() {
-		_, err := readFileSteady(ResultPath(job))
+		_, err := readRegular(ResultPath(job))
 		done <- err
 	}()
 	select {
@@ -96,25 +99,5 @@ func TestReadFileSteadyDoesNotBlockOnAFIFO(t *testing.T) {
 		require.False(t, missing(err), "a FIFO must not read as a record that is simply gone")
 	case <-time.After(30 * time.Second):
 		t.Fatal("STILL BLOCKED after 30s reading a FIFO at RESULT.md: the dispatcher is wedged")
-	}
-}
-
-func TestReadJSONDoesNotBlockOnAFIFO(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	job := filepath.Join(dir, "job")
-	require.NoError(t, os.MkdirAll(job, 0o755))
-	plantFIFO(t, ExitPath(job))
-	done := make(chan error, 1)
-	go func() {
-		var ex ExitRecord
-		done <- ReadJSON(ExitPath(job), &ex)
-	}()
-	select {
-	case err := <-done:
-		require.Error(t, err, "a FIFO read as an exit record")
-	case <-time.After(30 * time.Second):
-		t.Fatal("STILL BLOCKED after 30s reading a FIFO at exit.json: the recovery pass is wedged")
 	}
 }

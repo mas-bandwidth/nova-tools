@@ -19,7 +19,6 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 	testverbhelp.Check(t, swarmRun, []testverbhelp.Case{
 		{Verb: "version"},
 		{Verb: "doctor", Flags: []string{"--path", "{dir}/nova-swarm", "--local", "{dir}/local"}},
-		{Verb: "verify", Flags: []string{"--result", "{dir}/result"}},
 		{Verb: "lint", Flags: []string{"--card", "{dir}/card"}},
 		{Verb: "template", Flags: []string{"--name", "read-pr"}},
 		{Verb: "native", Flags: []string{"--card", "{dir}/card", "--slot", "{dir}/slot", "--root", "{dir}/root"}},

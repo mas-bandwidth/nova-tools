@@ -12,7 +12,7 @@ import (
 // it whole, and a verb's -h prints that verb's own line in its place (verbExits; docs/
 // STANDARD.md section 2, "Every verb's -h quotes the table, or the verb's own"; tool
 // ledger X9). It is the usage const's own text, and a test holds the two to one string.
-const exitParagraph = `exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- a verification that failed, a lint that found a defect; 2 could not run:
+const exitParagraph = `exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- a lint that found a defect, a worker description that drifts; 2 could not run:
 a missing flag, an unreadable worker description, a key file that is
 absent or empty, a bad invocation; 3 member: its binary was replaced on disk
 (MEMBER STOP: its supervisor starts the new one; with children running it first
@@ -21,7 +21,6 @@ takes no new card and stops when the last is reported).`
 // verbExit is each verb's own exit codes.
 var verbExit = map[string]string{
 	"lint":         "exit codes: 0 the card is clean (a NOTE line is advice and changes nothing); 1 a drift, each on its LINT DRIFT line; 2 could not run: a missing flag, a file that cannot be read, a bad invocation",
-	"verify":       "exit codes: 0 the result holds its contract; 1 it does not (the line says why); 2 could not run: a missing flag, a file that cannot be read, a receipt that cannot be written",
 	"worker":       "exit codes: 0 WORKER OK; 1 the description was read and drifts, each on its WORKER DRIFT line; 2 it cannot be read, or a bad invocation",
 	"worker check": "exit codes: 0 WORKER OK; 1 the description was read and drifts, each on its WORKER DRIFT line; 2 it cannot be read, or a bad invocation",
 	"member":       "exit codes: 0 it stopped as asked (--once, --ticks); 2 could not run: a missing flag, a directory that cannot be made; 3 its binary was replaced on disk (MEMBER STOP: its supervisor starts the new one; with children running it first takes no new card and stops when the last is reported)",
