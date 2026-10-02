@@ -148,9 +148,13 @@ func TestReadJobTextCarriesTheFourChecks(t *testing.T) {
 		assert.Contains(t, text, ReaderChecksText, family)
 		for _, check := range []string{
 			"truth of a stated reason against the code",
+			"truth-table equality",
+			"cite the line of code that shows it",
 			"sentence completeness",
+			"from its first line to its full stop as a whole paragraph",
 			"edits strictly within PATHS",
 			"cross-references after a rename",
+			"verify with `ls`",
 		} {
 			assert.Contains(t, text, check, "%s lacks check %q", family, check)
 		}
