@@ -181,6 +181,7 @@ func TestAFailedWriteIsNotShown(t *testing.T) {
 	l.Line("WAKE REPORT path=b")
 	assert.Equal(t, 0, l.Shown(), "Shown() = %d over a writer that failed every write, want 0", l.Shown())
 	assert.Equal(t, 2, l.Total(), "Total() = %d, want 2: the count is the truth about the state even when the output is not", l.Total())
+	assert.Error(t, l.Err(), "the write error was discarded")
 }
 
 type brokenWriter struct{}
