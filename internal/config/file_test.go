@@ -2,8 +2,11 @@ package config
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -104,12 +107,18 @@ func TestAFileStoreRefusesUntilMigrateMakesIt(t *testing.T) {
 // is refused by name; a field a later migration added reads as its default.
 func TestAFileStoreReadsOnlyItsOwnShape(t *testing.T) {
 	t.Parallel()
+	all, err := Migrations()
+	require.NoError(t, err)
 	cases := []struct {
 		name, body, want string
 	}{
 		{"not JSON", "machines:\n  m1: {}\n", "is not a nova-config store file"},
+		{"empty object", `{}`, "is not a nova-config store file"},
+		{"future schema", fmt.Sprintf(`{"schema":%d,"rows":{},"history":[]}`, len(all)+1), "is not a nova-config store file"},
+		{"missing rows", fmt.Sprintf(`{"schema":%d,"history":[]}`, len(all)), "is not a nova-config store file"},
+		{"second object", `{"schema":1,"rows":{}} {}`, "want one JSON object"},
 		{"an unknown key", `{"schema":13,"rows":{},"history":[],"extra":1}`, "is not a nova-config store file"},
-		{"an unknown kind", `{"schema":13,"rows":{"lane":{}},"history":[]}`, `holds rows of kind "lane"`},
+		{"an unknown kind", fmt.Sprintf(`{"schema":%d,"rows":{"lane":{}},"history":[]}`, len(all)), `holds rows of kind "lane"`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -118,6 +127,9 @@ func TestAFileStoreReadsOnlyItsOwnShape(t *testing.T) {
 			require.NoError(t, os.WriteFile(path, []byte(tc.body), 0o600))
 			_, err := OpenFile(path)
 			assert.ErrorContains(t, err, tc.want)
+			got, err := os.ReadFile(path)
+			require.NoError(t, err)
+			assert.Equal(t, tc.body, string(got), "refusing a file preserves its bytes")
 		})
 	}
 	t.Run("a field added later reads as its default", func(t *testing.T) {
@@ -131,4 +143,62 @@ func TestAFileStoreReadsOnlyItsOwnShape(t *testing.T) {
 		require.True(t, found)
 		assert.Equal(t, "0", row.Fields["width"])
 	})
+}
+
+// The final newline counts toward the read bound. A write crossing it
+// refuses before replacing the previous readable store.
+func TestAFileStoreWriteCannotOutgrowItsReadBound(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	path := migratedFile(t)
+	f, err := OpenFile(path)
+	require.NoError(t, err)
+	_, err = f.Insert(ctx, KindMachine, Row{Name: "m1", Fields: map[string]string{"user": "u", "seat": "s", "slots": "8", "width": "1"}}, "a1")
+	require.NoError(t, err)
+	all, err := Migrations()
+	require.NoError(t, err)
+	// Bring an existing history field exactly to the limit without a loop
+	// generating thousands of otherwise identical writes.
+	raw, err := json.MarshalIndent(fileState{Schema: len(all), Rows: f.rows, History: f.history}, "", "  ")
+	require.NoError(t, err)
+	f.history[0].Actor += strings.Repeat("x", MaxStoreFileBytes-len(raw)-1)
+	require.NoError(t, f.save())
+	before, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Len(t, before, MaxStoreFileBytes)
+	again, err := OpenFile(path)
+	require.NoError(t, err)
+	history, err := again.History(ctx, KindMachine, "m1")
+	require.NoError(t, err)
+	_, _, err = again.Update(ctx, KindMachine, "m1", map[string]string{"width": "2"}, "a1")
+	require.ErrorContains(t, err, "nothing was written")
+	row, found, err := again.Get(ctx, KindMachine, "m1")
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, "1", row.Fields["width"], "a failed save leaves the open store unchanged")
+	afterHistory, err := again.History(ctx, KindMachine, "m1")
+	require.NoError(t, err)
+	assert.Equal(t, history, afterHistory)
+	_, err = again.Insert(ctx, KindMachine, Row{Name: "m2", Fields: map[string]string{"user": "u", "seat": "s", "slots": "1"}}, "a1")
+	require.ErrorContains(t, err, "nothing was written")
+	_, found, err = again.Get(ctx, KindMachine, "m2")
+	require.NoError(t, err)
+	assert.False(t, found, "a refused insert leaves no row in memory")
+	_, err = again.Delete(ctx, KindMachine, "m1", "a1")
+	require.ErrorContains(t, err, "nothing was written")
+	_, found, err = again.Get(ctx, KindMachine, "m1")
+	require.NoError(t, err)
+	assert.True(t, found, "a refused delete keeps its row in memory")
+	afterHistory, err = again.History(ctx, KindMachine, "m1")
+	require.NoError(t, err)
+	assert.Equal(t, history, afterHistory)
+	after, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
+	kept, err := OpenFile(path)
+	require.NoError(t, err)
+	row, found, err = kept.Get(ctx, KindMachine, "m1")
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, "1", row.Fields["width"])
 }

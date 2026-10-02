@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"time"
@@ -64,6 +66,16 @@ func OpenFile(path string) (*FileStore, error) {
 	if err := dec.Decode(&st); err != nil {
 		return nil, fmt.Errorf("--file %s is not a nova-config store file (%v); give a new path, and migrate --file <path> makes one", path, err)
 	}
+	if err := dec.Decode(new(any)); err != io.EOF {
+		return nil, fmt.Errorf("--file %s is not a nova-config store file: want one JSON object", path)
+	}
+	all, err := Migrations()
+	if err != nil {
+		return nil, err
+	}
+	if st.Schema < 1 || st.Schema > len(all) || st.Rows == nil {
+		return nil, fmt.Errorf("--file %s is not a nova-config store file this binary can read: want schema 1 through %d and rows, got schema %d", path, len(all), st.Schema)
+	}
 	for kind, rows := range st.Rows {
 		k, ok := Lookup(kind)
 		if !ok {
@@ -113,6 +125,9 @@ func (f *FileStore) save() error {
 	if err != nil {
 		return fmt.Errorf("--file %s: encode: %w", f.path, err)
 	}
+	if len(raw)+1 > MaxStoreFileBytes {
+		return fmt.Errorf("--file %s would be %d bytes, over %d; nothing was written", f.path, len(raw)+1, MaxStoreFileBytes)
+	}
 	tmp, err := os.CreateTemp(filepath.Dir(f.path), "."+filepath.Base(f.path)+".*")
 	if err != nil {
 		return fmt.Errorf("--file %s: %w", f.path, err)
@@ -147,37 +162,67 @@ func (f *FileStore) List(ctx context.Context, kind string) ([]Row, error) {
 	return f.Mem.List(ctx, kind)
 }
 
+// staged keeps a write private until save replaces the file: a failed
+// encode, write or rename leaves both the open store and its file unchanged.
+func (f *FileStore) staged() *FileStore {
+	f.Mem.mu.Lock()
+	defer f.Mem.mu.Unlock()
+	m := &Mem{rows: map[string]map[string]Row{}, Now: f.Now, history: append([]Change(nil), f.history...)}
+	for kind, rows := range f.rows {
+		m.rows[kind] = map[string]Row{}
+		for name, row := range rows {
+			m.rows[kind][name] = row.Clone()
+		}
+	}
+	for i := range m.history {
+		m.history[i].Before = maps.Clone(m.history[i].Before)
+		m.history[i].After = maps.Clone(m.history[i].After)
+	}
+	return &FileStore{Mem: m, path: f.path, exists: f.exists}
+}
+
+func (f *FileStore) commit(next *FileStore) error {
+	if err := next.save(); err != nil {
+		return err
+	}
+	f.Mem = next.Mem
+	return nil
+}
+
 func (f *FileStore) Insert(ctx context.Context, kind string, row Row, actor string) (int64, error) {
 	if err := f.absent(); err != nil {
 		return 0, err
 	}
-	id, err := f.Mem.Insert(ctx, kind, row, actor)
+	next := f.staged()
+	id, err := next.Mem.Insert(ctx, kind, row, actor)
 	if err != nil {
 		return 0, err
 	}
-	return id, f.save()
+	return id, f.commit(next)
 }
 
 func (f *FileStore) Update(ctx context.Context, kind, name string, changes map[string]string, actor string) (Row, int64, error) {
 	if err := f.absent(); err != nil {
 		return Row{}, 0, err
 	}
-	row, id, err := f.Mem.Update(ctx, kind, name, changes, actor)
+	next := f.staged()
+	row, id, err := next.Mem.Update(ctx, kind, name, changes, actor)
 	if err != nil {
 		return Row{}, 0, err
 	}
-	return row, id, f.save()
+	return row, id, f.commit(next)
 }
 
 func (f *FileStore) Delete(ctx context.Context, kind, name, actor string) (int64, error) {
 	if err := f.absent(); err != nil {
 		return 0, err
 	}
-	id, err := f.Mem.Delete(ctx, kind, name, actor)
+	next := f.staged()
+	id, err := next.Mem.Delete(ctx, kind, name, actor)
 	if err != nil {
 		return 0, err
 	}
-	return id, f.save()
+	return id, f.commit(next)
 }
 
 func (f *FileStore) History(ctx context.Context, kind, name string) ([]Change, error) {
