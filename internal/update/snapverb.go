@@ -247,7 +247,8 @@ func snapshotVerb(c *tool.Call) *tool.Out {
 		fmt.Fprintf(&b, "%s\t%s\t%s\t%s\n", r.name, r.stamp, r.revision, r.platform)
 		o.Item("row", "name", r.name, "stamp", r.stamp, "revision", r.revision, "platform", r.platform)
 	}
-	if c.Bool("dry-run") {
+	if c.DryRun() {
+
 		return o.Fact("dry_run", true).Note("dry run: " + outPath + " not written")
 	}
 	if err := os.WriteFile(outPath, []byte(b.String()), 0o644); err != nil {

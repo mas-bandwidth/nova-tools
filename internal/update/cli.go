@@ -875,7 +875,8 @@ func movedVerb(c *tool.Call, env Environment) *tool.Out {
 	o := tool.Done().Fact("from", fromSha).Fact("to", toSha).Fact("added", counts.added).Fact("deleted", counts.deleted).
 		Fact("renamed", counts.renamed).Fact("verbs", counts.verbs).Fact("file", outPath)
 	// --dry-run is the same builds and reads with the note printed, not written.
-	if c.Bool("dry-run") {
+	if c.DryRun() {
+
 		o.Payload = note.String()
 		return o.Fact("dry_run", true)
 	}
