@@ -509,11 +509,36 @@ id (`--op`) returns the original result, with no second counter or notification.
   backlog. A moved read is retired (by `level`) and asked of the other reader
   at the same attempt and head, its route kept, as a fresh ask (not returned,
   reasked 0); a primary's two reads stay with two different readers, and no
-  reader is asked an attempt it already had. The sprint knows no reader's width
+  reader is asked an attempt it already had. A read is moved at most once: a
+  read card the level asked (a card of its attempt retired by `level` at the
+  stamp it was asked) is not moved again, so a late read is not asked afresh
+  on reader after reader (the owner, 2026-10-01: "This pesky one card that
+  doesn't clear thing... this is a failure mode we must fix. We can't get
+  stuck on the last card."). The sprint knows no reader's width
   (a reader loop's `--width` is its own), so readers are levelled by count and
   none is bounded at DealAhead times a width.
+- A late read gets one more reader, by the machine: the tick's ask asks one
+  more reader, as `ask --another` does, of a primary in review whose work did
+  not fail, with no read broken and fewer than two ok at its attempt, at least
+  two reads standing and fewer than four, a reader up with no card at the
+  attempt, and every read out (asked or reading) out longer than the late
+  bound in running time: twice the median time from asked to verdict of the
+  reads finished on the table, never under 60 seconds, and 120 seconds with
+  fewer than five. The newest read out is the one timed, so the tick right
+  after finds nothing late until the bound passes again. The reader is the
+  one the level would give a read (round the readers from the ask's index,
+  one whose load is below the mean, else at it), else the next free reader
+  round the readers. The first two ok reads accept the primary, and the reads
+  still out are retired as at any accept. A read still out at its deadline is
+  `a read card is past its deadline` as before.
 - ask deals every primary in review that lacks reads to TWO DIFFERENT readers
-  UP, each to the shortest asked queue, keeping order. One read card per reader.
+  UP, in work order, each the next reader round the readers from the readers'
+  `ask_index` that has no read card at the attempt, placed or retired. One read
+  card per reader. Reworked work is asked by the same rotation: a read is a
+  fresh child on a freshly drawn route, so the readers of an earlier attempt
+  are not preferred, and a busy reader is not asked again only to have the
+  next tick's level move the read (the owner, 2026-10-01, deleting the
+  preference for the readers kept on the primary: "yes on the decision.").
   A reader away or down is never asked. A read asked, and not begun, of a
   reader that is not up is taken back by the next ask (the tick's, in the same
   step that asks the primary again): its read card is retired (by `away`), the
@@ -527,7 +552,9 @@ id (`--op`) returns the original result, with no second counter or notification.
   reason, no finding counts against the work and no bound of the primary is
   spent, and the next tick asks it of another reader up that has no read card
   at the attempt (the returned card retired, by `returned`), or, when none is
-  free, of the same reader again, in place, so a reader whose launches failed
+  free, of the same reader again, in place, on a route drawn afresh as a new
+  read's is, leaving out the route it returned on while the tier has another,
+  so a reader whose launches failed
   is not counted as having read the attempt (tla/DirtyTick.tla,
   JudgedOnlyAfterTheBound). Each return counts itself on the read card (its
   `reasked` field, moved by `read --return`, whatever the tick does and
@@ -546,22 +573,27 @@ id (`--op`) returns the original result, with no second counter or notification.
   are up or no primary waits; `reader up` and `reader add` answer it.
   The machine's tick asks for every such primary; `ask` is the coordinator's
   own. Each read card the ask creates carries a route as a work card does
-  (`route`, `model`, `tokens`, `deadline`), drawn from the reader tier, the
-  sprint row's `reader_tier` in nova-config (pro unless set), at that tier's
-  rolling index on the fleet table, which the deal and the reads share and the
-  ask moves once a read (`internal/sprint/route.go`, readRouteOf;
+  (`route`, `model`, `tokens`, `deadline`), drawn from the tier of the card
+  it reads, the tier the deal draws that card's work from (line 1's tier,
+  flash when it names none, so a card that pins a model and names no tier is
+  read on flash; a frontier card, a tier no route serves, is read on pro; the
+  owner, 2026-10-01: "i think readers being conservatively the same tier as
+  the work being done seems fine?"), at that tier's rolling index on the
+  fleet table, which the deal and the reads share and the ask moves once a
+  read (`internal/sprint/route.go`, readRouteOf;
   tla/RouteIndex.tla, THE READS); its packet hands the reader that route, so a
   reader loop needs no `--model`, and a reader started with `--model`,
   `--tokens` and `--deadline` runs its reads on those. A store with no route
-  asks with none, and the reader runs its own; a store whose reader tier no
-  enabled route serves asks with none too, and the deal's tick raises that
+  asks with none, and the reader runs its own; a read whose tier no enabled
+  route serves is asked with none too, and the deal's tick raises that
   tier's judgment, `no route serves the tier`, at once for every primary in
   review whose reads wait or were asked with no route (`route.go`,
   readRouteMissing), closed when a route serves the tier.
   Work that came back failed is not read: it waits for the coordinator.
   `ask --another` deals a primary already asked to one more reader, for that
-  attempt only (the readers kept on the primary stay the pair it was asked
-  of, and after a rework the two are asked again); before
+  attempt only (the primary's `asked` field still names the two the attempt
+  was asked of, and after a rework two readers are asked round the readers);
+  before
   the first ask of its attempt it is refused, naming `ask` and the tick as
   what asks first.
 - A reader moves its own read cards: asked -> reading -> ok | broken, with the finding.
@@ -595,11 +627,11 @@ id (`--op`) returns the original result, with no second counter or notification.
   does not write it again; ask closes stranded in review.
 - A broken read notifies the coordinator. rework sends the primary back with
   the finding as the fix and delegates the next attempt at once (section 3);
-  the primary's read cards are retired in the same step and its readers are
-  kept on it. When the fixed work returns, its finish asks no reader: the
-  machine's ask, in the tick the finish wakes, asks the two kept on it first,
-  at the new head, on new read cards of the new attempt, each with the route
-  it draws (one path asks). A report against a retired
+  the primary's read cards are retired in the same step. When the fixed work
+  returns, its finish asks no reader: the machine's ask, in the tick the
+  finish wakes, asks two different readers round the readers, at the new
+  head, on new read cards of the new attempt, each with the route it draws
+  (one path asks). A report against a retired
   read card is refused, naming the retirement.
 
 ## 7. Merging

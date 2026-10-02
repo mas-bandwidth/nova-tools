@@ -197,8 +197,10 @@ func TickLevelReads(s *Snapshot, _ TickReq) (Plan, int) {
 // read. The move retires the read card (retired_by level: the reader it left
 // is never asked that attempt again) and asks the read of the other reader
 // at the same attempt and head, its route kept, in the readers table only. A
-// read begun stays with its reader; a reader that is not up is neither a
-// source nor a target: sweepReads takes its reads back first.
+// read is moved at most once (levelled), so a late read is not asked afresh
+// on reader after reader. A read begun stays with its reader; a reader that
+// is not up is neither a source nor a target: sweepReads takes its reads back
+// first.
 //
 // The sprint knows no reader's width: a reader loop's --width is the loop's
 // own, and the readers table has no width column, so every reader up counts
@@ -211,8 +213,12 @@ func levelReads(s *Snapshot, p *Plan) {
 	}
 	held, queues, room := map[string]int{}, map[string][]*Card{}, map[string]int{}
 	for _, rd := range up {
-		held[rd] = s.Readers.Count(rd, Asked) + s.Readers.Count(rd, Reading)
-		queues[rd] = append([]*Card{}, s.Readers.Cell(rd, Asked)...)
+		held[rd] = readerLoad(s, rd)
+		for _, c := range s.Readers.Cell(rd, Asked) {
+			if !levelled(s, c) {
+				queues[rd] = append(queues[rd], c)
+			}
+		}
 		SortCards(queues[rd])
 		room[rd] = math.MaxInt // no reader width is known: none bounds the move
 	}
@@ -259,6 +265,26 @@ func levelReads(s *Snapshot, p *Plan) {
 		}, Moved: fmt.Sprintf("%s %s:asked -> %s:asked (%s)", c.ID, long, to, id)})
 	}
 	roundWrites(p, rr, moves)
+}
+
+// levelled says the read card is one a level move asked: a card of its
+// primary's attempt was retired by the level as it was asked (the move retires
+// one and asks the other in one unit, at one stamp). The level moves it no
+// more (the owner, 2026-10-01: "We can't get stuck on the last card.").
+func levelled(s *Snapshot, c *Card) bool {
+	for _, rd := range s.Readers.Rows() {
+		x := s.Readers.Card(ReadCardID(c.F("primary"), c.Int("attempt"), rd))
+		if x != nil && x.F("retired_by") == RetiredByLevel && x.F("retired") == c.F("asked") {
+			return true
+		}
+	}
+	return false
+}
+
+// readerLoad is a reader's load as the level counts it: its reads asked and
+// reading together.
+func readerLoad(s *Snapshot, rd string) int {
+	return s.Readers.Count(rd, Asked) + s.Readers.Count(rd, Reading)
 }
 
 // movedReadFields is the fields of the card a read moved by the level is asked

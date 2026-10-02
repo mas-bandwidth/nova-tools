@@ -144,7 +144,7 @@ type Step struct {
 	// Prices says the step prices what a worker reports (finish, read with usage:
 	// internal/sprint/cost.go): it plans with the routes alone, the routes set and
 	// each route's record (routes.go, PriceRoutes), read before its tables. It reads
-	// no tier array and no reader tier: a worker's ACL reads routes and route:*
+	// no tier array: a worker's ACL reads routes and route:*
 	// only (internal/redisacl, the member role), and pricing needs no more.
 	Prices bool
 	// Readers says the step asks, or reads what the ask would do: it plans

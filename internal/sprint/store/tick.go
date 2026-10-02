@@ -1035,7 +1035,7 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 		}
 		if view != nil && view.Routes == nil && routesPart(part.Name) {
 			// a part that plans with the routes asks what it would do with them: the
-			// deal's judgment of a reader tier no route serves (route.go,
+			// deal's judgment of reads whose tier no route serves (route.go,
 			// readRouteMissing) has nothing else to show it; read once a tick, the
 			// cache the parts share
 			set, err := t.st.cached(t.ctx, &t.routes)

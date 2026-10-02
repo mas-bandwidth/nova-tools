@@ -708,11 +708,19 @@ func TestTwoLateReadsOfOnePrimaryAreTwoJudgments(t *testing.T) {
 	}
 	h.must(ReadStep(sprint.ReadReq{As: cards[0].Row, Begin: true, Sel: sprint.Sel{IDs: []string{cards[0].ID}}}))
 	h.tick(sprint.DeadlineUnbegun + time.Minute)
-	h.machine() // the unbegun read is late
+	h.machine() // the tick asks the third reader as one more, and the unbegun read is late
 	late := h.openOf(sprint.NReadLate)
 	if len(late) != 1 || late[0].Note.Card != cards[1].ID {
 		t.Fatalf("the unbegun read late: %+v", late)
 	}
+	var more *sprint.Card
+	for _, rc := range h.snap().Readers.Of("p") {
+		if rc.Row != cards[0].Row && rc.Row != cards[1].Row {
+			more = rc
+		}
+	}
+	require.NotNil(t, more, "the tick asked one more reader of the late reads")
+	h.must(ReadStep(sprint.ReadReq{As: more.Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{more.ID}}}))
 	h.tick(sprint.DeadlineUnreported)
 	h.machine() // the begun read is late too, while the first is open
 	late = h.openOf(sprint.NReadLate)

@@ -383,7 +383,8 @@ func TestAcceptAfterAskingAnotherTwice(t *testing.T) {
 }
 
 // One ok and one broken; rework; a late report on the retired card; the
-// fix returns; who is asked at which head; two reworks in a row.
+// fix returns and is asked of two different readers at the new head; two
+// reworks in a row.
 func TestReworkTwice(t *testing.T) {
 	t.Parallel()
 	p := newProbe(t)
@@ -416,8 +417,9 @@ func TestReworkTwice(t *testing.T) {
 		assert.Equal(t, "h2", rc.F("head"), "%s not asked at h2", rc.ID)
 		who = append(who, rc.F("reader"))
 	}
-	assert.ElementsMatch(t, []string{a, b}, who, "not asked of the same two at h2")
-	p.read(b, sprint.ReadCardID("s1-1", 2, b), "broken")
+	require.Len(t, who, 2, "not asked of two at h2")
+	assert.NotEqual(t, who[0], who[1], "asked twice of one reader at h2")
+	p.read(who[0], sprint.ReadCardID("s1-1", 2, who[0]), "broken")
 	for _, o := range p.openOn("s1-1") {
 		t.Logf("second broken: marked=%v before=%d decisions=%v", o.Note.Marked, o.Note.Before, o.Note.Decisions)
 		if !o.Note.Marked {
