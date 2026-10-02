@@ -1,8 +1,9 @@
 // Package fleet holds the machines registry: the one file that says what each machine in
 // the fleet IS, and therefore what may be placed on it.
 //
-// The runner/bench lock prevents cards from running on CI-only hosts.
-// A card and a CI shard on one host make the shard slow and the gate red.
+// The runner/bench lock keeps cards, probes and load off machines that serve the merge
+// group's CI shards. A card and a CI shard on one host make the shard slow, the gate red
+// and the queue stop.
 //
 // The registry resolves machine names to their roles. A bare name string is refused
 // if it does not appear in the registry, with the reason and remedy on the line.
