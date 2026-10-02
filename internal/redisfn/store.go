@@ -349,8 +349,8 @@ func (l Library) Ensure(ctx context.Context, client redis.UniversalClient) (Rece
 // LoadMissing puts the library on the store only when the store holds no
 // library of its name, and never replaces one, whatever its code. It is for
 // every caller that is not the deployer: a tool on its way to an FCALL runs
-// whatever binary its host has, and when an older binary's load replaced the
-// deployed library, every function added since vanished from the store.
+// whatever binary its host has, and an older binary can replace the
+// deployed library and remove every function added since.
 // Putting a newer build over an older one is Ensure's job, in the one place
 // that deploys.
 //
