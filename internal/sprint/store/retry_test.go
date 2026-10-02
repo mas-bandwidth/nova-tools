@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
@@ -131,17 +132,19 @@ func TestABusyFenceWaitsWithJitter(t *testing.T) {
 // A store with no NewID, Sleep or Rand runs a step: the defaults stand in.
 func TestAZeroStoreHasWorkingDefaults(t *testing.T) {
 	t.Parallel()
-	m := NewMem()
-	st := &Store{B: m, Names: sprint.Names{Prefix: "z-"}, Now: time.Now}
-	require.NoError(t, st.Init(context.Background()))
-	res, err := st.Run(context.Background(), FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
-	require.NoError(t, err, "run: %+v %v", res, err)
-	require.NotEmpty(t, res.Op, "run: %+v %v", res, err)
-	r := st.retry(context.Background())
-	st.Rand = func(int64) int64 { return 0 } // time.Sleep(0): the default sleeps, it does not spin on nil
-	require.True(t, r.next(2), "two tries, then none")
-	require.True(t, r.next(2), "two tries, then none")
-	require.False(t, r.next(2), "two tries, then none")
+	synctest.Test(t, func(t *testing.T) {
+		m := NewMem()
+		st := &Store{B: m, Names: sprint.Names{Prefix: "z-"}, Now: time.Now}
+		require.NoError(t, st.Init(context.Background()))
+		res, err := st.Run(context.Background(), FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
+		require.NoError(t, err, "run: %+v %v", res, err)
+		require.NotEmpty(t, res.Op, "run: %+v %v", res, err)
+		r := st.retry(context.Background())
+		st.Rand = func(int64) int64 { return 0 } // time.Sleep(0): the default sleeps, it does not spin on nil
+		require.True(t, r.next(2), "two tries, then none")
+		require.True(t, r.next(2), "two tries, then none")
+		require.False(t, r.next(2), "two tries, then none")
+	})
 }
 
 // Two writers started fresh, as two processes or one restarted, generate
