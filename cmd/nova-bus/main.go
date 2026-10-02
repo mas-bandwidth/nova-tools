@@ -3661,14 +3661,14 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// it wherever it was met. The values `check` was never given are the placeholders they
 	// are; see printSwitchDayNote.
 	printSwitchDayNote(stdout, noteLegacy, *busDir, noteName, "<n>", "", "", now)
-	// THE CAP, AND THE COUNT THAT IS NEVER CAPPED. A check can fail with a wall of
-	// findings, most of one class repeating, and a reader holding the wall cannot tell the
-	// loud kind from the one finding that matters. So the report is capped at --max
-	// findings, one BUS MORE line says what the cap held back and names the flag that
-	// lifts it, and one BUS CHECK line counts every finding by class before the exit --
-	// the listing is capped, the counting never is, and the class the cap ate is still on
-	// the line. The cap governs what is PRINTED and nothing else: the exit code and the
-	// counts come from the whole walk, exactly as an uncapped run said them.
+	// THE CAP, AND THE COUNT THAT IS NEVER CAPPED. A check that fails 1,059 times (#2574)
+	// printed all 1,059 lines, most of them one class repeating, and a reader holding the
+	// wall could not tell the loud kind from the one finding that mattered. So the report
+	// is capped at --max findings, one BUS MORE line says what the cap held back and names
+	// the flag that lifts it, and one BUS CHECK line counts every finding by class before
+	// the exit -- the listing is capped, the counting never is, and the class the cap ate
+	// is still on the line. The cap governs what is PRINTED and nothing else: the exit
+	// code and the counts come from the whole walk, exactly as an uncapped run said them.
 	counts := bus.CountCheckFindings(problems)
 	shown := len(problems)
 	if *maxFindings > 0 && shown > *maxFindings {
