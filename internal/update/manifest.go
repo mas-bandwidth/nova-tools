@@ -53,7 +53,7 @@ func (e *ManifestError) Error() string {
 // manifestProblemCap bounds the problems one refusal lists; the rest are counted.
 const manifestProblemCap = 50
 
-// Load reads the manifest (SPEC-UPDATE) and returns every problem it finds as one
+// Load reads the manifest (SPEC-UPDATE rule 2) and returns every problem it finds as one
 // *ManifestError: the header, then each line's fields in order, every bad field of a line
 // named and every bad line of the file. A file with no problem yields its entries.
 func Load(r io.Reader) ([]Entry, error) {
