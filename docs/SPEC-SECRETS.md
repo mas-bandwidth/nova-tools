@@ -478,9 +478,9 @@ no deletion, no non-fast-forward, **`bypass_actors` empty**. It has exactly two 
 the configured administrator and writer. An empty `bypass_actors` stops an admin
 *bypassing* the rule; it does not stop an admin *editing* it — an `admin` account can disable
 or delete the ruleset with no pull request, and one of those tokens is the `GH_TOKEN` in
-`rowan.yaml`, on an unwalled bench whose loose child is the threat this split
+the seat file, on an unwalled bench whose loose child is the threat this split
 exists for. What an admin push buys an attacker with the cryptography intact: a direct push
-editing `rowan.yaml`'s own rule — that bench holds a current recipient key, so `updatekeys`
+editing the seat file's own rule — that bench holds a current recipient key, so `updatekeys`
 runs — swapping the recovery key out of that one file, invariants 2 and 4 green afterwards.
 **Invariant 1 is what turns the one-file swap red on every other bench**, not the ruleset — and
 it can only because the recovery key is *declared* (invariant 1, declared and not counted).

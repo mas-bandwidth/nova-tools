@@ -41,7 +41,7 @@ docs/SPEC-SECRETS.md:emma 1
 docs/SPEC-SECRETS.md:freddy 1
 docs/SPEC-SECRETS.md:glenn 8
 docs/SPEC-SECRETS.md:johnny 1
-docs/SPEC-SECRETS.md:rowan 50
+docs/SPEC-SECRETS.md:rowan 48
 docs/SPEC-SECRETS.md:space 9
 docs/SPEC-SECRETS.md:stella 1
 docs/SPEC-SECRETS.md:studio 4
