@@ -22,7 +22,7 @@ package release
 // shell: `nova-check dogfood gate --cli <cli> --receipts <dir>` is
 // internal/dogfood.Gate over dogfood.ParseCLI and dogfood.ReadReceipts, and
 // calling it directly is one process, one set of refusals, and no shell to get
-// wrong. Calling it directly avoids shell parsing errors.
+// wrong.
 
 import (
 	"errors"
@@ -39,11 +39,11 @@ import (
 // DefaultReceiptsDir is where this fleet keeps its receipts, relative to the
 // home directory of whoever is cutting. It is the ONLY path in this package
 // with a default, and it is one on purpose: no path is
-// guessed, and the reason the rule exists is that a guessed path makes two
-// runs mean different things. A receipts directory is the exception because
-// the alternative -- a release lane that silently skips the gate whenever
-// somebody forgets a flag -- fails in the direction that lets a tool ship. It
-// is used only when it EXISTS, and what was used is named on the line.
+// guessed, because a guessed path makes two runs mean different things. A
+// receipts directory is the exception because the alternative -- a release
+// lane that silently skips the gate whenever somebody forgets a flag -- fails
+// in the direction that lets a tool ship. It is used only when it EXISTS, and
+// what was used is named on the line.
 var DefaultReceiptsDir = filepath.Join("rowan-working", "dogfood")
 
 // DogfoodWaiveFlag and DogfoodReasonFlag are the way past the gate, spelled in
@@ -85,7 +85,7 @@ func addDogfoodFlags(f *flag.FlagSet, o *options, cliDefault string) {
 }
 
 // dogfoodFindingCap bounds the refusal. Tool output costs tokens:
-// The COUNT is the answer, the first few edges are the orientation,
+// the COUNT is the answer, the first few edges are the orientation,
 // and a person who wants all of them runs the ledger.
 const dogfoodFindingCap = 10
 

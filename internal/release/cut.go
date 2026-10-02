@@ -16,12 +16,12 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-// prNumber matches a parenthesized pull request number at the end of the subject.
-// It is anchored to the END of the subject on purpose: this repository's own
-// merges read `feat: nova-pulse hygiene, the path-safe bench cleanup verbs
-// A subject can contain an issue number before the pull request number, where the
-// last is the pull request that merged it. Taking the first would file every
-// such commit under a number that never existed as a pull request.
+// prNumber matches a parenthesized pull request number at the end of the
+// subject. It is anchored to the END of the subject on purpose: a subject can
+// end with two parenthesized numbers, an issue number before the pull request
+// number, and the last one is the pull request that merged the work. Taking
+// the first would file every such commit under a number that never existed as
+// a pull request.
 var prNumber = regexp.MustCompile(`\(#(\d+)\)\s*$`)
 
 // memberNumber matches a pull request number anywhere in a commit body. An integration batch
@@ -151,9 +151,8 @@ func Section(version, sha, previous, sumsDigest, dogfoodWaiver string, when time
 	// a release from another machine cannot verify it with the checksum file
 	// that came with it -- anybody who could change one could change the other
 	// -- so it is given this digest instead, which reached the adopting host
-	// through the repository rather than through the machine being read
-	// It is written in the form the check wants, so
-	// nobody has to transcribe it.
+	// through the repository rather than through the machine being read.
+	// It is written in the form the check wants, so nobody has to transcribe it.
 	if sumsDigest != "" {
 		fmt.Fprintf(&b, "%s%s\n\nAdopt this release with `--expect-sums %s`.\n\n", SumsDigestPrefix, sumsDigest, sumsDigest)
 	}
@@ -207,9 +206,9 @@ var annotationSums = regexp.MustCompile(`(?m)^` + AnnotationSumsPrefix + `([0-9a
 
 // Annotation is the message the TAG OBJECT carries, composed in one place
 // because it is written by `cut` and read by `adopt` and the two have to agree
-// about where the digest is, so the writer and reader agree. A tag is the one
-// thing in this repository that cannot be quietly amended, so what it says
-// about a release is the most durable record the release has.
+// about where the digest is. A tag is the one thing in this repository that
+// cannot be quietly amended, so what it says about a release is the most
+// durable record the release has.
 func Annotation(version, sha, sumsDigest string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s\n\nCut from %s.\n", version, sha)
@@ -243,14 +242,14 @@ var errTruncated = errors.New("compare-truncated")
 // It is its own function, and pure apart from the writers, because the decision
 // is the thing worth reading -- the cut around it is bookkeeping.
 //
-// The compare is classified for completeness before sensitive paths. That cut's
-// compare answered with exactly 300 files -- the forge's ceiling -- and the
-// verb refused naming 24 sensitive paths out of the 58 the range really
-// touched. It looked like the gate working. It was the gate being lucky: the
-// hits it named were the ones that happened to fall inside the prefix it could
-// see, and a range whose only sensitive file sat past file 300 would have been
-// cut clean. So the truncation is decided FIRST and named FIRST, before
-// anything is said about what was found inside a list that may be short.
+// THE ORDER IS THE POINT: completeness before any hit is named. One compare
+// answered with exactly 300 files -- the forge's ceiling -- and the verb
+// refused naming 24 sensitive paths out of the 58 the range really touched.
+// It looked like the gate working. It was the gate being lucky: the hits it
+// named were the ones that happened to fall inside the prefix it could see,
+// and a range whose only sensitive file sat past file 300 would have been cut
+// clean. So the truncation is decided FIRST and named FIRST, before anything
+// is said about what was found inside a list that may be short.
 //
 // And --security-read does not get past it. A security read is a read OF A LIST,
 // and a read of a prefix of the truth vouches for a prefix of the truth. The

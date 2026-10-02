@@ -214,13 +214,12 @@ func (g *GH) Files(ctx context.Context, repo, base, head string) ([]string, erro
 // from the exec so a test can read the exact arguments the forge would be handed
 // without a subprocess -- the same reason apiError is its own function.
 //
-// THE OBJECT FIRST, THEN THE REF. The tag object carries the annotation, while the ref
-// creates a LIGHTWEIGHT tag: a name pointing straight at the commit and carrying
-// nothing. The tag carries
-// the digest of the release's SHA256SUMS, so there has to be something to carry
-// it IN -- a tag object -- and the ref has to point at THAT, not at the commit,
-// or the annotation is orphaned and the tag still reads lightweight to everything
-// that looks at it.
+// THE OBJECT FIRST, THEN THE REF. A ref posted on its own points straight at
+// the commit and makes a LIGHTWEIGHT tag: a name carrying nothing. The tag has
+// to carry the digest of the release's SHA256SUMS, so there has to be
+// something to carry it IN -- a tag object -- and the ref has to point at THAT,
+// not at the commit, or the annotation is orphaned and the tag still reads
+// lightweight to everything that looks at it.
 func tagObjectArgs(repo, tag, sha, message string) []string {
 	return []string{"api", "--method", "POST", "repos/" + repo + "/git/tags",
 		"-f", "tag=" + tag, "-f", "message=" + message, "-f", "object=" + sha, "-f", "type=commit",
