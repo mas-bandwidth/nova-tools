@@ -86,7 +86,9 @@ supervisor pushes nothing twice:
 nova-config loop add inbox-push --machine bench-a --argv '["env","NOVA_SPRINT_SERVER=127.0.0.1:6390","NOVA_SPRINT_ACTOR=<coordinator>","nova-sprint","inbox","--wait","--push","<home>/<coordinator>-working/inbox/sprint-judgments","--timeout","1m"]' --keepalive true --as ada
 ```
 
-The friends are nova-config's friend rows: `nova-sprint friend sync --actor ada`
+A friend's working directory, how her jobs arrive and are reported, and how
+their clones are removed once done, is docs/FRIENDS.md. The friends are
+nova-config's friend rows: `nova-sprint friend sync --actor ada`
 copies their names into the sprint's friends table, and each friend says it is
 there by beating from its own machinery, beside its harness, every few seconds
 (the same window and misses as a member's beat; `where` shows it `up`, `down`,
