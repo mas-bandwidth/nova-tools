@@ -29,7 +29,9 @@ import (
 	stdflag "flag"
 	"fmt"
 	"io"
+	"maps"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -696,10 +698,7 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 		if _, id, err = st.Update(ctx, k.Name, name, changes, actor); err != nil {
 			return storeErr(stderr, verb, err, writeRemedy(k, add, name, err, next)+c.again())
 		}
-		for f := range changes {
-			changed = append(changed, f)
-		}
-		sort.Strings(changed)
+		changed = slices.Sorted(maps.Keys(changes))
 	}
 	if *asJSON {
 		o := tool.Done().Fact("op", op).Fact("kind", k.Name).Fact("name", name).Fact("rev", id)

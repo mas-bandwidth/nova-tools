@@ -32,6 +32,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -233,12 +234,7 @@ type CountRow struct {
 
 // IsStale reports whether a row with this key is stale.
 func (r Result) IsStale(key string) bool {
-	for _, row := range r.Stale {
-		if row.Key == key {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(r.Stale, func(row Row) bool { return row.Key == key })
 }
 
 // Check compares the measured keys with the list. Outside an update it only reports:

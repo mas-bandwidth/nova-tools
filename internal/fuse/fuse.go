@@ -69,9 +69,10 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -198,12 +199,7 @@ func (b Box) LiftQuarantine(surface string) map[string]Fuse {
 // so an unsorted listing would print a different order every run -- and a status output
 // that reorders itself is one a reader stops diffing.
 func (b Box) Surfaces() []string {
-	names := make([]string, 0, len(b.Quarantine))
-	for k := range b.Quarantine {
-		names = append(names, k)
-	}
-	sort.Strings(names)
-	return names
+	return slices.Sorted(maps.Keys(b.Quarantine))
 }
 
 // ErrNoBox is ReadBox's answer when nothing is at the path: CANNOT TELL, like an

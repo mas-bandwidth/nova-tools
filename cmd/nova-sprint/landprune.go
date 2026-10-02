@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"regexp"
 	"slices"
 	"strconv"
@@ -245,14 +246,9 @@ func (a *app) flushPrune(ctx context.Context, last bool) []pruneResult {
 	dirs := q.dirs
 	q.dirs = nil
 	q.mu.Unlock()
-	keys := make([]string, 0, len(dirs))
-	for k := range dirs {
-		keys = append(keys, k)
-	}
-	slices.Sort(keys)
 	var out []pruneResult
 	failed := false
-	for _, dir := range keys {
+	for _, dir := range slices.Sorted(maps.Keys(dirs)) {
 		d := dirs[dir]
 		start := time.Now()
 		r := pruneResult{Status: "ok", Dir: dir}

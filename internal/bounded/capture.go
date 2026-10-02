@@ -23,10 +23,7 @@ func (c *Capture) Write(p []byte) (int, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	n := len(p)
-	remaining := c.limit - len(c.data)
-	if remaining > len(p) {
-		remaining = len(p)
-	}
+	remaining := min(c.limit-len(c.data), len(p))
 	if remaining > 0 {
 		c.data = append(c.data, p[:remaining]...)
 	}

@@ -193,12 +193,7 @@ func (r Receipt) Validate() []error {
 }
 
 func hasControl(s string) bool {
-	for _, r := range s {
-		if r == '\n' || r == '\r' || unicode.IsControl(r) {
-			return true
-		}
-	}
-	return false
+	return strings.ContainsFunc(s, func(r rune) bool { return r == '\n' || r == '\r' || unicode.IsControl(r) })
 }
 
 // Record appends one receipt to the receipts directory and returns the file it
