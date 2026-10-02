@@ -4,17 +4,19 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/record"
 	"github.com/mas-bandwidth/nova-tools/internal/tokens"
+	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
 // The token ledger (docs/SPEC-STATE.md test 17, #2201; recut of #3243 on Redis under
@@ -78,13 +80,8 @@ func ledgerEntries(d tokens.DayFile) []record.LedgerEntry {
 			kinds[kind] = true
 		}
 		sort.Strings(srcs)
-		var ks []string
-		for k := range kinds {
-			ks = append(ks, k)
-		}
-		sort.Strings(ks)
 		a.e.Sources = strings.Join(srcs, ",")
-		a.e.Provider = strings.Join(ks, ",")
+		a.e.Provider = strings.Join(slices.Sorted(maps.Keys(kinds)), ",")
 		out = append(out, a.e)
 	}
 	return out
@@ -92,7 +89,8 @@ func ledgerEntries(d tokens.DayFile) []record.LedgerEntry {
 
 // cmdLedger indexes the day files of one day or one month into tokens:ledger:<day>. Each day is
 // replaced whole, so indexing twice is the table indexing once. It reads the day files and
-// writes nothing beside them.
+// writes nothing beside them. Under --dry-run it reads and checks the same day files, prints
+// the rows it would write, and dials no store.
 func cmdLedger(args []string, stdout, stderr io.Writer) int {
 	fs := newFlagSet("ledger")
 	out := fs.String("out", "", "directory containing daily token files")
@@ -101,13 +99,12 @@ func cmdLedger(args []string, stdout, stderr io.Writer) int {
 	addr := fs.String("redis", "", "Redis address for the ledger store")
 	user := fs.String("user", "", "Redis username for the ledger store")
 	passwordEnv := fs.String("password-env", "", "environment variable holding the Redis password")
-	if err := verbflag.Parse(fs, args); err != nil {
-		return refuse(stderr, " ledger", oneline.Cap(err.Error(), oneline.TailBytes))
-	}
-	if code, refused := noPositional(fs, stderr, "ledger"); refused {
+	dryRun := fs.Bool("dry-run", false, "read the day files and print the rows that would be written, and dial no store")
+	s, code, ok := start(fs, args, "LEDGER", stdout, stderr)
+	if !ok {
 		return code
 	}
-	r := &refusals{token: "LEDGER"}
+	r := &refusals{token: "LEDGER", s: s}
 	r.required("out", *out, wantsOut)
 	r.required("redis", *addr, wantsRedis)
 	switch {
@@ -139,13 +136,14 @@ func cmdLedger(args []string, stdout, stderr io.Writer) int {
 		}
 		sort.Strings(paths)
 	}
-	ls, err := openLedger(*addr, *user, *passwordEnv)
-	if err != nil {
-		fmt.Fprintf(stderr, "LEDGER FAILED store=redis err=%s\n", oneline.Err(err))
-		return 1
+	var ls record.LedgerStore
+	if !*dryRun {
+		var err error
+		if ls, err = openLedger(*addr, *user, *passwordEnv); err != nil {
+			return ledgerFailed(s, "store", "redis", err)
+		}
+		defer ls.Close()
 	}
-	defer ls.Close()
-	ctx := context.Background()
 	days, rows, bad := 0, 0, 0
 	type dayResult struct {
 		day  string
@@ -178,40 +176,49 @@ func cmdLedger(args []string, stdout, stderr io.Writer) int {
 		days++
 		rows += len(entries)
 	}
-	if len(batch) > 0 {
-		if err := ls.ReplaceLedgerDays(ctx, batch); err != nil {
+	if len(batch) > 0 && !*dryRun {
+		if err := ls.ReplaceLedgerDays(context.Background(), batch); err != nil {
 			if *day != "" {
-				fmt.Fprintf(stderr, "LEDGER FAILED day=%s err=%s\n", oneline.Field(*day), oneline.Err(err))
-			} else {
-				fmt.Fprintf(stderr, "LEDGER FAILED store=redis err=%s\n", oneline.Err(err))
+				return ledgerFailed(s, "day", *day, err)
 			}
-			return 1
+			return ledgerFailed(s, "store", "redis", err)
 		}
 	}
 	for _, res := range results {
 		if res.bad {
-			fmt.Fprintf(stdout, "LEDGER BAD day=%s why=%s\n", oneline.Field(res.day), oneline.Escape(res.why))
+			fmt.Fprintf(s.out(), "LEDGER BAD day=%s why=%s\n", oneline.Field(res.day), oneline.Escape(res.why))
+			s.item("bad", "day", res.day, "why", tool.Text(res.why))
 		} else {
-			fmt.Fprintf(stdout, "LEDGER day=%s rows=%d\n", oneline.Field(res.day), res.rows)
+			fmt.Fprintf(s.out(), "LEDGER day=%s rows=%d\n", oneline.Field(res.day), res.rows)
+			s.item("day", "day", res.day, "rows", res.rows)
 		}
 	}
 	verdict, code := "OK", 0
 	if bad > 0 || days == 0 {
 		verdict, code = "NO", 1
 	}
-	if *day != "" {
-		fmt.Fprintf(stdout, "LEDGER %s day=%s days=%d rows=%d bad=%d\n", oneline.Field(verdict), oneline.Field(*day), days, rows, bad)
-	} else {
-		fmt.Fprintf(stdout, "LEDGER %s month=%s days=%d rows=%d bad=%d\n", oneline.Field(verdict), oneline.Field(*month), days, rows, bad)
+	scope, value := "day", *day
+	if *day == "" {
+		scope, value = "month", *month
 	}
-	return code
+	fmt.Fprintf(s.out(), "LEDGER %s%s%s\n", oneline.Field(verdict),
+		s.factFields(scope, value, "days", days, "rows", rows, "bad", bad), s.dryRunFields(*dryRun))
+	return s.done(code, 0)
+}
+
+// ledgerFailed is the store that did not answer: one LEDGER FAILED line, exit 1.
+func ledgerFailed(s *sink, key, value string, err error) int {
+	fmt.Fprintf(s.err(), "LEDGER FAILED %s=%s err=%s\n", oneline.Field(key), oneline.Field(value), oneline.Err(err))
+	s.fact(key, value)
+	s.o.Why = append(s.o.Why, err.Error())
+	return s.done(1, 0)
 }
 
 // cmdReportStore is `report --redis`: the month's ledger grouped by model, repo,
 // day, or the (day, model, repo) tuple, every one of the five types apart and a dash where
 // no row reported a type.
-func cmdReportStore(addr, user, passwordEnv, month, by string, max int, stdout, stderr io.Writer) int {
-	r := &refusals{token: "REPORT"}
+func cmdReportStore(s *sink, addr, user, passwordEnv, month, by string, max int, stderr io.Writer) int {
+	r := &refusals{token: "REPORT", s: s}
 	switch {
 	case month == "":
 		r.add("--month is required; it wants " + wantsMonth + "; refusing to guess")
@@ -225,16 +232,19 @@ func cmdReportStore(addr, user, passwordEnv, month, by string, max int, stdout, 
 	if len(r.list) > 0 {
 		return r.print(stderr)
 	}
+	failed := func(err error) int {
+		fmt.Fprintf(s.err(), "REPORT FAILED store=redis err=%s\n", oneline.Err(err))
+		s.o.Why = append(s.o.Why, err.Error())
+		return s.done(1, 0)
+	}
 	ls, err := openLedger(addr, user, passwordEnv)
 	if err != nil {
-		fmt.Fprintf(stderr, "REPORT FAILED store=redis err=%s\n", oneline.Err(err))
-		return 1
+		return failed(err)
 	}
 	defer ls.Close()
 	totals, indexed, missing, err := ls.LedgerReport(context.Background(), month, by)
 	if err != nil {
-		fmt.Fprintf(stderr, "REPORT FAILED store=redis err=%s\n", oneline.Err(err))
-		return 1
+		return failed(err)
 	}
 	rows := 0
 	for i, t := range totals {
@@ -243,33 +253,45 @@ func cmdReportStore(addr, user, passwordEnv, month, by string, max int, stdout, 
 			continue
 		}
 		var keys []string
+		var kv []any
 		for _, c := range record.LedgerGroupings[by] {
 			switch c {
 			case "day":
-				keys = append(keys, "day="+oneline.Field(t.Day))
+				keys, kv = append(keys, "day="+oneline.Field(t.Day)), append(kv, "day", t.Day)
 			case "model":
-				keys = append(keys, "model="+oneline.Field(t.Model))
+				keys, kv = append(keys, "model="+oneline.Field(t.Model)), append(kv, "model", t.Model)
 			case "repo":
-				keys = append(keys, "repo="+oneline.Field(t.Repo))
+				keys, kv = append(keys, "repo="+oneline.Field(t.Repo)), append(kv, "repo", t.Repo)
 			}
 		}
 		line := "REPORT " + strings.Join(keys, " ") + fmt.Sprintf(" rows=%d", t.Rows)
+		kv = append(kv, "rows", t.Rows)
 		for i, name := range record.LedgerTypes {
 			cell := tokens.Dash
 			if t.Known[i] {
 				cell = strconv.FormatInt(t.Tokens[i], 10)
 			}
 			line += " " + name + "=" + cell
+			kv = append(kv, name, cell)
 		}
-		fmt.Fprintln(stdout, line)
+		fmt.Fprintln(s.out(), line)
+		s.item("group", kv...)
 	}
 	if max != 0 && len(totals) > max {
-		fmt.Fprintf(stdout, "REPORT MORE shown=%d of=%d; raise --max (0 = all)\n", max, len(totals))
+		fmt.Fprintf(s.out(), "REPORT MORE shown=%d of=%d; raise --max (0 = all)\n", max, len(totals))
+		s.o.More = append(s.o.More, tool.More{Kind: "group", Shown: max, Total: len(totals), Remedy: tool.MaxRemedy})
 	}
+	s.fact("month", month)
+	s.fact("source", "redis")
 	if indexed == 0 {
-		fmt.Fprintf(stdout, "REPORT NO month=%s source=redis indexed=0\n", oneline.Field(month))
-		return 1
+		fmt.Fprintf(s.out(), "REPORT NO month=%s source=redis indexed=0\n", oneline.Field(month))
+		s.fact("indexed", 0)
+		return s.done(1, 0)
 	}
-	fmt.Fprintf(stdout, "REPORT OK month=%s source=redis groups=%d rows=%d indexed=%d missing=%d\n", oneline.Field(month), len(totals), rows, indexed, missing)
-	return 0
+	fmt.Fprintf(s.out(), "REPORT OK month=%s source=redis groups=%d rows=%d indexed=%d missing=%d\n", oneline.Field(month), len(totals), rows, indexed, missing)
+	s.fact("groups", len(totals))
+	s.fact("rows", rows)
+	s.fact("indexed", indexed)
+	s.fact("missing", missing)
+	return s.done(0, 0)
 }

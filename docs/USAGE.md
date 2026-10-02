@@ -278,8 +278,8 @@ missing**, and declaring a copied transcript twice can double-count it. Coverage
 is limited to the sources it supports today. For transcript-backed sources the
 reader scans the supplied transcript tree even when `--day` selects only one
 day's output, so a broad tree can still make a one-day report expensive.
-A reported `usd=0` is not evidence that a request was free when no price is
-available. Token counts cover the sources you explicitly name; they are not a
+A cost no source reported prints `usd=-`, never `usd=0`: a dash is "not
+measured", and a zero is only ever a reported zero. Token counts cover the sources you explicitly name; they are not a
 complete account of work performed elsewhere.
 
 **It may not help if** your harness is not a supported source — in which case it

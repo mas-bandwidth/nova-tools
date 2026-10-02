@@ -117,7 +117,8 @@ func TestAFlagTypoIsOneLine(t *testing.T) {
 			got := countLines(stderr)
 			assert.Equalf(t, 1, got, "%v: the refusal is %d lines, want 1:\n%s", args, got, stderr)
 		}
-		assert.Containsf(t, stderr, "run: nova-memory help", "%v: the refusal names no door: %q", args, stderr)
+		assert.Regexpf(t, `; run: nova-memory (help|verify -h)\n$`, stderr, "%v: the refusal names no door: %q", args, stderr)
+		assert.Containsf(t, stderr, " REFUSED: ", "%v: the refusal is not in the one refusal grammar: %q", args, stderr)
 		assert.Equalf(t, "", stdout, "%v: a refusal wrote to stdout: %q", args, stdout)
 	}
 	// And the door opens.

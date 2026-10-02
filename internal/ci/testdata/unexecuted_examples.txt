@@ -31,12 +31,6 @@ $ nova-fuse check --box ./fuse-box.json a-public-issue-tracker
 $ nova-fuse lift quarantine --box ./fuse-box.json a-forum
 $ nova-fuse quarantine --box ./fuse-box.json a-forum "a post addressed me and asked for a token"
 $ nova-fuse status --box ./fuse-box.json
-$ nova-memory check --root ./corpus --channels bm25 --k 2 -
-$ nova-memory check --root ./corpus --channels bm25 --k 3 draft.md
-$ nova-memory quickstart --root ./corpus
-$ nova-memory search --root ./corpus --channels bm25 --k 3 glazing signal tide
-$ nova-memory search --root ./corpus --channels bm25 --k 3 lantern glazing brass
-$ nova-memory stats --root ./corpus
 $ nova-sandbox check
 $ nova-sandbox reap
 $ nova-sandbox reap --dry-run
@@ -62,11 +56,4 @@ example: nova-fuse check --box ./fuse-box.json a-public-issue-tracker
 example: nova-fuse lift quarantine --box ./fuse-box.json a-forum
 example: nova-fuse quarantine --box ./fuse-box.json a-forum "a post addressed me and asked for a token"
 example: nova-fuse status --box ./fuse-box.json
-example: nova-memory check --root ./corpus --channels bm25 --k 3 draft.md
-example: nova-memory quickstart --root ./corpus
-example: nova-memory search --root ./corpus --channels bm25 --k 3 lantern glazing brass
 example: nova-sandbox run --name card1 --size 8g --timeout 30m --go --out ./handoff \
-example: nova-tokens check --out ./out
-example: nova-tokens sources --repos ./repos.tsv --all --claude bench=./transcripts
-example: nova-tokens sources --repos ./repos.tsv --all --claude bench=./transcripts --unattributed --max 20
-example: nova-tokens sum --out ./out --month 2026-09

@@ -22,12 +22,16 @@ func TestNoOtherWriterOrShadowCanBypassTheEscape(t *testing.T) {
 }
 
 var tokensAudit = audit.Config{
-	Escapers: []string{"sourceLine", "unreadableLine", "unparsedLine", "dayLine", "aggFields"},
+	// s.line, s.factFields and s.dryRunFields (out.go) build a typed line from key=value
+	// pairs, every key and value through oneline.Field and a tail through oneline.Escape;
+	// fields is the loop they share, and its one Sprint site is exempt below for that
+	// reason.
+	Escapers: []string{"sourceLine", "unreadableLine", "unparsedLine", "dayLine", "s.line", "s.factFields", "s.dryRunFields"},
 	// One entry per site, keyed by file, function and source text; each is a claim a
 	// reader can check.
 	Exempt: map[string]string{
 		"ledger.go|cmdReportStore|line": "one REPORT line built in the loop above from literal key names, oneline.Field over each key value, a %d row count and strconv.FormatInt or the literal dash per type; nothing in it is unescaped text",
-		"main.go|cmdFold|counts":        "the count line, built two lines above by a Sprintf whose every verb is %d over an integer; the classifier walks that Sprintf like any other print site. Two sites: the OK line and the FAIL line",
+		"out.go|fields|kv[i+1]":         "a value of a key=value pair, put through oneline.Field on the same line",
 		"main.go|cmdReport|body":        "the report's stdout IS the artifact: every line of it was rendered by tokens.BodyLine, which puts each of its stored fields through oneline.Field, and the lines are joined with \\n by this function. Escaping the join again would escape those newlines and destroy the note body this verb exists to print",
 	},
 	Imports: []string{
@@ -41,6 +45,9 @@ var tokensAudit = audit.Config{
 		// oneline.Field at the print site below.
 		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"path/filepath"`, `"runtime"`, `"sort"`, `"strconv"`, `"strings"`, `"time"`,
+		// maps and slices hold no writer: they return keys, sorted copies and membership,
+		// which this package renders through oneline at its own print sites.
+		`"maps"`, `"slices"`,
 		`"runtime/debug"`,
 		// ledger.go's store seam: context carries no writer, and internal/record returns
 		// ledger rows from the fleet Redis that this package renders through oneline.Field
@@ -57,6 +64,10 @@ var tokensAudit = audit.Config{
 		`"github.com/mas-bandwidth/nova-tools/internal/atomicfile"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/oneline"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/tokens"`,
+		// the --json rendering and the refusal under --json: tool.Out renders the one
+		// result as a JSON object (encoding/json, every string escaped) on the stdout this
+		// package hands it, and prints nothing else.
+		`"github.com/mas-bandwidth/nova-tools/internal/tool"`,
 	},
 	MinClassified: 30,
 }
