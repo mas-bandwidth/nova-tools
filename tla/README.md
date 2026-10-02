@@ -227,8 +227,8 @@ distinct states, no error) took 92 s on the same bench and is not in the set.
 ## The file lock (FileLock)
 
 `FileLock.tla`: a lock on a file across processes, the design of the shared
-module `internal/filelock`: one holder at a time, and a way to ask who holds
-it. Written from the locks the tools already carry (`internal/bus`, `merge`,
+module `internal/filelock`: one holder at a time, and a refusal that tells the
+truth. Written from the locks the tools already carry (`internal/bus`, `merge`,
 `tokens`, `swarm`, `wake`, `update`) and against the first candidate,
 nova-tools#4473 at d653eb53e. A bounded design model with reversed witnesses,
 not a refinement proof. What it leaves out is listed in its header.
@@ -244,10 +244,9 @@ What it holds the module to:
   holds the file at the path by the kernel's lock (`HolderHoldsThePath`);
 - the path names one file for ever (`OneFileForEver`);
 - the file names its holder (`HolderIsNamed`);
-- "held" is said only of a holder and "free" never of one, by a probe or by a
-  refusal (`HeldIsTrue`): a probe asks for a shared lock, and a refused taker
-  asks for one too before it says "held", so an asker is never taken for a
-  holder; a taker that only askers kept out answers "busy";
+- "held" is said only of a holder (`HeldIsTrue`): a refused taker asks for a
+  shared lock before it says "held", so another taker asking is never taken
+  for a holder; a taker that only askers kept out answers "busy";
 - who takes the lock is told, truly, whether the last holder released it
   (`UncleanIsTold`): release clears the note, so a note found is a holder that
   never released, whatever became of its pid;
@@ -270,19 +269,26 @@ Measured on a Linux bench, 2026-09-27, load 10, all nine at once: 5 s wall.
 | `MCFileLock` | no error, 37,611 distinct states, three processes, each pid reused twice: TypeOK, MutualExclusion, HolderHoldsThePath, HolderIsNamed, OneFileForEver, HeldIsTrue, UncleanIsTold, NothingToClear | 3 s |
 | `MCFileLockFour` | no error, 160,832 distinct states, four processes, each pid reused once: the same eight | 5 s |
 | `MCFileLockBrokenStale` | MutualExclusion violated in 21 states: a holder dies; two processes find the lock stale and both clear it; the first removes the file and takes a new one at the path; the second opens that new file, finds no name in it, and removes it; both then create a file and hold (d653eb53e filelock_unix.go: 167, 197, 206, 217, 221, then 57, 64, 70) | 2 s |
-| `MCFileLockBrokenExProbe` | HeldIsTrue violated in 6 states: a probe has the exclusive lock for an instant, and a taker is refused as "held" with nobody holding (d653eb53e filelock_unix.go: 171, then 64, 96, 104; `internal/wake/lockprobe_unix.go` 49 on dev) | 2 s |
 | `MCFileLockBrokenSentinel` | NothingToClear violated in 4 states: the holder dies and the lock stays taken (`lock_other.go` of `internal/bus`, `tokens`, `swarm`; `internal/wake/lockprobe_other.go` says so of itself) | 2 s |
-| `MCFileLockCandidate` | the candidate as it is ("stale" and "exprobe" together): HeldIsTrue violated in 6 states, MutualExclusion as above | 2 s |
-| `MCFileLockBrokenPidLive` | HeldIsTrue violated: a probe that reads the note and asks whether the pid answers says "free" of a taker that has not yet written its name | 2 s |
+| `MCFileLockCandidate` | the candidate's take and stale clear, its probe gone (2026-10-02): expected HeldIsTrue violated (a refusal by a process clearing the lock, which is no holder) or MutualExclusion as above; not yet measured | - |
+| `MCFileLockBrokenBusyIsHeld` | expected HeldIsTrue violated: a refused taker whose shared ask is granted, the holder gone, answers "held" where take.go tries again and then answers busy; not yet measured | - |
 | `MCFileLockBrokenUnlink` | MutualExclusion violated in 11 states: release removes the file under a taker that has it open | 2 s |
 | `MCFileLockBrokenKeepStamp` | UncleanIsTold violated: release leaves the name, and the next taker is told the last holder never released | 2 s |
 
-Stale, ExProbe and Sentinel are in code that exists, each checked by hand
+Stale and Sentinel are in code that exists or existed, each checked by hand
 against the lines named. The first Stale counterexample TLC gave did not
 survive that check (it counted as a holder a process the code makes give up),
 so the invariant was tightened to locks handed to a caller, and the trace above
-is the one that holds. PidLive, Unlink and KeepStamp are misimplementations the
-invariants are shown to catch.
+is the one that holds. BusyIsHeld, Unlink and KeepStamp are misimplementations
+the invariants are shown to catch.
+
+Until 2026-10-02 the model also had a probe (ask who holds the lock without
+taking it) and two witnesses on it: ExProbe (a probe taking the exclusive lock
+for an instant, the candidate's and `internal/wake`'s) and PidLive (a probe
+answering from the pid in the file). They left with the module's `Probe`,
+which no caller used; HeldIsTrue stayed, on the refused taker, with BusyIsHeld
+as its reversed witness. A probe can return with a caller, and these two with
+it.
 
 ## The shell (TableSession)
 

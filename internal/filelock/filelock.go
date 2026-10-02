@@ -1,7 +1,8 @@
 // Package filelock is the one lock on a file across processes: the kernel's lock
 // (flock on unix, LockFileEx on Windows), released by the kernel when its holder
-// dies, with the holder's stamp written inside the file for a refusal to name and
-// a probe that asks without taking. Its design and invariants are tla/FileLock.tla.
+// dies, with the holder's stamp written inside the file for a refusal to name. Its
+// design and invariants are tla/FileLock.tla. A probe that asked without taking
+// left the package on 2026-10-02 because no caller used it; it can return with one.
 //
 // Its callers, on unix, each the same flock on the same file its earlier binary took, so
 // an old and a new binary exclude each other across an upgrade (each package's
@@ -26,22 +27,6 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
-
-// State is the observation of a lock file path.
-type State string
-
-const (
-	// StateAbsent means the lock file does not exist.
-	StateAbsent State = "absent"
-	// StateFree means the lock file exists and is not held by any process.
-	StateFree State = "free"
-	// StateHeld means the lock file exists and is held by an exclusive holder.
-	StateHeld State = "held"
-)
-
-func (s State) String() string {
-	return string(s)
-}
 
 var (
 	// ErrHeld indicates the lock is currently held by an exclusive holder.
@@ -468,9 +453,4 @@ func TryLock(path string, label string) (*FileLock, error) {
 // and is never removed.
 func Lock(path string, label string, timeout time.Duration) (*FileLock, error) {
 	return lockWithOptions(path, label, timeout, options{})
-}
-
-// Probe inspects path without taking an exclusive lock and without creating the file if absent.
-func Probe(path string) (State, Stamp, error) {
-	return probeWithOptions(path, options{})
 }

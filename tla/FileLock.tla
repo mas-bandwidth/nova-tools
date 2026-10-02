@@ -1,6 +1,6 @@
 ----------------------------- MODULE FileLock -----------------------------
-\* A lock on a file, across processes: one holder at a time, and a way to ask
-\* who holds it. The design of the shared module internal/filelock, written
+\* A lock on a file, across processes: one holder at a time, and a refusal
+\* that tells the truth. The design of the shared module internal/filelock, written
 \* from the locks nova-tools already has (internal/bus, merge, tokens, swarm,
 \* wake and update each carry a copy) and against the first candidate,
 \* nova-tools#4473 at d653eb53e (internal/filelock/filelock_unix.go).
@@ -31,10 +31,13 @@
 \*            and then the answer is "busy", never "held".
 \*   release  clear what the file says, then let the kernel lock go. The
 \*            file stays.
-\*   probe    open without creating; ask for a shared lock without waiting:
-\*            granted means free, refused means held.
 \*   The file is never removed, by anyone. Waiting (Lock with a bound) is
 \*   take again, and adds no state.
+\*   A probe (ask who holds it without taking) was here until 2026-10-02 and
+\*   left with the module's Probe, which no caller used; it can return with a
+\*   caller. HeldIsTrue is still the refused taker's: in Blocked it answers
+\*   "held" only when its shared ask is refused too, and the askers in the way
+\*   are other refused takers asking (the "peek" state).
 \*
 \* Every other value of Broken is a reversed witness:
 \*   "stale"      a name in the file whose process is dead is a refusal, and
@@ -42,18 +45,16 @@
 \*                lockInternal lines 71 and 97, ClearStaleWithOptions line
 \*                221; the rule internal/merge/lock.go records as having
 \*                lost 3 of 20 concurrent writes on 2026-09-11)
-\*   "exprobe"    probe takes the exclusive lock for an instant (d653eb53e:
-\*                ProbeWithOptions line 171; internal/wake/lockprobe_unix.go
-\*                line 49 on dev)
 \*   "sentinel"   the lock is a file whose existence means held, so a death
 \*                releases nothing (the lock_other.go of internal/bus,
 \*                tokens and swarm, and internal/wake/lockprobe_other.go,
 \*                where there is no flock; each says so of itself)
-\*   "pidlive"    probe answers from the name in the file and whether that
-\*                pid answers, and never asks the kernel
+\*   "busyisheld" a refused taker whose shared ask is granted (only askers
+\*                in the way) answers "held" all the same, where take.go lets
+\*                go and tries again and then answers busy
 \*   "unlink"     release removes the file
 \*   "keepstamp"  release leaves the name in the file
-\* The first three are in code that exists, each read against the lines
+\* The first two are in code that exists or existed, each read against the lines
 \* named. The last three are misimplementations the invariants are shown to
 \* catch.
 \*
@@ -63,7 +64,7 @@
 \* locks are not the kernel's (NFS). Those are tests of the module.
 EXTENDS Naturals, FiniteSets
 CONSTANTS Procs, MaxInodes, MaxLives, Broken
-Faults == {"stale", "exprobe", "pidlive", "sentinel", "unlink", "keepstamp"}
+Faults == {"stale", "sentinel", "busyisheld", "unlink", "keepstamp"}
 None == 0
 Nobody == 0
 ASSUME Broken \subseteq Faults /\ 0 \notin Procs
@@ -121,8 +122,10 @@ TakeEx(p) ==
 Blocked(p) ==
  /\ pc[p] = "blocked"
  /\ LET i == fd[p]
-    IN IF Broken \cap {"stale", "exprobe", "sentinel"} # {} \/ ~ShFree(i)
-       THEN \* answered "held", on the refusal alone or on the second one
+    IN IF Broken \cap {"stale", "sentinel", "busyisheld"} # {} \/ ~ShFree(i)
+       THEN \* answered "held": on the refusal alone (the candidate, the
+            \* sentinel), on a granted ask ("busyisheld"), or on the second
+            \* refusal (the design)
             /\ Answer(i, TRUE)
             /\ Go(p, "idle") /\ Close(p)
             /\ UNCHANGED sh
@@ -166,48 +169,6 @@ Release(p) ==
        /\ path' = IF "unlink" \in Broken /\ path = i THEN None ELSE path
  /\ Go(p, "idle") /\ Close(p)
  /\ UNCHANGED <<used, sh, life, history>>
-
-\* ---- probe
-ProbeOpen(p) ==
- /\ pc[p] = "idle" /\ path # None
- /\ fd' = [fd EXCEPT ![p] = path]
- /\ Go(p, "probing")
- /\ UNCHANGED <<files, kernel, life, history>>
-
-ProbeAsk(p) ==
- /\ pc[p] = "probing"
- /\ LET i == fd[p]
-    IN CASE "pidlive" \in Broken ->
-              \* the name in the file, and whether its pid answers
-              /\ Answer(i, stamp[i] # Nobody /\ alive[stamp[i]])
-              /\ Go(p, "idle") /\ Close(p)
-              /\ UNCHANGED kernel
-         [] "pidlive" \notin Broken /\ "exprobe" \in Broken ->
-              IF ExFree(i, p)
-              THEN /\ ex' = [ex EXCEPT ![i] = p]
-                   /\ Answer(i, FALSE)
-                   /\ Go(p, "probe")
-                   /\ UNCHANGED <<sh, fd>>
-              ELSE /\ Answer(i, TRUE)
-                   /\ Go(p, "idle") /\ Close(p)
-                   /\ UNCHANGED kernel
-         [] OTHER ->
-              IF ShFree(i)
-              THEN /\ sh' = [sh EXCEPT ![i] = @ \cup {p}]
-                   /\ Answer(i, FALSE)
-                   /\ Go(p, "probe")
-                   /\ UNCHANGED <<ex, fd>>
-              ELSE /\ Answer(i, TRUE)
-                   /\ Go(p, "idle") /\ Close(p)
-                   /\ UNCHANGED kernel
- /\ UNCHANGED <<files, life, crashed, toldWrong>>
-
-ProbeDone(p) ==
- /\ pc[p] = "probe"
- /\ ex' = [ex EXCEPT ![fd[p]] = IF @ = p THEN None ELSE @]
- /\ sh' = [sh EXCEPT ![fd[p]] = @ \ {p}]
- /\ Go(p, "idle") /\ Close(p)
- /\ UNCHANGED <<files, life, history>>
 
 \* ---- clearing a stale lock: the candidate's, and only with "stale"
 ClearProbe(p) ==
@@ -264,15 +225,14 @@ Reborn(p) ==
 
 Step(p) ==
  \/ Open(p) \/ TakeEx(p) \/ Blocked(p) \/ Peek(p) \/ Stamp(p) \/ Release(p)
- \/ ProbeOpen(p) \/ ProbeAsk(p) \/ ProbeDone(p)
  \/ ClearProbe(p) \/ ClearOpen(p) \/ ClearTake(p) \/ ClearRemove(p)
  \/ ClearDone(p)
  \/ Die(p) \/ Reborn(p)
 Next == \E p \in Procs : Step(p)
 Spec == Init /\ [][Next]_vars
 
-States == {"idle", "opened", "blocked", "peek", "locked", "held", "probing",
-           "probe", "clear", "clearopen", "cleartaken", "cleared", "dead"}
+States == {"idle", "opened", "blocked", "peek", "locked", "held",
+           "clear", "clearopen", "cleartaken", "cleared", "dead"}
 TypeOK ==
  /\ path \in Inodes \cup {None} /\ used \in 0..MaxInodes
  /\ stamp \in [Inodes -> Procs \cup {Nobody}]
@@ -293,7 +253,8 @@ HolderHoldsThePath ==
 HolderIsNamed == \A p \in Procs : pc[p] = "held" => stamp[fd[p]] = p
 \* The path names one file for ever: the lock file is never replaced.
 OneFileForEver == used <= 1
-\* "held" is said only of a holder, and "free" never of one.
+\* "held" is said only of a holder: a refused taker never takes an asker for
+\* one.
 HeldIsTrue == ~lied
 \* Who takes the lock is told, truly, whether the last holder released it.
 UncleanIsTold == ~toldWrong
@@ -302,5 +263,5 @@ UncleanIsTold == ~toldWrong
 NothingToClear ==
  \A i \in Inodes : ex[i] # None =>
    (alive[ex[i]] /\ fd[ex[i]] = i
-    /\ pc[ex[i]] \in {"locked", "held", "probe", "cleartaken", "cleared"})
+    /\ pc[ex[i]] \in {"locked", "held", "cleartaken", "cleared"})
 =============================================================================

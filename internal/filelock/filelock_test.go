@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -163,7 +162,7 @@ func TestH1_ContendedTakerVsSharedProbe_ReturnsErrBusy(t *testing.T) {
 		require.NoError(t, err, "init Unlock failed: %v", err)
 	}
 
-	// Open file and take SHARED lock (simulating a long-running prober or reader)
+	// Open file and take SHARED lock (an asker: another refused taker asking)
 	f, err := openFileSafe(path, os.O_RDWR, 0)
 	if err != nil {
 		require.NoError(t, err, "openFileSafe failed: %v", err)
@@ -187,7 +186,7 @@ func TestH1_ContendedTakerVsSharedProbe_ReturnsErrBusy(t *testing.T) {
 		assert.ErrorIs(t, tryErr, ErrBusy, "tryErr = %v, want ErrBusy", tryErr)
 	}
 	if errors.Is(tryErr, ErrHeld) {
-		assert.Fail(t, fmt.Sprintf("tryErr wraps ErrHeld, want only ErrBusy when prober in the way"))
+		assert.Fail(t, fmt.Sprintf("tryErr wraps ErrHeld, want only ErrBusy when an asker is in the way"))
 	}
 
 	// Unlock shared lock
@@ -335,114 +334,6 @@ func TestPrevious_UnreleasedHolderObserved(t *testing.T) {
 	}
 }
 
-func TestProbe_AbsentNeverCreatesFile(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	path := filepath.Join(dir, "nonexistent.lock")
-
-	state, stamp, err := Probe(path)
-	if err != nil {
-		require.NoError(t, err, "Probe failed: %v", err)
-	}
-	if state != StateAbsent {
-		assert.Equal(t, StateAbsent, state, "Probe state = %s, want %s", state, StateAbsent)
-	}
-	if !stamp.IsZero() {
-		assert.Fail(t, fmt.Sprintf("Probe stamp = %+v, want zero", stamp))
-	}
-
-	// Invariant: file MUST NOT exist after Probe
-	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
-		assert.ErrorIs(t, err, os.ErrNotExist, "Probe created file at %s: %v", path, err)
-	}
-}
-
-func TestProbe_Free(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	path := filepath.Join(dir, "free.lock")
-
-	// Create and unlock
-	lock, err := TryLock(path, "temp")
-	if err != nil {
-		require.NoError(t, err, "TryLock failed: %v", err)
-	}
-	if err := lock.Unlock(); err != nil {
-		require.NoError(t, err, "Unlock failed: %v", err)
-	}
-
-	state, stamp, err := Probe(path)
-	if err != nil {
-		require.NoError(t, err, "Probe failed: %v", err)
-	}
-	if state != StateFree {
-		assert.Equal(t, StateFree, state, "Probe state = %s, want %s", state, StateFree)
-	}
-	if !stamp.IsZero() {
-		assert.Fail(t, fmt.Sprintf("Probe stamp = %+v, want zero", stamp))
-	}
-}
-
-func TestProbe_Held(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	path := filepath.Join(dir, "held.lock")
-
-	lock, err := TryLock(path, "active-job")
-	if err != nil {
-		require.NoError(t, err, "TryLock failed: %v", err)
-	}
-	defer lock.Unlock()
-
-	state, stamp, err := Probe(path)
-	if err != nil {
-		require.NoError(t, err, "Probe failed: %v", err)
-	}
-	if state != StateHeld {
-		assert.Equal(t, StateHeld, state, "Probe state = %s, want %s", state, StateHeld)
-	}
-	if stamp.Label != "active-job" {
-		assert.Equal(t, "active-job", stamp.Label, "Probe stamp.Label = %q, want active-job", stamp.Label)
-	}
-	if stamp.PID != os.Getpid() {
-		assert.Fail(t, fmt.Sprintf("Probe stamp.PID = %d, want %d", stamp.PID, os.Getpid()))
-	}
-}
-
-func TestProbe_ConcurrentProbes(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	path := filepath.Join(dir, "shared_probe.lock")
-
-	lock, err := TryLock(path, "shared-test")
-	if err != nil {
-		require.NoError(t, err, "TryLock failed: %v", err)
-	}
-	if err := lock.Unlock(); err != nil {
-		require.NoError(t, err, "Unlock failed: %v", err)
-	}
-
-	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			state, _, err := Probe(path)
-			if err != nil {
-				assert.NoError(t, err, "Probe error: %v", err)
-			}
-			if state != StateFree {
-				assert.Equal(t, StateFree, state, "Probe state = %s, want free", state)
-			}
-		}()
-	}
-	wg.Wait()
-}
-
 func TestSymlink_NotPermitted(t *testing.T) {
 	t.Parallel()
 
@@ -459,9 +350,6 @@ func TestSymlink_NotPermitted(t *testing.T) {
 	if _, err := TryLock(link, "test"); err == nil {
 		assert.Error(t, err, "TryLock on symlink succeeded, want error")
 	}
-	if _, _, err := Probe(link); err == nil {
-		assert.Error(t, err, "Probe on symlink succeeded, want error")
-	}
 }
 
 func TestDirectory_NotPermitted(t *testing.T) {
@@ -471,9 +359,6 @@ func TestDirectory_NotPermitted(t *testing.T) {
 
 	if _, err := TryLock(dir, "test"); err == nil {
 		assert.Error(t, err, "TryLock on directory succeeded, want error")
-	}
-	if _, _, err := Probe(dir); err == nil {
-		assert.Error(t, err, "Probe on directory succeeded, want error")
 	}
 }
 
@@ -603,20 +488,6 @@ func TestOptionsDefaults(t *testing.T) {
 	}
 }
 
-func TestStateStrings(t *testing.T) {
-	t.Parallel()
-
-	if StateAbsent.String() != "absent" {
-		assert.Fail(t, fmt.Sprintf("StateAbsent.String() = %q", StateAbsent.String()))
-	}
-	if StateFree.String() != "free" {
-		assert.Fail(t, fmt.Sprintf("StateFree.String() = %q", StateFree.String()))
-	}
-	if StateHeld.String() != "held" {
-		assert.Fail(t, fmt.Sprintf("StateHeld.String() = %q", StateHeld.String()))
-	}
-}
-
 func TestHeldErrorFormatting(t *testing.T) {
 	t.Parallel()
 
@@ -706,7 +577,7 @@ func TestRealClock(t *testing.T) {
 	rc.Sleep(0)
 }
 
-func TestProbe_NotDir(t *testing.T) {
+func TestTryLock_NotDirParent(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -716,15 +587,12 @@ func TestProbe_NotDir(t *testing.T) {
 	}
 	badPath := filepath.Join(regularFile, "sub.lock")
 
-	if _, _, err := Probe(badPath); err == nil {
-		assert.Error(t, err, "Probe with non-directory parent should error")
-	}
 	if _, err := TryLock(badPath, "bad"); err == nil {
 		assert.Error(t, err, "TryLock with non-directory parent should error")
 	}
 }
 
-// H1 witness. An asker (a Probe, or another refused taker) holds the shared
+// H1 witness. An asker (another refused taker asking) holds the shared
 // lock for an instant, and the kernel refuses the exclusive lock while it does.
 // The asker here never leaves, so every take lands in that instant. Nobody
 // holds, so the taker must answer busy (ErrBusy) and never held (ErrHeld):
@@ -879,16 +747,8 @@ func TestMutant_Fsync(t *testing.T) {
 		require.ErrorIs(t, err, syncErr, "err = %v, want syncErr", err)
 	}
 
-	// Lock file must not be held now
-	state, _, probeErr := Probe(path)
-	if probeErr != nil {
-		require.NoError(t, probeErr, "Probe failed: %v", probeErr)
-	}
-	if state == StateHeld {
-		require.NotEqual(t, StateHeld, state, "lock still held after sync failure")
-	}
-
-	// 3. Verify sync is called on successful lock
+	// 3. Verify sync is called on successful lock. The take below also shows the
+	// failed one let go of the kernel lock: a lock still held would refuse it.
 	syncCalled := false
 	optsSuccess := options{
 		sync: func(f *os.File) error {

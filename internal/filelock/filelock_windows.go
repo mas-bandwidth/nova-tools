@@ -184,33 +184,3 @@ func tryLockWithOptions(path string, label string, opts options) (*FileLock, err
 func lockWithOptions(path string, label string, timeout time.Duration, opts options) (*FileLock, error) {
 	return lockLoop(path, label, timeout, opts, tryLockWithOptions)
 }
-
-func probeWithOptions(path string, opts options) (State, Stamp, error) {
-	f, err := openFileSafe(path, os.O_RDWR, 0)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return StateAbsent, Stamp{}, nil
-		}
-		f, err = openFileSafe(path, os.O_RDONLY, 0)
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				return StateAbsent, Stamp{}, nil
-			}
-			return "", Stamp{}, err
-		}
-	}
-	defer f.Close()
-
-	ok, lockErr := trySharedLock(f)
-	if lockErr != nil {
-		cleanPath := oneline.Escape(oneline.Cap(path, 1024))
-		return "", Stamp{}, fmt.Errorf("filelock %q probe: %w", cleanPath, wrapPathError(lockErr))
-	}
-	if ok {
-		unlockFile(f)
-		return StateFree, Stamp{}, nil
-	}
-
-	holder := readExistingStamp(f)
-	return StateHeld, holder, nil
-}
