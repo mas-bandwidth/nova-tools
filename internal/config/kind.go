@@ -1,7 +1,6 @@
 // Package config is nova-config's library: the permanent, non-ephemeral
 // configuration of the fleet, kept in Postgres (schema `config`) and applied
-// into Redis so Redis is always a rebuildable copy (Glenn 2026-09-26: "redis
-// is good as a hot store of data that can be rebuilt"; docs/SPEC-CONFIG.md).
+// into Redis so Redis is always a rebuildable copy of the configuration.
 //
 // Every kind of configuration is one Kind descriptor: its name, its table,
 // its fields with their types and validators, and the two Redis functions
@@ -103,8 +102,8 @@ type Kind struct {
 	// Doc is the one sentence `nova-config kinds` prints about the kind.
 	Doc string
 	// Singleton is a kind of exactly one row, named as the kind is (the
-	// fleet: Glenn 2026-09-27, "in the fleet there is only one coordinator
-	// at a time"). Its migration creates the row, so the grammar has no add,
+	// fleet: the fleet has exactly one coordinator at a time). Its migration
+	// creates the row, so the grammar has no add,
 	// remove or list and its set, show and history take no name
 	// (docs/SPEC-CONFIG.md, "Singleton kinds").
 	Singleton bool
@@ -186,9 +185,8 @@ const CoordinatorRole = "coordinator"
 // (each names no row), and tiers last (each names routes).
 //
 // A machine's record is exactly the declared facts something reads, one
-// reader each, and nothing invented (Glenn 2026-09-27: "I only want the
-// fleet to have actual defined useful things associated with each machine,
-// not invented rando stuff"). Its name is the tailnet host: `ssh <name>`
+// reader each, and contains no invented fields, so it reflects only declared
+// machine facts. Its name is the tailnet host: `ssh <name>`
 // reaches it, so there is no address field ("All fleet machines must be on
 // the tailnet. This is a hard requirement."). Measured facts (os, arch,
 // cores, memory) are never typed: they come live from the machine's own
@@ -223,8 +221,8 @@ var Kinds = []*Kind{
 		// A friend's row is what someone decides for her: how wide, which
 		// tiers, which roles. What she would just know (where she runs, her
 		// harness, her logins) is runtime data her own presence reports
-		// (Glenn 2026-09-27, docs/SPEC-CONFIG.md, "What a friend would just
-		// know").
+		// know: runtime data such as where she runs, her harness and her logins comes
+		// from her own presence report.
 		Name:  KindFriend,
 		Table: "friends",
 		Doc:   "an AI friend: how wide she runs, which tiers she can do, and her roles",
@@ -289,8 +287,8 @@ var Kinds = []*Kind{
 			{Name: "deadline", Type: TypeInt, Required: true, Help: "the seconds a card on this route may run, above 0"},
 			{Name: "enabled", Type: TypeBool, Default: "true", Help: "false takes it out of the deal; true (the default) keeps it in"},
 			// The price sheet: optional, so a card's predicted cost can be worked
-			// out from its tokens (the owner, 2026-10-01: "the pricing configuration
-			// saved per-tuple"; internal/cardcost). Prices are USD per million tokens.
+			// out from its tokens using the pricing configuration saved per route tuple.
+			// Prices are USD per million tokens.
 			{Name: cardcost.FieldInput, Type: TypeDecimal, Help: "USD per million uncached input tokens, a decimal like 0.30; empty (the default) when not known"},
 			{Name: cardcost.FieldCacheRead, Type: TypeDecimal, Help: "USD per million cached input tokens read"},
 			{Name: cardcost.FieldCacheWrite, Type: TypeDecimal, Help: "USD per million tokens written to the cache"},
@@ -309,10 +307,8 @@ var Kinds = []*Kind{
 	},
 	{
 		// A tier's route array: the deal takes routes[index mod len] for each
-		// card of the tier, the index a uint64 counter on the fleet table
-		// (the owner, 2026-10-01: "the per-tier provider/model array should
-		// be specified in nova-config"; internal/sprint/route.go,
-		// tla/RouteIndex.tla).
+		// card of the tier, using an index that advances on the fleet table. The route
+		// array is stored in configuration so each tier controls its route order.
 		Name:  KindTier,
 		Table: "tiers",
 		Doc:   "a model tier's route array: the deal takes routes[index mod len] for each card of the tier, a route named twice taking two turns; one row each for " + strings.Join(RouteTiers, " and ") + ", created by migrate",
