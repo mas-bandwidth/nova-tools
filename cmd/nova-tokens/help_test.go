@@ -110,7 +110,7 @@ func TestTheSpecPromisesWhatTheToolPrints(t *testing.T) {
 
 	// Spec-versus-code drift: every verb the binary accepts and every first-two-token line it
 	// prints is promised by the verbs block and the output grammar.
-	t.Run("363 every verb and token it prints", func(t *testing.T) {
+	t.Run("every verb and token it prints", func(t *testing.T) {
 		t.Parallel()
 		for _, want := range []string{"nova-tokens profiles", "nova-tokens session", "PROFILES OK", "PROFILES MODEL", "SESSION turns="} {
 			assert.Contains(t, spec, want, "the binary accepts or prints it but docs/SPEC-TOKENS.md does not promise it")
@@ -122,24 +122,22 @@ func TestTheSpecPromisesWhatTheToolPrints(t *testing.T) {
 	// day line carries the shares, and a `--timeout` that bounds one source and not the run.
 	// The section is prose, so whitespace is collapsed: a phrase is checked for its words, not
 	// its column.
-	t.Run("85 the efficiency card names its rules", func(t *testing.T) {
+	t.Run("the efficiency contract names its rules", func(t *testing.T) {
 		t.Parallel()
-		_, section, ok := strings.Cut(spec, "## The efficiency card (#85), nova-tokens")
-		require.True(t, ok, "the spec has no #85 efficiency card section")
+		_, section, ok := strings.Cut(spec, "## The efficiency contract, nova-tokens")
+		require.True(t, ok, "the spec has no efficiency contract section")
 		section, _, _ = strings.Cut(section, "\n## ")
 		section = strings.Join(strings.Fields(section), " ")
 		for _, want := range []string{
-			// the measurement the card published, on the bench.
-			"1,397", "1,699 MB", "57,239", "87 %",
 			// the walk: claude.go parses the tree, the fold folds every day.
-			"internal/tokens/claude.go:98", "cmd/nova-tokens/main.go:587", "one walk of the sources per run", "3.27 s", "dup=49765", "messages=57239",
+			"internal/tokens/claude.go", "`folder.Days()`", "one walk of the sources per run", "`dup=`",
 			// the coordinator read: one source, one day, one OK, `check` one line per finding under `--max`.
-			"TOKENS SOURCE", "TOKENS DAY", "TOKENS OK", "`check` is one line per finding", "`--max`", "33",
+			"TOKENS SOURCE", "TOKENS DAY", "TOKENS OK", "`check` is one line per finding", "`--max`",
 			// what a run waits on: `--timeout` is one source, not the run.
-			"120 s", "`--timeout`", "CHECK FAIL files=9 rows=0 first=2026-07-29 last=2026-09-11 bad=9 missing=36 stray=2", "`sum --month 2026-09`", "fold --day <d>",
+			"120 s", "`--timeout`", "`sum --month 2026-09`", "fold --day <d>",
 			"Red tests",
 		} {
-			assert.Contains(t, section, want, "SPEC-TOKENS.md's nova-tokens efficiency card names it")
+			assert.Contains(t, section, want, "SPEC-TOKENS.md's nova-tokens efficiency contract names it")
 		}
 	})
 }

@@ -13,7 +13,6 @@
 # --- 1. A specification's plan: a file the spec says will exist, not yet written. ---
 
 docs/templates SPEC-CI cardtemplates: one of CardTemplateDirs, skipped until a template is written there
-internal/tokens/message.go SPEC-TOKENS' plan: the message record
 tools/templates SPEC-CI cardtemplates: one of CardTemplateDirs, skipped until a template is written there
 
 # --- 2. An invented example: a name chosen to show the SHAPE of a path. ---
