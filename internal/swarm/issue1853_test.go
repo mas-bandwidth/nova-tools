@@ -3,6 +3,8 @@ package swarm
 import (
 	"fmt"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // TestIssue1853 reproduces every validation escape in nova-tools#1853: Windows drive
@@ -78,9 +80,7 @@ func TestIssue1853(t *testing.T) {
 				}
 				return
 			}
-			if !hasCheck(fs, tc.drift) {
-				t.Fatalf("expected %s drift, got:\n%s", tc.drift, dumpFindings(fs))
-			}
+			require.True(t, hasCheck(fs, tc.drift), "expected %s drift, got:\n%s", tc.drift, dumpFindings(fs))
 		})
 	}
 
@@ -90,9 +90,7 @@ func TestIssue1853(t *testing.T) {
 		t.Run(fmt.Sprintf("TEST: none on gated kind %s", kind), func(t *testing.T) {
 			raw := headerCard(t, "KIND: "+kind, "PATHS: internal/swarm/a.go", "TEST: none the fixture has a why")
 			fs := findingsOn(raw)
-			if !hasCheck(fs, "test-named") {
-				t.Fatalf("kind %q is gated and requires a test; got:\n%s", kind, dumpFindings(fs))
-			}
+			require.True(t, hasCheck(fs, "test-named"), "kind %q is gated and requires a test; got:\n%s", kind, dumpFindings(fs))
 		})
 	}
 	for _, kind := range []string{"read", "probe", "text", "tone", "report"} {
@@ -100,9 +98,7 @@ func TestIssue1853(t *testing.T) {
 			raw := headerCard(t, "KIND: "+kind, "PATHS: internal/swarm/a.go", "TEST: none the kind changes no code")
 			fs := findingsOn(raw)
 			for _, f := range fs {
-				if f.Check == "test-named" {
-					t.Fatalf("kind %q is ungated and allows TEST: none, but got test-named: %s", kind, f.Excerpt)
-				}
+				require.NotEqual(t, "test-named", f.Check, "kind %q is ungated and allows TEST: none, but got test-named: %s", kind, f.Excerpt)
 			}
 		})
 	}

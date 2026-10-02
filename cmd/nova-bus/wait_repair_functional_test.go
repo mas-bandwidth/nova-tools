@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/stretchr/testify/require"
 )
 
 // #2627: a killed git leaves index.lock, and the beat it was writing stays dirty. The next
@@ -49,7 +50,7 @@ func gitAncestor(t *testing.T, dir, ancestor, desc string) bool {
 	if errors.As(err, &exit) && exit.ExitCode() == 1 {
 		return false
 	}
-	t.Fatalf("merge-base --is-ancestor: %v", err)
+	require.FailNowf(t, "assertion failed", "merge-base --is-ancestor: %v", err)
 	return false
 }
 
@@ -64,14 +65,10 @@ func gitIndexLock(t *testing.T, checkout string) string {
 func plantLock(t *testing.T, checkout string, age time.Duration) string {
 	t.Helper()
 	lock := gitIndexLock(t, checkout)
-	if err := os.WriteFile(lock, nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(lock, nil, 0o644))
 	if age > 0 {
 		when := time.Now().Add(-age)
-		if err := os.Chtimes(lock, when, when); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.Chtimes(lock, when, when))
 	}
 	return lock
 }
@@ -109,25 +106,19 @@ func TestWaitRepairStaleLockAndDirtyBeat(t *testing.T) {
 
 	r := invoke(t, "", waitFlags(checkout, "Ada", "2s")...).mustCode(t, 0)
 	lines := waitRepairLines(r)
-	if len(lines) != 1 {
-		t.Fatalf("want one WAIT REPAIR line, got %d\nstdout:\n%s\nstderr:\n%s", len(lines), r.stdout, r.stderr)
-	}
-	if !strings.Contains(lines[0], "index.lock") || !strings.Contains(lines[0], "from-ada/BEAT") {
-		t.Fatalf("the repair line does not name both repairs: %s", lines[0])
-	}
-	if _, err := os.Lstat(lock); !os.IsNotExist(err) {
-		t.Fatalf("stale index.lock still present: %v", err)
+	require.Equalf(t, 1, len(lines), "want one WAIT REPAIR line, got %d\nstdout:\n%s\nstderr:\n%s", len(lines), r.stdout, r.stderr)
+	require.Falsef(t, !strings.Contains(lines[0], "index.lock") || !strings.Contains(lines[0], "from-ada/BEAT"), "the repair line does not name both repairs: %s", lines[0])
+	{
+		_, err := os.Lstat(lock)
+		require.Truef(t, os.IsNotExist(err), "stale index.lock still present: %v", err)
 	}
 	// Discarded, not regenerated (#3144: no wait writes a BEAT): the fixture holds none.
-	if beat, err := os.ReadFile(filepath.Join(checkout, "from-ada", "BEAT")); !os.IsNotExist(err) {
-		t.Fatalf("BEAT was not discarded (%v):\n%s", err, beat)
+	{
+		beat, err := os.ReadFile(filepath.Join(checkout, "from-ada", "BEAT"))
+		require.Truef(t, os.IsNotExist(err), "BEAT was not discarded (%v):\n%s", err, beat)
 	}
-	if !gitAncestor(t, checkout, tip, "HEAD") {
-		t.Fatalf("the fast-forward did not land %s; HEAD is %s", tip, headOf(t, checkout))
-	}
-	if !strings.Contains(r.stdout, "WAIT OK") {
-		t.Fatalf("the wait did not tick:\n%s", r.stdout)
-	}
+	require.Truef(t, gitAncestor(t, checkout, tip, "HEAD"), "the fast-forward did not land %s; HEAD is %s", tip, headOf(t, checkout))
+	require.Containsf(t, r.stdout, "WAIT OK", "the wait did not tick:\n%s", r.stdout)
 }
 
 // Case 1: a stale lock and a clean tree. One WAIT REPAIR line, naming the lock and not a
@@ -141,21 +132,14 @@ func TestWaitRepairStaleIndexLock(t *testing.T) {
 
 	r := invoke(t, "", waitFlags(checkout, "Ada", "2s")...).mustCode(t, 0)
 	lines := waitRepairLines(r)
-	if len(lines) != 1 {
-		t.Fatalf("want one WAIT REPAIR line, got %d\nstdout:\n%s\nstderr:\n%s", len(lines), r.stdout, r.stderr)
+	require.Equalf(t, 1, len(lines), "want one WAIT REPAIR line, got %d\nstdout:\n%s\nstderr:\n%s", len(lines), r.stdout, r.stderr)
+	require.Containsf(t, lines[0], "index.lock", "the repair line does not name the lock: %s", lines[0])
+	require.NotContainsf(t, lines[0], "BEAT", "claimed a BEAT repair this run did not do: %s", lines[0])
+	{
+		_, err := os.Lstat(lock)
+		require.Truef(t, os.IsNotExist(err), "stale index.lock still present: %v", err)
 	}
-	if !strings.Contains(lines[0], "index.lock") {
-		t.Fatalf("the repair line does not name the lock: %s", lines[0])
-	}
-	if strings.Contains(lines[0], "BEAT") {
-		t.Fatalf("claimed a BEAT repair this run did not do: %s", lines[0])
-	}
-	if _, err := os.Lstat(lock); !os.IsNotExist(err) {
-		t.Fatalf("stale index.lock still present: %v", err)
-	}
-	if !gitAncestor(t, checkout, tip, "HEAD") {
-		t.Fatalf("fast-forward did not land after the lock was removed; HEAD %s", headOf(t, checkout))
-	}
+	require.Truef(t, gitAncestor(t, checkout, tip, "HEAD"), "fast-forward did not land after the lock was removed; HEAD %s", headOf(t, checkout))
 }
 
 // Case 2: a lock just created is left in place, and no repair is claimed.
@@ -168,18 +152,16 @@ func TestWaitRepairFreshLockLeftAlone(t *testing.T) {
 	before := headOf(t, checkout)
 
 	r := invoke(t, "", waitFlags(checkout, "Ada", "2s")...)
-	if r.code == 0 {
-		t.Fatalf("a fresh lock did not stop the fast-forward\nstdout:\n%s\nstderr:\n%s", r.stdout, r.stderr)
+	require.NotEqualf(t, 0, r.code, "a fresh lock did not stop the fast-forward\nstdout:\n%s\nstderr:\n%s", r.stdout, r.stderr)
+	{
+		lines := waitRepairLines(r)
+		require.Emptyf(t, len(lines), "claimed a repair of a fresh lock: %q", lines)
 	}
-	if lines := waitRepairLines(r); len(lines) != 0 {
-		t.Fatalf("claimed a repair of a fresh lock: %q", lines)
+	{
+		_, err := os.Lstat(lock)
+		require.NoErrorf(t, err, "fresh index.lock was removed: %v", err)
 	}
-	if _, err := os.Lstat(lock); err != nil {
-		t.Fatalf("fresh index.lock was removed: %v", err)
-	}
-	if headOf(t, checkout) != before {
-		t.Fatalf("HEAD moved under a fresh lock: %s -> %s", before, headOf(t, checkout))
-	}
+	require.Falsef(t, headOf(t, checkout) != before, "HEAD moved under a fresh lock: %s -> %s", before, headOf(t, checkout))
 }
 
 // Case 3: a dirty BEAT an older wait left is discarded, and not regenerated (#3144: no wait
@@ -193,20 +175,16 @@ func TestWaitRepairDirtyBeat(t *testing.T) {
 
 	r := invoke(t, "", waitFlags(checkout, "Ada", "2s")...).mustCode(t, 0)
 	lines := waitRepairLines(r)
-	if len(lines) != 1 {
-		t.Fatalf("want one WAIT REPAIR line, got %d\nstdout:\n%s\nstderr:\n%s", len(lines), r.stdout, r.stderr)
+	require.Equalf(t, 1, len(lines), "want one WAIT REPAIR line, got %d\nstdout:\n%s\nstderr:\n%s", len(lines), r.stdout, r.stderr)
+	require.Containsf(t, lines[0], "from-ada/BEAT", "the repair line does not name the beat: %s", lines[0])
+	require.NotContainsf(t, lines[0], "index.lock", "claimed a lock repair this run did not do: %s", lines[0])
+	{
+		beat, err := os.ReadFile(filepath.Join(checkout, "from-ada", "BEAT"))
+		require.Truef(t, os.IsNotExist(err), "BEAT was not discarded, or was regenerated (%v):\n%s", err, beat)
 	}
-	if !strings.Contains(lines[0], "from-ada/BEAT") {
-		t.Fatalf("the repair line does not name the beat: %s", lines[0])
-	}
-	if strings.Contains(lines[0], "index.lock") {
-		t.Fatalf("claimed a lock repair this run did not do: %s", lines[0])
-	}
-	if beat, err := os.ReadFile(filepath.Join(checkout, "from-ada", "BEAT")); !os.IsNotExist(err) {
-		t.Fatalf("BEAT was not discarded, or was regenerated (%v):\n%s", err, beat)
-	}
-	if out := strings.TrimSpace(gitIn(t, checkout, "log", "--format=%H", "--", "from-ada/BEAT")); out != "" {
-		t.Fatalf("the repair committed a BEAT: %s", out)
+	{
+		out := strings.TrimSpace(gitIn(t, checkout, "log", "--format=%H", "--", "from-ada/BEAT"))
+		require.Emptyf(t, out, "the repair committed a BEAT: %s", out)
 	}
 }
 
@@ -229,19 +207,11 @@ func TestWaitRepairBehindOwnLaneFileFastForwards(t *testing.T) {
 
 	r := invoke(t, "", waitFlags(checkout, "Ada", "2s")...).mustCode(t, 0)
 	lines := waitRepairLines(r)
-	if len(lines) != 1 || !strings.Contains(lines[0], "from-ada/BEAT") {
-		t.Fatalf("want one WAIT REPAIR line naming the beat, got %q\nstdout:\n%s\nstderr:\n%s", lines, r.stdout, r.stderr)
-	}
+	require.Falsef(t, len(lines) != 1 || !strings.Contains(lines[0], "from-ada/BEAT"), "want one WAIT REPAIR line naming the beat, got %q\nstdout:\n%s\nstderr:\n%s", lines, r.stdout, r.stderr)
 	beat, err := os.ReadFile(filepath.Join(checkout, "from-ada", "BEAT"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(beat), "STALE GARBAGE") {
-		t.Fatalf("the blocking BEAT was kept:\n%s", beat)
-	}
-	if !gitAncestor(t, checkout, tip, "HEAD") {
-		t.Fatalf("did not fast-forward onto %s; HEAD is %s", tip, headOf(t, checkout))
-	}
+	require.NoError(t, err)
+	require.NotContainsf(t, string(beat), "STALE GARBAGE", "the blocking BEAT was kept:\n%s", beat)
+	require.Truef(t, gitAncestor(t, checkout, tip, "HEAD"), "did not fast-forward onto %s; HEAD is %s", tip, headOf(t, checkout))
 }
 
 // Case 5: behind origin, plus a dirty CURSOR. CURSOR is not this tool's to discard.
@@ -262,26 +232,17 @@ func TestWaitRepairBehindCursorRefusesUntouched(t *testing.T) {
 	before := headOf(t, checkout)
 
 	r := invoke(t, "", waitFlags(checkout, "Ada", "2s")...)
-	if r.code == 0 {
-		t.Fatalf("wait fast-forwarded over a dirty CURSOR\nstdout:\n%s\nstderr:\n%s", r.stdout, r.stderr)
-	}
-	if lines := waitRepairLines(r); len(lines) != 0 {
-		t.Fatalf("claimed a repair while refusing: %q", lines)
+	require.NotEqualf(t, 0, r.code, "wait fast-forwarded over a dirty CURSOR\nstdout:\n%s\nstderr:\n%s", r.stdout, r.stderr)
+	{
+		lines := waitRepairLines(r)
+		require.Emptyf(t, len(lines), "claimed a repair while refusing: %q", lines)
 	}
 	refusal := r.stderr
-	if !strings.Contains(refusal, "from-ada/CURSOR") || !strings.Contains(refusal, "not this tool's to discard") {
-		t.Fatalf("the refusal does not name the file it left alone:\n%s", refusal)
-	}
+	require.Falsef(t, !strings.Contains(refusal, "from-ada/CURSOR") || !strings.Contains(refusal, "not this tool's to discard"), "the refusal does not name the file it left alone:\n%s", refusal)
 	got, err := os.ReadFile(filepath.Join(checkout, "from-ada", "CURSOR"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != sentinel {
-		t.Fatalf("CURSOR was touched: %q", got)
-	}
-	if headOf(t, checkout) != before {
-		t.Fatalf("HEAD moved: %s -> %s", before, headOf(t, checkout))
-	}
+	require.NoError(t, err)
+	require.Falsef(t, string(got) != sentinel, "CURSOR was touched: %q", got)
+	require.Falsef(t, headOf(t, checkout) != before, "HEAD moved: %s -> %s", before, headOf(t, checkout))
 }
 
 // Case 6: nothing analogous to a harness check lives in here, and the tool must not lie
@@ -292,33 +253,25 @@ func TestWaitRepairDoesNotClaimWhatItDidNotDo(t *testing.T) {
 	hermetic(t)
 	checkout, _ := busDir(t)
 	clean := invoke(t, "", waitFlags(checkout, "Ada", "2s")...).mustCode(t, 0)
-	if lines := waitRepairLines(clean); len(lines) != 0 {
-		t.Fatalf("a clean wait claimed a repair: %q\nstdout:\n%s", lines, clean.stdout)
+	{
+		lines := waitRepairLines(clean)
+		require.Emptyf(t, len(lines), "a clean wait claimed a repair: %q\nstdout:\n%s", lines, clean.stdout)
 	}
-	if strings.Contains(clean.stdout, "WAIT ADVANCED") {
-		t.Fatalf("a wait without --advance claimed it advanced:\n%s", clean.stdout)
-	}
-	if !strings.Contains(clean.stdout, "WAIT OK") {
-		t.Fatalf("the clean wait did not tick:\n%s", clean.stdout)
-	}
+	require.NotContainsf(t, clean.stdout, "WAIT ADVANCED", "a wait without --advance claimed it advanced:\n%s", clean.stdout)
+	require.Containsf(t, clean.stdout, "WAIT OK", "the clean wait did not tick:\n%s", clean.stdout)
 
 	quietCheckout, _ := busDir(t)
 	const harness = "1999-01-01T00:00:00Z harness\n"
 	writeFile(t, quietCheckout, "from-ada/BEAT", harness)
 	quiet := invoke(t, "", waitFlags(quietCheckout, "Ada", "2s", "--no-beat")...).mustCode(t, 0)
-	if lines := waitRepairLines(quiet); len(lines) != 0 {
-		t.Fatalf("--no-beat claimed a repair: %q\nstdout:\n%s\nstderr:\n%s", lines, quiet.stdout, quiet.stderr)
+	{
+		lines := waitRepairLines(quiet)
+		require.Emptyf(t, len(lines), "--no-beat claimed a repair: %q\nstdout:\n%s\nstderr:\n%s", lines, quiet.stdout, quiet.stderr)
 	}
-	if strings.Contains(quiet.stdout, "WAIT ADVANCED") {
-		t.Fatalf("--no-beat claimed an advance:\n%s", quiet.stdout)
-	}
+	require.NotContainsf(t, quiet.stdout, "WAIT ADVANCED", "--no-beat claimed an advance:\n%s", quiet.stdout)
 	got, err := os.ReadFile(filepath.Join(quietCheckout, "from-ada", "BEAT"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != harness {
-		t.Fatalf("--no-beat rewrote a BEAT it does not own:\n%q", got)
-	}
+	require.NoError(t, err)
+	require.Falsef(t, string(got) != harness, "--no-beat rewrote a BEAT it does not own:\n%q", got)
 }
 
 // #4420, end to end: a stale index.lock owned by another account is refused by the wait
@@ -336,38 +289,34 @@ func TestWaitRefusesAnotherAccountsStaleLock(t *testing.T) {
 	pushAhead(t, bare, "from-bo/arrived.md", "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:03:00 UTC 2026\nId: bo-222222222222\nSubject: Arrived\n\nA note on the bus.\n")
 	lock := plantLock(t, checkout, 2*time.Minute)
 	restore, err := bus.SetIndexLockOwnerForTest(lock, other)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	defer restore()
 	r := invoke(t, "", waitFlags(checkout, "Ada", "2s")...).mustCode(t, 1)
-	if r.stderr != want {
-		t.Fatalf("stderr = %q, want %q", r.stderr, want)
+	require.Equalf(t, want, r.stderr, "stderr = %q, want %q", r.stderr, want)
+	{
+		lines := waitRepairLines(r)
+		require.Emptyf(t, len(lines), "claimed a repair of another account's lock: %q", lines)
 	}
-	if lines := waitRepairLines(r); len(lines) != 0 {
-		t.Fatalf("claimed a repair of another account's lock: %q", lines)
+	{
+		lines := waitScanLines(r)
+		require.Emptyf(t, len(lines), "another account's lock was scanned: %q", lines)
 	}
-	if lines := waitScanLines(r); len(lines) != 0 {
-		t.Fatalf("another account's lock was scanned: %q", lines)
-	}
-	if _, err := os.Lstat(lock); err != nil {
-		t.Fatalf("another account's stale index.lock was removed: %v", err)
+	{
+		_, err := os.Lstat(lock)
+		require.NoErrorf(t, err, "another account's stale index.lock was removed: %v", err)
 	}
 
 	fresh, freshBare := busDir(t)
 	pushAhead(t, freshBare, "from-bo/arrived.md", "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:03:00 UTC 2026\nId: bo-222222222222\nSubject: Arrived\n\nA note on the bus.\n")
 	freshLock := plantLock(t, fresh, 0)
 	restoreFresh, err := bus.SetIndexLockOwnerForTest(freshLock, other)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	defer restoreFresh()
 	r = invoke(t, "", waitFlags(fresh, "Ada", "2s")...)
-	if strings.Contains(r.stderr, "is owned by uid") {
-		t.Fatalf("a fresh lock of another account was refused by owner:\n%s", r.stderr)
-	}
-	if _, err := os.Lstat(freshLock); err != nil {
-		t.Fatalf("fresh index.lock was removed: %v", err)
+	require.NotContainsf(t, r.stderr, "is owned by uid", "a fresh lock of another account was refused by owner:\n%s", r.stderr)
+	{
+		_, err := os.Lstat(freshLock)
+		require.NoErrorf(t, err, "fresh index.lock was removed: %v", err)
 	}
 }
 
@@ -397,21 +346,22 @@ func TestWaitScanReceiptNamesTheCounts(t *testing.T) {
 	plantLock(t, checkout, 2*time.Minute)
 	r := invoke(t, "", waitFlags(checkout, "Ada", "2s")...).mustCode(t, 0)
 	scans := waitScanLines(r)
-	if len(scans) != 1 || !scanReceipt.MatchString(scans[0]) {
-		t.Fatalf("WAIT SCAN lines = %q, want one matching %s\nstdout:\n%s", scans, scanReceipt, r.stdout)
-	}
-	if repairs := waitRepairLines(r); len(repairs) != 1 || strings.Index(r.stdout, scans[0]) > strings.Index(r.stdout, repairs[0]) {
-		t.Fatalf("the scan receipt does not come before the one repair line:\n%s", r.stdout)
+	require.Falsef(t, len(scans) != 1 || !scanReceipt.MatchString(scans[0]), "WAIT SCAN lines = %q, want one matching %s\nstdout:\n%s", scans, scanReceipt, r.stdout)
+	{
+		repairs := waitRepairLines(r)
+		require.Falsef(t, len(repairs) != 1 || strings.Index(r.stdout, scans[0]) > strings.Index(r.stdout, repairs[0]), "the scan receipt does not come before the one repair line:\n%s", r.stdout)
 	}
 
 	fresh, _ := busDir(t)
 	plantLock(t, fresh, 0)
-	if r := invoke(t, "", waitFlags(fresh, "Ada", "2s")...); len(waitScanLines(r)) != 0 {
-		t.Fatalf("a fresh lock was scanned:\n%s", r.stdout)
+	{
+		r := invoke(t, "", waitFlags(fresh, "Ada", "2s")...)
+		require.Emptyf(t, len(waitScanLines(r)), "a fresh lock was scanned:\n%s", r.stdout)
 	}
 	clean, _ := busDir(t)
-	if r := invoke(t, "", waitFlags(clean, "Ada", "2s")...).mustCode(t, 0); len(waitScanLines(r)) != 0 {
-		t.Fatalf("a checkout with no lock was scanned:\n%s", r.stdout)
+	{
+		r := invoke(t, "", waitFlags(clean, "Ada", "2s")...).mustCode(t, 0)
+		require.Emptyf(t, len(waitScanLines(r)), "a checkout with no lock was scanned:\n%s", r.stdout)
 	}
 }
 
@@ -431,35 +381,23 @@ func TestWaitGoesOnWhenTheLockChangesDuringTheScan(t *testing.T) {
 	checkout, _ := busDir(t)
 	lock := plantLock(t, checkout, 2*time.Minute)
 	fi, err := os.Lstat(lock)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	old := fi.ModTime()
 	n := 0
 	replace := func() {
 		n++
-		if err := os.Rename(lock, fmt.Sprintf("%s.old%d", lock, n)); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(lock, []byte(fmt.Sprintf("replacement %d", n)), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Chtimes(lock, old, old); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.Rename(lock, fmt.Sprintf("%s.old%d", lock, n)))
+		require.NoError(t, os.WriteFile(lock, []byte(fmt.Sprintf("replacement %d", n)), 0o600))
+		require.NoError(t, os.Chtimes(lock, old, old))
 	}
 	var restoreSecond func()
 	restoreFirst, err := bus.HookIndexLockScanForTest(lock, func() {
 		replace()
 		r, err := bus.HookIndexLockScanForTest(lock, replace)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		restoreSecond = r
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	defer restoreFirst()
 	defer func() {
 		if restoreSecond != nil {
@@ -469,28 +407,20 @@ func TestWaitGoesOnWhenTheLockChangesDuringTheScan(t *testing.T) {
 
 	r := invoke(t, "", waitFlags(checkout, "Ada", "2s")...).mustCode(t, 0)
 	const changed = "WAIT: index.lock changed during the scan; waiting\n"
-	if r.stderr != changed+changed {
-		t.Fatalf("stderr = %q, want the changed line twice and nothing else", r.stderr)
-	}
-	if n != 2 {
-		t.Fatalf("the lock was replaced %d times, want 2 (under the first check and under the first poll)", n)
-	}
-	if repairs := waitRepairLines(r); len(repairs) != 0 {
-		t.Fatalf("claimed a repair of a lock that changed under it: %q\nstdout:\n%s", repairs, r.stdout)
+	require.Equalf(t, changed+changed, r.stderr, "stderr = %q, want the changed line twice and nothing else", r.stderr)
+	require.Equalf(t, 2, n, "the lock was replaced %d times, want 2 (under the first check and under the first poll)", n)
+	{
+		repairs := waitRepairLines(r)
+		require.Emptyf(t, len(repairs), "claimed a repair of a lock that changed under it: %q\nstdout:\n%s", repairs, r.stdout)
 	}
 	scans := waitScanLines(r)
-	if len(scans) != 2 {
-		t.Fatalf("want two WAIT SCAN receipts (one per changed scan), got %q", scans)
-	}
+	require.Equalf(t, 2, len(scans), "want two WAIT SCAN receipts (one per changed scan), got %q", scans)
 	for _, s := range scans {
-		if !scanReceipt.MatchString(s) {
-			t.Fatalf("scan receipt %q does not match %s", s, scanReceipt)
-		}
+		require.Truef(t, scanReceipt.MatchString(s), "scan receipt %q does not match %s", s, scanReceipt)
 	}
-	if got, err := os.ReadFile(lock); err != nil || string(got) != "replacement 2" {
-		t.Fatalf("the lock at the path after the wait: %q %v, want the second replacement untouched", got, err)
+	{
+		got, err := os.ReadFile(lock)
+		require.Falsef(t, err != nil || string(got) != "replacement 2", "the lock at the path after the wait: %q %v, want the second replacement untouched", got, err)
 	}
-	if !strings.Contains(r.stdout, "WAIT OK") {
-		t.Fatalf("the wait did not go on to its poll:\n%s", r.stdout)
-	}
+	require.Containsf(t, r.stdout, "WAIT OK", "the wait did not go on to its poll:\n%s", r.stdout)
 }

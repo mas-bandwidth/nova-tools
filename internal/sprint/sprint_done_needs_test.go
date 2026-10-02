@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // The sprint is done: an add that only opens a stream admits no card and
@@ -15,22 +17,23 @@ func TestSprintDoneOutlastsAnAddOfNoCardAndIsNeverOverdue(t *testing.T) {
 	accepted(w, "s1-1")
 	w.must(MergeStep(w.s, MergeReq{Stream: "s1"}))
 	w.must(Add(w.s, AddReq{Stream: "s2"}))
-	if p, _ := TickDone(w.s, TickReq{}); w.s.StreamCtl("s2") == nil || len(p.Notes) != 1 {
-		t.Fatalf("an add that only opens a stream: s2 %v, done %+v", w.s.StreamCtl("s2") != nil, p)
-	}
+	p, _ := TickDone(w.s, TickReq{})
+	require.NotNil(t, w.s.StreamCtl("s2"), "an add that only opens a stream: s2 %v, done %+v", w.s.StreamCtl("s2") != nil, p)
+	require.Len(t, p.Notes, 1, "an add that only opens a stream: s2 %v, done %+v", w.s.StreamCtl("s2") != nil, p)
 	w.must(tickDone(w.s, TickReq{}))
 	for _, g := range Inbox(InboxReq{Now: w.s.Now.Add(1000 * time.Hour), Open: w.s.Open, Recent: w.notes, Deadline: time.Minute}) {
-		if g.Type == NSprintDone && (g.Kind != Happened || g.Overdue || g.Marked || !g.Due.IsZero() || len(g.Decisions) != 0) {
-			t.Fatalf("the sprint is done, shown as a judgment or overdue: %+v", g)
+		if g.Type == NSprintDone {
+			require.Equal(t, Happened, g.Kind, "the sprint is done, shown as a judgment or overdue: %+v", g)
+			require.False(t, g.Overdue, "the sprint is done, shown as a judgment or overdue: %+v", g)
+			require.False(t, g.Marked, "the sprint is done, shown as a judgment or overdue: %+v", g)
+			require.True(t, g.Due.IsZero(), "the sprint is done, shown as a judgment or overdue: %+v", g)
+			require.Empty(t, g.Decisions, "the sprint is done, shown as a judgment or overdue: %+v", g)
 		}
 	}
-	if len(w.s.Open) != 0 {
-		t.Fatalf("the sprint done opened a judgment: %+v", w.s.Open)
-	}
+	require.Empty(t, w.s.Open, "the sprint done opened a judgment: %+v", w.s.Open)
 	w.must(Add(w.s, AddReq{Stream: "s2", Count: 1}))
-	if p, _ := TickDone(w.s, TickReq{}); !p.Empty() {
-		t.Fatalf("an add of a card left the sprint done")
-	}
+	p, _ = TickDone(w.s, TickReq{})
+	require.True(t, p.Empty(), "an add of a card left the sprint done")
 }
 
 // Every primary dropped, none landed: the sprint is done, 0 landed.
@@ -40,18 +43,17 @@ func TestSprintDoneWithNothingLanded(t *testing.T) {
 	w.must(Drop(w.s, DropReq{Sel: Sel{IDs: []string{"s1-1", "s1-2"}}, Reason: "obsolete"}))
 	w.must(tickDone(w.s, TickReq{}))
 	done := w.notesOf(NSprintDone)
-	if len(done) != 1 || done[0].What != "0 landed, 2 dropped" || len(w.s.Open) != 0 {
-		t.Fatalf("all dropped: %+v", done)
-	}
+	require.Len(t, done, 1, "all dropped: %+v", done)
+	require.Equal(t, "0 landed, 2 dropped", done[0].What, "all dropped: %+v", done)
+	require.Empty(t, w.s.Open, "all dropped: %+v", done)
 }
 
 // A sprint that never had a card is not done.
 func TestAnEmptySprintIsNotDone(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 0)
-	if p, _ := TickDone(w.s, TickReq{}); !p.Empty() {
-		t.Fatalf("an empty sprint is done: %+v", p)
-	}
+	p, _ := TickDone(w.s, TickReq{})
+	require.True(t, p.Empty(), "an empty sprint is done: %+v", p)
 }
 
 // Acknowledging a blocked judgment waives only the needs it names; a need
@@ -63,26 +65,24 @@ func TestAckWaivesOnlyTheNeedsItsJudgmentNames(t *testing.T) {
 	w.must(Drop(w.s, DropReq{Sel: Sel{IDs: []string{"s1-1"}}, Reason: "gone"}))
 	w.must(Drop(w.s, DropReq{Sel: Sel{IDs: []string{"s1-2"}}, Reason: "gone too"}))
 	open := w.openOn("b")
-	if len(open) != 2 || strings.Join(open[0].Note.Needs, ",")+"|"+strings.Join(open[1].Note.Needs, ",") != "s1-1|s1-2" {
-		t.Fatalf("blocked judgments on b: %+v", open)
-	}
+	require.Len(t, open, 2, "blocked judgments on b: %+v", open)
+	require.Equal(t, "s1-1|s1-2", strings.Join(open[0].Note.Needs, ",")+"|"+strings.Join(open[1].Note.Needs, ","), "blocked judgments on b: %+v", open)
 	// A resolve writes none again.
 	w.do(Resolve(w.s, ResolveReq{}))
-	if len(w.notesOf(NBlocked)) != 2 {
-		t.Fatalf("blocked notes after resolve: %d", len(w.notesOf(NBlocked)))
-	}
+	require.Len(t, w.notesOf(NBlocked), 2, "blocked notes after resolve: %d", len(w.notesOf(NBlocked)))
 	w.must(Ack(w.s, AckReq{Notes: []string{open[0].Note.ID}, Reason: "fine"}))
-	if b := w.s.Work.Card("b"); b.Col != Waiting || b.F("waived") != "s1-1" {
-		t.Fatalf("the first ack: %s waived=%q", b.Col, b.F("waived"))
-	}
+	b := w.s.Work.Card("b")
+	require.Equal(t, Waiting, b.Col, "the first ack: %s waived=%q", b.Col, b.F("waived"))
+	require.Equal(t, "s1-1", b.F("waived"), "the first ack: %s waived=%q", b.Col, b.F("waived"))
 	w.must(Ack(w.s, AckReq{Notes: []string{open[1].Note.ID}, Reason: "fine too"}))
-	if b := w.s.Work.Card("b"); b.Col != Ready || b.F("waived") != "s1-1,s1-2" {
-		t.Fatalf("the second ack: %s waived=%q", b.Col, b.F("waived"))
-	}
+	b = w.s.Work.Card("b")
+	require.Equal(t, Ready, b.Col, "the second ack: %s waived=%q", b.Col, b.F("waived"))
+	require.Equal(t, "s1-1,s1-2", b.F("waived"), "the second ack: %s waived=%q", b.Col, b.F("waived"))
 	needs, _ := NeedsOf(w.s, "b")
-	if len(needs) != 2 || !needs[0].Waived || !needs[1].Waived || needs[1].WaivedAt == "" {
-		t.Fatalf("needs of b: %+v", needs)
-	}
+	require.Len(t, needs, 2, "needs of b: %+v", needs)
+	require.True(t, needs[0].Waived, "needs of b: %+v", needs)
+	require.True(t, needs[1].Waived, "needs of b: %+v", needs)
+	require.NotEmpty(t, needs[1].WaivedAt, "needs of b: %+v", needs)
 	w.clean("waived")
 }
 

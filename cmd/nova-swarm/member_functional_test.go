@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/member"
 	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
@@ -34,13 +35,9 @@ var (
 
 func builtSprint(t *testing.T) string {
 	t.Helper()
-	if err := buildShared(); err != nil {
-		t.Fatalf("building the binaries these tests run: %v", err)
-	}
+	require.NoError(t, buildShared(), "building the binaries these tests run")
 	sprintOnce.Do(func() { sprintBin, sprintErr = build(builtDir, "nova-sprint", "./cmd/nova-sprint") })
-	if sprintErr != nil {
-		t.Fatalf("building nova-sprint: %v", sprintErr)
-	}
+	require.NoError(t, sprintErr, "building nova-sprint")
 	return sprintBin
 }
 
@@ -89,8 +86,8 @@ func (d *memberDrive) sprint(actor string, args ...string) (int, string, string)
 	code := 0
 	if ee, ok := err.(*exec.ExitError); ok {
 		code = ee.ExitCode()
-	} else if err != nil {
-		d.t.Fatalf("nova-sprint %s: %v", strings.Join(args, " "), err)
+	} else {
+		require.NoError(d.t, err, "nova-sprint %s", strings.Join(args, " "))
 	}
 	return code, out.String(), errb.String()
 }
@@ -118,9 +115,7 @@ func (d *memberDrive) worker() *sprintwire.Worker {
 func (d *memberDrive) must(args ...string) string {
 	d.t.Helper()
 	code, out, errb := d.sprint("coordinator", args...)
-	if code != 0 {
-		d.t.Fatalf("nova-sprint %s: exit %d\n%s%s", strings.Join(args, " "), code, out, errb)
-	}
+	require.Equal(d.t, 0, code, "nova-sprint %s: exit %d\n%s%s", strings.Join(args, " "), code, out, errb)
 	return out
 }
 
@@ -128,9 +123,7 @@ func (d *memberDrive) where() sprintWhere {
 	d.t.Helper()
 	var w sprintWhere
 	out := d.must("where", "--json")
-	if err := json.Unmarshal([]byte(out), &w); err != nil {
-		d.t.Fatalf("where --json: %v\n%s", err, out)
-	}
+	require.NoError(d.t, json.Unmarshal([]byte(out), &w), "where --json\n%s", out)
 	return w
 }
 
@@ -143,9 +136,7 @@ func (d *memberDrive) working(member string) int {
 		} `json:"cards"`
 	}
 	out := d.must("queue", "--as", member, "--json")
-	if err := json.Unmarshal([]byte(out), &q); err != nil {
-		d.t.Fatalf("queue --as %s --json: %v\n%s", member, err, out)
-	}
+	require.NoError(d.t, json.Unmarshal([]byte(out), &q), "queue --as %s --json\n%s", member, out)
 	n := 0
 	for _, c := range q.Cards {
 		if c.Col == "working" {
@@ -181,9 +172,7 @@ echo "fake harness: wrote RESULT.md in $(pwd)"
 func (d *memberDrive) member(as, harness string, reader bool) (*member.Member, *lockedBuf) {
 	d.t.Helper()
 	root := filepath.Join(d.t.TempDir(), as)
-	if err := os.MkdirAll(filepath.Join(root, "slots"), 0o755); err != nil {
-		d.t.Fatal(err)
-	}
+	require.NoError(d.t, os.MkdirAll(filepath.Join(root, "slots"), 0o755))
 	write(d.t, filepath.Join(root, "identity.tsv"), "owner\tname\temail\ntest-owner\tPool Worker\tpool@example.com\n")
 	rn := &nativeRunner{self: builtTool, harness: harness, model: "fake/fake-model", root: root, slots: filepath.Join(root, "slots"),
 		resultsRoot: filepath.Join(root, "results"), deadline: time.Minute, tokens: "unmetered", noWall: true, stderr: io.Discard}
@@ -230,9 +219,7 @@ func testMemberFunctionalDrive(t *testing.T) {
 	defer cancel()
 	d := &memberDrive{t: t, addr: "mem:" + filepath.Join(t.TempDir(), "sprint.twin"), bin: builtSprint(t)}
 	harness := filepath.Join(t.TempDir(), "harness.sh")
-	if err := testbin.WriteExecutable(harness, []byte(fakeHarness), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, testbin.WriteExecutable(harness, []byte(fakeHarness), 0o755))
 
 	origin := filepath.Join(t.TempDir(), "origin.git")
 	seed := filepath.Join(t.TempDir(), "seed")
@@ -252,39 +239,31 @@ func testMemberFunctionalDrive(t *testing.T) {
 	maxWorking := 0
 	var w sprintWhere
 	for {
-		if ctx.Err() != nil {
-			t.Fatalf("the sprint did not reach 3 done and 6 reads ok in time: %+v\nm1:\n%s\nreader-a:\n%s\nreader-b:\n%s", w, mOut, aOut, bOut)
-		}
+		require.NoError(t, ctx.Err(), "the sprint did not reach 3 done and 6 reads ok in time: %+v\nm1:\n%s\nreader-a:\n%s\nreader-b:\n%s", w, mOut, aOut, bOut)
 		d.must("tick")
 		for _, m := range []*member.Member{m1, ra, rb} {
-			if _, err := m.Tick(time.Now()); err != nil {
-				t.Fatalf("a member's pass: %v", err)
-			}
+			_, err := m.Tick(time.Now())
+			require.NoError(t, err, "a member's pass")
 		}
 		if n := d.working("m1"); n > maxWorking {
 			maxWorking = n
 		}
-		if maxWorking > 2 {
-			t.Fatalf("m1 has %d cards working at once, its width is 2", maxWorking)
-		}
+		require.LessOrEqual(t, maxWorking, 2, "m1 has %d cards working at once, its width is 2", maxWorking)
 		w = d.where()
 		if cellInt(w, "fleet", "m1", "done") == 3 && cellInt(w, "readers", "reader-a", "ok")+cellInt(w, "readers", "reader-b", "ok") == 6 {
 			break
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	if maxWorking != 2 {
-		t.Errorf("the most cards m1 had working at once was %d, want 2 (width 2, three ready)", maxWorking)
-	}
+	assert.Equal(t, 2, maxWorking, "the most cards m1 had working at once was %d, want 2 (width 2, three ready)", maxWorking)
 	// Each card ran once, and every report was taken: a verb refused (exit 1)
 	// is a fault of the loop.
 	for _, tc := range []struct{ name, out, verb string }{{"m1", "\n" + mOut.String(), "finish"}, {"reader-a", "\n" + aOut.String(), "read"}, {"reader-b", "\n" + bOut.String(), "read"}} {
 		if strings.Contains(tc.out, "refused") || strings.Contains(tc.out, "exit=1") {
 			t.Errorf("%s: a verb was refused:\n%s", tc.name, tc.out)
 		}
-		if n := strings.Count(tc.out, "\nstart "); n != 3 {
-			t.Errorf("%s started %d children, want 3 (one a card):\n%s", tc.name, n, tc.out)
-		}
+		n := strings.Count(tc.out, "\nstart ")
+		assert.Equal(t, 3, n, "%s started %d children, want 3 (one a card):\n%s", tc.name, n, tc.out)
 		if n := strings.Count(tc.out, "\n"+tc.verb+" "); n < 3 || strings.Count(tc.out, " exit=0\n") != 3 {
 			t.Errorf("%s: want %s reported 3 times with exit=0:\n%s", tc.name, tc.verb, tc.out)
 		}
@@ -299,13 +278,11 @@ func testMemberFunctionalDrive(t *testing.T) {
 
 	d.must("accept", "--read-ok")
 	w = d.where()
-	if got := cellInt(w, "merge", "a", "queued"); got != 3 {
-		t.Fatalf("after accept --read-ok the merge queue holds %d, want 3: %+v", got, w.Tables["merge"])
-	}
+	got := cellInt(w, "merge", "a", "queued")
+	require.Equal(t, 3, got, "after accept --read-ok the merge queue holds %d, want 3: %+v", got, w.Tables["merge"])
 	d.must("merge", "--stream", "a", "--batch", "3", "--epoch", fmt.Sprint(w.Epoch))
 	d.must("tick") // the landing reaches the work table at the next tick's pump (tla/DirtyTick.tla)
 	w = d.where()
-	if w.Landed != 3 || w.All != 3 {
-		t.Fatalf("landed %d of %d, want 3 of 3: %+v", w.Landed, w.All, w.Tables)
-	}
+	require.Equal(t, int64(3), w.Landed, "landed %d of %d, want 3 of 3: %+v", w.Landed, w.All, w.Tables)
+	require.Equal(t, int64(3), w.All, "landed %d of %d, want 3 of 3: %+v", w.Landed, w.All, w.Tables)
 }

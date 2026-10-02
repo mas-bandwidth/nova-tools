@@ -2,8 +2,10 @@ package swarm
 
 import (
 	"os"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // DeepSeek's read 5, finding 1. The FIRST shape of the Windows identity fix kept one
@@ -23,15 +25,11 @@ func TestNoProcessLayerFileKeepsIdentityOfItsOwn(t *testing.T) {
 	for _, name := range []string{"proc_windows.go", "proc_unix.go", "proc_other.go", "proc_linux.go",
 		"proc_darwin.go", "proc_bsd.go", "deadline.go"} {
 		raw, err := os.ReadFile(name)
-		if err != nil {
-			t.Fatalf("the process layer wants %s: %v", name, err)
-		}
+		require.NoError(t, err, "the process layer wants %s: %v", name, err)
 		body := string(raw)
 		for _, forbidden := range []string{"sync.Map", "map[int]", "var known", "func identify", "func noteChild"} {
-			if strings.Contains(body, forbidden) {
-				t.Errorf("%s holds %q: a pid's identity belongs to the job that recorded it, never to a table this file keeps",
-					name, forbidden)
-			}
+			assert.NotContains(t, body, forbidden, "%s holds %q: a pid's identity belongs to the job that recorded it, never to a table this file keeps",
+				name, forbidden)
 		}
 	}
 	// And every question about a pid takes the identity beside it, so the caller cannot
@@ -43,11 +41,7 @@ func TestNoProcessLayerFileKeepsIdentityOfItsOwn(t *testing.T) {
 		"func KillGroup(pgid int, started string)",
 	} {
 		raw, err := os.ReadFile("proc_windows.go")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(string(raw), decl) {
-			t.Errorf("the process layer wants %q", decl)
-		}
+		require.NoError(t, err)
+		assert.Contains(t, string(raw), decl, "the process layer wants %q", decl)
 	}
 }

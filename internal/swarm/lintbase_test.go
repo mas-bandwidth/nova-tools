@@ -68,18 +68,12 @@ func baseRepo(t *testing.T) (dir, sha string) {
 		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
 		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
 		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
+		require.NoError(t, err, "git %v: %v\n%s", args, err, out)
 		return strings.TrimSpace(string(out))
 	}
 	git("init", "-q")
-	if err := os.MkdirAll(filepath.Join(dir, "internal", "decide"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "internal", "decide", "decide.go"), []byte("package decide\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "internal", "decide"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "internal", "decide", "decide.go"), []byte("package decide\n"), 0o644))
 	git("add", ".")
 	git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "base")
 	return dir, git("rev-parse", "HEAD")
@@ -127,26 +121,21 @@ func TestLintRefusesPushSteps(t *testing.T) {
 		"RULES. Network is limited to the one leased push and read-only `gh api` GETs; no `gh`, no push.",
 	)
 	fs := findingsFor(LintCardBase(holdfix, bc), "no-push-steps")
-	if len(fs) != 3 {
-		t.Fatalf("the holdfix card's STEP 2 gh, STEP 6 push and STEP 7 gh are three refusals, got %d: %v", len(fs), fs)
-	}
+	require.Len(t, fs, 3, "the holdfix card's STEP 2 gh, STEP 6 push and STEP 7 gh are three refusals, got %d: %v", len(fs), fs)
 	var sawPush, sawGh bool
 	for _, f := range fs {
 		sawPush = sawPush || strings.Contains(f.Excerpt, "git push")
 		sawGh = sawGh || strings.Contains(f.Excerpt, "gh api")
-		if strings.Contains(f.Excerpt, "RULES") {
-			t.Fatalf("the RULES paragraph is not a STEP: %v", f)
-		}
+		require.NotContains(t, f.Excerpt, "RULES", "the RULES paragraph is not a STEP: %v", f)
 	}
-	if !sawPush || !sawGh {
-		t.Fatalf("the refusals quote the push and the gh line, got %v", fs)
-	}
+	require.True(t, sawPush, "the refusals quote the push and the gh line, got %v", fs)
+	require.True(t, sawGh, "the refusals quote the push and the gh line, got %v", fs)
 
 	// `git -c ... push` is a push, and a markdown `## STEP` heading is a STEP.
 	flagged := baseCard(nil, "## STEP 1. Enter.", "", "cd repo", "", "## STEP 2. Ship.", "", "git -c user.name=Rowan push origin HEAD")
-	if fs := findingsFor(LintCardBase(flagged, bc), "no-push-steps"); len(fs) != 1 || fs[0].Line == 0 {
-		t.Fatalf("`git -c k=v push` under a `## STEP` heading is refused, got %v", fs)
-	}
+	fs = findingsFor(LintCardBase(flagged, bc), "no-push-steps")
+	require.Len(t, fs, 1, "`git -c k=v push` under a `## STEP` heading is refused, got %v", fs)
+	require.NotZero(t, fs[0].Line, "`git -c k=v push` under a `## STEP` heading is refused, got %v", fs)
 
 	// Passes: a card that ends at a local commit and says `no gh, no push` only in
 	// RULES and in the header, and whose STEPs mention pushing in words, not commands.
@@ -157,9 +146,8 @@ func TestLintRefusesPushSteps(t *testing.T) {
 		"",
 		"RULES. No network beyond the clone; no `gh`, no push, no PR.",
 	)
-	if fs := findingsFor(LintCardBase(clean, bc), "no-push-steps"); len(fs) != 0 {
-		t.Fatalf("a card whose STEPs run no push and no gh passes, got %v", fs)
-	}
+	fs = findingsFor(LintCardBase(clean, bc), "no-push-steps")
+	require.Empty(t, fs, "a card whose STEPs run no push and no gh passes, got %v", fs)
 }
 
 func TestLintLegInFleetTable(t *testing.T) {
@@ -169,41 +157,37 @@ func TestLintLegInFleetTable(t *testing.T) {
 
 	// nx-r1633: `LEG: lisp`, which no bench carries (the fleet's leg is sbcl).
 	fs := findingsFor(LintCardBase(baseCard(map[string]string{"LEG": "lisp"}), bc), "leg-in-fleet")
-	if len(fs) != 1 || !strings.Contains(fs[0].Excerpt, `"lisp"`) || !strings.Contains(fs[0].Excerpt, "sbcl") {
-		t.Fatalf("LEG: lisp is refused, naming the leg and the table, got %v", fs)
-	}
-	if fs := findingsFor(LintCardBase(baseCard(map[string]string{"LEG": "sbcl"}), bc), "leg-in-fleet"); len(fs) != 0 {
-		t.Fatalf("LEG: sbcl is in the table and passes, got %v", fs)
-	}
-	if fs := findingsFor(LintCardBase(baseCard(map[string]string{"LEG": "Go"}), bc), "leg-in-fleet"); len(fs) != 0 {
-		t.Fatalf("a leg is compared without case, got %v", fs)
-	}
+	require.Len(t, fs, 1, "LEG: lisp is refused, naming the leg and the table, got %v", fs)
+	require.Contains(t, fs[0].Excerpt, `"lisp"`, "LEG: lisp is refused, naming the leg and the table, got %v", fs)
+	require.Contains(t, fs[0].Excerpt, "sbcl", "LEG: lisp is refused, naming the leg and the table, got %v", fs)
+	fs = findingsFor(LintCardBase(baseCard(map[string]string{"LEG": "sbcl"}), bc), "leg-in-fleet")
+	require.Empty(t, fs, "LEG: sbcl is in the table and passes, got %v", fs)
+	fs = findingsFor(LintCardBase(baseCard(map[string]string{"LEG": "Go"}), bc), "leg-in-fleet")
+	require.Empty(t, fs, "a leg is compared without case, got %v", fs)
 	// LEGS: is a list, and every entry is looked up.
-	if fs := findingsFor(LintCardBase(baseCard(map[string]string{"LEG": "\x00", "LEGS": "go, lisp"}), bc), "leg-in-fleet"); len(fs) != 1 || !strings.Contains(fs[0].Excerpt, `"lisp"`) || strings.Contains(fs[0].Excerpt, `"go"`) {
-		t.Fatalf("LEGS: go, lisp refuses lisp alone, got %v", fs)
-	}
-	if fs := findingsFor(LintCardBase(baseCard(map[string]string{"LEG": "\x00"}), bc), "leg-in-fleet"); len(fs) != 1 {
-		t.Fatalf("a coding card with no LEG: is refused, got %v", fs)
-	}
+	fs = findingsFor(LintCardBase(baseCard(map[string]string{"LEG": "\x00", "LEGS": "go, lisp"}), bc), "leg-in-fleet")
+	require.Len(t, fs, 1, "LEGS: go, lisp refuses lisp alone, got %v", fs)
+	require.Contains(t, fs[0].Excerpt, `"lisp"`, "LEGS: go, lisp refuses lisp alone, got %v", fs)
+	require.NotContains(t, fs[0].Excerpt, `"go"`, "LEGS: go, lisp refuses lisp alone, got %v", fs)
+	fs = findingsFor(LintCardBase(baseCard(map[string]string{"LEG": "\x00"}), bc), "leg-in-fleet")
+	require.Len(t, fs, 1, "a coding card with no LEG: is refused, got %v", fs)
 	noTable := bc
 	noTable.Legs = nil
-	if fs := findingsFor(LintCardBase(baseCard(nil), noTable), "leg-in-fleet"); len(fs) != 1 || !strings.Contains(fs[0].Excerpt, "MISSING") {
-		t.Fatalf("no fleet table handed over is MISSING, never a pass, got %v", fs)
-	}
+	fs = findingsFor(LintCardBase(baseCard(nil), noTable), "leg-in-fleet")
+	require.Len(t, fs, 1, "no fleet table handed over is MISSING, never a pass, got %v", fs)
+	require.Contains(t, fs[0].Excerpt, "MISSING", "no fleet table handed over is MISSING, never a pass, got %v", fs)
 
 	// The table file: one leg per line, or a TSV whose first column is the leg; a
 	// header naming `leg` and `#` comments are skipped.
 	p := filepath.Join(t.TempDir(), "legs.tsv")
-	if err := os.WriteFile(p, []byte("# fleet legs\nleg\tbenches\ngo\thulk,vision\nsbcl\thulk\n\nrust\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(p, []byte("# fleet legs\nleg\tbenches\ngo\thulk,vision\nsbcl\thulk\n\nrust\n"), 0o644))
 	legs, err := ReadFleetLegs(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(legs) != 3 || !legs["go"] || !legs["sbcl"] || !legs["rust"] || legs["leg"] {
-		t.Fatalf("ReadFleetLegs read %v, want go, sbcl, rust", legs)
-	}
+	require.NoError(t, err)
+	require.Len(t, legs, 3, "ReadFleetLegs read %v, want go, sbcl, rust", legs)
+	require.True(t, legs["go"], "ReadFleetLegs read %v, want go, sbcl, rust", legs)
+	require.True(t, legs["sbcl"], "ReadFleetLegs read %v, want go, sbcl, rust", legs)
+	require.True(t, legs["rust"], "ReadFleetLegs read %v, want go, sbcl, rust", legs)
+	require.False(t, legs["leg"], "ReadFleetLegs read %v, want go, sbcl, rust", legs)
 }
 
 func TestLintDeadlineAtKindP95(t *testing.T) {
@@ -213,61 +197,53 @@ func TestLintDeadlineAtKindP95(t *testing.T) {
 
 	// card-read3-nova-tools-2708: DEADLINE 1500 on a kind whose DONE cards ran to 1526 s.
 	fs := findingsFor(LintCardBase(baseCard(map[string]string{"KIND": "read", "DEADLINE": "1500"}), bc), "deadline-p95")
-	if len(fs) != 1 || !strings.Contains(fs[0].Excerpt, "1500") || !strings.Contains(fs[0].Excerpt, "1526") || fs[0].Line != 3 {
-		t.Fatalf("DEADLINE below the kind p95 is refused on the DEADLINE: line with both numbers, got %v", fs)
-	}
+	require.Len(t, fs, 1, "DEADLINE below the kind p95 is refused on the DEADLINE: line with both numbers, got %v", fs)
+	require.Contains(t, fs[0].Excerpt, "1500", "DEADLINE below the kind p95 is refused on the DEADLINE: line with both numbers, got %v", fs)
+	require.Contains(t, fs[0].Excerpt, "1526", "DEADLINE below the kind p95 is refused on the DEADLINE: line with both numbers, got %v", fs)
+	require.Equal(t, 3, fs[0].Line, "DEADLINE below the kind p95 is refused on the DEADLINE: line with both numbers, got %v", fs)
 	// At the p95 passes (at or above), and so does above it.
 	for _, d := range []string{"1526", "2700", "2700s", "finish within 30 minutes"} {
-		if fs := findingsFor(LintCardBase(baseCard(map[string]string{"KIND": "read", "DEADLINE": d}), bc), "deadline-p95"); len(fs) != 0 {
-			t.Fatalf("DEADLINE: %s is at or above 1526 s and passes, got %v", d, fs)
-		}
+		fs = findingsFor(LintCardBase(baseCard(map[string]string{"KIND": "read", "DEADLINE": d}), bc), "deadline-p95")
+		require.Empty(t, fs, "DEADLINE: %s is at or above 1526 s and passes, got %v", d, fs)
 	}
-	if fs := findingsFor(LintCardBase(baseCard(map[string]string{"KIND": "read", "DEADLINE": "finish within 20 minutes"}), bc), "deadline-p95"); len(fs) != 1 {
-		t.Fatalf("finish within 20 minutes is 1200 s, below 1526, got %v", fs)
-	}
+	fs = findingsFor(LintCardBase(baseCard(map[string]string{"KIND": "read", "DEADLINE": "finish within 20 minutes"}), bc), "deadline-p95")
+	require.Len(t, fs, 1, "finish within 20 minutes is 1200 s, below 1526, got %v", fs)
 	// A kind the table does not hold is MISSING, unless the table has a `*` row.
-	if fs := findingsFor(LintCardBase(baseCard(map[string]string{"KIND": "mutation-kill", "DEADLINE": "9999"}), bc), "deadline-p95"); len(fs) != 1 || !strings.Contains(fs[0].Excerpt, "MISSING") {
-		t.Fatalf("a kind with no measured p95 is MISSING, never a pass, got %v", fs)
-	}
+	fs = findingsFor(LintCardBase(baseCard(map[string]string{"KIND": "mutation-kill", "DEADLINE": "9999"}), bc), "deadline-p95")
+	require.Len(t, fs, 1, "a kind with no measured p95 is MISSING, never a pass, got %v", fs)
+	require.Contains(t, fs[0].Excerpt, "MISSING", "a kind with no measured p95 is MISSING, never a pass, got %v", fs)
 	star := BaseCheck{Legs: bc.Legs, P95: KindP95{"*": 1800}}
-	if fs := findingsFor(LintCardBase(baseCard(map[string]string{"KIND": "mutation-kill", "DEADLINE": "1200"}), star), "deadline-p95"); len(fs) != 1 || !strings.Contains(fs[0].Excerpt, "1800") {
-		t.Fatalf("the `*` row answers for a kind the table does not name, got %v", fs)
-	}
+	fs = findingsFor(LintCardBase(baseCard(map[string]string{"KIND": "mutation-kill", "DEADLINE": "1200"}), star), "deadline-p95")
+	require.Len(t, fs, 1, "the `*` row answers for a kind the table does not name, got %v", fs)
+	require.Contains(t, fs[0].Excerpt, "1800", "the `*` row answers for a kind the table does not name, got %v", fs)
 	for name, h := range map[string]map[string]string{
 		"no DEADLINE":  {"KIND": "read", "DEADLINE": "\x00"},
 		"not a number": {"KIND": "read", "DEADLINE": "soon"},
 		"no KIND":      {"KIND": "\x00"},
 	} {
-		if fs := findingsFor(LintCardBase(baseCard(h), bc), "deadline-p95"); len(fs) != 1 {
-			t.Fatalf("%s is refused, got %v", name, fs)
-		}
+		fs = findingsFor(LintCardBase(baseCard(h), bc), "deadline-p95")
+		require.Len(t, fs, 1, "%s is refused, got %v", name, fs)
 	}
 	none := bc
 	none.P95 = nil
-	if fs := findingsFor(LintCardBase(baseCard(nil), none), "deadline-p95"); len(fs) != 1 || !strings.Contains(fs[0].Excerpt, "MISSING") {
-		t.Fatalf("no p95 table handed over is MISSING, got %v", fs)
-	}
+	fs = findingsFor(LintCardBase(baseCard(nil), none), "deadline-p95")
+	require.Len(t, fs, 1, "no p95 table handed over is MISSING, got %v", fs)
+	require.Contains(t, fs[0].Excerpt, "MISSING", "no p95 table handed over is MISSING, got %v", fs)
 
 	// The table file: `<kind> <seconds>` per line, TSV or spaces, `#` comments and a
 	// header row skipped, an `s` suffix allowed.
 	p := filepath.Join(t.TempDir(), "p95.tsv")
-	if err := os.WriteFile(p, []byte("# p95 of DONE walls by kind\nkind\tp95_s\nread\t1526\nfix-red 1600s\n*\t1800\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(p, []byte("# p95 of DONE walls by kind\nkind\tp95_s\nread\t1526\nfix-red 1600s\n*\t1800\n"), 0o644))
 	p95, err := ReadKindP95(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(p95) != 3 || p95["read"] != 1526 || p95["fix-red"] != 1600 || p95["*"] != 1800 {
-		t.Fatalf("ReadKindP95 read %v", p95)
-	}
+	require.NoError(t, err)
+	require.Len(t, p95, 3, "ReadKindP95 read %v", p95)
+	require.Equal(t, 1526, p95["read"], "ReadKindP95 read %v", p95)
+	require.Equal(t, 1600, p95["fix-red"], "ReadKindP95 read %v", p95)
+	require.Equal(t, 1800, p95["*"], "ReadKindP95 read %v", p95)
 	bad := filepath.Join(t.TempDir(), "bad.tsv")
-	if err := os.WriteFile(bad, []byte("read\t1526\nfix\tlater\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ReadKindP95(bad); err == nil {
-		t.Fatal("a row after the first whose seconds are not a number is an error, not a skipped row")
-	}
+	require.NoError(t, os.WriteFile(bad, []byte("read\t1526\nfix\tlater\n"), 0o644))
+	_, err = ReadKindP95(bad)
+	require.Error(t, err, "a row after the first whose seconds are not a number is an error, not a skipped row")
 }
 
 // TestTestDefinedAtRefusesATreeThatIsNotAFullSha holds the shape git grep is given: no

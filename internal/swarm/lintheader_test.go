@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // THE FOUR TOKENS OF SPEC-TOOLWORK §5 RULE 1 (issue #1651), RED FIRST.
@@ -70,9 +73,7 @@ func TestCardHeaderMissingKindDrawsKindDeclared(t *testing.T) {
 	h := fullHeader()[1:] // everything but KIND:
 	fs := LintCardHeader(typedCard(h...), nil, false)
 	f := drew(t, fs, "kind-declared")
-	if f.Line < 1 {
-		t.Errorf("a finding names a 1-based line, got %d", f.Line)
-	}
+	assert.GreaterOrEqual(t, f.Line, 1, "a finding names a 1-based line, got %d", f.Line)
 }
 
 // An empty value is not a declaration: `KIND:` with nothing after it leaves the parser's
@@ -82,18 +83,15 @@ func TestCardHeaderEmptyKindValueDrawsKindDeclared(t *testing.T) {
 
 	fs := LintCardHeader(typedCard(append([]string{"KIND:"}, fullHeader()[1:]...)...), nil, false)
 	f := drew(t, fs, "kind-declared")
-	if f.Line != 2 {
-		t.Errorf("the empty KIND: line is line 2, the finding says %d", f.Line)
-	}
+	assert.Equal(t, 2, f.Line, "the empty KIND: line is line 2, the finding says %d", f.Line)
 }
 
 // NEGATIVE CONTROL for kind-declared: the same card with a kind draws nothing at all.
 func TestCardHeaderFullHeaderDrawsNothing(t *testing.T) {
 	t.Parallel()
 
-	if fs := LintCardHeader(typedCard(fullHeader()...), nil, true); len(fs) != 0 {
-		t.Fatalf("a complete header is clean, drew %v", fs)
-	}
+	fs := LintCardHeader(typedCard(fullHeader()...), nil, true)
+	require.Empty(t, fs, "a complete header is clean, drew %v", fs)
 }
 
 // ---- test-named ------------------------------------------------------------------
@@ -123,9 +121,7 @@ func TestCardHeaderMalformedTestDrawsTestNamed(t *testing.T) {
 		h := append([]string{}, fullHeader()...)
 		h[2] = bad
 		fs := LintCardHeader(typedCard(h...), nil, false)
-		if !checks(fs)["test-named"] {
-			t.Errorf("%q is not a TEST: the gate can use; drew %v", bad, checks(fs))
-		}
+		assert.True(t, checks(fs)["test-named"], "%q is not a TEST: the gate can use; drew %v", bad, checks(fs))
 	}
 }
 
@@ -140,18 +136,16 @@ func TestCardHeaderTestNoneDrawsNothing(t *testing.T) {
 	h := append([]string{}, fullHeader()...)
 	h[0] = "KIND: read"
 	h[2] = "TEST: none the read changes no code"
-	if fs := LintCardHeader(typedCard(h...), nil, true); len(fs) != 0 {
-		t.Fatalf("`TEST: none <why>` is a declaration, drew %v", fs)
-	}
+	fs := LintCardHeader(typedCard(h...), nil, true)
+	require.Empty(t, fs, "`TEST: none <why>` is a declaration, drew %v", fs)
 	h[2] = "TEST: none"
-	if fs := LintCardHeader(typedCard(h...), nil, true); !checks(fs)["test-named"] || !strings.Contains(fs[0].Excerpt, "says no why") {
-		t.Fatalf("a bare `TEST: none` drew %v, want test-named: says no why", fs)
-	}
+	fs = LintCardHeader(typedCard(h...), nil, true)
+	require.True(t, checks(fs)["test-named"], "a bare `TEST: none` drew %v, want test-named: says no why", fs)
+	require.Contains(t, fs[0].Excerpt, "says no why", "a bare `TEST: none` drew %v, want test-named: says no why", fs)
 	h = append([]string{}, fullHeader()...)
 	h[2] = "TEST: -tags functional internal/swarm TestA"
-	if fs := LintCardHeader(typedCard(h...), nil, true); len(fs) != 0 {
-		t.Fatalf("a tagged TEST drew %v", fs)
-	}
+	fs = LintCardHeader(typedCard(h...), nil, true)
+	require.Empty(t, fs, "a tagged TEST drew %v", fs)
 }
 
 // ---- paths-declared --------------------------------------------------------------
@@ -180,9 +174,7 @@ func TestCardHeaderBadPathsDrawPathsDeclared(t *testing.T) {
 		h := append([]string{}, fullHeader()...)
 		h[1] = bad
 		fs := LintCardHeader(typedCard(h...), nil, false)
-		if !checks(fs)["paths-declared"] {
-			t.Errorf("%q is not a PATHS: the gate can use; drew %v", bad, checks(fs))
-		}
+		assert.True(t, checks(fs)["paths-declared"], "%q is not a PATHS: the gate can use; drew %v", bad, checks(fs))
 	}
 }
 
@@ -207,9 +199,8 @@ func TestCardHeaderGoodPathsDrawNothing(t *testing.T) {
 	} {
 		h := append([]string{}, fullHeader()...)
 		h[1] = good
-		if fs := LintCardHeader(typedCard(h...), nil, true); len(fs) != 0 {
-			t.Errorf("%q is a PATHS: the gate can use, drew %v", good, fs)
-		}
+		fs := LintCardHeader(typedCard(h...), nil, true)
+		assert.Empty(t, fs, "%q is a PATHS: the gate can use, drew %v", good, fs)
 	}
 }
 
@@ -218,9 +209,7 @@ func TestCardHeaderGoodPathsDrawNothing(t *testing.T) {
 func writeTrust(t *testing.T, body string) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "trust.tsv")
-	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(p, []byte(body), 0o644))
 	return p
 }
 
@@ -237,17 +226,11 @@ func TestCardHeaderPausedKindDrawsPausedAndTheTrialRemedy(t *testing.T) {
 		"",
 	}, "\n"))
 	trust, err := ReadTrustFixture(p)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	fs := LintCardHeader(typedCard(fullHeader()...), trust, false)
 	f := drew(t, fs, "paused")
-	if !strings.Contains(f.Excerpt, "fix-red") {
-		t.Errorf("the finding names the paused kind: %q", f.Excerpt)
-	}
-	if !strings.Contains(CardHeaderRemedies["paused"], "trust --set trial") {
-		t.Errorf("the paused remedy is the `trust --set trial` command: %q", CardHeaderRemedies["paused"])
-	}
+	assert.Contains(t, f.Excerpt, "fix-red", "the finding names the paused kind: %q", f.Excerpt)
+	assert.Contains(t, CardHeaderRemedies["paused"], "trust --set trial", "the paused remedy is the `trust --set trial` command: %q", CardHeaderRemedies["paused"])
 }
 
 // NEGATIVE CONTROL for paused: the same fixture, a kind that is on trial in it.
@@ -256,12 +239,9 @@ func TestCardHeaderTrialKindDrawsNoPaused(t *testing.T) {
 
 	p := writeTrust(t, "TRUST kind=fix-red area=- state=trial cards=0/10 pass=- need=0.80 run_of_fails=0/3 since=- by=-\n")
 	trust, err := ReadTrustFixture(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if fs := LintCardHeader(typedCard(fullHeader()...), trust, true); len(fs) != 0 {
-		t.Fatalf("a kind on trial is cut and launched, drew %v", fs)
-	}
+	require.NoError(t, err)
+	fs := LintCardHeader(typedCard(fullHeader()...), trust, true)
+	require.Empty(t, fs, "a kind on trial is cut and launched, drew %v", fs)
 }
 
 // NEGATIVE CONTROL for paused: with no fixture there is no state, and the lint says
@@ -269,9 +249,8 @@ func TestCardHeaderTrialKindDrawsNoPaused(t *testing.T) {
 func TestCardHeaderNoTrustFixtureDrawsNoPaused(t *testing.T) {
 	t.Parallel()
 
-	if fs := LintCardHeader(typedCard(fullHeader()...), nil, true); len(fs) != 0 {
-		t.Fatalf("no trust state is not a paused state, drew %v", fs)
-	}
+	fs := LintCardHeader(typedCard(fullHeader()...), nil, true)
+	require.Empty(t, fs, "no trust state is not a paused state, drew %v", fs)
 }
 
 // ---- the header block is the parser's block --------------------------------------
@@ -301,9 +280,8 @@ func TestCardHeaderUnknownKeyDoesNotEndTheBlock(t *testing.T) {
 
 	h := append([]string{}, fullHeader()...)
 	h = append(h[:2], append([]string{"MODE: explore"}, h[2:]...)...)
-	if fs := LintCardHeader(typedCard(h...), nil, true); len(fs) != 0 {
-		t.Fatalf("an unknown KEY: line is read past, not stopped at; drew %v", fs)
-	}
+	fs := LintCardHeader(typedCard(h...), nil, true)
+	require.Empty(t, fs, "an unknown KEY: line is read past, not stopped at; drew %v", fs)
 }
 
 // NEGATIVE CONTROL for the whole set: a card with no typed header at all is a card of
@@ -313,14 +291,11 @@ func TestCardHeaderUntypedCardIsCheckedOnlyWhenRequired(t *testing.T) {
 	t.Parallel()
 
 	raw := typedCard()
-	if fs := LintCardHeader(raw, nil, false); len(fs) != 0 {
-		t.Fatalf("an untyped card is not header-checked unless asked, drew %v", fs)
-	}
+	fs := LintCardHeader(raw, nil, false)
+	require.Empty(t, fs, "an untyped card is not header-checked unless asked, drew %v", fs)
 	got := checks(LintCardHeader(raw, nil, true))
 	for _, want := range []string{"kind-declared", "paths-declared", "test-named"} {
-		if !got[want] {
-			t.Errorf("a required header draws %s on a card that has none; drew %v", want, got)
-		}
+		assert.True(t, got[want], "a required header draws %s on a card that has none; drew %v", want, got)
 	}
 }
 
@@ -329,11 +304,7 @@ func TestCardHeaderEveryTokenHasARemedy(t *testing.T) {
 	t.Parallel()
 
 	for _, tok := range CardHeaderChecks() {
-		if strings.TrimSpace(CardHeaderRemedies[tok]) == "" {
-			t.Errorf("%s carries no remedy line", tok)
-		}
+		assert.NotEmpty(t, strings.TrimSpace(CardHeaderRemedies[tok]), "%s carries no remedy line", tok)
 	}
-	if len(CardHeaderChecks()) != 4 {
-		t.Errorf("§5 rule 1 names four tokens, this holds %v", CardHeaderChecks())
-	}
+	assert.Len(t, CardHeaderChecks(), 4, "§5 rule 1 names four tokens, this holds %v", CardHeaderChecks())
 }

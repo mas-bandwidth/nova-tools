@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"github.com/stretchr/testify/require"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,32 +32,27 @@ func TestHelpExampleLinesRunAsPrinted(t *testing.T) {
 	t.Parallel()
 
 	lines := exampleBlockLines(usage)
-	if len(lines) == 0 {
-		t.Fatal("the usage banner's `example:` blocks hold no line; this test would pass by running nothing")
-	}
+	require.False(t, len(lines) == 0, "the usage banner's `example:` blocks hold no line; this test would pass by running nothing")
 
 	setup := fixtureSetupLine(usage)
-	if setup == "" {
-		t.Fatalf("the usage banner has no fixture setup line above the block, so a stranger pasting it names\n"+
-			"inputs they have not made (nova-tools #1455: an example exiting 2 is a broken example).\n"+
-			"The missing line is:\n  %s", wantFixtureSetup)
-	}
+	require.False(t, setup == "", "the usage banner has no fixture setup line above the block, so a stranger pasting it names\n"+
+		"inputs they have not made (nova-tools #1455: an example exiting 2 is a broken example).\n"+
+		"The missing line is:\n  %s", wantFixtureSetup)
 	assert.NotContains(t, setup, "cmd/nova-tokens/testdata", "the setup still depends on a source checkout")
 
 	bin := buildExampleBinary(t)
 
 	root := t.TempDir()
-	if exit, out := runExampleLine(t, root, filepath.Dir(bin), setup); exit != 0 {
-		t.Fatalf("the fixture setup line exits %d, want 0:\n  %s\nits first output line: %s",
+	{
+		exit, out := runExampleLine(t, root, filepath.Dir(bin), setup)
+		require.False(t, exit != 0, "the fixture setup line exits %d, want 0:\n  %s\nits first output line: %s",
 			exit, setup, exampleFirstLine(out))
 	}
 
 	for _, line := range lines {
 		exit, out := runExampleLine(t, root, filepath.Dir(bin), line)
-		if exit != 0 {
-			t.Errorf("the example `%s` exits %d, want 0 -- a line a stranger pastes must run as printed:\nfirst output line: %s",
-				line, exit, exampleFirstLine(out))
-		}
+		assert.False(t, exit != 0, "the example `%s` exits %d, want 0 -- a line a stranger pastes must run as printed:\nfirst output line: %s",
+			line, exit, exampleFirstLine(out))
 	}
 }
 
@@ -114,8 +110,9 @@ func buildExampleBinary(t *testing.T) string {
 	cmd := exec.Command("go", "build", "-o", bin, ".")
 	cmd.Env = goenv.Clean(os.Environ())
 	cmd.Dir = "."
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("building nova-tokens: %v\n%s", err, out)
+	{
+		out, err := cmd.CombinedOutput()
+		require.False(t, err != nil, "building nova-tokens: %v\n%s", err, out)
 	}
 	return bin
 }
@@ -137,7 +134,7 @@ func runExampleLine(t *testing.T, dir, binDir, line string) (int, string) {
 	case errors.As(err, &exitErr):
 		return exitErr.ExitCode(), out.String()
 	default:
-		t.Fatalf("running %q: %v", line, err)
+		require.FailNowf(t, "example command failed", "running %q: %v", line, err)
 		return 0, ""
 	}
 }
@@ -164,9 +161,7 @@ func copyExampleTree(t *testing.T, src, dst string) {
 		}
 		return os.WriteFile(target, raw, 0o644)
 	})
-	if err != nil {
-		t.Fatalf("copying the fixture %s: %v", src, err)
-	}
+	require.False(t, err != nil, "copying the fixture %s: %v", src, err)
 }
 
 // exampleFirstLine is the first line of an output, which is where a refusal says what was wrong.

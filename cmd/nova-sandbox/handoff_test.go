@@ -12,6 +12,8 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // handoff_test.go is the red-test contract of the handoff, docs/SPEC-SANDBOX.md
@@ -29,12 +31,8 @@ import (
 func writeOn(t *testing.T, dir, rel, body string) {
 	t.Helper()
 	full := filepath.Join(dir, filepath.FromSlash(rel))
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Dir(full), 0o755))
+	require.NoError(t, os.WriteFile(full, []byte(body), 0o644))
 }
 
 // handoffDirs is a work directory standing in for the volume's work/ and an out
@@ -59,26 +57,17 @@ func TestHandoffTakesTheDefaultsThatArePresent(t *testing.T) {
 	writeOn(t, work, "notes.txt", "not an artifact")
 
 	res, err := copyOut(handoffInput{Work: work, Out: out, Name: "card1"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Files != 2 {
-		t.Fatalf("files = %d, want 2 (repo.bundle is not there and is not a failure)", res.Files)
-	}
-	if res.Bytes != int64(len("RESULT card1 sha=abc\nDONE\n")+len("in\tout\n10\t20\n")) {
-		t.Errorf("bytes = %d", res.Bytes)
-	}
-	if got := res.Line(); got != "SANDBOX OUT name=card1 files=2 bytes="+itoa(res.Bytes) {
-		t.Errorf("OUT line = %q", got)
-	}
+	require.NoError(t, err)
+	require.Equal(t, 2, res.Files, "files = %d, want 2 (repo.bundle is not there and is not a failure)", res.Files)
+	assert.Equal(t, int64(len("RESULT card1 sha=abc\nDONE\n")+len("in\tout\n10\t20\n")), res.Bytes, "bytes = %d", res.Bytes)
+	got := res.Line()
+	assert.Equal(t, "SANDBOX OUT name=card1 files=2 bytes="+itoa(res.Bytes), got, "OUT line = %q", got)
 	for _, name := range []string{"RESULT.md", "usage.tsv"} {
-		if _, err := os.Stat(filepath.Join(out, "card1", name)); err != nil {
-			t.Errorf("%s did not arrive: %v", name, err)
-		}
+		_, err := os.Stat(filepath.Join(out, "card1", name))
+		assert.NoError(t, err, "%s did not arrive: %v", name, err)
 	}
-	if _, err := os.Stat(filepath.Join(out, "card1", "notes.txt")); err == nil {
-		t.Errorf("a file nobody named left the volume; only named artifacts leave")
-	}
+	_, err = os.Stat(filepath.Join(out, "card1", "notes.txt"))
+	assert.Error(t, err, "a file nobody named left the volume; only named artifacts leave")
 }
 
 // 2. An artifact the CALLER named and did not write is a refusal, not a silent
@@ -91,15 +80,11 @@ func TestHandoffRefusesANamedArtifactTheCardNeverWrote(t *testing.T) {
 	writeOn(t, work, "RESULT.md", "x\n")
 	_, err := copyOut(handoffInput{Work: work, Out: out, Name: "card1",
 		Artifacts: []string{"RESULT.md", "report.json"}, Named: true})
-	if err == nil {
-		t.Fatal("a named artifact that is not on the volume was not refused")
-	}
-	if !strings.Contains(err.Error(), "report.json") || !strings.Contains(err.Error(), "--artifact") {
-		t.Errorf("the refusal does not name the flag and the file: %v", err)
-	}
-	if _, statErr := os.Stat(filepath.Join(out, "card1")); statErr == nil {
-		t.Errorf("a refused handoff still made the out directory; nothing is written unless the whole set resolves")
-	}
+	require.Error(t, err, "a named artifact that is not on the volume was not refused")
+	assert.Contains(t, err.Error(), "report.json", "the refusal does not name the flag and the file: %v", err)
+	assert.Contains(t, err.Error(), "--artifact", "the refusal does not name the flag and the file: %v", err)
+	_, statErr := os.Stat(filepath.Join(out, "card1"))
+	assert.Error(t, statErr, "a refused handoff still made the out directory; nothing is written unless the whole set resolves")
 }
 
 // 3. Nothing escapes the volume. An absolute path, a `..` and a symlink pointing
@@ -110,18 +95,15 @@ func TestHandoffRefusesAnythingThatWouldReachOffTheVolume(t *testing.T) {
 	work, out := handoffDirs(t)
 	writeOn(t, work, "RESULT.md", "x\n")
 	outside := filepath.Join(t.TempDir(), "secret.txt")
-	if err := os.WriteFile(outside, []byte("not yours"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(outside, []byte("not yours"), 0o600))
 	if err := os.Symlink(outside, filepath.Join(work, "link.txt")); err != nil {
 		t.Skipf("this filesystem has no symlinks: %v", err)
 	}
 
 	for _, rel := range []string{"/etc/passwd", "../secret.txt", "a/../../b", "link.txt", "", "."} {
-		if _, err := copyOut(handoffInput{Work: work, Out: out, Name: "card1",
-			Artifacts: []string{rel}, Named: true}); err == nil {
-			t.Errorf("--artifact %q was not refused", rel)
-		}
+		_, err := copyOut(handoffInput{Work: work, Out: out, Name: "card1",
+			Artifacts: []string{rel}, Named: true})
+		assert.Error(t, err, "--artifact %q was not refused", rel)
 	}
 }
 
@@ -133,19 +115,14 @@ func TestHandoffRefusesOverTheByteCapAndWritesNothing(t *testing.T) {
 	work, out := handoffDirs(t)
 	writeOn(t, work, "RESULT.md", strings.Repeat("x", 4096))
 	_, err := copyOut(handoffInput{Work: work, Out: out, Name: "card1", MaxBytes: 1024})
-	if err == nil {
-		t.Fatal("4096 bytes under a 1024-byte cap was not refused")
-	}
-	if !strings.Contains(err.Error(), "--out-max-bytes") {
-		t.Errorf("the refusal does not name the flag: %v", err)
-	}
-	if _, statErr := os.Stat(filepath.Join(out, "card1", "RESULT.md")); statErr == nil {
-		t.Errorf("a refused handoff wrote a file anyway")
-	}
+	require.Error(t, err, "4096 bytes under a 1024-byte cap was not refused")
+	assert.Contains(t, err.Error(), "--out-max-bytes", "the refusal does not name the flag: %v", err)
+	_, statErr := os.Stat(filepath.Join(out, "card1", "RESULT.md"))
+	assert.Error(t, statErr, "a refused handoff wrote a file anyway")
 	// The default ceiling is 64 MiB and the same set goes under it.
-	if res, err := copyOut(handoffInput{Work: work, Out: out, Name: "card1"}); err != nil || res.Files != 1 {
-		t.Fatalf("the same set under the default cap: files=%d err=%v", res.Files, err)
-	}
+	res, err := copyOut(handoffInput{Work: work, Out: out, Name: "card1"})
+	require.NoError(t, err, "the same set under the default cap: files=%d err=%v", res.Files, err)
+	require.Equal(t, 1, res.Files, "the same set under the default cap: files=%d err=%v", res.Files, err)
 }
 
 // 5. A directory named as an artifact is taken whole, one row per regular file,
@@ -158,15 +135,11 @@ func TestHandoffTakesADirectoryWhole(t *testing.T) {
 	writeOn(t, work, "art/deep/two.txt", "22")
 	res, err := copyOut(handoffInput{Work: work, Out: out, Name: "card1",
 		Artifacts: []string{"art"}, Named: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Files != 2 || res.Bytes != 3 {
-		t.Fatalf("files=%d bytes=%d, want 2 and 3", res.Files, res.Bytes)
-	}
-	if _, err := os.Stat(filepath.Join(out, "card1", "art", "deep", "two.txt")); err != nil {
-		t.Errorf("the directory's shape was not kept: %v", err)
-	}
+	require.NoError(t, err)
+	require.Equal(t, 2, res.Files, "files=%d bytes=%d, want 2 and 3", res.Files, res.Bytes)
+	require.Equal(t, int64(3), res.Bytes, "files=%d bytes=%d, want 2 and 3", res.Files, res.Bytes)
+	_, err = os.Stat(filepath.Join(out, "card1", "art", "deep", "two.txt"))
+	assert.NoError(t, err, "the directory's shape was not kept: %v", err)
 }
 
 // deletingVolumes is the disk seam with a Delete that REALLY removes the mount,
@@ -221,26 +194,16 @@ func TestRunCopiesTheArtifactsOutBeforeTheVolumeIsDeleted(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := runDisposable(parseRun(args), 0, nil, &stdout, &stderr, []string{"PATH=" + os.Getenv("PATH")})
 	errOut := stderr.String()
-	if code != 0 {
-		t.Fatalf("exit = %d, want the command's own 0\n%s", code, errOut)
-	}
-	if !strings.Contains(errOut, "SANDBOX OUT name=card1 files=2 bytes=31") {
-		t.Fatalf("the OUT receipt is not there or does not count what left:\n%s", errOut)
-	}
-	if strings.Index(errOut, "SANDBOX OUT") > strings.Index(errOut, "SANDBOX DONE") {
-		t.Errorf("the OUT line comes after the DONE line; the copy must happen before the delete:\n%s", errOut)
-	}
-	if strings.Join(vols.calls, " ") != "create delete" {
-		t.Errorf("calls = %v", vols.calls)
-	}
+	require.Equal(t, 0, code, "exit = %d, want the command's own 0\n%s", code, errOut)
+	require.Contains(t, errOut, "SANDBOX OUT name=card1 files=2 bytes=31", "the OUT receipt is not there or does not count what left:\n%s", errOut)
+	assert.LessOrEqual(t, strings.Index(errOut, "SANDBOX OUT"), strings.Index(errOut, "SANDBOX DONE"), "the OUT line comes after the DONE line; the copy must happen before the delete:\n%s", errOut)
+	assert.Equal(t, "create delete", strings.Join(vols.calls, " "), "calls = %v", vols.calls)
 	// The proof: the volume is gone and the artifacts are not.
-	if _, err := os.Stat(filepath.Join(mount, "work", "RESULT.md")); err == nil {
-		t.Errorf("the volume survived the run; this test proves nothing")
-	}
+	_, err := os.Stat(filepath.Join(mount, "work", "RESULT.md"))
+	assert.Error(t, err, "the volume survived the run; this test proves nothing")
 	for _, name := range []string{"RESULT.md", "repo.bundle"} {
-		if _, err := os.Stat(filepath.Join(out, "card1", name)); err != nil {
-			t.Errorf("%s did not leave the volume: %v", name, err)
-		}
+		_, err := os.Stat(filepath.Join(out, "card1", name))
+		assert.NoError(t, err, "%s did not leave the volume: %v", name, err)
 	}
 }
 
@@ -269,16 +232,10 @@ func TestRunRefusesWhenTheHandoffFailsAfterACleanCommand(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := runDisposable(parseRun(args), 0, nil, &stdout, &stderr, []string{"PATH=" + os.Getenv("PATH")})
 	errOut := stderr.String()
-	if code != sandbox.ExitRefused {
-		t.Fatalf("exit = %d, want %d: a clean command whose artifacts did not leave is not a clean run\n%s",
-			code, sandbox.ExitRefused, errOut)
-	}
-	if !strings.Contains(errOut, "reason=out_failed") {
-		t.Errorf("the refusal does not name itself:\n%s", errOut)
-	}
-	if strings.Join(vols.calls, " ") != "create delete" {
-		t.Errorf("a failed handoff left the volume: %v", vols.calls)
-	}
+	require.Equal(t, sandbox.ExitRefused, code, "exit = %d, want %d: a clean command whose artifacts did not leave is not a clean run\n%s",
+		code, sandbox.ExitRefused, errOut)
+	assert.Contains(t, errOut, "reason=out_failed", "the refusal does not name itself:\n%s", errOut)
+	assert.Equal(t, "create delete", strings.Join(vols.calls, " "), "a failed handoff left the volume: %v", vols.calls)
 }
 
 // itoa keeps the expected OUT line honest without importing strconv for one call.

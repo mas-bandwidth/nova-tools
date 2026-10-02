@@ -25,6 +25,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // nativeVerdict runs one card through `native` with the fake harness and returns stdout.
@@ -43,9 +45,7 @@ func nativeVerdictRun(t *testing.T, label, card string) (stdout, stderr string, 
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	cardPath := filepath.Join(root, label+".md")
-	if err := os.WriteFile(cardPath, []byte(card), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(cardPath, []byte(card), 0o644))
 	var out, errb bytes.Buffer
 	code = run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1",
 		"--harness", bin, "--model", "fake/fake-model", "--label", label,
@@ -63,20 +63,12 @@ func TestNativeRefusesToSayOKForAProviderFailureThatProducedNothing(t *testing.T
 
 	out := nativeVerdict(t, "c18", "FAKE-5XX\n")
 
-	if strings.Contains(out, "NATIVE OK") {
-		t.Fatalf("a run with rc!=0 and no RESULT.md said OK -- a fill loop counts that as delivered:\n%s", out)
-	}
-	if !strings.Contains(out, "NATIVE INCOMPLETE ") {
-		t.Fatalf("the verdict line must still be printed, and say what it is:\n%s", out)
-	}
-	if !strings.Contains(out, "why=no-result") {
-		t.Fatalf("the verdict must name why it is incomplete (no RESULT.md):\n%s", out)
-	}
+	require.NotContains(t, out, "NATIVE OK", "a run with rc!=0 and no RESULT.md said OK -- a fill loop counts that as delivered:\n%s", out)
+	require.Contains(t, out, "NATIVE INCOMPLETE ", "the verdict line must still be printed, and say what it is:\n%s", out)
+	require.Contains(t, out, "why=no-result", "the verdict must name why it is incomplete (no RESULT.md):\n%s", out)
 	// Every other field a reader parses is exactly where it was.
 	for _, want := range []string{"label=c18", "job=", "rc=1", "wall=", "sandbox=", "card_sha256=", "harness="} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("the incomplete line dropped %q, which every reader of this line parses:\n%s", want, out)
-		}
+		require.Contains(t, out, want, "the incomplete line dropped %q, which every reader of this line parses:\n%s", want, out)
 	}
 }
 
@@ -89,15 +81,9 @@ func TestNativeRefusesToSayOKWhenTheHarnessSaidNothing(t *testing.T) {
 
 	out := nativeVerdict(t, "noresult", "FAKE-NORESULT\n")
 
-	if strings.Contains(out, "NATIVE OK") {
-		t.Fatalf("a clean exit that said nothing and wrote no RESULT.md said OK:\n%s", out)
-	}
-	if !strings.Contains(out, "why=harness-silent") {
-		t.Fatalf("the verdict must name the silence:\n%s", out)
-	}
-	if !strings.Contains(out, " rc=0 ") {
-		t.Fatalf("the exit code is still reported as it was:\n%s", out)
-	}
+	require.NotContains(t, out, "NATIVE OK", "a clean exit that said nothing and wrote no RESULT.md said OK:\n%s", out)
+	require.Contains(t, out, "why=harness-silent", "the verdict must name the silence:\n%s", out)
+	require.Contains(t, out, " rc=0 ", "the exit code is still reported as it was:\n%s", out)
 }
 
 // AND THE OTHER DIRECTION, so the fix is not "never say OK": a card that ran, answered and
@@ -107,12 +93,8 @@ func TestNativeStillSaysOKForARunThatProducedItsResult(t *testing.T) {
 
 	out := nativeVerdict(t, "green", "FAKE-RESULT ok\n")
 
-	if !strings.Contains(out, "NATIVE OK ") {
-		t.Fatalf("a run that produced its RESULT.md must still be OK:\n%s", out)
-	}
-	if strings.Contains(out, "why=") {
-		t.Fatalf("an OK verdict carries no why= tail:\n%s", out)
-	}
+	require.Contains(t, out, "NATIVE OK ", "a run that produced its RESULT.md must still be OK:\n%s", out)
+	require.NotContains(t, out, "why=", "an OK verdict carries no why= tail:\n%s", out)
 }
 
 // THE SUPERMAN SHAPE (nova-tools #2058). Darwin, harness v1.18.20, 24 cards at once:
@@ -133,21 +115,15 @@ func TestNativeHarnessExit255PrintsAVerdictAndDoesNotExit255(t *testing.T) {
 
 	stdout, stderr, code := nativeVerdictRun(t, "fsevents", "FAKE-FSEVENTS\n")
 	combined := stdout + stderr
-	if strings.Contains(combined, "NATIVE OK") {
-		t.Fatalf("a harness that exited 255 after writing RESULT.md must not say OK:\nstdout:\n%s\nstderr:\n%s\nexit %d", stdout, stderr, code)
-	}
-	if strings.Contains(combined, "NATIVE REFUSED") {
-		t.Fatalf("a harness that exited 255 after writing RESULT.md must not say REFUSED:\nstdout:\n%s\nstderr:\n%s\nexit %d", stdout, stderr, code)
-	}
+	require.NotContains(t, combined, "NATIVE OK", "a harness that exited 255 after writing RESULT.md must not say OK:\nstdout:\n%s\nstderr:\n%s\nexit %d", stdout, stderr, code)
+	require.NotContains(t, combined, "NATIVE REFUSED", "a harness that exited 255 after writing RESULT.md must not say REFUSED:\nstdout:\n%s\nstderr:\n%s\nexit %d", stdout, stderr, code)
 	var incomplete []string
 	for _, line := range strings.Split(combined, "\n") {
 		if strings.HasPrefix(line, "NATIVE INCOMPLETE ") {
 			incomplete = append(incomplete, line)
 		}
 	}
-	if len(incomplete) != 1 {
-		t.Fatalf("want exactly one NATIVE INCOMPLETE line, got %d:\nstdout:\n%s\nstderr:\n%s\nexit %d", len(incomplete), stdout, stderr, code)
-	}
+	require.Len(t, incomplete, 1, "want exactly one NATIVE INCOMPLETE line, got %d:\nstdout:\n%s\nstderr:\n%s\nexit %d", len(incomplete), stdout, stderr, code)
 	line := incomplete[0]
 	hasRC, hasWhy := false, false
 	for _, f := range strings.Fields(line) {
@@ -158,15 +134,10 @@ func TestNativeHarnessExit255PrintsAVerdictAndDoesNotExit255(t *testing.T) {
 			hasWhy = true
 		}
 	}
-	if !hasRC || !hasWhy {
-		t.Fatalf("the INCOMPLETE line must carry rc=255 and why=rc:\n%s", line)
-	}
-	if code == 255 {
-		t.Fatalf("native exited 255; local ssh(1) 255 is any error and is potentially UNKNOWN, so a launcher may retry a finished card. The child's 255 belongs on the line as rc=255:\n%s\nstderr:\n%s", stdout, stderr)
-	}
-	if code != 1 {
-		t.Fatalf("the verb ran and said NO, want exit 1, got %d:\n%s\nstderr:\n%s", code, stdout, stderr)
-	}
+	require.True(t, hasRC, "the INCOMPLETE line must carry rc=255 and why=rc:\n%s", line)
+	require.True(t, hasWhy, "the INCOMPLETE line must carry rc=255 and why=rc:\n%s", line)
+	require.NotEqual(t, 255, code, "native exited 255; local ssh(1) 255 is any error and is potentially UNKNOWN, so a launcher may retry a finished card. The child's 255 belongs on the line as rc=255:\n%s\nstderr:\n%s", stdout, stderr)
+	require.Equal(t, 1, code, "the verb ran and said NO, want exit 1, got %d:\n%s\nstderr:\n%s", code, stdout, stderr)
 }
 
 // THE NEGATIVE, so the 255 clamp is not "never say OK/INCOMPLETE": a card that
@@ -176,27 +147,13 @@ func TestNativeOrdinaryCardsStillPrintOKAndIncomplete(t *testing.T) {
 	t.Parallel()
 
 	stdout, stderr, code := nativeVerdictRun(t, "green255", "FAKE-RESULT ok\n")
-	if !strings.Contains(stdout, "NATIVE OK ") {
-		t.Fatalf("a run that produced its RESULT.md must still be OK:\n%s\nstderr:\n%s", stdout, stderr)
-	}
-	if strings.Contains(stdout, "NATIVE INCOMPLETE ") {
-		t.Fatalf("an OK card must not also be INCOMPLETE:\n%s", stdout)
-	}
-	if code == 255 {
-		t.Fatalf("a normal OK card must not exit 255:\n%s", stdout)
-	}
-	if code != 0 {
-		t.Fatalf("a run that produced its RESULT.md still exits 0, got %d:\n%s\nstderr:\n%s", code, stdout, stderr)
-	}
+	require.Contains(t, stdout, "NATIVE OK ", "a run that produced its RESULT.md must still be OK:\n%s\nstderr:\n%s", stdout, stderr)
+	require.NotContains(t, stdout, "NATIVE INCOMPLETE ", "an OK card must not also be INCOMPLETE:\n%s", stdout)
+	require.NotEqual(t, 255, code, "a normal OK card must not exit 255:\n%s", stdout)
+	require.Equal(t, 0, code, "a run that produced its RESULT.md still exits 0, got %d:\n%s\nstderr:\n%s", code, stdout, stderr)
 
 	stdout, stderr, code = nativeVerdictRun(t, "quiet255", "FAKE-NORESULT\n")
-	if !strings.Contains(stdout, "NATIVE INCOMPLETE ") {
-		t.Fatalf("a silent harness must still be INCOMPLETE:\n%s\nstderr:\n%s", stdout, stderr)
-	}
-	if strings.Contains(stdout, "NATIVE OK ") {
-		t.Fatalf("a silent harness must not be OK:\n%s", stdout)
-	}
-	if code == 255 {
-		t.Fatalf("an incomplete card must not exit 255:\n%s", stdout)
-	}
+	require.Contains(t, stdout, "NATIVE INCOMPLETE ", "a silent harness must still be INCOMPLETE:\n%s\nstderr:\n%s", stdout, stderr)
+	require.NotContains(t, stdout, "NATIVE OK ", "a silent harness must not be OK:\n%s", stdout)
+	require.NotEqual(t, 255, code, "an incomplete card must not exit 255:\n%s", stdout)
 }

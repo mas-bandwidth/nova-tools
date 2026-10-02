@@ -28,6 +28,8 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 var (
@@ -56,9 +58,7 @@ func walledTool(t *testing.T) string {
 			buildErr = fmt.Errorf("go build: %v: %s", err, out)
 		}
 	})
-	if buildErr != nil {
-		t.Fatalf("the tool under test could not be built: %v", buildErr)
-	}
+	require.NoError(t, buildErr, "the tool under test could not be built: %v", buildErr)
 	return builtTool
 }
 
@@ -73,8 +73,8 @@ func (j job) runTool(t *testing.T, env []string, args ...string) (int, string, s
 	code := 0
 	if cmd.ProcessState != nil {
 		code = cmd.ProcessState.ExitCode()
-	} else if err != nil {
-		t.Fatalf("nova-sandbox did not run at all: %v", err)
+	} else {
+		require.NoError(t, err, "nova-sandbox did not run at all: %v", err)
 	}
 	return code, out.String(), errb.String()
 }
@@ -109,24 +109,16 @@ func TestLandlockWallRefusesWriteOutsideJob(t *testing.T) {
 
 	// THE CONTROL FIRST, and it is why the denial below can be believed: a write that
 	// was never possible is not a wall. Outside the tool, this user can create the file.
-	if err := os.WriteFile(outside, []byte("x"), 0o644); err != nil {
-		t.Fatalf("the control write failed, so a denial inside the wall would prove nothing: %v", err)
-	}
-	if err := os.Remove(outside); err != nil {
-		t.Fatal(err)
-	}
+	err := os.WriteFile(outside, []byte("x"), 0o644)
+	require.NoError(t, err, "the control write failed, so a denial inside the wall would prove nothing: %v", err)
+	require.NoError(t, os.Remove(outside))
 
 	code, _, errOut := j.wall(t, "echo escaped > "+outside)
-	if code == 0 {
-		t.Fatalf("the wrapped command WROTE OUTSIDE THE JOB and exited 0: %s", errOut)
-	}
-	if _, err := os.Stat(outside); err == nil {
-		t.Fatal("the file outside the job exists: the wall did not hold")
-	}
+	require.NotEqual(t, 0, code, "the wrapped command WROTE OUTSIDE THE JOB and exited 0: %s", errOut)
+	_, err = os.Stat(outside)
+	require.Error(t, err, "the file outside the job exists: the wall did not hold")
 	// And the wall was announced, on the stream a log keeps.
-	if !strings.Contains(errOut, "SANDBOX OK backend=landlock") {
-		t.Errorf("the run did not announce the landlock wall: %q", errOut)
-	}
+	assert.Contains(t, errOut, "SANDBOX OK backend=landlock", "the run did not announce the landlock wall: %q", errOut)
 }
 
 // The clamp, end to end, on whatever kernel this machine has (run 35045469738). An ABI above the
@@ -147,24 +139,17 @@ func TestLandlockWallClampsAnABIAboveTheTable(t *testing.T) {
 	needLandlock(t)
 	j := newJob(t)
 	code, _, errOut := j.wall(t, "echo ran > "+filepath.Join(j.write, "output"))
-	if code != 0 {
-		t.Fatalf("a walled run on this kernel exited %d; a clamped abi must still run: %s", code, errOut)
-	}
+	require.Equal(t, 0, code, "a walled run on this kernel exited %d; a clamped abi must still run: %s", code, errOut)
 	used, clamped := sandbox.ClampedABI()
 	if !clamped {
-		if strings.Contains(errOut, " used=") {
-			t.Errorf("this kernel's abi is inside the table and the line still claims a clamp: %q", errOut)
-		}
+		assert.NotContains(t, errOut, " used=", "this kernel's abi is inside the table and the line still claims a clamp: %q", errOut)
 		return
 	}
 	// abi= is the kernel's, used= is the wall's, and both are on the one line a log keeps.
 	want := "abi=" + abiOf(t, j) + " used=" + strconv.Itoa(used)
-	if !strings.Contains(errOut, want) {
-		t.Errorf("the SANDBOX OK line does not carry %q: %q", want, errOut)
-	}
-	if !strings.Contains(errOut, "SANDBOX NOTE") || !strings.Contains(errOut, "clamped") {
-		t.Errorf("the clamp was not said in a note before the command started: %q", errOut)
-	}
+	assert.Contains(t, errOut, want, "the SANDBOX OK line does not carry %q: %q", want, errOut)
+	assert.Contains(t, errOut, "SANDBOX NOTE", "the clamp was not said in a note before the command started: %q", errOut)
+	assert.Contains(t, errOut, "clamped", "the clamp was not said in a note before the command started: %q", errOut)
 }
 
 // abiOf is the kernel's own number, read off the tool's `check` line rather than computed
@@ -172,9 +157,7 @@ func TestLandlockWallClampsAnABIAboveTheTable(t *testing.T) {
 func abiOf(t *testing.T, j job) string {
 	t.Helper()
 	code, out, errOut := j.runTool(t, j.env(), "check")
-	if code != 0 {
-		t.Fatalf("check exited %d: %s", code, errOut)
-	}
+	require.Equal(t, 0, code, "check exited %d: %s", code, errOut)
 	return fieldOf(out, "abi=")
 }
 
@@ -185,29 +168,21 @@ func TestLandlockWallAllowsReadPaths(t *testing.T) {
 	needLandlock(t)
 	j := newJob(t)
 	const want = "the-read-set-is-readable"
-	if err := os.WriteFile(filepath.Join(j.read, "input"), []byte(want+"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(j.read, "input"), []byte(want+"\n"), 0o644))
 	code, out, errOut := j.wall(t, "cat "+filepath.Join(j.read, "input"))
-	if code != 0 {
-		t.Fatalf("reading a --read path inside the wall exited %d: %s", code, errOut)
-	}
-	if !strings.Contains(out, want) {
-		t.Fatalf("the --read file did not come back: %q", out)
-	}
+	require.Equal(t, 0, code, "reading a --read path inside the wall exited %d: %s", code, errOut)
+	require.Contains(t, out, want, "the --read file did not come back: %q", out)
 	// The write set is writable in the same run, or the job cannot do its work.
-	if code, _, errOut := j.wall(t, "echo ok > "+filepath.Join(j.write, "output")); code != 0 {
-		t.Fatalf("writing inside the --write set exited %d: %s", code, errOut)
-	}
+	code, _, errOut = j.wall(t, "echo ok > "+filepath.Join(j.write, "output"))
+	require.Equal(t, 0, code, "writing inside the --write set exited %d: %s", code, errOut)
 	// And the roots table's two WRITABLE device files, which is a regression test and not
 	// a nicety: the first cut of this body handed /dev/null the same access mask as a
 	// directory, the kernel rejected that rule with EINVAL for carrying directory-only
 	// rights on a non-directory, the tool skipped the error as "absent device", and every
 	// `cmd > /dev/null` in every job was denied. Four wall tests passed over it, because
 	// not one of them redirected anywhere.
-	if code, _, errOut := j.wall(t, "echo hi > /dev/null"); code != 0 {
-		t.Fatalf("redirecting to /dev/null inside the wall exited %d: %s; the roots table grants write on it", code, errOut)
-	}
+	code, _, errOut = j.wall(t, "echo hi > /dev/null")
+	require.Equal(t, 0, code, "redirecting to /dev/null inside the wall exited %d: %s; the roots table grants write on it", code, errOut)
 }
 
 // The secret is in NEITHER list, and #69 is exactly this file: the bench's SSH key and
@@ -224,16 +199,10 @@ func TestLandlockWallHidesSecret(t *testing.T) {
 	needLandlock(t)
 	j := newJob(t)
 	secret, err := os.ReadFile(j.secret)
-	if err != nil {
-		t.Fatalf("the control read failed, so a denial inside the wall would prove nothing: %v", err)
-	}
+	require.NoError(t, err, "the control read failed, so a denial inside the wall would prove nothing: %v", err)
 	code, out, errOut := j.wall(t, "cat "+j.secret)
-	if code == 0 {
-		t.Fatalf("the wrapped command READ THE SECRET and exited 0: %q", out)
-	}
-	if strings.Contains(out+errOut, strings.TrimSpace(string(secret))) {
-		t.Fatal("the secret's contents came out of the wall")
-	}
+	require.NotEqual(t, 0, code, "the wrapped command READ THE SECRET and exited 0: %q", out)
+	require.NotContains(t, out+errOut, strings.TrimSpace(string(secret)), "the secret's contents came out of the wall")
 }
 
 // Rule 7: --net-deny is an ENFORCED denial on this platform or it is a refusal, and at
@@ -250,9 +219,7 @@ func TestLandlockWallBlocksNetworkWhenNotAllowed(t *testing.T) {
 	// A listener this test owns, so that a refused connect is the WALL and not an empty
 	// port. The listener is outside the wall; the wrapped command is what is walled.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	defer ln.Close()
 	go func() {
 		for {
@@ -278,12 +245,8 @@ func TestLandlockWallBlocksNetworkWhenNotAllowed(t *testing.T) {
 		t.Skipf("skipped: the control connect failed (exit %d), so a denial would prove nothing: %s", code, errOut)
 	}
 	code, errOut := connect("--net-deny")
-	if code == 0 {
-		t.Fatalf("the wrapped command CONNECTED under --net-deny: %s", errOut)
-	}
-	if !strings.Contains(errOut, "net=denied") {
-		t.Errorf("the run did not announce net=denied: %q", errOut)
-	}
+	require.NotEqual(t, 0, code, "the wrapped command CONNECTED under --net-deny: %s", errOut)
+	assert.Contains(t, errOut, "net=denied", "the run did not announce net=denied: %q", errOut)
 }
 
 // check is a question, not an attempt, and on a linux machine with Landlock it names the
@@ -293,36 +256,25 @@ func TestCheckReportsLandlock(t *testing.T) {
 
 	j := newJob(t)
 	code, out, _ := j.runTool(t, j.env(), "check")
-	if code != 0 {
-		t.Fatalf("check exit %d: %q", code, out)
-	}
-	if !strings.HasPrefix(out, "CHECK OK backend=") {
-		t.Fatalf("check did not print its line: %q", out)
-	}
+	require.Equal(t, 0, code, "check exit %d: %q", code, out)
+	require.True(t, strings.HasPrefix(out, "CHECK OK backend="), "check did not print its line: %q", out)
 	// Landlock is in this kernel or it is not, and check must say which WITHOUT ever
 	// naming a backend it cannot apply (rule 1).
 	if !strings.Contains(out, "backend=landlock") {
-		if !strings.Contains(out, "backend=none") {
-			t.Fatalf("check named neither landlock nor none on linux: %q", out)
-		}
-		if !strings.Contains(out, "abi=-") {
-			t.Errorf("check reported no backend but still an abi: %q", out)
-		}
+		require.Contains(t, out, "backend=none", "check named neither landlock nor none on linux: %q", out)
+		assert.Contains(t, out, "abi=-", "check reported no backend but still an abi: %q", out)
 		t.Skipf("skipped the abi assertions: this kernel has no landlock: %q", out)
 	}
 	abi := fieldOf(out, "abi=")
 	n, err := strconv.Atoi(abi)
-	if err != nil || n < 1 {
-		t.Fatalf("check named landlock but no usable abi: %q", out)
-	}
+	require.NoError(t, err, "check named landlock but no usable abi: %q", out)
+	require.GreaterOrEqual(t, n, 1, "check named landlock but no usable abi: %q", out)
 	// Rule 7's two answers, and they must agree with the abi that was just printed.
 	wantNet := "net=unenforceable"
 	if n >= 4 {
 		wantNet = "net=enforceable"
 	}
-	if !strings.Contains(out, wantNet) {
-		t.Errorf("abi %d and %q disagree: %q", n, wantNet, out)
-	}
+	assert.Contains(t, out, wantNet, "abi %d and %q disagree: %q", n, wantNet, out)
 }
 
 // fieldOf pulls one key=value field out of a one-line status line.
@@ -349,24 +301,15 @@ func TestLandlockReadNoExecReadsAndRefusesToExecute(t *testing.T) {
 	needLandlock(t)
 	j := newJob(t)
 	cache := filepath.Join(j.base, "cache")
-	if err := os.MkdirAll(cache, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(cache, 0o755))
 	script := filepath.Join(cache, "x.sh")
-	if err := testbin.WriteExecutable(script, []byte("#!/bin/sh\necho ran\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, testbin.WriteExecutable(script, []byte("#!/bin/sh\necho ran\n"), 0o755))
 	code, out, errOut := j.wall(t, "cat "+script, "--read-noexec", cache)
-	if code != 0 || !strings.Contains(out, "echo ran") {
-		t.Fatalf("the --read-noexec tree is not readable inside the wall: exit %d, stdout %q, stderr %s", code, out, errOut)
-	}
-	if !strings.Contains(errOut, "read-noexec=1") {
-		t.Errorf("the SANDBOX OK line does not count the no-exec reads: %q", errOut)
-	}
-	if code, _, _ := j.wall(t, script, "--read-noexec", cache); code == 0 {
-		t.Fatal("the script under --read-noexec EXECUTED inside the wall; readable is not executable")
-	}
-	if code, _, errOut := j.wall(t, script, "--read", cache); code != 0 {
-		t.Fatalf("the control failed: the same script under --read did not run: exit %d, %s", code, errOut)
-	}
+	require.Equal(t, 0, code, "the --read-noexec tree is not readable inside the wall: exit %d, stdout %q, stderr %s", code, out, errOut)
+	require.Contains(t, out, "echo ran", "the --read-noexec tree is not readable inside the wall: exit %d, stdout %q, stderr %s", code, out, errOut)
+	assert.Contains(t, errOut, "read-noexec=1", "the SANDBOX OK line does not count the no-exec reads: %q", errOut)
+	code, _, _ = j.wall(t, script, "--read-noexec", cache)
+	require.NotEqual(t, 0, code, "the script under --read-noexec EXECUTED inside the wall; readable is not executable")
+	code, _, errOut = j.wall(t, script, "--read", cache)
+	require.Equal(t, 0, code, "the control failed: the same script under --read did not run: exit %d, %s", code, errOut)
 }

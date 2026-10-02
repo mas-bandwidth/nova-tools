@@ -60,9 +60,7 @@ func deadPID(t *testing.T) int {
 	}
 	pid := c.Process.Pid
 	_ = c.Wait()
-	if processAlive(pid) {
-		t.Fatalf("the staged holder %d is still alive; this test needs a dead one", pid)
-	}
+	require.False(t, processAlive(pid), "the staged holder %d is still alive; this test needs a dead one", pid)
 	return pid
 }
 
@@ -78,8 +76,11 @@ func TestLockRecoversWhenTheSentinelHolderDied(t *testing.T) {
 	require.NoError(t, err, "a lock whose holder is dead was not recovered: %v", err)
 	defer release()
 
-	if got := ReadLockHolder(lockPath); got != fmt.Sprint(os.Getpid()) {
-		t.Fatalf("after recovery the lock names %q, want this process %d", got, os.Getpid())
+	{
+		got := ReadLockHolder(lockPath)
+		if got != fmt.Sprint(os.Getpid()) {
+			require.False(t, got != fmt.Sprint(os.Getpid()), "after recovery the lock names %q, want this process %d", got, os.Getpid())
+		}
 	}
 	if _, err := os.Stat(sentinelPath(lockPath)); err != nil {
 		require.NoError(t, err, "the recovered lock's sentinel is missing: %v", err)
@@ -92,15 +93,18 @@ func TestRemoveLockFileTreatsAMissingFileAsGone(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), LockName+".held")
-	if err := removeLockFile(path); err != nil {
-		t.Fatalf("removing a file that is not there returned %v, want nil", err)
+	{
+		err := removeLockFile(path)
+		require.NoError(t, err, "removing a file that is not there returned %v, want nil", err)
 	}
 	require.NoError(t, os.WriteFile(path, nil, 0o644))
-	if err := removeLockFile(path); err != nil {
-		t.Fatalf("removing the file returned %v, want nil", err)
+	{
+		err := removeLockFile(path)
+		require.NoError(t, err, "removing the file returned %v, want nil", err)
 	}
-	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("the file was not removed: %v", err)
+	{
+		_, err := os.Stat(path)
+		require.False(t, !errors.Is(err, os.ErrNotExist), "the file was not removed: %v", err)
 	}
 }
 
@@ -113,9 +117,9 @@ func TestLockLeavesALiveHoldersSentinelAlone(t *testing.T) {
 	writeSentinel(t, lockPath)
 
 	if _, err := lockFile(lockPath, 100*time.Millisecond, sentinelTry, newLockStepClock()); err == nil {
-		t.Fatal("a lock held by a live process was taken")
+		require.FailNow(t, "a lock held by a live process was taken")
 	} else if !errors.Is(err, ErrLockHeld) {
-		t.Fatalf("err = %v, want ErrLockHeld", err)
+		require.FailNowf(t, "assertion failed", "err = %v, want ErrLockHeld", err)
 	}
 	if _, err := os.Stat(sentinelPath(lockPath)); err != nil {
 		require.NoError(t, err, "a live holder's sentinel was cleared: %v", err)
@@ -133,9 +137,9 @@ func TestLockLeavesAnUnknownHolderAlone(t *testing.T) {
 	writeSentinel(t, lockPath)
 
 	if _, err := lockFile(lockPath, 100*time.Millisecond, sentinelTry, newLockStepClock()); err == nil {
-		t.Fatal("a lock with no recorded holder was taken")
+		require.FailNow(t, "a lock with no recorded holder was taken")
 	} else if !errors.Is(err, ErrLockHeld) {
-		t.Fatalf("err = %v, want ErrLockHeld", err)
+		require.FailNowf(t, "assertion failed", "err = %v, want ErrLockHeld", err)
 	}
 	if _, err := os.Stat(sentinelPath(lockPath)); err != nil {
 		require.NoError(t, err, "a lock with no recorded holder was cleared: %v", err)

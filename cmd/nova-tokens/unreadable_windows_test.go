@@ -4,9 +4,12 @@ package main
 
 import (
 	"os"
+
 	"os/exec"
 	"syscall"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // makeUnreadable makes an EXISTING file refuse os.Open, and returns the release that gives
@@ -47,7 +50,7 @@ func makeUnreadable(t *testing.T, path string) (release func()) {
 		f.Close()
 		undo()
 	}
-	t.Fatalf("no mechanism on this Windows made %s refuse a read: an exclusive handle and a deny ACE were each tried and the file stayed readable", path)
+	require.FailNowf(t, "Windows unreadable fixture remained readable", "no mechanism on this Windows made %s refuse a read: an exclusive handle and a deny ACE were each tried and the file stayed readable", path)
 	return func() {}
 }
 

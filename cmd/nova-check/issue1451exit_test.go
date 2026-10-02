@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // Defect #1451, Rowan's standing door rule of 2026-09-19: an exit-1 line -- the verb
@@ -25,26 +27,14 @@ func TestAnExitOneVerdictCarriesNoDoor(t *testing.T) {
 	dir := t.TempDir()
 	cli := writeCLI(t, dir)
 	receipts := filepath.Join(dir, "receipts")
-	if err := os.MkdirAll(receipts, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(receipts, 0o755))
 
 	code, _, stderr := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts)
-	if code != 1 {
-		t.Fatalf("empty receipts: exit %d, want exactly 1; stderr: %s", code, stderr)
-	}
-	if !strings.Contains(stderr, "--allow-empty") {
-		t.Fatalf("the exit-1 verdict lost its own remedy:\n%s", stderr)
-	}
-	if strings.Contains(stderr, "run: nova-check help") {
-		t.Fatalf("an exit-1 verdict carries the exit-2 door:\n%s", stderr)
-	}
+	require.EqualValues(t, 1, code, "empty receipts: exit %d, want exactly 1; stderr: %s", code, stderr)
+	require.Contains(t, stderr, "--allow-empty", "the exit-1 verdict lost its own remedy:\n%s", stderr)
+	require.NotContains(t, stderr, "run: nova-check help", "an exit-1 verdict carries the exit-2 door:\n%s", stderr)
 
 	code, _, stderr = dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts, "--no-such-flag")
-	if code != 2 {
-		t.Fatalf("unknown flag: exit %d, want exactly 2; stderr: %s", code, stderr)
-	}
-	if !strings.HasSuffix(strings.TrimRight(stderr, "\n"), "run: nova-check help") {
-		t.Fatalf("an exit-2 invocation refusal lost the door:\n%s", stderr)
-	}
+	require.EqualValues(t, 2, code, "unknown flag: exit %d, want exactly 2; stderr: %s", code, stderr)
+	require.True(t, strings.HasSuffix(strings.TrimRight(stderr, "\n"), "run: nova-check help"), "an exit-2 invocation refusal lost the door:\n%s", stderr)
 }

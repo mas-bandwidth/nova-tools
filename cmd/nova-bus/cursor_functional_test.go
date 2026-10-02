@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/stretchr/testify/require"
 )
 
 // The property this file exists for, in Dana's words: "Make sure the bus tool is O(n)
@@ -57,8 +58,9 @@ func TestInboxParsesOnlyWhatIsNewSinceTheCursor(t *testing.T) {
 	r := invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX SCOPE mode=full cursor=-").
 		mustContain(t, "stdout", "INBOX CURSOR commit=")
-	if full := bus.NoteParsesIn(checkout) - before; full < history {
-		t.Fatalf("the full run parsed %d notes over a bus of %d; the fixture is not what this test thinks it is\n%s", full, history, r.stdout)
+	{
+		full := bus.NoteParsesIn(checkout) - before
+		require.Falsef(t, full < history, "the full run parsed %d notes over a bus of %d; the fixture is not what this test thinks it is\n%s", full, history, r.stdout)
 	}
 
 	// Answer the two notes the FIXTURE leaves open -- by hand, in Ada's own lane, which is
@@ -69,8 +71,9 @@ func TestInboxParsesOnlyWhatIsNewSinceTheCursor(t *testing.T) {
 	commitAs(t, checkout, "Ada", "ada: answering the fixture's two")
 	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
 		mustContain(t, "stdout", fmt.Sprintf("carrying=%d", carried))
-	if n := openEntries(t, checkout, "from-ada"); n != carried {
-		t.Fatalf("the open list holds %d entries, want %d", n, carried)
+	{
+		n := openEntries(t, checkout, "from-ada")
+		require.Equalf(t, carried, n, "the open list holds %d entries, want %d", n, carried)
 	}
 
 	// One new note, addressed to Ada.
@@ -90,14 +93,16 @@ func TestInboxParsesOnlyWhatIsNewSinceTheCursor(t *testing.T) {
 		mustContain(t, "stdout", fmt.Sprintf("INBOX OK as=Ada carrying=%d open=%d", carried+1, carried+1))
 	// ONE. Not one plus the open list, not one plus the history: one file opened and parsed,
 	// over a bus of ten thousand and one with five hundred of them open.
-	if got := bus.NoteParsesIn(checkout) - before; got != 1 {
-		t.Fatalf("inbox parsed %d notes for one new note over a bus of %d carrying %d; the read is not O(new)\n%s", got, history+1, carried, r.stdout)
+	{
+		got := bus.NoteParsesIn(checkout) - before
+		require.Falsef(t, got != 1, "inbox parsed %d notes for one new note over a bus of %d carrying %d; the read is not O(new)\n%s", got, history+1, carried, r.stdout)
 	}
 	// The NEW note, in full, and NOTHING else from the list of 500. That is the whole of
 	// what a default return is: the news, and one line for the backlog.
 	r.mustContain(t, "stdout", "INBOX NOTE id=bo-222222222222 from=Bo addr=to at=2026-09-08T09:00:00Z")
-	if n := strings.Count(r.stdout, "INBOX NOTE "); n != 1 {
-		t.Fatalf("the default read printed %d note lines for one new note, want 1:\n%s", n, r.stdout)
+	{
+		n := strings.Count(r.stdout, "INBOX NOTE ")
+		require.Equalf(t, 1, n, "the default read printed %d note lines for one new note, want 1:\n%s", n, r.stdout)
 	}
 
 	// THE SAME READ WITH --open. It prints the carried entries, every field of them out of
@@ -108,20 +113,21 @@ func TestInboxParsesOnlyWhatIsNewSinceTheCursor(t *testing.T) {
 		mustContain(t, "stdout", "INBOX NOTE id=bo-222222222222 from=Bo addr=to at=2026-09-08T09:00:00Z").
 		mustContain(t, "stdout", "One more").
 		mustContain(t, "stdout", fmt.Sprintf("INBOX OPEN listed=20 and %d more (--open-max to widen)", carried+1-20))
-	if got := bus.NoteParsesIn(checkout) - before; got != 1 {
-		t.Fatalf("inbox --open parsed %d notes, want 1: printing the open list must not open a note\n%s", got, r.stdout)
+	{
+		got := bus.NoteParsesIn(checkout) - before
+		require.Falsef(t, got != 1, "inbox --open parsed %d notes, want 1: printing the open list must not open a note\n%s", got, r.stdout)
 	}
-	if n := strings.Count(r.stdout, "INBOX NOTE "); n != 20 {
-		t.Fatalf("--open listed %d notes, want the 20 --open-max allows", n)
+	{
+		n := strings.Count(r.stdout, "INBOX NOTE ")
+		require.Equalf(t, 20, n, "--open listed %d notes, want the 20 --open-max allows", n)
 	}
 	// And the whole of it, for the reader who asks for the whole of it.
 	r = invoke(t, "", append(append([]string{}, quiet...), "--open", "--open-max", "10000")...).mustCode(t, 0)
-	if n := strings.Count(r.stdout, "INBOX NOTE "); n != carried+1 {
-		t.Fatalf("--open --open-max 10000 listed %d notes, want %d", n, carried+1)
+	{
+		n := strings.Count(r.stdout, "INBOX NOTE ")
+		require.Equalf(t, carried+1, n, "--open --open-max 10000 listed %d notes, want %d", n, carried+1)
 	}
-	if strings.Contains(r.stdout, "--open-max to widen") {
-		t.Fatalf("a listing that printed everything still said there was more:\n%s", r.stdout)
-	}
+	require.NotContainsf(t, r.stdout, "--open-max to widen", "a listing that printed everything still said there was more:\n%s", r.stdout)
 
 	// Move the cursor over it, then close one entry with a REPLY. Closing is driven by the
 	// new note -- my own file in the change set -- so it is one parse as well, and the open
@@ -137,14 +143,14 @@ func TestInboxParsesOnlyWhatIsNewSinceTheCursor(t *testing.T) {
 	r = invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
 		mustContain(t, "stdout", fmt.Sprintf("INBOX OPEN carrying=%d heard=0", carried)).
 		mustContain(t, "stdout", fmt.Sprintf("carrying=%d pushed=true", carried))
-	if got := bus.NoteParsesIn(checkout) - before; got != 1 {
-		t.Fatalf("closing an open entry parsed %d notes, want the 1 reply that closed it\n%s", got, r.stdout)
+	{
+		got := bus.NoteParsesIn(checkout) - before
+		require.Falsef(t, got != 1, "closing an open entry parsed %d notes, want the 1 reply that closed it\n%s", got, r.stdout)
 	}
-	if strings.Contains(read(t, checkout, "from-ada/OPEN"), "bo-222222222222") {
-		t.Fatalf("the answered note is still on the open list")
-	}
-	if n := openEntries(t, checkout, "from-ada"); n != carried {
-		t.Fatalf("the open list holds %d entries after one closed, want %d", n, carried)
+	require.NotContainsf(t, read(t, checkout, "from-ada/OPEN"), "bo-222222222222", "the answered note is still on the open list")
+	{
+		n := openEntries(t, checkout, "from-ada")
+		require.Equalf(t, carried, n, "the open list holds %d entries after one closed, want %d", n, carried)
 	}
 }
 
@@ -153,9 +159,7 @@ func TestInboxParsesOnlyWhatIsNewSinceTheCursor(t *testing.T) {
 func openEntries(t *testing.T, checkout, lane string) int {
 	t.Helper()
 	raw := read(t, checkout, lane+"/OPEN")
-	if !strings.HasPrefix(raw, bus.OpenHeader+"\n") {
-		t.Fatalf("%s/OPEN does not begin with %q", lane, bus.OpenHeader)
-	}
+	require.Truef(t, strings.HasPrefix(raw, bus.OpenHeader+"\n"), "%s/OPEN does not begin with %q", lane, bus.OpenHeader)
 	return len(strings.Split(strings.TrimRight(raw, "\n"), "\n")) - 1
 }
 
@@ -171,9 +175,7 @@ func TestOpenListSurvivesTheCursorMovingPastIt(t *testing.T) {
 	// Both of Bo's notes are now carried, and the cursor is at HEAD. The entry carries
 	// the note's whole display line, which is what a later run prints it from.
 	got := read(t, checkout, "from-ada/OPEN")
-	if !strings.Contains(got, "bo-abcdef012345\tnote\t-\tBo\tto\t2026-09-07T00:01:00Z\tfrom-bo/2026-09-07T0001Z-a-question-abcdef012345.md\tA question about the gate") {
-		t.Fatalf("the question was not carried into OPEN with its line:\n%s", got)
-	}
+	require.Containsf(t, got, "bo-abcdef012345\tnote\t-\tBo\tto\t2026-09-07T00:01:00Z\tfrom-bo/2026-09-07T0001Z-a-question-abcdef012345.md\tA question about the gate", "the question was not carried into OPEN with its line:\n%s", got)
 	cursorOne := read(t, checkout, "from-ada/CURSOR")
 
 	// A second run, with NOTHING new on the bus. The cursor has already moved past the
@@ -184,22 +186,17 @@ func TestOpenListSurvivesTheCursorMovingPastIt(t *testing.T) {
 		mustContain(t, "stdout", "INBOX NOTE id=bo-abcdef012345 from=Bo addr=to at=2026-09-07T00:01:00Z").
 		mustContain(t, "stdout", "A question about the gate").
 		mustContain(t, "stdout", "INBOX OK as=Ada carrying=2 open=2")
-	if strings.Contains(r.stdout, "changed=0") && !strings.Contains(r.stdout, "carrying=2") {
-		t.Fatalf("the second run lost what the first was carrying:\n%s", r.stdout)
-	}
-	if read(t, checkout, "from-ada/CURSOR") == cursorOne {
-		t.Fatalf("the second run did not advance the cursor past its own first commit")
-	}
+	require.Falsef(t, strings.Contains(r.stdout, "changed=0") && !strings.Contains(r.stdout, "carrying=2"), "the second run lost what the first was carrying:\n%s", r.stdout)
+	require.Falsef(t, read(t, checkout, "from-ada/CURSOR") == cursorOne, "the second run did not advance the cursor past its own first commit")
 
 	// Now answer it. The reply names the note by id, so the third run drops it from OPEN
 	// and from the listing.
 	invoke(t, draft, "send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").mustCode(t, 0)
 	r = invoke(t, "", advance(checkout, "Ada", "--open")...).mustCode(t, 0)
-	if strings.Contains(r.stdout, "bo-abcdef012345") {
-		t.Fatalf("an answered note is still carried:\n%s", r.stdout)
-	}
-	if got := read(t, checkout, "from-ada/OPEN"); strings.Contains(got, "bo-abcdef012345") {
-		t.Fatalf("an answered note is still in OPEN:\n%s", got)
+	require.NotContainsf(t, r.stdout, "bo-abcdef012345", "an answered note is still carried:\n%s", r.stdout)
+	{
+		got := read(t, checkout, "from-ada/OPEN")
+		require.NotContainsf(t, got, "bo-abcdef012345", "an answered note is still in OPEN:\n%s", got)
 	}
 }
 
@@ -221,8 +218,9 @@ func TestHeardSurvivesTheCursor(t *testing.T) {
 		mustContain(t, "stdout", "INBOX HEARD id=bo-abcdef012345")
 	// The flag is IN the open list now, which is why the next run needs neither the note nor
 	// RECEIPTS to say HEARD.
-	if got := read(t, checkout, "from-ada/OPEN"); !strings.Contains(got, "bo-abcdef012345\tnote\theard\t") {
-		t.Fatalf("the heard flag was not written into the open list:\n%s", got)
+	{
+		got := read(t, checkout, "from-ada/OPEN")
+		require.Containsf(t, got, "bo-abcdef012345\tnote\theard\t", "the heard flag was not written into the open list:\n%s", got)
 	}
 	// And again, with the receipt now far behind the cursor -- and with no note opened at
 	// all, which is the count this asserts.
@@ -230,15 +228,17 @@ func TestHeardSurvivesTheCursor(t *testing.T) {
 	invoke(t, "", advance(checkout, "Ada", "--open")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX HEARD id=bo-abcdef012345").
 		mustContain(t, "stdout", "heard=1")
-	if got := bus.NoteParsesIn(checkout) - before; got != 0 {
-		t.Fatalf("a run over an unchanged bus parsed %d notes, want 0: heard is read from the open list", got)
+	{
+		got := bus.NoteParsesIn(checkout) - before
+		require.Falsef(t, got != 0, "a run over an unchanged bus parsed %d notes, want 0: heard is read from the open list", got)
 	}
 	// The default read says the same thing in one line, and RECEIPTS is still the durable
 	// record underneath it.
 	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX OPEN carrying=2 heard=1")
-	if got := read(t, checkout, "from-ada/RECEIPTS"); !strings.Contains(got, "bo-abcdef012345") {
-		t.Fatalf("RECEIPTS is not the durable record any more:\n%s", got)
+	{
+		got := read(t, checkout, "from-ada/RECEIPTS")
+		require.Containsf(t, got, "bo-abcdef012345", "RECEIPTS is not the durable record any more:\n%s", got)
 	}
 	// A --full read rebuilds the flag from RECEIPTS rather than carrying it, which is what
 	// makes the file the record and the flag the cache.
@@ -261,8 +261,9 @@ func TestACursorThatIsNotAnAncestorIsRefused(t *testing.T) {
 		mustContain(t, "stderr", "INBOX REFUSED: ").
 		mustContain(t, "stderr", "is not an ancestor of HEAD").
 		mustContain(t, "stderr", "--full")
-	if n := strings.Count(strings.TrimRight(r.stderr, "\n"), "\n"); n != 0 {
-		t.Fatalf("the refusal is %d lines, want one:\n%q", n+1, r.stderr)
+	{
+		n := strings.Count(strings.TrimRight(r.stderr, "\n"), "\n")
+		require.Equalf(t, 0, n, "the refusal is %d lines, want one:\n%q", n+1, r.stderr)
 	}
 	// --full is the fallback it names, and it works.
 	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--full").
@@ -288,9 +289,7 @@ func TestABusBelowTheRepositoryRootIsRefused(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
 	bare := filepath.Join(t.TempDir(), "bus.git")
-	if err := os.MkdirAll(bare, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(bare, 0o755))
 	gitIn(t, bare, "init", "--bare", "--quiet", "--initial-branch=main")
 	checkout := filepath.Join(t.TempDir(), "checkout")
 	gitIn(t, filepath.Dir(checkout), "clone", "--quiet", bare, checkout)
@@ -338,12 +337,11 @@ func TestACursorWhoseOpenListWentMissingIsRefused(t *testing.T) {
 	hermetic(t)
 	checkout, _ := busDir(t)
 	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).mustContain(t, "stdout", "carrying=2")
-	if line := read(t, checkout, "from-ada/CURSOR"); !strings.Contains(line, "open=2") {
-		t.Fatalf("the cursor does not record what it was carrying: %q", line)
+	{
+		line := read(t, checkout, "from-ada/CURSOR")
+		require.Containsf(t, line, "open=2", "the cursor does not record what it was carrying: %q", line)
 	}
-	if err := os.Remove(filepath.Join(checkout, "from-ada", "OPEN")); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Remove(filepath.Join(checkout, "from-ada", "OPEN")))
 	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40").
 		mustCode(t, 1).
 		mustContain(t, "stderr", "INBOX REFUSED: ").
@@ -363,8 +361,9 @@ func TestACursorWhoseOpenListWentMissingIsRefused(t *testing.T) {
 	invoke(t, "From: Ada\nTo: Bo\nRe: bo-111111111111\nSubject: That one too\n\nAnswered.\n",
 		"send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").mustCode(t, 0)
 	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).mustContain(t, "stdout", "carrying=0")
-	if _, err := os.Stat(filepath.Join(checkout, "from-ada", "OPEN")); !os.IsNotExist(err) {
-		t.Fatalf("an empty OPEN list was left on disk, so absent no longer means nothing open: %v", err)
+	{
+		_, err := os.Stat(filepath.Join(checkout, "from-ada", "OPEN"))
+		require.Truef(t, os.IsNotExist(err), "an empty OPEN list was left on disk, so absent no longer means nothing open: %v", err)
 	}
 	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40").
 		mustCode(t, 0).mustContain(t, "stdout", "INBOX OK as=Ada carrying=0 open=0")
@@ -400,8 +399,9 @@ func TestANoteThatArrivedThroughAMergeIsSeen(t *testing.T) {
 	// A real merge commit, with two parents, which is the fixture this test is for.
 	gitIn(t, checkout, "-c", "user.name=Bo", "-c", "user.email=bo@example.com",
 		"merge", "-q", "--no-ff", "-m", "merge bo's branch", "bo-side")
-	if parents := strings.Fields(strings.TrimSpace(gitIn(t, checkout, "rev-list", "--parents", "-n", "1", "HEAD"))); len(parents) != 3 {
-		t.Fatalf("HEAD is not a merge commit: %v", parents)
+	{
+		parents := strings.Fields(strings.TrimSpace(gitIn(t, checkout, "rev-list", "--parents", "-n", "1", "HEAD")))
+		require.Equalf(t, 3, len(parents), "HEAD is not a merge commit: %v", parents)
 	}
 	gitIn(t, checkout, "push", "-q", "origin", "HEAD:refs/heads/main")
 
@@ -432,24 +432,14 @@ func TestSendAppendsToTheIndexAndCheckAgrees(t *testing.T) {
 
 	line := read(t, checkout, "from-ada/INDEX")
 	fields := strings.Split(strings.TrimRight(line, "\n"), "\t")
-	if len(fields) != 5 {
-		t.Fatalf("the index line is %d fields, want 5: %q", len(fields), line)
-	}
-	if fields[0] != id || fields[1] != path {
-		t.Fatalf("the index line names %q at %q; the note is %q at %q", fields[0], fields[1], id, path)
-	}
-	if fields[3] != "Bo;Dana" {
-		t.Fatalf("the index line's recipients are %q, want the resolved To then Cc", fields[3])
-	}
-	if fields[4] != "bo-abcdef012345" {
-		t.Fatalf("the index line's Re is %q", fields[4])
-	}
+	require.Equalf(t, 5, len(fields), "the index line is %d fields, want 5: %q", len(fields), line)
+	require.Falsef(t, fields[0] != id || fields[1] != path, "the index line names %q at %q; the note is %q at %q", fields[0], fields[1], id, path)
+	require.Equalf(t, "Bo;Dana", fields[3], "the index line's recipients are %q, want the resolved To then Cc", fields[3])
+	require.Equalf(t, "bo-abcdef012345", fields[4], "the index line's Re is %q", fields[4])
 	// One commit, both files: a catalogue that could lag the notes by a commit is one a
 	// reader between the two would resolve wrongly.
 	files := gitIn(t, bare, "show", "--name-only", "--format=", "main")
-	if !strings.Contains(files, "from-ada/INDEX") || !strings.Contains(files, path) {
-		t.Fatalf("the note and its index line are not in one commit:\n%s", files)
-	}
+	require.Falsef(t, !strings.Contains(files, "from-ada/INDEX") || !strings.Contains(files, path), "the note and its index line are not in one commit:\n%s", files)
 	invoke(t, "", "check", "--bus", checkout, "--full").mustCode(t, 0).
 		mustContain(t, "stdout", "BUS OK").mustContain(t, "stdout", "warn=0")
 }
@@ -473,9 +463,7 @@ func TestCheckFullAgainstTheIndex(t *testing.T) {
 		mustContain(t, "stdout", "BUS WARN from-bo/2026-09-08T0300Z-by-hand-333333333333.md").
 		mustContain(t, "stdout", "--rebuild-index").
 		mustContain(t, "stdout", "warn=1")
-	if strings.Contains(r.stderr, "BUS WARN") {
-		t.Fatalf("a warning reached stderr, where only failures and refusals go:\n%s", r.stderr)
-	}
+	require.NotContainsf(t, r.stderr, "BUS WARN", "a warning reached stderr, where only failures and refusals go:\n%s", r.stderr)
 
 	// --rebuild-index writes it, and the warning goes.
 	invoke(t, "", "check", "--bus", checkout, "--full", "--rebuild-index").mustCode(t, 0).
@@ -548,11 +536,13 @@ func TestInboxWithoutAdvanceWritesNothing(t *testing.T) {
 	hermetic(t)
 	checkout, _ := busDir(t)
 	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40").mustCode(t, 0)
-	if _, err := os.Stat(filepath.Join(checkout, "from-ada")); err == nil {
-		t.Fatalf("a plain inbox created the reader's lane")
+	{
+		_, err := os.Stat(filepath.Join(checkout, "from-ada"))
+		require.Errorf(t, err, "a plain inbox created the reader's lane")
 	}
-	if out := gitIn(t, checkout, "status", "--porcelain"); strings.TrimSpace(out) != "" {
-		t.Fatalf("a plain inbox left the checkout dirty:\n%s", out)
+	{
+		out := gitIn(t, checkout, "status", "--porcelain")
+		require.Emptyf(t, strings.TrimSpace(out), "a plain inbox left the checkout dirty:\n%s", out)
 	}
 	// --advance without the flags it needs to push is refused by name.
 	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--advance").
@@ -570,12 +560,11 @@ func TestTheCursorIsPushedLikeAReceipt(t *testing.T) {
 		mustContain(t, "stdout", "pushed=true attempts=1")
 	files := gitIn(t, bare, "ls-tree", "-r", "--name-only", "main")
 	for _, want := range []string{"from-ada/CURSOR", "from-ada/OPEN"} {
-		if !strings.Contains(files, want) {
-			t.Fatalf("%s is not on the remote:\n%s", want, files)
-		}
+		require.Containsf(t, files, want, "%s is not on the remote:\n%s", want, files)
 	}
-	if who := strings.TrimSpace(gitIn(t, bare, "log", "-1", "--format=%an <%ae>", "main")); who != "Ada <ada@example.com>" {
-		t.Fatalf("the cursor was committed as %q, not the roster's identity for Ada", who)
+	{
+		who := strings.TrimSpace(gitIn(t, bare, "log", "-1", "--format=%an <%ae>", "main"))
+		require.Equalf(t, "Ada <ada@example.com>", who, "the cursor was committed as %q, not the roster's identity for Ada", who)
 	}
 	// --no-push commits it and says the cursor is not on the bus.
 	writeFile(t, checkout, "from-bo/2026-09-08T0500Z-another-555555555555.md",
@@ -602,9 +591,7 @@ func TestLaneStateFilesAreNotStrays(t *testing.T) {
 		mustContain(t, "stderr", "RECEIPTS, CURSOR, OPEN, INDEX")
 	// A malformed state file is a finding, not a crash: a reader would otherwise refuse on
 	// their next run with nothing on the bus saying why.
-	if err := os.Remove(filepath.Join(checkout, "from-ada", "notes.txt")); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Remove(filepath.Join(checkout, "from-ada", "notes.txt")))
 	writeFile(t, checkout, "from-ada/OPEN", bus.OpenHeader+"\nno-path-here\n")
 	invoke(t, "", "check", "--bus", checkout, "--full").mustCode(t, 1).
 		mustContain(t, "stderr", "BUS FAIL from-ada/OPEN").
@@ -634,9 +621,7 @@ func TestALanesReadmeIsNotANote(t *testing.T) {
 		advance(checkout, "Ada"),
 	} {
 		r := invoke(t, "", args...).mustCode(t, 0).mustContain(t, "stdout", "unreadable=0")
-		if strings.Contains(r.stdout, "README.md") {
-			t.Fatalf("a lane's README reached a reader's listing:\n%s", r.stdout)
-		}
+		require.NotContainsf(t, r.stdout, "README.md", "a lane's README reached a reader's listing:\n%s", r.stdout)
 	}
 	// The tolerance is ONE name and is not a licence: a second document in a lane is read as
 	// the note it is not, and fails, exactly as it did before. (A `readme.md` in another case
@@ -667,8 +652,9 @@ func TestAnOpenListFromBeforeV2IsRefusedAndFullAdvanceRepairsIt(t *testing.T) {
 		mustContain(t, "stderr", "INBOX REFUSED: ").
 		mustContain(t, "stderr", bus.OpenHeader).
 		mustContain(t, "stderr", "--full --advance")
-	if n := strings.Count(strings.TrimRight(r.stderr, "\n"), "\n"); n != 0 {
-		t.Fatalf("the refusal is %d lines, want one:\n%q", n+1, r.stderr)
+	{
+		n := strings.Count(strings.TrimRight(r.stderr, "\n"), "\n")
+		require.Equalf(t, 0, n, "the refusal is %d lines, want one:\n%q", n+1, r.stderr)
 	}
 	// check says the same thing about the same file, so a bus carrying one is not a
 	// silence that only its own reader ever meets.
@@ -680,8 +666,9 @@ func TestAnOpenListFromBeforeV2IsRefusedAndFullAdvanceRepairsIt(t *testing.T) {
 	invoke(t, "", advance(checkout, "Ada", "--full")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX SCOPE mode=full").
 		mustContain(t, "stdout", "INBOX OK as=Ada carrying=2 open=2")
-	if got := read(t, checkout, "from-ada/OPEN"); !strings.HasPrefix(got, bus.OpenHeader+"\n") {
-		t.Fatalf("--full --advance did not write a v2 open list:\n%s", got)
+	{
+		got := read(t, checkout, "from-ada/OPEN")
+		require.Truef(t, strings.HasPrefix(got, bus.OpenHeader+"\n"), "--full --advance did not write a v2 open list:\n%s", got)
 	}
 	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40").
 		mustCode(t, 0).mustContain(t, "stdout", "INBOX OPEN carrying=2")
@@ -702,8 +689,9 @@ func TestAnUnreadableFileIsCarriedAcrossRuns(t *testing.T) {
 	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX UNREADABLE path=from-bo/2026-09-07T0009Z-prose.md: ").
 		mustContain(t, "stdout", "unreadable=1")
-	if got := read(t, checkout, "from-ada/OPEN"); !strings.Contains(got, "-\tunreadable\t-\t-\t-\t-\tfrom-bo/2026-09-07T0009Z-prose.md\t-") {
-		t.Fatalf("the unreadable file was not carried on the open list:\n%s", got)
+	{
+		got := read(t, checkout, "from-ada/OPEN")
+		require.Containsf(t, got, "-\tunreadable\t-\t-\t-\t-\tfrom-bo/2026-09-07T0009Z-prose.md\t-", "the unreadable file was not carried on the open list:\n%s", got)
 	}
 	// The next run, with nothing new at all, still names it, collapsed to one count line
 	// because it is unchanged since the cursor. That is the whole point.
@@ -718,9 +706,7 @@ func TestAnUnreadableFileIsCarriedAcrossRuns(t *testing.T) {
 		"--remote", "origin", "--branch", "main", "--attempts", "3").mustCode(t, 0)
 	r := invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
 		mustContain(t, "stdout", "unreadable=0")
-	if strings.Contains(r.stdout, "2026-09-07T0009Z-prose.md") {
-		t.Fatalf("a receipted unreadable file is still named:\n%s", r.stdout)
-	}
+	require.NotContainsf(t, r.stdout, "2026-09-07T0009Z-prose.md", "a receipted unreadable file is still named:\n%s", r.stdout)
 
 	// The other way is that somebody FIXES it: it stops being unreadable and becomes an
 	// ordinary open note, with the line it should have had.
@@ -752,9 +738,7 @@ func TestUnreadableNotesCollapseToOneLineWhenUnchanged(t *testing.T) {
 	// whole set collapses to one count line and no per-file lines print.
 	r := invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX UNREADABLE count=1 unchanged=true first=from-bo/2026-09-07T0009Z-prose.md")
-	if strings.Contains(r.stdout, "INBOX UNREADABLE path=") {
-		t.Fatalf("an unchanged unreadable set still printed per-file lines:\n%s", r.stdout)
-	}
+	require.NotContainsf(t, r.stdout, "INBOX UNREADABLE path=", "an unchanged unreadable set still printed per-file lines:\n%s", r.stdout)
 	// --diagnostics asks for the whole picture whatever the default is: the per-file line
 	// is back even though nothing changed.
 	invoke(t, "", advance(checkout, "Ada", "--diagnostics")...).mustCode(t, 0).
@@ -800,9 +784,7 @@ func TestTheExampleBusInTestdataIsWhatTheREADMESays(t *testing.T) {
 	wantAda := read(t, root, "from-ada/INDEX")
 	wantBo := read(t, root, "from-bo/INDEX")
 	invoke(t, "", "check", "--bus", root, "--full", "--rebuild-index").mustCode(t, 0)
-	if read(t, root, "from-ada/INDEX") != wantAda || read(t, root, "from-bo/INDEX") != wantBo {
-		t.Fatal("a rebuild changed the example bus's catalogue, so the committed one is stale")
-	}
+	require.False(t, read(t, root, "from-ada/INDEX") != wantAda || read(t, root, "from-bo/INDEX") != wantBo, "a rebuild changed the example bus's catalogue, so the committed one is stale")
 	// As a repository root it is a bus the git-reading verbs will work over, which is
 	// what its README tells a reader to make it. `--since HEAD` is the cheapest proof:
 	// the root test passes, the diff runs, and the change set over no change is empty.
@@ -811,8 +793,9 @@ func TestTheExampleBusInTestdataIsWhatTheREADMESays(t *testing.T) {
 		mustContain(t, "stdout", "changed=0")
 	// And the CURSOR it ships records what its OPEN list holds, so a reader arriving on it
 	// is not refused for an open list that went missing.
-	if line := read(t, root, "from-ada/CURSOR"); !strings.Contains(line, "open=2") {
-		t.Fatalf("the example cursor does not record its two carried notes: %q", line)
+	{
+		line := read(t, root, "from-ada/CURSOR")
+		require.Containsf(t, line, "open=2", "the example cursor does not record its two carried notes: %q", line)
 	}
 }
 
@@ -835,9 +818,7 @@ func copyTree(t *testing.T, from, to string) {
 		}
 		return os.WriteFile(filepath.Join(to, rel), raw, 0o644)
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 }
 
 // A reader's very first --advance with an EMPTY inbox. There is no OPEN file to commit,
@@ -859,12 +840,8 @@ func TestAFirstAdvanceWithNothingOpen(t *testing.T) {
 		mustContain(t, "stdout", "INBOX CURSOR commit=").
 		mustContain(t, "stdout", "carrying=0 pushed=true")
 	files := gitIn(t, bare, "ls-tree", "-r", "--name-only", "main")
-	if !strings.Contains(files, "from-ada/CURSOR") {
-		t.Fatalf("the cursor did not land:\n%s", files)
-	}
-	if strings.Contains(files, "from-ada/OPEN") {
-		t.Fatalf("an empty OPEN list was committed as a file:\n%s", files)
-	}
+	require.Containsf(t, files, "from-ada/CURSOR", "the cursor did not land:\n%s", files)
+	require.NotContainsf(t, files, "from-ada/OPEN", "an empty OPEN list was committed as a file:\n%s", files)
 	// The next run reads from it, and is a `since` run over no change at all.
 	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX SCOPE mode=since").
@@ -878,18 +855,21 @@ func TestAnOpenListThatEmptiesIsRemovedFromTheBus(t *testing.T) {
 	hermetic(t)
 	checkout, bare := busDir(t)
 	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0)
-	if files := gitIn(t, bare, "ls-tree", "-r", "--name-only", "main"); !strings.Contains(files, "from-ada/OPEN") {
-		t.Fatalf("the first advance did not publish an OPEN list:\n%s", files)
+	{
+		files := gitIn(t, bare, "ls-tree", "-r", "--name-only", "main")
+		require.Containsf(t, files, "from-ada/OPEN", "the first advance did not publish an OPEN list:\n%s", files)
 	}
 	invoke(t, draft, "send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").mustCode(t, 0)
 	invoke(t, "From: Ada\nTo: Bo\nRe: bo-111111111111\nSubject: That one too\n\nAnswered.\n",
 		"send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").mustCode(t, 0)
 	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).mustContain(t, "stdout", "carrying=0")
-	if files := gitIn(t, bare, "ls-tree", "-r", "--name-only", "main"); strings.Contains(files, "from-ada/OPEN") {
-		t.Fatalf("an emptied OPEN list is still on the bus:\n%s", files)
+	{
+		files := gitIn(t, bare, "ls-tree", "-r", "--name-only", "main")
+		require.NotContainsf(t, files, "from-ada/OPEN", "an emptied OPEN list is still on the bus:\n%s", files)
 	}
-	if out := gitIn(t, checkout, "status", "--porcelain"); strings.TrimSpace(out) != "" {
-		t.Fatalf("the checkout is dirty after an emptied OPEN list:\n%s", out)
+	{
+		out := gitIn(t, checkout, "status", "--porcelain")
+		require.Emptyf(t, strings.TrimSpace(out), "the checkout is dirty after an emptied OPEN list:\n%s", out)
 	}
 }
 
@@ -921,17 +901,17 @@ func TestTheSwitchDayLineLeavesTheOldNotesOffTheOpenList(t *testing.T) {
 		mustContain(t, "stdout", "INBOX LEGACY before=2026-09-01 notes=2 unreadable=0").
 		mustContain(t, "stdout", "INBOX OK as=Ada carrying=2 open=2")
 	for _, old := range []string{"bo-aaaaaaaaaaaa", "bo-bbbbbbbbbbbb"} {
-		if strings.Contains(r.stdout, old) {
-			t.Fatalf("a note behind the line was listed one by one:\n%s", r.stdout)
-		}
+		require.NotContainsf(t, r.stdout, old, "a note behind the line was listed one by one:\n%s", r.stdout)
 	}
 	// The open list is the notes in front of the line and nothing else, and the cursor
 	// carries the date so the next run needs no flag.
-	if open := read(t, checkout, "from-ada/OPEN"); strings.Contains(open, "aaaaaaaaaaaa") || strings.Contains(open, "bbbbbbbbbbbb") {
-		t.Fatalf("the open list carries a note from behind the line:\n%s", open)
+	{
+		open := read(t, checkout, "from-ada/OPEN")
+		require.Falsef(t, strings.Contains(open, "aaaaaaaaaaaa") || strings.Contains(open, "bbbbbbbbbbbb"), "the open list carries a note from behind the line:\n%s", open)
 	}
-	if cursor := read(t, checkout, "from-ada/CURSOR"); !strings.Contains(cursor, "legacy=2026-09-01") {
-		t.Fatalf("the cursor did not record the line: %s", cursor)
+	{
+		cursor := read(t, checkout, "from-ada/CURSOR")
+		require.Containsf(t, cursor, "legacy=2026-09-01", "the cursor did not record the line: %s", cursor)
 	}
 
 	// The second read, with no flag at all: quiet. It honours the line from the cursor,
@@ -941,9 +921,7 @@ func TestTheSwitchDayLineLeavesTheOldNotesOffTheOpenList(t *testing.T) {
 		mustContain(t, "stdout", "INBOX LEGACY before=2026-09-01 notes=0 unreadable=0").
 		mustContain(t, "stdout", "INBOX OK as=Ada carrying=2 open=2")
 	for _, old := range []string{"bo-aaaaaaaaaaaa", "bo-bbbbbbbbbbbb"} {
-		if strings.Contains(r.stdout, old) {
-			t.Fatalf("the second read brought the old notes back:\n%s", r.stdout)
-		}
+		require.NotContainsf(t, r.stdout, old, "the second read brought the old notes back:\n%s", r.stdout)
 	}
 
 	// A line that moves EARLIER would put the notes between the two dates back on the open
@@ -964,9 +942,7 @@ func TestTheSwitchDayLineLeavesTheOldNotesOffTheOpenList(t *testing.T) {
 	r = invoke(t, "", advance(checkout, "Ada", "--full", "--legacy-before", "2026-08-01")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX LEGACY before=2026-08-01 notes=0 unreadable=0").
 		mustContain(t, "stdout", "INBOX OK as=Ada carrying=4 open=4")
-	if !strings.Contains(r.stdout, "bo-aaaaaaaaaaaa") {
-		t.Fatalf("a --full read with an earlier line did not bring the old notes back:\n%s", r.stdout)
-	}
+	require.Containsf(t, r.stdout, "bo-aaaaaaaaaaaa", "a --full read with an earlier line did not bring the old notes back:\n%s", r.stdout)
 }
 
 // THE SWITCH-DAY LINE DRAWN TODAY, end to end -- the bug a family of five found in their
@@ -1002,9 +978,7 @@ func TestASwitchDrawnAtTomorrowsDateHidesTodayAndAnInstantBringsItBack(t *testin
 	r := invoke(t, "", advance(checkout, "Ada", "--full", "--legacy-before", "2026-09-10")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX LEGACY before=2026-09-10 notes=4").
 		mustContain(t, "stdout", "INBOX OK as=Ada carrying=0 open=0")
-	if strings.Contains(r.stdout, "bo-bbbbbbbbbbbb") {
-		t.Fatalf("tomorrow's date listed a note sent today:\n%s", r.stdout)
-	}
+	require.NotContainsf(t, r.stdout, "bo-bbbbbbbbbbbb", "tomorrow's date listed a note sent today:\n%s", r.stdout)
 
 	// THE RECOVERY, which is one command: the same full read with the instant they actually
 	// switched at. Moving the line EARLIER is refused on an incremental read and allowed
@@ -1014,17 +988,17 @@ func TestASwitchDrawnAtTomorrowsDateHidesTodayAndAnInstantBringsItBack(t *testin
 		mustContain(t, "stdout", "INBOX LEGACY before=2026-09-09T18:07:00Z notes=3").
 		mustContain(t, "stdout", "INBOX OK as=Ada carrying=1 open=1").
 		mustContain(t, "stdout", "bo-bbbbbbbbbbbb")
-	if strings.Contains(r.stdout, "bo-aaaaaaaaaaaa") {
-		t.Fatalf("the note from a minute BEFORE the switch was listed:\n%s", r.stdout)
-	}
+	require.NotContainsf(t, r.stdout, "bo-aaaaaaaaaaaa", "the note from a minute BEFORE the switch was listed:\n%s", r.stdout)
 	// The open list is the one note in front of the line, and the cursor records the instant
 	// EXACTLY as it was given rather than rounded back to its day -- which is the whole of
 	// what makes the next run honour a same-day switch.
-	if open := read(t, checkout, "from-ada/OPEN"); strings.Contains(open, "aaaaaaaaaaaa") || !strings.Contains(open, "bbbbbbbbbbbb") {
-		t.Fatalf("the open list is not the notes in front of the line:\n%s", open)
+	{
+		open := read(t, checkout, "from-ada/OPEN")
+		require.Falsef(t, strings.Contains(open, "aaaaaaaaaaaa") || !strings.Contains(open, "bbbbbbbbbbbb"), "the open list is not the notes in front of the line:\n%s", open)
 	}
-	if cursor := read(t, checkout, "from-ada/CURSOR"); !strings.Contains(cursor, "legacy=2026-09-09T18:07:00Z") {
-		t.Fatalf("the cursor did not record the instant as given: %s", cursor)
+	{
+		cursor := read(t, checkout, "from-ada/CURSOR")
+		require.Containsf(t, cursor, "legacy=2026-09-09T18:07:00Z", "the cursor did not record the instant as given: %s", cursor)
 	}
 
 	// The next read needs no flag: it honours the instant from the cursor, echoes it back
@@ -1034,9 +1008,7 @@ func TestASwitchDrawnAtTomorrowsDateHidesTodayAndAnInstantBringsItBack(t *testin
 		mustContain(t, "stdout", "INBOX LEGACY before=2026-09-09T18:07:00Z notes=0").
 		mustContain(t, "stdout", "bo-bbbbbbbbbbbb").
 		mustContain(t, "stdout", "INBOX OK as=Ada carrying=1 open=1")
-	if strings.Contains(r.stdout, "bo-aaaaaaaaaaaa") {
-		t.Fatalf("a run reading the line from its cursor brought the old note back:\n%s", r.stdout)
-	}
+	require.NotContainsf(t, r.stdout, "bo-aaaaaaaaaaaa", "a run reading the line from its cursor brought the old note back:\n%s", r.stdout)
 
 	// A note sent AFTER the line lands on the open list on an incremental run, which is the
 	// half of the bug that made the tool look dead: no note sent since the switch appeared
@@ -1062,11 +1034,10 @@ func TestASwitchDrawnAtTomorrowsDateHidesTodayAndAnInstantBringsItBack(t *testin
 	r = invoke(t, "", advance(checkout, "Ada", "--full", "--legacy-before", "2026-09-09")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX LEGACY before=2026-09-09 notes=2").
 		mustContain(t, "stdout", "INBOX OK as=Ada carrying=3 open=3")
-	if !strings.Contains(r.stdout, "bo-aaaaaaaaaaaa") {
-		t.Fatalf("today's date did not read as midnight at its start:\n%s", r.stdout)
-	}
-	if cursor := read(t, checkout, "from-ada/CURSOR"); !strings.Contains(cursor, "legacy=2026-09-09 ") && !strings.HasSuffix(strings.TrimSpace(cursor), "legacy=2026-09-09") {
-		t.Fatalf("a date line was not recorded as a date: %s", cursor)
+	require.Containsf(t, r.stdout, "bo-aaaaaaaaaaaa", "today's date did not read as midnight at its start:\n%s", r.stdout)
+	{
+		cursor := read(t, checkout, "from-ada/CURSOR")
+		require.Falsef(t, !strings.Contains(cursor, "legacy=2026-09-09 ") && !strings.HasSuffix(strings.TrimSpace(cursor), "legacy=2026-09-09"), "a date line was not recorded as a date: %s", cursor)
 	}
 }
 
@@ -1126,11 +1097,10 @@ func TestUnreadableFilesBehindTheSwitchDayLineAreCountedAndNotListed(t *testing.
 		mustContain(t, "stdout", "INBOX UNREADABLE path="+old+": ").
 		mustContain(t, "stdout", "INBOX UNREADABLE path="+recent+": ").
 		mustContain(t, "stdout", "unreadable=2")
-	if strings.Contains(r.stdout, "INBOX LEGACY") {
-		t.Fatalf("a run with no line printed one anyway:\n%s", r.stdout)
-	}
-	if got := read(t, checkout, "from-ada/OPEN"); !strings.Contains(got, old) || !strings.Contains(got, recent) {
-		t.Fatalf("a run with no line did not carry both unreadable files:\n%s", got)
+	require.NotContainsf(t, r.stdout, "INBOX LEGACY", "a run with no line printed one anyway:\n%s", r.stdout)
+	{
+		got := read(t, checkout, "from-ada/OPEN")
+		require.Falsef(t, !strings.Contains(got, old) || !strings.Contains(got, recent), "a run with no line did not carry both unreadable files:\n%s", got)
 	}
 
 	// THE LINE, drawn on an incremental read over the two files already being carried --
@@ -1141,11 +1111,10 @@ func TestUnreadableFilesBehindTheSwitchDayLineAreCountedAndNotListed(t *testing.
 		mustContain(t, "stdout", "INBOX LEGACY before=2026-09-01 notes=0 unreadable=1").
 		mustContain(t, "stdout", "INBOX UNREADABLE count=1 unchanged=true first="+recent).
 		mustContain(t, "stdout", "unreadable=1")
-	if strings.Contains(r.stdout, old) {
-		t.Fatalf("a file behind the line was named one by one:\n%s", r.stdout)
-	}
-	if got := read(t, checkout, "from-ada/OPEN"); strings.Contains(got, old) {
-		t.Fatalf("the open list still carries a file from behind the line:\n%s", got)
+	require.NotContainsf(t, r.stdout, old, "a file behind the line was named one by one:\n%s", r.stdout)
+	{
+		got := read(t, checkout, "from-ada/OPEN")
+		require.NotContainsf(t, got, old, "the open list still carries a file from behind the line:\n%s", got)
 	}
 
 	// AND THEN THE INBOX IS QUIET. The next run needs no flag, honours the line from the
@@ -1155,9 +1124,7 @@ func TestUnreadableFilesBehindTheSwitchDayLineAreCountedAndNotListed(t *testing.
 		mustContain(t, "stdout", "INBOX LEGACY before=2026-09-01 notes=0 unreadable=0").
 		mustContain(t, "stdout", "INBOX UNREADABLE count=1 unchanged=true first="+recent).
 		mustContain(t, "stdout", "unreadable=1")
-	if strings.Contains(r.stdout, old) {
-		t.Fatalf("the quiet run brought a file from behind the line back:\n%s", r.stdout)
-	}
+	require.NotContainsf(t, r.stdout, old, "the quiet run brought a file from behind the line back:\n%s", r.stdout)
 
 	// A file from behind the line arriving in a CHANGE SET rather than carried -- an old
 	// lane rearranged, a history rewritten -- gets the same answer, counted and unnamed.
@@ -1166,9 +1133,7 @@ func TestUnreadableFilesBehindTheSwitchDayLineAreCountedAndNotListed(t *testing.
 	r = invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX LEGACY before=2026-09-01 notes=0 unreadable=1").
 		mustContain(t, "stdout", "unreadable=1")
-	if strings.Contains(r.stdout, "older-still") {
-		t.Fatalf("a file behind the line arriving in the change set was named:\n%s", r.stdout)
-	}
+	require.NotContainsf(t, r.stdout, "older-still", "a file behind the line arriving in the change set was named:\n%s", r.stdout)
 
 	// --FULL LISTS EVERYTHING, whatever its date, because a full read is what a person
 	// asks for when they want the whole picture. The line still shapes the open list it
@@ -1179,9 +1144,7 @@ func TestUnreadableFilesBehindTheSwitchDayLineAreCountedAndNotListed(t *testing.
 		mustContain(t, "stdout", "INBOX LEGACY before=2026-09-01 notes=0 unreadable=2").
 		mustContain(t, "stdout", "unreadable=3")
 	for _, path := range []string{old, recent, "from-bo/2026-07-04-older-still.md"} {
-		if !strings.Contains(r.stdout, "INBOX UNREADABLE path="+path+": ") {
-			t.Fatalf("a --full read did not list %s:\n%s", path, r.stdout)
-		}
+		require.Containsf(t, r.stdout, "INBOX UNREADABLE path="+path+": ", "a --full read did not list %s:\n%s", path, r.stdout)
 	}
 
 	// A file whose name says NOTHING about when it was written is never behind the line,
@@ -1223,22 +1186,20 @@ func TestAFirstAdvanceOverOldNotesIsRefused(t *testing.T) {
 		// day, which tomorrow's date would have swallowed whole -- is news.
 		mustContain(t, "stderr", `--full --legacy-now --advance --remote "origin" --branch "main"`).
 		mustContain(t, "stderr", "--carry-history")
-	if strings.Contains(r.stderr, "--legacy-before") {
-		t.Fatalf("the guard still hands over a timestamp to retype:\n%s", r.stderr)
-	}
+	require.NotContainsf(t, r.stderr, "--legacy-before", "the guard still hands over a timestamp to retype:\n%s", r.stderr)
 	// It refuses BEFORE the listing, because the listing is the cost being complained
 	// about: a first full read of that bus is a line per open note.
-	if r.stdout != "" {
-		t.Fatalf("the refusal printed a listing anyway:\n%s", r.stdout)
-	}
+	require.Emptyf(t, r.stdout, "the refusal printed a listing anyway:\n%s", r.stdout)
 	// And it wrote nothing: no cursor, no open list, nothing pushed.
 	for _, p := range []string{"from-ada/CURSOR", "from-ada/OPEN"} {
-		if _, err := os.Stat(filepath.Join(checkout, filepath.FromSlash(p))); !os.IsNotExist(err) {
-			t.Fatalf("%s exists after a refused advance: %v", p, err)
+		{
+			_, err := os.Stat(filepath.Join(checkout, filepath.FromSlash(p)))
+			require.Truef(t, os.IsNotExist(err), "%s exists after a refused advance: %v", p, err)
 		}
 	}
-	if files := gitIn(t, bare, "ls-tree", "-r", "--name-only", "main"); strings.Contains(files, "from-ada/") {
-		t.Fatalf("a refused advance pushed something:\n%s", files)
+	{
+		files := gitIn(t, bare, "ls-tree", "-r", "--name-only", "main")
+		require.NotContainsf(t, files, "from-ada/", "a refused advance pushed something:\n%s", files)
 	}
 	// The first answer, which is the one the refusal recommends: run the line it printed,
 	// VERBATIM. The old notes are counted on the LEGACY line and carried by nobody, and
@@ -1252,8 +1213,9 @@ func TestAFirstAdvanceOverOldNotesIsRefused(t *testing.T) {
 	// --legacy-now is sugar for the instant and nothing else, so what lands in the cursor is
 	// the instant itself -- the same eight fields any other read leaves, honoured by every
 	// later run with no flag.
-	if cursor := read(t, checkout, "from-ada/CURSOR"); !strings.Contains(cursor, "legacy=2026-09-09T12:34:56Z") {
-		t.Fatalf("the cursor did not record the line the refusal named: %s", cursor)
+	{
+		cursor := read(t, checkout, "from-ada/CURSOR")
+		require.Containsf(t, cursor, "legacy=2026-09-09T12:34:56Z", "the cursor did not record the line the refusal named: %s", cursor)
 	}
 
 	// AND THE SWITCH DAY SURVIVES IT, which is the whole reason the suggestion is an
@@ -1284,13 +1246,15 @@ func TestAFirstAdvanceCarriesTheHistoryWhenAsked(t *testing.T) {
 		"--advance", "--remote", "origin", "--branch", "main", "--attempts", "3").
 		mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX OK as=Ada carrying=2 open=2")
-	if open := read(t, checkout, "from-ada/OPEN"); !strings.Contains(open, "bo-abcdef012345") {
-		t.Fatalf("--carry-history did not carry the old notes:\n%s", open)
+	{
+		open := read(t, checkout, "from-ada/OPEN")
+		require.Containsf(t, open, "bo-abcdef012345", "--carry-history did not carry the old notes:\n%s", open)
 	}
 	// It is not a switch-day line and does not become one: nothing is written to the cursor
 	// that a later run would honour.
-	if cursor := read(t, checkout, "from-ada/CURSOR"); strings.Contains(cursor, "legacy=") {
-		t.Fatalf("--carry-history wrote a legacy line into the cursor: %s", cursor)
+	{
+		cursor := read(t, checkout, "from-ada/CURSOR")
+		require.NotContainsf(t, cursor, "legacy=", "--carry-history wrote a legacy line into the cursor: %s", cursor)
 	}
 	// The second advance needs neither flag: there is a cursor now.
 	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
@@ -1344,25 +1308,13 @@ func TestCarryHistoryTwoCommandRoundTripRetainsLegacyAndUnreadable(t *testing.T)
 		mustContain(t, "stdout", "INBOX OK as=Ada carrying=6")
 
 	open := read(t, checkout, "from-ada/OPEN")
-	if !strings.Contains(open, "bo-legacy-001") {
-		t.Fatalf("OPEN does not contain legacy ID bo-legacy-001:\n%s", open)
-	}
-	if !strings.Contains(open, "Bo-Legacy-001") {
-		t.Fatalf("OPEN does not contain uppercase legacy ID Bo-Legacy-001:\n%s", open)
-	}
-	if !strings.Contains(open, "bo-abcdef012345") {
-		t.Fatalf("OPEN does not contain modern ID bo-abcdef012345:\n%s", open)
-	}
-	if !strings.Contains(open, "from-bo/2026-09-07T0005Z-unsupported-id.md") {
-		t.Fatalf("OPEN does not contain unsupported ID note path:\n%s", open)
-	}
+	require.Containsf(t, open, "bo-legacy-001", "OPEN does not contain legacy ID bo-legacy-001:\n%s", open)
+	require.Containsf(t, open, "Bo-Legacy-001", "OPEN does not contain uppercase legacy ID Bo-Legacy-001:\n%s", open)
+	require.Containsf(t, open, "bo-abcdef012345", "OPEN does not contain modern ID bo-abcdef012345:\n%s", open)
+	require.Containsf(t, open, "from-bo/2026-09-07T0005Z-unsupported-id.md", "OPEN does not contain unsupported ID note path:\n%s", open)
 	// The unsupported legacy ID must use the deliberate safe representation ("-" in ID column):
-	if strings.Contains(open, "bo not slug") {
-		t.Fatalf("OPEN published unreadable/malformed ID string %q:\n%s", "bo not slug", open)
-	}
-	if !strings.Contains(open, "from-bo/2026-09-07T0006Z-unreadable.md") {
-		t.Fatalf("OPEN does not contain unreadable path:\n%s", open)
-	}
+	require.NotContainsf(t, open, "bo not slug", "OPEN published unreadable/malformed ID string %q:\n%s", "bo not slug", open)
+	require.Containsf(t, open, "from-bo/2026-09-07T0006Z-unreadable.md", "OPEN does not contain unreadable path:\n%s", open)
 
 	// Command 2: subsequent incremental inbox without --full or --carry-history.
 	// Must read OPEN cleanly without refusing any legacy ID or safe representation.
@@ -1373,21 +1325,11 @@ func TestCarryHistoryTwoCommandRoundTripRetainsLegacyAndUnreadable(t *testing.T)
 	// When asked for --open, it prints all carried entries cleanly.
 	openRes := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--open").
 		mustCode(t, 0)
-	if !strings.Contains(openRes.stdout, "bo-legacy-001") {
-		t.Fatalf("incremental inbox --open did not print legacy note bo-legacy-001:\n%s", openRes.stdout)
-	}
-	if !strings.Contains(openRes.stdout, "Bo-Legacy-001") {
-		t.Fatalf("incremental inbox --open did not print uppercase legacy note Bo-Legacy-001:\n%s", openRes.stdout)
-	}
-	if !strings.Contains(openRes.stdout, "bo-abcdef012345") {
-		t.Fatalf("incremental inbox --open did not print modern note bo-abcdef012345:\n%s", openRes.stdout)
-	}
-	if !strings.Contains(openRes.stdout, "from-bo/2026-09-07T0005Z-unsupported-id.md") {
-		t.Fatalf("incremental inbox --open did not print unsupported-id note by path:\n%s", openRes.stdout)
-	}
-	if !strings.Contains(openRes.stdout, "from-bo/2026-09-07T0006Z-unreadable.md") {
-		t.Fatalf("incremental inbox --open did not print unreadable note:\n%s", openRes.stdout)
-	}
+	require.Containsf(t, openRes.stdout, "bo-legacy-001", "incremental inbox --open did not print legacy note bo-legacy-001:\n%s", openRes.stdout)
+	require.Containsf(t, openRes.stdout, "Bo-Legacy-001", "incremental inbox --open did not print uppercase legacy note Bo-Legacy-001:\n%s", openRes.stdout)
+	require.Containsf(t, openRes.stdout, "bo-abcdef012345", "incremental inbox --open did not print modern note bo-abcdef012345:\n%s", openRes.stdout)
+	require.Containsf(t, openRes.stdout, "from-bo/2026-09-07T0005Z-unsupported-id.md", "incremental inbox --open did not print unsupported-id note by path:\n%s", openRes.stdout)
+	require.Containsf(t, openRes.stdout, "from-bo/2026-09-07T0006Z-unreadable.md", "incremental inbox --open did not print unreadable note:\n%s", openRes.stdout)
 
 	// Subsequent incremental advance also succeeds cleanly.
 	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
@@ -1405,9 +1347,7 @@ func TestAFirstAdvanceOnABusWithNoOldNotesNeedsNeither(t *testing.T) {
 	checkout, _ := busDir(t)
 	// Take the fixture's two old notes off the bus and leave one note dated today.
 	for _, p := range []string{"from-bo/2026-09-07T0001Z-a-question-abcdef012345.md", "from-bo/2026-09-07T0002Z-heard-111111111111.md"} {
-		if err := os.Remove(filepath.Join(checkout, filepath.FromSlash(p))); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.Remove(filepath.Join(checkout, filepath.FromSlash(p))))
 	}
 	writeFile(t, checkout, "from-bo/2026-09-09T0900Z-today-cccccccccccc.md",
 		"From: Bo\nTo: Ada\nDate: Wed Sep  9 09:00:00 UTC 2026\nId: bo-cccccccccccc\nSubject: Written today\n\nDoes the guard fire on a bus with no history?\n")
@@ -1463,32 +1403,31 @@ func TestALongOpenListIsCountedListedOnAskAndCappedWhenListed(t *testing.T) {
 	plain := []string{"inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40"}
 	r := invoke(t, "", plain...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX OPEN carrying=62 heard=0")
-	if strings.Contains(r.stdout, "INBOX NOTE ") {
-		t.Fatalf("a default return listed the carried entries:\n%s", r.stdout)
-	}
-	if n := strings.Count(r.stdout, "INBOX OPEN carrying=62 heard="); n != 1 {
-		t.Fatalf("a default return printed %d OPEN carrying lines, want exactly 1:\n%s", n, r.stdout)
+	require.NotContainsf(t, r.stdout, "INBOX NOTE ", "a default return listed the carried entries:\n%s", r.stdout)
+	{
+		n := strings.Count(r.stdout, "INBOX OPEN carrying=62 heard=")
+		require.Equalf(t, 1, n, "a default return printed %d OPEN carrying lines, want exactly 1:\n%s", n, r.stdout)
 	}
 
 	// --open LISTS, capped at twenty, with one line saying how many it did not print.
 	r = invoke(t, "", append(append([]string{}, plain...), "--open")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX OPEN carrying=62 heard=0").
 		mustContain(t, "stdout", "INBOX OPEN listed=20 and 42 more (--open-max to widen)")
-	if n := strings.Count(r.stdout, "INBOX NOTE ") + strings.Count(r.stdout, "INBOX RECEIPT "); n != 20 {
-		t.Fatalf("--open listed %d entries, want 20:\n%s", n, r.stdout)
+	{
+		n := strings.Count(r.stdout, "INBOX NOTE ") + strings.Count(r.stdout, "INBOX RECEIPT ")
+		require.Equalf(t, 20, n, "--open listed %d entries, want 20:\n%s", n, r.stdout)
 	}
 
 	// --open-max is the cap, and it is the caller's.
 	r = invoke(t, "", append(append([]string{}, plain...), "--open", "--open-max", "5")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX OPEN listed=5 and 57 more (--open-max to widen)")
-	if n := strings.Count(r.stdout, "INBOX NOTE ") + strings.Count(r.stdout, "INBOX RECEIPT "); n != 5 {
-		t.Fatalf("--open --open-max 5 listed %d entries, want 5:\n%s", n, r.stdout)
+	{
+		n := strings.Count(r.stdout, "INBOX NOTE ") + strings.Count(r.stdout, "INBOX RECEIPT ")
+		require.Equalf(t, 5, n, "--open --open-max 5 listed %d entries, want 5:\n%s", n, r.stdout)
 	}
 	// Widened past the list, it says nothing about more, because there is no more.
 	r = invoke(t, "", append(append([]string{}, plain...), "--open", "--open-max", "62")...).mustCode(t, 0)
-	if strings.Contains(r.stdout, "--open-max to widen") {
-		t.Fatalf("a listing that printed all 62 still said there was more:\n%s", r.stdout)
-	}
+	require.NotContainsf(t, r.stdout, "--open-max to widen", "a listing that printed all 62 still said there was more:\n%s", r.stdout)
 	// A cap of nothing at all is a bad invocation, not a listing of nothing.
 	invoke(t, "", append(append([]string{}, plain...), "--open", "--open-max", "0")...).
 		mustCode(t, 2).mustContain(t, "stderr", "--open-max must be given and at least 1")
@@ -1527,8 +1466,9 @@ func TestTheLargeListLineFiresPastTheWarnThresholdAndNotAtIt(t *testing.T) {
 	r = invoke(t, "", append(append([]string{}, plain...), "--advance", "--remote", "origin", "--branch", "main", "--attempts", "3")...).
 		mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX OPEN carrying=41 heard=0 large=true remedy=reply or receipt each note, or close --before <instant> as an explicit bulk cutoff")
-	if n := strings.Count(r.stdout, "INBOX OPEN carrying=41 heard="); n != 1 {
-		t.Fatalf("the OPEN line was printed %d times, want 1:\n%s", n, r.stdout)
+	{
+		n := strings.Count(r.stdout, "INBOX OPEN carrying=41 heard=")
+		require.Equalf(t, 1, n, "the OPEN line was printed %d times, want 1:\n%s", n, r.stdout)
 	}
 	// It is a NOTE and not a refusal: the run did what it was asked and the cursor moved.
 	r.mustContain(t, "stdout", "INBOX CURSOR commit=")
@@ -1551,9 +1491,7 @@ func TestASmallOpenListIsNotCalledLarge(t *testing.T) {
 	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0)
 	r := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40").
 		mustCode(t, 0).mustContain(t, "stdout", "INBOX OPEN carrying=2 heard=0 large=false remedy=inbox --advance")
-	if strings.Contains(r.stdout, "large=true") {
-		t.Fatalf("a reader carrying 2 was told their list is large:\n%s", r.stdout)
-	}
+	require.NotContainsf(t, r.stdout, "large=true", "a reader carrying 2 was told their list is large:\n%s", r.stdout)
 }
 
 // FREDDY'S INBOX, WHICH LISTED NOTHING AND SAID NOTHING ABOUT WHY.
@@ -1583,9 +1521,7 @@ func TestAForwardDrawnDateLineSaysSoAndNamesTheCommandThatFixesIt(t *testing.T) 
 	r := invoke(t, "", advance(checkout, "Ada", "--full", "--legacy-before", "2026-09-10")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX LEGACY before=2026-09-10 notes=3").
 		mustContain(t, "stdout", "INBOX OK as=Ada carrying=0 open=0")
-	if strings.Contains(r.stdout, "INBOX SWITCH your switch-day line") {
-		t.Fatalf("the run that DREW the line warned about a cursor that did not exist yet:\n%s", r.stdout)
-	}
+	require.NotContainsf(t, r.stdout, "INBOX SWITCH your switch-day line", "the run that DREW the line warned about a cursor that did not exist yet:\n%s", r.stdout)
 
 	// THE NEXT RUN, which is where he lived: nothing listed, and now a sentence saying
 	// exactly which day is hidden and exactly what to run. It is one line, it comes after
@@ -1600,9 +1536,7 @@ func TestAForwardDrawnDateLineSaysSoAndNamesTheCommandThatFixesIt(t *testing.T) 
 		mustContain(t, "stdout", "INBOX OK as=Ada carrying=0 open=0").
 		mustContain(t, "stdout", want+"\n")
 	lines := strings.Split(strings.TrimRight(r.stdout, "\n"), "\n")
-	if len(lines) < 2 || !strings.HasPrefix(lines[0], "INBOX SCOPE ") || lines[1] != want {
-		t.Fatalf("the note is not the line straight after INBOX SCOPE:\n%s", r.stdout)
-	}
+	require.Falsef(t, len(lines) < 2 || !strings.HasPrefix(lines[0], "INBOX SCOPE ") || lines[1] != want, "the note is not the line straight after INBOX SCOPE:\n%s", r.stdout)
 
 	// `check --as` reads the same cursor, so it says the same thing. A reader polling check
 	// and seeing a clean bus is in the same trouble, and the sentence is the same sentence
@@ -1621,8 +1555,9 @@ func TestAForwardDrawnDateLineSaysSoAndNamesTheCommandThatFixesIt(t *testing.T) 
 		mustContain(t, "stdout", "INBOX LEGACY before=2026-09-09T12:34:56Z notes=2").
 		mustContain(t, "stdout", "INBOX OK as=Ada carrying=1 open=1")
 	// It round-trips into the cursor as an INSTANT, so the note has nothing left to say.
-	if cursor := read(t, checkout, "from-ada/CURSOR"); !strings.Contains(cursor, "legacy=2026-09-09T12:34:56Z") {
-		t.Fatalf("--legacy-now did not record this run's instant: %s", cursor)
+	{
+		cursor := read(t, checkout, "from-ada/CURSOR")
+		require.Containsf(t, cursor, "legacy=2026-09-09T12:34:56Z", "--legacy-now did not record this run's instant: %s", cursor)
 	}
 
 	// And the next flagless run is an ordinary inbox again: the note is gone, and a note
@@ -1634,9 +1569,7 @@ func TestAForwardDrawnDateLineSaysSoAndNamesTheCommandThatFixesIt(t *testing.T) 
 		mustContain(t, "stdout", "INBOX LEGACY before=2026-09-09T12:34:56Z notes=0 unreadable=0").
 		mustContain(t, "stdout", "INBOX NOTE id=bo-eeeeeeeeeeee").
 		mustContain(t, "stdout", "INBOX OK as=Ada carrying=2 open=2")
-	if strings.Contains(r.stdout, "INBOX SWITCH your switch-day line") {
-		t.Fatalf("an instant line was still complained about:\n%s", r.stdout)
-	}
+	require.NotContainsf(t, r.stdout, "INBOX SWITCH your switch-day line", "an instant line was still complained about:\n%s", r.stdout)
 	invoke(t, "", "check", "--bus", checkout, "--as", "Ada").mustCode(t, 0)
 }
 
@@ -1669,12 +1602,11 @@ func TestTheSwitchDayNoteFiresOnAForwardDateAndNothingElse(t *testing.T) {
 			// move in either direction between the cases.
 			invoke(t, "", advance(checkout, "Ada", "--full", "--legacy-before", tc.line)...).mustCode(t, 0)
 			r := invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0)
-			if got := strings.Contains(r.stdout, said); got != tc.want {
-				t.Fatalf("legacy=%s: note printed=%v, want %v:\n%s", tc.line, got, tc.want, r.stdout)
+			{
+				got := strings.Contains(r.stdout, said)
+				require.Equalf(t, tc.want, got, "legacy=%s: note printed=%v, want %v:\n%s", tc.line, got, tc.want, r.stdout)
 			}
-			if tc.want && !strings.Contains(r.stdout, said+tc.line+", which hides every note dated "+tc.hides+" or earlier;") {
-				t.Fatalf("legacy=%s: the note names the wrong days:\n%s", tc.line, r.stdout)
-			}
+			require.Falsef(t, tc.want && !strings.Contains(r.stdout, said+tc.line+", which hides every note dated "+tc.hides+" or earlier;"), "legacy=%s: the note names the wrong days:\n%s", tc.line, r.stdout)
 		})
 	}
 }

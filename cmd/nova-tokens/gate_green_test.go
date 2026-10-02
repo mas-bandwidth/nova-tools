@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -88,11 +90,13 @@ func TestCheckStrictRestoresEveryFindingTheGateUsedToMake(t *testing.T) {
 	wantContains(t, line, "missing=36")
 	wantContains(t, line, "stray=4")
 	wantContains(t, line, "bad=0")
-	if n := strings.Count(r.stderr, "CHECK MISSING "); n != 36 {
-		t.Errorf("%d CHECK MISSING lines under --strict, want 36", n)
+	{
+		n := strings.Count(r.stderr, "CHECK MISSING ")
+		assert.False(t, n != 36, "%d CHECK MISSING lines under --strict, want 36", n)
 	}
-	if n := strings.Count(r.stderr, "CHECK STRAY "); n != 4 {
-		t.Errorf("%d CHECK STRAY lines under --strict, want 4", n)
+	{
+		n := strings.Count(r.stderr, "CHECK STRAY ")
+		assert.False(t, n != 4, "%d CHECK STRAY lines under --strict, want 4", n)
 	}
 	// The strays are named by path, and the archive DIRECTORY is one of them.
 	for _, want := range []string{"README.md", "collate.log", "pre-nova-tokens", "session-151250bd-2026-09-14.md"} {
@@ -159,9 +163,7 @@ func TestSourcesUnattributedNamesThePathsThatFellToOther(t *testing.T) {
 			stems = append(stems, line)
 		}
 	}
-	if len(stems) != 2 {
-		t.Fatalf("%d SOURCES UNATTRIBUTED lines, want 2:\n%s", len(stems), r.stdout)
-	}
+	require.False(t, len(stems) != 2, "%d SOURCES UNATTRIBUTED lines, want 2:\n%s", len(stems), r.stdout)
 	// One unnamed tree is ONE stem however many directories inside it were touched: the
 	// three `deepseek-working-3` paths sit in two directories and arrive as one line.
 	wantContains(t, stems[0], "stem=/Users/glenn/deepseek-working-3 tokens=3")
@@ -195,16 +197,18 @@ func TestSourcesUnattributedIsCappedWithARemedy(t *testing.T) {
 
 	r := invoke(t, "sources", "--repos", repos, "--all", "--claude", "g="+tr, "--unattributed", "--max", "20")
 	wantExit(t, r, 0)
-	if n := strings.Count(r.stdout, "SOURCES UNATTRIBUTED "); n != 20 {
-		t.Errorf("%d unattributed lines at --max 20, want 20", n)
+	{
+		n := strings.Count(r.stdout, "SOURCES UNATTRIBUTED ")
+		assert.False(t, n != 20, "%d unattributed lines at --max 20, want 20", n)
 	}
 	wantContains(t, r.stdout, "SOURCES MORE kind=unattributed shown=20 total=25")
 	wantContains(t, r.stdout, "--max 0")
 
 	all := invoke(t, "sources", "--repos", repos, "--all", "--claude", "g="+tr, "--unattributed", "--max", "0")
 	wantExit(t, all, 0)
-	if n := strings.Count(all.stdout, "SOURCES UNATTRIBUTED "); n != 25 {
-		t.Errorf("%d unattributed lines at --max 0, want all 25", n)
+	{
+		n := strings.Count(all.stdout, "SOURCES UNATTRIBUTED ")
+		assert.False(t, n != 25, "%d unattributed lines at --max 0, want all 25", n)
 	}
 	wantNotContains(t, all.stdout, "SOURCES MORE kind=unattributed")
 }

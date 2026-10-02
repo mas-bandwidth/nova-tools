@@ -13,6 +13,9 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The verb's own surface: the one HYGIENE line, the cap-and-count listing, and the
@@ -28,20 +31,17 @@ func hygGit(t *testing.T, dir string, args ...string) {
 		"GIT_COMMITTER_NAME=Rowan", "GIT_COMMITTER_EMAIL=rowan@example.com",
 		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
 	)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+	{
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %s: %v\n%s", strings.Join(args, " "), err, out)
 	}
 }
 
 func hygWrite(t *testing.T, dir, rel, body string) {
 	t.Helper()
 	p := filepath.Join(dir, filepath.FromSlash(rel))
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+	require.NoError(t, os.WriteFile(p, []byte(body), 0o644))
 }
 
 var (
@@ -126,9 +126,7 @@ func hygLab(t *testing.T) string {
 	t.Helper()
 	hygLabGoldenOnce.Do(initHygLabGolden)
 	dir := t.TempDir()
-	if err := copyDirHyg(hygLabGoldenDir, dir); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, copyDirHyg(hygLabGoldenDir, dir))
 	return dir
 }
 
@@ -141,11 +139,9 @@ func TestHygieneVerbPassesACleanBranch(t *testing.T) {
 	hygGit(t, dir, "commit", "-q", "-m", "clean")
 	var out, errb bytes.Buffer
 	code := run([]string{"hygiene", "--repo", dir, "--base", "main", "--head", "HEAD", "--identity", "Rowan <rowan@example.com>", "--paths", "sign/**"}, &out, &errb)
-	if code != 0 {
-		t.Fatalf("exit %d, want 0\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
-	}
+	require.EqualValues(t, 0, code, "exit %d, want 0\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
 	if !strings.Contains(out.String(), "HYGIENE OK base=main head=HEAD paths=sign/** findings=0") {
-		t.Fatalf("stdout = %q", out.String())
+		require.FailNow(t, "fatal prerequisite", "stdout = %q", out.String())
 	}
 }
 
@@ -158,15 +154,9 @@ func TestHygieneVerbExitsOneAndNamesTheFinding(t *testing.T) {
 	hygGit(t, dir, "commit", "-q", "-m", "ship the report")
 	var out, errb bytes.Buffer
 	code := run([]string{"hygiene", "--repo", dir, "--base", "main", "--head", "HEAD", "--identity", "Rowan <rowan@example.com>", "--paths", "sign/**"}, &out, &errb)
-	if code != 1 {
-		t.Fatalf("exit %d, want 1\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
-	}
-	if !strings.Contains(out.String(), "HYGIENE FINDING reason=stray-file at=sign/RESULT.md") {
-		t.Fatalf("stdout = %q, want the finding named", out.String())
-	}
-	if !strings.Contains(errb.String(), "HYGIENE NO ") || !strings.Contains(errb.String(), "findings=1") {
-		t.Fatalf("stderr = %q, want the NO verdict line", errb.String())
-	}
+	require.EqualValues(t, 1, code, "exit %d, want 1\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
+	require.Contains(t, out.String(), "HYGIENE FINDING reason=stray-file at=sign/RESULT.md", "stdout = %q, want the finding named", out.String())
+	require.False(t, !strings.Contains(errb.String(), "HYGIENE NO ") || !strings.Contains(errb.String(), "findings=1"), "stderr = %q, want the NO verdict line", errb.String())
 }
 
 // A branch with no declared paths says paths=- and skips out-of-path. The field is
@@ -180,12 +170,8 @@ func TestHygieneVerbSaysPathsDashWhenUnbounded(t *testing.T) {
 	hygGit(t, dir, "commit", "-q", "-m", "a friend's own branch")
 	var out, errb bytes.Buffer
 	code := run([]string{"hygiene", "--repo", dir, "--base", "main", "--head", "HEAD", "--identity", "Rowan <rowan@example.com>"}, &out, &errb)
-	if code != 0 {
-		t.Fatalf("exit %d, want 0\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
-	}
-	if !strings.Contains(out.String(), "paths=- findings=0") {
-		t.Fatalf("stdout = %q, want paths=-", out.String())
-	}
+	require.EqualValues(t, 0, code, "exit %d, want 0\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
+	require.Contains(t, out.String(), "paths=- findings=0", "stdout = %q, want paths=-", out.String())
 }
 
 // There is no default identity. A range checked against nobody would admit anybody, so
@@ -202,8 +188,9 @@ func TestHygieneVerbRefusesWithoutAnIdentity(t *testing.T) {
 		{"hygiene", "--repo", dir, "--base", "main", "--head", "HEAD", "--identity", "Rowan <r@e.example>", "--paths", "**"},
 	} {
 		var out, errb bytes.Buffer
-		if code := run(args, &out, &errb); code != 2 {
-			t.Fatalf("%v: exit %d, want 2 (stdout %q stderr %q)", args, code, out.String(), errb.String())
+		{
+			code := run(args, &out, &errb)
+			require.EqualValues(t, 2, code, "%v: exit %d, want 2 (stdout %q stderr %q)", args, code, out.String(), errb.String())
 		}
 	}
 }
@@ -212,12 +199,11 @@ func TestHygieneUsageNamesTheVerb(t *testing.T) {
 	t.Parallel()
 
 	var out, errb bytes.Buffer
-	if code := run([]string{"help"}, &out, &errb); code != 0 {
-		t.Fatalf("exit %d", code)
+	{
+		code := run([]string{"help"}, &out, &errb)
+		require.EqualValues(t, 0, code, "exit %d", code)
 	}
-	if !strings.Contains(out.String(), "nova-check hygiene --repo <dir> --base <ref> --head <ref>") {
-		t.Fatalf("the help does not carry the hygiene line:\n%s", out.String())
-	}
+	require.Contains(t, out.String(), "nova-check hygiene --repo <dir> --base <ref> --head <ref>", "the help does not carry the hygiene line:\n%s", out.String())
 }
 
 // ---------------------------------------------------------------------------
@@ -243,18 +229,12 @@ func TestHygieneVerbNeverPrintsTheKey(t *testing.T) {
 	hygGit(t, dir, "commit", "-q", "-m", "oops")
 	var out, errb bytes.Buffer
 	code := run([]string{"hygiene", "--repo", dir, "--base", "main", "--head", "HEAD", "--identity", "Rowan <rowan@example.com>", "--paths", "sign/**"}, &out, &errb)
-	if code != 1 {
-		t.Fatalf("exit %d, want 1\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
-	}
+	require.EqualValues(t, 1, code, "exit %d, want 1\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
 	// The finding must be there: a verb that printed nothing at all would pass the
 	// search below and have proved nothing.
-	if !strings.Contains(out.String(), "HYGIENE FINDING reason=secret at=sign/sign.go:3") {
-		t.Fatalf("stdout = %q, want the secret named by path and line", out.String())
-	}
+	require.Contains(t, out.String(), "HYGIENE FINDING reason=secret at=sign/sign.go:3", "stdout = %q, want the secret named by path and line", out.String())
 	for name, stream := range map[string]string{"stdout": out.String(), "stderr": errb.String()} {
-		if strings.Contains(stream, key) {
-			t.Fatalf("the matched text reached %s: %q", name, stream)
-		}
+		require.NotContains(t, stream, key, "the matched text reached %s: %q", name, stream)
 	}
 }
 
@@ -290,20 +270,14 @@ func hygMore(t *testing.T, stdout string) (total int, remedy string) {
 			continue
 		}
 		_, rest, ok := strings.Cut(line, " total=")
-		if !ok {
-			t.Fatalf("the MORE line has no total= field: %q", line)
-		}
+		require.True(t, ok, "the MORE line has no total= field: %q", line)
 		n, cmd, ok := strings.Cut(rest, " ")
-		if !ok {
-			t.Fatalf("the MORE line carries no remedy: %q", line)
-		}
+		require.True(t, ok, "the MORE line carries no remedy: %q", line)
 		total, err := strconv.Atoi(n)
-		if err != nil {
-			t.Fatalf("the MORE line's total is not a number: %q", line)
-		}
+		require.NoError(t, err, "the MORE line's total is not a number: %q", line)
 		return total, cmd
 	}
-	t.Fatalf("no HYGIENE MORE line in:\n%s", stdout)
+	require.FailNow(t, "fatal prerequisite", "no HYGIENE MORE line in:\n%s", stdout)
 	return 0, ""
 }
 
@@ -318,39 +292,23 @@ func TestHygieneMoreCommandRunsAsPrinted(t *testing.T) {
 	var out, errb bytes.Buffer
 	code := run([]string{"hygiene", "--repo", dir, "--base", "main", "--head", "HEAD",
 		"--identity", "Emma <emma@mas-bandwidth.com>", "--paths", "sign/**", "--kind", "fix-red", "--max", "2"}, &out, &errb)
-	if code != 1 {
-		t.Fatalf("exit %d, want 1\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
-	}
+	require.EqualValues(t, 1, code, "exit %d, want 1\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
 	total, remedy := hygMore(t, out.String())
 	args, err := hygFields(remedy)
-	if err != nil {
-		t.Fatalf("the remedy %q cannot be split into arguments: %v", remedy, err)
-	}
-	if len(args) == 0 || args[0] != "nova-check" || args[1] != "hygiene" {
-		t.Fatalf("the remedy does not start with `nova-check hygiene`: %q", remedy)
-	}
+	require.NoError(t, err, "the remedy %q cannot be split into arguments: %v", remedy, err)
+	require.False(t, len(args) == 0 || args[0] != "nova-check" || args[1] != "hygiene", "the remedy does not start with `nova-check hygiene`: %q", remedy)
 	var out2, errb2 bytes.Buffer
 	code2 := run(args[1:], &out2, &errb2)
-	if code2 == 2 {
-		t.Fatalf("the printed remedy does not run:\n  %s\nexit 2: %s", remedy, errb2.String())
-	}
-	if code2 != 1 {
-		t.Fatalf("the printed remedy exited %d, want 1 (the same findings, uncapped)\nstdout:%s\nstderr:%s", code2, out2.String(), errb2.String())
-	}
+	require.NotEqualValues(t, 2, code2, "the printed remedy does not run:\n  %s\nexit 2: %s", remedy, errb2.String())
+	require.EqualValues(t, 1, code2, "the printed remedy exited %d, want 1 (the same findings, uncapped)\nstdout:%s\nstderr:%s", code2, out2.String(), errb2.String())
 	// The whole point of the remedy: it prints the rest, and the rest is what the
 	// capped run said it was. A remedy missing --paths or --kind would run and answer
 	// a DIFFERENT question, which is the same failure one step quieter.
 	first := strings.Count(out.String(), "HYGIENE FINDING ")
 	all := strings.Count(out2.String(), "HYGIENE FINDING ")
-	if all <= first {
-		t.Fatalf("the remedy printed %d findings, the capped run printed %d: it is not the command that shows the rest", all, first)
-	}
-	if all != total {
-		t.Fatalf("the remedy printed %d findings and the MORE line stood for %d: the remedy is not the same run with the cap lifted\n  %s", all, total, remedy)
-	}
-	if strings.Contains(out2.String(), "HYGIENE MORE ") {
-		t.Fatalf("the remedy is still capped:\n%s", out2.String())
-	}
+	require.Greater(t, all, first, "the remedy printed %d findings, the capped run printed %d: it is not the command that shows the rest", all, first)
+	require.EqualValues(t, total, all, "the remedy printed %d findings and the MORE line stood for %d: the remedy is not the same run with the cap lifted\n  %s", all, total, remedy)
+	require.NotContains(t, out2.String(), "HYGIENE MORE ", "the remedy is still capped:\n%s", out2.String())
 }
 
 // #1805: the help and the command reference told a reader to write the email inside a
@@ -368,15 +326,9 @@ func TestHygieneRefusesAnEmailInAngleBrackets(t *testing.T) {
 	var out, errb bytes.Buffer
 	code := run([]string{"hygiene", "--repo", dir, "--base", "main", "--head", "HEAD",
 		"--identity", "Rowan <<rowan@example.com>>"}, &out, &errb)
-	if code != 2 {
-		t.Fatalf("exit %d, want 2: a malformed identity must be refused, never silently matched against nobody\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
-	}
-	if !strings.Contains(errb.String(), "Name <email>") {
-		t.Fatalf("stderr = %q, want the refusal to spell the form it wants", errb.String())
-	}
-	if strings.Contains(out.String(), "HYGIENE FINDING") {
-		t.Fatalf("a malformed identity produced findings about the branch: %q", out.String())
-	}
+	require.EqualValues(t, 2, code, "exit %d, want 2: a malformed identity must be refused, never silently matched against nobody\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
+	require.Contains(t, errb.String(), "Name <email>", "stderr = %q, want the refusal to spell the form it wants", errb.String())
+	require.NotContains(t, out.String(), "HYGIENE FINDING", "a malformed identity produced findings about the branch: %q", out.String())
 }
 
 // #1805, the other half: neither the help nor the command reference may teach the
@@ -385,20 +337,15 @@ func TestHygieneIdentityFormIsSpelledTheSameEverywhere(t *testing.T) {
 	t.Parallel()
 
 	var out, errb bytes.Buffer
-	if code := run([]string{"help"}, &out, &errb); code != 0 {
-		t.Fatalf("exit %d", code)
+	{
+		code := run([]string{"help"}, &out, &errb)
+		require.EqualValues(t, 0, code, "exit %d", code)
 	}
 	cli, err := os.ReadFile(filepath.Join("..", "..", "docs", "CLI.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	for name, text := range map[string]string{"the help banner": out.String(), "docs/CLI.md": string(cli)} {
-		if strings.Contains(text, "<<email>>") {
-			t.Errorf("%s still shows `--identity \"<Name> <<email>>\"`; pasted as written it matches no git author (#1805)", name)
-		}
-		if !strings.Contains(text, `--identity "<Name> <email>"`) {
-			t.Errorf("%s does not spell the identity form `--identity \"<Name> <email>\"`", name)
-		}
+		assert.NotContains(t, text, "<<email>>", "%s still shows `--identity \"<Name> <<email>>\"`; pasted as written it matches no git author (#1805)", name)
+		assert.Contains(t, text, `--identity "<Name> <email>"`, "%s does not spell the identity form `--identity \"<Name> <email>\"`", name)
 	}
 }
 
@@ -413,29 +360,20 @@ func TestHygieneIdentityIsDocumentedAsOneNameAndEmail(t *testing.T) {
 	t.Parallel()
 
 	var helpOut, helpErr bytes.Buffer
-	if code := run([]string{"help"}, &helpOut, &helpErr); code != 0 {
-		t.Fatalf("`nova-check help` exits %d, want 0; stderr: %s", code, helpErr.String())
+	{
+		code := run([]string{"help"}, &helpOut, &helpErr)
+		require.EqualValues(t, 0, code, "`nova-check help` exits %d, want 0; stderr: %s", code, helpErr.String())
 	}
 	const (
 		malformed = `--identity "<Name> <<email>>"`
 		want      = `--identity "<Name> <email>"`
 	)
-	if strings.Contains(helpOut.String(), malformed) {
-		t.Fatalf("the help still spells %s: the doubled brackets are read as part of the email, so a commit authored under that address is reported as an identity finding; SPEC.md:1396 says %s", malformed, want)
-	}
-	if !strings.Contains(helpOut.String(), want) {
-		t.Errorf("the help does not spell the identity as %s", want)
-	}
+	require.NotContains(t, helpOut.String(), malformed, "the help still spells %s: the doubled brackets are read as part of the email, so a commit authored under that address is reported as an identity finding; SPEC.md:1396 says %s", malformed, want)
+	assert.Contains(t, helpOut.String(), want, "the help does not spell the identity as %s", want)
 	cli, err := os.ReadFile(filepath.Join("..", "..", "docs", "CLI.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(cli), malformed) {
-		t.Fatalf("docs/CLI.md still spells %s: the doubled brackets are read as part of the email and break the author match; SPEC.md:1396 says %s", malformed, want)
-	}
-	if !strings.Contains(string(cli), want) {
-		t.Errorf("docs/CLI.md does not spell the identity as %s", want)
-	}
+	require.NoError(t, err)
+	require.NotContains(t, string(cli), malformed, "docs/CLI.md still spells %s: the doubled brackets are read as part of the email and break the author match; SPEC.md:1396 says %s", malformed, want)
+	assert.Contains(t, string(cli), want, "docs/CLI.md does not spell the identity as %s", want)
 
 	// The documented form is the one the check matches: a clean branch authored
 	// under that address is no identity finding.
@@ -445,12 +383,8 @@ func TestHygieneIdentityIsDocumentedAsOneNameAndEmail(t *testing.T) {
 	hygGit(t, dir, "commit", "-q", "-m", "clean")
 	var out, errb bytes.Buffer
 	code := run([]string{"hygiene", "--repo", dir, "--base", "main", "--head", "HEAD", "--identity", "Rowan <rowan@example.com>", "--paths", "sign/**"}, &out, &errb)
-	if code != 0 {
-		t.Fatalf("the documented identity form did not match the author: exit %d\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
-	}
-	if !strings.Contains(out.String(), "findings=0") {
-		t.Fatalf("stdout = %q, want findings=0", out.String())
-	}
+	require.EqualValues(t, 0, code, "the documented identity form did not match the author: exit %d\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
+	require.Contains(t, out.String(), "findings=0", "stdout = %q, want findings=0", out.String())
 
 	// The `### hygiene, on a branch` transcript docs/TESTS.md promises is
 	// EXECUTED, not only read -- but only its refusal steps. The lab stanzas
@@ -468,13 +402,9 @@ func TestHygieneIdentityIsDocumentedAsOneNameAndEmail(t *testing.T) {
 	// comparing stay the shared ones -- SplitShell, runDocumented, Compare --
 	// so this pins the same promise the harness keeps.
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	lines, err := onboarding.Transcript(string(raw), "nova-check", "hygiene, on a branch")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	var steps []onboarding.Step
 	for _, line := range lines {
 		cmd, isCommand := strings.CutPrefix(line, "$ ")
@@ -483,18 +413,14 @@ func TestHygieneIdentityIsDocumentedAsOneNameAndEmail(t *testing.T) {
 				if strings.TrimSpace(line) == "" {
 					continue
 				}
-				t.Fatalf("a transcript line stands before any command:\n  %s", line)
+				require.FailNow(t, "fatal prerequisite", "a transcript line stands before any command:\n  %s", line)
 			}
 			steps[len(steps)-1].Want = append(steps[len(steps)-1].Want, line)
 			continue
 		}
 		args, err := onboarding.SplitShell(cmd)
-		if err != nil {
-			t.Fatalf("cannot split the transcript line %q: %v", line, err)
-		}
-		if len(args) == 0 || args[0] != "nova-check" {
-			t.Fatalf("the transcript line %q is not a nova-check command", line)
-		}
+		require.NoError(t, err, "cannot split the transcript line %q: %v", line, err)
+		require.False(t, len(args) == 0 || args[0] != "nova-check", "the transcript line %q is not a nova-check command", line)
 		steps = append(steps, onboarding.Step{Line: line, Args: args[1:]})
 	}
 	for i := range steps {
@@ -518,17 +444,14 @@ func TestHygieneIdentityIsDocumentedAsOneNameAndEmail(t *testing.T) {
 			refusals = append(refusals, s)
 		}
 	}
-	if len(refusals) == 0 {
-		t.Fatal("the `### hygiene, on a branch` block holds no refusal step; this test would pass by running nothing")
-	}
+	require.NotEmpty(t, refusals, "the `### hygiene, on a branch` block holds no refusal step; this test would pass by running nothing")
 	for _, s := range refusals {
 		res, err := runDocumented(s)
-		if err != nil {
-			t.Errorf("the documented command\n  %s\ncould not be run: %v", s.Line, err)
+		if !assert.NoError(t, err, "the documented command\n  %s\ncould not be run: %v", s.Line, err) {
 			continue
 		}
 		for _, p := range onboarding.Compare(s, res, nil) {
-			t.Error(p)
+			assert.Fail(t, "check failed", p)
 		}
 	}
 }
@@ -590,19 +513,11 @@ func TestHygieneRefusesAKindTheToolDoesNotDeclare(t *testing.T) {
 			var out, errb bytes.Buffer
 			code := run([]string{"hygiene", "--repo", dir, "--base", "main", "--head", "HEAD",
 				"--identity", "Rowan <rowan@example.com>", "--kind", kind}, &out, &errb)
-			if code != 2 {
-				t.Fatalf("--kind %q: exit %d, want 2\nstdout:%s\nstderr:%s", kind, code, out.String(), errb.String())
-			}
-			if !strings.Contains(errb.String(), kind) {
-				t.Errorf("--kind %q: the refusal does not name the kind: %q", kind, errb.String())
-			}
+			require.EqualValues(t, 2, code, "--kind %q: exit %d, want 2\nstdout:%s\nstderr:%s", kind, code, out.String(), errb.String())
+			assert.Contains(t, errb.String(), kind, "--kind %q: the refusal does not name the kind: %q", kind, errb.String())
 			// A refusal a reader can act on names the kinds there are.
-			if !strings.Contains(errb.String(), "fix-red") {
-				t.Errorf("--kind %q: the refusal does not list the kinds the tool declares: %q", kind, errb.String())
-			}
-			if out.String() != "" {
-				t.Errorf("--kind %q: a refusal must print nothing on stdout, got %q", kind, out.String())
-			}
+			assert.Contains(t, errb.String(), "fix-red", "--kind %q: the refusal does not list the kinds the tool declares: %q", kind, errb.String())
+			assert.EqualValues(t, "", out.String(), "--kind %q: a refusal must print nothing on stdout, got %q", kind, out.String())
 		})
 	}
 }
@@ -618,26 +533,26 @@ func TestHygieneAcceptsEveryDeclaredKind(t *testing.T) {
 	hygGit(t, dir, "add", "-A")
 	hygGit(t, dir, "commit", "-q", "-m", "clean")
 	kinds := hygiene.Kinds()
-	if len(kinds) == 0 {
-		t.Fatal("the tool declares no kinds at all")
-	}
+	require.NotEmpty(t, kinds, "the tool declares no kinds at all")
 	for _, kind := range kinds {
 		kind := kind
 		t.Run(kind, func(t *testing.T) {
 			t.Parallel()
 			var out, errb bytes.Buffer
-			if code := run([]string{"hygiene", "--repo", dir, "--base", "main", "--head", "HEAD",
-				"--identity", "Rowan <rowan@example.com>", "--kind", kind}, &out, &errb); code != 0 {
-				t.Errorf("--kind %q: exit %d, want 0\nstdout:%s\nstderr:%s", kind, code, out.String(), errb.String())
+			{
+				code := run([]string{"hygiene", "--repo", dir, "--base", "main", "--head", "HEAD",
+					"--identity", "Rowan <rowan@example.com>", "--kind", kind}, &out, &errb)
+				assert.EqualValues(t, 0, code, "--kind %q: exit %d, want 0\nstdout:%s\nstderr:%s", kind, code, out.String(), errb.String())
 			}
 		})
 	}
 	// No --kind at all stays what it was: the flag is optional, and only a kind that
 	// was GIVEN and is not declared is a refusal.
 	var out, errb bytes.Buffer
-	if code := run([]string{"hygiene", "--repo", dir, "--base", "main", "--head", "HEAD",
-		"--identity", "Rowan <rowan@example.com>"}, &out, &errb); code != 0 {
-		t.Fatalf("no --kind: exit %d, want 0\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
+	{
+		code := run([]string{"hygiene", "--repo", dir, "--base", "main", "--head", "HEAD",
+			"--identity", "Rowan <rowan@example.com>"}, &out, &errb)
+		require.EqualValues(t, 0, code, "no --kind: exit %d, want 0\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
 	}
 }
 
@@ -647,8 +562,6 @@ func TestEveryKindTheStrayListNamesIsDeclared(t *testing.T) {
 	t.Parallel()
 
 	for _, kind := range hygiene.StrayKinds() {
-		if !hygiene.KindDeclared(kind) {
-			t.Errorf("the stray list excuses a file for kind %q, which the tool does not declare: the exception is granted to nobody", kind)
-		}
+		assert.True(t, hygiene.KindDeclared(kind), "the stray list excuses a file for kind %q, which the tool does not declare: the exception is granted to nobody", kind)
 	}
 }

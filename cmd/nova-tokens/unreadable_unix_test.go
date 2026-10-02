@@ -3,6 +3,7 @@
 package main
 
 import (
+	"github.com/stretchr/testify/require"
 	"os"
 	"testing"
 )
@@ -18,8 +19,9 @@ func makeUnreadable(t *testing.T, path string) (release func()) {
 	if os.Geteuid() == 0 {
 		t.Skip("root reads a mode-000 file, so a refused read cannot be produced here")
 	}
-	if err := os.Chmod(path, 0o000); err != nil {
-		t.Fatal(err)
+	{
+		err := os.Chmod(path, 0o000)
+		require.False(t, err != nil, err)
 	}
 	done := false
 	release = func() {
@@ -35,7 +37,7 @@ func makeUnreadable(t *testing.T, path string) (release func()) {
 	if f, err := os.Open(path); err == nil {
 		f.Close()
 		release()
-		t.Fatalf("mode 000 did not make %s refuse a read", path)
+		require.FailNowf(t, "unreadable fixture was not unreadable", "mode 000 did not make %s refuse a read", path)
 	}
 	return release
 }
