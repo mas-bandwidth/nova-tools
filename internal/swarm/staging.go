@@ -99,9 +99,7 @@ func ParseIdentity(s string) (StagingIdentity, error) {
 // StagingGitEnv is the environment the launcher exports with every job: the
 // bench's own git config cannot leak into what the worker commits or what the
 // machinery reads, and the pool's identity row is exported as author and
-//
-//	committer so a worker cloning after launch commits under the pool's name
-//
+// committer so a worker cloning after launch commits under the pool's name
 // (SPEC-TOOLWORK §3 rule 1).
 func StagingGitEnv(id StagingIdentity) []string {
 	var env []string
