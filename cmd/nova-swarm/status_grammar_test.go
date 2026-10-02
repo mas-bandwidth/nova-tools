@@ -18,11 +18,16 @@ import (
 // section 2, "The status word leads every line", and its exit table: 0 done, 1 the verb
 // ran and said no, 2 usage or a store that did not answer). Every row drives a verb
 // through the tool's run function -- member through cmdMember, whose send parameter is
-// the package's fake seam -- with the fixtures the package's own tests use, and asserts
-// the status line's leading words and the exit code together, so neither moves without
-// the other. A row's wantLine is the status line's prefix: the verb's token, then the
-// status word. Two OK rows carry no wantLine: template prints a verbatim document and
-// version prints the one buildinfo line, and neither is a status line.
+// the package's fake seam -- with the fixtures the package's own tests use, to one OK,
+// one REFUSED and one FAILED outcome where the verb has each, and asserts the status
+// line's leading words and the exit code together, so neither moves without the other.
+// A row's wantLine is the status line's prefix: the line's own token, then the status
+// word. One FAILED row's line is not the verb's own: native's public-class gate (the
+// CARD-8390 gate, before any directory is made) refuses any card of a public-class
+// worker whose root carries no public-repos.txt, with the card's CARD REFUSED line at
+// exit 1. Three OK rows carry no wantLine: template prints a verbatim document,
+// version prints the one buildinfo line and profile prints its PROFILE and PROFILE
+// SUMMARY event lines, and none is a status line.
 func TestStatusGrammar(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -73,6 +78,14 @@ func TestStatusGrammar(t *testing.T) {
 		{"native_refused", func(t *testing.T) (int, string, string) {
 			return runSwarm(t, "native", "--nope")
 		}, 2, "nova-swarm native REFUSED:"},
+		{"native_failed", func(t *testing.T) (int, string, string) {
+			root, slot := aSlot(t)
+			cardPath := filepath.Join(root, "card.md")
+			require.NoError(t, os.WriteFile(cardPath, []byte("a card\n"), 0o644))
+			return runSwarm(t, "native", "--tokens", "unmetered", "--harness", nativeHarness(t),
+				"--card", cardPath, "--slot", slot, "--root", root, "--deadline", "30s", "--no-wall",
+				"--worker", workerCheckFixture(t, func(d map[string]any) { d["class"] = "public" }))
+		}, 1, "CARD REFUSED reason=private-source repo=- class=public worker=check-1"},
 		{"worker_ok", func(t *testing.T) (int, string, string) {
 			return runWorkerCheck(workerCheckFixture(t, nil))
 		}, 0, "WORKER OK check-1"},
@@ -103,6 +116,13 @@ func TestStatusGrammar(t *testing.T) {
 		{"doctor_refused", func(t *testing.T) (int, string, string) {
 			return runSwarm(t, "doctor", "--nope")
 		}, 2, "nova-swarm doctor REFUSED:"},
+		{"profile_ok", func(t *testing.T) (int, string, string) {
+			root := t.TempDir()
+			timelineFile(t, filepath.Join(root, "job-a"),
+				"t_start\tt_end\ttool\twall_ms\tinput_tokens\toutput_tokens\n"+
+					"2026-09-17T00:00:00Z\t2026-09-17T00:00:10Z\tmodel\t10000\t100\t20\n")
+			return runSwarm(t, "profile", "--jobs", filepath.Join(root, "job-a"))
+		}, 0, ""},
 		{"profile_refused", func(t *testing.T) (int, string, string) {
 			return runSwarm(t, "profile", "--nope")
 		}, 2, "nova-swarm profile REFUSED:"},
