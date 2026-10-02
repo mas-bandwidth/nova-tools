@@ -107,7 +107,8 @@ type Finding struct {
 
 func (f Finding) String() string { return "stalled: " + f.What + ": " + f.Why }
 
-// CheckHeld checks for stalls: each stall is one violation.
+// CheckHeld is the no-stall rule as a rule of check: each stall is one
+// violation.
 func CheckHeld(h HeldState, now time.Time) []Violation {
 	var out []Violation
 	for _, f := range Unheld(h, now) {
