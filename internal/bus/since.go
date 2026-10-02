@@ -109,7 +109,8 @@ type InboxResult struct {
 	// Fresh is those notes THEMSELVES, in listing order: the entries this run put on the
 	// open list that were not on it before, and nothing that was already there.
 	//
-	// It exists because a default run prints the newly arrived notes separately. The listing is a
+	// It exists so a default run can show a note that has just arrived, not only count
+	// it. The listing is a
 	// choice between one summary line and the WHOLE carried list, so a reader who wanted to
 	// see the note that had just arrived had to ask for every note they had ever failed to
 	// answer -- which is how a line on a small-context model came to re-read seventy-four

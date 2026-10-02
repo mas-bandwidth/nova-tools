@@ -213,7 +213,7 @@ func ValidSlug(slug string) error {
 }
 
 // HostMax is how long a Host value may be. A host is a machine's short name -- `air`,
-// a short machine name printed on an inbox line beside the sender, so it is
+// among others -- and it is printed on an inbox line beside the sender, so it is
 // bounded rather than left to whatever a defaults file holds.
 const HostMax = 40
 
@@ -436,7 +436,7 @@ func PlanClose(t *Bus, me Participant, before time.Time, now time.Time) (ClosePl
 			senders = append(senders, item.From)
 		}
 		// A target named twice -- two notes sharing a hand-made id -- is closed once. It
-		// The receipt plan records a repeated target once, so one filename cannot receive it twice.
+		// is recorded once: the seen key keeps the first occurrence and drops every later one.
 		if key := item.From + "\x00" + target; !seen[key] {
 			seen[key] = true
 			targets[item.From] = append(targets[item.From], target)
