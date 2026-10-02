@@ -519,6 +519,14 @@ func (r *Redis) commit(ctx context.Context, p redis.Pipeliner, op OpRecord) erro
 	if op.CallerOp != "" {
 		p.HSet(ctx, r.key(keyDone), op.CallerOp, op.Result)
 	}
+	if op.Seat != nil {
+		rec, err := seatRecord(op.Seat)
+		if err != nil {
+			return err
+		}
+		p.Set(ctx, r.Names.Key(keyCoordinator), op.Seat.Holder, 0)
+		p.Set(ctx, r.Names.Key(keySeat), rec, 0)
+	}
 	return nil
 }
 

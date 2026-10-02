@@ -89,6 +89,49 @@ func TestSelectPackagesAlwaysAddsInternalDocs(t *testing.T) {
 	assert.Contains(t, classTestSelection(t), "./internal/docs", "a docs-only change must select ./internal/docs")
 }
 
+// TestSelectPackagesAddsThePackagesWhoseTestsReadAChangedFile pins the
+// selection against nova-tools#5111: docsd-16 changed a heading in
+// docs/SPEC-SWARM.md, internal/swarm's test asserts that heading, and the run
+// tested only the touched packages and their importers, so a red test landed
+// green. A changed file that is not Go selects every package whose _test.go
+// files or testdata name it, though no import edge says so. The fixture is the
+// shape of the miss: the test names the doc through filepath.Join, so the
+// path as a string is not in its text; and the reversed witness, a doc no test
+// names, selects nothing beyond the two class-test packages.
+func TestSelectPackagesAddsThePackagesWhoseTestsReadAChangedFile(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	for name, body := range map[string]string{
+		"go.mod":                       "module example.com/m\n",
+		"internal/swarm/swarm_test.go": "package swarm\n\nvar doc = filepath.Join(\"..\", \"..\", \"docs\", \"SPEC-SWARM.md\")\n",
+	} {
+		p := filepath.Join(root, filepath.FromSlash(name))
+		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+		require.NoError(t, os.WriteFile(p, []byte(body), 0o644))
+	}
+	selectFor := func(diff string) []string {
+		run := func(dir string, env []string, argv ...string) (pkgselect.Result, error) {
+			switch strings.Join(argv, " ") {
+			case "git diff --name-only base HEAD":
+				return pkgselect.Result{Stdout: diff}, nil
+			case "go list ./cmd/... ./internal/... ./tools/...":
+				return pkgselect.Result{Stdout: "example.com/m/internal/ci\nexample.com/m/internal/docs\nexample.com/m/internal/swarm\n"}, nil
+			case "go list -f {{.ImportPath}}{{range .Deps}} {{.}}{{end}} ./cmd/... ./internal/... ./tools/...":
+				return pkgselect.Result{Stdout: "example.com/m/internal/ci fmt\nexample.com/m/internal/docs fmt\nexample.com/m/internal/swarm fmt\n"}, nil
+			}
+			return pkgselect.Result{}, nil // git fetch
+		}
+		out, err := pkgselect.Select(run, pkgselect.Options{Root: root, Base: "base"})
+		require.NoError(t, err)
+		return out.Packages
+	}
+	assert.Equal(t, []string{"./internal/ci", "./internal/docs", "./internal/swarm"}, selectFor("docs/SPEC-SWARM.md\n"),
+		"a docs-only change to SPEC-SWARM.md selected no package whose test reads it; pkgselect.Select must map a changed non-Go file to the packages whose _test.go files or testdata name it (nova-tools#5111)")
+	assert.Equal(t, []string{"./internal/ci", "./internal/docs"}, selectFor("docs/OTHER.md\n"),
+		"a doc no test names selected a package beyond the two class-test packages")
+}
+
 // stepBody returns the source text of one step, from its `- name:` key to the
 // next step key at the same indentation, so a test can assert about the
 // merge-gate selection and not the whole job.

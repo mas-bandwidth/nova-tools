@@ -38,6 +38,9 @@ func TestExecGitReadsLargeRangeWithoutRenameWarningsAsPaths(t *testing.T) {
 		"user.name": "Release fixture", "user.email": "release@example.invalid",
 		"commit.gpgsign": "false", "core.hooksPath": filepath.Join(dir, "no-hooks"),
 		"diff.renameLimit": "1", "diff.renames": "true",
+		// No detached auto gc or maintenance: one still writing .git/objects
+		// made the TempDir cleanup fail ("directory not empty"), 3 runs in 8.
+		"gc.auto": "0", "maintenance.auto": "false",
 	} {
 		git("config", "--local", key, value)
 	}

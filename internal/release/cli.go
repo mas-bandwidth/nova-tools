@@ -19,10 +19,11 @@ import (
 // The one exception is --receipts, and internal/release/dogfoodgate.go says at
 // length why the gate in front of the definition of done is worth it.
 const Verbs = `nova-update release cut --repo <owner/name> --from <branch> --version <v> --changelog <path> [--sums <file>] [--security-read <id|url>] [--local-diff <checkout> [--paths-from <file>] | --paths-from <file>] [--cli <file>] [--receipts <dir>] [--no-dogfood-gate --reason <why>] [--dry-run] [--timeout <d>]
-nova-update release build --version <v> --out <dir> --source <dir> [--platform <goos-goarch>,...] [--cli <file>] [--receipts <dir>] [--no-dogfood-gate --reason <why>] [--timeout <d>]
+nova-update release build --version <v> --out <dir> --source <dir> [--platform <goos-goarch>,...] [--incremental] [--cli <file>] [--receipts <dir>] [--no-dogfood-gate --reason <why> | --gate report --reason <why>] [--timeout <d>]
 nova-update release install --from <dir> --version <v> --bin <dir> [--retire <dir>] [--platform <goos-goarch>] [--timeout <d>]
 nova-update release adopt [--version <v>] --machines <file> --ssh <path> --from <dir|host:dir> --bin <dir> --dest <dir> [--stage <dir> --repo <owner/name> | --stage <dir> --expect-sums <sha256> | --stage <dir> --expect-sums-from <file>] [--retire <dir>] [--platform <goos-goarch>] (--certify <machines.tsv> --certs <file> --standard <file> | --no-certify) [--dry-run] [--timeout <d>]
-nova-update release pull --version <v> --out <dir> --changelog <path> [--machines <file> --ssh <path> --dest <dir>] [--reason <text>] [--platform <goos-goarch>] [--dry-run] [--timeout <d>]`
+nova-update release pull --version <v> --out <dir> --changelog <path> [--machines <file> --ssh <path> --dest <dir>] [--reason <text>] [--platform <goos-goarch>] [--dry-run] [--timeout <d>]
+nova-update release cycle --version <v> --source <dir> --out <dir> --inventory <file> --benches <a,b,...> --reason <why> --ansible <path> [--receipts <dir>] [--dry-run] [--timeout <d>]`
 
 // CutNote is the gate in front of a tag, said where a person will meet it
 // (Johnny's decision 1 on SPEC-RELEASE, #1337). It is a var rather than a const
@@ -72,6 +73,12 @@ type Deps struct {
 	// seam because `install`'s skip decision is the one place this package
 	// runs a binary it is about to replace.
 	VersionOf func(ctx context.Context, path string) (string, error)
+	// Source is the checkout `build` records and `--incremental` diffs
+	// (incremental.go); nil is ExecSource.
+	Source Source
+	// Ansible runs the tools play for `cycle` (cycle.go); nil is
+	// ExecAnsible with --ansible.
+	Ansible Ansible
 }
 
 // options are every flag the five verbs take, in one struct, because they share
@@ -86,9 +93,15 @@ type options struct {
 	// out of the ordinary.
 	cli, receipts string
 	noDogfood     bool
-	platforms     platformList
-	dryRun        bool
-	timeout       time.Duration
+	// gate is build's --gate: "refuse" (the default, and the only way cut
+	// runs it) or "report", which prints the open edges and builds.
+	gate        string
+	incremental bool
+	// cycle's own: the inventory, the benches, the ansible-playbook binary.
+	inventory, benches, ansible string
+	platforms                   platformList
+	dryRun                      bool
+	timeout                     time.Duration
 	// The three that turn on certification after an adopt. They are named together or
 	// not at all: a certificates file with no registry names no machine's roles, and a
 	// registry with no standard has no hash to write.
@@ -153,7 +166,7 @@ func refusal(w io.Writer, token string, err error) int {
 }
 
 // verbNames are the release verbs, as a refusal lists them.
-const verbNames = "cut, build, install, adopt, pull"
+const verbNames = "cut, build, install, adopt, pull, cycle"
 
 // ExitCodes is the release verbs' exit-code line, which each verb's -h prints.
 const ExitCodes = "exit codes: 0 the verb did what its line says (a --dry-run printed its plan and changed nothing); " +
@@ -189,14 +202,16 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 	verb := args[0]
 	args = args[1:]
 	switch verb {
-	case "cut", "build", "install", "adopt", "pull":
+	case "cut", "build", "install", "adopt", "pull", "cycle":
 	case "help", "--help", "-h":
 		fmt.Fprintln(out, Verbs)
 		fmt.Fprintln(out, ExitCodes+" `nova-update release <verb> -h` lists a verb's flags.")
 		fmt.Fprintln(out, CutNote)
 		fmt.Fprintln(out, DogfoodNote)
+		fmt.Fprintln(out, IncrementalNote)
 		fmt.Fprintln(out, AdoptNote)
 		fmt.Fprintln(out, PullNote)
+		fmt.Fprintln(out, CycleNote)
 		return 0
 	default:
 		return refusal(errs, "RELEASE", fmt.Errorf("unknown release verb %q; the release verbs are %s", verb, verbNames))
@@ -227,7 +242,21 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 		f.StringVar(&o.source, "source", "", "the checkout to build")
 		f.Var(&o.platforms, "platform", "goos-goarch, repeatable and comma-separated (default: this host)")
 		addDogfoodFlags(f, &o, "<--source>/docs/CLI.md")
+		f.StringVar(&o.gate, "gate", "refuse", "refuse: an open dogfood edge refuses the build; report: the edges are printed and the build goes on, --reason <why> required (a machinery install during a sprint; cut always refuses)")
+		f.BoolVar(&o.incremental, "incremental", false, "compile only the tools whose packages changed since the newest clean build recorded under --out, and copy the rest from it, verified")
 		required = []string{"version", "out", "source"}
+	case "cycle":
+		// A cycle is a build and two plays: ten minutes is a cold build alone.
+		o.timeout = 30 * time.Minute
+		f.StringVar(&o.source, "source", "", "the nova-tools checkout to build; its fleet/tools.yml is the play")
+		f.StringVar(&o.out, "out", "", "the artifact root the build writes under (the play's nova_release_out)")
+		f.StringVar(&o.inventory, "inventory", "", "the inventory the play reads, the nova-inventory script")
+		f.StringVar(&o.benches, "benches", "", "the machines to install on, comma-separated, as the inventory names them")
+		f.StringVar(&o.reason, "reason", "", "why this install is happening; the dogfood gate reports under it and the build record keeps it")
+		f.StringVar(&o.receipts, "receipts", "", "the dogfood receipts directory (default: ~/"+DefaultReceiptsDir+" when it exists)")
+		f.StringVar(&o.ansible, "ansible", "", "the ansible-playbook binary")
+		f.BoolVar(&o.dryRun, "dry-run", false, "run the play with --check only: build nothing, install nothing")
+		required = []string{"version", "source", "out", "inventory", "benches", "reason", "ansible"}
 	case "install":
 		f.StringVar(&o.from, "from", "", "the artifact root a release build wrote (its --out)")
 		f.StringVar(&o.bin, "bin", "", "the directory the binaries are installed into")
@@ -295,6 +324,9 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 				fmt.Fprintln(out, DogfoodNote)
 			case "build":
 				fmt.Fprintln(out, DogfoodNote)
+				fmt.Fprintln(out, IncrementalNote)
+			case "cycle":
+				fmt.Fprintln(out, CycleNote)
 			case "adopt":
 				fmt.Fprintln(out, AdoptNote)
 			case "pull":
@@ -370,6 +402,8 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 		return install(ctx, o, deps, out, errs)
 	case "pull":
 		return pull(ctx, o, deps, out, errs)
+	case "cycle":
+		return cycle(ctx, o, deps, out, errs)
 	default:
 		return adopt(ctx, o, deps, out, errs)
 	}

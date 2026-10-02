@@ -150,10 +150,12 @@ func TestWhereFrameIsTheGolden(t *testing.T) {
 	golden(t, "where_watch_frame.golden", screen.writes[1])
 }
 
-// A frame holds the time, the words SPRINT TABLE, the machine's state line
-// and the tables, and nothing else: no pending line, no stalled line, no line
-// about the people, no coordinator; the merge table has no since column; and a
-// row's first cell is its identity. What the frame leaves out is in --json.
+// A frame holds the time, the words SPRINT TABLE and the seat's holder beside
+// them (the title line), the machine's state line and the tables, and nothing
+// else: no pending line, no stalled line, no line about the people, the
+// coordinator named on the title line alone; the merge table has no since
+// column; and a row's first cell is its identity. What the frame leaves out is
+// in --json.
 func TestWhereFrameHoldsOnlyTheHeaderAndTheTables(t *testing.T) {
 	t.Parallel()
 	ta := whereFixture(t)
@@ -174,12 +176,14 @@ func TestWhereFrameHoldsOnlyTheHeaderAndTheTables(t *testing.T) {
 
 	frame := ta.ok("where")
 	lines := strings.Split(frame, "\n")
-	require.Equal(t, []string{"SPRINT TABLE", "", "STOPPED", ""}, lines[:4], "the head of the frame")
+	require.Equal(t, []string{"SPRINT TABLE  coordinator coordinator", "", "STOPPED", ""}, lines[:4], "the head of the frame")
 	for _, l := range lines[4:] {
+		// a table's line holds a cell divider or a rule's joint
 		assert.False(t, l != "" && !strings.Contains(l, " | ") && !strings.Contains(l, "-+-"), "a line that is not a table's: %q\n%s", l, frame)
 	}
+	_, below, _ := strings.Cut(frame, "\n")
 	for _, gone := range []string{"pending", "stalled", "REMINDERS", "friend-a", "coordinator", "since", "op-left"} {
-		assert.NotContains(t, frame, gone, "the frame shows %q", gone)
+		assert.NotContains(t, below, gone, "the frame shows %q below its title", gone)
 	}
 	// the identity of a row is its first cell; the readers and merge tables are
 	// one row, the sum of all (the owner, 2026-10-01)
@@ -187,6 +191,8 @@ func TestWhereFrameHoldsOnlyTheHeaderAndTheTables(t *testing.T) {
 		got := strings.Join(rowsOf(tableOf(frame, name)), ",")
 		assert.Equal(t, want, got, "table %s: rows, in the frame:\n%s", name, frame)
 	}
+	// the fixture has no friend: the friends table is its header, one rule and its footer at zero
+	assert.Equal(t, emptyFriends, tableOf(frame, "friends"), "the frame:\n%s", frame)
 	// the view for a program keeps all of it
 	var w whereView
 	ta.json("where", &w)
@@ -205,6 +211,13 @@ func TestWhereShowsEveryTableAndEveryStream(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --members m1")
+	// a table with no row is its header, one rule and the summary row (the owner,
+	// 2026-10-02: "when the work stream table is empty, please just show the summary row")
+	for _, name := range []string{"work", "readers", "merge"} {
+		lines := strings.Split(strings.TrimRight(tableOf(ta.ok("where"), name), "\n"), "\n")
+		require.Len(t, lines, 3, "table %s, empty: header, rule, summary row", name)
+		assert.Equal(t, "", strings.TrimSpace(strings.Split(lines[2], " | ")[0]), "table %s: the summary row is unlabelled: %q", name, lines[2])
+	}
 	ta.ok("add --stream s1 --count 2")
 	ta.ok("add --stream s2 --count 1")
 	ta.ok("drop s2-1 --reason obsolete")
