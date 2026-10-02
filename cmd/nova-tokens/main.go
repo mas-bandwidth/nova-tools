@@ -29,8 +29,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -502,26 +504,6 @@ func sourceLine(token string, s *tokens.Source) string {
 		oneline.Field(s.StatField("rows")))
 }
 
-// sourceNamedDay reports whether the source fed any message for the day.
-func sourceNamedDay(s *tokens.Source, day string) bool {
-	for _, m := range s.Stream {
-		if m.Day == day {
-			return true
-		}
-	}
-	return false
-}
-
-// dayNames reports whether the day file's sources= line names the label.
-func dayNames(sources []string, label string) bool {
-	for _, s := range sources {
-		if s == label {
-			return true
-		}
-	}
-	return false
-}
-
 // noPositional refuses a verb invoked with a positional argument. Every verb's shape in
 // the usage block is flags only, and four of the five silently DROPPED the extra word:
 // `nova-tokens sum --out X --month Y extra` ran and answered about something the caller
@@ -743,7 +725,8 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 				// day is quiet: the day file still names it, and the fold prints a bounded
 				// line naming it rather than letting the refusal speak only in day totals.
 				for _, s := range sources {
-					if sourceNamedDay(s, d) || !dayNames(old.Sources, s.Label) {
+					fedDay := slices.ContainsFunc(s.Stream, func(m tokens.Message) bool { return m.Day == d })
+					if fedDay || !slices.Contains(old.Sources, s.Label) {
 						continue
 					}
 					quiet++
@@ -842,10 +825,7 @@ func buildDayFile(day string, rows []*tokens.Row, folder *tokens.Folder, now tim
 			Rough: r.Rough, Basis: r.Basis(), Sources: r.Sources(),
 		})
 	}
-	for l := range labels {
-		f.Sources = append(f.Sources, l)
-	}
-	sort.Strings(f.Sources)
+	f.Sources = slices.Sorted(maps.Keys(labels))
 	return f
 }
 

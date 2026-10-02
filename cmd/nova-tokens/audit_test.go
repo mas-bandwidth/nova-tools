@@ -41,6 +41,9 @@ var tokensAudit = audit.Config{
 		// oneline.Field at the print site below.
 		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"path/filepath"`, `"runtime"`, `"sort"`, `"strconv"`, `"strings"`, `"time"`,
+		// maps and slices hold no writer: they return keys, sorted copies and membership,
+		// which this package renders through oneline at its own print sites.
+		`"maps"`, `"slices"`,
 		`"runtime/debug"`,
 		// ledger.go's store seam: context carries no writer, and internal/record returns
 		// ledger rows from the fleet Redis that this package renders through oneline.Field

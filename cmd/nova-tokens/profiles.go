@@ -3,8 +3,10 @@ package main
 import (
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -106,14 +108,8 @@ func profileSwarmRoot(root string, stdout, stderr io.Writer, r *refusals) int {
 		}
 	}
 
-	names := make([]string, 0, len(models))
-	for name := range models {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-
 	totalCards, totalOver := 0, 0
-	for _, name := range names {
+	for _, name := range slices.Sorted(maps.Keys(models)) {
 		m := models[name]
 		totalCards += m.cards
 		totalOver += m.overshoot
@@ -121,7 +117,7 @@ func profileSwarmRoot(root string, stdout, stderr io.Writer, r *refusals) int {
 			oneline.Field(name), m.cards, oneline.Field(medianOut(m.outs)), m.overshoot)
 	}
 	fmt.Fprintf(stdout, "PROFILES OK models=%d cards=%d overshoot=%d\n",
-		len(names), totalCards, totalOver)
+		len(models), totalCards, totalOver)
 	return 0
 }
 

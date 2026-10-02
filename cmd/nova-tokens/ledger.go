@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -78,13 +80,8 @@ func ledgerEntries(d tokens.DayFile) []record.LedgerEntry {
 			kinds[kind] = true
 		}
 		sort.Strings(srcs)
-		var ks []string
-		for k := range kinds {
-			ks = append(ks, k)
-		}
-		sort.Strings(ks)
 		a.e.Sources = strings.Join(srcs, ",")
-		a.e.Provider = strings.Join(ks, ",")
+		a.e.Provider = strings.Join(slices.Sorted(maps.Keys(kinds)), ",")
 		out = append(out, a.e)
 	}
 	return out
