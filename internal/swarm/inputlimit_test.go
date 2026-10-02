@@ -8,7 +8,6 @@ import (
 	"testing"
 )
 
-
 // A PHRASE HAS A FLOOR, AND THE REFUSAL QUOTES IT (Fable's read of #150, finding 4). The
 // only floor was non-emptiness, so `input_limit_phrases: ["limit"]` would class every failed
 // job whose log holds the word `limit` -- and a job classed `input-limit` is a job that is
