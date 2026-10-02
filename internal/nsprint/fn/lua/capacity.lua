@@ -3,8 +3,8 @@
 -- machine:<m>:ceiling, sums the desired slots of every registered friend and
 -- bench on that machine, refuses a raise that would break the ceiling with exit
 -- 2 CEILING <m> <sum>/<ceiling>, and otherwise writes the desired hash and one
--- cap:log receipt stamped with server TIME (spec #2756 2.1 rule 2, 2.2, 2.4).
--- ns_sprint_plan (#2380) applies a whole sprint plan the same way: every row's
+-- cap:log receipt stamped with server TIME.
+-- ns_sprint_plan applies a whole sprint plan the same way: every row's
 -- desired hash through the one write_desired path, under a multi-row ceiling
 -- check, after an ACL authority check and before any write.
 
@@ -54,9 +54,8 @@ end
 -- registered. It is the same rule Go's capacity.Evaluate applies; running it
 -- here makes the guard and the write atomic.
 --
--- Benches are not in the sum (Glenn 2026-09-27: one ceiling per machine,
--- friends and the swarm share it; a sleeping friend's slots are the
--- swarm's). A bench's share is checked against the ceiling on its own
+-- Benches are not in the sum: one ceiling per machine, and friends and
+-- benches share it. A bench's share is checked against the ceiling on its own
 -- (capacity_desired below), and at run time its slots are the ceiling
 -- less the slots of the friends awake on its machine, read at every deal
 -- and work (TM.bench_slots in 02_card_move.lua), so the split follows who
@@ -76,7 +75,7 @@ local function machine_sum(m, req_kind, req_name, req_slots)
   return total
 end
 
--- write_desired is the one write path of a desired hash (#2380 rev 4): it
+-- write_desired is the one write path of a desired hash: it
 -- keeps paused (default 0), writes slots, machine, paused and at, and adds one
 -- cap:log receipt. capacity_desired and ns_sprint_plan both call it. It does no
 -- ceiling check and registers no name: each caller has already checked
@@ -87,19 +86,19 @@ local function write_desired(kind, name, slots, machine, actor, idem, at, legacy
   if not paused then
     paused = '0'
   end
-  -- #3206 PR A: capacity_desired's optional paused arg; nil keeps the stored
+  -- set_paused is capacity_desired's optional paused arg; nil keeps the stored
   -- value, as every other caller does.
   if set_paused == '0' or set_paused == '1' then
     paused = set_paused
   end
   redis.call('HSET', key,
     'slots', tostring(slots), 'machine', machine, 'paused', paused, 'at', tostring(at))
-  -- #3349: capacity_desired's optional legs arg (a bench's declared CI legs,
-  -- comma separated); nil or '' keeps the stored list.
+  -- set_legs is capacity_desired's optional legs arg (a bench's declared CI
+  -- legs, comma separated); nil or '' keeps the stored list.
   if set_legs and set_legs ~= '' then
     redis.call('HSET', key, 'legs', set_legs)
   end
-  -- #4270: the kinds and tiers filters (what TM.may reads); '' or nil
+  -- set_kinds and set_tiers are the kinds and tiers filters: '' or nil
   -- keeps the stored value, '-' clears it.
   for f, v in pairs({ kinds = set_kinds, tiers = set_tiers }) do
     if v == '-' then
@@ -126,19 +125,18 @@ local function filter_ok(v, kinds)
 end
 
 -- capacity_desired: set friend:<f>:desired or bench:<b>:desired under the
--- machine ceiling. args = kind, name, slots, machine, actor, idem, and (#3206
--- rev 4 PR A, both optional so six-arg callers are unchanged) paused ('' keeps
--- the stored value, '0' or '1' sets it; a friend's or a bench's, #4308: the
--- one flag worker pause|resume sets) and register ('1' is accepted and
--- implied: since #2934 every write adds the name to its registry; no beat is
--- written) and (#3349, optional ninth) legs: a bench's CI legs, comma
--- separated, '' keeps the stored list; a friend has none. (#3634, optional
--- tenth) role: a bench's registry role, friends or fleet, '' keeps the stored
--- one (absent reads as fleet). A friends bench declares no CI legs: legs on a
--- bench whose role is or becomes friends returns ROLE friends and writes
--- nothing. (#4270, optional eleventh and twelfth) kinds and tiers: the
--- consumer's copy filters, comma lists TM.may reads (kinds of work, read,
--- fix; tiers frontier, pro, flash); '' keeps the stored value, '-' clears it. The same
+-- machine ceiling. args = kind, name, slots, machine, actor, idem, and (both
+-- optional so six-arg callers are unchanged) paused ('' keeps the stored
+-- value, '0' or '1' sets it; a friend's or a bench's, the one flag worker
+-- pause|resume sets) and register ('1' is accepted and implied: every write
+-- adds the name to its registry; no beat is written) and (optional ninth)
+-- legs: a bench's CI legs, comma separated, '' keeps the stored list; a friend
+-- has none. (optional tenth) role: a bench's registry role, friends or fleet,
+-- '' keeps the stored one (absent reads as fleet). A friends bench declares no
+-- CI legs: legs on a bench whose role is or becomes friends returns ROLE
+-- friends and writes nothing. (optional eleventh and twelfth) kinds and tiers:
+-- the consumer's copy filters, comma lists (kinds of work, read, fix; tiers
+-- frontier, pro, flash); '' keeps the stored value, '-' clears it. The same
 -- slots, machine, paused, legs, role, kinds and tiers as stored return
 -- SAME and write nothing.
 local function capacity_desired(keys, args)
@@ -154,9 +152,8 @@ local function capacity_desired(keys, args)
   if kind ~= 'friend' and kind ~= 'bench' then
     return { 'INVALID', machine, '0', '0' }
   end
-  -- NAME-IS-LOGIN (#3604): a name mapped in friends:login never registers as
-  -- a friend, so the desired write refuses it before any ceiling or write, the
-  -- same rule hello enforces (#3593, #3092 rev 6).
+  -- NAME-IS-LOGIN: a name mapped in friends:login never registers as
+  -- a friend, so the desired write refuses it before any ceiling or write.
   if kind == 'friend' and redis.call('HEXISTS', 'friends:login', name) == 1 then
     return { 'NAME-IS-LOGIN', name }
   end
@@ -281,7 +278,7 @@ local function key_type(key)
   return redis.call('TYPE', key)['ok']
 end
 
--- plan_machine_sum is the ceiling rule of a sprint plan (#2380 rev 4): on
+-- plan_machine_sum is the ceiling rule of a sprint plan: on
 -- machine m, the plan slots of every FRIEND row whose machine is m, plus the
 -- stored slots of every registered friend outside the plan whose stored
 -- machine is m (outside, summed once per call of ns_sprint_plan). A friend
@@ -310,13 +307,13 @@ local function plan_bench_over(m, rows, ceiling)
   return nil
 end
 
--- sprint_plan applies one validated sprint plan (#2380 rev 4) in three phases:
+-- sprint_plan applies one validated sprint plan in three phases:
 -- authority, then every check, then every write. Redis does not undo a
 -- script's earlier writes when it errors, so no write happens until every
 -- check has passed; the write phase has no check that can refuse.
 -- args = sprint, sha, body, applied_by, routes_sha, backpressure_missing,
 -- ci_reruns, readers, absent_after, n, then kind, name, machine, slots per row,
--- then optionally fix_to and release_reader (#3798), both registered friends.
+-- then optionally fix_to and release_reader, both registered friends.
 local function sprint_plan(keys, args)
   -- 1. Authority: only a seat whose ACL may HSET authz:sprint-plan applies a
   -- plan. The key is never written; it names the right.
@@ -664,7 +661,7 @@ local function cap_budget_debits(keys, args)
   return result
 end
 
--- worker_pause (#4308): set or clear the paused flag on a worker's desired
+-- worker_pause: set or clear the paused flag on a worker's desired
 -- hash, friend and bench alike, in one call. args = kind, name, paused
 -- ('1' pauses, '0' resumes), actor, idem. A worker is a name its registry
 -- (friends, benches) holds or one with a desired hash; anything else is
@@ -698,7 +695,7 @@ local function worker_pause(keys, args)
   return { word, id, '1' }
 end
 
--- worker_show (#4308): the desired record of every worker, or of the one
+-- worker_show: the desired record of every worker, or of the one
 -- named. args = kind, name (both '' for every worker). The roster is the
 -- friends and benches registries plus the consumers SET (what the table
 -- rows), each once, sorted by <kind>:<name>. Returns WORKERS n, then per
