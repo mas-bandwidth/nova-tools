@@ -1027,7 +1027,8 @@ refused unless its actor is that coordinator and never changes it, and
 another actor is refused (exit 2) with nothing written; a store with no
 coordinator takes init and teardown only. The workers' verbs (take, finish,
 read, fleet beat) are anyone's who names the member or reader, and their
-actor, when none is given, is that name. The reports (merge, ci) want an
+actor is that name, whatever `--actor` or NOVA_SPRINT_ACTOR say: the record
+names the worker the verb was run as, as the server's does. The reports (merge, ci) want an
 actor; the machine's verbs (tick, run) are recorded as the machine; the reads
 (queue, inbox, card, check, where, goal show) need no actor, except `inbox
 --read`, which moves the coordinator's cursor and is the coordinator's alone:
