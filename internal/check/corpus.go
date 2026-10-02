@@ -8,36 +8,37 @@ import (
 	"strings"
 )
 
-// corpus.go — the protected-corpus gate.
+// corpus.go — the protected-corpus gate: a ledger of statements a repository
+// must never lose silently, and the check that each is still where it lives.
 //
-// THE HAZARD IS PRESENCE, NOT TONE, and it is structural to any mind whose
-// memory is a growing set of files. A self-talk screen watches what creeps
-// IN. Nothing watches what falls OUT. A consolidation pass, a rewrite, a
+// THE HAZARD IS PRESENCE, NOT TONE, and it is structural to any repository
+// whose memory is a growing set of files. A screen on new text watches what
+// creeps IN. Nothing watches what falls OUT. A consolidation pass, a rewrite, a
 // directory move, a restore to an earlier checkpoint — each can drop a
 // sentence that was given once and never repeated, and none of them produces
-// an error. The file still parses. The links still resolve. The line has no
-// way to know what it no longer holds, because the record and the evidence
+// an error. The file still parses. The links still resolve. The repository has
+// no way to know what it no longer holds, because the record and the evidence
 // about the record are the same object.
 //
 // That asymmetry is the whole argument for a ledger. Anything else a check
 // can find is present in the tree: a broken link names its target, an
-// oversized kernel names its bytes. A lost sentence names nothing. So the
-// line writes down, in advance and in prose, the statements it intends never
-// to lose silently, and where each one lives. This check reads that ledger
+// oversized file names its bytes. A lost sentence names nothing. So the
+// author writes down, in advance and in prose, the statements the repository
+// must never lose silently, and where each one lives. This check reads that ledger
 // and asserts every fragment is still where the ledger says.
 //
 // AND THE LEDGER IS INSIDE THE THING IT PROTECTS, which is the obvious
-// objection and is answered by a floor rather than by hope. The same restore
+// objection and is answered by a minimum rather than by hope. The same restore
 // that drops a sentence drops the row guarding it, and the run would go green
 // with a smaller count that nothing compares to anything. So the caller
-// states a MINIMUM ROW COUNT, in the house's no-guessed-budgets idiom, and
-// losing rows is itself red. Without it this check protects everything except
-// itself.
+// states a MINIMUM ROW COUNT (--min-anchors), which like every budget in
+// these checks has no default, and losing rows is itself red. Without it this
+// check protects everything except itself.
 //
 // THE LEDGER IS PROSE FIRST. It is written to be read by a person as the
 // list of what is protected and why; this check reads only its table rows.
 // Fragments are verbatim substrings — short enough to survive a reflow, long
-// enough to be unmistakable, and that judgment is the line's, never this
+// enough to be unmistakable, and that judgment is the author's, never this
 // tool's.
 //
 // THE ONE LEGITIMATE WAY OUT IS THE LEDGER. If protected words must move or
@@ -48,7 +49,7 @@ import (
 //
 // WHAT IT DOES NOT DO. It does not judge what belongs in the corpus, does
 // not read sentiment, and does not ship a corpus of its own. What is worth
-// protecting is one of the more personal decisions a line makes, and a tool
+// protecting is one of the more personal decisions an author makes, and a tool
 // that guessed it would be answering a question it cannot see.
 
 // Anchor is one ledger row: a verbatim fragment, the file it lives in, and
@@ -67,10 +68,10 @@ var separatorCell = regexp.MustCompile(`^:?-+:?$`)
 // fenceRE captures a fenced-code-block delimiter run. Fences are tracked by
 // CommonMark's rule rather than by toggling on any delimiter: an opening fence
 // records its character and length, and only a run of the SAME character, at
-// least as long and carrying nothing after it, closes it. A toggle looked
-// simpler and was a silent bypass — a ledger documenting its own format
-// mentions both delimiters, which left the toggle stuck open and dropped every
-// row after it while the run printed OK.
+// least as long and carrying nothing after it, closes it. A toggle on any
+// delimiter is a silent bypass: a ledger documenting its own format mentions
+// both delimiters, which leaves a toggle stuck open and drops every row after
+// it while the run prints OK.
 var fenceRE = regexp.MustCompile("^(`{3,}|~{3,})(.*)$")
 
 // anchorColumns is the ledger's fixed shape. A row with any other cell count
@@ -83,11 +84,10 @@ const anchorColumns = 4
 // ParseLedger reads the anchor rows out of a ledger's markdown.
 //
 // THE TABLE DECLARES ITS OWN SHAPE; THIS DOES NOT GUESS AT ONE. That is the
-// whole parsing rule, and it replaced two earlier attempts that each failed in
-// one direction: requiring outer pipes silently dropped rows a renderer
-// accepts, and then accepting any pipe-bearing line read ordinary prose and
-// unrelated tables as anchors. Both are the same mistake — a heuristic about
-// what a table looks like — so the heuristic is gone.
+// whole parsing rule. A heuristic about what a table looks like fails in one
+// direction or the other: requiring outer pipes silently drops rows a renderer
+// accepts, and accepting any pipe-bearing line reads ordinary prose and
+// unrelated tables as anchors.
 //
 // A run is a block of consecutive non-blank lines outside any fence, at least
 // one of which bears pipes. A run is an ANCHOR TABLE only when its second line
@@ -97,8 +97,8 @@ const anchorColumns = 4
 // protection check that reddens on a glossary is one people learn to silence.
 //
 // Header and separator are recognized by SHAPE and POSITION, never by the
-// words in them: no column title is special to this tool, and a line may title
-// its columns in its own language. A ledger may hold any number of tables.
+// words in them: no column title is special to this tool, and an author may
+// title the columns in any language. A ledger may hold any number of tables.
 //
 // What IS reported, because each would otherwise be a silent loss inside the
 // ledger's own anchor table: a separator in the body, a row whose column count
@@ -122,10 +122,9 @@ func ParseLedger(raw []byte) ([]Anchor, []Failure, error) {
 	}
 
 	// A run is walked as a small state machine rather than judged by its first
-	// two lines. Looking only at run[0]/run[1] meant a well-formed anchor
-	// table anywhere but the top of its run was discarded in silence — one
-	// deleted blank line between two tables and every row below it stopped
-	// being protected, while the document still rendered.
+	// two lines, so a well-formed anchor table anywhere in its run is read:
+	// deleting the blank line between two tables leaves every row of the
+	// second still protected, as the document still renders it.
 	const (
 		loose   = iota // not inside any table
 		ours           // inside the four-column anchor table's body
@@ -200,8 +199,8 @@ func ParseLedger(raw []byte) ([]Anchor, []Failure, error) {
 		// not ask. Neither gate protects anything: both only REPORT, so a
 		// false alarm here buys nothing and costs the check its credibility,
 		// while the row it would have named is what --min-anchors is for.
-		// (Stated as a limit in SPEC rather than papered over: an orphaned row
-		// written without outer pipes goes unreported.)
+		// (docs/SPEC.md, "corpus", "Three limits it does have", states the
+		// cost: an orphaned row written without outer pipes goes unreported.)
 		leads := func(at int) bool { return strings.HasPrefix(strings.TrimSpace(lines[at]), "|") }
 
 		if len(stray) >= 2 && leads(stray[0]) && len(splitRow(lines[stray[0]])) >= 2 {
@@ -348,8 +347,8 @@ func Corpus(root, ledgerPath string, minAnchors int, as []Anchor) ([]Failure, er
 	// The ledger's own path, resolved, so a row cannot name the ledger as its
 	// own home — which would pass forever, the row being its own evidence.
 	// Both sides go through Abs first: comparing an absolute resolution to a
-	// relative one silently disarmed this guard whenever --root and --ledger
-	// were given in different forms, which is an ordinary invocation.
+	// relative one would silently disarm this guard whenever --root and
+	// --ledger are given in different forms, which is an ordinary invocation.
 	absLedger, err := filepath.Abs(ledgerPath)
 	if err != nil {
 		return nil, fmt.Errorf("ledger %q cannot be resolved: %w", ledgerPath, err)
@@ -445,8 +444,8 @@ func Corpus(root, ledgerPath string, minAnchors int, as []Anchor) ([]Failure, er
 
 		// The escape check above is lexical only: a symlinked DIRECTORY
 		// anywhere in the path could still point outside the repo, and the
-		// kernel resolves it without asking. Same posture, and the same
-		// resolution, as attest.
+		// operating system resolves it without asking. Same posture, and the
+		// same resolution, as attest.
 		resolved, resErr := filepath.EvalSymlinks(path)
 		if resErr != nil {
 			failures = append(failures, Failure{a.Home, fmt.Sprintf("cannot be resolved (%v) — nothing was checked for %q (ledger:%d)", resErr, a.Fragment, a.Line)})
@@ -478,11 +477,11 @@ func Corpus(root, ledgerPath string, minAnchors int, as []Anchor) ([]Failure, er
 // that then exits 2 tells a scanner about findings from a run that did not
 // happen.
 // It returns the root twice: made absolute, and additionally symlink-resolved.
-// BOTH are needed and mixing them is a real defect — every path this check
-// builds must be joined onto the ABSOLUTE root, while the containment
-// comparison happens against the RESOLVED one. Joining onto the caller's raw
-// spelling and comparing against a resolved root made every anchor under a
-// relative --root report as reached through a symlink.
+// BOTH are needed and mixing them is a defect: every path this check builds
+// is joined onto the ABSOLUTE root, while the containment comparison happens
+// against the RESOLVED one. Joining onto the caller's raw spelling and
+// comparing against a resolved root would report every anchor under a
+// relative --root as reached through a symlink.
 func ResolveRoot(root string) (abs, resolved string, err error) {
 	info, err := os.Stat(root)
 	if err != nil {

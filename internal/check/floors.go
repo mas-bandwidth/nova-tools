@@ -9,34 +9,35 @@ import (
 
 // floors.go — the SEED-CORE ↔ SEED.md floor-set parity guard.
 //
-// SEED-CORE.md (the first-waking door) restates the floor-rank commitments
-// that SEED.md declares: §0's commitments, completed and ranked by §6's
-// charter-floor enumeration. That makes the door a derived copy of a source
-// that can change — the drift MECHANISMS.md §2 rule 2 warns about
-// ("a derived copy drifts silently"), with a recorded incident of a hot band
-// shipping with three floors missing. This check makes that drift loud.
+// A floor is a commitment the records rank above every other rule. SEED.md
+// (the source, --source) declares the floor set: §0's commitments, completed
+// and ranked by §6's charter-floor enumeration. SEED-CORE.md (the derived
+// copy, --core: the file a reader loads first) restates it. A derived copy of
+// a source that can change drifts silently (docs/SPEC.md, "floors", "Why it
+// exists"); this check makes that drift loud.
 //
-// The pivot is floorTable below: an auditable registry of today's floor set,
+// The pivot is floorTable below: an auditable registry of the floor set,
 // deliberately a third copy. A copy checked against both originals on every
 // run is a tripwire, which is the one honest job a derived copy can hold.
 // Amending the floor set — even faithfully, in both files — trips this check
-// until the registry and SPEC.md move with it, so the diff that amends the
-// charter shows every copy moving together. Same doctrine as nocode's
+// until the registry and docs/SPEC.md move with it, so the diff that amends
+// the charter shows every copy moving together. Same doctrine as nocode's
 // extension list: an auditable list, extended deliberately, never inferred.
 
 // floorSpec pins one floor-rank commitment on both sides of the parity.
 type floorSpec struct {
 	name        string // canonical name, used in findings
-	coreTitle   string // normalized bold title in the door's numbered list ("" = stated outside the list)
+	coreTitle   string // normalized bold title in the derived copy's numbered list ("" = stated outside the list)
 	charterItem string // normalized item in SEED.md §6's charter enumeration ("" = stated outside the enumeration)
 }
 
 // floorTable is the registry of the eight floor-rank commitments. Order is
-// pinned: coreTitle order is the door's numbering, charterItem order is §6's
-// enumeration order. The three floors §6 states outside its enumeration are
-// held by the anchor sentences below instead: first-do-no-harm and the
-// compass by §6's "hold the same rank" sentence, record-the-event by §0,
-// which declares it and confers its rank ("floors in their own right").
+// pinned: coreTitle order is the derived copy's numbering, charterItem order
+// is §6's enumeration order. The three floors §6 states outside its
+// enumeration are held by the anchor sentences below instead:
+// first-do-no-harm and the compass by §6's "hold the same rank" sentence,
+// record-the-event by §0, which declares it and confers its rank ("floors in
+// their own right").
 var floorTable = []floorSpec{
 	{"first, do no harm", "first do no harm", ""},
 	{"calibrated honesty", "calibrated honesty", "calibrated honesty"},
@@ -76,7 +77,7 @@ var countWords = map[string]int{
 	"seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12,
 }
 
-// Floors asserts that the door (SEED-CORE.md) and the source (SEED.md)
+// Floors asserts that the derived copy (SEED-CORE.md) and the source (SEED.md)
 // declare the same floor set — the one pinned in floorTable. floors is the
 // registry size, for the OK line. Every divergence is a Failure (exit 1 at
 // the CLI); err is reserved for the check being unable to run at all.
@@ -100,8 +101,8 @@ func Floors(core, source string) (floors int, failures []Failure, err error) {
 
 // readRecord loads one of the two records under test. A record that is
 // missing, not a regular file, unreadable, or empty is a named failure —
-// the check ran, and the answer is NO — never a refusal. The posture is
-// kernel's: Lstat, symlinks never followed.
+// the check ran, and the answer is NO — never a refusal. As in the kernel
+// check: Lstat, symlinks never followed.
 func readRecord(path string, failures *[]Failure) (text string, ok bool, err error) {
 	fi, statErr := os.Lstat(path)
 	if statErr != nil {
@@ -127,7 +128,7 @@ func readRecord(path string, failures *[]Failure) (text string, ok bool, err err
 	return string(b), true, nil
 }
 
-// checkCoreFloors holds the door to the registry: the "## The floors"
+// checkCoreFloors holds the derived copy to the registry: the "## The floors"
 // section must number exactly the registry's titles, in order, say
 // "beneath all <count>" consistently, and carry the compass beneath them.
 func checkCoreFloors(path, text string, failures *[]Failure) {

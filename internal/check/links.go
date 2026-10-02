@@ -55,9 +55,9 @@ func Links(dir string) (mdFiles, checked int, broken []BrokenLink, err error) {
 // The Excluded count is the number of .md files under those prefixes.
 func LinksExcluding(dir string, exclude []string) (res LinksResult, err error) {
 	// Resolve the root before walking. os.Stat FOLLOWS a symlink, so a --dir
-	// naming a link to the repo passed the directory check and then handed
-	// WalkDir a root it saw as a single non-directory entry — a clean pass
-	// over a tree never opened. On this platform /var is such a link.
+	// naming a link to the repo would pass the directory check and then hand
+	// WalkDir a root it sees as a single non-directory entry — a clean pass
+	// over a tree never opened. On macOS /var is such a link.
 	root, statErr := filepath.EvalSymlinks(dir)
 	if statErr != nil {
 		return res, fmt.Errorf("dir %q: %w", dir, statErr)
@@ -171,16 +171,15 @@ func underExclude(rel string, exclude []string) bool {
 // one whole-file BrokenLink — Line 0, Target empty, reason "unreadable (…)" —
 // never as an error. This is the same posture attest takes with a manifested
 // file that exists but cannot be read: a NAMED FAILURE, not a refusal. The
-// walk continues, so one unreadable file cannot discard the findings from the
-// rest of the tree; before this, it converted the whole run to exit 2 and
-// threw the accumulated broken links away.
+// walk continues, so one unreadable file cannot turn the whole run into exit
+// 2 and discard the findings from the rest of the tree.
 func checkFileLinks(root, mdPath string, exclude []string) (checked int, broken []BrokenLink) {
 	relFile, relErr := filepath.Rel(root, mdPath)
 	if relErr != nil {
 		relFile = mdPath
 	}
-	// Reported paths are forward-slashed on every platform, as nocode already
-	// does. A finding is something a reader copies into a shell or an issue, and
+	// Reported paths are forward-slashed on every platform, as nocode reports
+	// them. A finding is something a reader copies into a shell or an issue, and
 	// a backslashed spelling is not what any other output here uses. On the
 	// Rel-error branch above this is an ABSOLUTE path rather than a repo-relative
 	// one, so it is forward-slashed but not repo-relative; that branch is
@@ -260,8 +259,8 @@ func readCause(err error) error {
 // a CommonMark parser: it handles bracket nesting in link text (the badge
 // pattern [![alt](img)](target) — both targets are found), angle-bracket
 // destinations (<my file.md>), and titles in "double", 'single', or (paren)
-// form. What it does not handle is listed in SPEC.md as deliberately
-// not checked.
+// form. What it does not handle is listed in docs/SPEC.md, "links", under
+// "Deliberately does not check".
 func extractLinkTargets(line string) []string {
 	if strings.IndexByte(line, '[') < 0 {
 		return nil

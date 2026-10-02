@@ -65,6 +65,8 @@ func defaultSpellingChecker() *SpellingChecker {
 
 // NewSpellingChecker compiles a misspell Replacer with DictAmerican and removes ignored words.
 // It caches compiled checkers so repetitive compilation across tests and files is avoided.
+// An ignore spec that does not parse yields the default checker, so a caller
+// validates the spec with ParseIgnoreSpec first.
 func NewSpellingChecker(ignore []string) *SpellingChecker {
 	words, err := ParseIgnoreSpec(ignore)
 	if err != nil || len(words) == 0 {
@@ -105,7 +107,8 @@ func NewSpellingChecker(ignore []string) *SpellingChecker {
 	return c
 }
 
-// ParseAllowlist parses allowlist content: one word per line, ignoring blank lines and # comments.
+// ParseAllowlist parses allowlist content: one lowercased word per line,
+// ignoring blank lines and # comments, whole-line or trailing.
 func ParseAllowlist(content string) []string {
 	var words []string
 	for _, line := range strings.Split(content, "\n") {

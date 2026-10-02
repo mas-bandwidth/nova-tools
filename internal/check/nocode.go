@@ -15,9 +15,11 @@ import (
 	"unicode"
 )
 
-// codeExtsData is the floor deny-list, kept as data a reader can open and diff
-// rather than as string literals inside a walk. See codeexts.txt for why it is
-// embedded rather than demanded from the caller.
+// codeExtsData is the floor deny-list: the code extensions the tool ships
+// with and applies when the caller supplies no list of its own. It is kept as
+// data a reader can open and diff rather than as string literals inside a
+// walk. See codeexts.txt for why it is embedded rather than demanded from the
+// caller.
 //
 //go:embed codeexts.txt
 var codeExtsData string
@@ -37,12 +39,12 @@ var codeNamesData string
 //
 // These labels are read in two places: in a finding's REASON --
 // `code extension .py (floor-list)` -- and on the `deny-list=` and `source=`
-// FIELDS of nova-check's summary lines. SPEC.md's rule is that a field is ONE
-// token, so each label IS one token, with no space and no "=": the same
-// spelling reads the same in both places, and the field needs no escape to
-// be one (a label with a space printed as `floor\x20list`, which a scanner
-// could count and a reader had to decode). The caller still renders them
-// through oneline.Field, which leaves a token like these unchanged.
+// FIELDS of nova-check's summary lines. A field is ONE token (docs/SPEC.md,
+// "Conventions", "A field is one token"), so each label IS one token, with no
+// space and no "=": the same spelling reads the same in both places, and the
+// field needs no escape to be one (a label with a space would print as
+// `floor\x20list`, which a reader has to decode). The caller still renders
+// them through oneline.Field, which leaves a token like these unchanged.
 const (
 	DenyFloor    = "floor-list"
 	DenyReplaced = "--deny-ext"
@@ -74,10 +76,8 @@ func FloorDenyNames() (names map[string]bool, prefixes []string, err error) {
 	return floorDenyNamesFrom(codeNamesData)
 }
 
-// floorDenyNamesFrom is FloorDenyNames over supplied data, so that the
-// emptiness guard below is reachable by a test. It was not: replacing the
-// guard with `if false` changed nothing anywhere in the suite, which makes a
-// doc comment asserting behavior nothing checks.
+// floorDenyNamesFrom is FloorDenyNames over supplied data, so that a test
+// reaches the emptiness guard below.
 func floorDenyNamesFrom(data string) (names map[string]bool, prefixes []string, err error) {
 	names, prefixes, err = parseNameLines(data)
 	if err != nil {
@@ -146,13 +146,11 @@ func parseNameLines(s string) (map[string]bool, []string, error) {
 }
 
 // validName and validPrefix hold the name list to the SAME standard validExt
-// holds the extension list to, and they exist because the first version of this
-// parser did not. It accepted globs, embedded whitespace, zero-width spaces and
-// a leading "./" — every one of which builds an entry that matches nothing,
-// survives the emptiness guard because other entries are fine, prints happily
-// in --print-deny-list, and leaves a floor quietly forbidding less than it
-// says. That is the exact fail-open this check exists against, written into the
-// commit whose own argument condemns it. Found at the gate.
+// holds the extension list to. A glob, embedded whitespace, a zero-width space
+// or a leading "./" each builds an entry that matches nothing, survives the
+// emptiness guard because other entries are fine, prints happily in
+// --print-deny-list, and leaves a floor quietly forbidding less than it says:
+// the exact fail-open this check exists against.
 func validName(v, line string) error {
 	switch {
 	case v == "":
@@ -166,7 +164,7 @@ func validName(v, line string) error {
 	case v == "." || v == "..":
 		// filepath.Base never returns these for a file the walk classifies, so
 		// the entry would match nothing and survive the emptiness guard. The
-		// path side already refused them; the name side did not.
+		// path side refuses them too.
 		return fmt.Errorf("floor name list: %q is not a file name", line)
 	}
 	return nil
@@ -179,10 +177,10 @@ func validPrefix(v, line string) error {
 	case strings.Contains(v, "\\"):
 		// filepath.ToSlash is a NO-OP on every platform whose separator is
 		// already "/", so it reads as though it handles a backslash entry and
-		// does not. An unrefused "path:.circleci\" prints in
-		// --print-deny-list as a live floor and matches nothing, which is a
+		// does not. An unrefused "path:.circleci\" would print in
+		// --print-deny-list as a live floor and match nothing, which is a
 		// whole location floor silently forbidding nothing. validExt refuses
-		// the same character; this now does too.
+		// the same character.
 		return fmt.Errorf("floor name list: %q contains a backslash; prefixes are written with /", line)
 	case strings.ContainsAny(v, "*?[]"):
 		return fmt.Errorf("floor name list: %q looks like a glob; prefixes are matched literally", line)
@@ -285,7 +283,8 @@ func ParseDenyList(spec string) ([]string, error) {
 	return exts, nil
 }
 
-// NoCodeOptions configures the self/machinery separation check.
+// NoCodeOptions configures the nocode check, which keeps machinery (code,
+// scripts, build files) out of a tree meant to hold only prose.
 //
 // Allow starts EMPTY and stays empty unless the caller narrows scope. Every
 // scope narrowing is the caller's, stated per run — the same law the skip and
@@ -321,9 +320,9 @@ func NoCode(opts NoCodeOptions) (scanned int, findings []Failure, err error) {
 	}
 
 	// Resolve the root before walking. os.Stat FOLLOWS a symlink, so a --dir
-	// naming a link to the repo passed the directory check and then handed
-	// WalkDir a root it saw as a single non-directory entry — a clean pass
-	// over a tree never opened. On this platform /var is such a link.
+	// naming a link to the repo would pass the directory check and then hand
+	// WalkDir a root it sees as a single non-directory entry — a clean pass
+	// over a tree never opened. On macOS /var is such a link.
 	root, statErr := filepath.EvalSymlinks(opts.Dir)
 	if statErr != nil {
 		return 0, nil, fmt.Errorf("dir %q: %w", opts.Dir, statErr)
@@ -402,8 +401,8 @@ func normalizeAllow(allow []string) []string {
 }
 
 // isAllowed reports whether rel is, or lies beneath, a declared allow prefix.
-// A prefix genuinely covers everything beneath it, at any depth, and the same
-// prefix covers everything beneath it at any depth.
+// A prefix covers everything beneath it, at any depth, and never a sibling
+// that only shares its spelling: "docs" does not cover "docs-old".
 func isAllowed(rel string, allow []string) bool {
 	return slices.ContainsFunc(allow, func(a string) bool { return rel == a || strings.HasPrefix(rel, a+"/") })
 }
@@ -417,8 +416,7 @@ func isAllowed(rel string, allow []string) bool {
 // the first two bytes with its read error. The walk supplies them from the
 // filesystem (peekTwoFile); a test supplies them from a blob's bytes.
 //
-// The PATH-SIDE rules (name, location, extension) are `pathOnlyReasons`
-// (SPEC.md 858).
+// The PATH-SIDE rules (name, location, extension) are `pathOnlyReasons`.
 //
 // peekTwo returns AT MOST the first two bytes: fewer for a short or empty
 // file, which is not an error. Whether those bytes are "#!" is decided here
@@ -452,7 +450,9 @@ func classifyParametrised(rel string, perm os.FileMode, isLink bool, denySet map
 }
 
 // pathOnlyReasons returns the path-side reasons: name, location and
-// extension. The spec pins them to one statement (SPEC.md 858).
+// extension. The spec pins them to one statement, and this is its one
+// implementation (docs/SPEC.md, "nocode", `--staged`, "PARITY IS BY
+// CONSTRUCTION, NOT BY TRANSCRIPTION").
 func pathOnlyReasons(rel string, denySet map[string]bool, source string, denyNames map[string]bool, denyPrefixes []string) []string {
 	var reasons []string
 	if base := strings.TrimSpace(strings.ToLower(filepath.Base(rel))); denyNames[base] {
@@ -505,10 +505,10 @@ func newNoCodeRules(opts NoCodeOptions) (noCodeRules, error) {
 	}
 	// The name and path floors are always the embedded floor, and deliberately
 	// are NOT replaced by --deny-ext. That flag answers "which LANGUAGES does
-	// this line legitimately keep inside its own self", which has nothing to
-	// say about whether a CI workflow belongs in a prose tree. A line that
-	// genuinely keeps build machinery declares WHERE with --allow, which is the
-	// existing escape hatch and is narrower than switching a floor off.
+	// this tree legitimately keep", which has nothing to say about whether a
+	// CI workflow belongs in a prose tree. A tree that genuinely keeps build
+	// machinery declares WHERE with --allow, the escape hatch that is narrower
+	// than switching a floor off.
 	denyNames, denyPrefixes, err := FloorDenyNames()
 	if err != nil {
 		return noCodeRules{}, err

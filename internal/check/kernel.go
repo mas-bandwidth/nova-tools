@@ -12,7 +12,7 @@ import (
 // way.
 //
 // Lstat, not Stat: a symlinked kernel is refused as not a regular file, never
-// followed — the same posture as attest. See SPEC.md.
+// followed, as attest refuses one (docs/SPEC.md, "kernel").
 func measureKernel(file string) (size int64, failures []Failure, err error) {
 	fi, statErr := os.Lstat(file)
 	if statErr != nil {
@@ -31,7 +31,8 @@ func measureKernel(file string) (size int64, failures []Failure, err error) {
 	return size, failures, nil
 }
 
-// Kernel enforces a BYTE budget on the kernel file. maxBytes must be
+// Kernel enforces a BYTE budget on the kernel file: the one file a reader
+// loads first, held to a size budget. maxBytes must be
 // positive; there is no default budget and zero does not mean unlimited.
 // A missing kernel and an empty kernel are both failures, not errors:
 // the check ran, and the answer is NO.
@@ -69,16 +70,15 @@ func Kernel(file string, maxBytes int64) (measured int64, failures []Failure, er
 // tokens than its own estimate, and rounding down would let a kernel sit one
 // token over budget and read as exactly at it.
 //
-// AND IT MUST NOT REPORT A NUMBER THE CONVERSION INVENTED. The estimate is a
+// AND IT NEVER REPORTS A NUMBER THE CONVERSION INVENTED. The estimate is a
 // float64 and the count is an int64, and Go leaves an out-of-range conversion
 // between them to the hardware: arm64 saturates to MaxInt64, amd64 yields the
-// integer-indefinite value MinInt64 -- which is less than every budget, so a
-// divisor of 1e-20 printed `KERNEL OK tokens=-9223372036854775808 budget=400`
-// and exited 0 on three of the five shipped targets while the other two failed
-// on the same file. The divisor is a hand-typed measurement and `1e-20` is a
-// scientific-notation typo away from `1e20`, so the range is checked BEFORE the
-// conversion and an estimate that cannot be counted is over budget, said in
-// those words. The gate now gives the same verdict on every GOARCH.
+// integer-indefinite value MinInt64, which is less than every budget and would
+// print a negative token count as a pass. The divisor is a hand-typed
+// measurement and `1e-20` is a scientific-notation typo away from `1e20`, so
+// the range is checked BEFORE the conversion, and an estimate that cannot be
+// counted is over budget, said in those words: the same verdict on every
+// GOARCH.
 func KernelTokens(file string, maxTokens int64, bytesPerToken float64) (measured, tokens int64, failures []Failure, err error) {
 	if maxTokens <= 0 {
 		return 0, 0, nil, fmt.Errorf("max-tokens must be positive, got %d", maxTokens)

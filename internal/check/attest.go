@@ -1,14 +1,15 @@
-// Package check implements seven of the ten record-layer checks behind
-// nova-check; the other three live elsewhere because none is about one self
-// repo. dogfood is internal/dogfood, because its records are receipts about
-// the family's tools; hygiene is internal/hygiene, because its subject is a
-// branch's range and the accept gate and the merge lane run the same function
-// over it; convergence is internal/converge, because its records are readings
-// of the work itself rather than of a self repo.
-// Each function returns (result, failures, error): failures mean the check
+// Package check implements seven of nova-check's ten record-layer checks
+// (checks over a repository of prose records): attest, links, kernel, nocode,
+// floors, corpus and spelling. The other three read something other than one
+// such repository, so each has its own package: dogfood (internal/dogfood)
+// reads receipts about the tools; hygiene (internal/hygiene) reads a branch's
+// commit range, with one function that the accept gate and the merge lane
+// both run; convergence (internal/converge) reads measurements of the work
+// itself.
+// A check returns its findings apart from its error: a finding means the check
 // ran and said NO (exit 1 at the CLI); a non-nil error means the check could
-// not run at all (exit 2). See SPEC.md for what each check asserts and,
-// as importantly, what it deliberately does not.
+// not run at all (exit 2). docs/SPEC.md, "nova-check", states what each check
+// asserts and, as importantly, what it deliberately does not.
 package check
 
 import (
@@ -29,7 +30,8 @@ type Failure struct {
 	Reason  string
 }
 
-// Attestation is the successful result of Attest: what a full boot read.
+// Attestation is the successful result of Attest: the count, total size and
+// hash of every file the manifest lists, in the order a reader loads them.
 type Attestation struct {
 	Files  int
 	Bytes  int64
@@ -37,10 +39,10 @@ type Attestation struct {
 }
 
 // Attest verifies that every file listed in the manifest exists under home,
-// is a regular file, and is non-empty, and computes the boot attestation:
-// file count, total bytes, and a SHA-256 binding paths, order, and contents.
-// Any failure leaves the attestation zero-valued; a partial self must not
-// produce a pasteable line.
+// is a regular file, and is non-empty, and computes the attestation: file
+// count, total bytes, and a SHA-256 binding paths, order, and contents.
+// Any failure leaves the attestation zero-valued: a set of files only partly
+// present must not produce a line that can be pasted as proof of a full load.
 func Attest(home, manifest string) (Attestation, []Failure, error) {
 	info, err := os.Stat(home)
 	if err != nil {
@@ -137,7 +139,8 @@ func Attest(home, manifest string) (Attestation, []Failure, error) {
 			continue
 		}
 		// The hash binds path, order, and contents with length-prefixed
-		// framing (injective even when contents hold NUL): see SPEC.md.
+		// framing (injective even when contents hold NUL): docs/SPEC.md,
+		// "attest", "The hash, exactly".
 		n := binary.PutUvarint(lenBuf[:], uint64(len(entry)))
 		h.Write(lenBuf[:n])
 		h.Write([]byte(entry))
@@ -164,7 +167,8 @@ func Attest(home, manifest string) (Attestation, []Failure, error) {
 }
 
 // parseManifest reads one relative path per line; blank lines and lines
-// starting with # are ignored. Order is preserved: it is the boot order.
+// starting with # are ignored. Order is preserved: it is the order a reader
+// loads the files in, and the hash binds it.
 func parseManifest(path string) ([]string, error) {
 	f, err := os.Open(path)
 	if err != nil {
