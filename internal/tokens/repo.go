@@ -11,9 +11,8 @@ import (
 
 // Repo attribution: ONE rule, ONE function, ONE statement.
 //
-// The prototype had two copies of this rule in two scripts with two different regexp
-// tables, and they disagreed about `serialize`, `rowan` and `freddy`. So the table is the
-// caller's file — there is no built-in list, and `--repos` is required — and the ladder
+// Two copies of this rule with two different regexp tables disagree about which repo a
+// path is in. So the table is the caller's file — there is no built-in list, and `--repos` is required — and the ladder
 // below is written once and called from every source reader.
 //
 // The two named buckets are the other half. `unknown` means no path in this transcript
@@ -64,7 +63,7 @@ type Rules struct {
 const stemLimit = 50000
 
 // stemDepth is how many leading path elements a stem keeps. Three is where a tree is named
-// on a bench -- /Users/glenn/deepseek-working-3, /home/nova/actions-runner -- and a tally
+// on a bench -- /Users/ada/work-3, /home/ci/actions-runner -- and a tally
 // keyed by the whole file path would be a list of FILES rather than a list of candidate
 // rules: one unnamed tree would arrive as a hundred stems, one per directory in it, and the
 // top of the list would say nothing.
@@ -154,7 +153,7 @@ func PathStem(tok string) string {
 		return tok
 	}
 	// A leading `/` is kept and is not an element; a leading `~` IS an element, because
-	// `~/rowan-working/nova-tools` and `/Users/glenn/rowan-working` are the same depth of
+	// `~/work/nova-tools` and `/Users/ada/work` are the same depth of
 	// answer -- the home directory has been named either way.
 	lead, rest := "", tok
 	if strings.HasPrefix(tok, "/") {
