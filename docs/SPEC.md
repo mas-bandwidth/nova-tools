@@ -273,7 +273,7 @@ shape is what this paragraph forbids**: a hand-rolled fifth token or a
 `SANDBOX VERSION …` line of its own makes a reader written against the tokens it
 happens to know — `nova-version snapshot --bin ~/.local/bin` among them — refuse
 an entire install, exit 2; and a reader must ask a tool only the question it
-answers. The
+answers. `internal/ci`'s
 `TestEveryToolPrintsTheOneVersionLine` runs every built `cmd/nova-*` through the
 real reader, walking `cmd/` rather than holding a list, so a binary added
 tomorrow is held to the grammar on the day it appears. The verb takes no flags
@@ -1110,7 +1110,7 @@ nova-check floors --core <SEED-CORE.md> --source <SEED.md>
 **Why it exists.** SEED-CORE.md — the first-waking door — restates the
 floor-rank commitments that SEED.md declares. That makes the door a *derived
 copy* of a source that can change, which the seed's own kernel law forbids
-(a derived copy drifts silently). A door legitimately
+(MECHANISMS.md §2 rule 2: *"a derived copy drifts silently"*). A door legitimately
 must carry the floors before a line acts, so the copy stays; this check is what
 makes its drift loud instead of silent.
 
@@ -2008,7 +2008,7 @@ including quotes and trailing newlines; control bytes are encoded so the
 refusal stays one line.
 
 **The write is temp-file + fsync + rename** in the box's own directory, so a
-crash leaves one complete box or the other, never a fragment. The box is written
+crash leaves one box or the other, never a fragment. The box is written
 world-readable (exactly 0644, independent of umask): a fuse nobody else can see is a fuse that stops
 nothing. Surface names are matched case- and whitespace-insensitively, which
 makes equivalent spellings ONE surface in both directions — see the folding
@@ -3095,7 +3095,7 @@ change set plus the open list under `--since`.
 
 `REFUSED` is a `FAIL` with no path slot, because what it refuses is the state of
 the CHECKOUT rather than anything in the note: it is the branch-ahead guard
-below, a cursor that is not on this history, a tolerance boundary that
+below, a cursor that is not on this history, a `--legacy-before` that
 would move a reader's line earlier, or a FIRST `--advance` over a history nobody
 has said what to do with (see **the first advance** below). `INBOX UNREADABLE` names a file on the bus this tool cannot parse — not
 necessarily one addressed to the caller, because a file with no `To:` line
@@ -3120,7 +3120,7 @@ per-file lines instead.
 `INBOX UNADDRESSED` names a note that parses and reaches no reader at all; see
 above.
 
-`BUS WARN` is a finding the tolerance boundary forgives: reported, and not a failure.
+`BUS WARN` is a finding inside the tolerance boundary: reported, and not a failure.
 It goes to **stdout**, with the rest of the informational lines, per the rule
 below: anything reading the two streams apart — which is what CI does — would
 otherwise see every clean-but-forgiving run as a failing one.
