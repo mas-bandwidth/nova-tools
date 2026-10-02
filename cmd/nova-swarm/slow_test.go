@@ -41,7 +41,7 @@ func TestNativeRunKillsAtDeadline(t *testing.T) {
 	elapsed := time.Since(start)
 	require.Equal(t, 0, code, "a deadline kill is not a refusal, got exit %d:\n%s", code, errOut.String())
 	require.NotEqual(t, 0, res.rc, "the deadline killed the child, and the run records a non-zero exit")
-	require.LessOrEqual(t, elapsed, 30*time.Second, "the deadline should cut the run short, but it took %v", elapsed)
+	require.True(t, elapsed <= 30*time.Second, "the deadline should cut the run short, but it took %v", elapsed)
 }
 
 // SLOW: 25.2 s on bench-tier at dev 64b9bec48, over the five-second line.
