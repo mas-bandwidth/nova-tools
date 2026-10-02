@@ -193,8 +193,7 @@ const failMaxRemedy = "--fail-max <n> raises the ceiling, --fail-max 0 prints ev
 // refuse is what an unusable invocation costs: ONE line naming what was wrong, and the
 // door to the usage rather than the usage itself.
 //
-// Refuses unusable invocation with a concise message naming what was wrong
-// a dash was in the wrong place. That is the wrong trade twice over: a reader who
+// One line instead of the whole usage is the right trade twice over: a reader who
 // mistyped a flag knows what the flags are and wanted the one sentence, and a reader who
 // does not know can type the four words at the end of the line. The usage is still there,
 // still complete, and now it is asked for.
