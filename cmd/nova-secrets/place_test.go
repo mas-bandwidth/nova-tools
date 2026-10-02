@@ -9,8 +9,9 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
@@ -31,9 +32,7 @@ type placeFixture struct {
 
 func writeFakeExe(t *testing.T, path, body string) {
 	t.Helper()
-	if err := testbin.WriteExecutable(path, []byte(body), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, testbin.WriteExecutable(path, []byte(body), 0o755))
 }
 
 func newPlaceFixture(t *testing.T) placeFixture {
@@ -46,24 +45,14 @@ func newPlaceFixture(t *testing.T) placeFixture {
 	bin := buildNovaSecrets(t)
 
 	store := filepath.Join(td, "store")
-	if err := os.MkdirAll(filepath.Join(store, ".git"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(store, ".sops.yaml"), []byte("creation_rules:\n  - path_regex: ^rowan\\.yaml$\n    age: age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(store, "rowan.yaml"), []byte("DEEPSEEK_API_KEY: ENC[FAKE]\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Join(store, ".git"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(store, ".sops.yaml"), []byte("creation_rules:\n  - path_regex: ^rowan\\.yaml$\n    age: age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(store, "rowan.yaml"), []byte("DEEPSEEK_API_KEY: ENC[FAKE]\n"), 0o644))
 
 	keyDir := filepath.Join(td, "keys")
-	if err := os.MkdirAll(keyDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(keyDir, 0o700))
 	key := filepath.Join(keyDir, "rowan.key")
-	if err := os.WriteFile(key, []byte("AGE-SECRET-KEY-FAKE\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(key, []byte("AGE-SECRET-KEY-FAKE\n"), 0o600))
 
 	// Shares no six bytes with any name, path or word the tool prints, so a leak test
 	// that finds a fragment of it has found the value and not a coincidence.
@@ -84,9 +73,7 @@ func newPlaceFixture(t *testing.T) placeFixture {
 		"exit 0\n")
 
 	machines := filepath.Join(td, "machines.tsv")
-	if err := os.WriteFile(machines, []byte("mini\tmini.example\t/home/glenn\t-\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(machines, []byte("mini\tmini.example\t/home/glenn\t-\n"), 0o644))
 	receipts := filepath.Join(td, "receipts")
 
 	return placeFixture{
@@ -113,83 +100,53 @@ func TestPlaceThenPlacedShowsNameAndSealedFile(t *testing.T) {
 	t.Parallel()
 	f := newPlaceFixture(t)
 	stdout, stderr, code := runNovaSecrets(f.bin, f.placeArgs("mini", "DEEPSEEK_API_KEY", f.remotePath)...)
-	if code != 0 {
-		t.Fatalf("place exit=%d stdout=%q stderr=%q", code, stdout, stderr)
-	}
+	require.Equal(t, 0, code, "place exit=%d stdout=%q stderr=%q", code, stdout, stderr)
 
 	// What was placed is named by the sealed file's blob id, never a digest of the value.
 	wantBlob := blobOf(t, filepath.Join(f.store, "rowan.yaml"))
 
 	// The value reached the machine by stdin, not an argument.
 	copied, err := os.ReadFile(f.sshStdinFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(copied) != f.value {
-		t.Fatalf("ssh stdin = %q, want the secret value", copied)
-	}
+	require.NoError(t, err)
+	require.Equal(t, f.value, string(copied), "ssh stdin = %q, want the secret value", copied)
 	args, err := os.ReadFile(f.sshArgsFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(args), f.value) {
-		t.Fatalf("the value appears in the ssh argument list: %q", args)
-	}
+	require.NoError(t, err)
+	require.NotContains(t, string(args), f.value, "the value appears in the ssh argument list: %q", args)
 
 	// The receipt carries secret, path, the sealed file and a stamp, and never the value.
 	receipt, err := os.ReadFile(filepath.Join(f.receipts, "mini.receipt"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(receipt), f.value) {
-		t.Fatalf("the receipt holds the value: %q", receipt)
-	}
-	if !strings.Contains(string(receipt), wantBlob) {
-		t.Fatalf("receipt = %q, want the sealed file's blob %s", receipt, wantBlob)
-	}
-	if !strings.Contains(string(receipt), f.remotePath) {
-		t.Fatalf("receipt = %q, want remote path %s", receipt, f.remotePath)
-	}
+	require.NoError(t, err)
+	require.NotContains(t, string(receipt), f.value, "the receipt holds the value: %q", receipt)
+	require.Contains(t, string(receipt), wantBlob, "receipt = %q, want the sealed file's blob %s", receipt, wantBlob)
+	require.Contains(t, string(receipt), f.remotePath, "receipt = %q, want remote path %s", receipt, f.remotePath)
 
 	// placed lists the name and the sealed file.
 	stdout, stderr, code = runNovaSecrets(f.bin, f.placedArgs("mini")...)
-	if code != 0 {
-		t.Fatalf("placed exit=%d stderr=%q", code, stderr)
-	}
-	if !strings.Contains(stdout, "DEEPSEEK_API_KEY") || !strings.Contains(stdout, "blob="+wantBlob) {
-		t.Fatalf("placed stdout = %q, want the secret name and blob %s", stdout, wantBlob)
-	}
+	require.Equal(t, 0, code, "placed exit=%d stderr=%q", code, stderr)
+	require.Contains(t, stdout, "DEEPSEEK_API_KEY", "placed stdout = %q, want the secret name and blob %s", stdout, wantBlob)
+	require.Contains(t, stdout, "blob="+wantBlob, "placed stdout = %q, want the secret name and blob %s", stdout, wantBlob)
 }
 
 func TestPlaceNeverPrintsTheValue(t *testing.T) {
 	t.Parallel()
 	f := newPlaceFixture(t)
 	stdout, stderr, code := runNovaSecrets(f.bin, f.placeArgs("mini", "DEEPSEEK_API_KEY", f.remotePath)...)
-	if code != 0 {
-		t.Fatalf("place exit=%d stderr=%q", code, stderr)
-	}
-	if strings.Contains(stdout, f.value) || strings.Contains(stderr, f.value) {
-		t.Fatalf("the value appears on a stream: stdout=%q stderr=%q", stdout, stderr)
-	}
+	require.Equal(t, 0, code, "place exit=%d stderr=%q", code, stderr)
+	require.NotContains(t, stdout, f.value, "the value appears on a stream: stdout=%q stderr=%q", stdout, stderr)
+	require.NotContains(t, stderr, f.value, "the value appears on a stream: stdout=%q stderr=%q", stdout, stderr)
 	stdout, stderr, code = runNovaSecrets(f.bin, f.placedArgs("mini")...)
-	if code != 0 {
-		t.Fatalf("placed exit=%d stderr=%q", code, stderr)
-	}
-	if strings.Contains(stdout, f.value) || strings.Contains(stderr, f.value) {
-		t.Fatalf("placed printed the value: stdout=%q stderr=%q", stdout, stderr)
-	}
+	require.Equal(t, 0, code, "placed exit=%d stderr=%q", code, stderr)
+	require.NotContains(t, stdout, f.value, "placed printed the value: stdout=%q stderr=%q", stdout, stderr)
+	require.NotContains(t, stderr, f.value, "placed printed the value: stdout=%q stderr=%q", stdout, stderr)
 }
 
 func TestPlaceRefusesMissingMachineWithRemedy(t *testing.T) {
 	t.Parallel()
 	f := newPlaceFixture(t)
 	_, stderr, code := runNovaSecrets(f.bin, f.placeArgs("nowhere", "DEEPSEEK_API_KEY", f.remotePath)...)
-	if code != 2 {
-		t.Fatalf("place unknown machine exit=%d, want 2; stderr=%q", code, stderr)
-	}
-	if !strings.Contains(stderr, "nowhere") || !strings.Contains(stderr, f.machines) {
-		t.Fatalf("refusal %q must name the machine and the fleet registry", stderr)
-	}
+	require.Equal(t, 2, code, "place unknown machine exit=%d, want 2; stderr=%q", code, stderr)
+	require.Contains(t, stderr, "nowhere", "refusal %q must name the machine and the fleet registry", stderr)
+	require.Contains(t, stderr, f.machines, "refusal %q must name the machine and the fleet registry", stderr)
 }
 
 func TestPlaceRefusesMissingStoreWithRemedy(t *testing.T) {
@@ -202,10 +159,6 @@ func TestPlaceRefusesMissingStoreWithRemedy(t *testing.T) {
 		}
 	}
 	_, stderr, code := runNovaSecrets(f.bin, args...)
-	if code != 2 {
-		t.Fatalf("place missing store exit=%d, want 2; stderr=%q", code, stderr)
-	}
-	if !strings.Contains(stderr, "nope") {
-		t.Fatalf("refusal %q must name the absent store", stderr)
-	}
+	require.Equal(t, 2, code, "place missing store exit=%d, want 2; stderr=%q", code, stderr)
+	require.Contains(t, stderr, "nope", "refusal %q must name the absent store", stderr)
 }
