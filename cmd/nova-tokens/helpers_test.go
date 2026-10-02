@@ -191,7 +191,6 @@ const (
 	fakeSqlite3Env = "NOVA_TOKENS_FAKE_SQLITE3"
 	fakeSleepMode  = "sleep"
 	fakeArgvLog    = "argv.log"
-	fakeSleep      = 30 * time.Second
 )
 
 // fakeSqlite3OnPath places the test binary (by link, a copy only where a link is not
@@ -233,8 +232,7 @@ func TestMain(m *testing.M) {
 // fakeSqlite3Main records the invocation and answers the last argument, which is the SQL.
 func fakeSqlite3Main(mode string, args []string, stdout io.Writer) int {
 	if mode == fakeSleepMode {
-		time.Sleep(fakeSleep)
-		return 0
+		select {}
 	}
 	f, err := os.OpenFile(filepath.Join(mode, fakeArgvLog), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {

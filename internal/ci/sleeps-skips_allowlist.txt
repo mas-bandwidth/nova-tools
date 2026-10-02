@@ -25,11 +25,7 @@
 # base lacks is red, so a wait and its row in one change is red). The remedy
 # for a row is an injected clock seam or //go:build functional, then delete it.
 cmd/nova-ci	TestNewVerbYieldsABuildingTestingSkeleton	#4221 measured over 5 s on the 2026-09-25 PR run
-cmd/nova-redis	TestRestartOnTheSameDirKeepsTheStore	#4221 calls time.Sleep
 cmd/nova-sandbox	TestTheCheckScriptPassesAgainstTheToolsProfile	#4221 measured over 5 s on the 2026-09-25 PR run
-cmd/nova-sandbox	TestAForkedChildIsReapedWithTheCallersGroup	#4221 calls time.Sleep
-cmd/nova-sandbox	TestWindowsHasNo128PlusN	#4221 calls time.Sleep
-cmd/nova-tokens	TestConcurrentWritersDoNotMutateTheBareRemote	#4221 calls time.Sleep
 cmd/nova-update	TestHelpExampleLinesRunAsPrinted	#4221 measured over 5 s on the 2026-09-25 PR run
 internal/bus	TestTwoConcurrentRunsSerialiseOnOneCheckout	#4221 calls time.Sleep
 internal/bus	TestSendPreparedProcessDeathRecovery	#4221 measured over 5 s on the 2026-09-25 PR run
@@ -37,9 +33,6 @@ internal/bus	TestPreparedIndexRecoveryFromStagedPartialIndexRetainsEarlierEntrie
 internal/bus	TestStaleIndexLockWithALiveGitIsLeftAlone	#4221 calls time.Sleep
 internal/bus	TestStaleLockStaysForCwdGitWithoutDashC	#4221 calls time.Sleep
 internal/bus	TestStellaPreparedAttributePrefixesPublishExactBytes	#4221 measured over 5 s on the 2026-09-25 PR run
-internal/ci	TestWaitsRefusesFixedSleep	#4221 calls time.Sleep
-internal/ci	TestWaitsAllowlistSurvivesShiftedLines	#4221 calls time.Sleep
-internal/ci	TestSlowWaitsRuleSeesEveryShape	#4221 calls time.Sleep
 internal/nsprint/capacity	TestL20b	#4221 calls time.Sleep
 internal/nsprint/card	TestWrapperOwnsOneCardEndToEnd	#4221 calls time.Sleep
 internal/nsprint/card	TestWrapperFillsTheResult	#4221 measured over 5 s on the 2026-09-25 PR run
@@ -76,7 +69,6 @@ internal/update	TestMovedIsBoundedByTheClock	#4221 waits on the wall clock, fail
 internal/update	TestRemoveStaleGitTransactionLocksNamesOnly	#4221 calls time.Sleep
 internal/update	TestStellaTwoSnapshotsOneDirectoryPreservesKilledWritersTemp	#4221 calls time.Sleep
 cmd/nova-sandbox	TestTheAgentSocketIsUnreachable	seed #4413: time.After at main_test.go:332
-cmd/nova-tokens	fakeSqlite3Main	seed #4413: time.Sleep at helpers_test.go:236
 internal/bus	TestFriendSequencePlantedIndexIsRefused	seed #4413: time.After at planted_index_sequence_unix_test.go:58
 internal/bus	TestReadLaneIndexDoesNotBlockOnAPlantedFIFO	seed #4413: time.After at fifo_test.go:41
 internal/fleet	TestRunBenchesConcurrentlyOverlapsCallbacks	seed #4413: time.NewTimer at parallel_test.go:101
