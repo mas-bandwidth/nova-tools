@@ -201,9 +201,7 @@ func TestTheWholeFleetMovesInOneTickOnTheStore(t *testing.T) {
 		slices.Sort(set)
 		t.Logf("tick %d: %d dealt to %v", i+1, len(d), set)
 		dealt += len(d)
-		if len(d) >= len(members) && !slices.Equal(set, members) {
-			t.Fatalf("tick %d dealt %d cards to %v only: every tick's deal reaches the whole fleet", i+1, len(d), set)
-		}
+		require.False(t, len(d) >= len(members) && !slices.Equal(set, members), "tick %d dealt %d cards to %v only: every tick's deal reaches the whole fleet", i+1, len(d), set)
 	}
 	least, most := dealt, 0
 	for _, m := range members {

@@ -75,18 +75,15 @@ func TestChildRulesTableIsWellFormed(t *testing.T) {
 	for set, rules := range map[string][]ChildRule{"default": DefaultChildRules, "ours": ourRules(t)} {
 		seen := map[string]bool{}
 		for _, r := range rules {
-			if !name.MatchString(r.Name) || seen[r.Name] {
-				t.Errorf("%s: rule name %q is not a unique kebab-case token", set, r.Name)
-			}
+			assert.True(t, name.MatchString(r.Name), "%s: rule name %q is not a unique kebab-case token", set, r.Name)
+			assert.False(t, seen[r.Name], "%s: rule name %q is not a unique kebab-case token", set, r.Name)
 			seen[r.Name] = true
-			if r.Sentence != strings.TrimSpace(r.Sentence) || len(r.Sentence) < 12 {
-				t.Errorf("%s: rule %s: sentence %q is not a whole rule", set, r.Name, r.Sentence)
-			}
+			assert.Equal(t, strings.TrimSpace(r.Sentence), r.Sentence, "%s: rule %s: sentence %q is not a whole rule", set, r.Name, r.Sentence)
+			assert.GreaterOrEqual(t, len(r.Sentence), 12, "%s: rule %s: sentence %q is not a whole rule", set, r.Name, r.Sentence)
 			assert.NotEmpty(t, strings.TrimSpace(r.Source), "%s: rule %s names no source", set, r.Name)
 			remedy := ChildRemedy(rules, "rule-"+r.Name)
-			if !strings.Contains(remedy, r.Sentence) || !strings.Contains(remedy, r.Source) {
-				t.Errorf("%s: rule %s: remedy %q does not quote the sentence and its source", set, r.Name, remedy)
-			}
+			assert.Contains(t, remedy, r.Sentence, "%s: rule %s: remedy %q does not quote the sentence and its source", set, r.Name, remedy)
+			assert.Contains(t, remedy, r.Source, "%s: rule %s: remedy %q does not quote the sentence and its source", set, r.Name, remedy)
 		}
 	}
 	for _, r := range DefaultChildRules {
@@ -94,9 +91,8 @@ func TestChildRulesTableIsWellFormed(t *testing.T) {
 		assert.Equal(t, ChildRemedy(DefaultChildRules, "rule-"+r.Name), got, "the listing's remedy for %s differs from the lint's: %q", r.Name, got)
 	}
 	for _, s := range childScans {
-		if !strings.HasPrefix(s.Check, "step-") || strings.TrimSpace(CardChildRemedies[s.Check]) == "" {
-			t.Errorf("scan %s is not a step-<what> token with a remedy", s.Check)
-		}
+		assert.True(t, strings.HasPrefix(s.Check, "step-"), "scan %s is not a step-<what> token with a remedy", s.Check)
+		assert.NotEqual(t, "", strings.TrimSpace(CardChildRemedies[s.Check]), "scan %s is not a step-<what> token with a remedy", s.Check)
 		got := ChildRemedy(nil, s.Check)
 		assert.Equal(t, s.Remedy, got, "scan %s: ChildRemedy answers %q, want its remedy", s.Check, got)
 		if s.Needs != "" {
@@ -193,9 +189,9 @@ func TestChildRulesFileNamesTheRuleAMissingSentenceBreaks(t *testing.T) {
 	got = LintCardChildWith([]byte(strings.Replace(card, "Say which environment the change is for.\n", "", 1)), rules)
 	require.Len(t, got, 1, "a card without the named sentence draws %v, want rule-deploy-note", got)
 	require.Equal(t, "rule-deploy-note", got[0].Check, "a card without the named sentence draws %v, want rule-deploy-note", got)
-	if r := ChildRemedy(rules, "rule-deploy-note"); !strings.Contains(r, "Say which environment") || !strings.Contains(r, "rules.txt:2") {
-		t.Errorf("the remedy %q does not quote the sentence and its line in the file", r)
-	}
+	r := ChildRemedy(rules, "rule-deploy-note")
+	assert.Contains(t, r, "Say which environment", "the remedy %q does not quote the sentence and its line in the file", r)
+	assert.Contains(t, r, "rules.txt:2", "the remedy %q does not quote the sentence and its line in the file", r)
 }
 
 // A rules file is one sentence per line; every problem of a bad file is reported together.
@@ -204,18 +200,16 @@ func TestParseChildRules(t *testing.T) {
 	rules, err := ParseChildRules("# a comment\n\n[a-b] First   rule  here.\r\nSecond rule here.\n  \n", "f.txt")
 	require.NoError(t, err, "got %v, %v", rules, err)
 	require.Len(t, rules, 2, "got %v, %v", rules, err)
-	if rules[0] != (ChildRule{"a-b", "First rule here.", "f.txt:3"}) || rules[1] != (ChildRule{"line4", "Second rule here.", "f.txt:4"}) {
-		t.Errorf("rules %+v", rules)
-	}
+	assert.Equal(t, (ChildRule{"a-b", "First rule here.", "f.txt:3"}), rules[0], "rules %+v", rules)
+	assert.Equal(t, (ChildRule{"line4", "Second rule here.", "f.txt:4"}), rules[1], "rules %+v", rules)
 	_, err = ParseChildRules("[Bad Name] x y z\n[ok] same sentence\n[ok] another\n[two] same sentence\n[open sentence\n[named]\n", "f.txt")
 	require.Error(t, err, "a file with six problems is accepted")
 	for _, want := range []string{"line 1", "line 3", "line 4", "line 5", "line 6"} {
 		assert.Contains(t, err.Error(), want, "the refusal %q does not name %s", err, want)
 	}
 	for _, empty := range []string{"", "\n\n", "# only a comment\n"} {
-		if _, err := ParseChildRules(empty, "f.txt"); err == nil || !strings.Contains(err.Error(), "holds no rule") {
-			t.Errorf("%q: got %v, want the empty-file refusal", empty, err)
-		}
+		_, err := ParseChildRules(empty, "f.txt")
+		assert.ErrorContains(t, err, "holds no rule", "%q: got %v, want the empty-file refusal", empty, err)
 	}
 	_, err = ReadChildRules("testdata/no-such-rules-file")
 	assert.Error(t, err, "an unreadable rules file is accepted")
@@ -242,8 +236,10 @@ func TestChildRuleMissingIsRefusedNamingIt(t *testing.T) {
 			without := strings.Replace(c.body, r.Sentence+"\n", "", 1)
 			require.NotEqual(t, c.body, without, "%s: the card does not carry %s on a line of its own", set, r.Name)
 			got := LintCardChildWith([]byte(without), c.rules)
-			if len(got) != 1 || got[0].Check != "rule-"+r.Name || got[0].Line != 1 || !strings.Contains(got[0].Excerpt, r.Sentence) {
-				t.Errorf("%s: a card without %s draws %v, want exactly rule-%s naming the sentence", set, r.Name, got, r.Name)
+			if assert.Len(t, got, 1, "%s: a card without %s draws %v, want exactly rule-%s naming the sentence", set, r.Name, got, r.Name) {
+				assert.Equal(t, "rule-"+r.Name, got[0].Check, "%s: a card without %s draws %v, want exactly rule-%s naming the sentence", set, r.Name, got, r.Name)
+				assert.Equal(t, 1, got[0].Line, "%s: a card without %s draws %v, want exactly rule-%s naming the sentence", set, r.Name, got, r.Name)
+				assert.Contains(t, got[0].Excerpt, r.Sentence, "%s: a card without %s draws %v, want exactly rule-%s naming the sentence", set, r.Name, got, r.Name)
 			}
 		}
 		bare := LintCardChildWith([]byte("RESULT: x sha=abc\nfix the thing\n"), c.rules)
@@ -311,8 +307,9 @@ func TestChildScansRefuseTheCommandAndAllowTheRest(t *testing.T) {
 	for _, c := range cases {
 		covered[c.check] = true
 		for _, line := range c.bad {
-			if got := scanFindings(t, line); len(got) != 1 || got[0] != c.check {
-				t.Errorf("%q draws %v, want exactly %s", line, got, c.check)
+			got := scanFindings(t, line)
+			if assert.Len(t, got, 1, "%q draws %v, want exactly %s", line, got, c.check) {
+				assert.Equal(t, c.check, got[0], "%q draws %v, want exactly %s", line, got, c.check)
 			}
 		}
 		for _, line := range c.ok {
@@ -368,13 +365,14 @@ func TestChildScansSkipOnlyTheRulesParagraph(t *testing.T) {
 	}
 	// the same paragraph in the template, with a force-push in it, is refused too
 	tmpl := strings.Replace(childTemplate(t), "THE TASK. <", "THE TASK. Then git push --force. <", 1)
-	if got := LintCardChild([]byte(tmpl)); len(got) != 1 || got[0].Check != "step-force-push" {
-		t.Errorf("a force-push in the template's task paragraph draws %v", got)
+	got := LintCardChild([]byte(tmpl))
+	if assert.Len(t, got, 1, "a force-push in the template's task paragraph draws %v", got) {
+		assert.Equal(t, "step-force-push", got[0].Check, "a force-push in the template's task paragraph draws %v", got)
 	}
 	// the second scan hit is the one outside the paragraph, at its own line
-	got := LintCardChild([]byte("RESULT: x sha=abc\nRULES.\ngit stash\n\nSTEP 1. git stash\n"))
-	if len(got) < 1 || got[len(got)-1].Line != 5 {
-		t.Errorf("want the finding on line 5 only: %v", got)
+	got = LintCardChild([]byte("RESULT: x sha=abc\nRULES.\ngit stash\n\nSTEP 1. git stash\n"))
+	if assert.GreaterOrEqual(t, len(got), 1, "want the finding on line 5 only: %v", got) {
+		assert.Equal(t, 5, got[len(got)-1].Line, "want the finding on line 5 only: %v", got)
 	}
 }
 
@@ -404,8 +402,9 @@ func TestChildNegationIsLimitedToTheClause(t *testing.T) {
 func TestChildTimeoutMustBePositive(t *testing.T) {
 	t.Parallel()
 	for _, line := range []string{"STEP 7. go test -timeout 0 ./x", "STEP 7. go test -timeout=0s ./x", "STEP 7. go test -timeout 00 ./x"} {
-		if got := scanFindings(t, line); len(got) != 1 || got[0] != "step-go-test-timeout" {
-			t.Errorf("%q draws %v, want step-go-test-timeout", line, got)
+		got := scanFindings(t, line)
+		if assert.Len(t, got, 1, "%q draws %v, want step-go-test-timeout", line, got) {
+			assert.Equal(t, "step-go-test-timeout", got[0], "%q draws %v, want step-go-test-timeout", line, got)
 		}
 	}
 	for _, line := range []string{"STEP 7. go test -timeout 600s ./x", "STEP 7. go test -timeout=10m ./x", "STEP 7. go test -timeout 1h30m ./x", "STEP 7. go test --timeout 0.5s ./x"} {

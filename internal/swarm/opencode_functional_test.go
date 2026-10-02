@@ -48,9 +48,9 @@ func TestTheOpenCodeSourceSumsTheMessageRows(t *testing.T) {
 		assert.Equal(t, c.want, got, "%s is %q, want %q", c.column, got, c.want)
 	}
 	sum, seen, partial := usage.Sum()
-	if sum != 180 || seen != 3 || !partial {
-		t.Errorf("the sum of the observed columns is %d over %d columns (partial=%t), want 180 over 3 (partial=true)", sum, seen, partial)
-	}
+	assert.Equal(t, 180, sum, "the sum of the observed columns is %d over %d columns (partial=%t), want 180 over 3 (partial=true)", sum, seen, partial)
+	assert.Equal(t, 3, seen, "the sum of the observed columns is %d over %d columns (partial=%t), want 180 over 3 (partial=true)", sum, seen, partial)
+	assert.True(t, partial, "the sum of the observed columns is %d over %d columns (partial=%t), want 180 over 3 (partial=true)", sum, seen, partial)
 }
 
 // A DATABASE THAT IS NOT THERE YET IS NOT AN ERROR: it is the provider having reported

@@ -82,9 +82,8 @@ func TestUsageBannerExamplesMakeThePoolBeforeReadingIt(t *testing.T) {
 			if a != "./pool" {
 				continue
 			}
-			if len(f) < 2 || f[1] != "quickstart" {
-				t.Fatalf("the usage example %q reads ./pool before any example makes it; put `nova-swarm quickstart --pool ./pool` above it", ex)
-			}
+			require.GreaterOrEqual(t, len(f), 2, "the usage example %q reads ./pool before any example makes it; put `nova-swarm quickstart --pool ./pool` above it", ex)
+			require.Equal(t, "quickstart", f[1], "the usage example %q reads ./pool before any example makes it; put `nova-swarm quickstart --pool ./pool` above it", ex)
 			return
 		}
 	}

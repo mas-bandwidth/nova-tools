@@ -92,8 +92,7 @@ func TestVersionVerbIsReachableFromTheDispatch(t *testing.T) {
 		if !assert.Equal(t, 0, code, "%s: exit %d, want 0\nstderr: %s", verb, code, errOut.String()) {
 			continue
 		}
-		if !strings.HasPrefix(out.String(), "nova-swarm ") || strings.Count(out.String(), "\n") != 1 {
-			t.Errorf("%s: not the version line: %q", verb, out.String())
-		}
+		assert.True(t, strings.HasPrefix(out.String(), "nova-swarm "), "%s: not the version line: %q", verb, out.String())
+		assert.Equal(t, 1, strings.Count(out.String(), "\n"), "%s: not the version line: %q", verb, out.String())
 	}
 }

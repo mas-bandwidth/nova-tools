@@ -86,9 +86,8 @@ func TestNativeBudgetStopsTheCardAndKeepsWhatItPublished(t *testing.T) {
 	spentWord, ofWord, _ := strings.Cut(budget, "/")
 	assert.Equal(t, "100000", ofWord, "budget= names the number the caller gave, got %q:\n%s", budget, line)
 	spent, err := strconv.Atoi(strings.TrimSuffix(spentWord, "+"))
-	if err != nil || spent < 100000 {
-		t.Errorf("budget= carries a spend of at least the budget, got %q:\n%s", budget, line)
-	}
+	assert.NoError(t, err, "budget= carries a spend of at least the budget, got %q:\n%s", budget, line)
+	assert.GreaterOrEqual(t, spent, 100000, "budget= carries a spend of at least the budget, got %q:\n%s", budget, line)
 
 	jobDir := filepath.Join(slot, "jobs", "lbl")
 	// EXACTLY ONE LAUNCH: a budget stop is terminal, and a stopped card is never relaunched.
@@ -354,9 +353,8 @@ func TestNativeCardBudgetStopsAndPrintsThePromptDefect(t *testing.T) {
 				}
 			}
 			require.GreaterOrEqual(t, defectAt, 0, "a card budget's stop prints the PROMPT-DEFECT line on native's stdout:\n%s", out)
-			if okAt < 0 || defectAt < okAt {
-				t.Fatalf("the PROMPT-DEFECT line comes AFTER the NATIVE verdict line:\n%s", out)
-			}
+			require.GreaterOrEqual(t, okAt, 0, "the PROMPT-DEFECT line comes AFTER the NATIVE verdict line:\n%s", out)
+			require.GreaterOrEqual(t, defectAt, okAt, "the PROMPT-DEFECT line comes AFTER the NATIVE verdict line:\n%s", out)
 			assert.Contains(t, lines[defectAt], "reason=budget", "the PROMPT-DEFECT line is rule 13b's own:\n%s", lines[defectAt])
 			// AND IT IS IN NO FILE: the published report is kept byte for byte.
 			jobDir := filepath.Join(slot, "jobs", "lbl")

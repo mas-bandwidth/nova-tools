@@ -333,9 +333,7 @@ func TestEveryVerbHasHelpAndRefusesBadUse(t *testing.T) {
 		assert.Equal(t, 2, code, "%q: exit %d %q", line, code, errs)
 		assert.Contains(t, errs, "run: nova-sprint", "%q: exit %d %q", line, code, errs)
 	}
-	if len(ta.m.Calls) > 0 && ta.m.Calls["apply"] > 0 {
-		t.Errorf("a refused invocation wrote")
-	}
+	assert.False(t, len(ta.m.Calls) > 0 && ta.m.Calls["apply"] > 0, "a refused invocation wrote")
 }
 
 // The tables are the plain names, and clear and

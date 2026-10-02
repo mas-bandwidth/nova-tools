@@ -5,9 +5,10 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // Standing probe for issue #233: native looks for a card's RESULT.md with FindCardResult
@@ -26,13 +27,9 @@ func skipWindowsPlant(t *testing.T) {
 func plantNativeResultSymlink(t *testing.T, job, body string) string {
 	t.Helper()
 	skipWindowsPlant(t)
-	if err := os.MkdirAll(job, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(job, 0o755))
 	outside := filepath.Join(filepath.Dir(job), "outside-the-wall")
-	if err := os.WriteFile(outside, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(outside, []byte(body), 0o644))
 	if err := os.Symlink(outside, filepath.Join(job, "RESULT.md")); err != nil {
 		t.Skipf("this filesystem will not make a symlink: %v", err)
 	}
@@ -56,19 +53,11 @@ func TestNativeDoesNotTreatAPlantedSymlinkAsAPublishedResult(t *testing.T) {
 		card: []byte("FAKE-NORESULT\n"), slotDir: slot, root: root,
 		deadline: 30 * time.Second, noWall: true,
 	}, &errOut)
-	if code != 0 {
-		t.Fatalf("native run exits 0, got %d:\n%s", code, errOut.String())
-	}
-	if res.harness == "ok" {
-		t.Fatalf("native treated a planted symlink at RESULT.md as a published result; harness=%s", res.harness)
-	}
+	require.Equal(t, 0, code, "native run exits 0, got %d:\n%s", code, errOut.String())
+	require.NotEqual(t, "ok", res.harness, "native treated a planted symlink at RESULT.md as a published result; harness=%s", res.harness)
 	raw, err := os.ReadFile(outside)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(raw), "worker/exfil-233") {
-		t.Fatalf("the file outside the job was rewritten through the link: %q", string(raw))
-	}
+	require.NoError(t, err)
+	require.Contains(t, string(raw), "worker/exfil-233", "the file outside the job was rewritten through the link: %q", string(raw))
 }
 
 // The lookup harnessState uses is the same question native asks of RESULT.md.
@@ -79,7 +68,6 @@ func TestNativeHarnessStateDoesNotFollowAPlantedSymlinkAtResult(t *testing.T) {
 	dir := t.TempDir()
 	job := filepath.Join(dir, "job")
 	plantNativeResultSymlink(t, job, "RESULT plant sha=aaa\nall green from outside the wall\n")
-	if got := harnessState(job); got == "ok" {
-		t.Fatal("native's result lookup followed a planted symlink at RESULT.md")
-	}
+	got := harnessState(job)
+	require.NotEqual(t, "ok", got, "native's result lookup followed a planted symlink at RESULT.md")
 }
