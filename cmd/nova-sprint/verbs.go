@@ -682,6 +682,7 @@ func stepExit(res store.Result, err error) int {
 }
 
 func (a *app) report(ctx context.Context, verbName string, c common, st *store.Store, res store.Result, err error, stdout, stderr io.Writer) int {
+	err = noSprintYet(err)
 	code := stepExit(res, err)
 	var synced *store.SyncError
 	line := sprintLine(ctx, st)
