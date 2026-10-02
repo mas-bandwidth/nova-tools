@@ -52,7 +52,7 @@ func (m *memStore) Applied(context.Context) ([]int, error) {
 	}
 	return out, nil
 }
-func (m *memStore) Close() error                         { return nil }
+func (m *memStore) Close() error { return nil }
 
 // fakeRedis records what apply asked for, and holds the beats list and
 // show read live.
