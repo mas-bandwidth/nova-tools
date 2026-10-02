@@ -784,7 +784,8 @@ func TestTheExampleBusInTestdataIsWhatTheREADMESays(t *testing.T) {
 	wantAda := read(t, root, "from-ada/INDEX")
 	wantBo := read(t, root, "from-bo/INDEX")
 	invoke(t, "", "check", "--bus", root, "--full", "--rebuild-index").mustCode(t, 0)
-	require.False(t, read(t, root, "from-ada/INDEX") != wantAda || read(t, root, "from-bo/INDEX") != wantBo, "a rebuild changed the example bus's catalogue, so the committed one is stale")
+	require.Equal(t, wantAda, read(t, root, "from-ada/INDEX"), "a rebuild changed the example bus's catalogue, so the committed one is stale")
+	require.Equal(t, wantBo, read(t, root, "from-bo/INDEX"), "a rebuild changed the example bus's catalogue, so the committed one is stale")
 	// As a repository root it is a bus the git-reading verbs will work over, which is
 	// what its README tells a reader to make it. `--since HEAD` is the cheapest proof:
 	// the root test passes, the diff runs, and the change set over no change is empty.

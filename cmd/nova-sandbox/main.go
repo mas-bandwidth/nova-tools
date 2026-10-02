@@ -805,9 +805,9 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 }
 
 // walled runs one probe check INSIDE the wall and reports allow or deny. The child is
-// this same binary with the internal verb (rule 10), so the step name and the path are
+// this same binary with the internal verb, so the step name and the path are
 // argv ELEMENTS: nothing the caller handed the tool is ever re-parsed by an interpreter,
-// which is rule 12's "never through a shell" applied to the tool's own child. The
+// which means the tool's own child is never run through a shell either. The
 // previous form built a shell script by concatenation, and a --secret holding a quote and
 // a semicolon ran a command inside the wall and flipped read_secret to allow.
 func walled(p *sandbox.Policy, env []string, raw [probeNonceLen]byte, nonce, name, path string) string {
@@ -848,7 +848,7 @@ func walled(p *sandbox.Policy, env []string, raw [probeNonceLen]byte, nonce, nam
 	return "allow"
 }
 
-// probeStepVerbName is the internal verb rule 10 names. It is not in the usage banner and
+// probeStepVerbName is the tool's one internal verb. It is not in the usage banner and
 // no caller runs it: it is the child of every walled probe step, and it exists so that the
 // probe's child is the tool itself rather than a shell — the smaller surface, and the only
 // shape under which read_root reads the probe's own executable.
@@ -945,11 +945,11 @@ func notTheProbesChild(nonce string, env []string) string {
 // Both re-reads are there because a pid and an image can each change under the other.
 //
 //   - The pid can go: os.Getppid() and the per-pid path read are two syscalls, and between
-//     them the parent can exit. This process is reparented, the old number is free, and on
+//     them the parent can exit. This process is reparented, the pid is free again, and on
 //     a busy machine it is handed out again within the same second — so asking a STALE
 //     number is asking about whatever process now wears it.
 //   - The IMAGE can go while the pid stays. exec(2) replaces a process's image IN PLACE and
-//     leaves its pid alone (Johnny's read on #1310): a parent that is this binary when the
+//     leaves its pid alone: a parent that is this binary when the
 //     first read happens can exec something else and still be the same pid at the second
 //     read, so a pid that did not move proves nothing about the image that ran. The image
 //     is therefore read again, and the second read is a fresh stat: it catches both an exec
@@ -1021,7 +1021,7 @@ func sameImage(self, parent string) bool {
 
 // probeStepVerb is that child: one step, done in Go, exit 0 for allow and 1 for deny. Each
 // case is the smallest syscall that answers its question, and read_secret opens the file
-// and closes it without reading a byte (rule 6).
+// and closes it without reading a byte, so the secret's bytes never enter this process.
 func probeStepVerb(args []string, stderr io.Writer, env []string) int {
 	if len(args) != 3 {
 		fmt.Fprintf(stderr, "PROBE REFUSED reason=probe_step_not_a_child: %s is internal and takes <nonce> <name> <path>; it is the child of a probe this binary started and nothing else runs it; run: nova-sandbox probe -h\n", probeStepVerbName)
@@ -1034,7 +1034,7 @@ func probeStepVerb(args []string, stderr io.Writer, env []string) int {
 		fmt.Fprintf(stderr, "PROBE REFUSED reason=probe_step_not_a_child: %s runs only as the child of a probe this binary started, and this invocation is not one (%s); nothing was opened. Run: nova-sandbox probe --write <dir> --secret <path>; run: nova-sandbox probe -h\n", probeStepVerbName, r)
 		return sandbox.ExitCannotRun
 	}
-	// Rule 5's shape for the one path this verb is handed: absolute, never relative. The
+	// The one path this verb is handed is absolute, never relative. The
 	// parent builds every step path absolute from a resolved directory, so a relative one
 	// is not the parent's and would be resolved against a cwd the parent did not choose.
 	if !filepath.IsAbs(path) {
@@ -1056,7 +1056,7 @@ func probeStepVerb(args []string, stderr io.Writer, env []string) int {
 		return 0
 	case "read_secret":
 		// Opened and closed. Nothing is read, so the tool never holds a credential's
-		// bytes even for the length of one syscall (rule 6).
+		// bytes even for the length of one syscall.
 		f, err := os.Open(path)
 		if err != nil {
 			return sandbox.ExitProbeFailed
@@ -1082,10 +1082,10 @@ func probeStepVerb(args []string, stderr io.Writer, env []string) int {
 	return sandbox.ExitCannotRun
 }
 
-// policyText is rule 15 for the backend this binary was built with: the darwin
+// policyText is the generated policy for the backend this binary was built with: the darwin
 // profile where the wall is sandbox-exec, the landlock ruleset where it is
 // Landlock. Printing the darwin template under backend=landlock showed a reader
-// seven kilobytes of policy no linux run uses (#1469).
+// seven kilobytes of policy no linux run uses.
 func policyText(p *sandbox.Policy) (string, error) {
 	if sandbox.Backend == "landlock" {
 		return sandbox.LandlockPolicyText(p)
@@ -1097,7 +1097,7 @@ func policyText(p *sandbox.Policy) (string, error) {
 // policyVerb prints the generated policy for a read/write pair and runs NOTHING. It is
 // how a reader checks the wall without trusting the document — and it is how
 // tools/sandboxcheck can be run against the profile THIS TOOL generates, so that
-// the check and the tool cannot drift apart (rule 15: generated, never hand-edited).
+// the check and the tool cannot drift apart: the profile is generated, never hand-edited.
 func policyVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	f := parseVerb("policy", args)
 	v := newVerbOut("policy", f.json, stdout, stderr)
@@ -1110,7 +1110,7 @@ func policyVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	if len(f.bad) > 0 {
 		return refuse(f.bad)
 	}
-	// Rule 15: "policy prints exactly what a wrapped run would apply". One root is
+	// The policy this verb prints is exactly what a wrapped run would apply. One root is
 	// computed from the COMMAND — "the directory of the resolved command" — so a policy
 	// built around /bin/sh could not show it for any real command, and the one root a
 	// reader most needs to see was the one root this verb could not print. The command is

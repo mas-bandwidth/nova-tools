@@ -1,6 +1,6 @@
 package main
 
-// The session verb: the coordinator's own window, folded (G5 of pit stop 3, #828).
+// The session verb folds the caller's own window into one session record.
 //
 // It is a VERB OF ITS OWN and not a flag on fold, deliberately. fold's source flags are
 // declared once, in sourceFlags, and shared by fold, sources and report, so a flag added

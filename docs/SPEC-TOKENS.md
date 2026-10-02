@@ -361,27 +361,27 @@ near the end, and the sections below say how each is met.
     summed over every model.
 
 21. **A harness that shows nothing is counted from the provider's side, and
-    never apportioned.** Emma's harness (Antigravity, Gemini) and Johnny's
-    (Grok) record no token counts anywhere a tool can read. For them the source is `--provider
+    never apportioned.** The Antigravity and Gemini harnesses and Grok
+    record no token counts anywhere a tool can read. For these the source is `--provider
     <label>=<file>`: a billing export the account holder downloads (Google
     Cloud, xAI), one row per (day, model, type, count) after the tool's
     parser for that provider's shape, with the parser's name in the
     `sources` column. Its repo is the fixed word `unattributed`: the tool
     never splits a provider total across repos by any proportion, because a
     split nobody measured is a number nobody can defend ("never invent a
-    split"). The export's rows are dated by rule 17: UTC days from
+    split"). The export's rows use UTC days from
     timestamps when it has them, its own local day with `day_basis=<zone>`
     when it has only totals, never a silent mix. A type the export does not
-    carry is `-` (rule 15). A friend's daily note may still carry the repos
+    carry is `-`. A daily note may still carry the repos
     touched that day, as the one comment shape `# repos: <name>[, <name>]…`
-    in the body (rule 6); `fold` records them beside the day as
+    in the body; `fold` records them beside the day as
     `TOKENS TOUCHED label=bus:<name> day=<d> repos=<list>` and adds no
     numbers to them, and a tokens note whose body is only that line and
     blanks is a valid note with zero rows. A `report` on such a harness
-    prints `TOKENS UNREADABLE` per source and exits 1 (rule 20), and that
-    line plus the daily `# repos:` note is the friend's whole duty. Stella's
+    prints `TOKENS UNREADABLE` per source and exits 1, and that
+    line plus the daily `# repos:` note is the harness's whole duty. The
     harness (Codex) is the third of these: it exposes no token usage, this
-    spec has no Codex adapter, and her spend is counted provider-side from
+    spec has no Codex adapter, and its spend is counted provider-side from
     the account holder's OpenAI export under the same rule.
 
 ## The verbs
@@ -412,7 +412,7 @@ nova-tokens version
 The binary is `nova-tokens`, and that is its only name.
 
 **No guessed anything, with one named exception.** `--timeout` defaults to
-120 seconds (rule 19). Nothing else has a default: not the output directory,
+120 seconds. Nothing else has a default: not the output directory,
 not a source, not the rules file, not the scratch directory. `--scratch` is
 required when `--opencode` is given and refused otherwise, because a scratch
 directory with nothing to put in it is a flag that does nothing. A label in a
@@ -441,8 +441,8 @@ A day the sources name no row for is not written and not removed.
 
 Asserts nothing. Reads `<out>/<month>-??.tsv`, prints per `(model, repo)`,
 per model and the total, all five types, the rough count, per type column how
-many rows added were `-` (`dashes=`, rule 15), how many rows added were not
-UTC (`nonutc=`, rule 17), and the days it found and the days missing between
+many rows added were `-` (`dashes=`), how many rows added were not
+UTC (`nonutc=`), and the days it found and the days missing between
 the first and last. A `-` adds nothing and is counted; it is never read as
 zero. Writes nothing. Exits
 0 whenever it ran, including over a month with gaps: answering is its job,
@@ -450,7 +450,7 @@ and `missing=<n>` is the answer. `sum` is a **report**. Never gate on it.
 
 ### `check`
 
-Asserts what rule 13 says. Says NO (exit 1) on any malformed file, any
+Asserts the day-file validity rules. Says NO (exit 1) on any malformed file, any
 malformed row, any missing day, any stray file, or when `--through <day>` is
 given and the last folded day is older than `<day>` (`CHECK FAIL stale`).
 Deliberately does not check: whether a day's numbers are plausible, or whether a
@@ -490,7 +490,7 @@ token ledger's verbs, specified in [SPEC-STATE.md](SPEC-STATE.md).
 | 2 | could not run: missing flag, bad flag value, `--out` not a directory, `--repos` unreadable or malformed, a duplicate label, `sqlite3` absent when `--opencode` is given, a second fold holding the lock |
 
 **Exit 1 still writes.** A fold with one unreadable file writes every day it
-could compute and exits 1. The exit code is about the claim (rule 3), not
+could compute and exits 1. The exit code is about the claim, not
 about whether the files landed; `TOKENS DAY … written=true` is about the
 files. A caller who cannot read the keeper's transcripts should not declare
 them, and a caller who declares them is told, every run, that the report does
@@ -503,7 +503,7 @@ class, second is `OK`, `FAIL` or one of the informational tokens listed here.
 `OK` and informational lines go to stdout; `FAIL`, `UNREADABLE`, `UNPARSED`,
 `MIXED`, `SHRANK`, `QUIET`, `MISSING` and refusals go to stderr.
 `report` is the one
-exception, stated in rule 20: its stdout is exactly rule 6's body lines, and
+exception: its stdout is exactly the body's lines, and
 `REPORT OK`, `REPORT FAIL` and its `TOKENS UNREADABLE` lines go to stderr. Every path, label, model name,
 repo name, note id and reason renders through `internal/oneline`; every
 `key=value` carrying stored text is one token via `oneline.Field`; the tail
@@ -587,11 +587,11 @@ comma-joined list of the five type names this source reports at all
 all five for a swarm usage file; all five for OpenCode; whatever the
 export's columns are for a provider; for a bus lane, the types its lines
 named), so a reader of a mixed row can see which source could not have
-covered which cell (rule 15). `day_basis=` is `utc` for every kind but a
+covered which cell. `day_basis=` is `utc` for every kind but a
 provider export of local-day totals, where it is the export's zone, and a
 bus lane whose lines carry a seventh field, where it is that zone, or
-`mixed` when one lane's lines carry more than one (rule 17); `<zone>` in the
-block is that zone NAME as rule 17 declares it and rule 13 accepts it
+`mixed` when one lane's lines carry more than one; `<zone>` in the
+block is that zone NAME as the day-basis rules declare it and accept it
 (`America/Los_Angeles`, `+02:00`: no whitespace, never `utc`), not the word
 `zone`, which this tool never prints; a lane is
 allowed to be mixed across days, a row never. The fields that do not apply to a kind print `-`, never `0`: a
@@ -648,9 +648,9 @@ date	model	repo	input	output	cache_write	cache_read	reasoning	rough	day_basis	so
 | `date` | the day; equals the file name; `check` refuses a mismatch; a UTC day unless `day_basis` says otherwise |
 | `model` | the model id as the source reports it, unchanged |
 | `repo` | the repo name from the rules file, or `other`, or `unknown`, or `unattributed` for a provider export |
-| `input` `output` `cache_write` `cache_read` `reasoning` | the five types, each as the source reports it; `-` where no source that fed the row reported that type, never `0` (rule 15) |
+| `input` `output` `cache_write` `cache_read` `reasoning` | the five types as the source reports them; `-` where no source feeding the row reported that type, never `0` |
 | `rough` | how many `~` bus lines fed this row |
-| `day_basis` | `utc` for a row dated from stamps; the export's own zone for a provider row that is a local-day total (rule 17) |
+| `day_basis` | `utc` for a row dated from stamps; the export's own zone for a provider row that is a local-day total |
 | `sources` | sorted, comma-joined labels that fed this row |
 
 Eleven columns, every one written on every row. A `-` in a type cell is a
@@ -666,13 +666,13 @@ row they make. A fold writes eleven, so the day after a fold the file is
 eleven wide. The version line stays `nova-tokens v1`: the eleven columns mean
 what they always did. Anything that is neither header is refused.
 
-The first line is the **version and stamp line** (rule 12; lesson 45), and
-`turns=` on it is the day's message count across the sources that count
-messages, `-` when none did, summed by `sum` onto `SUM MONTH` and `SUM TOTAL`
-as `turns=`. A file
-whose first line is not `nova-tokens v1 …` is refused by `sum` and named by
-`check`, and the repair is `fold --day <d>`. Rows are sorted by
-`(model, repo)` and are unique by it. The write lands atomically through internal/atomicfile via a unique random-sibling temporary file `.<day>.tsv.tmp-%08x` and rename (rule 8).
+The first line is the **version and stamp line**, identifying the
+tool version and carrying a timestamp; `turns=` holds the message count across
+sources that track messages, `-` when none do, aggregated by `sum` onto
+`SUM MONTH` and `SUM TOTAL` as `turns=`. A file whose first line does not
+start with `nova-tokens v1` is refused by `sum` and named by `check`, fixed
+with `fold --day <d>`. Rows sort by `(model, repo)` and stay unique by it.
+The write lands atomically through internal/atomicfile via a unique random-sibling temporary file `.<day>.tsv.tmp-%08x` and rename.
 
 **Absent and empty are one state.** A day with no rows has no file. A fold
 never writes an empty day file and `check` names one as malformed.
@@ -699,14 +699,13 @@ carries no such count (`reports=input,output,cache_write,cache_read`).
 `paths` are every string under every `tool_use` content block's `input`. The
 day is `timestamp[:10]`, UTC.
 
-A file the tool cannot open is one `TOKENS UNREADABLE` line with the OS
-reason (rule 3).
+When a file cannot be opened, the tool emits one `TOKENS UNREADABLE` line with the underlying reason.
 
 ### `--opencode <label>=<file>`: OpenCode's SQLite database
 
 The file, and `<file>-wal` and `<file>-shm` when present, are copied into
 `--scratch`, and three queries run there with `sqlite3 -readonly -json` under
-`--timeout` (rule 16; `-json` rather than `-tabs`, because a tool command input can carry tabs and newlines, which would corrupt TSV column splitting): sessions (`id`, `parent_id`, `directory`), assistant
+`--timeout` (`-json` rather than `-tabs`, because a tool command input can carry tabs and newlines, which would corrupt TSV column splitting): sessions (`id`, `parent_id`, `directory`), assistant
 messages (`id`, `session_id`, `time_created`, `providerID`, `modelID`, the
 five `tokens.*` counts, `path.cwd`), and tool parts (`message_id`,
 `session_id`, the `command`, `filePath`, `path` and `pattern` inputs).
@@ -741,13 +740,13 @@ order is `TOKENS UNPARSED` naming the file and the first wrong column.
 
 ### `--provider <label>=<file>`: a billing export
 
-For a harness that records nothing (rule 21). The file is the provider's own
+For a harness that records nothing. The file is the provider's own
 export, unmodified; the label names the provider and the parser (`google`,
 `openai`, `xai`); an export whose shape the parser does not know is `TOKENS UNREADABLE`
 with the first unparsed line quoted, never a guess. Rows land with repo
 `unattributed` and the model as the export names it; a type the export has
 no column for is `-`, and `reports=` on the source line names the columns it
-has. The day is rule 17's: an export with a timestamp per row is folded to
+has. The day: an export with a timestamp per row is folded to
 UTC days from the timestamps, in whatever zone they are printed, and its
 rows are `day_basis=utc`; an export with only per-day totals is folded under
 its own dates with `day_basis=<zone>`, the zone taken from the export's own
@@ -762,8 +761,8 @@ same rows: `endedAt` is the day, `primaryModelId` the model, and
 `reasoningTokens` the five counts, with a field the turn did not carry left
 a `-`, never a zero. `costUsdTicks` is the turn's cost, an integer count of
 micro-dollar ticks — the unit `usd=` holds — folded into the model's `usd=`
-on the day's `TOKENS AVG` lines (rule 20's amendment: the cost is "from the
-usage `usd` column or a cost tick the source reported"); a lexeme that is
+on the day's `TOKENS AVG` lines: the cost is "from the
+usage `usd` column or a cost tick the source reported"; a lexeme that is
 not a non-negative integer is an absence, and `usd=` is `0` where no source
 reported one. The flag names that one file. A path that is not there is
 `TOKENS UNREADABLE` saying the file is not there and that a session store is
@@ -778,7 +777,7 @@ lane owner's name, whatever the line's `who` field says. The header is read
 as nova-bus reads it: every line before the first blank line, `Key: value`.
 The body is the lines after.
 
-The line shape (rule 6):
+The line shape:
 
 ```
 date<TAB>who<TAB>model<TAB>repo<TAB>type<TAB>count[<TAB>day_basis=<zone>]
@@ -789,21 +788,21 @@ date<TAB>who<TAB>model<TAB>repo<TAB>type<TAB>count[<TAB>day_basis=<zone>]
 ```
 
 Six fields, tab separated, with an optional seventh. `date` is `YYYY-MM-DD`.
-The seventh field, when present, is exactly `day_basis=<zone>`, the zone as
-rule 13 accepts it in the day file (no whitespace) and never `utc`: it puts
+The seventh field, when present, is exactly `day_basis=<zone>`, the zone the
+day file accepts (no whitespace) and never `utc`: it puts
 the line's row under the line's date with that `day_basis`, which is how a
-provider's local-day total (rule 17) crosses the bus without being called
+provider's local-day total crosses the bus without being called
 UTC. A line without it is a UTC day. `day_basis=utc` spelled out is
 `TOKENS UNPARSED` (the six-field line already says UTC, and two spellings of
 one fact would be two grammars), as is any seventh field that is not
 `day_basis=` or any eighth field. Lines for one `(date, model, repo)` with
-two bases are `TOKENS MIXED` for that row (rule 17). `who` is kept for the
+two bases are `TOKENS MIXED` for that row. `who` is kept for the
 friend's own reading and is not in the key. `model` and `repo` are non-empty
 and are written as given; a friend's repo name goes through the same
 attribution function as a path, so `schema` is `schema` if the rules file
 says so and `other` if it does not. `type` is one of the five. `count` is
 `~?[0-9]+`. Several lines for one `(date, model, repo, type)` sum. A type no
-line named for a `(date, model, repo)` is `-` in the row (rule 15). A blank
+line named for a `(date, model, repo)` is `-` in the row. A blank
 line is skipped. A `#` line is a comment, skipped and counted; the one
 comment shape `# repos: <name>[, <name>]…` (the prefix exact, names
 `[a-z0-9._-]+` separated by a comma and optional spaces) yields
@@ -840,7 +839,7 @@ tips replaces that one and leaves the conflict, because the other tip still
 stands, and the printed remedy names **every** tip. The append-only
 reconciliation is a **replacement snapshot**: one fully validated note whose
 predecessor set names all current tips becomes their single successor and the
-lane-day's single tip, the old records untouched and each `SUPERSEDED` by
+lane-day's single tip, the predecessors untouched and each `SUPERSEDED` by
 name. A predecessor set with a duplicate, an unsorted order, an id that names
 a note in another lane or for another day, a missing or unparsed target, or a
 cycle (at any length, through any member) refuses the whole successor as
@@ -864,7 +863,7 @@ tips whatever is sent next, and no correction could resolve the conflict.
 
 Reading the bus, the tool never pulls, fetches, pushes, runs `git`, or talks to a
 network (only `ledger` and `report --redis` dial a network, and only the Redis
-they are named). It reads the checkout it is given as files (rule 16). A caller who wants today's
+they are named). It reads the checkout it is given as files. A caller who wants today's
 notes runs `nova-bus inbox` first. A fold that fetched would be a fold whose
 numbers depend on a network call, and the `TOKENS SOURCE` line for the bus
 prints the newest note's mtime so a reader can see how fresh the checkout
@@ -933,7 +932,7 @@ pairs by total descending (ties by name), capped, then models the same way,
 capped separately, then `SUM TOTAL`, then `SUM OK`. `missing=<n>` counts the
 days between `first` and `last` with no file. A month with no day files is
 `SUM OK month=<m> days=0 missing=0 pairs=0 models=0`, and it is a different
-line from a month with files and no rows, which cannot exist (rule 9).
+line from a month with files and no rows, which cannot exist.
 
 Counts are integers, summed as integers, printed without separators, because
 the line is for a scanner and a person can read `sum --max 0 | column -t`.
@@ -1006,7 +1005,7 @@ There is no clock in this tool. `--timeout` (default **120 s**) is how long it
 waits on one source and not a deadline on the run. What a fold or a check
 actually waits on is a person running it, and on the measured bench it was not
 being run: `check` printed
-`CHECK FAIL files=9 rows=0 first=2026-07-29 last=2026-09-11 bad=9 missing=36 stray=2`,
+`CHECK FAIL files=9 rows=0 first=<d> last=<d> bad=9 missing=36 stray=2`,
 and `sum --month 2026-09` refused because the first line of a day file was not
 the version line, with `fold --day <d>` as the repair. Nine of nine day files
 were bad. A stale ledger is repaired by `fold --day <d>` before `check` is
@@ -1077,10 +1076,10 @@ seen red before it is trusted.
    paths and nothing before it is `unknown`; `TOKENS DAY` prints
    `unknown=` and `other=` shares that add to the right percentage of the
    day's total; a fold with no `--repos` is exit 2.
-6. A bus note whose subject is `Tokens 2026-09-11 (rough)` is not a tokens
-   note, and neither is `tokens 2026-09-11 at=x`; one whose subject is
-   exactly `tokens 2026-09-11 at=2026-09-11T23:55:02Z build=abc123` is; one
-   whose subject is exactly `tokens 2026-09-11` with three good lines, two
+6. A bus note whose subject is `Tokens <d> (rough)` is not a tokens
+   note, and neither is `tokens <d> at=x`; one whose subject is
+   exactly `tokens <d> at=<stamp> build=abc123` is; one
+   whose subject is exactly `tokens <d>` with three good lines, two
    blank lines, one `# folded by hand` line, one `# repos: schema, serialize`
    line, one prose line, one five-field line and one line with an empty
    repo: three rows fold, `comments=2`, `TOKENS TOUCHED … repos=schema,serialize`
@@ -1125,15 +1124,15 @@ seen red before it is trusted.
    second rough line on the same row makes `rough=2`, `TOKENS DAY rough=2`,
    and `sum` carries `rough=2` on the pair, the model and the total.
 8. A fold killed with SIGKILL between the temp write and the rename leaves
-   the old day file entire and a temporary file beside it; the next fold
+   the existing day file entire and a temporary file beside it; the next fold
    writes the day file atomically through internal/atomicfile and preserves
    the stranded temporary; `check` does not name a valid day-file temporary
    as a stray; a second concurrent fold on one `--out` waits and exits 2 naming
    the holder's pid; a source test finds no `os.Remove` and no `os.RemoveAll` anywhere in
    the package (except internal/atomicfile's own-run temporary cleanup).
-   This tripwire is rule 9's: it reads rule 9's list of calls that can empty a
+   This tripwire is the removes-nothing rule's: it reads the list of calls that can empty a
    file and fails on any call it cannot match to a carved-out file. The
-   carve-outs are the tripwire's own list (rule 9); a removal of anything
+   carve-outs are the tripwire's own list; a removal of anything
    else, including any file the tool was given, is the failure this test
    exists for.
 9. A fold over sources that name three days writes three files and no
@@ -1169,7 +1168,7 @@ seen red before it is trusted.
     line lacks `turns=`, and a run of days
     `09-07, 09-08, 09-10`: every finding prints one line, the count line
     prints `bad=8 gap=1 missing=0`, exit 1; the same run with `--strict`
-    prints `CHECK MISSING date=2026-09-09` and `missing=1`, and so does a
+    prints `CHECK MISSING date=<d>` and `missing=1`, and so does a
     `--no-spend` list that does not name that day; a `--no-spend` list that
     names it is `missing=0`; `--strict` and `--no-spend` together is exit 2;
     a file whose type cells are `-` and whose `day_basis` is
@@ -1210,9 +1209,9 @@ seen red before it is trusted.
     original database's bytes and mtime are unchanged after the fold; a
     fake `git` on `PATH` records that it was never invoked, over a fixture
     bus holding competing notes; a source test finds no `net` import.
-17. A transcript line stamped `2026-09-11T23:59:59Z` and one stamped
-    `2026-09-12T00:00:01Z` land in two files; a bus note with subject
-    `tokens 2026-09-11` and a line dated `2026-09-10` folds into the
+17. A transcript line stamped just before a UTC midnight and one
+    stamped just after it land in two files; a bus note whose subject
+    names one day but holds a line dated the previous day folds into the
     `09-10` file, `redated=1` on the source line; a provider export with
     per-row timestamps `2026-09-11T20:30:00-07:00` and
     `2026-09-11T17:30:00-07:00` lands one row in `09-12` and one in `09-11`,

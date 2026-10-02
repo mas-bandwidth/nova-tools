@@ -55,7 +55,7 @@ func controlCardSurvivesSweep(t *testing.T, sweepNow bool) {
 	require.True(t, os.IsNotExist(err), "the job directory must be gone after the sweep, stat=%v", err)
 	attempt := oneRunAttempt(t, resultsRoot, label)
 	rel, err := filepath.Rel(job, attempt)
-	require.False(t, err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)), "results %s sit inside the job directory %s", attempt, job)
+	require.True(t, err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)), "results %s sit inside the job directory %s", attempt, job)
 	for _, name := range []string{"RESULT.md", "usage.tsv", "report"} {
 		_, err := os.Stat(filepath.Join(attempt, name))
 		require.NoError(t, err, "%s was not published under %s\nstderr:\n%s", name, attempt, stderr.String())

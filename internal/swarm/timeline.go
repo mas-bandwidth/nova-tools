@@ -1,8 +1,8 @@
 package swarm
 
-// A CARD'S MINUTES ARE MEASURED PER PHASE (Glenn, 2026-09-17: "speed up average wall clock
-// time per card; make each card operate more efficiently in tokens and in time from start to
-// finish; look at single cards"). The harness log carried no timestamps, so nothing could say
+// A CARD'S MINUTES ARE MEASURED PER PHASE: the aim is a faster average wall clock
+// time per card and each card operating more efficiently in tokens and in time from
+// start to finish. The harness log carried no timestamps, so nothing could say
 // which phase -- clone, deps, read, edit, test, retry, result -- spent a card's wall.
 //
 // The harness REPORTS its own events on the child's output, one line each, and this reader

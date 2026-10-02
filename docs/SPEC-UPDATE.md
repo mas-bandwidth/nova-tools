@@ -26,10 +26,10 @@ and a failure never allowed to read as *up to date*. SPEC.md's **Conventions** g
 exit codes, the one-line grammar, the field law, `internal/oneline`, `internal/bounded`,
 no guessed paths — and this file says only what is more. The estate runs it nightly and
 reads the counts in the morning; the tool has no clock of its own — no daemon, no timer,
-no `--watch`, no state file of its own (rule 25's snapshot is the caller's, named by flag)
+no `--watch`, no state file of its own (the snapshot is the caller's, named by flag)
 — nothing reacts to its exit code, no verdict starts an `apply`.
 
-`nova-version snapshot --file <manifest>` counts how many of the ADOPTED tools the rule-2 manifest names answer: it reads the manifest and reports `known=<n>` on the `SNAPSHOT <OK|FAIL> checked=<n> known=<n> unknown=<n> file=<path>` line, then one `SNAPSHOT UNKNOWN name=<name> reason=<why> remedy=<what to do>` line per tool that did not answer (capped by `--max`), exit 1 when any adopted tool is unknown — the adopted 16, never how many `nova-*` executables sit on a bin dir or PATH. A recorded installed version is known without starting a process; an installed argv is probed the way report probes it (rule 4), `--timeout` a tool (default `5s` in this shape) and `--budget` the run. The verb writes nothing: the manifest is adopted, not discovered, so a draft for a person to fill in is a hand-written file, not a scan. `nova-version snapshot --bin <dir> --out <file.tsv>` instead inventories a directory of `nova-*` executables as a four-column TSV, and `nova-version diff --from <a.tsv> --to <b.tsv>` compares two such inventories.
+`nova-version snapshot --file <manifest>` counts how many of the ADOPTED tools the manifest names answer: it reads the manifest and reports `known=<n>` on the `SNAPSHOT <OK|FAIL> checked=<n> known=<n> unknown=<n> file=<path>` line, then one `SNAPSHOT UNKNOWN name=<name> reason=<why> remedy=<what to do>` line per tool that did not answer (capped by `--max`), exit 1 when any adopted tool is unknown — only the adopted tools, never how many `nova-*` executables sit on a bin dir or PATH. A recorded installed version is known without starting a process; an installed argv is probed the way report probes it, `--timeout` a tool (default `5s` in this shape) and `--budget` the run. The verb writes nothing: the manifest is adopted, not discovered, so a draft for a person to fill in is a hand-written file, not a scan. `nova-version snapshot --bin <dir> --out <file.tsv>` instead inventories a directory of `nova-*` executables as a four-column TSV, and `nova-version diff --from <a.tsv> --to <b.tsv>` compares two such inventories.
 
 ## The rules, numbered
 
@@ -42,15 +42,15 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
    the header byte for byte**, else a refusal naming the file and line 1, exit 2, remedy
    *put the header back exactly as the spec shows* — unchecked, a header-less file loses
    entry 1 to the skip. The header and every line whose first character is `#` are
-   skipped, nothing else is: neither is an entry, `entries=` counts neither, rule 5 never
+   skipped, nothing else is: neither is an entry, `entries=` counts neither, the parser never
    reads `kind=kind`. No field may be empty; `apply` may be `none`. More or fewer fields
    is a refusal naming the line number, exit 2, never a skip. A manifest with several problems is refused ONCE, naming every one of them with its line (the header, each line's bad fields, each bad line; at most fifty, the rest counted as `and <n> more`), so a file is fixed in one pass. No graph, no lockfile.
-3. **A command is argv, never a shell.** `installed`, `apply` and rule 6's `local:<argv>`
+3. **A command is argv, never a shell.** `installed`, `apply` and `local:<argv>`
    — this tool's three exec sites — are split on single spaces and executed directly: no
    shell, no pipe, no glob, no `&&`, no environment expansion. An argument needing a space
    is refused at load time with the remedy *put it in a script and name the script* — as
    is a field carrying two adjacent spaces or a leading or trailing one, so the split
-   never makes an empty argument. This makes rule 13 provable.
+   never makes an empty argument. This makes the argument boundary provable.
 4. **The installed version is read by one fixed rule, and it is the whole identity.** Run
    the entry's `installed` argv and take the FIRST line of its stdout — stderr only when
    stdout is empty, so no race decides it — then the first whitespace-delimited token
@@ -60,21 +60,21 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
    there are two builds, and a read that kept the dotted number alone would collapse them
    into one. A command that exits non-zero, times out, or prints no such
    token is UNKNOWN, remedy *wrap it in a script that prints the version alone*; its stdout
-   and stderr go through `internal/bounded`, rule 23's 64 KB cap, a child reaching it
+   and stderr go through `internal/bounded`, the 64 KB cap, a child reaching it
    UNKNOWN reason `output`, the same remedy. Before the read, a first line whose second
-   token is `devel` or a bare commit (rule 21) has no release identity: under `check`, a
-   `pin` aside (rule 15), UNKNOWN reason `no_release_identity`, remedy *install a stamped
+   token is `devel` or a bare commit has no release identity: under `check`, a
+   `pin` aside, UNKNOWN reason `no_release_identity`, remedy *install a stamped
    build, or read it with `report`*; the toolchain's number on that line is never the
    tool's. **argv[0] resolves
    against the PATH nova-update was started with**, echoed as `path=`; a name resolving
    nowhere on it is UNKNOWN, reason `not_found`, remedy naming argv[0] and the PATH
    searched, never the wrap-it remedy; an argv[0] carrying a `/` is that executable, no
-   PATH searched (rule 20). The child inherits the environment, so the nightly's PATH is
+   PATH searched. The child inherits the environment, so the caller's PATH is
    the unit's to state: under a launchd-default PATH, measured, none of `gh`, `go`,
    `ollama`, `node` resolve. **The same read runs on the latest side**, on whatever field
-   rule 6 names: a `tag_name` `v2.101.0` and an installed `2.101.0` are one version. One
+   the latest field names: a `tag_name` `v2.101.0` and an installed `2.101.0` are one version. One
    rule; `kind` decides two exceptions below (4a, 15). The
-   eleven commands this estate uses are a fixture in `testdata/`, first line then the read: `gh version 2.100.0 (2026-09-03)` 2.100.0, its second line
+   The commands are fixtures in `testdata/`, first line then the read: `gh version 2.100.0 (2026-09-03)` 2.100.0, its second line
    and dotless date never read; `go version go1.27.1 darwin/arm64` 1.27.1;
    `ollama version is 0.33.3` 0.33.3; `v1.3.2` 1.3.2 (`age`); `1.18.30` 1.18.30
    (`opencode`); `codex-cli 0.153.4` 0.153.4; `0.46.0` 0.46.0 (`gemini`); `sops 3.13.3`
@@ -83,17 +83,17 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
    token, `0.12.1-0.20260912135226-0459069+dirty`.
 4a. **A model's version is its digest, because a model has no version.** Measured:
     neither `ollama show <model> --modelfile` nor the library's tags page
-    carries a dotted number, so under rule 4 every model reads UNKNOWN forever — a red
+    carries a dotted number, so the version read returns UNKNOWN for every model — a red
     nobody can act on. A model does have a digest. **Installed**: the entry's `installed`
-    argv runs like any other — rule 4's exit, timeout and PATH clauses hold — its stdout
+    argv runs like any other — its exit, timeout and PATH clauses hold — its stdout
     read as the `ollama list` table: the ID column of the row whose first token equals the
     entry's `name`, tag and all; no such row is UNKNOWN, remedy *this weight is not on this
     box: its owner pulls it, `ollama pull <name>`*.
     It never asks `:11434`. **Latest** is one GET of
     `https://registry.ollama.ai/v2/library/<model>/manifests/<tag>`, no token, the digest
     being the SHA-256 of the body; a body not JSON, or without `schemaVersion` or `layers`,
-    is a shape change: UNKNOWN, never OK (status first, rule 7). **Compared**, both sides
-    cut to their first twelve lowercase hex characters, per rule 17: measured, two of three
+    is a shape change: UNKNOWN, never OK (status first). **Compared**, both sides
+    cut to their first twelve lowercase hex characters: measured, two of three
     installed tags match and `qwen3.6:35b-a3b` reads `07d35212591f` against `096fdbd02fe6`
     — one real DIFFERENT. **DIFFERENT for a model is a new weight under the same tag**:
     a differing digest is different weights, not a newer number — a digest has no order,
@@ -103,18 +103,18 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
     the binary is to be asked. Such a row — what `nova-version snapshot` writes and what
     every hand-written manifest holds, `nova-bus  tool  ~/.local/bin/nova-bus` — is run
     `<exe> version`, then `<exe> --version`, then BARE, and the first invocation whose
-    output carries an identity under rule 4 is the reading. Bare stays last, for a foreign
+    output carries an identity is the reading. Bare stays last, for a foreign
     tool that prints its version with no argument at all. The whole ladder shares ONE
     `--timeout`, so three rungs never cost three deadlines, and a rung answering
     `not_found`, a spent budget, a timeout or a held pipe ends it, because those answers do
     not change with the argument. A row whose `installed` column is a whole argv —
     `go version`, `sops --version` — is the caller's sentence, run exactly as written,
-    once: rule 3's argv is never appended to. The mistake this prevents, in one sentence:
+    once: the argv is never appended to. The mistake this prevents, in one sentence:
     every nova tool answers a bare invocation with a usage refusal (the banner is behind
     `help`, not in front of every mistake), so a bare-only read would be UNKNOWN for every
     one of OUR OWN tools while each of them can say exactly which build it is.
 5. **Five kinds, and the kind decides what may happen.** `harness` (OpenCode), `engine`
-   (ollama), `model` (a weight in the ollama library — checked, never pulled, rule 4a),
+   (ollama), `model` (a weight in the ollama library — checked, never pulled),
    `tool` (gh), `pin` (one of our tools' pinned version of another). One specimen each,
    the versions file names the rest; an unknown kind is a refusal naming the line, exit 2.
 6. **Five latest sources: four bounded GETs and one local argv, each echoed.**
@@ -125,13 +125,13 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
    | `github:owner/repo` | `GET https://api.github.com/repos/owner/repo/releases/latest` | `tag_name` |
    | `npm:package` | `GET https://registry.npmjs.org/package/latest` | `version` |
    | `brew:formula` | `GET https://formulae.brew.sh/api/formula/formula.json` | `versions.stable` |
-   | `ollama:model:tag` | `GET https://registry.ollama.ai/v2/library/model/manifests/tag` | the body's SHA-256 (rule 4a) |
-   | `local:<argv>` | runs that argv here | rule 4's read |
+   | `ollama:model:tag` | `GET https://registry.ollama.ai/v2/library/model/manifests/tag` | the body's SHA-256, the model's digest |
+   | `local:<argv>` | runs that argv here | the fixed version read |
 
-   The field the table names goes through rule 4's read — a model's digest through rule
+   The field the table names goes through the fixed version read — a model's digest through rule
    4a's — so nothing downstream sees a leading `v`. One GET per entry, with one documented
    exception, because a project can tag and never release (its `releases/latest` is 404): a `github:` answered 404, and only then, asks `.../tags?per_page=1` once
-   and reads `[0].name` **through rule 4's read**, so a tag `v0.11.0` against an installed
+   and reads `[0].name` **through the fixed version read**, so a tag `v0.11.0` against an installed
    `0.11.0` is EQUAL, never a false STALE — two bounded GETs at most — and an empty `[]` is
    UNKNOWN, reason `no release and no tag`. Otherwise no second request, no redirect beyond
    three hops, no pagination; the body is capped at 256 KB, one reaching the cap being
@@ -141,9 +141,9 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
 7. **A source that does not answer is UNKNOWN, and UNKNOWN is not OK.** A timeout, a 5xx, a
    rate limit, a malformed body, a missing field, an empty tag — each is one `UPDATE
    UNKNOWN` line naming the source and the reason, and the run exits 1. **The status is read
-   before the body**: any status but 200 is UNKNOWN naming it, rule 6's `github:` 404 the
+   before the body**: any status but 200 is UNKNOWN naming it, the `github:` 404 tags retry the
    one exception, so a registry 404 — measured, valid JSON with no `schemaVersion` — is
-   `tag_not_found`, never `shape` and never rule 4's `not_found`: two misses, two remedies,
+   `tag_not_found`, never `shape` and never the fixed version read's `not_found`: two misses, two remedies,
    this one *check `https://ollama.com/library/<model>/tags`*. A 403 or a 429 quotes its
    `x-ratelimit-reset` as the time to ask again. **Network failure is never silence and
    never green.** A nightly that prints *all up to date* because GitHub was down is worse
@@ -158,7 +158,7 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
    `check` with every entry's line shown**, the current ones too: the same reads, the
    same flags (`--max`, `--timeout`, `--budget`, `--kind`), the same exit (0 when every
    entry is equal, 1 when any is STALE, NEWER, AHEAD, DIFFERENT or UNKNOWN), and the same
-   bound (rule 16, per verdict, `equal` included). Its lines begin `STATUS`, never
+   bound (`--max` per verdict, `equal` included). Its lines begin `STATUS`, never
    `CHECK`, so a caller scanning for one never reads the other.
 10. **`apply` needs a name, from a person.** `nova-update apply --file <path>` with no
     name is a refusal, exit 2, saying a name is required. There is no `--all`, no
@@ -178,7 +178,7 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
     the latest the source reported, or `--version <v>` when the person named one. A latest
     the source did not answer, with no `--version`, is a refusal, exit 2 — *latest unknown;
     pass `--version <v>`, or ask again when the source answers* — and no process starts.
-    Nothing else is substituted; rule 3 leaves no shell to substitute in. An `apply` of
+    Nothing else is substituted; the argv-not-a-shell rule leaves no shell to substitute in. An `apply` of
     `none` is refused: *installed by hand*; `--version` against an argv with no
     `{version}`: *this entry's apply does not take a version*.
 13a. **`apply --dry-run` prints the plan and writes nothing.** Every refusal of rules 10 to
@@ -192,7 +192,7 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
     flag alone: `check`, `status` and `report` refuse it.
 14. **`apply` prints before and after, and after must equal the target.** `APPLY
     BEFORE` before the install, `APPLY AFTER` after it, both read by the entry's
-    `installed` command through rule 4, and the **target** is the version echoed on
+    `installed` command through the fixed version read, and the **target** is the version echoed on
     `APPLY RUN`. After EQUAL to the target is `APPLY OK`, exit 0; everything else is
     `APPLY FAIL`, exit 1, saying which — after equal to before, so the command ran and
     nothing changed; after equal to neither, `installed <after>, asked <target>`, what a
@@ -219,7 +219,7 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
     stopped answering — and each capped verdict gets one `CHECK MORE` line naming the
     remedy. **The count line prints on failure as well as success**, first, about the world.
 17. **The tool stamps, and nothing read from a file or a server is a clock.** The opening
-    `at=` is the tool's own. **A version is its whole identity string** after rule 4's read
+    `at=` is the tool's own. **A version is its whole identity string** after the fixed version read
     or 4a's, and two of them compare to exactly one of: **EQUAL**, the same bytes, current;
     **OLDER** or **NEWER**, an order this tool has *verified*; **AHEAD**, an installed
     pseudo-version whose commit the tool reads as on main after the release tag;
@@ -237,7 +237,7 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
     is never known between a tag and a pseudo-version (Go would place
     `v0.12.1-0.<stamp>-<commit>` between two tags; this tool has not verified any other
     case and says DIFFERENT), never between two pseudo-versions, never for a digest, never
-    across two tools (rule 15). **STALE is the line for verified OLDER and for nothing
+    across two tools (the pin rule). **STALE is the line for verified OLDER and for nothing
     else**; NEWER, AHEAD and DIFFERENT print under their own names; a person looks; not
     EQUAL is 1.
 18. **Every refusal names its remedy.** No refusal here ends at the reason: the
@@ -253,29 +253,29 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
     filtered run while `entries=` stays the file's count. An unknown
     `--kind` is its own refusal, exit 2, naming the value and the five kinds, and no line.
 20. **`report` reads the file alone: an explicit manifest, exact paths allowed, no bus.**
-    `nova-update report --file <path>` takes the same six-field file (rule 2) and runs only
+    `nova-update report --file <path>` takes the same six-field file and runs only
     each entry's `installed` argv — never `latest`, never a GET, never `apply` — so the base
     inventory needs no network, no recipients, no `--as`, no bus checkout: it prints and
     exits, so a stateless job reads stdout. The manifest is explicit: only the
     file's argv run; an argv[0] carrying a `/` is that executable and no PATH is searched,
     so a bench with two installation roots names each path; a bare name
-    resolves as rule 4 says; no home-directory scan, no wildcard discovery, no shell, no
+    resolves against the launched PATH, as the fixed version read says; no home-directory scan, no wildcard discovery, no shell, no
     read of any private self. A shipped Nova-only example, `testdata/nova.tsv`, names the
     estate's own tools by their `version` verb; its `latest` column is
     `github:mas-bandwidth/nova-tools` on every line, a real source `report` never asks, so
-    rule 2 holds as written and `check` over the same file is a check. The host is the
+    the six-field rule holds as written and `check` over the same file is a check. The host is the
     caller's word: `--host <label>` prints as given, absent `-`; nothing on the box is asked
-    to name it. `--kind` (rule 19) and `--max` (rule 16, per line kind: `TOOL`, `UNKNOWN`,
+    to name it. `--kind` (the run filter) and `--max` (the bound, per line kind: `TOOL`, `UNKNOWN`,
     `CHANGED`) hold.
     **`nova-version` is a second entry point on this one implementation** — its `report` and
     `send` are these flags under that name, the same code, no second reader and no second
     spec — so whichever name starts it, rules 20–26 and 9–13 hold for it: one shared
     reader behind both, and `nova-version` the focused entry point.
 21. **A report line carries the whole identity raw, beside the key `check` would compare.**
-    One `REPORT TOOL` line per entry that answered: `version=` is the key — rule 4's read,
-    or rule 15's for `kind=pin` — and `raw=` is the observed first line, whole, one
+    One `REPORT TOOL` line per entry that answered: `version=` is the key — the fixed version read,
+    or the pin rule's for `kind=pin` — and `raw=` is the observed first line, whole, one
     `internal/oneline` token; `+dirty`, `-rc1` and the pseudo-version stamp stay in both.
-    For a model, `raw` is the matched `ollama list` row from rule 4a, so a changed
+    For a model, `raw` is the matched `ollama list` row from the model digest rule, so a changed
     digest changes the retained observation; the unchanged table header cannot hide it.
     Both are on the line because they differ in what they can say: an opaque commit or a
     `devel` build is an identity this bench honestly runs though no order is known for it

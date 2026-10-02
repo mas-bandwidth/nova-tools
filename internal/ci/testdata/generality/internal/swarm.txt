@@ -1,19 +1,15 @@
 # Migrated counted package ledger; original row keys preserved.
-# ceiling: 48
-internal/swarm/cardbudget.go:stella 1
-internal/swarm/fence.go:rowan 1
-internal/swarm/fileretry.go:stella 1
+# ceiling: 40
 internal/swarm/inputlimit.go:space 1
-internal/swarm/lease.go:stella 2
+internal/swarm/lease.go:stella 1
 internal/swarm/lintbase.go:rowan 1
 internal/swarm/lintbase.go:space 1
 internal/swarm/lintcontract.go:rowan 1
 internal/swarm/lintdepends.go:mas-bandwidth 2
 internal/swarm/lintdepends.go:space 2
-internal/swarm/lintheader.go:emma 4
+internal/swarm/lintheader.go:emma 2
 internal/swarm/lintheader.go:rowan 2
-internal/swarm/nativeidle.go:hulk 1
-internal/swarm/nativeidle.go:johnny 1
+
 internal/swarm/pathcase.go:stella 1
 internal/swarm/providererr.go:space 2
 internal/swarm/providerproxy.go:stella 1
@@ -28,16 +24,13 @@ internal/swarm/slotweight.go:captainamerica 1
 internal/swarm/stage.go:hulk 1
 internal/swarm/stage.go:mas-bandwidth 1
 internal/swarm/stage.go:rowan 6
-internal/swarm/staging.go:rowan 2
-internal/swarm/timeline.go:glenn 1
+internal/swarm/staging.go:rowan 1
 internal/swarm/toolchain.go:hulk 2
 internal/swarm/toolchain.go:johnny 2
 internal/swarm/wall.go:glenn 3
 internal/swarm/wall.go:hulk 1
 internal/swarm/wall.go:johnny 1
 internal/swarm/wall.go:stella 3
-internal/swarm/wallread.go:hulk 2
-internal/swarm/wallread.go:studio 1
 internal/swarm/worker.go:rowan 3
 internal/swarm/worker.go:space 1
 internal/swarm/worker.go:stella 1

@@ -423,7 +423,7 @@ func assertConfigRecord(t *testing.T, slot, wantMode, wantBody string) {
 		return
 	}
 	assert.True(t, strings.HasPrefix(rec, "mode="+wantMode+"\n"), "the harness saw %q, want mode %s", rec, wantMode)
-	assert.False(t, wantBody != "" && !strings.Contains(rec, wantBody), "the harness saw no %s in the config it read:\n%s", wantBody, rec)
+	assert.True(t, wantBody == "" || strings.Contains(rec, wantBody), "the harness saw no %s in the config it read:\n%s", wantBody, rec)
 }
 
 // TestNativeRefusesConfigProviderWithoutKey: a --config whose entry for THE MODEL'S OWN
@@ -1073,7 +1073,7 @@ func TestNativeEnvIsCleanAndInsideTheWall(t *testing.T) {
 	require.NoError(t, err, "the child did not write pwd into RESULT.md")
 	if got := strings.TrimPrefix(strings.TrimSpace(string(raw)), "pwd="); got != jobDir {
 		want, evalErr := filepath.EvalSymlinks(jobDir)
-		assert.False(t, evalErr == nil && got != want, "from cwd %s the child's cwd is %q, want the job directory %q", foreign, got, want)
+		assert.True(t, evalErr != nil || got == want, "from cwd %s the child's cwd is %q, want the job directory %q", foreign, got, want)
 	}
 
 	// The environment the run recorded is what the wall was handed.
@@ -1515,7 +1515,7 @@ func TestNativeSilentHarnessIsNotOK(t *testing.T) {
 				raw, err := os.ReadFile(filepath.Join(jobDir, "harness-output.log"))
 				require.NoError(t, err, "the capture is written even for a silent run")
 				for _, line := range strings.Split(string(raw), "\n") {
-					assert.False(t, strings.TrimSpace(line) != "" && !strings.HasPrefix(line, "SANDBOX "), "a silent run's capture carries a line the child wrote: %q", line)
+					assert.True(t, strings.TrimSpace(line) == "" || strings.HasPrefix(line, "SANDBOX "), "a silent run's capture carries a line the child wrote: %q", line)
 				}
 			}
 		})

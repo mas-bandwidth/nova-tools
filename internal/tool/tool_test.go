@@ -480,7 +480,7 @@ func TestRun(t *testing.T) {
 				want  []string
 				empty bool
 			}{{"stdout", out.String(), tc.stdout, tc.emptyStdout}, {"stderr", errs.String(), tc.stderr, tc.emptyStderr}} {
-				assert.False(t, w.empty && w.got != "", "%s is not empty: %q", w.name, w.got)
+				assert.True(t, w.got == "" || !w.empty, "%s is not empty: %q", w.name, w.got)
 				rest := w.got
 				for _, s := range w.want {
 					i := strings.Index(rest, s)

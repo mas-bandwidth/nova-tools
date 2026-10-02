@@ -227,7 +227,7 @@ func main() {
 
 func run(args []string, stdout, stderr io.Writer) (code int) {
 	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
-	// before anything is read or written (the CLI style's rule (b), #4505).
+	// before anything is read or written, so help has no side effects.
 	defer verbflag.Recover(stdout, "nova-check", usage, &code)
 	if len(args) == 0 {
 		return refuse(stderr, "", "no verb given; quickstart is the first run")
@@ -383,7 +383,7 @@ func cmdQuickstart(args []string, stdout, stderr io.Writer) int {
 	// run needs NEXT does not depend on whether this one was green. THE OK WORD
 	// IS A CLAIM THAT BOTH CHECKS PASSED, so it is printed only then: a run with
 	// a failed check closes with FAIL and the names of the checks that failed
-	// (a cold rating of the tools, 2026-09-30: `QUICKSTART OK` over two failures).
+	// (a cold evaluation shows that `QUICKSTART OK` can appear over two failures).
 	if len(failed) == 0 {
 		fmt.Fprintf(stdout, "QUICKSTART OK done=2 worst-exit=%d next=kernel,attest,floors,corpus (each wants a budget, a manifest or a ledger of yours: nova-check help)\n", worst)
 	} else {
@@ -499,7 +499,7 @@ func cmdKernel(args []string, stdout, stderr io.Writer) int {
 	}
 	// The file and the budget are independent, so both are judged before
 	// either sends the caller away: `nova-check kernel` with nothing at all
-	// used to name --file and stop, and the second run then learned about the
+	// reports --file and the budget together instead of stopping after
 	// budget. One run, every problem it can find.
 	ok := requireFlags(fs, stderr, map[string]*string{"file": file})
 	// Which budget was GIVEN, not which value survived: --max-bytes 0 is a

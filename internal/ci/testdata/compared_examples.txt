@@ -74,6 +74,6 @@ cmd/nova-secrets/examples_test.go:TestTheHelpExamplesAreWhatTheSeatsVerbsPrint e
 cmd/nova-secrets/examples_test.go:TestTheHelpExamplesAreWhatTheSeatsVerbsPrint example: nova-secrets placed --machine bench-a
 cmd/nova-secrets/examples_test.go:TestTheHelpExamplesAreWhatTheSeatsVerbsPrint example: nova-secrets seat add --store ./secrets --as bo --pub $BO_PUB --from ada --only GH_TOKEN,DEEPSEEK_API_KEY --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops
 cmd/nova-tokens/report_example_test.go:TestTheHelpReportExampleIsWhatItPrints example: nova-tokens report --who ada --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts
-cmd/nova-check/polish_test.go:TestPolishLinksBannerExampleMatchesOutput example: nova-check links --dir ./self
+cmd/nova-check/json_output_preserves_check_contracts_test.go:TestPolishLinksBannerExampleMatchesOutput example: nova-check links --dir ./self
 cmd/nova-fuse/firstrun_test.go:TestInitBannerExampleThroughTheComparator example: nova-fuse init --box ./fuse-box.json
 cmd/nova-tokens/fold_example_test.go:TestHelpFoldExampleIsComparedToOutput example: nova-tokens fold --out ./out --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts

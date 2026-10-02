@@ -188,8 +188,8 @@ func refuse(stdout, stderr io.Writer, asJSON bool, verb, hint string, problems .
 func main() { os.Exit(runStdin(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
 
 func runStdin(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
-	// `<verb> -h` is that verb's help on stdout at exit 0, with the verb's effect, before
-	// anything is read (the CLI style's rule (b), #4505).
+	// `<verb> -h` prints that verb's help on stdout at exit 0, with the verb's effect, before anything is read
+	// (docs/CLI-STYLE.md rule (b)).
 	defer verbflag.RecoverWith(stdout, "nova-self-talk", usage, &code, func(verb string) string {
 		return "effect: " + effects[verb] + "\n"
 	})

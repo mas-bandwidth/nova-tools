@@ -1,3 +1,2 @@
 # Migrated counted package ledger; original row keys preserved.
-# ceiling: 1
-internal/cairn/cairn.go:rowan 1
+# ceiling: 0

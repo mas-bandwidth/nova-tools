@@ -94,7 +94,8 @@ func TestSendPreparedDecidingTests(t *testing.T) {
 	rDirty.mustCode(t, 1).mustContain(t, "stderr", "SEND FAIL")
 	{
 		data, err := os.ReadFile(dirtyFile)
-		require.False(t, err != nil || string(data) != "dirty work\n", "failed to preserve dirty file")
+		require.NoError(t, err, "failed to preserve dirty file")
+		require.Equal(t, "dirty work\n", string(data), "failed to preserve dirty file")
 	}
 	os.Remove(dirtyFile)
 

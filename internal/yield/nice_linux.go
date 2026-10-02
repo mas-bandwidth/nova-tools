@@ -14,9 +14,8 @@ const Supported = true
 // process. On Linux a nice value belongs to a thread, not a process: the
 // 0 in setpriority(PRIO_PROCESS, 0, n) is the calling thread alone, and a
 // child the Go runtime forks from another of its threads inherits that
-// thread's nice value. Because new threads may start, the process scans
-// /proc/self/task to set the nice value on all threads until no threads
-// remain unconfigured. So the threads are read from
+// thread's nice, which is still 0 (measured: nearly every child of a wrapper
+// stayed at nice 0). So the threads are read from
 // /proc/self/task and each is set, and the read repeats until a pass finds
 // no thread it has not set: a thread the runtime starts meanwhile is
 // forked from a thread already at n and inherits it, but the loop does not

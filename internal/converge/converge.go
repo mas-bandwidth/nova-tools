@@ -1,10 +1,9 @@
 // Package converge answers one question mechanically: are we converging?
 //
-// Glenn, 2026-09-15: convergence is the health metric — the contraction ratio
-// per stream, every tick. Rowan answered it by hand on 2026-09-18 out of six
-// different places, and the answer was a paragraph nobody could diff against
-// the next one. A stream here is one number a converging family drives in one
-// direction, read now and read at --since, with the ratio between them.
+// Convergence is the health metric — the contraction ratio per stream, every
+// tick. It is computed here, mechanically, so one run's answer can be diffed
+// against the next. A stream here is one number a converging family drives in
+// one direction, read now and read at --since, with the ratio between them.
 //
 // Everything in this file is PURE: it takes already-fetched data and returns
 // findings. The forge, git, the filesystem and the clock are seams (forge.go,
