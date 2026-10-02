@@ -20,7 +20,7 @@ Finds the tests only the perf build tag adds. Writes "<import path> <run regexp>
 line per package, to $RUNNER_TEMP/perf-runs and appends PERF_PKGS=<the packages> to
 $GITHUB_ENV. A perf-tagged package with no test behind the tag is reported and skipped;
 a tree with no perf-tagged test at all is red, because then the perf job asserts nothing.
-Only live packages are considered (deprecated/PACKAGES).
+Only live packages are considered (internal/pkgselect/DEPRECATED).
 
 Exit 0 found, 1 none found or go list failed, 2 bad usage.
 

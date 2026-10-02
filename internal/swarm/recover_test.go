@@ -2,27 +2,9 @@ package swarm
 
 import (
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
-
-func recoveryPool(t *testing.T, dir string) (*Pool, Worker) {
-	t.Helper()
-	if err := os.MkdirAll(filepath.Join(dir, "pool"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	p, err := OpenPool(filepath.Join(dir, "pool"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	home := filepath.Join(dir, "worker-home")
-	if err := os.MkdirAll(home, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	return p, Worker{Name: "recovery", Provider: "fake", Model: "fake-model", Harness: "fake-harness",
-		WorkerDir: home, Deadline: "30s", Usage: UsageOpenCode}
-}
 
 // DeepSeek's read 5, finding 1. The FIRST shape of the Windows identity fix kept one
 // package-global pid->stamp map, and that map is a second way to lose a job: when a

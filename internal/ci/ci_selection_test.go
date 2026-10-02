@@ -15,20 +15,16 @@ import (
 
 // ci_selection_test.go pins the SELECTION side of the class-test contract. The
 // budget test (ci_budget_test.go) says what the checks must be; this one says
-// which packages must run them. Two independent places choose the packages a
-// change tests:
-//
-//   - internal/pkgselect's Select builds the `want` set the self-hosted shards
-//     use (`ci test-matrix` and `nova-ci local` both call it); and
-//   - ci.yml's test-hosted-merge job has its own inline selection and does not
-//     call the script.
+// which packages must run them. internal/pkgselect's Select chooses the packages
+// a change tests: it builds the `want` set the self-hosted shards use (`ci
+// test-matrix` and `nova-ci local` both call it).
 //
 // internal/ci holds class tests that read the workflow and source files as text
 // and scan the tree rather than import what they guard. A cmd/nova-swarm edit
 // (PR #1073) therefore turned an internal/ci class test red but named no
 // dependent in the import graph, so no shard was selected to run it and the
-// branch sat for two hours. Both selection points must name ./internal/ci on
-// every run; these tests run the selection over a fixture and read its source.
+// branch sat for two hours. The selection must name ./internal/ci on every
+// run; these tests run the selection over a fixture and read its source.
 
 var (
 	// selectAppendRe is the statement (one tab of indentation: the body of
@@ -36,20 +32,6 @@ var (
 	// The bug it guards is that the line lives inside an `if` guarded on a
 	// .github/ diff, so the regex is red until it is at the top level.
 	selectAppendRe = regexp.MustCompile(`(?m)^\twant\["\./internal/ci"\] = true\s*$`)
-
-	// mergeAppendRe is the append to the merge gate's `$pkgs`, outside any `||`
-	// fallback, so every group runs internal/ci and not only one that changed no
-	// Go package. A trailing `;;` is allowed because the append sits in a `case`
-	// arm since 2026-09-18: when the diff had ALREADY selected internal/ci, a
-	// bare append ran it twice in every shard of every leg (ten runs of it across
-	// the windows legs of run 35354900090 alone). The rule this pins is
-	// "unconditionally in scope", and a guard that only prevents a DUPLICATE
-	// keeps it.
-	mergeAppendRe = regexp.MustCompile(`(?m)^\s*(\*\)\s*)?pkgs="\$pkgs \./internal/ci"\s*(;;)?\s*$`)
-
-	// mergeFallback is the shape this card removes: internal/ci selected only
-	// when $pkgs is empty.
-	mergeFallback = `|| pkgs="./internal/ci"`
 )
 
 var (
@@ -59,14 +41,6 @@ var (
 	// it guards, so a docs-only edit can break its class test without naming a
 	// single dependent in the import graph.
 	selectDocsAppendRe = regexp.MustCompile(`(?m)^\twant\["\./internal/docs"\] = true\s*$`)
-
-	// mergeDocsAppendRe is the append to the merge gate's `$pkgs`, outside any
-	// `||` fallback, so every group runs internal/docs and not only one that
-	// changed no Go package. A trailing `;;` is allowed for the same reason as
-	// the internal/ci append: the append sits in a `case` arm, and its guard
-	// only prevents a DUPLICATE. The rule this pins is "unconditionally in
-	// scope".
-	mergeDocsAppendRe = regexp.MustCompile(`(?m)^\s*(\*\)\s*)?pkgs="\$pkgs \./internal/docs"\s*(;;)?\s*$`)
 )
 
 // classTestSelection runs pkgselect.Select over a docs-only change in a fixture

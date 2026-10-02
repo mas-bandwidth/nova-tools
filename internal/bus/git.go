@@ -1070,25 +1070,9 @@ func commitsSince(dir, from, to string, ceiling int) (int, bool, error) {
 	if _, err := fmt.Sscanf(strings.TrimSpace(out), "%d", &n); err != nil {
 		return 0, false, fmt.Errorf("git rev-list --count did not answer with a number: %w", err)
 	}
-	commitsWalked.Add(int64(n))
 	countersFor(dir).commitsWalked.Add(int64(n))
 	return n, ceiling > 0 && n > ceiling, nil
 }
-
-// commitsWalked counts the commits this process's commit counts have enumerated, and
-// CommitsWalked reads it.
-//
-// It is INSTRUMENTATION, of the same kind and for the same reason as NoteParses in note.go:
-// the property it measures -- a stale cursor costs the BOUND and not the distance -- is a
-// claim about work NOT DONE, and work not done leaves no output to assert on. The honest
-// proof is a count taken where the work happens. Timing two runs instead would be a flake on
-// a shared runner and would prove nothing on a fast enough machine.
-var commitsWalked atomic.Int64
-
-// CommitsWalked is how many commits this process's rev-list counts have enumerated. Tests
-// take it before and after a run and assert on the difference; nothing else reads it and
-// nothing branches on it.
-func CommitsWalked() int64 { return commitsWalked.Load() }
 
 func ChangedSince(dir, commit string) ([]string, error) {
 	if err := ValidCommitHex(commit); err != nil {

@@ -245,7 +245,7 @@ func (t *Tool) call(v Verb, args []string, stdin io.Reader, stdout, stderr io.Wr
 	if f.max && c.Int("max") < 0 {
 		c.Problem(fmt.Sprintf("--max must be zero or more (got %d); 0 lists all", c.Int("max")))
 	}
-	if !f.args && f.NArg() > 0 {
+	if f.NArg() > 0 {
 		c.Problem(fmt.Sprintf("takes no positional arguments, got %q (flags come before arguments)", f.Arg(0)))
 	}
 	if o := c.Refused(); o != nil {
@@ -307,9 +307,9 @@ func (t *Tool) emit(v *Verb, o *Out, asJSON bool, stdout, stderr io.Writer) int 
 // closed (verbflag.New), and the standard flags a verb opts into.
 type Flags struct {
 	*flag.FlagSet
-	max, args, prints bool
-	required          [][2]string
-	checks            []func(c *Call)
+	max, prints bool
+	required    [][2]string
+	checks      []func(c *Call)
 }
 
 // Required declares a string flag the verb cannot run without: empty, it is a
@@ -344,9 +344,6 @@ func (f *Flags) Redis(seatFirst string) {
 	f.String("redis", seatFirst, "the Redis address, host:port (default: the seat's)")
 }
 
-// Positional lets the verb take positional arguments; without it one is refused.
-func (f *Flags) Positional() { f.args = true }
-
 // Prints marks a verb that writes its own output (a payload a program reads,
 // a child's stream, or a body shared with a tool not yet on this package): it
 // gets no --json, and returns Exit(code) after writing to c.Stdout and c.Stderr.
@@ -372,9 +369,6 @@ func (c *Call) Dur(name string) time.Duration { return c.Get(name).(time.Duratio
 
 // Given reports whether the flag was on the command line.
 func (c *Call) Given(name string) bool { return c.given[name] }
-
-// Args is the positional arguments (a verb that declared Positional).
-func (c *Call) Args() []string { return c.flags.FlagSet.Args() }
 
 // Want reads a required string flag, recording a problem that says what it
 // wants when it is empty. Every Want is read before Refused, so one run names

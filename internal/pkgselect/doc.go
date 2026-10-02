@@ -2,7 +2,7 @@
 // the legs that test them. It is the one home of four rules that every place
 // choosing packages reads:
 //
-//   - a deprecated package is never tested: deprecated/PACKAGES names the
+//   - a deprecated package is never tested: internal/pkgselect/DEPRECATED names the
 //     packages that are deprecated and still in the tree because living tools
 //     import them, and Deprecated.Live drops them from any list (live.go);
 //   - a selection is never silently nothing: a failed `go list`, or a Go diff

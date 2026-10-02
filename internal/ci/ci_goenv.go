@@ -175,13 +175,9 @@ func matchGoEnvAllow(entries []waitAllow, used []bool, f GoEnvFinding) int {
 	return loose
 }
 
-// walkCIGoFiles hands every .go file under root/internal and root/cmd to fn,
+// walkCIGoFilesWith hands every .go file under root/internal and root/cmd to fn,
 // tests included. testdata, .git and vendor directories are skipped, and so is
 // internal/goenv, which is the rule's own implementation.
-func walkCIGoFiles(root string, fn func(rel string, src []byte) error) error {
-	return walkCIGoFilesWith(root, defaultSourceSeams(), fn)
-}
-
 func walkCIGoFilesWith(root string, seams SourceSeams, fn func(rel string, src []byte) error) error {
 	for _, dir := range checkGoEnvDirs {
 		base := filepath.Join(root, dir)
@@ -226,14 +222,10 @@ func walkCIGoFilesWith(root string, seams SourceSeams, fn func(rel string, src [
 	return nil
 }
 
-// scanGoEnvFile returns the go commands in one file whose function does not
+// scanGoEnvFileWith returns the go commands in one file whose function does not
 // build a sanitized environment. A file that does not parse is reported as
 // read-but-clean rather than as an error: the checker refuses environments,
 // never syntax, and the compiler has the better message for a broken file.
-func scanGoEnvFile(rel string, raw []byte) ([]GoEnvFinding, bool) {
-	return scanGoEnvFileWith(rel, raw, defaultSourceSeams())
-}
-
 func scanGoEnvFileWith(rel string, raw []byte, seams SourceSeams) ([]GoEnvFinding, bool) {
 	fset, file, err := seams.parseFile(rel, raw, 0)
 	if err != nil {

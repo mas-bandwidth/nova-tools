@@ -44,9 +44,6 @@ func isDroppedDeprecated(lt *liveTree, p string) bool {
 	if lt.keep[p] {
 		return false
 	}
-	if p == "deprecated" || strings.HasPrefix(p, "deprecated/") {
-		return true
-	}
 	for _, d := range lt.drop {
 		if p == d || strings.HasPrefix(p, d+"/") {
 			return true
@@ -68,11 +65,11 @@ func cleanPkgPath(p string) string {
 }
 
 // TestLivingPackagesDoNotImportDroppedDeprecatedPackages walks every .go file in the
-// repository (excluding deprecated/ and vendor/), reading import blocks via AST,
+// repository (excluding vendor/ and testdata/), reading import blocks via AST,
 // and asserts that no living package (or keep foundation test dependency) imports
 // dropped deprecated packages without an allowlist entry.
 //
-// A keep line in deprecated/PACKAGES permits importing that package; it is never
+// A keep line in internal/pkgselect/DEPRECATED permits importing that package; it is never
 // permission for that package's test dependencies to import non-keep retired packages.
 func TestLivingPackagesDoNotImportDroppedDeprecatedPackages(t *testing.T) {
 	t.Parallel()
@@ -96,7 +93,7 @@ func TestLivingPackagesDoNotImportDroppedDeprecatedPackages(t *testing.T) {
 	for _, unlisted := range res.Unlisted {
 		t.Errorf("%s: unlisted dependency on dropped deprecated package: %s\n"+
 			"A living package (or keep foundation test dependency) must not import dropped deprecated packages without an allowlist entry.\n"+
-			"A keep line in deprecated/PACKAGES permits importing that package; it is never permission for that package's test dependencies to import non-keep retired packages.\n"+
+			"A keep line in internal/pkgselect/DEPRECATED permits importing that package; it is never permission for that package's test dependencies to import non-keep retired packages.\n"+
 			"Remedy: lift the target package into a shared module, decouple the test fixture, or remove the dependency; the allowlist only shrinks and refuses new rows.",
 			deprecatedImportsAllowlistPath, unlisted)
 	}
@@ -322,8 +319,8 @@ func TestDeprecatedImportsAllowlistGrowthRefusesStaleOrMissingBase(t *testing.T)
 	}
 }
 
-// measureLivingDeprecatedImports scans files in living packages (excluding .git, vendor, testdata,
-// and root deprecated/) for imports of dropped deprecated packages.
+// measureLivingDeprecatedImports scans files in living packages (excluding .git, vendor and
+// testdata) for imports of dropped deprecated packages.
 func measureLivingDeprecatedImports(t *testing.T, files []*treeFile, lt *liveTree) map[string]bool {
 	t.Helper()
 	measured := map[string]bool{}
@@ -332,7 +329,7 @@ func measureLivingDeprecatedImports(t *testing.T, files []*treeFile, lt *liveTre
 		if !f.Go || f.AST == nil {
 			continue
 		}
-		if f.HasDirNamed(".git") || f.HasDirNamed("vendor") || f.HasDirNamed("testdata") || f.InDir("deprecated") {
+		if f.HasDirNamed(".git") || f.HasDirNamed("vendor") || f.HasDirNamed("testdata") {
 			continue
 		}
 		relSlash := f.Rel
@@ -359,42 +356,4 @@ func measureLivingDeprecatedImports(t *testing.T, files []*treeFile, lt *liveTre
 		}
 	}
 	return measured
-}
-
-// TestDeprecatedImportsRatchetExaminesNestedDeprecatedDirectories verifies that
-// the deprecated imports ratchet does not exclude nested directories named "deprecated"
-// (like cmd/live/deprecated/), only the root deprecated/ directory.
-func TestDeprecatedImportsRatchetExaminesNestedDeprecatedDirectories(t *testing.T) {
-	t.Parallel()
-
-	root := t.TempDir()
-	for rel, body := range map[string]string{
-		"deprecated/cmd/old/main.go":    "package old\n",
-		"cmd/live/deprecated/nested.go": "package nested\n\nimport _ \"github.com/mas-bandwidth/nova-tools/deprecated/cmd/old\"\n",
-	} {
-		path := filepath.Join(root, filepath.FromSlash(rel))
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	tree, err := loadRepoTree(root)
-	if err != nil {
-		t.Fatalf("loadRepoTree: %v", err)
-	}
-
-	lt := &liveTree{
-		root: root,
-		drop: []string{"deprecated"},
-		keep: map[string]bool{},
-	}
-
-	measured := measureLivingDeprecatedImports(t, tree.Files, lt)
-	wantEdge := "cmd/live/deprecated -> deprecated/cmd/old"
-	if !measured[wantEdge] {
-		t.Errorf("measured = %v, want edge %q; nested deprecated directories must be examined", measured, wantEdge)
-	}
 }

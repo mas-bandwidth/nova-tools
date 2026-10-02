@@ -102,8 +102,8 @@ func selRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	for name, body := range map[string]string{
-		"go.mod":              "module " + selMod + "\n\ngo 1.26\n",
-		"deprecated/PACKAGES": "cmd/gone\n",
+		"go.mod":                 "module " + selMod + "\n\ngo 1.26\n",
+		pkgselect.DeprecatedFile: "cmd/gone\n",
 	} {
 		p := filepath.Join(dir, filepath.FromSlash(name))
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
@@ -786,9 +786,9 @@ func TestFetchAncestryFailures(t *testing.T) {
 	}
 }
 
-func TestGofmtListsWhatIsNotFormattedLeavingDeprecatedAlone(t *testing.T) {
+func TestGofmtListsWhatIsNotFormatted(t *testing.T) {
 	t.Parallel()
-	f := newSelFake(map[string]selReply{"gofmt -l .": {out: "cmd/a/a.go\ndeprecated/cmd/b/b.go\ninternal/c/c.go\n"}})
+	f := newSelFake(map[string]selReply{"gofmt -l .": {out: "cmd/a/a.go\ninternal/c/c.go\n"}})
 	code, out, errb := selRun(func(e env, a []string) int { return gofmtVerb(e, a, f.host()) }, "", nil)
 	if code != 1 || out != "not gofmt-clean:\ncmd/a/a.go\ninternal/c/c.go\n" || errb != "" {
 		t.Errorf("exit %d, stdout %q, stderr %q", code, out, errb)
@@ -797,7 +797,7 @@ func TestGofmtListsWhatIsNotFormattedLeavingDeprecatedAlone(t *testing.T) {
 
 func TestGofmtIsSilentWhenTheTreeIsClean(t *testing.T) {
 	t.Parallel()
-	for name, listing := range map[string]string{"nothing": "", "only deprecated": "deprecated/x.go\n"} {
+	for name, listing := range map[string]string{"nothing": ""} {
 		f := newSelFake(map[string]selReply{"gofmt -l .": {out: listing}})
 		if code, out, errb := selRun(func(e env, a []string) int { return gofmtVerb(e, a, f.host()) }, "", nil); code != 0 || out != "" || errb != "" {
 			t.Errorf("%s: exit %d, stdout %q, stderr %q", name, code, out, errb)
