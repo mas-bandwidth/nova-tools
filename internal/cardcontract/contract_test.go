@@ -33,6 +33,34 @@ func TestJobTextCarriesTheAttemptBefore(t *testing.T) {
 	assert.Contains(t, For("plain").JobText(f, s), "verdict: ok | broken")
 }
 
+// A read's JOB.md carries the four checks readers make before approving: truth of
+// a stated reason against the code, sentence completeness, edits inside PATHS, and
+// references after a rename.
+func TestJobTextOfAReadCarriesTheFourReaderChecks(t *testing.T) {
+	t.Parallel()
+	f := Frame{Kind: "read", Card: "c1.r1", Attempt: 1, Repo: cardURL, BaseRef: "main", Branch: "sprint/c1.r1"}
+	s := Staged{Job: "/j", Repo: "/j/repo", Head: "0123456789abcdef0123456789abcdef01234567", Start: "abcdef0123456789abcdef0123456789abcdef01"}
+	checks := []string{
+		"Four checks every read makes before an approval:",
+		"Truth of a stated reason against the code",
+		"Sentence completeness",
+		"Edits inside PATHS",
+		"References after a rename",
+	}
+	for _, family := range []string{"claude", "openai", "plain"} {
+		text := For(family).JobText(f, s)
+		for _, want := range checks {
+			assert.Contains(t, text, want, "%s missing check %q", family, want)
+		}
+	}
+	// Work cards do not carry the reader checks
+	fWork := Frame{Kind: "work", Card: "c1.w1", Attempt: 1, Repo: cardURL, BaseRef: "main", Branch: "sprint/c1.w1"}
+	for _, family := range []string{"claude", "openai", "plain"} {
+		text := For(family).JobText(fWork, s)
+		assert.NotContains(t, text, "Four checks every read makes before an approval", "%s work card has reader checks", family)
+	}
+}
+
 // A rework's JOB.md says, right after the attempt line, why the attempt exists, what a reader
 // found and what the coordinator asks, then to do that first; a line with no value is left out.
 func TestJobTextOfAReworkSaysWhyAndWhatToDoFirst(t *testing.T) {
