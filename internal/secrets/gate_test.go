@@ -63,6 +63,9 @@ func gateSealedFile() string {
 		"        - recipient: " + gateSeatKey + "\n" +
 		"          enc: |\n" +
 		"            -----BEGIN AGE ENCRYPTED FILE-----\n" +
+		"        - recipient: " + gateRecoveryKey + "\n" +
+		"          enc: |\n" +
+		"            -----BEGIN AGE ENCRYPTED FILE-----\n" +
 		"    lastmodified: \"2026-09-17T00:00:00Z\"\n" +
 		"    mac: ENC[AES256_GCM,data:aaaaaaaa,iv:bbbbbbbb,tag:cccccccc,type:str]\n" +
 		"GH_TOKEN: ENC[AES256_GCM,data:xyz,iv:abc,tag:def,type:str]\n"
