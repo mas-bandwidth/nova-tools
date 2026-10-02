@@ -125,17 +125,17 @@ field and refuses a value outside its type, naming every problem in one line.
 
 A machine of the fleet, named by its tailnet host: `ssh <name>` reaches it
 ("All fleet machines *must* be on the tailnet. This is a hard requirement."),
-so there is no address field. The row is exactly the five declared facts
+so there is no address field. The row is exactly the six declared facts
 something reads, "not invented rando stuff".
 
 ```
 nova-config machine add m2 --user gaffer --seat swarm-m2 --slots 40 --runners 0 --width 32 --as f1
 CONFIG ADD kind=machine name=m2 rev=1
-nova-config machine add m1 --user nova --seat m1 --slots 64 --runners 1 --width 16 --as f1
+nova-config machine add m1 --user nova --seat m1 --slots 64 --runners 1 --width 16 --tla true --as f1
 CONFIG ADD kind=machine name=m1 rev=2
 nova-config machine list
-MACHINE name=m1 user=nova seat=m1 slots=64 runners=1 width=16 note=-
-MACHINE name=m2 user=gaffer seat=swarm-m2 slots=40 runners=0 width=32 note=-
+MACHINE name=m1 user=nova seat=m1 slots=64 runners=1 width=16 tla=true note=-
+MACHINE name=m2 user=gaffer seat=swarm-m2 slots=40 runners=0 width=32 tla=false note=-
 CONFIG LIST kind=machine rows=2
 ```
 
@@ -144,7 +144,10 @@ nova-secrets seat; `--slots` the machine ceiling apply writes
 (`machine:<m>:ceiling`), which the friends' desired slots must fit under, and
 not the sprint's width; `--runners` how many CI runners it hosts (0, the
 default, hosts none); `--width` the most work cards the sprint's member on it
-runs at once (0, the default, is no member).
+runs at once (0, the default, is no member); `--tla` whether it is a TLC record
+machine (false, the default, is none): the inventory's `tla` group, where the
+tools play holds the pinned TLC jar, and the machines `tlacheck run --bench
+any` picks from (tla/README.md, "The record machines").
 
 Measured facts (os, arch, cores, memory) are never typed: "I like measured
 facts coming live ... It's more robust." With a Redis named (`--redis`, or
@@ -154,8 +157,8 @@ beat does not carry yet and `beat=none` for a machine that has never beaten:
 
 ```
 nova-config machine list --redis db1:6380
-MACHINE name=m1 user=nova seat=m1 slots=64 runners=1 width=16 note=- beat=none
-MACHINE name=m2 user=gaffer seat=swarm-m2 slots=40 runners=0 width=32 note=- os=- arch=- cores=64 memory_gb=- beat=2026-09-27T03:00:00Z
+MACHINE name=m1 user=nova seat=m1 slots=64 runners=1 width=16 tla=true note=- beat=none
+MACHINE name=m2 user=gaffer seat=swarm-m2 slots=40 runners=0 width=32 tla=false note=- os=- arch=- cores=64 memory_gb=- beat=2026-09-27T03:00:00Z
 CONFIG LIST kind=machine rows=2
 ```
 
@@ -281,7 +284,7 @@ CONFIG SET kind=loop name=reader-m1 rev=14 changed=width
 nova-config loop show reader-m1
 LOOP name=reader-m1 machine=m1 argv=["/opt/bin/nova-swarm","member","--reader"] seat=s-m1 keys=A_KEY,B_KEY every=0 keepalive=true width=16 enabled=true created=2026-09-30T02:00:00Z updated=2026-09-30T02:10:00Z command=["/opt/bin/nova-swarm","member","--reader","--width","16"]
 nova-config machine show m1
-MACHINE name=m1 user=u1 seat=s-m1 slots=4 runners=0 width=4 note=- created=2026-09-30T02:00:00Z updated=2026-09-30T02:00:00Z loops=reader-m1,refresh-m1
+MACHINE name=m1 user=u1 seat=s-m1 slots=4 runners=0 width=4 tla=false note=- created=2026-09-30T02:00:00Z updated=2026-09-30T02:00:00Z loops=reader-m1,refresh-m1
 ```
 
 `--every <seconds>` runs it periodically and `--keepalive true` keeps a

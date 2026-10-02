@@ -166,6 +166,9 @@ func TestMigrationTwelveFillsTheOldWidth(t *testing.T) {
 				require.NoError(t, err, q)
 			}
 			require.NoError(t, st.applyOne(ctx, twelve))
+			for _, m := range all[12:] { // the rows are read with the kind as it is now
+				require.NoError(t, st.applyOne(ctx, m), "migration %s", m.Name)
+			}
 			widths := func() map[string]string {
 				t.Helper()
 				// by SQL: the store at version 12 has no note column, which List reads

@@ -1,9 +1,10 @@
 # A fixture of the applied state: what `nova-config inventory --fixture` reads in
 # place of the store. Two machines, the fleet row, and their loops: a member kept
 # alive with two secrets from its seat, and a periodic loop written disabled.
+# bench-b is a TLC record machine (tla: true), the tla group's one host.
 machines:
   bench-a: {user: nova, seat: bench-a, slots: 2, runners: 0, os: darwin, arch: arm64}
-  bench-b: {user: nova, seat: bench-b, slots: 4, runners: 1, os: linux, arch: amd64}
+  bench-b: {user: nova, seat: bench-b, slots: 4, runners: 1, tla: true, os: linux, arch: amd64}
 fleet: {store: bench-b, coordinator: bench-a, redis_port: 6380, pg_dsn: postgres://nova_config@localhost:5432/nova}
 loops:
   member-bench-b:

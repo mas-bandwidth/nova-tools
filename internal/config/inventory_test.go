@@ -66,7 +66,7 @@ func TestBuildInventoryFromTheAppliedState(t *testing.T) {
 	alpha, beta := inv.Meta.Hostvars["bench-alpha"], inv.Meta.Hostvars["bench-beta"]
 	assert.Equal(t, map[string]any{
 		"ansible_host": "bench-alpha", "ansible_user": "user-a", "nova_seat": "seat-a", "slots": 64, "runners": 1,
-		"kind": "machine", "ansible_connection": "local", "nova_redis_port": 6380, "nova_redis_addr": "bench-beta:6380", "nova_pg_dsn": "postgres://nova_config@localhost:5432/nova",
+		"kind": "machine", "nova_tla": false, "ansible_connection": "local", "nova_redis_port": 6380, "nova_redis_addr": "bench-beta:6380", "nova_pg_dsn": "postgres://nova_config@localhost:5432/nova",
 		"nova_loops": []InventoryLoop{{Name: "tick", Argv: []string{"nova-sprint", "run"}, Keys: []string{}, Every: 5, Log: "~/nova-bench/loops/tick.log"}},
 	}, alpha)
 	assert.Equal(t, "linux", beta["nova_os"])
@@ -215,7 +215,7 @@ func TestBuildInventoryOfAnEmptyStore(t *testing.T) {
 	require.NoError(t, err)
 	var parsed map[string]map[string]any
 	require.NoError(t, json.Unmarshal(raw, &parsed))
-	for _, g := range []string{"all", "benches", "coordinator", "store", "store_deployer", "runners"} {
+	for _, g := range []string{"all", "benches", "coordinator", "store", "store_deployer", "runners", "tla"} {
 		assert.Equal(t, []any{}, parsed[g]["hosts"], g)
 	}
 	// A store no kind was applied to has no revisions: an empty object, never null.
@@ -249,7 +249,7 @@ loops:
 `)
 	snap, err := LoadFixture(full)
 	require.NoError(t, err)
-	assert.Equal(t, View{"user": "user-a", "seat": "seat-a", "slots": "4", "runners": "1"}, snap.Machines["bench-alpha"])
+	assert.Equal(t, View{"user": "user-a", "seat": "seat-a", "slots": "4", "runners": "1", "tla": "false"}, snap.Machines["bench-alpha"])
 	assert.Equal(t, &Beat{OS: "darwin", Arch: "arm64"}, snap.Beats["bench-alpha"])
 	assert.NotContains(t, snap.Beats, "bench-beta")
 	assert.Equal(t, View{"store": "bench-beta", "coordinator": "bench-alpha", "redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova"}, snap.Fleet)
@@ -293,4 +293,34 @@ func TestAFixtureOfTheWrongShapeIsRefusedInOneLine(t *testing.T) {
 	assert.NotContains(t, msg, "\n")
 	assert.Contains(t, msg, "is not the fixture's shape: \"yaml: unmarshal errors: line 1: cannot unmarshal !!seq into config.fixture\"")
 	assert.Contains(t, msg, "want a mapping with machines")
+}
+
+// A machine row's tla fact is the inventory's tla group and its nova_tla
+// host variable: the tools play installs the pinned TLC jar on exactly those
+// machines (fleet/tools.yml, the tla play). A view written before the field
+// existed (no tla key) is no record machine.
+func TestTLAMachinesAreTheTLAGroup(t *testing.T) {
+	t.Parallel()
+	s := snapshot(nil)
+	s.Machines["bench-beta"]["tla"] = "true"
+	s.Machines["bench-gamma"] = View{"user": "user-c", "seat": "seat-c", "slots": "8", "runners": "0", "tla": "false"}
+	inv, err := BuildInventory(s, "")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"bench-beta"}, inv.TLA.Hosts)
+	assert.Equal(t, true, inv.Meta.Hostvars["bench-beta"]["nova_tla"])
+	assert.Equal(t, false, inv.Meta.Hostvars["bench-gamma"]["nova_tla"])
+	assert.Equal(t, false, inv.Meta.Hostvars["bench-alpha"]["nova_tla"], "a view with no tla key")
+
+	path := filepath.Join(t.TempDir(), "fx.yml")
+	require.NoError(t, os.WriteFile(path, []byte("machines:\n  bench-alpha: {user: u, seat: s, slots: 1, tla: true}\n  bench-beta: {user: u, seat: s, slots: 1}\nfleet: {redis_port: 6380, pg_dsn: postgres://u@localhost:5432/nova}\n"), 0o600))
+	snap, err := LoadFixture(path)
+	require.NoError(t, err)
+	assert.Equal(t, "true", snap.Machines["bench-alpha"]["tla"])
+	assert.Equal(t, "false", snap.Machines["bench-beta"]["tla"])
+	inv, err = BuildInventory(snap, "")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"bench-alpha"}, inv.TLA.Hosts)
+	empty, err := BuildInventory(&Snapshot{Fleet: View{"redis_port": "6380", "pg_dsn": "postgres://user@localhost:5432/nova"}}, "")
+	require.NoError(t, err)
+	assert.Equal(t, []string{}, empty.TLA.Hosts, "an empty group is [], never null")
 }

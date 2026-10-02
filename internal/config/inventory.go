@@ -59,7 +59,9 @@ type AnsibleMeta struct {
 // AnsibleInventory is the standard Ansible dynamic inventory JSON
 // representation. store_deployer is the coordinator machine: it holds the
 // seat that loads the function library and the ACL onto the store
-// (fleet/tools.yml, fleet/redis.yml).
+// (fleet/tools.yml, fleet/redis.yml). tla is the machines whose row says
+// tla=true, the TLC record machines the tools play's tla play installs the
+// pinned jar on.
 type AnsibleInventory struct {
 	Meta          AnsibleMeta  `json:"_meta"`
 	All           AnsibleGroup `json:"all"`
@@ -68,6 +70,7 @@ type AnsibleInventory struct {
 	Store         AnsibleGroup `json:"store"`
 	StoreDeployer AnsibleGroup `json:"store_deployer"`
 	Runners       AnsibleGroup `json:"runners"`
+	TLA           AnsibleGroup `json:"tla"`
 }
 
 // InventoryLoop is one loop record as a host variable: the loop kind's
@@ -105,7 +108,7 @@ func BuildInventory(snap *Snapshot, localHost string) (*AnsibleInventory, error)
 	}
 
 	hostvars := make(map[string]map[string]any, len(names))
-	var runnerHosts []string
+	runnerHosts, tlaHosts := []string{}, []string{}
 	for _, m := range names {
 		v := snap.Machines[m]
 		slots, _ := strconv.Atoi(v["slots"])
@@ -119,6 +122,8 @@ func BuildInventory(snap *Snapshot, localHost string) (*AnsibleInventory, error)
 			"slots":        slots,
 			"runners":      runners,
 			"kind":         KindMachine,
+			// a view written before the field existed has no tla: none
+			"nova_tla": v["tla"] == "true",
 		}
 		if u := v["user"]; u != "" {
 			hv["ansible_user"] = u
@@ -146,6 +151,9 @@ func BuildInventory(snap *Snapshot, localHost string) (*AnsibleInventory, error)
 		if runners > 0 {
 			runnerHosts = append(runnerHosts, m)
 		}
+		if v["tla"] == "true" {
+			tlaHosts = append(tlaHosts, m)
+		}
 	}
 
 	one := func(name string) []string {
@@ -161,9 +169,6 @@ func BuildInventory(snap *Snapshot, localHost string) (*AnsibleInventory, error)
 	revs := map[string]int64{}
 	maps.Copy(revs, snap.Revs)
 	vars["nova_config_rev"] = revs
-	if runnerHosts == nil {
-		runnerHosts = []string{}
-	}
 	return &AnsibleInventory{
 		Meta:          AnsibleMeta{Hostvars: hostvars},
 		All:           AnsibleGroup{Hosts: append([]string{}, names...), Vars: vars},
@@ -172,6 +177,7 @@ func BuildInventory(snap *Snapshot, localHost string) (*AnsibleInventory, error)
 		Store:         AnsibleGroup{Hosts: one(snap.Fleet["store"])},
 		StoreDeployer: AnsibleGroup{Hosts: one(snap.Fleet["coordinator"])},
 		Runners:       AnsibleGroup{Hosts: runnerHosts},
+		TLA:           AnsibleGroup{Hosts: tlaHosts},
 	}, nil
 }
 
@@ -362,6 +368,7 @@ type fixture struct {
 		Seat    string `yaml:"seat"`
 		Slots   int    `yaml:"slots"`
 		Runners int    `yaml:"runners"`
+		TLA     bool   `yaml:"tla"`
 		// OS and Arch stand in for the machine's beat.
 		OS   string `yaml:"os"`
 		Arch string `yaml:"arch"`
@@ -408,14 +415,14 @@ func LoadFixture(path string) (*Snapshot, error) {
 	dec := yaml.NewDecoder(strings.NewReader(string(raw)))
 	dec.KnownFields(true)
 	if err := dec.Decode(&f); err != nil {
-		return nil, fmt.Errorf("--fixture %s is not the fixture's shape: %s; want a mapping with machines (each user, seat, slots, runners, os, arch), fleet (store, coordinator) and loops (docs/FLEET.md, \"A fixture inventory\"; fleet/testdata/inventory-fixture.yml is one)", path, oneline.Quote(strings.Join(strings.Fields(err.Error()), " ")))
+		return nil, fmt.Errorf("--fixture %s is not the fixture's shape: %s; want a mapping with machines (each user, seat, slots, runners, tla, os, arch), fleet (store, coordinator) and loops (docs/FLEET.md, \"A fixture inventory\"; fleet/testdata/inventory-fixture.yml is one)", path, oneline.Quote(strings.Join(strings.Fields(err.Error()), " ")))
 	}
 	snap := &Snapshot{Machines: map[string]View{}, Beats: map[string]*Beat{}, Revs: map[string]int64{}}
 	for m, r := range f.Machines {
 		if !NamePattern.MatchString(m) {
 			return nil, fmt.Errorf("--fixture %s: machine %q is not a row name (lower-case letters, digits and dashes)", path, m)
 		}
-		snap.Machines[m] = View{"user": r.User, "seat": r.Seat, "slots": strconv.Itoa(r.Slots), "runners": strconv.Itoa(r.Runners)}
+		snap.Machines[m] = View{"user": r.User, "seat": r.Seat, "slots": strconv.Itoa(r.Slots), "runners": strconv.Itoa(r.Runners), "tla": strconv.FormatBool(r.TLA)}
 		if r.OS != "" || r.Arch != "" {
 			snap.Beats[m] = &Beat{OS: r.OS, Arch: r.Arch}
 		}

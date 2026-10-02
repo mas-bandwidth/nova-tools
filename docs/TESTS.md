@@ -697,7 +697,7 @@ Postgres and a throwaway Redis.
 
 ```text
 $ nova-config migrate --file try.json
-CONFIG MIGRATE file=try.json from=0 to=15 applied=15
+CONFIG MIGRATE file=try.json from=0 to=16 applied=16
 
 $ nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --as a1 --file try.json
 CONFIG ADD kind=machine name=m1 rev=1
@@ -706,11 +706,11 @@ $ nova-config machine set m1 --width 6 --as a1 --file try.json
 CONFIG SET kind=machine name=m1 rev=2 changed=width
 
 $ nova-config machine list --file try.json
-MACHINE name=m1 user=nova seat=s1 slots=8 runners=0 width=6 note=-
+MACHINE name=m1 user=nova seat=s1 slots=8 runners=0 width=6 tla=false note=-
 CONFIG LIST kind=machine rows=1
 
 $ nova-config machine history m1 --file try.json
-HISTORY id=1 kind=machine name=m1 op=add actor=a1 at=2026-10-02T03:18:20Z note=- runners=0 seat=s1 slots=8 user=nova width=4
+HISTORY id=1 kind=machine name=m1 op=add actor=a1 at=2026-10-02T03:18:20Z note=- runners=0 seat=s1 slots=8 tla=false user=nova width=4
 HISTORY id=2 kind=machine name=m1 op=set actor=a1 at=2026-10-02T03:18:20Z width=4>6
 CONFIG HISTORY kind=machine name=m1 changes=2
 ```

@@ -44,6 +44,9 @@ func TestMigrationFifteenAddsTheNoteEmptyToEveryOldRow(t *testing.T) {
 		require.NoError(t, err, q)
 	}
 	require.NoError(t, st.applyOne(ctx, fifteen))
+	for _, m := range all[15:] { // the row is read with the kind as it is now
+		require.NoError(t, st.applyOne(ctx, m), "migration %s", m.Name)
+	}
 	m1, found, err := st.Get(ctx, KindMachine, "m1")
 	require.NoError(t, err)
 	require.True(t, found)
