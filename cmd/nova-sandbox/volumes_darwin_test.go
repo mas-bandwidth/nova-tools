@@ -35,6 +35,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/filelock"
 )
 
 // fakeDiskutil stands in for /usr/sbin/diskutil. It answers the three commands Create
@@ -415,6 +417,35 @@ func TestTheCreateLockIsAnExclusiveFlock(t *testing.T) {
 	err = syscall.Flock(int(other.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 	require.NoError(t, err, "the create lock was not released: %v", err)
 	_ = syscall.Flock(int(other.Fd()), syscall.LOCK_UN)
+}
+
+// The compatibility witness for the other direction: during an upgrade an OLD nova-sandbox
+// (before internal/filelock) can hold the create lock while a new one asks. The old binary
+// took a bare `flock(LOCK_EX)` on the same file, so that is what is staged here, on a
+// second descriptor. While it is held the new lock must refuse as held -- never take it
+// beside the old holder -- and once the old one lets go the new lock must take it. The
+// lock file the old binary made (0600, empty) must also be one the new lock opens. Both
+// binaries lock the same file with the same kernel lock (darwin only), so there is no
+// mixed-version hole; this test is what says so. lockVolumeCreate is filelock.Lock on
+// this path with production's bound, so the take is asked of filelock directly, on the
+// test's own file, with no package-level swap.
+func TestAnOldBinarysCreateLockKeepsTheNewOneOut(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "volume-create.lock")
+
+	oldBinary, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+	require.NoError(t, err, "stage the old binary's lock file: %v", err)
+	defer oldBinary.Close()
+	require.NoError(t, syscall.Flock(int(oldBinary.Fd()), syscall.LOCK_EX|syscall.LOCK_NB), "stage the old binary's flock")
+
+	_, err = filelock.TryLock(path, "witness")
+	require.Error(t, err, "the new lock was taken while an old binary held the same file; two diskutil runs could overlap across an upgrade")
+	require.True(t, errors.Is(err, filelock.ErrHeld), "an old binary's flock was not read as held: %v", err)
+
+	require.NoError(t, syscall.Flock(int(oldBinary.Fd()), syscall.LOCK_UN))
+	l, err := filelock.TryLock(path, "witness")
+	require.NoError(t, err, "the new lock could not be taken once the old binary let go: %v", err)
+	require.NoError(t, l.Unlock())
 }
 
 // The lock file lives under the caller's own cache directory and nowhere else. A lock at
