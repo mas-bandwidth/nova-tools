@@ -105,51 +105,81 @@ func TestMigrateOnAnEmptyDatabaseTwice(t *testing.T) {
 	}
 }
 
-// TestMigrationTwelveFillsWidthWithSlots: 0012 adds the machine's width and
-// fills it with each existing row's slots (charging nothing: the friends'
-// machines came from live beats a migration cannot read); a width set after
-// it survives the file run again, and migrate after it applies nothing.
-func TestMigrationTwelveFillsWidthWithSlots(t *testing.T) {
+// TestMigrationTwelveFillsTheOldWidth: 0012 adds the machine's width and
+// fills it with the old derived width's beat-free rule (the slots of every
+// friend charged to the fleet row's coordinator machine; every other machine
+// width = slots; never below 0); a width set after it survives the file run
+// again, and migrate after it applies nothing.
+func TestMigrationTwelveFillsTheOldWidth(t *testing.T) {
 	t.Parallel()
-	ctx := context.Background()
-	st, err := OpenPG(ctx, server.Database(t))
-	require.NoError(t, err)
-	defer st.Close()
-	all, err := Migrations()
-	require.NoError(t, err)
-	var twelve Migration
-	for _, m := range all {
-		if m.Version == 12 {
-			twelve = m
-			break
-		}
-		require.NoError(t, st.applyOne(ctx, m), "migration %s", m.Name)
+	machines := `INSERT INTO config.machines (name, "user", seat, slots, runners) VALUES ('m1', 'u', 's', 144, 0), ('m2', 'u', 's', 8, 1), ('m3', 'u', 's', 0, 0)`
+	cases := []struct {
+		name  string
+		setup []string
+		want  map[string]string
+	}{
+		{name: "friends charged to the coordinator",
+			setup: []string{machines, `INSERT INTO config.friends (name, slots) VALUES ('f1', 64), ('f2', 64), ('f3', 0)`, `UPDATE config.fleet SET coordinator = 'm1'`},
+			want:  map[string]string{"m1": "16", "m2": "8", "m3": "0"}},
+		{name: "friends over the coordinator's slots leave it 0",
+			setup: []string{machines, `INSERT INTO config.friends (name, slots) VALUES ('f1', 4)`, `UPDATE config.fleet SET coordinator = 'm2'`},
+			want:  map[string]string{"m1": "144", "m2": "4", "m3": "0"}},
+		{name: "a coordinator with no slots stays 0",
+			setup: []string{machines, `INSERT INTO config.friends (name, slots) VALUES ('f1', 4)`, `UPDATE config.fleet SET coordinator = 'm3'`},
+			want:  map[string]string{"m1": "144", "m2": "8", "m3": "0"}},
+		{name: "no coordinator charges nothing",
+			setup: []string{machines, `INSERT INTO config.friends (name, slots) VALUES ('f1', 64)`},
+			want:  map[string]string{"m1": "144", "m2": "8", "m3": "0"}},
+		{name: "no friends charges nothing",
+			setup: []string{machines, `UPDATE config.fleet SET coordinator = 'm1'`},
+			want:  map[string]string{"m1": "144", "m2": "8", "m3": "0"}},
 	}
-	require.Equal(t, "0012_machine_width.sql", twelve.Name)
-	_, err = st.db.ExecContext(ctx, `INSERT INTO config.machines (name, "user", seat, slots, runners) VALUES ('m1', 'u', 's', 160, 0), ('m2', 'u', 's', 8, 1), ('m3', 'u', 's', 0, 0)`)
-	require.NoError(t, err)
-	require.NoError(t, st.applyOne(ctx, twelve))
-	widths := func() map[string]string {
-		t.Helper()
-		rows, err := st.List(ctx, KindMachine)
-		require.NoError(t, err)
-		out := map[string]string{}
-		for _, r := range rows {
-			out[r.Name] = r.Fields["width"]
-		}
-		return out
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			st, err := OpenPG(ctx, server.Database(t))
+			require.NoError(t, err)
+			defer st.Close()
+			all, err := Migrations()
+			require.NoError(t, err)
+			var twelve Migration
+			for _, m := range all {
+				if m.Version == 12 {
+					twelve = m
+					break
+				}
+				require.NoError(t, st.applyOne(ctx, m), "migration %s", m.Name)
+			}
+			require.Equal(t, "0012_machine_width.sql", twelve.Name)
+			for _, q := range tc.setup {
+				_, err = st.db.ExecContext(ctx, q)
+				require.NoError(t, err, q)
+			}
+			require.NoError(t, st.applyOne(ctx, twelve))
+			widths := func() map[string]string {
+				t.Helper()
+				rows, err := st.List(ctx, KindMachine)
+				require.NoError(t, err)
+				out := map[string]string{}
+				for _, r := range rows {
+					out[r.Name] = r.Fields["width"]
+				}
+				return out
+			}
+			assert.Equal(t, tc.want, widths(), "the fill")
+			_, _, err = st.Update(ctx, KindMachine, "m2", map[string]string{"width": "3"}, "t")
+			require.NoError(t, err)
+			_, err = st.db.ExecContext(ctx, twelve.SQL)
+			require.NoError(t, err, "the file run again")
+			assert.Equal(t, "3", widths()["m2"], "the file run again overwrote a width set since")
+			from, to, applied, err := st.Migrate(ctx)
+			require.NoError(t, err)
+			assert.Equal(t, len(all), from)
+			assert.Equal(t, len(all), to)
+			assert.Empty(t, applied, "migrate after the fill applied %v", applied)
+		})
 	}
-	require.Equal(t, map[string]string{"m1": "160", "m2": "8", "m3": "0"}, widths(), "the fill is width = slots")
-	_, _, err = st.Update(ctx, KindMachine, "m1", map[string]string{"width": "32"}, "t")
-	require.NoError(t, err)
-	_, err = st.db.ExecContext(ctx, twelve.SQL)
-	require.NoError(t, err, "the file run again")
-	require.Equal(t, map[string]string{"m1": "32", "m2": "8", "m3": "0"}, widths(), "the file run again overwrote a width set since")
-	from, to, applied, err := st.Migrate(ctx)
-	require.NoError(t, err)
-	require.Equal(t, len(all), from)
-	require.Equal(t, len(all), to)
-	require.Empty(t, applied, "migrate after the fill applied %v", applied)
 }
 
 // TestPostgresStoreKeepsTheContract runs the one store contract the Mem

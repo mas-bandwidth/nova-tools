@@ -150,6 +150,19 @@ nova-config machine width m1 --json
 {"machine":"m1","width":32,"member":true}
 ```
 
+**Migrating to a set width.** Before migration 0012 the width was derived: a
+machine's `slots` less the `slots` of the friends charged to it, a friend
+charged to the machine her live beat named, else to the fleet row's
+coordinator machine. 0012 adds `width` and fills it with that rule's
+beat-free part, since a migration reads no beats: every friend's `slots` are
+charged to the coordinator machine (never below 0), every other machine gets
+its `slots`. The fill is the old width exactly when no friend with slots had
+a beat naming another machine. To see any machine where it is not, compare
+with the fleet table the last sync wrote under the old rule, before syncing
+again: `nova-sprint fleet sync --check` prints each width that differs and
+writes nothing; set each one back with `nova-config machine set <m> --width
+<n> --as <name>`.
+
 `machine self` prints this machine's own name, so a process learns it and types
 none: `NOVA_MACHINE`, else the tailnet's name for the host when a tailnet is
 running, else the first label of the hostname, lower-case. It opens no store.

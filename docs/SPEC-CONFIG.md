@@ -161,8 +161,11 @@ take, by a lease from the machine's one slot store, never in the width.
 `nova-config machine width <name>` prints it (`Widths`,
 `internal/config/width.go`), and `nova-sprint fleet sync` moves it to the
 fleet table. Until migration 0012 the width was derived (the machine's `slots`
-less the `slots` of the friends charged to it by their beats); 0012 filled
-`width` with each machine's `slots`.
+less the `slots` of the friends charged to it: the machine a friend's beat
+named, else the fleet row's coordinator machine); 0012 filled `width` with
+the rule's beat-free part, every friend charged to the coordinator machine
+(never below 0) and every other machine its `slots`
+(docs/nova-config/README.md, "Migrating to a set width").
 
 **A machine's own name.** `nova-config machine self` prints the name this
 machine has in the inventory, so no name is typed on the machine it names:
@@ -305,7 +308,8 @@ config.history           (id bigserial PK, kind, name, op add|set|remove,
                           before jsonb, after jsonb, actor, at timestamptz)
 config.machines          (name PK, "user", seat, slots, runners,
                           created_at, updated_at; width added by 0012,
-                          filled with slots)
+                          filled with slots less the friends' slots on the
+                          coordinator machine, slots elsewhere)
 config.fleet             (name PK = 'fleet', store -> machines.name,
                           coordinator -> machines.name, created_at, updated_at;
                           the one row inserted by the migration)
