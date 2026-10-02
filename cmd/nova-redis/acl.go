@@ -21,6 +21,7 @@ package main
 // admin user that may run ACL, through connect as every nova-redis verb does.
 
 import (
+	"cmp"
 	"context"
 	"flag"
 	"fmt"
@@ -301,9 +302,20 @@ func aclVerb(args []string, stdout, stderr io.Writer, d deps, open aclOpener) in
 		}
 	}
 	if len(unsourced) > 0 {
+		// the remedy names a source for every user the store lacks, keeping
+		// the ones given, so it is one paste
+		remedy := "nova-redis acl apply " + store.flags()
+		for _, u := range differ {
+			if !live[u.Name].Exists {
+				remedy += " --password-env-for " + u.Name + "=" + cmp.Or(sources[u.Name], "<VARIABLE>")
+			}
+		}
+		if *dryRun {
+			remedy += " --dry-run"
+		}
 		r.line(false, "ACL APPLY REFUSED", "users", len(users), "missing", free(strings.Join(unsourced, ",")),
 			"", why("a user the store lacks is created only with a password"),
-			"", next("nova-redis acl apply "+store.flags()+" --password-env-for "+unsourced[0]+"=<VARIABLE> (the variable set, under nova-secrets exec --only <VARIABLE>)"))
+			"", next(remedy+" (each variable set, under nova-secrets exec --only <VARIABLE>)"))
 		return r.done(1)
 	}
 	if *dryRun {

@@ -220,3 +220,15 @@ func TestParseGetUser(t *testing.T) {
 	assert.Equal(t, redisacl.Live{Exists: true, Commands: "-@all", Channels: "&*", Selectors: 1}, parseGetUser(resp2))
 	assert.Equal(t, redisacl.Live{}, parseGetUser(nil))
 }
+
+// An apply refused for users the store lacks names a password source for
+// every one of them in its one remedy, so the remedy is one paste (USE
+// defect 5: it named the first of four).
+func TestACLApplyRefusalNamesASourceForEveryMissingUser(t *testing.T) {
+	t.Parallel()
+	f := &fakeACL{live: map[string]redisacl.Live{}, cat: redisacl.Catalog{}}
+	code, out, _ := aclRun(t, f, append([]string{"apply", "--dry-run", "--password-env-for", "bench=NEW_PW"}, login4...)...)
+	assert.Equal(t, 1, code, out)
+	assert.Contains(t, out, "ACL APPLY REFUSED users=4 missing=coordinator,ns-table,ns-friend: ", out)
+	assert.Contains(t, out, "; run: nova-redis acl apply --addr 127.0.0.1:6379 --user admin --password-env ADMIN_PW --password-env-for coordinator=<VARIABLE> --password-env-for bench=NEW_PW --password-env-for ns-table=<VARIABLE> --password-env-for ns-friend=<VARIABLE> --dry-run (", "one source per missing user, the one given kept: %s", out)
+}
