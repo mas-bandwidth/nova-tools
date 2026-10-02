@@ -573,7 +573,7 @@ again (`nova-secrets place ... --machine <name> --secret <NAME>`), or remove the
 ```
 nova-secrets seal --store ~/secrets --as <seat> --key ~/.config/nova-secrets/<seat>.key \
   --sops /opt/homebrew/bin/sops --name GH_TOKEN
-SECRETS SEAL OK name=GH_TOKEN seat=<seat> merged
+SECRETS SEAL OK name=GH_TOKEN seat=<seat> pr=#<n> merged
 ```
 
 **What it asserts.** That the value the caller pasted is now the `NAME` entry of
@@ -605,8 +605,8 @@ still sees HEAD matching the remote-tracking ref. The seal commit remains on
 ```
 nova-secrets seat add --store ~/secrets --as <seat> --pub <age-public-key> --from <source-seat> \
   --only NAME,... --key ~/.config/nova-secrets/<source-seat>.key --sops /opt/homebrew/bin/sops
-SECRETS SEAT ADD NEXT: commit .sops.yaml and air.yaml on a branch and open the pull request the store's gate reviews
-SECRETS SEAT ADD OK as=<seat> from=<source-seat> keys=<count> file=<seat>.yaml
+SECRETS SEAT ADD NEXT: commit .sops.yaml and <seat>.yaml on a branch and open the pull request the store's gate reviews
+SECRETS SEAT ADD OK as=<seat> from=<source-seat> keys=<count> file=<seat>.yaml rule=<n>
 ```
 
 **The circle it breaks.** `seal` cannot give a NEW seat its first value, and no flag makes it
@@ -647,7 +647,7 @@ gate`) reads the diff before the review, as it does for every other recipient ch
 ```
 nova-secrets seat inject --store ~/secrets --as <seat> --from <source-seat> --only NAME \
   --key ~/.config/nova-secrets/<source-seat>.key --sops /opt/homebrew/bin/sops
-SECRETS SEAT INJECT OK seat=<seat> from=<source-seat> names=<count> merged
+SECRETS SEAT INJECT OK seat=<seat> from=<source-seat> names=<count> pr=#<n> merged
 ```
 
 **The second circle.** A value one seat holds must sometimes reach seats that already exist.
