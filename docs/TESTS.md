@@ -85,12 +85,12 @@ BUS OK notes=4 lanes=2 receipts=1 participants=3 warn=0
 $ nova-bus inbox --bus ./bus --as Bo --receipt-max-words 40 --full --open
 INBOX SCOPE mode=full cursor=- changed=0 carrying=1
 INBOX OPEN carrying=1 heard=0 large=false remedy=inbox --advance
-INBOX NOTE id=note from=sender addr=to at=now path=from-sender/note.md: Yes, on the merge queue too
+INBOX NOTE id=ada-0f1e2d3c4b5a from=Ada addr=to at=2026-09-09T12:34:56Z path=from-ada/2026-09-09T1234Z-yes-on-the-merge-queue-too-0f1e2d3c4b5a.md: Yes, on the merge queue too
 INBOX OK as=Bo carrying=1 open=1 notes=1 receipts=0 heard=0 unaddressed=0 unreadable=0
 
 $ nova-bus inbox --bus ./bus --as Bo --receipt-max-words 40 --full --bodies
 INBOX SCOPE mode=full cursor=- changed=0 carrying=1
-INBOX NOTE id=note from=sender addr=to at=now path=from-sender/note.md: Yes, on the merge queue too
+INBOX NOTE id=ada-0f1e2d3c4b5a from=Ada addr=to at=2026-09-09T12:34:56Z path=from-ada/2026-09-09T1234Z-yes-on-the-merge-queue-too-0f1e2d3c4b5a.md: Yes, on the merge queue too
 INBOX BODY id=ada-0f1e2d3c4b5a bytes=195
 Bo,
 
@@ -102,7 +102,7 @@ Ada
 INBOX BODY END id=ada-0f1e2d3c4b5a
 INBOX BODIES printed=1 bytes=195 oversize=0 gaps=0 drained=true complete=true next=-
 INBOX OPEN carrying=1 heard=0 large=false remedy=inbox --advance
-INBOX NOTE id=note from=sender addr=to at=now path=from-sender/note.md: Yes, on the merge queue too
+INBOX NOTE id=ada-0f1e2d3c4b5a from=Ada addr=to at=2026-09-09T12:34:56Z path=from-ada/2026-09-09T1234Z-yes-on-the-merge-queue-too-0f1e2d3c4b5a.md: Yes, on the merge queue too
 INBOX OK as=Bo carrying=1 open=1 notes=1 receipts=0 heard=0 unaddressed=0 unreadable=0
 
 $ nova-bus receipt --bus ./bus --as Bo --note ada-0f1e2d3c4b5a --remote origin --branch main
@@ -110,7 +110,7 @@ RECEIPT OK recorded=1 already=0 commit=9750ba9617d4a42a5fdedf372ec70132aa46f936 
 
 $ nova-bus inbox --bus ./bus --as Bo --receipt-max-words 40 --advance --legacy-now --remote origin --branch main
 INBOX SCOPE mode=full cursor=- changed=0 carrying=0
-INBOX LEGACY before=history notes=some unreadable=none
+INBOX LEGACY before=2026-09-12T20:15:33Z notes=1 unreadable=0
 INBOX OPEN carrying=0 heard=0 large=false remedy=inbox --advance
 INBOX OK as=Bo carrying=0 open=0 notes=0 receipts=0 heard=0 unaddressed=0 unreadable=0
 INBOX CURSOR commit=9750ba9617d4a42a5fdedf372ec70132aa46f936 carrying=0 pushed=true attempts=1
@@ -119,7 +119,7 @@ $ nova-bus draft --bus ./bus --as Bo --to Ada --subject gate > draft.md   # Stde
 ! DRAFT NOTE redirect this to a file, then send: nova-bus send --file <that file>
 
 $ nova-bus send --bus ./bus --file draft.md --as Bo --remote origin --branch main
-SEND OK id=note path=from-sender/note.md commit=commit pushed=true attempts=once wakes=once body_bytes=bytes
+SEND OK id=bo-8405301fd99d path=from-bo/2026-09-12T2015Z-gate-8405301fd99d.md commit=57dc978d3ad645788c4236b0da99b1c59f89282d pushed=true attempts=1 wakes=1 body_bytes=46
 
 $ nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --advance --remote origin --branch main
 INBOX REFUSED: the cursor 3f9a1c2b8d40e7c6a5b4938271605f4e3d2c1b0a is not an ancestor of HEAD, so a diff from it would report changes that are not changes and miss notes that are (a rewritten history, or a cursor from another branch); read once with --full, and --advance will replace it
@@ -127,9 +127,9 @@ INBOX REFUSED: the cursor 3f9a1c2b8d40e7c6a5b4938271605f4e3d2c1b0a is not an anc
 $ nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --full --advance --remote origin --branch main
 INBOX SCOPE mode=full cursor=- changed=0 carrying=3
 INBOX OPEN carrying=3 heard=1 large=false remedy=inbox --advance
-INBOX NOTE id=note from=sender addr=to at=now path=from-sender/note.md: gate
-INBOX HEARD id=note from=sender addr=to at=now path=from-sender/note.md: The runner skips some steps
-INBOX RECEIPT id=receipt from=sender addr=to at=now path=from-sender/receipt.md: Heard
+INBOX NOTE id=bo-8405301fd99d from=Bo addr=to at=2026-09-12T20:15:41Z path=from-bo/2026-09-12T2015Z-gate-8405301fd99d.md: gate
+INBOX HEARD id=bo-222222222222 from=Bo addr=to at=2026-09-09T14:00:00Z path=from-bo/2026-09-09T1400Z-the-windows-runner-222222222222.md: The Windows runner skips three steps
+INBOX RECEIPT id=bo-111111111111 from=Bo addr=to at=2026-09-09T13:00:00Z path=from-bo/2026-09-09T1300Z-heard-111111111111.md: Heard
 INBOX OK as=Ada carrying=3 open=2 notes=1 receipts=1 heard=1 unaddressed=0 unreadable=0
 INBOX CURSOR commit=57dc978d3ad645788c4236b0da99b1c59f89282d carrying=3 pushed=true attempts=1
 
@@ -140,7 +140,7 @@ INBOX OK as=Ada carrying=3 open=2 notes=1 receipts=1 heard=1 unaddressed=0 unrea
 
 $ nova-bus draft --bus ./bus --as Ada --reply-to gate --body-file reply.md --draft-dir ./drafts --remote origin --branch main
 DRAFT NOTE the bus had nothing new; this id was resolved against 36e7270d2e96325b3588828d17fb81a1aa918730
-DRAFT OK path=./drafts/reply.md re=note from=sender to="recipient" cc=- at=commit moved=false bytes=bytes
+DRAFT OK path=./drafts/2026-09-12T2015Z-re-bo-ce10834fbfea.md re=bo-ce10834fbfea from=Ada to="Bo" cc=- at=36e7270d2e96325b3588828d17fb81a1aa918730 moved=false bytes=86
 ```
 
 **Identity is the roster, not the shell.** `names` is the whole of it: a participant with a `lane` can send, one without a lane (Dana) can be written to and cannot write, and `--as` takes a name or any alias on that line — `--as "the archivist"` is Ada. There is no default `--as`, and a name the roster does not know is a refusal rather than a new participant.
