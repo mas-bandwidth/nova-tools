@@ -1489,11 +1489,11 @@ The per-binary deadline is thirty seconds rather than the five every other verb
 takes because of when this verb is run: right after `go install ./cmd/...`, on a
 directory of binaries this machine has never executed. The platform assesses the
 first run of a never-seen executable and charges it to that deadline — measured
-on a darwin/arm64 Studio at 164–571 ms cold against 5 ms warm when idle, and at
+against the worst case, and at
 a 7.03 s maximum while a tree compiled beside it, which is the state the
 `go install` one command earlier leaves the machine in. At five seconds that
 refused healthy binaries and named a build repair that would have found nothing
-([#890](https://github.com/mas-bandwidth/nova-tools/issues/890)). Lower it with
+. Lower it with
 `--timeout` on a bin whose binaries you have already been running.
 `diff` reads two such files and reports changed, added or removed entries without
 executing the binaries.
@@ -1510,7 +1510,7 @@ did not answer (`--max` caps them, with a `MORE` line) — the
 adopted 16, never the 32 `nova-*` executables a directory or `PATH` might hold.
 It writes no file and mirrors `report`'s read, so a recorded version is known
 without running a process; it exits 1 when any adopted tool does not answer
-([#622](https://github.com/mas-bandwidth/nova-tools/issues/622)).
+.
 
 Snapshot reads the version line with `internal/buildinfo`, the package that
 writes it. Named `key=value` extras, such as `nova-sandbox`'s `backend=` and
@@ -1905,7 +1905,7 @@ Each of these is refused (exit 2) before the dial, and the refusal names where t
 
 The user needs `FUNCTION LIST` for `fn check`, and `FUNCTION LIST` and `FUNCTION LOAD` for `fn load`. A user with `~* &* +@all -@dangerous` has both. `-h` or `--help` after a verb or a verb group (`nova-redis fn -h`), or `nova-redis help <verb>`, prints that verb's usage, its effect and every flag with what it wants, on stdout at exit 0, before anything is dialled. `nova-redis help` prints the whole usage.
 
-`fn load` replaces, so it belongs to the one place that deploys. Two deployers with different builds replace each other's library for as long as both run (`tla/RedisFn.tla`, `MCRedisFnTwoDeployers`). A tool on its way to an `FCALL` calls `redisfn.LoadMissing`, which never replaces a library (nova-tools #3620): nova-table does so on its first `Function not found` (see [nova-table](#nova-table)). The first run's refusals are in [TESTS.md](TESTS.md#nova-redis).
+`fn load` replaces, so it belongs to the one place that deploys. Two deployers with different builds replace each other's library for as long as both run (`tla/RedisFn.tla`, `MCRedisFnTwoDeployers`). A tool on its way to an `FCALL` calls `redisfn.LoadMissing`, which never replaces a library: nova-table does so on its first `Function not found` (see [nova-table](#nova-table)). The first run's refusals are in [TESTS.md](TESTS.md#nova-redis).
 
 ## nova-cairn
 
