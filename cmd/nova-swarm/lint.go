@@ -834,8 +834,8 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	// A template is printed verbatim and is not itself a card: `nova-swarm template --name
-	// <t>` piped into `lint --card` used to report result-first drift on the template's first
-	// line. The card templates now pass, and a template that is not a card answers
+	// <t>` piped into `lint --card` is read as the named template, not as a card: its first
+	// line would draw result-first drift. The card templates pass, and a template that is not a card answers
 	// by name rather than as a drift.
 	if tmpl := matchingTemplate(raw); tmpl != "" && tmpl != "card" {
 		if swarm.IsCardTemplate(tmpl) {
