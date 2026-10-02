@@ -10,7 +10,6 @@ const (
 	ReqRequired = "R" // Required always
 	ReqDone     = "D" // Required when status is DONE
 	ReqPass     = "P" // Required when DONE and CHECK=pass, optional otherwise
-	ReqOptional = "O" // Optional, type-checked when present
 	ReqUnknown  = "-" // Unknown for this kind, refused
 )
 
