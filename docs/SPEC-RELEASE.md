@@ -472,11 +472,14 @@ a tag is still refused on an open edge, and still waived only with the CHANGELOG
 **`release cycle`** is the fix-land-install cycle from the coordinator in one command: the tools play
 (`<source>/fleet/tools.yml`) with `--check`, then the play, limited to `--benches` and `localhost`, the
 build `--incremental --gate report --reason <why>`. The play seeds a new version's directory on each
-machine from the installed build's and sends only the files whose `SHA256SUMS` line differs.
-The seed is not verified: `nova-update`, the one binary the play runs there, is always compared with
-the build's and sent when it differs, and it verifies the whole set before its first rename, so a seed
-file corrupted on the machine refuses the install and the next run (the directory begun) compares
-every file and sends it again.
+machine from the installed build's, unverified, then measures the sha256 of every file in the stage in
+one listing and sends exactly the files whose bytes differ from the release's `SHA256SUMS` (absent,
+rebuilt, or corrupt on the machine). Every file in the stage holds the release's bytes before anything
+in it runs, a reused one included, and `release install` verifies the whole set again before its first
+rename. `tla/BenchStage.tla` is the model: `ReusedByteIdentical`, `NoWrongBinary`,
+`NoVerifiedWithWrong` and, with crashes anywhere, `Liveness` hold (`MCBenchStage`); the first cut's
+rule, sending the files whose `SHA256SUMS` line differs, breaks `ReusedByteIdentical`
+(`MCBenchStageBrokenLines`).
 One line per bench, then the cycle:
 
 ```
@@ -496,7 +499,7 @@ A failed check applies nothing (`CYCLE FAIL step=check`); a bench with no receip
 `TestInstallSkipsAToolThatAlreadyHoldsTheBytes`, `TestCycleDryRunChecksAndInstallsNothing`,
 `TestCycleChecksThenAppliesAndSaysWhatEachBenchRuns`, `TestCycleStopsOnAFailedBench`,
 `TestCycleRefusesBeforeAnyPlay`, `TestToolsPlaySendsOnlyTheFilesTheInstalledBuildLacks`,
-`TestATransitiveChangeRebuildsTheTool`, `TestToolsPlayNeverRunsAnUnverifiedSeed`.*
+`TestATransitiveChangeRebuildsTheTool`, `TestToolsPlaySendsEveryStagedFileWhoseBytesDiffer`.*
 
 ## What this file does not cover
 
@@ -571,7 +574,7 @@ One numbered line per test; where one test holds several behaviours, they share 
 59. `TestCycleRefusesBeforeAnyPlay` — a `--benches` entry that is not a machine name, an empty list, or a `--source` without `fleet/tools.yml` refuses before any play.
 60. `TestToolsPlaySendsOnlyTheFilesTheInstalledBuildLacks` (functional) — the tools play seeds a new version's directory from the installed build's on the machine, sends only the differing files, and the install skips the identical binary.
 61. `TestATransitiveChangeRebuildsTheTool` (functional) — the real `go list` on a chain A -> B -> C (a tool, a package it imports, a package that one imports) puts C in A's set (`.Deps` is recursive), and a change under C, an embedded-style file included, rebuilds A and reuses a tool beside it.
-62. `TestToolsPlayNeverRunsAnUnverifiedSeed` (functional) — a corrupt seeded nova-update is sent again before it runs; any other corrupt seeded file refuses the install with the bin directory unchanged, and the next run heals it.
+62. `TestToolsPlaySendsEveryStagedFileWhoseBytesDiffer` (functional) — a seeded file corrupt on the machine whose `SHA256SUMS` line matches the release's (the binary the play runs, or any other) is sent again in the same run and the install succeeds; an intact reused file is not sent (`tla/BenchStage.tla` `ReusedByteIdentical`).
 
 Demanded, and proven by no test yet (8):
 

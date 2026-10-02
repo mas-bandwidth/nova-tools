@@ -319,8 +319,7 @@ func TestToolsPlaySendsOnlyTheFilesTheInstalledBuildLacks(t *testing.T) {
 	assert.Regexp(t, `TASK \[the stage seeded from the installed build's directory, on the machine\][^\n]*\n(?:[^\n]*\n)?changed: \[localhost\]`, second)
 	assert.Contains(t, second, "(item=nova-extra)")
 	assert.Contains(t, second, "(item=SHA256SUMS)")
-	assert.Contains(t, second, "ok: [localhost] => (item=nova-update)", "the binary the play runs is always compared")
-	assert.NotContains(t, second, "changed: [localhost] => (item=nova-update)", "a file the machine already held was sent")
+	assert.NotContains(t, second, "(item=nova-update)", "a file the machine already held was sent")
 	assert.Contains(t, second, "was=v0.0.0-one removed=0 INSTALLED RELEASE INSTALLED version=v0.0.0-two tools=1 skipped=1 ")
 	after, err := os.Stat(installed)
 	require.NoError(t, err)
@@ -333,15 +332,16 @@ func TestToolsPlaySendsOnlyTheFilesTheInstalledBuildLacks(t *testing.T) {
 	assert.Contains(t, check, "was=v0.0.0-two removed=0 UP-TO-DATE", "a reused nova-update answers the earlier version; the build fact says the install is done")
 }
 
-// TestToolsPlayNeverRunsAnUnverifiedSeed: the seed copies the installed
-// build's directory on the machine without verifying it, and the send skips
-// a file whose SHA256SUMS line did not change. nova-update, the one binary
-// the play runs, is always compared and sent again when it differs, so a
-// corrupt seeded nova-update never runs. Any other corrupt seeded file is
-// refused by the install's whole verification before its first rename (the
-// bin directory unchanged), and the next run, the directory begun, compares
-// every file, sends it again and installs.
-func TestToolsPlayNeverRunsAnUnverifiedSeed(t *testing.T) {
+// TestToolsPlaySendsEveryStagedFileWhoseBytesDiffer is BenchStage.tla's
+// ReusedByteIdentical on the real play: the seed copies the installed build's
+// directory on the machine unverified, so the files sent are those whose
+// bytes in the stage differ from the release's SHA256SUMS, measured after the
+// seed (one listing with sha256), never those whose SHA256SUMS line differs.
+// A seeded file corrupted on the machine whose line matches the release's,
+// the binary the play runs or any other, is sent again in the same run, the
+// install takes the rebuilt tool and skips the rest, and an intact reused
+// file is not sent.
+func TestToolsPlaySendsEveryStagedFileWhoseBytesDiffer(t *testing.T) {
 	t.Parallel()
 	built := ""
 	var update []byte
@@ -388,20 +388,21 @@ func TestToolsPlayNeverRunsAnUnverifiedSeed(t *testing.T) {
 				return string(b)
 			}
 
-			second, err := r.playResult(t, "tools.yml", vars("v0.0.0-two")...)
-			if corrupt == "nova-update" {
-				require.NoError(t, err, second)
-				assert.Contains(t, second, "changed: [localhost] => (item=nova-update)", "the corrupt seeded nova-update was not sent again")
-				assert.Contains(t, second, "INSTALLED RELEASE INSTALLED version=v0.0.0-two tools=1 skipped=2 ")
-				assert.Equal(t, "nova-extra v0.0.0-two\n", extraNow())
-				return
+			second := r.play(t, "tools.yml", vars("v0.0.0-two")...)
+			assert.Contains(t, second, "changed: [localhost] => (item="+corrupt+")", "the corrupt seeded file was not sent again")
+			assert.Contains(t, second, "changed: [localhost] => (item=nova-extra)")
+			for _, intact := range []string{"nova-update", "nova-same"} {
+				if intact != corrupt {
+					assert.NotContains(t, second, "(item="+intact+")", "an intact reused file was sent")
+				}
 			}
-			require.Error(t, err, second)
-			assert.Contains(t, second, "nova-same does not match SHA256SUMS")
-			assert.Equal(t, "nova-extra v0.0.0-one\n", extraNow(), "a refused install changed the bin directory")
-			third := r.play(t, "tools.yml", vars("v0.0.0-two")...)
-			assert.Contains(t, third, "INSTALLED RELEASE INSTALLED version=v0.0.0-two tools=1 skipped=2 ")
+			assert.Contains(t, second, "INSTALLED RELEASE INSTALLED version=v0.0.0-two tools=1 skipped=2 ")
 			assert.Equal(t, "nova-extra v0.0.0-two\n", extraNow())
+			staged, err := os.ReadFile(filepath.Join(r.home, "nova-bench", "release", "v0.0.0-two", platform, corrupt))
+			require.NoError(t, err)
+			want, err := os.ReadFile(filepath.Join(out, "v0.0.0-two", platform, corrupt))
+			require.NoError(t, err)
+			assert.Equal(t, want, staged, "the stage holds bytes the release does not")
 		})
 	}
 }
