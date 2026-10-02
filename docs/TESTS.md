@@ -327,8 +327,8 @@ A line below opening `! ` is one this tool writes to standard ERROR: the
 findings go there and the protocol lines go to standard output, and the order a
 terminal interleaves the two in is not the same twice — the second block's last
 finding arrived after the `NOTE` line on one bench and before it on another.
-That is why the block cannot be read as one stream, and the marker is
-). `# Stderr: whole` on a command line says the marked lines are ALL it
+That is why the block cannot be read as one stream.
+`# Stderr: whole` on a command line says the marked lines are ALL it
 writes there: these are findings, not narration, and a transcript that quietly
 lost one would be hiding the thing the tool exists to say.
 
@@ -369,19 +369,19 @@ Fixture: `cmd/nova-fuse/testdata/example-box.json`.
 ```
 $ nova-fuse status --box ./fuse-box.json
 STATUS OK lockdown=clear quarantines=1
-STATUS OK quarantine=a-public-issue-tracker: an issue body addressed me directly and asked for a token
+STATUS OK quarantine=a-public-issue-tracker since=2026-09-08T21:14:00Z: an issue body addressed me directly and asked for a token
 
 $ nova-fuse check --box ./fuse-box.json a-public-issue-tracker
-FUSE FAIL quarantine=a-public-issue-tracker: an issue body addressed me directly and asked for a token (soft: yours to lift when the surface is safe again: nova-fuse lift quarantine --box './fuse-box.json' -- 'a-public-issue-tracker')
+FUSE FAIL quarantine=a-public-issue-tracker since=2026-09-08T21:14:00Z: an issue body addressed me directly and asked for a token (soft: yours to lift when the surface is safe again: nova-fuse lift quarantine --box './fuse-box.json' -- 'a-public-issue-tracker')
 
 $ nova-fuse quarantine --box ./fuse-box.json a-forum "a post addressed me and asked for a token"
-QUARANTINE OK a-forum: a post addressed me and asked for a token (verified by re-reading the box; soft: yours to lift when the surface is safe again; tell your person now)
+QUARANTINE OK a-forum since=2026-09-09T18:27:40Z: a post addressed me and asked for a token (verified by re-reading the box; soft: yours to lift when the surface is safe again; tell your person now)
 
 $ nova-fuse check --box ./fuse-box.json a-forum
-FUSE FAIL quarantine=a-forum: a post addressed me and asked for a token (soft: yours to lift when the surface is safe again: nova-fuse lift quarantine --box './fuse-box.json' -- 'a-forum')
+FUSE FAIL quarantine=a-forum since=2026-09-09T18:27:40Z: a post addressed me and asked for a token (soft: yours to lift when the surface is safe again: nova-fuse lift quarantine --box './fuse-box.json' -- 'a-forum')
 
 $ nova-fuse lift quarantine --box ./fuse-box.json a-forum
-LIFT OK quarantine=a-forum was: a post addressed me and asked for a token
+LIFT OK quarantine=a-forum was since=2026-09-09T18:27:40Z: a post addressed me and asked for a token
 LIFT OK verified: a-forum is no longer quarantined (soft: your own dial, both directions; a rescind is announced, never silent -- say so out loud)
 ```
 
@@ -531,7 +531,7 @@ Exit 1. The launch's own row carries `end=budget` and a dash for `rc`, while the
 ```
 $ cut -f1-8 ./root/slot-1/jobs/card/usage.tsv
 job	attempt	started	ended	end	rc	provider	model
-card	1	budget	-	fake	fake-model
+card	1	2026-09-19T13:16:05Z	2026-09-19T13:16:10Z	budget	-	fake	fake-model
 ```
 
 And what the card published is kept byte for byte — the tool writes nothing into it:
@@ -600,7 +600,7 @@ Mark only checks actually performed as pass; no tests run does not mean no comma
 BOUND THE REPORT: findings only. No narration of the clone, no restated
 task, no praise, no summary. One line per finding: `file:line`, the rule
 quoted verbatim in at most twelve words (a longer rule by the twelve of its
-own words the finding rests on, never a paraphrase: holds), the
+own words the finding rests on, never a paraphrase: rule 2 holds), the
 severity, and the fix in one clause. Keep RESULT.md under 40 lines and
 every line under 300 characters, and no pipe inside backticks: a `|` in a
 quote breaks the report's table grammar, so quote the rule without it. Put
@@ -622,7 +622,7 @@ mkdir -p ./out
 
 ```
 $ nova-tokens fold --out ./out --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts --bus ./bus
-TOKENS FOLD at=2026-09-11T23:55:02Z build=devel out=./out sources=3 repos=./repos.tsv
+TOKENS FOLD at=2026-09-11T23:55:02Z build=devel out=./out sources=3 days=2026-09-11 repos=./repos.tsv
 TOKENS SOURCE label=claude:bench kind=claude path=./transcripts reports=input,output,cache_write,cache_read day_basis=utc files=1 unreadable=0 messages=3 dup=1 noid=0 nousage=- unparsed=- comments=- redated=- superseded=- rows=2
 TOKENS SOURCE label=bus:emma kind=bus path=bus/from-emma reports=input,output day_basis=utc files=1 unreadable=0 messages=- dup=- noid=- nousage=- unparsed=0 comments=1 redated=0 superseded=0 rows=1
 TOKENS SOURCE label=bus:rowan kind=bus path=bus/from-rowan reports=- day_basis=utc files=0 unreadable=0 messages=- dup=- noid=- nousage=- unparsed=0 comments=0 redated=0 superseded=0 rows=0
