@@ -97,9 +97,9 @@ type TrustState map[string]string
 // `^([A-Z][A-Z-]*):`, and the two lines every card the darwin launchers stage MUST carry
 // are lower case: the launcher scripts
 // read `base-repo:` and `base-sha:` out of the card's first 40 lines with a
-// case-sensitive `sed`, and refuse to launch without both. On the 59 cards of the
-// 2026-09-22 sprint set, those two lower-case lines end the header block under the old
-// key pattern, and every subsequent typed key sits outside the block the gate reads;
+// case-sensitive `sed`, and refuse to launch without both. A key pattern that reads
+// upper case only ends the header block at those two lower-case lines, and every
+// subsequent typed key sits outside the block the gate reads;
 // `PATHS:`, `FILES:`, `TEST:`, `RUN:`, `SYMBOL:`, `RED-WHEN:`, `DONE-WHEN:`,
 // `NO-SUBAGENTS:` and `SOURCE:` -- every key under them -- were outside the header the
 // gate reads. `bin/sprint-stage:37` refuses the whole stage on one such card, so the set
