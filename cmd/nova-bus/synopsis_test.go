@@ -197,7 +197,12 @@ func TestThePackageDocNamesEveryVerb(t *testing.T) {
 	for _, verb := range verbs {
 		assert.Regexp(t, `(?m)^//\t`+verb+` +\S`, doc, "the package doc does not list %s", verb)
 	}
-	for _, f := range []string{"main.go", "help.go", "draft.go", "reply.go", "verb_reply.go", "version.go"} {
+	files, err := filepath.Glob("*.go")
+	require.NoError(t, err)
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
 		src, err := os.ReadFile(f)
 		require.NoError(t, err)
 		assert.NotRegexp(t, `#[0-9]{3,5}\b`, string(src), "%s cites a ticket number", f)

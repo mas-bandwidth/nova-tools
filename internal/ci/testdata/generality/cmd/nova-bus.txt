@@ -1,4 +1,3 @@
 # Migrated counted package ledger; original row keys preserved.
-# ceiling: 2
-cmd/nova-bus/main.go:space 10
+# ceiling: 1
 cmd/nova-bus/version.go:space 1
