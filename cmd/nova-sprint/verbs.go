@@ -58,6 +58,7 @@ func init() {
 		{"drop", "(<id>... | --stream <s> --col <state> | --group <id> [--expect <n>]) --reason <text> [--answers <note>]", "drop s1-9 --reason obsolete", (*app).cmdDrop},
 		{"rank", "<id>... (--score <n> | --first) [--answers <note>]", "rank s2-3 --first", (*app).cmdRank},
 		{"brief", "<id> (--brief <text> | --brief-file <path>) [--rules <file>]", "brief s1-4 --brief-file s1-4.md", (*app).cmdBrief},
+		{"move", "<id>... --stream <s> [--before <id> | --after <id> | --score <n>]", "move s1-4 s1-5 --stream s2", (*app).cmdMove},
 		{"merge", "--stream <s> [--batch <n>] [--conflict <id> | --cross <id>=<other> | --red [--suspect <id>...] | --rejected] [--note <text>]", "merge --stream s1 --batch 100", (*app).cmdMerge},
 		{"land", "[--stream <s>...] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]", "land --stream s1 --dry-run", (*app).cmdLand},
 		{"resume", "--stream <s> [--did <text>] [--answers <note>]", "resume --stream s1 --did 'rebased s1-4'", (*app).cmdResume},
@@ -1568,6 +1569,40 @@ func (a *app) cmdBrief(args []string, stdout, stderr io.Writer) int {
 		return code
 	}
 	return a.runStep("brief", *c, st, store.BriefStep(sprint.BriefReq{ID: ids[0], Brief: *brief, Who: c.actor}), stdout, stderr)
+}
+
+// cmdMove moves unstarted primaries to another stream (the owner,
+// 2026-10-01: "What other things should you be able to do to mutate a stopped
+// sprint" / "I don't want you manually hopping in and working around it and
+// doing manual stuff."): one step (sprint.MoveCards), on a STOPPED machine,
+// each card waiting or ready with nothing dealt, placed as add places cards,
+// all or none.
+func (a *app) cmdMove(args []string, stdout, stderr io.Writer) int {
+	fs, c := a.verbSetup("move")
+	stream := fs.String("stream", "", "the stream the cards move to: one of the sprint's, or a new one, made as add makes it")
+	score := fs.String("score", "", "the first card's score in its new line; the rest follow it (default: after every primary)")
+	before := fs.String("before", "", "place the cards in line in front of this primary of the stream")
+	after := fs.String("after", "", "place the cards in line after this primary of the stream")
+	ids, err := parse(fs, args)
+	if err != nil {
+		return refuse(stderr, "move", err.Error())
+	}
+	if len(ids) == 0 || *stream == "" {
+		return refuse(stderr, "move", "wants ids and --stream <s>")
+	}
+	r := sprint.MoveReq{IDs: ids, Stream: *stream, Before: *before, After: *after, Who: c.actor}
+	if *score != "" {
+		f, err := strconv.ParseFloat(*score, 64)
+		if err != nil {
+			return refuse(stderr, "move", "--score wants a number")
+		}
+		r.Score = &f
+	}
+	st, err := a.store(*c)
+	if err != nil {
+		return refuse(stderr, "move", err.Error())
+	}
+	return a.runStep("move", *c, st, store.MoveStep(r), stdout, stderr)
 }
 
 func (a *app) cmdRank(args []string, stdout, stderr io.Writer) int {

@@ -128,6 +128,21 @@ func BriefStep(r sprint.BriefReq) Step {
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Brief(s, r) }}
 }
 
+// MoveStep is the coordinator moving unstarted primaries to another stream,
+// on a STOPPED machine (sprint.MoveCards): it reads what add reads, the moved
+// cards' needs, placed or not, and the destination's control card.
+func MoveStep(r sprint.MoveReq) Step {
+	return Step{Named: true, Args: ArgsOf(r), Verb: "move", Load: tables(sprint.Work, sprint.Merge, sprint.Fleet), Mirrors: true,
+		Extras: func(s *sprint.Snapshot) map[string][]string {
+			ids := append([]string(nil), r.IDs...)
+			for _, id := range r.IDs {
+				ids = append(ids, sprint.Split(s.Work.Placed(id).F("needs"))...)
+			}
+			return map[string][]string{sprint.Work: ids, sprint.Merge: {sprint.CtlID(r.Stream)}}
+		},
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.MoveCards(s, r) }}
+}
+
 // RankStep is the coordinator changing scores.
 func RankStep(r sprint.RankReq) Step {
 	return Step{Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "rank", Load: All,
