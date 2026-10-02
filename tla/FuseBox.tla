@@ -170,4 +170,10 @@ InitOnlyWhereNoBox ==
 LockdownAlwaysBlows ==
   last[1] = "lockdown" => (st[last[2]] = "ok" /\ lock[last[2]])
 
+\* Every cooperating tool mutation keeps the hard fuse. Outside Hand and
+\* Delete remain permitted; this rule does not extend to those events.
+ToolWritesPreserveLockdown ==
+  last[1] \in {"init", "lockdown", "quarantine", "lift"} =>
+    (\A b \in Boxes : plock[b] => lock[b])
+
 =============================================================================
