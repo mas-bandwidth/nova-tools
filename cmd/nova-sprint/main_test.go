@@ -270,7 +270,7 @@ func TestJudgmentsReachTheInboxAndTheCoordinatorAnswers(t *testing.T) {
 	// the inbox group is a set, named by its id
 	id := strings.Fields(lines[0])[1]
 	out = ta.ok("rework --group " + id + " --fix 'handle the empty case'")
-	if !strings.Contains(out, "s1-3 review -> working (rework)") {
+	if !strings.Contains(out, "s1-3 work review -> working (rework)") {
 		t.Fatalf("rework: %s", out)
 	}
 	out = ta.ok("inbox --read")

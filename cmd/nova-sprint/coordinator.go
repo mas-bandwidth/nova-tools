@@ -11,12 +11,12 @@ import (
 //   - coordinator: the sprint's coordinator alone (init --coordinator, set
 //     once by the first init); another actor is refused and nothing written.
 //   - worker: a fleet member or a reader, named by --as (fleet beat: the
-//     member); its actor is --actor, else NOVA_SPRINT_ACTOR, else that name.
+//     member); its actor is that name, whatever --actor says.
 //   - report: an outside actor's report (merge, ci), anyone's who names it.
 //   - machine: the run loop's (tick, run), recorded as the machine.
 //   - read: changes nothing and needs no actor.
 //
-// Every class but read and machine wants an actor: --actor or
+// Every class but read, machine and worker wants an actor: --actor or
 // NOVA_SPRINT_ACTOR; there is no default.
 const (
 	classCoordinator = "coordinator"
@@ -45,12 +45,11 @@ var verbClasses = map[string]string{
 	"goal show": classRead,
 }
 
-// orActor is a worker's actor: --actor, else NOVA_SPRINT_ACTOR, else the
-// member or reader it names.
+// orActor is a worker's actor: the member or reader it names, whatever
+// --actor or NOVA_SPRINT_ACTOR say, so the record names the worker the verb
+// was run as, as the server records a worker's verb (serve.go).
 func (c *common) orActor(name string) {
-	if c.actor == "" {
-		c.actor = name
-	}
+	c.actor = name
 }
 
 // needsActor is why the verb may not run with no actor: "" is may.

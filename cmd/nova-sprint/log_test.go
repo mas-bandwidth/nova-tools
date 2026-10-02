@@ -23,7 +23,7 @@ func TestLogPrintsTheEpochsLinesFiltered(t *testing.T) {
 	out := ta.ok("log --card s1-1")
 	for _, want := range []string{
 		"03:04:05  2 cards: s1-1 added to s1 by coordinator (with s1-2)",
-		"    brief: handle the empty case",
+		" bytes, shown by nova-sprint card s1-1", // a brief is said, not printed (log_brief_test.go)
 		"attempt 1 dealt to m1",
 		"m1 took attempt 1",
 		"m1 finished attempt 1: FAILED",

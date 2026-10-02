@@ -64,9 +64,10 @@ func twinWords() string {
 mem:<file>, or NOVA_SPRINT_REDIS=mem:<file>, runs every verb against an
 in-memory twin of the store, loaded from the file before the verb and saved
 to it after, the file made by the first verb that writes; run one command at a
-time. Every member of the twin's fleet is alive at every verb, and no machine
-runs between commands, so the tick is yours: nova-sprint tick; run, inbox
---wait and where --watch are refused. A card's whole flow:
+time. Every member and reader of the twin beats at every verb, so a member
+added is up from the next tick; no machine runs between commands, so the tick
+is yours: nova-sprint tick; run, inbox --wait and where --watch are refused. A
+card's whole flow:
 
   export NOVA_SPRINT_REDIS=mem:sprint.twin NOVA_SPRINT_ACTOR=boss
 `)
