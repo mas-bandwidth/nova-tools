@@ -392,8 +392,8 @@ func (e *flagError) Error() string { return e.msg }
 
 // flagRefusal words a flag package's parse error once: a flag the verb does not define
 // is `unknown flag --x`, a flag missing its value is `--x wants a value`, each with the
-// verb's help to run; any other parse error (a value that does not parse) keeps the flag
-// package's own words.
+// verb's help to run; a value that does not parse names the flag and what it wants
+// (tool.FlagRefusal).
 func flagRefusal(fs *flag.FlagSet, err error) error {
 	name := fs.Name()
 	if w := strings.Fields(name); len(w) > 0 && !slices.ContainsFunc(verbs, func(v verb) bool { return v.name == name }) {
@@ -409,7 +409,9 @@ func flagRefusal(fs *flag.FlagSet, err error) error {
 	case strings.HasPrefix(msg, needs):
 		return &flagError{"-" + strings.TrimPrefix(msg, needs) + " wants a value" + help}
 	}
-	return err
+	// a value that does not parse names the flag and what it wants, as its own whole
+	// line: a verb's words are never glued in front of it ("takes no words invalid value")
+	return &flagError{tool.FlagRefusal(name, fs, err) + help}
 }
 
 // sel is the set flags of a verb.
@@ -937,6 +939,10 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, "add", err.Error())
 	}
+	if *count < 0 {
+		// a negative count admitted no card and opened the stream with an OK
+		return refuse(stderr, "add", fmt.Sprintf("--count wants the number of cards to admit, at least 1, got %d", *count))
+	}
 	// The many-brief form: --brief-dir <dir>, or --brief-file given again,
 	// names one brief file per card. One --brief-file alone is the one brief
 	// for every card the ids, --count or --sentinel name.
@@ -1003,6 +1009,7 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 		if code := a.holdBrief("add", *brief, *rules, c, &st, stderr); code != 0 {
 			return code
 		}
+		c.says = append(c.says, unfilledSays("the brief", *brief)...)
 	}
 	var rs []sprint.AddReq
 	for _, sn := range streams {
@@ -1097,6 +1104,9 @@ func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, se
 		r.Score = &f
 	}
 	c.says = append(c.says, fmt.Sprintf("each card's id is its brief file's name without .md (%s is %s)", files[0], cards[0].ID))
+	for _, cd := range cards {
+		c.says = append(c.says, unfilledSays("the brief of "+cd.ID, cd.Brief)...)
+	}
 	return a.runStep("add", *c, st, store.AddStep(r), stdout, stderr)
 }
 
@@ -1528,10 +1538,15 @@ func takeShort(ctx context.Context, st *store.Store, res store.Result, members [
 				n++
 			}
 		}
-		if n >= asked || !s.Fleet.HasRow(m) {
+		if n >= asked {
 			continue
 		}
 		head := fmt.Sprintf("%s took %d of the %d asked: ", m, n, asked)
+		if !s.Fleet.HasRow(m) {
+			// a name the fleet table lacks takes nothing, and says so rather than an OK alone
+			out = append(out, head+"it is no member of the fleet table (members: "+orDashStr(strings.Join(s.Fleet.Rows(), ","), "none")+"); run: nova-sprint fleet up "+m+" --width <n>")
+			continue
+		}
 		switch status := s.MemberCtl(m).F("status"); {
 		case status != sprint.Up:
 			out = append(out, head+"it is "+orDashStr(status, "-")+", and only a member up takes")
@@ -1630,8 +1645,42 @@ func (a *app) cmdRead(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, "read", err.Error())
 	}
+	if len(ids) == 0 {
+		col := sprint.Reading
+		if *begin {
+			col = sprint.Asked
+		}
+		c.after = func(ctx context.Context, st *store.Store, res store.Result) []string {
+			return readShort(ctx, st, res, sprint.Split(*as), col)
+		}
+	}
 	return a.runStep("read", *c, st, store.ReadStep(sprint.ReadReq{Sel: sprint.Sel{IDs: ids, Limit: *limit}, As: *as, Begin: *begin,
 		Verdict: verdict, Finding: *finding, Return: *ret != "", Reason: *reason, Usage: *usage, Who: *as}), stdout, stderr)
+}
+
+// readShort is why a read by queue moved nothing, one line per reader named: the
+// name is no row of the readers table, or the reader holds no read card in the
+// column the verb moves from (asked for --begin, reading for a verdict). A read
+// that moved a card says nothing.
+func readShort(ctx context.Context, st *store.Store, res store.Result, readers []string, col sprint.State) []string {
+	if len(res.Moved) > 0 {
+		return nil
+	}
+	rows, err := st.ReaderRows(ctx)
+	if err != nil {
+		return []string{"why the read moved nothing is not known: the readers table did not read: " + err.Error()}
+	}
+	var out []string
+	for _, r := range readers {
+		if !slices.Contains(rows, r) {
+			out = append(out, r+" read nothing: it is no reader of the readers table (readers: "+orDashStr(strings.Join(rows, ","), "none")+"); run: nova-sprint reader add "+r)
+			continue
+		}
+		if cs, err := st.ReadCells(ctx, sprint.Readers, r, col); err == nil && len(cs) == 0 {
+			out = append(out, r+" read nothing: it holds no read card "+col+"; run: nova-sprint queue --as "+r)
+		}
+	}
+	return out
 }
 
 func (a *app) cmdAccept(args []string, stdout, stderr io.Writer) int {
@@ -1728,6 +1777,7 @@ func (a *app) cmdBrief(args []string, stdout, stderr io.Writer) int {
 	if code := a.holdBrief("brief", *brief, *rules, c, &st, stderr); code != 0 {
 		return code
 	}
+	c.says = append(c.says, unfilledSays("the brief of "+ids[0], *brief)...)
 	return a.runStep("brief", *c, st, store.BriefStep(sprint.BriefReq{ID: ids[0], Brief: *brief, Who: c.actor}), stdout, stderr)
 }
 

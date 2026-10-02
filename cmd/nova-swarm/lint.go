@@ -50,7 +50,7 @@ const cardRefusedBytes = cardlimits.MaxBriefBytes
 // `placeholder` is advice too, on purpose: the card template is pinned to lint clean as
 // printed (it is the shape every rule is checked against), so a line of it left unfilled
 // is named on a NOTE line under the OK, one per line, rather than changing the verdict.
-var cardLintAdvisory = map[string]bool{"size": true, "placeholder": true}
+var cardLintAdvisory = map[string]bool{"size": true, swarm.PlaceholderCheck: true}
 
 // cardLintChecks is how many independent shapes lintCard looks for. It is printed on the
 // LINT OK line so a reader knows how much of the card was actually checked, and it is the
@@ -114,30 +114,13 @@ var cardLintRemedies = map[string]string{
 	"placeholder":      "fill it in before the card is handed out: the line is the card template's own, its <...> not filled in; replace each <...> with the card's value (the label, the sha, the repository, the base, the minutes, the task, the worktree, the package)",
 }
 
-// cardPlaceholderRE is a template's fill-in: <...> on one line.
-var cardPlaceholderRE = regexp.MustCompile(`<[^<>\n]+>`)
-
 // cardPlaceholders is every line of a card that is a line of the card template still
-// holding its <...> fill-ins, as the template printed it (tool ledger W12: the unfilled
-// template passed the lint and said nothing). A line partly filled in, or a card not cut from the
-// template, is not this finding: it reads only the template's own lines, so a card that
-// writes `--count <n>` in its task is never caught by it.
+// holding its <...> fill-ins (swarm.UnfilledTemplateLines; tool ledger W12: the unfilled
+// template passed the lint and said nothing).
 func cardPlaceholders(raw []byte) []cardFinding {
-	tmpl, err := swarm.Template("card")
-	if err != nil {
-		return nil // ignored: "card" is a template name the binary always carries
-	}
-	unfilled := map[string]bool{}
-	for _, l := range strings.Split(tmpl, "\n") {
-		if cardPlaceholderRE.MatchString(l) {
-			unfilled[strings.TrimSpace(l)] = true
-		}
-	}
 	var out []cardFinding
-	for i, l := range strings.Split(string(raw), "\n") {
-		if t := strings.TrimSpace(l); t != "" && unfilled[t] {
-			out = append(out, cardFinding{check: "placeholder", line: i + 1, excerpt: l})
-		}
+	for _, f := range swarm.UnfilledTemplateLines(string(raw)) {
+		out = append(out, cardFinding{check: f.Check, line: f.Line, excerpt: f.Excerpt})
 	}
 	return out
 }

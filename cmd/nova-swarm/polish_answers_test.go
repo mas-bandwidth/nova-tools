@@ -118,6 +118,20 @@ func TestTheReadPRTemplateAsksForOneQuotingRule(t *testing.T) {
 	assert.NotContains(t, body, "the\nrule in twelve words", "the bound no longer reads as a paraphrase")
 }
 
+// A verb's -h carries its own exit codes; nova-swarm help keeps them all at once.
+func TestAVerbsHelpCarriesItsOwnExitCodes(t *testing.T) {
+	t.Parallel()
+	assert.Contains(t, usage, "\n"+exitParagraph+"\n", "the banner's paragraph is the one a verb's -h replaces")
+	last := func(args ...string) string {
+		lines := strings.Split(strings.TrimSpace(swarmHelp(t, args...)), "\n")
+		return lines[len(lines)-1]
+	}
+	assert.Equal(t, verbExit["lint"], last("lint", "-h"))
+	assert.Equal(t, verbExit["worker check"], last("worker", "check", "-h"))
+	assert.Equal(t, commonExit, last("template", "-h"))
+	assert.NotContains(t, last("template", "-h"), "member", "a template's help is not told of member's exit 3")
+}
+
 func TestTheHelpNamesTheLiveVerbsAndTheCardsRepoAndBase(t *testing.T) {
 	t.Parallel()
 	help := swarmHelp(t, "help")

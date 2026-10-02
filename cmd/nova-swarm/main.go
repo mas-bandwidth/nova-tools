@@ -194,7 +194,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0, before
 	// anything is read, dialed or written (the CLI style's rule (b), #4505). Only -h:
 	// every other exit of this tool is unchanged.
-	defer verbflag.RecoverWith(stdout, "nova-swarm", usage, &code, verbHelpLines)
+	defer recoverHelp(stdout, &code)
 	// --seat <name> (or NOVA_SEAT): the Redis login is read from that seat's
 	// file through nova-secrets' library, in this process (#4052).
 	args, err := seatcred.FromArgs(args, os.Getenv)

@@ -34,6 +34,9 @@ var swarmAudit = audit.Config{
 		"main.go|cmdTemplate|body": "the named verbatim site: a template is a DOCUMENT a person redirects into a file, not an event line, so escaping it would fold it into one unusable line. Every byte of it is an embedded constant in package swarm. TestTemplatesCarryTheirConditions is the behavioural test for this site.",
 		"native.go|nativeRun|line": "the line NewWallReader announces a refusal on: swarm.WallRefusedLine builds the whole line and puts the kind, the path, the task and the step through oneline.Field inside itself, so what arrives at this closure is already one safe token, and escaping it a second time would fold it into one unreadable form. TestNativeIdleZeroWatchesNothing asserts the line this site prints byte for byte.",
 
+		// a verb's -h with its own exit codes (verbhelp.go)
+		"verbhelp.go|recoverHelp|help": "a verb's help, what verbflag.RecoverWith prints: lines of this package's usage const, flag names and their usage literals, the verb's example and exit lines, all constants; never an argument the caller typed",
+
 		// the stderr the member's loop and its beat share (memberLoop)
 		"member.go|Write|string(p)": "lockedWriter only orders whole writes from two goroutines (the member's loop and its beat, memberLoop): every byte it carries was already printed through fmt.Fprintf with escaped arguments by its caller, and it adds none of its own",
 	},

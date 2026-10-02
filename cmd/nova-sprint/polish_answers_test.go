@@ -197,6 +197,41 @@ func TestADryRunSaysWouldRecordNotFact(t *testing.T) {
 	assert.NotContains(t, string(raw), `"fact"`)
 }
 
+// What a cold run met (the new rows of the polish): a value that does not parse is
+// one line naming the flag and what it wants; a negative count is refused; a take
+// or a read by a name the tables lack says so; a brief cut from the card template
+// with its <...> left is named before a worker is handed it.
+func TestTheColdRunsMistakesAreAnsweredInOneTurn(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+
+	code, _, errs := ta.do("where --every x")
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errs, "nova-sprint where REFUSED: invalid value \"x\" for flag --every: parse error; --every wants ")
+	assert.NotContains(t, errs, "takes no words")
+
+	before := ta.applies()
+	code, _, errs = ta.do("add --stream s1 --count -2")
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errs, "--count wants the number of cards to admit, at least 1, got -2")
+	assert.Equal(t, before, ta.applies(), "a refused add wrote")
+
+	assert.Contains(t, ta.ok("take --as nosuch"), "\nNOTE nosuch took 0 of the 1 asked: it is no member of the fleet table (members: m1); run: nova-sprint fleet up nosuch --width <n>\n")
+	assert.Contains(t, ta.ok("read --as nosuch --ok"), "\nNOTE nosuch read nothing: it is no reader of the readers table (readers: reader-a,reader-b); run: nova-sprint reader add nosuch\n")
+	assert.Contains(t, ta.ok("read --as reader-a --begin"), "\nNOTE reader-a read nothing: it holds no read card asked; run: nova-sprint queue --as reader-a\n")
+
+	card, err := swarm.Template("card")
+	require.NoError(t, err)
+	raw := filepath.Join(t.TempDir(), "raw.md")
+	require.NoError(t, os.WriteFile(raw, []byte(card), 0o600))
+	out := ta.ok("add --stream s1 r1 --brief-file " + raw)
+	assert.Contains(t, out, "\nNOTE the brief holds 10 of the card template's lines unfilled (line 1: RESULT: <label> sha=<sha12>; line 2: REPO: <owner>/<name>; line 3: BASE: <branch>; and 7 more);")
+	filled := strings.NewReplacer("RESULT: <label> sha=<sha12>", "RESULT: r2 sha=000000000000", "REPO: <owner>/<name>", "REPO: acme/widgets", "BASE: <branch>", "BASE: main").Replace(card)
+	require.NoError(t, os.WriteFile(raw, []byte(filled), 0o600))
+	assert.Contains(t, ta.ok("add --stream s1 r2 --brief-file "+raw), "NOTE the brief holds 7 of the card template's lines unfilled (line 6: Deadline: finish within <n> minutes.;")
+}
+
 // The help's first screen says where the rest is, and the finish it shows is
 // the one land can merge.
 func TestTheHelpSaysWhereTheRestIsAndFinishNamesItsHead(t *testing.T) {
