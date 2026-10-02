@@ -2500,10 +2500,11 @@ every guarded path the side branch's tip has and HEAD lacks is a finding
 unless a row added beyond it declares it, which first-parent comparison alone
 never sees. The NOTE names how many deletions and rows the history excused. A
 one-parent commit on main or dev is compared with its parent as everywhere:
-the dev queue's merge method is squash, so a promotion that lands through the
-queue as a squash is the ordinary comparison and is red for every deletion the
-promoted branch made; only a promotion that lands as a merge commit is read as
-one (the squash of the same tree is not excused). The ancestry must be
+the dev queue's merge method is merge (fleet/land/ruleset-dev.json), so a batch
+lands as a merge commit; a promotion that lands as a one-parent squash (a pull
+request merged by hand with the squash method) is the ordinary comparison and is
+red for every deletion the promoted branch made; only a promotion that lands as a
+merge commit is read as one (the squash of the same tree is not excused). The ancestry must be
 complete: the landing steps of ci.yml (`test`, `test-hosted`) and
 certification.yml (`test`) run `git fetch --no-tags --filter=blob:none
 --unshallow origin +dev:refs/remotes/origin/dev` after checkout on the default
