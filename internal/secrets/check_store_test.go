@@ -213,7 +213,7 @@ func TestTheWorkingCopyMustBeTheCommittedStore(t *testing.T) {
 		{"a .git that is a file", func(t *testing.T, s *checkStore) {
 			require.NoError(t, os.Rename(filepath.Join(s.dir, ".git"), filepath.Join(s.dir, "..", "real-git")))
 			s.write(t, ".git", "gitdir: ../real-git\n")
-		}, "(a worktree or submodule)", nil},
+		}, "has a .git that is a file (a worktree or submodule)", nil},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

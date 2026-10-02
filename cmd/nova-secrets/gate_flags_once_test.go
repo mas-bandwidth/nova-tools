@@ -40,7 +40,7 @@ func TestGateRefusesAFlagGivenTwice(t *testing.T) {
 			!assert.Empty(t, stdout, "--%s twice: exit=%d stdout=%q stderr=%q; want exit 2 and nothing on stdout", c.flag, code, stdout, stderr) {
 			continue
 		}
-		want := "SECRETS REFUSED: --" + c.flag + " is given more than once"
+		want := "SECRETS GATE REFUSED: --" + c.flag + " is given more than once"
 		assert.True(t, strings.HasPrefix(stderr, want), "--%s twice: stderr=%q; want one line beginning %q", c.flag, stderr, want)
 		assert.Equal(t, 1, strings.Count(stderr, "\n"), "--%s twice: stderr=%q; want one line beginning %q", c.flag, stderr, want)
 	}

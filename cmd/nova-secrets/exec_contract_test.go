@@ -297,7 +297,7 @@ func TestExecReplacesItselfAndPassesTheStatusThrough(t *testing.T) {
 		if assert.True(t, ok, "expected exit code %d, got %v", expectedCode, err) {
 			assert.Equal(t, expectedCode, exitErr.ExitCode(), "expected exit code %d, got %v", expectedCode, err)
 		}
-		assert.NotContains(t, stderr.String(), "SECRETS EXEC FAIL", "unexpected SECRETS EXEC FAIL on command exit %d: %s", expectedCode, stderr.String())
+		assert.NotContains(t, stderr.String(), "SECRETS EXEC REFUSED", "unexpected SECRETS EXEC REFUSED on command exit %d: %s", expectedCode, stderr.String())
 	}
 
 	// Command exiting 125 passed through, told from refusal by absence of our line
@@ -312,7 +312,7 @@ func TestExecReplacesItselfAndPassesTheStatusThrough(t *testing.T) {
 			assert.Equal(t, 125, exitErr.ExitCode(), "expected exit code 125, got %v", err)
 		}
 	}
-	assert.NotContains(t, stderr.String(), "SECRETS EXEC FAIL", "found SECRETS EXEC FAIL when command exited 125: %s", stderr.String())
+	assert.NotContains(t, stderr.String(), "SECRETS EXEC REFUSED", "found SECRETS EXEC REFUSED when command exited 125: %s", stderr.String())
 
 	if runtime.GOOS == "windows" {
 		t.Log("windows has no execve: the pid, RLIMIT_CORE and signal clauses do not apply there")
@@ -340,7 +340,7 @@ func TestExecReplacesItselfAndPassesTheStatusThrough(t *testing.T) {
 		assert.True(t, ws.Signaled(), "the command killed by SIGTERM must leave the tool killed by SIGTERM (shell status 143), got %v", err) {
 		assert.Equal(t, syscall.SIGTERM, ws.Signal(), "the command killed by SIGTERM must leave the tool killed by SIGTERM (shell status 143), got %v", err)
 	}
-	assert.NotContains(t, stderr.String(), "SECRETS EXEC FAIL", "a signal-killed command printed our failure line: %s", stderr.String())
+	assert.NotContains(t, stderr.String(), "SECRETS EXEC REFUSED", "a signal-killed command printed our failure line: %s", stderr.String())
 
 	// The command's RLIMIT_CORE is 0 even when the caller's soft limit is not: a core
 	// dump would write every value to disk.

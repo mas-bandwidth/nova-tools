@@ -87,8 +87,8 @@ func TestExecRefusesAHandWriteOfTheSprintWidthKey(t *testing.T) {
 	_, errOut, code = runNovaSecrets(bin, execArgs(fakeRedis, "SET", "friend:emma:width", "3")...)
 	require.Equal(t, 125, code, "the redis-cli line writing friend:emma:width must be refused at 125 before the command starts, got %d; stderr: %s", code, errOut)
 	lines := strings.Split(strings.TrimSpace(errOut), "\n")
-	require.Len(t, lines, 1, "the refusal is one SECRETS EXEC FAIL line, got %d lines:\n%s", len(lines), errOut)
-	require.True(t, strings.HasPrefix(lines[0], "SECRETS EXEC FAIL"), "the refusal is one SECRETS EXEC FAIL line, got %d lines:\n%s", len(lines), errOut)
+	require.Len(t, lines, 1, "the refusal is one SECRETS EXEC REFUSED line, got %d lines:\n%s", len(lines), errOut)
+	require.True(t, strings.HasPrefix(lines[0], "SECRETS EXEC REFUSED"), "the refusal is one SECRETS EXEC REFUSED line, got %d lines:\n%s", len(lines), errOut)
 	// Since #3447 the working column is the friend row's, written by the row
 	// loop; no beat writes the row (the retired nova-wake beat refused it),
 	// so the refusal names the row loop and never a beat (nova-tools #3807).

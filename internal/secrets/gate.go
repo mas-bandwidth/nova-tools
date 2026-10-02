@@ -32,7 +32,7 @@ func RunGate(in GateInput) (string, int) {
 	storeDir, base, head := in.StoreDir, in.Base, in.Head
 	// The flags only: the gate judges any working copy, a store with no seat yet included.
 	if err := preflight("", need{storeDir, "--store <dir>", false}, need{base, "--base <git ref>", false}, need{head, "--head <git ref>", false}); err != nil {
-		return "SECRETS REFUSED: " + oneline.WithRemedy(err.Error(), "nova-secrets gate -h"), 2
+		return "SECRETS GATE REFUSED: " + oneline.WithRemedy(err.Error(), "nova-secrets gate -h"), 2
 	}
 	// The two refs become commits before anything reads them. A ref is handed to git as an
 	// argument, and one beginning with "-" is read by git as an OPTION: --head=--diff-filter=U
@@ -42,7 +42,7 @@ func RunGate(in GateInput) (string, int) {
 	// resolved SHA, again behind --end-of-options.
 	for _, r := range []struct{ flag, ref string }{{"--base", base}, {"--head", head}} {
 		if strings.HasPrefix(r.ref, "-") {
-			return fmt.Sprintf("SECRETS REFUSED: %s %s begins with \"-\", the shape of an option, not a git ref", r.flag, oneline.Field(r.ref)), 2
+			return fmt.Sprintf("SECRETS GATE REFUSED: %s %s begins with \"-\", the shape of an option, not a git ref; pass a branch, tag or commit; run: nova-secrets gate -h", r.flag, oneline.Field(r.ref)), 2
 		}
 	}
 	base, err := gateResolveCommit(storeDir, "--base", base)

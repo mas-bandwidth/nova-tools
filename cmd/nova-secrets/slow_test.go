@@ -335,7 +335,7 @@ func TestAStaleWorkingCopyIsRefused(t *testing.T) {
 		}
 		_, errOut, code := runNovaSecrets(bin, v...)
 		assert.Equal(t, want, code, "%s on a worktree: expected %d naming the .git file, got %d: %s", v[0], want, code, errOut)
-		assert.Contains(t, errOut, ".git is a file (a worktree or submodule)", "%s on a worktree: expected %d naming the .git file, got %d: %s", v[0], want, code, errOut)
+		assert.Contains(t, errOut, "has a .git that is a file (a worktree or submodule)", "%s on a worktree: expected %d naming the .git file, got %d: %s", v[0], want, code, errOut)
 		assert.NotContains(t, errOut, "pull --ff-only", "%s on a worktree named the wrong fact: %s", v[0], errOut)
 		assert.NotContains(t, errOut, "no .git", "%s on a worktree named the wrong fact: %s", v[0], errOut)
 	}

@@ -47,7 +47,7 @@ func CheckGitWorkingCopy(storeDir string) (GitRefStatus, error) {
 		return status, fmt.Errorf("store %s is not a git repository: missing .git directory; clone it: git clone <url> %s", storeDir, storeDir)
 	}
 	if !fi.IsDir() {
-		return status, fmt.Errorf("store %s: .git is a file (a worktree or submodule); expected a directory working copy", storeDir)
+		return status, fmt.Errorf("store %s has %s; %s", storeDir, gitIsAFile, gitFileRemedy(storeDir))
 	}
 
 	headBytes, err := os.ReadFile(filepath.Join(gitDir, "HEAD"))
