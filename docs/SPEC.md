@@ -4206,7 +4206,7 @@ addressed to me and going quietly if it is not, or when I receipt it, which is h
 a reader says *I have seen this file* about something with no id to answer.
 
 **Unless it is behind the switch-day line**, in which case it is not carried, not
-re-parsed and not named — it is counted, with the old notes, on `INBOX LEGACY`'s
+re-parsed and not named — it is counted, with the notes behind the line, on `INBOX LEGACY`'s
 `unreadable=`. Notes written by hand before a bus switched over — a markdown
 heading first, a `**To**`, a `Branch:` key, a sentence where the header goes —
 are history, they will never be fixed, and naming them once per run buries the
@@ -4255,7 +4255,7 @@ arriving as noise instead of as silence.
 So `inbox` takes **`--legacy-before <date-or-instant>`**, the same shape
 `check`'s flag takes and drawn at the same moment: a UTC date `YYYY-MM-DD`,
 which means **midnight at its start**, or an RFC 3339 UTC instant like
-`2026-09-09T18:07:00Z`. The comparison is by **instant** either way, against the
+`YYYY-MM-DDTHH:MM:SSZ`. The comparison is by **instant** either way, against the
 note's own date — its `Date:` header, else the UTC minute in its filename, else
 the leading `YYYY-MM-DD` in its filename at that day's midnight. A note dated
 before the line:
@@ -4306,7 +4306,7 @@ is still shaped by the line.
 reasonable — nothing written before tomorrow was written under the tool, so the
 open list starts at zero. And it stays at zero: a date is midnight at its
 **start**, so every note sent that same afternoon is dated before tomorrow's
-midnight and is therefore legacy — lines writing to each other all day, and not
+midnight and is therefore behind the line — lines writing to each other all day, and not
 one note on anybody's open list, not even under `--full`. **A `--legacy-before` date in the future
 hides every note written today**, because midnight tomorrow is after all of them;
 give the instant you switched instead. Recovering is one command — the same
@@ -4335,7 +4335,7 @@ nova-bus inbox --bus <dir> --as <you> --receipt-max-words <n> \
   --advance --remote origin --branch main --attempts 3
 ```
 
-`check` has no `--legacy-now`: its flag draws a tolerance over a history and is
+`check` has no `--legacy-now`: its flag draws a tolerance over a bus's earlier notes and is
 usually a day months ago, and it is not the flag that goes quiet if you get it
 wrong.
 
