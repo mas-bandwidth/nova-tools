@@ -9,7 +9,6 @@ package swarm
 
 import (
 	"strconv"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -36,9 +35,8 @@ func TestOpenCodeInvalidNumericUsageIsAReadFailure(t *testing.T) {
 			require.Empty(t, u.Values, "a failed source must return no observed partial map: %+v", u)
 			assert.Contains(t, err.Error(), "row ", "the refusal identifies its row: %v", err)
 			assert.Contains(t, err.Error(), "column", "the refusal identifies its column: %v", err)
-			if strings.Contains(err.Error(), "private-provider") || strings.Contains(err.Error(), "private-cell") {
-				t.Errorf("the refusal must not echo source data: %v", err)
-			}
+			assert.NotContains(t, err.Error(), "private-provider", "the refusal must not echo source data: %v", err)
+			assert.NotContains(t, err.Error(), "private-cell", "the refusal must not echo source data: %v", err)
 		})
 	}
 }

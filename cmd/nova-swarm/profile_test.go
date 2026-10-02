@@ -42,17 +42,16 @@ func TestNativeRunWritesTimeline(t *testing.T) {
 	rows, err := swarm.ReadTimeline(path)
 	require.NoError(t, err, "read the timeline back")
 	require.Len(t, rows, 6, "%d timeline rows, want 6 (one turn, five tool calls):\n%s", len(rows), raw)
-	if rows[0].Tool != "model" || rows[0].InputTokens != "1200" || rows[0].OutputTokens != "340" {
-		t.Errorf("turn row = %+v, want tool=model in=1200 out=340", rows[0])
-	}
+	assert.Equal(t, "model", rows[0].Tool, "turn row = %+v, want tool=model in=1200 out=340", rows[0])
+	assert.Equal(t, "1200", rows[0].InputTokens, "turn row = %+v, want tool=model in=1200 out=340", rows[0])
+	assert.Equal(t, "340", rows[0].OutputTokens, "turn row = %+v, want tool=model in=1200 out=340", rows[0])
 	// The tool calls, in report order, each with no tokens of its own.
 	wants := []string{"git clone", "cat ", "go test", "go test", "result.md"}
 	for i, want := range wants {
 		r := rows[i+1]
 		assert.Contains(t, strings.ToLower(r.Tool), want, "tool row %d = %q, want it to name %q", i, r.Tool, want)
-		if r.InputTokens != "" || r.OutputTokens != "" {
-			t.Errorf("tool row %d carries tokens %q/%q, want both empty (the harness gave none)", i, r.InputTokens, r.OutputTokens)
-		}
+		assert.Equal(t, "", r.InputTokens, "tool row %d carries tokens %q/%q, want both empty (the harness gave none)", i, r.InputTokens, r.OutputTokens)
+		assert.Equal(t, "", r.OutputTokens, "tool row %d carries tokens %q/%q, want both empty (the harness gave none)", i, r.InputTokens, r.OutputTokens)
 	}
 	// Every span is a real, non-negative duration.
 	for i, r := range rows {

@@ -135,7 +135,7 @@ func TestGuardChildProcess(t *testing.T) {
 		require.True(t, Refusing(), "the child must run under %s=1", EnvNoHost)
 		defer func() {
 			r := recover()
-			require.NotNil(t, r, "the armed guard let the system ssh through")
+			require.True(t, r != nil, "the armed guard let the system ssh through")
 			fmt.Printf("REFUSED %v\n", r)
 		}()
 		RefuseHosts("/usr/bin/ssh", "hulk", "uptime")

@@ -106,8 +106,8 @@ func TestASecondTakeOnALiveJobLeaseIsRefused(t *testing.T) {
 	second, err := StartJobLease(job, "card-1")
 	if err == nil {
 		second()
-		t.Fatal("a second run took a lease on a job directory a live run holds; both would then write one data home, one tmp and one log, and the first to end would remove the other's lease (#1585)")
 	}
+	require.Error(t, err, "a second run took a lease on a job directory a live run holds; both would then write one data home, one tmp and one log, and the first to end would remove the other's lease (#1585)")
 	var held *JobLeaseHeldError
 	require.ErrorAs(t, err, &held, "the refusal is %v (%T), and a caller has to be able to name the holder: want a *JobLeaseHeldError", err, err)
 	assert.Equal(t, os.Getpid(), held.Holder.PID, "the refusal names pid %d; the holder is %d", held.Holder.PID, os.Getpid())
@@ -202,8 +202,8 @@ func TestAnUnfinishedClaimIsNotReclaimedAsADeadOwner(t *testing.T) {
 	release, err := StartJobLease(job, "competitor")
 	if err == nil {
 		release()
-		t.Fatal("a competitor reclaimed an unfinished claim as a dead owner: an empty record is not a pid 0 that is not alive, it is an owner this run cannot read yet (#1585, Stella's P1)")
 	}
+	require.Error(t, err, "a competitor reclaimed an unfinished claim as a dead owner: an empty record is not a pid 0 that is not alive, it is an owner this run cannot read yet (#1585, Stella's P1)")
 	_, ok := HeldJobLease(err)
 	assert.True(t, ok, "the refusal is %v; an unfinished record is HELD by an unknown owner, and the caller has to be able to say so", err)
 
@@ -248,8 +248,8 @@ func TestALeaseThatCannotBeEstablishedIsARefusalAndNotASilentSuccess(t *testing.
 		release, err := StartJobLease(job, who)
 		if err == nil {
 			release()
-			t.Fatalf("%s was told it holds a job directory it could not take: a take that establishes nothing must refuse, or two launchers proceed with no exclusion at all (#1585, Stella's P1)", who)
 		}
+		require.Error(t, err, "%s was told it holds a job directory it could not take: a take that establishes nothing must refuse, or two launchers proceed with no exclusion at all (#1585, Stella's P1)", who)
 		assert.Contains(t, err.Error(), JobLeaseName, "%s: the refusal does not name the path it could not take: %v", who, err)
 	}
 }
@@ -269,8 +269,8 @@ func TestAJobDirectoryThatCannotHoldALeaseRefusesTheRun(t *testing.T) {
 	release, err := StartJobLease(job, "card-1")
 	if err == nil {
 		release()
-		t.Fatal("a run was told it holds a job directory it cannot even write a lease into")
 	}
+	require.Error(t, err, "a run was told it holds a job directory it cannot even write a lease into")
 }
 
 // RULE 4, THE JOIN. `close(done)` does not join a tick that has ALREADY been selected, and
@@ -350,8 +350,8 @@ func TestAnOldHeartbeatNeverRetiresALivePid(t *testing.T) {
 	second, err := StartJobLease(job, "card-2")
 	if err == nil {
 		second()
-		t.Fatal("an old heartbeat retired a claim whose pid this kernel can see alive: a card in one long model call is exactly that, and it is the whole reason the lease exists (#1499, #1585)")
 	}
+	require.Error(t, err, "an old heartbeat retired a claim whose pid this kernel can see alive: a card in one long model call is exactly that, and it is the whole reason the lease exists (#1499, #1585)")
 	_, ok := HeldJobLease(err)
 	assert.True(t, ok, "the refusal is %v; a live pid is a holder and has to be named as one", err)
 }
