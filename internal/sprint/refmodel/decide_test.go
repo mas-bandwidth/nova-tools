@@ -48,10 +48,9 @@ func briefs(ms []refmodel.Move) []string {
 // read only of moves that are the ones expected.
 func expect(t *testing.T, got []refmodel.Move, want ...string) {
 	t.Helper()
-	if want == nil {
-		want = []string{}
+	if !slices.Equal(briefs(got), want) {
+		require.Failf(t, "assertion failed", "moves:\n got %q\nwant %q\nfull:%s", briefs(got), want, show(got))
 	}
-	require.Equal(t, want, briefs(got), "moves:\n got %q\nwant %q\nfull:%s", briefs(got), want, show(got))
 }
 
 func TestStrangersAreToldOnceEachInNameOrder(t *testing.T) {
@@ -331,7 +330,9 @@ func TestAcceptMovesAPrimaryWithTwoOkReadsToMergingAndTellsTheCoordinatorOnce(t 
 	got := refmodel.AcceptMoves(w.snapshot(w.fresh()), later(0))
 	require.NotEmpty(t, got, "a primary in review with two ok reads is accepted by the tick")
 	for _, m := range got {
-		assert.NotEqual(t, "s1-2", m.Card, "a primary with a broken read is accepted:%s", show(got))
+		if m.Card == "s1-2" {
+			assert.Failf(t, "assertion failed", "a primary with a broken read is accepted:%s", show(got))
+		}
 	}
 	notices := 0
 	for _, m := range got {
@@ -339,7 +340,9 @@ func TestAcceptMovesAPrimaryWithTwoOkReadsToMergingAndTellsTheCoordinatorOnce(t 
 			notices++
 		}
 	}
-	assert.Equal(t, 1, notices, "the coordinator is told %d times that a stream is ready to merge, want once:%s", notices, show(got))
+	if notices != 1 {
+		assert.Failf(t, "assertion failed", "the coordinator is told %d times that a stream is ready to merge, want once:%s", notices, show(got))
+	}
 }
 
 func TestAskTellsOnceWhenFewerThanTwoReadersAreFree(t *testing.T) {
@@ -363,10 +366,8 @@ func TestCheckRaisesAJudgmentForABrokenRule(t *testing.T) {
 	wc.Row, wc.Col = "", "" // the live work card of a working primary is gone
 	w.s.Fleet.Put(wc)
 	got := refmodel.CheckMoves(w.snapshot(w.fresh()), later(0))
-	if assert.NotEmpty(t, got, "a broken rule is one judgment on its card:%s", show(got)) {
-		assert.Equal(t, refmodel.KindOpen, got[0].Kind, "a broken rule is one judgment on its card:%s", show(got))
-		assert.Equal(t, sprint.NInvariant, got[0].Type, "a broken rule is one judgment on its card:%s", show(got))
-		assert.Contains(t, got[0].Subjects, "s1-1", "a broken rule is one judgment on its card:%s", show(got))
+	if len(got) == 0 || got[0].Kind != refmodel.KindOpen || got[0].Type != sprint.NInvariant || !slices.Contains(got[0].Subjects, "s1-1") {
+		assert.Failf(t, "assertion failed", "a broken rule is one judgment on its card:%s", show(got))
 	}
 }
 
@@ -503,11 +504,13 @@ func TestAStoppedMachineMovesNothing(t *testing.T) {
 	require.NotEmpty(t, refmodel.Decide(snap, later(0)), "the fixture: a running machine has something to do")
 	snap.Running = false
 	for _, d := range refmodel.Duties {
-		got := d.Moves(snap, later(time.Hour))
-		assert.Empty(t, got, "%s moves while the machine is STOPPED:%s", d.Name, show(got))
+		if got := d.Moves(snap, later(time.Hour)); len(got) > 0 {
+			assert.Failf(t, "assertion failed", "%s moves while the machine is STOPPED:%s", d.Name, show(got))
+		}
 	}
-	got := refmodel.Decide(snap, later(time.Hour))
-	assert.Empty(t, got, "Decide moves while the machine is STOPPED:%s", show(got))
+	if got := refmodel.Decide(snap, later(time.Hour)); len(got) > 0 {
+		assert.Failf(t, "assertion failed", "Decide moves while the machine is STOPPED:%s", show(got))
+	}
 }
 
 func TestDecideIsEveryDutyInTheTicksOrder(t *testing.T) {
@@ -532,7 +535,9 @@ func TestDecideIsEveryDutyInTheTicksOrder(t *testing.T) {
 	require.True(t, seen[refmodel.DutyDeal], "the fixture: strangers and deal have moves: %v", seen)
 	ok, diff := refmodel.Equal(got, want)
 	assert.True(t, ok, "Decide is not its duties: %s", diff)
-	assert.True(t, slices.IsSortedFunc(got, func(a, b refmodel.Move) int { return rank(a) - rank(b) }), "the moves are not in the ticks order by duty:%s", show(got))
+	if !slices.IsSortedFunc(got, func(a, b refmodel.Move) int { return rank(a) - rank(b) }) {
+		assert.Failf(t, "assertion failed", "the moves are not in the ticks order by duty:%s", show(got))
+	}
 }
 
 // rank is the position of a move's duty in the tick's order.
@@ -553,10 +558,11 @@ func TestDecideReadsTheTimeItIsGivenAndNotTheSnapshots(t *testing.T) {
 	snap := w.snapshot(nil)
 	snap.Beats = nil                   // no beats read: the presence duty does nothing
 	snap.Tables.Now = later(time.Hour) // the snapshot's own clock is not read
-	got := refmodel.Decide(snap, later(time.Minute))
-	assert.Empty(t, got, "a card dealt a minute ago is not late:%s", show(got))
+	if got := refmodel.Decide(snap, later(time.Minute)); len(got) != 0 {
+		assert.Failf(t, "assertion failed", "a card dealt a minute ago is not late:%s", show(got))
+	}
 	snap.Tables.Now = t0
-	got = refmodel.Decide(snap, later(time.Hour))
+	got := refmodel.Decide(snap, later(time.Hour))
 	assert.NotEmpty(t, got, "a card dealt an hour ago is late")
 }
 
@@ -612,6 +618,7 @@ func TestASnapshotThatLacksATableIsRefusedInWords(t *testing.T) {
 	}
 	snap := w.snapshot(w.fresh())
 	snap.Tables, snap.Running = nil, false
-	got := refmodel.Decide(snap, later(0))
-	assert.Empty(t, got, "a STOPPED machine decides nothing, whatever it holds:%s", show(got))
+	if got := refmodel.Decide(snap, later(0)); len(got) != 0 {
+		assert.Failf(t, "assertion failed", "a STOPPED machine decides nothing, whatever it holds:%s", show(got))
+	}
 }

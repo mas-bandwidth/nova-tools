@@ -129,8 +129,9 @@ func TestACloneSharesNothingWithItsSnapshot(t *testing.T) {
 		c.Goals.Noted = map[string]string{"zed": "1"}
 		c.Untold = append(c.Untold, "zed")
 		c.Stopped = append(c.Stopped, sprint.Span{})
-		after := dump(s.snap)
-		require.Equal(t, before, after, "what was done to a clone changed its snapshot:\n%s", firstDifference(before, after))
+		if after := dump(s.snap); after != before {
+			require.Failf(t, "assertion failed", "what was done to a clone changed its snapshot:\n%s", firstDifference(before, after))
+		}
 	}
 }
 
@@ -158,21 +159,27 @@ func TestDecideIsDeterministicAndLeavesItsSnapshotAlone(t *testing.T) {
 		before := dump(s.snap)
 		got := refmodel.Decide(s.snap, s.now)
 		first := lines(got)
-		again := lines(refmodel.Decide(s.snap, s.now))
-		require.Equal(t, first, again, "snapshot %d: the same snapshot at the same time gave two decisions:\n%s\n%s", i, strings.Join(first, "\n"), strings.Join(again, "\n"))
-		after := dump(s.snap)
-		require.Equal(t, before, after, "snapshot %d: deciding changed the snapshot:\n%s", i, firstDifference(before, after))
+		if again := lines(refmodel.Decide(s.snap, s.now)); !slices.Equal(first, again) {
+			require.Failf(t, "assertion failed", "snapshot %d: the same snapshot at the same time gave two decisions:\n%s\n%s", i, strings.Join(first, "\n"), strings.Join(again, "\n"))
+		}
+		if after := dump(s.snap); after != before {
+			require.Failf(t, "assertion failed", "snapshot %d: deciding changed the snapshot:\n%s", i, firstDifference(before, after))
+		}
 		// Decide copies the snapshot once for every duty; each duty asked alone
 		// copies it for itself, and the moves are the same
 		var alone []refmodel.Move
 		for _, d := range refmodel.Duties {
 			alone = append(alone, d.Moves(s.snap, s.now)...)
 		}
-		ok, diff := refmodel.Equal(got, alone)
-		require.True(t, ok, "snapshot %d: Decide, on one copy of the snapshot, is not the duties each on a copy of its own: %s", i, diff)
-		require.True(t, slices.IsSortedFunc(got, func(a, b refmodel.Move) int { return rank(a) - rank(b) }), "snapshot %d: the duties are out of the tick's order:%s", i, show(got))
-		ok, diff = refmodel.Equal(got, slices.Clone(got))
-		require.True(t, ok, "snapshot %d: the moves are not equal to themselves: %s", i, diff)
+		if ok, diff := refmodel.Equal(got, alone); !ok {
+			require.Failf(t, "assertion failed", "snapshot %d: Decide, on one copy of the snapshot, is not the duties each on a copy of its own: %s", i, diff)
+		}
+		if !slices.IsSortedFunc(got, func(a, b refmodel.Move) int { return rank(a) - rank(b) }) {
+			require.Failf(t, "assertion failed", "snapshot %d: the duties are out of the tick's order:%s", i, show(got))
+		}
+		if ok, diff := refmodel.Equal(got, slices.Clone(got)); !ok {
+			require.Failf(t, "assertion failed", "snapshot %d: the moves are not equal to themselves: %s", i, diff)
+		}
 	}
 }
 
@@ -187,8 +194,9 @@ func TestEveryDutyIsDeterministicAndLeavesItsSnapshotAlone(t *testing.T) {
 			require.Equal(t, one, two, "snapshot %d: the duty %s gave two decisions", i, d.Name)
 			viaClone := lines(d.Moves(clone, s.now))
 			require.Equal(t, one, viaClone, "snapshot %d: a clone of the snapshot is decided differently by the duty %s", i, d.Name)
-			after := dump(s.snap)
-			require.Equal(t, before, after, "snapshot %d: the duty %s changed the snapshot:\n%s", i, d.Name, firstDifference(before, after))
+			if after := dump(s.snap); after != before {
+				require.Failf(t, "assertion failed", "snapshot %d: the duty %s changed the snapshot:\n%s", i, d.Name, firstDifference(before, after))
+			}
 		}
 	}
 }
@@ -206,8 +214,9 @@ func TestThePlannersDoNotModifyWhatTheyRead(t *testing.T) {
 		for _, p := range sprint.TickParts {
 			plan, _ := p.Fn(c.Tables, sprint.TickReq{Who: sprint.MachineActor, Beats: c.Beats})
 			sprint.Applied(c.Tables, plan)
-			after := dump(c)
-			require.Equal(t, before, after, "snapshot %d: the tick's part %s changed what it read:\n%s", i, p.Name, firstDifference(before, after))
+			if after := dump(c); after != before {
+				require.Failf(t, "assertion failed", "snapshot %d: the tick's part %s changed what it read:\n%s", i, p.Name, firstDifference(before, after))
+			}
 		}
 	}
 }

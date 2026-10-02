@@ -70,11 +70,11 @@ func TestEveryFieldOfANoteIsCarriedOrLeftOutInWords(t *testing.T) {
 		c, ok := noteCarry[name]
 		switch {
 		case !ok:
-			t.Errorf("the note has a field %s that no test says a move carries or leaves out", name)
+			assert.Failf(t, "assertion failed", "the note has a field %s that no test says a move carries or leaves out", name)
 		case c.as == "left out" && c.why == "":
-			t.Errorf("the field %s is left out of a move and says no why", name)
+			assert.Failf(t, "assertion failed", "the field %s is left out of a move and says no why", name)
 		case c.as == "attr" && strings.Contains(typ.Field(i).Tag.Get("json"), "-"):
-			t.Errorf("the field %s is an attr but has no name in the note's JSON", name)
+			assert.Failf(t, "assertion failed", "the field %s is an attr but has no name in the note's JSON", name)
 		}
 	}
 	for name := range noteCarry {
@@ -271,8 +271,9 @@ func TestAMoveHoldsEveryFieldOfANoteThatIsSet(t *testing.T) {
 			set(&n)
 			ms := refmodel.PlanMoves(refmodel.DutyDeal, tabs, sprint.Plan{Notes: []sprint.Note{n}})
 			require.Len(t, ms, 1, "%s note on its %s: %d moves", kind, way, len(ms))
-			bad := checkNoteMove(n, ms[0])
-			assert.Empty(t, bad, "%s note on its %s:\n  %s", kind, way, strings.Join(bad, "\n  "))
+			if bad := checkNoteMove(n, ms[0]); len(bad) > 0 {
+				assert.Failf(t, "assertion failed", "%s note on its %s:\n  %s", kind, way, strings.Join(bad, "\n  "))
+			}
 			// every field a move holds as an attr is set, but a note is a stream's or the sprint's or neither: one flag or none
 			want := countCarried("attr") - 2
 			if way != "primaries" {
@@ -285,8 +286,9 @@ func TestAMoveHoldsEveryFieldOfANoteThatIsSet(t *testing.T) {
 				assert.Equal(t, refmodel.KindUpdate, up[0].Kind, "%s note on its %s: its update is not the note with its id in the attrs and its card kept: %+v", kind, way, up)
 				assert.Contains(t, up[0].Attrs, "id="+n.ID, "%s note on its %s: its update is not the note with its id in the attrs and its card kept: %+v", kind, way, up)
 				assert.Equal(t, n.Card, up[0].Card, "%s note on its %s: its update is not the note with its id in the attrs and its card kept: %+v", kind, way, up)
-				bad := checkNoteMove(n, withKind(up[0], kindOfNote(n.Kind), n.ID))
-				assert.Empty(t, bad, "%s note on its %s, as an update:\n  %s", kind, way, strings.Join(bad, "\n  "))
+				if bad := checkNoteMove(n, withKind(up[0], kindOfNote(n.Kind), n.ID)); len(bad) > 0 {
+					assert.Failf(t, "assertion failed", "%s note on its %s, as an update:\n  %s", kind, way, strings.Join(bad, "\n  "))
+				}
 			}
 		}
 	}
@@ -359,8 +361,9 @@ func TestTheMoveOfEachNoteAndCloseOfTodaysPlansHasEveryFieldOfIt(t *testing.T) {
 			for _, n := range notes {
 				ms := refmodel.PlanMoves(duty, tabs, sprint.Plan{Notes: []sprint.Note{n}})
 				require.Len(t, ms, 1, "sample %d, %s: a note gives %d moves", i, duty, len(ms))
-				bad := checkNoteMove(n, ms[0])
-				require.Empty(t, bad, "sample %d, %s: the move of the note %q lacks:\n  %s", i, duty, n.What, strings.Join(bad, "\n  "))
+				if bad := checkNoteMove(n, ms[0]); len(bad) > 0 {
+					require.Failf(t, "assertion failed", "sample %d, %s: the move of the note %q lacks:\n  %s", i, duty, n.What, strings.Join(bad, "\n  "))
+				}
 				seen[ms[0].Kind]++
 				if len(n.Decisions) > 0 {
 					seen["a note with decisions"]++
@@ -371,11 +374,12 @@ func TestTheMoveOfEachNoteAndCloseOfTodaysPlansHasEveryFieldOfIt(t *testing.T) {
 			}
 			for _, n := range plan.Updates {
 				ms := refmodel.PlanMoves(duty, tabs, sprint.Plan{Updates: []sprint.Note{n}})
-				require.Len(t, ms, 1, "sample %d, %s: an update is not the move that names the judgment it rewrites: %s", i, duty, show(ms))
-				require.Equal(t, refmodel.KindUpdate, ms[0].Kind, "sample %d, %s: an update is not the move that names the judgment it rewrites: %s", i, duty, show(ms))
-				require.Contains(t, ms[0].Attrs, "id="+n.ID, "sample %d, %s: an update is not the move that names the judgment it rewrites: %s", i, duty, show(ms))
-				bad := checkNoteMove(n, withKind(ms[0], kindOfNote(n.Kind), n.ID))
-				require.Empty(t, bad, "sample %d, %s: the update of %q lacks:\n  %s", i, duty, n.What, strings.Join(bad, "\n  "))
+				if len(ms) != 1 || ms[0].Kind != refmodel.KindUpdate || !slices.Contains(ms[0].Attrs, "id="+n.ID) {
+					require.Failf(t, "assertion failed", "sample %d, %s: an update is not the move that names the judgment it rewrites: %s", i, duty, show(ms))
+				}
+				if bad := checkNoteMove(n, withKind(ms[0], kindOfNote(n.Kind), n.ID)); len(bad) > 0 {
+					require.Failf(t, "assertion failed", "sample %d, %s: the update of %q lacks:\n  %s", i, duty, n.What, strings.Join(bad, "\n  "))
+				}
 				seen["update"]++
 			}
 		}
@@ -390,11 +394,9 @@ func TestTheMoveOfEachNoteAndCloseOfTodaysPlansHasEveryFieldOfIt(t *testing.T) {
 func one(t *testing.T, i int, duty string, tabs *sprint.Snapshot, p sprint.Plan, o sprint.Open, seen map[string]int, how string) {
 	t.Helper()
 	ms := refmodel.PlanMoves(duty, tabs, p)
-	require.Len(t, ms, 1, "sample %d, %s: a %s of %s on %s is not the one move that closes it: %s", i, duty, how, o.Note.ID, o.Subject(), show(ms))
-	require.Equal(t, refmodel.KindClose, ms[0].Kind, "sample %d, %s: a %s of %s on %s is not the one move that closes it: %s", i, duty, how, o.Note.ID, o.Subject(), show(ms))
-	require.Equal(t, o.Note.ID, ms[0].Card, "sample %d, %s: a %s of %s on %s is not the one move that closes it: %s", i, duty, how, o.Note.ID, o.Subject(), show(ms))
-	require.Equal(t, []string{o.Subject()}, ms[0].Subjects, "sample %d, %s: a %s of %s on %s is not the one move that closes it: %s", i, duty, how, o.Note.ID, o.Subject(), show(ms))
-	require.Equal(t, o.Note.Type, ms[0].Type, "sample %d, %s: a %s of %s on %s is not the one move that closes it: %s", i, duty, how, o.Note.ID, o.Subject(), show(ms))
-	require.Equal(t, o.Note.Stream, ms[0].Stream, "sample %d, %s: a %s of %s on %s is not the one move that closes it: %s", i, duty, how, o.Note.ID, o.Subject(), show(ms))
+	if len(ms) != 1 || ms[0].Kind != refmodel.KindClose || ms[0].Card != o.Note.ID || !slices.Equal(ms[0].Subjects, []string{o.Subject()}) ||
+		ms[0].Type != o.Note.Type || ms[0].Stream != o.Note.Stream {
+		require.Failf(t, "assertion failed", "sample %d, %s: a %s of %s on %s is not the one move that closes it: %s", i, duty, how, o.Note.ID, o.Subject(), show(ms))
+	}
 	seen[how]++
 }

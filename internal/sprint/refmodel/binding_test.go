@@ -199,8 +199,9 @@ func TestTheStoreWritesWhatTheReferenceDecides(t *testing.T) {
 			}
 			l := loadSample(t, s)
 			res, due := l.run(s, part.Name)
-			problem := l.differs(s, moves, res, due)
-			require.Empty(t, problem, "sample %d, part %s: %s\nthe reference:%s", i, part.Name, problem, show(moves))
+			if problem := l.differs(s, moves, res, due); problem != "" {
+				require.Failf(t, "assertion failed", "sample %d, part %s: %s\nthe reference:%s", i, part.Name, problem, show(moves))
+			}
 			compared[i] = true
 			if len(moves) > 0 {
 				withMoves[part.Name]++

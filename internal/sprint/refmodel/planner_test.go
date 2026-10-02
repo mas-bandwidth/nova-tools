@@ -76,8 +76,9 @@ func TestDecideIsWhatTodaysTickPlansOnAThousandSnapshots(t *testing.T) {
 		var all []refmodel.Move
 		for _, d := range refmodel.Duties {
 			got := d.Moves(s.snap, s.now)
-			ok, diff := refmodel.Equal(want[d.Name], got)
-			require.True(t, ok, "snapshot %d, duty %s: %s\ntoday's tick:%s\nthe reference:%s", i, d.Name, diff, show(want[d.Name]), show(got))
+			if ok, diff := refmodel.Equal(want[d.Name], got); !ok {
+				require.Failf(t, "assertion failed", "snapshot %d, duty %s: %s\ntoday's tick:%s\nthe reference:%s", i, d.Name, diff, show(want[d.Name]), show(got))
+			}
 			if len(got) > 0 {
 				withMoves[d.Name]++
 			}
@@ -87,8 +88,9 @@ func TestDecideIsWhatTodaysTickPlansOnAThousandSnapshots(t *testing.T) {
 			all = append(all, want[d.Name]...)
 		}
 		if i < deepSamples {
-			ok, diff := refmodel.Equal(all, refmodel.Decide(s.snap, s.now))
-			require.True(t, ok, "snapshot %d: Decide is not the moves of today's tick: %s", i, diff)
+			if ok, diff := refmodel.Equal(all, refmodel.Decide(s.snap, s.now)); !ok {
+				require.Failf(t, "assertion failed", "snapshot %d: Decide is not the moves of today's tick: %s", i, diff)
+			}
 		}
 	}
 	for _, d := range refmodel.Duties {
@@ -211,8 +213,9 @@ func TestTheMovesOfAPlanReproduceItsChangesToTheCards(t *testing.T) {
 			if cards(byPlan.s) != cards(t0) {
 				changed++
 			}
-			a, b := cards(byPlan.s), cards(byMoves)
-			require.Equal(t, a, b, "snapshot %d, part %s: the moves do not make the plan's changes:\n%s", i, part.Name, firstDifference(a, b))
+			if a, b := cards(byPlan.s), cards(byMoves); a != b {
+				require.Failf(t, "assertion failed", "snapshot %d, part %s: the moves do not make the plan's changes:\n%s", i, part.Name, firstDifference(a, b))
+			}
 		}
 	}
 	assert.GreaterOrEqual(t, changed, minSamplesWithMoves, "only %d of %d plans changed a card: the walks do not try the moves", changed, tried)

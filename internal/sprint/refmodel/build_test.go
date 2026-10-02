@@ -151,7 +151,7 @@ func (w *world) applyPart(t *testing.T, part string, after time.Duration) {
 			return
 		}
 	}
-	t.Fatalf("the tick has no part %s", part)
+	require.FailNowf(t, "assertion failed", "the tick has no part %s", part)
 }
 
 // later is the sprint with the clock d on: a duty decides at that time.

@@ -29,7 +29,9 @@ func theClose(t *testing.T, got []refmodel.Move, typ, id string, subjects ...str
 			closes = append(closes, m)
 		}
 	}
-	require.Len(t, closes, 1, "want one close, got %d:%s", len(closes), show(got))
+	if len(closes) != 1 {
+		require.Failf(t, "assertion failed", "want one close, got %d:%s", len(closes), show(got))
+	}
 	c := closes[0]
 	assert.Equal(t, typ, c.Type, "the close is of %q %s on %v, want %q %s on %v", c.Type, c.Card, c.Subjects, typ, id, subjects)
 	assert.Equal(t, id, c.Card, "the close is of %q %s on %v, want %q %s on %v", c.Type, c.Card, c.Subjects, typ, id, subjects)
