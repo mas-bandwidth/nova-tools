@@ -108,3 +108,64 @@ func TestCheckUnknownFlagIsTheSameLine(t *testing.T) {
 	got, want := errb.String(), "CHECK REFUSED reason=bad_flag: unknown flag --wrte; run: nova-sandbox help check\n"
 	assert.Equal(t, want, got, "check --wrte printed %q, want %q", got, want)
 }
+
+// Every switch the hand-read verbs take reads as Go's flag package reads one, the way
+// reap's --dry-run and every skeleton tool's switches do: bare, -name, =true and =false,
+// and a value that is no boolean refused with what the switch wants. The parse alone:
+// nothing here runs a command, a probe or a forge.
+func TestEverySwitchTakesGosBooleanForms(t *testing.T) {
+	t.Parallel()
+	type got struct {
+		on  bool
+		bad []string
+	}
+	read := map[string]func(args ...string) got{
+		"--net-deny": func(a ...string) got {
+			f := parseVerb("policy", append([]string{"--write", "/b"}, a...))
+			return got{f.netDeny, badTexts(f)}
+		},
+		"--net-listen": func(a ...string) got {
+			f := parseVerb("policy", append([]string{"--write", "/b"}, a...))
+			return got{f.netListen, badTexts(f)}
+		},
+		"--json": func(a ...string) got { f := parseVerb("probe", a); return got{f.json, badTexts(f)} },
+		"--go":   func(a ...string) got { f := parseRun(a); return got{f.useGo, runBad(f)} },
+		"--prune": func(a ...string) got {
+			f := parseWorktree(a)
+			return got{f.prune, f.unknown}
+		},
+	}
+	for name, parse := range read {
+		bare := strings.TrimPrefix(name, "--")
+		for _, c := range []struct {
+			arg string
+			on  bool
+			bad bool
+		}{
+			{name, true, false},
+			{"-" + bare, true, false},
+			{name + "=true", true, false},
+			{name + "=1", true, false},
+			{name + "=false", false, false},
+			{name + "=maybe", false, true},
+		} {
+			t.Run(c.arg, func(t *testing.T) {
+				t.Parallel()
+				g := parse(c.arg)
+				assert.Equal(t, c.on, g.on, "%s: %+v", c.arg, g)
+				if !c.bad {
+					assert.Empty(t, g.bad, "%s refused: %+v", c.arg, g)
+					return
+				}
+				if assert.Len(t, g.bad, 1, "%s: %+v", c.arg, g) {
+					assert.True(t, strings.HasPrefix(g.bad[0], name+" wants true or false, got maybe"), "%s: %q", c.arg, g.bad[0])
+				}
+			})
+		}
+	}
+	// check reads --json from the argv it parses: a refusal asked for as --json=true is JSON
+	var out, errb bytes.Buffer
+	code := checkVerb([]string{"--json=true", "--bogus"}, &out, &errb)
+	assert.Equal(t, 2, code, "stdout %q stderr %q", out.String(), errb.String())
+	assert.True(t, strings.HasPrefix(out.String(), `{"result":{"verb":"check","status":"refused"`), "check --json=true refused in lines: stdout %q stderr %q", out.String(), errb.String())
+}
