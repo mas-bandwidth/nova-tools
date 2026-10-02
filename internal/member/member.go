@@ -54,6 +54,13 @@ type Ender interface {
 	Ended(p Packet, failed bool)
 }
 
+// Epocher is a Runner told the sprint's epoch each pass, as the queue answered it: its
+// cleaner, apart from the pass, removes what launches of epochs long cleared left behind
+// (docs/SPEC-SWARM.md, `member`). Epoch only records the number; it never waits.
+type Epocher interface {
+	Epoch(epoch uint64)
+}
+
 // Child is one running card.
 type Child interface {
 	// Done says whether the child has ended.
@@ -595,6 +602,9 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		return 0, fmt.Errorf("queue: not JSON: %w", err)
 	}
 	m.epoch = q.Epoch
+	if e, ok := m.runner.(Epocher); ok {
+		e.Epoch(q.Epoch)
+	}
 	if m.cfg.Width == 0 && q.Width != m.width {
 		// the fleet row changed (fleet up --width, fleet sync): said once, run from now
 		fmt.Fprintf(m.out, "width %d -> %d (the fleet row)\n", m.width, q.Width)

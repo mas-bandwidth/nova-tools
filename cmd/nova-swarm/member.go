@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -348,6 +349,13 @@ type nativeRunner struct {
 	removing   sync.Mutex // held while a launch directory is removed, and while one is claimed
 
 	tagged chan ended
+
+	// the cleaner's lazy work (lazyclean.go): epoch is the sprint's epoch plus one as the
+	// member's last pass read it (Epoch; 0: none read yet); oldFailed and cache are the
+	// cleaner's own, touched by no other goroutine
+	epoch     atomic.Uint64
+	oldFailed map[string]bool
+	cache     cacheTrim
 }
 
 // started marks a launch running, so no prune of the pool touches its directory until the
