@@ -30,7 +30,7 @@ import (
 // not this is refused by `sum` and named by `check`, and the repair is `fold --day <d>`.
 const Version = "nova-tokens v1"
 
-// TempSuffix is the legacy temporary-file suffix that check recognizes to support older file formats.
+// TempSuffix is the fixed temporary-file suffix that check recognizes as a current input format.
 const TempSuffix = ".tsv.tmp"
 
 // FileSuffix is a day file's extension.
@@ -184,14 +184,14 @@ func Shrinks(old, now Counts, day string) []Shrink {
 	return out
 }
 
-// The merge, and why a fold is not a whole recomputation of the file.
+// The merge keeps rows outside this fold's sources instead of recomputing the whole file.
 //
 // A fold declares SOURCES, and a day file's rows each name the sources that wrote them.
 // A run that declares one source and recomputes the file whole ERASES every row the other
-// sources wrote, and the shrink comparison cannot see it: it is over the day's per-type
-// TOTALS, so a run whose own numbers are bigger than what it deleted writes a smaller file
-// with a bigger total and says written=true. A day holding a retained row with a small
-// count, folded by a run whose own row carries a larger count, comes back holding the
+// sources wrote, and the shrink comparison cannot see it because it is over the day's per-type
+// TOTALS. A run whose own numbers exceed what it deletes can therefore write a smaller file
+// with a bigger total and report written=true. A day holding a retained row with a small
+// count, folded by a run whose own row carries a larger count, returns holding the
 // run's row alone, exit 0, no TOKENS SHRANK.
 //
 // So the fold merges by source instead. This run's rows replace the rows its own sources
@@ -263,7 +263,7 @@ func MergeDay(old, fresh []DayRow, declared []string) (rows []DayRow, retained i
 		case in > 0:
 			// replaced: this run recomputed every source that wrote it. A (model, repo)
 			// this run no longer reports at all is a row that drops out of the merged
-			// file. If overall day totals fall or become unknown, the shrink comparison catches the
+			// file. If overall day totals fall or become unknown, the shrink comparison catches that
 			// shrink; but if another declared source rises by more than this row's
 			// totals, day-total comparison cannot see the per-source quiet shrink
 			// (preserved as follow-up).
@@ -336,7 +336,7 @@ func ParseDayFile(name, text string) (DayFile, []Finding) {
 			f = append(f, Finding{Line: 1, Reason: "the version line carries no `" + want + "=`; it wants " + Version + " day=… at=… build=… turns=<n or -> sources=…"})
 		}
 	}
-	// The version line carries `turns=` as an integer or `-`. An EMPTY value is
+	// The version line carries `turns=` as an integer or `-`. An empty value is
 	// present but says nothing, and a NEGATIVE one is not a count of messages; both read
 	// clean when the check was only `!= "" && != Dash`.
 	if _, ok := fields["turns"]; ok && d.Turns != Dash {
