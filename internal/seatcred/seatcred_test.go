@@ -135,32 +135,48 @@ func TestActiveResolvesOnceAndOnlyWhenSelected(t *testing.T) {
 	require.True(t, same(c, "air-bench-test-pw-11"), "Active = %v %v %v; want air as bench", c, ok, err)
 }
 
-// A Selection given no resolver and no lookup resolves through the process's own
-// environment. The proof runs in a child of this test binary whose environment is set
-// here, HOME a fresh temp dir and no store variables, so the store the default
-// resolver looks for is under that dir: no test reads, lists or stats a real store.
-func TestDefaultResolverReadsTheProcessEnvironment(t *testing.T) {
-	t.Parallel()
-	const marker = "SEATCRED_DEFAULT_RESOLVER_CHILD"
-	if os.Getenv(marker) == "1" {
-		s := new(seatcred.Selection)
-		s.Select("nonexistent-seat-probe-4717")
-		_, ok, err := s.Active()
-		fmt.Printf("\nCHILD ok=%v err=%v\n", ok, err)
-		return
+// inHermeticChild runs the calling test again in a child of this test binary whose
+// environment is only a fresh temp HOME and PATH, and says whether this is that child.
+// A test that resolves through the process's own environment (a Selection with no
+// lookup) does it in the child, so the store it looks for is under that temp HOME: no
+// test reads, lists or stats a real store. The parent fails with the child's output.
+func inHermeticChild(t *testing.T) bool {
+	t.Helper()
+	const marker = "SEATCRED_HERMETIC_CHILD"
+	if os.Getenv(marker) == t.Name() {
+		return true
 	}
-	home := t.TempDir()
-	cmd := exec.Command(os.Args[0], "-test.run=^TestDefaultResolverReadsTheProcessEnvironment$", "-test.count=1")
-	cmd.Env = []string{marker + "=1", "HOME=" + home, "PATH=" + os.Getenv("PATH")}
+	cmd := exec.Command(os.Args[0], "-test.run=^"+t.Name()+"$", "-test.count=1")
+	cmd.Env = []string{marker + "=" + t.Name(), "HOME=" + t.TempDir(), "PATH=" + os.Getenv("PATH")}
 	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, "%s", out)
-	assert.Contains(t, string(out), "CHILD ok=true err=seat nonexistent-seat-probe-4717: store "+filepath.Join(home, seatcred.DefaultStore)+" is not a directory",
-		"the default resolver did not look for the store under the process's own HOME")
-	assert.NotContains(t, string(out), "HOME is unset")
+	require.NoError(t, err, "the hermetic child failed:\n%s", out)
+	return false
 }
 
+// A Selection given no resolver and no lookup resolves through the process's own
+// environment: the store it looks for is the one under the process's HOME.
+func TestDefaultResolverReadsTheProcessEnvironment(t *testing.T) {
+	t.Parallel()
+	if !inHermeticChild(t) {
+		return
+	}
+	s := new(seatcred.Selection)
+	s.Select("nonexistent-seat-probe-4717")
+	_, ok, err := s.Active()
+	require.True(t, ok)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "seat nonexistent-seat-probe-4717: store "+filepath.Join(os.Getenv("HOME"), seatcred.DefaultStore)+" is not a directory",
+		"the default resolver did not look for the store under the process's own HOME")
+	assert.NotContains(t, err.Error(), "HOME is unset")
+}
+
+// Select and SelectWith clear the lookup FromArgs recorded, so Active then resolves
+// through the process's own environment: in the hermetic child (inHermeticChild).
 func TestSelectClearsLookupFromArgs(t *testing.T) {
 	t.Parallel()
+	if !inHermeticChild(t) {
+		return
+	}
 
 	s := new(seatcred.Selection)
 	called := false
