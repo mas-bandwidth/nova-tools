@@ -15,71 +15,93 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/selftalk"
+	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
 const usage = `nova-self-talk: flags sentences where a writer passes a standing verdict on themselves
 
-how it works: each file is read sentence by sentence (line numbers kept) and
-matched against known shapes: a first-person claim built on a negative word
-(cannot, bad at, worst) or a neutral-worded verdict (a self-superlative, a door
-stated shut, a habit). A dated sentence is a record, counted and never flagged.
-It prefers a miss to a false alarm, so a clean run clears these shapes only.
-first run: copy the example pages (the cp line above example:), then run the
-lines under example:; each exits 1 because the pages hold findings.
+how it works: each named file (- is stdin) is read sentence by sentence, line numbers kept,
+and matched against one table of shapes: a first-person claim carrying a word of failure
+(STANDING: cannot check, bad at, worst) or a neutral-worded verdict (INSTALLATION: a
+self-superlative, a door stated shut, a habit). A dated claim is a record, never flagged.
+A scan writes nothing; nova-self-talk shapes prints the table, each row with a sentence it finds.
+first run: nova-self-talk example ./pages writes the example pages from the binary itself;
+then each line under example: exits 1, because the pages hold findings.
 
 usage:
-  nova-self-talk version    print this build identity (--version also accepted)
-  nova-self-talk [--skip <basename>]... [--rule-doc <basename>]... [--max <n>] <file>...
-  nova-self-talk help
+  nova-self-talk [--skip <basename>]... [--rule-doc <basename>]... [--max <n>] [--json] <file>...
+  nova-self-talk scan [flags] <file>...        the same scan, named as a verb
+  nova-self-talk shapes [--json]               every shape and licence the scan uses, with a
+                                               sentence each finds and a near miss each passes
+  nova-self-talk example [--dry-run] <dir>     write the two example pages into <dir>
+  nova-self-talk version                       print this build identity (--version also accepted)
+  nova-self-talk help [<verb>]                 this text, or one verb's help
+
+The first word is a verb only when it is scan, shapes, example, version or help; anything
+else is the first file, so a file named like a verb is given as ./scan. Flags come before
+files; use -- before a file whose name begins with a dash.
 
 Two disjoint classes.
 
-  STANDING / DATED   a first-person claim, in negative vocabulary, about what
-                     the writer permanently IS or permanently CANNOT do. With
-                     a date marker it is DATED — a measurement, a record,
-                     welcome. Without one it is STANDING and is flagged.
+  STANDING / DATED   a first-person claim (I am, I cannot, I always, my <noun> is ...)
+                     carrying a word of failure (fallible, broken, bad at, terrible at,
+                     worst, cannot check, cannot ever ...). With a date or a measurement
+                     word (2026-09-30, measured, that day) it is DATED: a record, counted
+                     on one line, never quoted. Without one it is STANDING and is flagged.
 
-  INSTALLATION       a standing self-verdict built from NEUTRAL words, which
-                     the first class cannot see: a self-superlative (RANKING),
-                     a door stated shut (FORECLOSURE), a verdict on a practice
-                     (VERDICT-IDIOM), or a habitual self-report (TRAIT). Dated
-                     ones are exempt here too.
+  INSTALLATION       a standing self-verdict built from NEUTRAL words, which the first
+                     class cannot see: a self-superlative (RANKING: I am the best, my
+                     weakest instrument), a door stated shut (FORECLOSURE: I will never be
+                     a good planner, I have no recall), a verdict on a practice
+                     (VERDICT-IDIOM: dead as a practice), or a habit (TRAIT: I always
+                     overpromise, I tend to rush). Dated, instrument (RULE:, TELL:),
+                     aspiration (I want to), imperative and quoted sentences are licensed.
 
 Date it, cut it, relocate it, or keep it on purpose — the judgment is the
 writer's, and this tool never makes it.
 
-  --skip <basename>       do not scan files with this basename (repeatable).
-                          Nothing is skipped by default.
-  --rule-doc <basename>   scan the file, but print its findings under a banner
-                          saying a finding there is a self-verdict to relocate
-                          and NEVER a reason to soften a rule (repeatable).
-                          For your rule documents. No basename is special by
-                          default: one repo's filenames are not this tool's.
-  --max <n>               how many finding lines to PRINT, per class, before
-                          one MORE line stands for the rest. Default 20, and 0
-                          means all. The closing line carries the totals
-                          whichever way the run went, so a scan that found six
-                          hundred says six hundred without printing six
-                          hundred. DATED claims are never listed at all: they
-                          are the WELCOME case -- a measurement, a record --
-                          and they print as one count.
+what a scan prints, one line each:
+  SELFTALK FAIL <file>:<line>: STANDING match="<words>": <sentence>           (stderr)
+  SELFTALK FAIL <file>:<line>: INSTALLATION <SHAPE> match="<words>": <sentence> (stderr)
+  SELFTALK SKIP <file> (--skip)
+  SELFTALK RULEDOC <file>: <banner>     above the findings of a --rule-doc file
+  SELFTALK MORE kind=<class> shown=<n> total=<t> <remedy>
+  SELFTALK DATED n=<k> files=<n>
+  SELFTALK OK|FAIL files=<n> claims=<n> standing=<n> installations=<n> dated=<n> [shown=<n>]
+  SELFTALK NOTE <what a green does and does not clear>
+match= is the words the shape's rule matched. files= counts the files scanned; claims= the
+first class's claims, dated ones included; standing= and installations= the findings of each
+class; shown= the finding lines printed. A partial check says so: the NOTE prints every run.
 
-Flags come before files. Exit codes: 0 no findings, 1 findings, 2 could not
-run (bad invocation, unreadable file). Use -- before a dash-prefixed filename.
-An explicitly all-skipped run exits 0 with SELFTALK SKIP files=0, never OK.
+flags of the scan:
+  --skip <basename>       do not scan files with this basename (repeatable). Nothing is
+                          skipped by default, and a skip is reported on a SKIP line.
+  --rule-doc <basename>   scan the file, but print its findings under a banner saying a
+                          finding there is a self-verdict to relocate and NEVER a reason to
+                          soften a rule (repeatable). No basename is special by default.
+  --max <n>               finding lines to PRINT per class before one MORE line stands for
+                          the rest. Default 20, and 0 means all. The closing line carries
+                          the totals whichever way the run went.
+  --json                  print the run as one JSON object on stdout instead of lines:
+                          result, facts (the closing line's counts), items (one per finding,
+                          skip and banner, with file, line, shape, match, text), more, notes.
 
-First run, from the root of this checkout: copy the example pages the lines
-below read, so ./pages is a directory you have made, then paste them as they
-are.
+exit codes: 0 no findings, or a verb done; 1 findings; 2 could not run (bad invocation,
+unreadable file). An all-skipped run exits 0 with SELFTALK SKIP files=0, never OK.
 
-  cp -R cmd/nova-self-talk/testdata/example-pages ./pages
+The first run needs nothing but this binary. Write the example pages, then paste the
+lines under example: as they are:
+
+  nova-self-talk example ./pages
 
 example:
   nova-self-talk ./pages/journal.md
@@ -87,20 +109,19 @@ example:
   nova-self-talk --skip RULES.md ./pages/RULES.md ./pages/journal.md
 
 All three exit 1, and that is the tool working: a finding is a sentence to date,
-cut, relocate or keep on purpose, never a failure. ./pages is a directory of
-yours; cmd/nova-self-talk/testdata/example-pages in this repo is one the size
-of a first run, and every line is run against it by the tests. --skip leaves
-a file unscanned and says so on one SELFTALK SKIP line.
+cut, relocate or keep on purpose, never a failure. --skip leaves a file unscanned
+and says so on one SELFTALK SKIP line.
 `
 
-// The hints below turn this binary's two most-hit refusals into a next step.
-// The no-guessing law is unchanged -- naming no files is still exit 2 -- but a
+// The hints below turn this binary's most-hit refusals into a next step. The
+// no-guessing law is unchanged -- naming no files is still exit 2 -- but a
 // refusal that names only what was wrong leaves a first caller to guess what
 // the tool wanted, which is the same guessing the tool refuses to do, moved
 // onto the reader.
 const (
-	filesHint = `nova-self-talk takes markdown FILES, named on the command line: nova-self-talk <file>... There is no default set and no directory walk, so a shell glob is the usual first run (nova-self-talk memory/*.md) -- every file scanned is one you chose, and one this tool cannot read is not a clean one.`
-	baseHint  = `--skip and --rule-doc take a BASENAME, not a path: --skip RULES.md, never --skip memory/RULES.md. The match is on the file's name wherever it sits, and nothing is skipped or banner-marked by default.`
+	filesHint  = `nova-self-talk takes markdown FILES, named on the command line: nova-self-talk <file>... (- is stdin). There is no default set and no directory walk, so a shell glob is the usual first run (nova-self-talk memory/*.md); nova-self-talk example ./pages writes two pages to try it on.`
+	unreadHint = `NOTHING was scanned, which is not a green: a file this tool cannot read is not a clean one. Fix or drop the paths above and run again.`
+	baseHint   = `--skip and --rule-doc take a BASENAME, not a path: --skip RULES.md, never --skip memory/RULES.md. The match is on the file's name wherever it sits, and nothing is skipped or banner-marked by default.`
 )
 
 // hintFor returns the already-indented hint line for a kind of refusal,
@@ -110,6 +131,8 @@ func hintFor(kind string) string {
 	switch kind {
 	case "files":
 		return "  " + filesHint + "\n"
+	case "unread":
+		return "  " + unreadHint + "\n"
 	case "basename":
 		return "  " + baseHint + "\n"
 	}
@@ -119,22 +142,88 @@ func hintFor(kind string) string {
 // note prints on every completed run, pass or fail: a green from a partial
 // check reads exactly like a green from a complete one, and this check is
 // structurally partial.
-const note = "SELFTALK NOTE catches known SHAPES only: register, irony and quoted-specimen " +
-	"context are invisible to grammar, and a quoted verdict is a true positive on the grammar " +
-	"and a false one on the meaning. A green clears the known shapes, never the file.\n"
+const note = "catches known SHAPES only (list them: nova-self-talk shapes): register, irony and " +
+	"quoted-specimen context are invisible to grammar, and a quoted verdict is a true positive on the " +
+	"grammar and a false one on the meaning. A green clears the known shapes, never the file."
 
 // maxRemedy is the second half of every MORE line this binary prints. A cap with no
 // remedy is censorship; a cap with one is an index.
 const maxRemedy = "--max <n> raises the ceiling, --max 0 prints every finding"
 
-// refuse is what an unusable invocation costs: ONE line naming what was wrong, and the
-// door to the usage rather than the usage itself. It was the whole 40-line banner.
-func refuse(stderr io.Writer, what, hint string) int {
-	fmt.Fprintf(stderr, "nova-self-talk: %s; run: nova-self-talk help\n%s", oneline.Escape(what), hintFor(hint))
+// verbs are the words that are a verb in first position; anything else is a file.
+var verbs = []string{"scan", "shapes", "example", "version", "help"}
+
+// effects is what each verb's help says it does to the world (docs/STANDARD.md §2).
+var effects = map[string]string{
+	"scan":    string(tool.Inspection),
+	"shapes":  string(tool.Inspection),
+	"example": string(tool.LocalWrite),
+	"version": string(tool.Inspection),
+}
+
+// refuse is what an unusable invocation costs: one line per problem, every problem
+// this run found, each naming the door, then at most one indented hint. With --json
+// it is the one JSON object on stdout instead.
+func refuse(stdout, stderr io.Writer, asJSON bool, verb, hint string, problems ...string) int {
+	who, door := "nova-self-talk", "nova-self-talk help"
+	if verb != "scan" {
+		who, door = who+" "+verb, door+" "+verb
+	}
+	if asJSON {
+		o := tool.Refuse(problems...)
+		o.Verb, o.Remedy = verb, door
+		if h := strings.TrimSpace(hintFor(hint)); h != "" {
+			o.Note(h)
+		}
+		o.Render(stdout, true)
+		return 2
+	}
+	for _, p := range problems {
+		fmt.Fprintf(stderr, "%s REFUSED: %s; run: %s\n", oneline.Escape(who), oneline.Escape(p), oneline.Escape(door))
+	}
+	fmt.Fprint(stderr, hintFor(hint))
 	return 2
 }
 
-func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
+func main() { os.Exit(runStdin(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
+
+// run is the binary with an empty standard input: the entry the tests and the verb-help
+// check call.
+func run(args []string, stdout, stderr io.Writer) int {
+	return runStdin(args, strings.NewReader(""), stdout, stderr)
+}
+
+func runStdin(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
+	// `<verb> -h` is that verb's help on stdout at exit 0, with the verb's effect, before
+	// anything is read (the CLI style's rule (b), #4505).
+	defer verbflag.RecoverWith(stdout, "nova-self-talk", usage, &code, func(verb string) string {
+		return "effect: " + effects[verb] + "\n"
+	})
+	first := ""
+	if len(args) > 0 {
+		first = args[0]
+	}
+	switch first {
+	case "help", "-h", "-help", "--help":
+		// `help <verb>` is that verb's help; `help` with anything else is the banner,
+		// because help is never a refusal.
+		if first == "help" && len(args) > 1 && slices.Contains(verbs, args[1]) && args[1] != "help" {
+			return runStdin([]string{args[1], "-h"}, stdin, stdout, stderr)
+		}
+		fmt.Fprint(stdout, usage)
+		return 0
+	case "version", "--version":
+		verbflag.HelpIfAsked(args[1:], "version")
+		return cmdVersion(args[1:], stdout, stderr)
+	case "shapes":
+		return cmdShapes(args[1:], stdout, stderr)
+	case "example":
+		return cmdExample(args[1:], stdout, stderr)
+	case "scan":
+		args = args[1:]
+	}
+	return scan(args, stdin, stdout, stderr)
+}
 
 // baseList is the value type behind both repeatable basename flags, --skip
 // and --rule-doc. It refuses paths — the match is decided on basenames
@@ -169,195 +258,285 @@ func set(l baseList) map[string]bool {
 	return m
 }
 
-func run(args []string, stdout, stderr io.Writer) (code int) {
-	// `version -h` is the version verb's help on stdout at exit 0, never two file
-	// names (the CLI style's rule (b), #4505); -h on the scan itself is answered below.
-	defer verbflag.Recover(stdout, "nova-self-talk", usage, &code)
-	if len(args) == 2 && args[0] == "version" {
-		verbflag.HelpIfAsked(args[1:], "version")
-	}
-	// `help` is a word rather than a flag because the refusals now name it: a one-line
-	// refusal that ends in `run: nova-self-talk help` has to be telling the truth.
-	if len(args) == 1 && args[0] == "help" {
-		fmt.Fprint(stdout, usage)
-		return 0
-	}
-	// `version` is a word here for the same reason `help` is, and it is recognised in
-	// the same place: as the WHOLE invocation, before the flag set is built. This tool
-	// takes files positionally, so a lone `version` is a file named version to the
-	// parser -- the same collision `help` already has, and the same answer, because a
-	// verb somebody has to remember to spell differently is a verb nobody uses. A file
-	// actually named `version` is still scanned when it is named beside another.
-	if len(args) == 1 && (args[0] == "version" || args[0] == "--version") {
-		return cmdVersion(nil, stdout, stderr)
-	}
-	fs := flag.NewFlagSet("nova-self-talk", flag.ContinueOnError)
-	// Package flag is given no stream: its error text quotes the argument it could
-	// not parse, raw, so an argument holding a newline authored a whole line of
-	// stderr before any code in this file ran. The refusal is printed below,
-	// escaped, and usage is printed where this file decides the stream.
-	fs.SetOutput(io.Discard)
-	fs.Usage = func() {}
+// finding is one reported sentence, of either class.
+type finding struct {
+	class string // "standing" or "installation": the two are capped separately
+	line  int
+	shape string
+	match string
+	text  string
+}
+
+// page is what the scan learned about one named file.
+type page struct {
+	name     string
+	skipped  bool
+	ruledoc  bool // named by --rule-doc and has findings, so its banner prints
+	findings []finding
+}
+
+// report is the one value a scan builds; the lines and the JSON are two renderings of it.
+type report struct {
+	pages                                       []page
+	scanned, claims, standing, installed, dated int
+}
+
+func scan(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	asJSON := verbflag.BoolAsked(args, "json")
+	fset := verbflag.New("scan")
 	var skips, ruleDocs baseList
-	fs.Var(&skips, "skip", "basename to skip, repeatable (nothing is skipped by default)")
-	fs.Var(&ruleDocs, "rule-doc", "basename whose findings print under the rule-document banner, repeatable (empty by default)")
-	max := fs.Int("max", bounded.Default, "finding lines to print per class before one MORE line stands for the rest; 0 prints all")
-	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			fmt.Fprint(stdout, usage)
-			return 0
-		}
+	fset.Var(&skips, "skip", "basename to skip, repeatable (nothing is skipped by default)")
+	fset.Var(&ruleDocs, "rule-doc", "basename whose findings print under the rule-document banner, repeatable (empty by default)")
+	maxLines := fset.Int("max", bounded.Default, "finding lines to print per class before one MORE line stands for the rest; 0 prints all")
+	fset.Bool("json", false, "print the run as one JSON object on stdout instead of lines")
+	if err := verbflag.Parse(fset, args); err != nil {
 		hint := ""
 		for _, flagName := range []string{"skip", "rule-doc"} {
 			if strings.Contains(err.Error(), " for flag -"+flagName+":") || err.Error() == "flag needs an argument: -"+flagName {
 				hint = "basename"
 			}
 		}
-		return refuse(stderr, oneline.Cap(err.Error(), oneline.TailBytes), hint)
+		what := err.Error()
+		if name, ok := strings.CutPrefix(what, "flag provided but not defined: "); ok {
+			what = "unknown flag " + name + "; the flags are --skip, --rule-doc, --max, --json"
+		}
+		return refuse(stdout, stderr, asJSON, "scan", hint, oneline.Cap(what, oneline.TailBytes))
 	}
-	if *max < 0 {
+
+	// EVERY PROBLEM THIS RUN CAN FIND IS NAMED IN ONE GO, so a caller fixes the call once.
+	var problems []string
+	if *maxLines < 0 {
 		// Zero already means "all", so a negative ceiling is a typo with two readings
 		// and gets neither.
-		return refuse(stderr, fmt.Sprintf("--max must be a line ceiling of zero or more (got %d); 0 means print them all", *max), "")
+		problems = append(problems, fmt.Sprintf("--max must be a line ceiling of zero or more (got %d); 0 means print them all", *maxLines))
 	}
-	parsed := len(args) - fs.NArg()
+	files, late := positionals(args, fset)
+	if late != "" {
+		// A flag after the files makes the file list itself ambiguous, so no file is read.
+		problems = append(problems, fmt.Sprintf("flags come before files (got %q); use -- before a filename beginning with a dash", late))
+		return refuse(stdout, stderr, asJSON, "scan", "", problems...)
+	}
+	if len(files) == 0 {
+		problems = append(problems, "no files named; refusing to guess")
+		return refuse(stdout, stderr, asJSON, "scan", "files", problems...)
+	}
+
+	skipped, pinned := set(skips), set(ruleDocs)
+
+	// EVERY NAMED FILE IS READ BEFORE ANY OF THEM IS SCANNED, and every unreadable one is
+	// reported rather than the first: a caller who mistyped three paths learns about three
+	// in one go, and a run that printed findings and then refused would be reporting
+	// findings from a run that did not happen.
+	contents := make([]string, len(files))
+	unread := 0
+	var piped []byte
+	for i, f := range files {
+		if skipped[selftalk.Base(f)] {
+			continue
+		}
+		b, err := readNamed(f, stdin, &piped)
+		if err != nil {
+			unread++
+			problems = append(problems, cannotRead(f, err))
+			continue
+		}
+		contents[i] = string(b)
+	}
+	if len(problems) > 0 {
+		hint := ""
+		if unread > 0 {
+			hint = "unread"
+		}
+		return refuse(stdout, stderr, asJSON, "scan", hint, problems...)
+	}
+
+	var r report
+	for i, f := range files {
+		p := page{name: f, skipped: skipped[selftalk.Base(f)]}
+		if !p.skipped {
+			r.scanned++
+			for _, c := range selftalk.Scan(contents[i]) {
+				r.claims++
+				if c.Verdict != selftalk.Standing {
+					// A DATED CLAIM IS THE WELCOME CASE, and it was half the output: six
+					// hundred of them quoted a whole sentence each to say, six hundred times,
+					// that the writer had done the thing this tool asks for. It is a count.
+					r.dated++
+					continue
+				}
+				r.standing++
+				p.findings = append(p.findings, finding{"standing", c.Line, string(c.Verdict), c.Match, c.Text})
+			}
+			for _, in := range selftalk.ScanInstallation(contents[i]) {
+				r.installed++
+				p.findings = append(p.findings, finding{"installation", in.Line, string(in.Shape), in.Match, in.Text})
+			}
+			// The banner prints ONCE per file that has findings, before them, so a reader
+			// cannot meet a finding in a rule document without meeting the sentence that
+			// says what it is for.
+			p.ruledoc = pinned[selftalk.Base(f)] &&
+				slices.ContainsFunc(p.findings, func(f finding) bool { return f.class == "installation" })
+		}
+		r.pages = append(r.pages, p)
+	}
+	if asJSON {
+		return r.json(stdout, *maxLines)
+	}
+	return r.lines(stdout, stderr, *maxLines)
+}
+
+// positionals returns the files after the flags, and the first argument that looks like a
+// flag standing after a file (a late flag), or "".
+func positionals(args []string, fset *flag.FlagSet) ([]string, string) {
+	parsed := len(args) - fset.NArg()
 	literal := false
-	// Every scan flag takes a value. A value spelled "--" is not the
+	// Every scan flag but --json takes a value. A value spelled "--" is not the
 	// terminator; walk the parsed prefix so only the separator protects files.
 	for i := 0; i < parsed; i++ {
 		if args[i] == "--" {
 			literal = true
 			break
 		}
-		if !strings.Contains(args[i], "=") {
+		if !strings.Contains(args[i], "=") && strings.TrimLeft(args[i], "-") != "json" {
 			i++
 		}
 	}
 	var files []string
-	for _, arg := range fs.Args() {
+	for _, arg := range fset.Args() {
 		if !literal && arg == "--" {
 			literal = true
 			continue
 		}
 		if !literal && len(arg) > 1 && strings.HasPrefix(arg, "-") {
-			return refuse(stderr, fmt.Sprintf("flags come before files (got %q); use -- before a filename beginning with a dash", arg), "")
+			return nil, arg
 		}
 		files = append(files, arg)
 	}
-	if len(files) == 0 {
-		return refuse(stderr, "no files named; refusing to guess", "files")
+	return files, ""
+}
+
+// readNamed reads one named file; "-" is standard input, read once however often it is named.
+func readNamed(name string, stdin io.Reader, piped *[]byte) ([]byte, error) {
+	if name != "-" {
+		return os.ReadFile(name)
 	}
-
-	skipped, pinned := set(skips), set(ruleDocs)
-
-	// EVERY NAMED FILE IS READ BEFORE ANY OF THEM IS SCANNED, and every
-	// unreadable one is reported rather than the first. Two reasons, and both
-	// are a first run's: a caller who mistyped three paths should learn about
-	// three in one go, and a run that printed findings and then refused would
-	// be reporting findings from a run that did not happen.
-	contents := make([]string, len(files))
-	readable := true
-	for i, f := range files {
-		if skipped[selftalk.Base(f)] {
-			continue
-		}
-		b, err := os.ReadFile(f)
+	if *piped == nil {
+		b, err := io.ReadAll(stdin)
 		if err != nil {
-			fmt.Fprintf(stderr, "nova-self-talk: %s\n", oneline.Err(err))
-			readable = false
-			continue
+			return nil, err
 		}
-		contents[i] = string(b)
+		*piped = append([]byte{}, b...)
 	}
-	if !readable {
-		return refuse(stderr, "NOTHING was scanned, which is not a green", "files")
-	}
+	return *piped, nil
+}
 
+// cannotRead is the problem line for one unreadable file. A bare word that is no file is
+// most often a verb guessed wrong, so that line names the verbs too.
+func cannotRead(name string, err error) string {
+	// Built by concatenation, not formatted: refuse escapes the whole line when it prints it.
+	what := "cannot read " + oneline.Quote(name) + ": " + reason(err)
+	if !strings.ContainsAny(name, `./\`) {
+		what += "; it is not a verb either (the verbs are " + strings.Join(verbs, ", ") +
+			"; a file of that name is ./" + name + ")"
+	}
+	return what
+}
+
+// reason is an error without the path a *fs.PathError repeats, since the line names the path.
+func reason(err error) string {
+	var pe *fs.PathError
+	if errors.As(err, &pe) {
+		err = pe.Err
+	}
+	return err.Error()
+}
+
+// lines renders the report as this tool's typed lines: findings on stderr, the protocol
+// lines on stdout.
+func (r report) lines(stdout, stderr io.Writer, maxLines int) int {
 	// THE TWO CLASSES ARE CAPPED SEPARATELY, for the same reason the classes exist: six
 	// hundred STANDING claims must not be able to eat the one INSTALLATION finding, which
 	// is the one the first class cannot see and the reader is least likely to know about.
-	fails := bounded.Grouped(stderr, *max, "SELFTALK", maxRemedy)
-	skipLines := bounded.Capped(stdout, *max, "SELFTALK", "skip", maxRemedy)
-	banners := bounded.Capped(stdout, *max, "SELFTALK", "ruledoc", maxRemedy)
-
-	scanned, claims, standing, installed, dated := 0, 0, 0, 0, 0
-	for i, f := range files {
-		if skipped[selftalk.Base(f)] {
-			skipLines.Line(fmt.Sprintf("SELFTALK SKIP %s (--skip)", oneline.Escape(f)))
+	fails := bounded.Grouped(stderr, maxLines, "SELFTALK", maxRemedy)
+	skipLines := bounded.Capped(stdout, maxLines, "SELFTALK", "skip", maxRemedy)
+	banners := bounded.Capped(stdout, maxLines, "SELFTALK", "ruledoc", maxRemedy)
+	for _, p := range r.pages {
+		if p.skipped {
+			skipLines.Line(fmt.Sprintf("SELFTALK SKIP %s (--skip)", oneline.Escape(p.name)))
 			continue
 		}
-		scanned++
-		text := contents[i]
-		for _, c := range selftalk.Scan(text) {
-			claims++
-			if c.Verdict == selftalk.Standing {
-				standing++
-				fails.Line("standing", fmt.Sprintf("SELFTALK FAIL %s:%d: %s: %s",
-					oneline.Escape(f), c.Line, c.Verdict, oneline.Escape(oneline.Cap(c.Text, oneline.TailBytes))))
-				continue
+		if p.ruledoc {
+			banners.Line(fmt.Sprintf("SELFTALK RULEDOC %s: %s", oneline.Escape(p.name), selftalk.RuleDocumentBanner))
+		}
+		for _, f := range p.findings {
+			kind := "STANDING"
+			if f.class == "installation" {
+				kind = "INSTALLATION " + f.shape
 			}
-			// A DATED CLAIM IS THE WELCOME CASE, and it was half the output: six hundred
-			// of them quoted a whole sentence each to say, six hundred times, that the
-			// writer had done the thing this tool asks for. It is a count now. Nothing
-			// is lost that the file does not already hold, and a run that dated
-			// everything went from 78K tokens to one line.
-			dated++
-		}
-		// THE THIRD DETECTOR (nova-tools #1468, third fix attempt) runs alongside
-		// selftalk.Scan for the same reason the second detector does: the three
-		// plainest first-person absolutes ("I cannot ever get this right." and
-		// its two siblings) are missed by both of the existing detectors by
-		// design. plainest.go carries the narrow addition; here we merge its
-		// STANDING claims into the count and the FAIL stream, so the run loop's
-		// one-line grammar is unchanged.
-		plainestClaims, plainestFound := plainestScan(text)
-		for _, c := range plainestClaims {
-			claims++
-			if c.Verdict == selftalk.Standing {
-				standing++
-				fails.Line("standing", fmt.Sprintf("SELFTALK FAIL %s:%d: %s: %s",
-					oneline.Escape(f), c.Line, c.Verdict, oneline.Escape(oneline.Cap(c.Text, oneline.TailBytes))))
-				continue
-			}
-			dated++
-		}
-		found := selftalk.ScanInstallation(text)
-		found = append(found, plainestFound...)
-		// The banner prints ONCE per file that has findings, before them, so a
-		// reader cannot meet a finding in a rule document without meeting the
-		// sentence that says what it is for.
-		if len(found) > 0 && pinned[selftalk.Base(f)] {
-			banners.Line(fmt.Sprintf("SELFTALK RULEDOC %s: %s", oneline.Escape(f), selftalk.RuleDocumentBanner))
-		}
-		for _, i := range found {
-			installed++
-			fails.Line("installation", fmt.Sprintf("SELFTALK FAIL %s:%d: INSTALLATION %s: %s",
-				oneline.Escape(f), i.Line, i.Shape, oneline.Escape(oneline.Cap(i.Text, oneline.TailBytes))))
+			fails.Line(f.class, fmt.Sprintf("SELFTALK FAIL %s:%d: %s match=%q: %s",
+				oneline.Escape(p.name), f.line, oneline.Escape(kind), f.match, oneline.Escape(oneline.Cap(f.text, oneline.TailBytes))))
 		}
 	}
 	skipLines.More()
-	if scanned == 0 {
-		fmt.Fprintf(stdout, "SELFTALK SKIP files=0 skipped=%d reason=all-skipped\n", len(files))
-		fmt.Fprint(stdout, note)
+	if r.scanned == 0 {
+		fmt.Fprintf(stdout, "SELFTALK SKIP files=0 skipped=%d reason=all-skipped\n", len(r.pages))
+		fmt.Fprintf(stdout, "SELFTALK NOTE %s\n", note)
 		return 0
 	}
 	banners.More()
 	fails.More()
-
-	if dated > 0 {
-		fmt.Fprintf(stdout, "SELFTALK DATED n=%d files=%d\n", dated, scanned)
+	if r.dated > 0 {
+		fmt.Fprintf(stdout, "SELFTALK DATED n=%d files=%d\n", r.dated, r.scanned)
 	}
 	// THE COUNT LINE PRINTS ON FAILURE TOO. It printed only on a clean run, so a scan
 	// that found six hundred things gave six hundred lines and never the number.
-	if standing > 0 || installed > 0 {
+	if r.standing > 0 || r.installed > 0 {
 		fmt.Fprintf(stdout, "SELFTALK FAIL files=%d claims=%d standing=%d installations=%d dated=%d shown=%d\n",
-			scanned, claims, standing, installed, dated, fails.Shown())
+			r.scanned, r.claims, r.standing, r.installed, r.dated, fails.Shown())
 	} else {
-		fmt.Fprintf(stdout, "SELFTALK OK files=%d claims=%d standing=0 installations=0 dated=%d\n", scanned, claims, dated)
+		fmt.Fprintf(stdout, "SELFTALK OK files=%d claims=%d standing=0 installations=0 dated=%d\n", r.scanned, r.claims, r.dated)
 	}
-	fmt.Fprint(stdout, note)
-	if standing > 0 || installed > 0 {
+	fmt.Fprintf(stdout, "SELFTALK NOTE %s\n", note)
+	if r.standing > 0 || r.installed > 0 {
 		return 1
 	}
 	return 0
+}
+
+// json renders the same report as one JSON object on stdout, capped by --max the same way.
+func (r report) json(stdout io.Writer, maxLines int) int {
+	o := tool.Done()
+	o.Verb = "scan"
+	tally := bounded.NewTally(maxLines)
+	shown := 0
+	for _, p := range r.pages {
+		if p.skipped {
+			if tally.Add("skip") {
+				o.Item("skip", "file", p.name)
+			}
+			continue
+		}
+		if p.ruledoc && tally.Add("ruledoc") {
+			o.Item("ruledoc", "file", p.name, "banner", selftalk.RuleDocumentBanner)
+		}
+		for _, f := range p.findings {
+			if tally.Add(f.class) {
+				shown++
+				o.Item(f.class, "file", p.name, "line", f.line, "shape", f.shape, "match", f.match, "text", f.text)
+			}
+		}
+	}
+	for _, kind := range tally.Kinds() {
+		if tally.Shown(kind) < tally.Total(kind) {
+			o.More = append(o.More, tool.More{Kind: kind, Shown: tally.Shown(kind), Total: tally.Total(kind), Remedy: maxRemedy})
+		}
+	}
+	o.Fact("files", r.scanned).Fact("skipped", len(r.pages)-r.scanned).Fact("claims", r.claims).
+		Fact("standing", r.standing).Fact("installations", r.installed).Fact("dated", r.dated).Fact("shown", shown)
+	if r.standing > 0 || r.installed > 0 {
+		o.Status, o.Exit = tool.Failed, 1
+	}
+	o.Note(note)
+	o.Render(stdout, true)
+	return o.Exit
 }
