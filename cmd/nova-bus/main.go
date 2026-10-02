@@ -1395,7 +1395,7 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// sender left before the stamp, so len(plan.Prepared) is the number of lanes answered
 	// and would be a different, smaller and quite surprising number here.
 	if *dryRun {
-		fmt.Fprintf(stdout, "CLOSE OK closed=%d kept=%d commit=-\n", plan.Closed, plan.Kept)
+		fmt.Fprintf(stdout, "CLOSE OK closed=%d kept=%d commit=- dry_run=true\n", plan.Closed, plan.Kept)
 		return 0
 	}
 	if len(plan.Prepared) == 0 {

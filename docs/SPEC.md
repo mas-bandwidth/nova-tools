@@ -2941,7 +2941,7 @@ INBOX NOTE id=<id|-> from=<name> [host=<host> ]addr=<to|cc> at=<stamp|-> path=<p
 INBOX HEARD id=<id|-> from=<name> [host=<host> ]addr=<to|cc> at=<stamp|-> path=<path>: <subject>
 INBOX RECEIPT id=<id|-> from=<name> [host=<host> ]addr=<to|cc> at=<stamp|-> path=<path>: <subject>
 INBOX OK as=<name> carrying=<n> open=<n> notes=<n> receipts=<n> heard=<n> unaddressed=<n> unreadable=<n>
-INBOX CURSOR commit=<sha> carrying=<n> pushed=<true|false> attempts=<n>
+INBOX CURSOR commit=<sha> carrying=<n> pushed=<true|false> attempts=<n>[ dry_run=true]
 INBOX FAIL <path>: <reason>
 INBOX REFUSED: <reason>
 INBOX WALK commits=<n>/<total> notes=<n> elapsed=<d>                   (progress: stderr only, never stdout)
@@ -2953,15 +2953,16 @@ WAIT OK new=<n> after=<d> polls=<n>
 WAIT TIMEOUT after=<d> polls=<n> cursor=<sha|->[ idle-exit=<n>]                            (the field only with --idle-exit)
 WAIT REFUSED: <reason>
 RECEIPT ALREADY note=<id or path> lane=<lane>
-RECEIPT OK recorded=<n> already=<n> commit=<sha|-> pushed=<true|false> attempts=<n>
+RECEIPT RECORD note=<id> lane=<lane>                                                        (--dry-run: one per note it would record)
+RECEIPT OK recorded=<n> already=<n> commit=<sha|-> pushed=<true|false> attempts=<n>[ dry_run=true]
 RECEIPT FAIL <name or path>: <reason>
 RECEIPT REFUSED: <reason>
-CLOSE OK closed=<n> kept=<n>[ receipts=<n>] commit=<sha8|->     (receipts= on a writing close; a dry run has none to count)
+CLOSE OK closed=<n> kept=<n>[ receipts=<n>] commit=<sha8|->[ dry_run=true]     (receipts= on a writing close; a dry run has none to count, and says dry_run=true)
 CLOSE NOTE <path> was written and could not be taken back: <reason>
 CLOSE FAIL <name or path>: <reason>
 CLOSE REFUSED: <reason>
 BUS SCOPE mode=<full|since> cursor=<sha|-> changed=<n>
-BUS INDEX lane=<lane> notes=<n>
+BUS INDEX lane=<lane> notes=<n>[ dry_run=true]
 BUS OK notes=<n> lanes=<n> receipts=<n> participants=<n> warn=<n>
 BUS WARN <path, path:line, or lane>: <reason>
 BUS FAIL <path, path:line, or lane>: <reason>
