@@ -108,26 +108,6 @@ type TestLine struct {
 	Why  string
 }
 
-// String is the line's value as a card carries it.
-func (t TestLine) String() string {
-	if t.None {
-		return "none " + t.Why
-	}
-	if t.Tags != "" {
-		return "-tags " + t.Tags + " " + t.Package + " " + t.Name
-	}
-	return t.Package + " " + t.Name
-}
-
-// GoPackage is Package as go test takes it: a repository-relative
-// package gets a leading ./ (a ./-relative one is kept as it is).
-func (t TestLine) GoPackage() string {
-	if strings.HasPrefix(t.Package, ".") {
-		return t.Package
-	}
-	return "./" + t.Package
-}
-
 // TestRemedy is what a card whose DONE-WHEN cannot be turned into a test is
 // told, on every refusal.
 const TestRemedy = "name `go test <package> -run <TestName>` in DONE-WHEN, or add TEST: [-tags <tags>] <package> <TestName>, or TEST: none <why the change has no test>"
