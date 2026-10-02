@@ -312,6 +312,16 @@ is never applied again, so `nova-config migrate` on a migrated database
 applies nothing and says so (`applied=0`). `0001_schema.sql` makes the
 schema, the ledger and the history table; every later file is one kind.
 
+The role that runs migrate must own every table in schema config and be
+able to create in it: migrations alter and fill tables, which only their
+owner may do. Before applying anything migrate reads the owners in one
+catalog query (`Store.Ownership`) and decides with `MigrateGaps` (the role,
+the owners, the pending migrations; the SQL is never read): with a migration
+pending and a table another role owns, it refuses before applying any and
+prints one `ALTER TABLE config.<table> OWNER TO <role>;` per table for a role
+with the owners' rights to run once. It never changes an owner or a grant. A
+`--file` store has no roles (the zero `Ownership`), so the check passes there.
+
 After every migrate the `nova_read` role, when it exists, is granted `USAGE`
 on the schema and `SELECT` on every table: a runtime tool that reads
 configuration straight from Postgres does it as that role.
@@ -494,7 +504,9 @@ CONFIG APPLY kind=<k> add=<n> set=<n> remove=<n> rev=<r> ms=<n>
 MIGRATION version=<v> file=<f> lines=<n>                 (migrate --print)
 MIGRATION version=<v> file=<f> lines=<n> state=applied|pending|missing   (migrate --dry-run: the ledger; missing is below the greatest recorded and not in the ledger, which migrate will not apply)
 CONFIG MIGRATE print=<n> pg=-
-CONFIG MIGRATE pg=<user@host:port/db>|file=<path> from=<v> to=<v> applied=<n> [dry_run=true pending=<n> missing=<n>]
+MIGRATE NOT-OWNED table=config.<t> owner=<role> role=<role>   (migrate --dry-run: a table the role does not own)
+MIGRATE WOULD-REFUSE <the refusal migrate would print>; run: ALTER TABLE config.<t> OWNER TO <role>; ...   (migrate --dry-run, ready=no)
+CONFIG MIGRATE pg=<user@host:port/db>|file=<path> from=<v> to=<v> applied=<n> [dry_run=true pending=<n> missing=<n> role=<role> ready=yes|no]
 CONFIG STATUS pg=<...>|file=<path> schema=<v> <kind>=<rows> <kind>_rev=<r> ... redis=<addr> <kind>_applied=<r> ...   (a singleton: <kind>_rev alone)
 CONFIG DRY-RUN op=<op> kind=<k> name=<n> actor=<a> wrote=nothing <field>=<v>|<field>=<before>><after> ...   (add, set, remove --dry-run)
 NOTE machine=<m> width=0: no sprint member, ...; run: nova-config machine set <m> --width <n> ...   (machine add with no --width)
@@ -505,7 +517,9 @@ CONFIG KINDS count=<n>
 
 Exit codes: 0 done; 1 refused (the store or Redis said no: a duplicate, a
 missing row, a ref naming no row, a row another names, a set that breaks
-the kind's `Check`, a ceiling, working copies, `CONFLICT`, a status behind); 2 usage (a flag, a value, a name on a
+the kind's `Check`, a ceiling, working copies, `CONFLICT`, a status behind;
+and `migrate --dry-run` ending `ready=no`, which prints its lines and no
+refusal line, since nothing was attempted); 2 usage (a flag, a value, a name on a
 singleton, a store that did not answer). A refusal is
 one stderr line, `nova-config <verb> REFUSED: <why>; run: <next step>`; a
 usage refusal's next step is the verb's own `-h`. `--json` prints the same
