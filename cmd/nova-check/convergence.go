@@ -166,7 +166,12 @@ func cmdConvergence(args []string, stdout, stderr io.Writer) int {
 	}
 
 	if *asJSON {
-		raw, err := json.Marshal(report.AsJSON(now, sinceAt))
+		// The dry-run fact the line form prints as its NOTE is a field here, so
+		// the two renderings carry the same facts.
+		raw, err := json.Marshal(struct {
+			converge.JSON
+			DryRun bool `json:"dry_run,omitempty"`
+		}{report.AsJSON(now, sinceAt), *dryRun && *state != ""})
 		if err != nil {
 			fmt.Fprintf(stderr, "nova-check convergence REFUSED: %s; run: nova-check help\n", oneline.Err(err))
 			return 2
