@@ -115,8 +115,7 @@ func TestEveryProviderLaunchesThroughOneArgv(t *testing.T) {
 			darwinArgv, errD := LaunchArgv(p.Name, "darwin")
 			require.NoError(t, errL, "LaunchArgv(%q, linux/darwin): linux=%v darwin=%v", p.Name, errL, errD)
 			require.NoError(t, errD, "LaunchArgv(%q, linux/darwin): linux=%v darwin=%v", p.Name, errL, errD)
-			if len(linuxArgv) != len(darwinArgv) {
-				t.Errorf("LaunchArgv(%q) linux argv len %d != darwin argv len %d", p.Name, len(linuxArgv), len(darwinArgv))
+			if !assert.Len(t, linuxArgv, len(darwinArgv), "LaunchArgv(%q) linux argv len %d != darwin argv len %d", p.Name, len(linuxArgv), len(darwinArgv)) {
 				return
 			}
 			// The two OS argvs must differ only in the harness path (the table

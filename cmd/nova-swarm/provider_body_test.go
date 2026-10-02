@@ -109,9 +109,8 @@ func assertDialedProxy(t *testing.T, job string, proxy *swarm.ProviderProxy) {
 	raw, err := os.ReadFile(filepath.Join(job, "provider-url"))
 	require.NoError(t, err)
 	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
-	if len(lines) == 0 || lines[0] == "" {
-		t.Fatal("the harness recorded no provider url")
-	}
+	require.NotEmpty(t, lines, "the harness recorded no provider url")
+	require.NotEqual(t, "", lines[0], "the harness recorded no provider url")
 	for _, line := range lines {
 		require.Equal(t, proxy.HarnessURL(), line, "harness dialed %q, want the proxy %s", line, proxy.HarnessURL())
 	}
@@ -140,18 +139,16 @@ func TestProviderBodySilenceArmsFortyFiveSecondsAndDoesNotRelaunch(t *testing.T)
 	got := runBodyCard(t, up.URL, 0, clock.After)
 	require.NotNil(t, got.proxy, "no proxy\n%s", got.err)
 	require.Equal(t, swarm.ProviderBodySilence, clock.first(), "the card armed %s, want %s", clock.first(), swarm.ProviderBodySilence)
-	if got.code != 0 || !got.res.lost || got.res.end != swarm.EndUnknown {
-		t.Fatalf("code=%d lost=%v end=%s\n%s", got.code, got.res.lost, got.res.end, got.err)
-	}
+	require.Equal(t, 0, got.code, "code=%d lost=%v end=%s\n%s", got.code, got.res.lost, got.res.end, got.err)
+	require.True(t, got.res.lost, "code=%d lost=%v end=%s\n%s", got.code, got.res.lost, got.res.end, got.err)
+	require.Equal(t, swarm.EndUnknown, got.res.end, "code=%d lost=%v end=%s\n%s", got.code, got.res.lost, got.res.end, got.err)
 	verdict, why := nativeVerdictWhy(got.res)
-	if verdict != "INCOMPLETE" || why != "unknown-acceptance" {
-		t.Fatalf("verdict %s why %s", verdict, why)
-	}
+	require.Equal(t, "INCOMPLETE", verdict, "verdict %s why %s", verdict, why)
+	require.Equal(t, "unknown-acceptance", why, "verdict %s why %s", verdict, why)
 	n := jobLaunches(t, got.res.job)
 	require.Equal(t, 1, n, "card launches=%d, want 1", n)
-	if got.proxy.Requests() != 1 || upstream.Load() != 1 {
-		t.Fatalf("requests=%d upstream=%d, want 1 and 1", got.proxy.Requests(), upstream.Load())
-	}
+	require.Equal(t, int64(1), got.proxy.Requests(), "requests=%d upstream=%d, want 1 and 1", got.proxy.Requests(), upstream.Load())
+	require.Equal(t, int32(1), upstream.Load(), "requests=%d upstream=%d, want 1 and 1", got.proxy.Requests(), upstream.Load())
 	assertDialedProxy(t, got.res.job, got.proxy)
 	mark, err := os.ReadFile(filepath.Join(got.res.job, "provider-acceptance"))
 	require.NoError(t, err)
@@ -185,18 +182,16 @@ func TestProviderBodySilenceAbortsTheCardOnce(t *testing.T) {
 	runFor := time.Since(started)
 	require.NotNil(t, got.proxy, "no proxy\n%s", got.err)
 	require.Equal(t, 2*time.Second, got.proxy.Silence(), "silence %s, want 2s", got.proxy.Silence())
-	if got.code != 0 || !got.res.lost || got.res.end != swarm.EndUnknown {
-		t.Fatalf("code=%d lost=%v end=%s\n%s", got.code, got.res.lost, got.res.end, got.err)
-	}
+	require.Equal(t, 0, got.code, "code=%d lost=%v end=%s\n%s", got.code, got.res.lost, got.res.end, got.err)
+	require.True(t, got.res.lost, "code=%d lost=%v end=%s\n%s", got.code, got.res.lost, got.res.end, got.err)
+	require.Equal(t, swarm.EndUnknown, got.res.end, "code=%d lost=%v end=%s\n%s", got.code, got.res.lost, got.res.end, got.err)
 	verdict, why := nativeVerdictWhy(got.res)
-	if verdict != "INCOMPLETE" || why != "unknown-acceptance" {
-		t.Fatalf("verdict %s why %s", verdict, why)
-	}
+	require.Equal(t, "INCOMPLETE", verdict, "verdict %s why %s", verdict, why)
+	require.Equal(t, "unknown-acceptance", why, "verdict %s why %s", verdict, why)
 	n := jobLaunches(t, got.res.job)
 	require.Equal(t, 1, n, "card launches=%d, want 1", n)
-	if got.proxy.Requests() != 1 || upstream.Load() != 1 {
-		t.Fatalf("requests=%d upstream=%d, want 1 and 1", got.proxy.Requests(), upstream.Load())
-	}
+	require.Equal(t, int64(1), got.proxy.Requests(), "requests=%d upstream=%d, want 1 and 1", got.proxy.Requests(), upstream.Load())
+	require.Equal(t, int32(1), upstream.Load(), "requests=%d upstream=%d, want 1 and 1", got.proxy.Requests(), upstream.Load())
 	assertDialedProxy(t, got.res.job, got.proxy)
 	mark, err := os.ReadFile(filepath.Join(got.res.job, "provider-acceptance"))
 	require.NoError(t, err)
@@ -229,18 +224,16 @@ func TestProviderBodyThatResumesInsideTheDeadlineIsNotUnknown(t *testing.T) {
 
 	got := runBodyCard(t, up.URL, 2*time.Second, nil)
 	require.NotNil(t, got.proxy, "no proxy\n%s", got.err)
-	if got.code != 0 || got.res.lost || got.res.rc != 0 {
-		t.Fatalf("code=%d lost=%v rc=%d\n%s", got.code, got.res.lost, got.res.rc, got.err)
-	}
+	require.Equal(t, 0, got.code, "code=%d lost=%v rc=%d\n%s", got.code, got.res.lost, got.res.rc, got.err)
+	require.False(t, got.res.lost, "code=%d lost=%v rc=%d\n%s", got.code, got.res.lost, got.res.rc, got.err)
+	require.Equal(t, 0, got.res.rc, "code=%d lost=%v rc=%d\n%s", got.code, got.res.lost, got.res.rc, got.err)
 	verdict, why := nativeVerdictWhy(got.res)
-	if verdict != "OK" || why != "" {
-		t.Fatalf("verdict %s why %s, want OK", verdict, why)
-	}
+	require.Equal(t, "OK", verdict, "verdict %s why %s, want OK", verdict, why)
+	require.Equal(t, "", why, "verdict %s why %s, want OK", verdict, why)
 	n := jobLaunches(t, got.res.job)
 	require.Equal(t, 1, n, "card launches=%d, want 1", n)
-	if got.proxy.Requests() != 1 || upstream.Load() != 1 {
-		t.Fatalf("requests=%d upstream=%d, want 1 and 1", got.proxy.Requests(), upstream.Load())
-	}
+	require.Equal(t, int64(1), got.proxy.Requests(), "requests=%d upstream=%d, want 1 and 1", got.proxy.Requests(), upstream.Load())
+	require.Equal(t, int32(1), upstream.Load(), "requests=%d upstream=%d, want 1 and 1", got.proxy.Requests(), upstream.Load())
 	require.False(t, got.proxy.Lost(), "a body inside the deadline was marked unknown")
 	_, err := os.Stat(filepath.Join(got.res.job, "provider-acceptance"))
 	require.True(t, os.IsNotExist(err), "provider-acceptance exists: %v", err)
@@ -270,18 +263,16 @@ func TestProviderNoHeadersEndsAtTheHeaderWaitAsUnknown(t *testing.T) {
 	runFor := time.Since(started)
 	require.NotNil(t, got.proxy, "no proxy\n%s", got.err)
 	require.Equal(t, time.Second, got.proxy.HeaderWait(), "header wait %s, want 1s", got.proxy.HeaderWait())
-	if got.code != 0 || !got.res.lost || got.res.end != swarm.EndUnknown {
-		t.Fatalf("code=%d lost=%v end=%s\n%s", got.code, got.res.lost, got.res.end, got.err)
-	}
+	require.Equal(t, 0, got.code, "code=%d lost=%v end=%s\n%s", got.code, got.res.lost, got.res.end, got.err)
+	require.True(t, got.res.lost, "code=%d lost=%v end=%s\n%s", got.code, got.res.lost, got.res.end, got.err)
+	require.Equal(t, swarm.EndUnknown, got.res.end, "code=%d lost=%v end=%s\n%s", got.code, got.res.lost, got.res.end, got.err)
 	verdict, why := nativeVerdictWhy(got.res)
-	if verdict != "INCOMPLETE" || why != "unknown-acceptance" {
-		t.Fatalf("verdict %s why %s", verdict, why)
-	}
+	require.Equal(t, "INCOMPLETE", verdict, "verdict %s why %s", verdict, why)
+	require.Equal(t, "unknown-acceptance", why, "verdict %s why %s", verdict, why)
 	n := jobLaunches(t, got.res.job)
 	require.Equal(t, 1, n, "card launches=%d, want 1", n)
-	if got.proxy.Requests() != 1 || upstream.Load() != 1 {
-		t.Fatalf("requests=%d upstream=%d, want 1 and 1", got.proxy.Requests(), upstream.Load())
-	}
+	require.Equal(t, int64(1), got.proxy.Requests(), "requests=%d upstream=%d, want 1 and 1", got.proxy.Requests(), upstream.Load())
+	require.Equal(t, int32(1), upstream.Load(), "requests=%d upstream=%d, want 1 and 1", got.proxy.Requests(), upstream.Load())
 	assertDialedProxy(t, got.res.job, got.proxy)
 	mark, err := os.ReadFile(filepath.Join(got.res.job, "provider-acceptance"))
 	require.NoError(t, err)
@@ -320,21 +311,18 @@ func TestProviderDelayedHeadersInsideTheWaitAreNotUnknown(t *testing.T) {
 
 	got := runProviderCard(t, up.URL, 2*time.Second, 2*time.Second, nil)
 	require.NotNil(t, got.proxy, "no proxy\n%s", got.err)
-	if got.code != 0 || got.res.lost || got.res.rc != 0 {
-		t.Fatalf("code=%d lost=%v rc=%d\n%s", got.code, got.res.lost, got.res.rc, got.err)
-	}
+	require.Equal(t, 0, got.code, "code=%d lost=%v rc=%d\n%s", got.code, got.res.lost, got.res.rc, got.err)
+	require.False(t, got.res.lost, "code=%d lost=%v rc=%d\n%s", got.code, got.res.lost, got.res.rc, got.err)
+	require.Equal(t, 0, got.res.rc, "code=%d lost=%v rc=%d\n%s", got.code, got.res.lost, got.res.rc, got.err)
 	verdict, why := nativeVerdictWhy(got.res)
-	if verdict != "OK" || why != "" {
-		t.Fatalf("verdict %s why %s, want OK", verdict, why)
-	}
+	require.Equal(t, "OK", verdict, "verdict %s why %s, want OK", verdict, why)
+	require.Equal(t, "", why, "verdict %s why %s, want OK", verdict, why)
 	n := jobLaunches(t, got.res.job)
 	require.Equal(t, 1, n, "card launches=%d, want 1", n)
-	if got.proxy.Requests() != 1 || upstream.Load() != 1 {
-		t.Fatalf("requests=%d upstream=%d, want 1 and 1", got.proxy.Requests(), upstream.Load())
-	}
-	if got.proxy.Lost() || got.proxy.HeaderWall() != 0 {
-		t.Fatalf("delayed headers inside the wait were marked unknown (header wall %s)", got.proxy.HeaderWall())
-	}
+	require.Equal(t, int64(1), got.proxy.Requests(), "requests=%d upstream=%d, want 1 and 1", got.proxy.Requests(), upstream.Load())
+	require.Equal(t, int32(1), upstream.Load(), "requests=%d upstream=%d, want 1 and 1", got.proxy.Requests(), upstream.Load())
+	require.False(t, got.proxy.Lost(), "delayed headers inside the wait were marked unknown (header wall %s)", got.proxy.HeaderWall())
+	require.Zero(t, got.proxy.HeaderWall(), "delayed headers inside the wait were marked unknown (header wall %s)", got.proxy.HeaderWall())
 	_, err := os.Stat(filepath.Join(got.res.job, "provider-acceptance"))
 	require.True(t, os.IsNotExist(err), "provider-acceptance exists: %v", err)
 	_, err = os.Stat(filepath.Join(got.res.job, "RESULT.md"))

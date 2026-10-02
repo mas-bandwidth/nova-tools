@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // ISSUE #1463: THE HARNESS FENCE IGNORED THE WORKER DESCRIPTION'S `read_roots`, so a staged
@@ -54,16 +56,12 @@ func TestNativeConfigNamesTheWorkerReadRootsOnAWalledRun(t *testing.T) {
 		sandbox:  nativeSandbox(t),
 		worker:   aReadRootWorker(stage),
 	}, &errOut)
-	if code != 0 {
-		t.Fatalf("the run exits 0, got %d:\n%s", code, errOut.String())
-	}
+	require.Equal(t, 0, code, "the run exits 0, got %d:\n%s", code, errOut.String())
 	external := externalDirectoryRules(t, slot)
 	// The path itself, and both wildcard spellings, because the harness asks about a
 	// directory under either -- FenceReadPatterns is the one place that decides the shapes.
 	for _, want := range []string{stage, stage + "/*", stage + "/**"} {
-		if external[want] != "allow" {
-			t.Errorf("read_roots named %s, so the fence allows %s on a WALLED run; it holds %v", stage, want, external)
-		}
+		assert.Equal(t, "allow", external[want], "read_roots named %s, so the fence allows %s on a WALLED run; it holds %v", stage, want, external)
 	}
 }
 
@@ -88,13 +86,9 @@ func TestNativeWallReadsTheWorkerReadRoots(t *testing.T) {
 			found = true
 		}
 		// AND NEVER A WRITE. A root the desk names is a reference, not a workspace.
-		if (argv[i] == "--write" || argv[i] == "--read-noexec") && argv[i+1] == stage {
-			t.Errorf("a read root reaches the wall as --read and on no other flag; %s is on %s:\n%s", stage, argv[i], strings.Join(argv, " "))
-		}
+		assert.False(t, (argv[i] == "--write" || argv[i] == "--read-noexec") && argv[i+1] == stage, "a read root reaches the wall as --read and on no other flag; %s is on %s:\n%s", stage, argv[i], strings.Join(argv, " "))
 	}
-	if !found {
-		t.Errorf("read_roots named %s, so the wall is handed --read %s; the argv reads:\n%s", stage, stage, strings.Join(argv, " "))
-	}
+	assert.True(t, found, "read_roots named %s, so the wall is handed --read %s; the argv reads:\n%s", stage, stage, strings.Join(argv, " "))
 }
 
 // TestNativeConfigStillWithholdsTheCardsReadPathsOnAWalledRun is the line this fix does NOT
@@ -119,13 +113,10 @@ func TestNativeConfigStillWithholdsTheCardsReadPathsOnAWalledRun(t *testing.T) {
 		deadline: 30 * time.Second,
 		sandbox:  nativeSandbox(t),
 	}, &errOut)
-	if code != 0 {
-		t.Fatalf("the run exits 0, got %d:\n%s", code, errOut.String())
-	}
+	require.Equal(t, 0, code, "the run exits 0, got %d:\n%s", code, errOut.String())
 	external := externalDirectoryRules(t, slot)
 	for _, never := range []string{"/sys/kernel/security/lsm", "/sys/kernel/security/*"} {
-		if _, named := external[never]; named {
-			t.Errorf("a WALLED run takes no path from the card's own text: %s is named; it holds %v", never, external)
-		}
+		_, named := external[never]
+		assert.False(t, named, "a WALLED run takes no path from the card's own text: %s is named; it holds %v", never, external)
 	}
 }

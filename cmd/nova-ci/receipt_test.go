@@ -80,9 +80,9 @@ func TestReceiptNeedsAStoreAddress(t *testing.T) {
 	args := receiptArgs()
 	args[3] = ""
 	var out, errOut bytes.Buffer
-	if code := cmdGitHub(args, &out, &errOut, noEnv); code != 2 || !strings.Contains(errOut.String(), "needs --redis <host:port> or NOVA_REDIS_ADDR") {
-		t.Fatalf("code %d err %q", code, errOut.String())
-	}
+	code := cmdGitHub(args, &out, &errOut, noEnv)
+	require.Equal(t, 2, code, "code %d err %q", code, errOut.String())
+	require.Contains(t, errOut.String(), "needs --redis <host:port> or NOVA_REDIS_ADDR", "code %d err %q", code, errOut.String())
 }
 
 // receipt -h is the verb's help: its usage lines, every flag with what it
@@ -122,14 +122,12 @@ func TestTheCommandReferenceReceiptRefusalsAreWhatTheToolPrints(t *testing.T) {
 	require.Len(t, steps, 2, "the `### github receipt` block runs %d commands, want 2 refusals", len(steps))
 	got := make([]onboarding.Result, 0, len(steps))
 	for _, s := range steps {
-		if len(s.Args) < 2 || s.Args[0] != "github" || s.Args[1] != "receipt" {
-			t.Fatalf("the documented command %q is not nova-ci github receipt", s.Line)
-		}
+		require.GreaterOrEqual(t, len(s.Args), 2, "the documented command %q is not nova-ci github receipt", s.Line)
+		require.Equal(t, "github", s.Args[0], "the documented command %q is not nova-ci github receipt", s.Line)
+		require.Equal(t, "receipt", s.Args[1], "the documented command %q is not nova-ci github receipt", s.Line)
 		var out, errb bytes.Buffer
 		code := cmdGitHub(s.Args[1:], &out, &errb, noEnv)
-		if code != 2 {
-			t.Errorf("%s: exit %d, want 2 (refused before any dial)", s.Line, code)
-		}
+		assert.Equal(t, 2, code, "%s: exit %d, want 2 (refused before any dial)", s.Line, code)
 		got = append(got, onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()})
 	}
 	for _, p := range onboarding.CompareTranscript(steps, got, nil) {

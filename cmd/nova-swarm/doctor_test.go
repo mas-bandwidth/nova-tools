@@ -104,9 +104,8 @@ func TestDoctorRefusesWhenThePATHBinaryIsShadowed(t *testing.T) {
 	both := out.String() + errOut.String()
 	assert.Contains(t, both, doctorStaleLine, "the PATH binary's full line is not printed:\n%s", both)
 	assert.Contains(t, both, doctorRebuiltLine, "the ~/.local/bin binary's full line is not printed:\n%s", both)
-	if !strings.Contains(both, "copy") || !strings.Contains(both, ".local/bin") {
-		t.Errorf("the refusal names no fix:\n%s", both)
-	}
+	assert.Contains(t, both, "copy", "the refusal names no fix:\n%s", both)
+	assert.Contains(t, both, ".local/bin", "the refusal names no fix:\n%s", both)
 }
 
 // THE PATH RESOLVER IS THE SEAM, and this test drives it: `--path` is left off, the fake
@@ -152,9 +151,9 @@ func TestDoctorRefusesWhenTheOneBinaryCannotBeRead(t *testing.T) {
 
 	var out, errOut bytes.Buffer
 	code := env.cmdDoctor([]string{"--path", doctorLocal("/home/me"), "--local", doctorLocal("/home/me")}, &out, &errOut)
-	if code != 2 || out.Len() != 0 || !strings.Contains(errOut.String(), "DOCTOR UNREADABLE") {
-		t.Fatalf("exit %d, want 2 with DOCTOR UNREADABLE on stderr\nstdout: %s\nstderr: %s", code, out.String(), errOut.String())
-	}
+	require.Equal(t, 2, code, "exit %d, want 2 with DOCTOR UNREADABLE on stderr\nstdout: %s\nstderr: %s", code, out.String(), errOut.String())
+	require.Equal(t, 0, out.Len(), "exit %d, want 2 with DOCTOR UNREADABLE on stderr\nstdout: %s\nstderr: %s", code, out.String(), errOut.String())
+	require.Contains(t, errOut.String(), "DOCTOR UNREADABLE", "exit %d, want 2 with DOCTOR UNREADABLE on stderr\nstdout: %s\nstderr: %s", code, out.String(), errOut.String())
 }
 
 // NO ~/.local/bin COPY means there is nothing that could be shadowed: the guard cannot
@@ -186,24 +185,22 @@ func TestPreflightRefusesALaunchUnderAShadowedBinary(t *testing.T) {
 
 	var errOut bytes.Buffer
 	code, stop := env.preflight([]string{"native", "--dir", "d"}, &errOut)
-	if !stop || code != 2 {
-		t.Fatalf("preflight(exit=%d, stop=%v), want (2, true)", code, stop)
-	}
+	require.True(t, stop, "preflight(exit=%d, stop=%v), want (2, true)", code, stop)
+	require.Equal(t, 2, code, "preflight(exit=%d, stop=%v), want (2, true)", code, stop)
 	both := errOut.String()
-	if !strings.Contains(both, doctorStaleLine) || !strings.Contains(both, doctorRebuiltLine) {
-		t.Errorf("the preflight prints both stamps:\n%s", both)
-	}
+	assert.Contains(t, both, doctorStaleLine, "the preflight prints both stamps:\n%s", both)
+	assert.Contains(t, both, doctorRebuiltLine, "the preflight prints both stamps:\n%s", both)
 
 	// A flag value spelled -h (like `native --label -h` or `native --card -h`) is NOT a help request:
 	// under a shadowed binary, the preflight must refuse it with exit 2 rather than stand aside.
 	errOut.Reset()
-	if code, stop := env.preflight([]string{"native", "--label", "-h"}, &errOut); !stop || code != 2 {
-		t.Errorf("native --label -h: preflight(exit=%d, stop=%v), want (2, true)", code, stop)
-	}
+	code, stop = env.preflight([]string{"native", "--label", "-h"}, &errOut)
+	assert.True(t, stop, "native --label -h: preflight(exit=%d, stop=%v), want (2, true)", code, stop)
+	assert.Equal(t, 2, code, "native --label -h: preflight(exit=%d, stop=%v), want (2, true)", code, stop)
 	errOut.Reset()
-	if code, stop := env.preflight([]string{"native", "--card", "-h"}, &errOut); !stop || code != 2 {
-		t.Errorf("native --card -h: preflight(exit=%d, stop=%v), want (2, true)", code, stop)
-	}
+	code, stop = env.preflight([]string{"native", "--card", "-h"}, &errOut)
+	assert.True(t, stop, "native --card -h: preflight(exit=%d, stop=%v), want (2, true)", code, stop)
+	assert.Equal(t, 2, code, "native --card -h: preflight(exit=%d, stop=%v), want (2, true)", code, stop)
 }
 
 func TestPreflightLeavesNonLaunchVerbsAlone(t *testing.T) {
@@ -216,9 +213,9 @@ func TestPreflightLeavesNonLaunchVerbsAlone(t *testing.T) {
 		func(string) (string, error) { return "/opt/go/bin/nova-swarm", nil }, "/home/me")
 
 	var errOut bytes.Buffer
-	if code, stop := env.preflight([]string{"template", "--name", "read-pr"}, &errOut); stop || code != 0 {
-		t.Fatalf("template: preflight(exit=%d, stop=%v), want (0, false)", code, stop)
-	}
+	code, stop := env.preflight([]string{"template", "--name", "read-pr"}, &errOut)
+	require.False(t, stop, "template: preflight(exit=%d, stop=%v), want (0, false)", code, stop)
+	require.Equal(t, 0, code, "template: preflight(exit=%d, stop=%v), want (0, false)", code, stop)
 	assert.Zero(t, errOut.Len(), "a verb that starts nothing was refused: %q", errOut.String())
 }
 
@@ -260,18 +257,18 @@ func TestPreflightDoctorStandsAsideForHelp(t *testing.T) {
 	var errOut bytes.Buffer
 	for _, verb := range []string{"native"} {
 		for _, flag := range []string{"-h", "--help", "-help", "--h"} {
-			if code, stop := preflightDoctor([]string{verb, flag}, &errOut); stop || code != 0 {
-				t.Errorf("%s %s: preflight(exit=%d, stop=%v), want (0, false)", verb, flag, code, stop)
-			}
+			code, stop := preflightDoctor([]string{verb, flag}, &errOut)
+			assert.False(t, stop, "%s %s: preflight(exit=%d, stop=%v), want (0, false)", verb, flag, code, stop)
+			assert.Equal(t, 0, code, "%s %s: preflight(exit=%d, stop=%v), want (0, false)", verb, flag, code, stop)
 		}
 	}
 	// Flag value followed by actual help stands aside
-	if code, stop := preflightDoctor([]string{"native", "--label", "-h", "-h"}, &errOut); stop || code != 0 {
-		t.Errorf("native --label -h -h: preflight(exit=%d, stop=%v), want (0, false)", code, stop)
-	}
-	if code, stop := preflightDoctor([]string{"native", "--card", "-h", "-h"}, &errOut); stop || code != 0 {
-		t.Errorf("native --card -h -h: preflight(exit=%d, stop=%v), want (0, false)", code, stop)
-	}
+	code, stop := preflightDoctor([]string{"native", "--label", "-h", "-h"}, &errOut)
+	assert.False(t, stop, "native --label -h -h: preflight(exit=%d, stop=%v), want (0, false)", code, stop)
+	assert.Equal(t, 0, code, "native --label -h -h: preflight(exit=%d, stop=%v), want (0, false)", code, stop)
+	code, stop = preflightDoctor([]string{"native", "--card", "-h", "-h"}, &errOut)
+	assert.False(t, stop, "native --card -h -h: preflight(exit=%d, stop=%v), want (0, false)", code, stop)
+	assert.Equal(t, 0, code, "native --card -h -h: preflight(exit=%d, stop=%v), want (0, false)", code, stop)
 }
 
 // The version reader answers under a deadline: a binary that answers is read, and one that
@@ -284,24 +281,21 @@ func TestReadVersionLineWithinKillsAHungBinary(t *testing.T) {
 	answers := filepath.Join(dir, "answers")
 	require.NoError(t, testbin.WriteExecutable(answers, []byte("#!/bin/sh\necho 'nova-swarm v1 stamp'\n"), 0o755))
 	line, err := readVersionLineWithin(answers, doctorGoodDeadline, time.Second, doctorVersionLineMax)
-	if err != nil || line != "nova-swarm v1 stamp" {
-		t.Fatalf("a binary that answers: got (%q, %v)", line, err)
-	}
+	require.NoError(t, err, "a binary that answers: got (%q, %v)", line, err)
+	require.Equal(t, "nova-swarm v1 stamp", line, "a binary that answers: got (%q, %v)", line, err)
 
 	hangs := filepath.Join(dir, "hangs")
 	require.NoError(t, testbin.WriteExecutable(hangs, []byte("#!/bin/sh\nexec sleep 30\n"), 0o755))
 	line, err = readVersionLineWithin(hangs, doctorHungDeadline, 50*time.Millisecond, doctorVersionLineMax)
-	if err == nil || err.Error() != "timed out after 100ms" || line != "" {
-		t.Errorf("a hung binary: got (%q, %v), want an empty line and \"timed out after 100ms\"", line, err)
-	}
+	assert.EqualError(t, err, "timed out after 100ms", "a hung binary: got (%q, %v), want an empty line and \"timed out after 100ms\"", line, err)
+	assert.Equal(t, "", line, "a hung binary: got (%q, %v), want an empty line and \"timed out after 100ms\"", line, err)
 }
 
 // Production's reader carries a bounded deadline.
 func TestDoctorVersionDeadlineIsBounded(t *testing.T) {
 	t.Parallel()
-	if doctorVersionDeadline <= 0 || doctorVersionDeadline > 30*time.Second {
-		t.Errorf("doctorVersionDeadline = %s, want a few seconds", doctorVersionDeadline)
-	}
+	assert.Greater(t, doctorVersionDeadline, time.Duration(0), "doctorVersionDeadline = %s, want a few seconds", doctorVersionDeadline)
+	assert.LessOrEqual(t, doctorVersionDeadline, 30*time.Second, "doctorVersionDeadline = %s, want a few seconds", doctorVersionDeadline)
 }
 
 // doctorGoodDeadline is the deadline a stub that answers is read under: no test requires a
@@ -411,9 +405,9 @@ func TestPreflightRefusesAnUnreadableBinary(t *testing.T) {
 			}()
 			code, stop := env.preflight([]string{"native", "--tokens", "unmetered"}, &errOut)
 			<-done
-			if want := c.wantExit != 0; stop != want || code != c.wantExit {
-				t.Fatalf("preflight(exit=%d, stop=%v), want exit %d\n%s", code, stop, c.wantExit, errOut.String())
-			}
+			want := c.wantExit != 0
+			require.Equal(t, want, stop, "preflight(exit=%d, stop=%v), want exit %d\n%s", code, stop, c.wantExit, errOut.String())
+			require.Equal(t, c.wantExit, code, "preflight(exit=%d, stop=%v), want exit %d\n%s", code, stop, c.wantExit, errOut.String())
 			got := errOut.String()
 			for _, want := range c.contains {
 				assert.Contains(t, got, want, "stderr lacks %q:\n%s", want, got)
@@ -424,12 +418,8 @@ func TestPreflightRefusesAnUnreadableBinary(t *testing.T) {
 
 			// The doctor verb says the same as a finding, and exits non-zero.
 			assert.Equal(t, c.wantExit, dcode, "doctor exit %d, want %d\nstdout: %s\nstderr: %s", dcode, c.wantExit, out.String(), derr.String())
-			if c.wantExit != 0 && (out.Len() != 0 || derr.String() != got) {
-				t.Errorf("doctor's finding differs from the preflight's\nstdout: %q\nstderr: %q\nwant stderr: %q", out.String(), derr.String(), got)
-			}
-			if c.wantExit == 0 && !strings.HasPrefix(out.String(), "DOCTOR OK stamp=") {
-				t.Errorf("doctor: not the OK line: %q", out.String())
-			}
+			assert.False(t, c.wantExit != 0 && (out.Len() != 0 || derr.String() != got), "doctor's finding differs from the preflight's\nstdout: %q\nstderr: %q\nwant stderr: %q", out.String(), derr.String(), got)
+			assert.False(t, c.wantExit == 0 && !strings.HasPrefix(out.String(), "DOCTOR OK stamp="), "doctor: not the OK line: %q", out.String())
 		})
 	}
 }
@@ -443,13 +433,14 @@ func TestFirstLineWriterRetainsOnlyTheFirstLineUpToTheLimit(t *testing.T) {
 
 	w := &firstLineWriter{limit: 4096}
 	for i := 0; i < 1600; i++ {
-		if n, err := w.Write(chunk); n != len(chunk) || err != nil {
-			t.Fatalf("write %d: (%d, %v), want the whole chunk accepted", i, n, err)
-		}
+		n, err := w.Write(chunk)
+		require.Equal(t, len(chunk), n, "write %d: (%d, %v), want the whole chunk accepted", i, n, err)
+		require.NoError(t, err, "write %d: (%d, %v), want the whole chunk accepted", i, n, err)
 	}
-	if line, over := w.result(); line != "y" || over || len(w.line) != 1 {
-		t.Errorf("a stream of short lines: kept %q (overflow %v, %d bytes), want just %q", line, over, len(w.line), "y")
-	}
+	line, over := w.result()
+	assert.Equal(t, "y", line, "a stream of short lines: kept %q (overflow %v, %d bytes), want just %q", line, over, len(w.line), "y")
+	assert.False(t, over, "a stream of short lines: kept %q (overflow %v, %d bytes), want just %q", line, over, len(w.line), "y")
+	assert.Len(t, w.line, 1, "a stream of short lines: kept %q (overflow %v, %d bytes), want just %q", line, over, len(w.line), "y")
 
 	fired := 0
 	w = &firstLineWriter{limit: 4096, onOverflow: func() { fired++ }}
@@ -457,22 +448,23 @@ func TestFirstLineWriterRetainsOnlyTheFirstLineUpToTheLimit(t *testing.T) {
 	for i := 0; i < 1600; i++ {
 		_, _ = w.Write(long)
 	}
-	line, over := w.result()
-	if !over || len(line) != 4096 || len(w.line) != 4096 || fired != 1 {
-		t.Errorf("a line that never ends: kept %d bytes (overflow %v, notified %d times), want 4096, true, 1", len(line), over, fired)
-	}
+	line, over = w.result()
+	assert.True(t, over, "a line that never ends: kept %d bytes (overflow %v, notified %d times), want 4096, true, 1", len(line), over, fired)
+	assert.Len(t, line, 4096, "a line that never ends: kept %d bytes (overflow %v, notified %d times), want 4096, true, 1", len(line), over, fired)
+	assert.Len(t, w.line, 4096, "a line that never ends: kept %d bytes (overflow %v, notified %d times), want 4096, true, 1", len(line), over, fired)
+	assert.Equal(t, 1, fired, "a line that never ends: kept %d bytes (overflow %v, notified %d times), want 4096, true, 1", len(line), over, fired)
 
 	// A first line of exactly the limit is a line; one byte more is not.
 	w = &firstLineWriter{limit: 8}
 	_, _ = w.Write([]byte("12345678\nrest"))
-	if line, over := w.result(); line != "12345678" || over {
-		t.Errorf("a line of exactly the limit: got %q overflow %v", line, over)
-	}
+	line, over = w.result()
+	assert.Equal(t, "12345678", line, "a line of exactly the limit: got %q overflow %v", line, over)
+	assert.False(t, over, "a line of exactly the limit: got %q overflow %v", line, over)
 	w = &firstLineWriter{limit: 8}
 	_, _ = w.Write([]byte("123456789\n"))
-	if line, over := w.result(); !over || len(line) != 8 {
-		t.Errorf("a line one byte over: got %q overflow %v", line, over)
-	}
+	line, over = w.result()
+	assert.True(t, over, "a line one byte over: got %q overflow %v", line, over)
+	assert.Len(t, line, 8, "a line one byte over: got %q overflow %v", line, over)
 }
 
 // A binary that streams forever is cut off at the deadline holding at most its first line,
@@ -492,18 +484,19 @@ func TestReadVersionLineWithinBoundsWhatItKeeps(t *testing.T) {
 	// here depends on how fast a shell starts. The bytes retained are the first line alone.
 	streams := write("streams", "echo y; yes | head -c 20000000")
 	out, timedOut, err := runVersion(context.Background(), streams, doctorGoodDeadline, 50*time.Millisecond, 4096)
-	if err != nil || timedOut || string(out.line) != "y" || len(out.line) != 1 || out.overflowed {
-		t.Errorf("a binary that streams: kept %q (%d bytes, overflow %v), run error %v, timed out %v; want just \"y\" and a clean exit", out.line, len(out.line), out.overflowed, err, timedOut)
-	}
-	if line, err := readVersionLineWithin(streams, doctorGoodDeadline, 50*time.Millisecond, 4096); line != "y" || err != nil {
-		t.Errorf("a binary that streams: got (%q, %v), want its first line and no error", line, err)
-	}
+	assert.NoError(t, err, "a binary that streams: kept %q (%d bytes, overflow %v), run error %v, timed out %v; want just \"y\" and a clean exit", out.line, len(out.line), out.overflowed, err, timedOut)
+	assert.False(t, timedOut, "a binary that streams: kept %q (%d bytes, overflow %v), run error %v, timed out %v; want just \"y\" and a clean exit", out.line, len(out.line), out.overflowed, err, timedOut)
+	assert.Equal(t, "y", string(out.line), "a binary that streams: kept %q (%d bytes, overflow %v), run error %v, timed out %v; want just \"y\" and a clean exit", out.line, len(out.line), out.overflowed, err, timedOut)
+	assert.Len(t, out.line, 1, "a binary that streams: kept %q (%d bytes, overflow %v), run error %v, timed out %v; want just \"y\" and a clean exit", out.line, len(out.line), out.overflowed, err, timedOut)
+	assert.False(t, out.overflowed, "a binary that streams: kept %q (%d bytes, overflow %v), run error %v, timed out %v; want just \"y\" and a clean exit", out.line, len(out.line), out.overflowed, err, timedOut)
+	line, err := readVersionLineWithin(streams, doctorGoodDeadline, 50*time.Millisecond, 4096)
+	assert.Equal(t, "y", line, "a binary that streams: got (%q, %v), want its first line and no error", line, err)
+	assert.NoError(t, err, "a binary that streams: got (%q, %v), want its first line and no error", line, err)
 
 	endless := write("endless", "while :; do printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; done")
-	line, err := readVersionLineWithin(endless, doctorGoodDeadline, 50*time.Millisecond, 64)
-	if line != "" || err == nil || err.Error() != "printed a line longer than 64 bytes" {
-		t.Errorf("a first line that never ends: got (%q, %v), want no line and the limit named", line, err)
-	}
+	line, err = readVersionLineWithin(endless, doctorGoodDeadline, 50*time.Millisecond, 64)
+	assert.Equal(t, "", line, "a first line that never ends: got (%q, %v), want no line and the limit named", line, err)
+	assert.EqualError(t, err, "printed a line longer than 64 bytes", "a first line that never ends: got (%q, %v), want no line and the limit named", line, err)
 }
 
 // A stamp the doctor prints is a bounded, escaped excerpt: a very long stamp is compared
@@ -516,16 +509,15 @@ func TestDoctorPrintsABoundedExcerptOfAStamp(t *testing.T) {
 	var out, errOut bytes.Buffer
 	code := env.cmdDoctor([]string{"--path", "/opt/nova-swarm"}, &out, &errOut)
 	require.Equal(t, 2, code, "exit %d, want 2", code)
-	if len(errOut.String()) > 4*doctorStampExcerpt+2000 || strings.Contains(errOut.String(), strings.Repeat("x", doctorStampExcerpt+50)) {
-		t.Errorf("the refusal printed the whole stamp (%d bytes)", errOut.Len())
-	}
+	assert.LessOrEqual(t, len(errOut.String()), 4*doctorStampExcerpt+2000, "the refusal printed the whole stamp (%d bytes)", errOut.Len())
+	assert.NotContains(t, errOut.String(), strings.Repeat("x", doctorStampExcerpt+50), "the refusal printed the whole stamp (%d bytes)", errOut.Len())
 	assert.Contains(t, errOut.String(), "...+", "the excerpt does not say it was cut:\n%.400s", errOut.String())
 
 	out.Reset()
 	env = doctorFake(map[string]string{"/opt/nova-swarm": long}, noPath, "/home/me")
-	if code := env.cmdDoctor([]string{"--path", "/opt/nova-swarm"}, &out, &errOut); code != 0 || out.Len() > doctorStampExcerpt+100 {
-		t.Errorf("OK line: exit %d, %d bytes", code, out.Len())
-	}
+	code = env.cmdDoctor([]string{"--path", "/opt/nova-swarm"}, &out, &errOut)
+	assert.Equal(t, 0, code, "OK line: exit %d, %d bytes", code, out.Len())
+	assert.LessOrEqual(t, out.Len(), doctorStampExcerpt+100, "OK line: exit %d, %d bytes", code, out.Len())
 }
 
 // The two binaries are read at the same time: each read waits until the other has started,
@@ -545,9 +537,9 @@ func TestCompareBinariesReadsTheTwoAtTheSameTime(t *testing.T) {
 	}
 	r := env.compareBinaries("/a/nova-swarm", "/b/nova-swarm")
 	require.Empty(t, r.unreadable, "the reads were not concurrent: %+v", r.unreadable)
-	if !r.shadowed || r.pathLine != "nova-swarm /a/nova-swarm" || r.localLine != "nova-swarm /b/nova-swarm" {
-		t.Errorf("the comparison lost a stamp: %+v", r)
-	}
+	assert.True(t, r.shadowed, "the comparison lost a stamp: %+v", r)
+	assert.Equal(t, "nova-swarm /a/nova-swarm", r.pathLine, "the comparison lost a stamp: %+v", r)
+	assert.Equal(t, "nova-swarm /b/nova-swarm", r.localLine, "the comparison lost a stamp: %+v", r)
 }
 
 // The preflight reads its arguments the way the dispatcher does: --seat comes out first,
@@ -579,9 +571,9 @@ func TestPreflightReadsArgumentsAfterTheGlobalFlagsAreStripped(t *testing.T) {
 	for _, c := range cases {
 		var errOut bytes.Buffer
 		code, stop := env.preflight(c.args, &errOut)
-		if stop != c.stop || (stop && code != 2) || (!stop && code != 0) {
-			t.Errorf("%s: preflight(%v) = (exit=%d, stop=%v), want stop=%v\n%s", c.name, c.args, code, stop, c.stop, errOut.String())
-		}
+		assert.Equal(t, c.stop, stop, "%s: preflight(%v) = (exit=%d, stop=%v), want stop=%v\n%s", c.name, c.args, code, stop, c.stop, errOut.String())
+		assert.False(t, stop && code != 2, "%s: preflight(%v) = (exit=%d, stop=%v), want stop=%v\n%s", c.name, c.args, code, stop, c.stop, errOut.String())
+		assert.False(t, !stop && code != 0, "%s: preflight(%v) = (exit=%d, stop=%v), want stop=%v\n%s", c.name, c.args, code, stop, c.stop, errOut.String())
 	}
 }
 
@@ -644,17 +636,16 @@ func TestDoctorSaysWhenThereIsNothingToCompare(t *testing.T) {
 	t.Parallel()
 	env := doctorFake(map[string]string{}, noPath, "/home/me")
 	var out, errOut bytes.Buffer
-	if code := env.cmdDoctor(nil, &out, &errOut); code != 0 || errOut.Len() != 0 {
-		t.Fatalf("exit %d, stderr %q, want 0 and silence", code, errOut.String())
-	}
+	code := env.cmdDoctor(nil, &out, &errOut)
+	require.Equal(t, 0, code, "exit %d, stderr %q, want 0 and silence", code, errOut.String())
+	require.Equal(t, 0, errOut.Len(), "exit %d, stderr %q, want 0 and silence", code, errOut.String())
 	want := "DOCTOR OK nothing to compare: no nova-swarm on PATH and none under the local directory\n"
 	assert.Equal(t, want, out.String(), "got %q, want %q", out.String(), want)
-	if strings.Contains(out.String(), "devel") || strings.Contains(out.String(), "stamp=") {
-		t.Errorf("the line reports a stamp nobody read: %q", out.String())
-	}
-	if code, stop := env.preflight([]string{"native", "--tokens", "1"}, &errOut); code != 0 || stop {
-		t.Errorf("the launch is refused with nothing to compare: (%d, %v)", code, stop)
-	}
+	assert.NotContains(t, out.String(), "devel", "the line reports a stamp nobody read: %q", out.String())
+	assert.NotContains(t, out.String(), "stamp=", "the line reports a stamp nobody read: %q", out.String())
+	code, stop := env.preflight([]string{"native", "--tokens", "1"}, &errOut)
+	assert.Equal(t, 0, code, "the launch is refused with nothing to compare: (%d, %v)", code, stop)
+	assert.False(t, stop, "the launch is refused with nothing to compare: (%d, %v)", code, stop)
 }
 
 // The spec and the CLI reference list exactly the lines the doctor prints, and the causes

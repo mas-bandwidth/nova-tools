@@ -77,9 +77,7 @@ func TestTheShiftsOwnCardsLintClean(t *testing.T) {
 			require.Contains(t, stdout, "kind-declared", "KIND: dogfood is not a kind kinds.txt declares; exit=%d\n%s", code, stdout)
 			require.Contains(t, stdout, "dogfood", "KIND: dogfood is not a kind kinds.txt declares; exit=%d\n%s", code, stdout)
 			for _, line := range strings.Split(stdout, "\n") {
-				if strings.Contains(line, "LINT DRIFT") && !strings.Contains(line, "kind-declared") {
-					t.Fatalf("the only drift on this fixture is kind-declared:\n%s", stdout)
-				}
+				require.False(t, strings.Contains(line, "LINT DRIFT") && !strings.Contains(line, "kind-declared"), "the only drift on this fixture is kind-declared:\n%s", stdout)
 			}
 		})
 	}
@@ -96,8 +94,6 @@ func TestACardOverTheCeilingIsAdvisedNotRefused(t *testing.T) {
 	require.Contains(t, stdout, "LINT NOTE card="+name+" size: ", "over the ceiling is said, on a NOTE line and never a DRIFT line:\n%s", stdout)
 	require.Contains(t, stdout, "advisory", "the word a manager needs is in the line: advisory, not a limit:\n%s", stdout)
 	for _, line := range strings.Split(stdout, "\n") {
-		if strings.Contains(line, "LINT DRIFT") && strings.Contains(line, " size:") {
-			t.Fatalf("over the ceiling is not a DRIFT:\n%s", stdout)
-		}
+		require.False(t, strings.Contains(line, "LINT DRIFT") && strings.Contains(line, " size:"), "over the ceiling is not a DRIFT:\n%s", stdout)
 	}
 }

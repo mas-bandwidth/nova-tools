@@ -170,16 +170,15 @@ func TestWorkerCheckFlagTypes(t *testing.T) {
 		}
 		n, all := drifts(out)
 		assert.Equal(t, c.wantDrifts, n, "%s: %d drift lines, want %d:\n%s%s", c.name, n, c.wantDrifts, all, errb)
-		if got := strings.Contains(out, "WORKER DRIFT secret"); got != c.wantSecret && c.wantDrifts == 2 {
-			t.Errorf("%s: secret drift present = %v, want %v:\n%s", c.name, got, c.wantSecret, out)
-		}
+		got := strings.Contains(out, "WORKER DRIFT secret")
+		assert.False(t, got != c.wantSecret && c.wantDrifts == 2, "%s: secret drift present = %v, want %v:\n%s", c.name, got, c.wantSecret, out)
 	}
 
 	// A value that is not the flag's type is a refusal naming the flag.
 	for _, args := range [][]string{{"--max", "x", path}, {"--max=x", path}, {"--max"}, {"--env=maybe", path}} {
 		code, out, errb := runWorkerCheck(args...)
-		if code != 2 || !strings.Contains(errb, "worker check") || out != "" {
-			t.Errorf("%v: exit %d, want a refusal on stderr\nstdout: %s\nstderr: %s", args, code, out, errb)
-		}
+		assert.Equal(t, 2, code, "%v: exit %d, want a refusal on stderr\nstdout: %s\nstderr: %s", args, code, out, errb)
+		assert.Contains(t, errb, "worker check", "%v: exit %d, want a refusal on stderr\nstdout: %s\nstderr: %s", args, code, out, errb)
+		assert.Equal(t, "", out, "%v: exit %d, want a refusal on stderr\nstdout: %s\nstderr: %s", args, code, out, errb)
 	}
 }
