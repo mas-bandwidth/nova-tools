@@ -24,13 +24,13 @@ func TestD1PendingOperationSuspendsOnlyTheQuietRules(t *testing.T) {
 	pr := w.s.Work.Card("s1-2")
 	w.s.Fleet.Put(&Card{ID: "s1-2.w1", Row: "m1", Col: Ready, Score: pr.Score, Rev: 1,
 		Fields: map[string]string{"primary": "s1-2", "attempt": "1", "gen": "1"}})
-	if v := Check(w.s, nil); len(v) == 0 || v[0].Rule != 2 {
-		t.Fatalf("with no operation pending the partial state is a violation: %v", v)
-	}
-	v := Check(w.s, &Pending{ID: "deal-x-1", Verb: "deal"})
-	if len(v) != 1 || v[0].Rule != 10 || !strings.Contains(v[0].Detail, "pending") {
-		t.Fatalf("with the start pending: %v", v)
-	}
+	v := Check(w.s, nil)
+	require.NotEmpty(t, v, "with no operation pending the partial state is a violation: %v", v)
+	require.Equal(t, 2, v[0].Rule, "with no operation pending the partial state is a violation: %v", v)
+	v = Check(w.s, &Pending{ID: "deal-x-1", Verb: "deal"})
+	require.Len(t, v, 1, "with the start pending: %v", v)
+	require.Equal(t, 10, v[0].Rule, "with the start pending: %v", v)
+	require.Contains(t, v[0].Detail, "pending", "with the start pending: %v", v)
 	// Rule 8 always: a second live work card for one primary.
 	w.s.Fleet.Put(&Card{ID: "s1-2.w9", Row: "m2", Col: Ready, Score: pr.Score, Rev: 1,
 		Fields: map[string]string{"primary": "s1-2", "attempt": "9", "gen": "1"}})
@@ -38,9 +38,7 @@ func TestD1PendingOperationSuspendsOnlyTheQuietRules(t *testing.T) {
 	for _, x := range Check(w.s, &Pending{ID: "deal-x-1", Verb: "deal"}) {
 		found = found || x.Rule == 8
 	}
-	if !found {
-		t.Fatalf("rule 8 is not judged while an operation is pending")
-	}
+	require.True(t, found, "rule 8 is not judged while an operation is pending")
 }
 
 // Rework delegates at once; with no member up it goes to ready; the fixed
@@ -61,20 +59,20 @@ func TestReworkDelegatesAtOnce(t *testing.T) {
 	w.must(Rework(w.s, ReworkReq{Sel: Sel{IDs: []string{"s1-1"}}, Fix: "the fix"}))
 	pr := w.s.Work.Card("s1-1")
 	card := w.s.Fleet.Placed(pr.F("work"))
-	if pr.Col != Working || card == nil || card.ID != "s1-1.w2" || card.Col != Ready || card.F("fix") != "the fix" || card.Score != pr.Score {
-		t.Fatalf("rework did not delegate at once: primary %s card %+v", pr.Col, card)
-	}
+	require.Equal(t, Working, pr.Col, "rework did not delegate at once: primary %s card %+v", pr.Col, card)
+	require.NotNil(t, card, "rework did not delegate at once: primary %s card %+v", pr.Col, card)
+	require.Equal(t, "s1-1.w2", card.ID, "rework did not delegate at once: primary %s card %+v", pr.Col, card)
+	require.Equal(t, Ready, card.Col, "rework did not delegate at once: primary %s card %+v", pr.Col, card)
+	require.Equal(t, "the fix", card.F("fix"), "rework did not delegate at once: primary %s card %+v", pr.Col, card)
+	require.Equal(t, pr.Score, card.Score, "rework did not delegate at once: primary %s card %+v", pr.Col, card)
 	w.clean("delegated")
 	// A report against the retired card is refused, naming the retirement.
 	late := Read(w.s, ReadReq{As: reads[1].F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{reads[1].ID}}})
-	if len(late.Units) != 0 {
-		t.Fatalf("a report against a retired card moved: %+v", late)
-	}
+	require.Empty(t, late.Units, "a report against a retired card moved: %+v", late)
 	w.s.Readers.Put(w.s.Readers.Card(reads[1].ID)) // the loader reads the retired record by name
 	late = Read(w.s, ReadReq{As: reads[1].F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{reads[1].ID}}})
-	if len(late.Refused) != 1 || !strings.Contains(late.Refused[0].Why, "retired") {
-		t.Fatalf("the refusal does not name the retirement: %+v", late.Refused)
-	}
+	require.Len(t, late.Refused, 1, "the refusal does not name the retirement: %+v", late.Refused)
+	require.Contains(t, late.Refused[0].Why, "retired", "the refusal does not name the retirement: %+v", late.Refused)
 	// The fixed work returns: the finish asks no reader (one path asks), and the machine's
 	// ask asks two different readers at the new head.
 	w.must(Take(w.s, TakeReq{As: card.Row, Sel: Sel{IDs: []string{card.ID}}, Gens: gensOf(w.s, card.ID)}))
@@ -95,9 +93,9 @@ func TestReworkDelegatesAtOnce(t *testing.T) {
 	r2 := readsAt(w.s, w.s.Work.Card("s1-2"), 1)
 	w.must(Read(w.s, ReadReq{As: r2[0].F("reader"), Verdict: "broken", Sel: Sel{IDs: []string{r2[0].ID}}}))
 	w.must(Rework(w.s, ReworkReq{Sel: Sel{IDs: []string{"s1-2"}}, Fix: "later"}))
-	if w.state("s1-2") != Ready || w.s.Fleet.Card("s1-2.w2") != nil || w.s.Work.Card("s1-2").F("fix") != "later" {
-		t.Fatalf("rework with nobody up: %s", w.state("s1-2"))
-	}
+	require.Equal(t, Ready, w.state("s1-2"), "rework with nobody up: %s", w.state("s1-2"))
+	require.Nil(t, w.s.Fleet.Card("s1-2.w2"), "rework with nobody up: %s", w.state("s1-2"))
+	require.Equal(t, "later", w.s.Work.Card("s1-2").F("fix"), "rework with nobody up: %s", w.state("s1-2"))
 	w.clean("ready with the fix")
 }
 
@@ -110,22 +108,21 @@ func TestD3AssignmentGeneration(t *testing.T) {
 	w := setup(t, 3)
 	w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{"s1-1", "s1-2", "s1-3"}}}))
 	c1 := w.s.Fleet.Card("s1-1.w1")
-	if c1.F("gen") != "1" || c1.F("member") != c1.Row {
-		t.Fatalf("a dealt card has generation %q member %q", c1.F("gen"), c1.F("member"))
-	}
+	require.Equal(t, "1", c1.F("gen"), "a dealt card has generation %q member %q", c1.F("gen"), c1.F("member"))
+	require.Equal(t, c1.Row, c1.F("member"), "a dealt card has generation %q member %q", c1.F("gen"), c1.F("member"))
 	m := c1.Row
 	w.must(Take(w.s, TakeReq{As: m, Sel: Sel{IDs: []string{"s1-1.w1"}}, Gens: map[string]int{"s1-1.w1": 1}}))
 	// the member goes down: its card is drained to the other member, generation 2
 	w.must(FleetStep(w.s, FleetReq{Op: "down", Member: m}))
 	c1 = w.s.Fleet.Card("s1-1.w1")
-	if c1.F("gen") != "2" || c1.Row == m || c1.F("member") != c1.Row {
-		t.Fatalf("drained card: gen %s at %s", c1.F("gen"), c1.Row)
-	}
+	require.Equal(t, "2", c1.F("gen"), "drained card: gen %s at %s", c1.F("gen"), c1.Row)
+	require.NotEqual(t, m, c1.Row, "drained card: gen %s at %s", c1.F("gen"), c1.Row)
+	require.Equal(t, c1.Row, c1.F("member"), "drained card: gen %s at %s", c1.F("gen"), c1.Row)
 	// the old holder's finish is stale
 	late := Finish(w.s, FinishReq{Sel: Sel{IDs: []string{"s1-1.w1"}}, Gens: map[string]int{"s1-1.w1": 1}})
-	if len(late.Units) != 0 || len(late.Refused) != 1 || !strings.Contains(late.Refused[0].Why, "stale") {
-		t.Fatalf("a stale finish: %+v", late)
-	}
+	require.Empty(t, late.Units, "a stale finish: %+v", late)
+	require.Len(t, late.Refused, 1, "a stale finish: %+v", late)
+	require.Contains(t, late.Refused[0].Why, "stale", "a stale finish: %+v", late)
 	// the new holder takes it at generation 2 and finishes
 	w.must(Take(w.s, TakeReq{As: c1.Row, Sel: Sel{IDs: []string{"s1-1.w1"}}, Gens: map[string]int{"s1-1.w1": 2}}))
 	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{"s1-1.w1"}}, Gens: map[string]int{"s1-1.w1": 2}}))
@@ -133,15 +130,14 @@ func TestD3AssignmentGeneration(t *testing.T) {
 	w.must(FleetStep(w.s, FleetReq{Op: "up", Member: m}))
 	other := w.s.Fleet.Card("s1-1.w1").Row
 	w.must(FleetStep(w.s, FleetReq{Op: "down", Member: other}))
-	if c := w.s.Fleet.Card("s1-1.w1"); c.Col != DoneOK || c.Row != other || c.F("gen") != "2" {
-		t.Fatalf("a done card was redistributed: %+v", c)
-	}
+	done := w.s.Fleet.Card("s1-1.w1")
+	require.Equal(t, DoneOK, done.Col, "a done card was redistributed: %+v", done)
+	require.Equal(t, other, done.Row, "a done card was redistributed: %+v", done)
+	require.Equal(t, "2", done.F("gen"), "a done card was redistributed: %+v", done)
 	// a level move and a withdrawal change the generation too
 	w.must(FleetStep(w.s, FleetReq{Op: "up", Member: other}))
 	for _, c := range w.s.Fleet.Column(Ready) {
-		if c.Int("gen") < 1 {
-			t.Fatalf("no generation on %s", c.ID)
-		}
+		require.GreaterOrEqual(t, c.Int("gen"), 1, "no generation on %s", c.ID)
 	}
 	before := map[string]int{}
 	for _, c := range w.s.Fleet.Column(Ready, Working) {
@@ -150,9 +146,9 @@ func TestD3AssignmentGeneration(t *testing.T) {
 	w.must(FleetStep(w.s, FleetReq{Op: "down", Member: m}))
 	w.must(FleetStep(w.s, FleetReq{Op: "down", Member: other}))
 	for id, g := range before {
-		if c := w.s.Fleet.Card(id); c.Col != Withdrawn || c.Int("gen") <= g {
-			t.Fatalf("withdrawn %s: at %s gen %d (was %d)", id, placeWord(c), c.Int("gen"), g)
-		}
+		c := w.s.Fleet.Card(id)
+		require.Equal(t, Withdrawn, c.Col, "withdrawn %s: at %s gen %d (was %d)", id, placeWord(c), c.Int("gen"), g)
+		require.Greater(t, c.Int("gen"), g, "withdrawn %s: at %s gen %d (was %d)", id, placeWord(c), c.Int("gen"), g)
 	}
 	w.clean("withdrawn")
 	// Rule 2 is a bijection: two live cards for one working primary is caught.
@@ -164,9 +160,8 @@ func TestD3AssignmentGeneration(t *testing.T) {
 	for _, v := range Check(w.s, nil) {
 		rules = append(rules, v.Rule)
 	}
-	if len(rules) == 0 || rules[0] != 2 {
-		t.Fatalf("two live cards for one working primary: %v", Check(w.s, nil))
-	}
+	require.NotEmpty(t, rules, "two live cards for one working primary: %v", Check(w.s, nil))
+	require.Equal(t, 2, rules[0], "two live cards for one working primary: %v", Check(w.s, nil))
 }
 
 // D4: named ids are all or nothing; a selection moves the eligible.
@@ -185,18 +180,20 @@ func TestD4AcceptNamedIsAllOrNothing(t *testing.T) {
 		}
 	}
 	p := Accept(w.s, AcceptReq{Sel: Sel{IDs: []string{"s1-1", "s1-2", "s1-3"}}})
-	if len(p.Units) != 0 || len(p.Refused) != 3 {
-		t.Fatalf("named set with one ineligible: %+v", p)
-	}
+	require.Empty(t, p.Units, "named set with one ineligible: %+v", p)
+	require.Len(t, p.Refused, 3, "named set with one ineligible: %+v", p)
 	for _, r := range p.Refused {
-		if r.Key == "s1-3" && !strings.Contains(r.Why, "two different readers") || r.Key != "s1-3" && !strings.Contains(r.Why, "eligible, not moved") {
-			t.Fatalf("refusal: %+v", r)
+		if r.Key == "s1-3" {
+			require.Contains(t, r.Why, "two different readers", "refusal: %+v", r)
+		} else {
+			require.Contains(t, r.Why, "eligible, not moved", "refusal: %+v", r)
 		}
 	}
 	p = w.do(Accept(w.s, AcceptReq{Sel: Sel{Stream: "s1"}}))
-	if len(p.Units) != 2 || w.state("s1-1") != Merging || w.state("s1-2") != Merging || w.state("s1-3") != Review {
-		t.Fatalf("a selection: %+v", p)
-	}
+	require.Len(t, p.Units, 2, "a selection: %+v", p)
+	require.Equal(t, Merging, w.state("s1-1"), "a selection: %+v", p)
+	require.Equal(t, Merging, w.state("s1-2"), "a selection: %+v", p)
+	require.Equal(t, Review, w.state("s1-3"), "a selection: %+v", p)
 }
 
 // D5: a verb discharges only the per-card, per-cause obligations it resolved.
@@ -212,25 +209,22 @@ func TestD5AnswersDischargeOnlyWhatWasResolved(t *testing.T) {
 	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: ids}, Gens: gensOf(w.s, ids...), Failed: true}))
 	w.must(RecordCI(w.s, CIReq{Sel: Sel{IDs: []string{"s1-1"}}, Red: true, Run: "r1"}))
 	failed := w.openOn("s1-1")
-	if len(failed) != 2 {
-		t.Fatalf("open on s1-1: %v", failed)
-	}
+	require.Len(t, failed, 2, "open on s1-1: %v", failed)
 	// Accept is refused and resolves nothing; ci green resolves only the red.
 	w.must(RecordCI(w.s, CIReq{Sel: Sel{IDs: []string{"s1-1"}}, Run: "r2"}))
-	if o := w.openOn("s1-1"); len(o) != 1 || o[0].Note.Type != NWorkFailed {
-		t.Fatalf("after green: %v", o)
-	}
+	o := w.openOn("s1-1")
+	require.Len(t, o, 1, "after green: %v", o)
+	require.Equal(t, NWorkFailed, o[0].Note.Type, "after green: %v", o)
 	// Rework of one card of a group of three leaves the other two open.
 	nid := w.openOn("s1-2")[0].Note.ID
 	w.must(Rework(w.s, ReworkReq{Sel: Sel{IDs: []string{"s1-2"}}, Fix: "x", Answers: []string{nid}}))
-	if len(w.openOn("s1-2")) != 0 || len(w.openOn("s1-3")) != 1 || len(w.openOn("s1-1")) != 1 {
-		t.Fatalf("rework of one card closed others: %v", w.s.Open)
-	}
+	require.Empty(t, w.openOn("s1-2"), "rework of one card closed others: %v", w.s.Open)
+	require.Len(t, w.openOn("s1-3"), 1, "rework of one card closed others: %v", w.s.Open)
+	require.Len(t, w.openOn("s1-1"), 1, "rework of one card closed others: %v", w.s.Open)
 	// Naming a judgment the verb does not resolve is refused by its id.
 	p := Rank(w.s, RankReq{IDs: []string{"s1-3"}, Score: ptr(-1), Answers: []string{w.openOn("s1-3")[0].Note.ID}})
-	if len(p.Refused) != 1 || !strings.Contains(p.Refused[0].Why, "resolves no obligation") {
-		t.Fatalf("rank answering a failure: %+v", p.Refused)
-	}
+	require.Len(t, p.Refused, 1, "rank answering a failure: %+v", p.Refused)
+	require.Contains(t, p.Refused[0].Why, "resolves no obligation", "rank answering a failure: %+v", p.Refused)
 }
 
 func ptr(f float64) *float64 { return &f }
@@ -246,39 +240,36 @@ func TestD6StuckCardsAndResume(t *testing.T) {
 	score := w.s.Merge.Card("s1-2").Score
 	w.must(MergeStep(w.s, MergeReq{Stream: "s1", Cross: "s1-2=b1"}))
 	st := w.s.Merge.Card("s1-2")
-	if st.Col != Stuck || st.F("need_card") != "b1" || st.F("need_stream") != "s2" {
-		t.Fatalf("cross: %+v", st)
-	}
+	require.Equal(t, Stuck, st.Col, "cross: %+v", st)
+	require.Equal(t, "b1", st.F("need_card"), "cross: %+v", st)
+	require.Equal(t, "s2", st.F("need_stream"), "cross: %+v", st)
 	n := w.notesOf(NCross)[0]
-	if !strings.Contains(n.What, "s1") || !strings.Contains(n.What, "s2") || !contains(n.Primaries, "b1") || !contains(n.Primaries, "s1-2") {
-		t.Fatalf("the notification does not name both streams and cards: %+v", n)
-	}
+	require.Contains(t, n.What, "s1", "the notification does not name both streams and cards: %+v", n)
+	require.Contains(t, n.What, "s2", "the notification does not name both streams and cards: %+v", n)
+	require.Contains(t, n.Primaries, "b1", "the notification does not name both streams and cards: %+v", n)
+	require.Contains(t, n.Primaries, "s1-2", "the notification does not name both streams and cards: %+v", n)
 	p := Resume(w.s, ResumeReq{Stream: "s1"})
-	if len(p.Units) != 0 || len(p.Refused) != 1 || !strings.Contains(p.Refused[0].Why, "b1") {
-		t.Fatalf("resume with the need unresolved: %+v", p)
-	}
+	require.Empty(t, p.Units, "resume with the need unresolved: %+v", p)
+	require.Len(t, p.Refused, 1, "resume with the need unresolved: %+v", p)
+	require.Contains(t, p.Refused[0].Why, "b1", "resume with the need unresolved: %+v", p)
 	w.must(Rank(w.s, RankReq{IDs: []string{"b1"}, First: true}))
-	if p := Resume(w.s, ResumeReq{Stream: "s1"}); len(p.Refused) != 1 {
-		t.Fatalf("ranking the needed card resolved it: %+v", p)
-	}
+	p = Resume(w.s, ResumeReq{Stream: "s1"})
+	require.Len(t, p.Refused, 1, "ranking the needed card resolved it: %+v", p)
 	accepted(w, "b1")
 	w.must(MergeStep(w.s, MergeReq{Stream: "s2"}))
 	w.must(Resume(w.s, ResumeReq{Stream: "s1", Did: "b1 landed"}))
-	if c := w.s.Merge.Card("s1-2"); c.Col != Queued || c.Score != score || c.F("need_card") != "" {
-		t.Fatalf("resumed card: %+v", c)
-	}
-	if w.s.StreamCtl("s1").F("state") != StreamMerging {
-		t.Fatalf("stream not merging after resume")
-	}
+	resumed := w.s.Merge.Card("s1-2")
+	require.Equal(t, Queued, resumed.Col, "resumed card: %+v", resumed)
+	require.Equal(t, score, resumed.Score, "resumed card: %+v", resumed)
+	require.Equal(t, "", resumed.F("need_card"), "resumed card: %+v", resumed)
+	require.Equal(t, StreamMerging, w.s.StreamCtl("s1").F("state"), "stream not merging after resume")
 	w.clean("resumed")
 	// The barrier: with a stuck card at s1-2, only the cards before it merge.
 	w.s.Merge.Card("s1-2").Col = Stuck
 	w.s.Merge.cells = nil
 	p = MergeStep(w.s, MergeReq{Stream: "s1", Batch: 10})
 	for _, u := range p.Units {
-		if u.Key == "s1-3" {
-			t.Fatalf("the merge step passed a stuck card: %+v", p.Units)
-		}
+		require.NotEqual(t, "s1-3", u.Key, "the merge step passed a stuck card: %+v", p.Units)
 	}
 }
 
@@ -298,18 +289,14 @@ func TestD7InboxDueTimesAndStalledStreams(t *testing.T) {
 		{Stream: "s2", State: StreamWaiting, Since: t0, Progress: now},
 		{Stream: "s3", State: StreamLanded, Since: t0, Progress: t0},
 	}})
-	if len(g) != 3 {
-		t.Fatalf("groups: %+v", g)
-	}
-	if !g[0].Overdue || !g[0].Due.Equal(t0.Add(10*time.Minute)) {
-		t.Fatalf("overdue judgment: %+v", g[0])
-	}
-	if g[1].Overdue || !g[1].Due.Equal(waited.Review) || g[1].Type != NReadBroken {
-		t.Fatalf("a waited judgment is hidden or overdue: %+v", g[1])
-	}
-	if g[2].Type != NStreamStale || g[2].Stream != "s1" {
-		t.Fatalf("stalled stream: %+v", g[2])
-	}
+	require.Len(t, g, 3, "groups: %+v", g)
+	require.True(t, g[0].Overdue, "overdue judgment: %+v", g[0])
+	require.True(t, g[0].Due.Equal(t0.Add(10*time.Minute)), "overdue judgment: %+v", g[0])
+	require.False(t, g[1].Overdue, "a waited judgment is hidden or overdue: %+v", g[1])
+	require.True(t, g[1].Due.Equal(waited.Review), "a waited judgment is hidden or overdue: %+v", g[1])
+	require.Equal(t, NReadBroken, g[1].Type, "a waited judgment is hidden or overdue: %+v", g[1])
+	require.Equal(t, NStreamStale, g[2].Type, "stalled stream: %+v", g[2])
+	require.Equal(t, "s1", g[2].Stream, "stalled stream: %+v", g[2])
 }
 
 // D8: ci records head, run, status and source on a primary in any state,
@@ -321,16 +308,16 @@ func TestD8CIObservation(t *testing.T) {
 	w.must(Deal(w.s, DealReq{Sel: Sel{Limit: 1}}))
 	p := w.must(RecordCI(w.s, CIReq{Sel: Sel{IDs: []string{"s1-1"}}, Red: true, Run: "run-7", Source: "ci", Head: "old"}))
 	c := w.s.Work.Card("s1-1")
-	if c.Col != Working || c.F("ci_run") != "run-7" || c.F("ci_source") != "ci" || c.F("ci_head") != "" || c.F("ci") != "" {
-		t.Fatalf("ci fields: %+v", c.Fields)
-	}
-	if !strings.Contains(p.Units[0].Moved, "old head") || !strings.Contains(w.notesOf(NCIRed)[0].What, "old head") {
-		t.Fatalf("an old head is not labelled: %s / %s", p.Units[0].Moved, w.notesOf(NCIRed)[0].What)
-	}
+	require.Equal(t, Working, c.Col, "ci fields: %+v", c.Fields)
+	require.Equal(t, "run-7", c.F("ci_run"), "ci fields: %+v", c.Fields)
+	require.Equal(t, "ci", c.F("ci_source"), "ci fields: %+v", c.Fields)
+	require.Empty(t, c.F("ci_head"), "ci fields: %+v", c.Fields)
+	require.Empty(t, c.F("ci"), "ci fields: %+v", c.Fields)
+	require.Contains(t, p.Units[0].Moved, "old head", "an old head is not labelled: %s / %s", p.Units[0].Moved, w.notesOf(NCIRed)[0].What)
+	require.Contains(t, w.notesOf(NCIRed)[0].What, "old head", "an old head is not labelled: %s / %s", p.Units[0].Moved, w.notesOf(NCIRed)[0].What)
 	again := RecordCI(w.s, CIReq{Sel: Sel{IDs: []string{"s1-1"}}, Red: true, Run: "run-7"})
-	if len(again.Units) != 0 || len(again.Refused) != 1 {
-		t.Fatalf("a retried report recorded twice: %+v", again)
-	}
+	require.Empty(t, again.Units, "a retried report recorded twice: %+v", again)
+	require.Len(t, again.Refused, 1, "a retried report recorded twice: %+v", again)
 }
 
 // F2: take by id and finish always name the generation; a finish by selection
@@ -340,19 +327,20 @@ func TestF2TheGenerationIsAlwaysNamed(t *testing.T) {
 	w := setup(t, 2)
 	w.must(Deal(w.s, DealReq{Sel: Sel{Limit: 2}}))
 	c := w.s.Fleet.Card("s1-1.w1")
-	if p := Take(w.s, TakeReq{As: c.Row, Sel: Sel{IDs: []string{c.ID}}}); len(p.Units) != 0 || !strings.Contains(p.Refused[0].Why, "names no generation") {
-		t.Fatalf("a take by id with no generation: %+v", p)
-	}
+	p := Take(w.s, TakeReq{As: c.Row, Sel: Sel{IDs: []string{c.ID}}})
+	require.Empty(t, p.Units, "a take by id with no generation: %+v", p)
+	require.NotEmpty(t, p.Refused, "a take by id with no generation: %+v", p)
+	require.Contains(t, p.Refused[0].Why, "names no generation", "a take by id with no generation: %+v", p)
 	w.must(Take(w.s, TakeReq{As: c.Row, Sel: Sel{Limit: 1}}))
-	if p := Finish(w.s, FinishReq{As: c.Row, Sel: Sel{IDs: []string{c.ID}}}); len(p.Units) != 0 || !strings.Contains(p.Refused[0].Why, "names no generation") {
-		t.Fatalf("a finish with no generation: %+v", p)
-	}
-	if p := Finish(w.s, FinishReq{Sel: Sel{Limit: 5}, Gens: w.gens(c.ID)}); len(p.Units) != 0 || len(p.Refused) != 1 {
-		t.Fatalf("a finish by selection without --as: %+v", p)
-	}
-	if p := Finish(w.s, FinishReq{As: c.Row, Sel: Sel{Limit: 5}}); len(p.Units) != 0 {
-		t.Fatalf("a finish by selection names no generation and moved: %+v", p)
-	}
+	p = Finish(w.s, FinishReq{As: c.Row, Sel: Sel{IDs: []string{c.ID}}})
+	require.Empty(t, p.Units, "a finish with no generation: %+v", p)
+	require.NotEmpty(t, p.Refused, "a finish with no generation: %+v", p)
+	require.Contains(t, p.Refused[0].Why, "names no generation", "a finish with no generation: %+v", p)
+	p = Finish(w.s, FinishReq{Sel: Sel{Limit: 5}, Gens: w.gens(c.ID)})
+	require.Empty(t, p.Units, "a finish by selection without --as: %+v", p)
+	require.Len(t, p.Refused, 1, "a finish by selection without --as: %+v", p)
+	p = Finish(w.s, FinishReq{As: c.Row, Sel: Sel{Limit: 5}})
+	require.Empty(t, p.Units, "a finish by selection names no generation and moved: %+v", p)
 	w.must(Finish(w.s, FinishReq{As: c.Row, Sel: Sel{IDs: []string{c.ID}}, Gens: w.gens(c.ID)}))
 }
 
@@ -367,18 +355,18 @@ func TestF3ReturnAnswersAndAckCloses(t *testing.T) {
 	w.must(RecordCI(w.s, CIReq{Sel: Sel{IDs: []string{"s1-1"}}, Red: true, Run: "r1"}))
 	nid := w.openOn("s1-1")[0].Note.ID
 	w.must(Return(w.s, ReturnReq{Sel: Sel{IDs: []string{"s1-1"}}, Answers: []string{nid}}))
-	if o := w.openOn("s1-1"); len(o) != 1 || o[0].Note.Type != NReturned {
-		t.Fatalf("return left the red CI open, or opened no returned judgment: %v", o)
-	}
+	o := w.openOn("s1-1")
+	require.Len(t, o, 1, "return left the red CI open, or opened no returned judgment: %v", o)
+	require.Equal(t, NReturned, o[0].Note.Type, "return left the red CI open, or opened no returned judgment: %v", o)
 	w.must(MergeStep(w.s, MergeReq{Stream: "s1", Red: true}))
 	red := w.openOn(StreamSubject("s1"))[0].Note.ID
 	p := w.must(Return(w.s, ReturnReq{Sel: Sel{IDs: []string{"s1-2"}}, Answers: []string{red}, Reason: "the suspect"}))
-	if len(w.openOn(StreamSubject("s1"))) != 1 || !answeredIn(p.Units[0].Notes, red) {
-		t.Fatalf("the stream's red judgment: open %v, answered %v", w.openOn(StreamSubject("s1")), p.Units[0].Notes)
-	}
-	if p := Ack(w.s, AckReq{Notes: []string{red}, Reason: "x"}); len(p.Units) != 0 || !strings.Contains(p.Refused[0].Why, "stopped") {
-		t.Fatalf("ack of a stopped stream's judgment: %+v", p)
-	}
+	require.Len(t, w.openOn(StreamSubject("s1")), 1, "the stream's red judgment: open %v, answered %v", w.openOn(StreamSubject("s1")), p.Units[0].Notes)
+	require.True(t, answeredIn(p.Units[0].Notes, red), "the stream's red judgment: open %v, answered %v", w.openOn(StreamSubject("s1")), p.Units[0].Notes)
+	p = Ack(w.s, AckReq{Notes: []string{red}, Reason: "x"})
+	require.Empty(t, p.Units, "ack of a stopped stream's judgment: %+v", p)
+	require.NotEmpty(t, p.Refused, "ack of a stopped stream's judgment: %+v", p)
+	require.Contains(t, p.Refused[0].Why, "stopped", "ack of a stopped stream's judgment: %+v", p)
 	w.must(RecordCI(w.s, CIReq{Sel: Sel{IDs: []string{"s1-1"}}, Red: true, Run: "r2"}))
 	var ci string
 	for _, o := range w.openOn("s1-1") {
@@ -387,9 +375,11 @@ func TestF3ReturnAnswersAndAckCloses(t *testing.T) {
 		}
 	}
 	p = w.must(Ack(w.s, AckReq{Notes: []string{ci}, Reason: "a flaky runner"}))
-	if o := w.openOn("s1-1"); len(o) != 1 || o[0].Note.Type != NReturned || p.Units[0].Notes[0].What != "ack: a flaky runner" || p.Units[0].Notes[0].Answers != ci {
-		t.Fatalf("ack: open %v, notes %+v", w.openOn("s1-1"), p.Units[0].Notes)
-	}
+	o = w.openOn("s1-1")
+	require.Len(t, o, 1, "ack: open %v, notes %+v", w.openOn("s1-1"), p.Units[0].Notes)
+	require.Equal(t, NReturned, o[0].Note.Type, "ack: open %v, notes %+v", w.openOn("s1-1"), p.Units[0].Notes)
+	require.Equal(t, "ack: a flaky runner", p.Units[0].Notes[0].What, "ack: open %v, notes %+v", w.openOn("s1-1"), p.Units[0].Notes)
+	require.Equal(t, ci, p.Units[0].Notes[0].Answers, "ack: open %v, notes %+v", w.openOn("s1-1"), p.Units[0].Notes)
 }
 
 // G3: a primary in review whose reads are exhausted (no read outstanding, not
@@ -412,21 +402,22 @@ func TestG3ReadsExhaustedIsAJudgment(t *testing.T) {
 	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}, Another: true}))
 	third := readsAt(w.s, w.s.Work.Card("s1-1"), 1)[2]
 	w.must(Read(w.s, ReadReq{As: third.F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{third.ID}}}))
-	if o := w.openOn("s1-1"); len(o) != 1 || o[0].Note.Type != NReadsExhausted || !contains(o[0].Note.Decisions, "ask another reader") {
-		t.Fatalf("reads exhausted by a read: %v", o)
-	}
+	o := w.openOn("s1-1")
+	require.Len(t, o, 1, "reads exhausted by a read: %v", o)
+	require.Equal(t, NReadsExhausted, o[0].Note.Type, "reads exhausted by a read: %v", o)
+	require.Contains(t, o[0].Note.Decisions, "ask another reader", "reads exhausted by a read: %v", o)
 	// s1-2: one ok, one broken; ack does not answer a broken read: refused,
 	// and the broken judgment stays open.
 	r2 := readsAt(w.s, w.s.Work.Card("s1-2"), 1)
 	w.must(Read(w.s, ReadReq{As: r2[0].F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{r2[0].ID}}}))
 	w.must(Read(w.s, ReadReq{As: r2[1].F("reader"), Verdict: "broken", Sel: Sel{IDs: []string{r2[1].ID}}}))
 	broken := w.openOn("s1-2")[0].Note.ID
-	if p := w.do(Ack(w.s, AckReq{Notes: []string{broken}, Reason: "not a defect"})); len(p.Refused) != 1 || len(p.Units) != 0 {
-		t.Fatalf("ack of a broken read: %+v", p)
-	}
-	if o := w.openOn("s1-2"); len(o) != 1 || o[0].Note.Type != NReadBroken {
-		t.Fatalf("after the refused ack: %v", o)
-	}
+	p := w.do(Ack(w.s, AckReq{Notes: []string{broken}, Reason: "not a defect"}))
+	require.Len(t, p.Refused, 1, "ack of a broken read: %+v", p)
+	require.Empty(t, p.Units, "ack of a broken read: %+v", p)
+	o = w.openOn("s1-2")
+	require.Len(t, o, 1, "after the refused ack: %v", o)
+	require.Equal(t, NReadBroken, o[0].Note.Type, "after the refused ack: %v", o)
 }
 
 // G4: every step that changes what is queued keeps the stream's state true:
@@ -450,25 +441,21 @@ func TestG4StreamStateIsKeptTrue(t *testing.T) {
 	}
 	w.must(RecordCI(w.s, CIReq{Sel: Sel{IDs: []string{"s1-1"}}, Red: true, Run: "r"}))
 	w.must(Accept(w.s, AcceptReq{Sel: Sel{IDs: []string{"s1-1"}}}))
-	if st := w.s.StreamCtl("s1").F("state"); st != StreamMerging || len(w.notesOf(NStartedMerging)) != 1 {
-		t.Fatalf("accept on a waiting stream: %s, %d notes", st, len(w.notesOf(NStartedMerging)))
-	}
-	if len(w.openOn("s1-1")) != 0 {
-		t.Fatalf("accept left the card's judgments open: %v", w.openOn("s1-1"))
-	}
+	st := w.s.StreamCtl("s1").F("state")
+	require.Equal(t, StreamMerging, st, "accept on a waiting stream: %s, %d notes", st, len(w.notesOf(NStartedMerging)))
+	require.Len(t, w.notesOf(NStartedMerging), 1, "accept on a waiting stream: %s, %d notes", st, len(w.notesOf(NStartedMerging)))
+	require.Empty(t, w.openOn("s1-1"), "accept left the card's judgments open")
 	w.must(Return(w.s, ReturnReq{Sel: Sel{IDs: []string{"s1-1"}}}))
-	if st := w.s.StreamCtl("s1").F("state"); st != StreamWaiting {
-		t.Fatalf("return of the only queued card: %s", st)
-	}
+	st = w.s.StreamCtl("s1").F("state")
+	require.Equal(t, StreamWaiting, st, "return of the only queued card: %s", st)
 	w.must(Accept(w.s, AcceptReq{Sel: Sel{IDs: []string{"s1-1", "s1-2"}}}))
 	w.must(MergeStep(w.s, MergeReq{Stream: "s1"}))
-	if st := w.s.StreamCtl("s1").F("state"); st != StreamWaiting {
-		t.Fatalf("the last queued card landed, s1-3 still open: the stream is %s, want waiting", st)
-	}
+	st = w.s.StreamCtl("s1").F("state")
+	require.Equal(t, StreamWaiting, st, "the last queued card landed, s1-3 still open: the stream is %s, want waiting", st)
 	w.must(Drop(w.s, DropReq{Sel: Sel{IDs: []string{"s1-3"}}, Reason: "not needed"}))
-	if st := w.s.StreamCtl("s1").F("state"); st != StreamLanded || len(w.notesOf(NStreamLanded)) != 1 {
-		t.Fatalf("a drop of the last open primary: %s", st)
-	}
+	st = w.s.StreamCtl("s1").F("state")
+	require.Equal(t, StreamLanded, st, "a drop of the last open primary: %s", st)
+	require.Len(t, w.notesOf(NStreamLanded), 1, "a drop of the last open primary: %s", st)
 	w.clean("landed by a drop")
 }
 
@@ -479,14 +466,13 @@ func TestRule7IsJudgedAgainstAPendingRank(t *testing.T) {
 	w := setup(t, 1)
 	w.must(Deal(w.s, DealReq{Sel: Sel{Limit: 1}}))
 	w.s.Fleet.Card("s1-1.w1").Score = -9 // the rank's fleet phase applied, its work phase not
-	if v := Check(w.s, &Pending{ID: "rank-1", Verb: "rank", Scores: map[string]float64{"s1-1": -9}}); len(v) != 1 || v[0].Rule != 10 {
-		t.Fatalf("a copy at the pending rank's score: %v", v)
-	}
+	v := Check(w.s, &Pending{ID: "rank-1", Verb: "rank", Scores: map[string]float64{"s1-1": -9}})
+	require.Len(t, v, 1, "a copy at the pending rank's score: %v", v)
+	require.Equal(t, 10, v[0].Rule, "a copy at the pending rank's score: %v", v)
 	w.s.Fleet.Card("s1-1.w1").Score = 42
-	v := Check(w.s, &Pending{ID: "deal-1", Verb: "deal"})
-	if len(v) != 2 || v[0].Rule != 7 {
-		t.Fatalf("a copy at another score while another operation is pending: %v", v)
-	}
+	v = Check(w.s, &Pending{ID: "deal-1", Verb: "deal"})
+	require.Len(t, v, 2, "a copy at another score while another operation is pending: %v", v)
+	require.Equal(t, 7, v[0].Rule, "a copy at another score while another operation is pending: %v", v)
 }
 
 // G1: dropping a primary takes its withdrawn card too; a withdrawn card whose
@@ -497,13 +483,10 @@ func TestG1WithdrawnCardsAreDroppedAndChecked(t *testing.T) {
 	w.must(Deal(w.s, DealReq{Sel: Sel{Limit: 2}}))
 	w.must(FleetStep(w.s, FleetReq{Op: "down", Member: "m1"}))
 	w.must(FleetStep(w.s, FleetReq{Op: "down", Member: "m2"}))
-	if len(w.s.Fleet.Column(Withdrawn)) != 2 {
-		t.Fatalf("withdrawn: %d", len(w.s.Fleet.Column(Withdrawn)))
-	}
+	require.Len(t, w.s.Fleet.Column(Withdrawn), 2, "withdrawn: %d", len(w.s.Fleet.Column(Withdrawn)))
 	w.must(Drop(w.s, DropReq{Sel: Sel{IDs: []string{"s1-1"}}, Reason: "x"}))
-	if c := w.s.Fleet.Card("s1-1.w1"); c.Placed() {
-		t.Fatalf("drop left the withdrawn card at %s", c.Col)
-	}
+	left := w.s.Fleet.Card("s1-1.w1")
+	require.False(t, left.Placed(), "drop left the withdrawn card at %s", placeWord(left))
 	w.clean("dropped")
 	w.s.Work.Card("s1-2").Col = Review
 	w.s.Work.cells = nil
@@ -511,9 +494,7 @@ func TestG1WithdrawnCardsAreDroppedAndChecked(t *testing.T) {
 	for _, v := range Check(w.s, nil) {
 		found = found || v.Rule == 2 && strings.Contains(v.Detail, "withdrawn")
 	}
-	if !found {
-		t.Fatalf("a withdrawn card of a primary in review: %v", Check(w.s, nil))
-	}
+	require.True(t, found, "a withdrawn card of a primary in review: %v", Check(w.s, nil))
 }
 
 // A reader counts once, and a read card counts for the row it occupies only
@@ -540,21 +521,21 @@ func TestAReaderCountsOnceWhereItsCardIs(t *testing.T) {
 	rs[1].Row = rs[0].Row
 	w.s.Readers.cells, w.s.Readers.byPrimary = nil, nil
 	p := Accept(w.s, AcceptReq{Sel: Sel{IDs: []string{"s1-1", "s1-2"}}})
-	if len(p.Units) != 0 || len(p.Refused) != 2 {
-		t.Fatalf("accept: %+v", p)
-	}
+	require.Empty(t, p.Units, "accept: %+v", p)
+	require.Len(t, p.Refused, 2, "accept: %+v", p)
 	for _, r := range p.Refused {
-		if r.Key == "s1-2" && !strings.Contains(r.Why, "two different readers") || r.Key == "s1-1" && !strings.Contains(r.Why, "eligible, not moved") {
-			t.Fatalf("refusal: %+v", r)
+		if r.Key == "s1-2" {
+			require.Contains(t, r.Why, "two different readers", "refusal: %+v", r)
+		}
+		if r.Key == "s1-1" {
+			require.Contains(t, r.Why, "eligible, not moved", "refusal: %+v", r)
 		}
 	}
 	found := false
 	for _, v := range Check(w.s, nil) {
 		found = found || v.Rule == 1 && strings.Contains(v.Detail, rs[1].ID)
 	}
-	if !found {
-		t.Fatalf("check does not report the card off its reader's row: %v", Check(w.s, nil))
-	}
+	require.True(t, found, "check does not report the card off its reader's row: %v", Check(w.s, nil))
 }
 
 // Every decision of every judgment type, the tick's included, prints the
@@ -579,9 +560,7 @@ func TestEveryDecisionPrintsItsCommands(t *testing.T) {
 				}
 			}
 			for _, d := range ds {
-				if !got[d] {
-					t.Errorf("%s: the decision %q prints no command", typ, d)
-				}
+				assert.True(t, got[d], "%s: the decision %q prints no command", typ, d)
 			}
 		}
 	}
@@ -607,9 +586,7 @@ func TestAckAnswersOnlyTheTypesThatListIt(t *testing.T) {
 		n := Note{ID: "n-x.1", Kind: Judgment, Type: typ, Stream: "s1", Primaries: []string{"s1-1"}, Count: 1, Decisions: ds, At: w.s.Now}
 		w.s.Open = append(w.s.Open, Open{Key: OpenKey(n.ID, "s1-1"), Note: n})
 		p := w.do(Ack(w.s, AckReq{Notes: []string{n.ID}, Reason: "seen"}))
-		if ackable[typ] != contains(ds, "ack") {
-			t.Errorf("%s: its decisions %v and the ack rule disagree", typ, ds)
-		}
+		assert.Equal(t, ackable[typ], contains(ds, "ack"), "%s: its decisions %v and the ack rule disagree", typ, ds)
 		switch {
 		case ackable[typ] && (len(p.Refused) != 0 || len(p.Units) != 1):
 			t.Errorf("%s lists ack and the ack was refused: %+v", typ, p.Refused)
@@ -633,20 +610,14 @@ func TestTickKeptList(t *testing.T) {
 	}
 	slices.Sort(got)
 	slices.Sort(keeps)
-	if !slices.Equal(got, keeps) {
-		t.Errorf("tick kept %q, want %q", got, keeps)
-	}
+	assert.Equal(t, keeps, got, "tick kept %q, want %q", got, keeps)
 	for _, typ := range keeps {
-		if !TickKept(typ) {
-			t.Errorf("%q is not tick kept", typ)
-		}
+		assert.True(t, TickKept(typ), "%q is not tick kept", typ)
 	}
 	for _, typ := range []string{
 		NSentinelReached, NBlocked, NMissingNeed, NConflict, NRed, NCross, NRejected,
 		NCIRed, NReturned, NReadsExhausted, NStranded, NSprintDone, NReadyToAccept,
 	} {
-		if TickKept(typ) {
-			t.Errorf("%q is tick kept", typ)
-		}
+		assert.False(t, TickKept(typ), "%q is tick kept", typ)
 	}
 }
