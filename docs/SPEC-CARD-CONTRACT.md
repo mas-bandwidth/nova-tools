@@ -22,6 +22,11 @@ and opens the pull request). The model is `tla/CardContract.tla`.
 | 4. the finish | the member reads the result shape, pushes the head, opens the pull request, and judges the finish: ok, failed with its reason, or reaped | `TestJudgeIsTheFinishRule`, `TestJudgeNamesTheProviderForARunItFailed` and the push tests of `internal/member`, the twin tests of `cmd/nova-sprint`, `tla/CardContract.tla` |
 | 5. end to end | a scripted child (clone, branch, commit, push, `gh pr create`) runs under the real member and native on the mem twin with a local bare origin, once per profile | `TestTheScriptedChildEndToEnd` (functional tier) |
 
+`STAGE OK` reports total staging `secs` and cumulative Git command seconds for `clone`
+(including its initial checkout), `fetch` (excluding probes and retry waits), and `checkout`;
+`FRAME OK secs` reports the whole successful frame installation separately, including recipes,
+shims and the read base refresh.
+
 ## 2. The frame and JOB.md
 
 `JOB.md` is the first thing the child reads: the harness prompt begins `Read <job>/JOB.md
@@ -52,7 +57,11 @@ moves and is used as it is. A branch is fetched from origin into `origin/<base>`
 fetch that fails refuses the read at staging: native prints a STAGE FAIL line naming the base
 and the fetch error, writes no JOB.md, and the sprint deals the read again; the checkout's own
 branch is never trusted in its place
-(`TestAReadWhoseBaseCannotBeFetchedIsRefusedAtStaging`, `TestAReadAgainstATagOrAShaNeedsNoFetch`). On the
+(`TestAReadWhoseBaseCannotBeFetchedIsRefusedAtStaging`, `TestAReadAgainstATagOrAShaNeedsNoFetch`).
+A missing base object or an operational failure while finding the merge base also refuses the
+read before writing its frame. Valid unrelated histories have no common ancestor; their frame
+names no exact start (`TestReviewAMissingImmutableBaseRefusesTheReadBeforeWritingItsFrame`,
+`TestReviewUnrelatedHistoriesKeepTheUnknownStartPolicy`). On the
 1000-card load test of 2026-10-01 cards landed on the base every few seconds, and a reader that
 ran `git diff origin/dev` saw every file landed since the work began as a deletion and sent a
 correct work card back (`TestAReadIsToldTheWorksChangeWhenTheBaseMoved`). The fetch is because

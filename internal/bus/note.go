@@ -8,7 +8,6 @@ import (
 	"io"
 	"sort"
 	"strings"
-	"sync/atomic"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -188,7 +187,6 @@ func SplitDraft(text string) []string {
 // blanks above a header -- and a refusal about line 6 of what was left is a refusal about
 // a line the writer cannot find. So the numbers in the message are always the file's own.
 func parseLines(path string, lines []string, at []int, first int) (Note, []error) {
-	noteParses.Add(1)
 	n := Note{Path: path}
 	if i := strings.IndexByte(path, '/'); i > 0 {
 		n.Lane = path[:i]
@@ -806,20 +804,3 @@ func quoteAll(ss []string) string {
 	sort.Strings(out)
 	return strings.Join(out, ", ")
 }
-
-// noteParses counts every call to ParseNote, and NoteParses reads it.
-//
-// It is INSTRUMENTATION, and the only thing that reads it is a test. It is here rather
-// than in a test file because the property it measures is a property of this package and
-// is asserted from another one: `inbox` parses the notes that are new plus the notes this
-// reader has open, and NO OTHER NOTE, whatever the bus's history holds. That claim is
-// about work not done, and work not done leaves no output to assert on -- so the only
-// honest proof is a count taken at the one place the work happens. The alternative, timing
-// two runs, is a flake on a shared runner and proves nothing on a fast enough machine.
-//
-// The cost is one atomic add per note parsed, against a file read and a header walk.
-var noteParses atomic.Int64
-
-// NoteParses is how many notes this process has parsed. Tests take it before and after a
-// run and assert on the difference; nothing else reads it and nothing branches on it.
-func NoteParses() int64 { return noteParses.Load() }

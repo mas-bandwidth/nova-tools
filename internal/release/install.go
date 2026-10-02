@@ -239,7 +239,7 @@ func install(ctx context.Context, o options, deps Deps, out, errs io.Writer) int
 	// verified, and the old version directories under --from are removed by
 	// the rule in prune.go. The one being installed and every one the bin
 	// directory answered before it stay.
-	pruned, pruneFailed := pruneDefault(o.from, func(name string) bool {
+	pruned, pruneFailed := pruneInstalled(o.from, o.bin, func(name string) bool {
 		if name == o.version {
 			return true
 		}
@@ -253,6 +253,56 @@ func install(ctx context.Context, o options, deps Deps, out, errs io.Writer) int
 	fmt.Fprintf(out, "RELEASE INSTALLED version=%s tools=%d skipped=%d retired=%d bin=%s platform=%s pruned=%d prune-failed=%d\n",
 		field(o.version), installed, skipped, retired, field(o.bin), field(goos+"-"+goarch), pruned, pruneFailed)
 	return 0
+}
+
+// pruneInstalled also protects the installed binaries' directory, including a
+// bin symlink's target: a version stamp alone does not protect an empty bin
+// installed into an older release directory (SPEC-RELEASE, retention).
+func pruneInstalled(root, bin string, keep func(string) bool, errs io.Writer) (int, int) {
+	binAbs, err := filepath.Abs(bin)
+	if err != nil {
+		progress(errs, "cannot resolve installed bin %s for pruning: %v (nothing removed)", bin, err)
+		return 0, 1
+	}
+	binReal, err := filepath.EvalSymlinks(binAbs)
+	if err != nil {
+		progress(errs, "cannot resolve installed bin %s for pruning: %v (nothing removed)", bin, err)
+		return 0, 1
+	}
+	// Preserve both the route to a bin symlink and its actual target. Identity
+	// handles case and normalization aliases without guessing volume policy.
+	var ancestors []os.FileInfo
+	for _, path := range []string{binAbs, binReal} {
+		for {
+			info, err := os.Stat(path)
+			if err != nil {
+				progress(errs, "cannot identify installed bin ancestor %s: %v (nothing removed)", path, err)
+				return 0, 1
+			}
+			ancestors = append(ancestors, info)
+			parent := filepath.Dir(path)
+			if parent == path {
+				break
+			}
+			path = parent
+		}
+	}
+	return pruneDefault(root, func(name string) bool {
+		if keep(name) {
+			return true
+		}
+		info, err := os.Stat(filepath.Join(root, name))
+		if err != nil {
+			progress(errs, "leaving release %s alone: %v", name, err)
+			return true
+		}
+		for _, ancestor := range ancestors {
+			if os.SameFile(info, ancestor) {
+				return true
+			}
+		}
+		return false
+	}, errs)
 }
 
 // hasToken is the same whole-token match tools/ghrelease's stamp verb

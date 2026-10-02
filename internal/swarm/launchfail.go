@@ -73,15 +73,6 @@ var ProviderRetryDelay = func(failed int) time.Duration {
 	return time.Duration(lo+randBelow(hi-lo+1)) * time.Second
 }
 
-// providerLaunchReason is the sentence the supervisor records on exit.json for a launch
-// that died on a provider server error. The tail itself is capped on the RUN line by finish.
-func providerLaunchReason(ref, tail string) string {
-	if ref != "" {
-		return "provider launch failure ref=" + ref
-	}
-	return "provider launch failure"
-}
-
 // randBelow is a cryptographic random in [0,n): the jitter need not be unpredictable, but
 // the one source this package already trusts is here.
 func randBelow(n int) int {

@@ -252,29 +252,11 @@ func foldCardMessages(rows [][]string) (ProviderUsage, string) {
 	return ProviderUsage{Values: values, Observed: true, Turns: len(rows)}, ""
 }
 
-// WriteCardUsage writes one card's usage.tsv, header line and one row, atomically. The
-// fields follow the same tab- and newline-scrubbing law as the pool's usage file, so the row
-// is always one row.
-func WriteCardUsage(path string, row UsageRow) error {
-	var head, values []string
-	for _, c := range CardUsageColumns {
-		v := strings.TrimSpace(row[c])
-		if v == "" {
-			v = Dash
-		}
-		v = strings.NewReplacer("\t", " ", "\n", " ", "\r", " ").Replace(v)
-		head = append(head, c)
-		values = append(values, v)
-	}
-	body := strings.Join(head, "\t") + "\n" + strings.Join(values, "\t") + "\n"
-	return writeAtomic(path, []byte(body), 0o644)
-}
-
 // AppendCardUsage appends one attempt's usage row to a card's usage.tsv, writing the header
 // first when the file is new (issue #900). A native run that retried a launch writes one row
 // per attempt -- attempt=1,2,3 for one card -- so the file holds the header and one row per
 // launch, and a reader folds them. A field the provider did not report stays a dash, never a
-// zero, exactly as in the single-row writer.
+// zero, and a tab or a newline in a value is scrubbed so the row is always one row.
 func AppendCardUsage(path string, row UsageRow) error {
 	_, statErr := os.Stat(path)
 	var b strings.Builder

@@ -228,7 +228,9 @@ retention rule (`internal/release/prune.go`), run last by `build` on `--out` and
 `--from`: of the directories whose names are versions, it keeps the one just built or installed,
 the one the machine had installed before it, and the `KeepBesides` (3) newest of the rest by
 modification time, and removes the others through `safepath.RemoveUnder`. A removal that fails is
-counted in `prune-failed=` and never fails the verb.
+counted in `prune-failed=` and never fails the verb. Install also preserves any release
+directory containing the bin path or its resolved target, compared by filesystem identity
+so symlinks and case aliases cannot cause newly installed binaries to be pruned.
 
 *Tests: `TestBuildRefusesAnUnsupportedPairBeforeBuildingAnything`,
 `TestBuildBuildsEveryPlatformAndNamesEachInTheReceipt`.*
@@ -393,7 +395,7 @@ tag nobody ever cuts.
 
 **The gate judges what ships.** The shipped set is the tools under the checkout's `cmd/` — the
 directory beside the reference and the changelog — and a receipt naming any other tool is set aside
-before the gate reads it: a tool under `deprecated/` is not built, not tested and not in the release,
+before the gate reads it: a tool outside `cmd/` is not built, not tested and not in the release,
 so its open edges and its not-ok runs are true about that tool and say nothing about this one. What
 is set aside is counted, never dropped in silence:
 

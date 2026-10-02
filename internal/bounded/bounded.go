@@ -140,9 +140,6 @@ func (l *List) Shown() int { return l.shown }
 // reason Line counts past the ceiling instead of stopping at it.
 func (l *List) Total() int { return l.total }
 
-// Elided is Total minus Shown: what the reader would have to widen the cap to see.
-func (l *List) Elided() int { return l.total - l.shown }
-
 // Group is one cap per kind over a single stream, for a verb that runs several checks and
 // prints their findings together.
 //
@@ -203,19 +200,6 @@ func (g *Group) Total() int {
 	}
 	return n
 }
-
-// Elided is Total minus Shown across every kind.
-func (g *Group) Elided() int { return g.Total() - g.Shown() }
-
-// List is one kind's list, or nil when this group has not seen that kind. It is
-// here for a verb whose MORE line carries a field this package does not print
-// -- nova-wake's carries n=<elided>, which its spec requires -- so that such a
-// verb can reuse the per-kind capping and still write its own summary, rather
-// than hand-rolling a second map of lists beside this one.
-func (g *Group) List(kind string) *List { return g.lists[kind] }
-
-// Kinds returns the kinds seen, in first-seen order.
-func (g *Group) Kinds() []string { return append([]string(nil), g.order...) }
 
 // Tally counts a capped listing without printing it, for a caller that keeps
 // the listing as a value (internal/tool): Add reports whether an item of a kind

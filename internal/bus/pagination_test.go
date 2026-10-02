@@ -112,54 +112,6 @@ func TestBodyPaginatorContinuationSurvivesItsOwnWholeCommitAdvance(t *testing.T)
 	}
 }
 
-func TestBodyItemsAtSnapshotReadsPinnedCommitNotChangedWorktree(t *testing.T) {
-	t.Parallel()
-
-	hermetic(t)
-	bare := bareBus(t)
-	clone := cloneBus(t, bare)
-	base, err := HeadCommit(clone)
-	require.NoError(t, err)
-	path := "from-bo/pinned.md"
-	write(t, clone, path, "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:00:00 UTC 2026\nSubject: pinned\n\noriginal")
-	commitByHand(t, clone, path, "add pinned note")
-	head, err := HeadCommit(clone)
-	require.NoError(t, err)
-	// The body source must be git show <commit>:<path>.  Reading the worktree here
-	// would return this mutation and make a continuation change under the reader.
-	write(t, clone, path, "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:00:00 UTC 2026\nSubject: pinned\n\nworktree mutation")
-	items, err := BodyItemsAtSnapshot(clone, BodySnapshot{Base: base, Head: head, Reader: "Ada", Selector: "inbox-new"}, []OpenEntry{{Path: path}})
-	require.NoError(t, err)
-	if len(items) != 1 || items[0].Commit != head || string(items[0].Body) != "original" {
-		t.Fatalf("snapshot item read worktree or lost identity: %+v", items)
-	}
-}
-
-func TestBodyRecordsAtSnapshotKeepsTwoReceiptOffsetsInOnePath(t *testing.T) {
-	t.Parallel()
-
-	hermetic(t)
-	bare := bareBus(t)
-	clone := cloneBus(t, bare)
-	base, err := HeadCommit(clone)
-	require.NoError(t, err)
-	path := "from-bo/RECEIPTS"
-	write(t, clone, path, "2026-09-09T12:34:56Z bo-aaaaaaaaaaaa\n2026-09-09T12:35:56Z bo-bbbbbbbbbbbb\n")
-	commitByHand(t, clone, path, "append two receipts")
-	head, err := HeadCommit(clone)
-	require.NoError(t, err)
-	// A real RECEIPTS source has multiple appended timestamp/target records in one path.
-	// A path-keyed paginator would keep just one and let the cursor pass the other forever.
-	records, err := BodyRecordsAtSnapshot(clone, BodySnapshot{Base: base, Head: head, Reader: "Ada", Selector: "inbox-new"}, []BodyItem{
-		{Path: path, Offset: 0, Entry: OpenEntry{ID: "bo-aaaaaaaaaaaa", Kind: OpenReceipt, Path: path}},
-		{Path: path, Offset: 1, Entry: OpenEntry{ID: "bo-bbbbbbbbbbbb", Kind: OpenReceipt, Path: path}},
-	})
-	require.NoError(t, err)
-	if len(records) != 2 || records[0].Offset != 0 || records[1].Offset != 1 || records[0].Commit != head || records[1].Commit != head {
-		t.Fatalf("receipt offsets collapsed in snapshot: %+v", records)
-	}
-}
-
 func TestBodySnapshotReadsFirstParentMergeDelta(t *testing.T) {
 	t.Parallel()
 

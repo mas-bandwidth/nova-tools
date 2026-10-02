@@ -103,11 +103,6 @@ const noMaintenanceConfig = "[gc]\n\tauto = 0\n\tautoDetach = false\n" +
 // What stays serial, and must: a test that writes PROCESS-WIDE state. That is the whole
 // list, and every one of them is serial for a named reason --
 //
-//	bus.NoteParses,         one counter each for the process -- but no test here reads
-//	bus.CommitsWalked       them any more: the three that assert a delta of a count read
-//	                        bus.NoteParsesIn and bus.CommitsWalkedIn over their own bus,
-//	                        and run parallel (TestInboxParsesOnlyWhatIsNewSinceTheCursor,
-//	                        TestHeardSurvivesTheCursor, TestAStaleCursorCostsTheBoundAndNotTheDistance)
 //	refreshCheckout,        package variables taken out at the seam and put back
 //	publishDraft,           (withoutFetch, and the two tests that stand in for a
 //	checkoutLockWait,       filesystem, a held lock and a stamp)

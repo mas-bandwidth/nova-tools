@@ -134,21 +134,6 @@ func jobRunsOnEvent(block, event string) bool {
 	return false
 }
 
-// jobUsesShort reports whether a job's test command passes -short. Comments are
-// stripped first, so prose that names the flag is not read as the flag.
-func jobUsesShort(block string) bool {
-	for _, line := range strings.Split(block, "\n") {
-		code := line
-		if j := strings.Index(code, "#"); j >= 0 {
-			code = code[:j]
-		}
-		if strings.Contains(code, "go test") && strings.Contains(code, "-short") {
-			return true
-		}
-	}
-	return false
-}
-
 // ci_branches_test.go is class B of pit stop 3 (#828) applied to CI:
 // ONE FACT WRITTEN TWICE. Two rows of that bug table are read off these
 // workflow files as text, the same way ci_budget_test.go reads the two-minute

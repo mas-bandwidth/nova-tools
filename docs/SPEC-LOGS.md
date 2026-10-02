@@ -11,23 +11,16 @@ line), [SPEC-SECRETS.md](SPEC-SECRETS.md) (the secrets a line must never carry).
 
 ## Part 1 — the primitive
 
-`internal/log` holds three things:
+`internal/log` holds two things:
 
 - **`Line`** — one event as a value. `New(clock, guid, source)` fills `ts` from the injected
   clock, `guid` from the injected source, `source` from the caller, and `level` as `INFO`;
   the caller fills the rest and `Write(w)` renders it.
-- **`LongVerb`** — the sink a long-running verb holds for its whole run. Its fields are
-  `W` (the writer), `Clock`, `GUID`, `Source` (the tool), `Host` (the `bench` field) and
-  `Verb`, fixed from the first event to the last. A nil `Clock` falls back to `time.Now`
-  and a nil `GUID` to `ProcessGUID`, which reads `/proc`. `Event(label, msg)` writes one line through `Line.Write`. A nil
-  writer writes nothing, so a caller that names no sink keeps its exact stdout and stderr,
-  and a line that cannot be written never stops the work.
 - **`Redact`** — the redaction pass `Write` runs on every field whose content comes from
   outside the program (Part 2).
 
-The clock and the guid are injected: `New` takes both, a test passes fixed ones and never
-reads `time.Now` or `/proc`, and only a `LongVerb` built with a nil `Clock` or `GUID` falls
-back to the real clock and `ProcessGUID`. The production guid is `ProcessGUID`: the kernel's boot id, the pid
+The clock and the guid are injected: `New` takes both, and a test passes fixed ones and never
+reads `time.Now` or `/proc`. The production guid is `ProcessGUID`: the kernel's boot id, the pid
 and the process start time, joined as `<boot>-<pid>-<start>`. **The guid is a run's identity**:
 a run's lines share it, and with both halves read from `/proc` two runs that share a pid after a
 reboot still differ. Where `/proc` is absent, `noboot` and `nostart` stand in and the guid is
@@ -89,15 +82,6 @@ an ordinary sentence survive it. The fixed vocabulary the program writes itself 
 out from under a query. A private bus note's body is never an event field: log the note id, the
 scope and the receipt.
 
-## Part 3 — a long-running verb
-
-A verb that does one unit of work and exits builds a `Line`, writes it, and is gone. A verb that
-changes state many times over one run holds a `LongVerb`: the run's `source`, `bench` and `verb`
-ride on every line as labels, and each `Event` carries the same fifteen fields, escaped and
-redacted the same way as a `Line`. Those labels are shared by every run of that verb on that
-host, repeated or concurrent, and `LongVerb` enforces no exclusion between runs; one run's lines
-are the ones carrying its `guid`.
-
 ## Tests this spec demands
 
 The tests run through injected clocks and guids against `bytes.Buffer` sinks and `t.TempDir()`
@@ -119,5 +103,3 @@ files: no network, no real `/proc`.
 8. `TestWriteRedactsEveryVariableField` — the pass is inside `Write`, so a secret is caught
    whatever field carried it, and the line stays one line.
 9. `TestWriteKeepsTheFixedVocabulary` — redaction never touches ts, level, source or event.
-10. `TestLongVerbWritesJSONLines` — a run that changes state five times writes five JSON lines to
-    a file, each carrying the run's host, verb and event label, parsed back from the file.

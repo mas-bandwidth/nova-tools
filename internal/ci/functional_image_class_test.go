@@ -518,9 +518,9 @@ func execNames(t *testing.T) map[string][]string {
 }
 
 type imageRow struct {
-	name, how, provider, note string
-	unscanned                 bool
-	line                      int
+	name, how, provider string
+	unscanned           bool
+	line                int
 }
 
 // imageRows parses binaries.txt: `<name> <TAB> <how> <TAB> <provider or reason>`
