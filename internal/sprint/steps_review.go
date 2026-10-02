@@ -22,7 +22,15 @@ type AskReq struct {
 	More    []string
 	Answers []string
 	Who     string
+	// Instead is the reader whose live read of the one primary named is taken
+	// back (retired_by coordinator) and asked of one other reader in the same
+	// step, chosen and routed as Another's (ask --instead)
+	Instead string `json:",omitempty"`
 }
+
+// RetiredByCoordinator is a read card's retired_by when the coordinator took
+// the read back and asked another reader instead (ask --instead).
+const RetiredByCoordinator = "coordinator"
 
 // readsAt is the primary's placed read cards at an attempt, in reader row order.
 func readsAt(s *Snapshot, pr *Card, attempt int) []*Card {
@@ -54,13 +62,20 @@ func Ask(s *Snapshot, r AskReq) Plan {
 	// (streamTurns), so a limit asks of every stream alike, and the index moves
 	// past the stream of the last primary asked
 	srr := askStreamRound(s)
-	another := func(c *Card) bool { return r.Another || contains(r.More, c.ID) }
+	if r.Instead != "" && (r.Another || len(r.IDs) != 1 || r.Only != nil || r.Stream != "" || r.Limit != 0 || len(r.More) > 0) {
+		p.refuse("ask", "--instead takes back one read of one primary and asks one other reader: ask <primary> --instead <reader>, with no --another, --group, --stream or --limit")
+		return p
+	}
+	another := func(c *Card) bool { return r.Another || r.Instead != "" || contains(r.More, c.ID) }
 	eligible := func(c *Card) string {
 		if why := inState(c, Review); why != "" {
 			return why
 		}
 		if c.F("result") == "failed" {
 			return "its work came back failed: rework or drop it"
+		}
+		if r.Instead != "" {
+			return insteadHeld(s, c, r.Instead)
 		}
 		asked := len(readsAt(s, c, c.Int("attempt")))
 		have := len(liveReadsAt(s, c, c.Int("attempt")))
@@ -96,7 +111,14 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		var takenBack []Change
 		var away []string
 		var returned []*Card
+		instead := ""
 		for _, rc := range readsAt(s, c, attempt) {
+			if rc.F("reader") == r.Instead {
+				// the coordinator takes it back: asked of another reader below
+				takenBack = append(takenBack, change(Readers, removeEntry(rc, map[string]string{"retired": stamp(s.Now), "retired_by": RetiredByCoordinator})))
+				instead = rc.F("reader")
+				continue
+			}
 			if awayRead(s, rc) {
 				// asked of a reader that is not up: taken back, and asked again below
 				takenBack = append(takenBack, change(Readers, removeEntry(rc, map[string]string{"retired": stamp(s.Now), "retired_by": "away"})))
@@ -202,6 +224,9 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		if len(retiredFrom) > 0 {
 			u.Moved += "; its returned read taken back from " + strings.Join(retiredFrom, ", ")
 		}
+		if instead != "" {
+			u.Moved += "; its read taken back from " + instead + " (instead)"
+		}
 		if another(c) {
 			u.Closes = closesFor(s.Open, []string{NReadBroken, NReadsExhausted, NStranded, NStalled}, c.ID)
 		} else {
@@ -220,7 +245,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 	if ri != nil {
 		ri.write(&p)
 	}
-	if !r.Another {
+	if !r.Another && r.Instead == "" {
 		// one more reader of a primary named is not a turn round the streams:
 		// the ask's stream index moves with the asks of the streams' cards
 		// (errata 3 amendment 10; the reference model's AskAnother moves no
@@ -234,6 +259,23 @@ func Ask(s *Snapshot, r AskReq) Plan {
 	}
 	answered(&p, s, r.Answers, r.Who)
 	return p
+}
+
+// insteadHeld says why the reader's read of the primary at its attempt cannot be
+// taken back by ask --instead ("" when it is live: asked or reading).
+func insteadHeld(s *Snapshot, pr *Card, rd string) string {
+	attempt := pr.Int("attempt")
+	rc := s.Readers.Card(ReadCardID(pr.ID, attempt, rd))
+	at := " of " + pr.ID + " at attempt " + itoa(attempt)
+	switch {
+	case rc == nil:
+		return rd + " holds no read" + at + "; run: nova-sprint card " + pr.ID + " for its readers, or nova-sprint ask " + pr.ID + " --another to add one"
+	case !rc.Placed():
+		return rd + "'s read" + at + " was retired at " + rc.F("retired") + " by " + orDash(rc.F("retired_by")) + ": nothing to take back; run: nova-sprint ask " + pr.ID + " --another to add a reader"
+	case rc.Col != Asked && rc.Col != Reading:
+		return rd + "'s read" + at + " is finished (" + rc.Col + "), not asked or reading: nothing to take back; run: nova-sprint ask " + pr.ID + " --another to add a reader"
+	}
+	return ""
 }
 
 // NamedExtras is the named cards a step must read as records when they are not
@@ -314,6 +356,9 @@ func Read(s *Snapshot, r ReadReq) Plan {
 			}
 			if c.F("retired_by") == RetiredByLevel {
 				return "retired at " + c.F("retired") + ": the tick's level asked the read of another reader"
+			}
+			if c.F("retired_by") == RetiredByCoordinator {
+				return "retired at " + c.F("retired") + ": the coordinator took the read back and asked another reader instead"
 			}
 			if c.F("retired_by") == "returned" {
 				return "retired at " + c.F("retired") + ": the read was returned; it was asked of another reader, or judged"

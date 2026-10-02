@@ -1439,12 +1439,18 @@ func (a *app) cmdFinish(args []string, stdout, stderr io.Writer) int {
 
 func (a *app) cmdAsk(args []string, stdout, stderr io.Writer) int {
 	var another *bool
-	var ans *string
+	var ans, instead *string
 	return a.setVerb("ask", args, stdout, stderr, false, func(fs flagSet) {
 		another = fs.Bool("another", false, "one more reader for a primary already asked")
 		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated")
-	}, nil, func(ids []string, s *sel, c *common) store.Step {
-		return store.AskStep(sprint.AskReq{Sel: s.sel(ids), Another: *another, Answers: answers(*ans), Who: c.actor})
+		instead = fs.String("instead", "", "take back this reader's read (asked or reading) of the one primary named and ask one other reader, as --another chooses")
+	}, func(ids []string, s *sel) string {
+		if *instead != "" && s.group != "" {
+			return "--instead takes back one read of one primary and asks one other reader: ask <primary> --instead <reader>, with no --another, --group, --stream or --limit; nothing was changed"
+		}
+		return ""
+	}, func(ids []string, s *sel, c *common) store.Step {
+		return store.AskStep(sprint.AskReq{Sel: s.sel(ids), Another: *another, Answers: answers(*ans), Who: c.actor, Instead: *instead})
 	})
 }
 
