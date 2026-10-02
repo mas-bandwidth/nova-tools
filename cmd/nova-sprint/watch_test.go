@@ -205,6 +205,13 @@ func TestWhereShowsEveryTableAndEveryStream(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --members m1")
+	// a table with no row is its header, one rule and the summary row (the owner,
+	// 2026-10-02: "when the work stream table is empty, please just show the summary row")
+	for _, name := range []string{"work", "readers", "merge"} {
+		lines := strings.Split(strings.TrimRight(tableOf(ta.ok("where"), name), "\n"), "\n")
+		require.Len(t, lines, 3, "table %s, empty: header, rule, summary row", name)
+		assert.Equal(t, "", strings.TrimSpace(strings.Split(lines[2], " | ")[0]), "table %s: the summary row is unlabelled: %q", name, lines[2])
+	}
 	ta.ok("add --stream s1 --count 2")
 	ta.ok("add --stream s2 --count 1")
 	ta.ok("drop s2-1 --reason obsolete")
