@@ -11,7 +11,7 @@ import (
 
 // Of is the file at path as it is on disk now: its path, size and modification
 // time; "" when it cannot be read (a binary removed or replaced by a rename on a
-// system that reports the old one as gone).
+// system that reports that binary as gone).
 func Of(path string) string {
 	fi, err := os.Stat(path)
 	if err != nil {
