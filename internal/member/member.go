@@ -32,6 +32,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -1414,6 +1415,7 @@ func CardText(p Packet) string {
 	}
 	if p.Kind == "read" {
 		b.WriteString("Your verdict is RESULT.md's `verdict: ok` or `verdict: broken` (broken means the work is wrong for the card; a problem of your own run is not a verdict, leave the line out). ")
+		b.WriteString(cardcontract.ReaderChecksText + " ")
 		b.WriteString("A broken verdict tells them what to do: at least one finding line names the file (file:line), the line, or the card's STEP or RULE the work breaks, and says what to change. A broken verdict that names none is no verdict: the sprint asks another reader. ")
 		b.WriteString("Your RESULT.md's `report:` line and its body are what the sprint records as your finding, in full; the member reports it for you as:\n\n")
 		fmt.Fprintf(&b, "    nova-sprint read --as %s (--ok | --broken) %s --epoch %d --finding '<your findings>'\n", p.As, p.Card, p.Epoch)

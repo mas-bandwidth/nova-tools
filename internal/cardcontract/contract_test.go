@@ -138,3 +138,30 @@ func TestStageRecipesRefusalNamesTheStageLine(t *testing.T) {
 	assert.ErrorContains(t, err, "not a regular file inside")
 	assert.NoDirExists(t, job)
 }
+
+func TestReadJobTextCarriesTheFourChecks(t *testing.T) {
+	t.Parallel()
+	f := Frame{Kind: "read", Card: "c1.r1", Attempt: 1, Repo: cardURL, BaseRef: "main", Branch: "sprint/c1.w1", ReviewBase: "main"}
+	s := Staged{Job: "/j", Repo: "/j/repo", Head: "0123456789abcdef0123456789abcdef01234567"}
+	for _, family := range []string{"claude", "plain", "openai"} {
+		text := For(family).JobText(f, s)
+		assert.Contains(t, text, ReaderChecksText, family)
+		for _, check := range []string{
+			"truth of a stated reason against the code",
+			"sentence completeness",
+			"edits strictly within PATHS",
+			"cross-references after a rename",
+		} {
+			assert.Contains(t, text, check, "%s lacks check %q", family, check)
+		}
+		assert.Contains(t, text, BrokenFindingText, family)
+	}
+
+	work := Frame{Kind: "work", Card: "c1.w1", Attempt: 1, Repo: cardURL, BaseRef: "main", Branch: "sprint/c1.w1"}
+	for _, family := range []string{"claude", "plain", "openai"} {
+		text := For(family).JobText(work, s)
+		assert.NotContains(t, text, ReaderChecksText, family)
+		assert.NotContains(t, text, BrokenFindingText, family)
+	}
+}
+

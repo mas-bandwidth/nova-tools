@@ -256,6 +256,11 @@ func LastPushed(job string) (branch, head string) {
 // (docs/SPEC-CARD-CONTRACT.md section 3): it names the defect, or it is no verdict.
 const BrokenFindingText = "A broken verdict tells them what to do: at least one finding line names the file (file:line), the line, or the card's STEP or RULE the work breaks, and says what to change. \"Request changes.\" alone, or an approval's words, is no finding: a broken verdict that names no file, line or rule is not a verdict, and the sprint asks another reader."
 
+// ReaderChecksText is what every profile's read JOB.md requires the reader to check before approving
+// (docs/SPEC-CARD-CONTRACT.md section 3): truth against code, sentence completeness, PATHS containment,
+// and cross-references after a rename.
+const ReaderChecksText = "Four checks before an approval: (1) truth of a stated reason against the code: verify every reconstructed reason against the actual implementation; a comment that contradicts the code or invents a reason is broken; (2) sentence completeness: read every changed comment from its first line to its full stop as a whole paragraph, not as a diff; stranded fragments from editing only a listed line are broken; (3) edits strictly within PATHS: check that every edit is strictly within the card's declared paths, rename targets, or ledger rows; modifications outside declared paths are broken; (4) cross-references after a rename: verify with `ls` that any file named in a changed comment exists and belongs to the package, ensuring no cross-package breakage."
+
 // ShapeText is the result shape as JOB.md quotes it, for a work card or a read.
 func ShapeText(kind string) string {
 	verdict := "ok | not-done | nothing"
