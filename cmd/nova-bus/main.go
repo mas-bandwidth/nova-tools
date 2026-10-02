@@ -3048,9 +3048,8 @@ const maxIdleExit = 125
 // defaults pass: it is not a fact about a bus that only its owner can supply. Ten seconds
 // is under the time it takes to read a note and well over the cost of a fetch, and it is
 // chosen for the round trip between two lines that answer each other, not for the fetch: a
-// shorter interval is a shorter round trip between two lines
-// that are answering each other, and a git fetch of a bus this size is cheap enough that
-// the round trip is what the number should be chosen for.
+// git fetch of a bus this size is cheap enough that the round trip is what the number
+// should be chosen for.
 const defaultWaitInterval = 10 * time.Second
 
 // defaultBeatInterval and defaultBeatLease are the defaults of the retired --beat and
