@@ -60,7 +60,7 @@ var knownRoles = map[string]bool{
 const ReasonUnknown = "unknown-machine"
 
 // allowSharedPrefix is how a machine that is BOTH runner and bench says why. The exception
-// is dated because it is meant to end.
+// records why the machine may serve both roles.
 const allowSharedPrefix = "allow-shared="
 
 // Machine is one line of the registry.
