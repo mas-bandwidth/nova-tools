@@ -12,12 +12,18 @@
 package config
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
+	"unicode"
+
+	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 )
 
 // Type is a field's type. It decides the SQL column, the flag's parsing and
@@ -40,6 +46,23 @@ const (
 	// TypeRef is the name of a row of another kind (Field.Ref), stored as
 	// text with a foreign key.
 	TypeRef Type = "ref"
+	// TypeBool is true or false, stored as boolean.
+	TypeBool Type = "bool"
+	// TypeKeys is a comma list of environment variable names (letters,
+	// digits and underscores, not starting with a digit), deduplicated and
+	// sorted, stored as text: the names of secrets, never their values.
+	TypeKeys Type = "keys"
+	// TypeArgv is a command as a JSON array of strings, the program first,
+	// stored as text in its compact JSON spelling.
+	TypeArgv Type = "argv"
+	// TypeSeq is a comma list of row names of another kind (Field.Ref) in the
+	// order given, a name kept as often as it is given, stored as text ("" is
+	// the empty list): a tier's route array.
+	TypeSeq Type = "seq"
+	// TypeDecimal is a non-negative decimal number (digits, one point, no sign
+	// or exponent), stored as text in its one spelling (cardcost.Canonical), ""
+	// when not set: a price, never a float.
+	TypeDecimal Type = "decimal"
 )
 
 // Field is one column of a kind: the flag `--<Name>` on add and set, the
@@ -53,10 +76,14 @@ type Field struct {
 	Required bool
 	// Enum is the word list of a TypeEnum or TypeList field.
 	Enum []string
-	// Ref is the kind a TypeRef field names.
+	// Ref is the kind a TypeRef or TypeSeq field names.
 	Ref string
 	// Help is the flag's help line, one sentence.
 	Help string
+	// Default is the canonical value add stores for a field it is not
+	// given. "" means the type's zero: 0 for an int, false for a bool, the
+	// empty value for the rest.
+	Default string
 }
 
 // Kind is one kind of configuration. See the package comment.
@@ -76,6 +103,9 @@ type Kind struct {
 	// remove or list and its set, show and history take no name
 	// (docs/SPEC-CONFIG.md, "Singleton kinds").
 	Singleton bool
+	// Seed are the rows the kind's migration creates, every field at its
+	// default (the tiers), so set takes them on a new store. nil is none.
+	Seed []string
 	// Derive, when set, is run by Apply on the kind's rows before they are
 	// planned: a value another kind's row decides (the sprint's coordinator
 	// as a friend's Redis role) is added here, so Redis holds it and the
@@ -85,6 +115,16 @@ type Kind struct {
 	// number is written first. nil keeps name order. Friends put the
 	// coordinator first so ns_friend_roles' bootstrap has one.
 	ApplyOrder func(r Row) int
+	// Check, when set, is the rule across a row's fields that no one field
+	// can say (a loop runs every n seconds or is kept alive, never both).
+	// add runs it on the new row before any store is opened; every store
+	// runs it on the row a set would leave, and refuses the set with
+	// ErrInvalid. nil checks nothing. add also runs it when some other
+	// field is already refused, so one refusal names every problem; a
+	// field that failed its own validation is then absent from r.Fields,
+	// and a rule that needs it is skipped (the field's own refusal says
+	// what is wrong).
+	Check func(r Row) error
 }
 
 // NamePattern is the shape of a row key: lower-case, digits and dashes, the
@@ -95,12 +135,25 @@ var NamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 // any case.
 var namesPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]*$`)
 
-// The four kinds of this cut (docs/SPEC-CONFIG.md lists the planned ones).
+// keyPattern is a word of a TypeKeys list: an environment variable's name.
+var keyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// The bounds of a TypeArgv value: a command is at most MaxArgs words and
+// MaxArgvBytes bytes in its canonical spelling, refused before any write.
+const (
+	MaxArgs      = 64
+	MaxArgvBytes = 4096
+)
+
+// The kinds of this cut (docs/SPEC-CONFIG.md, "The kinds of this cut").
 const (
 	KindMachine = "machine"
 	KindFleet   = "fleet"
 	KindFriend  = "friend"
 	KindSprint  = "sprint"
+	KindLoop    = "loop"
+	KindRoute   = "route"
+	KindTier    = "tier"
 )
 
 // FriendRoles are the roles someone decides for a friend. The coordinator
@@ -113,14 +166,19 @@ var FriendRoles = []string{"builder", "may-hold", "reader"}
 // spelling (frontier, pro, flash).
 var Tiers = []string{"flash", "frontier", "pro"}
 
+// RouteTiers are the tiers a route serves: Tiers less frontier, whose cards
+// are never drawn from routes and escalate to the coordinator.
+var RouteTiers = []string{"flash", "pro"}
+
 // CoordinatorRole is the Redis role ns_friend_roles and the deal read
 // (friend:<f>:roles), derived at apply from the sprint row.
 const CoordinatorRole = "coordinator"
 
 // Kinds is the registry, in apply order: machines first, the fleet row next
 // (it names machines, and a friend's desired slots are charged to the
-// fleet's coordinator machine when her beat names none), friends, and the
-// sprint row last (it names a friend).
+// fleet's coordinator machine when her beat names none), friends, the
+// sprint row (it names a friend), loops (each names a machine), routes
+// (each names no row), and tiers last (each names routes).
 //
 // A machine's record is exactly the declared facts something reads, one
 // reader each, and nothing invented (Glenn 2026-09-27: "I only want the
@@ -134,12 +192,13 @@ var Kinds = []*Kind{
 	{
 		Name:  KindMachine,
 		Table: "machines",
-		Doc:   "a machine of the fleet, named by its tailnet host: the login, the seat, and how many cards and runners it takes",
+		Doc:   "a machine of the fleet, named by its tailnet host: the login, the seat, its ceiling, its runners, and the sprint member's width on it",
 		Fields: []Field{
 			{Name: "user", Type: TypeText, Required: true, Help: "the login the plays and seals use on it (ssh <user>@<name>)"},
 			{Name: "seat", Type: TypeText, Required: true, Help: "its nova-secrets seat: the identity it opens secrets as, one <seat>.yaml in the store"},
-			{Name: "slots", Type: TypeInt, Required: true, Help: "how many cards it may run at once, the machine ceiling (machine:<m>:ceiling); 0 runs none"},
+			{Name: "slots", Type: TypeInt, Required: true, Help: "the machine ceiling apply writes to machine:<m>:ceiling, which the friends' desired slots must fit under; not the sprint's width"},
 			{Name: "runners", Type: TypeInt, Help: "how many CI runners it hosts; 0 (the default) hosts none"},
+			{Name: "width", Type: TypeInt, Help: "the most work cards the sprint's member on it runs at once, what nova-sprint fleet sync sets; set apart from --slots, never derived from it; 0 (the default) is no member, dealt no work"},
 		},
 	},
 	{
@@ -162,7 +221,7 @@ var Kinds = []*Kind{
 		Table: "friends",
 		Doc:   "an AI friend: how wide she runs, which tiers she can do, and her roles",
 		Fields: []Field{
-			{Name: "slots", Type: TypeInt, Required: true, Help: "her desired slots, under the ceiling of the machine her beat reports"},
+			{Name: "slots", Type: TypeInt, Required: true, Help: "her desired slots, under the ceiling of the machine her beat reports; no machine's width"},
 			{Name: "tiers", Type: TypeList, Enum: Tiers, Required: true, Help: "which tiers she can do: comma list of " + strings.Join(Tiers, ", ")},
 			{Name: "roles", Type: TypeList, Enum: FriendRoles, Help: "comma list of " + strings.Join(FriendRoles, ", ") + " (who coordinates is the sprint row's)"},
 		},
@@ -183,6 +242,200 @@ var Kinds = []*Kind{
 			{Name: "coordinator", Type: TypeRef, Ref: KindFriend, Help: "the friend who holds the coordinator role (a friend row), or empty; set it to hand over"},
 		},
 	},
+	{
+		// A loop is a supervised process on one machine: the command, the
+		// seat it opens its secrets from and the names of the secrets it
+		// needs, and how it runs (every n seconds, or kept alive). Every
+		// value is data in the row; the code names no machine, seat or
+		// secret (docs/SPEC-CONFIG.md, "loop"). The plays render one unit
+		// per row from the Redis view apply writes; the log path is derived
+		// from the name (LoopLog), never typed.
+		Name:  KindLoop,
+		Table: "loops",
+		Doc:   "a supervised loop on one machine: its command, the seat and secret names it opens, and how it runs (every n seconds or kept alive)",
+		Fields: []Field{
+			{Name: "machine", Type: TypeRef, Ref: KindMachine, Required: true, Help: "the machine it runs on (a machine row)"},
+			{Name: "argv", Type: TypeArgv, Required: true, Help: `the command as a JSON array of strings, the program first: '["/path/prog","--flag","v"]'; never a secret, which goes by name in --keys`},
+			{Name: "seat", Type: TypeText, Help: "the nova-secrets seat on that machine it opens its secrets from, or empty when it needs none"},
+			{Name: "keys", Type: TypeKeys, Help: "comma list of the names of the secrets it needs from the seat (API_KEY,...), never a value; empty when none"},
+			{Name: "every", Type: TypeInt, Help: "seconds between runs of a periodic loop; 0 (the default) when it is kept alive"},
+			{Name: "keepalive", Type: TypeBool, Help: "true for a long-running unit restarted when it exits; false (the default) when it runs --every n"},
+			{Name: "width", Type: TypeInt, Help: "the --width its command runs with: above 0 it replaces the argv's --width, or is appended when the argv has none; 0 (the default) runs the argv as written. A reader loop's width; a work member's is its machine row's (machine set <m> --width <n>), so leave it 0 there"},
+			{Name: "enabled", Type: TypeBool, Default: "true", Help: "false writes the unit and does not start it; true (the default) runs it"},
+		},
+		Check: checkLoop,
+	},
+	{
+		// A route is one way to run a model tier: the provider and model a
+		// card of that tier runs on, its budget and deadline. The deal takes
+		// the routes of a card's tier in the order of the tier's array (the
+		// tier kind; docs/SPEC-CONFIG.md, "route").
+		Name:  KindRoute,
+		Table: "routes",
+		Doc:   "a route of a model tier: the provider and model a card of that tier runs on, its token budget and deadline; the tier's array orders its routes; frontier cards are never dealt from routes, they escalate to the coordinator",
+		Fields: []Field{
+			{Name: "tier", Type: TypeEnum, Enum: RouteTiers, Required: true, Help: "the tier it serves: one of " + strings.Join(RouteTiers, ", ") + " (frontier cards are never drawn from routes, they escalate to the coordinator)"},
+			{Name: "provider", Type: TypeText, Required: true, Help: "the provider word of the model id <provider>/<model> the harness is launched with: one word, no slash"},
+			{Name: "model", Type: TypeText, Required: true, Help: "the model name after the provider, which may hold slashes (x-ai/grok-4); no blank"},
+			{Name: "tokens", Type: TypeInt, Help: "the token budget per card; 0 (the default) is unmetered and the deadline is the only stop"},
+			{Name: "deadline", Type: TypeInt, Required: true, Help: "the seconds a card on this route may run, above 0"},
+			{Name: "enabled", Type: TypeBool, Default: "true", Help: "false takes it out of the deal; true (the default) keeps it in"},
+			// The price sheet: optional, so a card's predicted cost can be worked
+			// out from its tokens (the owner, 2026-10-01: "the pricing configuration
+			// saved per-tuple"; internal/cardcost). Prices are USD per million tokens.
+			{Name: cardcost.FieldInput, Type: TypeDecimal, Help: "USD per million uncached input tokens, a decimal like 0.30; empty (the default) when not known"},
+			{Name: cardcost.FieldCacheRead, Type: TypeDecimal, Help: "USD per million cached input tokens read"},
+			{Name: cardcost.FieldCacheWrite, Type: TypeDecimal, Help: "USD per million tokens written to the cache"},
+			{Name: cardcost.FieldOutput, Type: TypeDecimal, Help: "USD per million output tokens"},
+			{Name: cardcost.FieldReasoningAsOutput, Type: TypeBool, Default: "true", Help: "true (the default) bills reasoning tokens at the output price; false when the provider does not bill them apart"},
+			{Name: cardcost.FieldLongContext, Type: TypeInt, Help: "the prompt size in tokens above which a request is priced at the long prices; 0 (the default) is none"},
+			{Name: cardcost.FieldInputLong, Type: TypeDecimal, Help: "USD per million input tokens of a request above --" + cardcost.FieldLongContext},
+			{Name: cardcost.FieldOutputLong, Type: TypeDecimal, Help: "USD per million output tokens of a request above --" + cardcost.FieldLongContext},
+			{Name: cardcost.FieldRequest, Type: TypeDecimal, Help: "USD per request, on top of the tokens; empty when there is no fee"},
+			{Name: cardcost.FieldBilling, Type: TypeEnum, Enum: cardcost.Billings, Default: cardcost.BillingMetered, Help: "how it is paid: metered (the default: per token) or plan (a subscription, so the predicted cost is the metered price of the same tokens)"},
+			{Name: cardcost.FieldGateway, Type: TypeDecimal, Help: "the percent a gateway adds on top of the prices, a decimal like 5.5; empty when none"},
+			{Name: cardcost.FieldSource, Type: TypeText, Help: "where the prices were read, free text (a URL)"},
+			{Name: cardcost.FieldAsOf, Type: TypeText, Help: "the date the prices were read, YYYY-MM-DD"},
+		},
+		Check: checkRoute,
+	},
+	{
+		// A tier's route array: the deal takes routes[index mod len] for each
+		// card of the tier, the index a uint64 counter on the fleet table
+		// (the owner, 2026-10-01: "the per-tier provider/model array should
+		// be specified in nova-config"; internal/sprint/route.go,
+		// tla/RouteIndex.tla).
+		Name:  KindTier,
+		Table: "tiers",
+		Doc:   "a model tier's route array: the deal takes routes[index mod len] for each card of the tier, a route named twice taking two turns; one row each for " + strings.Join(RouteTiers, " and ") + ", created by migrate",
+		Fields: []Field{
+			{Name: "routes", Type: TypeSeq, Ref: KindRoute, Help: "the ordered comma list of the tier's routes, a name repeated for more turns; each an enabled route of the tier; empty takes the tier's enabled routes in name order"},
+		},
+		Seed:  RouteTiers,
+		Check: checkTier,
+	},
+}
+
+// checkTier is the tier kind's Check: the row is one of RouteTiers.
+func checkTier(r Row) error {
+	if !hasWord(strings.Join(RouteTiers, ","), r.Name) {
+		return fmt.Errorf("tier %s: want one of %s", r.Name, strings.Join(RouteTiers, ", "))
+	}
+	return nil
+}
+
+// checkRoute is the route kind's Check: the provider is one word with no
+// slash or blank, the model has no blank, and the deadline is above 0. A
+// field absent from the row (refused on its own, or a required one not
+// given) is skipped, so its own refusal stands alone.
+func checkRoute(r Row) error {
+	var problems []string
+	if p, ok := r.Fields["provider"]; ok && (p == "" || strings.ContainsFunc(p, func(c rune) bool { return c == '/' || unicode.IsSpace(c) })) {
+		problems = append(problems, fmt.Sprintf("route %s has --provider %q; want the provider word of the model id <provider>/<model>: one word, no slash, no blank", r.Name, p))
+	}
+	if m, ok := r.Fields["model"]; ok && (m == "" || strings.ContainsFunc(m, unicode.IsSpace)) {
+		problems = append(problems, fmt.Sprintf("route %s has --model %q; want the model name after the provider, not empty and with no blank", r.Name, m))
+	}
+	if _, ok := r.Fields["deadline"]; ok && r.Int("deadline") <= 0 {
+		problems = append(problems, fmt.Sprintf("route %s has --deadline 0; want the seconds a card on it may run, above 0", r.Name))
+	}
+	// the long prices go with the threshold: one without the other prices nothing
+	if _, ok := r.Fields[cardcost.FieldLongContext]; ok {
+		long := r.Int(cardcost.FieldLongContext) > 0
+		for _, f := range []string{cardcost.FieldInputLong, cardcost.FieldOutputLong} {
+			v, given := r.Fields[f]
+			switch {
+			case given && long && v == "":
+				problems = append(problems, fmt.Sprintf("route %s has --%s %s and no --%s; want both long prices with the threshold, or --%s 0", r.Name, cardcost.FieldLongContext, r.Fields[cardcost.FieldLongContext], f, cardcost.FieldLongContext))
+			case given && !long && v != "":
+				problems = append(problems, fmt.Sprintf("route %s has --%s %s and no --%s; want the prompt size in tokens above which it applies", r.Name, f, v, cardcost.FieldLongContext))
+			}
+		}
+	}
+	if d := r.Fields[cardcost.FieldAsOf]; d != "" {
+		if _, err := time.Parse(time.DateOnly, d); err != nil {
+			problems = append(problems, fmt.Sprintf("route %s has --%s %q; want the date the prices were read, YYYY-MM-DD", r.Name, cardcost.FieldAsOf, d))
+		}
+	}
+	if len(problems) > 0 {
+		return fmt.Errorf("%s", strings.Join(problems, "; "))
+	}
+	return nil
+}
+
+// LoopLog is where a loop's unit writes its output on its machine, derived
+// from the name and never typed: ~/nova-bench/loops/<name>.log. apply writes
+// it into the loop's Redis hash beside the row's fields.
+func LoopLog(name string) string { return "~/nova-bench/loops/" + name + ".log" }
+
+// LoopCommand is the command a loop's unit runs: its argv, with the width
+// field as the value of its --width when the field is above 0, so a loop's
+// width is set as one value (loop set <name> --width <n>) and never by
+// editing the argv. The last spelling of the flag (--width n, -width n,
+// --width=n, -width=n) after the program word and before a --, the one a
+// flag parser keeps, takes the value; an argv with none gets --width n
+// before its -- or at its end. A
+// width of 0 leaves the argv as written, so a row whose argv carries --width
+// and whose field is 0 keeps its own (migration 0013 sets the field from
+// the argv). The inventory renders nova_loops' argv with it (parseLoop), and
+// loop show prints it as command=.
+func LoopCommand(argv []string, width int) []string {
+	out := append([]string{}, argv...)
+	if width <= 0 || len(out) == 0 {
+		return out
+	}
+	n := strconv.Itoa(width)
+	end := len(out)
+	for i := 1; i < len(out); i++ {
+		if out[i] == "--" {
+			end = i
+			break
+		}
+	}
+	last, prefix := -1, "" // the index of the last spelling's value, and what precedes the value there
+	for i := 1; i < end; i++ {
+		switch t := out[i]; {
+		case (t == "--width" || t == "-width") && i+1 < end:
+			last, prefix = i+1, ""
+			i++
+		case strings.HasPrefix(t, "--width=") || strings.HasPrefix(t, "-width="):
+			last, prefix = i, t[:strings.IndexByte(t, '=')+1]
+		}
+	}
+	if last < 0 {
+		return append(out[:end:end], append([]string{"--width", n}, out[end:]...)...)
+	}
+	out[last] = prefix + n
+	return out
+}
+
+// checkLoop is the loop kind's Check: exactly one of every and keepalive
+// says how it runs, and secret names need a seat to open them from.
+func checkLoop(r Row) error {
+	var problems []string
+	// A field absent from the row failed its own validation in add; a rule
+	// that needs it is skipped and the field's refusal stands alone.
+	_, everyOK := r.Fields["every"]
+	_, keepOK := r.Fields["keepalive"]
+	if everyOK && keepOK {
+		periodic := r.Int("every") > 0
+		kept := r.Fields["keepalive"] == "true"
+		switch {
+		case periodic && kept:
+			problems = append(problems, fmt.Sprintf("loop %s has --every %s and --keepalive true; a loop runs every n seconds or is kept alive, so set one: --every 0 or --keepalive false", r.Name, r.Fields["every"]))
+		case !periodic && !kept:
+			problems = append(problems, fmt.Sprintf("loop %s has neither --every nor --keepalive; want --every <seconds> for a periodic loop or --keepalive true for a long-running one", r.Name))
+		}
+	}
+	_, keysOK := r.Fields["keys"]
+	_, seatOK := r.Fields["seat"]
+	if keysOK && seatOK && r.Fields["keys"] != "" && r.Fields["seat"] == "" {
+		problems = append(problems, fmt.Sprintf("loop %s names secrets (--keys %s) and no --seat to open them from; want --seat <seat>", r.Name, r.Fields["keys"]))
+	}
+	if len(problems) > 0 {
+		return fmt.Errorf("%s", strings.Join(problems, "; "))
+	}
+	return nil
 }
 
 // deriveCoordinator is the friend kind's Derive: the sprint row's
@@ -333,6 +586,41 @@ func (f Field) Canonical(raw string) (string, error) {
 			}
 		}
 		return strings.Join(words, ","), nil
+	case TypeBool:
+		b, err := strconv.ParseBool(raw)
+		if err != nil {
+			return "", fmt.Errorf("--%s %q: want true or false", f.Name, raw)
+		}
+		return strconv.FormatBool(b), nil
+	case TypeKeys:
+		words, err := splitList(raw)
+		if err != nil {
+			return "", fmt.Errorf("--%s: %v (a secret goes by name, never by value)", f.Name, err)
+		}
+		for _, w := range words {
+			if !keyPattern.MatchString(w) {
+				return "", fmt.Errorf("--%s %q: want a comma list of variable names (letters, digits and underscores, not starting with a digit)", f.Name, w)
+			}
+		}
+		return strings.Join(words, ","), nil
+	case TypeArgv:
+		return canonicalArgv(f.Name, raw)
+	case TypeDecimal:
+		c, err := cardcost.Canonical(raw)
+		if err != nil {
+			return "", fmt.Errorf("--%s %v", f.Name, err)
+		}
+		return c, nil
+	case TypeSeq:
+		var words []string
+		for _, w := range strings.Split(raw, ",") {
+			if w = strings.TrimSpace(w); w == "" && raw != "" || w != "" && !NamePattern.MatchString(w) {
+				return "", fmt.Errorf("--%s %q: want a comma list of %s names in order", f.Name, raw, f.Ref)
+			} else if w != "" {
+				words = append(words, w)
+			}
+		}
+		return strings.Join(words, ","), nil
 	case TypeRef:
 		if raw == "" {
 			if f.Required {
@@ -346,6 +634,74 @@ func (f Field) Canonical(raw string) (string, error) {
 		return raw, nil
 	}
 	return "", fmt.Errorf("--%s: unknown field type %q", f.Name, f.Type)
+}
+
+// canonicalArgv validates a command given as a JSON array of strings and
+// returns its compact JSON spelling: at least the program, a non-empty
+// program, no line break or NUL in any word, at most MaxArgs words and
+// MaxArgvBytes bytes.
+func canonicalArgv(field, raw string) (string, error) {
+	const want = `want the command as a JSON array of strings, the program first, like '["/path/prog","--flag","v"]'`
+	if !strings.HasPrefix(raw, "[") {
+		return "", fmt.Errorf("--%s: %s", field, want)
+	}
+	var words []string
+	dec := json.NewDecoder(strings.NewReader(raw))
+	if err := dec.Decode(&words); err != nil || dec.More() {
+		return "", fmt.Errorf("--%s: %s", field, want)
+	}
+	switch {
+	case len(words) == 0 || words[0] == "":
+		return "", fmt.Errorf("--%s: the command names no program; %s", field, want)
+	case len(words) > MaxArgs:
+		return "", fmt.Errorf("--%s: %d words, over the maximum of %d", field, len(words), MaxArgs)
+	}
+	for i, w := range words {
+		if strings.ContainsAny(w, "\n\r\x00") {
+			return "", fmt.Errorf("--%s: word %d holds a line break or a NUL; want one line per word", field, i)
+		}
+	}
+	out, err := marshalArgv(words)
+	if err != nil {
+		return "", fmt.Errorf("--%s: %v", field, err)
+	}
+	if len(out) > MaxArgvBytes {
+		return "", fmt.Errorf("--%s: %d bytes, over the maximum of %d", field, len(out), MaxArgvBytes)
+	}
+	return string(out), nil
+}
+
+// marshalArgv is the compact JSON spelling of the words with & < > written as
+// themselves: json.Marshal turns them into \u0026 \u003c \u003e, which makes
+// a command like '["sh","-c","a && b > c"]' unreadable in list and show.
+func marshalArgv(words []string) ([]byte, error) {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(words); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(b.Bytes(), []byte("\n")), nil
+}
+
+// LoopCommandText is a loop row's command (LoopCommand of its argv and
+// width) in the argv's own canonical JSON text: what loop show prints as
+// command=, the words the unit runs.
+func LoopCommandText(row Row) (string, error) {
+	raw, err := marshalArgv(LoopCommand(Argv(row.Fields["argv"]), row.Int("width")))
+	if err != nil {
+		return "", fmt.Errorf("loop %s: render its command: %w", row.Name, err)
+	}
+	return string(raw), nil
+}
+
+// Argv decodes a canonical TypeArgv value ("" is none).
+func Argv(canonical string) []string {
+	var words []string
+	if canonical == "" || json.Unmarshal([]byte(canonical), &words) != nil {
+		return nil
+	}
+	return words
 }
 
 // splitList splits a comma (or space) list into sorted, deduplicated words.
@@ -375,14 +731,6 @@ func hasWord(list, word string) bool {
 	return false
 }
 
-// Words splits a canonical list ("" is none).
-func Words(list string) []string {
-	if list == "" {
-		return nil
-	}
-	return strings.Split(list, ",")
-}
-
 // NewRow builds a canonical row of the kind from raw flag values: every
 // field named in raw is validated, every required field must be present,
 // and every problem is reported in one error so a first run is refused once
@@ -397,13 +745,11 @@ func (k *Kind) NewRow(name string, raw map[string]string) (Row, error) {
 		v, given := raw[f.Name]
 		if !given {
 			if f.Required {
+				// Absent from the row, so a Check rule that reads it waits.
 				problems = append(problems, fmt.Sprintf("--%s is required: %s", f.Name, f.Help))
+				continue
 			}
-			if f.Type == TypeInt {
-				row.Fields[f.Name] = "0"
-			} else {
-				row.Fields[f.Name] = ""
-			}
+			row.Fields[f.Name] = f.zero()
 			continue
 		}
 		c, err := f.Canonical(v)
@@ -418,11 +764,30 @@ func (k *Kind) NewRow(name string, raw map[string]string) (Row, error) {
 			problems = append(problems, fmt.Sprintf("--%s is not a %s field; the fields are %s", name, k.Name, strings.Join(k.FieldNames(), ", ")))
 		}
 	}
+	if k.Check != nil {
+		if err := k.Check(row); err != nil {
+			problems = append(problems, err.Error())
+		}
+	}
 	if len(problems) > 0 {
 		sort.Strings(problems)
 		return Row{}, fmt.Errorf("%s", strings.Join(problems, "; "))
 	}
 	return row, nil
+}
+
+// zero is the canonical value add stores for a field it is not given:
+// Default when the field has one, else the type's zero.
+func (f Field) zero() string {
+	switch {
+	case f.Default != "":
+		return f.Default
+	case f.Type == TypeInt:
+		return "0"
+	case f.Type == TypeBool:
+		return "false"
+	}
+	return ""
 }
 
 // Changes validates the named fields of a set and returns their canonical

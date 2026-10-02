@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/stretchr/testify/assert"
 )
 
 // ONE LINE IS NOT ONE BOUNDED LINE. Escape already folded git's output onto a single
@@ -16,19 +17,14 @@ func TestGitErrorCapsTheEmbeddedOutput(t *testing.T) {
 	g := &gitError{args: []string{"push", "origin", "main"}, err: errors.New("exit status 1"), output: huge}
 
 	text := g.Error()
-	if len(text) > gitOutputCap+200 {
-		t.Errorf("an error carrying %d bytes of git output renders %d bytes; the ceiling is %d",
-			len(huge), len(text), gitOutputCap)
-	}
+	assert.LessOrEqual(t, len(text), gitOutputCap+200,
+		"an error carrying %d bytes of git output renders %d bytes; the ceiling is %d",
+		len(huge), len(text), gitOutputCap)
 	if !strings.HasPrefix(text, "git push origin main: exit status 1: hint:") {
-		t.Errorf("the head of the error is gone: %q", text[:60])
+		assert.False(t, !strings.HasPrefix(text, "git push origin main: exit status 1: hint:"), "the head of the error is gone: %q", text[:60])
 	}
-	if !strings.Contains(text, "...+") {
-		t.Errorf("the cut is not marked, so a reader cannot tell there was more: %q", text)
-	}
-	if strings.Contains(oneline.Err(g), "\n") {
-		t.Errorf("the rendered error is not one line")
-	}
+	assert.Contains(t, text, "...+", "the cut is not marked, so a reader cannot tell there was more: %q", text)
+	assert.NotContains(t, oneline.Err(g), "\n", "the rendered error is not one line")
 }
 
 // Under the ceiling nothing changes: the reason a person needs is the whole of what git
@@ -41,9 +37,8 @@ func TestGitErrorLeavesShortOutputAlone(t *testing.T) {
 		output: "fatal: could not read from remote repository",
 	}
 	want := "git fetch origin: exit status 128: fatal: could not read from remote repository"
-	if got := g.Error(); got != want {
-		t.Errorf("got  %q\nwant %q", got, want)
-	}
+	got := g.Error()
+	assert.Equal(t, want, got, "got  %q\nwant %q", got, want)
 }
 
 // An empty output keeps its own shape: a colon with nothing after it says less than
@@ -51,7 +46,6 @@ func TestGitErrorLeavesShortOutputAlone(t *testing.T) {
 func TestGitErrorWithNoOutput(t *testing.T) {
 	t.Parallel()
 	g := &gitError{args: []string{"status"}, err: errors.New("exit status 1"), output: "   \n  "}
-	if got := g.Error(); got != "git status: exit status 1" {
-		t.Errorf("got %q", got)
-	}
+	got := g.Error()
+	assert.Equal(t, "git status: exit status 1", got, "got %q", got)
 }

@@ -7,18 +7,13 @@ import (
 	"strings"
 )
 
-// gofmtOutOfScope is the directory the gofmt check leaves alone: deprecated code
-// is out of scope of the testing drive (deprecated/README.md).
-const gofmtOutOfScope = "deprecated/"
-
 func init() {
 	register(verb{
 		name:    "gofmt",
 		summary: "list the files that are not gofmt-clean",
 		help: `ci gofmt
 
-Runs gofmt -l over the tree and prints the files it lists, less anything under
-deprecated/ (out of scope of the testing drive). gofmt -l prints the unformatted files
+Runs gofmt -l over the tree and prints the files it lists. gofmt -l prints the unformatted files
 and exits 0 either way, so the exit code is not the product: the output is. Exit 1 after
 "not gofmt-clean:" and the files, one per line; exit 0 and no output when the tree is
 clean. Formatting is a property of the source, not of the platform or the shard, so a
@@ -51,7 +46,7 @@ func gofmtVerb(e env, args []string, h selHost) int {
 	}
 	var unformatted []string
 	for _, l := range strings.Split(out.String(), "\n") {
-		if l != "" && !strings.HasPrefix(l, gofmtOutOfScope) {
+		if l != "" {
 			unformatted = append(unformatted, l)
 		}
 	}

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/stretchr/testify/require"
 )
 
 // The red tests of docs/SPEC-BUS.md's `send --file` preflight and `reply` section. Each is
@@ -26,16 +27,14 @@ func laneNote(t *testing.T, checkout, lane string) string {
 			return name
 		}
 	}
-	t.Fatalf("no note in %s on HEAD", lane)
+	require.FailNowf(t, "assertion failed", "no note in %s on HEAD", lane)
 	return ""
 }
 
 func writeDraftFile(t *testing.T, text string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "draft.md")
-	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(text), 0o644))
 	return path
 }
 
@@ -48,11 +47,13 @@ func TestSendRefusesAHandWrittenId(t *testing.T) {
 	invoke(t, "", "send", "--bus", checkout, "--file", draft, "--remote", "origin", "--branch", "main", "--attempts", "3").
 		mustCode(t, 2).
 		mustContain(t, "stderr", "nova-bus send: the tool mints the Id; delete the Id: header from "+draft)
-	if got := headSHA(t, checkout); got != before {
-		t.Fatalf("a refused draft committed: HEAD moved from %s to %s", before, got)
+	{
+		got := headSHA(t, checkout)
+		require.Falsef(t, got != before, "a refused draft committed: HEAD moved from %s to %s", before, got)
 	}
-	if entries, err := os.ReadDir(filepath.Join(checkout, "from-ada")); err == nil && len(entries) > 0 {
-		t.Fatalf("a refused draft left %d files in the lane", len(entries))
+	{
+		entries, err := os.ReadDir(filepath.Join(checkout, "from-ada"))
+		require.Falsef(t, err == nil && len(entries) > 0, "a refused draft left %d files in the lane", len(entries))
 	}
 }
 
@@ -76,12 +77,8 @@ func TestSendWarnsOnceOnADateItReplaces(t *testing.T) {
 		mustContain(t, "stdout", "SEND NOTE")
 	note := laneNote(t, checkout, "from-ada")
 	content := gitIn(t, checkout, "show", "HEAD:"+note)
-	if !strings.Contains(content, "Date: "+now().UTC().Format(bus.DateLayout)) {
-		t.Fatalf("the committed note does not carry the fake clock's date:\n%s", content)
-	}
-	if strings.Contains(content, "2001") {
-		t.Fatalf("the draft's own Date line survived:\n%s", content)
-	}
+	require.Containsf(t, content, "Date: "+now().UTC().Format(bus.DateLayout), "the committed note does not carry the fake clock's date:\n%s", content)
+	require.NotContainsf(t, content, "2001", "the draft's own Date line survived:\n%s", content)
 }
 
 func TestSendDryRunPrintsTheShapedNoteAndWritesNothing(t *testing.T) {
@@ -95,14 +92,14 @@ func TestSendDryRunPrintsTheShapedNoteAndWritesNothing(t *testing.T) {
 		mustContain(t, "stdout", "SEND DRAFT id=ada-").
 		mustContain(t, "stdout", "SEND DRAFT END id=ada-").
 		mustContain(t, "stdout", "the body of the note")
-	if !strings.Contains(r.stdout, "subject=dry") {
-		t.Fatalf("the SEND DRAFT line does not name the subject: %s", r.stdout)
+	require.Containsf(t, r.stdout, "subject=dry", "the SEND DRAFT line does not name the subject: %s", r.stdout)
+	{
+		got := headSHA(t, checkout)
+		require.Falsef(t, got != before, "--dry-run committed: HEAD moved from %s to %s", before, got)
 	}
-	if got := headSHA(t, checkout); got != before {
-		t.Fatalf("--dry-run committed: HEAD moved from %s to %s", before, got)
-	}
-	if entries, err := os.ReadDir(filepath.Join(checkout, "from-ada")); err == nil && len(entries) > 0 {
-		t.Fatalf("--dry-run left %d files in the lane", len(entries))
+	{
+		entries, err := os.ReadDir(filepath.Join(checkout, "from-ada"))
+		require.Falsef(t, err == nil && len(entries) > 0, "--dry-run left %d files in the lane", len(entries))
 	}
 }
 
@@ -124,9 +121,7 @@ func TestReplyFillsFromToReSubjectFromTheOriginal(t *testing.T) {
 		"Subject: Re: A question about the gate\n",
 		"Green on all three platforms.",
 	} {
-		if !strings.Contains(content, want) {
-			t.Fatalf("the committed reply does not carry %q:\n%s", want, content)
-		}
+		require.Containsf(t, content, want, "the committed reply does not carry %q:\n%s", want, content)
 	}
 }
 
@@ -140,11 +135,13 @@ func TestReplyRefusesAnUnknownRe(t *testing.T) {
 		"--remote", "origin", "--branch", "main", "--attempts", "3").
 		mustCode(t, 2).
 		mustContain(t, "stderr", "nova-bus reply: --re bo-999999999999 names no note; run nova-bus inbox --open and name one")
-	if got := headSHA(t, checkout); got != before {
-		t.Fatalf("a refused reply committed: HEAD moved from %s to %s", before, got)
+	{
+		got := headSHA(t, checkout)
+		require.Falsef(t, got != before, "a refused reply committed: HEAD moved from %s to %s", before, got)
 	}
-	if entries, err := os.ReadDir(filepath.Join(checkout, "from-ada")); err == nil && len(entries) > 0 {
-		t.Fatalf("a refused reply left %d files in the lane", len(entries))
+	{
+		entries, err := os.ReadDir(filepath.Join(checkout, "from-ada"))
+		require.Falsef(t, err == nil && len(entries) > 0, "a refused reply left %d files in the lane", len(entries))
 	}
 }
 
@@ -178,9 +175,7 @@ func TestReplyAdvanceMovesTheCursorInTheReplyCommit(t *testing.T) {
 			cursor = true
 		}
 	}
-	if !note || !cursor {
-		t.Fatalf("one commit must hold both the reply and the cursor, got note=%t cursor=%t in %v", note, cursor, files)
-	}
+	require.Falsef(t, !note || !cursor, "one commit must hold both the reply and the cursor, got note=%t cursor=%t in %v", note, cursor, files)
 }
 
 func TestReplyAdvanceWithDryRunIsRefused(t *testing.T) {
@@ -193,10 +188,12 @@ func TestReplyAdvanceWithDryRunIsRefused(t *testing.T) {
 		"--remote", "origin", "--branch", "main", "--attempts", "3", "--advance", "--dry-run").
 		mustCode(t, 2).
 		mustContain(t, "stderr", "nova-bus reply: --advance moves the cursor and --dry-run writes nothing; drop one")
-	if got := headSHA(t, checkout); got != before {
-		t.Fatalf("a refused reply committed: HEAD moved from %s to %s", before, got)
+	{
+		got := headSHA(t, checkout)
+		require.Falsef(t, got != before, "a refused reply committed: HEAD moved from %s to %s", before, got)
 	}
-	if entries, err := os.ReadDir(filepath.Join(checkout, "from-ada")); err == nil && len(entries) > 0 {
-		t.Fatalf("a refused reply left %d files in the lane", len(entries))
+	{
+		entries, err := os.ReadDir(filepath.Join(checkout, "from-ada"))
+		require.Falsef(t, err == nil && len(entries) > 0, "a refused reply left %d files in the lane", len(entries))
 	}
 }

@@ -125,11 +125,6 @@ func killPidWithStrategy(pid int, started string, force bool, strat WindowsKillS
 	}
 }
 
-// killPid preserves the legacy direct syscall signature.
-func killPid(pid int, started string) {
-	killPidWithStrategy(pid, started, true, StrategySyscall)
-}
-
 func known(started string) bool { return started != "" && started != Dash }
 
 func stillTheSame(pid int, started string) bool {
@@ -172,6 +167,3 @@ func StartStamp(pid int) string {
 	}
 	return strconv.FormatUint(uint64(creation.HighDateTime)<<32|uint64(creation.LowDateTime), 10)
 }
-
-// pgidOf has no process group to report here, so a process is its own group of one.
-func pgidOf(pid int) int { return pid }

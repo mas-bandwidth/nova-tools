@@ -13,7 +13,11 @@ import (
 )
 
 func cmdSpelling(args []string, stdout, stderr io.Writer) int {
+	var asJSON bool
+	stdout, stderr = jsonWriters(stdout, stderr, &asJSON)
+	defer stderr.(*jsonOutput).finish()
 	fs := flag.NewFlagSet("spelling", flag.ContinueOnError)
+	fs.BoolVar(&asJSON, "json", false, "print typed findings and totals as one JSON object")
 	dir := fs.String("dir", "", "directory tree to scan for misspellings")
 	var files repeatable
 	fs.Var(&files, "file", "one file to check, narrowing the check to just these (repeatable)")
@@ -102,6 +106,9 @@ func cmdSpelling(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, " spelling", oneline.Err(err))
 	}
 
+	if asJSON {
+		return renderSpelling(stdout, root, res, *write, *failMax)
+	}
 	if *write {
 		for _, f := range res.Findings {
 			fmt.Fprintf(stdout, "SPELLING FIXED %s:%d:%d: %s -> %s\n",

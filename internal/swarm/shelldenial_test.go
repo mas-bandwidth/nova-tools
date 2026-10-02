@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // A DENIAL IN THE CAPTURE IS NEVER AN OK, AND NEVER A DIAGNOSIS EITHER (issue #1465, and
@@ -108,22 +110,14 @@ func TestShellDeniedReadsTheShellsOwnWords(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			got, ok := ShellDenied([]byte(tc.line + "\n"))
 			if tc.want == "" {
-				if ok {
-					t.Fatalf("%q is not the class, and it was read as one: %+v", tc.line, got)
-				}
+				require.False(t, ok, "%q is not the class, and it was read as one: %+v", tc.line, got)
 				return
 			}
-			if !ok {
-				t.Fatalf("%q is the class and was read as nothing", tc.line)
-			}
-			if got.Path != tc.want {
-				t.Errorf("the denied path is %q, got %q", tc.want, got.Path)
-			}
+			require.True(t, ok, "%q is the class and was read as nothing", tc.line)
+			assert.Equal(t, tc.want, got.Path, "the denied path is %q, got %q", tc.want, got.Path)
 			// The line itself rides along: it is the only thing a person can act on, and the
 			// refusal quotes it rather than paraphrasing it.
-			if !strings.Contains(got.Line, "ermission denied") {
-				t.Errorf("the denial carries the shell's own line; it holds %q", got.Line)
-			}
+			assert.Contains(t, got.Line, "ermission denied", "the denial carries the shell's own line; it holds %q", got.Line)
 		})
 	}
 }
@@ -135,12 +129,8 @@ func TestShellDenialCarriesTheStep(t *testing.T) {
 
 	log := []byte("STEP 1 clone\nSTEP 4 run the gate\n/usr/bin/bash: line 1: /opt/sdk tool/bin/go: Permission denied\n")
 	got, ok := ShellDenied(log)
-	if !ok {
-		t.Fatal("the log holds a shell's denial and was read as none")
-	}
-	if got.Step != "4" {
-		t.Errorf("the denial names the last step the card reached (4), got %q", got.Step)
-	}
+	require.True(t, ok, "the log holds a shell's denial and was read as none")
+	assert.Equal(t, "4", got.Step, "the denial names the last step the card reached (4), got %q", got.Step)
 }
 
 // TestShellDenialReasonAssertsNoCauseItCannotProve is Stella's P2 at the words themselves.
@@ -160,19 +150,13 @@ func TestShellDenialReasonAssertsNoCauseItCannotProve(t *testing.T) {
 				"never executed", "never compiled", "nothing compiled",
 				"the program", "the gate never", "could not execute",
 			} {
-				if strings.Contains(got, forbidden) {
-					t.Errorf("the reason asserts %q, which this line cannot establish:\n%s", forbidden, got)
-				}
+				assert.NotContains(t, got, forbidden, "the reason asserts %q, which this line cannot establish:\n%s", forbidden, got)
 			}
 			for _, want := range []string{"operation=unverified", "Permission denied", "step=3"} {
-				if !strings.Contains(got, want) {
-					t.Errorf("the reason carries %q:\n%s", want, got)
-				}
+				assert.Contains(t, got, want, "the reason carries %q:\n%s", want, got)
 			}
 			// The remedy is a MEASUREMENT, not a guess at a cause.
-			if !strings.Contains(got, "re-run the card's own gate") {
-				t.Errorf("the reason's remedy is to run the gate and read its stderr:\n%s", got)
-			}
+			assert.Contains(t, got, "re-run the card's own gate", "the reason's remedy is to run the gate and read its stderr:\n%s", got)
 		})
 	}
 }
@@ -186,21 +170,15 @@ func TestShellDenialReasonAttributesNothingToAWallThatWasNotThere(t *testing.T) 
 	d := ShellDenial{Path: "/opt/sdk tool/bin/go", Step: "3", Line: "/bin/bash: /opt/sdk tool/bin/go: Permission denied"}
 	got := ShellDenialReason("a-card", "/jobs/a-card", SandboxNoneByFlag, 0, d)
 	for _, forbidden := range []string{"read_roots", "the wall refused"} {
-		if strings.Contains(got, forbidden) {
-			t.Errorf("an unwalled run attributes nothing to a wall or its read set (%q):\n%s", forbidden, got)
-		}
+		assert.NotContains(t, got, forbidden, "an unwalled run attributes nothing to a wall or its read set (%q):\n%s", forbidden, got)
 	}
-	if !strings.Contains(got, "no sandbox") {
-		t.Errorf("an unwalled run says so in the reason:\n%s", got)
-	}
+	assert.Contains(t, got, "no sandbox", "an unwalled run says so in the reason:\n%s", got)
 	// A walled one may offer the read set, and must call it a candidate.
 	walled := ShellDenialReason("a-card", "/jobs/a-card", "landlock", 0, d)
 	if !strings.Contains(walled, "read_roots") || !strings.Contains(walled, "/opt/sdk tool/bin") {
 		t.Errorf("a walled run offers the complete candidate root:\n%s", walled)
 	}
-	if !strings.Contains(walled, "candidate and not the diagnosis") {
-		t.Errorf("the candidate is named as a candidate:\n%s", walled)
-	}
+	assert.Contains(t, walled, "candidate and not the diagnosis", "the candidate is named as a candidate:\n%s", walled)
 }
 
 // TestDeniedPathRootsNameBothEntries: IF the denied path was one the child had to read or
@@ -214,36 +192,26 @@ func TestDeniedPathRootsNameBothEntries(t *testing.T) {
 	// The temp dir is resolved once: on macOS t.TempDir() lands under /var, a symlink to
 	// /private/var, and the roots this reports are resolved paths.
 	dir, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	sdkBin := filepath.Join(dir, "sdk tool", "go1.26.5", "bin")
-	if err := os.MkdirAll(sdkBin, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := testbin.WriteExecutable(filepath.Join(sdkBin, "go"), []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(sdkBin, 0o755))
+	require.NoError(t, testbin.WriteExecutable(filepath.Join(sdkBin, "go"), []byte("#!/bin/sh\n"), 0o755))
 	linkDir := filepath.Join(dir, "go", "bin")
-	if err := os.MkdirAll(linkDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(linkDir, 0o755))
 	if err := os.Symlink(filepath.Join(sdkBin, "go"), filepath.Join(linkDir, "go")); err != nil {
 		t.Skipf("this filesystem refuses a symlink: %v", err)
 	}
 	roots := DeniedPathRoots(filepath.Join(linkDir, "go"))
 	want := map[string]bool{linkDir: false, filepath.Join(dir, "sdk tool", "go1.26.5"): false}
 	for _, r := range roots {
-		if _, named := want[r]; !named {
-			t.Errorf("the candidate set names a root nobody asked for: %s (roots %v)", r, roots)
+		_, named := want[r]
+		if !assert.True(t, named, "the candidate set names a root nobody asked for: %s (roots %v)", r, roots) {
 			continue
 		}
 		want[r] = true
 	}
 	for r, found := range want {
-		if !found {
-			t.Errorf("the candidate set does not name %s; it holds %v", r, roots)
-		}
+		assert.True(t, found, "the candidate set does not name %s; it holds %v", r, roots)
 	}
 }
 
@@ -268,9 +236,9 @@ func TestShellDenialReaderAnswersAsShellDenied(t *testing.T) {
 				if end > len(c) {
 					end = len(c)
 				}
-				if n, err := r.Write([]byte(c[i:end])); err != nil || n != end-i {
-					t.Fatalf("Write(%q) = %d, %v", c[i:end], n, err)
-				}
+				n, err := r.Write([]byte(c[i:end]))
+				require.NoError(t, err, "Write(%q) = %d, %v", c[i:end], n, err)
+				require.Equal(t, end-i, n, "Write(%q) = %d, %v", c[i:end], n, err)
 			}
 			got, ok := r.Denied()
 			if ok != wantOK || got != want {

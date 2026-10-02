@@ -5,8 +5,8 @@
 # go-test-timeout also switch on the scans for `go clean` and for a `go test` with no -timeout, and the rule named
 # libraries-considered switches on the check that a card that builds code carries a filled `Libraries considered:` line.
 
-[worktree] Work only in the NEW worktree this card names.
-[own-branch] Touch only your own branch.
+[worktree] Work only in the staged checkout JOB.md names; do not clone.
+[own-branch] Commit on the checkout's own branch, as usual; touch no other branch.
 [gocache] Export a private GOCACHE (the path this card names) and GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 before any go command.
 [no-go-clean] Never `go clean`, and never clean a shared cache.
 [no-redis-server] NEVER start a redis-server on this machine.
@@ -18,7 +18,7 @@
 [no-stash] Do not use git stash (the stash list is shared by every worktree).
 [functional-in-container] Functional tests (any test that needs Redis) run ONLY inside the container through `tools/functionalrun` (`--fresh-gocache --deadline 15m`), never against any other store.
 [parallel] Every new test opens with `t.Parallel()`.
-[class-tests] Run `go test -count=1 -timeout 600s ./internal/ci/` before each push.
+[class-tests] Run `go test -count=1 -timeout 600s ./internal/ci/` before you finish.
 [no-names] No names of people, machines or friends in code, comments or docs.
 [present-tense] Docs and comments in the present tense.
 [cite] Cite the model or the design section from every function that implements a rule.
@@ -26,9 +26,9 @@
 [minimal-diff] Keep the diff minimal: every added line traceable to one sentence of this card.
 [commit-trailer] Commit messages end with `Co-Authored-By: Claude <your model> <noreply@anthropic.com>`.
 [pr-line] PR bodies end with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
-[never-merge] Open PRs against the base this card names; never merge.
+[never-merge] Finish as JOB.md says, with `gh pr create` against the base this card names; never merge.
 [pr-diffstat] The PR body states the diff stat and what was deleted.
 [pr-tests] The PR body lists the tests, each with what it pins, and every local helper added.
-[report-shape] Report under 80 lines: PR number and sha, every test package line, what you could not do and why.
+[report-shape] The report is the PR: its title is the one-line report, its body every test package line and what you could not do and why.
 [report-not-done] "Not done" is a welcome report; a green claim you did not run is not.
 [libraries-considered] A card that builds code carries a filled line `Libraries considered: <what the standard library and the adopted modules offered, and why each was used or not>` (docs/STANDARD.md section 7).

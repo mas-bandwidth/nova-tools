@@ -8,6 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
@@ -59,9 +62,7 @@ func TestASecondNativeRunInOneJobDirectoryIsRefusedAndTheFirstIsUntouched(t *tes
 	// A holds the directory the moment its lease is on disk. That file IS the readiness
 	// signal: it is written before the child starts and it is what the reaper reads.
 	held := awaitLease(t, lease)
-	if !strings.Contains(held, "label="+label+"\n") {
-		t.Fatalf("A's lease does not name its card:\n%s", held)
-	}
+	require.Contains(t, held, "label="+label+"\n", "A's lease does not name its card:\n%s", held)
 
 	// RUN B: the same slot, the same label, the same physical directory.
 	var errB bytes.Buffer
@@ -71,45 +72,27 @@ func TestASecondNativeRunInOneJobDirectoryIsRefusedAndTheFirstIsUntouched(t *tes
 		slotDir: slot, root: root, deadline: 2 * time.Minute, noWall: true,
 	}, &errB)
 
-	if codeB != 2 {
-		t.Errorf("a second run in a live job directory exits 2, got %d:\n%s", codeB, errB.String())
-	}
-	if !strings.Contains(errB.String(), "NATIVE REFUSED") {
-		t.Errorf("the refusal is one REFUSED line, got:\n%s", errB.String())
-	}
-	if !strings.Contains(errB.String(), "held by a live run") {
-		t.Errorf("the refusal does not say why:\n%s", errB.String())
-	}
-	if !strings.Contains(errB.String(), "pid=") {
-		t.Errorf("the refusal does not name the holder:\n%s", errB.String())
-	}
-	if got := strings.Count(strings.TrimSpace(errB.String()), "\n") + 1; got != 1 {
-		t.Errorf("exactly one REFUSED line, got %d:\n%s", got, errB.String())
-	}
+	assert.Equal(t, 2, codeB, "a second run in a live job directory exits 2, got %d:\n%s", codeB, errB.String())
+	assert.Contains(t, errB.String(), "NATIVE REFUSED", "the refusal is one REFUSED line, got:\n%s", errB.String())
+	assert.Contains(t, errB.String(), "held by a live run", "the refusal does not say why:\n%s", errB.String())
+	assert.Contains(t, errB.String(), "pid=", "the refusal does not name the holder:\n%s", errB.String())
+	lines := strings.Count(strings.TrimSpace(errB.String()), "\n") + 1
+	assert.Equal(t, 1, lines, "exactly one REFUSED line, got %d:\n%s", lines, errB.String())
 
 	// AND THE FIRST RUN IS EXACTLY AS IT WAS. The lease is still A's, byte for byte: the
 	// refused launch neither truncated it, rewrote it, nor removed it.
 	now, err := os.ReadFile(lease)
-	if err != nil {
-		t.Fatalf("the refused second run removed the live run's lease: %v (#1585)", err)
-	}
-	if string(now) != held {
-		t.Errorf("the refused second run rewrote the live run's lease:\nbefore:\n%s\nafter:\n%s", held, now)
-	}
+	require.NoError(t, err, "the refused second run removed the live run's lease (#1585)")
+	assert.Equal(t, held, string(now), "the refused second run rewrote the live run's lease:\nbefore:\n%s\nafter:\n%s", held, now)
 
 	// Release the barrier and let A finish on its own terms.
-	if err := os.WriteFile(filepath.Join(jobDir, "note"), []byte("go on\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(jobDir, "note"), []byte("go on\n"), 0o644))
 	got := <-first
-	if got.code != 0 {
-		t.Fatalf("the first run did not finish cleanly after the second was refused: exit %d\n%s", got.code, got.err)
-	}
+	require.Equal(t, 0, got.code, "the first run did not finish cleanly after the second was refused: exit %d\n%s", got.code, got.err)
 	// A finished, so ITS release removes ITS lease: a finished job leaves nothing behind
 	// that pretends to be alive.
-	if _, err := os.Lstat(lease); !os.IsNotExist(err) {
-		t.Errorf("the finished run left its lease behind: %v", err)
-	}
+	_, err = os.Lstat(lease)
+	assert.True(t, os.IsNotExist(err), "the finished run left its lease behind: %v", err)
 }
 
 // awaitLease answers the lease file's bytes as soon as there are any. The deadline only
@@ -122,9 +105,7 @@ func awaitLease(t *testing.T, path string) string {
 		if err == nil && len(raw) > 0 {
 			return string(raw)
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("no lease appeared at %s: the first run never took the job directory", path)
-		}
+		require.False(t, time.Now().After(deadline), "no lease appeared at %s: the first run never took the job directory", path)
 	}
 }
 
@@ -141,9 +122,7 @@ func TestANativeRunThatCannotEstablishOwnershipRefusesBeforeItWritesAnything(t *
 	root, slot := aSlot(t)
 	const label = "unownable"
 	jobDir := filepath.Join(slot, "jobs", label)
-	if err := os.MkdirAll(filepath.Join(jobDir, swarm.JobLeaseName), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Join(jobDir, swarm.JobLeaseName), 0o755))
 
 	var errOut bytes.Buffer
 	_, code := nativeRun(nativeRunConfig{
@@ -152,34 +131,20 @@ func TestANativeRunThatCannotEstablishOwnershipRefusesBeforeItWritesAnything(t *
 		slotDir: slot, root: root, deadline: 2 * time.Minute, noWall: true,
 	}, &errOut)
 
-	if code != 2 {
-		t.Fatalf("a run that cannot take its job lease exits 2, got %d:\n%s", code, errOut.String())
-	}
-	if !strings.Contains(errOut.String(), "NATIVE REFUSED") {
-		t.Errorf("the refusal is one REFUSED line, got:\n%s", errOut.String())
-	}
-	if !strings.Contains(errOut.String(), "cannot prove it owns its job directory") {
-		t.Errorf("the refusal does not say what it could not establish:\n%s", errOut.String())
-	}
-	if !strings.Contains(errOut.String(), "run it again") {
-		t.Errorf("the refusal carries no remedy:\n%s", errOut.String())
-	}
-	if got := strings.Count(strings.TrimSpace(errOut.String()), "\n") + 1; got != 1 {
-		t.Errorf("exactly one REFUSED line, got %d:\n%s", got, errOut.String())
-	}
+	require.Equal(t, 2, code, "a run that cannot take its job lease exits 2, got %d:\n%s", code, errOut.String())
+	assert.Contains(t, errOut.String(), "NATIVE REFUSED", "the refusal is one REFUSED line, got:\n%s", errOut.String())
+	assert.Contains(t, errOut.String(), "cannot prove it owns its job directory", "the refusal does not say what it could not establish:\n%s", errOut.String())
+	assert.Contains(t, errOut.String(), "run it again", "the refusal carries no remedy:\n%s", errOut.String())
+	got := strings.Count(strings.TrimSpace(errOut.String()), "\n") + 1
+	assert.Equal(t, 1, got, "exactly one REFUSED line, got %d:\n%s", got, errOut.String())
 
 	// NOTHING WAS WRITTEN. The job directory holds what the test put there and not one
 	// thing more, and the slot has no data home or temp directory for this label.
 	entries, err := os.ReadDir(jobDir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	for _, e := range entries {
-		if e.Name() != swarm.JobLeaseName {
-			t.Errorf("the refused run wrote %q into a job directory it does not own", e.Name())
-		}
+		assert.Equal(t, swarm.JobLeaseName, e.Name(), "the refused run wrote %q into a job directory it does not own", e.Name())
 	}
-	if _, err := os.Stat(filepath.Join(slot, "tmp", label)); !os.IsNotExist(err) {
-		t.Errorf("the refused run made its temp directory anyway: %v", err)
-	}
+	_, err = os.Stat(filepath.Join(slot, "tmp", label))
+	assert.True(t, os.IsNotExist(err), "the refused run made its temp directory anyway: %v", err)
 }

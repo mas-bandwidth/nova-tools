@@ -104,8 +104,20 @@ const (
 // tick deals a member.
 const Width = 64
 
+// DealAhead is how many widths of work cards a member holds, ready and working
+// together: its width working and as many again ready behind them (the owner,
+// 2026-10-01: "deal at most 2X width ahead per-machine in fleet"; the engine's
+// sprint.DealAhead).
+const DealAhead = 2
+
+// Room is the most work cards a placement leaves on a member, ready and
+// working together: DealAhead times its Width.
+const Room = DealAhead * Width
+
 // MaxRedeals is the spec's redeal bound (section 2): an attempt's work card
-// is dealt again at most this many times after its member went down.
+// is dealt again at most this many times after a take of it ended without a
+// finish, its member down while it was working; a card that was ready keeps
+// its count (sprint.MaxRedeals, tla/DirtyTick.tla RedealsAreEndedTakes).
 const MaxRedeals = 3
 
 // Judgment types. The model's own (SprintTables.tla CardNoteTypes and
@@ -148,8 +160,15 @@ type Primary struct {
 	Score   float64
 	Attempt int      // the attempt of its current or next work card, from 1
 	Head    int      // the attempt whose finished work is its head; 0 before
-	Pair    []string // sorted: the readers kept on it (D2)
+	Pair    []string // sorted: the two readers of its latest ask (the work table's asked field)
 	Reached bool     // a sentinel whose needs have all landed or been waived
+	// CI and CIHead are its last CI observation: "", "red" or "green", and
+	// the attempt whose head it was for (0: no head yet).
+	CI     string
+	CIHead int
+	// ReturnedAt is the attempt at which the coordinator last returned it to
+	// review, 0 when never (sprint.FieldReturnedAttempt).
+	ReturnedAt int
 }
 
 // WorkCard is one work card: <primary>.w<attempt>.
@@ -160,10 +179,13 @@ type WorkCard struct {
 	Place   string // FReady, FWorking, FDone, FWithdrawn, Gone
 	Gen     int
 	OK      string // "", "ok" or "failed"
-	// Redeals is how many times the attempt was dealt again after its
-	// member went down (spec section 2): at MaxRedeals the card stays
-	// withdrawn and the bound's judgment names its primary.
-	Redeals int
+	// Redeals is how many times the attempt was dealt again after a take of
+	// it ended without a finish (spec section 2): a working card whose member
+	// goes down at MaxRedeals stays withdrawn and the bound's judgment names
+	// its primary. TakeEnded marks a card withdrawn after such a take: the
+	// deal that places it again counts it (sprint.FieldTakeEnded).
+	Redeals   int
+	TakeEnded bool
 }
 
 // ReadCard is one read card: <primary>.r<attempt>.<reader>.
@@ -488,13 +510,13 @@ func (s State) NextMember(set []string) string {
 // amendment 5: every placement, first attempts and redeals and levelling
 // alike, goes round the fleet and moves the index; the engine's round.next):
 // the next member round the fleet among set holding fewer work cards, ready
-// and working, than its Width (errata 3 amendment 9), avoid only when no
+// and working, than its Room (errata 3 amendment 9; DealAhead), avoid only when no
 // other has room; with none having room, the next of set, avoid only when it
 // is the only one. "" when set is empty.
 func (s State) PlaceOn(set []string, avoid string) string {
 	var room []string
 	for _, m := range set {
-		if s.Held(m) < Width {
+		if s.Held(m) < Room {
 			room = append(room, m)
 		}
 	}
@@ -584,19 +606,6 @@ func (s State) LiveReadsOf(p string) []string {
 	var out []string
 	for id, c := range s.Reads {
 		if c.Primary == p && c.Place != Retired {
-			out = append(out, id)
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
-// Unfinished is p's work cards on a member's ready or working cell
-// (SprintTables.tla Unfinished restricted to p).
-func (s State) UnfinishedOf(p string) []string {
-	var out []string
-	for id, w := range s.Work {
-		if w.Primary == p && (w.Place == FReady || w.Place == FWorking) {
 			out = append(out, id)
 		}
 	}
@@ -793,8 +802,35 @@ func (s State) AtBound(p string) string {
 		return ""
 	}
 	id := WC(p, pr.Attempt)
-	if w, ok := s.Work[id]; ok && w.Place == FWithdrawn && w.Redeals >= MaxRedeals {
+	if w, ok := s.Work[id]; ok && w.Place == FWithdrawn && w.TakeEnded && w.Redeals >= MaxRedeals {
 		return id
 	}
 	return ""
+}
+
+// AcceptHeld is why the machine's accept leaves an acceptable primary in
+// review for the coordinator (sprint.AcceptHeld): its CI red at its head, or
+// returned to review at its attempt; "" when the machine accepts it.
+func (s State) AcceptHeld(p string) string {
+	pr := s.Primaries[p]
+	switch {
+	case pr.CI == "red" && pr.CIHead == pr.Head:
+		return "ci red at its head"
+	case pr.ReturnedAt != 0 && pr.ReturnedAt == pr.Attempt:
+		return "returned at its attempt"
+	}
+	return ""
+}
+
+// acceptNote is the ready to accept judgment a step that leaves an
+// acceptable primary in review writes (sprint's reviewJudgment): when no
+// judgment open on it offers accept (ready to accept, returned to review), and
+// the machine is STOPPED or holds it (AcceptHeld).
+func (n *State) acceptNote(p string) {
+	if !n.InWork(p, Review) || !n.Acceptable(p) || n.Open[Judgment{JAccept, p}] || n.Open[Judgment{JReturned, p}] {
+		return
+	}
+	if n.Machine != Running || n.AcceptHeld(p) != "" {
+		n.open(JAccept, p)
+	}
 }

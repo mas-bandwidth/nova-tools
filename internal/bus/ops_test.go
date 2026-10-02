@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 const draft = `From: Ada (day shift, the west host, the shared account)
@@ -21,39 +23,19 @@ func TestPrepareAssignsTheDateTheIDAndThePath(t *testing.T) {
 	t.Parallel()
 	tab := loadBus(t, writeBus(t, fixture()))
 	p, err := Prepare(tab, draft, at("2026-09-09T12:34:56Z"), "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if p.Note.Header.Date != "Wed Sep  9 12:34:56 UTC 2026" {
-		t.Fatalf("Date = %q; it is pasted from the clock in UTC", p.Note.Header.Date)
-	}
-	if err := ValidID(p.Note.Header.ID); err != nil {
-		t.Fatalf("Id = %q: %v", p.Note.Header.ID, err)
-	}
-	if SlugOfID(p.Note.Header.ID) != "ada" {
-		t.Fatalf("Id = %q, want it in Ada's namespace", p.Note.Header.ID)
-	}
+	require.NoError(t, err)
+	require.Equal(t, "Wed Sep  9 12:34:56 UTC 2026", p.Note.Header.Date, "Date = %q; it is pasted from the clock in UTC", p.Note.Header.Date)
+	require.NoError(t, ValidID(p.Note.Header.ID), "Id = %q", p.Note.Header.ID)
+	require.Equal(t, "ada", SlugOfID(p.Note.Header.ID), "Id = %q, want it in Ada's namespace", p.Note.Header.ID)
 	wantPath := "from-ada/2026-09-09T1234Z-the-gate-in-the-workflow-never-runs-" + strings.TrimPrefix(p.Note.Header.ID, "ada-") + ".md"
-	if p.Path != wantPath {
-		t.Fatalf("Path = %q, want %q", p.Path, wantPath)
-	}
-	if p.Message != "ada: The gate in the workflow never runs" {
-		t.Fatalf("commit message = %q", p.Message)
-	}
-	if p.Sender.Name != "Ada" {
-		t.Fatalf("sender = %q", p.Sender.Name)
-	}
+	require.Equal(t, wantPath, p.Path, "Path = %q, want %q", p.Path, wantPath)
+	require.Equal(t, "ada: The gate in the workflow never runs", p.Message, "commit message = %q", p.Message)
+	require.Equal(t, "Ada", p.Sender.Name, "sender = %q", p.Sender.Name)
 	// --slug replaces only the human half.
 	p2, err := Prepare(tab, draft, at("2026-09-09T12:34:56Z"), "ci-gate")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(p2.Path, "-ci-gate-") {
-		t.Fatalf("Path = %q, want the given slug", p2.Path)
-	}
-	if p2.Note.Header.ID != p.Note.Header.ID {
-		t.Fatal("the slug changed the id; the id must not depend on the filename")
-	}
+	require.NoError(t, err)
+	require.Contains(t, p2.Path, "-ci-gate-", "Path = %q, want the given slug", p2.Path)
+	require.Equal(t, p.Note.Header.ID, p2.Note.Header.ID, "the slug changed the id; the id must not depend on the filename")
 }
 
 func TestPrepareRefuses(t *testing.T) {
@@ -74,11 +56,9 @@ func TestPrepareRefuses(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := Prepare(tab, tc.text, at("2026-09-09T12:34:56Z"), "")
-			if err == nil {
-				t.Fatal("want a refusal, got none")
-			}
+			require.Error(t, err, "want a refusal, got none")
 			if !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("refusal %q does not name %q", err, tc.want)
+				require.Contains(t, err.Error(), tc.want, "refusal %q does not name %q", err, tc.want)
 			}
 		})
 	}
@@ -89,8 +69,9 @@ func TestPrepareAcceptsAReByIDAndByLegacyPath(t *testing.T) {
 	tab := loadBus(t, writeBus(t, fixture()))
 	for _, re := range []string{"bo-abcdef012345", "from-bo/2026-09-06-legacy-note.md", "new"} {
 		text := "From: Ada\nTo: Bo\nRe: " + re + "\nSubject: s\n\nbody\n"
-		if _, err := Prepare(tab, text, at("2026-09-09T12:34:56Z"), ""); err != nil {
-			t.Fatalf("Re: %s was refused: %v", re, err)
+		{
+			_, err := Prepare(tab, text, at("2026-09-09T12:34:56Z"), "")
+			require.NoError(t, err, "Re: %s was refused: %v", re, err)
 		}
 	}
 }
@@ -103,24 +84,16 @@ func TestPrepareRefusesAnIDAlreadyOnTheBus(t *testing.T) {
 	tab := loadBus(t, root)
 	now := at("2026-09-09T12:34:56Z")
 	p, err := Prepare(tab, draft, now, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := p.Save(root); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	require.NoError(t, p.Save(root))
 	tab = loadBus(t, root)
 	_, err = Prepare(tab, draft, now, "")
-	if err == nil {
-		t.Fatal("the same note sent twice in one second was accepted twice")
-	}
-	if !strings.Contains(err.Error(), "already on this bus") {
-		t.Fatalf("refusal %q", err)
-	}
+	require.Error(t, err, "the same note sent twice in one second was accepted twice")
+	require.Contains(t, err.Error(), "already on this bus", "refusal %q", err)
 	// A second later it is a different note and goes through, which is the reason the
 	// date is in the id's preimage at all.
 	if _, err := Prepare(loadBus(t, root), draft, at("2026-09-09T12:34:57Z"), ""); err != nil {
-		t.Fatalf("the same words a second later were refused: %v", err)
+		require.NoError(t, err, "the same words a second later were refused: %v", err)
 	}
 }
 
@@ -128,28 +101,19 @@ func TestWriteRefusesToOverwrite(t *testing.T) {
 	t.Parallel()
 	root := writeBus(t, fixture())
 	p, err := Prepare(loadBus(t, root), draft, at("2026-09-09T12:34:56Z"), "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := p.Save(root); err != nil {
-		t.Fatal(err)
-	}
-	if err := p.Save(root); err == nil {
-		t.Fatal("a note once written was rewritten; the bus's rule is that it is not")
+	require.NoError(t, err)
+	require.NoError(t, p.Save(root))
+	{
+		err := p.Save(root)
+		require.Error(t, err, "a note once written was rewritten; the bus's rule is that it is not")
 	}
 	raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(p.Path)))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	back, err := ParseNote(p.Path, string(raw))
-	if err != nil {
-		t.Fatalf("what was written does not parse: %v", err)
-	}
-	if back.Header.ID != p.Note.Header.ID || back.Header.Date != p.Note.Header.Date {
-		t.Fatal("the written note lost its Id or Date")
-	}
+	require.NoError(t, err, "what was written does not parse: %v", err)
+	require.False(t, back.Header.ID != p.Note.Header.ID || back.Header.Date != p.Note.Header.Date, "the written note lost its Id or Date")
 	if back.Header.From != "Ada (day shift, the west host, the shared account)" {
-		t.Fatalf("the author's own From line was rewritten to %q", back.Header.From)
+		require.Equal(t, "Ada (day shift, the west host, the shared account)", back.Header.From, "the author's own From line was rewritten to %q", back.Header.From)
 	}
 }
 
@@ -158,14 +122,11 @@ func TestASentNotePassesCheck(t *testing.T) {
 	t.Parallel()
 	root := writeBus(t, fixture())
 	p, err := Prepare(loadBus(t, root), draft, at("2026-09-09T12:34:56Z"), "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := p.Save(root); err != nil {
-		t.Fatal(err)
-	}
-	if ps := loadBus(t, root).Check(); len(ps) != 0 {
-		t.Fatalf("a note this tool wrote failed check: %+v", ps)
+	require.NoError(t, err)
+	require.NoError(t, p.Save(root))
+	{
+		ps := loadBus(t, root).Check()
+		require.Equal(t, 0, len(ps), "a note this tool wrote failed check: %+v", ps)
 	}
 }
 
@@ -177,27 +138,19 @@ func TestPlanReceipts(t *testing.T) {
 	now := at("2026-09-09T12:34:56Z")
 
 	plan, err := PlanReceipts(tab, ada, []string{"bo-abcdef012345", "from-bo/2026-09-06-legacy-note.md"}, now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if plan.Path != "from-ada/RECEIPTS" {
-		t.Fatalf("Path = %q", plan.Path)
+		require.Equal(t, "from-ada/RECEIPTS", plan.Path, "Path = %q", plan.Path)
 	}
 	// A note with an id is recorded BY id; a legacy note by the only name it has.
 	want := []string{"bo-abcdef012345", "from-bo/2026-09-06-legacy-note.md"}
 	if strings.Join(plan.Record, "|") != strings.Join(want, "|") {
-		t.Fatalf("Record = %v, want %v", plan.Record, want)
+		require.False(t, strings.Join(plan.Record, "|") != strings.Join(want, "|"), "Record = %v, want %v", plan.Record, want)
 	}
-	if err := plan.Append(root); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, plan.Append(root))
 	raw, err := os.ReadFile(filepath.Join(root, "from-ada", ReceiptsName))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(raw), "2026-09-09T12:34:56Z bo-abcdef012345\n") {
-		t.Fatalf("RECEIPTS holds %q", raw)
-	}
+	require.NoError(t, err)
+	require.Contains(t, string(raw), "2026-09-09T12:34:56Z bo-abcdef012345\n", "RECEIPTS holds %q", raw)
 
 	// inbox honours it: the receipted notes are HEARD. They stay in the listing, because
 	// heard is not answered and a note I acknowledged and never replied to is the state
@@ -210,29 +163,23 @@ func TestPlanReceipts(t *testing.T) {
 			continue
 		}
 		if !it.Heard {
-			t.Fatalf("a receipted note is reported as unheard: %s", it.Note.Path)
+			require.True(t, it.Heard, "a receipted note is reported as unheard: %s", it.Note.Path)
 		}
 		heard++
 	}
-	if heard != 2 {
-		t.Fatalf("%d of the two receipted notes are in the listing; a receipt must not make a note vanish", heard)
-	}
+	require.Equal(t, 2, heard, "%d of the two receipted notes are in the listing; a receipt must not make a note vanish", heard)
 
 	// Recording the same note again is reported, not written twice.
 	plan2, err := PlanReceipts(tab, ada, []string{"bo-abcdef012345"}, now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if len(plan2.Record) != 0 || len(plan2.Already) != 1 {
-		t.Fatalf("a second receipt: record=%v already=%v", plan2.Record, plan2.Already)
+		require.False(t, len(plan2.Record) != 0 || len(plan2.Already) != 1, "a second receipt: record=%v already=%v", plan2.Record, plan2.Already)
 	}
 	// And a note recorded by id is not recordable again under its path.
 	plan3, err := PlanReceipts(tab, ada, []string{"from-bo/2026-09-07T0001Z-a-question-abcdef012345.md"}, now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if len(plan3.Record) != 0 {
-		t.Fatalf("the same note was recorded twice under its two names: %v", plan3.Record)
+		require.Equal(t, 0, len(plan3.Record), "the same note was recorded twice under its two names: %v", plan3.Record)
 	}
 }
 
@@ -245,17 +192,21 @@ func TestPlanReceiptsRefuses(t *testing.T) {
 	dana := mustParticipant(t, tab.Config, "Dana")
 	now := at("2026-09-09T12:34:56Z")
 
-	if _, err := PlanReceipts(tab, ada, []string{"bo-deadbeefcafe"}, now); err == nil {
-		t.Fatal("a receipt for a note that does not exist was accepted")
+	{
+		_, err := PlanReceipts(tab, ada, []string{"bo-deadbeefcafe"}, now)
+		require.Error(t, err, "a receipt for a note that does not exist was accepted")
 	}
-	if _, err := PlanReceipts(tab, ada, nil, now); err == nil {
-		t.Fatal("a receipt for nothing was accepted")
+	{
+		_, err := PlanReceipts(tab, ada, nil, now)
+		require.Error(t, err, "a receipt for nothing was accepted")
 	}
-	if _, err := PlanReceipts(tab, bo, []string{"bo-abcdef012345"}, now); err == nil {
-		t.Fatal("a receipt for one's own note was accepted")
+	{
+		_, err := PlanReceipts(tab, bo, []string{"bo-abcdef012345"}, now)
+		require.Error(t, err, "a receipt for one's own note was accepted")
 	}
-	if _, err := PlanReceipts(tab, dana, []string{"bo-abcdef012345"}, now); err == nil {
-		t.Fatal("a participant with no lane recorded a receipt")
+	{
+		_, err := PlanReceipts(tab, dana, []string{"bo-abcdef012345"}, now)
+		require.Error(t, err, "a participant with no lane recorded a receipt")
 	}
 }
 
@@ -282,26 +233,23 @@ func TestPrepareRefusesASlugThatIsNotASlug(t *testing.T) {
 		t.Run(slug, func(t *testing.T) {
 			p, err := Prepare(tab, draft, when, slug)
 			if err == nil {
-				t.Fatalf("--slug %q was accepted and wrote %q", slug, p.Path)
+				require.Error(t, err, "--slug %q was accepted and wrote %q", slug, p.Path)
 			}
-			if !strings.Contains(err.Error(), "--slug") {
-				t.Fatalf("the refusal does not name the flag: %v", err)
-			}
+			require.Contains(t, err.Error(), "--slug", "the refusal does not name the flag: %v", err)
 		})
 	}
 	// An EMPTY --slug is not an override at all: it is the flag not given, and the slug
 	// comes from the subject as it always did.
 	p, err := Prepare(tab, draft, when, "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if !strings.Contains(p.Path, "-the-gate-in-the-workflow-never-runs-") {
-		t.Fatalf("an empty --slug did not fall back to the subject: %q", p.Path)
+		require.Contains(t, p.Path, "-the-gate-in-the-workflow-never-runs-", "an empty --slug did not fall back to the subject: %q", p.Path)
 	}
 	// And the shapes a person actually types are still accepted.
 	for _, slug := range []string{"ci-gate", "gate2", "a"} {
-		if _, err := Prepare(tab, draft, when, slug); err != nil {
-			t.Fatalf("--slug %q is a slug and was refused: %v", slug, err)
+		{
+			_, err := Prepare(tab, draft, when, slug)
+			require.NoError(t, err, "--slug %q is a slug and was refused: %v", slug, err)
 		}
 	}
 }
@@ -315,16 +263,15 @@ func TestSaveRefusesToWriteOutsideTheBus(t *testing.T) {
 	root := writeBus(t, fixture())
 	tab := loadBus(t, root)
 	p, err := Prepare(tab, draft, at("2026-09-09T12:34:56Z"), "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	p.Path = "../escaped.md"
 	if err := p.Save(root); err == nil {
-		t.Fatal("Save wrote outside the bus root")
+		require.FailNow(t, "Save wrote outside the bus root")
 	} else if !strings.Contains(err.Error(), "not inside the bus") {
-		t.Fatalf("the refusal does not say why: %v", err)
+		require.FailNowf(t, "assertion failed", "the refusal does not say why: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(filepath.Dir(root), "escaped.md")); err == nil {
-		t.Fatal("a file was written outside the bus root")
+	{
+		_, err := os.Stat(filepath.Join(filepath.Dir(root), "escaped.md"))
+		require.Error(t, err, "a file was written outside the bus root")
 	}
 }

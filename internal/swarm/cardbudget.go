@@ -2,11 +2,8 @@ package swarm
 
 import (
 	"bufio"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -35,15 +32,8 @@ func CardCacheRead(u ProviderUsage) (int, bool) {
 	return n, true
 }
 
-// CountCardTurns counts a job's assistant turns: the harness output log's
-// assistant turns, counted the way usage already counts them (assistant
-// rows/lines), or the usage row count where the log has fewer. A missing log
-// answers the usage row count; both missing is zero turns.
-func CountCardTurns(jobDir string, u ProviderUsage) int {
-	return CountCardTurnsIn(filepath.Join(jobDir, "harness.log"), u)
-}
-
-// CountCardTurnsIn is the same count against a NAMED log, because the two routes keep the
+// CountCardTurnsIn counts a job's assistant turns against a NAMED log: the log's
+// assistant lines, or the usage row count where the log has fewer, because the two routes keep the
 // harness's words in two different files and rule 13d says which is which: "Turns are
 // counted as rule 13b counts them, with `<job>/harness-output.log` as the log, since
 // `native` never writes `harness.log`."
@@ -102,34 +92,6 @@ func PromptDefectLine(id string, cacheRead, max, turns int) string {
 	return fmt.Sprintf("PROMPT-DEFECT task=%s reason=budget cache_read=%d max=%d turns=%d",
 		id, cacheRead, max, turns)
 }
-
-// AppendPromptDefect writes the PROMPT-DEFECT line into the task's report,
-// creating the report where the worker published none. A line for this task
-// is written once: a report that already carries one is left alone.
-func AppendPromptDefect(jobDir, id string, cacheRead, max, turns int) error {
-	line := PromptDefectLine(id, cacheRead, max, turns)
-	path := ResultPath(jobDir)
-	if raw, err := readFileSteady(path); err == nil && strings.Contains(string(raw), "PROMPT-DEFECT task="+id+" ") {
-		return nil
-	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	if fi, err := f.Stat(); err == nil && fi.Size() > 0 {
-		if raw, err := os.ReadFile(path); err == nil && len(raw) > 0 && raw[len(raw)-1] != '\n' {
-			if _, err := f.WriteString("\n"); err != nil {
-				return err
-			}
-		}
-	}
-	_, err = f.WriteString(line + "\n")
-	return err
-}
-
-// cardBudgetMaxWord renders the budget that fired for messages that carry it.
-func cardBudgetMaxWord(max int) string { return strconv.Itoa(max) }
 
 // THE MEASURED STARTUP COST (CARD-8349). Stella's read: a 2k cap was smaller
 // than the harness's own first context, so every card carrying it would have
@@ -222,24 +184,6 @@ func RecordStartupCostIfAbsent(root, harnessSHA256 string, cacheRead, turns int)
 		return err
 	}
 	return RecordStartupCost(root, harnessSHA256, cacheRead, turns)
-}
-
-// HarnessSHA256 is the lowercase hex sha256 of the harness binary, resolved on
-// PATH when the description names a bare command. An unreadable harness answers
-// the empty string, and the measurement is still written.
-func HarnessSHA256(harness string) string {
-	path := harness
-	if !strings.ContainsRune(path, filepath.Separator) {
-		if found, err := exec.LookPath(harness); err == nil {
-			path = found
-		}
-	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	sum := sha256.Sum256(raw)
-	return hex.EncodeToString(sum[:])
 }
 
 // BudgetRefusal is the one line a card budget below the measured startup cost

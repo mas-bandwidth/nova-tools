@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/stretchr/testify/require"
 )
 
 // The tick-end note (errata 3 amendment 8): a tick that addressed the
@@ -24,17 +25,13 @@ func TestTheTickEndWakesTheCoordinatorOnce(t *testing.T) {
 	}
 	h.setup(2)
 	_, from, err := h.m.Tails(h.ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	h.landThrough("s1", "s1-1", "s1-2")
 	if res := h.machine(); res.Done == "" || res.TickEnd != 1 || h.written(sprint.NTickEnd) != 1 {
 		t.Fatalf("the done tick: done %q, tick end %d, written %d", res.Done, res.TickEnd, h.written(sprint.NTickEnd))
 	}
 	notes, _, err := h.m.NotesSince(h.ctx, from, 1000)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	last := notes[len(notes)-1]
 	if last.Type != sprint.NTickEnd || last.Kind != sprint.Happened || last.To != h.st.Actor || last.What != "judgments=1" {
 		t.Fatalf("the tick end: %+v", last)
@@ -43,13 +40,9 @@ func TestTheTickEndWakesTheCoordinatorOnce(t *testing.T) {
 		t.Fatalf("a wait from before the done tick: %v %v", woke, err)
 	}
 	v, err := h.st.Inbox(h.ctx, time.Hour, time.Hour, 100)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	for _, g := range v.Groups {
-		if g.Type == sprint.NTickEnd {
-			t.Fatalf("the inbox lists the tick end: %+v", g)
-		}
+		require.NotEqual(t, string(sprint.NTickEnd), g.Type, "the inbox lists the tick end: %+v", g)
 	}
 	// the machine stopped: a start and a tick with nothing addressed since
 	h.startMachine()
@@ -58,9 +51,7 @@ func TestTheTickEndWakesTheCoordinatorOnce(t *testing.T) {
 		t.Fatalf("the tick after a start of a done sprint: %+v, %d tick ends", res, h.written(sprint.NTickEnd))
 	}
 	_, tail, err := h.m.Tails(h.ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	waiter := &Store{B: h.m, Names: h.st.Names, Actor: h.st.Actor, Now: h.st.Now, NewID: h.st.NewID, Sleep: h.tick}
 	if woke, err := waiter.WaitTickEnd(h.ctx, tail, time.Second); err != nil || woke {
 		t.Fatalf("a wait with nothing to come: %v %v", woke, err)
@@ -79,9 +70,8 @@ func TestTheTickEndMarkStartsAgainAfterAClear(t *testing.T) {
 	if res := h.machine(); res.Done == "" || res.TickEnd == 0 {
 		t.Fatalf("the first sprint's done tick: %+v", res)
 	}
-	if _, err := h.st.Clear(h.ctx); err != nil {
-		t.Fatal(err)
-	}
+	_, err := h.st.Clear(h.ctx)
+	require.NoError(t, err)
 	h.setup(1)
 	var ids []string
 	for _, c := range h.snap().Work.Cards() {
@@ -118,11 +108,10 @@ func TestANoteBetweenTheScanAndTheWriteIsCountedOnce(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	addressed := func(st *Store) {
-		if _, err := st.Run(h.ctx, Step{Verb: "probe", Plan: func(s *sprint.Snapshot) sprint.Plan {
+		_, err := st.Run(h.ctx, Step{Verb: "probe", Plan: func(s *sprint.Snapshot) sprint.Plan {
 			return sprint.Plan{Notes: []sprint.Note{{Kind: sprint.Happened, Type: sprint.NSprintDone, To: h.st.Actor, At: s.Now, What: "probe"}}}
-		}}); err != nil {
-			t.Fatal(err)
-		}
+		}})
+		require.NoError(t, err)
 	}
 	addressed(h.st)
 	b := &noteBetween{Mem: h.m}
@@ -132,11 +121,9 @@ func TestANoteBetweenTheScanAndTheWriteIsCountedOnce(t *testing.T) {
 	}
 	for i, want := range []int{1, 1, 0} {
 		n, err := st.tickEnd(h.ctx)
-		if err != nil || n != want {
-			t.Fatalf("tick end %d: counted %d, want %d (%v)", i+1, n, want, err)
-		}
+		require.NoError(t, err, "tick end %d: counted %d, want %d (%v)", i+1, n, want, err)
+		require.Equal(t, want, n, "tick end %d: counted %d, want %d (%v)", i+1, n, want, err)
 	}
-	if n := h.written(sprint.NTickEnd); n != 2 {
-		t.Fatalf("%d tick ends written, want 2", n)
-	}
+	n := h.written(sprint.NTickEnd)
+	require.Equal(t, 2, n, "%d tick ends written, want 2", n)
 }

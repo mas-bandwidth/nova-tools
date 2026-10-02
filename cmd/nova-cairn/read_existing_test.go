@@ -47,14 +47,9 @@ func TestIndexAndReceiptReadFlatRecordsWithoutChangingThem(t *testing.T) {
 		c.ok("append", "--session", "flat", "--entry", id, "--text", "a note", "--now", stamp, "--publish", "manual", "--source", "not-stored")
 	}
 	before := testkit.ReadFile(t, path)
-	out := c.ok("index", "--max", "1")
-	for _, want := range []string{"INDEX ENTRY session=flat entry=early stamp=2026-09-28T01:02:03Z bytes=6 source=-", "INDEX MORE kind=entry shown=1 total=2", "INDEX OK sessions=1 entries=2"} {
-		assert.Contains(t, out, want, "index lacks %q: %s", want, out)
-	}
-	out = c.ok("receipt", "--session", "flat", "--entry", "late")
-	for _, want := range []string{"stamp=2026-09-28T02:02:03Z", "bytes=6 source=-", "publish=unknown"} {
-		assert.Contains(t, out, want, "receipt lacks %q: %s", want, out)
-	}
+	printed(t, c.ok("index", "--max", "1"), "INDEX ENTRY session=flat entry=early stamp=2026-09-28T01:02:03Z bytes=6 source=-", "INDEX MORE kind=entry shown=1 total=2", "INDEX OK sessions=1 entries=2")
+	printed(t, c.ok("receipt", "--session", "flat", "--entry", "late"), "stamp=2026-09-28T02:02:03Z", "bytes=6 source=-", "publish=unknown")
+	printed(t, c.ok("receipt", "--session", "flat", "--entry", "late", "--text"), `text=a\x20note`)
 	require.Equal(t, before, testkit.ReadFile(t, path), "read changed the session")
 	files, err := os.ReadDir(c.store)
 	require.NoError(t, err)

@@ -4,7 +4,6 @@ package swarm
 
 import (
 	"context"
-	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -32,19 +31,13 @@ func TestStageCardUsesMirrorAndDissociates(t *testing.T) {
 	target := filepath.Join(root, "jobs", "card-1", "repo")
 	jobDir := filepath.Join(root, "jobs", "card-1")
 
-	if err := os.MkdirAll(src, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Dir(mirror), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(src, 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Dir(mirror), 0o755))
 
 	execCmd(t, src, "git", "init", "-q")
 	execCmd(t, src, "git", "config", "user.name", "test")
 	execCmd(t, src, "git", "config", "user.email", "test@example.com")
-	if err := os.WriteFile(filepath.Join(src, "file.txt"), []byte("hello"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(src, "file.txt"), []byte("hello"), 0o644))
 	execCmd(t, src, "git", "add", "file.txt")
 	execCmd(t, src, "git", "commit", "-q", "-m", "commit 1")
 	sha1 := strings.TrimSpace(execCmd(t, src, "git", "rev-parse", "HEAD"))
@@ -60,31 +53,20 @@ func TestStageCardUsesMirrorAndDissociates(t *testing.T) {
 		BenchName: "testhost",
 		Timeout:   30 * time.Second,
 	})
-	if err != nil {
-		t.Fatalf("StageCard failed: %v", err)
-	}
-	if !res.Staged {
-		t.Fatal("expected Staged=true")
-	}
-	if res.Mirror != mirror {
-		t.Fatalf("expected mirror %s, got %s", mirror, res.Mirror)
-	}
+	require.NoError(t, err, "StageCard failed: %v", err)
+	require.True(t, res.Staged, "expected Staged=true")
+	require.Equal(t, mirror, res.Mirror, "expected mirror %s, got %s", mirror, res.Mirror)
 
 	// Verify alternates does not exist because --dissociate was used
 	alternates := filepath.Join(target, ".git", "objects", "info", "alternates")
-	if _, err := os.Stat(alternates); !os.IsNotExist(err) {
-		t.Fatalf("alternates file exists: staging was not dissociated: %v", err)
-	}
+	_, err = os.Stat(alternates)
+	require.True(t, os.IsNotExist(err), "alternates file exists: staging was not dissociated: %v", err)
 
 	head := strings.TrimSpace(execCmd(t, target, "git", "rev-parse", "HEAD"))
-	if head != sha1 {
-		t.Fatalf("expected HEAD=%s, got %s", sha1, head)
-	}
+	require.Equal(t, sha1, head, "expected HEAD=%s, got %s", sha1, head)
 
 	origin := strings.TrimSpace(execCmd(t, target, "git", "remote", "get-url", "origin"))
-	if origin != "https://example.com/mas-bandwidth/repo.git" {
-		t.Fatalf("expected origin URL https://example.com/mas-bandwidth/repo.git, got %s", origin)
-	}
+	require.Equal(t, "https://example.com/mas-bandwidth/repo.git", origin, "expected origin URL https://example.com/mas-bandwidth/repo.git, got %s", origin)
 }
 
 func TestStageCardTimesOutAndWritesResult(t *testing.T) {
@@ -95,23 +77,15 @@ func TestStageCardTimesOutAndWritesResult(t *testing.T) {
 	mirror := filepath.Join(root, "home", "nova-bench", "mirror", "repo.git")
 	target := filepath.Join(root, "jobs", "card-1", "repo")
 	jobDir := filepath.Join(root, "jobs", "card-1")
-	if err := os.MkdirAll(jobDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(jobDir, 0o755))
 
-	if err := os.MkdirAll(src, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Dir(mirror), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(src, 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Dir(mirror), 0o755))
 
 	execCmd(t, src, "git", "init", "-q")
 	execCmd(t, src, "git", "config", "user.name", "test")
 	execCmd(t, src, "git", "config", "user.email", "test@example.com")
-	if err := os.WriteFile(filepath.Join(src, "file.txt"), []byte("hello"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(src, "file.txt"), []byte("hello"), 0o644))
 	execCmd(t, src, "git", "add", "file.txt")
 	execCmd(t, src, "git", "commit", "-q", "-m", "commit 1")
 	sha1 := strings.TrimSpace(execCmd(t, src, "git", "rev-parse", "HEAD"))
@@ -127,26 +101,16 @@ func TestStageCardTimesOutAndWritesResult(t *testing.T) {
 		BenchName: "hulk",
 		Timeout:   1 * time.Nanosecond,
 	})
-	if err == nil {
-		t.Fatal("expected timeout error")
-	}
-	if !errors.Is(err, ErrStageTimeout) {
-		t.Fatalf("expected ErrStageTimeout, got %v", err)
-	}
-	if !res.TimedOut {
-		t.Fatal("expected TimedOut=true")
-	}
+	require.Error(t, err, "expected timeout error")
+	require.ErrorIs(t, err, ErrStageTimeout, "expected ErrStageTimeout, got %v", err)
+	require.True(t, res.TimedOut, "expected TimedOut=true")
 
 	resultFile := filepath.Join(jobDir, "RESULT.md")
 	raw, err := os.ReadFile(resultFile)
-	if err != nil {
-		t.Fatalf("RESULT.md not written on timeout: %v", err)
-	}
+	require.NoError(t, err, "RESULT.md not written on timeout: %v", err)
 	lines := strings.Split(string(raw), "\n")
 	expectedLine1 := "RESULT: BLOCKED stage-timeout hulk 1"
-	if lines[0] != expectedLine1 {
-		t.Fatalf("expected line 1 %q, got %q", expectedLine1, lines[0])
-	}
+	require.Equal(t, expectedLine1, lines[0], "expected line 1 %q, got %q", expectedLine1, lines[0])
 }
 
 // TestStageUsesTheBenchMirrorAndTimesOut tests that staging uses the bench mirror,
@@ -166,25 +130,15 @@ func TestStageUsesTheBenchMirrorAndTimesOut(t *testing.T) {
 func testStageHungCloneEndsAtTheTimeout(t *testing.T) {
 	root := t.TempDir()
 	mirror := filepath.Join(root, "home", "nova-bench", "mirror", "repo.git")
-	if err := os.MkdirAll(mirror, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(mirror, "HEAD"), []byte("ref: refs/heads/dev\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(mirror, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(mirror, "HEAD"), []byte("ref: refs/heads/dev\n"), 0o644))
 	bin := filepath.Join(root, "bin")
-	if err := os.MkdirAll(bin, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(bin, 0o755))
 	fake := "#!/bin/sh\nsleep 60 &\nwait\n"
-	if err := testbin.WriteExecutable(filepath.Join(bin, "git"), []byte(fake), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, testbin.WriteExecutable(filepath.Join(bin, "git"), []byte(fake), 0o755))
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	jobDir := filepath.Join(root, "jobs", "card-1")
-	if err := os.MkdirAll(jobDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(jobDir, 0o755))
 	card := []byte("base-repo: https://example.com/mas-bandwidth/repo.git\nbase-sha: 09fbedc9052145b20677501a1dbcb5f5ba9c87d4\n")
 	// StageCard blocks, so the event under test -- the call returning instead
 	// of riding the hung 60s sleep -- is read off a done channel, not the wall
@@ -214,16 +168,12 @@ func testStageHungCloneEndsAtTheTimeout(t *testing.T) {
 	case <-time.After(testWait()):
 		t.Fatalf("staging did not return within %s on a clone that hung past a 1s timeout; the timeout is not hard", testWait())
 	}
-	if !errors.Is(err, ErrStageTimeout) || !res.TimedOut {
-		t.Fatalf("a hung clone must end ErrStageTimeout with TimedOut; got err=%v res=%+v", err, res)
-	}
+	require.ErrorIs(t, err, ErrStageTimeout, "a hung clone must end ErrStageTimeout with TimedOut; got err=%v res=%+v", err, res)
+	require.True(t, res.TimedOut, "a hung clone must end ErrStageTimeout with TimedOut; got err=%v res=%+v", err, res)
 	raw, rerr := os.ReadFile(filepath.Join(jobDir, "RESULT.md"))
-	if rerr != nil {
-		t.Fatalf("RESULT.md not written on timeout: %v", rerr)
-	}
-	if first := strings.SplitN(string(raw), "\n", 2)[0]; first != "RESULT: BLOCKED stage-timeout hulk 1" {
-		t.Fatalf("RESULT.md line 1 = %q", first)
-	}
+	require.NoError(t, rerr, "RESULT.md not written on timeout: %v", rerr)
+	first := strings.SplitN(string(raw), "\n", 2)[0]
+	require.Equal(t, "RESULT: BLOCKED stage-timeout hulk 1", first, "RESULT.md line 1 = %q", first)
 }
 
 func execCmd(t *testing.T, dir, name string, args ...string) string {
@@ -232,9 +182,7 @@ func execCmd(t *testing.T, dir, name string, args ...string) string {
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("%s %s in %s: %v\n%s", name, strings.Join(args, " "), dir, err, string(out))
-	}
+	require.NoError(t, err, "%s %s in %s: %v\n%s", name, strings.Join(args, " "), dir, err, string(out))
 	return string(out)
 }
 
@@ -301,4 +249,45 @@ func testWait() time.Duration {
 		}
 	}
 	return 30 * time.Second
+}
+
+// A frame's base and branch stage in place of the card's header lines
+// (docs/SPEC-CARD-CONTRACT.md layer 2): the checkout is at the frame's sha (a
+// rework's previous pushed head) on the frame's branch, whatever the card's
+// prose says, and a branch git would read as an option is refused.
+func TestStageCardStagesTheFramesCommitOnItsBranch(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	require.NoError(t, os.MkdirAll(src, 0o755))
+	execCmd(t, src, "git", "init", "-q", "-b", "main")
+	execCmd(t, src, "git", "config", "user.name", "test")
+	execCmd(t, src, "git", "config", "user.email", "test@example.com")
+	require.NoError(t, os.WriteFile(filepath.Join(src, "f"), []byte("base"), 0o644))
+	execCmd(t, src, "git", "add", "f")
+	execCmd(t, src, "git", "commit", "-q", "-m", "base")
+	origin := filepath.Join(root, "origin.git")
+	execCmd(t, root, "git", "clone", "-q", "--bare", src, origin)
+	execCmd(t, src, "git", "switch", "-q", "-c", "sprint/c1.w1")
+	require.NoError(t, os.WriteFile(filepath.Join(src, "f"), []byte("attempt 1"), 0o644))
+	execCmd(t, src, "git", "commit", "-q", "-am", "attempt 1")
+	prev := strings.TrimSpace(execCmd(t, src, "git", "rev-parse", "HEAD"))
+	execCmd(t, src, "git", "push", "-q", origin, "sprint/c1.w1")
+
+	target := filepath.Join(root, "jobs", "c1.w2", "repo")
+	card := []byte("c1: the card\nBASE: main\nThe work is branch sprint/c1.w2 from sprint/c1.w1, says the prose.\n")
+	res, err := StageCard(StageOptions{
+		Card: card, TargetDir: target, JobDir: filepath.Dir(target), BenchHome: filepath.Join(root, "home"), BenchName: "testhost",
+		Timeout: 30 * time.Second, Base: &CardBase{Repo: origin, Sha: prev, Ref: "main", Named: origin}, Branch: "sprint/c1.w2",
+	})
+	require.NoError(t, err)
+	assert.True(t, res.Staged)
+	assert.Equal(t, prev, res.BaseSha)
+	assert.Equal(t, "sprint/c1.w2", res.Branch)
+	assert.Equal(t, prev, strings.TrimSpace(execCmd(t, target, "git", "rev-parse", "HEAD")))
+	assert.Equal(t, "sprint/c1.w2", strings.TrimSpace(execCmd(t, target, "git", "symbolic-ref", "--short", "HEAD")))
+
+	_, err = StageCard(StageOptions{Card: card, TargetDir: filepath.Join(root, "jobs", "x", "repo"), BenchHome: filepath.Join(root, "home"),
+		Timeout: 30 * time.Second, Base: &CardBase{Repo: origin, Ref: "main", Named: origin}, Branch: "-x"})
+	assert.ErrorContains(t, err, "starts with '-'")
 }

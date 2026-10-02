@@ -117,9 +117,8 @@ var coordinatorVerbs = map[string]bool{"accept": true, "rework": true, "drop": t
 // width for it.
 const DefaultWidth = 64
 
-// Most is the cards one batched verb names: the Layer 1 step's bound of IDs
-// in an entry and in a log line (L1 contract section 6, LimitEntryIDs and
-// LimitLineIDs). A batch larger than this is cut at it; the rest wait a tick.
+// Most is the cards one batched verb names: the table layer's bound of IDs in
+// an entry and in a log line. A batch larger than this is cut at it; the rest wait a tick.
 const Most = 2000
 
 // run runs one verb, prints its command line and its summary shortened, and
@@ -287,9 +286,7 @@ func (d *Driver) Loop() (string, error) {
 	if !d.read(&first, "where") {
 		return "", fmt.Errorf("the view could not be read: run: %s", commandLine(append([]string{"where"}, d.Base...)))
 	}
-	// running, running and catching up ("machine: running (catching up: n
-	// moves due)"), or running with its last tick failed
-	if first.Machine != "machine: running" && !strings.HasPrefix(first.Machine, "machine: running;") && !strings.HasPrefix(first.Machine, "machine: running (") {
+	if first.Machine != "machine: running" {
 		return "", fmt.Errorf("no machine is running (%s): the driver plays only the outside actors; run: nova-sprint start, and nova-sprint run", orDash(first.Machine))
 	}
 	d.held = first.Epoch
@@ -577,18 +574,16 @@ func (d *Driver) tick(tick int, c Config, w where) {
 			return out
 		}
 		args := []string{"merge", "--stream", s, "--batch", strconv.Itoa(c.Batch)}
-		if len(batch) > 0 {
-			out := d.Facts.Merge(s, batch, others)
-			switch {
-			case out.Conflict != "":
-				args = append(args, "--conflict", out.Conflict)
-			case out.Cross != "":
-				args = append(args, "--cross", out.Cross)
-			case out.Red:
-				args = append(args, "--red")
-				for _, x := range out.Suspects {
-					args = append(args, "--suspect", x)
-				}
+		out := d.Facts.Merge(s, batch, others)
+		switch {
+		case out.Conflict != "":
+			args = append(args, "--conflict", out.Conflict)
+		case out.Cross != "":
+			args = append(args, "--cross", out.Cross)
+		case out.Red:
+			args = append(args, "--red")
+			for _, x := range out.Suspects {
+				args = append(args, "--suspect", x)
 			}
 		}
 		d.run(false, append(args, held...)...)

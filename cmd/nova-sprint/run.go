@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/binstamp"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
@@ -219,9 +220,12 @@ func (a *app) printTick(res store.TickResult, err error, max int, stdout, stderr
 }
 
 func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
-	var profile string
+	var profile, listen string
 	var profileTicks int
+	var land bool
 	st, c, code := a.machineVerb("run", args, stderr, func(fs flagSet) {
+		fs.StringVar(&listen, "listen", "", "also be the sprint's server: the workers' verbs on this `address:port` (this machine's address on the fleet's private network; 0.0.0.0 and other every-network addresses are refused), where nova-swarm member --server <address>:<port> sends them, and the coordinator's verbs on 127.0.0.1 at the same port, where NOVA_SPRINT_SERVER=127.0.0.1:<port> sends them")
+		fs.BoolVar(&land, "land", false, "also land what the readers passed, every "+LandEvery.String()+", one landing at a time, as the coordinator (land's defaults: each card's REPO: and BASE: lines); land is then not run by hand")
 		fs.StringVar(&profile, "cpuprofile", "", "write a CPU profile of the loop's first ticks to this file (see --profile-ticks)")
 		fs.IntVar(&profileTicks, "profile-ticks", 10, "the ticks --cpuprofile covers; the profile is written after the last of them")
 	})
@@ -261,9 +265,37 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 			}
 		}
 	}
+	if listen != "" {
+		if err := a.listen(listen, c.redis, stdout); err != nil {
+			return refuse(stderr, "run", err.Error())
+		}
+	}
+	if land {
+		go a.landLoop(context.Background(), c.redis, stdout)
+	}
 	fmt.Fprintf(stdout, "RUN ticking on every line of the log (at most every %s) and every %s while it is quiet; %s\n", store.TickFloor, store.TickEvery, st.MachineLine(context.Background()))
-	a.runLoop(context.Background(), st, c.max, 0, stdout, stderr)
+	if a.runLoop(context.Background(), st, c.max, 0, stdout, stderr) {
+		return exitReplaced
+	}
 	return 0
+}
+
+// exitReplaced is run's exit when its binary was replaced under it: not 0, so
+// a supervisor that restarts only a failed loop restarts it too.
+const exitReplaced = 3
+
+// binaryStamp is the binary file this process was started from, as it is on disk
+// now: its path, size and modification time; "" when it cannot be read.
+func (a *app) binaryStamp() string {
+	exe := a.executable
+	if exe == nil {
+		exe = os.Executable
+	}
+	path, err := exe()
+	if err != nil {
+		return ""
+	}
+	return binstamp.Of(path)
 }
 
 // startProfile begins a CPU profile to the file; its stop, which may be
@@ -309,15 +341,30 @@ const (
 // and the rows it changed in each (errata 3 amendment 10), and every tick that
 // failed; an error is printed always and the loop goes on, waiting longer
 // after each failure in a row, up to TickBackoffCap.
-func (a *app) runLoop(ctx context.Context, st *store.Store, max, n int, stdout, stderr io.Writer) {
+//
+// A loop runs the code it was started with for as long as it runs: a binary
+// installed under it (a release, a fix) would leave the store ticked by the
+// code before it (the owner's store, 2026-10-01: a loop started before the
+// routes dealt a fresh card with none while the verbs drew them). So before
+// each tick it reads its binary's file, and when that changed since it began it
+// stops, saying so, and returns true: its supervisor starts the new binary.
+func (a *app) runLoop(ctx context.Context, st *store.Store, max, n int, stdout, stderr io.Writer) (replaced bool) {
 	failures := 0
 	was := ""
+	began0 := a.binaryStamp()
 	// every line before the loop is seen: the first tick reads the state whole
 	cursor, _ := st.LogTail(ctx)
 	why := tickStart
 	for i := 0; (n == 0 || i < n) && ctx.Err() == nil; i++ {
+		if now := a.binaryStamp(); began0 != "" && now != began0 {
+			fmt.Fprintf(stdout, "RUN STOP the binary this loop runs was replaced on disk since it began (%s, now %s): exiting so its supervisor starts the new one; a loop that is not supervised: run nova-sprint run again\n", began0, orDashStr(now, "unreadable"))
+			return true
+		}
 		began := a.now()
+		// one tick, or one worker's batch, at a time (serve.go)
+		a.serial.Lock()
 		res, err := st.Tick(ctx)
+		a.serial.Unlock()
 		if a.ticked != nil {
 			a.ticked(i+1, began, why)
 		}
@@ -341,7 +388,7 @@ func (a *app) runLoop(ctx context.Context, st *store.Store, max, n int, stdout, 
 			}
 		}
 		if n != 0 && i == n-1 {
-			return
+			return false
 		}
 		if err != nil {
 			failures++
@@ -352,6 +399,7 @@ func (a *app) runLoop(ctx context.Context, st *store.Store, max, n int, stdout, 
 		failures = 0
 		cursor, why = a.pace(ctx, st, res.Epoch, cursor, began)
 	}
+	return false
 }
 
 // pace is the wait between two ticks of run: it blocks on the log of the
@@ -389,5 +437,6 @@ due time is marked overdue, once. A stop halts the tick before its next part.
 When nothing is left open (every card landed or dropped) the tick says "the
 sprint is done" to the coordinator and stops the machine itself: DONE, in
 where and the view; work added after leaves it STOPPED until nova-sprint
-start. Every verb works in both states.`) + "\n"
+start. Every verb works in both states. run stops (exit 3) when its own binary
+is replaced on disk, so its supervisor starts the new build.`) + "\n"
 }

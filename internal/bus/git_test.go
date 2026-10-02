@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // TestMain sets the hermetic git environment ONCE, for the whole process, and hermetic is
@@ -71,9 +73,7 @@ func hermetic(t *testing.T) {
 	// config, its ~/.gitconfig and its credential prompt out of these tests, and an
 	// assertion on one of four would pass over a TestMain that set one of four.
 	for _, key := range []string{"GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM", "GIT_TERMINAL_PROMPT"} {
-		if os.Getenv(key) == "" {
-			t.Fatalf("%s is not set: the hermetic git environment is TestMain's, in this package, and it sets four", key)
-		}
+		require.False(t, os.Getenv(key) == "", "%s is not set: the hermetic git environment is TestMain's, in this package, and it sets four", key)
 	}
 }
 
@@ -97,12 +97,11 @@ var testIdentity = map[string]Identity{
 func bareBus(t *testing.T) string {
 	t.Helper()
 	barebusOnce.Do(func() { barebusDir, barebusErr = seedBareBus() })
-	if barebusErr != nil {
-		t.Fatalf("the bus fixture: %v", barebusErr)
-	}
+	require.Equal(t, nil, barebusErr, "the bus fixture: %v", barebusErr)
 	bare := filepath.Join(t.TempDir(), "bus.git")
-	if err := os.CopyFS(bare, os.DirFS(barebusDir)); err != nil {
-		t.Fatalf("copying the bus fixture: %v", err)
+	{
+		err := os.CopyFS(bare, os.DirFS(barebusDir))
+		require.NoError(t, err, "copying the bus fixture: %v", err)
 	}
 	return bare
 }
@@ -150,8 +149,9 @@ func seedBareBus() (string, error) {
 func cloneBus(t *testing.T, bare string) string {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "clone")
-	if out, err := git(filepath.Dir(dir), "clone", "--quiet", bare, dir); err != nil {
-		t.Fatalf("clone: %v %s", err, out)
+	{
+		out, err := git(filepath.Dir(dir), "clone", "--quiet", bare, dir)
+		require.NoError(t, err, "clone: %v %s", err, out)
 	}
 	return dir
 }
@@ -169,27 +169,17 @@ func TestCommitAndPushLandsANote(t *testing.T) {
 	clone := cloneBus(t, bare)
 	write(t, clone, "from-ada/a.md", noteText("Ada", "one", "body"))
 	res, err := CommitAndPush(clone, testIdentity["Ada"], []string{"from-ada/a.md"}, "ada: one", "origin", "main", 3)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !res.Pushed || res.Attempts != 1 {
-		t.Fatalf("res = %+v, want pushed on the first attempt", res)
-	}
+	require.NoError(t, err)
+	require.False(t, !res.Pushed || res.Attempts != 1, "res = %+v, want pushed on the first attempt", res)
 	out, err := git(bare, "show", "main:from-ada/a.md")
-	if err != nil {
-		t.Fatalf("the note is not on the remote: %v", err)
-	}
-	if !strings.Contains(out, "Subject: one") {
-		t.Fatalf("the remote holds %q", out)
-	}
+	require.NoError(t, err, "the note is not on the remote: %v", err)
+	require.Contains(t, out, "Subject: one", "the remote holds %q", out)
 	// The identity is the sender's, from the roster, and was passed with git -c rather
 	// than written into any config.
 	who, err := git(bare, "log", "-1", "--format=%an <%ae>", "main")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if strings.TrimSpace(who) != "Ada <ada@example.com>" {
-		t.Fatalf("the commit is authored by %q", strings.TrimSpace(who))
+		require.False(t, strings.TrimSpace(who) != "Ada <ada@example.com>", "the commit is authored by %q", strings.TrimSpace(who))
 	}
 }
 
@@ -230,26 +220,25 @@ func TestTwoSendersPushingAtOnceBothLand(t *testing.T) {
 
 	for i, err := range errs {
 		if err != nil {
-			t.Fatalf("%s: %v", senders[i].who, err)
+			require.NoError(t, err, "%s: %v", senders[i].who, err)
 		}
 		if !results[i].Pushed {
-			t.Fatalf("%s: %+v, want pushed", senders[i].who, results[i])
+			require.False(t, !results[i].Pushed, "%s: %+v, want pushed", senders[i].who, results[i])
 		}
 	}
 	// Both notes are on the remote. Neither lost.
 	for _, s := range senders {
-		if _, err := git(bare, "cat-file", "-e", "main:"+s.path); err != nil {
-			t.Fatalf("%s lost its note: %s is not on the remote", s.who, s.path)
+		{
+			_, err := git(bare, "cat-file", "-e", "main:"+s.path)
+			if err != nil {
+				require.NoError(t, err, "%s lost its note: %s is not on the remote", s.who, s.path)
+			}
 		}
 	}
 	// And the loser retried rather than forcing: the winner's commit is still an ancestor.
 	log, err := git(bare, "log", "--format=%s", "main")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Count(log, ": a note") != 2 {
-		t.Fatalf("the remote log holds:\n%s\nwant both notes", log)
-	}
+	require.NoError(t, err)
+	require.False(t, strings.Count(log, ": a note") != 2, "the remote log holds:\n%s\nwant both notes", log)
 }
 
 func TestPushGivesUpInsideTheBudgetAndSaysTheNoteIsNotOnTheBus(t *testing.T) {
@@ -263,21 +252,16 @@ func TestPushGivesUpInsideTheBudgetAndSaysTheNoteIsNotOnTheBus(t *testing.T) {
 	// Somebody else pushes first, so my push is rejected.
 	write(t, theirs, "from-bo/b.md", noteText("Bo", "theirs", "body"))
 	if _, err := CommitAndPush(theirs, testIdentity["Bo"], []string{"from-bo/b.md"}, "bo: theirs", "origin", "main", 3); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 	// One attempt is one push and no recovery.
 	res, err := CommitAndPush(mine, testIdentity["Ada"], []string{"from-ada/a.md"}, "ada: mine", "origin", "main", 1)
-	if err == nil {
-		t.Fatal("a push that could not land reported success")
-	}
-	if !strings.Contains(err.Error(), "was NOT pushed") {
-		t.Fatalf("the refusal does not say the note is not on the bus: %v", err)
-	}
-	if res.Pushed {
-		t.Fatalf("res = %+v", res)
-	}
-	if _, err := git(bare, "cat-file", "-e", "main:from-ada/a.md"); err == nil {
-		t.Fatal("the note reached the remote after a reported failure")
+	require.Error(t, err, "a push that could not land reported success")
+	require.Contains(t, err.Error(), "was NOT pushed", "the refusal does not say the note is not on the bus: %v", err)
+	require.False(t, res.Pushed, "res = %+v", res)
+	{
+		_, err := git(bare, "cat-file", "-e", "main:from-ada/a.md")
+		require.Error(t, err, "the note reached the remote after a reported failure")
 	}
 }
 
@@ -294,29 +278,19 @@ func TestTwoBenchesReceiptingAtOnceBothLand(t *testing.T) {
 
 	write(t, a, "from-ada/RECEIPTS", "2026-09-07T00:01:00Z bo-aaaaaaaaaaaa\n")
 	if _, err := CommitAndPush(a, testIdentity["Ada"], []string{"from-ada/RECEIPTS"}, "ada: receipt", "origin", "main", 3); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 	// The second bench cannot see the first.
 	write(t, b, "from-ada/RECEIPTS", "2026-09-07T00:02:00Z bo-bbbbbbbbbbbb\n")
 	res, err := CommitAndPush(b, testIdentity["Ada"], []string{"from-ada/RECEIPTS"}, "ada: another receipt", "origin", "main", 3)
-	if err != nil {
-		t.Fatalf("a conflict this tool settles wedged the line instead: %v", err)
-	}
-	if !res.Pushed {
-		t.Fatalf("res = %+v, want pushed", res)
-	}
+	require.NoError(t, err, "a conflict this tool settles wedged the line instead: %v", err)
+	require.True(t, res.Pushed, "res = %+v, want pushed", res)
 	landed, err := git(bare, "show", "main:from-ada/RECEIPTS")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	for _, want := range []string{"bo-aaaaaaaaaaaa", "bo-bbbbbbbbbbbb"} {
-		if !strings.Contains(landed, want) {
-			t.Fatalf("the union dropped a receipt; the remote holds:\n%s", landed)
-		}
+		require.Contains(t, landed, want, "the union dropped a receipt; the remote holds:\n%s", landed)
 	}
-	if strings.Contains(landed, "<<<") {
-		t.Fatalf("conflict markers reached the bus:\n%s", landed)
-	}
+	require.NotContains(t, landed, "<<<", "conflict markers reached the bus:\n%s", landed)
 	assertSettled(t, b)
 }
 
@@ -335,41 +309,30 @@ func TestTwoBenchesOfOneLaneSettleTheCatalogue(t *testing.T) {
 
 	first := IndexEntry{ID: "ada-aaaaaaaaaaaa", Path: "from-ada/a.md", Date: "2026-09-07T00:01:00Z", To: []string{"Bo"}, Lane: "from-ada"}
 	write(t, a, first.Path, noteText("Ada", "one", "body"))
-	if err := AppendIndexLine(a, first); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, AppendIndexLine(a, first))
 	if _, err := CommitAndPush(a, testIdentity["Ada"], []string{first.Path, IndexPath("from-ada")}, "ada: one", "origin", "main", 3); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 
 	// The second bench cannot see the first: a DIFFERENT note, at a different path, whose
 	// only shared file is the lane's catalogue.
 	second := IndexEntry{ID: "ada-bbbbbbbbbbbb", Path: "from-ada/b.md", Date: "2026-09-07T00:02:00Z", To: []string{"Bo"}, Lane: "from-ada"}
 	write(t, b, second.Path, noteText("Ada", "two", "body"))
-	if err := AppendIndexLine(b, second); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, AppendIndexLine(b, second))
 	res, err := CommitAndPush(b, testIdentity["Ada"], []string{second.Path, IndexPath("from-ada")}, "ada: two", "origin", "main", 3)
-	if err != nil {
-		t.Fatalf("the catalogue conflict wedged the bench instead of being settled: %v", err)
-	}
-	if !res.Pushed {
-		t.Fatalf("res = %+v, want pushed", res)
-	}
+	require.NoError(t, err, "the catalogue conflict wedged the bench instead of being settled: %v", err)
+	require.True(t, res.Pushed, "res = %+v, want pushed", res)
 	// Both notes are on the bus, and the catalogue names both.
 	for _, p := range []string{first.Path, second.Path} {
-		if _, cerr := git(bare, "cat-file", "-e", "main:"+p); cerr != nil {
-			t.Fatalf("%s is not on the remote", p)
+		{
+			_, cerr := git(bare, "cat-file", "-e", "main:"+p)
+			require.Equal(t, nil, cerr, "%s is not on the remote", p)
 		}
 	}
 	landed, err := git(bare, "show", "main:"+IndexPath("from-ada"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	for _, want := range []string{first.ID, second.ID} {
-		if !strings.Contains(landed, want) {
-			t.Fatalf("the catalogue lost %s:\n%s", want, landed)
-		}
+		require.Contains(t, landed, want, "the catalogue lost %s:\n%s", want, landed)
 	}
 	assertSettled(t, b)
 }
@@ -389,57 +352,35 @@ func TestTwoBenchesOfOneReaderSettleTheCursor(t *testing.T) {
 	// A commit on the bus both benches can see, and a second only the first has read to.
 	write(t, a, "from-bo/a.md", noteText("Bo", "one", "body"))
 	if _, err := CommitAndPush(a, testIdentity["Bo"], []string{"from-bo/a.md"}, "bo: one", "origin", "main", 3); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 	behind, err := HeadCommit(b)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if _, err := git(a, "fetch", "origin", "main"); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 	ahead, err := HeadCommit(a)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	// The FURTHER read, pushed first.
-	if err := WriteCursor(a, "from-ada", ahead, 1, "", at("2026-09-09T12:00:00Z")); err != nil {
-		t.Fatal(err)
-	}
-	if err := WriteOpen(a, "from-ada", []OpenEntry{{ID: "bo-aaaaaaaaaaaa", Kind: OpenNote, From: "Bo", Addr: "to", Path: "from-bo/a.md", Subject: "one"}}); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, WriteCursor(a, "from-ada", ahead, 1, "", at("2026-09-09T12:00:00Z")))
+	require.NoError(t, WriteOpen(a, "from-ada", []OpenEntry{{ID: "bo-aaaaaaaaaaaa", Kind: OpenNote, From: "Bo", Addr: "to", Path: "from-bo/a.md", Subject: "one"}}))
 	if _, err := CommitAndPush(a, testIdentity["Ada"], []string{CursorPath("from-ada"), OpenPath("from-ada")}, "ada: read to "+ahead[:12], "origin", "main", 3); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 
 	// The bench that is BEHIND, which cannot see any of that, pushes its own read second.
-	if err := WriteCursor(b, "from-ada", behind, 0, "", at("2026-09-09T11:00:00Z")); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, WriteCursor(b, "from-ada", behind, 0, "", at("2026-09-09T11:00:00Z")))
 	res, err := CommitAndPush(b, testIdentity["Ada"], []string{CursorPath("from-ada")}, "ada: read to "+behind[:12], "origin", "main", 3)
-	if err != nil {
-		t.Fatalf("two benches of one reader wedged the line: %v", err)
-	}
-	if !res.Pushed {
-		t.Fatalf("res = %+v, want pushed", res)
-	}
+	require.NoError(t, err, "two benches of one reader wedged the line: %v", err)
+	require.True(t, res.Pushed, "res = %+v, want pushed", res)
 	landedCursor, err := git(bare, "show", "main:"+CursorPath("from-ada"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(landedCursor, ahead) {
-		t.Fatalf("the settlement kept the SHORTER read; a cursor that goes backwards re-opens everything between the two:\n%s", landedCursor)
-	}
+	require.NoError(t, err)
+	require.Contains(t, landedCursor, ahead, "the settlement kept the SHORTER read; a cursor that goes backwards re-opens everything between the two:\n%s", landedCursor)
 	// And the open list came with it, rather than being merged with the other side's.
 	landedOpen, err := git(bare, "show", "main:"+OpenPath("from-ada"))
-	if err != nil {
-		t.Fatalf("the winning cursor's open list is not on the bus: %v", err)
-	}
-	if !strings.Contains(landedOpen, "from-bo/a.md") {
-		t.Fatalf("the open list does not belong to the cursor beside it:\n%s", landedOpen)
-	}
+	require.NoError(t, err, "the winning cursor's open list is not on the bus: %v", err)
+	require.Contains(t, landedOpen, "from-bo/a.md", "the open list does not belong to the cursor beside it:\n%s", landedOpen)
 	assertSettled(t, b)
 }
 
@@ -456,40 +397,29 @@ func TestAConflictOnANoteIsRefusedAndTheAbortIsClean(t *testing.T) {
 
 	write(t, a, "from-ada/same.md", noteText("Ada", "one", "the first bench wrote this"))
 	if _, err := CommitAndPush(a, testIdentity["Ada"], []string{"from-ada/same.md"}, "ada: one", "origin", "main", 3); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 	write(t, b, "from-ada/same.md", noteText("Ada", "one", "the second bench wrote this"))
 	res, err := CommitAndPush(b, testIdentity["Ada"], []string{"from-ada/same.md"}, "ada: one again", "origin", "main", 3)
-	if err == nil {
-		t.Fatal("two benches writing one note path was settled; which of the two is the note is not this tool's decision")
-	}
+	require.Error(t, err, "two benches writing one note path was settled; which of the two is the note is not this tool's decision")
 	for _, want := range []string{"conflicted", "from-ada/same.md", "was NOT pushed", "git pull --rebase"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("the refusal does not say %q: %v", want, err)
-		}
+		require.Contains(t, err.Error(), want, "the refusal does not say %q: %v", want, err)
 	}
 	// The reason is ONE LINE and the transcript is carried beside it, not inside it.
 	if strings.Contains(err.Error(), "\n") {
-		t.Fatalf("the refusal is more than one line: %q", err.Error())
+		require.NotContains(t, err.Error(), "\n", "the refusal is more than one line: %q", err.Error())
 	}
-	if Transcript(err) == "" {
-		t.Fatal("the refusal carries no transcript, so a person has git's own words nowhere")
-	}
-	if res.Commit == "" {
-		t.Fatal("the refusal names no commit, so a person has nothing to look at")
-	}
-	if _, cerr := git(b, "cat-file", "-e", res.Commit+"^{commit}"); cerr != nil {
-		t.Fatalf("the commit named in the refusal is not on the branch: %v", cerr)
+	require.False(t, Transcript(err) == "", "the refusal carries no transcript, so a person has git's own words nowhere")
+	require.False(t, res.Commit == "", "the refusal names no commit, so a person has nothing to look at")
+	{
+		_, cerr := git(b, "cat-file", "-e", res.Commit+"^{commit}")
+		require.Equal(t, nil, cerr, "the commit named in the refusal is not on the branch: %v", cerr)
 	}
 	assertSettled(t, b)
 	// And the first bench's note is untouched on the bus.
 	landed, err := git(bare, "show", "main:from-ada/same.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(landed, "the first bench wrote this") {
-		t.Fatalf("the conflicting note overwrote the one on the bus:\n%s", landed)
-	}
+	require.NoError(t, err)
+	require.Contains(t, landed, "the first bench wrote this", "the conflicting note overwrote the one on the bus:\n%s", landed)
 }
 
 // assertSettled is the state every one of the tests above ends in: on a branch, no rebase
@@ -498,19 +428,19 @@ func TestAConflictOnANoteIsRefusedAndTheAbortIsClean(t *testing.T) {
 func assertSettled(t *testing.T, dir string) {
 	t.Helper()
 	if _, err := CurrentBranch(dir); err != nil {
-		t.Fatalf("the checkout was left mid-rebase: %v", err)
+		require.NoError(t, err, "the checkout was left mid-rebase: %v", err)
 	}
 	gd, err := GitDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	for _, name := range []string{"rebase-merge", "rebase-apply"} {
-		if _, statErr := os.Stat(filepath.Join(gd, name)); !os.IsNotExist(statErr) {
-			t.Fatalf("a rebase is still in progress (%s)", name)
+		{
+			_, statErr := os.Stat(filepath.Join(gd, name))
+			require.False(t, !os.IsNotExist(statErr), "a rebase is still in progress (%s)", name)
 		}
 	}
-	if err := EnsureClean(dir, nil); err != nil {
-		t.Fatalf("the checkout was left dirty: %v", err)
+	{
+		err := EnsureClean(dir, nil)
+		require.NoError(t, err, "the checkout was left dirty: %v", err)
 	}
 }
 
@@ -521,18 +451,13 @@ func TestEnsureCleanRefusesAnUnrelatedChange(t *testing.T) {
 	clone := cloneBus(t, bare)
 	write(t, clone, "stray.txt", "something else in flight\n")
 	err := EnsureClean(clone, []string{"from-ada/a.md"})
-	if err == nil {
-		t.Fatal("a checkout holding unrelated work passed; a rebase over it would sweep somebody's work into a note")
-	}
-	if !strings.Contains(err.Error(), "stray.txt") {
-		t.Fatalf("the refusal does not name the file in the way: %v", err)
-	}
-	if err := os.Remove(filepath.Join(clone, "stray.txt")); err != nil {
-		t.Fatal(err)
-	}
+	require.Error(t, err, "a checkout holding unrelated work passed; a rebase over it would sweep somebody's work into a note")
+	require.Contains(t, err.Error(), "stray.txt", "the refusal does not name the file in the way: %v", err)
+	require.NoError(t, os.Remove(filepath.Join(clone, "stray.txt")))
 	write(t, clone, "from-ada/a.md", noteText("Ada", "one", "body"))
-	if err := EnsureClean(clone, []string{"from-ada/a.md"}); err != nil {
-		t.Fatalf("the note being sent was treated as unrelated work: %v", err)
+	{
+		err := EnsureClean(clone, []string{"from-ada/a.md"})
+		require.NoError(t, err, "the note being sent was treated as unrelated work: %v", err)
 	}
 }
 
@@ -543,14 +468,11 @@ func TestCommitOnlyDoesNotPush(t *testing.T) {
 	clone := cloneBus(t, bare)
 	write(t, clone, "from-ada/a.md", noteText("Ada", "one", "body"))
 	res, err := CommitOnly(clone, testIdentity["Ada"], []string{"from-ada/a.md"}, "ada: one")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Pushed || res.Commit == "" {
-		t.Fatalf("res = %+v, want a commit and pushed=false", res)
-	}
-	if _, err := git(bare, "cat-file", "-e", "main:from-ada/a.md"); err == nil {
-		t.Fatal("--no-push pushed")
+	require.NoError(t, err)
+	require.False(t, res.Pushed || res.Commit == "", "res = %+v, want a commit and pushed=false", res)
+	{
+		_, err := git(bare, "cat-file", "-e", "main:from-ada/a.md")
+		require.Error(t, err, "--no-push pushed")
 	}
 }
 
@@ -559,14 +481,17 @@ func TestCommitRefusesWithoutAnIdentityOrPaths(t *testing.T) {
 	hermetic(t)
 	bare := bareBus(t)
 	clone := cloneBus(t, bare)
-	if _, err := CommitOnly(clone, Identity{}, []string{"x"}, "m"); err == nil {
-		t.Fatal("a commit with no identity was allowed")
+	{
+		_, err := CommitOnly(clone, Identity{}, []string{"x"}, "m")
+		require.Error(t, err, "a commit with no identity was allowed")
 	}
-	if _, err := CommitOnly(clone, testIdentity["Ada"], nil, "m"); err == nil {
-		t.Fatal("a commit with no paths was allowed")
+	{
+		_, err := CommitOnly(clone, testIdentity["Ada"], nil, "m")
+		require.Error(t, err, "a commit with no paths was allowed")
 	}
-	if _, err := CommitAndPush(clone, testIdentity["Ada"], []string{"x"}, "m", "origin", "main", 0); err == nil {
-		t.Fatal("an attempt budget of zero was accepted")
+	{
+		_, err := CommitAndPush(clone, testIdentity["Ada"], []string{"x"}, "m", "origin", "main", 0)
+		require.Error(t, err, "an attempt budget of zero was accepted")
 	}
 }
 
@@ -575,14 +500,14 @@ func TestIsRepoRootAndCurrentBranch(t *testing.T) {
 	hermetic(t)
 	bare := bareBus(t)
 	clone := cloneBus(t, bare)
-	if err := IsRepoRoot(clone); err != nil {
-		t.Fatal(err)
+	require.NoError(t, IsRepoRoot(clone))
+	{
+		b, err := CurrentBranch(clone)
+		require.False(t, err != nil || b != "main", "CurrentBranch = %q %v", b, err)
 	}
-	if b, err := CurrentBranch(clone); err != nil || b != "main" {
-		t.Fatalf("CurrentBranch = %q %v", b, err)
-	}
-	if err := IsRepoRoot(t.TempDir()); err == nil {
-		t.Fatal("a directory that is not a repository passed IsRepoRoot")
+	{
+		err := IsRepoRoot(t.TempDir())
+		require.Error(t, err, "a directory that is not a repository passed IsRepoRoot")
 	}
 }
 
@@ -597,42 +522,26 @@ func TestABusThatIsNotTheRepositoryRootIsRefused(t *testing.T) {
 	bare := bareBus(t)
 	clone := cloneBus(t, bare)
 	nested := filepath.Join(clone, "bus")
-	if err := os.MkdirAll(nested, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(nested, 0o755))
 	write(t, nested, ConfigName, rosterJSON)
 	err := IsRepoRoot(nested)
-	if err == nil {
-		t.Fatal("a bus one directory inside a repository passed; a diff from its cursor would name paths it then drops, and report nothing new over unread notes")
-	}
-	if !strings.Contains(err.Error(), "is not its root") {
-		t.Fatalf("the refusal does not say what is wrong: %v", err)
-	}
+	require.Error(t, err, "a bus one directory inside a repository passed; a diff from its cursor would name paths it then drops, and report nothing new over unread notes")
+	require.Contains(t, err.Error(), "is not its root", "the refusal does not say what is wrong: %v", err)
 	// And it names the root, so the caller can point --bus at it.
 	top, gerr := resolved(clone)
-	if gerr != nil {
-		t.Fatal(gerr)
-	}
-	if !strings.Contains(err.Error(), top) {
-		t.Fatalf("the refusal does not name the repository root %q: %v", top, err)
-	}
+	require.Equal(t, nil, gerr, gerr)
+	require.Contains(t, err.Error(), top, "the refusal does not name the repository root %q: %v", top, err)
 	// The change set the old code would have reported over that bus, for the record: git
 	// names the path from the repository root, and ChangedSince keeps only from-* paths.
 	write(t, nested, "from-bo/a.md", noteText("Bo", "one", "body"))
 	if _, err := CommitAndPush(clone, testIdentity["Bo"], []string{"bus"}, "bo: a nested note", "origin", "main", 3); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 	base, err := ResolveCommit(clone, "HEAD~1")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	changed, err := ChangedSince(clone, base)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(changed) != 0 {
-		t.Fatalf("the nested note was reported as a lane path: %v", changed)
-	}
+	require.NoError(t, err)
+	require.Equal(t, 0, len(changed), "the nested note was reported as a lane path: %v", changed)
 }
 
 // THE SECOND TEST THIS TOOL EXISTS FOR, and the one the concurrent test above cannot
@@ -649,23 +558,20 @@ func TestARejectedPushRecoversOnTheSecondAttempt(t *testing.T) {
 
 	write(t, theirs, "from-bo/b.md", noteText("Bo", "theirs", "body"))
 	if _, err := CommitAndPush(theirs, testIdentity["Bo"], []string{"from-bo/b.md"}, "bo: theirs", "origin", "main", 3); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 	write(t, mine, "from-ada/a.md", noteText("Ada", "mine", "body"))
 	res, err := CommitAndPush(mine, testIdentity["Ada"], []string{"from-ada/a.md"}, "ada: mine", "origin", "main", 3)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !res.Pushed {
-		t.Fatalf("res = %+v, want pushed", res)
-	}
+	require.NoError(t, err)
+	require.True(t, res.Pushed, "res = %+v, want pushed", res)
 	if res.Attempts != 2 {
-		t.Fatalf("res.Attempts = %d, want 2: the first push must be rejected and the second must land, or the retry loop is not what landed this", res.Attempts)
+		require.Equal(t, 2, res.Attempts, "res.Attempts = %d, want 2: the first push must be rejected and the second must land, or the retry loop is not what landed this", res.Attempts)
 	}
 	// Both notes are on the remote, and the rebase replayed mine on top rather than over.
 	for _, path := range []string{"from-ada/a.md", "from-bo/b.md"} {
-		if _, err := git(bare, "cat-file", "-e", "main:"+path); err != nil {
-			t.Fatalf("%s is not on the remote", path)
+		{
+			_, err := git(bare, "cat-file", "-e", "main:"+path)
+			require.NoError(t, err, "%s is not on the remote", path)
 		}
 	}
 	// A rebase REPLAYS a commit, which writes a new commit object, which git will not do
@@ -673,11 +579,12 @@ func TestARejectedPushRecoversOnTheSecondAttempt(t *testing.T) {
 	// machine's, and not an error on a bench whose git cannot guess one at all, which is
 	// what a CI runner is and how this was found.
 	who, err := git(bare, "log", "-1", "--format=%an <%ae>|%cn <%ce>", "main")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := "Ada <ada@example.com>|Ada <ada@example.com>"; strings.TrimSpace(who) != want {
-		t.Fatalf("the replayed commit is author|committer %q, want %q: the identity comes from the roster on every invocation that records one", strings.TrimSpace(who), want)
+	require.NoError(t, err)
+	{
+		want := "Ada <ada@example.com>|Ada <ada@example.com>"
+		if strings.TrimSpace(who) != want {
+			require.False(t, strings.TrimSpace(who) != want, "the replayed commit is author|committer %q, want %q: the identity comes from the roster on every invocation that records one", strings.TrimSpace(who), want)
+		}
 	}
 }
 
@@ -693,40 +600,41 @@ func TestSendRefusesABranchAheadOfTheRemoteWithSomebodyElsesWork(t *testing.T) {
 	clone := cloneBus(t, bare)
 
 	// Level with the remote: nothing to refuse.
-	if err := EnsureLevelWith(clone, "origin", "main"); err != nil {
-		t.Fatalf("a checkout level with its remote was refused: %v", err)
+	{
+		err := EnsureLevelWith(clone, "origin", "main")
+		require.NoError(t, err, "a checkout level with its remote was refused: %v", err)
 	}
 	// Somebody's unrelated work, committed here by hand -- so it carries no trailer -- and
 	// not pushed.
 	write(t, clone, "notes-to-self.txt", "half a thought\n")
 	commitByHand(t, clone, "notes-to-self.txt", "wip")
 	err := EnsureLevelWith(clone, "origin", "main")
-	if err == nil {
-		t.Fatal("a branch holding an unrelated local commit passed; a push would have published it")
-	}
+	require.Error(t, err, "a branch holding an unrelated local commit passed; a push would have published it")
 	for _, want := range []string{"ahead of origin/main", "by 1 commits", "1 of which the tool did not make", "git pull --rebase && git push"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("the refusal does not say %q: %v", want, err)
-		}
+		require.Contains(t, err.Error(), want, "the refusal does not say %q: %v", want, err)
 	}
 	// THE ADVICE HAS TO WORK. Somebody else pushes while this checkout is ahead, which is
 	// the state a bare `git push` cannot get out of -- and the sentence's own recovery does.
 	other := cloneBus(t, bare)
 	write(t, other, "from-bo/b.md", noteText("Bo", "theirs", "body"))
 	if _, err := CommitAndPush(other, testIdentity["Bo"], []string{"from-bo/b.md"}, "bo: theirs", "origin", "main", 3); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
-	if out, perr := git(clone, "push", "origin", "HEAD:refs/heads/main"); perr == nil {
-		t.Fatalf("the fixture is not the state the advice is about: a bare push succeeded\n%s", out)
+	{
+		out, perr := git(clone, "push", "origin", "HEAD:refs/heads/main")
+		require.False(t, perr == nil, "the fixture is not the state the advice is about: a bare push succeeded\n%s", out)
 	}
-	if out, rerr := git(clone, "-c", "user.name=Ada", "-c", "user.email=ada@example.com", "pull", "--rebase", "origin", "main"); rerr != nil {
-		t.Fatalf("`git pull --rebase`, which the refusal recommends, failed: %v\n%s", rerr, out)
+	{
+		out, rerr := git(clone, "-c", "user.name=Ada", "-c", "user.email=ada@example.com", "pull", "--rebase", "origin", "main")
+		require.Equal(t, nil, rerr, "`git pull --rebase`, which the refusal recommends, failed: %v\n%s", rerr, out)
 	}
-	if out, perr := git(clone, "push", "origin", "HEAD:refs/heads/main"); perr != nil {
-		t.Fatalf("`git push` after the rebase, which the refusal recommends, failed: %v\n%s", perr, out)
+	{
+		out, perr := git(clone, "push", "origin", "HEAD:refs/heads/main")
+		require.Equal(t, nil, perr, "`git push` after the rebase, which the refusal recommends, failed: %v\n%s", perr, out)
 	}
-	if err := EnsureLevelWith(clone, "origin", "main"); err != nil {
-		t.Fatalf("the advice ran to the end and the checkout is still refused: %v", err)
+	{
+		err := EnsureLevelWith(clone, "origin", "main")
+		require.NoError(t, err, "the advice ran to the end and the checkout is still refused: %v", err)
 	}
 }
 
@@ -746,38 +654,30 @@ func TestAnUnpushedCommitOfOurOwnIsCarriedRatherThanRefused(t *testing.T) {
 	// A push that cannot land: somebody else got there first and the budget is one attempt.
 	write(t, theirs, "from-bo/b.md", noteText("Bo", "theirs", "body"))
 	if _, err := CommitAndPush(theirs, testIdentity["Bo"], []string{"from-bo/b.md"}, "bo: theirs", "origin", "main", 3); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 	write(t, mine, "from-ada/a.md", noteText("Ada", "mine", "body"))
 	lost, err := CommitAndPush(mine, testIdentity["Ada"], []string{"from-ada/a.md"},
 		WithTrailer("ada: mine", TrailerSend+" ada-aaaaaaaaaaaa"), "origin", "main", 1)
-	if err == nil {
-		t.Fatal("the fixture did not lose its push")
-	}
-	if !strings.Contains(err.Error(), "git pull --rebase && git push") {
-		t.Fatalf("the refusal offers no recovery that works: %v", err)
-	}
-	if lost.Commit == "" {
-		t.Fatal("the lost push named no commit")
-	}
+	require.Error(t, err, "the fixture did not lose its push")
+	require.False(t, !strings.Contains(err.Error(), "git pull --rebase && git push"), "the refusal offers no recovery that works: %v", err)
+	require.False(t, lost.Commit == "", "the lost push named no commit")
 
 	// The next run. This is where the tool used to refuse to run at all.
-	if err := EnsureLevelWith(mine, "origin", "main"); err != nil {
-		t.Fatalf("the guard refused this tool's OWN unpushed commit, which is the wedge: %v", err)
+	{
+		err := EnsureLevelWith(mine, "origin", "main")
+		require.NoError(t, err, "the guard refused this tool's OWN unpushed commit, which is the wedge: %v", err)
 	}
 	write(t, mine, "from-ada/c.md", noteText("Ada", "next", "body"))
 	res, err := CommitAndPush(mine, testIdentity["Ada"], []string{"from-ada/c.md"},
 		WithTrailer("ada: next", TrailerSend+" ada-cccccccccccc"), "origin", "main", 25)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !res.Pushed {
-		t.Fatalf("res = %+v, want pushed", res)
-	}
+	require.NoError(t, err)
+	require.True(t, res.Pushed, "res = %+v, want pushed", res)
 	// BOTH notes are on the bus: the one whose push was lost was carried by this one.
 	for _, p := range []string{"from-ada/a.md", "from-ada/c.md", "from-bo/b.md"} {
-		if _, cerr := git(bare, "cat-file", "-e", "main:"+p); cerr != nil {
-			t.Fatalf("%s is not on the remote; the lost note was not carried", p)
+		{
+			_, cerr := git(bare, "cat-file", "-e", "main:"+p)
+			require.Equal(t, nil, cerr, "%s is not on the remote; the lost note was not carried", p)
 		}
 	}
 }
@@ -786,11 +686,13 @@ func TestAnUnpushedCommitOfOurOwnIsCarriedRatherThanRefused(t *testing.T) {
 // branch-ahead guard sees work this tool did not make.
 func commitByHand(t *testing.T, dir, path, message string) {
 	t.Helper()
-	if out, err := git(dir, "add", "--", path); err != nil {
-		t.Fatalf("git add: %v %s", err, out)
+	{
+		out, err := git(dir, "add", "--", path)
+		require.NoError(t, err, "git add: %v %s", err, out)
 	}
-	if out, err := git(dir, "-c", "user.name=Someone", "-c", "user.email=someone@example.com", "commit", "-q", "-m", message); err != nil {
-		t.Fatalf("git commit: %v %s", err, out)
+	{
+		out, err := git(dir, "-c", "user.name=Someone", "-c", "user.email=someone@example.com", "commit", "-q", "-m", message)
+		require.NoError(t, err, "git commit: %v %s", err, out)
 	}
 }
 
@@ -803,34 +705,25 @@ func TestEveryCommitCarriesTheTrailer(t *testing.T) {
 	clone := cloneBus(t, bare)
 	write(t, clone, "from-ada/a.md", noteText("Ada", "one", "body"))
 	if _, err := CommitOnly(clone, testIdentity["Ada"], []string{"from-ada/a.md"}, "ada: one"); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 	body, err := git(clone, "log", "-1", "--format=%B")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !HasTrailer(body) {
-		t.Fatalf("a commit made through this tool carries no %s trailer:\n%s", TrailerKey, body)
-	}
+	require.NoError(t, err)
+	require.False(t, !HasTrailer(body), "a commit made through this tool carries no %s trailer:\n%s", TrailerKey, body)
 	// A caller that named its own keeps it, and it is not doubled.
 	write(t, clone, "from-ada/b.md", noteText("Ada", "two", "body"))
 	if _, err := CommitOnly(clone, testIdentity["Ada"], []string{"from-ada/b.md"}, WithTrailer("ada: two", TrailerSend+" ada-bbbbbbbbbbbb")); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 	body, err = git(clone, "log", "-1", "--format=%B")
-	if err != nil {
-		t.Fatal(err)
+	require.NoError(t, err)
+	{
+		n := strings.Count(body, TrailerKey+":")
+		require.Equal(t, 1, n, "the message carries %d trailers, want 1:\n%s", n, body)
 	}
-	if n := strings.Count(body, TrailerKey+":"); n != 1 {
-		t.Fatalf("the message carries %d trailers, want 1:\n%s", n, body)
-	}
-	if !strings.Contains(body, TrailerSend+" ada-bbbbbbbbbbbb") {
-		t.Fatalf("the caller's own trailer was replaced:\n%s", body)
-	}
+	require.Contains(t, body, TrailerSend+" ada-bbbbbbbbbbbb", "the caller's own trailer was replaced:\n%s", body)
 	// And a message with no trailer is not one of ours.
-	if HasTrailer("ada: a note somebody wrote by hand") {
-		t.Fatal("a message with no trailer was read as this tool's own")
-	}
+	require.False(t, HasTrailer("ada: a note somebody wrote by hand"), "a message with no trailer was read as this tool's own")
 }
 
 // The two flags that become git's own argv. A value beginning with a dash is an OPTION to
@@ -840,24 +733,28 @@ func TestRemoteAndBranchAreRefusedWhenTheyCouldBeOptions(t *testing.T) {
 	hermetic(t)
 	bad := []string{"--upload-pack=touch /tmp/pwned", "-o", "origin;rm -rf /", "origin main", "ori\ngin", ""}
 	for _, s := range bad {
-		if err := ValidGitArg("remote", s); err == nil {
-			t.Fatalf("--remote %q was accepted", s)
+		{
+			err := ValidGitArg("remote", s)
+			require.Error(t, err, "--remote %q was accepted", s)
 		}
-		if err := ValidGitArg("branch", s); err == nil {
-			t.Fatalf("--branch %q was accepted", s)
+		{
+			err := ValidGitArg("branch", s)
+			require.Error(t, err, "--branch %q was accepted", s)
 		}
 	}
 	for _, s := range []string{"origin", "main", "release/2026.09", "a_b-c.d", "upstream2"} {
-		if err := ValidGitArg("remote", s); err != nil {
-			t.Fatalf("%q is a name a bus uses and was refused: %v", s, err)
+		{
+			err := ValidGitArg("remote", s)
+			require.NoError(t, err, "%q is a name a bus uses and was refused: %v", s, err)
 		}
 	}
 	// And the package refuses it too, at the last place these become argv.
 	bare := bareBus(t)
 	clone := cloneBus(t, bare)
 	write(t, clone, "from-ada/a.md", noteText("Ada", "one", "body"))
-	if _, err := CommitAndPush(clone, testIdentity["Ada"], []string{"from-ada/a.md"}, "m", "--upload-pack=id", "main", 3); err == nil {
-		t.Fatal("CommitAndPush accepted a remote that is an option to git")
+	{
+		_, err := CommitAndPush(clone, testIdentity["Ada"], []string{"from-ada/a.md"}, "m", "--upload-pack=id", "main", 3)
+		require.Error(t, err, "CommitAndPush accepted a remote that is an option to git")
 	}
 }
 
@@ -872,37 +769,35 @@ func TestEnsureCleanReadsARenameAsThePairItIs(t *testing.T) {
 	clone := cloneBus(t, bare)
 	write(t, clone, "from-ada/before.md", noteText("Ada", "one", "body"))
 	if _, err := CommitAndPush(clone, testIdentity["Ada"], []string{"from-ada/before.md"}, "ada: one", "origin", "main", 3); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
-	if out, err := git(clone, "mv", "from-ada/before.md", "from-ada/after.md"); err != nil {
-		t.Fatalf("git mv: %v %s", err, out)
+	{
+		out, err := git(clone, "mv", "from-ada/before.md", "from-ada/after.md")
+		require.NoError(t, err, "git mv: %v %s", err, out)
 	}
 	err := EnsureClean(clone, []string{"from-ada/a-note-being-sent.md"})
-	if err == nil {
-		t.Fatal("a checkout holding a rename passed as clean")
-	}
+	require.Error(t, err, "a checkout holding a rename passed as clean")
 	// One change, named as the pair it is: both halves, in one entry, with nothing eaten
 	// off the front of the old path.
-	if !strings.HasSuffix(err.Error(), ": from-ada/before.md -> from-ada/after.md") {
-		t.Fatalf("the refusal does not name the rename as one change over two paths: %v", err)
-	}
-	if strings.Contains(err.Error(), ",") {
-		t.Fatalf("the old path was read as a second, separate change: %v", err)
-	}
+	require.False(t, !strings.HasSuffix(err.Error(), ": from-ada/before.md -> from-ada/after.md"), "the refusal does not name the rename as one change over two paths: %v", err)
+	require.NotContains(t, err.Error(), ",", "the old path was read as a second, separate change: %v", err)
 	// A short old path is the case that used to vanish: a record under four characters is
 	// skipped, so the rename was reported as clean.
-	if out, err := git(clone, "mv", "from-ada/after.md", "from-ada/before.md"); err != nil {
-		t.Fatalf("git mv back: %v %s", err, out)
+	{
+		out, err := git(clone, "mv", "from-ada/after.md", "from-ada/before.md")
+		require.NoError(t, err, "git mv back: %v %s", err, out)
 	}
 	write(t, clone, "x.md", "x\n")
 	if _, err := CommitAndPush(clone, testIdentity["Ada"], []string{"x.md"}, "ada: x", "origin", "main", 3); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
-	if out, err := git(clone, "mv", "x.md", "y.md"); err != nil {
-		t.Fatalf("git mv: %v %s", err, out)
+	{
+		out, err := git(clone, "mv", "x.md", "y.md")
+		require.NoError(t, err, "git mv: %v %s", err, out)
 	}
-	if err := EnsureClean(clone, nil); err == nil {
-		t.Fatal("a rename whose old path is three characters long was reported as a clean checkout")
+	{
+		err := EnsureClean(clone, nil)
+		require.Error(t, err, "a rename whose old path is three characters long was reported as a clean checkout")
 	}
 }
 
@@ -924,9 +819,7 @@ func TestIssue462(t *testing.T) {
 	write(t, clone, "from-ada/BEAT", "2026-09-15T12:00:00Z abcdef1\n")
 
 	err := EnsureClean(clone, []string{"from-ada/a.md"})
-	if err != nil {
-		t.Fatalf("EnsureClean refused over the wait's own BEAT in the same lane: %v", err)
-	}
+	require.NoError(t, err, "EnsureClean refused over the wait's own BEAT in the same lane: %v", err)
 }
 
 // THE RETRY LOOP WAITS BETWEEN ATTEMPTS, and it did not before. Every retry here was
@@ -940,34 +833,29 @@ func TestIssue462(t *testing.T) {
 // test that actually slept would be a test that takes a second to say what a recorded
 // duration says at once.
 func TestThePushRetryWaitsBetweenAttempts(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	var slept []time.Duration
-	real := sleepBetweenAttempts
-	sleepBetweenAttempts = func(d time.Duration) { slept = append(slept, d) }
-	t.Cleanup(func() { sleepBetweenAttempts = real })
+	sleep := func(d time.Duration) { slept = append(slept, d) }
 
 	bare := bareBus(t)
 	mine := cloneBus(t, bare)
 	theirs := cloneBus(t, bare)
 	write(t, theirs, "from-bo/b.md", noteText("Bo", "theirs", "body"))
 	if _, err := CommitAndPush(theirs, testIdentity["Bo"], []string{"from-bo/b.md"}, "bo: theirs", "origin", "main", 3); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 	write(t, mine, "from-ada/a.md", noteText("Ada", "mine", "body"))
-	res, err := CommitAndPush(mine, testIdentity["Ada"], []string{"from-ada/a.md"}, "ada: mine", "origin", "main", 3)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !res.Pushed || res.Attempts != 2 {
-		t.Fatalf("res = %+v, want pushed on the second attempt", res)
-	}
+	res, err := commitAndPushWithSleep(mine, testIdentity["Ada"], []string{"from-ada/a.md"}, "ada: mine", "origin", "main", 3, sleep)
+	require.NoError(t, err)
+	require.False(t, !res.Pushed || res.Attempts != 2, "res = %+v, want pushed on the second attempt", res)
 	// One rejected push, so one wait: before the fetch that takes what arrived, and never
 	// after the push that lands.
 	if len(slept) != 1 {
-		t.Fatalf("the loop waited %d times for one rejected push, want 1: %v", len(slept), slept)
+		require.Equal(t, 1, len(slept), "the loop waited %d times for one rejected push, want 1: %v", len(slept), slept)
 	}
 	if slept[0] < backoffStep || slept[0] > backoffStep+backoffJitter {
-		t.Fatalf("waited %v after the first attempt, want between %v and %v", slept[0], backoffStep, backoffStep+backoffJitter)
+		require.False(t, slept[0] < backoffStep || slept[0] > backoffStep+backoffJitter, "waited %v after the first attempt, want between %v and %v", slept[0], backoffStep, backoffStep+backoffJitter)
 	}
 }
 
@@ -980,15 +868,14 @@ func TestPushBackoffGrowsIsJitteredAndIsCapped(t *testing.T) {
 		lo := time.Duration(attempt) * backoffStep
 		for range 50 {
 			d := pushBackoff(attempt)
-			if d < lo || d > lo+backoffJitter || d > backoffCap {
-				t.Fatalf("pushBackoff(%d) = %v, want between %v and %v and at most %v", attempt, d, lo, lo+backoffJitter, backoffCap)
-			}
+			require.False(t, d < lo || d > lo+backoffJitter || d > backoffCap, "pushBackoff(%d) = %v, want between %v and %v and at most %v", attempt, d, lo, lo+backoffJitter, backoffCap)
 		}
 	}
 	// The cap holds however many attempts a caller asks for.
 	for _, attempt := range []int{20, 1000} {
-		if d := pushBackoff(attempt); d != backoffCap {
-			t.Fatalf("pushBackoff(%d) = %v, want the cap %v", attempt, d, backoffCap)
+		{
+			d := pushBackoff(attempt)
+			require.Equal(t, backoffCap, d, "pushBackoff(%d) = %v, want the cap %v", attempt, d, backoffCap)
 		}
 	}
 	// And it is jittered: fifty draws at one attempt are not one value. (The chance of a
@@ -998,7 +885,7 @@ func TestPushBackoffGrowsIsJitteredAndIsCapped(t *testing.T) {
 		seen[pushBackoff(1)] = true
 	}
 	if len(seen) < 2 {
-		t.Fatalf("fifty draws gave %d distinct waits; a fixed delay leaves two benches that collided colliding again", len(seen))
+		require.False(t, len(seen) < 2, "fifty draws gave %d distinct waits; a fixed delay leaves two benches that collided colliding again", len(seen))
 	}
 }
 
@@ -1018,21 +905,17 @@ func TestFetchAndFastForwardMovesTheCheckoutOnlyWhenItCan(t *testing.T) {
 
 	// Nothing has happened: the fetch runs and the checkout stays where it is.
 	moved, err := FetchAndFastForward(reader, "origin", "main")
-	if err != nil || moved {
-		t.Fatalf("a quiet bus: moved=%t err=%v, want false and no error", moved, err)
-	}
+	require.False(t, err != nil || moved, "a quiet bus: moved=%t err=%v, want false and no error", moved, err)
 
 	// A note lands from somebody else: the reader is BEHIND and is fast-forwarded onto it.
 	write(t, writer, "from-bo/note.md", noteText("Bo", "the gate", "Is it on the queue?"))
 	if _, err := CommitAndPush(writer, testIdentity["Bo"], []string{"from-bo/note.md"}, "bo: the gate", "origin", "main", 3); err != nil {
-		t.Fatalf("the other bench could not send: %v", err)
+		require.NoError(t, err, "the other bench could not send: %v", err)
 	}
 	moved, err = FetchAndFastForward(reader, "origin", "main")
-	if err != nil || !moved {
-		t.Fatalf("a note on the bus: moved=%t err=%v, want true and no error", moved, err)
-	}
+	require.False(t, err != nil || !moved, "a note on the bus: moved=%t err=%v, want true and no error", moved, err)
 	if _, err := os.Stat(filepath.Join(reader, "from-bo", "note.md")); err != nil {
-		t.Fatalf("the checkout was not moved onto the note: %v", err)
+		require.NoError(t, err, "the checkout was not moved onto the note: %v", err)
 	}
 
 	// A commit of the reader's OWN that has not been pushed: it is AHEAD, there is nothing
@@ -1040,23 +923,17 @@ func TestFetchAndFastForwardMovesTheCheckoutOnlyWhenItCan(t *testing.T) {
 	write(t, reader, "from-ada/mine.md", noteText("Ada", "mine", "Not pushed yet."))
 	commitByHand(t, reader, "from-ada/mine.md", "ada: not pushed")
 	moved, err = FetchAndFastForward(reader, "origin", "main")
-	if err != nil || moved {
-		t.Fatalf("a checkout ahead: moved=%t err=%v, want false and no error", moved, err)
-	}
+	require.False(t, err != nil || moved, "a checkout ahead: moved=%t err=%v, want false and no error", moved, err)
 
 	// And when the two have both moved, a poll will not merge or rebase to reconcile them:
 	// it says so, and names the recovery.
 	write(t, writer, "from-bo/second.md", noteText("Bo", "second", "And another."))
 	if _, err := CommitAndPush(writer, testIdentity["Bo"], []string{"from-bo/second.md"}, "bo: second", "origin", "main", 3); err != nil {
-		t.Fatalf("the other bench could not send: %v", err)
+		require.NoError(t, err, "the other bench could not send: %v", err)
 	}
 	moved, err = FetchAndFastForward(reader, "origin", "main")
-	if err == nil {
-		t.Fatalf("a diverged checkout was fast-forwarded anyway: moved=%t", moved)
-	}
+	require.Error(t, err, "a diverged checkout was fast-forwarded anyway: moved=%t", moved)
 	for _, want := range []string{"both moved", "git pull --rebase"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("the refusal does not say %q: %v", want, err)
-		}
+		require.Contains(t, err.Error(), want, "the refusal does not say %q: %v", want, err)
 	}
 }

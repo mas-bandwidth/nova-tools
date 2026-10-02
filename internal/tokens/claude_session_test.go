@@ -10,6 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // fixtureSession is five turns of a Claude Code window, as the transcript writes them: an
@@ -57,9 +60,7 @@ func writeFixtureSession(t *testing.T, dir string) string {
 		"",
 	}, "\n")
 	path := filepath.Join(dir, "session.jsonl")
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
 	return path
 }
 
@@ -68,9 +69,7 @@ func TestReadClaudeSessionMatchesTheHandCount(t *testing.T) {
 	t.Parallel()
 
 	sum, err := ReadClaudeSession(writeFixtureSession(t, t.TempDir()))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	for _, c := range []struct {
 		name      string
 		got, want int64
@@ -83,18 +82,12 @@ func TestReadClaudeSessionMatchesTheHandCount(t *testing.T) {
 		{"weighted", sum.Weighted(), wantWeighted},
 		{"avg_context", sum.AvgContext(), wantAvgContext},
 	} {
-		if c.got != c.want {
-			t.Errorf("%s=%d, want %d (the hand count)", c.name, c.got, c.want)
-		}
+		assert.EqualValuesf(t, c.want, c.got, "%s=%d, want %d (the hand count)", c.name, c.got, c.want)
 	}
 	want := fmt.Sprintf("SESSION turns=%d input=%d cache_write=%d cache_read=%d output=%d weighted=%d avg_context=%d",
 		wantTurns, wantInput, wantCacheWrite, wantCacheRead, wantOutput, wantWeighted, wantAvgContext)
-	if sum.Line() != want {
-		t.Errorf("the line is\n  %s\nwant\n  %s", sum.Line(), want)
-	}
-	if sum.Unstamped != 0 {
-		t.Errorf("unstamped=%d, want 0: every turn in the fixture carries a stamp", sum.Unstamped)
-	}
+	assert.EqualValuesf(t, want, sum.Line(), "the line is\n  %s\nwant\n  %s", sum.Line(), want)
+	assert.EqualValuesf(t, 0, sum.Unstamped, "unstamped=%d, want 0: every turn in the fixture carries a stamp", sum.Unstamped)
 }
 
 // TestSessionRowIsTheCoordinatorsOwnLine: the fold writes the coordinator as a model of its
@@ -104,35 +97,24 @@ func TestSessionRowIsTheCoordinatorsOwnLine(t *testing.T) {
 	t.Parallel()
 
 	sum, err := ReadClaudeSession(writeFixtureSession(t, t.TempDir()))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	days := sum.DayList()
-	if len(days) != 1 || days[0] != "2026-09-16" {
-		t.Fatalf("days=%v, want one day 2026-09-16", days)
-	}
+	require.Falsef(t, len(days) != 1 || days[0] != "2026-09-16", "days=%v, want one day 2026-09-16", days)
 	rows := sum.Rows(days[0])
-	if len(rows) != 1 {
-		t.Fatalf("rows=%d, want one row for the one model the transcript names", len(rows))
-	}
+	require.Lenf(t, rows, 1, "rows=%d, want one row for the one model the transcript names", len(rows))
 	row := rows[0]
-	if row.Model != "claude-opus-5/coordinator" || row.Repo != CoordinatorRepo {
-		t.Errorf("row is (%s, %s), want (claude-opus-5/coordinator, %s): the model the transcript names", row.Model, row.Repo, CoordinatorRepo)
-	}
-	if row.Counts.Cell(Reasoning) != Dash {
-		t.Errorf("the reasoning cell is %q, want %q: a transcript reports none", row.Counts.Cell(Reasoning), Dash)
-	}
+	assert.Falsef(t, row.Model != "claude-opus-5/coordinator" || row.Repo != CoordinatorRepo, "row is (%s, %s), want (claude-opus-5/coordinator, %s): the model the transcript names", row.Model, row.Repo, CoordinatorRepo)
+	assert.EqualValuesf(t, Dash, row.Counts.Cell(Reasoning), "the reasoning cell is %q, want %q: a transcript reports none", row.Counts.Cell(Reasoning), Dash)
 	for _, c := range []struct {
 		t    Type
 		want string
 	}{{Input, "34"}, {CacheWrite, "2650"}, {CacheRead, "86000"}, {Output, "1575"}} {
-		if got := row.Counts.Cell(c.t); got != c.want {
-			t.Errorf("%s cell=%s, want %s", TypeNames[c.t], got, c.want)
+		{
+			got := row.Counts.Cell(c.t)
+			assert.EqualValuesf(t, c.want, got, "%s cell=%s, want %s", TypeNames[c.t], got, c.want)
 		}
 	}
-	if len(row.Sources) != 1 || row.Sources[0] != SessionLabel {
-		t.Errorf("sources=%v, want [%s]: every number names the flag that wrote it", row.Sources, SessionLabel)
-	}
+	assert.Falsef(t, len(row.Sources) != 1 || row.Sources[0] != SessionLabel, "sources=%v, want [%s]: every number names the flag that wrote it", row.Sources, SessionLabel)
 }
 
 // TestSessionSplitsAcrossMidnight: a window that runs past midnight is two rows on two days,
@@ -146,23 +128,16 @@ func TestSessionSplitsAcrossMidnight(t *testing.T) {
 {"timestamp":"2026-09-17T00:01:00Z","message":{"id":"b","model":"m","usage":{"input_tokens":20,"output_tokens":2}}}
 {"message":{"id":"c","model":"m","usage":{"input_tokens":5,"output_tokens":5}}}
 `
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
 	sum, err := ReadClaudeSession(path)
-	if err != nil {
-		t.Fatal(err)
+	require.NoError(t, err)
+	{
+		got := sum.DayList()
+		require.Falsef(t, len(got) != 2 || got[0] != "2026-09-16" || got[1] != "2026-09-17", "days=%v, want the two days the turns fell on", got)
 	}
-	if got := sum.DayList(); len(got) != 2 || got[0] != "2026-09-16" || got[1] != "2026-09-17" {
-		t.Fatalf("days=%v, want the two days the turns fell on", got)
-	}
-	if sum.Days["2026-09-16"].Input != 10 || sum.Days["2026-09-17"].Input != 20 {
-		t.Errorf("the days carry %d and %d, want 10 and 20", sum.Days["2026-09-16"].Input, sum.Days["2026-09-17"].Input)
-	}
+	assert.Falsef(t, sum.Days["2026-09-16"].Input != 10 || sum.Days["2026-09-17"].Input != 20, "the days carry %d and %d, want 10 and 20", sum.Days["2026-09-16"].Input, sum.Days["2026-09-17"].Input)
 	// The undated turn is in the totals and in no day, and it is COUNTED so a reader knows.
-	if sum.Turns != 3 || sum.Input != 35 || sum.Unstamped != 1 {
-		t.Errorf("turns=%d input=%d unstamped=%d, want 3, 35 and 1", sum.Turns, sum.Input, sum.Unstamped)
-	}
+	assert.Falsef(t, sum.Turns != 3 || sum.Input != 35 || sum.Unstamped != 1, "turns=%d input=%d unstamped=%d, want 3, 35 and 1", sum.Turns, sum.Input, sum.Unstamped)
 }
 
 // TestSessionRowsAreBookedUnderTheModelTheTranscriptNames: a transcript of one model is that
@@ -173,48 +148,40 @@ func TestSessionRowsAreBookedUnderTheModelTheTranscriptNames(t *testing.T) {
 
 	write := func(body string) string {
 		path := filepath.Join(t.TempDir(), "s.jsonl")
-		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
 		return path
 	}
 
 	sum, err := ReadClaudeSession(write(`{"timestamp":"2026-09-16T09:00:00Z","message":{"id":"a","model":"other-model-9","usage":{"input_tokens":3,"output_tokens":1}}}
 {"timestamp":"2026-09-16T09:01:00Z","message":{"id":"b","model":"claude-opus-5","usage":{"input_tokens":4,"output_tokens":2}}}
 `))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if why := sum.UnbookableReason(); why != "" {
-		t.Fatalf("a transcript naming a model on every turn is bookable, got %q", why)
+	require.NoError(t, err)
+	{
+		why := sum.UnbookableReason()
+		require.EqualValuesf(t, "", why, "a transcript naming a model on every turn is bookable, got %q", why)
 	}
 	rows := sum.Rows("2026-09-16")
-	if len(rows) != 2 || rows[0].Model != "claude-opus-5/coordinator" || rows[1].Model != "other-model-9/coordinator" {
-		t.Fatalf("rows=%+v, want one row per model, sorted", rows)
-	}
-	if rows[0].Counts.Cell(Input) != "4" || rows[1].Counts.Cell(Input) != "3" {
-		t.Errorf("each model's row carries its own turns: %s and %s, want 4 and 3", rows[0].Counts.Cell(Input), rows[1].Counts.Cell(Input))
-	}
+	require.Falsef(t, len(rows) != 2 || rows[0].Model != "claude-opus-5/coordinator" || rows[1].Model != "other-model-9/coordinator", "rows=%+v, want one row per model, sorted", rows)
+	assert.Falsef(t, rows[0].Counts.Cell(Input) != "4" || rows[1].Counts.Cell(Input) != "3", "each model's row carries its own turns: %s and %s, want 4 and 3", rows[0].Counts.Cell(Input), rows[1].Counts.Cell(Input))
 
 	none, err := ReadClaudeSession(write(`{"timestamp":"2026-09-16T09:00:00Z","message":{"id":"a","usage":{"input_tokens":3,"output_tokens":1}}}
 `))
-	if err != nil {
-		t.Fatal(err)
+	require.NoError(t, err)
+	{
+		why := none.UnbookableReason()
+		assert.Truef(t, strings.Contains(why, "names no model on any of its 1 turns"), "a transcript that names no model is unbookable with a named reason, got %q", why)
 	}
-	if why := none.UnbookableReason(); !strings.Contains(why, "names no model on any of its 1 turns") {
-		t.Errorf("a transcript that names no model is unbookable with a named reason, got %q", why)
-	}
-	if got := none.Rows("2026-09-16"); len(got) != 0 {
-		t.Errorf("a transcript that names no model has no rows, got %+v", got)
+	{
+		got := none.Rows("2026-09-16")
+		assert.Lenf(t, got, 0, "a transcript that names no model has no rows, got %+v", got)
 	}
 
 	some, err := ReadClaudeSession(write(`{"timestamp":"2026-09-16T09:00:00Z","message":{"id":"a","model":"m","usage":{"input_tokens":3,"output_tokens":1}}}
 {"timestamp":"2026-09-16T09:01:00Z","message":{"id":"b","usage":{"input_tokens":4,"output_tokens":2}}}
 `))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if why := some.UnbookableReason(); !strings.Contains(why, "names no model on 1 of its 2 turns") {
-		t.Errorf("a turn with no model is not booked under another's, got %q", why)
+	require.NoError(t, err)
+	{
+		why := some.UnbookableReason()
+		assert.Truef(t, strings.Contains(why, "names no model on 1 of its 2 turns"), "a turn with no model is not booked under another's, got %q", why)
 	}
 }

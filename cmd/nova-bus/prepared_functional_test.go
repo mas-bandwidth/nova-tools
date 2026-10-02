@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/stretchr/testify/require"
 )
 
 func TestPrepareDecidingTests(t *testing.T) {
@@ -19,30 +20,23 @@ func TestPrepareDecidingTests(t *testing.T) {
 	scratch := t.TempDir()
 
 	draftFile := filepath.Join(scratch, "draft.md")
-	if err := os.WriteFile(draftFile, []byte("# On the merge queue\n\nFrom: Ada\nTo: Bo\n\nThe gate never ran.\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(draftFile, []byte("# On the merge queue\n\nFrom: Ada\nTo: Bo\n\nThe gate never ran.\n"), 0o644))
 
 	// 1. Prepare with tolerances outputs valid JSON and notes to stderr
 	r := invoke(t, "", "prepare", "--bus", checkout, "--as", "Ada", "--file", draftFile)
 	r.mustCode(t, 0).mustContain(t, "stderr", "PREPARE NOTE")
 
 	var art bus.PreparedArtifact
-	if err := json.Unmarshal([]byte(strings.TrimSpace(r.stdout)), &art); err != nil {
-		t.Fatalf("json.Unmarshal prepare output failed: %v\nstdout: %s", err, r.stdout)
+	{
+		err := json.Unmarshal([]byte(strings.TrimSpace(r.stdout)), &art)
+		require.NoErrorf(t, err, "json.Unmarshal prepare output failed: %v\nstdout: %s", err, r.stdout)
 	}
-	if art.Schema != bus.PreparedSchema {
-		t.Fatalf("schema = %q, want %q", art.Schema, bus.PreparedSchema)
-	}
-	if !strings.HasSuffix(art.Note, "\n") {
-		t.Fatal("prepared note must end with LF")
-	}
+	require.Equalf(t, bus.PreparedSchema, art.Schema, "schema = %q, want %q", art.Schema, bus.PreparedSchema)
+	require.True(t, strings.HasSuffix(art.Note, "\n"), "prepared note must end with LF")
 
 	// 2. Draft refusal exits 1 with PREPARE FAIL
 	badDraft := filepath.Join(scratch, "bad-draft.md")
-	if err := os.WriteFile(badDraft, []byte("From: Ada\nSubject: No To line\n\nBody.\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(badDraft, []byte("From: Ada\nSubject: No To line\n\nBody.\n"), 0o644))
 	rBad := invoke(t, "", "prepare", "--bus", checkout, "--as", "Ada", "--file", badDraft)
 	rBad.mustCode(t, 1).mustContain(t, "stderr", "PREPARE FAIL")
 
@@ -58,9 +52,7 @@ func TestSendPreparedDecidingTests(t *testing.T) {
 	scratch := t.TempDir()
 
 	draftFile := filepath.Join(scratch, "draft.md")
-	if err := os.WriteFile(draftFile, []byte("From: Ada\nTo: Bo\nSubject: Prepared delivery\n\nA test note.\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(draftFile, []byte("From: Ada\nTo: Bo\nSubject: Prepared delivery\n\nA test note.\n"), 0o644))
 
 	// Prepare the artifact
 	rPrep := invoke(t, "", "prepare", "--bus", checkout, "--as", "Ada", "--file", draftFile)
@@ -68,9 +60,7 @@ func TestSendPreparedDecidingTests(t *testing.T) {
 	prepJSON := strings.TrimSpace(rPrep.stdout)
 
 	artFile := filepath.Join(scratch, "prepared.json")
-	if err := os.WriteFile(artFile, []byte(prepJSON), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(artFile, []byte(prepJSON), 0o644))
 
 	// 1. Fresh publication with --prepared
 	rSend := invoke(t, "", "send", "--bus", checkout, "--as", "Ada", "--remote", "origin", "--branch", "main", "--prepared", artFile)
@@ -82,9 +72,7 @@ func TestSendPreparedDecidingTests(t *testing.T) {
 
 	// 3. Stdin delivery with --prepared-stdin
 	draftFile2 := filepath.Join(scratch, "draft2.md")
-	if err := os.WriteFile(draftFile2, []byte("From: Ada\nTo: Bo\nSubject: Prepared stdin\n\nSecond test note.\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(draftFile2, []byte("From: Ada\nTo: Bo\nSubject: Prepared stdin\n\nSecond test note.\n"), 0o644))
 	rPrep2 := invoke(t, "", "prepare", "--bus", checkout, "--as", "Ada", "--file", draftFile2)
 	rPrep2.mustCode(t, 0)
 	prepJSON2 := strings.TrimSpace(rPrep2.stdout)
@@ -94,24 +82,19 @@ func TestSendPreparedDecidingTests(t *testing.T) {
 
 	// 4. Dirty checkout refusal preserves dirty file
 	draftFileDirty := filepath.Join(scratch, "draft-dirty.md")
-	if err := os.WriteFile(draftFileDirty, []byte("From: Ada\nTo: Bo\nSubject: Dirty test note\n\nFresh unpublished note.\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(draftFileDirty, []byte("From: Ada\nTo: Bo\nSubject: Dirty test note\n\nFresh unpublished note.\n"), 0o644))
 	rPrepDirty := invoke(t, "", "prepare", "--bus", checkout, "--as", "Ada", "--file", draftFileDirty)
 	rPrepDirty.mustCode(t, 0)
 	artFileDirty := filepath.Join(scratch, "prepared-dirty.json")
-	if err := os.WriteFile(artFileDirty, []byte(strings.TrimSpace(rPrepDirty.stdout)), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(artFileDirty, []byte(strings.TrimSpace(rPrepDirty.stdout)), 0o644))
 
 	dirtyFile := filepath.Join(checkout, "dirty.txt")
-	if err := os.WriteFile(dirtyFile, []byte("dirty work\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(dirtyFile, []byte("dirty work\n"), 0o644))
 	rDirty := invoke(t, "", "send", "--bus", checkout, "--as", "Ada", "--remote", "origin", "--branch", "main", "--prepared", artFileDirty)
 	rDirty.mustCode(t, 1).mustContain(t, "stderr", "SEND FAIL")
-	if data, err := os.ReadFile(dirtyFile); err != nil || string(data) != "dirty work\n" {
-		t.Fatal("failed to preserve dirty file")
+	{
+		data, err := os.ReadFile(dirtyFile)
+		require.False(t, err != nil || string(data) != "dirty work\n", "failed to preserve dirty file")
 	}
 	os.Remove(dirtyFile)
 
@@ -121,15 +104,11 @@ func TestSendPreparedDecidingTests(t *testing.T) {
 
 	// 6. Child death recovery: kill after commit before push
 	draftFile3 := filepath.Join(scratch, "draft3.md")
-	if err := os.WriteFile(draftFile3, []byte("From: Ada\nTo: Bo\nSubject: Prepared recovery commit\n\nThird test note.\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(draftFile3, []byte("From: Ada\nTo: Bo\nSubject: Prepared recovery commit\n\nThird test note.\n"), 0o644))
 	rPrep3 := invoke(t, "", "prepare", "--bus", checkout, "--as", "Ada", "--file", draftFile3)
 	rPrep3.mustCode(t, 0)
 	artFile3 := filepath.Join(scratch, "prepared3.json")
-	if err := os.WriteFile(artFile3, []byte(strings.TrimSpace(rPrep3.stdout)), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(artFile3, []byte(strings.TrimSpace(rPrep3.stdout)), 0o644))
 	var art3 bus.PreparedArtifact
 	json.Unmarshal([]byte(strings.TrimSpace(rPrep3.stdout)), &art3)
 
@@ -144,11 +123,7 @@ func TestSendPreparedDecidingTests(t *testing.T) {
 
 	// Verify on bare remote: both the note file and the INDEX entry must be present
 	files := gitIn(t, bare, "ls-tree", "-r", "--name-only", "main")
-	if !strings.Contains(files, art3.Path) {
-		t.Fatalf("recovered note not found on remote: %s", files)
-	}
+	require.Containsf(t, files, art3.Path, "recovered note not found on remote: %s", files)
 	indexContent := gitIn(t, bare, "show", "main:from-ada/INDEX")
-	if !strings.Contains(indexContent, art3.ID) {
-		t.Fatalf("recovered note missing from remote index: %s", indexContent)
-	}
+	require.Containsf(t, indexContent, art3.ID, "recovered note missing from remote index: %s", indexContent)
 }

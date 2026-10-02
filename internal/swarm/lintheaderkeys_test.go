@@ -4,6 +4,9 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // THE HEADER BLOCK IS THE LEADING RUN OF `KEY: value` LINES, IN ANY CASE (#2605).
@@ -149,21 +152,14 @@ func TestCardHeaderBlockRunsToTheFirstLineThatIsNotAKeyLine(t *testing.T) {
 					t.Errorf("%s: not in the header block; the block holds %v", key, blockKeys(block))
 					continue
 				}
-				if f.line != line {
-					t.Errorf("%s: read on line %d, want line %d", key, f.line, line)
-				}
+				assert.Equal(t, line, f.line, "%s: read on line %d, want line %d", key, f.line, line)
 			}
-			if len(block) != len(tc.inBlock) {
-				t.Errorf("block holds %v, want exactly %v", blockKeys(block), sortedOf(tc.inBlock))
-			}
+			assert.Len(t, block, len(tc.inBlock), "block holds %v, want exactly %v", blockKeys(block), sortedOf(tc.inBlock))
 			for key, line := range tc.stranded {
-				if got := stranded[key]; got != line {
-					t.Errorf("%s: stranded on line %d, want line %d", key, got, line)
-				}
+				got := stranded[key]
+				assert.Equal(t, line, got, "%s: stranded on line %d, want line %d", key, got, line)
 			}
-			if len(stranded) != len(tc.stranded) {
-				t.Errorf("stranded %v, want exactly %v", sortedOf(stranded), sortedOf(tc.stranded))
-			}
+			assert.Len(t, stranded, len(tc.stranded), "stranded %v, want exactly %v", sortedOf(stranded), sortedOf(tc.stranded))
 			// The lint's own answer, which is what `bin/sprint-stage` refuses on: a key
 			// inside the block draws no `below the header block` drift, and a key under
 			// the prose draws one naming the line it sits on.
@@ -173,9 +169,7 @@ func TestCardHeaderBlockRunsToTheFirstLineThatIsNotAKeyLine(t *testing.T) {
 					below = append(below, f.Excerpt)
 				}
 			}
-			if len(below) != len(tc.stranded) {
-				t.Errorf("%d `below the header block` drifts, want %d: %v", len(below), len(tc.stranded), below)
-			}
+			assert.Len(t, below, len(tc.stranded), "%d `below the header block` drifts, want %d: %v", len(below), len(tc.stranded), below)
 		})
 	}
 }
@@ -197,16 +191,12 @@ func TestCardHeaderLowerCaseTypedKeyIsNotTheTypedKey(t *testing.T) {
 		"SOURCE: mas-bandwidth/nova-tools#2605",
 	)
 	block, stranded := cardHeaderBlock(raw)
-	if f, ok := block["paths"]; !ok || f.line != 3 {
-		t.Fatalf("`paths:` is a key line of the block on line 3; block holds %v", blockKeys(block))
-	}
-	if len(stranded) != 0 {
-		t.Errorf("nothing is stranded, got %v", sortedOf(stranded))
-	}
+	field, ok := block["paths"]
+	require.True(t, ok, "`paths:` is a key line of the block on line 3; block holds %v", blockKeys(block))
+	require.Equal(t, 3, field.line, "`paths:` is a key line of the block on line 3; block holds %v", blockKeys(block))
+	assert.Empty(t, stranded, "nothing is stranded, got %v", sortedOf(stranded))
 	f := drew(t, LintCardHeader(raw, nil, true), "paths-declared")
-	if !strings.Contains(f.Excerpt, "no PATHS: line") {
-		t.Errorf("paths-declared says the card has no PATHS: line, got %q", f.Excerpt)
-	}
+	assert.Contains(t, f.Excerpt, "no PATHS: line", "paths-declared says the card has no PATHS: line, got %q", f.Excerpt)
 }
 
 func blockKeys(m map[string]headerField) []string {

@@ -2,6 +2,8 @@ package sprint
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // The world's workers and readers move in one batch a tick (errata 3
@@ -10,33 +12,33 @@ import (
 
 func TestATakeOfSeveralMembersTakesEachOnesQueue(t *testing.T) {
 	t.Parallel()
-	f := newFleetW(t, 12, 64, "m1", "m2", "m3")
-	f.w.must(Deal(f.snap(), DealReq{Sel: Sel{Limit: 12}}))
-	p := f.w.must(Take(f.snap(), TakeReq{As: "m1,m2,m3", Sel: Sel{Limit: 3}, Who: "m1,m2,m3"}))
+	w := fleetWorld(t, 12, 64, "m1", "m2", "m3")
+	w.must(Deal(w.s, DealReq{Sel: Sel{Limit: 12}}))
+	p := w.must(Take(w.s, TakeReq{As: "m1,m2,m3", Sel: Sel{Limit: 3}, Who: "m1,m2,m3"}))
 	by := map[string]int{}
 	for _, u := range p.Units {
-		by[f.snap().Fleet.Card(u.Key).Row]++
+		by[w.s.Fleet.Card(u.Key).Row]++
 	}
-	if by["m1"] != 3 || by["m2"] != 3 || by["m3"] != 3 {
-		t.Fatalf("taken by member %v, want three of each", by)
-	}
-	if q := Take(f.snap(), TakeReq{As: "m1,m2", Sel: Sel{IDs: []string{"s1-1.w1"}}, Gens: map[string]int{"s1-1.w1": 1}}); len(q.Refused) != 1 || len(q.Units) != 0 {
-		t.Fatalf("a take by id of several members: %+v", q)
-	}
+	require.Equal(t, 3, by["m1"], "taken by member %v, want three of each", by)
+	require.Equal(t, 3, by["m2"], "taken by member %v, want three of each", by)
+	require.Equal(t, 3, by["m3"], "taken by member %v, want three of each", by)
+	q := Take(w.s, TakeReq{As: "m1,m2", Sel: Sel{IDs: []string{"s1-1.w1"}}, Gens: map[string]int{"s1-1.w1": 1}})
+	require.Len(t, q.Refused, 1, "a take by id of several members: %+v", q)
+	require.Empty(t, q.Units, "a take by id of several members: %+v", q)
 }
 
 // Two readers' oks of one primary in one read: the primary is ready to
 // accept, its judgment written once, after both.
 func TestTwoReadersOksInOneReadMakeOneJudgment(t *testing.T) {
 	t.Parallel()
-	f := newFleetW(t, 1, 64, "m1")
-	f.snap().Readers.SetRows(append(f.snap().Readers.Rows(), "reader-b"))
-	f.w.must(Deal(f.snap(), DealReq{Sel: Sel{Limit: 1}}))
-	f.w.must(Take(f.snap(), TakeReq{As: "m1", Sel: Sel{Limit: 1}}))
-	f.w.must(Finish(f.snap(), FinishReq{As: "m1,m2", Sel: Sel{IDs: []string{"s1-1.w1"}}, Gens: map[string]int{"s1-1.w1": 1}}))
-	f.w.must(Ask(f.snap(), AskReq{Sel: Sel{IDs: []string{"s1-1"}}, Who: "coordinator"}))
+	w := fleetWorld(t, 1, 64, "m1")
+	w.s.Readers.SetRows(append(w.s.Readers.Rows(), "reader-b"))
+	w.must(Deal(w.s, DealReq{Sel: Sel{Limit: 1}}))
+	w.must(Take(w.s, TakeReq{As: "m1", Sel: Sel{Limit: 1}}))
+	w.must(Finish(w.s, FinishReq{As: "m1,m2", Sel: Sel{IDs: []string{"s1-1.w1"}}, Gens: map[string]int{"s1-1.w1": 1}}))
+	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}, Who: "coordinator"}))
 	ids := []string{ReadCardID("s1-1", 1, "reader-a"), ReadCardID("s1-1", 1, "reader-b")}
-	p := f.w.must(Read(f.snap(), ReadReq{As: "reader-a,reader-b", Verdict: "ok", Sel: Sel{IDs: ids}}))
+	p := w.must(Read(w.s, ReadReq{As: "reader-a,reader-b", Verdict: "ok", Sel: Sel{IDs: ids}}))
 	n := 0
 	for _, u := range p.Units {
 		for _, x := range u.Notes {
@@ -45,10 +47,8 @@ func TestTwoReadersOksInOneReadMakeOneJudgment(t *testing.T) {
 			}
 		}
 	}
-	if len(p.Units) != 2 || n != 1 {
-		t.Fatalf("two oks in one read: %d units, %d ready-to-accept judgments, want 2 and 1", len(p.Units), n)
-	}
-	if q := Read(f.snap(), ReadReq{As: "reader-a,reader-b", Verdict: "ok"}); len(q.Refused) != 1 {
-		t.Fatalf("a read by selection of several readers: %+v", q)
-	}
+	require.Len(t, p.Units, 2, "two oks in one read: %d units, %d ready-to-accept judgments, want 2 and 1", len(p.Units), n)
+	require.Equal(t, 1, n, "two oks in one read: %d units, %d ready-to-accept judgments, want 2 and 1", len(p.Units), n)
+	q := Read(w.s, ReadReq{As: "reader-a,reader-b", Verdict: "ok"})
+	require.Len(t, q.Refused, 1, "a read by selection of several readers: %+v", q)
 }

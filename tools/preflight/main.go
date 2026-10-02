@@ -227,7 +227,7 @@ func run(args []string, e env) int {
 		return code, code == 0
 	}
 
-	// 1. gofmt. deprecated/ is reference code that is not formatted or tested.
+	// 1. gofmt.
 	fmt.Fprintln(e.stdout, "=== [1/3] Preflight: gofmt check ===")
 	var listed bytes.Buffer
 	// A gofmt that cannot run lists nothing, as a silent failure of the listing
@@ -235,7 +235,7 @@ func run(args []string, e env) int {
 	step(command{name: gofmtCmd, args: []string{"-l", "."}, out: &listed, err: io.Discard})
 	var unformatted []string
 	for _, l := range strings.Split(listed.String(), "\n") {
-		if l != "" && !strings.HasPrefix(l, "deprecated/") {
+		if l != "" {
 			unformatted = append(unformatted, l)
 		}
 	}

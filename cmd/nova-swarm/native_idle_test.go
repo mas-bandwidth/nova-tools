@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
@@ -112,9 +114,7 @@ func TestNativeIdleIsDecidedByTheWatchsEventNotByAClock(t *testing.T) {
 	root, slot := aSlot(t)
 	cardPath := filepath.Join(root, "card.md")
 	card := "FAKE-SAY sh: 1: cannot create /etc/hosts: Permission denied\nFAKE-SLEEP 60\n"
-	if err := os.WriteFile(cardPath, []byte(card), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(cardPath, []byte(card), 0o644))
 	// The end the watch would have sent for `js-under-20-bytes`: a card still for four
 	// minutes that never moved past a refusal. It is CONSTRUCTED here, because what the
 	// watch decides is internal/swarm's question (TestWatchIdleCarriesTheRefusalTheCard
@@ -138,14 +138,11 @@ func TestNativeIdleIsDecidedByTheWatchsEventNotByAClock(t *testing.T) {
 	_ = run(args, strings.NewReader(""), &stdout, &stderr, time.Now())
 
 	// (1) THE ORDER. Not "it happened within n seconds": this, then this, then this.
-	if got := seam.seen(); strings.Join(got, ",") != "watch-started,idle-declared,reap" {
-		t.Fatalf("the wait's events, in order, are watch-started then idle-declared then reap; got %v\n%s\n%s", got, stdout.String(), stderr.String())
-	}
+	got := seam.seen()
+	require.Equal(t, "watch-started,idle-declared,reap", strings.Join(got, ","), "the wait's events, in order, are watch-started then idle-declared then reap; got %v\n%s\n%s", got, stdout.String(), stderr.String())
 	// (2) AND THE DEADLINE NEVER FIRED. nativeKillGroup is reached from one branch only.
 	for _, e := range seam.seen() {
-		if e == "kill" {
-			t.Fatalf("the deadline branch ran: an idle card is reaped, never shot\n%s", stdout.String())
-		}
+		require.NotEqual(t, "kill", e, "the deadline branch ran: an idle card is reaped, never shot\n%s", stdout.String())
 	}
 	// (3) THE RUN CARRIES WHAT THE WATCH SAW, in its own lines and in the report it owes.
 	// This end was REFUSED, so the run takes the wall branch (main.go:1846) and reports it
@@ -156,16 +153,10 @@ func TestNativeIdleIsDecidedByTheWatchsEventNotByAClock(t *testing.T) {
 		"WALL task=stillcard path=/etc/hosts step=3",
 		"WALL REFUSED write /etc/hosts task=stillcard step=3",
 	} {
-		if !strings.Contains(stdout.String(), want) {
-			t.Fatalf("the run reports the watch's own end on %q:\n%s", want, stdout.String())
-		}
+		require.Contains(t, stdout.String(), want, "the run reports the watch's own end on %q:\n%s", want, stdout.String())
 	}
-	if strings.Contains(stdout.String(), "CARD IDLE") {
-		t.Fatalf("a refused end is a wall death, not a card that went quiet:\n%s", stdout.String())
-	}
-	if !strings.Contains(stdout.String(), "NATIVE NOTE: the card published no report of its own") {
-		t.Fatalf("a card the watch ended is given the report it owes:\n%s\n%s", stdout.String(), stderr.String())
-	}
+	require.NotContains(t, stdout.String(), "CARD IDLE", "a refused end is a wall death, not a card that went quiet:\n%s", stdout.String())
+	require.Contains(t, stdout.String(), "NATIVE NOTE: the card published no report of its own", "a card the watch ended is given the report it owes:\n%s\n%s", stdout.String(), stderr.String())
 	// THE SUMMARY LINE IS STILL PRINTED, naming this card and the end it got. The old test
 	// asked for the WORD `OK` here, and that word is no longer this PR's to assert: dev
 	// made it a verdict (#1844, main.go "OK IS A VERDICT, NOT A PUNCTUATION MARK"), and a
@@ -174,25 +165,18 @@ func TestNativeIdleIsDecidedByTheWatchsEventNotByAClock(t *testing.T) {
 	// from the wrong PR and go red the moment the two meet -- which is exactly what it did.
 	// What this test owes is that the run still reports the card and the end, in fields.
 	for _, want := range []string{"NATIVE ", "label=stillcard", "rc=-1", "wall="} {
-		if !strings.Contains(stdout.String(), want) {
-			t.Fatalf("a card the watch ended still prints its summary line, carrying %q:\n%s", want, stdout.String())
-		}
+		require.Contains(t, stdout.String(), want, "a card the watch ended still prints its summary line, carrying %q:\n%s", want, stdout.String())
 	}
 	raw, err := os.ReadFile(filepath.Join(job, "RESULT.md"))
-	if err != nil {
-		t.Fatalf("a card the machinery ended is given a report naming the block: %v\n%s", err, stdout.String())
-	}
+	require.NoError(t, err, "a card the machinery ended is given a report naming the block:\n%s", stdout.String())
 	// The report names the DELIVERED duration, which is the one number in the end that no
 	// part of this run could have invented: 240s never appears in the arguments.
 	for _, w := range []string{"RESULT: BLOCKED stillcard", "WALL REFUSED write /etc/hosts", "written-by: nova-swarm native",
 		"the wall refused write /etc/hosts and the card wrote nothing for 240s after it"} {
-		if !strings.Contains(string(raw), w) {
-			t.Fatalf("the blocked report carries %q:\n%s", w, raw)
-		}
+		require.Contains(t, string(raw), w, "the blocked report carries %q:\n%s", w, raw)
 	}
-	if _, err := os.Stat(filepath.Join(slot, "usage.tsv")); err != nil {
-		t.Fatalf("usage.tsv absent after an idle end: %v", err)
-	}
+	_, err = os.Stat(filepath.Join(slot, "usage.tsv"))
+	require.NoError(t, err, "usage.tsv absent after an idle end")
 }
 
 // TestNativeIdleSaysACardThatSimplyWentStillWentStill: the OTHER branch of the same
@@ -214,9 +198,7 @@ func TestNativeIdleSaysACardThatSimplyWentStillWentStill(t *testing.T) {
 	// of this branch is a card no wall refused anything to. `js-under-20-bytes` died in a
 	// provider stall exactly like this one.
 	card := "FAKE-SAY thinking about the sixteenth step\nFAKE-SLEEP 60\n"
-	if err := os.WriteFile(cardPath, []byte(card), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(cardPath, []byte(card), 0o644))
 	job := filepath.Join(slot, "jobs", "quietcard")
 	want := swarm.IdleEnd{Idle: 300 * time.Second, Step: "16"}
 	seam := newIdleSeam(t, func(swarm.IdleWatch) (swarm.IdleEnd, bool) {
@@ -230,24 +212,14 @@ func TestNativeIdleSaysACardThatSimplyWentStillWentStill(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	_ = run(args, strings.NewReader(""), &stdout, &stderr, time.Now())
 
-	if got := seam.seen(); strings.Join(got, ",") != "watch-started,idle-declared,reap" {
-		t.Fatalf("the wait's events, in order, are watch-started then idle-declared then reap; got %v\n%s\n%s", got, stdout.String(), stderr.String())
-	}
-	if !strings.Contains(stdout.String(), "CARD IDLE task=quietcard step=16 idle=300s") {
-		t.Fatalf("a card that simply went still is reported on its own line:\n%s", stdout.String())
-	}
-	if strings.Contains(stdout.String(), "WALL ") {
-		t.Fatalf("no wall refused this card, so no WALL line may name one:\n%s", stdout.String())
-	}
-	if !strings.Contains(stdout.String(), "NATIVE NOTE: the card published no report of its own") {
-		t.Fatalf("a card the watch ended is given the report it owes:\n%s\n%s", stdout.String(), stderr.String())
-	}
-	if strings.Contains(stdout.String(), "why=unknown-acceptance") {
-		t.Fatalf("a card that went still is not an unknown provider acceptance:\n%s", stdout.String())
-	}
-	if _, err := os.Stat(filepath.Join(job, "provider-acceptance")); !os.IsNotExist(err) {
-		t.Fatalf("a quiet card wrote an acceptance mark: %v", err)
-	}
+	got := seam.seen()
+	require.Equal(t, "watch-started,idle-declared,reap", strings.Join(got, ","), "the wait's events, in order, are watch-started then idle-declared then reap; got %v\n%s\n%s", got, stdout.String(), stderr.String())
+	require.Contains(t, stdout.String(), "CARD IDLE task=quietcard step=16 idle=300s", "a card that simply went still is reported on its own line:\n%s", stdout.String())
+	require.NotContains(t, stdout.String(), "WALL ", "no wall refused this card, so no WALL line may name one:\n%s", stdout.String())
+	require.Contains(t, stdout.String(), "NATIVE NOTE: the card published no report of its own", "a card the watch ended is given the report it owes:\n%s\n%s", stdout.String(), stderr.String())
+	require.NotContains(t, stdout.String(), "why=unknown-acceptance", "a card that went still is not an unknown provider acceptance:\n%s", stdout.String())
+	_, err := os.Stat(filepath.Join(job, "provider-acceptance"))
+	require.True(t, os.IsNotExist(err), "a quiet card wrote an acceptance mark: %v", err)
 }
 
 // TestNativeIdleReapsTheCardInsteadOfShootingIt keeps the REAL signal, because the point of
@@ -265,9 +237,7 @@ func TestNativeIdleReapsTheCardInsteadOfShootingIt(t *testing.T) {
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	cardPath := filepath.Join(root, "card.md")
-	if err := os.WriteFile(cardPath, []byte("FAKE-NOTE-ON-TERM\nFAKE-SLEEP 60\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(cardPath, []byte("FAKE-NOTE-ON-TERM\nFAKE-SLEEP 60\n"), 0o644))
 	job := filepath.Join(slot, "jobs", "politecard")
 	newIdleSeam(t, func(w swarm.IdleWatch) (swarm.IdleEnd, bool) {
 		waitForFile(t, filepath.Join(job, "term-armed"), "the fixture harness arming its TERM handler")
@@ -280,12 +250,9 @@ func TestNativeIdleReapsTheCardInsteadOfShootingIt(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	_ = run(args, strings.NewReader(""), &stdout, &stderr, time.Now())
 
-	if !strings.Contains(stdout.String(), "NATIVE NOTE: the card published no report of its own") {
-		t.Fatalf("the idle watch is what ended this card:\n%s\n%s", stdout.String(), stderr.String())
-	}
-	if _, err := os.Stat(filepath.Join(job, "termed")); err != nil {
-		t.Fatalf("a card the watch ended is terminated before it is killed, so its harness can flush: %v\n%s", err, stdout.String())
-	}
+	require.Contains(t, stdout.String(), "NATIVE NOTE: the card published no report of its own", "the idle watch is what ended this card:\n%s\n%s", stdout.String(), stderr.String())
+	_, err := os.Stat(filepath.Join(job, "termed"))
+	require.NoError(t, err, "a card the watch ended is terminated before it is killed, so its harness can flush:\n%s", stdout.String())
 }
 
 // TestNativeIdleZeroWatchesNothing: --idle 0 is the behaviour every run had before the watch
@@ -297,17 +264,13 @@ func TestNativeIdleZeroWatchesNothing(t *testing.T) {
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	cardPath := filepath.Join(root, "card.md")
-	if err := os.WriteFile(cardPath, []byte("FAKE-SAY sh: 1: cannot create /etc/hosts: Permission denied\nFAKE-SLEEP 3\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(cardPath, []byte("FAKE-SAY sh: 1: cannot create /etc/hosts: Permission denied\nFAKE-SLEEP 3\n"), 0o644))
 	args := []string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin,
 		"--model", "fake/fake-model", "--label", "unwatched", "--card", cardPath, "--slot", slot,
 		"--root", root, "--deadline", "60s", "--idle", "0", "--no-wall"}
 	var stdout, stderr bytes.Buffer
 	_ = run(args, strings.NewReader(""), &stdout, &stderr, time.Now())
-	if strings.Contains(stdout.String(), "CARD IDLE") {
-		t.Fatalf("a run with no idle window ends nothing for idleness:\n%s", stdout.String())
-	}
+	require.NotContains(t, stdout.String(), "CARD IDLE", "a run with no idle window ends nothing for idleness:\n%s", stdout.String())
 	raw, err := os.ReadFile(filepath.Join(slot, "jobs", "unwatched", "RESULT.md"))
 	if err == nil && strings.Contains(string(raw), "RESULT: BLOCKED") {
 		t.Fatalf("a run that was never ended by the watch writes no blocked report:\n%s", raw)
@@ -315,7 +278,20 @@ func TestNativeIdleZeroWatchesNothing(t *testing.T) {
 	// The refusal is still NAMED, because naming it costs the card nothing -- and this is
 	// now the test that holds native.go|nativeRun|line byte for byte in the audit, so it
 	// asserts the WHOLE line. A run with no idle window cannot race the watch for it.
-	if !strings.Contains(stderr.String(), "WALL REFUSED write /etc/hosts task=unwatched") {
-		t.Fatalf("a refusal is announced whether or not anything acts on it:\n%s", stderr.String())
+	require.Contains(t, stderr.String(), "WALL REFUSED write /etc/hosts task=unwatched", "a refusal is announced whether or not anything acts on it:\n%s", stderr.String())
+}
+
+// waitForFile waits for a file this test owns to appear, and gives up on its own. It is a
+// wait on an OBSERVABLE (what the fixture harness writes when it reaches a point) and never
+// a sleep racing a process. The 30s bound is a safety net for a harness that never gets
+// there; the assertion is on the file, not the elapsed time.
+func waitForFile(t *testing.T, path, what string) {
+	t.Helper()
+	for waited := time.Duration(0); waited < 30*time.Second; waited += 5 * time.Millisecond {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
+	t.Fatalf("%s: %s never appeared", what, path)
 }

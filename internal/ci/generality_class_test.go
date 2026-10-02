@@ -481,7 +481,7 @@ func TestGeneralityGuardrail(t *testing.T) {
 
 	var files []GeneralitySourceFile
 	for _, f := range tree.GoFilesUnder(false, "cmd", "internal", "tools") {
-		if f.HasDirNamed("testdata") || f.HasDirNamed("vendor") || f.HasDirNamed("deprecated") {
+		if f.HasDirNamed("testdata") || f.HasDirNamed("vendor") {
 			continue
 		}
 		files = append(files, GeneralitySourceFile{Rel: f.Rel, Src: f.Src})

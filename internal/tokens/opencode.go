@@ -153,6 +153,7 @@ func ReadOpenCode(label, dbPath, scratch string, timeout time.Duration, rules *R
 			s.unparsed(dbPath, 0, "message "+id+": time_created is not a stamp this tool can read: "+row["stamp"])
 			continue
 		}
+		rules.SetDay(day)
 		// A child session inherits its parent's repo at its first message, and never
 		// across sources.
 		if _, ok := prev[session]; !ok {

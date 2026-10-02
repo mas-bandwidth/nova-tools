@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"sync"
@@ -57,7 +58,9 @@ type memState struct {
 	// when it has passed (a test's clock steps by it, or appends a line). Nil
 	// waits on the wall clock for a line or the time, whichever comes first.
 	LogWait func(d time.Duration)
-	logged  chan struct{} // closed, and replaced, by every commit that appends to a log
+	logged  chan struct{}       // closed, and replaced, by every commit that appends to a log
+	routes  []sprint.Route      // the model tiers' routes (routes.go)
+	tiers   map[string][]string // the tiers' route arrays (routes.go)
 }
 
 // memLog is one epoch's sprint keys.
@@ -107,7 +110,7 @@ type memChange struct {
 type memEpoch struct {
 	rows  []string
 	texts map[string]map[string]string
-	props map[string]string // the table's properties (L1 contract amendment, table properties)
+	props map[string]string // the table's properties (docs/SPEC-NOVA-TABLE.md)
 }
 
 type memMember struct {
@@ -651,6 +654,46 @@ func (m *Mem) RowsAdd(_ context.Context, table string, rows []string) error {
 	return nil
 }
 
+// RowsDel removes rows and unplaces the cards in them, as the table layer's row
+// delete does, under RowsAdd's epoch check.
+func (m *Mem) RowsDel(_ context.Context, table string, rows []string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.Calls["rowsdel"]++
+	t, err := m.table(table)
+	if err != nil {
+		return err
+	}
+	if err := m.writeEpoch(t); err != nil {
+		return err
+	}
+	ep := t.at(m.active(t))
+	// unplaced is the members the delete took off the table: the change names
+	// them, as the table layer's change stream does (a twin catching up reads
+	// them again)
+	var unplaced []string
+	for _, r := range rows {
+		i := slices.Index(ep.rows, r)
+		if i < 0 {
+			continue
+		}
+		ep.rows = slices.Delete(ep.rows, i, i+1)
+		delete(ep.texts, r)
+		for id, mm := range t.members {
+			if mm.placed && mm.epoch == m.active(t) && mm.row == r {
+				mm.placed, mm.row, mm.col = false, "", ""
+				mm.rev++
+				unplaced = append(unplaced, id)
+			}
+		}
+	}
+	slices.Sort(unplaced)
+	t.rev++
+	t.wrote[m.active(t)] = true
+	t.changes = append(t.changes, memChange{epoch: m.active(t), before: t.rev - 1, after: t.rev, verb: "row_del", ids: unplaced})
+	return nil
+}
+
 // writeEpoch refuses a write pinned to an epoch that is not the table's
 // active one, as the table layer refuses a stale epoch.
 func (m *Mem) writeEpoch(t *memTable) error {
@@ -679,6 +722,17 @@ func (m *Mem) RowSet(_ context.Context, table, row string, texts map[string]stri
 	ep := t.at(m.active(t))
 	if !containsStr(ep.rows, row) {
 		return refusal("NOROW", "no row "+row)
+	}
+	// as the store's ns_table_row_set: a column the table lacks, or one that is no
+	// text column, is refused
+	for k := range texts {
+		j := t.def.Column(k)
+		if j < 0 {
+			return refusal("NOCOL", "row "+row+": no column "+k)
+		}
+		if t.def.Columns[j].Projection != ntable.Text {
+			return refusal("NOTTEXT", "row "+row+": column "+k+" is not text")
+		}
 	}
 	if ep.texts[row] == nil {
 		ep.texts[row] = map[string]string{}
@@ -1102,3 +1156,37 @@ func (m *Mem) Trips() int64 {
 }
 
 var _ Tripper = (*Mem)(nil)
+
+// RowsOrder puts the named rows first, in that order, the rest after them as
+// they stood: the table layer's row order, under RowsAdd's epoch check.
+func (m *Mem) RowsOrder(_ context.Context, table string, rows []string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.Calls["roworder"]++
+	t, err := m.table(table)
+	if err != nil {
+		return err
+	}
+	if err := m.writeEpoch(t); err != nil {
+		return err
+	}
+	ep := t.at(m.active(t))
+	var order []string
+	for _, r := range rows {
+		if containsStr(ep.rows, r) && !containsStr(order, r) {
+			order = append(order, r)
+		}
+	}
+	for _, r := range ep.rows {
+		if !containsStr(order, r) {
+			order = append(order, r)
+		}
+	}
+	ep.rows = order
+	t.rev++
+	t.wrote[m.active(t)] = true
+	t.changes = append(t.changes, memChange{epoch: m.active(t), before: t.rev - 1, after: t.rev, verb: "row_order"})
+	return nil
+}
+
+var _ RowsOrderer = (*Mem)(nil)

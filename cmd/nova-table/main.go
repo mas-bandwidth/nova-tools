@@ -27,10 +27,12 @@ import (
 )
 
 const usageDetails = `Table write verbs take --epoch <observed epoch> (default 0), --actor, --fence,
---idem (receipt metadata) and --receipt. create also takes --epoch-key,
+--idem (receipt metadata only; does not deduplicate retries) and --receipt. create also takes --epoch-key,
 --epoch-field (default n), and --member-prefix (default table::member:).
-A stale epoch is refused. drop keeps the saved column definition unless
---definition is given; snapshots from earlier epochs remain available.
+A stale epoch is refused. drop keeps the saved column definition and the
+table's identity unless --definition is given, which removes both and the rows
+of every epoch (and repairs a store left with the identity alone); the
+definition snapshots of earlier epochs remain available.
 View configuration has no table epoch or receipt.
 Quote column specs containing parentheses, for example 'done,pct:pct(done)'.
 
@@ -152,7 +154,7 @@ func (app *application) run(args []string, stdout, stderr io.Writer) (code int) 
 }
 
 // selectSeat is the seat resolution nova-sprint defined
-// (deprecated/cmd/nova-sprint/seat.go, nova-tools#4330), carried here:
+// (the old nova-sprint's seat.go, nova-tools#4330), carried here:
 // --seat <name> (or NOVA_SPRINT_SEAT, then NOVA_SEAT) is taken off the line,
 // its row in nova-sprint's seats.tsv names its Redis address (the --redis
 // default) and login, and a seat with no row is the nova-secrets seat of that

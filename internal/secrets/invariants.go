@@ -442,23 +442,6 @@ func CheckInvariant7(storeDir string, trackedFiles map[string]bool) []CheckFailu
 	return failures
 }
 
-// CheckInvariant8 inspects .git directly for remote tracking ref sync.
-func CheckInvariant8(storeDir string) (status GitRefStatus, failure *CheckFailure, refusal error) {
-	st, err := CheckGitWorkingCopy(storeDir)
-	if err != nil {
-		msg := err.Error()
-		if strings.Contains(msg, "detached HEAD") || strings.Contains(msg, "no upstream") || strings.Contains(msg, "worktree or submodule") || strings.Contains(msg, "is not a git repository") {
-			return st, nil, err
-		}
-		return st, &CheckFailure{
-			Kind:   "stale-working-copy",
-			File:   "working copy",
-			Reason: msg,
-		}, nil
-	}
-	return st, nil, nil
-}
-
 // RunCheck executes the complete verification suite for 'check'.
 func RunCheck(storeDir, asName, keyPath, sopsPath string, maxShown int) (okLine string, failLines []string, moreLines []string, summaryLine string, exitCode int, err error) {
 	if maxShown < 0 {
@@ -470,45 +453,14 @@ func RunCheck(storeDir, asName, keyPath, sopsPath string, maxShown int) (okLine 
 		return "", nil, nil, "", 2, fmt.Errorf("failed to set RLIMIT_CORE to 0: %w", err)
 	}
 
-	if asName == "" {
-		return "", nil, nil, "", 2, fmt.Errorf("missing --as <name>")
-	}
-	if !IsValidAsName(asName) {
-		return "", nil, nil, "", 2, fmt.Errorf("invalid seat name %q: must match [A-Za-z0-9_-]+", asName)
-	}
-
-	// 1. Refusal checks
-	storeFi, err := os.Stat(storeDir)
-	if err != nil || !storeFi.IsDir() {
-		return "", nil, nil, "", 2, fmt.Errorf("store %s is not a directory", storeDir)
-	}
-
-	gitDir := filepath.Join(storeDir, ".git")
-	gitFi, err := os.Stat(gitDir)
-	if err != nil {
-		return "", nil, nil, "", 2, fmt.Errorf("store %s has no .git directory; run: git clone <url> %s", storeDir, storeDir)
-	}
-	if !gitFi.IsDir() {
-		return "", nil, nil, "", 2, fmt.Errorf("store %s: .git is a file (a worktree or submodule); expected a directory working copy", storeDir)
-	}
-
-	sopsConfigPath := filepath.Join(storeDir, ".sops.yaml")
-	if _, err := os.Stat(sopsConfigPath); err != nil {
-		return "", nil, nil, "", 2, fmt.Errorf("store %s carries no .sops.yaml", storeDir)
+	// 1. Refusal checks: the invocation and the store's shape, every problem at once
+	if err := preflight(storeDir, need{storeDir, "--store <dir>", false}, need{asName, "--as <name>", true}, need{keyPath, "--key <path>", false}, need{sopsPath, "--sops <path>", false}); err != nil {
+		return "", nil, nil, "", 2, err
 	}
 
 	targetFile := filepath.Join(storeDir, asName+".yaml")
 	if _, err := os.Stat(targetFile); err != nil {
-		// List available files in store
-		entries, _ := os.ReadDir(storeDir)
-		var names []string
-		for _, e := range entries {
-			if strings.HasSuffix(e.Name(), ".yaml") && e.Name() != ".sops.yaml" {
-				names = append(names, strings.TrimSuffix(e.Name(), ".yaml"))
-			}
-		}
-		sort.Strings(names)
-		return "", nil, nil, "", 2, fmt.Errorf("seat file %s.yaml is absent in store; available names: %s", asName, strings.Join(names, ", "))
+		return "", nil, nil, "", 2, seatAbsent(storeDir, asName)
 	}
 
 	if err := CheckInvariant6(keyPath); err != nil {
@@ -608,7 +560,7 @@ func RunCheck(storeDir, asName, keyPath, sopsPath string, maxShown int) (okLine 
 	recipientsCount := len(recipientsSet)
 
 	if len(allFailures) == 0 {
-		okLine = fmt.Sprintf("SECRETS CHECK OK  as=%s recipients=%d files=%d sealed=%d mine=%d foreign=%d clear=%d head=%s",
+		okLine = fmt.Sprintf("SECRETS CHECK OK as=%s recipients=%d files=%d sealed=%d mine=%d foreign=%d clear=%d head=%s",
 			oneline.Field(asName), recipientsCount, len(yamlFiles), sealedCount, mineCount, foreignCount, clearCount, oneline.Field(gitStatus.HeadSHA))
 		return okLine, nil, nil, "", 0, nil
 	}

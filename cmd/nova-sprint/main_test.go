@@ -11,9 +11,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 )
@@ -30,6 +32,9 @@ type testApp struct {
 	// live is the fleet members that beat before every command line and
 	// after every step of the clock: the machines alive.
 	live []string
+	// quiet is the readers that do not beat: every other reader of the readers
+	// table beats with the members (a reader's own queue is its beat).
+	quiet map[string]bool
 }
 
 func newTestApp(t *testing.T) *testApp {
@@ -60,9 +65,20 @@ func (ta *testApp) beat() {
 	st := &store.Store{B: ta.m, Names: sprint.Names{}, Now: ta.a.now}
 	zero := 0.0
 	for _, m := range live {
-		if _, err := st.Beat(context.Background(), m, &zero, hostload.Source{}); err != nil {
-			ta.t.Fatal(err)
+		_, err := st.Beat(context.Background(), m, &zero, hostload.Source{})
+		require.NoError(ta.t, err)
+	}
+	rows, err := st.ReaderRows(context.Background())
+	require.NoError(ta.t, err)
+	for _, r := range rows {
+		ta.mu.Lock()
+		quiet := ta.quiet[r]
+		ta.mu.Unlock()
+		if quiet {
+			continue
 		}
+		_, err := st.ReaderBeat(context.Background(), r)
+		require.NoError(ta.t, err)
 	}
 }
 
@@ -104,9 +120,7 @@ func (ta *testApp) withEpoch(args []string) []string {
 func (ta *testApp) ok(line string) string {
 	ta.t.Helper()
 	code, out, errs := ta.do(line)
-	if code != 0 {
-		ta.t.Fatalf("%s: exit %d\n%s%s", line, code, out, errs)
-	}
+	require.Equal(ta.t, 0, code, "%s: exit %d\n%s%s", line, code, out, errs)
 	return out
 }
 
@@ -139,9 +153,7 @@ func split(line string) []string {
 func (ta *testApp) json(line string, v any) {
 	ta.t.Helper()
 	out := ta.ok(line + " --json")
-	if err := json.Unmarshal([]byte(out), v); err != nil {
-		ta.t.Fatalf("%s: %v\n%s", line, err, out)
-	}
+	require.NoError(ta.t, json.Unmarshal([]byte(out), v), "%s: %s", line, out)
 }
 
 // deal deals up to n ready primaries, as the machine's tick does, without
@@ -149,41 +161,34 @@ func (ta *testApp) json(line string, v any) {
 func (ta *testApp) deal(n int) {
 	ta.t.Helper()
 	st, err := ta.a.store(common{redis: "mem:0", actor: "tester"})
-	if err != nil {
-		ta.t.Fatal(err)
-	}
+	require.NoError(ta.t, err)
 	res, err := st.Run(context.Background(), store.DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: n}}))
-	if err != nil || len(res.Refused) > 0 {
-		ta.t.Fatalf("deal %d: %+v %v", n, res.Refused, err)
-	}
+	require.NoError(ta.t, err, "deal %d: %+v %v", n, res.Refused, err)
+	require.Empty(ta.t, res.Refused, "deal %d: %+v %v", n, res.Refused, err)
 }
 
 func (ta *testApp) clean() {
 	ta.t.Helper()
-	if code, out, errs := ta.do("check"); code != 0 {
-		ta.t.Fatalf("check: %s%s", out, errs)
-	}
+	code, out, errs := ta.do("check")
+	require.Equal(ta.t, 0, code, "check: %s%s", out, errs)
 }
 
 func TestTheCommandDrivesAStreamToLanded(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	out := ta.ok("init --readers reader-a,reader-b,reader-c --members m1,m2")
-	if !strings.Contains(out, "INIT OK tables=work,readers,merge,fleet view=sprint") {
-		t.Fatalf("init: %s", out)
-	}
+	require.Contains(t, out, "INIT OK tables=work,readers,merge,fleet view=sprint", "init")
 	out = ta.ok("add --stream s1 --count 4")
-	if !strings.Contains(out, "ADD OK moved=4") || !strings.Contains(out, "\nSTOPPED  0/4 0.0%") || strings.Contains(out, "-> ETA") {
-		t.Fatalf("add: %s", out)
-	}
+	require.Contains(t, out, "ADD OK moved=4", "add")
+	require.Contains(t, out, "\nSTOPPED  0/4 0.0%", "add")
+	require.NotContains(t, out, "-> ETA", "add")
 	ta.clean()
 	ta.ok("start")
 	ta.ok("tick")
 	var q struct{ Cards []queueCard }
 	ta.json("queue --as m1", &q)
-	if len(q.Cards) != 2 || q.Cards[0].Gen != 1 {
-		t.Fatalf("m1's queue: %+v", q.Cards)
-	}
+	require.Len(t, q.Cards, 2, "m1's queue: %+v", q.Cards)
+	require.Equal(t, 1, q.Cards[0].Gen, "m1's queue: %+v", q.Cards)
 	for _, m := range []string{"m1", "m2"} {
 		ta.ok("take --as " + m + " --limit 5")
 		ta.json("queue --as "+m, &q)
@@ -199,33 +204,28 @@ func TestTheCommandDrivesAStreamToLanded(t *testing.T) {
 	}
 	ta.clean()
 	out = ta.ok("accept --read-ok")
-	if !strings.Contains(out, "ACCEPT OK moved=4") {
-		t.Fatalf("accept: %s", out)
-	}
+	require.Contains(t, out, "ACCEPT OK moved=4", "accept")
 	ta.ok("merge --stream s1 --batch 10")
 	// the landings are queued for the next tick's pump, which drains them, and
 	// the tick's done part stops the machine of a sprint that is done
 	ta.ok("tick")
 	out = ta.ok("where")
 	for _, want := range []string{"SPRINT TABLE", "DONE", "work ", "merge ", "fleet "} {
-		if !strings.Contains(out, want) {
-			t.Errorf("where lacks %q:\n%s", want, out)
-		}
+		assert.Contains(t, out, want, "where lacks %q", want)
 	}
 	var w whereView
 	ta.json("where", &w)
-	if w.Landed != 4 || w.All != 4 || w.Tables["merge"]["s1"]["state"] != "landed" {
-		t.Fatalf("where --json: %+v", w)
-	}
+	require.Equal(t, int64(4), w.Landed, "where --json: %+v", w)
+	require.Equal(t, int64(4), w.All, "where --json: %+v", w)
+	require.Equal(t, "landed", w.Tables["merge"]["s1"]["state"], "where --json: %+v", w)
 	ta.clean()
 	out = ta.ok("inbox")
-	if !strings.Contains(out, "HAPPENED") || !strings.Contains(out, "stream landed") {
-		t.Fatalf("inbox: %s", out)
-	}
+	require.Contains(t, out, "HAPPENED", "inbox")
+	require.Contains(t, out, "stream landed", "inbox")
 	out = ta.ok("card --fields s1-1")
-	if !strings.Contains(out, "PRIMARY s1-1 place=s1:landed") || !strings.Contains(out, "WORK s1-1.w1") || !strings.Contains(out, "MERGE s1-1") {
-		t.Fatalf("card: %s", out)
-	}
+	require.Contains(t, out, "PRIMARY s1-1 place=s1:landed", "card")
+	require.Contains(t, out, "WORK s1-1.w1", "card")
+	require.Contains(t, out, "MERGE s1-1", "card")
 }
 
 func TestJudgmentsReachTheInboxAndTheCoordinatorAnswers(t *testing.T) {
@@ -240,34 +240,26 @@ func TestJudgmentsReachTheInboxAndTheCoordinatorAnswers(t *testing.T) {
 	ta.ok("take --as m1 --limit 3")
 	ta.ok("finish --as m1 s1-1.w1@1 s1-2.w1@1")
 	code, _, errs := ta.do("finish --as m1 s1-3.w1@1 --failed --report 'tests red'")
-	if code != 0 {
-		t.Fatalf("finish failed: %s", errs)
-	}
+	require.Equal(t, 0, code, "finish failed: %s", errs)
 	out := ta.ok("inbox")
 	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if !strings.HasPrefix(lines[0], "JUDGMENT ") || !strings.Contains(lines[0], "work came back failed") || !strings.Contains(lines[0], "size=1") {
-		t.Fatalf("judgment first: %s", out)
-	}
+	require.True(t, strings.HasPrefix(lines[0], "JUDGMENT "), "judgment first: %s", out)
+	require.Contains(t, lines[0], "work came back failed", "judgment first: %s", out)
+	require.Contains(t, lines[0], "size=1", "judgment first: %s", out)
 	// the inbox group is a set, named by its id
 	id := strings.Fields(lines[0])[1]
 	out = ta.ok("rework --group " + id + " --fix 'handle the empty case'")
-	if !strings.Contains(out, "s1-3 review -> working (rework)") {
-		t.Fatalf("rework: %s", out)
-	}
+	require.Contains(t, out, "s1-3 work review -> working (rework)", "rework")
 	out = ta.ok("inbox --read")
-	if strings.Contains(out, "JUDGMENT") {
-		t.Fatalf("an answered judgment is still open: %s", out)
-	}
+	require.NotContains(t, out, "JUDGMENT", "an answered judgment is still open")
 	out = ta.ok("inbox")
-	if strings.Contains(out, "HAPPENED") {
-		t.Fatalf("the cursor did not move: %s", out)
-	}
+	require.NotContains(t, out, "HAPPENED", "the cursor did not move")
 	// accept refused without two readers: exit 1, the reason on stderr
 	ta.ok("ask")
 	code, _, errs = ta.do("accept s1-1")
-	if code != 1 || !strings.Contains(errs, "REFUSED s1-1: needs ok from two different readers") || !strings.Contains(errs, "ACCEPT FAIL") {
-		t.Fatalf("accept with no reads: %d %s", code, errs)
-	}
+	require.Equal(t, 1, code, "accept with no reads: %d %s", code, errs)
+	require.Contains(t, errs, "REFUSED s1-1: needs ok from two different readers", "accept with no reads: %d %s", code, errs)
+	require.Contains(t, errs, "ACCEPT FAIL", "accept with no reads: %d %s", code, errs)
 	ta.clean()
 }
 
@@ -286,20 +278,16 @@ func TestAStoppedStreamWaitsForResume(t *testing.T) {
 	ta.ok("accept --stream s1")
 	ta.ok("merge --stream s1 --conflict s1-2")
 	out := ta.ok("inbox")
-	if !strings.Contains(out, "stream stopped: conflict on a card") {
-		t.Fatalf("inbox: %s", out)
-	}
-	if code, _, errs := ta.do("merge --stream s1"); code != 1 || !strings.Contains(errs, "stopped") {
-		t.Fatalf("merge of a stopped stream: %s", errs)
-	}
+	require.Contains(t, out, "stream stopped: conflict on a card", "inbox")
+	code, _, errs := ta.do("merge --stream s1")
+	require.Equal(t, 1, code, "merge of a stopped stream: %s", errs)
+	require.Contains(t, errs, "stopped", "merge of a stopped stream: %s", errs)
 	ta.ok("resume --stream s1 --did 'rebased s1-2'")
 	ta.ok("merge --stream s1")
 	ta.ok("tick") // the pump drains the landings the merge queued
 	var w whereView
 	ta.json("where", &w)
-	if w.Landed != 2 {
-		t.Fatalf("landed %d", w.Landed)
-	}
+	require.Equal(t, int64(2), w.Landed, "landed %d", w.Landed)
 	ta.clean()
 }
 
@@ -316,18 +304,16 @@ func TestAStaleFinishIsRefusedAndARetryReplays(t *testing.T) {
 	ta.ok("take --as m1 " + card + "@1")
 	ta.ok("fleet down m1")
 	code, _, errs := ta.do("finish --as m1 " + card + "@1")
-	if code != 1 || !strings.Contains(errs, "stale") {
-		t.Fatalf("a stale finish: %d %s", code, errs)
-	}
+	require.Equal(t, 1, code, "a stale finish: %d %s", code, errs)
+	require.Contains(t, errs, "stale", "a stale finish: %d %s", code, errs)
 	ta.ok("take --as m2 --limit 5")
 	first := ta.ok("finish --as m2 " + card + "@2 --op w-1")
 	again := ta.ok("finish --as m2 " + card + "@2 --op w-1")
-	if !strings.Contains(again, "replay=yes") || strings.Count(first, "MOVED") != strings.Count(again, "MOVED") {
-		t.Fatalf("retry:\n%s\n%s", first, again)
-	}
-	if code, _, errs := ta.do("finish --as m2 " + card); code != 2 || !strings.Contains(errs, "<card>@<gen>") {
-		t.Fatalf("a finish without its generation: %d %s", code, errs)
-	}
+	require.Contains(t, again, "replay=yes", "retry:\n%s\n%s", first, again)
+	require.Equal(t, strings.Count(first, "MOVED"), strings.Count(again, "MOVED"), "retry:\n%s\n%s", first, again)
+	code, _, errs = ta.do("finish --as m2 " + card)
+	require.Equal(t, 2, code, "a finish without its generation: %d %s", code, errs)
+	require.Contains(t, errs, "<card>@<gen>", "a finish without its generation: %d %s", code, errs)
 }
 
 func TestEveryVerbHasHelpAndRefusesBadUse(t *testing.T) {
@@ -335,17 +321,17 @@ func TestEveryVerbHasHelpAndRefusesBadUse(t *testing.T) {
 	ta := newTestApp(t)
 	for _, v := range verbs {
 		code, out, errs := ta.do(v.name + " -h")
-		if code != 0 || !strings.Contains(out, "usage: nova-sprint "+v.name) || errs != "" {
-			t.Errorf("%s -h: %d %q %q", v.name, code, out, errs)
-		}
+		assert.Equal(t, 0, code, "%s -h: %d %q %q", v.name, code, out, errs)
+		assert.Contains(t, out, "usage: nova-sprint "+v.name, "%s -h: %d %q %q", v.name, code, out, errs)
+		assert.Empty(t, errs, "%s -h: %d %q %q", v.name, code, out, errs)
 	}
-	if code, out, _ := ta.do("help"); code != 0 || !strings.Contains(out, "nova-sprint play") {
-		t.Errorf("help: %d", code)
-	}
+	code, out, _ := ta.do("help")
+	assert.Equal(t, 0, code, "help: %d", code)
+	assert.Contains(t, out, "nova-sprint play", "help: %d", code)
 	for _, line := range []string{"", "nosuch", "start now", "take", "merge", "read --as reader-a", "rank x", "teardown", "add --stream s1"} {
-		if code, _, errs := ta.do(line); code != 2 || !strings.Contains(errs, "run: nova-sprint") {
-			t.Errorf("%q: exit %d %q", line, code, errs)
-		}
+		code, _, errs := ta.do(line)
+		assert.Equal(t, 2, code, "%q: exit %d %q", line, code, errs)
+		assert.Contains(t, errs, "run: nova-sprint", "%q: exit %d %q", line, code, errs)
 	}
 	if len(ta.m.Calls) > 0 && ta.m.Calls["apply"] > 0 {
 		t.Errorf("a refused invocation wrote")
@@ -359,26 +345,21 @@ func TestTablesAreNamedPlainlyAndConfirmIsTheViewName(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	ta.ok("add --stream s1 --count 2")
-	if out := ta.ok("where"); !strings.Contains(out, "work | waiting") || !strings.Contains(out, "readers ") || !strings.Contains(out, "fleet |") {
-		t.Fatalf("where with no prefix: %s", out)
-	}
+	out := ta.ok("where")
+	require.Contains(t, out, "work | waiting", "where with no prefix: %s", out)
+	require.Contains(t, out, "readers ", "where with no prefix: %s", out)
+	require.Contains(t, out, "fleet |", "where with no prefix: %s", out)
 	for _, verb := range []string{"clear", "teardown"} {
 		for _, wrong := range []string{"none", "", "t-sprint", "work", "prefix"} {
 			code, _, errs := ta.do(verb + " --confirm '" + wrong + "'")
-			if code != 2 || !strings.Contains(errs, "wants --confirm sprint") {
-				t.Fatalf("%s --confirm %q: %d %s", verb, wrong, code, errs)
-			}
+			require.Equal(t, 2, code, "%s --confirm %q: %d %s", verb, wrong, code, errs)
+			require.Contains(t, errs, "wants --confirm sprint", "%s --confirm %q: %d %s", verb, wrong, code, errs)
 		}
 	}
-	if out := ta.ok("clear --confirm sprint"); !strings.Contains(out, "CLEAR OK epoch=0->1") {
-		t.Fatalf("clear: %s", out)
-	}
-	if out := ta.ok("teardown --confirm sprint"); !strings.Contains(out, "TEARDOWN OK sprint=sprint keys=") {
-		t.Fatalf("teardown: %s", out)
-	}
-	if code, _, _ := ta.do("where"); code == 0 {
-		t.Fatalf("the tables are still there")
-	}
+	require.Contains(t, ta.ok("clear --confirm sprint"), "CLEAR OK epoch=0->1", "clear")
+	require.Contains(t, ta.ok("teardown --confirm sprint"), "TEARDOWN OK sprint=sprint keys=", "teardown")
+	code, _, _ := ta.do("where")
+	require.NotEqual(t, 0, code, "the tables are still there")
 	const none = "there is no prefix: the tables are always work, merge, readers and fleet and the view is sprint"
 	for _, verb := range []string{"where", "card p1", "log", "clear", "teardown", "inbox", "check", "repair", "init", "add --stream s1", "fleet up m1", "goal set a", "goal show", "goal", "reader add r"} {
 		name := verb
@@ -389,13 +370,13 @@ func TestTablesAreNamedPlainlyAndConfirmIsTheViewName(t *testing.T) {
 		} else {
 			name = f[0]
 		}
-		want := "nova-sprint " + name + ": " + none + "; run: nova-sprint " + name + " -h\n"
+		want := "nova-sprint " + name + " REFUSED: " + none + "; run: nova-sprint " + name + " -h\n"
 		if name == "goal" {
-			want = "nova-sprint goal: " + none + "; run: nova-sprint goal -h\n"
+			want = "nova-sprint goal REFUSED: " + none + "; run: nova-sprint goal -h\n"
 		}
-		if code, _, errs := ta.do(verb + " --prefix x"); code != 2 || errs != want {
-			t.Fatalf("%s --prefix x: exit %d, stderr %q, want %q", verb, code, errs, want)
-		}
+		code, _, errs := ta.do(verb + " --prefix x")
+		require.Equal(t, 2, code, "%s --prefix x: exit %d, stderr %q, want %q", verb, code, errs, want)
+		require.Equal(t, want, errs, "%s --prefix x: exit %d, stderr %q, want %q", verb, code, errs, want)
 	}
 	get := ta.a.getenv
 	ta.a.getenv = func(k string) string {
@@ -404,14 +385,14 @@ func TestTablesAreNamedPlainlyAndConfirmIsTheViewName(t *testing.T) {
 		}
 		return get(k)
 	}
-	if code, _, errs := ta.do("where"); code != 2 || errs != "nova-sprint where: NOVA_SPRINT_PREFIX is set: "+none+"; unset it; run: nova-sprint where -h\n" {
-		t.Fatalf("a set NOVA_SPRINT_PREFIX is refused: %d %q", code, errs)
-	}
+	code, _, errs := ta.do("where")
+	require.Equal(t, 2, code, "a set NOVA_SPRINT_PREFIX is refused: %d %q", code, errs)
+	require.Equal(t, "nova-sprint where REFUSED: NOVA_SPRINT_PREFIX is set: "+none+"; unset it; run: nova-sprint where -h\n", errs, "a set NOVA_SPRINT_PREFIX is refused: %d %q", code, errs)
 	// before the --redis check: with no store named the refusal is still this one
 	ta.a.getenv = func(k string) string { return map[string]string{"NOVA_SPRINT_PREFIX": "dev-"}[k] }
-	if code, _, errs := ta.do("where"); code != 2 || !strings.HasPrefix(errs, "nova-sprint where: NOVA_SPRINT_PREFIX is set: ") {
-		t.Fatalf("the prefix variable is checked before --redis: %d %q", code, errs)
-	}
+	code, _, errs = ta.do("where")
+	require.Equal(t, 2, code, "the prefix variable is checked before --redis: %d %q", code, errs)
+	require.True(t, strings.HasPrefix(errs, "nova-sprint where REFUSED: NOVA_SPRINT_PREFIX is set: "), "the prefix variable is checked before --redis: %d %q", code, errs)
 }
 
 // A verb on a stopped machine ends with a line that starts with STOPPED and
@@ -420,20 +401,15 @@ func TestVerbLineOnAStoppedMachineHasNoETA(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	out := ta.ok("init --readers reader-a --members m1")
-	if last := lastLine(out); last != "STOPPED" {
-		t.Fatalf("init on a stopped machine, no cards: last line %q in %s", last, out)
-	}
+	require.Equal(t, "STOPPED", lastLine(out), "init on a stopped machine, no cards: last line %q in %s", lastLine(out), out)
 	out = ta.ok("add --stream s1 --count 3")
-	if last := lastLine(out); last != "STOPPED  0/3 0.0%" || strings.Contains(out, "-> ETA") {
-		t.Fatalf("add on a stopped machine: last line %q in %s", last, out)
-	}
+	require.Equal(t, "STOPPED  0/3 0.0%", lastLine(out), "add on a stopped machine: last line %q in %s", lastLine(out), out)
+	require.NotContains(t, out, "-> ETA", "add on a stopped machine: last line %q in %s", lastLine(out), out)
 	ta.ok("start")
 	out = ta.ok("add --stream s2 --count 1")
 	// the added card is queued for the next tick's pump: the table counts it
 	// once the pump has drained the queue
-	if last := lastLine(out); last != "0/3 0.0% -> ETA  machine: running" {
-		t.Fatalf("add on a running machine: last line %q in %s", last, out)
-	}
+	require.Equal(t, "0/3 0.0% -> ETA  machine: running", lastLine(out), "add on a running machine: last line %q in %s", lastLine(out), out)
 	out = ta.ok("tick")
 	last := lastLine(out)
 	require.True(t, strings.HasPrefix(last, "0/4 0.0% -> ETA"), "the tick after an add on a running machine: last line %q in %s", last, out)
@@ -448,13 +424,11 @@ func TestTeardownWantsTheSamePrefix(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
-	if code, _, _ := ta.do("teardown --confirm other"); code != 2 {
-		t.Fatalf("teardown with another prefix: %d", code)
-	}
+	code, _, _ := ta.do("teardown --confirm other")
+	require.Equal(t, 2, code, "teardown with another prefix: %d", code)
 	ta.ok("teardown --confirm sprint")
-	if code, _, _ := ta.do("where"); code == 0 {
-		t.Fatalf("the tables are still there")
-	}
+	code, _, _ = ta.do("where")
+	require.NotEqual(t, 0, code, "the tables are still there")
 }
 
 // clear: a new epoch, the old one readable, a late worker refused naming it,
@@ -466,29 +440,26 @@ func TestClearByTheCommand(t *testing.T) {
 	ta.ok("add --stream s1 --count 2")
 	ta.deal(2)
 	ta.ok("take --as m1 --limit 2")
-	if code, _, _ := ta.do("clear --confirm other"); code != 2 {
-		t.Fatalf("clear with another prefix: %d", code)
-	}
+	code, _, _ := ta.do("clear --confirm other")
+	require.Equal(t, 2, code, "clear with another prefix: %d", code)
 	out := ta.ok("clear --confirm sprint")
-	if !strings.Contains(out, "CLEAR OK epoch=0->1") || !strings.Contains(out, "primaries=2") || !strings.HasSuffix(strings.TrimSpace(out), "\nSTOPPED") || strings.Contains(out, "-> ETA") {
-		t.Fatalf("clear: %s", out)
-	}
+	require.Contains(t, out, "CLEAR OK epoch=0->1", "clear")
+	require.Contains(t, out, "primaries=2", "clear")
+	require.True(t, strings.HasSuffix(strings.TrimSpace(out), "\nSTOPPED"), "clear: %s", out)
+	require.NotContains(t, out, "-> ETA", "clear")
 	code, _, errs := ta.do("finish --as m1 --epoch 0 s1-1.w1@1")
-	if code != 1 || !strings.Contains(errs, "cleared at") || !strings.Contains(errs, "epoch is now 1") {
-		t.Fatalf("a late finish: %d %s", code, errs)
-	}
+	require.Equal(t, 1, code, "a late finish: %d %s", code, errs)
+	require.Contains(t, errs, "cleared at", "a late finish: %d %s", code, errs)
+	require.Contains(t, errs, "epoch is now 1", "a late finish: %d %s", code, errs)
 	var w whereView
 	ta.json("where", &w)
-	if w.Epoch != 1 || w.All != 0 || w.Tables["merge"]["s1"]["state"] != "waiting" {
-		t.Fatalf("where after clear: %+v", w)
-	}
+	require.Equal(t, uint64(1), w.Epoch, "where after clear: %+v", w)
+	require.Equal(t, int64(0), w.All, "where after clear: %+v", w)
+	require.Equal(t, "waiting", w.Tables["merge"]["s1"]["state"], "where after clear: %+v", w)
 	ta.json("where --at-epoch 0", &w)
-	if w.Epoch != 0 || w.All != 2 {
-		t.Fatalf("where at the old epoch: %+v", w)
-	}
-	if out := ta.ok("card --fields s1-1 --at-epoch 0"); !strings.Contains(out, "place=s1:working") {
-		t.Fatalf("card at the old epoch: %s", out)
-	}
+	require.Equal(t, uint64(0), w.Epoch, "where at the old epoch: %+v", w)
+	require.Equal(t, int64(2), w.All, "where at the old epoch: %+v", w)
+	require.Contains(t, ta.ok("card --fields s1-1 --at-epoch 0"), "place=s1:working", "card at the old epoch")
 	ta.ok("add --stream s1 --count 2")
 	ta.deal(2)
 	var q struct {
@@ -496,10 +467,49 @@ func TestClearByTheCommand(t *testing.T) {
 		Cards []queueCard
 	}
 	ta.json("queue --as m1", &q)
-	if q.Epoch != 1 || len(q.Cards) != 2 || q.Cards[0].ID != "s1-1.w1" {
-		t.Fatalf("the same ids in the new epoch: %+v", q)
-	}
+	require.Equal(t, uint64(1), q.Epoch, "the same ids in the new epoch: %+v", q)
+	require.Len(t, q.Cards, 2, "the same ids in the new epoch: %+v", q)
+	require.Equal(t, "s1-1.w1", q.Cards[0].ID, "the same ids in the new epoch: %+v", q)
 	ta.ok("take --as m1 --epoch 1 s1-1.w1@1")
 	ta.ok("clear --confirm sprint")
 	ta.clean()
+}
+
+// parse is every verb's one reading of its words: flags anywhere among them, and every
+// word after the first -- that is not a flag's value taken as it is, however it looks.
+func TestParseTakesEveryWordAfterTheTerminatorAsItIs(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name       string
+		args, pos  []string
+		file, text string
+		on         bool
+	}{
+		{"flags anywhere, no --", []string{"a", "--file", "f", "b", "--on", "--text=t", "c"}, []string{"a", "b", "c"}, "f", "t", true},
+		{"flags before --, words that look like flags after it", []string{"--file", "f", "a", "--", "--file", "g", "--on"}, []string{"a", "--file", "g", "--on"}, "f", "", false},
+		{"a word after -- that begins with a dash", []string{"--", "-x", "--text", "t"}, []string{"-x", "--text", "t"}, "", "", false},
+		{"-- after a word", []string{"a", "--", "--on"}, []string{"a", "--on"}, "", "", false},
+		{"-- as a flag's value", []string{"--text", "--", "a", "--on"}, []string{"a"}, "", "--", true},
+		{"-- as a flag's value, then the terminator", []string{"--text", "--", "--", "--on"}, []string{"--on"}, "", "--", false},
+		{"a second -- is a word", []string{"--", "--", "a"}, []string{"--", "a"}, "", "", false},
+		{"a boolean takes no word", []string{"--on", "--", "--file", "f"}, []string{"--file", "f"}, "", "", true},
+		{"one dash, and a lone dash is a word", []string{"-file=f", "-", "-on=true"}, []string{"-"}, "f", "", true},
+	} {
+		fs := verbflag.New("try")
+		file, text, on := fs.String("file", "", ""), fs.String("text", "", ""), fs.Bool("on", false, "")
+		pos, err := parse(fs, c.args)
+		require.NoError(t, err, c.name)
+		require.Equal(t, c.pos, pos, c.name)
+		require.Equal(t, []any{c.file, c.text, c.on}, []any{*file, *text, *on}, c.name)
+	}
+	fs := verbflag.New("try")
+	fs.String("text", "", "")
+	_, err := parse(fs, []string{"a", "--nope"})
+	require.ErrorContains(t, err, "unknown flag --nope", "an unknown flag after a word is refused")
+	_, err = parse(fs, []string{"a", "--text"})
+	require.ErrorContains(t, err, "--text wants a value", "a flag with no value is refused")
+	require.PanicsWithValue(t, verbflag.Help{FS: fs}, func() { _, _ = parse(fs, []string{"a", "--help"}) }, "help after a word is help")
+	pos, err := parse(fs, []string{"a", "--", "--help"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"a", "--help"}, pos, "help after -- is a word")
 }

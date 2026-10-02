@@ -3,7 +3,6 @@ package gitrun_test
 import (
 	"bytes"
 	"context"
-	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +14,8 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func fakeGit(t *testing.T, body string) string {
@@ -23,26 +24,19 @@ func fakeGit(t *testing.T, body string) string {
 		t.Skip("the fake git is a shell script")
 	}
 	path := filepath.Join(t.TempDir(), "git")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte("#!/bin/sh\n"+body), 0o755))
 	return path
 }
 
 func TestDefaultTimeoutIsSixtySeconds(t *testing.T) {
 	t.Parallel()
 
-	if gitrun.DefaultTimeout != 60*time.Second {
-		t.Fatalf("DefaultTimeout is %s, want 60s", gitrun.DefaultTimeout)
-	}
+	require.Equal(t, 60*time.Second, gitrun.DefaultTimeout, "DefaultTimeout is %s, want 60s", gitrun.DefaultTimeout)
 	cmd, cancel := gitrun.Command(context.Background(), gitrun.Options{C: "/somewhere"}, "status")
 	defer cancel()
-	if cmd.WaitDelay != subproc.WaitDelay {
-		t.Fatalf("WaitDelay is %s, want %s", cmd.WaitDelay, subproc.WaitDelay)
-	}
-	if got := strings.Join(cmd.Args[1:], " "); got != "-C /somewhere status" {
-		t.Fatalf("args are %q", got)
-	}
+	require.Equal(t, subproc.WaitDelay, cmd.WaitDelay, "WaitDelay is %s, want %s", cmd.WaitDelay, subproc.WaitDelay)
+	got := strings.Join(cmd.Args[1:], " ")
+	require.Equal(t, "-C /somewhere status", got, "args are %q", got)
 }
 
 func TestAFinishedGitReturnsItsStreamsAndItsExitError(t *testing.T) {
@@ -51,16 +45,14 @@ func TestAFinishedGitReturnsItsStreamsAndItsExitError(t *testing.T) {
 	bin := fakeGit(t, "echo out\necho err >&2\nexit 3\n")
 	res, err := gitrun.Run(context.Background(), gitrun.Options{Bin: bin}, "x")
 	var ee *exec.ExitError
-	if !errors.As(err, &ee) || ee.ExitCode() != 3 {
-		t.Fatalf("got %v", err)
-	}
-	if string(res.Stdout) != "out\n" || string(res.Stderr) != "err\n" {
-		t.Fatalf("streams %q %q", res.Stdout, res.Stderr)
-	}
+	require.ErrorAs(t, err, &ee, "got %v", err)
+	require.Equal(t, 3, ee.ExitCode(), "got %v", err)
+	require.Equal(t, "out\n", string(res.Stdout), "streams %q %q", res.Stdout, res.Stderr)
+	require.Equal(t, "err\n", string(res.Stderr), "streams %q %q", res.Stdout, res.Stderr)
 	out, err := gitrun.Combined(context.Background(), gitrun.Options{Bin: bin, Env: []string{"PATH=/usr/bin:/bin"}}, "x")
-	if !errors.As(err, &ee) || !strings.Contains(string(out), "out") || !strings.Contains(string(out), "err") {
-		t.Fatalf("combined %q %v", out, err)
-	}
+	require.ErrorAs(t, err, &ee, "combined %q %v", out, err)
+	require.Contains(t, string(out), "out", "combined %q %v", out, err)
+	require.Contains(t, string(out), "err", "combined %q %v", out, err)
 }
 
 // standing is a writer that closes ready when the child has said it stands, so the test
@@ -93,14 +85,10 @@ func TestAKilledGitDoesNotHangOnItsPipe(t *testing.T) {
 	defer cancel()
 	out := &standing{ready: make(chan struct{})}
 	cmd.Stdout = out
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, cmd.Start())
 	<-out.ready
 	cancel()
-	if err := cmd.Wait(); err == nil {
-		t.Fatal("a git killed while it slept returned no error")
-	}
+	require.Error(t, cmd.Wait(), "a git killed while it slept returned no error")
 }
 
 // A caller whose own deadline has passed: the git does not run, the error is the timeout
@@ -113,9 +101,9 @@ func TestACallersPassedDeadlineIsATimeoutThatNamesNoBudget(t *testing.T) {
 	defer stop()
 	_, err := gitrun.Run(passed, gitrun.Options{Bin: bin}, "fetch")
 	var te *subproc.TimeoutError
-	if !errors.As(err, &te) || te.Budget != 0 || !strings.Contains(te.Error(), "before its deadline") {
-		t.Fatalf("got %v", err)
-	}
+	require.ErrorAs(t, err, &te, "got %v", err)
+	require.Zero(t, te.Budget, "got %v", err)
+	require.Contains(t, te.Error(), "before its deadline", "got %v", err)
 }
 
 // Output trims stdout, and a failure carries the command, the cause and git's stderr, and
@@ -125,19 +113,16 @@ func TestOutputTrimsAndReportsAFailureWithStderr(t *testing.T) {
 
 	ok := fakeGit(t, "echo '  hello  '\n")
 	got, err := gitrun.Output(context.Background(), gitrun.Options{Bin: ok}, "x")
-	if err != nil || got != "hello" {
-		t.Fatalf("got %q, %v", got, err)
-	}
+	require.NoError(t, err, "got %q, %v", got, err)
+	require.Equal(t, "hello", got, "got %q, %v", got, err)
 	bad := fakeGit(t, "echo boom >&2\nexit 4\n")
 	_, err = gitrun.Output(context.Background(), gitrun.Options{Bin: bad}, "frob", "--now")
 	var ge *gitrun.Error
 	var ee *exec.ExitError
-	if !errors.As(err, &ge) || !errors.As(err, &ee) || ee.ExitCode() != 4 {
-		t.Fatalf("got %v", err)
-	}
-	if !strings.HasPrefix(err.Error(), "git frob --now: exit status 4: boom") {
-		t.Fatalf("the message is %q", err.Error())
-	}
+	require.ErrorAs(t, err, &ge, "got %v", err)
+	require.ErrorAs(t, err, &ee, "got %v", err)
+	require.Equal(t, 4, ee.ExitCode(), "got %v", err)
+	require.True(t, strings.HasPrefix(err.Error(), "git frob --now: exit status 4: boom"), "the message is %q", err.Error())
 }
 
 // A network command line gets the long budget by default and a local one the short; an
@@ -156,8 +141,6 @@ func TestTheDefaultBudgetFollowsTheCommandLine(t *testing.T) {
 	} {
 		b := gitrun.Prepare(context.Background(), c.o, c.args...)
 		b.Cancel()
-		if b.Budget != c.want {
-			t.Errorf("%v %+v: budget %s, want %s", c.args, c.o, b.Budget, c.want)
-		}
+		assert.Equal(t, c.want, b.Budget, "%v %+v: budget %s, want %s", c.args, c.o, b.Budget, c.want)
 	}
 }

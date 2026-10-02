@@ -3,14 +3,22 @@ package sprint
 import (
 	"fmt"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 )
 
 // MergeReq is one mechanical merge step for a stream, given its facts by the
 // caller. The step never decides: what merged, what conflicted and the CI
 // result are facts.
 type MergeReq struct {
-	Stream   string
-	Batch    int
+	Stream string
+	Batch  int
+	// Cards, when given, is the batch by name: exactly these cards of the stream's
+	// queue, wherever they stand in it, and Batch is not read. A landing reports the
+	// cards it pushed, never "the first n": the tick's accepts put cards in the queue
+	// by their order of work, often ahead of the ones a landing is building, and a
+	// report by place would then record cards that were not pushed (nova-sprint land).
+	Cards    []string
 	Conflict string   // a card of the batch that did not merge
 	Cross    string   // "<card>=<other>": a card that needs a card of another stream first
 	Red      bool     // the stream branch went red on the batch
@@ -109,6 +117,19 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		n = len(queued)
 	}
 	batch := queued[:n]
+	if len(r.Cards) > 0 {
+		// the batch by name: every named card queued here, in the queue's order
+		batch = nil
+		for _, c := range queued {
+			if contains(r.Cards, c.ID) {
+				batch = append(batch, c)
+			}
+		}
+		if len(batch) != len(r.Cards) {
+			p.refuse(r.Stream, fmt.Sprintf("the batch names %d cards and %d of them are queued in stream %s now; nothing was changed", len(r.Cards), len(batch), r.Stream))
+			return p
+		}
+	}
 	var ids []string
 	for _, c := range batch {
 		ids = append(ids, c.ID)
@@ -121,7 +142,8 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		m.Who = r.Who
 		notes = append(notes, m)
 	}
-	// A card named by a fact is a card of the batch: the first n queued.
+	// A card named by a fact is a card of the batch: the first n queued, or the
+	// cards the batch names.
 	notInBatch := func(id string) bool {
 		if contains(ids, id) {
 			return false
@@ -245,6 +267,27 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 				ctlSet["state"], ctlSet["since"] = StreamWaiting, now
 			}
 		}
+		// What each card cost, its total's charged figure as the card carries it
+		// (cost.go, FieldCostTotal), written on it as it lands (FieldCost), and the
+		// stream's sum over every landed card, set on its control card, which the work
+		// table's cost column shows (Cost): a sum of the cards, set, never added to, so
+		// a replay writes the same and a clear empties it with the tables.
+		costs := map[string]string{}
+		sum := []string{}
+		for _, pr := range s.Work.Cell(r.Stream, Landed) {
+			if v := pr.F(FieldCost); v != "" {
+				sum = append(sum, v)
+			}
+		}
+		for _, c := range landing {
+			if v := cardcost.ParseTotal(s.Work.Placed(c.ID).F(FieldCostTotal)).Charged; v != "" {
+				costs[c.ID] = v
+				sum = append(sum, v)
+			}
+		}
+		if total, ok := cardcost.Sum(sum...); ok && len(sum) > 0 && total != ctl.F(FieldCost) {
+			ctlSet[FieldCost] = total
+		}
 		for i, c := range landing {
 			u := Unit{Key: c.ID, Stream: r.Stream}
 			if i == 0 {
@@ -252,7 +295,11 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 				u.Notes = notes
 			}
 			u.Changes = append(u.Changes, change(Merge, moveEntry(c, r.Stream, Merged, map[string]string{"merged": now})))
-			u.Changes = append(u.Changes, change(Work, moveEntry(s.Work.Placed(c.ID), r.Stream, Landed, map[string]string{"ci": "green", "landed": now})))
+			set := map[string]string{"ci": "green", "landed": now}
+			if v := costs[c.ID]; v != "" {
+				set[FieldCost] = v
+			}
+			u.Changes = append(u.Changes, change(Work, moveEntry(s.Work.Placed(c.ID), r.Stream, Landed, set)))
 			u.Moved = c.ID + " merging -> landed"
 			p.Units = append(p.Units, u)
 		}

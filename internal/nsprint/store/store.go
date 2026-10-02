@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"sync/atomic"
-	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
 	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
@@ -105,46 +103,8 @@ func isNoAuth(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "NOAUTH")
 }
 
-// noRetryWaits is set by NoRetryWaits and never cleared.
-var noRetryWaits atomic.Bool
-
-// NoRetryWaits makes every client Open and OpenSingle build from now on retry a
-// refused dial or command WITHOUT WAITING between attempts. It is for test
-// binaries: go-redis waits 100 ms between each of five dial attempts and backs
-// off between four command attempts, so a verb pointed at a closed port spent
-// 1.7 s of wall clock before it could refuse, and a test asserting that refusal
-// waited it out (nova-tools#4328, Glenn 2026-09-26: unit tests under 2 s and
-// never waiting on the wall clock). The number of attempts and the error are
-// unchanged. Production never calls it.
-func NoRetryWaits() { noRetryWaits.Store(true) }
-
 func Open(ctx context.Context, addr string) (*Store, error) {
 	return open(ctx, addr, 0, seatcred.Process())
-}
-
-// OpenSeat is Open as sel's seat instead of this process's (nova-tools#4330):
-// a caller holding its own seatcred.Selection, such as a parallel test.
-func OpenSeat(ctx context.Context, addr string, sel *seatcred.Selection) (*Store, error) {
-	return open(ctx, addr, 0, sel)
-}
-
-// OpenSingle is Open with a pool of exactly one connection, for a long-lived
-// loop such as `nova-sprint bench beat` (#3372): every tick rides the one
-// authenticated connection, and a broken one is redialed by the same client
-// on the next command.
-func OpenSingle(ctx context.Context, addr string) (*Store, error) {
-	return open(ctx, addr, 1, seatcred.Process())
-}
-
-// OpenProbe is OpenSeat for a one-shot health read (`nova-sprint doctor`):
-// one connection, one dial attempt bounded by a second, and no command
-// retries, so a store that is down or refuses the login answers on the first
-// pipeline in well under a second instead of after go-redis's five dials and
-// three retries.
-func OpenProbe(ctx context.Context, addr string, sel *seatcred.Selection) (*Store, error) {
-	return openWith(ctx, addr, sel, func(o *redis.Options) {
-		o.PoolSize, o.MaxRetries, o.DialerRetries, o.DialTimeout = 1, -1, 1, time.Second
-	})
 }
 
 // open dials as sel's seat, else the environment's. With no addr it dials the
@@ -180,11 +140,6 @@ func openWith(ctx context.Context, addr string, sel *seatcred.Selection, tune fu
 		},
 	}
 	tune(opts)
-	if noRetryWaits.Load() {
-		// The attempts are go-redis's own; only the waits between them go.
-		opts.MinRetryBackoff, opts.MaxRetryBackoff = -1, -1
-		opts.DialerRetryBackoff = func(int) time.Duration { return 0 }
-	}
 	client := redis.NewClient(opts)
 	if user == "" && os.Getenv(DefaultPasswordEnv) != "" {
 		client.AddHook(noUserHook{addr: addr})

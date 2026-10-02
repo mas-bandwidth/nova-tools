@@ -329,6 +329,12 @@ func (l *loaded) tables(want *sprint.Snapshot) *sprint.Snapshot {
 		for _, r := range shapes[i].Rows {
 			tab.SetRows(append(tab.Rows(), r.Key))
 		}
+		if name == sprint.Fleet && sameSet(tab.Rows(), want.Fleet.Rows()) {
+			// the store keeps the fleet's rows in its display order (status,
+			// then name: store.FleetOrder), which the reference does not model:
+			// the rows are compared as a set
+			tab.SetRows(want.Fleet.Rows())
+		}
 		ids := map[string]bool{}
 		for _, c := range want.T(name).Cards() {
 			ids[c.ID] = true

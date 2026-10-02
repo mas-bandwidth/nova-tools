@@ -54,14 +54,9 @@ example: nova-cairn append --store ./cairns --session s1 --entry e1 --text "the 
 example: nova-cairn index --store ./cairns
 example: nova-cairn open --store ./cairns --session s1 --publish manual
 example: nova-cairn receipt --store ./cairns --session s1 --entry e1
-example: nova-check attest --home ./self --manifest ./self/MANIFEST
-example: nova-check corpus --ledger ./self/corpus/anchors.md --root ./self --min-anchors 2
-example: nova-check dogfood ledger --cli ./docs/CLI.md --receipts ./dogfood-receipts
 example: nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000
 example: nova-check quickstart --dir ./self
 example: nova-ci help
-example: nova-ci slowtests --budget 60
-example: nova-ci version
 example: nova-fuse check --box ./fuse-box.json a-forum
 example: nova-fuse check --box ./fuse-box.json a-public-issue-tracker
 example: nova-fuse lift quarantine --box ./fuse-box.json a-forum
@@ -72,7 +67,6 @@ example: nova-memory quickstart --root ./corpus
 example: nova-memory search --root ./corpus --channels bm25 --k 3 lantern glazing brass
 example: nova-sandbox run --name card1 --size 8g --timeout 30m --go --out ./handoff \
 example: nova-tokens check --out ./out
-example: nova-tokens fold --out ./out --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts --bus ./bus
 example: nova-tokens sources --repos ./repos.tsv --all --claude bench=./transcripts
 example: nova-tokens sources --repos ./repos.tsv --all --claude bench=./transcripts --unattributed --max 20
 example: nova-tokens sum --out ./out --month 2026-09

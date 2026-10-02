@@ -29,6 +29,8 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNewVerbYieldsABuildingTestingSkeleton(t *testing.T) {
@@ -62,9 +64,7 @@ func TestNewVerbYieldsABuildingTestingSkeleton(t *testing.T) {
 	}
 	mainGo := filepath.Join(tree, "cmd", "nova-ci", "main.go")
 	src, err := os.ReadFile(mainGo)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if strings.Contains(string(src), "cmdProbe") {
 		t.Errorf("new-verb edited the dispatch switch in %s; it must only print the case", mainGo)
 	}
@@ -88,9 +88,7 @@ func TestNewVerbYieldsABuildingTestingSkeleton(t *testing.T) {
 	if !strings.Contains(string(src), sw) {
 		t.Fatalf("%s has no %q to paste the case under", mainGo, sw)
 	}
-	if err := os.WriteFile(mainGo, []byte(strings.Replace(string(src), sw, sw+dispatch, 1)), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(mainGo, []byte(strings.Replace(string(src), sw, sw+dispatch, 1)), 0o644))
 	if got := runIn(t, tree, "go", "run", "./cmd/nova-ci", "probe"); !strings.Contains(got, "nova-ci probe: OK") {
 		t.Errorf("nova-ci probe after pasting the printed case did not run the verb:\n%s", got)
 	}
@@ -120,6 +118,45 @@ func TestNewVerbYieldsABuildingTestingSkeleton(t *testing.T) {
 	}
 }
 
+// In process, on a temp tree: --dry-run lists exactly the files the real run
+// writes and writes none; a second run, a bad name, no checkout and a tool
+// with no func main are each one refusal at exit 2 that names the verb's help.
+func TestScaffoldVerbsDryRunAndRefuse(t *testing.T) {
+	t.Parallel()
+	tree := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(tree, "go.mod"), []byte("module example.com/m\n"), 0o644))
+
+	code, dry, stderr := runCI(t, []string{"new-rule", "--root", tree, "--dry-run", "demo"}, "")
+	require.Equal(t, 0, code, stderr)
+	entries, err := os.ReadDir(tree)
+	require.NoError(t, err)
+	assert.Len(t, entries, 1, "--dry-run wrote into the tree")
+	assert.Contains(t, dry, "nova-ci new-rule NOTE --dry-run wrote nothing")
+
+	code, wrote, stderr := runCI(t, []string{"new-rule", "--root", tree, "demo"}, "")
+	require.Equal(t, 0, code, stderr)
+	assert.Equal(t, strings.Count(dry, "would write "), strings.Count(wrote, "wrote "), "the dry run and the run name different files:\n%s\n%s", dry, wrote)
+	assert.Equal(t, strings.ReplaceAll(strings.Split(dry, "nova-ci new-rule NOTE")[0], "would write ", "wrote "), wrote)
+
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"new-rule", "--root", tree, "demo"}, "already exists"},
+		{[]string{"new-rule", "--root", tree, "--dry-run", "demo"}, "already exists"},
+		{[]string{"new-rule", "--root", tree, "Bad Name"}, "rule name"},
+		{[]string{"new-rule", "--root", t.TempDir(), "demo"}, "no go.mod"},
+		{[]string{"new-verb", "--root", tree, "ghost", "probe"}, "no func main"},
+		{[]string{"new-verb", "--root", tree, "ghost"}, "new-verb wants two arguments"},
+	} {
+		code, stdout, stderr := runCI(t, c.args, "")
+		assert.Equal(t, 2, code, "%v", c.args)
+		assert.Empty(t, stdout, "%v", c.args)
+		assert.Contains(t, stderr, c.want, "%v", c.args)
+		assert.Regexp(t, `^nova-ci new-(rule|verb) REFUSED: .*; run: nova-ci new-(rule|verb) -h\n$`, stderr, "%v", c.args)
+	}
+}
+
 // scaffoldTree builds the CLI and lays out a scratch module holding go.mod,
 // go.sum, the Makefile, and only the module packages that pattern depends on,
 // tests included: each such package's top-level files plus its embed files.
@@ -131,9 +168,7 @@ func scaffoldTree(t *testing.T, pattern string) (root, bin, tree string) {
 		}
 	}
 	root, err := filepath.Abs("../..")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	bin = buildCLI(t)
 	tree = t.TempDir()
 
@@ -162,9 +197,7 @@ func scaffoldTree(t *testing.T, pattern string) (root, bin, tree string) {
 		}
 		seen[line] = true
 		ents, err := os.ReadDir(dir)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		for _, e := range ents {
 			if e.Type().IsRegular() {
 				copyScaffoldFile(t, filepath.Join(dir, e.Name()), filepath.Join(tree, rel, e.Name()))
@@ -215,17 +248,9 @@ func runIn(t *testing.T, dir, name string, args ...string) string {
 func copyScaffoldFile(t *testing.T, from, to string) {
 	t.Helper()
 	data, err := os.ReadFile(from)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	info, err := os.Stat(from)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(to, data, info.Mode().Perm()); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Dir(to), 0o755))
+	require.NoError(t, os.WriteFile(to, data, info.Mode().Perm()))
 }

@@ -7,12 +7,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/record"
 	"github.com/mas-bandwidth/nova-tools/internal/testredis"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/require"
 )
 
 func ledgerServer(t *testing.T) (*redis.Client, *record.RedisLedger) {
@@ -26,33 +26,23 @@ func ledgerServerImage(t *testing.T, c *redis.Client) map[string]string {
 	t.Helper()
 	ctx := context.Background()
 	keys, err := c.Keys(ctx, "*").Result()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	image := make(map[string]string, len(keys))
 	for _, key := range keys {
 		kind, err := c.Type(ctx, key).Result()
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		if kind == "hash" {
 			// Rebuilding a large hash can change its DUMP iteration order.
 			// Compare every field/value, preserving the full key set as well.
 			fields, err := c.HGetAll(ctx, key).Result()
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
 			value, err := json.Marshal(fields)
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
 			image[key] = "hash:" + string(value)
 			continue
 		}
 		value, err := c.Dump(ctx, key).Result()
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		image[key] = kind + ":" + value
 	}
 	return image
@@ -81,21 +71,16 @@ func TestLedgerServerPermissionRefusalPreservesWholeBatch(t *testing.T) {
 				day := fmt.Sprintf("2026-09-%02d", n)
 				days = append(days, record.LedgerDay{Day: day, Entries: []record.LedgerEntry{{Day: day, Card: "before", Model: "model", Repo: "repo"}}})
 			}
-			if err := store.ReplaceLedgerDays(ctx, days); err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, store.ReplaceLedgerDays(ctx, days))
 			before := ledgerServerImage(t, admin)
 			rules := []string{"on", ">test-only-password", "~*", "&*", "+@all"}
 			rules = append(rules, tc.rules...)
-			if err := admin.ACLSetUser(ctx, "fixture", rules...).Err(); err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, admin.ACLSetUser(ctx, "fixture", rules...).Err())
 			client := redis.NewClient(&redis.Options{Addr: admin.Options().Addr, Username: "fixture", Password: "test-only-password"})
 			t.Cleanup(func() { _ = client.Close() })
 			who, err := client.Do(ctx, "ACL", "WHOAMI").Text()
-			if err != nil || who != "fixture" {
-				t.Fatalf("fixture user=%q (%v)", who, err)
-			}
+			require.NoError(t, err, "fixture user=%q (%v)", who, err)
+			require.Equal(t, "fixture", who, "fixture user=%q (%v)", who, err)
 			for i := range days {
 				if tc.clear {
 					days[i].Entries = nil
@@ -104,13 +89,10 @@ func TestLedgerServerPermissionRefusalPreservesWholeBatch(t *testing.T) {
 				}
 			}
 			err = record.NewRedisLedger(client).ReplaceLedgerDays(ctx, days)
-			if err == nil || !strings.Contains(err.Error(), "NOPERM") {
-				t.Fatalf("want permission refusal, got %v", err)
-			}
+			require.ErrorContains(t, err, "NOPERM", "want permission refusal, got %v", err)
 			t.Logf("refused before mutation: %v", err)
-			if after := ledgerServerImage(t, admin); !reflect.DeepEqual(after, before) {
-				t.Fatalf("refused batch changed store: before=%v after=%v", before, after)
-			}
+			after := ledgerServerImage(t, admin)
+			require.Equal(t, before, after, "refused batch changed store: before=%v after=%v", before, after)
 		})
 	}
 }
@@ -128,22 +110,17 @@ func TestLedgerServerLargeDayWritesEveryRow(t *testing.T) {
 	ctx := context.Background()
 	c, store := ledgerServer(t)
 	day := largeLedgerDay("2026-09-01")
-	if err := record.CheckLedgerDay(day.Day, day.Entries); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.ReplaceLedgerDays(ctx, []record.LedgerDay{day}); err != nil {
-		t.Fatal(err)
-	}
-	if count, err := c.HLen(ctx, record.LedgerKey(day.Day)).Result(); err != nil || count != 5000 {
-		t.Fatalf("rows=%d (%v), want5000", count, err)
-	}
+	require.NoError(t, record.CheckLedgerDay(day.Day, day.Entries))
+	require.NoError(t, store.ReplaceLedgerDays(ctx, []record.LedgerDay{day}))
+	count, err := c.HLen(ctx, record.LedgerKey(day.Day)).Result()
+	require.NoError(t, err, "rows=%d (%v), want5000", count, err)
+	require.Equal(t, int64(5000), count, "rows=%d (%v), want5000", count, err)
 	totals, indexed, _, err := store.LedgerReport(ctx, "2026-09", "model")
-	if err != nil || indexed != 1 || len(totals) != 1 {
-		t.Fatalf("report=%v indexed=%d (%v)", totals, indexed, err)
-	}
-	if totals[0].Rows != 5000 || totals[0].Tokens[0] != 5000*5001/2 {
-		t.Fatalf("large day totals=%+v", totals[0])
-	}
+	require.NoError(t, err, "report=%v indexed=%d (%v)", totals, indexed, err)
+	require.Equal(t, 1, indexed, "report=%v indexed=%d (%v)", totals, indexed, err)
+	require.Len(t, totals, 1, "report=%v indexed=%d (%v)", totals, indexed, err)
+	require.Equal(t, 5000, totals[0].Rows, "large day totals=%+v", totals[0])
+	require.Equal(t, int64(5000*5001/2), totals[0].Tokens[0], "large day totals=%+v", totals[0])
 }
 
 func TestLedgerServerRecoverableErrorRestoresLargeDay(t *testing.T) {
@@ -151,21 +128,15 @@ func TestLedgerServerRecoverableErrorRestoresLargeDay(t *testing.T) {
 	ctx := context.Background()
 	c, store := ledgerServer(t)
 	days := []record.LedgerDay{largeLedgerDay("2026-09-01"), {Day: "2026-09-02", Entries: []record.LedgerEntry{{Day: "2026-09-02", Card: "before", Model: "model", Repo: "repo"}}}, {Day: "2026-09-03"}}
-	if err := store.ReplaceLedgerDays(ctx, days); err != nil {
-		t.Fatal(err)
-	}
-	if err := c.Set(ctx, "not-a-hash", "fixture", 0).Err(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, store.ReplaceLedgerDays(ctx, days))
+	require.NoError(t, c.Set(ctx, "not-a-hash", "fixture", 0).Err())
 	before := ledgerServerImage(t, c)
 	c.AddHook(&injectEvalMidScriptFailHook{})
 	days[0].Entries = days[0].Entries[:1]
 	days[0].Entries[0].Card = "after"
 	err := store.ReplaceLedgerDays(ctx, days)
-	if err == nil || !strings.Contains(err.Error(), "WRONGTYPE") {
-		t.Fatalf("want injected recoverable error, got %v", err)
-	}
-	if after := ledgerServerImage(t, c); !reflect.DeepEqual(after, before) {
-		t.Fatal("recoverable error did not restore large prior hash and absent day")
-	}
+	require.ErrorContains(t, err, "WRONGTYPE", "want injected recoverable error, got %v", err)
+	// The image holds the 5000-row day: reflect.DeepEqual keeps a failure's output to the one
+	// sentence, where assert.Equal would print both maps whole.
+	require.True(t, reflect.DeepEqual(ledgerServerImage(t, c), before), "recoverable error did not restore large prior hash and absent day")
 }

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/stretchr/testify/require"
 )
 
 // A worker that held generation 1 of a card dealt away and back again sends
@@ -21,9 +22,8 @@ func TestProbe1bStaleFinishWithoutGeneration(t *testing.T) {
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: first}))
 	h.must(FleetStep(sprint.FleetReq{Op: "down", Member: second}))
 	c := h.snap().Fleet.Card("s1-1.w1")
-	if c.Row != first || c.Int("gen") != 3 {
-		t.Fatalf("the card is at %s gen %d", c.Row, c.Int("gen"))
-	}
+	require.Equal(t, first, c.Row, "the card is at %s gen %d", c.Row, c.Int("gen"))
+	require.Equal(t, 3, c.Int("gen"), "the card is at %s gen %d", c.Row, c.Int("gen"))
 	h.must(TakeStep(sprint.TakeReq{As: first, Sel: sprint.Sel{IDs: []string{"s1-1.w1"}}, Gens: map[string]int{"s1-1.w1": c.Int("gen")}}))
 	for name, r := range map[string]sprint.FinishReq{
 		"--as only":           {As: first, Sel: sprint.Sel{IDs: []string{"s1-1.w1"}}, Failed: true, Report: "stale"},

@@ -6,17 +6,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
 // The machine kind's two queries beside its six verbs: self, the machine's
-// own name, and width, the room the sprint's member on a machine has. Both
+// own name, and width, the width of the sprint's member on a machine. Both
 // read the one inventory and type nothing into it (docs/SPEC-CONFIG.md, "The
-// sprint's width"; internal/config/kind.go, the machine kind's four fields).
+// sprint's width"; internal/config/kind.go, the machine kind's fields).
 
 // Exit codes of machine self. They are the family's: 0 done, 2 a finding (the
 // name is no machine row) or an invocation that could not run, 3 the name or
@@ -32,88 +31,95 @@ const exitCannotRead = 3
 func runMachineSelf(ctx context.Context, args []string, stdout, stderr io.Writer, d deps) int {
 	const verb = "machine self"
 	fs := verbflag.New(verb)
-	pg, _, _ := connFlags(fs, false, false)
+	c := storeFlags(fs)
 	check := fs.Bool("check", false, "read the machine rows and exit 2 when this machine's name is none of them (exit 3 when the rows cannot be read); without it no store is opened")
-	if err := fs.Parse(args); err != nil {
-		return refuse(stderr, verb, err.Error())
+	asJSON := jsonFlag(fs)
+	if code, ok := parse(fs, args, stderr, verb); !ok {
+		return code
 	}
 	if fs.NArg() > 0 {
 		return refuse(stderr, verb, "self takes no name; flags only")
 	}
+	// cannotRead is the exit 3 line: the name or the rows could not be read.
+	cannotRead := func(what, next string) int {
+		fmt.Fprintf(stderr, "%s %s REFUSED: %s; run: %s\n", toolName, verb, plain(what), next)
+		return exitCannotRead
+	}
 	name, _, err := config.SelfName(ctx, config.SelfSource{Getenv: d.getenv, Hostname: d.hostname, Tailscale: d.tailscale})
 	if err != nil {
-		fmt.Fprintf(stderr, "%s %s: %s; run: %s=<the name of this machine's row> %s %s\n", tool, verb, err.Error(), envMachine, tool, verb)
-		return exitCannotRead
+		return cannotRead(err.Error(), envMachine+"=<the name of this machine's row> "+toolName+" "+verb)
 	}
 	if *check {
 		// under --check exit 2 is "no such row" alone: no store to read is 3
-		dsn, err := pgDSN(*pg, d.getenv)
+		dsn, err := c.dsn(d.getenv)
 		if err != nil {
-			fmt.Fprintf(stderr, "%s %s: the config cannot be read: %s\n", tool, verb, oneline.WithRemedy(oneLine(err), tool+" "+verb+" -h"))
-			return exitCannotRead
+			return cannotRead("the config cannot be read: "+err.Error(), helpFor(verb))
 		}
 		st, err := d.openStore(ctx, dsn)
 		if err != nil {
-			fmt.Fprintf(stderr, "%s %s: the config cannot be read: %s\n", tool, verb, oneline.WithRemedy(oneLine(err), tool+" "+verb+" -h"))
-			return exitCannotRead
+			return cannotRead("the config cannot be read: "+err.Error(), helpFor(verb))
 		}
 		defer st.Close()
 		_, found, err := st.Get(ctx, config.KindMachine, name)
 		if err != nil {
-			fmt.Fprintf(stderr, "%s %s: the config cannot be read: %s\n", tool, verb, oneline.WithRemedy(oneLine(err), tool+" "+verb+" -h"))
-			return exitCannotRead
+			return cannotRead("the config cannot be read: "+err.Error(), helpFor(verb))
 		}
 		if !found {
-			fmt.Fprintf(stderr, "%s %s: %q is no machine row; run: %s machine add %s --user <login> --seat <seat> --slots <n> --as <friend>\n", tool, verb, name, tool, name)
+			fmt.Fprintf(stderr, "%s %s REFUSED: %q is no machine row; run: %s machine add %s --user <login> --seat <seat> --slots <n> --width <n> --as <name>%s\n", toolName, verb, name, toolName, name, c.again())
 			return 2
 		}
+	}
+	if *asJSON {
+		o := tool.Done().Fact("machine", name)
+		o.Verb = verb
+		if *check {
+			o.Fact("row", true)
+		}
+		return emit(stdout, o)
 	}
 	fmt.Fprintln(stdout, name)
 	return 0
 }
 
-func oneLine(err error) string { return strings.Join(strings.Fields(err.Error()), " ") }
-
-// widths reads every machine row's width: the rows from the store, and the
-// friends' beats from Redis when a friend row carries slots (Redis is given
-// by --redis, else NOVA_SPRINT_REDIS, else NOVA_REDIS_ADDR).
-func widths(ctx context.Context, st config.Store, redisFlag string, d deps) ([]config.MachineWidth, error) {
-	var hosts config.HostReader
-	if addr := liveRedisAddress(redisFlag, d.getenv); addr != "" {
-		rs, err := d.openRedis(ctx, addr)
-		if err != nil {
-			return nil, err
-		}
-		defer rs.Close()
-		hosts = rs
+// machineLoops names the loop rows that run on the machine, by name: what
+// machine show lists after the machine's own fields (loops=<a,b>, - for
+// none).
+func machineLoops(ctx context.Context, st config.Store, machine string) ([]string, error) {
+	rows, err := st.List(ctx, config.KindLoop)
+	if err != nil {
+		return nil, err
 	}
-	return config.Widths(ctx, st, hosts)
+	var out []string
+	for _, r := range rows {
+		if r.Fields["machine"] == machine {
+			out = append(out, r.Name)
+		}
+	}
+	return out, nil
 }
 
 // widthJSON is one machine's width as a program reads it.
 type widthJSON struct {
 	Machine string `json:"machine"`
-	Slots   int    `json:"slots"`
-	Charged int    `json:"charged"`
 	Width   int    `json:"width"`
 	Member  bool   `json:"member"`
 }
 
 func toJSON(w config.MachineWidth) widthJSON {
-	return widthJSON{Machine: w.Machine, Slots: w.Slots, Charged: w.Charged, Width: w.Width, Member: w.Member()}
+	return widthJSON{Machine: w.Machine, Width: w.Width, Member: w.Member()}
 }
 
 // runMachineWidth is `machine width <name>`: the width of the sprint's member
-// on the machine, its slots less the friend slots charged to it, and whether
-// it is a member (width above 0).
+// on the machine, the row's width field, and whether it is a member (width
+// above 0). It reads the machine rows alone and opens no Redis.
 func runMachineWidth(ctx context.Context, args []string, stdout, stderr io.Writer, d deps) int {
 	const verb = "machine width"
 	fs := verbflag.New(verb)
-	pg, redisFlag, _ := connFlags(fs, true, false)
-	asJSON := fs.Bool("json", false, "print one JSON object for a program instead of the line")
+	c := storeFlags(fs)
+	asJSON := fs.Bool("json", false, "print one JSON object for a program instead of the line: {\"machine\",\"width\",\"member\"}")
 	name, rest := nameAndRest(mustMachine(), args)
-	if err := fs.Parse(rest); err != nil {
-		return refuse(stderr, verb, err.Error())
+	if code, ok := parse(fs, rest, stderr, verb); !ok {
+		return code
 	}
 	if name == "" && fs.NArg() == 1 {
 		name = fs.Arg(0)
@@ -123,7 +129,7 @@ func runMachineWidth(ctx context.Context, args []string, stdout, stderr io.Write
 	if err := config.ValidateName(name); err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	dsn, err := pgDSN(*pg, d.getenv)
+	dsn, err := c.dsn(d.getenv)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
@@ -132,16 +138,19 @@ func runMachineWidth(ctx context.Context, args []string, stdout, stderr io.Write
 		return refuse(stderr, verb, err.Error())
 	}
 	defer st.Close()
-	ws, err := widths(ctx, st, *redisFlag, d)
+	ws, err := config.Widths(ctx, st)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
 	w, found := config.WidthOf(ws, name)
 	if !found {
-		return refused(stderr, verb, "machine "+name+" not found", tool+" machine list")
+		return refused(stderr, verb, "machine "+name+" not found", toolName+" machine list"+c.again())
 	}
 	if *asJSON {
-		out, _ := json.Marshal(toJSON(w))
+		out, err := json.Marshal(toJSON(w))
+		if err != nil {
+			return refuse(stderr, verb, err.Error())
+		}
 		fmt.Fprintln(stdout, string(out))
 		return 0
 	}

@@ -2,8 +2,9 @@ package main
 
 import (
 	"path/filepath"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // #2636, THE LINT THIRD OF `nova-swarm lint --card --typed`. Three refusals and two
@@ -39,19 +40,14 @@ func TestLintTypedRefusesACardWithNoDependsOn(t *testing.T) {
 
 	card := dependsOnCard(t, "nokey.card", "")
 	exit, stdout, stderr := runSwarm(t, "lint", "--card", card, "--typed", "--max", "0")
-	if exit != 1 {
-		t.Fatalf("a typed card with no DEPENDS-ON key exits 1, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
-	}
-	if !strings.Contains(stdout, "depends-on:") || !strings.Contains(stdout, "DEPENDS-ON") {
-		t.Fatalf("the refusal names the key:\n%s", stdout)
-	}
-	if !strings.Contains(stdout, dependsRemedy) {
-		t.Fatalf("the refusal names the remedy %q:\n%s", dependsRemedy, stdout)
-	}
+	require.Equal(t, 1, exit, "a typed card with no DEPENDS-ON key exits 1, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	require.Contains(t, stdout, "depends-on:", "the refusal names the key:\n%s", stdout)
+	require.Contains(t, stdout, "DEPENDS-ON", "the refusal names the key:\n%s", stdout)
+	require.Contains(t, stdout, dependsRemedy, "the refusal names the remedy %q:\n%s", dependsRemedy, stdout)
 	// The same card, not asked to be typed, is the card cut before the key existed.
-	if exit, stdout, stderr = runSwarm(t, "lint", "--card", card, "--max", "0"); exit != 0 || strings.Contains(stdout, "depends-on") {
-		t.Fatalf("without --typed a card is not refused for a missing DEPENDS-ON: exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
-	}
+	exit, stdout, stderr = runSwarm(t, "lint", "--card", card, "--max", "0")
+	require.Equal(t, 0, exit, "without --typed a card is not refused for a missing DEPENDS-ON: exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	require.NotContains(t, stdout, "depends-on", "without --typed a card is not refused for a missing DEPENDS-ON: exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
 }
 
 func TestLintTypedRefusesASelfDependency(t *testing.T) {
@@ -60,18 +56,12 @@ func TestLintTypedRefusesASelfDependency(t *testing.T) {
 	card := dependsOnCard(t, "self.card", "DEPENDS-ON: other-card, CARD-0000")
 	lineup := dependsLineup(t, "id\tdepends-on\nother-card\t-\n")
 	exit, stdout, stderr := runSwarm(t, "lint", "--card", card, "--typed", "--lineup", lineup, "--max", "0")
-	if exit != 1 {
-		t.Fatalf("a self-dependency exits 1, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
-	}
-	if !strings.Contains(stdout, "depends-on:") || !strings.Contains(stdout, "CARD-0000") || !strings.Contains(stdout, "own id") {
-		t.Fatalf("the refusal names the card's own id:\n%s", stdout)
-	}
-	if strings.Contains(stdout, "not in the lineup") {
-		t.Fatalf("a self-dependency is not an unknown id:\n%s", stdout)
-	}
-	if !strings.Contains(stdout, dependsRemedy) {
-		t.Fatalf("the refusal names the remedy:\n%s", stdout)
-	}
+	require.Equal(t, 1, exit, "a self-dependency exits 1, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	require.Contains(t, stdout, "depends-on:", "the refusal names the card's own id:\n%s", stdout)
+	require.Contains(t, stdout, "CARD-0000", "the refusal names the card's own id:\n%s", stdout)
+	require.Contains(t, stdout, "own id", "the refusal names the card's own id:\n%s", stdout)
+	require.NotContains(t, stdout, "not in the lineup", "a self-dependency is not an unknown id:\n%s", stdout)
+	require.Contains(t, stdout, dependsRemedy, "the refusal names the remedy:\n%s", stdout)
 }
 
 func TestLintTypedRefusesAnUnknownDependsOnID(t *testing.T) {
@@ -80,15 +70,11 @@ func TestLintTypedRefusesAnUnknownDependsOnID(t *testing.T) {
 	card := dependsOnCard(t, "unknown.card", "DEPENDS-ON: missing-card")
 	lineup := dependsLineup(t, "id\tdepends-on\nother-card\t-\n")
 	exit, stdout, stderr := runSwarm(t, "lint", "--card", card, "--typed", "--lineup", lineup, "--max", "0")
-	if exit != 1 {
-		t.Fatalf("an unknown id exits 1, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
-	}
-	if !strings.Contains(stdout, "depends-on:") || !strings.Contains(stdout, "missing-card") || !strings.Contains(stdout, "not in the lineup") {
-		t.Fatalf("the refusal names the id and the lineup:\n%s", stdout)
-	}
-	if !strings.Contains(stdout, dependsRemedy) {
-		t.Fatalf("the refusal names the remedy:\n%s", stdout)
-	}
+	require.Equal(t, 1, exit, "an unknown id exits 1, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	require.Contains(t, stdout, "depends-on:", "the refusal names the id and the lineup:\n%s", stdout)
+	require.Contains(t, stdout, "missing-card", "the refusal names the id and the lineup:\n%s", stdout)
+	require.Contains(t, stdout, "not in the lineup", "the refusal names the id and the lineup:\n%s", stdout)
+	require.Contains(t, stdout, dependsRemedy, "the refusal names the remedy:\n%s", stdout)
 }
 
 func TestLintTypedDependsOnDashPasses(t *testing.T) {
@@ -97,12 +83,9 @@ func TestLintTypedDependsOnDashPasses(t *testing.T) {
 	card := dependsOnCard(t, "dash.card", "DEPENDS-ON: -")
 	lineup := dependsLineup(t, "id\tdepends-on\nother-card\t-\n")
 	exit, stdout, stderr := runSwarm(t, "lint", "--card", card, "--typed", "--lineup", lineup, "--max", "0")
-	if exit != 0 || !strings.Contains(stdout, "LINT OK card=dash.card") {
-		t.Fatalf("DEPENDS-ON: - passes, exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
-	}
-	if strings.Contains(stdout, "depends-on") {
-		t.Fatalf("a dash is not a drift:\n%s", stdout)
-	}
+	require.Equal(t, 0, exit, "DEPENDS-ON: - passes, exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	require.Contains(t, stdout, "LINT OK card=dash.card", "DEPENDS-ON: - passes, exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	require.NotContains(t, stdout, "depends-on", "a dash is not a drift:\n%s", stdout)
 }
 
 func TestLintTypedDependsOnReferencePasses(t *testing.T) {
@@ -111,12 +94,10 @@ func TestLintTypedDependsOnReferencePasses(t *testing.T) {
 	card := dependsOnCard(t, "ref.card", "DEPENDS-ON: mas-bandwidth/nova-tools#2550")
 	lineup := dependsLineup(t, "id\tdepends-on\nother-card\t-\n")
 	exit, stdout, stderr := runSwarm(t, "lint", "--card", card, "--typed", "--lineup", lineup, "--max", "0")
-	if exit != 0 || !strings.Contains(stdout, "LINT OK card=ref.card") {
-		t.Fatalf("owner/repo#n passes and is not looked up in the lineup, exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
-	}
-	if strings.Contains(stdout, "depends-on") || strings.Contains(stdout, "mas-bandwidth/nova-tools#2550") {
-		t.Fatalf("a reference is not a drift:\n%s", stdout)
-	}
+	require.Equal(t, 0, exit, "owner/repo#n passes and is not looked up in the lineup, exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	require.Contains(t, stdout, "LINT OK card=ref.card", "owner/repo#n passes and is not looked up in the lineup, exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	require.NotContains(t, stdout, "depends-on", "a reference is not a drift:\n%s", stdout)
+	require.NotContains(t, stdout, "mas-bandwidth/nova-tools#2550", "a reference is not a drift:\n%s", stdout)
 }
 
 func TestLintTypedRefusesASpaceAndDogfood(t *testing.T) {
@@ -125,14 +106,14 @@ func TestLintTypedRefusesASpaceAndDogfood(t *testing.T) {
 	lineup := dependsLineup(t, "id\tdepends-on\nother-card\t-\n")
 	card := dependsOnCard(t, "space.card", "DEPENDS-ON: nova-tools #2550")
 	exit, stdout, stderr := runSwarm(t, "lint", "--card", card, "--typed", "--lineup", lineup, "--max", "0")
-	if exit != 1 || !strings.Contains(stdout, "depends-on:") || !strings.Contains(stdout, "nova-tools #2550") {
-		t.Fatalf("nova-tools #2550 (a space) is refused by name, exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
-	}
+	require.Equal(t, 1, exit, "nova-tools #2550 (a space) is refused by name, exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	require.Contains(t, stdout, "depends-on:", "nova-tools #2550 (a space) is refused by name, exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	require.Contains(t, stdout, "nova-tools #2550", "nova-tools #2550 (a space) is refused by name, exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
 	card = dependsOnCard(t, "dog.card", "DEPENDS-ON: dogfood")
 	exit, stdout, stderr = runSwarm(t, "lint", "--card", card, "--typed", "--lineup", lineup, "--max", "0")
-	if exit != 1 || !strings.Contains(stdout, "depends-on:") || !strings.Contains(stdout, "dogfood") {
-		t.Fatalf("dogfood is refused by name, exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
-	}
+	require.Equal(t, 1, exit, "dogfood is refused by name, exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	require.Contains(t, stdout, "depends-on:", "dogfood is refused by name, exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	require.Contains(t, stdout, "dogfood", "dogfood is refused by name, exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
 }
 
 func TestLintTypedDependsOnKnownIDPasses(t *testing.T) {
@@ -141,10 +122,7 @@ func TestLintTypedDependsOnKnownIDPasses(t *testing.T) {
 	card := dependsOnCard(t, "known.card", "DEPENDS-ON: other-card, third-card")
 	lineup := dependsLineup(t, "id\tdepends-on\nother-card\t-\nthird-card\tother-card\n")
 	exit, stdout, stderr := runSwarm(t, "lint", "--card", card, "--typed", "--lineup", lineup, "--max", "0")
-	if exit != 0 || !strings.Contains(stdout, "LINT OK card=known.card") {
-		t.Fatalf("an id the lineup holds passes, exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
-	}
-	if strings.Contains(stdout, "depends-on") {
-		t.Fatalf("a known id is not a drift:\n%s", stdout)
-	}
+	require.Equal(t, 0, exit, "an id the lineup holds passes, exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	require.Contains(t, stdout, "LINT OK card=known.card", "an id the lineup holds passes, exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	require.NotContains(t, stdout, "depends-on", "a known id is not a drift:\n%s", stdout)
 }

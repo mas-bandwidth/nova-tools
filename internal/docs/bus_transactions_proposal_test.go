@@ -2,8 +2,10 @@ package docs
 
 import (
 	"os"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestBusTransactionsProposalBoundaries pins the nova-bus bounded
@@ -20,9 +22,7 @@ func TestBusTransactionsProposalBoundaries(t *testing.T) {
 	t.Parallel()
 
 	body, err := os.ReadFile("../../docs/SPEC.md")
-	if err != nil {
-		t.Fatalf("docs/SPEC.md: %v", err)
-	}
+	require.NoError(t, err, "docs/SPEC.md: %v", err)
 	content := string(body)
 
 	// The transaction itself, and the one-identity rule that binds its parts.
@@ -39,9 +39,7 @@ func TestBusTransactionsProposalBoundaries(t *testing.T) {
 		"shared collector",
 		"no savings percentage is claimed yet",
 	} {
-		if !strings.Contains(content, want) {
-			t.Errorf("docs/SPEC.md missing %q", want)
-		}
+		assert.Contains(t, content, want, "docs/SPEC.md missing %q", want)
 	}
 
 	// The ownership boundary, in the section's own terms.
@@ -50,9 +48,7 @@ func TestBusTransactionsProposalBoundaries(t *testing.T) {
 		"owns no subscription and no assignment",
 		"does not infer permission from message content or Git author",
 	} {
-		if !strings.Contains(content, want) {
-			t.Errorf("docs/SPEC.md missing %q", want)
-		}
+		assert.Contains(t, content, want, "docs/SPEC.md missing %q", want)
 	}
 
 	// The deciding cases, each named so the section cannot shrink to prose.
@@ -65,8 +61,6 @@ func TestBusTransactionsProposalBoundaries(t *testing.T) {
 		"a CC-only update",
 		"interrupted draft handling",
 	} {
-		if !strings.Contains(content, want) {
-			t.Errorf("docs/SPEC.md missing %q", want)
-		}
+		assert.Contains(t, content, want, "docs/SPEC.md missing %q", want)
 	}
 }

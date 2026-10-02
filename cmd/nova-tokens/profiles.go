@@ -143,7 +143,7 @@ func medianOut(outs []int64) string {
 // cmdProfiles parses the `profiles` verb's one flag and folds the root.
 func cmdProfiles(args []string, stdout, stderr io.Writer, now time.Time) int {
 	fs := newFlagSet("profiles")
-	swarmRoot := fs.String("swarm-root", "", "")
+	swarmRoot := fs.String("swarm-root", "", "root containing the swarm pool profiles")
 	if err := verbflag.Parse(fs, args); err != nil {
 		return refuse(stderr, " profiles", oneline.Cap(err.Error(), oneline.TailBytes))
 	}

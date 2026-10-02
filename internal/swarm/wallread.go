@@ -297,13 +297,3 @@ func WriteBlockedResult(jobDir, task, kind, path, step, reason string) (string, 
 	}
 	return dest, true, nil
 }
-
-// wallStoppedInLog reads one log file and reports the refusal that STOPPED the card in it,
-// or false when the file cannot be read, holds no refusal, or holds one the card moved past.
-func wallStoppedInLog(path string) (WallRefusal, bool) {
-	raw, err := readRegular(path)
-	if err != nil {
-		return WallRefusal{}, false
-	}
-	return WallStopped(raw)
-}

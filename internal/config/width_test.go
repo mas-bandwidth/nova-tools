@@ -2,151 +2,100 @@ package config
 
 import (
 	"context"
-	"errors"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
-// hostsFake is a HostReader over a map: where each friend's beat says she runs.
-type hostsFake map[string]string
-
-func (h hostsFake) FriendHosts(_ context.Context, names []string) (map[string]string, error) {
-	out := map[string]string{}
-	for _, n := range names {
-		out[n] = h[n]
-	}
-	return out, nil
-}
-
-type hostsErr struct{}
-
-func (hostsErr) FriendHosts(context.Context, []string) (map[string]string, error) {
-	return nil, errors.New("store down")
-}
-
+// seedWidths makes four machine rows whose slots are all 160 and whose widths
+// differ, so a width read from the slots would be seen.
 func seedWidths(t *testing.T) *Mem {
 	t.Helper()
 	ctx := context.Background()
 	m := NewMem()
 	for _, r := range []struct {
 		name  string
-		slots string
+		width string
 	}{{"m1", "8"}, {"m2", "4"}, {"m3", "0"}, {"m4", "2"}} {
-		if _, err := m.Insert(ctx, KindMachine, Row{Name: r.name, Fields: map[string]string{"user": "u", "seat": "s", "slots": r.slots, "runners": "0"}}, "t"); err != nil {
-			t.Fatal(err)
-		}
+		_, setupErr763 := m.Insert(ctx, KindMachine, Row{Name: r.name, Fields: map[string]string{"user": "u", "seat": "s", "slots": "160", "runners": "0", "width": r.width}}, "t")
+		require.NoError(t, setupErr763)
 	}
 	return m
 }
 
 func addFriend(t *testing.T, m *Mem, name, slots string) {
 	t.Helper()
-	if _, err := m.Insert(context.Background(), KindFriend, Row{Name: name, Fields: map[string]string{"slots": slots, "tiers": "flash", "roles": "builder"}}, "t"); err != nil {
-		t.Fatal(err)
-	}
+	_, setupErr1036 := m.Insert(context.Background(), KindFriend, Row{Name: name, Fields: map[string]string{"slots": slots, "tiers": "flash", "roles": "builder"}}, "t")
+	require.NoError(t, setupErr1036)
 }
 
-// TestWidthIsSlotsLessTheFriendsChargedThere: decision 1, the width of the
-// sprint's member is the machine's ceiling less the desired slots of the
-// friends charged to it, and a machine with no room is no member.
-func TestWidthIsSlotsLessTheFriendsChargedThere(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	m := seedWidths(t)
-	// no friend: the width is the ceiling, and no Redis is needed
-	ws, err := Widths(ctx, m, nil)
-	if err != nil {
-		t.Fatal(err)
+func widthsByName(t *testing.T, m *Mem) map[string]MachineWidth {
+	t.Helper()
+	ws, err := Widths(context.Background(), m)
+	require.NoError(t, err)
+	for i := 1; i < len(ws); i++ {
+		require.Less(t, ws[i-1].Machine, ws[i].Machine, "widths not in name order: %+v", ws)
 	}
 	got := map[string]MachineWidth{}
 	for _, w := range ws {
 		got[w.Machine] = w
 	}
-	if got["m1"].Width != 8 || !got["m1"].Member() || got["m3"].Width != 0 || got["m3"].Member() {
-		t.Fatalf("no friends: %+v", ws)
-	}
-	for i := 1; i < len(ws); i++ {
-		if ws[i-1].Machine >= ws[i].Machine {
-			t.Fatalf("widths not in name order: %+v", ws)
-		}
-	}
-
-	// two friends on m1 by their beats, one on m4 taking all of it, one with
-	// slots 0 that is charged nowhere
-	addFriend(t, m, "f1", "3")
-	addFriend(t, m, "f2", "2")
-	addFriend(t, m, "f3", "2")
-	addFriend(t, m, "f4", "0")
-	ws, err = Widths(ctx, m, hostsFake{"f1": "m1", "f2": "m1", "f3": "m4"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	got = map[string]MachineWidth{}
-	for _, w := range ws {
-		got[w.Machine] = w
-	}
-	if w := got["m1"]; w.Slots != 8 || w.Charged != 5 || w.Width != 3 || !w.Member() {
-		t.Fatalf("m1: %+v", w)
-	}
-	if w := got["m2"]; w.Charged != 0 || w.Width != 4 {
-		t.Fatalf("m2: %+v", w)
-	}
-	if w := got["m4"]; w.Charged != 2 || w.Width != 0 || w.Member() {
-		t.Fatalf("m4 is full of its friend and is no member: %+v", w)
-	}
+	return got
 }
 
-// TestAFriendWithNoBeatIsChargedToTheCoordinatorMachine: the default charge
-// is the one apply makes (RedisApplier.charge), and with no coordinator
-// machine either the width refuses naming the fix.
-func TestAFriendWithNoBeatIsChargedToTheCoordinatorMachine(t *testing.T) {
+// TestWidthIsTheRowsWidthField: the width of the sprint's member is the
+// machine row's width field as set, never its slots; width 0 is no member.
+func TestWidthIsTheRowsWidthField(t *testing.T) {
+	t.Parallel()
+	got := widthsByName(t, seedWidths(t))
+	require.Len(t, got, 4)
+	for name, want := range map[string]int{"m1": 8, "m2": 4, "m3": 0, "m4": 2} {
+		require.Equal(t, want, got[name].Width, "%s: %+v", name, got[name])
+		require.Equal(t, want > 0, got[name].Member(), "%s: %+v", name, got[name])
+	}
+	require.Equal(t, "CONFIG WIDTH machine=m1 width=8 member=true", got["m1"].Line())
+	require.Equal(t, "CONFIG WIDTH machine=m3 width=0 member=false", got["m3"].Line())
+}
+
+// TestSettingOneWidthChangesNoOther: a width set on one machine is that
+// machine's width and moves no other machine's.
+func TestSettingOneWidthChangesNoOther(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	m := seedWidths(t)
-	addFriend(t, m, "f1", "3")
-	if _, err := Widths(ctx, m, hostsFake{}); err == nil || !strings.Contains(err.Error(), "nova-config fleet set --coordinator") {
-		t.Fatalf("no beat, no coordinator: %v", err)
-	}
-	if _, _, err := m.Update(ctx, KindFleet, KindFleet, map[string]string{"coordinator": "m2"}, "t"); err != nil {
-		t.Fatal(err)
-	}
-	ws, err := Widths(ctx, m, hostsFake{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if w, _ := WidthOf(ws, "m2"); w.Charged != 3 || w.Width != 1 {
-		t.Fatalf("m2 carries the friend: %+v", w)
+	before := widthsByName(t, m)
+	_, _, err := m.Update(ctx, KindMachine, "m2", map[string]string{"width": "32"}, "t")
+	require.NoError(t, err)
+	after := widthsByName(t, m)
+	require.Equal(t, 32, after["m2"].Width)
+	for _, name := range []string{"m1", "m3", "m4"} {
+		require.Equal(t, before[name], after[name], "setting m2's width moved %s", name)
 	}
 }
 
-// TestWidthsNeedARedisOnlyWhenAFriendCarriesSlots: a store with friends and
-// no host reader refuses (never a silently wrong width), and a host reader
-// that fails is the error.
-func TestWidthsNeedARedisOnlyWhenAFriendCarriesSlots(t *testing.T) {
+// TestAFriendRowAffectsNoWidth: friend rows carrying slots, a fleet row naming
+// a coordinator machine, and no Redis at all: every width is still its row's.
+func TestAFriendRowAffectsNoWidth(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	m := seedWidths(t)
-	addFriend(t, m, "f1", "0")
-	if _, err := Widths(ctx, m, nil); err != nil {
-		t.Fatalf("a friend with no slots needs no Redis: %v", err)
+	before := widthsByName(t, m)
+	for _, f := range []string{"f1", "f2", "f3", "f4"} {
+		addFriend(t, m, f, "32")
 	}
-	addFriend(t, m, "f2", "1")
-	if _, err := Widths(ctx, m, nil); err == nil || !strings.Contains(err.Error(), "Redis address is needed") {
-		t.Fatalf("no host reader: %v", err)
-	}
-	if _, err := Widths(ctx, m, hostsErr{}); err == nil || !strings.Contains(err.Error(), "store down") {
-		t.Fatalf("host reader down: %v", err)
-	}
+	_, _, err := m.Update(ctx, KindFleet, KindFleet, map[string]string{"coordinator": "m1"}, "t")
+	require.NoError(t, err)
+	require.Equal(t, before, widthsByName(t, m), "a friend row changed a width")
 }
 
-// TestWidthIsDerivedNotStored: the machine kind declares no width or member
-// field; the width is always the rows' arithmetic (decision 1, no new field).
-func TestWidthIsDerivedNotStored(t *testing.T) {
+// TestWidthDefaultsToNoMember: a machine added with no width is no member.
+func TestWidthDefaultsToNoMember(t *testing.T) {
 	t.Parallel()
-	k, _ := Lookup(KindMachine)
-	for _, f := range k.Fields {
-		if f.Name == "width" || f.Name == "member" {
-			t.Fatalf("the machine kind declares %s; the width is derived from slots and the friends' charges", f.Name)
-		}
-	}
+	ctx := context.Background()
+	m := NewMem()
+	_, err := m.Insert(ctx, KindMachine, Row{Name: "m1", Fields: map[string]string{"user": "u", "seat": "s", "slots": "8"}}, "t")
+	require.NoError(t, err)
+	got := widthsByName(t, m)
+	require.Zero(t, got["m1"].Width, "%+v", got["m1"])
+	require.False(t, got["m1"].Member())
 }

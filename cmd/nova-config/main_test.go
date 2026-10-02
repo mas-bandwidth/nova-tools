@@ -3,18 +3,16 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"os"
-	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/config"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // memStore is config.Mem with the schema verbs a pgStore has: a fresh Mem
@@ -22,6 +20,7 @@ import (
 type memStore struct {
 	*config.Mem
 	version int
+	ledger  []int
 }
 
 func (m *memStore) Migrate(context.Context) (int, int, []int, error) {
@@ -40,7 +39,20 @@ func (m *memStore) Migrate(context.Context) (int, int, []int, error) {
 	return from, m.version, applied, nil
 }
 func (m *memStore) Version(context.Context) (int, error) { return m.version, nil }
-func (m *memStore) Close() error                         { return nil }
+
+// Applied is the ledger: ledger when a test sets one (a gap), else every
+// version up to the store's.
+func (m *memStore) Applied(context.Context) ([]int, error) {
+	if m.ledger != nil {
+		return m.ledger, nil
+	}
+	var out []int
+	for v := 1; v <= m.version; v++ {
+		out = append(out, v)
+	}
+	return out, nil
+}
+func (m *memStore) Close() error { return nil }
 
 // fakeRedis records what apply asked for, and holds the beats list and
 // show read live.
@@ -49,13 +61,15 @@ type fakeRedis struct {
 	revs  map[string]int64
 	log   []string
 	beats map[string]*config.Beat
-	// hosts is where each friend's own beat says she runs.
-	hosts map[string]string
 	opens int
+	// snapshots counts inventory's reads; hang holds every Snapshot until
+	// its context ends, like a store that never answers.
+	snapshots int
+	hang      bool
 }
 
 func newFakeRedis() *fakeRedis {
-	return &fakeRedis{views: map[string]map[string]config.View{}, revs: map[string]int64{}, beats: map[string]*config.Beat{}, hosts: map[string]string{}}
+	return &fakeRedis{views: map[string]map[string]config.View{}, revs: map[string]int64{}, beats: map[string]*config.Beat{}}
 }
 func (f *fakeRedis) Read(_ context.Context, kind string) (map[string]config.View, int64, error) {
 	out := map[string]config.View{}
@@ -76,13 +90,6 @@ func (f *fakeRedis) Beats(_ context.Context, names []string) (map[string]*config
 		if b := f.beats[n]; b != nil {
 			out[n] = b
 		}
-	}
-	return out, nil
-}
-func (f *fakeRedis) FriendHosts(_ context.Context, names []string) (map[string]string, error) {
-	out := map[string]string{}
-	for _, n := range names {
-		out[n] = f.hosts[n]
 	}
 	return out, nil
 }
@@ -109,6 +116,36 @@ func (f *fakeRedis) Stamp(_ context.Context, kind string, prev, rev int64) error
 }
 func (f *fakeRedis) Close() error { return nil }
 
+// Snapshot is the applied state the fake holds: its machine, fleet and
+// loop views (loops only once rev:loop is stamped), its beats and revs.
+func (f *fakeRedis) Snapshot(ctx context.Context) (*config.Snapshot, error) {
+	f.snapshots++
+	if f.hang {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	snap := &config.Snapshot{Machines: map[string]config.View{}, Fleet: config.View{}, Beats: map[string]*config.Beat{}, Revs: map[string]int64{}}
+	for n, v := range f.views[config.KindMachine] {
+		snap.Machines[n] = v
+	}
+	for k, v := range f.views[config.KindFleet][config.KindFleet] {
+		snap.Fleet[k] = v
+	}
+	for k, r := range f.revs {
+		snap.Revs[k] = r
+	}
+	if _, ok := f.revs["loop"]; ok {
+		snap.Loops = map[string]config.View{}
+		for n, v := range f.views["loop"] {
+			snap.Loops[n] = v
+		}
+	}
+	for n, b := range f.beats {
+		snap.Beats[n] = b
+	}
+	return snap, nil
+}
+
 // harness is one test's tool: a Mem store, a fake Redis, an environment
 // map, a fixed clock.
 type harness struct {
@@ -122,10 +159,22 @@ type harness struct {
 	override pgStore
 	// tailnet is what `tailscale status --json` prints; "" is no tailnet.
 	tailnet string
+	// dir is where a --file path is opened ("" refuses one).
+	dir string
 }
 
 func newHarness() *harness {
-	return &harness{hostname: "elsewhere.example", store: &memStore{Mem: config.NewMem(), version: 5}, redis: newFakeRedis(), env: map[string]string{}}
+	return &harness{hostname: "elsewhere.example", store: &memStore{Mem: config.NewMem(), version: currentSchema()}, redis: newFakeRedis(), env: map[string]string{}}
+}
+
+// currentSchema is the version this binary's migrations reach: a fresh Mem
+// is a store migrated to it.
+func currentSchema() int {
+	all, err := config.Migrations()
+	if err != nil {
+		panic(err)
+	}
+	return len(all)
 }
 
 func (h *harness) deps() deps {
@@ -135,6 +184,18 @@ func (h *harness) deps() deps {
 			h.opens++
 			if strings.Contains(dsn, "closed") {
 				return nil, fmt.Errorf("postgres at %s: connection refused", config.Redact(dsn))
+			}
+			if path, ok := strings.CutPrefix(dsn, filePrefix); ok {
+				// a --file is a real file store, under the test's own directory, on the fixed clock
+				if h.dir == "" {
+					return nil, fmt.Errorf("the harness has no directory for --file %s; set h.dir = t.TempDir()", path)
+				}
+				f, err := config.OpenFile(filepath.Join(h.dir, path))
+				if err != nil {
+					return nil, err
+				}
+				f.Now = func() time.Time { return time.Unix(1700000000, 0).UTC() }
+				return f, nil
 			}
 			if h.override != nil {
 				return h.override, nil
@@ -168,13 +229,18 @@ func TestBareAndUnknownVerbsNameTheDoor(t *testing.T) {
 	h := newHarness()
 	for _, args := range [][]string{{}, {"nothing"}, {"friend"}, {"friend", "fly"}, {"help", "x"}, {"version", "x"}, {"kinds", "x"}, {"fleet"}, {"fleet", "add"}, {"fleet", "remove"}, {"fleet", "list"}, {"sprint", "add"}, {"sprint", "list"}} {
 		code, out, errs := h.run(t, args...)
-		if code != 2 || out != "" || strings.Count(errs, "\n") != 1 || !strings.HasSuffix(errs, "; run: nova-config help\n") || !strings.HasPrefix(errs, "nova-config") {
-			t.Errorf("%v: exit %d stdout %q stderr %q; want exit 2, one stderr line naming the door", args, code, out, errs)
+		assert.Equal(t, 2, code, "%v: exit %d stdout %q stderr %q; want exit 2, one stderr line naming the door", args, code, out, errs)
+		assert.Equal(t, "", out, "%v: exit %d stdout %q stderr %q; want exit 2, one stderr line naming the door", args, code, out, errs)
+		assert.Equal(t, 1, strings.Count(errs, "\n"), "%v: exit %d stdout %q stderr %q; want exit 2, one stderr line naming the door", args, code, out, errs)
+		door := "; run: nova-config help\n"
+		if len(args) > 0 && args[0] != "nothing" && args[0] != "help" {
+			door = "; run: nova-config " + args[0] + " -h\n"
 		}
+		assert.True(t, strings.HasSuffix(errs, door), "%v: exit %d stdout %q stderr %q; want exit 2, one stderr line naming the door %q", args, code, out, errs, door)
+		assert.True(t, strings.HasPrefix(errs, "nova-config"), "%v: exit %d stdout %q stderr %q; want exit 2, one stderr line naming the door", args, code, out, errs)
+		assert.Contains(t, errs, " REFUSED: ", "%v: the refusal carries its status word", args)
 	}
-	if h.opens != 0 {
-		t.Fatal("a usage refusal opened the store")
-	}
+	require.Equal(t, 0, h.opens, "a usage refusal opened the store")
 }
 
 func TestHelpEndsInRunnableExamplesAndVersionIsOneLine(t *testing.T) {
@@ -182,21 +248,19 @@ func TestHelpEndsInRunnableExamplesAndVersionIsOneLine(t *testing.T) {
 
 	h := newHarness()
 	code, out, _ := h.run(t, "help")
-	if code != 0 || !strings.HasSuffix(out, "example:\n  nova-config kinds\n  nova-config migrate --print\n  nova-config machine add -h\n") {
-		t.Fatalf("help exit %d, tail %q", code, out[max(0, len(out)-80):])
-	}
+	require.Equal(t, 0, code, "help exit %d, tail %q", code, out[max(0, len(out)-80):])
+	require.True(t, strings.HasSuffix(out, "\nexample:\n  "+strings.Join(firstRun(), "\n  ")+"\n"), "help exit %d, tail %q", code, out[max(0, len(out)-80):])
+	assert.Less(t, len(out), 8000, "the banner is the three answers and the usage; each verb's detail is its -h")
 	for _, k := range config.Kinds {
 		for _, f := range k.Fields {
-			if !strings.Contains(out, "--"+f.Name) {
-				t.Errorf("help does not name --%s of %s", f.Name, k.Name)
-			}
+			assert.Contains(t, out, "--"+f.Name, "help does not name --%s of %s", f.Name, k.Name)
 		}
 	}
 	for _, verb := range []string{"version", "--version"} {
 		code, out, _ := h.run(t, verb)
-		if code != 0 || strings.Count(out, "\n") != 1 || !strings.HasPrefix(out, "nova-config ") {
-			t.Errorf("%s: exit %d %q", verb, code, out)
-		}
+		assert.Equal(t, 0, code, "%s: exit %d %q", verb, code, out)
+		assert.Equal(t, 1, strings.Count(out, "\n"), "%s: exit %d %q", verb, code, out)
+		assert.True(t, strings.HasPrefix(out, "nova-config "), "%s: exit %d %q", verb, code, out)
 	}
 }
 
@@ -205,16 +269,16 @@ func TestKindsAndMigratePrintNeedNoStore(t *testing.T) {
 
 	h := newHarness()
 	code, out, errs := h.run(t, "kinds")
-	if code != 0 || errs != "" || !strings.HasPrefix(out, "CONFIG KIND name=machine ") || !strings.HasSuffix(out, "CONFIG KINDS count=4\n") {
-		t.Fatalf("kinds: %d %q %q", code, out, errs)
-	}
+	require.Equal(t, 0, code, "kinds: %d %q %q", code, out, errs)
+	require.Equal(t, "", errs, "kinds: %d %q %q", code, out, errs)
+	require.True(t, strings.HasPrefix(out, "CONFIG KIND name=machine "), "kinds: %d %q %q", code, out, errs)
+	require.True(t, strings.HasSuffix(out, "CONFIG KINDS count=7\n"), "kinds: %d %q %q", code, out, errs)
 	code, out, errs = h.run(t, "migrate", "--print")
-	if code != 0 || errs != "" || !strings.HasPrefix(out, "MIGRATION version=1 file=0001_schema.sql ") || !strings.HasSuffix(out, "CONFIG MIGRATE print=5 pg=-\n") {
-		t.Fatalf("migrate --print: %d %q %q", code, out, errs)
-	}
-	if h.opens != 0 {
-		t.Fatal("kinds or migrate --print opened the store")
-	}
+	require.Equal(t, 0, code, "migrate --print: %d %q %q", code, out, errs)
+	require.Equal(t, "", errs, "migrate --print: %d %q %q", code, out, errs)
+	require.True(t, strings.HasPrefix(out, "MIGRATION version=1 file=0001_schema.sql "), "migrate --print: %d %q %q", code, out, errs)
+	require.True(t, strings.HasSuffix(out, fmt.Sprintf("CONFIG MIGRATE print=%d pg=-\n", currentSchema())), "migrate --print: %d %q %q", code, out, errs)
+	require.Equal(t, 0, h.opens, "kinds or migrate --print opened the store")
 }
 
 func TestARefusalNamesEveryMissingFlagAtOnce(t *testing.T) {
@@ -222,125 +286,123 @@ func TestARefusalNamesEveryMissingFlagAtOnce(t *testing.T) {
 
 	h := newHarness()
 	code, _, errs := h.run(t, "friend", "add", "rowan")
-	if code != 2 {
-		t.Fatalf("exit %d", code)
-	}
+	require.Equal(t, 2, code, "exit %d", code)
 	for _, want := range []string{"--as is required", "--pg is required", "--tiers is required", "--slots is required", "NOVA_FRIEND", "NOVA_PG_DSN"} {
-		if !strings.Contains(errs, want) {
-			t.Errorf("the refusal does not say %q:\n%s", want, errs)
-		}
+		assert.Contains(t, errs, want, "the refusal does not say %q:\n%s", want, errs)
 	}
-	if strings.Count(errs, "\n") != 1 {
-		t.Fatalf("refusal is not one line:\n%s", errs)
-	}
+	require.Equal(t, 1, strings.Count(errs, "\n"), "refusal is not one line:\n%s", errs)
 	code, _, errs = h.run(t, "friend", "add", "--as", "rowan", "--pg", dsn, "--tiers", "pro", "--slots", "1")
-	if code != 2 || !strings.Contains(errs, "the name is required") {
-		t.Fatalf("no name: %d %q", code, errs)
-	}
+	require.Equal(t, 2, code, "no name: %d %q", code, errs)
+	require.Contains(t, errs, "the name is required", "no name: %d %q", code, errs)
 	code, _, errs = h.run(t, "friend", "set", "rowan", "--as", "rowan", "--pg", dsn)
-	if code != 2 || !strings.Contains(errs, "set names no field") {
-		t.Fatalf("set with no field: %d %q", code, errs)
-	}
+	require.Equal(t, 2, code, "set with no field: %d %q", code, errs)
+	require.Contains(t, errs, "set names no field", "set with no field: %d %q", code, errs)
 	code, _, errs = h.run(t, "friend", "list", "rowan", "--pg", dsn)
-	if code != 2 || !strings.Contains(errs, "list takes no name") {
-		t.Fatalf("list with a name: %d %q", code, errs)
-	}
-	code, _, errs = h.run(t, "apply", "--kind", "loop", "--pg", dsn, "--redis", "127.0.0.1:6379", "--as", "rowan")
-	if code != 2 || !strings.Contains(errs, "--kind loop: want one of machine, fleet, friend, sprint") {
-		t.Fatalf("apply --kind loop: %d %q", code, errs)
-	}
+	require.Equal(t, 2, code, "list with a name: %d %q", code, errs)
+	require.Contains(t, errs, "list takes no name", "list with a name: %d %q", code, errs)
+	code, _, errs = h.run(t, "apply", "--kind", "lane", "--pg", dsn, "--redis", "127.0.0.1:6379", "--as", "rowan")
+	require.Equal(t, 2, code, "apply --kind lane: %d %q", code, errs)
+	require.Contains(t, errs, "--kind lane: want one of machine, fleet, friend, sprint, loop, route", "apply --kind lane: %d %q", code, errs)
 	// The machine kind has no invented flag: an address is the name, a
 	// measured fact is the beat's, a note is history.
 	for _, flag := range []string{"--ssh", "--os_arch", "--cores", "--roles", "--note", "--store", "--coordinator"} {
 		code, _, errs = h.run(t, "machine", "add", "hulk", "--as", "rowan", "--pg", dsn, "--user", "gaffer", "--seat", "swarm-hulk", "--slots", "40", flag, "x")
-		if code != 2 || !strings.Contains(errs, "flag provided but not defined: "+strings.TrimPrefix(flag, "-")) {
-			t.Errorf("machine add %s: %d %q", flag, code, errs)
-		}
+		assert.Equal(t, 2, code, "machine add %s: %d %q", flag, code, errs)
+		assert.Contains(t, errs, "REFUSED: unknown flag "+flag, "machine add %s: %d %q", flag, code, errs)
+		assert.Contains(t, errs, "this verb takes --as, --dry-run, --file, --json, --pg, --runners, --seat, --slots, --user, --width; run: nova-config machine add -h", "machine add %s: the flags it takes", flag)
+		assert.NotContains(t, errs, "flag provided but not defined", "machine add %s: never the flag package's stock line", flag)
 	}
 	// The friend kind has no runtime fact and no coordinator role: what
 	// she would just know is her presence's; who coordinates is the
 	// sprint's.
 	for _, flag := range []string{"--machine", "--harness", "--logins", "--wake", "--note"} {
 		code, _, errs = h.run(t, "friend", "add", "emma", "--as", "rowan", "--pg", dsn, "--slots", "8", "--tiers", "flash", flag, "x")
-		if code != 2 || !strings.Contains(errs, "flag provided but not defined: "+strings.TrimPrefix(flag, "-")) {
-			t.Errorf("friend add %s: %d %q", flag, code, errs)
-		}
+		assert.Equal(t, 2, code, "friend add %s: %d %q", flag, code, errs)
+		assert.Contains(t, errs, "REFUSED: unknown flag "+flag, "friend add %s: %d %q", flag, code, errs)
 	}
 	code, _, errs = h.run(t, "friend", "add", "emma", "--as", "rowan", "--pg", dsn, "--slots", "8", "--tiers", "flash", "--roles", "coordinator")
-	if code != 2 || !strings.Contains(errs, "--roles \"coordinator\": want a comma list of builder, may-hold, reader") {
-		t.Errorf("friend add --roles coordinator: %d %q", code, errs)
-	}
+	assert.Equal(t, 2, code, "friend add --roles coordinator: %d %q", code, errs)
+	assert.Contains(t, errs, "--roles \"coordinator\": want a comma list of builder, may-hold, reader", "friend add --roles coordinator: %d %q", code, errs)
 	// A singleton takes no name.
 	code, _, errs = h.run(t, "fleet", "set", "fleet", "--store", "hulk", "--as", "rowan", "--pg", dsn)
-	if code != 2 || !strings.Contains(errs, "fleet takes no name: it is one row") {
-		t.Fatalf("fleet set with a name: %d %q", code, errs)
-	}
+	require.Equal(t, 2, code, "fleet set with a name: %d %q", code, errs)
+	require.Contains(t, errs, "fleet takes no name: it is one row", "fleet set with a name: %d %q", code, errs)
 	code, _, errs = h.run(t, "fleet", "show", "fleet", "--pg", dsn)
-	if code != 2 || !strings.Contains(errs, "fleet takes no name") {
-		t.Fatalf("fleet show with a name: %d %q", code, errs)
-	}
-	if h.opens != 0 {
-		t.Fatal("a usage refusal opened the store")
-	}
+	require.Equal(t, 2, code, "fleet show with a name: %d %q", code, errs)
+	require.Contains(t, errs, "fleet takes no name", "fleet show with a name: %d %q", code, errs)
+	require.Equal(t, 0, h.opens, "a usage refusal opened the store")
+}
+
+// pgDSN is the store a verb given only --pg resolves.
+func pgDSN(flagValue string, getenv func(string) string) (string, error) {
+	file := ""
+	return conn{pg: &flagValue, file: &file}.dsn(getenv)
+}
+
+// --file stands in for PostgreSQL, alone: with --pg it is refused, and with
+// NOVA_PG_DSN set it still wins (the flag is the explicit choice).
+func TestFileIsTheStoreAndExclusiveWithPg(t *testing.T) {
+	t.Parallel()
+
+	env := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
+	pg, file := "", "try.json"
+	got, err := conn{pg: &pg, file: &file}.dsn(env(map[string]string{"NOVA_PG_DSN": dsn}))
+	require.NoError(t, err)
+	assert.Equal(t, "file:try.json", got)
+	pg = dsn
+	_, err = conn{pg: &pg, file: &file}.dsn(env(nil))
+	assert.ErrorContains(t, err, "--pg and --file are exclusive")
+	pg, file = "", ""
+	_, err = conn{pg: &pg, file: &file}.dsn(env(nil))
+	assert.ErrorContains(t, err, "or --file <path> for a local file with no database")
 }
 
 func TestPgDSNKeepsThePasswordOffTheLine(t *testing.T) {
 	t.Parallel()
 
 	env := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
-	if _, err := pgDSN("", env(nil)); err == nil || !strings.Contains(err.Error(), "--pg is required") {
-		t.Errorf("no dsn: %v", err)
-	}
-	if _, err := pgDSN("postgres://u:secret@127.0.0.1/nova", env(nil)); err == nil || !strings.Contains(err.Error(), "carries a password") {
-		t.Errorf("password on the line: %v", err)
-	}
+	_, errCheck321 := pgDSN("", env(nil))
+	assert.ErrorContains(t, errCheck321, "--pg is required", "no dsn: %v", errCheck321)
+	_, errCheck324 := pgDSN("postgres://u:secret@127.0.0.1/nova", env(nil))
+	assert.ErrorContains(t, errCheck324, "carries a password", "password on the line: %v", errCheck324)
 	got, err := pgDSN(dsn, env(map[string]string{"NOVA_PG_PASSWORD": "pw"}))
-	if err != nil || got != "postgres://nova_config:pw@127.0.0.1:5432/nova" {
-		t.Errorf("default variable: %q %v", got, err)
-	}
+	assert.NoError(t, err, "default variable: %q %v", got, err)
+	assert.Equal(t, "postgres://nova_config:pw@127.0.0.1:5432/nova", got, "default variable: %q %v", got, err)
 	got, err = pgDSN(dsn, env(map[string]string{"NOVA_PG_PASSWORD_ENV": "NOVA_SECRET_PG", "NOVA_SECRET_PG": "p w"}))
-	if err != nil || got != "postgres://nova_config:p%20w@127.0.0.1:5432/nova" {
-		t.Errorf("named variable: %q %v", got, err)
-	}
+	assert.NoError(t, err, "named variable: %q %v", got, err)
+	assert.Equal(t, "postgres://nova_config:p%20w@127.0.0.1:5432/nova", got, "named variable: %q %v", got, err)
 	_, err = pgDSN(dsn, env(map[string]string{"NOVA_PG_PASSWORD_ENV": "NOVA_SECRET_PG"}))
-	if err == nil || !strings.Contains(err.Error(), "NOVA_PG_PASSWORD_ENV=NOVA_SECRET_PG but NOVA_SECRET_PG is empty; run under nova-secrets exec --only NOVA_SECRET_PG") {
-		t.Errorf("named but empty: %v", err)
-	}
+	assert.ErrorContains(t, err, "NOVA_PG_PASSWORD_ENV=NOVA_SECRET_PG but NOVA_SECRET_PG is empty; run under nova-secrets exec --only NOVA_SECRET_PG", "named but empty: %v", err)
 	got, err = pgDSN("", env(map[string]string{"NOVA_PG_DSN": dsn}))
-	if err != nil || got != dsn {
-		t.Errorf("no password anywhere (a throwaway trusts): %q %v", got, err)
-	}
+	assert.NoError(t, err, "no password anywhere (a throwaway trusts): %q %v", got, err)
+	assert.Equal(t, dsn, got, "no password anywhere (a throwaway trusts): %q %v", got, err)
 	got, err = pgDSN("host=127.0.0.1 user=nova_config dbname=nova", env(map[string]string{"NOVA_PG_PASSWORD": "it's"}))
-	if err != nil || got != `host=127.0.0.1 user=nova_config dbname=nova password='it\'s'` {
-		t.Errorf("keyword dsn: %q %v", got, err)
-	}
-	if _, err := pgDSN("postgres://[bad", env(nil)); err == nil || !strings.Contains(err.Error(), "--pg:") {
-		t.Errorf("unparsable: %v", err)
-	}
+	assert.NoError(t, err, "keyword dsn: %q %v", got, err)
+	assert.Equal(t, `host=127.0.0.1 user=nova_config dbname=nova password='it\'s'`, got, "keyword dsn: %q %v", got, err)
+	_, errCheck347 := pgDSN("postgres://[bad", env(nil))
+	assert.ErrorContains(t, errCheck347, "--pg:", "unparsable: %v", errCheck347)
 }
 
 func TestRedisAddressAndActorFallBackToTheEnvironment(t *testing.T) {
 	t.Parallel()
 
 	env := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
-	if got, err := redisAddress("127.0.0.1:1", env(map[string]string{"NOVA_SPRINT_REDIS": "127.0.0.1:2"})); err != nil || got != "127.0.0.1:1" {
-		t.Errorf("flag wins: %q %v", got, err)
-	}
-	if got, err := redisAddress("", env(map[string]string{"NOVA_SPRINT_REDIS": "127.0.0.1:2", "NOVA_REDIS_ADDR": "127.0.0.1:3"})); err != nil || got != "127.0.0.1:2" {
-		t.Errorf("sprint env first: %q %v", got, err)
-	}
-	if got, err := redisAddress("", env(map[string]string{"NOVA_REDIS_ADDR": "127.0.0.1:3"})); err != nil || got != "127.0.0.1:3" {
-		t.Errorf("redis addr env: %q %v", got, err)
-	}
-	if _, err := redisAddress("", env(nil)); err == nil || !strings.Contains(err.Error(), "--redis is required") {
-		t.Errorf("none: %v", err)
-	}
-	if got, err := actorName("", env(map[string]string{"NOVA_FRIEND": "stella"})); err != nil || got != "stella" {
-		t.Errorf("actor env: %q %v", got, err)
-	}
-	if _, err := actorName("", env(nil)); err == nil || !strings.Contains(err.Error(), "--as is required") {
-		t.Errorf("no actor: %v", err)
-	}
+	gotCheck356, errCheck356 := redisAddress("127.0.0.1:1", env(map[string]string{"NOVA_SPRINT_REDIS": "127.0.0.1:2"}))
+	assert.NoError(t, errCheck356, "flag wins: %q %v", gotCheck356, errCheck356)
+	assert.Equal(t, "127.0.0.1:1", gotCheck356, "flag wins: %q %v", gotCheck356, errCheck356)
+	gotCheck359, errCheck359 := redisAddress("", env(map[string]string{"NOVA_SPRINT_REDIS": "127.0.0.1:2", "NOVA_REDIS_ADDR": "127.0.0.1:3"}))
+	assert.NoError(t, errCheck359, "sprint env first: %q %v", gotCheck359, errCheck359)
+	assert.Equal(t, "127.0.0.1:2", gotCheck359, "sprint env first: %q %v", gotCheck359, errCheck359)
+	gotCheck362, errCheck362 := redisAddress("", env(map[string]string{"NOVA_REDIS_ADDR": "127.0.0.1:3"}))
+	assert.NoError(t, errCheck362, "redis addr env: %q %v", gotCheck362, errCheck362)
+	assert.Equal(t, "127.0.0.1:3", gotCheck362, "redis addr env: %q %v", gotCheck362, errCheck362)
+	_, errCheck365 := redisAddress("", env(nil))
+	assert.ErrorContains(t, errCheck365, "--redis is required", "none: %v", errCheck365)
+	gotCheck368, errCheck368 := actorName("", env(map[string]string{"NOVA_FRIEND": "stella"}))
+	assert.NoError(t, errCheck368, "actor env: %q %v", gotCheck368, errCheck368)
+	assert.Equal(t, "stella", gotCheck368, "actor env: %q %v", gotCheck368, errCheck368)
+	_, errCheck371 := actorName("", env(nil))
+	assert.ErrorContains(t, errCheck371, "--as is required", "no actor: %v", errCheck371)
 }
 
 func TestTheSixVerbsEndToEndOnTheFake(t *testing.T) {
@@ -352,147 +414,93 @@ func TestTheSixVerbsEndToEndOnTheFake(t *testing.T) {
 	step := func(want int, args ...string) (string, string) {
 		t.Helper()
 		code, out, errs := h.run(t, args...)
-		if code != want {
-			t.Fatalf("%v: exit %d, want %d\nstdout: %s\nstderr: %s", args, code, want, out, errs)
-		}
+		require.Equal(t, want, code, "%v: exit %d, want %d\nstdout: %s\nstderr: %s", args, code, want, out, errs)
 		return out, errs
 	}
 	out, _ := step(0, "machine", "add", "studio", "--user", "glenn", "--seat", "studio", "--slots", "64", "--runners", "1")
-	if out != "CONFIG ADD kind=machine name=studio rev=1\n" {
-		t.Fatalf("machine add: %q", out)
-	}
+	require.Equal(t, "CONFIG ADD kind=machine name=studio rev=1\nNOTE machine=studio width=0: no sprint member, so it is dealt no work; its width is set apart from its slots; run: nova-config machine set studio --width <n> --as rowan\n", out, "machine add: %q", out)
 	_, errs := step(1, "machine", "add", "studio", "--user", "glenn", "--seat", "studio", "--slots", "64")
-	if errs != "nova-config machine add: machine studio exists; run: nova-config machine set studio --<field> <value>\n" {
-		t.Fatalf("duplicate: %q", errs)
-	}
+	require.Equal(t, "nova-config machine add REFUSED: machine studio exists; run: nova-config machine set studio --<field> <value>\n", errs, "duplicate: %q", errs)
 	out, _ = step(0, "friend", "add", "rowan", "--slots", "32", "--tiers", "pro,frontier", "--roles", "builder")
-	if out != "CONFIG ADD kind=friend name=rowan rev=2\n" {
-		t.Fatalf("friend add: %q", out)
-	}
+	require.Equal(t, "CONFIG ADD kind=friend name=rowan rev=2\n", out, "friend add: %q", out)
 	out, _ = step(0, "friend", "set", "rowan", "--slots", "64", "--roles", "builder,reader")
-	if out != "CONFIG SET kind=friend name=rowan rev=3 changed=roles,slots\n" {
-		t.Fatalf("friend set: %q", out)
-	}
+	require.Equal(t, "CONFIG SET kind=friend name=rowan rev=3 changed=roles,slots\n", out, "friend set: %q", out)
 	_, errs = step(1, "friend", "set", "nobody", "--slots", "1")
-	if errs != "nova-config friend set: friend nobody not found; run: nova-config friend add nobody --<field> <value> ...\n" {
-		t.Fatalf("set nobody: %q", errs)
-	}
+	require.Equal(t, "nova-config friend set REFUSED: friend nobody not found; run: nova-config friend add nobody --<field> <value> ...\n", errs, "set nobody: %q", errs)
 	out, _ = step(0, "friend", "list")
-	if out != "FRIEND name=rowan slots=64 tiers=frontier,pro roles=builder,reader\nCONFIG LIST kind=friend rows=1\n" {
-		t.Fatalf("friend list: %q", out)
-	}
+	require.Equal(t, "FRIEND name=rowan slots=64 tiers=frontier,pro roles=builder,reader\nCONFIG LIST kind=friend rows=1\n", out, "friend list: %q", out)
 	out, _ = step(0, "friend", "show", "rowan")
-	if !strings.HasPrefix(out, "FRIEND name=rowan slots=64 tiers=frontier,pro roles=builder,reader") || !strings.Contains(out, " created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z\n") {
-		t.Fatalf("friend show: %q", out)
-	}
+	require.True(t, strings.HasPrefix(out, "FRIEND name=rowan slots=64 tiers=frontier,pro roles=builder,reader"), "friend show: %q", out)
+	require.Contains(t, out, " created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z\n", "friend show: %q", out)
 	_, errs = step(1, "friend", "show", "nobody")
-	if errs != "nova-config friend show: friend nobody not found; run: nova-config friend list\n" {
-		t.Fatalf("show nobody: %q", errs)
-	}
+	require.Equal(t, "nova-config friend show REFUSED: friend nobody not found; run: nova-config friend list\n", errs, "show nobody: %q", errs)
 	out, _ = step(0, "friend", "history", "rowan")
 	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if len(lines) != 3 || !strings.HasPrefix(lines[0], "HISTORY id=2 kind=friend name=rowan op=add actor=rowan at=") || !strings.HasPrefix(lines[1], "HISTORY id=3 kind=friend name=rowan op=set actor=rowan at=") || !strings.HasSuffix(lines[1], " roles=builder>builder,reader slots=32>64") || lines[2] != "CONFIG HISTORY kind=friend name=rowan changes=2" {
-		t.Fatalf("friend history:\n%s", out)
-	}
+	require.Len(t, lines, 3, "friend history:\n%s", out)
+	require.True(t, strings.HasPrefix(lines[0], "HISTORY id=2 kind=friend name=rowan op=add actor=rowan at="), "friend history:\n%s", out)
+	require.True(t, strings.HasPrefix(lines[1], "HISTORY id=3 kind=friend name=rowan op=set actor=rowan at="), "friend history:\n%s", out)
+	require.True(t, strings.HasSuffix(lines[1], " roles=builder>builder,reader slots=32>64"), "friend history:\n%s", out)
+	require.Equal(t, "CONFIG HISTORY kind=friend name=rowan changes=2", lines[2], "friend history:\n%s", out)
 	_, errs = step(1, "friend", "history", "nobody")
-	if !strings.Contains(errs, "friend nobody has no history: it was never added") {
-		t.Fatalf("history nobody: %q", errs)
-	}
+	require.Contains(t, errs, "friend nobody has no history: it was never added", "history nobody: %q", errs)
 	// The sprint row: who coordinates; a friend it names stays.
 	_, errs = step(1, "sprint", "set", "--coordinator", "nobody")
-	if errs != "nova-config sprint set: --coordinator nobody names no friend row; run: nova-config friend list\n" {
-		t.Fatalf("sprint set naming no friend: %q", errs)
-	}
+	require.Equal(t, "nova-config sprint set REFUSED: --coordinator nobody names no friend row; run: nova-config friend list\n", errs, "sprint set naming no friend: %q", errs)
 	out, _ = step(0, "sprint", "set", "--coordinator", "rowan")
-	if out != "CONFIG SET kind=sprint name=sprint rev=4 changed=coordinator\n" {
-		t.Fatalf("sprint set: %q", out)
-	}
+	require.Equal(t, "CONFIG SET kind=sprint name=sprint rev=4 changed=coordinator\n", out, "sprint set: %q", out)
 	_, errs = step(1, "friend", "remove", "rowan")
-	if errs != "nova-config friend remove: friend rowan is the --coordinator of the sprint; run: nova-config friend list\n" {
-		t.Fatalf("remove the coordinating friend: %q", errs)
-	}
+	require.Equal(t, "nova-config friend remove REFUSED: friend rowan is the --coordinator of the sprint; run: nova-config friend list\n", errs, "remove the coordinating friend: %q", errs)
 	step(0, "sprint", "set", "--coordinator", "")
 	out, _ = step(0, "friend", "remove", "rowan")
-	if out != "CONFIG REMOVE kind=friend name=rowan rev=6\n" {
-		t.Fatalf("friend remove: %q", out)
-	}
+	require.Equal(t, "CONFIG REMOVE kind=friend name=rowan rev=6\n", out, "friend remove: %q", out)
 	out, _ = step(0, "friend", "list")
-	if out != "CONFIG LIST kind=friend rows=0\n" {
-		t.Fatalf("empty list: %q", out)
-	}
+	require.Equal(t, "CONFIG LIST kind=friend rows=0\n", out, "empty list: %q", out)
 
 	// The machine's lines: declared fields only without a Redis, the live
 	// measured facts after them with one (from the beat; none for a
 	// machine that has not beaten).
 	out, _ = step(0, "machine", "add", "hulk", "--user", "gaffer", "--seat", "swarm-hulk", "--slots", "40", "--runners", "0")
-	if out != "CONFIG ADD kind=machine name=hulk rev=7\n" {
-		t.Fatalf("machine add hulk: %q", out)
-	}
+	require.True(t, strings.HasPrefix(out, "CONFIG ADD kind=machine name=hulk rev=7\nNOTE machine=hulk width=0: "), "machine add hulk: %q", out)
 	out, _ = step(0, "machine", "list")
-	if out != "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0\nMACHINE name=studio user=glenn seat=studio slots=64 runners=1\nCONFIG LIST kind=machine rows=2\n" {
-		t.Fatalf("machine list: %q", out)
-	}
-	if h.redis.opens != 0 {
-		t.Fatal("a list with no --redis opened Redis")
-	}
+	require.Equal(t, "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0 width=0\nMACHINE name=studio user=glenn seat=studio slots=64 runners=1 width=0\nCONFIG LIST kind=machine rows=2\n", out, "machine list: %q", out)
+	require.Equal(t, 0, h.redis.opens, "a list with no --redis opened Redis")
 	h.redis.beats["hulk"] = &config.Beat{Cores: "64", At: "2026-09-27T03:00:00Z"}
 	out, _ = step(0, "machine", "list", "--redis", "127.0.0.1:6379")
-	if out != "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0 os=- arch=- cores=64 memory_gb=- beat=2026-09-27T03:00:00Z\nMACHINE name=studio user=glenn seat=studio slots=64 runners=1 beat=none\nCONFIG LIST kind=machine rows=2\n" {
-		t.Fatalf("machine list --redis: %q", out)
-	}
+	require.Equal(t, "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0 width=0 os=- arch=- cores=64 memory_gb=- beat=2026-09-27T03:00:00Z\nMACHINE name=studio user=glenn seat=studio slots=64 runners=1 width=0 beat=none\nCONFIG LIST kind=machine rows=2\n", out, "machine list --redis: %q", out)
 	h.env["NOVA_SPRINT_REDIS"] = "127.0.0.1:6379"
 	out, _ = step(0, "machine", "show", "hulk")
-	if !strings.HasPrefix(out, "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0 created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z os=- arch=- cores=64 memory_gb=- beat=2026-09-27T03:00:00Z\n") {
-		t.Fatalf("machine show with NOVA_SPRINT_REDIS: %q", out)
-	}
+	require.True(t, strings.HasPrefix(out, "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0 width=0 created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z loops=- os=- arch=- cores=64 memory_gb=- beat=2026-09-27T03:00:00Z\n"), "machine show with NOVA_SPRINT_REDIS: %q", out)
 	delete(h.env, "NOVA_SPRINT_REDIS")
 	out, _ = step(0, "machine", "show", "studio")
-	if out != "MACHINE name=studio user=glenn seat=studio slots=64 runners=1 created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z\n" {
-		t.Fatalf("machine show without a Redis: %q", out)
-	}
+	require.Equal(t, "MACHINE name=studio user=glenn seat=studio slots=64 runners=1 width=0 created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z loops=-\n", out, "machine show without a Redis: %q", out)
 
 	// The fleet: one row, there from the start, set without a name, its
 	// history the sets alone.
 	out, _ = step(0, "fleet", "show")
-	if out != "FLEET name=fleet store=- coordinator=- created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z\n" {
-		t.Fatalf("fleet show before a set: %q", out)
-	}
+	require.Equal(t, "FLEET name=fleet store=- coordinator=- created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z\n", out, "fleet show before a set: %q", out)
 	out, _ = step(0, "fleet", "history")
-	if out != "CONFIG HISTORY kind=fleet name=fleet changes=0\n" {
-		t.Fatalf("fleet history before a set: %q", out)
-	}
+	require.Equal(t, "CONFIG HISTORY kind=fleet name=fleet changes=0\n", out, "fleet history before a set: %q", out)
 	_, errs = step(1, "fleet", "set", "--store", "space")
-	if errs != "nova-config fleet set: --store space names no machine row; run: nova-config machine list\n" {
-		t.Fatalf("fleet set naming no machine: %q", errs)
-	}
+	require.Equal(t, "nova-config fleet set REFUSED: --store space names no machine row; run: nova-config machine list\n", errs, "fleet set naming no machine: %q", errs)
 	out, _ = step(0, "fleet", "set", "--store", "hulk", "--coordinator", "studio")
-	if out != "CONFIG SET kind=fleet name=fleet rev=8 changed=coordinator,store\n" {
-		t.Fatalf("fleet set: %q", out)
-	}
+	require.Equal(t, "CONFIG SET kind=fleet name=fleet rev=8 changed=coordinator,store\n", out, "fleet set: %q", out)
 	out, _ = step(0, "fleet", "show")
-	if !strings.HasPrefix(out, "FLEET name=fleet store=hulk coordinator=studio created=") {
-		t.Fatalf("fleet show: %q", out)
-	}
+	require.True(t, strings.HasPrefix(out, "FLEET name=fleet store=hulk coordinator=studio created="), "fleet show: %q", out)
 	_, errs = step(1, "machine", "remove", "hulk")
-	if errs != "nova-config machine remove: machine hulk is the --store of the fleet; run: nova-config machine list\n" {
-		t.Fatalf("remove the store machine: %q", errs)
-	}
+	require.Equal(t, "nova-config machine remove REFUSED: machine hulk is the --store of the fleet; run: nova-config machine list\n", errs, "remove the store machine: %q", errs)
 	out, _ = step(0, "fleet", "set", "--store", "")
-	if out != "CONFIG SET kind=fleet name=fleet rev=9 changed=store\n" {
-		t.Fatalf("fleet clear: %q", out)
-	}
+	require.Equal(t, "CONFIG SET kind=fleet name=fleet rev=9 changed=store\n", out, "fleet clear: %q", out)
 	out, _ = step(0, "fleet", "history")
 	lines = strings.Split(strings.TrimSpace(out), "\n")
-	if len(lines) != 3 || !strings.HasSuffix(lines[0], " coordinator=->studio store=->hulk") || !strings.HasSuffix(lines[1], " store=hulk>-") || lines[2] != "CONFIG HISTORY kind=fleet name=fleet changes=2" {
-		t.Fatalf("fleet history:\n%s", out)
-	}
+	require.Len(t, lines, 3, "fleet history:\n%s", out)
+	require.True(t, strings.HasSuffix(lines[0], " coordinator=->studio store=->hulk"), "fleet history:\n%s", out)
+	require.True(t, strings.HasSuffix(lines[1], " store=hulk>-"), "fleet history:\n%s", out)
+	require.Equal(t, "CONFIG HISTORY kind=fleet name=fleet changes=2", lines[2], "fleet history:\n%s", out)
 	step(0, "machine", "remove", "hulk")
 	// A store that does not answer is exit 2, not a refusal.
 	h.env["NOVA_PG_DSN"] = "postgres://nova_config@127.0.0.1:5432/closed"
 	_, errs = step(2, "friend", "list")
-	if !strings.Contains(errs, "connection refused") {
-		t.Fatalf("closed store: %q", errs)
-	}
+	require.Contains(t, errs, "connection refused", "closed store: %q", errs)
 }
 
 func TestApplyStatusAndMigrateOnTheFakes(t *testing.T) {
@@ -505,163 +513,59 @@ func TestApplyStatusAndMigrateOnTheFakes(t *testing.T) {
 	step := func(want int, args ...string) (string, string) {
 		t.Helper()
 		code, out, errs := h.run(t, args...)
-		if code != want {
-			t.Fatalf("%v: exit %d, want %d\nstdout: %s\nstderr: %s", args, code, want, out, errs)
-		}
+		require.Equal(t, want, code, "%v: exit %d, want %d\nstdout: %s\nstderr: %s", args, code, want, out, errs)
 		return out, errs
 	}
 	h.store.version = 0
 	out, errs := step(1, "status")
-	if out != "CONFIG STATUS pg=nova_config@127.0.0.1:5432/nova schema=0 redis=-\n" || !strings.Contains(errs, "run: nova-config migrate") {
-		t.Fatalf("status before migrate: %q %q", out, errs)
-	}
+	require.Equal(t, "CONFIG STATUS pg=nova_config@127.0.0.1:5432/nova schema=0 redis=-\n", out, "status before migrate: %q %q", out, errs)
+	require.Contains(t, errs, "run: nova-config migrate", "status before migrate: %q %q", out, errs)
 	out, _ = step(0, "migrate")
-	if out != "CONFIG MIGRATE pg=nova_config@127.0.0.1:5432/nova from=0 to=5 applied=5\n" {
-		t.Fatalf("migrate: %q", out)
-	}
+	n := currentSchema()
+	require.Equal(t, fmt.Sprintf("CONFIG MIGRATE pg=nova_config@127.0.0.1:5432/nova from=0 to=%d applied=%d\n", n, n), out, "migrate: %q", out)
 	out, _ = step(0, "migrate")
-	if out != "CONFIG MIGRATE pg=nova_config@127.0.0.1:5432/nova from=5 to=5 applied=0\n" {
-		t.Fatalf("migrate twice: %q", out)
-	}
+	require.Equal(t, fmt.Sprintf("CONFIG MIGRATE pg=nova_config@127.0.0.1:5432/nova from=%d to=%d applied=0\n", n, n), out, "migrate twice: %q", out)
 	step(0, "machine", "add", "studio", "--user", "glenn", "--seat", "studio", "--slots", "64")
 	step(0, "friend", "add", "rowan", "--slots", "32", "--tiers", "frontier", "--roles", "builder")
 	step(0, "friend", "add", "stella", "--slots", "32", "--tiers", "frontier,pro")
 	step(0, "fleet", "set", "--coordinator", "studio")
 	step(0, "sprint", "set", "--coordinator", "rowan")
 	out, errs = step(1, "status")
-	if out != "CONFIG STATUS pg=nova_config@127.0.0.1:5432/nova schema=5 machine=1 machine_rev=1 fleet_rev=4 friend=2 friend_rev=3 sprint_rev=5 redis=127.0.0.1:6379 machine_applied=0 fleet_applied=0 friend_applied=0 sprint_applied=0\n" || !strings.Contains(errs, "Redis is not at Postgres's revision for 4 kind(s); run: nova-config apply") {
-		t.Fatalf("status behind: %q %q", out, errs)
-	}
+	require.Equal(t, "CONFIG STATUS pg=nova_config@127.0.0.1:5432/nova schema="+strconv.Itoa(n)+" machine=1 machine_rev=1 fleet_rev=4 friend=2 friend_rev=3 sprint_rev=5 loop=0 loop_rev=0 route=0 route_rev=0 tier=2 tier_rev=0 redis=127.0.0.1:6379 machine_applied=0 fleet_applied=0 friend_applied=0 sprint_applied=0 loop_applied=0 route_applied=0 tier_applied=0\n", out, "status behind: %q %q", out, errs)
+	require.Contains(t, errs, "status REFUSED: Redis is not at the store's revision for 4 kind(s); run: nova-config apply", "status behind: %q %q", out, errs)
 	delete(h.env, "NOVA_FRIEND")
 	out, _ = step(0, "apply", "--check")
-	want := "CHECK ADD kind=machine name=studio\nCONFIG CHECK kind=machine add=1 set=0 remove=0 rev=1 applied=0\nCHECK SET kind=fleet name=fleet changed=coordinator\nCONFIG CHECK kind=fleet add=0 set=1 remove=0 rev=4 applied=0\nCHECK ADD kind=friend name=rowan\nCHECK ADD kind=friend name=stella\nCONFIG CHECK kind=friend add=2 set=0 remove=0 rev=3 applied=0\nCHECK SET kind=sprint name=sprint changed=coordinator\nCONFIG CHECK kind=sprint add=0 set=1 remove=0 rev=5 applied=0\n"
-	if out != want {
-		t.Fatalf("apply --check without --as:\n%s\nwant:\n%s", out, want)
-	}
-	if len(h.redis.log) != 0 || len(h.redis.revs) != 0 {
-		t.Fatalf("--check wrote: %v %v", h.redis.log, h.redis.revs)
-	}
+	want := "CHECK ADD kind=machine name=studio\nCONFIG CHECK kind=machine add=1 set=0 remove=0 rev=1 applied=0\nCHECK SET kind=fleet name=fleet changed=coordinator\nCONFIG CHECK kind=fleet add=0 set=1 remove=0 rev=4 applied=0\nCHECK ADD kind=friend name=rowan\nCHECK ADD kind=friend name=stella\nCONFIG CHECK kind=friend add=2 set=0 remove=0 rev=3 applied=0\nCHECK SET kind=sprint name=sprint changed=coordinator\nCONFIG CHECK kind=sprint add=0 set=1 remove=0 rev=5 applied=0\nCONFIG CHECK kind=loop add=0 set=0 remove=0 rev=0 applied=0\nCONFIG CHECK kind=route add=0 set=0 remove=0 rev=0 applied=0\nCHECK ADD kind=tier name=flash\nCHECK ADD kind=tier name=pro\nCONFIG CHECK kind=tier add=2 set=0 remove=0 rev=0 applied=0\n"
+	require.Equal(t, want, out, "apply --check without --as:\n%s\nwant:\n%s", out, want)
+	require.Len(t, h.redis.log, 0, "--check wrote: %v %v", h.redis.log, h.redis.revs)
+	require.Len(t, h.redis.revs, 0, "--check wrote: %v %v", h.redis.log, h.redis.revs)
 	out, _ = step(0, "apply", "--check", "--as", "rowan")
-	if out != want {
-		t.Fatalf("apply --check with --as:\n%s\nwant:\n%s", out, want)
-	}
+	require.Equal(t, want, out, "apply --check with --as:\n%s\nwant:\n%s", out, want)
 	// Real apply without --as or NOVA_FRIEND refuses.
 	_, errs = step(2, "apply")
-	if !strings.Contains(errs, "--as is required: the friend making the change (or NOVA_FRIEND); run: nova-config help") {
-		t.Fatalf("apply without --as refusal: %q", errs)
-	}
+	require.Contains(t, errs, "apply REFUSED: --as is required: the name the write is recorded under (or NOVA_FRIEND); run: nova-config apply -h", "apply without --as refusal: %q", errs)
 	h.env["NOVA_FRIEND"] = "rowan"
 	out, _ = step(0, "apply")
-	want = "APPLY ADD kind=machine name=studio\nCONFIG APPLY kind=machine add=1 set=0 remove=0 rev=1 ms=0\nAPPLY SET kind=fleet name=fleet changed=coordinator\nCONFIG APPLY kind=fleet add=0 set=1 remove=0 rev=4 ms=0\nAPPLY ADD kind=friend name=rowan\nAPPLY ADD kind=friend name=stella\nCONFIG APPLY kind=friend add=2 set=0 remove=0 rev=3 ms=0\nAPPLY SET kind=sprint name=sprint changed=coordinator\nCONFIG APPLY kind=sprint add=0 set=1 remove=0 rev=5 ms=0\n"
-	if out != want {
-		t.Fatalf("apply:\n%s\nwant:\n%s", out, want)
-	}
-	if strings.Join(h.redis.log, " ") != "write machine studio write fleet fleet write friend rowan write friend stella write sprint sprint" || h.redis.revs["friend"] != 3 || h.redis.revs["machine"] != 1 || h.redis.revs["fleet"] != 4 || h.redis.revs["sprint"] != 5 {
-		t.Fatalf("redis after apply: %v %v", h.redis.log, h.redis.revs)
-	}
+	want = "APPLY ADD kind=machine name=studio\nCONFIG APPLY kind=machine add=1 set=0 remove=0 rev=1 ms=0\nAPPLY SET kind=fleet name=fleet changed=coordinator\nCONFIG APPLY kind=fleet add=0 set=1 remove=0 rev=4 ms=0\nAPPLY ADD kind=friend name=rowan\nAPPLY ADD kind=friend name=stella\nCONFIG APPLY kind=friend add=2 set=0 remove=0 rev=3 ms=0\nAPPLY SET kind=sprint name=sprint changed=coordinator\nCONFIG APPLY kind=sprint add=0 set=1 remove=0 rev=5 ms=0\nCONFIG APPLY kind=loop add=0 set=0 remove=0 rev=0 ms=0\nCONFIG APPLY kind=route add=0 set=0 remove=0 rev=0 ms=0\nAPPLY ADD kind=tier name=flash\nAPPLY ADD kind=tier name=pro\nCONFIG APPLY kind=tier add=2 set=0 remove=0 rev=0 ms=0\n"
+	require.Equal(t, want, out, "apply:\n%s\nwant:\n%s", out, want)
+	require.Equal(t, "write machine studio write fleet fleet write friend rowan write friend stella write sprint sprint write tier flash write tier pro", strings.Join(h.redis.log, " "), "redis after apply: %v %v", h.redis.log, h.redis.revs)
+	require.Equal(t, int64(3), h.redis.revs["friend"], "redis after apply: %v %v", h.redis.log, h.redis.revs)
+	require.Equal(t, int64(1), h.redis.revs["machine"], "redis after apply: %v %v", h.redis.log, h.redis.revs)
+	require.Equal(t, int64(4), h.redis.revs["fleet"], "redis after apply: %v %v", h.redis.log, h.redis.revs)
+	require.Equal(t, int64(5), h.redis.revs["sprint"], "redis after apply: %v %v", h.redis.log, h.redis.revs)
 	// The sprint's coordinator carries the role in what apply wrote; the
 	// stored row does not.
-	if got := h.redis.views["friend"]["rowan"]["roles"]; got != "builder,coordinator" {
-		t.Fatalf("rowan's applied roles %q", got)
-	}
+	gotCheck594 := h.redis.views["friend"]["rowan"]["roles"]
+	require.Equal(t, "builder,coordinator", gotCheck594, "rowan's applied roles %q", gotCheck594)
 	out, _ = step(0, "friend", "show", "rowan")
-	if !strings.HasPrefix(out, "FRIEND name=rowan slots=32 tiers=frontier roles=builder created=") {
-		t.Fatalf("rowan's stored row: %q", out)
-	}
+	require.True(t, strings.HasPrefix(out, "FRIEND name=rowan slots=32 tiers=frontier roles=builder created="), "rowan's stored row: %q", out)
 	out, _ = step(0, "status")
-	if !strings.HasSuffix(out, " machine_applied=1 fleet_applied=4 friend_applied=3 sprint_applied=5\n") {
-		t.Fatalf("status after apply: %q", out)
-	}
+	require.True(t, strings.HasSuffix(out, " machine_applied=1 fleet_applied=4 friend_applied=3 sprint_applied=5 loop_applied=0 route_applied=0 tier_applied=0\n"), "status after apply: %q", out)
 	out, _ = step(0, "apply", "--kind", "friend")
-	if out != "CONFIG APPLY kind=friend add=0 set=0 remove=0 rev=3 ms=0\n" {
-		t.Fatalf("second apply: %q", out)
-	}
+	require.Equal(t, "CONFIG APPLY kind=friend add=0 set=0 remove=0 rev=3 ms=0\n", out, "second apply: %q", out)
 	h.redis.revs["friend"] = 9
 	_, errs = step(1, "apply", "--kind", "friend")
-	if !strings.HasPrefix(errs, "nova-config apply: CONFLICT friend: Redis holds rev 9 and this Postgres is at rev 3; a newer Postgres applied it; run: nova-config status") {
-		t.Fatalf("conflict: %q", errs)
-	}
-}
-
-func TestInventoryVerb(t *testing.T) {
-	t.Parallel()
-
-	h := newHarness()
-	h.env["NOVA_PG_DSN"] = dsn
-	h.env["NOVA_FRIEND"] = "operator"
-	h.env["NOVA_MACHINE"] = "bench-alpha"
-
-	step := func(want int, args ...string) (string, string) {
-		t.Helper()
-		code, out, errs := h.run(t, args...)
-		if code != want {
-			t.Fatalf("%v: exit %d, want %d\nstdout: %s\nstderr: %s", args, code, want, out, errs)
-		}
-		return out, errs
-	}
-
-	step(0, "migrate")
-	step(0, "machine", "add", "bench-alpha", "--user", "user-a", "--seat", "seat-alpha", "--slots", "64", "--runners", "1")
-	step(0, "machine", "add", "bench-beta", "--user", "user-b", "--seat", "seat-beta", "--slots", "40", "--runners", "0")
-	step(0, "fleet", "set", "--store", "bench-beta", "--coordinator", "bench-alpha")
-
-	// 1. nova-config inventory
-	out, _ := step(0, "inventory")
-	var inv config.AnsibleInventory
-	if err := json.Unmarshal([]byte(out), &inv); err != nil {
-		t.Fatalf("unmarshal inventory: %v\noutput:\n%s", err, out)
-	}
-
-	if len(inv.All.Hosts) != 2 || inv.All.Hosts[0] != "bench-alpha" || inv.All.Hosts[1] != "bench-beta" {
-		t.Fatalf("all hosts: got %v, want [bench-alpha bench-beta]", inv.All.Hosts)
-	}
-	if len(inv.Benches.Hosts) != 2 || inv.Benches.Hosts[0] != "bench-alpha" || inv.Benches.Hosts[1] != "bench-beta" {
-		t.Fatalf("benches hosts: got %v, want [bench-alpha bench-beta]", inv.Benches.Hosts)
-	}
-	if len(inv.Coordinator.Hosts) != 1 || inv.Coordinator.Hosts[0] != "bench-alpha" {
-		t.Fatalf("coordinator hosts: got %v, want [bench-alpha]", inv.Coordinator.Hosts)
-	}
-	if len(inv.Store.Hosts) != 1 || inv.Store.Hosts[0] != "bench-beta" {
-		t.Fatalf("store hosts: got %v, want [bench-beta]", inv.Store.Hosts)
-	}
-	if len(inv.Runners.Hosts) != 1 || inv.Runners.Hosts[0] != "bench-alpha" {
-		t.Fatalf("runners hosts: got %v, want [bench-alpha]", inv.Runners.Hosts)
-	}
-
-	alphaHV := inv.Meta.Hostvars["bench-alpha"]
-	if alphaHV["ansible_host"] != "bench-alpha" || alphaHV["ansible_user"] != "user-a" || alphaHV["nova_seat"] != "seat-alpha" || alphaHV["kind"] != "machine" {
-		t.Fatalf("bench-alpha hostvars: %v", alphaHV)
-	}
-	if alphaHV["slots"] != float64(64) || alphaHV["runners"] != float64(1) {
-		t.Fatalf("bench-alpha slots/runners: %v %v", alphaHV["slots"], alphaHV["runners"])
-	}
-	if alphaHV["ansible_connection"] != "local" {
-		t.Fatalf("bench-alpha ansible_connection want local, got %v", alphaHV["ansible_connection"])
-	}
-
-	betaHV := inv.Meta.Hostvars["bench-beta"]
-	if betaHV["ansible_host"] != "bench-beta" || betaHV["ansible_user"] != "user-b" || betaHV["slots"] != float64(40) || betaHV["runners"] != float64(0) {
-		t.Fatalf("bench-beta hostvars: %v", betaHV)
-	}
-	if _, ok := betaHV["ansible_connection"]; ok {
-		t.Fatalf("bench-beta should not have ansible_connection: %v", betaHV)
-	}
-
-	// 2. nova-config inventory --list
-	listOut, _ := step(0, "inventory", "--list")
-	if listOut != out {
-		t.Fatalf("inventory --list output differs from inventory:\n%s\nvs\n%s", listOut, out)
-	}
-
-	// 3. nova-config inventory --host bench-alpha
-	hostOut, _ := step(0, "inventory", "--host", "bench-alpha")
-	var hostMap map[string]any
-	if err := json.Unmarshal([]byte(hostOut), &hostMap); err != nil {
-		t.Fatalf("unmarshal --host bench-alpha: %v\noutput:\n%s", err, hostOut)
-	}
-	if hostMap["ansible_host"] != "bench-alpha" || hostMap["ansible_user"] != "user-a" || hostMap["ansible_connection"] != "local" {
-		t.Fatalf("hostMap: %v", hostMap)
-	}
+	require.True(t, strings.HasPrefix(errs, "nova-config apply REFUSED: CONFLICT friend: Redis holds rev 9 and this Postgres is at rev 3; a newer Postgres applied it; run: nova-config status"), "conflict: %q", errs)
 }
 
 func TestApplyCheckReportsDriftAgainstFleet(t *testing.T) {
@@ -675,9 +579,7 @@ func TestApplyCheckReportsDriftAgainstFleet(t *testing.T) {
 	step := func(want int, args ...string) (string, string) {
 		t.Helper()
 		code, out, errs := h.run(t, args...)
-		if code != want {
-			t.Fatalf("%v: exit %d, want %d\nstdout: %s\nstderr: %s", args, code, want, out, errs)
-		}
+		require.Equal(t, want, code, "%v: exit %d, want %d\nstdout: %s\nstderr: %s", args, code, want, out, errs)
 		return out, errs
 	}
 
@@ -692,570 +594,94 @@ func TestApplyCheckReportsDriftAgainstFleet(t *testing.T) {
 
 	// Verify apply --check reports zero drift when synchronized
 	out, _ := step(0, "apply", "--check", "--kind", "machine")
-	if out != "CONFIG CHECK kind=machine add=0 set=0 remove=0 rev=2 applied=2\n" {
-		t.Fatalf("want no drift for machine, got:\n%s", out)
-	}
+	require.Equal(t, "CONFIG CHECK kind=machine add=0 set=0 remove=0 rev=2 applied=2\n", out, "want no drift for machine, got:\n%s", out)
 	out, _ = step(0, "apply", "--check", "--kind", "fleet")
-	if out != "CONFIG CHECK kind=fleet add=0 set=0 remove=0 rev=3 applied=3\n" {
-		t.Fatalf("want no drift for fleet, got:\n%s", out)
-	}
+	require.Equal(t, "CONFIG CHECK kind=fleet add=0 set=0 remove=0 rev=3 applied=3\n", out, "want no drift for fleet, got:\n%s", out)
 
 	// 1. Detect drift: update machine slots in Postgres
 	step(0, "machine", "set", "bench-beta", "--slots", "80")
 	out, _ = step(0, "apply", "--check", "--kind", "machine")
 	wantDrift := "CHECK SET kind=machine name=bench-beta changed=slots\nCONFIG CHECK kind=machine add=0 set=1 remove=0 rev=4 applied=2\n"
-	if out != wantDrift {
-		t.Fatalf("drift on machine slots:\ngot:\n%s\nwant:\n%s", out, wantDrift)
-	}
+	require.Equal(t, wantDrift, out, "drift on machine slots:\ngot:\n%s\nwant:\n%s", out, wantDrift)
 
 	// 2. Detect drift: add new machine in Postgres
 	step(0, "machine", "add", "bench-gamma", "--user", "user-c", "--seat", "seat-gamma", "--slots", "32")
 	out, _ = step(0, "apply", "--check", "--kind", "machine")
 	wantDrift = "CHECK SET kind=machine name=bench-beta changed=slots\nCHECK ADD kind=machine name=bench-gamma\nCONFIG CHECK kind=machine add=1 set=1 remove=0 rev=5 applied=2\n"
-	if out != wantDrift {
-		t.Fatalf("drift on machine add+set:\ngot:\n%s\nwant:\n%s", out, wantDrift)
-	}
+	require.Equal(t, wantDrift, out, "drift on machine add+set:\ngot:\n%s\nwant:\n%s", out, wantDrift)
 
 	// 3. Detect drift: change fleet coordinator in Postgres
 	step(0, "fleet", "set", "--coordinator", "bench-beta")
 	out, _ = step(0, "apply", "--check", "--kind", "fleet")
 	wantDrift = "CHECK SET kind=fleet name=fleet changed=coordinator\nCONFIG CHECK kind=fleet add=0 set=1 remove=0 rev=6 applied=3\n"
-	if out != wantDrift {
-		t.Fatalf("drift on fleet coordinator:\ngot:\n%s\nwant:\n%s", out, wantDrift)
-	}
+	require.Equal(t, wantDrift, out, "drift on fleet coordinator:\ngot:\n%s\nwant:\n%s", out, wantDrift)
 
 	// 4. Detect drift: machine removed from Postgres but present in Redis
 	// Manually inject a stale machine into fake redis
 	h.redis.views["machine"]["bench-retired"] = config.View{"user": "nobody", "seat": "none", "slots": "10", "runners": "0"}
 	out, _ = step(0, "apply", "--check", "--kind", "machine")
-	if !strings.Contains(out, "CHECK REMOVE kind=machine name=bench-retired") {
-		t.Fatalf("drift on machine remove missing:\ngot:\n%s", out)
-	}
+	require.Contains(t, out, "CHECK REMOVE kind=machine name=bench-retired", "drift on machine remove missing:\ngot:\n%s", out)
 
 	// Verify apply --check wrote NOTHING to redis
 	// Redis revs should still be 2 and 3
-	if h.redis.revs["machine"] != 2 || h.redis.revs["fleet"] != 3 {
-		t.Fatalf("apply --check wrote to redis: %v", h.redis.revs)
-	}
+	require.Equal(t, int64(2), h.redis.revs["machine"], "apply --check wrote to redis: %v", h.redis.revs)
+	require.Equal(t, int64(3), h.redis.revs["fleet"], "apply --check wrote to redis: %v", h.redis.revs)
 }
 
-// inventoryHarness is a harness with n machine rows named bench-01 ...
-// bench-nn, added to the store directly.
-func inventoryHarness(t *testing.T, n int) *harness {
-	t.Helper()
-	h := newHarness()
-	h.env["NOVA_PG_DSN"] = dsn
-	machine, _ := config.Lookup(config.KindMachine)
-	for i := 1; i <= n; i++ {
-		row, err := machine.NewRow(fmt.Sprintf("bench-%02d", i), map[string]string{"user": "user-a", "seat": "seat-a", "slots": "8"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := h.store.Insert(context.Background(), config.KindMachine, row, "operator"); err != nil {
-			t.Fatal(err)
-		}
-	}
-	return h
-}
-
-func TestInventoryHostNamingNoMachineIsRefused(t *testing.T) {
-	t.Parallel()
-
-	h := inventoryHarness(t, 3)
-	code, out, errs := h.run(t, "inventory", "--host", "nosuch")
-	if code != 1 || out != "" {
-		t.Fatalf("exit %d stdout %q, want 1 and nothing", code, out)
-	}
-	want := "nova-config inventory: --host \"nosuch\" names no machine row; known machines: bench-01, bench-02, bench-03; run: nova-config machine list\n"
-	if errs != want {
-		t.Fatalf("refusal:\n got %q\nwant %q", errs, want)
-	}
-
-	// The remedy keeps the effective --pg.
-	_, _, errs = h.run(t, "inventory", "--pg", dsn, "--host", "nosuch")
-	if !strings.HasSuffix(errs, "run: nova-config machine list --pg "+dsn+"\n") {
-		t.Fatalf("remedy does not keep --pg: %q", errs)
-	}
-
-	// An empty store lists none.
-	_, _, errs = inventoryHarness(t, 0).run(t, "inventory", "--host", "nosuch")
-	if !strings.Contains(errs, "known machines: none;") {
-		t.Fatalf("empty store: %q", errs)
-	}
-}
-
-func TestInventoryHostRefusalListsAtMostTwentyNames(t *testing.T) {
-	t.Parallel()
-
-	h := inventoryHarness(t, 25)
-	code, _, errs := h.run(t, "inventory", "--host", "nosuch")
-	if code != 1 {
-		t.Fatalf("exit %d, want 1", code)
-	}
-	if !strings.Contains(errs, "bench-20 and 5 more;") || strings.Contains(errs, "bench-21") {
-		t.Fatalf("the list is not bounded at 20: %q", errs)
-	}
-}
-
-func TestInventoryHostAndListForRealMachinesStillAnswer(t *testing.T) {
-	t.Parallel()
-
-	h := inventoryHarness(t, 2)
-	code, out, errs := h.run(t, "inventory", "--host", "bench-02")
-	if code != 0 || errs != "" {
-		t.Fatalf("--host bench-02: exit %d stderr %q", code, errs)
-	}
-	var hv map[string]any
-	if err := json.Unmarshal([]byte(out), &hv); err != nil || hv["ansible_host"] != "bench-02" {
-		t.Fatalf("--host bench-02: %v %q", err, out)
-	}
-	_, def, _ := h.run(t, "inventory")
-	code, listed, _ := h.run(t, "inventory", "--list")
-	if code != 0 || listed != def || !strings.Contains(listed, "_meta") {
-		t.Fatalf("--list differs from the default or lacks _meta:\n%s", listed)
-	}
-}
-
-func TestInventoryBadFlagsAreRefusedBeforeTheStoreIsOpened(t *testing.T) {
-	t.Parallel()
-
-	for _, tc := range []struct {
-		args []string
-		want []string
-	}{
-		{[]string{"inventory", "--list", "--host", "bench-01"}, []string{"--list", "--host", "exclusive"}},
-		{[]string{"inventory", "--host", "bench-01", "--list"}, []string{"--list", "--host", "exclusive"}},
-		{[]string{"inventory", "--host="}, []string{"--host", "empty"}},
-		{[]string{"inventory", "--host", ""}, []string{"--host", "empty"}},
-		{[]string{"inventory", "--host"}, []string{"host"}},
-		{[]string{"inventory", "bench-01"}, []string{"no arguments"}},
-	} {
-		h := inventoryHarness(t, 1)
-		code, out, errs := h.run(t, tc.args...)
-		if code != 2 || out != "" {
-			t.Fatalf("%v: exit %d stdout %q, want 2 and nothing (stderr %q)", tc.args, code, out, errs)
-		}
-		for _, w := range tc.want {
-			if !strings.Contains(errs, w) {
-				t.Fatalf("%v: refusal %q lacks %q", tc.args, errs, w)
-			}
-		}
-		if strings.Count(errs, "\n") != 1 {
-			t.Fatalf("%v: refusal is not one line: %q", tc.args, errs)
-		}
-		if h.opens != 0 {
-			t.Fatalf("%v: opened the store %d times before refusing", tc.args, h.opens)
-		}
-	}
-}
-
-// localMachines is the machines of an inventory that carry
-// ansible_connection=local.
-func localMachines(t *testing.T, out string) []string {
-	t.Helper()
-	var inv config.AnsibleInventory
-	if err := json.Unmarshal([]byte(out), &inv); err != nil {
-		t.Fatalf("unmarshal: %v\n%s", err, out)
-	}
-	var local []string
-	for _, n := range inv.All.Hosts {
-		if inv.Meta.Hostvars[n]["ansible_connection"] == "local" {
-			local = append(local, n)
-		}
-	}
-	return local
-}
-
-func TestInventoryLocalMachineComesFromNovaMachine(t *testing.T) {
-	t.Parallel()
-
-	h := inventoryHarness(t, 3)
-	h.env["NOVA_MACHINE"] = "bench-02"
-	code, out, errs := h.run(t, "inventory")
-	if code != 0 || errs != "" {
-		t.Fatalf("exit %d stderr %q", code, errs)
-	}
-	if got := localMachines(t, out); len(got) != 1 || got[0] != "bench-02" {
-		t.Fatalf("NOVA_MACHINE=bench-02 marks %v local", got)
-	}
-}
-
-func TestInventoryLocalMachineFallsBackToTheShortHostname(t *testing.T) {
-	t.Parallel()
-
-	h := inventoryHarness(t, 3)
-	h.hostname = "bench-03.tailnet.example"
-	_, out, _ := h.run(t, "inventory")
-	if got := localMachines(t, out); len(got) != 1 || got[0] != "bench-03" {
-		t.Fatalf("hostname bench-03.tailnet.example marks %v local", got)
-	}
-	// NOVA_MACHINE outranks the hostname.
-	h.env["NOVA_MACHINE"] = "bench-01"
-	_, out, _ = h.run(t, "inventory")
-	if got := localMachines(t, out); len(got) != 1 || got[0] != "bench-01" {
-		t.Fatalf("NOVA_MACHINE=bench-01 with hostname bench-03 marks %v local", got)
-	}
-}
-
-func TestInventoryIgnoresTheOldFleetSelfName(t *testing.T) {
-	t.Parallel()
-
-	h := inventoryHarness(t, 2)
-	h.env["FLEET_SELF"] = "bench-01"
-	_, out, _ := h.run(t, "inventory")
-	if got := localMachines(t, out); len(got) != 0 {
-		t.Fatalf("FLEET_SELF still marks %v local", got)
-	}
-}
-
-// helpCommands returns the printf and chmod commands the inventory help
-// prints, each as printed (the help left-trims its lines).
-func helpCommands(t *testing.T, help string) (printf, chmod string) {
-	t.Helper()
-	for _, l := range strings.Split(help, "\n") {
-		l = strings.TrimSpace(l)
-		switch {
-		case strings.HasPrefix(l, "printf "):
-			printf = l
-		case strings.HasPrefix(l, "chmod +x "):
-			chmod = l
-		}
-	}
-	if printf == "" || chmod == "" {
-		t.Fatalf("inventory -h prints no printf and chmod commands:\n%s", help)
-	}
-	return printf, chmod
-}
-
-func TestInventoryHelpAndDocsReachAWorkingRun(t *testing.T) {
-	t.Parallel()
-
-	h := newHarness()
-	code, help, errs := h.run(t, "inventory", "-h")
-	if code != 0 || errs != "" {
-		t.Fatalf("inventory -h: exit %d stderr %q", code, errs)
-	}
-	needs := []string{
-		"--list", "--host", "--pg", "--timeout", // every flag
-		"NOVA_PG_DSN", "NOVA_PG_PASSWORD_ENV", "NOVA_MACHINE", // every variable
-		"first run", "nova-config inventory", // a first example
-		"-i wants an executable", "column one", "ANSIBLE_INVENTORY_UNPARSED_FAILED=true ansible-inventory -i ./nova-inventory --list", "a failed inventory is an empty inventory", "unparsed_is_failed = True", // the wrapper
-		"_meta.hostvars", "ansible never calls --host", // why --host is not called
-		"the default when neither --list nor --host is given",                                                                                         // what --list is
-		"all and benches are every machine row", "coordinator and store come from the fleet row", "runners is every machine with at least one runner", // the groups
-		"matched by exact machine name", "lower-cased first label", "nothing is marked local", "an empty value counts as unset", // how NOVA_MACHINE matches
-		"this verb exits 0 when it printed, 1 when the store's state or an unknown machine refused it, 2 when it could not run (usage, connection, timeout)", // its exit codes
-	}
-	for _, w := range needs {
-		if !strings.Contains(help, w) {
-			t.Errorf("inventory -h lacks %q:\n%s", w, help)
-		}
-	}
-	printf, chmod := helpCommands(t, help)
-
-	// The printed commands are the ones the docs carry.
-	for _, doc := range []string{"docs/CLI.md", "docs/nova-config/README.md"} {
-		raw, err := os.ReadFile(filepath.Join("..", "..", filepath.FromSlash(doc)))
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, w := range []string{printf, chmod, "NOVA_MACHINE", "ANSIBLE_INVENTORY_UNPARSED_FAILED=true ansible-inventory -i ./nova-inventory --list", "unparsed_is_failed = True", "older than the store", "exact machine name", "an empty value counts as unset", "lower-cased first label", "every machine with at least one runner", "run: nova-config migrate", "ansible-inventory -i ./nova-inventory --list", "_meta.hostvars"} {
-			if !strings.Contains(string(raw), w) {
-				t.Errorf("%s lacks %q", doc, w)
-			}
-		}
-	}
-
-	// Run the printed commands in a temp dir: the wrapper starts with
-	// #!/bin/sh at byte 0, is executable, and runs the tool with ansible's
-	// arguments. nova-config on the PATH is this test binary serving the
-	// inventory of an in-memory store (TestInventoryHelperProcess).
-	dir := t.TempDir()
-	sh := func(script string, env ...string) (string, error) {
-		cmd := exec.Command("/bin/sh", "-c", script)
-		cmd.Dir = dir
-		cmd.Env = append([]string{"PATH=" + dir + ":/usr/bin:/bin"}, env...)
-		out, err := cmd.CombinedOutput()
-		return string(out), err
-	}
-	if out, err := sh(printf + "\n" + chmod); err != nil {
-		t.Fatalf("the printed commands failed: %v\n%s", err, out)
-	}
-	wrapper, err := os.ReadFile(filepath.Join(dir, "nova-inventory"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(wrapper) != "#!/bin/sh\nexec nova-config inventory \"$@\"\n" {
-		t.Fatalf("the wrapper is %q", wrapper)
-	}
-	if fi, err := os.Stat(filepath.Join(dir, "nova-inventory")); err != nil || fi.Mode()&0o111 == 0 {
-		t.Fatalf("the wrapper is not executable: %v %v", fi, err)
-	}
-	self, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	shim := "#!/bin/sh\nNOVA_CONFIG_TEST_HELPER=1 exec '" + self + "' -test.run='^TestInventoryHelperProcess$' -- \"$@\"\n"
-	if err := os.WriteFile(filepath.Join(dir, "nova-config"), []byte(shim), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	for _, args := range []string{"--list", "--host bench-02"} {
-		out, err := sh("./nova-inventory " + args)
-		if err != nil || !strings.Contains(out, `"ansible_host": "bench-`) {
-			t.Fatalf("./nova-inventory %s: %v\n%s", args, err, out)
-		}
-	}
-}
-
-// TestInventoryHelperProcess is the tool the wrapper test puts on the PATH:
-// the test binary, run with the wrapper's arguments against an in-memory
-// store. It does nothing in a normal test run.
-func TestInventoryHelperProcess(t *testing.T) {
-	t.Parallel()
-
-	if os.Getenv("NOVA_CONFIG_TEST_HELPER") != "1" {
-		return
-	}
-	var args []string
-	for i, a := range os.Args {
-		if a == "--" {
-			args = os.Args[i+1:]
-			break
-		}
-	}
-	h := inventoryHarness(t, 2)
-	os.Exit(run(args, os.Stdout, os.Stderr, h.deps()))
-}
-
-func TestInventoryDocsCarryNoIssueNumbersOrHistory(t *testing.T) {
-	t.Parallel()
-
-	issue := regexp.MustCompile(`#[0-9]+|ideas#|\b20[0-9]{2}-[0-9]{2}-[0-9]{2}\b`)
-	code, help, _ := newHarness().run(t, "inventory", "-h")
-	if code != 0 {
-		t.Fatalf("inventory -h exits %d", code)
-	}
-	if m := issue.FindString(help); m != "" {
-		t.Errorf("inventory -h carries %q", m)
-	}
-	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "nova-config", "README.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, sec, ok := strings.Cut(string(raw), "## Ansible inventory")
-	if !ok {
-		t.Fatal("README has no Ansible inventory section")
-	}
-	sec, _, _ = strings.Cut(sec, "\n## ")
-	if m := issue.FindString(sec); m != "" {
-		t.Errorf("the README's inventory section carries %q", m)
-	}
-	if strings.Contains(sec, "registry_seat") || !strings.Contains(sec, "`nova_seat`") || !strings.Contains(sec, "group_vars") {
-		t.Errorf("the README's inventory section must name nova_seat, say a deployment maps it in group_vars, and not name registry_seat")
-	}
-}
-
-func TestInventoryUnknownNovaMachineIsRefused(t *testing.T) {
-	t.Parallel()
-
-	for _, self := range []string{"nosuch", "BENCH-01", "bench-01.tailnet.ts.net", " bench-01"} {
-		for _, extra := range [][]string{nil, {"--list"}, {"--host", "bench-01"}} {
-			h := inventoryHarness(t, 2)
-			h.env["NOVA_MACHINE"] = self
-			args := append([]string{"inventory"}, extra...)
-			code, out, errs := h.run(t, args...)
-			want := "nova-config inventory: NOVA_MACHINE=" + strconv.Quote(self) + " names no machine row (the name is matched exactly); known machines: bench-01, bench-02; run: nova-config machine list\n"
-			if code != 1 || out != "" || errs != want {
-				t.Fatalf("NOVA_MACHINE=%q %v: exit %d stdout %q stderr %q\nwant %q", self, extra, code, out, errs, want)
-			}
-		}
-	}
-	// The remedy keeps --pg.
-	h := inventoryHarness(t, 1)
-	h.env["NOVA_MACHINE"] = "nosuch"
-	_, _, errs := h.run(t, "inventory", "--pg", dsn)
-	if !strings.HasSuffix(errs, "run: nova-config machine list --pg "+dsn+"\n") {
-		t.Fatalf("remedy does not keep --pg: %q", errs)
-	}
-}
-
-func TestInventoryUnsetNovaMachineAndNoHostnameMatchMarksNothing(t *testing.T) {
-	t.Parallel()
-
-	// The fallback compares the lower-cased first label of the hostname to
-	// the machine name exactly, like NOVA_MACHINE.
-	for _, hostname := range []string{"elsewhere.example", "bench-011.local", "bench.01", ""} {
-		h := inventoryHarness(t, 2)
-		h.hostname = hostname
-		code, out, errs := h.run(t, "inventory")
-		if code != 0 || errs != "" {
-			t.Fatalf("hostname %q: exit %d stderr %q", hostname, code, errs)
-		}
-		if got := localMachines(t, out); len(got) != 0 {
-			t.Fatalf("hostname %q marks %v local", hostname, got)
-		}
-	}
-}
-
-// blockedStore never answers the inventory read until its context ends,
-// like a store holding a lock on the machines table.
-type blockedStore struct{ *memStore }
-
-func (b blockedStore) MachinesAndFleet(ctx context.Context) ([]config.Row, config.Row, error) {
-	<-ctx.Done()
-	return nil, config.Row{}, ctx.Err()
-}
-
-func TestInventoryTimesOutWaitingForTheStore(t *testing.T) {
-	t.Parallel()
-
-	h := inventoryHarness(t, 2)
-	h.override = blockedStore{h.store}
-	code, out, errs := h.run(t, "inventory", "--pg", dsn, "--host", "bench-01", "--timeout", "50ms")
-	want := "nova-config inventory: timed out after 50ms waiting for the store while reading the machines and the fleet row; check that nothing holds a lock on config.machines or config.fleet; run: nova-config inventory --pg " + dsn + " --host bench-01 --timeout 150ms\n"
-	if code != 2 || out != "" || errs != want {
-		t.Fatalf("exit %d stdout %q stderr %q\nwant 2, nothing, %q", code, out, errs, want)
-	}
-
-	// The printed remedy runs through the real CLI once the store answers.
-	h.override = nil
-	remedy := strings.Fields(strings.TrimPrefix(strings.TrimSuffix(errs, "\n"), "nova-config inventory: timed out after 50ms waiting for the store while reading the machines and the fleet row; check that nothing holds a lock on config.machines or config.fleet; run: "))
-	code, out, errs = h.run(t, remedy[1:]...)
-	if code != 0 || errs != "" || !strings.Contains(out, "ansible_host") {
-		t.Fatalf("remedy %v: exit %d stdout %q stderr %q", remedy, code, out, errs)
-	}
-}
-
-func TestInventoryTimeoutMustBePositive(t *testing.T) {
-	t.Parallel()
-
-	for _, v := range []string{"0", "0s", "-1s", "soon"} {
-		h := inventoryHarness(t, 1)
-		code, out, errs := h.run(t, "inventory", "--timeout", v)
-		if code != 2 || out != "" || !strings.Contains(errs, "timeout") || h.opens != 0 {
-			t.Fatalf("--timeout %s: exit %d stdout %q stderr %q opens %d", v, code, out, errs, h.opens)
-		}
-	}
-}
-
-func TestInventoryOnAStoreNotMigratedOrOlderRefusesWithMigrate(t *testing.T) {
+// A store older than this binary has no loops or routes table: status, apply,
+// machine show and every loop and route verb refuse with the versions and the migrate command, and never reach the
+// store's own "relation does not exist".
+func TestVerbsOnAnOlderSchemaRefuseWithMigrate(t *testing.T) {
 	t.Parallel()
 
 	all, err := config.Migrations()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, have := range []int{0, len(all) - 1} {
-		for _, pgFlag := range []bool{false, true} {
-			h := inventoryHarness(t, 1)
+	require.NoError(t, err)
+	for _, have := range []int{1, len(all) - 1} {
+		for _, args := range [][]string{{"status"}, {"apply"}, {"apply", "--kind", "loop"}, {"apply", "--check"}, {"machine", "show", "studio"},
+			{"loop", "add", "l1", "--machine", "studio", "--argv", `["/bin/prog"]`, "--every", "5"},
+			{"loop", "set", "l1", "--every", "6"},
+			{"loop", "remove", "l1"},
+			{"loop", "list"},
+			{"loop", "show", "l1"},
+			{"loop", "history", "l1"},
+			{"route", "add", "r1", "--tier", "pro", "--provider", "p", "--model", "m", "--deadline", "60"},
+			{"route", "set", "r1", "--tokens", "2"},
+			{"route", "remove", "r1"},
+			{"route", "list"},
+			{"route", "show", "r1"},
+			{"route", "history", "r1"},
+		} {
+			h := newHarness()
+			h.env["NOVA_PG_DSN"] = dsn
+			h.env["NOVA_SPRINT_REDIS"] = "127.0.0.1:6379"
+			h.env["NOVA_FRIEND"] = "rowan"
 			h.store.version = have
-			args := []string{"inventory"}
-			next := "nova-config migrate"
-			if pgFlag {
-				args = append(args, "--pg", dsn)
-				next += " --pg " + dsn
+			code, _, errs := h.run(t, args...)
+			verb := args[0]
+			if args[0] == "machine" || args[0] == "loop" || args[0] == "route" {
+				verb = args[0] + " " + args[1]
 			}
-			code, out, errs := h.run(t, args...)
-			want := fmt.Sprintf("nova-config inventory: schema config is at version %d and this binary carries %d; run: %s\n", have, len(all), next)
-			if code != 1 || out != "" || errs != want {
-				t.Fatalf("version %d: exit %d stdout %q stderr %q\nwant %q", have, code, out, errs, want)
-			}
+			want := fmt.Sprintf("nova-config %s REFUSED: schema config is at version %d and this binary carries %d; run: nova-config migrate\n", verb, have, len(all))
+			assert.Equal(t, 1, code, "%v at version %d", args, have)
+			assert.Equal(t, want, errs, "%v at version %d", args, have)
+			assert.NotContains(t, errs, "does not exist")
+			assert.Equal(t, 0, h.redis.opens, "%v at version %d: Redis is not opened", args, have)
+			assert.Empty(t, h.redis.log, "%v at version %d: nothing is written", args, have)
 		}
 	}
 }
 
-func TestInventoryRefusedConnectionKeepsTheGenericRefusal(t *testing.T) {
-	t.Parallel()
-
-	h := inventoryHarness(t, 1)
-	code, out, errs := h.run(t, "inventory", "--pg", "postgres://nova_config@127.0.0.1:5432/closed")
-	if code != 2 || out != "" || !strings.Contains(errs, "connection refused") || strings.Contains(errs, "timed out") || !strings.HasSuffix(errs, "; run: nova-config help\n") {
-		t.Fatalf("exit %d stdout %q stderr %q", code, out, errs)
-	}
-}
-
-func TestInventoryRefusalsQuoteTheValueSoAStraySpaceShows(t *testing.T) {
-	t.Parallel()
-
-	h := inventoryHarness(t, 1)
-	_, _, errs := h.run(t, "inventory", "--host", "bench-01 ")
-	if !strings.Contains(errs, `--host "bench-01 " names no machine row`) {
-		t.Fatalf("--host: %q", errs)
-	}
-	h.env["NOVA_MACHINE"] = " bench-01"
-	_, _, errs = h.run(t, "inventory")
-	if !strings.Contains(errs, `NOVA_MACHINE=" bench-01" names no machine row`) {
-		t.Fatalf("NOVA_MACHINE: %q", errs)
-	}
-}
-
-func TestInventoryHostnameFallbackLowercasesTheFirstLabel(t *testing.T) {
-	t.Parallel()
-
-	h := inventoryHarness(t, 2)
-	h.hostname = "Bench-02.local"
-	code, out, errs := h.run(t, "inventory")
-	if code != 0 || errs != "" {
-		t.Fatalf("exit %d stderr %q", code, errs)
-	}
-	if got := localMachines(t, out); len(got) != 1 || got[0] != "bench-02" {
-		t.Fatalf("hostname Bench-02.local marks %v local, want bench-02", got)
-	}
-	// NOVA_MACHINE is not lowered: it is matched exactly.
-	h.env["NOVA_MACHINE"] = "Bench-02"
-	if code, _, _ := h.run(t, "inventory"); code != 1 {
-		t.Fatalf("NOVA_MACHINE=Bench-02 exits %d, want 1", code)
-	}
-}
-
-func TestInventoryEmptyNovaMachineIsUnset(t *testing.T) {
-	t.Parallel()
-
-	h := inventoryHarness(t, 2)
-	h.env["NOVA_MACHINE"] = ""
-	h.hostname = "bench-01.local"
-	code, out, errs := h.run(t, "inventory")
-	if code != 0 || errs != "" {
-		t.Fatalf("an empty NOVA_MACHINE exits %d with stderr %q, want 0 (unset)", code, errs)
-	}
-	if got := localMachines(t, out); len(got) != 1 || got[0] != "bench-01" {
-		t.Fatalf("an empty NOVA_MACHINE marks %v, want the hostname's bench-01", got)
-	}
-}
-
-func TestInventoryHelpKeepsTheToolWideExitFooter(t *testing.T) {
+// --pg is repeated in the command the refusal names.
+func TestOlderSchemaRefusalRepeatsPG(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness()
-	for _, verb := range []string{"inventory", "status", "apply"} {
-		_, help, _ := h.run(t, verb, "-h")
-		if !strings.HasSuffix(help, "exit codes: 0 done, 1 refused, 2 usage\n") {
-			t.Errorf("%s -h footer changed:\n%s", verb, help)
-		}
-	}
-	_, top, _ := h.run(t, "help")
-	if !strings.Contains(top, "exit codes: 0 done, 1 refused, 2 usage") {
-		t.Errorf("the tool-wide footer changed")
-	}
-}
-
-func TestInventoryOnAStoreMigratedAheadOfTheBinaryRefuses(t *testing.T) {
-	t.Parallel()
-
+	h.env["NOVA_SPRINT_REDIS"] = "127.0.0.1:6379"
+	h.env["NOVA_FRIEND"] = "rowan"
+	h.store.version = 5
+	code, _, errs := h.run(t, "machine", "show", "studio", "--pg", dsn)
 	all, err := config.Migrations()
-	if err != nil {
-		t.Fatal(err)
-	}
-	h := inventoryHarness(t, 1)
-	h.store.version = len(all) + 1
-	code, out, errs := h.run(t, "inventory")
-	want := fmt.Sprintf("nova-config inventory: schema config is at version %d and this binary carries %d; this nova-config is older than the store; install a nova-config whose migrations reach version %d\n", len(all)+1, len(all), len(all)+1)
-	if code != 1 || out != "" || errs != want {
-		t.Fatalf("exit %d stdout %q stderr %q\nwant 1, nothing, %q", code, out, errs, want)
-	}
-	// A store at exactly the binary's version is read.
-	h.store.version = len(all)
-	if code, out, _ := h.run(t, "inventory"); code != 0 || out == "" {
-		t.Fatalf("a store at the binary's version: exit %d", code)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, 1, code)
+	assert.Equal(t, fmt.Sprintf("nova-config machine show REFUSED: schema config is at version 5 and this binary carries %d; run: nova-config migrate --pg %s\n", len(all), dsn), errs)
 }

@@ -325,10 +325,14 @@ func Start(s State, p, m string, limit int) (State, error) {
 		if w.Place != FWithdrawn {
 			return s, badChoice("%s cut a second time (NoCardLostOrTwice)", id)
 		}
-		if w.Redeals >= MaxRedeals {
+		if w.TakeEnded && w.Redeals >= MaxRedeals {
 			return s, refuse("%s was redealt %d times, its bound", id, w.Redeals)
 		}
-		w.Place, w.Member, w.Gen, w.Redeals = FReady, m, w.Gen+1, w.Redeals+1
+		if w.TakeEnded {
+			// the take that ended is counted by the deal that places it again
+			w.Redeals++
+		}
+		w.Place, w.Member, w.Gen, w.TakeEnded = FReady, m, w.Gen+1, false
 		n.Work[id] = w
 	} else {
 		n.Work[id] = WorkCard{Primary: p, Attempt: pr.Attempt, Member: m, Place: FReady, Gen: 1}
@@ -362,7 +366,8 @@ func Take(s State, m, c string, gen int) (State, error) {
 // FinishRefused (line 364) when the generation is not live: accepted only
 // for the live generation in its member's working cell (D3); the card to
 // done, its primary to review at the head the card produced; failed opens
-// the failed judgment; ok asks the readers kept on the primary again (G2).
+// the failed judgment. ok asks no reader: one path asks (the engine's commit 255180e2), the
+// machine's Ask, which asks round the readers.
 func Finish(s State, m, c string, gen int, ok bool) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
@@ -390,14 +395,6 @@ func Finish(s State, m, c string, gen int, ok bool) (State, error) {
 	n.Primaries[p] = pr
 	if !ok {
 		n.open(JFailed, p)
-		return n, nil
-	}
-	for _, r := range pr.Pair {
-		id := RC(p, w.Attempt, r)
-		if _, made := n.Reads[id]; made {
-			return s, badChoice("%s cut a second time (NoCardLostOrTwice)", id)
-		}
-		n.Reads[id] = ReadCard{Primary: p, Attempt: w.Attempt, Reader: r, Place: Asked}
 	}
 	return n, nil
 }
@@ -406,8 +403,10 @@ func Finish(s State, m, c string, gen int, ok bool) (State, error) {
 
 // Ask is SprintTables.tla Ask(p) (line 375): a primary in review whose work
 // did not fail, with no read card on the table, is dealt to two different
-// readers: the two kept on it (D2), or the next two round the readers
-// (NextReaders, errata 3 amendment 5), the rolling index moved past them. It closes stranded in review (spec section 6).
+// readers: the next two round the readers (NextReaders, errata 3 amendment 5),
+// the rolling index moved past them; reworked work too, no reader of an earlier
+// attempt preferred (the owner, 2026-10-01: "yes on the decision."). It closes
+// stranded in review (spec section 6).
 func Ask(s State, p string, two []string) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
@@ -423,22 +422,13 @@ func Ask(s State, p string, two []string) (State, error) {
 	}
 	pr := s.Primaries[p]
 	sorted := addSorted(nil, two...)
-	if len(pr.Pair) > 0 {
-		if Join(sorted) != Join(pr.Pair) {
-			return s, badChoice("%s asked of %v, not the readers kept on it %v", p, sorted, pr.Pair)
-		}
-	}
-	var next []string
-	if len(pr.Pair) == 0 {
-		if next = s.NextReaders(p, 2); Join(sorted) != Join(addSorted(nil, next...)) {
-			return s, badChoice("%s asked of %v, not the next two readers round the readers, %v (past %q)", p, two, next, s.AskLast)
-		}
+	next := s.NextReaders(p, 2)
+	if Join(sorted) != Join(addSorted(nil, next...)) {
+		return s, badChoice("%s asked of %v, not the next two readers round the readers, %v (past %q)", p, two, next, s.AskLast)
 	}
 	n := s.Clone()
-	if len(next) == 2 {
-		order := addSorted(nil, s.Readers...)
-		n.AskLast = roundPast(order, roundPast(order, s.AskLast, next[0]), next[1])
-	}
+	order := addSorted(nil, s.Readers...)
+	n.AskLast = roundPast(order, roundPast(order, s.AskLast, next[0]), next[1])
 	n.AskStreamLast = roundPast(s.streamOrder(pr.Stream), s.AskStreamLast, pr.Stream) // the ask's stream index moves past it (errata 3 amendment 10)
 	for _, r := range two {
 		id := RC(p, pr.Attempt, r)
@@ -532,9 +522,10 @@ func Read(s State, r, c string, ok bool) (State, error) {
 	n.Reads[c] = rc
 	if !ok {
 		n.open(JBroken, p)
-	} else if before < 2 && len(n.OkReaders(p)) >= 2 && n.InWork(p, Review) && n.Machine != Running {
-		// a RUNNING machine's pump accepts it: "accept is mechanical"
-		n.open(JAccept, p)
+	} else if before < 2 {
+		// a RUNNING machine's pump accepts it unless it holds it: "accept is
+		// mechanical"
+		n.acceptNote(p)
 	}
 	n.exhaust(p)
 	return n, nil
@@ -605,8 +596,7 @@ func Accept(s State, set []string) (State, error) {
 // next member round the fleet (ReworkChoice: errata 3 amendment 5, the member
 // of the attempt's work card avoided unless no other has room; the index moved
 // past it), and the primary goes review -> working; with none up (m is "")
-// review -> ready. The readers are kept (D2);
-// its card judgments close.
+// review -> ready; its card judgments close.
 func Rework(s State, p, m string) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
@@ -768,7 +758,8 @@ func Rank(s State, p string, score float64) (State, error) {
 // card leaves merge queued or stuck, into returned (spec section 7), with its
 // need; the stream's state follows (G4); it answers the card's red CI and a
 // skipped repair (F3), and opens returned to review (spec section 7, not in
-// the model).
+// the model); the primary is marked returned at its attempt, which the
+// machine's accept holds (AcceptHeld).
 func Return(s State, p string) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
@@ -783,7 +774,7 @@ func Return(s State, p string) (State, error) {
 	x.State = n.streamAfter(st, x.State, nil, nil)
 	n.Streams[st] = x
 	n.closeOn(p)
-	n.setPrimary(p, func(x *Primary) { x.State = Review })
+	n.setPrimary(p, func(x *Primary) { x.State, x.ReturnedAt = Review, x.Attempt })
 	n.open(JReturned, p)
 	return n, nil
 }
@@ -972,8 +963,11 @@ func FleetDown(s State, m string, dest map[string]string) (State, error) {
 	others := n.Up()
 	for _, id := range cs {
 		w := n.Work[id]
-		if len(others) == 0 || w.Redeals >= MaxRedeals {
-			w.Place, w.Gen = FWithdrawn, w.Gen+1
+		// a working card's take ended without a finish: its redeal counts; a
+		// ready card was never taken and keeps its count
+		taken := w.Place == FWorking
+		if len(others) == 0 || taken && w.Redeals >= MaxRedeals {
+			w.Place, w.Gen, w.TakeEnded = FWithdrawn, w.Gen+1, taken
 			n.Work[id] = w
 			n.setPrimary(w.Primary, func(x *Primary) { x.State = Ready })
 			continue
@@ -982,7 +976,10 @@ func FleetDown(s State, m string, dest map[string]string) (State, error) {
 		if next := n.PlaceOn(others, ""); t != next {
 			return s, badChoice("%s dealt from %s to %s, not the next member round the fleet, %s (past %q) of %v", id, m, t, next, n.DealLast, others)
 		}
-		w.Member, w.Place, w.Gen, w.Redeals = t, FReady, w.Gen+1, w.Redeals+1
+		if taken {
+			w.Redeals++
+		}
+		w.Member, w.Place, w.Gen = t, FReady, w.Gen+1
 		n.Work[id] = w
 		n.DealLast = roundPast(sorted(n.Order), n.DealLast, t)
 	}
@@ -1018,7 +1015,7 @@ func Level(s State, moves map[string]string) (State, error) {
 	return s.level(moves)
 }
 
-// level levels the queues by levelRound; moves, when given, is the engine's
+// level levels the backlogs by levelRound; moves, when given, is the engine's
 // choice, card to the member it ended on, and must be the round's.
 func (s State) level(moves map[string]string) (State, error) {
 	n := s.Clone()
@@ -1034,33 +1031,48 @@ func (s State) level(moves map[string]string) (State, error) {
 			return s, badChoice("level moves %v, not round the fleet: the round (past %q) moves %v", moves, s.DealLast, want)
 		}
 	}
-	// after levelling no two queues differ by more than one, save where every
-	// member below its Width at or below the mean is gone: the rest are at
-	// their Width and take no more (amendment 9)
-	lo, hi, total := -1, -1, 0
+	// after levelling no two backlogs differ by more than one, of a member
+	// with a ready card and a member below its Room at or below the mean
+	lo, hi, total, any := 0, 0, 0, false
+	loSet := false
 	up := n.Up()
 	for _, x := range up {
-		l := n.RL(x)
-		total += l
-		if n.Held(x) < Width && (lo < 0 || l < lo) {
-			lo = l
+		b := n.Backlog(x)
+		total += b
+		if n.Held(x) < Room && (!loSet || b < lo) {
+			lo, loSet = b, true
 		}
-		if l > hi {
-			hi = l
+		if n.RL(x) > 0 && (!any || b > hi) {
+			hi, any = b, true
 		}
 	}
-	if len(up) > 1 && lo >= 0 && lo <= total/len(up) && hi-lo > 1 {
-		return s, badChoice("the ready queues differ by %d after levelling", hi-lo)
+	if len(up) > 1 && loSet && any && lo <= floorDiv(total, len(up)) && hi-lo > 1 {
+		return s, badChoice("the backlogs differ by %d after levelling", hi-lo)
 	}
 	return n, nil
 }
 
-// levelRound levels (spec section 14, T4, with errata 3 amendment 5: the
-// levelling goes round the fleet and moves the index; amendment 9: a member
-// at its Width takes no more): while the first longest up queue and the
-// shortest of the up members below their Width differ by more than one, the
-// newest ready card of the longest goes to the next member round the fleet
-// past DealLast below its Width whose queue is below the up members' mean
+// Backlog is a member's work cards held, ready and working, less its Width:
+// below zero it has lanes its ready cards do not fill, above zero it holds
+// ready cards it cannot start.
+func (s State) Backlog(m string) int { return s.Held(m) - Width }
+
+// floorDiv is a / b rounded down, below zero too.
+func floorDiv(a, b int) int {
+	q := a / b
+	if a%b != 0 && (a < 0) != (b < 0) {
+		q--
+	}
+	return q
+}
+
+// levelRound levels, once at the start of every tick (the owner, 2026-10-01:
+// "just once before tick, rebalance each table"; spec section 14, T4, with
+// errata 3 amendment 5: the levelling goes round the fleet and moves the
+// index): while the largest backlog of an up member with a ready card and the
+// smallest of the up members below their Room differ by more than one, the
+// newest ready card of the largest goes to the next member round the fleet
+// past DealLast below its Room whose backlog is below the up members' mean
 // rounded down, or, when none such is below, at it, at a new generation, and
 // DealLast moves past it. It returns the member each card it moved ended on.
 func (n *State) levelRound() map[string]string {
@@ -1070,29 +1082,29 @@ func (n *State) levelRound() map[string]string {
 		if len(up) < 2 {
 			return out
 		}
-		lo, hi, total := "", up[0], 0
+		lo, hi, total := "", "", 0
 		for _, x := range up {
-			total += n.RL(x)
-			if n.Held(x) < Width && (lo == "" || n.RL(x) < n.RL(lo)) {
+			total += n.Backlog(x)
+			if n.Held(x) < Room && (lo == "" || n.Backlog(x) < n.Backlog(lo)) {
 				lo = x
 			}
-			if n.RL(x) > n.RL(hi) {
+			if n.RL(x) > 0 && (hi == "" || n.Backlog(x) > n.Backlog(hi)) {
 				hi = x
 			}
 		}
-		if lo == "" || n.RL(hi)-n.RL(lo) <= 1 {
+		if lo == "" || hi == "" || n.Backlog(hi)-n.Backlog(lo) <= 1 {
 			return out
 		}
-		mean := total / len(up)
+		mean := floorDiv(total, len(up))
 		var below, at []string
 		for _, x := range up {
-			if n.Held(x) >= Width {
+			if n.Held(x) >= Room || x == hi {
 				continue
 			}
-			if n.RL(x) < mean {
+			if n.Backlog(x) < mean {
 				below = append(below, x)
 			}
-			if n.RL(x) <= mean {
+			if n.Backlog(x) <= mean {
 				at = append(at, x)
 			}
 		}
@@ -1116,6 +1128,121 @@ func (n *State) levelRound() map[string]string {
 		n.DealLast = roundPast(sorted(n.Order), n.DealLast, to)
 		out[newest] = to
 	}
+}
+
+// ReaderLoad is a reader's reads asked and reading.
+func (s State) ReaderLoad(r string) int {
+	n := 0
+	for _, c := range s.Reads {
+		if c.Reader == r && (c.Place == Asked || c.Place == Reading) {
+			n++
+		}
+	}
+	return n
+}
+
+// levelReads is the readers' rebalance, once at the start of every tick, the
+// fleet's level in the readers' shape (sprint.TickLevelReads; from the
+// owner's ruling of 2026-10-01, not yet in the model): while the largest load
+// of a reader with an asked read and the smallest load of a reader differ by
+// more than one, the newest asked read of the largest (by its primary's score,
+// then its id) that has a reader to go to moves to the next reader round the
+// readers past AskLast, other than the largest and with no card of the
+// primary at that attempt, whose load is below the readers' mean rounded down,
+// or, when none such is below, at it: its card retired, the read asked of that
+// reader at the same attempt, and AskLast moved past it. No reader width is
+// known, so none bounds it.
+func (n *State) levelReads() {
+	for {
+		rs := n.Readers
+		if len(rs) < 2 {
+			return
+		}
+		lo, hi, total := "", "", 0
+		for _, x := range rs {
+			total += n.ReaderLoad(x)
+			if lo == "" || n.ReaderLoad(x) < n.ReaderLoad(lo) {
+				lo = x
+			}
+			if n.readerHasAsked(x) && (hi == "" || n.ReaderLoad(x) > n.ReaderLoad(hi)) {
+				hi = x
+			}
+		}
+		if hi == "" || n.ReaderLoad(hi)-n.ReaderLoad(lo) <= 1 {
+			return
+		}
+		mean := floorDiv(total, len(rs))
+		var asked []string
+		for _, id := range Keys(n.Reads) {
+			if c := n.Reads[id]; c.Reader == hi && c.Place == Asked {
+				asked = append(asked, id)
+			}
+		}
+		sort.SliceStable(asked, func(i, j int) bool {
+			a, b := n.Primaries[n.Reads[asked[i]].Primary].Score, n.Primaries[n.Reads[asked[j]].Primary].Score
+			if a != b {
+				return a < b
+			}
+			return asked[i] < asked[j]
+		})
+		moved := false
+		for i := len(asked) - 1; i >= 0 && !moved; i-- {
+			c := n.Reads[asked[i]]
+			var below, at []string
+			for _, x := range rs {
+				if x == hi {
+					continue
+				}
+				if _, made := n.Reads[RC(c.Primary, c.Attempt, x)]; made {
+					continue
+				}
+				if n.ReaderLoad(x) < mean {
+					below = append(below, x)
+				}
+				if n.ReaderLoad(x) <= mean {
+					at = append(at, x)
+				}
+			}
+			to := n.nextReader(below)
+			if to == "" {
+				to = n.nextReader(at)
+			}
+			if to == "" {
+				continue
+			}
+			c.Place = Retired
+			n.Reads[asked[i]] = c
+			n.Reads[RC(c.Primary, c.Attempt, to)] = ReadCard{Primary: c.Primary, Attempt: c.Attempt, Reader: to, Place: Asked}
+			n.AskLast = roundPast(sorted(n.Readers), n.AskLast, to)
+			moved = true
+		}
+		if !moved {
+			return
+		}
+	}
+}
+
+// readerHasAsked says the reader holds a read asked and not begun.
+func (s State) readerHasAsked(r string) bool {
+	for _, c := range s.Reads {
+		if c.Reader == r && c.Place == Asked {
+			return true
+		}
+	}
+	return false
+}
+
+// nextReader is the first of set round the readers in name order from just
+// past AskLast, wrapping; "" when set is empty.
+func (s State) nextReader(set []string) string {
+	order := sorted(s.Readers)
+	at := roundFrom(order, s.AskLast)
+	for i := range order {
+		if r := order[(at+i)%len(order)]; has(set, r) {
+			return r
+		}
+	}
+	return ""
 }
 
 func sameMap(a, b map[string]string) bool {
@@ -1142,6 +1269,7 @@ func CiRed(s State, p string) (State, error) {
 		return s, refuse("%s is not on the table", p)
 	}
 	n := s.Clone()
+	n.setPrimary(p, func(x *Primary) { x.CI, x.CIHead = "red", x.Head })
 	n.open(JCI, p)
 	return n, nil
 }
@@ -1158,8 +1286,10 @@ func CiGreen(s State, p string) (State, error) {
 		return s, refuse("%s is not on the table", p)
 	}
 	n := s.Clone()
+	n.setPrimary(p, func(x *Primary) { x.CI, x.CIHead = "green", x.Head })
 	if n.Open[Judgment{JCI, p}] {
 		delete(n.Open, Judgment{JCI, p})
+		n.acceptNote(p)
 		n.exhaust(p)
 	}
 	return n, nil
@@ -1218,6 +1348,7 @@ func Ack(s State, typ string, subjects []string, waive []string) (State, error) 
 	if typ != JReads && typ != JStranded {
 		for _, sub := range subjects {
 			if _, ok := n.Primaries[sub]; ok {
+				n.acceptNote(sub)
 				n.exhaust(sub)
 			}
 		}

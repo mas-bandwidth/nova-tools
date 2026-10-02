@@ -1,9 +1,10 @@
 package main
 
 import (
-	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // H1: the read verbs show a work card's dealt and taken and a read card's
@@ -20,12 +21,10 @@ func TestQueueShowsTheStamps(t *testing.T) {
 	taken := ta.a.now().UTC().Format(time.RFC3339)
 	var q struct{ Cards []queueCard }
 	ta.json("queue --as m1", &q)
-	if len(q.Cards) != 1 || q.Cards[0].Dealt != dealt || q.Cards[0].Taken != taken {
-		t.Fatalf("the work card's stamps: %+v", q.Cards)
-	}
-	if out := ta.ok("queue --as m1"); !strings.Contains(out, "dealt="+dealt+" taken="+taken) {
-		t.Fatalf("queue: %s", out)
-	}
+	require.Len(t, q.Cards, 1, "the work card's stamps: %+v", q.Cards)
+	require.Equal(t, dealt, q.Cards[0].Dealt, "the work card's stamps: %+v", q.Cards)
+	require.Equal(t, taken, q.Cards[0].Taken, "the work card's stamps: %+v", q.Cards)
+	require.Contains(t, ta.ok("queue --as m1"), "dealt="+dealt+" taken="+taken, "queue")
 	ta.ok("finish --as m1 s1-1.w1@1")
 	ta.ok("ask")
 	asked := ta.a.now().UTC().Format(time.RFC3339)
@@ -33,14 +32,12 @@ func TestQueueShowsTheStamps(t *testing.T) {
 	ta.ok("read --as reader-a --begin s1-1.r1.reader-a")
 	begun := ta.a.now().UTC().Format(time.RFC3339)
 	ta.json("queue --as reader-a", &q)
-	if len(q.Cards) != 1 || q.Cards[0].Asked != asked || q.Cards[0].Begun != begun {
-		t.Fatalf("the read card's stamps: %+v", q.Cards)
-	}
-	if out := ta.ok("queue --as reader-a"); !strings.Contains(out, "asked="+asked+" begun="+begun) {
-		t.Fatalf("queue: %s", out)
-	}
-	if out := ta.ok("card --fields s1-1"); !strings.Contains(out, "dealt="+dealt) || !strings.Contains(out, "begun="+begun) {
-		t.Fatalf("card: %s", out)
-	}
+	require.Len(t, q.Cards, 1, "the read card's stamps: %+v", q.Cards)
+	require.Equal(t, asked, q.Cards[0].Asked, "the read card's stamps: %+v", q.Cards)
+	require.Equal(t, begun, q.Cards[0].Begun, "the read card's stamps: %+v", q.Cards)
+	require.Contains(t, ta.ok("queue --as reader-a"), "asked="+asked+" begun="+begun, "queue")
+	out := ta.ok("card --fields s1-1")
+	require.Contains(t, out, "dealt="+dealt, "card")
+	require.Contains(t, out, "begun="+begun, "card")
 	ta.clean()
 }

@@ -1,0 +1,45 @@
+# The dead code ledger: per-package count of unreachable functions from cmd/... roots.
+# Held by TestDeadCode in internal/ci/dead_code_class_test.go (docs/SPEC-CI.md, "deadcode").
+# Run across GOOS linux, darwin, windows taking the union of dead functions.
+# Shrink-only: NOVA_CI_UPDATE=1 lowers counts and drops rows at zero; it never raises or adds rows.
+# ceiling: 38
+
+
+cmd/nova-cairn 1
+cmd/nova-sandbox 5
+cmd/nova-swarm 3
+cmd/nova-table 3
+internal/bounded 1
+internal/buildinfo 1
+internal/bus 23
+internal/cardhdr 10
+internal/check 2
+internal/ci/slowtests 2
+internal/converge 1
+internal/dogfood 1
+internal/fleet 1
+internal/fuse 1
+internal/ghevent 4
+internal/hygiene 1
+internal/nogh 1
+internal/nsprint/fn 5
+internal/nsprint/store 3
+internal/ntable 19
+internal/pkgselect 22
+internal/redisconn 1
+internal/redisfn 9
+internal/release 1
+internal/sandbox 1
+internal/seatcred 4
+internal/secrets 24
+internal/selftalk 1
+internal/sprint 6
+internal/sprint/store 4
+internal/subproc 1
+internal/swarm 43
+internal/testguard 5
+internal/tokens 2
+internal/tool 5
+internal/typedrec 11
+internal/workfile 2
+internal/workgh 1

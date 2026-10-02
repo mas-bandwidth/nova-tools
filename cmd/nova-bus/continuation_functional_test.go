@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/stretchr/testify/require"
 )
 
 // busState is every file a read must not touch, plus the commit both sides of the remote
@@ -45,14 +46,10 @@ func readBusState(t *testing.T, checkout string) busState {
 
 func (s busState) mustEqual(t *testing.T, other busState, what string) {
 	t.Helper()
-	if s.head != other.head || s.origin != other.origin || s.status != other.status {
-		t.Fatalf("%s moved the checkout: head %s->%s origin %s->%s status %q->%q",
-			what, s.head, other.head, s.origin, other.origin, s.status, other.status)
-	}
+	require.Falsef(t, s.head != other.head || s.origin != other.origin || s.status != other.status, "%s moved the checkout: head %s->%s origin %s->%s status %q->%q",
+		what, s.head, other.head, s.origin, other.origin, s.status, other.status)
 	for name, was := range s.files {
-		if other.files[name] != was {
-			t.Fatalf("%s changed %s", what, name)
-		}
+		require.Falsef(t, other.files[name] != was, "%s changed %s", what, name)
 	}
 }
 
@@ -63,17 +60,11 @@ var tokenKeys = map[string]bool{"v": true, "b": true, "h": true, "r": true, "s":
 func assertTokenShape(t *testing.T, token string) {
 	t.Helper()
 	raw, err := base64.RawURLEncoding.DecodeString(token)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	var keys map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &keys); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, json.Unmarshal(raw, &keys))
 	for k := range keys {
-		if !tokenKeys[k] {
-			t.Fatalf("token carries %q, which is not in the one schema: %s", k, raw)
-		}
+		require.Truef(t, tokenKeys[k], "token carries %q, which is not in the one schema: %s", k, raw)
 	}
 }
 
@@ -91,24 +82,23 @@ func TestTwoNotesInOneCommitWithMaxNotesOneLosesNeither(t *testing.T) {
 	first := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
 		"--bodies", "--max-notes", "1").mustCode(t, 0)
 	const page1 = "INBOX BODIES printed=1 bytes=140 oversize=0 gaps=0 drained=false complete=false next="
-	if !strings.Contains(first.stdout, page1) {
-		t.Fatalf("page 1 is not %q:\n%s", page1, first.stdout)
-	}
-	if n := strings.Count(first.stdout, "INBOX NOTE id="); n != 1 {
-		t.Fatalf("page 1 printed %d INBOX NOTE lines, want exactly one:\n%s", n, first.stdout)
+	require.Containsf(t, first.stdout, page1, "page 1 is not %q:\n%s", page1, first.stdout)
+	{
+		n := strings.Count(first.stdout, "INBOX NOTE id=")
+		require.Equalf(t, 1, n, "page 1 printed %d INBOX NOTE lines, want exactly one:\n%s", n, first.stdout)
 	}
 	token := bodyNext(t, first.stdout)
-	if decoded := decodeToken(t, token); decoded.Last == nil || decoded.Last.Path != "from-bo/a-note.md" {
-		t.Fatalf("page 1's token does not decode to A: %+v", decoded)
+	{
+		decoded := decodeToken(t, token)
+		require.Falsef(t, decoded.Last == nil || decoded.Last.Path != "from-bo/a-note.md", "page 1's token does not decode to A: %+v", decoded)
 	}
 	second := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
 		"--bodies", "--max-notes", "1", "--after", token).mustCode(t, 0)
 	const page2 = "INBOX BODIES printed=1 bytes=155 oversize=0 gaps=0 drained=true complete=true next=-"
-	if !strings.Contains(second.stdout, page2) {
-		t.Fatalf("page 2 is not %q:\n%s", page2, second.stdout)
-	}
-	if frames := readFrames(t, second.stdout); len(frames) != 1 || frames[0].id != "nB" {
-		t.Fatalf("page 2 did not print B whole:\n%s", second.stdout)
+	require.Containsf(t, second.stdout, page2, "page 2 is not %q:\n%s", page2, second.stdout)
+	{
+		frames := readFrames(t, second.stdout)
+		require.Falsef(t, len(frames) != 1 || frames[0].id != "nB", "page 2 did not print B whole:\n%s", second.stdout)
 	}
 
 	t.Run("FinalPartialCommit", func(t *testing.T) {
@@ -124,12 +114,8 @@ func TestTwoNotesInOneCommitWithMaxNotesOneLosesNeither(t *testing.T) {
 		r := invoke(t, "", "inbox", "--bus", cut, "--as", "Ada", "--receipt-max-words", "40",
 			"--bodies", "--max-notes", "2", "--advance", "--remote", "origin", "--branch", "main").mustCode(t, 0)
 		want := "INBOX CURSOR commit=" + parent
-		if !strings.Contains(r.stdout, want) {
-			t.Fatalf("safe frontier is not c1's parent; want %q:\n%s", want, r.stdout)
-		}
-		if strings.Contains(r.stdout, "INBOX CURSOR commit="+c1) {
-			t.Fatalf("the cursor crossed the commit the page cut inside:\n%s", r.stdout)
-		}
+		require.Containsf(t, r.stdout, want, "safe frontier is not c1's parent; want %q:\n%s", want, r.stdout)
+		require.NotContainsf(t, r.stdout, "INBOX CURSOR commit="+c1, "the cursor crossed the commit the page cut inside:\n%s", r.stdout)
 	})
 
 	t.Run("CE3LegacyIdsAndDisplayOrder", func(t *testing.T) {
@@ -157,29 +143,19 @@ func TestTwoNotesInOneCommitWithMaxNotesOneLosesNeither(t *testing.T) {
 					next = tok
 				}
 			}
-			if next == "" {
-				t.Fatalf("page %d carried no next= field:\n%s", page, r.stdout)
-			}
+			require.NotEmptyf(t, next, "page %d carried no next= field:\n%s", page, r.stdout)
 			if next == "-" {
 				break
 			}
 			assertTokenShape(t, next)
 			decoded := decodeToken(t, next)
-			if decoded.Last == nil || decoded.Last.Path == "" {
-				t.Fatalf("a token's item identity is not a path: %+v", decoded)
-			}
-			if strings.Contains(string(mustDecode(t, next)), `"-"`) {
-				t.Fatalf("a token carries an id=- identity: %s", mustDecode(t, next))
-			}
+			require.Falsef(t, decoded.Last == nil || decoded.Last.Path == "", "a token's item identity is not a path: %+v", decoded)
+			require.NotContainsf(t, string(mustDecode(t, next)), `"-"`, "a token carries an id=- identity: %s", mustDecode(t, next))
 			run = append(append([]string{}, args...), "--after", next)
-			if page == 4 {
-				t.Fatalf("the chain did not drain in four pages")
-			}
+			require.Falsef(t, page == 4, "the chain did not drain in four pages")
 		}
 		for _, p := range []string{"from-bo/a-legacy.md", "from-bo/b-legacy.md"} {
-			if seen[p] != 1 {
-				t.Fatalf("%s appeared %d times across the chain, want exactly once", p, seen[p])
-			}
+			require.Falsef(t, seen[p] != 1, "%s appeared %d times across the chain, want exactly once", p, seen[p])
 		}
 	})
 }
@@ -190,18 +166,14 @@ func TestTwoNotesInOneCommitWithMaxNotesOneLosesNeither(t *testing.T) {
 func mustPrintNoBodies(t *testing.T, r result) {
 	t.Helper()
 	for _, token := range []string{"INBOX NOTE id=", "INBOX BODY", "INBOX BODIES"} {
-		if strings.Contains(r.stdout, token) {
-			t.Fatalf("a refused continuation printed %s:\n%s", token, r.stdout)
-		}
+		require.NotContainsf(t, r.stdout, token, "a refused continuation printed %s:\n%s", token, r.stdout)
 	}
 }
 
 func mustDecode(t *testing.T, token string) []byte {
 	t.Helper()
 	raw, err := base64.RawURLEncoding.DecodeString(token)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return raw
 }
 
@@ -216,16 +188,12 @@ func TestContinuationSurvivesOrdinaryCursorAdvance(t *testing.T) {
 
 	first := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
 		"--bodies", "--max-notes", "1", "--advance", "--remote", "origin", "--branch", "main").mustCode(t, 0)
-	if !strings.Contains(first.stdout, "INBOX CURSOR commit="+c1) {
-		t.Fatalf("page 1 did not move CURSOR to c1:\n%s", first.stdout)
-	}
+	require.Containsf(t, first.stdout, "INBOX CURSOR commit="+c1, "page 1 did not move CURSOR to c1:\n%s", first.stdout)
 	token := bodyNext(t, first.stdout)
 	second := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
 		"--bodies", "--max-notes", "1", "--after", token).mustCode(t, 0)
 	const page2 = "INBOX BODIES printed=1 bytes=155 oversize=0 gaps=0 drained=true complete=true next=-"
-	if !strings.Contains(second.stdout, page2) {
-		t.Fatalf("page 2 is not %q after an ordinary cursor advance:\n%s", page2, second.stdout)
-	}
+	require.Containsf(t, second.stdout, page2, "page 2 is not %q after an ordinary cursor advance:\n%s", page2, second.stdout)
 
 	// A distinct external cursor change instead refuses, and never rewinds state.
 	other := settledBus(t)
@@ -238,15 +206,14 @@ func TestContinuationSurvivesOrdinaryCursorAdvance(t *testing.T) {
 	invoke(t, "", "inbox", "--bus", other, "--as", "Ada", "--receipt-max-words", "40",
 		"--advance", "--remote", "origin", "--branch", "main").mustCode(t, 0)
 	moved, err := bus.ReadCursor(other, "from-ada")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	before := readBusState(t, other)
 	refused := invoke(t, "", "inbox", "--bus", other, "--as", "Ada", "--receipt-max-words", "40",
 		"--bodies", "--max-notes", "1", "--after", stale).mustCode(t, 2)
 	want := fmt.Sprintf("INBOX REFUSED: --after names cursor %s and this reader's cursor is %s; rerun without --after", otherC1, moved.Commit)
-	if got := strings.TrimRight(refused.stderr, "\n"); got != want {
-		t.Fatalf("external cursor change refusal is\n  %q\nwant\n  %q", got, want)
+	{
+		got := strings.TrimRight(refused.stderr, "\n")
+		require.Equalf(t, want, got, "external cursor change refusal is\n  %q\nwant\n  %q", got, want)
 	}
 	readBusState(t, other).mustEqual(t, before, "a refused continuation")
 }
@@ -280,9 +247,7 @@ func TestRetryAfterAPartialResumesAtNext(t *testing.T) {
 			var last result
 			run := append([]string{}, args...)
 			for page := 1; ; page++ {
-				if page > 5 {
-					t.Fatalf("the chain did not drain")
-				}
+				require.Falsef(t, page > 5, "the chain did not drain")
 				last = invoke(t, "", run...).mustCode(t, 0)
 				for _, f := range readFrames(t, last.stdout) {
 					seen[f.id]++
@@ -298,34 +263,22 @@ func TestRetryAfterAPartialResumesAtNext(t *testing.T) {
 				}
 				run = append(append([]string{}, args...), "--after", next)
 			}
-			if !strings.Contains(last.stdout, "drained=true complete=true next=-") {
-				t.Fatalf("the chain's last page is not drained and complete:\n%s", last.stdout)
-			}
-			if strings.Contains(last.stdout, "nR4") {
-				t.Fatalf("a commit pushed after H appeared in this chain:\n%s", last.stdout)
-			}
+			require.Containsf(t, last.stdout, "drained=true complete=true next=-", "the chain's last page is not drained and complete:\n%s", last.stdout)
+			require.NotContainsf(t, last.stdout, "nR4", "a commit pushed after H appeared in this chain:\n%s", last.stdout)
 			for _, id := range []string{"nR1", "nR2", "nR3"} {
-				if seen[id] != 1 {
-					t.Fatalf("%s appeared %d times in the chain, want once", id, seen[id])
-				}
+				require.Falsef(t, seen[id] != 1, "%s appeared %d times in the chain, want once", id, seen[id])
 			}
-			if seen["nR4"] != 0 {
-				t.Fatalf("the post-H note was delivered by the old chain")
-			}
+			require.Falsef(t, seen["nR4"] != 0, "the post-H note was delivered by the old chain")
 			// It is on the fresh chain that follows -- and where the chain advanced the
 			// cursor it is the FIRST thing on it, while a read-only chain moved nothing
 			// and so starts again from the persisted cursor, which may re-show a body.
 			fresh := invoke(t, "", args...).mustCode(t, 0)
 			frames := readFrames(t, fresh.stdout)
-			if len(frames) == 0 {
-				t.Fatalf("the post-H note is on no chain at all:\n%s", fresh.stdout)
-			}
+			require.NotEmptyf(t, len(frames), "the post-H note is on no chain at all:\n%s", fresh.stdout)
 			if advance {
-				if len(frames) != 1 || frames[0].id != "nR4" {
-					t.Fatalf("the post-H note was not first on the fresh chain:\n%s", fresh.stdout)
-				}
-			} else if frames[0].id != "nR1" {
-				t.Fatalf("a read-only chain moved the cursor: the fresh chain starts at %s\n%s", frames[0].id, fresh.stdout)
+				require.Falsef(t, len(frames) != 1 || frames[0].id != "nR4", "the post-H note was not first on the fresh chain:\n%s", fresh.stdout)
+			} else {
+				require.Equalf(t, "nR1", frames[0].id, "a read-only chain moved the cursor: the fresh chain starts at %s\n%s", frames[0].id, fresh.stdout)
 			}
 		})
 	}
@@ -341,8 +294,9 @@ func TestRetryAfterAPartialResumesAtNext(t *testing.T) {
 		r := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
 			"--bodies", "--max-notes", "1", "--after", stray).mustCode(t, 2)
 		const want = "INBOX REFUSED: --after <token> names no item in this range; rerun without --after"
-		if got := strings.TrimRight(r.stderr, "\n"); got != want {
-			t.Fatalf("refusal is\n  %q\nwant\n  %q", got, want)
+		{
+			got := strings.TrimRight(r.stderr, "\n")
+			require.Equalf(t, want, got, "refusal is\n  %q\nwant\n  %q", got, want)
 		}
 		mustPrintNoBodies(t, r)
 		readBusState(t, checkout).mustEqual(t, before, "a refused continuation")
@@ -357,7 +311,7 @@ func bodyNext2(t *testing.T, stdout string) string {
 			return token
 		}
 	}
-	t.Fatalf("no next= field:\n%s", stdout)
+	require.FailNowf(t, "assertion failed", "no next= field:\n%s", stdout)
 	return ""
 }
 
@@ -374,38 +328,26 @@ func TestBodiesWithoutAdvanceMovesNoCursor(t *testing.T) {
 	before := readBusState(t, checkout)
 
 	complete := invoke(t, "", append(append([]string{}, base...), "--max-notes", "10")...).mustCode(t, 0)
-	if !strings.Contains(complete.stdout, "drained=true complete=true next=-") {
-		t.Fatalf("the complete return is not complete:\n%s", complete.stdout)
-	}
+	require.Containsf(t, complete.stdout, "drained=true complete=true next=-", "the complete return is not complete:\n%s", complete.stdout)
 	readBusState(t, checkout).mustEqual(t, before, "a complete read-only return")
 
 	partial := invoke(t, "", append(append([]string{}, base...), "--max-notes", "1")...).mustCode(t, 0)
 	token := bodyNext(t, partial.stdout)
-	if !strings.Contains(partial.stdout, "next="+token) {
-		t.Fatalf("the partial return does not carry its token:\n%s", partial.stdout)
-	}
+	require.Containsf(t, partial.stdout, "next="+token, "the partial return does not carry its token:\n%s", partial.stdout)
 	frames := readFrames(t, partial.stdout)
-	if len(frames) != 1 {
-		t.Fatalf("the partial return printed %d frames, want 1", len(frames))
-	}
+	require.Equalf(t, 1, len(frames), "the partial return printed %d frames, want 1", len(frames))
 	decoded := decodeToken(t, token)
-	if decoded.Last == nil || decoded.Last.Path != "from-bo/n1.md" {
-		t.Fatalf("the token does not decode to the last accounted item: %+v", decoded)
-	}
+	require.Falsef(t, decoded.Last == nil || decoded.Last.Path != "from-bo/n1.md", "the token does not decode to the last accounted item: %+v", decoded)
 	readBusState(t, checkout).mustEqual(t, before, "a partial read-only return")
 
 	gapped := invoke(t, "", append(append([]string{}, base...), "--max-bytes", "1024")...).mustCode(t, 0)
-	if !strings.Contains(gapped.stdout, "INBOX BODY OVERSIZE id=nBigger") {
-		t.Fatalf("the gapped return named no gap:\n%s", gapped.stdout)
-	}
+	require.Containsf(t, gapped.stdout, "INBOX BODY OVERSIZE id=nBigger", "the gapped return named no gap:\n%s", gapped.stdout)
 	readBusState(t, checkout).mustEqual(t, before, "a gapped read-only return")
 
 	empty := settledBus(t)
 	emptyBefore := readBusState(t, empty)
 	quiet := invoke(t, "", "inbox", "--bus", empty, "--as", "Ada", "--receipt-max-words", "40", "--bodies").mustCode(t, 0)
-	if !strings.Contains(quiet.stdout, "INBOX BODIES printed=0 bytes=0 oversize=0 gaps=0 drained=true complete=true next=-") {
-		t.Fatalf("an empty snapshot is drained and complete:\n%s", quiet.stdout)
-	}
+	require.Containsf(t, quiet.stdout, "INBOX BODIES printed=0 bytes=0 oversize=0 gaps=0 drained=true complete=true next=-", "an empty snapshot is drained and complete:\n%s", quiet.stdout)
 	readBusState(t, empty).mustEqual(t, emptyBefore, "an empty read-only return")
 
 	t.Run("ReadOnlyResume", func(t *testing.T) {
@@ -413,9 +355,7 @@ func TestBodiesWithoutAdvanceMovesNoCursor(t *testing.T) {
 		run := append(append([]string{}, base...), "--max-notes", "1", "--after", token)
 		var last result
 		for page := 2; ; page++ {
-			if page > 6 {
-				t.Fatalf("the read-only chain did not drain")
-			}
+			require.Falsef(t, page > 6, "the read-only chain did not drain")
 			last = invoke(t, "", run...).mustCode(t, 0)
 			next := bodyNext2(t, last.stdout)
 			if next == "-" {
@@ -423,13 +363,9 @@ func TestBodiesWithoutAdvanceMovesNoCursor(t *testing.T) {
 			}
 			run = append(append(append([]string{}, base...), "--max-notes", "1"), "--after", next)
 		}
-		if !strings.Contains(last.stdout, "drained=true") || !strings.Contains(last.stdout, "complete=true") || !strings.Contains(last.stdout, "next=-") {
-			t.Fatalf("the read-only chain did not reach a terminal page:\n%s", last.stdout)
-		}
+		require.Falsef(t, !strings.Contains(last.stdout, "drained=true") || !strings.Contains(last.stdout, "complete=true") || !strings.Contains(last.stdout, "next=-"), "the read-only chain did not reach a terminal page:\n%s", last.stdout)
 		after := readBusState(t, checkout)
-		if after.files["from-ada/CURSOR"] != cursorBefore {
-			t.Fatalf("a read-only chain changed CURSOR")
-		}
+		require.Falsef(t, after.files["from-ada/CURSOR"] != cursorBefore, "a read-only chain changed CURSOR")
 		after.mustEqual(t, before, "a read-only chain")
 	})
 }
@@ -451,32 +387,23 @@ func TestASingleOversizeBodyIsANamedGapAndNeverALoop(t *testing.T) {
 		"INBOX BODIES GAP id=nBig kind=over-ceiling retry-max-bytes=- path=from-x/2026-09-13-big.md",
 		"INBOX BODIES printed=0 bytes=0 oversize=1 gaps=1 drained=true complete=false next=-",
 	} {
-		if !strings.Contains(r.stdout, want+"\n") {
-			t.Fatalf("stdout does not carry\n  %q\n%s", want, r.stdout)
-		}
+		require.Containsf(t, r.stdout, want+"\n", "stdout does not carry\n  %q\n%s", want, r.stdout)
 	}
 	gap := strings.Index(r.stdout, "INBOX BODIES GAP ")
 	receipt := strings.Index(r.stdout, "INBOX BODIES printed=")
-	if gap < 0 || receipt < 0 || gap > receipt {
-		t.Fatalf("the remedy is not immediately before the receipt:\n%s", r.stdout)
+	require.Falsef(t, gap < 0 || receipt < 0 || gap > receipt, "the remedy is not immediately before the receipt:\n%s", r.stdout)
+	{
+		between := r.stdout[gap:receipt]
+		require.Falsef(t, strings.Count(between, "\n") != 1, "a line stands between the remedy and the receipt:\n%s", r.stdout)
 	}
-	if between := r.stdout[gap:receipt]; strings.Count(between, "\n") != 1 {
-		t.Fatalf("a line stands between the remedy and the receipt:\n%s", r.stdout)
-	}
-	if len(readFrames(t, r.stdout)) != 0 {
-		t.Fatalf("a frame was opened for an item over the ceiling:\n%s", r.stdout)
-	}
-	if strings.Count(r.stdout, "INBOX BODIES GAP") != 1 {
-		t.Fatalf("the gap was named more than once:\n%s", r.stdout)
-	}
+	require.Emptyf(t, len(readFrames(t, r.stdout)), "a frame was opened for an item over the ceiling:\n%s", r.stdout)
+	require.Falsef(t, strings.Count(r.stdout, "INBOX BODIES GAP") != 1, "the gap was named more than once:\n%s", r.stdout)
 	readBusState(t, checkout).mustEqual(t, before, "a gapped return")
 
 	// No cursor advance, and no drain call to repeat: next=- is the end of the chain.
 	adv := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
 		"--bodies", "--advance", "--remote", "origin", "--branch", "main").mustCode(t, 0)
-	if strings.Contains(adv.stdout, "INBOX CURSOR") {
-		t.Fatalf("a return holding only a gap advanced the cursor:\n%s", adv.stdout)
-	}
+	require.NotContainsf(t, adv.stdout, "INBOX CURSOR", "a return holding only a gap advanced the cursor:\n%s", adv.stdout)
 }
 
 // TestEarlierGapSurvivesLaterPages (CE2): a gap on page 1 is still named on the terminal
@@ -492,48 +419,28 @@ func TestEarlierGapSurvivesLaterPages(t *testing.T) {
 	base := []string{"inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
 		"--bodies", "--max-notes", "1", "--max-bytes", "1024", "--advance", "--remote", "origin", "--branch", "main"}
 	page1 := invoke(t, "", base...).mustCode(t, 0)
-	if !strings.Contains(page1.stdout, "INBOX BODY OVERSIZE id=nA bytes=2048 max-bytes=1024 path=from-bo/g-a.md\n") {
-		t.Fatalf("page 1 did not name the gap:\n%s", page1.stdout)
-	}
-	if !strings.Contains(page1.stdout, "INBOX BODIES printed=0 bytes=0 oversize=1 gaps=1 drained=false complete=false next=") {
-		t.Fatalf("page 1's receipt is wrong:\n%s", page1.stdout)
-	}
+	require.Containsf(t, page1.stdout, "INBOX BODY OVERSIZE id=nA bytes=2048 max-bytes=1024 path=from-bo/g-a.md\n", "page 1 did not name the gap:\n%s", page1.stdout)
+	require.Containsf(t, page1.stdout, "INBOX BODIES printed=0 bytes=0 oversize=1 gaps=1 drained=false complete=false next=", "page 1's receipt is wrong:\n%s", page1.stdout)
 	page2 := invoke(t, "", append(append([]string{}, base...), "--after", bodyNext(t, page1.stdout))...).mustCode(t, 0)
 	const want2 = "INBOX BODIES printed=1 bytes=150 oversize=0 gaps=1 drained=false complete=false next="
-	if !strings.Contains(page2.stdout, want2) {
-		t.Fatalf("page 2 is not %q:\n%s", want2, page2.stdout)
-	}
+	require.Containsf(t, page2.stdout, want2, "page 2 is not %q:\n%s", want2, page2.stdout)
 	page3 := invoke(t, "", append(append([]string{}, base...), "--after", bodyNext(t, page2.stdout))...).mustCode(t, 0)
 	const want3 = "INBOX BODIES printed=1 bytes=150 oversize=0 gaps=1 drained=true complete=false next=-"
-	if !strings.Contains(page3.stdout, want3) {
-		t.Fatalf("the terminal page is not %q:\n%s", want3, page3.stdout)
-	}
-	if !strings.Contains(page3.stdout, "INBOX BODIES GAP id=nA kind=over-budget retry-max-bytes=2048 path=from-bo/g-a.md\n") {
-		t.Fatalf("the terminal page did not keep the earliest gap:\n%s", page3.stdout)
-	}
-	if strings.Count(page3.stdout, "INBOX BODIES GAP") != 1 {
-		t.Fatalf("a chain holding a gap printed a list of them:\n%s", page3.stdout)
-	}
+	require.Containsf(t, page3.stdout, want3, "the terminal page is not %q:\n%s", want3, page3.stdout)
+	require.Containsf(t, page3.stdout, "INBOX BODIES GAP id=nA kind=over-budget retry-max-bytes=2048 path=from-bo/g-a.md\n", "the terminal page did not keep the earliest gap:\n%s", page3.stdout)
+	require.Falsef(t, strings.Count(page3.stdout, "INBOX BODIES GAP") != 1, "a chain holding a gap printed a list of them:\n%s", page3.stdout)
 	for _, r := range []result{page1, page2, page3} {
-		if strings.Contains(r.stdout, "INBOX CURSOR commit="+c1) {
-			t.Fatalf("CURSOR crossed the gap's own commit:\n%s", r.stdout)
-		}
+		require.NotContainsf(t, r.stdout, "INBOX CURSOR commit="+c1, "CURSOR crossed the gap's own commit:\n%s", r.stdout)
 	}
 	cursor, err := bus.ReadCursor(checkout, "from-ada")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cursor.Commit == c1 {
-		t.Fatalf("CURSOR stands at the gap's commit")
-	}
+	require.NoError(t, err)
+	require.Falsef(t, cursor.Commit == c1, "CURSOR stands at the gap's commit")
 
 	// A fresh raised-budget run re-shows A; it was never silently consumed.
 	fresh := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
 		"--bodies", "--max-bytes", "65536").mustCode(t, 0)
 	got := readFrames(t, fresh.stdout)
-	if len(got) == 0 || got[0].id != "nA" {
-		t.Fatalf("a fresh raised-budget run did not re-show A:\n%s", fresh.stdout)
-	}
+	require.Falsef(t, len(got) == 0 || got[0].id != "nA", "a fresh raised-budget run did not re-show A:\n%s", fresh.stdout)
 
 	t.Run("SeveralGapsKeepConstantSizedState", func(t *testing.T) {
 		many := settledBus(t)
@@ -548,9 +455,7 @@ func TestEarlierGapSurvivesLaterPages(t *testing.T) {
 		run := append([]string{}, args...)
 		var last result
 		for page := 1; ; page++ {
-			if page > 6 {
-				t.Fatalf("the chain did not drain")
-			}
+			require.Falsef(t, page > 6, "the chain did not drain")
 			last = invoke(t, "", run...).mustCode(t, 0)
 			next := bodyNext2(t, last.stdout)
 			if next == "-" {
@@ -558,24 +463,14 @@ func TestEarlierGapSurvivesLaterPages(t *testing.T) {
 			}
 			assertTokenShape(t, next)
 			decoded := decodeToken(t, next)
-			if decoded.Gap == nil || decoded.Gap.Path != "from-bo/gap-1.md" {
-				t.Fatalf("a later token forgot the earliest gap: %+v", decoded)
-			}
+			require.Falsef(t, decoded.Gap == nil || decoded.Gap.Path != "from-bo/gap-1.md", "a later token forgot the earliest gap: %+v", decoded)
 			sizes[len(mustDecode(t, next))] = true
 			run = append(append([]string{}, args...), "--after", next)
 		}
-		if !strings.Contains(last.stdout, "gaps=3 drained=true complete=false next=-") {
-			t.Fatalf("the terminal page did not carry all three gaps:\n%s", last.stdout)
-		}
-		if strings.Count(last.stdout, "INBOX BODIES GAP") != 1 {
-			t.Fatalf("three gaps printed more than one remedy:\n%s", last.stdout)
-		}
-		if !strings.Contains(last.stdout, "INBOX BODIES GAP id=nG1 ") {
-			t.Fatalf("the remedy does not name the earliest gap:\n%s", last.stdout)
-		}
-		if len(sizes) > 2 {
-			t.Fatalf("token size grew with the gap count: %v", sizes)
-		}
+		require.Containsf(t, last.stdout, "gaps=3 drained=true complete=false next=-", "the terminal page did not carry all three gaps:\n%s", last.stdout)
+		require.Falsef(t, strings.Count(last.stdout, "INBOX BODIES GAP") != 1, "three gaps printed more than one remedy:\n%s", last.stdout)
+		require.Containsf(t, last.stdout, "INBOX BODIES GAP id=nG1 ", "the remedy does not name the earliest gap:\n%s", last.stdout)
+		require.Falsef(t, len(sizes) > 2, "token size grew with the gap count: %v", sizes)
 	})
 }
 
@@ -625,10 +520,8 @@ func TestSnapshotTokenValidationAndBound(t *testing.T) {
 			r := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
 				"--bodies", "--max-notes", "1", "--after", tc.token).mustCode(t, 2)
 			got := strings.TrimRight(r.stderr, "\n")
-			if !strings.HasPrefix(got, "INBOX REFUSED: --after <token> is not a continuation for this read: ") ||
-				!strings.HasSuffix(got, "; rerun without --after") {
-				t.Fatalf("refusal is not the one shape:\n  %q", got)
-			}
+			require.Truef(t, strings.HasPrefix(got, "INBOX REFUSED: --after <token> is not a continuation for this read: ") ||
+				!strings.HasSuffix(got, "; rerun without --after"), "refusal is not the one shape:\n  %q", got)
 			mustPrintNoBodies(t, r)
 			readBusState(t, checkout).mustEqual(t, before, "a refused token")
 		})
@@ -643,18 +536,14 @@ func TestSnapshotTokenValidationAndBound(t *testing.T) {
 		page1 := invoke(t, "", "inbox", "--bus", gapped, "--as", "Ada", "--receipt-max-words", "40",
 			"--bodies", "--max-notes", "1", "--max-bytes", "1024").mustCode(t, 0)
 		token := bodyNext(t, page1.stdout)
-		if decodeToken(t, token).Gap == nil {
-			t.Fatalf("the fixture produced no gap:\n%s", page1.stdout)
-		}
+		require.NotNilf(t, decodeToken(t, token).Gap, "the fixture produced no gap:\n%s", page1.stdout)
 		bad := retoken(t, token, `"f":""`, `"f":"`+decodeToken(t, token).Head+`"`)
 		before := readBusState(t, gapped)
 		r := invoke(t, "", "inbox", "--bus", gapped, "--as", "Ada", "--receipt-max-words", "40",
 			"--bodies", "--max-notes", "1", "--max-bytes", "1024", "--after", bad).mustCode(t, 2)
 		got := strings.TrimRight(r.stderr, "\n")
-		if !strings.HasPrefix(got, "INBOX REFUSED: --after <token> is not a continuation for this read: ") ||
-			!strings.HasSuffix(got, "; rerun without --after") {
-			t.Fatalf("refusal is not the one shape:\n  %q", got)
-		}
+		require.Truef(t, strings.HasPrefix(got, "INBOX REFUSED: --after <token> is not a continuation for this read: ") ||
+			!strings.HasSuffix(got, "; rerun without --after"), "refusal is not the one shape:\n  %q", got)
 		mustPrintNoBodies(t, r)
 		readBusState(t, gapped).mustEqual(t, before, "a refused token")
 	})
@@ -663,12 +552,8 @@ func TestSnapshotTokenValidationAndBound(t *testing.T) {
 	t.Run("no new authority", func(t *testing.T) {
 		r := invoke(t, "", "inbox", "--bus", checkout, "--as", "Bo", "--receipt-max-words", "40",
 			"--bodies", "--max-notes", "1", "--after", good).mustCode(t, 2)
-		if !strings.Contains(r.stderr, "another reader or selector") {
-			t.Fatalf("Ada's token was not refused for Bo: %s", r.stderr)
-		}
-		if strings.Contains(r.stdout, "from-bo/v1.md") {
-			t.Fatalf("a token handed another reader a body:\n%s", r.stdout)
-		}
+		require.Containsf(t, r.stderr, "another reader or selector", "Ada's token was not refused for Bo: %s", r.stderr)
+		require.NotContainsf(t, r.stdout, "from-bo/v1.md", "a token handed another reader a body:\n%s", r.stdout)
 	})
 }
 
@@ -682,23 +567,15 @@ func TestBrokenOutputCannotAcknowledgeUnprintedBodies(t *testing.T) {
 			commitFiles(t, checkout, "b1", busFile{"from-bo/b1.md", noteFrom("nB1", "b1", fill(204))})
 			commitFiles(t, checkout, "b2", busFile{"from-bo/b2.md", noteFrom("nB2", "b2", fill(204))})
 			was, err := bus.ReadCursor(checkout, "from-ada")
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
 			var stderr strings.Builder
 			code := run([]string{"inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
 				"--bodies", "--advance", "--remote", "origin", "--branch", "main"},
 				strings.NewReader(""), &breakingWriter{limit: after}, &stderr, now())
-			if code != 1 || !strings.Contains(stderr.String(), "INBOX FAIL output") {
-				t.Fatalf("broken stdout did not refuse safely: code=%d stderr=%s", code, stderr.String())
-			}
+			require.Falsef(t, code != 1 || !strings.Contains(stderr.String(), "INBOX FAIL output"), "broken stdout did not refuse safely: code=%d stderr=%s", code, stderr.String())
 			now, err := bus.ReadCursor(checkout, "from-ada")
-			if err != nil {
-				t.Fatal(err)
-			}
-			if now.Commit != was.Commit {
-				t.Fatalf("cursor advanced across unprinted output: %s -> %s", was.Commit, now.Commit)
-			}
+			require.NoError(t, err)
+			require.Falsef(t, now.Commit != was.Commit, "cursor advanced across unprinted output: %s -> %s", was.Commit, now.Commit)
 		})
 	}
 
@@ -710,9 +587,7 @@ func TestBrokenOutputCannotAcknowledgeUnprintedBodies(t *testing.T) {
 	commitFiles(t, checkout, "c2", busFile{"from-bo/p2.md", noteFrom("nP2", "p2", fill(204))})
 	r := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
 		"--bodies", "--max-notes", "1", "--advance", "--remote", "origin", "--branch", "main").mustCode(t, 0)
-	if !strings.Contains(r.stdout, "INBOX CURSOR commit="+c1) {
-		t.Fatalf("the cursor did not name the last fully emitted safe prefix:\n%s", r.stdout)
-	}
+	require.Containsf(t, r.stdout, "INBOX CURSOR commit="+c1, "the cursor did not name the last fully emitted safe prefix:\n%s", r.stdout)
 }
 
 // breakingWriter accepts limit bytes and then fails, so that a failure can be placed before

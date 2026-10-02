@@ -7,6 +7,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/stretchr/testify/require"
 )
 
 // The property test's finding of seed 7, its shortest sequence as a test; and
@@ -27,22 +28,18 @@ func TestAckOfTwoBlockedJudgmentsOnOnePrimaryWaivesBoth(t *testing.T) {
 	for _, o := range h.openOf(sprint.NBlocked) {
 		notes = append(notes, o.Note.ID)
 	}
-	if len(notes) != 2 {
-		t.Fatalf("two blocked judgments: %v", notes)
-	}
+	require.Len(t, notes, 2, "two blocked judgments: %v", notes)
 	var ack string
 	for _, c := range h.commandsOf(sprint.NBlocked) {
 		if c.Decision == "ack" {
 			ack = c.Lines[0]
 		}
 	}
-	if !strings.Contains(ack, notes[0]) || !strings.Contains(ack, notes[1]) {
-		t.Fatalf("the printed ack does not name both: %q", ack)
-	}
+	require.Contains(t, ack, notes[0], "the printed ack does not name both: %q", ack)
+	require.Contains(t, ack, notes[1], "the printed ack does not name both: %q", ack)
 	h.must(AckStep(sprint.AckReq{Notes: notes, Reason: "none"}))
-	if got := h.state("p5"); got != sprint.Ready {
-		t.Fatalf("p5 is %s", got)
-	}
+	got := h.state("p5")
+	require.Equal(t, sprint.Ready, got, "p5 is %s", got)
 	if w := h.snap().Work.Card("p5").F("waived"); w != "p3,p4" && w != "p4,p3" {
 		t.Fatalf("waived %q", w)
 	}

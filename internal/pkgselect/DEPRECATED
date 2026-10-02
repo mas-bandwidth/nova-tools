@@ -1,0 +1,22 @@
+# Packages that are deprecated and still in the tree, because living tools
+# import them. CI never selects a package named here or under a prefix named
+# here (internal/pkgselect). One path per line, from the
+# repository root. A line "keep <path>" names one package under a prefix that
+# living tools stand on today: it stays tested until it is lifted out into a
+# shared module, and then its line goes. This list only shrinks: a package
+# leaves it by being deleted. (It was deprecated/PACKAGES until the
+# deprecated/ folder was removed on 2026-10-01; the old nova-work and its
+# modules live in the nova-work-old repository, for reference only.)
+
+# nova-sprint's old runtime. cmd/nova-sprint (living, rebuilt on nova-table)
+# does not use it; the deprecated copy of the old tool was deleted on
+# 2026-09-30. These packages stay here until nothing living imports them.
+internal/nsprint
+
+# what nova-table, nova-config and others stand on until it is lifted out
+keep internal/nsprint/store
+keep internal/nsprint/redisauth
+keep internal/nsprint/fn
+keep internal/nsprint/testutil
+keep internal/nsprint/testutil/pg
+keep internal/nsprint/verbflag

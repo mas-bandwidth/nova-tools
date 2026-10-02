@@ -290,7 +290,8 @@ func copyDir(t *testing.T, from, to string) {
 }
 
 // TestHelpExampleLinesRunAsPrinted: every line of this tool's `example:` block runs, as printed,
-// from the root of a checkout, after the setup line the banner carries above it. nova-tools #1455
+// in an empty directory with only the binary, after the setup line the banner carries above it
+// (`nova-self-talk example ./pages`, which writes the pages built into the binary). nova-tools #1455
 // measured 28 of 61 pasted example lines exiting 2 because the line names an input the reader has
 // not made; an example exiting 2 is a broken example (ONBOARDING point 1). This is the #1920 shape
 // (cmd/nova-tokens), and unlike TestUsageBannerExamplesRun it does NOT localize(): the lines run
@@ -317,9 +318,9 @@ func TestHelpExampleLinesRunAsPrinted(t *testing.T) {
 
 	bin := buildExampleBinary(t)
 
+	// An EMPTY root: the setup line writes the pages from the binary itself, so a reader with
+	// the binary and no checkout runs the first run as printed (ledger X6).
 	root := t.TempDir()
-	// The one path the setup line reads, at the path it names: the checkout shape and nothing else.
-	copyExampleTree(t, examplePages, filepath.Join(root, "cmd", "nova-self-talk", "testdata", "example-pages"))
 
 	if exit, out := runExampleLine(t, root, filepath.Dir(bin), setup); exit != 0 {
 		t.Fatalf("the fixture setup line exits %d, want 0:\n  %s\nits first output line: %s",
@@ -342,7 +343,7 @@ func TestHelpExampleLinesRunAsPrinted(t *testing.T) {
 
 // wantFixtureSetup is the line the class fix added above the block, named so a test that finds it
 // missing says which line a reader lost.
-const wantFixtureSetup = "cp -R cmd/nova-self-talk/testdata/example-pages ./pages"
+const wantFixtureSetup = "nova-self-talk example ./pages"
 
 // exampleBlockLines returns every command under an `example:` heading in a usage banner, in
 // banner order. A line beginning with the tool's name under the heading is an example; a blank
@@ -374,7 +375,7 @@ func exampleBlockLines(usage string) []string {
 // matches the line's shape rather than its exact text, so the printed line is what is run.
 func fixtureSetupLine(usage string) string {
 	for _, line := range strings.Split(usage, "\n") {
-		if trimmed := strings.TrimSpace(line); strings.HasPrefix(trimmed, "cp -R cmd/nova-self-talk/testdata/example-pages") {
+		if trimmed := strings.TrimSpace(line); trimmed == wantFixtureSetup {
 			return trimmed
 		}
 	}
@@ -416,33 +417,6 @@ func runExampleLine(t *testing.T, dir, binDir, line string) (int, string) {
 	default:
 		t.Fatalf("running %q: %v", line, err)
 		return 0, ""
-	}
-}
-
-// copyExampleTree copies src under dst. Every path it writes is inside the caller's t.TempDir()
-// (AGENTS.md rule 10).
-func copyExampleTree(t *testing.T, src, dst string) {
-	t.Helper()
-	err := filepath.Walk(src, func(p string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(src, p)
-		if err != nil {
-			return err
-		}
-		target := filepath.Join(dst, rel)
-		if info.IsDir() {
-			return os.MkdirAll(target, 0o755)
-		}
-		raw, err := os.ReadFile(p)
-		if err != nil {
-			return err
-		}
-		return os.WriteFile(target, raw, 0o644)
-	})
-	if err != nil {
-		t.Fatalf("copying the fixture %s: %v", src, err)
 	}
 }
 

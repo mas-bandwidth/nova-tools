@@ -5,7 +5,6 @@ package config
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -15,6 +14,8 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // redisApplier starts a throwaway Redis with the nova_sprint library and
@@ -24,9 +25,8 @@ func redisApplier(t *testing.T) (*RedisApplier, *redis.Client) {
 	addr := testutil.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = c.Close() })
-	if err := fn.Load(context.Background(), c); err != nil {
-		t.Fatal(err)
-	}
+	scopedErr28 := fn.Load(context.Background(), c)
+	require.NoError(t, scopedErr28)
 	return &RedisApplier{Client: c}, c
 }
 
@@ -36,9 +36,7 @@ func applyKinds(t *testing.T, st Store, ap Applier, actor string) map[string]Res
 	out := map[string]Result{}
 	for _, kind := range KindNames() {
 		res, err := Apply(context.Background(), st, ap, kind, actor, false, func(Op) {})
-		if err != nil {
-			t.Fatalf("apply %s: %v", kind, err)
-		}
+		require.NoError(t, err, "apply %s: %v", kind, err)
 		out[kind] = res
 	}
 	return out
@@ -60,74 +58,168 @@ func TestApplyLeavesTheKeysCapacityFriendWould(t *testing.T) {
 	// to the fleet's coordinator machine, studio.
 	c.HSet(ctx, FriendBeatKey("stella"), "host", "hulk", "at", "1790000000000")
 	res := applyKinds(t, st, ap, "rowan")
-	if res[KindMachine].Add != 2 || res[KindFriend].Add != 2 || res[KindFleet].Set != 1 || res[KindSprint].Set != 1 {
-		t.Fatalf("results %+v", res)
-	}
+	assertionMsg64 := []any{"results %+v", res}
+	require.Equal(t, 2, res[KindMachine].Add, assertionMsg64...)
+	require.Equal(t, 2, res[KindFriend].Add, assertionMsg64...)
+	require.Equal(t, 1, res[KindFleet].Set, assertionMsg64...)
+	require.Equal(t, 1, res[KindSprint].Set, assertionMsg64...)
 
 	// The machine: the ceiling ns_capacity_machine writes (slots alone:
 	// cores and memory are never declared, so the ceiling carries none and
 	// no budget is derived) and the registry hash nova-config owns, exactly
-	// the four declared fields with the revision and time.
-	if got := c.HGetAll(ctx, "machine:studio:ceiling").Val(); got["slots"] != "64" || got["cores"] != "" || got["mem_gb"] != "" || got["at"] == "" {
-		t.Errorf("machine:studio:ceiling %v", got)
+	// the five declared fields with the revision and time.
+	{
+		got := c.HGetAll(ctx, "machine:studio:ceiling").Val()
+		assertionMsg76 := []any{"machine:studio:ceiling %v", got}
+		func() {
+			if !assert.Equal(t, "64", got["slots"], assertionMsg76...) {
+				return
+			}
+			if !assert.Equal(t, "", got["cores"], assertionMsg76...) {
+				return
+			}
+			if !assert.Equal(t, "", got["mem_gb"], assertionMsg76...) {
+				return
+			}
+			assert.NotEqual(t, "", got["at"], assertionMsg76...)
+		}()
 	}
-	if c.Exists(ctx, "machine:studio:budget").Val() != 0 {
-		t.Error("a budget was derived from cores nobody declared")
+	assert.Equal(t, int64(0), c.Exists(ctx, "machine:studio:budget").Val(), "a budget was derived from cores nobody declared")
+	{
+		got := c.HGetAll(ctx, "machine:studio").Val()
+		assertionMsg81 := []any{"machine:studio %v: want user, seat, slots, runners, width, rev, at and nothing else", got}
+		func() {
+			if !assert.Equal(t, "glenn", got["user"], assertionMsg81...) {
+				return
+			}
+			if !assert.Equal(t, "studio", got["seat"], assertionMsg81...) {
+				return
+			}
+			if !assert.Equal(t, "64", got["slots"], assertionMsg81...) {
+				return
+			}
+			if !assert.Equal(t, "1", got["runners"], assertionMsg81...) {
+				return
+			}
+			if !assert.Equal(t, "2", got["rev"], assertionMsg81...) {
+				return
+			}
+			if !assert.NotEqual(t, "", got["at"], assertionMsg81...) {
+				return
+			}
+			if !assert.Equal(t, "0", got["width"], assertionMsg81...) {
+				return
+			}
+			assert.Len(t, got, 7, assertionMsg81...)
+		}()
 	}
-	if got := c.HGetAll(ctx, "machine:studio").Val(); got["user"] != "glenn" || got["seat"] != "studio" || got["slots"] != "64" || got["runners"] != "1" || got["rev"] != "2" || got["at"] == "" || len(got) != 6 {
-		t.Errorf("machine:studio %v: want user, seat, slots, runners, rev, at and nothing else", got)
+	{
+		got := c.HGetAll(ctx, "machine:hulk").Val()
+		assertionMsg85 := []any{"machine:hulk %v", got}
+		func() {
+			if !assert.Equal(t, "gaffer", got["user"], assertionMsg85...) {
+				return
+			}
+			if !assert.Equal(t, "swarm-hulk", got["seat"], assertionMsg85...) {
+				return
+			}
+			assert.Equal(t, "0", got["runners"], assertionMsg85...)
+		}()
 	}
-	if got := c.HGetAll(ctx, "machine:hulk").Val(); got["user"] != "gaffer" || got["seat"] != "swarm-hulk" || got["runners"] != "0" {
-		t.Errorf("machine:hulk %v", got)
-	}
-	if members := c.SMembers(ctx, MachinesKey).Val(); len(members) != 2 {
-		t.Errorf("machines %v", members)
-	}
+	scopedMembers128 := c.SMembers(ctx, MachinesKey).Val()
+	assert.Len(t, scopedMembers128, 2, "machines %v", scopedMembers128)
 	// The fleet and the sprint: one plain key per named field.
-	if got := c.Get(ctx, FleetKey("coordinator")).Val(); got != "studio" || c.Exists(ctx, FleetKey("store")).Val() != 0 {
-		t.Errorf("fleet:coordinator %q, fleet:store exists=%d", got, c.Exists(ctx, FleetKey("store")).Val())
-	}
-	if got := c.Get(ctx, SprintKey("coordinator")).Val(); got != "rowan" {
-		t.Errorf("sprint:coordinator %q", got)
-	}
+	gotCoordinator := c.Get(ctx, FleetKey("coordinator")).Val()
+	gotStoreExists := c.Exists(ctx, FleetKey("store")).Val()
+	assert.Equal(t, "studio", gotCoordinator, "fleet coordinator view")
+	assert.Equal(t, int64(0), gotStoreExists, "fleet store should be absent")
+	scopedGot137 := c.Get(ctx, SprintKey("coordinator")).Val()
+	assert.Equal(t, "rowan", scopedGot137, "sprint:coordinator %q", scopedGot137)
 
 	// The friend: what capacity friend and friend roles would have left,
 	// and nothing her own presence writes.
-	if !c.SIsMember(ctx, FriendsKey, "rowan").Val() || !c.SIsMember(ctx, FriendsKey, "stella").Val() {
-		t.Error("friends registry lacks rowan or stella")
-	}
-	if got := c.HGetAll(ctx, "friend:rowan:desired").Val(); got["slots"] != "32" || got["machine"] != "studio" || got["tiers"] != "frontier" || got["paused"] != "0" || got["at"] == "" {
-		t.Errorf("friend:rowan:desired %v (charged to the coordinator machine: no beat)", got)
-	}
-	if got := c.HGetAll(ctx, "friend:stella:desired").Val(); got["slots"] != "32" || got["machine"] != "hulk" || got["tiers"] != "frontier,pro" {
-		t.Errorf("friend:stella:desired %v (charged to the host her beat reports)", got)
-	}
-	if got := c.HGetAll(ctx, "friend:rowan:roles").Val(); got["roles"] != "builder,coordinator" || got["by"] != "rowan" {
-		t.Errorf("friend:rowan:roles %v (the sprint's coordinator carries the role)", got)
-	}
-	if got := c.HGetAll(ctx, "friend:stella:roles").Val(); got["roles"] != "builder,reader" {
-		t.Errorf("friend:stella:roles %v", got)
-	}
-	for _, key := range []string{"friend:rowan:wakepath", "friend:stella:wakepath", "friends:login", "friend:rowan:config"} {
-		if c.Exists(ctx, key).Val() != 0 {
-			t.Errorf("%s was written: it is the friend's own presence's, not configuration", key)
+	assertionMsg102 := []any{"friends registry lacks rowan or stella"}
+	func() {
+		if !assert.True(t, c.SIsMember(ctx, FriendsKey, "rowan").Val(), assertionMsg102...) {
+			return
 		}
+		assert.True(t, c.SIsMember(ctx, FriendsKey, "stella").Val(), assertionMsg102...)
+	}()
+	{
+		got := c.HGetAll(ctx, "friend:rowan:desired").Val()
+		assertionMsg105 := []any{"friend:rowan:desired %v (charged to the coordinator machine: no beat)", got}
+		func() {
+			if !assert.Equal(t, "32", got["slots"], assertionMsg105...) {
+				return
+			}
+			if !assert.Equal(t, "studio", got["machine"], assertionMsg105...) {
+				return
+			}
+			if !assert.Equal(t, "frontier", got["tiers"], assertionMsg105...) {
+				return
+			}
+			if !assert.Equal(t, "0", got["paused"], assertionMsg105...) {
+				return
+			}
+			assert.NotEqual(t, "", got["at"], assertionMsg105...)
+		}()
 	}
-	if got := c.HGetAll(ctx, DeclKey).Val(); got["rev:friend"] != "4" || got["rev:machine"] != "2" || got["rev:fleet"] != "5" || got["rev:sprint"] != "6" || got["at:friend"] == "" {
-		t.Errorf("config:decl %v", got)
+	{
+		got := c.HGetAll(ctx, "friend:stella:desired").Val()
+		assertionMsg109 := []any{"friend:stella:desired %v (charged to the host her beat reports)", got}
+		func() {
+			if !assert.Equal(t, "32", got["slots"], assertionMsg109...) {
+				return
+			}
+			if !assert.Equal(t, "hulk", got["machine"], assertionMsg109...) {
+				return
+			}
+			assert.Equal(t, "frontier,pro", got["tiers"], assertionMsg109...)
+		}()
+	}
+	{
+		got := c.HGetAll(ctx, "friend:rowan:roles").Val()
+		assertionMsg113 := []any{"friend:rowan:roles %v (the sprint's coordinator carries the role)", got}
+		func() {
+			if !assert.Equal(t, "builder,coordinator", got["roles"], assertionMsg113...) {
+				return
+			}
+			assert.Equal(t, "rowan", got["by"], assertionMsg113...)
+		}()
+	}
+	scopedGot193 := c.HGetAll(ctx, "friend:stella:roles").Val()
+	assert.Equal(t, "builder,reader", scopedGot193["roles"], "friend:stella:roles %v", scopedGot193)
+	for _, key := range []string{"friend:rowan:wakepath", "friend:stella:wakepath", "friends:login", "friend:rowan:config"} {
+		assert.Equal(t, int64(0), c.Exists(ctx, key).Val(), "%s was written: it is the friend's own presence's, not configuration", key)
+	}
+	{
+		got := c.HGetAll(ctx, DeclKey).Val()
+		assertionMsg124 := []any{"config:decl %v", got}
+		func() {
+			if !assert.Equal(t, "4", got["rev:friend"], assertionMsg124...) {
+				return
+			}
+			if !assert.Equal(t, "2", got["rev:machine"], assertionMsg124...) {
+				return
+			}
+			if !assert.Equal(t, "5", got["rev:fleet"], assertionMsg124...) {
+				return
+			}
+			if !assert.Equal(t, "6", got["rev:sprint"], assertionMsg124...) {
+				return
+			}
+			assert.NotEqual(t, "", got["at:friend"], assertionMsg124...)
+		}()
 	}
 	// The receipts every capacity write leaves.
-	if n := c.XLen(ctx, CapLogKey).Val(); n < 4 {
-		t.Errorf("cap:log has %d receipts, want one per desired and ceiling write at least", n)
-	}
+	scopedN220 := c.XLen(ctx, CapLogKey).Val()
+	assert.GreaterOrEqual(t, scopedN220, int64(4), "cap:log has %d receipts, want one per desired and ceiling write at least", scopedN220)
 
 	// Read reads back exactly the views the rows are, for every kind, so a
 	// second apply is a no-op and the stamp is unchanged.
 	for _, kind := range KindNames() {
 		views, _, err := ap.Read(ctx, kind)
-		if err != nil {
-			t.Fatalf("read %s: %v", kind, err)
-		}
+		require.NoError(t, err, "read %s: %v", kind, err)
 		k, _ := Lookup(kind)
 		rows, _ := st.List(ctx, kind)
 		if k.Derive != nil {
@@ -135,22 +227,26 @@ func TestApplyLeavesTheKeysCapacityFriendWould(t *testing.T) {
 		}
 		for _, row := range rows {
 			for f, want := range row.Fields {
-				if views[row.Name][f] != want {
-					t.Errorf("view of %s %s.%s = %q, row has %q", kind, row.Name, f, views[row.Name][f], want)
-				}
+				assert.Equal(t, want, views[row.Name][f], "view of %s %s.%s = %q, row has %q", kind, row.Name, f, views[row.Name][f], want)
 			}
 		}
 	}
-	if _, rev, err := ap.Read(ctx, KindFriend); err != nil || rev != 4 {
-		t.Fatalf("read friends: rev %d err %v", rev, err)
+	{
+		_, rev, err := ap.Read(ctx, KindFriend)
+		assertionMsg146 := []any{"read friends: rev %d err %v", rev, err}
+		require.NoError(t, err, assertionMsg146...)
+		require.Equal(t, int64(4), rev, assertionMsg146...)
 	}
 	res = applyKinds(t, st, ap, "rowan")
-	if r := res[KindFriend]; r.Add+r.Set+r.Remove != 0 || r.Rev != 4 || r.RedisRev != 4 {
-		t.Fatalf("second apply %+v", r)
+	{
+		r := res[KindFriend]
+		assertionMsg151 := []any{"second apply %+v", r}
+		require.Equal(t, 0, r.Add+r.Set+r.Remove, assertionMsg151...)
+		require.Equal(t, int64(4), r.Rev, assertionMsg151...)
+		require.Equal(t, int64(4), r.RedisRev, assertionMsg151...)
 	}
-	if got := c.HGet(ctx, DeclKey, "rev:friend").Val(); got != "4" {
-		t.Fatalf("stamp after a no-op apply %s", got)
-	}
+	scopedGot255 := c.HGet(ctx, DeclKey, "rev:friend").Val()
+	require.Equal(t, "4", scopedGot255, "stamp after a no-op apply %s", scopedGot255)
 }
 
 func TestApplySetsAndRemovesAFriend(t *testing.T) {
@@ -162,72 +258,66 @@ func TestApplySetsAndRemovesAFriend(t *testing.T) {
 	applyKinds(t, st, ap, "rowan")
 
 	// A set in Postgres: slots, tiers and a role.
-	if _, _, err := st.Update(ctx, KindFriend, "stella", map[string]string{"slots": "30", "tiers": "flash", "roles": "reader"}, "rowan"); err != nil {
-		t.Fatal(err)
-	}
+	_, _, setupErr9031 := st.Update(ctx, KindFriend, "stella", map[string]string{"slots": "30", "tiers": "flash", "roles": "reader"}, "rowan")
+	require.NoError(t, setupErr9031)
 	res, err := Apply(ctx, st, ap, KindFriend, "rowan", false, func(Op) {})
-	if err != nil || res.Set != 1 {
-		t.Fatalf("apply after set: %+v %v", res, err)
+	assertionMsg173 := []any{"apply after set: %+v %v", res, err}
+	require.NoError(t, err, assertionMsg173...)
+	require.Equal(t, 1, res.Set, assertionMsg173...)
+	{
+		got := c.HGetAll(ctx, "friend:stella:desired").Val()
+		assertionMsg187 := []any{"stella desired %v", got}
+		func() {
+			if !assert.Equal(t, "30", got["slots"], assertionMsg187...) {
+				return
+			}
+			assert.Equal(t, "flash", got["tiers"], assertionMsg187...)
+		}()
 	}
-	if got := c.HGetAll(ctx, "friend:stella:desired").Val(); got["slots"] != "30" || got["tiers"] != "flash" {
-		t.Errorf("stella desired %v", got)
-	}
-	if got := c.HGet(ctx, "friend:stella:roles", "roles").Val(); got != "reader" {
-		t.Errorf("stella roles %q", got)
-	}
+	scopedGot286 := c.HGet(ctx, "friend:stella:roles", "roles").Val()
+	assert.Equal(t, "reader", scopedGot286, "stella roles %q", scopedGot286)
 
 	// The handover: the sprint names stella; the next friend apply gives
 	// her the role first and takes it from rowan, as rowan (who holds it).
-	if _, _, err := st.Update(ctx, KindSprint, KindSprint, map[string]string{"coordinator": "stella"}, "rowan"); err != nil {
-		t.Fatal(err)
-	}
+	_, _, setupErr9967 := st.Update(ctx, KindSprint, KindSprint, map[string]string{"coordinator": "stella"}, "rowan")
+	require.NoError(t, setupErr9967)
 	var reported []string
 	res, err = Apply(ctx, st, ap, KindFriend, "rowan", false, func(op Op) { reported = append(reported, op.Name) })
-	if err != nil || res.Set != 2 || strings.Join(reported, " ") != "stella rowan" {
-		t.Fatalf("handover: %+v %v reported %v", res, err, reported)
-	}
-	if got := c.HGet(ctx, "friend:stella:roles", "roles").Val(); got != "coordinator,reader" {
-		t.Errorf("stella roles after the handover %q", got)
-	}
-	if got := c.HGet(ctx, "friend:rowan:roles", "roles").Val(); got != "builder" {
-		t.Errorf("rowan roles after the handover %q", got)
-	}
+	assertionMsg191 := []any{"handover: %+v %v reported %v", res, err, reported}
+	require.NoError(t, err, assertionMsg191...)
+	require.Equal(t, 2, res.Set, assertionMsg191...)
+	require.Equal(t, "stella rowan", strings.Join(reported, " "), assertionMsg191...)
+	scopedGot301 := c.HGet(ctx, "friend:stella:roles", "roles").Val()
+	assert.Equal(t, "coordinator,reader", scopedGot301, "stella roles after the handover %q", scopedGot301)
+	scopedGot305 := c.HGet(ctx, "friend:rowan:roles", "roles").Val()
+	assert.Equal(t, "builder", scopedGot305, "rowan roles after the handover %q", scopedGot305)
 
 	// A remove takes what apply wrote, leaving her presence's own keys
 	// behind; removing a friend does not read sprint keys and succeeds
 	// even if working copies exist.
-	if _, _, err := st.Update(ctx, KindSprint, KindSprint, map[string]string{"coordinator": "rowan"}, "stella"); err != nil {
-		t.Fatal(err)
+	_, _, setupErr10964 := st.Update(ctx, KindSprint, KindSprint, map[string]string{"coordinator": "rowan"}, "stella")
+	require.NoError(t, setupErr10964)
+	{
+		_, err := Apply(ctx, st, ap, KindFriend, "stella", false, func(Op) {})
+		require.NoError(t, err, "handover back as stella: %v", err)
 	}
-	if _, err := Apply(ctx, st, ap, KindFriend, "stella", false, func(Op) {}); err != nil {
-		t.Fatalf("handover back as stella: %v", err)
-	}
-	if _, err := st.Delete(ctx, KindFriend, "stella", "rowan"); err != nil {
-		t.Fatal(err)
-	}
+	_, setupErr11244 := st.Delete(ctx, KindFriend, "stella", "rowan")
+	require.NoError(t, setupErr11244)
 	c.HSet(ctx, "friend:stella:wakepath", "kind", "human", "notify", "#stella")
 	c.ZAdd(ctx, "friend:stella:cards:working", redis.Z{Score: 1, Member: "card:4410"}, redis.Z{Score: 2, Member: "card:4414"})
 	res, err = Apply(ctx, st, ap, KindFriend, "rowan", false, func(Op) {})
-	if err != nil || res.Remove != 1 {
-		t.Fatalf("remove: %+v %v", res, err)
-	}
+	assertionMsg219 := []any{"remove: %+v %v", res, err}
+	require.NoError(t, err, assertionMsg219...)
+	require.Equal(t, 1, res.Remove, assertionMsg219...)
 	for _, key := range []string{"friend:stella:desired", "friend:stella:roles"} {
-		if c.Exists(ctx, key).Val() != 0 {
-			t.Errorf("%s survived the remove", key)
-		}
+		assert.Equal(t, int64(0), c.Exists(ctx, key).Val(), "%s survived the remove", key)
 	}
-	if c.Exists(ctx, "friend:stella:wakepath").Val() != 1 {
-		t.Error("the remove took her wake path, which is her presence's own")
-	}
-	if c.SIsMember(ctx, FriendsKey, "stella").Val() {
-		t.Error("stella is still in friends")
-	}
-	if got := c.HGet(ctx, DeclKey, "rev:friend").Val(); got != "10" {
-		t.Fatalf("stamp after remove %s", got)
-	}
-	if got := c.ZCard(ctx, "friend:stella:cards:working").Val(); got != 2 {
-		t.Fatalf("working copies were modified: %d", got)
-	}
+	assert.Equal(t, int64(1), c.Exists(ctx, "friend:stella:wakepath").Val(), "the remove took her wake path, which is her presence's own")
+	assert.False(t, c.SIsMember(ctx, FriendsKey, "stella").Val(), "stella is still in friends")
+	scopedGot332 := c.HGet(ctx, DeclKey, "rev:friend").Val()
+	require.Equal(t, "10", scopedGot332, "stamp after remove %s", scopedGot332)
+	scopedGot336 := c.ZCard(ctx, "friend:stella:cards:working").Val()
+	require.Equal(t, int64(2), scopedGot336, "working copies were modified: %d", scopedGot336)
 }
 
 // TestApplyRefusesAFriendNobodyCanCharge: a friend with no beat and no
@@ -239,21 +329,18 @@ func TestApplyRefusesAFriendNobodyCanCharge(t *testing.T) {
 	ctx := context.Background()
 	ap, c := redisApplier(t)
 	st := seed(t)
-	if _, _, err := st.Update(ctx, KindFleet, KindFleet, map[string]string{"coordinator": ""}, "rowan"); err != nil {
-		t.Fatal(err)
-	}
+	_, _, setupErr12770 := st.Update(ctx, KindFleet, KindFleet, map[string]string{"coordinator": ""}, "rowan")
+	require.NoError(t, setupErr12770)
 	for _, kind := range []string{KindMachine, KindFleet} {
-		if _, err := Apply(ctx, st, ap, kind, "rowan", false, func(Op) {}); err != nil {
-			t.Fatal(err)
-		}
+		_, setupErr12958 := Apply(ctx, st, ap, kind, "rowan", false, func(Op) {})
+		require.NoError(t, setupErr12958)
 	}
 	_, err := Apply(ctx, st, ap, KindFriend, "rowan", false, func(Op) {})
-	if err == nil || !Refused(err) || !strings.Contains(err.Error(), "friend rowan has no beat naming a machine and the fleet names no coordinator machine to charge her slots to; run: nova-config fleet set --coordinator <machine>") {
-		t.Fatalf("nobody to charge: %v", err)
-	}
-	if c.SIsMember(ctx, FriendsKey, "rowan").Val() {
-		t.Fatal("a refused friend was registered")
-	}
+	assertionMsg255 := []any{"nobody to charge: %v", err}
+	require.Error(t, err, assertionMsg255...)
+	require.True(t, Refused(err), assertionMsg255...)
+	require.ErrorContains(t, err, "friend rowan has no beat naming a machine and the fleet names no coordinator machine to charge her slots to; run: nova-config fleet set --coordinator <machine>", assertionMsg255...)
+	require.False(t, c.SIsMember(ctx, FriendsKey, "rowan").Val(), "a refused friend was registered")
 }
 
 // TestApplyWritesTheFleetKeysAndTheLiveFactsAreTheBeat: the fleet row is
@@ -266,55 +353,84 @@ func TestApplyWritesTheFleetKeysAndTheLiveFactsAreTheBeat(t *testing.T) {
 	ap, c := redisApplier(t)
 	st := seed(t)
 	applyKinds(t, st, ap, "rowan")
-	if _, _, err := st.Update(ctx, KindFleet, KindFleet, map[string]string{"store": "hulk"}, "rowan"); err != nil {
-		t.Fatal(err)
-	}
+	_, _, setupErr14007 := st.Update(ctx, KindFleet, KindFleet, map[string]string{"store": "hulk"}, "rowan")
+	require.NoError(t, setupErr14007)
 	res, err := Apply(ctx, st, ap, KindFleet, "rowan", false, func(Op) {})
-	if err != nil || res.Set != 1 || res.Rev != 7 {
-		t.Fatalf("apply the fleet: %+v %v", res, err)
-	}
-	if got := c.Get(ctx, FleetKey("store")).Val(); got != "hulk" {
-		t.Errorf("fleet:store %q", got)
-	}
-	if got := c.Get(ctx, FleetKey("coordinator")).Val(); got != "studio" {
-		t.Errorf("fleet:coordinator %q", got)
-	}
-	if got := c.HGet(ctx, DeclKey, "rev:fleet").Val(); got != "7" {
-		t.Errorf("rev:fleet %s", got)
-	}
+	assertionMsg274 := []any{"apply the fleet: %+v %v", res, err}
+	require.NoError(t, err, assertionMsg274...)
+	require.Equal(t, 1, res.Set, assertionMsg274...)
+	require.Equal(t, int64(7), res.Rev, assertionMsg274...)
+	scopedGot382 := c.Get(ctx, FleetKey("store")).Val()
+	assert.Equal(t, "hulk", scopedGot382, "fleet:store %q", scopedGot382)
+	scopedGot386 := c.Get(ctx, FleetKey("coordinator")).Val()
+	assert.Equal(t, "studio", scopedGot386, "fleet:coordinator %q", scopedGot386)
+	scopedGot390 := c.HGet(ctx, DeclKey, "rev:fleet").Val()
+	assert.Equal(t, "7", scopedGot390, "rev:fleet %s", scopedGot390)
 	// Clearing a field deletes its key.
-	if _, _, err := st.Update(ctx, KindFleet, KindFleet, map[string]string{"store": ""}, "rowan"); err != nil {
-		t.Fatal(err)
-	}
+	_, _, setupErr14789 := st.Update(ctx, KindFleet, KindFleet, map[string]string{"store": ""}, "rowan")
+	require.NoError(t, setupErr14789)
 	res, err = Apply(ctx, st, ap, KindFleet, "rowan", false, func(Op) {})
-	if err != nil || res.Set != 1 {
-		t.Fatalf("apply the cleared store: %+v %v", res, err)
-	}
-	if c.Exists(ctx, FleetKey("store")).Val() != 0 || c.Get(ctx, FleetKey("coordinator")).Val() != "studio" {
-		t.Error("clearing the store did not delete fleet:store, or took the coordinator with it")
-	}
+	assertionMsg293 := []any{"apply the cleared store: %+v %v", res, err}
+	require.NoError(t, err, assertionMsg293...)
+	require.Equal(t, 1, res.Set, assertionMsg293...)
+	assertionMsg318 := []any{"clearing the store did not delete fleet:store, or took the coordinator with it"}
+	func() {
+		if !assert.Equal(t, int64(0), c.Exists(ctx, FleetKey("store")).Val(), assertionMsg318...) {
+			return
+		}
+		assert.Equal(t, "studio", c.Get(ctx, FleetKey("coordinator")).Val(), assertionMsg318...)
+	}()
 
 	// The beats: hulk has beaten (today's fields), studio never has.
 	c.HSet(ctx, BeatKey("hulk"), "host", "hulk", "at", "1790000000000", "load1", "0.5", "ncpu", "64", "cpu", "3")
 	beats, err := ap.Beats(ctx, []string{"hulk", "studio"})
-	if err != nil {
-		t.Fatal(err)
+	require.NoError(t, err)
+	{
+		b := beats["hulk"]
+		assertionMsg326 := []any{"hulk's beat %+v", b}
+		func() {
+			if !assert.NotNil(t, b, assertionMsg326...) {
+				return
+			}
+			if !assert.Equal(t, "64", b.Cores, assertionMsg326...) {
+				return
+			}
+			if !assert.Equal(t, "", b.OS, assertionMsg326...) {
+				return
+			}
+			if !assert.Equal(t, "", b.Arch, assertionMsg326...) {
+				return
+			}
+			if !assert.Equal(t, "", b.MemoryGB, assertionMsg326...) {
+				return
+			}
+			assert.Equal(t, "2026-09-21T14:13:20Z", b.At, assertionMsg326...)
+		}()
 	}
-	if b := beats["hulk"]; b == nil || b.Cores != "64" || b.OS != "" || b.Arch != "" || b.MemoryGB != "" || b.At != "2026-09-21T14:13:20Z" {
-		t.Errorf("hulk's beat %+v", b)
-	}
-	if beats["studio"] != nil {
-		t.Errorf("studio has no beat and one was read: %+v", beats["studio"])
-	}
+	assert.Nil(t, beats["studio"], "studio has no beat and one was read: %+v", beats["studio"])
 	// The follow-on fields are read when the beat carries them.
 	c.HSet(ctx, BeatKey("hulk"), "os", "linux", "arch", "amd64", "memory_gb", "251")
 	beats, _ = ap.Beats(ctx, []string{"hulk"})
-	if b := beats["hulk"]; b.OS != "linux" || b.Arch != "amd64" || b.MemoryGB != "251" {
-		t.Errorf("hulk's fuller beat %+v", b)
+	{
+		b := beats["hulk"]
+		assertionMsg334 := []any{"hulk's fuller beat %+v", b}
+		func() {
+			if !assert.Equal(t, "linux", b.OS, assertionMsg334...) {
+				return
+			}
+			if !assert.Equal(t, "amd64", b.Arch, assertionMsg334...) {
+				return
+			}
+			assert.Equal(t, "251", b.MemoryGB, assertionMsg334...)
+		}()
 	}
-	if c.Exists(ctx, BeatKey("hulk")).Val() != 1 || c.HGet(ctx, "machine:hulk", "os").Val() != "" {
-		t.Error("reading a beat wrote something")
-	}
+	assertionMsg336 := []any{"reading a beat wrote something"}
+	func() {
+		if !assert.Equal(t, int64(1), c.Exists(ctx, BeatKey("hulk")).Val(), assertionMsg336...) {
+			return
+		}
+		assert.Equal(t, "", c.HGet(ctx, "machine:hulk", "os").Val(), assertionMsg336...)
+	}()
 }
 
 func TestApplyRefusesConflictWhenRedisIsAheadOfPostgres(t *testing.T) {
@@ -326,24 +442,23 @@ func TestApplyRefusesConflictWhenRedisIsAheadOfPostgres(t *testing.T) {
 	applyKinds(t, st, ap, "rowan")
 	c.HSet(ctx, DeclKey, "rev:friend", "40")
 	_, err := Apply(ctx, st, ap, KindFriend, "rowan", false, func(Op) {})
-	if err == nil || !IsConflict(err) {
-		t.Fatalf("Redis ahead: %v", err)
-	}
-	if !strings.Contains(err.Error(), "Redis holds rev 40") {
-		t.Fatalf("conflict %q", err)
-	}
+	assertionMsg324 := []any{"Redis ahead: %v", err}
+	require.Error(t, err, assertionMsg324...)
+	require.True(t, IsConflict(err), assertionMsg324...)
+	require.ErrorContains(t, err, "Redis holds rev 40", "conflict %q", err)
 	// The stamp is compare-and-set: one that moves between the read and
 	// the stamp is refused too.
 	c.HSet(ctx, DeclKey, "rev:friend", "4")
-	if err := ap.Stamp(ctx, KindFriend, 3, 5); err == nil || !IsConflict(err) {
-		t.Fatalf("stamp with a moved prev: %v", err)
+	{
+		err := ap.Stamp(ctx, KindFriend, 3, 5)
+		assertionMsg331 := []any{"stamp with a moved prev: %v", err}
+		require.Error(t, err, assertionMsg331...)
+		require.True(t, IsConflict(err), assertionMsg331...)
 	}
-	if err := ap.Stamp(ctx, KindFriend, 4, 5); err != nil {
-		t.Fatalf("stamp with the right prev: %v", err)
-	}
-	if got := c.HGet(ctx, DeclKey, "rev:friend").Val(); got != "5" {
-		t.Fatalf("stamp %s", got)
-	}
+	scopedErr483 := ap.Stamp(ctx, KindFriend, 4, 5)
+	require.NoError(t, scopedErr483, "stamp with the right prev: %v", scopedErr483)
+	scopedGot487 := c.HGet(ctx, DeclKey, "rev:friend").Val()
+	require.Equal(t, "5", scopedGot487, "stamp %s", scopedGot487)
 }
 
 func TestApplyRefusesACeilingAndAMachineInUse(t *testing.T) {
@@ -355,31 +470,29 @@ func TestApplyRefusesACeilingAndAMachineInUse(t *testing.T) {
 	applyKinds(t, st, ap, "rowan")
 	// stella 32 + rowan 32 = 64 on studio; one more slot is over the
 	// ceiling, refused by ns_capacity_desired, and named with the remedy.
-	if _, _, err := st.Update(ctx, KindFriend, "stella", map[string]string{"slots": "33"}, "rowan"); err != nil {
-		t.Fatal(err)
-	}
+	_, _, setupErr18524 := st.Update(ctx, KindFriend, "stella", map[string]string{"slots": "33"}, "rowan")
+	require.NoError(t, setupErr18524)
 	_, err := Apply(ctx, st, ap, KindFriend, "rowan", false, func(Op) {})
-	if err == nil || !errors.Is(err, ErrCeiling) {
-		t.Fatalf("over the ceiling: %v", err)
-	}
-	if !strings.Contains(err.Error(), "CEILING studio: friend stella makes the sum 65 over the machine ceiling 64") {
-		t.Fatalf("ceiling refusal %q", err)
-	}
+	assertionMsg357 := []any{"over the ceiling: %v", err}
+	require.Error(t, err, assertionMsg357...)
+	require.ErrorIs(t, err, ErrCeiling, assertionMsg357...)
+	require.ErrorContains(t, err, "CEILING studio: friend stella makes the sum 65 over the machine ceiling 64", "ceiling refusal %q", err)
 	// A machine's ceiling below its friends' sum is refused by
 	// ns_capacity_machine.
-	if _, _, err := st.Update(ctx, KindMachine, "studio", map[string]string{"slots": "10"}, "rowan"); err != nil {
-		t.Fatal(err)
-	}
+	_, _, setupErr19099 := st.Update(ctx, KindMachine, "studio", map[string]string{"slots": "10"}, "rowan")
+	require.NoError(t, setupErr19099)
 	_, err = Apply(ctx, st, ap, KindMachine, "rowan", false, func(Op) {})
-	if err == nil || !errors.Is(err, ErrCeiling) || !strings.Contains(err.Error(), "CEILING studio: its friends desire 64 slots and the row says 10") {
-		t.Fatalf("ceiling below the sum: %v", err)
-	}
+	assertionMsg366 := []any{"ceiling below the sum: %v", err}
+	require.Error(t, err, assertionMsg366...)
+	require.ErrorIs(t, err, ErrCeiling, assertionMsg366...)
+	require.ErrorContains(t, err, "CEILING studio: its friends desire 64 slots and the row says 10", assertionMsg366...)
 	// A machine that Redis still has consumers on cannot be removed (here
 	// the Redis side is exercised directly).
 	err = ap.Remove(ctx, KindMachine, "studio", "rowan", "test")
-	if err == nil || !errors.Is(err, ErrInUse) || !strings.Contains(err.Error(), "machine studio still carries friend:rowan,friend:stella in Redis") {
-		t.Fatalf("remove a machine in use: %v", err)
-	}
+	assertionMsg370 := []any{"remove a machine in use: %v", err}
+	require.Error(t, err, assertionMsg370...)
+	require.ErrorIs(t, err, ErrInUse, assertionMsg370...)
+	require.ErrorContains(t, err, "machine studio still carries friend:rowan,friend:stella in Redis", assertionMsg370...)
 }
 
 func TestApplyNeedsTheCoordinatorRoleForRoles(t *testing.T) {
@@ -391,14 +504,14 @@ func TestApplyNeedsTheCoordinatorRoleForRoles(t *testing.T) {
 	// The actor is not a friend at all: the first roles write refuses.
 	var reported bytes.Buffer
 	for _, kind := range []string{KindMachine, KindFleet} {
-		if _, err := Apply(ctx, st, ap, kind, "nobody", false, func(Op) {}); err != nil {
-			t.Fatal(err)
-		}
+		_, setupErr20335 := Apply(ctx, st, ap, kind, "nobody", false, func(Op) {})
+		require.NoError(t, setupErr20335)
 	}
 	_, err := Apply(ctx, st, ap, KindFriend, "nobody", false, func(op Op) { reported.WriteString(op.Name + " ") })
-	if err == nil || !errors.Is(err, ErrActor) || !strings.Contains(err.Error(), "--as nobody is not a registered friend") {
-		t.Fatalf("roles as nobody: %v", err)
-	}
+	assertionMsg388 := []any{"roles as nobody: %v", err}
+	require.Error(t, err, assertionMsg388...)
+	require.ErrorIs(t, err, ErrActor, assertionMsg388...)
+	require.ErrorContains(t, err, "--as nobody is not a registered friend", assertionMsg388...)
 }
 
 type testCmdHook struct {
@@ -478,9 +591,8 @@ func TestRemoveFriendDoesNotTouchSprintKeys(t *testing.T) {
 	logging = true
 	mu.Unlock()
 
-	if err := ap.Remove(ctx, KindFriend, "stella", "rowan", "idem-remove-1"); err != nil {
-		t.Fatalf("removeFriend failed: %v", err)
-	}
+	scopedErr623 := ap.Remove(ctx, KindFriend, "stella", "rowan", "idem-remove-1")
+	require.NoError(t, scopedErr623, "removeFriend failed: %v", scopedErr623)
 
 	mu.Lock()
 	logging = false
@@ -489,42 +601,43 @@ func TestRemoveFriendDoesNotTouchSprintKeys(t *testing.T) {
 	mu.Unlock()
 
 	// Friend keys apply wrote are removed.
-	if c.SIsMember(ctx, FriendsKey, "stella").Val() {
-		t.Error("stella still in friends set")
-	}
-	if c.Exists(ctx, "friend:stella:desired").Val() != 0 {
-		t.Error("friend:stella:desired still exists")
-	}
-	if c.Exists(ctx, "friend:stella:roles").Val() != 0 {
-		t.Error("friend:stella:roles still exists")
-	}
+	assert.False(t, c.SIsMember(ctx, FriendsKey, "stella").Val(), "stella still in friends set")
+	assert.Equal(t, int64(0), c.Exists(ctx, "friend:stella:desired").Val(), "friend:stella:desired still exists")
+	assert.Equal(t, int64(0), c.Exists(ctx, "friend:stella:roles").Val(), "friend:stella:roles still exists")
 
 	// Sprint keys were untouched.
-	if got := c.Get(ctx, "sprint:epoch").Val(); got != "not-a-hash" {
-		t.Errorf("sprint:epoch was modified: %q", got)
-	}
-	if got := c.ZCard(ctx, "friend:stella:cards:working").Val(); got != 1 {
-		t.Errorf("friend:stella:cards:working was modified: %d", got)
-	}
+	scopedGot640 := c.Get(ctx, "sprint:epoch").Val()
+	assert.Equal(t, "not-a-hash", scopedGot640, "sprint:epoch was modified: %q", scopedGot640)
+	scopedGot644 := c.ZCard(ctx, "friend:stella:cards:working").Val()
+	assert.Equal(t, int64(1), scopedGot644, "friend:stella:cards:working was modified: %d", scopedGot644)
 
 	// Assert that no command executed during removeFriend touched sprint keys.
-	if len(cmds) == 0 {
-		t.Fatal("expected commands to be recorded during removeFriend")
-	}
+	require.NotEmpty(t, cmds, "expected commands to be recorded during removeFriend")
 	for _, cmd := range cmds {
 		for _, arg := range cmd.args {
-			if strings.Contains(arg, "sprint") || strings.Contains(arg, "cards") {
-				t.Errorf("removeFriend touched sprint key in command %s %v", cmd.name, cmd.args)
-			}
+			assertionMsg537 := []any{"removeFriend touched sprint key in command %s %v", cmd.name, cmd.args}
+			func() {
+				if !assert.NotContains(t, arg, "sprint", assertionMsg537...) {
+					return
+				}
+				assert.NotContains(t, arg, "cards", assertionMsg537...)
+			}()
 		}
 	}
 }
 
 // TestApplyRedisTripsReducedFromAuditBaseline measures round trips against the
-// REDIS-TRIPS.md baseline from Rowan's audit (rowan-7fbdefecf56e):
-// - first run: 28 trips (down from 42 before Cuts 2, 3, 4)
-// - steady apply: 6 trips (down from 18 before Cut 1)
-// - two changes: 11 trips (down from 25 before Cut 2)
+// REDIS-TRIPS.md baseline from Rowan's audit (rowan-7fbdefecf56e), with the
+// loop and route kinds' one read trip each on a store with none of their
+// rows (readHashes), and the tier kind's two read trips (its flash and pro rows
+// are made by migrate), added to every apply of all kinds:
+//   - first run: 38 trips (32 before the tier kind, whose first apply also writes
+//     its two rows and its stamp; 30 before the loop and route kinds; 42 before
+//     Cuts 2, 3, 4)
+//   - steady apply: 10 trips (8 before the tier kind; 6 before the loop and route
+//     kinds; 18 before Cut 1)
+//   - two changes: 15 trips (13 before the tier kind; 11 before the loop and route
+//     kinds; 25 before Cut 2)
 func TestApplyRedisTripsReducedFromAuditBaseline(t *testing.T) {
 	t.Parallel()
 
@@ -539,55 +652,41 @@ func TestApplyRedisTripsReducedFromAuditBaseline(t *testing.T) {
 	applyKinds(t, st, ap, "rowan")
 	firstRunTrips := trips.N() - before
 	t.Logf("first run trips = %d (baseline was 42)", firstRunTrips)
-	if firstRunTrips > 30 {
-		t.Fatalf("first run took %d trips, want <= 30 (was 42 before batching cuts)", firstRunTrips)
-	}
+	require.LessOrEqual(t, firstRunTrips, int64(38), "first run took %d trips, want <= 38: 30 for the four first kinds, 1 each for the loop and route kinds with no row, and 6 for the tier kind's two rows (was 42 before batching cuts)", firstRunTrips)
 
 	// 2. Steady apply: nothing changed; Cut 1 skips the stamps (18 -> 6)
 	before = trips.N()
 	applyKinds(t, st, ap, "rowan")
 	steadyTrips := trips.N() - before
 	t.Logf("steady apply trips = %d (baseline was 18)", steadyTrips)
-	if steadyTrips != 6 {
-		t.Fatalf("steady apply took %d trips, want 6 (was 18 before Cut 1)", steadyTrips)
-	}
+	require.Equal(t, int64(10), steadyTrips, "steady apply took %d trips, want 10: 6 for the four first kinds, 1 each for the loop and route kinds with no row, and 2 for the tier kind's read (was 18 before Cut 1)", steadyTrips)
 
 	// 3. Two changes: update two friends (slots on stella, slots on rowan) (25 -> 11)
-	if _, _, err := st.Update(ctx, KindFriend, "stella", map[string]string{"slots": "24"}, "rowan"); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := st.Update(ctx, KindFriend, "rowan", map[string]string{"slots": "24"}, "rowan"); err != nil {
-		t.Fatal(err)
-	}
+	_, _, setupErr25760 := st.Update(ctx, KindFriend, "stella", map[string]string{"slots": "24"}, "rowan")
+	require.NoError(t, setupErr25760)
+	_, _, setupErr25887 := st.Update(ctx, KindFriend, "rowan", map[string]string{"slots": "24"}, "rowan")
+	require.NoError(t, setupErr25887)
 	before = trips.N()
 	applyKinds(t, st, ap, "rowan")
 	twoChangesTrips := trips.N() - before
 	t.Logf("two changes trips = %d (baseline was 25)", twoChangesTrips)
-	if twoChangesTrips > 11 {
-		t.Fatalf("two changes took %d trips, want <= 11 (was 25 before Cut 2)", twoChangesTrips)
-	}
+	require.LessOrEqual(t, twoChangesTrips, int64(15), "two changes took %d trips, want <= 15: 11, the loop and route kinds' one each and the tier kind's two (was 25 before Cut 2)", twoChangesTrips)
 
 	// 4. Machine removal: add third machine "air" to store and apply, then delete "air" and measure apply trips.
 	machine, _ := Lookup(KindMachine)
 	airRow, err := machine.NewRow("air", map[string]string{"user": "glenn", "seat": "air", "slots": "16"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.Insert(ctx, KindMachine, airRow, "rowan"); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	_, setupErr26602 := st.Insert(ctx, KindMachine, airRow, "rowan")
+	require.NoError(t, setupErr26602)
 	applyKinds(t, st, ap, "rowan")
 
-	if _, err := st.Delete(ctx, KindMachine, "air", "rowan"); err != nil {
-		t.Fatal(err)
-	}
+	_, setupErr26724 := st.Delete(ctx, KindMachine, "air", "rowan")
+	require.NoError(t, setupErr26724)
 	before = trips.N()
 	applyKinds(t, st, ap, "rowan")
 	machineRemovalTrips := trips.N() - before
 	t.Logf("machine removal trips = %d", machineRemovalTrips)
-	if machineRemovalTrips > 15 {
-		t.Fatalf("machine removal took %d trips, want <= 15 (was 25 before Cut 5)", machineRemovalTrips)
-	}
+	require.LessOrEqual(t, machineRemovalTrips, int64(17), "machine removal took %d trips, want <= 17: 15 and the loop and route kinds' one each (was 25 before Cut 5)", machineRemovalTrips)
 }
 
 // TestRefusedMachineCeilingLeavesMachineHashUntouched proves that when
@@ -603,36 +702,25 @@ func TestRefusedMachineCeilingLeavesMachineHashUntouched(t *testing.T) {
 
 	// Capture the exact machine:studio hash fields before the refused apply.
 	beforeFields, err := c.HGetAll(ctx, MachineKey("studio")).Result()
-	if err != nil {
-		t.Fatalf("read machine:studio before: %v", err)
-	}
-	if len(beforeFields) == 0 {
-		t.Fatal("expected machine:studio to exist before update")
-	}
+	require.NoError(t, err, "read machine:studio before: %v", err)
+	require.NotEmpty(t, beforeFields, "expected machine:studio to exist before update")
 
 	// Try to lower studio's slots to 10 when its friends desire 64 slots.
-	if _, _, err := st.Update(ctx, KindMachine, "studio", map[string]string{"slots": "10"}, "rowan"); err != nil {
-		t.Fatal(err)
-	}
+	_, _, setupErr27920 := st.Update(ctx, KindMachine, "studio", map[string]string{"slots": "10"}, "rowan")
+	require.NoError(t, setupErr27920)
 	_, err = Apply(ctx, st, ap, KindMachine, "rowan", false, func(Op) {})
-	if err == nil || !errors.Is(err, ErrCeiling) {
-		t.Fatalf("expected ErrCeiling, got %v", err)
-	}
+	assertionMsg591 := []any{"expected ErrCeiling, got %v", err}
+	require.Error(t, err, assertionMsg591...)
+	require.ErrorIs(t, err, ErrCeiling, assertionMsg591...)
 
 	// Capture the machine:studio hash fields after the refused apply.
 	afterFields, err := c.HGetAll(ctx, MachineKey("studio")).Result()
-	if err != nil {
-		t.Fatalf("read machine:studio after: %v", err)
-	}
+	require.NoError(t, err, "read machine:studio after: %v", err)
 
 	// Assert byte-identical / untouched.
-	if len(beforeFields) != len(afterFields) {
-		t.Fatalf("field count changed: before %d, after %d", len(beforeFields), len(afterFields))
-	}
+	require.Len(t, afterFields, len(beforeFields), "field count changed: before %d, after %d", len(beforeFields), len(afterFields))
 	for k, v := range beforeFields {
-		if afterFields[k] != v {
-			t.Errorf("machine:studio field %q was modified: before=%q, after=%q", k, v, afterFields[k])
-		}
+		assert.Equal(t, v, afterFields[k], "machine:studio field %q was modified: before=%q, after=%q", k, v, afterFields[k])
 	}
 }
 
@@ -647,23 +735,21 @@ func TestApplyFriendRefusesWhenCoordinatorClearedAcrossApplies(t *testing.T) {
 	st := seed(t)
 	applyKinds(t, st, ap, "rowan")
 
-	if got := c.Get(ctx, FleetKey("coordinator")).Val(); got != "studio" {
-		t.Fatalf("fleet:coordinator = %q, want studio", got)
-	}
+	scopedGot768 := c.Get(ctx, FleetKey("coordinator")).Val()
+	require.Equal(t, "studio", scopedGot768, "fleet:coordinator = %q, want studio", scopedGot768)
 
 	// Clear fleet:coordinator in Redis.
 	c.Del(ctx, FleetKey("coordinator"))
 
 	// Update friend rowan's slots so an apply has an OpSet for rowan (who has no beat).
-	if _, _, err := st.Update(ctx, KindFriend, "rowan", map[string]string{"slots": "20"}, "rowan"); err != nil {
-		t.Fatal(err)
-	}
+	_, _, setupErr29554 := st.Update(ctx, KindFriend, "rowan", map[string]string{"slots": "20"}, "rowan")
+	require.NoError(t, setupErr29554)
 
 	// Apply friend on the same applier. It must refuse ErrCeiling because fleet coordinator is now empty.
 	_, err := Apply(ctx, st, ap, KindFriend, "rowan", false, func(Op) {})
-	if err == nil || !errors.Is(err, ErrCeiling) {
-		t.Fatalf("expected ErrCeiling when coordinator cleared, got %v", err)
-	}
+	assertionMsg631 := []any{"expected ErrCeiling when coordinator cleared, got %v", err}
+	require.Error(t, err, assertionMsg631...)
+	require.ErrorIs(t, err, ErrCeiling, assertionMsg631...)
 }
 
 // TestApplyFriendRechargesWhenBeatHostChangesAcrossApplies verifies that when a friend's
@@ -680,40 +766,30 @@ func TestApplyFriendRechargesWhenBeatHostChangesAcrossApplies(t *testing.T) {
 	c.HSet(ctx, FriendBeatKey("stella"), "host", "hulk", "at", "1790000000000")
 	applyKinds(t, st, ap, "rowan")
 
-	if got := c.HGet(ctx, "friend:stella:desired", "machine").Val(); got != "hulk" {
-		t.Fatalf("initial stella machine = %q, want hulk", got)
-	}
+	scopedGot801 := c.HGet(ctx, "friend:stella:desired", "machine").Val()
+	require.Equal(t, "hulk", scopedGot801, "initial stella machine = %q, want hulk", scopedGot801)
 
 	// Delete stella from the store and apply to remove stella from the registered friends.
-	if _, err := st.Delete(ctx, KindFriend, "stella", "rowan"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Apply(ctx, st, ap, KindFriend, "rowan", false, func(Op) {}); err != nil {
-		t.Fatal(err)
-	}
+	_, setupErr30847 := st.Delete(ctx, KindFriend, "stella", "rowan")
+	require.NoError(t, setupErr30847)
+	_, setupErr30937 := Apply(ctx, st, ap, KindFriend, "rowan", false, func(Op) {})
+	require.NoError(t, setupErr30937)
 
 	// stella's beat moves to studio.
 	c.HSet(ctx, FriendBeatKey("stella"), "host", "studio", "at", "1790000001000")
 
 	// Re-add stella to the store with 16 slots and apply.
 	friendKind, ok := Lookup(KindFriend)
-	if !ok {
-		t.Fatal("KindFriend not found")
-	}
+	require.True(t, ok, "KindFriend not found")
 	row, err := friendKind.NewRow("stella", map[string]string{"slots": "16", "roles": "reader", "tiers": "frontier,pro"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.Insert(ctx, KindFriend, row, "rowan"); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	_, setupErr31440 := st.Insert(ctx, KindFriend, row, "rowan")
+	require.NoError(t, setupErr31440)
 
-	if _, err := Apply(ctx, st, ap, KindFriend, "rowan", false, func(Op) {}); err != nil {
-		t.Fatal(err)
-	}
+	_, setupErr31526 := Apply(ctx, st, ap, KindFriend, "rowan", false, func(Op) {})
+	require.NoError(t, setupErr31526)
 
 	// stella must now be charged to studio, not hulk.
-	if got := c.HGet(ctx, "friend:stella:desired", "machine").Val(); got != "studio" {
-		t.Fatalf("recharged stella machine = %q, want studio", got)
-	}
+	scopedGot827 := c.HGet(ctx, "friend:stella:desired", "machine").Val()
+	require.Equal(t, "studio", scopedGot827, "recharged stella machine = %q, want studio", scopedGot827)
 }

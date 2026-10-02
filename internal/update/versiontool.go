@@ -1,6 +1,7 @@
 package update
 
 import (
+	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
@@ -21,15 +22,25 @@ func VersionTool(stamp string, env Environment) *tool.Tool {
 		Stamp: stamp,
 		How: `report reads each tool's installed version; snapshot records a directory's binaries;
 diff compares two snapshots; moved writes the note of what two commits' binaries changed.
-It is ONE binary under two names; asking what is latest and installing are nova-update's.
+It is one of two binaries sharing the manifest and report; latest and installing are nova-update's.
 THE MANIFEST is the file --file names, written by hand; report -h states its six rules.
-first run: from a nova-tools checkout, the example lines read the included manifest.`,
+first run: the binary alone; the example lines write a one-tool manifest and read it.`,
 		ExitTable: "0 the verb ran and passed: a report whose every entry answered (under send, whose note nova-bus took), a snapshot whose tools all answer, a diff, a moved note written; 1 the tool said NO (a report or a snapshot with an UNKNOWN tool, a send that was refused or unconfirmed); 2 could not run (a refusal naming the remedy).",
 		Verbs: []tool.Verb{
 			{
+				Name:    "example",
+				Usage:   "example [--out <path>]",
+				Example: "example --out versions.tsv",
+				Effect:  tool.LocalWrite + " with --out, never over another file; without it, inspection: prints the example manifest",
+				Flags: func(f *tool.Flags) {
+					f.String("out", "", "write the example manifest to this path (an existing file is never overwritten); without it, print the manifest")
+				},
+				Run: func(c *tool.Call) *tool.Out { return exampleVerb("nova-version", c.Str("out")) },
+			},
+			{
 				Name:   "moved",
-				Usage:  "moved --from <sha> --to <sha> --repo <dir> --out <path>",
-				Effect: tool.LocalWrite,
+				Usage:  "moved --from <sha> --to <sha> --repo <dir> --out <path> [--timeout <d>] [--budget <d>] [--dry-run]",
+				Effect: tool.LocalWrite + "; with --dry-run, the note is printed and nothing is written but the builds' scratch",
 				Flags: func(f *tool.Flags) {
 					f.Required("from", "the revision to compare from")
 					f.Required("to", "the revision to compare to")
@@ -37,30 +48,42 @@ first run: from a nova-tools checkout, the example lines read the included manif
 					f.Required("out", "the path of the note to write")
 					f.Duration("timeout", movedChildTimeout, "one child's deadline")
 					f.Duration("budget", movedBudget, "whole run deadline")
+					f.Bool("dry-run", false, "build and read both revisions and print the note; write no --out")
 					f.Check(positiveBounds)
 				},
 				Run: func(c *tool.Call) *tool.Out { return movedVerb(c, env) },
 			},
 			{
 				Name:    "snapshot",
-				Usage:   "snapshot " + manifest + "\nsnapshot --bin <dir> --out <file.tsv> [--timeout <d>] [--budget <d>]",
-				Example: "snapshot --file cmd/nova-version/testdata/example.tsv",
-				Effect:  tool.LocalWrite + "; with --file, inspection",
+				Usage:   "snapshot " + manifest + "\nsnapshot --bin <dir> --out <file.tsv> [--timeout <d>] [--budget <d>] [--max <n>] [--dry-run]",
+				Example: "snapshot --file versions.tsv",
+				Effect:  tool.LocalWrite + "; with --file or --dry-run, inspection: writes nothing",
 				Flags: func(f *tool.Flags) {
 					f.String("file", "", "manifest of adopted tools: count how many answer")
 					f.String("bin", "", "directory holding the binaries")
 					f.String("out", "", "TSV snapshot to write")
 					f.Duration("timeout", snapshotChildTimeout, "one binary's read deadline")
 					f.Duration("budget", snapshotBudget, "whole run deadline")
+					f.Bool("dry-run", false, "read every binary and list the rows; write no --out")
 					// Neither path is guessed: both are the caller's to name
 					// (SPEC-UPDATE rule 1), unless --file asks the manifest shape.
+					// The refusal names both shapes, so either is the next call.
 					f.Check(func(c *tool.Call) {
-						if !c.Given("file") {
-							c.Want("bin", "the directory holding the binaries, for example ./bin")
-							c.Want("out", "the TSV snapshot to write, for example ./before.tsv")
+						var missing []string
+						for _, n := range []string{"bin", "out"} {
+							if c.Str(n) == "" {
+								missing = append(missing, "--"+n)
+							}
+						}
+						switch {
+						case c.Given("file") && len(missing) < 2:
+							c.Problem("--file counts a manifest's adopted tools and --bin/--out inventory a directory; give one shape, not both")
+						case !c.Given("file") && len(missing) > 0:
+							c.Problem("missing " + strings.Join(missing, ", ") + "; refusing to guess (--bin wants the directory holding the binaries, for example ./bin, and --out the TSV snapshot to write, for example ./before.tsv; or give --file <manifest> alone to count which adopted tools answer)")
 						}
 					})
 					f.Check(positiveBounds)
+					f.Max()
 				},
 				Run: snapshotVerb,
 			},
@@ -79,7 +102,7 @@ first run: from a nova-tools checkout, the example lines read the included manif
 				Usage: "report " + manifest + " [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]",
 				// The second example line is the version verb's: the banner's
 				// examples are its verbs' in order, and version is last.
-				Example: "report --file cmd/nova-version/testdata/example.tsv\nversion",
+				Example: "report --file versions.tsv\nversion",
 				// The strongest effect a flag gives it: --send delivers the note and
 				// writes the --snapshot state file; without --send it only reads.
 				Effect: tool.Delivery + "; only with --send, which also writes the --snapshot state file; " +
@@ -137,5 +160,9 @@ func reportVerb(c *tool.Call, send bool, env Environment) *tool.Out {
 		max: c.Int("max"), timeout: c.Dur("timeout"), budget: c.Dur("budget"),
 		kinds: *c.Get("kind").(*kindFlags), draft: c.Bool("draft"), send: send || (c.Given("send") && c.Bool("send")),
 	}
-	return tool.Exit(checked("nova-version", "report", "REPORT", o, nil, c.Stdout, c.Stderr, env))
+	verb := "report"
+	if send {
+		verb = "send"
+	}
+	return tool.Exit(emit(checked("nova-version", verb, o, nil, env), false, o.max, c.Stdout, c.Stderr))
 }

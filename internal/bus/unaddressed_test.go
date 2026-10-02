@@ -4,6 +4,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // The two shapes off a real bus, and the two that must NOT be reported.
@@ -41,20 +43,19 @@ func TestUnaddressedReason(t *testing.T) {
 		"from-bo/2026-09-07T0002Z-split.md",
 		"from-bo/2026-09-07T0003Z-none.md",
 	}
-	if strings.Join(paths, ",") != strings.Join(want, ",") {
-		t.Fatalf("unaddressed = %v, want %v", paths, want)
-	}
+	require.Equal(t, strings.Join(want, ","), strings.Join(paths, ","), "unaddressed = %v, want %v", paths, want)
 	// The reason names the token that reached nobody, so the writer knows what to fix.
 	if !strings.Contains(got[0].Reason, `"Team"`) || !strings.Contains(got[0].Reason, "in nobody's inbox") {
-		t.Fatalf("the reason does not name the token or say what it costs: %q", got[0].Reason)
+		require.False(t, !strings.Contains(got[0].Reason, `"Team"`) || !strings.Contains(got[0].Reason, "in nobody's inbox"), "the reason does not name the token or say what it costs: %q", got[0].Reason)
 	}
 	if !strings.Contains(got[2].Reason, "no To line") {
-		t.Fatalf("a note with no To line is reported as %q", got[2].Reason)
+		require.Contains(t, got[2].Reason, "no To line", "a note with no To line is reported as %q", got[2].Reason)
 	}
 	// A file that will not PARSE is not reported here: it has no header to read, and
 	// UNREADABLE is what says so.
 	broken := &Note{Path: "from-bo/x.md", Parse: &ParseError{Err: errors.New("not a header line")}}
-	if _, yes := UnaddressedReason(tab.Config, broken); yes {
-		t.Fatal("an unreadable file was reported as unaddressed; it has no To line to resolve")
+	{
+		_, yes := UnaddressedReason(tab.Config, broken)
+		require.False(t, yes, "an unreadable file was reported as unaddressed; it has no To line to resolve")
 	}
 }

@@ -4,6 +4,7 @@ package main
 // existing path that is not a directory is refused by name and never overwritten (#1502).
 
 import (
+	"github.com/stretchr/testify/assert"
 	"path/filepath"
 	"testing"
 )
@@ -30,8 +31,9 @@ func TestFoldOutAbsent(t *testing.T) {
 		wantExit(t, r, 2)
 		wantContains(t, r.stderr, "is not a directory")
 		wantContains(t, r.stderr, out)
-		if got := read(t, out); got != "a regular file\n" {
-			t.Errorf("the file at --out was overwritten: %q", got)
+		{
+			got := read(t, out)
+			assert.False(t, got != "a regular file\n", "the file at --out was overwritten: %q", got)
 		}
 	})
 }

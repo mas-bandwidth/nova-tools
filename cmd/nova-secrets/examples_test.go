@@ -176,7 +176,8 @@ func TestTheHelpExampleIsWhatKeygenPrints(t *testing.T) {
 func TestTheHelpExamplesAreWhatTheSeatsVerbsPrint(t *testing.T) {
 	t.Parallel()
 	h := newSittingHome(t)
-	placed := "machine=bench-a secret=DEEPSEEK_API_KEY path=/home/bench/.config/nova-secrets/DEEPSEEK_API_KEY.env sha256=e54ba31e7c194b583223ccf5875280256f521f5d0810de4e745702d732ea7111 stamp=-"
+	placed := "machine=bench-a secret=DEEPSEEK_API_KEY path=/home/bench/.config/nova-secrets/DEEPSEEK_API_KEY.env file=ada.yaml head=- blob=" +
+		blobOf(t, filepath.Join(h.home, "secrets", "ada.yaml")) + " stamp=-"
 	runSitting(t, h, bannerExamples(t), []onboarding.Step{
 		{Line: "$ nova-secrets names --store ./secrets --as ada", Want: []string{
 			"SECRETS NAME key=DEEPSEEK_API_KEY clear=false",
@@ -185,7 +186,7 @@ func TestTheHelpExamplesAreWhatTheSeatsVerbsPrint(t *testing.T) {
 			"SECRETS NAMES OK as=ada keys=3 shown=3 sealed=3 clear=0",
 		}},
 		{Line: "$ nova-secrets check --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops", Want: []string{
-			"SECRETS CHECK OK  as=ada recipients=2 files=1 sealed=1 mine=1 foreign=0 clear=0 head=-",
+			"SECRETS CHECK OK as=ada recipients=2 files=1 sealed=1 mine=1 foreign=0 clear=0 head=-",
 		}},
 		{Line: "$ nova-secrets exec --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops --only GH_TOKEN --require GH_TOKEN -- gh api user", Want: []string{
 			"gh api user token=set",

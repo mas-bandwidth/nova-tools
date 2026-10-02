@@ -62,13 +62,14 @@ const SchemaVersion = "nova-memory/1"
 // every rare-word query drown in stubs.
 const MinTerms = 3
 
-// Chunk is one indexed paragraph. Text is NORMALIZED (see Normalize); the raw
-// bytes are not kept — receipts quote normalized text, and the file:para
-// anchor is the stable address a judge needs to go read the original.
+// Chunk is one indexed paragraph. Text stays normalized for retrieval;
+// Original and Line locate and quote the source without changing paragraph IDs.
 type Chunk struct {
-	File  string // slash path relative to the corpus root
-	Para  int    // ordinal among the file's indexable paragraphs
-	Class string // top-level directory, "." for root files — the corpus classifies itself
+	File     string // slash path relative to the corpus root
+	Line     int    // first source line, 1-based
+	Original string // source paragraph with normalized line endings
+	Para     int    // ordinal among the file's indexable paragraphs
+	Class    string // top-level directory, "." for root files — the corpus classifies itself
 	// Root is the root directory this chunk was indexed from, as the caller
 	// named it. It is empty for a single-root Build and set by Merge, so a
 	// receipt spanning several roots can name which one each hit came from.
@@ -272,7 +273,12 @@ func Build(fsys fs.FS, exclude func(p string) bool) (*Corpus, error) {
 			class = f[:i]
 		}
 		para := 0
+		line := 1
 		for _, p := range strings.Split(text, "\n\n") {
+			start := line
+			line += strings.Count(p, "\n") + 2
+			// Blank lines left by repeated separators are not paragraph content.
+			start += len(p) - len(strings.TrimLeft(p, "\n"))
 			terms := Tokenize(p)
 			if len(terms) < MinTerms {
 				continue
@@ -283,7 +289,7 @@ func Build(fsys fs.FS, exclude func(p string) bool) (*Corpus, error) {
 			}
 			id := int32(len(c.Chunks))
 			c.Chunks = append(c.Chunks, Chunk{
-				File: f, Para: para, Class: class, Text: Normalize(p),
+				File: f, Para: para, Line: start, Original: strings.Trim(p, "\n"), Class: class, Text: Normalize(p),
 				Terms: tf, Len: len(terms), FMName: fmName, FMType: fmType,
 			})
 			for t := range tf {

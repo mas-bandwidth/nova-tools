@@ -1,0 +1,46 @@
+# THE NOVA SPRINT TABLES ARE LOCKED.
+# Glenn, 2026-10-01: "i never want new things unless i ask for them" / "i dislike this
+# drift from the design of nova sprint tables that is *complete and locked*."
+#
+# One line per column: table.column projection fold hidden [label=...], in the order the
+# table has them, then the order the sprint view shows the tables in. internal/ci
+# (TestSprintTablesAreLocked) renders the same text from schema.go and is red on any
+# difference. Change a table's shape only when Glenn asks for it, and then change this
+# file in the same PR so a read sees it.
+#
+# Change, 2026-10-01, asked by Glenn in words: "can you please add a final column to the
+# work stream table, which is "cost". This is the sum of each landed card's total cost
+# for that work stream, and then a total at the bottom." work.cost is that column: a text
+# cell (the stream's landed cost, "$" and four places, "-" when none was priced) and the
+# footer the exact sum over the streams. Held by TestSprintTablesAreLocked.
+work.waiting count sum shown
+work.ready count sum shown
+work.working count sum shown
+work.review count sum shown
+work.merging count sum shown
+work.landed count sum shown
+work.cost text sum shown
+readers.asked count sum shown
+readers.reading count sum shown
+readers.ok count sum shown
+readers.broken count sum shown
+merge.queued count sum shown
+merge.merged count sum shown
+merge.stuck count sum shown
+merge.ci text none shown
+merge.state text none shown
+merge.since text none hidden
+merge.returned count sum hidden
+merge.ctl first none hidden
+fleet.ready count sum shown
+fleet.working count sum shown
+fleet.width text sum shown
+fleet.done sum(ok+failed) sum shown
+fleet.okpct pct(ok/ok+failed) pooled shown label=ok%
+fleet.status text none shown
+fleet.load text none shown
+fleet.withdrawn count sum hidden
+fleet.ok count sum hidden
+fleet.failed count sum hidden
+fleet.ctl first none hidden
+view work readers merge fleet

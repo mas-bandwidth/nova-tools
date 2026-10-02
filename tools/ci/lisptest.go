@@ -61,7 +61,7 @@ func lispTest(e env, r cmdRunner, pid int, args []string) int {
 			fmt.Fprintln(e.stderr, "lisp-test: lisp/ exists and holds no nova-work; this verb does not know how to test it")
 			return 1
 		}
-		fmt.Fprintln(e.stdout, "lisp-test: nothing to test (lisp/ holds no system; nova-work is parked under deprecated/lisp/nova-work)")
+		fmt.Fprintln(e.stdout, "lisp-test: nothing to test (lisp/ holds no system; the old nova-work kernel lives in the nova-work-old repository)")
 		return 0
 	}
 

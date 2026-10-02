@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"time"
 
@@ -184,6 +185,33 @@ func (st *Store) Beat(ctx context.Context, member string, given *float64, src ho
 	return b, st.noteStranger(ctx, member)
 }
 
+// TouchBeat is the beat that releasing a hold gives a member that has beaten
+// (docs/SPEC-SPRINT.md section 5; the coordinator's fleet up counts as a
+// beat): its last beat becomes the store's clock now, its load and samples as
+// they were, so the tick after the release, within a beat window, finds it up
+// and takes none of its cards back. A member that never beat has no record to
+// touch: it stays down until it beats. It says whether it wrote.
+func (st *Store) TouchBeat(ctx context.Context, member string) (bool, error) {
+	kv, err := st.rootKV()
+	if err != nil {
+		return false, err
+	}
+	raw, ok, err := kv.GetKey(ctx, beatKey(member))
+	if err != nil || !ok {
+		return false, err
+	}
+	var b sprint.Beat
+	if err := json.Unmarshal([]byte(raw), &b); err != nil || !b.Beaten() {
+		return false, nil // an unreadable record is no beat: the next beat replaces it
+	}
+	b.At = st.now().UTC().Truncate(time.Second)
+	out, err := json.Marshal(b)
+	if err != nil {
+		return false, err
+	}
+	return true, kv.SetKey(ctx, beatKey(member), string(out))
+}
+
 // Beats is the beat records of the members, in one exchange where the store
 // can; a member that has never beaten has none.
 func (st *Store) Beats(ctx context.Context, members []string) (map[string]sprint.Beat, error) {
@@ -199,20 +227,9 @@ func (st *Store) Beats(ctx context.Context, members []string) (map[string]sprint
 	for i, m := range members {
 		names[i] = beatKey(m)
 	}
-	var vals []string
-	var oks []bool
-	if kg, ok := kv.(KeysGetter); ok {
-		if vals, oks, err = kg.GetKeys(ctx, names); err != nil {
-			return nil, err
-		}
-	} else {
-		for _, n := range names {
-			v, ok, err := kv.GetKey(ctx, n)
-			if err != nil {
-				return nil, err
-			}
-			vals, oks = append(vals, v), append(oks, ok)
-		}
+	vals, oks, err := getKeys(ctx, kv, names)
+	if err != nil {
+		return nil, err
 	}
 	for i, m := range members {
 		var b sprint.Beat
@@ -221,6 +238,23 @@ func (st *Store) Beats(ctx context.Context, members []string) (map[string]sprint
 		}
 	}
 	return out, nil
+}
+
+// getKeys reads machine records, in one exchange where the store can.
+func getKeys(ctx context.Context, kv KV, names []string) ([]string, []bool, error) {
+	if kg, ok := kv.(KeysGetter); ok {
+		return kg.GetKeys(ctx, names)
+	}
+	var vals []string
+	var oks []bool
+	for _, n := range names {
+		v, ok, err := kv.GetKey(ctx, n)
+		if err != nil {
+			return nil, nil, err
+		}
+		vals, oks = append(vals, v), append(oks, ok)
+	}
+	return vals, oks, nil
 }
 
 // SyncFleet brings every display cell of the fleet up to date, reading the
@@ -257,6 +291,7 @@ func (st *Store) SyncFleet(ctx context.Context) (bool, error) {
 		}
 	}
 	now := st.now()
+	status := map[string]string{}
 	diffs := map[string]map[string]string{}
 	for _, row := range shape.Rows {
 		m, _ := rs.Member(pinned.sid(sprint.CtlID(row.Key)))
@@ -266,11 +301,16 @@ func (st *Store) SyncFleet(ctx context.Context) (bool, error) {
 			b := beats[row.Key]
 			want[sprint.Status], want[sprint.Load] = sprint.MemberStatus(ctl, b, now), sprint.LoadText(b, now)
 		}
+		status[row.Key] = want[sprint.Status]
 		if d := rowDiff(row, want); len(d) > 0 {
 			diffs[row.Key] = d
 		}
 	}
-	return len(diffs) > 0, pinned.setRows(ctx, shape.Name, diffs)
+	if err := pinned.setRows(ctx, shape.Name, diffs); err != nil {
+		return false, err
+	}
+	ordered, err := st.orderFleet(ctx, shape, status)
+	return len(diffs) > 0 || ordered, err
 }
 
 // fleetBeats is the fleet's shape, from the shapes a tick read or else read
@@ -299,11 +339,13 @@ func (st *Store) fleetBeats(ctx context.Context, shapes []ntable.Table) (ntable.
 	return shape, beats, err
 }
 
-// freshOf is the members whose beat is fresh at now, in row order.
+// freshOf is the members that are alive at now (fewer than MissedBeatsDown
+// beat windows missed), in row order: the set whose change is a member
+// coming or going.
 func freshOf(shape ntable.Table, beats map[string]sprint.Beat, now time.Time) []string {
 	var out []string
 	for _, r := range shape.Rows {
-		if beats[r.Key].Fresh(now) {
+		if beats[r.Key].Alive(now) {
 			out = append(out, r.Key)
 		}
 	}
@@ -316,28 +358,35 @@ func freshOf(shape ntable.Table, beats map[string]sprint.Beat, now time.Time) []
 // held: a hold is set and released only by a verb, whose step brings every
 // cell up to date (SyncFleet). It says whether it wrote.
 func (st *Store) showFleet(ctx context.Context, shape ntable.Table, beats map[string]sprint.Beat, now time.Time) (bool, error) {
-	diffs := map[string]map[string]string{}
+	diffs, status := map[string]map[string]string{}, map[string]string{}
 	for _, row := range shape.Rows {
 		b := beats[row.Key]
 		want := map[string]string{sprint.Load: sprint.LoadText(b, now)}
 		if row.Texts[sprint.Status] != sprint.Held {
 			want[sprint.Status] = sprint.Down
-			if b.Fresh(now) {
+			if b.Alive(now) {
 				want[sprint.Status] = sprint.Up
 			}
+		}
+		status[row.Key] = row.Texts[sprint.Status]
+		if s, ok := want[sprint.Status]; ok {
+			status[row.Key] = s
 		}
 		if d := rowDiff(row, want); len(d) > 0 {
 			diffs[row.Key] = d
 		}
 	}
-	if len(diffs) == 0 {
-		return false, nil
+	if len(diffs) > 0 {
+		pinned, err := st.pin(ctx)
+		if err != nil {
+			return false, err
+		}
+		if err := pinned.setRows(ctx, shape.Name, diffs); err != nil {
+			return false, err
+		}
 	}
-	pinned, err := st.pin(ctx)
-	if err != nil {
-		return false, err
-	}
-	return true, pinned.setRows(ctx, shape.Name, diffs)
+	ordered, err := st.orderFleet(ctx, shape, status)
+	return len(diffs) > 0 || ordered, err
 }
 
 // rowDiff is the display cells of a row that differ from want.
@@ -377,4 +426,61 @@ func (st *Store) setRows(ctx context.Context, table string, rows map[string]map[
 		}
 	}
 	return nil
+}
+
+// RowsOrderer is a store that puts a table's rows in an order (the table
+// layer's row order: the named rows first, in that order).
+type RowsOrderer interface {
+	RowsOrder(ctx context.Context, table string, rows []string) error
+}
+
+// statusRank is a fleet row's place by its status cell: up first, then held,
+// then down (the owner, 2026-10-01: "Please sort the fleet table such that we
+// sort first alphabetically by machine name (as is current), then stable sort
+// by status, such that "up" is first, then "held" then "down"").
+func statusRank(status string) int {
+	switch status {
+	case sprint.Up:
+		return 0
+	case sprint.Held:
+		return 1
+	case sprint.Down:
+		return 2
+	}
+	return 3
+}
+
+// FleetOrder is the fleet's rows by name, then stably by status: up, held,
+// down, anything else last. status is each row's status cell.
+func FleetOrder(rows []string, status map[string]string) []string {
+	out := slices.Clone(rows)
+	slices.Sort(out)
+	slices.SortStableFunc(out, func(a, b string) int { return statusRank(status[a]) - statusRank(status[b]) })
+	return out
+}
+
+// orderFleet puts the fleet's rows in FleetOrder when they are not, where the
+// store can order rows; status is each row's status cell as it now stands. It
+// says whether it wrote.
+func (st *Store) orderFleet(ctx context.Context, shape ntable.Table, status map[string]string) (bool, error) {
+	if _, ok := st.B.(RowsOrderer); !ok {
+		return false, nil
+	}
+	var rows []string
+	for _, r := range shape.Rows {
+		rows = append(rows, r.Key)
+	}
+	want := FleetOrder(rows, status)
+	if slices.Equal(rows, want) {
+		return false, nil
+	}
+	pinned, err := st.pin(ctx)
+	if err != nil {
+		return false, err
+	}
+	ro, ok := pinned.B.(RowsOrderer)
+	if !ok {
+		return false, nil
+	}
+	return true, ro.RowsOrder(ctx, shape.Name, want)
 }

@@ -8,6 +8,9 @@ page is section 1, the lowest layer: the tree's shape, the import that fills it,
 that proves it holds exactly what the source holds. The verbs that query and change the tree, and
 its index, are specified on their own page and stand on this one.
 
+The old nova-work and its modules live in the repository `nova-work-old`, beside this one in the
+same organization, for reference only.
+
 ## 1.1 The layer
 
 | part | what it is | where |

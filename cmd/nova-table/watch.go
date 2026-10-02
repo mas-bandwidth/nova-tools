@@ -346,7 +346,7 @@ func publish(out, text string, stdout, stderr io.Writer, verb string) int {
 
 // writeAtomic writes body to <path>.tmp.<pid> in path's own directory,
 // fsyncs it, and renames it over path, the publish the sprint table used
-// (deprecated/cmd/nova-sprint/table_live.go): a reader sees the old text or
+// (the old nova-sprint's table_live.go): a reader sees the old text or
 // the new one, never half of one.
 func writeAtomic(path, body string) error {
 	if err := atomicfile.Write(filepath.Clean(path), []byte(body), 0o644); err != nil {

@@ -479,7 +479,19 @@ do
   function T.prefix(name, epoch)
     return 'table:' .. name .. (epoch == '0' and '' or ':' .. epoch)
   end
-  function T.open(name, fields, historical, repair)
+  -- T.active(cfg): the epoch a configuration is at: epoch 0 without an epoch
+  -- key, else the field of the key's hash.
+  function T.active(cfg)
+    return cfg.epoch_key == '' and '0' or (redis.call('HGET', cfg.epoch_key, cfg.epoch_field) or '0')
+  end
+  -- T.open(name, fields, historical, repair, orphan): the table's definition
+  -- as the store holds it. A table that is gone while its identity hash is
+  -- left (the orphan: an earlier build's drop --definition kept the identity)
+  -- is refused ORPHAN (naming the epoch its remedy is written at), and opens,
+  -- empty, only for the verb that removes it (orphan true: drop --definition).
+  -- A table created where the rows of an earlier table of the name are left at
+  -- its epoch is refused RESIDUE, naming the keys; it never adopts them.
+  function T.open(name, fields, historical, repair, orphan)
     if not T.name(name) then return nil, T.refuse('NAME') end
     local key = 'table:' .. name
     local template = T.hash(key)
@@ -487,7 +499,12 @@ do
     if fields then
       local _, err = T.shape(fields)
       if err then return nil, err end
-      if next(identity) and not T.sameconfig(identity, fields) then return nil, T.refuse('CONFIG') end
+      if next(identity) and not T.sameconfig(identity, fields) then
+        if next(template) then return nil, T.refuse('CONFIG') end
+        local at = T.active(T.config(identity))
+        if not T.uint(at) then return nil, T.refuse('EPOCH', at) end
+        return nil, T.refuse('ORPHAN', at)
+      end
       if next(template) then
         for k, v in pairs(fields) do
           if k ~= 'created_at' and k ~= 'epoch_key' and k ~= 'epoch_field' and k ~= 'member_prefix' and template[k] ~= v then
@@ -499,11 +516,18 @@ do
     end
     local h = next(template) and template or fields
     local cfg = T.config(h or identity)
-    local active = cfg.epoch_key == '' and '0' or (redis.call('HGET', cfg.epoch_key, cfg.epoch_field) or '0')
+    local active = T.active(cfg)
     if not T.uint(active) then return nil, T.refuse('EPOCH', active) end
     local epoch = historical or active
     if not T.uint(epoch) then return nil, T.refuse('EPOCH', tostring(epoch)) end
     local prefix = T.prefix(name, epoch)
+    if fields and not next(template) and not historical then
+      local stray = {}
+      for _, k in ipairs({prefix .. ':rows', prefix .. ':props'}) do
+        if redis.call('EXISTS', k) == 1 then stray[#stray + 1] = k end
+      end
+      if #stray > 0 then return nil, T.refuse('RESIDUE', active, unpack(stray)) end
+    end
     local snap = T.hash(prefix .. ':definition')
     if historical and snap.order then
       h = {}
@@ -514,15 +538,22 @@ do
       if next(template) and T.uintgt(epoch, active) then return nil, T.refuse('EPOCHAHEAD', epoch, active) end
       return nil, T.refuse('NOTABLE')
     end
-    if not h then return nil, T.refuse('NOTABLE') end
-    local cols, err = T.shape(h, repair)
-    if not cols then return nil, err end
+    local cols, err
+    local orphaned = not h and next(identity) ~= nil
+    if orphaned then
+      if not orphan then return nil, T.refuse('ORPHAN', active) end
+      h, cols = {}, {}
+    else
+      if not h then return nil, T.refuse('NOTABLE') end
+      cols, err = T.shape(h, repair)
+      if not cols then return nil, err end
+    end
     local revision = historical and snap._revision or redis.call('HGET', key .. ':revision', 'n')
     revision = revision or '0'
     if not T.uint(revision) then return nil, T.refuse('REVISION', revision) end
     return {name=name, key=key, prefix=prefix, epoch=epoch, active=active, revision=revision,
       h=h, cols=cols, ncols=#cols, cfg=cfg, snap=snap, present=snap._present ~= '0',
-      newtemplate=not next(template), newidentity=not next(identity), commands={}, cells={}, members={}}
+      newtemplate=not next(template) and not orphaned, newidentity=not next(identity), commands={}, cells={}, members={}}
   end
   function T.def(name, historical)
     local d, err = T.open(name, nil, historical)
@@ -1083,7 +1114,7 @@ do
         if type(fields) ~= 'table' then return T.refuse('DEFINITION') end
       end
       local edit = verb == 'set' and T.decode(args[2])
-      local d, err = T.open(args[1], fields, nil, edit and edit.columns ~= nil)
+      local d, err = T.open(args[1], fields, nil, edit and edit.columns ~= nil, verb == 'drop_definition')
       if not d then return err end
       local missing = not d.present and not declaration and verb ~= 'drop_definition'
       if opts.epoch ~= d.active then
@@ -1441,6 +1472,47 @@ do
     if loss then return nil, loss end
     return {'OK', 1}
   end))
+  -- T.sweep(d): the rows of every epoch before the active one, with their
+  -- cells and properties, and the places their members' records hold: what a
+  -- drop --definition removes beyond the active epoch, so no later table of
+  -- the name has rows to adopt. The epochs are walked 0 .. active - 1, under a
+  -- bound; the snapshot of each gives the columns whose cells are owned.
+  T.sweep_epochs = 1000
+  function T.sweep(d)
+    if #d.active > 3 then return T.refuse('LIMIT', 'epochs to sweep', T.sweep_epochs, d.active) end
+    for n = 0, tonumber(d.active) - 1 do
+      local e = tostring(n)
+      local prefix = T.prefix(d.name, e)
+      local h = {}
+      for k, v in pairs(T.hash(prefix .. ':definition')) do
+        if string.sub(k, 1, 1) ~= '_' then h[k] = v end
+      end
+      local cols = h.order and T.shape(h, true) or {}
+      for _, row in ipairs(redis.call('ZRANGE', prefix .. ':rows', 0, -1)) do
+        local rh = T.hash(prefix .. ':row:' .. row)
+        for _, col in ipairs(cols) do
+          local bound = rh['key:' .. col.name]
+          if not col.noset and (not bound or bound == '') then
+            local key = prefix .. ':cell:' .. row .. ':' .. col.name
+            for _, id in ipairs(redis.call('ZRANGE', key, 0, -1)) do
+              local mkey = d.cfg.member_prefix .. id
+              local rec = T.hash(mkey)
+              if rec['place:' .. d.name] == T.place(row, col.name) and (rec.epoch or '0') == e then
+                local after = T.next(rec.revision or '0')
+                if not after then return T.refuse('OVERFLOW', id) end
+                T.stage(d, 'HDEL', mkey, 'place:' .. d.name)
+                T.stage(d, 'HSET', mkey, 'revision', after)
+              end
+            end
+            T.stage(d, 'DEL', key)
+          end
+        end
+        T.stage(d, 'DEL', prefix .. ':row:' .. row)
+      end
+      T.stage(d, 'DEL', prefix .. ':rows')
+      T.stage(d, 'DEL', prefix .. ':props')
+    end
+  end
   function T.delete(d, args, op)
     local rows = redis.call('ZRANGE', T.rowskey(d), 0, -1)
     for _, row in ipairs(rows) do
@@ -1466,8 +1538,16 @@ do
       T.stage(d, 'DEL', T.opskey(d.name))
     end
     if op == 'drop_definition' then
+      local swept = T.sweep(d)
+      if swept then return nil, swept end
       redis.call('SCARD', 'tables')
       T.stage(d, 'DEL', d.key)
+      -- the table's identity goes with its template, so a table created again
+      -- under the name is a new table with its own configuration (the orphan
+      -- an earlier build left is removed here, too); T.finish does not write
+      -- it back
+      T.stage(d, 'DEL', d.key .. ':identity')
+      d.newidentity = false
       T.stage(d, 'SREM', 'tables', d.name)
     end
     return {'OK', #rows}

@@ -4,12 +4,14 @@ package main
 
 import (
 	"context"
+	"github.com/redis/go-redis/v9"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
-	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // shellSplit splits a command line the way a shell does for the single-quote
@@ -55,17 +57,12 @@ func shellSplit(line string) []string {
 func nextCommand(t *testing.T, refusal string) []string {
 	t.Helper()
 	_, cmd, ok := strings.Cut(refusal, "; run: ")
-	if !ok {
-		t.Fatalf("no next command in %q", refusal)
-	}
+	require.True(t, ok, "no next command in %q", refusal)
 	cmd = strings.TrimSpace(cmd)
-	if strings.ContainsAny(cmd, "<>") {
-		t.Fatalf("the next command holds a placeholder: %q", cmd)
-	}
+	require.False(t, strings.ContainsAny(cmd, "<>"), "the next command holds a placeholder: %q", cmd)
 	words := shellSplit(cmd)
-	if len(words) < 2 || words[0] != "nova-table" {
-		t.Fatalf("next command %q is not a nova-table command", cmd)
-	}
+	require.GreaterOrEqual(t, len(words), 2, "next command %q is not a nova-table command", cmd)
+	require.Equal(t, "nova-table", words[0], "next command %q is not a nova-table command", cmd)
 	return words[1:]
 }
 
@@ -83,9 +80,7 @@ func withStore(t *testing.T, addr string, words []string) []string {
 			best = len(w)
 		}
 	}
-	if best == 0 {
-		t.Fatalf("no verb in %q", words)
-	}
+	require.NotEqualValues(t, 0, best, "no verb in %q", words)
 	out := append([]string{}, words[:best]...)
 	out = append(out, "--redis", addr)
 	return append(out, words[best:]...)
@@ -95,9 +90,9 @@ func runsWhenPasted(t *testing.T, addr, name, refusal string) {
 	t.Helper()
 	words := nextCommand(t, refusal)
 	code, stdout, stderr := runTable(withStore(t, addr, words)...)
-	if code != 0 || stderr != "" || stdout == "" {
-		t.Errorf("%s: %q exit %d\n stdout %q\n stderr %q", name, strings.Join(words, " "), code, stdout, stderr)
-	}
+	assert.EqualValues(t, 0, code, "%s: %q exit %d\n stdout %q\n stderr %q", name, strings.Join(words, " "), code, stdout, stderr)
+	assert.Empty(t, stderr, "%s: %q exit %d\n stdout %q\n stderr %q", name, strings.Join(words, " "), code, stdout, stderr)
+	assert.NotEmpty(t, stdout, "%s: %q exit %d\n stdout %q\n stderr %q", name, strings.Join(words, " "), code, stdout, stderr)
 }
 
 // Each refusal of `nova-table batch`, and of a read set, ends in a command
@@ -109,30 +104,22 @@ func TestBatchRefusalNextCommandsRun(t *testing.T) {
 	defer c.Close()
 	ctx := context.Background()
 	cols, err := ntable.ParseColumns("ready,working,done")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := ntable.Create(ctx, c, ntable.Table{Name: "demo", Columns: cols}, time.Now()); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, "%v", err)
+	require.NoError(t, ntable.Create(ctx, c, ntable.Table{Name: "demo", Columns: cols}, time.Now()))
 	for _, r := range []string{"build", "test"} {
-		if _, err := ntable.RowAdd(ctx, c, "demo", r, ntable.RowSpec{}); err != nil {
-			t.Fatal(err)
+		{
+			_, err := ntable.RowAdd(ctx, c, "demo", r, ntable.RowSpec{})
+			require.NoError(t, err, "%v", err)
 		}
 	}
 	code, _, stderr := runTable("batch", "--redis", addr, `{"schema":1,"table":"demo","epoch":"0","expected_table_revision":"3","operation_id":"seed","members":[{"id":"a","expect":{"absent":true},"create":{"row":"build","col":"ready","score":1},"set":{"role":"x"}}]}`)
-	if code != 0 {
-		t.Fatalf("seed: %d %s", code, stderr)
+	require.EqualValues(t, 0, code, "seed: %d %s", code, stderr)
+	{
+		_, err := ntable.RowAdd(ctx, c, "demo", "bnd", ntable.RowSpec{Binds: map[string]string{"ready": "ext:ready"}, Owner: "o"})
+		require.NoError(t, err, "%v", err)
 	}
-	if _, err := ntable.RowAdd(ctx, c, "demo", "bnd", ntable.RowSpec{Binds: map[string]string{"ready": "ext:ready"}, Owner: "o"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := c.Set(ctx, ntable.MemberKey("junk"), "s", 0).Err(); err != nil {
-		t.Fatal(err)
-	}
-	if err := c.ZAdd(ctx, ntable.CellKey("demo", "test", "done"), redis.Z{Score: 1, Member: "ghost"}).Err(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, c.Set(ctx, ntable.MemberKey("junk"), "s", 0).Err())
+	require.NoError(t, c.ZAdd(ctx, ntable.CellKey("demo", "test", "done"), redis.Z{Score: 1, Member: "ghost"}).Err())
 	rev := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
 	manifest := func(table, epoch, revision, op, members string) string {
 		return `{"schema":1,"table":"` + table + `","epoch":"` + epoch + `","expected_table_revision":"` + revision + `","operation_id":"` + op + `","members":[` + members + `]}`
@@ -159,12 +146,11 @@ func TestBatchRefusalNextCommandsRun(t *testing.T) {
 	for _, tc := range cases {
 		code, stdout, stderr := runTable("batch", "--redis", addr, tc.manifest)
 		if code != 1 || stdout != "" {
-			t.Errorf("%s: exit %d, stdout %q, stderr %q; want a refusal", tc.name, code, stdout, stderr)
+			assert.EqualValues(t, 1, code, "%s: exit %d, stdout %q, stderr %q; want a refusal", tc.name, code, stdout, stderr)
+			assert.Empty(t, stdout, "%s: refusal wrote stdout: %s", tc.name, stdout)
 			continue
 		}
-		if !strings.Contains(stderr, "changed=no") {
-			t.Errorf("%s: no changed=no: %s", tc.name, stderr)
-		}
+		assert.Contains(t, stderr, "changed=no", "%s: no changed=no: %s", tc.name, stderr)
 		runsWhenPasted(t, addr, tc.name, stderr)
 	}
 
@@ -180,12 +166,10 @@ func TestBatchRefusalNextCommandsRun(t *testing.T) {
 	for _, tc := range reads {
 		_, err := ntable.ReadSet(ctx, c, "demo", tc.scope, tc.epoch...)
 		if err == nil {
-			t.Errorf("%s: accepted", tc.name)
+			assert.Error(t, err, "%s: accepted", tc.name)
 			continue
 		}
-		if !strings.Contains(err.Error(), "changed=no") {
-			t.Errorf("%s: no changed=no: %v", tc.name, err)
-		}
+		assert.Contains(t, err.Error(), "changed=no", "%s: no changed=no: %v", tc.name, err)
 		runsWhenPasted(t, addr, tc.name, err.Error())
 	}
 }
@@ -201,17 +185,12 @@ func TestBatchCLIOverBoundIsARefusal(t *testing.T) {
 	}
 	manifest := `{"schema":1,"table":"demo","epoch":"0","expected_table_revision":"0","operation_id":"over","members":[{"id":"m","expect":{},"set":{` + strings.Join(fields, ",") + `}}]}`
 	code, stdout, stderr := runTable("batch", "--redis", addr, manifest)
-	if code != 1 || stdout != "" {
-		t.Fatalf("exit %d stdout %q stderr %q; want a refusal, exit 1", code, stdout, stderr)
-	}
+	require.EqualValues(t, 1, code, "exit %d stdout %q stderr %q; want a refusal, exit 1", code, stdout, stderr)
+	require.Empty(t, stdout, "exit %d stdout %q stderr %q; want a refusal, exit 1", code, stdout, stderr)
 	for _, w := range []string{"limit exceeded: set fields per member: bound 128, observed 129", `member "m"`, "changed=no"} {
-		if !strings.Contains(stderr, w) {
-			t.Errorf("refusal lacks %q: %s", w, stderr)
-		}
+		assert.Contains(t, stderr, w, "refusal lacks %q: %s", w, stderr)
 	}
-	if strings.Contains(stderr, "zzq") {
-		t.Errorf("refusal echoes the input: %s", stderr)
-	}
+	assert.NotContains(t, stderr, "zzq", "refusal echoes the input: %s", stderr)
 	runsWhenPasted(t, addr, "over bound", stderr)
 }
 
@@ -225,35 +204,32 @@ func TestBatchMemberEpochNextCommandReadsTheMemberAtItsOwnEpoch(t *testing.T) {
 	defer c.Close()
 	ctx := context.Background()
 	cols, err := ntable.ParseColumns("ready,working")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, "%v", err)
 	tb := ntable.Table{Name: "demo", Columns: cols, EpochKey: "epochs", EpochField: "n"}
-	if err := ntable.Create(ctx, c, tb, time.Now()); err != nil {
-		t.Fatal(err)
+	require.NoError(t, ntable.Create(ctx, c, tb, time.Now()))
+	{
+		_, err := ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{})
+		require.NoError(t, err, "%v", err)
 	}
-	if _, err := ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{}); err != nil {
-		t.Fatal(err)
+	{
+		_, err := ntable.CellAdd(ctx, c, "demo", "build", "ready", "old", 1, ntable.WriteOptions{Epoch: 0})
+		require.NoError(t, err, "%v", err)
 	}
-	if _, err := ntable.CellAdd(ctx, c, "demo", "build", "ready", "old", 1, ntable.WriteOptions{Epoch: 0}); err != nil {
-		t.Fatal(err)
-	}
-	if err := c.HSet(ctx, "epochs", "n", 1).Err(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{}, ntable.WriteOptions{Epoch: 1}); err != nil {
-		t.Fatal(err)
+	require.NoError(t, c.HSet(ctx, "epochs", "n", 1).Err())
+	{
+		_, err := ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{}, ntable.WriteOptions{Epoch: 1})
+		require.NoError(t, err, "%v", err)
 	}
 	rev := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
 	manifest := `{"schema":1,"table":"demo","epoch":"1","expected_table_revision":"` + rev + `","operation_id":"me1","members":[{"id":"old","expect":{}}]}`
 	code, stdout, stderr := runTable("batch", "--redis", addr, manifest)
-	if code != 1 || stdout != "" || !strings.Contains(stderr, "MEMBEREPOCH") || !strings.Contains(stderr, "changed=no") {
-		t.Fatalf("exit %d stdout %q stderr %q; want a MEMBEREPOCH refusal", code, stdout, stderr)
-	}
+	require.EqualValues(t, 1, code, "exit %d stdout %q stderr %q; want a MEMBEREPOCH refusal", code, stdout, stderr)
+	require.Empty(t, stdout, "exit %d stdout %q stderr %q; want a MEMBEREPOCH refusal", code, stdout, stderr)
+	require.Contains(t, stderr, "MEMBEREPOCH", "exit %d stdout %q stderr %q; want a MEMBEREPOCH refusal", code, stdout, stderr)
+	require.Contains(t, stderr, "changed=no", "exit %d stdout %q stderr %q; want a MEMBEREPOCH refusal", code, stdout, stderr)
 	words := strings.Join(nextCommand(t, stderr), " ")
-	if !strings.Contains(words, "member read") || !strings.Contains(words, "--at-epoch 0") {
-		t.Errorf("the next command %q does not read the member at its own epoch", words)
-	}
+	assert.Contains(t, words, "member read", "the next command %q does not read the member at its own epoch", words)
+	assert.Contains(t, words, "--at-epoch 0", "the next command %q does not read the member at its own epoch", words)
 	runsWhenPasted(t, addr, "member epoch", stderr)
 }
 
@@ -266,23 +242,21 @@ func TestBatchNoRowNextCommandDoesNotWrite(t *testing.T) {
 	defer c.Close()
 	ctx := context.Background()
 	cols, err := ntable.ParseColumns("ready")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := ntable.Create(ctx, c, ntable.Table{Name: "demo", Columns: cols}, time.Now()); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, "%v", err)
+	require.NoError(t, ntable.Create(ctx, c, ntable.Table{Name: "demo", Columns: cols}, time.Now()))
 	rev := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
 	manifest := `{"schema":1,"table":"demo","epoch":"0","expected_table_revision":"` + rev + `","operation_id":"nr1","members":[{"id":"n","expect":{"absent":true},"create":{"row":"nope","col":"ready","score":1}}]}`
 	code, _, stderr := runTable("batch", "--redis", addr, manifest)
-	if code != 1 || !strings.Contains(stderr, "NOROW") {
-		t.Fatalf("exit %d stderr %q; want a NOROW refusal", code, stderr)
-	}
-	if next := strings.Join(nextCommand(t, stderr), " "); strings.Contains(next, "row add") || !strings.HasPrefix(next, "show ") {
-		t.Errorf("the next command %q writes to the table or does not show it", next)
+	require.EqualValues(t, 1, code, "exit %d stderr %q; want a NOROW refusal", code, stderr)
+	require.Contains(t, stderr, "NOROW", "exit %d stderr %q; want a NOROW refusal", code, stderr)
+	{
+		next := strings.Join(nextCommand(t, stderr), " ")
+		assert.NotContains(t, next, "row add", "the next command %q writes to the table or does not show it", next)
+		assert.True(t, strings.HasPrefix(next, "show "), "the next command %q writes to the table or does not show it", next)
 	}
 	runsWhenPasted(t, addr, "no row", stderr)
-	if n := c.ZCard(ctx, ntable.DefKey("demo")+":rows").Val(); n != 0 {
-		t.Errorf("running the next command left %d rows", n)
+	{
+		n := c.ZCard(ctx, ntable.DefKey("demo")+":rows").Val()
+		assert.EqualValues(t, 0, n, "running the next command left %d rows", n)
 	}
 }

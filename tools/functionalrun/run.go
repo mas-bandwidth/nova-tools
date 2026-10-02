@@ -12,22 +12,21 @@ import (
 
 // runTier is the run verb: reap, image, caches, the networked module step,
 // the test container, the leftover check, one receipt line.
-func runTier(ctx context.Context, eng engine, c runConfig, clk clock, stdout, stderr io.Writer) int {
-	now := clk.Now
-	t0 := now()
+func runTier(ctx context.Context, eng engine, c runConfig, stdout, stderr io.Writer) int {
+	t0 := time.Now()
 	runID := newRunID(t0)
 	logf := func(format string, a ...any) {
 		fmt.Fprintf(stderr, "functionalrun: "+format+"\n", a...)
 	}
 
 	// 1. Anything an earlier run left past its deadline goes first.
-	if _, _, err := reap(ctx, eng, now(), c.grace, c.ownerID, false, stderr); err != nil {
+	if _, _, err := reap(ctx, eng, time.Now(), c.grace, c.ownerID, false, stderr); err != nil {
 		logf("the reaper could not list containers: %v", err)
 		return setupExit(ctx)
 	}
 
 	// 2. The image: the one given, or the context's, built only when absent.
-	image, buildSecs, err := ensureImage(ctx, eng, c, now, stderr)
+	image, buildSecs, err := ensureImage(ctx, eng, c, stderr)
 	if err != nil {
 		logf("%v", err)
 		return setupExit(ctx)
@@ -50,10 +49,10 @@ func runTier(ctx context.Context, eng engine, c runConfig, clk clock, stdout, st
 		logf("hashing go.mod and go.sum: %v", err)
 		return setupExit(ctx)
 	}
-	mt := now()
+	mt := time.Now()
 	pre := prefillArgs(c, image, runID, stamp, moduleProxy(os.Getenv), mt)
-	code, ended := runContainer(ctx, eng, clk, pre, containerName(runID+"-mod"), mt.Add(prefillDeadline+clientGrace), stderr, stderr)
-	left := leftovers(eng, clk, runID+"-mod", leftoverBudget)
+	code, ended := runContainer(ctx, eng, pre, containerName(runID+"-mod"), mt.Add(prefillDeadline+clientGrace), stderr, stderr)
+	left := leftovers(eng, runID+"-mod", leftoverBudget)
 	if code != 0 || ended != "finished" || left != 0 {
 		logf("the module cache step ended %s with exit %d, %d container(s) left", ended, code, left)
 		if ended == "interrupted" {
@@ -61,24 +60,24 @@ func runTier(ctx context.Context, eng engine, c runConfig, clk clock, stdout, st
 		}
 		return setupExit(ctx)
 	}
-	modSecs := now().Sub(mt).Seconds()
+	modSecs := time.Since(mt).Seconds()
 
 	// 5. The run itself.
-	start := now()
+	start := time.Now()
 	deadline := start.Add(c.deadline)
 	logf("run=%s image=%s packages=%q deadline=%s (%s) cpus=%d memory=%s",
 		runID, short(strings.TrimPrefix(image, "sha256:")), strings.Join(c.packages, " "), c.deadline, deadline.Format(time.RFC3339), c.cpus, c.memory)
-	code, ended = runContainer(ctx, eng, clk, testArgs(c, image, runID, start), containerName(runID), deadline.Add(clientGrace), stdout, stderr)
-	ended, exit := classify(code, ended, now().Sub(start), c.deadline)
+	code, ended = runContainer(ctx, eng, testArgs(c, image, runID, start), containerName(runID), deadline.Add(clientGrace), stdout, stderr)
+	ended, exit := classify(code, ended, time.Since(start), c.deadline)
 
 	// 6. Nothing of the run may be left.
-	left = leftovers(eng, clk, runID, leftoverBudget)
-	wall := now().Sub(start).Seconds()
+	left = leftovers(eng, runID, leftoverBudget)
+	wall := time.Since(start).Seconds()
 	if left != 0 {
 		exit = exitCannotRun
 	}
 	fmt.Fprintf(stderr, "FUNCTIONAL RUN run=%s ended=%s exit=%d wall=%.1fs build=%.1fs modcache=%.1fs total=%.1fs containers_left=%s\n",
-		runID, ended, exit, wall, buildSecs, modSecs, now().Sub(t0).Seconds(), leftText(left))
+		runID, ended, exit, wall, buildSecs, modSecs, time.Since(t0).Seconds(), leftText(left))
 	return exit
 }
 
@@ -137,7 +136,7 @@ func setupExit(ctx context.Context) int {
 // the runtime's own --timeout has already fired by then); an interrupt of this
 // process (removed at once). ended is "finished", "deadline" or "interrupted";
 // code is the client's exit code when finished.
-func runContainer(ctx context.Context, eng engine, clk clock, args []string, name string, clientDeadline time.Time, stdout, stderr io.Writer) (int, string) {
+func runContainer(ctx context.Context, eng engine, args []string, name string, clientDeadline time.Time, stdout, stderr io.Writer) (int, string) {
 	p, err := eng.Start(args, stdout, stderr)
 	if err != nil {
 		fmt.Fprintf(stderr, "functionalrun: %v\n", err)
@@ -152,7 +151,7 @@ func runContainer(ctx context.Context, eng engine, clk clock, args []string, nam
 		code, err := p.Wait()
 		done <- result{code, err}
 	}()
-	timer := clk.After(clientDeadline.Sub(clk.Now()))
+	timer := time.After(time.Until(clientDeadline))
 	var ended string
 	// Every ending removes the container first and logs after, so a log line
 	// that cannot be written never stands between a run and its removal.
@@ -177,7 +176,7 @@ func runContainer(ctx context.Context, eng engine, clk clock, args []string, nam
 	// ended: it is the one process here this tool started.
 	select {
 	case <-done:
-	case <-clk.After(15 * time.Second):
+	case <-time.After(15 * time.Second):
 		// ignored: the container outlived its grace; the wait on done is the proof it ended
 		_ = p.Kill()
 		<-done
@@ -201,7 +200,7 @@ const leftoverBudget = 30 * time.Second
 // after giving the runtime's removal a moment to finish; any still there are
 // removed by id and counted again. All of it within budget. -1: the count
 // could not be read.
-func leftovers(eng engine, clk clock, runID string, budget time.Duration) int {
+func leftovers(eng engine, runID string, budget time.Duration) int {
 	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
 	count := func() (int, []string) {
@@ -219,7 +218,7 @@ func leftovers(eng engine, clk clock, runID string, budget time.Duration) int {
 		if n == 0 {
 			return 0
 		}
-		clk.Sleep(250 * time.Millisecond)
+		time.Sleep(250 * time.Millisecond)
 	}
 	for _, id := range ids {
 		// ignored: a removal of leftover containers; the next run's leftover pass lists and removes them again
@@ -232,7 +231,7 @@ func leftovers(eng engine, clk clock, runID string, budget time.Duration) int {
 // ensureImage returns the image id to run: --image as given, or the image
 // built from --context, tagged by the context's hash and built only when no
 // image carries that tag.
-func ensureImage(ctx context.Context, eng engine, c runConfig, now func() time.Time, stderr io.Writer) (string, float64, error) {
+func ensureImage(ctx context.Context, eng engine, c runConfig, stderr io.Writer) (string, float64, error) {
 	ref := c.image
 	var secs float64
 	if ref == "" {
@@ -243,7 +242,7 @@ func ensureImage(ctx context.Context, eng engine, c runConfig, now func() time.T
 		ref = imageTag(hash)
 		if _, err := inspectImage(ctx, eng, ref); err != nil {
 			fmt.Fprintf(stderr, "functionalrun: building %s from %s\n", ref, c.context)
-			t := now()
+			t := time.Now()
 			p, err := eng.Start(buildArgs(c.context, ref), stderr, stderr)
 			if err != nil {
 				return "", 0, err
@@ -254,7 +253,7 @@ func ensureImage(ctx context.Context, eng engine, c runConfig, now func() time.T
 			if ended != "" || code != 0 {
 				return "", 0, fmt.Errorf("building the image ended %s with exit %d", orFinished(ended), code)
 			}
-			secs = now().Sub(t).Seconds()
+			secs = time.Since(t).Seconds()
 		} else {
 			fmt.Fprintf(stderr, "functionalrun: reusing %s\n", ref)
 		}
@@ -332,18 +331,3 @@ func ensureVolume(ctx context.Context, eng engine, name, kind, ownerID string) e
 	}
 	return nil
 }
-
-// clock is time as the run uses it, so the tests can hold it still.
-type clock interface {
-	Now() time.Time
-	// After fires once d has passed: the deadlines.
-	After(d time.Duration) <-chan time.Time
-	// Sleep waits d: the pause between two listings.
-	Sleep(d time.Duration)
-}
-
-type realClock struct{}
-
-func (realClock) Now() time.Time                         { return time.Now() }
-func (realClock) After(d time.Duration) <-chan time.Time { return time.After(d) }
-func (realClock) Sleep(d time.Duration)                  { time.Sleep(d) }
