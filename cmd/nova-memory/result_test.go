@@ -145,6 +145,12 @@ func TestFlagsMayFollowTheQueryWords(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(stdout), &got))
 	assert.Equal(t, "lantern", got.Facts["query"])
 
+	// A --json after the words still asks for JSON when a flag after it is wrong.
+	exit, stdout, stderr = runCLI(t, "", "search", "--root", corpus, "lantern", "--json", "--bogus")
+	assert.Equal(t, 2, exit)
+	assert.Empty(t, stderr)
+	assert.Contains(t, stdout, `"status":"refused"`)
+
 	exit, stdout, stderr = runCLI(t, "", "search", "--root", corpus, "--channels", "bm25", "--k", "3", "--", "-glazing", "--json")
 	require.Equal(t, 0, exit, stderr)
 	assert.Contains(t, stdout, `SEARCH OK hits=`)

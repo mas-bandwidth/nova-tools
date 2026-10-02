@@ -394,7 +394,10 @@ func (t *Tool) call(v Verb, args []string, stdin io.Reader, stdout, stderr io.Wr
 	if c.args, err = f.parse(args); err != nil {
 		o := Refuse(oneline.Cap(verbflag.Explain(f.FlagSet, err), oneline.TailBytes))
 		o.Remedy = t.Name + " " + v.Name + " -h"
-		return t.emit(&v, o, !f.prints && verbflag.BoolGiven(f.FlagSet, args, "json"), stdout, stderr)
+		// --json counts when it was read before the mistake, in any run of flags
+		// around the arguments, or stands after it where BoolGiven reads it.
+		asJSON := !f.prints && (verbflag.BoolGiven(f.FlagSet, args, "json") || c.Bool("json"))
+		return t.emit(&v, o, asJSON, stdout, stderr)
 	}
 	f.Visit(func(fl *flag.Flag) { c.given[fl.Name] = true })
 	asJSON := !f.prints && c.Bool("json")
@@ -431,7 +434,7 @@ func (t *Tool) call(v Verb, args []string, stdin io.Reader, stdout, stderr io.Wr
 	}
 	if c.Given("dry-run") && c.Bool("dry-run") {
 		switch {
-		case !c.dryRead: // a tool bug its own tests meet: the verb ran as if for real
+		case !c.dryRead && o.Status != Refused: // a tool bug its own tests meet: the verb ran as if for real
 			o = Fail("--dry-run was given and the verb never read it (Call.DryRun); it may have written")
 		case o.Status == OK:
 			o.Fact("dry_run", true)

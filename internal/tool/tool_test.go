@@ -707,6 +707,17 @@ func memo() *Tool {
 				}, Run: func(c *Call) *Out {
 					return Done().Fact("root", c.Str("root")).Fact("k", c.Int("k")).Fact("words", Text(strings.Join(c.Args(), " ")))
 				}},
+			{Name: "load", Usage: "load <file>", Effect: LocalWrite, DryRun: true,
+				Flags: func(f *Flags) { f.Args("<file>") },
+				Run: func(c *Call) *Out {
+					if c.Args()[0] == "bad" { // refused before --dry-run is read
+						return Refuse("bad is no file to load")
+					}
+					if c.DryRun() {
+						return Done().Fact("would_load", c.Args()[0])
+					}
+					return Done().Fact("loaded", c.Args()[0])
+				}},
 			{Name: "check", Usage: "check <file|->", Example: "check ./notes/a.md", Effect: Inspection, Token: "MEMORY",
 				Flags: func(f *Flags) {
 					f.Required("root", "the notes directory")
@@ -746,6 +757,11 @@ func TestPositionalArguments(t *testing.T) {
 			"MEMORY REFUSED: unknown flag --rot; the flags of check are --json, --root; did you mean --root?; run: nova-memo check -h\n"},
 		{"-h after an argument is help, the arguments on the usage line", []string{"search", "a", "-h"}, 0,
 			"usage: nova-memo search [flags] <words>...\n", ""},
+		{"a --json read before an unknown flag after an argument still asks for JSON", []string{"search", "a", "--json", "--bogus"}, 2,
+			`{"result":{"verb":"search","status":"refused","exit":2,"remedy":"nova-memo search -h","why":["unknown flag --bogus; the flags of search are --json, --k, --root"]},"facts":{}}` + "\n", ""},
+		{"a refusal before --dry-run is read stays the refusal", []string{"load", "bad", "--dry-run"}, 2, "",
+			"LOAD REFUSED: bad is no file to load; run: nova-memo help\n"},
+		{"a dry run that read the flag says so", []string{"load", "a", "--dry-run"}, 0, "LOAD OK would_load=a dry_run=true\n", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
