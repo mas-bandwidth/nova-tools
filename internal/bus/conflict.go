@@ -66,9 +66,9 @@ const maxRebaseSteps = 200
 // ConflictError is a refusal whose one actionable line and whose git transcript are
 // separate values.
 //
-// THE FAILURE IT CLOSES: `SEND FAIL` used to carry git's whole rebase transcript inline,
-// rendered through the one-line escape, so a person got forty lines of git as one line of
-// `\x0d\x0a` and could read none of it. The one-line guarantee is about the EVENT line, and
+// THE FAILURE IT CLOSES: a `send` that meets a conflict carries git's whole rebase
+// transcript, and folding that through the one-line escape would turn it into one line of
+// `\x0d\x0a` nobody can read. The one-line guarantee is about the EVENT line, and
 // a transcript is not an event: the line above says what happened and what to do, escaped
 // like every other, and the transcript follows it on stderr as git wrote it.
 type ConflictError struct {
@@ -147,9 +147,9 @@ func inRebase(dir string) (string, bool) {
 // abortRebase takes the checkout out of a rebase, and REFUSES when it could not.
 //
 // THE FAILURE THIS CLOSES, and it is the worst shape a failure in this file can have. The
-// Check the checkout after aborting: an abort error alone does not show whether the abort
-// had actually worked -- so a `git rebase --abort` that failed left the run returning while
-// the checkout was STILL IN A REBASE. Every later verb then refuses for a reason that is
+// checkout is checked after aborting: an abort error alone does not show whether the abort
+// had actually worked -- so a `git rebase --abort` that fails leaves the run returning while
+// the checkout is STILL IN A REBASE. Every later verb then refuses for a reason that is
 // true and unhelpful (a dirty checkout, a detached HEAD), and nothing says the real one.
 // The state is checked after the attempt, not inferred from its exit code, and the refusal
 // carries the recovery that actually works on the state it found.

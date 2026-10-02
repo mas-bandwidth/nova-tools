@@ -67,7 +67,7 @@ func (n Note) When() time.Time {
 // WHY THE LINE READS A DATE THE REST OF THE TOOL DOES NOT. The rule the tolerance rests on
 // is that a file which cannot say when it was written cannot claim to predate anything.
 // That is right, and the first version of it read too little: a bus written by hand for
-// Accepted notes use four filename shapes -- a UTC timestamp with minutes, the same with seconds,
+// months names its notes four ways -- a UTC timestamp with minutes, the same with seconds,
 // the same with the stamp accidentally doubled, and a plain date-only stamp -- and
 // only the first is the minute When parses. Every one of the other three still says its
 // DAY, in the first ten characters, which is all a line drawn on a date needs. On a real
