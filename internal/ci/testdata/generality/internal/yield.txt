@@ -1,4 +1,2 @@
 # Migrated counted package ledger; original row keys preserved.
-# ceiling: 2
-internal/yield/nice_linux.go:hetzner 1
-internal/yield/yield.go:glenn 1
+# ceiling: 0
