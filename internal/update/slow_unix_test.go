@@ -5,6 +5,8 @@ package update
 import (
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // SLOW: 6.0 s on hetzner at dev 64b9bec48, over the five-second line.
@@ -36,7 +38,7 @@ func TestSnapshotToleratesTheFirstExecOfANeverSeenBinary(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "s.tsv")
 	code, stdout, stderr := specRun(t, Environment{}, "snapshot", "--bin", bin, "--out", out)
 	if code != 0 {
-		t.Fatalf("a binary costing six seconds on its first exec and nothing after was refused: exit %d stderr=%s", code, stderr)
+		require.EqualValuesf(t, 0, code, "a binary costing six seconds on its first exec and nothing after was refused: exit %d stderr=%s", code, stderr)
 	}
 	need(t, stdout, "SNAPSHOT OK", "tools=1", "stamp=v1.0.0")
 }

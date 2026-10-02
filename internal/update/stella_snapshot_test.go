@@ -15,6 +15,9 @@ import (
 	"runtime"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestStellaSnapshotWriterPreservesOtherSnapshotsTemp(t *testing.T) {
@@ -24,29 +27,29 @@ func TestStellaSnapshotWriterPreservesOtherSnapshotsTemp(t *testing.T) {
 	a, b := filepath.Join(dir, "a.json"), filepath.Join(dir, "b.json")
 	unlockA, err := lockSnapshot(context.Background(), a)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	defer unlockA()
 	unlockB, err := lockSnapshot(context.Background(), b)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	defer unlockB()
 	// B holds its own lock and has a live, open temporary exactly as writeSnapshot creates it.
 	f, err := os.CreateTemp(dir, snapshotTempPrefix+"*")
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	defer f.Close()
 	if _, err = f.WriteString("synthetic B bytes"); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if err = writeSnapshot(a, emptySnapshot()); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	got, err := os.ReadFile(f.Name())
 	if err != nil || string(got) != "synthetic B bytes" {
-		t.Fatalf("A removed/changed B's live temporary: %q %v", got, err)
+		require.Failf(t, "", "A removed/changed B's live temporary: %q %v", got, err)
 	}
 }
 
@@ -60,15 +63,15 @@ func TestStellaSnapshotRoundTripKeepsDistinctMapKeys(t *testing.T) {
 		}
 		p := filepath.Join(t.TempDir(), "s.json")
 		if err := writeSnapshot(p, s); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 		got, err := readSnapshot(p)
 		if err != nil {
-			t.Errorf("writer's own %q map cannot be read: %v", names, err)
+			assert.NoErrorf(t, err, "writer's own %q map cannot be read: %v", names, err)
 			continue
 		}
 		if len(got.Observed) != len(names) {
-			t.Errorf("keys collapsed")
+			assert.Lenf(t, got.Observed, len(names), "keys collapsed")
 		}
 	}
 }
@@ -93,7 +96,7 @@ func TestStellaTwoSnapshotsOneDirectoryPreservesKilledWritersTemp(t *testing.T) 
 	runReport := func(m, snap string) {
 		t.Helper()
 		if out, err := exec.Command(bin, "report", "--file", m, "--snapshot", snap).CombinedOutput(); err != nil {
-			t.Fatalf("%v\n%s", err, out)
+			require.NoErrorf(t, err, "%v\n%s", err, out)
 		}
 	}
 	// Two independent writers settle a baseline in the same directory.
@@ -109,10 +112,10 @@ func TestStellaTwoSnapshotsOneDirectoryPreservesKilledWritersTemp(t *testing.T) 
 		c := exec.Command(bin, "report", "--file", p, "--snapshot", snapA)
 		setGroup(c)
 		if err := c.Start(); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 		if err := assignGroup(c); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 		done := make(chan struct{})
 		go func() { _ = c.Wait(); close(done) }()
@@ -145,16 +148,16 @@ func TestStellaTwoSnapshotsOneDirectoryPreservesKilledWritersTemp(t *testing.T) 
 	// and must still write snapB correctly.
 	runReport(manifest(t, row("y", "tool", printer(t, "v2.1.0"), "npm:unused", "none")), snapB)
 	if temps, _ := filepath.Glob(filepath.Join(dir, snapshotTempPrefix+"*")); len(temps) == 0 {
-		t.Fatalf("snapB's writer swept snapA's killed temporary")
+		require.NotEqualValuesf(t, 0, len(temps), "snapB's writer swept snapA's killed temporary")
 	}
 	if st, err := readSnapshot(snapB); err != nil || len(st.Observed) != 1 {
-		t.Fatalf("snapB is not intact after its own write: %v", err)
+		require.Failf(t, "", "snapB is not intact after its own write: %v", err)
 	}
 
 	// The killed retry: a fresh writer for snapA finishes cleanly on top of the
 	// leftover temporary.
 	runReport(manifest(t, row("x", "tool", printer(t, "v1.0.0"), "npm:unused", "none")), snapA)
 	if st, err := readSnapshot(snapA); err != nil || len(st.Observed) != 1 {
-		t.Fatalf("the retry could not use the surviving snapshot: %v", err)
+		require.Failf(t, "", "the retry could not use the surviving snapshot: %v", err)
 	}
 }
