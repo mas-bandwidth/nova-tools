@@ -27,7 +27,11 @@ this fetch.
 
 --promotion: a commit with one parent on an event that is not a pull_request has no
 promotion to read, so nothing is fetched ("a one-parent commit: no promotion to read").
-GITHUB_EVENT_NAME names the event.
+GITHUB_EVENT_NAME names the event. The promotion branch is optional, too: dev is the
+integration branch, and sprint/foundation exists only while a promotion is in flight. When
+origin has no <branch> (git ls-remote --exit-code answers 2) there is no promotion to
+read, so nothing is fetched ("origin has no branch <branch>: no promotion to read") and
+the classtests rule excuses nothing, the safe side. Any other ls-remote failure is exit 1.
 
 Exit 0 fetched or nothing to read, 1 a git command failed, 2 bad usage.
 
@@ -60,6 +64,19 @@ func fetchAncestryVerb(e env, args []string, h selHost) int {
 		if len(strings.Fields(res.Stdout)) < 3 {
 			fmt.Fprintln(e.stdout, "a one-parent commit: no promotion to read")
 			return 0
+		}
+	}
+	if *promotion {
+		// The promotion branch is optional: dev is the integration branch and
+		// sprint/foundation exists only while a promotion is in flight.
+		res, err := h.run(root, nil, "git", "ls-remote", "--exit-code", "--heads", "origin", branch)
+		switch {
+		case err == nil && res.Code == 2:
+			fmt.Fprintf(e.stdout, "origin has no branch %s: no promotion to read\n", branch)
+			return 0
+		case err != nil || res.Code != 0:
+			fmt.Fprintf(e.stderr, "fetch-ancestry: git ls-remote %s failed: %s\n", branch, selWhy(res.Stderr, res.Code, err))
+			return 1
 		}
 	}
 	shallow, err := h.run(root, nil, "git", "rev-parse", "--is-shallow-repository")
