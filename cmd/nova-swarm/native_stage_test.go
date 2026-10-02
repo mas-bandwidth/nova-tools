@@ -57,7 +57,7 @@ func captureStageLine(t *testing.T, fn func()) string {
 
 // TestStageUsesTheBenchMirrorAndTimesOut tests the stage requirements of mas-bandwidth/nova-tools#2882:
 // 1. A card pointing to a remote repo without a bench mirror fails staging without going to GitHub.
-// 2. Staging clones from the bench's local mirror (--reference or clone --shared) and dissociates.
+// 2. Staging clones from the bench's local mirror with --shared, borrowing its objects.
 // 3. Staging past the timeout ends the card RESULT: BLOCKED stage-timeout <bench> <secs> and writes usage.tsv.
 func TestStageUsesTheBenchMirrorAndTimesOut(t *testing.T) {
 	t.Parallel()
@@ -124,7 +124,7 @@ func TestStageUsesTheBenchMirrorAndTimesOut(t *testing.T) {
 		require.NoError(t, err, "expected repo dir %s to exist", repoDir)
 		alternates := filepath.Join(repoDir, ".git", "objects", "info", "alternates")
 		_, err = os.Stat(alternates)
-		require.True(t, os.IsNotExist(err), "staging did not dissociate from mirror: alternates file exists at %s", alternates)
+		require.NoError(t, err, "staging borrows the bench mirror's objects: no alternates file at %s", alternates)
 	})
 
 	t.Run("times out and writes blocked result and usage", func(t *testing.T) {

@@ -1,4 +1,4 @@
-SPRINT TABLE
+SPRINT TABLE  coordinator coordinator
 
 0/3 0.0% -> ETA
 
@@ -9,9 +9,9 @@ s2   |       0 |     0 |       0 |      0 |       0 |      0 |    -
 -----+---------+-------+---------+--------+---------+--------+-----
      |       0 |     0 |       2 |      0 |       1 |      0 |    -
 
-friends | status
---------+-------
-        |
+friends | ready | working | width | done | ok%  | status
+--------+-------+---------+-------+------+------+-------
+        |     0 |       0 |     0 |    0 | 0.0% |
 
 fleet | ready | working | width | done | ok%    | status | load
 ------+-------+---------+-------+------+--------+--------+-----

@@ -25,10 +25,14 @@ var ApplyOrder = []string{Fleet, Readers, Merge, Work}
 var ViewOrder = []string{Work, Readers, Merge, Fleet}
 
 // Friends is the friends table: one row per friend of nova-config's friend
-// rows, its status up, down or held (the owner, 2026-10-02: "add a friends
-// table, above fleet and below merge. friends | status for now. up/down/held").
-// It is drawn by where from the friends' records (store/friends.go), never
-// stored as a table: nothing in the four tables, the tick or an epoch holds it.
+// rows (the owner, 2026-10-02: "add a friends table, above fleet and below
+// merge. friends | status for now. up/down/held"), with the fleet table's
+// columns but load (the owner, 2026-10-02: "please give friends in the friends
+// table the same ready, working, width, done, ok%, status that we have for
+// machines, but no load, since they don't correspond to a machine (at the
+// moment...)"). It is drawn by where from the friends' records (store/friends.go:
+// the roster, each friend's job cards and her beat), never stored as a table:
+// nothing in the four tables, the tick or an epoch holds it.
 const Friends = "friends"
 
 // ShownOrder is the order where shows the tables in by default: work, friends,
@@ -42,14 +46,18 @@ var ShownOrder = []string{Work, Friends, Fleet}
 // view, with friends after merge and before fleet.
 var AllOrder = []string{Work, Readers, Merge, Friends, Fleet}
 
-// FriendsDef is the friends table's shape: its one column, the friend's
-// status, as text with no fold. The rows are the friends'; where draws them.
+// FriendsDef is the friends table's shape: the fleet table's columns but load.
+// ready and working count her job cards in those states; width is her width
+// as text, summed; ok and failed (hidden) count her jobs done ok and done
+// failed, and done and ok% are the table's formulas over them, the footer
+// pooling ok% over the friends; status is text with no fold. The rows are the
+// friends'; where draws them from store.FriendRows.
 func FriendsDef() ntable.Table {
-	cols, err := ntable.ParseColumns("status:text")
+	cols, err := ntable.ParseColumns("ready,working,width:text:sum,done:sum(ok+failed),okpct:pct(ok/ok+failed):pooled:ok%,status:text,ok,failed")
 	if err != nil {
 		panic(fmt.Sprintf("sprint table %s: %v", Friends, err))
 	}
-	return ntable.Table{Name: Friends, Columns: cols}
+	return ntable.Table{Name: Friends, Columns: cols, Hidden: []string{DoneOK, DoneFailed}}
 }
 
 // Readers table columns.
@@ -202,6 +210,9 @@ func OtherEpoch(id string, epoch, now uint64) string {
 func noJudgment(s *Snapshot, id string) string {
 	if e := IDEpoch(id); e != s.Epoch {
 		return OtherEpoch(id, e, s.Epoch)
+	}
+	if _, ok := StaleStream(id); ok {
+		return id + " is a stream that has not moved, read when the inbox is read, not a stored judgment: nothing answers it but its stream moving; run: nova-sprint wait " + id + " --for 30m"
 	}
 	return "no open judgment " + id + "; run: nova-sprint inbox"
 }

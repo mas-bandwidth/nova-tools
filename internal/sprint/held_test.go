@@ -335,7 +335,7 @@ func TestAStallOffersOnlyEnabledDecisions(t *testing.T) {
 	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{"s1-1.w1"}}, Gens: gensOf(w.s, "s1-1.w1")}))
 	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}}))
 	reads := w.s.Readers.Of("s1-1")
-	w.must(Read(w.s, ReadReq{As: reads[0].Row, Verdict: "broken", Finding: "f", Sel: Sel{IDs: []string{reads[0].ID}}}))
+	w.must(Read(w.s, ReadReq{As: reads[0].Row, Verdict: "broken", Finding: "f:1", Sel: Sel{IDs: []string{reads[0].ID}}}))
 	w.must(Read(w.s, ReadReq{As: reads[1].Row, Verdict: "ok", Sel: Sel{IDs: []string{reads[1].ID}}}))
 	w.s.Open = nil // the broken read's judgment closed without the step that writes what it needs next
 	f := mustStall(t, running(w), "s1-1", "")
