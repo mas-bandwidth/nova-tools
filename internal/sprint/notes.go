@@ -278,9 +278,7 @@ func MergeNotes(notes []Note) []Note {
 				out[i].Count++
 			}
 		}
-		if n.Before > out[i].Before {
-			out[i].Before = n.Before
-		}
+		out[i].Before = max(out[i].Before, n.Before)
 		for _, x := range n.Needs {
 			if !contains(out[i].Needs, x) {
 				out[i].Needs = append(out[i].Needs, x)
