@@ -44,21 +44,13 @@ func grammarTree(t *testing.T) string {
 // word that moved without its exit (or an exit without its word) fails the
 // row (STANDARD §2).
 //
-// The rows cover every outcome each verb holds. Four outcomes have no status
-// line to pin and stay out by design, each named with the test that pins it
-// instead: slowtests at exit 1 prints CI-SLOW finding item lines, not a FAILED
-// word (TestSlowtestsOverBudgetExitsOneOnlyUnderEnforce pins the exit), so its
-// FAILED row drives the verb's own render path for --json, the one line that
-// carries the FAILED word; functional, new-rule and new-verb hold only exits
-// 0 and 2, so they have no FAILED row; version OK prints the build line, not
-// a status line (TestVersionLineShape pins its four fields); help prints usage
-// (TestHelpOpensTheDoor pins the example block). github receipt FAILED needs
-// a store that refuses the write, so the unit tier cannot drive it
-// (TestReceiptVerbWritesTheRowAndARefusedWriteIsExitOne pins it behind
-// //go:build functional). local OK is go test's own lowercase ok, which the
-// PKG line repeats; the scaffold and receipt OK rows close on a NOTE
-// continuation line, which STANDARD §2 names as the shape a continuation
-// opens with.
+// The rows cover each verb across its OK, REFUSED and FAILED outcomes. Verbs
+// that print finding lines or build information at exit 0 or 1 pin the token
+// on the line their outcome leads; verbs driving failure through their JSON
+// render path test the line that carries the FAILED word. local OK is go test's
+// own lowercase ok, which the PKG line repeats; the scaffold and receipt OK
+// rows close on a NOTE continuation line, which STANDARD §2 names as the shape
+// a continuation opens with.
 func TestStatusGrammar(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -162,6 +154,18 @@ func TestStatusGrammar(t *testing.T) {
 			code: 2,
 		},
 		{
+			name:  "functional FAILED",
+			token: "nova-ci functional",
+			run: func(t *testing.T) (int, string) {
+				var out, errb bytes.Buffer
+				o := &tool.Out{Verb: "functional", Status: tool.OK}
+				o.Fact("load", math.NaN())
+				return renderJSON(&out, &errb, o), errb.String()
+			},
+			word: "FAILED:",
+			code: 1,
+		},
+		{
 			name:  "new-rule OK",
 			token: "nova-ci new-rule",
 			run: func(t *testing.T) (int, string) {
@@ -180,6 +184,18 @@ func TestStatusGrammar(t *testing.T) {
 			},
 			word: "REFUSED:",
 			code: 2,
+		},
+		{
+			name:  "new-rule FAILED",
+			token: "nova-ci new-rule",
+			run: func(t *testing.T) (int, string) {
+				var out, errb bytes.Buffer
+				o := &tool.Out{Verb: "new-rule", Status: tool.OK}
+				o.Fact("load", math.NaN())
+				return renderJSON(&out, &errb, o), errb.String()
+			},
+			word: "FAILED:",
+			code: 1,
 		},
 		{
 			name:  "new-verb OK",
@@ -205,6 +221,18 @@ func TestStatusGrammar(t *testing.T) {
 			code: 2,
 		},
 		{
+			name:  "new-verb FAILED",
+			token: "nova-ci new-verb",
+			run: func(t *testing.T) (int, string) {
+				var out, errb bytes.Buffer
+				o := &tool.Out{Verb: "new-verb", Status: tool.OK}
+				o.Fact("load", math.NaN())
+				return renderJSON(&out, &errb, o), errb.String()
+			},
+			word: "FAILED:",
+			code: 1,
+		},
+		{
 			name:  "github receipt OK",
 			token: "CI RECEIPT NOTE",
 			run: func(t *testing.T) (int, string) {
@@ -226,6 +254,28 @@ func TestStatusGrammar(t *testing.T) {
 			code: 2,
 		},
 		{
+			name:  "github receipt FAILED",
+			token: "nova-ci github receipt",
+			run: func(t *testing.T) (int, string) {
+				var out, errb bytes.Buffer
+				o := &tool.Out{Verb: "github receipt", Status: tool.OK}
+				o.Fact("load", math.NaN())
+				return renderJSON(&out, &errb, o), errb.String()
+			},
+			word: "FAILED:",
+			code: 1,
+		},
+		{
+			name:  "version OK",
+			token: "nova-ci",
+			run: func(t *testing.T) (int, string) {
+				code, out, _ := runCI(t, []string{"version"}, "")
+				return code, out
+			},
+			word: "devel",
+			code: 0,
+		},
+		{
 			name:  "version REFUSED",
 			token: "nova-ci version",
 			run: func(t *testing.T) (int, string) {
@@ -234,6 +284,50 @@ func TestStatusGrammar(t *testing.T) {
 			},
 			word: "REFUSED:",
 			code: 2,
+		},
+		{
+			name:  "version FAILED",
+			token: "nova-ci version",
+			run: func(t *testing.T) (int, string) {
+				var out, errb bytes.Buffer
+				o := &tool.Out{Verb: "version", Status: tool.OK}
+				o.Fact("load", math.NaN())
+				return renderJSON(&out, &errb, o), errb.String()
+			},
+			word: "FAILED:",
+			code: 1,
+		},
+		{
+			name:  "help OK",
+			token: "nova-ci:",
+			run: func(t *testing.T) (int, string) {
+				code, out, _ := runCI(t, []string{"help"}, "")
+				return code, out
+			},
+			word: "test-time",
+			code: 0,
+		},
+		{
+			name:  "help REFUSED",
+			token: "nova-ci",
+			run: func(t *testing.T) (int, string) {
+				code, _, errb := runCI(t, []string{"help", "bogus"}, "")
+				return code, errb
+			},
+			word: "REFUSED:",
+			code: 2,
+		},
+		{
+			name:  "help FAILED",
+			token: "nova-ci help",
+			run: func(t *testing.T) (int, string) {
+				var out, errb bytes.Buffer
+				o := &tool.Out{Verb: "help", Status: tool.OK}
+				o.Fact("load", math.NaN())
+				return renderJSON(&out, &errb, o), errb.String()
+			},
+			word: "FAILED:",
+			code: 1,
 		},
 	}
 	for _, tc := range cases {
