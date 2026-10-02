@@ -2282,3 +2282,48 @@ for an isolated store and the function-library loading command.
 Exit codes: 0 done (including requested help), 1 refused by the store, 2 usage or
 connection failure. A refusal gives the commands needed to proceed. In watch, a failed read leaves
 the last good frame and one `store unreachable since <time>` line until recovery (a frame that reads fine carries no age line); Ctrl-C exits 0.
+
+## nova-work
+
+nova-work is pre-alpha: not ready for production use.
+
+Every issue of every repository of a GitHub organization in one tree file, with
+each issue's full contents, and a check that the file holds exactly what GitHub
+holds. The design is [SPEC-WORK-V1.md](SPEC-WORK-V1.md); this section is how to
+use it. It reads GitHub only (no GitLab, no Gitea), never writes to GitHub (the
+seam refuses any GraphQL document that is not a query), and captures the fields
+SPEC-WORK-V1 section 1.3 lists, not reactions or other timeline events.
+
+**Try it with no login.** `nova-work verify -h` prints the tree's grammar and a
+minimal tree. Save that tree as `a.lisp`, copy it to `b.lisp` with
+`:archived true`, and run `nova-work verify --tree a.lisp --against b.lisp`: one
+`VERIFY DRIFT ... field=archived` line under `VERIFY FAIL`, exit 1. The same
+file against itself is `VERIFY OK ... differences=0`, exit 0.
+
+**First run against GitHub.** Needs `gh auth status` to pass and one repository
+you can read: export `ORG` and `REPO`, then run the three lines of the banner's
+`example:` block in a scratch directory (a dry run, the import to
+`./tree.lisp`, the verify). The executed transcript of that sitting, with every
+line of output, is in [TESTS.md](TESTS.md#nova-work).
+
+**Output.** One result per run: `IMPORT OK`, `VERIFY OK`, `VERIFY FAIL` (exit 1,
+the differences as `VERIFY MISSING`, `EXTRA` or `DRIFT` lines, values quoted),
+or `<VERB> REFUSED: <why>; run: <next command>` (exit 2). `--json` prints the
+same result as one JSON object.
+
+### import
+
+Reads every issue of `--org` (or of each `--repo`) through your `gh` login,
+read-only, and writes one local tree file, `--out`, only after the encoded tree
+has read back equal to what was fetched. `--dry-run` is not offline: it reads
+GitHub exactly as the import does (every issue, the same calls), checks the
+round trip, and writes nothing. A dry run costs what the import costs:
+`IMPORT PLAN` names `est_calls`, and `--max-calls` (default 1500) refuses a plan
+past it before any issue is read.
+
+### verify
+
+Reads the tree and GitHub again and writes nothing: zero differences is
+`VERIFY OK ... differences=0`, the receipt that the tree holds what GitHub
+holds. `--against <tree>` puts a second tree file where GitHub stands and reads
+no network at all.
