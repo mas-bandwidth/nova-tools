@@ -14,8 +14,7 @@
 //	            ceremony, but always announced.
 //
 // Blowing either is solo, instant, and needs no proof -- blowing is cheap,
-// hesitating is not. This design keeps the fuse controls together so their
-// boundaries stay explicit.
+// hesitating is not.
 package main
 
 import (
@@ -184,7 +183,8 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 // with boxOK=false means the --box refusal is already printed and the verb
 // should go on to judge its OWN arguments before returning 2, so that one run
 // names every problem it can find: `nova-fuse quarantine` with nothing at all
-// A missing --box does not stop validation: one run also reports a missing surface and reason.
+// names --box, the surface and the reason in one run, rather than naming --box,
+// stopping, and leaving the other two for a second run.
 func parseBox(name string, args []string, stderr io.Writer) (box string, positional []string, boxOK, parsed bool) {
 	return parseBoxWith(name, args, stderr, nil)
 }
@@ -453,7 +453,8 @@ func cmdStatus(rest []string, stdout, stderr io.Writer) int {
 	}
 	// THE COUNT IS NEVER CAPPED and the listing always is. quarantines= above is the truth
 	// about the box; the lines below are a sample of it in the box's own order, and the
-	// The MORE line reports the sample size, so a large quarantine remains glanceable.
+	// MORE line says how big the sample is, so a box holding hundreds of surfaces is
+	// still a handful of lines on a verb whose whole job is to be glanced at.
 	list := bounded.Capped(stdout, max, "STATUS", "quarantine", maxRemedy)
 	for _, n := range names {
 		f := b.Quarantine[n]
