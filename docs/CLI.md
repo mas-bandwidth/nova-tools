@@ -584,7 +584,7 @@ INBOX WALK bounded commits=500 remedy="raise --max-commits or close --before <in
 
 A bounded run **read nothing, so it moves no cursor**, and `--advance` beside it writes nothing at all: advancing over a walk nobody made would take every unread note behind the bound as read, which is the one outcome the bound exists to prevent. Raise the bound to read the stale cursor, or draw a switch-day line with `close --before <instant>` to take the history as read and start over.
 
-Past `--open-warn` carried (default 40) every return adds a line naming the three ways out: answer with `Re: <id>`, say heard with `receipt --note <id>`, or start over with `--full --legacy-now --advance`. It is a note, not a refusal: a backlog grows one note at a time and no single run says it is growing.
+`--open-warn` carries a warning threshold (default 40). Every return adds a note naming the three ways out: answer with `Re: <id>`, say heard with `receipt --note <id>`, or start over with `--full --legacy-now --advance`. The note records a fact — a backlog grows one note at a time and no single run says it is growing — rather than refusing.
 
 **`wait`** is the same listing, blocking, for a harness that does not wake you:
 
