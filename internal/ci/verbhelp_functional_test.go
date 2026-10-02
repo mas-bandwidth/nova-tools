@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -133,7 +134,7 @@ func everyVerbAnswersHelp(t *testing.T, root, tool, bin, banner string) (map[str
 			code = exitErr.ExitCode()
 		default:
 			cancel()
-			t.Fatalf("running %s %s: %v", tool, strings.Join(args, " "), err)
+			require.FailNowf(t, fmt.Sprintf("running %s %s: %v", tool, strings.Join(args, " "), err), "")
 		}
 		cancel()
 		line := tool + " " + strings.Join(args, " ")
@@ -142,10 +143,11 @@ func everyVerbAnswersHelp(t *testing.T, root, tool, bin, banner string) (map[str
 			assert.Equal(t, 0, out.Len(), "`%s` exited %d with stdout %q; %s refuses -h at exit 2 by design (%s)", line, code, out.String(), tool, helpRefusedByDesign[tool])
 			continue
 		}
-		assert.Equal(t, 0, code, "`%s` exited %d, stdout %d bytes, stderr %q; want that verb's help on stdout at exit 0 and nothing on stderr (route the verb's flag parsing through internal/nsprint/verbflag)", line, code, out.Len(), errb.String())
-		assert.NotEmpty(t, strings.TrimSpace(out.String()), "`%s` exited %d, stdout %d bytes, stderr %q; want that verb's help on stdout at exit 0 and nothing on stderr (route the verb's flag parsing through internal/nsprint/verbflag)", line, code, out.Len(), errb.String())
-		assert.Equal(t, 0, errb.Len(), "`%s` exited %d, stdout %d bytes, stderr %q; want that verb's help on stdout at exit 0 and nothing on stderr (route the verb's flag parsing through internal/nsprint/verbflag)", line, code, out.Len(), errb.String())
-		helps[verb] = out.String()
+		if code != 0 || strings.TrimSpace(out.String()) == "" || errb.Len() != 0 {
+			assert.Failf(t, fmt.Sprintf("`%s` exited %d, stdout %d bytes, stderr %q; want that verb's help on stdout at exit 0 and nothing on stderr (route the verb's flag parsing through internal/nsprint/verbflag)", line, code, out.Len(), errb.String()), "")
+		} else {
+			helps[verb] = out.String()
+		}
 		// The exit-codes line is the onboarding standard, and it reaches every
 		// tool's verb help: the banner states the tool's codes (no exemption),
 		// and a verb's -h states codes, never only the `see help` pointer: the

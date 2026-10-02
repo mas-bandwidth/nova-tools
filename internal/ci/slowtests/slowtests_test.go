@@ -232,7 +232,8 @@ func TestSlowTestsManySmallTestsNameThePackageAndItsTopThree(t *testing.T) {
 	if assert.Len(t, got, 1, "OverLines = %q, want only %q", got, want) {
 		assert.Equal(t, want, got[0], "OverLines = %q, want only %q", got, want)
 	}
-	assert.Equal(t, 1, report.ExitCode(), "ExitCode = %d, want 1", report.ExitCode())
+	exitCode := report.ExitCode()
+	assert.Equal(t, 1, exitCode, "ExitCode = %d, want 1", exitCode)
 }
 
 // PROBE 1 and 6 at the verdict (the #4413 ruling: a budget verdict is the

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -455,7 +456,7 @@ func TestTheNamedPathHeuristicReadsWhatItClaims(t *testing.T) {
 	}
 	for _, tc := range cases {
 		got := namedPathsIn(tc.text)
-		assert.Equal(t, tc.want, got, "%s: namedPathsIn(%q) = %v, want %v", tc.name, tc.text, got, tc.want)
+		assert.True(t, slices.Equal(got, tc.want), "%s: namedPathsIn(%q) = %v, want %v", tc.name, tc.text, got, tc.want)
 	}
 }
 

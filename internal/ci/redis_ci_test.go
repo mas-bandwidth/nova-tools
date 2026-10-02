@@ -53,7 +53,8 @@ func TestRedisBackedTestsDoNotSkipUnderCI(t *testing.T) {
 	defer cancel()
 	client := redis.NewClient(&redis.Options{Addr: addr})
 	defer client.Close()
-	require.NoError(t, client.Ping(ctx).Err(), "throwaway redis at %s did not answer", addr)
+	err := client.Ping(ctx).Err()
+	require.NoError(t, err, "throwaway redis at %s did not answer: %v", addr, err)
 
 	root := repoRoot(t)
 	helper := readFile(t, filepath.Join(root, "internal", "nsprint", "testutil", "redis.go"))

@@ -337,10 +337,10 @@ func (f tlcFixture) write(name, contents string) {
 	f.t.Helper()
 	path := filepath.Join(f.root, filepath.FromSlash(name))
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		f.t.Fatal(err)
+		require.FailNowf(f.t, err.Error(), "")
 	}
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
-		f.t.Fatal(err)
+		require.FailNowf(f.t, err.Error(), "")
 	}
 }
 
@@ -348,7 +348,7 @@ func (f tlcFixture) read(name string) string {
 	f.t.Helper()
 	raw, err := os.ReadFile(filepath.Join(f.root, filepath.FromSlash(name)))
 	if err != nil {
-		f.t.Fatal(err)
+		require.FailNowf(f.t, err.Error(), "")
 	}
 	return string(raw)
 }
@@ -360,17 +360,17 @@ func (f tlcFixture) seal(edit func(row []string) []string) {
 	f.t.Helper()
 	plan, err := readTLCTSV(filepath.Join(f.root, "tla", "CASES.tsv"), []string{"config", "module", "expected", "property", "deadlock", "group", "gate", "debt"})
 	if err != nil {
-		f.t.Fatal(err)
+		require.FailNowf(f.t, err.Error(), "")
 	}
 	src, err := tlcSource(f.root)
 	if err != nil {
-		f.t.Fatal(err)
+		require.FailNowf(f.t, err.Error(), "")
 	}
 	out := strings.Join(tlcRunHeader, "\t") + "\n"
 	for _, p := range plan {
 		fp, files, err := src.Fingerprint(p[0])
 		if err != nil {
-			f.t.Fatal(err)
+			require.FailNowf(f.t, err.Error(), "")
 		}
 		row := make([]string, len(tlcRunHeader))
 		for name, v := range map[string]string{"config": p[0], "module": p[1], "input_sha256": fp, "input_files": strconv.Itoa(files), "jar_sha256": strings.Repeat("a", 64), "java_version": "21.0.12.1", "workers": "2", "host": "linux-amd64", "cpus": "8", "started_utc": "2026-01-01T00:00:00Z", "generated": "10", "distinct": "5", "seconds": "1.25", "exit": "0", "result": "PASS", "expected": p[2], "property": p[3], "budget": "110", "mode": "bounded"} {
@@ -412,7 +412,7 @@ func (f tlcFixture) expectStale(want ...string) {
 		stale = []string{}
 	}
 	if len(other) != 0 || strings.Join(stale, ",") != strings.Join(want, ",") {
-		f.t.Fatalf("stale %v and other problems %v; want stale %v and no other", stale, other, want)
+		require.FailNowf(f.t, fmt.Sprintf("stale %v and other problems %v; want stale %v and no other", stale, other, want), "")
 	}
 }
 

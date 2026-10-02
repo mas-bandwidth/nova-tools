@@ -19,7 +19,8 @@ func TestSelectNamesOnlyTheTaggedTests(t *testing.T) {
 	require.NoError(t, err)
 	want := []Package{{Dir: mixed, Tests: []string{"TestStoreRefuses", "TestStoreRoundTrip"}}}
 	assert.Equal(t, want, got, "Select = %+v, want %+v", got, want)
-	assert.Equal(t, "^(TestStoreRefuses|TestStoreRoundTrip)$", RunPattern(got), "RunPattern = %q, want %q", RunPattern(got), "^(TestStoreRefuses|TestStoreRoundTrip)$")
+	pattern := RunPattern(got)
+	assert.Equal(t, "^(TestStoreRefuses|TestStoreRoundTrip)$", pattern, "RunPattern = %q, want %q", pattern, "^(TestStoreRefuses|TestStoreRoundTrip)$")
 }
 
 // A dir/... pattern is every package directory under it, testdata and dot

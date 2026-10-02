@@ -68,7 +68,7 @@ func TestEveryCommandMeetsTheOnboardingStandard(t *testing.T) {
 			}
 
 			// (c) The transcript section in docs/TESTS.md that a test executes.
-			assert.NoError(t, firstRunErr, "(docs/STANDARD.md, onboarding point 5(c): every tool's docs/TESTS.md section opens with `%s`)", onboarding.FirstRunHeading)
+			assert.NoError(t, firstRunErr, "%v\n(docs/STANDARD.md, onboarding point 5(c): every tool's docs/TESTS.md section opens with `%s`)", firstRunErr, onboarding.FirstRunHeading)
 
 			// (a), first half: the bare command REFUSES in one line and names the
 			// door. It used to be the banner itself, which cost between 1,900 and
@@ -109,7 +109,7 @@ func TestEveryCommandMeetsTheOnboardingStandard(t *testing.T) {
 			// names its nouns and where its state lives, and the `example:` block
 			// is a first run of at least three command lines. No exemptions.
 			sentence, err := onboarding.OpeningSentence(banner, tool)
-			assert.NoError(t, err, "(docs/ONBOARDING.md point 6: what does it do?)")
+			assert.NoError(t, err, "%v\n(docs/ONBOARDING.md point 6: what does it do?)", err)
 			if assert.NotZero(t, onboarding.HowItWorksLine(banner), "`%s help` has no %q paragraph in its first %d lines; it names the tool's nouns and where its state lives (docs/ONBOARDING.md point 6: how does it work?)", tool, onboarding.HowItWorksLabel, onboarding.HowItWorksWithin) {
 				n := onboarding.HowItWorksLength(banner)
 				assert.LessOrEqual(t, n, onboarding.HowItWorksMaxLines, "`%s help`'s %q paragraph takes %d lines, over %d; it names the nouns and where the state lives, and the usage says the rest (docs/ONBOARDING.md point 6)", tool, onboarding.HowItWorksLabel, n, onboarding.HowItWorksMaxLines)
@@ -123,7 +123,7 @@ func TestEveryCommandMeetsTheOnboardingStandard(t *testing.T) {
 			}
 
 			examples, err := onboarding.ExampleLines(banner, tool)
-			require.NoError(t, err, "(docs/STANDARD.md, onboarding point 1)\n\nwhat it printed:\n%s", banner)
+			require.NoError(t, err, "%v\n(docs/STANDARD.md, onboarding point 1)\n\nwhat it printed:\n%s", err, banner)
 			for _, ex := range examples {
 				ok := !strings.Contains(ex, "<") && !strings.Contains(ex, ">")
 				assert.True(t, ok, "the example %q still carries a placeholder; the `example:` block is for lines a stranger can paste, and the usage block above it is where <dir> and <file> belong", ex)

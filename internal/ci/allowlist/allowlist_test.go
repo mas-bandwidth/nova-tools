@@ -162,9 +162,9 @@ func TestCeilingLineIsLoweredNeverRaised(t *testing.T) {
 	require.Equal(t, 1, o.count("over its ceiling of 1"), "a list over its ceiling must be refused: %q", o.lines)
 	var u recorder
 	CheckMode(&u, load(t, over, Options{Ceiling: true}), set("a", "b"), true)
-	require.Equal(t, 1, u.count("never raises a ceiling"), "an update must not raise a ceiling: %q", u.lines)
-	gotOver := readBack(t, over)
-	require.Equal(t, "# ceiling: 1\na\nb\n", gotOver, "an update must not raise a ceiling: %q %q", u.lines, gotOver)
+	if u.count("never raises a ceiling") != 1 || readBack(t, over) != "# ceiling: 1\na\nb\n" {
+		require.FailNowf(t, fmt.Sprintf("an update must not raise a ceiling: %q %q", u.lines, readBack(t, over)), "")
+	}
 
 	_, err := Parse("p", "# ceiling: many\n", Options{})
 	require.Error(t, err, "a ceiling that is not a number must be refused")
