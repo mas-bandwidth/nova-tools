@@ -230,6 +230,21 @@ func ValidID(s string) bool { return len(s) <= MaxIDLen && idRE.MatchString(s) }
 // MaxIDLen is the longest identity ValidID takes.
 const MaxIDLen = 128
 
+// ValidCardID says a card's id is its parts joined by dots, each a ValidID word: a
+// primary (p), a work card (p.w1), a read card (p.r1.reader).
+func ValidCardID(s string) bool {
+	parts := strings.Split(s, ".")
+	if len(parts) > 3 {
+		return false
+	}
+	for _, p := range parts {
+		if !ValidID(p) {
+			return false
+		}
+	}
+	return true
+}
+
 // WorkCardID is the identity of a primary's work card for one attempt.
 func WorkCardID(primary string, attempt int) string {
 	return primary + ".w" + strconv.Itoa(attempt)

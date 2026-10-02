@@ -1520,7 +1520,8 @@ func TestAReaderBeatsNothing(t *testing.T) {
 	require.Empty(t, g.s.lines("beat"))
 	require.NoError(t, g.m.Beat())
 	require.Empty(t, g.s.lines("beat"))
-	require.Equal(t, []string{"queue --as r --json", "queue --as r --json"}, g.s.lines("queue"), "the pass's queue, then the beat's")
+	require.Equal(t, []string{"queue --as r --json --packets 1", "queue --as r --json --packets 0"}, g.s.lines("queue"),
+		"the pass's queue, asking a packet for its free lane, then the beat's, asking none")
 }
 
 // TestTheRunnerIsToldWhenTheMemberIsDoneWithALaunch pins Ender: each launch the member is

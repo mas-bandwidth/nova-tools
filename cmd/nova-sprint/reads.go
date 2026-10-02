@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -84,9 +85,18 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 	as := fs.String("as", "", "a reader (its read cards, asked then reading) or a fleet member (its work cards, ready then working)")
 	stream := fs.String("stream", "", "a stream: its merge queue, then its stuck cards")
 	col := fs.String("col", "", "with --stream: waiting lists the stream's waiting primaries, each with what it still waits for")
+	packets := fs.String("packets", "", "with --as: the packets the worker wants, so the answer carries only those (every other card is listed with its id, column, attempt and gen, and the answer's epoch, with no packet): the first n cards it may start (asked, ready) and every in-flight card (reading, working), each not named by --have; without it every card carries its packet")
+	have := fs.String("have", "", "with --packets: the cards, comma separated, the worker wants no packet for (it runs them, or will not start them yet)")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "queue", err.Error())
+	}
+	want, err := packetsWanted(*packets, *have)
+	if err != nil {
+		return refuse(stderr, "queue", err.Error())
+	}
+	if want.n >= 0 && *as == "" {
+		return refuse(stderr, "queue", "--packets is a worker's: it takes --as <reader|member>")
 	}
 	if len(pos) > 0 || (*as == "") == (*stream == "") {
 		return refuse(stderr, "queue", "wants one of --as <reader|member>, --stream <s>")
@@ -159,12 +169,17 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 			add(t.table, own)
 			mine = append(mine, own...)
 		}
-		ps, err := st.Packets(ctx, mine)
+		at := want.of(mine)
+		need := make([]*sprint.Card, len(at))
+		for k, i := range at {
+			need[k] = mine[i]
+		}
+		ps, err := st.Packets(ctx, need)
 		if err != nil {
 			return a.readFailed("queue", err, stderr)
 		}
-		for i := range ps {
-			cards[i].Packet = &ps[i]
+		for k, i := range at {
+			cards[i].Packet = &ps[k]
 		}
 	}
 	if c.json {
@@ -199,15 +214,17 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 		}
 		lines = append(lines, l)
 	}
-	if len(lines) > 0 && cards[0].Packet != nil {
-		// a member's or a reader's queue: each card with its packet
+	if *as != "" && len(lines) > 0 {
+		// a member's or a reader's queue: each card with its packet, when the answer carries it
 		for i, l := range lines {
 			if c.max > 0 && i >= c.max {
 				fmt.Fprintf(stdout, "CARD ... and %d more; --max 0 lists all\n", len(lines)-i)
 				break
 			}
 			fmt.Fprintln(stdout, "CARD "+oneline.Escape(l))
-			printPacket(stdout, *cards[i].Packet)
+			if cards[i].Packet != nil {
+				printPacket(stdout, *cards[i].Packet)
+			}
 		}
 		fmt.Fprintf(stdout, "QUEUE OK cards=%d epoch=%d\n", len(cards), epoch)
 		return 0
@@ -215,6 +232,75 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 	listed(stdout, "CARD", lines, c.max, "queue")
 	fmt.Fprintf(stdout, "QUEUE OK cards=%d epoch=%d\n", len(cards), epoch)
 	return 0
+}
+
+// wanted is the packets a worker's queue asks for (--packets, --have): n < 0 is every
+// card's, the answer as it was before the flags.
+type wanted struct {
+	n    int
+	have map[string]bool
+}
+
+// maxPacketsAsked bounds --packets and the cards --have names: a worker's lanes are far
+// fewer, and a value past it is no worker's.
+const maxPacketsAsked = 1024
+
+// packetsWanted reads --packets and --have, refusing a value no worker sends: --packets a
+// count from 0 to maxPacketsAsked, --have card ids (dot-joined words, sprint.ValidCardID),
+// and --have only with --packets. The server's fleet listener holds a worker's queue to the
+// same (workerVerb).
+func packetsWanted(packets, have string) (wanted, error) {
+	w := wanted{n: -1}
+	if packets == "" {
+		if have != "" {
+			return w, errors.New("--have names the cards a --packets answer leaves without a packet: give --packets <n> with it")
+		}
+		return w, nil
+	}
+	n, err := strconv.Atoi(packets)
+	if err != nil || n < 0 || n > maxPacketsAsked {
+		return w, fmt.Errorf("--packets is a count of cards from 0 to %d, found %q", maxPacketsAsked, packets)
+	}
+	w.n, w.have = n, map[string]bool{}
+	if have == "" {
+		return w, nil
+	}
+	ids := strings.Split(have, ",")
+	if len(ids) > maxPacketsAsked {
+		return w, fmt.Errorf("--have names at most %d cards, found %d", maxPacketsAsked, len(ids))
+	}
+	for _, id := range ids {
+		if !sprint.ValidCardID(id) {
+			return w, fmt.Errorf("--have is card ids, comma separated, found %q", id)
+		}
+		w.have[id] = true
+	}
+	return w, nil
+}
+
+// of is which of a worker's cards, in queue order, get their packets: every one when no
+// --packets was given; else the first n it may start (asked, ready) and every one in flight
+// (reading, working), skipping the cards --have names. A worker starts a card from its
+// packet, or recovers an in-flight card it holds no launch for; a card it already runs, or
+// a read past its free lanes, needs none (the fleet load test of 2026-10-01: one reader's
+// answer, its 150 asked reads each with its brief, was 579,181 bytes every pass).
+func (w wanted) of(cards []*sprint.Card) []int {
+	var at []int
+	left := w.n
+	for i, x := range cards {
+		switch {
+		case w.n < 0:
+		case w.have[x.ID]:
+			continue
+		case x.Col == sprint.Asked || x.Col == sprint.Ready:
+			if left == 0 {
+				continue
+			}
+			left--
+		}
+		at = append(at, i)
+	}
+	return at
 }
 
 func (a *app) readFailed(verbName string, err error, stderr io.Writer) int {
