@@ -237,8 +237,19 @@ func TestAQuietSourceIsTheNoteNotTheAllClear(t *testing.T) {
 func TestTheBannerNamesTheEnvironmentTheRedisVerbsRead(t *testing.T) {
 	t.Parallel()
 
-	assert.NotContains(t, usage, "no environment variable is consulted")
-	for _, name := range []string{redisauth.UserEnv, redisauth.PasswordEnvEnv, redisauth.DefaultPasswordEnv, "$PATH", tokens.LockName} {
-		assert.Contains(t, usage, name)
+	var help strings.Builder // the verbs' own help, where what each reads is said
+	for _, verb := range []string{"fold", "report", "ledger", "sources", "session"} {
+		help.WriteString(invoke(t, "help", verb).stdout)
 	}
+	assert.NotContains(t, help.String(), "no environment variable is consulted")
+	for _, name := range []string{redisauth.UserEnv, redisauth.PasswordEnvEnv, redisauth.DefaultPasswordEnv, "$PATH", tokens.LockName} {
+		assert.Contains(t, help.String(), name)
+	}
+}
+
+// The definition meets the standard the banner and help carry by construction only when
+// it is complete: every verb's effect, the how text's size, the status words.
+func TestTokensToolMeetsTheStandard(t *testing.T) {
+	t.Parallel()
+	assert.Empty(t, tokensTool(foldStamp).Problems())
 }

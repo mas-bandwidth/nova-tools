@@ -4,12 +4,14 @@ package main
 // own row beside whatever the other sources already wrote.
 
 import (
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func writeSession(t *testing.T) string {
@@ -100,6 +102,8 @@ func TestHelpNamesTheSessionVerb(t *testing.T) {
 	r := invoke(t, "help")
 	wantExit(t, r, 0)
 	wantContains(t, r.stdout, "nova-tokens session --claude-session <jsonl>")
+	r = invoke(t, "help", "session")
+	wantExit(t, r, 0)
 	wantContains(t, r.stdout, "<model>/coordinator")
 }
 
@@ -176,4 +180,28 @@ func TestSessionRefusesUnreadableDayFile(t *testing.T) {
 	raw, err := os.ReadFile(dayPath)
 	require.NoError(t, err)
 	require.Equal(t, existing, string(raw), "unreadable day file was modified:\ngot:\n%s\nwant:\n%s", string(raw), existing)
+}
+
+// TestTheHelpSessionExampleIsWhatItPrints runs the help's session line as a reader pastes
+// it after the setup line (./session.jsonl is the bench's own window, ./out its day files)
+// and compares it, line for line, with what the tool prints.
+func TestTheHelpSessionExampleIsWhatItPrints(t *testing.T) {
+	t.Parallel()
+
+	line := "nova-tokens session --claude-session ./session.jsonl --out ./out"
+	examples, err := onboarding.ExampleLines(usage, "nova-tokens")
+	require.NoError(t, err)
+	assert.Contains(t, examples, line)
+	bench := t.TempDir()
+	copyExampleTree(t, filepath.Join("testdata", "example-bench"), bench)
+	mkdir(t, filepath.Join(bench, "out"))
+	write(t, filepath.Join(bench, "session.jsonl"), read(t, filepath.Join(bench, "transcripts", "window.jsonl")))
+	r := invoke(t, strings.Fields(strings.ReplaceAll(strings.TrimPrefix(line, "nova-tokens "), "./", bench+"/"))...)
+	step := onboarding.Step{Line: "$ " + line, Want: []string{
+		"SESSION turns=3 input=1338 cache_write=1200 cache_read=246000 output=1593 weighted=35403 avg_context=82846",
+		"TOKENS DAY day=2026-09-11 written=true rows=1 retained=0 model=claude-fable-5-1/coordinator weighted=35403",
+	}}
+	for _, p := range onboarding.CompareTranscript([]onboarding.Step{step}, []onboarding.Result{{Code: r.exit, Stdout: r.stdout, Stderr: r.stderr}}, nil) {
+		assert.Fail(t, "the help's session example", "%v", p)
+	}
 }

@@ -86,12 +86,21 @@ func TestEveryVerbAnswersAsOneJSONObject(t *testing.T) {
 	}
 }
 
+// verbNames is every verb the tool answers, version included.
+func verbNames() []string {
+	names := []string{"version"}
+	for _, v := range memoryTool().Verbs {
+		names = append(names, v.Name)
+	}
+	return names
+}
+
 // Every verb's -h states its effect: each is an inspection, and none takes --dry-run
 // because none writes (the tool-answers ledger's dry-run row).
 func TestEveryVerbsHelpStatesItsEffect(t *testing.T) {
 	t.Parallel()
 
-	for _, verb := range verbs {
+	for _, verb := range verbNames() {
 		t.Run(verb, func(t *testing.T) {
 			exit, stdout, _ := runCLI(t, "", verb, "-h")
 			require.Equal(t, 0, exit)
@@ -110,11 +119,11 @@ func TestEveryMistakeIsOneRefusalNamingTheWayForward(t *testing.T) {
 		args []string
 		want string
 	}{
-		{"bare", nil, "MEMORY REFUSED: no verb given; the verbs are quickstart, stats, search, check, verify, eval, boot, version, and quickstart is the first run; run: nova-memory help\n"},
+		{"bare", nil, "MEMORY REFUSED: no verb given; the verbs are quickstart, stats, search, check, verify, eval, boot, version; run: nova-memory help\n"},
 		{"unknown verb", []string{"serch"}, `MEMORY REFUSED: unknown verb "serch"; did you mean search? the verbs are quickstart, stats, search, check, verify, eval, boot, version; run: nova-memory help` + "\n"},
 		{"unknown flag", []string{"stats", "--rot", corpus}, "STATS REFUSED: unknown flag --rot; the flags of stats are --exclude, --json, --root; did you mean --root?; run: nova-memory stats -h\n"},
-		{"a flag with no value", []string{"search", "--root", corpus, "--channels", "bm25", "x", "--k"}, "SEARCH REFUSED: --k needs a value: it wants a whole number (receipts per query, positive (required)); run: nova-memory search -h\n"},
-		{"check's lines are MEMORY's", []string{"check", "--root", corpus, "--channels", "bm25", "--k", "2", "a.md", "b.md"}, "MEMORY REFUSED: name exactly one candidate file, or - for stdin; refusing to guess; run: nova-memory help\n"},
+		{"a flag with no value", []string{"search", "--root", corpus, "--channels", "bm25", "x", "--k"}, "SEARCH REFUSED: --k needs a value: it wants a whole number (receipts per query, positive (default 10): k is the mind's budget, and zero is not unlimited); run: nova-memory search -h\n"},
+		{"check's lines are MEMORY's", []string{"check", "--root", corpus, "--channels", "bm25", "--k", "2", "a.md", "b.md"}, "MEMORY REFUSED: takes <file|->, exactly 1 argument, got 2; run: nova-memory check -h\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			exit, stdout, stderr := runCLI(t, "", tc.args...)
@@ -135,6 +144,12 @@ func TestFlagsMayFollowTheQueryWords(t *testing.T) {
 	var got jsonResult
 	require.NoError(t, json.Unmarshal([]byte(stdout), &got))
 	assert.Equal(t, "lantern", got.Facts["query"])
+
+	// A --json after the words still asks for JSON when a flag after it is wrong.
+	exit, stdout, stderr = runCLI(t, "", "search", "--root", corpus, "lantern", "--json", "--bogus")
+	assert.Equal(t, 2, exit)
+	assert.Empty(t, stderr)
+	assert.Contains(t, stdout, `"status":"refused"`)
 
 	exit, stdout, stderr = runCLI(t, "", "search", "--root", corpus, "--channels", "bm25", "--k", "3", "--", "-glazing", "--json")
 	require.Equal(t, 0, exit, stderr)
@@ -177,6 +192,16 @@ func TestTheRankFollowsFusedAndTheBannerSaysSo(t *testing.T) {
 	}
 	assert.Equal(t, 5, hits)
 	assert.Len(t, channels, 2, "the fixture query is meant to reach both channels")
-	assert.Contains(t, usage, "a hit is ranked by fused=")
-	assert.Contains(t, usage, "so score= need not fall with rank")
+	for _, verb := range []string{"search", "check"} {
+		_, help, _ := runCLI(t, "", verb, "-h")
+		assert.Contains(t, help, "a hit is ranked by fused=")
+		assert.Contains(t, help, "so score= need not fall with rank")
+	}
+}
+
+// The definition meets the standard the banner and help carry by construction only when
+// it is complete: every verb's effect, the how text's size, the status words.
+func TestMemoryToolMeetsTheStandard(t *testing.T) {
+	t.Parallel()
+	assert.Empty(t, memoryTool().Problems())
 }

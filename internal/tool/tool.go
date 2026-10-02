@@ -9,8 +9,10 @@
 // named at once), and the refusal line with its remedy: an unknown verb or
 // flag is answered with the nearest name and the ones there are, and a verb
 // group's -h lists its verbs. A tool may name a default verb (`<tool> <file>`)
-// and its own status words (STALE beside FAIL). A command holds only what its
-// verbs do.
+// and its own status words (STALE beside FAIL), a verb its positional
+// arguments (Flags.Args) and the token its spec opens its lines with, and a
+// tool the one setup line its examples need first. A command holds only what
+// its verbs do.
 package tool
 
 import (
@@ -29,6 +31,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
+	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -55,6 +58,10 @@ type Tool struct {
 	// only ones Out.As may put in place of OK or FAIL: at most MaxWords,
 	// upper case, none of OK, FAIL, REFUSED, MORE or NOTE (Problems).
 	Words []string
+	// Setup, when set, is the one shell line a first run types before the
+	// examples work (it makes the files they read): the banner prints it
+	// under onboarding.SetupHeading, above the example block.
+	Setup string
 }
 
 // MaxWords bounds a tool's own status words: a reader learns them all at once.
@@ -76,7 +83,8 @@ type Verb struct {
 	Detail    string         // lines `help <verb>` prints above its flags: a format, a worked example
 	ExitTable string         // this verb's exit codes, quoted by its -h; "" quotes the tool's
 	DryRun    bool           // the verb takes --dry-run and honours it (Call.DryRun): it plans and writes nothing
-	Flags     func(f *Flags) // declares the verb's flags; nil declares none
+	Token     string         // the first word of the verb's lines, where its spec names one; "" is the verb's name
+	Flags     func(f *Flags) // declares the verb's flags and arguments; nil declares none
 	Run       func(c *Call) *Out
 }
 
@@ -217,9 +225,10 @@ func (t *Tool) help(stdout io.Writer, code *int) {
 	if !ok {
 		panic(r)
 	}
-	effect, detail, exit := Effect("unstated"), "", []string{"exit codes: " + t.ExitTable}
+	effect, detail, exit, args := Effect("unstated"), "", []string{"exit codes: " + t.ExitTable}, ""
 	for _, v := range t.verbs() {
 		if v.Name == h.FS.Name() {
+			args = strings.Join(v.flags().args, " ")
 			detail = strings.Trim(v.Detail, "\n")
 			if v.Effect != "" {
 				effect = v.Effect
@@ -234,11 +243,14 @@ func (t *Tool) help(stdout io.Writer, code *int) {
 	if detail != "" {
 		detail += "\n"
 	}
-	text := b.String()
-	if t.Stage != "" { // line 2, under the usage line
-		usage, rest, _ := strings.Cut(text, "\n")
-		text = usage + "\n" + t.Stage + "\n" + rest
+	usage, rest, _ := strings.Cut(b.String(), "\n")
+	if args != "" { // the arguments the verb takes, after its flags
+		usage += " " + args
 	}
+	if t.Stage != "" { // line 2, under the usage line
+		usage += "\n" + t.Stage
+	}
+	text := usage + "\n" + rest
 	fmt.Fprintf(stdout, "%seffect: %s\n", verbflag.Insert(text, detail), effect)
 	*code = 0
 }
@@ -352,6 +364,9 @@ func (t *Tool) Banner() string {
 	}
 	b.WriteString(json + ": the same result as one JSON object on stdout. A verb that lists takes --max <n> (default 20, 0 lists all) and says MORE for the rest. `<verb> -h` lists a verb's flags.\n\n")
 	fmt.Fprintf(&b, "exit codes: %s\n\n", t.ExitTable)
+	if setup := strings.TrimSpace(t.Setup); setup != "" {
+		fmt.Fprintf(&b, "%s\n  %s\n\n", onboarding.SetupHeading, setup)
+	}
 	b.WriteString("example:\n")
 	for _, v := range t.verbs() {
 		for _, l := range lines(v.Example) {
@@ -375,10 +390,14 @@ func lines(s string) []string {
 func (t *Tool) call(v Verb, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	f := v.flags()
 	c := &Call{Stdin: stdin, Stdout: stdout, Stderr: stderr, flags: f, given: map[string]bool{}}
-	if err := verbflag.Parse(f.FlagSet, args); err != nil {
+	var err error
+	if c.args, err = f.parse(args); err != nil {
 		o := Refuse(oneline.Cap(verbflag.Explain(f.FlagSet, err), oneline.TailBytes))
 		o.Remedy = t.Name + " " + v.Name + " -h"
-		return t.emit(&v, o, !f.prints && verbflag.BoolGiven(f.FlagSet, args, "json"), stdout, stderr)
+		// --json counts when it was read before the mistake, in any run of flags
+		// around the arguments, or stands after it where BoolGiven reads it.
+		asJSON := !f.prints && (verbflag.BoolGiven(f.FlagSet, args, "json") || c.Bool("json"))
+		return t.emit(&v, o, asJSON, stdout, stderr)
 	}
 	f.Visit(func(fl *flag.Flag) { c.given[fl.Name] = true })
 	asJSON := !f.prints && c.Bool("json")
@@ -393,10 +412,17 @@ func (t *Tool) call(v Verb, args []string, stdin io.Reader, stdout, stderr io.Wr
 	if f.max && c.Int("max") < 0 {
 		c.Problem(fmt.Sprintf("--max must be zero or more (got %d); 0 lists all", c.Int("max")))
 	}
-	if v.Name != t.Default && f.NArg() > 0 {
-		c.Problem(fmt.Sprintf("takes no positional arguments, got %q (flags come before arguments)", f.Arg(0)))
+	wrongCount := f.args != nil && f.arity(len(c.args)) != ""
+	switch {
+	case wrongCount:
+		c.Problem(f.arity(len(c.args)))
+	case f.args == nil && v.Name != t.Default && len(c.args) > 0:
+		c.Problem(fmt.Sprintf("takes no positional arguments, got %q (flags come before arguments)", c.args[0]))
 	}
 	if o := c.Refused(); o != nil {
+		if wrongCount { // the verb's -h names what it takes
+			o.Remedy = t.Name + " " + v.Name + " -h"
+		}
 		return t.emit(&v, o, asJSON, stdout, stderr)
 	}
 	o := v.Run(c)
@@ -408,7 +434,7 @@ func (t *Tool) call(v Verb, args []string, stdin io.Reader, stdout, stderr io.Wr
 	}
 	if c.Given("dry-run") && c.Bool("dry-run") {
 		switch {
-		case !c.dryRead: // a tool bug its own tests meet: the verb ran as if for real
+		case !c.dryRead && o.Status != Refused: // a tool bug its own tests meet: the verb ran as if for real
 			o = Fail("--dry-run was given and the verb never read it (Call.DryRun); it may have written")
 		case o.Status == OK:
 			o.Fact("dry_run", true)
@@ -448,7 +474,7 @@ func (t *Tool) emit(v *Verb, o *Out, asJSON bool, stdout, stderr io.Writer) int 
 	o.token = strings.ToUpper(strings.TrimPrefix(t.Name, "nova-"))
 	if v != nil {
 		o.Verb = v.Name
-		o.token = strings.ToUpper(strings.Join(strings.Fields(v.Name), "-"))
+		o.token = cmp.Or(v.Token, strings.ToUpper(strings.Join(strings.Fields(v.Name), "-")))
 	}
 	if o.Status == Refused && o.Remedy == "" {
 		o.Remedy = t.Name + " help"
@@ -479,8 +505,78 @@ func (t *Tool) emit(v *Verb, o *Out, asJSON bool, stdout, stderr io.Writer) int 
 type Flags struct {
 	*flag.FlagSet
 	max, prints bool
+	args        []string // the positional arguments' names (Args); nil takes none
 	required    [][2]string
 	checks      []func(c *Call)
+}
+
+// Args declares the verb's positional arguments by name, in order:
+// f.Args("<file>") takes exactly one, and a last name ending in "..."
+// (f.Args("<words>...")) is a tail of one or more. Flags may stand before,
+// between or after them, and `--` ends the flags (a word after it that starts
+// with a dash is an argument). The verb's -h prints them on its usage line,
+// Call.Args reads them, and a wrong count is one refusal naming what the verb
+// takes, with the verb's -h as the next command.
+func (f *Flags) Args(names ...string) { f.args = names }
+
+// arity is the refusal for n arguments, or "" when the verb takes n.
+func (f *Flags) arity(n int) string {
+	want, tail := len(f.args), strings.HasSuffix(f.args[len(f.args)-1], "...")
+	if n == want || tail && n > want {
+		return ""
+	}
+	count := "exactly"
+	if tail {
+		count = "at least"
+	}
+	noun := "arguments"
+	if want == 1 {
+		noun = "argument"
+	}
+	return fmt.Sprintf("takes %s, %s %d %s, got %d", strings.Join(f.args, " "), count, want, noun, n)
+}
+
+// parse parses args into the flags and returns the positional arguments. A
+// verb that declares none stops at the first argument (verbflag.Parse); one
+// that declares Args reads flags on either side of each argument, up to `--`.
+func (f *Flags) parse(args []string) ([]string, error) {
+	if f.args == nil {
+		err := verbflag.Parse(f.FlagSet, args)
+		return f.FlagSet.Args(), err
+	}
+	var pos []string
+	for {
+		if err := verbflag.Parse(f.FlagSet, args); err != nil {
+			return nil, err
+		}
+		rest := f.FlagSet.Args()
+		if len(rest) == 0 || f.ended(args[:len(args)-len(rest)]) {
+			return append(pos, rest...), nil
+		}
+		pos, args = append(pos, rest[0]), rest[1:]
+	}
+}
+
+// ended reports whether the flag package stopped at a `--` among parsed (the
+// words it read as flags and their values) rather than at an argument: a `--`
+// read as no flag's value is the end of the flags.
+func (f *Flags) ended(parsed []string) bool {
+	for i := 0; i < len(parsed); i++ {
+		if parsed[i] == "--" {
+			return true
+		}
+		name, _, inline := strings.Cut(strings.TrimLeft(parsed[i], "-"), "=")
+		if fl := f.Lookup(name); fl != nil && !inline && !isBool(fl) {
+			i++ // its value
+		}
+	}
+	return false
+}
+
+// isBool reports whether a flag takes no value.
+func isBool(f *flag.Flag) bool {
+	b, ok := f.Value.(interface{ IsBoolFlag() bool })
+	return ok && b.IsBoolFlag()
 }
 
 // Required declares a string flag the verb cannot run without: empty, it is a
@@ -525,6 +621,7 @@ type Call struct {
 	Stdin          io.Reader
 	Stdout, Stderr io.Writer // written only by a verb that Prints
 	flags          *Flags
+	args           []string
 	given          map[string]bool
 	problems       []string
 	dryRead        bool
@@ -550,6 +647,10 @@ func (c *Call) Dur(name string) time.Duration { return c.Get(name).(time.Duratio
 
 // Given reports whether the flag was on the command line.
 func (c *Call) Given(name string) bool { return c.given[name] }
+
+// Args is the positional arguments: the ones a verb declared (Flags.Args), or
+// the default verb's.
+func (c *Call) Args() []string { return c.args }
 
 // Want reads a required string flag, recording a problem that says what it
 // wants when it is empty. Every Want is read before Refused, so one run names

@@ -20,6 +20,22 @@ import (
 // command for this tool, is a command a first run can type.
 const ExampleHeading = "\nexample:\n"
 
+// SetupHeading is the line above a banner's one setup line: the shell line a
+// first run types before its examples work, because it makes the files they
+// read. A test that runs the examples runs it first (SetupLine).
+const SetupHeading = "setup (run it first, in an empty directory):"
+
+// SetupLine returns the line under a banner's SetupHeading, trimmed, or ""
+// when the banner has none.
+func SetupLine(usage string) string {
+	_, tail, found := strings.Cut(usage, "\n"+SetupHeading+"\n")
+	if !found {
+		return ""
+	}
+	line, _, _ := strings.Cut(tail, "\n")
+	return strings.TrimSpace(line)
+}
+
 // FirstRunHeading is the subsection a stranger reads before anything else
 // about a tool. It names a section in whichever document the caller supplies:
 // docs/TESTS.md for the transcripts these tests execute.

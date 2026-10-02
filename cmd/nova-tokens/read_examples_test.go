@@ -31,11 +31,8 @@ func TestTheHelpReadingExamplesAreWhatTheyPrint(t *testing.T) {
 	}
 	require.Equal(t, 0, run("nova-tokens fold --out ./out --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts").Code)
 
-	build, err := onboarding.Elide("build id (the identity of this build)", `build=(devel|v[0-9]+\.[0-9]+\.[0-9]+[^ \t]*)`, "build=<this build>")
-	require.NoError(t, err)
-	norms := []onboarding.Norm{onboarding.Instant("at"), build}
 	source := "SOURCES SOURCE label=claude:bench kind=claude path=./transcripts reports=input,output,cache_write,cache_read day_basis=utc files=1 unreadable=0 messages=3 dup=1 noid=0 nousage=- unparsed=- comments=- redated=- superseded=- rows=2"
-	for _, step := range []onboarding.Step{
+	steps := []onboarding.Step{
 		{Line: "$ nova-tokens check --out ./out", Want: []string{
 			"CHECK OK at=2026-09-11T23:55:02Z build=devel files=1 rows=2 first=2026-09-11 last=2026-09-11 missing=0 stray=0 gap=0 notes=0",
 		}},
@@ -55,11 +52,14 @@ func TestTheHelpReadingExamplesAreWhatTheyPrint(t *testing.T) {
 			source,
 			"SOURCES OK sources=1 files=1 messages=3 unreadable=0 unparsed=0 rows=2 unattributed=0",
 		}},
-	} {
+	}
+	var results []onboarding.Result
+	for _, step := range steps {
 		line := strings.TrimPrefix(step.Line, "$ ")
 		assert.Contains(t, examples, line, "the help's example block does not hold %q", line)
-		for _, p := range onboarding.Compare(step, run(line), norms) {
-			assert.Fail(t, "onboarding example comparison failed", "%v", p)
-		}
+		results = append(results, run(line))
+	}
+	for _, p := range onboarding.CompareTranscript(steps, results, []onboarding.Field{{Name: "at"}, {Name: "build"}}) {
+		assert.Fail(t, "onboarding example comparison failed", "%v", p)
 	}
 }

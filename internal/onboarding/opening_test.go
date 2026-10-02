@@ -3,6 +3,8 @@ package onboarding
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // The three readers of a banner's opening (ONBOARDING.md point 6), each with
@@ -84,5 +86,22 @@ func TestHowItWorksLengthStopsAtTheFirstRunOrABlankLine(t *testing.T) {
 	}
 	if got := HowItWorksLength("nova-foo: does a thing well\n\nusage:\n"); got != 0 {
 		t.Errorf("a banner with no paragraph measured %d lines", got)
+	}
+}
+
+// TestSetupLine reads the one line under a banner's setup heading: trimmed,
+// "" when the banner has no heading, and only the first line under it.
+func TestSetupLine(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ name, banner, want string }{
+		{"the line under the heading", "x: y\n\n" + SetupHeading + "\n  mkdir -p ./in && cp a b\n\nexample:\n  x run\n", "mkdir -p ./in && cp a b"},
+		{"no heading", "x: y\n\nexample:\n  x run\n", ""},
+		{"the heading inside a sentence is no heading", "x: y " + SetupHeading + "\n  mkdir z\n", ""},
+		{"one line only", "x\n" + SetupHeading + "\n  one\n  two\n", "one"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, SetupLine(tc.banner))
+		})
 	}
 }

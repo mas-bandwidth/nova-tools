@@ -101,3 +101,4 @@ cmd/nova-fuse/firstrun_test.go:TestTheBannerSittingThroughTheComparator example:
 cmd/nova-fuse/firstrun_test.go:TestTheBannerSittingThroughTheComparator example: nova-fuse status --box ./fuse-box.json
 cmd/nova-check/answers_test.go:TestTheBannerQuickstartAndKernelExamplesMatchOutput example: nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000
 cmd/nova-check/answers_test.go:TestTheBannerQuickstartAndKernelExamplesMatchOutput example: nova-check quickstart --dir ./self
+cmd/nova-tokens/session_test.go:TestTheHelpSessionExampleIsWhatItPrints example: nova-tokens session --claude-session ./session.jsonl --out ./out

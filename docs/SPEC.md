@@ -2337,12 +2337,12 @@ preserves), and a read verb added later is fused by default, not by memory.
 ```
 nova-memory quickstart --root <dir>... [--words <w>]... [--draft <file>] [--exclude <glob>]...
 nova-memory stats  --root <dir>... [--exclude <glob>]...
-nova-memory search --root <dir>... --channels <list> --k <n> [--exclude <glob>]... [--json] <words>...
-nova-memory check  --root <dir>... --channels <list> --k <n> [--exclude <glob>]... [--json] <file|->
+nova-memory search --root <dir>... [--channels <list>] [--k <n>] [--exclude <glob>]... [--json] <words>...
+nova-memory check  --root <dir>... [--channels <list>] [--k <n>] [--exclude <glob>]... [--json] <file|->
 nova-memory verify --root <dir> --links <gate|info> [--coverage <A:B>]...
                    [--frontmatter <glob>]... [--exempt <prefix>]... [--exclude <glob>]...
                    [--fail-max <n>]
-nova-memory eval   --root <dir>... --channels <list> --k <n> --floor <f> [--exclude <glob>]...
+nova-memory eval   --root <dir>... [--channels <list>] [--k <n>] --floor <f> [--exclude <glob>]...
                    [--fail-max <n>] <gold.tsv>
 nova-memory boot   --root <dir> --pin <file>
 nova-memory version
@@ -2419,9 +2419,11 @@ roots are indexed together in one ranking, and a receipt names which root each
 hit came from in its `root=` field — a memory that lives in the cairn beside
 `memory/` is a second root, not a miss. `verify` takes exactly one root (its
 coverage and frontmatter globs and link resolution walk one tree); `boot` names
-one root because its pin is relative to that root. `--channels` is required
-wherever retrieval happens: which retrieval ran is part of what the answer means, and
-no channel set is right by default. `--k` is required and must be positive —
+one root because its pin is relative to that root. `--channels` defaults to
+every channel (`bm25,trigram`) and `--k` to 10, each stated in its flag text
+and named on every OK line (`channels=`, `k=`): which retrieval ran is part of
+what the answer means, so it is always printed, and an explicit value behaves as
+it always did. `--k` must be positive —
 k is the mind's budget and zero is not "unlimited". `--floor` is required on
 `eval`, in (0,1]. `--links` is required on `verify`. `--exclude` and
 `--exempt` are repeatable and start **empty**: every scope narrowing is the
@@ -5334,14 +5336,14 @@ These are the umbrella **Conventions** (the Conventions section of docs/SPEC.md)
 226. `TestRootIsNeverTakenFromTheEnvironment` — `--root` is required; no environment variable and no working-directory discovery.
 227. `TestSearchSpansMultipleRoots` — `--root` is repeatable and each receipt names `root=`.
 228. `-` — `verify` takes exactly one root and refuses two.
-229. `TestRefusesToGuess` — `--channels` is required wherever retrieval happens.
-230. `TestRetrieveRefusesNonPositiveK` / `TestRefusesToGuess` — `--k` is required and positive.
+229. `TestChannelsAndKHaveDefaults` — `--channels` defaults to every channel, named on the OK line.
+230. `TestRetrieveRefusesNonPositiveK` / `TestChannelsAndKHaveDefaults` — `--k` defaults to 10 and is positive.
 231. `TestRefusesToGuess` — `--floor` is required on `eval` and must be in (0,1].
 232. `TestRefusesToGuess` — `--links` is required on `verify`.
 233. `TestStatsHonoursExclude` / `TestBuildHonoursExclude` / `TestFrontmatterExemptionIsTheCallersAndNeverADefault` — `--exclude`/`--exempt` are repeatable and start empty.
 234. `-` — `.git` is never a corpus and is always skipped.
 235. `TestRequiredFlagErrorOrderDeterministic` / `TestARefusalReportsEveryReasonAtOnce` — a refusal reports every reason at once, in one deterministic order.
-236. `TestARefusalSaysWhatTheFlagWants` / `TestIssue1451EveryRefusalNamesTheDoor` — a refusal names the next step for `--channels`/`--k`/`--root` and still exits 2.
+236. `TestARefusalSaysWhatTheFlagWants` / `TestIssue1451EveryRefusalNamesTheDoor` — a refusal names the next step for `--channels`/`--root` and still exits 2.
 237. `TestUsageBannerExamplesRun` / `TestEveryDefinedFlagAppearsInTheUsageBanner` — the banner ends in the quickstart line and one runnable example per retrieval verb.
 238. `TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine` / `TestREADMEFirstRunMatchesWhatTheToolPrints` — `docs/TESTS.md`'s `### First run` transcript matches what the tool prints, line for line.
 239. `TestQuickstartEchoesEveryCommandItRuns` / `TestQuickstartRunsTheWordsAndDraftItWasGiven` — quickstart runs stats, then `search --channels bm25 --k 3`, then `check --channels bm25 --k 2` with the corpus-top or given words/draft.

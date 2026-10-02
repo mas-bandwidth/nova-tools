@@ -31,7 +31,7 @@ func TestHelpFoldExampleIsComparedToOutput(t *testing.T) {
 		"TOKENS OK days=1 rows=2 sources=1 unreadable=0 unparsed=0 mixed=0 conflict=0 shrank=0 partial=0 quiet=0",
 		"TOKENS NOTE nothing was wrong; nova-tokens check --out ./out is the gate",
 	}}
-	build, err := onboarding.Elide("build id (the identity of this build)", `build=(devel|v[0-9]+\.[0-9]+\.[0-9]+[^ \t]*)`, "build=<this build>")
-	require.NoError(t, err)
-	assert.Empty(t, onboarding.Compare(step, onboarding.Result{Code: exit, Stdout: output}, []onboarding.Norm{onboarding.Instant("at"), build}))
+	// The built binary stamps the instant it ran and the build it is: both are the run's.
+	assert.Empty(t, onboarding.CompareTranscript([]onboarding.Step{step}, []onboarding.Result{{Code: exit, Stdout: output}},
+		[]onboarding.Field{{Name: "at"}, {Name: "build"}}))
 }
