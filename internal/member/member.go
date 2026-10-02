@@ -279,11 +279,7 @@ type Config struct {
 	// (the tests' member). Clock is the time it measures the gap by; nil is time.Now.
 	Sleep func(time.Duration)
 	Clock func() time.Time
-	// Background takes the long work out of the pass (the owner, 2026-10-01: "You must
-	// not do heavy work in-line."): a launch's start, its result and its push run apart
-	// from the pass that began them and are collected by a later pass, and Wake says when
-	// one posted or a child exited. false (the tests' member) does each where the pass
-	// asks for it, so a pass is one step.
+	// Background performs long work asynchronously, separating a launch's start, result collection, and push from the pass to ensure heavy work does not block the pass execution.
 	Background bool
 }
 
@@ -351,14 +347,7 @@ type Member struct {
 	lastStart time.Time
 	passNow   time.Time // the pass's own time (Tick's), for what a start records
 
-	// THE PASS HAS NO LONG STEP (the owner, 2026-10-01: "The state machines and logic
-	// should never have long steps in them. Anything long can be added to a queue, and
-	// performed async." / "This includes the runners or whatever runs per-machine."). What
-	// is long in a launch's life (its start, staggered; reading its result; pushing its
-	// commit) is done by long, apart from the pass, and posts what it found here, by card;
-	// a pass collects it. startMu puts the starts one after another, StartGap apart;
-	// pushGate bounds the pushes running at once (pushWidth); wake holds one word for the
-	// loop: something was posted or a child exited, so the next pass is due now (Wake)
+	// The pass minimizes latency by avoiding long steps, offloading time-consuming operations like launching a child, collecting results, and pushing commits to be performed asynchronously.
 	postMu   sync.Mutex
 	posted   map[string]post
 	startMu  sync.Mutex
@@ -393,8 +382,7 @@ func (m *Member) Drain() { m.drain = true }
 // Running is how many lanes the member holds: one for every launch from its start until
 // its card is reported (a spent launch holds none). A child that has exited holds its lane
 // until the report, so the cards a member has working never pass its width (the owner,
-// 2026-10-01: "this \"squishiness\" of having > width in the working set has me
-// concerned."); the sprint's take holds the same bound (internal/sprint, takeOne).
+// A child that has exited holds its lane until reported, ensuring that active working set cards never exceed the configured width.
 func (m *Member) Running() int {
 	n := 0
 	for _, l := range m.running {
@@ -417,8 +405,7 @@ func (m *Member) woken() {
 	}
 }
 
-// THE BEAT GOES ON ITS OWN CLOCK (the fleet pass of 2026-10-01: a machine alive, pushing and
-// finishing, marked `down: no beat for 45s`). The work pass is serial: the queue, then for each
+// The beat runs on a separate clock to monitor machine liveness, independently of the serial work pass.
 // ended card a push to the forge and a finish, then the take and the starts; from a machine
 // 100 ms from the store a verb takes seconds, and sixteen lanes ending together hold one pass
 // longer than MissedBeatsDown beat windows (docs/SPEC-SPRINT.md section 5). A machine that is
@@ -567,7 +554,7 @@ func (m *Member) BeatLoop(ctx context.Context, every <-chan time.Time, out io.Wr
 // next pass, and the pass goes on to every other ended child and to the take
 // (a member 100 ms from the store lost one finish to the sprint's fence and
 // left seven finished cards unreported behind it, pass after pass: the fleet
-// pass of 2026-10-01 16:32 ET). Only the pass's first read, the queue, ends it.
+// A failed verb does not end the pass, which continues processing remaining tasks.
 func (m *Member) Tick(now time.Time) (acted int, err error) {
 	m.advanced()
 	m.passNow = now
@@ -1144,8 +1131,7 @@ func (m *Member) failLaunch(p Packet, why error) {
 // make) with the reason, so the sprint asks it of another reader at once, or of this one
 // again at most MaxReadReasks times and then judges it; this reader does not begin it again
 // before ReadStageRetry. A read left reading with no child was started again every pass,
-// the refusal only in this log, for the read's whole deadline (fleet pass 7, 2026-10-01:
-// two reads with no route held a card twelve minutes of a two-hour deadline).
+// A read that cannot start is returned to the sprint, preventing it from consuming resources throughout its entire deadline.
 func (m *Member) returnUnstarted(p Packet, why error) {
 	reason := cut("launch refused: " + oneLine(why.Error()))
 	code, out := m.run("read", "--as", m.cfg.As, "--return", p.Card, "--reason", reason, "--epoch", strconv.FormatUint(p.Epoch, 10))
@@ -1175,8 +1161,7 @@ func (m *Member) claim(c queueCard) (epoch uint64, gen, attempt int) {
 }
 
 // queueArgs is the pass's queue, asking only for the packets it may use (the fleet load
-// test of 2026-10-01: a reader's answer carried its 150 asked reads' briefs, 579,181
-// bytes, every pass): --packets, the reads a reader may begin this pass (its lanes free,
+// QueueArgs requests only the necessary packets, optimizing the data volume transmitted in each pass.
 // and those the pass's reports free; a member none: its take hands its packets), and
 // --have, every card it holds a launch for and every read it returned a moment ago, which
 // need none. Every other in-flight card comes with its packet, so a restarted member
@@ -1399,7 +1384,7 @@ func usageArgs(r Result) []string {
 
 // StartGap is the least time between two harness starts on one member, so the cards a
 // pass takes do not all start their harness in the same instant (sixteen at once on one
-// machine lost their start; the owner, 2026-10-01: "Yes on staggering.").
+// StartGap prevents harness starts from coinciding when a member takes multiple cards, avoiding resource contention by staggering them.
 const StartGap = 300 * time.Millisecond
 
 // staggerStart waits, when the member has a Sleep, until StartGap has passed since its
