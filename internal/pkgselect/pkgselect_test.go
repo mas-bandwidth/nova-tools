@@ -209,6 +209,59 @@ func TestSelectChangeIsTheTouchedPackagesTheirDependentsAndTheClassTestPackages(
 	}
 }
 
+// A changed file that is not Go selects every package whose _test.go files or
+// testdata name it, and the package whose testdata it is (nova-tools#5111:
+// docsd-16 changed a heading in docs/SPEC-SWARM.md, internal/swarm's doc test
+// asserts it, and the run tested neither). The tests name a doc by its file
+// name, usually through filepath.Join("..", "..", "docs", "X.md"), so the
+// full path is not in the text and the base name is what is looked for. Red
+// witnesses are the references that must not select: a doc no test names, a
+// longer name that ends the same way, a non-test source file's mention, a
+// deprecated package's test, a test under testdata.
+func TestSelectChangeMapsANonGoFileToThePackagesWhoseTestsReadIt(t *testing.T) {
+	t.Parallel()
+	root := tree(t)
+	for name, body := range map[string]string{
+		"internal/bar/bar_test.go":            "package bar\n\nvar doc = filepath.Join(\"..\", \"..\", \"docs\", \"SPEC-BAR.md\")\n",
+		"cmd/foo/foo_test.go":                 "package main\n\n// reads docs/NOT-SPEC-BAR.md, a different file, and SPEC-BARN.md, another\n",
+		"cmd/foo/testdata/golden.txt":         "the contract is docs/GUIDE.md\n",
+		"internal/docs/docs_test.go":          "package docs\n",
+		"cmd/gone/gone_test.go":               "package main\n\nvar _ = \"docs/DEPRECATED-ONLY.md\"\n",
+		"internal/ci/source.go":               "package ci\n\nvar _ = \"docs/SOURCE-ONLY.md\"\n",
+		"internal/bar/testdata/own/data.json": "{}\n",
+	} {
+		p := filepath.Join(root, filepath.FromSlash(name))
+		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+		require.NoError(t, os.WriteFile(p, []byte(body), 0o644))
+	}
+	cases := []struct {
+		name, diff string
+		want       []string
+	}{
+		{"a doc named by a test in a package the diff did not touch", "docs/SPEC-BAR.md\n", []string{"./internal/bar", "./internal/ci", "./internal/docs"}},
+		{"a doc named by a package's testdata", "docs/GUIDE.md\n", []string{"./cmd/foo", "./internal/ci", "./internal/docs"}},
+		{"a doc no test names", "docs/OTHER.md\n", []string{"./internal/ci", "./internal/docs"}},
+		{"a longer name ending the same way is not the doc", "docs/BAR.md\n", []string{"./internal/ci", "./internal/docs"}},
+		{"a source file's mention is not a test's", "docs/SOURCE-ONLY.md\n", []string{"./internal/ci", "./internal/docs"}},
+		{"a deprecated package's test selects nothing", "docs/DEPRECATED-ONLY.md\n", []string{"./internal/ci", "./internal/docs"}},
+		{"a file under a package's testdata selects that package", "internal/bar/testdata/own/data.json\n", []string{"./internal/bar", "./internal/ci", "./internal/docs"}},
+		{"of two changed docs, the one a test names selects it", "docs/SPEC-BAR.md\ndocs/OTHER.md\n", []string{"./internal/bar", "./internal/ci", "./internal/docs"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newFake(map[string]Result{
+				diffCmd:  {Stdout: tc.diff},
+				listTree: {Stdout: imports("cmd/foo", "internal/bar", "internal/ci", "internal/docs")},
+				listDeps: {Stdout: depsListing},
+			})
+			out, err := Select(f.run, Options{Root: root, Base: "base"})
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, out.Packages)
+		})
+	}
+}
+
 // The base is fetched only when it is missing, and --depth=1 only into a clone
 // that is already shallow: a fetch with --depth shallows the clone it runs in,
 // and `nova-ci local` runs here in a developer's own clone.
