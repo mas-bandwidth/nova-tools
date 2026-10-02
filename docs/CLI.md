@@ -407,6 +407,11 @@ A bus is an ordinary git repository where several lines, people and minds alike,
 
 ### First run
 
+The binary alone supplies a standalone git setup in `nova-bus help`: create a
+fresh scratch directory, run its Standalone setup block, then its example block.
+There is no `quickstart` verb because a bus needs explicit participant identities
+and lanes before it can send. The populated source fixture below is an alternative.
+
 The sitting runs in a scratch directory, on the example bus: `cmd/nova-bus/testdata/example-bus` copied out of a nova-tools source checkout, given a repository of its own, and given a remote — a bare repository beside it on the same disk — so every `--remote origin` below pushes to a directory and nothing leaves the machine. Git needs your configured commit identity. From the root of the checkout, the whole setup:
 
 ```sh
