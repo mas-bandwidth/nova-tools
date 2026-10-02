@@ -321,7 +321,7 @@ func TestTheCheckWritesAStallOnceAndClosesItWhenItClears(t *testing.T) {
 	require.True(t, p.Empty(), "written again: %+v", p)
 	// The coordinator reworks it: the rework closes the stall on it.
 	w.must(Rework(w.s, ReworkReq{Sel: Sel{IDs: []string{"s1-1"}}, Fix: "fix"}))
-	require.Empty(t, w.openOn("s1-1"), "the rework left open")
+	require.Empty(t, w.openOn("s1-1"), "the rework left open: %v", w.openOn("s1-1"))
 	p, _ = TickCheck(w.s, TickReq{})
 	require.True(t, p.Empty(), "the check after the rework: %+v", p)
 }

@@ -77,7 +77,7 @@ func (w *world) do(p Plan) Plan {
 
 func (w *world) must(p Plan) Plan {
 	w.t.Helper()
-	require.Empty(w.t, p.Refused, "refused")
+	require.Empty(w.t, p.Refused, "refused: %v", p.Refused)
 	return w.do(p)
 }
 

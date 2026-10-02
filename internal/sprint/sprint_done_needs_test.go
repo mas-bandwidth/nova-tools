@@ -30,7 +30,7 @@ func TestSprintDoneOutlastsAnAddOfNoCardAndIsNeverOverdue(t *testing.T) {
 			require.Empty(t, g.Decisions, "the sprint is done, shown as a judgment or overdue: %+v", g)
 		}
 	}
-	require.Empty(t, w.s.Open, "the sprint done opened a judgment")
+	require.Empty(t, w.s.Open, "the sprint done opened a judgment: %+v", w.s.Open)
 	w.must(Add(w.s, AddReq{Stream: "s2", Count: 1}))
 	p, _ = TickDone(w.s, TickReq{})
 	require.True(t, p.Empty(), "an add of a card left the sprint done")

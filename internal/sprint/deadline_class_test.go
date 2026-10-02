@@ -88,5 +88,5 @@ func TestTheWorkStampsAreReadOnlyByWorkDeadline(t *testing.T) {
 			}
 		}
 	}
-	require.Empty(t, bad, "a work stamp read outside WorkDeadline, a second clock")
+	require.Empty(t, bad, "a work stamp read outside WorkDeadline, a second clock:\n%s", strings.Join(bad, "\n"))
 }

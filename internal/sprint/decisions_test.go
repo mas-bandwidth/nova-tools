@@ -444,7 +444,7 @@ func TestG4StreamStateIsKeptTrue(t *testing.T) {
 	st := w.s.StreamCtl("s1").F("state")
 	require.Equal(t, StreamMerging, st, "accept on a waiting stream: %s, %d notes", st, len(w.notesOf(NStartedMerging)))
 	require.Len(t, w.notesOf(NStartedMerging), 1, "accept on a waiting stream: %s, %d notes", st, len(w.notesOf(NStartedMerging)))
-	require.Empty(t, w.openOn("s1-1"), "accept left the card's judgments open")
+	require.Empty(t, w.openOn("s1-1"), "accept left the card's judgments open: %v", w.openOn("s1-1"))
 	w.must(Return(w.s, ReturnReq{Sel: Sel{IDs: []string{"s1-1"}}}))
 	st = w.s.StreamCtl("s1").F("state")
 	require.Equal(t, StreamWaiting, st, "return of the only queued card: %s", st)

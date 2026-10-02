@@ -133,7 +133,7 @@ func TestTheSprintIsDoneOnce(t *testing.T) {
 	p, _ = TickDone(w.s, req)
 	require.True(t, p.Empty(), "done with s1-2 merging: %+v", p)
 	w.must(MergeStep(w.s, MergeReq{Stream: "s1", Batch: 1}))
-	require.Empty(t, w.notesOf(NSprintDone), "the merge step wrote the sprint done")
+	require.Empty(t, w.notesOf(NSprintDone), "the merge step wrote the sprint done: %+v", w.notesOf(NSprintDone))
 	w.tick(90 * time.Minute)
 	w.must(tickDone(w.s, req))
 	done := w.notesOf(NSprintDone)
