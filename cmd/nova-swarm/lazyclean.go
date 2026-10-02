@@ -43,8 +43,9 @@ import (
 // nothing reads them again.
 const keepEpochs = 2
 
-// lazyRound is the most old-epoch entries one round removes (or tries to): a round is a
-// few hundred milliseconds at most, so a tagged launch never waits long behind one.
+// lazyRound is the most old-epoch entries one round removes (or tries to). It bounds a
+// round by entry count, not by time: an entry may be a whole launch directory, and how long
+// its removal takes is not measured here. A round stops partway when a launch is tagged.
 const lazyRound = 32
 
 // lazyEvery is how often the cleaner, with no tagged launch to clean, runs a lazy round: a
