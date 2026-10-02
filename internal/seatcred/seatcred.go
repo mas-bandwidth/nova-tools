@@ -140,7 +140,6 @@ type Selection struct {
 	cred     Cred
 	credErr  error
 	addr     string
-	github   string
 	resolver func(seat string) (Cred, error)
 	getenv   func(string) string
 }
@@ -194,25 +193,13 @@ func (s *Selection) Select(seat string) { s.SelectWith(seat, "", nil) }
 func (s *Selection) SelectWith(seat, redisAddr string, resolve func(seat string) (Cred, error)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.selected, s.resolved, s.cred, s.credErr, s.addr, s.github, s.resolver, s.getenv = strings.TrimSpace(seat), false, Cred{}, nil, redisAddr, "", resolve, nil
+	s.selected, s.resolved, s.cred, s.credErr, s.addr, s.resolver, s.getenv = strings.TrimSpace(seat), false, Cred{}, nil, redisAddr, resolve, nil
 }
 
-// SelectProfile is SelectWith for a seats.tsv row: the row's seat, its Redis
-// address and its GitHub token env (GitHubEnv), resolved through resolve.
+// SelectProfile is SelectWith for a seats.tsv row: the row's seat and its
+// Redis address, resolved through resolve.
 func (s *Selection) SelectProfile(p Profile, resolve func(seat string) (Cred, error)) {
 	s.SelectWith(p.Name, p.Addr, resolve)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.github = p.GitHubEnv
-}
-
-// GitHubEnv is the key of the selected seat's file that holds its GitHub
-// token, from its seats.tsv row's seventh column; "" when no seat is selected
-// or its row names none. Nothing is decrypted to answer it.
-func (s *Selection) GitHubEnv() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.github
 }
 
 // Addr is the selected seat's Redis address from its profile row, "" when no
