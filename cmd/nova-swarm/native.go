@@ -546,10 +546,10 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// (4) THE AUTH COPY. One entry, the model's provider's, moved to the data home so
 	// the child's account resolves, and left mode 0600. A source that is looser than
 	// 0600 is refused: its copy would spread a secret further than its owner.
-	// --auth stays ONLY the legacy shape's (issue #881): a description that names
+	// --auth stays only the legacy shape: a description that names
 	// "secret": "<NAME>" takes the key from the environment and writes no auth file, so
-	// this step is skipped entirely for one. When a description IS given and --auth is
-	// used, the copy is the legacy path and one NOTE line says so.
+	// this step is skipped for that case. When --auth is explicitly given with a legacy
+	// description, a note line reports that the copy follows the legacy path.
 	//
 	// AND THE COPY DIES WITH THE CARD. The child reads the copy for as long as it runs
 	// -- every launch of a retried card included -- and when the run returns by any path
@@ -581,30 +581,28 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		}
 	}
 
-	// (4b) THE PROVIDER CONFIG (issue #465). The clean env carries the provider's auth entry
+	// (4b) THE PROVIDER CONFIG. The clean env carries the provider's auth entry
 	// into the job's own XDG data home but no opencode.json, so every configured provider --
 	// ollama, inception, zen -- is unknown to the harness and the run dies rc=1 in under a
 	// second. --config copies an opencode.json beside the carried auth file, mode 0600, so
 	// the harness resolves the provider exactly as it does when a person adds it to
-	// ~/.config/opencode. Only THE MODEL'S OWN provider is checked: a config whose entry for
+	// ~/.config/opencode. Only the model's own provider is checked: a config whose entry for
 	// it has no key in --auth is refused before anything runs, naming the provider and never
 	// the key; a provider whose options carry a baseURL and no apiKey field has no key to be
 	// absent (ollama on localhost) and is admitted without one. Every other provider in the
 	// file is carried verbatim and not checked -- this run never calls them, and checking
-	// them refused local-model cards for an absent inception key on every adoption pass
-	// (#523 follow-up).
+	// them would reject local-model cards that do not use those providers.
 	//
-	// (4c) AND THE JOB'S OWN FENCE (issue #644). The harness's `permission` block is written
+	// (4c) AND THE JOB'S OWN FENCE. The harness's `permission` block is written
 	// into the SAME file, whether or not --config named one, because a run with no config at
 	// all still runs under the harness's default fence -- which auto-rejects the job's own
-	// `../scratch` and every read-only path a card names -- and that fence is what killed 8
-	// of 30 cards on 2026-09-16. The block names this job's directories; the carried
+	// `../scratch` and every read-only path a card names. The block names this job's directories; the carried
 	// provider config keeps its own bytes and its own rules beside them (internal/swarm/fence.go).
 	// On a walled bench the wall owns what the child may read, so only a --no-wall run takes
 	// the card's `READ:` paths: with no OS wall there is nothing else to open them.
 	//
 	// (4d) AND THE DESCRIPTION'S OWN READ ROOTS, ON A WALLED RUN AS MUCH AS AN UNWALLED ONE
-	// (issue #1463). `read_roots` is the worker description's declaration of what every job
+	// `read_roots` is the worker description's declaration of what every job
 	// of this worker may READ -- a bench-local mirror, a corpus, a toolchain under a user
 	// directory. `worker check` accepted it, `LoadWorker` validated it, and NEITHER fence
 	// was ever told: the wall's read set was built without it (nativeSandboxArgv) and the
@@ -640,7 +638,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		}
 	}
 	// The keyless provider's loopback host:port travels to the wall as --net-allow
-	// (issue #591): (allow network-outbound (remote ip)) does not reach 127.0.0.1, so a
+	// (allow network-outbound (remote ip)) does not reach 127.0.0.1, so a
 	// local-model card runs and dies silently without the named grant.
 	if cfg.configFile != "" {
 		cfg.netAllow = providerLoopback(cfg.configFile, provider)
@@ -650,7 +648,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// caller can prove later that neither the card nor the binary changed under it.
 	binaryHash, _ := fileSHA256(bin)
 	cardHash := sha256.Sum256(cfg.card)
-	// (4e) STAGING FROM BENCH MIRROR (issue #2882).
+	// (4e) STAGING FROM BENCH MIRROR.
 	// Staging clones from the bench's local mirror (--reference or clone --shared)
 	// with a hard timeout (120 s) that ends the card RESULT: BLOCKED stage-timeout <bench> <secs>
 	// and writes the end record like any other card.
@@ -694,7 +692,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 				}
 			}
 			swarm.WriteStageTimeoutResult(jobDir, bench, secs)
-			// STAGE FAIL (issue #3050): the batch launcher watches stdout for a
+			// STAGE FAIL: the batch launcher watches stdout for a
 			// STAGE OK/FAIL line and detaches 2s after seeing it; without one on every
 			// failure path (this one included) it waits out the full 135s and prints
 			// STAGE UNSEEN even though staging already ended.
@@ -714,16 +712,16 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			}
 			return res, 1
 		}
-		// STAGE FAIL (issue #3050): see the timeout branch above for why this line has
+		// STAGE FAIL: see the timeout branch above for why this line has
 		// to be printed here rather than left to the caller's own NATIVE line.
 		fmt.Fprintf(os.Stdout, "STAGE FAIL bench=%s repo=%s base=%s reason=%s\n",
 			oneline.Field(bench), oneline.Field(stageRes.BaseRepo), oneline.Field(stageFailBase(stageRes)), oneline.Escape(stageErr.Error()))
 		refuseNative(errOut, stageErr.Error())
 		return nativeRunResult{}, 2
 	}
-	// NO-REPO-STAGED (nova-tools#3711): a card that NAMES a repo (base-repo:, REPO:, or a clone
-	// URL) and ends with nothing staged is a staging failure. quack-0925b launched all 12 of
-	// its `REPO: owner/name` cards into job dirs with no repo after `STAGE OK repo= base=`;
+	// NO-REPO-STAGED: a card that NAMES a repo (base-repo:, REPO:, or a clone
+	// URL) and ends with nothing staged is a staging failure. A card with `REPO: owner/name`
+	// would launch into job dirs with no repo after `STAGE OK repo= base=`;
 	// the models cloned it themselves (75 s on one bench), were refused by the wall on another bench, or
 	// ran out of wall. The wrapper hands the model the repo, or the card does not start.
 	if !stageRes.Staged && swarm.CardNamesRepo(cfg.card) {
@@ -734,9 +732,9 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			oneline.Field(cfg.label), oneline.Field(named.Named), oneline.Field(stageOpts.TargetDir)))
 		return nativeRunResult{}, 2
 	}
-	// STAGE OK (issue #3050): staging returned silently, so the batch launcher
+	// STAGE OK: staging returned silently, so the batch launcher
 	// -- which detaches 2s after seeing a STAGE OK/FAIL line on stdout instead of waiting
-	// the full 135s -- printed STAGE UNSEEN on every #3050 launch. One line, on success.
+	// the full 135s -- printed STAGE UNSEEN on every such launch. One line, on success.
 	writeStageOK(os.Stdout, bench, stageRes)
 
 	// (4f) THE FRAME (docs/SPEC-CARD-CONTRACT.md layers 2 and 3). A framed launch whose
@@ -760,7 +758,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		}
 	}
 
-	// (5) THE WALL (slice 11). Every native run is walled unless the caller typed --no-wall:
+	// (5) THE WALL. Every native run is walled unless the caller typed --no-wall:
 	// the wall is never implied away (SPEC-SANDBOX rule 1). A --sandbox name is used as typed;
 	// otherwise the tool's own name is resolved on PATH. A wall that cannot express a repo
 	// allow rule is still a wall -- a card naming no repos runs inside it without the rule,
@@ -846,14 +844,14 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		refuseNative(errOut, fmt.Sprintf("the run log %s could not be opened: %s", oneline.Field(filepath.Join(cfg.slotDir, "native.log")), oneline.Escape(err.Error())))
 		return nativeRunResult{}, 2
 	}
-	// ONE CAPTURE PATH, WALLED OR NOT (issue #608). The child's output also lands under the
+	// ONE CAPTURE PATH, WALLED OR NOT. The child's output also lands under the
 	// JOB, in `harness-output.log`, so the evidence sits with the card's own work rather
 	// than one directory up with the slot's. Before this the native path wrote only
 	// <slot>/native.log, so an UNWALLED card that produced no RESULT
-	// left no evidence of what the harness said: the whole no-result class of 2026-09-16
+	// left no evidence of what the harness said: the whole no-result class
 	// could not be diagnosed, and a silent harness and a lost log read the same.
 	//
-	// IT IS NOT `harness.log`, DELIBERATELY. That name has two owners already -- the legacy
+	// IT IS NOT `harness.log`, DELIBERATELY. That name has two owners already -- the
 	// supervisor pins the harness's output to it, and a `batch` pins its runner's stdout to
 	// it, which is where the NATIVE OK line lands -- and a third writer at one path is how
 	// evidence gets cut out from under a reader. This capture has its own name and one
