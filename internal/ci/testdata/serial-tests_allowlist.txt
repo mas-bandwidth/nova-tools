@@ -216,7 +216,7 @@ cmd/nova-swarm/firstrun_test.go:TestFirstRunTranscriptIsWhatTheToolPrintsLineFor
 cmd/nova-swarm/gate_hold_test.go:TestWalledRefusalOffersTheReadRootsAsOnePossibility serial: t.Setenv
 cmd/nova-swarm/gate_test.go:TestNativeGateThatCouldNotRunIsNeverOK serial: t.Setenv
 cmd/nova-swarm/gate_test.go:TestNativeWalledRunOpensTheWorkersReadRoots serial: t.Setenv
-cmd/nova-swarm/issue2328_test.go:TestIssue2328 serial: t.Setenv
+cmd/nova-swarm/experimental_filewatcher_env_test.go:TestIssue2328 serial: t.Setenv
 cmd/nova-swarm/native_budget_sample_test.go:TestLiveSamplerCountsAFailedReadAndAnAnswerResetsIt serial: t.Setenv
 cmd/nova-swarm/native_budget_sample_test.go:TestLiveSamplerNeverRunsTwoReadsAtOnce serial: t.Setenv
 cmd/nova-swarm/native_budget_source_test.go:TestNativeRefusesABudgetNothingCanObserve serial: t.Setenv
