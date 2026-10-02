@@ -124,11 +124,10 @@ func Resolve(stamped string, info *debug.BuildInfo, ok bool) string {
 // A tool with one more true thing to say about itself says it as an EXTRA: a `key=value`
 // token after the fourth -- `build=<12 hex>` from nova-merge, `backend=` and `platform=`
 // from nova-sandbox. Extras are part of the grammar rather than exceptions to it. On
-// 2026-09-18 nova-merge's hand-rolled fifth token made `nova-version snapshot` refuse an
-// entire install, because each reader had been written against the four tokens it
-// happened to know. So the writer takes extras HERE, where Parse is guaranteed to read
-// them back, and REFUSES one that is not key=value: a writer looser than its reader is a
-// refusal deferred to whoever runs the snapshot.
+// Parse accepts named extras, so a tool can add a fact without making `nova-version snapshot`
+// reject the version line. The writer validates extras here, where Parse reads them back,
+// and refuses anything that is not key=value: a writer looser than its reader defers
+// rejection until someone runs the snapshot.
 func Line(tool, stamped string, extras ...string) string {
 	line := fmt.Sprintf("%s %s %s/%s %s",
 		oneline.Field(tool),
@@ -205,8 +204,7 @@ func Parse(s string) (Fields, bool) {
 // snapshot, `moved`'s per-revision readback -- also reads this four-field shape and
 // refuses a binary that names a different checkout, a different revision, a dirty tree,
 // or a different build host than the manifest recorded. A build from the wrong
-// repository that happens to carry the requested linker stamp cannot pass (#2291,
-// SPEC-VERSION item 6).
+// A matching linker stamp does not let a binary from another repository pass verification.
 //
 // All four fields are always written together, so the round-trip is unambiguous: a Source
 // the reader can extract is one the writer wrote whole. A version line that carries some
