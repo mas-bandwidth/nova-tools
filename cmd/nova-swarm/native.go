@@ -1374,8 +1374,8 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		}
 	}
 	// A CARD THAT ENDED BY ASKING OWES THE SAME REPORT. `opencode run` is non-interactive:
-	// a final turn that is a question finishes the turn and exits 0 in seconds -- 5.22 s
-	// and 5.49 s on two benches, measured 2026-09-22 -- so the run
+	// a final turn that is a question finishes the turn and exits 0 in seconds (measured:
+	// 5.22 s and 5.49 s on two benches) -- so the run
 	// never holds its slot, and the end it gets today is a plain `no-result`, the token
 	// for a model that chose to publish nothing. The question is read out of the card's
 	// own capture and written into a report that SAYS it was a question, so a requeue can
@@ -2040,7 +2040,7 @@ func sameDir(a, b string) bool {
 // attempt is summed once. A fast failure whose provider reported nothing keeps its dashes,
 // and `usd` stays a dash rather than becoming a zero. The `end` column names how the attempt
 // ended -- done, failed, or wall.
-// THE ROW IS THE LAUNCH'S (rule 13d, "Two numbers, kept apart"): each launch's numbers stay its own. It returns the usage it
+// THE ROW IS THE LAUNCH'S (rule 13d, "Two numbers, kept apart"). It returns the usage it
 // finally read as well, because the JOB's figure on the NATIVE OK line is the sum of these
 // launches' own final reads -- "a job's rows are disjoint, so that adding them counts each
 // launch once", and two launches reported at 40 and 70 keep 40 and 70 here while the line
