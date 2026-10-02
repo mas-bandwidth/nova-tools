@@ -177,7 +177,7 @@ func cmdLocal(args []string, stdout, stderr io.Writer, runner localRunner, selec
 	}
 	makefile, err := os.ReadFile(filepath.Join(root, "Makefile"))
 	if err != nil {
-		return refuse(stderr, " local", fmt.Sprintf("%s has no readable Makefile, so there is no `make test` to run: %s", oneline.Quote(root),oneline.Err(err)))
+		return refuse(stderr, " local", fmt.Sprintf("%s has no readable Makefile, so there is no `make test` to run: %s", oneline.Quote(root), oneline.Err(err)))
 	}
 	if !localHasTarget(makefile, "test") {
 		return refuse(stderr, " local", fmt.Sprintf("%s's Makefile has no test target, the one entry CI's unit legs call", oneline.Quote(root)))
