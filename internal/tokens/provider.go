@@ -91,8 +91,8 @@ func ParserColumns(kind string) []string {
 }
 
 // ReadProvider reads one billing export with the parser its kind names. The label on
-// every row it feeds is `<kind>:<name>`, a per-account label that the day-file
-// example writes it, so two exports from one provider are two sources.
+// every row it feeds is `<kind>:<name>`, a per-account label, as the day-file example
+// writes it, so two exports from one provider are two sources.
 func ReadProvider(kind, name, path string, _ *Rules) *Source {
 	s := &Source{Label: Label(kind, name), Kind: KindProvider, Path: path, Basis: UTC}
 	s.Stat.Files = 1
