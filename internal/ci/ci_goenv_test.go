@@ -56,7 +56,8 @@ func TestGoEnvRefusesThePreFixMutate(t *testing.T) {
 	root := goEnvFixtureTree(t, "mutate_prefix.go.txt")
 	res, err := CheckGoEnv(root, "")
 	require.NoError(t, err)
-	require.False(t, res.Refused() != 1 || len(res.Findings) != 1, "the pre-fix mutate is one refusal, got %d: %+v", res.Refused(), res.Findings)
+	require.Equal(t, 1, res.Refused(), "the pre-fix mutate is one refusal, got %d: %+v", res.Refused(), res.Findings)
+	require.Equal(t, 1, len(res.Findings), "the pre-fix mutate is one refusal, got %d: %+v", res.Refused(), res.Findings)
 	f := res.Findings[0]
 	assert.Equal(t, "inherit", f.Kind, "kind = %q, want inherit", f.Kind)
 	assert.Equal(t, "runUnits", f.Func, "func = %q, want runUnits", f.Func)
@@ -115,7 +116,8 @@ func TestGoEnvAllowlistHoldsOneOffender(t *testing.T) {
 	require.NoError(t, os.WriteFile(list, []byte("internal/fixture/fixture.go:1 inherit 2026-09-18 predates the checker\n"), 0o644))
 	res, err := CheckGoEnv(root, list)
 	require.NoError(t, err)
-	require.False(t, res.Refused() != 0 || res.Allowlisted != 1, "the row holds the offender: refused=%d allowlisted=%d %+v", res.Refused(), res.Allowlisted, res.Findings)
+	require.Equal(t, 0, res.Refused(), "the row holds the offender: refused=%d allowlisted=%d %+v", res.Refused(), res.Allowlisted, res.Findings)
+	require.Equal(t, 1, res.Allowlisted, "the row holds the offender: refused=%d allowlisted=%d %+v", res.Refused(), res.Allowlisted, res.Findings)
 }
 
 // 6. The help line the class test is entered under, word for word as
@@ -160,7 +162,9 @@ func TestGoEnvRefusesAChildGoStartedThroughSubproc(t *testing.T) {
 	root := goEnvFixtureTree(t, "subproc_inherit.go.txt")
 	res, err := CheckGoEnv(root, "")
 	require.NoError(t, err)
-	require.False(t, res.Refused() != 1 || len(res.Findings) != 1, "a subproc go with no Env is one refusal, got %d: %+v", res.Refused(), res.Findings)
+	require.Equal(t, 1, res.Refused(), "a subproc go with no Env is one refusal, got %d: %+v", res.Refused(), res.Findings)
+	require.Equal(t, 1, len(res.Findings), "a subproc go with no Env is one refusal, got %d: %+v", res.Refused(), res.Findings)
 	f := res.Findings[0]
-	require.False(t, f.Kind != "inherit" || f.Func != "listDeps", "finding %+v", f)
+	require.Equal(t, "inherit", f.Kind, "finding %+v", f)
+	require.Equal(t, "listDeps", f.Func, "finding %+v", f)
 }
