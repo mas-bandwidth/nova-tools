@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -278,6 +279,82 @@ func TestAPushTheRemoteRejectedIsSentAgain(t *testing.T) {
 	got = g3.Push(b3.p, member.Result{Head: head3})
 	assert.Contains(t, got.Refused, "[rejected]")
 	assert.Empty(t, waits, "a push refused for the commit is not sent again")
+}
+
+// badFetchGit is a git whose first n fetches into the push repository fail as one did on the
+// 5000-card load test (2026-10-01), on another launch's ref, while the bench mirror the push
+// repository borrows objects from was being repacked; every other git, and the fetches
+// after, run. At each push it records the launch refs the push repository still holds.
+type badFetchGit struct {
+	mu          sync.Mutex
+	fail        int
+	fetches     int
+	refsAtPush  []string
+	refsAtFetch []string
+}
+
+const badFetchLine = "fatal: bad object refs/member/c9.w1.g1.e7/HEAD"
+
+func (r *badFetchGit) run(ctx context.Context, o gitrun.Options, args ...string) (gitrun.Result, error) {
+	held := func() []string {
+		res, err := gitrun.Run(ctx, gitrun.Options{C: o.C}, "for-each-ref", "--format=%(refname)", "refs/member/")
+		if err != nil {
+			return []string{"for-each-ref: " + err.Error()}
+		}
+		return strings.Fields(string(res.Stdout))
+	}
+	switch {
+	case slices.Contains(args, "fetch"):
+		r.mu.Lock()
+		r.fetches++
+		failed := r.fetches <= r.fail
+		r.refsAtFetch = append(r.refsAtFetch, held()...)
+		r.mu.Unlock()
+		if failed {
+			return gitrun.Result{Stderr: []byte(badFetchLine + "\n")}, assert.AnError
+		}
+	case slices.Contains(args, "push"):
+		r.mu.Lock()
+		r.refsAtPush = append(r.refsAtPush, held()...)
+		r.mu.Unlock()
+	}
+	return gitrun.Run(ctx, o, args...)
+}
+
+// A fetch from the checkout that fails is the member's moment, never the card's: it is made
+// again after a wait, with nothing of the failed try left in this launch's namespace, and the
+// commit lands; a fetch that fails every time is the refusal, saying the push repository and
+// the tries. The launch's refs are gone before the push to origin, so another launch's fetch
+// never meets them for the seconds a push and a pull request take. On the 5000-card load test
+// (2026-10-01) one card failed "push refused: fetch from the checkout: fatal: bad object
+// refs/member/<another launch>/HEAD", a moment of the shared push repository.
+func TestAFetchFromTheCheckoutThatFailsIsMadeAgain(t *testing.T) {
+	t.Parallel()
+	b := newPushBench(t)
+	head := b.commit(t, "the work\n")
+	var waits []time.Duration
+	g := b.pusher()
+	once := &badFetchGit{fail: 1}
+	g.git, g.sleep = once.run, func(d time.Duration) { waits = append(waits, d) }
+	require.Equal(t, member.Push{Sha: head}, g.Push(b.p, member.Result{Head: head}))
+	assert.Equal(t, 2, once.fetches, "failed once, fetched on the second")
+	assert.Equal(t, pushWaits[:1], waits)
+	assert.Empty(t, once.refsAtFetch, "each try starts with this launch's namespace empty")
+	assert.Empty(t, once.refsAtPush, "the launch's refs are dropped before the push to origin")
+	assert.Equal(t, head, b.originHas(t, "sprint/c1"))
+
+	b2 := newPushBench(t)
+	head2 := b2.commit(t, "the work\n")
+	waits = nil
+	g2 := b2.pusher()
+	always := &badFetchGit{fail: 100}
+	g2.git, g2.sleep = always.run, func(d time.Duration) { waits = append(waits, d) }
+	got := g2.Push(b2.p, member.Result{Head: head2})
+	assert.Empty(t, got.Sha)
+	assert.Equal(t, fmt.Sprintf("fetch from the checkout into the member's push repository, %d tries: %s", len(pushWaits)+1, badFetchLine), got.Refused)
+	assert.Equal(t, len(pushWaits)+1, always.fetches)
+	assert.Equal(t, pushWaits, waits)
+	assert.Empty(t, b2.originHas(t, "sprint/c1"))
 }
 
 // What is not pushed, each said: a head that is not a sha, a branch that is
