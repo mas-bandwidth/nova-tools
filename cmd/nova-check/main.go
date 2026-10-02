@@ -25,11 +25,11 @@ import (
 
 const usage = `nova-check: checks over markdown records and repositories, each finding named by file and line
 
-how it works: each verb is one check over the files you name; nothing is kept
-between runs and nothing is written except by spelling --write. links, nocode,
-kernel and spelling fit any markdown tree (spelling matches a list of known
-misspellings, not a dictionary); attest, floors, corpus, hygiene, dogfood and
-convergence read a record repository's own manifest, ledgers and receipts.
+how it works: most verbs inspect named paths and keep no state between runs.
+dogfood record appends a receipt; spelling --write edits files in place.
+convergence reads forge data through gh, an optional checkout through git, and
+the files you name; --state stores its two-tick streak. Other repository checks
+read the manifests, ledgers and receipts you name.
 first run: create the small markdown tree below, then run the example commands.
 
 usage:
@@ -92,16 +92,15 @@ usage:
                          --retired <file> --since <RFC3339|24h>
         [--bin <dir>] [--repo-dir <dir>] [--batch-logs <dir>] [--versions <tsv>]
         [--certs <tsv>] [--state <file>] [--by <name>] [--json]
-                                                     are we converging: one line per stream,
-                                                     now against --since, with the ratio and
-                                                     the trend. Seven streams -- LANDING,
-                                                     CLASSES, SCRIPTS, PRS, EDGES, FLEET,
-                                                     LEDGER -- each from a real source, and
-                                                     a stream whose source was not named is
-                                                     ABSENT rather than zero. Exit 1 only
-                                                     when a stream has widened on two
-                                                     consecutive ticks, which is why the
-                                                     streak lives in --state.
+                                                     LANDING and PRS read the forge through
+                                                     gh; CLASSES reads the optional checkout
+                                                     through git. SCRIPTS, EDGES, FLEET and
+                                                     LEDGER read the named paths. --state
+                                                     stores the two-tick streak. Each stream
+                                                     shows now, --since, ratio and trend;
+                                                     an unnamed optional source is ABSENT,
+                                                     not zero. Exit 1 after two consecutive
+                                                     widening ticks.
   nova-check spelling (--dir <dir> | --file <path> | --path <pattern>)
                       [--ignore <word|@file>] [--write] [--exclude <prefix>]
                       [--fail-max <n>]

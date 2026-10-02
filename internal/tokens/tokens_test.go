@@ -289,6 +289,33 @@ func TestTheUnattributedTallyCountsOnlyWhatFellToOther(t *testing.T) {
 	assert.Falsef(t, len(got) != 2 || got[0].Stem != "/home/nova/tree" || got[0].Count != 2 || got[1].Stem != "/home/nova/other-tree", "the tally is %v; it wants the heaviest tree first, keyed by the tree", got)
 }
 
+// TestTheUnattributedTallyScopesToFilteredDay: when FilterDay is set, only messages
+// attributed under that day are tallied.
+func TestTheUnattributedTallyScopesToFilteredDay(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "repos.tsv")
+	require.NoError(t, os.WriteFile(path, []byte("schema\t(^|/)schema($|/)\n"), 0o644))
+	rules, err := LoadRules(path)
+	require.NoError(t, err)
+	rules.WatchUnattributed()
+	rules.FilterDay("2026-09-11")
+
+	// Message on 2026-09-11: should be tallied
+	rules.SetDay("2026-09-11")
+	rules.AttributeInputs([]string{"/home/nova/day1/a.go"}, "")
+
+	// Message on 2026-09-12: should be ignored
+	rules.SetDay("2026-09-12")
+	rules.AttributeInputs([]string{"/home/nova/day2/b.go"}, "")
+
+	n := rules.TotalUnattributed()
+	assert.Equal(t, 1, n, "unattributed total = %d, want 1", n)
+	got := rules.Unattributed()
+	assert.Equal(t, []UnattributedStem{{Stem: "/home/nova/day1", Count: 1}}, got, "got %v, want 1 stem for day 1", got)
+}
+
 // The tally is bounded, and past the ceiling it still counts every token: a listing whose
 // memory grows with the tree is the unbounded read this repo's caps exist to end, and a
 // total that stopped at the ceiling would be a number nobody could use.
@@ -440,6 +467,19 @@ func TestValidDayIsACalendarCheck(t *testing.T) {
 	}
 	for _, bad := range []string{"2026-13-40", "2026-02-30", "2026-00-10", "2026-09-31", "2026-09-00", "2026-9-11", "not-a-day!"} {
 		assert.Falsef(t, ValidDay(bad), "%s is not a day", bad)
+	}
+}
+
+// TestValidMonthIsACalendarCheck: a month is a calendar month (01-12), not just seven characters
+// with a hyphen.
+func TestValidMonthIsACalendarCheck(t *testing.T) {
+	t.Parallel()
+
+	for _, good := range []string{"2026-01", "2026-09", "2026-12", "1999-02"} {
+		assert.True(t, ValidMonth(good), "%s is a month", good)
+	}
+	for _, bad := range []string{"2026-13", "2026-00", "2026-9", "2026-99", "not-a-month", "2026/01", "2026-a1"} {
+		assert.False(t, ValidMonth(bad), "%s is not a month", bad)
 	}
 }
 

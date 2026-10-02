@@ -1818,6 +1818,23 @@ func TestADayIsADateOnTheCalendar(t *testing.T) {
 	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2024-02-29", "--repos", reposFile(t, dir), "--claude", "g="+tr), 0)
 }
 
+// TestSumRejectsMonth13AndInvalidMonths: a month is a calendar month (01-12), not just seven
+// characters with a hyphen. Month 13 must be rejected with exit 2 before accessing the output directory.
+func TestSumRejectsMonth13AndInvalidMonths(t *testing.T) {
+	t.Parallel()
+
+	out := t.TempDir()
+	r := invoke(t, "sum", "--out", out, "--month", "2026-13")
+	wantExit(t, r, 2)
+	wantContains(t, r.stderr, "SUM REFUSED: --month is not a month: 2026-13")
+
+	for _, bad := range []string{"2026-00", "2026-99", "2026-1", "bad-month"} {
+		r := invoke(t, "sum", "--out", out, "--month", bad)
+		wantExit(t, r, 2)
+		wantContains(t, r.stderr, "SUM REFUSED: --month is not a month: "+bad)
+	}
+}
+
 // TestASwarmFileWithALeadingBlankLineStillValidatesItsHeader pins the --swarm section: "A
 // file whose header is not the sixteen names in order is TOKENS UNPARSED naming the file
 // and the first wrong column." The header was whatever line 1 was, so one blank line at

@@ -307,7 +307,7 @@ func TestQuickstartEchoesEveryCommandItRuns(t *testing.T) {
 	require.Equalf(t, 0, exit, "exit = %d, want 0; stderr: %s", exit, stderr)
 	lines := strings.Split(strings.TrimRight(stdout, "\n"), "\n")
 
-	require.Truef(t, strings.HasPrefix(lines[0], "QUICKSTART OK root="), "the first line does not say what this run chose: %q", lines[0])
+	require.Truef(t, strings.HasPrefix(lines[0], "QUICKSTART RUN root="), "the first line does not say what this run chose: %q", lines[0])
 	words := field(t, lines[0], "words")
 	{
 		got := field(t, lines[0], "words-source")
@@ -316,6 +316,7 @@ func TestQuickstartEchoesEveryCommandItRuns(t *testing.T) {
 	for _, w := range strings.Split(words, `\x20`) {
 		assert.Falsef(t, quickstartFunctionWords[w], "the demonstration query offers %q, a function word, as one of this corpus's own terms", w)
 	}
+	assert.Equalf(t, "QUICKSTART OK done=3", lines[len(lines)-2], "the line before NOTE is\n  %s\nwant\n  %s", lines[len(lines)-2], "QUICKSTART OK done=3")
 	{
 		want := "QUICKSTART NOTE " + quickstartChoiceNote
 		assert.Equalf(t, want, lines[len(lines)-1], "the last line is\n  %s\nwant\n  %s", lines[len(lines)-1], want)
@@ -389,6 +390,19 @@ func TestQuickstartExitsTwoWhenAStepCouldNotRun(t *testing.T) {
 	assert.Containsf(t, stderr, "the check step could not run", "stderr does not name the step that failed: %q", stderr)
 	assert.NotContains(t, stdout, quickstartChoiceNote, "a quickstart that did not finish printed its closing note anyway")
 	assert.Containsf(t, stdout, "SEARCH OK", "the steps that did run must still be on the page: %q", stdout)
+	assert.NotContainsf(t, stdout, "QUICKSTART OK", "a quickstart that failed printed QUICKSTART OK:\n%s", stdout)
+}
+
+// A quickstart given a missing draft file refuses and exits 2, and must NOT
+// print QUICKSTART OK before or after the failure.
+func TestQuickstartWithMissingDraftDoesNotPrintOK(t *testing.T) {
+	t.Parallel()
+
+	missing := filepath.Join(t.TempDir(), "missing-draft.md")
+	exit, stdout, stderr := runCLI(t, "", "quickstart", "--root", corpus, "--draft", missing)
+	require.Equalf(t, 2, exit, "exit = %d, want 2; stderr: %s", exit, stderr)
+	assert.NotContainsf(t, stdout, "QUICKSTART OK", "quickstart with missing draft printed QUICKSTART OK:\n%s", stdout)
+	assert.Containsf(t, stderr, "the check step could not run", "stderr does not name the step that failed: %q", stderr)
 }
 
 // The README's quickstart transcript, held to the tool: the first line is RUN,

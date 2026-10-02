@@ -25,6 +25,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path"
 	"path/filepath"
@@ -664,7 +665,7 @@ func cmdQuickstart(args []string, stdout, stderr io.Writer) int {
 	for _, e := range rf.excludes {
 		common = append(common, "--exclude", e)
 	}
-	fmt.Fprintf(stdout, "QUICKSTART OK root=%s steps=3 channels=bm25 k=%s/%s words=%s words-source=%s candidate=%s\n",
+	fmt.Fprintf(stdout, "QUICKSTART RUN root=%s steps=3 channels=bm25 k=%s/%s words=%s words-source=%s candidate=%s\n",
 		oneline.Field(strings.Join(rf.root, " ")), quickstartSearchK, quickstartCheckK,
 		oneline.Field(strings.Join(words, " ")), oneline.Field(wordsSource), oneline.Field(candidate))
 
@@ -705,6 +706,7 @@ func cmdQuickstart(args []string, stdout, stderr io.Writer) int {
 		return stepFailed("check", code, stderr)
 	}
 
+	fmt.Fprintf(stdout, "QUICKSTART OK done=3\n")
 	fmt.Fprintf(stdout, "QUICKSTART NOTE %s\n", quickstartChoiceNote)
 	return 0
 }
@@ -1155,7 +1157,7 @@ func cmdEval(args []string, stdout, stderr io.Writer) int {
 			bad = true
 		}
 	}
-	if given["floor"] && (*floor <= 0 || *floor > 1) {
+	if given["floor"] && (math.IsNaN(*floor) || math.IsInf(*floor, 0) || *floor <= 0 || *floor > 1) {
 		refuse(stderr, " eval", fmt.Sprintf("--floor must be in (0,1] (got %g); a harness that cannot fail is not a measurement", *floor))
 		bad = true
 	}

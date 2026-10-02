@@ -115,6 +115,7 @@ func ReadSwarm(label, pool string, rules *Rules) *Source {
 				s.unparsed(path, n, "the ended stamp is not a date this tool can read: "+cells[cols["ended"]])
 				continue
 			}
+			rules.SetDay(day)
 			m := Message{
 				Day:   day,
 				Basis: UTC,

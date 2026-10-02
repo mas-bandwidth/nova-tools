@@ -2458,9 +2458,10 @@ output, and the printed line is the argv that ran, through the same dispatch a
 shell reaches, so a transcript cannot teach an invocation that does not work.
 
 ```
-QUICKSTART OK root=<dir> steps=3 channels=bm25 k=3/2 words=<w> words-source=given|corpus-top-terms candidate=<file|corpus-first-paragraph>
+QUICKSTART RUN root=<dir> steps=3 channels=bm25 k=3/2 words=<w> words-source=given|corpus-top-terms candidate=<file|corpus-first-paragraph>
 $ nova-memory <verb> --root <dir> ...
 QUICKSTART DEMO no --draft given, so the candidate on stdin is this corpus's own first paragraph: <file>:<line>
+QUICKSTART OK done=3
 QUICKSTART NOTE this used bm25 alone and k=3/2; those are choices, not defaults: see --channels and --k
 ```
 
