@@ -2,12 +2,17 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/tool"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -138,15 +143,82 @@ func TestSlowtestsRefusesATerminalOnStdin(t *testing.T) {
 	assert.Equal(t, "CI-SLOW OK packages=2 slowest=github.com/mas-bandwidth/nova-tools/internal/example:65.1s\n"+loadLine1of2, stdout.String())
 }
 
-// terminal is a reader whose Stat says it is a character device, as a tty is.
+// terminal is a reader that answers as a terminal through the seam isTerminal
+// reads (IsTerminal), and whose Stat says character device, as /dev/null's
+// does too: the mode alone must not make it a terminal.
 type terminal struct{}
 
 func (terminal) Read([]byte) (int, error)   { return 0, io.EOF }
 func (terminal) Stat() (os.FileInfo, error) { return terminalInfo{}, nil }
+func (terminal) IsTerminal() bool           { return true }
 
 type terminalInfo struct{ os.FileInfo }
 
 func (terminalInfo) Mode() os.FileMode { return os.ModeDevice | os.ModeCharDevice }
+
+// The null device is a character device and not a terminal: slowtests reads
+// it as the documented empty stream (OK, packages=0), never as a terminal.
+func TestSlowtestsReadsTheNullDeviceAsAnEmptyStream(t *testing.T) {
+	t.Parallel()
+
+	null, err := os.Open(os.DevNull)
+	require.NoError(t, err)
+	defer null.Close()
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"slowtests", "--budget", "60", "--load", "1", "--cpus", "2"}, null, &stdout, &stderr)
+	assert.Equal(t, 0, code, "stderr %q", stderr.String())
+	assert.Empty(t, stderr.String())
+	assert.Equal(t, "CI-SLOW OK packages=0 slowest=none\n"+loadLine1of2, stdout.String())
+}
+
+// A float flag that is not a finite number (NaN, +Inf, -Inf) is refused
+// before anything is judged or rendered, naming what the flag wants, as a
+// line without --json and as the JSON refusal with it.
+func TestSlowtestsRefusesANonFiniteFloat(t *testing.T) {
+	t.Parallel()
+
+	for _, flag := range []string{"--load", "--package-budget", "--test-budget"} {
+		for _, value := range []string{"NaN", "+Inf", "-Inf"} {
+			args := []string{"slowtests", "--example", "--budget", "120", "--cpus", "2", flag, value}
+			want := flag + " wants a finite number, got " + value
+			code, stdout, stderr := runCI(t, args, "")
+			assert.Equal(t, 2, code, "%v", args)
+			assert.Empty(t, stdout, "%v", args)
+			assert.Regexp(t, `^nova-ci slowtests REFUSED: .*`+regexp.QuoteMeta(want)+`.*; run: nova-ci slowtests -h\n$`, stderr, "%v", args)
+
+			code, stdout, stderr = runCI(t, append(args, "--json"), "")
+			assert.Equal(t, 2, code, "%v --json", args)
+			assert.Empty(t, stderr, "%v --json", args)
+			var got struct {
+				Result struct {
+					Verb, Status, Remedy string
+					Exit                 int
+					Why                  []string
+				}
+			}
+			require.NoError(t, json.Unmarshal([]byte(stdout), &got), "%v --json printed %q", args, stdout)
+			assert.Equal(t, "slowtests", got.Result.Verb)
+			assert.Equal(t, "refused", got.Result.Status)
+			assert.Equal(t, 2, got.Result.Exit)
+			assert.Equal(t, "nova-ci slowtests -h", got.Result.Remedy)
+			assert.Contains(t, got.Result.Why, want, "%v --json", args)
+		}
+	}
+}
+
+// A JSON rendering that fails is said, as a FAIL line at exit 1, never an
+// empty line at exit 0.
+func TestSlowtestsJSONRenderFailureIsAFailLine(t *testing.T) {
+	t.Parallel()
+
+	var stdout, stderr bytes.Buffer
+	o := &tool.Out{Verb: "slowtests", Status: tool.OK}
+	o.Fact("load", math.NaN())
+	code := renderJSON(&stdout, &stderr, o)
+	assert.Equal(t, 1, code)
+	assert.Empty(t, stdout.String())
+	assert.Regexp(t, `^nova-ci slowtests FAIL: the verdict could not be rendered as JSON: .*unsupported value: NaN.*; run: nova-ci slowtests -h\n$`, stderr.String())
+}
 
 // --json is the same verdict as one object: the findings typed, the exit the
 // lines' exit, and status failed where the run fails.
