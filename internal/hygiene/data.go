@@ -131,7 +131,6 @@ func Kinds() []string {
 }
 
 // KindDeclared says whether the KIND: line names a shape of work the tool declares.
-// KindDeclared verifies whether the KIND: line names a shape of work the tool declares.
 // There is no default kind, and a kind not present in the table is refused.
 func KindDeclared(name string) bool {
 	_, set := loadKinds()
@@ -140,7 +139,7 @@ func KindDeclared(name string) bool {
 
 // StrayKinds is every kind named in the stray list's exception column, so a test can
 // hold the two files to each other: an exception granted to a kind that does not exist
-// An exception for a kind that does not exist is not permitted.
+// is an exception granted to nobody, and the test is what notices.
 func StrayKinds() []string {
 	rules, _, err := load()
 	if err != nil {
