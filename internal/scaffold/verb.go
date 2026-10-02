@@ -112,7 +112,7 @@ func hasMain(dir string) (bool, error) {
 
 // Dispatch is the case a scaffolded verb needs in its tool's dispatch switch,
 // calling the function verb.go.tmpl declares. new-verb prints it and never
-// edits the switch itself (rowan hold 6 on #3616, item 4).
+// edits the switch itself.
 func Dispatch(verb string) string {
 	return fmt.Sprintf("case %q:\n\treturn cmd%s(args[1:], stdout, stderr)", verb, toCamel(verb))
 }
