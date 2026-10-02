@@ -39,16 +39,6 @@ var KindMap = map[string]string{
 	"probe":    typedrec.KindReport,
 }
 
-// IsRunnerKind reports whether kind is one of RunnerKinds.
-func IsRunnerKind(kind string) bool {
-	for _, k := range RunnerKinds {
-		if k == kind {
-			return true
-		}
-	}
-	return false
-}
-
 // The routes a card may carry: the three model types (Glenn 2026-09-26).
 // frontier is the most recent Astra or Fable model only; pro and flash are
 // the rungs the bench harness picks its model from (nova-sprint routes --tier <route>, first allowed route). A

@@ -204,9 +204,6 @@ func (g *Group) Total() int {
 	return n
 }
 
-// Elided is Total minus Shown across every kind.
-func (g *Group) Elided() int { return g.Total() - g.Shown() }
-
 // List is one kind's list, or nil when this group has not seen that kind. It is
 // here for a verb whose MORE line carries a field this package does not print
 // -- nova-wake's carries n=<elided>, which its spec requires -- so that such a

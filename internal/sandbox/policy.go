@@ -745,17 +745,12 @@ func build(in Input, homesFn func() []string) (*Policy, []Refusal) {
 	return p, nil
 }
 
-// PathDirectories extracts existing directories from lookIn (PATH) that are not already
-// covered by fixed prefixes, optional roots, or the caller's reads/writes.
+// PathDirectoriesWith extracts existing directories from lookIn (PATH) that are not already
+// covered by fixed prefixes, optional roots, or the caller's reads/writes, skipping the
+// given homes.
 // On darwin, these directories receive file-read-metadata so that commands installed
 // on PATH (e.g. ~/.local/bin) can be resolved and executed by name, while keeping
 // their file contents uninspectable (issue #3501).
-func PathDirectories(lookIn string, reads, writes, optRoots []string) []string {
-	return PathDirectoriesWith(lookIn, reads, writes, optRoots, callerHomes())
-}
-
-// PathDirectoriesWith extracts existing directories from lookIn (PATH) with an explicit
-// list of homes to skip.
 func PathDirectoriesWith(lookIn string, reads, writes, optRoots, homes []string) []string {
 	var out []string
 	seen := map[string]bool{}

@@ -81,9 +81,6 @@ type Finding struct {
 // Path is where a day file lives under an output directory.
 func Path(out, day string) string { return filepath.Join(out, day+FileSuffix) }
 
-// TempPath is the one fixed temp name beside it.
-func TempPath(out, day string) string { return filepath.Join(out, day+TempSuffix) }
-
 // Render is the file's bytes.
 //
 // EVERY STORED CELL GOES THROUGH oneline.Field, and that is what makes eleven
