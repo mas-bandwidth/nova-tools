@@ -995,9 +995,9 @@ receipt is quoted up to `next=` and the token is asserted by decode.
 - `TestASingleOversizeBodyIsANamedGapAndNeverALoop`: the only item's body is
   2,097,152 bytes, over the 1048576 ceiling, so no `--max-bytes` carries it. No
   frame is opened and the gap is named once,
-  `expected=INBOX BODY OVERSIZE id=nBig bytes=2097152 max-bytes=65536 path=from-x/big.md`,
+  `expected=INBOX BODY OVERSIZE id=nBig bytes=2097152 max-bytes=65536 path=from-x/2026-09-13-big.md`,
   then the remedy immediately before the receipt,
-  `expected=INBOX BODIES GAP id=nBig kind=over-ceiling retry-max-bytes=- path=from-x/big.md`,
+  `expected=INBOX BODIES GAP id=nBig kind=over-ceiling retry-max-bytes=- path=from-x/2026-09-13-big.md`,
   then
   `expected=INBOX BODIES printed=0 bytes=0 oversize=1 gaps=1 drained=true complete=false next=-`.
   No cursor advance, and no drain call to repeat.
