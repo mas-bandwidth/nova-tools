@@ -44,7 +44,7 @@ const localDiffCap = 8 * 1024 * 1024
 
 // runCommand runs one argv directly -- no shell, no pipe, no glob, no
 // environment expansion -- and returns its output, stdout and stderr together,
-// bounded. Direct argv keeps command arguments explicit: a
+// bounded. SPEC-UPDATE rule 3 is the same rule and this is the same reason: a
 // command built as a string is a command whose quoting nobody can check.
 func runCommand(ctx context.Context, name string, args ...string) (string, error) {
 	out, _, err := runCommandCapped(ctx, childCap, nil, "", name, args...)
@@ -215,11 +215,11 @@ func (g *GH) Files(ctx context.Context, repo, base, head string) ([]string, erro
 // without a subprocess -- the same reason apiError is its own function.
 //
 // THE OBJECT FIRST, THEN THE REF. A ref posted on its own points straight at
-// the commit and makes a LIGHTWEIGHT tag: a name carrying nothing. The tag has
-// to carry the digest of the release's SHA256SUMS, so there has to be
-// something to carry it IN -- a tag object -- and the ref has to point at THAT,
-// not at the commit, or the annotation is orphaned and the tag still reads
-// lightweight to everything that looks at it.
+// the commit and makes a LIGHTWEIGHT tag: a name carrying nothing.
+// SPEC-RELEASE rule 2 is that the tag carries the digest of the release's
+// SHA256SUMS, so there has to be something to carry it IN -- a tag object --
+// and the ref has to point at THAT, not at the commit, or the annotation is
+// orphaned and the tag still reads lightweight to everything that looks at it.
 func tagObjectArgs(repo, tag, sha, message string) []string {
 	return []string{"api", "--method", "POST", "repos/" + repo + "/git/tags",
 		"-f", "tag=" + tag, "-f", "message=" + message, "-f", "object=" + sha, "-f", "type=commit",

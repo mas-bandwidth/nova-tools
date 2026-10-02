@@ -206,9 +206,9 @@ var annotationSums = regexp.MustCompile(`(?m)^` + AnnotationSumsPrefix + `([0-9a
 
 // Annotation is the message the TAG OBJECT carries, composed in one place
 // because it is written by `cut` and read by `adopt` and the two have to agree
-// about where the digest is. A tag is the one thing in this repository that
-// cannot be quietly amended, so what it says about a release is the most
-// durable record the release has.
+// about where the digest is, as SPEC-RELEASE rule 2 requires. A tag is the one
+// thing in this repository that cannot be quietly amended, so what it says
+// about a release is the most durable record the release has.
 func Annotation(version, sha, sumsDigest string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s\n\nCut from %s.\n", version, sha)
