@@ -1,9 +1,9 @@
 // Package sandbox is the wall of docs/SPEC-SANDBOX.md: one command run with its
 // filesystem reach cut down by the operating system. This file is the
-// platform-independent half — the Policy, the path resolution and refusal of rule 5,
-// the per-platform root tables as data, and the temp directory of rule 8. The three
+// platform-independent half: the Policy, path resolution and refusal of invalid paths,
+// per-platform root tables as data, and the temporary directory. The three
 // bodies that apply a policy live behind build tags beside it, and on a platform whose
-// backend is not built the body REFUSES (rule 1): there is no fallback, no degraded
+// backend is not built the body refuses: there is no fallback, no degraded
 // mode, and no partial wall.
 package sandbox
 
@@ -38,7 +38,7 @@ const (
 	profileFilePrefx = ".nova-sandbox-"
 )
 
-// Refusal is one independent problem, named by the flag it is about. Rule 16: a refusal
+// Refusal is one independent problem, named by the flag it is about. A refusal
 // says what the input wants and every independent problem is reported at once, so the
 // callers below collect these rather than returning the first.
 type Refusal struct {
@@ -70,44 +70,44 @@ type Input struct {
 	// EXECUTE|READ_FILE|READ_DIR and the darwin profile grants process-exec* globally --
 	// so naming a directory the job's own user can write to (a GOPATH/bin, a
 	// node_modules/.bin, a pip --user bin) lets the job RUN whatever is in it. A cache or
-	// a data tree wants reading, and this is the form that says so (Johnny's security
-	// read of #1364, where the module cache was about to be granted exec).
+	// a data tree wants reading without execution, and this form makes that distinction
+	// explicit so a cache cannot become executable merely because it is readable.
 	ReadsNoExec []string
 	Writes      []string
-	Cwd         string // empty: the first --write (rule 13)
-	Tmp         string // empty: <first --write>/.nova-sandbox-tmp (rule 8)
+	Cwd         string // empty: the first --write supplies the working directory
+	Tmp         string // empty: <first --write>/.nova-sandbox-tmp
 	Name        string // windows container name; accepted and ignored elsewhere
 	NetDeny     bool
 	NetListen   bool
-	NetAllow    []string // host:port the profile opens back up by name (issue #591)
-	GPU         string   // --gpu none|metal; empty means none (issue #230)
+	NetAllow    []string // host:port the profile opens back up by name
+	GPU         string   // --gpu none|metal; empty means none
 	Argv        []string // the command and its arguments, everything after --
-	Home        string   // the caller's HOME as the child will see it (rule 9)
+	Home        string   // the HOME value the child receives
 	LookAt      string   // PATH to resolve the command on; empty means the process's own
 	CallerHomes []string // homes to check against; empty uses callerHomes()
 }
 
 // Policy is one run's wall: resolved, absolute, existing paths and nothing guessed. The
-// two named exceptions to "never guessed" are rule 4's, and both are recorded here as
+// Cwd and Tmp derive from the caller's own first --write, so neither value is guessed; both are recorded here as
 // the caller's own first --write.
 type Policy struct {
 	Reads       []string // resolved, read-only, recursive; carries EXECUTE
 	ReadsNoExec []string // resolved, read-only, recursive, and NOT executable
 	Writes      []string // resolved, read+write, recursive; the first is load-bearing
 	OptRoots    []string // the platform's optional roots that EXIST on this machine
-	PathDirs    []string // existing directories from PATH granted file-read-metadata (issue #3501)
+	PathDirs    []string // existing directories from PATH granted file-read-metadata
 	Cwd         string
 	Tmp         string
 	Home        string
 	Name        string
 	NetDeny     bool
 	NetListen   bool
-	NetAllow    []string // host:port the profile opens back up by name (issue #591)
+	NetAllow    []string // host:port the profile opens back up by name
 	GPUMode     GPUMode
 	Command     string   // the resolved absolute path of the executable
 	Argv        []string // Command followed by its arguments, verbatim
 
-	// Available is an optional seam for tests checking rule 1's refusal when the backend is absent.
+	// Available is an optional seam for tests checking refusal when the backend is absent.
 	// When nil, package Available() is called.
 	Available func() (string, bool)
 
@@ -124,7 +124,7 @@ type Policy struct {
 	Extra []*os.File
 }
 
-// Net is the word rule 7 puts on the SANDBOX OK line. There is no net=unenforced: a
+// Net is the value put on the SANDBOX OK line. There is no net=unenforced: a
 // denial that cannot be enforced is a refusal, not a word in a line.
 func (p *Policy) Net() string {
 	if p.NetDeny {
@@ -141,7 +141,7 @@ func (p *Policy) CmdName() string { return filepath.Base(p.Command) }
 // file-read-metadata on: every --read and --write, the --cwd, the temp directory — and
 // every OPTIONAL ROOT.
 //
-// The optional roots were missing, and the cost was measured on 2026-09-18 dogfooding
+// Optional roots include the ancestors needed to resolve toolchain paths through symlinks.
 // `nova-sandbox run` on a real card step: a `go build` inside the wall died with Go's own
 // message and nothing else — `go: cannot find GOROOT directory: 'go' binary is trimmed and
 // GOROOT is not set`. The profile granted `(allow file-read* (subpath "/opt/homebrew"))`,
@@ -179,7 +179,7 @@ func (p *Policy) AncestorCount() int {
 // /dev/null and /dev/tty — are in profiles/darwin.sb.tmpl verbatim, because two
 // copies of a profile is one copy too many. What varies per machine is here. A
 // root is SKIPPED if it is absent; only a caller's path is refused for absence
-// (rule 5). The directory /var/db/xcode_select_link points at is discovered
+// The directory /var/db/xcode_select_link points at is discovered
 // below, not listed here: CommandLineTools is already under /Library, and
 // Xcode.app/Contents is not (Contents, not Developer: the shims read
 // Info.plist and SharedFrameworks next to Developer).
