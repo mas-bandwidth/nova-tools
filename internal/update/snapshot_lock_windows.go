@@ -9,10 +9,11 @@ import (
 	"time"
 )
 
-// lockSnapshot on Windows takes the lock the unix build took before it moved
-// onto internal/filelock: LockFileEx on byte 0 of the sibling file (snapshot_windows.go),
-// polled until ctx ends. An old and a new binary on one machine do NOT exclude each other
-// because filelock locks one byte at OffsetHigh
+// lockSnapshot on Windows takes the sibling lock the unix build takes through
+// internal/filelock: LockFileEx on byte 0 of the sibling file (snapshot_windows.go),
+// polled until ctx ends. Old and new binaries on one machine exclude each other
+// because both builds hold this byte-zero lock. A future migration onto
+// internal/filelock must keep that exclusion: filelock locks one byte at OffsetHigh
 // 0x80000000, a range this lock does not overlap.
 func lockSnapshot(ctx context.Context, path string) (func(), error) {
 	// A stable sibling inode is required because the JSON itself is replaced by
