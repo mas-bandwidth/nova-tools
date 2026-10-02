@@ -67,7 +67,7 @@ func runImport(args []string, stdout, stderr io.Writer, q workgh.Query) int {
 	start := now()
 	f := &workgh.Fetcher{Q: q, PageSize: c.pageSize, MaxCalls: c.maxCalls, Log: stderr, Remaining: -1}
 	fail := func(code int, format string, a ...any) int {
-		fmt.Fprintf(stderr, "IMPORT FAIL org=%s calls=%d points=%d reason=%s\n", oneline.Field(*org), f.Calls, f.Points,
+		fmt.Fprintf(stderr, "IMPORT FAILED org=%s calls=%d points=%d reason=%s\n", oneline.Field(*org), f.Calls, f.Points,
 			oneline.Field(fmt.Sprintf(format, a...)))
 		return code
 	}
