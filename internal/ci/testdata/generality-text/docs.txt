@@ -1,5 +1,5 @@
 # Migrated counted package ledger; original row keys preserved.
-# ceiling: 61
+# ceiling: 60
 docs/CLI.md:emma 2
 docs/CLI.md:freddy 1
 docs/CLI.md:johnny 2
@@ -9,7 +9,6 @@ docs/CLI.md:rowan 16
 docs/CLI.md:space 2
 docs/CLI.md:stella 6
 docs/CLI.md:studio 3
-
 docs/MODELS.md:mini 1
 docs/MODELS.md:space 2
 docs/SPEC-BUS-DELIVERY.md:rowan 1
