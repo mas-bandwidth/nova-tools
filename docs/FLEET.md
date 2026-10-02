@@ -151,7 +151,7 @@ runs it as the role `nova_pg_dsn` names (the config role), so a schema whose
 tables another role made (an admin role at setup) is refused before any
 migration is applied, and the refusal is the play's failure line: it names
 the role, each table it does not own with its owner, and ends in `run:` and
-one `ALTER TABLE config.<table> OWNER TO <role>;` per table. Run those once,
+one `ALTER TABLE config."<table>" OWNER TO "<role>";` per table. Run those once,
 in psql, as a role with the owners' rights (the owner or a superuser), then
 run the play again. `nova-config migrate --dry-run` prints the same finding,
 applies nothing, and exits 1 when migrate would refuse (`ready=no`), 0 when

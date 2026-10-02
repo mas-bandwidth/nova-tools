@@ -72,7 +72,7 @@ The role that runs migrate must own every table in schema config. Before it
 applies anything, migrate reads the owners from the catalog and, when another
 role owns a table and a migration is pending, refuses (exit 1) naming the
 role, each table with its owner, and the one-time remedy, one `ALTER TABLE
-config.<table> OWNER TO <role>;` per table, which a role with the owners'
+config."<table>" OWNER TO "<role>";` per table, which a role with the owners'
 rights runs in psql; migrate never changes an owner itself. `migrate
 --dry-run` adds the same finding to the ledger it prints: `MIGRATE NOT-OWNED`
 per table the role does not own, `MIGRATE WOULD-REFUSE` with that refusal

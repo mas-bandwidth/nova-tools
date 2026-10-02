@@ -63,15 +63,22 @@ func TestGapRemedyIsOneStatementPerObject(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {
+		name string
 		gap  Gap
 		role string
 		want string
 	}{
-		{Gap{"fleet", "nova_admin"}, "nova_config", "ALTER TABLE config.fleet OWNER TO nova_config;"},
-		{Gap{"", "postgres"}, "nova_config", "ALTER SCHEMA config OWNER TO nova_config;"},
-		{Gap{"fleet", "nova_admin"}, "Odd Role", `ALTER TABLE config.fleet OWNER TO "Odd Role";`},
+		{"plain identifiers", Gap{"fleet", "nova_admin"}, "nova_config", `ALTER TABLE config."fleet" OWNER TO "nova_config";`},
+		{"schema owner", Gap{"", "postgres"}, "nova_config", `ALTER SCHEMA config OWNER TO "nova_config";`},
+		{"spaced role", Gap{"fleet", "nova_admin"}, "Odd Role", `ALTER TABLE config."fleet" OWNER TO "Odd Role";`},
+		{"reserved role", Gap{"fleet", "nova_admin"}, "current_user", `ALTER TABLE config."fleet" OWNER TO "current_user";`},
+		{"reserved table", Gap{"select", "nova_admin"}, "nova_config", `ALTER TABLE config."select" OWNER TO "nova_config";`},
+		{"embedded quotes", Gap{`ta"ble`, "nova_admin"}, `ro"le`, `ALTER TABLE config."ta""ble" OWNER TO "ro""le";`},
 	} {
-		assert.Equal(t, tc.want, tc.gap.Remedy(tc.role))
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, tc.gap.Remedy(tc.role))
+		})
 	}
 }
 

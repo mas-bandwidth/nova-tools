@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -32,9 +34,9 @@ const (
 		"the role that runs migrate must own every table in schema config and be able to create in it, " +
 		"and nova_admin owns config.fleet, config.friends, config.history, config.machines, config.schema_migrations, config.sprint, " +
 		"so a role with the owners' rights runs this once, in psql"
-	mixedRemedy = "ALTER TABLE config.fleet OWNER TO nova_config; ALTER TABLE config.friends OWNER TO nova_config; " +
-		"ALTER TABLE config.history OWNER TO nova_config; ALTER TABLE config.machines OWNER TO nova_config; " +
-		"ALTER TABLE config.schema_migrations OWNER TO nova_config; ALTER TABLE config.sprint OWNER TO nova_config;"
+	mixedRemedy = `ALTER TABLE config."fleet" OWNER TO "nova_config"; ALTER TABLE config."friends" OWNER TO "nova_config"; ` +
+		`ALTER TABLE config."history" OWNER TO "nova_config"; ALTER TABLE config."machines" OWNER TO "nova_config"; ` +
+		`ALTER TABLE config."schema_migrations" OWNER TO "nova_config"; ALTER TABLE config."sprint" OWNER TO "nova_config";`
 )
 
 // mixedHarness is the measured store: ledger at 13, the mixed owners.
@@ -136,6 +138,101 @@ func TestMigratePreflightPassesWhatTheRuleAllows(t *testing.T) {
 			code, out, errs = h.run(t, "migrate")
 			require.Equal(t, 0, code, "stdout %q stderr %q", out, errs)
 			assert.Equal(t, fmt.Sprintf("CONFIG MIGRATE pg=nova_config@127.0.0.1:5432/nova from=%d to=%d applied=%d\n", tc.version, n, n-tc.version), out)
+		})
+	}
+}
+
+// advancingMigrationStore is a strict dry-run seam: Version reads 13, then
+// another migrator records 14 before Applied reads the ledger. Any DDL call
+// is a defect; the read order is part of the regression's witness.
+type advancingMigrationStore struct {
+	*memStore
+	reads    []string
+	ddlCalls int
+}
+
+func (s *advancingMigrationStore) Version(ctx context.Context) (int, error) {
+	s.reads = append(s.reads, "version")
+	return s.memStore.Version(ctx)
+}
+
+func (s *advancingMigrationStore) Ownership(ctx context.Context) (config.Ownership, error) {
+	s.reads = append(s.reads, "ownership")
+	return s.memStore.Ownership(ctx)
+}
+
+func (s *advancingMigrationStore) Applied(ctx context.Context) ([]int, error) {
+	s.reads = append(s.reads, "applied")
+	s.version = 14
+	return s.memStore.Applied(ctx)
+}
+
+func (s *advancingMigrationStore) Migrate(context.Context) (int, int, []int, error) {
+	s.ddlCalls++
+	return 0, 0, nil, fmt.Errorf("dry-run attempted DDL")
+}
+
+// Readiness and the rendered ledger share one snapshot (docs/SPEC-CONFIG.md,
+// "The schema"): mixed owners cannot block a dry run with nothing pending, even
+// when the preliminary Version read finds a migration pending.
+func TestMigrateDryRunUsesTheAdvancingLedgerForReadiness(t *testing.T) {
+	t.Parallel()
+	for _, format := range []string{"text", "json"} {
+		t.Run(format, func(t *testing.T) {
+			t.Parallel()
+			h := mixedHarness(t)
+			st := &advancingMigrationStore{memStore: h.store}
+			h.override = st
+			args := []string{"migrate", "--dry-run"}
+			if format == "json" {
+				args = append(args, "--json")
+			}
+			code, out, errs := h.run(t, args...)
+			require.Equal(t, 0, code, "stdout: %s\nstderr: %s", out, errs)
+			assert.Empty(t, errs)
+			assert.Equal(t, []string{"version", "ownership", "applied"}, st.reads)
+			assert.Zero(t, st.ddlCalls)
+			assert.Zero(t, h.redis.opens)
+			if format == "text" {
+				assert.Contains(t, out, "MIGRATION version=14 file=0014_fleet_endpoints.sql")
+				assert.NotContains(t, out, "state=pending")
+				assert.NotContains(t, out, "WOULD-REFUSE")
+				assert.Contains(t, out, "MIGRATE NOT-OWNED table=config.fleet")
+				assert.Contains(t, out, "from=14 to=14 applied=0 dry_run=true pending=0 missing=0 role=nova_config ready=yes")
+				return
+			}
+			var result struct {
+				Result struct {
+					Status string `json:"status"`
+					Exit   int    `json:"exit"`
+					Remedy string `json:"remedy"`
+				} `json:"result"`
+				Facts map[string]any `json:"facts"`
+				Items []struct {
+					Kind   string         `json:"kind"`
+					Fields map[string]any `json:"fields"`
+				} `json:"items"`
+			}
+			require.NoError(t, json.Unmarshal([]byte(out), &result))
+			assert.Equal(t, "ok", result.Result.Status)
+			assert.Zero(t, result.Result.Exit)
+			assert.Empty(t, result.Result.Remedy)
+			assert.EqualValues(t, 14, result.Facts["from"])
+			assert.EqualValues(t, 0, result.Facts["pending"])
+			assert.EqualValues(t, 0, result.Facts["applied"])
+			assert.Equal(t, "yes", result.Facts["ready"])
+			migrations, notOwned := 0, 0
+			for _, item := range result.Items {
+				switch item.Kind {
+				case "migration":
+					migrations++
+					assert.Equal(t, "applied", item.Fields["state"])
+				case "not_owned":
+					notOwned++
+				}
+			}
+			assert.Equal(t, 14, migrations)
+			assert.Equal(t, 6, notOwned)
 		})
 	}
 }

@@ -318,8 +318,9 @@ owner may do. Before applying anything migrate reads the owners in one
 catalog query (`Store.Ownership`) and decides with `MigrateGaps` (the role,
 the owners, the pending migrations; the SQL is never read): with a migration
 pending and a table another role owns, it refuses before applying any and
-prints one `ALTER TABLE config.<table> OWNER TO <role>;` per table for a role
-with the owners' rights to run once. It never changes an owner or a grant. A
+prints one `ALTER TABLE config."<table>" OWNER TO "<role>";` per table for a role
+with the owners' rights to run once. Table and role identifiers are always
+quoted, with an embedded quote doubled. It never changes an owner or a grant. A
 `--file` store has no roles (the zero `Ownership`), so the check passes there.
 
 After every migrate the `nova_read` role, when it exists, is granted `USAGE`
@@ -505,7 +506,7 @@ MIGRATION version=<v> file=<f> lines=<n>                 (migrate --print)
 MIGRATION version=<v> file=<f> lines=<n> state=applied|pending|missing   (migrate --dry-run: the ledger; missing is below the greatest recorded and not in the ledger, which migrate will not apply)
 CONFIG MIGRATE print=<n> pg=-
 MIGRATE NOT-OWNED table=config.<t> owner=<role> role=<role>   (migrate --dry-run: a table the role does not own)
-MIGRATE WOULD-REFUSE <the refusal migrate would print>; run: ALTER TABLE config.<t> OWNER TO <role>; ...   (migrate --dry-run, ready=no)
+MIGRATE WOULD-REFUSE <the refusal migrate would print>; run: ALTER TABLE config."<t>" OWNER TO "<role>"; ...   (migrate --dry-run, ready=no)
 CONFIG MIGRATE pg=<user@host:port/db>|file=<path> from=<v> to=<v> applied=<n> [dry_run=true pending=<n> missing=<n> role=<role> ready=yes|no]
 CONFIG STATUS pg=<...>|file=<path> schema=<v> <kind>=<rows> <kind>_rev=<r> ... redis=<addr> <kind>_applied=<r> ...   (a singleton: <kind>_rev alone)
 CONFIG DRY-RUN op=<op> kind=<k> name=<n> actor=<a> wrote=nothing <field>=<v>|<field>=<before>><after> ...   (add, set, remove --dry-run)

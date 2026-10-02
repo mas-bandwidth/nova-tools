@@ -1,6 +1,9 @@
 package config
 
-import "regexp"
+import (
+	"maps"
+	"slices"
+)
 
 // Ownership is what the catalog says about schema config for the role a
 // store is connected as (Store.Ownership reads it in one query). migrate's
@@ -27,11 +30,12 @@ type Gap struct {
 
 // Remedy is the one statement a role with the owner's rights runs, once, to
 // close the gap: printed, never executed (migrate changes no ownership).
+// Catalog identifiers are quoted (docs/SPEC-CONFIG.md, "The schema").
 func (g Gap) Remedy(role string) string {
 	if g.Table == "" {
-		return "ALTER SCHEMA config OWNER TO " + sqlIdent(role) + ";"
+		return "ALTER SCHEMA config OWNER TO " + quoteIdent(role) + ";"
 	}
-	return "ALTER TABLE config." + sqlIdent(g.Table) + " OWNER TO " + sqlIdent(role) + ";"
+	return "ALTER TABLE config." + quoteIdent(g.Table) + " OWNER TO " + quoteIdent(role) + ";"
 }
 
 // MigrateGaps is migrate's preflight, the decision before anything is
@@ -55,7 +59,7 @@ func Gaps(o Ownership) []Gap {
 		return nil
 	}
 	var gaps []Gap
-	for _, t := range sortedKeys(o.Tables) {
+	for _, t := range slices.Sorted(maps.Keys(o.Tables)) {
 		if o.Tables[t] != o.Role {
 			gaps = append(gaps, Gap{Table: t, Owner: o.Tables[t]})
 		}
@@ -76,17 +80,6 @@ func Pending(all []Migration, from int) []Migration {
 		}
 	}
 	return out
-}
-
-var plainIdent = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
-
-// sqlIdent is a name as SQL reads it: bare when it is a plain lower-case
-// identifier, quoted otherwise.
-func sqlIdent(s string) string {
-	if plainIdent.MatchString(s) {
-		return s
-	}
-	return quoteIdent(s)
 }
 
 // catalogTables is every table Mem stands in for: each kind's, the ledger and

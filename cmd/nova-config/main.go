@@ -1116,10 +1116,10 @@ func runMigrate(ctx context.Context, args []string, stdout, stderr io.Writer, d 
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	gaps := config.MigrateGaps(owners, config.Pending(all, have))
 	if *dry {
-		return migrateDryRun(ctx, st, all, owners, gaps, stdout, stderr, key, value, *asJSON)
+		return migrateDryRun(ctx, st, all, owners, stdout, stderr, key, value, *asJSON)
 	}
+	gaps := config.MigrateGaps(owners, config.Pending(all, have))
 	if len(gaps) > 0 {
 		return refused(stderr, verb, ownershipWhy(owners.Role, config.Pending(all, have), gaps), ownershipRemedy(owners.Role, gaps))
 	}
@@ -1147,7 +1147,7 @@ func runMigrate(ctx context.Context, args []string, stdout, stderr io.Writer, d 
 // refusal it would print. It exits 0 when migrate would apply (ready=yes)
 // and 1 when it would refuse (ready=no), so a play or script gating on the
 // dry run stops on it; nothing was attempted, so it prints no refusal line.
-func migrateDryRun(ctx context.Context, st pgStore, all []config.Migration, owners config.Ownership, gaps []config.Gap, stdout, stderr io.Writer, key, value string, asJSON bool) int {
+func migrateDryRun(ctx context.Context, st pgStore, all []config.Migration, owners config.Ownership, stdout, stderr io.Writer, key, value string, asJSON bool) int {
 	const verb = "migrate"
 	ledger, err := st.Applied(ctx)
 	if err != nil {
@@ -1163,14 +1163,14 @@ func migrateDryRun(ctx context.Context, st pgStore, all []config.Migration, owne
 	o.Verb = verb
 	var lines []string
 	var missing []string
-	pending := 0
+	var pending []config.Migration
 	for _, m := range all {
 		state := "applied"
 		switch {
 		case recorded[m.Version]:
 		case m.Version > have:
 			state = "pending"
-			pending++
+			pending = append(pending, m)
 		default:
 			state = "missing"
 			missing = append(missing, strconv.Itoa(m.Version))
@@ -1182,14 +1182,17 @@ func migrateDryRun(ctx context.Context, st pgStore, all []config.Migration, owne
 		o.Item("not_owned", "table", gapName(g), "owner", g.Owner, "role", owners.Role)
 		lines = append(lines, fmt.Sprintf("MIGRATE NOT-OWNED table=%s owner=%s role=%s", config.Value(gapName(g)), config.Value(g.Owner), config.Value(owners.Role)))
 	}
+	// Readiness uses the same ledger as the rendered pending rows: another
+	// migrate may advance it after Version (docs/SPEC-CONFIG.md, "The schema").
+	gaps := config.MigrateGaps(owners, pending)
 	ready := "yes"
 	if len(gaps) > 0 {
 		ready = "no"
-		why, remedy := ownershipWhy(owners.Role, config.Pending(all, have), gaps), ownershipRemedy(owners.Role, gaps)
+		why, remedy := ownershipWhy(owners.Role, pending, gaps), ownershipRemedy(owners.Role, gaps)
 		o.Status, o.Exit, o.Why, o.Remedy = tool.Failed, 1, []string{why}, remedy
 		lines = append(lines, "MIGRATE WOULD-REFUSE "+plain(why)+"; run: "+remedy)
 	}
-	o.Fact(key, value).Fact("from", have).Fact("to", len(all)).Fact("applied", 0).Fact("dry_run", true).Fact("pending", pending).Fact("missing", len(missing)).Fact("role", owners.Role).Fact("ready", ready)
+	o.Fact(key, value).Fact("from", have).Fact("to", len(all)).Fact("applied", 0).Fact("dry_run", true).Fact("pending", len(pending)).Fact("missing", len(missing)).Fact("role", owners.Role).Fact("ready", ready)
 	if len(missing) > 0 {
 		o.Note(fmt.Sprintf("version(s) %s are not in the ledger and are below %d, the greatest recorded: migrate applies only versions above it, so it will not apply them", strings.Join(missing, ","), have))
 	}
@@ -1199,7 +1202,7 @@ func migrateDryRun(ctx context.Context, st pgStore, all []config.Migration, owne
 	for _, l := range lines {
 		fmt.Fprintln(stdout, l)
 	}
-	fmt.Fprintf(stdout, "CONFIG MIGRATE %s=%s from=%d to=%d applied=0 dry_run=true pending=%d missing=%d role=%s ready=%s\n", key, config.Value(value), have, len(all), pending, len(missing), config.Value(owners.Role), ready)
+	fmt.Fprintf(stdout, "CONFIG MIGRATE %s=%s from=%d to=%d applied=0 dry_run=true pending=%d missing=%d role=%s ready=%s\n", key, config.Value(value), have, len(all), len(pending), len(missing), config.Value(owners.Role), ready)
 	printNotes(stdout, o.Notes)
 	return o.Exit
 }
