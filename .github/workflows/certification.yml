@@ -739,6 +739,23 @@ jobs:
           [ -n "${GITHUB_WORKSPACE}" ] || exit 1
           [ -d "${GITHUB_WORKSPACE}" ] || exit 0
           [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0
+          # Stale git locks a cancelled run left: why and how, in ci.yml lint's copy of this step.
+          w=$(cd "${GITHUB_WORKSPACE}" && pwd -P) && cd /
+          if [ -e "$w/.git/index.lock" ] || [ -e "$w/.git/HEAD.lock" ]; then
+            if [ "$(uname -s)" = Linux ] && [ -e /proc/self/cwd ]; then
+              held=$(for p in /proc/[0-9]*; do [ -O "$p" ] && c=$(readlink "$p/cwd") && { [ "$c" = "$w" ] || [ "${c#"$w"/}" != "$c" ]; } && echo "${p#/proc/}"; done 2>/dev/null; true)
+            elif [ "$(uname -s)" = Darwin ]; then
+              held=$(lsof -n -P -a -u "$(id -u)" -d cwd -Fpn | awk -v w="$w" '/^p/ { p = substr($0, 2) } /^n/ { n = substr($0, 2); if (n == w || index(n, w "/") == 1) print p }') || held=unscanned
+            else
+              held=unscanned
+            fi
+            if [ -z "$held" ]; then
+              rm -f -- "$w/.git/index.lock" "$w/.git/HEAD.lock"
+              echo "stale git locks removed: no process has its cwd in the workspace"
+            else
+              echo "git locks kept, held by:" $held
+            fi
+          fi
           if git -C "${GITHUB_WORKSPACE}" reset -q --hard && git -C "${GITHUB_WORKSPACE}" clean -ffdxq; then
             exit 0
           fi
