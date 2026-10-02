@@ -53,11 +53,10 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	root := fs.String("root", "", "required: the `dir` the launches and results sit under")
 	slots := fs.String("slots", "", "the `dir` of the launch directories, one per card launch (default <root>/slots)")
 	resultsRoot := fs.String("results-root", "", "the `dir` each launch's results are written under (default <root>/results)")
-	deadline := newSecondsFlag(fs, "deadline", 0) // the override: a card with no route
-	fs.Lookup("deadline").Usage = "the wall-clock bound a card with no route runs to, a `duration` or whole seconds; a reader given it runs every read to it"
+	// the override: a card with no route
+	deadline := newSecondsFlag(fs, "deadline", 0, "the wall-clock bound a card with no route runs to, a `duration` or whole seconds; a reader given it runs every read to it")
 	tokensWord := fs.String("tokens", "", "the token budget a card with no route runs on, a number of tokens or the word unmetered (`n|unmetered`); a reader given it runs every read on it")
-	every := newSecondsFlag(fs, "every", 3*time.Second)
-	fs.Lookup("every").Usage = "the time between passes and beats, a `duration` or whole seconds, above 0 and at most 5s (default 3s)"
+	every := newSecondsFlag(fs, "every", 3*time.Second, "the time between passes and beats, a `duration` or whole seconds, above 0 and at most 5s (default 3s)")
 	once := fs.Bool("once", false, "run one pass, wait for its starts and pushes, and stop")
 	ticks := fs.Int("ticks", 0, "run this many passes and stop (not with --once; default: run until stopped)")
 	auth := fs.String("auth", "", "the harness's auth `file`, handed to each child's native --auth")

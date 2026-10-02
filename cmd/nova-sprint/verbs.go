@@ -1277,7 +1277,7 @@ func readBriefFile(path string) (string, error) {
 }
 
 // briefFromFile is a brief file's text, its one trailing newline cut; a file
-// that holds nothing but white space is refused naming it, since a card
+// that holds nothing but blanks and newlines is refused naming it, since a card
 // admitted with no brief is handed no task and is never linted.
 func briefFromFile(path, text string) (string, error) {
 	if strings.TrimSpace(text) == "" {

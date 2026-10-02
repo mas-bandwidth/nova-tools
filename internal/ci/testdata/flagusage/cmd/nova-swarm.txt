@@ -1,13 +1,3 @@
 # flag-usage: flags registered with no description; each row's count only falls
-# ceiling: 11
-cmd/nova-swarm/doctor.go:doctorEnv.cmdDoctor 2 declared before the rule (tool ledger X7); the tool's author describes each flag
-cmd/nova-swarm/main.go:cmdProfile 1 declared before the rule (tool ledger X7); the tool's author describes each flag
-cmd/nova-swarm/main.go:cmdTemplate 1 declared before the rule (tool ledger X7); the tool's author describes each flag
-cmd/nova-swarm/main.go:cmdVerify 7 declared before the rule (tool ledger X7); the tool's author describes each flag
-cmd/nova-swarm/main.go:nativeFlagSet 25 declared before the rule (tool ledger X7); the tool's author describes each flag
-cmd/nova-swarm/main.go:newSecondsFlag 1 declared before the rule (tool ledger X7); the tool's author describes each flag
-cmd/nova-swarm/slots.go:cmdSlotsInit 4 declared before the rule (tool ledger X7); the tool's author describes each flag
-cmd/nova-swarm/slots.go:cmdSlotsList 1 declared before the rule (tool ledger X7); the tool's author describes each flag
-cmd/nova-swarm/slots.go:cmdSlotsRelease 5 declared before the rule (tool ledger X7); the tool's author describes each flag
-cmd/nova-swarm/slots.go:cmdSlotsTake 6 declared before the rule (tool ledger X7); the tool's author describes each flag
+# ceiling: 1
 cmd/nova-swarm/workercheck.go:cmdWorker 2 declared before the rule (tool ledger X7); the tool's author describes each flag

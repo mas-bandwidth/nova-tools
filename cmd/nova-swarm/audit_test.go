@@ -25,7 +25,6 @@ var swarmAudit = audit.Config{
 	// One entry per site, keyed by file, function and source text; sites with the same
 	// text in the same function share an entry. Each is a claim a reader can check.
 	Exempt: map[string]string{
-		"main.go|parse|f.verb":     "the verb's own name, a literal at every newFlags call site in this file",
 		"member.go|cmdMember|note": "passNote's one line, a literal with no argument interpolated",
 		"main.go|want|name":        "a required flag's name, a literal at every call site in this file",
 		"main.go|want|wants":       "the guidance that flag wants, a literal at every call site in this file",
@@ -107,6 +106,10 @@ var swarmAudit = audit.Config{
 		// their usage literals and lines of this package's own usage const, to the stdout run
 		// hands it; it never prints an argument, so nothing it writes can carry a newline in.
 		`"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"`,
+		// main.go's flag refusal: tool.FlagRefusal returns a STRING (the unknown flag, the
+		// nearest and the verb's flag names) and writes nothing; refuse prints it through
+		// oneline.Escape, so a flag a caller typed with a newline in it stays one line.
+		`"github.com/mas-bandwidth/nova-tools/internal/tool"`,
 		// version.go, and the reason it cannot write past the escape: buildinfo reads
 		// debug.ReadBuildInfo and runtime's GOOS, GOARCH and Version, holds no writer of
 		// its own, and returns a STRING that this package prints -- rendered field by
