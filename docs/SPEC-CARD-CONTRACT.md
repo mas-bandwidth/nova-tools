@@ -212,11 +212,13 @@ no cause, as its own `UnknownError` does); the status is the provider's HTTP sta
 the record names none; the words are the provider's own message, one line, everything
 after a `key:` or `key ` dropped and every other secret-shaped value removed, cut to 120 bytes with the cut said. They come from the session's
 record of the failed message when it has one (an API error keeps the provider's status and
-body there), else the log's error line, else (a run that ended on a tool) `ended without a
+body there), else the log's error line (the log file, else the harness's printed error lines among the last 20 non-empty lines of its stderr, which native keeps in its own memory and never reads back from the card's directory), else (a run that ended on a tool) `ended without a
 final message`, class `other`. Native prints it as `NATIVE PROVIDER-FAIL label=<l> wall=<s>s
 route=<model> reason=<cause>`, and the 5xx hand-back ends its own line with the same
-`reason=<cause>`, read from the session and the log first and from the harness's own last
-words else. The member reads either line's reason (`member.Result`'s `Provider`) and judges the
+`reason=<cause>`, read from the session and the log first, then from the last error line the
+harness printed on its stderr (the same tail native keeps) (every launch runs it with `--print-logs --log-level
+ERROR`, the providers table, so its own cause of an `UnknownError` is there), and from its
+last words else. The member reads either line's reason (`member.Result`'s `Provider`) and judges the
 finish (`TestCauseFromTheHarnessLogAndOutput`, `TestCauseFromTheSessionsRecord`,
 `TestTheSessionsRecordOfTheFailedMessageIsTheCause`). The class is a record: it changes no
 judgment. A run with no result and no provider error that ends with a final assistant message

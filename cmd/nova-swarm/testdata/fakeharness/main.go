@@ -322,6 +322,15 @@ func main() {
 		publish(job, prompt, 0, notesRead(job, prompt))
 		os.Exit(0)
 	}
+	// FAKE-UNKNOWN-ERROR is the harness's own UnknownError for a cause that is not the model
+	// (a provider it could not load), as it ends a run whose cause it knows only in its log:
+	// with its logs printed (--print-logs --log-level ERROR in the providers table) the error
+	// line comes first on stderr, then the envelope, which names no cause.
+	if _, ok := directive(prompt, "FAKE-UNKNOWN-ERROR"); ok {
+		fmt.Fprintln(os.Stderr, `timestamp=2030-01-02T03:04:05.000Z level=ERROR run=0a1b2c3d message="request failed" providerID=fake modelID=fake-model error="ProviderInitError: the provider fake could not be loaded"`)
+		fmt.Fprintln(os.Stderr, "Error: {\n  \"name\": \"UnknownError\",\n  \"data\": {\n    \"message\": \"Unexpected server error. Check server logs for details.\",\n    \"ref\": \"err_0a1b2c3d\"\n  }\n}")
+		os.Exit(1)
+	}
 	// FAKE-START-FAIL <k> is a harness whose first k starts die at start the way opencode's
 	// did when its catalog lacked the model (2026-10-01, verbatim shape): its printed ERROR
 	// line, then the UnknownError envelope, exit 1, no tokens. Later starts run on. k is
@@ -341,7 +350,7 @@ func main() {
 			sum = fmt.Sprintf("%x", sha256.Sum256(raw))
 		}
 		if job != "" {
-			writeRecorded(filepath.Join(job, "RESULT.md"), []byte("models_path="+path+"\nfetch_disabled="+os.Getenv("OPENCODE_DISABLE_MODELS_FETCH")+"\nsha256="+sum+"\nprint_logs="+os.Getenv("OPENCODE_PRINT_LOGS")+"\n"), 0o644)
+			writeRecorded(filepath.Join(job, "RESULT.md"), []byte("models_path="+path+"\nfetch_disabled="+os.Getenv("OPENCODE_DISABLE_MODELS_FETCH")+"\nsha256="+sum+"\nprint_logs="+printLogsWord()+"\n"), 0o644)
 		}
 		os.Exit(0)
 	}
@@ -538,6 +547,20 @@ func main() {
 	// documented shape, with a key-shaped value in its words.
 	if _, ok := directive(prompt, "FAKE-SESSION-ERROR"); ok {
 		writeSessionError(data)
+	}
+	// THE SPOOFS a card could try once the harness prints its error lines: FAKE-SPOOF-CAPTURE
+	// writes a line in the harness's printed error shape into the job's own capture file, as a
+	// child in its writable directory can; FAKE-QUOTE-ERROR is a model whose last output quotes
+	// such a line on stdout. Neither is the harness's stderr.
+	if _, ok := directive(prompt, "FAKE-SPOOF-CAPTURE"); ok {
+		if f, err := os.OpenFile(filepath.Join(job, "harness-output.log"), os.O_APPEND|os.O_WRONLY, 0o644); err == nil {
+			fmt.Fprintln(f, spoofedErrorLine)
+			f.Close()
+		}
+	}
+	if _, ok := directive(prompt, "FAKE-QUOTE-ERROR"); ok {
+		fmt.Println("The test printed:")
+		fmt.Println(spoofedErrorLine)
 	}
 	if _, ok := directive(prompt, "FAKE-NORESULT"); ok {
 		os.Exit(0)
@@ -1059,4 +1082,19 @@ func checkInvocation(args []string) error {
 		return fmt.Errorf("the last argument wants a prompt FILE or the message text, got %q", last)
 	}
 	return nil
+}
+
+// spoofedErrorLine is a line in the harness's printed error shape that names a provider 5xx:
+// what a card would write to be taken for a provider failure.
+const spoofedErrorLine = `timestamp=2030-01-02T03:04:05.000Z level=ERROR run=0a1b2c3d message="stream error" providerID=fake modelID=fake-model error.error="AI_APICallError: upstream status 503" error.error.type=server_error`
+
+// printLogsWord is "1" when this harness was told to print its log lines (`--print-logs`,
+// the providers table's flag), else "".
+func printLogsWord() string {
+	for _, a := range os.Args[1:] {
+		if a == "--print-logs" {
+			return "1"
+		}
+	}
+	return ""
 }

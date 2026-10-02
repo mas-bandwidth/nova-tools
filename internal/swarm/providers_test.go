@@ -204,3 +204,17 @@ func readProvidersTSV(raw string) ([]providerRow, error) {
 	}
 	return out, nil
 }
+
+// Every row launches the harness with its error lines printed into the run's capture, so a
+// failure the harness reports only as UnknownError has its cause recorded
+// (cmd/nova-swarm nativeprovider.go).
+func TestEveryLaunchPrintsTheHarnessErrorLines(t *testing.T) {
+	t.Parallel()
+	table, err := readProvidersTable()
+	require.NoError(t, err)
+	for name := range table {
+		argv, err := LaunchArgvFor(name, "linux", LaunchRequest{Model: "p/m", Prompt: "a card"})
+		require.NoError(t, err, name)
+		assert.Equal(t, []string{"run", "--print-logs", "--log-level", "ERROR", "--model", "p/m"}, argv[1:7], name)
+	}
+}

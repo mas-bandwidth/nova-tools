@@ -900,6 +900,10 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// rewrite, unlink or read error of that file can turn a denial into an OK.
 	denials := swarm.NewShellDenialReader()
 	capture := io.MultiWriter(log, harnessOut, timeline, reader, denials)
+	// the harness's own stderr, its last lines kept in this process (nativeprovider.go,
+	// harnessErrTail): the error lines it prints are read from here, never from the file
+	// in the card's directory
+	errTail := &harnessErrTail{}
 
 	res := nativeRunResult{
 		rc:           -1,
@@ -1000,7 +1004,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		cmd.Dir = jobDir
 		cmd.Stdin = devNull
 		cmd.Stdout = capture
-		cmd.Stderr = io.MultiWriter(capture, &wallOut)
+		cmd.Stderr = io.MultiWriter(capture, &wallOut, errTail)
 		attemptStart := time.Now()
 		if err := cmd.Start(); err != nil {
 			log.Close()
@@ -1352,19 +1356,20 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	if !res.lost && !res.idled && !res.terminated && res.wallReport == "" && (res.wallRefusal == swarm.WallRefusal{}) {
 		if raw, err := os.ReadFile(outLog); err == nil {
 			if h, ok := swarm.ProviderHandback(swarm.ProviderExit{Tail: raw, Job: jobDir, RC: res.rc, Wall: time.Duration(res.wallSeconds * float64(time.Second)), Route: cfg.model, Routes: swarm.ParseRouteList(os.Getenv(swarm.RoutesEnv))}); ok {
-				// the cause: the session's record of the failed message, else the log's error
-				// line, else the harness's own last words (nativeprovider.go)
-				// the harness's printed refusal of the model comes first: no request was made,
-				// so no session or log names it (OPENCODE_PRINT_LOGS, printedHarnessError)
-				printed := printedHarnessError(raw)
-				if strings.Contains(printed, "ProviderModelNotFoundError") {
+				// the cause, all read from native's own copy of the harness's stderr (errTail), never
+				// from the capture file the card can write: the harness's printed refusal of the
+				// model first (no request was made, so no session or log names it), else the
+				// session's record of the failed message, else the log's provider error line, else
+				// the last error line the harness printed, else its last words (nativeprovider.go)
+				tail := errTail.Lines()
+				if printed := printedErrorLine(tail, true, func(l string) bool { return strings.Contains(l, "ProviderModelNotFoundError") }); printed != "" {
 					h.Cause = swarm.CauseFromText(printed)
 				} else if c, ok := sessionProviderError(dataHome, runStart); ok {
 					h.Cause = c
-				} else if line := providerLogError(dataHome, providerMark); line != "" {
+				} else if line := providerLogError(dataHome, providerMark, tail); line != "" {
 					h.Cause = swarm.CauseFromText(line)
-				} else if printed != "" {
-					h.Cause = swarm.CauseFromText(printed)
+				} else if line := captureErrorLine(tail); line != "" {
+					h.Cause = swarm.CauseFromText(line)
 				}
 				// a run whose every start failed says how many it tried (harnessStartWaits)
 				if res.starts > 0 {
@@ -1406,7 +1411,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	if !res.lost && !res.idled && !res.terminated && !handedBack && res.stopped == "" && res.wallReport == "" &&
 		(res.wallRefusal == swarm.WallRefusal{}) && (res.shellDenial == swarm.ShellDenial{}) {
 		if _, published := swarm.FindCardResult(jobDir); !published {
-			if cause, ok := providerEnd(dataHome, providerMark, runStart, res.rc); ok {
+			if cause, ok := providerEnd(dataHome, errTail.Lines(), providerMark, runStart, res.rc); ok {
 				fmt.Fprintln(errOut, oneline.Escape(providerLine(cfg.label, res.wallSeconds, cfg.model, cause)))
 			}
 		}
@@ -1824,10 +1829,6 @@ func nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shim
 		"XDG_DATA_HOME="+dataHome,
 		"NOVA_SWARM_JOB="+jobDir,
 		"TMPDIR="+tmpDir,
-		// the harness prints its ERROR lines into the capture, so a start it refuses names
-		// why (`error="ProviderModelNotFoundError: ..."`), not only its UnknownError envelope
-		"OPENCODE_PRINT_LOGS=1",
-		"OPENCODE_LOG_LEVEL=ERROR",
 	)
 	if cacheDir != "" {
 		out = append(out,

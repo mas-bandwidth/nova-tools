@@ -46,7 +46,7 @@ how it works: a card is one task, a markdown file with a header and its RULES;
 a worker description (JSON) names the harness, the model, the key file and the
 directories it may read. native runs one card as one child inside nova-sandbox;
 member runs a sprint's cards on this machine, each a native child, every sprint
-verb sent to the sprint's server; results land under --root. Nothing has a default.
+verb sent to the sprint's server; results land under --root.
 first run: the lines under example: need nothing: a card, a worker description
 and the lint's rules; running a card needs a harness, a model's key file and nova-sandbox.
 

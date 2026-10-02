@@ -25,7 +25,7 @@ const harnessStartWindow = 10 * time.Second
 var (
 	// startModelRE is the harness's own catalog refusing the model before any request
 	// (opencode's printed `error="ProviderModelNotFoundError: Model not found: <model>. Did
-	// you mean ..."`, OPENCODE_PRINT_LOGS).
+	// you mean ..."`, printed by the providers table's --print-logs).
 	startModelRE = regexp.MustCompile(`ProviderModelNotFoundError`)
 	// startEnvelopeRE is opencode's envelope for a run that died inside its own server
 	// (`UnknownError` ... `Unexpected server error. Check server logs for details.`).

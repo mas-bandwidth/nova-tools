@@ -138,7 +138,7 @@ func TestALaunchReadsTheMachinesOneCatalog(t *testing.T) {
 	got := string(raw)
 	assert.Contains(t, got, "/slot-1/data/.cache/opencode/models.json\n", "a copy in the launch's own data home")
 	assert.Contains(t, got, "fetch_disabled=1", "the harness's own fetch is off")
-	assert.Contains(t, got, "print_logs=1", "the harness prints its ERROR lines")
+	assert.Contains(t, got, "print_logs=1", "the harness prints its ERROR lines (the providers table's --print-logs)")
 	assert.Contains(t, got, fmt.Sprintf("sha256=%x", sha256.Sum256([]byte(catalog))), "the launch reads the machine's catalog byte for byte")
 	assert.NotContains(t, errOut.String(), "NATIVE NOTE catalog")
 
