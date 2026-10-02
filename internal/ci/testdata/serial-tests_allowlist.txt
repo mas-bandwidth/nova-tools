@@ -34,7 +34,7 @@ cmd/nova-cairn/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints serial: t.C
 cmd/nova-check/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints serial: t.Chdir
 cmd/nova-check/issue2296_test.go:TestIssue2296 serial: os.Setenv
 cmd/nova-check/issue2296_test.go:TestNoCodeStagedRefusals serial: os.Setenv
-cmd/nova-check/issue2311_test.go:TestIssue2311 serial: swaps package var main.dogfoodClock, swaps package var main.dogfoodGitRunner, swaps package var main.dogfoodHelpRunner
+cmd/nova-check/record_and_optional_checks_test.go:TestIssue2311 serial: swaps package var main.dogfoodClock, swaps package var main.dogfoodGitRunner, swaps package var main.dogfoodHelpRunner
 cmd/nova-fuse/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints serial: t.Chdir
 cmd/nova-fuse/main_test.go:TestEnvironmentCannotRedirectOrLiftAnything serial: t.Setenv
 cmd/nova-fuse/main_test.go:TestNoDefaultBoxRefusesToGuess serial: t.Setenv
