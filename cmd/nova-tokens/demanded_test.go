@@ -78,7 +78,7 @@ func TestFoldRefusesSymlinkedOutputBeforeWritingLock(t *testing.T) {
 			write(t, filepath.Join(target, "2026-09-11.tsv"), "original day\n")
 			{
 				err := os.Symlink(target, link)
-				require.NoError(t, err, err)
+				require.NoError(t, err)
 			}
 			result := invoke(t, "fold", "--out", link+suffix, "--day", "2026-09-11",
 				"--repos", reposFile(t, dir), "--claude", "fixture="+transcripts)
@@ -110,7 +110,7 @@ func TestFoldRefusesParentSymlinkedOutputBeforeWritingLock(t *testing.T) {
 			write(t, filepath.Join(child, "2026-09-11.tsv"), "original day\n")
 			{
 				err := os.Symlink(target, link)
-				require.NoError(t, err, err)
+				require.NoError(t, err)
 			}
 			outPath := filepath.Join(link, "child") + suffix
 			result := invoke(t, "fold", "--out", outPath, "--day", "2026-09-11",
@@ -141,7 +141,7 @@ func TestFoldRefusesParentSymlinkCreatesNoFiles(t *testing.T) {
 			transcripts := mkdir(t, filepath.Join(dir, "transcripts"))
 			{
 				err := os.Symlink(target, link)
-				require.NoError(t, err, err)
+				require.NoError(t, err)
 			}
 			outPath := filepath.Join(link, "child") + suffix
 			result := invoke(t, "fold", "--out", outPath, "--day", "2026-09-11",
@@ -157,7 +157,7 @@ func TestFoldRefusesParentSymlinkCreatesNoFiles(t *testing.T) {
 				assert.True(t, os.IsNotExist(err), "day file created in referent child: %v", err)
 			}
 			entries, err := os.ReadDir(child)
-			require.NoError(t, err, err)
+			require.NoError(t, err)
 			require.Equal(t, 0, len(entries), "referent child has %d entries, want 0: %v", len(entries), entries)
 		})
 	}
@@ -233,7 +233,7 @@ func TestRule3AnUnreadableSourceIsCountedAndPrintedAndExitsOne(t *testing.T) {
 	release() // windows holds the file open to make it unreadable, and an open file is undeletable
 	{
 		err := os.Remove(bad)
-		require.NoError(t, err, err)
+		require.NoError(t, err)
 	}
 	r = invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "glenn="+tr)
 	wantExit(t, r, 0)
@@ -658,7 +658,7 @@ func TestRule8RandomSiblingTempIsNotAStrayAndIsPreserved(t *testing.T) {
 	wantContains(t, cUnrelated.all(), ".unrelated.txt.tmp-12345678")
 	{
 		err := os.Remove(unrelated)
-		require.NoError(t, err, err)
+		require.NoError(t, err)
 	}
 
 	// The next fold writes the day file atomically via internal/atomicfile.
@@ -956,7 +956,7 @@ func TestExplicitDayQuietSourceDetectedAndRefused(t *testing.T) {
 	// Remove the source usage file so the declared source now has zero rows for that day.
 	{
 		err := os.Remove(jobPath)
-		require.NoError(t, err, err)
+		require.NoError(t, err)
 	}
 
 	// Refused under rule 10: input fell from 100 to unknown (now=-). File on disk is left untouched.
