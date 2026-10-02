@@ -571,9 +571,9 @@ again (`nova-secrets place ... --machine <name> --secret <NAME>`), or remove the
 ### `seal`
 
 ```
-nova-secrets seal --store ~/secrets --as rowan --key ~/.config/nova-secrets/rowan.key \
+nova-secrets seal --store ~/secrets --as <seat> --key ~/.config/nova-secrets/<seat>.key \
   --sops /opt/homebrew/bin/sops --name GH_TOKEN
-SECRETS SEAL OK name=GH_TOKEN seat=rowan pr=#123 merged
+SECRETS SEAL OK name=GH_TOKEN seat=<seat> merged
 ```
 
 **What it asserts.** That the value the caller pasted is now the `NAME` entry of
@@ -603,10 +603,10 @@ still sees HEAD matching the remote-tracking ref. The seal commit remains on
 ### `seat add`
 
 ```
-nova-secrets seat add --store ~/secrets --as air --pub age1… --from rowan \
-  --only GH_TOKEN,DEEPSEEK_API_KEY --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops
+nova-secrets seat add --store ~/secrets --as <seat> --pub <age-public-key> --from <source-seat> \
+  --only NAME,... --key ~/.config/nova-secrets/<source-seat>.key --sops /opt/homebrew/bin/sops
 SECRETS SEAT ADD NEXT: commit .sops.yaml and air.yaml on a branch and open the pull request the store's gate reviews
-SECRETS SEAT ADD OK as=air from=rowan keys=2 file=air.yaml rule=2
+SECRETS SEAT ADD OK as=<seat> from=<source-seat> keys=<count> file=<seat>.yaml
 ```
 
 **The circle it breaks.** `seal` cannot give a NEW seat its first value, and no flag makes it
@@ -645,9 +645,9 @@ gate`) reads the diff before the review, as it does for every other recipient ch
 ### `seat inject`
 
 ```
-nova-secrets seat inject --store ~/secrets --as air --from studio --only NOVA_REDIS_BENCH_PASSWORD \
-  --key ~/.config/nova-secrets/studio.key --sops /opt/homebrew/bin/sops
-SECRETS SEAT INJECT OK seat=air from=studio names=1 pr=#31 merged
+nova-secrets seat inject --store ~/secrets --as <seat> --from <source-seat> --only NAME \
+  --key ~/.config/nova-secrets/<source-seat>.key --sops /opt/homebrew/bin/sops
+SECRETS SEAT INJECT OK seat=<seat> from=<source-seat> names=<count> merged
 ```
 
 **The second circle.** A value one seat holds must sometimes reach seats that already exist.
@@ -703,7 +703,7 @@ One line, on stderr, naming the door — exit 2, or 125 from `exec`:
 |---|---|
 | `get`, `print`, `show`, `cat` a value | **Refused forever.** No verb prints a secret value and no flag makes one. A person who must see a value holds the key and runs `sops -d <file>` with their own hands. |
 | `put`, `set`, `add`, `edit` a value | `sops <store>/<name>.yaml`, or `sops set`; then `git add`, `git commit`, and a pull request the other collaborator approves. |
-| `rotate` | The provider's console (Glenn's hand), then `sops`, then an approved pull request, then a pull on every bench, then a probe. See **Rotation**. |
+| `rotate` | The provider's console, then `sops`, then an approved pull request, then a pull on every bench, then a probe. See **Rotation**. |
 | `delete` a key, or a file | `sops unset`, or `git rm`, and a rotation of whatever the deleted value was. |
 | a file-shaped secret (an SSH key, an age key) handed to a program that wants a path | **Not in this store.** Generate it on the seat that uses it, authorize its public half on the box that accepts it by that box's own recipe, and never move the private half. |
 | `recipients`, `grant`, `revoke access` | A pull request against `.sops.yaml` editing one rule, approved by the other collaborator and merged under the ruleset, then `sops updatekeys` in a second one. |
@@ -728,15 +728,15 @@ the variable the tool that acts already reads.
 | surface | key | file | who reads it |
 |---|---|---|---|
 | a pool's provider | `ANTHROPIC_API_KEY`, `XAI_API_KEY`, `GEMINI_API_KEY`, `INCEPTION_API_KEY` | `swarm-<name>` | pool workers and the gemini CLI — one key per pool file |
-| DeepSeek | `DEEPSEEK_API_KEY` | `rowan` | OpenCode workers, dispatched by the coordinator |
-| GitHub, **org roles** | `GH_TOKEN` | `rowan` | `gh`, nova-bus, the coordinator's pushes |
-| GitHub, **the keeper's own repositories, plus the store** | `GH_TOKEN` | `rowan-keeper` | the keeper's own pushes, and his pull requests against `mas-bandwidth/secrets` — no org role |
-| space, who and where | `SPACE_USER`, `SPACE_HOST` | `rowan` | the profiling launcher; the key itself lives on the seat, per **The model** |
-| email, send and its fallback | `SMTP_PASSWORD`, `SMTP_PASSWORD_BACKUP` | `rowan-keeper` | rowan-email producer |
-| email, read | `IMAP_PASSWORD` | `rowan-keeper` | rowan-email consumer |
-| Bluesky | `BSKY_APP_PASSWORD` | `rowan-keeper` | rowan-bsky |
-| Discord | `DISCORD_BOT_TOKEN` | `rowan-keeper` | rowan-discord producer and consumer |
-| Ghost | `GHOST_ADMIN_KEY` | `rowan-keeper` | rowan-ghost |
+| DeepSeek | `DEEPSEEK_API_KEY` | `<seat>` | OpenCode workers, dispatched by the scheduler |
+| GitHub, **org roles** | `GH_TOKEN` | `<seat>` | `gh`, nova-bus, scheduled pushes |
+| GitHub, **the store's own repositories** | `GH_TOKEN` | `<keeper-seat>` | the keeper's own pushes and pull requests against the store, without an org role |
+| space, who and where | `SPACE_USER`, `SPACE_HOST` | `<seat>` | the profiling launcher; the key itself lives on the seat, per **The model** |
+| email, send and its fallback | `SMTP_PASSWORD`, `SMTP_PASSWORD_BACKUP` | `<keeper-seat>` | email producer |
+| email, read | `IMAP_PASSWORD` | `<keeper-seat>` | email consumer |
+| Bluesky | `BSKY_APP_PASSWORD` | `<keeper-seat>` | Bluesky producer and consumer |
+| Discord | `DISCORD_BOT_TOKEN` | `<keeper-seat>` | Discord producer and consumer |
+| Ghost | `GHOST_ADMIN_KEY` | `<keeper-seat>` | Ghost producer and consumer |
 
 **Rowan's two files, and which key opens each.** `rowan.yaml` is sealed to the
 **admin bench key alone**, plus the recovery key, and holds the **admin** `GH_TOKEN` — the
