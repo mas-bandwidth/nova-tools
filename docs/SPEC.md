@@ -3671,11 +3671,11 @@ shapes repeated — aggregated, and one pass:
 ```
 $ nova-bus check --bus ~/bus --full
 BUS SCOPE mode=full cursor=- changed=-
-BUS FINDING kind=missing-subject count=109 first=from-cy/2026-08-03-note.md warn=true \
-  remedy=add a Subject: line, or --legacy-before at the day the bus adopted the tool
-BUS FINDING kind=unknown-to count=21 first=from-bo/2026-08-11-note.md warn=true \
-  remedy=name a reader from nova-bus names, or --legacy-before at the day the bus adopted the tool
-BUS FINDING kind=missing-index count=3 first=from-cy/2026-08-03-note.md warn=true \
+BUS FINDING kind=missing-subject count=109 first=from-<lane>/YYYY-MM-DD-note.md warn=true \
+  remedy=add a Subject: line, or --legacy-before at the switch-day line
+BUS FINDING kind=unknown-to count=21 first=from-<lane>/YYYY-MM-DD-note.md warn=true \
+  remedy=name a reader from nova-bus names, or --legacy-before at the switch-day line
+BUS FINDING kind=missing-index count=3 first=from-<lane>/YYYY-MM-DD-note.md warn=true \
   remedy=nova-bus check --bus ~/bus --full --rebuild-index
 BUS SUMMARY mode=full cursor=- notes=1900 findings=133 warn=133 fail=0 complete=true next=-
 ```
@@ -3687,16 +3687,16 @@ resumed on the same snapshot:
 ```
 $ nova-bus check --bus ~/bus --full --fail-max 2
 BUS SCOPE mode=full cursor=- changed=-
-BUS FINDING kind=parse count=12 first=from-dana/2026-08-07-prose.md warn=true \
+BUS FINDING kind=parse count=12 first=from-<lane>/YYYY-MM-DD-prose.md warn=true \
   remedy=the header ends at the first blank line; put a blank line after the last header
-BUS FINDING kind=parse count=9 first=from-bo/2026-08-19-heading.md warn=false \
+BUS FINDING kind=parse count=9 first=from-<lane>/YYYY-MM-DD-heading.md warn=false \
   remedy=headers are plain Key: value; a # heading is not a key
 BUS MORE kind=parse shown=2 total=4 remedy=--fail-max 0, or --full to see every finding
 BUS SUMMARY mode=full cursor=- notes=1900 findings=167 warn=145 fail=22 complete=false next=<token>
 $ nova-bus check --bus ~/bus --full --after <token>
-BUS FINDING kind=parse count=7 first=from-cy/2026-08-21-key.md warn=false \
+BUS FINDING kind=parse count=7 first=from-<lane>/YYYY-MM-DD-key.md warn=false \
   remedy=unknown header key; the eight keys are From, To, Cc, Date, Id, Re, Kind, Subject
-BUS FINDING kind=parse count=6 first=from-cy/2026-08-23-bold.md warn=false \
+BUS FINDING kind=parse count=6 first=from-<lane>/YYYY-MM-DD-bold.md warn=false \
   remedy=headers are plain Key: value, not markdown bold; write To: not **To**:
 BUS SUMMARY mode=full cursor=- notes=1900 findings=167 warn=145 fail=22 complete=true next=-
 ```
@@ -3741,7 +3741,7 @@ smaller receipt.
 note is pushed:
 
 ```
-2026-09-09T12:34:56Z ada-3f9a1c2b8d40
+YYYY-MM-DDTHH:MM:SSZ <lane>-<id>
 ```
 
 RFC 3339 in UTC — which holds no spaces, so the rest of the line is the target
@@ -3814,7 +3814,7 @@ inbox, and is not reported — only a note whose whole address resolves to an em
 list has no reader. It is a report and never a failure; `check` is the gate and
 says the same thing about the header in its own words. `send` refuses an unknown
 recipient, so nothing this tool writes can become one of these: they are the
-legacy notes and the ones typed by hand in a browser, which is exactly the
+older notes and the ones typed by hand in a browser, which is exactly the
 writing this bus's form exists to allow.
 
 ### The push protocol
@@ -4012,17 +4012,17 @@ and `#` comments are ignored in all three.
 
 ```
 from-ada/CURSOR
-3f9a1c2b8d40e7c6a5b4938271605f4e3d2c1b0a 2026-09-09T14:05:00Z open=2 legacy=2026-09-09T18:07:00Z
+<sha> YYYY-MM-DDTHH:MM:SSZ open=2 legacy=YYYY-MM-DDTHH:MM:SSZ
 
 from-ada/OPEN   (tab-separated, after a version line)
 OPEN v2
-bo-111111111111	receipt	-	Bo	to	2026-09-09T13:00:00Z	from-bo/2026-09-09T1300Z-heard-111111111111.md	Heard
-bo-222222222222	note	heard	Bo	to	2026-09-09T14:00:00Z	from-bo/2026-09-09T1400Z-the-windows-runner-222222222222.md	The Windows runner skips three steps
+<id>	receipt	-	<from>	to	YYYY-MM-DDTHH:MM:SSZ	from-<lane>/YYYY-MM-DDTHHMMZ-heard-<id>.md	Heard
+<id>	note	heard	<from>	to	YYYY-MM-DDTHH:MM:SSZ	from-<lane>/YYYY-MM-DDTHHMMZ-the-windows-runner-<id>.md	The Windows runner skips three steps
 -	note	-	Bo	cc	-	from-bo/a-note-written-before-ids.md	Written before there were ids
--	unreadable	-	-	-	-	from-bo/2026-09-07T0009Z-prose.md	-
+-	unreadable	-	-	-	-	from-<lane>/YYYY-MM-DDTHHMMZ-prose.md	-
 
 from-bo/INDEX   (tab-separated)
-bo-abcdef012345	from-bo/2026-09-07T0001Z-a-question-abcdef012345.md	2026-09-07T00:01:00Z	Ada;Dana	-
+<id>	from-<lane>/YYYY-MM-DDTHHMMZ-a-question-<id>.md	YYYY-MM-DDTHH:MM:SSZ	<from>;<from>	-
 ```
 
 **The `OPEN v2` grammar.** The first meaningful line is exactly `OPEN v2` and
@@ -4036,7 +4036,7 @@ same two reasons, as an `INDEX` line.
 <id|->  <kind>  <heard|->  <from|->  <addr|->  <date|->  <path>  <subject|->
 ```
 
-- **id** — the note's id, or `-` for a legacy note, which is addressed by path;
+- **id** — the note's id, or `-` for a note without one, addressed by path;
 - **kind** — `note`, `receipt` or `unreadable`, decided when the note went open.
   `receipt` is the receipt heuristic's answer or a `Kind:` line's, taken once:
   the body is not read again, so the threshold that classified an entry is the
