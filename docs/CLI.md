@@ -1362,9 +1362,9 @@ past it: classify from a complete local list instead, with `--local-diff <checko
 that nobody has run since and said it did, is an **open edge**, and an open edge refuses —
 `RELEASE CUT REFUSED reason=dogfood-gate open=<n> remedy="fix the open edges or --no-dogfood-gate
 --reason <why>"`. `--cli` defaults to `docs/CLI.md` beside the checkout the verb was already given
-(`--changelog` for `cut`, `--source` for `build`); `--receipts` defaults to `~/dogfood`
-when that directory exists, and a run with neither says `dogfood-gate=skipped` rather than passing
-quietly. The gate judges the **shipped set** only: the tools under the checkout's `cmd/`. A receipt
+(`--changelog` for `cut`, `--source` for `build`); `--receipts` names the receipts directory.
+When the directory is omitted, the run says `dogfood-gate=skipped` rather than passing quietly.
+The gate judges the **shipped set** only: the tools under the checkout's `cmd/`. A receipt
 naming any other tool is set aside and counted on `RELEASE CUT NOTE dogfood-gate shipped=<n>
 outside=<n> cmd=<dir>`. `--no-dogfood-gate` needs `--reason <why>`, and the reason is printed, put on the release
 line as `dogfood=waived`, and written into the CHANGELOG section as `Dogfood gate waived: <why>`.
