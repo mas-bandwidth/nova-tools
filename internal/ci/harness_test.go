@@ -76,3 +76,18 @@ func (h *ciHarness) parseSource(name, src string) (*token.FileSet, *ast.File) {
 	require.NoError(h.t, err)
 	return fset, f
 }
+
+// assertExactlyOneDeletion asserts that findings contains exactly one finding naming the file deletion.
+func (h *ciHarness) assertExactlyOneDeletion(name string, got []string, file string) {
+	h.t.Helper()
+	require.Len(h.t, got, 1, "%s: findings = %q; want exactly one, naming %s", name, got, file)
+	assert.Contains(h.t, got[0], "deletes "+file+",", "%s: findings = %q; want exactly one, naming %s", name, got, file)
+}
+
+// assertExcusedGuardedDeletions asserts that findings is empty and the note confirms excused deletions.
+func (h *ciHarness) assertExcusedGuardedDeletions(got []string, note string, desc string) {
+	h.t.Helper()
+	assert.Empty(h.t, got, "%s: findings = %q, note = %q; want none, gone_test.go excused", desc, got, note)
+	assert.Contains(h.t, note, "excused 1 guarded deletions", "%s: findings = %q, note = %q; want none, gone_test.go excused", desc, got, note)
+}
+
