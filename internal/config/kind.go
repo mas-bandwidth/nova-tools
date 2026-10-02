@@ -218,11 +218,10 @@ var Kinds = []*Kind{
 		Check: checkFleet,
 	},
 	{
-		// A friend's row is what someone decides for her: how wide, which
-		// tiers, which roles. What she would just know (where she runs, her
-		// harness, her logins) is runtime data her own presence reports
-		// know: runtime data such as where she runs, her harness and her logins comes
-		// from her own presence report.
+		// A friend's row is what someone decides for her: how wide, which tiers
+		// and which roles. Where she runs, her harness and her logins are
+		// runtime data a friend would just know, reported by her own presence
+		// rather than stored in configuration.
 		Name:  KindFriend,
 		Table: "friends",
 		Doc:   "an AI friend: how wide she runs, which tiers she can do, and her roles",
@@ -486,7 +485,7 @@ func checkLoop(r Row) error {
 // friend:<f>:roles in Redis (what ns_friend_roles guards and the deal
 // reads) carries exactly one coordinator, and a handover (sprint set
 // --coordinator) is two SET lines on the next apply: the new coordinator's
-// roles first (ApplyOrder), then the old one's without it.
+// roles first (ApplyOrder), then the former coordinator's without the coordinator role.
 func deriveCoordinator(ctx context.Context, st Store, rows []Row) ([]Row, error) {
 	sprint, _, err := st.Get(ctx, KindSprint, KindSprint)
 	if err != nil {
