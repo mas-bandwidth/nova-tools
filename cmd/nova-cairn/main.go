@@ -106,12 +106,13 @@ first run: the four examples are one sitting: the open makes ./cairns, the rest 
 			},
 			{
 				Name:    "receipt",
-				Usage:   "receipt --store <dir> --session <id> --entry <id>",
+				Usage:   "receipt --store <dir> --session <id> --entry <id> [--text]",
 				Example: "receipt --store ./cairns --session s1 --entry e1",
 				Effect:  tool.Inspection,
 				Flags: func(f *tool.Flags) {
 					record(f)
 					f.Required("entry", "the stable entry identifier")
+					f.Bool("text", false, "include the entry's stored words as a text fact")
 				},
 				Run: receipt,
 			},
@@ -228,7 +229,15 @@ func receipt(c *tool.Call) *tool.Out {
 	if err != nil {
 		return tool.Refuse(err.Error())
 	}
-	return tool.Done().Fact("session", rc.Session).Fact("entry", rc.ID).Fact("stamp", stampOf(rc.Stamp)).
+	o := tool.Done().Fact("session", rc.Session).Fact("entry", rc.ID).Fact("stamp", stampOf(rc.Stamp)).
 		Fact("bytes", rc.Bytes).Fact("source", sourceOf(rc.Source)).Fact("persisted", true).
 		Fact("published", false).Fact("publish", rc.Policy)
+	if c.Bool("text") {
+		text, err := cairn.EntryText(c.Str("store"), c.Str("session"), c.Str("entry"))
+		if err != nil {
+			return tool.Refuse(err.Error())
+		}
+		o.Fact("text", text)
+	}
+	return o
 }

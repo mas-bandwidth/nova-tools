@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -17,13 +18,14 @@ import (
 func (h *harness) nothingWritten(before map[string]uint64) {
 	h.t.Helper()
 	for tb, rev := range before {
-		if got := h.m.Revision(tb); got != rev {
-			h.t.Fatalf("table %s moved %d -> %d", tb, rev, got)
-		}
+		got := h.m.Revision(tb)
+		require.Equal(h.t, rev, got, "table %s moved %d -> %d", tb, rev, got)
 	}
-	if h.m.Pending() != nil {
-		h.t.Fatalf("the fence holds %s", h.m.Pending().ID)
+	var pendingID any
+	if p := h.m.Pending(); p != nil {
+		pendingID = p.ID
 	}
+	require.Nil(h.t, h.m.Pending(), "the fence holds %s", pendingID)
 }
 
 func (h *harness) revisions() map[string]uint64 {
@@ -43,12 +45,13 @@ func TestACardTextOverTheBoundRefusesTheStepWhole(t *testing.T) {
 	h.setup(1)
 	before := h.revisions()
 	res, err := h.st.Run(h.ctx, AddStep(sprint.AddReq{Stream: "s2", Count: 2, Brief: strings.Repeat("b", MaxBriefBytes+1)}))
-	if err != nil || len(res.Moved) != 0 || len(res.Refused) != 2 || res.Attempts != 1 {
-		t.Fatalf("an over-long brief: %+v %v", res, err)
-	}
+	require.NoError(t, err, "an over-long brief: %+v %v", res, err)
+	require.Empty(t, res.Moved, "an over-long brief: %+v %v", res, err)
+	require.Len(t, res.Refused, 2, "an over-long brief: %+v %v", res, err)
+	require.Equal(t, 1, res.Attempts, "an over-long brief: %+v %v", res, err)
 	why := res.Refused[0].Why
 	for _, want := range []string{"field brief", fmt.Sprintf("is %d bytes, over the bound of 16384 bytes", MaxBriefBytes+1), "a child's whole brief", "shorten it, or point to a file or a comment"} {
-		assert.Contains(t, why, want)
+		assert.Contains(t, why, want, "refusal %q has no %q", why, want)
 	}
 	assert.NotContains(t, why, "kept changing")
 	h.nothingWritten(before)
@@ -82,13 +85,14 @@ func TestAStepTheTableLayerRefusesIsRefusedBeforeAnyWrite(t *testing.T) {
 		}}}}
 	}}
 	res, err := h.st.Run(h.ctx, step)
-	if err != nil || len(res.Moved) != 0 || len(res.Refused) != 1 || res.Attempts != 1 {
-		t.Fatalf("an unwritable step: %+v %v", res, err)
-	}
+	require.NoError(t, err, "an unwritable step: %+v %v", res, err)
+	require.Empty(t, res.Moved, "an unwritable step: %+v %v", res, err)
+	require.Len(t, res.Refused, 1, "an unwritable step: %+v %v", res, err)
+	require.Equal(t, 1, res.Attempts, "an unwritable step: %+v %v", res, err)
 	why := res.Refused[0].Why
-	if !strings.Contains(why, "LIMIT") || !strings.Contains(why, "field value bytes") || strings.Contains(why, "kept changing") {
-		t.Fatalf("the refusal: %s", why)
-	}
+	require.Contains(t, why, "LIMIT", "the refusal: %s", why)
+	require.Contains(t, why, "field value bytes", "the refusal: %s", why)
+	require.NotContains(t, why, "kept changing", "the refusal: %s", why)
 	h.nothingWritten(before)
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m3"}))
 }
@@ -100,18 +104,14 @@ func TestAStepIsSplitByBytes(t *testing.T) {
 	h := newHarness(t)
 	h.setup(1)
 	res := h.must(AddStep(sprint.AddReq{Stream: "s2", Count: 128, Brief: strings.Repeat("b", MaxBriefBytes)}))
-	if len(res.Moved) != 128 {
-		t.Fatalf("moved %d", len(res.Moved))
-	}
+	require.Len(t, res.Moved, 128, "moved %d", len(res.Moved))
 	n := 0
 	for _, c := range h.snap().Work.Cards() {
 		if strings.HasPrefix(c.ID, "s2-") {
 			n++
 		}
 	}
-	if n != 128 {
-		t.Fatalf("%d of 128 on the table", n)
-	}
+	require.Equal(t, 128, n, "%d of 128 on the table", n)
 	h.clean("split by bytes")
 }
 
@@ -143,12 +143,13 @@ func TestAFirstManifestRefusedOnABoundIsNotRetried(t *testing.T) {
 	st.B = r
 	before := h.revisions()
 	res, err := st.Run(h.ctx, DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 2}}))
-	if err != nil || len(res.Moved) != 0 || len(res.Refused) != 2 || r.calls != 1 {
-		t.Fatalf("a first manifest refused on a bound: %+v %v; %d sends", res, err, r.calls)
-	}
-	if why := res.Refused[0].Why; !strings.Contains(why, "changed entries: bound 1") || strings.Contains(why, "kept changing") {
-		t.Fatalf("the refusal: %s", why)
-	}
+	require.NoError(t, err, "a first manifest refused on a bound: %+v %v; %d sends", res, err, r.calls)
+	require.Empty(t, res.Moved, "a first manifest refused on a bound: %+v %v; %d sends", res, err, r.calls)
+	require.Len(t, res.Refused, 2, "a first manifest refused on a bound: %+v %v; %d sends", res, err, r.calls)
+	require.Equal(t, 1, r.calls, "a first manifest refused on a bound: %+v %v; %d sends", res, err, r.calls)
+	why := res.Refused[0].Why
+	require.Contains(t, why, "changed entries: bound 1", "the refusal: %s", why)
+	require.NotContains(t, why, "kept changing", "the refusal: %s", why)
 	h.nothingWritten(before)
 }
 
@@ -157,12 +158,10 @@ func TestAFirstManifestRefusedOnABoundIsNotRetried(t *testing.T) {
 func (h *harness) pendingOp(op OpRecord) {
 	h.t.Helper()
 	f, err := h.m.ReadFence(h.ctx)
-	if err != nil {
-		h.t.Fatal(err)
-	}
-	if ok, err := h.m.Acquire(h.ctx, f.Gen, op); !ok || err != nil {
-		h.t.Fatalf("acquire: %v %v", ok, err)
-	}
+	require.NoError(h.t, err)
+	ok, err := h.m.Acquire(h.ctx, f.Gen, op)
+	require.NoError(h.t, err, "acquire: %v %v", ok, err)
+	require.True(h.t, ok, "acquire: %v %v", ok, err)
 }
 
 // S2 (d). A later manifest the store refuses on a bound is skipped by repair
@@ -186,27 +185,22 @@ func TestRepairSkipsALaterManifestRefusedOnABound(t *testing.T) {
 				{ID: p1.ID, Expect: guard(p1), Set: map[string]string{"probe": strings.Repeat("v", ntable.LimitFieldValueBytes+1)}},
 				{ID: p2.ID, Expect: guard(p2), Set: map[string]string{"probe": "2"}}}},
 	}}
-	if _, err := h.m.Apply(h.ctx, op.Manifests[0]); err != nil {
-		t.Fatal(err)
-	}
+	_, err := h.m.Apply(h.ctx, op.Manifests[0])
+	require.NoError(t, err)
 	h.pendingOp(op)
 	rr, err := h.st.Repair(h.ctx)
-	if err != nil || len(rr) != 1 || rr[0].Done != RepairSkipped || len(rr[0].Skipped) != 1 {
-		t.Fatalf("repair: %+v %v", rr, err)
-	}
-	if !strings.Contains(rr[0].Skipped[0], "s1-1") || !strings.Contains(rr[0].Skipped[0], "LIMIT") {
-		t.Fatalf("the skip does not carry the store's text: %s", rr[0].Skipped[0])
-	}
-	if h.m.Pending() != nil {
-		t.Fatalf("the fence is still held")
-	}
+	require.NoError(t, err, "repair: %+v %v", rr, err)
+	require.Len(t, rr, 1, "repair: %+v %v", rr, err)
+	require.Equal(t, RepairSkipped, rr[0].Done, "repair: %+v %v", rr, err)
+	require.Len(t, rr[0].Skipped, 1, "repair: %+v %v", rr, err)
+	require.Contains(t, rr[0].Skipped[0], "s1-1", "the skip does not carry the store's text: %s", rr[0].Skipped[0])
+	require.Contains(t, rr[0].Skipped[0], "LIMIT", "the skip does not carry the store's text: %s", rr[0].Skipped[0])
+	require.Nil(t, h.m.Pending(), "the fence is still held")
 	s = h.snap()
-	if s.Work.Card("s1-2").F("probe") != "2" || s.Work.Card("s1-1").F("probe") != "" {
-		t.Fatalf("applied: s1-1 %q s1-2 %q", s.Work.Card("s1-1").F("probe"), s.Work.Card("s1-2").F("probe"))
-	}
-	if n := len(h.skipNotes()); n != 1 {
-		t.Fatalf("%d skip judgments", n)
-	}
+	require.Equal(t, "2", s.Work.Card("s1-2").F("probe"), "applied: s1-1 %q s1-2 %q", s.Work.Card("s1-1").F("probe"), s.Work.Card("s1-2").F("probe"))
+	require.Empty(t, s.Work.Card("s1-1").F("probe"), "applied: s1-1 %q s1-2 %q", s.Work.Card("s1-1").F("probe"), s.Work.Card("s1-2").F("probe"))
+	n := len(h.skipNotes())
+	require.Equal(t, 1, n, "%d skip judgments", n)
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m3"}))
 }
 
@@ -224,11 +218,9 @@ func TestAFirstManifestOverABoundIsAbandonedAtOnce(t *testing.T) {
 			Members: []ntable.BatchMemberEntry{{ID: p1.ID, Set: map[string]string{"probe": strings.Repeat("v", ntable.LimitFieldValueBytes+1)}}}},
 	}})
 	res, err := h.st.Run(h.ctx, FleetStep(sprint.FleetReq{Op: "up", Member: "m3"}))
-	if err != nil || len(res.Repaired) != 1 || !strings.HasSuffix(res.Repaired[0], RepairAbandoned) {
-		t.Fatalf("the verb after an unwritable pending operation: %+v %v", res, err)
-	}
+	require.NoError(t, err, "the verb after an unwritable pending operation: %+v %v", res, err)
+	require.Len(t, res.Repaired, 1, "the verb after an unwritable pending operation: %+v %v", res, err)
+	require.True(t, strings.HasSuffix(res.Repaired[0], RepairAbandoned), "the verb after an unwritable pending operation: %+v %v", res, err)
 	var pe *PendingError
-	if errors.As(err, &pe) {
-		t.Fatal(pe)
-	}
+	require.False(t, errors.As(err, &pe), pe)
 }

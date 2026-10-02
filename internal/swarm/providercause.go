@@ -143,10 +143,18 @@ var envelopeNameRE = regexp.MustCompile(`"name"\s*:\s*"([A-Za-z]+Error)"`)
 // apiCallPrefixRE is the SDK's own wrapper word in front of the provider's message.
 var apiCallPrefixRE = regexp.MustCompile(`^AI_[A-Za-z]+Error:\s*`)
 
+// harnessModelNotFoundRE is the harness's own catalog refusing the model before any
+// request (opencode's printed `error="ProviderModelNotFoundError: Model not found:
+// <model>. Did you mean ..."`): the model it names.
+var harnessModelNotFoundRE = regexp.MustCompile(`ProviderModelNotFoundError:\s*Model not found:\s*(\S+?)\.(?:\s|"|$)`)
+
 // CauseFromText is the cause a line of text records: a harness log's error line, or the
 // last lines of the harness's output (its error envelope). The status is the one the text
 // names, the message the provider's own words in it, else the text itself.
 func CauseFromText(text string) ProviderCause {
+	if m := harnessModelNotFoundRE.FindStringSubmatch(text); m != nil {
+		return ProviderCause{Class: CauseUnknownModel, Message: causeMessage("model not found in the harness catalog: " + m[1])}
+	}
 	status := 0
 	if m := textStatusRE.FindStringSubmatch(text); m != nil {
 		status, _ = strconv.Atoi(m[1]) // ignored: the pattern holds three digits

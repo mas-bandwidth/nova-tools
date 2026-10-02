@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
+
+	tassert "github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // testdata/replay holds one real capture: trace.json as a bench wrote it, and
@@ -16,18 +18,15 @@ import (
 func replayFile(t *testing.T, name string) []byte {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("testdata", "replay", name))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return raw
 }
 
 func loadTrace(t *testing.T) Trace {
 	t.Helper()
 	var tr Trace
-	if err := json.Unmarshal(replayFile(t, "trace.json"), &tr); err != nil {
-		t.Fatalf("trace.json: %v", err)
-	}
+	err := json.Unmarshal(replayFile(t, "trace.json"), &tr)
+	require.NoError(t, err, "trace.json: %v", err)
 	return tr
 }
 
@@ -47,18 +46,13 @@ func harnessOf(tr Trace, mutate bool) string {
 func TestHarnessIsTheModuleTheOriginalRunnerGenerated(t *testing.T) {
 	t.Parallel()
 	tr := loadTrace(t)
-	if len(tr.Steps) != 32 {
-		t.Fatalf("the recorded trace has %d steps", len(tr.Steps))
-	}
-	if got, want := harnessOf(tr, false), string(replayFile(t, "MemberReceiptReplay.tla")); got != want {
-		t.Fatalf("the harness differs from the recorded one at byte %d", firstDifference(got, want))
-	}
-	if got, want := harnessOf(tr, true), string(replayFile(t, "MemberReceiptReplay.mutated.tla")); got != want {
-		t.Fatalf("the mutated harness differs from the recorded one at byte %d", firstDifference(got, want))
-	}
-	if got, want := HarnessConfig(string(replayFile(t, "MCEpochMemberTable.cfg")), len(tr.Steps)), string(replayFile(t, "MemberReceiptReplay.cfg")); got != want {
-		t.Fatalf("the harness configuration is\n%s\nwant\n%s", got, want)
-	}
+	require.Len(t, tr.Steps, 32, "the recorded trace has %d steps", len(tr.Steps))
+	got, want := harnessOf(tr, false), string(replayFile(t, "MemberReceiptReplay.tla"))
+	require.Equal(t, want, got, "the harness differs from the recorded one at byte %d", firstDifference(got, want))
+	got, want = harnessOf(tr, true), string(replayFile(t, "MemberReceiptReplay.mutated.tla"))
+	require.Equal(t, want, got, "the mutated harness differs from the recorded one at byte %d", firstDifference(got, want))
+	gotCfg, wantCfg := HarnessConfig(string(replayFile(t, "MCEpochMemberTable.cfg")), len(tr.Steps)), string(replayFile(t, "MemberReceiptReplay.cfg"))
+	require.Equal(t, wantCfg, gotCfg, "the harness configuration is\n%s\nwant\n%s", gotCfg, wantCfg)
 }
 
 func firstDifference(a, b string) int {
@@ -74,9 +68,7 @@ func TestTheMutatedHarnessDiffersInExactlyOneObservedLink(t *testing.T) {
 	t.Parallel()
 	tr := loadTrace(t)
 	a, b := strings.Split(harnessOf(tr, false), "\n"), strings.Split(harnessOf(tr, true), "\n")
-	if len(a) != len(b) {
-		t.Fatalf("line counts %d and %d", len(a), len(b))
-	}
+	require.Equal(t, len(b), len(a), "line counts %d and %d", len(a), len(b))
 	var differing []int
 	for i := range a {
 		if a[i] != b[i] {
@@ -84,60 +76,45 @@ func TestTheMutatedHarnessDiffersInExactlyOneObservedLink(t *testing.T) {
 		}
 	}
 	// Only the state after the first step is corrupted.
-	if len(differing) != 1 || !strings.HasPrefix(a[differing[0]], "<<{") {
-		t.Fatalf("lines differing: %v", differing)
-	}
+	require.Len(t, differing, 1, "lines differing: %v", differing)
+	require.True(t, strings.HasPrefix(a[differing[0]], "<<{"), "lines differing: %v", differing)
 }
 
 func TestTheTraceRoundTripsThroughItsJSON(t *testing.T) {
 	t.Parallel()
 	raw, err := json.MarshalIndent(loadTrace(t), "", "  ")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	var before, after map[string]any
-	if err := json.Unmarshal(replayFile(t, "trace.json"), &before); err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal(raw, &after); err != nil {
-		t.Fatal(err)
-	}
+	err = json.Unmarshal(replayFile(t, "trace.json"), &before)
+	require.NoError(t, err)
+	err = json.Unmarshal(raw, &after)
+	require.NoError(t, err)
 	for _, key := range []string{"initial", "source_sha256", "model_sha256"} {
-		if !reflect.DeepEqual(before[key], after[key]) {
-			t.Errorf("%s changed in the round trip", key)
-		}
+		tassert.Equal(t, before[key], after[key], "%s changed in the round trip", key)
 	}
 	steps, again := before["steps"].([]any), after["steps"].([]any)
-	if len(steps) != len(again) {
-		t.Fatalf("%d steps became %d", len(steps), len(again))
-	}
+	require.Equal(t, len(again), len(steps), "%d steps became %d", len(steps), len(again))
 	// The arguments of a step are compared in the test of the actions: the
 	// runner that wrote the fixture spaced the JSON inside them differently.
 	for i := range steps {
 		x, y := steps[i].(map[string]any), again[i].(map[string]any)
 		for _, key := range []string{"verb", "actor", "refused", "receipt", "model", "state"} {
-			if !reflect.DeepEqual(x[key], y[key]) {
-				t.Errorf("step %d: %s changed in the round trip", i, key)
-			}
+			tassert.Equal(t, x[key], y[key], "step %d: %s changed in the round trip", i, key)
 		}
 	}
-	if !strings.Contains(string(raw), `"refused": null`) {
-		t.Error("a step with no table call does not carry refused: null")
-	}
+	tassert.Contains(t, string(raw), `"refused": null`, "a step with no table call does not carry refused: null")
 }
 
 func TestActionsAreTheThirtyTwoOfTheTrace(t *testing.T) {
 	t.Parallel()
 	tr := loadTrace(t)
 	actions := Actions()
-	if len(actions) != len(tr.Steps) {
-		t.Fatalf("%d actions, %d recorded steps", len(actions), len(tr.Steps))
-	}
+	require.Equal(t, len(tr.Steps), len(actions), "%d actions, %d recorded steps", len(actions), len(tr.Steps))
 	for i, a := range actions {
 		s := tr.Steps[i]
-		if a.Verb != s.Verb || a.Actor != s.Actor || len(a.Args) != len(s.Args) {
-			t.Errorf("action %d = %+v, recorded %s %v %s", i, a, s.Verb, s.Args, s.Actor)
-		}
+		tassert.Equal(t, s.Verb, a.Verb, "action %d = %+v, recorded %s %v %s", i, a, s.Verb, s.Args, s.Actor)
+		tassert.Equal(t, s.Actor, a.Actor, "action %d = %+v, recorded %s %v %s", i, a, s.Verb, s.Args, s.Actor)
+		tassert.Equal(t, len(s.Args), len(a.Args), "action %d = %+v, recorded %s %v %s", i, a, s.Verb, s.Args, s.Actor)
 	}
 }
 
@@ -167,13 +144,11 @@ func TestActionTLARendersEachVerb(t *testing.T) {
 	}
 	for _, tc := range tests {
 		got, err := ActionTLA(tc.a, 1)
-		if err != nil || got != tc.want {
-			t.Errorf("%s: %q, %v\nwant %q", tc.a.Verb, got, err, tc.want)
-		}
+		tassert.NoError(t, err, "%s: %q, %v\nwant %q", tc.a.Verb, got, err, tc.want)
+		tassert.Equal(t, tc.want, got, "%s: %q, %v\nwant %q", tc.a.Verb, got, err, tc.want)
 	}
-	if got, _ := ActionTLA(Action{"clear", []string{"t2"}, "w1"}, 2); got != `EpochClear("w1",<<"t2",2>>)` {
-		t.Errorf("the epoch is not the step's: %q", got)
-	}
+	got, _ := ActionTLA(Action{"clear", []string{"t2"}, "w1"}, 2)
+	tassert.Equal(t, `EpochClear("w1",<<"t2",2>>)`, got, "the epoch is not the step's: %q", got)
 }
 
 func TestActionTLARefusesWhatItCannotMap(t *testing.T) {
@@ -187,8 +162,7 @@ func TestActionTLARefusesWhatItCannotMap(t *testing.T) {
 		"a verb with no table":      {"clear", nil, "w1"},
 		"a cell verb with too few":  {"cell_add", []string{"t1", "r1", "c1"}, "w1"},
 	} {
-		if got, err := ActionTLA(a, 1); err == nil {
-			t.Errorf("%s was rendered as %q", name, got)
-		}
+		got, err := ActionTLA(a, 1)
+		tassert.Error(t, err, "%s was rendered as %q", name, got)
 	}
 }

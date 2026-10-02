@@ -14,6 +14,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"io"
 
@@ -26,18 +27,32 @@ import (
 // only write a string var, and it is package-level and unexported for the same reason.
 var version string
 
-// cmdVersion prints the one line. It takes no flags and no arguments: there is no
-// --short, no --json and no --long, because a second output shape is a second thing to
-// agree about and this verb exists to end an argument rather than to start one.
+// cmdVersion prints the build identity, optionally in the shared JSON envelope.
+// STANDARD section 2 keeps the payload identical in both renderings.
 func cmdVersion(args []string, stdout, stderr io.Writer) int {
 	return cmdVersionWith(args, stdout, stderr, version)
 }
 
 func cmdVersionWith(args []string, stdout, stderr io.Writer, ver string) int {
-	verbflag.HelpIfAsked(args, "version")
+	var asJSON bool
+	stdout, stderr = jsonWriters(stdout, stderr, &asJSON)
+	defer stderr.(*jsonOutput).finish()
+	fs := flag.NewFlagSet("version", flag.ContinueOnError)
+	fs.BoolVar(&asJSON, "json", false, "print this build identity in a JSON envelope")
+	fs.SetOutput(io.Discard)
+	if err := verbflag.Parse(fs, args); err != nil {
+		return refuse(stderr, " version", "takes no flags and no arguments except --json: "+err.Error())
+	}
+	args = fs.Args()
 	if len(args) > 0 {
+		if asJSON {
+			return refuse(stderr, " version", "takes no arguments; use --json alone")
+		}
 		fmt.Fprintf(stderr, "nova-check version: takes no flags and no arguments, got %d; run: nova-check help\n", len(args))
 		return 2
+	}
+	if asJSON {
+		return renderVersion(stdout, ver)
 	}
 	fmt.Fprintln(stdout, buildinfo.Line("nova-check", ver))
 	return 0

@@ -24,10 +24,12 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
+	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 	"github.com/mas-bandwidth/nova-tools/internal/yield"
 )
 
@@ -97,6 +99,9 @@ type nativeRunConfig struct {
 	// onProxy receives the proxy once it is listening, before the child starts.
 	// Nil in production.
 	onProxy func(*swarm.ProviderProxy)
+	// startSleep is the wait before a failed start is launched again (harnessStartWaits);
+	// nil is the real wait (startSleep). A test records the schedule through it.
+	startSleep func(time.Duration)
 	// resultsRoot is where RESULT.md, usage.tsv and the report are published,
 	// outside the job directory a sweep deletes (issue #2632). Empty means the
 	// caller did not ask: the direct tests keep the files in the job directory.
@@ -161,6 +166,7 @@ type nativeRunResult struct {
 	unrecorded   bool              // the unknown could not be written anywhere the next reader looks
 	terminated   bool              // a TERM from outside ended the run mid-flight, not the deadline
 	survivors    string            // what the harness left in its group when it exited on its own: "", <pgid>:reaped or <pgid>:alive
+	starts       int               // the harness starts tried when every one failed (harnessStartFailed), else 0
 	// THE JOB'S OWN FIGURE (rule 13d, "Two numbers, kept apart: the row is the launch's and
 	// the line is the job's"). These three are the JOB's -- the sum over every launch of
 	// this one invocation of `native` -- and they are what the NATIVE OK line's `budget=`
@@ -731,8 +737,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// STAGE OK (issue #3050): staging returned silently, so the batch launcher
 	// -- which detaches 2s after seeing a STAGE OK/FAIL line on stdout instead of waiting
 	// the full 135s -- printed STAGE UNSEEN on every #3050 launch. One line, on success.
-	fmt.Fprintf(os.Stdout, "STAGE OK bench=%s repo=%s base=%s secs=%.0f\n",
-		oneline.Field(bench), oneline.Field(stageRes.BaseRepo), oneline.Field(swarm.Version8(stageRes.BaseSha)), stageRes.Wall.Seconds())
+	writeStageOK(os.Stdout, bench, stageRes)
 
 	// (4f) THE FRAME (docs/SPEC-CARD-CONTRACT.md layers 2 and 3). A framed launch whose
 	// checkout is staged gets JOB.md in the job directory and its family's shims first on
@@ -741,7 +746,15 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// A frame that cannot be installed refuses the launch: a child outside its frame is the
 	// defect the frame closes.
 	if cfg.frame != nil && stageRes.Staged {
-		if err := installFrame(cfg, jobDir, stageRes.BaseSha); err != nil {
+		if err := installFrameTimed(cfg, jobDir, stageRes.BaseSha, os.Stdout); err != nil {
+			if errors.Is(err, errReadStart) {
+				// a read whose start cannot be known is refused at staging, as a stage that
+				// failed is: no child ran, and the sprint deals the read again
+				fmt.Fprintf(os.Stdout, "STAGE FAIL bench=%s repo=%s base=%s reason=%s\n",
+					oneline.Field(bench), oneline.Field(stageRes.BaseRepo), oneline.Field(stageFailBase(stageRes)), oneline.Escape(err.Error()))
+				refuseNative(errOut, err.Error())
+				return nativeRunResult{}, 2
+			}
 			refuseNative(errOut, fmt.Sprintf("%s the card's frame could not be installed: %s", oneline.Field(cfg.label), oneline.Err(err)))
 			return nativeRunResult{}, 2
 		}
@@ -792,7 +805,8 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			}
 		}
 	}
-	childEnv := nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell)
+	childEnv := nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell,
+		swarm.BenchGoBin(benchHome(cfg), os.Getenv("PATH")))
 	if cfg.root != "" {
 		var id swarm.StagingIdentity
 		if cfg.identity != nil {
@@ -805,6 +819,15 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			}
 		}
 		for _, kv := range swarm.StagingGitEnv(id) {
+			name, _, _ := strings.Cut(kv, "=")
+			childEnv = append(environWithoutName(childEnv, name), kv)
+		}
+		// the machine's one catalog, the harness's own fetch off (catalog.go: the race)
+		seeded, note := seedCatalog(cfg.root, dataHome)
+		if note != "" {
+			fmt.Fprintf(errOut, "NATIVE NOTE catalog: %s\n", oneline.Escape(note))
+		}
+		for _, kv := range seeded {
 			name, _, _ := strings.Cut(kv, "=")
 			childEnv = append(environWithoutName(childEnv, name), kv)
 		}
@@ -927,6 +950,8 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		}
 	}
 	lastAttempt := 0
+	// startRetries is how many times a failed start has been launched again (harnessStartWaits)
+	startRetries := 0
 
 	// THE LIVE SAMPLER (SPEC-SWARM rule 13d, issue #1545). It is started HERE, once for the
 	// whole job and not once per launch, because the budget it watches is the job's: "the
@@ -1145,6 +1170,36 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		if res.stopped != "" {
 			break
 		}
+		// A START THAT FAILED IS LAUNCHED AGAIN IN PLACE (the owner, 2026-10-01: "Yes on
+		// retry ... simple stuff"): no tokens, no result, and the harness's own refusal or
+		// an exit inside harnessStartWindow (harnessStartFailed). Same job, same route,
+		// after harnessStartWaits in turn; the dead harness's group was ended above
+		// (nativeEndLeftovers), and this launch's usage row is written and folded once.
+		// Only when the waits are spent does the run go on to hand back, naming the starts.
+		launchTokens := 0
+		if sum, seen, _ := launchUsage.Budget(); seen > 0 {
+			launchTokens = sum
+		}
+		_, published := swarm.FindCardResult(jobDir)
+		if cause, failed := harnessStartFailed(tail, elapsed, launchTokens, published); failed {
+			if startRetries < len(harnessStartWaits) {
+				if word := sampler.StopWordAtFinal(jobSpent, jobObserved); word != "" {
+					res.stopped = word
+					break
+				}
+				wait := harnessStartWaits[startRetries]
+				startRetries++
+				fmt.Fprintf(errOut, "NATIVE RETRY start=%d wait=%ds cause=%s\n", attempt+1, int(wait/time.Second), oneline.Field(cause))
+				sleep := cfg.startSleep
+				if sleep == nil {
+					sleep = startSleep
+				}
+				sleep(wait)
+				continue
+			}
+			res.starts = attempt
+			break
+		}
 		// Inherited grace retry. The tail and the elapsed time do not prove the
 		// provider never accepted the request. A lost response does not take
 		// this path.
@@ -1299,10 +1354,21 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			if h, ok := swarm.ProviderHandback(swarm.ProviderExit{Tail: raw, Job: jobDir, RC: res.rc, Wall: time.Duration(res.wallSeconds * float64(time.Second)), Route: cfg.model, Routes: swarm.ParseRouteList(os.Getenv(swarm.RoutesEnv))}); ok {
 				// the cause: the session's record of the failed message, else the log's error
 				// line, else the harness's own last words (nativeprovider.go)
-				if c, ok := sessionProviderError(dataHome, runStart); ok {
+				// the harness's printed refusal of the model comes first: no request was made,
+				// so no session or log names it (OPENCODE_PRINT_LOGS, printedHarnessError)
+				printed := printedHarnessError(raw)
+				if strings.Contains(printed, "ProviderModelNotFoundError") {
+					h.Cause = swarm.CauseFromText(printed)
+				} else if c, ok := sessionProviderError(dataHome, runStart); ok {
 					h.Cause = c
 				} else if line := providerLogError(dataHome, providerMark); line != "" {
 					h.Cause = swarm.CauseFromText(line)
+				} else if printed != "" {
+					h.Cause = swarm.CauseFromText(printed)
+				}
+				// a run whose every start failed says how many it tried (harnessStartWaits)
+				if res.starts > 0 {
+					h.Cause.Message = strings.TrimSpace(h.Cause.Message + " (harness starts tried: " + strconv.Itoa(res.starts) + ")")
 				}
 				fmt.Fprintln(errOut, oneline.Escape(h.Line(cfg.label)))
 				handedBack = true
@@ -1741,7 +1807,12 @@ func benchOS(cfg nativeRunConfig) string {
 // -- and every shell under it is handed an environment with the secret names unset. Both
 // are empty on windows and in the unit tests of the argv builder, and the environment is
 // then exactly what it was.
-func nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell string) []string {
+//
+// goBin is the bench's Go (swarm.BenchGoBin: GOROOT/bin, where `go` and `gofmt` live),
+// put on the child's PATH right after the wrappers, so a card's bare `go` and `gofmt`
+// resolve to the toolchain the wall grants whatever PATH the loop unit started the member
+// with. Empty names no Go and leaves PATH as it was.
+func nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell, goBin string) []string {
 	var kept []string
 	for _, kv := range os.Environ() {
 		name, _, _ := strings.Cut(kv, "=")
@@ -1770,6 +1841,10 @@ func nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shim
 		"XDG_DATA_HOME="+dataHome,
 		"NOVA_SWARM_JOB="+jobDir,
 		"TMPDIR="+tmpDir,
+		// the harness prints its ERROR lines into the capture, so a start it refuses names
+		// why (`error="ProviderModelNotFoundError: ..."`), not only its UnknownError envelope
+		"OPENCODE_PRINT_LOGS=1",
+		"OPENCODE_LOG_LEVEL=ERROR",
 	)
 	if cacheDir != "" {
 		out = append(out,
@@ -1781,7 +1856,7 @@ func nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shim
 	}
 	// The wrappers go on before the secret is re-added, so the ONE process that keeps the
 	// key is the harness itself and every shell it spawns by name is scrubbed (#1814).
-	out = pathWithShimFirst(out, shimDir)
+	out = pathWithDirFirst(pathWithDirFirst(out, goBin), shimDir)
 	if shimShell != "" {
 		out = append(out, "SHELL="+shimShell)
 	}
@@ -2240,6 +2315,24 @@ func nativePrompt(cfg nativeRunConfig) string {
 	return cardcontract.Prompt(filepath.Join(cfg.slotDir, "jobs", cfg.label), swarm.CardPrompt(cfg.card))
 }
 
+// writeStageOK names the command phases of staging (docs/SPEC-CARD-CONTRACT.md,
+// staging), while preserving the readiness line before the frame is installed.
+func writeStageOK(w io.Writer, bench string, st swarm.StageResult) {
+	fmt.Fprintf(w, "STAGE OK bench=%s repo=%s base=%s secs=%.0f clone=%.1f fetch=%.1f checkout=%.1f\n",
+		oneline.Field(bench), oneline.Field(st.BaseRepo), oneline.Field(swarm.Version8(st.BaseSha)), st.Wall.Seconds(), st.Clone.Seconds(), st.Fetch.Seconds(), st.Checkout.Seconds())
+}
+
+// installFrameTimed reports the whole successful frame installation, including
+// recipes and shims, separately from staging (docs/SPEC-CARD-CONTRACT.md, staging).
+func installFrameTimed(cfg nativeRunConfig, jobDir, head string, w io.Writer) error {
+	started := time.Now()
+	if err := installFrame(cfg, jobDir, head); err != nil {
+		return err
+	}
+	fmt.Fprintf(w, "FRAME OK secs=%.1f\n", time.Since(started).Seconds())
+	return nil
+}
+
 // installFrame records the staged commit in the slot and writes a framed launch's JOB.md
 // and its family's shims into <slot>/shim, the shims handing through to the real git.
 func installFrame(cfg nativeRunConfig, jobDir, head string) error {
@@ -2250,6 +2343,13 @@ func installFrame(cfg nativeRunConfig, jobDir, head string) error {
 	if git, err = filepath.Abs(git); err != nil {
 		return err
 	}
+	st := cardcontract.Staged{Job: jobDir, Repo: filepath.Join(jobDir, swarm.JobRepo), Head: head, Git: git}
+	if cfg.frame.Kind == "read" {
+		// first, so a read whose start cannot be known leaves nothing of its frame behind
+		if st.Start, err = workStart(git, st.Repo, cfg.frame.ReviewBase); err != nil {
+			return err
+		}
+	}
 	// the commit staged, recorded in the slot (outside the job the child writes): the
 	// member counts the child's commits from it, never from the checkout's own refs
 	if err := atomicfile.Write(filepath.Join(cfg.slotDir, cardcontract.StagedName), []byte(head+"\n"), 0o644); err != nil {
@@ -2258,8 +2358,64 @@ func installFrame(cfg nativeRunConfig, jobDir, head string) error {
 	if err := cardcontract.StageRecipes(*cfg.frame, jobDir); err != nil {
 		return err
 	}
-	st := cardcontract.Staged{Job: jobDir, Repo: filepath.Join(jobDir, swarm.JobRepo), Head: head, Git: git}
 	return cardcontract.Install(cardcontract.For(cardcontract.FamilyOf(cfg.model)), *cfg.frame, st, nativeShellShimDir(cfg.slotDir))
+}
+
+// errReadStart marks a read refused at staging because the commit its work started from
+// cannot be known: native prints the STAGE FAIL line for it, as for a stage that failed, so
+// no child runs and the sprint deals the read again.
+var errReadStart = errors.New("staging refused: the read's start")
+
+// workStart is the commit the work a read reviews started from, found in the read's staged
+// checkout before the child runs: the merge base of its HEAD (the work's head) and the
+// review base, a full sha; "" when they have none. The packet carries the base's name, never
+// the commit the work was staged on, and the base branch moves while the work is read
+// (docs/SPEC-CARD-CONTRACT.md, JOB.md).
+//
+// The base is one of three, told apart in this order: a full sha (it never moves); a branch,
+// when the checkout holds refs/remotes/origin/<base>; a tag, when it holds refs/tags/<base>
+// and no such branch (a tag never moves); and anything else is taken for a branch. A sha or
+// a tag is used as it is. A branch is fetched from origin into refs/remotes/origin/<base>
+// first, and a fetch that fails is an errReadStart, never the clone's own ref: the checkout
+// is cloned from the bench mirror, whose branch can be older than the commit the work
+// started from, the merge base against it is that older tip, and a diff from it shows every
+// card landed in between as the work's own (the 1000-card load test of 2026-10-01: "diff has
+// 22 files not exactly one"). origin's branch holds the work's start (the work was cut from
+// it) and not the work (a read comes before the land), so the merge base against it is
+// exactly the start, however far the branch has moved since.
+func workStart(git, checkout, base string) (string, error) {
+	if base == "" {
+		return "", nil
+	}
+	o := gitrun.Options{Bin: git, C: checkout, OwnRepo: true}
+	has := func(ref string) bool {
+		_, err := gitrun.Output(context.Background(), o, "rev-parse", "-q", "--verify", "--end-of-options", ref+"^{commit}")
+		return err == nil
+	}
+	ref := "refs/remotes/origin/" + base
+	switch {
+	case typedrec.IsFullSha(base):
+		ref = base
+	case !has(ref) && has("refs/tags/"+base):
+		ref = "refs/tags/" + base
+	default:
+		if _, err := gitrun.Output(context.Background(), o, "fetch", "-q", "--no-tags", "--", "origin", "+refs/heads/"+base+":"+ref); err != nil {
+			return "", fmt.Errorf("%w: the base branch %s could not be fetched from origin, and the checkout's own %s may be older than the work's start: %w", errReadStart, base, ref, err)
+		}
+	}
+	sha, err := gitrun.Output(context.Background(), o, "merge-base", "--end-of-options", "HEAD", ref)
+	if err != nil {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && exit.ExitCode() == 1 {
+			// Unrelated histories have no merge base: JOB.md names no start.
+			return "", nil
+		}
+		return "", fmt.Errorf("%w: the merge base against %s could not be read: %w", errReadStart, base, err)
+	}
+	if !typedrec.IsFullSha(sha) {
+		return "", fmt.Errorf("%w: the merge base against %s returned no full commit sha: %q", errReadStart, base, sha)
+	}
+	return sha, nil
 }
 
 // providerOf splits a native model id on its single slash and reports whether it
@@ -2418,6 +2574,15 @@ func writeJobConfig(cfg nativeRunConfig, provider, dataHome, jobDir string, read
 		raw = body
 	}
 	body, merged := swarm.MergeFencePermission(raw, jobDir, reads)
+	// the route's model is declared in the config, so the harness knows it whatever
+	// catalog it starts with (swarm.DeclareRouteModel: the fresh-home catalog race)
+	if merged && strings.HasPrefix(cfg.model, provider+"/") {
+		if declared, ok := swarm.DeclareRouteModel(body, provider, cfg.model[len(provider)+1:]); ok {
+			body = declared
+		} else if notes != nil {
+			fmt.Fprintf(notes, "NATIVE NOTE: the model %s could not be declared in the config %s (its provider entry is not an object); the launch falls back to the harness's own catalog\n", oneline.Field(cfg.model), oneline.Field(dash(configPath)))
+		}
+	}
 	var proxy *swarm.ProviderProxy
 	if merged {
 		// headerTimeout and chunkTimeout are written for a harness that honors

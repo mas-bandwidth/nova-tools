@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // ci_templates_test.go is the red-test contract of the templates checker in
@@ -24,16 +26,10 @@ func fixtureTree(t *testing.T, name string) string {
 	t.Helper()
 	root := t.TempDir()
 	src, err := os.ReadFile(filepath.Join("testdata", "templates", name))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	dir := filepath.Join(root, "internal", "fixture")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "fixture_test.go"), src, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "fixture_test.go"), src, 0o644))
 	return root
 }
 
@@ -50,13 +46,9 @@ func emptyTree(t *testing.T) string {
 func lineAt(t *testing.T, root, rel string, line int) string {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	lines := strings.Split(string(raw), "\n")
-	if line < 1 || line > len(lines) {
-		t.Fatalf("%s:%d is outside the file (%d lines)", rel, line, len(lines))
-	}
+	require.False(t, line < 1 || line > len(lines), "%s:%d is outside the file (%d lines)", rel, line, len(lines))
 	return strings.TrimSpace(lines[line-1])
 }
 
@@ -67,22 +59,13 @@ func TestTemplatesRefusesRawFilepathJoin(t *testing.T) {
 
 	root := fixtureTree(t, "join.go.txt")
 	res, err := CheckTemplates(root, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Refused() != 1 || len(res.Findings) != 1 {
-		t.Fatalf("a raw filepath.Join in a JSON literal is one refusal, got %d: %+v", res.Refused(), res.Findings)
-	}
+	require.NoError(t, err)
+	require.False(t, res.Refused() != 1 || len(res.Findings) != 1, "a raw filepath.Join in a JSON literal is one refusal, got %d: %+v", res.Refused(), res.Findings)
 	f := res.Findings[0]
-	if f.Kind != "join" {
-		t.Errorf("kind = %q, want join", f.Kind)
-	}
-	if f.Remedy != TemplateRemedyJoin {
-		t.Errorf("remedy = %q, want %q", f.Remedy, TemplateRemedyJoin)
-	}
-	if got := lineAt(t, root, f.File, f.Line); !strings.Contains(got, "filepath.Join") {
-		t.Errorf("finding names %s:%d = %q, want the filepath.Join line", f.File, f.Line, got)
-	}
+	assert.Equal(t, "join", f.Kind, "kind = %q, want join", f.Kind)
+	assert.Equal(t, TemplateRemedyJoin, f.Remedy, "remedy = %q, want %q", f.Remedy, TemplateRemedyJoin)
+	got := lineAt(t, root, f.File, f.Line)
+	assert.Contains(t, got, "filepath.Join", "finding names %s:%d = %q, want the filepath.Join line", f.File, f.Line, got)
 }
 
 // 2. A C:\ path placed unquoted inside a JSON literal is refused, with the
@@ -92,22 +75,13 @@ func TestTemplatesRefusesUnquotedOSPathLiteral(t *testing.T) {
 
 	root := fixtureTree(t, "literal.go.txt")
 	res, err := CheckTemplates(root, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Refused() != 1 || len(res.Findings) != 1 {
-		t.Fatalf("an unquoted C:\\ path in a JSON literal is one refusal, got %d: %+v", res.Refused(), res.Findings)
-	}
+	require.NoError(t, err)
+	require.False(t, res.Refused() != 1 || len(res.Findings) != 1, "an unquoted C:\\ path in a JSON literal is one refusal, got %d: %+v", res.Refused(), res.Findings)
 	f := res.Findings[0]
-	if f.Kind != "literal" {
-		t.Errorf("kind = %q, want literal", f.Kind)
-	}
-	if f.Remedy != TemplateRemedyLiteral {
-		t.Errorf("remedy = %q, want %q", f.Remedy, TemplateRemedyLiteral)
-	}
-	if got := lineAt(t, root, f.File, f.Line); !strings.Contains(got, `C:\Users\RUNN\keys\key`) {
-		t.Errorf("finding names %s:%d = %q, want the unquoted path line", f.File, f.Line, got)
-	}
+	assert.Equal(t, "literal", f.Kind, "kind = %q, want literal", f.Kind)
+	assert.Equal(t, TemplateRemedyLiteral, f.Remedy, "remedy = %q, want %q", f.Remedy, TemplateRemedyLiteral)
+	got := lineAt(t, root, f.File, f.Line)
+	assert.Contains(t, got, `C:\Users\RUNN\keys\key`, "finding names %s:%d = %q, want the unquoted path line", f.File, f.Line, got)
 }
 
 // 3. A path unquoted inside a text/template string is refused, with the
@@ -117,22 +91,13 @@ func TestTemplatesRefusesUnquotedPathInTemplate(t *testing.T) {
 
 	root := fixtureTree(t, "template.go.txt")
 	res, err := CheckTemplates(root, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Refused() != 1 || len(res.Findings) != 1 {
-		t.Fatalf("an unquoted path in a template literal is one refusal, got %d: %+v", res.Refused(), res.Findings)
-	}
+	require.NoError(t, err)
+	require.False(t, res.Refused() != 1 || len(res.Findings) != 1, "an unquoted path in a template literal is one refusal, got %d: %+v", res.Refused(), res.Findings)
 	f := res.Findings[0]
-	if f.Kind != "literal" {
-		t.Errorf("kind = %q, want literal", f.Kind)
-	}
-	if f.Remedy != TemplateRemedyLiteral {
-		t.Errorf("remedy = %q, want %q", f.Remedy, TemplateRemedyLiteral)
-	}
-	if got := lineAt(t, root, f.File, f.Line); !strings.Contains(got, `C:\Users\RUNN\keys\key`) {
-		t.Errorf("finding names %s:%d = %q, want the template path line", f.File, f.Line, got)
-	}
+	assert.Equal(t, "literal", f.Kind, "kind = %q, want literal", f.Kind)
+	assert.Equal(t, TemplateRemedyLiteral, f.Remedy, "remedy = %q, want %q", f.Remedy, TemplateRemedyLiteral)
+	got := lineAt(t, root, f.File, f.Line)
+	assert.Contains(t, got, `C:\Users\RUNN\keys\key`, "finding names %s:%d = %q, want the template path line", f.File, f.Line, got)
 }
 
 // 4. A path wrapped in strconv.Quote is allowed, with the bench it guards
@@ -142,15 +107,9 @@ func TestTemplatesAllowsStrconvQuote(t *testing.T) {
 
 	root := fixtureTree(t, "quoted.go.txt")
 	res, err := CheckTemplates(root, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Refused() != 0 || len(res.Findings) != 0 {
-		t.Fatalf("strconv.Quote is the allowed shape, got %d refusals: %+v", res.Refused(), res.Findings)
-	}
-	if res.Tests != 1 {
-		t.Errorf("tests = %d, want 1", res.Tests)
-	}
+	require.NoError(t, err)
+	require.False(t, res.Refused() != 0 || len(res.Findings) != 0, "strconv.Quote is the allowed shape, got %d refusals: %+v", res.Refused(), res.Findings)
+	assert.Equal(t, 1, res.Tests, "tests = %d, want 1", res.Tests)
 }
 
 // 5. A path wrapped in oneline.Quote is allowed, with the network it reports
@@ -160,12 +119,8 @@ func TestTemplatesAllowsOnelineQuote(t *testing.T) {
 
 	root := fixtureTree(t, "oneline_quoted.go.txt")
 	res, err := CheckTemplates(root, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Refused() != 0 || len(res.Findings) != 0 {
-		t.Fatalf("oneline.Quote is the allowed shape, got %d refusals: %+v", res.Refused(), res.Findings)
-	}
+	require.NoError(t, err)
+	require.False(t, res.Refused() != 0 || len(res.Findings) != 0, "oneline.Quote is the allowed shape, got %d refusals: %+v", res.Refused(), res.Findings)
 }
 
 // 6. Adding an entry to the allowlist is refused; removing one is allowed. An
@@ -177,41 +132,21 @@ func TestTemplatesAllowlistGrowsRefused(t *testing.T) {
 	root := emptyTree(t)
 	allow := filepath.Join(t.TempDir(), "template-paths-allowlist.txt")
 
-	if err := os.WriteFile(allow, []byte(""), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(allow, []byte(""), 0o644))
 	res, err := CheckTemplates(root, allow)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Refused() != 0 {
-		t.Fatalf("an empty allowlist over a clean tree must pass, got %d refusals", res.Refused())
-	}
+	require.NoError(t, err)
+	require.Zero(t, res.Refused(), "an empty allowlist over a clean tree must pass, got %d refusals", res.Refused())
 
-	if err := os.WriteFile(allow, []byte("internal/x/x_test.go:1 join 2026-09-17 parked here\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(allow, []byte("internal/x/x_test.go:1 join 2026-09-17 parked here\n"), 0o644))
 	res, err = CheckTemplates(root, allow)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Refused() != 1 || len(res.Stale) != 1 {
-		t.Fatalf("adding an allowlist entry that names no offender must be refused, got %d refusals %+v", res.Refused(), res.Stale)
-	}
-	if res.Stale[0].Remedy != TemplateRemedyAllow {
-		t.Errorf("allowlist remedy = %q, want %q", res.Stale[0].Remedy, TemplateRemedyAllow)
-	}
+	require.NoError(t, err)
+	require.False(t, res.Refused() != 1 || len(res.Stale) != 1, "adding an allowlist entry that names no offender must be refused, got %d refusals %+v", res.Refused(), res.Stale)
+	assert.Equal(t, TemplateRemedyAllow, res.Stale[0].Remedy, "allowlist remedy = %q, want %q", res.Stale[0].Remedy, TemplateRemedyAllow)
 
-	if err := os.WriteFile(allow, []byte(""), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(allow, []byte(""), 0o644))
 	res, err = CheckTemplates(root, allow)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Refused() != 0 {
-		t.Fatalf("removing the entry must be allowed, got %d refusals", res.Refused())
-	}
+	require.NoError(t, err)
+	require.Zero(t, res.Refused(), "removing the entry must be allowed, got %d refusals", res.Refused())
 }
 
 // TestTemplatesOutputMatchesTheSpec pins the one-line grammar of the section:
@@ -222,29 +157,17 @@ func TestTemplatesOutputMatchesTheSpec(t *testing.T) {
 
 	root := fixtureTree(t, "join.go.txt")
 	res, err := CheckTemplates(root, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, want := res.OKLine(), "CI-TEMPLATES OK tests=1 allowlisted=0 refused=0"; got != want {
-		t.Errorf("clean line = %q, want %q", got, want)
-	}
-	if got, want := res.FailLine(), "CI-TEMPLATES FAIL tests=1 allowlisted=0 refused=1"; got != want {
-		t.Errorf("fail line = %q, want %q", got, want)
-	}
-	if res.ExitCode() != 2 {
-		t.Errorf("exit = %d, want 2", res.ExitCode())
-	}
-	if len(res.Findings) != 1 {
-		t.Fatalf("want one refusal, got %d", len(res.Findings))
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "CI-TEMPLATES OK tests=1 allowlisted=0 refused=0", res.OKLine(), "clean line = %q, want %q", res.OKLine(), "CI-TEMPLATES OK tests=1 allowlisted=0 refused=0")
+	assert.Equal(t, "CI-TEMPLATES FAIL tests=1 allowlisted=0 refused=1", res.FailLine(), "fail line = %q, want %q", res.FailLine(), "CI-TEMPLATES FAIL tests=1 allowlisted=0 refused=1")
+	assert.Equal(t, 2, res.ExitCode(), "exit = %d, want 2", res.ExitCode())
+	require.Len(t, res.Findings, 1, "want one refusal, got %d", len(res.Findings))
 	line := res.Findings[0].Render()
 	for _, want := range []string{
 		"CI-TEMPLATES file=internal/fixture/fixture_test.go line=",
 		` kind=join remedy="wrap the path in strconv.Quote"`,
 	} {
-		if !strings.Contains(line, want) {
-			t.Errorf("refusal %q lacks %q", line, want)
-		}
+		assert.Contains(t, line, want, "refusal %q lacks %q", line, want)
 	}
 }
 
@@ -254,9 +177,7 @@ func TestTemplatesVerbLineMatchesTheSpec(t *testing.T) {
 	t.Parallel()
 
 	spec := readFile(t, filepath.Join(repoRoot(t), "docs", "SPEC-CI.md"))
-	if !strings.Contains(spec, TemplatesVerbLine) {
-		t.Errorf("the templates verb line is not in docs/SPEC-CI.md:\n%s", TemplatesVerbLine)
-	}
+	assert.Contains(t, spec, TemplatesVerbLine, "the templates verb line is not in docs/SPEC-CI.md:\n%s", TemplatesVerbLine)
 }
 
 // TestNoUnquotedPathsInTemplateLiterals is the class test itself: every
@@ -269,9 +190,7 @@ func TestNoUnquotedPathsInTemplateLiterals(t *testing.T) {
 	root := repoRoot(t)
 	allow := filepath.Join(root, "internal", "ci", "testdata", "template-paths-allowlist.txt")
 	res, err := CheckTemplates(root, allow)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	t.Log(res.OKLine())
 	for _, f := range res.Findings {
 		t.Error(f.Render())
@@ -303,12 +222,8 @@ func TestFlattenAddsSplitsOnlyAdditions(t *testing.T) {
 	} {
 		t.Run(c.src, func(t *testing.T) {
 			e, err := parser.ParseExpr(c.src)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got := len(flattenAdds(e)); got != c.want {
-				t.Errorf("flattenAdds(%q) has %d operands, want %d", c.src, got, c.want)
-			}
+			require.NoError(t, err)
+			assert.Len(t, flattenAdds(e), c.want, "flattenAdds(%q) has %d operands, want %d", c.src, len(flattenAdds(e)), c.want)
 		})
 	}
 }

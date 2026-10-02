@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/pkgselect"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // ci_budget_test.go is the two-minute law, read off the workflow files as text
@@ -62,35 +64,25 @@ func TestEveryCIJobIsCappedAtTwoMinutes(t *testing.T) {
 	root := repoRoot(t)
 	// GitHub runs both extensions; a .yaml workflow must not be a way around the cap.
 	files, err := filepath.Glob(filepath.Join(root, ".github", "workflows", "*.yml"))
-	if err != nil || len(files) == 0 {
-		t.Fatalf("no workflow files under .github/workflows: %v", err)
-	}
+	require.False(t, err != nil || len(files) == 0, "no workflow files under .github/workflows: %v", err)
 	yamls, err := filepath.Glob(filepath.Join(root, ".github", "workflows", "*.yaml"))
-	if err != nil {
-		t.Fatalf("glob .yaml workflows: %v", err)
-	}
+	require.NoError(t, err, "glob .yaml workflows: %v", err)
 	files = append(files, yamls...)
 	for _, file := range files {
 		src := readFile(t, file)
 		names := jobNames(src)
-		if len(names) == 0 {
-			t.Errorf("%s: no jobs parsed; the parser is looking in the wrong place", filepath.Base(file))
+		if !assert.NotEmpty(t, names, "%s: no jobs parsed; the parser is looking in the wrong place", filepath.Base(file)) {
 			continue
 		}
 		timeouts := jobTimeouts(src)
 		for _, name := range names {
 			mins, ok := timeouts[name]
-			if !ok {
-				t.Errorf("%s: job %q declares no literal timeout-minutes; every job is `timeout-minutes: %d`, no expression, no per-leg ceiling", filepath.Base(file), name, twoMinuteCap)
+			if !assert.True(t, ok, "%s: job %q declares no literal timeout-minutes; every job is `timeout-minutes: %d`, no expression, no per-leg ceiling", filepath.Base(file), name, twoMinuteCap) {
 				continue
 			}
-			if mins > twoMinuteCap {
-				t.Errorf("%s: job %q has timeout-minutes %d, want %d: the cap is permanent and platform-wide; split the work into parallel functional programs instead of raising it", filepath.Base(file), name, mins, twoMinuteCap)
-			}
+			assert.LessOrEqual(t, mins, twoMinuteCap, "%s: job %q has timeout-minutes %d, want %d: the cap is permanent and platform-wide; split the work into parallel functional programs instead of raising it", filepath.Base(file), name, mins, twoMinuteCap)
 		}
-		if strings.Contains(src, "timeout-minutes: ${{") {
-			t.Errorf("%s: a timeout-minutes is an expression; the cap is the literal %d on every job", filepath.Base(file), twoMinuteCap)
-		}
+		assert.NotContains(t, src, "timeout-minutes: ${{", "%s: a timeout-minutes is an expression; the cap is the literal %d on every job", filepath.Base(file), twoMinuteCap)
 	}
 }
 
@@ -124,9 +116,8 @@ func checkPositiveTimeoutUnderCap(d, cap time.Duration) error {
 // the cap, reporting a test error on where if not.
 func requirePositiveTimeoutUnderCap(t *testing.T, where string, d, cap time.Duration) {
 	t.Helper()
-	if err := checkPositiveTimeoutUnderCap(d, cap); err != nil {
-		t.Errorf("%s %v", where, err)
-	}
+	err := checkPositiveTimeoutUnderCap(d, cap)
+	assert.NoError(t, err, "%s %v", where, err)
 }
 
 func TestShardGoTestTimeoutIsUnderTheJobCap(t *testing.T) {
@@ -134,9 +125,7 @@ func TestShardGoTestTimeoutIsUnderTheJobCap(t *testing.T) {
 
 	jobCap := time.Duration(twoMinuteCap) * time.Minute
 	job := jobBody(readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml")), "test")
-	if !strings.Contains(job, ciRunner+" unit-test") {
-		t.Fatal("the test job does not run its shard through `ci unit-test`, which passes make test the go test timeout")
-	}
+	require.Contains(t, job, ciRunner+" unit-test", "the test job does not run its shard through `ci unit-test`, which passes make test the go test timeout")
 	// every run the verb makes (the default, the whole tree, the nightly leg)
 	// carries the same timeout
 	for _, args := range [][]string{
@@ -150,12 +139,9 @@ func TestShardGoTestTimeoutIsUnderTheJobCap(t *testing.T) {
 				found = v
 			}
 		}
-		if found == "" {
-			t.Fatalf("make test is run with %v: no GOTEST_TIMEOUT", args)
-		}
+		require.NotEmpty(t, found, "make test is run with %v: no GOTEST_TIMEOUT", args)
 		d, err := time.ParseDuration(found)
-		if err != nil {
-			t.Errorf("GOTEST_TIMEOUT %q is not a duration: %v", found, err)
+		if !assert.NoError(t, err, "GOTEST_TIMEOUT %q is not a duration: %v", found, err) {
 			continue
 		}
 		requirePositiveTimeoutUnderCap(t, fmt.Sprintf("go test -timeout %s", found), d, jobCap)
@@ -164,13 +150,11 @@ func TestShardGoTestTimeoutIsUnderTheJobCap(t *testing.T) {
 	mk := parseMakefile(t, filepath.Join(repoRoot(t), "Makefile"))
 	for _, v := range []string{"GOTEST_TIMEOUT", "MERGE_TIMEOUT", "DARWIN_TIMEOUT", "SHORT_TIMEOUT"} {
 		raw, ok := mk.vars[v]
-		if !ok {
-			t.Errorf("the Makefile declares no %s", v)
+		if !assert.True(t, ok, "the Makefile declares no %s", v) {
 			continue
 		}
 		d, err := time.ParseDuration(strings.TrimSpace(raw))
-		if err != nil {
-			t.Errorf("%s = %q is not a Go duration: %v", v, raw, err)
+		if !assert.NoError(t, err, "%s = %q is not a Go duration: %v", v, raw, err) {
 			continue
 		}
 		requirePositiveTimeoutUnderCap(t, fmt.Sprintf("Makefile %s = %s", v, d), d, jobCap)
@@ -199,8 +183,7 @@ func TestEveryMakeTimeoutIsUnderTheJobCap(t *testing.T) {
 			for _, m := range recipeTimeoutRe.FindAllStringSubmatch(line, -1) {
 				raw := strings.Trim(mk.expand(mk.vars, m[1]), `"'`)
 				d, err := time.ParseDuration(raw)
-				if err != nil {
-					t.Errorf("make %s: -timeout %q (from %q) is not a Go duration: %v", target, raw, m[1], err)
+				if !assert.NoError(t, err, "make %s: -timeout %q (from %q) is not a Go duration: %v", target, raw, m[1], err) {
 					continue
 				}
 				seen++
@@ -208,9 +191,7 @@ func TestEveryMakeTimeoutIsUnderTheJobCap(t *testing.T) {
 			}
 		}
 	}
-	if seen == 0 {
-		t.Fatal("no -timeout read from any Makefile recipe; the parser is looking in the wrong place")
-	}
+	require.NotZero(t, seen, "no -timeout read from any Makefile recipe; the parser is looking in the wrong place")
 }
 
 // TestPositiveTimeoutUnderJobCapWitnesses exercises checkPositiveTimeoutUnderCap
@@ -259,20 +240,14 @@ func TestPositiveTimeoutUnderJobCapWitnesses(t *testing.T) {
 			t.Parallel()
 
 			d, err := time.ParseDuration(tc.raw)
-			if err != nil {
-				t.Fatalf("time.ParseDuration(%q): %v", tc.raw, err)
-			}
+			require.NoError(t, err, "time.ParseDuration(%q): %v", tc.raw, err)
 
 			err = checkPositiveTimeoutUnderCap(d, jobCap)
 			if tc.valid {
-				if err != nil {
-					t.Errorf("checkPositiveTimeoutUnderCap(%s, %s) = %v, want nil", tc.raw, jobCap, err)
-				}
+				assert.NoError(t, err, "checkPositiveTimeoutUnderCap(%s, %s) = %v, want nil", tc.raw, jobCap, err)
 			} else {
-				if err == nil {
-					t.Errorf("checkPositiveTimeoutUnderCap(%s, %s) unexpectedly succeeded, want error", tc.raw, jobCap)
-				} else if !strings.Contains(err.Error(), tc.wantErr) {
-					t.Errorf("checkPositiveTimeoutUnderCap(%s, %s) error = %q, want substring %q", tc.raw, jobCap, err.Error(), tc.wantErr)
+				if assert.Error(t, err, "checkPositiveTimeoutUnderCap(%s, %s) unexpectedly succeeded, want error", tc.raw, jobCap) {
+					assert.Contains(t, err.Error(), tc.wantErr, "checkPositiveTimeoutUnderCap(%s, %s) error = %q, want substring %q", tc.raw, jobCap, err.Error(), tc.wantErr)
 				}
 			}
 		})
@@ -295,12 +270,8 @@ func TestMacOSShardsRunOnTheStudioForNow(t *testing.T) {
 
 	src := readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
 	m := macOSGroupFlagRe.FindStringSubmatch(jobBody(src, "test-packages"))
-	if m == nil {
-		t.Fatal("test-packages hands no --macos-group to the verb that deals the legs")
-	}
-	if m[1] != "studio" {
-		t.Errorf("the macOS test shards select group %q, want studio (2026-09-25, until the Mac minis)", m[1])
-	}
+	require.NotNil(t, m, "test-packages hands no --macos-group to the verb that deals the legs")
+	assert.Equal(t, "studio", m[1], "the macOS test shards select group %q, want studio (2026-09-25, until the Mac minis)", m[1])
 	legs := pkgselect.Fanout("push", []string{"./cmd/a"}, pkgselect.DarwinSensitive{}, pkgselect.Groups{Linux: "linux-group", Mac: m[1]}, true)
 	found := 0
 	for _, leg := range legs {
@@ -308,16 +279,10 @@ func TestMacOSShardsRunOnTheStudioForNow(t *testing.T) {
 			continue
 		}
 		found++
-		if leg.Arch != "ARM64" || leg.Group != m[1] {
-			t.Errorf("a macOS test shard selects arch %q group %q, want ARM64 on %s (2026-09-25, until the Mac minis): %+v", leg.Arch, leg.Group, m[1], leg)
-		}
+		assert.False(t, leg.Arch != "ARM64" || leg.Group != m[1], "a macOS test shard selects arch %q group %q, want ARM64 on %s (2026-09-25, until the Mac minis): %+v", leg.Arch, leg.Group, m[1], leg)
 	}
-	if found == 0 {
-		t.Error("the fan-out emits no macOS shard entry this test can read")
-	}
-	if jobBody(src, "test-hosted-merge") != "" || jobBody(src, "plan-merge") != "" {
-		t.Error("the merge group carries a hosted leg again; since 2026-09-26 its gate is the sharded test legs on our own benches (Glenn: \"Less dependency on github is my bet\")")
-	}
+	assert.NotZero(t, found, "the fan-out emits no macOS shard entry this test can read")
+	assert.False(t, jobBody(src, "test-hosted-merge") != "" || jobBody(src, "plan-merge") != "", "the merge group carries a hosted leg again; since 2026-09-26 its gate is the sharded test legs on our own benches (Glenn: \"Less dependency on github is my bet\")")
 }
 
 func TestJobsThatLeftCIAreStillInCertification(t *testing.T) {
@@ -327,25 +292,17 @@ func TestJobsThatLeftCIAreStillInCertification(t *testing.T) {
 	cert := readFile(t, filepath.Join(root, ".github", "workflows", "certification.yml"))
 
 	certNames := toSet(jobNames(cert))
-	if len(certNames) == 0 {
-		t.Fatal("no jobs parsed from certification.yml; the parser is looking in the wrong place")
-	}
+	require.NotEmpty(t, certNames, "no jobs parsed from certification.yml; the parser is looking in the wrong place")
 	inventory := toSet(splitMovedJobs)
 	for name, reason := range droppedByRuling {
-		if !inventory[name] {
-			t.Errorf("droppedByRuling names %q, which is not in splitMovedJobs; an exception to a list must be an entry of that list", name)
-		}
-		if strings.TrimSpace(reason) == "" {
-			t.Errorf("the exception for %q carries no reason; an exception must say why it exists", name)
-		}
+		assert.True(t, inventory[name], "droppedByRuling names %q, which is not in splitMovedJobs; an exception to a list must be an entry of that list", name)
+		assert.NotEmpty(t, strings.TrimSpace(reason), "the exception for %q carries no reason; an exception must say why it exists", name)
 	}
 	for _, name := range splitMovedJobs {
 		if _, byRuling := droppedByRuling[name]; byRuling {
 			continue
 		}
-		if !certNames[name] {
-			t.Errorf("job %q left ci.yml in the split but is not present in certification.yml; the split must delete nothing", name)
-		}
+		assert.True(t, certNames[name], "job %q left ci.yml in the split but is not present in certification.yml; the split must delete nothing", name)
 	}
 
 	needs := certificationOKNeeds(cert)
@@ -353,9 +310,7 @@ func TestJobsThatLeftCIAreStillInCertification(t *testing.T) {
 		if _, byRuling := droppedByRuling[name]; byRuling {
 			continue
 		}
-		if !needs[name] {
-			t.Errorf("certification-ok does not list %q in its needs; every certification job must be aggregated", name)
-		}
+		assert.True(t, needs[name], "certification-ok does not list %q in its needs; every certification job must be aggregated", name)
 	}
 }
 
@@ -370,9 +325,7 @@ func TestEveryActionIsPinnedBySHA(t *testing.T) {
 			if !usesDirectiveRe.MatchString(line) {
 				continue
 			}
-			if usesRe.FindStringSubmatch(line) == nil {
-				t.Errorf("%s:%d: uses: is not owner/action@40-hex-sha: %q", file, i+1, strings.TrimSpace(line))
-			}
+			assert.NotNil(t, usesRe.FindStringSubmatch(line), "%s:%d: uses: is not owner/action@40-hex-sha: %q", file, i+1, strings.TrimSpace(line))
 		}
 	}
 }
@@ -391,26 +344,15 @@ func TestFleetProbeRunsTheNetworkProbeInsideNovaSandbox(t *testing.T) {
 	root := repoRoot(t)
 	src := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
 	job := jobBody(src, "fleet-probe")
-	if job == "" {
-		t.Fatal("no fleet-probe job in ci.yml; the bench would enter the loop with no probe at all")
-	}
-	if !strings.Contains(job, ciRunner+" sandbox-probe") {
-		t.Errorf("the fleet-probe job does not call `ci sandbox-probe`; a probe that does not run in the sandbox is the host probe #893 killed")
-	}
+	require.NotEmpty(t, job, "no fleet-probe job in ci.yml; the bench would enter the loop with no probe at all")
+	assert.Contains(t, job, ciRunner+" sandbox-probe", "the fleet-probe job does not call `ci sandbox-probe`; a probe that does not run in the sandbox is the host probe #893 killed")
 	// The verb builds nova-sandbox from the checkout and runs curl inside it.
 	verb := readFile(t, filepath.Join(root, "tools", "ci", "sel_sandboxprobe.go"))
-	if !strings.Contains(verb, `"go", "build", "./cmd/nova-sandbox"`) {
-		t.Errorf("tools/ci/sel_sandboxprobe.go does not build nova-sandbox from the checkout; a probe that does not run in the sandbox is the host probe #893 killed")
-	}
-	if !strings.Contains(verb, `"./nova-sandbox", "--read"`) || !strings.Contains(verb, `"curl", "-s"`) {
-		t.Errorf("tools/ci/sel_sandboxprobe.go does not run the network probe inside nova-sandbox (need `nova-sandbox --read` and `curl -s` in one command); a bench enters the loop only after the sandboxed probe is green")
-	}
-	if !strings.Contains(job, "runner.os == 'Linux'") {
-		t.Errorf("the sandboxed network probe is not guarded to Linux runners only")
-	}
-	if mins, ok := jobTimeouts(src)["fleet-probe"]; !ok || mins > twoMinuteCap {
-		t.Errorf("fleet-probe timeout-minutes = %d (declared=%v), want a cap <= %d; the probe must fit the two-minute CL budget", mins, ok, twoMinuteCap)
-	}
+	assert.Contains(t, verb, `"go", "build", "./cmd/nova-sandbox"`, "tools/ci/sel_sandboxprobe.go does not build nova-sandbox from the checkout; a probe that does not run in the sandbox is the host probe #893 killed")
+	assert.False(t, !strings.Contains(verb, `"./nova-sandbox", "--read"`) || !strings.Contains(verb, `"curl", "-s"`), "tools/ci/sel_sandboxprobe.go does not run the network probe inside nova-sandbox (need `nova-sandbox --read` and `curl -s` in one command); a bench enters the loop only after the sandboxed probe is green")
+	assert.Contains(t, job, "runner.os == 'Linux'", "the sandboxed network probe is not guarded to Linux runners only")
+	mins, ok := jobTimeouts(src)["fleet-probe"]
+	assert.False(t, !ok || mins > twoMinuteCap, "fleet-probe timeout-minutes = %d (declared=%v), want a cap <= %d; the probe must fit the two-minute CL budget", mins, ok, twoMinuteCap)
 }
 
 // jobBody returns the source text of one job, from its two-space key to the
@@ -494,9 +436,10 @@ func TestNoTestAssertsAWallClockBoundUnderTenSeconds(t *testing.T) {
 				if !strings.Contains(code, wallSecondToken) {
 					continue
 				}
-				if batchFile && wallSecondsUnderTen(secLitRe, code) {
-					t.Errorf("%s:%d: batch-driving test carries a wall-clock literal under ten seconds (use thirty seconds or more, or an injected clock with // wall-ok: <reason>): %q", rel, i+1, strings.TrimSpace(line))
-					continue
+				if batchFile {
+					if !assert.False(t, wallSecondsUnderTen(secLitRe, code), "%s:%d: batch-driving test carries a wall-clock literal under ten seconds (use thirty seconds or more, or an injected clock with // wall-ok: <reason>): %q", rel, i+1, strings.TrimSpace(line)) {
+						continue
+					}
 				}
 				if !trigRe.MatchString(code) {
 					continue
@@ -691,15 +634,11 @@ func TestEveryTriggeringEventReachesACIOKVerdict(t *testing.T) {
 	root := repoRoot(t)
 	src := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
 	i := strings.Index(src, "\n  ci-ok:")
-	if i < 0 {
-		t.Fatal("no ci-ok job in ci.yml")
-	}
+	require.NotEqual(t, -1, i, "no ci-ok job in ci.yml")
 	ciok := src[i:]
 	for _, ev := range []string{"pull_request", "merge_group", "push", "workflow_dispatch"} {
 		want := "github.event_name == '" + ev + "'"
-		if !strings.Contains(ciok, want) {
-			t.Errorf("ci-ok has no verdict step guarded for %s: the workflow triggers on it, so a run on that event would report success with no step run", ev)
-		}
+		assert.Contains(t, ciok, want, "ci-ok has no verdict step guarded for %s: the workflow triggers on it, so a run on that event would report success with no step run", ev)
 	}
 }
 
@@ -712,9 +651,8 @@ func TestMakefileHasNoTargetSpecificConditionalPKGS(t *testing.T) {
 
 	src := readFile(t, filepath.Join(repoRoot(t), "Makefile"))
 	re := regexp.MustCompile(`(?m)^[A-Za-z0-9_.-]+:\s*PKGS\s*\?=`)
-	if m := re.FindString(src); m != "" {
-		t.Errorf("Makefile carries %q; under make 3.81 it lets `test: PKGS :=` beat the shard's PKGS", m)
-	}
+	m := re.FindString(src)
+	assert.Empty(t, m, "Makefile carries %q; under make 3.81 it lets `test: PKGS :=` beat the shard's PKGS", m)
 }
 
 // TestShardsUseTheGoTestCache (Glenn 2026-09-26 9:42 AM ET, the Studio at
@@ -729,9 +667,7 @@ func TestMakefileHasNoTargetSpecificConditionalPKGS(t *testing.T) {
 func TestShardsUseTheGoTestCache(t *testing.T) {
 	t.Parallel()
 	ci := readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
-	if !strings.Contains(jobBody(ci, "test"), ciRunner+" unit-test") {
-		t.Fatal("no shard step in ci.yml's test job runs `make test` through `ci unit-test`")
-	}
+	require.Contains(t, jobBody(ci, "test"), ciRunner+" unit-test", "no shard step in ci.yml's test job runs `make test` through `ci unit-test`")
 	flag := func(args []string, name string) (string, bool) {
 		for _, a := range args {
 			if v, ok := strings.CutPrefix(a, name+"="); ok {
@@ -747,17 +683,12 @@ func TestShardsUseTheGoTestCache(t *testing.T) {
 	} {
 		count, ok := flag(args, "GOTEST_COUNT_FLAG")
 		nightly := strings.Contains(strings.Join(args, " "), "SLOWTESTS_ENFORCE=1")
-		if !ok || (!nightly && count != "") || (nightly && count != "-count=1") {
-			t.Errorf("%s runs the suite with GOTEST_COUNT_FLAG=%q (present %v): only the nightly leg passes -count=1, every other leg lets Go's test cache serve unchanged packages: %v", name, count, ok, args)
-		}
-		if v, _ := flag(args, "GOTEST_LDFLAGS"); v != "-ldflags=-w" {
-			t.Errorf("%s links test binaries with GOTEST_LDFLAGS=%q (DWARF, and a dsymutil per binary on darwin): %v", name, v, args)
-		}
+		assert.False(t, !ok || (!nightly && count != "") || (nightly && count != "-count=1"), "%s runs the suite with GOTEST_COUNT_FLAG=%q (present %v): only the nightly leg passes -count=1, every other leg lets Go's test cache serve unchanged packages: %v", name, count, ok, args)
+		v, _ := flag(args, "GOTEST_LDFLAGS")
+		assert.Equal(t, "-ldflags=-w", v, "%s links test binaries with GOTEST_LDFLAGS=%q (DWARF, and a dsymutil per binary on darwin): %v", name, v, args)
 	}
 	mk := readFile(t, filepath.Join(repoRoot(t), "Makefile"))
-	if !strings.Contains(mk, "GOTEST_COUNT_FLAG ?= -count=1") || !strings.Contains(mk, "$(GOTEST_COUNT_FLAG)") {
-		t.Fatal("the Makefile's test target does not take GOTEST_COUNT_FLAG (-count=1 by hand, empty in CI)")
-	}
+	require.False(t, !strings.Contains(mk, "GOTEST_COUNT_FLAG ?= -count=1") || !strings.Contains(mk, "$(GOTEST_COUNT_FLAG)"), "the Makefile's test target does not take GOTEST_COUNT_FLAG (-count=1 by hand, empty in CI)")
 }
 
 // TestPushOfAProvedShaSkipsTheShards (Glenn 2026-09-26 9:42 AM ET): a push
@@ -776,17 +707,13 @@ func TestPushOfAProvedShaSkipsTheShards(t *testing.T) {
 		"- name: vet\n        if: matrix.entry.packages != '' && steps.proved.outputs.proved != 'true'",
 		"- name: test\n        if: matrix.entry.packages != '' && steps.proved.outputs.proved != 'true'",
 	} {
-		if !strings.Contains(job, want) {
-			t.Errorf("the test job lacks %q", want)
-		}
+		assert.Contains(t, job, want, "the test job lacks %q", want)
 	}
 	// The ask: a successful merge_group run of this sha. Any trouble reads as
 	// zero runs, never a skip (tools/ci's TestProvedByMergeGroup runs each shape).
 	verb := readFile(t, filepath.Join(root, "tools", "ci", "sel_proved.go"))
 	for _, want := range []string{`q.Set("event", "merge_group")`, `q.Set("head_sha", sha)`, `q.Set("status", "success")`, "resp.StatusCode != http.StatusOK"} {
-		if !strings.Contains(verb, want) {
-			t.Errorf("tools/ci/sel_proved.go lacks %q", want)
-		}
+		assert.Contains(t, verb, want, "tools/ci/sel_proved.go lacks %q", want)
 	}
 }
 
@@ -800,7 +727,5 @@ func TestRunnerWorkspacesAreCleanedInPlace(t *testing.T) {
 	ci := readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
 	sweeps := strings.Count(ci, `find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf`)
 	inPlace := strings.Count(ci, `clean -ffdxq; then`)
-	if sweeps == 0 || sweeps != inPlace {
-		t.Fatalf("%d workspace sweeps, %d of them clean in place first; every sweep resets and cleans the checkout before it may empty the tree", sweeps, inPlace)
-	}
+	require.False(t, sweeps == 0 || sweeps != inPlace, "%d workspace sweeps, %d of them clean in place first; every sweep resets and cleans the checkout before it may empty the tree", sweeps, inPlace)
 }

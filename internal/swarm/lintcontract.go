@@ -1,20 +1,23 @@
 package swarm
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
 // THE CONTRACT LINE HAS ONE FORM, AND THIS IS THE ONE PLACE THAT SAYS SO (issue #1741,
 // SPEC-TOOLWORK.md §5 rule 7).
 //
 // Line 1 of a card is its contract: the swarm hashes everything below it, records the
 // line at admission, and `gather` refuses a `RESULT.md` whose line 1 differs
-// (deprecated/docs/spec-pulse/10-the-card-as-cut-writes-it.md:12-14). Three readers touch it and
+// (the deleted spec-pulse page 10, the-card-as-cut-writes-it, lines 12-14). Three readers touch it and
 // two of them disagreed on one character:
 //
 //   - `cut` writes and accepts `RESULT <label> sha=<sha12>` -- no colon
 //     (internal/pulse/cut.go, and the example at
-//     deprecated/docs/spec-pulse/10-the-card-as-cut-writes-it.md:4);
+//     that page, line 4);
 //   - `lint --card`'s `result-first` wanted `RESULT: ` -- with one
-//     (deprecated/docs/WORKER-CARDS.md practice 1, and docs/SPEC-SWARM.md:969,976);
+//     (WORKER-CARDS.md practice 1, now in the nova-work-old repository, and docs/SPEC-SWARM.md:969,976);
 //   - `gather` compares line 1 to line 1 and imposes no prefix of its own, so it follows
 //     whichever the other two settle on (internal/pulse/harvest.go, classifyResult).
 //
@@ -43,16 +46,11 @@ var CardContractPrefixes = []string{"RESULT: ", "RESULT "}
 // IsCardContractLine says whether line 1 of a card is a contract line in either form.
 // The prefix is anchored at column 0: an indented or quoted RESULT is prose.
 func IsCardContractLine(line string) bool {
-	for _, p := range CardContractPrefixes {
-		if strings.HasPrefix(line, p) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(CardContractPrefixes, func(p string) bool { return strings.HasPrefix(line, p) })
 }
 
 // CardContractWanted is what `result-first` wants, in ONE form, for the remedy line and
 // for any tool that has to print the rule rather than apply it. It names the stopgap in
 // the same breath so a writer reading a card `cut` wrote is not told it is wrong, and so
 // that nobody has to read two documents to learn which of the two to type.
-const CardContractWanted = "`RESULT: <label> sha=<sha12>`, with the colon (SPEC-TOOLWORK.md §5 rule 7, SPEC-SWARM.md:969). The colon-less `RESULT <label> sha=` the plain `cut` template still renders is accepted as a stopgap until the renderer card of rule 7 lands, and is not the form to write"
+const CardContractWanted = "`RESULT: <label> sha=<sha12>`, with the colon. The colon-less `RESULT <label> sha=` an older renderer prints is accepted as a stopgap, and is not the form to write"

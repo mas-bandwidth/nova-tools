@@ -1,6 +1,10 @@
 package store
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+)
 
 // S3. A release whose transaction kept failing because the fence moved is
 // settled as Acquire settles it: the fence no longer holding the operation
@@ -26,8 +30,7 @@ func TestAReleaseTheFenceMovedUnderIsSettledByTheFence(t *testing.T) {
 		{"an abandon: gone is done", op, false, "", false, true},
 		{"an abandon still held", op, false, op.ID, false, false},
 	} {
-		if got := released(c.op, c.commit, c.held, c.recorded); got != c.want {
-			t.Errorf("%s: released %v, want %v", c.name, got, c.want)
-		}
+		got := released(c.op, c.commit, c.held, c.recorded)
+		assert.Equal(t, c.want, got, "%s: released %v, want %v", c.name, got, c.want)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -25,8 +26,7 @@ platform, in parallel, each under the two-minute cap; ghrelease sums then checks
 and sums the whole set on one machine.
 
 The tool set is cmd/*/, walked rather than listed, so a tool added to the
-repository ships without anyone editing this verb. deprecated/ is its own module
-and is never reached. The platform must be a line of release-targets. The
+repository ships without anyone editing this verb. The platform must be a line of release-targets. The
 ldflags are composed by "ghrelease ldflags", which refuses a bad stamp once,
 before anything is compiled. -trimpath so a binary holds no path from the
 runner; CGO_ENABLED=0 so it runs on any machine of its platform.
@@ -69,7 +69,7 @@ func doBuild(e env, args []string) int {
 		fmt.Fprintf(e.stderr, "%s build: %v\n", tool, err)
 		return 2
 	}
-	if !containsTarget(targets, t) {
+	if !slices.Contains(targets, t) {
 		fmt.Fprintf(e.stderr, "refusing: %s/%s is not a shipped platform (release-targets)\n", t.goos, t.goarch)
 		return 1
 	}
@@ -139,15 +139,6 @@ func doBuild(e env, args []string) int {
 		return 1
 	}
 	return 0
-}
-
-func containsTarget(ts []target, t target) bool {
-	for _, x := range ts {
-		if x == t {
-			return true
-		}
-	}
-	return false
 }
 
 // moveFile renames src to dst, copying across a filesystem boundary when a

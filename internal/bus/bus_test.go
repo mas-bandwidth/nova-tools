@@ -52,8 +52,9 @@ func TestReadBusReadsEveryLane(t *testing.T) {
 	t.Parallel()
 	tab := loadBus(t, writeBus(t, fixture()))
 	require.Len(t, tab.Notes, 4, "read %d notes, want 4", len(tab.Notes))
-	if n, ok := tab.NoteByID("bo-abcdef012345"); !ok || n.Header.Subject != "A question about the gate" {
-		t.Fatalf("NoteByID = %v %v", n, ok)
+	{
+		n, ok := tab.NoteByID("bo-abcdef012345")
+		require.False(t, !ok || n.Header.Subject != "A question about the gate", "NoteByID = %v %v", n, ok)
 	}
 	_, ok := tab.NoteByPath("from-bo/2026-09-06-legacy-note.md")
 	require.True(t, ok, "a legacy note is not addressable by path")
@@ -77,8 +78,11 @@ Its id carries a slug from-bo does not own.
 `,
 	})
 	tab := loadBus(t, root)
-	if n, ok := tab.NoteByID("ada-abcdef012345"); ok {
-		t.Fatalf("indexed %s under an id whose slug is not its lane", n.Path)
+	{
+		n, ok := tab.NoteByID("ada-abcdef012345")
+		if ok {
+			require.False(t, ok, "indexed %s under an id whose slug is not its lane", n.Path)
+		}
 	}
 	_, ok := tab.NoteByPath(forgedPath)
 	require.True(t, ok, "the note should still be addressable by path")
@@ -103,20 +107,24 @@ The answer.
 	tab := loadBus(t, root)
 
 	byID, _ := tab.NoteByID("bo-abcdef012345")
-	if by, ok := tab.AnsweredBy(byID, "from-ada"); !ok || by != "from-ada/2026-09-07T0010Z-an-answer-999999999999.md" {
-		t.Fatalf("a note answered by id reads as %q %v", by, ok)
+	{
+		by, ok := tab.AnsweredBy(byID, "from-ada")
+		require.False(t, !ok || by != "from-ada/2026-09-07T0010Z-an-answer-999999999999.md", "a note answered by id reads as %q %v", by, ok)
 	}
 	// The same note is NOT answered in Bo's own lane: the rule is per reader.
-	if _, ok := tab.AnsweredBy(byID, "from-bo"); ok {
-		t.Fatal("a note is answered in its own sender's lane; the rule is per reader")
+	{
+		_, ok := tab.AnsweredBy(byID, "from-bo")
+		require.False(t, ok, "a note is answered in its own sender's lane; the rule is per reader")
 	}
 	legacy, _ := tab.NoteByPath("from-bo/2026-09-06-legacy-note.md")
-	if _, ok := tab.AnsweredBy(legacy, "from-ada"); ok {
-		t.Fatal("the legacy note is answered before anything answers it")
+	{
+		_, ok := tab.AnsweredBy(legacy, "from-ada")
+		require.False(t, ok, "the legacy note is answered before anything answers it")
 	}
 	receipted, _ := tab.NoteByID("bo-111111111111")
-	if by, ok := tab.AnsweredBy(receipted, "from-ada"); !ok || by != "from-ada/RECEIPTS" {
-		t.Fatalf("a receipt did not answer: %q %v", by, ok)
+	{
+		by, ok := tab.AnsweredBy(receipted, "from-ada")
+		require.False(t, !ok || by != "from-ada/RECEIPTS", "a receipt did not answer: %q %v", by, ok)
 	}
 
 	// Now answer the legacy note by its PATH, which is the only name it has.
@@ -131,8 +139,9 @@ The answer to a note that has no id.
 `
 	tab = loadBus(t, writeBus(t, files))
 	legacy, _ = tab.NoteByPath("from-bo/2026-09-06-legacy-note.md")
-	if by, ok := tab.AnsweredBy(legacy, "from-ada"); !ok || !strings.Contains(by, "888888888888") {
-		t.Fatalf("a legacy note answered by path reads as %q %v", by, ok)
+	{
+		by, ok := tab.AnsweredBy(legacy, "from-ada")
+		require.False(t, !ok || !strings.Contains(by, "888888888888"), "a legacy note answered by path reads as %q %v", by, ok)
 	}
 }
 
@@ -152,8 +161,9 @@ The answer.
 `
 	tab := loadBus(t, writeBus(t, files))
 	n, _ := tab.NoteByID("bo-abcdef012345")
-	if _, ok := tab.AnsweredBy(n, "from-ada"); !ok {
-		t.Fatal("an answer naming the path of a note that HAS an id did not count")
+	{
+		_, ok := tab.AnsweredBy(n, "from-ada")
+		require.True(t, ok, "an answer naming the path of a note that HAS an id did not count")
 	}
 }
 
@@ -163,11 +173,9 @@ func TestInboxSeparatesReceiptsFromNotesAndOrdersNewestFirst(t *testing.T) {
 	ada := mustParticipant(t, tab.Config, "Ada")
 	items := tab.Inbox(ada, 40)
 	if len(items) != 4 {
-		t.Fatalf("inbox has %d items, want 4", len(items))
+		require.Equal(t, 4, len(items), "inbox has %d items, want 4", len(items))
 	}
-	if !items[0].Note.When().After(items[len(items)-1].Note.When()) {
-		t.Fatal("the inbox is not newest first")
-	}
+	require.False(t, !items[0].Note.When().After(items[len(items)-1].Note.When()), "the inbox is not newest first")
 	var receipts, notes []string
 	for _, it := range items {
 		if it.Receipt {
@@ -176,16 +184,12 @@ func TestInboxSeparatesReceiptsFromNotesAndOrdersNewestFirst(t *testing.T) {
 			notes = append(notes, it.Note.Header.Subject)
 		}
 	}
-	if len(receipts) != 1 || receipts[0] != "Heard" {
-		t.Fatalf("receipts = %v, want just the bare acknowledgement", receipts)
-	}
-	if len(notes) != 3 {
-		t.Fatalf("notes = %v, want the other three", notes)
-	}
+	require.False(t, len(receipts) != 1 || receipts[0] != "Heard", "receipts = %v, want just the bare acknowledgement", receipts)
+	require.Equal(t, 3, len(notes), "notes = %v, want the other three", notes)
 	// The Cc'd note is in the inbox, marked as a Cc rather than a direct address.
 	for _, it := range items {
 		if it.Note.Header.ID == "bo-222222222222" && it.Address != "cc" {
-			t.Fatalf("a Cc'd note reads as addr=%q", it.Address)
+			require.False(t, it.Note.Header.ID == "bo-222222222222" && it.Address != "cc", "a Cc'd note reads as addr=%q", it.Address)
 		}
 	}
 }
@@ -205,18 +209,14 @@ The answer.
 	tab := loadBus(t, writeBus(t, files))
 	ada := mustParticipant(t, tab.Config, "Ada")
 	for _, it := range tab.Inbox(ada, 40) {
-		if it.Note.Header.ID == "bo-abcdef012345" {
-			t.Fatal("an answered note is still in the inbox")
-		}
-		if it.Note.Lane == "from-ada" {
-			t.Fatal("my own note is in my inbox")
-		}
+		require.False(t, it.Note.Header.ID == "bo-abcdef012345", "an answered note is still in the inbox")
+		require.False(t, it.Note.Lane == "from-ada", "my own note is in my inbox")
 	}
 	// Bo's inbox holds Ada's answer and nothing of her own.
 	bo := mustParticipant(t, tab.Config, "Bo")
 	items := tab.Inbox(bo, 40)
 	if len(items) != 1 || items[0].Note.Header.ID != "ada-999999999999" {
-		t.Fatalf("Bo's inbox = %d items, want just Ada's answer", len(items))
+		require.False(t, len(items) != 1 || items[0].Note.Header.ID != "ada-999999999999", "Bo's inbox = %d items, want just Ada's answer", len(items))
 	}
 }
 
@@ -225,8 +225,9 @@ func TestCheckPassesACleanBus(t *testing.T) {
 	files := fixture()
 	files["from-ada/RECEIPTS"] = "2026-09-07T00:11:00Z bo-111111111111\n"
 	tab := loadBus(t, writeBus(t, files))
-	if ps := tab.Check(); len(ps) != 0 {
-		t.Fatalf("a clean bus failed check: %+v", ps)
+	{
+		ps := tab.Check()
+		require.Equal(t, 0, len(ps), "a clean bus failed check: %+v", ps)
 	}
 }
 
@@ -316,9 +317,7 @@ func TestCheckFailures(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			tab := loadBus(t, writeBus(t, tc.files))
 			ps := tab.Check()
-			if len(ps) == 0 {
-				t.Fatal("check passed a bus it should have failed")
-			}
+			require.False(t, len(ps) == 0, "check passed a bus it should have failed")
 			var found bool
 			for _, p := range ps {
 				if strings.Contains(p.Reason, tc.want) {
@@ -326,7 +325,7 @@ func TestCheckFailures(t *testing.T) {
 				}
 			}
 			if !found {
-				t.Fatalf("no finding names %q; got %+v", tc.want, ps)
+				require.True(t, found, "no finding names %q; got %+v", tc.want, ps)
 			}
 		})
 	}
@@ -339,8 +338,9 @@ func TestCheckAcceptsReNew(t *testing.T) {
 	tab := loadBus(t, writeBus(t, map[string]string{
 		"from-ada/x.md": "From: Ada\nTo: Bo\nRe: new\nSubject: s\n\nbody\n",
 	}))
-	if ps := tab.Check(); len(ps) != 0 {
-		t.Fatalf("Re: new was refused: %+v", ps)
+	{
+		ps := tab.Check()
+		require.Equal(t, 0, len(ps), "Re: new was refused: %+v", ps)
 	}
 }
 
@@ -352,8 +352,11 @@ func TestCheckReportsEveryFailureNotTheFirst(t *testing.T) {
 		"from-ada/b.md": "From: Ada\nTo: Boe\nSubject: s\n\nbody\n",
 		"from-ada/c.md": "From: Ada\nTo: Bo\nRe: bo-deadbeefcafe\nSubject: s\n\nbody\n",
 	}))
-	if ps := tab.Check(); len(ps) < 3 {
-		t.Fatalf("check reported %d findings over three broken files: %+v", len(ps), ps)
+	{
+		ps := tab.Check()
+		if len(ps) < 3 {
+			require.False(t, len(ps) < 3, "check reported %d findings over three broken files: %+v", len(ps), ps)
+		}
 	}
 }
 
@@ -381,25 +384,19 @@ Something everyone needs, said once.
 		if item.Note.Header.ID == "bo-333333333333" {
 			found = true
 			if item.Address != "to" {
-				t.Fatalf("addr = %q, want to", item.Address)
+				require.Equal(t, "to", item.Address, "addr = %q, want to", item.Address)
 			}
 		}
 	}
-	if !found {
-		t.Fatal("a note addressed to a group Ada belongs to is not in Ada's inbox")
-	}
+	require.True(t, found, "a note addressed to a group Ada belongs to is not in Ada's inbox")
 	bo := mustParticipant(t, tab.Config, "Bo")
 	for _, item := range tab.Inbox(bo, 40) {
-		if item.Note.Header.ID == "bo-333333333333" {
-			t.Fatal("Bo's own note is in Bo's inbox")
-		}
+		require.False(t, item.Note.Header.ID == "bo-333333333333", "Bo's own note is in Bo's inbox")
 	}
 	// And the resolution itself names every member, including the one with no lane, who is
 	// addressable and never a sender.
 	to, unknown := tab.Config.ResolveList("Everybody on the bus")
-	if len(unknown) > 0 || strings.Join(to, "; ") != "Ada; Bo; Dana" {
-		t.Fatalf("the group resolved to %v %v", to, unknown)
-	}
+	require.False(t, len(unknown) > 0 || strings.Join(to, "; ") != "Ada; Bo; Dana", "the group resolved to %v %v", to, unknown)
 }
 
 // A file that will not parse is a note somebody wrote, on the bus, that inbox used to
@@ -413,23 +410,18 @@ func TestUnreadableNotesAreNamedAndNotSilent(t *testing.T) {
 	ada := mustParticipant(t, tab.Config, "Ada")
 
 	bad := tab.Unreadable(ada.Lane)
-	if len(bad) != 1 || bad[0].Path != "from-bo/2026-09-07T0005Z-prose.md" {
-		t.Fatalf("Unreadable = %v, want the one file outside my own lane", bad)
-	}
-	if bad[0].Parse == nil || bad[0].Parse.Err == nil {
-		t.Fatal("an unreadable note carries no reason")
-	}
+	require.False(t, len(bad) != 1 || bad[0].Path != "from-bo/2026-09-07T0005Z-prose.md", "Unreadable = %v, want the one file outside my own lane", bad)
+	require.False(t, bad[0].Parse == nil || bad[0].Parse.Err == nil, "an unreadable note carries no reason")
 	// It is NOT in the inbox listing: an unreadable note has no To line, so nothing can
 	// honestly say it was addressed to me. It is reported separately, which is the whole
 	// point.
 	for _, item := range tab.Inbox(ada, 40) {
-		if item.Note.Path == bad[0].Path {
-			t.Fatal("an unparseable note was reported as an open note addressed to me")
-		}
+		require.False(t, item.Note.Path == bad[0].Path, "an unparseable note was reported as an open note addressed to me")
 	}
 	// check still fails on both, including the one in my own lane.
-	if n := len(tab.Check()); n < 2 {
-		t.Fatalf("check found %d problems over two unreadable notes", n)
+	{
+		n := len(tab.Check())
+		require.False(t, n < 2, "check found %d problems over two unreadable notes", n)
 	}
 }
 
@@ -460,11 +452,11 @@ Re lines named filenames once, and a rename orphaned this one.
 	strict := tab.Check()
 	for _, p := range strict {
 		if p.Warn {
-			t.Fatalf("Check() tolerated %s without being asked to: %s", p.Where, p.Reason)
+			require.False(t, p.Warn, "Check() tolerated %s without being asked to: %s", p.Where, p.Reason)
 		}
 	}
 	if len(strict) < 3 {
-		t.Fatalf("Check() found %d problems, want at least the three planted: %+v", len(strict), strict)
+		require.False(t, len(strict) < 3, "Check() found %d problems, want at least the three planted: %+v", len(strict), strict)
 	}
 
 	// With it, the two old ones warn and the new one still fails.
@@ -482,13 +474,9 @@ Re lines named filenames once, and a rename orphaned this one.
 		"from-bo/2026-09-01T0001Z-old-prose.md",
 		"from-bo/2026-09-01T0002Z-old-dangling.md:4",
 	} {
-		if !warned[where] {
-			t.Fatalf("%s was not tolerated; warned=%v failed=%v", where, warned, failed)
-		}
+		require.False(t, !warned[where], "%s was not tolerated; warned=%v failed=%v", where, warned, failed)
 	}
-	if !failed["from-bo/2026-09-08T0001Z-new-prose.md"] {
-		t.Fatalf("a note written after the cutoff was tolerated; failed=%v", failed)
-	}
+	require.False(t, !failed["from-bo/2026-09-08T0001Z-new-prose.md"], "a note written after the cutoff was tolerated; failed=%v", failed)
 }
 
 // The four header findings a real bus failed 163 times on, with the line
@@ -531,22 +519,20 @@ func TestTheHeaderFindingsAreInsideTheLegacyTolerance(t *testing.T) {
 					newP = &ps[i]
 				}
 			}
-			if oldP == nil || newP == nil {
-				t.Fatalf("the planted findings are missing: old=%v new=%v", oldP, newP)
-			}
+			require.False(t, oldP == nil || newP == nil, "the planted findings are missing: old=%v new=%v", oldP, newP)
 			if !strings.Contains(oldP.Reason, k.want) || !strings.Contains(newP.Reason, k.want) {
-				t.Fatalf("the message changed: old=%q new=%q, want both to name %q", oldP.Reason, newP.Reason, k.want)
+				require.False(t, !strings.Contains(oldP.Reason, k.want) || !strings.Contains(newP.Reason, k.want), "the message changed: old=%q new=%q, want both to name %q", oldP.Reason, newP.Reason, k.want)
 			}
 			if !oldP.Warn {
-				t.Fatalf("a note dated before the line still FAILS on %s: %s", k.name, oldP.Reason)
+				require.True(t, oldP.Warn, "a note dated before the line still FAILS on %s: %s", k.name, oldP.Reason)
 			}
 			if newP.Warn {
-				t.Fatalf("a note dated after the line was tolerated on %s: %s", k.name, newP.Reason)
+				require.False(t, newP.Warn, "a note dated after the line was tolerated on %s: %s", k.name, newP.Reason)
 			}
 			// And with no line at all, both fail.
 			for _, p := range tab.Check() {
 				if p.Warn {
-					t.Fatalf("Check() tolerated %s without being asked to: %s", p.Where, p.Reason)
+					require.False(t, p.Warn, "Check() tolerated %s without being asked to: %s", p.Where, p.Reason)
 				}
 			}
 		})
@@ -589,9 +575,7 @@ body
 		"from-bo/2026-09-01T0005Z-bad-id.md:4",
 		"from-bo/notes.txt",
 	} {
-		if !failed[where] {
-			t.Fatalf("%s was tolerated as legacy; failed=%v", where, failed)
-		}
+		require.False(t, !failed[where], "%s was tolerated as legacy; failed=%v", where, failed)
 	}
 }
 
@@ -602,9 +586,7 @@ func TestLegacyToleranceNeedsADateItCanRead(t *testing.T) {
 	files["from-bo/undated-prose.md"] = "Ada, no date line and no minute in the filename.\n\nbody\n"
 	tab := loadBus(t, writeBus(t, files))
 	for _, p := range tab.CheckWith(CheckOptions{LegacyBefore: at("2030-01-01T00:00:00Z")}) {
-		if p.Where == "from-bo/undated-prose.md" && p.Warn {
-			t.Fatal("a note with no readable date was tolerated as old")
-		}
+		require.False(t, p.Where == "from-bo/undated-prose.md" && p.Warn, "a note with no readable date was tolerated as old")
 	}
 }
 
@@ -638,22 +620,16 @@ func TestTheLegacyLineReadsTheDayAtTheFrontOfAFilename(t *testing.T) {
 		}
 	}
 	for _, name := range shapes {
-		if !warned["from-bo/"+name] {
-			t.Fatalf("%s names its day and was not tolerated; warned=%v failed=%v", name, warned, failed)
-		}
+		require.False(t, !warned["from-bo/"+name], "%s names its day and was not tolerated; warned=%v failed=%v", name, warned, failed)
 	}
-	if !failed["from-bo/2026-09-08-after-the-line.md"] {
-		t.Fatalf("a note whose filename names a day AFTER the line was tolerated; failed=%v", failed)
-	}
+	require.False(t, !failed["from-bo/2026-09-08-after-the-line.md"], "a note whose filename names a day AFTER the line was tolerated; failed=%v", failed)
 	// And the day is read for the line only. What the listing orders by is unchanged: a
 	// note whose Date line cannot be read and whose filename is not the minute still has no
 	// moment, so no catalogue line and no at= field is invented for it.
 	n, ok := tab.NoteByPath("from-bo/2026-09-01-just-the-day.md")
-	if !ok {
-		t.Fatal("the note is not on the bus")
-	}
+	require.True(t, ok, "the note is not on the bus")
 	if !n.When().IsZero() {
-		t.Fatalf("When() now reads a day it did not read before (%v); ordering, INDEX Date and at= would change with it", n.When())
+		require.False(t, !n.When().IsZero(), "When() now reads a day it did not read before (%v); ordering, INDEX Date and at= would change with it", n.When())
 	}
 }
 
@@ -666,9 +642,10 @@ func TestLaneDotfilesAreToleratedAndIgnored(t *testing.T) {
 	m["from-bo/.gitkeep"] = ""
 	tab := loadBus(t, writeBus(t, m))
 	if len(tab.Notes) != 4 {
-		t.Fatalf("read %d notes, want 4", len(tab.Notes))
+		require.Equal(t, 4, len(tab.Notes), "read %d notes, want 4", len(tab.Notes))
 	}
-	if ps := tab.Check(); len(ps) != 0 {
-		t.Fatalf("dotfiles in lane produced check findings: %+v", ps)
+	{
+		ps := tab.Check()
+		require.Equal(t, 0, len(ps), "dotfiles in lane produced check findings: %+v", ps)
 	}
 }

@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
@@ -21,8 +23,7 @@ func TestCardNeedsPreview(t *testing.T) {
 		needs[i] = sprint.NeedState{ID: fmt.Sprintf("a-%d", i), State: st}
 	}
 	got := needsPreview(needs)
-	if len(got) >= 300 || !strings.HasPrefix(got, "needs 750 of 1000 still open: a-1 (merging), a-2 (merging), a-3 (merging), ") ||
-		!strings.HasSuffix(got, ", ... and 992 more") {
-		t.Fatalf("%d bytes: %s", len(got), got)
-	}
+	require.Less(t, len(got), 300, "%d bytes: %s", len(got), got)
+	require.True(t, strings.HasPrefix(got, "needs 750 of 1000 still open: a-1 (merging), a-2 (merging), a-3 (merging), "), "%d bytes: %s", len(got), got)
+	require.True(t, strings.HasSuffix(got, ", ... and 992 more"), "%d bytes: %s", len(got), got)
 }

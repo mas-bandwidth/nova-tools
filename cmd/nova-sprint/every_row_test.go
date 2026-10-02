@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // Every row of every table moves every tick, never a row at a time (the
@@ -105,9 +106,10 @@ func everyRowMoves(t *testing.T, width int) {
 		var before tablesView
 		ta.json("where", &before)
 		out := ta.ok("tick")
-		if !strings.Contains(out, "TABLES rows changed: work=") || !strings.Contains(out, " readers=") || !strings.Contains(out, " merge=") || !strings.Contains(out, " fleet=") {
-			t.Fatalf("tick %d does not name every table:\n%s", tick, out)
-		}
+		require.Contains(t, out, "TABLES rows changed: work=", "tick %d does not name every table", tick)
+		require.Contains(t, out, " readers=", "tick %d does not name every table", tick)
+		require.Contains(t, out, " merge=", "tick %d does not name every table", tick)
+		require.Contains(t, out, " fleet=", "tick %d does not name every table", tick)
 		done := strings.Contains(out, "the sprint is done")
 		// the merge's work is what the tick's pump accepted into its queue, which
 		// the merger lands in the world's turn of the same round: it is read
@@ -127,9 +129,7 @@ func everyRowMoves(t *testing.T, width int) {
 				seen[tb]++
 			}
 			for _, r := range rows {
-				if tb != "work" && !slices.Contains(moved[tb], r) {
-					t.Errorf("tick %d: %s row %s had work (%v) and did not move: moved %v\n%s", tick, tb, r, before.Tables[tb][r], moved[tb], play)
-				}
+				assert.False(t, tb != "work" && !slices.Contains(moved[tb], r), "tick %d: %s row %s had work (%v) and did not move: moved %v\n%s", tick, tb, r, before.Tables[tb][r], moved[tb], play)
 			}
 		}
 		if len(moved["work"]) > 0 {
@@ -141,9 +141,7 @@ func everyRowMoves(t *testing.T, width int) {
 		}
 	}
 	for _, tb := range []string{"fleet", "readers", "work", "merge"} {
-		if seen[tb] == 0 {
-			t.Errorf("the %s table never had work in the ticks: %v", tb, seen)
-		}
+		assert.NotZero(t, seen[tb], "the %s table never had work in the ticks: %v", tb, seen)
 	}
 	assert.GreaterOrEqual(t, workMoved, 3, "the work table moved in %d ticks, fewer than 3: the pump did not advance it from what the other tables queued", workMoved)
 	t.Logf("ticks with work by table: %v; the work table moved in %d", seen, workMoved)

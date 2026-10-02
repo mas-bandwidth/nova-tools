@@ -13,6 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
@@ -56,9 +59,7 @@ func TestNativeBudgetStopsTheCardAndKeepsWhatItPublished(t *testing.T) {
 	body := "a card\nFAKE-PUBLISH-FIRST\nFAKE-FINDINGS 2\n" +
 		"FAKE-USAGE-DB 60000 40000 0 0 0 1.0\n" +
 		"FAKE-BACKGROUND-SLEEP 30\nFAKE-IGNORE-TERM\nFAKE-SLEEP 60\n"
-	if err := os.WriteFile(card, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(card, []byte(body), 0o644))
 	args := append(budgetNativeArgs(t, bin, card, slot, root, "100000"), "--usage-interval", "1s")
 	for i := range args {
 		if args[i] == "--deadline" {
@@ -71,74 +72,51 @@ func TestNativeBudgetStopsTheCardAndKeepsWhatItPublished(t *testing.T) {
 	elapsed := time.Since(start)
 
 	// EXIT 1: "it ran, and the answer is no".
-	if rc != 1 {
-		t.Fatalf("a card the budget stopped exits 1, got %d after %v\nstdout:\n%s\nstderr:\n%s", rc, elapsed, stdout.String(), stderr.String())
-	}
+	require.Equal(t, 1, rc, "a card the budget stopped exits 1, got %d after %v\nstdout:\n%s\nstderr:\n%s", rc, elapsed, stdout.String(), stderr.String())
 	// THE EVENT, NOT THE CLOCK. What proves the BUDGET ended this card rather than its
 	// deadline or its own exit is the `stopped=tokens` field asserted below: a deadline
 	// leaves that field off the line entirely. The repo refuses a wall-clock assertion and
 	// it is right to -- the bound would only be a slower way of reading the same field.
 	line := nativeOKLine(t, stdout.String())
-	if got := fieldOf(line, "rc"); got != "-1" {
-		t.Errorf("the line prints rc=-1 as it does for a deadline and a TERM, got %q:\n%s", got, line)
-	}
-	if got := fieldOf(line, "stopped"); got != "tokens" {
-		t.Errorf("the line names which budget fired, stopped=tokens, got %q:\n%s", got, line)
-	}
+	got := fieldOf(line, "rc")
+	assert.Equal(t, "-1", got, "the line prints rc=-1 as it does for a deadline and a TERM, got %q:\n%s", got, line)
+	got = fieldOf(line, "stopped")
+	assert.Equal(t, "tokens", got, "the line names which budget fired, stopped=tokens, got %q:\n%s", got, line)
 	budget := fieldOf(line, "budget")
 	spentWord, ofWord, _ := strings.Cut(budget, "/")
-	if ofWord != "100000" {
-		t.Errorf("budget= names the number the caller gave, got %q:\n%s", budget, line)
-	}
+	assert.Equal(t, "100000", ofWord, "budget= names the number the caller gave, got %q:\n%s", budget, line)
 	spent, err := strconv.Atoi(strings.TrimSuffix(spentWord, "+"))
-	if err != nil || spent < 100000 {
-		t.Errorf("budget= carries a spend of at least the budget, got %q:\n%s", budget, line)
-	}
+	assert.NoError(t, err, "budget= carries a spend of at least the budget, got %q:\n%s", budget, line)
+	assert.GreaterOrEqual(t, spent, 100000, "budget= carries a spend of at least the budget, got %q:\n%s", budget, line)
 
 	jobDir := filepath.Join(slot, "jobs", "lbl")
 	// EXACTLY ONE LAUNCH: a budget stop is terminal, and a stopped card is never relaunched.
 	head, rows := usageRows(t, jobDir)
-	if len(rows) != 1 {
-		t.Fatalf("a stopped card is launched exactly once, and usage.tsv holds %d rows:\n%v", len(rows), rows)
-	}
-	if got := cell(t, head, rows[0], "end"); got != swarm.EndBudget {
-		t.Errorf("the stopping launch's row carries end=%s, got %q", swarm.EndBudget, got)
-	}
+	require.Len(t, rows, 1, "a stopped card is launched exactly once, and usage.tsv holds %d rows:\n%v", len(rows), rows)
+	got = cell(t, head, rows[0], "end")
+	assert.Equal(t, swarm.EndBudget, got, "the stopping launch's row carries end=%s, got %q", swarm.EndBudget, got)
 	// `rc` IS A DASH IN THE ROW (rule 12's closed list, decision 14): a native launch the
 	// machinery ended has no exit code of its own to report.
-	if got := cell(t, head, rows[0], "rc"); got != swarm.Dash {
-		t.Errorf("the row's rc is a dash for a launch the machinery ended, got %q", got)
-	}
+	got = cell(t, head, rows[0], "rc")
+	assert.Equal(t, swarm.Dash, got, "the row's rc is a dash for a launch the machinery ended, got %q", got)
 	// THE ROW'S COLUMNS ARE THE DATABASE'S FINAL FIGURES, not the figures at the stop.
-	if got := cell(t, head, rows[0], "tokens_in"); got != "60000" {
-		t.Errorf("the row carries the final reported tokens_in 60000, got %q", got)
-	}
-	if got := cell(t, head, rows[0], "tokens_out"); got != "40000" {
-		t.Errorf("the row carries the final reported tokens_out 40000, got %q", got)
-	}
+	got = cell(t, head, rows[0], "tokens_in")
+	assert.Equal(t, "60000", got, "the row carries the final reported tokens_in 60000, got %q", got)
+	got = cell(t, head, rows[0], "tokens_out")
+	assert.Equal(t, "40000", got, "the row carries the final reported tokens_out 40000, got %q", got)
 
 	// WHAT THE CARD PUBLISHED IS KEPT BYTE FOR BYTE.
 	result, err := os.ReadFile(filepath.Join(jobDir, "RESULT.md"))
-	if err != nil {
-		t.Fatalf("a card the budget stopped keeps the findings it published: %v", err)
-	}
-	if !strings.Contains(string(result), "findings: 2") {
-		t.Errorf("the published report is the card's own, unchanged:\n%s", result)
-	}
+	require.NoError(t, err, "a card the budget stopped keeps the findings it published")
+	assert.Contains(t, string(result), "findings: 2", "the published report is the card's own, unchanged:\n%s", result)
 	// AND THE TOOL WROTE NOTHING INTO IT: on this route a PROMPT-DEFECT goes on stdout.
-	if strings.Contains(string(result), "PROMPT-DEFECT") {
-		t.Errorf("on the native route the tool writes nothing into a card's report:\n%s", result)
-	}
+	assert.NotContains(t, string(result), "PROMPT-DEFECT", "on the native route the tool writes nothing into a card's report:\n%s", result)
 
 	// NO PROCESS OF THE GROUP IS ALIVE, grandchildren included.
 	bgRaw, err := os.ReadFile(filepath.Join(jobDir, "background.pid"))
-	if err != nil {
-		t.Fatalf("the harness recorded no background pid: %v", err)
-	}
+	require.NoError(t, err, "the harness recorded no background pid")
 	bg, err := strconv.Atoi(strings.TrimSpace(string(bgRaw)))
-	if err != nil {
-		t.Fatalf("the background pid is a number: %q", bgRaw)
-	}
+	require.NoError(t, err, "the background pid is a number: %q", bgRaw)
 	// The kill is a signal to a group and the kernel reaps at its own pace; the wait is
 	// bounded and ends on the OBSERVABLE -- the pid going away -- never on a fixed sleep.
 	gone := time.Now().Add(5 * time.Second)
@@ -148,9 +126,8 @@ func TestNativeBudgetStopsTheCardAndKeepsWhatItPublished(t *testing.T) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	if err := syscall.Kill(bg, 0); err == nil {
-		t.Errorf("after the stop no process of the card's group is alive; the grandchild pid %d survived", bg)
-	}
+	err = syscall.Kill(bg, 0)
+	assert.Error(t, err, "after the stop no process of the card's group is alive; the grandchild pid %d survived", bg)
 }
 
 // TestNativeBudgetFiresAtExactlyTheNumberAndNotOnCacheAlone: two halves of one sentence.
@@ -181,12 +158,9 @@ func TestNativeBudgetFiresAtExactlyTheNumberAndNotOnCacheAlone(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rc, stdout, stderr := runBudgetCard(t, "1000", tc.directives, "--usage-interval", "1s")
-			if rc != tc.wantRC {
-				t.Fatalf("this card exits %d, got %d\nstdout:\n%s\nstderr:\n%s", tc.wantRC, rc, stdout, stderr)
-			}
-			if got := fieldOf(nativeOKLine(t, stdout), "stopped"); got != tc.wantStop {
-				t.Fatalf("stopped= is %q, want %q:\n%s", got, tc.wantStop, stdout)
-			}
+			require.Equal(t, tc.wantRC, rc, "this card exits %d, got %d\nstdout:\n%s\nstderr:\n%s", tc.wantRC, rc, stdout, stderr)
+			got := fieldOf(nativeOKLine(t, stdout), "stopped")
+			require.Equal(t, tc.wantStop, got, "stopped= is %q, want %q:\n%s", got, tc.wantStop, stdout)
 		})
 	}
 }
@@ -214,9 +188,7 @@ func TestNativeTwoLaunchAccounting(t *testing.T) {
 	body := "a card\nFAKE-LAUNCHES\n" +
 		"FAKE-USAGE-DB 40 0 0 0 0 0.1 ; 70 0 0 0 0 0.2\n" +
 		"FAKE-5XX-FIRST\nFAKE-SLEEP 20\n"
-	if err := os.WriteFile(card, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(card, []byte(body), 0o644))
 	args := append(budgetNativeArgs(t, bin, card, slot, root, "100"), "--usage-interval", "1s")
 	for i := range args {
 		if args[i] == "--deadline" {
@@ -225,42 +197,30 @@ func TestNativeTwoLaunchAccounting(t *testing.T) {
 	}
 	var stdout, stderr strings.Builder
 	rc := run(args, strings.NewReader(""), &stdout, &stderr, time.Now())
-	if rc != 1 {
-		t.Fatalf("the card is stopped in its second launch and exits 1, got %d\nstdout:\n%s\nstderr:\n%s", rc, stdout.String(), stderr.String())
-	}
+	require.Equal(t, 1, rc, "the card is stopped in its second launch and exits 1, got %d\nstdout:\n%s\nstderr:\n%s", rc, stdout.String(), stderr.String())
 	line := nativeOKLine(t, stdout.String())
-	if got := fieldOf(line, "budget"); got != "110/100" {
-		t.Errorf("the LINE is the job's: two launches at 40 and 70 under --tokens 100 print budget=110/100, got %q:\n%s", got, line)
-	}
-	if got := fieldOf(line, "stopped"); got != "tokens" {
-		t.Errorf("stopped=tokens, got %q:\n%s", got, line)
-	}
+	got := fieldOf(line, "budget")
+	assert.Equal(t, "110/100", got, "the LINE is the job's: two launches at 40 and 70 under --tokens 100 print budget=110/100, got %q:\n%s", got, line)
+	got = fieldOf(line, "stopped")
+	assert.Equal(t, "tokens", got, "stopped=tokens, got %q:\n%s", got, line)
 
 	jobDir := filepath.Join(slot, "jobs", "lbl")
 	head, rows := usageRows(t, jobDir)
-	if len(rows) != 2 {
-		t.Fatalf("the job had two launches, so usage.tsv holds two rows, got %d:\n%v", len(rows), rows)
-	}
+	require.Len(t, rows, 2, "the job had two launches, so usage.tsv holds two rows, got %d:\n%v", len(rows), rows)
 	// THE ROWS ARE 40 AND 70, NEVER 40 AND 110.
-	if got := cell(t, head, rows[0], "tokens_in"); got != "40" {
-		t.Errorf("the first launch's row holds its OWN 40, got %q", got)
-	}
-	if got := cell(t, head, rows[1], "tokens_in"); got != "70" {
-		t.Errorf("the second launch's row holds its OWN 70 and never the job's 110, got %q", got)
-	}
+	got = cell(t, head, rows[0], "tokens_in")
+	assert.Equal(t, "40", got, "the first launch's row holds its OWN 40, got %q", got)
+	got = cell(t, head, rows[1], "tokens_in")
+	assert.Equal(t, "70", got, "the second launch's row holds its OWN 70 and never the job's 110, got %q", got)
 	// THE SECOND ROW ALONE HAS end=budget.
-	if got := cell(t, head, rows[1], "end"); got != swarm.EndBudget {
-		t.Errorf("the stopping launch's row carries end=budget, got %q", got)
-	}
-	if got := cell(t, head, rows[0], "end"); got == swarm.EndBudget {
-		t.Errorf("the launch that died on a provider 5xx did not end on the budget, and its row says so; got end=%q", got)
-	}
+	got = cell(t, head, rows[1], "end")
+	assert.Equal(t, swarm.EndBudget, got, "the stopping launch's row carries end=budget, got %q", got)
+	got = cell(t, head, rows[0], "end")
+	assert.NotEqual(t, swarm.EndBudget, got, "the launch that died on a provider 5xx did not end on the budget, and its row says so; got end=%q", got)
 	// AND THE ROWS ADD TO THE LINE'S 110.
 	a, _ := strconv.Atoi(cell(t, head, rows[0], "tokens_in"))
 	b, _ := strconv.Atoi(cell(t, head, rows[1], "tokens_in"))
-	if a+b != 110 {
-		t.Errorf("the rows add to the line's 110, got %d + %d", a, b)
-	}
+	assert.Equal(t, 110, a+b, "the rows add to the line's 110, got %d + %d", a, b)
 }
 
 // TestNativeALaunchThatReachedTheBudgetAloneIsNeverLaunchedAgain: rule 13d tests the stop
@@ -276,9 +236,7 @@ func TestNativeALaunchThatReachedTheBudgetAloneIsNeverLaunchedAgain(t *testing.T
 	// The FIRST launch spends the whole budget and then dies on a 5xx inside the grace.
 	// A card that sleeps a moment first gives the sampler its reading before the death.
 	body := "a card\nFAKE-LAUNCHES\nFAKE-USAGE-DB 200 0 0 0 0 0.1\nFAKE-SLEEP 3\nFAKE-5XX-FIRST\n"
-	if err := os.WriteFile(card, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(card, []byte(body), 0o644))
 	args := append(budgetNativeArgs(t, bin, card, slot, root, "100"), "--usage-interval", "1s")
 	for i := range args {
 		if args[i] == "--deadline" {
@@ -287,21 +245,14 @@ func TestNativeALaunchThatReachedTheBudgetAloneIsNeverLaunchedAgain(t *testing.T
 	}
 	var stdout, stderr strings.Builder
 	rc := run(args, strings.NewReader(""), &stdout, &stderr, time.Now())
-	if rc != 1 {
-		t.Fatalf("the card is stopped and exits 1, got %d\nstdout:\n%s\nstderr:\n%s", rc, stdout.String(), stderr.String())
-	}
+	require.Equal(t, 1, rc, "the card is stopped and exits 1, got %d\nstdout:\n%s\nstderr:\n%s", rc, stdout.String(), stderr.String())
 	jobDir := filepath.Join(slot, "jobs", "lbl")
 	raw, err := os.ReadFile(filepath.Join(jobDir, "launches"))
-	if err != nil {
-		t.Fatalf("the harness recorded no launches: %v", err)
-	}
+	require.NoError(t, err, "the harness recorded no launches")
 	launches := len(strings.Split(strings.TrimRight(string(raw), "\n"), "\n"))
-	if launches != 1 {
-		t.Fatalf("a first launch that reached the budget alone is never launched again; the harness ran %d times:\n%s", launches, raw)
-	}
-	if got := fieldOf(nativeOKLine(t, stdout.String()), "stopped"); got != "tokens" {
-		t.Errorf("stopped=tokens, got %q:\n%s", got, stdout.String())
-	}
+	require.Equal(t, 1, launches, "a first launch that reached the budget alone is never launched again; the harness ran %d times:\n%s", launches, raw)
+	got := fieldOf(nativeOKLine(t, stdout.String()), "stopped")
+	assert.Equal(t, "tokens", got, "stopped=tokens, got %q:\n%s", got, stdout.String())
 }
 
 // TestNativeAFastLaunchAtTheBudgetIsNotRelaunchedBeforeAnySample: the "once more before any
@@ -317,9 +268,7 @@ func TestNativeAFastLaunchAtTheBudgetIsNotRelaunchedBeforeAnySample(t *testing.T
 	root, slot := aSlot(t)
 	card := filepath.Join(root, "card.md")
 	body := "a card\nFAKE-LAUNCHES\nFAKE-USAGE-DB 200 0 0 0 0 0.1\nFAKE-5XX-FIRST\nFAKE-SLEEP 3\n"
-	if err := os.WriteFile(card, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(card, []byte(body), 0o644))
 	args := append(budgetNativeArgs(t, bin, card, slot, root, "100"), "--usage-interval", "60s")
 	for i := range args {
 		if args[i] == "--deadline" {
@@ -328,25 +277,17 @@ func TestNativeAFastLaunchAtTheBudgetIsNotRelaunchedBeforeAnySample(t *testing.T
 	}
 	var stdout, stderr strings.Builder
 	rc := run(args, strings.NewReader(""), &stdout, &stderr, time.Now())
-	if rc != 1 {
-		t.Fatalf("the card is stopped and exits 1, got %d\nstdout:\n%s\nstderr:\n%s", rc, stdout.String(), stderr.String())
-	}
+	require.Equal(t, 1, rc, "the card is stopped and exits 1, got %d\nstdout:\n%s\nstderr:\n%s", rc, stdout.String(), stderr.String())
 	jobDir := filepath.Join(slot, "jobs", "lbl")
 	raw, err := os.ReadFile(filepath.Join(jobDir, "launches"))
-	if err != nil {
-		t.Fatalf("the harness recorded no launches: %v", err)
-	}
+	require.NoError(t, err, "the harness recorded no launches")
 	launches := len(strings.Split(strings.TrimRight(string(raw), "\n"), "\n"))
-	if launches != 1 {
-		t.Fatalf("a first launch whose final read reached the budget is never launched again, even before any sample; the harness ran %d times:\n%s", launches, raw)
-	}
+	require.Equal(t, 1, launches, "a first launch whose final read reached the budget is never launched again, even before any sample; the harness ran %d times:\n%s", launches, raw)
 	line := nativeOKLine(t, stdout.String())
-	if got := fieldOf(line, "stopped"); got != "tokens" {
-		t.Errorf("stopped=tokens, got %q:\n%s", got, line)
-	}
-	if got := fieldOf(line, "budget"); got != "200/100" {
-		t.Errorf("the line prints the final read's budget=200/100, got %q:\n%s", got, line)
-	}
+	got := fieldOf(line, "stopped")
+	assert.Equal(t, "tokens", got, "stopped=tokens, got %q:\n%s", got, line)
+	got = fieldOf(line, "budget")
+	assert.Equal(t, "200/100", got, "the line prints the final read's budget=200/100, got %q:\n%s", got, line)
 }
 
 // TestNativeCardBudgetStopsAndPrintsThePromptDefect: rule 13b's budgets on this route,
@@ -382,9 +323,7 @@ func TestNativeCardBudgetStopsAndPrintsThePromptDefect(t *testing.T) {
 			root, slot := aSlot(t)
 			card := filepath.Join(root, "card.md")
 			body := "a card\nFAKE-PUBLISH-FIRST\nFAKE-FINDINGS 3\n" + tc.directives + "FAKE-SLEEP 20\n"
-			if err := os.WriteFile(card, []byte(body), 0o644); err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, os.WriteFile(card, []byte(body), 0o644))
 			args := append(budgetNativeArgs(t, bin, card, slot, root, "unmetered"),
 				"--worker", budgetWorker(t, swarm.UsageOpenCode, tc.maxTurns, tc.maxCache),
 				"--usage-interval", "1s")
@@ -395,13 +334,10 @@ func TestNativeCardBudgetStopsAndPrintsThePromptDefect(t *testing.T) {
 			}
 			var stdout, stderr strings.Builder
 			rc := run(args, strings.NewReader(""), &stdout, &stderr, time.Now())
-			if rc != 1 {
-				t.Fatalf("a card its own budget stopped exits 1, got %d\nstdout:\n%s\nstderr:\n%s", rc, stdout.String(), stderr.String())
-			}
+			require.Equal(t, 1, rc, "a card its own budget stopped exits 1, got %d\nstdout:\n%s\nstderr:\n%s", rc, stdout.String(), stderr.String())
 			out := stdout.String()
-			if got := fieldOf(nativeOKLine(t, out), "stopped"); got != tc.wantStop {
-				t.Fatalf("stopped= is %q, want %q:\n%s", got, tc.wantStop, out)
-			}
+			got := fieldOf(nativeOKLine(t, out), "stopped")
+			require.Equal(t, tc.wantStop, got, "stopped= is %q, want %q:\n%s", got, tc.wantStop, out)
 			// THE PROMPT-DEFECT LINE IS ON STDOUT, AFTER THE NATIVE VERDICT LINE. The
 			// verdict word is #1844's and not this test's subject: a card the budget
 			// stopped has rc=-1, so #1844's rule calls it INCOMPLETE, and what this case
@@ -416,31 +352,19 @@ func TestNativeCardBudgetStopsAndPrintsThePromptDefect(t *testing.T) {
 					defectAt = i
 				}
 			}
-			if defectAt < 0 {
-				t.Fatalf("a card budget's stop prints the PROMPT-DEFECT line on native's stdout:\n%s", out)
-			}
-			if okAt < 0 || defectAt < okAt {
-				t.Fatalf("the PROMPT-DEFECT line comes AFTER the NATIVE verdict line:\n%s", out)
-			}
-			if !strings.Contains(lines[defectAt], "reason=budget") {
-				t.Errorf("the PROMPT-DEFECT line is rule 13b's own:\n%s", lines[defectAt])
-			}
+			require.GreaterOrEqual(t, defectAt, 0, "a card budget's stop prints the PROMPT-DEFECT line on native's stdout:\n%s", out)
+			require.GreaterOrEqual(t, okAt, 0, "the PROMPT-DEFECT line comes AFTER the NATIVE verdict line:\n%s", out)
+			require.GreaterOrEqual(t, defectAt, okAt, "the PROMPT-DEFECT line comes AFTER the NATIVE verdict line:\n%s", out)
+			assert.Contains(t, lines[defectAt], "reason=budget", "the PROMPT-DEFECT line is rule 13b's own:\n%s", lines[defectAt])
 			// AND IT IS IN NO FILE: the published report is kept byte for byte.
 			jobDir := filepath.Join(slot, "jobs", "lbl")
 			result, err := os.ReadFile(filepath.Join(jobDir, "RESULT.md"))
-			if err != nil {
-				t.Fatalf("the card's published report is kept: %v", err)
-			}
-			if strings.Contains(string(result), "PROMPT-DEFECT") {
-				t.Errorf("on the native route the tool writes nothing into a card's report:\n%s", result)
-			}
-			if !strings.Contains(string(result), "findings: 3") {
-				t.Errorf("the published report is unchanged by a byte:\n%s", result)
-			}
+			require.NoError(t, err, "the card's published report is kept")
+			assert.NotContains(t, string(result), "PROMPT-DEFECT", "on the native route the tool writes nothing into a card's report:\n%s", result)
+			assert.Contains(t, string(result), "findings: 3", "the published report is unchanged by a byte:\n%s", result)
 			head, rows := usageRows(t, jobDir)
-			if got := cell(t, head, rows[len(rows)-1], "end"); got != swarm.EndBudget {
-				t.Errorf("a card budget's stop carries end=budget in the row, got %q", got)
-			}
+			got = cell(t, head, rows[len(rows)-1], "end")
+			assert.Equal(t, swarm.EndBudget, got, "a card budget's stop carries end=budget in the row, got %q", got)
 		})
 	}
 }

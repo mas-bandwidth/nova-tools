@@ -105,11 +105,18 @@ type worktreeFlags struct {
 	pr                      int
 	prNumeric, prSet, prune bool
 	baseSet                 bool
+	unknown                 []string // a refusal per argument the verb has no flag for
 }
 
 func parseWorktree(args []string) worktreeFlags {
 	var f worktreeFlags
 	for i := 0; i < len(args); i++ {
+		if !worktreeFlagNames[args[i]] {
+			text, took := unknownArg(args, i, "worktree")
+			f.unknown = append(f.unknown, text)
+			i += took
+			continue
+		}
 		value := func() (string, bool) {
 			if i+1 >= len(args) {
 				return "", false
@@ -144,6 +151,8 @@ func parseWorktree(args []string) worktreeFlags {
 	return f
 }
 
+var worktreeFlagNames = map[string]bool{"--repo": true, "--scratch": true, "--base": true, "--pr": true, "--prune": true}
+
 // worktreeRecord is what <scratch>/<id>.pr holds: the guid that names the tree,
 // the base branch compared against, and the head the tree was placed at.
 type worktreeRecord struct {
@@ -157,22 +166,29 @@ func (r worktreeRecord) path(scratch string) string { return filepath.Join(scrat
 
 func worktreeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	f := parseWorktree(args)
-	refuse := func(reason, text string) int {
-		fmt.Fprintf(stderr, "WORKTREE REFUSED reason=%s: %s\n%s\n", oneline.Field(reason), oneline.Escape(text), worktreeRemedy)
-		return sandbox.ExitCannotRun
+	// Every independent problem in one run, one line each, then the one remedy line
+	// (docs/STANDARD.md §3 point 2): a flag the verb has no use for is one of them,
+	// never ignored.
+	var bad [][2]string
+	for _, text := range f.unknown {
+		bad = append(bad, [2]string{"bad_flag", text})
 	}
 	// --pr and --prune are two modes and not one call.
-	if f.prune && f.prSet {
-		return refuse("bad_pr", "--pr wants one pull-request number and one mode")
-	}
-	if !f.prune && !f.prNumeric {
-		return refuse("bad_pr", "--pr wants one pull-request number and one mode")
+	if (f.prune && f.prSet) || (!f.prune && !f.prNumeric) {
+		bad = append(bad, [2]string{"bad_pr", "--pr wants one pull-request number and one mode"})
 	}
 	if !isGitWorkTree(f.repo) {
-		return refuse("bad_repo", "--repo wants an existing repository named by an absolute path")
+		bad = append(bad, [2]string{"bad_repo", "--repo wants an existing repository named by an absolute path"})
 	}
 	if !isDir(f.scratch) {
-		return refuse("bad_scratch", "--scratch wants an existing directory and is not created")
+		bad = append(bad, [2]string{"bad_scratch", "--scratch wants an existing directory and is not created"})
+	}
+	if len(bad) > 0 {
+		for _, b := range bad {
+			fmt.Fprintf(stderr, "WORKTREE REFUSED reason=%s: %s\n", oneline.Field(b[0]), oneline.WithRemedy(b[1], "nova-sandbox help worktree"))
+		}
+		fmt.Fprintln(stderr, worktreeRemedy)
+		return sandbox.ExitCannotRun
 	}
 	if f.prune {
 		return worktreePrune(f, stdout, stderr, env)

@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"errors"
 	"io"
-	"reflect"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"strings"
 	"testing"
 )
@@ -26,13 +28,13 @@ func TestShellWords(t *testing.T) {
 	}
 	for _, tc := range cases {
 		got, err := shellWords(tc.line)
-		if err != nil || !reflect.DeepEqual(got, tc.want) {
-			t.Errorf("%q: %q %v, want %q", tc.line, got, err, tc.want)
-		}
+		assert.NoError(t, err, "%q: %q %v, want %q", tc.line, got, err, tc.want)
+		assert.Equal(t, tc.want, got, "%q: %q %v, want %q", tc.line, got, err, tc.want)
 	}
 	for _, line := range []string{`row add t 'unfinished`, `row add t "unfinished`, `row add t trailing\`, `show t; drop t`, `show t | cat`, `show t > out`} {
-		if _, err := shellWords(line); err == nil {
-			t.Errorf("accepted %q", line)
+		{
+			_, err := shellWords(line)
+			assert.Error(t, err, "accepted %q", line)
 		}
 	}
 }
@@ -46,9 +48,9 @@ func TestShellInputFailuresAreReported(t *testing.T) {
 	for _, r := range []io.Reader{shellReadError{}, strings.NewReader(strings.Repeat("x", maxShellLine+1))} {
 		var out, errout bytes.Buffer
 		code := (&application{}).readCommands(r, &out, &errout, false, false)
-		if code != 2 || out.Len() != 0 || !strings.Contains(errout.String(), "reading line 1") {
-			t.Fatalf("code=%d out=%q err=%q", code, out.String(), errout.String())
-		}
+		require.EqualValues(t, 2, code, "code=%d out=%q err=%q", code, out.String(), errout.String())
+		require.EqualValues(t, 0, out.Len(), "code=%d out=%q err=%q", code, out.String(), errout.String())
+		require.Contains(t, errout.String(), "reading line 1", "code=%d out=%q err=%q", code, out.String(), errout.String())
 	}
 }
 
@@ -56,15 +58,19 @@ func TestShellHelpNeverDials(t *testing.T) {
 	t.Parallel()
 	for _, args := range [][]string{{"help", "shell"}, {"shell", "--help"}, {"shell", "-h"}} {
 		code, out, errout := runTable(args...)
-		if code != 0 || errout != "" || !strings.Contains(out, "--keep-going") || !strings.Contains(out, "--receipt") {
-			t.Fatalf("%v: %d %s %s", args, code, out, errout)
-		}
+		require.EqualValues(t, 0, code, "%v: %d %s %s", args, code, out, errout)
+		require.Empty(t, errout, "%v: %d %s %s", args, code, out, errout)
+		require.Contains(t, out, "--keep-going", "%v: %d %s %s", args, code, out, errout)
+		require.Contains(t, out, "--receipt", "%v: %d %s %s", args, code, out, errout)
 	}
 	// The Redis client is lazy: exploring help/version inside a shell needs
 	// no network command, even though its store address is pinned.
 	var out, errout bytes.Buffer
 	app := &application{in: strings.NewReader("help row move\nversion\nquit\ndrop never\n")}
-	if code := app.run([]string{"shell", "--redis", "127.0.0.1:1"}, &out, &errout); code != 0 || errout.Len() != 0 || !strings.Contains(out.String(), "row move") {
-		t.Fatalf("%d %s %s", code, &out, &errout)
+	{
+		code := app.run([]string{"shell", "--redis", "127.0.0.1:1"}, &out, &errout)
+		require.EqualValues(t, 0, code, "%d %s %s", code, &out, &errout)
+		require.EqualValues(t, 0, errout.Len(), "%d %s %s", code, &out, &errout)
+		require.Contains(t, out.String(), "row move", "%d %s %s", code, &out, &errout)
 	}
 }

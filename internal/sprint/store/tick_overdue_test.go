@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // A coordinator who is silent is visible: every judgment passes its due time
@@ -15,9 +17,7 @@ import (
 func (h *harness) overdueLines() map[string]int {
 	h.t.Helper()
 	notes, _, err := h.m.NotesSince(h.ctx, "", 1000000)
-	if err != nil {
-		h.t.Fatal(err)
-	}
+	require.NoError(h.t, err)
 	out := map[string]int{}
 	for _, n := range notes {
 		if n.Kind == sprint.Happened && n.Type == sprint.NOverdue {
@@ -52,9 +52,7 @@ func TestASilentCoordinatorIsVisible(t *testing.T) {
 		h.tick(5 * time.Minute)
 		h.machine()
 		open, err := h.m.OpenNotes(h.ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		judgments, holds := sprint.SplitOpen(open)
 		marked := map[string]bool{} // judgment id | subject
 		for _, o := range holds {
@@ -73,9 +71,7 @@ func TestASilentCoordinatorIsVisible(t *testing.T) {
 			if running <= sprint.DeadlineJudgment || !marked[sprint.OpenKey(n.ID, o.Subject())] {
 				continue
 			}
-			if lines[n.ID] != 1 {
-				t.Errorf("seed %d: judgment %s (%s) has %d overdue lines, want 1", seed, n.ID, n.Type, lines[n.ID])
-			}
+			assert.Equal(t, 1, lines[n.ID], "seed %d: judgment %s (%s) has %d overdue lines, want 1", seed, n.ID, n.Type, lines[n.ID])
 			named[o.Subject()] = true
 		}
 		s := h.snap()
@@ -90,35 +86,29 @@ func TestASilentCoordinatorIsVisible(t *testing.T) {
 					continue
 				}
 				needs++
-				if !named[c.ID] {
-					t.Errorf("seed %d: %s in review waits on the coordinator, and no open overdue judgment names it", seed, c.ID)
-				}
+				assert.True(t, named[c.ID], "seed %d: %s in review waits on the coordinator, and no open overdue judgment names it", seed, c.ID)
 			}
 			for _, c := range s.Merge.Cell(st, sprint.Stuck) {
 				needs++
-				if !named[sprint.StreamSubject(st)] {
-					t.Errorf("seed %d: %s is stuck in a stopped stream, and no open overdue judgment names the stream", seed, c.ID)
-				}
+				assert.True(t, named[sprint.StreamSubject(st)], "seed %d: %s is stuck in a stopped stream, and no open overdue judgment names the stream", seed, c.ID)
 			}
 			for _, c := range s.Work.Cell(st, sprint.Waiting) {
 				if !named[c.ID] && len(sprint.Split(c.F("needs"))) > 0 {
 					for _, n := range sprint.Split(c.F("needs")) {
-						if nc := s.Work.Card(n); nc != nil && !nc.Placed() && nc.F("outcome") == "dropped" {
-							t.Errorf("seed %d: %s is blocked on %s, dropped, and no open overdue judgment names it", seed, c.ID, n)
+						if nc := s.Work.Card(n); nc != nil && !nc.Placed() {
+							assert.NotEqual(t, "dropped", nc.F("outcome"), "seed %d: %s is blocked on %s, dropped, and no open overdue judgment names it", seed, c.ID, n)
 						}
 					}
 				}
 			}
 		}
-		if needs == 0 {
-			t.Errorf("seed %d: nothing waits on the coordinator after five silent hours: the scene proves nothing", seed)
-		}
+		assert.NotEqual(t, 0, needs, "seed %d: nothing waits on the coordinator after five silent hours: the scene proves nothing", seed)
 		// A second tick marks nothing again.
 		h.tick(time.Minute)
 		h.machine()
 		for id, n := range h.overdueLines() {
-			if n != lines[id] && lines[id] > 0 {
-				t.Errorf("seed %d: judgment %s marked overdue again (%d lines)", seed, id, n)
+			if lines[id] > 0 {
+				assert.Equal(t, lines[id], n, "seed %d: judgment %s marked overdue again (%d lines)", seed, id, n)
 			}
 		}
 		h.clean("silent coordinator")
@@ -139,43 +129,34 @@ func TestAnOverdueMarkFollowsTheDueTime(t *testing.T) {
 	h.must(FinishStep(sprint.FinishReq{As: "m1", Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: c.Int("gen")}, Failed: true}))
 	h.machine()
 	o := h.openOf(sprint.NWorkFailed)
-	if len(o) != 1 {
-		t.Fatalf("work failed: %d", len(o))
-	}
+	require.Len(t, o, 1, "work failed: %d", len(o))
 	id := o[0].Note.ID
 	// Stopped time does not count.
 	h.stopMachine()
 	h.tick(time.Hour)
 	h.startMachine()
 	h.machine()
-	if n := h.overdueLines()[id]; n != 0 {
-		t.Fatalf("marked overdue from stopped time: %d", n)
-	}
+	n := h.overdueLines()[id]
+	require.Equal(t, 0, n, "marked overdue from stopped time: %d", n)
 	h.tick(sprint.DeadlineJudgment + time.Second)
 	h.machine()
 	h.tick(time.Minute + time.Second)
 	h.machine()
-	if n := h.overdueLines()[id]; n != 1 {
-		t.Fatalf("overdue lines %d, want 1", n)
-	}
-	if err := h.m.SetReview(h.ctx, id, h.now.Add(time.Hour), h.now); err != nil {
-		t.Fatal(err)
-	}
+	n = h.overdueLines()[id]
+	require.Equal(t, 1, n, "overdue lines %d, want 1", n)
+	require.NoError(t, h.m.SetReview(h.ctx, id, h.now.Add(time.Hour), h.now))
 	h.tick(time.Minute + time.Second)
 	h.machine()
-	if n := len(h.openOf(sprint.NOverdue)); n != 0 {
-		t.Fatalf("the mark outlived the wait: %d", n)
-	}
+	n = len(h.openOf(sprint.NOverdue))
+	require.Equal(t, 0, n, "the mark outlived the wait: %d", n)
 	h.tick(time.Hour)
 	h.machine()
-	if n := h.overdueLines()[id]; n != 2 {
-		t.Fatalf("overdue lines after the review time passed: %d, want 2", n)
-	}
+	n = h.overdueLines()[id]
+	require.Equal(t, 2, n, "overdue lines after the review time passed: %d, want 2", n)
 	h.run(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: "fix"}))
 	h.tick(time.Second)
 	h.machine()
-	if n := len(h.openOf(sprint.NOverdue)); n != 0 {
-		t.Fatalf("the mark outlived its judgment: %d", n)
-	}
+	n = len(h.openOf(sprint.NOverdue))
+	require.Equal(t, 0, n, "the mark outlived its judgment: %d", n)
 	h.clean("marks")
 }

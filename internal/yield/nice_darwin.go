@@ -13,12 +13,8 @@ func setNice(n int) error {
 	if err == nil {
 		return nil
 	}
-	if now, err2 := currentNice(); err2 == nil && alreadyBehind(err, now, n) {
+	if now, err2 := syscall.Getpriority(syscall.PRIO_PROCESS, 0); err2 == nil && alreadyBehind(err, now, n) {
 		return nil
 	}
 	return err
 }
-
-// currentNice is getpriority(PRIO_PROCESS, 0): darwin returns the nice value
-// as it is.
-func currentNice() (int, error) { return syscall.Getpriority(syscall.PRIO_PROCESS, 0) }

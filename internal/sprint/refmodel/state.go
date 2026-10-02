@@ -28,6 +28,8 @@ package refmodel
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -104,6 +106,16 @@ const (
 // tick deals a member.
 const Width = 64
 
+// DealAhead is how many widths of work cards a member holds, ready and working
+// together: its width working and as many again ready behind them (the owner,
+// 2026-10-01: "deal at most 2X width ahead per-machine in fleet"; the engine's
+// sprint.DealAhead).
+const DealAhead = 2
+
+// Room is the most work cards a placement leaves on a member, ready and
+// working together: DealAhead times its Width.
+const Room = DealAhead * Width
+
 // MaxRedeals is the spec's redeal bound (section 2): an attempt's work card
 // is dealt again at most this many times after a take of it ended without a
 // finish, its member down while it was working; a card that was ready keeps
@@ -150,7 +162,7 @@ type Primary struct {
 	Score   float64
 	Attempt int      // the attempt of its current or next work card, from 1
 	Head    int      // the attempt whose finished work is its head; 0 before
-	Pair    []string // sorted: the readers kept on it (D2)
+	Pair    []string // sorted: the two readers of its latest ask (the work table's asked field)
 	Reached bool     // a sentinel whose needs have all landed or been waived
 	// CI and CIHead are its last CI observation: "", "red" or "green", and
 	// the attempt whose head it was for (0: no head yet).
@@ -270,25 +282,15 @@ func (s State) Clone() State {
 		c.Primaries[k] = v
 	}
 	c.Work = make(map[string]WorkCard, len(s.Work))
-	for k, v := range s.Work {
-		c.Work[k] = v
-	}
+	maps.Copy(c.Work, s.Work)
 	c.Reads = make(map[string]ReadCard, len(s.Reads))
-	for k, v := range s.Reads {
-		c.Reads[k] = v
-	}
+	maps.Copy(c.Reads, s.Reads)
 	c.Merge = make(map[string]MergeCard, len(s.Merge))
-	for k, v := range s.Merge {
-		c.Merge[k] = v
-	}
+	maps.Copy(c.Merge, s.Merge)
 	c.Streams = make(map[string]Stream, len(s.Streams))
-	for k, v := range s.Streams {
-		c.Streams[k] = v
-	}
+	maps.Copy(c.Streams, s.Streams)
 	c.Members = make(map[string]string, len(s.Members))
-	for k, v := range s.Members {
-		c.Members[k] = v
-	}
+	maps.Copy(c.Members, s.Members)
 	c.Order = append([]string(nil), s.Order...)
 	c.Readers = append([]string(nil), s.Readers...)
 	c.Open = make(map[Judgment]bool, len(s.Open))
@@ -347,7 +349,7 @@ func (s State) Placedp(p string) bool {
 func (s State) NeedsMet(p string) bool {
 	pr := s.Primaries[p]
 	for _, q := range pr.Needs {
-		if !s.InWork(q, Landed) && !has(pr.Waived, q) {
+		if !s.InWork(q, Landed) && !slices.Contains(pr.Waived, q) {
 			return false
 		}
 	}
@@ -390,7 +392,7 @@ func (s State) DroppedNeeds(p string) []string {
 	pr := s.Primaries[p]
 	var out []string
 	for _, q := range pr.Needs {
-		if s.InWork(q, Off) && !has(pr.Waived, q) {
+		if s.InWork(q, Off) && !slices.Contains(pr.Waived, q) {
 			out = append(out, q)
 		}
 	}
@@ -474,7 +476,7 @@ func roundPast(order []string, value, name string) string {
 func (s State) streamOrder(extra ...string) []string {
 	names := s.StreamNames()
 	for _, st := range extra {
-		if _, ok := s.Streams[st]; !ok && !has(names, st) {
+		if _, ok := s.Streams[st]; !ok && !slices.Contains(names, st) {
 			names = append(names, st)
 		}
 	}
@@ -489,7 +491,7 @@ func (s State) NextMember(set []string) string {
 	order := sorted(s.Order)
 	at := roundFrom(order, s.DealLast)
 	for i := range order {
-		if m := order[(at+i)%len(order)]; has(set, m) {
+		if m := order[(at+i)%len(order)]; slices.Contains(set, m) {
 			return m
 		}
 	}
@@ -500,13 +502,13 @@ func (s State) NextMember(set []string) string {
 // amendment 5: every placement, first attempts and redeals and levelling
 // alike, goes round the fleet and moves the index; the engine's round.next):
 // the next member round the fleet among set holding fewer work cards, ready
-// and working, than its Width (errata 3 amendment 9), avoid only when no
+// and working, than its Room (errata 3 amendment 9; DealAhead), avoid only when no
 // other has room; with none having room, the next of set, avoid only when it
 // is the only one. "" when set is empty.
 func (s State) PlaceOn(set []string, avoid string) string {
 	var room []string
 	for _, m := range set {
-		if s.Held(m) < Width {
+		if s.Held(m) < Room {
 			room = append(room, m)
 		}
 	}
@@ -514,7 +516,7 @@ func (s State) PlaceOn(set []string, avoid string) string {
 		if m := s.NextMember(without(from, avoid)); m != "" {
 			return m
 		}
-		if has(from, avoid) {
+		if slices.Contains(from, avoid) {
 			return avoid
 		}
 	}
@@ -553,7 +555,7 @@ func (s State) NextReaders(p string, k int) []string {
 		pick := -1
 		for i := range order {
 			j := (at + i) % len(order)
-			if _, made := s.Reads[RC(p, attempt, order[j])]; !made && !has(out, order[j]) {
+			if _, made := s.Reads[RC(p, attempt, order[j])]; !made && !slices.Contains(out, order[j]) {
 				pick = j
 				break
 			}
@@ -596,19 +598,6 @@ func (s State) LiveReadsOf(p string) []string {
 	var out []string
 	for id, c := range s.Reads {
 		if c.Primary == p && c.Place != Retired {
-			out = append(out, id)
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
-// Unfinished is p's work cards on a member's ready or working cell
-// (SprintTables.tla Unfinished restricted to p).
-func (s State) UnfinishedOf(p string) []string {
-	var out []string
-	for id, w := range s.Work {
-		if w.Primary == p && (w.Place == FReady || w.Place == FWorking) {
 			out = append(out, id)
 		}
 	}
@@ -732,29 +721,15 @@ func (s State) MergeCell(stream, place string) []string {
 
 // Streams is the streams in name order.
 func (s State) StreamNames() []string {
-	var out []string
-	for k := range s.Streams {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
+	return slices.Sorted(maps.Keys(s.Streams))
 }
 
 // ------------------------------------------------------------------ helpers
 
-func has(xs []string, x string) bool {
-	for _, y := range xs {
-		if y == x {
-			return true
-		}
-	}
-	return false
-}
-
 func addSorted(xs []string, add ...string) []string {
 	out := append([]string(nil), xs...)
 	for _, a := range add {
-		if !has(out, a) {
+		if !slices.Contains(out, a) {
 			out = append(out, a)
 		}
 	}
@@ -774,7 +749,7 @@ func (s *State) open(t, subject string) { s.Open[Judgment{t, subject}] = true }
 // (every type when types is empty).
 func (s *State) closeOn(subject string, types ...string) {
 	for j := range s.Open {
-		if j.Subject == subject && (len(types) == 0 || has(types, j.Type)) {
+		if j.Subject == subject && (len(types) == 0 || slices.Contains(types, j.Type)) {
 			delete(s.Open, j)
 		}
 	}

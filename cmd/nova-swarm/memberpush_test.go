@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -68,6 +70,16 @@ func (b *pushBench) commit(t *testing.T, text string) string {
 	return gitAs(t, b.checkout, "rev-parse", "HEAD")
 }
 
+// secondLine is a second line of work in the checkout: a branch from the staged commit with a
+// commit of its own; the checkout is left on rowan/c1. Its sha.
+func (b *pushBench) secondLine(t *testing.T) string {
+	t.Helper()
+	gitAs(t, b.checkout, "switch", "-q", "-c", "other", b.base)
+	other := b.commit(t, "another line\n")
+	gitAs(t, b.checkout, "switch", "-q", "rowan/c1")
+	return other
+}
+
 // originHas is the sha origin's branch holds, "" when it has none.
 func (b *pushBench) originHas(t *testing.T, branch string) string {
 	t.Helper()
@@ -75,7 +87,7 @@ func (b *pushBench) originHas(t *testing.T, branch string) string {
 	return out
 }
 
-func (b *pushBench) pusher() *gitPusher { return newGitPusher(b.root, b.slots, "nova-sprint") }
+func (b *pushBench) pusher() *gitPusher { return newGitPusher(b.root, b.slots) }
 
 // The member pushes the child's commit to origin's branch the sprint named,
 // from its own repository: the checkout's pre-push hook, credential helper and
@@ -208,12 +220,169 @@ func TestAGitThatRefusesThePushIsRefused(t *testing.T) {
 	assert.Empty(t, b.originHas(t, "sprint/c1"))
 }
 
+// rejectGit is a git whose first n pushes origin rejects on its own side, git's
+// `[remote rejected]` line; every other git, and the pushes after, run.
+type rejectGit struct {
+	mu     sync.Mutex
+	reject int
+	pushes int
+}
+
+func (r *rejectGit) run(ctx context.Context, o gitrun.Options, args ...string) (gitrun.Result, error) {
+	if slices.Contains(args, "push") {
+		r.mu.Lock()
+		r.pushes++
+		rejected := r.pushes <= r.reject
+		r.mu.Unlock()
+		if rejected {
+			return gitrun.Result{Stdout: []byte("To the origin\n!\t0123:refs/heads/sprint/c1\t[remote rejected] (failed)\nDone\n")}, assert.AnError
+		}
+	}
+	return gitrun.Run(ctx, o, args...)
+}
+
+// A push origin rejected on its own side is the remote's failure, not the
+// commit's: it is sent again after a wait, and the commit lands. Origin rejecting
+// it every time is the refusal, with git's line, after the last wait; a push
+// refused for the commit itself is never sent again.
+func TestAPushTheRemoteRejectedIsSentAgain(t *testing.T) {
+	t.Parallel()
+	b := newPushBench(t)
+	head := b.commit(t, "the work\n")
+	var waits []time.Duration
+	g := b.pusher()
+	twice := &rejectGit{reject: 2}
+	g.git, g.sleep = twice.run, func(d time.Duration) { waits = append(waits, d) }
+	require.Equal(t, member.Push{Sha: head}, g.Push(b.p, member.Result{Head: head}))
+	assert.Equal(t, 3, twice.pushes, "rejected twice, landed on the third")
+	assert.Equal(t, pushWaits[:2], waits)
+	assert.Equal(t, head, b.originHas(t, "sprint/c1"))
+
+	b2 := newPushBench(t)
+	head2 := b2.commit(t, "the work\n")
+	waits = nil
+	g2 := b2.pusher()
+	always := &rejectGit{reject: 100}
+	g2.git, g2.sleep = always.run, func(d time.Duration) { waits = append(waits, d) }
+	got := g2.Push(b2.p, member.Result{Head: head2})
+	assert.Contains(t, got.Refused, "[remote rejected]")
+	assert.Equal(t, len(pushWaits)+1, always.pushes)
+	assert.Equal(t, pushWaits, waits)
+	assert.Empty(t, b2.originHas(t, "sprint/c1"))
+
+	b3 := newPushBench(t)
+	head3 := b3.commit(t, "the work\n")
+	waits = nil
+	g3 := b3.pusher()
+	rec := &recordGit{refusePush: "!\t0123:refs/heads/sprint/c1\t[rejected] (non-fast-forward)"}
+	g3.git, g3.sleep = rec.run, func(d time.Duration) { waits = append(waits, d) }
+	got = g3.Push(b3.p, member.Result{Head: head3})
+	assert.Contains(t, got.Refused, "[rejected]")
+	assert.Empty(t, waits, "a push refused for the commit is not sent again")
+}
+
+// badFetchGit is a git whose first n fetches into the push repository fail as one did on the
+// 5000-card load test (2026-10-01), on another launch's ref, while the bench mirror the push
+// repository borrows objects from was being repacked; every other git, and the fetches
+// after, run. Failed tries first run the real fetch, then inject an error after refs
+// exist. It records those refs and the refs held before each fetch and push.
+type badFetchGit struct {
+	mu               sync.Mutex
+	fail             int
+	fetches          int
+	refsAtPush       []string
+	refsAtFetch      []string
+	refsAfterFailure [][]string
+}
+
+const badFetchLine = "fatal: bad object refs/member/c9.w1.g1.e7/HEAD"
+
+func (r *badFetchGit) run(ctx context.Context, o gitrun.Options, args ...string) (gitrun.Result, error) {
+	held := func() []string {
+		res, err := gitrun.Run(ctx, gitrun.Options{C: o.C}, "for-each-ref", "--format=%(refname)", "refs/member/")
+		if err != nil {
+			return []string{"for-each-ref: " + err.Error()}
+		}
+		return strings.Fields(string(res.Stdout))
+	}
+	switch {
+	case slices.Contains(args, "fetch"):
+		r.mu.Lock()
+		r.fetches++
+		failed := r.fetches <= r.fail
+		r.refsAtFetch = append(r.refsAtFetch, held()...)
+		r.mu.Unlock()
+		res, err := gitrun.Run(ctx, o, args...)
+		if err != nil {
+			return res, err // a real fetch failure is never replaced by the injected one
+		}
+		if failed {
+			r.mu.Lock()
+			r.refsAfterFailure = append(r.refsAfterFailure, held())
+			r.mu.Unlock()
+			return gitrun.Result{Stderr: []byte(badFetchLine + "\n")}, assert.AnError
+		}
+		return res, nil
+	case slices.Contains(args, "push"):
+		r.mu.Lock()
+		r.refsAtPush = append(r.refsAtPush, held()...)
+		r.mu.Unlock()
+	}
+	return gitrun.Run(ctx, o, args...)
+}
+
+// A fetch from the checkout that fails is the member's moment, never the card's: it is made
+// again after a wait, with nothing of the failed try left in this launch's namespace, and the
+// commit lands; a fetch that fails every time is the refusal, saying the push repository and
+// the tries. The launch's refs are gone before the push to origin, so another launch's fetch
+// never meets them for the seconds a push and a pull request take. On the 5000-card load test
+// (2026-10-01) one card failed "push refused: fetch from the checkout: fatal: bad object
+// refs/member/<another launch>/HEAD", a moment of the shared push repository.
+func TestAFetchFromTheCheckoutThatFailsIsMadeAgain(t *testing.T) {
+	t.Parallel()
+	b := newPushBench(t)
+	head := b.commit(t, "the work\n")
+	var waits []time.Duration
+	g := b.pusher()
+	once := &badFetchGit{fail: 1}
+	g.git, g.sleep = once.run, func(d time.Duration) { waits = append(waits, d) }
+	require.Equal(t, member.Push{Sha: head}, g.Push(b.p, member.Result{Head: head}))
+	assert.Equal(t, 2, once.fetches, "failed once, fetched on the second")
+	assert.Equal(t, pushWaits[:1], waits)
+	require.Len(t, once.refsAfterFailure, 1)
+	assert.Contains(t, once.refsAfterFailure[0], "refs/member/"+launchName(b.p)+"/HEAD", "the failed try really created the launch namespace")
+	assert.Empty(t, once.refsAtFetch, "each try starts with this launch's namespace empty")
+	assert.Empty(t, once.refsAtPush, "the launch's refs are dropped before the push to origin")
+	assert.Equal(t, head, b.originHas(t, "sprint/c1"))
+
+	b2 := newPushBench(t)
+	head2 := b2.commit(t, "the work\n")
+	waits = nil
+	g2 := b2.pusher()
+	always := &badFetchGit{fail: 100}
+	g2.git, g2.sleep = always.run, func(d time.Duration) { waits = append(waits, d) }
+	got := g2.Push(b2.p, member.Result{Head: head2})
+	assert.Empty(t, got.Sha)
+	assert.Equal(t, fmt.Sprintf("fetch from the checkout into the member's push repository, %d tries: %s", len(pushWaits)+1, badFetchLine), got.Refused)
+	assert.Equal(t, len(pushWaits)+1, always.fetches)
+	assert.Equal(t, pushWaits, waits)
+	require.Len(t, always.refsAfterFailure, len(pushWaits)+1)
+	for _, refs := range always.refsAfterFailure {
+		assert.Contains(t, refs, "refs/member/"+launchName(b2.p)+"/HEAD", "every failed try created refs before returning its error")
+	}
+	assert.Empty(t, always.refsAtFetch, "each retry starts after the failed try was cleaned up")
+	assert.Empty(t, runGit(t, filepath.Join(b2.root, "push.git"), "for-each-ref", "--format=%(refname)", "refs/member/"), "the final refusal also cleans up its partial fetch")
+	assert.Empty(t, b2.originHas(t, "sprint/c1"))
+}
+
 // What is not pushed, each said: a head that is not a sha, a branch that is
 // not a branch name (a refspec in disguise), a card that names no repository,
-// a checkout that is not there, a head the checkout's branches do not hold.
+// a checkout that is not there, a head the checkout's branches do not hold (with two lines
+// of work on them, so the checkout has no one head of its own to push in its place).
 func TestWhatIsNotPushedIsSaid(t *testing.T) {
 	t.Parallel()
 	b := newPushBench(t)
+	b.secondLine(t)
 	head := b.commit(t, "the work\n")
 	g := b.pusher()
 	cases := []struct {
@@ -319,4 +488,69 @@ func TestAHeadThatDoesNotDescendFromTheStagedCommitIsRefused(t *testing.T) {
 	got := b.pusher().Push(b.p, member.Result{Head: orphan})
 	assert.Empty(t, got.Sha)
 	assert.Contains(t, got.Refused, "does not descend from the staged commit")
+}
+
+// wrongTail is a sha whose first twelve characters are head's and whose tail is invented, as
+// a cheap model wrote one on the 1000-card load test (2026-10-01).
+func wrongTail(head string) string {
+	tail := "0123456789abcdef0123456789ab"
+	if head[12:] == tail {
+		tail = "ba9876543210fedcba9876543210"
+	}
+	return head[:12] + tail
+}
+
+// A result whose head names no commit of the checkout (its tail invented), from a child that
+// made exactly one line of work, pushes the checkout's own head and says so: five of the first
+// twelve failures of the load test were this, the commit on the checkout's branch all along.
+func TestAWrongTailHeadPushesTheCheckoutsOwnCommit(t *testing.T) {
+	t.Parallel()
+	b := newPushBench(t)
+	head := b.commit(t, "the work\n")
+	claimed := wrongTail(head)
+	g := b.pusher()
+	var notes strings.Builder
+	g.notes = &notes
+
+	got := g.Push(b.p, member.Result{Ran: true, OK: true, Head: claimed})
+
+	assert.Equal(t, member.Push{Sha: head}, got)
+	assert.Equal(t, head, b.originHas(t, "sprint/c1"), "origin's branch holds the checkout's commit")
+	assert.Equal(t, "NOTE push c1 head: the result named "+claimed+", which is no commit of the checkout; the checkout's own head "+head+" was pushed\n", notes.String())
+}
+
+// A result head the checkout does not hold, with two lines of work on its branches, is refused
+// as before: the member does not choose between them. With no line of work it is refused too.
+func TestAnAbsentHeadWithTwoCandidateBranchesIsStillRefused(t *testing.T) {
+	t.Parallel()
+	b := newPushBench(t)
+	b.secondLine(t)
+	head := b.commit(t, "the work\n")
+	g := b.pusher()
+	var notes strings.Builder
+	g.notes = &notes
+	got := g.Push(b.p, member.Result{Head: wrongTail(head)})
+	assert.Equal(t, member.Push{Refused: "the result's head " + wrongTail(head) + " is not a commit on the checkout's branches"}, got)
+	assert.Empty(t, b.originHas(t, "sprint/c1"))
+	assert.Empty(t, notes.String())
+
+	none := newPushBench(t)
+	got = none.pusher().Push(none.p, member.Result{Head: wrongTail(none.base)})
+	assert.Equal(t, member.Push{Refused: "the result's head " + wrongTail(none.base) + " is not a commit on the checkout's branches"}, got, "no line of work: nothing to push in its place")
+	assert.Empty(t, none.originHas(t, "sprint/c1"))
+}
+
+// A result head the checkout holds is pushed exactly as before, and nothing is noted, even
+// when the checkout holds a second line of work beside it.
+func TestARightHeadIsPushedAsBefore(t *testing.T) {
+	t.Parallel()
+	b := newPushBench(t)
+	b.secondLine(t)
+	head := b.commit(t, "the work\n")
+	g := b.pusher()
+	var notes strings.Builder
+	g.notes = &notes
+	assert.Equal(t, member.Push{Sha: head}, g.Push(b.p, member.Result{Head: head}))
+	assert.Equal(t, head, b.originHas(t, "sprint/c1"))
+	assert.Empty(t, notes.String())
 }

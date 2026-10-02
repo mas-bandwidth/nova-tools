@@ -19,7 +19,8 @@ import (
 // clone step that enters the wrong directory, a `../scratch` the wall refuses, a missing red
 // test, no deadline. `lint --card` reads the card mechanically -- no model, no probe, one
 // file -- and names each defect by check, line and excerpt before any spend. The checks are
-// the shape the card deaths taught (deprecated/docs/WORKER-CARDS.md practices 17, 18, 23, 25).
+// the shape the card deaths taught (WORKER-CARDS.md practices 17, 18, 23, 25; that document now
+// lives in the nova-work-old repository).
 
 // cardMaxBytes is the ADVISORY ceiling a card is written within: past it a model stops
 // reading the card in one window, so the lint says so before any spend -- and nothing is
@@ -46,13 +47,17 @@ const cardRefusedBytes = cardlimits.MaxBriefBytes
 // cardLintAdvisory is every check whose finding is advice rather than a defect. An advisory
 // finding is printed on a `LINT NOTE` line and is not in the verdict: a card whose only
 // findings are advisory is a clean card and exits 0.
-var cardLintAdvisory = map[string]bool{"size": true}
+//
+// `placeholder` is advice too, on purpose: the card template is pinned to lint clean as
+// printed (it is the shape every rule is checked against), so a line of it left unfilled
+// is named on a NOTE line under the OK, one per line, rather than changing the verdict.
+var cardLintAdvisory = map[string]bool{"size": true, swarm.PlaceholderCheck: true}
 
 // cardLintChecks is how many independent shapes lintCard looks for. It is printed on the
 // LINT OK line so a reader knows how much of the card was actually checked, and it is the
 // size of cardLintRemedies below: a check with no remedy is a red test, never a judgement.
 //
-// It counts the twelve shape rules of deprecated/docs/WORKER-CARDS.md:23-36, the four typed-header
+// It counts the twelve shape rules of WORKER-CARDS.md:23-36, the four typed-header
 // tokens SPEC-TOOLWORK.md §5 rule 1 adds -- `kind-declared`, `paths-declared`, `test-named`
 // and `paused` -- whose rules live in internal/swarm/lintheader.go, beside a note on the
 // gate parser they have to agree with (internal/pulse/cardheader.go, #1721 at f927bccc),
@@ -65,7 +70,9 @@ var cardLintAdvisory = map[string]bool{"size": true}
 // brief the coordinator gives every child and one `step-<what>` per forbidden command --
 // join the same set, so `--rules` prints them and this count includes them. They are
 // checked under `--child-rules`, and always by `nova-sprint add` over every brief.
-var cardLintChecks = 22 + len(swarm.CardChildRemedies)
+//
+// And `placeholder`: a line of the card template left with its <...> fill-ins.
+var cardLintChecks = 23 + len(swarm.CardChildRemedies)
 
 // EVERY DRIFT NAMES ITS REMEDY, AND THE BINARY CAN PRINT THE WHOLE TABLE (issue #1464).
 //
@@ -79,7 +86,7 @@ var cardLintChecks = 22 + len(swarm.CardChildRemedies)
 // `nova-swarm help` says of every listing that it carries "one MORE line naming the remedy".
 // This one named the rule, quoted the line and stopped.
 //
-// AND THE RULE TOKENS WERE WRITTEN DOWN NOWHERE THE BENCH COULD READ. deprecated/docs/WORKER-CARDS.md
+// AND THE RULE TOKENS WERE WRITTEN DOWN NOWHERE THE BENCH COULD READ. WORKER-CARDS.md
 // carries the practices in prose and names none of these tokens, and a bench's clone of this
 // repository is months behind the binary installed on it -- `grep -rn result-first` over the
 // stale clone found nothing at all. So the remedies live HERE, in the tool, beside the
@@ -90,19 +97,33 @@ var cardLintChecks = 22 + len(swarm.CardChildRemedies)
 // remedy cannot drift from the rule it explains, and a check added without one is caught by
 // the count above before it ships.
 var cardLintRemedies = map[string]string{
-	"result-first":     "line 1 IS the contract: " + swarm.CardContractWanted + ". A title, a heading or a `#` comment on line 1 is this drift, however right the words are (WORKER-CARDS.md practice 1; the two forms and why there are two are in internal/swarm/lintcontract.go)",
-	"clone-step":       "STEP 1 enters the repository from the working directory: the whole step, its line and the lines under it, holds a `git clone -q <url> repo && cd repo`, or a `cd ` into a checkout that may already be there. The wording of the STEP line itself is yours; the command is the rule (practices 17, 25)",
-	"steps-numbered":   "each step is its own line beginning `STEP <n>.`, numbered 1, 2, 3 with no gap and no repeat; a card with no STEP lines at all is this drift (practice 17)",
-	"red-test":         "name the reproducing test by its own name -- `TestSomething` -- or, for a card that only reads, say `probe` or `read` in so many words (practice 23)",
-	"test-command":     "write the gate verbatim, exactly as the card is to run it -- the accepted set is `make`/`gmake <target>` (the most common polyglot gate and the one `ci-fast.yml` runs), `go test`, `go vet`, `pytest`, `cargo test`, `npm test`, `dotnet test`, `ctest`, `mvn test`, `gradle test`, `bash <script>` or a bare `./<script>`, or say in words that there are no tests (practice 5; #1994)",
-	"deadline":         "give the card its own bound: a `deadline` line, or `finish within <n> minutes` (practice 17)",
-	"files-named":      "name the file or the package the work lives in, so the change has a home to start from (practice 3)",
-	"scratch-absolute": "the LINE quoted is the one to fix: spell scratch against a named root -- `<job>/scratch`, `$PWD/scratch`, an absolute path -- and never as the bare word. An absolute path on another line does not answer for this one (practice 25)",
+	// A remedy says what the rule wants and cites nothing a binary's user does not have (no
+	// spec section, practice number or issue; tool ledger W5): the rule's token is its name.
+	"result-first":     "line 1 IS the contract: " + swarm.CardContractWanted + ". A title, a heading or a `#` comment on line 1 is this drift, however right the words are",
+	"clone-step":       "STEP 1 enters the repository from the working directory: the whole step, its line and the lines under it, holds a `git clone -q <url> repo && cd repo`, or a `cd ` into a checkout that may already be there. The wording of the STEP line itself is yours; the command is the rule",
+	"steps-numbered":   "each step is its own line beginning `STEP <n>.`, numbered 1, 2, 3 with no gap and no repeat; a card with no STEP lines at all is this drift",
+	"red-test":         "name the reproducing test by its own name -- `TestSomething` -- or, for a card that only reads, say `probe` or `read` in so many words",
+	"test-command":     "write the gate verbatim, exactly as the card is to run it -- the accepted set is `make`/`gmake <target>`, `go test`, `go vet`, `pytest`, `cargo test`, `npm test`, `dotnet test`, `ctest`, `mvn test`, `gradle test`, `bash <script>` or a bare `./<script>`, or say in words that there are no tests",
+	"deadline":         "give the card its own bound: a `deadline` line, or `finish within <n> minutes`",
+	"files-named":      "name the file or the package the work lives in, so the change has a home to start from",
+	"scratch-absolute": "the LINE quoted is the one to fix: spell scratch against a named root -- `<job>/scratch`, `$PWD/scratch`, an absolute path -- and never as the bare word. An absolute path on another line does not answer for this one",
 	"no-parent-path":   swarm.CardParentPathWanted,
-	"no-sandbox":       "a card runs INSIDE the wall and never invokes it; drop the `nova-sandbox` line (practice 2)",
-	"result-last":      "the LAST step writes RESULT.md, and RESULT.md's own line 1 is the contract line from line 1 of this card (practices 1, 25)",
+	"no-sandbox":       "a card runs INSIDE the wall and never invokes it; drop the `nova-sandbox` line",
+	"result-last":      "the LAST step writes RESULT.md, and RESULT.md's own line 1 is the contract line from line 1 of this card",
 	"size":             "ADVICE, not a limit: a card over the ceiling is not refused, not truncated and still ships, so nothing here has to be cut. The ceiling is the budget that keeps a model reading the card in one window -- to come under it, point at a file instead of pasting it, and drop quoted source",
 	"depends-on":       swarm.CardDependsRemedy,
+	"placeholder":      "fill it in before the card is handed out: the line is the card template's own, its <...> not filled in; replace each <...> with the card's value (the label, the sha, the repository, the base, the minutes, the task, the worktree, the package)",
+}
+
+// cardPlaceholders is every line of a card that is a line of the card template still
+// holding its <...> fill-ins (swarm.UnfilledTemplateLines; tool ledger W12: the unfilled
+// template passed the lint and said nothing).
+func cardPlaceholders(raw []byte) []cardFinding {
+	var out []cardFinding
+	for _, f := range swarm.UnfilledTemplateLines(string(raw)) {
+		out = append(out, cardFinding{check: f.Check, line: f.Line, excerpt: f.Excerpt})
+	}
+	return out
 }
 
 // THE TYPED HEADER'S FOUR TOKENS JOIN THE SAME TABLE (SPEC-TOOLWORK.md §5 rule 1, #1651).
@@ -701,7 +722,7 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 	// on bash 4 or on zsh's word-splitting differences takes every launch down with it.
 	// The same verb, the same one-file contract, the same drift lines and remedies.
 	fleet := f.fs.String("fleet", "", "a launcher script to lint instead of a card")
-	rules := f.fs.Bool("rules", false, "print every rule token with what it wants, and lint nothing")
+	rules := f.fs.Bool("rules", false, "print every rule token with what it wants, and lint nothing; nova-sprint add holds a brief to the rule-<name> and step-<what> tokens of its rule set (and rule-libraries-considered when the set carries it) and to no other")
 	// THE TYPED HEADER IS CHECKED WHEN THE CARD HAS ONE, AND ON DEMAND WHEN IT DOES NOT.
 	// A card cut under SPEC-TOOLWORK §5 carries five typed lines; every card written before
 	// it carries none, and those are still linted by the twelve older rules. So the header
@@ -806,6 +827,12 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	name := filepath.Base(*card)
+	// AN EMPTY CARD IS SAID ONCE (swarm.EmptyCardCheck): every rule it fails is the one fact
+	// that there is nothing in it.
+	if strings.TrimSpace(string(raw)) == "" {
+		fmt.Fprintf(stdout, "LINT DRIFT card=%s %s: 1: the card is empty remedy=%s\n", oneline.Field(name), oneline.Field(swarm.EmptyCardCheck), oneline.Escape(swarm.EmptyCardRemedy))
+		return 1
+	}
 	// A template is printed verbatim and is not itself a card: `nova-swarm template --name
 	// <t>` piped into `lint --card` used to report result-first drift on the template's first
 	// line (issue #1471). The card templates pass, and a template that is not a card answers
@@ -855,7 +882,7 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 		}
 		bc.P95 = p
 	}
-	findings := lintCard(raw)
+	findings := append(lintCard(raw), cardPlaceholders(raw)...)
 	for _, hf := range swarm.LintCardHeader(raw, trust, *typed) {
 		findings = append(findings, cardFinding{check: hf.Check, line: hf.Line, excerpt: hf.Excerpt})
 	}

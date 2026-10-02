@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
+	"github.com/stretchr/testify/require"
 )
 
 func TestLocalRemoteEnforcesDevIntegrity(t *testing.T) {
@@ -29,40 +30,40 @@ func TestLocalRemoteEnforcesDevIntegrity(t *testing.T) {
 	}
 
 	if out, err := exec.Command("git", "clone", "--quiet", remote.URL, workDir).CombinedOutput(); err != nil {
-		t.Fatalf("clone failed: %v\n%s", err, out)
+		require.NoError(t, err, "clone failed: %v\n%s", err, out)
 	}
 
 	// Make initial commit on dev
 	_ = os.WriteFile(filepath.Join(workDir, "file.txt"), []byte("v1"), 0o644)
 	if out, err := git("add", "file.txt"); err != nil {
-		t.Fatalf("git add: %v\n%s", err, out)
+		require.NoError(t, err, "git add: %v\n%s", err, out)
 	}
 	if out, err := git("commit", "-m", "v1"); err != nil {
-		t.Fatalf("git commit: %v\n%s", err, out)
+		require.NoError(t, err, "git commit: %v\n%s", err, out)
 	}
 	// Fast-forward push to dev should succeed
 	if out, err := git("push", "origin", "dev"); err != nil {
-		t.Fatalf("fast-forward push should succeed: %v\n%s", err, out)
+		require.NoError(t, err, "fast-forward push should succeed: %v\n%s", err, out)
 	}
 
 	// Make second commit
 	_ = os.WriteFile(filepath.Join(workDir, "file.txt"), []byte("v2"), 0o644)
 	if out, err := git("commit", "-am", "v2"); err != nil {
-		t.Fatalf("git commit: %v\n%s", err, out)
+		require.NoError(t, err, "git commit: %v\n%s", err, out)
 	}
 	if out, err := git("push", "origin", "dev"); err != nil {
-		t.Fatalf("fast-forward push 2 should succeed: %v\n%s", err, out)
+		require.NoError(t, err, "fast-forward push 2 should succeed: %v\n%s", err, out)
 	}
 
 	// Try non-fast-forward push (force push or push of older commit)
 	if out, err := git("reset", "--hard", "HEAD~1"); err != nil {
-		t.Fatalf("git reset: %v\n%s", err, out)
+		require.NoError(t, err, "git reset: %v\n%s", err, out)
 	}
 	_ = os.WriteFile(filepath.Join(workDir, "file.txt"), []byte("v2-divergent"), 0o644)
 	if out, err := git("commit", "-am", "divergent"); err != nil {
-		t.Fatalf("git commit: %v\n%s", err, out)
+		require.NoError(t, err, "git commit: %v\n%s", err, out)
 	}
 	if out, err := git("push", "--force", "origin", "dev"); err == nil {
-		t.Fatalf("non-fast-forward push must be refused by update hook, but succeeded: %s", out)
+		require.Error(t, err, "non-fast-forward push must be refused by update hook, but succeeded: %s", out)
 	}
 }

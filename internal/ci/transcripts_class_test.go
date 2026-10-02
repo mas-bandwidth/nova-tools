@@ -8,6 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 )
@@ -67,9 +70,7 @@ func TestEveryTranscriptIsExecutedLineForLine(t *testing.T) {
 	tree := repoTree(t)
 
 	entries, err := os.ReadDir(filepath.Join(root, "cmd"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	var violations []string
 	sections := 0
@@ -112,9 +113,7 @@ func TestEveryTranscriptIsExecutedLineForLine(t *testing.T) {
 		}
 	}
 
-	if sections == 0 {
-		t.Fatal("no `## <tool>` sections found in docs/TESTS.md; this walk was looking in the wrong place and would have passed by checking nothing")
-	}
+	require.NotZero(t, sections, "no `## <tool>` sections found in docs/TESTS.md; this walk was looking in the wrong place and would have passed by checking nothing")
 	// The list only shrinks, and it shrinks two ways. A section a test now
 	// executes line for line, with the one comparator and no other, may not stay
 	// listed as owed -- and an entry naming NO section is an orphan that nothing
@@ -135,7 +134,7 @@ func TestEveryTranscriptIsExecutedLineForLine(t *testing.T) {
 	}
 	sort.Strings(violations)
 	for _, v := range violations {
-		t.Error(v)
+		assert.Fail(t, v)
 	}
 }
 

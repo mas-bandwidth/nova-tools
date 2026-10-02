@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/redis/go-redis/v9"
 	"net"
 	"strings"
 	"sync/atomic"
@@ -15,7 +16,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
-	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/require"
 )
 
 func TestShellUsesOneConnectionAndExistingReceipts(t *testing.T) {
@@ -24,23 +25,20 @@ func TestShellUsesOneConnectionAndExistingReceipts(t *testing.T) {
 	ctx := context.Background()
 	admin := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = admin.Close() })
-	if err := admin.Ping(ctx).Err(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, admin.Ping(ctx).Err())
 	monitor, err := net.DialTimeout("tcp", addr, 30*time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, "%v", err)
 	defer monitor.Close()
-	if err := monitor.SetDeadline(time.Now().Add(30 * time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := fmt.Fprint(monitor, "*1\r\n$7\r\nMONITOR\r\n"); err != nil {
-		t.Fatal(err)
+	require.NoError(t, monitor.SetDeadline(time.Now().Add(30*time.Second)))
+	{
+		_, err := fmt.Fprint(monitor, "*1\r\n$7\r\nMONITOR\r\n")
+		require.NoError(t, err, "%v", err)
 	}
 	reader := bufio.NewReader(monitor)
-	if line, err := reader.ReadString('\n'); err != nil || line != "+OK\r\n" {
-		t.Fatalf("monitor: %q %v", line, err)
+	{
+		line, err := reader.ReadString('\n')
+		require.NoError(t, err, "monitor: %q %v", line, err)
+		require.Equal(t, "+OK\r\n", line, "monitor: %q %v", line, err)
 	}
 	script := `# One session uses the same commands and quote rules throughout.
 create jobs --columns 'ready,working,done,note:text,pct:pct(done)'
@@ -58,19 +56,14 @@ drop jobs
 `
 	var out, errout bytes.Buffer
 	code := (&application{in: strings.NewReader(script)}).run([]string{"shell", "--redis", addr, "--actor", "shell-test"}, &out, &errout)
-	if code != 0 || errout.Len() != 0 {
-		t.Fatalf("shell: %d\n%s\n%s", code, &out, &errout)
-	}
-	if err := admin.Echo(ctx, "shell-end").Err(); err != nil {
-		t.Fatal(err)
-	}
+	require.EqualValues(t, 0, code, "shell: %d\n%s\n%s", code, &out, &errout)
+	require.EqualValues(t, 0, errout.Len(), "shell: %d\n%s\n%s", code, &out, &errout)
+	require.NoError(t, admin.Echo(ctx, "shell-end").Err())
 	hellos, calls := 0, 0
 	clients := map[string]bool{}
 	for {
 		line, err := reader.ReadString('\n')
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err, "%v", err)
 		if strings.Contains(line, `"echo" "shell-end"`) {
 			break
 		}
@@ -78,9 +71,7 @@ drop jobs
 			continue
 		}
 		parts := strings.SplitN(line, "] ", 2)
-		if len(parts) != 2 {
-			t.Fatalf("monitor: %q", line)
-		}
+		require.Len(t, parts, 2, "monitor: %q", line)
 		command := strings.ToLower(parts[1])
 		if strings.HasPrefix(command, `"hello"`) {
 			hellos++
@@ -91,35 +82,23 @@ drop jobs
 		}
 	}
 	t.Logf("wire: hellos=%d client_connections=%d application_calls=%d", hellos, len(clients), calls)
-	if hellos != 1 || len(clients) != 1 || calls != 12 {
-		t.Fatalf("wire: hello=%d clients=%d calls=%d", hellos, len(clients), calls)
-	}
-	if strings.Count(out.String(), "TABLE RECEIPT ") != 5 {
-		t.Fatalf("mutation receipts:\n%s", &out)
-	}
+	require.EqualValues(t, 1, hellos, "wire: hello=%d clients=%d calls=%d", hellos, len(clients), calls)
+	require.Len(t, clients, 1, "wire: hello=%d clients=%d calls=%d", hellos, len(clients), calls)
+	require.EqualValues(t, 12, calls, "wire: hello=%d clients=%d calls=%d", hellos, len(clients), calls)
+	require.EqualValues(t, 5, strings.Count(out.String(), "TABLE RECEIPT "), "mutation receipts:\n%s", &out)
 	for _, line := range strings.Split(out.String(), "\n") {
-		if strings.Contains(line, " trips=") && !strings.Contains(line, " trips=1") {
-			t.Fatalf("per-verb trips grew across the session: %s", line)
-		}
+		require.False(t, strings.Contains(line, " trips=") && !strings.Contains(line, " trips=1"), "per-verb trips grew across the session: %s", line)
 	}
 	tab, err := ntable.Read(ctx, admin, "jobs")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if tab.Revision != 5 || tab.Rows[0].Label != "--seat" || tab.Rows[0].Texts["note"] != "$HOME $(touch file) `whoami` *" {
-		t.Fatalf("stored session state: %+v", tab)
-	}
+	require.NoError(t, err, "%v", err)
+	require.EqualValues(t, 5, tab.Revision, "stored session state: %+v", tab)
+	require.Equal(t, "--seat", tab.Rows[0].Label, "stored session state: %+v", tab)
+	require.Equal(t, "$HOME $(touch file) `whoami` *", tab.Rows[0].Texts["note"], "stored session state: %+v", tab)
 	records, err := admin.XRange(ctx, "table:jobs:changes", "-", "+").Result()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(records) != 5 {
-		t.Fatalf("durable receipts: %d", len(records))
-	}
+	require.NoError(t, err, "%v", err)
+	require.Len(t, records, 5, "durable receipts: %d", len(records))
 	for _, r := range records {
-		if r.Values["actor"] != "shell-test" {
-			t.Fatalf("session defaults lost: %v", r)
-		}
+		require.Equal(t, "shell-test", r.Values["actor"], "session defaults lost: %v", r)
 	}
 }
 
@@ -138,43 +117,32 @@ row add jobs later
 			var out, errout bytes.Buffer
 			args := []string{"shell", "--redis", addr, "--keep-going=" + fmt.Sprint(keep), "--receipt=false"}
 			code := (&application{in: strings.NewReader(script)}).run(args, &out, &errout)
-			if code != 1 || !strings.Contains(errout.String(), "already has a place") || strings.Contains(out.String(), "TABLE RECEIPT") {
-				t.Fatalf("%d %s %s", code, &out, &errout)
-			}
+			require.EqualValues(t, 1, code, "%d %s %s", code, &out, &errout)
+			require.Contains(t, errout.String(), "already has a place", "%d %s %s", code, &out, &errout)
+			require.NotContains(t, out.String(), "TABLE RECEIPT", "%d %s %s", code, &out, &errout)
 			c := redis.NewClient(&redis.Options{Addr: addr})
 			defer c.Close()
 			tab, err := ntable.Read(context.Background(), c, "jobs")
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err, "%v", err)
 			want := 1
 			if keep {
 				want = 2
 			}
-			if len(tab.Rows) != want {
-				t.Fatalf("keep-going=%v rows=%d want %d", keep, len(tab.Rows), want)
-			}
+			require.Equal(t, want, len(tab.Rows), "keep-going=%v rows=%d want %d", keep, len(tab.Rows), want)
 			// A different address and a mid-session seat are rejected before any
 			// connection switch. A later valid command still uses the first store.
 			out.Reset()
 			errout.Reset()
 			script = "row add jobs forbidden --redis 127.0.0.1:1\nrow add jobs forbidden --seat elsewhere\nrow add jobs same --redis " + addr + "\n"
 			code = (&application{in: strings.NewReader(script)}).run([]string{"shell", "--redis", addr, "--keep-going"}, &out, &errout)
-			if code != 2 || !strings.Contains(errout.String(), "connection is fixed") {
-				t.Fatalf("pin: %d %s %s", code, &out, &errout)
-			}
+			require.EqualValues(t, 2, code, "pin: %d %s %s", code, &out, &errout)
+			require.Contains(t, errout.String(), "connection is fixed", "pin: %d %s %s", code, &out, &errout)
 			tab, err = ntable.Read(context.Background(), c, "jobs")
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err, "%v", err)
 			for _, r := range tab.Rows {
-				if r.Key == "forbidden" {
-					t.Fatal("a connection-changing line wrote")
-				}
+				require.NotEqual(t, "forbidden", r.Key, "%v", "a connection-changing line wrote")
 			}
-			if tab.Rows[len(tab.Rows)-1].Key != "same" {
-				t.Fatalf("same connection could not continue: %+v", tab.Rows)
-			}
+			require.Equal(t, "same", tab.Rows[len(tab.Rows)-1].Key, "same connection could not continue: %+v", tab.Rows)
 		})
 	}
 }
@@ -185,9 +153,7 @@ func TestShellEpochAndMetadataDefaultsDoNotDrift(t *testing.T) {
 	ctx := context.Background()
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	defer c.Close()
-	if err := c.HSet(ctx, "generation", "n", "5").Err(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, c.HSet(ctx, "generation", "n", "5").Err())
 	script := `create jobs --columns ready --epoch-key generation
 row add jobs stale --epoch 4
 row add jobs override --actor alternate --receipt=false
@@ -195,27 +161,21 @@ row add jobs default
 `
 	var out, errout bytes.Buffer
 	code := (&application{in: strings.NewReader(script)}).run([]string{"shell", "--redis", addr, "--epoch", "5", "--actor", "session", "--keep-going"}, &out, &errout)
-	if code != 1 || !strings.Contains(errout.String(), "epoch") {
-		t.Fatalf("%d %s %s", code, &out, &errout)
-	}
-	if strings.Count(out.String(), "TABLE RECEIPT ") != 2 {
-		t.Fatalf("per-command receipt override leaked: %s", &out)
-	}
+	require.EqualValues(t, 1, code, "%d %s %s", code, &out, &errout)
+	require.Contains(t, errout.String(), "epoch", "%d %s %s", code, &out, &errout)
+	require.EqualValues(t, 2, strings.Count(out.String(), "TABLE RECEIPT "), "per-command receipt override leaked: %s", &out)
 	tab, err := ntable.Read(ctx, c, "jobs")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if tab.Epoch != 5 || tab.Revision != 3 || len(tab.Rows) != 2 || tab.Rows[0].Key != "override" || tab.Rows[1].Key != "default" {
-		t.Fatalf("epoch/session state: %+v", tab)
-	}
+	require.NoError(t, err, "%v", err)
+	require.EqualValues(t, 5, tab.Epoch, "epoch/session state: %+v", tab)
+	require.EqualValues(t, 3, tab.Revision, "epoch/session state: %+v", tab)
+	require.Len(t, tab.Rows, 2, "epoch/session state: %+v", tab)
+	require.Equal(t, "override", tab.Rows[0].Key, "epoch/session state: %+v", tab)
+	require.Equal(t, "default", tab.Rows[1].Key, "epoch/session state: %+v", tab)
 	events, err := c.XRange(ctx, "table:jobs:changes", "-", "+").Result()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, "%v", err)
 	for i, want := range []string{"session", "alternate", "session"} {
-		if events[i].Values["actor"] != want || events[i].Values["epoch"] != "5" {
-			t.Fatalf("event %d: %v", i, events[i])
-		}
+		require.Equal(t, want, events[i].Values["actor"], "event %d: %v", i, events[i])
+		require.Equal(t, "5", events[i].Values["epoch"], "event %d: %v", i, events[i])
 	}
 }
 
@@ -225,50 +185,40 @@ func TestShellSyntaxErrorDoesNotPartiallyExecuteLine(t *testing.T) {
 	script := "create t --columns ready\nrow add t bad; drop t\nrow add t 'unfinished\nrow add t good\n"
 	var out, errout bytes.Buffer
 	code := (&application{in: strings.NewReader(script)}).run([]string{"shell", "--redis", addr, "--keep-going"}, &out, &errout)
-	if code != 2 || !strings.Contains(errout.String(), "line 2") || !strings.Contains(errout.String(), "line 3") {
-		t.Fatalf("%d %s %s", code, &out, &errout)
-	}
+	require.EqualValues(t, 2, code, "%d %s %s", code, &out, &errout)
+	require.Contains(t, errout.String(), "line 2", "%d %s %s", code, &out, &errout)
+	require.Contains(t, errout.String(), "line 3", "%d %s %s", code, &out, &errout)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	defer c.Close()
 	tab, err := ntable.Read(context.Background(), c, "t")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(tab.Rows) != 1 || tab.Rows[0].Key != "good" || tab.Revision != 2 {
-		t.Fatalf("bad input line wrote: %+v", tab)
-	}
+	require.NoError(t, err, "%v", err)
+	require.Len(t, tab.Rows, 1, "bad input line wrote: %+v", tab)
+	require.Equal(t, "good", tab.Rows[0].Key, "bad input line wrote: %+v", tab)
+	require.EqualValues(t, 2, tab.Revision, "bad input line wrote: %+v", tab)
 }
 
 func TestDocumentedShellSessionRuns(t *testing.T) {
 	t.Parallel()
 	doc := readDoc(t, "nova-table/README.md")
 	_, section, ok := strings.Cut(doc, "## Resident shell\n")
-	if !ok {
-		t.Fatal("resident shell guide missing")
-	}
+	require.True(t, ok, "%v", "resident shell guide missing")
 	_, body, ok := strings.Cut(section, "<<'TABLE'\n")
-	if !ok {
-		t.Fatal("shell example missing")
-	}
+	require.True(t, ok, "%v", "shell example missing")
 	script, _, ok := strings.Cut(body, "\nTABLE\n")
-	if !ok {
-		t.Fatal("shell example has no terminator")
-	}
+	require.True(t, ok, "%v", "shell example has no terminator")
 	addr := firstRunStore(t)
 	var out, errout bytes.Buffer
 	code := (&application{in: strings.NewReader(script)}).run([]string{"shell", "--redis", addr}, &out, &errout)
-	if code != 0 || errout.Len() != 0 {
-		t.Fatalf("documented shell: %d\n%s\n%s", code, &out, &errout)
-	}
+	require.EqualValues(t, 0, code, "documented shell: %d\n%s\n%s", code, &out, &errout)
+	require.EqualValues(t, 0, errout.Len(), "documented shell: %d\n%s\n%s", code, &out, &errout)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	defer c.Close()
 	tab, err := ntable.Read(context.Background(), c, "session-demo")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if tab.Revision != 5 || len(tab.Rows) != 1 || tab.Rows[0].Cells[1].Count != 2 || tab.Rows[0].Texts["note"] != "Running both checks" {
-		t.Fatalf("documented session result: %+v", tab)
-	}
+	require.NoError(t, err, "%v", err)
+	require.EqualValues(t, 5, tab.Revision, "documented session result: %+v", tab)
+	require.Len(t, tab.Rows, 1, "documented session result: %+v", tab)
+	require.EqualValues(t, 2, tab.Rows[0].Cells[1].Count, "documented session result: %+v", tab)
+	require.Equal(t, "Running both checks", tab.Rows[0].Texts["note"], "documented session result: %+v", tab)
 }
 
 // The first connection's store goes away (its sockets close and nothing
@@ -281,9 +231,7 @@ func TestShellFreshDialAfterConnectionFailureWithoutReplay(t *testing.T) {
 	addr := firstRunStore(t)
 	gone := startRelay(t, addr, nil)
 	first, err := openShellStore(gone.addr(), noEnv)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, "%v", err)
 	gone.stop()
 	back := startRelay(t, addr, nil)
 	reopens := 0
@@ -297,9 +245,11 @@ func TestShellFreshDialAfterConnectionFailureWithoutReplay(t *testing.T) {
 	// A failed create must not be replayed after the store recovers. Help needs
 	// no connection; two later list calls must reuse the single fresh one.
 	code := app.readCommands(strings.NewReader("create failed --columns ready\nversion\nlist\nlist\n"), &out, &errs, true, false)
-	if code != 2 || reopens != 1 || back.accepted.Load() != 1 || strings.Count(out.String(), "TABLE LIST tables=0 trips=1") != 2 || !strings.Contains(errs.String(), "line 1") {
-		t.Fatalf("recovery: code=%d reopens=%d connections=%d out=%s err=%s", code, reopens, back.accepted.Load(), &out, &errs)
-	}
+	require.EqualValues(t, 2, code, "recovery: code=%d reopens=%d connections=%d out=%s err=%s", code, reopens, back.accepted.Load(), &out, &errs)
+	require.EqualValues(t, 1, reopens, "recovery: code=%d reopens=%d connections=%d out=%s err=%s", code, reopens, back.accepted.Load(), &out, &errs)
+	require.EqualValues(t, 1, back.accepted.Load(), "recovery: code=%d reopens=%d connections=%d out=%s err=%s", code, reopens, back.accepted.Load(), &out, &errs)
+	require.EqualValues(t, 2, strings.Count(out.String(), "TABLE LIST tables=0 trips=1"), "recovery: code=%d reopens=%d connections=%d out=%s err=%s", code, reopens, back.accepted.Load(), &out, &errs)
+	require.Contains(t, errs.String(), "line 1", "recovery: code=%d reopens=%d connections=%d out=%s err=%s", code, reopens, back.accepted.Load(), &out, &errs)
 }
 
 // The relay drops one reply only after the store produced it. This is an
@@ -308,8 +258,9 @@ func TestShellFreshDialAfterConnectionFailureWithoutReplay(t *testing.T) {
 func TestShellLostWriteReplyIsNeverReplayed(t *testing.T) {
 	t.Parallel()
 	addr := firstRunStore(t)
-	if code, out, err := runTable(at(addr, "create", "jobs", "--columns", "ready")...); code != 0 {
-		t.Fatalf("setup %d %s %s", code, out, err)
+	{
+		code, out, err := runTable(at(addr, "create", "jobs", "--columns", "ready")...)
+		require.EqualValues(t, 0, code, "setup %d %s %s", code, out, err)
 	}
 	var lost atomic.Bool
 	r := startRelay(t, addr, &lost)
@@ -320,17 +271,17 @@ func TestShellLostWriteReplyIsNeverReplayed(t *testing.T) {
 	admin := redis.NewClient(&redis.Options{Addr: addr})
 	defer admin.Close()
 	tab, err := ntable.Read(context.Background(), admin, "jobs")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, "%v", err)
 	events, err := admin.XLen(context.Background(), ntable.ChangesKey("jobs")).Result()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, "%v", err)
 	// One remedy, show: the write may have committed, so the line sends the
 	// reader to look, never to start the store and write again.
 	const wantErr = "nova-table row add: table \"jobs\" row \"committed\": ns_table_row_add: EOF; run: nova-table show 'jobs'\nnova-table shell: line 1 failed (exit 2)\n"
-	if code != 2 || !lost.Load() || tab.Revision != 2 || events != 2 || len(tab.Rows) != 1 || !strings.Contains(out.String(), "TABLE LIST tables=1 trips=1") || errs.String() != wantErr {
-		t.Fatalf("lost reply: code=%d lost=%v revision=%d events=%d rows=%d out=%s err=%s", code, lost.Load(), tab.Revision, events, len(tab.Rows), &out, &errs)
-	}
+	require.EqualValues(t, 2, code, "lost reply: code=%d lost=%v revision=%d events=%d rows=%d out=%s err=%s", code, lost.Load(), tab.Revision, events, len(tab.Rows), &out, &errs)
+	require.True(t, lost.Load(), "lost reply: code=%d lost=%v revision=%d events=%d rows=%d out=%s err=%s", code, lost.Load(), tab.Revision, events, len(tab.Rows), &out, &errs)
+	require.EqualValues(t, 2, tab.Revision, "lost reply: code=%d lost=%v revision=%d events=%d rows=%d out=%s err=%s", code, lost.Load(), tab.Revision, events, len(tab.Rows), &out, &errs)
+	require.EqualValues(t, 2, events, "lost reply: code=%d lost=%v revision=%d events=%d rows=%d out=%s err=%s", code, lost.Load(), tab.Revision, events, len(tab.Rows), &out, &errs)
+	require.Len(t, tab.Rows, 1, "lost reply: code=%d lost=%v revision=%d events=%d rows=%d out=%s err=%s", code, lost.Load(), tab.Revision, events, len(tab.Rows), &out, &errs)
+	require.Contains(t, out.String(), "TABLE LIST tables=1 trips=1", "lost reply: code=%d lost=%v revision=%d events=%d rows=%d out=%s err=%s", code, lost.Load(), tab.Revision, events, len(tab.Rows), &out, &errs)
+	require.Equal(t, wantErr, errs.String(), "lost reply: code=%d lost=%v revision=%d events=%d rows=%d out=%s err=%s", code, lost.Load(), tab.Revision, events, len(tab.Rows), &out, &errs)
 }

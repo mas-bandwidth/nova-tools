@@ -6,10 +6,15 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 )
 
 const Header = "name\tkind\tinstalled\tlatest\tapply\towner"
+
+// tabbed is a tab-separated header as a reader copies it from a line: each tab
+// spelled <TAB>, the way the banner spells it, never escaped as \x09.
+func tabbed(header string) string { return strings.ReplaceAll(header, "\t", "<TAB>") }
 
 var Kinds = []string{"harness", "engine", "model", "tool", "pin"}
 
@@ -19,12 +24,7 @@ type Entry struct {
 }
 
 func kindValid(s string) bool {
-	for _, k := range Kinds {
-		if k == s {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(Kinds, s)
 }
 func argv(s string) ([]string, error) {
 	if s == "" || strings.TrimSpace(s) != s || strings.Contains(s, "  ") || strings.ContainsAny(s, "\r\n\t\"'") {
@@ -64,7 +64,7 @@ func Load(r io.Reader) ([]Entry, error) {
 		problems = append(problems, fmt.Sprintf("line %d: ", line)+fmt.Sprintf(format, args...))
 	}
 	if !sc.Scan() || sc.Text() != Header {
-		add(1, "invalid header (put the header back exactly: %s)", Header)
+		add(1, "invalid header (put the header back exactly: %s)", tabbed(Header))
 	}
 	var out []Entry
 	seen := map[string]bool{}

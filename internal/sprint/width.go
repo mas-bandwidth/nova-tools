@@ -7,15 +7,19 @@ import (
 )
 
 // A member is a fleet machine, and its width is the machine's child cap: the
-// most work cards it holds at once, ready and working together (errata 3,
-// amendment 9: "each fleet machine to have say, max width 64"). The width is a
-// field of the member's control card, set by init --members <m>:<n> and by
-// fleet up <m> --width <n>, and shown in the fleet table's width column. The
-// deal fills every member up to its width in one step, round the fleet (T3,
-// R6), and the level moves a card only to a member below its width (T4, R7).
-// The model is tla/SprintEvents.tla: PlanDeal's room (its Cap), which counts
-// the ready cards of a member; the width counts ready and working, and the
-// bench run of the model at the width is owed (errata 3, amendment 9).
+// most work cards it runs at once (errata 3, amendment 9: "each fleet machine
+// to have say, max width 64"). It holds up to DealAhead times its width,
+// ready and working together: its width working and as many again ready
+// behind them (the owner, 2026-10-01: "The WHOLE POINT of nova-sprint is to
+// feed the fleet at width and keep it working at that width until done."). The
+// width is a field of the member's control card, set by init --members
+// <m>:<n> and by fleet up <m> --width <n>, and shown in the fleet table's
+// width column. The deal fills every member up to DealAhead times its width
+// in one step, round the fleet (T3, R6), and the level, once at the start of
+// every tick, moves ready cards from a member that cannot start them to one
+// with free lanes, never past DealAhead times its width (T4, R7). The model is
+// tla/SprintEvents.tla: PlanDeal's room (its Cap), which counts the ready
+// cards of a member; the room here counts ready and working.
 const (
 	// FieldWidth is the control card's field, and the fleet table's column,
 	// holding the member's width.
@@ -94,21 +98,30 @@ func memberLoads(s *Snapshot, up []string) map[string]int {
 	return q
 }
 
-// memberWidths is each up member's width.
+// DealAhead is how many widths of cards a member may hold, ready and working
+// together: its width working and as many again ready behind them, so a lane
+// that frees takes its next card at once and never waits for a tick (the owner,
+// 2026-10-01: "we must FEED the machine"; "deal at most 2X width ahead
+// per-machine in fleet"). The member itself runs at most its width (the fleet
+// row's, internal/member); the rest wait in its ready column.
+const DealAhead = 2
+
+// memberWidths is each up member's room for every placement (the deal, a
+// redeal, the level, a down member's cards): DealAhead times its width.
 func memberWidths(s *Snapshot, up []string) map[string]int {
 	w := map[string]int{}
 	for _, m := range up {
-		w[m] = s.Width(m)
+		w[m] = DealAhead * s.Width(m)
 	}
 	return w
 }
 
 // widthRoom is the sum over the up members of the cards each can still take
-// before it is at its width.
+// before it holds DealAhead times its width.
 func widthRoom(s *Snapshot, up []string) int {
 	room := 0
 	for _, m := range up {
-		room += max(0, s.Width(m)-s.Fleet.Count(m, Ready)-s.Fleet.Count(m, Working))
+		room += max(0, DealAhead*s.Width(m)-s.Fleet.Count(m, Ready)-s.Fleet.Count(m, Working))
 	}
 	return room
 }

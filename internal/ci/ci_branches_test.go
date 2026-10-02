@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/pkgselect"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // ci_branches_test.go pins the per-event job set: what each trigger runs, and
@@ -36,12 +38,8 @@ func TestSelfHostedShardsSelectThePackagesAChangeTouches(t *testing.T) {
 	root := repoRoot(t)
 	src := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
 	block := jobBody(src, "test-packages")
-	if block == "" {
-		t.Fatal("no test-packages job in ci.yml; the self-hosted fan-out has no selection to check")
-	}
-	if runsOnHosted(block) {
-		t.Fatal("test-packages is not the self-hosted fan-out; the test is looking at the wrong job")
-	}
+	require.NotEmpty(t, block, "no test-packages job in ci.yml; the self-hosted fan-out has no selection to check")
+	require.False(t, runsOnHosted(block), "test-packages is not the self-hosted fan-out; the test is looking at the wrong job")
 	// The step hands the event's own bases to the verb that selects and deals;
 	// the verb holds the rest of the law.
 	for _, want := range []string{
@@ -50,9 +48,7 @@ func TestSelfHostedShardsSelectThePackagesAChangeTouches(t *testing.T) {
 		`--pull-request-base "${{ github.event.pull_request.base.sha }}"`,
 		`--merge-group-base "${{ github.event.merge_group.base_sha }}"`,
 	} {
-		if !strings.Contains(block, want) {
-			t.Errorf("test-packages does not carry %q: the self-hosted shards must select the packages a change touches on pull_request and merge_group, against the event's own base", want)
-		}
+		assert.Contains(t, block, want, "test-packages does not carry %q: the self-hosted shards must select the packages a change touches on pull_request and merge_group, against the event's own base", want)
 	}
 	verb := readFile(t, filepath.Join(root, "tools", "ci", "sel_matrix.go"))
 	for _, want := range []string{
@@ -62,9 +58,7 @@ func TestSelfHostedShardsSelectThePackagesAChangeTouches(t *testing.T) {
 		`base = *prBase`,
 		`base = *mgBase`,
 	} {
-		if !strings.Contains(verb, want) {
-			t.Errorf("tools/ci/sel_matrix.go does not carry %q: a change that touches no Go package runs nothing, and the selection reads the diff against the event's own base", want)
-		}
+		assert.Contains(t, verb, want, "tools/ci/sel_matrix.go does not carry %q: a change that touches no Go package runs nothing, and the selection reads the diff against the event's own base", want)
 	}
 }
 
@@ -134,21 +128,6 @@ func jobRunsOnEvent(block, event string) bool {
 	return false
 }
 
-// jobUsesShort reports whether a job's test command passes -short. Comments are
-// stripped first, so prose that names the flag is not read as the flag.
-func jobUsesShort(block string) bool {
-	for _, line := range strings.Split(block, "\n") {
-		code := line
-		if j := strings.Index(code, "#"); j >= 0 {
-			code = code[:j]
-		}
-		if strings.Contains(code, "go test") && strings.Contains(code, "-short") {
-			return true
-		}
-	}
-	return false
-}
-
 // ci_branches_test.go is class B of pit stop 3 (#828) applied to CI:
 // ONE FACT WRITTEN TWICE. Two rows of that bug table are read off these
 // workflow files as text, the same way ci_budget_test.go reads the two-minute
@@ -205,20 +184,14 @@ func TestIntegrationBranchesAreOneList(t *testing.T) {
 
 	// (1) Exactly one definition, and it parses as a list of refs.
 	defs := integrationListRe.FindAllStringSubmatch(src, -1)
-	if len(defs) != 1 {
-		t.Fatalf("%s: found %d fromJSON lists of refs/heads/... refs, want exactly 1: the integration branches are one list, so every rule reads the same one", ciFile, len(defs))
-	}
+	require.Len(t, defs, 1, "%s: found %d fromJSON lists of refs/heads/... refs, want exactly 1: the integration branches are one list, so every rule reads the same one", ciFile, len(defs))
 	var refs []string
-	if err := json.Unmarshal([]byte(defs[0][1]), &refs); err != nil {
-		t.Fatalf("%s: the integration branch list %q is not a JSON array: %v", ciFile, defs[0][1], err)
-	}
-	if len(refs) == 0 {
-		t.Fatalf("%s: the integration branch list is empty", ciFile)
-	}
+	err := json.Unmarshal([]byte(defs[0][1]), &refs)
+	require.NoError(t, err, "%s: the integration branch list %q is not a JSON array: %v", ciFile, defs[0][1], err)
+	require.NotEmpty(t, refs, "%s: the integration branch list is empty", ciFile)
 	names := make([]string, 0, len(refs))
 	for _, ref := range refs {
-		if !strings.HasPrefix(ref, "refs/heads/") {
-			t.Errorf("%s: integration branch %q is not a refs/heads/ ref; github.ref is compared against this list", ciFile, ref)
+		if !assert.True(t, strings.HasPrefix(ref, "refs/heads/"), "%s: integration branch %q is not a refs/heads/ ref; github.ref is compared against this list", ciFile, ref) {
 			continue
 		}
 		names = append(names, strings.TrimPrefix(ref, "refs/heads/"))
@@ -233,9 +206,7 @@ func TestIntegrationBranchesAreOneList(t *testing.T) {
 		}
 		for i, line := range strings.Split(text, "\n") {
 			for _, ref := range refs {
-				if strings.Contains(line, ref) {
-					t.Errorf("%s:%d: %q is written outside the one list: %q. Every rule that treats an integration branch differently must read the list in ci.yml's concurrency group (row 8 of #828: dev was taught the sha-keyed group and not the no-cancel rule, and the bench froze)", file, i+1, ref, strings.TrimSpace(line))
-				}
+				assert.NotContains(t, line, ref, "%s:%d: %q is written outside the one list: %q. Every rule that treats an integration branch differently must read the list in ci.yml's concurrency group (row 8 of #828: dev was taught the sha-keyed group and not the no-cancel rule, and the bench froze)", file, i+1, ref, strings.TrimSpace(line))
 			}
 		}
 	}
@@ -248,9 +219,7 @@ func TestIntegrationBranchesAreOneList(t *testing.T) {
 			continue
 		}
 		for _, name := range names {
-			if regexp.MustCompile(`\b` + regexp.QuoteMeta(name) + `\b`).MatchString(line) {
-				t.Errorf("%s:%d: cancel-in-progress names %q: %q. The no-cancel rule must not hold a second copy of the branch list", ciFile, i+1, name, strings.TrimSpace(line))
-			}
+			assert.False(t, regexp.MustCompile(`\b`+regexp.QuoteMeta(name)+`\b`).MatchString(line), "%s:%d: cancel-in-progress names %q: %q. The no-cancel rule must not hold a second copy of the branch list", ciFile, i+1, name, strings.TrimSpace(line))
 		}
 	}
 
@@ -259,20 +228,12 @@ func TestIntegrationBranchesAreOneList(t *testing.T) {
 	// land on; main is promoted, #778). Nothing else may appear there.
 	inList := toSet(names)
 	ciPush := pushTriggerBranches(src)
-	if len(ciPush) == 0 {
-		t.Fatalf("%s: no push trigger branches parsed; the parser is looking in the wrong place", ciFile)
-	}
-	if !sameSet(ciPush, names) {
-		t.Errorf("%s: push trigger branches %v do not match the integration branch list %v. `on: push: branches:` takes no expression, so it is the one spelling the list cannot reach: change it in the same edit", ciFile, ciPush, names)
-	}
+	require.NotEmpty(t, ciPush, "%s: no push trigger branches parsed; the parser is looking in the wrong place", ciFile)
+	assert.True(t, sameSet(ciPush, names), "%s: push trigger branches %v do not match the integration branch list %v. `on: push: branches:` takes no expression, so it is the one spelling the list cannot reach: change it in the same edit", ciFile, ciPush, names)
 	certPush := pushTriggerBranches(readFile(t, filepath.Join(root, certFile)))
-	if len(certPush) == 0 {
-		t.Fatalf("%s: no push trigger branches parsed; certification runs on a push to the integration branch", certFile)
-	}
+	require.NotEmpty(t, certPush, "%s: no push trigger branches parsed; certification runs on a push to the integration branch", certFile)
 	for _, b := range certPush {
-		if !inList[b] {
-			t.Errorf("%s: certification triggers on a push to %q, which is not in ci.yml's integration branch list %v", certFile, b, names)
-		}
+		assert.True(t, inList[b], "%s: certification triggers on a push to %q, which is not in ci.yml's integration branch list %v", certFile, b, names)
 	}
 }
 
@@ -289,23 +250,16 @@ func TestRunnersPerMachineIsOneNumber(t *testing.T) {
 	src := readFile(t, filepath.Join(root, ciFile))
 
 	step := stepText(src, "share of the machine")
-	if step == "" {
-		t.Fatal("no fair-share step in ci.yml (a step whose name says it takes this runner's share of the machine); GOMAXPROCS per leg is what row 9 of #828 got wrong")
-	}
-	if !strings.Contains(step, ciRunner+" runner-share") {
-		t.Error("the fair-share step does not call `ci runner-share`, which holds the division")
-	}
+	require.NotEmpty(t, step, "no fair-share step in ci.yml (a step whose name says it takes this runner's share of the machine); GOMAXPROCS per leg is what row 9 of #828 got wrong")
+	assert.Contains(t, step, ciRunner+" runner-share", "the fair-share step does not call `ci runner-share`, which holds the division")
 	// The divisor is the runner service's fact, and 8 is today's fleet as the
 	// default when a machine does not say.
-	if pkgselect.RunnersEnv != "NOVA_RUNNERS_PER_MACHINE" || pkgselect.DefaultRunners != 8 {
-		t.Errorf("the runner count is %s with default %d, want NOVA_RUNNERS_PER_MACHINE with default 8: the runner count is the runner service's fact", pkgselect.RunnersEnv, pkgselect.DefaultRunners)
-	}
+	assert.Equal(t, "NOVA_RUNNERS_PER_MACHINE", pkgselect.RunnersEnv, "the runner count is %s with default %d, want NOVA_RUNNERS_PER_MACHINE with default 8: the runner count is the runner service's fact", pkgselect.RunnersEnv, pkgselect.DefaultRunners)
+	assert.Equal(t, 8, pkgselect.DefaultRunners, "the runner count is %s with default %d, want NOVA_RUNNERS_PER_MACHINE with default 8: the runner count is the runner service's fact", pkgselect.RunnersEnv, pkgselect.DefaultRunners)
 	// The number a leg divided by is printed, so a leg's own log answers "how
 	// many runners did this machine claim" without a trip to the machine.
 	verb := readFile(t, filepath.Join(root, "tools", "ci", "sel_share.go"))
-	if !strings.Contains(verb, "runners per machine") {
-		t.Error("`ci runner-share` does not print the runner count it used; the number a leg divided by must be readable in the leg's own log")
-	}
+	assert.Contains(t, verb, "runners per machine", "`ci runner-share` does not print the runner count it used; the number a leg divided by must be readable in the leg's own log")
 	// The divisor is what the machine says: 6 cores over 3 runners is 2, over 4
 	// runners is 1, and a machine that says nothing divides by 8.
 	for _, tc := range []struct {
@@ -313,14 +267,12 @@ func TestRunnersPerMachineIsOneNumber(t *testing.T) {
 		says              string
 		wantRunners, want int
 	}{{6, "3", 3, 2}, {6, "4", 4, 1}, {6, "", 8, 1}, {64, "", 8, 2}} {
-		if runners, got := pkgselect.RunnerShare(tc.cores, tc.says); runners != tc.wantRunners || got != tc.want {
-			t.Errorf("%d cores, NOVA_RUNNERS_PER_MACHINE=%q: %d runners, a share of %d; want %d and %d", tc.cores, tc.says, runners, got, tc.wantRunners, tc.want)
-		}
+		runners, got := pkgselect.RunnerShare(tc.cores, tc.says)
+		assert.Equal(t, tc.wantRunners, runners, "%d cores, NOVA_RUNNERS_PER_MACHINE=%q: %d runners, a share of %d; want %d and %d", tc.cores, tc.says, runners, got, tc.wantRunners, tc.want)
+		assert.Equal(t, tc.want, got, "%d cores, NOVA_RUNNERS_PER_MACHINE=%q: %d runners, a share of %d; want %d and %d", tc.cores, tc.says, runners, got, tc.wantRunners, tc.want)
 	}
 	for _, stale := range []string{"4 runners", "four runners", "FOUR runners"} {
-		if strings.Contains(step, stale) {
-			t.Errorf("the fair-share step still says %q; the runner count is not written in this file", stale)
-		}
+		assert.NotContains(t, step, stale, "the fair-share step still says %q; the runner count is not written in this file", stale)
 	}
 }
 

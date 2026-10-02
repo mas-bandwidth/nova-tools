@@ -4,8 +4,10 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // unreadableStore is a store directory holding one file nobody can read (mode
@@ -17,12 +19,8 @@ func unreadableStore(t *testing.T) (store, file string) {
 	}
 	store = t.TempDir()
 	file = filepath.Join(store, "locked.txt")
-	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(file, 0); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(file, []byte("x"), 0o600))
+	require.NoError(t, os.Chmod(file, 0))
 	t.Cleanup(func() { _ = os.Chmod(file, 0o600) })
 	return store, file
 }
@@ -35,16 +33,12 @@ func TestInvariant5ReportsAnUnreadableFile(t *testing.T) {
 	store, _ := unreadableStore(t)
 
 	fails := CheckInvariant5(store, filepath.Join(t.TempDir(), "key.txt"))
-	if len(fails) != 1 {
-		t.Fatalf("want one failure for the unreadable file, got %+v", fails)
-	}
+	require.Len(t, fails, 1, "want one failure for the unreadable file, got %+v", fails)
 	f := fails[0]
-	if f.Kind != "store-private-key" || f.File != "locked.txt" {
-		t.Errorf("failure = %+v, want kind store-private-key on locked.txt", f)
-	}
-	if !strings.Contains(f.Reason, "could not be read, so it was not checked") || !strings.Contains(f.Reason, "fix its permissions and rerun") {
-		t.Errorf("the reason does not say it was not checked and how to fix it: %q", f.Reason)
-	}
+	assert.Equal(t, "store-private-key", f.Kind, "failure = %+v, want kind store-private-key on locked.txt", f)
+	assert.Equal(t, "locked.txt", f.File, "failure = %+v, want kind store-private-key on locked.txt", f)
+	assert.Contains(t, f.Reason, "could not be read, so it was not checked", "the reason does not say it was not checked and how to fix it: %q", f.Reason)
+	assert.Contains(t, f.Reason, "fix its permissions and rerun", "the reason does not say it was not checked and how to fix it: %q", f.Reason)
 }
 
 // TestInvariant7ReportsAnUnreadableFile is the same for the untracked-plaintext
@@ -54,14 +48,10 @@ func TestInvariant7ReportsAnUnreadableFile(t *testing.T) {
 	store, _ := unreadableStore(t)
 
 	fails := CheckInvariant7(store, map[string]bool{})
-	if len(fails) != 1 {
-		t.Fatalf("want one failure for the unreadable file, got %+v", fails)
-	}
+	require.Len(t, fails, 1, "want one failure for the unreadable file, got %+v", fails)
 	f := fails[0]
-	if f.Kind != "untracked-plaintext" || f.File != "locked.txt" {
-		t.Errorf("failure = %+v, want kind untracked-plaintext on locked.txt", f)
-	}
-	if !strings.Contains(f.Reason, "could not be read, so it was not checked") || !strings.Contains(f.Reason, "fix its permissions and rerun") {
-		t.Errorf("the reason does not say it was not checked and how to fix it: %q", f.Reason)
-	}
+	assert.Equal(t, "untracked-plaintext", f.Kind, "failure = %+v, want kind untracked-plaintext on locked.txt", f)
+	assert.Equal(t, "locked.txt", f.File, "failure = %+v, want kind untracked-plaintext on locked.txt", f)
+	assert.Contains(t, f.Reason, "could not be read, so it was not checked", "the reason does not say it was not checked and how to fix it: %q", f.Reason)
+	assert.Contains(t, f.Reason, "fix its permissions and rerun", "the reason does not say it was not checked and how to fix it: %q", f.Reason)
 }

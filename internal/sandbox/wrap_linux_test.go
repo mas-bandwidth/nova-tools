@@ -9,6 +9,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // Test 7's linux half. The seam is the `available` variable, the mirror of darwin's: no
@@ -42,28 +45,18 @@ func TestNewerLandlockABIIsClampedToTheTableOnLinux(t *testing.T) {
 	abiFn := func() (int, bool) { return forced, true }
 
 	used, clamped := ClampedABIWith(abiFn)
-	if !clamped {
-		t.Fatalf("abi %d is above the table's %d and was not reported as clamped", forced, maxKnownABI)
-	}
-	if used != maxKnownABI {
-		t.Errorf("the wall is built at abi %d, want the table's maximum %d", used, maxKnownABI)
-	}
+	require.True(t, clamped, "abi %d is above the table's %d and was not reported as clamped", forced, maxKnownABI)
+	assert.Equal(t, maxKnownABI, used, "the wall is built at abi %d, want the table's maximum %d", used, maxKnownABI)
 	// abi= stays the KERNEL's number: a line that printed the clamped one would hide the
 	// very fact it exists to publish.
-	if ABIWith(abiFn) != strconv.Itoa(forced) {
-		t.Errorf("abi=%s, want the kernel's %d", ABIWith(abiFn), forced)
-	}
+	assert.Equal(t, strconv.Itoa(forced), ABIWith(abiFn), "abi=%s, want the kernel's %d", ABIWith(abiFn), forced)
 	// Both numbers, because the note is what tells the reader which kernel it has and
 	// which table it needs: a note naming neither is a note nobody can act on.
 	note := NoteWith(abiFn)
 	for _, n := range []int{forced, maxKnownABI} {
-		if !strings.Contains(note, strconv.Itoa(n)) {
-			t.Errorf("the note does not name %d: %q", n, note)
-		}
+		assert.Contains(t, note, strconv.Itoa(n), "the note does not name %d: %q", n, note)
 	}
-	if !strings.Contains(note, "clamped") {
-		t.Errorf("the note does not say the wall was clamped: %q", note)
-	}
+	assert.Contains(t, note, "clamped", "the note does not say the wall was clamped: %q", note)
 	// That the command then RUNS is the other half, and it cannot be asserted here: Run
 	// would wall this test binary for the rest of the suite. It is asserted where a
 	// caller of its own exists -- cmd/nova-sandbox's TestLandlockWallClampsAnABIAboveTheTable,
@@ -76,14 +69,14 @@ func TestWallABIClampsOnlyAboveTheTable(t *testing.T) {
 	t.Parallel()
 
 	for abi := minKnownABI; abi <= maxKnownABI; abi++ {
-		if used, clamped := wallABI(abi); used != abi || clamped {
-			t.Errorf("wallABI(%d) = %d, %v; want %d, false", abi, used, clamped, abi)
-		}
+		used, clamped := wallABI(abi)
+		assert.Equal(t, abi, used, "wallABI(%d) = %d, %v; want %d, false", abi, used, clamped, abi)
+		assert.False(t, clamped, "wallABI(%d) = %d, %v; want %d, false", abi, used, clamped, abi)
 	}
 	for _, abi := range []int{maxKnownABI + 1, maxKnownABI + 2, 99} {
-		if used, clamped := wallABI(abi); used != maxKnownABI || !clamped {
-			t.Errorf("wallABI(%d) = %d, %v; want %d, true", abi, used, clamped, maxKnownABI)
-		}
+		used, clamped := wallABI(abi)
+		assert.Equal(t, maxKnownABI, used, "wallABI(%d) = %d, %v; want %d, true", abi, used, clamped, maxKnownABI)
+		assert.True(t, clamped, "wallABI(%d) = %d, %v; want %d, true", abi, used, clamped, maxKnownABI)
 	}
 }
 
@@ -102,17 +95,11 @@ func TestLandlockABIBelowTheTableRefusesOnLinux(t *testing.T) {
 
 	forced := minKnownABI - 1
 	r, out := runRefused(t, func() (int, bool) { return forced, true })
-	if r.Reason != "landlock_abi_unknown" {
-		t.Fatalf("reason = %q, want landlock_abi_unknown: %s", r.Reason, r.Text)
-	}
+	require.Equal(t, "landlock_abi_unknown", r.Reason, "reason = %q, want landlock_abi_unknown: %s", r.Reason, r.Text)
 	for _, n := range []int{forced, minKnownABI} {
-		if !strings.Contains(r.Text, strconv.Itoa(n)) {
-			t.Errorf("the refusal does not name %d: %q", n, r.Text)
-		}
+		assert.Contains(t, r.Text, strconv.Itoa(n), "the refusal does not name %d: %q", n, r.Text)
 	}
-	if out != "" {
-		t.Errorf("the command produced output; it must not have run: %q", out)
-	}
+	assert.Empty(t, out, "the command produced output; it must not have run: %q", out)
 }
 
 // Rule 1 on this platform: no landlock is no run. It had no linux test of its own while
@@ -121,12 +108,8 @@ func TestNoLandlockRefusesOnLinux(t *testing.T) {
 	t.Parallel()
 
 	r, out := runRefused(t, func() (int, bool) { return 0, false })
-	if r.Reason != "no_sandbox" {
-		t.Fatalf("reason = %q, want no_sandbox: %s", r.Reason, r.Text)
-	}
-	if out != "" {
-		t.Errorf("the command produced output; it must not have run: %q", out)
-	}
+	require.Equal(t, "no_sandbox", r.Reason, "reason = %q, want no_sandbox: %s", r.Reason, r.Text)
+	assert.Empty(t, out, "the command produced output; it must not have run: %q", out)
 }
 
 // runRefused runs a normal job through Run and insists it was refused at exit 125 before
@@ -137,25 +120,15 @@ func runRefused(t *testing.T, abiFn func() (int, bool)) (Refusal, string) {
 	t.Helper()
 	write := t.TempDir()
 	home := filepath.Join(write, "home")
-	if err := os.MkdirAll(home, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(home, 0o755))
 	p, bad := Build(in(t, write, t.TempDir(), home, "/bin/echo", "tripwire"))
-	if len(bad) > 0 {
-		t.Fatalf("refused at build: %v", bad)
-	}
+	require.Empty(t, bad, "refused at build: %v", bad)
 	p.LandlockABI = abiFn
 	var out, errb bytes.Buffer
 	code, err := Run(p, os.Environ(), strings.NewReader(""), &out, &errb, nil)
-	if code != ExitRefused {
-		t.Errorf("exit %d, want %d", code, ExitRefused)
-	}
+	assert.Equal(t, ExitRefused, code, "exit %d, want %d", code, ExitRefused)
 	r, ok := err.(Refusal)
-	if !ok {
-		t.Fatalf("err = %v, want a Refusal", err)
-	}
-	if r.Code() != ExitRefused {
-		t.Errorf("the refusal carries exit %d, want %d", r.Code(), ExitRefused)
-	}
+	require.True(t, ok, "err = %v, want a Refusal", err)
+	assert.Equal(t, ExitRefused, r.Code(), "the refusal carries exit %d, want %d", r.Code(), ExitRefused)
 	return r, out.String()
 }

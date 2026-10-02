@@ -51,10 +51,6 @@ func TestNoTrackedScratchPathOrOversizedFile(t *testing.T) {
 		if path == "" {
 			continue
 		}
-		// deprecated/ is out of scope of the testing drive (Glenn 2026-09-27); see deprecated/README.md
-		if strings.HasPrefix(path, deprecatedDir+"/") {
-			continue
-		}
 		if strings.HasPrefix(path, scratchPrefix) {
 			scratch = append(scratch, path)
 		}

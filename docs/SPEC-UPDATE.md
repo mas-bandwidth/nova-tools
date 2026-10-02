@@ -7,7 +7,7 @@ One tool, three verbs.
 
 - `nova-update check --file <path>` reads one versions file kept in git and asks of every
   dependency it names what is INSTALLED on this box and what is the LATEST its own source
-  publishes. One line per finding, a count line always, exit 1 when anything is not current
+  publishes. A count line first, always, then one line per finding, exit 1 when anything is not current
   — STALE, NEWER, DIFFERENT or UNKNOWN; it never installs, never pulls.
 - `nova-update status --file <path>` is `check` with every entry's line shown, the
   current ones too: one line per tool, installed against latest, exit 0 when every entry
@@ -29,7 +29,7 @@ reads the counts in the morning; the tool has no clock of its own — no daemon,
 no `--watch`, no state file of its own (rule 25's snapshot is the caller's, named by flag)
 — nothing reacts to its exit code, no verdict starts an `apply`.
 
-`nova-version snapshot --file <manifest>` counts how many of the ADOPTED tools the rule-2 manifest names answer: it reads the manifest and reports `known=<n>` on the single `SNAPSHOT <OK|FAIL> checked=<n> known=<n> unknown=<n> file=<path>` line, exit 1 when any adopted tool is unknown — the adopted 16, never how many `nova-*` executables sit on a bin dir or PATH. A recorded installed version is known without starting a process; an installed argv is probed the way report probes it (rule 4). The verb writes nothing: the manifest is adopted, not discovered, so a draft for a person to fill in is a hand-written file, not a scan. `nova-version snapshot --bin <dir> --out <file.tsv>` instead inventories a directory of `nova-*` executables as a four-column TSV, and `nova-version diff --from <a.tsv> --to <b.tsv>` compares two such inventories.
+`nova-version snapshot --file <manifest>` counts how many of the ADOPTED tools the rule-2 manifest names answer: it reads the manifest and reports `known=<n>` on the `SNAPSHOT <OK|FAIL> checked=<n> known=<n> unknown=<n> file=<path>` line, then one `SNAPSHOT UNKNOWN name=<name> reason=<why> remedy=<what to do>` line per tool that did not answer (capped by `--max`), exit 1 when any adopted tool is unknown — the adopted 16, never how many `nova-*` executables sit on a bin dir or PATH. A recorded installed version is known without starting a process; an installed argv is probed the way report probes it (rule 4), `--timeout` a tool (default `5s` in this shape) and `--budget` the run. The verb writes nothing: the manifest is adopted, not discovered, so a draft for a person to fill in is a hand-written file, not a scan. `nova-version snapshot --bin <dir> --out <file.tsv>` instead inventories a directory of `nova-*` executables as a four-column TSV, and `nova-version diff --from <a.tsv> --to <b.tsv>` compares two such inventories.
 
 ## The rules, numbered
 
@@ -88,7 +88,7 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
     argv runs like any other — rule 4's exit, timeout and PATH clauses hold — its stdout
     read as the `ollama list` table: the ID column of the row whose first token equals the
     entry's `name`, tag and all; no such row is UNKNOWN, remedy *this weight is not on this
-    box: the owner pulls it, `ollama pull <name>`; `nova-local status --list` shows it*.
+    box: its owner pulls it, `ollama pull <name>`*.
     It never asks `:11434`. **Latest** is one GET of
     `https://registry.ollama.ai/v2/library/<model>/manifests/<tag>`, no token, the digest
     being the SHA-256 of the body; a body not JSON, or without `schemaVersion` or `layers`,
@@ -159,7 +159,7 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
    same flags (`--max`, `--timeout`, `--budget`, `--kind`), the same exit (0 when every
    entry is equal, 1 when any is STALE, NEWER, AHEAD, DIFFERENT or UNKNOWN), and the same
    bound (rule 16, per verdict, `equal` included). Its lines begin `STATUS`, never
-   `UPDATE`, so a caller scanning for one never reads the other.
+   `CHECK`, so a caller scanning for one never reads the other.
 10. **`apply` needs a name, from a person.** `nova-update apply --file <path>` with no
     name is a refusal, exit 2, saying a name is required. There is no `--all`, no
     `--stale`, no glob, no `-y`; no verdict of `check` — STALE, NEWER, DIFFERENT — is a
@@ -168,8 +168,8 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
     remedy naming the owner's own step: a weight arrives by the owner's own `ollama pull
     <name>`, after whatever evaluation the owner chose, never through this tool — SPEC-LOCAL
     cut `quarantine` and `eval` (*if we want to eval, it is another tool*), so no remedy
-    here names them; `nova-local status --list` shows the weight landed. The refusal names
-    the model, so a transcript says which one.
+    here names them, nor any tool this repository does not ship. The refusal names the
+    model and its owner, so a transcript says which one and who pulls it.
 12. **`apply` refuses a name the file does not carry.** Not a near match, not a
     prefix, not a case-insensitive match — the exact name or a refusal, exit 2, naming
     the file it read and its entry count.
@@ -183,10 +183,11 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
     `{version}`: *this entry's apply does not take a version*.
 13a. **`apply --dry-run` prints the plan and writes nothing.** Every refusal of rules 10 to
     13 holds first, exit 2 and no process. Then the plan the real run takes, at exit 0:
-    the entry's line as `status` prints it (installed against the target, `--version` or
-    the latest), `APPLY DRY-RUN would install <name> <version> from <source>`, `APPLY
-    DRY-RUN would run argv=<n> version=<v>: <command>` (the very command `APPLY RUN`
-    prints), and `APPLY DRY-RUN OK`. Only the two version reads `apply` makes run; the
+    `APPLY OK name=<name> dry_run=true from=<installed> to=<target> source=<source>`, the
+    entry's item as `status` shows it (installed against the target, `--version` or
+    the latest), `APPLY PLAN name=<name> argv=<n> version=<v>: <command>` (the very command
+    `APPLY RUN` carries), and `APPLY NOTE dry run: nothing installed, nothing written`.
+    Only the two version reads `apply` makes run; the
     entry's `apply` command never starts and nothing is written. `--dry-run` is `apply`'s
     flag alone: `check`, `status` and `report` refuse it.
 14. **`apply` prints before and after, and after must equal the target.** `APPLY
@@ -215,8 +216,8 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
 16. **Bounded output, per SPEC.md.** `--max <n>`, default 20, `0` means all, a negative is
     refused. The cap is **per verdict** — `stale`, `newer`, `differ` and `unknown`
     separately, so a night where six things moved does not hide the one source that
-    stopped answering — and each capped verdict gets one `UPDATE MORE` line naming the
-    remedy. **The count line prints on failure as well as success**, about the world.
+    stopped answering — and each capped verdict gets one `CHECK MORE` line naming the
+    remedy. **The count line prints on failure as well as success**, first, about the world.
 17. **The tool stamps, and nothing read from a file or a server is a clock.** The opening
     `at=` is the tool's own. **A version is its whole identity string** after rule 4's read
     or 4a's, and two of them compare to exactly one of: **EQUAL**, the same bytes, current;
@@ -241,11 +242,15 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
     EQUAL is 1.
 18. **Every refusal names its remedy.** No refusal here ends at the reason: the
     missing flag, the malformed line, the script to wrap the command in, the owner's own
-    pull of the weights — the next thing to type is on the line.
+    pull of the weights — the next thing to type is on the line. The line is
+    `<TOKEN> REFUSED: <reason>; run: <command>`: the reason says what the input wants,
+    every problem of the invocation named at once, and the command is the refusing
+    verb's `-h` (`nova-update help` for an invocation with no verb, or an unknown one).
 19. **`--kind <k>` restricts the run, not the output.** Repeatable, the only filter; absent,
     every kind runs. A kind not named is **neither read nor printed** — no `installed` argv
-    starts for it and no GET is made — so the first line's `kinds=` and the count line's
-    `checked=` are the filtered run while `entries=` stays the file's count. An unknown
+    starts for it and no GET is made — so the first line's `kinds=` (the kinds of the
+    entries the run read, never a kind the file does not hold) and `checked=` are the
+    filtered run while `entries=` stays the file's count. An unknown
     `--kind` is its own refusal, exit 2, naming the value and the five kinds, and no line.
 20. **`report` reads the file alone: an explicit manifest, exact paths allowed, no bus.**
     `nova-update report --file <path>` takes the same six-field file (rule 2) and runs only
@@ -370,7 +375,7 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
     receipt is unconfirmed, 2 on a refusal.
 28. **Voluntary adoption matrix, owned by each friend.** `adoption` reads one
     five-column TSV file the caller names (`tool`, `friend`, `state`, `version`, `detail`,
-    header byte for byte) and prints one `ADOPTION` line per choice plus a count line; it
+    header byte for byte) and prints a count line and one `ADOPTION CHOICE` line per choice; it
     makes no network call, sends nothing, installs nothing and needs no bus, so the
     version report stays useful before any bus adoption. `state` is one of `evaluated`,
     `useful-now`, `tried`, `adopted`, `declined`, `deferred`, `unknown` or `equivalent`;
@@ -400,6 +405,7 @@ DIFFERENT line, so the morning names a person, not only a number.
 ## The verbs
 
 ```
+nova-update example [--out <path>]
 nova-update check --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
 nova-update status --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
 nova-update apply --file <path> <name> [--version <v>] [--dry-run] [--timeout <d>]
@@ -407,18 +413,16 @@ nova-update report --file <path> [--host <label>] [--snapshot <path>] [--draft -
 nova-update report --store <host:port> [--timeout <d>]
 nova-update watch --adopt <checks.tsv> [--bus <path> --remote <r> --branch <b> --as <friend> --to <who,who>] [--host <label>] [--timeout <d>] [--budget <d>]
 nova-update adoption --file <path> [--as <friend>] [--max <n>]
-nova-update release cut --repo <owner/name> --from <branch> --version <v> --changelog <path> [--sums <file>] [--security-read <id|url>] [--local-diff <checkout> [--paths-from <file>] | --paths-from <file>] [--cli <file>] [--receipts <dir>] [--no-dogfood-gate --reason <why>] [--dry-run] [--timeout <d>]
-nova-update release build --version <v> --out <dir> --source <dir> [--platform <goos-goarch>,...] [--cli <file>] [--receipts <dir>] [--no-dogfood-gate --reason <why>] [--timeout <d>]
-nova-update release install --from <dir> --version <v> --bin <dir> [--retire <dir>] [--platform <goos-goarch>] [--timeout <d>]
-nova-update release adopt [--version <v>] --machines <file> --ssh <path> --from <dir|host:dir> --bin <dir> --dest <dir> [--stage <dir> --repo <owner/name> | --stage <dir> --expect-sums <sha256> | --stage <dir> --expect-sums-from <file>] [--retire <dir>] [--platform <goos-goarch>] (--certify <machines.tsv> --certs <file> --standard <file> | --no-certify) [--dry-run] [--timeout <d>]
-nova-update release pull --version <v> --out <dir> --changelog <path> [--machines <file> --ssh <path> --dest <dir>] [--reason <text>] [--platform <goos-goarch>] [--dry-run] [--timeout <d>]
+nova-update release <cut|build|install|adopt|pull> ...   nova-tools' own release pipeline: nova-update help release prints its usage lines
 nova-update help
 ```
 
-Those twelve usage lines are the string `nova-update help` prints, byte for byte, under the
+Those ten usage lines are the string `nova-update help` prints, byte for byte, under the
 banner's opening (what the tool does, how it works, the first run): one string
-in the binary, so the spec and the help cannot drift apart; the five `release` lines are
-`release.Verbs`, spliced into that one string rather than copied beside it. `report --store <host:port>` is the fleet's view: it reads every registered bench's
+in the binary, so the spec and the help cannot drift apart. The release pipeline is one
+line there, so a reader of the manifest verbs is not handed it: its five usage lines are
+`release.Verbs`, which `nova-update help release` prints with its notes, and each release
+verb's `-h` prints its line, its flags with what each wants, and its exit codes. `report --store <host:port>` is the fleet's view: it reads every registered bench's
 beat (`bench:<b>:beat`, field `build`, the version line the bench stamps each
 beat) in two pipelined round trips and prints one `REPORT DRIFT` line per beating bench not on
 the newest build, then one receipt; no ssh, no bus note, exit 1 on drift. `--kind <k>` is rule 19. No
@@ -632,73 +636,82 @@ is not the target, a `report` with an UNKNOWN or a send nova-bus refused or did 
 confirm (`sent=uncertain`); **2** could not run, every refusal the rules name.
 
 ```
-UPDATE at=<stamp> file=<path> entries=<n> kinds=<k,k,k> timeout=<d> budget=<d> max=<n>
-UPDATE <STALE|NEWER|DIFFERENT> name=<name> kind=<kind> installed=<v> latest=<v> path=<path> source=<source> owner=<owner>
-UPDATE AHEAD name=<name> kind=<kind> installed=<v> latest=<v> ahead=<commit> path=<path> source=<source> owner=<owner>
-UPDATE UNKNOWN name=<name> kind=<kind> installed=<v|-> path=<path|-> source=<source>: <reason> (<remedy>)
-UPDATE <OK|FAIL> checked=<n> current=<n> stale=<n> newer=<n> ahead=<n> differ=<n> unknown=<n> pins=<n> took=<d> file=<path>
-UPDATE MORE kind=<stale|newer|ahead|differ|unknown> shown=<n> total=<t> <remedy>
-UPDATE NOTE <something true about this run that is not a finding>
-UPDATE REFUSED: <reason> (<remedy>)
-STATUS at=<stamp> file=<path> entries=<n> kinds=<k,k,k> timeout=<d> budget=<d> max=<n>
+CHECK <OK|FAIL> checked=<n> current=<n> stale=<n> newer=<n> ahead=<n> differ=<n> unknown=<n> pins=<n> took=<d> file=<path> entries=<n> kinds=<k,k> at=<stamp> timeout=<d> budget=<d> max=<n>
+CHECK <STALE|NEWER|DIFFERENT> name=<name> kind=<kind> installed=<v> latest=<v> path=<path> source=<source> owner=<owner>
+CHECK AHEAD name=<name> kind=<kind> installed=<v> latest=<v> ahead=<commit> path=<path> source=<source> owner=<owner>
+CHECK UNKNOWN name=<name> kind=<kind> installed=<v|-> path=<path|-> source=<source>: <reason> (<remedy>)
+CHECK MORE kind=<stale|newer|ahead|different|unknown> shown=<n> total=<t> <remedy>
+CHECK REFUSED: <reason>; run: <command>
+STATUS <OK|FAIL> checked=<n> current=<n> stale=<n> newer=<n> ahead=<n> differ=<n> unknown=<n> pins=<n> took=<d> file=<path> entries=<n> kinds=<k,k> at=<stamp> timeout=<d> budget=<d> max=<n>
 STATUS <EQUAL|STALE|NEWER|DIFFERENT> name=<name> kind=<kind> installed=<v> latest=<v> path=<path> source=<source> owner=<owner>
 STATUS AHEAD name=<name> kind=<kind> installed=<v> latest=<v> ahead=<commit> path=<path> source=<source> owner=<owner>
 STATUS UNKNOWN name=<name> kind=<kind> installed=<v|-> path=<path|-> source=<source>: <reason> (<remedy>)
-STATUS <OK|FAIL> checked=<n> current=<n> stale=<n> newer=<n> ahead=<n> differ=<n> unknown=<n> pins=<n> took=<d> file=<path>
-STATUS MORE kind=<equal|stale|newer|ahead|differ|unknown> shown=<n> total=<t> <remedy>
-APPLY DRY-RUN would install <name> <version> from <source>
-APPLY DRY-RUN would run argv=<n> version=<v>: <command, escaped>
-APPLY DRY-RUN OK name=<name> nothing installed, nothing written
-APPLY BEFORE name=<name> kind=<kind> installed=<v|-> path=<path|-> latest=<v> source=<source>
-APPLY RUN name=<name> argv=<n> version=<v>: <command, escaped>
-APPLY AFTER name=<name> installed=<v|-> was=<v|->
+STATUS MORE kind=<equal|stale|newer|ahead|different|unknown> shown=<n> total=<t> <remedy>
+APPLY OK name=<name> dry_run=true from=<v|-> to=<v> source=<source>
+APPLY <EQUAL|STALE|NEWER|DIFFERENT|AHEAD|UNKNOWN> name=<name> kind=<kind> installed=<v|-> ...   (under --dry-run: the entry as status shows it)
+APPLY PLAN name=<name> argv=<n> version=<v>: <command>
+APPLY NOTE dry run: nothing installed, nothing written
 APPLY <OK|FAIL> name=<name> from=<v|-> to=<v|-> took=<d>[: <reason>]
-APPLY REFUSED name=<name>: <reason> (<remedy>)
-REPORT at=<stamp> file=<path> host=<label|-> as=<friend|-> entries=<n> kinds=<k,k,k> timeout=<d> budget=<d> max=<n> snapshot=<path|->
+APPLY BEFORE name=<name> kind=<kind> installed=<v|-> path=<path|-> latest=<v> source=<source>
+APPLY RUN name=<name> argv=<n> version=<v>: <command>
+APPLY AFTER name=<name> installed=<v|-> was=<v|->
+APPLY REFUSED: <reason>; run: <command>
+REPORT <OK|FAIL> checked=<n> known=<n> unknown=<n> changed=<yes|no|-> sent=<yes|no|uncertain|-> took=<d> file=<path> host=<label|-> as=<friend|-> entries=<n> kinds=<k,k> at=<stamp> timeout=<d> budget=<d> max=<n> snapshot=<path|->
 REPORT TOOL name=<name> kind=<kind> version=<v|-> raw=<first line, escaped> path=<path>
 REPORT UNKNOWN name=<name> kind=<kind> path=<path|-> raw=<line|->: <reason> (<remedy>)
 REPORT CHANGED name=<name> was=<raw|-> now=<raw|->
-REPORT MORE kind=<tool|unknown|changed> shown=<n> total=<t> <remedy>
 REPORT SENT to=<who,who> via=<nova-bus argv, escaped> line=<nova-bus's SEND OK line, escaped>
-REPORT <OK|FAIL> checked=<n> known=<n> unknown=<n> changed=<yes|no|-> sent=<yes|no|uncertain|-> took=<d> file=<path>
+REPORT MORE kind=<tool|unknown|changed> shown=<n> total=<t> <remedy>
 REPORT NOTE <something true about this run that is not a finding>
-REPORT REFUSED: <reason> (<remedy>)
+REPORT REFUSED: <reason>; run: <command>
+REPORT <OK|FAIL> benches=<n> beating=<n> current=<n> drift=<n> unknown=<n> want=<build> took=<d> store=<host:port>   (--store)
+REPORT DRIFT bench=<bench> tool=nova-sprint build=<build> want=<build>   (--store)
+UPDATE REFUSED: <reason>; run: nova-update help   (no verb, or an unknown one)
 ADOPT OK check=<name> detail=<first line, escaped>
 ADOPT REFUSED check=<name> detail=<reason> (<remedy>)
 ADOPT ESCALATE check=<name> to=<owner>: duty files an issue and a fix card (<reason>)
 ADOPT DONE sha=<12 hex> ok=<n> refused=<m>
 ADOPT SENT to=<who,who> line=<nova-bus's SEND OK line, escaped>
 ADOPT NOTE <something true about this run that is not a finding>
-ADOPT REFUSED: <reason> (<remedy>)
-ADOPTION at=<stamp> file=<path> entries=<n> max=<n>
-ADOPTION tool=<tool> friend=<friend> state=<evaluated|useful-now|tried|adopted|declined|deferred|unknown|equivalent> version=<v|-> detail=<reason, escaped>
+ADOPT REFUSED: <reason>; run: <command>
+ADOPTION OK entries=<n> friends=<n> file=<path> max=<n>
+ADOPTION CHOICE tool=<tool> friend=<friend> state=<evaluated|useful-now|tried|adopted|declined|deferred|unknown|equivalent> version=<v|->: <detail>
 ADOPTION MORE kind=<choice> shown=<n> total=<t> <remedy>
-ADOPTION OK entries=<n> friends=<n> file=<path>
-ADOPTION REFUSED: <reason> (<remedy>)
+ADOPTION REFUSED: <reason>; run: <command>
 ```
 
-`UPDATE`, `STATUS`, `APPLY`, `REPORT`, `ADOPT` and `ADOPTION` are the first tokens, `OK` and `FAIL` the verdicts and the
-**last** line (`ADOPTION` has no `FAIL`: declined, deferred, unknown and equivalent are answers); the rest are informational second tokens, declared here as SPEC.md requires,
-on stdout, `REFUSED` and `FAIL` on stderr; every value is one `internal/oneline` token.
+`CHECK`, `STATUS`, `APPLY`, `REPORT` and `ADOPTION` are the first tokens, the verb's own, and
+`OK`, `FAIL` or `REFUSED` the second token of the **first** line, which carries every count
+and every fact of the run (`ADOPTION` has no `FAIL`: declined, deferred, unknown and
+equivalent are answers); the rest are items, one per finding, declared here as SPEC.md
+requires. A run that is OK prints on stdout and one that is not on stderr, whole; under
+`--json` every one of these verbs prints the same value as one JSON object on stdout
+(`result`, `facts`, `items`, `more`, `notes`, `payload`: internal/tool's shape), refusals
+included. A value is one `internal/oneline` token, except the text after `: ` on an item
+(a reason, a command, a detail) and its remedy in parentheses, which are prose printed plain.
+`watch`'s `ADOPT` lines keep their own order: one per check, then `ADOPT DONE`.
 
 ## First run — meet your installed tools
 
-From the nova-tools checkout, with Go on PATH:
+With the binary alone and Go on PATH, in any directory:
 
 ```sh
-go run ./cmd/nova-update report --file cmd/nova-update/testdata/example.tsv
-go run ./cmd/nova-version report --file cmd/nova-version/testdata/example.tsv
+nova-update example --out versions.tsv
+nova-update report --file versions.tsv
 ```
 
-The shipped example reads `go version` and reports the actual identity on your bench.
-It performs no latest-version lookup, installation or bus delivery. Output timestamps,
-paths and versions come from your run; UNKNOWN means an incomplete inventory.
+`example` writes the example manifest, one tool (Go, read with `go version` on both
+sides), into `versions.tsv`, or prints it without `--out`; it leaves a file already
+holding the example unchanged and never overwrites anything else. `nova-version example`
+is the same verb. The report reads `go version` and reports the actual identity on your
+bench; it performs no latest-version lookup, installation or bus delivery. Output
+timestamps, paths and versions come from your run; UNKNOWN means an incomplete inventory.
 
-Then create your own six-column manifest and choose which tools to check. The examples
-in `versions.tsv` demonstrate supported source types; replace their entries and owner
-labels with your team's choices before use. `apply.tsv` is a parser-only fixture with
-fictional executable paths, not a runnable installation example. An explicit `apply`
-runs the installer your own manifest names, so review that command before choosing it.
+Then replace the example with your own six-column manifest and choose which tools to
+check. In a nova-tools checkout, `cmd/nova-update/testdata/versions.tsv` demonstrates
+the supported source types; `apply.tsv` there is a parser-only fixture with fictional
+executable paths, not a runnable installation example. An explicit `apply` runs the
+installer your own manifest names, so review that command before choosing it.
 
 [CLI.md](CLI.md#nova-update) covers optional reporting and delivery. The executable
 first-run transcripts in [TESTS.md](TESTS.md#nova-update) are checked by the command
@@ -751,7 +764,7 @@ install` or `npm install`.
 7. `TestADeadSourceIsNeverOk`: a 500 naming it, then a 403 and a 429 each naming its
    `x-ratelimit-reset`, a registry 404 giving `tag_not_found` with the `ollama.com` remedy,
    never `shape` and never rule 4's `not_found`, a hang past the timeout, a `{}` and invalid
-   JSON each give one `UPDATE UNKNOWN` and exit 1; `up to date` never appears; every source
+   JSON each give one `CHECK UNKNOWN` and exit 1; `up to date` never appears; every source
    dead exits 1 with `current=0`; a dead source is asked once in a run and again in the
    next — the no-retry, no-cache assertion.
 8. `TestTheRunIsBounded`: an injected clock, 40 entries, a server answering in 3s:
@@ -763,7 +776,7 @@ install` or `npm install`.
 10. `TestApplyNeedsANameFromAPerson`: no name is exit 2 saying a name is required;
     `--all`, `--stale` and `-y` are unknown flags; two names is exit 2.
 11. `TestApplyRefusesAModelByName`: `apply` of every `kind=model` entry is exit 2, carries
-    the model's name, names `ollama pull` with that name and `nova-local status --list`,
+    the model's name, names `ollama pull` with that name and the entry's owner,
     names no verb SPEC-LOCAL cut — `quarantine`, `eval` nowhere in the output, the mutation
     that matters — and starts no process.
 12. `TestApplyRefusesAnUnnamedThing`: `g`, `GH`, `gh ` and `gh-cli` against a file
@@ -795,12 +808,12 @@ install` or `npm install`.
     DIFFERENT; `0.12.0` against `0.12.1-0.20260912135226-0459069` is DIFFERENT and `STALE`
     is nowhere in the output — the mutation that matters; `at=` is the clock, never a body.
     `TestDevBuildAheadOfReleaseReportsAhead`: an installed `v0.15.3-0.<date>-<sha>` against
-    a latest `0.15.2`, `<sha>` descending from the tag, prints `UPDATE AHEAD … ahead=<sha>`
-    and never `UPDATE DIFFERENT` — a dev build on main after the release, the mutation that
+    a latest `0.15.2`, `<sha>` descending from the tag, prints `CHECK AHEAD … ahead=<sha>`
+    and never `CHECK DIFFERENT` — a dev build on main after the release, the mutation that
     matters being the old DIFFERENT line.
 18. `TestEveryRefusalNamesItsRemedy`: every refusal in the package lives in one table, which
-    the test walks: each ends in a parenthesised remedy naming a command, a file, a URL,
-    or the values allowed, and removing one turns the test red.
+    the test walks: each ends in `; run: ` and the command to run next, and its reason
+    says what the input wants; removing the command turns the test red.
 19. `TestTheKindFilterRestrictsTheRun`: `--kind tool` over a file of all five kinds starts
     only the tool entries' `installed` argvs and only their GETs — a counting handler sees
     no others — prints no line of another kind, and its `kinds=` and `checked=` are the

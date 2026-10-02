@@ -2,6 +2,8 @@ package sprint
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -114,10 +116,7 @@ func (g *needGraph) needs(id string) (named, place []string) {
 		return named, nil
 	}
 	if IsSentinel(c) {
-		from := l.prev[i]
-		if from < 0 {
-			from = 0
-		}
+		from := max(l.prev[i], 0)
 		return named, l.ids[from:i]
 	}
 	if p := l.prev[i]; p >= 0 {
@@ -300,13 +299,8 @@ func (g *needGraph) tellLoop(loop []string) string {
 // the edges name is one they make: a cycle already on the table is check's to
 // report, not this call's.
 func NeedsCycle(s *Snapshot, edges map[string][]string) []string {
-	ids := make([]string, 0, len(edges))
-	for id := range edges {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
 	g := newNeedGraph(s, edges, nil, nil)
-	return g.closes(ids)
+	return g.closes(slices.Sorted(maps.Keys(edges)))
 }
 
 // closes is the loop through the first of ids that is on a cycle, nil when

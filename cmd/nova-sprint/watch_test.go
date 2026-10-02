@@ -7,13 +7,18 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 	"unicode/utf8"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -33,21 +38,13 @@ func golden(t *testing.T, name, got string) {
 	t.Helper()
 	path := filepath.Join("testdata", name)
 	if *updateWhereGolden {
-		if err := os.MkdirAll("testdata", 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte(got), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.MkdirAll("testdata", 0o755))
+		require.NoError(t, os.WriteFile(path, []byte(got), 0o644))
 		return
 	}
 	want, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != string(want) {
-		t.Fatalf("%s differs from the golden:\ngot  %q\nwant %q", name, got, string(want))
-	}
+	require.NoError(t, err)
+	require.Equal(t, string(want), got, "%s differs from the golden", name)
 }
 
 // writeLog is a screen that keeps each write whole. after, when set, is
@@ -92,9 +89,7 @@ func whereFixture(t *testing.T) *testApp {
 			taken = c.ID
 		}
 	}
-	if taken == "" {
-		t.Fatalf("m1 took nothing: %+v", q.Cards)
-	}
+	require.NotEmpty(t, taken, "m1 took nothing: %+v", q.Cards)
 	ta.ok("finish --as m1 " + taken + "@1")
 	ta.ok("ask")
 	ta.ok("read --as reader-a --ok --limit 10")
@@ -148,12 +143,10 @@ func TestWhereFrameIsTheGolden(t *testing.T) {
 		}
 	}}
 	var errb bytes.Buffer
-	if code := ta.a.whereLoop(ctx, ta.whereRun(true), screen, &errb); code != 0 || errb.Len() > 0 {
-		t.Fatalf("watch: exit %d: %s", code, errb.String())
-	}
-	if len(screen.writes) != 3 {
-		t.Fatalf("writes: %q", screen.writes)
-	}
+	code := ta.a.whereLoop(ctx, ta.whereRun(true), screen, &errb)
+	require.Equal(t, 0, code, "watch: exit %d: %s", code, errb.String())
+	require.Zero(t, errb.Len(), "watch: exit %d: %s", code, errb.String())
+	require.Len(t, screen.writes, 3, "writes: %q", screen.writes)
 	golden(t, "where_watch_frame.golden", screen.writes[1])
 }
 
@@ -166,50 +159,47 @@ func TestWhereFrameHoldsOnlyTheHeaderAndTheTables(t *testing.T) {
 	ta := whereFixture(t)
 	dir := t.TempDir()
 	text := filepath.Join(dir, "goal.txt")
-	if err := os.WriteFile(text, []byte("keep going\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(text, []byte("keep going\n"), 0o644))
 	ta.ok("goal set friend-a --file " + text + " --to file:" + filepath.Join(dir, "reminder.txt"))
 	// a pending operation in the fence, and a stream with no progress for hours
 	ctx := context.Background()
 	f, err := ta.m.ReadFence(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ok, err := ta.m.Acquire(ctx, f.Gen, store.OpRecord{ID: "op-left", Verb: "add", At: t0}); err != nil || !ok {
-		t.Fatalf("acquire: %v %v", ok, err)
-	}
+	require.NoError(t, err)
+	ok, err := ta.m.Acquire(ctx, f.Gen, store.OpRecord{ID: "op-left", Verb: "add", At: t0})
+	require.NoError(t, err, "acquire: %v %v", ok, err)
+	require.True(t, ok, "acquire: %v %v", ok, err)
 	ta.mu.Lock()
 	ta.now = ta.now.Add(3 * time.Hour)
 	ta.mu.Unlock()
 
 	frame := ta.ok("where")
 	lines := strings.Split(frame, "\n")
-	if got, want := lines[:4], []string{"SPRINT TABLE", "", "STOPPED", ""}; strings.Join(got, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("the head of the frame:\n%q\nwant\n%q", got, want)
-	}
+	require.Equal(t, []string{"SPRINT TABLE", "", "STOPPED", ""}, lines[:4], "the head of the frame")
 	for _, l := range lines[4:] {
-		if l != "" && !strings.Contains(l, " | ") && !strings.Contains(l, "-+-") {
-			t.Errorf("a line that is not a table's: %q\n%s", l, frame)
-		}
+		// a table's line holds a cell divider or a rule's joint; the friends table's
+		// summary row is a blank label and its blank cell, "<label> |"
+		assert.False(t, l != "" && !strings.Contains(l, " | ") && !strings.Contains(l, "-+-") && !strings.HasSuffix(l, " |"), "a line that is not a table's: %q\n%s", l, frame)
 	}
 	for _, gone := range []string{"pending", "stalled", "REMINDERS", "friend-a", "coordinator", "since", "op-left"} {
-		if strings.Contains(frame, gone) {
-			t.Errorf("the frame shows %q:\n%s", gone, frame)
-		}
+		assert.NotContains(t, frame, gone, "the frame shows %q", gone)
 	}
-	// the identity of a row is its first cell
-	for name, want := range map[string]string{"work": "s1,s2", "readers": "reader-a,reader-b", "merge": "s1,s2", "fleet": "m1,m2"} {
-		if got := strings.Join(rowsOf(tableOf(frame, name)), ","); got != want {
-			t.Errorf("table %s: rows %q, want %q:\n%s", name, got, want, frame)
-		}
+	// the identity of a row is its first cell; the readers and merge tables are
+	// one row, the sum of all (the owner, 2026-10-01)
+	for name, want := range map[string]string{"work": "s1,s2", "readers": allRow, "merge": allRow, "fleet": "m1,m2"} {
+		got := strings.Join(rowsOf(tableOf(frame, name)), ",")
+		assert.Equal(t, want, got, "table %s: rows, in the frame:\n%s", name, frame)
 	}
+	// the fixture has no friend: the friends table is its header, one rule and its summary row
+	assert.Equal(t, "friends | status\n--------+-------\n        |", tableOf(frame, "friends"), "the frame:\n%s", frame)
 	// the view for a program keeps all of it
 	var w whereView
 	ta.json("where", &w)
-	if w.Pending != "op-left" || len(w.Stalled) == 0 || len(w.Goals) != 1 || w.Coordinator == "" {
-		t.Errorf("where --json: pending=%q stalled=%v goals=%v coordinator=%q", w.Pending, w.Stalled, w.Goals, w.Coordinator)
-	}
+	assert.Equal(t, "op-left", w.Pending, "where --json: pending=%q stalled=%v goals=%v coordinator=%q", w.Pending, w.Stalled, w.Goals, w.Coordinator)
+	assert.NotEmpty(t, w.Stalled, "where --json: pending=%q stalled=%v goals=%v coordinator=%q", w.Pending, w.Stalled, w.Goals, w.Coordinator)
+	assert.Len(t, w.Goals, 1, "where --json: pending=%q stalled=%v goals=%v coordinator=%q", w.Pending, w.Stalled, w.Goals, w.Coordinator)
+	assert.NotEmpty(t, w.Coordinator, "where --json: pending=%q stalled=%v goals=%v coordinator=%q", w.Pending, w.Stalled, w.Goals, w.Coordinator)
+	assert.ElementsMatch(t, []string{"reader-a", "reader-b"}, slices.Collect(maps.Keys(w.Tables[sprint.Readers])), "where --json keeps each reader's row")
+	assert.ElementsMatch(t, []string{"s1", "s2"}, slices.Collect(maps.Keys(w.Tables[sprint.Merge])), "where --json keeps each stream's merge row")
 }
 
 // Every table is in the frame, with no rows when it has none, and a stream with
@@ -219,34 +209,34 @@ func TestWhereShowsEveryTableAndEveryStream(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --members m1")
+	// a table with no row is its header, one rule and the summary row (the owner,
+	// 2026-10-02: "when the work stream table is empty, please just show the summary row")
+	for _, name := range []string{"work", "readers", "merge"} {
+		lines := strings.Split(strings.TrimRight(tableOf(ta.ok("where"), name), "\n"), "\n")
+		require.Len(t, lines, 3, "table %s, empty: header, rule, summary row", name)
+		assert.Equal(t, "", strings.TrimSpace(strings.Split(lines[2], " | ")[0]), "table %s: the summary row is unlabelled: %q", name, lines[2])
+	}
 	ta.ok("add --stream s1 --count 2")
 	ta.ok("add --stream s2 --count 1")
 	ta.ok("drop s2-1 --reason obsolete")
 	frame := ta.ok("where")
 	for _, name := range []string{"work", "readers", "merge", "fleet"} {
-		if !strings.Contains(frame, "\n"+name+" ") {
-			t.Errorf("table %s is not in the frame:\n%s", name, frame)
-		}
+		assert.Contains(t, frame, "\n"+name+" ", "table %s is not in the frame", name)
 	}
-	if got := rowsOf(tableOf(frame, "readers")); len(got) != 0 {
-		t.Errorf("readers rows %q, want none:\n%s", got, frame)
-	}
-	for _, name := range []string{"work", "merge"} {
-		if got := rowsOf(tableOf(frame, name)); strings.Join(got, ",") != "s1,s2" {
-			t.Errorf("%s rows %q: s2 has no cards in any column and shows:\n%s", name, got, frame)
-		}
-	}
+	// the readers table is one row, the sum of all readers, at zero with none
+	assert.Equal(t, allRow, strings.Join(rowsOf(tableOf(frame, "readers")), ","), "readers rows, %s alone:\n%s", allRow, frame)
+	assert.Equal(t, []string{"s1", "s2"}, rowsOf(tableOf(frame, "work")), "s2 has no cards in any column and shows:\n%s", frame)
+	// the merge table is one row, the sum of all streams; --json keeps each
+	assert.Equal(t, []string{allRow}, rowsOf(tableOf(frame, "merge")), frame)
+	assert.ElementsMatch(t, []string{"s1", "s2"}, ta.mergeRows(), "where --json keeps each stream's merge row, s2 at zero")
 
 	// the readers come, and a card comes to s2
 	ta.ok("reader add reader-a reader-b")
 	ta.ok("add --stream s2 s2-2")
 	frame = ta.ok("where")
-	if got := rowsOf(tableOf(frame, "readers")); strings.Join(got, ",") != "reader-a,reader-b" {
-		t.Errorf("readers rows %q:\n%s", got, frame)
-	}
-	if got := rowsOf(tableOf(frame, "work")); strings.Join(got, ",") != "s1,s2" {
-		t.Errorf("work rows %q:\n%s", got, frame)
-	}
+	assert.Equal(t, allRow, strings.Join(rowsOf(tableOf(frame, "readers")), ","), "readers rows, %s alone:\n%s", allRow, frame)
+	assert.ElementsMatch(t, []string{"reader-a", "reader-b"}, ta.readerRows(), "where --json keeps each reader's row")
+	assert.Equal(t, "s1,s2", strings.Join(rowsOf(tableOf(frame, "work")), ","), "work rows:\n%s", frame)
 
 	// a card comes to merge
 	ta.ok("start")
@@ -264,9 +254,16 @@ func TestWhereShowsEveryTableAndEveryStream(t *testing.T) {
 	ta.ok("read --as reader-b --ok --limit 10")
 	ta.ok("accept --read-ok")
 	frame = ta.ok("where")
-	if got := rowsOf(tableOf(frame, "merge")); len(got) != 2 {
-		t.Errorf("merge rows %q, want both streams:\n%s", got, frame)
-	}
+	assert.Equal(t, []string{allRow}, rowsOf(tableOf(frame, "merge")), frame)
+	assert.ElementsMatch(t, []string{"s1", "s2"}, ta.mergeRows(), "where --json keeps both streams' merge rows")
+}
+
+// mergeRows is the merge table's row keys, as where --json lists them.
+func (ta *testApp) mergeRows() []string {
+	ta.t.Helper()
+	var w whereView
+	ta.json("where", &w)
+	return slices.Collect(maps.Keys(w.Tables[sprint.Merge]))
 }
 
 // Each frame of a watch is one write, drawn from the top of the screen, every
@@ -283,43 +280,27 @@ func TestWatchDrawsEachFrameInPlaceWithOneWrite(t *testing.T) {
 		}
 	}}
 	var errb bytes.Buffer
-	if code := ta.a.whereLoop(ctx, ta.whereRun(true), screen, &errb); code != 0 {
-		t.Fatalf("watch: exit %d: %s", code, errb.String())
-	}
-	if len(screen.writes) != 4 {
-		t.Fatalf("two frames, the cursor hidden and restored: %d writes: %q", len(screen.writes), screen.writes)
-	}
-	if screen.writes[0] != "\x1b[?25l" || screen.writes[3] != "\x1b[?25h" {
-		t.Fatalf("the cursor: %q ... %q", screen.writes[0], screen.writes[3])
-	}
+	code := ta.a.whereLoop(ctx, ta.whereRun(true), screen, &errb)
+	require.Equal(t, 0, code, "watch: exit %d: %s", code, errb.String())
+	require.Len(t, screen.writes, 4, "two frames, the cursor hidden and restored: %d writes: %q", len(screen.writes), screen.writes)
+	require.Equal(t, "\x1b[?25l", screen.writes[0], "the cursor: %q ... %q", screen.writes[0], screen.writes[3])
+	require.Equal(t, "\x1b[?25h", screen.writes[3], "the cursor: %q ... %q", screen.writes[0], screen.writes[3])
 	for i, w := range screen.writes[1:3] {
-		if !strings.HasPrefix(w, "\x1b[H") || !strings.HasSuffix(w, "\x1b[K\x1b[J") {
-			t.Errorf("frame %d does not draw from home and clear below: %q", i+1, w)
-		}
-		if strings.Contains(w, "\x1b[2J") {
-			t.Errorf("frame %d clears the whole screen: %q", i+1, w)
-		}
+		assert.True(t, strings.HasPrefix(w, "\x1b[H"), "frame %d does not draw from home and clear below: %q", i+1, w)
+		assert.True(t, strings.HasSuffix(w, "\x1b[K\x1b[J"), "frame %d does not draw from home and clear below: %q", i+1, w)
+		assert.NotContains(t, w, "\x1b[2J", "frame %d clears the whole screen", i+1)
 		// every line is cleared to its end; the last has no newline after it
 		lines := strings.Count(w, "\n") + 1
-		if got := strings.Count(w, "\x1b[K"); got != lines {
-			t.Errorf("frame %d: %d lines, %d cleared to their end", i+1, lines, got)
-		}
-		if got := strings.Count(w, "\x1b[K\n"); got != lines-1 {
-			t.Errorf("frame %d: %d newlines, %d after a cleared line", i+1, lines-1, got)
-		}
-		if strings.Contains(w[strings.LastIndex(w, "\x1b[K"):], "\n") {
-			t.Errorf("frame %d has a newline after its last line: %q", i+1, w)
-		}
+		assert.Equal(t, lines, strings.Count(w, "\x1b[K"), "frame %d: %d lines cleared to their end", i+1, lines)
+		assert.Equal(t, lines-1, strings.Count(w, "\x1b[K\n"), "frame %d: %d newlines after a cleared line", i+1, lines-1)
+		assert.NotContains(t, w[strings.LastIndex(w, "\x1b[K"):], "\n", "frame %d has a newline after its last line: %q", i+1, w)
 		// and the last line is not an empty one, which is a newline after
 		// the line before it
-		if last := strings.TrimSuffix(w[strings.LastIndex(w, "\n")+1:], "\x1b[K\x1b[J"); last == "" {
-			t.Errorf("frame %d ends in an empty line: %q", i+1, w)
-		}
+		assert.NotEmpty(t, strings.TrimSuffix(w[strings.LastIndex(w, "\n")+1:], "\x1b[K\x1b[J"), "frame %d ends in an empty line: %q", i+1, w)
 	}
 	// no frame shows a time: the view's first line is its title
-	if strings.Contains(screen.writes[1], "2030-01-02") || !strings.Contains(screen.writes[1], "\x1b[HSPRINT TABLE") {
-		t.Errorf("the head of a frame:\n%q", screen.writes[1])
-	}
+	assert.NotContains(t, screen.writes[1], "2030-01-02", "the head of a frame")
+	assert.Contains(t, screen.writes[1], "\x1b[HSPRINT TABLE", "the head of a frame")
 }
 
 // The writer's sequences, and its one write to a frame: two frames are two
@@ -328,25 +309,16 @@ func TestWatchWriterWritesOncePerFrame(t *testing.T) {
 	t.Parallel()
 	screen := &writeLog{}
 	w := newWatchWriter(screen, screenOf(0, 0))
-	if err := w.frame("one\ntwo\nthree\n"); err != nil {
-		t.Fatal(err)
-	}
-	if err := w.frame("one\n"); err != nil { // a shorter frame
-		t.Fatal(err)
-	}
-	if len(screen.writes) != 2 {
-		t.Fatalf("two frames are %d writes: %q", len(screen.writes), screen.writes)
-	}
-	if want := "\x1b[Hone\x1b[K\ntwo\x1b[K\nthree\x1b[K\x1b[J"; screen.writes[0] != want {
-		t.Errorf("the first frame:\n%q\nwant\n%q", screen.writes[0], want)
-	}
-	if want := "\x1b[Hone\x1b[K\x1b[J"; screen.writes[1] != want {
-		t.Errorf("the shorter frame clears what is below it:\n%q\nwant\n%q", screen.writes[1], want)
-	}
+	require.NoError(t, w.frame("one\ntwo\nthree\n"))
+	require.NoError(t, w.frame("one\n")) // a shorter frame
+	require.Len(t, screen.writes, 2, "two frames are %d writes: %q", len(screen.writes), screen.writes)
+	assert.Equal(t, "\x1b[Hone\x1b[K\ntwo\x1b[K\nthree\x1b[K\x1b[J", screen.writes[0], "the first frame")
+	assert.Equal(t, "\x1b[Hone\x1b[K\x1b[J", screen.writes[1], "the shorter frame clears what is below it")
 	w.hideCursor()
 	w.showCursor()
-	if len(screen.writes) != 4 || screen.writes[2] != "\x1b[?25l" || screen.writes[3] != "\x1b[?25h" {
-		t.Errorf("the cursor: %q", screen.writes[2:])
+	if assert.Len(t, screen.writes, 4, "the cursor: %q", screen.writes[2:]) {
+		assert.Equal(t, "\x1b[?25l", screen.writes[2], "the cursor: %q", screen.writes[2:])
+		assert.Equal(t, "\x1b[?25h", screen.writes[3], "the cursor: %q", screen.writes[2:])
 	}
 }
 
@@ -363,13 +335,14 @@ func TestWatchRestoresTheCursor(t *testing.T) {
 		ta.a.sleep = func(time.Duration) { cancel() }
 		screen := &writeLog{}
 		var errb bytes.Buffer
-		if code := ta.a.whereLoop(ctx, ta.whereRun(true), screen, &errb); code != 0 || errb.Len() > 0 {
-			t.Fatalf("exit %d: %s", code, errb.String())
-		}
+		code := ta.a.whereLoop(ctx, ta.whereRun(true), screen, &errb)
+		require.Equal(t, 0, code, "exit %d: %s", code, errb.String())
+		require.Zero(t, errb.Len(), "exit %d: %s", code, errb.String())
 		w := screen.writes
-		if len(w) != 3 || w[0] != hidden || w[2] != shown || !strings.HasPrefix(w[1], "\x1b[H") {
-			t.Fatalf("writes: %q", w)
-		}
+		require.Len(t, w, 3, "writes: %q", w)
+		require.Equal(t, hidden, w[0], "writes: %q", w)
+		require.Equal(t, shown, w[2], "writes: %q", w)
+		require.True(t, strings.HasPrefix(w[1], "\x1b[H"), "writes: %q", w)
 	})
 	t.Run("cancelled before it starts", func(t *testing.T) {
 		t.Parallel()
@@ -378,13 +351,14 @@ func TestWatchRestoresTheCursor(t *testing.T) {
 		cancel()
 		screen := &writeLog{}
 		var errb bytes.Buffer
-		if code := ta.a.whereLoop(ctx, ta.whereRun(true), screen, &errb); code != 0 || errb.Len() > 0 {
-			t.Fatalf("exit %d: %s", code, errb.String())
-		}
+		code := ta.a.whereLoop(ctx, ta.whereRun(true), screen, &errb)
+		require.Equal(t, 0, code, "exit %d: %s", code, errb.String())
+		require.Zero(t, errb.Len(), "exit %d: %s", code, errb.String())
 		w := screen.writes
-		if len(w) < 2 || w[0] != hidden || w[len(w)-1] != shown || strings.Count(strings.Join(w, ""), hidden) != 1 {
-			t.Fatalf("writes: %q", w)
-		}
+		require.GreaterOrEqual(t, len(w), 2, "writes: %q", w)
+		require.Equal(t, hidden, w[0], "writes: %q", w)
+		require.Equal(t, shown, w[len(w)-1], "writes: %q", w)
+		require.Equal(t, 1, strings.Count(strings.Join(w, ""), hidden), "writes: %q", w)
 	})
 	t.Run("a read the store refuses", func(t *testing.T) {
 		t.Parallel()
@@ -393,12 +367,10 @@ func TestWatchRestoresTheCursor(t *testing.T) {
 		r.atEpoch = 99
 		screen := &writeLog{}
 		var errb bytes.Buffer
-		if code := ta.a.whereLoop(context.Background(), r, screen, &errb); code != 1 || !strings.Contains(errb.String(), "EPOCHAHEAD") {
-			t.Fatalf("exit %d: %s", code, errb.String())
-		}
-		if got := strings.Join(screen.writes, "|"); got != hidden+"|"+shown {
-			t.Fatalf("writes: %q", screen.writes)
-		}
+		code := ta.a.whereLoop(context.Background(), r, screen, &errb)
+		require.Equal(t, 1, code, "exit %d: %s", code, errb.String())
+		require.Contains(t, errb.String(), "EPOCHAHEAD", "exit %d: %s", code, errb.String())
+		require.Equal(t, hidden+"|"+shown, strings.Join(screen.writes, "|"), "writes: %q", screen.writes)
 	})
 	t.Run("no store to read", func(t *testing.T) {
 		t.Parallel()
@@ -407,12 +379,10 @@ func TestWatchRestoresTheCursor(t *testing.T) {
 		r.c.redis = ""
 		screen := &writeLog{}
 		var errb bytes.Buffer
-		if code := ta.a.whereLoop(context.Background(), r, screen, &errb); code != 2 || !strings.Contains(errb.String(), "--redis") {
-			t.Fatalf("exit %d: %s", code, errb.String())
-		}
-		if got := strings.Join(screen.writes, "|"); got != hidden+"|"+shown {
-			t.Fatalf("writes: %q", screen.writes)
-		}
+		code := ta.a.whereLoop(context.Background(), r, screen, &errb)
+		require.Equal(t, 2, code, "exit %d: %s", code, errb.String())
+		require.Contains(t, errb.String(), "--redis", "exit %d: %s", code, errb.String())
+		require.Equal(t, hidden+"|"+shown, strings.Join(screen.writes, "|"), "writes: %q", screen.writes)
 	})
 }
 
@@ -431,17 +401,15 @@ func TestWatchJSONIsOneObjectAFrameAndNoEscape(t *testing.T) {
 	r := ta.whereRun(true)
 	r.c.json = true
 	var errb bytes.Buffer
-	if code := ta.a.whereLoop(ctx, r, screen, &errb); code != 0 {
-		t.Fatalf("exit %d: %s", code, errb.String())
-	}
-	if len(screen.writes) != 2 {
-		t.Fatalf("writes: %q", screen.writes)
-	}
+	code := ta.a.whereLoop(ctx, r, screen, &errb)
+	require.Equal(t, 0, code, "exit %d: %s", code, errb.String())
+	require.Len(t, screen.writes, 2, "writes: %q", screen.writes)
 	for _, w := range screen.writes {
 		var v whereView
-		if err := json.Unmarshal([]byte(w), &v); err != nil || strings.Contains(w, "\x1b") || !strings.HasSuffix(w, "\n") {
-			t.Errorf("not one object for a program: %q (%v)", w, err)
-		}
+		err := json.Unmarshal([]byte(w), &v)
+		assert.NoError(t, err, "not one object for a program: %q (%v)", w, err)
+		assert.NotContains(t, w, "\x1b", "not one object for a program: %q (%v)", w, err)
+		assert.True(t, strings.HasSuffix(w, "\n"), "not one object for a program: %q (%v)", w, err)
 	}
 }
 
@@ -453,9 +421,9 @@ func TestWatchRefusesAnEveryOfZeroOrLess(t *testing.T) {
 	ta.ok("init --members m1")
 	for _, every := range []string{"0s", "-1s"} {
 		code, out, errs := ta.do("where --watch --every " + every)
-		if code != 2 || out != "" || !strings.Contains(errs, "--every wants a duration above 0") {
-			t.Errorf("--every %s: exit %d %q %q", every, code, out, errs)
-		}
+		assert.Equal(t, 2, code, "--every %s: exit %d %q %q", every, code, out, errs)
+		assert.Empty(t, out, "--every %s: exit %d %q %q", every, code, out, errs)
+		assert.Contains(t, errs, "--every wants a duration above 0", "--every %s: exit %d %q %q", every, code, out, errs)
 	}
 }
 
@@ -469,12 +437,11 @@ func TestWatchTakesAnyEveryAboveZero(t *testing.T) {
 			ta.a.sleep = func(time.Duration) { in.now(t) } // the first step of the wait
 			screen := &writeLog{}
 			var errb bytes.Buffer
-			if code := ta.a.cmdWhere(split("--watch --every "+every), screen, &errb); code != 0 || errb.Len() > 0 {
-				t.Fatalf("--every %s: exit %d: %s", every, code, errb.String())
-			}
-			if len(screen.writes) != 3 || !strings.HasPrefix(screen.writes[1], "\x1b[H") {
-				t.Fatalf("--every %s: the cursor hidden, one frame, the cursor restored: %q", every, screen.writes)
-			}
+			code := ta.a.cmdWhere(split("--watch --every "+every), screen, &errb)
+			require.Equal(t, 0, code, "--every %s: exit %d: %s", every, code, errb.String())
+			require.Zero(t, errb.Len(), "--every %s: exit %d: %s", every, code, errb.String())
+			require.Len(t, screen.writes, 3, "--every %s: the cursor hidden, one frame, the cursor restored: %q", every, screen.writes)
+			require.True(t, strings.HasPrefix(screen.writes[1], "\x1b[H"), "--every %s: the cursor hidden, one frame, the cursor restored: %q", every, screen.writes)
 		})
 	}
 }
@@ -485,23 +452,17 @@ func TestPauseSleepsInStepsAndStopsWhenCancelled(t *testing.T) {
 	a := &app{}
 	var slept []time.Duration
 	a.sleep = func(d time.Duration) { slept = append(slept, d) }
-	if !a.pause(context.Background(), 250*time.Millisecond) {
-		t.Fatal("a pause nothing interrupted says the watch is over")
-	}
-	if want := []time.Duration{100 * time.Millisecond, 100 * time.Millisecond, 50 * time.Millisecond}; len(slept) != len(want) || slept[0] != want[0] || slept[1] != want[1] || slept[2] != want[2] {
-		t.Fatalf("slept %v, want %v", slept, want)
-	}
+	require.True(t, a.pause(context.Background(), 250*time.Millisecond), "a pause nothing interrupted says the watch is over")
+	require.Equal(t, []time.Duration{100 * time.Millisecond, 100 * time.Millisecond, 50 * time.Millisecond}, slept, "slept")
 	ctx, cancel := context.WithCancel(context.Background())
 	a.sleep = func(time.Duration) { cancel() }
 	slept = nil
-	if a.pause(ctx, time.Hour) {
-		t.Fatal("a cancelled pause says the watch goes on")
-	}
+	require.False(t, a.pause(ctx, time.Hour), "a cancelled pause says the watch goes on")
 	cancelled := 0
 	a.sleep = func(time.Duration) { cancelled++ }
-	if a.pause(ctx, time.Hour) || cancelled != 0 {
-		t.Fatalf("a pause that begins cancelled slept %d times", cancelled)
-	}
+	paused := a.pause(ctx, time.Hour)
+	require.False(t, paused, "a pause that begins cancelled slept %d times", cancelled)
+	require.Zero(t, cancelled, "a pause that begins cancelled slept %d times", cancelled)
 }
 
 // screenOf is the size of a screen, read by a watchWriter: rows by cols, 0 for
@@ -515,15 +476,13 @@ func drawn(t *testing.T, w string) []string {
 	t.Helper()
 	body, ok := strings.CutPrefix(w, "\x1b[H")
 	body, ok2 := strings.CutSuffix(body, "\x1b[J")
-	if !ok || !ok2 {
-		t.Fatalf("not a frame drawn in place: %q", w)
-	}
+	require.True(t, ok, "not a frame drawn in place: %q", w)
+	require.True(t, ok2, "not a frame drawn in place: %q", w)
 	lines := strings.Split(body, "\n")
 	for i, l := range lines {
 		l, ok := strings.CutSuffix(l, "\x1b[K")
-		if !ok || strings.Contains(l, "\x1b") {
-			t.Fatalf("line %d is not cleared to its end, or holds a sequence: %q", i, lines[i])
-		}
+		require.True(t, ok, "line %d is not cleared to its end, or holds a sequence: %q", i, lines[i])
+		require.NotContains(t, l, "\x1b", "line %d is not cleared to its end, or holds a sequence: %q", i, lines[i])
 		lines[i] = l
 	}
 	return lines
@@ -554,12 +513,9 @@ func TestWatchCutsAFrameTallerThanTheScreenAtTheBottom(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			screen := &writeLog{}
-			if err := newWatchWriter(screen, screenOf(tc.rows, 0)).frame(text); err != nil {
-				t.Fatal(err)
-			}
-			if len(screen.writes) != 1 || screen.writes[0] != tc.want {
-				t.Fatalf("%d rows: %q\nwant one write of %q", tc.rows, screen.writes, tc.want)
-			}
+			require.NoError(t, newWatchWriter(screen, screenOf(tc.rows, 0)).frame(text))
+			require.Len(t, screen.writes, 1, "%d rows: %q\nwant one write of %q", tc.rows, screen.writes, tc.want)
+			require.Equal(t, tc.want, screen.writes[0], "%d rows: %q\nwant one write of %q", tc.rows, screen.writes, tc.want)
 		})
 	}
 }
@@ -571,9 +527,7 @@ func TestWhereWatchDrawsOnlyTheLinesThatFitTheScreen(t *testing.T) {
 	t.Parallel()
 	ta := whereFixture(t)
 	plain := plainLines(ta.ok("where"))
-	if len(plain) < 20 {
-		t.Fatalf("the fixture's frame is %d lines, too few to cut:\n%s", len(plain), strings.Join(plain, "\n"))
-	}
+	require.GreaterOrEqual(t, len(plain), 20, "the fixture's frame is %d lines, too few to cut:\n%s", len(plain), strings.Join(plain, "\n"))
 	rows := 10
 	var asked []io.Writer
 	ta.a.screen = func(w io.Writer) (int, int) { asked = append(asked, w); return rows, 0 }
@@ -588,27 +542,19 @@ func TestWhereWatchDrawsOnlyTheLinesThatFitTheScreen(t *testing.T) {
 		}
 	}}
 	var errb bytes.Buffer
-	if code := ta.a.whereLoop(ctx, ta.whereRun(true), screen, &errb); code != 0 || errb.Len() > 0 {
-		t.Fatalf("exit %d: %s", code, errb.String())
-	}
-	if len(screen.writes) != 4 {
-		t.Fatalf("the cursor hidden, two frames, the cursor restored: %q", screen.writes)
-	}
+	code := ta.a.whereLoop(ctx, ta.whereRun(true), screen, &errb)
+	require.Equal(t, 0, code, "exit %d: %s", code, errb.String())
+	require.Zero(t, errb.Len(), "exit %d: %s", code, errb.String())
+	require.Len(t, screen.writes, 4, "the cursor hidden, two frames, the cursor restored: %q", screen.writes)
 	first := drawn(t, screen.writes[1])
-	if strings.Join(first, "\n") != strings.Join(plain[:10], "\n") {
-		t.Errorf("a screen of 10 rows draws the first 10 lines of the frame:\n%s\nwant\n%s", strings.Join(first, "\n"), strings.Join(plain[:10], "\n"))
-	}
+	assert.Equal(t, strings.Join(plain[:10], "\n"), strings.Join(first, "\n"), "a screen of 10 rows draws the first 10 lines of the frame")
 	second := drawn(t, screen.writes[2])
-	if len(second) != len(plain) || strings.Join(second[1:], "\n") != strings.Join(plain[1:], "\n") { // the clock is the first line
-		t.Errorf("a screen taller than the frame draws all of it:\n%s\nwant\n%s", strings.Join(second, "\n"), strings.Join(plain, "\n"))
-	}
-	if len(asked) != 2 {
-		t.Errorf("the height is read for every frame: read %d times for 2 frames", len(asked))
-	}
+	assert.Len(t, second, len(plain), "a screen taller than the frame draws all of it:\n%s\nwant\n%s", strings.Join(second, "\n"), strings.Join(plain, "\n"))
+	// the clock is the first line
+	assert.Equal(t, strings.Join(plain[1:], "\n"), strings.Join(second[1:], "\n"), "a screen taller than the frame draws all of it:\n%s\nwant\n%s", strings.Join(second, "\n"), strings.Join(plain, "\n"))
+	assert.Len(t, asked, 2, "the height is read for every frame: read %d times for 2 frames", len(asked))
 	for _, w := range asked {
-		if w != io.Writer(screen) {
-			t.Errorf("the size was read of %v, not of the screen it draws on", w)
-		}
+		assert.Same(t, screen, w, "the size was read of another writer, not of the screen it draws on")
 	}
 }
 
@@ -632,15 +578,9 @@ func TestWatchCutsEachLineToOneLessThanTheWidth(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			screen := &writeLog{}
-			if err := newWatchWriter(screen, screenOf(tc.rows, tc.cols)).frame(text); err != nil {
-				t.Fatal(err)
-			}
-			if len(screen.writes) != 1 {
-				t.Fatalf("writes: %q", screen.writes)
-			}
-			if got := drawn(t, screen.writes[0]); strings.Join(got, "|") != strings.Join(tc.want, "|") {
-				t.Fatalf("%d columns: %q, want %q", tc.cols, got, tc.want)
-			}
+			require.NoError(t, newWatchWriter(screen, screenOf(tc.rows, tc.cols)).frame(text))
+			require.Len(t, screen.writes, 1, "writes: %q", screen.writes)
+			require.Equal(t, tc.want, drawn(t, screen.writes[0]), "%d columns", tc.cols)
 		})
 	}
 }
@@ -660,29 +600,21 @@ func TestWhereWatchCutsItsLinesToTheWidthOfTheScreen(t *testing.T) {
 		}
 	}}
 	var errb bytes.Buffer
-	if code := ta.a.whereLoop(ctx, ta.whereRun(true), screen, &errb); code != 0 || errb.Len() > 0 {
-		t.Fatalf("exit %d: %s", code, errb.String())
-	}
+	code := ta.a.whereLoop(ctx, ta.whereRun(true), screen, &errb)
+	require.Equal(t, 0, code, "exit %d: %s", code, errb.String())
+	require.Zero(t, errb.Len(), "exit %d: %s", code, errb.String())
 	got := drawn(t, screen.writes[1])
-	if len(got) != len(plain) {
-		t.Fatalf("a screen with no height known draws every line: %d of %d", len(got), len(plain))
-	}
+	require.Len(t, got, len(plain), "a screen with no height known draws every line: %d of %d", len(got), len(plain))
 	cut := 0
 	for i, l := range got {
 		want := plain[i]
 		if r := []rune(want); len(r) > cols-1 {
 			want, cut = string(r[:cols-1]), cut+1
 		}
-		if l != want {
-			t.Errorf("line %d is %q, want %q", i, l, want)
-		}
-		if utf8.RuneCountInString(l) > cols-1 {
-			t.Errorf("line %d is %d columns on a screen %d wide: %q", i, utf8.RuneCountInString(l), cols, l)
-		}
+		assert.Equal(t, want, l, "line %d", i)
+		assert.LessOrEqual(t, utf8.RuneCountInString(l), cols-1, "line %d is %d columns on a screen %d wide: %q", i, utf8.RuneCountInString(l), cols, l)
 	}
-	if cut == 0 {
-		t.Fatalf("no line of the frame is wider than the screen, so nothing shows the cut:\n%s", strings.Join(plain, "\n"))
-	}
+	require.NotZero(t, cut, "no line of the frame is wider than the screen, so nothing shows the cut:\n%s", strings.Join(plain, "\n"))
 }
 
 // One write per frame at any size: a frame of a sprint with many streams, over
@@ -705,19 +637,13 @@ func TestWatchWritesAFrameOverFourKiBInOneWrite(t *testing.T) {
 		}
 	}}
 	var errb bytes.Buffer
-	if code := ta.a.whereLoop(ctx, ta.whereRun(true), screen, &errb); code != 0 || errb.Len() > 0 {
-		t.Fatalf("exit %d: %s", code, errb.String())
-	}
-	if len(screen.writes) != 3 {
-		t.Fatalf("the cursor hidden, ONE frame, the cursor restored: %d writes of %v bytes", len(screen.writes), writeSizes(screen.writes))
-	}
+	code := ta.a.whereLoop(ctx, ta.whereRun(true), screen, &errb)
+	require.Equal(t, 0, code, "exit %d: %s", code, errb.String())
+	require.Zero(t, errb.Len(), "exit %d: %s", code, errb.String())
+	require.Len(t, screen.writes, 3, "the cursor hidden, ONE frame, the cursor restored: %d writes of %v bytes", len(screen.writes), writeSizes(screen.writes))
 	frame := screen.writes[1]
-	if len(frame) <= 8192 {
-		t.Fatalf("the frame is %d bytes, not over 8 KiB", len(frame))
-	}
-	if got := drawn(t, frame); strings.Join(got, "\n") != strings.Join(plainLines(plain), "\n") {
-		t.Errorf("the frame is not the whole of the view")
-	}
+	require.Greater(t, len(frame), 8192, "the frame is %d bytes, not over 8 KiB", len(frame))
+	assert.Equal(t, strings.Join(plainLines(plain), "\n"), strings.Join(drawn(t, frame), "\n"), "the frame is not the whole of the view")
 }
 
 func writeSizes(writes []string) []int {
@@ -751,9 +677,7 @@ func (ta *testApp) interruptible() *interrupt {
 // one to reach it: an interrupt would then kill it with the cursor hidden.
 func (in *interrupt) now(t *testing.T) {
 	t.Helper()
-	if in.fire == nil {
-		t.Fatalf("where --watch did not ask to be interrupted, so an interrupt would not reach it")
-	}
+	require.NotNil(t, in.fire, "where --watch did not ask to be interrupted, so an interrupt would not reach it")
 	in.fire()
 }
 
@@ -766,25 +690,24 @@ func TestAnInterruptEndsTheWatchThroughTheCommandAndRestoresTheCursor(t *testing
 	in := ta.interruptible()
 	sleeps := 0
 	ta.a.sleep = func(time.Duration) {
-		if sleeps++; sleeps > 3 {
-			t.Fatalf("the watch went on after the interrupt")
-		}
+		sleeps++
+		require.LessOrEqual(t, sleeps, 3, "the watch went on after the interrupt")
 		if sleeps == 3 { // the interrupt arrives while it waits, after three frames
 			in.now(t)
 		}
 	}
 	screen := &writeLog{}
 	var errb bytes.Buffer
-	if code := ta.a.cmdWhere(split("--watch --every 100ms"), screen, &errb); code != 0 || errb.Len() > 0 {
-		t.Fatalf("exit %d: %s", code, errb.String())
-	}
+	code := ta.a.cmdWhere(split("--watch --every 100ms"), screen, &errb)
+	require.Equal(t, 0, code, "exit %d: %s", code, errb.String())
+	require.Zero(t, errb.Len(), "exit %d: %s", code, errb.String())
 	w := screen.writes
-	if len(w) != 5 || w[0] != "\x1b[?25l" || w[4] != "\x1b[?25h" || !strings.HasPrefix(w[3], "\x1b[H") {
-		t.Fatalf("the cursor hidden, three frames, the cursor restored: %q", w)
-	}
-	if in.asked != 1 || in.released != 1 {
-		t.Errorf("the interrupt was asked for %d times and let go %d times", in.asked, in.released)
-	}
+	require.Len(t, w, 5, "the cursor hidden, three frames, the cursor restored: %q", w)
+	require.Equal(t, "\x1b[?25l", w[0], "the cursor hidden, three frames, the cursor restored: %q", w)
+	require.Equal(t, "\x1b[?25h", w[4], "the cursor hidden, three frames, the cursor restored: %q", w)
+	require.True(t, strings.HasPrefix(w[3], "\x1b[H"), "the cursor hidden, three frames, the cursor restored: %q", w)
+	assert.Equal(t, 1, in.asked, "the interrupt was asked for %d times and let go %d times", in.asked, in.released)
+	assert.Equal(t, 1, in.released, "the interrupt was asked for %d times and let go %d times", in.asked, in.released)
 }
 
 // cutStore is the store, with an interrupt arriving inside one of its reads:
@@ -849,23 +772,22 @@ func TestAnInterruptThatCutsAReadShortEndsTheWatchWithExitZero(t *testing.T) {
 			sleeps := 0
 			ta.a.sleep = func(time.Duration) {
 				cut.armed = true // the first frame is drawn: the interrupt comes in the next read
-				if sleeps++; sleeps > 3 {
-					t.Fatalf("the watch went on after the interrupt")
-				}
+				sleeps++
+				require.LessOrEqual(t, sleeps, 3, "the watch went on after the interrupt")
 			}
 			screen := &writeLog{}
 			var errb bytes.Buffer
-			if code := ta.a.cmdWhere(split("--watch --every 100ms"), screen, &errb); code != 0 || errb.Len() > 0 {
-				t.Fatalf("exit %d: %s", code, errb.String())
-			}
-			if w := screen.writes; len(w) != 3 || w[0] != "\x1b[?25l" || !strings.HasPrefix(w[1], "\x1b[H") || w[2] != "\x1b[?25h" {
-				t.Fatalf("the cursor hidden, the one frame, the cursor restored: %q", w)
-			}
-			if !cut.sawDone {
-				t.Errorf("the read the interrupt arrived in was not made in the command's context: the interrupt cannot cut it short")
-			}
-			if cut.dialCtx == nil || cut.dialCtx.Err() == nil {
-				t.Errorf("the store was opened in a context the interrupt does not end")
+			code := ta.a.cmdWhere(split("--watch --every 100ms"), screen, &errb)
+			require.Equal(t, 0, code, "exit %d: %s", code, errb.String())
+			require.Zero(t, errb.Len(), "exit %d: %s", code, errb.String())
+			w := screen.writes
+			require.Len(t, w, 3, "the cursor hidden, the one frame, the cursor restored: %q", w)
+			require.Equal(t, "\x1b[?25l", w[0], "the cursor hidden, the one frame, the cursor restored: %q", w)
+			require.True(t, strings.HasPrefix(w[1], "\x1b[H"), "the cursor hidden, the one frame, the cursor restored: %q", w)
+			require.Equal(t, "\x1b[?25h", w[2], "the cursor hidden, the one frame, the cursor restored: %q", w)
+			assert.True(t, cut.sawDone, "the read the interrupt arrived in was not made in the command's context: the interrupt cannot cut it short")
+			if assert.True(t, cut.dialCtx != nil, "the store was opened in a context the interrupt does not end") {
+				assert.Error(t, cut.dialCtx.Err(), "the store was opened in a context the interrupt does not end")
 			}
 		})
 	}

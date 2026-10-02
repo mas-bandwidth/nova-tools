@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // progressRegistryFile is the ONE place this repository answers "is this line
@@ -55,15 +58,14 @@ func TestEveryNovaBusConsumerDropsProgressLines(t *testing.T) {
 		{"a discard", "c := exec.Command(\"nova-bus\", \"send\")\nc.Stdout = io.Discard\nc.Stderr = io.Discard\n", false, true},
 		{"prose only", "// nova-bus is started elsewhere\n", false, false},
 	} {
-		if reads, discards := novaBusStarts(c.src); reads != c.reads || discards != c.discards {
-			t.Errorf("%s: reads=%v discards=%v, want %v %v", c.name, reads, discards, c.reads, c.discards)
-		}
+		reads, discards := novaBusStarts(c.src)
+		assert.Equal(t, c.reads, reads, "%s: reads=%v discards=%v, want %v %v", c.name, reads, discards, c.reads, c.discards)
+		assert.Equal(t, c.discards, discards, "%s: reads=%v discards=%v, want %v %v", c.name, reads, discards, c.reads, c.discards)
 	}
 
 	tree := repoTree(t)
-	if _, err := os.Stat(filepath.Join(tree.Root, filepath.FromSlash(progressRegistryFile))); err != nil {
-		t.Fatalf("%s is the one registry both halves of the rule read: %v", progressRegistryFile, err)
-	}
+	_, err := os.Stat(filepath.Join(tree.Root, filepath.FromSlash(progressRegistryFile)))
+	require.NoError(t, err, "%s is the one registry both halves of the rule read: %v", progressRegistryFile, err)
 
 	var readers, discarders, missing []string
 	for _, dir := range []string{"cmd", "internal"} {

@@ -248,7 +248,8 @@ func ParseSpend(w string) Usage {
 // Total is the sum over a producer card's consumer records: the tokens of each
 // class over the records that reported it (Unreported when none did), the waiting
 // and running seconds over the records that have them, and each cost over the
-// records that hold it, with how many of the records did.
+// records that hold it, with how many of the records did. Charged is the producer's
+// one figure: each record's actual cost where reported, else its predicted one.
 type Total struct {
 	Records   int    `json:"records"`
 	Tokens    Tokens `json:"tokens"`
@@ -263,47 +264,115 @@ type Total struct {
 	// none did. The harness's figure is its own (opencode prices each message from
 	// its model table), never an invoice.
 	ActualBy string `json:"actual_by"`
+	// Charged is the sum, over the records, of each one's actual cost where reported,
+	// else its predicted one; ChargedOf is how many records had either.
+	Charged   string `json:"charged_usd"`
+	ChargedOf int    `json:"charged_records"`
 }
 
-// SumUsage is the total of the records.
-func SumUsage(us []Usage) Total {
-	t := Total{Records: len(us), Tokens: None(), Wait: Unreported, Run: Unreported}
+// NoTotal is the total of no record.
+func NoTotal() Total { return Total{Tokens: None(), Wait: Unreported, Run: Unreported} }
+
+// Add is the total with one more record in it, every sum exact.
+func (t Total) Add(u Usage) Total {
 	add := func(to *int64, n int64) {
 		if n >= 0 {
 			*to = max(*to, 0) + n
 		}
 	}
-	var pred, act, bys []string
+	sum := func(to *string, v string) {
+		if s, ok := Sum(*to, v); ok {
+			*to = s
+		}
+	}
+	t.Records++
+	add(&t.Tokens.Input, u.Tokens.Input)
+	add(&t.Tokens.CacheRead, u.Tokens.CacheRead)
+	add(&t.Tokens.CacheWrite, u.Tokens.CacheWrite)
+	add(&t.Tokens.Output, u.Tokens.Output)
+	add(&t.Tokens.Reasoning, u.Tokens.Reasoning)
+	add(&t.Tokens.Requests, u.Tokens.Requests)
+	t.Tokens.MaxPrompt = max(t.Tokens.MaxPrompt, u.Tokens.MaxPrompt)
+	add(&t.Wait, u.Wait)
+	add(&t.Run, u.Run)
+	if u.Predicted != "" {
+		sum(&t.Predicted, u.Predicted)
+		t.PredOf++
+	}
+	if u.Actual != "" {
+		sum(&t.Actual, u.Actual)
+		t.ActualOf++
+		bys := Words(t.ActualBy)
+		if by := cmp.Or(u.ActualBy, "-"); !slices.Contains(bys, by) {
+			t.ActualBy = strings.Join(append(bys, by), "+")
+		}
+	}
+	if c := cmp.Or(u.Actual, u.Predicted); c != "" {
+		sum(&t.Charged, c)
+		t.ChargedOf++
+	}
+	return t
+}
+
+// Words splits an actual_by list ("" is none).
+func Words(by string) []string {
+	if by == "" {
+		return nil
+	}
+	return strings.Split(by, "+")
+}
+
+// SumUsage is the total of the records.
+func SumUsage(us []Usage) Total {
+	t := NoTotal()
 	for _, u := range us {
-		add(&t.Tokens.Input, u.Tokens.Input)
-		add(&t.Tokens.CacheRead, u.Tokens.CacheRead)
-		add(&t.Tokens.CacheWrite, u.Tokens.CacheWrite)
-		add(&t.Tokens.Output, u.Tokens.Output)
-		add(&t.Tokens.Reasoning, u.Tokens.Reasoning)
-		add(&t.Tokens.Requests, u.Tokens.Requests)
-		if u.Tokens.MaxPrompt > t.Tokens.MaxPrompt {
-			t.Tokens.MaxPrompt = u.Tokens.MaxPrompt
+		t = t.Add(u)
+	}
+	return t
+}
+
+// String is the total as a producer card keeps it, one line of key=value words, a
+// count or time not reported left out.
+func (t Total) String() string {
+	ws := []string{"records=" + strconv.Itoa(t.Records)}
+	for _, kv := range []struct {
+		k string
+		n int64
+	}{{"input", t.Tokens.Input}, {"cache_read", t.Tokens.CacheRead}, {"cache_write", t.Tokens.CacheWrite}, {"output", t.Tokens.Output},
+		{"reasoning", t.Tokens.Reasoning}, {"requests", t.Tokens.Requests}, {"max_prompt", t.Tokens.MaxPrompt}, {"wait_s", t.Wait}, {"run_s", t.Run}} {
+		if kv.n >= 0 {
+			ws = append(ws, kv.k+"="+strconv.FormatInt(kv.n, 10))
 		}
-		add(&t.Wait, u.Wait)
-		add(&t.Run, u.Run)
-		if u.Predicted != "" {
-			pred = append(pred, u.Predicted)
+	}
+	for _, kv := range []struct{ k, v string }{{"predicted_usd", t.Predicted}, {"actual_usd", t.Actual}, {"actual_by", t.ActualBy}, {"charged_usd", t.Charged}} {
+		if kv.v != "" {
+			ws = append(ws, kv.k+"="+kv.v)
 		}
-		if u.Actual != "" {
-			act = append(act, u.Actual)
-			if by := cmp.Or(u.ActualBy, "-"); !slices.Contains(bys, by) {
-				bys = append(bys, by)
+	}
+	return strings.Join(append(ws, "predicted_of="+strconv.Itoa(t.PredOf), "actual_of="+strconv.Itoa(t.ActualOf), "charged_of="+strconv.Itoa(t.ChargedOf)), " ")
+}
+
+// ParseTotal reads a total's line (Total.String); "" is the total of no record.
+func ParseTotal(line string) Total {
+	t := NoTotal()
+	counts := map[string]*int64{"input": &t.Tokens.Input, "cache_read": &t.Tokens.CacheRead, "cache_write": &t.Tokens.CacheWrite, "output": &t.Tokens.Output,
+		"reasoning": &t.Tokens.Reasoning, "requests": &t.Tokens.Requests, "max_prompt": &t.Tokens.MaxPrompt, "wait_s": &t.Wait, "run_s": &t.Run}
+	ints := map[string]*int{"records": &t.Records, "predicted_of": &t.PredOf, "actual_of": &t.ActualOf, "charged_of": &t.ChargedOf}
+	texts := map[string]*string{"predicted_usd": &t.Predicted, "actual_usd": &t.Actual, "actual_by": &t.ActualBy, "charged_usd": &t.Charged}
+	for _, w := range strings.Fields(line) {
+		k, v, _ := strings.Cut(w, "=")
+		switch {
+		case counts[k] != nil:
+			if n, err := strconv.ParseInt(v, 10, 64); err == nil && n >= 0 {
+				*counts[k] = n
 			}
+		case ints[k] != nil:
+			if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+				*ints[k] = n
+			}
+		case texts[k] != nil:
+			*texts[k] = v
 		}
-	}
-	if len(pred) > 0 {
-		t.Predicted, _ = Sum(pred...)
-		t.PredOf = len(pred)
-	}
-	if len(act) > 0 {
-		t.Actual, _ = Sum(act...)
-		t.ActualOf = len(act)
-		t.ActualBy = strings.Join(bys, "+")
 	}
 	return t
 }

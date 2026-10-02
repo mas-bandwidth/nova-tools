@@ -5,6 +5,9 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // finished drives a ready primary of s1 to review, its work ok or failed.
@@ -56,9 +59,10 @@ func openIDs(w *world, id string) []string {
 func ackRefused(w *world, id string) {
 	w.t.Helper()
 	p := w.do(Ack(w.s, AckReq{Notes: openIDs(w, id), Reason: "seen"}))
-	if len(p.Refused) != 1 || len(p.Units) != 0 || !strings.Contains(p.Refused[0].Why, "ack does not answer") || !strings.Contains(p.Refused[0].Why, "nova-sprint accept --group") {
-		w.t.Fatalf("an ack that silences %s: %+v", id, p)
-	}
+	require.Len(w.t, p.Refused, 1, "an ack that silences %s: %+v", id, p)
+	require.Empty(w.t, p.Units, "an ack that silences %s: %+v", id, p)
+	require.Contains(w.t, p.Refused[0].Why, "ack does not answer", "an ack that silences %s: %+v", id, p)
+	require.Contains(w.t, p.Refused[0].Why, "nova-sprint accept --group", "an ack that silences %s: %+v", id, p)
 }
 
 // Finish: failed work is its own judgment and nothing more; ok work that
@@ -67,13 +71,11 @@ func TestReviewJudgmentFinish(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 2)
 	finished(w, "s1-1", false)
-	if got := openTypes(w, "s1-1"); got != "" {
-		t.Fatalf("ok work, never asked yet: %q", got)
-	}
+	got := openTypes(w, "s1-1")
+	require.Empty(t, got, "ok work, never asked yet: %q", got)
 	finished(w, "s1-2", true)
-	if got := openTypes(w, "s1-2"); got != NWorkFailed {
-		t.Fatalf("failed work: %q", got)
-	}
+	got = openTypes(w, "s1-2")
+	require.Equal(t, NWorkFailed, got, "failed work: %q", got)
 	w.clean("finished")
 }
 
@@ -85,25 +87,21 @@ func TestReviewJudgmentRead(t *testing.T) {
 	finished(w, "s1-1", false)
 	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}}))
 	readOK(w, "s1-1")
-	if got := openTypes(w, "s1-1"); got != NReadyToAccept {
-		t.Fatalf("two oks: %q", got)
-	}
+	got := openTypes(w, "s1-1")
+	require.Equal(t, NReadyToAccept, got, "two oks: %q", got)
 	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}, Another: true}))
 	readOK(w, "s1-1")
-	if n := len(w.notesOf(NReadyToAccept)); n != 1 {
-		t.Fatalf("a third ok wrote another ready to accept: %d", n)
-	}
+	n := len(w.notesOf(NReadyToAccept))
+	require.Equal(t, 1, n, "a third ok wrote another ready to accept: %d", n)
 	finished(w, "s1-2", false)
 	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-2"}}}))
 	rcs := readsAt(w.s, w.s.Work.Card("s1-2"), 1)
 	w.must(Read(w.s, ReadReq{As: rcs[0].Row, Verdict: "ok", Sel: Sel{IDs: []string{rcs[0].ID}}}))
 	w.must(Read(w.s, ReadReq{As: rcs[1].Row, Verdict: "broken", Finding: "f", Sel: Sel{IDs: []string{rcs[1].ID}}}))
-	if p := w.do(Ack(w.s, AckReq{Notes: openIDs(w, "s1-2"), Reason: "seen"})); len(p.Refused) != 1 {
-		t.Fatalf("ack of a broken read: %+v", p)
-	}
-	if got := openTypes(w, "s1-2"); got != NReadBroken {
-		t.Fatalf("one ok, one broken, the ack refused: %q", got)
-	}
+	p := w.do(Ack(w.s, AckReq{Notes: openIDs(w, "s1-2"), Reason: "seen"}))
+	require.Len(t, p.Refused, 1, "ack of a broken read: %+v", p)
+	got = openTypes(w, "s1-2")
+	require.Equal(t, NReadBroken, got, "one ok, one broken, the ack refused: %q", got)
 	w.clean("read")
 }
 
@@ -116,19 +114,17 @@ func TestReviewJudgmentReturnAndAck(t *testing.T) {
 	accepted(w, "s1-1")
 	w.must(Return(w.s, ReturnReq{Sel: Sel{IDs: []string{"s1-1"}}, Reason: "hold it"}))
 	open := w.openOn("s1-1")
-	if len(open) != 1 || open[0].Note.Type != NReturned || !contains(open[0].Note.Decisions, "accept") {
-		t.Fatalf("returned: %+v", open)
-	}
+	require.Len(t, open, 1, "returned: %+v", open)
+	require.Equal(t, NReturned, open[0].Note.Type, "returned: %+v", open)
+	require.Contains(t, open[0].Note.Decisions, "accept", "returned: %+v", open)
 	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}, Another: true}))
 	readOK(w, "s1-1")
-	if got := openTypes(w, "s1-1"); got != NReturned {
-		t.Fatalf("a third ok after return: %q", got)
-	}
+	got := openTypes(w, "s1-1")
+	require.Equal(t, NReturned, got, "a third ok after return: %q", got)
 	// ack answers neither returned to review nor ready to accept.
 	ackRefused(w, "s1-1")
-	if got := openTypes(w, "s1-1"); got != NReturned {
-		t.Fatalf("returned after the refused ack: %q", got)
-	}
+	got = openTypes(w, "s1-1")
+	require.Equal(t, NReturned, got, "returned after the refused ack: %q", got)
 	w.clean("returned")
 }
 
@@ -142,9 +138,8 @@ func TestReviewJudgmentAsk(t *testing.T) {
 	readOK(w, "s1-1")
 	ackRefused(w, "s1-1")
 	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}, Another: true}))
-	if got := openTypes(w, "s1-1"); got != NReadyToAccept {
-		t.Fatalf("asked of another: %q", got)
-	}
+	got := openTypes(w, "s1-1")
+	require.Equal(t, NReadyToAccept, got, "asked of another: %q", got)
 	w.clean("asked")
 }
 
@@ -156,12 +151,10 @@ func TestReviewJudgmentRefusedRework(t *testing.T) {
 	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}}))
 	readOK(w, "s1-1")
 	p := w.do(Rework(w.s, ReworkReq{Sel: Sel{IDs: []string{"s1-1"}}}))
-	if len(p.Refused) != 1 || w.state("s1-1") != Review {
-		t.Fatalf("rework with no fix: %+v", p)
-	}
-	if got := openTypes(w, "s1-1"); got != NReadyToAccept {
-		t.Fatalf("refused rework: %q", got)
-	}
+	require.Len(t, p.Refused, 1, "rework with no fix: %+v", p)
+	require.Equal(t, Review, w.state("s1-1"), "rework with no fix: %+v", p)
+	got := openTypes(w, "s1-1")
+	require.Equal(t, NReadyToAccept, got, "refused rework: %q", got)
 	w.clean("refused")
 }
 
@@ -174,9 +167,9 @@ func TestReviewJudgmentCI(t *testing.T) {
 	w.must(RecordCI(w.s, CIReq{Sel: Sel{IDs: []string{"s1-1"}}, Red: true, Run: "r1"}))
 	w.must(RecordCI(w.s, CIReq{Sel: Sel{IDs: []string{"s1-1"}}, Run: "r2"}))
 	open := w.openOn("s1-1")
-	if len(open) != 1 || open[0].Note.Type != NStranded || !strings.Contains(open[0].Note.What, "never asked") {
-		t.Fatalf("green after red: %+v", open)
-	}
+	require.Len(t, open, 1, "green after red: %+v", open)
+	require.Equal(t, NStranded, open[0].Note.Type, "green after red: %+v", open)
+	require.Contains(t, open[0].Note.What, "never asked", "green after red: %+v", open)
 	w.clean("ci")
 }
 
@@ -203,9 +196,8 @@ func TestReworkOfNoNamedCardTakesReviewAndTheBoundedReadyCards(t *testing.T) {
 				got = append(got, u.Key)
 			}
 			slices.Sort(got)
-			if !slices.Equal(got, c.want) || len(p.Refused) != 0 {
-				t.Errorf("%s: reworked %v, refused %v, want %v", c.name, got, p.Refused, c.want)
-			}
+			assert.Equal(t, c.want, got, "%s: reworked %v, refused %v, want %v", c.name, got, p.Refused, c.want)
+			assert.Empty(t, p.Refused, "%s: reworked %v, refused %v, want %v", c.name, got, p.Refused, c.want)
 		})
 	}
 }

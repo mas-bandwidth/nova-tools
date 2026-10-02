@@ -1,12 +1,13 @@
 package main
 
 import (
-	"encoding/json"
 	"os"
-
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // THE NEW-USER AUDIT (2026-09-11). Each test below is one footgun or one stumble a person
@@ -21,18 +22,12 @@ func TestTemplatePrintsThePulseCardTemplates(t *testing.T) {
 	b := newBench(t)
 	for _, name := range []string{"read", "fix", "text", "replay", "drift", "tone", "models.tsv"} {
 		exit, stdout, stderr := b.swarm("template", "--name", name)
-		if exit != 0 {
-			t.Fatalf("`template --name %s` exited %d; nova-pulse cut needs the six typed templates and models.tsv:\n%s%s", name, exit, stdout, stderr)
-		}
-		if strings.TrimSpace(stdout) == "" {
-			t.Fatalf("`template --name %s` printed nothing", name)
-		}
+		require.Equal(t, 0, exit, "`template --name %s` exited %d; nova-pulse cut needs the six typed templates and models.tsv:\n%s%s", name, exit, stdout, stderr)
+		require.NotEqual(t, "", strings.TrimSpace(stdout), "`template --name %s` printed nothing", name)
 	}
 	// read is a text-only card and must carry the no-build line and the RESULT contract.
 	exit, stdout, stderr := b.swarm("template", "--name", "read")
-	if exit != 0 {
-		t.Fatalf("`template --name read` exited %d:\n%s%s", exit, stdout, stderr)
-	}
+	require.Equal(t, 0, exit, "`template --name read` exited %d:\n%s%s", exit, stdout, stderr)
 	mustContain(t, "the read card", stdout, "RESULT <label> sha=<sha12>")
 	mustContain(t, "the read card", stdout, "Do not run go build, go test or any toolchain")
 }
@@ -44,27 +39,10 @@ func TestTemplatePrintsThePulseCardTemplates(t *testing.T) {
 func TestTheCommandReferenceCarriesTheHarnessContract(t *testing.T) {
 	t.Parallel()
 	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", "CLI.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	body := string(raw)
 	for _, want := range []string{"### The harness contract", "NOVA_SWARM_JOB", "RESULT.md",
 		"cmd/nova-swarm/testdata/fakeharness", "harness_args"} {
-		if !strings.Contains(body, want) {
-			t.Errorf("docs/CLI.md's harness contract wants %q", want)
-		}
+		assert.Contains(t, body, want, "docs/CLI.md's harness contract wants %q", want)
 	}
-}
-
-// jsonInner is a string as it appears INSIDE a JSON string literal: the marshalled form
-// with its own quotes removed. A test that substitutes a path into a JSON template writes
-// JSON or it writes nothing -- on Unix the difference never showed, because a path with no
-// backslash in it is its own escape.
-func jsonInner(t *testing.T, s string) string {
-	t.Helper()
-	raw, err := json.Marshal(s)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(raw[1 : len(raw)-1])
 }

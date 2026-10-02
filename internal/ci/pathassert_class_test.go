@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // pathAssertAllowlistPath is the shrink-only list of the path-against-literal
@@ -69,9 +71,7 @@ func TestNoTestComparesAPathAgainstASlashLiteral(t *testing.T) {
 
 	for _, dir := range []string{"cmd", "internal"} {
 		for _, src := range tree.GoFilesUnder(true, dir) {
-			if src.ParseErr != nil {
-				t.Fatal(src.ParseErr)
-			}
+			require.NoError(t, src.ParseErr)
 			rel := src.Rel
 			for _, decl := range src.AST.Decls {
 				fn, ok := decl.(*ast.FuncDecl)
@@ -102,7 +102,7 @@ func TestNoTestComparesAPathAgainstASlashLiteral(t *testing.T) {
 	}
 	sort.Strings(violations)
 	for _, v := range violations {
-		t.Error(v)
+		assert.Fail(t, v)
 	}
 }
 
@@ -356,14 +356,10 @@ func TestPathAssertHeuristicReadsWhatItClaims(t *testing.T) {
 			src := "package p\nfunc f(t *testing.T) {\n" + tc.src + "\n}\n"
 			fset := token.NewFileSet()
 			file, err := parser.ParseFile(fset, "heuristic.go", src, 0)
-			if err != nil {
-				t.Fatalf("cannot parse the case: %v", err)
-			}
+			require.NoError(t, err, "cannot parse the case: %v", err)
 			fn := file.Decls[0].(*ast.FuncDecl)
 			got := flaggedPathAssertions(fn)
-			if len(got) != tc.want {
-				t.Errorf("flagged %d assertion(s) %v, want %d", len(got), got, tc.want)
-			}
+			assert.Len(t, got, tc.want, "flagged %d assertion(s) %v, want %d", len(got), got, tc.want)
 		})
 	}
 }

@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // nova-tools#3550: check and exec refuse a store whose branch has no upstream
@@ -29,12 +32,12 @@ func TestCheckAndExecHelpNameTheUpstreamPrerequisite(t *testing.T) {
 		{"exec", "help"},
 	} {
 		out, errOut, code := runNovaSecrets(bin, args...)
-		if code != 0 {
-			t.Errorf("%v: exit %d, want 0; stderr=%q", args, code, errOut)
+		if !assert.Equal(t, 0, code, "%v: exit %d, want 0; stderr=%q", args, code, errOut) {
 			continue
 		}
 		for _, want := range []string{
-			"nova-secrets " + args[0] + " --store <dir>",
+			"usage: nova-secrets " + args[0] + " [flags]",
+			"--store <dir>",
 			"named branch",
 			"upstream tracking ref",
 			"branch.<name>.remote",
@@ -46,16 +49,13 @@ func TestCheckAndExecHelpNameTheUpstreamPrerequisite(t *testing.T) {
 			"git init --bare",
 			"push -u origin",
 		} {
-			if !strings.Contains(out, want) {
-				t.Errorf("%v help lacks %q:\n%s", args, want, out)
-			}
+			assert.Contains(t, out, want, "%v help lacks %q:\n%s", args, want, out)
 		}
 	}
 	// The root help's --store line points at the prerequisite too.
 	out, _, code := runNovaSecrets(bin, "help")
-	if code != 0 || !strings.Contains(out, "upstream tracking ref") {
-		t.Errorf("root help --store line does not name the upstream tracking ref (exit %d):\n%s", code, out)
-	}
+	assert.Equal(t, 0, code, "root help --store line does not name the upstream tracking ref (exit %d):\n%s", code, out)
+	assert.Contains(t, out, "upstream tracking ref", "root help --store line does not name the upstream tracking ref (exit %d):\n%s", code, out)
 }
 
 // TestNoUpstreamRefusalNamesTheSafeNextAction: the issue's own transcript, a
@@ -95,22 +95,18 @@ func TestNoUpstreamRefusalNamesTheSafeNextAction(t *testing.T) {
 		"git init --bare <dir> && git -C " + storeDir + " remote add origin <dir> && git -C " + storeDir + " push -u origin main",
 	}
 	_, errOut, code := runNovaSecrets(bin, checkArgs...)
-	if code != 2 || !strings.HasPrefix(errOut, "SECRETS REFUSED: ") || strings.Count(errOut, "\n") != 1 {
-		t.Fatalf("check on a no-upstream store: want one SECRETS REFUSED line and exit 2, got %d: %q", code, errOut)
-	}
+	require.Equal(t, 2, code, "check on a no-upstream store: want one SECRETS REFUSED line and exit 2, got %d: %q", code, errOut)
+	require.True(t, strings.HasPrefix(errOut, "SECRETS REFUSED: "), "check on a no-upstream store: want one SECRETS REFUSED line and exit 2, got %d: %q", code, errOut)
+	require.Equal(t, 1, strings.Count(errOut, "\n"), "check on a no-upstream store: want one SECRETS REFUSED line and exit 2, got %d: %q", code, errOut)
 	for _, w := range wants {
-		if !strings.Contains(errOut, w) {
-			t.Errorf("check refusal lacks %q:\n%s", w, errOut)
-		}
+		assert.Contains(t, errOut, w, "check refusal lacks %q:\n%s", w, errOut)
 	}
 	_, errOut, code = runNovaSecrets(bin, execArgs...)
-	if code != 125 || !strings.HasPrefix(errOut, "SECRETS EXEC FAIL ") || strings.Count(errOut, "\n") != 1 {
-		t.Fatalf("exec on a no-upstream store: want one SECRETS EXEC FAIL line and exit 125, got %d: %q", code, errOut)
-	}
+	require.Equal(t, 125, code, "exec on a no-upstream store: want one SECRETS EXEC FAIL line and exit 125, got %d: %q", code, errOut)
+	require.True(t, strings.HasPrefix(errOut, "SECRETS EXEC FAIL "), "exec on a no-upstream store: want one SECRETS EXEC FAIL line and exit 125, got %d: %q", code, errOut)
+	require.Equal(t, 1, strings.Count(errOut, "\n"), "exec on a no-upstream store: want one SECRETS EXEC FAIL line and exit 125, got %d: %q", code, errOut)
 	for _, w := range wants {
-		if !strings.Contains(errOut, w) {
-			t.Errorf("exec refusal lacks %q:\n%s", w, errOut)
-		}
+		assert.Contains(t, errOut, w, "exec refusal lacks %q:\n%s", w, errOut)
 	}
 
 	// Follow the printed offline remedy, <dir> a bare repo in this test's temp dir.
@@ -120,11 +116,8 @@ func TestNoUpstreamRefusalNamesTheSafeNextAction(t *testing.T) {
 	runCmd(t, storeDir, "git", "push", "-q", "-u", "origin", "main")
 
 	out, errOut, code := runNovaSecrets(bin, checkArgs...)
-	if code != 0 || !strings.Contains(out, "head=") {
-		t.Fatalf("check after the printed remedy: want exit 0 with head=, got %d: out=%q err=%q", code, out, errOut)
-	}
+	require.Equal(t, 0, code, "check after the printed remedy: want exit 0 with head=, got %d: out=%q err=%q", code, out, errOut)
+	require.Contains(t, out, "head=", "check after the printed remedy: want exit 0 with head=, got %d: out=%q err=%q", code, out, errOut)
 	_, errOut, code = runNovaSecrets(bin, execArgs...)
-	if code != 0 {
-		t.Fatalf("exec after the printed remedy: want exit 0, got %d: %q", code, errOut)
-	}
+	require.Equal(t, 0, code, "exec after the printed remedy: want exit 0, got %d: %q", code, errOut)
 }

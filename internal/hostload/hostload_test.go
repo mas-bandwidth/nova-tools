@@ -1,7 +1,6 @@
 package hostload
 
 import (
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"math"
@@ -47,48 +46,6 @@ func TestTopCPULine(t *testing.T) {
 	require.False(t, ok, "a missing line must not report")
 	_, ok = ParseTopCPU("CPU usage: 1% user, 2% sys, x% idle\n")
 	require.False(t, ok, "an idle that is not a number must not report")
-}
-
-// TestProcLoadavg: Linux's /proc/loadavg gives its first field.
-func TestProcLoadavg(t *testing.T) {
-	t.Parallel()
-	v, ok := ParseProcLoadavg("0.52 0.58 0.59 1/389 12345\n")
-	require.True(t, ok && v == 0.52, "load1 = %v %v, want 0.52", v, ok)
-	v, ok = ParseProcLoadavg("21.07 19.50 18.00 30/2000 999\n")
-	require.True(t, ok && v == 21.07, "load1 = %v %v, want 21.07", v, ok)
-	for _, bad := range []string{"", "  \n", "x 1 2", "-1 0 0"} {
-		_, ok := ParseProcLoadavg(bad)
-		require.False(t, ok, "%q must not report", bad)
-	}
-}
-
-// vmLoadavg is darwin's struct loadavg as sysctl returns it: three fixed-point
-// averages and the scale, with its trailing NULs cut as syscall.Sysctl cuts
-// them.
-func vmLoadavg(scale uint64, avgs ...float64) []byte {
-	b := make([]byte, 24)
-	for i, a := range avgs {
-		binary.LittleEndian.PutUint32(b[4*i:], uint32(a*float64(scale)))
-	}
-	binary.LittleEndian.PutUint64(b[16:], scale)
-	for len(b) > 0 && b[len(b)-1] == 0 {
-		b = b[:len(b)-1]
-	}
-	return b
-}
-
-// TestVMLoadavg: darwin's vm.loadavg gives the first average over the scale,
-// with the reply's cut trailing NULs padded back.
-func TestVMLoadavg(t *testing.T) {
-	t.Parallel()
-	v, ok := ParseVMLoadavg(vmLoadavg(2048, 17.36, 21.31, 19.56))
-	require.True(t, ok && near(v, 17.36), "load1 = %v %v, want 17.36", v, ok)
-	v, ok = ParseVMLoadavg(vmLoadavg(2048, 1.5))
-	require.True(t, ok && v == 1.5, "load1 = %v %v, want 1.5", v, ok)
-	_, ok = ParseVMLoadavg(nil)
-	require.False(t, ok, "an empty reply has no scale and must not report")
-	_, ok = ParseVMLoadavg(make([]byte, 25))
-	require.False(t, ok, "a reply longer than the struct must not report")
 }
 
 // TestMeasureLinux: the first reading has no interval, so it falls back to the
@@ -204,21 +161,25 @@ func TestSamplerTakesTheSecondAMeterGives(t *testing.T) {
 func TestRingReportsTheHighestOfTheLastTen(t *testing.T) {
 	t.Parallel()
 	var r Ring
-	require.Equal(t, 0.0, r.Max(), "an empty ring reports 0")
+	max := func() float64 {
+		m, _ := r.MaxSince(0)
+		return m
+	}
+	require.Equal(t, 0.0, max(), "an empty ring reports 0")
 	for _, p := range []float64{10, 70, 20} {
 		r.Add(p)
 	}
-	require.Equal(t, 70.0, r.Max())
+	require.Equal(t, 70.0, max())
 	for i := 0; i < RingSize-3; i++ {
 		r.Add(5) // ten held: 10, 70, 20 and seven 5s
 	}
-	require.Equal(t, 70.0, r.Max(), "ten samples held, the 70 among them")
+	require.Equal(t, 70.0, max(), "ten samples held, the 70 among them")
 	for i := 0; i < RingSize; i++ {
 		r.Add(5)
 	}
-	require.Equal(t, 5.0, r.Max(), "after ten more samples of 5 the 70 is gone")
+	require.Equal(t, 5.0, max(), "after ten more samples of 5 the 70 is gone")
 	r.Add(5000)
-	require.Equal(t, MaxPercent, r.Max(), "a sample past the cap is capped")
+	require.Equal(t, MaxPercent, max(), "a sample past the cap is capped")
 }
 
 // TestRingSinceAnEarlierCount: the highest of the samples added after a count, at most
@@ -240,35 +201,6 @@ func TestRingSinceAnEarlierCount(t *testing.T) {
 	}
 	m, ok = r.MaxSince(0)
 	require.True(t, ok && m == 1, "since 0 after 12 more = %v %v, want only the ten held", m, ok)
-}
-
-// TestIostatSecond: darwin's iostat -c 2 prints the average since boot and then the
-// second; busy is 100 minus the second's idle.
-func TestIostatSecond(t *testing.T) {
-	t.Parallel()
-	out := "      cpu    load average\n us sy id   1m   5m   15m\n 12 20 68  8.18 8.05 7.81\n  3  6 90  8.18 8.05 7.81\n"
-	pct, ok := ParseIostat(out)
-	require.True(t, ok && pct == 10, "iostat busy = %v %v, want 10", pct, ok)
-	_, ok = ParseIostat("      cpu    load average\n us sy id   1m   5m   15m\n 12 20 68  8.18 8.05 7.81\n")
-	require.False(t, ok, "the since-boot line alone is not a second")
-	_, ok = ParseIostat("")
-	require.False(t, ok, "no output must not report")
-}
-
-// TestIostatIdleOneHundred: iostat prints each of us, sy and id %3.0f, so an idle of 100
-// is "  0  0100" and the row does not split on spaces; it is a second 0% busy, not a
-// failed reading.
-func TestIostatIdleOneHundred(t *testing.T) {
-	t.Parallel()
-	head := "      cpu    load average\n us sy id   1m   5m   15m\n 12 20 68  8.18 8.05 7.81\n"
-	pct, ok := ParseIostat(head + "  0  0100  8.18 8.05 7.81\n")
-	require.True(t, ok && pct == 0, "idle 100 = %v %v, want 0", pct, ok)
-	pct, ok = ParseIostat(head + "  0  1 99  8.18 8.05 7.81\n")
-	require.True(t, ok && pct == 1, "idle 99 = %v %v, want 1", pct, ok)
-	pct, ok = ParseIostat(head + "100  0  0  8.18 8.05 7.81\n")
-	require.True(t, ok && pct == 100, "idle 0 = %v %v, want 100", pct, ok)
-	pct, ok = ParseIostat("12 20 68 8.18\n3 6 90 8.18\n")
-	require.True(t, ok && pct == 10, "a row split on spaces = %v %v, want 10", pct, ok)
 }
 
 // TestTopDropsAZero: top prints the hundredths of a percent without a leading zero,
@@ -298,27 +230,4 @@ func TestLocalSamplerReadsThisMachine(t *testing.T) {
 	}
 	require.True(t, ok && pct >= 0 && pct <= 100, "local sample = %v %v, want 0..100", pct, ok)
 	t.Logf("LOCAL-SAMPLE %.1f%% on %d cores", pct, runtime.NumCPU())
-}
-
-// Both spaced and packed columns preserve the entire idle value. The spaced
-// three-digit value must not be truncated to its first two digits.
-func TestIostatColumnLayouts(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name, row string
-		busy      float64
-	}{
-		{"spaced idle hundred", "  0  0 100  8.18 8.05 7.81", 0},
-		{"spaced idle ninety eight", "  1  1  98  8.18 8.05 7.81", 2},
-		{"wide spaced idle hundred", "   0   0 100  8.18 8.05 7.81", 0},
-		{"packed idle hundred", "  0  0100  8.18 8.05 7.81", 0},
-		{"packed system hundred", "  0100  0  8.18 8.05 7.81", 100},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			busy, ok := ParseIostat("      cpu    load average\n us sy id   1m   5m   15m\n 12 20 68  8.18 8.05 7.81\n" + tc.row + "\n")
-			require.True(t, ok)
-			require.Equal(t, tc.busy, busy)
-		})
-	}
 }

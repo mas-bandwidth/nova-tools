@@ -3,7 +3,9 @@ package main
 import (
 	"fmt"
 	"io"
+	"maps"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -580,12 +582,7 @@ func (w *witness) checkSeat() {
 			owner, _, _ := strings.Cut(name, "-")
 			perOwner[owner]++
 		}
-		owners := make([]string, 0, len(perOwner))
-		for o := range perOwner {
-			owners = append(owners, o)
-		}
-		sort.Strings(owners)
-		for _, o := range owners {
+		for _, o := range slices.Sorted(maps.Keys(perOwner)) {
 			if o != "" && perOwner[o] > 1 {
 				w.drift("seat owner=%s keys=%d want=1 in %s", o, perOwner[o], seatdir)
 			}
@@ -713,10 +710,7 @@ func (w *witness) largest(n int) string {
 	var all []sized
 	const chunk = 200
 	for i := 0; i < len(entries); i += chunk {
-		end := i + chunk
-		if end > len(entries) {
-			end = len(entries)
-		}
+		end := min(i+chunk, len(entries))
 		res := w.runTool(du, append([]string{"-sk"}, entries[i:end]...))
 		for _, line := range strings.Split(res.stdout, "\n") {
 			kbs, path, ok := strings.Cut(line, "\t")

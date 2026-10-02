@@ -4,6 +4,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // nova-tools #2012, in its own title: "launchers: macOS bash 3.2 has no `mapfile`; zsh
@@ -62,46 +65,28 @@ func TestIssue2012(t *testing.T) {
 	t.Run("mapfile-is-not-a-bash-32-builtin", func(t *testing.T) {
 		path := fleetScript(t, "mapfile-launcher.sh", issue2012Mapfile)
 		exit, stdout, stderr := runSwarm(t, "lint", "--fleet", path)
-		if exit != 1 {
-			t.Fatalf("a launcher that reads lines with `mapfile` drifts at exit 1 -- the coordinator's /bin/bash is 3.2 and has no `mapfile`, which is the first outage of #2012 -- got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
-		}
-		if !strings.Contains(stdout, "LINT DRIFT script=mapfile-launcher.sh bash4-builtin: 2:") {
-			t.Fatalf("the drift names the rule, the script and the `mapfile` line:\n%s", stdout)
-		}
-		if !strings.Contains(stdout, "mapfile") {
-			t.Fatalf("the drift's excerpt quotes the `mapfile` line so the writer reads which word it is:\n%s", stdout)
-		}
-		if !strings.Contains(stdout, " remedy=") {
-			t.Fatalf("every drift carries its remedy, which is the whole of the card-writer lesson #1464 recorded:\n%s", stdout)
-		}
-		if strings.Contains(stdout, "unquoted-expansion") {
-			t.Fatalf("every other expansion on the launcher is quoted; `mapfile` is its one defect:\n%s", stdout)
-		}
+		require.Equal(t, 1, exit, "a launcher that reads lines with `mapfile` drifts at exit 1 -- the coordinator's /bin/bash is 3.2 and has no `mapfile`, which is the first outage of #2012 -- got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+		require.Contains(t, stdout, "LINT DRIFT script=mapfile-launcher.sh bash4-builtin: 2:", "the drift names the rule, the script and the `mapfile` line:\n%s", stdout)
+		require.Contains(t, stdout, "mapfile", "the drift's excerpt quotes the `mapfile` line so the writer reads which word it is:\n%s", stdout)
+		require.Contains(t, stdout, " remedy=", "every drift carries its remedy, which is the whole of the card-writer lesson #1464 recorded:\n%s", stdout)
+		require.NotContains(t, stdout, "unquoted-expansion", "every other expansion on the launcher is quoted; `mapfile` is its one defect:\n%s", stdout)
 	})
 
 	t.Run("zsh-does-not-word-split-unquoted-variables", func(t *testing.T) {
 		path := fleetScript(t, "zsh-one-liner.sh", issue2012ZshSplit)
 		exit, stdout, stderr := runSwarm(t, "lint", "--fleet", path)
-		if exit != 1 {
-			t.Fatalf("a launcher that leans on unquoted word splitting drifts at exit 1 -- zsh does not split it and four loops died on exactly this, which is the second outage of #2012 -- got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
-		}
+		require.Equal(t, 1, exit, "a launcher that leans on unquoted word splitting drifts at exit 1 -- zsh does not split it and four loops died on exactly this, which is the second outage of #2012 -- got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
 		for _, want := range []string{
 			"unquoted-expansion: 2:", // for c in $CARDS
 			"unquoted-expansion: 5:", // set -- $ARGS
 			"unquoted-expansion: 6:", // $NEW:refs/... whose `:r` zsh eats
 		} {
-			if !strings.Contains(stdout, "LINT DRIFT script=zsh-one-liner.sh "+want) {
-				t.Errorf("the drift %s is the zsh shape #2012 measured and is not named:\n%s", want, stdout)
-			}
+			assert.Contains(t, stdout, "LINT DRIFT script=zsh-one-liner.sh "+want, "the drift %s is the zsh shape #2012 measured and is not named:\n%s", want, stdout)
 		}
 		for _, no := range []string{"bash4-builtin", "bash-shebang"} {
-			if strings.Contains(stdout, no) {
-				t.Errorf("`%s` is not this script's defect: the shebang names bash and no bash-4 builtin is used:\n%s", no, stdout)
-			}
+			assert.NotContains(t, stdout, no, "`%s` is not this script's defect: the shebang names bash and no bash-4 builtin is used:\n%s", no, stdout)
 		}
-		if !strings.Contains(stdout, " remedy=") {
-			t.Fatalf("every drift carries its remedy:\n%s", stdout)
-		}
+		require.Contains(t, stdout, " remedy=", "every drift carries its remedy:\n%s", stdout)
 	})
 
 	t.Run("the-fleet-runs-under-bin-bash", func(t *testing.T) {
@@ -119,15 +104,9 @@ func TestIssue2012(t *testing.T) {
 			t.Run(tc.name, func(t *testing.T) {
 				path := fleetScript(t, tc.name+".sh", tc.body)
 				exit, stdout, stderr := runSwarm(t, "lint", "--fleet", path)
-				if exit != 1 {
-					t.Fatalf("a fleet script the coordinator cannot run under /bin/bash drifts at exit 1, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
-				}
-				if !strings.Contains(stdout, "LINT DRIFT script="+tc.name+".sh bash-shebang: 1:") {
-					t.Fatalf("the drift names the interpreter line, which is line 1:\n%s", stdout)
-				}
-				if strings.Contains(stdout, "unquoted-expansion") {
-					t.Fatalf("every expansion on this launcher is quoted; the interpreter line is its one defect:\n%s", stdout)
-				}
+				require.Equal(t, 1, exit, "a fleet script the coordinator cannot run under /bin/bash drifts at exit 1, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+				require.Contains(t, stdout, "LINT DRIFT script="+tc.name+".sh bash-shebang: 1:", "the drift names the interpreter line, which is line 1:\n%s", stdout)
+				require.NotContains(t, stdout, "unquoted-expansion", "every expansion on this launcher is quoted; the interpreter line is its one defect:\n%s", stdout)
 			})
 		}
 	})
@@ -148,18 +127,11 @@ func TestIssue2012(t *testing.T) {
 		}, "\n")
 		path := fleetScript(t, "clean-launcher.sh", clean)
 		exit, stdout, stderr := runSwarm(t, "lint", "--fleet", path)
-		if exit != 0 {
-			t.Fatalf("a launcher that runs under /bin/bash 3.2 with every expansion quoted lints clean at exit 0, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
-		}
-		if !strings.Contains(stdout, "LINT OK script=clean-launcher.sh checks=3") {
-			t.Fatalf("the OK line names the script and how many checks ran:\n%s", stdout)
-		}
-		if lines := strings.Split(strings.TrimSuffix(stdout, "\n"), "\n"); len(lines) != 1 {
-			t.Fatalf("LINT OK is one line, got %d:\n%s", len(lines), stdout)
-		}
-		if stderr != "" {
-			t.Fatalf("a clean lint writes nothing to stderr: %q", stderr)
-		}
+		require.Equal(t, 0, exit, "a launcher that runs under /bin/bash 3.2 with every expansion quoted lints clean at exit 0, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+		require.Contains(t, stdout, "LINT OK script=clean-launcher.sh checks=3", "the OK line names the script and how many checks ran:\n%s", stdout)
+		lines := strings.Split(strings.TrimSuffix(stdout, "\n"), "\n")
+		require.Len(t, lines, 1, "LINT OK is one line, got %d:\n%s", len(lines), stdout)
+		require.Empty(t, stderr, "a clean lint writes nothing to stderr: %q", stderr)
 	})
 
 	t.Run("mapfile-inside-quotes-is-prose", func(t *testing.T) {
@@ -174,44 +146,33 @@ func TestIssue2012(t *testing.T) {
 		}, "\n")
 		path := fleetScript(t, "quoted-mapfile.sh", body)
 		exit, stdout, stderr := runSwarm(t, "lint", "--fleet", path)
-		if exit != 0 || !strings.Contains(stdout, "LINT OK script=quoted-mapfile.sh checks=3") {
-			t.Fatalf("`mapfile` inside single or double quotes is prose and lints clean at exit 0, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
-		}
+		require.Equal(t, 0, exit, "`mapfile` inside single or double quotes is prose and lints clean at exit 0, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+		require.Contains(t, stdout, "LINT OK script=quoted-mapfile.sh checks=3", "`mapfile` inside single or double quotes is prose and lints clean at exit 0, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
 		code := fleetScript(t, "subst-mapfile.sh", "#!/usr/bin/env bash\nx=\"$(mapfile -t a < f)\"\n")
 		exit, stdout, _ = runSwarm(t, "lint", "--fleet", code)
-		if exit != 1 || !strings.Contains(stdout, "bash4-builtin: 2:") {
-			t.Fatalf("`mapfile` inside a quoted `$( )` is still code and drifts, got %d\n%s", exit, stdout)
-		}
+		require.Equal(t, 1, exit, "`mapfile` inside a quoted `$( )` is still code and drifts, got %d\n%s", exit, stdout)
+		require.Contains(t, stdout, "bash4-builtin: 2:", "`mapfile` inside a quoted `$( )` is still code and drifts, got %d\n%s", exit, stdout)
 		// Held on #2872 at 9a640fbb: a `$( )` is scanned with its own quote
 		// state, so a quoted word inside the substitution is prose too, while a bare
 		// builtin or an unquoted expansion inside it is still code.
 		inner := fleetScript(t, "subst-quoted-mapfile.sh", "#!/usr/bin/env bash\nx=\"$(printf '%s' 'mapfile')\"\ny=$(echo \"readarray\")\nz=\"$(printf '%s' \")\" 'mapfile')\"\n")
 		exit, stdout, stderr = runSwarm(t, "lint", "--fleet", inner)
-		if exit != 0 || !strings.Contains(stdout, "LINT OK script=subst-quoted-mapfile.sh checks=3") {
-			t.Fatalf("`mapfile` quoted inside `$( )` is prose and lints clean at exit 0, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
-		}
+		require.Equal(t, 0, exit, "`mapfile` quoted inside `$( )` is prose and lints clean at exit 0, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+		require.Contains(t, stdout, "LINT OK script=subst-quoted-mapfile.sh checks=3", "`mapfile` quoted inside `$( )` is prose and lints clean at exit 0, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
 		nested := fleetScript(t, "subst-nested-mapfile.sh", "#!/usr/bin/env bash\nx=\"$(echo \"$(mapfile -t a < f)\")\"\ny=\"$(ls $DIR)\"\n")
 		exit, stdout, _ = runSwarm(t, "lint", "--fleet", nested)
-		if exit != 1 || !strings.Contains(stdout, "bash4-builtin: 2:") || !strings.Contains(stdout, "unquoted-expansion: 3:") {
-			t.Fatalf("a builtin in a nested `$( )` and an unquoted expansion inside `$( )` are code and drift, got %d\n%s", exit, stdout)
-		}
+		require.Equal(t, 1, exit, "a builtin in a nested `$( )` and an unquoted expansion inside `$( )` are code and drift, got %d\n%s", exit, stdout)
+		require.Contains(t, stdout, "bash4-builtin: 2:", "a builtin in a nested `$( )` and an unquoted expansion inside `$( )` are code and drift, got %d\n%s", exit, stdout)
+		require.Contains(t, stdout, "unquoted-expansion: 3:", "a builtin in a nested `$( )` and an unquoted expansion inside `$( )` are code and drift, got %d\n%s", exit, stdout)
 	})
 
 	t.Run("card-and-fleet-are-two-inputs", func(t *testing.T) {
 		path := fleetScript(t, "two-inputs.sh", "#!/bin/bash\nexit 0\n")
 		exit, _, stderr := runSwarm(t, "lint", "--fleet", path, "--card", path)
-		if exit != 2 {
-			t.Fatalf("--card and --fleet name two different inputs and one run must say so at exit 2, got %d", exit)
-		}
-		if !strings.Contains(stderr, "--card and --fleet") {
-			t.Fatalf("the refusal names the two flags it was handed:\n%s", stderr)
-		}
+		require.Equal(t, 2, exit, "--card and --fleet name two different inputs and one run must say so at exit 2, got %d", exit)
+		require.Contains(t, stderr, "--card and --fleet", "the refusal names the two flags it was handed:\n%s", stderr)
 		exit, _, stderr = runSwarm(t, "lint", "--fleet", path, "--typed")
-		if exit != 2 {
-			t.Fatalf("the card checks over a shell script are a guess about a different file and must be refused at exit 2, got %d", exit)
-		}
-		if !strings.Contains(stderr, "--typed") {
-			t.Fatalf("the refusal names the card flag it was handed:\n%s", stderr)
-		}
+		require.Equal(t, 2, exit, "the card checks over a shell script are a guess about a different file and must be refused at exit 2, got %d", exit)
+		require.Contains(t, stderr, "--typed", "the refusal names the card flag it was handed:\n%s", stderr)
 	})
 }

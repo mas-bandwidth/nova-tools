@@ -292,9 +292,7 @@ func startJobLeaseTicking(jobDir, label string, ticks <-chan time.Time, stopTick
 
 	done := make(chan struct{})
 	var beating sync.WaitGroup
-	beating.Add(1)
-	go func() {
-		defer beating.Done()
+	beating.Go(func() {
 		defer stopTicks()
 		// THE PROVIDER-BYTE RULE (feature 87). The lease renews only when the
 		// supervisor has observed provider bytes, signalled by a .provider-beat
@@ -338,7 +336,7 @@ func startJobLeaseTicking(jobDir, label string, ticks <-chan time.Time, stopTick
 				_ = publishJobLease(path, body, hooks)
 			}
 		}
-	}()
+	})
 
 	var once sync.Once
 	return func() {

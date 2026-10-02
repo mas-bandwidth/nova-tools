@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +13,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
@@ -38,28 +41,21 @@ import (
 func TestNativeDeadlineKillsTheWholeTree(t *testing.T) {
 	windowsIsNotABench(t)
 	got := deadlineOnATree(t)
-	if !strings.Contains(got.stdout, "NATIVE INCOMPLETE ") {
-		t.Fatalf("a run killed at the deadline still prints its verdict line:\n%s\n%s", got.stdout, got.stderr)
-	}
+	require.Contains(t, got.stdout, "NATIVE INCOMPLETE ", "a run killed at the deadline still prints its verdict line:\n%s\n%s", got.stdout, got.stderr)
 	// A run killed at its deadline with a silent harness and no RESULT.md did not succeed,
 	// and does not say it did (nova-tools #1844).
-	if !strings.Contains(got.stdout, "why=harness-silent") {
-		t.Fatalf("the verdict must name why it is incomplete:\n%s", got.stdout)
-	}
-	if strings.Contains(got.stdout, "NATIVE OK") {
-		t.Fatalf("a run that produced nothing must not say OK:\n%s", got.stdout)
-	}
+	require.Contains(t, got.stdout, "why=harness-silent", "the verdict must name why it is incomplete:\n%s", got.stdout)
+	require.NotContains(t, got.stdout, "NATIVE OK", "a run that produced nothing must not say OK:\n%s", got.stdout)
 	// No live child after: the grandchild the harness left behind is gone too. It sleeps
 	// five minutes on its own, so it is gone only because the group was killed. The kill is
 	// SIGKILL and the kernel reaps at its own pace, so this waits on the pid itself; the
 	// bound is a safety net and never the assertion.
 	if !pidGoneWithin(got.grandchild, 30*time.Second) {
 		_ = syscall.Kill(got.grandchild, syscall.SIGKILL)
-		t.Fatalf("the grandchild pid %d survived the deadline kill; the run reaped only the leader", got.grandchild)
+		require.Fail(t, fmt.Sprintf("the grandchild pid %d survived the deadline kill; the run reaped only the leader", got.grandchild))
 	}
-	if _, err := os.Stat(filepath.Join(got.slot, "usage.tsv")); err != nil {
-		t.Fatalf("usage.tsv absent after a deadline kill: %v", err)
-	}
+	_, err := os.Stat(filepath.Join(got.slot, "usage.tsv"))
+	require.NoError(t, err, "usage.tsv absent after a deadline kill")
 }
 
 // TestNativeDeadlineControlALeaderOnlyKillLeavesTheGrandchild is the control for the test
@@ -82,9 +78,7 @@ func TestNativeDeadlineControlALeaderOnlyKillLeavesTheGrandchild(t *testing.T) {
 	// still alive and is exactly the observable the test above depends on. swarm.Alive
 	// reads EPERM as alive, where a bare `syscall.Kill(pid, 0) != nil` read it as gone and
 	// turned a green control red on the Studio.
-	if !swarm.Alive(got.grandchild, "") {
-		t.Fatalf("with the deadline killing only the leader, grandchild %d is gone anyway -- the test above cannot tell the fix from the defect", got.grandchild)
-	}
+	require.True(t, swarm.Alive(got.grandchild, ""), "with the deadline killing only the leader, grandchild %d is gone anyway -- the test above cannot tell the fix from the defect", got.grandchild)
 }
 
 type deadlineRun struct {
@@ -101,9 +95,7 @@ func deadlineOnATree(t *testing.T) deadlineRun {
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	cardPath := filepath.Join(root, "card.md")
-	if err := os.WriteFile(cardPath, []byte("FAKE-BACKGROUND-SLEEP 300\nFAKE-IGNORE-TERM\nFAKE-SLEEP 300\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(cardPath, []byte("FAKE-BACKGROUND-SLEEP 300\nFAKE-IGNORE-TERM\nFAKE-SLEEP 300\n"), 0o644))
 	bgPath := filepath.Join(slot, "jobs", "deadline", "background.pid")
 
 	realDeadline := nativeDeadline
@@ -191,18 +183,14 @@ func TestNativeTermFromOutsideWritesUsage(t *testing.T) {
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	cardPath := filepath.Join(root, "card.md")
-	if err := os.WriteFile(cardPath, []byte("FAKE-SLEEP 60\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(cardPath, []byte("FAKE-SLEEP 60\n"), 0o644))
 	cmd := exec.Command(tool, "native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 		"--label", "termed", "--card", cardPath, "--slot", slot, "--root", root,
 		"--deadline", "60s", "--no-wall")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("starting native: %v", err)
-	}
+	require.NoError(t, cmd.Start(), "starting native")
 	// Wait for the harness to be running (it writes its argv first), then TERM the run.
 	argv := filepath.Join(slot, "jobs", "termed", "argv")
 	waitFor := time.Now().Add(10 * time.Second)
@@ -212,21 +200,14 @@ func TestNativeTermFromOutsideWritesUsage(t *testing.T) {
 		}
 		if time.Now().After(waitFor) {
 			_ = cmd.Process.Kill()
-			t.Fatalf("the harness never started (no argv):\n%s", stderr.String())
+			require.Fail(t, fmt.Sprintf("the harness never started (no argv):\n%s", stderr.String()))
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
-	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
-		t.Fatalf("sending SIGTERM: %v", err)
-	}
-	if err := cmd.Wait(); err == nil {
-		// a native run that was terminated exits non-zero (rc=-1), never 0
-		t.Fatalf("a TERMed run exits non-zero, got 0")
-	}
-	if _, err := os.Stat(filepath.Join(slot, "usage.tsv")); err != nil {
-		t.Fatalf("usage.tsv absent after a TERM from outside: %v\n%s", err, stderr.String())
-	}
-	if !strings.Contains(stdout.String(), "reason=terminated") {
-		t.Fatalf("a TERM from outside prints reason=terminated, got:\n%s", stdout.String())
-	}
+	require.NoError(t, cmd.Process.Signal(syscall.SIGTERM), "sending SIGTERM")
+	// a native run that was terminated exits non-zero (rc=-1), never 0
+	require.Error(t, cmd.Wait(), "a TERMed run exits non-zero, got 0")
+	_, err := os.Stat(filepath.Join(slot, "usage.tsv"))
+	require.NoError(t, err, "usage.tsv absent after a TERM from outside:\n%s", stderr.String())
+	require.Contains(t, stdout.String(), "reason=terminated", "a TERM from outside prints reason=terminated, got:\n%s", stdout.String())
 }

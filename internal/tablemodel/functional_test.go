@@ -5,16 +5,15 @@ package tablemodel
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
-	"reflect"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/mas-bandwidth/nova-tools/internal/tlc"
+	tassert "github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // redisServer names the redis-server the store-backed checks start. The
@@ -30,9 +29,8 @@ func redisServer(t *testing.T) ServerOptions {
 func currentTable(t *testing.T) string {
 	t.Helper()
 	p := filepath.Join("..", "nsprint", "fn", "lua", "table.lua")
-	if _, err := os.Stat(p); err != nil {
-		t.Fatal(err)
-	}
+	_, err := os.Stat(p)
+	require.NoError(t, err)
 	return p
 }
 
@@ -41,21 +39,17 @@ func TestWitnessesReproduceAgainstThePinnedLibrary(t *testing.T) {
 	so := redisServer(t)
 	var got []Finding
 	err := RunWitnesses(context.Background(), filepath.Join("testdata", "table-pinned.lua"), so, func(f Finding) { got = append(got, f) })
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	want := []Finding{
 		{"OnePlacePerTable", "confirmed", ""}, {"scope-control", "pass", ""}, {"BindPreservesOwned-removal", "confirmed", ""},
 		{"BindPreservesOwned-retained", "confirmed", ""}, {"DropPreservesBound-alias", "confirmed", ""},
 		{"CellWritesPreserveBoundSets-alias", "confirmed", ""}, {"controls", "pass", ""}, {"clear-control", "pass", ""},
 	}
-	if len(got) != len(want) {
-		t.Fatalf("%d findings, want %d: %v", len(got), len(want), got)
-	}
+	require.Equal(t, len(want), len(got), "%d findings, want %d: %v", len(got), len(want), got)
 	for i := range want {
-		if got[i].Name != want[i].Name || got[i].Result != want[i].Result || got[i].Text == "" {
-			t.Errorf("finding %d = %+v, want %s %s", i, got[i], want[i].Name, want[i].Result)
-		}
+		tassert.Equal(t, want[i].Name, got[i].Name, "finding %d = %+v, want %s %s", i, got[i], want[i].Name, want[i].Result)
+		tassert.Equal(t, want[i].Result, got[i].Result, "finding %d = %+v, want %s %s", i, got[i], want[i].Name, want[i].Result)
+		tassert.NotEmpty(t, got[i].Text, "finding %d = %+v, want %s %s", i, got[i], want[i].Name, want[i].Result)
 	}
 }
 
@@ -66,25 +60,20 @@ func TestWitnessesFailWhenTheLibraryDoesNotHaveTheDefect(t *testing.T) {
 	// and the run says so rather than passing.
 	stub := filepath.Join(t.TempDir(), "stub.lua")
 	code := "redis.register_function('ns_table_create', function(keys, args) return {'REFUSED'} end)\n"
-	if err := os.WriteFile(stub, []byte(code), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	err := RunWitnesses(context.Background(), stub, so, func(Finding) { t.Error("a finding was reported for a stub") })
+	err := os.WriteFile(stub, []byte(code), 0o600)
+	require.NoError(t, err)
+	err = RunWitnesses(context.Background(), stub, so, func(Finding) { tassert.Fail(t, "a finding was reported for a stub") })
 	var f *Failure
-	if !errors.As(err, &f) {
-		t.Fatalf("error = %v, want a failed check", err)
-	}
+	require.ErrorAs(t, err, &f, "error = %v, want a failed check", err)
 }
 
 func TestAStoreThatCannotStartCannotRun(t *testing.T) {
 	t.Parallel()
 	err := WithStore(context.Background(), ServerOptions{RedisServer: filepath.Join(t.TempDir(), "no-redis"), TmpDir: t.TempDir()}, func(*Store) {
-		t.Error("the check ran without a store")
+		tassert.Fail(t, "the check ran without a store")
 	})
 	var c *CannotRun
-	if !errors.As(err, &c) {
-		t.Fatalf("error = %v, want CannotRun", err)
-	}
+	require.ErrorAs(t, err, &c, "error = %v, want CannotRun", err)
 }
 
 func TestTheStoreListensOnASocketOnlyAndIsRemoved(t *testing.T) {
@@ -92,24 +81,16 @@ func TestTheStoreListensOnASocketOnlyAndIsRemoved(t *testing.T) {
 	so := redisServer(t)
 	var dir string
 	err := WithStore(context.Background(), so, func(r *Store) {
-		if pong := r.Cmd("PING"); pong != "PONG" {
-			t.Errorf("PING = %v", pong)
-		}
+		pong := r.Cmd("PING")
+		tassert.Equal(t, "PONG", pong, "PING = %v", pong)
 		cfg := list(r.Cmd("CONFIG", "GET", "port"))
-		if cfg[1] != "0" {
-			t.Errorf("the store listens on TCP port %v", cfg[1])
-		}
+		tassert.Equal(t, "0", cfg[1], "the store listens on TCP port %v", cfg[1])
 		dir = str(list(r.Cmd("CONFIG", "GET", "dir"))[1])
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if dir == "" {
-		t.Fatal("no directory reported")
-	}
-	if _, err := os.Stat(dir); err == nil {
-		t.Fatalf("the store's directory %s was left behind", dir)
-	}
+	require.NoError(t, err)
+	require.NotEmpty(t, dir, "no directory reported")
+	_, err = os.Stat(dir)
+	require.Error(t, err, "the store's directory %s was left behind", dir)
 }
 
 // harnessModels is the tree's tla/, for the two things the replay copies.
@@ -124,9 +105,8 @@ func fakeTLC(t *testing.T, seen *[]tlc.Run) tlc.Executor {
 		if len(*seen) == 2 {
 			out, code = "Error: Invariant MatchesExecution is violated.\n5 states generated, 5 distinct states found, 1 states left on queue.\n", 12
 		}
-		if err := os.WriteFile(log, []byte(out), 0o644); err != nil {
-			t.Error(err)
-		}
+		err := os.WriteFile(log, []byte(out), 0o644)
+		tassert.NoError(t, err)
 		return code
 	}
 }
@@ -141,46 +121,41 @@ func TestReplayCapturesTheRecordedTraceAndReplaysItsReceipts(t *testing.T) {
 		Source: currentTable(t), Jar: "j.jar", Java: "java", Models: harnessModels(), Dir: dir,
 		Budget: time.Minute, Server: so, Exec: fakeTLC(t, &seen), OnStep: func(e ReplayEvent) { events = append(events, e) },
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	var steps []string
 	for _, e := range events {
 		steps = append(steps, e.Step)
 	}
-	if want := []string{"capture", "receipt-replay", "mutation-controls", "tlc-execution", "tlc-mutated-observation"}; !reflect.DeepEqual(steps, want) {
-		t.Fatalf("steps = %v, want %v", steps, want)
-	}
-	if len(seen) != 2 || seen[0].Workers != 1 || seen[0].Config != HarnessName+".cfg" || seen[0].Module != HarnessName+".tla" {
-		t.Fatalf("TLC runs = %+v", seen)
-	}
+	want := []string{"capture", "receipt-replay", "mutation-controls", "tlc-execution", "tlc-mutated-observation"}
+	require.Equal(t, want, steps, "steps = %v, want %v", steps, want)
+	require.Len(t, seen, 2, "TLC runs = %+v", seen)
+	require.Equal(t, 1, seen[0].Workers, "TLC runs = %+v", seen)
+	require.Equal(t, HarnessName+".cfg", seen[0].Config, "TLC runs = %+v", seen)
+	require.Equal(t, HarnessName+".tla", seen[0].Module, "TLC runs = %+v", seen)
 
 	// What this capture saw is what the one recorded on a bench saw: the same
 	// states, refusals and model actions for the same 32 calls.
 	var got Trace
 	raw, err := os.ReadFile(filepath.Join(dir, "trace.json"))
-	if err != nil || json.Unmarshal(raw, &got) != nil {
-		t.Fatalf("trace.json: %v", err)
-	}
-	want := loadTrace(t)
-	if !reflect.DeepEqual(got.Initial, want.Initial) || len(got.Steps) != len(want.Steps) {
-		t.Fatal("the initial state or the number of steps differs from the recorded trace")
-	}
-	for i := range want.Steps {
-		g, w := got.Steps[i], want.Steps[i]
-		if !reflect.DeepEqual(g.State, w.State) || g.Model != w.Model || !reflect.DeepEqual(g.Refused, w.Refused) || (g.Receipt == nil) != (w.Receipt == nil) {
-			t.Errorf("step %d (%s) differs from the recorded trace", i, w.Verb)
-		}
+	require.NoError(t, err, "trace.json: %v", err)
+	require.NoError(t, json.Unmarshal(raw, &got), "trace.json: %v", err)
+	wantTrace := loadTrace(t)
+	require.Equal(t, wantTrace.Initial, got.Initial, "the initial state or the number of steps differs from the recorded trace")
+	require.Equal(t, len(wantTrace.Steps), len(got.Steps), "the initial state or the number of steps differs from the recorded trace")
+	for i := range wantTrace.Steps {
+		g, w := got.Steps[i], wantTrace.Steps[i]
+		tassert.Equal(t, w.State, g.State, "step %d (%s) differs from the recorded trace", i, w.Verb)
+		tassert.Equal(t, w.Model, g.Model, "step %d (%s) differs from the recorded trace", i, w.Verb)
+		tassert.Equal(t, w.Refused, g.Refused, "step %d (%s) differs from the recorded trace", i, w.Verb)
+		tassert.Equal(t, w.Receipt == nil, g.Receipt == nil, "step %d (%s) differs from the recorded trace", i, w.Verb)
 	}
 	// The harness a bench generated is the harness written now.
 	written, err := os.ReadFile(filepath.Join(dir, "execution", HarnessName+".tla"))
-	if err != nil || string(written) != string(replayFile(t, "MemberReceiptReplay.tla")) {
-		t.Fatalf("the generated harness differs from the recorded one: %v", err)
-	}
+	require.NoError(t, err, "the generated harness differs from the recorded one: %v", err)
+	require.Equal(t, string(replayFile(t, "MemberReceiptReplay.tla")), string(written), "the generated harness differs from the recorded one: %v", err)
 	mutated, err := os.ReadFile(filepath.Join(dir, "mutated-observation", HarnessName+".tla"))
-	if err != nil || string(mutated) != string(replayFile(t, "MemberReceiptReplay.mutated.tla")) {
-		t.Fatalf("the mutated harness differs from the recorded one: %v", err)
-	}
+	require.NoError(t, err, "the mutated harness differs from the recorded one: %v", err)
+	require.Equal(t, string(replayFile(t, "MemberReceiptReplay.mutated.tla")), string(mutated), "the mutated harness differs from the recorded one: %v", err)
 }
 
 func TestReplayRefusesAHarnessTLCDoesNotAccept(t *testing.T) {
@@ -193,9 +168,7 @@ func TestReplayRefusesAHarnessTLCDoesNotAccept(t *testing.T) {
 	}
 	err := RunReplay(ReplayOptions{Source: currentTable(t), Jar: "j", Java: "java", Models: harnessModels(), Dir: t.TempDir(),
 		Budget: time.Minute, Server: so, Exec: violating})
-	if err == nil || !strings.Contains(err.Error(), "execution harness") {
-		t.Fatalf("error = %v", err)
-	}
+	require.ErrorContains(t, err, "execution harness", "error = %v", err)
 	// TLC accepts the corrupted observation: the check could not have caught it.
 	passing := func(ctx context.Context, r tlc.Run, log string) int {
 		_ = os.WriteFile(log, []byte("1 states generated, 1 distinct states found, 0 states left on queue.\nModel checking completed. No error has been found.\n"), 0o644)
@@ -203,9 +176,7 @@ func TestReplayRefusesAHarnessTLCDoesNotAccept(t *testing.T) {
 	}
 	err = RunReplay(ReplayOptions{Source: currentTable(t), Jar: "j", Java: "java", Models: harnessModels(), Dir: t.TempDir(),
 		Budget: time.Minute, Server: so, Exec: passing})
-	if err == nil || !strings.Contains(err.Error(), "mutated-observation harness") {
-		t.Fatalf("error = %v", err)
-	}
+	require.ErrorContains(t, err, "mutated-observation harness", "error = %v", err)
 }
 
 func TestReplayNeedsItsInputs(t *testing.T) {
@@ -217,9 +188,8 @@ func TestReplayNeedsItsInputs(t *testing.T) {
 	} {
 		o.Dir, o.Budget, o.Server, o.Jar, o.Java = t.TempDir(), time.Minute, so, "j", "java"
 		var c *CannotRun
-		if err := RunReplay(o); !errors.As(err, &c) {
-			t.Errorf("%s: error = %v, want CannotRun", name, err)
-		}
+		err := RunReplay(o)
+		tassert.ErrorAs(t, err, &c, "%s: error = %v, want CannotRun", name, err)
 	}
 }
 
@@ -234,7 +204,5 @@ func TestASlowCommandUnderAShortBudgetFailsWithinTheBudget(t *testing.T) {
 	defer cancel()
 	err := WithStore(ctx, so, func(r *Store) { r.Cmd("BLPOP", "no-such-list", 30) })
 	var f *Failure
-	if !errors.As(err, &f) {
-		t.Fatalf("error = %v, want a failed check when the budget ends first", err)
-	}
+	require.ErrorAs(t, err, &f, "error = %v, want a failed check when the budget ends first", err)
 }

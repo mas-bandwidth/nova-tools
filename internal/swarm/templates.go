@@ -57,13 +57,14 @@ shape and its mandatory ` + "`## Head`" + `, ` + "`## Findings`" + `, ` + "`## P
 In Gates, distinguish source checks from tests and report-writing commands.
 Mark only checks actually performed as pass; no tests run does not mean no commands run.
 
-BOUND THE REPORT (issue #74): findings only. No narration of the clone, no
-restated task, no praise, no summary. One line per finding: ` + "`file:line`" + `, the
-rule in twelve words, the severity, and the fix in one clause. Keep RESULT.md
-under 40 lines and every line under 300 characters, and no pipe inside backticks:
-a ` + "`|`" + ` in a quote broke the table grammar twice (D12), so quote the rule without
-it. Put the verdict line last. When there is nothing to report, write
-` + "`findings: 0`" + `.
+BOUND THE REPORT: findings only. No narration of the clone, no restated
+task, no praise, no summary. One line per finding: ` + "`file:line`" + `, the rule
+quoted verbatim in at most twelve words (a longer rule by the twelve of its
+own words the finding rests on, never a paraphrase: rule 2 holds), the
+severity, and the fix in one clause. Keep RESULT.md under 40 lines and
+every line under 300 characters, and no pipe inside backticks: a ` + "`|`" + ` in a
+quote breaks the report's table grammar, so quote the rule without it. Put
+the verdict line last. When there is nothing to report, write ` + "`findings: 0`" + `.
 `
 
 const templateProbeRow = `probe-row — make one claim true or false
@@ -101,6 +102,9 @@ const templateFixCard = `fix-card — take one card and land the fix
 // card without the paragraph is refused
 // before anything is written. The <angle> words are the writer's to fill.
 var templateCard = "RESULT: <label> sha=<sha12>\n" +
+	"REPO: <owner>/<name>\n" +
+	"BASE: <branch>\n" +
+	"The REPO: and BASE: lines are the repository and the branch the work starts from and lands on: the member stages REPO: at BASE:, and nova-sprint land merges the card's head onto BASE: (land --base stands in for a card naming no BASE:, land --repo-dir for one naming no REPO:).\n" +
 	"You are a child of the coordinator: one task, one worktree, one branch, unattended. This card is the whole of the task and it stands alone in front of a stranger; nothing outside it is owed to you.\n" +
 	"Deadline: finish within <n> minutes.\n" +
 	"\n" +
@@ -113,7 +117,7 @@ var templateCard = "RESULT: <label> sha=<sha12>\n" +
 	"STEP 2. Write the red test first, named TestSomething, in <file>_test.go, opening with t.Parallel(). Run go test -count=1 -timeout 600s ./internal/<package>/ -run TestSomething and keep the failing line.\n" +
 	"STEP 3. Make it pass in the files this card names, and only those. Cite the model or the design section from each function that implements a rule.\n" +
 	"STEP 4. Run the gate: go test -count=1 -timeout 600s ./internal/<package>/ ./internal/ci/ and read the last line of each.\n" +
-	"STEP 5. Commit on your own branch with the trailer, push it with a plain git push, and open the pull request against <base>. The body states the diff stat, what was deleted, the tests with what each pins, and what was not done.\n" +
+	"STEP 5. Commit on your own branch with the trailer. Nothing reaches the forge from inside the wall: in the job the git shim records a push, the pull request is the finish JOB.md names (STEP 6), and the member makes both, against <base>, from outside the wall when the card finishes. The pull request body states the diff stat, what was deleted, the tests with what each pins, and what was not done.\n" +
 	"STEP 6. End as JOB.md says (docs/SPEC-CARD-CONTRACT.md): where JOB.md ends the card with its pull request, that is the end and there is nothing else to write, the gate's lines in the pull request body; where it asks for RESULT.md, write it in JOB.md's shape (head, branch, verdict, gate, output, report).\n"
 
 // templateResult is the ONE shape a report has, so the fold is mechanical and a person

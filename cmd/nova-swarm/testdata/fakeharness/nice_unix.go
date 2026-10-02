@@ -11,7 +11,7 @@ import (
 )
 
 // ownNice is this process's nice, by getpriority: darwin answers the nice itself, the
-// raw Linux system call 20 minus it (internal/yield's currentNice says why).
+// raw Linux system call 20 minus it (internal/yield's threadNice says why).
 func ownNice() (int, error) {
 	raw, err := syscall.Getpriority(syscall.PRIO_PROCESS, 0)
 	if err != nil {

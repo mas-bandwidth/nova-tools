@@ -1,4 +1,4 @@
-//go:build slow
+//go:build slow && !windows
 
 // The tests of this package that cost more than the per-commit run can pay:
 // over five seconds each on the Linux bench, or a deadline, wedge or wall-clock
@@ -14,12 +14,14 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 	"github.com/mas-bandwidth/nova-tools/internal/update"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // SLOW: 9.1 s on hetzner at dev 64b9bec48, over the five-second line.
@@ -40,11 +42,10 @@ func TestHelpExampleLinesRunAsPrinted(t *testing.T) {
 	var banner bytes.Buffer
 	update.Main("nova-version", []string{"help"}, "", &banner, &banner)
 	printed, err := onboarding.ExampleLines(banner.String(), "nova-version")
-	if err != nil {
-		t.Fatalf("nova-version help: %v\n%s", err, banner.String())
-	}
-	if documented := mainDocumentedExamples(t); !reflect.DeepEqual(documented, printed) {
-		t.Errorf("main.go documents the `example:` block as %q, but `nova-version help` prints %q; a documented block that drifts from the printed one is how a stranger's paste breaks", documented, printed)
+	require.NoError(t, err, "nova-version help: %v\n%s", err, banner.String())
+	{
+		documented := mainDocumentedExamples(t)
+		assert.Equal(t, documented, printed, "main.go documents the `example:` block as %q, but `nova-version help` prints %q; a documented block that drifts from the printed one is how a stranger's paste breaks", documented, printed)
 	}
 	work := checkout(t, root)
 	for _, line := range printed {
@@ -52,14 +53,10 @@ func TestHelpExampleLinesRunAsPrinted(t *testing.T) {
 	}
 
 	doc, err := os.ReadFile(filepath.Join(root, "docs", "CLI.md"))
-	if err != nil {
-		t.Fatalf("docs/CLI.md: %v", err)
-	}
+	require.NoError(t, err, "docs/CLI.md: %v", err)
 	for _, heading := range []string{"First run", "Capture and compare installed binaries"} {
 		block, err := onboarding.Transcript(string(doc), "nova-version", heading)
-		if err != nil {
-			t.Fatalf("docs/CLI.md `### %s`: %v", heading, err)
-		}
+		require.NoError(t, err, "docs/CLI.md `### %s`: %v", heading, err)
 		work := checkout(t, root)
 		for _, line := range block {
 			if strings.TrimSpace(line) == "" {

@@ -5,7 +5,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"errors"
 	"net"
 	"os"
 	"os/exec"
@@ -16,6 +15,9 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/testredis"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestFnVerbsOnARedisServer runs fn check and fn load through run() and the
@@ -39,17 +41,15 @@ func TestFnVerbsOnARedisServer(t *testing.T) {
 		t.Helper()
 		var out, errb bytes.Buffer
 		code := run(args, &out, &errb, d)
-		if errb.Len() != 0 {
-			t.Errorf("%q: stderr %q", args, errb.String())
-		}
+		assert.Zero(t, errb.Len(), "%q: stderr %q", args, errb.String())
 		return code, out.String()
 	}
 	expect := func(verb string, code int, prefix string) {
 		t.Helper()
 		got, out := fnRun("fn", verb, "--addr", addr)
-		if got != code || !strings.HasPrefix(out, prefix) || !strings.Contains(out, " store="+addr) {
-			t.Fatalf("fn %s: exit %d %q; want exit %d and a line starting %q naming the store", verb, got, out, code, prefix)
-		}
+		require.Equal(t, code, got, "fn %s: exit %d %q; want exit %d and a line starting %q naming the store", verb, got, out, code, prefix)
+		require.True(t, strings.HasPrefix(out, prefix), "fn %s: exit %d %q; want exit %d and a line starting %q naming the store", verb, got, out, code, prefix)
+		require.Contains(t, out, " store="+addr, "fn %s: exit %d %q; want exit %d and a line starting %q naming the store", verb, got, out, code, prefix)
 	}
 
 	expect("check", 1, "MISSING nova_sprint sha="+sha+" loaded=none want="+sha+" ")
@@ -61,26 +61,22 @@ func TestFnVerbsOnARedisServer(t *testing.T) {
 	t.Cleanup(func() { _ = c.Close() })
 	ctx := context.Background()
 	names, err := library().Functions()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, err)
 	libs, err := c.FunctionList(ctx, redis.FunctionListQuery{LibraryNamePattern: "nova_sprint"}).Result()
-	if err != nil || len(libs) != 1 {
-		t.Fatalf("FUNCTION LIST: %v %v", libs, err)
-	}
+	require.NoError(t, err, "FUNCTION LIST: %v %v", libs, err)
+	require.Len(t, libs, 1, "FUNCTION LIST: %v %v", libs, err)
 	onStore := map[string]bool{}
 	for _, f := range libs[0].Functions {
 		onStore[f.Name] = true
 	}
 	for _, n := range names {
-		if !onStore[n] {
-			t.Errorf("function %s is registered by the library's files and not on the store after fn load", n)
-		}
+		assert.True(t, onStore[n], "function %s is registered by the library's files and not on the store after fn load", n)
 	}
 
 	other := "#!lua name=nova_sprint\nredis.register_function('ns_ping', function() return 'PONG' end)\n"
-	if err := c.FunctionLoadReplace(ctx, other).Err(); err != nil {
-		t.Fatal(err)
+	{
+		err := c.FunctionLoadReplace(ctx, other).Err()
+		require.NoError(t, err, err)
 	}
 	expect("check", 1, "STALE nova_sprint sha="+sha+" loaded=")
 	expect("load", 0, "REPLACED nova_sprint sha="+sha+" was=")
@@ -113,29 +109,42 @@ func TestFnVerbsLogInAsTheACLUser(t *testing.T) {
 	sha := want(t)
 
 	code, out, errOut := fnRun("fn", "load", "--addr", addr, "--user", "nofn")
-	if code != 1 || out != "" || strings.Count(errOut, "\n") != 1 ||
-		!strings.HasPrefix(errOut, "FAILED nova_sprint sha="+sha+" store="+addr+" ") ||
-		!strings.Contains(errOut, "NOPERM") || !strings.Contains(errOut, "remedy=") {
-		t.Fatalf("fn load as nofn: exit %d stdout %q stderr %q; want exit 1 and one FAILED line naming NOPERM and the remedy", code, out, errOut)
-	}
+	require.Equal(t, 1, code, "fn load as nofn: exit %d stdout %q stderr %q; want exit 1 and one FAILED line naming NOPERM and the remedy", code, out, errOut)
+	require.Empty(t, out, "fn load as nofn: exit %d stdout %q stderr %q; want exit 1 and one FAILED line naming NOPERM and the remedy", code, out, errOut)
+	require.Equal(t, 1, strings.Count(errOut, "\n"), "fn load as nofn: exit %d stdout %q stderr %q; want exit 1 and one FAILED line naming NOPERM and the remedy", code, out, errOut)
+	require.True(t, strings.HasPrefix(errOut, "FAILED nova_sprint sha="+sha+" store="+addr+" "), "fn load as nofn: exit %d stdout %q stderr %q; want exit 1 and one FAILED line naming NOPERM and the remedy", code, out, errOut)
+	require.Contains(t, errOut, "NOPERM", "fn load as nofn: exit %d stdout %q stderr %q; want exit 1 and one FAILED line naming NOPERM and the remedy", code, out, errOut)
+	require.Contains(t, errOut, "remedy=", "fn load as nofn: exit %d stdout %q stderr %q; want exit 1 and one FAILED line naming NOPERM and the remedy", code, out, errOut)
 
 	env[UserEnv] = "fnuser" // the environment's user, no flag
-	if code, out, errOut = fnRun("fn", "check", "--addr", addr); code != 1 || !strings.HasPrefix(out, "MISSING nova_sprint sha="+sha+" loaded=none ") || errOut != "" {
-		t.Fatalf("fn check as NOVA_REDIS_USER=fnuser after the refused load: exit %d %q %q; want MISSING", code, out, errOut)
+	{
+		code, out, errOut = fnRun("fn", "check", "--addr", addr)
+		require.Equal(t, 1, code, "fn check as NOVA_REDIS_USER=fnuser after the refused load: exit %d %q %q; want MISSING", code, out, errOut)
+		require.True(t, strings.HasPrefix(out, "MISSING nova_sprint sha="+sha+" loaded=none "), "fn check as NOVA_REDIS_USER=fnuser after the refused load: exit %d %q %q; want MISSING", code, out, errOut)
+		require.Empty(t, errOut, "fn check as NOVA_REDIS_USER=fnuser after the refused load: exit %d %q %q; want MISSING", code, out, errOut)
 	}
-	if code, out, errOut = fnRun("fn", "load", "--addr", addr); code != 0 || !strings.HasPrefix(out, "LOADED nova_sprint sha="+sha+" ") || errOut != "" {
-		t.Fatalf("fn load as NOVA_REDIS_USER=fnuser: exit %d %q %q; want LOADED", code, out, errOut)
+	{
+		code, out, errOut = fnRun("fn", "load", "--addr", addr)
+		require.Zero(t, code, "fn load as NOVA_REDIS_USER=fnuser: exit %d %q %q; want LOADED", code, out, errOut)
+		require.True(t, strings.HasPrefix(out, "LOADED nova_sprint sha="+sha+" "), "fn load as NOVA_REDIS_USER=fnuser: exit %d %q %q; want LOADED", code, out, errOut)
+		require.Empty(t, errOut, "fn load as NOVA_REDIS_USER=fnuser: exit %d %q %q; want LOADED", code, out, errOut)
 	}
 	delete(env, UserEnv) // the flag's user
-	if code, out, errOut = fnRun("fn", "check", "--addr", addr, "--user", "fnuser"); code != 0 || !strings.HasPrefix(out, "OK nova_sprint sha="+sha+" loaded="+sha+" want="+sha+" ") || errOut != "" {
-		t.Fatalf("fn check --user fnuser: exit %d %q %q; want OK", code, out, errOut)
+	{
+		code, out, errOut = fnRun("fn", "check", "--addr", addr, "--user", "fnuser")
+		require.Zero(t, code, "fn check --user fnuser: exit %d %q %q; want OK", code, out, errOut)
+		require.True(t, strings.HasPrefix(out, "OK nova_sprint sha="+sha+" loaded="+sha+" want="+sha+" "), "fn check --user fnuser: exit %d %q %q; want OK", code, out, errOut)
+		require.Empty(t, errOut, "fn check --user fnuser: exit %d %q %q; want OK", code, out, errOut)
 	}
 	// With no user the default user is used, and it is off: the store
 	// refuses the login, which exits 2 in every nova-redis verb, with the
 	// login remedy.
-	if code, _, errOut = fnRun("fn", "check", "--addr", addr); code != 2 || !strings.Contains(errOut, "NOAUTH") && !strings.Contains(errOut, "WRONGPASS") ||
-		!strings.Contains(errOut, `remedy="log in as a user that may run FUNCTION LIST`) || strings.Contains(errOut, "; next:") {
-		t.Fatalf("fn check with no user on a store whose default user is off: exit %d %q; want exit 2 naming the refused login and one remedy", code, errOut)
+	{
+		code, _, errOut = fnRun("fn", "check", "--addr", addr)
+		require.Equal(t, 2, code, "fn check with no user on a store whose default user is off: exit %d %q; want exit 2 naming the refused login and one remedy", code, errOut)
+		require.False(t, !strings.Contains(errOut, "NOAUTH") && !strings.Contains(errOut, "WRONGPASS"), "fn check with no user on a store whose default user is off: exit %d %q; want exit 2 naming the refused login and one remedy", code, errOut)
+		require.Contains(t, errOut, `remedy="log in as a user that may run FUNCTION LIST`, "fn check with no user on a store whose default user is off: exit %d %q; want exit 2 naming the refused login and one remedy", code, errOut)
+		require.NotContains(t, errOut, "; next:", "fn check with no user on a store whose default user is off: exit %d %q; want exit 2 naming the refused login and one remedy", code, errOut)
 	}
 }
 
@@ -149,24 +158,26 @@ func TestFnLoadNamesTheLibraryThatHoldsAFunction(t *testing.T) {
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = c.Close() })
 	ctx := context.Background()
-	if err := c.FunctionLoad(ctx, "#!lua name=other_lib\nredis.register_function('ns_ping', function() return 1 end)\n").Err(); err != nil {
-		t.Fatal(err)
+	{
+		err := c.FunctionLoad(ctx, "#!lua name=other_lib\nredis.register_function('ns_ping', function() return 1 end)\n").Err()
+		require.NoError(t, err, err)
 	}
 	d := realDeps()
 	d.getenv = func(string) string { return "" }
 	var out, errb bytes.Buffer
 	code := run([]string{"fn", "load", "--addr", addr}, &out, &errb, d)
 	line := errb.String()
-	if code != 1 || out.Len() != 0 || strings.Count(line, "\n") != 1 || strings.Count(line, "remedy") != 1 ||
-		!strings.Contains(line, "function ns_ping is registered by library other_lib") ||
-		!strings.Contains(line, `remedy="a function name belongs to one library and library other_lib registers ns_ping: `) ||
-		strings.Contains(line, "password") {
-		t.Fatalf("fn load over other_lib's ns_ping: exit %d stdout %q stderr %q; want exit 1 and one FAILED line with one remedy naming other_lib", code, out.String(), line)
-	}
+	require.Equal(t, 1, code, "fn load over other_lib's ns_ping: exit %d stdout %q stderr %q; want exit 1 and one FAILED line with one remedy naming other_lib", code, out.String(), line)
+	require.Zero(t, out.Len(), "fn load over other_lib's ns_ping: exit %d stdout %q stderr %q; want exit 1 and one FAILED line with one remedy naming other_lib", code, out.String(), line)
+	require.Equal(t, 1, strings.Count(line, "\n"), "fn load over other_lib's ns_ping: exit %d stdout %q stderr %q; want exit 1 and one FAILED line with one remedy naming other_lib", code, out.String(), line)
+	require.Equal(t, 1, strings.Count(line, "remedy"), "fn load over other_lib's ns_ping: exit %d stdout %q stderr %q; want exit 1 and one FAILED line with one remedy naming other_lib", code, out.String(), line)
+	require.Contains(t, line, "function ns_ping is registered by library other_lib", "fn load over other_lib's ns_ping: exit %d stdout %q stderr %q; want exit 1 and one FAILED line with one remedy naming other_lib", code, out.String(), line)
+	require.Contains(t, line, `remedy="a function name belongs to one library and library other_lib registers ns_ping: `, "fn load over other_lib's ns_ping: exit %d stdout %q stderr %q; want exit 1 and one FAILED line with one remedy naming other_lib", code, out.String(), line)
+	require.NotContains(t, line, "password", "fn load over other_lib's ns_ping: exit %d stdout %q stderr %q; want exit 1 and one FAILED line with one remedy naming other_lib", code, out.String(), line)
 	libs, err := c.FunctionList(ctx, redis.FunctionListQuery{}).Result()
-	if err != nil || len(libs) != 1 || libs[0].Name != "other_lib" {
-		t.Fatalf("the store after the refused load holds %v (%v); want other_lib alone", libs, err)
-	}
+	require.NoError(t, err, "the store after the refused load holds %v (%v); want other_lib alone", libs, err)
+	require.Len(t, libs, 1, "the store after the refused load holds %v (%v); want other_lib alone", libs, err)
+	require.Equal(t, "other_lib", libs[0].Name, "the store after the refused load holds %v (%v); want other_lib alone", libs, err)
 }
 
 // TestFnRemedyRoundTripsTheLogin is Stella's probe of 47e862ac8, promoted to
@@ -211,33 +222,31 @@ func TestFnRemedyRoundTripsTheLogin(t *testing.T) {
 			}
 			check := append([]string{"fn", "check", "--addr", addr}, c.flags...)
 			code, out, errOut := fnRun(check)
-			if code != 1 || !strings.HasPrefix(out, "MISSING ") || errOut != "" {
-				t.Fatalf("fn check %q: exit %d %q %q; want MISSING", check, code, out, errOut)
-			}
+			require.Equal(t, 1, code, "fn check %q: exit %d %q %q; want MISSING", check, code, out, errOut)
+			require.True(t, strings.HasPrefix(out, "MISSING "), "fn check %q: exit %d %q %q; want MISSING", check, code, out, errOut)
+			require.Empty(t, errOut, "fn check %q: exit %d %q %q; want MISSING", check, code, out, errOut)
 			_, quoted, ok := strings.Cut(strings.TrimSpace(out), " remedy=")
-			if !ok {
-				t.Fatalf("MISSING line has no remedy: %q", out)
-			}
+			require.True(t, ok, "MISSING line has no remedy: %q", out)
 			remedy, err := strconv.Unquote(quoted)
-			if err != nil {
-				t.Fatalf("remedy %s: %v", quoted, err)
-			}
+			require.NoError(t, err, "remedy %s: %v", quoted, err)
 			command, ok := strings.CutSuffix(remedy, " puts this binary's library on the store")
-			if !ok || !strings.HasPrefix(command, "nova-redis fn load ") {
-				t.Fatalf("remedy %q is not a nova-redis fn load command", remedy)
-			}
+			require.True(t, ok, "remedy %q is not a nova-redis fn load command", remedy)
+			require.True(t, strings.HasPrefix(command, "nova-redis fn load "), "remedy %q is not a nova-redis fn load command", remedy)
 			// The shell splits the printed words; the names in it are this
 			// test's own synthetic ones.
 			words, err := exec.Command("/bin/sh", "-c", `printf '%s\000' `+strings.TrimPrefix(command, "nova-redis ")).Output()
-			if err != nil {
-				t.Fatalf("the shell cannot read the remedy %q: %v", command, err)
-			}
+			require.NoError(t, err, "the shell cannot read the remedy %q: %v", command, err)
 			argv := strings.Split(strings.TrimSuffix(string(words), "\x00"), "\x00")
-			if code, out, errOut = fnRun(argv); code != 0 || !strings.HasPrefix(out, "LOADED nova_sprint ") || errOut != "" {
-				t.Fatalf("the remedy %q as argv %q: exit %d %q %q; want LOADED, logged in as the check was", command, argv, code, out, errOut)
+			{
+				code, out, errOut = fnRun(argv)
+				require.Zero(t, code, "the remedy %q as argv %q: exit %d %q %q; want LOADED, logged in as the check was", command, argv, code, out, errOut)
+				require.True(t, strings.HasPrefix(out, "LOADED nova_sprint "), "the remedy %q as argv %q: exit %d %q %q; want LOADED, logged in as the check was", command, argv, code, out, errOut)
+				require.Empty(t, errOut, "the remedy %q as argv %q: exit %d %q %q; want LOADED, logged in as the check was", command, argv, code, out, errOut)
 			}
-			if code, out, _ = fnRun(check); code != 0 || !strings.HasPrefix(out, "OK nova_sprint ") {
-				t.Fatalf("fn check after the remedy: exit %d %q; want OK", code, out)
+			{
+				code, out, _ = fnRun(check)
+				require.Zero(t, code, "fn check after the remedy: exit %d %q; want OK", code, out)
+				require.True(t, strings.HasPrefix(out, "OK nova_sprint "), "fn check after the remedy: exit %d %q; want OK", code, out)
 			}
 			t.Logf("remedy %s -> LOADED", command)
 		})
@@ -262,9 +271,7 @@ func TestFnRemedyRoundTripsTheLogin(t *testing.T) {
 func TestFnFailureIsOneLineFromTheBinary(t *testing.T) {
 	t.Parallel()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, err)
 	accepted := make(chan struct{})
 	go func() {
 		defer close(accepted)
@@ -288,13 +295,18 @@ func TestFnFailureIsOneLineFromTheBinary(t *testing.T) {
 		cmd.Stdout, cmd.Stderr = &out, &errb
 		err := cmd.Run()
 		var exit *exec.ExitError
-		if !errors.As(err, &exit) || exit.ExitCode() != 2 {
-			t.Errorf("%s: the child ended with %v; want exit 2 (stderr %q)", c.name, err, errb.String())
+		if !assert.ErrorAs(t, err, &exit, "%s: the child ended with %v; want exit 2 (stderr %q)", c.name, err, errb.String()) {
 			continue
 		}
-		if out.Len() != 0 || strings.Count(errb.String(), "\n") != 1 || !strings.HasPrefix(errb.String(), "FAILED nova_sprint sha=") ||
-			!strings.Contains(errb.String(), c.cause) {
-			t.Errorf("%s: stdout %q stderr %q; want no stdout and exactly one FAILED line on stderr naming %q", c.name, out.String(), errb.String(), c.cause)
+		if !assert.Equal(t, 2, exit.ExitCode(), "%s: the child ended with %v; want exit 2 (stderr %q)", c.name, err, errb.String()) {
+			continue
+		}
+		if assert.Zero(t, out.Len(), "%s: stdout %q stderr %q; want no stdout and exactly one FAILED line on stderr naming %q", c.name, out.String(), errb.String(), c.cause) {
+			if assert.Equal(t, 1, strings.Count(errb.String(), "\n"), "%s: stdout %q stderr %q; want no stdout and exactly one FAILED line on stderr naming %q", c.name, out.String(), errb.String(), c.cause) {
+				if assert.True(t, strings.HasPrefix(errb.String(), "FAILED nova_sprint sha="), "%s: stdout %q stderr %q; want no stdout and exactly one FAILED line on stderr naming %q", c.name, out.String(), errb.String(), c.cause) {
+					assert.Contains(t, errb.String(), c.cause, "%s: stdout %q stderr %q; want no stdout and exactly one FAILED line on stderr naming %q", c.name, out.String(), errb.String(), c.cause)
+				}
+			}
 		}
 	}
 }

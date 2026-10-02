@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 )
@@ -93,8 +92,15 @@ const LibrariesConsideredName = "libraries-considered"
 // LibrariesConsideredRule is the token of the line a card that builds code carries.
 const LibrariesConsideredRule = "rule-" + LibrariesConsideredName
 
+// EmptyCardCheck is the one finding an empty card draws (only blanks in it): a card is a
+// child's whole brief, so an empty one is said once, never as every rule it does not quote.
+const EmptyCardCheck = "empty"
+
+// EmptyCardRemedy is what that token wants, in the remedies' table shape.
+const EmptyCardRemedy = "the card is empty, and a card is a child's whole brief: `nova-swarm template --name card` prints one that passes; put it in the file and fill in its <...> lines"
+
 // LibrariesConsideredRemedy is what that token wants, in the remedies' table shape.
-const LibrariesConsideredRemedy = "a card that builds code carries one line `Libraries considered: <what the standard library and the adopted modules offered, and why each was used or not>` (docs/STANDARD.md section 7), filled: a line that is empty after the colon or still carries an angle-bracket placeholder does not count; search before any helper of more than about thirty lines is written, and name what was found; `nova-swarm template --name card` prints the line"
+const LibrariesConsideredRemedy = "a card that builds code carries one line `Libraries considered: <what the standard library and the adopted modules offered, and why each was used or not>`, filled: a line that is empty after the colon or still carries an angle-bracket placeholder does not count; search before any helper of more than about thirty lines is written, and name what was found; `nova-swarm template --name card` prints the line"
 
 var (
 	// childLibrariesLine is a `Libraries considered:` line; group 1 is what follows the colon.
@@ -166,7 +172,7 @@ var childScans = []childScan{
 		Allow:  childRmInsideJob},
 	{Check: "step-force-push",
 		RE:     childCmd(gitCmd + `push\b[^\n;&|]*?(?:[ \t]--force[A-Za-z-]*|[ \t]-[A-Za-z]*f[A-Za-z]*|[ \t]\+\S)`),
-		Remedy: "no line force-pushes (`--force`, `--force-with-lease`, `-f`, a `+` refspec): a child pushes its own branch with a plain `git push`, and a rewrite of a shared branch is the coordinator's act alone"},
+		Remedy: "no line force-pushes (`--force`, `--force-with-lease`, `-f`, a `+` refspec): a card's push carries one commit to its own branch, and a rewrite of a shared branch is the coordinator's act alone"},
 	{Check: "step-rebase",
 		RE:     childCmd(gitCmd + `rebase\b`),
 		Remedy: "no line rebases: merge the base forward with `git merge --no-edit`; a rebase rewrites the history another worktree shares"},
@@ -265,6 +271,7 @@ func init() {
 		CardChildRemedies[s.Check] = s.Remedy
 	}
 	CardChildRemedies[LibrariesConsideredRule] = LibrariesConsideredRemedy
+	CardChildRemedies[EmptyCardCheck] = EmptyCardRemedy
 }
 
 // ruleRemedy is what a missing rule wants: its sentence, verbatim, and where it came from.
@@ -287,8 +294,11 @@ func ChildRemedy(rules []ChildRule, check string) string {
 			return ruleRemedy(r)
 		}
 	}
-	if check == LibrariesConsideredRule {
+	switch check {
+	case LibrariesConsideredRule:
 		return LibrariesConsideredRemedy
+	case EmptyCardCheck:
+		return EmptyCardRemedy
 	}
 	return ""
 }
@@ -336,13 +346,13 @@ func ParseChildRules(text, source string) ([]ChildRule, error) {
 		}
 		name := "line" + strconv.Itoa(n)
 		if strings.HasPrefix(line, "[") {
-			end := strings.Index(line, "]")
-			if end < 0 {
+			inside, rest, closed := strings.Cut(line[1:], "]")
+			if !closed {
 				problems = append(problems, fmt.Sprintf("line %d opens a [name] and never closes it", n))
 				continue
 			}
-			name = line[1:end]
-			line = strings.TrimSpace(line[end+1:])
+			name = inside
+			line = strings.TrimSpace(rest)
 			if !childRuleName.MatchString(name) {
 				problems = append(problems, fmt.Sprintf("line %d: the name [%s] is not kebab case (letters, digits and single -)", n, name))
 				continue
@@ -392,8 +402,12 @@ func LintCardChild(raw []byte) []CardHeaderFinding { return LintCardChildWith(ra
 // LintCardChildWith returns the child-rule findings for one card under a rule set: a
 // `rule-<name>` for every required sentence the card does not quote, then a `step-<what>`
 // for every line that runs a forbidden command, each with its line and text. Line 1
-// carries the missing sentences: the card lacks them everywhere.
+// carries the missing sentences: the card lacks them everywhere. An empty card is one
+// finding, EmptyCardCheck.
 func LintCardChildWith(raw []byte, rules []ChildRule) []CardHeaderFinding {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return []CardHeaderFinding{{Check: EmptyCardCheck, Line: 1, Excerpt: "the card is empty"}}
+	}
 	var out []CardHeaderFinding
 	text := foldBlanks(string(raw))
 	have := map[string]bool{}
@@ -470,20 +484,4 @@ func childClause(before string) string {
 		return before[all[len(all)-1][1]:]
 	}
 	return before
-}
-
-// ChildRuleNames is every child-rule check token, sorted, for listings and tests.
-func ChildRuleNames() []string {
-	names := make([]string, 0, len(CardChildRemedies))
-	for n := range CardChildRemedies {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	return names
-}
-
-// ChildFindingLine is one finding as `nova-sprint add` and `nova-swarm lint` print it
-// after their own prefix: `<check>: <line>: <excerpt>`.
-func ChildFindingLine(f CardHeaderFinding) string {
-	return fmt.Sprintf("%s: %d: %s", f.Check, f.Line, f.Excerpt)
 }

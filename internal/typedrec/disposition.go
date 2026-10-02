@@ -135,20 +135,15 @@ func lenientDispositionKV(s string) map[string]string {
 		if len(s) == 0 {
 			break
 		}
-		eq := strings.IndexByte(s, '=')
-		if eq <= 0 {
+		key, rest, found := strings.Cut(s, "=")
+		if !found || key == "" {
 			break
 		}
-		key := strings.TrimSpace(s[:eq])
-		s = s[eq+1:]
+		key, s = strings.TrimSpace(key), rest
 		var val string
 		if len(s) > 0 && s[0] == '"' {
 			s = s[1:]
-			if closeQuote := strings.IndexByte(s, '"'); closeQuote >= 0 {
-				val, s = s[:closeQuote], s[closeQuote+1:]
-			} else {
-				val, s = s, ""
-			}
+			val, s, _ = strings.Cut(s, `"`)
 		} else if sp := strings.IndexFunc(s, unicode.IsSpace); sp >= 0 {
 			val, s = s[:sp], s[sp+1:]
 		} else {
@@ -169,23 +164,19 @@ func strictDispositionKV(s string) (map[string]string, bool) {
 		if s == "" {
 			return res, true
 		}
-		eq := strings.IndexByte(s, '=')
-		if eq <= 0 {
+		key, rest, found := strings.Cut(s, "=")
+		if !found || !isBareDispositionKey(key) {
 			return nil, false
 		}
-		key := s[:eq]
-		if !isBareDispositionKey(key) {
-			return nil, false
-		}
-		s = s[eq+1:]
+		s = rest
 		var val string
 		if len(s) > 0 && s[0] == '"' {
 			s = s[1:]
-			closeQuote := strings.IndexByte(s, '"')
-			if closeQuote < 0 {
+			var closed bool
+			val, s, closed = strings.Cut(s, `"`)
+			if !closed {
 				return nil, false
 			}
-			val, s = s[:closeQuote], s[closeQuote+1:]
 			if s != "" && !isDispositionSpace(s[0]) {
 				return nil, false
 			}
