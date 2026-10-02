@@ -8,6 +8,9 @@ import (
 	"net"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The connection Open dials takes one write and answers it itself. These
@@ -198,7 +201,7 @@ func TestFirstConnOverEveryOrderOfEvents(t *testing.T) {
 	walk = func() {
 		orders++
 		if fault := run(order); fault != "" {
-			t.Fatalf("%s\n  in the order: %s", fault, named(order))
+			require.Empty(t, fault, "%s\n  in the order: %s", fault, named(order))
 		}
 		if len(order) == depth {
 			return
@@ -227,7 +230,7 @@ func TestFirstConnOverEveryOrderOfEvents(t *testing.T) {
 		{[]int{openReturns, writeOther, sendAccepted, readAll, writeProbe}, false},
 	} {
 		if fault := run(c.order); fault != "" {
-			t.Fatalf("%s\n  in the order: %s", fault, named(c.order))
+			require.Empty(t, fault, "%s\n  in the order: %s", fault, named(c.order))
 		}
 		far := &farEnd{}
 		conn := &firstConn{Conn: far}
@@ -250,7 +253,7 @@ func TestFirstConnOverEveryOrderOfEvents(t *testing.T) {
 			}
 		}
 		if got := !bytes.Contains(far.received, []byte(probeWire)); got != c.want {
-			t.Errorf("the probe taken: %v; want %v, in the order: %s", got, c.want, named(c.order))
+			assert.EqualValues(t, c.want, got, "the probe taken: %v; want %v, in the order: %s", got, c.want, named(c.order))
 		}
 		if c.want {
 			taken++
@@ -277,7 +280,7 @@ func TestFirstConnOverLongOrdersOfEvents(t *testing.T) {
 				order = append(order, r.IntN(events))
 			}
 			if fault := run(order); fault != "" {
-				t.Fatalf("seed %d case %d: %s\n  in the order: %s", seed, i, fault, named(order))
+				require.Empty(t, fault, "seed %d case %d: %s\n  in the order: %s", seed, i, fault, named(order))
 			}
 		}
 	}

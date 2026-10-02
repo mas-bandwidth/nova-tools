@@ -13,6 +13,8 @@ import (
 	"testing"
 
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestClassify is every kind of error a tool can hold after working with
@@ -34,9 +36,8 @@ func TestClassify(t *testing.T) {
 	answered := func(line string) error {
 		err := conn.Client().Do(context.Background(), "ECHO-AS-ERROR", line).Err()
 		var re redis.Error
-		if !errors.As(err, &re) || err.Error() != line {
-			t.Fatalf("the store's %q came back as %T %v", line, err, err)
-		}
+		require.ErrorAs(t, err, &re, "the store's %q came back as %T %v", line, err, err)
+		require.EqualError(t, err, line, "the store's %q came back as %T %v", line, err, err)
 		return err
 	}
 	timeout := &net.OpError{Op: "read", Net: "tcp", Err: os.ErrDeadlineExceeded}
@@ -79,18 +80,15 @@ func TestClassify(t *testing.T) {
 		{"this package's, explained: the class it was made with", conn.Explain(answered("NOAUTH Authentication required.")), AuthRefused},
 		{"this package's, explained: other", conn.Explain(errors.New("connection refused, said the script")), Unreachable},
 	} {
-		if got := Classify(c.err); got != c.want {
-			t.Errorf("%s: Classify(%v) = %v; want %v", c.name, c.err, got, c.want)
-		}
+		got := Classify(c.err)
+		assert.Equal(t, c.want, got, "%s: Classify(%v) = %v; want %v", c.name, c.err, got, c.want)
 		if c.err == nil {
 			continue
 		}
-		if got := Classify(fmt.Errorf("table list: %w", c.err)); got != c.want {
-			t.Errorf("%s, wrapped: %v; want %v", c.name, got, c.want)
-		}
-		if got := Classify(fmt.Errorf("verb: %w", fmt.Errorf("table list: %w", c.err))); got != c.want {
-			t.Errorf("%s, wrapped twice: %v; want %v", c.name, got, c.want)
-		}
+		got = Classify(fmt.Errorf("table list: %w", c.err))
+		assert.Equal(t, c.want, got, "%s, wrapped: %v; want %v", c.name, got, c.want)
+		got = Classify(fmt.Errorf("verb: %w", fmt.Errorf("table list: %w", c.err)))
+		assert.Equal(t, c.want, got, "%s, wrapped twice: %v; want %v", c.name, got, c.want)
 	}
 
 	// An error that kept only its text is read by its words.
@@ -110,9 +108,8 @@ func TestClassify(t *testing.T) {
 		"": Other,
 		"NOAUTH Authentication required. after connection refused: the login comes first": AuthRefused,
 	} {
-		if got := Classify(errors.New(text)); got != want {
-			t.Errorf("Classify of the text %q = %v; want %v", text, got, want)
-		}
+		got := Classify(errors.New(text))
+		assert.Equal(t, want, got, "Classify of the text %q = %v; want %v", text, got, want)
 	}
 }
 
@@ -121,21 +118,16 @@ func TestClassify(t *testing.T) {
 func TestClassNames(t *testing.T) {
 	t.Parallel()
 	for class, want := range map[Class]string{Other: "other", Unreachable: "unreachable", AuthRefused: "auth-refused", Class(7): "other", Class(-1): "other"} {
-		if got := class.String(); got != want {
-			t.Errorf("Class(%d) reads %q; want %q", int(class), got, want)
-		}
-		if got := fmt.Sprintf("%v %s", class, class); got != want+" "+want {
-			t.Errorf("Class(%d) prints %q", int(class), got)
-		}
+		got := class.String()
+		assert.Equal(t, want, got, "Class(%d) reads %q; want %q", int(class), got, want)
+		got = fmt.Sprintf("%v %s", class, class)
+		assert.Equal(t, want+" "+want, got, "Class(%d) prints %q", int(class), got)
 	}
 	var zero Class
-	if zero != Other {
-		t.Errorf("the zero class is %v; want %v", zero, Other)
-	}
+	assert.Equal(t, Other, zero, "the zero class is %v; want %v", zero, Other)
 	for class, want := range map[Class]string{Other: "failed", Unreachable: "unreachable", AuthRefused: "login refused", Class(7): "failed"} {
-		if got := class.phrase(); got != want {
-			t.Errorf("Class(%d) is said %q; want %q", int(class), got, want)
-		}
+		got := class.phrase()
+		assert.Equal(t, want, got, "Class(%d) is said %q; want %q", int(class), got, want)
 	}
 }
 
@@ -150,12 +142,11 @@ func TestAFailureIsOneLine(t *testing.T) {
 	l := login{Options: Options{Addr: "/var/run/a" + separator + "b.sock", User: "bench\r\nREFUSED", PasswordEnv: "PW"}}
 	f := explain(l, hider("s3cret"), errors.New("first\nsecond\x00"+override), false)
 	want := "redis at /var/run/a" + bs + "u2028b.sock as user bench" + bs + "x0d" + bs + "x0aREFUSED (password from PW): failed: first" + bs + "x0asecond" + bs + "x00" + bs + "u202e; next: the store answered, so the connection stands: read the refusal as the command's own"
-	if got := f.Error(); got != want {
-		t.Errorf("\n got %s\nwant %s", got, want)
-	}
+	got := f.Error()
+	assert.Equal(t, want, got, "\n got %s\nwant %s", got, want)
 	for _, r := range f.Error() {
 		if r < 0x20 || r == 0x7f || r == 0x2028 || r == 0x2029 || r == 0x202e {
-			t.Errorf("the message holds %U", r)
+			assert.False(t, r < 0x20 || r == 0x7f || r == 0x2028 || r == 0x2029 || r == 0x202e, "the message holds %U", r)
 		}
 	}
 }
@@ -183,9 +174,8 @@ func TestHiderExamples(t *testing.T) {
 		{"e", "EOF or not, there is an e in it", "***"},
 		{withheld, "the text: " + withheld, "***"},
 	} {
-		if got := hider(c.secret)(c.text); got != c.want {
-			t.Errorf("hider(%q)(%q) = %q; want %q", c.secret, c.text, got, c.want)
-		}
+		got := hider(c.secret)(c.text)
+		assert.Equal(t, c.want, got, "hider(%q)(%q) = %q; want %q", c.secret, c.text, got, c.want)
 	}
 }
 
@@ -215,11 +205,11 @@ func TestHiderProperty(t *testing.T) {
 			held := secret != "" && strings.Contains(text, secret)
 			switch {
 			case secret != "" && strings.Contains(got, secret):
-				t.Fatalf("seed %d case %d: hider(%q)(%q) = %q, which holds the secret", seed, i, secret, text, got)
+				require.NotContains(t, got, secret, "seed %d case %d: hider(%q)(%q) = %q, which holds the secret", seed, i, secret, text, got)
 			case !held && got != text:
-				t.Fatalf("seed %d case %d: hider(%q)(%q) = %q; the text did not hold the secret and was changed", seed, i, secret, text, got)
+				require.Equal(t, text, got, "seed %d case %d: hider(%q)(%q) = %q; the text did not hold the secret and was changed", seed, i, secret, text, got)
 			case held && got != withheld && got != "***":
-				t.Fatalf("seed %d case %d: hider(%q)(%q) = %q; want the text withheld", seed, i, secret, text, got)
+				require.True(t, got == withheld || got == "***", "seed %d case %d: hider(%q)(%q) = %q; want the text withheld", seed, i, secret, text, got)
 			}
 		}
 	}
@@ -239,21 +229,17 @@ func TestPasswordHiddenInEncodedAndTruncatedDiagnostics(t *testing.T) {
 		return "+unexpected" + quotePass + "\r\n"
 	})
 	_, err := open(context.Background(), Options{Addr: storeAddr, User: "bench", PasswordEnv: "PW"}, environment(map[string]string{"PW": quotePass}), storeQuote.dial)
-	if err == nil {
-		t.Fatal("expected Open to fail")
-	}
+	require.Error(t, err, "expected Open to fail")
 	for _, text := range errorsText(err) {
-		if strings.Contains(text, `synth"pass`) || strings.Contains(text, `synth\"pass`) {
-			t.Fatalf("error text exposed escaped password: %q", text)
-		}
+		require.NotContains(t, text, `synth"pass`, "error text exposed escaped password: %q", text)
+		require.NotContains(t, text, `synth\"pass`, "error text exposed escaped password: %q", text)
 	}
 	cause := errors.Unwrap(err)
-	if cause == nil || (cause.Error() != withheld && cause.Error() != "***") || errors.Unwrap(cause) != nil {
-		t.Fatalf("cause not withheld or has unwrap chain: %#v", cause)
-	}
-	if got := Classify(err); got != Other {
-		t.Errorf("class = %v; want Other", got)
-	}
+	require.NotNil(t, cause, "cause not withheld or has unwrap chain: %#v", cause)
+	require.True(t, cause.Error() == withheld || cause.Error() == "***", "cause not withheld or has unwrap chain: %#v", cause)
+	require.Nil(t, errors.Unwrap(cause), "cause not withheld or has unwrap chain: %#v", cause)
+	got := Classify(err)
+	assert.Equal(t, Other, got, "class = %v; want Other", got)
 
 	// 2. Long password truncated at 100 characters in go-redis's %.100q map reply diagnostic.
 	longPass := strings.Repeat("x", 150)
@@ -261,21 +247,16 @@ func TestPasswordHiddenInEncodedAndTruncatedDiagnostics(t *testing.T) {
 		return "+unexpected" + longPass + "\r\n"
 	})
 	_, err = open(context.Background(), Options{Addr: storeAddr, User: "bench", PasswordEnv: "PW"}, environment(map[string]string{"PW": longPass}), storeLong.dial)
-	if err == nil {
-		t.Fatal("expected Open to fail")
-	}
+	require.Error(t, err, "expected Open to fail")
 	for _, text := range errorsText(err) {
-		if strings.Contains(text, strings.Repeat("x", 20)) {
-			t.Fatalf("error text exposed truncated password: %q", text)
-		}
+		require.NotContains(t, text, strings.Repeat("x", 20), "error text exposed truncated password: %q", text)
 	}
 	cause = errors.Unwrap(err)
-	if cause == nil || (cause.Error() != withheld && cause.Error() != "***") || errors.Unwrap(cause) != nil {
-		t.Fatalf("cause not withheld or has unwrap chain: %#v", cause)
-	}
-	if got := Classify(err); got != Other {
-		t.Errorf("class = %v; want Other", got)
-	}
+	require.NotNil(t, cause, "cause not withheld or has unwrap chain: %#v", cause)
+	require.True(t, cause.Error() == withheld || cause.Error() == "***", "cause not withheld or has unwrap chain: %#v", cause)
+	require.Nil(t, errors.Unwrap(cause), "cause not withheld or has unwrap chain: %#v", cause)
+	got = Classify(err)
+	assert.Equal(t, Other, got, "class = %v; want Other", got)
 }
 
 // TestUnicodePreambleDoesNotExposePasswordPrefix: %.100q counts Unicode code
@@ -291,21 +272,16 @@ func TestUnicodePreambleDoesNotExposePasswordPrefix(t *testing.T) {
 	conn, err := open(context.Background(), Options{Addr: storeAddr, User: "review", PasswordEnv: "PW"}, environment(map[string]string{"PW": secret}), store.dial)
 	if conn != nil {
 		conn.Close()
-		t.Fatal("expected bad-handshake refusal")
+		require.FailNow(t, "expected bad-handshake refusal")
 	}
-	if err == nil {
-		t.Fatal("expected refusal")
-	}
+	require.Error(t, err, "expected refusal")
 	for _, text := range errorsText(err) {
-		if strings.Contains(text, secret[:30]) {
-			t.Errorf("diagnostic exposes 30 bytes of synthetic password: %s", text)
-		}
+		assert.NotContains(t, text, secret[:30], "diagnostic exposes 30 bytes of synthetic password: %s", text)
 	}
 	cause := errors.Unwrap(err)
-	if cause == nil || (cause.Error() != withheld && cause.Error() != "***") || errors.Unwrap(cause) != nil {
-		t.Fatalf("cause not withheld or has unwrap chain: %#v", cause)
-	}
-	if got := Classify(err); got != Other {
-		t.Errorf("class = %v; want Other", got)
-	}
+	require.NotNil(t, cause, "cause not withheld or has unwrap chain: %#v", cause)
+	require.True(t, cause.Error() == withheld || cause.Error() == "***", "cause not withheld or has unwrap chain: %#v", cause)
+	require.Nil(t, errors.Unwrap(cause), "cause not withheld or has unwrap chain: %#v", cause)
+	got := Classify(err)
+	assert.Equal(t, Other, got, "class = %v; want Other", got)
 }

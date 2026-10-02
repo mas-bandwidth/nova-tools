@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const storeAddr = "store.test:6379"
@@ -45,41 +47,41 @@ func TestOpenCostsTheHandshakeAlone(t *testing.T) {
 		store := newFakeStore(t, accepting)
 		conn, err := open(context.Background(), c.o, environment(c.env), store.dial)
 		if err != nil {
-			t.Fatalf("%s: %v", c.name, err)
+			require.NoError(t, err, "%s: %v", c.name, err)
 		}
 		if got := store.commands(); !reflect.DeepEqual(got, []string{c.hello}) {
-			t.Errorf("%s: Open sent %q; want the handshake alone, %q", c.name, got, c.hello)
+			assert.Equal(t, []string{c.hello}, got, "%s: Open sent %q; want the handshake alone, %q", c.name, got, c.hello)
 		}
 		if n := store.dialed(); n != 1 {
-			t.Errorf("%s: Open dialed %d times; want once", c.name, n)
+			assert.EqualValues(t, 1, n, "%s: Open dialed %d times; want once", c.name, n)
 		}
 		if got := conn.String(); got != c.named {
-			t.Errorf("%s: the connection reads %q; want %q", c.name, got, c.named)
+			assert.EqualValues(t, c.named, got, "%s: the connection reads %q; want %q", c.name, got, c.named)
 		}
 		ctx := context.Background()
 		if err := conn.Client().Ping(ctx).Err(); err != nil {
-			t.Errorf("%s: ping: %v", c.name, err)
+			assert.NoError(t, err, "%s: ping: %v", c.name, err)
 		}
 		if got, err := conn.Client().Do(ctx, "PING").Text(); err != nil || got != "PONG" {
-			t.Errorf("%s: PING = %q, %v", c.name, got, err)
+			assert.Failf(t, "", "%s: PING = %q, %v", c.name, got, err)
 		}
 		if got, err := conn.Client().Get(ctx, "key").Result(); err != nil || got != "value" {
-			t.Errorf("%s: GET = %q, %v", c.name, got, err)
+			assert.Failf(t, "", "%s: GET = %q, %v", c.name, got, err)
 		}
 		if got := store.commands(); !reflect.DeepEqual(got, []string{"1: ping", "1: PING", "1: get key"}) {
-			t.Errorf("%s: after Open the store received %q; want the caller's three commands, its own PING among them", c.name, got)
+			assert.Equal(t, []string{"1: ping", "1: PING", "1: get key"}, got, "%s: after Open the store received %q; want the caller's three commands, its own PING among them", c.name, got)
 		}
 		if n := store.dialed(); n != 1 {
-			t.Errorf("%s: %d dials after three commands; want the one connection", c.name, n)
+			assert.EqualValues(t, 1, n, "%s: %d dials after three commands; want the one connection", c.name, n)
 		}
 		if faults := store.faults(); len(faults) != 0 {
-			t.Errorf("%s: %q", c.name, faults)
+			assert.Len(t, faults, 0, "%s: %q", c.name, faults)
 		}
 		if err := conn.Close(); err != nil {
-			t.Errorf("%s: close: %v", c.name, err)
+			assert.NoError(t, err, "%s: close: %v", c.name, err)
 		}
 		if n := store.open(); n != 0 {
-			t.Errorf("%s: %d connections open after Close", c.name, n)
+			assert.Zero(t, n, "%s: %d connections open after Close", c.name, n)
 		}
 	}
 }
@@ -148,29 +150,29 @@ func TestOpenReturnsWhatTheStoreSaid(t *testing.T) {
 		store := newFakeStore(t, c.reply)
 		conn, err := open(context.Background(), c.o, environment(map[string]string{"PW": "s3cret"}), store.dial)
 		if err == nil || conn != nil {
-			t.Fatalf("%s: Open = %v, %v; want the refusal and no connection", c.name, conn, err)
+			require.FailNowf(t, "", "%s: Open = %v, %v; want the refusal and no connection", c.name, conn, err)
 		}
 		if got := err.Error(); got != c.want {
-			t.Errorf("%s:\n got %s\nwant %s", c.name, got, c.want)
+			assert.EqualValues(t, c.want, got, "%s:\n got %s\nwant %s", c.name, got, c.want)
 		}
 		if got := Classify(err); got != c.class {
-			t.Errorf("%s: class %v; want %v", c.name, got, c.class)
+			assert.EqualValues(t, c.class, got, "%s: class %v; want %v", c.name, got, c.class)
 		}
 		if got := store.commands(); !reflect.DeepEqual(got, c.sent) {
-			t.Errorf("%s: the store received %q; want %q", c.name, got, c.sent)
+			assert.Equal(t, c.sent, got, "%s: the store received %q; want %q", c.name, got, c.sent)
 		}
 		if n := store.dialed(); n != 1 {
-			t.Errorf("%s: %d dials; want one", c.name, n)
+			assert.EqualValues(t, 1, n, "%s: %d dials; want one", c.name, n)
 		}
 		if n := store.open(); n != 0 {
-			t.Errorf("%s: %d connections left open by a failed Open", c.name, n)
+			assert.Zero(t, n, "%s: %d connections left open by a failed Open", c.name, n)
 		}
 		if faults := store.faults(); len(faults) != 0 {
-			t.Errorf("%s: %q", c.name, faults)
+			assert.Len(t, faults, 0, "%s: %q", c.name, faults)
 		}
 		for _, shown := range errorsText(err) {
 			if strings.Contains(shown, "s3cret") {
-				t.Errorf("%s: %q shows the password", c.name, shown)
+				assert.NotContains(t, shown, "s3cret", "%s: %q shows the password", c.name, shown)
 			}
 		}
 	}
@@ -190,17 +192,17 @@ func TestOpenReachesAStoreOlderThanHello(t *testing.T) {
 	})
 	conn, err := open(context.Background(), Options{Addr: storeAddr, User: "bench", PasswordEnv: "PW"}, environment(map[string]string{"PW": "s3cret"}), store.dial)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	want := []string{"1: hello 3 auth bench s3cret", "1: auth bench s3cret", "1: PING"}
 	if got := store.commands(); !reflect.DeepEqual(got, want) {
-		t.Errorf("the store received %q; want %q", got, want)
+		assert.Equal(t, want, got, "the store received %q; want %q", got, want)
 	}
 	if err := conn.Client().Set(context.Background(), "k", "v", 0).Err(); err != nil {
-		t.Error(err)
+		assert.NoError(t, err, err)
 	}
 	if err := conn.Close(); err != nil {
-		t.Error(err)
+		assert.NoError(t, err, err)
 	}
 }
 
@@ -211,20 +213,20 @@ func TestOpenDialsOnce(t *testing.T) {
 	dials := 0
 	conn, err := open(context.Background(), Options{Env: Env{Addr: "TOOL_REDIS"}}, environment(map[string]string{"TOOL_REDIS": "127.0.0.1:1"}), refusedDial(&dials))
 	if err == nil || conn != nil {
-		t.Fatalf("Open = %v, %v; want unreachable", conn, err)
+		require.FailNowf(t, "", "Open = %v, %v; want unreachable", conn, err)
 	}
 	const want = "redis at 127.0.0.1:1 as the default user, no password: unreachable: dial tcp 127.0.0.1:1: connect: connection refused; next: start the store or correct the address, which was from TOOL_REDIS"
 	if got := err.Error(); got != want {
-		t.Errorf("\n got %s\nwant %s", got, want)
+		assert.EqualValues(t, want, got, "\n got %s\nwant %s", got, want)
 	}
 	if got := Classify(err); got != Unreachable {
-		t.Errorf("class %v; want %v", got, Unreachable)
+		assert.EqualValues(t, Unreachable, got, "class %v; want %v", got, Unreachable)
 	}
 	if dials != 1 {
-		t.Errorf("%d dials; want one", dials)
+		assert.EqualValues(t, 1, dials, "%d dials; want one", dials)
 	}
 	if !errors.Is(err, syscall.ECONNREFUSED) {
-		t.Errorf("%v does not unwrap to the refusal the dial returned", err)
+		assert.ErrorIs(t, err, syscall.ECONNREFUSED, "%v does not unwrap to the refusal the dial returned", err)
 	}
 }
 
@@ -244,13 +246,13 @@ func TestOpenDialsTheNetworkOfTheAddress(t *testing.T) {
 			return store.dial(ctx, network, to)
 		})
 		if err != nil {
-			t.Fatalf("%s: %v", addr, err)
+			require.NoError(t, err, "%s: %v", addr, err)
 		}
 		if !reflect.DeepEqual(dialed, []string{want}) {
-			t.Errorf("%s: dialed %q; want %q", addr, dialed, want)
+			assert.Equal(t, []string{want}, dialed, "%s: dialed %q; want %q", addr, dialed, want)
 		}
 		if err := conn.Close(); err != nil {
-			t.Error(err)
+			assert.NoError(t, err, err)
 		}
 	}
 }
@@ -270,10 +272,10 @@ func TestOpenRefusesBeforeItDials(t *testing.T) {
 		conn, err := open(context.Background(), o, nothing, refusedDial(&dials))
 		_, want := Resolve(o, nothing)
 		if conn != nil || err == nil || want == nil || err.Error() != want.Error() || Classify(err) != Classify(want) {
-			t.Errorf("Open(%+v) = %v, %v; want Resolve's refusal, %v", o, conn, err, want)
+			assert.Failf(t, "", "Open(%+v) = %v, %v; want Resolve's refusal, %v", o, conn, err, want)
 		}
 		if dials != 0 {
-			t.Errorf("Open(%+v) dialed %d times; want none", o, dials)
+			assert.Zero(t, dials, "Open(%+v) dialed %d times; want none", o, dials)
 		}
 	}
 }
@@ -326,25 +328,25 @@ func TestOpenIsBounded(t *testing.T) {
 			conn, err := open(ctx, Options{Addr: storeAddr}, nothing, dial)
 			took := time.Now().Sub(start)
 			if err == nil || conn != nil {
-				t.Fatalf("%s: Open = %v, %v; want an error", c.name, conn, err)
+				require.FailNowf(t, "", "%s: Open = %v, %v; want an error", c.name, conn, err)
 			}
 			if took != c.after {
-				t.Errorf("%s: Open returned after %v; want %v", c.name, took, c.after)
+				assert.EqualValues(t, c.after, took, "%s: Open returned after %v; want %v", c.name, took, c.after)
 			}
 			if got := Classify(err); got != c.class {
-				t.Errorf("%s: class %v; want %v (%v)", c.name, got, c.class, err)
+				assert.EqualValues(t, c.class, got, "%s: class %v; want %v (%v)", c.name, got, c.class, err)
 			}
 			if !strings.Contains(err.Error(), c.want) {
-				t.Errorf("%s: %v; want %q in it", c.name, err, c.want)
+				assert.Contains(t, err.Error(), c.want, "%s: %v; want %q in it", c.name, err, c.want)
 			}
 			// A dial that was under way when the caller stopped waiting ends
 			// at the dial's own bound, and is the only one.
 			silent.settled()
 			if took := time.Now().Sub(start); took > DialTimeout {
-				t.Errorf("%s: the dial ended after %v; want it within %v", c.name, took, DialTimeout)
+				assert.LessOrEqual(t, took, DialTimeout, "%s: the dial ended after %v; want it within %v", c.name, took, DialTimeout)
 			}
 			if n := dialed(); n > 1 {
-				t.Errorf("%s: %d dials; want at most one", c.name, n)
+				assert.LessOrEqual(t, n, 1, "%s: %d dials; want at most one", c.name, n)
 			}
 		})
 	}
@@ -372,16 +374,16 @@ func TestADialThatAnswersAfterOpenGaveUpIsClosed(t *testing.T) {
 			return store.dial(dctx, network, addr)
 		})
 		if conn != nil || Classify(err) != Unreachable {
-			t.Fatalf("Open = %v, %v; want unreachable", conn, err)
+			require.FailNowf(t, "", "Open = %v, %v; want unreachable", conn, err)
 		}
 		close(answer)
 		late.Wait()
 		synctest.Wait()
 		if n := store.open(); n != 0 || store.dialed() != 1 {
-			t.Errorf("%d of %d connections left open after Open gave up", n, store.dialed())
+			assert.Failf(t, "", "%d of %d connections left open after Open gave up", n, store.dialed())
 		}
 		if got := store.commands(); len(got) != 0 {
-			t.Errorf("the store received %q on a connection nobody opened", got)
+			assert.Len(t, got, 0, "the store received %q on a connection nobody opened", got)
 		}
 	})
 }
@@ -410,7 +412,7 @@ func TestCommandsAreBounded(t *testing.T) {
 			})
 			conn, err := open(context.Background(), Options{Addr: storeAddr}, nothing, store.dial)
 			if err != nil {
-				t.Fatal(err)
+				require.NoError(t, err, err)
 			}
 			defer conn.Close()
 			store.commands()
@@ -420,16 +422,16 @@ func TestCommandsAreBounded(t *testing.T) {
 			err = conn.Client().Get(ctx, "key").Err()
 			took := time.Now().Sub(start)
 			if took != c.after {
-				t.Errorf("%s: the command returned after %v; want %v", c.name, took, c.after)
+				assert.EqualValues(t, c.after, took, "%s: the command returned after %v; want %v", c.name, took, c.after)
 			}
 			if got := Classify(err); got != Unreachable {
-				t.Errorf("%s: %v is %v; want %v", c.name, err, got, Unreachable)
+				assert.EqualValues(t, Unreachable, got, "%s: %v is %v; want %v", c.name, err, got, Unreachable)
 			}
 			if got := store.commands(); !reflect.DeepEqual(got, []string{"1: get key"}) {
-				t.Errorf("%s: the store received %q; want the command once", c.name, got)
+				assert.Equal(t, []string{"1: get key"}, got, "%s: the store received %q; want the command once", c.name, got)
 			}
 			if faults := store.faults(); len(faults) != 0 {
-				t.Errorf("%s: %q", c.name, faults)
+				assert.Len(t, faults, 0, "%s: %q", c.name, faults)
 			}
 		})
 	}
@@ -449,35 +451,35 @@ func TestEveryReadAndWriteHasADeadline(t *testing.T) {
 	})
 	conn, err := open(context.Background(), Options{Addr: storeAddr}, nothing, store.dial)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	defer conn.Close()
 	ctx := context.Background()
 	work := func() {
 		t.Helper()
 		if err := conn.Client().Set(ctx, "k", "v", 0).Err(); err != nil {
-			t.Error(err)
+			assert.NoError(t, err, err)
 		}
 		pipe := conn.Client().Pipeline()
 		pipe.Get(ctx, "a")
 		pipe.Get(ctx, "b")
 		if _, err := pipe.Exec(ctx); err != nil {
-			t.Error(err)
+			assert.NoError(t, err, err)
 		}
 		if _, err := conn.Client().TxPipelined(ctx, func(p redis.Pipeliner) error { return p.Set(ctx, "k", "v", 0).Err() }); err != nil {
-			t.Error(err)
+			assert.NoError(t, err, err)
 		}
 	}
 	work()
 	if err := conn.Client().Get(ctx, "drop").Err(); !errors.Is(err, io.EOF) {
-		t.Errorf("a command on a connection the store dropped = %v; want EOF", err)
+		assert.ErrorIs(t, err, io.EOF, "a command on a connection the store dropped = %v; want EOF", err)
 	}
 	work()
 	if n := store.dialed(); n != 2 {
-		t.Errorf("%d dials; want two, the second by the command after the drop", n)
+		assert.EqualValues(t, 2, n, "%d dials; want two, the second by the command after the drop", n)
 	}
 	if faults := store.faults(); len(faults) != 0 {
-		t.Errorf("%q", faults)
+		assert.Len(t, faults, 0, "%q", faults)
 	}
 
 	client, server := net.Pipe()
@@ -486,16 +488,16 @@ func TestEveryReadAndWriteHasADeadline(t *testing.T) {
 	spy := &spyConn{Conn: client}
 	go func() { _, _ = io.Copy(io.Discard, server) }()
 	if _, err := spy.Write([]byte("x")); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if err := spy.SetWriteDeadline(time.Now().Add(2 * WriteTimeout)); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if _, err := spy.Write([]byte("x")); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if len(spy.faults) != 2 || spy.faults[0] != "write with no deadline" || !strings.Contains(spy.faults[1], "over the bound") {
-		t.Errorf("the spy saw %q; want a write with no deadline and one over the bound", spy.faults)
+		assert.Failf(t, "", "the spy saw %q; want a write with no deadline and one over the bound", spy.faults)
 	}
 }
 
@@ -514,27 +516,27 @@ func TestACommandIsSentOnceAndABrokenConnectionIsDialedOnce(t *testing.T) {
 	})
 	conn, err := open(context.Background(), Options{Addr: storeAddr, User: "bench", PasswordEnv: "PW"}, environment(map[string]string{"PW": "s3cret"}), store.dial)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	defer conn.Close()
 	store.commands()
 	ctx := context.Background()
 	err = conn.Client().Incr(ctx, "n").Err()
 	if got := Classify(err); got != Unreachable {
-		t.Errorf("the command the drop met = %v, %v; want %v", err, got, Unreachable)
+		assert.EqualValues(t, Unreachable, got, "the command the drop met = %v, %v; want %v", err, got, Unreachable)
 	}
 	if got := store.commands(); !reflect.DeepEqual(got, []string{"1: incr n"}) {
-		t.Errorf("the store received %q; want the command once", got)
+		assert.Equal(t, []string{"1: incr n"}, got, "the store received %q; want the command once", got)
 	}
 	if got, err := conn.Client().Do(ctx, "PING").Text(); err != nil || got != "PONG" {
-		t.Errorf("PING on the connection dialed next = %q, %v", got, err)
+		assert.Failf(t, "", "PING on the connection dialed next = %q, %v", got, err)
 	}
 	want := []string{"2: hello 3 auth bench s3cret", "2: PING"}
 	if got := store.commands(); !reflect.DeepEqual(got, want) {
-		t.Errorf("the store received %q; want %q", got, want)
+		assert.Equal(t, want, got, "the store received %q; want %q", got, want)
 	}
 	if n := store.dialed(); n != 2 {
-		t.Errorf("%d dials; want two", n)
+		assert.EqualValues(t, 2, n, "%d dials; want two", n)
 	}
 }
 
@@ -545,25 +547,25 @@ func TestClose(t *testing.T) {
 	store := newFakeStore(t, accepting)
 	conn, err := open(context.Background(), Options{Addr: storeAddr}, nothing, store.dial)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	client := conn.Client()
 	if client == nil || client != conn.Client() {
-		t.Fatalf("Client = %v, then %v; want the one client", client, conn.Client())
+		require.FailNowf(t, "", "Client = %v, then %v; want the one client", client, conn.Client())
 	}
 	if err := conn.Close(); err != nil {
-		t.Errorf("close: %v", err)
+		assert.NoError(t, err, "close: %v", err)
 	}
 	if err := conn.Close(); err != nil {
-		t.Errorf("close again: %v", err)
+		assert.NoError(t, err, "close again: %v", err)
 	}
 	var none *Conn
 	if err := none.Close(); err != nil {
-		t.Errorf("close of nil: %v", err)
+		assert.NoError(t, err, "close of nil: %v", err)
 	}
 	err = client.Ping(context.Background()).Err()
 	if !errors.Is(err, redis.ErrClosed) || Classify(err) != Other {
-		t.Errorf("a command after Close = %v, %v; want the closed client, %v", err, Classify(err), Other)
+		assert.Failf(t, "", "a command after Close = %v, %v; want the closed client, %v", err, Classify(err), Other)
 	}
 }
 
@@ -591,22 +593,22 @@ func TestReconnectSocketCleanup(t *testing.T) {
 	})
 	conn, err := open(context.Background(), Options{Addr: storeAddr, User: "bench", PasswordEnv: "PW"}, environment(map[string]string{"PW": "s3cret"}), store.dial)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	ctx := context.Background()
 	_ = conn.Client().Get(ctx, "k").Err()  // drops conn 1
 	_ = conn.Client().Get(ctx, "k2").Err() // reconnect refused
 	if n := store.dialed(); n != 2 {
-		t.Fatalf("%d dials; want 2", n)
+		require.EqualValues(t, 2, n, "%d dials; want 2", n)
 	}
 	if err := conn.Close(); err != nil {
-		t.Errorf("first close: %v", err)
+		assert.NoError(t, err, "first close: %v", err)
 	}
 	if err := conn.Close(); err != nil {
-		t.Errorf("second close: %v", err)
+		assert.NoError(t, err, "second close: %v", err)
 	}
 	if n := store.open(); n != 0 {
-		t.Fatalf("%d sockets left open after Conn.Close; want 0", n)
+		require.Zero(t, n, "%d sockets left open after Conn.Close; want 0", n)
 	}
 
 	// Repeated reconnect failures.
@@ -621,20 +623,20 @@ func TestReconnectSocketCleanup(t *testing.T) {
 	})
 	connRepeated, err := open(context.Background(), Options{Addr: storeAddr, User: "bench", PasswordEnv: "PW"}, environment(map[string]string{"PW": "s3cret"}), storeRepeated.dial)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	_ = connRepeated.Client().Get(ctx, "drop").Err()
 	for i := 0; i < 4; i++ {
 		_ = connRepeated.Client().Get(ctx, "fail").Err()
 	}
 	if n := storeRepeated.dialed(); n != 5 {
-		t.Fatalf("repeated: %d dials; want 5", n)
+		require.EqualValues(t, 5, n, "repeated: %d dials; want 5", n)
 	}
 	if err := connRepeated.Close(); err != nil {
-		t.Fatalf("close: %v", err)
+		require.NoError(t, err, "close: %v", err)
 	}
 	if n := storeRepeated.open(); n != 0 {
-		t.Fatalf("repeated: %d sockets left open after Conn.Close; want 0", n)
+		require.Zero(t, n, "repeated: %d sockets left open after Conn.Close; want 0", n)
 	}
 
 	// Concurrent reconnect failures.
@@ -649,7 +651,7 @@ func TestReconnectSocketCleanup(t *testing.T) {
 	})
 	connConcurrent, err := open(context.Background(), Options{Addr: storeAddr, User: "bench", PasswordEnv: "PW"}, environment(map[string]string{"PW": "s3cret"}), storeConcurrent.dial)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	_ = connConcurrent.Client().Get(ctx, "drop").Err()
 	var wg sync.WaitGroup
@@ -662,10 +664,10 @@ func TestReconnectSocketCleanup(t *testing.T) {
 	}
 	wg.Wait()
 	if err := connConcurrent.Close(); err != nil {
-		t.Fatalf("close: %v", err)
+		require.NoError(t, err, "close: %v", err)
 	}
 	if n := storeConcurrent.open(); n != 0 {
-		t.Fatalf("concurrent: %d sockets left open after Conn.Close; want 0", n)
+		require.Zero(t, n, "concurrent: %d sockets left open after Conn.Close; want 0", n)
 	}
 }
 
@@ -676,11 +678,11 @@ func TestExplain(t *testing.T) {
 	store := newFakeStore(t, accepting)
 	conn, err := open(context.Background(), Options{Addr: storeAddr, User: "bench", PasswordEnv: "PW"}, environment(map[string]string{"PW": "s3cret"}), store.dial)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	defer conn.Close()
 	if got := conn.Explain(nil); got != nil {
-		t.Errorf("Explain(nil) = %v", got)
+		assert.NoError(t, got, "Explain(nil) = %v", got)
 	}
 	const tried = "redis at store.test:6379 as user bench (password from PW): "
 	refused := conn.Client().LPush(context.Background(), "k", "v").Err()
@@ -704,26 +706,26 @@ func TestExplain(t *testing.T) {
 	} {
 		got := conn.Explain(c.err)
 		if got == nil || got.Error() != c.want {
-			t.Errorf("Explain(%q):\n got %v\nwant %s", c.err, got, c.want)
+			assert.Failf(t, "", "Explain(%q):\n got %v\nwant %s", c.err, got, c.want)
 			continue
 		}
 		if class := Classify(got); class != c.class {
-			t.Errorf("Explain(%q) is %v; want %v", c.err, class, c.class)
+			assert.EqualValues(t, c.class, class, "Explain(%q) is %v; want %v", c.err, class, c.class)
 		}
 		if again := conn.Explain(got); again != got {
-			t.Errorf("Explain of its own error = %v; want it unchanged", again)
+			assert.True(t, again == got, "Explain of its own error = %v; want it unchanged", again)
 		}
 		if wrapped := fmt.Errorf("verb: %w", got); conn.Explain(wrapped) != wrapped {
-			t.Errorf("Explain of its own error, wrapped, is not the wrapped error")
+			assert.True(t, conn.Explain(wrapped) == wrapped, "Explain of its own error, wrapped, is not the wrapped error")
 		}
 		for _, shown := range errorsText(got) {
 			if strings.Contains(shown, "s3cret") {
-				t.Errorf("Explain(%q): %q shows the password", c.err, shown)
+				assert.NotContains(t, shown, "s3cret", "Explain(%q): %q shows the password", c.err, shown)
 			}
 		}
 	}
 	if got := conn.Explain(refused); !errors.Is(got, refused) {
-		t.Errorf("%v does not unwrap to the error it explains", got)
+		assert.ErrorIs(t, got, refused, "%v does not unwrap to the error it explains", got)
 	}
 }
 
@@ -753,15 +755,15 @@ func TestTheFirstConnectionOfASocketIsStillASocket(t *testing.T) {
 	dialer.opening.Store(true)
 	conn, err := dialer.dialer(context.Background(), "tcp", storeAddr)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	defer conn.Close()
 	sys, ok := conn.(syscall.Conn)
 	if !ok {
-		t.Fatalf("%T is not a socket; the connection it wraps is", conn)
+		require.True(t, ok, "%T is not a socket; the connection it wraps is", conn)
 	}
 	if _, err := sys.SyscallConn(); err != errRawSocket || socket.asked != 1 {
-		t.Errorf("SyscallConn = %v after %d calls of the socket's own; want the socket's answer", err, socket.asked)
+		assert.Failf(t, "", "SyscallConn = %v after %d calls of the socket's own; want the socket's answer", err, socket.asked)
 	}
 
 	pipe, other := net.Pipe()
@@ -770,22 +772,22 @@ func TestTheFirstConnectionOfASocketIsStillASocket(t *testing.T) {
 	plain.opening.Store(true)
 	conn, err = plain.dialer(context.Background(), "tcp", storeAddr)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	defer conn.Close()
 	if _, ok := conn.(syscall.Conn); ok {
-		t.Errorf("%T says it is a socket; the connection it wraps is not", conn)
+		assert.False(t, ok, "%T says it is a socket; the connection it wraps is not", conn)
 	}
 
 	// After Open, dials remain tracked and preserve socket identity.
 	plain.done()
 	conn, err = plain.dialer(context.Background(), "tcp", storeAddr)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	defer conn.Close()
 	if _, ok := conn.(syscall.Conn); ok {
-		t.Errorf("%T says it is a socket; the connection it wraps is not", conn)
+		assert.False(t, ok, "%T says it is a socket; the connection it wraps is not", conn)
 	}
 
 	socketPlain := &rawSocket{Conn: client}
@@ -793,12 +795,12 @@ func TestTheFirstConnectionOfASocketIsStillASocket(t *testing.T) {
 	socketDialer.done()
 	sconn, err := socketDialer.dialer(context.Background(), "tcp", storeAddr)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	defer sconn.Close()
 	if sys, ok := sconn.(syscall.Conn); !ok {
-		t.Fatalf("%T is not a socket; the connection it wraps is", sconn)
+		require.True(t, ok, "%T is not a socket; the connection it wraps is", sconn)
 	} else if _, err := sys.SyscallConn(); err != errRawSocket || socketPlain.asked != 1 {
-		t.Errorf("SyscallConn = %v after %d calls; want the socket's answer", err, socketPlain.asked)
+		assert.Failf(t, "", "SyscallConn = %v after %d calls; want the socket's answer", err, socketPlain.asked)
 	}
 }
