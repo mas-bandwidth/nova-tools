@@ -562,20 +562,6 @@ func isInstant(v string) bool {
 	return err == nil
 }
 
-// HexID declares that the named field's value is n lower-case hex digits and
-// belongs to the run. An id a tool derives from its content reproduces exactly
-// and should NOT be declared here: it is part of what the document promises.
-// EXACTLY n digits: an id of another length is the tool disagreeing with the
-// document, and it stays on the line to be compared.
-func HexID(field string, n int) Norm {
-	return Norm{
-		Name:  fmt.Sprintf("%s= (an id of this run, %d hex digits)", field, n),
-		Re:    regexp.MustCompile(fmt.Sprintf(`^%s=[0-9a-f]{%d}$`, regexp.QuoteMeta(field), n)),
-		As:    field + "=<an id of this run>",
-		field: field,
-	}
-}
-
 // Path declares that a path the document writes stands for a directory this run
 // made. `from` is what the document says; both sides are reduced to it, so the
 // documented spelling is what a failure message shows.

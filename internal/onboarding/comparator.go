@@ -193,7 +193,7 @@ var Volatile = []VolatileField{
 		// Anchored at both ends AND named, so `base_sha=` is another token and
 		// is compared as written. A sha of some other length, or with a
 		// non-hex digit in it, is the tool disagreeing with the document and
-		// stays on the line -- the same rule HexID keeps.
+		// stays on the line.
 		norm: func(Field) Norm {
 			return Norm{
 				Name:  "sha= (a sha this run made)",
