@@ -42,7 +42,7 @@ func TestEveryShapeTheHelpNamesIsFound(t *testing.T) {
 			f := write(t, t.TempDir(), "page.md", tc.sentence+"\n")
 			exit, _, stderr := runSelfTalk(t, f)
 			assert.Equal(t, 1, exit)
-			assert.Equal(t, 1, strings.Count(stderr, "SELFTALK FAIL "), "one finding, not two: %s", stderr)
+			assert.Equal(t, 1, strings.Count(stderr, "SELFTALK FAILED "), "one finding, not two: %s", stderr)
 			assert.Contains(t, stderr, ":1: "+tc.want+" match=")
 		})
 	}
@@ -212,7 +212,7 @@ func TestJSONIsTheSameRunAsTheLines(t *testing.T) {
 	assert.Len(t, got.Notes, 1)
 
 	_, lines, _ := runSelfTalk(t, f)
-	assert.Contains(t, lines, "SELFTALK FAIL files=1 claims=2 standing=1 installations=1 dated=1 shown=2")
+	assert.Contains(t, lines, "SELFTALK FAILED files=1 claims=2 standing=1 installations=1 dated=1 shown=2")
 
 	exit, stdout, stderr = runSelfTalk(t, "--json")
 	assert.Equal(t, 2, exit)
@@ -228,7 +228,7 @@ func TestDashReadsStandardInput(t *testing.T) {
 	var out, errb bytes.Buffer
 	exit := runStdin([]string{"-"}, strings.NewReader("# Journal\nI am bad at estimating time.\n"), &out, &errb)
 	assert.Equal(t, 1, exit)
-	assert.Contains(t, errb.String(), `SELFTALK FAIL -:2: STANDING match="bad at": I am bad at estimating time.`)
+	assert.Contains(t, errb.String(), `SELFTALK FAILED -:2: STANDING match="bad at": I am bad at estimating time.`)
 }
 
 // The first word is a verb only when it is one; `help <anything>` is help, `scan` is the scan,

@@ -70,13 +70,13 @@ Date it, cut it, relocate it, or keep it on purpose — the judgment is the
 writer's, and this tool never makes it.
 
 what a scan prints, one line each:
-  SELFTALK FAIL <file>:<line>: STANDING match="<words>": <sentence>           (stderr)
-  SELFTALK FAIL <file>:<line>: INSTALLATION <SHAPE> match="<words>": <sentence> (stderr)
-  SELFTALK SKIP <file> (--skip)
+  SELFTALK FAILED <file>:<line>: STANDING match="<words>": <sentence>           (stderr)
+  SELFTALK FAILED <file>:<line>: INSTALLATION <SHAPE> match="<words>": <sentence> (stderr)
+  SELFTALK SKIPPED file=<file> why=--skip
   SELFTALK RULEDOC <file>: <banner>     above the findings of a --rule-doc file
   SELFTALK MORE kind=<class> shown=<n> total=<t> <remedy>
   SELFTALK DATED n=<k> files=<n>
-  SELFTALK OK|FAIL files=<n> claims=<n> standing=<n> installations=<n> dated=<n> [shown=<n>]
+  SELFTALK OK|FAILED files=<n> claims=<n> standing=<n> installations=<n> dated=<n> [shown=<n>]
   SELFTALK NOTE <what a green does and does not clear>
 match= is the words the shape's rule matched. files= counts the files scanned; claims= the
 first class's claims, dated ones included; standing= and installations= the findings of each
@@ -84,7 +84,7 @@ class; shown= the finding lines printed. A partial check says so: the NOTE print
 
 flags of the scan:
   --skip <basename>       do not scan files with this basename (repeatable). Nothing is
-                          skipped by default, and a skip is reported on a SKIP line.
+                          skipped by default, and a skip is reported on a SKIPPED line.
   --rule-doc <basename>   scan the file, but print its findings under a banner saying a
                           finding there is a self-verdict to relocate and NEVER a reason to
                           soften a rule (repeatable). No basename is special by default.
@@ -96,7 +96,8 @@ flags of the scan:
                           skip and banner, with file, line, shape, match, text), more, notes.
 
 exit codes: 0 no findings, or a verb done; 1 findings; 2 could not run (bad invocation,
-unreadable file). An all-skipped run exits 0 with SELFTALK SKIP files=0, never OK.
+unreadable file). An all-skipped run exits 0 with SELFTALK OK files=0 skipped=<n>
+reason=all-skipped: files=0 says nothing was scanned.
 
 The first run needs nothing but this binary. Write the example pages, then paste the
 lines under example: as they are:
@@ -110,7 +111,7 @@ example:
 
 All three exit 1, and that is the tool working: a finding is a sentence to date,
 cut, relocate or keep on purpose, never a failure. --skip leaves a file unscanned
-and says so on one SELFTALK SKIP line.
+and says so on one SELFTALK SKIPPED line.
 `
 
 // The hints below turn this binary's most-hit refusals into a next step. The
@@ -455,7 +456,9 @@ func (r report) lines(stdout, stderr io.Writer, maxLines int) int {
 	banners := bounded.Capped(stdout, maxLines, "SELFTALK", "ruledoc", maxRemedy)
 	for _, p := range r.pages {
 		if p.skipped {
-			skipLines.Line(fmt.Sprintf("SELFTALK SKIP %s (--skip)", oneline.Escape(p.name)))
+			// A skip is an item of the run and prints with its reason; the run's own
+			// status line carries one of the standard's three words (docs/STANDARD.md §2).
+			skipLines.Line(fmt.Sprintf("SELFTALK SKIPPED file=%s why=--skip", oneline.Field(p.name)))
 			continue
 		}
 		if p.ruledoc {
@@ -466,13 +469,13 @@ func (r report) lines(stdout, stderr io.Writer, maxLines int) int {
 			if f.class == "installation" {
 				kind = "INSTALLATION " + f.shape
 			}
-			fails.Line(f.class, fmt.Sprintf("SELFTALK FAIL %s:%d: %s match=%q: %s",
+			fails.Line(f.class, fmt.Sprintf("SELFTALK FAILED %s:%d: %s match=%q: %s",
 				oneline.Escape(p.name), f.line, oneline.Escape(kind), f.match, oneline.Escape(oneline.Cap(f.text, oneline.TailBytes))))
 		}
 	}
 	skipLines.More()
 	if r.scanned == 0 {
-		fmt.Fprintf(stdout, "SELFTALK SKIP files=0 skipped=%d reason=all-skipped\n", len(r.pages))
+		fmt.Fprintf(stdout, "SELFTALK OK files=0 skipped=%d reason=all-skipped\n", len(r.pages))
 		fmt.Fprintf(stdout, "SELFTALK NOTE %s\n", note)
 		return 0
 	}
@@ -484,7 +487,7 @@ func (r report) lines(stdout, stderr io.Writer, maxLines int) int {
 	// THE COUNT LINE PRINTS ON FAILURE TOO. It printed only on a clean run, so a scan
 	// that found six hundred things gave six hundred lines and never the number.
 	if r.standing > 0 || r.installed > 0 {
-		fmt.Fprintf(stdout, "SELFTALK FAIL files=%d claims=%d standing=%d installations=%d dated=%d shown=%d\n",
+		fmt.Fprintf(stdout, "SELFTALK FAILED files=%d claims=%d standing=%d installations=%d dated=%d shown=%d\n",
 			r.scanned, r.claims, r.standing, r.installed, r.dated, fails.Shown())
 	} else {
 		fmt.Fprintf(stdout, "SELFTALK OK files=%d claims=%d standing=0 installations=0 dated=%d\n", r.scanned, r.claims, r.dated)

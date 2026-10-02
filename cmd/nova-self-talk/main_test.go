@@ -14,6 +14,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 func write(t *testing.T, dir, name, body string) string {
@@ -35,7 +37,7 @@ func TestExitZeroWhenClean(t *testing.T) {
 	assert.Empty(t, stderr.String(), "clean run must leave stderr empty, got %q", stderr.String())
 }
 
-// Exit 1 when a standing claim is present: FAIL on stderr, no OK line on
+// Exit 1 when a standing claim is present: FAILED on stderr, no OK line on
 // stdout. The tool's predecessor always exited 0, which is an instrument
 // with no failure state — the defect it exists to detect could not make it
 // say NO.
@@ -46,7 +48,7 @@ func TestExitOneOnStandingClaim(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	got := run([]string{f}, &stdout, &stderr)
 	assert.Equal(t, 1, got, "want exit 1, got %d\nstdout: %s", got, stdout.String())
-	assert.Contains(t, stderr.String(), "SELFTALK FAIL "+f+`:1: STANDING match="cannot check": I cannot check my own work.`, "stderr = %q, want a SELFTALK FAIL line naming the file, verdict, and claim", stderr.String())
+	assert.Contains(t, stderr.String(), "SELFTALK FAILED "+f+`:1: STANDING match="cannot check": I cannot check my own work.`, "stderr = %q, want a SELFTALK FAILED line naming the file, verdict, and claim", stderr.String())
 	assert.NotContains(t, stdout.String(), "SELFTALK OK", "a failing run must not print an OK line, got %q", stdout.String())
 }
 
@@ -99,8 +101,8 @@ func TestSkipReportsAndDoesNotAffectExit(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	got := run([]string{"--skip", "RULES.md", f}, &stdout, &stderr)
 	assert.Equal(t, 0, got, "a skipped file must not drive the exit code; got %d\nstderr: %s", got, stderr.String())
-	assert.Contains(t, stdout.String(), "SELFTALK SKIP "+f+" (--skip)", "the skip must be reported, not silent:\n%s", stdout.String())
-	assert.Contains(t, stdout.String(), "SELFTALK SKIP files=0 skipped=1 reason=all-skipped", "a skipped file must not count as scanned:\n%s", stdout.String())
+	assert.Contains(t, stdout.String(), "SELFTALK SKIPPED file="+f+" why=--skip", "the skip must be reported, not silent:\n%s", stdout.String())
+	assert.Contains(t, stdout.String(), "SELFTALK OK files=0 skipped=1 reason=all-skipped", "a skipped file must not count as scanned:\n%s", stdout.String())
 }
 
 // The promotion clause, pinned: the origin of this tool hardcoded its own
@@ -132,8 +134,8 @@ func TestSkipRepeatableAndMatchesBasename(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	got := run([]string{"--skip", "RULES.md", "--skip", "FLOORS.md", a, b, c}, &stdout, &stderr)
 	assert.Equal(t, 0, got, "want exit 0 with both rule documents skipped, got %d\nstderr: %s", got, stderr.String())
-	n := strings.Count(stdout.String(), "SELFTALK SKIP")
-	assert.Equal(t, 2, n, "want 2 SKIP lines, got %d:\n%s", n, stdout.String())
+	n := strings.Count(stdout.String(), "SELFTALK SKIPPED")
+	assert.Equal(t, 2, n, "want 2 SKIPPED lines, got %d:\n%s", n, stdout.String())
 	assert.Contains(t, stdout.String(), "SELFTALK OK files=1 claims=0 standing=0", "the unskipped file must still be scanned:\n%s", stdout.String())
 }
 
@@ -204,7 +206,7 @@ func TestDeterministic(t *testing.T) {
 	assert.True(t, bytes.Equal(err1.Bytes(), err2.Bytes()), "stderr differs between identical runs:\n%q\n%q", err1.String(), err2.String())
 }
 
-// An INSTALLATION alone drives the exit code: FAIL on stderr with the shape and the source line,
+// An INSTALLATION alone drives the exit code: FAILED on stderr with the shape and the source line,
 // no OK line on stdout. The second class is a full citizen of the exit contract, not an advisory.
 func TestInstallationExitsOneWithShapeAndLine(t *testing.T) {
 	t.Parallel()
@@ -214,7 +216,7 @@ func TestInstallationExitsOneWithShapeAndLine(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	got := run([]string{f}, &stdout, &stderr)
 	assert.Equal(t, 1, got, "want exit 1 on an installation, got %d\nstdout: %s", got, stdout.String())
-	assert.Contains(t, stderr.String(), "SELFTALK FAIL "+f+":3: INSTALLATION RANKING match=", "stderr = %q, want a FAIL line naming file, line, class and shape", stderr.String())
+	assert.Contains(t, stderr.String(), "SELFTALK FAILED "+f+":3: INSTALLATION RANKING match=", "stderr = %q, want a FAILED line naming file, line, class and shape", stderr.String())
 	assert.NotContains(t, stdout.String(), "SELFTALK OK", "a failing run must not print an OK line, got %q", stdout.String())
 }
 
@@ -327,21 +329,21 @@ func TestNoFileNameOrClaimCanForgeALine(t *testing.T) {
 		}
 	}
 
-	t.Run("FAIL and SKIP name a file whose name holds a newline", func(t *testing.T) {
+	t.Run("FAILED and SKIPPED name a file whose name holds a newline", func(t *testing.T) {
 		name := "a\n" + forged + ".md"
 		f := write(t, t.TempDir(), name, "I cannot check my own work.\n")
 		var stdout, stderr bytes.Buffer
 		got := run([]string{f}, &stdout, &stderr)
 		require.Equal(t, 1, got, "exit = %d, want 1; stderr: %s", got, stderr.String())
 		noForgedLine(t, stdout.String(), stderr.String())
-		assert.Contains(t, stderr.String(), "SELFTALK FAIL "+strings.ReplaceAll(f, "\n", `\x0a`)+`:1: STANDING match="cannot check": I cannot check my own work.`, "stderr = %q, want the file name escaped inside its one FAIL line", stderr.String())
+		assert.Contains(t, stderr.String(), "SELFTALK FAILED "+strings.ReplaceAll(f, "\n", `\x0a`)+`:1: STANDING match="cannot check": I cannot check my own work.`, "stderr = %q, want the file name escaped inside its one FAILED line", stderr.String())
 
 		stdout.Reset()
 		stderr.Reset()
 		got = run([]string{"--skip", name, f}, &stdout, &stderr)
 		require.Equal(t, 0, got, "exit = %d, want 0; stderr: %s", got, stderr.String())
 		noForgedLine(t, stdout.String(), stderr.String())
-		assert.Contains(t, stdout.String(), "SELFTALK SKIP "+strings.ReplaceAll(f, "\n", `\x0a`)+" (--skip)", "stdout = %q, want the skip reported with the name escaped", stdout.String())
+		assert.Contains(t, stdout.String(), "SELFTALK SKIPPED file="+oneline.Field(f)+" why=--skip", "stdout = %q, want the skip reported with the name escaped", stdout.String())
 	})
 
 	t.Run("a claim's text is escaped", func(t *testing.T) {

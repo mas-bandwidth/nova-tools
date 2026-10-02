@@ -48,8 +48,7 @@ func TestAllSkippedReportsNoScan(t *testing.T) {
 	code := run([]string{"--skip", "skip.md", missing}, &out, &errOut)
 	require.Equal(t, 0, code, "all skipped: exit %d out=%q err=%q", code, out.String(), errOut.String())
 	require.Zero(t, errOut.Len(), "all skipped: exit %d out=%q err=%q", code, out.String(), errOut.String())
-	require.Contains(t, out.String(), "SELFTALK SKIP files=0 skipped=1 reason=all-skipped", "all skipped: exit %d out=%q err=%q", code, out.String(), errOut.String())
-	require.NotContains(t, out.String(), "SELFTALK OK", "all skipped: exit %d out=%q err=%q", code, out.String(), errOut.String())
+	require.Contains(t, out.String(), "SELFTALK OK files=0 skipped=1 reason=all-skipped", "all skipped: exit %d out=%q err=%q", code, out.String(), errOut.String())
 	require.Contains(t, out.String(), "SELFTALK NOTE", "all skipped: exit %d out=%q err=%q", code, out.String(), errOut.String())
 }
 

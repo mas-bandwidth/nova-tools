@@ -114,7 +114,7 @@ func TestEveryUnreadableFileIsNamedInOneRun(t *testing.T) {
 	}
 	// And nothing was scanned: a run that printed findings and then refused
 	// would be reporting findings from a run that did not happen.
-	assert.NotContains(t, stderr, "SELFTALK FAIL", "a refused run must scan nothing:\nstdout: %s\nstderr: %s", stdout, stderr)
+	assert.NotContains(t, stderr, "SELFTALK FAILED", "a refused run must scan nothing:\nstdout: %s\nstderr: %s", stdout, stderr)
 	assert.NotContains(t, stdout, "SELFTALK", "a refused run must scan nothing:\nstdout: %s\nstderr: %s", stdout, stderr)
 	assert.Contains(t, stderr, "NOTHING was scanned", "the refusal must say that nothing was scanned:\n%s", stderr)
 }

@@ -36,7 +36,7 @@ A resource limit keeps its unit or scope in its name; these spellings stand: nov
 - nova-bus wait `--idle-exit <n>`, a caller-selected code for an idle timeout.
 
 **(e) Output: events and payloads.**
-- EVENT output is one line per event, `<TOKEN> OK|FAIL key=value ...`; OK to stdout, FAIL and REFUSED to stderr. One exception, per SPEC.md: nova-self-talk's `SELFTALK FAIL files=...` summary count line goes to stdout beside its advisory note.
+- EVENT output is one line per event, `<TOKEN> OK|FAIL key=value ...`; OK to stdout, FAIL and REFUSED to stderr. One exception, per SPEC.md: nova-self-talk's `SELFTALK FAILED files=...` summary count line goes to stdout beside its advisory note.
 - Item OK events may precede a later failure; the closing status is then FAIL, exit not 0.
 - PAYLOAD output: a verb documented to emit a payload names its format in help and emits exactly that payload on stdout and nothing else; its events go to stderr. The documented cases: nova-bus prepare (a JSON artifact), nova-bus draft (a drafted note) and nova-fuse path (a bare value). A payload is never capped like a listing.
 - A remedy is a command, printed shell-quoted so it pastes.

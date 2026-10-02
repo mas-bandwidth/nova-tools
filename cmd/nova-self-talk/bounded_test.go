@@ -50,7 +50,7 @@ func TestScanCapsFindingsAndCountsTheDated(t *testing.T) {
 	assert.Contains(t, stdout, "SELFTALK DATED n=600 files=1", "the dated claims are not counted: %s", stdout)
 	assert.NotContains(t, stdout, "SELFTALK DATED "+page, "a dated claim is still quoted")
 	assert.Contains(t, stdout, "standing=600", "no count line on failure: %s", stdout)
-	// stdout: the DATED count, the FAIL count, the NOTE.
+	// stdout: the DATED count, the FAILED count, the NOTE.
 	got = countLines(stdout)
 	assert.Equal(t, 3, got, "stdout is %d lines, want 3 (dated count, count line, NOTE):\n%s", got, stdout)
 }
