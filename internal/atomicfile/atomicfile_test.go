@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestWriteSuccessAndFileModes(t *testing.T) {
@@ -806,5 +809,47 @@ func TestExactModeIsSetBeforeSync(t *testing.T) {
 	}
 	if err := writeWithHooks(target, []byte("complete\n"), 0o644, h, ExactMode()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Check refuses exactly what Write refuses before it writes, with the same error, and
+// makes nothing: a dry run that calls it plans the write it skips.
+func TestCheckRefusesWhatWriteRefusesAndWritesNothing(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	file := filepath.Join(dir, "a-file")
+	require.NoError(t, os.WriteFile(file, []byte("x"), 0o644))
+	for _, tc := range []struct {
+		name string
+		path string
+		perm os.FileMode
+		ok   bool
+	}{
+		{"empty", "", 0o644, false},
+		{"not clean", dir + "/x/../y", 0o644, false},
+		{"bad mode", filepath.Join(dir, "m"), 0o1777, false},
+		{"missing parent", filepath.Join(dir, "missing", "f"), 0o644, false},
+		{"parent is a file", filepath.Join(file, "f"), 0o644, false},
+		{"target is a directory", dir, 0o644, false},
+		{"a new file", filepath.Join(dir, "new"), 0o644, true},
+		{"an existing file", file, 0o644, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			before, err := os.ReadDir(dir)
+			require.NoError(t, err)
+			checked := Check(tc.path, tc.perm)
+			after, err := os.ReadDir(dir)
+			require.NoError(t, err)
+			assert.Equal(t, len(before), len(after), "Check made an entry")
+			if tc.ok {
+				assert.NoError(t, checked)
+				return
+			}
+			require.Error(t, checked)
+			written := Write(tc.path, []byte("y"), tc.perm)
+			require.Error(t, written)
+			assert.Equal(t, written.Error(), checked.Error())
+		})
 	}
 }

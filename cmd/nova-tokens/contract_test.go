@@ -84,6 +84,9 @@ func TestNothingInThisToolRemovesAFile(t *testing.T) {
 		// The copy under --scratch, made from the live database this run and read there;
 		// the live file is never opened for writing.
 		"internal/tokens/opencode.go": {"os.Create("},
+		// The private copy a dry run or sources made under --scratch this run, removed
+		// entry by entry before it returns, so --scratch is left as it was.
+		"cmd/nova-tokens/privatecopy.go": {"os.Remove"},
 		// The temporary file atomicfile writes through before rename; on error or
 		// cleanup, atomicfile removes the temporary file this run created.
 		"internal/atomicfile/atomicfile.go": {"os.Remove"},

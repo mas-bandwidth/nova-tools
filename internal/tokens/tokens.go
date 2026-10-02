@@ -87,6 +87,18 @@ func (c Counts) Cell(t Type) string {
 }
 
 // Total is the five types summed, for the shares on a day line. A dash adds nothing.
+// Billed is the tokens a cost covers: input, output, cache write and cache read, the
+// four types a provider prices. Reasoning is its own column and in none of them.
+func (c Counts) Billed() int64 {
+	var n int64
+	for _, t := range []Type{Input, Output, CacheWrite, CacheRead} {
+		if v, ok := c.Get(t); ok {
+			n += v
+		}
+	}
+	return n
+}
+
 func (c Counts) Total() int64 {
 	var n int64
 	for t := Type(0); t < NTypes; t++ {
@@ -145,13 +157,16 @@ type Key struct{ Day, Model, Repo string }
 // Row is one line of a day file while it is still being accumulated.
 type Row struct {
 	Key
-	Counts   Counts
-	Rough    int
-	Usd      int64  // micro-dollars summed over the messages that fed the row
-	Priced   bool   // some message that fed the row reported a cost; false: Usd is no measurement
-	Provider string // the provider prefix of the messages that fed the row; "" where unknown
-	bases    map[string]bool
-	sources  map[string]bool
+	Counts Counts
+	Rough  int
+	Usd    int64 // micro-dollars summed over the messages that fed the row
+	Priced bool  // some message that fed the row reported a cost; false: Usd is no measurement
+	// PricedTokens is the Billed tokens of the messages that reported a cost: what Usd
+	// covers, and the only tokens a rate over Usd may divide by.
+	PricedTokens int64
+	Provider     string // the provider prefix of the messages that fed the row; "" where unknown
+	bases        map[string]bool
+	sources      map[string]bool
 }
 
 // Bases is the day bases that fed this row, sorted. More than one is a row that is not
@@ -239,6 +254,9 @@ func (f *Folder) Add(label string, m Message) {
 	r.Rough += m.Rough
 	r.Usd += m.Usd
 	r.Priced = r.Priced || m.Priced
+	if m.Priced {
+		r.PricedTokens += m.Counts.Billed()
+	}
 	if m.Provider != "" {
 		r.Provider = m.Provider
 	}
