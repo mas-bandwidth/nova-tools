@@ -1,15 +1,10 @@
 package main
 
-// Red test for nova-tools#2676: the sprint table's friend working column,
-// friend:<name>:width in the fleet's Redis, was written by hand with redis-cli
-// through nova-secrets exec (Emma hers; Rowan wrote rowan=8 and johnny=6 from
-// statements; Johnny's own attempt hung without the seat exec). The fix's
-// nova-secrets leg: exec refuses to be the vehicle for that hand-write and
-// names the column's one writer on the refusal line, so the column is never a
-// redis-cli line through this exec. Since #3447 that writer is the friend row
-// loop and no beat writes the row (the retired nova-wake beat refused it), so
-// the line names the row loop and the queue, never a beat (#3807). sops and redis-cli are fakes on disk, so no test opens a real store or
-// touches a real Redis.
+// exec refuses to be the vehicle for a hand-write of the sprint table's working column,
+// friend:<name>:width in the fleet's Redis: a redis-cli line that writes that key is
+// refused before the command starts, naming the column's one writer (the friend row
+// loop), and a redis-cli line that reads it, or writes another key, still runs. sops and
+// redis-cli are fakes on disk, so no test opens a real store or touches a real Redis.
 
 import (
 	"fmt"
@@ -23,7 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestIssue2676(t *testing.T) {
+func TestExecRefusesAHandWriteOfTheSprintWidthKey(t *testing.T) {
 	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("the fake sops and redis-cli run through /bin/sh; the fleet is a linux bench")
