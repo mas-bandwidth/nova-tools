@@ -448,6 +448,50 @@ func TestAnOldBinarysCreateLockKeepsTheNewOneOut(t *testing.T) {
 	require.NoError(t, l.Unlock())
 }
 
+// The fresh-file witness. Before internal/filelock this tool created volume-create.lock
+// 0600 (volumes_darwin.go:265 at 4bb0a044e); filelock alone creates 0666 less the umask.
+// With no lock file present, the create lock must make it 0600 still, under a umask that
+// would make a 0666 create something else -- and a caller that takes filelock with no
+// adapter must still get filelock's own default, so nothing generic changed.
+// The umask is measured with a probe file rather than set: it is the process's, and the
+// other tests run beside this one.
+func TestAFreshCreateLockIsMadeOwnerOnly(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	probe := filepath.Join(dir, "probe")
+	require.NoError(t, os.WriteFile(probe, nil, 0o666))
+	pinfo, err := os.Stat(probe)
+	require.NoError(t, err)
+	def := pinfo.Mode().Perm()
+	if def == 0o600 {
+		t.Skipf("this process's umask already makes a 0666 create 0600, so the witness cannot tell the modes apart")
+	}
+
+	t.Run("the create lock", func(t *testing.T) {
+		t.Parallel()
+		path := filepath.Join(dir, "volume-create.lock")
+		unlock, err := lockVolumeCreateAt(path)
+		require.NoError(t, err, "the create lock on a fresh path: %v", err)
+		info, err := os.Stat(path)
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "a fresh volume-create.lock is %v; this tool has always made it 0600 (a 0666 create here gives %v)", info.Mode().Perm(), def)
+		unlock()
+		info, err = os.Stat(path)
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "the release changed the lock file's mode to %v", info.Mode().Perm())
+	})
+	t.Run("a generic filelock caller", func(t *testing.T) {
+		t.Parallel()
+		path := filepath.Join(dir, "generic.lock")
+		l, err := filelock.TryLock(path, "witness")
+		require.NoError(t, err)
+		defer func() { require.NoError(t, l.Unlock()) }()
+		info, err := os.Stat(path)
+		require.NoError(t, err)
+		assert.Equal(t, def, info.Mode().Perm(), "a caller with no adapter got %v, want filelock's default (0666 less the umask: %v)", info.Mode().Perm(), def)
+	})
+}
+
 // The lock file lives under the caller's own cache directory and nowhere else. A lock at
 // a path a card could write is a lock a card can take, and `run`'s whole premise is that
 // the contained command is not trusted with the machine.

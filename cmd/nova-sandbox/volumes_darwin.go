@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -263,6 +264,25 @@ func lockVolumeCreate() (func(), error) {
 	path, err := volumeLockPath()
 	if err != nil {
 		return nil, err
+	}
+	return lockVolumeCreateAt(path)
+}
+
+// lockVolumeCreateAt is lockVolumeCreate on a named file, so a test takes it on a file of
+// its own without swapping volumeLockPath.
+//
+// A FRESH lock file is made 0600, as this tool always made it: filelock creates 0666 less
+// the umask, so the file is created here first, exclusively, and filelock then opens the
+// existing file and leaves its mode alone. O_EXCL makes the create refuse whatever is
+// already at the path (a symlink included); an existing file is filelock's to open and
+// check.
+func lockVolumeCreateAt(path string) (func(), error) {
+	fresh, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
+	if err == nil {
+		// ignored: an empty file closed at once; filelock reopens it, and its open reports any fault
+		_ = fresh.Close()
+	} else if !errors.Is(err, fs.ErrExist) {
+		return nil, fmt.Errorf("the volume-creation lock at %s could not be opened: %w", path, err)
 	}
 	l, err := filelock.Lock(path, "nova-sandbox run: diskutil apfs addVolume", volumeLockWait)
 	if errors.Is(err, filelock.ErrHeld) || errors.Is(err, filelock.ErrBusy) {
