@@ -54,9 +54,18 @@ func TestMemberReadPrintsPlaceScoreRevisionFieldsAndTheMissing(t *testing.T) {
 		err := json.Unmarshal([]byte(stdout), &got)
 		require.NoError(t, err, "not JSON: %v\n%s", err, stdout)
 	}
-	assert.False(t, got.Table != "demo" || got.Epoch != "0" || got.TableRevision != "4" || got.Trips != 1 || len(got.Missing) != 1 || got.Missing[0] != "zz" ||
-		len(got.Members) != 1 || got.Members[0].ID != "m1" || *got.Members[0].Place != "build:ready" || *got.Members[0].Score != "1" ||
-		got.Members[0].MemberRevision != "1" || got.Members[0].Fields["role"] != "builder", "JSON: %+v", got)
+	assert.Equal(t, "demo", got.Table, "JSON: %+v", got)
+	assert.Equal(t, "0", got.Epoch, "JSON: %+v", got)
+	assert.Equal(t, "4", got.TableRevision, "JSON: %+v", got)
+	assert.Equal(t, 1, got.Trips, "JSON: %+v", got)
+	assert.Equal(t, 1, len(got.Missing), "JSON: %+v", got)
+	assert.Equal(t, "zz", got.Missing[0], "JSON: %+v", got)
+	assert.Equal(t, 1, len(got.Members), "JSON: %+v", got)
+	assert.Equal(t, "m1", got.Members[0].ID, "JSON: %+v", got)
+	assert.Equal(t, "build:ready", *got.Members[0].Place, "JSON: %+v", got)
+	assert.Equal(t, "1", *got.Members[0].Score, "JSON: %+v", got)
+	assert.Equal(t, "1", got.Members[0].MemberRevision, "JSON: %+v", got)
+	assert.Equal(t, "builder", got.Members[0].Fields["role"], "JSON: %+v", got)
 	// usage
 	for _, args := range [][]string{{"member", "read", "--redis", addr, "demo"}, {"member", "read", "--redis", addr, "demo", "m1", "--cell", "build:ready"}, {"member", "read", "--redis", addr, "demo", "--cell", "nocolon"}} {
 		{
