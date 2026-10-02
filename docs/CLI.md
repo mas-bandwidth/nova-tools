@@ -1489,7 +1489,7 @@ The per-binary deadline is thirty seconds rather than the five every other verb
 takes because of when this verb is run: right after `go install ./cmd/...`, on a
 directory of binaries this machine has never executed. The platform assesses the
 first run of a never-seen executable and charges it to that deadline — measured
-at 164–571 ms cold against 5 ms warm when idle, and at
+cold against warm when idle, and at
 a 7.03 s maximum while a tree compiled beside it, which is the state the
 `go install` one command earlier leaves the machine in. At five seconds that
 refused healthy binaries and named a build repair that would have found nothing.
