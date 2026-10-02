@@ -12,10 +12,10 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 )
 
-// What a card cost (docs/SPEC-SPRINT.md, "What a card cost");
-// "the producer card by the time it gets to landed, should have the history of
-// consumer cards that did work for it ... how much each consumer card cost, total
-// for producer"; and "The cost needs to be tracked IN THE CARD"). A producer card's
+// What a card cost (docs/SPEC-SPRINT.md, "What a card cost"): the cost is tracked
+// in the card itself, so by the time a producer card lands it holds the history
+// of the consumer cards that did work for it, what each cost, and the total for
+// the producer. A producer card's
 // consumers are its work cards' takes (each run on a fleet member) and its read
 // cards' runs (each read by a reader). When a consumer ends, the step that ends it
 // writes its usage record (cardcost.Usage: the tokens by class its member or reader
@@ -83,8 +83,8 @@ func nextTake(c *Card, prefix string) int {
 	return n
 }
 
-// The producer card carries what it cost (as the section says: "The cost needs to
-// be tracked IN THE CARD"): each consumer that ends appends one record to the primary,
+// The producer card carries what it cost, for the cost is tracked in the card:
+// each consumer that ends appends one record to the primary,
 // FieldCostRecord plus the consumer's key, in the same step that ends it, and the
 // primary's running total (FieldCostTotal) is updated with it. Everything that shows
 // or sums a card's cost reads the primary alone (CardCostOf), so no reader or member
@@ -314,8 +314,8 @@ func seconds(n int64) string {
 const FieldCost = "cost"
 
 // MoneyText is a cost as the work table's cost cell shows it: US dollars and cents,
-// rounded up to the next cent ("$1.24" for 1.2345; "
-// never care about anything past 2 decimal places (cents)." / "round up to cents"), "-"
+// rounded up to the next cent ("$1.24" for 1.2345; nothing past the cent is
+// shown), "-"
 // when there is none. The card keeps the exact figure (FieldCost, FieldCostTotal); only
 // what is shown is rounded.
 func MoneyText(usd string) string {
