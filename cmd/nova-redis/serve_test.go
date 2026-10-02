@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/secrets"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -56,9 +57,7 @@ func newServeHarness(t *testing.T, password string) *serveHarness {
 			return out
 		},
 		lookPath: func(name string) (string, error) {
-			if name != "redis-server" {
-				t.Fatalf("serve looked up %q; the instance program is redis-server", name)
-			}
+			require.Equal(t, "redis-server", name, "serve looked up %q; the instance program is redis-server", name)
 			return fakeRedisServer, nil
 		},
 		launch: func(_ context.Context, spec launchSpec, _, _ io.Writer) error {
@@ -133,7 +132,7 @@ func splitConfigArgs(t *testing.T, line string) []string {
 					case h >= 'a' && h <= 'f':
 						v |= byte(h-'a') + 10
 					default:
-						t.Fatalf("bad \\x escape in %q", line)
+						require.FailNowf(t, "", "bad \\x escape in %q", line)
 					}
 				}
 				b.WriteByte(v)
@@ -150,9 +149,7 @@ func splitConfigArgs(t *testing.T, line string) []string {
 			}
 			break
 		}
-		if !closed {
-			t.Fatalf("unterminated quote in config line %q", line)
-		}
+		require.True(t, closed, "unterminated quote in config line %q", line)
 		args = append(args, b.String())
 	}
 	return args
@@ -161,9 +158,7 @@ func splitConfigArgs(t *testing.T, line string) []string {
 func only(t *testing.T, cfg map[string][][]string, directive string) []string {
 	t.Helper()
 	got := cfg[directive]
-	if len(got) != 1 {
-		t.Fatalf("config carries %d %q lines, want exactly 1: %q", len(got), directive, got)
-	}
+	require.Len(t, got, 1, "config carries %d %q lines, want exactly 1: %q", len(got), directive, got)
 	return got[0]
 }
 
@@ -184,24 +179,31 @@ func TestBoundToLocalhostAndTailnetOnly(t *testing.T) {
 	} {
 		h := newServeHarness(t, "pw-from-nova-secrets")
 		code, out, errb := h.run("serve", "--bind", bind, "--port", "6379", "--dir", h.dir)
-		if code != 0 || len(h.launches) != 1 {
-			t.Errorf("--bind %s: exit %d launches %d, want 0 and 1; stderr=%q", bind, code, len(h.launches), errb)
+		if !assert.Zero(t, code, "--bind %s: exit %d launches %d, want 0 and 1; stderr=%q", bind, code, len(h.launches), errb) {
+			continue
+		}
+		if !assert.Len(t, h.launches, 1, "--bind %s: exit %d launches %d, want 0 and 1; stderr=%q", bind, code, len(h.launches), errb) {
 			continue
 		}
 		cfg := config(t, h.launches[0].Config)
 		want := strings.Split(bind, ",")
-		if got := only(t, cfg, "bind"); strings.Join(got, ",") != strings.Join(want, ",") {
-			t.Errorf("--bind %s: config binds %q, want exactly %q", bind, got, want)
+		{
+			got := only(t, cfg, "bind")
+			assert.Equal(t, strings.Join(want, ","), strings.Join(got, ","), "--bind %s: config binds %q, want exactly %q", bind, got, want)
 		}
-		if got := only(t, cfg, "protected-mode"); len(got) != 1 || got[0] != "yes" {
-			t.Errorf("--bind %s: protected-mode %q, want yes", bind, got)
+		{
+			got := only(t, cfg, "protected-mode")
+			if assert.Len(t, got, 1, "--bind %s: protected-mode %q, want yes", bind, got) {
+				assert.Equal(t, "yes", got[0], "--bind %s: protected-mode %q, want yes", bind, got)
+			}
 		}
-		if got := only(t, cfg, "port"); len(got) != 1 || got[0] != "6379" {
-			t.Errorf("--bind %s: port %q, want 6379", bind, got)
+		{
+			got := only(t, cfg, "port")
+			if assert.Len(t, got, 1, "--bind %s: port %q, want 6379", bind, got) {
+				assert.Equal(t, "6379", got[0], "--bind %s: port %q, want 6379", bind, got)
+			}
 		}
-		if !strings.Contains(out, "SERVE START bind="+bind+" ") {
-			t.Errorf("--bind %s: stdout does not report the bind: %q", bind, out)
-		}
+		assert.Contains(t, out, "SERVE START bind="+bind+" ", "--bind %s: stdout does not report the bind: %q", bind, out)
 	}
 
 	for _, tc := range []struct{ name, bind string }{
@@ -221,18 +223,18 @@ func TestBoundToLocalhostAndTailnetOnly(t *testing.T) {
 	} {
 		h := newServeHarness(t, "pw-from-nova-secrets")
 		code, _, errb := h.run("serve", "--bind", tc.bind, "--port", "6379", "--dir", h.dir)
-		if code != 2 || len(h.launches) != 0 {
-			t.Errorf("%s (--bind %q): exit %d launches %d, want 2 and 0 (a public bind is refused, never launched)", tc.name, tc.bind, code, len(h.launches))
+		if assert.Equal(t, 2, code, "%s (--bind %q): exit %d launches %d, want 2 and 0 (a public bind is refused, never launched)", tc.name, tc.bind, code, len(h.launches)) {
+			assert.Len(t, h.launches, 0, "%s (--bind %q): exit %d launches %d, want 2 and 0 (a public bind is refused, never launched)", tc.name, tc.bind, code, len(h.launches))
 		}
-		if !strings.HasPrefix(errb, "nova-redis serve REFUSED: ") {
-			t.Errorf("%s: stderr %q is not a serve refusal", tc.name, errb)
-		}
+		assert.True(t, strings.HasPrefix(errb, "nova-redis serve REFUSED: "), "%s: stderr %q is not a serve refusal", tc.name, errb)
 	}
 
 	h := newServeHarness(t, "pw-from-nova-secrets")
 	code, _, errb := h.run("serve", "--port", "6379", "--dir", h.dir)
-	if code != 2 || len(h.launches) != 0 || !strings.Contains(errb, "--bind is required") {
-		t.Errorf("no --bind: exit %d launches %d stderr %q; want 2, 0 and a refusal naming --bind (never a default)", code, len(h.launches), errb)
+	if assert.Equal(t, 2, code, "no --bind: exit %d launches %d stderr %q; want 2, 0 and a refusal naming --bind (never a default)", code, len(h.launches), errb) {
+		if assert.Len(t, h.launches, 0, "no --bind: exit %d launches %d stderr %q; want 2, 0 and a refusal naming --bind (never a default)", code, len(h.launches), errb) {
+			assert.Contains(t, errb, "--bind is required", "no --bind: exit %d launches %d stderr %q; want 2, 0 and a refusal naming --bind (never a default)", code, len(h.launches), errb)
+		}
 	}
 }
 
@@ -248,38 +250,30 @@ func TestAuthFromNovaSecretsNeverAPlaintextArgument(t *testing.T) {
 	secret := secrets.NewSecret(pw)
 	h := newServeHarness(t, pw)
 	code, out, errb := h.run("serve", "--bind", "127.0.0.1,100.100.1.2", "--port", "6380", "--dir", h.dir)
-	if code != 0 || len(h.launches) != 1 {
-		t.Fatalf("serve with the secret in the environment: exit %d launches %d stderr %q", code, len(h.launches), errb)
-	}
+	require.Zero(t, code, "serve with the secret in the environment: exit %d launches %d stderr %q", code, len(h.launches), errb)
+	require.Len(t, h.launches, 1, "serve with the secret in the environment: exit %d launches %d stderr %q", code, len(h.launches), errb)
 	spec := h.launches[0]
-	if spec.Program != fakeRedisServer {
-		t.Errorf("program %q, want the one found on PATH %q", spec.Program, fakeRedisServer)
-	}
-	if strings.Join(spec.Args, " ") != "-" {
-		t.Errorf("redis-server argv %q, want only \"-\" (config on stdin)", spec.Args)
-	}
+	assert.Equal(t, fakeRedisServer, spec.Program, "program %q, want the one found on PATH %q", spec.Program, fakeRedisServer)
+	assert.Equal(t, "-", strings.Join(spec.Args, " "), "redis-server argv %q, want only \"-\" (config on stdin)", spec.Args)
 	for _, a := range append([]string{spec.Program}, spec.Args...) {
-		if secrets.Leaks(a, secret) {
-			t.Errorf("the secret is in the argv: %q", a)
-		}
+		assert.False(t, secrets.Leaks(a, secret), "the secret is in the argv: %q", a)
 	}
 	for _, e := range spec.Env {
-		if strings.HasPrefix(e, PasswordEnv+"=") || secrets.Leaks(e, secret) {
-			t.Errorf("the child environment carries the secret: %q", e)
+		if assert.False(t, strings.HasPrefix(e, PasswordEnv+"="), "the child environment carries the secret: %q", e) {
+			assert.False(t, secrets.Leaks(e, secret), "the child environment carries the secret: %q", e)
 		}
 	}
-	if len(spec.Env) == 0 {
-		t.Errorf("the child environment is empty; want the parent's minus %s", PasswordEnv)
+	assert.NotEmpty(t, spec.Env, "the child environment is empty; want the parent's minus %s", PasswordEnv)
+	{
+		got := only(t, config(t, spec.Config), "requirepass")
+		if assert.Len(t, got, 1, "requirepass reads back as %q, want the nova-secrets value", got) {
+			assert.Equal(t, pw, got[0], "requirepass reads back as %q, want the nova-secrets value", got)
+		}
 	}
-	if got := only(t, config(t, spec.Config), "requirepass"); len(got) != 1 || got[0] != pw {
-		t.Errorf("requirepass reads back as %q, want the nova-secrets value", got)
+	if assert.False(t, secrets.Leaks(out, secret), "serve printed the secret: stdout=%q stderr=%q", out, errb) {
+		assert.False(t, secrets.Leaks(errb, secret), "serve printed the secret: stdout=%q stderr=%q", out, errb)
 	}
-	if secrets.Leaks(out, secret) || secrets.Leaks(errb, secret) {
-		t.Errorf("serve printed the secret: stdout=%q stderr=%q", out, errb)
-	}
-	if !strings.Contains(out, " auth=on ") {
-		t.Errorf("stdout does not report auth=on: %q", out)
-	}
+	assert.Contains(t, out, " auth=on ", "stdout does not report auth=on: %q", out)
 	err := filepath.Walk(h.dir, func(p string, fi os.FileInfo, err error) error {
 		if err != nil || fi.IsDir() {
 			return err
@@ -288,26 +282,24 @@ func TestAuthFromNovaSecretsNeverAPlaintextArgument(t *testing.T) {
 		if rerr != nil {
 			return rerr
 		}
-		if secrets.Leaks(string(b), secret) {
-			t.Errorf("the secret is in plaintext on the bench: %s", p)
-		}
+		assert.False(t, secrets.Leaks(string(b), secret), "the secret is in plaintext on the bench: %s", p)
 		return nil
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, err)
 
 	h = newServeHarness(t, "")
 	code, _, errb = h.run("serve", "--bind", "127.0.0.1", "--port", "6379", "--dir", h.dir)
-	if code != 2 || len(h.launches) != 0 || !strings.Contains(errb, "nova-secrets exec") {
-		t.Errorf("no secret: exit %d launches %d stderr %q; want 2, 0 and a refusal naming nova-secrets exec", code, len(h.launches), errb)
+	if assert.Equal(t, 2, code, "no secret: exit %d launches %d stderr %q; want 2, 0 and a refusal naming nova-secrets exec", code, len(h.launches), errb) {
+		if assert.Len(t, h.launches, 0, "no secret: exit %d launches %d stderr %q; want 2, 0 and a refusal naming nova-secrets exec", code, len(h.launches), errb) {
+			assert.Contains(t, errb, "nova-secrets exec", "no secret: exit %d launches %d stderr %q; want 2, 0 and a refusal naming nova-secrets exec", code, len(h.launches), errb)
+		}
 	}
 
 	for _, flagName := range []string{"--password", "--requirepass", "--pass"} {
 		h = newServeHarness(t, pw)
 		code, _, _ = h.run("serve", "--bind", "127.0.0.1", "--port", "6379", flagName, "on-the-command-line")
-		if code != 2 || len(h.launches) != 0 {
-			t.Errorf("%s: exit %d launches %d; a secret argument must be refused, not taken", flagName, code, len(h.launches))
+		if assert.Equal(t, 2, code, "%s: exit %d launches %d; a secret argument must be refused, not taken", flagName, code, len(h.launches)) {
+			assert.Len(t, h.launches, 0, "%s: exit %d launches %d; a secret argument must be refused, not taken", flagName, code, len(h.launches))
 		}
 	}
 }
@@ -324,9 +316,8 @@ func TestPersistenceIsAOFWithNoEviction(t *testing.T) {
 
 	h := newServeHarness(t, "pw-from-nova-secrets")
 	code, out, errb := h.run("serve", "--bind", "127.0.0.1", "--port", "6379", "--dir", h.dir)
-	if code != 0 || len(h.launches) != 1 {
-		t.Fatalf("serve: exit %d launches %d stderr %q", code, len(h.launches), errb)
-	}
+	require.Zero(t, code, "serve: exit %d launches %d stderr %q", code, len(h.launches), errb)
+	require.Len(t, h.launches, 1, "serve: exit %d launches %d stderr %q", code, len(h.launches), errb)
 	cfg := config(t, h.launches[0].Config)
 	for directive, want := range map[string]string{
 		"appendonly":                "yes",
@@ -337,17 +328,19 @@ func TestPersistenceIsAOFWithNoEviction(t *testing.T) {
 		"latency-monitor-threshold": "100",
 		"dir":                       h.dir,
 	} {
-		if got := strings.Join(only(t, cfg, directive), " "); got != want {
-			t.Errorf("%s %q, want %q (the fleet store's rule)", directive, got, want)
+		{
+			got := strings.Join(only(t, cfg, directive), " ")
+			assert.Equal(t, want, got, "%s %q, want %q (the fleet store's rule)", directive, got, want)
 		}
 	}
 	for _, d := range []string{"appendfilename", "appenddirname", "dbfilename", "include", "rdb-del-sync-files"} {
-		if _, ok := cfg[d]; ok {
-			t.Errorf("config carries %q; the store's files live under --dir by their default names", d)
+		{
+			_, ok := cfg[d]
+			assert.False(t, ok, "config carries %q; the store's files live under --dir by their default names", d)
 		}
 	}
-	if !strings.Contains(out, " persistence=aof ") || !strings.Contains(out, " dir="+h.dir+" ") {
-		t.Errorf("stdout does not report persistence=aof and the --dir: %q", out)
+	if assert.Contains(t, out, " persistence=aof ", "stdout does not report persistence=aof and the --dir: %q", out) {
+		assert.Contains(t, out, " dir="+h.dir+" ", "stdout does not report persistence=aof and the --dir: %q", out)
 	}
 
 	for _, tc := range []struct{ name, dir, why string }{
@@ -355,20 +348,25 @@ func TestPersistenceIsAOFWithNoEviction(t *testing.T) {
 		{"a file", filepath.Join(h.dir, "file"), "not a directory"},
 	} {
 		if tc.name == "a file" {
-			if err := os.WriteFile(tc.dir, []byte("x"), 0o600); err != nil {
-				t.Fatal(err)
+			{
+				err := os.WriteFile(tc.dir, []byte("x"), 0o600)
+				require.NoError(t, err, err)
 			}
 		}
 		h := newServeHarness(t, "pw-from-nova-secrets")
 		code, _, errb := h.run("serve", "--bind", "127.0.0.1", "--port", "6379", "--dir", tc.dir)
-		if code != 2 || len(h.launches) != 0 || !strings.Contains(errb, tc.why) {
-			t.Errorf("--dir %s: exit %d launches %d stderr %q; want 2, 0 and a refusal saying %q", tc.name, code, len(h.launches), errb, tc.why)
+		if assert.Equal(t, 2, code, "--dir %s: exit %d launches %d stderr %q; want 2, 0 and a refusal saying %q", tc.name, code, len(h.launches), errb, tc.why) {
+			if assert.Len(t, h.launches, 0, "--dir %s: exit %d launches %d stderr %q; want 2, 0 and a refusal saying %q", tc.name, code, len(h.launches), errb, tc.why) {
+				assert.Contains(t, errb, tc.why, "--dir %s: exit %d launches %d stderr %q; want 2, 0 and a refusal saying %q", tc.name, code, len(h.launches), errb, tc.why)
+			}
 		}
 	}
 	h = newServeHarness(t, "pw-from-nova-secrets")
 	code, _, errb = h.run("serve", "--bind", "127.0.0.1", "--port", "6379")
-	if code != 2 || len(h.launches) != 0 || !strings.Contains(errb, "--dir is required") {
-		t.Errorf("no --dir: exit %d launches %d stderr %q; want 2, 0 and a refusal naming --dir (a store never lands in a guessed dir)", code, len(h.launches), errb)
+	if assert.Equal(t, 2, code, "no --dir: exit %d launches %d stderr %q; want 2, 0 and a refusal naming --dir (a store never lands in a guessed dir)", code, len(h.launches), errb) {
+		if assert.Len(t, h.launches, 0, "no --dir: exit %d launches %d stderr %q; want 2, 0 and a refusal naming --dir (a store never lands in a guessed dir)", code, len(h.launches), errb) {
+			assert.Contains(t, errb, "--dir is required", "no --dir: exit %d launches %d stderr %q; want 2, 0 and a refusal naming --dir (a store never lands in a guessed dir)", code, len(h.launches), errb)
+		}
 	}
 }
 

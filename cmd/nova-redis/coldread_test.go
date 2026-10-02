@@ -27,7 +27,7 @@ func coldRun(t *testing.T, args ...string) (int, string, string) {
 	d := deps{
 		now: func() time.Time { return time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC) },
 		getenv: func(k string) string {
-			t.Errorf("%q read %s; a refusal or help reads no login", args, k)
+			assert.Failf(t, "", "%q read %s; a refusal or help reads no login", args, k)
 			return ""
 		},
 	}

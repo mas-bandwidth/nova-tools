@@ -8,6 +8,9 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestFirstRunTranscriptIsWhatTheToolPrints runs every `$` line of the
@@ -23,24 +26,16 @@ func TestFirstRunTranscriptIsWhatTheToolPrints(t *testing.T) {
 	t.Parallel()
 
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, err)
 	lines, err := onboarding.FirstRun(string(raw), "nova-redis")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, err)
 	steps, err := onboarding.Steps("nova-redis", lines)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(steps) == 0 {
-		t.Fatal("the nova-redis first run holds no `$ nova-redis` line; this test checked nothing")
-	}
+	require.NoError(t, err, err)
+	require.NotEmpty(t, steps, "the nova-redis first run holds no `$ nova-redis` line; this test checked nothing")
 	d := deps{
 		now: func() time.Time { return time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC) },
 		getenv: func(k string) string {
-			t.Fatalf("a first-run refusal reached connect (it read %s); a refused write must never reach the instance", k)
+			require.FailNowf(t, "", "a first-run refusal reached connect (it read %s); a refused write must never reach the instance", k)
 			return ""
 		},
 	}
@@ -50,6 +45,6 @@ func TestFirstRunTranscriptIsWhatTheToolPrints(t *testing.T) {
 		return onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}, nil
 	}
 	for _, p := range onboarding.Execute(steps, runner) {
-		t.Errorf("docs/TESTS.md: %s", p)
+		assert.Failf(t, "", "docs/TESTS.md: %s", p)
 	}
 }
