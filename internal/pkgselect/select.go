@@ -316,6 +316,13 @@ func (s *selector) selectChange() (Outcome, error) {
 	return Outcome{Packages: selected}, nil
 }
 
+// EveryRun are the class-test packages selectChange adds to every selection, whatever the
+// change (the two `want` lines above, and why): the pull request's CI runs them whole on every
+// change, so a read runs of them only the tests its diff reaches (internal/cardcontract, the
+// read's gate). TestSelectChangeIsTheTouchedPackagesTheirDependentsAndTheClassTestPackages
+// holds the two equal.
+var EveryRun = []string{"./internal/ci", "./internal/docs"}
+
 // hasRootDir reports whether the file is under cmd/, internal/ or tools/.
 func hasRootDir(f string) bool {
 	return slices.ContainsFunc([]string{"cmd/", "internal/", "tools/"}, func(r string) bool { return strings.HasPrefix(f, r) })
