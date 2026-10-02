@@ -1314,4 +1314,3 @@ deprecated/internal/workreconcile/reconcile_test.go deprecated/ removed 2026-10-
 deprecated/internal/workreconcile/sprint_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
 deprecated/internal/workreconcile/types_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
 internal/ci/sizetable_test.go dead: its only helper readSizeTable had no caller; the size tables it read are checked nowhere else (dead-code pass 2026-10-01)
-cmd/nova-secrets/issue2378_test.go not deleted by this branch: the lander batch of 2026-10-02 renamed it to gate_unborn_test.go (da9b6725c) after rewriting it (e9b17771a), and across this merge of that base into child/compact-sandbox git sees the rename as a deletion because the file it renames from is foundation's older text
