@@ -1686,7 +1686,7 @@ func nativeSandboxArgv(launch []string, cfg nativeRunConfig, dataHome, jobDir, t
 	}
 	argv = append(argv, "--cwd", jobDir)
 	// The keyless provider's loopback address is opened back up by name, never by widening
-	// the wall's network promise (SPEC-SANDBOX rule 1).
+	// the wall's network promise (SPEC-SANDBOX rule 7).
 	if cfg.netAllow != "" {
 		argv = append(argv, "--net-allow", cfg.netAllow)
 	}
@@ -1709,7 +1709,7 @@ func nativeSandboxArgv(launch []string, cfg nativeRunConfig, dataHome, jobDir, t
 	// for the sdk tree, whose `go` the card must RUN, and `--read-noexec` for the module
 	// cache, which the card only reads. A `--read` root carries EXECUTE on both wall bodies,
 	// so the cache under that flag would put every dependency's own files one exec away from
-	// running inside the wall (SPEC-SANDBOX rule 1).
+	// running inside the wall (SPEC-SANDBOX rule 4).
 	//
 	// AND THE LIST IS PER GOOS, because a Mac bench's toolchains are INSTALLED rather than
 	// unpacked into a home and each one resolves its runtime from the directory of the
