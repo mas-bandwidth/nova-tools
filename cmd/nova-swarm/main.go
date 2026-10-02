@@ -211,7 +211,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 		// help <verb> for a named verb; help with a word that is no verb is refused
 		// naming the verbs, as an unknown verb is
 		if cmd == "help" && len(rest) > 0 && helpVerbs[rest[0]] {
-			return run(append(append([]string{}, rest...), "--help"), stdin, stdout, stderr, now)
+			return run(verbflag.HelpArgs(rest, usage, "nova-swarm"), stdin, stdout, stderr, now)
 		}
 		if cmd == "help" && len(rest) > 0 && !verbflag.IsHelp(rest[0]) {
 			return refuse(stderr, "", fmt.Sprintf("help %q: no such verb", rest[0])+"; the verbs are "+strings.Join(verbNames, ", "))
