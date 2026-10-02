@@ -70,7 +70,7 @@ func TestSnapshotRoundTripKeepsDistinctMapKeys(t *testing.T) {
 // processes. A killed writer's temporary must not be swept by the other
 // snapshot's writer (a leftover is preferable to deleting another writer's
 // work), and the killed write retries cleanly on top of the leftover.
-func TestTwoSnapshotsOneDirectoryPreservesKilledWritersTemp(t *testing.T) {
+func TestStellaTwoSnapshotsOneDirectoryPreservesKilledWritersTemp(t *testing.T) {
 	// SLEEPS: this test waits on the wall clock (calls time.Sleep), and unit tests
 	// use no real time: it becomes a mocked-clock unit test or a functional program.
 	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")

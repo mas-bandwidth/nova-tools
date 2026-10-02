@@ -259,7 +259,7 @@ func TestHelpKeepsTheReleasePipelineApartAndStatesEffects(t *testing.T) {
 	assert.Contains(t, release[0], "nova-update help release")
 	assert.Contains(t, banner, "Every verb but watch and release takes --json")
 	_, watch, _ := runTool(t, "nova-update", "watch", "-h")
-	assert.Contains(t, watch, "its sha= the first twelve hex")
+	assert.Contains(t, watch, "sha= is the first twelve hex")
 	code, rel, _ := runTool(t, "nova-update", "help", "release")
 	require.Equal(t, 0, code)
 	assert.Len(t, linesOf(rel, "nova-update release "), 5, rel)

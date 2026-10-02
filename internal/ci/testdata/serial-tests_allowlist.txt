@@ -135,7 +135,7 @@ internal/update/slow_test.go:TestJoinRefusedPushRecoversToOneNoteWithTheSameID s
 internal/update/slow_test.go:TestPendingBeforeDispatchAndQuietRetry serial: t.Setenv
 internal/update/drain_test.go:TestDeadlineHealthyChildUnderLoadIsFullyDrained serial: t.Setenv
 internal/update/drain_escaped_pipe_unix_test.go:TestDeadlineEscapedPipeGrandchildReturnsInsideBudget serial: t.Setenv
-internal/update/snapshot_temp_test.go:TestTwoSnapshotsOneDirectoryPreservesKilledWritersTemp serial: swaps package var update.jobMap, t.Setenv
+internal/update/snapshot_temp_test.go:TestStellaTwoSnapshotsOneDirectoryPreservesKilledWritersTemp serial: swaps package var update.jobMap, t.Setenv
 internal/update/update_test.go:TestApplyOnlyNamedEntryAndExactTarget serial: t.Setenv
 internal/update/update_test.go:TestCheckCapsAndFilterActuallyAvoidsReads serial: t.Setenv
 internal/update/update_test.go:TestFourReadLimitAndOverallBudget serial: t.Setenv
