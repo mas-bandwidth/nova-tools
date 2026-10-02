@@ -1883,7 +1883,7 @@ that cannot confirm one changes this document rather than asserting it.
    `com.apple.system.logger`), with `/` and `/dev` in the roots, is enough for
    a Node-based harness and a Go toolchain under the profile, and if not, which
    further service each needs, added by measurement — the unqualified
-    `(allow mach-lookup)` is forbidden and is not the fallback, while
+   `(allow mach-lookup)` is forbidden and is not the fallback, while
    a deny-default profile that blocks `mach-lookup` outright breaks `dyld` and
    process spawn in ways that look like unrelated crashes.
 2. `-D` parameter escaping, which is a live risk and not a formality: one
@@ -1940,7 +1940,7 @@ One per rule:
    `cat /etc/hosts` succeeds and `/bin/sh -c true` exits 0 inside the wall
    (both fail without the `/etc`, `/tmp`, `/var` literals and
    `/private/var/select`). On darwin a wrapped `/usr/bin/c++` compiles and
-    runs a C++ probe inside the write set; it fails without the
+   runs a C++ probe inside the write set; it fails without the
    `xcode_select_link` literals). On linux a wrapped command's **child** reads
    `/proc/self/status` successfully, which `/proc/self` as a root would
    deny.
@@ -1991,9 +1991,10 @@ One per rule:
    reason=landlock_abi_unknown` naming both numbers, at exit 125, with the
    tripwire on the exec path seeing no call — the mirror of the forced-down
    `net_unenforceable` case above, and the only thing that makes
-    `landlock_abi_unknown` is a real exit code, and the no_sandbox refusal
-    provides a parallel test through the same seam and with the same tripwire.
-    End to end on a real kernel, a walled run on a machine whose ABI is above the table **runs and
+   `landlock_abi_unknown` more than a word in the exit table. The
+   `no_sandbox` refusal gets the linux test the ABI refusal stands in
+   for, through the same seam and with the same tripwire. End to end on a real
+   kernel, a walled run on a machine whose ABI is above the table **runs and
    exits 0** and its line carries `used=`; on a machine at or below the table
    the line carries **no** `used=` field at all.
 8. A wrapped command that writes to `$TMPDIR` succeeds and the file lands under
@@ -2013,7 +2014,7 @@ One per rule:
    variable the child still has is a false statement about the wall.
 10. `TestProbeProvesTheWall`: the `write_outside` path is the named one and is
     asserted to be outside every list **with `TMPDIR` pointed inside the wall
-    by a write rule** — a probe built on `os.TempDir()` turns this red; a first
+    by the rule** — a probe built on `os.TempDir()` turns this red; a first
     `--write` whose parent is inside a list is exit 2
     `reason=probe_outside_inside`; all five checks run even when the first
     fails; a named outside path that this user cannot write to anyway is exit 2
@@ -2026,15 +2027,16 @@ One per rule:
     A probe **without `--secret`** prints `PROBE OK steps=4
     passed=4` with no `read_secret` step — the key delivered by `nova-secrets
     exec` is never a file.
-    And the shape rule 10 fixes, which is what makes `read_root` mean anything:
+    And the shape the probe enforces, which is what makes `read_root` mean anything:
     the printed `path=` of `read_root` **is `os.Executable()`**, the probe's own
     binary, and no step's `path=` is a shell. `/bin` is a fixed root in the
     profile verbatim, so a `read_root` that read `/bin/sh` would exercise none
     of the run-time root it exists for; and a step built as a shell **string**
     lets a `--secret` holding a quote and a `;` run a command inside the wall
     and flip the check's verdict, which is the test's second half, with the
-    injected file asserted absent afterwards. `--secret` is resolved like every other caller path, so one that names no file is a refusal rather
-     than a probe that "could not read" a file that was never there.
+    injected file asserted absent afterwards. `--secret` is resolved
+    like every other caller path, so one that names no file is a refusal rather
+    than a probe that "could not read" a file that was never there.
 11. `--no-sandbox` is **not a flag this tool has**: the test runs
     `nova-sandbox --no-sandbox -- <command>` and asserts the existing refusal,
     `SANDBOX REFUSED reason=bad_flag: unknown flag --no-sandbox; the flags are
