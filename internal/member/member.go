@@ -279,7 +279,7 @@ type Config struct {
 	// (the tests' member). Clock is the time it measures the gap by; nil is time.Now.
 	Sleep func(time.Duration)
 	Clock func() time.Time
-	// Background controls whether a launch's long work runs apart from the pass that began it; when true, the start, its result, and its push execute asynchonously while Wake signals completion, and false runs each inline where the pass asks for it so a pass is one step.
+	// Background controls whether a launch's long work runs apart from the pass that began it; when true, the start, its result, and its push execute asynchronously while Wake signals completion, and false runs each inline where the pass asks for it so a pass is one step.
 	Background bool
 }
 
@@ -347,7 +347,12 @@ type Member struct {
 	lastStart time.Time
 	passNow   time.Time // the pass's own time (Tick's), for what a start records
 
-	// The pass avoids long steps by running asynchronous work—launching children, collecting results, and pushing commits—on a separate path so the main loop stays fast.
+	// The pass has no long step: what is long in a launch's life (its start, staggered;
+	// reading its result; pushing its commit) is run apart from the pass, by long, and
+	// posts what it found here, by card, for a later pass to collect. postMu guards posted,
+	// the findings by card id; startMu puts the starts one after another, StartGap apart;
+	// pushGate bounds the pushes running at once (pushWidth); wake holds one word for the
+	// loop: something was posted or a child exited, so the next pass is due now (Wake).
 	postMu   sync.Mutex
 	posted   map[string]post
 	startMu  sync.Mutex
