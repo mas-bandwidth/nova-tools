@@ -32,7 +32,7 @@ func fakeGit(t *testing.T) (logPath string) {
 	bin := mkdir(t, filepath.Join(dir, "bin"))
 	{
 		err := testbin.WriteExecutable(filepath.Join(bin, "git"), []byte("#!/bin/sh\necho \"$@\" >> "+logPath+"\nexit 0\n"), 0o755)
-		require.NoError(t, err)
+		require.NoError(t, err, err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return logPath
@@ -98,11 +98,11 @@ func TestNothingAboutTheCheckoutDecidesWhichNoteIsTheDay(t *testing.T) {
 	newer := time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC)
 	{
 		err := os.Chtimes(filepath.Join(bus, "from-emma", "aaa-second.md"), old, old)
-		require.NoError(t, err)
+		require.NoError(t, err, err)
 	}
 	{
 		err := os.Chtimes(filepath.Join(bus, "from-emma", "zzz-first.md"), newer, newer)
-		require.NoError(t, err)
+		require.NoError(t, err, err)
 	}
 	// An INDEX sorted by path, the way `nova-bus check --rebuild-index` writes it: a
 	// derived catalogue, and never a statement about which number the friend meant.
