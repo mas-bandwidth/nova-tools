@@ -777,7 +777,7 @@ $ nova-redis spill --addr 127.0.0.1:6379 --owner ada --name note --ttl 0s --valu
 nova-redis spill REFUSED: --ttl is required and must be above zero; an unbounded key is a bug; run: nova-redis help spill
 
 $ nova-redis fn load
-nova-redis fn load REFUSED: --addr is required: the store's address as <host:port>, such as 127.0.0.1:6379 (no default); refusing to guess; run: nova-redis help fn load
+nova-redis fn load REFUSED: --addr is required: the store's address as <host:port>, such as 127.0.0.1:6379, or the absolute path of a Unix socket (no default); refusing to guess; run: nova-redis help fn load
 ```
 
 Each refusal names every problem with the line, one line each, and the

@@ -56,7 +56,7 @@ func TestARefusalNamesEveryProblemInTheOneGrammar(t *testing.T) {
 		{"serve's bad bind and bad port at once", []string{"serve", "--bind", "0.0.0.0", "--port", "0", "--dir", "relative"},
 			[]string{`--bind "0.0.0.0" binds every interface`, `--port "0" needs a port`, `--dir "relative" is not absolute`}},
 		{"a misspelled flag lists the verb's flags", []string{"spill", "--zzz"},
-			[]string{"nova-redis spill REFUSED: unknown flag --zzz; the flags of spill are --addr, --dry-run, --json, --name, --owner, --password-env, --ttl, --user, --value; run: nova-redis help spill"}},
+			[]string{"nova-redis spill REFUSED: unknown flag --zzz; the flags of spill are --addr, --dry-run, --json, --name, --owner, --password-env, --redis, --ttl, --user, --value; run: nova-redis help spill"}},
 		{"an unknown verb lists the verbs", []string{"zzz"},
 			[]string{`nova-redis REFUSED: unknown verb "zzz"; the verbs are serve, spill, recall, fn load, fn check, acl render, acl check, acl apply, version, help; run: nova-redis help`}},
 		{"an unknown fn subverb points at the group's help", []string{"fn", "deploy"},

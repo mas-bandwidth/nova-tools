@@ -24,6 +24,10 @@ nova-redis version
 nova-redis help
 ```
 
+`--addr` is `<host:port>` or the absolute path of a Unix socket, as
+`internal/redisconn` dials; `--redis` is the same flag under the name every
+nova tool's store flag has, and the two together are refused.
+
 - `serve` launches the instance in the foreground under the rules of the next
   section: `--bind` names loopback and tailnet addresses only and has no
   default, the password comes from nova-secrets and reaches `redis-server` on

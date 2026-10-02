@@ -1862,7 +1862,7 @@ nova-redis acl apply <login> [--password-env-for <user>=<NAME>]... [--dry-run] #
 ```
 
 `nova-redis` owns a Redis instance ([SPEC-REDIS.md](SPEC-REDIS.md)). Every verb that talks to a store opens it one way, through `internal/redisconn`: one dial, the handshake and the login bounded, no retry.
-- `--addr` is the store's `host:port`.
+- `--addr` (or `--redis`, the name every nova tool's store flag has; not both) is the store's `host:port` or the absolute path of a Unix socket.
 - `--user` is the ACL user to log in as. Its default is `NOVA_REDIS_USER`, and with neither set the verb logs in as the store's default user.
 - `--password-env` names the variable that holds the password. Its default is the variable `NOVA_REDIS_PASSWORD_ENV` names, else `NOVA_REDIS_PASSWORD`. A seat whose secret has its own name (`nova-secrets exec --only <NAME>`) passes `--password-env <NAME>` and needs no copy. The password itself is never an argument.
 

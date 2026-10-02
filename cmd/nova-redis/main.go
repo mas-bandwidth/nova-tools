@@ -97,8 +97,10 @@ A refused invocation prints one line per problem with the line, all at once:
 nova-redis <verb> REFUSED: <what was wrong>; run: nova-redis help <verb>
 (exit 2), and nothing is dialled or written.
 The key is <owner>:<name>. Every verb that dials a store (spill, recall, fn
-load, fn check, acl check, acl apply) refuses a missing or empty --addr, or one
-without a host and a port (exit 2), before anything is dialled. spill refuses a
+load, fn check, acl check, acl apply) takes it as --addr, or --redis (the name
+every nova tool's store flag has), <host:port> or the absolute path of a Unix
+socket, and refuses a missing or empty one, or one without a host and a port
+(exit 2), before anything is dialled. spill refuses a
 missing owner or a missing, zero or negative TTL (exit 2) and writes nothing;
 an unbounded key is a bug. spill --dry-run makes every check, the login's too,
 and prints the write it would make with written=0, dialling nothing.
@@ -269,6 +271,15 @@ func parse(fs *flag.FlagSet, args []string, required ...string) (problems []stri
 	if fs.NArg() > 0 {
 		problems = append(problems, fmt.Sprintf("unexpected argument %q; every input is a flag", fs.Arg(0)))
 	}
+	both := 0
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "addr" || f.Name == "redis" {
+			both++
+		}
+	})
+	if both == 2 {
+		problems = append(problems, "--addr and --redis name the same store; give one")
+	}
 	sort.Strings(required)
 	for _, name := range required {
 		if !given(fs, name) {
@@ -278,10 +289,11 @@ func parse(fs *flag.FlagSet, args []string, required ...string) (problems []stri
 	return problems, true
 }
 
-// given reports whether the flag was on the line, even empty.
+// given reports whether the flag was on the line, even empty; --redis is
+// --addr given (loginFlags).
 func given(fs *flag.FlagSet, name string) bool {
 	on := false
-	fs.Visit(func(f *flag.Flag) { on = on || f.Name == name })
+	fs.Visit(func(f *flag.Flag) { on = on || f.Name == name || (name == "addr" && f.Name == "redis") })
 	return on
 }
 
@@ -429,12 +441,15 @@ type login struct {
 }
 
 func loginFlags(fs *flag.FlagSet) login {
-	return login{
+	l := login{
 		fs:          fs,
-		addr:        fs.String("addr", "", "the store's address as <host:port>, such as 127.0.0.1:6379 (no default)"),
+		addr:        fs.String("addr", "", "the store's address as <host:port>, such as 127.0.0.1:6379, or the absolute path of a Unix socket (no default)"),
 		user:        fs.String("user", "", "the ACL user to log in as (default $"+UserEnv+"; with neither, the store's default user)"),
 		passwordEnv: fs.String("password-env", "", "the NAME of the variable that holds the password, never the password itself (default: the variable $"+PasswordEnvEnv+" names, else "+PasswordEnv+")"),
 	}
+	// --redis is --addr under the name every other nova tool's store flag has
+	fs.StringVar(l.addr, "redis", "", "the same as --addr, under the name every nova tool's store flag has")
+	return l
 }
 
 // given reports whether the flag was on the line, even empty.
@@ -519,14 +534,18 @@ func (l login) flags() string {
 // validAddr refuses an address the tool would have to guess at. The Redis
 // client fills an empty address in as localhost:6379 and an empty host as the
 // local machine, so an address that is empty, blank, or lacks a host or a
-// numeric port is refused before anything is dialled.
+// numeric port is refused before anything is dialled. An absolute path is a
+// Unix socket, which redisconn dials as it is.
 func validAddr(addr string) error {
 	if strings.TrimSpace(addr) == "" {
-		return errors.New("--addr is empty; give the instance as <host:port>, refusing to guess localhost")
+		return errors.New("--addr is empty; give the instance as <host:port> or the absolute path of a Unix socket, refusing to guess localhost")
+	}
+	if strings.HasPrefix(addr, "/") {
+		return nil
 	}
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
-		return fmt.Errorf("--addr %q is not <host:port>; refusing to guess", addr)
+		return fmt.Errorf("--addr %q is not <host:port> or the absolute path of a Unix socket; refusing to guess", addr)
 	}
 	if strings.TrimSpace(host) == "" || strings.ContainsAny(host, " \t\r\n") {
 		return fmt.Errorf("--addr %q names no host; refusing to guess localhost", addr)

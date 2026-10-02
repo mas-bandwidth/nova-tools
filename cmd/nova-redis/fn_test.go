@@ -361,8 +361,8 @@ func TestFnRefusesBeforeTheDial(t *testing.T) {
 	}{
 		{[]string{"fn"}, "nova-redis fn REFUSED: no subverb given; load puts this binary's function library on the store, check compares the store's with it; run: nova-redis help fn\n"},
 		{[]string{"fn", "deploy", "--addr", "127.0.0.1:6379"}, "nova-redis fn REFUSED: unknown subverb \"deploy\"; want load or check; run: nova-redis help fn\n"},
-		{[]string{"fn", "load"}, "nova-redis fn load REFUSED: --addr is required: the store's address as <host:port>, such as 127.0.0.1:6379 (no default); refusing to guess; run: nova-redis help fn load\n"},
-		{[]string{"fn", "check", "--addr", "127.0.0.1"}, "nova-redis fn check REFUSED: --addr \"127.0.0.1\" is not <host:port>; refusing to guess; run: nova-redis help fn check\n"},
+		{[]string{"fn", "load"}, "nova-redis fn load REFUSED: --addr is required: the store's address as <host:port>, such as 127.0.0.1:6379, or the absolute path of a Unix socket (no default); refusing to guess; run: nova-redis help fn load\n"},
+		{[]string{"fn", "check", "--addr", "127.0.0.1"}, "nova-redis fn check REFUSED: --addr \"127.0.0.1\" is not <host:port> or the absolute path of a Unix socket; refusing to guess; run: nova-redis help fn check\n"},
 		{[]string{"fn", "check", "--addr", ":6379"}, "nova-redis fn check REFUSED: --addr \":6379\" names no host; refusing to guess localhost; run: nova-redis help fn check\n"},
 		{[]string{"fn", "load", "--addr", "127.0.0.1:6379", "extra"}, "nova-redis fn load REFUSED: unexpected argument \"extra\"; every input is a flag; run: nova-redis help fn load\n"},
 	}

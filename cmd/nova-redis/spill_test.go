@@ -333,3 +333,28 @@ func tripProxy(t *testing.T, target string) (addr string, trips func() int64) {
 	}()
 	return ln.Addr().String(), n.Load
 }
+
+// The store flag is --addr or --redis, the name every other nova tool's store
+// flag has, and it takes the absolute path of a Unix socket as redisconn
+// does (USE defect 6: a socket was refused as "not <host:port>", and --redis
+// was an unknown flag).
+func TestTheStoreIsAddrOrRedisAndASocketPathIsAnAddress(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	code, _, errs := h.run("spill", "--owner", "ada", "--name", "note", "--ttl", "10m", "--value", "v")
+	require.Equal(t, 0, code, errs)
+	code, out, errs := h.runBare("recall", "--redis", h.mr.Addr(), "--owner", "ada", "--name", "note")
+	assert.Equal(t, 0, code, "recall --redis: %s%s", out, errs)
+	assert.Contains(t, out, "RECALL OK key=ada:note", "recall --redis")
+	sock := "/nova-redis-test-absent/redis.sock" // dialled, never created: nothing listens there
+	code, out, errs = h.runBare("recall", "--addr", sock, "--owner", "ada", "--name", "note")
+	assert.Equal(t, 2, code, "recall over an absent socket: %s%s", out, errs)
+	assert.NotContains(t, out+errs, "is not <host:port>", "a socket path is an address")
+	assert.Contains(t, out+errs, "RECALL FAIL", "a socket path is dialled")
+	code, out, errs = h.runBare("recall", "--addr", "redis.sock", "--owner", "ada", "--name", "note")
+	assert.Equal(t, 2, code, "a relative socket path: %s%s", out, errs)
+	assert.Contains(t, out+errs, "or the absolute path of a Unix socket", "a relative path is refused naming both shapes")
+	code, out, errs = h.runBare("recall", "--addr", h.mr.Addr(), "--redis", sock, "--owner", "ada", "--name", "note")
+	assert.Equal(t, 2, code, "--addr beside --redis: %s%s", out, errs)
+	assert.Contains(t, out+errs, "--addr and --redis name the same store", "--addr beside --redis is refused")
+}
