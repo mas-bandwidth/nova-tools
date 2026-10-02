@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -83,10 +85,7 @@ func ParserColumns(kind string) []string {
 	if !ok {
 		return nil
 	}
-	out := []string{sh.model}
-	for name := range sh.columns {
-		out = append(out, name)
-	}
+	out := slices.AppendSeq([]string{sh.model}, maps.Keys(sh.columns))
 	sort.Strings(out)
 	return append([]string{sh.stamp + " or " + sh.date}, out...)
 }
