@@ -14,16 +14,12 @@ import (
 // nova-tools #596, which held the tool in place as the input adapter until
 // nova-work's views were dogfooded; the ruling supersedes that order.
 //
-// Three things are held, and no more: deprecated/README.md exists and names
-// the tool, the top-level README no longer lists it, and the tool is gone from
-// its old paths. Nothing under deprecated/ is built or tested, so this test
-// reads the folder's README and nothing else in it.
+// Two things are held, and no more: the top-level README no longer lists it,
+// and the tool is gone from its old paths. (The deprecated/ folder it moved to
+// was removed on 2026-10-01; its README, which names nova-board, lives in the
+// nova-work-old repository.)
 func TestNovaBoardIsDeprecated(t *testing.T) {
 	t.Parallel()
-
-	readme, err := os.ReadFile("../../deprecated/README.md")
-	require.NoError(t, err, "deprecated/README.md: %v", err)
-	assert.Contains(t, string(readme), "nova-board", "deprecated/README.md does not name nova-board; the folder's README lists every tool moved into it")
 
 	top, err := os.ReadFile("../../README.md")
 	require.NoError(t, err, "README.md: %v", err)
@@ -34,6 +30,6 @@ func TestNovaBoardIsDeprecated(t *testing.T) {
 		"../../internal/board",
 	} {
 		_, err = os.Stat(path)
-		assert.Error(t, err, "%s exists; nova-board is deprecated and was moved under deprecated/ (Glenn, 2026-09-27)", path)
+		assert.Error(t, err, "%s exists; nova-board is deprecated and was removed (Glenn, 2026-09-27)", path)
 	}
 }

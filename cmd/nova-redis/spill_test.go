@@ -19,6 +19,9 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // fakeClock is the controlled clock: it reads t and only moves when a test
@@ -73,7 +76,7 @@ func TestAddrRefusedWhenMissingOrEmpty(t *testing.T) {
 	// environment before it opens anything, so the first read stops the test
 	// (t.Fatalf ends this goroutine) before redisconn.Open can dial.
 	h.d.getenv = func(k string) string {
-		t.Fatalf("a refused address reached connect (it read %s); the refusal comes before the store is opened", k)
+		require.FailNowf(t, "", "a refused address reached connect (it read %s); the refusal comes before the store is opened", k)
 		return ""
 	}
 	verbs := map[string][]string{
@@ -97,19 +100,19 @@ func TestAddrRefusedWhenMissingOrEmpty(t *testing.T) {
 		for _, a := range addrs {
 			args := append(append([]string{verb}, a.flag...), rest...)
 			code, stdout, stderr := h.runBare(args...)
-			if code != 2 {
-				t.Errorf("%s with %s --addr exits %d, want 2; stdout=%q stderr=%q", verb, a.label, code, stdout, stderr)
-			}
-			if !strings.Contains(stderr, a.want) || !strings.Contains(stderr, "run: nova-redis help") {
-				t.Errorf("%s with %s --addr must name --addr and the remedy; stderr=%q", verb, a.label, stderr)
+			assert.Equal(t, 2, code, "%s with %s --addr exits %d, want 2; stdout=%q stderr=%q", verb, a.label, code, stdout, stderr)
+			if assert.Contains(t, stderr, a.want, "%s with %s --addr must name --addr and the remedy; stderr=%q", verb, a.label, stderr) {
+				assert.Contains(t, stderr, "run: nova-redis help", "%s with %s --addr must name --addr and the remedy; stderr=%q", verb, a.label, stderr)
 			}
 		}
 	}
-	if n := h.mr.TotalConnectionCount(); n != 0 {
-		t.Errorf("a refused address opened %d connections to the fake; the refusal comes before the dial", n)
+	{
+		n := h.mr.TotalConnectionCount()
+		assert.Zero(t, n, "a refused address opened %d connections to the fake; the refusal comes before the dial", n)
 	}
-	if keys := h.mr.Keys(); len(keys) != 0 {
-		t.Errorf("a refused address stored %v; a refusal writes nothing", keys)
+	{
+		keys := h.mr.Keys()
+		assert.Len(t, keys, 0, "a refused address stored %v; a refusal writes nothing", keys)
 	}
 }
 
@@ -118,19 +121,16 @@ func TestSpillRefusedWithoutOwner(t *testing.T) {
 
 	h := newHarness(t)
 	code, stdout, stderr := h.run("spill", "--name", "note", "--ttl", "1h", "--value", "hi")
-	if code != 2 {
-		t.Fatalf("spill with no --owner exits %d, want 2; stdout=%q stderr=%q", code, stdout, stderr)
-	}
-	if !strings.Contains(stderr, "--owner is required") || !strings.Contains(stderr, "run: nova-redis help") {
-		t.Errorf("spill with no --owner must name the remedy; stderr=%q", stderr)
+	require.Equal(t, 2, code, "spill with no --owner exits %d, want 2; stdout=%q stderr=%q", code, stdout, stderr)
+	if assert.Contains(t, stderr, "--owner is required", "spill with no --owner must name the remedy; stderr=%q", stderr) {
+		assert.Contains(t, stderr, "run: nova-redis help", "spill with no --owner must name the remedy; stderr=%q", stderr)
 	}
 	// An empty owner is no owner: it would store a key of the form ":note".
 	code, _, stderr = h.run("spill", "--owner", "", "--name", "note", "--ttl", "1h", "--value", "hi")
-	if code != 2 {
-		t.Fatalf("spill with an empty --owner exits %d, want 2; stderr=%q", code, stderr)
-	}
-	if keys := h.mr.Keys(); len(keys) != 0 {
-		t.Errorf("a refused spill stored %v; a refusal writes nothing", keys)
+	require.Equal(t, 2, code, "spill with an empty --owner exits %d, want 2; stderr=%q", code, stderr)
+	{
+		keys := h.mr.Keys()
+		assert.Len(t, keys, 0, "a refused spill stored %v; a refusal writes nothing", keys)
 	}
 }
 
@@ -139,20 +139,17 @@ func TestSpillRefusedWithoutTTL(t *testing.T) {
 
 	h := newHarness(t)
 	code, stdout, stderr := h.run("spill", "--owner", "rowan", "--name", "note", "--value", "hi")
-	if code != 2 {
-		t.Fatalf("spill with no --ttl exits %d, want 2; stdout=%q stderr=%q", code, stdout, stderr)
-	}
-	if !strings.Contains(stderr, "--ttl is required") || !strings.Contains(stderr, "run: nova-redis help") {
-		t.Errorf("spill with no --ttl must name the remedy; stderr=%q", stderr)
+	require.Equal(t, 2, code, "spill with no --ttl exits %d, want 2; stdout=%q stderr=%q", code, stdout, stderr)
+	if assert.Contains(t, stderr, "--ttl is required", "spill with no --ttl must name the remedy; stderr=%q", stderr) {
+		assert.Contains(t, stderr, "run: nova-redis help", "spill with no --ttl must name the remedy; stderr=%q", stderr)
 	}
 	for _, ttl := range []string{"0s", "-5m"} {
 		code, _, stderr = h.run("spill", "--owner", "rowan", "--name", "note", "--ttl", ttl, "--value", "hi")
-		if code != 2 {
-			t.Errorf("spill with --ttl %s exits %d, want 2 (an unbounded key is a bug); stderr=%q", ttl, code, stderr)
-		}
+		assert.Equal(t, 2, code, "spill with --ttl %s exits %d, want 2 (an unbounded key is a bug); stderr=%q", ttl, code, stderr)
 	}
-	if keys := h.mr.Keys(); len(keys) != 0 {
-		t.Errorf("a refused spill stored %v; an unbounded key is refused, not stored", keys)
+	{
+		keys := h.mr.Keys()
+		assert.Len(t, keys, 0, "a refused spill stored %v; an unbounded key is refused, not stored", keys)
 	}
 }
 
@@ -160,33 +157,28 @@ func TestRecallRefusesAnExpiredKey(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness(t)
-	if code, _, stderr := h.run("spill", "--owner", "rowan", "--name", "note", "--ttl", "1h", "--value", "hi"); code != 0 {
-		t.Fatalf("spill exits %d; stderr=%q", code, stderr)
+	{
+		code, _, stderr := h.run("spill", "--owner", "rowan", "--name", "note", "--ttl", "1h", "--value", "hi")
+		require.Zero(t, code, "spill exits %d; stderr=%q", code, stderr)
 	}
 	code, stdout, stderr := h.run("recall", "--owner", "rowan", "--name", "note")
-	if code != 0 || !strings.Contains(stdout, "value=hi") {
-		t.Fatalf("recall inside the TTL exits %d stdout=%q stderr=%q, want 0 and value=hi", code, stdout, stderr)
-	}
+	require.Zero(t, code, "recall inside the TTL exits %d stdout=%q stderr=%q, want 0 and value=hi", code, stdout, stderr)
+	require.Contains(t, stdout, "value=hi", "recall inside the TTL exits %d stdout=%q stderr=%q, want 0 and value=hi", code, stdout, stderr)
 
 	// Move the controlled clock past the TTL. The fake instance has NOT aged
 	// the key out (it keeps its own clock), so only recall's own expiry check
 	// stands between the caller and a stale value.
 	h.clock.t = h.clock.t.Add(2 * time.Hour)
 	code, stdout, stderr = h.run("recall", "--owner", "rowan", "--name", "note")
-	if code != 1 {
-		t.Fatalf("recall past the TTL exits %d, want 1; stdout=%q stderr=%q", code, stdout, stderr)
-	}
-	if strings.Contains(stdout, "value=hi") {
-		t.Errorf("recall past the TTL printed the stale value: %q", stdout)
-	}
-	if !strings.Contains(stdout+stderr, "EXPIRED") {
-		t.Errorf("recall past the TTL must say EXPIRED; stdout=%q stderr=%q", stdout, stderr)
-	}
+	require.Equal(t, 1, code, "recall past the TTL exits %d, want 1; stdout=%q stderr=%q", code, stdout, stderr)
+	assert.NotContains(t, stdout, "value=hi", "recall past the TTL printed the stale value: %q", stdout)
+	assert.Contains(t, stdout+stderr, "EXPIRED", "recall past the TTL must say EXPIRED; stdout=%q stderr=%q", stdout, stderr)
 
 	// And once the instance itself ages the key out, recall misses (exit 1).
 	h.mr.FastForward(2 * time.Hour)
-	if code, _, _ := h.run("recall", "--owner", "rowan", "--name", "note"); code != 1 {
-		t.Errorf("recall of a key the instance expired exits %d, want 1", code)
+	{
+		code, _, _ := h.run("recall", "--owner", "rowan", "--name", "note")
+		assert.Equal(t, 1, code, "recall of a key the instance expired exits %d, want 1", code)
 	}
 }
 
@@ -206,21 +198,23 @@ func TestEveryEphemeralKeyCarriesOwnerAndTTL(t *testing.T) {
 		{[]string{"spill", "--owner", "ro:wan", "--name", "f", "--ttl", "1h", "--value", "6"}, 2},
 	}
 	for _, a := range attempts {
-		if code, stdout, stderr := h.run(a.args...); code != a.want {
-			t.Errorf("%v exits %d, want %d; stdout=%q stderr=%q", a.args, code, a.want, stdout, stderr)
+		{
+			code, stdout, stderr := h.run(a.args...)
+			assert.Equal(t, a.want, code, "%v exits %d, want %d; stdout=%q stderr=%q", a.args, code, a.want, stdout, stderr)
 		}
 	}
 	keys := h.mr.Keys()
-	if len(keys) != 2 {
-		t.Fatalf("stored keys %v, want exactly the two bounded, owned spills", keys)
-	}
+	require.Len(t, keys, 2, "stored keys %v, want exactly the two bounded, owned spills", keys)
 	for _, k := range keys {
 		owner, name, ok := strings.Cut(k, ":")
-		if !ok || owner == "" || name == "" {
-			t.Errorf("key %q is not <owner>:<name>", k)
+		if assert.True(t, ok, "key %q is not <owner>:<name>", k) {
+			if assert.NotEmpty(t, owner, "key %q is not <owner>:<name>", k) {
+				assert.NotEmpty(t, name, "key %q is not <owner>:<name>", k)
+			}
 		}
-		if ttl := h.mr.TTL(k); ttl <= 0 {
-			t.Errorf("key %q carries no TTL (%v); an unbounded key is a bug", k, ttl)
+		{
+			ttl := h.mr.TTL(k)
+			assert.Greater(t, ttl, time.Duration(0), "key %q carries no TTL (%v); an unbounded key is a bug", k, ttl)
 		}
 	}
 
@@ -228,19 +222,20 @@ func TestEveryEphemeralKeyCarriesOwnerAndTTL(t *testing.T) {
 	// still cannot write a key without an owner or a TTL.
 	ctx := context.Background()
 	conn, err := redisconn.Open(ctx, redisconn.Options{Addr: h.mr.Addr()}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, err)
 	t.Cleanup(func() { _ = conn.Close() })
 	s := &scratch{rdb: conn.Client(), now: h.clock.now}
-	if _, err := s.spill(ctx, "", "g", "7", time.Hour); err == nil {
-		t.Error("scratch.spill with no owner returned no error")
+	{
+		_, err := s.spill(ctx, "", "g", "7", time.Hour)
+		assert.Error(t, err, "scratch.spill with no owner returned no error")
 	}
-	if _, err := s.spill(ctx, "rowan", "h", "8", 0); err == nil {
-		t.Error("scratch.spill with no TTL returned no error")
+	{
+		_, err := s.spill(ctx, "rowan", "h", "8", 0)
+		assert.Error(t, err, "scratch.spill with no TTL returned no error")
 	}
-	if n := len(h.mr.Keys()); n != 2 {
-		t.Errorf("the package seam stored a key it should have refused: %v", h.mr.Keys())
+	{
+		n := len(h.mr.Keys())
+		assert.Equal(t, 2, n, "the package seam stored a key it should have refused: %v", h.mr.Keys())
 	}
 }
 
@@ -262,11 +257,13 @@ func TestSpillAndRecallAreOneRoundTripEach(t *testing.T) {
 	for _, v := range verbs {
 		addr, trips := tripProxy(t, h.mr.Addr())
 		args := append([]string{v[0], "--addr", addr}, v[1:]...)
-		if code, stdout, stderr := h.runBare(args...); code != 0 {
-			t.Fatalf("%s exits %d; stdout=%q stderr=%q", v[0], code, stdout, stderr)
+		{
+			code, stdout, stderr := h.runBare(args...)
+			require.Zero(t, code, "%s exits %d; stdout=%q stderr=%q", v[0], code, stdout, stderr)
 		}
-		if n := trips(); n != handshake+1 {
-			t.Errorf("%s made %d round trips, want %d: the handshake and one batch", v[0], n, handshake+1)
+		{
+			n := trips()
+			assert.Equal(t, int64(handshake+1), n, "%s made %d round trips, want %d: the handshake and one batch", v[0], n, handshake+1)
 		}
 	}
 }
@@ -277,9 +274,7 @@ func TestSpillAndRecallAreOneRoundTripEach(t *testing.T) {
 func tripProxy(t *testing.T, target string) (addr string, trips func() int64) {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, err)
 	var n atomic.Int64
 	var mu sync.Mutex
 	var open []net.Conn

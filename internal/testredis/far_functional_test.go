@@ -9,6 +9,8 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	"github.com/redis/go-redis/v9/maintnotifications"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The distance through a real redis-server: the spec of Far, at the 100ms it
@@ -59,7 +61,7 @@ func farClient(ctx context.Context, t *testing.T, addr string) *redis.Client {
 	})
 	t.Cleanup(func() { _ = c.Close() })
 	if err := c.Ping(ctx).Err(); err != nil {
-		t.Fatalf("warming the connection through Far: %v", err)
+		require.NoError(t, err, "warming the connection through Far: %v", err)
 	}
 	return c
 }
@@ -78,10 +80,10 @@ func TestFarThroughARealStore(t *testing.T) {
 	held := func(t *testing.T, before, n int, what string) {
 		t.Helper()
 		if got := link.Writes() - before; got != n {
-			t.Errorf("%s was %d writes at the proxy; want %d, one delay for each", what, got, n)
+			assert.Equal(t, n, got, "%s was %d writes at the proxy; want %d, one delay for each", what, got, n)
 		}
 		if got := link.Shortest(); got < farStoreDelay {
-			t.Errorf("%s: the proxy held a write for %v; want none held less than %v", what, got, farStoreDelay)
+			assert.Failf(t, "", "%s: the proxy held a write for %v; want none held less than %v", what, got, farStoreDelay)
 		}
 	}
 
@@ -91,7 +93,7 @@ func TestFarThroughARealStore(t *testing.T) {
 		got, err := c.Ping(ctx).Result()
 		took := time.Since(start)
 		if err != nil || got != "PONG" {
-			t.Fatalf("PING = %q, %v", got, err)
+			require.Failf(t, "", "PING = %q, %v", got, err)
 		}
 		held(t, before, farOneWrite, "one PING")
 		t.Logf("one PING through %v of distance: %v as the client saw it", farStoreDelay, took)
@@ -108,11 +110,11 @@ func TestFarThroughARealStore(t *testing.T) {
 		_, err := pipe.Exec(ctx)
 		took := time.Since(start)
 		if err != nil {
-			t.Fatalf("pipeline: %v", err)
+			require.NoError(t, err, "pipeline: %v", err)
 		}
 		for i, cmd := range cmds {
 			if got := cmd.Val(); got != "PONG" {
-				t.Fatalf("command %d of the pipeline answered %q; want PONG", i, got)
+				require.Equal(t, "PONG", got, "command %d of the pipeline answered %q; want PONG", i, got)
 			}
 		}
 		held(t, before, farOneWrite, "a pipeline of a hundred PINGs")
@@ -124,7 +126,7 @@ func TestFarThroughARealStore(t *testing.T) {
 		start := time.Now()
 		for i := 0; i < farSeparate; i++ {
 			if got, err := c.Ping(ctx).Result(); err != nil || got != "PONG" {
-				t.Fatalf("PING %d = %q, %v", i, got, err)
+				require.Failf(t, "", "PING %d = %q, %v", i, got, err)
 			}
 		}
 		took := time.Since(start)
@@ -135,15 +137,15 @@ func TestFarThroughARealStore(t *testing.T) {
 	t.Run("a write through Far lands in the store", func(t *testing.T) {
 		const key, value = "far:key", "far value"
 		if err := c.Set(ctx, key, value, 0).Err(); err != nil {
-			t.Fatalf("SET through Far: %v", err)
+			require.NoError(t, err, "SET through Far: %v", err)
 		}
 		direct := redis.NewClient(&redis.Options{Addr: store, MaxRetries: -1, DialerRetries: 1})
 		t.Cleanup(func() { _ = direct.Close() })
 		if got, err := direct.Get(ctx, key).Result(); err != nil || got != value {
-			t.Fatalf("the store, read directly, holds %q, %v; want %q", got, err, value)
+			require.Failf(t, "", "the store, read directly, holds %q, %v; want %q", got, err, value)
 		}
 		if got, err := c.Get(ctx, key).Result(); err != nil || got != value {
-			t.Fatalf("GET through Far = %q, %v; want %q", got, err, value)
+			require.Failf(t, "", "GET through Far = %q, %v; want %q", got, err, value)
 		}
 	})
 }

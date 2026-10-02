@@ -140,9 +140,7 @@ func tagsNamedBySchedules(t *testing.T, root string) map[string][]string {
 	t.Helper()
 	dir := filepath.Join(root, ".github", "workflows")
 	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	literal := regexp.MustCompile(`-tags[ =]+'?"?([A-Za-z0-9_,]+)`)
 	matrixTag := regexp.MustCompile(`^-?\s*tag:\s*'?"?([A-Za-z0-9_]+)`)
 
@@ -229,9 +227,7 @@ func TestEveryTestBuildTagIsRunBySomeScheduledJob(t *testing.T) {
 	used := buildTagsInTestFiles(t)
 	named := tagsNamedBySchedules(t, root)
 
-	if len(used) == 0 {
-		t.Fatal("no opt-in build tag found in any _test.go; the walk is broken, not the tree")
-	}
+	require.NotEmpty(t, used, "no opt-in build tag found in any _test.go; the walk is broken, not the tree")
 
 	tags := make([]string, 0, len(used))
 	for tag := range used {
@@ -245,7 +241,7 @@ func TestEveryTestBuildTagIsRunBySomeScheduledJob(t *testing.T) {
 		}
 		files := append([]string(nil), used[tag]...)
 		sort.Strings(files)
-		t.Errorf("build tag %q hides %d test file(s) and NO scheduled job runs it: %s\n"+
+		assert.Failf(t, tag, "build tag %q hides %d test file(s) and NO scheduled job runs it: %s\n"+
 			"\tremedy: add a `tag: %s` leg to nightly-slow.yml's matrix (or `go test -tags %s` to another scheduled workflow), "+
 			"or drop the tag from those files",
 			tag, len(files), strings.Join(files, ", "), tag, tag)
@@ -262,10 +258,8 @@ func TestTheNetworkExemptTagsHaveAHomeInTheSchedule(t *testing.T) {
 	root := repoRoot(t)
 	named := tagsNamedBySchedules(t, root)
 	for _, tag := range []string{"nightly", "soak"} {
-		if len(named[tag]) == 0 {
-			t.Errorf("CheckNet exempts //go:build %s, but no scheduled job runs `go test -tags %s`: "+
-				"a real-network test could be written and never run once", tag, tag)
-		}
+		assert.NotEmpty(t, named[tag], "CheckNet exempts //go:build %s, but no scheduled job runs `go test -tags %s`: "+
+			"a real-network test could be written and never run once", tag, tag)
 	}
 }
 
@@ -278,9 +272,7 @@ func TestSomeScheduledJobRunsTheRaceDetector(t *testing.T) {
 	root := repoRoot(t)
 	dir := filepath.Join(root, ".github", "workflows")
 	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".yml") {
 			continue
@@ -295,7 +287,7 @@ func TestSomeScheduledJobRunsTheRaceDetector(t *testing.T) {
 			}
 		}
 	}
-	t.Error("no scheduled workflow runs `go test -race`, so //go:build race and //go:build !race " +
+	assert.Fail(t, "no scheduled workflow runs `go test -race`, so //go:build race and //go:build !race "+
 		"files are no longer both covered")
 }
 

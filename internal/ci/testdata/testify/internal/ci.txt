@@ -1,3 +1,2 @@
 # Migrated counted package ledger; original row keys preserved.
-# ceiling: 1
-internal/ci:assert 1194 bare assertions to convert to testify
+# ceiling: 0

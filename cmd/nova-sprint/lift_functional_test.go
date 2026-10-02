@@ -13,6 +13,8 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // On the store: accept --read-ok accepts every primary with two ok reads in
@@ -25,9 +27,7 @@ func TestReadOkDoneAndTheWakeOnTheStore(t *testing.T) {
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	defer c.Close()
 	ctx := context.Background()
-	if err := fn.Load(ctx, c); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, fn.Load(ctx, c))
 	env := map[string]string{"NOVA_SPRINT_REDIS": addr, "NOVA_SPRINT_ACTOR": "coordinator"}
 	world, waiter := newApp(func(k string) string { return env[k] }), newApp(func(k string) string { return env[k] })
 	defer world.close()
@@ -35,9 +35,8 @@ func TestReadOkDoneAndTheWakeOnTheStore(t *testing.T) {
 	do := func(line string) string {
 		t.Helper()
 		var out, errb bytes.Buffer
-		if code := world.run(strings.Fields(line), &out, &errb); code != 0 {
-			t.Fatalf("%s: exit %d\n%s%s", line, code, out.String(), errb.String())
-		}
+		code := world.run(strings.Fields(line), &out, &errb)
+		require.Equal(t, 0, code, "%s: exit %d\n%s%s", line, code, out.String(), errb.String())
 		return out.String()
 	}
 	for _, l := range []string{"init --readers reader-a,reader-b --members m1", "add --stream s1 --count 2", "fleet beat m1", "start",
@@ -48,9 +47,9 @@ func TestReadOkDoneAndTheWakeOnTheStore(t *testing.T) {
 		do(l)
 	}
 	var q struct{ Cards []queueCard }
-	if err := json.Unmarshal([]byte(do("queue --as m1 --json")), &q); err != nil || len(q.Cards) != 2 {
-		t.Fatalf("m1's queue: %v %+v", err, q)
-	}
+	err := json.Unmarshal([]byte(do("queue --as m1 --json")), &q)
+	require.NoError(t, err, "m1's queue: %v %+v", err, q)
+	require.Len(t, q.Cards, 2, "m1's queue: %v %+v", err, q)
 	words := []string{"finish", "--as", "m1", "--epoch", "0"}
 	for _, c := range q.Cards {
 		words = append(words, c.ID+"@1")
@@ -59,9 +58,7 @@ func TestReadOkDoneAndTheWakeOnTheStore(t *testing.T) {
 	for _, l := range []string{"queue --as reader-a", "queue --as reader-b", "ask", "read --as reader-a --ok --limit 10 --epoch 0", "read --as reader-b --ok --limit 10 --epoch 0"} {
 		do(l)
 	}
-	if out := do("accept --read-ok"); !strings.Contains(out, "ACCEPT OK moved=2") {
-		t.Fatalf("accept --read-ok on the store:\n%s", out)
-	}
+	require.Contains(t, do("accept --read-ok"), "ACCEPT OK moved=2", "accept --read-ok on the store")
 	do("merge --stream s1 --batch 10 --epoch 0")
 
 	// the coordinator waits; the tick that finds the sprint done wakes it
@@ -78,26 +75,20 @@ func TestReadOkDoneAndTheWakeOnTheStore(t *testing.T) {
 	blocked := false
 	for i := 0; i < 500 && !blocked; i++ { // the waiter is in its XREAD BLOCK
 		list, err := c.ClientList(ctx).Result()
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		blocked = strings.Contains(list, "cmd=xread")
 		if !blocked {
 			time.Sleep(20 * time.Millisecond)
 		}
 	}
-	if !blocked {
-		t.Fatal("the waiter never blocked on the notes")
-	}
+	require.True(t, blocked, "the waiter never blocked on the notes")
 	do("tick")
-	if out := do("where"); !strings.Contains(out, "DONE") {
-		t.Errorf("the machine did not stop itself at done:\n%s", out)
-	}
+	assert.Contains(t, do("where"), "DONE", "the machine did not stop itself at done")
 	select {
 	case w := <-got:
-		if w.code != 0 || strings.Contains(w.out, "no tick end") || !strings.Contains(w.out, "the sprint is done") {
-			t.Errorf("inbox --wait: exit %d\n%s%s", w.code, w.out, w.err)
-		}
+		assert.Equal(t, 0, w.code, "inbox --wait: exit %d\n%s%s", w.code, w.out, w.err)
+		assert.NotContains(t, w.out, "no tick end", "inbox --wait: exit %d\n%s%s", w.code, w.out, w.err)
+		assert.Contains(t, w.out, "the sprint is done", "inbox --wait: exit %d\n%s%s", w.code, w.out, w.err)
 	case <-time.After(60 * time.Second):
 		t.Fatal("inbox --wait did not wake on the tick end")
 	}

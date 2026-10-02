@@ -1,8 +1,9 @@
 package sprint
 
 import (
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // gensOf is the live generation of each named work card: what a worker
@@ -28,14 +29,13 @@ func TestTakeAndFinishNameTheGeneration(t *testing.T) {
 	m := c.Row
 
 	take := Take(w.s, TakeReq{As: m, Sel: Sel{IDs: []string{c.ID}}})
-	if len(take.Units) != 0 || len(take.Refused) != 1 || !strings.Contains(take.Refused[0].Why, "names no generation; the live one is 1: take s1-1.w1@1") {
-		t.Fatalf("a take by id without a generation: %+v", take)
-	}
+	require.Empty(t, take.Units, "a take by id without a generation: %+v", take)
+	require.Len(t, take.Refused, 1, "a take by id without a generation: %+v", take)
+	require.Contains(t, take.Refused[0].Why, "names no generation; the live one is 1: take s1-1.w1@1", "a take by id without a generation: %+v", take)
 	// a take by selection needs none: it reports the generation it took
 	sel := Take(w.s, TakeReq{As: m})
-	if len(sel.Units) != 1 || !strings.Contains(sel.Units[0].Moved, "gen=1") {
-		t.Fatalf("a take by selection: %+v", sel)
-	}
+	require.Len(t, sel.Units, 1, "a take by selection: %+v", sel)
+	require.Contains(t, sel.Units[0].Moved, "gen=1", "a take by selection: %+v", sel)
 	w.must(Take(w.s, TakeReq{As: m, Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
 
 	for name, r := range map[string]FinishReq{
@@ -46,24 +46,19 @@ func TestTakeAndFinishNameTheGeneration(t *testing.T) {
 		"by selection alone": {},
 	} {
 		p := Finish(w.s, r)
-		if len(p.Units) != 0 || len(p.Refused) != 1 {
-			t.Fatalf("%s: a finish without a generation: %+v", name, p)
-		}
+		require.Empty(t, p.Units, "%s: a finish without a generation: %+v", name, p)
+		require.Len(t, p.Refused, 1, "%s: a finish without a generation: %+v", name, p)
 		why := p.Refused[0].Why
 		if name == "by selection alone" {
-			if p.Refused[0].Key != "finish" || !strings.Contains(why, "--as <member>") {
-				t.Fatalf("%s: %+v", name, p.Refused)
-			}
+			require.Equal(t, "finish", p.Refused[0].Key, "%s: %+v", name, p.Refused)
+			require.Contains(t, why, "--as <member>", "%s: %+v", name, p.Refused)
 			continue
 		}
-		if p.Refused[0].Key != c.ID || !strings.Contains(why, "the live one is 1: finish s1-1.w1@1") {
-			t.Fatalf("%s: %+v", name, p.Refused)
-		}
+		require.Equal(t, c.ID, p.Refused[0].Key, "%s: %+v", name, p.Refused)
+		require.Contains(t, why, "the live one is 1: finish s1-1.w1@1", "%s: %+v", name, p.Refused)
 	}
 	w.must(Finish(w.s, FinishReq{As: m, Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
-	if w.state("s1-1") != Review {
-		t.Fatalf("finished at the live generation: %s", w.state("s1-1"))
-	}
+	require.Equal(t, Review, w.state("s1-1"), "finished at the live generation: %s", w.state("s1-1"))
 	w.clean("finished")
 }
 
@@ -81,9 +76,9 @@ func TestStartAfterAWithdrawalDealsTheSameCard(t *testing.T) {
 	w.must(FleetStep(w.s, FleetReq{Op: "down", Member: "m2"}))
 	gone := w.s.Fleet.Card("s1-1.w1")
 	genW := gone.Int("gen")
-	if w.state("s1-1") != Ready || gone.Col != Withdrawn || genW <= gen0 {
-		t.Fatalf("withdrawn: primary %s, card at %s gen %d", w.state("s1-1"), placeWord(gone), genW)
-	}
+	require.Equal(t, Ready, w.state("s1-1"), "withdrawn: primary %s, card at %s gen %d", w.state("s1-1"), placeWord(gone), genW)
+	require.Equal(t, Withdrawn, gone.Col, "withdrawn: primary %s, card at %s gen %d", w.state("s1-1"), placeWord(gone), genW)
+	require.Greater(t, genW, gen0, "withdrawn: primary %s, card at %s gen %d", w.state("s1-1"), placeWord(gone), genW)
 	w.clean("withdrawn")
 	w.must(FleetStep(w.s, FleetReq{Op: "up", Member: "m1"}))
 	w.must(FleetStep(w.s, FleetReq{Op: "up", Member: "m2"}))
@@ -103,19 +98,18 @@ func TestStartAfterAWithdrawalDealsTheSameCard(t *testing.T) {
 	w.clean("dealt again")
 	// the worker that held the old generation is stale; the new one finishes
 	stale := Finish(w.s, FinishReq{Sel: Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: gen0}})
-	if len(stale.Units) != 0 || len(stale.Refused) != 1 || !strings.Contains(stale.Refused[0].Why, "stale") {
-		t.Fatalf("a finish of the withdrawn generation: %+v", stale)
-	}
+	require.Empty(t, stale.Units, "a finish of the withdrawn generation: %+v", stale)
+	require.Len(t, stale.Refused, 1, "a finish of the withdrawn generation: %+v", stale)
+	require.Contains(t, stale.Refused[0].Why, "stale", "a finish of the withdrawn generation: %+v", stale)
 	w.must(Take(w.s, TakeReq{As: c.Row, Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
 	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
 	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}}))
-	if reads := readsAt(w.s, w.s.Work.Card("s1-1"), 1); len(reads) != 2 {
-		t.Fatalf("read cards of attempt 1: %v", reads)
-	}
+	reads := readsAt(w.s, w.s.Work.Card("s1-1"), 1)
+	require.Len(t, reads, 2, "read cards of attempt 1: %v", reads)
 	// rework advances the attempt: the next card is w2 and its reads are r2
 	w.must(Rework(w.s, ReworkReq{Sel: Sel{IDs: []string{"s1-1"}}, Fix: "f"}))
-	if pr := w.s.Work.Card("s1-1"); pr.Int("attempt") != 2 || pr.F("work") != "s1-1.w2" {
-		t.Fatalf("rework: attempt %d work %s", pr.Int("attempt"), pr.F("work"))
-	}
+	pr = w.s.Work.Card("s1-1")
+	require.Equal(t, 2, pr.Int("attempt"), "rework: attempt %d work %s", pr.Int("attempt"), pr.F("work"))
+	require.Equal(t, "s1-1.w2", pr.F("work"), "rework: attempt %d work %s", pr.Int("attempt"), pr.F("work"))
 	w.clean("reworked")
 }

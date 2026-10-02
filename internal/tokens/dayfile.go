@@ -2,8 +2,10 @@ package tokens
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -80,9 +82,6 @@ type Finding struct {
 
 // Path is where a day file lives under an output directory.
 func Path(out, day string) string { return filepath.Join(out, day+FileSuffix) }
-
-// TempPath is the one fixed temp name beside it.
-func TempPath(out, day string) string { return filepath.Join(out, day+TempSuffix) }
 
 // Render is the file's bytes.
 //
@@ -523,10 +522,5 @@ func mergeSources(a, b []string) []string {
 	for _, l := range b {
 		set[l] = true
 	}
-	out := make([]string, 0, len(set))
-	for l := range set {
-		out = append(out, l)
-	}
-	sort.Strings(out)
-	return out
+	return slices.Sorted(maps.Keys(set))
 }

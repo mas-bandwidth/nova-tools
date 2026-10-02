@@ -2,11 +2,12 @@ package pkgselect
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -14,7 +15,7 @@ import (
 // does.
 type Options struct {
 	// Root is the repository root: the directory every command runs in and
-	// where deprecated/PACKAGES and the tracked files are read.
+	// where DeprecatedFile and the tracked files are read.
 	Root string
 	// All selects the whole tree. Otherwise Base is the commit the change is
 	// diffed against (the event's own base: pull_request.base.sha or
@@ -172,22 +173,13 @@ func (s *selector) treeFromFiles() ([]string, error) {
 		}
 		dirs["./"+path.Dir(f)] = true
 	}
-	out := make([]string, 0, len(dirs))
-	for d := range dirs {
-		out = append(out, d)
-	}
-	sort.Strings(out)
+	out := slices.Sorted(maps.Keys(dirs))
 	return s.dep.Live(out), nil
 }
 
 // hasBuildLine reports whether any line of the file starts with //go:build.
 func hasBuildLine(b []byte) bool {
-	for _, l := range strings.Split(string(b), "\n") {
-		if strings.HasPrefix(l, "//go:build") {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(strings.Split(string(b), "\n"), func(l string) bool { return strings.HasPrefix(l, "//go:build") })
 }
 
 var goModFileRe = regexp.MustCompile(`^(go\.mod|go\.sum)$`)
@@ -326,12 +318,7 @@ func (s *selector) selectChange() (Outcome, error) {
 
 // hasRootDir reports whether the file is under cmd/, internal/ or tools/.
 func hasRootDir(f string) bool {
-	for _, r := range []string{"cmd/", "internal/", "tools/"} {
-		if strings.HasPrefix(f, r) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc([]string{"cmd/", "internal/", "tools/"}, func(r string) bool { return strings.HasPrefix(f, r) })
 }
 
 // modulePrefix is the module path of root with its trailing slash, or "" when

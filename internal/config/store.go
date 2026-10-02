@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -30,15 +32,16 @@ type Store interface {
 	Delete(ctx context.Context, kind, name string, actor string) (int64, error)
 	// History reads the change rows of one row, oldest first.
 	History(ctx context.Context, kind, name string) ([]Change, error)
-	// MachinesAndFleet reads every machine row and the fleet row from one
-	// snapshot: one transaction on Postgres, one lock hold on Mem.
-	MachinesAndFleet(ctx context.Context) (machines []Row, fleet Row, err error)
 	// Rev is the kind's revision: the greatest history id of the kind, 0
 	// when it has none. apply stamps it into Redis.
 	Rev(ctx context.Context, kind string) (int64, error)
 	// Counts is the row count per kind that has many (a singleton kind is
 	// always one row and is left out).
 	Counts(ctx context.Context) (map[string]int, error)
+	// Ownership reads from the catalog who owns schema config and each of
+	// its tables, and the role connected: migrate's preflight (MigrateGaps).
+	// A store with no roles (the file) answers the zero Ownership.
+	Ownership(ctx context.Context) (Ownership, error)
 }
 
 // Change is one history row.
@@ -107,15 +110,44 @@ func checkRefs(ctx context.Context, st Store, k *Kind, row Row) error {
 			return &RefusedError{Err: ErrNoRef, Detail: fmt.Sprintf("--%s %s names no %s row", f.Name, row.Fields[f.Name], f.Ref)}
 		}
 	}
+	if k.Name == KindTier {
+		return checkTierRoutes(ctx, st, row)
+	}
+	return nil
+}
+
+// checkTierRoutes refuses a tier's array that names a route that is not a row,
+// is disabled, or serves another tier: the deal would only skip it.
+func checkTierRoutes(ctx context.Context, st Store, row Row) error {
+	for _, name := range strings.Split(row.Fields["routes"], ",") {
+		if name == "" {
+			continue
+		}
+		r, found, err := st.Get(ctx, KindRoute, name)
+		switch {
+		case err != nil:
+			return err
+		case !found:
+			return &RefusedError{Err: ErrNoRef, Detail: fmt.Sprintf("--routes %s names no route row", name)}
+		case r.Fields["enabled"] != "true":
+			return &RefusedError{Err: ErrInvalid, Detail: fmt.Sprintf("--routes %s names a disabled route; enable it first (route set %s --enabled true)", name, name)}
+		case r.Fields["tier"] != row.Name:
+			return &RefusedError{Err: ErrInvalid, Detail: fmt.Sprintf("--routes %s names a route of tier %s, not %s", name, r.Fields["tier"], row.Name)}
+		}
+	}
 	return nil
 }
 
 // checkReferenced refuses removing a row that a ref field of another kind
-// names.
+// names, and a row the kind's migration made (Kind.Seed: the tiers, which the
+// deal reads).
 func checkReferenced(ctx context.Context, st Store, kind, name string) error {
+	if k, ok := Lookup(kind); ok && hasWord(strings.Join(k.Seed, ","), name) {
+		return &RefusedError{Err: ErrInvalid, Detail: fmt.Sprintf("%s %s is made by migrate and the deal reads it; it is never removed: set its fields instead (%s set %s --<field> <value>)", kind, name, kind, name)}
+	}
 	for _, other := range Kinds {
 		for _, f := range other.Fields {
-			if f.Type != TypeRef || f.Ref != kind {
+			if (f.Type != TypeRef && f.Type != TypeSeq) || f.Ref != kind {
 				continue
 			}
 			rows, err := st.List(ctx, other.Name)
@@ -124,9 +156,13 @@ func checkReferenced(ctx context.Context, st Store, kind, name string) error {
 			}
 			var names []string
 			for _, r := range rows {
-				if r.Fields[f.Name] == name {
+				// a ref names one row; a seq (a tier's routes) is a comma list of them
+				if r.Fields[f.Name] == name || (f.Type == TypeSeq && slices.Contains(strings.Split(r.Fields[f.Name], ","), name)) {
 					names = append(names, r.Name)
 				}
+			}
+			if len(names) > 0 && f.Type == TypeSeq {
+				return &RefusedError{Err: ErrReferenced, Detail: fmt.Sprintf("%s %s is in the --%s of %s %s; set it out of the list first (%s set %s --%s <the rest>)", kind, name, f.Name, other.Name, strings.Join(names, ","), other.Name, names[0], f.Name)}
 			}
 			if len(names) > 0 && other.Singleton {
 				return &RefusedError{Err: ErrReferenced, Detail: fmt.Sprintf("%s %s is the --%s of the %s", kind, name, f.Name, other.Name)}
@@ -139,6 +175,57 @@ func checkReferenced(ctx context.Context, st Store, kind, name string) error {
 	return nil
 }
 
+// PlanWrite is the history row a write would add, worked out from the store as it
+// stands and written nowhere: the dry run of Insert (OpAdd, row), Update
+// (OpSet, row.Name and changes) and Delete (OpRemove, row.Name), with the
+// refusals both stores make before they write (a name taken or missing, the
+// kind's Check, a ref naming no row, a row another names or the migration
+// made), from the same checks. The change has no id and no instant: nothing
+// was recorded.
+func PlanWrite(ctx context.Context, st Store, op, kind string, row Row, changes map[string]string) (Change, error) {
+	k, ok := Lookup(kind)
+	if !ok {
+		return Change{}, fmt.Errorf("unknown kind %q", kind)
+	}
+	cur, found, err := st.Get(ctx, kind, row.Name)
+	if err != nil {
+		return Change{}, err
+	}
+	c := Change{Kind: kind, Name: row.Name, Op: op}
+	missing := &RefusedError{Err: ErrNotFound, Detail: fmt.Sprintf("%s %s not found", kind, row.Name)}
+	switch op {
+	case OpAdd:
+		if err := checkRefs(ctx, st, k, row); err != nil {
+			return Change{}, err
+		}
+		if found {
+			return Change{}, &RefusedError{Err: ErrExists, Detail: fmt.Sprintf("%s %s exists", kind, row.Name)}
+		}
+		c.After = row.Clone().Fields
+	case OpSet:
+		if !found {
+			return Change{}, missing
+		}
+		next := cur.Clone()
+		maps.Copy(next.Fields, changes)
+		if err := checkRefs(ctx, st, k, next); err != nil {
+			return Change{}, err
+		}
+		c.Before, c.After = cur.Fields, next.Fields
+	case OpRemove:
+		if !found {
+			return Change{}, missing
+		}
+		if err := checkReferenced(ctx, st, kind, row.Name); err != nil {
+			return Change{}, err
+		}
+		c.Before = cur.Fields
+	default:
+		return Change{}, fmt.Errorf("plan: unknown op %q", op)
+	}
+	return c, nil
+}
+
 // Mem is the in-memory Store the unit tests use. It is strict like PG: the
 // same refusals, the same history, the same revision.
 type Mem struct {
@@ -146,21 +233,34 @@ type Mem struct {
 	rows    map[string]map[string]Row // kind -> name -> row
 	history []Change
 	Now     func() time.Time
+	// Catalog is what Ownership answers; a test sets the owners it needs.
+	Catalog Ownership
 }
+
+// memRole is the role a Mem is connected as: it owns schema config and every
+// table in it until a test sets Catalog.
+const memRole = "nova_config"
 
 // NewMem returns an empty store: no rows of any kind but the singleton
 // kinds' one row each, as a migrated Postgres has.
 func NewMem() *Mem {
-	m := &Mem{rows: map[string]map[string]Row{}, Now: func() time.Time { return time.Unix(1700000000, 0).UTC() }}
+	m := &Mem{rows: map[string]map[string]Row{}, Now: func() time.Time { return time.Unix(1700000000, 0).UTC() },
+		Catalog: Ownership{Role: memRole, SchemaOwner: memRole, Create: true, Tables: catalogTables(memRole)}}
 	for _, k := range Kinds {
-		if !k.Singleton {
-			continue
+		names := k.Seed
+		if k.Singleton {
+			names = []string{k.Name}
 		}
-		row := Row{Name: k.Name, Fields: map[string]string{}, CreatedAt: m.stamp(), UpdatedAt: m.stamp()}
-		for _, f := range k.Fields {
-			row.Fields[f.Name] = ""
+		for _, name := range names {
+			row := Row{Name: name, Fields: map[string]string{}, CreatedAt: m.stamp(), UpdatedAt: m.stamp()}
+			for _, f := range k.Fields {
+				row.Fields[f.Name] = f.Default
+			}
+			if m.rows[k.Name] == nil {
+				m.rows[k.Name] = map[string]Row{}
+			}
+			m.rows[k.Name][name] = row
 		}
-		m.rows[k.Name] = map[string]Row{k.Name: row}
 	}
 	return m
 }
@@ -192,21 +292,6 @@ func (m *Mem) List(_ context.Context, kind string) ([]Row, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
-}
-
-func (m *Mem) MachinesAndFleet(_ context.Context) ([]Row, Row, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	var machines []Row
-	for _, r := range m.rows[KindMachine] {
-		machines = append(machines, r.Clone())
-	}
-	sort.Slice(machines, func(i, j int) bool { return machines[i].Name < machines[j].Name })
-	var fleet Row
-	if r, ok := m.rows[KindFleet][KindFleet]; ok {
-		fleet = r.Clone()
-	}
-	return machines, fleet, nil
 }
 
 func (m *Mem) Insert(ctx context.Context, kind string, row Row, actor string) (int64, error) {
@@ -243,9 +328,7 @@ func (m *Mem) Update(ctx context.Context, kind, name string, changes map[string]
 		return Row{}, 0, &RefusedError{Err: ErrNotFound, Detail: fmt.Sprintf("%s %s not found", kind, name)}
 	}
 	next := cur.Clone()
-	for f, v := range changes {
-		next.Fields[f] = v
-	}
+	maps.Copy(next.Fields, changes)
 	if err := checkRefs(ctx, m, k, next); err != nil {
 		return Row{}, 0, err
 	}
@@ -306,4 +389,15 @@ func (m *Mem) Counts(_ context.Context) (map[string]int, error) {
 		}
 	}
 	return out, nil
+}
+
+func (m *Mem) Ownership(context.Context) (Ownership, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	o := m.Catalog
+	o.Tables = map[string]string{}
+	for t, owner := range m.Catalog.Tables {
+		o.Tables[t] = owner
+	}
+	return o, nil
 }

@@ -32,7 +32,9 @@ import (
 // path, rev and at, and its name in the set `loops`: nova-config's own keys,
 // which the plays read to render one unit per row. A route's row is the hash
 // route:<name> with every field, rev and at, and its name in the set
-// `routes`, which the deal reads (hashKinds).
+// `routes`, which the deal reads (hashKinds); a tier's row is the hash
+// tier:<name> and its name in the set `tiers`, read by the deal beside the
+// routes.
 //
 // config:decl is the stamp: rev:<kind> is the Postgres revision last applied
 // and at:<kind> the server time it was written (the shape of friends:decl in
@@ -44,6 +46,7 @@ const (
 	CapLogKey   = "cap:log"
 	LoopsKey    = "loops"
 	RoutesKey   = "routes"
+	TiersKey    = "tiers"
 )
 
 // LoopKey is a loop's hash: its fields, log, rev and at.
@@ -52,6 +55,10 @@ func LoopKey(name string) string { return "loop:" + name }
 // RouteKey is a route's hash: its fields, name, rev and at. The deal reads
 // every route of the set RoutesKey (internal/sprint/store, the routes read).
 func RouteKey(name string) string { return "route:" + name }
+
+// TierKey is a tier's hash: its route array (routes), name, rev and at. The deal
+// reads its routes field with the routes (internal/sprint/store, the routes read).
+func TierKey(name string) string { return "tier:" + name }
 
 // FleetKey is the plain key one fleet field is written to: fleet:store,
 // fleet:coordinator.
@@ -118,7 +125,7 @@ func (a *RedisApplier) Read(ctx context.Context, kind string) (map[string]View, 
 		return a.readSingleton(ctx, KindFleet, FleetKey)
 	case KindSprint:
 		return a.readSingleton(ctx, KindSprint, SprintKey)
-	case KindLoop, KindRoute:
+	case KindLoop, KindRoute, KindTier:
 		return a.readHashes(ctx, hashKinds[kind])
 	}
 	return nil, 0, fmt.Errorf("apply: no Redis reader for kind %q", kind)
@@ -134,7 +141,7 @@ func (a *RedisApplier) Write(ctx context.Context, kind string, row Row, prev Vie
 		return a.writeSingleton(ctx, KindFleet, FleetKey, row)
 	case KindSprint:
 		return a.writeSingleton(ctx, KindSprint, SprintKey, row)
-	case KindLoop, KindRoute:
+	case KindLoop, KindRoute, KindTier:
 		return a.writeHash(ctx, hashKinds[kind], row, idem)
 	}
 	return fmt.Errorf("apply: no Redis writer for kind %q", kind)
@@ -148,7 +155,7 @@ func (a *RedisApplier) Remove(ctx context.Context, kind, name, actor, idem strin
 		return a.removeMachine(ctx, name, actor, idem)
 	case KindFleet, KindSprint:
 		return fmt.Errorf("apply: the %s row is never removed", kind)
-	case KindLoop, KindRoute:
+	case KindLoop, KindRoute, KindTier:
 		return a.removeHash(ctx, hashKinds[kind], name, actor, idem)
 	}
 	return fmt.Errorf("apply: no Redis remover for kind %q", kind)
@@ -509,21 +516,27 @@ func machineView(reg map[string]string, ceiling string) View {
 
 // Snapshot reads the applied state the inventory is built from in two
 // round trips, whatever the fleet's size: the names (the machines and loops
-// sets), the fleet row and config:decl first, then every machine's hash,
+// sets), every declared fleet field and config:decl first, then every machine's hash,
 // ceiling and beat and every loop's hash in one pipeline. It writes nothing.
 func (a *RedisApplier) Snapshot(ctx context.Context) (*Snapshot, error) {
 	pipe := a.Client.Pipeline()
 	machines := pipe.SMembers(ctx, MachinesKey)
 	loops := pipe.SMembers(ctx, LoopsKey)
-	store := pipe.Get(ctx, FleetKey("store"))
-	coord := pipe.Get(ctx, FleetKey("coordinator"))
+	fleetKind, _ := Lookup(KindFleet)
+	fleetValues := make([]*redis.StringCmd, len(fleetKind.Fields))
+	for i, f := range fleetKind.Fields {
+		fleetValues[i] = pipe.Get(ctx, FleetKey(f.Name))
+	}
 	decl := pipe.HGetAll(ctx, DeclKey)
 	if err := redisconn.Exec(ctx, pipe); err != nil {
 		return nil, fmt.Errorf("redis: read the applied names: %w", err)
 	}
 	snap := &Snapshot{
 		Machines: map[string]View{}, Beats: map[string]*Beat{}, Revs: map[string]int64{},
-		Fleet: View{"store": store.Val(), "coordinator": coord.Val()},
+		Fleet: View{},
+	}
+	for i, f := range fleetKind.Fields {
+		snap.Fleet[f.Name] = fleetValues[i].Val()
 	}
 	for f, v := range decl.Val() {
 		if kind, ok := strings.CutPrefix(f, "rev:"); ok {
@@ -654,6 +667,7 @@ type hashKind struct {
 var hashKinds = map[string]hashKind{
 	KindLoop:  {kind: KindLoop, set: LoopsKey, key: LoopKey, extra: func(n string) []any { return []any{"log", LoopLog(n)} }},
 	KindRoute: {kind: KindRoute, set: RoutesKey, key: RouteKey},
+	KindTier:  {kind: KindTier, set: TiersKey, key: TierKey},
 }
 
 // readHashes reads the set and the stamp in one round trip, then every
@@ -820,28 +834,6 @@ func (a *RedisApplier) Beats(ctx context.Context, names []string) (map[string]*B
 			b.At = time.UnixMilli(ms).UTC().Format(time.RFC3339)
 		}
 		out[m] = b
-	}
-	return out, nil
-}
-
-// FriendHosts is where each named friend runs now, in one pipelined round
-// trip: the host her own beat reports (FriendBeatKey), "" when she has none.
-// It is the reader Widths charges her slots by.
-func (a *RedisApplier) FriendHosts(ctx context.Context, names []string) (map[string]string, error) {
-	out := make(map[string]string, len(names))
-	if len(names) == 0 {
-		return out, nil
-	}
-	pipe := a.Client.Pipeline()
-	cmds := make([]*redis.StringCmd, len(names))
-	for i, f := range names {
-		cmds[i] = pipe.HGet(ctx, FriendBeatKey(f), "host")
-	}
-	if err := redisconn.Exec(ctx, pipe); err != nil {
-		return nil, fmt.Errorf("redis: read friends' beats: %w", err)
-	}
-	for i, f := range names {
-		out[f] = cmds[i].Val()
 	}
 	return out, nil
 }

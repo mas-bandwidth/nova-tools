@@ -8,6 +8,9 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The onboarding standard (ONBOARDING.md), pinned for this binary. A newcomer's
@@ -62,13 +65,9 @@ func examples(t *testing.T) []string {
 	// costs one line and names the door (`run: nova-check help`). Reading it through that
 	// door is also a test that the door opens.
 	exit, stdout, stderr := runCheck(t, "help")
-	if exit != 0 {
-		t.Fatalf("`nova-check help` must print the usage and exit 0, got %d; stderr: %s", exit, stderr)
-	}
+	require.EqualValues(t, 0, exit, "`nova-check help` must print the usage and exit 0, got %d; stderr: %s", exit, stderr)
 	lines, err := onboarding.ExampleLines(stdout, "nova-check")
-	if err != nil {
-		t.Fatalf("%s\n\n%s", err, stdout)
-	}
+	require.NoError(t, err, "%s\n\n%s", err, stdout)
 	return lines
 }
 
@@ -81,16 +80,11 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 
 	for _, ex := range examples(t) {
 		exit, stdout, stderr := runCheck(t, localize(strings.Fields(ex)[1:])...)
-		if exit == 2 {
-			t.Errorf("the usage example %q does not run: exit 2 (could not run)\nstderr: %s", ex, stderr)
+		if !assert.NotEqualValues(t, 2, exit, "the usage example %q does not run: exit 2 (could not run)\nstderr: %s", ex, stderr) {
 			continue
 		}
-		if exit != 0 {
-			t.Errorf("the usage example %q ran but said NO (exit %d); an example a stranger types should pass on the fixture\nstderr: %s", ex, exit, stderr)
-		}
-		if stdout == "" {
-			t.Errorf("the usage example %q printed nothing on stdout", ex)
-		}
+		assert.EqualValues(t, 0, exit, "the usage example %q ran but said NO (exit %d); an example a stranger types should pass on the fixture\nstderr: %s", ex, exit, stderr)
+		assert.NotEqualValues(t, "", stdout, "the usage example %q printed nothing on stdout", ex)
 	}
 }
 
@@ -100,12 +94,8 @@ func TestQuickstartIsTheFirstThingTheBannerOffers(t *testing.T) {
 	t.Parallel()
 
 	exs := examples(t)
-	if !strings.HasPrefix(exs[0], "nova-check quickstart ") {
-		t.Errorf("the first example is %q; a first run should be offered quickstart first", exs[0])
-	}
-	if !strings.Contains(usage, "nova-check quickstart --dir <dir>") {
-		t.Error("the usage block does not list the quickstart verb")
-	}
+	assert.True(t, strings.HasPrefix(exs[0], "nova-check quickstart "), "the first example is %q; a first run should be offered quickstart first", exs[0])
+	assert.Contains(t, usage, "nova-check quickstart --dir <dir>", "the usage block does not list the quickstart verb")
 }
 
 // The seed has kept SEED-CORE.md and SEED.md under docs/ since nova#141. The
@@ -115,26 +105,20 @@ func TestHelpNamesTheSeedFilesUnderDocs(t *testing.T) {
 	t.Parallel()
 
 	exit, stdout, stderr := runCheck(t, "help")
-	if exit != 0 {
-		t.Fatalf("`nova-check help` must exit 0, got %d; stderr: %s", exit, stderr)
-	}
+	require.EqualValues(t, 0, exit, "`nova-check help` must exit 0, got %d; stderr: %s", exit, stderr)
 	for _, gone := range []string{
 		"--core <SEED-CORE.md>",
 		"--source <SEED.md>",
 		"./self/SEED-CORE.md",
 	} {
-		if strings.Contains(stdout, gone) {
-			t.Errorf("the help still names %q, a root-level seed path the seed has not kept since nova#141", gone)
-		}
+		assert.NotContains(t, stdout, gone, "the help still names %q, a root-level seed path the seed has not kept since nova#141", gone)
 	}
 	for _, want := range []string{
 		"--core <docs/SEED-CORE.md>",
 		"--source <docs/SEED.md>",
 		"./self/docs/SEED-CORE.md",
 	} {
-		if !strings.Contains(stdout, want) {
-			t.Errorf("the help does not name %q, the docs/ path the seed keeps", want)
-		}
+		assert.Contains(t, stdout, want, "the help does not name %q, the docs/ path the seed keeps", want)
 	}
 }
 
@@ -165,15 +149,9 @@ func TestARefusalSaysWhatTheFlagWants(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			exit, stdout, stderr := runCheck(t, tc.args...)
-			if exit != 2 {
-				t.Fatalf("exit = %d, want 2 — guidance must not soften the refusal; stderr: %s", exit, stderr)
-			}
-			if !strings.Contains(stderr, tc.want) {
-				t.Errorf("stderr = %q,\nwant it to contain the hint %q", stderr, tc.want)
-			}
-			if stdout != "" {
-				t.Errorf("a refusal must print nothing on stdout, got %q", stdout)
-			}
+			require.EqualValues(t, 2, exit, "exit = %d, want 2 — guidance must not soften the refusal; stderr: %s", exit, stderr)
+			assert.Contains(t, stderr, tc.want, "stderr = %q,\nwant it to contain the hint %q", stderr, tc.want)
+			assert.EqualValues(t, "", stdout, "a refusal must print nothing on stdout, got %q", stdout)
 		})
 	}
 }
@@ -199,13 +177,9 @@ func TestIndependentProblemsAreReportedInOneRun(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			exit, _, stderr := runCheck(t, tc.args...)
-			if exit != 2 {
-				t.Fatalf("exit = %d, want 2; stderr: %s", exit, stderr)
-			}
+			require.EqualValues(t, 2, exit, "exit = %d, want 2; stderr: %s", exit, stderr)
 			for _, want := range tc.want {
-				if !strings.Contains(stderr, want) {
-					t.Errorf("one run must name every problem it can find; %q is missing from:\n%s", want, stderr)
-				}
+				assert.Contains(t, stderr, want, "one run must name every problem it can find; %q is missing from:\n%s", want, stderr)
 			}
 		})
 	}
@@ -217,25 +191,13 @@ func TestQuickstartRunsBothChecksAndTakesTheWorstExit(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "a.md"), []byte("[gone](nowhere.md)\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "build.py"), []byte("print('machinery')\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.md"), []byte("[gone](nowhere.md)\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "build.py"), []byte("print('machinery')\n"), 0o644))
 	exit, stdout, stderr := runCheck(t, "quickstart", "--dir", dir)
-	if exit != 1 {
-		t.Fatalf("exit = %d, want 1 (both checks ran and said NO); stderr: %s", exit, stderr)
-	}
-	if !strings.Contains(stderr, "LINKS FAIL") {
-		t.Errorf("the broken link is not reported:\n%s", stderr)
-	}
-	if !strings.Contains(stderr, "NOCODE FAIL") {
-		t.Errorf("nocode did not run after links failed; a first run must get both:\n%s", stderr)
-	}
-	if !strings.Contains(stdout, "QUICKSTART FAIL checks=2 failed=links,nocode worst-exit=1") {
-		t.Errorf("the closing line must say FAIL, name both failed checks and report the worst exit:\n%s", stdout)
-	}
+	require.EqualValues(t, 1, exit, "exit = %d, want 1 (both checks ran and said NO); stderr: %s", exit, stderr)
+	assert.Contains(t, stderr, "LINKS FAIL", "the broken link is not reported:\n%s", stderr)
+	assert.Contains(t, stderr, "NOCODE FAIL", "nocode did not run after links failed; a first run must get both:\n%s", stderr)
+	assert.Contains(t, stdout, "QUICKSTART FAIL checks=2 failed=links,nocode worst-exit=1", "the closing line must say FAIL, name both failed checks and report the worst exit:\n%s", stdout)
 }
 
 // The `### First run` block of docs/TESTS.md is EXECUTED: every documented
@@ -260,30 +222,20 @@ func TestQuickstartRunsBothChecksAndTakesTheWorstExit(t *testing.T) {
 // compared the line the document promised.
 func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	fixture, err := filepath.Abs(exampleSelf)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	lines, err := onboarding.FirstRun(string(raw), "nova-check")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	steps, err := onboarding.Steps("nova-check", lines)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(steps) == 0 {
-		t.Fatal("the `### First run` block holds no nova-check command; this test would pass by running nothing")
-	}
+	require.NoError(t, err)
+	require.NotEmpty(t, steps, "the `### First run` block holds no nova-check command; this test would pass by running nothing")
 
 	dir := t.TempDir()
 	copyTree(t, fixture, filepath.Join(dir, "self"))
 	t.Chdir(dir)
 	for _, p := range onboarding.Execute(steps, runDocumented) {
-		t.Error(p)
+		assert.Fail(t, "check failed", p)
 	}
 }
 
@@ -310,24 +262,16 @@ var errReadsNothing = readsNothing{}
 func copyTree(t *testing.T, from, to string) {
 	t.Helper()
 	entries, err := os.ReadDir(from)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(to, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(to, 0o755))
 	for _, e := range entries {
 		if e.IsDir() {
 			copyTree(t, filepath.Join(from, e.Name()), filepath.Join(to, e.Name()))
 			continue
 		}
 		body, err := os.ReadFile(filepath.Join(from, e.Name()))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(to, e.Name()), body, 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(filepath.Join(to, e.Name()), body, 0o644))
 	}
 }
 
@@ -338,19 +282,11 @@ func TestQuickstartWithOneFailingCheckPrintsFailAndNoOK(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "a.md"), []byte("[gone](nowhere.md)\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.md"), []byte("[gone](nowhere.md)\n"), 0o644))
 	exit, stdout, stderr := runCheck(t, "quickstart", "--dir", dir)
-	if exit != 1 {
-		t.Fatalf("exit = %d, want 1; stderr: %s", exit, stderr)
-	}
-	if strings.Contains(stdout, "QUICKSTART OK") {
-		t.Errorf("an OK line over a failed check:\n%s", stdout)
-	}
-	if !strings.Contains(stdout, "QUICKSTART FAIL checks=2 failed=links worst-exit=1 ") {
-		t.Errorf("the closing line must be FAIL and name only the failed check:\n%s", stdout)
-	}
+	require.EqualValues(t, 1, exit, "exit = %d, want 1; stderr: %s", exit, stderr)
+	assert.NotContains(t, stdout, "QUICKSTART OK", "an OK line over a failed check:\n%s", stdout)
+	assert.Contains(t, stdout, "QUICKSTART FAIL checks=2 failed=links worst-exit=1 ", "the closing line must be FAIL and name only the failed check:\n%s", stdout)
 }
 
 // With both checks clean the run closes with OK, and only then.
@@ -358,14 +294,8 @@ func TestQuickstartWithEveryCheckPassingPrintsOK(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "a.md"), []byte("no links here\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.md"), []byte("no links here\n"), 0o644))
 	exit, stdout, stderr := runCheck(t, "quickstart", "--dir", dir)
-	if exit != 0 {
-		t.Fatalf("exit = %d, want 0; stdout: %s\nstderr: %s", exit, stdout, stderr)
-	}
-	if !strings.Contains(stdout, "QUICKSTART OK done=2 worst-exit=0 ") || strings.Contains(stdout, "QUICKSTART FAIL") {
-		t.Errorf("a clean run closes with OK:\n%s", stdout)
-	}
+	require.EqualValues(t, 0, exit, "exit = %d, want 0; stdout: %s\nstderr: %s", exit, stdout, stderr)
+	assert.False(t, !strings.Contains(stdout, "QUICKSTART OK done=2 worst-exit=0 ") || strings.Contains(stdout, "QUICKSTART FAIL"), "a clean run closes with OK:\n%s", stdout)
 }

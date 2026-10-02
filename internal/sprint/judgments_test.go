@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // H2: the read that completes two different readers' ok writes one judgment,
@@ -24,14 +26,14 @@ func TestReadyToAcceptIsClosedByReworkAndDrop(t *testing.T) {
 		}
 	}
 	notes := w.notesOf(NReadyToAccept)
-	if len(notes) != 2 || notes[0].Kind != Judgment || len(w.openOn("s1-1")) != 1 || len(w.openOn("s1-2")) != 1 {
-		t.Fatalf("ready to accept: %+v", notes)
-	}
+	require.Len(t, notes, 2, "ready to accept: %+v", notes)
+	require.Equal(t, Judgment, notes[0].Kind, "ready to accept: %+v", notes)
+	require.Len(t, w.openOn("s1-1"), 1, "ready to accept: %+v", notes)
+	require.Len(t, w.openOn("s1-2"), 1, "ready to accept: %+v", notes)
 	w.must(Rework(w.s, ReworkReq{Sel: Sel{IDs: []string{"s1-1"}}, Fix: "more"}))
 	w.must(Drop(w.s, DropReq{Sel: Sel{IDs: []string{"s1-2"}}, Reason: "obsolete"}))
-	if len(w.openOn("s1-1"))+len(w.openOn("s1-2")) != 0 {
-		t.Fatalf("still open: %v", w.s.Open)
-	}
+	require.Empty(t, w.openOn("s1-1"), "still open: %v", w.s.Open)
+	require.Empty(t, w.openOn("s1-2"), "still open: %v", w.s.Open)
 	w.clean("closed")
 }
 
@@ -46,24 +48,20 @@ func TestAddOnADroppedNeedIsBlockedAtOnce(t *testing.T) {
 	for _, u := range p.Units {
 		notes = append(notes, u.Notes...)
 	}
-	if len(notes) != 1 || notes[0].Type != NBlocked || len(w.openOn("later")) != 1 {
-		t.Fatalf("add did not write the blocked judgment: %+v", notes)
-	}
-	if got := notes[0].Decisions; len(got) != 2 || got[0] != "drop" || got[1] != "ack" {
-		t.Fatalf("decisions: %v", got)
-	}
+	require.Len(t, notes, 1, "add did not write the blocked judgment: %+v", notes)
+	require.Equal(t, NBlocked, notes[0].Type, "add did not write the blocked judgment: %+v", notes)
+	require.Len(t, w.openOn("later"), 1, "add did not write the blocked judgment: %+v", notes)
+	got := notes[0].Decisions
+	require.Equal(t, []string{"drop", "ack"}, got, "decisions: %v", got)
 	g := Inbox(InboxReq{Now: w.s.Now, Open: w.s.Open})
 	var ds []string
 	for _, c := range g[0].Commands {
 		ds = append(ds, c.Decision+": "+c.Lines[0])
 	}
-	if len(ds) != 2 || ds[1] != "ack: nova-sprint ack "+g[0].ID+" --reason "+noneText {
-		t.Fatalf("commands: %v", ds)
-	}
+	require.Len(t, ds, 2, "commands: %v", ds)
+	require.Equal(t, "ack: nova-sprint ack "+g[0].ID+" --reason "+noneText, ds[1], "commands: %v", ds)
 	w.must(Resolve(w.s, ResolveReq{}))
-	if len(w.notesOf(NBlocked)) != 1 {
-		t.Fatalf("blocked written again")
-	}
+	require.Len(t, w.notesOf(NBlocked), 1, "blocked written again")
 	w.clean("blocked")
 }
 
@@ -79,17 +77,17 @@ func TestAMergeFactNamesACardOfTheBatch(t *testing.T) {
 		{Stream: "s1", Batch: 1, Cross: "s1-2=s2-1"},
 	} {
 		p := MergeStep(w.s, r)
-		if len(p.Units) != 0 || len(p.Refused) != 1 || p.Refused[0].Key != "s1-2" || p.Refused[0].Why != "not a card of the batch; the batch of 1 is s1-1" {
-			t.Fatalf("%+v: %+v", r, p)
-		}
+		require.Empty(t, p.Units, "%+v: %+v", r, p)
+		require.Len(t, p.Refused, 1, "%+v: %+v", r, p)
+		require.Equal(t, "s1-2", p.Refused[0].Key, "%+v: %+v", r, p)
+		require.Equal(t, "not a card of the batch; the batch of 1 is s1-1", p.Refused[0].Why, "%+v: %+v", r, p)
 	}
-	if w.s.Merge.Placed("s1-1").Col != Queued || w.s.Merge.Placed("s1-2").Col != Queued || w.s.StreamCtl("s1").F("state") != StreamMerging {
-		t.Fatalf("a refused fact moved a card")
-	}
+	require.Equal(t, Queued, w.s.Merge.Placed("s1-1").Col, "a refused fact moved a card")
+	require.Equal(t, Queued, w.s.Merge.Placed("s1-2").Col, "a refused fact moved a card")
+	require.Equal(t, StreamMerging, w.s.StreamCtl("s1").F("state"), "a refused fact moved a card")
 	w.must(MergeStep(w.s, MergeReq{Stream: "s1", Batch: 2, Conflict: "s1-2"}))
-	if w.s.Merge.Placed("s1-2").Col != Stuck || w.s.Merge.Placed("s1-1").Col != Queued {
-		t.Fatalf("a conflict inside the batch")
-	}
+	require.Equal(t, Stuck, w.s.Merge.Placed("s1-2").Col, "a conflict inside the batch")
+	require.Equal(t, Queued, w.s.Merge.Placed("s1-1").Col, "a conflict inside the batch")
 	w.clean("stuck")
 }
 
@@ -108,9 +106,9 @@ func TestAReportOnAnAskedCardBeginsIt(t *testing.T) {
 	for i, verdict := range []string{"ok", "broken"} {
 		rc := reads[i]
 		w.must(Read(w.s, ReadReq{As: rc.F("reader"), Verdict: verdict, Sel: Sel{IDs: []string{rc.ID}}}))
-		if rc.Col != verdict || rc.F("begun") != stamp(w.s.Now) || rc.F("read") != rc.F("begun") {
-			t.Fatalf("%s on an asked card: %s %v", verdict, rc.Col, rc.Fields)
-		}
+		require.Equal(t, verdict, rc.Col, "%s on an asked card: %s %v", verdict, rc.Col, rc.Fields)
+		require.Equal(t, stamp(w.s.Now), rc.F("begun"), "%s on an asked card: %s %v", verdict, rc.Col, rc.Fields)
+		require.Equal(t, rc.F("begun"), rc.F("read"), "%s on an asked card: %s %v", verdict, rc.Col, rc.Fields)
 	}
 	w.clean("read")
 }
@@ -128,37 +126,38 @@ func TestTheSprintIsDoneOnce(t *testing.T) {
 	w.must(Add(w.s, AddReq{Stream: "s2", Count: 1}))
 	accepted(w, "s1-1", "s1-2")
 	w.must(Drop(w.s, DropReq{Sel: Sel{IDs: []string{"s2-1"}}, Reason: "obsolete"}))
-	if p, _ := TickDone(w.s, req); !p.Empty() || w.s.StreamCtl("s2").F("dropped") != "1" {
-		t.Fatalf("done too early, or the drop not counted: %+v %q", p, w.s.StreamCtl("s2").F("dropped"))
-	}
+	p, _ := TickDone(w.s, req)
+	require.True(t, p.Empty(), "done too early, or the drop not counted: %+v %q", p, w.s.StreamCtl("s2").F("dropped"))
+	require.Equal(t, "1", w.s.StreamCtl("s2").F("dropped"), "done too early, or the drop not counted: %+v %q", p, w.s.StreamCtl("s2").F("dropped"))
 	w.must(MergeStep(w.s, MergeReq{Stream: "s1", Batch: 1}))
-	if p, _ := TickDone(w.s, req); !p.Empty() {
-		t.Fatalf("done with s1-2 merging: %+v", p)
-	}
+	p, _ = TickDone(w.s, req)
+	require.True(t, p.Empty(), "done with s1-2 merging: %+v", p)
 	w.must(MergeStep(w.s, MergeReq{Stream: "s1", Batch: 1}))
-	if len(w.notesOf(NSprintDone)) != 0 {
-		t.Fatalf("the merge step wrote the sprint done: %+v", w.notesOf(NSprintDone))
-	}
+	require.Empty(t, w.notesOf(NSprintDone), "the merge step wrote the sprint done: %+v", w.notesOf(NSprintDone))
 	w.tick(90 * time.Minute)
 	w.must(tickDone(w.s, req))
 	done := w.notesOf(NSprintDone)
-	if len(done) != 1 || done[0].Kind != Happened || done[0].What != "2 landed, 1 dropped, took 1h30m0s from the first start" ||
-		done[0].To != "coordinator" || done[0].Hint != DoneHint || len(w.openOn(SprintSubject)) != 0 {
-		t.Fatalf("the sprint is done: %+v", done)
-	}
+	require.Len(t, done, 1, "the sprint is done: %+v", done)
+	require.Equal(t, Happened, done[0].Kind, "the sprint is done: %+v", done)
+	require.Equal(t, "2 landed, 1 dropped, took 1h30m0s from the first start", done[0].What, "the sprint is done: %+v", done)
+	require.Equal(t, "coordinator", done[0].To, "the sprint is done: %+v", done)
+	require.Equal(t, DoneHint, done[0].Hint, "the sprint is done: %+v", done)
+	require.Empty(t, w.openOn(SprintSubject), "the sprint is done: %+v", done)
 	g := Inbox(InboxReq{Now: w.s.Now, Open: w.s.Open, Recent: w.notes})
-	if len(g) == 0 || g[0].Type != NSprintDone || g[0].Kind != Happened || g[0].To != "coordinator" || g[0].Hint != DoneHint ||
-		g[0].What != done[0].What || len(g[0].Commands) != 0 {
-		t.Fatalf("the inbox does not show the sprint done first: %+v", g)
-	}
+	require.NotEmpty(t, g, "the inbox does not show the sprint done first: %+v", g)
+	require.Equal(t, NSprintDone, g[0].Type, "the inbox does not show the sprint done first: %+v", g)
+	require.Equal(t, Happened, g[0].Kind, "the inbox does not show the sprint done first: %+v", g)
+	require.Equal(t, "coordinator", g[0].To, "the inbox does not show the sprint done first: %+v", g)
+	require.Equal(t, DoneHint, g[0].Hint, "the inbox does not show the sprint done first: %+v", g)
+	require.Equal(t, done[0].What, g[0].What, "the inbox does not show the sprint done first: %+v", g)
+	require.Empty(t, g[0].Commands, "the inbox does not show the sprint done first: %+v", g)
 	// Not known when the machine first started: the counts alone.
-	if p, _ := TickDone(w.s, TickReq{}); len(p.Notes) != 1 || p.Notes[0].What != "2 landed, 1 dropped" {
-		t.Fatalf("with no first start: %+v", p.Notes)
-	}
+	p, _ = TickDone(w.s, TickReq{})
+	require.Len(t, p.Notes, 1, "with no first start: %+v", p.Notes)
+	require.Equal(t, "2 landed, 1 dropped", p.Notes[0].What, "with no first start: %+v", p.Notes)
 	w.must(Add(w.s, AddReq{Stream: "s3", Count: 1}))
-	if p, _ := TickDone(w.s, req); !p.Empty() {
-		t.Fatalf("more work, and still done: %+v", p)
-	}
+	p, _ = TickDone(w.s, req)
+	require.True(t, p.Empty(), "more work, and still done: %+v", p)
 	w.clean("more work")
 
 	// The last open primary dropped: done, once the tick looks.
@@ -167,9 +166,10 @@ func TestTheSprintIsDoneOnce(t *testing.T) {
 	w2.must(MergeStep(w2.s, MergeReq{Stream: "s1"}))
 	w2.must(Drop(w2.s, DropReq{Sel: Sel{IDs: []string{"s1-2"}}, Reason: "obsolete"}))
 	w2.must(tickDone(w2.s, TickReq{}))
-	if done := w2.notesOf(NSprintDone); len(done) != 1 || done[0].What != "1 landed, 1 dropped" || done[0].Kind != Happened {
-		t.Fatalf("done by a drop: %+v", done)
-	}
+	done = w2.notesOf(NSprintDone)
+	require.Len(t, done, 1, "done by a drop: %+v", done)
+	require.Equal(t, "1 landed, 1 dropped", done[0].What, "done by a drop: %+v", done)
+	require.Equal(t, Happened, done[0].Kind, "done by a drop: %+v", done)
 	w2.clean("done")
 }
 
@@ -182,14 +182,11 @@ func TestLandingResolvesWhatWaitsOnIt(t *testing.T) {
 	w.must(Add(w.s, AddReq{Stream: "s2", IDs: []string{"c"}, Needs: []string{"s1-1", "s1-2"}}))
 	accepted(w, "s1-1", "s1-2")
 	p := w.must(MergeStep(w.s, MergeReq{Stream: "s1", Batch: 1}))
-	if w.state("b") != Ready || w.state("c") != Waiting {
-		t.Fatalf("after s1-1 landed: b %s, c %s (%+v)", w.state("b"), w.state("c"), p.Units)
-	}
+	require.Equal(t, Ready, w.state("b"), "after s1-1 landed: b %s, c %s (%+v)", w.state("b"), w.state("c"), p.Units)
+	require.Equal(t, Waiting, w.state("c"), "after s1-1 landed: b %s, c %s (%+v)", w.state("b"), w.state("c"), p.Units)
 	w.clean("b ready")
 	w.must(MergeStep(w.s, MergeReq{Stream: "s1", Batch: 1}))
-	if w.state("c") != Ready {
-		t.Fatalf("after s1-2 landed: c %s", w.state("c"))
-	}
+	require.Equal(t, Ready, w.state("c"), "after s1-2 landed: c %s", w.state("c"))
 	w.clean("c ready")
 }
 
@@ -201,22 +198,19 @@ func TestReturnOpensAJudgment(t *testing.T) {
 	accepted(w, "s1-1")
 	w.must(Return(w.s, ReturnReq{Sel: Sel{IDs: []string{"s1-1"}}, Reason: "suspect"}))
 	open := w.openOn("s1-1")
-	if len(open) != 1 || open[0].Note.Type != NReturned || strings.Join(open[0].Note.Decisions, ",") != "rework,accept,drop" {
-		t.Fatalf("returned: %+v", open)
-	}
+	require.Len(t, open, 1, "returned: %+v", open)
+	require.Equal(t, NReturned, open[0].Note.Type, "returned: %+v", open)
+	require.Equal(t, "rework,accept,drop", strings.Join(open[0].Note.Decisions, ","), "returned: %+v", open)
 	w.must(Rework(w.s, ReworkReq{Sel: Sel{IDs: []string{"s1-1"}}, Fix: "again"}))
-	if len(w.openOn("s1-1")) != 0 {
-		t.Fatalf("rework left it open")
-	}
+	require.Empty(t, w.openOn("s1-1"), "rework left it open")
 	w.clean("reworked")
 	// Its reads gone (a new head), accept is not offered.
 	w2 := setup(t, 1)
 	accepted(w2, "s1-1")
 	w2.s.Work.Card("s1-1").Fields["head"] = "moved"
 	w2.must(Return(w2.s, ReturnReq{Sel: Sel{IDs: []string{"s1-1"}}}))
-	if d := w2.openOn("s1-1")[0].Note.Decisions; strings.Join(d, ",") != "rework,drop" {
-		t.Fatalf("decisions without standing reads: %v", d)
-	}
+	d := w2.openOn("s1-1")[0].Note.Decisions
+	require.Equal(t, "rework,drop", strings.Join(d, ","), "decisions without standing reads: %v", d)
 }
 
 // H9: a primary in review that nothing moves gets a judgment from the step
@@ -233,12 +227,11 @@ func TestAStrandedPrimaryIsAJudgment(t *testing.T) {
 	ci := w.openOn("s1-1")[0].Note.ID
 	w.must(Ack(w.s, AckReq{Notes: []string{ci}, Reason: "flaky"}))
 	o := w.openOn("s1-1")
-	if len(o) != 1 || o[0].Note.Type != NStranded || strings.Join(o[0].Note.Decisions, ",") != "ask,rework,drop" || !strings.Contains(o[0].Note.What, "never asked") {
-		t.Fatalf("stranded: %+v", o)
-	}
+	require.Len(t, o, 1, "stranded: %+v", o)
+	require.Equal(t, NStranded, o[0].Note.Type, "stranded: %+v", o)
+	require.Equal(t, "ask,rework,drop", strings.Join(o[0].Note.Decisions, ","), "stranded: %+v", o)
+	require.Contains(t, o[0].Note.What, "never asked", "stranded: %+v", o)
 	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}}))
-	if len(w.openOn("s1-1")) != 0 {
-		t.Fatalf("ask left it open")
-	}
+	require.Empty(t, w.openOn("s1-1"), "ask left it open")
 	w.clean("asked")
 }

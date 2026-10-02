@@ -3,6 +3,8 @@ package ci
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // isVersionLine reports whether a transcript line is the one version line the
@@ -54,23 +56,19 @@ $ command-with-output
 OUTPUT OK val=1
 `
 	// 1. Missing command returns found=false
-	if _, found := outputAfterCommand(fixture, "command-nonexistent"); found {
-		t.Errorf("outputAfterCommand found nonexistent command")
-	}
+	_, found := outputAfterCommand(fixture, "command-nonexistent")
+	assert.False(t, found, "outputAfterCommand found nonexistent command")
 
 	// 2. Command with empty output block returns found=true but len == 0
 	lines, found := outputAfterCommand(fixture, "command-empty")
-	if !found {
-		t.Errorf("outputAfterCommand failed to find command-empty")
-	}
-	if len(lines) != 0 {
-		t.Errorf("expected empty lines for command-empty, got %v", lines)
-	}
+	assert.True(t, found, "outputAfterCommand failed to find command-empty")
+	assert.Empty(t, lines, "expected empty lines for command-empty, got %v", lines)
 
 	// 3. Command with output returns lines
 	lines, found = outputAfterCommand(fixture, "command-with-output")
-	if !found || len(lines) != 1 || lines[0] != "OUTPUT OK val=1" {
-		t.Errorf("expected ['OUTPUT OK val=1'], got found=%v, lines=%v", found, lines)
+	assert.True(t, found, "expected ['OUTPUT OK val=1'], got found=%v, lines=%v", found, lines)
+	if assert.Len(t, lines, 1, "expected ['OUTPUT OK val=1'], got found=%v, lines=%v", found, lines) {
+		assert.Equal(t, "OUTPUT OK val=1", lines[0], "expected ['OUTPUT OK val=1'], got found=%v, lines=%v", found, lines)
 	}
 
 	// 4. isVersionLine negative controls
@@ -90,8 +88,6 @@ OUTPUT OK val=1
 		{"non-go-runtime", "nova-review devel darwin/arm64 rustc1.80.0", "nova-review"},
 	}
 	for _, tc := range badVersions {
-		if isVersionLine(tc.line, tc.tool) {
-			t.Errorf("isVersionLine(%q, %q) returned true, want false (%s)", tc.line, tc.tool, tc.name)
-		}
+		assert.False(t, isVersionLine(tc.line, tc.tool), "isVersionLine(%q, %q) returned true, want false (%s)", tc.line, tc.tool, tc.name)
 	}
 }

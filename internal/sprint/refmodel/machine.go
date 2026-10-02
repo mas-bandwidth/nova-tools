@@ -1,5 +1,7 @@
 package refmodel
 
+import "maps"
+
 // The machine, the tick, sentinels' release and clear: from the spec
 // (sections 13, 14 and 16), not yet in the model. The model's Next lets any
 // enabled action happen at any time; the spec's machine runs the mechanical
@@ -38,10 +40,11 @@ func SetMachine(s State, running bool) (State, error) {
 
 // Tick is one tick of the machine (spec section 14): a STOPPED machine moves
 // nothing; a RUNNING one runs its parts in order, each on the state the one
-// before left, the four tables' updates in the owner's order: the work pump's
+// before left: the start, the fleet's level (T4) and the readers' (levelReads),
+// once; then the four tables' updates in the owner's order: the work pump's
 // resolve (T1), deal (T3) and accept (the owner's ruling of 2026-09-30,
-// "accept is mechanical"), the readers' ask (T2), the merge's resume (T7), the
-// fleet's level (T4), and then done (R15, errata 3 amendment 6), which stops
+// "accept is mechanical"), the readers' ask (T2), the merge's resume (T7); and
+// then done (R15, errata 3 amendment 6), which stops
 // the machine on a done sprint. The tables the updates dirty are updated again
 // until none is; the model's parts dirty no earlier table, so one pass is the
 // fixpoint.
@@ -56,7 +59,13 @@ func Tick(s State, ch TickChoices) (State, error) {
 	if s.Machine != Running {
 		return s, nil
 	}
-	n := s.Clone()
+	// the start: the fleet's and the readers' rebalance, once (the owner,
+	// 2026-10-01: "just once before tick, rebalance each table.")
+	n, err := s.level(ch.Level)
+	if err != nil {
+		return s, err
+	}
+	n.levelReads()
 	n.tickResolve()
 	if err := n.tickDeal(ch.Deal); err != nil {
 		return s, err
@@ -68,11 +77,6 @@ func Tick(s State, ch TickChoices) (State, error) {
 		return s, err
 	}
 	n.tickResume()
-	lv, err := n.level(ch.Level)
-	if err != nil {
-		return s, err
-	}
-	n = lv
 	n.tickDone()
 	return n, nil
 }
@@ -135,7 +139,7 @@ func (n *State) tickResume() {
 // skipped, each stream's oldest first by score; Start moves the index past
 // each primary's stream, errata 3 amendment 10), each to the up
 // next member round the fleet (NextMember), no member holding more work
-// cards, ready and working, than its Width (errata 3 amendment 9); with no member up and primaries to deal, the no-member
+// cards, ready and working, than its Room (DealAhead times its Width, errata 3 amendment 9); with no member up and primaries to deal, the no-member
 // judgment once, closed when the condition clears (section 14).
 func (n *State) tickDeal(choice map[string]string) error {
 	var ready []string
@@ -179,7 +183,7 @@ func (n *State) tickDeal(choice map[string]string) error {
 	for _, p := range ready {
 		var room []string
 		for _, m := range n.Up() {
-			if n.Held(m) < Width {
+			if n.Held(m) < Room {
 				room = append(room, m)
 			}
 		}
@@ -190,7 +194,7 @@ func (n *State) tickDeal(choice map[string]string) error {
 		if m == "" {
 			m = n.NextMember(room)
 		}
-		next, err := Start(*n, p, m, Width)
+		next, err := Start(*n, p, m, Room)
 		if err != nil {
 			return err
 		}
@@ -215,7 +219,7 @@ func (n *State) tickAsk(choice map[string][]string) error {
 	for _, p := range review {
 		two := choice[p]
 		if two == nil {
-			two = n.defaultPair(p)
+			two = n.NextReaders(p, 2)
 		}
 		next, err := Ask(*n, p, two)
 		if err != nil {
@@ -253,13 +257,6 @@ func (n *State) tickAccept() error {
 	}
 	*n = next
 	return nil
-}
-
-func (s State) defaultPair(p string) []string {
-	if pair := s.Primaries[p].Pair; len(pair) > 0 {
-		return append([]string(nil), pair...)
-	}
-	return s.NextReaders(p, 2)
 }
 
 // Release is the spec's release (section 16): the coordinator alone lands
@@ -304,9 +301,7 @@ func Release(s State, ids []string, who string) (State, error) {
 // the sprint's and is kept. From the spec, not yet in the model.
 func Clear(s State) (State, error) {
 	n := New(s.Readers, s.Order, s.Coordinator)
-	for m, st := range s.Members {
-		n.Members[m] = st
-	}
+	maps.Copy(n.Members, s.Members)
 	for st := range s.Streams {
 		n.Streams[st] = Stream{State: SWaiting}
 	}

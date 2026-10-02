@@ -14,6 +14,8 @@ import (
 	"testing"
 
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The unit tier of RoundTrips: a hook is handed a fake processor, or a real
@@ -49,7 +51,7 @@ func sendGets(t testing.TB, process redis.ProcessHook, n int) {
 	ctx := context.Background()
 	for range n {
 		if err := process(ctx, redis.NewCmd(ctx, "get", "k")); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 	}
 }
@@ -65,7 +67,7 @@ func TestEveryCommandIsOneRoundTrip(t *testing.T) {
 	for _, wrong := range []int{1, loopCommands + 1} {
 		r := provoke(t, func(tb testing.TB) { trips.Expect(tb, wrong, func() { sendGets(tb, process, loopCommands) }) })
 		if r.fatal == "" {
-			t.Fatalf("%d commands were taken for %d round trips", loopCommands, wrong)
+			require.NotEmpty(t, r.fatal, "%d commands were taken for %d round trips", loopCommands, wrong)
 		}
 	}
 }
@@ -79,7 +81,7 @@ func TestAPipelineIsOneRoundTripWhateverItHolds(t *testing.T) {
 	for _, n := range []int{loopCommands, batchCommands} {
 		trips.Expect(t, 1, func() {
 			if err := pipeline(ctx, getBatch(ctx, n)); err != nil {
-				t.Fatal(err)
+				require.NoError(t, err, err)
 			}
 		})
 	}
@@ -93,7 +95,7 @@ func TestAnEmptyPipelineIsNoRoundTrip(t *testing.T) {
 	pipeline := hook.ProcessPipelineHook(answerPipeline)
 	trips.Expect(t, 0, func() {
 		if err := pipeline(ctx, nil); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 	})
 }
@@ -106,10 +108,10 @@ func TestTheHookPassesTheAnswerThroughAndCountsAFailedCommand(t *testing.T) {
 	trips, hook := RoundTrips(t)
 	trips.Expect(t, 2, func() {
 		if err := hook.ProcessHook(func(context.Context, redis.Cmder) error { return refused })(ctx, redis.NewCmd(ctx, "get", "k")); !errors.Is(err, refused) {
-			t.Fatalf("the command was answered %v; want what the client answered", err)
+			require.ErrorIs(t, err, refused, "the command was answered %v; want what the client answered", err)
 		}
 		if err := hook.ProcessPipelineHook(func(context.Context, []redis.Cmder) error { return refused })(ctx, getBatch(ctx, loopCommands)); !errors.Is(err, refused) {
-			t.Fatalf("the pipeline was answered %v; want what the client answered", err)
+			require.ErrorIs(t, err, refused, "the pipeline was answered %v; want what the client answered", err)
 		}
 	})
 	// A dial is not a round trip, and it is counted as none only if it happens
@@ -117,7 +119,7 @@ func TestTheHookPassesTheAnswerThroughAndCountsAFailedCommand(t *testing.T) {
 	dial := func(context.Context, string, string) (net.Conn, error) { return nil, refused }
 	trips.Expect(t, 0, func() {
 		if _, err := hook.DialHook(dial)(ctx, "tcp", "in-process"); !errors.Is(err, refused) {
-			t.Fatalf("the dial was answered %v; want what the client answered", err)
+			require.ErrorIs(t, err, refused, "the dial was answered %v; want what the client answered", err)
 		}
 	})
 }
@@ -135,7 +137,7 @@ func TestExpectFailsWhenTheCountDiffersAndSaysBothNumbers(t *testing.T) {
 		process := hook.ProcessHook(answerCommand)
 		r := provoke(t, func(tb testing.TB) { trips.Expect(tb, c.want, func() { sendGets(tb, process, c.made) }) })
 		if r.fatal == "" {
-			t.Errorf("%s: expected %d round trips, made %d, and the test passed", name, c.want, c.made)
+			assert.NotEmpty(t, r.fatal, "%s: expected %d round trips, made %d, and the test passed", name, c.want, c.made)
 			continue
 		}
 		for _, number := range []string{
@@ -143,7 +145,7 @@ func TestExpectFailsWhenTheCountDiffersAndSaysBothNumbers(t *testing.T) {
 			"counted " + countOf(c.made),
 		} {
 			if !strings.Contains(r.fatal, number) {
-				t.Errorf("%s: the failure %q does not say %q", name, r.fatal, number)
+				assert.Contains(t, r.fatal, number, "%s: the failure %q does not say %q", name, r.fatal, number)
 			}
 		}
 	}
@@ -152,11 +154,11 @@ func TestExpectFailsWhenTheCountDiffersAndSaysBothNumbers(t *testing.T) {
 	process := hook.ProcessHook(answerCommand)
 	r := provoke(t, func(tb testing.TB) { trips.Expect(tb, wrongTripCount, func() { sendGets(tb, process, loopCommands) }) })
 	if want := "testredis: expected 2 round trips, counted 3 round trips: get; get; get"; r.fatal != want {
-		t.Fatalf("the failure:\n got %q\nwant %q", r.fatal, want)
+		require.Equal(t, want, r.fatal, "the failure:\n got %q\nwant %q", r.fatal, want)
 	}
 	r = provoke(t, func(tb testing.TB) { trips.Expect(tb, 1, func() {}) })
 	if want := "testredis: expected 1 round trip, counted 0 round trips"; r.fatal != want {
-		t.Fatalf("the failure:\n got %q\nwant %q", r.fatal, want)
+		require.Equal(t, want, r.fatal, "the failure:\n got %q\nwant %q", r.fatal, want)
 	}
 }
 
@@ -175,10 +177,10 @@ func TestExpectNamesWhatItCountedAndNoArgument(t *testing.T) {
 		})
 	})
 	if want := "testredis: expected 0 round trips, counted 3 round trips: auth; pipeline(hset, expire); transaction(set, del)"; r.fatal != want {
-		t.Fatalf("the failure:\n got %q\nwant %q", r.fatal, want)
+		require.Equal(t, want, r.fatal, "the failure:\n got %q\nwant %q", r.fatal, want)
 	}
 	if strings.Contains(r.fatal, password) || strings.Contains(r.fatal, key) {
-		t.Fatalf("an argument is in the failure: %q", r.fatal)
+		require.Failf(t, "", "an argument is in the failure: %q", r.fatal)
 	}
 }
 
@@ -191,18 +193,18 @@ func TestAFailureNamesTheFirstOfWhatItCountedAndSaysHowManyMore(t *testing.T) {
 	r := provoke(t, func(tb testing.TB) {
 		trips.Expect(tb, 0, func() {
 			if err := pipeline(ctx, getBatch(ctx, longRunCommands)); err != nil {
-				tb.Fatal(err)
+				require.NoError(tb, err, err)
 			}
 		})
 	})
 	want := fmt.Sprintf("counted 1 round trip: pipeline(%s, and %d more)", strings.TrimSuffix(strings.Repeat("get, ", tripNamesShown), ", "), longRunCommands-tripNamesShown)
 	if !strings.HasSuffix(r.fatal, want) {
-		t.Fatalf("the failure %q does not end %q", r.fatal, want)
+		require.Failf(t, "", "the failure %q does not end %q", r.fatal, want)
 	}
 	r = provoke(t, func(tb testing.TB) { trips.Expect(tb, 0, func() { sendGets(tb, process, longRunCommands) }) })
 	want = fmt.Sprintf("counted %d round trips: %s; and %d more", longRunCommands, strings.TrimSuffix(strings.Repeat("get; ", tripsShown), "; "), longRunCommands-tripsShown)
 	if !strings.HasSuffix(r.fatal, want) {
-		t.Fatalf("the failure %q does not end %q", r.fatal, want)
+		require.Failf(t, "", "the failure %q does not end %q", r.fatal, want)
 	}
 }
 
@@ -223,11 +225,11 @@ func TestExpectRefusesANegativeCountAndNoFunction(t *testing.T) {
 	trips, _ := RoundTrips(t)
 	r := provoke(t, func(tb testing.TB) { trips.Expect(tb, -1, func() {}) })
 	if !strings.Contains(r.fatal, "-1 round trips") {
-		t.Fatalf("a negative count failed with %q; want the number it was given", r.fatal)
+		require.Contains(t, r.fatal, "-1 round trips", "a negative count failed with %q; want the number it was given", r.fatal)
 	}
 	r = provoke(t, func(tb testing.TB) { trips.Expect(tb, 0, nil) })
 	if !strings.Contains(r.fatal, "no function") {
-		t.Fatalf("no function failed with %q; want that said", r.fatal)
+		require.Contains(t, r.fatal, "no function", "no function failed with %q; want that said", r.fatal)
 	}
 }
 
@@ -244,7 +246,7 @@ func TestManyGoroutinesAreCountedWhole(t *testing.T) {
 				ctx := context.Background()
 				for range tripCommandsPerWorker {
 					if err := process(ctx, redis.NewCmd(ctx, "get", "k")); err != nil {
-						t.Error(err)
+						assert.NoError(t, err, err)
 					}
 				}
 			})
@@ -260,7 +262,7 @@ func TestRoundTripsRefusesToRunOutsideATestBinary(t *testing.T) {
 	l.inTest = func() bool { return false }
 	said, _ := panics(func() { l.roundTrips(t) }).(string)
 	if !strings.Contains(said, "outside a test binary") {
-		t.Fatalf("RoundTrips outside a test binary panicked with %q; want the refusal", said)
+		require.Contains(t, said, "outside a test binary", "RoundTrips outside a test binary panicked with %q; want the refusal", said)
 	}
 }
 
@@ -353,7 +355,7 @@ func pipedClient(t testing.TB, hooks ...redis.Hook) *redis.Client {
 func connectClient(t testing.TB, c *redis.Client) {
 	t.Helper()
 	if err := c.Ping(context.Background()).Err(); err != nil {
-		t.Fatalf("ping: %v", err)
+		require.NoError(t, err, "ping: %v", err)
 	}
 }
 
@@ -396,7 +398,7 @@ func TestAPipelineAndATransactionOfARealClientAreOneRoundTripEach(t *testing.T) 
 	trips.Expect(t, loopCommands, func() {
 		for range loopCommands {
 			if err := c.Set(ctx, "k", "v", 0).Err(); err != nil {
-				t.Fatal(err)
+				require.NoError(t, err, err)
 			}
 		}
 	})
@@ -408,12 +410,12 @@ func TestAPipelineAndATransactionOfARealClientAreOneRoundTripEach(t *testing.T) 
 	}
 	trips.Expect(t, 1, func() {
 		if _, err := c.Pipelined(ctx, fill); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 	})
 	trips.Expect(t, 1, func() {
 		if _, err := c.TxPipelined(ctx, fill); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 	})
 	// The transaction is named as one: its MULTI and EXEC are not commands of
@@ -421,12 +423,12 @@ func TestAPipelineAndATransactionOfARealClientAreOneRoundTripEach(t *testing.T) 
 	r := provoke(t, func(tb testing.TB) {
 		trips.Expect(tb, 0, func() {
 			if _, err := c.TxPipelined(ctx, fill); err != nil {
-				tb.Fatal(err)
+				require.NoError(tb, err, err)
 			}
 		})
 	})
 	if want := "counted 1 round trip: transaction(set, set, set)"; !strings.HasSuffix(r.fatal, want) {
-		t.Fatalf("the failure %q does not end %q", r.fatal, want)
+		require.Failf(t, "", "the failure %q does not end %q", r.fatal, want)
 	}
 }
 
@@ -444,7 +446,7 @@ func TestAColdClientsFirstCommandIsOneRoundTrip(t *testing.T) {
 	trips.Expect(t, 1, func() { connectClient(t, c) })
 	// The count did cover the dial and the handshake: they happened inside it.
 	if dialed := store.dials.Load(); dialed != 1 {
-		t.Fatalf("the first PING of a client that had not connected opened %d connections; want 1, so that the setup ran while it was counted", dialed)
+		require.EqualValues(t, 1, dialed, "the first PING of a client that had not connected opened %d connections; want 1, so that the setup ran while it was counted", dialed)
 	}
 	// Connected, the same PING is one round trip as well.
 	trips.Expect(t, 1, func() { connectClient(t, c) })
@@ -458,11 +460,11 @@ func TestAColdClientsFirstCommandIsOneRoundTrip(t *testing.T) {
 			}
 			return nil
 		}); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 	})
 	if dialed := store.dials.Load(); dialed != 2 {
-		t.Fatalf("a second cold client brought the connections to %d; want 2", dialed)
+		require.EqualValues(t, 2, dialed, "a second cold client brought the connections to %d; want 2", dialed)
 	}
 }
 
@@ -478,22 +480,22 @@ func TestTheCallersOwnHelloAndClientAreRoundTripsWhateverTheirNames(t *testing.T
 		trips.Expect(tb, 0, func() { _ = c.Do(ctx, "hello", "2").Err() })
 	})
 	if want := "testredis: expected 0 round trips, counted 1 round trip: hello"; said.fatal != want {
-		t.Fatalf("the caller's own HELLO on a cold client:\n got %q\nwant %q", said.fatal, want)
+		require.Equal(t, want, said.fatal, "the caller's own HELLO on a cold client:\n got %q\nwant %q", said.fatal, want)
 	}
 	trips.Expect(t, 1, func() { _ = c.Do(ctx, "hello", "2").Err() })
 	said = provoke(t, func(tb testing.TB) {
 		trips.Expect(tb, 0, func() {
 			if err := c.Do(ctx, "client", "setname", "a-name").Err(); err != nil {
-				tb.Fatal(err)
+				require.NoError(tb, err, err)
 			}
 		})
 	})
 	if want := "testredis: expected 0 round trips, counted 1 round trip: client"; said.fatal != want {
-		t.Fatalf("the caller's own CLIENT SETNAME:\n got %q\nwant %q", said.fatal, want)
+		require.Equal(t, want, said.fatal, "the caller's own CLIENT SETNAME:\n got %q\nwant %q", said.fatal, want)
 	}
 	trips.Expect(t, 1, func() {
 		if err := c.Do(ctx, "client", "setname", "a-name").Err(); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 	})
 }
@@ -518,7 +520,7 @@ func TestACrowdOnOneClientIsCountedExactlyWhateverTheHandshakes(t *testing.T) {
 		for range crowd {
 			wg.Go(func() {
 				if err := c.Set(ctx, "k", "v", 0).Err(); err != nil {
-					t.Error(err)
+					assert.NoError(t, err, err)
 				}
 			})
 		}
@@ -527,7 +529,7 @@ func TestACrowdOnOneClientIsCountedExactlyWhateverTheHandshakes(t *testing.T) {
 	// Every member was at the store at once, so all but the one connection the
 	// client had dialed a connection of their own, inside the count.
 	if opened := store.dials.Load() - before; opened < crowd-1 {
-		t.Fatalf("the crowd opened %d connections; want at least %d, so that their handshakes were sent while they were counted", opened, crowd-1)
+		require.GreaterOrEqual(t, opened, int64(crowd-1), "the crowd opened %d connections; want at least %d, so that their handshakes were sent while they were counted", opened, crowd-1)
 	}
 }
 
@@ -559,7 +561,7 @@ func TestTheHookAddedLastCountsWhatAnEarlierHookSendsAgain(t *testing.T) {
 		connectClient(t, client)
 		trips.Expect(t, c.want, func() {
 			if _, err := client.Pipelined(ctx, fill); err != nil {
-				t.Fatalf("%s: %v", name, err)
+				require.NoError(t, err, "%s: %v", name, err)
 			}
 		})
 	}

@@ -7,6 +7,7 @@ package cardcontract
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,6 +47,11 @@ type Staged struct {
 	Repo string // <job>/repo
 	Head string // the full sha the checkout is at
 	Git  string // the real git, absolute
+	// Start is a read's: the commit the work under review started from, a full sha (the
+	// merge base of Head and the review base, found when the checkout was staged), so the
+	// read sees exactly the work's change however far the base branch has moved since;
+	// "" for work, or when no merge base was found.
+	Start string
 }
 
 // Shim is one script a profile writes first on the child's PATH.
@@ -65,7 +71,7 @@ type Profile interface {
 var Families = []string{"claude", "openai", "gemini", "grok", "deepseek", "plain"}
 
 // profiles are the built profiles by family; a family with none here serves plain.
-var profiles = map[string]Profile{"claude": claude{}, "plain": plain{family: "plain"}}
+var profiles = map[string]Profile{"claude": claude{}, "openai": openai{}, "plain": plain{family: "plain"}}
 
 // For is the profile of a family: its own, else plain under the family's name.
 func For(family string) Profile {
@@ -126,6 +132,11 @@ func ReadFrame(path string) (Frame, error) {
 // JobName is the frame's text in the job directory, the first thing the child reads.
 const JobName = "JOB.md"
 
+// ReadTitle begins the first line of a read's JOB.md in every profile, and of no work's: a
+// brief that speaks to its readers names it, so a work card never takes itself for a read (a
+// work card of the 5000-card load test, 2026-10-01, ended "nothing to do: no PR to review").
+const ReadTitle = "# JOB: read"
+
 // PushedName is the file in the job directory the git shim records each push in:
 // branch, head and checkout top, tab separated, one line a push.
 const PushedName = ".sprint/pushed.tsv"
@@ -181,20 +192,34 @@ const RecipesName = "recipes"
 // into <job>/recipes, each at its own relative path (docs/SPEC-CARD-CONTRACT.md, staged
 // recipes): a brief holds 16 KiB, a recipe a card works from can be larger, and the wall
 // gives the child no forge to fetch one from. A name that is not a local relative path, or
-// is not a regular file in the recipes directory, refuses the whole staging.
+// is not a regular file in the recipes directory, refuses the whole staging; every source is
+// opened through an os.Root of the recipes directory, so no path component, a symlinked
+// directory included, leaves it, and a refusal names the Stage line and the reason.
 func StageRecipes(f Frame, job string) error {
+	if len(f.Stage) == 0 {
+		return nil
+	}
+	root, err := os.OpenRoot(f.Recipes)
+	if err != nil {
+		return fmt.Errorf("Stage: the recipes directory %s: %w", f.Recipes, err)
+	}
+	defer root.Close()
 	for _, rel := range f.Stage {
 		if !filepath.IsLocal(rel) {
 			return fmt.Errorf("Stage: %q is not a path inside the recipes directory", rel)
 		}
-		from := filepath.Join(f.Recipes, rel)
-		fi, err := os.Lstat(from)
+		fi, err := root.Lstat(rel)
 		if err != nil || !fi.Mode().IsRegular() {
-			return fmt.Errorf("Stage: %s is not a file in %s (put it there, or drop the Stage: line)", rel, f.Recipes)
+			return fmt.Errorf("Stage: %s is not a regular file inside %s (put it there, or drop the Stage: line)", rel, f.Recipes)
 		}
-		b, err := os.ReadFile(from)
+		src, err := root.Open(rel)
 		if err != nil {
-			return err
+			return fmt.Errorf("Stage: %s cannot be opened inside %s: %w", rel, f.Recipes, err)
+		}
+		b, err := io.ReadAll(src)
+		src.Close()
+		if err != nil {
+			return fmt.Errorf("Stage: %s: %w", rel, err)
 		}
 		to := filepath.Join(job, RecipesName, rel)
 		if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil {

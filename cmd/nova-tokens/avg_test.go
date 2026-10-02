@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/stretchr/testify/assert"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -46,9 +47,7 @@ func TestAvgLinesPerModelAndAll(t *testing.T) {
 	deepI := indexOfLine(r.stderr, "deepseek/deepseek-v3")
 	gptI := indexOfLine(r.stderr, "openai/gpt-4o")
 	zeroI := indexOfLine(r.stderr, "x/zero")
-	if !(deepI < gptI && gptI < zeroI) {
-		t.Errorf("AVG lines are not sorted by usd_per_mtok descending:\n%s", r.stderr)
-	}
+	assert.False(t, !(deepI < gptI && gptI < zeroI), "AVG lines are not sorted by usd_per_mtok descending:\n%s", r.stderr)
 }
 
 // indexOfLine returns the 0-based index of the first line of s containing sub, or -1.

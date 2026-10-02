@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // CARD #86, nova-check: efficiency card, 2026-09-12. The card is a measurement
@@ -18,9 +21,7 @@ func TestNovaCheckEfficiencyCardNamesItsRules(t *testing.T) {
 	t.Parallel()
 
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC.md"))
-	if err != nil {
-		t.Fatalf("the nova-check efficiency card's contract is the spec's: %s", err)
-	}
+	require.NoError(t, err, "the nova-check efficiency card's contract is the spec's: %s", err)
 	spec := string(raw)
 	section := novaCheckEfficiencySection(t, spec)
 	// The contract is prose, so its line wrapping is the spec's; collapse runs
@@ -55,9 +56,7 @@ func TestNovaCheckEfficiencyCardNamesItsRules(t *testing.T) {
 		"a `quickstart` of one tree walks the root once and hands the same path list to `links` and `nocode`",
 		"`--fail-max <n>` caps each kind's findings at `n`, the `MORE` line names the flag that lifts it",
 	} {
-		if !strings.Contains(section, want) {
-			t.Errorf("SPEC.md nova-check efficiency card names %q; the section holds:\n%s", want, section)
-		}
+		assert.Contains(t, section, want, "SPEC.md nova-check efficiency card names %q; the section holds:\n%s", want, section)
 	}
 }
 
@@ -68,11 +67,9 @@ func novaCheckEfficiencySection(t *testing.T, spec string) string {
 	t.Helper()
 	const header = "## The efficiency card, nova-check"
 	start := strings.Index(spec, header)
-	if start < 0 {
-		t.Fatalf("the spec has no %q section", header)
-		return ""
-	}
+	require.False(t, start < 0, "the spec has no %q section", header)
 	rest := spec[start+len(header):]
+
 	end := strings.Index(rest, "\n## ")
 	if end < 0 {
 		return rest

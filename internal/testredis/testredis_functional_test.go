@@ -24,6 +24,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The functional tier of the package: real redis-servers, and the test binary
@@ -85,11 +87,11 @@ func fakePID(t *testing.T, failure string) int {
 	t.Helper()
 	m := regexp.MustCompile(`fake pid=(\d+)`).FindStringSubmatch(failure)
 	if m == nil {
-		t.Fatalf("the failure does not carry the server's output:\n%s", failure)
+		require.NotNil(t, m, "the failure does not carry the server's output:\n%s", failure)
 	}
 	pid, err := strconv.Atoi(m[1])
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	return pid
 }
@@ -163,27 +165,27 @@ func TestAServerStartsAndAnswersPing(t *testing.T) {
 	addr := Start(t)
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil || host != "127.0.0.1" {
-		t.Fatalf("Start = %q, %v; want 127.0.0.1 and a port", addr, err)
+		require.Failf(t, "", "Start = %q, %v; want 127.0.0.1 and a port", addr, err)
 	}
 	if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
-		t.Fatalf("Start = %q; want a port", addr)
+		require.Failf(t, "", "Start = %q; want a port", addr)
 	}
 	ctx := bounded(t)
 	c := dial(t, addr)
 	if got, err := c.Ping(ctx).Result(); err != nil || got != "PONG" {
-		t.Fatalf("PING = %q, %v", got, err)
+		require.Failf(t, "", "PING = %q, %v", got, err)
 	}
 	if n, err := c.DBSize(ctx).Result(); err != nil || n != 0 {
-		t.Fatalf("a server just started holds %d keys, %v; want none", n, err)
+		require.Failf(t, "", "a server just started holds %d keys, %v; want none", n, err)
 	}
 	// Nothing is kept, in the test's own directory.
 	for option, want := range map[string]string{"save": "", "appendonly": "no"} {
 		if got, err := c.ConfigGet(ctx, option).Result(); err != nil || got[option] != want {
-			t.Errorf("CONFIG GET %s = %q, %v; want %q", option, got[option], err, want)
+			assert.Failf(t, "", "CONFIG GET %s = %q, %v; want %q", option, got[option], err, want)
 		}
 	}
 	if bin := Program(t); !filepath.IsAbs(bin) {
-		t.Errorf("Program = %q; want the redis-server on PATH, by its whole path", bin)
+		assert.Failf(t, "", "Program = %q; want the redis-server on PATH, by its whole path", bin)
 	}
 }
 
@@ -211,7 +213,7 @@ func TestTwoHundredStartsInParallelEachGetTheirOwnServer(t *testing.T) {
 				pids[s.PID()] = true
 				mu.Unlock()
 				if shared {
-					t.Fatalf("test %d was given %s while the server of test %d stands on it", i, s.Addr(), other)
+					require.False(t, shared, "test %d was given %s while the server of test %d stands on it", i, s.Addr(), other)
 				}
 				// Registered after Start, so it runs before the server is
 				// stopped: the address is free to give out only from then on.
@@ -224,29 +226,29 @@ func TestTwoHundredStartsInParallelEachGetTheirOwnServer(t *testing.T) {
 				c := dial(t, s.Addr())
 				mine := "test " + strconv.Itoa(i)
 				if n, err := c.DBSize(ctx).Result(); err != nil || n != 0 {
-					t.Fatalf("the server of test %d holds %d keys before the test wrote one, %v", i, n, err)
+					require.Failf(t, "", "the server of test %d holds %d keys before the test wrote one, %v", i, n, err)
 				}
 				if err := c.Set(ctx, "whose", mine, 0).Err(); err != nil {
-					t.Fatal(err)
+					require.NoError(t, err, err)
 				}
 				if n, err := c.DBSize(ctx).Result(); err != nil || n != 1 {
-					t.Fatalf("the server of test %d holds %d keys, %v; want its one", i, n, err)
+					require.Failf(t, "", "the server of test %d holds %d keys, %v; want its one", i, n, err)
 				}
 				if got, err := c.Get(ctx, "whose").Result(); err != nil || got != mine {
-					t.Fatalf("the server of test %d says it is the server of %q, %v", i, got, err)
+					require.Failf(t, "", "the server of test %d says it is the server of %q, %v", i, got, err)
 				}
 			})
 		}
 	})
 	if len(dirs) != tests || len(pids) != tests {
-		t.Fatalf("%d tests started servers in %d directories as %d processes; want %d of each", tests, len(dirs), len(pids), tests)
+		require.Failf(t, "", "%d tests started servers in %d directories as %d processes; want %d of each", tests, len(dirs), len(pids), tests)
 	}
 	if len(stands) != 0 {
-		t.Fatalf("every test has ended and %d servers still stand: %v", len(stands), stands)
+		require.Len(t, stands, 0, "every test has ended and %d servers still stand: %v", len(stands), stands)
 	}
 	for pid := range pids {
 		if alive(pid) {
-			t.Errorf("every test has ended and the server with pid %d is alive", pid)
+			assert.Failf(t, "", "every test has ended and the server with pid %d is alive", pid)
 		}
 	}
 }
@@ -258,24 +260,24 @@ func TestCleanupKillsTheServerAndRemovesItsDirectory(t *testing.T) {
 	t.Run("a test that starts a server", func(t *testing.T) {
 		s = StartServer(t, "--appendonly", "yes")
 		if !alive(s.PID()) {
-			t.Fatalf("the server with pid %d is not alive in its own test", s.PID())
+			require.Failf(t, "", "the server with pid %d is not alive in its own test", s.PID())
 		}
 		c := dial(t, s.Addr())
 		if err := c.Set(bounded(t), "kept", "on disk", 0).Err(); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 		// The test asked for an append-only file: it is in the server's
 		// directory, which is the test's.
 		if kept, err := os.ReadDir(s.dir); err != nil || len(kept) == 0 {
-			t.Fatalf("the server's directory %s holds %d files, %v; want the append-only file", s.dir, len(kept), err)
+			require.Failf(t, "", "the server's directory %s holds %d files, %v; want the append-only file", s.dir, len(kept), err)
 		}
 	})
 	if alive(s.PID()) {
 		kill(s.PID())
-		t.Fatalf("the test has ended and its server, pid %d, is alive", s.PID())
+		require.Failf(t, "", "the test has ended and its server, pid %d, is alive", s.PID())
 	}
 	if _, err := os.Stat(s.dir); !errors.Is(err, fs.ErrNotExist) {
-		t.Fatalf("the test has ended and its server's directory %s is there: %v", s.dir, err)
+		require.Failf(t, "", "the test has ended and its server's directory %s is there: %v", s.dir, err)
 	}
 	// The port is not asked: the process that held it is gone, so the port
 	// is anyone's, and a parallel test may take it and answer there.
@@ -301,13 +303,13 @@ func TestAServerWithAUserAndAPasswordRefusesTheDefaultUser(t *testing.T) {
 		err := dial(t, addr, c.login...).Set(ctx, "k", name, 0).Err()
 		switch {
 		case c.want == "" && err != nil:
-			t.Errorf("%s: SET = %v; want it taken", name, err)
+			assert.Failf(t, "", "%s: SET = %v; want it taken", name, err)
 		case c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)):
-			t.Errorf("%s: SET = %v; want %s", name, err, c.want)
+			assert.Failf(t, "", "%s: SET = %v; want %s", name, err, c.want)
 		}
 	}
 	if who, err := dial(t, addr, "bench", password).Do(ctx, "ACL", "WHOAMI").Text(); err != nil || who != "bench" {
-		t.Fatalf("ACL WHOAMI = %q, %v; want bench", who, err)
+		require.Failf(t, "", "ACL WHOAMI = %q, %v; want bench", who, err)
 	}
 }
 
@@ -321,29 +323,29 @@ func TestStopMakesTheNextCommandFailAtOnce(t *testing.T) {
 	// server is gone.
 	held, err := net.Dial("tcp", s.Addr())
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	defer held.Close()
 	if deadline, ok := bounded(t).Deadline(); ok {
 		if err := held.SetDeadline(deadline); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 	}
 	answers := bufio.NewReader(held)
 	if _, err := io.WriteString(held, "*1\r\n$4\r\nPING\r\n"); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if got, err := answers.ReadString('\n'); err != nil || got != "+PONG\r\n" {
-		t.Fatalf("PING before Stop was answered %q, %v; want PONG", got, err)
+		require.Failf(t, "", "PING before Stop was answered %q, %v; want PONG", got, err)
 	}
 	pid, addr := s.PID(), s.Addr()
 	s.Stop()
 	if alive(pid) {
 		kill(pid)
-		t.Fatalf("Stop returned and the server, pid %d, is alive", pid)
+		require.Failf(t, "", "Stop returned and the server, pid %d, is alive", pid)
 	}
 	if s.Addr() != addr || s.PID() != pid {
-		t.Fatalf("after Stop the server is %s, pid %d; it was %s, pid %d", s.Addr(), s.PID(), addr, pid)
+		require.Failf(t, "", "after Stop the server is %s, pid %d; it was %s, pid %d", s.Addr(), s.PID(), addr, pid)
 	}
 	// The held connection was hung up on: the failure is the kernel's
 	// answer on this test's own socket, not a deadline that ran out. Nothing
@@ -352,7 +354,7 @@ func TestStopMakesTheNextCommandFailAtOnce(t *testing.T) {
 	// taken by the kernel; the read is the answer.
 	_, _ = io.WriteString(held, "*1\r\n$4\r\nPING\r\n")
 	if got, err := answers.ReadString('\n'); err == nil || errors.Is(err, os.ErrDeadlineExceeded) {
-		t.Fatalf("PING on the held connection after Stop was answered %q, %v; want a connection that ended", got, err)
+		require.Failf(t, "", "PING on the held connection after Stop was answered %q, %v; want a connection that ended", got, err)
 	}
 	// A second Stop, and the cleanup's after it, only wait.
 	s.Stop()
@@ -368,15 +370,15 @@ func TestTheServerListensOnLoopbackAndNowhereElse(t *testing.T) {
 	c := dial(t, s.Addr())
 	host, port, err := net.SplitHostPort(s.Addr())
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() || ip.IsUnspecified() {
-		t.Fatalf("the server's address is %s; want a loopback address", s.Addr())
+		require.Failf(t, "", "the server's address is %s; want a loopback address", s.Addr())
 	}
 	for option, want := range map[string]string{"bind": "127.0.0.1", "port": port, "tls-port": "0", "unixsocket": "", "dir": ""} {
 		got, err := c.ConfigGet(ctx, option).Result()
 		if err != nil {
-			t.Fatalf("CONFIG GET %s: %v", option, err)
+			require.NoError(t, err, "CONFIG GET %s: %v", option, err)
 		}
 		if option == "dir" {
 			// The server's own spelling of the directory (/private/var for
@@ -384,12 +386,12 @@ func TestTheServerListensOnLoopbackAndNowhereElse(t *testing.T) {
 			asked, err1 := os.Stat(s.dir)
 			told, err2 := os.Stat(got[option])
 			if err1 != nil || err2 != nil || !os.SameFile(asked, told) {
-				t.Errorf("CONFIG GET dir = %q (%v); want the test's directory %q (%v)", got[option], err2, s.dir, err1)
+				assert.Failf(t, "", "CONFIG GET dir = %q (%v); want the test's directory %q (%v)", got[option], err2, s.dir, err1)
 			}
 			continue
 		}
 		if got[option] != want {
-			t.Errorf("CONFIG GET %s = %q; want %q", option, got[option], want)
+			assert.Equal(t, want, got[option], "CONFIG GET %s = %q; want %q", option, got[option], want)
 		}
 	}
 
@@ -401,7 +403,7 @@ func TestTheServerListensOnLoopbackAndNowhereElse(t *testing.T) {
 	// listener on this machine answers from the kernel, at any load.
 	addrs, err := net.InterfaceAddrs()
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	others := []string{"::1"}
 	for _, a := range addrs {
@@ -432,15 +434,15 @@ func TestTheServerListensOnLoopbackAndNowhereElse(t *testing.T) {
 		// One command answered and the next is read after the server has
 		// taken every client that had connected by then.
 		if err := c.Ping(ctx).Err(); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 		clients, err := c.ClientList(ctx).Result()
 		_ = conn.Close()
 		if err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 		if strings.Contains(clients, "addr="+from+" ") {
-			t.Errorf("the server took a client on %s, which is not loopback:\n%s", net.JoinHostPort(others[i], port), clients)
+			assert.Failf(t, "", "the server took a client on %s, which is not loopback:\n%s", net.JoinHostPort(others[i], port), clients)
 		}
 	}
 }
@@ -457,24 +459,24 @@ func TestAServerThatLostItsPortIsNeverMistakenForTheOneThatHoldsIt(t *testing.T)
 	ctx := bounded(t)
 	a := dial(t, first.Addr())
 	if err := a.Set(ctx, "whose", "the first test's", 0).Err(); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	pings := func() string {
 		t.Helper()
 		stats, err := a.Info(ctx, "commandstats").Result()
 		if err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 		return regexp.MustCompile(`cmdstat_ping:calls=\d+`).FindString(stats)
 	}
 	before := pings()
 	if before != "cmdstat_ping:calls=1" {
-		t.Fatalf("the first server was pinged %q as it started; want once, by its own Start", before)
+		require.Equal(t, "cmdstat_ping:calls=1", before, "the first server was pinged %q as it started; want once, by its own Start", before)
 	}
 
 	_, held, err := net.SplitHostPort(first.Addr())
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	l := real
 	var handed []string
@@ -490,20 +492,20 @@ func TestAServerThatLostItsPortIsNeverMistakenForTheOneThatHoldsIt(t *testing.T)
 	second := l.start(t, nil)
 
 	if second.Addr() == first.Addr() || second.PID() == first.PID() {
-		t.Fatalf("the second test was given the first test's server: %s, pid %d", second.Addr(), second.PID())
+		require.Failf(t, "", "the second test was given the first test's server: %s, pid %d", second.Addr(), second.PID())
 	}
 	if len(handed) != 2 || second.Addr() != net.JoinHostPort("127.0.0.1", handed[1]) {
-		t.Fatalf("ports handed over: %v, the second server is at %s; want the held port left and the next one taken", handed, second.Addr())
+		require.Failf(t, "", "ports handed over: %v, the second server is at %s; want the held port left and the next one taken", handed, second.Addr())
 	}
 	b := dial(t, second.Addr())
 	if n, err := b.DBSize(ctx).Result(); err != nil || n != 0 {
-		t.Fatalf("the second test's server holds %d keys, %v; want none: the first test's key is not its", n, err)
+		require.Failf(t, "", "the second test's server holds %d keys, %v; want none: the first test's key is not its", n, err)
 	}
 	if got, err := a.Get(ctx, "whose").Result(); err != nil || got != "the first test's" {
-		t.Fatalf("the first server's key = %q, %v", got, err)
+		require.Failf(t, "", "the first server's key = %q, %v", got, err)
 	}
 	if after := pings(); after != before {
-		t.Fatalf("the first server was pinged again while the second started: %s; Start asked a server that is not its own", after)
+		require.Equal(t, before, after, "the first server was pinged again while the second started: %s; Start asked a server that is not its own", after)
 	}
 }
 
@@ -514,12 +516,12 @@ func TestAPortThatSomethingElseHoldsIsLeftAlone(t *testing.T) {
 	Program(t)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	defer ln.Close()
 	_, held, err := net.SplitHostPort(ln.Addr().String())
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	l := real
 	asked := 0
@@ -531,18 +533,18 @@ func TestAPortThatSomethingElseHoldsIsLeftAlone(t *testing.T) {
 	}
 	s := l.start(t, nil)
 	if asked != 2 || s.Addr() == ln.Addr().String() {
-		t.Fatalf("%d ports were taken and the server is at %s; want two, and not the held %s", asked, s.Addr(), ln.Addr())
+		require.Failf(t, "", "%d ports were taken and the server is at %s; want two, and not the held %s", asked, s.Addr(), ln.Addr())
 	}
 	if err := dial(t, s.Addr()).Ping(bounded(t)).Err(); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	// Nobody called on the held port.
 	if err := ln.(*net.TCPListener).SetDeadline(time.Now()); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if conn, err := ln.Accept(); err == nil {
 		_ = conn.Close()
-		t.Fatalf("Start called on %s, a port its server did not hold", ln.Addr())
+		require.Failf(t, "", "Start called on %s, a port its server did not hold", ln.Addr())
 	}
 }
 
@@ -560,10 +562,10 @@ func TestStartWithNoRedisServerSkipsOnALaptopAndFailsUnderCI(t *testing.T) {
 	switch os.Getenv(childEnv) {
 	case "Start":
 		Start(t)
-		t.Fatal("Start returned with no redis-server on PATH")
+		require.Fail(t, "Start returned with no redis-server on PATH")
 	case "Program":
 		Program(t)
-		t.Fatal("Program returned with no redis-server on PATH")
+		require.Fail(t, "Program returned with no redis-server on PATH")
 	}
 
 	empty := t.TempDir()
@@ -583,10 +585,10 @@ func TestStartWithNoRedisServerSkipsOnALaptopAndFailsUnderCI(t *testing.T) {
 			env := append([]string{"PATH=" + empty, "TMPDIR=" + t.TempDir()}, c.env...)
 			out, err := again("TestStartWithNoRedisServerSkipsOnALaptopAndFailsUnderCI", env...).CombinedOutput()
 			if !strings.Contains(string(out), c.want) || !strings.Contains(string(out), "executable file not found") {
-				t.Fatalf("the child said nothing of %q and its cause:\n%s", c.want, out)
+				require.Failf(t, "", "the child said nothing of %q and its cause:\n%s", c.want, out)
 			}
 			if skipped := strings.Contains(string(out), "--- SKIP"); skipped != c.skip || (err == nil) != c.skip {
-				t.Fatalf("the child skipped: %v, ended with %v; want skipped: %v\n%s", skipped, err, c.skip, out)
+				require.Failf(t, "", "the child skipped: %v, ended with %v; want skipped: %v\n%s", skipped, err, c.skip, out)
 			}
 		})
 	}
@@ -601,11 +603,11 @@ func TestARedisServerThatCannotRunFailsTheTestWithItsName(t *testing.T) {
 	r := provoke(t, func(tb testing.TB) { l.start(tb, User("bench", "the-password")) })
 	for _, want := range []string{"did not start", missing, `arguments: "--bind" "127.0.0.1" "--port"`, `"--user" "bench" "on" "***"`} {
 		if !strings.Contains(r.fatal, want) {
-			t.Errorf("the failure lacks %q:\n%s", want, r.fatal)
+			assert.Contains(t, r.fatal, want, "the failure lacks %q:\n%s", want, r.fatal)
 		}
 	}
 	if strings.Contains(r.fatal, "the-password") || r.skipped != "" {
-		t.Fatalf("the failure carries the password, or the test skipped (%q):\n%s", r.skipped, r.fatal)
+		require.Failf(t, "", "the failure carries the password, or the test skipped (%q):\n%s", r.skipped, r.fatal)
 	}
 }
 
@@ -631,14 +633,14 @@ func TestAServerThatExitsFailsTheTestWithWhatItSaid(t *testing.T) {
 		"last output:\n" + shimLine,
 	} {
 		if !strings.Contains(r.fatal, want) {
-			t.Errorf("the failure lacks %q:\n%s", want, r.fatal)
+			assert.Contains(t, r.fatal, want, "the failure lacks %q:\n%s", want, r.fatal)
 		}
 	}
 	if strings.Contains(r.fatal, "the-password") || r.skipped != "" {
-		t.Fatalf("the failure carries the password, or the test skipped (%q):\n%s", r.skipped, r.fatal)
+		require.Failf(t, "", "the failure carries the password, or the test skipped (%q):\n%s", r.skipped, r.fatal)
 	}
 	if taken != 3 {
-		t.Fatalf("Start took %d ports; want 3, its tries", taken)
+		require.EqualValues(t, 3, taken, "Start took %d ports; want 3, its tries", taken)
 	}
 }
 
@@ -656,15 +658,15 @@ func TestAServerThatNeverComesUpIsKilledAtTheBound(t *testing.T) {
 		"last output:\nfake pid=",
 	} {
 		if !strings.Contains(r.fatal, want) {
-			t.Errorf("the failure lacks %q:\n%s", want, r.fatal)
+			assert.Contains(t, r.fatal, want, "the failure lacks %q:\n%s", want, r.fatal)
 		}
 	}
 	if pid := fakePID(t, r.fatal); alive(pid) {
 		kill(pid)
-		t.Fatalf("Start failed the test and left its server, pid %d, alive", pid)
+		require.Failf(t, "", "Start failed the test and left its server, pid %d, alive", pid)
 	}
 	if taken != 1 {
-		t.Fatalf("Start took %d ports for a server that stayed; want one: the bound is paid once", taken)
+		require.EqualValues(t, 1, taken, "Start took %d ports for a server that stayed; want one: the bound is paid once", taken)
 	}
 }
 
@@ -679,12 +681,12 @@ func TestAServerThatSaysItIsReadyAndDoesNotAnswerFailsTheTest(t *testing.T) {
 		"Ready to accept connections tcp",
 	} {
 		if !strings.Contains(r.fatal, want) {
-			t.Errorf("the failure lacks %q:\n%s", want, r.fatal)
+			assert.Contains(t, r.fatal, want, "the failure lacks %q:\n%s", want, r.fatal)
 		}
 	}
 	if pid := fakePID(t, r.fatal); alive(pid) {
 		kill(pid)
-		t.Fatalf("Start failed the test and left its server, pid %d, alive", pid)
+		require.Failf(t, "", "Start failed the test and left its server, pid %d, alive", pid)
 	}
 }
 
@@ -698,7 +700,7 @@ func TestAServerDoesNotOutliveItsTestBinary(t *testing.T) {
 		fmt.Printf("SERVER %d %s %s\n", s.PID(), s.Addr(), s.dir)
 		switch how {
 		case "fails":
-			t.Fatal("the child fails, as it was asked to")
+			require.Fail(t, "the child fails, as it was asked to")
 		case "panics":
 			panic("the child panics, as it was asked to")
 		case "panics off the test's goroutine":
@@ -708,7 +710,7 @@ func TestAServerDoesNotOutliveItsTestBinary(t *testing.T) {
 		}
 		// The others stay until it happens to them.
 		_, _ = io.Copy(io.Discard, os.Stdin)
-		t.Fatal("the child's input ended and nothing had ended the child")
+		require.Fail(t, "the child's input ended and nothing had ended the child")
 	}
 
 	Program(t)
@@ -739,22 +741,22 @@ func TestAServerDoesNotOutliveItsTestBinary(t *testing.T) {
 				e = endBadly(t, how, "-test.timeout="+timeout)
 			}
 			if e.pid == 0 {
-				t.Fatalf("the child started no server\n%s", e.said)
+				require.NotEqualValues(t, 0, e.pid, "the child started no server\n%s", e.said)
 			}
 			defer kill(e.pid)
 			if e.passed {
-				t.Fatalf("the child passed; it was to end badly\n%s", e.said)
+				require.Failf(t, "", "the child passed; it was to end badly\n%s", e.said)
 			}
 			if !strings.Contains(e.said, c.said) {
-				t.Fatalf("the child did not end the way it was asked to (%q):\n%s", c.said, e.said)
+				require.Contains(t, e.said, c.said, "the child did not end the way it was asked to (%q):\n%s", c.said, e.said)
 			}
 			// The process is asked, not the port: once the server is gone
 			// its port is anyone's, and a parallel test may take it.
 			if !gone(e.pid) {
-				t.Fatalf("the test binary is gone and its server, pid %d, is alive", e.pid)
+				require.Failf(t, "", "the test binary is gone and its server, pid %d, is alive", e.pid)
 			}
 			if _, err := os.Stat(e.dir); c.cleanups != errors.Is(err, fs.ErrNotExist) {
-				t.Fatalf("the server's directory %s: %v; the child ran its cleanups: %v", e.dir, err, c.cleanups)
+				require.Failf(t, "", "the server's directory %s: %v; the child ran its cleanups: %v", e.dir, err, c.cleanups)
 			}
 		})
 	}
@@ -777,17 +779,17 @@ func endBadly(t *testing.T, how string, flags ...string) ending {
 	child.Args = append(child.Args, flags...)
 	held, err := child.StdinPipe()
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	defer held.Close()
 	stdout, err := child.StdoutPipe()
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	var stderr bytes.Buffer
 	child.Stderr = &stderr
 	if err := child.Start(); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	server := make(chan string, 1)
 	said := make(chan string, 1)
@@ -808,15 +810,15 @@ func endBadly(t *testing.T, how string, flags ...string) ending {
 	case line := <-server:
 		// No line is a child that ended before it had a server.
 		if _, err := fmt.Sscanf(line, "SERVER %d %s %s", &e.pid, &e.addr, &e.dir); err != nil && line != "" {
-			t.Errorf("the child said %q: %v", line, err)
+			assert.Failf(t, "", "the child said %q: %v", line, err)
 		}
 	case <-time.After(30 * time.Second):
-		t.Error("the child said nothing of a server in thirty seconds")
+		assert.Fail(t, "the child said nothing of a server in thirty seconds")
 	}
 	if how == "is killed" || e.pid == 0 {
 		// The server stands, and its test binary is killed under it.
 		if e.pid != 0 && (!alive(e.pid) || refused(e.addr)) {
-			t.Errorf("the child's server, pid %d at %s, does not stand", e.pid, e.addr)
+			assert.Failf(t, "", "the child's server, pid %d at %s, does not stand", e.pid, e.addr)
 		}
 		_ = child.Process.Kill()
 	}
@@ -834,10 +836,10 @@ func TestTheSentryKillsItsServersWhenItsInputCloses(t *testing.T) {
 	Program(t)
 	at, err := enlist(realSentry)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if at.group <= 0 || !alive(at.group) {
-		t.Fatalf("the sentry's group is %d; want the pid of a process that is alive", at.group)
+		require.Failf(t, "", "the sentry's group is %d; want the pid of a process that is alive", at.group)
 	}
 	defer kill(at.group)
 	l := real
@@ -846,43 +848,43 @@ func TestTheSentryKillsItsServersWhenItsInputCloses(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		s := l.start(t, nil)
 		if err := dial(t, s.Addr()).Ping(bounded(t)).Err(); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 		servers = append(servers, s)
 	}
 
 	// What the kernel does when the test binary is gone.
 	if err := at.hold.Close(); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	select {
 	case <-at.gone:
 	case <-time.After(30 * time.Second):
-		t.Fatal("the sentry's input closed thirty seconds ago and the sentry is alive")
+		require.Fail(t, "the sentry's input closed thirty seconds ago and the sentry is alive")
 	}
 	for _, s := range servers {
 		select {
 		case <-s.exited:
 		case <-time.After(30 * time.Second):
-			t.Fatalf("the sentry is gone and the server with pid %d is alive; nobody stopped it", s.PID())
+			require.Failf(t, "", "the sentry is gone and the server with pid %d is alive; nobody stopped it", s.PID())
 		}
 		// The process is asked, not the port: the port of a server that
 		// has exited is anyone's, and a parallel test may take it.
 		if alive(s.PID()) {
-			t.Errorf("the server with pid %d at %s outlived its sentry", s.PID(), s.Addr())
+			assert.Failf(t, "", "the server with pid %d at %s outlived its sentry", s.PID(), s.Addr())
 		}
 	}
 
 	// With the sentry gone no server is started: Start refuses, and a start
 	// that did not ask could not join the group.
 	if r := provoke(t, func(tb testing.TB) { l.start(tb, nil) }); !strings.Contains(r.fatal, "no server is started without its sentry") {
-		t.Fatalf("Start after the sentry ended failed with %q; want the refusal", r.fatal)
+		require.Contains(t, r.fatal, "no server is started without its sentry", "Start after the sentry ended failed with %q; want the refusal", r.fatal)
 	}
 	r := provoke(t, func(tb testing.TB) {
 		l.run(tb, Program(tb), tb.TempDir(), FreePort(tb), nil, at.group)
 	})
 	if !strings.Contains(r.fatal, "did not start") {
-		t.Fatalf("a server started into the group of a sentry that is gone: %q; want the start to fail", r.fatal)
+		require.Contains(t, r.fatal, "did not start", "a server started into the group of a sentry that is gone: %q; want the start to fail", r.fatal)
 	}
 }
 
@@ -916,17 +918,17 @@ func TestASentryThatDoesNotStandIsAnError(t *testing.T) {
 			at, err := enlist(c.spec)
 			if err == nil {
 				kill(at.group)
-				t.Fatalf("enlist = a sentry in group %d; want an error", at.group)
+				require.Failf(t, "", "enlist = a sentry in group %d; want an error", at.group)
 			}
 			for _, want := range c.want {
 				if !strings.Contains(err.Error(), want) {
-					t.Errorf("the error lacks %q: %v", want, err)
+					assert.Failf(t, "", "the error lacks %q: %v", want, err)
 				}
 			}
 			if m := regexp.MustCompile(`fake pid=(\d+)`).FindStringSubmatch(err.Error()); m != nil {
 				if pid, _ := strconv.Atoi(m[1]); alive(pid) {
 					kill(pid)
-					t.Fatalf("a sentry that does not stand was left alive, pid %d", pid)
+					require.Failf(t, "", "a sentry that does not stand was left alive, pid %d", pid)
 				}
 			}
 		})
@@ -943,13 +945,13 @@ func TestASentryThatSaysNothingIsKilledAtTheBound(t *testing.T) {
 	})
 	if err == nil {
 		kill(at.group)
-		t.Fatalf("enlist = a sentry in group %d; want an error", at.group)
+		require.Failf(t, "", "enlist = a sentry in group %d; want an error", at.group)
 	}
 	if !strings.Contains(err.Error(), "does not stand") || !strings.Contains(err.Error(), "it said nothing in 300ms") {
-		t.Fatalf("enlist = %v; want the bound", err)
+		require.Failf(t, "", "enlist = %v; want the bound", err)
 	}
 	if pid := fakePID(t, err.Error()); alive(pid) {
 		kill(pid)
-		t.Fatalf("a sentry that does not stand was left alive, pid %d", pid)
+		require.Failf(t, "", "a sentry that does not stand was left alive, pid %d", pid)
 	}
 }

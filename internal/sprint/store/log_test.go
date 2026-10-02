@@ -1,7 +1,6 @@
 package store
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -9,14 +8,14 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func (h *harness) lines() []sprint.Line {
 	h.t.Helper()
 	ls, err := h.st.Log(h.ctx)
-	if err != nil {
-		h.t.Fatal(err)
-	}
+	require.NoError(h.t, err)
 	return ls
 }
 
@@ -46,14 +45,13 @@ func TestTheLogHoldsEveryMoveAndReplaysToTheTables(t *testing.T) {
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m2"}))
 	h.live = []string{"m2"} // m1 silent: its card is taken back and redealt
 	for i := 0; i < 3; i++ {
-		h.tick(10 * time.Second)
+		h.tick(pastDown / 3)
 		h.machine()
 	}
 	h.clean("redealt")
 	c := h.snap().Fleet.Card("p1.w1")
-	if c == nil || c.Row != "m2" {
-		t.Fatalf("redealt to m2: %+v", c)
-	}
+	require.NotNil(t, c, "redealt to m2: %+v", c)
+	require.Equal(t, "m2", c.Row, "redealt to m2: %+v", c)
 	h.run(TakeStep(sprint.TakeReq{As: "m2", Sel: sprint.Sel{IDs: []string{"p1.w1"}}, Gens: map[string]int{"p1.w1": c.Int("gen")}, Who: "m2"}))
 	h.must(FinishStep(sprint.FinishReq{As: "m2", Sel: sprint.Sel{IDs: []string{"p1.w1"}}, Gens: map[string]int{"p1.w1": c.Int("gen")}, Failed: true, Report: "the tests went red", Who: "m2"}))
 	h.must(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"p1"}}, Answers: []string{h.openOf(sprint.NWorkFailed)[0].Note.ID}}))
@@ -70,21 +68,17 @@ func TestTheLogHoldsEveryMoveAndReplaysToTheTables(t *testing.T) {
 		"tester answered \"work came back failed\": rework",
 		"attempt 2 dealt to",
 	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("the log of p1 has no %q:\n%s", want, got)
-		}
+		assert.Contains(t, got, want, "the log of p1 has no %q:\n%s", want, got)
 	}
 	var report, brief bool
 	for _, l := range h.lines() {
 		report = report || l.Text["report"] == "the tests went red"
 		brief = brief || l.Text["brief"] == "do the thing"
 	}
-	if !report || !brief {
-		t.Fatalf("the words given are not on their lines: report %v, brief %v", report, brief)
-	}
-	if v := sprint.LogViolations(h.snap(), h.lines()); len(v) != 0 {
-		t.Fatalf("the log does not replay: %v", v)
-	}
+	require.True(t, report, "the words given are not on their lines: report %v, brief %v", report, brief)
+	require.True(t, brief, "the words given are not on their lines: report %v, brief %v", report, brief)
+	v := sprint.LogViolations(h.snap(), h.lines())
+	require.Empty(t, v, "the log does not replay: %v", v)
 }
 
 // Rule 13 holds the log to the tables: a card moved by a writer outside the
@@ -96,22 +90,17 @@ func TestAMoveTheLogNeverSawIsRule13(t *testing.T) {
 	h.must(DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
 	s := h.snap()
 	wc := s.Fleet.Card("s1-1.w1")
-	if _, err := h.m.Apply(h.ctx, ntable.BatchManifest{Schema: 1, Table: "t-fleet", Epoch: "0", ExpectedTableRevision: fmt.Sprint(s.Fleet.Revision),
+	_, err := h.m.Apply(h.ctx, ntable.BatchManifest{Schema: 1, Table: "t-fleet", Epoch: "0", ExpectedTableRevision: fmt.Sprint(s.Fleet.Revision),
 		OperationID: "outside-move", Members: []ntable.BatchMemberEntry{{ID: wc.ID, Expect: &ntable.MemberExpect{Revision: fmt.Sprint(wc.Rev)},
-			Move: &ntable.MemberMoveOp{Row: wc.Row, Col: sprint.Withdrawn}}}}); err != nil {
-		t.Fatal(err)
-	}
+			Move: &ntable.MemberMoveOp{Row: wc.Row, Col: sprint.Withdrawn}}}})
+	require.NoError(t, err)
 	rep, _, err := h.st.Check(h.ctx, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	found := false
 	for _, v := range rep.Violations {
 		found = found || v.Rule == 13 && strings.Contains(v.Detail, "s1-1.w1")
 	}
-	if !found {
-		t.Fatalf("an unlogged move: %v", rep.Violations)
-	}
+	require.True(t, found, "an unlogged move: %v", rep.Violations)
 }
 
 // A clear keeps the old epoch's log, readable at that epoch, and the new
@@ -121,29 +110,19 @@ func TestAClearKeepsTheOldEpochsLog(t *testing.T) {
 	h := newHarness(t)
 	h.setup(2)
 	before := len(h.lines())
-	if before == 0 {
-		t.Fatalf("no lines before the clear")
-	}
-	if _, err := h.st.Clear(h.ctx); err != nil {
-		t.Fatal(err)
-	}
+	require.NotEqual(t, 0, before, "no lines before the clear")
+	_, err := h.st.Clear(h.ctx)
+	require.NoError(t, err)
 	st, err := h.st.Pinned(h.ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	now, err := st.Log(h.ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	for _, l := range now {
-		if l.Kind == sprint.LineMove && !strings.HasSuffix(l.To, ":"+sprint.Ctl) {
-			t.Fatalf("the new epoch's log has a move line: %+v", l)
-		}
+		require.False(t, l.Kind == sprint.LineMove && !strings.HasSuffix(l.To, ":"+sprint.Ctl), "the new epoch's log has a move line: %+v", l)
 	}
 	old, err := st.At(0).Log(h.ctx)
-	if err != nil || len(old) != before {
-		t.Fatalf("the old epoch's log: %d lines, want %d (%v)", len(old), before, err)
-	}
+	require.NoError(t, err, "the old epoch's log: %d lines, want %d (%v)", len(old), before, err)
+	require.Len(t, old, before, "the old epoch's log: %d lines, want %d (%v)", len(old), before, err)
 }
 
 // The flapping judgment: a lateness raised on an attempt stays raised
@@ -180,27 +159,25 @@ func TestALatenessStaysRaisedUntilItsAttemptEnds(t *testing.T) {
 		return out
 	}
 	first := late()
-	if len(first) != 1 {
-		t.Fatalf("withdrawn two hours after its take: %d not-finished judgments", len(first))
-	}
+	require.Len(t, first, 1, "withdrawn two hours after its take: %d not-finished judgments", len(first))
 	for i := 0; i < 3; i++ {
 		h.live = []string{"m1"}
 		h.tick(time.Second)
 		h.machine() // back: its presence is the fleet's update, after the pump
 		h.tick(time.Second)
 		h.machine() // the next pump redeals the card: ready
-		if l := late(); len(l) != 1 || l[0].Note.ID != first[0].Note.ID {
-			t.Fatalf("lap %d, redealt: the lateness %+v, want %s still open", i, l, first[0].Note.ID)
-		}
+		l := late()
+		require.Len(t, l, 1, "lap %d, redealt: the lateness %+v, want %s still open", i, l, first[0].Note.ID)
+		require.Equal(t, first[0].Note.ID, l[0].Note.ID, "lap %d, redealt: the lateness %+v, want %s still open", i, l, first[0].Note.ID)
 		take()
 		h.tick(time.Second)
 		h.machine()
-		if l := late(); len(l) != 1 || l[0].Note.ID != first[0].Note.ID {
-			t.Fatalf("lap %d, taken again: the lateness %+v, want %s still open", i, l, first[0].Note.ID)
-		}
+		l = late()
+		require.Len(t, l, 1, "lap %d, taken again: the lateness %+v, want %s still open", i, l, first[0].Note.ID)
+		require.Equal(t, first[0].Note.ID, l[0].Note.ID, "lap %d, taken again: the lateness %+v, want %s still open", i, l, first[0].Note.ID)
 		h.live = nil
 		for j := 0; j < 3; j++ {
-			h.tick(10 * time.Second)
+			h.tick(pastDown / 3)
 			h.machine()
 		}
 	}
@@ -215,12 +192,10 @@ func TestALatenessStaysRaisedUntilItsAttemptEnds(t *testing.T) {
 			}
 		}
 	}
-	if written != 1 || updates == 0 {
-		t.Fatalf("the not-finished judgment written %d times, updated %d times", written, updates)
-	}
-	if w := late()[0].Note.What; !strings.Contains(w, "; at ") {
-		t.Fatalf("the open lateness does not say where the card is: %q", w)
-	}
+	require.Equal(t, 1, written, "the not-finished judgment written %d times, updated %d times", written, updates)
+	require.NotEqual(t, 0, updates, "the not-finished judgment written %d times, updated %d times", written, updates)
+	w := late()[0].Note.What
+	require.Contains(t, w, "; at ", "the open lateness does not say where the card is: %q", w)
 }
 
 // The take-and-abandon loop: a card taken and abandoned over and over is redealt at most
@@ -248,7 +223,7 @@ func TestTheRedealBoundEndsTheTakeAndAbandonLoop(t *testing.T) {
 		other := map[string]string{"m1": "m2", "m2": "m1"}[holder]
 		h.live = []string{other} // the taker abandons it
 		for i := 0; i < 3; i++ {
-			h.tick(10 * time.Second)
+			h.tick(pastDown / 3)
 			h.machine()
 		}
 		h.live = []string{"m1", "m2"}
@@ -257,36 +232,33 @@ func TestTheRedealBoundEndsTheTakeAndAbandonLoop(t *testing.T) {
 	}
 	c := h.snap().Fleet.Card("s1-1.w1")
 	if c.Int("redeals") != sprint.MaxRedeals || c.Col != sprint.Withdrawn || c.Int("gen") > sprint.MaxRedeals+2 {
-		t.Fatalf("after ten abandonments: %s at %s:%s gen %d redeals %d", c.ID, c.Row, c.Col, c.Int("gen"), c.Int("redeals"))
+		require.Failf(t, "", "after ten abandonments: %s at %s:%s gen %d redeals %d", c.ID, c.Row, c.Col, c.Int("gen"), c.Int("redeals"))
 	}
-	if st := h.state("s1-1"); st != sprint.Ready {
-		t.Fatalf("s1-1 is %s at its bound", st)
-	}
+	st := h.state("s1-1")
+	require.Equal(t, sprint.Ready, st, "s1-1 is %s at its bound", st)
 	bound := h.openOf(sprint.NBound)
-	if len(bound) != 1 || bound[0].Note.Card != "s1-1.w1" || !strings.Contains(bound[0].Note.What, "redealt 3 times") {
-		t.Fatalf("the bound judgment: %+v", bound)
-	}
+	require.Len(t, bound, 1, "the bound judgment: %+v", bound)
+	require.Equal(t, "s1-1.w1", bound[0].Note.Card, "the bound judgment: %+v", bound)
+	require.Contains(t, bound[0].Note.What, "redealt 3 times", "the bound judgment: %+v", bound)
 	var redeals []string
 	for _, l := range h.lines() {
 		if l.Card == "s1-1.w1" && strings.Contains(sprint.Render(l), "redeal ") {
 			redeals = append(redeals, sprint.Render(l))
 		}
 	}
-	if len(redeals) != 3 || !strings.Contains(redeals[2], "redeal 3 of 3") {
-		t.Fatalf("the redeal lines: %q", redeals)
-	}
+	require.Len(t, redeals, 3, "the redeal lines: %q", redeals)
+	require.Contains(t, redeals[2], "redeal 3 of 3", "the redeal lines: %q", redeals)
 	h.tick(time.Minute)
 	h.machine()
 	if c2 := h.snap().Fleet.Card("s1-1.w1"); c2.Int("gen") != c.Int("gen") || c2.Col != sprint.Withdrawn {
-		t.Fatalf("dealt again past its bound: %s:%s gen %d", c2.Row, c2.Col, c2.Int("gen"))
+		require.Failf(t, "", "dealt again past its bound: %s:%s gen %d", c2.Row, c2.Col, c2.Int("gen"))
 	}
-	if res := h.run(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Answers: []string{bound[0].Note.ID}})); len(res.Refused) == 0 {
-		t.Fatalf("rework at the bound with no fix: %+v", res)
-	}
+	res := h.run(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Answers: []string{bound[0].Note.ID}}))
+	require.NotEmpty(t, res.Refused, "rework at the bound with no fix: %+v", res)
 	h.must(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: "run it on a quieter machine", Answers: []string{bound[0].Note.ID}}))
 	w2 := h.snap().Fleet.Card("s1-1.w2")
 	if w2 == nil || w2.Col != sprint.Ready || w2.Int("redeals") != 0 || h.state("s1-1") != sprint.Working || len(h.openOf(sprint.NBound)) != 0 {
-		t.Fatalf("reworked at the bound: %+v, s1-1 %s, bound open %d", w2, h.state("s1-1"), len(h.openOf(sprint.NBound)))
+		require.Failf(t, "", "reworked at the bound: %+v, s1-1 %s, bound open %d", w2, h.state("s1-1"), len(h.openOf(sprint.NBound)))
 	}
 	h.clean("reworked at the bound")
 }
@@ -300,9 +272,7 @@ func TestTheLogAndTheInboxAgree(t *testing.T) {
 	h.clean("agree")
 	rule14 := func() []string {
 		rep, _, err := h.st.Check(h.ctx, 1)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		var out []string
 		for _, v := range rep.Violations {
 			if v.Rule == 14 {
@@ -317,14 +287,15 @@ func TestTheLogAndTheInboxAgree(t *testing.T) {
 	lg := h.m.log()
 	lg.inbox = append(lg.inbox, memNote{fmt.Sprintf("%d-0", h.m.seq), n})
 	h.m.mu.Unlock()
-	if v := rule14(); len(v) != 1 || !strings.Contains(v[0], "outside-1.1") || !strings.Contains(v[0], "not in the log") {
-		t.Fatalf("an inbox entry with no line: %v", v)
-	}
+	v := rule14()
+	require.Len(t, v, 1, "an inbox entry with no line: %v", v)
+	require.Contains(t, v[0], "outside-1.1", "an inbox entry with no line: %v", v)
+	require.Contains(t, v[0], "not in the log", "an inbox entry with no line: %v", v)
 	m := sprint.Note{ID: "outside-2.1", Kind: sprint.Happened, Type: "an outside note", What: "only in the log", At: h.now}
 	h.m.appendLine(sprint.NoteLine(m, "outside-2"))
-	if v := rule14(); len(v) != 2 || !strings.Contains(strings.Join(v, "\n"), "outside-2.1 (happened, an outside note): only in the log is in the log and not in the inbox") {
-		t.Fatalf("a line with no inbox entry: %v", v)
-	}
+	v = rule14()
+	require.Len(t, v, 2, "a line with no inbox entry: %v", v)
+	require.Contains(t, strings.Join(v, "\n"), "outside-2.1 (happened, an outside note): only in the log is in the log and not in the inbox", "a line with no inbox entry: %v", v)
 }
 
 // Glenn's drive: a sentinel every 100 cards of a stream of 1,000 ready
@@ -340,14 +311,11 @@ func TestSentinelsInsertedIntoALongStreamAreBoundedRecords(t *testing.T) {
 	for k := 1; k <= 9; k++ {
 		gate := fmt.Sprintf("s1-gate-%d", k)
 		res, err := h.st.Run(h.ctx, AddStep(sprint.AddReq{Stream: "s1", IDs: []string{gate}, Sentinel: true, After: fmt.Sprintf("s1-%d", k*100)}))
-		if err != nil || len(res.Refused) > 0 {
-			t.Fatalf("the sentinel after s1-%d: %v %+v", k*100, err, res.Refused)
-		}
+		require.NoError(t, err, "the sentinel after s1-%d: %v %+v", k*100, err, res.Refused)
+		require.Empty(t, res.Refused, "the sentinel after s1-%d: %v %+v", k*100, err, res.Refused)
 	}
 	for _, l := range h.lines() {
-		if len(l.Cause) > sprint.MaxCause {
-			t.Fatalf("a line's cause of %d bytes: %.200s", len(l.Cause), l.Cause)
-		}
+		require.LessOrEqual(t, len(l.Cause), int(sprint.MaxCause), "a line's cause of %d bytes: %.200s", len(l.Cause), l.Cause)
 	}
 	h.clean("nine sentinels")
 }
@@ -360,18 +328,12 @@ func TestARecordTheStoreRefusesChangesNothingAndSaysSo(t *testing.T) {
 	h.setup(0)
 	h.m.MaxWrite = 512
 	res, err := h.st.Run(h.ctx, AddStep(sprint.AddReq{Stream: "s1", Count: 20}))
-	if err == nil && len(res.Refused) == 0 {
-		t.Fatalf("a record over the store's bound was taken: %+v", res)
-	}
-	if errors.Is(err, ErrUnknown) {
-		t.Fatalf("changed=unknown for a write the store did not take: %v", err)
-	}
+	require.False(t, err == nil && len(res.Refused) == 0, "a record over the store's bound was taken: %+v", res)
+	require.NotErrorIs(t, err, ErrUnknown, "changed=unknown for a write the store did not take: %v", err)
 	why := fmt.Sprint(err, res.Refused)
-	if !strings.Contains(why, "nothing was changed") || !strings.Contains(why, "broken pipe") {
-		t.Fatalf("the refusal does not say nothing changed and the store's reason: %s", why)
-	}
-	if n := len(h.snap().Work.Column(sprint.Ready)); n != 0 {
-		t.Fatalf("%d cards added by a refused write", n)
-	}
+	require.Contains(t, why, "nothing was changed", "the refusal does not say nothing changed and the store's reason: %s", why)
+	require.Contains(t, why, "broken pipe", "the refusal does not say nothing changed and the store's reason: %s", why)
+	n := len(h.snap().Work.Column(sprint.Ready))
+	require.Equal(t, 0, n, "%d cards added by a refused write", n)
 	h.clean("refused")
 }

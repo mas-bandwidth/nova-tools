@@ -8,7 +8,7 @@ Each rule here is a gate rather than a step: something the verb **refuses** unti
 gate whose condition lives only in code is a gate nobody outside the code can check. Each rule is numbered
 so it can be referred to, states the mistake it prevents, and names the tests that hold it.
 
-## 1. A range that touched the sensitive paths needs Johnny's read
+## 1. A range that touched the sensitive paths needs the security reader's read
 
 A release is the moment work stops being a diff somebody can revert and becomes binaries on every bench in
 the fleet. Most ranges are ordinary. Some touch the parts of this estate a mistake cannot be taken back
@@ -18,7 +18,7 @@ coordinator runs unattended. Those are not cut on the judgement of whoever is at
 **`release cut` classifies the range `<previous tag>..<head>` against the list below.** If any path the
 range touched sits under one of these prefixes, the cut **refuses** — naming the paths, because *something
 sensitive changed* sends a person back to the compare view to work out what — until `--security-read <note
-id or the url of the pull request comment>` names Johnny's read. It then prints, above its own receipt:
+id or the url of the pull request comment>` names the security reader's read. It then prints, above its own receipt:
 
 ```
 RELEASE CUT SENSITIVE paths=<n> read=<id>
@@ -171,7 +171,7 @@ RELEASE CUT REFUSED reason=compare-truncated files=300 range=<base>...<head> rem
 It is a field line rather than the usual `CUT REFUSED: <prose>` because this is the one refusal a
 person or a script has to be able to tell apart from every other reason a cut can refuse.
 
-**`--security-read` does not get past it.** Johnny's read is a read *of a list*, and the list is the
+**`--security-read` does not get past it.** The security reader's read is a read *of a list*, and the list is the
 thing that may be short: a read of a prefix of the truth vouches for a prefix of the truth. The only
 way past a truncated compare is a complete list.
 
@@ -220,10 +220,17 @@ names them all:
 
 ```
 RELEASE BUILT version=<v> platform=<goos-goarch> tools=<n> verified=<n> out=<dir> sums=<sha256> digest=<path>
-RELEASE BUILD OK version=<v> platforms=<a,b,c> tools=<n> sums=<sha256,sha256,sha256> dogfood=<ok|waived|skipped> out=<dir>
+RELEASE BUILD OK version=<v> platforms=<a,b,c> tools=<n> sums=<sha256,sha256,sha256> dogfood=<ok|waived|skipped> out=<dir> pruned=<n> prune-failed=<n>
 ```
 
-`platforms=` and `sums=` are the same list in the same order, one token each.
+`platforms=` and `sums=` are the same list in the same order, one token each. `pruned=` is the
+retention rule (`internal/release/prune.go`), run last by `build` on `--out` and by `install` on
+`--from`: of the directories whose names are versions, it keeps the one just built or installed,
+the one the machine had installed before it, and the `KeepBesides` (3) newest of the rest by
+modification time, and removes the others through `safepath.RemoveUnder`. A removal that fails is
+counted in `prune-failed=` and never fails the verb. Install also preserves any release
+directory containing the bin path or its resolved target, compared by filesystem identity
+so symlinks and case aliases cannot cause newly installed binaries to be pruned.
 
 *Tests: `TestBuildRefusesAnUnsupportedPairBeforeBuildingAnything`,
 `TestBuildBuildsEveryPlatformAndNamesEachInTheReceipt`.*
@@ -388,7 +395,7 @@ tag nobody ever cuts.
 
 **The gate judges what ships.** The shipped set is the tools under the checkout's `cmd/` — the
 directory beside the reference and the changelog — and a receipt naming any other tool is set aside
-before the gate reads it: a tool under `deprecated/` is not built, not tested and not in the release,
+before the gate reads it: a tool outside `cmd/` is not built, not tested and not in the release,
 so its open edges and its not-ok runs are true about that tool and say nothing about this one. What
 is set aside is counted, never dropped in silence:
 

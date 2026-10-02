@@ -6,6 +6,9 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // ci_outputs_test.go is the one-line law for step outputs.
@@ -65,9 +68,7 @@ func TestNoMultiLineValueIsWrittenToAStepOutput(t *testing.T) {
 	for _, file := range []string{".github/workflows/ci.yml", ".github/workflows/certification.yml"} {
 		src := readFile(t, filepath.Join(root, file))
 		found := flaggedOutputWrites(src)
-		if len(runBlocks(src)) == 0 {
-			t.Fatalf("no run blocks parsed from %s; the parser is looking in the wrong place", file)
-		}
+		require.NotEmpty(t, runBlocks(src), "no run blocks parsed from %s; the parser is looking in the wrong place", file)
 		for _, v := range found {
 			t.Errorf("%s:%d: %s", file, v.line, v.msg)
 		}
@@ -117,14 +118,12 @@ jobs:
           pkgs="$pkgs ./internal/ci"
           echo "pkgs=$pkgs" >> "$GITHUB_OUTPUT"
 `
-	if got := flaggedOutputWrites(before); len(got) != 1 {
-		t.Errorf("the pre-#1318 step must be flagged exactly once, got %d: %v", len(got), got)
-	} else if !strings.Contains(got[0].msg, "go list") {
-		t.Errorf("the finding does not name the producer that made the value multi-line: %s", got[0].msg)
+	got := flaggedOutputWrites(before)
+	if assert.Len(t, got, 1, "the pre-#1318 step must be flagged exactly once, got %d: %v", len(got), got) {
+		assert.Contains(t, got[0].msg, "go list", "the finding does not name the producer that made the value multi-line: %s", got[0].msg)
 	}
-	if got := flaggedOutputWrites(after); len(got) != 0 {
-		t.Errorf("the fixed step must pass, got %d finding(s): %v", len(got), got)
-	}
+	gotAfter := flaggedOutputWrites(after)
+	assert.Empty(t, gotAfter, "the fixed step must pass, got %d finding(s): %v", len(gotAfter), gotAfter)
 
 	// The other two shapes the rule claims: a substitution written straight to
 	// the output, and the heredoc form that is the right way to write a real
@@ -136,9 +135,8 @@ jobs:
       - run: |
           echo "files=$(git diff --name-only HEAD~1 HEAD)" >> "$GITHUB_OUTPUT"
 `
-	if got := flaggedOutputWrites(direct); len(got) != 1 {
-		t.Errorf("a multi-line substitution written straight to $GITHUB_OUTPUT must be flagged once, got %d: %v", len(got), got)
-	}
+	gotDirect := flaggedOutputWrites(direct)
+	assert.Len(t, gotDirect, 1, "a multi-line substitution written straight to $GITHUB_OUTPUT must be flagged once, got %d: %v", len(gotDirect), gotDirect)
 	const heredoc = `
 jobs:
   j:
@@ -149,9 +147,8 @@ jobs:
           echo "$files" >> "$GITHUB_OUTPUT"
           echo "NOVA_EOF" >> "$GITHUB_OUTPUT"
 `
-	if got := flaggedOutputWrites(heredoc); len(got) != 0 {
-		t.Errorf("the key<<EOF form is the supported way to write a multi-line value and must pass, got: %v", got)
-	}
+	gotHeredoc := flaggedOutputWrites(heredoc)
+	assert.Empty(t, gotHeredoc, "the key<<EOF form is the supported way to write a multi-line value and must pass, got: %v", gotHeredoc)
 	// And the two narrowings, which must stay quiet: one package, and a script.
 	const narrow = `
 jobs:
@@ -163,9 +160,8 @@ jobs:
           echo "p=$p" >> "$GITHUB_OUTPUT"
           echo "slots=$slots" >> "$GITHUB_OUTPUT"
 `
-	if got := flaggedOutputWrites(narrow); len(got) != 0 {
-		t.Errorf("the documented narrowings must not fire, got: %v", got)
-	}
+	gotNarrow := flaggedOutputWrites(narrow)
+	assert.Empty(t, gotNarrow, "the documented narrowings must not fire, got: %v", gotNarrow)
 }
 
 // outputFinding is one flagged write: the line in the workflow and what to do.

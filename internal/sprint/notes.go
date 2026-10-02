@@ -42,6 +42,14 @@ const (
 	NMemberUp       = "fleet member up"
 	NMemberDown     = "fleet member down"
 	NUnknownMachine = "an unknown machine is beating"
+	NStagingRefused = "a member refused a card at staging" // dealt to another member
+
+	// The tick's own failure, noted once for each distinct error text it
+	// keeps failing with, and its recovery, noted once with the count of
+	// failed ticks (docs/SPEC-SPRINT.md section 14): both are happened notes
+	// addressed to the coordinator, so the tick end wakes it.
+	NTickFailed    = "the tick failed"
+	NTickRecovered = "the tick recovered"
 
 	// Computed by inbox from the machine's record, as the stale line is: no
 	// notification holds them.
@@ -57,6 +65,7 @@ const (
 	NReturned        = "returned to review" // sent back from merging: the coordinator decides again
 	NWorkFailed      = "work came back failed"
 	NReadBroken      = "a reader found it broken"
+	NReadReturned    = "a reader returned a read" // no verdict, not a read: asked again
 	NConflict        = "stream stopped: conflict on a card"
 	NRed             = "stream stopped: stream branch red"
 	NCross           = "stream stopped: needs a card of another stream first"
@@ -269,9 +278,7 @@ func MergeNotes(notes []Note) []Note {
 				out[i].Count++
 			}
 		}
-		if n.Before > out[i].Before {
-			out[i].Before = n.Before
-		}
+		out[i].Before = max(out[i].Before, n.Before)
 		for _, x := range n.Needs {
 			if !contains(out[i].Needs, x) {
 				out[i].Needs = append(out[i].Needs, x)

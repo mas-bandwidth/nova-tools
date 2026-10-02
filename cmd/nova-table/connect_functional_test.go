@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"github.com/redis/go-redis/v9"
 	"io"
 	"net"
 	"strings"
@@ -15,7 +16,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/testredis"
-	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/require"
 )
 
 // relay stands between the tool and a throwaway store, so a test can take
@@ -58,9 +59,7 @@ func (p *pair) end() {
 func startRelay(t *testing.T, target string, dropFcall *atomic.Bool) *relay {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, "%v", err)
 	r := &relay{ln: ln, target: target, dropFcall: dropFcall}
 	go r.serve()
 	t.Cleanup(r.stop)
@@ -164,14 +163,15 @@ func (r *relay) stop() {
 // of go-redis's own pool log.
 func oneFailureLine(t *testing.T, what string, code int, stdout, stderr string, want ...string) {
 	t.Helper()
-	if code != 2 || stdout != "" || strings.Count(stderr, "\n") != 1 || !strings.HasSuffix(stderr, "\n") ||
-		strings.Contains(stderr, "pool.go") || !strings.Contains(stderr, "; next: ") || strings.Contains(stderr, "; run: nova-table help") {
-		t.Fatalf("%s: exit %d stdout %q stderr %q", what, code, stdout, stderr)
-	}
+	require.EqualValues(t, 2, code, "%s: exit %d stdout %q stderr %q", what, code, stdout, stderr)
+	require.Empty(t, stdout, "%s: exit %d stdout %q stderr %q", what, code, stdout, stderr)
+	require.EqualValues(t, 1, strings.Count(stderr, "\n"), "%s: exit %d stdout %q stderr %q", what, code, stdout, stderr)
+	require.True(t, strings.HasSuffix(stderr, "\n"), "%s: exit %d stdout %q stderr %q", what, code, stdout, stderr)
+	require.NotContains(t, stderr, "pool.go", "%s: exit %d stdout %q stderr %q", what, code, stdout, stderr)
+	require.Contains(t, stderr, "; next: ", "%s: exit %d stdout %q stderr %q", what, code, stdout, stderr)
+	require.NotContains(t, stderr, "; run: nova-table help", "%s: exit %d stdout %q stderr %q", what, code, stdout, stderr)
 	for _, w := range want {
-		if !strings.Contains(stderr, w) {
-			t.Fatalf("%s: stderr %q wants %q", what, stderr, w)
-		}
+		require.Contains(t, stderr, w, "%s: stderr %q wants %q", what, stderr, w)
 	}
 }
 
@@ -192,9 +192,11 @@ func TestUnreachableStoreIsOneLine(t *testing.T) {
 	var out, errs bytes.Buffer
 	code = (&application{in: strings.NewReader("version\nlist\n")}).run([]string{"shell", "--redis", port}, &out, &errs)
 	lines := strings.Split(strings.TrimSuffix(errs.String(), "\n"), "\n")
-	if code != 2 || len(lines) != 2 || !strings.Contains(lines[0], ": unreachable: ") || lines[1] != "nova-table shell: line 2 failed (exit 2)" || strings.Contains(errs.String(), "pool.go") {
-		t.Fatalf("shell: exit %d stdout %q stderr %q", code, &out, &errs)
-	}
+	require.EqualValues(t, 2, code, "shell: exit %d stdout %q stderr %q", code, &out, &errs)
+	require.Len(t, lines, 2, "shell: exit %d stdout %q stderr %q", code, &out, &errs)
+	require.Contains(t, lines[0], ": unreachable: ", "shell: exit %d stdout %q stderr %q", code, &out, &errs)
+	require.Equal(t, "nova-table shell: line 2 failed (exit 2)", lines[1], "shell: exit %d stdout %q stderr %q", code, &out, &errs)
+	require.NotContains(t, errs.String(), "pool.go", "shell: exit %d stdout %q stderr %q", code, &out, &errs)
 }
 
 // noEnv is an empty environment: the default user, no password.
@@ -211,9 +213,7 @@ func TestRefusedLoginIsOneLine(t *testing.T) {
 	addr := testredis.Start(t, testredis.User(user, right)...)
 	admin := redis.NewClient(&redis.Options{Addr: addr, Username: user, Password: right})
 	defer admin.Close()
-	if err := fn.Load(context.Background(), admin); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, fn.Load(context.Background(), admin))
 	env := map[string]string{
 		"NOVA_SPRINT_REDIS_USER":         user,
 		"NOVA_SPRINT_REDIS_PASSWORD_ENV": "NOVA_TABLE_TEST_PASSWORD",
@@ -227,9 +227,8 @@ func TestRefusedLoginIsOneLine(t *testing.T) {
 	env["NOVA_TABLE_TEST_PASSWORD"] = wrong
 	code, stdout, stderr := runAs("list", "--redis", addr)
 	oneFailureLine(t, "wrong password", code, stdout, stderr, "as user "+user+" (password from NOVA_TABLE_TEST_PASSWORD)", ": login refused: ", "WRONGPASS")
-	if strings.Contains(stderr, wrong) || strings.Contains(stderr, right) {
-		t.Fatalf("a password reached stderr: %q", stderr)
-	}
+	require.NotContains(t, stderr, wrong, "a password reached stderr: %q", stderr)
+	require.NotContains(t, stderr, right, "a password reached stderr: %q", stderr)
 
 	env["NOVA_TABLE_TEST_PASSWORD"] = ""
 	code, stdout, stderr = runAs("list", "--redis", addr)
@@ -246,14 +245,17 @@ func TestRefusedLoginIsOneLine(t *testing.T) {
 
 	env["NOVA_SPRINT_REDIS_USER"] = user
 	env["NOVA_TABLE_TEST_PASSWORD"] = right
-	if code, stdout, stderr = runAs("list", "--redis", addr); code != 0 || stdout != "TABLE LIST tables=0 trips=1\n" || stderr != "" {
-		t.Fatalf("right password: exit %d stdout %q stderr %q", code, stdout, stderr)
+	{
+		code, stdout, stderr = runAs("list", "--redis", addr)
+		require.EqualValues(t, 0, code, "right password: exit %d stdout %q stderr %q", code, stdout, stderr)
+		require.Equal(t, "TABLE LIST tables=0 trips=1\n", stdout, "right password: exit %d stdout %q stderr %q", code, stdout, stderr)
+		require.Empty(t, stderr, "right password: exit %d stdout %q stderr %q", code, stdout, stderr)
 	}
 	var out, errs bytes.Buffer
 	code = (&application{in: strings.NewReader("list\n"), getenv: func(k string) string { return env[k] }}).run([]string{"shell", "--redis", addr}, &out, &errs)
-	if code != 0 || out.String() != "TABLE LIST tables=0 trips=1\n" || errs.Len() != 0 {
-		t.Fatalf("shell with the right password: exit %d stdout %q stderr %q", code, &out, &errs)
-	}
+	require.EqualValues(t, 0, code, "shell with the right password: exit %d stdout %q stderr %q", code, &out, &errs)
+	require.Equal(t, "TABLE LIST tables=0 trips=1\n", out.String(), "shell with the right password: exit %d stdout %q stderr %q", code, &out, &errs)
+	require.EqualValues(t, 0, errs.Len(), "shell with the right password: exit %d stdout %q stderr %q", code, &out, &errs)
 }
 
 // restartReader hands the shell one line per read, and before the second
@@ -295,9 +297,7 @@ func TestShellLineAfterRestart(t *testing.T) {
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	defer c.Close()
 	rows, err := c.XLen(context.Background(), ntable.ChangesKey("jobs")).Result()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, "%v", err)
 	lines := strings.Split(strings.TrimSuffix(errs.String(), "\n"), "\n")
 	answered := code == 0 && errs.Len() == 0 && rows == 2 && strings.Contains(out.String(), "TABLE ROW ADD table=jobs row=after")
 	// Lost: one line, one remedy, show (the write may have committed).
@@ -305,7 +305,7 @@ func TestShellLineAfterRestart(t *testing.T) {
 		strings.HasSuffix(lines[0], "; run: nova-table show 'jobs'") && !strings.Contains(lines[0], "; next: ") &&
 		lines[1] == "nova-table shell: line 2 failed (exit 2)"
 	t.Logf("after the restart the line took Answered=%v Lost=%v; stderr %q", answered, lost, &errs)
-	if !(answered || lost) || !strings.Contains(out.String(), "TABLE LIST tables=1 trips=1") || r.accepted.Load() != 2 {
-		t.Fatalf("restart: exit %d changes=%d connections=%d stdout %q stderr %q", code, rows, r.accepted.Load(), &out, &errs)
-	}
+	require.True(t, (answered || lost), "restart: exit %d changes=%d connections=%d stdout %q stderr %q", code, rows, r.accepted.Load(), &out, &errs)
+	require.Contains(t, out.String(), "TABLE LIST tables=1 trips=1", "restart: exit %d changes=%d connections=%d stdout %q stderr %q", code, rows, r.accepted.Load(), &out, &errs)
+	require.EqualValues(t, 2, r.accepted.Load(), "restart: exit %d changes=%d connections=%d stdout %q stderr %q", code, rows, r.accepted.Load(), &out, &errs)
 }

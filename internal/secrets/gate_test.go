@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 const (
@@ -19,9 +21,7 @@ func gateGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
 	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %v failed: %v, out: %s", args, err, out)
-	}
+	require.NoError(t, err, "git %v failed: %v, out: %s", args, err, out)
 	return string(out)
 }
 
@@ -32,12 +32,8 @@ func gateStart(t *testing.T) string {
 	gateGit(t, dir, "init", "-b", "main")
 	gateGit(t, dir, "config", "user.name", "Test")
 	gateGit(t, dir, "config", "user.email", "test@example.com")
-	if err := os.WriteFile(filepath.Join(dir, "recovery.pub"), []byte(gateRecoveryKey+"\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("the store\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "recovery.pub"), []byte(gateRecoveryKey+"\n"), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "README.md"), []byte("the store\n"), 0600))
 	gateGit(t, dir, "add", "-A")
 	gateGit(t, dir, "commit", "-m", "base")
 	return dir
@@ -47,9 +43,7 @@ func gateStart(t *testing.T) string {
 func gateCommit(t *testing.T, dir string, files map[string]string) string {
 	t.Helper()
 	for name, content := range files {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0600); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(content), 0600))
 	}
 	gateGit(t, dir, "add", "-A")
 	gateGit(t, dir, "commit", "-m", "change")
@@ -84,12 +78,8 @@ func TestGateApprovesAGoodSeatPR(t *testing.T) {
 		"rowan.yaml": gateSealedFile(),
 	})
 	line, code := RunGate(GateInput{StoreDir: dir, Base: base, Head: head})
-	if code != 0 {
-		t.Fatalf("RunGate = (%q, %d), want APPROVE at exit 0", line, code)
-	}
-	if line != "GATE APPROVE files=2 machines=-" {
-		t.Fatalf("RunGate line = %q, want %q", line, "GATE APPROVE files=2 machines=-")
-	}
+	require.Equal(t, 0, code, "RunGate = (%q, %d), want APPROVE at exit 0", line, code)
+	require.Equal(t, "GATE APPROVE files=2 machines=-", line, "RunGate line = %q, want %q", line, "GATE APPROVE files=2 machines=-")
 }
 
 func TestGateRefusesARuleWithThreeRecipients(t *testing.T) {
@@ -102,12 +92,8 @@ func TestGateRefusesARuleWithThreeRecipients(t *testing.T) {
 		"rowan.yaml": gateSealedFile(),
 	})
 	line, code := RunGate(GateInput{StoreDir: dir, Base: base, Head: head})
-	if code != 2 {
-		t.Fatalf("RunGate code = %d, want 2 (line=%q)", code, line)
-	}
-	if !strings.Contains(line, "GATE REFUSE rule=1") {
-		t.Fatalf("RunGate line = %q, want REFUSE naming rule=1", line)
-	}
+	require.Equal(t, 2, code, "RunGate code = %d, want 2 (line=%q)", code, line)
+	require.Contains(t, line, "GATE REFUSE rule=1", "RunGate line = %q, want REFUSE naming rule=1", line)
 }
 
 func TestGateRefusesAPlaintextValue(t *testing.T) {
@@ -120,12 +106,9 @@ func TestGateRefusesAPlaintextValue(t *testing.T) {
 		"rowan.yaml": gateSealedFile() + "GH_TOKEN: sk-live-notencrypted\n",
 	})
 	line, code := RunGate(GateInput{StoreDir: dir, Base: base, Head: head})
-	if code != 2 {
-		t.Fatalf("RunGate code = %d, want 2 (line=%q)", code, line)
-	}
-	if !strings.Contains(line, "GATE REFUSE") || !strings.Contains(line, "rowan.yaml") {
-		t.Fatalf("RunGate line = %q, want REFUSE naming rowan.yaml", line)
-	}
+	require.Equal(t, 2, code, "RunGate code = %d, want 2 (line=%q)", code, line)
+	require.Contains(t, line, "GATE REFUSE", "RunGate line = %q, want REFUSE naming rowan.yaml", line)
+	require.Contains(t, line, "rowan.yaml", "RunGate line = %q, want REFUSE naming rowan.yaml", line)
 }
 
 func TestGateRefusesAChangeToAnotherFile(t *testing.T) {
@@ -139,10 +122,7 @@ func TestGateRefusesAChangeToAnotherFile(t *testing.T) {
 		"notes.txt":  "a change outside the gate\n",
 	})
 	line, code := RunGate(GateInput{StoreDir: dir, Base: base, Head: head})
-	if code != 2 {
-		t.Fatalf("RunGate code = %d, want 2 (line=%q)", code, line)
-	}
-	if !strings.Contains(line, "GATE REFUSE") || !strings.Contains(line, "notes.txt") {
-		t.Fatalf("RunGate line = %q, want REFUSE naming notes.txt", line)
-	}
+	require.Equal(t, 2, code, "RunGate code = %d, want 2 (line=%q)", code, line)
+	require.Contains(t, line, "GATE REFUSE", "RunGate line = %q, want REFUSE naming notes.txt", line)
+	require.Contains(t, line, "notes.txt", "RunGate line = %q, want REFUSE naming notes.txt", line)
 }

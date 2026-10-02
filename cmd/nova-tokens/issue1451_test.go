@@ -1,6 +1,8 @@
 package main
 
 import (
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"strings"
 	"testing"
 )
@@ -41,9 +43,7 @@ func TestIssue1451EveryRefusalNamesTheDoor(t *testing.T) {
 		seen[verb] = true
 		verbs = append(verbs, verb)
 	}
-	if len(verbs) == 0 {
-		t.Fatal("no flag-bearing verbs parsed from the help banner")
-	}
+	require.False(t, len(verbs) == 0, "no flag-bearing verbs parsed from the help banner")
 
 	for _, verb := range verbs {
 		t.Run(verb, func(t *testing.T) {
@@ -54,9 +54,7 @@ func TestIssue1451EveryRefusalNamesTheDoor(t *testing.T) {
 				if line == "" {
 					continue
 				}
-				if !strings.HasSuffix(line, "; run: nova-tokens help") {
-					t.Errorf("%s refusal line %d has no door: %q", verb, i+1, line)
-				}
+				assert.False(t, !strings.HasSuffix(line, "; run: nova-tokens help"), "%s refusal line %d has no door: %q", verb, i+1, line)
 			}
 		})
 	}

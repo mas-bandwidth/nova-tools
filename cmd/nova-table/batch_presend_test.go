@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/stretchr/testify/assert"
 )
 
 // The command judges a manifest before it sends it, and says what the library
@@ -30,11 +31,9 @@ func TestBatchCommandPreSendRefusalsSayThisCallOnly(t *testing.T) {
 	}
 	for _, tc := range cases {
 		code, stdout, stderr := runTable("batch", tc.manifest)
-		if code != tc.exit || stdout != "" {
-			t.Errorf("%s: exit %d stdout %q stderr %q; want exit %d", tc.name, code, stdout, stderr, tc.exit)
-		}
-		if !strings.Contains(stderr, ntable.CheckedBeforeSending) || !strings.Contains(stderr, "changed=no") {
-			t.Errorf("%s: %q lacks %q", tc.name, stderr, ntable.CheckedBeforeSending)
-		}
+		assert.Equal(t, tc.exit, code, "%s: exit %d stdout %q stderr %q; want exit %d", tc.name, code, stdout, stderr, tc.exit)
+		assert.Empty(t, stdout, "%s: exit %d stdout %q stderr %q; want exit %d", tc.name, code, stdout, stderr, tc.exit)
+		assert.Contains(t, stderr, ntable.CheckedBeforeSending, "%s: %q lacks %q", tc.name, stderr, ntable.CheckedBeforeSending)
+		assert.Contains(t, stderr, "changed=no", "%s: %q lacks %q", tc.name, stderr, ntable.CheckedBeforeSending)
 	}
 }

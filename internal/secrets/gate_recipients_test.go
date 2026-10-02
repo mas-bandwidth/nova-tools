@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // The second key a PR would introduce. A recipient key is public, but the gate never prints
@@ -38,9 +40,7 @@ func gateMachines(t *testing.T, rows ...string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "machines.tsv")
 	body := "# the fleet\n" + strings.Join(rows, "\n") + "\n"
-	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(body), 0600))
 	return path
 }
 
@@ -52,9 +52,7 @@ func gateRow(name, seat string) string {
 func gateRemove(t *testing.T, dir string, names ...string) string {
 	t.Helper()
 	for _, n := range names {
-		if err := os.Remove(filepath.Join(dir, n)); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.Remove(filepath.Join(dir, n)))
 	}
 	gateGit(t, dir, "add", "-A")
 	gateGit(t, dir, "commit", "-m", "remove")
@@ -77,15 +75,10 @@ func TestGateRefusesANewRecipientForASeatTheRegistryDoesNotName(t *testing.T) {
 	machines := gateMachines(t, gateRow("air", "swarm-air"), gateRow("hulk", "swarm-hulk"))
 
 	line, code := RunGate(GateInput{StoreDir: dir, Base: base, Head: head, MachinesPath: machines})
-	if code != 2 {
-		t.Fatalf("RunGate code = %d, want 2 (line=%q)", code, line)
-	}
-	if !strings.Contains(line, "GATE REFUSE rule=1") || !strings.Contains(line, "air.yaml") {
-		t.Fatalf("RunGate line = %q, want REFUSE naming rule=1 and air.yaml", line)
-	}
-	if strings.Contains(line, gateNewSeatKey) {
-		t.Fatalf("RunGate line = %q, must name the seat, not the key", line)
-	}
+	require.Equal(t, 2, code, "RunGate code = %d, want 2 (line=%q)", code, line)
+	require.Contains(t, line, "GATE REFUSE rule=1", "RunGate line = %q, want REFUSE naming rule=1 and air.yaml", line)
+	require.Contains(t, line, "air.yaml", "RunGate line = %q, want REFUSE naming rule=1 and air.yaml", line)
+	require.NotContains(t, line, gateNewSeatKey, "RunGate line = %q, must name the seat, not the key", line)
 }
 
 func TestGateApprovesANewRecipientForASeatTheRegistryNames(t *testing.T) {
@@ -100,12 +93,9 @@ func TestGateApprovesANewRecipientForASeatTheRegistryNames(t *testing.T) {
 	machines := gateMachines(t, gateRow("air", "swarm-air"))
 
 	line, code := RunGate(GateInput{StoreDir: dir, Base: base, Head: head, MachinesPath: machines})
-	if code != 0 {
-		t.Fatalf("RunGate = (%q, %d), want APPROVE at exit 0", line, code)
-	}
-	if !strings.HasPrefix(line, "GATE APPROVE files=2 machines=") || !strings.Contains(line, machines) {
-		t.Fatalf("RunGate line = %q, want APPROVE naming the registry it read", line)
-	}
+	require.Equal(t, 0, code, "RunGate = (%q, %d), want APPROVE at exit 0", line, code)
+	require.True(t, strings.HasPrefix(line, "GATE APPROVE files=2 machines="), "RunGate line = %q, want APPROVE naming the registry it read", line)
+	require.Contains(t, line, machines, "RunGate line = %q, want APPROVE naming the registry it read", line)
 }
 
 // A key already in the store is not a grant: reselaing an existing seat, or editing its rule,
@@ -127,9 +117,7 @@ func TestGateApprovesARuleEditThatAddsNoRecipient(t *testing.T) {
 	machines := gateMachines(t, gateRow("air", "swarm-air"))
 
 	line, code := RunGate(GateInput{StoreDir: dir, Base: base, Head: head, MachinesPath: machines})
-	if code != 0 {
-		t.Fatalf("RunGate = (%q, %d), want APPROVE at exit 0", line, code)
-	}
+	require.Equal(t, 0, code, "RunGate = (%q, %d), want APPROVE at exit 0", line, code)
 }
 
 // Without a registry the rule is dormant, not silently satisfied: the gate says so on the
@@ -145,12 +133,8 @@ func TestGateWithoutAMachinesRegistrySaysTheRuleDidNotRun(t *testing.T) {
 	})
 
 	line, code := RunGate(GateInput{StoreDir: dir, Base: base, Head: head})
-	if code != 0 {
-		t.Fatalf("RunGate = (%q, %d), want APPROVE at exit 0", line, code)
-	}
-	if !strings.Contains(line, "machines=-") {
-		t.Fatalf("RunGate line = %q, want it to say machines=- (no registry read)", line)
-	}
+	require.Equal(t, 0, code, "RunGate = (%q, %d), want APPROVE at exit 0", line, code)
+	require.Contains(t, line, "machines=-", "RunGate line = %q, want it to say machines=- (no registry read)", line)
 }
 
 func TestGateRefusesAnUnreadableMachinesRegistry(t *testing.T) {
@@ -164,12 +148,8 @@ func TestGateRefusesAnUnreadableMachinesRegistry(t *testing.T) {
 	})
 
 	line, code := RunGate(GateInput{StoreDir: dir, Base: base, Head: head, MachinesPath: filepath.Join(dir, "no-such.tsv")})
-	if code != 2 {
-		t.Fatalf("RunGate code = %d, want 2 (line=%q)", code, line)
-	}
-	if !strings.Contains(line, "GATE REFUSE") {
-		t.Fatalf("RunGate line = %q, want a refusal", line)
-	}
+	require.Equal(t, 2, code, "RunGate code = %d, want 2 (line=%q)", code, line)
+	require.Contains(t, line, "GATE REFUSE", "RunGate line = %q, want a refusal", line)
 }
 
 // Keep what exists: a seat file that was in the store must still be there. Removing one is
@@ -186,12 +166,9 @@ func TestGateRefusesARemovedSeatFile(t *testing.T) {
 	head := gateRemove(t, dir, "rowan.yaml")
 
 	line, code := RunGate(GateInput{StoreDir: dir, Base: base, Head: head})
-	if code != 2 {
-		t.Fatalf("RunGate code = %d, want 2 (line=%q)", code, line)
-	}
-	if !strings.Contains(line, "GATE REFUSE") || !strings.Contains(line, "rowan.yaml") {
-		t.Fatalf("RunGate line = %q, want REFUSE naming rowan.yaml", line)
-	}
+	require.Equal(t, 2, code, "RunGate code = %d, want 2 (line=%q)", code, line)
+	require.Contains(t, line, "GATE REFUSE", "RunGate line = %q, want REFUSE naming rowan.yaml", line)
+	require.Contains(t, line, "rowan.yaml", "RunGate line = %q, want REFUSE naming rowan.yaml", line)
 }
 
 // The registry is read WHOLE and validated whole, as internal/fleet demands: a malformed
@@ -208,12 +185,8 @@ func TestGateRefusesAMalformedMachinesRegistry(t *testing.T) {
 	machines := gateMachines(t, "air\tair\tlinux/x64\tbench")
 
 	line, code := RunGate(GateInput{StoreDir: dir, Base: base, Head: head, MachinesPath: machines})
-	if code != 2 {
-		t.Fatalf("RunGate code = %d, want 2 (line=%q)", code, line)
-	}
-	if !strings.Contains(line, "GATE REFUSE") {
-		t.Fatalf("RunGate line = %q, want a refusal", line)
-	}
+	require.Equal(t, 2, code, "RunGate code = %d, want 2 (line=%q)", code, line)
+	require.Contains(t, line, "GATE REFUSE", "RunGate line = %q, want a refusal", line)
 }
 
 // A machine that carries no seat says `-`; that is an answer, not a seat name, and a rule
@@ -230,7 +203,5 @@ func TestGateDoesNotTreatADashAsASeatName(t *testing.T) {
 	machines := gateMachines(t, gateRow("mini", "-"))
 
 	line, code := RunGate(GateInput{StoreDir: dir, Base: base, Head: head, MachinesPath: machines})
-	if code != 2 {
-		t.Fatalf("RunGate code = %d, want 2 (line=%q)", code, line)
-	}
+	require.Equal(t, 2, code, "RunGate code = %d, want 2 (line=%q)", code, line)
 }

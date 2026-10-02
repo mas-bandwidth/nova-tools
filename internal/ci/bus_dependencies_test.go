@@ -5,6 +5,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The bus is messages over Git. Only its bus, build-info and one-line modules
@@ -35,25 +38,19 @@ func TestBusHasOnlyGeneralModulesAndStandardLibrary(t *testing.T) {
 		if f.HasDirNamed("testdata") {
 			continue
 		}
-		if f.ParseErr != nil {
-			t.Fatal(f.ParseErr)
-		}
+		require.NoError(t, f.ParseErr)
 		pkg := module + path.Dir(f.Rel)
 		if _, ok := imports[pkg]; !ok {
 			imports[pkg] = nil
 		}
 		for _, spec := range f.AST.Imports {
 			name, err := strconv.Unquote(spec.Path.Value)
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
 			imports[pkg] = append(imports[pkg], name)
 		}
 	}
 	for _, root := range []string{"cmd/nova-bus"} {
-		if _, ok := imports[module+root]; !ok {
-			t.Fatalf("missing dependency root %s", root)
-		}
+		require.Contains(t, imports, module+root, "missing dependency root %s", root)
 		visited := map[string]bool{}
 		var walk func(string)
 		walk = func(pkg string) {
@@ -63,16 +60,14 @@ func TestBusHasOnlyGeneralModulesAndStandardLibrary(t *testing.T) {
 			visited[pkg] = true
 			for _, dep := range imports[pkg] {
 				if strings.HasPrefix(dep, module) {
-					if !busAllowed[dep] {
-						t.Errorf("%s reaches %s through %s; the bus carries messages over Git without decision or storage dependencies", root, dep, pkg)
-					}
-					if _, ok := imports[dep]; !ok {
-						t.Errorf("cannot inspect local dependency %s", dep)
+					assert.True(t, busAllowed[dep], "%s reaches %s through %s; the bus carries messages over Git without decision or storage dependencies", root, dep, pkg)
+					if !assert.Contains(t, imports, dep, "cannot inspect local dependency %s", dep) {
 						continue
 					}
 					walk(dep)
-				} else if first, _, _ := strings.Cut(dep, "/"); strings.Contains(first, ".") {
-					t.Errorf("%s reaches third-party dependency %s through %s; the bus uses the standard library", root, dep, pkg)
+				} else {
+					first, _, _ := strings.Cut(dep, "/")
+					assert.False(t, strings.Contains(first, "."), "%s reaches third-party dependency %s through %s; the bus uses the standard library", root, dep, pkg)
 				}
 			}
 		}

@@ -176,9 +176,7 @@ func workWrites(ws []holeWrite) map[string]int {
 func (h *harness) queueLen() int {
 	h.t.Helper()
 	q, err := h.st.B.QueueRead(h.ctx)
-	if err != nil {
-		h.t.Fatal(err)
-	}
+	require.NoError(h.t, err)
 	return len(q)
 }
 
@@ -186,9 +184,7 @@ func (h *harness) queueLen() int {
 func (h *harness) notesOf(typ string) int {
 	h.t.Helper()
 	notes, _, err := h.st.B.NotesSince(h.ctx, "", 100000)
-	if err != nil {
-		h.t.Fatal(err)
-	}
+	require.NoError(h.t, err)
 	n := 0
 	for _, x := range notes {
 		if x.Type == typ && x.Kind != sprint.Decided && x.Kind != sprint.Acknowledged {
@@ -220,12 +216,16 @@ func (h *harness) play(members []string, streams ...string) {
 	h.tick(time.Second)
 }
 
-// heldOK says no up member holds more work cards, ready and working, than its
-// width; "" when none does.
+// heldOK says no up member holds more work cards, ready and working, than
+// DealAhead times its width, and none works more than its width; "" when none
+// does.
 func heldOK(s *sprint.Snapshot) string {
 	for _, m := range s.UpMembers() {
-		if n := heldBy(s, m); n > s.Width(m) {
-			return fmt.Sprintf("%s holds %d work cards, over its width %d", m, n, s.Width(m))
+		if n := heldBy(s, m); n > sprint.DealAhead*s.Width(m) {
+			return fmt.Sprintf("%s holds %d work cards, over DealAhead times its width %d", m, n, s.Width(m))
+		}
+		if n := s.Fleet.Count(m, sprint.Working); n > s.Width(m) {
+			return fmt.Sprintf("%s works %d cards, over its width %d", m, n, s.Width(m))
 		}
 	}
 	return ""
@@ -277,7 +277,7 @@ func holesRun(x *holeTick, n int, lapse bool, after func(round int, res TickResu
 			h.liveMembers("m2")
 			h.work("m2")
 			h.readAll()
-			h.tick(sprint.BeatDeadline + time.Second)
+			h.tick(pastDown)
 			continue
 		}
 		if lapse && round == 5 {
@@ -288,7 +288,7 @@ func holesRun(x *holeTick, n int, lapse bool, after func(round int, res TickResu
 			return
 		}
 	}
-	t.Fatalf("not landed after 120 rounds")
+	require.FailNow(t, "not landed after 120 rounds")
 }
 
 // ---- G1 ----------------------------------------------------------------------
@@ -486,13 +486,15 @@ func TestG2TheDealWritesTheFleetInThePumpsOwnStep(t *testing.T) {
 	require.GreaterOrEqual(t, checked, 10, "the watch saw %d work cards created by the deal and checked %d steps: it saw too little", created, checked)
 }
 
-// G2. No machine is over its width at any step of any tick: the width is
-// checked on the state every update plans on, after every settle step, and
-// after the tick.
-func TestG2NoMachineIsOverItsWidthAtAnyStepOfATick(t *testing.T) {
+// G2. No machine holds more than DealAhead times its width, nor works more
+// than its width, at any step of any tick: checked on the state every update
+// plans on, after every settle step, and after the tick.
+func TestG2NoMachineIsOverDealAheadTimesItsWidthAtAnyStepOfATick(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
-	holesUp(h, 8)
+	// sixteen cards a stream: a deal of DealAhead times the width ends the sprint
+	// in fewer ticks, so more cards give the check as many steps as before
+	holesUp(h, 16)
 	x := newHoleTick(h)
 	steps := 0
 	x.onPlan = func(part string, s *sprint.Snapshot) {
@@ -500,7 +502,7 @@ func TestG2NoMachineIsOverItsWidthAtAnyStepOfATick(t *testing.T) {
 		why := heldOK(s)
 		require.Empty(t, why, "before %s: %s", part, why)
 	}
-	holesRun(x, 8, false, func(round int, _ TickResult, _ []holeWrite) {
+	holesRun(x, 16, false, func(round int, _ TickResult, _ []holeWrite) {
 		why := heldOK(h.table())
 		require.Empty(t, why, "round %d after the tick: %s", round, why)
 	})
@@ -508,11 +510,11 @@ func TestG2NoMachineIsOverItsWidthAtAnyStepOfATick(t *testing.T) {
 }
 
 // G2. A machine that falls silent with work on it, while the others are at
-// their width: the fleet takes it down and its cards go to the members with
+// their room: the fleet takes it down and its cards go to the members with
 // room and are withdrawn (their primaries ready again) for the rest; no member
-// is over its width at any step of any tick, and the pump never deals a
-// machine more than its room.
-func TestG2ALapseNeverTakesAMachineOverItsWidth(t *testing.T) {
+// holds more than DealAhead times its width nor works more than its width at
+// any step of any tick, and the pump never deals a machine more than its room.
+func TestG2ALapseNeverTakesAMachineOverDealAheadTimesItsWidth(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	holesUp(h, 8)
@@ -539,8 +541,8 @@ func TestG2ALapseNeverTakesAMachineOverItsWidth(t *testing.T) {
 		}
 		for m, n := range made {
 			dealt += n
-			room := max(0, 2-held[m])
-			require.LessOrEqual(t, n, room, "round %d: the deal gave %s %d cards, its room was %d (it held %d of width 2)", round, m, n, room, held[m])
+			room := max(0, sprint.DealAhead*2-held[m])
+			require.LessOrEqual(t, n, room, "round %d: the deal gave %s %d cards, its room was %d (it held %d of DealAhead times width 2)", round, m, n, room, held[m])
 		}
 		clear(held)
 		why := heldOK(h.table())
@@ -664,7 +666,7 @@ func TestW13ATickWithNothingToDoEndsAfterTheFourFirstUpdates(t *testing.T) {
 		for i := 0; i < 5; i++ {
 			h.tick(time.Duration(i+1) * time.Second)
 			res := x.tick()
-			want := []string{sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet, "end"}
+			want := []string{"start", sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet, "end"}
 			require.Equal(t, want, res.Order, "hold=%v tick %d updated %v, want %v", hold, i+1, res.Order, want)
 			require.True(t, res.Idle, "hold=%v tick %d was not idle: parts %v, tick-end %d", hold, i+1, res.Parts, res.TickEnd)
 			require.Empty(t, res.Parts, "hold=%v tick %d was not idle: parts %v, tick-end %d", hold, i+1, res.Parts, res.TickEnd)
@@ -704,7 +706,7 @@ func TestW13AnUpdateThatChangedNothingQueuesNothing(t *testing.T) {
 			return sprint.Plan{Units: []sprint.Unit{{Key: c.ID, Changes: []sprint.Change{{Table: table, Entry: e}}, Moved: "again " + table}}}, 0
 		}
 	}
-	first := []string{sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet, "end"}
+	first := []string{"start", sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet, "end"}
 	for _, guardOnly := range []bool{false, true} {
 		h := newHarness(t)
 		h.setup(1)
@@ -728,7 +730,7 @@ func TestW13AnUpdateThatChangedNothingQueuesNothing(t *testing.T) {
 		{Table: sprint.Fleet, Parts: []sprint.TickPartDef{{Name: "to-merge", Fn: ping(sprint.Merge, 1)}}},
 	}
 	res := h.machine()
-	want := []string{sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet, sprint.Merge, "end"}
+	want := []string{"start", sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet, sprint.Merge, "end"}
 	require.Equal(t, want, res.Order, "an update that changed a row: the tick updated %v, want %v", res.Order, want)
 }
 

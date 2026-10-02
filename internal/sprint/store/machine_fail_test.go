@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestCRTickFailsAtEveryCallAndRecovers(t *testing.T) {
@@ -35,44 +36,35 @@ func TestCRTickFailsAtEveryCallAndRecovers(t *testing.T) {
 		}
 		where := fmt.Sprintf("fail %q (call %d)", fired, k)
 		line := h.st.MachineLine(h.ctx)
-		if terr != nil && fired != "kv" && !strings.Contains(line, "last tick failed") {
-			t.Errorf("%s: tick error %v but the line says %q", where, terr, line)
+		if strings.Contains(line, "failed") || strings.Contains(line, "(") {
+			assert.Fail(t, fmt.Sprintf("%s: tick error %v and the line carries a suffix: %q", where, terr, line))
 		}
 		for i := 0; i < 3; i++ {
 			h.tick(2 * time.Minute) // past the grace
-			if _, err := h.st.Tick(h.ctx); err != nil {
-				t.Errorf("%s: recovery tick %d: %v", where, i, err)
-			}
+			_, err := h.st.Tick(h.ctx)
+			assert.NoError(t, err, "%s: recovery tick %d: %v", where, i, err)
 		}
 		h.clean(where)
-		if l := h.st.MachineLine(h.ctx); strings.Contains(l, "failed") {
-			t.Errorf("%s: after recovery: %q", where, l)
-		}
+		l := h.st.MachineLine(h.ctx)
+		assert.NotContains(t, l, "failed", "%s: after recovery: %q", where, l)
 		s := h.snap()
 		// every due move happened: w resolved and dealt, s3 resumed, rv asked, s1 dealt
-		if st := s.StateOf("w"); st == sprint.Waiting {
-			t.Errorf("%s: w still waiting after recovery", where)
-		}
-		if st := s.StreamCtl("s3").F("state"); st == sprint.StreamStopped {
-			t.Errorf("%s: s3 still stopped after recovery", where)
-		}
-		if len(s.Readers.Of("rv")) != 2 {
-			t.Errorf("%s: rv asked of %d", where, len(s.Readers.Of("rv")))
-		}
-		if n := h.written(sprint.NResumed); n != 1 {
-			t.Errorf("%s: resumed written %d", where, n)
-		}
+		assert.NotEqual(t, sprint.Waiting, s.StateOf("w"), "%s: w still waiting after recovery", where)
+		assert.NotEqual(t, string(sprint.StreamStopped), s.StreamCtl("s3").F("state"), "%s: s3 still stopped after recovery", where)
+		assert.Len(t, s.Readers.Of("rv"), 2, "%s: rv asked of %d", where, len(s.Readers.Of("rv")))
+		n := h.written(sprint.NResumed)
+		assert.Equal(t, 1, n, "%s: resumed written %d", where, n)
 		notes, _, _ := h.m.NotesSince(h.ctx, "", 100000)
 		seen := map[string]int{}
 		for _, n := range notes {
-			if n.Who == sprint.MachineActor {
+			// a failed tick's note and the recovery's each wake the coordinator
+			// with a tick end of their own (TestRecoveryAddsOneNoteWithTheFailedCount)
+			if n.Who == sprint.MachineActor && n.Type != sprint.NTickEnd {
 				seen[n.Type+"|"+strings.Join(n.Subjects(), ",")]++
 			}
 		}
 		for key, v := range seen {
-			if v > 1 {
-				t.Errorf("%s: the machine wrote %s %d times", where, key, v)
-			}
+			assert.LessOrEqual(t, v, 1, "%s: the machine wrote %s %d times", where, key, v)
 		}
 	}
 	_, hb, _ := func() (Machine, Heartbeat, error) { h := newHarness(t); return h.st.Machine(h.ctx) }()
@@ -97,7 +89,5 @@ func TestCRFailuresInARow(t *testing.T) {
 	}
 	h.m.Fail = nil
 	_, hb, _ := h.st.Machine(h.ctx)
-	if hb.Failures != 3 {
-		t.Errorf("heartbeat failures after three failed ticks in a row: %d (want 3)", hb.Failures)
-	}
+	assert.Equal(t, 3, hb.Failures, "heartbeat failures after three failed ticks in a row: %d (want 3)", hb.Failures)
 }

@@ -37,34 +37,20 @@ internal/bus	TestPreparedIndexRecoveryFromStagedPartialIndexRetainsEarlierEntrie
 internal/bus	TestStaleIndexLockWithALiveGitIsLeftAlone	#4221 calls time.Sleep
 internal/bus	TestStaleLockStaysForCwdGitWithoutDashC	#4221 calls time.Sleep
 internal/bus	TestStellaPreparedAttributePrefixesPublishExactBytes	#4221 measured over 5 s on the 2026-09-25 PR run
-internal/ci	TestWaitsRefusesFixedSleep	#4221 calls time.Sleep
-internal/ci	TestWaitsAllowlistSurvivesShiftedLines	#4221 calls time.Sleep
-internal/ci	TestSlowWaitsRuleSeesEveryShape	#4221 calls time.Sleep
 internal/secrets	TestSealNoPRMakesNoGHCalls	#4221 measured over 5 s on the 2026-09-25 PR run
 internal/swarm	TestOSProcessTreeCPUAccrual	#4221 calls time.Sleep
 internal/swarm	TestPausePointThreadDirected	#4221 calls time.Sleep
 internal/swarm	TestJobLeaseHeartbeatsItsMtime	#4221 calls time.Sleep
 internal/swarm	TestBodyThatResumesInsideTheDeadlineIsNotUnknown	#4221 calls time.Sleep
 internal/swarm	TestDelayedHeadersInsideTheWaitPassThrough	#4221 calls time.Sleep
-internal/swarm	TestNoSlotIsEverHeldTwice	#4221 calls time.Sleep
 internal/swarm	TestConcurrentTakesKeepEveryTake	#4221 measured over 5 s on the 2026-09-25 PR run
-internal/update	TestMovedIsBoundedByTheClock	#4221 waits on the wall clock, failed on a 2026-09-25 run
-internal/update	TestRemoveStaleGitTransactionLocksNamesOnly	#4221 calls time.Sleep
-internal/update	TestStellaTwoSnapshotsOneDirectoryPreservesKilledWritersTemp	#4221 calls time.Sleep
 cmd/nova-sandbox	TestTheAgentSocketIsUnreachable	seed #4413: time.After at main_test.go:332
 cmd/nova-tokens	fakeSqlite3Main	seed #4413: time.Sleep at helpers_test.go:236
 internal/bus	TestFriendSequencePlantedIndexIsRefused	seed #4413: time.After at planted_index_sequence_unix_test.go:58
 internal/bus	TestReadLaneIndexDoesNotBlockOnAPlantedFIFO	seed #4413: time.After at fifo_test.go:41
-internal/fleet	TestRunBenchesConcurrentlyOverlapsCallbacks	seed #4413: time.NewTimer at parallel_test.go:101
 internal/sandbox	TestAncestorsTerminatesOnAWindowsPath	seed #4413: time.After at winpath_test.go:77
-internal/swarm	TestCountRefusalsDoesNotBlockOnAFIFO	seed #4413: time.After at symlink_fifo_test.go:195
 internal/swarm	TestFriendSequencePlantedResultIsRefused	seed #4413: time.After at planted_gather_test.go:81
 internal/swarm	TestReadFileSteadyDoesNotBlockOnAFIFO	seed #4413: time.After at symlink_fifo_test.go:145
 internal/swarm	TestReadJSONDoesNotBlockOnAFIFO	seed #4413: time.After at symlink_fifo_test.go:169
 internal/swarm	idleBench.tick	seed #4413: time.After at nativeidle_test.go:76 and 1 more
-internal/update	TestHelperProcess	seed #4413: time.Sleep at update_test.go:50 and 2 more
-internal/update	TestRule25SnapshotSurvivesAReporterKilledWhileWriting	seed #4413: time.NewTimer at rules_test.go:259 and 1 more
-internal/update	fakeBus	seed #4413: time.Sleep at delivery_test.go:72
-internal/update	joinWrapper	seed #4413: time.Sleep at join_test.go:424 and 1 more
-internal/update	reporter.killReporterWhen	seed #4413: time.Sleep at join_test.go:848 and 2 more
 

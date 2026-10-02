@@ -1,5 +1,20 @@
 # tla: the models of nova-tools' state machines, and their runners
 
+> **The nova-sprint models are stale as of 2026-10-01 and are not the design.** The owner's ruling that day: nova-tables is
+> the modelled layer and stays so; nova-sprint is in its get-it-done stage and is changed, tested on the twin store, read,
+> landed and run on the real fleet without a model change each time ("we aren't going to model the whole thing in TLA+
+> everytime we make a change"; "the thing that is built upon, is held to a higher standard than the thing built on top of
+> it"). The modules this covers: `DirtyTick` (and `DirtyTickRead`), `RouteIndex`, `Land`, `CardContract`, `SprintEvents`,
+> `CardMachine`, `WorkImport`. Where they are known to disagree with the code today: the deal places up to twice a member's
+> width (`DealAhead`), the models say never past the width; the fleet table and the readers table are rebalanced at the
+> start of every tick and a held or down member keeps no card, the models have no such step; a read's re-ask is counted
+> when the reader hands it back, the model counts it at the ask; reads draw routes from the tier's index beside work
+> cards, checked in the model with one read and no redeal; `SprintEvents` and `CardMachine` describe designs no longer run.
+> The run records (`RUNS.tsv`) still match these model files, which is all `TestTLCRecordsCoverCurrentModels` checks: it
+> does not check the models against the code. At the contraction pass each is either re-derived from the behaviour the
+> fleet passes proved, or deleted. The table-layer models below (`TableMachine`, `MemberTable`, `EpochMemberTable`,
+> `TableEdit`, `TableOrder`, `TableSession`, `RedisFn`, `TableFirstContact`, `FirstConn`, `FuseBox`) are current.
+
 The TLA+ modules here are the specifications of the state machines this repo implements (rowan-new SPEC-COORDINATOR section 8: the backend is the state machine, the verbs are its actions; Glenn 2026-09-27: TLA+ for every state machine, every project). The findings each model produced, verified against the code by hand, are in rowan-new `specs/tla/FINDINGS.md`; the model documents (`TABLE-MODEL.md`, `MEMBER-TABLE-MODEL.md`) are copied here beside the modules they describe.
 
 | Module | Instance | What it is |
@@ -15,8 +30,10 @@ The TLA+ modules here are the specifications of the state machines this repo imp
 | `FuseBox.tla` | `MCFuseBox*` | nova-fuse's box: the gate answers only from a box it read and from every box named, only a lift, init or your person's hand makes a surface clear, init never replaces a box, a lockdown always blows; five reversed witnesses |
 | `SprintEvents.tla` | `MCSprintEvents*` | the upper layers of nova-sprint (layers 3 to 8 of the event-driven tick design, standing on the table layer's guarantees): the log turned into keys, due times in running time, the rules with plan and apply separate, the tick, the verbs; 29 reversed witness configurations (W1 to W27, W7 split in two, and W5's reach half, which breaks reach and unreach and not the verb), 27 of which fail with the property their row names while W1 and W25 pass because the design holds there in depth, each with its unbroken control; goal cases that fail for the seventeen holes the model found (thirteen in the design as written, four in repairs errata 3 decided, three of them decided in its amendment 2 and repaired here; H12 and H15 on the bench), each decided repair with a case that passes. The larger runs are in `sprintevents-bench/`, outside `CASES.tsv`. `README-SprintEvents.md` says the rest, including what is not modelled |
 | `WorkImport.tla` | `MCWorkImport*` | nova-work v1 (docs/SPEC-WORK-V1.md section 1): an issue under import (absent, fetched, in the tree, mirrored, closed by the destructive mode, re-opened by export) and a repository's sync, with outside edits at any time; a tree is written only whole, only a verify receipt at GitHub's current version licenses a close, an issue the import closed is held by the tree exactly, an external issue is never closed, export restores; five reversed witnesses |
-| `CardContract.tla` | `MCCardContract*` | the card contract's finish (docs/SPEC-CARD-CONTRACT.md): what a launch is staged from, how its child ends, the member's push and the one judgment (internal/member `Judge`): ok only with a commit the member pushed and the result's shape and verdict ok, a reaped launch never reported, a rework staged only from a head origin holds, and at the last pushed head of any earlier attempt, so no pushed work is unreachable from it; six reversed witnesses (the finish of 2026-09-30 that sent a card with no commit to review, ok without the shape, ok over a refused push, a reaped launch reported, a rework staged from a branch name, a rework staged from the immediately previous attempt only) |
+| `CardContract.tla` | `MCCardContract*` | the card contract's finish (docs/SPEC-CARD-CONTRACT.md): what a launch is staged from, how its child ends, the member's push and the one judgment (internal/member `Judge`): ok only with a commit the member pushed and the result's shape and verdict ok, a reaped launch never reported, a rework staged only from a head origin holds, and at the last pushed head of any earlier attempt, so no pushed work is unreachable from it; nine reversed witnesses (the finish of 2026-09-30 that sent a card with no commit to review, ok without the shape, ok over a refused push, a reaped launch reported, a rework staged from a branch name, a rework staged from the immediately previous attempt only, a provider failure judged as failed work, a redeal on the route that failed, a redeal past MaxRedeals); a run the provider failed with no result is finished `provider`, redealt (the same attempt, restaged from the same base) within MaxRedeals and retired at the bound with one judgment; the instance is one card |
 | `DirtyTick.tla` | `MCDirtyTick*` | the sprint machine's tick as the owner shaped it on 2026-09-30, before it is built: four tables updated in turn (work, readers, merge, fleet), a queue per table as its dirty bit, readers, merge and fleet drained until empty, the work table written only by the one pump at the start of each tick; placements by counter modulo the count, width, one wake at the tick's end; 16 reversed witnesses and three goals for the holes it found (a placement blind to the fleet's status never ends the tick; room read from an undrained fleet queue over-fills a machine; the v2.1 rules write the work table in their own steps). The readers' presence (`MCDirtyTickReader`, `MCDirtyTickReaderAway`, W21, W22) abstracts two things away from the Go code: `ReadsStandOnReadersUp` says a read is held only by a reader that is up at every state, but the code keeps a read already begun on a reader that went away (only a read asked and not begun is taken back), and the model has one read per card on a host while the code has none. The model's `raway` always finds a reader to ask again, but the code with fewer than two readers up takes nothing back and asks none, raising the one judgment `fewer than two readers up` instead. `README-DirtyTick.md` says the rest |
+| `RouteIndex.tla` | `MCRouteIndex*` | the deal's route choice (internal/sprint/route.go): each tier's route array taken at a uint64 counter modulo its length, one step a card dealt, a redeal moved past the entries it leaves out, a pinned card moving nothing, a read card drawn from the reader tier's array at the same index; 3 routes x 2 tiers x 7 cards (one a read), three reversed witnesses (a random draw breaks RouteFair, a redeal that does not move past the excluded entry breaks ExcludedNeverDrawn, a read that leaves the index where it is breaks RouteIndexAdvancesOncePerCard) and one reach witness (ReachSkip) |
+| `Land.tla` | `MCLand*` | `nova-sprint land` (cmd/nova-sprint/land.go): a batch of a stream's merge queue pushed to a remote base, then reported to the store through the merge step, with the outside between them (an accept anywhere in the queue, a return, a rework that replaces a card's head and keeps its id and epoch, another lander, a clear that moves the epoch, the base moving, a crash at any step); a head is <<card, attempt>>, and the check before the push and the push are separate steps, as in the code. It proves: the store records a card landed only at a head the base holds (LandedInBase), a card lands only with every card ahead of it (LandsInOrder), no push for a caller whose epoch the store was not at when read (CallerEpochCheckedBeforePush), no report records at an epoch the lander does not hold (ReportHoldsTheEpoch), and a batch pushed and not reported is recorded by running land again (Recovers, under fairness). It does not claim that no push follows a clear: a clear between the check and the push makes a push for an epoch just left (ReachStalePush reaches it), which nothing records and nothing undoes. Five reversed witnesses (the report before the push, the caller's epoch checked only after the push, a report with no guard, a guard on ids and not heads, a report with no epoch fence) and two reach witnesses (ReachStranded: the lander's own push for the store's epoch left unreported, marked by the ghost lpushed, to which a push for an epoch the store has left adds nothing; ReachStalePush). Recovers is proved only once the outside goes quiet (the instance caps outside events at 4), so it does not cover (a) a lander that crashes between the push and the report on every run, which never records the batch, or (b) a base that moves twice inside every read-to-push window: one rebuild, then the lander gives up (the rejected fact), every run; nothing is pushed or lost, the cards stay queued, and the coordinator resumes the stream and runs land again |
 
 Runners. `tools/tlacheck` (Go, over `internal/tlc` and `internal/tablemodel`) runs the checks. Run it on a bench that has java and, for the replays, redis-server: neither belongs on a working machine. Every run is bounded by `--timeout` (a timeout is a failure, never a green), downloads nothing, and runs TLC in a private copy of the models under `--dir`, so the checkout never gains the error-trace files TLC writes beside a spec. The jar is `--jar`, or the environment variable `TLC_JAR`; java and redis-server are found on PATH, or named with `--java` and `--redis-server`, and the path found is echoed. `tlacheck help` and `tlacheck <verb> -h` say the rest.
 
@@ -207,6 +224,82 @@ kernel was changed to refuse, the model was not. Bounds of the instance: a
 combined sort-and-move places at `--first` or `--last`, a combined
 sort-and-order names one row. A depth-5 run of the edit model with one member (1,652,467
 distinct states, no error) took 92 s on the same bench and is not in the set.
+## The file lock (FileLock)
+
+`FileLock.tla`: a lock on a file across processes, the design of the shared
+module `internal/filelock`: one holder at a time, and a refusal that tells the
+truth. Written from the locks the tools already carry (`internal/bus`, `merge`,
+`tokens`, `swarm`, `wake`, `update`) and against the first candidate,
+nova-tools#4473 at d653eb53e. A bounded design model with reversed witnesses,
+not a refinement proof. What it leaves out is listed in its header.
+
+The rule it stands on is `internal/merge/lock.go`'s: the kernel releases the
+lock when its holder dies, so there is nothing to break and no age to compute.
+The lock is the kernel's lock on the file and nothing else. What is written in
+the file is a note and never what decides. The file is never removed.
+
+What it holds the module to:
+
+- the lock is never handed to two callers (`MutualExclusion`), and who holds it
+  holds the file at the path by the kernel's lock (`HolderHoldsThePath`);
+- the path names one file for ever (`OneFileForEver`);
+- the file names its holder (`HolderIsNamed`);
+- "held" is said only of a holder (`HeldIsTrue`): a refused taker asks for a
+  shared lock before it says "held", so another taker asking is never taken
+  for a holder; a taker that only askers kept out answers "busy";
+- the kernel's lock is only ever with a live process that knows it has it, so
+  a death leaves nothing for anybody to clear (`NothingToClear`).
+
+Run as the other table models are, every config at once, each in its own temp
+directory under a 60 s cap:
+
+    for cfg in MCFileLock*.cfg; do c=${cfg%.cfg}
+      mkdir -p /tmp/tlc-$c
+      timeout 60 java -Djava.io.tmpdir=/tmp/tlc-$c -cp tla2tools.jar tlc2.TLC -workers 2 \
+        -deadlock -metadir /tmp/tlc-$c/meta -config $cfg MCFileLock.tla > $c.log 2>&1 &
+    done; wait
+
+Measured on a Linux amd64 bench, 2026-10-02, with Java 21.0.12.1 and
+TLC jar SHA-256 `936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88`.
+The seven current-input runs are recorded in `RUNS.tsv` (15:02:10–15:02:17
+UTC); the `tlc-filelock-contract.log` bench receipt identifies extracted
+source `ef5746abb0d484de8866bcb3b69292669c1e104d` and reports all seven cases
+PASS. A broken case passes by producing its expected invariant violation
+(exit 12); its count below is distinct explored states, not trace length.
+`MCFileLockCandidate` permits either named violation; the receipt does not
+identify which one. The 2026-09-27 counts describe the earlier module.
+
+| config | result | distinct states | time |
+|---|---|---|---|
+| `MCFileLock` | no error (exit 0), three processes, each pid reused twice: TypeOK, MutualExclusion, HolderHoldsThePath, HolderIsNamed, OneFileForEver, HeldIsTrue, NothingToClear | 16,335 | 1.422 s |
+| `MCFileLockFour` | no error (exit 0), four processes, each pid reused once: the same seven | 52,128 | 2.062 s |
+| `MCFileLockBrokenStale` | expected MutualExclusion violation (exit 12): a holder dies; two processes find the lock stale and both clear it; the first removes the file and takes a new one at the path; the second opens that new file, finds no name in it, and removes it; both then create a file and hold | 2,318 | 0.858 s |
+| `MCFileLockBrokenSentinel` | expected NothingToClear violation (exit 12): the holder dies and the lock stays taken | 15 | 0.697 s |
+| `MCFileLockCandidate` | expected HeldIsTrue or MutualExclusion violation (exit 12), the candidate's take and stale clear with its probe gone | 162 | 0.730 s |
+| `MCFileLockBrokenBusyIsHeld` | expected HeldIsTrue violation (exit 12): a refused taker whose shared ask is granted answers "held" after the holder leaves | 41 | 0.704 s |
+| `MCFileLockBrokenUnlink` | expected MutualExclusion violation (exit 12): release removes the file under a taker that has it open | 180 | 0.739 s |
+
+Stale and Sentinel are in code that exists or existed, each checked by hand
+against the lines named. The first Stale counterexample TLC gave did not
+survive that check (it counted as a holder a process the code makes give up),
+so the invariant was tightened to locks handed to a caller, and the trace above
+is the one that holds. BusyIsHeld and Unlink are misimplementations the
+invariants are shown to catch.
+
+Until 2026-10-02 the model also had a probe (ask who holds the lock without
+taking it) and two witnesses on it: ExProbe (a probe taking the exclusive lock
+for an instant, the candidate's and `internal/wake`'s) and PidLive (a probe
+answering from the pid in the file). They left with the module's `Probe`,
+which no caller used; HeldIsTrue stayed, on the refused taker, with BusyIsHeld
+as its reversed witness. The same day the telling left too: a take handed the
+caller what the file said (empty, the last holder released; a name, it never
+did), checked as UncleanIsTold with the reversed witness KeepStamp (release
+leaving the name). It left with the module's `FileLock.Previous`, which no
+caller used. Release still clears the note, so a free lock names nobody, but
+the model no longer checks it: the note is what a refusal reports
+(HolderIsNamed) and nothing decides on it. A probe and the telling can each
+return with a caller, and their witnesses with them.
+
 ## The shell (TableSession)
 
 `TableSession.tla`: `nova-table shell` as a state machine, the design that

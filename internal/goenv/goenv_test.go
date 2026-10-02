@@ -1,9 +1,10 @@
 package goenv
 
 import (
-	"slices"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The bug this package exists for: GOFLAGS=-json in the parent turns an inner
@@ -14,9 +15,7 @@ func TestCleanDropsGOFLAGS(t *testing.T) {
 
 	got := Clean([]string{"PATH=/usr/bin", "GOFLAGS=-json", "HOME=/home/rowan"})
 	want := []string{"PATH=/usr/bin", "HOME=/home/rowan"}
-	if !slices.Equal(got, want) {
-		t.Fatalf("Clean = %q, want %q", got, want)
-	}
+	require.Equal(t, want, got, "Clean = %q, want %q", got, want)
 }
 
 func TestCleanDropsTheWholeDocumentedList(t *testing.T) {
@@ -31,9 +30,8 @@ func TestCleanDropsTheWholeDocumentedList(t *testing.T) {
 		"GOCOVERFLAGS=--json",
 		"GORUNFLAGS=-json=on",
 	} {
-		if got := Clean([]string{entry}); len(got) != 0 {
-			t.Errorf("Clean kept %q", entry)
-		}
+		got := Clean([]string{entry})
+		assert.Empty(t, got, "Clean kept %q", entry)
 	}
 }
 
@@ -53,9 +51,8 @@ func TestCleanDropsTheCallersCredentials(t *testing.T) {
 		"DEEPSEEK_API_KEY=a-provider-key",
 		"aws_secret_access_key=a-lower-case-secret",
 	} {
-		if got := Clean([]string{entry}); len(got) != 0 {
-			t.Errorf("Clean kept the caller's credential %q; a child running a pull request's code can read it", entry)
-		}
+		got := Clean([]string{entry})
+		assert.Empty(t, got, "Clean kept the caller's credential %q; a child running a pull request's code can read it", entry)
 	}
 }
 
@@ -75,9 +72,7 @@ func TestCleanKeepsEverythingElseInOrder(t *testing.T) {
 		"NOEQUALSIGN",
 	}
 	got := Clean(env)
-	if !slices.Equal(got, env) {
-		t.Fatalf("Clean = %q, want the input unchanged", got)
-	}
+	require.Equal(t, env, got, "Clean = %q, want the input unchanged", got)
 }
 
 // Windows environment names are case-insensitive, and os.Environ there hands
@@ -85,9 +80,8 @@ func TestCleanKeepsEverythingElseInOrder(t *testing.T) {
 func TestCleanFoldsTheName(t *testing.T) {
 	t.Parallel()
 
-	if got := Clean([]string{"GoFlags=-json"}); len(got) != 0 {
-		t.Fatalf("Clean kept %q", got)
-	}
+	got := Clean([]string{"GoFlags=-json"})
+	require.Empty(t, got, "Clean kept %q", got)
 }
 
 func TestCleanDoesNotModifyItsInput(t *testing.T) {
@@ -95,9 +89,8 @@ func TestCleanDoesNotModifyItsInput(t *testing.T) {
 
 	env := []string{"GOFLAGS=-json", "PATH=/usr/bin"}
 	_ = Clean(env)
-	if env[0] != "GOFLAGS=-json" || len(env) != 2 {
-		t.Fatalf("the caller's env was modified: %q", env)
-	}
+	require.Equal(t, "GOFLAGS=-json", env[0], "the caller's env was modified: %q", env)
+	require.Len(t, env, 2, "the caller's env was modified: %q", env)
 }
 
 // The documented list is what a reader is pointed at when the class test says
@@ -106,8 +99,6 @@ func TestRemovedNamesWhatItDrops(t *testing.T) {
 	t.Parallel()
 
 	for _, name := range []string{"GOFLAGS", "GOTEST", "json", "KEY", "TOKEN", "SECRET"} {
-		if !strings.Contains(Removed, name) {
-			t.Errorf("Removed does not name %s", name)
-		}
+		assert.Contains(t, Removed, name, "Removed does not name %s", name)
 	}
 }

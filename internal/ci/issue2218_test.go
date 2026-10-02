@@ -1,6 +1,7 @@
 package ci
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -8,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestIssue2218(t *testing.T) {
@@ -18,19 +21,13 @@ func TestIssue2218(t *testing.T) {
 
 		ciYAML := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
 		legs := CILegsFromYAML(ciYAML)
-		if len(legs) == 0 {
-			t.Fatal("CILegsFromYAML found no platform legs in ci.yml; a Platform line would pass by being compared against nothing")
-		}
+		require.NotEmpty(t, legs, "CILegsFromYAML found no platform legs in ci.yml; a Platform line would pass by being compared against nothing")
 
 		md := readFile(t, filepath.Join(root, "docs", "TESTS.md"))
 		platforms, err := PlatformLinesFromTESTSmd(md)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		for _, p := range platforms {
-			if !legs[p] {
-				t.Errorf("docs/TESTS.md carries Platform: %s in a `## nova-*` section, which is not a GOOS that ci.yml runs a leg for (the platform a skipped transcript names must still be executed somewhere; known legs: %v)", p, mapKeysSorted(legs))
-			}
+			assert.True(t, legs[p], "docs/TESTS.md carries Platform: %s in a `## nova-*` section, which is not a GOOS that ci.yml runs a leg for (the platform a skipped transcript names must still be executed somewhere; known legs: %v)", p, mapKeysSorted(legs))
 		}
 	})
 
@@ -38,13 +35,9 @@ func TestIssue2218(t *testing.T) {
 		root := repoRoot(t)
 
 		docExamples, err := PastedDocExamplesByDoc(root)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		help, err := HelpBannerExamples(root)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		var examples []string
 		seen := make(map[string]bool)
 		docsOf := make(map[string][]string)
@@ -80,20 +73,18 @@ func TestIssue2218(t *testing.T) {
 		base, err := ChangeBase(root, os.Getenv)
 		switch {
 		case err != nil && changeEventMustCompare(os.Getenv("GITHUB_EVENT_NAME")):
-			t.Fatalf("%s is shrink-only, and a %s run must compare it with its base: %v", listPath, os.Getenv("GITHUB_EVENT_NAME"), err)
+			require.Fail(t, fmt.Sprintf("%s is shrink-only, and a %s run must compare it with its base: %v", listPath, os.Getenv("GITHUB_EVENT_NAME"), err))
 		case err != nil:
 			t.Logf("%s not compared with a base (no base commit here): %v", listPath, err)
 		default:
 			baseList, present, err := ListAtCommit(root, base, UnexecutedListPath)
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
 			if !present {
 				t.Logf("%s is introduced by this change (base %.12s has none); later changes compare with it", listPath, base)
 			}
 			for _, r := range AddedListRows(baseList, headList) {
 				if present {
-					t.Errorf("%s adds %q, which base %.12s does not list; the list only shrinks -- execute the example through the comparator and name the test in compared_examples.txt instead", listPath, r, base)
+					assert.Fail(t, fmt.Sprintf("%s adds %q, which base %.12s does not list; the list only shrinks -- execute the example through the comparator and name the test in compared_examples.txt instead", listPath, r, base))
 				}
 			}
 		}
@@ -110,21 +101,19 @@ func TestIssue2218(t *testing.T) {
 			}
 		}
 		for _, row := range allowlist.Check(t, comparedList, comparedMeasured).Stale {
-			t.Errorf("%s:%d names %q, which is not a pasted example of the named docs or a help banner; delete the stale entry", comparedPath, row.Line, row.Key)
+			assert.Fail(t, fmt.Sprintf("%s:%d names %q, which is not a pasted example of the named docs or a help banner; delete the stale entry", comparedPath, row.Line, row.Key))
 		}
 		for ex, c := range compared {
 			if !comparedMeasured[ex] {
 				continue
 			}
-			if allow[ex] {
-				t.Errorf("%q is in both %s and %s; a compared example leaves the unexecuted list", ex, comparedPath, listPath)
-			}
+			assert.False(t, allow[ex], "%q is in both %s and %s; a compared example leaves the unexecuted list", ex, comparedPath, listPath)
 			docs := docsOf[ex]
 			if _, fromHelp := help[ex]; fromHelp && strings.HasPrefix(ex, "example: ") {
 				docs = nil // the banner, not a doc, is where it is pasted from
 			}
 			if problem := ComparedEntryProblem(root, ComparedEntry{File: c.file, Test: c.test, Ex: ex}, docs); problem != "" {
-				t.Errorf("%s:%d: %s", comparedPath, c.line, problem)
+				assert.Empty(t, problem, "%s:%d: %s", comparedPath, c.line, problem)
 			}
 		}
 
@@ -146,11 +135,9 @@ func TestIssue2218(t *testing.T) {
 			if seen[row.Key] {
 				continue // moved to compared_examples.txt: the "in both" line above says so
 			}
-			t.Errorf("%s lists %q which is not a pasted example of the named docs or a help banner; delete the stale entry (the list only shrinks)", listPath, row.Key)
+			assert.Fail(t, fmt.Sprintf("%s lists %q which is not a pasted example of the named docs or a help banner; delete the stale entry (the list only shrinks)", listPath, row.Key))
 		}
-		if len(unmatched) > 0 {
-			t.Errorf("%d unlisted pasted example(s) in the named docs or the help banners are not covered by a test through onboarding.Compare; %s is shrink-only and does not grow to match new examples -- cover each with a comparator test and name it in %s instead of listing it", len(unmatched), listPath, comparedPath)
-		}
+		assert.Empty(t, unmatched, "%d unlisted pasted example(s) in the named docs or the help banners are not covered by a test through onboarding.Compare; %s is shrink-only and does not grow to match new examples -- cover each with a comparator test and name it in %s instead of listing it", len(unmatched), listPath, comparedPath)
 		for _, u := range unmatched {
 			t.Logf("  unlisted (needs a comparator test named in compared_examples.txt, not a list entry): %s", u)
 		}
@@ -212,12 +199,12 @@ func parseCompared(t *testing.T, path string, list *allowlist.List) map[string]c
 		ref, ex, ok := strings.Cut(row.Text, " ")
 		file, test, okRef := strings.Cut(ref, ":")
 		ex = strings.TrimSpace(ex)
-		if !ok || !okRef || file == "" || test == "" || !(strings.HasPrefix(ex, "$ ") || strings.HasPrefix(ex, "example: ")) {
-			t.Errorf("%s:%d: want `<test file>:<TestName> $ <example>` or `<test file>:<TestName> example: <line>`, got %q", path, row.Line, row.Text)
+		valid := ok && okRef && file != "" && test != "" && (strings.HasPrefix(ex, "$ ") || strings.HasPrefix(ex, "example: "))
+		if !assert.True(t, valid, "%s:%d: want `<test file>:<TestName> $ <example>` or `<test file>:<TestName> example: <line>`, got %q", path, row.Line, row.Text) {
 			continue
 		}
-		if prev, dup := out[ex]; dup {
-			t.Errorf("%s:%d: %q is already listed at line %d", path, row.Line, ex, prev.line)
+		prev, dup := out[ex]
+		if !assert.False(t, dup, "%s:%d: %q is already listed at line %d", path, row.Line, ex, prev.line) {
 			continue
 		}
 		out[ex] = comparedExample{file: file, test: test, line: row.Line, ex: ex}

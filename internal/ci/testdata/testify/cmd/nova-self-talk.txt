@@ -1,4 +1,3 @@
 # Migrated counted package ledger; original row keys preserved.
-# ceiling: 2
-cmd/nova-self-talk:assert 143 bare assertions to convert to testify
+# ceiling: 1
 cmd/nova-self-talk:env 1 t.Setenv and Chdir sites to inject through config

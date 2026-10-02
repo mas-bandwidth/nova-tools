@@ -11,6 +11,9 @@ type Sel struct {
 	Only   []string
 }
 
+// noSuchCard is why a named card that is on no table is refused.
+const noSuchCard = "no such card on the table"
+
 // pick applies a selection. all is every candidate in work order; eligible
 // says why a card cannot take the move ("" when it can); byID looks a named
 // card up. Named cards that cannot move are refused with the reason; cards
@@ -31,7 +34,7 @@ func pick(p *Plan, sel Sel, all []*Card, streamOf func(*Card) string, eligible f
 			seen[id] = true
 			c := byID(id)
 			if c == nil {
-				p.refuse(id, "no such card on the table")
+				p.refuse(id, noSuchCard)
 				continue
 			}
 			if why := eligible(c); why != "" {

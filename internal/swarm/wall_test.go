@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // ISSUE #918. A harness's permission denial is a TOOL ERROR the model routes around, not the
@@ -21,35 +24,24 @@ func TestAFencedRunThatPublishedIsDone(t *testing.T) {
 
 	job := t.TempDir()
 	reject := "\x1b[33;1m!\x1b[0m  permission requested: external_directory (/outside/scratch/*); auto-rejecting\n"
-	if err := os.WriteFile(filepath.Join(job, "harness.log"), []byte(reject), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(job, "RESULT.md"), []byte("a card line 1\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if report, ok := WallDeath(job, "a"); ok {
-		t.Fatalf("a run that published a result is not a wall death, got %q", report)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(job, "harness.log"), []byte(reject), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(job, "RESULT.md"), []byte("a card line 1\n"), 0o644))
+	report, ok := WallDeath(job, "a")
+	require.False(t, ok, "a run that published a result is not a wall death, got %q", report)
 }
 
 func git(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(dir, 0o755))
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
 	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
-	}
+	require.NoError(t, err, "git %s: %v\n%s", strings.Join(args, " "), err, out)
 	return strings.TrimSpace(string(out))
 }
 
 func commit(t *testing.T, dir, name string) string {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, name+".txt"), []byte(name+"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(dir, name+".txt"), []byte(name+"\n"), 0o644))
 	git(t, dir, "add", "-A")
 	git(t, dir, "commit", "-q", "-m", name)
 	return git(t, dir, "rev-parse", "HEAD")
@@ -93,12 +85,8 @@ func TestWallRefusedReadsTheFenceAndTheSandbox(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, ok := WallRefused([]byte(tc.in))
-			if ok != tc.ok {
-				t.Fatalf("WallRefused ok=%v, want %v (got %+v)", ok, tc.ok, got)
-			}
-			if ok && (got.Path != tc.path || got.Step != tc.step) {
-				t.Fatalf("WallRefused = %+v; want path=%q step=%q", got, tc.path, tc.step)
-			}
+			require.Equal(t, tc.ok, ok, "WallRefused ok=%v, want %v (got %+v)", ok, tc.ok, got)
+			require.False(t, ok && (got.Path != tc.path || got.Step != tc.step), "WallRefused = %+v; want path=%q step=%q", got, tc.path, tc.step)
 		})
 	}
 }
@@ -109,13 +97,10 @@ func TestWallLineNamesThePathTheStepAndTheSurvivingWork(t *testing.T) {
 	t.Parallel()
 
 	w := WallRefusal{Path: "/jobs/scratch/*", Step: "2"}
-	if got, want := WallLine("card-8311", w, "", 0), "WALL task=card-8311 path=/jobs/scratch/* step=2"; got != want {
-		t.Errorf("WallLine = %q, want %q", got, want)
-	}
-	if got, want := WallLine("card-8311", w, "rowan/fix", 3), "WALL task=card-8311 path=/jobs/scratch/* step=2 commits=3 branch=rowan/fix"; got != want {
-		t.Errorf("WallLine = %q, want %q", got, want)
-	}
-	if got, want := WallLine("card-8311", WallRefusal{}, "", 0), "WALL task=card-8311 path=- step=-"; got != want {
-		t.Errorf("WallLine = %q, want %q", got, want)
-	}
+	got, want := WallLine("card-8311", w, "", 0), "WALL task=card-8311 path=/jobs/scratch/* step=2"
+	assert.Equal(t, want, got, "WallLine = %q, want %q", got, want)
+	got, want = WallLine("card-8311", w, "rowan/fix", 3), "WALL task=card-8311 path=/jobs/scratch/* step=2 commits=3 branch=rowan/fix"
+	assert.Equal(t, want, got, "WallLine = %q, want %q", got, want)
+	got, want = WallLine("card-8311", WallRefusal{}, "", 0), "WALL task=card-8311 path=- step=-"
+	assert.Equal(t, want, got, "WallLine = %q, want %q", got, want)
 }

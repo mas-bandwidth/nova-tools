@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
@@ -81,14 +83,14 @@ func TestCRTickRepairAbandonsALiveWritersAppliedOperation(t *testing.T) {
 	failed := len(h.openOf(sprint.NWorkFailed))
 	abandoned := h.written(sprint.NAbandoned)
 	t.Logf("s1-1 is %s; work-failed judgments open %d; abandoned notes %d", st, failed, abandoned)
-	if st == sprint.Review && failed == 0 {
-		t.Errorf("A+D: the finish applied (s1-1 in review, failed) but its judgment was never written; 'abandoned' written %d", abandoned)
+	if st == sprint.Review {
+		assert.NotZero(t, failed, "A+D: the finish applied (s1-1 in review, failed) but its judgment was never written; 'abandoned' written %d", abandoned)
 	}
 	h.machine()
 	h.tick(time.Hour)
 	h.machine()
-	if len(h.openOf(sprint.NWorkFailed)) == 0 && h.state("s1-1") == sprint.Review {
-		t.Errorf("STALL: s1-1 in review, failed, no open judgment, after an hour of ticks")
+	if h.state("s1-1") == sprint.Review {
+		assert.NotEmpty(t, h.openOf(sprint.NWorkFailed), "STALL: s1-1 in review, failed, no open judgment, after an hour of ticks")
 	}
 }
 
@@ -133,7 +135,7 @@ func TestCRWriterToldCutWhenTheTickFinishedItsOperation(t *testing.T) {
 	<-done
 	t.Logf("tick err %v; worker err %v; s1-1 %s; pending %v", terr, werr, h.state("s1-1"), h.m.Pending())
 	h.clean("after")
-	if werr != nil && h.state("s1-1") == sprint.Review && h.m.Pending() == nil {
-		t.Errorf("the worker's finish applied and was committed (s1-1 in review, nothing pending) but the worker was told: %v", werr)
+	if h.state("s1-1") == sprint.Review && h.m.Pending() == nil {
+		assert.NoError(t, werr, "the worker's finish applied and was committed (s1-1 in review, nothing pending) but the worker was told: %v", werr)
 	}
 }

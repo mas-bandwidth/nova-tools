@@ -136,6 +136,13 @@ func Apply(ctx context.Context, st Store, ap Applier, kind, actor string, check 
 	if err != nil {
 		return Result{}, err
 	}
+	if kind == KindFleet {
+		for _, row := range rows {
+			if err := ValidateFleetEndpoints(View(row.Fields)); err != nil {
+				return Result{}, &RefusedError{Err: ErrInvalid, Detail: err.Error()}
+			}
+		}
+	}
 	if k.Derive != nil {
 		if rows, err = k.Derive(ctx, st, rows); err != nil {
 			return Result{}, err

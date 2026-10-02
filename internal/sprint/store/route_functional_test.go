@@ -15,22 +15,29 @@ import (
 )
 
 // The deal reads the routes nova-config's apply writes (config.RoutesKey, the
-// hash config.RouteKey of each) on a real store, and draws a pro card's route
-// from them: the hash's fields as apply writes them, a weight left out read as 1.
+// hash config.RouteKey of each, and each tier's array config.TierKey) on a real
+// store in two round trips, and takes a pro card's route from them: the hash's
+// fields as apply writes them, the array in its order.
 func TestRedisTheDealReadsTheRoutesApplyWrites(t *testing.T) {
 	t.Parallel()
 	st, c := liveStore(t)
 	ctx := context.Background()
 	require.NoError(t, c.SAdd(ctx, config.RoutesKey, "pro-a", "flash-a").Err())
 	require.NoError(t, c.HSet(ctx, config.RouteKey("pro-a"), "name", "pro-a", "tier", "pro", "provider", "openrouter", "model", "x-ai/grok-4",
-		"tokens", "400000", "deadline", "1800", "weight", "1", "enabled", "true", "rev", "7", "at", "0").Err())
+		"tokens", "400000", "deadline", "1800", "enabled", "true", "rev", "7", "at", "0").Err())
 	require.NoError(t, c.HSet(ctx, config.RouteKey("flash-a"), "tier", "flash", "provider", "deepseek", "model", "v4-flash",
 		"tokens", "0", "deadline", "900", "enabled", "true").Err())
-	rs, err := st.Routes(ctx)
+	require.NoError(t, c.HSet(ctx, config.TierKey("flash"), "name", "flash", "routes", "flash-a,flash-a", "rev", "8", "at", "0").Err())
+	set, trips, err := st.B.(RouteReader).Routes(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), trips, "the arrays ride in the routes' second trip")
+	assert.Equal(t, map[string][]string{"flash": {"flash-a", "flash-a"}}, set.Tiers, "pro has no array: it takes its routes in name order")
+	rs, _, err := st.Routes(ctx)
 	require.NoError(t, err)
 	require.Len(t, rs, 2)
-	want := sprint.Route{Name: "flash-a", Tier: "flash", Provider: "deepseek", Model: "v4-flash", Weight: 1, Enabled: true}
-	want.Deadline = 900 // seconds, as the route row holds it
+	want := sprint.Route{Name: "flash-a", Tier: "flash", Provider: "deepseek", Model: "v4-flash", Enabled: true}
+	want.Deadline = 900                  // seconds, as the route row holds it
+	want.Prices.ReasoningAsOutput = true // an absent price flag uses PricesOf's default
 	assert.Equal(t, want, rs[0])
 	assert.Equal(t, "x-ai/grok-4", rs[1].Model)
 
@@ -63,7 +70,7 @@ func TestRedisTheTickDealsAFreshCardOnARouteOfItsTier(t *testing.T) {
 	put := func(name, tier, enabled string) {
 		require.NoError(t, c.SAdd(ctx, config.RoutesKey, name).Err())
 		require.NoError(t, c.HSet(ctx, config.RouteKey(name), "name", name, "tier", tier, "provider", "p-"+name, "model", "m",
-			"tokens", "100000", "deadline", "900", "weight", "1", "enabled", enabled).Err())
+			"tokens", "100000", "deadline", "900", "enabled", enabled).Err())
 	}
 	for _, n := range []string{"flash-a", "flash-b", "flash-c"} {
 		put(n, "flash", "true")

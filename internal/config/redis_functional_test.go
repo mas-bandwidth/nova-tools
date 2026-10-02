@@ -67,7 +67,7 @@ func TestApplyLeavesTheKeysCapacityFriendWould(t *testing.T) {
 	// The machine: the ceiling ns_capacity_machine writes (slots alone:
 	// cores and memory are never declared, so the ceiling carries none and
 	// no budget is derived) and the registry hash nova-config owns, exactly
-	// the four declared fields with the revision and time.
+	// the five declared fields with the revision and time.
 	{
 		got := c.HGetAll(ctx, "machine:studio:ceiling").Val()
 		assertionMsg76 := []any{"machine:studio:ceiling %v", got}
@@ -87,7 +87,7 @@ func TestApplyLeavesTheKeysCapacityFriendWould(t *testing.T) {
 	assert.Equal(t, int64(0), c.Exists(ctx, "machine:studio:budget").Val(), "a budget was derived from cores nobody declared")
 	{
 		got := c.HGetAll(ctx, "machine:studio").Val()
-		assertionMsg81 := []any{"machine:studio %v: want user, seat, slots, runners, rev, at and nothing else", got}
+		assertionMsg81 := []any{"machine:studio %v: want user, seat, slots, runners, width, rev, at and nothing else", got}
 		func() {
 			if !assert.Equal(t, "glenn", got["user"], assertionMsg81...) {
 				return
@@ -107,7 +107,10 @@ func TestApplyLeavesTheKeysCapacityFriendWould(t *testing.T) {
 			if !assert.NotEqual(t, "", got["at"], assertionMsg81...) {
 				return
 			}
-			assert.Len(t, got, 6, assertionMsg81...)
+			if !assert.Equal(t, "0", got["width"], assertionMsg81...) {
+				return
+			}
+			assert.Len(t, got, 7, assertionMsg81...)
 		}()
 	}
 	{
@@ -341,7 +344,7 @@ func TestApplyRefusesAFriendNobodyCanCharge(t *testing.T) {
 }
 
 // TestApplyWritesTheFleetKeysAndTheLiveFactsAreTheBeat: the fleet row is
-// two plain keys of nova-config's own, set or deleted as the row says; a
+// plain keys of nova-config's own, set or deleted as the row says; a
 // machine's measured facts are read from its beat and never written.
 func TestApplyWritesTheFleetKeysAndTheLiveFactsAreTheBeat(t *testing.T) {
 	t.Parallel()
@@ -361,6 +364,8 @@ func TestApplyWritesTheFleetKeysAndTheLiveFactsAreTheBeat(t *testing.T) {
 	assert.Equal(t, "hulk", scopedGot382, "fleet:store %q", scopedGot382)
 	scopedGot386 := c.Get(ctx, FleetKey("coordinator")).Val()
 	assert.Equal(t, "studio", scopedGot386, "fleet:coordinator %q", scopedGot386)
+	assert.Equal(t, "6380", c.Get(ctx, FleetKey("redis_port")).Val())
+	assert.Equal(t, "postgres://nova_config@localhost:5432/nova", c.Get(ctx, FleetKey("pg_dsn")).Val())
 	scopedGot390 := c.HGet(ctx, DeclKey, "rev:fleet").Val()
 	assert.Equal(t, "7", scopedGot390, "rev:fleet %s", scopedGot390)
 	// Clearing a field deletes its key.
@@ -626,10 +631,15 @@ func TestRemoveFriendDoesNotTouchSprintKeys(t *testing.T) {
 // TestApplyRedisTripsReducedFromAuditBaseline measures round trips against the
 // REDIS-TRIPS.md baseline from Rowan's audit (rowan-7fbdefecf56e), with the
 // loop and route kinds' one read trip each on a store with none of their
-// rows (readHashes) added to every apply of all kinds:
-// - first run: 32 trips (30 before the loop and route kinds; 42 before Cuts 2, 3, 4)
-// - steady apply: 8 trips (6 before the loop and route kinds; 18 before Cut 1)
-// - two changes: 13 trips (11 before the loop and route kinds; 25 before Cut 2)
+// rows (readHashes), and the tier kind's two read trips (its flash and pro rows
+// are made by migrate), added to every apply of all kinds:
+//   - first run: 38 trips (32 before the tier kind, whose first apply also writes
+//     its two rows and its stamp; 30 before the loop and route kinds; 42 before
+//     Cuts 2, 3, 4)
+//   - steady apply: 10 trips (8 before the tier kind; 6 before the loop and route
+//     kinds; 18 before Cut 1)
+//   - two changes: 15 trips (13 before the tier kind; 11 before the loop and route
+//     kinds; 25 before Cut 2)
 func TestApplyRedisTripsReducedFromAuditBaseline(t *testing.T) {
 	t.Parallel()
 
@@ -644,14 +654,14 @@ func TestApplyRedisTripsReducedFromAuditBaseline(t *testing.T) {
 	applyKinds(t, st, ap, "rowan")
 	firstRunTrips := trips.N() - before
 	t.Logf("first run trips = %d (baseline was 42)", firstRunTrips)
-	require.LessOrEqual(t, firstRunTrips, int64(32), "first run took %d trips, want <= 32: 30 for the four first kinds and 1 each for the loop and route kinds with no row (was 42 before batching cuts)", firstRunTrips)
+	require.LessOrEqual(t, firstRunTrips, int64(38), "first run took %d trips, want <= 38: 30 for the four first kinds, 1 each for the loop and route kinds with no row, and 6 for the tier kind's two rows (was 42 before batching cuts)", firstRunTrips)
 
 	// 2. Steady apply: nothing changed; Cut 1 skips the stamps (18 -> 6)
 	before = trips.N()
 	applyKinds(t, st, ap, "rowan")
 	steadyTrips := trips.N() - before
 	t.Logf("steady apply trips = %d (baseline was 18)", steadyTrips)
-	require.Equal(t, int64(8), steadyTrips, "steady apply took %d trips, want 8: 6 for the four first kinds and 1 each for the loop and route kinds with no row (was 18 before Cut 1)", steadyTrips)
+	require.Equal(t, int64(10), steadyTrips, "steady apply took %d trips, want 10: 6 for the four first kinds, 1 each for the loop and route kinds with no row, and 2 for the tier kind's read (was 18 before Cut 1)", steadyTrips)
 
 	// 3. Two changes: update two friends (slots on stella, slots on rowan) (25 -> 11)
 	_, _, setupErr25760 := st.Update(ctx, KindFriend, "stella", map[string]string{"slots": "24"}, "rowan")
@@ -662,7 +672,7 @@ func TestApplyRedisTripsReducedFromAuditBaseline(t *testing.T) {
 	applyKinds(t, st, ap, "rowan")
 	twoChangesTrips := trips.N() - before
 	t.Logf("two changes trips = %d (baseline was 25)", twoChangesTrips)
-	require.LessOrEqual(t, twoChangesTrips, int64(13), "two changes took %d trips, want <= 13: 11 and the loop and route kinds' one each (was 25 before Cut 2)", twoChangesTrips)
+	require.LessOrEqual(t, twoChangesTrips, int64(15), "two changes took %d trips, want <= 15: 11, the loop and route kinds' one each and the tier kind's two (was 25 before Cut 2)", twoChangesTrips)
 
 	// 4. Machine removal: add third machine "air" to store and apply, then delete "air" and measure apply trips.
 	machine, _ := Lookup(KindMachine)

@@ -27,6 +27,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -188,11 +190,8 @@ func Select(events []Event, repos []string, last int) []Event {
 	}
 	keep := map[string]map[int]bool{}
 	for repo, set := range prs {
-		nums := make([]int, 0, len(set))
-		for pr := range set {
-			nums = append(nums, pr)
-		}
-		sort.Sort(sort.Reverse(sort.IntSlice(nums)))
+		nums := slices.Sorted(maps.Keys(set))
+		slices.Reverse(nums)
 		if last > 0 && len(nums) > last {
 			nums = nums[:last]
 		}

@@ -4,5 +4,5 @@
 # plays a nova-secrets that prints what it was asked and dials nothing.
 machines:
   localhost: {user: nova, seat: seat-local, slots: 1}
-fleet: {store: localhost, coordinator: localhost}
+fleet: {store: localhost, coordinator: localhost, redis_port: 6380, pg_dsn: postgres://nova_config@localhost:5432/nova}
 loops: {}

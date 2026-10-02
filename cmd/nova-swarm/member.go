@@ -2,30 +2,35 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"flag"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/binstamp"
 	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
+	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/internal/hostload"
+	"github.com/mas-bandwidth/nova-tools/internal/log"
 	"github.com/mas-bandwidth/nova-tools/internal/member"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
+	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
+	"github.com/mas-bandwidth/nova-tools/internal/yield"
 )
 
 // cmdMember is `nova-swarm member`: this machine as one member of a sprint's
@@ -33,31 +38,36 @@ import (
 // from the sprint, pushes the commit of every work card whose child ended and
 // reports it, takes up to its width and starts each card taken as one child
 // through `nova-swarm native`. The fleet table is the dispatcher; the loop is
-// internal/member.
-func cmdMember(args []string, stdout, stderr io.Writer) int {
+// internal/member. Every sprint verb goes to the sprint's server (--server, `nova-sprint
+// run --listen`), the one writer; this machine opens no store. send delivers them: nil is
+// the server's client (sprintwire.Client.Do), a test's is the server's own step.
+func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Context, ...[]string) ([]sprintwire.Result, error)) int {
 	fs := flag.NewFlagSet("member", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	f := &flags{verb: "member", fs: fs}
-	as := fs.String("as", "", "")
-	width := fs.Int("width", 0, "")
-	reader := fs.Bool("reader", false, "")
-	sprintBin := fs.String("sprint", "nova-sprint", "")
-	harness := fs.String("harness", "", "")
-	model := fs.String("model", "", "")
-	root := fs.String("root", "", "")
-	slots := fs.String("slots", "", "")
-	resultsRoot := fs.String("results-root", "", "")
-	deadline := newSecondsFlag(fs, "deadline", 0) // the override: a card with no route
-	tokensWord := fs.String("tokens", "", "")
-	every := newSecondsFlag(fs, "every", 3*time.Second)
-	once := fs.Bool("once", false, "")
-	ticks := fs.Int("ticks", 0, "")
-	auth := fs.String("auth", "", "")
-	config := fs.String("config", "", "")
-	workerFile := fs.String("worker", "", "")
-	noWall := fs.Bool("no-wall", false, "")
-	ghBin := fs.String("gh", "gh", "")
-	passFlag := fs.String("pass", "", "")
+	as := fs.String("as", "", "required: this machine's `name`, its row in the fleet table (with --reader, its row in the readers table)")
+	width := fs.Int("width", 0, "with --reader, required: the most reads it runs at once; a member runs its fleet row's width, and this overrides it")
+	reader := fs.Bool("reader", false, "run as a reader: take and run reads of finished work instead of work cards (needs --width)")
+	harness := fs.String("harness", "", "required: the harness binary `path` each card's child runs under (native --harness)")
+	model := fs.String("model", "", "the `provider/model` a card with no route runs on; a reader given it runs every read on it")
+	root := fs.String("root", "", "required: the `dir` the launches and results sit under")
+	slots := fs.String("slots", "", "the `dir` of the launch directories, one per card launch (default <root>/slots)")
+	resultsRoot := fs.String("results-root", "", "the `dir` each launch's results are written under (default <root>/results)")
+	// the override: a card with no route
+	deadline := newSecondsFlag(fs, "deadline", 0, "the wall-clock bound a card with no route runs to, a `duration` or whole seconds; a reader given it runs every read to it")
+	tokensWord := fs.String("tokens", "", "the token budget a card with no route runs on, a number of tokens or the word unmetered (`n|unmetered`); a reader given it runs every read on it")
+	every := newSecondsFlag(fs, "every", 3*time.Second, "the time between passes and beats, a `duration` or whole seconds, above 0 and at most 5s (default 3s)")
+	once := fs.Bool("once", false, "run one pass, wait for its starts and pushes, and stop")
+	ticks := fs.Int("ticks", 0, "run this many passes and stop (not with --once; default: run until stopped)")
+	auth := fs.String("auth", "", "the harness's auth `file`, handed to each child's native --auth")
+	config := fs.String("config", "", "the harness's provider config `file`, handed to each child's native --config")
+	workerFile := fs.String("worker", "", "the worker description `file` (JSON), handed to each child's native --worker; the secret it names is handed through too")
+	noWall := fs.Bool("no-wall", false, "run each child with no nova-sandbox wall (native --no-wall): the caller owns every read and write it makes")
+	ghBin := fs.String("gh", "gh", "the gh `path` the member opens a work card's pull request with, outside the wall (default gh)")
+	passFlag := fs.String("pass", "", "the `NAME,...` of secrets in this environment a child is handed (the loop record's nova-secrets keys); a harness that reads its provider key from the environment needs it")
+	diskFloor := fs.Int("disk-floor", 10, "the free `GiB` the slots' volume keeps: below it no card starts (default 10; 0 checks nothing)")
+	identity := fs.String("identity", "", "the pool identity every child commits under, `owner,name,email` (default: the pool's identity.tsv)")
+	server := fs.String("server", "", "required: the sprint server's `address:port`, which nova-sprint run --listen started on the coordinator's machine; every sprint verb goes there and this machine opens no store")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -69,10 +79,12 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	} else if *width < 0 {
 		f.add("--width is an override of the fleet row's width and is at least 1; leave it out to run the row's")
 	}
+	f.want(*server, "server", "the sprint server's host:port, the run loop started with nova-sprint run --listen on the coordinator's machine: the member sends every sprint verb there and opens no store")
 	f.want(*harness, "harness", "the harness binary path a card runs under (nova-swarm native --harness)")
-	// the card decides its model: the deal writes the route it drew into the packet
-	// (provider/model, tokens, deadline); --model, --tokens and --deadline are the
-	// override a card with no route runs on (a store with no route: a twin, one machine)
+	// the card decides its model: the deal (a read: the ask) writes the route it drew
+	// into the packet (provider/model, tokens, deadline); --model, --tokens and
+	// --deadline are the override a card with no route runs on (a store with no route: a
+	// twin, one machine), and a reader's, given, run its reads over their routes
 	if *model != "" {
 		if _, ok := providerOf(*model); !ok {
 			f.add(fmt.Sprintf("--model %q is not provider/model (one slash, both sides nonempty); every card would be refused by native", *model))
@@ -88,8 +100,6 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	if every.d <= 0 || every.d > 5*time.Second {
 		f.add("--every is between 1ms and 5s: the beat it carries has a 15s deadline in the fleet")
 	}
-	// The store is nova-sprint's to know: the member passes its environment
-	// through (NOVA_SPRINT_REDIS, or a seat) and names no address itself.
 	if *as != "" && !safepath.NameOK(*as) {
 		f.add(fmt.Sprintf("--as %q is not a name (letters, digits, - _ .)", *as))
 	}
@@ -108,6 +118,16 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	if ticksGiven && *ticks <= 0 {
 		f.add("give --ticks 1 or more, or leave it out to run until stopped")
 	}
+	if *diskFloor < 0 {
+		f.add("--disk-floor is the free GiB the slots' volume must keep for the member to start a card: 0 or more (0 checks nothing; default 10)")
+	}
+	// the pool identity every child commits under, from the loop's argv in nova-config;
+	// without it native reads the pool's identity.tsv
+	if *identity != "" {
+		if _, err := swarm.ParseIdentity(*identity); err != nil {
+			f.add(err.Error())
+		}
+	}
 	pass := splitNames(*passFlag)
 	for _, n := range pass {
 		if !envNameRE.MatchString(n) {
@@ -124,6 +144,14 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	if f.refused(stderr) {
 		return 2
 	}
+	// the beat writes from its own goroutine (memberLoop), so what this verb writes to stderr
+	// is one line at a time
+	stderr = &lockedWriter{w: stderr}
+	// CI over work (nova-tools#4293): native refuses every card on an OS with no
+	// setpriority, so a member there would take and fail every card it is dealt
+	if why := yieldRefusal(yield.Supported, runtime.GOOS); why != "" {
+		return refuse(stderr, " member", why)
+	}
 	if *slots == "" {
 		*slots = filepath.Join(*root, "slots")
 	}
@@ -139,21 +167,41 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, " member", "own executable: "+err.Error())
 	}
-	sp := &execSprint{bin: *sprintBin, actor: *as}
+	// the sprint's verbs go to its server, which runs them beside the store (internal/sprintwire)
+	if send == nil {
+		send = sprintwire.Client{Addr: *server}.Do
+	}
+	sp := &sprintwire.Worker{Send: send, Failed: sprintFailureOutput}
 	rn := &nativeRunner{
-		self: self, sprintBin: *sprintBin, harness: *harness, model: *model, root: *root, slots: *slots,
+		self: self, harness: *harness, model: *model, root: *root, slots: *slots,
 		resultsRoot: *resultsRoot, deadline: deadline.d, tokens: *tokensWord, auth: *auth, config: *config,
-		worker: *workerFile, noWall: *noWall, stderr: stderr, pass: pass,
+		worker: *workerFile, noWall: *noWall, stderr: stderr, pass: pass, identity: *identity,
 	}
 	// a work card's commit is pushed by the member, outside the wall, at its
 	// finish (memberpush.go); a read pushes nothing
 	var pu member.Pusher
 	if !*reader {
-		gp := newGitPusher(*root, *slots, *sprintBin)
+		gp := newGitPusher(*root, *slots)
 		gp.gh = *ghBin
+		gp.notes = stdout
 		pu = gp
 	}
-	m := member.New(member.Config{As: *as, Width: *width, Reader: *reader}, sp, rn, pu, stdout)
+	// the machine's CPU, a sample a second, for the beat's load (hostload.Sampler); a
+	// reader beats nothing
+	var meter *hostload.Sampler
+	if !*reader {
+		meter = hostload.NewSampler(hostload.Local())
+		ctx, stop := context.WithCancel(context.Background())
+		defer stop()
+		go meter.Run(ctx)
+	}
+	// a launch the member is done with leaves no checkout behind, and none is started on a
+	// volume under the floor (slotclean.go); what a crash or a kill left is swept first
+	var room func() (bool, string)
+	if *diskFloor > 0 {
+		room = diskRoom(*slots, *diskFloor, diskFree)
+	}
+	m := member.New(member.Config{As: *as, Width: *width, Reader: *reader, Meter: meter, Room: room, Sleep: time.Sleep, Background: true}, sp, rn, pu, stdout) // Sleep: harness starts StartGap apart
 	kind := "member"
 	if *reader {
 		kind = "reader"
@@ -166,10 +214,16 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	if *model != "" {
 		modelWord = "card,override:" + *model
 	}
-	fmt.Fprintf(stdout, "MEMBER %s as=%s width=%s every=%s sprint=%s harness=%s model=%s\n", oneline.Field(kind), oneline.Field(*as), oneline.Field(widthWord), oneline.Field(every.d.String()), oneline.Field(*sprintBin), oneline.Field(*harness), oneline.Field(modelWord))
+	fmt.Fprintf(stdout, "MEMBER %s as=%s width=%s every=%s server=%s harness=%s model=%s\n", oneline.Field(kind), oneline.Field(*as), oneline.Field(widthWord), oneline.Field(every.d.String()), oneline.Field(*server), oneline.Field(*harness), oneline.Field(modelWord))
+	// the machine's one model catalog, refreshed once here and never per launch (catalog.go)
+	fmt.Fprintf(stdout, "CATALOG %s\n", oneline.Escape(refreshCatalog(*harness, *root)))
 	if note := passNote(*model, pass, *auth); note != "" {
 		fmt.Fprintln(stdout, note)
 	}
+	if removed, kept := rn.prune(time.Now()); removed > 0 {
+		fmt.Fprintf(stdout, "NOTE sweep: removed %d ended launch directories under %s, kept the newest %d\n", removed, oneline.Field(*slots), kept)
+	}
+	rn.cleaner() // from here a launch the member ends is tagged, and removed apart from its pass
 	n, replaced := memberLoop(m, every.d, loopTicks(*once, ticksGiven, *ticks), func() string { return binstamp.Of(self) }, stdout, stderr)
 	if replaced {
 		return exitReplaced
@@ -205,6 +259,18 @@ func loopTicks(once, ticksGiven bool, ticks int) int {
 // ends, and stops when the last is reported. replaced is true when it stopped so.
 func memberLoop(m *member.Member, every time.Duration, limit int, stamp func() string, stdout, stderr io.Writer) (n int, replaced bool) {
 	began := stamp()
+	// the beat goes on its own clock, apart from the work pass (internal/member BeatLoop): one
+	// now, so the member is up before its first pass, then one every interval while the pass
+	// goes on, ending with this loop
+	if err := m.Beat(); err != nil {
+		fmt.Fprintf(stderr, "nova-swarm member: %s\n", oneline.Escape(err.Error()))
+	}
+	beatCtx, stopBeats := context.WithCancel(context.Background())
+	beatTicker := time.NewTicker(every)
+	beatsEnded := make(chan struct{})
+	go func() { defer close(beatsEnded); m.BeatLoop(beatCtx, beatTicker.C, stderr) }()
+	// the beat ends before the loop does: nothing it writes comes after the member's last line
+	defer func() { stopBeats(); beatTicker.Stop(); <-beatsEnded }()
 	draining := false
 	for {
 		if began != "" && stamp() != began {
@@ -224,60 +290,88 @@ func memberLoop(m *member.Member, every time.Duration, limit int, stamp func() s
 			fmt.Fprintf(stderr, "nova-swarm member: tick %d: %s\n", n, oneline.Escape(err.Error()))
 		}
 		if acted > 0 || err != nil {
-			fmt.Fprintf(stdout, "tick %d acted=%d running=%d %s\n", n, acted, m.Running(), oneline.Field(time.Now().Format("15:04:05")))
+			// where the pass's time went, by part: a lane freed during a pass waits for the rest of it
+			spent := m.LastPass()
+			fmt.Fprintf(stdout, "tick %d acted=%d running=%d %s queue=%.1fs push=%.1fs report=%.1fs fill=%.1fs\n", n, acted, m.Running(), oneline.Field(time.Now().Format("15:04:05")),
+				spent.Queue.Seconds(), spent.Push.Seconds(), spent.Report.Seconds(), spent.Fill.Seconds())
 		}
 		if limit > 0 && n >= limit {
+			m.WaitLong() // no start half made, no push cut off, when the process exits
 			return n, false
 		}
-		time.Sleep(every)
+
+		// the next pass at the interval, or at once when a push ended or a child exited
+		wait := time.NewTimer(every)
+		select {
+		case <-wait.C:
+		case <-m.Wake():
+			wait.Stop()
+		}
 	}
 }
 
-// execSprint runs the sprint's verbs as the nova-sprint binary, with this
-// process's environment (the store address is nova-sprint's own flag or
-// environment, never the member's).
-type execSprint struct {
-	bin, actor string
-	env        []string // added to this process's environment: none in production, a test's store address
-}
-
-// sprintVerbBudget is how long one sprint verb may run before the member stops waiting
-// for it: a verb is one store round trip or one planned batch, and a stuck one is a
-// tick that never ends.
-const sprintVerbBudget = 120 * time.Second
-
-func (s *execSprint) Run(args ...string) (int, []byte) {
-	cmd, cancel := subproc.CommandFor(context.Background(), sprintVerbBudget, s.bin, args...)
-	defer cancel()
-	cmd.Env = append(append(os.Environ(), s.env...), "NOVA_SPRINT_ACTOR="+s.actor)
-	var out, errb bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &errb
-	err := cmd.Run()
-	code := 0
-	if ee, ok := err.(*exec.ExitError); ok {
-		code = ee.ExitCode()
-	} else if err != nil {
-		return 2, []byte(err.Error())
+// sprintFailureOutput is one bounded diagnostic from a failed sprint verb (sprintwire.Worker's Failed).
+// stderr leads because it holds the refusal or store error; stdout follows because a
+// verb can print a repair or move receipt before a later store operation fails. Each
+// half keeps room for the other, and secret-shaped values never reach the member log.
+func sprintFailureOutput(stdout, stderr []byte) []byte {
+	clean := func(raw []byte, n int) string {
+		return oneline.Cap(oneline.Escape(log.Redact(strings.TrimSpace(string(raw)))), n)
 	}
-	if code != 0 && out.Len() == 0 {
-		return code, errb.Bytes()
+	if len(strings.TrimSpace(string(stdout))) == 0 {
+		return []byte(clean(stderr, oneline.TailBytes))
 	}
-	return code, out.Bytes()
+	if len(strings.TrimSpace(string(stderr))) == 0 {
+		return []byte(clean(stdout, oneline.TailBytes))
+	}
+	const labels = "stderr: ; stdout: "
+	each := (oneline.TailBytes - len(labels)) / 2
+	return []byte("stderr: " + clean(stderr, each) + "; stdout: " + clean(stdout, each))
 }
 
 // nativeRunner runs one packet as one `nova-swarm native` child in its own
 // slot directory, its results under <results-root>/<card>/.
 type nativeRunner struct {
-	self, sprintBin, harness, model, root, slots, resultsRoot string
-	deadline                                                  time.Duration
-	tokens, auth, config, worker                              string
-	noWall                                                    bool
-	stderr                                                    io.Writer
-	env                                                       []string // added to this process's environment: none in production, a test's
-	pass                                                      []string // the secret names handed to native (--pass, the worker's secret)
+	self, harness, model, root, slots, resultsRoot string
+	deadline                                       time.Duration
+	tokens, auth, config, worker, identity         string
+	noWall                                         bool
+	stderr                                         io.Writer
+	env                                            []string // added to this process's environment: none in production, a test's
+	pass                                           []string // the secret names handed to native (--pass, the worker's secret)
+
+	// launches started and not yet ended; failed ones ended and kept (slotclean.go). mu
+	// guards both: the member's pass tags a launch ended while the cleaner prunes. tagged
+	// is the cleaner's queue; nil cleans in Ended
+	mu         sync.Mutex
+	live, kept map[string]bool
+	removing   sync.Mutex // held while a launch directory is removed, and while one is claimed
+
+	tagged chan ended
+
+	// the cleaner's lazy work (lazyclean.go): epoch is the sprint's epoch plus one as the
+	// member's last pass read it (Epoch; 0: none read yet); oldFailed and cache are the
+	// cleaner's own, touched by no other goroutine
+	epoch     atomic.Uint64
+	oldFailed map[string]bool
+	cache     cacheTrim
 }
 
-func (r *nativeRunner) Start(p member.Packet) (member.Child, error) {
+// started marks a launch running, so no prune of the pool touches its directory until the
+// member ends it (slotclean.go).
+func (r *nativeRunner) started(name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.live == nil {
+		r.live = map[string]bool{}
+	}
+	r.live[name] = true
+}
+
+// Start runs a packet as a child. The launch is claimed (live) before its directory is
+// touched and for as long as it runs, so the cleaner, which removes ended launches apart
+// from the pass, never removes the directory of a launch of the same name started again.
+func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	if !safepath.NameOK(p.Card) {
 		return nil, fmt.Errorf("card %q is not a name", p.Card)
 	}
@@ -285,6 +379,16 @@ func (r *nativeRunner) Start(p member.Packet) (member.Child, error) {
 	// attempt, in its epoch), so a result can only be this launch's; a launch
 	// whose pid file names a live process is adopted, never run twice
 	name := launchName(p)
+	r.removing.Lock() // a removal in flight ends first: it may be this name's old directory
+	r.started(name)
+	r.removing.Unlock()
+	defer func() {
+		if err != nil {
+			r.mu.Lock()
+			delete(r.live, name)
+			r.mu.Unlock()
+		}
+	}()
 	slot := filepath.Join(r.slots, name)
 	results := filepath.Join(r.resultsRoot, name)
 	logPath := filepath.Join(r.slots, name+".native.log")
@@ -298,6 +402,7 @@ func (r *nativeRunner) Start(p member.Packet) (member.Child, error) {
 			}
 			close(c.done)
 		}()
+		r.started(name)
 		return c, nil
 	}
 	if err := safepath.RemoveUnder(r.slots, slot); err != nil && !os.IsNotExist(err) {
@@ -307,7 +412,7 @@ func (r *nativeRunner) Start(p member.Packet) (member.Child, error) {
 		return nil, err
 	}
 	cardPath := filepath.Join(r.slots, name+".card.md")
-	if err := os.WriteFile(cardPath, []byte(member.CardText(p, r.sprintBin)), 0o644); err != nil {
+	if err := os.WriteFile(cardPath, []byte(member.CardText(p)), 0o644); err != nil {
 		return nil, err
 	}
 	model, tokens, deadline, err := r.route(p)
@@ -331,6 +436,9 @@ func (r *nativeRunner) Start(p member.Packet) (member.Child, error) {
 	}
 	if r.noWall {
 		args = append(args, "--no-wall")
+	}
+	if r.identity != "" {
+		args = append(args, "--identity", r.identity)
 	}
 	// A long-lived child: its own cancellable context and no deadline (its own --deadline
 	// ends it), released when the wait returns.
@@ -360,14 +468,29 @@ func (r *nativeRunner) Start(p member.Packet) (member.Child, error) {
 		_ = safepath.RemoveUnder(r.slots, pidPath)
 		close(c.done)
 	}()
+	r.started(name)
 	return c, nil
 }
 
 // route is what one launch runs on: the packet's route (the card's model, budget and
-// deadline, as the deal drew them), each part it leaves empty from the member's
-// override; a launch with no model, budget or deadline from either is refused.
+// deadline, as the deal or the ask drew them), each part it leaves empty from the
+// member's override; a launch with no model, budget or deadline from either is
+// refused. A read's route is drawn from the reader tier (internal/sprint/route.go,
+// readRouteOf), so a reader needs no --model; a reader started with --model,
+// --tokens or --deadline runs its reads on what it names over the read's route.
 func (r *nativeRunner) route(p member.Packet) (model, tokens string, deadline time.Duration, err error) {
 	model, tokens, deadline = p.Model, p.Tokens, time.Duration(p.Deadline)*time.Second
+	if p.Kind == "read" {
+		if r.model != "" {
+			model = r.model
+		}
+		if r.tokens != "" {
+			tokens = r.tokens
+		}
+		if r.deadline > 0 {
+			deadline = r.deadline
+		}
+	}
 	if model == "" {
 		model = r.model
 	}
@@ -428,6 +551,9 @@ type nativeChild struct {
 	result                      member.Result
 }
 
+// Wait is closed when the child has ended (member.Waiter).
+func (c *nativeChild) Wait() <-chan struct{} { return c.done }
+
 func (c *nativeChild) Done() bool {
 	select {
 	case <-c.done:
@@ -441,6 +567,10 @@ var nativeRC = regexp.MustCompile(`\bNATIVE (\S+) .*\brc=(-?\d+)\b.*\bharness=(\
 
 // nativeSpent is the NATIVE line's wall seconds and budget word, the launch's usage.
 var nativeSpent = regexp.MustCompile(`\bNATIVE \S+ .*\bwall=([0-9.]+s)\b.*\bbudget=(\S+)`)
+
+// nativeSpend is the NATIVE line's spend= word (spendWord): the job's tokens by class,
+// requests, largest prompt, the harness's cost and model.
+var nativeSpend = regexp.MustCompile(`\bNATIVE \S+ .*\bspend=(\S+)`)
 
 // nativeEnd is how a launch that did not finish ended, from its log: the provider's
 // failure (a NATIVE PROVIDER- line), the budget (stopped=), the deadline (rc=-1 with
@@ -457,6 +587,43 @@ func nativeEnd(log []byte) string {
 	return ""
 }
 
+// nativeProviderWhy is the reason of a run the provider failed (nativeprovider.go's
+// PROVIDER-FAIL line, and the 5xx hand-back's, swarm.Handback, PROVIDER-5XX): the rest of
+// the line after its first reason=, the cause (`provider: class=<c> status=<n|-> msg=<m>`).
+// A hand-back line that names no reason (a native before the cause) is its own reason.
+var (
+	nativeProviderWhy = regexp.MustCompile(`(?m)\bNATIVE PROVIDER-(?:FAIL|5XX) \S.*? reason=(.+)$`)
+	nativeHandback    = regexp.MustCompile(`(?m)\bNATIVE (PROVIDER-5XX \S.*)$`)
+)
+
+// providerReason is why the provider failed the run, from native's log: the provider line's
+// reason, else a 5xx hand-back line with none (`provider: PROVIDER-5XX label=... ref=...`),
+// else "".
+func providerReason(log []byte) string {
+	if m := nativeProviderWhy.FindSubmatch(log); m != nil {
+		return strings.TrimSpace(string(m[1]))
+	}
+	if m := nativeHandback.FindSubmatch(log); m != nil {
+		return "provider: " + strings.TrimSpace(string(m[1]))
+	}
+	return ""
+}
+
+// nativeStageFail is native's STAGE FAIL line's reason: the launch refused at staging,
+// before any child ran (native.go; tla/CardContract.tla, StageRefused).
+var nativeStageFail = regexp.MustCompile(`(?m)^STAGE FAIL .*\breason=(.+)$`)
+
+// nativeRefusedWhy is native's NATIVE REFUSED line's reason (refuseNative): a launch
+// native would not run, such as one that could not step behind CI (yieldNative). It is
+// the report of a launch that left no result of its own, so the reason reaches the
+// card's finish instead of "ended without a result".
+var nativeRefusedWhy = regexp.MustCompile(`(?m)^NATIVE REFUSED: (.+)$`)
+
+// nativeYieldRefused is the one NATIVE REFUSED line that is the machine's and not the
+// card's: native could not step behind CI (yieldNative). Only this refusal ends a launch
+// as a staging refusal; every other one is the card's and stays a failed finish.
+var nativeYieldRefused = regexp.MustCompile(`(?m)^NATIVE REFUSED: (yield to CI: .+)$`)
+
 var (
 	nativeProvider = regexp.MustCompile(`\bNATIVE PROVIDER-`)
 	nativeStopped  = regexp.MustCompile(`\bNATIVE \S+ .*\bstopped=`)
@@ -469,19 +636,44 @@ var (
 // the card's results, in the contract's shape (docs/SPEC-CARD-CONTRACT.md
 // section 3). The head is the result's, else the last push the git shim
 // recorded in the job, else an older result's `rev:` line; a read's verdict and
-// report fall back to the older shape too.
+// report fall back to the older shape too. A launch refused at staging (its STAGE FAIL
+// line) ran no child: it ends EndStaging with the line's reason, and nothing else is read.
 func (c *nativeChild) Result() member.Result {
 	c.once.Do(func() {
 		ran := false
-		var end, usage string
+		var end, usage, provider, refused string
 		if b, err := os.ReadFile(c.logPath); err == nil {
+			if m := nativeRefusedWhy.FindSubmatch(b); m != nil {
+				refused = strings.TrimSpace(string(m[1]))
+			}
+			if m := nativeStageFail.FindSubmatch(b); m != nil {
+				// refused at staging: no child ran, so no result of this launch exists to read
+				why := strings.TrimPrefix(strings.TrimSpace(string(m[1])), member.EndStaging+": ")
+				c.result = member.Result{End: member.EndStaging, Staging: why, Report: "no child ran (see " + c.logPath + ")"}
+				return
+			}
+			if m := nativeYieldRefused.FindSubmatch(b); m != nil && !nativeRC.Match(b) {
+				// refused before any child ran because this machine could not step behind CI:
+				// the machine's fault, never the card's, so it ends as a staging refusal does
+				// and the sprint deals the card to another member (StageRefused)
+				c.result = member.Result{End: member.EndStaging, Staging: strings.TrimSpace(string(m[1])), Report: "no child ran (see " + c.logPath + ")"}
+				return
+			}
 			if m := nativeRC.FindSubmatch(b); m != nil {
 				ran = string(m[1]) == "OK" && string(m[2]) == "0" && string(m[3]) == "ok"
 			}
 			if m := nativeSpent.FindSubmatch(b); m != nil {
-				usage = "wall=" + string(m[1]) + " budget=" + string(m[2])
+				// the launch's cost record (internal/cardcost): the wall and the budget word,
+				// and what the job spent by token class with the harness's cost (spend=)
+				u := cardcost.NoUsage()
+				if s := nativeSpend.FindSubmatch(b); s != nil {
+					u = cardcost.ParseSpend(string(s[1]))
+				}
+				u.Wall, u.Budget = string(m[1]), string(m[2])
+				usage = u.String()
 			}
 			end = nativeEnd(b)
+			provider = providerReason(b)
 		}
 		path := newestResult(c.results)
 		var raw []byte
@@ -516,11 +708,13 @@ func (c *nativeChild) Result() member.Result {
 		if report == "" {
 			if ran {
 				report = "finished; the child published no one-line report"
+			} else if refused != "" {
+				report = "native refused: " + refused
 			} else {
 				report = "the child ended without a result (see " + c.logPath + ")"
 			}
 		}
-		c.result = member.Result{Ran: ran, OK: ran, Shaped: cr.Shaped, Verdict: verdict, Head: head, Report: report, Title: cr.Title, Body: cr.Body, End: end, Usage: usage}
+		c.result = member.Result{Ran: ran, OK: ran, Shaped: cr.Shaped, Verdict: verdict, Head: head, Report: report, Title: cr.Title, Body: cr.Body, End: end, Usage: usage, Provider: provider}
 	})
 	return c.result
 }
@@ -685,4 +879,28 @@ func passNote(model string, pass []string, auth string) string {
 		return ""
 	}
 	return "NOTE member --pass names no secret: a child's harness that reads its provider key from the environment starts without it and fails at the provider; run: nova-swarm member ... --pass <KEY> (the loop record's nova-secrets keys)"
+}
+
+// yieldRefusal is why a member will not start on an OS with no setpriority
+// (yield.Supported false): native refuses every card there rather than run it at the
+// priority of the CI legs beside it (nova-tools#4293, as nova-ci local refuses), so a
+// member would take and fail every card it is dealt. "" where a launch can step behind CI.
+func yieldRefusal(supported bool, goos string) string {
+	if supported {
+		return ""
+	}
+	return "no setpriority on " + goos + ": native would refuse every card this member takes rather than run it at CI's priority (nova-tools#4293); run members on darwin or Linux"
+}
+
+// lockedWriter is a writer two goroutines share, one Write at a time: the member's loop and
+// its beat (memberLoop).
+type lockedWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (l *lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return fmt.Fprint(l.w, string(p))
 }

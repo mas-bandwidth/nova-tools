@@ -7,31 +7,69 @@ import (
 	"path/filepath"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/scaffold"
 )
 
+// cmdNewRule is `nova-ci new-rule [--root <checkout>] [--dry-run] <rule-name>`.
 func cmdNewRule(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("new-rule", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	root := fs.String("root", ".", "nova-tools checkout directory")
+	return cmdScaffold("new-rule", "one argument, the rule's name (lowercase letters, digits, - or _)", 1, args, stdout, stderr,
+		func(root string, a []string) ([]scaffold.Planned, error) { return scaffold.RuleFiles(root, a[0]) }, nil)
+}
+
+// cmdNewVerb is `nova-ci new-verb [--root <checkout>] [--dry-run] <tool> <verb>`;
+// after writing it prints the dispatch case to add, and never edits the switch.
+func cmdNewVerb(args []string, stdout, stderr io.Writer) int {
+	return cmdScaffold("new-verb", "two arguments, the tool (its directory under cmd/) and the new verb's name", 2, args, stdout, stderr,
+		func(root string, a []string) ([]scaffold.Planned, error) { return scaffold.VerbFiles(root, a[0], a[1]) },
+		func(a []string) { fmt.Fprint(stdout, scaffold.DispatchNote(a[0], a[1])) })
+}
+
+// cmdScaffold is the one body of the two scaffolding verbs: parse, render the
+// files, then write them (or, with --dry-run, check them and list them). A
+// file already there, a bad name, or a root that is not a checkout is a
+// refusal at exit 2 and writes nothing.
+func cmdScaffold(verb, wants string, nargs int, args []string, stdout, stderr io.Writer,
+	plan func(root string, a []string) ([]scaffold.Planned, error), after func(a []string)) int {
+	where := " " + verb
+	fs := flag.NewFlagSet(verb, flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.Usage = func() {}
+	root := fs.String("root", ".", "the nova-tools checkout to write into (default the current directory)")
+	dryRun := fs.Bool("dry-run", false, "list the files it would write, checked against the tree, and write nothing")
 	if err := verbflag.Parse(fs, args); err != nil {
-		return 2
+		return refuse(stderr, where, flagProblem(fs, err))
 	}
-	if fs.NArg() != 1 {
-		return refuse(stderr, " new-rule", "usage: nova-ci new-rule [--root <checkout>] <rule-name>")
+	if fs.NArg() != nargs {
+		return refuse(stderr, where, fmt.Sprintf("%s wants %s, after the flags; got %d", verb, wants, fs.NArg()))
 	}
 	abs, err := filepath.Abs(*root)
 	if err != nil {
-		return refuse(stderr, " new-rule", oneline.Err(err))
+		return refuse(stderr, where, err.Error())
 	}
-	written, err := scaffold.Rule(abs, fs.Arg(0))
+	outs, err := plan(abs, fs.Args())
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-ci new-rule: %v\n", err)
-		return 1
+		return refuse(stderr, where, err.Error())
+	}
+	if *dryRun {
+		rels, err := scaffold.Check(abs, outs)
+		if err != nil {
+			return refuse(stderr, where, err.Error())
+		}
+		for _, p := range rels {
+			fmt.Fprintln(stdout, "would write "+p)
+		}
+		fmt.Fprintf(stdout, "nova-ci%s NOTE --dry-run wrote nothing; run it again without --dry-run to write these %d files\n", where, len(rels))
+		return 0
+	}
+	written, err := scaffold.Write(abs, outs)
+	if err != nil {
+		return refuse(stderr, where, err.Error())
 	}
 	for _, p := range written {
 		fmt.Fprintln(stdout, "wrote "+p)
+	}
+	if after != nil {
+		after(fs.Args())
 	}
 	return 0
 }

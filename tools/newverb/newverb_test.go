@@ -4,8 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/mas-bandwidth/nova-tools/internal/scaffold"
 )
 
 func TestNewVerbScaffoldValidatesInput(t *testing.T) {
@@ -13,7 +11,7 @@ func TestNewVerbScaffoldValidatesInput(t *testing.T) {
 
 	tree := t.TempDir()
 	// No go.mod
-	if _, err := scaffold.Verb(tree, "nova-ci", "sample"); err == nil {
+	if _, err := verb(tree, "nova-ci", "sample"); err == nil {
 		t.Errorf("expected error when go.mod missing, got nil")
 	}
 
@@ -24,16 +22,16 @@ func TestNewVerbScaffoldValidatesInput(t *testing.T) {
 
 	// Invalid tool / verb names
 	for _, bad := range []string{"123num", "BadName", "rule with spaces", "for", "type"} {
-		if _, err := scaffold.Verb(tree, "nova-ci", bad); err == nil {
+		if _, err := verb(tree, "nova-ci", bad); err == nil {
 			t.Errorf("expected error for invalid verb name %q, got nil", bad)
 		}
-		if _, err := scaffold.Verb(tree, bad, "probe"); err == nil {
+		if _, err := verb(tree, bad, "probe"); err == nil {
 			t.Errorf("expected error for invalid tool name %q, got nil", bad)
 		}
 	}
 
 	// Valid name
-	written, err := scaffold.Verb(tree, "nova-ci", "my-verb")
+	written, err := verb(tree, "nova-ci", "my-verb")
 	if err != nil {
 		t.Fatalf("Verb failed on valid name: %v", err)
 	}
@@ -42,7 +40,7 @@ func TestNewVerbScaffoldValidatesInput(t *testing.T) {
 	}
 
 	// Second run refused
-	if _, err := scaffold.Verb(tree, "nova-ci", "my-verb"); err == nil {
+	if _, err := verb(tree, "nova-ci", "my-verb"); err == nil {
 		t.Errorf("expected error on duplicate scaffold, got nil")
 	}
 }

@@ -243,7 +243,13 @@ func texts(a *app, about []sprint.Line) []storyText {
 			if f == "return_reason" {
 				what = "reason"
 			}
+			// the same words copied onto a later line (a finding onto its rework)
+			// are told once; a worker's or a reader's own words are its own, so
+			// two readers' identical findings are both told
 			k := attemptOf(l) + "|" + what + "|" + t
+			if l.Table == sprint.Fleet || l.Table == sprint.Readers {
+				k += "|" + who
+			}
 			if given[k] {
 				continue
 			}

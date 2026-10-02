@@ -1,13 +1,14 @@
 package swarm
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // A held lease names the launcher's own pid, so the reaper can ask the operating system
@@ -17,22 +18,14 @@ func TestJobLeaseNamesTheLauncherPid(t *testing.T) {
 
 	job := t.TempDir()
 	release, err := StartJobLease(job, "card-1")
-	if err != nil {
-		t.Fatalf("the take was refused: %v", err)
-	}
+	require.NoError(t, err, "the take was refused: %v", err)
 	defer release()
 
 	raw, err := os.ReadFile(filepath.Join(job, JobLeaseName))
-	if err != nil {
-		t.Fatalf("the launcher took no lease: %v", err)
-	}
+	require.NoError(t, err, "the launcher took no lease: %v", err)
 	want := "pid=" + strconv.Itoa(os.Getpid())
-	if !strings.Contains(string(raw), want+"\n") {
-		t.Fatalf("the lease does not name this process:\n%s\nwant a line %q", raw, want)
-	}
-	if !strings.Contains(string(raw), "label=card-1\n") {
-		t.Errorf("the lease does not name the card:\n%s", raw)
-	}
+	require.Contains(t, string(raw), want+"\n", "the lease does not name this process:\n%s\nwant a line %q", raw, want)
+	assert.Contains(t, string(raw), "label=card-1\n", "the lease does not name the card:\n%s", raw)
 }
 
 // The mtime is the heartbeat: a card that says nothing for an hour still has a lease that
@@ -47,33 +40,23 @@ func TestJobLeaseHeartbeatsItsMtime(t *testing.T) {
 	job := t.TempDir()
 	path := filepath.Join(job, JobLeaseName)
 	release, err := startJobLeaseEvery(job, "card-1", 10*time.Millisecond)
-	if err != nil {
-		t.Fatalf("the take was refused: %v", err)
-	}
+	require.NoError(t, err, "the take was refused: %v", err)
 	defer release()
 
 	st, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("the launcher took no lease: %v", err)
-	}
+	require.NoError(t, err, "the launcher took no lease: %v", err)
 	first := st.ModTime()
 	// Backdate it and let one tick land: the heartbeat must carry it forward again.
 	old := first.Add(-time.Hour)
-	if err := os.Chtimes(path, old, old); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Chtimes(path, old, old))
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		st, err = os.Stat(path)
-		if err != nil {
-			t.Fatalf("the lease went missing while it was held: %v", err)
-		}
+		require.NoError(t, err, "the lease went missing while it was held: %v", err)
 		if st.ModTime().After(old) {
 			return
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("the lease mtime is still %s after 2s: the heartbeat does not beat", st.ModTime())
-		}
+		require.False(t, time.Now().After(deadline), "the lease mtime is still %s after 2s: the heartbeat does not beat", st.ModTime())
 		time.Sleep(5 * time.Millisecond)
 	}
 }
@@ -85,14 +68,11 @@ func TestJobLeaseReleaseRemovesTheFile(t *testing.T) {
 
 	job := t.TempDir()
 	release, err := StartJobLease(job, "card-1")
-	if err != nil {
-		t.Fatalf("the take was refused: %v", err)
-	}
+	require.NoError(t, err, "the take was refused: %v", err)
 	release()
 	release()
-	if _, err := os.Lstat(filepath.Join(job, JobLeaseName)); !os.IsNotExist(err) {
-		t.Fatalf("the lease outlived the run: %v", err)
-	}
+	_, err = os.Lstat(filepath.Join(job, JobLeaseName))
+	require.True(t, os.IsNotExist(err), "the lease outlived the run: %v", err)
 }
 
 // ISSUE #1585, Stella's finding. Two `nova-swarm native` runs used one physical
@@ -118,37 +98,23 @@ func TestASecondTakeOnALiveJobLeaseIsRefused(t *testing.T) {
 
 	job := t.TempDir()
 	release, err := StartJobLease(job, "card-1")
-	if err != nil {
-		t.Fatalf("the first take was refused: %v", err)
-	}
+	require.NoError(t, err, "the first take was refused: %v", err)
 	defer release()
 	first, err := os.ReadFile(filepath.Join(job, JobLeaseName))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	second, err := StartJobLease(job, "card-1")
 	if err == nil {
 		second()
-		t.Fatal("a second run took a lease on a job directory a live run holds; both would then write one data home, one tmp and one log, and the first to end would remove the other's lease (#1585)")
 	}
+	require.Error(t, err, "a second run took a lease on a job directory a live run holds; both would then write one data home, one tmp and one log, and the first to end would remove the other's lease (#1585)")
 	var held *JobLeaseHeldError
-	if !errors.As(err, &held) {
-		t.Fatalf("the refusal is %v (%T), and a caller has to be able to name the holder: want a *JobLeaseHeldError", err, err)
-	}
-	if held.Holder.PID != os.Getpid() {
-		t.Errorf("the refusal names pid %d; the holder is %d", held.Holder.PID, os.Getpid())
-	}
-	if !strings.Contains(err.Error(), "card-1") {
-		t.Errorf("the refusal does not name the holder's card: %v", err)
-	}
+	require.ErrorAs(t, err, &held, "the refusal is %v (%T), and a caller has to be able to name the holder: want a *JobLeaseHeldError", err, err)
+	assert.Equal(t, os.Getpid(), held.Holder.PID, "the refusal names pid %d; the holder is %d", held.Holder.PID, os.Getpid())
+	assert.Contains(t, err.Error(), "card-1", "the refusal does not name the holder's card: %v", err)
 	after, err := os.ReadFile(filepath.Join(job, JobLeaseName))
-	if err != nil {
-		t.Fatalf("the refused take removed the live lease: %v", err)
-	}
-	if string(after) != string(first) {
-		t.Errorf("the refused take rewrote the live lease:\nbefore:\n%s\nafter:\n%s", first, after)
-	}
+	require.NoError(t, err, "the refused take removed the live lease: %v", err)
+	assert.Equal(t, string(first), string(after), "the refused take rewrote the live lease:\nbefore:\n%s\nafter:\n%s", first, after)
 }
 
 // (2) A RELEASE REMOVES ITS OWN LEASE AND NO OTHER. This is the exact sequence of #1585
@@ -162,38 +128,24 @@ func TestAReleaseNeverRemovesAnotherRunsLease(t *testing.T) {
 	path := filepath.Join(job, JobLeaseName)
 
 	releaseA, err := StartJobLease(job, "card-1")
-	if err != nil {
-		t.Fatalf("A could not take the lease: %v", err)
-	}
+	require.NoError(t, err, "A could not take the lease: %v", err)
 	// The path becomes free the way it does on the bench -- by a hand, an older binary or
 	// the first run's own unfenced release -- and B, a different run, takes it.
-	if err := os.Remove(path); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Remove(path))
 	releaseB, err := StartJobLease(job, "card-2")
-	if err != nil {
-		t.Fatalf("B could not take the free lease: %v", err)
-	}
+	require.NoError(t, err, "B could not take the free lease: %v", err)
 	defer releaseB()
 	bBody, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	// A ends. Its release must not touch B's lease: B is alive, and a job whose lease is
 	// gone is a job the reaper will delete out from under it.
 	releaseA()
 
 	after, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("A's release removed B's lease, and B is still running: %v (#1585)", err)
-	}
-	if string(after) != string(bBody) {
-		t.Errorf("A's release rewrote B's lease:\nB wrote:\n%s\nnow:\n%s", bBody, after)
-	}
-	if !strings.Contains(string(after), "label=card-2\n") {
-		t.Errorf("the lease on disk is not B's:\n%s", after)
-	}
+	require.NoError(t, err, "A's release removed B's lease, and B is still running: %v (#1585)", err)
+	assert.Equal(t, string(bBody), string(after), "A's release rewrote B's lease:\nB wrote:\n%s\nnow:\n%s", bBody, after)
+	assert.Contains(t, string(after), "label=card-2\n", "the lease on disk is not B's:\n%s", after)
 }
 
 // (3) THE HEARTBEAT RESTORES A LEASE THAT WENT MISSING. Chtimes on a path that is not
@@ -206,17 +158,11 @@ func TestTheHeartbeatRewritesALeaseThatWentMissing(t *testing.T) {
 	job := t.TempDir()
 	path := filepath.Join(job, JobLeaseName)
 	release, err := startJobLeaseEvery(job, "card-1", time.Millisecond)
-	if err != nil {
-		t.Fatalf("the take was refused: %v", err)
-	}
+	require.NoError(t, err, "the take was refused: %v", err)
 	defer release()
 	mine, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(path); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	require.NoError(t, os.Remove(path))
 
 	// The heartbeat is a ticker, so this is a poll for its next tick and not a wait on a
 	// chosen duration: the deadline only bounds a failure.
@@ -224,14 +170,10 @@ func TestTheHeartbeatRewritesALeaseThatWentMissing(t *testing.T) {
 	for {
 		raw, err := os.ReadFile(path)
 		if err == nil && len(raw) > 0 {
-			if string(raw) != string(mine) {
-				t.Fatalf("the heartbeat rewrote the lease as somebody else:\nwant:\n%s\ngot:\n%s", mine, raw)
-			}
+			require.Equal(t, string(mine), string(raw), "the heartbeat rewrote the lease as somebody else:\nwant:\n%s\ngot:\n%s", mine, raw)
 			return
 		}
-		if time.Now().After(deadline) {
-			t.Fatal("the lease is still missing: a held lease that is removed is never restored, and the reaper now reads this live job as finished work (#1585)")
-		}
+		require.False(t, time.Now().After(deadline), "the lease is still missing: a held lease that is removed is never restored, and the reaper now reads this live job as finished work (#1585)")
 	}
 }
 
@@ -252,33 +194,24 @@ func TestAnUnfinishedClaimIsNotReclaimedAsADeadOwner(t *testing.T) {
 
 	// The create-before-write boundary, held open: a claim that exists and says nothing yet.
 	claim, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	defer claim.Close()
 	before, err := claim.Stat()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	release, err := StartJobLease(job, "competitor")
 	if err == nil {
 		release()
-		t.Fatal("a competitor reclaimed an unfinished claim as a dead owner: an empty record is not a pid 0 that is not alive, it is an owner this run cannot read yet (#1585, Stella's P1)")
 	}
-	if _, ok := HeldJobLease(err); !ok {
-		t.Errorf("the refusal is %v; an unfinished record is HELD by an unknown owner, and the caller has to be able to say so", err)
-	}
+	require.Error(t, err, "a competitor reclaimed an unfinished claim as a dead owner: an empty record is not a pid 0 that is not alive, it is an owner this run cannot read yet (#1585, Stella's P1)")
+	_, ok := HeldJobLease(err)
+	assert.True(t, ok, "the refusal is %v; an unfinished record is HELD by an unknown owner, and the caller has to be able to say so", err)
 
 	// AND THE PATH IS STILL THE FIRST CLAIM'S INODE. Nothing unlinked it, so the creator's
 	// own write still lands on the file that bears the name.
 	after, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("the competitor removed the unfinished claim: %v", err)
-	}
-	if !os.SameFile(before, after) {
-		t.Fatal("the path no longer names the first claim's file: the competitor unlinked it and the creator's write would go to an inode with no name (#1585, Stella's P1)")
-	}
+	require.NoError(t, err, "the competitor removed the unfinished claim: %v", err)
+	require.True(t, os.SameFile(before, after), "the path no longer names the first claim's file: the competitor unlinked it and the creator's write would go to an inode with no name (#1585, Stella's P1)")
 }
 
 // The other half of rule 2: an unreadable record is HELD, not held forever. Once its
@@ -290,25 +223,15 @@ func TestAnUnfinishedClaimIsTakenOverOnceItIsStale(t *testing.T) {
 
 	job := t.TempDir()
 	path := filepath.Join(job, JobLeaseName)
-	if err := os.WriteFile(path, nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, nil, 0o644))
 	old := time.Now().Add(-2 * JobLeaseStale)
-	if err := os.Chtimes(path, old, old); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Chtimes(path, old, old))
 	release, err := StartJobLease(job, "card-1")
-	if err != nil {
-		t.Fatalf("an unreadable record older than the stale bound still refused the run: %v", err)
-	}
+	require.NoError(t, err, "an unreadable record older than the stale bound still refused the run: %v", err)
 	defer release()
 	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(raw), "label=card-1\n") {
-		t.Errorf("the stale record is still on disk:\n%s", raw)
-	}
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), "label=card-1\n", "the stale record is still on disk:\n%s", raw)
 }
 
 // STELLA'S P1, WITNESS TWO (#1585). With `.lease` an owned directory, BOTH takes returned
@@ -320,18 +243,14 @@ func TestALeaseThatCannotBeEstablishedIsARefusalAndNotASilentSuccess(t *testing.
 	job := t.TempDir()
 	// A path that is there and is not a record: this run cannot tell who holds the
 	// directory, and under rule 3 it may not guess.
-	if err := os.Mkdir(filepath.Join(job, JobLeaseName), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Mkdir(filepath.Join(job, JobLeaseName), 0o755))
 	for _, who := range []string{"first", "second"} {
 		release, err := StartJobLease(job, who)
 		if err == nil {
 			release()
-			t.Fatalf("%s was told it holds a job directory it could not take: a take that establishes nothing must refuse, or two launchers proceed with no exclusion at all (#1585, Stella's P1)", who)
 		}
-		if !strings.Contains(err.Error(), JobLeaseName) {
-			t.Errorf("%s: the refusal does not name the path it could not take: %v", who, err)
-		}
+		require.Error(t, err, "%s was told it holds a job directory it could not take: a take that establishes nothing must refuse, or two launchers proceed with no exclusion at all (#1585, Stella's P1)", who)
+		assert.Contains(t, err.Error(), JobLeaseName, "%s: the refusal does not name the path it could not take: %v", who, err)
 	}
 }
 
@@ -345,15 +264,13 @@ func TestAJobDirectoryThatCannotHoldALeaseRefusesTheRun(t *testing.T) {
 		t.Skip("root is not bound by the directory's mode, so this proves nothing here")
 	}
 	job := t.TempDir()
-	if err := os.Chmod(job, 0o555); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Chmod(job, 0o555))
 	t.Cleanup(func() { _ = os.Chmod(job, 0o755) })
 	release, err := StartJobLease(job, "card-1")
 	if err == nil {
 		release()
-		t.Fatal("a run was told it holds a job directory it cannot even write a lease into")
 	}
+	require.Error(t, err, "a run was told it holds a job directory it cannot even write a lease into")
 }
 
 // RULE 4, THE JOIN. `close(done)` does not join a tick that has ALREADY been selected, and
@@ -382,15 +299,11 @@ func TestAReleaseWaitsForTheHeartbeatBeforeItRemovesTheLease(t *testing.T) {
 
 	release, err := startJobLeaseTicking(job, "card-1", ticks, func() {},
 		jobLeaseHooks{atBeat: atBeat, afterRemove: afterRemove})
-	if err != nil {
-		t.Fatalf("the take was refused: %v", err)
-	}
+	require.NoError(t, err, "the take was refused: %v", err)
 
 	// The lease goes missing, so the beat that is about to run REPAIRS it -- the write
 	// that must not be allowed to land after the run has ended.
-	if err := os.Remove(path); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Remove(path))
 	ticks <- time.Now() // the heartbeat now sits at its barrier, inside this beat
 
 	returned := make(chan struct{})
@@ -400,9 +313,8 @@ func TestAReleaseWaitsForTheHeartbeatBeforeItRemovesTheLease(t *testing.T) {
 	<-afterRemove // the release has passed its remove
 	<-returned
 
-	if _, err := os.Lstat(path); !os.IsNotExist(err) {
-		t.Fatalf("the finished run left a lease behind: a beat already in flight wrote it back after the release, and the reaper now reads a finished job as live (#1585): %v", err)
-	}
+	_, err = os.Lstat(path)
+	require.True(t, os.IsNotExist(err), "the finished run left a lease behind: a beat already in flight wrote it back after the release, and the reaper now reads a finished job as live (#1585): %v", err)
 }
 
 // Nothing is left beside the lease either: the temp file the publication links from is this
@@ -412,18 +324,12 @@ func TestTakingTheLeaseLeavesNoTemporaryFileBehind(t *testing.T) {
 
 	job := t.TempDir()
 	release, err := StartJobLease(job, "card-1")
-	if err != nil {
-		t.Fatalf("the take was refused: %v", err)
-	}
+	require.NoError(t, err, "the take was refused: %v", err)
 	defer release()
 	entries, err := os.ReadDir(job)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	for _, e := range entries {
-		if e.Name() != JobLeaseName {
-			t.Errorf("the job directory holds %q beside the lease", e.Name())
-		}
+		assert.Equal(t, JobLeaseName, e.Name(), "the job directory holds %q beside the lease", e.Name())
 	}
 }
 
@@ -436,23 +342,18 @@ func TestAnOldHeartbeatNeverRetiresALivePid(t *testing.T) {
 	job := t.TempDir()
 	path := filepath.Join(job, JobLeaseName)
 	release, err := StartJobLease(job, "card-1")
-	if err != nil {
-		t.Fatalf("the take was refused: %v", err)
-	}
+	require.NoError(t, err, "the take was refused: %v", err)
 	defer release()
 	// Far past the reaper's stale bound, with the launcher very much alive.
 	old := time.Now().Add(-100 * JobLeaseStale)
-	if err := os.Chtimes(path, old, old); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Chtimes(path, old, old))
 	second, err := StartJobLease(job, "card-2")
 	if err == nil {
 		second()
-		t.Fatal("an old heartbeat retired a claim whose pid this kernel can see alive: a card in one long model call is exactly that, and it is the whole reason the lease exists (#1499, #1585)")
 	}
-	if _, ok := HeldJobLease(err); !ok {
-		t.Errorf("the refusal is %v; a live pid is a holder and has to be named as one", err)
-	}
+	require.Error(t, err, "an old heartbeat retired a claim whose pid this kernel can see alive: a card in one long model call is exactly that, and it is the whole reason the lease exists (#1499, #1585)")
+	_, ok := HeldJobLease(err)
+	assert.True(t, ok, "the refusal is %v; a live pid is a holder and has to be named as one", err)
 }
 
 // Feature 87 hold (#2857): the renew decision must stop renewing once the beat file
@@ -464,34 +365,25 @@ func TestLeaseProviderBeatRenewsOnlyOnAdvance(t *testing.T) {
 	beat := filepath.Join(job, ProviderBeatName)
 	var last time.Time
 	renew, last := providerBeatRenews(beat, last)
-	if !renew || !last.IsZero() {
-		t.Fatalf("no beat file yet: renew=%v last=%v, want renew with zero last", renew, last)
-	}
+	require.True(t, renew, "no beat file yet: renew=%v last=%v, want renew with zero last", renew, last)
+	require.True(t, last.IsZero(), "no beat file yet: renew=%v last=%v, want renew with zero last", renew, last)
 	t0 := time.Now().Add(-time.Minute).Truncate(time.Second)
-	if err := touchProviderBeat(job, t0); err != nil {
-		t.Fatal(err)
-	}
-	if renew, last = providerBeatRenews(beat, last); !renew || !last.Equal(t0) {
-		t.Fatalf("first beat: renew=%v last=%v, want renew at %v", renew, last, t0)
-	}
+	require.NoError(t, touchProviderBeat(job, t0))
+	renew, last = providerBeatRenews(beat, last)
+	require.True(t, renew, "first beat: renew=%v last=%v, want renew at %v", renew, last, t0)
+	require.True(t, last.Equal(t0), "first beat: renew=%v last=%v, want renew at %v", renew, last, t0)
 	for i := 0; i < 3; i++ {
-		if renew, last = providerBeatRenews(beat, last); renew {
-			t.Fatalf("tick %d with an unmoved beat file renewed the lease", i)
-		}
+		renew, last = providerBeatRenews(beat, last)
+		require.False(t, renew, "tick %d with an unmoved beat file renewed the lease", i)
 	}
 	t1 := t0.Add(10 * time.Second)
-	if err := touchProviderBeat(job, t1); err != nil {
-		t.Fatal(err)
-	}
-	if renew, last = providerBeatRenews(beat, last); !renew || !last.Equal(t1) {
-		t.Fatalf("advanced beat: renew=%v last=%v, want renew at %v", renew, last, t1)
-	}
-	if err := os.Remove(beat); err != nil {
-		t.Fatal(err)
-	}
-	if renew, _ = providerBeatRenews(beat, last); renew {
-		t.Fatal("beat file removed after being seen still renewed")
-	}
+	require.NoError(t, touchProviderBeat(job, t1))
+	renew, last = providerBeatRenews(beat, last)
+	require.True(t, renew, "advanced beat: renew=%v last=%v, want renew at %v", renew, last, t1)
+	require.True(t, last.Equal(t1), "advanced beat: renew=%v last=%v, want renew at %v", renew, last, t1)
+	require.NoError(t, os.Remove(beat))
+	renew, _ = providerBeatRenews(beat, last)
+	require.False(t, renew, "beat file removed after being seen still renewed")
 }
 
 // touchProviderBeat must create the file when absent (the first sample may already
@@ -501,14 +393,8 @@ func TestLeaseTouchProviderBeatCreatesAbsentFile(t *testing.T) {
 
 	job := t.TempDir()
 	now := time.Now().Add(-time.Hour).Truncate(time.Second)
-	if err := touchProviderBeat(job, now); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, touchProviderBeat(job, now))
 	st, err := os.Stat(filepath.Join(job, ProviderBeatName))
-	if err != nil {
-		t.Fatalf("beat file not created: %v", err)
-	}
-	if !st.ModTime().Equal(now) {
-		t.Fatalf("beat mtime %v, want %v", st.ModTime(), now)
-	}
+	require.NoError(t, err, "beat file not created: %v", err)
+	require.True(t, st.ModTime().Equal(now), "beat mtime %v, want %v", st.ModTime(), now)
 }

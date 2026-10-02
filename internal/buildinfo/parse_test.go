@@ -3,6 +3,9 @@ package buildinfo_test
 import (
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 )
 
@@ -66,19 +69,12 @@ func TestParseTakesEveryToolsLineApart(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, ok := buildinfo.Parse(tc.line)
-			if !ok {
-				t.Fatalf("Parse refused a line that obeys the grammar:\n%s", tc.line)
-			}
-			if got.Tool != tc.tool || got.Version != tc.version || got.Platform != tc.platform {
-				t.Errorf("Parse read tool=%q version=%q platform=%q, want %q %q %q",
-					got.Tool, got.Version, got.Platform, tc.tool, tc.version, tc.platform)
-			}
-			if got.GoVersion != "go1.27.1" {
-				t.Errorf("Parse read go version %q, want go1.27.1", got.GoVersion)
-			}
-			if len(got.Extras) != tc.extras {
-				t.Errorf("Parse read %d extras, want %d: %v", len(got.Extras), tc.extras, got.Extras)
-			}
+			require.True(t, ok, "Parse refused a line that obeys the grammar:\n%s", tc.line)
+			assert.Equal(t, [3]string{tc.tool, tc.version, tc.platform}, [3]string{got.Tool, got.Version, got.Platform},
+				"Parse read tool=%q version=%q platform=%q, want %q %q %q",
+				got.Tool, got.Version, got.Platform, tc.tool, tc.version, tc.platform)
+			assert.Equal(t, "go1.27.1", got.GoVersion, "Parse read go version %q, want go1.27.1", got.GoVersion)
+			assert.Len(t, got.Extras, tc.extras, "Parse read %d extras, want %d: %v", len(got.Extras), tc.extras, got.Extras)
 		})
 	}
 }
@@ -100,9 +96,8 @@ func TestParseRefusesWhatIsNotAVersionLine(t *testing.T) {
 		{"the sandbox's old shape, which no reader could take apart", "SANDBOX VERSION tool=nova-sandbox version=v1 backend=sandbox-exec platform=darwin"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got, ok := buildinfo.Parse(tc.line); ok {
-				t.Errorf("Parse accepted %q as a version line: %+v", tc.line, got)
-			}
+			got, ok := buildinfo.Parse(tc.line)
+			assert.False(t, ok, "Parse accepted %q as a version line: %+v", tc.line, got)
 		})
 	}
 }
@@ -114,15 +109,11 @@ func TestExtraFindsWhatTheToolSaidAboutItself(t *testing.T) {
 	t.Parallel()
 
 	f, ok := buildinfo.Parse("nova-merge v1 darwin/arm64 go1.27.1 build=9c1885748f57")
-	if !ok {
-		t.Fatal("Parse refused nova-merge's line")
-	}
-	if v, ok := f.Extra("build"); !ok || v != "9c1885748f57" {
-		t.Errorf("Extra(build) = %q %v, want 9c1885748f57 true", v, ok)
-	}
-	if _, ok := f.Extra("backend"); ok {
-		t.Error("Extra(backend) found a key the line does not carry")
-	}
+	require.True(t, ok, "Parse refused nova-merge's line")
+	v, ok := f.Extra("build")
+	assert.Equal(t, [2]any{"9c1885748f57", true}, [2]any{v, ok}, "Extra(build) = %q %v, want 9c1885748f57 true", v, ok)
+	_, ok = f.Extra("backend")
+	assert.False(t, ok, "Extra(backend) found a key the line does not carry")
 }
 
 // TestLineCarriesItsExtrasThroughTheOneWriter: the writer and the reader are
@@ -134,18 +125,12 @@ func TestLineCarriesItsExtrasThroughTheOneWriter(t *testing.T) {
 
 	line := buildinfo.Line("nova-merge", "v9.9.9", "build=9c1885748f57")
 	f, ok := buildinfo.Parse(line)
-	if !ok {
-		t.Fatalf("the line this package writes is not one it reads:\n%s", line)
-	}
-	if f.Tool != "nova-merge" || f.Version != "v9.9.9" {
-		t.Errorf("round trip lost the identity: %+v", f)
-	}
-	if v, _ := f.Extra("build"); v != "9c1885748f57" {
-		t.Errorf("round trip lost the extra: %+v", f)
-	}
-	if plain, _ := buildinfo.Parse(buildinfo.Line("nova-bus", "v9.9.9")); len(plain.Extras) != 0 {
-		t.Errorf("a tool with nothing to add printed extras: %v", plain.Extras)
-	}
+	require.True(t, ok, "the line this package writes is not one it reads:\n%s", line)
+	assert.Equal(t, [2]string{"nova-merge", "v9.9.9"}, [2]string{f.Tool, f.Version}, "round trip lost the identity: %+v", f)
+	v, _ := f.Extra("build")
+	assert.Equal(t, "9c1885748f57", v, "round trip lost the extra: %+v", f)
+	plain, _ := buildinfo.Parse(buildinfo.Line("nova-bus", "v9.9.9"))
+	assert.Empty(t, plain.Extras, "a tool with nothing to add printed extras: %v", plain.Extras)
 }
 
 // TestLineRefusesAnExtraThatIsNotKeyValue makes the writer as strict as the
@@ -154,10 +139,6 @@ func TestLineCarriesItsExtrasThroughTheOneWriter(t *testing.T) {
 func TestLineRefusesAnExtraThatIsNotKeyValue(t *testing.T) {
 	t.Parallel()
 
-	defer func() {
-		if recover() == nil {
-			t.Error("Line accepted an extra that is not key=value; the reader refuses it, so the writer must too")
-		}
-	}()
-	_ = buildinfo.Line("nova-merge", "v9.9.9", "9c1885748f57")
+	assert.Panics(t, func() { _ = buildinfo.Line("nova-merge", "v9.9.9", "9c1885748f57") },
+		"Line accepted an extra that is not key=value; the reader refuses it, so the writer must too")
 }

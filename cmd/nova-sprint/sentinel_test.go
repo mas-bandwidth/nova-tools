@@ -1,8 +1,9 @@
 package main
 
 import (
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
@@ -15,21 +16,16 @@ func TestReleaseIsTheCoordinators(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1 --coordinator lead")
 	var w whereView
-	if ta.json("where", &w); w.Coordinator != "lead" {
-		t.Fatalf("where --json: %+v", w)
-	}
-	if out := ta.ok("where"); strings.Contains(out, "coordinator:") {
-		t.Fatalf("where shows the coordinator line: %s", out)
-	}
+	ta.json("where", &w)
+	require.Equal(t, "lead", w.Coordinator, "where --json: %+v", w)
+	require.NotContains(t, ta.ok("where"), "coordinator:", "where shows the coordinator line")
 	ta.ok("add --stream s1 --count 1 --actor lead")
 	out := ta.ok("add --stream s1 --sentinel stop --actor lead")
-	if !strings.Contains(out, "MOVED sentinel stop -> waiting stream=s1") {
-		t.Fatalf("add --sentinel: %s", out)
-	}
+	require.Contains(t, out, "MOVED sentinel stop -> waiting stream=s1", "add --sentinel")
 	ta.ok("add --stream s2 b --needs stop --actor lead")
-	if out := ta.ok("card --fields stop"); !strings.Contains(out, "NEEDS s1-1 ready\n") || !strings.Contains(out, "NEEDED-BY b\n") {
-		t.Fatalf("card stop: %s", out)
-	}
+	out = ta.ok("card --fields stop")
+	require.Contains(t, out, "NEEDS s1-1 ready\n", "card stop")
+	require.Contains(t, out, "NEEDED-BY b\n", "card stop")
 	ta.deal(1)
 	ta.ok("take --as m1 s1-1.w1@1")
 	ta.ok("finish --as m1 s1-1.w1@1")
@@ -39,15 +35,14 @@ func TestReleaseIsTheCoordinators(t *testing.T) {
 	ta.ok("accept s1-1 --actor lead")
 	ta.ok("merge --stream s1")
 	g := ta.group(sprint.NSentinelReached, "s1")
-	if code, _, errs := ta.do("release stop --reason 'looked' --actor someone"); code != 2 || !strings.Contains(errs, "release is the coordinator's alone: lead, not someone") {
-		t.Fatalf("another actor: %d %s", code, errs)
-	}
-	if code, _, errs := ta.do("release stop --actor lead"); code != 1 || !strings.Contains(errs, "release wants --reason") {
-		t.Fatalf("no reason: %d %s", code, errs)
-	}
+	code, _, errs := ta.do("release stop --reason 'looked' --actor someone")
+	require.Equal(t, 2, code, "another actor: %d %s", code, errs)
+	require.Contains(t, errs, "release is the coordinator's alone: lead, not someone", "another actor: %d %s", code, errs)
+	code, _, errs = ta.do("release stop --actor lead")
+	require.Equal(t, 1, code, "no reason: %d %s", code, errs)
+	require.Contains(t, errs, "release wants --reason", "no reason: %d %s", code, errs)
 	out = ta.ok("release stop --reason 'the layer is read and green' --actor lead --answers " + g.ID)
-	if !strings.Contains(out, "sentinel stop waiting -> landed (released by lead); 1 cards are now ready") || !strings.Contains(out, "b waiting -> ready") {
-		t.Fatalf("release: %s", out)
-	}
+	require.Contains(t, out, "sentinel stop waiting -> landed (released by lead); 1 cards are now ready", "release")
+	require.Contains(t, out, "b waiting -> ready", "release")
 	ta.clean()
 }

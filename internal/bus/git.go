@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -119,10 +120,7 @@ type limitedGitBuffer struct{ bytes.Buffer }
 
 func (b *limitedGitBuffer) Write(p []byte) (int, error) {
 	if b.Len() < gitOutputCap {
-		remain := gitOutputCap - b.Len()
-		if remain > len(p) {
-			remain = len(p)
-		}
+		remain := min(gitOutputCap-b.Len(), len(p))
 		// ignored: a bytes.Buffer write never returns an error
 		_, _ = b.Buffer.Write(p[:remain])
 	}
@@ -360,12 +358,9 @@ func WithTrailer(message, what string) string {
 // rather than only the last paragraph, because a rebase, a cherry-pick or a person editing
 // a message can add lines under it, and a commit this tool made does not stop being one.
 func HasTrailer(message string) bool {
-	for _, line := range strings.Split(strings.ReplaceAll(message, "\r\n", "\n"), "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), TrailerKey+":") {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(strings.Split(strings.ReplaceAll(message, "\r\n", "\n"), "\n"), func(line string) bool {
+		return strings.HasPrefix(strings.TrimSpace(line), TrailerKey+":")
+	})
 }
 
 // HasExactTrailer reports whether a commit message carries the exact trailer key and value.
@@ -1070,25 +1065,9 @@ func commitsSince(dir, from, to string, ceiling int) (int, bool, error) {
 	if _, err := fmt.Sscanf(strings.TrimSpace(out), "%d", &n); err != nil {
 		return 0, false, fmt.Errorf("git rev-list --count did not answer with a number: %w", err)
 	}
-	commitsWalked.Add(int64(n))
 	countersFor(dir).commitsWalked.Add(int64(n))
 	return n, ceiling > 0 && n > ceiling, nil
 }
-
-// commitsWalked counts the commits this process's commit counts have enumerated, and
-// CommitsWalked reads it.
-//
-// It is INSTRUMENTATION, of the same kind and for the same reason as NoteParses in note.go:
-// the property it measures -- a stale cursor costs the BOUND and not the distance -- is a
-// claim about work NOT DONE, and work not done leaves no output to assert on. The honest
-// proof is a count taken where the work happens. Timing two runs instead would be a flake on
-// a shared runner and would prove nothing on a fast enough machine.
-var commitsWalked atomic.Int64
-
-// CommitsWalked is how many commits this process's rev-list counts have enumerated. Tests
-// take it before and after a run and assert on the difference; nothing else reads it and
-// nothing branches on it.
-func CommitsWalked() int64 { return commitsWalked.Load() }
 
 func ChangedSince(dir, commit string) ([]string, error) {
 	if err := ValidCommitHex(commit); err != nil {

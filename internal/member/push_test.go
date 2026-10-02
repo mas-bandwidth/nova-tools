@@ -241,7 +241,7 @@ func TestCardTextSaysTheMemberPushes(t *testing.T) {
 	for _, base := range []string{"", "sprint/base"} {
 		p := pk("c1")
 		p.Base = base
-		got := CardText(p, "nova-sprint")
+		got := CardText(p)
 		assert.Contains(t, got, "When you end, the member pushes your commit to origin's branch work/c1 from outside the wall.", "base %q", base)
 		assert.Contains(t, got, "JOB.md, which the prompt names first", "base %q", base)
 		assert.NotContains(t, got, "rev:", "base %q", base)
@@ -262,7 +262,7 @@ func TestJudgeIsTheFinishRule(t *testing.T) {
 		why  string
 	}{
 		{"shaped, ok, pushed", shaped, Push{Sha: fullSha}, FinishOK, ""},
-		{"no shape", Result{Verdict: "ok", Head: fullSha}, Push{Sha: fullSha}, FinishFailed, "no RESULT.md shape"},
+		{"no shape", Result{Verdict: "ok", Head: fullSha}, Push{Sha: fullSha}, FinishFailed, "no result: no RESULT.md shape"},
 		{"not done", Result{Shaped: true, Verdict: "not-done", Report: "r"}, Push{Sha: fullSha}, FinishFailed, "verdict not-done"},
 		{"no commit", shaped, Push{None: "nothing new"}, FinishFailed, "no commit: nothing new"},
 		{"push refused", shaped, Push{Refused: "! [rejected]"}, FinishFailed, "push refused: ! [rejected]"},

@@ -9,6 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/refmodel"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
@@ -74,7 +77,7 @@ func TestDecideIsWhatTodaysTickPlansOnAThousandSnapshots(t *testing.T) {
 		for _, d := range refmodel.Duties {
 			got := d.Moves(s.snap, s.now)
 			if ok, diff := refmodel.Equal(want[d.Name], got); !ok {
-				t.Fatalf("snapshot %d, duty %s: %s\ntoday's tick:%s\nthe reference:%s", i, d.Name, diff, show(want[d.Name]), show(got))
+				require.Failf(t, "assertion failed", "snapshot %d, duty %s: %s\ntoday's tick:%s\nthe reference:%s", i, d.Name, diff, show(want[d.Name]), show(got))
 			}
 			if len(got) > 0 {
 				withMoves[d.Name]++
@@ -86,20 +89,16 @@ func TestDecideIsWhatTodaysTickPlansOnAThousandSnapshots(t *testing.T) {
 		}
 		if i < deepSamples {
 			if ok, diff := refmodel.Equal(all, refmodel.Decide(s.snap, s.now)); !ok {
-				t.Fatalf("snapshot %d: Decide is not the moves of today's tick: %s", i, diff)
+				require.Failf(t, "assertion failed", "snapshot %d: Decide is not the moves of today's tick: %s", i, diff)
 			}
 		}
 	}
 	for _, d := range refmodel.Duties {
-		if withMoves[d.Name] < minSamplesWithMoves {
-			t.Errorf("the duty %s made moves on %d of %d snapshots, fewer than %d: the walks do not try it", d.Name, withMoves[d.Name], len(snapshots()), minSamplesWithMoves)
-		}
+		assert.GreaterOrEqual(t, withMoves[d.Name], minSamplesWithMoves, "the duty %s made moves on %d of %d snapshots, fewer than %d: the walks do not try it", d.Name, withMoves[d.Name], len(snapshots()), minSamplesWithMoves)
 	}
 	for _, kind := range []string{refmodel.KindCreate, refmodel.KindMove, refmodel.KindSet, refmodel.KindOpen, refmodel.KindNotice, refmodel.KindClose,
 		refmodel.KindHold, refmodel.KindUpdate, refmodel.KindPush} {
-		if kinds[kind] == 0 {
-			t.Errorf("no snapshot made a move of kind %s: the walks do not try it", kind)
-		}
+		assert.NotZero(t, kinds[kind], "no snapshot made a move of kind %s: the walks do not try it", kind)
 	}
 	t.Logf("snapshots with moves, by duty: %v; moves by kind: %v", withMoves, kinds)
 }
@@ -208,19 +207,16 @@ func TestTheMovesOfAPlanReproduceItsChangesToTheCards(t *testing.T) {
 				continue // a plan the store would refuse whole (a card changed twice): nothing to reproduce
 			}
 			byMoves := refmodel.Snapshot{Tables: t0}.Clone().Tables
-			if err := applyMoves(byMoves, refmodel.PlanMoves(part.Name, t0, plan)); err != nil {
-				t.Fatalf("snapshot %d, part %s: %v", i, part.Name, err)
-			}
+			err := applyMoves(byMoves, refmodel.PlanMoves(part.Name, t0, plan))
+			require.NoError(t, err, "snapshot %d, part %s: %v", i, part.Name, err)
 			tried++
 			if cards(byPlan.s) != cards(t0) {
 				changed++
 			}
 			if a, b := cards(byPlan.s), cards(byMoves); a != b {
-				t.Fatalf("snapshot %d, part %s: the moves do not make the plan's changes:\n%s", i, part.Name, firstDifference(a, b))
+				require.Failf(t, "assertion failed", "snapshot %d, part %s: the moves do not make the plan's changes:\n%s", i, part.Name, firstDifference(a, b))
 			}
 		}
 	}
-	if changed < minSamplesWithMoves {
-		t.Errorf("only %d of %d plans changed a card: the walks do not try the moves", changed, tried)
-	}
+	assert.GreaterOrEqual(t, changed, minSamplesWithMoves, "only %d of %d plans changed a card: the walks do not try the moves", changed, tried)
 }

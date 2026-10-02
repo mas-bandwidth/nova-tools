@@ -18,7 +18,8 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
-// (a) The order of a tick's updates: work, readers, merge, fleet, then end.
+// (a) The order of a tick's updates: the start (the fleet's and the readers'
+// rebalance, once), then work, readers, merge, fleet, then end.
 func TestTheTickUpdatesTheTablesInTheOwnersOrder(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
@@ -26,7 +27,7 @@ func TestTheTickUpdatesTheTablesInTheOwnersOrder(t *testing.T) {
 	h.startMachine()
 	for i := 0; i < 3; i++ {
 		res := h.machine()
-		got, want := res.Order, []string{sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet, "end"}
+		got, want := res.Order, []string{"start", sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet, "end"}
 		require.Equal(t, want, got, "tick %d updated %v, want %v", i+1, got, want)
 		t.Logf("tick %d: %s", i+1, strings.Join(res.Order, " -> "))
 		h.work("m1")
@@ -185,12 +186,12 @@ func TestAMutuallyDirtyingTickSettles(t *testing.T) {
 		{Table: sprint.Fleet, Parts: []sprint.TickPartDef{{Name: "to-merge", Fn: ping(sprint.Merge, 3)}}},
 	}
 	res := h.machine()
-	want := []string{sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet, sprint.Merge, sprint.Fleet, sprint.Merge, sprint.Fleet, sprint.Merge, "end"}
+	want := []string{"start", sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet, sprint.Merge, sprint.Fleet, sprint.Merge, sprint.Fleet, sprint.Merge, "end"}
 	require.Equal(t, want, res.Order, "the tick updated %v, want %v", res.Order, want)
 	t.Logf("settled: %s", strings.Join(res.Order, " -> "))
 	// the tick after writes nothing more: its first pass only
 	res = h.machine()
-	require.Equal(t, []string{sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet, "end"}, res.Order, "the next tick updated %v", res.Order)
+	require.Equal(t, []string{"start", sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet, "end"}, res.Order, "the next tick updated %v", res.Order)
 
 	g := newHarness(t)
 	g.setup(1)

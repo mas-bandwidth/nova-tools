@@ -45,6 +45,7 @@ var checkAudit = audit.Config{
 	// One entry per site, keyed by file, function and source text; two sites with the same
 	// text in the same function share an entry. Each is a claim a reader can check.
 	Exempt: map[string]string{
+		"json.go|Write|p":              "the unchanged text renderer forwards bytes already escaped at every print site audited in this package; JSON never forwards them",
 		"main.go|requireFlags|name":    "a required flag's name, a key of the map this file's callers build from literals",
 		"main.go|cmdAttest|att.SHA256": "sixty-four hex digits from encoding/hex over a SHA-256 sum",
 		// The convergence verb builds its lines in internal/converge, where every
@@ -86,6 +87,8 @@ var checkAudit = audit.Config{
 		// writing them. It writes to the stream the caller hands it and to nothing else.
 		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/check"`,
+		// The shared envelope escapes line fields and JSON strings before writing.
+		`"github.com/mas-bandwidth/nova-tools/internal/tool"`,
 		// gitrun starts one bounded git child and hands back its stdout and stderr as bytes
 		// to this package (stagedGit, the cat-file batch); it prints to no stream, and what
 		// comes back is read, never printed, except through the escaped error line.

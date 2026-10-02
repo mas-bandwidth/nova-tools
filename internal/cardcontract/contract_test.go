@@ -121,3 +121,20 @@ func TestStageRecipesCopiesOnlyFilesInTheRecipesDirectory(t *testing.T) {
 	text := For("claude").JobText(Frame{Kind: "work", Stage: []string{"pr/4926.md"}}, Staged{Job: "/j"})
 	assert.Contains(t, text, "Staged for you in /j/recipes: pr/4926.md.")
 }
+
+// A refused Stage: line names the path and the reason, and a directory link inside the
+// recipes directory leaves nothing in the job (docs/SPEC-CARD-CONTRACT.md, staged recipes).
+func TestStageRecipesRefusalNamesTheStageLine(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	recipes, job := filepath.Join(root, "recipes"), filepath.Join(root, "job")
+	require.NoError(t, os.MkdirAll(recipes, 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "outside"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "outside", "x.md"), []byte("not a recipe"), 0o644))
+	require.NoError(t, os.Symlink(filepath.Join(root, "outside"), filepath.Join(recipes, "dirlink")))
+
+	err := StageRecipes(Frame{Stage: []string{"dirlink/x.md"}, Recipes: recipes}, job)
+	assert.ErrorContains(t, err, "Stage: dirlink/x.md")
+	assert.ErrorContains(t, err, "not a regular file inside")
+	assert.NoDirExists(t, job)
+}

@@ -58,9 +58,7 @@ func TestLongestKnownNameWins(t *testing.T) {
 	c, err := LoadConfig(writeBus(t, nil))
 	require.NoError(t, err)
 	got, unknown := c.ResolveList("Bo Quill on the Air")
-	if len(unknown) > 0 || len(got) != 1 || got[0] != "Bo" {
-		t.Fatalf("got %v unresolved %v, want [Bo]", got, unknown)
-	}
+	require.False(t, len(unknown) > 0 || len(got) != 1 || got[0] != "Bo", "got %v unresolved %v, want [Bo]", got, unknown)
 }
 
 // A From line names exactly one sender. Two names is not a sender.
@@ -68,8 +66,9 @@ func TestResolveOne(t *testing.T) {
 	t.Parallel()
 	c, err := LoadConfig(writeBus(t, nil))
 	require.NoError(t, err)
-	if p, ok := c.ResolveOne("Ada (day shift, the west host, the shared account)"); !ok || p.Name != "Ada" {
-		t.Fatalf("ResolveOne = %+v %v, want Ada", p, ok)
+	{
+		p, ok := c.ResolveOne("Ada (day shift, the west host, the shared account)")
+		require.False(t, !ok || p.Name != "Ada", "ResolveOne = %+v %v, want Ada", p, ok)
 	}
 	_, ok := c.ResolveOne("Ada; Bo")
 	require.False(t, ok, "a From line naming two people resolved to a sender")
@@ -109,9 +108,7 @@ func TestAndIsASeparatorNotAQualifier(t *testing.T) {
 	// And the qualifier still works: what follows a known name is a qualifier only when it
 	// is not itself a name this bus knows.
 	got, unknown := c.ResolveList("Ada reads in place")
-	if len(unknown) > 0 || strings.Join(got, "; ") != "Ada" {
-		t.Fatalf(`ResolveList("Ada reads in place") = %v %v, want Ada: an instance qualifier is not a second reader`, got, unknown)
-	}
+	require.False(t, len(unknown) > 0 || strings.Join(got, "; ") != "Ada", `ResolveList("Ada reads in place") = %v %v, want Ada: an instance qualifier is not a second reader`, got, unknown)
 }
 
 // Two known names in ONE token, with no separator between them, is refused rather than
@@ -127,8 +124,11 @@ func TestAKnownNameFollowedByAKnownNameIsRefused(t *testing.T) {
 	}
 	// A From line naming two people is not a sender, in either spelling.
 	for _, line := range []string{"Ada and Bo", "Ada Bo"} {
-		if p, ok := c.ResolveOne(line); ok {
-			t.Fatalf("ResolveOne(%q) = %q; a note has one writer", line, p.Name)
+		{
+			p, ok := c.ResolveOne(line)
+			if ok {
+				require.False(t, ok, "ResolveOne(%q) = %q; a note has one writer", line, p.Name)
+			}
 		}
 	}
 }

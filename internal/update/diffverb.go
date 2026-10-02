@@ -3,8 +3,9 @@ package update
 import (
 	"bufio"
 	"fmt"
+	"maps"
 	"os"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
@@ -21,7 +22,7 @@ func readSnapshotFile(path string) (map[string]snapRow, error) {
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 4096), 1024*1024)
 	if !sc.Scan() || sc.Text() != snapshotHeader {
-		return nil, fmt.Errorf("its header is not %q", snapshotHeader)
+		return nil, fmt.Errorf("its header is not %s", tabbed(snapshotHeader))
 	}
 	rows := map[string]snapRow{}
 	for sc.Scan() {
@@ -45,13 +46,22 @@ func readSnapshotFile(path string) (map[string]snapRow, error) {
 // line that counts the state -- every name on either side -- not the output.
 func diffVerb(c *tool.Call) *tool.Out {
 	from, to := c.Str("from"), c.Str("to")
-	before, err := readSnapshotFile(from)
-	if err != nil {
-		return tool.Refuse(fmt.Sprintf("cannot read %s as a snapshot (%s) (write one with nova-version snapshot --bin <dir> --out <file.tsv>)", from, err))
-	}
-	after, err := readSnapshotFile(to)
-	if err != nil {
-		return tool.Refuse(fmt.Sprintf("cannot read %s as a snapshot (%s) (write one with nova-version snapshot --bin <dir> --out <file.tsv>)", to, err))
+	// Both files are read before either is refused, so one run names both.
+	before, errFrom := readSnapshotFile(from)
+	after, errTo := readSnapshotFile(to)
+	if errFrom != nil || errTo != nil {
+		var why []string
+		for _, f := range []struct {
+			path string
+			err  error
+		}{{from, errFrom}, {to, errTo}} {
+			if f.err != nil {
+				why = append(why, fmt.Sprintf("cannot read %s as a snapshot (%s)", f.path, f.err))
+			}
+		}
+		o := tool.Refuse(strings.Join(why, "; ") + " (write one with nova-version snapshot --bin <dir> --out <file.tsv>)")
+		o.Remedy = "nova-version snapshot -h"
+		return o
 	}
 	names := map[string]bool{}
 	for n := range before {
@@ -60,11 +70,7 @@ func diffVerb(c *tool.Call) *tool.Out {
 	for n := range after {
 		names[n] = true
 	}
-	ordered := make([]string, 0, len(names))
-	for n := range names {
-		ordered = append(ordered, n)
-	}
-	sort.Strings(ordered)
+	ordered := slices.Sorted(maps.Keys(names))
 	o := tool.Done().Fact("from", from).Fact("to", to).Fact("tools", len(ordered))
 	changed := 0
 	for _, n := range ordered {

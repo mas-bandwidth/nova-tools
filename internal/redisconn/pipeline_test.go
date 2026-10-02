@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // command is a pipeline's command as it stands after Exec: with the error
@@ -50,7 +52,7 @@ func TestFirstError(t *testing.T) {
 		{"an absent value, wrapped", []redis.Cmder{command(wrapped{redis.Nil})}, wrapped{redis.Nil}, nil},
 	} {
 		if got := FirstError(c.cmds, c.execErr); got != c.want {
-			t.Errorf("%s: FirstError = %v; want %v", c.name, got, c.want)
+			assert.True(t, got == c.want, "%s: FirstError = %v; want %v", c.name, got, c.want)
 		}
 	}
 }
@@ -76,42 +78,42 @@ func TestExec(t *testing.T) {
 	pipe := conn.Client().Pipeline()
 	absent, present := pipe.Get(ctx, "absent"), pipe.Get(ctx, "key")
 	if err := Exec(ctx, pipe); err != nil {
-		t.Errorf("a pipeline with an absent value: %v; want nil", err)
+		assert.NoError(t, err, "a pipeline with an absent value: %v; want nil", err)
 	}
 	if !errors.Is(absent.Err(), redis.Nil) || present.Val() != "value" {
-		t.Errorf("the commands read %v and %q; want the absent value and the value", absent.Err(), present.Val())
+		assert.Failf(t, "", "the commands read %v and %q; want the absent value and the value", absent.Err(), present.Val())
 	}
 
 	pipe = conn.Client().Pipeline()
 	absent, refused := pipe.Get(ctx, "absent"), pipe.LPush(ctx, "key", "v")
 	present = pipe.Get(ctx, "key")
 	if _, bare := pipe.Exec(ctx); !errors.Is(bare, redis.Nil) {
-		t.Fatalf("a bare Exec answered %v; this test is of the pipeline whose first failure is an absent value", bare)
+		require.ErrorIs(t, bare, redis.Nil, "a bare Exec answered %v; this test is of the pipeline whose first failure is an absent value", bare)
 	}
 	pipe.Get(ctx, "absent")
 	pipe.LPush(ctx, "key", "v")
 	err := Exec(ctx, pipe)
 	if err == nil || !strings.HasPrefix(err.Error(), "WRONGTYPE") {
-		t.Errorf("a pipeline with a refusal behind an absent value: %v; want the refusal", err)
+		assert.Failf(t, "", "a pipeline with a refusal behind an absent value: %v; want the refusal", err)
 	}
 	if !errors.Is(absent.Err(), redis.Nil) || refused.Err() == nil || present.Val() != "value" {
-		t.Errorf("the commands read %v, %v and %q", absent.Err(), refused.Err(), present.Val())
+		assert.Failf(t, "", "the commands read %v, %v and %q", absent.Err(), refused.Err(), present.Val())
 	}
 
 	pipe = conn.Client().Pipeline()
 	pipe.Get(ctx, "drop")
 	pipe.Get(ctx, "key")
 	if err := Exec(ctx, pipe); !errors.Is(err, io.EOF) || Classify(err) != Unreachable {
-		t.Errorf("a pipeline the store dropped: %v; want the end of the stream", err)
+		assert.Failf(t, "", "a pipeline the store dropped: %v; want the end of the stream", err)
 	}
 	if err := Exec(ctx, conn.Client().Pipeline()); err != nil {
-		t.Errorf("a pipeline with nothing in it: %v", err)
+		assert.NoError(t, err, "a pipeline with nothing in it: %v", err)
 	}
 	if trips.N() != 4 {
-		t.Errorf("four pipelines took %d trips; want 4", trips.N())
+		assert.EqualValues(t, 4, trips.N(), "four pipelines took %d trips; want 4", trips.N())
 	}
 	want := []string{"1: get absent", "1: get key", "1: get absent", "1: lpush key v", "1: get key", "1: get absent", "1: lpush key v", "1: get drop"}
 	if got := store.commands(); strings.Join(got, "\n") != strings.Join(want, "\n") {
-		t.Errorf("the store received %q; want %q", got, want)
+		assert.EqualValues(t, strings.Join(want, "\n"), strings.Join(got, "\n"), "the store received %q; want %q", got, want)
 	}
 }

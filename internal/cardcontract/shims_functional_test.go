@@ -268,6 +268,25 @@ func TestGhPrReviewIsTheRead(t *testing.T) {
 	}
 }
 
+// A read that hands its own RESULT.md to gh pr review as the body (it begins head: <sha>)
+// is recorded with the body's report: line, never the head line: the inbox's judgment line
+// carries the reader's finding, not a commit id.
+func TestGhPrReviewBodyThatIsAResultReportsItsReportLine(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "claude", "read")
+	head := r.commit(r.repo, "under review")
+	body := "head: " + head + "\nbranch: sprint/c1\nverdict: broken\ngate: -\noutput: -\nreport: PR title lacks quack.\n\n## Body\n\nf:1 the title lacks quack\n"
+	bodyPath := filepath.Join(r.job, "RESULT.md")
+	require.NoError(t, os.WriteFile(bodyPath, []byte(body), 0o644))
+	code, _, errb := r.sh(r.repo, `gh pr review --request-changes --body-file "`+bodyPath+`"`)
+	require.Equal(t, 0, code, errb)
+	finish, ok := ReadFinish(r.job)
+	require.True(t, ok)
+	assert.Equal(t, "broken", finish.Verdict)
+	assert.Equal(t, "PR title lacks quack.", finish.Report)
+	assert.NotContains(t, finish.Report, head)
+}
+
 // Everything gh does that writes is refused with one line, in every profile.
 func TestGhRefusesEveryWrite(t *testing.T) {
 	t.Parallel()
@@ -326,6 +345,28 @@ func TestAPushTheMemberCannotCarryIsRefused(t *testing.T) {
 	require.Equal(t, 0, code, errb)
 	_, got := LastPushed(r.job)
 	assert.Equal(t, head, got, "an option's value is consumed, never read as the source")
+}
+
+// git accepts an unambiguous prefix of a long flag, so each refused long flag is refused at
+// every prefix (docs/SPEC-CARD-CONTRACT.md, the push): the refusal names the flag as typed,
+// records nothing, and the lease and ordinary pushes still pass.
+func TestAPushRefusesAbbreviatedFlags(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "claude", "work")
+	head := r.commit(r.repo, "w")
+	for _, flag := range []string{"--del", "--dele", "--delete", "--mirr", "--mirror", "--push-o=x", "--push-option=x", "--pus=x", "--pru", "--bra", "--tag", "--al"} {
+		code, _, errb := r.sh(r.repo, "git push "+flag+" origin HEAD")
+		assert.Equal(t, 1, code, flag)
+		assert.Contains(t, errb, "REFUSED git push "+flag+":", flag)
+		_, err := os.Stat(filepath.Join(r.job, PushedName))
+		assert.True(t, os.IsNotExist(err), "a refused push records nothing: %s", flag)
+	}
+	for _, line := range []string{"git push --force-with-lease origin HEAD", "git push --force-with-lease=main origin HEAD", "git push origin HEAD"} {
+		code, _, errb := r.sh(r.repo, line)
+		require.Equal(t, 0, code, "%s: %s", line, errb)
+		_, got := LastPushed(r.job)
+		assert.Equal(t, head, got, line)
+	}
 }
 
 // gh's finishes are scoped to the card's kind: a read never creates a pull

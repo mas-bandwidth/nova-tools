@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // What is due is read from the state: a tick that did not finish it, or left
@@ -43,28 +45,20 @@ func TestTheTickResolvesEveryWaiterOfOneNeedPastTheBound(t *testing.T) {
 	h.must(AddStep(sprint.AddReq{Stream: "s2", Count: sprint.TickMaxMoves + 50, Needs: []string{"root"}}))
 	h.through("root")
 	h.landUnresolved("s1")
-	if h.state("root") != sprint.Landed || len(h.snap().Work.Column(sprint.Waiting)) != sprint.TickMaxMoves+50 {
-		t.Fatalf("the scene: root %s, waiting %d", h.state("root"), len(h.snap().Work.Column(sprint.Waiting)))
-	}
+	require.Equal(t, sprint.Landed, h.state("root"), "the scene: root %s, waiting %d", h.state("root"), len(h.snap().Work.Column(sprint.Waiting)))
+	require.Len(t, h.snap().Work.Column(sprint.Waiting), sprint.TickMaxMoves+50, "the scene: root %s, waiting %d", h.state("root"), len(h.snap().Work.Column(sprint.Waiting)))
 	h.startMachine()
 	res := h.machine()
-	if res.Due != 50 {
-		t.Fatalf("the first tick: due %d, want 50", res.Due)
-	}
-	if line := h.st.MachineLine(h.ctx); line != "machine: running (catching up: 50 moves due)" {
-		t.Fatalf("the line after a bounded tick: %q", line)
-	}
+	require.Equal(t, 50, res.Due, "the first tick: due %d, want 50", res.Due)
+	line := h.st.MachineLine(h.ctx)
+	require.Equal(t, "machine: running", line, "the line after a bounded tick: %q", line)
 	h.tick(time.Second)
 	res = h.machine()
-	if n := len(h.snap().Work.Column(sprint.Waiting)); n != 0 {
-		t.Fatalf("after the second tick: %d still waiting with their need landed", n)
-	}
-	if res.Due != 0 {
-		t.Fatalf("the second tick: due %d", res.Due)
-	}
-	if line := h.st.MachineLine(h.ctx); line != "machine: running" {
-		t.Fatalf("the line after catching up: %q", line)
-	}
+	n := len(h.snap().Work.Column(sprint.Waiting))
+	require.Equal(t, 0, n, "after the second tick: %d still waiting with their need landed", n)
+	require.Equal(t, 0, res.Due, "the second tick: due %d", res.Due)
+	line = h.st.MachineLine(h.ctx)
+	require.Equal(t, "machine: running", line, "the line after catching up: %q", line)
 	h.clean("caught up")
 }
 
@@ -96,18 +90,13 @@ func TestAResolveThatLostToOtherWritersIsDoneNextTick(t *testing.T) {
 	h.tick(time.Second)
 	h.landUnresolved("s1")
 	h.st.B = &loseTickPart{Mem: h.m, verb: "tick resolve", left: FenceTries}
-	if _, err := h.st.Tick(h.ctx); err != nil {
-		t.Fatalf("the contended tick: %v", err)
-	}
+	_, err := h.st.Tick(h.ctx)
+	require.NoError(t, err, "the contended tick: %v", err)
 	h.st.B = h.m
-	if h.state("b") != sprint.Waiting {
-		t.Fatalf("the scene: b %s", h.state("b"))
-	}
+	require.Equal(t, sprint.Waiting, h.state("b"), "the scene: b %s", h.state("b"))
 	h.tick(time.Second)
 	h.machine()
-	if st := h.state("b"); st == sprint.Waiting {
-		t.Fatalf("b is waiting a tick after its resolve lost to other writers, with its need landed")
-	}
+	require.NotEqual(t, sprint.Waiting, h.state("b"), "b is waiting a tick after its resolve lost to other writers, with its need landed")
 	h.clean("resolved")
 }
 
@@ -118,23 +107,19 @@ func TestATickThatWentStaleLeavesAFullReadDue(t *testing.T) {
 	h.startMachine()
 	h.machine()
 	_, hb, _ := h.st.Machine(h.ctx)
-	if hb.Full.IsZero() {
-		t.Fatalf("a finished tick left a full read due")
-	}
+	require.False(t, hb.Full.IsZero(), "a finished tick left a full read due")
 	// A part that lost every attempt: the next tick reads the whole sprint.
 	h.tick(time.Second)
 	h.work("m1")
 	h.st.B = &loseTickPart{Mem: h.m, verb: "tick ask", left: FenceTries}
-	if _, err := h.st.Tick(h.ctx); err != nil {
-		t.Fatal(err)
-	}
+	_, err := h.st.Tick(h.ctx)
+	require.NoError(t, err)
 	h.st.B = h.m
-	if _, hb, _ = h.st.Machine(h.ctx); !hb.Full.IsZero() {
-		t.Fatalf("a tick whose part lost every attempt left no full read due: %+v", hb)
-	}
+	_, hb, _ = h.st.Machine(h.ctx)
+	require.True(t, hb.Full.IsZero(), "a tick whose part lost every attempt left no full read due: %+v", hb)
 	h.tick(time.Second)
 	if res := h.machine(); res.Idle || len(h.snap().Readers.Of("s1-1")) != 2 {
-		t.Fatalf("the next tick: idle=%v, s1-1 asked of %d", res.Idle, len(h.snap().Readers.Of("s1-1")))
+		require.Failf(t, "", "the next tick: idle=%v, s1-1 asked of %d", res.Idle, len(h.snap().Readers.Of("s1-1")))
 	}
 }
 
@@ -153,16 +138,16 @@ func TestFailuresInARowCount(t *testing.T) {
 	}
 	for i := 1; i <= 3; i++ {
 		_, _ = h.st.Tick(h.ctx)
-		if _, hb, _ := h.st.Machine(h.ctx); hb.Failures != i || !hb.Full.IsZero() {
-			t.Fatalf("after %d failed ticks: failures %d, full %s", i, hb.Failures, hb.Full)
-		}
+		_, hb, _ := h.st.Machine(h.ctx)
+		require.Equal(t, i, hb.Failures, "after %d failed ticks: failures %d, full %s", i, hb.Failures, hb.Full)
+		require.True(t, hb.Full.IsZero(), "after %d failed ticks: failures %d, full %s", i, hb.Failures, hb.Full)
 		h.tick(time.Second)
 	}
 	h.m.Fail = nil
 	h.machine()
-	if _, hb, _ := h.st.Machine(h.ctx); hb.Failures != 0 || hb.Error != "" {
-		t.Fatalf("after a good tick: %+v", hb)
-	}
+	_, hb, _ := h.st.Machine(h.ctx)
+	require.Equal(t, 0, hb.Failures, "after a good tick: %+v", hb)
+	require.Equal(t, "", hb.Error, "after a good tick: %+v", hb)
 }
 
 // An idle tick writes the heartbeat at most once every HeartbeatIdleEvery; a
@@ -178,33 +163,29 @@ func TestIdleTicksWriteTheHeartbeatSeldom(t *testing.T) {
 	_, first, _ := h.st.Machine(h.ctx)
 	for i := 1; i < int(HeartbeatIdleEvery/time.Second); i++ {
 		h.tick(time.Second)
-		if res := h.machine(); !res.Idle {
-			t.Fatalf("tick %d is not idle: %+v", i, res)
-		}
-		if _, hb, _ := h.st.Machine(h.ctx); hb.At != first.At || hb.Ticks != first.Ticks {
-			t.Fatalf("idle tick %d wrote the heartbeat: %+v", i, hb)
-		}
-		if line := h.st.MachineLine(h.ctx); line != "machine: running" {
-			t.Fatalf("idle tick %d: %q", i, line)
-		}
+		res := h.machine()
+		require.True(t, res.Idle, "tick %d is not idle: %+v", i, res)
+		_, hb, _ := h.st.Machine(h.ctx)
+		require.Equal(t, first.At, hb.At, "idle tick %d wrote the heartbeat: %+v", i, hb)
+		require.Equal(t, first.Ticks, hb.Ticks, "idle tick %d wrote the heartbeat: %+v", i, hb)
+		line := h.st.MachineLine(h.ctx)
+		require.Equal(t, "machine: running", line, "idle tick %d: %q", i, line)
 	}
 	h.tick(time.Second)
 	h.machine()
-	if _, hb, _ := h.st.Machine(h.ctx); !hb.At.Equal(h.now) || hb.Ticks != first.Ticks+1 {
-		t.Fatalf("the idle tick at %s wrote no heartbeat: %+v", HeartbeatIdleEvery, hb)
-	}
-	if MachineSilence <= HeartbeatIdleEvery+TickEvery || MachineSilence <= TickBackoffCap {
-		t.Fatalf("the silence %s is not above the longest gap between heartbeats", MachineSilence)
-	}
+	_, hb, _ := h.st.Machine(h.ctx)
+	require.True(t, hb.At.Equal(h.now), "the idle tick at %s wrote no heartbeat: %+v", HeartbeatIdleEvery, hb)
+	require.Equal(t, first.Ticks+1, hb.Ticks, "the idle tick at %s wrote no heartbeat: %+v", HeartbeatIdleEvery, hb)
+	require.Greater(t, MachineSilence, time.Duration(HeartbeatIdleEvery+TickEvery), "the silence %s is not above the longest gap between heartbeats", MachineSilence)
+	require.Greater(t, MachineSilence, TickBackoffCap, "the silence %s is not above the longest gap between heartbeats", MachineSilence)
 	h.stopMachine()
 	h.tick(HeartbeatIdleEvery)
 	h.machine()
 	_, looked, _ := h.st.Machine(h.ctx)
 	h.tick(time.Second)
 	h.machine()
-	if _, hb, _ := h.st.Machine(h.ctx); !hb.Looked.Equal(looked.Looked) {
-		t.Fatalf("a STOPPED look a second later wrote the heartbeat: %+v", hb)
-	}
+	_, hb, _ = h.st.Machine(h.ctx)
+	require.True(t, hb.Looked.Equal(looked.Looked), "a STOPPED look a second later wrote the heartbeat: %+v", hb)
 }
 
 // stopAtFirstPart stops the machine as the tick's first part takes the fence,
@@ -234,29 +215,22 @@ func TestNoPartBeginsAfterStop(t *testing.T) {
 	h.st.B = x
 	res := h.machine()
 	h.st.B = h.m
-	if x.part == "" {
-		t.Fatalf("the tick ran no part")
-	}
+	require.NotEmpty(t, x.part, "the tick ran no part")
 	for _, p := range res.Parts {
-		if p.Name != x.part {
-			t.Errorf("the part %s ran after stop returned during %s", p.Name, x.part)
-		}
+		assert.Equal(t, x.part, p.Name, "the part %s ran after stop returned during %s", p.Name, x.part)
 	}
-	if res.State != Stopped || !strings.Contains(res.Halted, "did not begin") {
-		t.Fatalf("the tick does not say it halted: %+v", res)
-	}
-	if len(res.Parts) != 1 || len(res.Parts[0].Moved) == 0 {
-		t.Fatalf("the part in flight did not finish: %+v", res.Parts)
-	}
+	require.Equal(t, Stopped, res.State, "the tick does not say it halted: %+v", res)
+	require.Contains(t, res.Halted, "did not begin", "the tick does not say it halted: %+v", res)
+	require.Len(t, res.Parts, 1, "the part in flight did not finish: %+v", res.Parts)
+	require.NotEmpty(t, res.Parts[0].Moved, "the part in flight did not finish: %+v", res.Parts)
 	h.clean("halted")
 	// Started again, the tick does what was left.
 	h.startMachine()
 	h.tick(time.Second)
 	h.machine()
 	s := h.snap()
-	if len(s.Readers.Of("rv")) != 2 || s.StreamCtl("s3").F("state") == sprint.StreamStopped {
-		t.Fatalf("after start: rv asked of %d, s3 %s", len(s.Readers.Of("rv")), s.StreamCtl("s3").F("state"))
-	}
+	require.Len(t, s.Readers.Of("rv"), 2, "after start: rv asked of %d, s3 %s", len(s.Readers.Of("rv")), s.StreamCtl("s3").F("state"))
+	require.NotEqual(t, string(sprint.StreamStopped), s.StreamCtl("s3").F("state"), "after start: rv asked of %d, s3 %s", len(s.Readers.Of("rv")), s.StreamCtl("s3").F("state"))
 }
 
 // With fewer than two readers up the tick asks none and writes one judgment
@@ -267,9 +241,7 @@ func TestFewReadersIsWrittenOncePerSprint(t *testing.T) {
 	h := newHarness(t)
 	h.m = NewMem()
 	h.st.B = h.m
-	if err := h.st.Init(h.ctx); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, h.st.Init(h.ctx))
 	h.beat()
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 2}))
@@ -277,30 +249,25 @@ func TestFewReadersIsWrittenOncePerSprint(t *testing.T) {
 	h.machine()
 	h.work("m1")
 	h.machine()
-	if got := len(h.openOf(sprint.NFewReaders)); got != 1 {
-		t.Fatalf("fewer than two readers up: open %d, want 1 for the two primaries", got)
-	}
+	got := len(h.openOf(sprint.NFewReaders))
+	require.Equal(t, 1, got, "fewer than two readers up: open %d, want 1 for the two primaries", got)
 	was := h.written(sprint.NFewReaders)
-	if err := h.m.RowsAdd(h.ctx, "t-readers", []string{"reader-a"}); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, h.m.RowsAdd(h.ctx, "t-readers", []string{"reader-a"}))
 	h.beat()
 	h.tick(time.Second)
 	h.machine()
 	h.tick(time.Minute + time.Second)
 	h.machine()
-	if n := h.written(sprint.NFewReaders); n != was || len(h.openOf(sprint.NFewReaders)) != 1 {
-		t.Fatalf("few readers written %d times (was %d), open %d, after one reader came", n, was, len(h.openOf(sprint.NFewReaders)))
-	}
-	if err := h.m.RowsAdd(h.ctx, "t-readers", []string{"reader-b"}); err != nil {
-		t.Fatal(err)
-	}
+	n := h.written(sprint.NFewReaders)
+	open := len(h.openOf(sprint.NFewReaders))
+	require.Equal(t, was, n, "few readers written %d times (was %d), open %d, after one reader came", n, was, open)
+	require.Equal(t, 1, open, "few readers written %d times (was %d), open %d, after one reader came", n, was, open)
+	require.NoError(t, h.m.RowsAdd(h.ctx, "t-readers", []string{"reader-b"}))
 	h.beat()
 	h.tick(time.Second)
 	h.machine()
-	if got := len(h.openOf(sprint.NFewReaders)); got != 0 {
-		t.Fatalf("still open %d with two readers", got)
-	}
+	got = len(h.openOf(sprint.NFewReaders))
+	require.Equal(t, 0, got, "still open %d with two readers", got)
 }
 
 // A tick judgment is answered by wait, not ack: the condition is held until
@@ -313,16 +280,13 @@ func TestAWaitedTickJudgmentComesBackAfterItsTime(t *testing.T) {
 	h.startMachine()
 	h.machine()
 	o := h.openOf(sprint.NNoMember)
-	if len(o) != 1 {
-		t.Fatalf("no member: %d", len(o))
-	}
-	if res := h.run(AckStep(sprint.AckReq{Notes: []string{o[0].Note.ID}, Reason: "the fleet is off tonight"})); len(res.Refused) != 1 ||
-		!strings.Contains(res.Refused[0].Why, "nova-sprint wait "+o[0].Note.ID) {
-		t.Fatalf("ack of a condition the tick keeps: %+v", res)
-	}
-	if _, held, err := h.st.Wait(h.ctx, o[0].Note.ID, h.now.Add(10*time.Minute)); err != nil || !held {
-		t.Fatalf("wait: held %v %v", held, err)
-	}
+	require.Len(t, o, 1, "no member: %d", len(o))
+	res := h.run(AckStep(sprint.AckReq{Notes: []string{o[0].Note.ID}, Reason: "the fleet is off tonight"}))
+	require.Len(t, res.Refused, 1, "ack of a condition the tick keeps: %+v", res)
+	require.Contains(t, res.Refused[0].Why, "nova-sprint wait "+o[0].Note.ID, "ack of a condition the tick keeps: %+v", res)
+	_, held, err := h.st.Wait(h.ctx, o[0].Note.ID, h.now.Add(10*time.Minute))
+	require.NoError(t, err, "wait: held %v %v", held, err)
+	require.True(t, held, "wait: held %v %v", held, err)
 	for i := 0; i < 5; i++ {
 		h.tick(time.Minute + time.Second)
 		h.machine()
@@ -332,13 +296,12 @@ func TestAWaitedTickJudgmentComesBackAfterItsTime(t *testing.T) {
 	h.tick(time.Hour)
 	h.startMachine()
 	h.machine()
-	if n := h.written(sprint.NNoMember); n != 1 || len(h.openOf(sprint.NNoMember)) != 1 {
-		t.Fatalf("written %d times while waited", n)
-	}
+	n := h.written(sprint.NNoMember)
+	require.Equal(t, 1, n, "written %d times while waited", n)
+	require.Len(t, h.openOf(sprint.NNoMember), 1, "written %d times while waited", n)
 	h.tick(6 * time.Minute)
 	h.machine()
-	if n := h.written(sprint.NNoMember); n != 2 {
-		t.Fatalf("written %d times after the wait ran out, want 2", n)
-	}
+	n = h.written(sprint.NNoMember)
+	require.Equal(t, 2, n, "written %d times after the wait ran out, want 2", n)
 	h.clean("waited")
 }

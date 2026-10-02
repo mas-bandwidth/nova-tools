@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
@@ -47,65 +49,54 @@ func TestADoneSprintStopsItsMachineAndTellsTheCoordinator(t *testing.T) {
 	next, out := ta.playToDone(1)
 	for _, want := range []string{"HAPPENED the sprint is done: 9 landed, 0 dropped, took ", " from the first start; the machine is STOPPED; " + sprint.DoneHint,
 		"TICK OK state=STOPPED", "\nSTOPPED  9/9 100.0% done\n"} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("the done tick lacks %q:\n%s", want, out)
-		}
+		require.Contains(t, out, want, "the done tick lacks %q", want)
 	}
-	if got := ta.viewLine(); got != "DONE" {
-		t.Fatalf("the view: %q", got)
-	}
+	require.Equal(t, "DONE", ta.viewLine(), "the view")
 	where := ta.ok("where")
-	if !strings.Contains(where, "SPRINT TABLE\n\nDONE\n") {
-		t.Fatalf("where's header:\n%s", where)
-	}
+	require.Contains(t, where, "SPRINT TABLE\n\nDONE\n", "where's header")
 	inbox := ta.ok("inbox")
 	// the sprint done is the first thing the coordinator reads
 	lines := strings.Split(inbox, "\n")
-	if !strings.HasPrefix(lines[0], "HAPPENED ") || !strings.Contains(lines[0], "the sprint is done  x1  for=coordinator  9 landed, 0 dropped, took ") ||
-		lines[1] != "  "+sprint.DoneHint || strings.Contains(inbox, "JUDGMENT") || !strings.Contains(inbox, "\nmachine: DONE\n") {
-		t.Fatalf("the inbox:\n%s", inbox)
-	}
+	require.True(t, strings.HasPrefix(lines[0], "HAPPENED "), "the inbox:\n%s", inbox)
+	require.Contains(t, lines[0], "the sprint is done  x1  for=coordinator  9 landed, 0 dropped, took ", "the inbox:\n%s", inbox)
+	require.Equal(t, "  "+sprint.DoneHint, lines[1], "the inbox:\n%s", inbox)
+	require.NotContains(t, inbox, "JUDGMENT", "the inbox:\n%s", inbox)
+	require.Contains(t, inbox, "\nmachine: DONE\n", "the inbox:\n%s", inbox)
 	var in struct{ Groups []sprint.Group }
 	ta.json("inbox", &in)
-	if len(in.Groups) == 0 || in.Groups[0].Type != sprint.NSprintDone || in.Groups[0].Kind != sprint.Happened || in.Groups[0].To != "coordinator" {
-		t.Fatalf("the inbox, for a program: %+v", in.Groups)
-	}
+	require.NotEmpty(t, in.Groups, "the inbox, for a program: %+v", in.Groups)
+	require.Equal(t, sprint.NSprintDone, in.Groups[0].Type, "the inbox, for a program: %+v", in.Groups)
+	require.Equal(t, sprint.Happened, in.Groups[0].Kind, "the inbox, for a program: %+v", in.Groups)
+	require.Equal(t, "coordinator", in.Groups[0].To, "the inbox, for a program: %+v", in.Groups)
 	notes, _, err := ta.m.NotesSince(context.Background(), "", 100000)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	said := 0
 	for _, n := range notes {
 		if n.Type == sprint.NSprintDone {
 			said++
-			if n.Kind != sprint.Happened || n.To != "coordinator" || n.Hint != sprint.DoneHint {
-				t.Fatalf("the notes stream: %+v", n)
-			}
+			require.Equal(t, sprint.Happened, n.Kind, "the notes stream: %+v", n)
+			require.Equal(t, "coordinator", n.To, "the notes stream: %+v", n)
+			require.Equal(t, sprint.DoneHint, n.Hint, "the notes stream: %+v", n)
 		}
 	}
-	if open, err := ta.m.OpenNotes(context.Background()); err != nil || len(open) != 0 || said != 1 {
-		t.Fatalf("open judgments %+v (%v), the sprint done said %d times", open, err, said)
-	}
+	open, err := ta.m.OpenNotes(context.Background())
+	require.NoError(t, err, "open judgments %+v (%v), the sprint done said %d times", open, err, said)
+	require.Empty(t, open, "open judgments %+v (%v), the sprint done said %d times", open, err, said)
+	require.Equal(t, 1, said, "open judgments %+v (%v), the sprint done said %d times", open, err, said)
 	ta.clean()
-	if out := ta.ok("tick"); !strings.Contains(out, "TICK OK state=STOPPED nothing done") {
-		t.Fatalf("a tick after the done:\n%s", out)
-	}
+	require.Contains(t, ta.ok("tick"), "TICK OK state=STOPPED nothing done", "a tick after the done")
 
 	// Work added: STOPPED, no longer done.
 	out = ta.ok("add --stream s2 --count 1")
-	if !strings.Contains(out, "\nSTOPPED  9/10 90.0%") || ta.viewLine() != "STOPPED" {
-		t.Fatalf("an add after the done:\n%s\nview %q", out, ta.viewLine())
-	}
-	if out := ta.ok("tick"); !strings.Contains(out, "TICK OK state=STOPPED nothing done") {
-		t.Fatalf("the machine ran after an add:\n%s", out)
-	}
+	require.Contains(t, out, "\nSTOPPED  9/10 90.0%", "an add after the done:\n%s\nview %q", out, ta.viewLine())
+	require.Equal(t, "STOPPED", ta.viewLine(), "an add after the done:\n%s\nview %q", out, ta.viewLine())
+	require.Contains(t, ta.ok("tick"), "TICK OK state=STOPPED nothing done", "the machine ran after an add")
 	// Started: it lands the card and stops again.
 	ta.a.sleep(time.Minute)
 	ta.ok("start")
 	_, out = ta.playToDone(next)
-	if !strings.Contains(out, "HAPPENED the sprint is done: 10 landed, 0 dropped, took ") || !strings.Contains(out, "\nSTOPPED  10/10 100.0% done\n") ||
-		ta.viewLine() != "DONE" {
-		t.Fatalf("the second done:\n%s", out)
-	}
+	require.Contains(t, out, "HAPPENED the sprint is done: 10 landed, 0 dropped, took ", "the second done:\n%s", out)
+	require.Contains(t, out, "\nSTOPPED  10/10 100.0% done\n", "the second done:\n%s", out)
+	require.Equal(t, "DONE", ta.viewLine(), "the second done:\n%s", out)
 	ta.clean()
 }

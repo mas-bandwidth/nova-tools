@@ -16,6 +16,8 @@ package redisacl
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 
@@ -119,13 +121,8 @@ func Roles() []Role {
 	list := []string{"+function|list"}
 	read := map[string]string{"tables": "r", "views": "r", "sprint": "r", "machines": "r", "beats": "r", "friends": "r", "fleet": "r", "loops": "r", "routes": "r", "config": "r", "tokens": "r", "events": "r"}
 	with := func(over map[string]string) map[string]string {
-		out := map[string]string{}
-		for k, v := range read {
-			out[k] = v
-		}
-		for k, v := range over {
-			out[k] = v
-		}
+		out := maps.Clone(read)
+		maps.Copy(out, over)
 		return out
 	}
 	return []Role{
@@ -205,7 +202,7 @@ func Render(lib redisfn.Library) ([]User, error) {
 				}
 			}
 		}
-		for _, c := range sortedSet(called) {
+		for _, c := range slices.Sorted(maps.Keys(called)) {
 			rules = append(rules, "+"+c)
 		}
 		rules = append(rules, r.Extra...)
@@ -388,13 +385,4 @@ func (d Drift) Fields() string {
 		fmt.Fprintf(&b, " %s=%s%s", f.name, strings.Join(shown, ","), more)
 	}
 	return b.String()
-}
-
-func sortedSet(set map[string]bool) []string {
-	out := make([]string, 0, len(set))
-	for k := range set {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
 }

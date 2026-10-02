@@ -21,6 +21,8 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/testredis"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // These tests are the package against a redis-server: a throwaway one per
@@ -40,11 +42,11 @@ func open(t *testing.T, addr string) *redisconn.Conn {
 	t.Helper()
 	conn, err := redisconn.Open(context.Background(), redisconn.Options{Addr: addr}, nothing)
 	if err != nil {
-		t.Fatalf("open %s: %v", addr, err)
+		require.NoError(t, err, "open %s: %v", addr, err)
 	}
 	t.Cleanup(func() {
 		if err := conn.Close(); err != nil {
-			t.Errorf("close %s: %v", addr, err)
+			assert.NoError(t, err, "close %s: %v", addr, err)
 		}
 	})
 	return conn
@@ -58,7 +60,7 @@ func calls(t *testing.T, admin *redisconn.Conn) map[string]string {
 	t.Helper()
 	info, err := admin.Client().Info(context.Background(), "commandstats").Result()
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	out := map[string]string{}
 	for _, m := range statLine.FindAllStringSubmatch(info, -1) {
@@ -81,7 +83,7 @@ func names(calls map[string]string) string {
 func resetCalls(t *testing.T, admin *redisconn.Conn) {
 	t.Helper()
 	if err := admin.Client().ConfigResetStat(context.Background()).Err(); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 }
 
@@ -90,11 +92,11 @@ func connections(t *testing.T, admin *redisconn.Conn) string {
 	t.Helper()
 	info, err := admin.Client().Info(context.Background(), "stats").Result()
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	m := regexp.MustCompile(`(?m)^total_connections_received:(\d+)`).FindStringSubmatch(info)
 	if m == nil {
-		t.Fatalf("no total_connections_received in %q", info)
+		require.NotNil(t, m, "no total_connections_received in %q", info)
 	}
 	return m[1]
 }
@@ -112,40 +114,40 @@ func TestOpenOverTCP(t *testing.T) {
 	conn := open(t, addr)
 	ran := calls(t, admin)
 	if ran["hello"] != "1" {
-		t.Errorf("the store ran HELLO %q times for one Open; want 1 (%s)", ran["hello"], names(ran))
+		assert.EqualValues(t, "1", ran["hello"], "the store ran HELLO %q times for one Open; want 1 (%s)", ran["hello"], names(ran))
 	}
 	for name := range ran {
 		if name != "hello" && name != "config|resetstat" && name != "info" {
-			t.Errorf("the store ran %s for an Open; want HELLO alone (%s)", name, names(ran))
+			assert.Failf(t, "", "the store ran %s for an Open; want HELLO alone (%s)", name, names(ran))
 		}
 	}
 	if after := connections(t, admin); after == before {
-		t.Errorf("the store accepted no connection for an Open")
+		assert.NotEqualValues(t, before, after, "the store accepted no connection for an Open")
 	}
 	if got := conn.String(); got != "redis at "+addr+" as the default user, no password" {
-		t.Errorf("the connection reads %q", got)
+		assert.EqualValues(t, "redis at "+addr+" as the default user, no password", got, "the connection reads %q", got)
 	}
 
 	ctx := context.Background()
 	trips := redisconn.CountTrips(conn.Client())
 	if err := conn.Client().Set(ctx, "k", "v", 0).Err(); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if got, err := conn.Client().Get(ctx, "k").Result(); err != nil || got != "v" {
-		t.Errorf("GET = %q, %v", got, err)
+		assert.Failf(t, "", "GET = %q, %v", got, err)
 	}
 	if got, err := conn.Client().Ping(ctx).Result(); err != nil || got != "PONG" {
-		t.Errorf("PING = %q, %v", got, err)
+		assert.Failf(t, "", "PING = %q, %v", got, err)
 	}
 	if got, err := conn.Client().Do(ctx, "PING").Text(); err != nil || got != "PONG" {
-		t.Errorf("PING, as the probe spells it = %q, %v", got, err)
+		assert.Failf(t, "", "PING, as the probe spells it = %q, %v", got, err)
 	}
 	if trips.N() != 4 {
-		t.Errorf("four commands took %d trips", trips.N())
+		assert.EqualValues(t, 4, trips.N(), "four commands took %d trips", trips.N())
 	}
 	// The caller's two PINGs are the caller's: the store ran them.
 	if ran := calls(t, admin); ran["ping"] != "2" || ran["hello"] != "1" || ran["set"] != "1" || ran["get"] != "1" {
-		t.Errorf("after four commands the store has run %s; want each once, PING twice, and the one HELLO", names(ran))
+		assert.Failf(t, "", "after four commands the store has run %s; want each once, PING twice, and the one HELLO", names(ran))
 	}
 }
 
@@ -160,7 +162,7 @@ func socketDir(t *testing.T) string {
 	}
 	dir, err := os.MkdirTemp("/tmp", "redisconn-")
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	return dir
@@ -185,13 +187,13 @@ func startOnSocket(t *testing.T, socket string) string {
 		"--save", "", "--appendonly", "no", "--dir", t.TempDir())
 	pr, pw, err := os.Pipe()
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	cmd.Stdout, cmd.Stderr = pw, pw
 	if err := cmd.Start(); err != nil {
 		_ = pr.Close()
 		_ = pw.Close()
-		t.Fatalf("%s: %v", bin, err)
+		require.NoError(t, err, "%s: %v", bin, err)
 	}
 	_ = pw.Close()
 	var (
@@ -229,13 +231,13 @@ func startOnSocket(t *testing.T, socket string) string {
 	case <-ready:
 	case err := <-ended:
 		ended <- err
-		t.Fatalf("redis-server exited before it was ready: %v\n%s", err, output())
+		require.FailNowf(t, "", "redis-server exited before it was ready: %v\n%s", err, output())
 	case <-time.After(socketWait):
-		t.Fatalf("redis-server was not ready within %v\n%s", socketWait, output())
+		require.FailNowf(t, "", "redis-server was not ready within %v\n%s", socketWait, output())
 	}
 	c, err := net.Dial("unix", socket)
 	if err != nil {
-		t.Fatalf("the ready server's socket %s: %v", socket, err)
+		require.NoError(t, err, "the ready server's socket %s: %v", socket, err)
 	}
 	_ = c.Close()
 	return net.JoinHostPort("127.0.0.1", port)
@@ -252,29 +254,29 @@ func TestOpenOverAUnixSocket(t *testing.T) {
 
 	conn := open(t, socket)
 	if ran := calls(t, admin); ran["hello"] != "1" || ran["ping"] != "" {
-		t.Errorf("the store ran %s for an Open over its socket; want HELLO alone", names(ran))
+		assert.Failf(t, "", "the store ran %s for an Open over its socket; want HELLO alone", names(ran))
 	}
 	ctx := context.Background()
 	if err := conn.Client().Set(ctx, "over", "the socket", 0).Err(); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if got, err := admin.Client().Get(ctx, "over").Result(); err != nil || got != "the socket" {
-		t.Errorf("read over TCP what was written over the socket: %q, %v", got, err)
+		assert.Failf(t, "", "read over TCP what was written over the socket: %q, %v", got, err)
 	}
 	list, err := conn.Client().ClientList(ctx).Result()
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	// The store marks a client that came over its socket with the flag U.
 	if !strings.Contains(list, " flags=U ") {
-		t.Errorf("the store lists no client on its socket %s:\n%s", socket, list)
+		assert.Contains(t, list, " flags=U ", "the store lists no client on its socket %s:\n%s", socket, list)
 	}
 
 	// A socket that is not there is a store that is not there.
 	gone := filepath.Join(filepath.Dir(socket), "gone.sock")
 	none, err := redisconn.Open(ctx, redisconn.Options{Addr: gone}, nothing)
 	if none != nil || redisconn.Classify(err) != redisconn.Unreachable {
-		t.Errorf("Open of a socket that is not there = %v, %v; want unreachable", none, err)
+		assert.Failf(t, "", "Open of a socket that is not there = %v, %v; want unreachable", none, err)
 	}
 }
 
@@ -292,14 +294,14 @@ func TestOpenAsAnACLUser(t *testing.T) {
 
 	conn, err := redisconn.Open(ctx, login, environment(map[string]string{"NOVA_TEST_PW": password}))
 	if err != nil {
-		t.Fatalf("Open with the right password: %v", err)
+		require.NoError(t, err, "Open with the right password: %v", err)
 	}
 	defer conn.Close()
 	if who, err := conn.Client().ACLWhoAmI(ctx).Result(); err != nil || who != "bench" {
-		t.Errorf("the connection is %q, %v; want bench", who, err)
+		assert.Failf(t, "", "the connection is %q, %v; want bench", who, err)
 	}
 	if got := conn.String(); got != "redis at "+addr+" as user bench (password from NOVA_TEST_PW)" {
-		t.Errorf("the connection reads %q", got)
+		assert.EqualValues(t, "redis at "+addr+" as user bench (password from NOVA_TEST_PW)", got, "the connection reads %q", got)
 	}
 
 	// The same login from the environment alone, by a tool's own names.
@@ -308,13 +310,13 @@ func TestOpenAsAnACLUser(t *testing.T) {
 		tool.Addr: addr, tool.User: "bench", tool.PasswordEnv: "NOVA_TEST_PW", "NOVA_TEST_PW": password,
 	}))
 	if err != nil {
-		t.Fatalf("Open from the environment: %v", err)
+		require.NoError(t, err, "Open from the environment: %v", err)
 	}
 	if who, err := aliased.Client().ACLWhoAmI(ctx).Result(); err != nil || who != "bench" {
-		t.Errorf("the connection from the environment is %q, %v; want bench", who, err)
+		assert.Failf(t, "", "the connection from the environment is %q, %v; want bench", who, err)
 	}
 	if err := aliased.Close(); err != nil {
-		t.Error(err)
+		assert.NoError(t, err, err)
 	}
 
 	const tried = " as user bench (password from NOVA_TEST_PW): login refused: "
@@ -343,22 +345,22 @@ func TestOpenAsAnACLUser(t *testing.T) {
 	} {
 		refused, err := redisconn.Open(ctx, c.o, environment(c.env))
 		if refused != nil || err == nil {
-			t.Fatalf("%s: Open = %v, %v; want a refusal", c.name, refused, err)
+			require.FailNowf(t, "", "%s: Open = %v, %v; want a refusal", c.name, refused, err)
 		}
 		if got := err.Error(); !strings.HasPrefix(got, c.want) {
-			t.Errorf("%s:\n got %s\nwant %s", c.name, got, c.want)
+			assert.Failf(t, "", "%s:\n got %s\nwant %s", c.name, got, c.want)
 		}
 		if got := redisconn.Classify(err); got != redisconn.AuthRefused {
-			t.Errorf("%s: class %v; want %v", c.name, got, redisconn.AuthRefused)
+			assert.EqualValues(t, redisconn.AuthRefused, got, "%s: class %v; want %v", c.name, got, redisconn.AuthRefused)
 		}
 		for e := err; e != nil; e = errors.Unwrap(e) {
 			if strings.Contains(e.Error(), password) || strings.Contains(e.Error(), wrong) {
-				t.Errorf("%s: %q holds a password", c.name, e)
+				assert.Failf(t, "", "%s: %q holds a password", c.name, e)
 			}
 		}
 		now := connections(t, conn)
 		if dialed := now != accepted; dialed != c.dialed {
-			t.Errorf("%s: the store accepted a connection: %v; want %v", c.name, dialed, c.dialed)
+			assert.EqualValues(t, c.dialed, dialed, "%s: the store accepted a connection: %v; want %v", c.name, dialed, c.dialed)
 		}
 		accepted = now
 	}
@@ -367,20 +369,20 @@ func TestOpenAsAnACLUser(t *testing.T) {
 	limited := testredis.Start(t, "--user", "default", "off", "--user", "reader", "on", ">"+password, "~*", "+get", "+hello", "+ping")
 	reader, err := redisconn.Open(ctx, redisconn.Options{Addr: limited, User: "reader", PasswordEnv: "NOVA_TEST_PW"}, environment(map[string]string{"NOVA_TEST_PW": password}))
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	defer reader.Close()
 	err = reader.Client().Set(ctx, "k", "v", 0).Err()
 	if err == nil || redisconn.Classify(err) != redisconn.Other {
-		t.Fatalf("a write by a user who may only read = %v, %v; want the command's own refusal", err, redisconn.Classify(err))
+		require.FailNowf(t, "", "a write by a user who may only read = %v, %v; want the command's own refusal", err, redisconn.Classify(err))
 	}
 	explained := reader.Explain(err)
 	if got := explained.Error(); !strings.HasPrefix(got, "redis at "+limited+" as user reader (password from NOVA_TEST_PW): failed: NOPERM ") ||
 		!strings.HasSuffix(got, "; next: the store answered, so the connection stands: read the refusal as the command's own") {
-		t.Errorf("the refusal, explained: %s", got)
+		assert.Failf(t, "", "the refusal, explained: %s", got)
 	}
 	if !errors.Is(explained, err) || redisconn.Classify(explained) != redisconn.Other {
-		t.Errorf("the refusal, explained, is %v and unwraps to %v", redisconn.Classify(explained), errors.Unwrap(explained))
+		assert.Failf(t, "", "the refusal, explained, is %v and unwraps to %v", redisconn.Classify(explained), errors.Unwrap(explained))
 	}
 }
 
@@ -393,20 +395,20 @@ func TestOpenToAClosedPort(t *testing.T) {
 	defer cancel()
 	conn, err := redisconn.Open(ctx, redisconn.Options{Env: redisconn.GeneralEnv}, environment(map[string]string{redisconn.GeneralEnv.Addr: addr}))
 	if bound := ctx.Err(); bound != nil {
-		t.Errorf("Open returned after its bound of %v had passed: %v", redisconn.OpenTimeout, bound)
+		assert.NoError(t, bound, "Open returned after its bound of %v had passed: %v", redisconn.OpenTimeout, bound)
 	}
 	if conn != nil || err == nil {
-		t.Fatalf("Open = %v, %v; want unreachable", conn, err)
+		require.FailNowf(t, "", "Open = %v, %v; want unreachable", conn, err)
 	}
 	if got := redisconn.Classify(err); got != redisconn.Unreachable {
-		t.Errorf("class %v; want %v", got, redisconn.Unreachable)
+		assert.EqualValues(t, redisconn.Unreachable, got, "class %v; want %v", got, redisconn.Unreachable)
 	}
 	want := "redis at " + addr + " as the default user, no password: unreachable: dial tcp " + addr + ": connect: connection refused; next: start the store or correct the address, which was from NOVA_REDIS_ADDR"
 	if got := err.Error(); got != want {
-		t.Errorf("\n got %s\nwant %s", got, want)
+		assert.EqualValues(t, want, got, "\n got %s\nwant %s", got, want)
 	}
 	if !errors.Is(err, syscall.ECONNREFUSED) {
-		t.Errorf("%v does not unwrap to the refusal", err)
+		assert.ErrorIs(t, err, syscall.ECONNREFUSED, "%v does not unwrap to the refusal", err)
 	}
 }
 
@@ -427,10 +429,10 @@ func TestTripsAgainstTheStore(t *testing.T) {
 		t.Helper()
 		before := trips.N()
 		if err := work(); err != nil {
-			t.Errorf("%s: %v", name, err)
+			assert.NoError(t, err, "%s: %v", name, err)
 		}
 		if got := trips.N() - before; got != want {
-			t.Errorf("%s took %d trips; want %d", name, got, want)
+			assert.EqualValues(t, want, got, "%s took %d trips; want %d", name, got, want)
 		}
 	}
 	span("a command", 1, func() error { return client.Set(ctx, "k", "v", 0).Err() })
@@ -451,7 +453,7 @@ func TestTripsAgainstTheStore(t *testing.T) {
 		return err
 	})
 	if n, err := client.Get(ctx, "n").Int(); err != nil || n != 100 {
-		t.Errorf("after the pipeline n = %d, %v; want 100", n, err)
+		assert.Failf(t, "", "after the pipeline n = %d, %v; want 100", n, err)
 	}
 	span("a transaction", 1, func() error {
 		_, err := client.TxPipelined(ctx, func(p redis.Pipeliner) error {
@@ -477,7 +479,7 @@ func TestTripsAgainstTheStore(t *testing.T) {
 		return err
 	})
 	if trips.Of("fold") != 1 || len(trips.ByLabel()) != 1 {
-		t.Errorf("by label: %v; want fold=1", trips.ByLabel())
+		assert.Failf(t, "", "by label: %v; want fold=1", trips.ByLabel())
 	}
 
 	// The store hangs up on the connection. The command that comes next
@@ -486,11 +488,11 @@ func TestTripsAgainstTheStore(t *testing.T) {
 	// one trip, and the handshake of the connection dialed is none.
 	id, err := client.ClientID(ctx).Result()
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	resetCalls(t, admin)
 	if n, err := admin.Client().ClientKillByFilter(ctx, "ID", strings.TrimSpace(itoa(id))).Result(); err != nil || n != 1 {
-		t.Fatalf("the store hung up on %d connections, %v; want 1", n, err)
+		require.FailNowf(t, "", "the store hung up on %d connections, %v; want 1", n, err)
 	}
 	before, sent := trips.N(), int64(0)
 	for {
@@ -500,14 +502,14 @@ func TestTripsAgainstTheStore(t *testing.T) {
 			break
 		}
 		if sent == 2 || redisconn.Classify(err) != redisconn.Unreachable {
-			t.Fatalf("command %d after the store hung up: %v", sent, err)
+			require.FailNowf(t, "", "command %d after the store hung up: %v", sent, err)
 		}
 	}
 	if got := trips.N() - before; got != sent {
-		t.Errorf("%d commands after the hang-up took %d trips", sent, got)
+		assert.EqualValues(t, sent, got, "%d commands after the hang-up took %d trips", sent, got)
 	}
 	if ran := calls(t, admin); ran["hello"] != "1" || ran["set"] != "1" {
-		t.Errorf("after the hang-up the store ran %s; want one HELLO, for the connection dialed, and the one SET", names(ran))
+		assert.Failf(t, "", "after the hang-up the store ran %s; want one HELLO, for the connection dialed, and the one SET", names(ran))
 	}
 }
 
@@ -537,32 +539,32 @@ func TestADeadConnectionIsFoundBeforeItIsUsed(t *testing.T) {
 	for i := 0; i < rounds; i++ {
 		conn, err := redisconn.Open(ctx, redisconn.Options{Addr: addr}, nothing)
 		if err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 		id, err := conn.Client().ClientID(ctx).Result()
 		if err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 		if n, err := admin.Client().ClientKillByFilter(ctx, "ID", itoa(id)).Result(); err != nil || n != 1 {
-			t.Fatalf("round %d: the store hung up on %d connections, %v; want 1", i, n, err)
+			require.FailNowf(t, "", "round %d: the store hung up on %d connections, %v; want 1", i, n, err)
 		}
 		if err := conn.Client().Set(ctx, "k", "v", 0).Err(); err != nil {
 			if redisconn.Classify(err) != redisconn.Unreachable {
-				t.Fatalf("round %d: %v", i, err)
+				require.EqualValues(t, redisconn.Unreachable, redisconn.Classify(err), "round %d: %v", i, err)
 			}
 			failed++
 		}
 		if err := conn.Client().Set(ctx, "k", "v", 0).Err(); err != nil {
-			t.Fatalf("round %d: the command after the one that met the hang-up: %v", i, err)
+			require.NoError(t, err, "round %d: the command after the one that met the hang-up: %v", i, err)
 		}
 		if err := conn.Close(); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 	}
 	// The store's hang-up reaches this side in its own time; a round can
 	// lose that race. A connection that hid its socket loses every round.
 	if failed > rounds/4 {
-		t.Errorf("%d of %d commands met the dead connection; want it found dead before use", failed, rounds)
+		assert.LessOrEqual(t, failed, rounds/4, "%d of %d commands met the dead connection; want it found dead before use", failed, rounds)
 	}
 }
 
@@ -575,10 +577,10 @@ func TestPipelineFirstErrorAgainstTheStore(t *testing.T) {
 	client := conn.Client()
 	ctx := context.Background()
 	if err := client.Set(ctx, "text", "v", 0).Err(); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if err := client.HSet(ctx, "row", "state", "open").Err(); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	queue := func() (redis.Pipeliner, *redis.StringCmd, *redis.StringCmd, *redis.IntCmd) {
 		pipe := client.Pipeline()
@@ -588,30 +590,30 @@ func TestPipelineFirstErrorAgainstTheStore(t *testing.T) {
 	pipe, absent, present, refused := queue()
 	cmds, bare := pipe.Exec(ctx)
 	if !errors.Is(bare, redis.Nil) {
-		t.Fatalf("Exec answered %v; want the absence of the first command", bare)
+		require.ErrorIs(t, bare, redis.Nil, "Exec answered %v; want the absence of the first command", bare)
 	}
 	err := redisconn.FirstError(cmds, bare)
 	if err == nil || !strings.HasPrefix(err.Error(), "WRONGTYPE") || err != refused.Err() {
-		t.Errorf("FirstError = %v; want the refusal of the third command, %v", err, refused.Err())
+		assert.Failf(t, "", "FirstError = %v; want the refusal of the third command, %v", err, refused.Err())
 	}
 	if !errors.Is(absent.Err(), redis.Nil) || present.Val() != "open" {
-		t.Errorf("the commands read %v and %q", absent.Err(), present.Val())
+		assert.Failf(t, "", "the commands read %v and %q", absent.Err(), present.Val())
 	}
 
 	pipe, _, _, refused = queue()
 	trips := redisconn.CountTrips(client)
 	if err := redisconn.Exec(ctx, pipe); err == nil || err != refused.Err() || redisconn.Classify(err) != redisconn.Other {
-		t.Errorf("Exec of this package = %v; want the refusal", err)
+		assert.Failf(t, "", "Exec of this package = %v; want the refusal", err)
 	}
 	pipe = client.Pipeline()
 	absent, present = pipe.HGet(ctx, "row", "absent"), pipe.HGet(ctx, "row", "state")
 	if err := redisconn.Exec(ctx, pipe); err != nil {
-		t.Errorf("a pipeline of an absent field and a present one: %v; want nil", err)
+		assert.NoError(t, err, "a pipeline of an absent field and a present one: %v; want nil", err)
 	}
 	if !errors.Is(absent.Err(), redis.Nil) || present.Val() != "open" {
-		t.Errorf("the commands read %v and %q", absent.Err(), present.Val())
+		assert.Failf(t, "", "the commands read %v and %q", absent.Err(), present.Val())
 	}
 	if trips.N() != 2 {
-		t.Errorf("two pipelines took %d trips", trips.N())
+		assert.EqualValues(t, 2, trips.N(), "two pipelines took %d trips", trips.N())
 	}
 }

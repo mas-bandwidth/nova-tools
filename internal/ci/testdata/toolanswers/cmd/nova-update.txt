@@ -1,0 +1,3 @@
+# tool-answers: the mistakes this tool does not yet answer with the way forward; each row's count only falls
+# ceiling: 1
+cmd/nova-update:dry-run 1 verbs whose -h states no effect, or that write with no --dry-run (tool ledger X12)

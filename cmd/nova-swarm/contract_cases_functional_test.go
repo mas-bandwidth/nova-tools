@@ -85,21 +85,22 @@ func (e *caseEnv) log() string {
 	return string(b)
 }
 
-func (e *caseEnv) runner(bin, harness, model string) *nativeRunner {
+func (e *caseEnv) runner(harness, model string) *nativeRunner {
 	root := filepath.Join(e.dir, "m1")
-	return &nativeRunner{self: builtTool, sprintBin: bin, harness: harness, model: model, root: root,
+	return &nativeRunner{self: builtTool, harness: harness, model: model, root: root,
 		slots: filepath.Join(root, "slots"), resultsRoot: filepath.Join(root, "results"), deadline: time.Minute,
 		tokens: "unmetered", noWall: true, stderr: io.Discard, env: e.env}
 }
 
-func (e *caseEnv) pusher(rn *nativeRunner, bin string) *gitPusher {
-	pu := newGitPusher(rn.root, rn.slots, bin)
+func (e *caseEnv) pusher(rn *nativeRunner) *gitPusher {
+	pu := newGitPusher(rn.root, rn.slots)
 	pu.gh, pu.env = e.gh, e.env
 	return pu
 }
 
 func (e *caseEnv) member(t *testing.T) {
 	t.Helper()
+	require.NoError(t, buildShared(), "building the binaries these tests run")
 	root := filepath.Join(e.dir, "m1")
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "slots"), 0o755))
 	write(t, filepath.Join(root, "identity.tsv"), "owner\tname\temail\ntest-owner\tPool Worker\tpool@example.com\n")
@@ -109,23 +110,29 @@ func (e *caseEnv) member(t *testing.T) {
 // at a time, and returns the card's story and the member's output.
 func (e *caseEnv) sprintRun(t *testing.T, harness, model string) (story, out string) {
 	t.Helper()
+	return e.sprintRunUntil(t, harness, model, 3*time.Minute, "m1 finished attempt 1")
+}
+
+// sprintRunUntil drives the same real loop to the lifecycle outcome the case expects.
+func (e *caseEnv) sprintRunUntil(t *testing.T, harness, model string, bound time.Duration, terminal string) (story, out string) {
+	t.Helper()
 	bin := builtSprint(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), bound)
 	defer cancel()
 	d := &memberDrive{t: t, addr: "mem:" + filepath.Join(e.dir, "sprint.twin"), bin: bin}
 	d.must("init", "--members", "m1:1")
 	d.must("add", "--stream", "a", "--count", "1", "--brief", e.brief())
 	d.must("start")
 	e.member(t)
-	rn := e.runner(bin, harness, model)
+	rn := e.runner(harness, model)
 	ob := &lockedBuf{}
-	m := member.New(member.Config{As: "m1", Width: 1}, &execSprint{bin: bin, actor: "m1", env: []string{"NOVA_SPRINT_REDIS=" + d.addr}}, rn, e.pusher(rn, bin), ob)
+	m := member.New(member.Config{As: "m1", Width: 1}, d.worker(), rn, e.pusher(rn), ob)
 	t.Cleanup(func() {
 		if t.Failed() {
 			t.Logf("story:\n%s\nmember:\n%s\nchild:\n%s", story, ob.String(), e.log())
 		}
 	})
-	for !strings.Contains(story, "m1 finished attempt 1") {
+	for !strings.Contains(story, terminal) {
 		require.NoError(t, ctx.Err(), "the card did not finish in time")
 		d.must("tick")
 		_, err := m.Tick(time.Now())
@@ -140,9 +147,8 @@ func (e *caseEnv) sprintRun(t *testing.T, harness, model string) (story, out str
 // member does: the result, the push and the finish.
 func (e *caseEnv) directRun(t *testing.T, p member.Packet, harness, model string) (member.Result, member.Push, member.Finish, string) {
 	t.Helper()
-	bin := builtSprint(t)
 	e.member(t)
-	rn := e.runner(bin, harness, model)
+	rn := e.runner(harness, model)
 	c, err := rn.Start(p)
 	require.NoError(t, err)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -157,7 +163,7 @@ func (e *caseEnv) directRun(t *testing.T, p member.Packet, harness, model string
 	}
 	push := member.Push{None: "the result names no commit"}
 	if r.Head != "" {
-		push = e.pusher(rn, bin).Push(p, r)
+		push = e.pusher(rn).Push(p, r)
 	}
 	fin, why := member.Judge(r, push)
 	return r, push, fin, why
@@ -190,12 +196,12 @@ git push -u origin feat
 gh pr create --title T --body B >&2`)
 	story, _ := e.sprintRun(t, h, "anthropic/claude-sonnet-5-5")
 	assert.NotContains(t, story, "FAILED")
-	pushed := strings.TrimSpace(runGit(t, e.origin, "rev-parse", "refs/heads/sprint/a-1.w1"))
+	pushed := strings.TrimSpace(runGit(t, e.origin, "rev-parse", "refs/heads/sprint/a-1.w1.g1.e0"))
 	assert.Equal(t, "the change", strings.TrimSpace(runGit(t, e.origin, "log", "-1", "--format=%s", pushed)))
-	assert.Contains(t, e.log(), "feat -> sprint/a-1.w1", "the push answer names the branch the sprint pushes")
+	assert.Contains(t, e.log(), "feat -> sprint/a-1.w1.g1.e0", "the push answer names the branch the sprint pushes")
 	args, err := os.ReadFile(filepath.Join(e.dir, "gh.args"))
 	require.NoError(t, err)
-	assert.Contains(t, string(args), "--head\nsprint/a-1.w1\n")
+	assert.Contains(t, string(args), "--head\nsprint/a-1.w1.g1.e0\n")
 }
 
 // A child that opens a pull request and committed nothing is failed, no commit.
@@ -355,9 +361,8 @@ echo change >> f
 git commit -q -am "the change"
 git push
 gh pr create --title T --body B >&2`)
-	bin := builtSprint(t)
 	e.member(t)
-	rn := e.runner(bin, h, "fake/claude-x")
+	rn := e.runner(h, "fake/claude-x")
 	rn.pass = []string{"PROBE_API_KEY"}
 	p := member.Packet{Card: "a-1.w1", Kind: "work", As: "m1", Primary: "a-1", Stream: "a", Attempt: 1, Gen: 1, Epoch: 1,
 		Brief: e.brief(), Branch: "sprint/a-1.w1"}
@@ -403,19 +408,19 @@ echo change >> f
 git commit -q -am "the change"
 git push
 gh pr create --title T --body B >&2`)
-			rn := e.runner(bin, work, "fake/claude-x")
-			wm := member.New(member.Config{As: "m1", Width: 1}, &execSprint{bin: bin, actor: "m1", env: []string{"NOVA_SPRINT_REDIS=" + d.addr}}, rn, e.pusher(rn, bin), &lockedBuf{})
+			rn := e.runner(work, "fake/claude-x")
+			wm := member.New(member.Config{As: "m1", Width: 1}, d.worker(), rn, e.pusher(rn), &lockedBuf{})
 
 			readerRoot := filepath.Join(e.dir, "reader-a")
 			require.NoError(t, os.MkdirAll(filepath.Join(readerRoot, "slots"), 0o755))
 			write(t, filepath.Join(readerRoot, "identity.tsv"), "owner\tname\temail\ntest-owner\tPool Reader\treader@example.com\n")
 			readHarness := filepath.Join(e.dir, "reader.sh")
 			require.NoError(t, testbin.WriteExecutable(readHarness, []byte("#!/bin/sh\ngh pr diff | grep -q '^+change' || exit 1\n"+tc.review+"\n"), 0o755))
-			rr := &nativeRunner{self: builtTool, sprintBin: bin, harness: readHarness, model: "fake/claude-reader", root: readerRoot,
+			rr := &nativeRunner{self: builtTool, harness: readHarness, model: "fake/claude-reader", root: readerRoot,
 				slots: filepath.Join(readerRoot, "slots"), resultsRoot: filepath.Join(readerRoot, "results"), deadline: time.Minute,
 				tokens: "unmetered", noWall: true, stderr: io.Discard, env: e.env}
 			rout := &lockedBuf{}
-			reader := member.New(member.Config{As: "reader-a", Width: 1, Reader: true}, &execSprint{bin: bin, actor: "reader-a", env: []string{"NOVA_SPRINT_REDIS=" + d.addr}}, rr, nil, rout)
+			reader := member.New(member.Config{As: "reader-a", Width: 1, Reader: true}, d.worker(), rr, nil, rout)
 
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 			defer cancel()
@@ -440,10 +445,9 @@ gh pr create --title T --body B >&2`)
 func TestAStagedRecipeIsInTheJob(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name   string
-		have   bool
-		failed bool
-	}{{"present", true, false}, {"missing", false, true}} {
+		name string
+		have bool
+	}{{"present", true}, {"missing", false}} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			e := newCaseEnv(t, false)
@@ -452,14 +456,24 @@ func TestAStagedRecipeIsInTheJob(t *testing.T) {
 			}
 			first, rest, _ := strings.Cut(e.brief(), "\n")
 			e.briefOverride = first + "\nStage: pr/4926.md\n" + rest
-			story, _ := e.sprintRun(t, e.script(t, `set -e
+			harness := e.script(t, `set -e
 cp recipes/pr/4926.md repo/recipe.md
 cd repo
 git add recipe.md
 git commit -q -m "from the recipe"
 git push
-gh pr create --title T --body B >&2`), "fake/claude-x")
-			assert.Equal(t, tc.failed, strings.Contains(story, "FAILED"), story)
+gh pr create --title T --body B >&2`)
+			if tc.have {
+				story, _ := e.sprintRun(t, harness, "fake/claude-x")
+				assert.NotContains(t, story, "FAILED", story)
+				return
+			}
+			story, _ := e.sprintRunUntil(t, harness, "fake/claude-x", 30*time.Second, "a card reached its bound")
+			assert.Contains(t, story, "waits on your judgment: a card reached its bound")
+			assert.Contains(t, story, "the card's frame could not be installed: Stage: the recipes directory")
+			assert.Contains(t, story, "no result: no RESULT.md shape")
+			assert.NoFileExists(t, filepath.Join(e.logs, "child.log"), "a missing recipe refuses the frame before launching the child")
+			assert.NoFileExists(t, filepath.Join(e.dir, "gh.args"), "no pull request for a child that never ran")
 		})
 	}
 }

@@ -28,7 +28,7 @@ func argsRunner(t *testing.T, model, tokens string, deadline time.Duration) *nat
 	self := filepath.Join(dir, "self.sh")
 	script := "#!/bin/sh\nfor a in \"$@\"; do echo \"$a\"; done > '" + slots + "'/\"$(echo \"$@\" | sed 's/.*--label \\([^ ]*\\).*/\\1/')\".args\n"
 	require.NoError(t, testbin.WriteExecutable(self, []byte(script), 0o755))
-	return &nativeRunner{self: self, sprintBin: "nova-sprint", harness: "/bin/true", model: model, root: dir, slots: slots,
+	return &nativeRunner{self: self, harness: "/bin/true", model: model, root: dir, slots: slots,
 		resultsRoot: filepath.Join(dir, "results"), deadline: deadline, tokens: tokens, stderr: &bytes.Buffer{}}
 }
 
@@ -89,6 +89,39 @@ func TestACardWithNoRouteRunsOnTheMembersOverride(t *testing.T) {
 	assert.Equal(t, "999", args["--tokens"])
 	assert.Equal(t, "9s", args["--deadline"])
 	assert.Equal(t, "override/model", f.Model)
+}
+
+// A read's route is drawn by the ask from the reader tier and handed in its packet,
+// so a reader loop needs no --model; a reader started with --model, --tokens and
+// --deadline runs its reads on them over the read's route.
+func TestAReadRunsOnItsRouteUnlessTheReaderNamesAModel(t *testing.T) {
+	t.Parallel()
+	seconds := 900 // the route's deadline, in seconds as the read card holds it
+	p := member.Packet{Card: "c1.r1.reader-1", Kind: "read", Attempt: 1, Head: "abc", Brief: "c1: do it (s1) tier: flash\n\nThe task.",
+		Route: "pro-a", Model: "deepseek/v4-pro", Tokens: "400000", Deadline: seconds}
+	for _, c := range []struct {
+		name                   string
+		r                      *nativeRunner
+		model, tokens, wallStr string
+	}{
+		{"no override: the read's route", argsRunner(t, "", "", 0), "deepseek/v4-pro", "400000", "15m0s"},
+		{"the reader's --model, --tokens and --deadline", argsRunner(t, "override/model", "999", 9*time.Second), "override/model", "999", "9s"},
+	} {
+		args, _ := launched(t, c.r, p)
+		assert.Equal(t, c.model, args["--model"], c.name)
+		assert.Equal(t, c.tokens, args["--tokens"], c.name)
+		assert.Equal(t, c.wallStr, args["--deadline"], c.name)
+	}
+}
+
+// The pool identity the loop's nova-config argv names (--identity) is handed to
+// every native launch, so no identity.tsv is written into the pool by hand.
+func TestAMemberHandsItsIdentityToEveryLaunch(t *testing.T) {
+	t.Parallel()
+	r := argsRunner(t, "override/model", "999", 9*time.Second)
+	r.identity = "pool-owner,Pool Worker,pool@example.com"
+	args, _ := launched(t, r, member.Packet{Card: "c1", Kind: "work", Attempt: 1, Gen: 1, Branch: "work/c1"})
+	assert.Equal(t, "pool-owner,Pool Worker,pool@example.com", args["--identity"])
 }
 
 // A card with no route on a member with no override is refused at its launch,
@@ -177,11 +210,11 @@ func TestATakenCardTheMemberCannotLaunchIsFinishedFailed(t *testing.T) {
 func TestTheMemberLineSaysTheOverride(t *testing.T) {
 	t.Parallel()
 	for args, want := range map[string]string{
-		"--model ov/m --tokens 5 --deadline 9s": "width=row every=3s sprint=/usr/bin/false harness=/bin/true model=card,override:ov/m",
-		"--width 3":                             "width=override:3 every=3s sprint=/usr/bin/false harness=/bin/true model=card",
+		"--model ov/m --tokens 5 --deadline 9s": "width=row every=3s server=sprint.test:6390 harness=/bin/true model=card,override:ov/m",
+		"--width 3":                             "width=override:3 every=3s server=sprint.test:6390 harness=/bin/true model=card",
 	} {
 		var out, errb bytes.Buffer
-		cmdMember(append([]string{"--as", "m1", "--harness", "/bin/true", "--root", t.TempDir(), "--once", "--sprint", "/usr/bin/false"}, strings.Fields(args)...), &out, &errb)
+		cmdMember(append([]string{"--as", "m1", "--harness", "/bin/true", "--root", t.TempDir(), "--once", "--server", "sprint.test:6390"}, strings.Fields(args)...), &out, &errb, noServer)
 		assert.Contains(t, out.String(), "MEMBER member as=m1 "+want, args)
 	}
 }

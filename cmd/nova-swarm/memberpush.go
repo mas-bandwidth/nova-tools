@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +18,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/member"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
@@ -37,7 +40,7 @@ import (
 // that origin holds at another commit refuses the push, and the finish says so.
 // The rule is docs/SPEC-SWARM.md's `member`.
 type gitPusher struct {
-	root, slots, sprintBin string
+	root, slots string
 	// gh is the GitHub CLI the member opens a card's pull request with, as itself,
 	// outside the wall, when the child's result asks for one (gh pr create inside it).
 	gh string
@@ -47,10 +50,24 @@ type gitPusher struct {
 	// git runs one git; gitrun.Run, or a test's fake.
 	git func(ctx context.Context, o gitrun.Options, args ...string) (gitrun.Result, error)
 	mu  sync.Mutex // the push repository's creation and its alternates
+	// sleep waits between two tries of a push origin rejected on its own side, or of
+	// a fetch from the checkout that failed (pushWaits); nil is time.Sleep, a test
+	// gives its own.
+	sleep func(time.Duration)
+	// notes is where the pusher says what it pushed that the result did not name (the
+	// member's own output); nil says nothing.
+	notes io.Writer
 }
 
-func newGitPusher(root, slots, sprintBin string) *gitPusher {
-	return &gitPusher{root: root, slots: slots, sprintBin: sprintBin, gh: "gh", git: gitrun.Run}
+// pushWaits is the waits before a push that origin rejected on its own side, git's
+// `[remote rejected]`, is sent again: the remote's failure, never the commit's (three
+// pushes were rejected so within thirty seconds of a fleet pass, 2026-10-01, and each
+// failed its card). A push origin refuses for the commit (`[rejected]`: not a fast
+// forward) is refused at once, as before, and never forced.
+var pushWaits = []time.Duration{time.Second, 2 * time.Second, 4 * time.Second}
+
+func newGitPusher(root, slots string) *gitPusher {
+	return &gitPusher{root: root, slots: slots, gh: "gh", git: gitrun.Run}
 }
 
 // pushBranchRE is a branch a push names: a ref name with no refspec character
@@ -83,32 +100,61 @@ func (g *gitPusher) Push(p member.Packet, r member.Result) member.Push {
 	}
 	ctx := context.Background()
 	ns := "refs/member/" + launchName(p)
+	// a ref this launch's namespace kept from an interrupted push is dropped before the
+	// fetch, so only this checkout's own branches can authorize the head
+	g.drop(ctx, repo, ns)
 	defer g.drop(ctx, repo, ns)
 	// every branch and the HEAD of the checkout: the child's commit is on whichever branch
 	// it made, in the checkout or in a clone the git shim linked to it (docs/SPEC-CARD-CONTRACT.md)
 	fetch := []string{"fetch", "-q", "--no-tags", "--no-write-fetch-head", "--", checkout, "+HEAD:" + ns + "/HEAD", "+refs/heads/*:" + ns + "/heads/*"}
-	if res, err := g.run(ctx, repo, nil, fetch...); err != nil {
-		return member.Push{Refused: "fetch from the checkout: " + gitLine(res, err)}
+	for try := 0; ; try++ {
+		res, err := g.run(ctx, repo, nil, fetch...)
+		if err == nil {
+			break
+		}
+		// the push repository is shared by every launch of this member and borrows the bench
+		// mirror's objects, which the mirror's own repack can move: a fetch's check of every ref
+		// can find another launch's ref unreadable for a moment ("fatal: bad object
+		// refs/member/<another launch>/HEAD", the 5000-card load test of 2026-10-01). It is
+		// the member's moment, never the card's: this launch's refs are dropped and the fetch
+		// is made again after a wait, and only a fetch that fails every time is the refusal
+		if try == len(pushWaits) {
+			return member.Push{Refused: "fetch from the checkout into the member's push repository, " + strconv.Itoa(try+1) + " tries: " + gitLine(res, err)}
+		}
+		g.drop(ctx, repo, ns)
+		g.wait(pushWaits[try])
 	}
 	verify := []string{"rev-parse", "--verify", "-q", "--end-of-options", head + "^{commit}"}
 	res, err := g.run(ctx, repo, nil, verify...)
 	full := strings.TrimSpace(string(res.Stdout))
+	refused, claimed := "", "" // claimed: the head the result named, when the checkout's own was taken for it
 	if err != nil || len(full) < 40 {
-		return member.Push{Refused: "the result's head " + head + " is not a commit on the checkout's branches"}
-	}
-	// the head must be one this launch's checkout holds: the push repository keeps
-	// every launch's objects, so a commit being there is no evidence it is this one's
-	res, err = g.run(ctx, repo, nil, "for-each-ref", "--count=1", "--format=%(refname)", "--contains", full, ns+"/")
-	if err != nil || strings.TrimSpace(string(res.Stdout)) == "" {
-		return member.Push{Refused: "the result's head " + full + " is not on this checkout's branches or HEAD"}
+		refused = "the result's head " + head + " is not a commit on the checkout's branches"
+	} else if res, err := g.run(ctx, repo, nil, "for-each-ref", "--count=1", "--format=%(refname)", "--contains", full, ns+"/"); err != nil || strings.TrimSpace(string(res.Stdout)) == "" {
+		// the head must be one this launch's checkout holds: the push repository keeps
+		// every launch's objects, so a commit being there is no evidence it is this one's
+		refused = "the result's head " + full + " is not on this checkout's branches or HEAD"
 	}
 	// the child committed when its head has a commit the staged commit does not:
 	// counted from the commit native recorded in the slot, never from the
 	// checkout's own refs, which a stale mirror or the child can move
 	// (docs/SPEC-CARD-CONTRACT.md section 4; tla/CardContract.tla Push)
-	staged, err := os.ReadFile(filepath.Join(g.slots, launchName(p), cardcontract.StagedName))
+	staged, serr := os.ReadFile(filepath.Join(g.slots, launchName(p), cardcontract.StagedName))
 	base := strings.TrimSpace(string(staged))
-	if err != nil || !typedrec.IsFullSha(base) {
+	if refused != "" {
+		// a result whose head names no commit of the checkout (a model that wrote a sha's
+		// first characters right and invented its tail) is the checkout's own head when the
+		// child made exactly one line of work; else the refusal stands
+		tip := ""
+		if serr == nil && typedrec.IsFullSha(base) {
+			tip = g.checkoutTip(ctx, repo, ns, base)
+		}
+		if tip == "" {
+			return member.Push{Refused: refused}
+		}
+		claimed, full = head, tip
+	}
+	if serr != nil || !typedrec.IsFullSha(base) {
 		return member.Push{None: "no staged commit is recorded for this launch to count the child's commits from"}
 	}
 	if res, err := g.run(ctx, repo, nil, "merge-base", "--is-ancestor", "--end-of-options", base, full); err != nil {
@@ -121,15 +167,68 @@ func (g *gitPusher) Push(p member.Packet, r member.Result) member.Push {
 	if n, _ := strconv.Atoi(strings.TrimSpace(string(res.Stdout))); n == 0 {
 		return member.Push{None: "the child committed nothing: head " + full + " is the staged commit or behind it"}
 	}
+	// the launch's refs have done their work (the head is known and counted, and the push
+	// names it by sha): gone before the push to origin and the pull request, which take
+	// seconds, so another launch's fetch meets them only for the moment this one's took
+	g.drop(ctx, repo, ns)
 	push := []string{"push", "-q", "--porcelain", "--no-verify", "--", url, full + ":refs/heads/" + p.Branch}
-	if res, err := g.run(ctx, repo, nil, push...); err != nil {
-		return member.Push{Refused: gitLine(res, err)}
+	for try := 0; ; try++ {
+		res, err := g.run(ctx, repo, nil, push...)
+		if err == nil {
+			break
+		}
+		line := gitLine(res, err)
+		if try == len(pushWaits) || !strings.Contains(line, "[remote rejected]") {
+			return member.Push{Refused: line}
+		}
+		g.wait(pushWaits[try])
+	}
+	if claimed != "" && g.notes != nil {
+		// said only once the push has landed: a push refused after this point is a failure
+		fmt.Fprintf(g.notes, "NOTE push %s head: the result named %s, which is no commit of the checkout; the checkout's own head %s was pushed\n", oneline.Field(p.Card), oneline.Field(claimed), oneline.Field(full))
 	}
 	pu := member.Push{Sha: full}
 	if strings.TrimSpace(r.Title) != "" {
 		pu.PR, pu.PRNote = g.openPR(url, ref, p.Branch, r.Title, r.Body)
 	}
 	return pu
+}
+
+// checkoutTip is the one tip of the checkout's HEAD and branches (fetched under ns) that holds
+// a commit the staged commit does not and descends from it: the child's one line of work. ""
+// when there is none, or more than one. On the 1000-card load test of 2026-10-01 five of the
+// first twelve failures were a result naming a sha whose first characters were right and whose
+// tail was invented, from one route, with the commit itself on the checkout's branch.
+func (g *gitPusher) checkoutTip(ctx context.Context, repo, ns, base string) string {
+	res, err := g.run(ctx, repo, nil, "for-each-ref", "--format=%(objectname)", ns+"/")
+	if err != nil {
+		return ""
+	}
+	var tips []string
+	seen := map[string]bool{base: true}
+	for _, sha := range strings.Fields(string(res.Stdout)) {
+		if seen[sha] {
+			continue
+		}
+		seen[sha] = true
+		_, err := g.run(ctx, repo, nil, "merge-base", "--is-ancestor", "--end-of-options", base, sha)
+		var exit *exec.ExitError
+		switch {
+		case err == nil:
+			tips = append(tips, sha)
+		case errors.As(err, &exit) && exit.ExitCode() == 1:
+			// not a descendant of the staged commit: no candidate
+		default:
+			// git could not say (a broken object, the disk, a timeout): a tip that was
+			// not judged is never left out as if it were no descendant, or the other
+			// would look like the one line of work
+			return ""
+		}
+	}
+	if len(tips) != 1 {
+		return ""
+	}
+	return tips[0]
 }
 
 // cardRepo is the repository and base ref of a launch: its frame's, else the brief's header.
@@ -255,6 +354,15 @@ func addAlternate(repo, objects string) error {
 		held = append(held, '\n')
 	}
 	return atomicfile.Write(path, append(held, []byte(objects+"\n")...), 0o644)
+}
+
+// wait is the pause before a fetch or a push is made again: sleep, else time.Sleep.
+func (g *gitPusher) wait(d time.Duration) {
+	if g.sleep != nil {
+		g.sleep(d)
+		return
+	}
+	time.Sleep(d)
 }
 
 // drop deletes a launch's refs from the push repository once its push is

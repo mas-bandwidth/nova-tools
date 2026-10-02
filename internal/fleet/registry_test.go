@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // write puts one machines file in a temp directory and returns its path.
@@ -14,9 +15,7 @@ func write(t *testing.T, body string) string {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "machines.tsv")
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
 	return path
 }
 
@@ -30,28 +29,17 @@ func TestReadRegistryReadsEveryColumn(t *testing.T) {
 
 	path := write(t, "# a comment\n\n"+row("batman", "batman", "darwin/amd64", "runner", "-", "8", "2019 iMac Pro, six runners"))
 	reg, err := ReadRegistry(path)
-	if err != nil {
-		t.Fatalf("ReadRegistry: %v", err)
-	}
+	require.NoError(t, err, "ReadRegistry: %v", err)
 	m, ok := reg.Lookup("batman")
-	if !ok {
-		t.Fatal("batman is not in the registry")
-	}
-	if m.SSH != "batman" || m.OS != "darwin" || m.Arch != "amd64" {
-		t.Errorf("ssh/os/arch read back as %q/%q/%q", m.SSH, m.OS, m.Arch)
-	}
-	if m.Seat != "" {
-		t.Errorf("seat `-` read back as %q, want no seat", m.Seat)
-	}
-	if m.Cores != 8 {
-		t.Errorf("cores read back as %d, want 8", m.Cores)
-	}
-	if m.Notes != "2019 iMac Pro, six runners" {
-		t.Errorf("notes read back as %q", m.Notes)
-	}
-	if !m.HasRole(RoleRunner) || m.HasRole(RoleBench) {
-		t.Errorf("roles read back as %q, want runner and not bench", m.RoleList())
-	}
+	require.True(t, ok, "batman is not in the registry")
+	assert.Equal(t, "batman", m.SSH, "ssh/os/arch read back as %q/%q/%q", m.SSH, m.OS, m.Arch)
+	assert.Equal(t, "darwin", m.OS, "ssh/os/arch read back as %q/%q/%q", m.SSH, m.OS, m.Arch)
+	assert.Equal(t, "amd64", m.Arch, "ssh/os/arch read back as %q/%q/%q", m.SSH, m.OS, m.Arch)
+	assert.Equal(t, "", m.Seat, "seat `-` read back as %q, want no seat", m.Seat)
+	assert.Equal(t, 8, m.Cores, "cores read back as %d, want 8", m.Cores)
+	assert.Equal(t, "2019 iMac Pro, six runners", m.Notes, "notes read back as %q", m.Notes)
+	assert.True(t, m.HasRole(RoleRunner), "roles read back as %q, want runner and not bench", m.RoleList())
+	assert.False(t, m.HasRole(RoleBench), "roles read back as %q, want runner and not bench", m.RoleList())
 }
 
 func TestReadRegistryRefusesAMachineThatIsBothRunnerAndBenchWithoutTheNote(t *testing.T) {
@@ -59,21 +47,16 @@ func TestReadRegistryRefusesAMachineThatIsBothRunnerAndBenchWithoutTheNote(t *te
 
 	path := write(t, row("hulk", "hulk", "linux/x64", "bench,runner", "swarm-hulk", "64", "eight runners beside the cards"))
 	reg, err := ReadRegistry(path)
-	if err != nil {
-		t.Fatalf("a shared row without the note refused the whole registry: %v", err)
-	}
-	if _, ok := reg.Lookup("hulk"); ok {
-		t.Fatal("the poisoned row was in the bench set")
-	}
-	if got := len(reg.Machines()); got != 0 {
-		t.Errorf("the registry carries %d machines, want none: the poisoned row is not a machine", got)
-	}
+	require.NoError(t, err, "a shared row without the note refused the whole registry: %v", err)
+	_, ok := reg.Lookup("hulk")
+	require.False(t, ok, "the poisoned row was in the bench set")
+	got := len(reg.Machines())
+	assert.Equal(t, 0, got, "the registry carries %d machines, want none: the poisoned row is not a machine", got)
 	// The name stays taken: a second row under it is a duplicate, not a way round the lock.
 	twice := write(t, row("hulk", "hulk", "linux/x64", "bench,runner", "swarm-hulk", "64", "no note")+
 		row("hulk", "hulk2", "linux/x64", "bench", "swarm-hulk", "64", "-"))
-	if _, err := ReadRegistry(twice); err == nil {
-		t.Error("a second row under a lock-failed name was accepted")
-	}
+	_, err = ReadRegistry(twice)
+	assert.Error(t, err, "a second row under a lock-failed name was accepted")
 }
 
 // TestReadRegistryDoesNotRefuseTheFleetForOnePoisonedSharedRow is the registry half of
@@ -88,20 +71,15 @@ func TestReadRegistryDoesNotRefuseTheFleetForOnePoisonedSharedRow(t *testing.T) 
 	}
 	body.WriteString(row("hetzner", "hetzner", "linux/x64", "bench,runner", "swarm-hetzner", "64", "added with no allow-shared note"))
 	reg, err := ReadRegistry(write(t, body.String()))
-	if err != nil {
-		t.Fatalf("one poisoned row among five refused the whole registry: %v", err)
-	}
+	require.NoError(t, err, "one poisoned row among five refused the whole registry: %v", err)
 	for _, name := range []string{"b1", "b2", "b3", "b4"} {
-		if _, ok := reg.Lookup(name); !ok {
-			t.Errorf("neighbour %s is missing", name)
-		}
+		_, ok := reg.Lookup(name)
+		assert.True(t, ok, "neighbour %s is missing", name)
 	}
-	if _, ok := reg.Lookup("hetzner"); ok {
-		t.Error("the poisoned row was in the bench set")
-	}
-	if got := len(reg.Machines()); got != 4 {
-		t.Errorf("the registry carries %d machines, want the four neighbours", got)
-	}
+	_, ok := reg.Lookup("hetzner")
+	assert.False(t, ok, "the poisoned row was in the bench set")
+	got := len(reg.Machines())
+	assert.Equal(t, 4, got, "the registry carries %d machines, want the four neighbours", got)
 }
 
 func TestReadRegistryAcceptsTheSharedExceptionWithItsDateAndReason(t *testing.T) {
@@ -110,17 +88,13 @@ func TestReadRegistryAcceptsTheSharedExceptionWithItsDateAndReason(t *testing.T)
 	path := write(t, row("hulk", "hulk", "linux/x64", "bench,runner", "swarm-hulk", "64",
 		"allow-shared=2026-09-18 the pull worker does not containerise cards yet"))
 	reg, err := ReadRegistry(path)
-	if err != nil {
-		t.Fatalf("the dated exception was refused: %v", err)
-	}
+	require.NoError(t, err, "the dated exception was refused: %v", err)
 	m, _ := reg.Lookup("hulk")
 	date, why, ok := m.AllowShared()
-	if !ok || date != "2026-09-18" || why != "the pull worker does not containerise cards yet" {
-		t.Errorf("AllowShared read back %q/%q/%v", date, why, ok)
-	}
-	if !m.HasRole(RoleBench) {
-		t.Errorf("a shared machine is still a bench: roles %q", m.RoleList())
-	}
+	assert.True(t, ok, "AllowShared read back %q/%q/%v", date, why, ok)
+	assert.Equal(t, "2026-09-18", date, "AllowShared read back %q/%q/%v", date, why, ok)
+	assert.Equal(t, "the pull worker does not containerise cards yet", why, "AllowShared read back %q/%q/%v", date, why, ok)
+	assert.True(t, m.HasRole(RoleBench), "a shared machine is still a bench: roles %q", m.RoleList())
 }
 
 func TestReadRegistryRefusesASharedNoteWithNoDateAndOneWithNoReason(t *testing.T) {
@@ -133,13 +107,11 @@ func TestReadRegistryRefusesASharedNoteWithNoDateAndOneWithNoReason(t *testing.T
 	} {
 		path := write(t, row("hulk", "hulk", "linux/x64", "bench,runner", "swarm-hulk", "64", note))
 		reg, err := ReadRegistry(path)
-		if err != nil {
-			t.Errorf("%s: the whole registry was refused: %v", name, err)
+		if !assert.NoError(t, err, "%s: the whole registry was refused: %v", name, err) {
 			continue
 		}
-		if _, ok := reg.Lookup("hulk"); ok {
-			t.Errorf("%s: %q was accepted as a bench", name, note)
-		}
+		_, ok := reg.Lookup("hulk")
+		assert.False(t, ok, "%s: %q was accepted as a bench", name, note)
 	}
 }
 
@@ -160,10 +132,9 @@ func TestReadRegistryRefusesWhatItCannotRead(t *testing.T) {
 	}
 	for name, body := range cases {
 		path := write(t, body)
-		if _, err := ReadRegistry(path); err == nil {
-			t.Errorf("%s: accepted", name)
-		} else if !strings.Contains(err.Error(), "machines.tsv") {
-			t.Errorf("%s: refusal %q does not name the file", name, err)
+		_, err := ReadRegistry(path)
+		if assert.Error(t, err, "%s: accepted", name) {
+			assert.Contains(t, err.Error(), "machines.tsv", "%s: refusal %q does not name the file", name, err)
 		}
 	}
 }
@@ -171,9 +142,8 @@ func TestReadRegistryRefusesWhatItCannotRead(t *testing.T) {
 func TestReadRegistryRefusesAnEmptyFileRatherThanPretendTheFleetIsEmpty(t *testing.T) {
 	t.Parallel()
 
-	if _, err := ReadRegistry(write(t, "# only comments\n")); err == nil {
-		t.Fatal("a registry with no machine was accepted")
-	}
+	_, err := ReadRegistry(write(t, "# only comments\n"))
+	require.Error(t, err, "a registry with no machine was accepted")
 }
 
 func TestMachinesReadInFileOrder(t *testing.T) {
@@ -186,12 +156,9 @@ func TestMachinesReadInFileOrder(t *testing.T) {
 			names = append(names, m.Name)
 		}
 	}
-	if strings.Join(names, ",") != "hulk,vision,threadripper-wsl,space" {
-		t.Errorf("the benches are %v, want hulk, vision, threadripper-wsl, space in file order", names)
-	}
-	if got := len(reg.Machines()); got != 8 {
-		t.Errorf("the fleet has %d machines, want 8", got)
-	}
+	assert.Equal(t, "hulk,vision,threadripper-wsl,space", strings.Join(names, ","), "the benches are %v, want hulk, vision, threadripper-wsl, space in file order", names)
+	got := len(reg.Machines())
+	assert.Equal(t, 8, got, "the fleet has %d machines, want 8", got)
 }
 
 // TestRefusalLineIsOneLineWithItsReasonAndItsRemedy holds the line a verb prints for a
@@ -229,32 +196,25 @@ func TestTheExampleIsTheFleetWeHave(t *testing.T) {
 	}
 	for name, roles := range want {
 		m, ok := reg.Lookup(name)
-		if !ok {
-			t.Errorf("%s is not in the example", name)
+		if !assert.True(t, ok, "%s is not in the example", name) {
 			continue
 		}
-		if m.RoleList() != roles {
-			t.Errorf("%s has roles %q, want %q", name, m.RoleList(), roles)
-		}
+		assert.Equal(t, roles, m.RoleList(), "%s has roles %q, want %q", name, m.RoleList(), roles)
 		if m.HasRole(RoleBench) && m.HasRole(RoleRunner) {
-			if _, _, ok := m.AllowShared(); !ok {
-				t.Errorf("%s is shared with no dated exception", name)
-			}
+			_, _, ok := m.AllowShared()
+			assert.True(t, ok, "%s is shared with no dated exception", name)
 		}
 	}
 	for _, name := range []string{"batman", "superman", "studio", "mini"} {
-		if m, _ := reg.Lookup(name); m.HasRole(RoleBench) {
-			t.Errorf("the example lets a card reach %s", name)
-		}
+		m, _ := reg.Lookup(name)
+		assert.False(t, m.HasRole(RoleBench), "the example lets a card reach %s", name)
 	}
 	// AND NO WINDOWS LINE. This is the ruling made mechanical rather than left in
 	// the file's header comment: a Windows box joins this fleet through WSL2, as a
 	// linux/x64 line with the Linux bench standard and ordinary Linux runner
 	// labels, or it does not join.
 	for _, m := range reg.Machines() {
-		if m.OS == "windows" {
-			t.Errorf("%s is a windows machine in the registry; the native windows CI runners were dropped on 2026-09-18 (Glenn: \"WSL only from now on\") and a Windows box joins as a linux/x64 line under WSL2, like threadripper-wsl", m.Name)
-		}
+		assert.NotEqual(t, "windows", m.OS, "%s is a windows machine in the registry; the native windows CI runners were dropped on 2026-09-18 (Glenn: \"WSL only from now on\") and a Windows box joins as a linux/x64 line under WSL2, like threadripper-wsl", m.Name)
 	}
 }
 
@@ -262,20 +222,14 @@ func TestAMissingFileIsARefusalThatNamesIt(t *testing.T) {
 	t.Parallel()
 
 	_, err := ReadRegistry(filepath.Join(t.TempDir(), "nowhere.tsv"))
-	if err == nil {
-		t.Fatal("a missing machines file was accepted")
-	}
-	if !strings.Contains(err.Error(), "nowhere.tsv") {
-		t.Errorf("refusal %q does not name the file", err)
-	}
+	require.Error(t, err, "a missing machines file was accepted")
+	assert.Contains(t, err.Error(), "nowhere.tsv", "refusal %q does not name the file", err)
 }
 
 // example reads the shipped fleet example the same way a verb does.
 func example(t *testing.T) *Registry {
 	t.Helper()
 	reg, err := ReadRegistry(filepath.Join("testdata", "machines.tsv"))
-	if err != nil {
-		t.Fatalf("the shipped example does not read: %v", err)
-	}
+	require.NoError(t, err, "the shipped example does not read: %v", err)
 	return reg
 }
