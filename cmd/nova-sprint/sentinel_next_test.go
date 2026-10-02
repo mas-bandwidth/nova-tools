@@ -38,6 +38,50 @@ func TestASentinelWithNothingBeforeItIsNextNotReached(t *testing.T) {
 	assert.NotEqual(t, sprint.Waiting, ta.primary("d1").Col, "the machine's pump applies the release")
 }
 
+// The other half of the condition (sprint.Reachable's no-work-in-flight branch): the same
+// sentinel, next while s1's work moves, is reached by the step that lands the last of that
+// work, with nothing placed before it, and d1 behind it stays waiting for the release
+// (docs/SPEC-SPRINT.md section 16). With the branch gone it would never be reached.
+func TestASentinelWithNothingBeforeItIsReachedWhenNothingElseMoves(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1 --coordinator lead")
+	ta.ok("add --stream s1 --count 1 --actor lead")
+	ta.ok("add --stream docs --sentinel docs-round2 --actor lead")
+	ta.ok("add --stream docs d1 --actor lead")
+	ta.deal(1)
+	ta.ok("take --as m1 s1-1.w1@1")
+	ta.ok("finish --as m1 s1-1.w1@1")
+	ta.ok("ask --actor lead")
+	ta.ok("read --as reader-a --ok s1-1.r1.reader-a")
+	ta.ok("read --as reader-b --ok s1-1.r1.reader-b")
+	ta.ok("accept s1-1 --actor lead")
+	assert.False(t, hasGroup(ta.inboxGroups(), sprint.NSentinelReached), "reached while s1-1 was merging")
+	ta.ok("merge --stream s1")
+	require.True(t, hasGroup(ta.inboxGroups(), sprint.NSentinelReached), "not reached by the step that landed the last work in flight")
+	assert.Contains(t, ta.group(sprint.NSentinelReached, "docs").What, "sentinel docs-round2 reached: 0 cards of docs have landed; 1 cards wait behind it")
+	assert.NotEmpty(t, ta.primary("docs-round2").F("reached"))
+	assert.Equal(t, sprint.Waiting, ta.primary("d1").Col, "reached is not released")
+}
+
+// The tick as the backstop: the work in flight leaves the table by a drop, which reaches
+// nothing itself; the next tick finds nothing else moving and marks the sentinel reached.
+func TestTheTickReachesASentinelWithNothingBeforeItOnceNothingElseMoves(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1 --coordinator lead")
+	ta.ok("add --stream s1 --count 1 --actor lead")
+	ta.ok("add --stream docs --sentinel docs-round2 --actor lead")
+	ta.ok("start --actor lead")
+	ta.ok("tick")
+	assert.False(t, hasGroup(ta.inboxGroups(), sprint.NSentinelReached), "reached while s1-1 was ready")
+	ta.ok("drop s1-1 --reason 'done elsewhere' --actor lead")
+	assert.False(t, hasGroup(ta.inboxGroups(), sprint.NSentinelReached), "the drop itself reached it")
+	ta.ok("tick")
+	require.True(t, hasGroup(ta.inboxGroups(), sprint.NSentinelReached), "not reached by the tick once nothing else moves")
+	assert.Contains(t, ta.group(sprint.NSentinelReached, "docs").What, "sentinel docs-round2 reached: 0 cards of docs have landed; 0 cards wait behind it")
+}
+
 // The sequence of the first real sprint: a round-2 sentinel added at the head of an empty
 // stream, then the round-1 cards placed before it. It is reached when they have landed,
 // and not before.

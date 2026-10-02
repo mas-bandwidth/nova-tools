@@ -161,7 +161,11 @@ finding in full, every line of its report and body joined with ` / ` and cut to
 `member.MaxFindingBytes`, never its first line alone; a broken verdict whose finding names no
 defect is no verdict: the member hands the read back (`read --return`, its reason beginning
 `no finding:`), and the sprint asks another reader as for any return
-(`TestABrokenReadNamesItsDefectOrIsHandedBack`).
+(`TestABrokenReadNamesItsDefectOrIsHandedBack`). The sprint's own `read --broken` refuses a
+finding naming none, so the rule is one predicate consulted at the review (the shim), at the
+hand-back (the member) and at the record (the store); refused, the read stays the reader's to
+report or hand back (`TestAuthoritativeBrokenReadFindingBoundary`). A file is any name with an
+extension, `a.go` too; `e.g.` and `i.e.` are not, since a dot follows.
 
 ## 4. The finish
 

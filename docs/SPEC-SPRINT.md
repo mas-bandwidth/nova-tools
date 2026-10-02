@@ -633,7 +633,10 @@ id (`--op`) returns the original result, with no second counter or notification.
   read): a broken verdict whose finding names no file, line or rule the work breaks
   is no read at all, neither ok nor broken; its member hands it back as a return
   whose reason begins `no finding:`, the primary stays in review, and the tick asks
-  another reader, so the coordinator is never asked to judge on nothing. A broken
+  another reader, so the coordinator is never asked to judge on nothing. The verb
+  itself holds the same rule: `read --broken` whose finding names none is refused,
+  the read stays the reader's, asked or reading, to report with a finding or to hand
+  back (`--return`), and no verdict, finding or judgment is written. A broken
   read's finding is recorded, and its judgment shows it, in full: every line of the
   reader's report and body, never its first line alone.
 - A broken read notifies the coordinator. rework sends the primary back with

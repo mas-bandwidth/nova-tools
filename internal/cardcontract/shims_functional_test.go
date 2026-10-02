@@ -251,6 +251,7 @@ func TestGhPrReviewIsTheRead(t *testing.T) {
 		{`gh pr review --approve --body "gate green, diff matches"`, "ok", "gate green, diff matches"},
 		{`gh pr review -a`, "ok", "ok"},
 		{`gh pr review --request-changes --body "f:1 wrong word"`, "broken", "f:1 wrong word"},
+		{`gh pr review --request-changes --body "a.go drops the error; return it"`, "broken", "a.go drops the error; return it"},
 	} {
 		code, _, errb := r.sh(r.job, tc.line)
 		require.Equal(t, 0, code, "%s: %s", tc.line, errb)

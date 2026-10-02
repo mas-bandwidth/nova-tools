@@ -1603,7 +1603,7 @@ func (a *app) cmdRead(args []string, stdout, stderr io.Writer) int {
 	begin := fs.Bool("begin", false, "asked -> reading")
 	ok := fs.Bool("ok", false, "the read found it good")
 	broken := fs.Bool("broken", false, "the read found it broken")
-	finding := fs.String("finding", "", "what the read found")
+	finding := fs.String("finding", "", "what the read found; with --broken it names the file (file:line), the line, or the card's STEP or RULE the work breaks, and what to change, or the read is refused")
 	limit := fs.Int("limit", 0, "the first n of the reader's queue (default 1)")
 	ret := fs.String("return", "", "hand back a read the reader holds and has no verdict on: not a read; the next tick asks it of another reader free at the attempt, or of this reader again; no finding against the work")
 	reason := fs.String("reason", "", "with --return: why the read has no verdict (it reaches the inbox)")

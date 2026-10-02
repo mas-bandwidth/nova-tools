@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
 // The steps of review: ask and read (mechanical, and the readers' own), and
@@ -301,6 +303,15 @@ func Read(s *Snapshot, r ReadReq) Plan {
 	}
 	if len(readers) > 1 && !named(sel) {
 		p.refuse("read", "a read by selection names one reader: --as <reader>; several readers name their cards")
+		return p
+	}
+	// A broken read names its defect, or it is no read (docs/SPEC-CARD-CONTRACT.md
+	// section 3): the one rule (typedrec.NamesADefect) the gh shim refuses the review by
+	// and the member hands the read back by, consulted here too, at the record, so no path
+	// writes a broken verdict and a judgment on nothing. Refused, the read stays the
+	// reader's, in its column, to report with a finding or to hand back.
+	if !r.Begin && !r.Return && r.Verdict == "broken" && !typedrec.NamesADefect(r.Finding) {
+		p.refuse("read", "a broken read names its defect: a finding line naming the file (file:line), the line, or the card's STEP or RULE the work breaks, and what to change: read --as <reader> --broken <card> --finding <text>; a read with no verdict is handed back: read --as <reader> --return <card> --reason <text>")
 		return p
 	}
 	from := []string{Asked, Reading}
