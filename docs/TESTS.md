@@ -814,10 +814,9 @@ CI-LOAD line is the host's load average, printed and never judged; `--load` and
 `--cpus` hand it in here so the transcript is the same on every machine. On
 your own module the events come on stdin: `go test -json <packages> |
 nova-ci slowtests --budget 60`. The common mistake is forgetting the pipe: with a
-terminal on stdin the verb refuses at once and names both ways in; with an
-empty stream it reads zero packages and prints `CI-SLOW OK packages=0
-slowest=none`, which is why the test step always tees the stream first
-(`.github/workflows/ci.yml`).
+terminal on stdin the verb refuses at once and names both ways in; an empty
+stream, or one holding no package's result, is refused at exit 2, since a gate
+over zero packages cannot decide.
 
 
 ## nova-table
