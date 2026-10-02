@@ -710,7 +710,7 @@ MACHINE name=m1 user=nova seat=s1 slots=8 runners=0 width=6
 CONFIG LIST kind=machine rows=1
 
 $ nova-config machine history m1 --file try.json
-HISTORY id=<n> kind=<kind> name=<name> op=<op> actor=<actor> at=<timestamp> runners=<n> seat=<seat> slots=<n> user=nova width=<n>
+HISTORY id=<n> kind=<kind> name=<name> op=<op> actor=<actor> at=<timestamp> runners=<n> seat=<seat> slots=<n> user=<user> width=<n>
 HISTORY id=<n> kind=<kind> name=<name> op=<op> actor=<actor> at=<timestamp> width=<before>><after>
 CONFIG HISTORY kind=machine name=m1 changes=2
 ```
@@ -742,7 +742,7 @@ it and the real clock answers instead.
 
 ```text
 $ nova-cairn open --store ./cairns --session s1 --source bench-a/session-7 --publish manual --now 2026-09-17T12:00:00Z
-OPEN OK session=s1 store=./cairns source=bench-a/session-7 publish=manual stamp=2026-09-17T12:00:00Z
+OPEN OK session=<session> store=<store> source=<source> publish=<publish> stamp=<timestamp>
 
 $ nova-cairn append --store ./cairns --session s1 --entry e1 --text "the words to keep" --source bench-a/session-7#L3 --publish manual --now 2026-09-17T12:05:00Z
 APPEND OK session=<session> entry=<entry> source=<source>#<n> persisted=<bool> published=<bool> publish=<publish> duplicate=<bool> stamp=<timestamp>
