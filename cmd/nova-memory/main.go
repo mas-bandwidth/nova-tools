@@ -206,7 +206,7 @@ func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
 	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
-	// before anything is read or written
+	// before anything is read or written (the CLI style's rule (b)).
 	defer verbflag.Recover(stdout, "nova-memory", usage, &code)
 	if len(args) == 0 {
 		return refuse(stderr, "", "no verb given; quickstart is the first run")
