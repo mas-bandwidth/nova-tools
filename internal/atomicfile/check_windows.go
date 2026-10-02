@@ -7,8 +7,9 @@ import (
 	"os"
 )
 
-// canWrite is a directory check on Windows only as far as attributes go: its
-// access lists are answered by trying, which a plan does not do.
+// canWrite checks nothing on Windows: a directory's access list is answered by
+// trying, which a plan does not do, so a Windows plan's success is not proof
+// that the write is permitted. Everything else Check makes holds there too.
 func canWrite(string) error { return nil }
 
 // canWriteFile refuses a file with the read-only attribute.

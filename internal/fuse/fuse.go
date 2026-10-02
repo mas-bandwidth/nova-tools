@@ -66,9 +66,11 @@ WHAT IS ACTUALLY DECIDED HERE, and why each one is not arbitrary:
 package fuse
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"maps"
 	"os"
@@ -210,9 +212,52 @@ func ReadBox(path string) (Box, error) {
 		}
 		return Box{}, fmt.Errorf("cannot read %s: %w", path, err)
 	}
+	b, err := decodeBox(data)
+	if err != nil {
+		return Box{}, fmt.Errorf("%s is not a box: %w", path, err)
+	}
+	return b, nil
+}
+
+// decodeBox accepts exactly a box: one JSON object whose keys are only
+// "lockdown" (absent, null or a fuse) and "quarantine" (absent, null or an
+// object of fuses), each at most once, with nothing after it. A hand-edited box
+// may leave a key out, and the existing tests pin that, so `{}` is an empty box.
+// Anything else is CANNOT TELL (note 2): json.Unmarshal reads `null`, `[]` or an
+// object of misspelled keys into a zero Box with no error, and a zero Box is
+// VERIFIED CLEAR, so the shape is checked before the value is trusted.
+func decodeBox(data []byte) (Box, error) {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		return Box{}, errors.New("not a JSON object")
+	}
+	seen := map[string]bool{}
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return Box{}, err
+		}
+		k, _ := tok.(string)
+		if seen[k] {
+			return Box{}, fmt.Errorf("key %q given twice", k)
+		}
+		seen[k] = true
+		var v json.RawMessage
+		if err := dec.Decode(&v); err != nil {
+			return Box{}, err
+		}
+	}
+	if _, err := dec.Token(); err != nil {
+		return Box{}, err
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return Box{}, errors.New("bytes after the object")
+	}
+	strict := json.NewDecoder(bytes.NewReader(data))
+	strict.DisallowUnknownFields()
 	var b Box
-	if err := json.Unmarshal(data, &b); err != nil {
-		return Box{}, fmt.Errorf("%s is not readable JSON: %w", path, err)
+	if err := strict.Decode(&b); err != nil {
+		return Box{}, err
 	}
 	if b.Quarantine == nil {
 		b.Quarantine = map[string]Fuse{}

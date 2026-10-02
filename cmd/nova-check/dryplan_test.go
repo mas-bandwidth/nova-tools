@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -117,6 +118,12 @@ func TestADryRunRefusesWhereTheWriteWould(t *testing.T) {
 				return p
 			})},
 			{Name: "parent not there", Setup: state(func(root string) string { return filepath.Join(root, "absent", "state.json") })},
+			{Name: "name too long", Setup: state(func(root string) string { return filepath.Join(root, strings.Repeat("s", 242)) })},
+			{Name: "state is a dangling link", Setup: state(func(root string) string {
+				p := filepath.Join(root, "state.json")
+				require.NoError(t, os.Symlink(filepath.Join(root, "nowhere", "state.json"), p))
+				return p
+			})},
 		})
 	})
 }
