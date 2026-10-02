@@ -26,7 +26,7 @@ const SumsFile = "SHA256SUMS"
 // `adopt` fetching a release from another machine must check it against a digest that
 // did NOT travel with the bits, and the two ways to have one -- the annotated tag and
 // the CHANGELOG entry -- both belong to a TAGGED release. A dev build has no tag, so
-// the digest must be computed on the machine being adopted FROM, which is that machine
+// the only other place to get a digest is the machine being adopted FROM, which is that machine
 // vouching for its own bytes and is not evidence at all. This file is written where
 // the build ran, on the coordinator, out of the SHA256SUMS the build had just verified;
 // `adopt --expect-sums-from` reads it from there. A digest computed on the machine
@@ -227,8 +227,8 @@ func build(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 			field(o.version), field(goos+"-"+goarch), len(tools), verified, field(dir), field(digest), field(digestPath))
 	}
 	// LAST, and never a reason to fail: every platform is built and verified,
-	// and every version directory under --out is removed by the rule in
-	// prune.go. The version just built stays, and so does the version of the
+	// and the version directories under --out that prune.go's rule does not keep are
+	// removed. The version just built stays, and so does the version of the
 	// nova-update running this build, which is what this machine has installed.
 	self := ""
 	if deps.Self != nil {
