@@ -1,8 +1,8 @@
 package main
 
-// The convergence verb: are we converging? Glenn, 2026-09-15 -- convergence is
-// the health metric, the contraction ratio per stream, every tick. Rowan
-// answered it by hand on 2026-09-18 out of six different places, an hour of it,
+// The convergence verb asks whether each stream is converging: it reports
+// the health metric, the contraction ratio per stream, on every tick. It
+// computes that result from the streams in one place instead of by hand,
 // and the answer was a paragraph nobody could diff against the next one.
 //
 // Seven streams, each read from a real source through a seam: the forge, a

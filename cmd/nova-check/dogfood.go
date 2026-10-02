@@ -15,7 +15,7 @@ import (
 )
 
 // The dogfood verb answers the one question a tool's own tests cannot: has
-// somebody who did not write it run it? Glenn, 2026-09-18: a tool is not
+// somebody outside its authoring process run it? A tool is not
 // finished until it is tested, dogfooded by a non-author on real work with the
 // edges filed, the feedback applied, documented and released. Nothing tracked
 // that, so the claim was whatever the last person said it was.
@@ -28,7 +28,7 @@ import (
 //
 // The verb list comes from the binaries when `--tools` names them, and from the
 // command reference otherwise. Both are here because this verb's own first
-// dogfood pass, by a non-author on 2026-09-18, found the failure only a second
+// dogfood pass finds the failure only a second
 // source closes: a tool documented in a shape the reader did not read
 // contributed zero rows and could never be gated on, and two verbs that exist
 // in the binary but not in the reference stranded their receipts against a
@@ -221,11 +221,8 @@ func dogfoodGather(verb string, src *dogfoodSources, receiptsDir, authorsFile, r
 
 // reportStranded names every receipt that matched no verb: the file, what it
 // claimed, and the verb it was probably meant to be. Both `ledger` and `gate`
-// call it. The dogfood pass of 2026-09-18 was told only that nine receipts
-// matched nothing — not which nine, not how to spell them — and the gate, the
-// line a release lane actually calls, did not say even that. A lane must not be
-// able to pass or fail without learning that the evidence it read was thrown
-// away.
+// call it, so a lane cannot pass or fail without learning that the evidence
+// it read was thrown away.
 func reportStranded(read dogfoodRead, failMax int, stderr io.Writer) {
 	strands := dogfood.Stranded(read.verbs, read.receipts)
 	if len(strands) == 0 {
@@ -360,11 +357,10 @@ func cmdDogfoodRecord(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, " dogfood record", fmt.Sprintf("--issue must be an issue number, got %d; leave it out when no edge was filed", *issue))
 	}
 	// The spelling is checked against the same list the ledger will read it
-	// against. This verb had the flag and used it for nothing, so a receipt for
-	// a verb spelled differently was accepted in silence and discovered later
-	// as a note that named nothing: on 2026-09-18 that stranded every receipt
-	// on the bench — nine real runs — and the bench read as having dogfooded
-	// nothing at all.
+	// against. A receipt for a verb spelled differently is refused here, where
+	// the run can say which verb was meant; accepted in silence, it would only
+	// surface later as a note that names no verb, and the bench would read as
+	// having dogfooded nothing at all.
 	verbs, code := src.verbList("record", *failMax, stderr)
 	if code != 0 {
 		return code
