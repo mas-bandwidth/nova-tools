@@ -31,11 +31,11 @@ func TestReworkCarriesTheFixTheFindingAndWhyInTheNextPacket(t *testing.T) {
 		h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
 		rc := h.snap().Readers.Of("s1-1")
 		h.must(ReadStep(sprint.ReadReq{As: rc[0].Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc[0].ID}}}))
-		h.must(ReadStep(sprint.ReadReq{As: rc[1].Row, Verdict: "broken", Finding: "fix correct, the required test is missing", Sel: sprint.Sel{IDs: []string{rc[1].ID}}}))
+		h.must(ReadStep(sprint.ReadReq{As: rc[1].Row, Verdict: "broken", Finding: "line 1: fix correct, the required test is missing", Sel: sprint.Sel{IDs: []string{rc[1].ID}}}))
 		h.must(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: "add the required test"}))
 		p := packetOf(h, "s1-1.w2")
 		assert.Equal(t, "add the required test", p.Fix)
-		assert.Equal(t, "fix correct, the required test is missing", p.Finding)
+		assert.Equal(t, "line 1: fix correct, the required test is missing", p.Finding)
 		assert.Equal(t, "attempt 1 finished and a reader found it broken", p.Why)
 	})
 	t.Run("failed work and no --fix", func(t *testing.T) {
@@ -58,7 +58,7 @@ func TestReworkCarriesTheFixTheFindingAndWhyInTheNextPacket(t *testing.T) {
 		h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
 		rc := h.snap().Readers.Of("s1-1")
 		h.must(ReadStep(sprint.ReadReq{As: rc[0].Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc[0].ID}}}))
-		h.must(ReadStep(sprint.ReadReq{As: rc[1].Row, Verdict: "broken", Finding: "the test is missing", Sel: sprint.Sel{IDs: []string{rc[1].ID}}}))
+		h.must(ReadStep(sprint.ReadReq{As: rc[1].Row, Verdict: "broken", Finding: "line 1: the test is missing", Sel: sprint.Sel{IDs: []string{rc[1].ID}}}))
 		h.must(FleetStep(sprint.FleetReq{Op: "down", Member: "m1"}))
 		h.must(FleetStep(sprint.FleetReq{Op: "down", Member: "m2"}))
 		h.must(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: "add the test"}))
@@ -67,7 +67,7 @@ func TestReworkCarriesTheFixTheFindingAndWhyInTheNextPacket(t *testing.T) {
 		h.must(DealStep(sprint.DealReq{}))
 		p := packetOf(h, "s1-1.w2")
 		assert.Equal(t, "add the test", p.Fix)
-		assert.Equal(t, "the test is missing", p.Finding)
+		assert.Equal(t, "line 1: the test is missing", p.Finding)
 		assert.Equal(t, "attempt 1 finished and a reader found it broken", p.Why)
 	})
 	t.Run("a long finding and a long report are cut, never refused", func(t *testing.T) {
@@ -78,7 +78,7 @@ func TestReworkCarriesTheFixTheFindingAndWhyInTheNextPacket(t *testing.T) {
 		h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
 		rc := h.snap().Readers.Of("s1-1")
 		for i, c := range rc[:2] {
-			h.must(ReadStep(sprint.ReadReq{As: c.Row, Verdict: "broken", Finding: strings.Repeat(string(rune('a'+i)), 5000), Sel: sprint.Sel{IDs: []string{c.ID}}}))
+			h.must(ReadStep(sprint.ReadReq{As: c.Row, Verdict: "broken", Finding: "f:1 " + strings.Repeat(string(rune('a'+i)), 5000), Sel: sprint.Sel{IDs: []string{c.ID}}}))
 		}
 		h.must(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: "short"}))
 		p := packetOf(h, "s1-1.w2")
@@ -124,7 +124,7 @@ func TestAReworkTakenBeforeTheDrainStillCarriesItsWords(t *testing.T) {
 	rc := h.snap().Readers.Of("s1-1")
 	require.Len(t, rc, 2)
 	h.must(ReadStep(sprint.ReadReq{As: rc[0].Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc[0].ID}}}))
-	h.must(ReadStep(sprint.ReadReq{As: rc[1].Row, Verdict: "broken", Finding: "fix correct, the required test is missing", Sel: sprint.Sel{IDs: []string{rc[1].ID}}}))
+	h.must(ReadStep(sprint.ReadReq{As: rc[1].Row, Verdict: "broken", Finding: "line 1: fix correct, the required test is missing", Sel: sprint.Sel{IDs: []string{rc[1].ID}}}))
 	h.machine()
 	h.must(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: "add the required test"}))
 	wc := h.snap().Fleet.Card("s1-1.w2")
@@ -134,7 +134,7 @@ func TestAReworkTakenBeforeTheDrainStillCarriesItsWords(t *testing.T) {
 		ps, err := h.st.Packets(h.ctx, []*sprint.Card{h.snap().Fleet.Card("s1-1.w2")})
 		require.NoError(t, err)
 		assert.Equal(t, "add the required test", ps[0].Fix, when)
-		assert.Equal(t, "fix correct, the required test is missing", ps[0].Finding, when)
+		assert.Equal(t, "line 1: fix correct, the required test is missing", ps[0].Finding, when)
 		assert.Equal(t, "attempt 1 finished and a reader found it broken", ps[0].Why, when)
 	}
 	want("taken, before the drain")

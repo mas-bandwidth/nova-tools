@@ -55,7 +55,7 @@ func TestReworkDelegatesAtOnce(t *testing.T) {
 	}
 	w.must(Ask(w.s, AskReq{}))
 	reads := readsAt(w.s, w.s.Work.Card("s1-1"), 1)
-	w.must(Read(w.s, ReadReq{As: reads[0].F("reader"), Verdict: "broken", Sel: Sel{IDs: []string{reads[0].ID}}}))
+	w.must(Read(w.s, ReadReq{As: reads[0].F("reader"), Verdict: "broken", Finding: "f:1", Sel: Sel{IDs: []string{reads[0].ID}}}))
 	w.must(Rework(w.s, ReworkReq{Sel: Sel{IDs: []string{"s1-1"}}, Fix: "the fix"}))
 	pr := w.s.Work.Card("s1-1")
 	card := w.s.Fleet.Placed(pr.F("work"))
@@ -91,7 +91,7 @@ func TestReworkDelegatesAtOnce(t *testing.T) {
 	w.must(FleetStep(w.s, FleetReq{Op: "down", Member: "m1"}))
 	w.must(FleetStep(w.s, FleetReq{Op: "down", Member: "m2"}))
 	r2 := readsAt(w.s, w.s.Work.Card("s1-2"), 1)
-	w.must(Read(w.s, ReadReq{As: r2[0].F("reader"), Verdict: "broken", Sel: Sel{IDs: []string{r2[0].ID}}}))
+	w.must(Read(w.s, ReadReq{As: r2[0].F("reader"), Verdict: "broken", Finding: "f:1", Sel: Sel{IDs: []string{r2[0].ID}}}))
 	w.must(Rework(w.s, ReworkReq{Sel: Sel{IDs: []string{"s1-2"}}, Fix: "later"}))
 	require.Equal(t, Ready, w.state("s1-2"), "rework with nobody up: %s", w.state("s1-2"))
 	require.Nil(t, w.s.Fleet.Card("s1-2.w2"), "rework with nobody up: %s", w.state("s1-2"))
@@ -399,8 +399,8 @@ func TestG3ReadsExhaustedIsAJudgment(t *testing.T) {
 	w.must(Ask(w.s, AskReq{}))
 	// s1-1: both broken; ask another closes both; the third says ok.
 	r1 := readsAt(w.s, w.s.Work.Card("s1-1"), 1)
-	w.must(Read(w.s, ReadReq{As: r1[0].F("reader"), Verdict: "broken", Sel: Sel{IDs: []string{r1[0].ID}}}))
-	w.must(Read(w.s, ReadReq{As: r1[1].F("reader"), Verdict: "broken", Sel: Sel{IDs: []string{r1[1].ID}}}))
+	w.must(Read(w.s, ReadReq{As: r1[0].F("reader"), Verdict: "broken", Finding: "f:1", Sel: Sel{IDs: []string{r1[0].ID}}}))
+	w.must(Read(w.s, ReadReq{As: r1[1].F("reader"), Verdict: "broken", Finding: "f:1", Sel: Sel{IDs: []string{r1[1].ID}}}))
 	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}, Another: true}))
 	third := readsAt(w.s, w.s.Work.Card("s1-1"), 1)[2]
 	w.must(Read(w.s, ReadReq{As: third.F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{third.ID}}}))
@@ -412,7 +412,7 @@ func TestG3ReadsExhaustedIsAJudgment(t *testing.T) {
 	// and the broken judgment stays open.
 	r2 := readsAt(w.s, w.s.Work.Card("s1-2"), 1)
 	w.must(Read(w.s, ReadReq{As: r2[0].F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{r2[0].ID}}}))
-	w.must(Read(w.s, ReadReq{As: r2[1].F("reader"), Verdict: "broken", Sel: Sel{IDs: []string{r2[1].ID}}}))
+	w.must(Read(w.s, ReadReq{As: r2[1].F("reader"), Verdict: "broken", Finding: "f:1", Sel: Sel{IDs: []string{r2[1].ID}}}))
 	broken := w.openOn("s1-2")[0].Note.ID
 	p := w.do(Ack(w.s, AckReq{Notes: []string{broken}, Reason: "not a defect"}))
 	require.Len(t, p.Refused, 1, "ack of a broken read: %+v", p)

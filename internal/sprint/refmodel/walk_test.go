@@ -228,7 +228,7 @@ func (k *walk) read() bool {
 	if k.pick(4) == 0 && c.Col == sprint.Asked {
 		r.Begin = true
 	} else {
-		r.Verdict, r.Finding = "ok", "f"
+		r.Verdict, r.Finding = "ok", "f:1"
 		if k.pick(6) == 0 {
 			r.Verdict = "broken"
 		}
