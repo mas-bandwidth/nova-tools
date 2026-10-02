@@ -136,9 +136,23 @@ type TickReq struct {
 	// tick: the presence part applies the status it derives. nil is none
 	// read, and the presence part does nothing.
 	Beats map[string]Beat
+	// BeatsAt is the time of the read that saw Beats: a beat's age is
+	// measured against it, never against a later clock, so a tick that runs
+	// long makes no member look dead (tla/DirtyTick.tla: a beat window passes
+	// only between ticks, Miss at phase idle). Zero is the snapshot's time.
+	BeatsAt time.Time
 	// Started is the machine's first start of the sprint's epoch, the time
 	// the done part's note counts from; zero is not known.
 	Started time.Time
+}
+
+// beatsNow is the time the beats' ages are measured against: the read that
+// saw them, else the snapshot's.
+func (r TickReq) beatsNow(s *Snapshot) time.Time {
+	if r.BeatsAt.IsZero() {
+		return s.Now
+	}
+	return r.BeatsAt
 }
 
 func (r TickReq) who() string {
@@ -607,7 +621,7 @@ func readsWithoutRoute(s *Snapshot, pr *Card) bool {
 func beatingHeld(s *Snapshot, r TickReq) bool {
 	beats := false
 	for _, m := range s.Fleet.Rows() {
-		if !r.Beats[m].Fresh(s.Now) {
+		if !r.Beats[m].Fresh(r.beatsNow(s)) {
 			continue
 		}
 		if ctl := s.MemberCtl(m); ctl == nil || ctl.F("held") == "" {
