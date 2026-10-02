@@ -37,7 +37,9 @@ import (
 
 // Problems is every reason one draft was refused.
 //
-// A refusal is one reason at a time. So send collects, and prints one line per reason.
+// A draft can fail for several reasons at once -- a Date line, no From line, a
+// misspelled recipient -- and the person at the terminal should not have to do the
+// tool's counting: send collects every reason and prints one line per reason.
 type Problems struct{ Reasons []error }
 
 func (p *Problems) Error() string {
@@ -180,7 +182,8 @@ type tolerated struct {
 //     already steps over it; what it could not do is keep it, and a heading that IS the
 //     subject was being thrown away.)
 //  3. A DATE line. The tool writes the date from the clock at send; the author's line is
-//     dropped and the notice says so.
+//     dropped and the notice says so: the notice is what makes the replacement not
+//     quiet, which is why a DATE line is tolerated instead of refused.
 //  4. NO FROM LINE, with --as to say who is sending. The tool writes the From line, in
 //     the spelling the roster holds. A From line naming somebody ELSE is a refusal: one
 //     line does not send another's note, and that is not a shape to guess at.

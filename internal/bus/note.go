@@ -75,9 +75,9 @@ type Header struct {
 	From string
 	// Host is the machine that posted the note, and it is OPTIONAL: an absent Host line is
 	// the shape every note on every bus had before this line existed, and it stays that
-	// shape byte for byte. It exists because one name can post from two places -- the
-	// The same name can post from two places -- and the subject
-	// convention that told them apart, `[bud air]`, spent the subject line on routing.
+	// shape byte for byte. It exists because one name can post from two places, and the
+	// subject convention that told them apart, `[bud air]`, spent the subject line on
+	// routing.
 	//
 	// It is NOT in the id's preimage (see canonical): the id says a note is the same note
 	// -- same sender, same second, same recipients, same subject, same body -- and which
@@ -485,9 +485,10 @@ func (h Header) LineOf(key string) int { return h.lines[key] }
 // the same missing line.
 var ErrNoFrom = fmt.Errorf("no %s line", KeyFrom)
 
-// Validate holds the rules every note obeys, whether it is being sent now or was written
-// It does NOT check the Id line: a note without one is a supported format and is
-// addressed by path, which is the whole of the compatibility promise.
+// Validate holds the rules every note obeys, whether it is being sent now or was
+// written by hand. It does NOT check the Id line: a note without one is a legacy
+// note -- an input shape this tool still reads -- and is addressed by path, which
+// is the whole of the compatibility promise.
 func (h Header) Validate(c *Config) error {
 	if problems := h.Problems(c); len(problems) > 0 {
 		return problems[0]

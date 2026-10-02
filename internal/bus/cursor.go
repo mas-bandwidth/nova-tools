@@ -208,8 +208,8 @@ func ReadCursor(root, lane string) (Cursor, error) {
 		// The two trailing tokens are read BY THEIR PREFIX and not by their position, which
 		// is what makes a new one addable without every older cursor becoming unreadable:
 		// a cursor written before `open=` existed has two tokens and is trusted, and one
-		// A cursor without a switch-day field has three tokens. An unknown token is still a refusal -- the
-		// tolerance is for tokens this reader knows and the writer did not.
+		// without a switch-day field has three. An unknown token is still a refusal --
+		// the tolerance is for tokens this reader knows and the writer did not.
 		fields := strings.Fields(r.text)
 		if len(fields) > cursorFields {
 			return Cursor{}, fmt.Errorf("%s: line %d: a cursor is <commit> [<stamp>] [%s<n>] [%s<date>], got %d tokens", CursorPath(lane), r.line, cursorOpenPrefix, cursorLegacyPrefix, len(fields))
@@ -281,18 +281,17 @@ const (
 	cursorLegacyPrefix = "legacy="
 )
 
-// LegacyDateLayout and LegacyInstantLayout define the two accepted switch-day formats: a UTC
-// calendar date (midnight at its start) or an RFC 3339 UTC instant.
+// LegacyDateLayout and LegacyInstantLayout define the two accepted switch-day
+// formats: a UTC calendar date (midnight at its start) or an RFC 3339 UTC instant.
 //
-// WHY THE INSTANT EXISTS, because a date-only boundary caused everyone on a bus to
-// start with an empty open list when their notes were still being sent: they needed a
-// MOMENT as their cutoff, not a calendar day, and only the second form can express one.
-// A date-only boundary can hide notes written later that same day, so notes
-// under the tool, so the open list would start at zero. It did — and it stayed at zero. A
-// date is midnight at its START, so every note any of them sent that same afternoon was
-// dated before that midnight and therefore falls before the boundary. A date
-// can only ever name a boundary between days, and the boundary they needed was a MOMENT --
-// the moment they switched, which they knew to the second and could not say.
+// WHY THE INSTANT EXISTS: a date-only boundary can empty an open list on a busy
+// bus. A date is midnight at its START, so a line drawn at TOMORROW's date stands
+// in front of every note sent that same day: each of those notes predates the
+// boundary, counts as legacy to the switch-day line, and the open list sits at
+// zero all day -- even under `--full` -- while the bus keeps carrying notes. A
+// date can only ever name a boundary between days, and the boundary a switch
+// needs is a MOMENT: the instant of the switch, known to the second, which only
+// the instant form can express.
 //
 // So the line takes either, and the comparison is by instant in both cases: a date is the
 // instant of its own midnight, which is exactly what it always meant, and an instant is
@@ -325,15 +324,15 @@ func ParseLegacyBefore(value string) (time.Time, error) {
 // LegacyDateAtOrAfterToday is the shape of switch-day line that quietly empties an inbox,
 // and it is the reason this tool now says so out loud instead of listing nothing.
 //
-// THE FAILURE, when a date-only cutoff left every reader staring at an empty inbox while
-// notes continued arriving on the bus -- a line drawn at TOMORROW's date means midnight
-// v0.10.0's own first-advance guard handed out, tomorrow's -- and a date is midnight at its
-// START, so the line stood in front of everything anybody had written that day. His cursor
-// can leave an open list empty while notes remain on the bus.
-// Nothing was broken and nothing was lost: every note was still on the bus,
-// behind a line he had drawn himself and had no way to see. What was missing was a
-// SENTENCE. The tool knew the line was a date, knew the date was still to come, and knew
-// the one command that would fix it, and it said none of the three.
+// THE FAILURE: a date-only cutoff can leave a reader staring at an empty inbox
+// while notes keep arriving on the bus. A line drawn at TOMORROW's date is
+// midnight at that date's start, so it stands in front of everything written
+// that day: the cursor reads `open=0 legacy=<date>`, the inbox lists nothing,
+// run after run, on a busy bus. Nothing is broken and nothing is lost -- every
+// note is still on the bus, behind a line the reader drew and has no way to
+// see. What a reader needs is the SENTENCE: the tool knows the line is a date,
+// knows the date is still to come, and knows the one command that fixes it, and
+// says all three out loud.
 //
 // So this is the test the sentence is printed under, and it is a test about the LINE and
 // never about what a run found: an empty inbox is not evidence of anything, and a reader
@@ -410,8 +409,8 @@ func laneFilePresent(root, path string) bool {
 // how many notes this run was carrying; see Cursor.Open for why a count of another file's
 // contents lives here.
 // The fourth field is the switch-day line this reader read under, written only when there
-// is one: a cursor without a switch-day line has three tokens, which every cursor without the line
-// already is.
+// is one: a cursor without a switch-day line has three tokens, which is what
+// every cursor without the line already is.
 func WriteCursor(root, lane, commit string, open int, legacy string, now time.Time) error {
 	if err := ValidCommitHex(commit); err != nil {
 		return err
@@ -571,9 +570,10 @@ const openHeardToken = "heard"
 
 // ValidOpenID checks an id appearing in an OPEN entry.
 //
-// Modern notes carry <sender>-<12 hex>, generated by AssignID. Historical notes written
-// IDs in the accepted older format are also valid, so incremental reads can retain them
-// without producing an OPEN state that later reads reject.
+// Modern notes carry <sender>-<12 hex>, generated by AssignID. A note carrying a
+// legacy id -- the older format, still read here -- is valid too, so
+// carry-history does not publish an OPEN state that subsequent incremental reads
+// refuse.
 func ValidOpenID(id string) error {
 	if err := ValidID(id); err == nil {
 		return nil
@@ -930,9 +930,10 @@ func RebuildLaneIndex(root string, c *Config, t *Bus, lane string) (int, error) 
 // next run stops, an INDEX cut in two is a catalogue that resolves a thread to nothing. A
 // write in place makes all three reachable by killing the tool in the microsecond between
 // truncate and write -- a laptop lid, a CI timeout, a ctrl-C -- and the file it leaves is
-// an incomplete file only when writing in place; a rename is atomic on every filesystem this runs
-// on, so a kill leaves the OLD file, entire, which is a state every reader handles.
-// handles. The temporary is in the SAME DIRECTORY, because a rename across filesystems is
+// half-written: neither the previous content nor the new one. A rename is atomic on
+// every filesystem this runs on, so a kill leaves the previous file, entire, which is
+// a state every reader handles. The temporary is in the SAME DIRECTORY, because a rename
+// across filesystems is
 // not a rename, and atomicfile names it `.<file>.tmp-<8 hex>`, exclusive and unpredictable,
 // so a planted link is never written through and a stranded one is a name the lane walk
 // steps over (isLaneStateTemp).
@@ -952,7 +953,7 @@ func replaceLaneFile(root, path, content string) error {
 	}
 	// The whole path from the bus root is checked for a link, then atomicfile
 	// publishes: an unpredictable exclusive temporary, fsync of the file, rename, fsync of
-	// the directory. A kill leaves the old file, entire.
+	// the directory. An interrupted run leaves the previous file, entire.
 	if err := refuseLaneLink(root, full); err != nil {
 		return err
 	}
