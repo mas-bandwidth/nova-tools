@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // One deadline: a work card's deal and take stamps are read only by
@@ -33,16 +35,12 @@ func TestTheWorkStampsAreReadOnlyByWorkDeadline(t *testing.T) {
 		}
 		return err
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	var bad []string
 	for _, dir := range dirs {
 		fset := token.NewFileSet()
 		pkgs, err := parser.ParseDir(fset, dir, func(fi os.FileInfo) bool { return !strings.HasSuffix(fi.Name(), "_test.go") }, 0)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		for _, pkg := range pkgs {
 			for _, f := range pkg.Files {
 				for _, decl := range f.Decls {
@@ -90,7 +88,5 @@ func TestTheWorkStampsAreReadOnlyByWorkDeadline(t *testing.T) {
 			}
 		}
 	}
-	if len(bad) > 0 {
-		t.Fatalf("a work stamp read outside WorkDeadline, a second clock:\n%s", strings.Join(bad, "\n"))
-	}
+	require.Empty(t, bad, "a work stamp read outside WorkDeadline, a second clock")
 }
