@@ -1155,7 +1155,7 @@ the executable — and never the arguments, because arguments carry task text an
 task text carries quoted rules. The `cwd=<dir>` slot is a one-line field
 rendered through `internal/oneline` like every other path, so a directory whose
 path holds a space reaches a reader escaped; a consumer that compares it with a
-path it holds decodes that field first (issue #572).
+path it holds decodes that field first.
 
 **`SANDBOX OK` names the cwd twice.** `cwd=<dir>` is the readable rendering of
 the working directory through `oneline.Field`, for the operator;
@@ -1172,7 +1172,7 @@ Every `SANDBOX NOTE` is printed **before** the command starts, for the reason
 applied, and the wall goes up before the command does. There is no note about a failure the command suffered inside the
 wall, on any platform.
 
-`net=nopromise` is rule 7: the caller did not ask for network denial and the
+`net=nopromise` says the caller did not ask for network denial and the
 tool is not implying one. There is no `net=unenforced`; a denial that cannot be
 enforced is a refusal, not a word in a line.
 
@@ -1216,8 +1216,8 @@ the worker home with its `AGENTS.md` — belong in the read set, named once, so
 that N workers read one copy.
 
 **"Inside" is asked of the filesystem, not of a string prefix.** The one predicate
-behind rule 6's `--secret`, rule 10's outside path, rule 9's `HOME`, rule 13's
-`--cwd`, rule 8's `--tmp` and the command-directory home guard — and behind no
+behind `--secret`, the outside path, `HOME`,
+`--cwd`, `--tmp` and the command-directory home guard — and behind no
 other question — asks `os.SameFile` of the path and its existing ancestors against
 the directory, keeping the string prefix as the cheap first answer and, for a
 directory that is not there to be asked, falling back to that prefix
@@ -1258,7 +1258,7 @@ the wall unusable for any wrapped shell command. With the three literals and
 what is written: the literal grants the link, and what the link points at is
 granted, or not, by the other roots.
 
-One measured consequence of the same shape, repaired in #1557: `/usr/bin/c++`,
+One measured consequence of the same shape: `/usr/bin/c++`,
 `/usr/bin/cc` and `/usr/bin/git` on a Mac are Xcode shims that read
 `/var/db/xcode_select_link`. `/var` is a literal on the symlink, not a
 subpath, so without a literal on the link itself every C and C++ compile
@@ -1275,13 +1275,13 @@ stat `Info.plist` and load `SharedFrameworks` next to it — Developer alone is
 usual caller path; the shim no longer needs `--read /private/var/db`.
 
 There is no `--root` flag. A toolchain installed into a user directory — Go
-under `~/go`, node under `~/.nvm`, .NET under `~/.local`, the Studio's
+under `~/go`, node under `~/.nvm`, .NET under `~/.local`, any IDE's
 `/Users/<user>/toolchains` — is named with `--read`, which is exactly a
 caller-supplied read-only root and needs no second spelling. On Windows,
 `--read` is what makes the tool add a read-only ACE for the container SID. A
 command that dies for want of an interpreter inside the wall and runs outside
 it is a missing `--read`. The tool cannot say so after the fact — on linux it
-is gone by then (rule 12) — so the sentence lives in the usage banner instead:
+is gone by then — so the sentence lives in the usage banner instead:
 *a command that runs outside the wall and dies inside it is missing a
 `--read`.*
 
@@ -1308,7 +1308,7 @@ host` while TCP by IP still worked. So `addRules` applies `linuxRoots`, not the
 bare `linuxReadRoots` slice: it is the table above plus the directory
 `/etc/resolv.conf` resolves to, read-only and skip-if-absent like every other
 root. The containing directory is granted rather than the file, because WSL
-rewrites the file and a rule on the old inode would be left holding a path that
+rewrites the file and a rule on the prior inode would be left holding a path that
 is no longer read.
 
 The home directory is never a root — **including by way of the command**. One
@@ -1320,10 +1320,10 @@ tool **refuses** when the directory of the resolved command is the caller's home
 directory — the passwd home, and `$HOME` as the tool inherited it — or an
 ancestor of it, naming the directory and the home: "install the command in a
 directory of its own". The refusal is `bad_read` and it happens before anything
-runs. Two exemptions, both of them rule 3's "a caller that adds one back has
+runs. Two exemptions, both of them "a caller that adds one back has
 done so in its own argv": a directory the caller named in its own `--read` or
 `--write`, and a home that lies inside the caller's own lists, which is what the
-job's data home of rule 9 always is.
+job's data home always is.
 
 ## macOS — `sandbox-exec` with a generated profile
 
@@ -1349,10 +1349,10 @@ on this machine), `@@ANCESTORS@@`, `@@READS@@`, `@@WRITES@@` and `@@NET@@`
 (empty under `--net-deny`). Caller paths never enter the text: they arrive as
 `-D NAME=<resolved path>` and are read back as `(param "READn")`,
 `(param "WRITEn")` and `(param "HOME")`, so a directory with a quote or a paren
-in its name cannot rewrite the policy. Rule 15 still holds: the file is a
+in its name cannot rewrite the policy: the file is a
 template, never a policy, and nothing runs under it until the generator has
 filled it for one run's two lists. `HOME` gets no grant of its own beyond the
-`WRITEn` it must resolve inside (rule 9); it is passed so that the profile
+`WRITEn` it must resolve inside; it is passed so that the profile
 states the requirement.
 
 Four things in that file are load-bearing, and each was measured rather than
@@ -1416,7 +1416,7 @@ an ancestor, and a connect to a unix-domain socket outside the write set —
 **each with a control run outside the wall**, so that no denial can pass by
 being impossible. It also asserts that a unix-domain socket **outside** the
 write set cannot be connected to while the job's own socket **inside** it can
-(rule 7), and that the child environment holds none of rule 9's exact set while
+, and that the child environment holds none of the dropped set while
 a caller variable beside them survives. One line per check,
 `CHECK OK name=...` / `CHECK FAIL name=...`, exit 1 on any FAIL. **The count is
 the check's own** and no number is stated here: a document that named one would
@@ -1427,7 +1427,7 @@ it made: a scratch directory handed to it keeps whatever else it holds.
 
 The check's child-environment filter is the **check's**, so it can only agree
 with itself: what it measures is the profile, not the tool's scrub. The scrub is
-asserted in Go, and rule 9 names those tests rather than this check.
+asserted in Go, and the spec names those tests rather than this check.
 
 The check takes four options for a caller that is a **test** rather than an
 operator, each a flag and each read from an environment variable when the flag
@@ -1452,7 +1452,7 @@ The check binds and connects by **relative** path with the cwd set, and treats
 a socket that did not appear within a bounded wait as a FAIL, not a pass.
 
 Two things the check measured that the rules above now carry. The **cwd** is
-load-bearing beyond rule 13's fence argument: with a cwd outside every named
+load-bearing beyond the fence argument: with a cwd outside every named
 path, `getcwd(3)` is denied and every `git` command dies with
 `shell-init: error retrieving current directory ... Operation not permitted`
 before it looks at anything else. And git's upward repository discovery reaches
@@ -1469,7 +1469,7 @@ what the tool does with metacharacters in a path, is item 2 of **to verify at
 build**.
 
 The filled profile is **never written to a file**: it is handed to
-`sandbox-exec` inline with `-p` (rule 12), so no profile text lands in the
+`sandbox-exec` inline with `-p`, so no profile text lands in the
 write set and there is nothing to remove when the command ends. The darwin body
 waits rather than `exec`s in order to forward signals and return the command's
 status, not to clean anything up.
@@ -1516,8 +1516,8 @@ and `fork(2)` is what carries it to the command:
    ABI **below the first row** has no row to clamp to and is
    `SANDBOX REFUSED reason=landlock_abi_unknown` at exit 125, naming the
    discovered number and the lowest the tool knows, with the command not run;
-   so is no Landlock at all (`reason=no_sandbox`, rule 1). This tool has no
-   workaround for those two (rule 11). A backend must be available and its
+   so is no Landlock at all (`reason=no_sandbox`). This tool has no
+   workaround for those two. A backend must be available and its
    ABI supported before the command can run.
 
    **Why the clamp is valid.** A newer Landlock kernel accepts a ruleset for
