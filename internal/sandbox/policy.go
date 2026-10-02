@@ -698,7 +698,7 @@ func build(in Input, homesFn func() []string) (*Policy, []Refusal) {
 		homes = homesFn()
 	}
 
-	// Resolve the command on the caller's PATH, outside the wall.
+	// The command is resolved on the caller's PATH, outside the wall.
 	if len(in.Argv) > 0 {
 		cmd, r := resolveCommand(in.Argv[0], in.LookAt)
 		if r != nil {
