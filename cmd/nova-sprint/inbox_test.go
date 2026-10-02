@@ -133,7 +133,7 @@ func TestReworkTakesTheFindingOrTheReport(t *testing.T) {
 	ta.ok("finish --as m1 s1-1.w1@1 s1-3.w1@1 s1-4.w1@1")
 	ta.ok("finish --as m1 s1-2.w1@1 --failed --report 'the tests went red'")
 	ta.ok("ask")
-	ta.ok("read --as reader-a --broken --finding 'the empty case is not handled' s1-1.r1.reader-a")
+	ta.ok("read --as reader-a --broken --finding 'line 3: the empty case is not handled' s1-1.r1.reader-a")
 	broken := ta.group(sprint.NReadBroken, "s1")
 	// all or nothing: s1-3 has no finding, report or --fix, so nothing moves
 	code, out, errs := ta.do("rework s1-1 s1-2 s1-3 --answers " + broken.ID)
@@ -149,7 +149,7 @@ func TestReworkTakesTheFindingOrTheReport(t *testing.T) {
 	out = ta.ok("rework s1-1 s1-2 --answers " + broken.ID)
 	require.Contains(t, out, "MOVED s1-1 work review -> working (rework)", "rework with the finding and the report")
 	require.Contains(t, out, "MOVED s1-2 work review -> working (rework)", "rework with the finding and the report")
-	for id, want := range map[string]string{"s1-1": `fix=the\x20empty\x20case\x20is\x20not\x20handled`, "s1-2": `fix=the\x20tests\x20went\x20red`} {
+	for id, want := range map[string]string{"s1-1": `fix=line\x203:\x20the\x20empty\x20case\x20is\x20not\x20handled`, "s1-2": `fix=the\x20tests\x20went\x20red`} {
 		require.Contains(t, ta.ok("card --fields "+id), want, "%s: no %s in its card", id, want)
 	}
 	out = ta.ok("rework s1-3 s1-4 --fix 'handle the empty case'")
@@ -219,7 +219,7 @@ func TestEveryJudgmentPrintsItsDecisionsAsCommands(t *testing.T) {
 	ta.ok("finish --as m1 s2-1.w1@1 --failed --report 'the tests went red'")
 	ta.ok("ask --limit 100")
 	ta.a.sleep(time.Second)
-	ta.ok("read --as reader-a --broken --finding 'the empty case is not handled' s2-2.r1.reader-a")
+	ta.ok("read --as reader-a --broken --finding 'line 3: the empty case is not handled' s2-2.r1.reader-a")
 	ta.ok("read --as reader-a --ok --limit 100")
 	ta.ok("read --as reader-b --ok --limit 100")
 	ta.ok("accept --read-ok")
@@ -243,7 +243,7 @@ func TestEveryJudgmentPrintsItsDecisionsAsCommands(t *testing.T) {
   drop:
     nova-sprint drop s2-1 --reason '<why>'
 JUDGMENT N2   a reader found it broken  stream=s2  size=1  waited=1m1s  due=HH:MM:SS  (s2-2)
-  the empty case is not handled
+  line 3: the empty case is not handled
   rework with the finding:
     nova-sprint rework s2-2
   ask another reader:
@@ -298,7 +298,7 @@ func TestInboxPrintsTheReaderFindingInFullUnderTheJudgment(t *testing.T) {
 	ta.ok("finish --as m1 s1-1.w1@1")
 	ta.ok("ask")
 	ta.a.sleep(time.Second)
-	finding := "the empty case is not handled: it panics on the last line" + strings.Repeat(" of a very long finding", 12)
+	finding := "line 3: the empty case is not handled: it panics on the last line" + strings.Repeat(" of a very long finding", 12)
 	ta.ok("read --as reader-a --broken --finding '" + finding + "' s1-1.r1.reader-a")
 	out := ta.ok("inbox")
 	// the judgment line names the type and the card, not the finding
@@ -328,7 +328,7 @@ func TestInboxNamesASingleCardJudgmentByItsCard(t *testing.T) {
 	ta.ok("finish --as m1 s1-1.w1@1")
 	ta.ok("ask")
 	ta.a.sleep(time.Second)
-	ta.ok("read --as reader-a --broken --finding 'off by one' s1-1.r1.reader-a")
+	ta.ok("read --as reader-a --broken --finding 'line 3: off by one' s1-1.r1.reader-a")
 	out := ta.ok("inbox")
 	require.Contains(t, out, "nova-sprint rework s1-1\n", "rework with the finding names the card:\n%s", out)
 	require.Contains(t, out, "nova-sprint ask s1-1 --another\n", "ask --another names the card:\n%s", out)

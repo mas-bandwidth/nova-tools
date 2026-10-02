@@ -134,6 +134,9 @@ ScnMulti == [Base EXCEPT !.col = Cols4("waiting", "none", "waiting", "waiting"),
 ScnDropMissing == [Base EXCEPT !.col = Cols4("none", "waiting", "waiting", "waiting"), !.score = Cols4(0, 2, 2, 4), !.next = 6]
 \* STOPPED, p1 ready and never dealt (s1, 2), m1 up, m2 down: a dry deal would place it.
 ScnStoppedReady == [ScnReady1 EXCEPT !.running = FALSE]
+\* g1 waiting alone at the head of s1 (4), nothing before it; s2: p2 merging (2). The
+\* sentinel is next, not reached, until p2 lands (W30, C30: NextNotReached, NextReached).
+ScnNext == [Base EXCEPT !.col = Cols4("none", "merging", "none", "waiting"), !.score = Cols4(0, 2, 0, 4), !.next = 6]
 
 \* Reachability probes (expected to fail: each names a state a configuration
 \* must reach for its case to mean anything).

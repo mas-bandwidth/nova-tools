@@ -109,7 +109,10 @@ type landBatch struct {
 	// whether the store holds it.
 	WouldRecord string `json:"would_record,omitempty"`
 	Reason      string `json:"reason,omitempty"`
-	DryRun      bool   `json:"dry_run,omitempty"`
+	// Also is every cause of the refusal after the first, each with its one next command,
+	// and on a twin the verb that stands in for land: one NOTE line each.
+	Also   []string `json:"also,omitempty"`
+	DryRun bool     `json:"dry_run,omitempty"`
 	// Times is how long each of the batch's steps took; nil for a batch refused before
 	// its git ran, and for a dry run.
 	Times *landTimes `json:"times,omitempty"`
@@ -205,7 +208,7 @@ type lander struct {
 	c                          common
 	st                         *store.Store
 	repoDir, base, check, root string
-	dry                        bool
+	dry, twin                  bool // twin: a mem twin, which has no git
 	out                        []landBatch
 	epoch                      uint64 // the epoch land read: every report is fenced to it
 }
@@ -253,7 +256,7 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s land: the sprint is at epoch %d, not %d (cleared since): nothing was fetched, pushed or reported; run: nova-sprint where\n", prog, st.PinnedEpoch(), c.epoch)
 		return 1
 	}
-	l := &lander{a: a, c: *c, st: st, repoDir: *repoDir, base: *base, check: *check, dry: *dry, epoch: st.PinnedEpoch()}
+	l := &lander{a: a, c: *c, st: st, repoDir: *repoDir, base: *base, check: *check, dry: *dry, twin: a.twinOpen(c.redis), epoch: st.PinnedEpoch()}
 	if *repoDir != "" {
 		if abs, err := filepath.Abs(*repoDir); err == nil {
 			l.repoDir = abs
@@ -337,6 +340,9 @@ func (l *lander) report(failed bool, pruned []pruneResult, stdout, stderr io.Wri
 			w = stderr
 		}
 		fmt.Fprintln(w, b.line())
+		for _, x := range b.Also {
+			fmt.Fprintf(w, "NOTE %s\n", oneline.Escape(x))
+		}
 		switch {
 		case b.WouldRecord != "":
 			fmt.Fprintf(w, "NOTE land would report this as merge --%s and stop stream %s; nothing was reported (dry run)\n", b.WouldRecord, oneline.Field(b.Stream))
@@ -451,7 +457,8 @@ func (l *lander) batch(ctx context.Context, stream string, cards []landCard) (la
 		l.out = append(l.out, b)
 		return false, true
 	}
-	if why := l.placeWhy(stream, cards); why != "" {
+	if why, also := l.placeWhy(stream, cards); why != "" {
+		b.Also = also
 		return refuse(why)
 	}
 	dir, why := l.clone(ctx, b.Repo)
@@ -529,11 +536,14 @@ func (l *lander) batch(ctx context.Context, stream string, cards []landCard) (la
 // every problem of the batch at once (a base missing, a repository missing with
 // no clone given, and with them every head that is not a commit id, which land
 // would meet next), so one run names all of them (docs/STANDARD.md, a refusal
-// names every problem at once). A base that is not a branch name is refused alone.
-func (l *lander) placeWhy(stream string, cards []landCard) string {
+// names every problem at once), each cause on its own line with its one next
+// command: the first is the refusal's reason, the rest (also) its NOTE lines, and on a
+// twin, which has no git, the merge that stands in for land. A base that is not a
+// branch name is refused alone.
+func (l *lander) placeWhy(stream string, cards []landCard) (string, []string) {
 	id, base := cards[0].id, cards[0].base
 	if strings.HasPrefix(base, "-") {
-		return "card " + id + " names the base " + base + ", which is not a branch name; run: nova-sprint card " + id
+		return "card " + id + " names the base " + base + ", which is not a branch name; run: nova-sprint card " + id, nil
 	}
 	var why, flags []string
 	if base == "" {
@@ -545,15 +555,20 @@ func (l *lander) placeWhy(stream string, cards []landCard) string {
 		flags = append(flags, "--repo-dir <clone>")
 	}
 	if len(why) == 0 {
-		return ""
+		return "", nil
 	}
-	out := strings.Join(why, ", and ") + "; run: nova-sprint land " + strings.Join(flags, " ")
+	var also []string
 	for _, c := range cards {
-		if w := headNotCommit(stream, c); w != "" {
-			out += "; " + w
+		if !shaRE.MatchString(c.head) {
+			// before any git nothing was recorded and no stream stopped: the one next
+			// command is the return; its judgment offers the rework
+			also = append(also, "the head "+dashed(c.head)+" of "+c.id+" is not a commit id (a finish without --head records the card's id); run: nova-sprint return "+c.id+" --reason 'its head is not a commit'")
 		}
 	}
-	return out
+	if l.twin {
+		also = append(also, fmt.Sprintf("this twin has no git: nova-sprint merge --stream %s --batch %d records the landing in land's place (land merges and pushes)", stream, len(cards)))
+	}
+	return strings.Join(why, ", and ") + "; run: nova-sprint land " + strings.Join(flags, " "), also
 }
 
 // dryBatch is the dry run's outcome of a batch land can place: it stops where

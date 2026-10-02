@@ -320,6 +320,17 @@ Again(s) == {c \in Prims : S(c) = s /\ col[c] = "ready" /\ fld[c].attempt >= 1 /
 FreshBelow(s) == {c \in Fresh(s) : BelowSigma(s, score[c])}
 \* n_before: the open cards of s sorting below a score (the five open cells).
 NBefore(s, x) == Cardinality({c \in Cards : S(c) = s /\ col[c] \in OpenCols /\ score[c] < x})
+\* Work in flight (docs/SPEC-SPRINT.md section 16; sprint.workInFlight): a primary
+\* ready, working, in review or merging, anywhere in the sprint.
+InFlightCols == {"ready", "working", "review", "merging"}
+WorkInFlight == \E c \in Prims : col[c] \in InFlightCols
+\* A sentinel with something before it (sprint.HasBefore): a need it names, or a card
+\* of its stream on the table, landed too, that sorts before it.
+HasBefore(g) == NeedsOf[g] # {} \/ \E c \in Cards : c # g /\ S(c) = S(g) /\ col[c] \notin {"none", "removed"} /\ score[c] < score[g]
+\* sprint.Reachable: a sentinel whose waits are met is reached when something came
+\* before it, or when nothing else moves; with nothing before it while work is in
+\* flight it is simply next (W30: the old rule, reached whenever its waits are met).
+Reachable(g) == HasBefore(g) \/ ~WorkInFlight \/ Broken = "W30"
 \* What deal may place: fresh below sigma and again, over the streams not dropping.
 Dealable == UNION {FreshBelow(s) \cup Again(s) : s \in {s2 \in Streams : dropping[s2] = None}}
 \* H12's judgment condition: work dealable, members up, and either none is
@@ -400,6 +411,8 @@ CardKeys(c, T) ==
    \cup (IF c1 = "review" /\ c0 # "review" THEN (IF f1.result = "failed" THEN {<<"rework", c>>} ELSE {<<"ask", c>>}) ELSE {})
    \cup (IF c1 \in {"landed", "removed"} /\ c0 # c1 THEN {<<"needs", c>>} ELSE {})
    \cup (IF c1 = "removed" /\ c0 # c1 THEN {DealK} ELSE {})
+   \cup (IF c \in Prims /\ c0 \in InFlightCols /\ c1 \notin InFlightCols    \* work leaves flight: a next sentinel may be reached
+         THEN {ResolveK(S(g)) : g \in {h \in Sents : T.col[h] = "waiting"}} ELSE {})
    \cup (IF c \in Prims /\ \E x \in wk[c].pl \ {Withdrawn} : x \notin T.wk[c].pl THEN {DealK} ELSE {})
    \cup (IF c \in Prims /\ \E r \in Readers : T.rd[c][r].st = "ok" /\ rd[c][r].st # "ok" THEN {<<"accept", c>>} ELSE {})
    \cup (IF c \in Prims /\ \E r \in Readers : T.rd[c][r].st = "broken" /\ rd[c][r].st # "broken" THEN {<<"rework", c>>} ELSE {})
@@ -678,7 +691,7 @@ RoundTwo(X, at) ==
 \* R3 resolve:s: release, reach, unreach (W26: release reads waiting, not elig).
 ResolvePlan(k, g, below, rel, ch) ==
   LET nb == IF g = None THEN 0 ELSE NBefore(S(g), score[g])
-      reach == g # None /\ nb = 0 /\ fld[g].open = 0 /\ ~Present("reached", CS(g), "-")
+      reach == g # None /\ nb = 0 /\ fld[g].open = 0 /\ Reachable(g) /\ ~Present("reached", CS(g), "-")
       unreach == g # None /\ IsOpenJ("reached", CS(g), "-") /\ nb > 0
   IN PlanU(k, [i \in 1..Len(rel) |-> U("release", rel[i], None, None)]
               \o (IF reach THEN <<U("reach", g, None, None)>> ELSE <<>>)
@@ -1749,6 +1762,7 @@ WaitsOn(c) ==
        {n \in Cards : c \in waitn[n] /\ col[n] \in OpenCols}
        \cup (IF g # None /\ g # c /\ score[g] < score[c] THEN {g} ELSE {})
        \cup (IF c = g THEN {d \in Cards : S(d) = S(c) /\ col[d] \in OpenCols /\ score[d] < score[c]} ELSE {})
+       \cup (IF c = g /\ ~HasBefore(c) THEN {d \in Prims : col[d] \in InFlightCols} ELSE {})   \* next: held by the work in flight
   ELSE IF col[c] = "ready" /\ DealUp # {} /\ DealRoom = 0 THEN UNION {ReadyAt(m) : m \in DealUp}
   ELSE {}
 RECURSIVE NamedD(_, _)
@@ -1767,7 +1781,7 @@ RuleHolds(c) ==                                                        \* (b)
   \/ col[c] = "waiting" /\ \E n \in Cards : c \in waitn[n] /\ col[n] \in {"landed", "removed"}              \* R4
   \/ c \in Prims /\ col[c] = "waiting" /\ fld[c].open = 0 /\ ~fld[c].refused /\ BelowSigma(S(c), score[c])
      /\ dropping[S(c)] = None                                                                               \* R3 release
-  \/ c \in Sents /\ c = Sigma(S(c)) /\ NBefore(S(c), score[c]) = 0 /\ fld[c].open = 0                       \* R3 reach
+  \/ c \in Sents /\ c = Sigma(S(c)) /\ NBefore(S(c), score[c]) = 0 /\ fld[c].open = 0 /\ Reachable(c)       \* R3 reach
   \/ c \in Prims /\ col[c] = "ready" /\ (c \in FreshBelow(S(c)) \/ c \in Again(S(c)))
      /\ (DealRoom > 0 \/ (StableOn /\ Up # {} /\ DealUp = {}))              \* R6 (stablesince: arms or fires its 30 s entry)
   \/ c \in Prims /\ col[c] = "ready" /\ c \in Fresh(S(c)) /\ ~BelowSigma(S(c), score[c])                     \* R19
@@ -1918,6 +1932,25 @@ Moves == {<<"none", "waiting">>, <<"none", "ready">>, <<"waiting", "ready">>, <<
           <<"review", "ready">>, <<"review", "merging">>, <<"merging", "landed">>, <<"waiting", "landed">>}
          \cup {<<x, "removed">> : x \in OpenCols}
 Lifecycle == [][\A c \in Cards : col'[c] # col[c] => <<col[c], col'[c]>> \in Moves]_vars
+
+\* A sentinel with nothing before it is reached exactly when no work of the sprint is
+\* in flight (docs/SPEC-SPRINT.md section 16; sprint.Reachable). The safety half,
+\* NextNotReached: while work is in flight no tick plans its reach and no "reached"
+\* judgment opens for it. The plan reads the state the rule's condition is on; the
+\* apply's guard is the card's own record, as in the code (steps_sentinel.go,
+\* reachUnit), so a card added to another stream between the plan and the apply does
+\* not unreach it, and the property is on the plan. The liveness half, NextReached:
+\* due with nothing in flight (NextDue), it is reached, unless something else moves
+\* again, it is released, or the machine stops. W30 (the old rule) fails the first;
+\* a landing that queued no resolve key for its stream would fail the second.
+PlannedReach(g) == \E t \in Ticks : \E k \in DOMAIN tk[t].plans : \E i \in DOMAIN tk[t].plans[k].units :
+                     tk[t].plans[k].units[i].op = "reach" /\ tk[t].plans[k].units[i].c = g
+NextNotReached ==
+  [][\A g \in Sents : (~HasBefore(g) /\ WorkInFlight /\ ~PlannedReach(g) /\ ~Present("reached", CS(g), "-"))
+                        => (~PlannedReach(g) /\ ~Present("reached", CS(g), "-"))']_vars
+NextDue(g) == col[g] = "waiting" /\ g = Sigma(S(g)) /\ fld[g].open = 0 /\ NBefore(S(g), score[g]) = 0
+              /\ ~WorkInFlight /\ running /\ dropping[S(g)] = None
+NextReached == \A g \in Sents : NextDue(g) ~> (Present("reached", CS(g), "-") \/ ~NextDue(g))
 \* V6: while dropping[s] is set, no step other than the op's parts moves a
 \* card of s; when a drop records its last part, no card of s is open.
 \* The freeze is keyed on an op in flight (a part receipt for s, with no

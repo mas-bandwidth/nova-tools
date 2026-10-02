@@ -213,11 +213,12 @@ func (r *round) next(up []string, q, room map[string]int, avoid string) string {
 // holds, under widths: DealAhead times its width, width.go) and whose backlog
 // (n, which may be below zero: level) is below the up members' mean rounded
 // down, or, when none such is below it, at it. A member that receives is
-// never the longest while two backlogs differ by more than one, so no card is
-// moved twice, and every move takes a card from a backlog at least two longer
-// than the one it joins. A member of avoid (the card's StagingRefusers) is never the
-// target. "" when none.
-func (r *round) levelTo(up []string, n, held, widths map[string]int, avoid []string) string {
+// at least two below the source's backlog. Each move therefore strictly
+// decreases the sum of squared backlogs, even when staging refusals prevent
+// reaching the shortest queue. The single-card model (tla/CardContract.tla,
+// LevelTargets and Level) models refusal safety, not this backlog potential.
+// A member of avoid (the card's StagingRefusers) is never the target. "" when none.
+func (r *round) levelTo(up []string, n, held, widths map[string]int, from string, avoid []string) string {
 	if len(up) == 0 {
 		return ""
 	}
@@ -233,7 +234,9 @@ func (r *round) levelTo(up []string, n, held, widths map[string]int, avoid []str
 	for _, x := range up {
 		isUp[x] = true
 	}
-	open := func(x string) bool { return isUp[x] && held[x] < widths[x] && !contains(avoid, x) }
+	open := func(x string) bool {
+		return isUp[x] && held[x] < widths[x] && n[from]-n[x] > 1 && !contains(avoid, x)
+	}
 	to := r.scan(func(x string) bool { return open(x) && n[x] < mean })
 	if to == "" {
 		to = r.scan(func(x string) bool { return open(x) && n[x] <= mean })

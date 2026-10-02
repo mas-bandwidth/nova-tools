@@ -53,6 +53,6 @@ func printPacket(w io.Writer, p sprint.Packet) {
 	if p.Kind == "work" {
 		fmt.Fprintf(w, "  report it: nova-sprint finish --as %s %s@%d --epoch %d --branch %s --head <commit> --report '<what you did>' [--failed]\n", p.As, p.Card, p.Gen, p.Epoch, p.Branch)
 	} else {
-		fmt.Fprintf(w, "  report it: nova-sprint read --as %s (--ok | --broken) %s --epoch %d --finding '<what you found>'\n", p.As, p.Card, p.Epoch)
+		fmt.Fprintf(w, "  report it: nova-sprint read --as %s (--ok | --broken) %s --epoch %d --finding '<file:line, and what to change>'\n", p.As, p.Card, p.Epoch)
 	}
 }
