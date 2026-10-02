@@ -97,23 +97,9 @@ var prNumberRegex = regexp.MustCompile(`/pull/(\d+)`)
 // RunSeal reads one value, folds it into the seat file under --name, and carries the
 // change through a branch, a commit and, unless --no-pr, a pull request to its merge.
 func RunSeal(opts SealOptions) (line string, err error) {
-	if opts.StoreDir == "" {
-		return "", fmt.Errorf("missing --store <dir>")
-	}
-	if opts.AsName == "" {
-		return "", fmt.Errorf("missing --as <name>")
-	}
-	if !IsValidAsName(opts.AsName) {
-		return "", fmt.Errorf("invalid seat name %q: must match [A-Za-z0-9_-]+", opts.AsName)
-	}
-	if opts.KeyPath == "" {
-		return "", fmt.Errorf("missing --key <path>")
-	}
-	if opts.SopsPath == "" {
-		return "", fmt.Errorf("missing --sops <path>")
-	}
-	if opts.Name == "" {
-		return "", fmt.Errorf("missing --name <NAME>")
+	if err := preflight(opts.StoreDir, need{opts.StoreDir, "--store <dir>", false}, need{opts.AsName, "--as <name>", true},
+		need{opts.KeyPath, "--key <path>", false}, need{opts.SopsPath, "--sops <path>", false}, need{opts.Name, "--name <NAME>", false}); err != nil {
+		return "", err
 	}
 	if !IsValidEnvVar(opts.Name) {
 		return "", fmt.Errorf("invalid key name %q: must match [A-Z][A-Z0-9_]*", opts.Name)
@@ -128,18 +114,6 @@ func RunSeal(opts SealOptions) (line string, err error) {
 		opts.Now = time.Now
 	}
 
-	sFi, err := os.Stat(opts.StoreDir)
-	if err != nil || !sFi.IsDir() {
-		return "", fmt.Errorf("store %s is not a directory", opts.StoreDir)
-	}
-	gitDir := filepath.Join(opts.StoreDir, ".git")
-	gFi, err := os.Stat(gitDir)
-	if err != nil || !gFi.IsDir() {
-		return "", fmt.Errorf("store %s has no .git directory; clone it: git clone <url> %s", opts.StoreDir, opts.StoreDir)
-	}
-	if _, err := os.Stat(filepath.Join(opts.StoreDir, ".sops.yaml")); err != nil {
-		return "", fmt.Errorf("store %s carries no .sops.yaml", opts.StoreDir)
-	}
 	if err := CheckInvariant6(opts.KeyPath); err != nil {
 		return "", err
 	}

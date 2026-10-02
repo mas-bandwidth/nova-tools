@@ -338,7 +338,7 @@ secret, with no row in the credential table and no home in **The model** — to 
 which is not a trade this page makes.
 
 ```
-SECRETS CHECK OK  as=<name> recipients=<n> files=<n> sealed=<n> mine=<n> foreign=<n> clear=<n> head=<sha>
+SECRETS CHECK OK as=<name> recipients=<n> files=<n> sealed=<n> mine=<n> foreign=<n> clear=<n> head=<sha>
 SECRETS CHECK FAIL <file>: <reason>
 SECRETS CHECK FAIL as=<name> files=<n> failed=<n> shown=<n>
 ```

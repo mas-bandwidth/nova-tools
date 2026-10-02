@@ -185,7 +185,7 @@ func TestTheHelpExamplesAreWhatTheSeatsVerbsPrint(t *testing.T) {
 			"SECRETS NAMES OK as=ada keys=3 shown=3 sealed=3 clear=0",
 		}},
 		{Line: "$ nova-secrets check --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops", Want: []string{
-			"SECRETS CHECK OK  as=ada recipients=2 files=1 sealed=1 mine=1 foreign=0 clear=0 head=-",
+			"SECRETS CHECK OK as=ada recipients=2 files=1 sealed=1 mine=1 foreign=0 clear=0 head=-",
 		}},
 		{Line: "$ nova-secrets exec --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops --only GH_TOKEN --require GH_TOKEN -- gh api user", Want: []string{
 			"gh api user token=set",

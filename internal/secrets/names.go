@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
@@ -15,42 +14,13 @@ func RunNames(storeDir, asName string, maxShown int) (okLine string, nameLines [
 	if maxShown < 0 {
 		return "", nil, "", fmt.Errorf("--max %d is negative; expected non-negative integer", maxShown)
 	}
-	if storeDir == "" {
-		return "", nil, "", fmt.Errorf("missing --store <dir>")
-	}
-	if asName == "" {
-		return "", nil, "", fmt.Errorf("missing --as <name>")
-	}
-	if !IsValidAsName(asName) {
-		return "", nil, "", fmt.Errorf("invalid seat name %q: must match [A-Za-z0-9_-]+", asName)
-	}
-
-	sFi, err := os.Stat(storeDir)
-	if err != nil || !sFi.IsDir() {
-		return "", nil, "", fmt.Errorf("store %s is not a directory", storeDir)
-	}
-	gitDir := filepath.Join(storeDir, ".git")
-	gFi, err := os.Stat(gitDir)
-	if err != nil || !gFi.IsDir() {
-		return "", nil, "", fmt.Errorf("store %s has no .git directory", storeDir)
-	}
-	sopsConfigPath := filepath.Join(storeDir, ".sops.yaml")
-	if _, err := os.Stat(sopsConfigPath); err != nil {
-		return "", nil, "", fmt.Errorf("store %s carries no .sops.yaml", storeDir)
+	if err := preflight(storeDir, need{storeDir, "--store <dir>", false}, need{asName, "--as <name>", true}); err != nil {
+		return "", nil, "", err
 	}
 
 	targetFile := filepath.Join(storeDir, asName+".yaml")
 	if _, err := os.Stat(targetFile); err != nil {
-		// List available files in store
-		entries, _ := os.ReadDir(storeDir)
-		var names []string
-		for _, e := range entries {
-			if strings.HasSuffix(e.Name(), ".yaml") && e.Name() != ".sops.yaml" {
-				names = append(names, strings.TrimSuffix(e.Name(), ".yaml"))
-			}
-		}
-		sort.Strings(names)
-		return "", nil, "", fmt.Errorf("seat file %s.yaml is absent in store; available names: %s", asName, strings.Join(names, ", "))
+		return "", nil, "", seatAbsent(storeDir, asName)
 	}
 
 	keys, _, _, err := ParseStoreFileWithoutDecrypting(targetFile)
