@@ -1,5 +1,5 @@
 # Migrated counted package ledger; original row keys preserved.
-# ceiling: 68
+# ceiling: 66
 docs/CLI.md:emma 2
 docs/CLI.md:freddy 1
 docs/CLI.md:johnny 2
@@ -34,10 +34,8 @@ docs/SPEC-CONFIG.md:stella 2
 docs/SPEC-CONFIG.md:studio 2
 docs/SPEC-RELEASE.md:johnny 1
 docs/SPEC-RELEASE.md:rowan 1
-docs/SPEC-SANDBOX.md:glenn 1
-docs/SPEC-SANDBOX.md:johnny 1
 docs/SPEC-SANDBOX.md:space 5
-docs/SPEC-SANDBOX.md:studio 3
+docs/SPEC-SANDBOX.md:studio 1
 docs/SPEC-SECRETS.md:emma 1
 docs/SPEC-SECRETS.md:freddy 1
 docs/SPEC-SECRETS.md:glenn 16
