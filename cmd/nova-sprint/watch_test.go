@@ -176,9 +176,7 @@ func TestWhereFrameHoldsOnlyTheHeaderAndTheTables(t *testing.T) {
 	lines := strings.Split(frame, "\n")
 	require.Equal(t, []string{"SPRINT TABLE", "", "STOPPED", ""}, lines[:4], "the head of the frame")
 	for _, l := range lines[4:] {
-		if l != "" && !strings.Contains(l, " | ") && !strings.Contains(l, "-+-") {
-			t.Errorf("a line that is not a table's: %q\n%s", l, frame)
-		}
+		assert.False(t, l != "" && !strings.Contains(l, " | ") && !strings.Contains(l, "-+-"), "a line that is not a table's: %q\n%s", l, frame)
 	}
 	for _, gone := range []string{"pending", "stalled", "REMINDERS", "friend-a", "coordinator", "since", "op-left"} {
 		assert.NotContains(t, frame, gone, "the frame shows %q", gone)
@@ -307,8 +305,9 @@ func TestWatchWriterWritesOncePerFrame(t *testing.T) {
 	assert.Equal(t, "\x1b[Hone\x1b[K\x1b[J", screen.writes[1], "the shorter frame clears what is below it")
 	w.hideCursor()
 	w.showCursor()
-	if len(screen.writes) != 4 || screen.writes[2] != "\x1b[?25l" || screen.writes[3] != "\x1b[?25h" {
-		t.Errorf("the cursor: %q", screen.writes[2:])
+	if assert.Len(t, screen.writes, 4, "the cursor: %q", screen.writes[2:]) {
+		assert.Equal(t, "\x1b[?25l", screen.writes[2], "the cursor: %q", screen.writes[2:])
+		assert.Equal(t, "\x1b[?25h", screen.writes[3], "the cursor: %q", screen.writes[2:])
 	}
 }
 
@@ -776,8 +775,8 @@ func TestAnInterruptThatCutsAReadShortEndsTheWatchWithExitZero(t *testing.T) {
 			require.True(t, strings.HasPrefix(w[1], "\x1b[H"), "the cursor hidden, the one frame, the cursor restored: %q", w)
 			require.Equal(t, "\x1b[?25h", w[2], "the cursor hidden, the one frame, the cursor restored: %q", w)
 			assert.True(t, cut.sawDone, "the read the interrupt arrived in was not made in the command's context: the interrupt cannot cut it short")
-			if cut.dialCtx == nil || cut.dialCtx.Err() == nil {
-				t.Errorf("the store was opened in a context the interrupt does not end")
+			if assert.NotNil(t, cut.dialCtx, "the store was opened in a context the interrupt does not end") {
+				assert.Error(t, cut.dialCtx.Err(), "the store was opened in a context the interrupt does not end")
 			}
 		})
 	}
