@@ -115,10 +115,17 @@ type app struct {
 	// rounds: land itself then leaves the queue as it is.
 	prune    pruneQueue
 	landLazy bool
+	// tickDeadline is how long the run loop waits for one tick (run
+	// --tick-deadline; 0, a test's loop, waits for ever); after is the clock
+	// it waits on (time.After unless a test sets it), and exit how the loop
+	// ends the process when a tick runs past it (os.Exit unless a test sets it).
+	tickDeadline time.Duration
+	after        func(time.Duration) <-chan time.Time
+	exit         func(code int)
 }
 
 func newApp(getenv func(string) string) *app {
-	a := &app{getenv: getenv, now: time.Now, sleep: time.Sleep, conns: map[string]*redisconn.Conn{}, cached: map[string]store.Backend{}, meter: hostload.Local(), notify: interruptContext, screen: screenSize}
+	a := &app{getenv: getenv, now: time.Now, sleep: time.Sleep, after: time.After, exit: os.Exit, conns: map[string]*redisconn.Conn{}, cached: map[string]store.Backend{}, meter: hostload.Local(), notify: interruptContext, screen: screenSize}
 	a.backend = a.redisBackend
 	a.inventory = a.readInventory
 	a.landRoot = defaultLandRoot
