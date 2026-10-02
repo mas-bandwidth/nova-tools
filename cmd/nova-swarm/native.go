@@ -2041,7 +2041,7 @@ func sameDir(a, b string) bool {
 // attempt is summed once. A fast failure whose provider reported nothing keeps its dashes,
 // and `usd` stays a dash rather than becoming a zero. The `end` column names how the attempt
 // ended -- done, failed, or wall.
-// THE ROW IS THE LAUNCH'S: each launch's numbers stay its own. It returns the usage it
+// THE ROW IS THE LAUNCH'S (rule 13d, "Two numbers, kept apart"): each launch's numbers stay its own. It returns the usage it
 // finally read as well, because the JOB's figure on the NATIVE OK line is the sum of these
 // launches' own final reads -- "a job's rows are disjoint, so that adding them counts each
 // launch once", and two launches reported at 40 and 70 keep 40 and 70 here while the line
@@ -2357,7 +2357,8 @@ var errReadStart = errors.New("staging refused: the read's start")
 // is cloned from the bench mirror, whose branch can be older than the commit the work
 // started from, the merge base against it is that older tip, and a diff from it shows every
 // card landed in between as the work's own, so the diff names many cards' files and not the
-// one the read reviews. origin's branch holds the work's start (the work was cut from
+// one the read reviews (measured by a 1000-card load test: the diff had 22 files, not
+// exactly one). origin's branch holds the work's start (the work was cut from
 // it) and not the work (a read comes before the land), so the merge base against it is
 // exactly the start, however far the branch has moved since.
 func workStart(git, checkout, base string) (string, error) {
