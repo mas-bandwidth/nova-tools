@@ -931,7 +931,10 @@ refusal, or in any error passed through from sops** — a length is a value's sh
 shape of an API key names its provider. sops' stderr is *not* passed through raw: it is matched
 against the shapes this spec knows and reported as one of our lines, and an unrecognised one is
 `sops failed: exit <n>` with the transcript **withheld** and a line telling the reader to run
-the same `sops -d` themselves — the one place in this repo where a transcript is not printed
+the same decrypt themselves, with the key the verb was given (`SOPS_AGE_KEY_FILE=<key> <sops>
+-d <file>`; a bare `sops -d` has no identity and fails for another reason). A `--key` whose
+public half is not among the file's recipients is that cause, named with the recipients that
+would open it, read from the file's own `sops:` block — the one place in this repo where a transcript is not printed
 beneath the event line, a decrypt error being the one error that can contain plaintext.
 
 **Bounded by design.** `exec` prints exactly one line, always, at any store size; `names` and

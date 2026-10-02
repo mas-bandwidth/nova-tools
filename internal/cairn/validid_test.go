@@ -28,7 +28,7 @@ func TestADotSessionIsRefusedBeforeAnythingIsWritten(t *testing.T) {
 	t.Parallel()
 	store := t.TempDir()
 	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
-	require.Error(t, Open(store, ".", "", now, PublishManual))
+	require.Error(t, opened(Open(store, ".", "", now, PublishManual)))
 	_, err := Append(store, ".", "e", "words", "", now, PublishManual)
 	require.Error(t, err)
 	_, _, err = Index(store, ".", 0)

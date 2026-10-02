@@ -557,6 +557,18 @@ func cmdLockdown(rest []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 
 	b, readErr := fuse.ReadBox(box)
+	if readErr == nil && b.Lockdown != nil {
+		// Already blown: the box is left as it is. The first fuse's time and reason are
+		// the evidence a person audits before replacing it, and a later run rewriting
+		// them would lose it; the read just made is the verification.
+		fmt.Fprint(stdout, "LOCKDOWN OK ")
+		if dry {
+			fmt.Fprint(stdout, "dry_run=true ")
+		}
+		fmt.Fprintf(stdout, "already=blown since=%s: %s (the box is unchanged: a blown lockdown keeps its first time and reason; this run's reason is not recorded: %s; replaced only in a live conversation with the person you work with)\n",
+			since(*b.Lockdown), why(*b.Lockdown), oneline.Escape(reason))
+		return 0
+	}
 	what := "blow the lockdown in the box there"
 	switch {
 	case dry && errors.Is(readErr, fuse.ErrNoBox):

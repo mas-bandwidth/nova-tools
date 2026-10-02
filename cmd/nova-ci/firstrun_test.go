@@ -27,8 +27,8 @@ func runCIIn(t *testing.T, stdin string, args ...string) (int, string, string) {
 }
 
 // (a) Every line in the banner's example block runs, exits 0 or 1, and prints
-// something on stdout. `slowtests` reads stdin, so an empty stream stands in
-// for "no events yet" and must still be a green, not a hang.
+// something on stdout. Every `slowtests` example reads --example, so the empty
+// stdin handed here is never read.
 func TestUsageBannerExamplesRun(t *testing.T) {
 	t.Parallel()
 

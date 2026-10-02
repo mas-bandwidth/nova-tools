@@ -1479,6 +1479,41 @@ func TestQuarantineOKNamesTheEntryItVerified(t *testing.T) {
 	assert.True(t, strings.HasPrefix(out, want), "stdout = %q, want it to open with %q -- the entry that was written and read back, not its sibling", out, want)
 }
 
+// TestASecondLockdownKeepsTheFirstFuse. A lockdown over a box already blown
+// rewrote its time and reason: the first fuse's evidence, the one a person audits
+// before replacing it, was lost to whatever ran next. A second lockdown now writes
+// nothing, keeps the first fuse, says it was already blown with the first time and
+// reason, and names the reason it did not record; a dry run says the same.
+func TestASecondLockdownKeepsTheFirstFuse(t *testing.T) {
+	t.Parallel()
+
+	first := fuse.Fuse{At: "2020-01-01T00:00:00Z", Reason: "the first reason"}
+	for _, tc := range []struct {
+		name, flag, lead string
+	}{
+		{"a real run", "", "LOCKDOWN OK already=blown since=2020-01-01T00:00:00Z: the first reason ("},
+		{"a dry run", "--dry-run", "LOCKDOWN OK dry_run=true already=blown since=2020-01-01T00:00:00Z: the first reason ("},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			box := boxIn(t)
+			writeBox(t, box, fuse.Box{Lockdown: &first, Quarantine: map[string]fuse.Fuse{}})
+			before := readRaw(t, box)
+			args := []string{"lockdown", "--box", box}
+			if tc.flag != "" {
+				args = append(args, tc.flag)
+			}
+			code, out, errOut := capture(t, append(args, "a later reason"), nowish())
+			require.Equal(t, 0, code, "stdout %q stderr %q", out, errOut)
+			assert.True(t, strings.HasPrefix(out, tc.lead), "stdout = %q, want it to open with %q", out, tc.lead)
+			assert.Contains(t, out, "not recorded: a later reason", "stdout = %q, want the reason it did not record", out)
+			assert.Equal(t, 1, strings.Count(out, "\n"), "stdout = %q, want one line", out)
+			assert.Empty(t, errOut)
+			assert.Equal(t, before, readRaw(t, box), "a second lockdown changed the box")
+		})
+	}
+}
+
 func TestLeadingDashSurfaceWithDelimiter(t *testing.T) {
 	t.Parallel()
 

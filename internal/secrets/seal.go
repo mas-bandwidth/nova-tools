@@ -541,11 +541,7 @@ func sealDecrypt(run execCommand, sopsPath, keyPath, filePath string) ([]byte, e
 
 	out, err := run(nil, sealSopsEnv(keyPath, tmpDir), "", sopsPath, "-d", filePath)
 	if err != nil {
-		exitCode := 1
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
-		}
-		return nil, fmt.Errorf("sops failed: exit %d (transcript withheld: run 'sops -d %s' to inspect)", exitCode, filePath)
+		return nil, sopsFailed(err, sopsPath, keyPath, filePath)
 	}
 	return out, nil
 }

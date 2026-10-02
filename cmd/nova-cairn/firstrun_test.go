@@ -39,7 +39,7 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 		want    []string
 	}{
 		{"nova-cairn open --store ./cairns --session s1 --publish manual",
-			[]string{"OPEN OK session=s1 store=./cairns source=- publish=manual stamp=2026-01-01T00:00:00Z"}},
+			[]string{"OPEN OK session=s1 store=./cairns source=- publish=manual stamp=2026-01-01T00:00:00Z reopened=false"}},
 		{`nova-cairn append --store ./cairns --session s1 --entry e1 --text "the words to keep"`,
 			[]string{"APPEND OK session=s1 entry=e1 source=- persisted=true published=false publish=manual duplicate=false stamp=2026-01-01T00:00:00Z"}},
 		{"nova-cairn index --store ./cairns",

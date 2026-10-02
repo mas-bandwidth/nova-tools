@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // A package with a functional file is selected with exactly that file's
@@ -44,6 +47,35 @@ func TestExpandWalksTheTreeLikeGoList(t *testing.T) {
 	want := []string{filepath.Join(root, "a"), filepath.Join(root, "a", "b"), "./cmd/x"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Expand = %q, want %q", got, want)
+	}
+}
+
+// A ./-rooted pattern prints ./-rooted directories, `./...` itself included:
+// `go test` reads a bare `func` as a standard-library import path and refuses
+// it, so `./...` once printed `fast func` and the functional tier failed to set
+// up.
+func TestExpandKeepsTheDotSlashOfEveryRelativePattern(t *testing.T) {
+	t.Parallel()
+
+	cwd := t.TempDir()
+	for _, d := range []string{"fast", "func/inner", "testdata/x"} {
+		require.NoError(t, os.MkdirAll(filepath.Join(cwd, d), 0o755))
+	}
+	for _, tc := range []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{"the whole module", []string{"./..."}, []string{".", "./fast", "./func", "./func/inner"}},
+		{"a subtree", []string{"./func/..."}, []string{"./func", "./func/inner"}},
+		{"a bare subtree", []string{"func/..."}, []string{"func", "func/inner"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := expandIn(cwd, tc.args)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
 	}
 }
 

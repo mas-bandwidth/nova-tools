@@ -74,7 +74,9 @@ func TestSlowTestsOverBudgetNamesThePackageAndSlowestTests(t *testing.T) {
 }
 
 // An empty stdin is not a package over budget; it is zero packages, and the
-// OK line says so rather than leaving the slowest slot empty.
+// OK line says so rather than leaving the slowest slot empty. The verb refuses
+// such a stream before it prints a verdict (cmd/nova-ci,
+// TestSlowtestsRefusesAStreamWithNoPackage).
 func TestSlowTestsEmptyInputIsOKWithZeroPackages(t *testing.T) {
 	t.Parallel()
 

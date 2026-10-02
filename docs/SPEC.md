@@ -2062,6 +2062,7 @@ STATUS OK lockdown=blown since=<t> quarantines=<n>: <reason>
 STATUS OK quarantine=<name> since=<t>: <reason>
 STATUS MORE kind=quarantine shown=<n> total=<t> <remedy>
 LOCKDOWN OK since=<t>: <reason> (…)      LOCKDOWN FAIL <reason>
+LOCKDOWN OK already=blown since=<first t>: <first reason> (… not recorded: <reason>; …)
 QUARANTINE OK <name> since=<t>: <reason> (…)   QUARANTINE FAIL <name>: <reason>
 LIFT OK quarantine=<name> was since=<t>: <reason>
 LIFT OK verified: <surface> is no longer quarantined (…)

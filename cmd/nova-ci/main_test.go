@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -175,19 +176,47 @@ type terminalInfo struct{ os.FileInfo }
 
 func (terminalInfo) Mode() os.FileMode { return os.ModeDevice | os.ModeCharDevice }
 
-// The null device is a character device and not a terminal: slowtests reads
-// it as the documented empty stream (OK, packages=0), never as a terminal.
-func TestSlowtestsReadsTheNullDeviceAsAnEmptyStream(t *testing.T) {
+// The null device is a character device and not a terminal, and an empty
+// stream is nothing judged: slowtests refuses it at exit 2, with or without
+// --enforce, in lines and in JSON, never an OK over zero packages. A stream
+// holding events but no package's result (a pipe cut before any package
+// finished) is refused the same way.
+func TestSlowtestsRefusesAStreamWithNoPackage(t *testing.T) {
 	t.Parallel()
 
-	null, err := os.Open(os.DevNull)
-	require.NoError(t, err)
-	defer null.Close()
+	const why = "stdin held no package's result (events=%d): a gate over zero packages cannot decide"
+	for _, tc := range []struct {
+		name  string
+		args  []string
+		input string
+	}{
+		{"the null device", nil, ""},
+		{"under --enforce", []string{"--enforce"}, ""},
+		{"events but no package result", nil, `{"Action":"start","Package":"example.com/pkg"}` + "\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var in io.Reader = strings.NewReader(tc.input)
+			if tc.input == "" {
+				null, err := os.Open(os.DevNull)
+				require.NoError(t, err)
+				t.Cleanup(func() { _ = null.Close() }) // ignored: a read-only handle
+				in = null
+			}
+			args := append([]string{"slowtests", "--budget", "60", "--load", "1", "--cpus", "2"}, tc.args...)
+			events := strings.Count(tc.input, "\n")
+			var stdout, stderr bytes.Buffer
+			code := run(args, in, &stdout, &stderr)
+			assert.Equal(t, 2, code, "stdout %q", stdout.String())
+			assert.Empty(t, stdout.String())
+			assert.Equal(t, "nova-ci slowtests REFUSED: "+fmt.Sprintf(why, events)+"; run: go test -json <packages> | nova-ci slowtests --budget 60\n", stderr.String())
+		})
+	}
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"slowtests", "--budget", "60", "--load", "1", "--cpus", "2"}, null, &stdout, &stderr)
-	assert.Equal(t, 0, code, "stderr %q", stderr.String())
-	assert.Empty(t, stderr.String())
-	assert.Equal(t, "CI-SLOW OK packages=0 slowest=none\n"+loadLine1of2, stdout.String())
+	code := run([]string{"slowtests", "--json", "--load", "1", "--cpus", "2"}, strings.NewReader(""), &stdout, &stderr)
+	assert.Equal(t, 2, code)
+	assert.Contains(t, stdout.String(), `"status":"refused"`)
+	assert.Contains(t, stdout.String(), "no package's result (events=0)")
 }
 
 // A float flag that is not a finite number (NaN, +Inf, -Inf) is refused

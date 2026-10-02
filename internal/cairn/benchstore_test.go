@@ -113,7 +113,7 @@ func TestOpenOnABenchFileIsANoOpAndNeverSplitsTheRecord(t *testing.T) {
 	store, file, before := benchStore(t, session)
 	now := time.Date(2026, 9, 18, 14, 5, 0, 0, time.UTC)
 
-	require.NoError(t, Open(store, session, "src", now, "manual"), "Open on an existing bench record")
+	require.NoError(t, opened(Open(store, session, "src", now, "manual")), "Open on an existing bench record")
 	_, err := os.Stat(filepath.Join(store, "sessions", session+".md"))
 	require.ErrorIs(t, err, fs.ErrNotExist, "open wrote a second record under sessions/; the session would be split in two")
 	require.Equal(t, string(before), testkit.ReadFile(t, file), "open rewrote the hand-kept record; re-opening an open session is a no-op")

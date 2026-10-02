@@ -225,8 +225,9 @@ a finding can name where the time went; they never decide the verdict.
 
 **Its one-line output.** On a clean stream it prints one line, `CI-SLOW OK
 packages=<n> slowest=<pkg>:<seconds>`, where `packages=` is the packages seen
-and `slowest=` the single slowest package overall (or `slowest=none` when the
-stream is empty). On a refusal it prints one line per offending package, `CI-SLOW
+and `slowest=` the single slowest package overall. A stream holding no
+package's result (empty, or cut before any package finished) is a refusal at
+exit 2 naming the events it read: a gate over zero packages cannot decide. On a refusal it prints one line per offending package, `CI-SLOW
 package=<pkg> seconds=<seconds> budget=<b> slowest=<TestA:3.2s,TestB:2.9s>`, the
 slowest tests in that package, comma-separated, worst first and capped at three,
 and exits 1 under `--enforce` (the check ran and said no; 2 is input it could not read), 0 without it; the lines go to stdout, so one `CI-SLOW` grep reads the whole run.
@@ -307,7 +308,8 @@ verb end to end:
 2. A package summing `75.3s` with tests at `3.2s` and `2.9s` is one line naming
    the package, its total, the budget and `slowest=TestA:3.2s,TestB:2.9s`, exit
    2 under `--enforce` and 0 without it.
-3. An empty stream is `CI-SLOW OK packages=0 slowest=none`, exit 0.
+3. An empty stream, and one with events but no package's result, is a
+   refusal at exit 2, never an OK over zero packages.
 4. A line that is not JSON is a refusal naming its line number.
 5. The slowest list is sorted and capped at three.
 6. More than one package over budget prints one line each, worst first, an order

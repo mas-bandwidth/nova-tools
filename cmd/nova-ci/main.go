@@ -117,7 +117,7 @@ exit codes: 0 done and 2 usage or could not run, for every verb; by verb:
   slowtests: 0 inside budget, or CI-SLOW lines without --enforce (a
     measurement); 1 a CI-SLEEPS line, or a CI-SLOW line under --enforce
     (the check said no); 2 the invocation could not run (bad flag,
-    unreadable stdin)
+    unreadable stdin, or a stream with no package's result)
   local: 0 green; 1 a red test, a package that did not build, or a
     CI-SLEEPS line; 2 a step that could not run, or usage
   functional: 0 the selection printed (packages=0 included); 2 a flag, or
@@ -313,6 +313,11 @@ func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 		return slowtestsRefuse(stdout, stderr, *asJSON, []string{fmt.Sprintf("stdin is not newline-delimited go test -json: %s", oneline.Err(err))}, "go test -json <packages> | nova-ci slowtests --budget 60")
 	}
 	report := slowtests.Judge(events, budgets)
+	// A gate over zero packages cannot decide (STANDARD section 2): an empty
+	// or cut stream is refused, never an OK that judged nothing.
+	if report.Packages == 0 {
+		return slowtestsRefuse(stdout, stderr, *asJSON, []string{fmt.Sprintf("stdin held no package's result (events=%d): a gate over zero packages cannot decide", len(events))}, "go test -json <packages> | nova-ci slowtests --budget 60")
+	}
 	// The load is printed, never judged: read from the host unless --load
 	// gives it, so a test hands in the figure instead of reading a machine.
 	load := slowtests.Load{Avg: *loadFlag, CPUs: runtime.NumCPU(), Known: true}
