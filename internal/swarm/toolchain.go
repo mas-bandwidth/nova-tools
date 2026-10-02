@@ -63,7 +63,7 @@ import (
 // a `--read` root CARRIES EXECUTE on both bodies (landlock's read subset is
 // EXECUTE|READ_FILE|READ_DIR, and the darwin profile grants process-exec* globally), so a
 // tree the bench user can write to must be named as the read-only kind or a card can run
-// whatever lands in it.
+// untrusted files placed there by the bench user.
 type ToolchainRoot struct {
 	// Name is the token BOTH lists carry, in slash form. A name that begins with "/" is a
 	// SYSTEM root and is that absolute directory -- or, when Tool is set, the versioned
