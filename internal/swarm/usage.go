@@ -8,7 +8,7 @@ import (
 
 // A field the provider did not report is the literal "-", never 0: a zero is a
 // measurement and a dash is an absence, and nova-tokens reads this file and reads "-" as
-// unknown (SPEC-TOKENS).
+// unknown, preserving the distinction between an absent value and a measured zero.
 
 // The ways a job ends, as the `end` column spells them.
 const (
@@ -19,12 +19,12 @@ const (
 	EndUnknown      = "unknown"
 	// EndProvider is a launch that did not take: the harness died inside the launch
 	// grace with a provider server error in its tail. It is retried with backoff and,
-	// after the third fast failure, is filed with the provider's own ref.
+	// after repeated fast failures, records the provider's reference for diagnosis.
 	EndProvider = "provider"
 	// EndWall is a job the harness's own fence stopped at a path outside it, with no
-	// RESULT.md: the death names the path and the commits ./repo kept. It is
+	// RESULT.md: the result names the path and the commits the repository kept. It is
 	// also a card the harness's own fence or the OS wall stopped before it could publish:
-	// the machinery ended the task, not the model (wall.go).
+	// the harness or operating-system wall ended the task before the worker could publish it.
 	EndWall = "wall"
 )
 
@@ -78,7 +78,7 @@ func (u ProviderUsage) Budget() (sum int, seen int, partial bool) { return u.add
 //	<s>/<n>     a whole observation
 //
 // THE POOL'S `RUN DONE`/`RUN KILLED` AND `native`'s `NATIVE OK` BOTH COME THROUGH HERE
-// (what the word, the sum, the stop, the record, and a
+// This one path keeps the word, sum, stop, record, and a
 // source that cannot be read holds for a native card). Two renderings of one field is how
 // one of them drifts, and a reader who learned the field on one line would misread it on
 // the other.
