@@ -39,8 +39,7 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 	for _, ex := range examples {
 		args := strings.Fields(ex)[1:]
 		exit, out, errs := runCIIn(t, "", args...)
-		if exit == 2 {
-			t.Errorf("the usage example %q does not run: exit 2 (could not run)\nstderr: %s", ex, errs)
+		if !assert.NotEqual(t, 2, exit, "the usage example %q does not run: exit 2 (could not run)\nstderr: %s", ex, errs) {
 			continue
 		}
 		assert.Equal(t, 0, exit, "the usage example %q ran but said NO (exit %d)\nstderr: %s", ex, exit, errs)
@@ -118,9 +117,7 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	got := make([]onboarding.Result, 0, len(steps))
 	for _, s := range steps {
 		res, err := run(s)
-		if err != nil {
-			t.Fatalf("the documented command\n  %s\ncould not be run: %v", s.Line, err)
-		}
+		require.NoError(t, err, "the documented command\n  %s\ncould not be run: %v", s.Line, err)
 		got = append(got, res)
 	}
 	for _, p := range onboarding.CompareTranscript(steps, got, nil) {
@@ -155,8 +152,7 @@ func repoRoot(t *testing.T) string {
 	t.Helper()
 	root, err := filepath.Abs(filepath.Join("..", ".."))
 	require.NoError(t, err)
-	if _, err := os.Stat(filepath.Join(root, "docs", "TESTS.md")); err != nil {
-		t.Fatalf("docs/TESTS.md is not under %s: %v", root, err)
-	}
+	_, err = os.Stat(filepath.Join(root, "docs", "TESTS.md"))
+	require.NoError(t, err, "docs/TESTS.md is not under %s: %v", root, err)
 	return root
 }

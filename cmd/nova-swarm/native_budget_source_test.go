@@ -133,9 +133,7 @@ func TestNativeRefusesABudgetNothingCanObserve(t *testing.T) {
 			}
 			require.Equal(t, 2, rc, "this launch is NATIVE REFUSED at exit 2, got %d\nstdout:\n%s\nstderr:\n%s", rc, stdout.String(), stderr.String())
 			assert.Contains(t, stderr.String(), "NATIVE REFUSED", "the refusal is a NATIVE REFUSED line:\n%s", stderr.String())
-			if tc.names != "" && !strings.Contains(stderr.String(), tc.names) {
-				t.Errorf("the refusal names %q:\n%s", tc.names, stderr.String())
-			}
+			assert.False(t, tc.names != "" && !strings.Contains(stderr.String(), tc.names), "the refusal names %q:\n%s", tc.names, stderr.String())
 			madeNothing(t, slot)
 		})
 	}

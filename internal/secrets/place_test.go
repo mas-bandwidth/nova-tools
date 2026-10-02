@@ -27,7 +27,7 @@ func TestPlaceSSHSeamPanicsUnderTheGuard(t *testing.T) {
 	armHostGuard(t)
 	defer func() {
 		r := recover()
-		require.NotNil(t, r, "sshPlaceSecret ran a child under the guard; an unfaked seam must refuse before it reaches a host")
+		require.True(t, r != nil, "sshPlaceSecret ran a child under the guard; an unfaked seam must refuse before it reaches a host")
 		msg, _ := r.(string)
 		for _, want := range []string{testguard.EnvNoHost, "ssh", "bench.invalid", "testguard.AllowHosts"} {
 			assert.Contains(t, msg, want, "the panic must name %q so the reader sees the command and the remedy; got %q", want, msg)

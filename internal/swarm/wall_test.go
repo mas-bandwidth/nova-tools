@@ -86,9 +86,7 @@ func TestWallRefusedReadsTheFenceAndTheSandbox(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			got, ok := WallRefused([]byte(tc.in))
 			require.Equal(t, tc.ok, ok, "WallRefused ok=%v, want %v (got %+v)", ok, tc.ok, got)
-			if ok && (got.Path != tc.path || got.Step != tc.step) {
-				t.Fatalf("WallRefused = %+v; want path=%q step=%q", got, tc.path, tc.step)
-			}
+			require.False(t, ok && (got.Path != tc.path || got.Step != tc.step), "WallRefused = %+v; want path=%q step=%q", got, tc.path, tc.step)
 		})
 	}
 }

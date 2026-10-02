@@ -51,8 +51,8 @@ func TestReadRootsAreRefusedBeforeTheyReachTheWall(t *testing.T) {
 	for _, want := range []string{"is relative", "does not exist", "is not a directory"} {
 		assert.Contains(t, all, want, "no problem says %q:\n%s", want, all)
 	}
-	if len(w.ReadRoots) != 4 || w.ReadRoots[0] != good {
-		t.Errorf("the roots are read as written, in order: %v", w.ReadRoots)
+	if assert.Len(t, w.ReadRoots, 4, "the roots are read as written, in order: %v", w.ReadRoots) {
+		assert.Equal(t, good, w.ReadRoots[0], "the roots are read as written, in order: %v", w.ReadRoots)
 	}
 	// A description that names none is sound: the system roots are the floor.
 	delete(desc, "read_roots")

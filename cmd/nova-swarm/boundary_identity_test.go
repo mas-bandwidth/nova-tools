@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -74,15 +75,14 @@ func TestNativeDrainDeliversPoolIdentityToChild(t *testing.T) {
 	raw, err := os.ReadFile(commitIdentityPath)
 	if err != nil {
 		errRaw, _ := os.ReadFile(filepath.Join(jobDir, "commit-identity-err"))
-		t.Fatalf("failed to read commit-identity: %v; harness git err: %s", err, string(errRaw))
+		require.Fail(t, fmt.Sprintf("failed to read commit-identity: %v; harness git err: %s", err, string(errRaw)))
 	}
 
 	got := strings.TrimSpace(string(raw))
 	want := "Native Drain Worker <drain-worker@example.com> Native Drain Worker <drain-worker@example.com>"
 	assert.Equal(t, want, got, "native harness commit identity = %q, want %q", got, want)
-	if strings.Contains(got, "Hostile Ghost") || strings.Contains(got, "ghost@example.com") {
-		t.Errorf("hostile bench gitconfig leaked into native harness commit: %q", got)
-	}
+	assert.NotContains(t, got, "Hostile Ghost", "hostile bench gitconfig leaked into native harness commit: %q", got)
+	assert.NotContains(t, got, "ghost@example.com", "hostile bench gitconfig leaked into native harness commit: %q", got)
 }
 
 func TestBoundaryIdentityNegativeControlFallsBackToBenchConfigOrFails(t *testing.T) {
@@ -159,8 +159,9 @@ func TestNativeRefusesMissingPoolIdentityBeforeHarness(t *testing.T) {
 
 	root, slot := aSlot(t)
 	// Remove identity.tsv so the pool root has no identity file.
-	if err := os.Remove(filepath.Join(root, "identity.tsv")); err != nil && !os.IsNotExist(err) {
-		t.Fatal(err)
+	err := os.Remove(filepath.Join(root, "identity.tsv"))
+	if !os.IsNotExist(err) {
+		require.NoError(t, err)
 	}
 
 	require.NoError(t, buildShared())
@@ -215,13 +216,13 @@ func TestNativeRefusesMissingPoolIdentityBeforeHarness(t *testing.T) {
 	require.Contains(t, stderr.String(), "NATIVE REFUSED", "stderr does not contain NATIVE REFUSED:\n%s", stderr.String())
 	require.Contains(t, stderr.String(), "refusing to launch under nobody's name", "stderr does not contain expected refusal message:\n%s", stderr.String())
 	// #3193: the refusal names identity.tsv and the one remedy, the fleet converge.
-	if line := stderr.String(); !strings.Contains(line, "identity.tsv") || !strings.Contains(line, "make -C fleet converge") {
-		t.Fatalf("the refusal does not name identity.tsv and the remedy `make -C fleet converge`:\n%s", line)
-	}
+	line := stderr.String()
+	require.Contains(t, line, "identity.tsv", "the refusal does not name identity.tsv and the remedy `make -C fleet converge`:\n%s", line)
+	require.Contains(t, line, "make -C fleet converge", "the refusal does not name identity.tsv and the remedy `make -C fleet converge`:\n%s", line)
 
 	// Verify harness was never started: neither native.log nor harness-output.log was created.
 	nativeLog := filepath.Join(slot, "native.log")
-	_, err := os.Stat(nativeLog)
+	_, err = os.Stat(nativeLog)
 	assert.True(t, os.IsNotExist(err), "native.log exists at %s, want harness never started", nativeLog)
 	jobDir := filepath.Join(slot, "jobs", label)
 	harnessOut := filepath.Join(jobDir, "harness-output.log")
@@ -293,9 +294,9 @@ func TestNativeRefusesMalformedPoolIdentityBeforeHarness(t *testing.T) {
 	require.Contains(t, stderr.String(), "NATIVE REFUSED", "stderr does not contain NATIVE REFUSED:\n%s", stderr.String())
 	require.Contains(t, stderr.String(), "refusing to launch under nobody's name", "stderr does not contain expected refusal message:\n%s", stderr.String())
 	// #3193: the refusal names identity.tsv and the one remedy, the fleet converge.
-	if line := stderr.String(); !strings.Contains(line, "identity.tsv") || !strings.Contains(line, "make -C fleet converge") {
-		t.Fatalf("the refusal does not name identity.tsv and the remedy `make -C fleet converge`:\n%s", line)
-	}
+	line := stderr.String()
+	require.Contains(t, line, "identity.tsv", "the refusal does not name identity.tsv and the remedy `make -C fleet converge`:\n%s", line)
+	require.Contains(t, line, "make -C fleet converge", "the refusal does not name identity.tsv and the remedy `make -C fleet converge`:\n%s", line)
 
 	// Verify harness was never started: neither native.log nor harness-output.log was created.
 	nativeLog := filepath.Join(slot, "native.log")

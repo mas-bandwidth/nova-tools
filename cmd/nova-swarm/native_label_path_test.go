@@ -83,9 +83,7 @@ func TestNativeStillAcceptsAnOrdinaryLabel(t *testing.T) {
 		card:    []byte("a card\n"),
 		slotDir: slot, root: root, deadline: time.Minute, noWall: true,
 	}, &errOut)
-	if code == 2 && strings.Contains(errOut.String(), "not a job name") {
-		t.Fatalf("an ordinary label was refused as a path:\n%s", errOut.String())
-	}
+	require.False(t, code == 2 && strings.Contains(errOut.String(), "not a job name"), "an ordinary label was refused as a path:\n%s", errOut.String())
 	_, err := os.Stat(filepath.Join(slot, "jobs", "card-1.a_b"))
 	require.NoError(t, err, "the honest job directory was not made")
 }
