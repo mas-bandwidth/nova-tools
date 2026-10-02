@@ -306,11 +306,16 @@ func TestFleetPlaysReadOnlyTheInventory(t *testing.T) {
 	assert.Equal(t, []string{"bench-a", "bench-b"}, full.All.Hosts)
 	assert.Equal(t, []string{"bench-a"}, full.StoreDeployer.Hosts)
 	assert.Equal(t, "bench-b", full.All.Vars["nova_store"])
+	for _, host := range full.All.Hosts {
+		assert.Equal(t, "bench-b:6380", full.Meta.Hostvars[host]["nova_redis_addr"], host)
+		assert.Equal(t, 6380, full.Meta.Hostvars[host]["nova_redis_port"], host)
+		assert.Equal(t, "postgres://nova_config@localhost:5432/nova", full.Meta.Hostvars[host]["nova_pg_dsn"], host)
+	}
 	member := full.Meta.Hostvars["bench-b"]["nova_loops"].([]config.InventoryLoop)
 	require.Len(t, member, 1)
 	assert.Equal(t, config.InventoryLoop{
-		Name: "member-bench-b", Argv: []string{"nova-swarm", "member", "--as", "bench-b", "--width", "4"}, Seat: "bench-b",
-		Keys: []string{"API_KEY", "REDIS_PASSWORD"}, Keepalive: true, Width: 4, Enabled: true, Log: "~/nova-bench/loops/member-bench-b.log",
+		Name: "member-bench-b", Argv: []string{"/usr/bin/env", "NOVA_SPRINT_REDIS_USER=bench", "NOVA_SPRINT_REDIS_PASSWORD_ENV=NOVA_REDIS_BENCH_PASSWORD", "~/.local/bin/nova-swarm", "member", "--as", "bench-b", "--width", "4"}, Seat: "bench-b",
+		Keys: []string{"API_KEY", "NOVA_REDIS_BENCH_PASSWORD"}, Keepalive: true, Width: 4, Enabled: true, Log: "~/nova-bench/loops/member-bench-b.log",
 	}, member[0])
 	// The retired tools are names nova-tools no longer ships: none is a
 	// living cmd/ directory, so tools.yml never removes a tool it installs.
