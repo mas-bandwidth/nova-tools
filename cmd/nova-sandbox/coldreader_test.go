@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -207,6 +208,17 @@ func TestEgressPlanNamesItsFlagProblemsBeforeResolving(t *testing.T) {
 	}
 	assert.NotContains(t, errb.String(), "EGRESS STEP name=resolve")
 	assert.NotContains(t, errb.String(), "resolve_failed")
+}
+
+// run's refusal of a missing -- names its remedy once, on the remedy line, not again
+// inside the refusal.
+func TestRunNamesItsRemedyOnce(t *testing.T) {
+	t.Parallel()
+	var out, errb strings.Builder
+	code := runVerb([]string{"--name", "x", "--size", "1g"}, nil, &out, &errb, []string{"PATH=/usr/bin:/bin"})
+	assert.Equal(t, 125, code)
+	assert.Contains(t, errb.String(), "reason=no_command: no --")
+	assert.Equal(t, 1, strings.Count(errb.String(), remedyFor(runtime.GOOS)), errb.String())
 }
 
 // worktree names every problem in one run, an unknown flag among them, and never ignores
