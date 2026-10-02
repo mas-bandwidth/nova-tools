@@ -20,7 +20,7 @@ func VersionTool(stamp string, env Environment) *tool.Tool {
 		Name:  "nova-version",
 		What:  "report which version of each tool is installed, record it, and compare two records or two revisions",
 		Stamp: stamp,
-		How: `report reads installed versions; snapshot records a manifest or directory.
+		How: `report reads installed versions; snapshot counts a manifest or records a directory.
 diff compares two recorded inventories; moved builds two revisions and compares their help.
 The two binaries share report and manifests; latest checks and installs are nova-update's.
 The manifest is the file --file names, written by hand; report -h states its six rules.
