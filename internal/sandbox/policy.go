@@ -174,7 +174,7 @@ func (p *Policy) AncestorCount() int {
 
 // darwinOptRoots is the per-platform optional root table, as DATA and in one place
 // (spec: "they are data, not code"). The fixed darwin roots — /, /etc, /tmp, /var as
-// literals on the symlinks, the xcode_select_link literals (#1557), /System, /usr,
+// literals on the symlinks, the xcode_select_link literals, /System, /usr,
 // /bin, /sbin, /Library, /private/etc, /private/var/select, /dev, and write on
 // /dev/null and /dev/tty — are in profiles/darwin.sb.tmpl verbatim, because two
 // copies of a profile is one copy too many. What varies per machine is here. A
@@ -197,7 +197,7 @@ var fixedDarwinPrefixes = []string{"/usr", "/bin", "/sbin", "/System", "/Library
 // OptionalRoots is the machine's answer to the table above plus the directory of the
 // resolved command, which is a root for exactly this run (the spec's roots table names
 // it on all three platforms), plus the directory /var/db/xcode_select_link points at
-// when that directory is not already a fixed root (#1557).
+// when that directory is not already a fixed root.
 func OptionalRoots(command string) []string {
 	var out []string
 	seen := map[string]bool{}
@@ -230,7 +230,7 @@ func underAny(path string, prefixes []string) bool {
 }
 
 // xcodeSelectDeveloperDirs is the directory /var/db/xcode_select_link points at,
-// asked of the host the way --go asks go env and never guessed (#1557). Both
+// asked of the host the way --go asks go env and never guessed. Both
 // spellings of the link are read because /var is a symlink to /private/var.
 // An absent link is skip-if-absent, like /opt/local. The target is not yet
 // filtered against fixedDarwinPrefixes; OptionalRoots drops one that already
@@ -341,7 +341,7 @@ func commandDirRefusal(command string, named []string, homes []string) *Refusal 
 
 // Inside reports whether path is dir or lies beneath it. Both are expected resolved.
 //
-// AND "BENEATH" IS A QUESTION FOR THE FILESYSTEM, NOT FOR A STRING PREFIX (#145). This was
+// AND "BENEATH" IS A QUESTION FOR THE FILESYSTEM, NOT FOR A STRING PREFIX. This was
 // `strings.HasPrefix`, a case-SENSITIVE comparison, and APFS is case-INsensitive by default
 // (NTFS too): a `--secret` spelled in another case than the `--read` it actually sits inside
 // passed rule 6's own `secret_inside_allow` check and the probe reported a pass, and a `HOME`

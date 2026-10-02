@@ -314,7 +314,7 @@ func addRules(rulesetFd int, p *Policy, abi int) error {
 	write := writeSubset(abi)
 
 	// The roots, read-only, skipped if absent. linuxRoots is the static table plus the
-	// directory the system resolver's config resolves to (#1737).
+	// directory the system resolver's config resolves to.
 	for _, root := range linuxRoots() {
 		if err := addPathRule(rulesetFd, root, read); err != nil {
 			continue // absent on this image, or not a directory: the table is skip-if-absent
