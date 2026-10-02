@@ -105,8 +105,8 @@ type Row struct {
 }
 
 // MaxHeadroom is the most a row's budget may exceed its own measurement: three
-// times. Measurements from a busy runner (run 36261817989 on 2026-09-26) showed
-// ratios around 1.0-1.2 per 0.9 second baselines, leaving comfortable room.
+// times. The same tests take about 1.0-1.2 s on a busy runner against about
+// 0.9 s idle, well inside it.
 const MaxHeadroom = 3.0
 
 // SleepRow is one line of the SLEEPS ledger: `pkg<TAB>test<TAB>where`, a
@@ -460,9 +460,10 @@ func (r Report) SleepsLines(ledger string) []string {
 
 // Load is the host's run-queue load average and its logical CPU count when a
 // run is judged. It is a MEASUREMENT printed beside the times, never an input
-// to the verdict: a budget verdict is the same on any machine, so the load only tells a reader what the
-// box was doing while the times were taken. Known is false when the host has
-// no load average to read or the read failed; Why then says so.
+// to the verdict: a budget verdict is the same on any machine, so the load
+// only tells a reader what the box was doing while the times were taken. Known
+// is false when the host has no load average to read (Windows) or the read
+// failed; Why then says so.
 type Load struct {
 	Avg   float64
 	CPUs  int
