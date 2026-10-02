@@ -16,10 +16,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
@@ -100,25 +102,40 @@ func remedied(what string) bool {
 }
 
 // refuse is the one-line usage refusal: exit 2.
-func refuse(stderr io.Writer, verb, what string) int {
-	where := ""
-	if verb != "" {
-		where = " " + verb
-	}
-	if !remedied(what) {
-		what += "; run: nova-table help"
-	}
-	fmt.Fprintf(stderr, "nova-table%s: %s\n", where, oneline.Escape(what))
-	return 2
-}
+func refuse(stderr io.Writer, verb, what string) int { return refuseWith(stderr, verb, what, 2) }
 
 // refused is the store's no, one line: exit 1.
-func refused(stderr io.Writer, verb, what string) int {
+func refused(stderr io.Writer, verb, what string) int { return refuseWith(stderr, verb, what, 1) }
+
+// refuseWith prints a refusal in the one grammar every nova tool's refusal
+// has (docs/STANDARD.md section 2, internal/tool): `<VERB> REFUSED: <what
+// was wrong>; run: <remedy>`, the verb upper case with its words joined by
+// dashes, TABLE for the tool itself. A line naming no next step of its own
+// points at the verb's help, or the tool's.
+func refuseWith(stderr io.Writer, verb, what string, code int) int {
 	if !remedied(what) {
-		what += "; run: nova-table help"
+		what += "; run: " + helpFor(verb)
 	}
-	fmt.Fprintf(stderr, "nova-table %s: %s\n", verb, oneline.Escape(what))
-	return 1
+	fmt.Fprintf(stderr, "%s REFUSED: %s\n", token(verb), oneline.Escape(what))
+	return code
+}
+
+// token is the first word of a refusal: the verb, upper case, its words
+// joined by dashes (CELL-ADD), as internal/tool spells it; TABLE for the tool.
+func token(verb string) string {
+	if verb == "" {
+		return "TABLE"
+	}
+	return strings.ToUpper(strings.Join(strings.Fields(verb), "-"))
+}
+
+// helpFor is the help a refusal of verb points at: the verb's own (a group's
+// lists its verbs), else the tool's.
+func helpFor(verb string) string {
+	if isGroup(verb) || slices.ContainsFunc(commands, func(c command) bool { return c.name == verb }) {
+		return "nova-table help " + verb
+	}
+	return "nova-table help"
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
@@ -128,7 +145,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 func (app *application) run(args []string, stdout, stderr io.Writer) (code int) {
 	defer recoverHelp(stdout, &code)
 	if len(args) == 0 {
-		return refuse(stderr, "", "no verb; available: "+rootNames())
+		return refuse(stderr, "", "no verb given; the verbs are "+rootNames())
 	}
 	if isHelp(args[0]) || args[0] == "help" {
 		return helpCommand(args[1:], stdout, stderr)
@@ -254,13 +271,9 @@ func parseInterleaved(fs *flag.FlagSet, args []string) ([]string, error) {
 			}
 		}
 		if err := fs.Parse(rest[:n]); err != nil {
-			const prefix = "flag provided but not defined: "
-			if bad, found := strings.CutPrefix(err.Error(), prefix); found {
-				var names []string
-				fs.VisitAll(func(f *flag.Flag) { names = append(names, "--"+f.Name) })
-				return nil, fmt.Errorf("unknown flag --%s; %s flags: %s; run: nova-table help %s", strings.TrimLeft(bad, "-"), fs.Name(), strings.Join(names, ", "), fs.Name())
-			}
-			return nil, err
+			// verbflag's one wording: an unknown flag with the verb's flags and
+			// the nearest, a bad value with what its flag wants
+			return nil, fmt.Errorf("%s; run: nova-table help %s", verbflag.Explain(fs, err), fs.Name())
 		}
 		rest = rest[n:]
 	}

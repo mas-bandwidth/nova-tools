@@ -114,9 +114,21 @@ func (app *application) dispatch(args []string, out, errout io.Writer) int {
 				names = append(names, strings.TrimPrefix(c.name, args[0]+" "))
 			}
 		}
-		return refuse(errout, args[0], "unknown or missing subverb; wants "+strings.Join(names, ", "))
+		why := args[0] + " wants one of its verbs;"
+		if len(args) > 1 && !strings.HasPrefix(args[1], "-") {
+			why = fmt.Sprintf("unknown verb %q in %s;%s", args[0]+" "+args[1], args[0], nearest(args[1], names))
+		}
+		return refuse(errout, args[0], why+" the verbs are "+strings.Join(names, ", "))
 	}
-	return refuse(errout, "", "unknown verb "+strings.Join(args, " ")+"; available: "+rootNames())
+	return refuse(errout, "", fmt.Sprintf("unknown verb %q;%s the verbs are %s", args[0], nearest(args[0], strings.Split(rootNames(), ", ")), rootNames()))
+}
+
+// nearest is " did you mean <name>?" for the name nearest to got, else "".
+func nearest(got string, names []string) string {
+	if n := verbflag.Nearest(got, names); n != "" {
+		return " did you mean " + n + "?"
+	}
+	return ""
 }
 
 // opening is the banner's first three answers: what the tool does (line 1,
@@ -161,7 +173,7 @@ func helpCommand(path []string, out, errout io.Writer) int {
 			return c.run(&application{}, []string{"--help"}, out, errout)
 		}
 	}
-	return refuse(errout, "help", "unknown command "+name+"; available: "+rootNames())
+	return refuse(errout, "help", fmt.Sprintf("unknown verb %q;%s the verbs are %s", name, nearest(name, strings.Split(rootNames(), ", ")), rootNames()))
 }
 func recoverHelp(out io.Writer, code *int) {
 	r := recover()

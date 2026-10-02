@@ -9,6 +9,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
 	"github.com/mas-bandwidth/nova-tools/internal/secrets"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -28,11 +29,7 @@ func TestBareCommandNamesTheDoor(t *testing.T) {
 	code, stdout, stderr := runTable()
 	require.EqualValues(t, 2, code, "bare: exit %d stdout %q stderr %q", code, stdout, stderr)
 	require.Empty(t, stdout, "bare: exit %d stdout %q stderr %q", code, stdout, stderr)
-	require.Equal(t, "nova-table: no verb; available: help, create, set, drop, list, row, col, cell, member, batch, check, clear, show, render, watch, view, shell, version; run: nova-table help\n", stderr, "bare: exit %d stdout %q stderr %q", code, stdout, stderr)
-	code, _, stderr = runTable("bogus")
-	require.EqualValues(t, 2, code, "unknown verb: exit %d stderr %q", code, stderr)
-	require.True(t, strings.HasPrefix(stderr, "nova-table: unknown verb bogus;"), "unknown verb: exit %d stderr %q", code, stderr)
-	require.True(t, strings.HasSuffix(stderr, "; run: nova-table help\n"), "unknown verb: exit %d stderr %q", code, stderr)
+	require.Equal(t, "TABLE REFUSED: no verb given; the verbs are help, create, set, drop, list, row, col, cell, member, batch, check, clear, show, render, watch, view, shell, version; run: nova-table help\n", stderr, "bare: exit %d stdout %q stderr %q", code, stdout, stderr)
 	code, stdout, _ = runTable("help")
 	require.EqualValues(t, 0, code, "help: exit %d\n%s", code, stdout)
 	require.True(t, strings.HasPrefix(stdout, "nova-table: "), "help: exit %d\n%s", code, stdout)
@@ -40,6 +37,47 @@ func TestBareCommandNamesTheDoor(t *testing.T) {
 	code, stdout, _ = runTable("version")
 	require.EqualValues(t, 0, code, "version: exit %d %q", code, stdout)
 	require.True(t, strings.HasPrefix(stdout, "nova-table "), "version: exit %d %q", code, stdout)
+}
+
+// TestMistakesAreRefusedWithTheWayForward: every mistake an AI makes is
+// refused in the one grammar (`<VERB> REFUSED: <why>; run: <remedy>`), at
+// exit 2, in one line naming only the word that was wrong, the names there are
+// and the nearest, and the help of the verb the mistake was made in.
+func TestMistakesAreRefusedWithTheWayForward(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"unknown verb", []string{"craete", "--redis", "x"}, `TABLE REFUSED: unknown verb "craete"; did you mean create? the verbs are help, create,`},
+		{"unknown verb of a group", []string{"row", "ad"}, `ROW REFUSED: unknown verb "row ad" in row; did you mean add? the verbs are add, set,`},
+		{"bare group", []string{"cell"}, `CELL REFUSED: cell wants one of its verbs; the verbs are add, remove, move, members; run: nova-table help cell`},
+		{"unknown flag", []string{"create", "t", "--colums", "a"}, `CREATE REFUSED: unknown flag --colums; the flags of create are `},
+		{"bad value", []string{"create", "t", "--columns", "a", "--epoch", "bogus"}, `CREATE REFUSED: invalid value for --epoch: it wants a whole number of zero or more`},
+		{"unknown help", []string{"help", "craete"}, `HELP REFUSED: unknown verb "craete"; did you mean create?`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			code, stdout, stderr := runTable(tc.args...)
+			assert.EqualValues(t, 2, code)
+			assert.Empty(t, stdout)
+			assert.True(t, strings.HasPrefix(stderr, tc.want), "stderr %q, want it to open %q", stderr, tc.want)
+			assert.Equal(t, 1, strings.Count(stderr, "\n"), "one line: %q", stderr)
+			assert.NotContains(t, stderr, "--redis x", "the refusal names only the word that was wrong: %q", stderr)
+		})
+	}
+	for _, tc := range []struct {
+		args   []string
+		remedy string
+	}{
+		{[]string{"create", "t", "--columns", "a", "--epoch", "bogus"}, "; run: nova-table help create\n"},
+		{[]string{"create", "t", "--colums", "a"}, "did you mean --columns?; run: nova-table help create\n"},
+		{[]string{"cell", "add", "t"}, "; run: nova-table help cell add\n"},
+	} {
+		_, _, stderr := runTable(tc.args...)
+		assert.True(t, strings.HasSuffix(stderr, tc.remedy), "%v: %q, want the verb's help %q", tc.args, stderr, tc.remedy)
+	}
 }
 
 // TestLoginIsTheStoresLogin: with no seat, nova-table dials as nova-sprint's
