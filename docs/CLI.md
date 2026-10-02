@@ -538,7 +538,7 @@ A `Re:` line is how a note gets closed: your reply carrying `Re: <id>` takes tha
 **`--host <name>` says which source posted**, on `send` and on `reply`. One identity can post from multiple sources, and telling those sources apart from the subject line spends the subject on routing. The flag writes a `Host:` line under `From:`, `inbox` prints `host=<name>` beside `from=` on the line, and a `host=<name>` line in `<bus>/.nova-bus/defaults` supplies it when the flag is absent, so a bench sets it once and every note from it says where it came from:
 
 ```
-nova-bus send --bus ~/bus --file ~/drafts/draft.md --as Rowan --host air --remote origin --branch main
+nova-bus send --bus ~/bus --file ~/drafts/draft.md --as <name> --host <name> --remote origin --branch main
 ```
 
 A host is one word — lower-case letters, digits, `-`, `.` and `_`, at most 40 characters — because it is printed as one space-separated field. A draft that carries its own `Host:` line keeps it, and a `--host` naming a different machine is refused rather than guessed at, the same way `--as` is against a `From:` line that names somebody else. Everything about it is optional: a note sent without it carries no `Host:` line, lists with no `host=` field, and is byte for byte the note this tool has always written. It is not part of the id.
@@ -614,7 +614,7 @@ nova-bus receipt --bus ~/bus --as Ada --note bo-abcdef012345 --remote origin --b
 **`close --before <instant>`** is the explicit opt-in bulk cutoff the `INBOX OPEN` large-list line names: every open note addressed to you and dated before the instant is closed, and everything at or after it is left open. `--dry-run` reports the split and writes nothing.
 
 ```
-nova-bus close --bus ~/bus --as Ada --before 2026-09-18T12:00:00Z --remote origin --branch main
+nova-bus close --bus ~/bus --as <name> --before <instant> --remote origin --branch main
 CLOSE OK closed=2964 kept=184 receipts=7 commit=9141bd52
 ```
 
