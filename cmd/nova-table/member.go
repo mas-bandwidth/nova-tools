@@ -10,6 +10,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/redis/go-redis/v9"
 )
 
 func (app *application) cmdMember(args []string, stdout, stderr io.Writer) int {
@@ -27,17 +28,18 @@ func (app *application) cmdMember(args []string, stdout, stderr io.Writer) int {
 	if len(pos) != 2 {
 		return refuse(stderr, verb, "wants a table and a new member ID: member create <table> <id>")
 	}
-	if code, ok := planned(stdout, fs, verb, *addr, pos); ok {
+	ctx := context.Background()
+	call := func(c redis.Cmdable) error { return ntable.MemberCreate(ctx, c, pos[0], pos[1], *write) }
+	if code, done := app.preflight(stdout, stderr, fs, verb, *addr, pos, call); done {
 		return code
 	}
-	ctx := context.Background()
 	st, c, code := app.client(ctx, verb, *addr, stderr)
 	if code != 0 {
 		return code
 	}
 	defer st.Close()
 	trips := st.CountTrips()
-	if err := ntable.MemberCreate(ctx, c, pos[0], pos[1], *write); err != nil {
+	if err := call(c); err != nil {
 		return st.refusal(stderr, verb, err)
 	}
 	fmt.Fprintf(stdout, "TABLE MEMBER CREATE table=%s member=%s trips=%d\n", pos[0], field(pos[1]), trips.N())
