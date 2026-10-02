@@ -1232,3 +1232,6 @@ internal/swarm/f2_forged_exit_test.go its one test marshalled PidRecord, a recor
 internal/swarm/d5_ratelimit_test.go its one test drove rateLimitedOutcome, the pool's finish-step 429 rewrite, which no command reaches; it is deleted
 internal/swarm/delta2_ratelimit_reap_test.go its one test drove rateLimitedOutcome and reapEnd, which no command reaches; both are deleted
 cmd/nova-swarm/fixture_guards_test.go its tests guarded the bench's add and run helpers, which drove the `add` and `run` verbs nova-swarm no longer has; the helpers and the slow tests that used them are deleted
+internal/swarm/benchsize_test.go its tests drove the bench-size doubling and launch headroom (SizeRoundHolds, MeasureWidthFromRounds, Headroom, PlanBenchLaunch), which no command reaches; they are deleted, Version8 stays
+internal/swarm/d13_refusals_test.go its one test drove CountRefusals and its refusal marks, the pool's refusals= diagnosis, which no command reaches; both are deleted
+internal/swarm/slot_holdings_test.go its one test drove SlotHoldings, the read a status verb printed, which no command reaches; it is deleted

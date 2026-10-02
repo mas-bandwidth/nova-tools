@@ -228,25 +228,6 @@ func ListSlotLeases(store string, now time.Time) ([]SlotLease, error) {
 	return out, nil
 }
 
-// SlotHoldings reports how many leases owner holds and the share it holds them
-// within. It is the read `status` prints; it never reaps or grants.
-func SlotHoldings(store, owner string, now time.Time) (held, share int, err error) {
-	_, _, shares, err := loadSlotShares(store)
-	if err != nil {
-		return 0, 0, err
-	}
-	leases, err := ListSlotLeases(store, now)
-	if err != nil {
-		return 0, 0, err
-	}
-	for _, l := range leases {
-		if l.Owner == owner {
-			held += l.Units()
-		}
-	}
-	return held, shares[owner], nil
-}
-
 // publishSlotLease stages a complete lease directory beside the slot store
 // and renames it into place, so a directory in slots/ always arrives WITH
 // its lease file already inside. The staging directory lives beside slots/,
