@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
@@ -153,5 +154,13 @@ func sopsFailed(err error, sopsPath, keyPath, filePath string) error {
 		return fmt.Errorf("sops failed: exit %d: --key %s is %s, not a recipient of %s (its recipients: %s); pass --key the private key of one of them",
 			exitCode, keyPath, pub, filePath, strings.Join(recipients, ", "))
 	}
-	return fmt.Errorf("sops failed: exit %d (transcript withheld: run 'SOPS_AGE_KEY_FILE=%s %s -d %s' to inspect)", exitCode, keyPath, sopsPath, filePath)
+	// Every path is one shell word (oneline.ShellWord), so the command runs as
+	// written. The program stands in command position after an assignment, where
+	// a bare word holding = would be read as another assignment: it is quoted.
+	prog := oneline.ShellWord(sopsPath)
+	if strings.Contains(prog, "=") && !strings.HasPrefix(prog, "'") {
+		prog = "'" + prog + "'"
+	}
+	return fmt.Errorf("sops failed: exit %d, transcript withheld (it may quote the file); to see it, run: SOPS_AGE_KEY_FILE=%s %s -d %s",
+		exitCode, oneline.ShellWord(keyPath), prog, oneline.ShellWord(filePath))
 }

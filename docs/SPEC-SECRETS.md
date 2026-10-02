@@ -932,7 +932,8 @@ shape of an API key names its provider. sops' stderr is *not* passed through raw
 against the shapes this spec knows and reported as one of our lines, and an unrecognised one is
 `sops failed: exit <n>` with the transcript **withheld** and a line telling the reader to run
 the same decrypt themselves, with the key the verb was given (`SOPS_AGE_KEY_FILE=<key> <sops>
--d <file>`; a bare `sops -d` has no identity and fails for another reason). A `--key` whose
+-d <file>`, each path one shell word, so the line runs as printed; a bare `sops -d` has no
+identity and fails for another reason). A `--key` whose
 public half is not among the file's recipients is that cause, named with the recipients that
 would open it, read from the file's own `sops:` block — the one place in this repo where a transcript is not printed
 beneath the event line, a decrypt error being the one error that can contain plaintext.

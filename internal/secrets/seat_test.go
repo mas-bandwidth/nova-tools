@@ -169,6 +169,10 @@ var sharedFakeSops string
 // that a seat's key opens exactly the files that list it.
 var sharedSopsOpensAll, sharedSopsOpensNone string
 
+// sharedSopsEchoes is a sops whose -d opens nothing and prints the identity file
+// and the file it was given, so a remedy run through sh shows the words it meant.
+var sharedSopsEchoes string
+
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "secrets-fake-sops")
 	if err != nil {
@@ -177,10 +181,12 @@ func TestMain(m *testing.M) {
 	sharedFakeSops = filepath.Join(dir, "sops")
 	sharedSopsOpensAll = filepath.Join(dir, "sops-opens-all")
 	sharedSopsOpensNone = filepath.Join(dir, "sops-opens-none")
+	sharedSopsEchoes = filepath.Join(dir, "sops-echoes")
 	for path, script := range map[string]string{
 		sharedFakeSops:      fakeSopsScript,
 		sharedSopsOpensAll:  "#!/bin/sh\nexit 0\n",
 		sharedSopsOpensNone: "#!/bin/sh\necho 'no identity matched any of the recipients' >&2\nexit 128\n",
+		sharedSopsEchoes:    "#!/bin/sh\nprintf 'key=%s\\nfile=%s\\n' \"$SOPS_AGE_KEY_FILE\" \"$2\"\nexit 128\n",
 	} {
 		if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 			panic(err)
