@@ -11,9 +11,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -487,7 +487,7 @@ func TestRunContainerPassesTheExitCodeThrough(t *testing.T) {
 	t.Parallel()
 	for _, code := range []int{0, 1, 2, 124} {
 		eng := &fakeEngine{startCode: code}
-		got, ended := runContainer(context.Background(), eng, realClock{}, []string{"run", "x"}, "nova-functional-r", time.Now().Add(time.Minute), io.Discard, io.Discard)
+		got, ended := runContainer(context.Background(), eng, []string{"run", "x"}, "nova-functional-r", time.Now().Add(time.Minute), io.Discard, io.Discard)
 		if got != code || ended != "finished" {
 			t.Errorf("exit %d came back as %d (%s)", code, got, ended)
 		}
@@ -535,8 +535,12 @@ func (h *hangingEngine) Output(ctx context.Context, args ...string) (string, err
 
 func TestRunContainerRemovesAtTheClientDeadline(t *testing.T) {
 	t.Parallel()
-	eng := &hangingEngine{killed: make(chan struct{})}
-	_, ended := runContainer(context.Background(), eng, realClock{}, []string{"run", "x"}, "nova-functional-r", time.Now().Add(50*time.Millisecond), io.Discard, io.Discard)
+	var eng *hangingEngine
+	var ended string
+	synctest.Test(t, func(*testing.T) {
+		eng = &hangingEngine{killed: make(chan struct{})}
+		_, ended = runContainer(context.Background(), eng, []string{"run", "x"}, "nova-functional-r", time.Now().Add(50*time.Millisecond), io.Discard, io.Discard)
+	})
 	if ended != "deadline" {
 		t.Errorf("ended %q, want deadline", ended)
 	}
@@ -550,7 +554,7 @@ func TestRunContainerRemovesOnInterrupt(t *testing.T) {
 	eng := &hangingEngine{killed: make(chan struct{})}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, ended := runContainer(ctx, eng, realClock{}, []string{"run", "x"}, "nova-functional-r", time.Now().Add(time.Hour), io.Discard, io.Discard)
+	_, ended := runContainer(ctx, eng, []string{"run", "x"}, "nova-functional-r", time.Now().Add(time.Hour), io.Discard, io.Discard)
 	if ended != "interrupted" {
 		t.Errorf("ended %q, want interrupted", ended)
 	}
@@ -606,7 +610,7 @@ func TestRunTierPassesTheContainersExitThroughAndChecksForLeftovers(t *testing.T
 		var stdout, stderr bytes.Buffer
 		// The prefill must finish 0 for the test container to run; the fake
 		// gives both the same code, so a red run is judged at the module step.
-		got := runTier(context.Background(), eng, c, testkit.NewClock(time.Unix(1_800_000_000, 0)), &stdout, &stderr)
+		got := runTierIn(t, eng, c, &stdout, &stderr)
 		calls := eng.argvs()
 		if code != 0 {
 			if got != exitCannotRun || !strings.Contains(stderr.String(), "module cache step ended finished with exit 2") {
@@ -646,7 +650,7 @@ func TestRunTierRefusesAnotherUsersCache(t *testing.T) {
 	t.Parallel()
 	eng, c := tierFixture(t, "502", 0)
 	var stdout, stderr bytes.Buffer
-	if got := runTier(context.Background(), eng, c, testkit.NewClock(time.Unix(1_800_000_000, 0)), &stdout, &stderr); got != exitCannotRun {
+	if got := runTierIn(t, eng, c, &stdout, &stderr); got != exitCannotRun {
 		t.Errorf("exit %d, want %d", got, exitCannotRun)
 	}
 	for _, call := range eng.argvs() {
@@ -703,16 +707,64 @@ func TestClassify(t *testing.T) {
 	}
 }
 
+// runTierIn is runTier in a synctest bubble, whose clock is fake: a deadline
+// or a pause between two listings is a step of it, never a wait.
+func runTierIn(t *testing.T, eng engine, c runConfig, stdout, stderr io.Writer) (code int) {
+	t.Helper()
+	synctest.Test(t, func(*testing.T) { code = runTier(context.Background(), eng, c, stdout, stderr) })
+	return code
+}
+
+// deadlineEngine is a fakeEngine whose start number hang (from 0) never
+// returns until its container is removed, and which notes the bubble's time
+// of that start and of that removal.
+type deadlineEngine struct {
+	*fakeEngine
+	hang, starts     int
+	killed           chan struct{}
+	started, removed time.Time
+}
+
+func (d *deadlineEngine) Start(args []string, stdout, stderr io.Writer) (process, error) {
+	p, err := d.fakeEngine.Start(args, stdout, stderr)
+	if d.starts++; d.starts-1 != d.hang {
+		return p, err
+	}
+	d.started = time.Now()
+	return hangingProcess{killed: d.killed}, nil
+}
+
+func (d *deadlineEngine) Output(ctx context.Context, args ...string) (string, error) {
+	out, err := d.fakeEngine.Output(ctx, args...)
+	if len(args) > 0 && args[0] == "rm" && !d.started.IsZero() && d.removed.IsZero() {
+		d.removed = time.Now()
+		hangingProcess{killed: d.killed}.Kill()
+	}
+	return out, err
+}
+
 func TestRunTierClientDeadlines(t *testing.T) {
 	t.Parallel()
-	eng, c := tierFixture(t, "501", 0)
-	clk := testkit.NewClock(time.Unix(1_800_000_000, 0))
-	var stdout, stderr bytes.Buffer
-	if got := runTier(context.Background(), eng, c, clk, &stdout, &stderr); got != 0 {
-		t.Fatalf("exit %d\n%s", got, stderr.String())
+	for _, tc := range []struct {
+		step     string
+		hang     int
+		bound    func(runConfig) time.Duration
+		wantExit int
+	}{
+		{"the module step", 0, func(runConfig) time.Duration { return prefillDeadline }, exitCannotRun},
+		{"the run", 1, func(c runConfig) time.Duration { return c.deadline }, exitDeadline},
+	} {
+		fake, c := tierFixture(t, "501", 0)
+		var stdout, stderr bytes.Buffer
+		var got int
+		var eng *deadlineEngine
+		synctest.Test(t, func(*testing.T) {
+			eng = &deadlineEngine{fakeEngine: fake, hang: tc.hang, killed: make(chan struct{})}
+			got = runTier(context.Background(), eng, c, &stdout, &stderr)
+		})
+		assert.Equal(t, tc.wantExit, got, "%s: %s", tc.step, stderr.String())
+		assert.Equal(t, tc.bound(c)+clientGrace, eng.removed.Sub(eng.started), "%s: its container is removed at the bound plus the grace", tc.step)
 	}
-	want := []time.Duration{prefillDeadline + clientGrace, c.deadline + clientGrace}
-	assert.Equal(t, want, clk.Afters(), "client deadlines: want the module step's then the run's, each the bound plus the grace")
 }
 
 func TestRunTierExitCodes(t *testing.T) {
@@ -730,7 +782,7 @@ func TestRunTierExitCodes(t *testing.T) {
 		eng, c := tierFixture(t, "501", 0)
 		eng.startCodes = []int{0, tc.testCode}
 		var stdout, stderr bytes.Buffer
-		got := runTier(context.Background(), eng, c, testkit.NewClock(time.Unix(1_800_000_000, 0)), &stdout, &stderr)
+		got := runTierIn(t, eng, c, &stdout, &stderr)
 		if got != tc.wantExit || !strings.Contains(stderr.String(), "ended="+tc.wantEnded+" exit="+strconv.Itoa(tc.wantExit)+" ") {
 			t.Errorf("test container exit %d: tool exit %d, want %d ended=%s\n%s", tc.testCode, got, tc.wantExit, tc.wantEnded, stderr.String())
 		}
@@ -754,7 +806,7 @@ func TestRunTierFailsWhenAContainerIsLeft(t *testing.T) {
 			return fakeAnswer{}, false
 		}
 		var stdout, stderr bytes.Buffer
-		got := runTier(context.Background(), eng, c, testkit.NewClock(time.Unix(1_800_000_000, 0)), &stdout, &stderr)
+		got := runTierIn(t, eng, c, &stdout, &stderr)
 		if got != exitCannotRun || !strings.Contains(stderr.String(), tc.want) {
 			t.Errorf("a green run with a leftover (%v): exit %d, want %d and %s\n%s", tc.answer, got, exitCannotRun, tc.want, stderr.String())
 		}
@@ -784,17 +836,19 @@ func (w orderWriter) Write(p []byte) (int, error) {
 func TestRunContainerRemovesBeforeItLogs(t *testing.T) {
 	t.Parallel()
 	for _, interrupt := range []bool{false, true} {
-		eng := &hangingEngine{killed: make(chan struct{})}
-		ctx, cancel := context.WithCancel(context.Background())
-		deadline := time.Now().Add(time.Hour)
-		if interrupt {
+		synctest.Test(t, func(t *testing.T) {
+			eng := &hangingEngine{killed: make(chan struct{})}
+			ctx, cancel := context.WithCancel(context.Background())
+			deadline := time.Now().Add(time.Hour)
+			if interrupt {
+				cancel()
+			} else {
+				deadline = time.Now().Add(20 * time.Millisecond)
+			}
+			w := orderWriter{t: t, eng: eng}
+			runContainer(ctx, eng, []string{"run", "x"}, "nova-functional-r", deadline, w, w)
 			cancel()
-		} else {
-			deadline = time.Now().Add(20 * time.Millisecond)
-		}
-		w := orderWriter{t: t, eng: eng}
-		runContainer(ctx, eng, realClock{}, []string{"run", "x"}, "nova-functional-r", deadline, w, w)
-		cancel()
+		})
 	}
 }
 
@@ -810,7 +864,7 @@ func TestFreshGocacheIsAnAnonymousVolume(t *testing.T) {
 	eng, tc := tierFixture(t, "501", 0)
 	tc.freshGocache = true
 	var stdout, stderr bytes.Buffer
-	if got := runTier(context.Background(), eng, tc, testkit.NewClock(time.Unix(1_800_000_000, 0)), &stdout, &stderr); got != 0 {
+	if got := runTierIn(t, eng, tc, &stdout, &stderr); got != 0 {
 		t.Fatalf("exit %d\n%s", got, stderr.String())
 	}
 	for _, call := range eng.argvs() {
@@ -862,9 +916,14 @@ func (s *stuckEngine) Output(ctx context.Context, args ...string) (string, error
 func TestLeftoversHaveOneBudget(t *testing.T) {
 	t.Parallel()
 	eng := &stuckEngine{}
-	start := time.Now()
-	n := leftovers(eng, realClock{}, "run1", 100*time.Millisecond)
-	if took := time.Since(start); took > time.Second {
+	var n int
+	var took time.Duration
+	synctest.Test(t, func(*testing.T) {
+		start := time.Now()
+		n = leftovers(eng, "run1", 100*time.Millisecond)
+		took = time.Since(start)
+	})
+	if took > time.Second {
 		t.Errorf("a hung runtime held the leftover check %s past a 100ms budget", took)
 	}
 	if n != -1 {
