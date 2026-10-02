@@ -445,8 +445,8 @@ network or a real machine.
 The release tests run entirely against fakes and temp dirs — a `fakeForge`, a `fakeSSH`, a `fakeToolchain`, a `fakeGit` — and never reach a network or a real machine; the sensitive-list, command-reference and windows-spec parity checks live in `internal/ci` and read the spec file directly.
 One numbered line per test; where one test holds several behaviours, they share its line, and the tests for drive paths and backslash folding also name, in parentheses, a second test holding the other side of the same behaviour. The dogfood gate's tests are named in the gate section. The behaviours this spec demands that no test proves yet follow, unnumbered.
 
-1. `TestCutRefusesASensitiveRangeWithoutJohnnysRead` — a cut whose range touched a sensitive prefix is refused (exit 2) and names the paths, until `--security-read` is supplied.
-2. `TestCutWithJohnnysReadSaysSoOnItsOwnLine` — with `--security-read` the cut prints `RELEASE CUT SENSITIVE paths=<n> read=<id>` above its receipt.
+1. `TestCutRefusesASensitiveRangeWithoutASecurityRead` — a cut whose range touched a sensitive prefix is refused (exit 2) and names the paths, until `--security-read` is supplied.
+2. `TestCutWithASecurityReadSaysSoOnItsOwnLine` — with `--security-read` the cut prints `RELEASE CUT SENSITIVE paths=<n> read=<id>` above its receipt.
 3. `TestCutOfAnOrdinaryRangeSaysNothingAboutSensitivePaths` — an ordinary range prints no `RELEASE CUT SENSITIVE` line.
 4. `TestSensitiveClassifiesByPrefixAndNothingElse` — classification is by directory prefix (trailing slash load-bearing) and nothing else, never by filename or substring.
 5. `TestTheSensitivePathListIsTheSameInTheCodeAndInTheSpec` — the list in `internal/release/sensitive.go` and the spec block stay the same list in the same order.
