@@ -1843,6 +1843,12 @@ func (a *app) cmdBrief(args []string, stdout, stderr io.Writer) int {
 	if code := a.holdBrief("brief", *brief, *rules, c, &st, stderr); code != 0 {
 		return code
 	}
+	if st == nil { // --rules named the rule set: briefRules opened no store
+		var err error
+		if st, err = a.store(*c); err != nil {
+			return refuse(stderr, "brief", err.Error())
+		}
+	}
 	c.says = append(c.says, unfilledSays("the brief of "+ids[0], *brief)...)
 	return a.runStep("brief", *c, st, store.BriefStep(sprint.BriefReq{ID: ids[0], Brief: *brief, Who: c.actor}), stdout, stderr)
 }
