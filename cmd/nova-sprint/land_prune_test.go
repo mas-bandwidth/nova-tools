@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -18,8 +19,20 @@ import (
 func pruneRig(t *testing.T) *landRig {
 	t.Helper()
 	r := newLandRig(t)
-	r.branch = func(id string) string { return "sprint/" + id }
+	r.branch = func(id string) string { return sprint.BranchOf("", 0, sprint.WorkCardID(id, 1), 1) }
 	return r
+}
+
+// pruneTwo queues real canonical launch branches, rather than hand-named aliases.
+func pruneTwo(r *landRig) map[string]string {
+	r.t.Helper()
+	r.ok("add --stream s1 --count 2")
+	heads := map[string]string{}
+	for _, id := range []string{"s1-1", "s1-2"} {
+		heads[id] = r.head(strings.TrimPrefix(r.branch(id), "sprint/"), "main", id+".txt", id+"\n")
+	}
+	r.queued(heads, "s1-1", "s1-2")
+	return heads
 }
 
 // originBranches is origin's branches, sorted.
@@ -50,7 +63,7 @@ func pushTrace(t *testing.T, trace string) []string {
 func TestLandDeletesTheLandedCardsBranchesFromOriginAfterTheBatch(t *testing.T) {
 	t.Parallel()
 	r := pruneRig(t)
-	landTwo(r)
+	heads := pruneTwo(r)
 	r.git(r.worker, "push", "-q", "origin", "refs/remotes/origin/main:refs/heads/other")
 	trace := filepath.Join(r.dir, "git-trace")
 	r.a.gitEnv = append(slices.Clone(r.env), "GIT_TRACE="+trace)
@@ -64,13 +77,13 @@ func TestLandDeletesTheLandedCardsBranchesFromOriginAfterTheBatch(t *testing.T) 
 	tip := r.git(r.remote, "rev-parse", "main")
 	assert.Equal(t, []string{
 		"--porcelain origin " + tip + ":refs/heads/main",
-		"--porcelain --no-verify origin :refs/heads/sprint/s1-1 :refs/heads/sprint/s1-2",
+		"--porcelain --no-verify --force-with-lease=refs/heads/" + r.branch("s1-1") + ":" + heads["s1-1"] + " --force-with-lease=refs/heads/" + r.branch("s1-2") + ":" + heads["s1-2"] + " -- origin :refs/heads/" + r.branch("s1-1") + " :refs/heads/" + r.branch("s1-2"),
 	}, pushTrace(t, trace), "the landing's push, then one delete push naming each card's branch")
 	assert.Zero(t, r.a.prune.waiting())
 
 	// --json carries the queued count on the batch and the cleanup beside the items
 	r = pruneRig(t)
-	landTwo(r)
+	pruneTwo(r)
 	var v struct {
 		Items []landBatch   `json:"items"`
 		Prune []pruneResult `json:"prune"`
@@ -90,7 +103,7 @@ func TestLandDeletesTheLandedCardsBranchesFromOriginAfterTheBatch(t *testing.T) 
 func TestTheLandLoopDeletesBranchesLazilyBetweenRounds(t *testing.T) {
 	t.Parallel()
 	r := pruneRig(t)
-	landTwo(r)
+	pruneTwo(r)
 	trace := filepath.Join(r.dir, "git-trace")
 	r.a.gitEnv = append(slices.Clone(r.env), "GIT_TRACE="+trace)
 	more := []string{"--repo-dir", r.clone, "--base", "main"}
@@ -99,7 +112,7 @@ func TestTheLandLoopDeletesBranchesLazilyBetweenRounds(t *testing.T) {
 	assert.Contains(t, out.String(), "LAND OK stream=s1 cards=2")
 	assert.Contains(t, out.String(), "branches_queued=2")
 	assert.NotContains(t, out.String(), "PRUNE")
-	assert.Equal(t, []string{"main", "sprint/s1-1", "sprint/s1-2"}, r.originBranches(), "the landing's round deletes nothing")
+	assert.Equal(t, []string{"main", "sprint/s1-1.w1.g1.e0", "sprint/s1-2.w1.g1.e0"}, r.originBranches(), "the landing's round deletes nothing")
 	for _, p := range pushTrace(t, trace) {
 		assert.NotContains(t, p, " :refs/heads/", "a landing's steps hold no delete push")
 	}
@@ -118,19 +131,19 @@ func TestTheLandLoopDeletesBranchesLazilyBetweenRounds(t *testing.T) {
 func TestARefusedDeleteLeavesTheBatchLandedAndTheBranchesQueued(t *testing.T) {
 	t.Parallel()
 	r := pruneRig(t)
-	landTwo(r)
+	pruneTwo(r)
 	r.git(r.remote, "config", "receive.denyDeletes", "true")
 	code, out, errs := r.do("land --repo-dir " + r.clone + " --base main")
 	assert.Equal(t, 0, code, out+errs)
 	assert.Contains(t, out, "LAND OK stream=s1 cards=2")
 	assert.Contains(t, out, "PRUNE FAILED branches=0 refs=0 dir="+r.clone)
-	assert.Contains(t, out, "left=2 reason=origin refused the delete of sprint/s1-1")
+	assert.Contains(t, out, "left=2 reason=origin refused the delete of sprint/s1-1.w1.g1.e0")
 	assert.Contains(t, out, "; they stay on origin\n")
 	assert.Equal(t, map[string]string{"s1-1": "landed/merged", "s1-2": "landed/merged"}, r.places("s1-1", "s1-2"))
-	assert.Equal(t, []string{"main", "sprint/s1-1", "sprint/s1-2"}, r.originBranches())
+	assert.Equal(t, []string{"main", "sprint/s1-1.w1.g1.e0", "sprint/s1-2.w1.g1.e0"}, r.originBranches())
 
 	r = pruneRig(t)
-	landTwo(r)
+	pruneTwo(r)
 	r.git(r.remote, "config", "receive.denyDeletes", "true")
 	more := []string{"--repo-dir", r.clone, "--base", "main"}
 	var lines bytes.Buffer
@@ -149,7 +162,7 @@ func TestARefusedDeleteLeavesTheBatchLandedAndTheBranchesQueued(t *testing.T) {
 	assert.Equal(t, []string{"main"}, r.originBranches())
 
 	// a branch origin no longer holds is deleted all the same
-	r.a.prune.add(r.clone, "main", []string{"sprint/gone"})
+	r.a.prune.add(r.clone, "main", []pruneBranch{{Branch: "sprint/gone", Head: r.git(r.remote, "rev-parse", "main")}})
 	res := r.a.flushPrune(context.Background(), false)
 	require.Len(t, res, 1)
 	assert.Equal(t, "ok", res[0].Status, res[0].Reason)
@@ -163,19 +176,19 @@ func TestABatchPushedAndNotReportedKeepsItsBranches(t *testing.T) {
 	t.Parallel()
 	r := pruneRig(t)
 	r.ok("add --stream s1 --count 2")
-	r.queued(map[string]string{"s1-1": r.head("s1-1", "main", "a.txt", "a\n"), "s1-2": r.head("s1-2", "main", "b.txt", "b\n")}, "s1-1", "s1-2")
+	r.queued(map[string]string{"s1-1": r.head("s1-1.w1.g1.e0", "main", "a.txt", "a\n"), "s1-2": r.head("s1-2.w1.g1.e0", "main", "b.txt", "b\n")}, "s1-1", "s1-2")
 	r.a.beforePush = func(int) { r.ok("return s1-1 --reason 'taken back under the push'") }
 	code, out, errs := r.do("land --repo-dir " + r.clone + " --base main")
 	assert.Equal(t, 2, code)
 	assert.Contains(t, errs, "LAND FAILED stream=s1 cards=2")
 	assert.NotContains(t, out+errs, "branches_queued")
 	assert.NotContains(t, out+errs, "PRUNE")
-	assert.Equal(t, []string{"main", "sprint/s1-1", "sprint/s1-2"}, r.originBranches())
+	assert.Equal(t, []string{"main", "sprint/s1-1.w1.g1.e0", "sprint/s1-2.w1.g1.e0"}, r.originBranches())
 	r.a.beforePush = nil
 	out = r.ok("land --repo-dir " + r.clone + " --base main")
 	assert.Contains(t, out, "LAND OK stream=s1 cards=1")
 	assert.Contains(t, out, "PRUNE OK branches=1")
-	assert.Equal(t, []string{"main", "sprint/s1-1"}, r.originBranches())
+	assert.Equal(t, []string{"main", "sprint/s1-1.w1.g1.e0"}, r.originBranches())
 }
 
 // The base is never deleted, nor any branch that is not one the sprint names: a card
@@ -218,12 +231,12 @@ func TestLandNeverDeletesTheBaseOrABranchTheSprintDoesNotName(t *testing.T) {
 func TestLandDryRunDeletesNothing(t *testing.T) {
 	t.Parallel()
 	r := pruneRig(t)
-	landTwo(r)
+	pruneTwo(r)
 	out := r.ok("land --repo-dir " + r.clone + " --base main --dry-run")
 	assert.Contains(t, out, "LAND OK stream=s1 cards=2 base=main tip=- ids=s1-1..s1-2 dir="+r.clone+" branches_queued=2 dry_run=yes")
 	assert.NotContains(t, out, "PRUNE")
 	assert.Zero(t, r.a.prune.waiting())
-	assert.Equal(t, []string{"main", "sprint/s1-1", "sprint/s1-2"}, r.originBranches())
+	assert.Equal(t, []string{"main", "sprint/s1-1.w1.g1.e0", "sprint/s1-2.w1.g1.e0"}, r.originBranches())
 }
 
 // A reworked card's attempts are work cards of their own, each recording its own branch:
@@ -231,13 +244,13 @@ func TestLandDryRunDeletesNothing(t *testing.T) {
 func TestLandDeletesTheBranchOfEveryAttemptOfACard(t *testing.T) {
 	t.Parallel()
 	r := newLandRig(t)
-	r.branch = func(id string) string { return "sprint/" + id + ".w1" }
+	r.branch = func(id string) string { return sprint.BranchOf("", 0, sprint.WorkCardID(id, 1), 1) }
 	r.ok("add --stream s1 --count 1")
-	first := r.head("s1-1.w1", "main", "a.txt", "attempt 1\n")
+	first := r.head("s1-1.w1.g1.e0", "main", "a.txt", "attempt 1\n")
 	r.queued(map[string]string{"s1-1": first}, "s1-1")
 	r.ok("return s1-1 --reason 'again'")
 	r.ok("rework s1-1 --fix 'again'")
-	second := r.head("s1-1.w2", "main", "b.txt", "attempt 2\n")
+	second := r.head("s1-1.w2.g1.e0", "main", "b.txt", "attempt 2\n")
 	r.git(r.worker, "push", "-q", "origin", "refs/heads/sprint/*:refs/heads/sprint/*")
 	var q struct{ Cards []queueCard }
 	r.json("queue --as m1", &q)
@@ -250,12 +263,12 @@ func TestLandDeletesTheBranchOfEveryAttemptOfACard(t *testing.T) {
 	if q.Cards[0].Col == "ready" {
 		r.ok("take --as m1 " + w)
 	}
-	r.ok("finish --as m1 " + w + " --head " + second + " --branch sprint/s1-1.w2")
+	r.ok("finish --as m1 " + w + " --head " + second + " --branch sprint/s1-1.w2.g1.e0")
 	r.ok("ask")
 	r.ok("read --as reader-a --ok --limit 100")
 	r.ok("read --as reader-b --ok --limit 100")
 	r.ok("accept --read-ok")
-	assert.Equal(t, []string{"main", "sprint/s1-1.w1", "sprint/s1-1.w2"}, r.originBranches())
+	assert.Equal(t, []string{"main", "sprint/s1-1.w1.g1.e0", "sprint/s1-1.w2.g1.e0"}, r.originBranches())
 	out := r.ok("land --repo-dir " + r.clone + " --base main")
 	assert.Contains(t, out, "LAND OK stream=s1 cards=1")
 	assert.Contains(t, out, "branches_queued=2")
@@ -269,7 +282,7 @@ func TestLandDeletesTheBranchOfEveryAttemptOfACard(t *testing.T) {
 func TestTheCleanupRemovesTheClonesStaleRemoteTrackingRefs(t *testing.T) {
 	t.Parallel()
 	r := pruneRig(t)
-	landTwo(r)
+	pruneTwo(r)
 	for _, b := range []string{"other", "stale"} {
 		r.git(r.worker, "push", "-q", "origin", "refs/remotes/origin/main:refs/heads/"+b)
 	}
@@ -283,6 +296,80 @@ func TestTheCleanupRemovesTheClonesStaleRemoteTrackingRefs(t *testing.T) {
 	assert.Contains(t, refs, "refs/remotes/origin/main")
 	assert.Contains(t, refs, "refs/remotes/origin/other")
 	assert.NotContains(t, refs, "refs/remotes/origin/stale")
-	assert.NotContains(t, refs, "refs/remotes/origin/sprint/s1-1")
+	assert.NotContains(t, refs, "refs/remotes/origin/sprint/s1-1.w1.g1.e0")
 	assert.Equal(t, []string{"main", "other"}, r.originBranches())
+}
+
+// Cleanup is pinned to the finished attempt, including after a refused delete:
+// a later commit or a recreated name belongs to new work and stays on origin.
+func TestPrunePreservesAdvancedAndRecreatedBranches(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"advanced", "recreated", "retry"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			r := pruneRig(t)
+			pruneTwo(r)
+			more := []string{"--repo-dir", r.clone, "--base", "main"}
+			var out bytes.Buffer
+			require.Equal(t, 0, r.a.landRound(context.Background(), "mem:0", more, &out))
+			if mode == "retry" {
+				r.git(r.remote, "config", "receive.denyDeletes", "true")
+				results := r.a.flushPrune(context.Background(), false)
+				require.Len(t, results, 1)
+				require.Equal(t, "failed", results[0].Status)
+				r.git(r.remote, "config", "receive.denyDeletes", "false")
+			}
+			branch := r.branch("s1-1")
+			if mode == "recreated" {
+				r.git(r.remote, "update-ref", "-d", "refs/heads/"+branch)
+			}
+			r.git(r.worker, "switch", "-q", branch)
+			newHead := r.commit("new-work.txt", "keep this work\n", "new work after landing")
+			r.git(r.worker, "push", "-q", "origin", "HEAD:refs/heads/"+branch)
+
+			results := r.a.flushPrune(context.Background(), false)
+
+			require.Len(t, results, 1)
+			assert.Equal(t, "failed", results[0].Status, "a stale lease cannot delete new work")
+			assert.Equal(t, 1, results[0].Left)
+			assert.Equal(t, newHead, r.git(r.remote, "rev-parse", "refs/heads/"+branch))
+			assert.Equal(t, []string{"main", branch}, r.originBranches(), "the unchanged card branch is still deleted")
+			assert.Equal(t, 1, r.a.prune.waiting(), "retry retains the original head, never adopts the new tip")
+		})
+	}
+}
+
+// A finish may name an unrelated sprint branch, but it cannot authorize its
+// deletion; even a canonical owned branch stays when another stream uses it as base.
+func TestPrunePreservesUnownedBranchesAndOtherStreamBases(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"unowned", "other stream base"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			r := pruneRig(t)
+			if mode == "unowned" {
+				owned := r.branch
+				r.branch = func(id string) string {
+					if id == "s1-1" {
+						return "sprint/unrelated"
+					}
+					return owned(id)
+				}
+			}
+			heads := pruneTwo(r)
+			branch := r.branch("s1-1")
+			if mode == "other stream base" {
+				path := filepath.Join(t.TempDir(), "guard.card")
+				require.NoError(t, os.WriteFile(path, []byte(passingBrief("REPO: "+r.remote+"\nBASE: "+branch+"\n\nWrite guard.txt.")), 0o600))
+				r.ok("add --stream s2 guard --brief-file " + path)
+			}
+
+			out := r.ok("land --stream s1 --repo-dir " + r.clone + " --base main")
+
+			assert.Contains(t, out, "branches_queued=1 branches_kept=1")
+			assert.Contains(t, out, "PRUNE OK branches=1")
+			assert.Equal(t, heads["s1-1"], r.git(r.remote, "rev-parse", "refs/heads/"+branch))
+			assert.Equal(t, []string{"main", branch}, r.originBranches())
+		})
+	}
 }

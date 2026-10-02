@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -137,6 +138,60 @@ func TestInstallPrunesOldReleasesButNeverTheOneTheBinCameFrom(t *testing.T) {
 	assert.Contains(t, o.String(), " pruned=2 prune-failed=0\n")
 	assert.Equal(t, []string{"v0.15.0-dev.a3", "v0.15.0-dev.a4", "v0.15.0-dev.a5", "v0.15.0-dev.prev", "v0.16.0"}, left(t, from))
 	assertRunnable(t, filepath.Join(bin, ToolFile("nova-bus", runtime.GOOS)))
+}
+
+// An empty bin has no previous stamp to protect its containing release. The
+// installed binaries must survive pruning by location, including through a link.
+func TestInstallPruneKeepsTheDirectoryContainingItsBin(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"direct", "symlink-target", "symlink-path", "case-alias"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if strings.HasPrefix(name, "symlink") && runtime.GOOS == "windows" {
+				t.Skip("creating symlinks requires privileges on windows")
+			}
+			from := built(t, "v0.16.0", "", "nova-bus")
+			versionDirs(t, from, "v0.15.0-dev.bin", "v0.15.0-dev.a1", "v0.15.0-dev.a2", "v0.15.0-dev.a3", "v0.15.0-dev.a4")
+			oldest := filepath.Join(from, "v0.15.0-dev.bin")
+			bin := filepath.Join(oldest, "bin")
+			if name == "symlink-path" {
+				// The caller's path lies under the old release, but its target
+				// is outside: deleting the release would break that bin path.
+				require.NoError(t, os.Symlink(t.TempDir(), bin))
+			} else {
+				require.NoError(t, os.Mkdir(bin, 0o755))
+			}
+			// Adding bin changes the parent's mtime: restore it as the oldest.
+			old := time.Now().Add(-48 * time.Hour)
+			require.NoError(t, os.Chtimes(oldest, old, old))
+			switch name {
+			case "symlink-target":
+				link := filepath.Join(t.TempDir(), "bin")
+				require.NoError(t, os.Symlink(bin, link))
+				bin = link
+			case "case-alias":
+				alias := filepath.Join(from, strings.ToUpper(filepath.Base(oldest)))
+				realInfo, err := os.Stat(oldest)
+				require.NoError(t, err)
+				aliasInfo, err := os.Stat(alias)
+				if os.IsNotExist(err) {
+					t.Skip("volume does not resolve case aliases")
+				}
+				require.NoError(t, err)
+				if !os.SameFile(realInfo, aliasInfo) {
+					t.Skip("case spelling names a different directory")
+				}
+				bin = filepath.Join(alias, "bin")
+			}
+			var out, errs bytes.Buffer
+			code := Run("nova-update", []string{"install", "--from", from, "--version", "v0.16.0", "--bin", bin}, &out, &errs,
+				Deps{VersionOf: func(context.Context, string) (string, error) { return "", os.ErrNotExist }})
+			require.Equal(t, 0, code, errs.String())
+			assertRunnable(t, filepath.Join(bin, ToolFile("nova-bus", runtime.GOOS)))
+			assert.Equal(t, []string{"v0.15.0-dev.a2", "v0.15.0-dev.a3", "v0.15.0-dev.a4", "v0.15.0-dev.bin", "v0.16.0"}, left(t, from))
+			assert.Contains(t, out.String(), " pruned=1 prune-failed=0\n")
+		})
+	}
 }
 
 func TestInstallStandsWhenAnOldReleaseCannotBeRemoved(t *testing.T) {

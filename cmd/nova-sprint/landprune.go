@@ -29,6 +29,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // PruneEvery is how many queued branches make the land loop clean up between two busy rounds.
@@ -88,13 +89,26 @@ func (l *lander) tag(ctx context.Context, b *landBatch, cards []landCard) {
 	}
 	l.a.serial.Lock()
 	works, err := l.st.Records(ctx, sprint.Fleet, ids)
+	var bases []string
+	if err == nil {
+		var snapshot *sprint.Snapshot
+		snapshot, err = l.st.Load(ctx, []string{sprint.Work}, nil)
+		if err == nil {
+			bases = append(bases, b.Base)
+			for _, primary := range snapshot.Work.Cards() {
+				if base := swarm.ReadCardBase([]byte(primary.F("brief"))).Ref; base != "" {
+					bases = append(bases, base)
+				}
+			}
+		}
+	}
 	l.a.serial.Unlock()
 	if err != nil {
 		p.Why = "the cards' work records could not be read (" + oneline.Err(err) + "); their branches stay on origin"
 		return
 	}
 	slices.SortFunc(works, func(x, y *sprint.Card) int { return strings.Compare(x.ID, y.ID) })
-	var branches []string
+	var branches []pruneBranch
 	for _, w := range works {
 		branch := w.F("branch")
 		if branch == "" {
@@ -104,8 +118,19 @@ func (l *lander) tag(ctx context.Context, b *landBatch, cards []landCard) {
 			p.Kept = append(p.Kept, w.ID+": "+why)
 			continue
 		}
-		if !slices.Contains(branches, branch) {
-			branches = append(branches, branch)
+		if slices.Contains(bases, branch) {
+			p.Kept = append(p.Kept, w.ID+": its branch "+branch+" is a stream base")
+			continue
+		}
+		expected := sprint.BranchOf(l.st.Names.Prefix, l.epoch, w.ID, w.Int("gen"))
+		head := sprint.PushedHead(w)
+		if branch != expected || head == "" {
+			p.Kept = append(p.Kept, w.ID+": its branch or head does not prove ownership of "+expected)
+			continue
+		}
+		pin := pruneBranch{Branch: branch, Head: head}
+		if !slices.Contains(branches, pin) {
+			branches = append(branches, pin)
 		}
 	}
 	p.Queued = len(branches)
@@ -115,6 +140,9 @@ func (l *lander) tag(ctx context.Context, b *landBatch, cards []landCard) {
 	}
 	if !l.dry && p.Queued > 0 {
 		l.a.prune.add(b.Dir, b.Base, branches)
+		for _, base := range bases {
+			l.a.prune.add(b.Dir, base, nil)
+		}
 	}
 }
 
@@ -126,16 +154,20 @@ type pruneQueue struct {
 	retryAt time.Time // after a failed cleanup, the loop waits until then
 }
 
+// pruneBranch pins the recorded successful attempt's branch and head. Cleanup
+// never adopts a newer remote tip (docs/SPEC-SPRINT.md, land).
+type pruneBranch struct{ Branch, Head string }
+
 // pruneDir is one clone's waiting branches, and the bases landed in it: their
 // remote-tracking refs are the landing's own. A clone queued with no branch is owed a
 // look at its remote-tracking refs.
 type pruneDir struct {
-	branches []string
+	branches []pruneBranch
 	bases    []string
 }
 
 // add queues branches of the clone dir, landed on base.
-func (q *pruneQueue) add(dir, base string, branches []string) {
+func (q *pruneQueue) add(dir, base string, branches []pruneBranch) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if q.dirs == nil {
@@ -224,7 +256,7 @@ func (a *app) flushPrune(ctx context.Context, last bool) []pruneResult {
 		d := dirs[dir]
 		start := time.Now()
 		r := pruneResult{Status: "ok", Dir: dir}
-		left, why := a.deleteBranches(ctx, dir, d.branches)
+		left, why := a.deleteBranches(ctx, dir, d.branches, d.bases)
 		r.Branches, r.Left = len(d.branches)-len(left), len(left)
 		refs, rwhy := a.tidyRefs(ctx, dir, d.bases)
 		r.Refs = refs
@@ -256,15 +288,47 @@ func (a *app) flushPrune(ctx context.Context, last bool) []pruneResult {
 
 // deleteBranches deletes branches from the clone's origin, pruneChunk to a push; left is
 // those not deleted, why the first failure. A branch origin no longer holds is deleted.
-func (a *app) deleteBranches(ctx context.Context, dir string, branches []string) (left []string, why string) {
+func (a *app) deleteBranches(ctx context.Context, dir string, branches []pruneBranch, bases []string) (left []pruneBranch, why string) {
 	for start := 0; start < len(branches); start += pruneChunk {
 		chunk := branches[start:min(start+pruneChunk, len(branches))]
-		args := []string{"push", "--porcelain", "--no-verify", "origin"}
+		listing := []string{"ls-remote", "--heads", "origin"}
 		for _, b := range chunk {
-			args = append(args, ":refs/heads/"+b)
+			listing = append(listing, "refs/heads/"+b.Branch)
 		}
-		out, err := a.pruneGit(ctx, dir, nil, args...)
+		listed, err := a.pruneGit(ctx, dir, nil, listing...)
+		if err != nil {
+			return append(left, branches[start:]...), "the branch tips could not be read: " + firstLine("", err)
+		}
+		have := map[string]string{}
+		for _, line := range strings.Split(listed, "\n") {
+			if f := strings.Fields(line); len(f) == 2 {
+				have[strings.TrimPrefix(f[1], "refs/heads/")] = f[0]
+			}
+		}
+		args := []string{"push", "--porcelain", "--no-verify"}
+		var deletes []string
 		done := map[string]bool{}
+		for _, b := range chunk {
+			if slices.Contains(bases, b.Branch) {
+				left = append(left, b)
+				if why == "" {
+					why = "the branch " + b.Branch + " is a stream base"
+				}
+				continue
+			}
+			if have[b.Branch] == "" {
+				done[b.Branch] = true
+				continue
+			}
+			args = append(args, "--force-with-lease=refs/heads/"+b.Branch+":"+b.Head)
+			deletes = append(deletes, ":refs/heads/"+b.Branch)
+		}
+		args = append(args, "--", "origin")
+		args = append(args, deletes...)
+		out := ""
+		if len(deletes) > 0 {
+			out, err = a.pruneGit(ctx, dir, nil, args...)
+		}
 		var refused []string
 		for _, line := range strings.Split(out, "\n") {
 			f := strings.Split(line, "\t")
@@ -280,7 +344,7 @@ func (a *app) deleteBranches(ctx context.Context, dir string, branches []string)
 			}
 		}
 		for _, b := range chunk {
-			if !done[b] {
+			if !done[b.Branch] && !slices.Contains(left, b) {
 				left = append(left, b)
 			}
 		}
@@ -293,7 +357,7 @@ func (a *app) deleteBranches(ctx context.Context, dir string, branches []string)
 		}
 	}
 	if len(left) > 0 && why == "" {
-		why = "the delete push named no outcome for " + strings.Join(left, ", ")
+		why = fmt.Sprintf("the delete push named no outcome for %d branches", len(left))
 	}
 	return left, why
 }
