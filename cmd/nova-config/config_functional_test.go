@@ -103,11 +103,11 @@ func TestMigrateTwiceThenTheSixVerbs(t *testing.T) {
 	out, _ = r.run(t, 0, "machine", "add", "studio", "--user", "glenn", "--seat", "studio", "--slots", "64", "--runners", "1")
 	require.True(t, strings.HasPrefix(out, "CONFIG ADD kind=machine name=studio rev=1\nNOTE machine=studio width=0: no sprint member"), "machine add: %q", out)
 	_, errs = r.run(t, 1, "machine", "add", "studio", "--user", "glenn", "--seat", "studio", "--slots", "64")
-	require.Equal(t, "nova-config machine add: machine studio exists; run: nova-config machine set studio --<field> <value>\n", errs, "duplicate machine: %q", errs)
+	require.Equal(t, "nova-config machine add REFUSED: machine studio exists; run: nova-config machine set studio --<field> <value>\n", errs, "duplicate machine: %q", errs)
 	out, _ = r.run(t, 0, "friend", "add", "rowan", "--slots", "32", "--tiers", "frontier,pro", "--roles", "builder")
 	require.Equal(t, "CONFIG ADD kind=friend name=rowan rev=2\n", out, "friend add: %q", out)
 	_, errs = r.run(t, 1, "friend", "add", "rowan", "--slots", "32", "--tiers", "frontier")
-	require.Equal(t, "nova-config friend add: friend rowan exists; run: nova-config friend set rowan --<field> <value>\n", errs, "duplicate friend: %q", errs)
+	require.Equal(t, "nova-config friend add REFUSED: friend rowan exists; run: nova-config friend set rowan --<field> <value>\n", errs, "duplicate friend: %q", errs)
 	out, _ = r.run(t, 0, "friend", "set", "rowan", "--slots", "64", "--roles", "")
 	require.Equal(t, "CONFIG SET kind=friend name=rowan rev=3 changed=roles,slots\n", out, "friend set: %q", out)
 	out, _ = r.run(t, 0, "friend", "list")
@@ -119,16 +119,16 @@ func TestMigrateTwiceThenTheSixVerbs(t *testing.T) {
 	out, _ = r.run(t, 0, "fleet", "show")
 	require.True(t, strings.HasPrefix(out, "FLEET name=fleet store=- coordinator=- created="), "fleet show: %q", out)
 	_, errs = r.run(t, 1, "fleet", "set", "--store", "space")
-	require.Equal(t, "nova-config fleet set: --store space names no machine row; run: nova-config machine list\n", errs, "fleet set naming no machine: %q", errs)
+	require.Equal(t, "nova-config fleet set REFUSED: --store space names no machine row; run: nova-config machine list\n", errs, "fleet set naming no machine: %q", errs)
 	out, _ = r.run(t, 0, "fleet", "set", "--coordinator", "studio")
 	require.Equal(t, "CONFIG SET kind=fleet name=fleet rev=4 changed=coordinator\n", out, "fleet set: %q", out)
 	// The sprint row: who coordinates; the friend it names cannot go.
 	_, errs = r.run(t, 1, "sprint", "set", "--coordinator", "nobody")
-	require.Equal(t, "nova-config sprint set: --coordinator nobody names no friend row; run: nova-config friend list\n", errs, "sprint set naming no friend: %q", errs)
+	require.Equal(t, "nova-config sprint set REFUSED: --coordinator nobody names no friend row; run: nova-config friend list\n", errs, "sprint set naming no friend: %q", errs)
 	out, _ = r.run(t, 0, "sprint", "set", "--coordinator", "rowan")
 	require.Equal(t, "CONFIG SET kind=sprint name=sprint rev=5 changed=coordinator\n", out, "sprint set: %q", out)
 	_, errs = r.run(t, 1, "friend", "remove", "rowan")
-	require.Equal(t, "nova-config friend remove: friend rowan is the --coordinator of the sprint; run: nova-config friend list\n", errs, "remove the coordinating friend: %q", errs)
+	require.Equal(t, "nova-config friend remove REFUSED: friend rowan is the --coordinator of the sprint; run: nova-config friend list\n", errs, "remove the coordinating friend: %q", errs)
 	r.run(t, 0, "sprint", "set", "--coordinator", "")
 	out, _ = r.run(t, 0, "friend", "history", "rowan")
 	lines := strings.Split(strings.TrimSpace(out), "\n")
@@ -142,7 +142,7 @@ func TestMigrateTwiceThenTheSixVerbs(t *testing.T) {
 	require.Contains(t, out, "op=remove actor=rowan", "history after remove:\n%s", out)
 	require.True(t, strings.HasSuffix(out, "CONFIG HISTORY kind=friend name=rowan changes=3\n"), "history after remove:\n%s", out)
 	_, errs = r.run(t, 1, "machine", "remove", "studio")
-	require.Equal(t, "nova-config machine remove: machine studio is the --coordinator of the fleet; run: nova-config machine list\n", errs, "remove the coordinator machine: %q", errs)
+	require.Equal(t, "nova-config machine remove REFUSED: machine studio is the --coordinator of the fleet; run: nova-config machine list\n", errs, "remove the coordinator machine: %q", errs)
 	out, _ = r.run(t, 0, "fleet", "set", "--coordinator", "")
 	require.Equal(t, "CONFIG SET kind=fleet name=fleet rev=8 changed=coordinator\n", out, "fleet clear: %q", out)
 	out, _ = r.run(t, 0, "fleet", "history")
@@ -268,7 +268,7 @@ func TestApplyEndToEnd(t *testing.T) {
 	// CONFLICT when Redis's stamp is ahead of Postgres.
 	r.client.HSet(ctx, config.DeclKey, "rev:friend", "50")
 	_, errs := r.run(t, 1, "apply", "--kind", "friend")
-	require.True(t, strings.HasPrefix(errs, "nova-config apply: CONFLICT friend: Redis holds rev 50 and this Postgres is at rev 9"), "conflict: %q", errs)
+	require.True(t, strings.HasPrefix(errs, "nova-config apply REFUSED: CONFLICT friend: Redis holds rev 50 and this Postgres is at rev 9"), "conflict: %q", errs)
 	r.client.HSet(ctx, config.DeclKey, "rev:friend", "9")
 
 	// Machines: a set is applied, a removal of a machine with no friend
@@ -373,7 +373,7 @@ func TestInventoryTimeoutFlagGovernsTheConnection(t *testing.T) {
 	for flag, again := range map[string]string{"100ms": "300ms", "250ms": "750ms"} {
 		var out, errb bytes.Buffer
 		code := run([]string{"inventory", "--timeout", flag}, &out, &errb, r.deps())
-		want := "nova-config inventory: timed out after " + flag + " waiting for the store at " + addr + " while reading the applied state; check that Redis answers there; run: nova-config inventory --timeout " + again + "\n"
+		want := "nova-config inventory REFUSED: timed out after " + flag + " waiting for the store at " + addr + " while reading the applied state; check that Redis answers there; run: nova-config inventory --timeout " + again + "\n"
 		require.Equal(t, 2, code, "--timeout %s: exit %d stdout %q stderr %q\nwant 2, nothing, %q", flag, code, out.String(), errb.String(), want)
 		require.Equal(t, "", out.String(), "--timeout %s: exit %d stdout %q stderr %q\nwant 2, nothing, %q", flag, code, out.String(), errb.String(), want)
 		require.Equal(t, want, errb.String(), "--timeout %s: exit %d stdout %q stderr %q\nwant 2, nothing, %q", flag, code, out.String(), errb.String(), want)

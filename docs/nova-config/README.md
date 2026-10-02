@@ -21,7 +21,8 @@ Three things, each a flag or a variable, none a password on a line:
 | `--pg <dsn>` | `NOVA_PG_DSN` | `postgres://nova_config@space:5432/nova`, no password in it |
 | | `NOVA_PG_PASSWORD_ENV` | the NAME of the variable holding the password (`NOVA_PG_PASSWORD` when unset) |
 | `--redis <addr>` | `NOVA_SPRINT_REDIS`, then `NOVA_REDIS_ADDR`, then the seat | the store apply writes |
-| `--as <friend>` | `NOVA_FRIEND` | who is making the change; every write records it |
+| `--as <name>` | `NOVA_FRIEND` | who is making the change; every write records it |
+| `--file <path>` | | a local JSON file in PostgreSQL's place, to try the tool with no database; exclusive with `--pg` |
 
 The password is sealed the way the Redis one is: `nova-secrets exec --only
 NOVA_PG_PASSWORD -- nova-config ...` leaves it in the environment, where a
@@ -33,13 +34,24 @@ wants.
 
 ## First run
 
-Nothing below needs a store:
+Nothing below needs a database: `--file <path>` keeps the rows in a local
+JSON file in PostgreSQL's place, with the same kinds, refusals, history and
+revisions (the strict in-memory store the tests hold to the store contract,
+saved after every write). It is never the fleet's store.
 
 ```
-nova-config kinds
-nova-config migrate --print
+nova-config migrate --file try.json
+nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --as a1 --file try.json
+nova-config machine set m1 --width 6 --as a1 --file try.json
+nova-config machine list --file try.json
+nova-config machine history m1 --file try.json
 ```
 
+Every verb's `-h` prints its flags (the ones `add` requires marked
+`required;`), its effect (an inspection, a store write, or apply's delivery
+to Redis) and a worked example that runs on the same file. `--dry-run` on
+`add`, `set`, `remove`, `apply` and `migrate` prints what the write would do
+and writes nothing; `--json` prints one JSON object of the same result.
 `kinds` prints one line per kind with its table, its fields and the fields
 `add` requires; `migrate --print` lists the migrations this binary carries.
 The executable transcript is in [TESTS.md](../TESTS.md#nova-config).
@@ -335,21 +347,24 @@ A change of prices is a row in the route's history like any other set
 
 ### Refusals
 
-One stderr line each, naming the next step:
+One stderr line each, `nova-config <verb> REFUSED: <what>; run: <next>`:
 
 ```
-nova-config machine add: machine studio exists; run: nova-config machine set studio --<field> <value>
-nova-config fleet set: --store space names no machine row; run: nova-config machine list
-nova-config friend set: friend nobody not found; run: nova-config friend add nobody --<field> <value> ...
-nova-config machine remove: machine studio is the --coordinator of the fleet; run: nova-config machine list
-nova-config friend remove: friend rowan is the --coordinator of the sprint; run: nova-config friend list
-nova-config fleet set: fleet takes no name: it is one row; want fleet set --<field> <value> ...; run: nova-config help
-nova-config loop set: loop refresh-m1 has --every 60 and --keepalive true; a loop runs every n seconds or is kept alive, so set one: --every 0 or --keepalive false; run: nova-config loop show refresh-m1
+nova-config machine add REFUSED: machine m1 exists; run: nova-config machine set m1 --<field> <value>
+nova-config fleet set REFUSED: --store m9 names no machine row; run: nova-config machine list
+nova-config friend set REFUSED: friend f9 not found; run: nova-config friend add f9 --<field> <value> ...
+nova-config machine remove REFUSED: machine m1 is the --coordinator of the fleet; run: nova-config machine list
+nova-config friend remove REFUSED: friend f1 is the --coordinator of the sprint; run: nova-config friend list
+nova-config route remove REFUSED: route flash-a is in the --routes of tier flash; set it out of the list first (tier set flash --routes <the rest>); run: nova-config route list
+nova-config fleet set REFUSED: fleet takes no name: it is one row; want fleet set --<field> <value> ...; run: nova-config fleet set -h
+nova-config loop set REFUSED: loop refresh-m1 has --every 60 and --keepalive true; a loop runs every n seconds or is kept alive, so set one: --every 0 or --keepalive false; run: nova-config loop show refresh-m1
+nova-config machine list REFUSED: unknown flag --jsno (nearest: --json); this verb takes --file, --json, --pg, --redis; run: nova-config machine list -h
 ```
 
 Exit 1 is the store saying no; exit 2 is an invocation that could not run
 (a missing flag, a bad value, a store that did not answer), and its line
-ends `run: nova-config help`.
+ends with the verb's own help, `run: nova-config <verb> -h`. A remedy
+repeats the `--pg` or `--file` the run was given, so it pastes.
 
 ## Apply: Redis as a copy
 

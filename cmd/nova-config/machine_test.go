@@ -159,7 +159,7 @@ func TestAMachineAddedWithNoWidthIsToldItIsNoMember(t *testing.T) {
 	h := newHarness()
 	code, out, errs := h.run(t, "machine", "add", "m1", "--user", "u", "--seat", "s", "--slots", "8", "--pg", dsn, "--as", "a1")
 	require.Equal(t, 0, code, errs)
-	assert.Equal(t, "CONFIG ADD kind=machine name=m1 rev=1\nNOTE machine=m1 width=0: no sprint member, so it is dealt no work; its width is set apart from its slots; run: nova-config machine set m1 --width <n> --as a1\n", out)
+	assert.Equal(t, "CONFIG ADD kind=machine name=m1 rev=1\nNOTE machine=m1 width=0: no sprint member, so it is dealt no work; its width is set apart from its slots; run: nova-config machine set m1 --width <n> --as a1 --pg "+dsn+"\n", out)
 	code, out, errs = h.run(t, "machine", "add", "m2", "--user", "u", "--seat", "s", "--slots", "8", "--width", "4", "--pg", dsn, "--as", "a1")
 	require.Equal(t, 0, code, errs)
 	assert.Equal(t, "CONFIG ADD kind=machine name=m2 rev=2\n", out)

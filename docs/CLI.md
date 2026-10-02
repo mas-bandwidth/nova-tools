@@ -1727,26 +1727,26 @@ nova-ci github receipt REFUSED: --conclusion wants success, failure or cancelled
 ## nova-config
 
 ```
-nova-config kinds                                                        # every kind: its table, its fields, the fields add requires
-nova-config migrate [--pg <dsn>] [--print]                               # create or upgrade schema config from the migrations in the binary; --print lists them and connects to nothing
-nova-config status [--pg <dsn>] [--redis <addr>]                         # the connection, the schema version, rows and revision per kind, and what Redis has applied
-nova-config apply [--pg <dsn>] [--redis <addr>] [--as <friend>] [--kind <kind>] [--check]   # write Postgres into Redis per kind through the runtime's own functions, compare-and-set on the revision; --check prints the plan and writes nothing
+nova-config kinds [--json]                                               # every kind: its table, its fields, the fields add requires
+nova-config migrate [--pg <dsn> | --file <path>] [--print] [--dry-run] [--json]   # create or upgrade schema config (or make the --file); --print lists the migrations and connects to nothing; --dry-run lists the ones it would apply
+nova-config status [--pg <dsn> | --file <path>] [--redis <addr>] [--json]         # the store, the schema version, rows and revision per kind, and what Redis has applied
+nova-config apply [--pg <dsn> | --file <path>] [--redis <addr>] [--as <name>] [--kind <kind>] [--dry-run] [--json]   # write the rows into Redis per kind through the runtime's own functions, compare-and-set on the revision; --dry-run (or --check) prints the plan and writes nothing
 nova-config inventory [--redis <addr> | --fixture <file>] [--list | --host <name>] [--timeout <duration>] # print an Ansible dynamic JSON inventory of the applied state (Redis, never Postgres); --list is the default, --host prints one machine
-nova-config <kind> add <name> --<field> <value> ... --as <friend>        # insert a row; a duplicate name is refused with the set to run
-nova-config <kind> set <name> --<field> <value> ... --as <friend>        # update the fields named
-nova-config <kind> remove <name> --as <friend>                           # delete the row
-nova-config <kind> list                                                  # one typed line per row
-nova-config <kind> show <name>                                           # one line with every field and the stamps
-nova-config <kind> history <name>                                        # every change to the row: who, when, what changed
-nova-config <kind> <verb> -h                                             # the verb's usage line and every flag it takes
+nova-config <kind> add <name> --<field> <value> ... --as <name> [--dry-run] [--json]   # insert a row; a duplicate name is refused with the set to run; --dry-run prints CONFIG DRY-RUN and writes nothing
+nova-config <kind> set <name> --<field> <value> ... --as <name> [--dry-run] [--json]   # update the fields named
+nova-config <kind> remove <name> --as <name> [--dry-run] [--json]        # delete the row
+nova-config <kind> list [--json]                                         # one typed line per row
+nova-config <kind> show <name> [--json]                                  # one line with every field and the stamps
+nova-config <kind> history <name> [--json]                               # every change to the row: who, when, what changed
+nova-config <kind> <verb> -h                                             # the verb's flags (required ones marked), its effect and a worked example
 nova-config machine list|show <name> [--redis <addr>]                    # with a Redis, each line ends in the machine's live measured facts from its beat (os, arch, cores, memory_gb, beat=<t> or beat=none)
-nova-config machine width <name> [--pg <dsn>] [--json]                  # the width of the sprint's member on the machine: the row's width field (machine set <name> --width <n>), what nova-sprint fleet sync sets; above 0 it is a member; no Redis
-nova-config machine self [--check] [--pg <dsn>]                          # this machine's own name (NOVA_MACHINE, else the tailnet's name, else the hostname's first label); --check exits 2 when it is no machine row, 3 when unreadable
-nova-config fleet set --store <m> --coordinator <m> --as <friend>       # the one fleet row: no name, no add, remove or list
-nova-config sprint set --coordinator <friend> --as <friend>              # the one sprint row: who coordinates; set it to hand over
+nova-config machine width <name> [--pg <dsn> | --file <path>] [--json]  # the width of the sprint's member on the machine: the row's width field (machine set <name> --width <n>), what nova-sprint fleet sync sets; above 0 it is a member; no Redis
+nova-config machine self [--check] [--json]                              # this machine's own name (NOVA_MACHINE, else the tailnet's name, else the hostname's first label); --check exits 2 when it is no machine row, 3 when unreadable
+nova-config fleet set --store <m> --coordinator <m> --as <name>         # the one fleet row: no name, no add, remove or list
+nova-config sprint set --coordinator <friend> --as <name>                # the one sprint row: who coordinates; set it to hand over
 nova-config fleet|sprint show|history                                    # the one row, its stamps, its changes
-nova-config loop add <name> --machine <m> --argv '["/path/prog","--flag","v"]' (--every <seconds> | --keepalive true) [--seat <seat> --keys <NAME,...>] [--width <n>] [--enabled false] --as <friend>   # a supervised loop on one machine: the command as a JSON array, the secrets by name from the seat, every n seconds or kept alive
-nova-config loop set|remove|list|show|history                             # the one grammar, as for every kind; machine show <m> names the machine's loops (loops=<a,b>)
+nova-config loop add <name> --machine <m> --argv '["/path/prog","--flag","v"]' (--every <seconds> | --keepalive true) [--seat <seat> --keys <NAME,...>] [--width <n>] [--enabled false] --as <name>   # a supervised loop on one machine: the command as a JSON array, the secrets by name from the seat, every n seconds or kept alive; --width is the command's --width
+nova-config loop set|remove|list|show|history                             # the one grammar, as for every kind; loop show prints command=, the words the unit runs; machine show <m> names the machine's loops (loops=<a,b>)
 nova-config route add <name> --tier flash|pro --provider <p> --model <m> --deadline <seconds> [--tokens <n>] [--enabled false] --as <friend>   # one way to run a model tier: the harness runs <provider>/<model>; frontier cards escalate to the coordinator and are never dealt from routes
 nova-config route set <name> --price_input <usd> --price_cache_read <usd> --price_cache_write <usd> --price_output <usd> [--reasoning_as_output false] [--long_context <tokens> --price_input_long <usd> --price_output_long <usd>] [--price_request <usd>] [--billing metered|plan] [--gateway_percent <pct>] [--price_source <text>] [--price_as_of YYYY-MM-DD] --as <friend>   # the route's price sheet, optional: USD per million tokens of each class, each a decimal kept exactly; a route with none prices no card
 nova-config tier set flash|pro --routes <route,route,...> --as <friend>   # the tier's route array: the deal takes routes[index mod len] for each card of the tier, the index a uint64 counter on the fleet table; a route named twice takes two turns
@@ -1758,26 +1758,29 @@ nova-config route set|remove|list|show|history                            # the 
 ### First run
 
 ```sh
-nova-config kinds
-nova-config migrate --print
+nova-config migrate --file try.json
+nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --as a1 --file try.json
+nova-config machine set m1 --width 6 --as a1 --file try.json
+nova-config machine list --file try.json
+nova-config machine history m1 --file try.json
 ```
 
-Neither needs a store. `kinds` prints one `CONFIG KIND` line per kind with its table, its fields in the order every line prints them, and the fields `add` requires; `migrate --print` lists the migrations this binary carries. The executable transcript is in [TESTS.md](TESTS.md#nova-config).
+None needs a database: `--file <path>` keeps the rows in a local JSON file in PostgreSQL's place, with the same kinds, refusals, history and revisions (it is the strict in-memory store the tests hold to the store contract, saved after every write), so every verb but `apply`'s write runs on it. `migrate --file` makes the file; each write prints `CONFIG ADD|SET` and its history id; `list` prints the row; `history` prints each change with who made it and when. Every verb's `-h` prints its flags, its effect and a worked example that runs on the same file (`nova-config loop add -h`). The executable transcript is in [TESTS.md](TESTS.md#nova-config). A file is never the fleet's store: the runtime tools read PostgreSQL.
 
-The real first run needs a Postgres and a Redis — local prerequisites: a throwaway local Postgres on `127.0.0.1:5432` and a local Redis on `127.0.0.1:6379` — so there is no `quickstart`: a verb that made a store nobody asked for would write state on the way to a demonstration. With them running:
+The fleet's store is a Postgres, and `apply` needs a Redis (a throwaway local Postgres on `127.0.0.1:5432` and a local Redis on `127.0.0.1:6379` will do), so there is no `quickstart`: a verb that made a store nobody asked for would write state on the way to a demonstration. With them running:
 
 ```sh
 export NOVA_PG_DSN=postgres://nova_config@127.0.0.1:5432/nova
 nova-config migrate
-nova-config machine add studio --user glenn --seat studio --slots 64 --width 32 --as rowan
-nova-config fleet set --store studio --coordinator studio --as rowan
-nova-config friend add rowan --slots 32 --tiers frontier,pro --roles builder --as rowan
-nova-config sprint set --coordinator rowan --as rowan
-nova-config apply --check --redis 127.0.0.1:6379
-nova-config apply --redis 127.0.0.1:6379 --as rowan
+nova-config machine add m1 --user nova --seat s1 --slots 64 --width 32 --as a1
+nova-config fleet set --store m1 --coordinator m1 --as a1
+nova-config friend add f1 --slots 32 --tiers frontier,pro --roles builder --as a1
+nova-config sprint set --coordinator f1 --as a1
+nova-config apply --dry-run --redis 127.0.0.1:6379
+nova-config apply --redis 127.0.0.1:6379 --as a1
 ```
 
-**What the flags want.** `--pg` is `postgres://user@host:port/db` with no password in it (env `NOVA_PG_DSN`); the password is read from the variable `NOVA_PG_PASSWORD_ENV` names (`NOVA_PG_PASSWORD` when unset), never from the line, and a `--pg` carrying one is refused. `--redis` is `host:port` (env `NOVA_SPRINT_REDIS`, then `NOVA_REDIS_ADDR`, then the seat's address). `--as` is the friend making the change (env `NOVA_FRIEND`), required on every write (omitted on `apply --check`) and recorded in `config.history`. A name is lower-case letters, digits and dashes. `add` needs every required field (`kinds` names them) and refuses a value outside its type, every problem in one line; `set` changes only the fields named. A run missing several flags names all of them at once; a typo is one line naming the door (`run: nova-config help`).
+**What the flags want.** `--pg` is `postgres://user@host:port/db` with no password in it (env `NOVA_PG_DSN`); the password is read from the variable `NOVA_PG_PASSWORD_ENV` names (`NOVA_PG_PASSWORD` when unset), never from the line, and a `--pg` carrying one is refused. `--file <path>` stands in for it and the two are exclusive. `--redis` is `host:port` (env `NOVA_SPRINT_REDIS`, then `NOVA_REDIS_ADDR`, then the seat's address). `--as` is the name a write is recorded under (env `NOVA_FRIEND`), required on every write (omitted on `apply --dry-run`) and recorded in `config.history`. A name is lower-case letters, digits and dashes. `add` needs every required field (its `-h` marks them `required:`) and refuses a value outside its type, every problem in one line; `set` changes only the fields named. `--dry-run` on `add`, `set` and `remove` prints `CONFIG DRY-RUN op=<op> kind=<k> name=<n> actor=<a> wrote=nothing` with the fields as `history` would print them, from the same checks, and writes nothing; `--json` on every verb but `inventory` (already JSON) prints one object in `internal/tool`'s shape. A run missing several flags names all of them at once; an unknown flag names the flags the verb takes and the nearest one.
 
 **Ansible inventory.** `inventory` reads the applied state, the Redis view `apply` writes, and never Postgres: what the fleet plays converge machines to is what the running tools read. It makes two round trips whatever the fleet's size: the names (the machines and loops sets, the fleet row, `config:decl`), then every machine's hash, ceiling and beat and every loop's hash. It prints an Ansible dynamic JSON inventory: the groups `all` and `benches` (every machine), `coordinator`, `store` and `store_deployer` (the machines the fleet row names; `store_deployer` is the coordinator machine, whose seat loads the function library and the ACL onto the store; empty when the row names none) and `runners` (every machine with at least one runner). Every host's variables are under `_meta.hostvars`: `ansible_host`, `ansible_user`, `nova_seat`, `slots`, `runners`, `kind=machine`, `nova_os` and `nova_arch` from the machine's beat when it has one, and `nova_loops`, its loop records typed (`name`, `argv`, `seat`, `keys`, `every`, `keepalive`, `width`, `enabled`, `log`), once the loop kind has been applied (`rev:loop` in `config:decl`; before that the variable is absent, which is not an empty list). `all.vars` holds `nova_store` and `nova_config_rev`. A loop record the plays could not render a unit from (an argv that is not a JSON list, keys without a seat, both or neither of `every` and `keepalive`, a machine with no row) exits 1 naming it. `--redis` is the store (env `NOVA_SPRINT_REDIS`, then `NOVA_REDIS_ADDR`, then the seat's); `--fixture <file>` reads a YAML or JSON file of the same rows in its place and opens no store (`fleet/testdata/inventory-fixture.yml` is one), and the two are exclusive. `--list` (the default with no flag) prints all of it; because `_meta.hostvars` is there, ansible never calls `--host <name>`, which prints one machine's variables and exits 1 with the known names when no row has that name. `--list` and `--host` together are refused. `--timeout` (a Go duration, default `10s`) bounds the wait for the store; on expiry, at the connection or the read, the verb exits 2 with `timed out after <d> waiting for the store at <addr> while <stage>` and the command to repeat with a longer timeout. Env `NOVA_MACHINE` names the machine row the command runs on (an empty value counts as unset), matched by exact machine name and refused with exit 1 and the known names when no row has it; unset, the lower-cased first label of the hostname (machine names are lower-case) is matched the same way and nothing is marked local when no row has it. The matched host gets `ansible_connection=local`. Ansible's `-i` wants an executable, so a two-line wrapper carries the tool and its environment:
 
@@ -1792,9 +1795,9 @@ ANSIBLE_INVENTORY_UNPARSED_FAILED=true ansible-inventory -i ./nova-inventory --l
 
 Ansible hides a failing inventory script: when the wrapper exits non-zero (`nova-config` missing from the PATH, a `nova-config` without the verb, an unknown `NOVA_MACHINE`, a store that is down, a timeout, a loop it cannot render), `ansible-inventory` and `ansible-playbook` log a warning, use an empty inventory and exit 0, so a playbook does nothing. `ANSIBLE_INVENTORY_UNPARSED_FAILED=true` in the environment, or `[inventory] unparsed_is_failed = True` in `ansible.cfg`, makes the same run exit non-zero. The plays that read the inventory are [FLEET.md](FLEET.md)'s.
 
-**Reading it.** Every write prints `CONFIG ADD|SET|REMOVE kind=<k> name=<n> rev=<id>`, the id of its history row. `list` prints `<KIND> name=<n> <field>=<v> ...` per row and a `CONFIG LIST` count; `history` prints `HISTORY id=<n> ... op=<add|set|remove> actor=<a> at=<t>` with each changed field as `<field>=<before>><after>`. `apply` prints `APPLY ADD|SET|REMOVE kind=<k> name=<n>` per row it writes and one `CONFIG APPLY kind=<k> add=<n> set=<n> remove=<n> rev=<r> ms=<n>` per kind; `--check` prints the same plan as `CHECK` lines and `CONFIG CHECK`. `status` exits 1 with the next step when the schema is missing (`run: nova-config migrate`) or Redis is behind (`run: nova-config apply`).
+**Reading it.** Every write prints `CONFIG ADD|SET|REMOVE kind=<k> name=<n> rev=<id>`, the id of its history row. `list` prints `<KIND> name=<n> <field>=<v> ...` per row and a `CONFIG LIST` count; `history` prints `HISTORY id=<n> ... op=<add|set|remove> actor=<a> at=<t>` with each changed field as `<field>=<before>><after>`. `apply` prints `APPLY ADD|SET|REMOVE kind=<k> name=<n>` per row it writes and one `CONFIG APPLY kind=<k> add=<n> set=<n> remove=<n> rev=<r> ms=<n>` per kind; `--dry-run` (or `--check`) prints the same plan as `CHECK` lines and `CONFIG CHECK`. `status` exits 1 with the next step when the schema is missing (`run: nova-config migrate`) or Redis is behind (`run: nova-config apply`). A machine added with no `--width` is no sprint member: `add` prints a `NOTE` saying so with the `machine set <m> --width <n>` line.
 
-**Refusals.** Exit 1 is the store or Redis saying no, one stderr line naming the next step: `machine studio exists; run: nova-config machine set studio ...`, `--store space names no machine row`, `machine studio is the --coordinator of the fleet`, `friend rowan is the --coordinator of the sprint`, `CONFLICT friend: Redis holds rev 9 and this Postgres is at rev 4`, `CEILING studio: friend stella makes the sum 65 over the machine ceiling 64`, `friend emma has no beat naming a machine and the fleet names no coordinator machine to charge her slots to`. Exit 2 is an invocation that could not run (a name on a singleton is one).
+**Refusals.** Every refusal is one stderr line, `nova-config <verb> REFUSED: <what>; run: <next>`. Exit 1 is the store or Redis saying no, naming the next step: `machine m1 exists; run: nova-config machine set m1 ...`, `--store m9 names no machine row`, `machine m1 is the --coordinator of the fleet`, `friend f1 is the --coordinator of the sprint`, `CONFLICT friend: Redis holds rev 9 and this Postgres is at rev 4`, `CEILING m1: friend f2 makes the sum 65 over the machine ceiling 64`, `friend f3 has no beat naming a machine and the fleet names no coordinator machine to charge her slots to`. Exit 2 is an invocation that could not run (a name on a singleton is one, an unknown flag another), and names the verb's `-h`.
 
 ## nova-redis
 

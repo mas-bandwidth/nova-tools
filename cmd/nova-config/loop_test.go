@@ -95,7 +95,7 @@ func TestLoopVerbsEndToEndOnTheFake(t *testing.T) {
 			name: "a loop on no machine row is refused",
 			args: []string{"loop", "add", "stray", "--machine", "m9", "--argv", `["/bin/x"]`, "--every", "5"},
 			code: 1,
-			errs: "--machine m9 names no machine row",
+			errs: "--machine m9 names no machine row; run: nova-config machine list",
 		},
 		{
 			name: "remove",
@@ -144,7 +144,7 @@ func TestLoopUsageRefusalsOpenNoStore(t *testing.T) {
 		{
 			name: "a field the kind has not",
 			args: []string{"loop", "add", "l1", "--machine", "m1", "--argv", `["/bin/prog"]`, "--every", "5", "--log", "/tmp/x"},
-			errs: []string{"flag provided but not defined: -log"},
+			errs: []string{"REFUSED: unknown flag --log", "this verb takes --argv, --as"},
 		},
 	}
 	for _, tc := range cases {
