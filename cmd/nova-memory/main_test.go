@@ -903,6 +903,15 @@ func TestStatusGrammar(t *testing.T) {
 		wantFirst string // first word after the verb token
 		wantExit  int
 	}
+	// Two rows need a file the corpus does not hold: boot reads a pin that names
+	// one note, and the failed eval reads a gold whose two expectations miss on
+	// purpose so recall falls below the floor. Both are written here so that every
+	// row runs exactly the args it states.
+	dir := t.TempDir()
+	pin := filepath.Join(dir, "pin")
+	require.NoError(t, os.WriteFile(pin, []byte("notes/lantern.md\n"), 0o644))
+	badGold := filepath.Join(dir, "bad-gold.tsv")
+	require.NoError(t, os.WriteFile(badGold, []byte("# wrong on purpose\nhow often should the lantern glazing be washed\tnotes/fog-signal.md\nwhen can the relief boat land at the jetty steps\tnotes/lantern.md\n"), 0o644))
 	// verbs use their printed token: STATS, SEARCH, MEMORY (for check), VERIFY, EVAL,
 	// BOOT, QUICKSTART.
 	cases := []row{
@@ -910,15 +919,15 @@ func TestStatusGrammar(t *testing.T) {
 		{"stats refused", []string{"stats"}, "REFUSED", 2},
 		{"search ok", []string{"search", "--root", corpus, "--channels", "bm25", "--k", "1", "glazing"}, "OK", 0},
 		{"search refused", []string{"search"}, "REFUSED", 2},
-		{"check ok", []string{"check", "--root", corpus, "--channels", "bm25", "--k", "1", "-"}, "OK", 0}, // note: stdin supplied in runner for -
+		{"check ok", []string{"check", "--root", corpus, "--channels", "bm25", "--k", "1", "-"}, "OK", 0}, // The runner feeds the one candidate line on stdin, because the argument is "-".
 		{"check refused", []string{"check"}, "REFUSED", 2},
 		{"verify ok", []string{"verify", "--root", corpus, "--links", "info", "--coverage", "notes/*.md:notes/index-*.md"}, "OK", 0},
 		{"verify refused", []string{"verify"}, "REFUSED", 2},
 		{"verify failed", []string{"verify", "--root", corpus, "--links", "gate", "--coverage", "notes/*.md:notes/index-*.md"}, "FAILED", 1},
 		{"eval ok", []string{"eval", "--root", corpus, "--channels", "bm25", "--k", "3", "--floor", "0.1", exampleGold}, "OK", 0},
 		{"eval refused", []string{"eval"}, "REFUSED", 2},
-		{"eval failed", []string{"eval", "--root", corpus, "--channels", "bm25", "--k", "3", "--floor", "0.999", exampleGold}, "FAILED", 1},
-		{"boot ok", []string{"boot"}, "OK", 0}, // The runner writes the pin; boot prints BOOT OK.
+		{"eval failed", []string{"eval", "--root", corpus, "--channels", "bm25", "--k", "1", "--floor", "0.8", badGold}, "FAILED", 1},
+		{"boot ok", []string{"boot", "--root", corpus, "--pin", pin}, "OK", 0},
 		{"boot refused", []string{"boot"}, "REFUSED", 2},
 		{"quickstart ok", []string{"quickstart", "--root", corpus}, "OK", 0},
 		{"quickstart refused", []string{"quickstart"}, "REFUSED", 2},
@@ -928,24 +937,11 @@ func TestStatusGrammar(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			stdin := ""
-			args := tc.args
 			if tc.name == "check ok" {
 				stdin = "The lantern glazing is cleaned with two cloths.\n"
 			}
-			if tc.name == "boot ok" {
-				pin := filepath.Join(t.TempDir(), "pin")
-				require.NoError(t, os.WriteFile(pin, []byte("notes/lantern.md\n"), 0o644))
-				args = []string{"boot", "--root", corpus, "--pin", pin}
-			}
-			if tc.name == "eval failed" {
-				// use a gold with deliberately wrong expectations so recall low
-				gold := filepath.Join(t.TempDir(), "bad-gold.tsv")
-				content := "# wrong on purpose\nhow often should the lantern glazing be washed\tnotes/fog-signal.md\nwhen can the relief boat land at the jetty steps\tnotes/lantern.md\n"
-				require.NoError(t, os.WriteFile(gold, []byte(content), 0o644))
-				args = []string{"eval", "--root", corpus, "--channels", "bm25", "--k", "1", "--floor", "0.8", gold}
-			}
-			exit, stdout, stderr := runCLI(t, stdin, args...)
-			require.Equalf(t, tc.wantExit, exit, "exit=%d want=%d args=%q", exit, tc.wantExit, args)
+			exit, stdout, stderr := runCLI(t, stdin, tc.args...)
+			require.Equalf(t, tc.wantExit, exit, "exit=%d want=%d args=%q", exit, tc.wantExit, tc.args)
 			out := stdout + stderr
 			found := false
 			for _, line := range strings.Split(out, "\n") {
@@ -961,7 +957,7 @@ func TestStatusGrammar(t *testing.T) {
 					}
 				}
 			}
-			assert.Truef(t, found, "no %s %s line for %q; out=%q", tc.args[0], tc.wantFirst, args, out)
+			assert.Truef(t, found, "no %s %s line for %q; out=%q", tc.args[0], tc.wantFirst, tc.args, out)
 		})
 	}
 }

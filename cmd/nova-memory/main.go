@@ -1047,9 +1047,10 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 	if (given["max"] && *cap < 0) || (given["fail-max"] && *failMaxAlias < 0) {
 		// Zero already means "all". A negative ceiling is neither a number of lines nor
 		// a way of asking for every line, so it is a typo with two readings and gets
-		// neither.
+		// neither. The refusal names the value that broke the ceiling, so the alias
+		// stands for it only when the alias itself is negative.
 		v := *cap
-		if given["fail-max"] {
+		if given["fail-max"] && *failMaxAlias < 0 {
 			v = *failMaxAlias
 		}
 		refuse(stderr, " verify", fmt.Sprintf("--max must be a line ceiling of zero or more (got %d); 0 means print them all", v))
@@ -1178,8 +1179,12 @@ func cmdEval(args []string, stdout, stderr io.Writer) int {
 		bad = true
 	}
 	if (given["max"] && *cap < 0) || (given["fail-max"] && *failMaxAlias < 0) {
+		// Zero already means "all". A negative ceiling is neither a number of lines nor
+		// a way of asking for every line, so it is a typo with two readings and gets
+		// neither. The refusal names the value that broke the ceiling, so the alias
+		// stands for it only when the alias itself is negative.
 		v := *cap
-		if given["fail-max"] {
+		if given["fail-max"] && *failMaxAlias < 0 {
 			v = *failMaxAlias
 		}
 		refuse(stderr, " eval", fmt.Sprintf("--max must be a line ceiling of zero or more (got %d); 0 means print them all", v))
