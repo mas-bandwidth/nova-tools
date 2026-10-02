@@ -3,10 +3,10 @@
 // in the fleet.
 //
 // It exists because that mile was a shell script. `fleet-install-tools.sh` built
-// the tools once on hulk, cached them by sha, tarred them to each bench and
+// the tools once on hulk; cached them by sha, tarred them to each bench and
 // installed them by rename -- 30 lines of nested ssh quoting with a build, a
 // cache, a copy, an install and a verify all in one `for` loop, and no test of
-// any of it. It was written after the pit stop of 2026-09-17, where four Linux
+// any of it. It was written after a pit stop where
 // benches ran six-hour-old tools while the coordinator believed they were
 // current, and the reason that could happen is that nothing in the loop could
 // SAY what it had done: the install printed one line per bench and the line was
@@ -128,7 +128,7 @@ type Machine struct {
 // MachinesShape is the one sentence that says what the --machines file holds.
 // The help prints it and docs/SPEC-UPDATE.md carries it, because a file format
 // discoverable only from a refusal is a format nobody can write correctly the
-// first time: the dogfood pass of 2026-09-18 had to read the source for it.
+// first time the source for it.
 const MachinesShape = "one machine per line: <name>[TAB<bin>[TAB<dest>]]; blank lines and #-comments skipped; user@host allowed; the optional columns override --bin and --dest for that machine"
 
 // RemotePathsNote says the one thing about --bin and --dest that is easy to get

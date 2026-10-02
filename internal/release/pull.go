@@ -32,7 +32,7 @@ const PullNote = "pull withdraws a release that should not have shipped (a leak,
 // the release's own checksum file, which ReadSums has already refused a
 // separator in, and this is the second gate: the value is interpolated into a
 // command the far side's shell parses, so it is held to the same narrowness as
-// a remote path (Johnny's read of adopt, 2026-09-18, applied to the verb that
+// a remote path (applied to the verb that
 // deletes rather than the one that installs).
 var remoteArtifactName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.+-]*$`)
 
