@@ -60,7 +60,7 @@ func TestWaitsRefusesFixedSleep(t *testing.T) {
 	root := waitFixtureTree(t, "sleep.go.txt")
 	res, err := CheckWaits(root, "")
 	require.NoError(t, err)
-	require.False(t, res.Refused() != 1 || len(res.Findings) != 1, "a fixed sleep over 100ms is one refusal, got %d: %+v", res.Refused(), res.Findings)
+	require.True(t, res.Refused() == 1 && len(res.Findings) == 1, "a fixed sleep over 100ms is one refusal, got %d: %+v", res.Refused(), res.Findings)
 	f := res.Findings[0]
 	assert.Equal(t, "sleep", f.Kind, "kind = %q, want sleep", f.Kind)
 	assert.Equal(t, WaitRemedySleep, f.Remedy, "remedy = %q, want %q", f.Remedy, WaitRemedySleep)
@@ -76,7 +76,7 @@ func TestWaitsRefusesShortBound(t *testing.T) {
 	root := waitFixtureTree(t, "bound.go.txt")
 	res, err := CheckWaits(root, "")
 	require.NoError(t, err)
-	require.False(t, res.Refused() != 1 || len(res.Findings) != 1, "a context bound under ten seconds is one refusal, got %d: %+v", res.Refused(), res.Findings)
+	require.True(t, res.Refused() == 1 && len(res.Findings) == 1, "a context bound under ten seconds is one refusal, got %d: %+v", res.Refused(), res.Findings)
 	f := res.Findings[0]
 	assert.Equal(t, "bound", f.Kind, "kind = %q, want bound", f.Kind)
 	assert.Equal(t, WaitRemedyBound, f.Remedy, "remedy = %q, want %q", f.Remedy, WaitRemedyBound)
@@ -92,7 +92,7 @@ func TestWaitsRefusesElapsedAssertion(t *testing.T) {
 	root := waitFixtureTree(t, "elapsed.go.txt")
 	res, err := CheckWaits(root, "")
 	require.NoError(t, err)
-	require.False(t, res.Refused() != 1 || len(res.Findings) != 1, "an elapsed-time assertion is one refusal, got %d: %+v", res.Refused(), res.Findings)
+	require.True(t, res.Refused() == 1 && len(res.Findings) == 1, "an elapsed-time assertion is one refusal, got %d: %+v", res.Refused(), res.Findings)
 	f := res.Findings[0]
 	assert.Equal(t, "elapsed", f.Kind, "kind = %q, want elapsed", f.Kind)
 	assert.Equal(t, WaitRemedyElapsed, f.Remedy, "remedy = %q, want %q", f.Remedy, WaitRemedyElapsed)
@@ -108,7 +108,7 @@ func TestWaitsAllowsThePoll(t *testing.T) {
 	root := waitFixtureTree(t, "poll.go.txt")
 	res, err := CheckWaits(root, "")
 	require.NoError(t, err)
-	require.False(t, res.Refused() != 0 || len(res.Findings) != 0, "a poll up to NOVA_TEST_WAIT is the allowed shape, got %d refusals: %+v", res.Refused(), res.Findings)
+	require.True(t, res.Refused() == 0 && len(res.Findings) == 0, "a poll up to NOVA_TEST_WAIT is the allowed shape, got %d refusals: %+v", res.Refused(), res.Findings)
 	assert.Equal(t, 1, res.Tests, "tests = %d, want 1", res.Tests)
 }
 
@@ -120,7 +120,7 @@ func TestWaitsAllowsFakeBenchAndClock(t *testing.T) {
 	root := waitFixtureTree(t, "fakeclock.go.txt")
 	res, err := CheckWaits(root, "")
 	require.NoError(t, err)
-	require.False(t, res.Refused() != 0 || len(res.Findings) != 0, "a fake bench and clock is the allowed shape, got %d refusals: %+v", res.Refused(), res.Findings)
+	require.True(t, res.Refused() == 0 && len(res.Findings) == 0, "a fake bench and clock is the allowed shape, got %d refusals: %+v", res.Refused(), res.Findings)
 }
 
 // 6. Adding an entry to the allowlist is refused; removing one is allowed. An
@@ -140,7 +140,7 @@ func TestWaitsAllowlistGrowsRefused(t *testing.T) {
 	require.NoError(t, os.WriteFile(allow, []byte("internal/x/x_test.go:1 sleep 2026-09-17 parked here\n"), 0o644))
 	res, err = CheckWaits(root, allow)
 	require.NoError(t, err)
-	require.False(t, res.Refused() != 1 || len(res.Stale) != 1, "adding an allowlist entry that names no offender must be refused, got %d refusals %+v", res.Refused(), res.Stale)
+	require.True(t, res.Refused() == 1 && len(res.Stale) == 1, "adding an allowlist entry that names no offender must be refused, got %d refusals %+v", res.Refused(), res.Stale)
 	assert.Equal(t, WaitRemedyAllow, res.Stale[0].Remedy, "allowlist remedy = %q, want %q", res.Stale[0].Remedy, WaitRemedyAllow)
 
 	require.NoError(t, os.WriteFile(allow, []byte(""), 0o644))
@@ -213,14 +213,15 @@ func TestWaitsAllowlistSurvivesShiftedLines(t *testing.T) {
 
 	root := waitFixtureTree(t, "sleep.go.txt")
 	first, err := CheckWaits(root, "")
-	require.False(t, err != nil || len(first.Findings) != 1, "fixture must hold one fixed sleep: %v %+v", err, first.Findings)
+	require.NoError(t, err, "fixture must hold one fixed sleep: %v", err)
+	require.Len(t, first.Findings, 1, "fixture must hold one fixed sleep: %+v", first.Findings)
 	f := first.Findings[0]
 	allow := filepath.Join(t.TempDir(), "fixed-waits-allowlist.txt")
 	row := fmt.Sprintf("%s:%d sleep 2026-09-17 written when the offender stood elsewhere\n", f.File, f.Line+40)
 	require.NoError(t, os.WriteFile(allow, []byte(row), 0o644))
 	res, err := CheckWaits(root, allow)
 	require.NoError(t, err)
-	require.False(t, res.Refused() != 0 || res.Allowlisted != 1, "a row must allow its offender after the lines shift: refused=%d allowlisted=%d stale=%+v", res.Refused(), res.Allowlisted, res.Stale)
+	require.True(t, res.Refused() == 0 && res.Allowlisted == 1, "a row must allow its offender after the lines shift: refused=%d allowlisted=%d stale=%+v", res.Refused(), res.Allowlisted, res.Stale)
 
 	// A second fixed sleep in the same file has no row: the budget is one.
 	path := filepath.Join(root, filepath.FromSlash(f.File))
@@ -230,5 +231,5 @@ func TestWaitsAllowlistSurvivesShiftedLines(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte(more), 0o644))
 	res, err = CheckWaits(root, allow)
 	require.NoError(t, err)
-	require.False(t, len(res.Findings) != 1 || res.Allowlisted != 1, "one row allows one offender; the second must be refused: findings=%d allowlisted=%d", len(res.Findings), res.Allowlisted)
+	require.True(t, len(res.Findings) == 1 && res.Allowlisted == 1, "one row allows one offender; the second must be refused: findings=%d allowlisted=%d", len(res.Findings), res.Allowlisted)
 }
