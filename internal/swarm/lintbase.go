@@ -37,8 +37,7 @@ import (
 //	donewhen-test-name  DONE-WHEN names a test runner and a literal test that is
 //	               absent at base-sha, so it can be red there. A DONE-WHEN value
 //	               must name a control a test can fail; an English outcome such as
-//	               control a test could fail. "applied cleanly" and
-//	               "make preflight" are English outcomes, not controls.
+//	               "applied cleanly" or "make preflight" is not a control.
 //
 // NO EVIDENCE IS NOT NEGATIVE EVIDENCE. A check whose evidence was not handed over
 // (no repository, a base-sha the repository does not hold, no leg table, no p95

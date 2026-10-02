@@ -21,11 +21,12 @@ import (
 // a hand-written card in the colon-less form draws one, for a missing colon.
 //
 // THE COLON FORM IS REQUIRED. It is the system's canonical form and what the writers
-// of writers already write -- `cut --kind` and the manager module.
+// already write -- `cut --kind` and the manager module.
 // `RESULT: <label> sha=<sha12>` is the form to WRITE.
 //
-// The stopgap handles a renderer that still emits the other form, and the class test rewrites
-// that path and adds the class test
+// THE NO-COLON FORM IS ACCEPTED AS A STOPGAP, NOT AS A SECOND RULE. The one renderer
+// still on it is the plain `cut` template path, and the follow-up card that closes the
+// stopgap rewrites that path and adds the class test
 // `every-writer-and-reader-agrees-on-the-result-line`. Until that card lands, refusing
 // the no-colon form would refuse cards a tool writes today, so both are read --
 // and it is that class test, never a judgment here, that retires the second entry.
