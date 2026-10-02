@@ -110,11 +110,11 @@ func TestEveryRefusalSaysWhatTheInputWantsAndOneRunNamesEveryProblem(t *testing.
 	r = invoke(t)
 	wantExit(t, r, 2)
 	wantContains(t, r.stderr, "run: nova-tokens help")
-	assert.Empty(t, r.stdout, "a bare invocation wrote to stdout: %q", r.stdout)
+	assert.Equal(t, "", r.stdout, "a bare invocation wrote to stdout: %q", r.stdout)
 	// And the door opens on stdout at exit 0.
 	r = invoke(t, "help")
 	wantExit(t, r, 0)
-	assert.Empty(t, r.stderr, "`help` wrote to stderr: %q", r.stderr)
+	assert.Equal(t, "", r.stderr, "`help` wrote to stderr: %q", r.stderr)
 }
 
 // There is no quickstart verb, and docs/ONBOARDING.md point 4 wants that said rather than
