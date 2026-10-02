@@ -46,7 +46,7 @@ var verbClasses = map[string]string{
 
 	"tick": classMachine, "run": classMachine,
 
-	"queue": classRead, "inbox": classRead, "card": classRead, "log": classRead, "check": classRead, "where": classRead, "routes": classRead, "stats": classRead,
+	"queue": classRead, "inbox": classRead, "card": classRead, "log": classRead, "check": classRead, "where": classRead, "dashboard": classRead, "routes": classRead, "stats": classRead,
 	"goal show": classRead, "handover": classRead,
 
 	"coordinator": classSeat,

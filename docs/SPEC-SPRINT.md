@@ -177,7 +177,9 @@ bottom, and nothing is added to say so; a line is cut to one column less than
 the screen is wide; and where the size of the screen cannot be read (the output
 is not a terminal) the frame is written whole. `where` without `--watch` prints
 one frame, whole; `where --json --watch` prints one object a second and draws
-nothing.
+nothing. `dashboard` serves a page that is a second view of the same JSON
+([SPEC-SPRINT-DASHBOARD.md](SPEC-SPRINT-DASHBOARD.md)); the frame `where` draws stays
+the canonical view.
 
 Each table keeps its member records under a prefix of its own, so a primary's
 record in work and its record in merge are separate. The tables are named
@@ -1151,7 +1153,7 @@ read, fleet beat, friend beat) are anyone's who names the member, reader or frie
 actor is that name, whatever `--actor` or NOVA_SPRINT_ACTOR say: the record
 names the worker the verb was run as, as the server's does. The reports (merge, ci) want an
 actor; the machine's verbs (tick, run) are recorded as the machine; the reads
-(queue, inbox, card, check, where, goal show) need no actor, except `inbox
+(queue, inbox, card, check, where, dashboard, goal show) need no actor, except `inbox
 --read`, which moves the coordinator's cursor and is the coordinator's alone:
 anyone reads the inbox, and nothing another actor does hides anything from
 the coordinator. A card's and a

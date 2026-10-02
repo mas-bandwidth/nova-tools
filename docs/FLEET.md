@@ -86,6 +86,22 @@ supervisor pushes nothing twice:
 nova-config loop add inbox-push --machine bench-a --argv '["env","NOVA_SPRINT_SERVER=127.0.0.1:6390","NOVA_SPRINT_ACTOR=<coordinator>","nova-sprint","inbox","--wait","--push","<home>/<coordinator>-working/inbox/sprint-judgments","--timeout","1m"]' --keepalive true --as ada
 ```
 
+The sprint dashboard ([SPEC-SPRINT-DASHBOARD.md](SPEC-SPRINT-DASHBOARD.md)), a page
+that is a second view of `where --json`, is one more loop record on the coordinator's
+machine and a client of the server like the others: it reads the sprint at most once
+per `--every` and only while a page is open. It listens on loopback, and on this
+machine's tailnet address when the page is wanted across the fleet's private network;
+an every-network or public address is refused, because the page shows the sprint and
+checks no credential. `--logo` names the image the page shows; the file stays on the
+machine, never in the repository:
+
+```
+nova-config loop add sprint-dashboard --machine bench-a --argv '["env","NOVA_SPRINT_SERVER=127.0.0.1:6390","nova-sprint","dashboard","--listen","127.0.0.1:7390,<tailnet-address>:7390","--logo","<home>/sprint-logo.webp"]' --keepalive true --as ada
+```
+
+It exits 3 when a new build is installed under it, and its unit starts the new one;
+`curl -s 127.0.0.1:7390/healthz` prints `ok`.
+
 The friends are nova-config's friend rows: `nova-sprint friend sync --actor ada`
 copies their names into the sprint's friends table, and each friend says it is
 there by beating from its own machinery, beside its harness, every few seconds

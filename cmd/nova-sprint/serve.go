@@ -136,8 +136,9 @@ func flagWord(words []string, name string) (value string, ok bool) {
 
 // notServed are the verbs the server runs for nobody: itself (run, tick), the ones that
 // work for seconds or minutes outside the store (land's git, the driver), and fleet sync
-// and friend sync, which read the config store with their caller's own credentials.
-var notServed = []string{"run", "tick", "land", "play", "fleet sync", "friend sync"}
+// and friend sync, which read the config store with their caller's own credentials, and
+// dashboard, which serves a page until it is interrupted and reads through the server.
+var notServed = []string{"run", "tick", "land", "play", "fleet sync", "friend sync", "dashboard"}
 
 // serveFrom is the server's one step: the batch's verbs run in order, each through
 // the verb's own code with its worker as the actor, and each answered. The
