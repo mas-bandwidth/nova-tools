@@ -55,14 +55,14 @@ binaries or from this file, the runs come from receipts, and the gate is one
 exit code a release lane can call.
 
 ```
-$ nova-check dogfood record --tool nova-check --verb links --by Stella --ok \
+$ nova-check dogfood record --tool nova-check --verb links --by user --ok \
     --notes "ran it over my own self repo before the merge; found nothing" \
     --receipts ./dogfood-receipts
-DOGFOOD RECORD OK tool=nova-check verb=links by=Stella at=2026-09-18T09:00:00Z ok=yes issue=- file=./dogfood-receipts/20260918T090000Z-nova-check-links-stella-8e9b64a4.json
+DOGFOOD RECORD OK tool=nova-check verb=links by=user at=<date> ok=yes issue=- file=./dogfood-receipts/<date>-nova-check-links-user-<id>.json
 
 $ nova-check dogfood ledger --cli ./docs/CLI.md --receipts ./dogfood-receipts
 DOGFOOD tool=nova-check verb=quickstart by=nobody at=- ok=- issue=- open=0
-DOGFOOD tool=nova-check verb=links by=Stella at=2026-09-18T09:00:00Z ok=yes issue=- open=0
+DOGFOOD tool=nova-check verb=links by=user at=<date> ok=yes issue=- open=0
 DOGFOOD OK verbs=105 dogfooded=1 by-nonauthor=1 open-edges=0 unfiled=0 unmatched=0
 
 $ nova-check dogfood gate --cli ./docs/CLI.md --receipts ./dogfood-receipts --require-all
@@ -84,18 +84,10 @@ receipt** no receipt's `--closes` names, and with `--require-all` on every verb 
 naming a tool that is not under that `cmd/` is set aside and counted on
 `DOGFOOD NOTE shipped=<n> outside=<n> cmd=<dir>`, and judges nothing.
 
-**An edge is answered, not outlived.** It used to be cleared by anybody running
-the verb again later and finding nothing — so where two people dogfood the same
-verb, the second one's pass silently closed the first one's finding, unread and
-unfiled, and the row printed that second person's `ok=yes` over it. A finding is
-closed by a receipt that **names** it — `dogfood record --closes <id>`, which
-anybody may write — or by **the person who found it** running the verb again and
-finding nothing. The id is the eight hex characters the gate prints beside the
-finding and the same eight that end the receipt's filename, so a reader with an
-id can find the file:
+**An edge is what the run found.** An edge stays open until someone runs the verb again and records neither. A finding is closed by a receipt that **names** it — `dogfood record --closes <id>`, which anybody may write — or by **the person who found it** running the verb and finding nothing. The id is the eight hex characters the gate prints beside the finding and the same eight that end the receipt's filename, so a reader with an id can find the file:
 
 ```
-DOGFOOD GATE FAIL tool=nova-check verb=links: open edge receipt=8e9b64a4 from Stella at 2026-09-18T09:00:00Z (no issue filed); closed by --closes 8e9b64a4 or by Stella running it again: the verb refused a relative path
+DOGFOOD GATE FAIL tool=nova-check verb=links: open edge receipt=<id> from user at <date> (no issue filed); closed by --closes <id> or by user running it again: the verb refused a relative path
 ```
 
 A `--closes` naming an id nothing carries closes nothing and leaves the edge
@@ -160,21 +152,19 @@ those findings.
 commas. There is no default: a range checked against nobody would admit
 anybody, so the flag is required and the repository's own config is never a
 fallback. An email spelled with a bracket still inside it is refused rather
-than quietly matched against no one (#1805).
+than quietly matched against no one.
 
 `--kind` is a card kind this toolchain DECLARES, and there is no default one
 (SPEC-TOOLWORK §5 rules 3 and 6). It unlocks an allowlisted stray exception and
-nothing else, so a kind the tool does not hold used to unlock nothing and print
-`HYGIENE OK` — a clean answer about a shape of work that does not exist. It is
-now refused by name, listing the kinds there are (#1848):
+nothing else. An unknown kind is now refused by name, listing the kinds there are:
 
 ```
-$ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --kind fix-with-red-test
+$ nova-check hygiene --repo . --base main --head card --identity "contributor <contributor@example.com>" --kind fix-with-red-test
 nova-check hygiene: --kind "fix-with-red-test" is not a kind this tool declares; one of: fix-red, transcript-test, rebase, sweep, mutation-kill, guard, read, probe, text, tone, report; run: nova-check help
 ```
-
 ```
-$ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**"
+
+$ nova-check hygiene --repo . --base main --head card --identity "contributor <contributor@example.com>" --paths "sign/**"
 HYGIENE OK base=main head=card paths=sign/** findings=0
 ```
 
@@ -184,13 +174,13 @@ bound that held.
 
 Findings are capped like every listing here, and the `MORE` line carries the
 command that prints the rest — the same run with the cap lifted, quoted so it
-can be pasted (#1804):
-
+can be pasted:
 ```
-$ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**" --max 2
+
+$ nova-check hygiene --repo . --base main --head card --identity "contributor <contributor@example.com>" --paths "sign/**" --max 2
 HYGIENE FINDING reason=identity at=0a19082d2973: author someone@elsewhere.example and committer someone@elsewhere.example are not the pool's identity
 HYGIENE FINDING reason=out-of-path at=elsewhere.go: this path matches none of the card's declared PATHS:
-HYGIENE MORE kind=finding shown=2 total=4 nova-check hygiene --repo "." --base "main" --head "card" --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**" --max 0
+HYGIENE MORE kind=finding shown=2 total=4 nova-check hygiene --repo "." --base "main" --head "card" --identity "contributor <contributor@example.com>" --paths "sign/**" --max 0
 HYGIENE NO base=main head=card paths=sign/** findings=4
 ```
 
@@ -204,11 +194,11 @@ travel.
 
 ```
 $ nova-check convergence --repo mas-bandwidth/nova-tools \
-    --ledger ~/rowan-new/reports/pitstop-tests-2026-09-17.md \
-    --receipts ~/rowan-working/dogfood \
-    --retired ~/rowan-working/bin/retired/README.md \
-    --bin ~/rowan-working/bin --repo-dir . \
-    --since 2026-09-18T00:00:00Z --state ~/rowan-working/convergence.json
+    --ledger ~/reports/pitstop-tests.md \
+    --receipts ~/.dogfood \
+    --retired ~/.local/share/nova/retired-scripts.md \
+    --bin ~/.local/bin --repo-dir . \
+    --since <date> --state ~/.config/nova/convergence.json
 CONVERGENCE LANDING now=2 before=5 ratio=0.40 trend=contracting measure=rounds-per-batch batches=4 per-hour=0.25
 CONVERGENCE CLASSES now=29 before=27 ratio=1.07 trend=contracting measure=class-test-index-entries rev=04bb4e1c9f2a
 CONVERGENCE SCRIPTS now=42 before=66 ratio=0.64 trend=contracting measure=scripts-left-in-bin retired-in-window=24

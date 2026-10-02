@@ -1,13 +1,11 @@
 # Migrated counted package ledger; original row keys preserved.
-# ceiling: 67
+# ceiling: 65
 docs/CLI.md:emma 2
 docs/CLI.md:freddy 1
 docs/CLI.md:johnny 2
-docs/CLI.md:mas-bandwidth 4
 docs/CLI.md:mini 2
-docs/CLI.md:rowan 16
+docs/CLI.md:rowan 3
 docs/CLI.md:space 2
-docs/CLI.md:stella 6
 docs/CLI.md:studio 3
 docs/CONTRIBUTING.md:glenn 1
 docs/CONTRIBUTING.md:mas-bandwidth 1
