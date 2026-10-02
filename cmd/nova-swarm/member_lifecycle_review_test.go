@@ -88,22 +88,20 @@ func (lcrShaPusher) Push(member.Packet, member.Result) member.Push {
 	return member.Push{Sha: "0123456789abcdef0123456789abcdef01234567"}
 }
 
-// DEFECT: the cleaner removes the directory of a running launch that reuses an ended launch's
-// name. A launch's name is <card>.g<gen>.e<epoch>, so a card run again at the same claim reuses
-// it: here an ok finish the sprint refuses (exit 1: "its primary is not working on it") is
-// forgotten (member.go, Tick: `m.forget(id, ...)` "refused (1) too") and Ended tags the name
-// for the cleaner, and the next pass recovers the still-working card at the same gen and epoch
-// and starts it again under the same name. The cleaner works its queue apart from the pass, up
-// to cleanQueue behind, each removal a whole staged clone; when it reaches the tag,
-// clean (slotclean.go, `if !e.failed { r.removeLaunch(e.name) }`) removes the directory by name
-// without asking whether a launch of that name is live again: the new child's checkout is
-// removed under it. (prune checks r.live; clean does not.)
+// DEFECT (2026-10-01, fixed): the cleaner removed the directory of a running launch that reused an
+// ended launch's name. A launch's name is <card>.g<gen>.e<epoch>, so a card run again at the same
+// claim reuses it: here an ok finish the sprint refuses (exit 1: "its primary is not working on
+// it") is forgotten (member.go, Tick: `m.forget(id, code == 0)`), and the next pass recovers the
+// still-working card at the same gen and epoch and starts it again under the same name. Today a
+// refused report tags nothing (Ended, not accepted: the slot is kept for the sweep), and a retire
+// by name, the cleaner's or the sweep's, never removes a launch that is live again (retire asks
+// r.live under the removing lock the start claims the name under).
 func TestReviewTheCleanerKeepsTheDirectoryOfANewLaunchOfTheSameName(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	slots := filepath.Join(root, "slots")
 	require.NoError(t, os.MkdirAll(slots, 0o755))
-	nr := &nativeRunner{root: root, slots: slots, stderr: io.Discard, tagged: make(chan ended, cleanQueue)} // the cleaner is behind: its queue is worked by the test
+	nr := &nativeRunner{root: root, slots: slots, stderr: io.Discard, tagged: make(chan string, cleanQueue)} // the cleaner is behind: its queue is worked by the test
 	rn := &lcrDirRunner{nr: nr}
 	sp := &lcrSprint{finishCode: 1}
 	m := member.New(member.Config{As: "m1", Width: 1}, sp, rn, lcrShaPusher{}, &bytes.Buffer{})
@@ -112,15 +110,17 @@ func TestReviewTheCleanerKeepsTheDirectoryOfANewLaunchOfTheSameName(t *testing.T
 	require.NoError(t, err)
 	require.Len(t, rn.children, 1)
 	rn.children[0].end()
-	_, err = m.Tick(time.Unix(0, 0)) // pushed, finish refused (exit 1): forgotten, Ended, tagged
+	_, err = m.Tick(time.Unix(0, 0)) // pushed, finish refused (exit 1): forgotten, Ended not accepted: kept, nothing tagged
 	require.NoError(t, err)
 	require.Equal(t, 1, sp.finishes)
+	require.Empty(t, nr.tagged, "a refused report tags nothing")
+	require.DirExists(t, filepath.Join(slots, "c1.g1.e1"), "the slot is kept")
 	_, err = m.Tick(time.Unix(0, 0)) // the card is still working: recovered under the same name
 	require.NoError(t, err)
 	require.Equal(t, []string{"c1.g1.e1", "c1.g1.e1"}, rn.names, "the same launch name, started again")
 	require.False(t, rn.children[1].Done(), "the new launch is running")
 
-	nr.clean(<-nr.tagged) // the cleaner reaches the old launch's tag
+	nr.retire("c1.g1.e1", time.Now()) // the cleaner or the sweep reaches the name
 	assert.DirExists(t, filepath.Join(slots, "c1.g1.e1"), "the running launch's directory is never removed")
 }
 

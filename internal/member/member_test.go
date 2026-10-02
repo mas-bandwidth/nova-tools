@@ -134,11 +134,11 @@ func (r *fakeRunner) Start(p Packet) (Child, error) {
 	return c, nil
 }
 
-// Ended records each launch the member is done with, `<card>:<failed>` (Ender).
-func (r *fakeRunner) Ended(p Packet, failed bool) {
+// Ended records each launch the member is done with, `<card>:<accepted>` (Ender).
+func (r *fakeRunner) Ended(p Packet, accepted bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.ended = append(r.ended, p.Card+":"+strconv.FormatBool(failed))
+	r.ended = append(r.ended, p.Card+":"+strconv.FormatBool(accepted))
 }
 
 func (r *fakeRunner) endedLaunches() []string {
@@ -1394,9 +1394,10 @@ func TestAReaderBeatsNothing(t *testing.T) {
 }
 
 // TestTheRunnerIsToldWhenTheMemberIsDoneWithALaunch pins Ender: each launch the member is
-// done with is told to the runner once, failed when its finish failed or a read was returned
-// with no verdict, so the runner removes or keeps what the launch staged; a launch still
-// running, or ended and not yet reported, is told nothing.
+// done with is told to the runner once, accepted when the sprint took its word (a finish ok or
+// failed, a read's verdict or its return, a reap), not accepted when the sprint refused the
+// report, so the runner retires or keeps what the launch staged; a launch still running, or
+// ended and not yet reported, is told nothing.
 func TestTheRunnerIsToldWhenTheMemberIsDoneWithALaunch(t *testing.T) {
 	t.Parallel()
 	ok := Result{Ran: true, OK: true, Shaped: true, Verdict: "ok", Head: "abc123", Report: "done"}
@@ -1405,13 +1406,16 @@ func TestTheRunnerIsToldWhenTheMemberIsDoneWithALaunch(t *testing.T) {
 		reader bool
 		res    Result
 		drop   bool // the queue stops listing the card: reaped
+		refuse bool // the store refuses the report (exit 1)
 		want   []string
 	}{
-		{"a work card finished ok", false, ok, false, []string{"c1:false"}},
-		{"a work card finished failed", false, Result{Ran: true, Report: "the harness fell over"}, false, []string{"c1:true"}},
-		{"a work card reaped", false, ok, true, []string{"c1:false"}},
-		{"a read with its verdict", true, Result{Ran: true, OK: true, Verdict: "broken", Report: "a bug"}, false, []string{"c1:false"}},
-		{"a read returned with no verdict", true, Result{Ran: true, Report: "no verdict"}, false, []string{"c1:true"}},
+		{"a work card finished ok", false, ok, false, false, []string{"c1:true"}},
+		{"a work card finished failed", false, Result{Ran: true, Report: "the harness fell over"}, false, false, []string{"c1:true"}},
+		{"a work card reaped", false, ok, true, false, []string{"c1:true"}},
+		{"a work card whose finish the store refused", false, ok, false, true, []string{"c1:false"}},
+		{"a read with its verdict", true, Result{Ran: true, OK: true, Verdict: "broken", Report: "a bug"}, false, false, []string{"c1:true"}},
+		{"a read returned with no verdict", true, Result{Ran: true, Report: "no verdict"}, false, false, []string{"c1:true"}},
+		{"a read whose verdict the store refused", true, Result{Ran: true, OK: true, Verdict: "ok", Report: "fine"}, false, true, []string{"c1:false"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -1432,6 +1436,10 @@ func TestTheRunnerIsToldWhenTheMemberIsDoneWithALaunch(t *testing.T) {
 			g.r.child("c1").end(tc.res)
 			if tc.drop {
 				g.s.set("queue", 0, queueJSON(t, 7))
+			}
+			if tc.refuse {
+				g.s.set("finish", 1, "finish: the claim moved")
+				g.s.set("report", 1, "read: the claim moved")
 			}
 			_, err = g.tick(t)
 			require.NoError(t, err)
