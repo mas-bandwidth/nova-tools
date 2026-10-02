@@ -289,7 +289,7 @@ above 0 comes with both long prices, and a long price with a threshold;
 
 ### The note
 
-Glenn, 2026-10-02, on the route and width choices the first real sprint made
+The owner, 2026-10-02, on the route and width choices the first real sprint made
 by hand: "your choices, these should be saved somewhere permanent with notes
 (ideally, nova-config)" (nova-tools#5101). The route row and the machine row
 carry a `note`: free text on one line, empty by default, the last field of the

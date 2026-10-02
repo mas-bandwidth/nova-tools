@@ -337,7 +337,7 @@ var Kinds = []*Kind{
 }
 
 // SayWhy is the remedy of a disabled route with no reason: a disabled route
-// carries its reason (Glenn, 2026-10-02: the choices on route and width
+// carries its reason (the owner, 2026-10-02: the choices on route and width
 // "should be saved somewhere permanent with notes").
 const SayWhy = "say why: --note '<the measured reason>'"
 

@@ -366,16 +366,16 @@ A change of prices is a row in the route's history like any other set
 ### The note: why a route or a machine is as it is
 
 The route row and the machine row carry a `note`: one line of free text, empty
-by default, the reason a choice was made (Glenn, 2026-10-02: "your choices,
+by default, the reason a choice was made (the owner, 2026-10-02: "your choices,
 these should be saved somewhere permanent with notes (ideally, nova-config)").
 It is the last field of the row. Set it with `--note` on `add` and `set`, clear
 it with `--note ''`:
 
 ```
-nova-config route set flash-luna6-opencode --enabled false --note "2 ok of 12 on the day's record; not suited to flash work on this card shape" --as rowan
-nova-config machine set superman --note "held 1:46 PM: reads kernel-bound" --as rowan
-nova-config route show flash-luna6-opencode
-nova-config route history flash-luna6-opencode
+nova-config route set flash-a --enabled false --note "2 ok of 12 on the day's record; not suited to flash work on this card shape" --as a1
+nova-config machine set m1 --note "held 1:46 PM: reads kernel-bound" --as a1
+nova-config route show flash-a
+nova-config route history flash-a
 ```
 
 `show` prints the note whole, and `--json` does in `show` and in `list`; the list
@@ -391,7 +391,7 @@ measured reason>'`; so is `route add --enabled false` with none, and
 `--note ''` on a route that is disabled. `--enabled true` needs no note, and
 the note of a route that is on may stay or be cleared. A route disabled before
 migration 0015 has an empty note; the day's are seeded by
-`tools/notes-2026-10-02.sh` (nova-tools#5101), which skips any route that is not
+`tools/notes-2026-10-02.sh <machine>` (nova-tools#5101), which skips any route that is not
 disabled and enables nothing.
 
 ### Refusals
