@@ -10,7 +10,7 @@ import (
 // DispositionWord is the first token of a typed DISPOSITION v1 line.
 const DispositionWord = "DISPOSITION"
 
-// ReadClaim is one typed DISPOSITION v1 line (#2506 rev 4, part B):
+// ReadClaim is one typed DISPOSITION v1 line:
 //
 //	DISPOSITION who=<name> head=<hex7-40> verdict=APPROVE|HOLD [score=<0-10>] [scope="<text>"]
 //
@@ -22,7 +22,7 @@ type ReadClaim struct {
 	Verdict string // upper-cased as typed
 	Score   string
 	Scope   string
-	// Whole is the strict reading (#2550): the first token is exactly
+	// Whole is the strict reading: the first token is exactly
 	// DISPOSITION and everything after it is key=value fields with bare keys,
 	// closed quotes and no repeated key. An APPROVE must be whole; a HOLD
 	// stays lenient, so a sloppily typed HOLD still holds.
