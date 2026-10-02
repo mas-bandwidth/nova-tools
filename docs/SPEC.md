@@ -121,7 +121,7 @@ CORPUS FAIL ledger:<line>: <reason>
 CORPUS FAIL anchors=<n> floor=<n> failed=<n> shown=<n> malformed=<n> ledger=<file>
 SELFTALK OK files=<n> claims=<n> standing=0 installations=0 dated=<n>
 SELFTALK FAIL <file>:<line>: STANDING: <claim>
-SELFTALK FAIL <file>:<line>: INSTALLATION <SHAPE>: <sentence>
+SELFTALK FAIL <file>:<line>: <SHAPE>: <sentence>
 SELFTALK FAIL files=<n> claims=<n> standing=<n> installations=<n> dated=<n> shown=<n>
 SEND OK id=<id> path=<path> commit=<sha> pushed=<true|false> attempts=<n> wakes=<n> body_bytes=<n>
 SEND FAIL <path or (stdin)>: <reason>
@@ -1868,7 +1868,7 @@ of those common names as *unbannered* unless the caller says otherwise.
 
 **Says NO when** any scanned file contains a standing claim or an installation
 — one `SELFTALK FAIL <file>:<line>: STANDING: <claim>` or
-`SELFTALK FAIL <file>:<line>: INSTALLATION <SHAPE>: <sentence>` line per
+`SELFTALK FAIL <file>:<line>: <SHAPE>: <sentence>` line per
 finding on stderr, and the final `SELFTALK FAIL files=…` summary count line on
 stdout, exit 1.
 
