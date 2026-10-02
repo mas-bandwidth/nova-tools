@@ -186,7 +186,7 @@ func noCodeStagedClassifiesTheIndex(t *testing.T) {
 
 	// The audit over the SAME tree walks the disk and sees prose only.
 	aexit, astdout, _ := runCheck(t, "nocode", "--dir", dir)
-	assert.False(t, aexit != 0 || !strings.Contains(astdout, "NOCODE OK"), "the audit over prose on disk exited %d:\n%s", aexit, astdout)
+	assert.True(t, aexit == 0 && strings.Contains(astdout, "NOCODE OK"), "the audit over prose on disk exited %d:\n%s", aexit, astdout)
 }
 
 func TestNoCodeStagedRequiresDir(t *testing.T) {
@@ -454,7 +454,7 @@ func noCodeStagedRootAndBase(t *testing.T) {
 	// arriving by reference: classified from its mode alone, its OID never
 	// read -- the one matching rule this mode adds to the audit's.
 	oexit, _, ostderr := runCheck(t, "nocode", "--staged", "--dir", outer)
-	assert.False(t, oexit != 1 || !strings.Contains(ostderr, "NOCODE FAIL sub: submodule gitlink (machinery arriving by reference)"), "the staged gitlink exited %d, want 1 with the gitlink finding:\n%s", oexit, ostderr)
+	assert.True(t, oexit == 1 && strings.Contains(ostderr, "NOCODE FAIL sub: submodule gitlink (machinery arriving by reference)"), "the staged gitlink exited %d, want 1 with the gitlink finding:\n%s", oexit, ostderr)
 
 	// An unborn HEAD is gated like every later commit: the base detector
 	// reaches for the empty tree, and the shebang staged for the FIRST commit
@@ -464,7 +464,7 @@ func noCodeStagedRootAndBase(t *testing.T) {
 	mustWrite(t, first, "runner", "#!/bin/sh\necho hi\n")
 	stGit(t, first, "add", "runner")
 	exit, _, stderr = runCheck(t, "nocode", "--staged", "--dir", first)
-	require.False(t, exit != 1 || !strings.Contains(stderr, "NOCODE FAIL runner: executable script (shebang)"), "the unborn repository exited %d, want 1 with the staged shebang named:\n%s", exit, stderr)
+	require.True(t, exit == 1 && strings.Contains(stderr, "NOCODE FAIL runner: executable script (shebang)"), "the unborn repository exited %d, want 1 with the staged shebang named:\n%s", exit, stderr)
 
 	// The sha256 form: the empty tree is obtained inside the repository, never
 	// hard-coded. The sha1 constant 4b825dc6... names no object a sha256
@@ -478,7 +478,7 @@ func noCodeStagedRootAndBase(t *testing.T) {
 	stGit(t, s256, "add", "runner")
 	exit, _, stderr = runCheck(t, "nocode", "--staged", "--dir", s256)
 	require.NotEqualValues(t, 2, exit, "the unborn sha256 repository was refused; the empty tree was not obtained from inside it (a hard-coded sha1 constant does not exist there):\n%s", stderr)
-	require.False(t, exit != 1 || !strings.Contains(stderr, "NOCODE FAIL runner: executable script (shebang)"), "the unborn sha256 repository exited %d, want 1 with the staged shebang named:\n%s", exit, stderr)
+	require.True(t, exit == 1 && strings.Contains(stderr, "NOCODE FAIL runner: executable script (shebang)"), "the unborn sha256 repository exited %d, want 1 with the staged shebang named:\n%s", exit, stderr)
 	{
 		et := strings.TrimSpace(stGit(t, s256, "hash-object", "-t", "tree", os.DevNull))
 		require.NotEqualValues(t, "4b825dc642cb6eb9a060e54bf8d69288fbee4904", et, "this sha256 repository names the sha1 empty tree %q", et)
@@ -538,5 +538,5 @@ func TestFriendSequenceStagedAdvisoryCommit(t *testing.T) {
 	// tree the audit calls clean.
 	stGit(t, dir, "commit", "-q", "-m", "prose only")
 	aexit, astdout, _ := runCheck(t, "nocode", "--dir", dir)
-	assert.False(t, aexit != 0 || !strings.Contains(astdout, "NOCODE OK"), "the audit over the committed tree exited %d:\n%s", aexit, astdout)
+	assert.True(t, aexit == 0 && strings.Contains(astdout, "NOCODE OK"), "the audit over the committed tree exited %d:\n%s", aexit, astdout)
 }
