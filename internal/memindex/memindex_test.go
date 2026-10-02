@@ -665,7 +665,7 @@ func (f fixedChannel) Query(text string, k int) []Scored { return f.res }
 
 // Pin the channel geometry BM25 smoothing, trigram Jaccard and reciprocal-rank
 // fusion dictate. These contracts live in docs/SPEC.md but had no direct tests.
-func TestIssue2306(t *testing.T) {
+func TestChannelGeometryContracts(t *testing.T) {
 	t.Parallel()
 
 	t.Run("BM25IdfNeverNegative", func(t *testing.T) {
@@ -763,7 +763,7 @@ func TestMaskingDoesSilenceQuotedSpecimens(t *testing.T) {
 	}
 }
 
-func TestIssue2305(t *testing.T) {
+func TestBuildDoesNotIndexGitContent(t *testing.T) {
 	t.Parallel()
 
 	fsys := fstest.MapFS{
@@ -790,7 +790,7 @@ func TestIssue2305(t *testing.T) {
 
 // TestBuildSkipsNestedGitDirectory pins issue #2305's second half: the
 // .git skip is by basename at any depth, not only at the corpus root.
-// A root-only check (p == ".git") passes TestIssue2305 but fails here.
+// A root-only check (p == ".git") passes TestBuildDoesNotIndexGitContent but fails here.
 func TestBuildSkipsNestedGitDirectory(t *testing.T) {
 	t.Parallel()
 
