@@ -12,8 +12,9 @@ import (
 // A LAUNCH THAT DIES IN THE FIRST SECONDS ON A PROVIDER 5XX IS NOT A FINISHED TASK:
 // rapid 5XX deaths consume slots and harvest without ever launching, and the pool reads
 // them as ordinary failures. A death inside the launch grace whose tail names a server
-// error is a LAUNCH failure: the same task is retried, with jittered backoff, twice, and only then filed -- with `end=provider`
-// and the provider's ref -- so the waste is a retry and not a failure.
+// error is a LAUNCH failure: the same task is retried, with jittered backoff, twice, and
+// only then filed -- with `end=provider` and the provider's ref -- so the waste is a retry
+// and not a failure.
 
 // DefaultLaunchGrace is how long a harness may run before its exit stops counting as a
 // launch failure. A worker description's `launch_grace` overrides it.

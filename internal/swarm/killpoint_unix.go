@@ -8,7 +8,7 @@ import (
 )
 
 // THE ORDER OF TWO DEATHS is what the reverse schedule is made of, and a test that
-// HOPES for an order gets the other one on a loaded runner
+// HOPES for an order gets the other one on a loaded runner: on a shared CI runner,
 // `TestTheLaunchIsATransaction/reverse-schedule`, `aborted.json was not written`, twice
 // identically, while the same test was green on every Mac and on a linux box with a core
 // to itself.
