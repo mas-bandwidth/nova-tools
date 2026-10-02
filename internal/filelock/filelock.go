@@ -3,12 +3,15 @@
 // dies, with the holder's stamp written inside the file for a refusal to name and
 // a probe that asks without taking. Its design and invariants are tla/FileLock.tla.
 //
-// Its caller: cmd/nova-sandbox (the volume-creation lock, darwin, where the old
-// binary's bare flock and this lock exclude each other: TestAnOldBinarysCreateLockKeepsTheNewOneOut).
-// The private copies in internal/bus, internal/swarm, internal/tokens and
-// internal/update stay until a migration in which an old and a new binary on one
-// Windows machine still exclude each other: their Windows locks are an O_EXCL
-// .held file or byte 0, and this lock is LockFileEx at OffsetHigh 0x80000000.
+// Its callers, on unix, each the same flock on the same file its earlier binary took, so
+// an old and a new binary exclude each other across an upgrade (each package's
+// *compat*_test.go or TestAnOldBinarysCreateLockKeepsTheNewOneOut): cmd/nova-sandbox
+// (the volume-creation lock, darwin), internal/swarm (the slot store's lock, behind an
+// in-process turn), internal/tokens (the fold lock) and internal/update (the snapshot
+// lock). Each creates a fresh lock file itself with the mode it always had. On Windows
+// those three packages keep their own locks (an O_EXCL .held file, or byte 0) until a
+// migration in which old and new still exclude each other: this lock is LockFileEx at
+// OffsetHigh 0x80000000. internal/bus keeps its own lock.
 package filelock
 
 import (
