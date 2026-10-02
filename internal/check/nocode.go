@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"unicode"
@@ -226,7 +228,7 @@ func parseExtLines(s string) ([]string, error) {
 		}
 		seen[line] = true
 	}
-	return sortedKeys(seen), nil
+	return slices.Sorted(maps.Keys(seen)), nil
 }
 
 // validExt rejects anything that is not a bare file extension. The rejected
@@ -403,12 +405,7 @@ func normalizeAllow(allow []string) []string {
 // A prefix genuinely covers everything beneath it, at any depth, and the same
 // prefix covers everything beneath it at any depth.
 func isAllowed(rel string, allow []string) bool {
-	for _, a := range allow {
-		if rel == a || strings.HasPrefix(rel, a+"/") {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(allow, func(a string) bool { return rel == a || strings.HasPrefix(rel, a+"/") })
 }
 
 // classifyParametrised returns every reason the file is machinery, or nil if
@@ -557,13 +554,4 @@ func readFirstTwo(r io.Reader) ([]byte, error) {
 		return nil, err
 	}
 	return buf[:n], nil
-}
-
-func sortedKeys(m map[string]bool) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
 }

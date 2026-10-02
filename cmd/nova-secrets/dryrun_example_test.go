@@ -9,6 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 )
 
@@ -46,20 +49,14 @@ func newExampleHome(t *testing.T, plain string) exampleHome {
 	// The store stands on main with a clean tree: the two reads the dry run asks git. A fake
 	// git first on PATH answers them, so the fixture makes no repository.
 	fakeBin := filepath.Join(home, "fakebin")
-	if err := os.MkdirAll(fakeBin, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(fakeBin, 0o755))
 	writeFakeExe(t, filepath.Join(fakeBin, "git"), "#!/bin/sh\nif [ \"$1\" = \"rev-parse\" ]; then echo main; exit 0; fi\nif [ \"$1\" = \"status\" ]; then exit 0; fi\nexit 1\n")
 	h.path = fakeBin + string(os.PathListSeparator) + "/usr/bin:/bin"
 	writeFakeExe(t, h.sops, "#!/bin/sh\ncase \"$1\" in\n--version) echo 'sops 3.13.3'; exit 0 ;;\n-d) printf '%s\\n' '"+plain+"'; exit 0 ;;\nesac\nexit 1\n")
 
 	store := filepath.Join(home, "secrets")
-	if err := os.MkdirAll(store, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(store, ".git"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(store, 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(store, ".git"), 0o755))
 	for name, body := range map[string]string{
 		"recovery.pub": exRecovery + "\n",
 		".sops.yaml": "creation_rules:\n  - path_regex: ^worker\\.yaml$\n    age: " + exWorker + "," + exRecovery +
@@ -68,23 +65,15 @@ func newExampleHome(t *testing.T, plain string) exampleHome {
 		"worker.yaml": "API_KEY: ENC[AES256_GCM,data:x,iv:a,tag:b,type:str]\nsops:\n    age:\n        - recipient: " + exWorker + "\n        - recipient: " + exRecovery + "\n",
 		"lead.yaml":   "API_KEY: ENC[AES256_GCM,data:y,iv:a,tag:b,type:str]\nsops:\n    age:\n        - recipient: " + exLead + "\n        - recipient: " + exRecovery + "\n",
 	} {
-		if err := os.WriteFile(filepath.Join(store, name), []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(filepath.Join(store, name), []byte(body), 0o644))
 	}
 
 	keyDir := filepath.Join(home, ".config", "nova-secrets")
-	if err := os.MkdirAll(keyDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(keyDir, 0o700))
 	for _, seat := range []string{"worker", "lead"} {
-		if err := os.WriteFile(filepath.Join(keyDir, seat+".key"), []byte("AGE-SECRET-KEY-FAKE\n# public key: x\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(filepath.Join(keyDir, seat+".key"), []byte("AGE-SECRET-KEY-FAKE\n# public key: x\n"), 0o600))
 	}
-	if err := os.WriteFile(filepath.Join(home, "fleet.tsv"), []byte("bench\tbench.example\t/home/bench\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(home, "fleet.tsv"), []byte("bench\tbench.example\t/home/bench\n"), 0o644))
 	return h
 }
 
@@ -100,9 +89,7 @@ func treeBytes(t *testing.T, dir string) map[string]string {
 		out[p] = string(b)
 		return err
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return out
 }
 
@@ -110,13 +97,9 @@ func treeBytes(t *testing.T, dir string) map[string]string {
 func runExample(t *testing.T, h exampleHome, transcript []string, volatile []onboarding.Field) {
 	t.Helper()
 	out, errOut, code := runNovaSecrets(h.bin, "help")
-	if code != 0 {
-		t.Fatalf("`nova-secrets help` exits %d: %s", code, errOut)
-	}
+	require.Equal(t, 0, code, "`nova-secrets help` exits %d: %s", code, errOut)
 	examples, err := onboarding.ExampleLines(out, "nova-secrets")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	documented := strings.TrimPrefix(transcript[0], "$ ")
 	found := false
 	for _, ex := range examples {
@@ -124,13 +107,9 @@ func runExample(t *testing.T, h exampleHome, transcript []string, volatile []onb
 			found = true
 		}
 	}
-	if !found {
-		t.Fatalf("the banner's example block does not hold this transcript's command:\n  %s\nbanner:\n  %s", documented, strings.Join(examples, "\n  "))
-	}
+	require.True(t, found, "the banner's example block does not hold this transcript's command:\n  %s\nbanner:\n  %s", documented, strings.Join(examples, "\n  "))
 	steps, err := onboarding.Steps("nova-secrets", transcript)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	before := treeBytes(t, h.home)
 	var got []onboarding.Result
 	for _, step := range steps {
@@ -152,9 +131,7 @@ func runExample(t *testing.T, h exampleHome, transcript []string, volatile []onb
 		code := 0
 		if err := cmd.Run(); err != nil {
 			exitErr, ok := err.(*exec.ExitError)
-			if !ok {
-				t.Fatalf("the documented command\n  %s\ncould not be run: %v", step.Line, err)
-			}
+			require.True(t, ok, "the documented command\n  %s\ncould not be run: %v", step.Line, err)
 			code = exitErr.ExitCode()
 		}
 		got = append(got, onboarding.Result{Code: code, Stdout: stdout.String(), Stderr: stderr.String()})
@@ -163,13 +140,9 @@ func runExample(t *testing.T, h exampleHome, transcript []string, volatile []onb
 		t.Error(p)
 	}
 	after := treeBytes(t, h.home)
-	if len(after) != len(before) {
-		t.Errorf("the dry run changed the file set: %d files before, %d after", len(before), len(after))
-	}
+	assert.Len(t, after, len(before), "the dry run changed the file set: %d files before, %d after", len(before), len(after))
 	for p, v := range before {
-		if after[p] != v {
-			t.Errorf("the dry run changed %s", p)
-		}
+		assert.Equal(t, v, after[p], "the dry run changed %s", p)
 	}
 }
 

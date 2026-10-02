@@ -14,25 +14,6 @@ import (
 // bound to a set another tool owns is a view: add, remove and move refuse
 // it naming the owner; members reads it freely.
 
-const cellWants = "wants add <table> <row> <col> <member>... [--score <n>], remove <table> <row> <col> <member>, move <table> <row> <from-col> <to-col> <member>, or members <table> <row> <col>"
-
-func (app *application) cmdCell(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 {
-		return refuse(stderr, "cell", cellWants)
-	}
-	switch args[0] {
-	case "add":
-		return app.cmdCellAdd(args[1:], stdout, stderr)
-	case "remove":
-		return app.cmdCellRemove(args[1:], stdout, stderr)
-	case "move":
-		return app.cmdCellMove(args[1:], stdout, stderr)
-	case "members":
-		return app.cmdCellMembers(args[1:], stdout, stderr)
-	}
-	return refuse(stderr, "cell", "unknown subverb "+args[0]+"; "+cellWants)
-}
-
 func (app *application) cmdCellAdd(args []string, stdout, stderr io.Writer) int {
 	const verb = "cell add"
 	fs := verbflag.New(verb)
@@ -49,6 +30,9 @@ func (app *application) cmdCellAdd(args []string, stdout, stderr io.Writer) int 
 	sc, err := scoreOf(*score)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
+	}
+	if code, ok := planned(stdout, fs, verb, *addr, pos); ok {
+		return code
 	}
 	ctx := context.Background()
 	st, c, code := app.client(ctx, verb, *addr, stderr)
@@ -92,6 +76,9 @@ func (app *application) cmdCellRemove(args []string, stdout, stderr io.Writer) i
 	if len(pos) < 4 {
 		return refuse(stderr, verb, "wants a table, a row, a column and one or more members: cell remove <table> <row> <col> <member>...")
 	}
+	if code, ok := planned(stdout, fs, verb, *addr, pos); ok {
+		return code
+	}
 	ctx := context.Background()
 	st, c, code := app.client(ctx, verb, *addr, stderr)
 	if code != 0 {
@@ -119,6 +106,9 @@ func (app *application) cmdCellMove(args []string, stdout, stderr io.Writer) int
 	}
 	if len(pos) < 5 {
 		return refuse(stderr, verb, "wants a table, a row, the column left, the column joined and one or more members: cell move <table> <row> <from-col> <to-col> <member>...")
+	}
+	if code, ok := planned(stdout, fs, verb, *addr, pos); ok {
+		return code
 	}
 	ctx := context.Background()
 	st, c, code := app.client(ctx, verb, *addr, stderr)

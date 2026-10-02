@@ -40,6 +40,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -139,12 +140,7 @@ type Workload struct {
 
 // AppliesTo says whether this workload is run on a machine carrying one role.
 func (w Workload) AppliesTo(role string) bool {
-	for _, r := range w.Roles {
-		if r == role {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(w.Roles, role)
 }
 
 // StandardWorkloads is the set that ships with the tool: the one a run takes when

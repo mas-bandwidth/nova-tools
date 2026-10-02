@@ -2,6 +2,8 @@ package sprint
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 
@@ -254,9 +256,7 @@ func composeQueued(a, b ntable.BatchMemberEntry) (ntable.BatchMemberEntry, strin
 	}
 	if len(b.Set) > 0 || len(b.Unset) > 0 {
 		set := map[string]string{}
-		for k, v := range a.Set {
-			set[k] = v
-		}
+		maps.Copy(set, a.Set)
 		unset := append([]string(nil), a.Unset...)
 		for _, k := range b.Unset {
 			delete(set, k)
@@ -266,11 +266,8 @@ func composeQueued(a, b ntable.BatchMemberEntry) (ntable.BatchMemberEntry, strin
 		}
 		for k, v := range b.Set {
 			set[k] = v
-			for i, u := range unset {
-				if u == k {
-					unset = append(unset[:i], unset[i+1:]...)
-					break
-				}
+			if i := slices.Index(unset, k); i >= 0 {
+				unset = slices.Delete(unset, i, i+1)
 			}
 		}
 		out.Set, out.Unset = nonEmpty(set), unset
@@ -293,15 +290,11 @@ func WithQueue(s *Snapshot, q []QueuedChange) *Snapshot {
 	w := NewTable(s.Work.Name)
 	w.Epoch, w.Revision, w.Texts, w.rows = s.Work.Epoch, s.Work.Revision+1, s.Work.Texts, s.Work.rows
 	w.props = map[string]string{}
-	for k, v := range s.Work.props {
-		w.props[k] = v
-	}
+	maps.Copy(w.props, s.Work.props)
 	for id, c := range s.Work.cards {
 		cp := *c
 		cp.Fields = map[string]string{}
-		for k, v := range c.Fields {
-			cp.Fields[k] = v
-		}
+		maps.Copy(cp.Fields, c.Fields)
 		w.cards[id] = &cp
 	}
 	for _, u := range p.Units {
@@ -325,9 +318,7 @@ func WithQueue(s *Snapshot, q []QueuedChange) *Snapshot {
 			if e.Remove {
 				c.Col = ""
 			}
-			for k, v := range e.Set {
-				c.Fields[k] = v
-			}
+			maps.Copy(c.Fields, e.Set)
 			for _, k := range e.Unset {
 				delete(c.Fields, k)
 			}

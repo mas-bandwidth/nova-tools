@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -202,9 +203,7 @@ func PlanWrite(ctx context.Context, st Store, op, kind string, row Row, changes 
 			return Change{}, missing
 		}
 		next := cur.Clone()
-		for f, v := range changes {
-			next.Fields[f] = v
-		}
+		maps.Copy(next.Fields, changes)
 		if err := checkRefs(ctx, st, k, next); err != nil {
 			return Change{}, err
 		}
@@ -318,9 +317,7 @@ func (m *Mem) Update(ctx context.Context, kind, name string, changes map[string]
 		return Row{}, 0, &RefusedError{Err: ErrNotFound, Detail: fmt.Sprintf("%s %s not found", kind, name)}
 	}
 	next := cur.Clone()
-	for f, v := range changes {
-		next.Fields[f] = v
-	}
+	maps.Copy(next.Fields, changes)
 	if err := checkRefs(ctx, m, k, next); err != nil {
 		return Row{}, 0, err
 	}

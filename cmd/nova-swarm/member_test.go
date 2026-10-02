@@ -37,9 +37,8 @@ func TestReadResultTakesTheHeadFromRevAndTheReportFromOneLine(t *testing.T) {
 	t.Parallel()
 	p := resultFixture(t, "# Result\n\nrev: 0a1b2c3d\n\n## One line\n\n  landed the member loop  \nsecond line of it\n\n## Details\n\nnot this\n")
 	head, _, report := readResult(p)
-	if head != "0a1b2c3d" || report != "landed the member loop" {
-		t.Fatalf("readResult = (%q, %q), want (0a1b2c3d, landed the member loop)", head, report)
-	}
+	require.Equal(t, "0a1b2c3d", head, "readResult = (%q, %q), want (0a1b2c3d, landed the member loop)", head, report)
+	require.Equal(t, "landed the member loop", report, "readResult = (%q, %q), want (0a1b2c3d, landed the member loop)", head, report)
 }
 
 // TestReadResultOneLineHeadingIsCaseInsensitive pins the section's name.
@@ -81,9 +80,9 @@ func TestReadResultRefusesARevThatIsNotASha(t *testing.T) {
 func TestReadResultOfNothing(t *testing.T) {
 	t.Parallel()
 	for _, p := range []string{"", filepath.Join(t.TempDir(), "absent", "RESULT.md")} {
-		if head, _, report := readResult(p); head != "" || report != "" {
-			t.Errorf("readResult(%q) = (%q, %q), want empty", p, head, report)
-		}
+		head, _, report := readResult(p)
+		assert.Equal(t, "", head, "readResult(%q) = (%q, %q), want empty", p, head, report)
+		assert.Equal(t, "", report, "readResult(%q) = (%q, %q), want empty", p, head, report)
 	}
 }
 
@@ -160,9 +159,9 @@ func TestNativeChildReadsHowItEnded(t *testing.T) {
 		if tc.finish != "" {
 			assert.Equal(t, "the body\n\n## RESULT.md\n\nRESULT: c1 sha=0123\n## One line\ngate green", r.Body, "the child's RESULT.md rides in the body")
 		}
-		if r.OK != tc.ok || r.Head != tc.head || r.Report != wantReport {
-			t.Errorf("%s: Result = %+v, want ok=%t head=%q report=%q", tc.name, r, tc.ok, tc.head, wantReport)
-		}
+		assert.Equal(t, tc.ok, r.OK, "%s: Result = %+v, want ok=%t head=%q report=%q", tc.name, r, tc.ok, tc.head, wantReport)
+		assert.Equal(t, tc.head, r.Head, "%s: Result = %+v, want ok=%t head=%q report=%q", tc.name, r, tc.ok, tc.head, wantReport)
+		assert.Equal(t, wantReport, r.Report, "%s: Result = %+v, want ok=%t head=%q report=%q", tc.name, r, tc.ok, tc.head, wantReport)
 	}
 }
 
@@ -226,9 +225,9 @@ func TestMemberWithAWidthOfZeroRefuses(t *testing.T) {
 		}
 		args = append(args, c.extra...)
 		var out, errb bytes.Buffer
-		if code := run(args, strings.NewReader(""), &out, &errb, time.Now()); code != 2 || !strings.Contains(errb.String(), c.want) {
-			t.Fatalf("--width %s %v: exit %d, stderr %q", c.width, c.extra, code, errb.String())
-		}
+		code := run(args, strings.NewReader(""), &out, &errb, time.Now())
+		require.Equal(t, 2, code, "--width %s %v: exit %d, stderr %q", c.width, c.extra, code, errb.String())
+		require.Contains(t, errb.String(), c.want, "--width %s %v: exit %d, stderr %q", c.width, c.extra, code, errb.String())
 	}
 }
 
@@ -332,9 +331,9 @@ func TestMemberRefusesAModelAndATokenBudgetThatEveryCardWouldRefuse(t *testing.T
 			}
 		}
 		var out, errb bytes.Buffer
-		if code := run(args, strings.NewReader(""), &out, &errb, time.Now()); code != 2 || !strings.Contains(errb.String(), tc.want) {
-			t.Errorf("%s %s: exit %d, stderr %q, want exit 2 naming %q", tc.flag, tc.value, code, errb.String(), tc.want)
-		}
+		code := run(args, strings.NewReader(""), &out, &errb, time.Now())
+		assert.Equal(t, 2, code, "%s %s: exit %d, stderr %q, want exit 2 naming %q", tc.flag, tc.value, code, errb.String(), tc.want)
+		assert.Contains(t, errb.String(), tc.want, "%s %s: exit %d, stderr %q, want exit 2 naming %q", tc.flag, tc.value, code, errb.String(), tc.want)
 		_, err := os.Stat(filepath.Join(root, "slots"))
 		assert.True(t, os.IsNotExist(err), "%s %s: a directory was made before the refusal: %v", tc.flag, tc.value, err)
 	}
@@ -467,15 +466,15 @@ func TestEveryIsBoundedUnderTheBeatDeadline(t *testing.T) {
 	root := t.TempDir()
 	var out, errb bytes.Buffer
 	// Removing the `every.d > 5*time.Second` bound in cmdMember makes this fail.
-	if code := run(with(root, "6s"), strings.NewReader(""), &out, &errb, time.Now()); code != 2 || !strings.Contains(errb.String(), "5s") {
-		t.Fatalf("--every 6s: exit %d, stderr %q, want exit 2 naming 5s", code, errb.String())
-	}
+	code := run(with(root, "6s"), strings.NewReader(""), &out, &errb, time.Now())
+	require.Equal(t, 2, code, "--every 6s: exit %d, stderr %q, want exit 2 naming 5s", code, errb.String())
+	require.Contains(t, errb.String(), "5s", "--every 6s: exit %d, stderr %q, want exit 2 naming 5s", code, errb.String())
 	require.Zero(t, out.Len(), "--every 6s: stdout %q, want empty", out.String())
 	_, err := os.Stat(filepath.Join(root, "slots"))
 	require.True(t, os.IsNotExist(err), "--every 6s made the slots before refusing: %v", err)
 	out.Reset()
 	errb.Reset()
-	code := cmdMember(with(t.TempDir(), "5s")[1:], &out, &errb, noServer)
+	code = cmdMember(with(t.TempDir(), "5s")[1:], &out, &errb, noServer)
 	require.Equal(t, 0, code, "--every 5s: exit %d, stderr %q, want it accepted", code, errb.String())
 }
 
@@ -571,4 +570,25 @@ func TestAMemberWithNoPassSaysSo(t *testing.T) {
 	assert.Empty(t, passNote("anthropic/claude-x", []string{"ANTHROPIC_API_KEY"}, ""))
 	assert.Empty(t, passNote("anthropic/claude-x", nil, "/auth.json"))
 	assert.Empty(t, passNote("ollama/qwen3", nil, ""))
+}
+
+// A pid file that cannot be written does not stop the child, and is not silent: the
+// member names the card, its pid and the file on one NOTE line, since a restart finds a
+// running child only by that file.
+func TestAPidFileThatCannotBeWrittenIsNamed(t *testing.T) {
+	t.Parallel()
+	r, slots, marker := markerRunner(t)
+	p := member.Packet{Card: "c1", Kind: "work", Gen: 1, Attempt: 1, Epoch: 7, Branch: "work/c1"}
+	pidPath := filepath.Join(slots, launchName(p)+".pid")
+	// a directory where the pid file goes: the write fails, and livePID reads no pid
+	require.NoError(t, os.MkdirAll(filepath.Join(pidPath, "in-the-way"), 0o755))
+	ch, err := r.Start(p)
+	require.NoError(t, err)
+	<-ch.(*nativeChild).done
+	_, err = os.Stat(marker)
+	require.NoError(t, err, "the child did not run")
+	said := r.stderr.(*bytes.Buffer).String()
+	assert.Contains(t, said, "nova-swarm member: NOTE card c1 runs as pid ")
+	assert.Contains(t, said, "could not be written")
+	assert.Equal(t, 1, strings.Count(said, "\n"), "one line: %q", said)
 }

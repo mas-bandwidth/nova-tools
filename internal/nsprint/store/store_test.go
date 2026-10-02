@@ -14,6 +14,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/require"
 )
 
 func startRedis(t *testing.T, extra ...string) string {
@@ -30,23 +31,23 @@ func TestFunctionLibraryLoadsFromFiles(t *testing.T) {
 	ctx := context.Background()
 	source, err := fn.Source()
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if !strings.HasPrefix(source, "#!lua name=nova_sprint\n") ||
 		!strings.Contains(source, "redis.register_function('ns_ping'") ||
 		!strings.Contains(source, "redis.register_function('ns_oset_move'") {
-		t.Fatalf("library did not concatenate embedded verb files: %q", source)
+		require.Failf(t, "assertion failed", "library did not concatenate embedded verb files: %q", source)
 	}
 	if err := fn.Load(ctx, client); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	result, err := client.FCall(ctx, "ns_ping", []string{}).Text()
 	if err != nil || result != "PONG" {
-		t.Fatalf("loaded ns_ping = %q, %v; want PONG", result, err)
+		require.Failf(t, "assertion failed", "loaded ns_ping = %q, %v; want PONG", result, err)
 	}
 	// An updated binary may load the same library again without a gap.
 	if err := fn.Load(ctx, client); err != nil {
-		t.Fatalf("reload: %v", err)
+		require.NoError(t, err, "reload: %v", err)
 	}
 }
 
@@ -90,7 +91,7 @@ func TestPipelineThousandReadsOneRoundTrip(t *testing.T) {
 	defer client.Close()
 	ctx := context.Background()
 	if err := client.Ping(ctx).Err(); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	seed := client.Pipeline()
 	reads := make([]store.HashRead, 1000)
@@ -100,24 +101,24 @@ func TestPipelineThousandReadsOneRoundTrip(t *testing.T) {
 		reads[i] = store.HashRead{Key: key, Fields: []string{"state", "owner"}}
 	}
 	if _, err := seed.Exec(ctx); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	writes.Store(0)
 	readCalls.Store(0)
 	interleaved.Store(0)
 	got, err := store.New(client).PipelineHMGet(ctx, reads)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if writes.Load() == 0 || readCalls.Load() == 0 || interleaved.Load() != 0 {
-		t.Fatalf("1000 HMGETs used %d writes, %d reads, %d writes after a reply; want one pipelined exchange", writes.Load(), readCalls.Load(), interleaved.Load())
+		require.Failf(t, "assertion failed", "1000 HMGETs used %d writes, %d reads, %d writes after a reply; want one pipelined exchange", writes.Load(), readCalls.Load(), interleaved.Load())
 	}
 	if len(got) != len(reads) {
-		t.Fatalf("got %d replies; want 1000", len(got))
+		require.Equal(t, len(reads), len(got), "got %d replies; want 1000", len(got))
 	}
 	for i, values := range got {
 		if len(values) != 2 || values[0] != "open" || values[1] != "stella" {
-			t.Fatalf("reply %d = %v", i, values)
+			require.Failf(t, "assertion failed", "reply %d = %v", i, values)
 		}
 	}
 }
@@ -151,7 +152,7 @@ func TestOpenAuthenticatesFromEnv(t *testing.T) {
 		!strings.Contains(err.Error(), "NOAUTH") ||
 		!strings.Contains(err.Error(), store.UserEnv+" is unset") ||
 		!strings.Contains(err.Error(), store.UserEnv+"=bench and "+store.DefaultPasswordEnv) {
-		t.Fatalf("first command with %s but no %s = %v; want NOAUTH and a refusal naming the missing variable and the pair", store.DefaultPasswordEnv, store.UserEnv, err)
+		require.Failf(t, "assertion failed", "first command with %s but no %s = %v; want NOAUTH and a refusal naming the missing variable and the pair", store.DefaultPasswordEnv, store.UserEnv, err)
 	}
 	pipe := func() error {
 		st, err := store.Open(ctx, addr)
@@ -163,26 +164,26 @@ func TestOpenAuthenticatesFromEnv(t *testing.T) {
 		return err
 	}
 	if err := pipe(); err == nil || !strings.Contains(err.Error(), "NOAUTH") || !strings.Contains(err.Error(), store.UserEnv+" is unset") {
-		t.Fatalf("first batch with %s but no %s = %v; want NOAUTH and the named refusal", store.DefaultPasswordEnv, store.UserEnv, err)
+		require.Failf(t, "assertion failed", "first batch with %s but no %s = %v; want NOAUTH and the named refusal", store.DefaultPasswordEnv, store.UserEnv, err)
 	}
 
 	t.Setenv(store.UserEnv, "bench")
 	st, err := store.Open(ctx, addr)
 	if err != nil {
-		t.Fatalf("Open as bench with %s: %v", store.DefaultPasswordEnv, err)
+		require.NoError(t, err, "Open as bench with %s: %v", store.DefaultPasswordEnv, err)
 	}
 	if err := st.Client().Set(ctx, "auth:probe", "1", 0).Err(); err != nil {
-		t.Fatalf("authenticated write: %v", err)
+		require.NoError(t, err, "authenticated write: %v", err)
 	}
 	_ = st.Close()
 
 	t.Setenv(store.PasswordEnvEnv, "NOVA_REDIS_OTHER_SEAT")
 	t.Setenv("NOVA_REDIS_OTHER_SEAT", "")
 	if _, err := store.Open(ctx, addr); err == nil || !strings.Contains(err.Error(), "NOVA_REDIS_OTHER_SEAT is empty") {
-		t.Fatalf("Open with an empty named password variable = %v; want a refusal naming it", err)
+		require.Failf(t, "assertion failed", "Open with an empty named password variable = %v; want a refusal naming it", err)
 	}
 	t.Setenv("NOVA_REDIS_OTHER_SEAT", "wrong")
 	if err := first(); err == nil || !strings.Contains(err.Error(), "WRONGPASS") {
-		t.Fatalf("first command with the wrong password = %v; want WRONGPASS", err)
+		require.Failf(t, "assertion failed", "first command with the wrong password = %v; want WRONGPASS", err)
 	}
 }

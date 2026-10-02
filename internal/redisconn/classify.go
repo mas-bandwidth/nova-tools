@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -98,21 +99,11 @@ func Classify(err error) Class {
 }
 
 func startsWithAny(s string, prefixes ...string) bool {
-	for _, p := range prefixes {
-		if strings.HasPrefix(s, p) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(prefixes, func(p string) bool { return strings.HasPrefix(s, p) })
 }
 
 func containsAny(s string, marks ...string) bool {
-	for _, m := range marks {
-		if strings.Contains(s, m) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(marks, func(m string) bool { return strings.Contains(s, m) })
 }
 
 // failure is the error of this package: a class, and one line that names

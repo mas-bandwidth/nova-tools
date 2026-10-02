@@ -2,8 +2,10 @@ package tokens
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -188,9 +190,9 @@ func Shrinks(old, now Counts, day string) []Shrink {
 // A run that declares one source and recomputes the file whole ERASES every row the other
 // sources wrote, and rule 10 cannot see it: the shrink comparison is over the day's per-type
 // TOTALS, so a run whose own numbers are bigger than what it deleted writes a smaller file
-// with a bigger total and says written=true. Measured at tip, 2026-09-14: a day holding
-// `claude-x 410` folded with only `--swarm freddy=<pool>` (mercury-2.5, 2000) came back
-// holding the mercury row alone, exit 0, no TOKENS SHRANK.
+// with a bigger total and says written=true: a day holding `claude-x 410` folded with
+// only `--swarm bo=<pool>` (mercury-2.5, 2000) would come back holding the mercury row
+// alone, exit 0, no TOKENS SHRANK.
 //
 // So the fold merges by source instead. This run's rows replace the rows its own sources
 // wrote; a row no declared source wrote is kept exactly as it is; and the two rows that
@@ -520,10 +522,5 @@ func mergeSources(a, b []string) []string {
 	for _, l := range b {
 		set[l] = true
 	}
-	out := make([]string, 0, len(set))
-	for l := range set {
-		out = append(out, l)
-	}
-	sort.Strings(out)
-	return out
+	return slices.Sorted(maps.Keys(set))
 }

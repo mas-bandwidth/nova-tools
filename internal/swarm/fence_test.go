@@ -107,9 +107,9 @@ func TestMergeFencePermissionKeepsTheCarriedConfig(t *testing.T) {
 	assert.Equal(t, FenceAllow, external["/opt/toolchains/*"], "a pattern the caller allowed is still allowed:\n%s", out)
 	assert.Equal(t, FenceAllow, external["/root/1/jobs/a/**"], "the job's own directory is allowed:\n%s", out)
 
-	if got, ok := MergeFencePermission([]byte("not json at all"), "/root/1/jobs/a", nil); ok || string(got) != "not json at all" {
-		t.Errorf("a config this side cannot read is carried verbatim and says so, got %q,%v", got, ok)
-	}
+	got, ok := MergeFencePermission([]byte("not json at all"), "/root/1/jobs/a", nil)
+	assert.False(t, ok, "a config this side cannot read is carried verbatim and says so, got %q,%v", got, ok)
+	assert.Equal(t, "not json at all", string(got), "a config this side cannot read is carried verbatim and says so, got %q,%v", got, ok)
 }
 
 // TestCardReadPathsReadsTheCardsOwnLine: the `READ:` line, and nothing inferred from prose.

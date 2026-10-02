@@ -346,13 +346,13 @@ func ParseChildRules(text, source string) ([]ChildRule, error) {
 		}
 		name := "line" + strconv.Itoa(n)
 		if strings.HasPrefix(line, "[") {
-			end := strings.Index(line, "]")
-			if end < 0 {
+			inside, rest, closed := strings.Cut(line[1:], "]")
+			if !closed {
 				problems = append(problems, fmt.Sprintf("line %d opens a [name] and never closes it", n))
 				continue
 			}
-			name = line[1:end]
-			line = strings.TrimSpace(line[end+1:])
+			name = inside
+			line = strings.TrimSpace(rest)
 			if !childRuleName.MatchString(name) {
 				problems = append(problems, fmt.Sprintf("line %d: the name [%s] is not kebab case (letters, digits and single -)", n, name))
 				continue

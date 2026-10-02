@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
@@ -134,7 +135,7 @@ func payloadOnly(o *tool.Out) bool {
 func typed(fs tool.Fields) string {
 	var b strings.Builder
 	for _, f := range fs {
-		if f.K == "remedy" || contains(prose, f.K) {
+		if f.K == "remedy" || slices.Contains(prose, f.K) {
 			continue
 		}
 		b.WriteString(" " + f.K + "=" + field(fmt.Sprint(f.V)))

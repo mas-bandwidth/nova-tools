@@ -85,13 +85,6 @@ func ClearStaleIndexLock(dir string, now time.Time) (IndexLockReport, error) {
 	return clearStaleIndexLockReport(dir, now, gitProcesses, indexLockOwner, effectiveUID())
 }
 
-// clearStaleIndexLock is ClearStaleIndexLock with the process scan supplied.
-// A test hands back an incomplete scan — a cwd git with no -C whose cwd could
-// not be read, or a permission error — and the lock must still be here afterwards.
-func clearStaleIndexLock(dir string, now time.Time, scan func() ([]gitProc, error)) (bool, error) {
-	return clearStaleIndexLockAs(dir, now, scan, indexLockOwner, effectiveUID())
-}
-
 // indexLockScanHooks holds what the CLI tests run on their own fixture lock between the
 // process scan and the re-Lstat, so the lock can be replaced during the scan from
 // outside this package. An entry matches one lock file by os.SameFile and fires once.
@@ -185,15 +178,6 @@ func lockOwnerForeignErr(uid uint32) error {
 }
 
 var errLockOwnerUnknown = errors.New("index.lock owner cannot be read, so it is not known to be this account's; ask its owner or the bench admin")
-
-// clearStaleIndexLockAs is clearStaleIndexLock with the lock file's owner reader and this
-// account's uid supplied. The age rule comes first; the owner of a stale lock is read
-// from the Lstat of the lock itself, and only a stale lock owned by self goes on to the
-// process scan.
-func clearStaleIndexLockAs(dir string, now time.Time, scan func() ([]gitProc, error), lockOwner func(os.FileInfo) (uint32, bool), self uint32) (bool, error) {
-	rep, err := clearStaleIndexLockReport(dir, now, scan, lockOwner, self)
-	return rep.Cleared, err
-}
 
 // clearStaleIndexLockReport is the whole of ClearStaleIndexLock, with the scan's counts.
 func clearStaleIndexLockReport(dir string, now time.Time, scan func() ([]gitProc, error), lockOwner func(os.FileInfo) (uint32, bool), self uint32) (IndexLockReport, error) {
@@ -943,13 +927,6 @@ type gitProc struct {
 	foreign  bool
 	unknown  bool
 	why      string
-}
-
-// gitOwnsCheckout reports whether a live git process is operating on dir. An error means
-// the question could not be answered, which the caller treats as "do not remove the lock".
-func gitOwnsCheckout(dir string) (bool, error) {
-	found, err := gitOwnsCheckoutScan(dir, gitProcesses)
-	return found.Owner > 0, err
 }
 
 // gitOwnsCheckoutScan classifies every process the scan listed (LockScan). An owner

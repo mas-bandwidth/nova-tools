@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -75,8 +76,6 @@ func CheckInvariant1(storeDir string, sopsCfg *SopsConfig, recoveryKey string) [
 			})
 		}
 
-		// Check recipients
-		seenRecipients := make(map[string]bool)
 		for _, rec := range rule.Recipients {
 			if !IsValidAgePublicKey(rec) {
 				failures = append(failures, CheckFailure{
@@ -85,41 +84,38 @@ func CheckInvariant1(storeDir string, sopsCfg *SopsConfig, recoveryKey string) [
 					Reason: fmt.Sprintf("rule for %s recipient %q is not a valid age public key", label, rec),
 				})
 			}
-			if seenRecipients[rec] {
-				failures = append(failures, CheckFailure{
-					Kind:   "rule-shape",
-					File:   ".sops.yaml",
-					Reason: fmt.Sprintf("rule for %s has duplicate recipient %s", label, rec),
-				})
-			}
-			seenRecipients[rec] = true
 		}
-
-		if len(rule.Recipients) != 2 {
+		if problem := ruleRecipientsProblem(rule.Recipients, recoveryKey); problem != "" {
 			failures = append(failures, CheckFailure{
 				Kind:   "rule-shape",
 				File:   ".sops.yaml",
-				Reason: fmt.Sprintf("rule for %s has %d recipients; expected exactly 2 (one seat key and declared recovery key)", label, len(rule.Recipients)),
+				Reason: fmt.Sprintf("rule for %s %s", label, problem),
 			})
-		} else if recoveryKey != "" {
-			hasRecovery := false
-			for _, rec := range rule.Recipients {
-				if rec == recoveryKey {
-					hasRecovery = true
-					break
-				}
-			}
-			if !hasRecovery {
-				failures = append(failures, CheckFailure{
-					Kind:   "rule-shape",
-					File:   ".sops.yaml",
-					Reason: fmt.Sprintf("rule for %s does not contain declared recovery key %s", label, recoveryKey),
-				})
-			}
 		}
 	}
 
 	return failures
+}
+
+// ruleRecipientsProblem is the one judgement of a seat's recipients: exactly two,
+// distinct, one of them the declared recovery key, so the other is the seat's own key.
+// check (CheckInvariant1) and the store's gate (RunGate) hold a creation rule's
+// recipients to it, seat inject (seatInjectTarget) the seat file's own, and seat add
+// (RunSeatAdd) the rule it is about to write. It returns why they are not, worded to
+// follow its subject ("rule ...", "seat file ..."), or "" when they are. An empty
+// recoveryKey is one check could not read (recovery.pub is reported on its own), and
+// the recovery key is then not looked for.
+func ruleRecipientsProblem(recipients []string, recoveryKey string) string {
+	if len(recipients) != 2 {
+		return fmt.Sprintf("has %d recipients; expected exactly 2 (one seat key and declared recovery key)", len(recipients))
+	}
+	if recipients[0] == recipients[1] {
+		return fmt.Sprintf("has duplicate recipient %s; a seat is one seat key and the declared recovery key, distinct", recipients[0])
+	}
+	if recoveryKey != "" && !slices.Contains(recipients, recoveryKey) {
+		return fmt.Sprintf("does not contain declared recovery key %s (recovery.pub)", recoveryKey)
+	}
+	return ""
 }
 
 // CheckInvariant2 verifies that each file's sops recipient block matches its creation rule.
@@ -147,28 +143,7 @@ func CheckInvariant2(storeDir string, sopsCfg *SopsConfig, files []string) []Che
 			continue
 		}
 
-		fileSet := make(map[string]bool)
-		for _, r := range fileRecipients {
-			fileSet[r] = true
-		}
-		ruleSet := make(map[string]bool)
-		for _, r := range rule.Recipients {
-			ruleSet[r] = true
-		}
-
-		differ := false
-		if len(fileSet) != len(ruleSet) {
-			differ = true
-		} else {
-			for r := range fileSet {
-				if !ruleSet[r] {
-					differ = true
-					break
-				}
-			}
-		}
-
-		if differ {
+		if !sameKeySet(fileRecipients, rule.Recipients) {
 			failures = append(failures, CheckFailure{
 				Kind:   "recipients-drift",
 				File:   file,
@@ -229,15 +204,7 @@ func CheckInvariant4(storeDir, sopsPath, keyPath, seatPubKey string, files []str
 			continue
 		}
 
-		isMine := false
-		for _, r := range fileRecipients {
-			if r == seatPubKey {
-				isMine = true
-				break
-			}
-		}
-
-		if isMine {
+		if slices.Contains(fileRecipients, seatPubKey) {
 			mineCount++
 			_, decErr := DecryptFile(sopsPath, keyPath, filePath)
 			if decErr != nil {
@@ -448,7 +415,7 @@ func RunCheck(storeDir, asName, keyPath, sopsPath string, maxShown int) (okLine 
 		return "", nil, nil, "", 2, fmt.Errorf("--max %d is negative; expected non-negative integer", maxShown)
 	}
 
-	// 0. Set RLIMIT_CORE to 0 immediately (M5)
+	// No core file: a crash after a decrypt must not write a value to disk.
 	if err := setRlimitCoreZero(); err != nil {
 		return "", nil, nil, "", 2, fmt.Errorf("failed to set RLIMIT_CORE to 0: %w", err)
 	}

@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -145,8 +146,10 @@ func terminalAction(action string) bool {
 }
 
 // Parse decodes newline-delimited TestEvent JSON. Blank lines are skipped; a
-// line that is not an object is an error naming its 1-based line, never a
-// silent skip, so a truncated pipe cannot read as a clean run.
+// line that is not an object, or an object with no Action (every event go test
+// -json writes has one, the bookkeeping ones included), is an error naming its
+// 1-based line, never a silent skip, so a truncated pipe or a stream of other
+// JSON cannot read as a clean run.
 func Parse(r io.Reader) ([]Event, error) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
@@ -158,9 +161,15 @@ func Parse(r io.Reader) ([]Event, error) {
 		if len(b) == 0 {
 			continue
 		}
+		if b[0] != '{' {
+			return nil, fmt.Errorf("line %d: not a JSON object; a TestEvent is one", line)
+		}
 		var ev Event
 		if err := json.Unmarshal(b, &ev); err != nil {
 			return nil, fmt.Errorf("line %d: %w", line, err)
+		}
+		if ev.Action == "" {
+			return nil, fmt.Errorf("line %d: a JSON object with no Action is not a TestEvent", line)
 		}
 		events = append(events, ev)
 	}
@@ -230,15 +239,14 @@ var Benches = []string{"space", "studio", "superman", "batman", "air"}
 // CI run (`run<id>`, the digits of a GitHub Actions run id) or a bench in
 // Benches. Free text is refused: `2s@guess` names nothing a reader can open.
 func parseMeasured(field string) (float64, string, error) {
-	at := strings.Index(field, "s@")
-	if at <= 0 || at+2 >= len(field) {
+	before, where, found := strings.Cut(field, "s@")
+	if !found || before == "" || where == "" {
 		return 0, "", fmt.Errorf("measured %q is not <seconds>s@<where>; a row names the time it was cut from and where", field)
 	}
-	secs, err := strconv.ParseFloat(field[:at], 64)
+	secs, err := strconv.ParseFloat(before, 64)
 	if err != nil || secs <= 0 {
 		return 0, "", fmt.Errorf("measured %q is not a positive number of seconds", field)
 	}
-	where := field[at+2:]
 	if !measuredWhere(where) {
 		return 0, "", fmt.Errorf("measured %q: where %q is neither run<id> (a CI run) nor a bench (%s)", field, where, strings.Join(Benches, ", "))
 	}
@@ -255,12 +263,7 @@ func measuredWhere(where string) bool {
 		}
 		return true
 	}
-	for _, b := range Benches {
-		if where == b {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(Benches, where)
 }
 
 // ParseSleeps reads the SLEEPS ledger: `pkg<TAB>test<TAB>where` rows, blank
@@ -312,12 +315,7 @@ func (b Budgets) budgetFor(pkg, test string, def float64) float64 {
 
 // ledgered reports whether the SLEEPS ledger names (pkg, test).
 func (b Budgets) ledgered(pkg, test string) bool {
-	for _, row := range b.Sleeps {
-		if row.Test == test && matches(row.Package, pkg) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(b.Sleeps, func(row SleepRow) bool { return row.Test == test && matches(row.Package, pkg) })
 }
 
 // topLevel is a test name's top-level test: a subtest's skip is its parent's.

@@ -20,7 +20,7 @@ func TestVersionsStrayArgumentRefusalNamesTheDoor(t *testing.T) {
 	r := invoke(t, "version", "extra")
 	require.False(t, r.exit != 2, "exit %d, want 2\nstdout:\n%s\nstderr:\n%s", r.exit, r.stdout, r.stderr)
 	line := strings.TrimSpace(r.stderr)
-	require.False(t, !strings.Contains(line, "takes no flags and no arguments"), "refusal no longer says what was wrong: %q", line)
+	require.False(t, !strings.Contains(line, `takes no positional arguments, got "extra"`), "refusal no longer says what was wrong: %q", line)
 	assert.False(t, !strings.HasSuffix(line, "; run: nova-tokens help"), "refusal line has no door: %q", line)
 	{
 		got := strings.Count(line, "; run: nova-tokens help")

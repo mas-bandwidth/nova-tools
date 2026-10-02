@@ -12,6 +12,9 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
@@ -47,22 +50,14 @@ func TestExecSetsExactlyTheKeysInTheFile(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("exec failed: %v, stderr: %s", err, stderr.String())
-	}
-	if !strings.Contains(stderr.String(), "only=1") {
-		t.Errorf("expected only=1 in stderr: %s", stderr.String())
-	}
+	err := cmd.Run()
+	require.NoError(t, err, "exec failed: %v, stderr: %s", err, stderr.String())
+	assert.Contains(t, stderr.String(), "only=1", "expected only=1 in stderr: %s", stderr.String())
 	envOutput := stdout.String()
-	if !strings.Contains(envOutput, "GH_TOKEN=ghp_testtoken123") {
-		t.Errorf("missing GH_TOKEN in child env: %s", envOutput)
-	}
-	if strings.Contains(envOutput, "DEEPSEEK_API_KEY") || strings.Contains(envOutput, "SPACE_USER") {
-		t.Errorf("child env leaked keys outside --only: %s", envOutput)
-	}
-	if strings.Contains(envOutput, "NOVA_SECRETS_") {
-		t.Errorf("child env has invented NOVA_SECRETS_ marker: %s", envOutput)
-	}
+	assert.Contains(t, envOutput, "GH_TOKEN=ghp_testtoken123", "missing GH_TOKEN in child env: %s", envOutput)
+	assert.NotContains(t, envOutput, "DEEPSEEK_API_KEY", "child env leaked keys outside --only: %s", envOutput)
+	assert.NotContains(t, envOutput, "SPACE_USER", "child env leaked keys outside --only: %s", envOutput)
+	assert.NotContains(t, envOutput, "NOVA_SECRETS_", "child env has invented NOVA_SECRETS_ marker: %s", envOutput)
 
 	// 2. --only all puts every key and says only=all
 	cmd = exec.Command(bin, "exec", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath,
@@ -71,39 +66,31 @@ func TestExecSetsExactlyTheKeysInTheFile(t *testing.T) {
 	stderr.Reset()
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("exec failed: %v, stderr: %s", err, stderr.String())
-	}
-	if !strings.Contains(stderr.String(), "only=all") {
-		t.Errorf("expected only=all in stderr: %s", stderr.String())
-	}
+	err = cmd.Run()
+	require.NoError(t, err, "exec failed: %v, stderr: %s", err, stderr.String())
+	assert.Contains(t, stderr.String(), "only=all", "expected only=all in stderr: %s", stderr.String())
 	envOutput = stdout.String()
-	if !strings.Contains(envOutput, "GH_TOKEN=ghp_testtoken123") ||
-		!strings.Contains(envOutput, "DEEPSEEK_API_KEY=ds_456") ||
-		!strings.Contains(envOutput, "SPACE_USER=glenn") {
-		t.Errorf("missing expected keys in only=all: %s", envOutput)
-	}
+	assert.Contains(t, envOutput, "GH_TOKEN=ghp_testtoken123", "missing expected keys in only=all: %s", envOutput)
+	assert.Contains(t, envOutput, "DEEPSEEK_API_KEY=ds_456", "missing expected keys in only=all: %s", envOutput)
+	assert.Contains(t, envOutput, "SPACE_USER=glenn", "missing expected keys in only=all: %s", envOutput)
 
 	// 3. --require for an excluded key is 125
 	_, errOut, code := runNovaSecrets(bin, "exec", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath,
 		"--only", "GH_TOKEN", "--require", "DEEPSEEK_API_KEY", "--", "echo", "NO")
-	if code != 125 || !strings.Contains(errOut, "excluded by --only") {
-		t.Errorf("expected 125 for excluded required key, got %d: %s", code, errOut)
-	}
+	assert.Equal(t, 125, code, "expected 125 for excluded required key, got %d: %s", code, errOut)
+	assert.Contains(t, errOut, "excluded by --only", "expected 125 for excluded required key, got %d: %s", code, errOut)
 
 	// 4. --only naming a key the file does not hold is 125 naming that key
 	_, errOut, code = runNovaSecrets(bin, "exec", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath,
 		"--only", "NONEXISTENT", "--", "echo", "NO")
-	if code != 125 || !strings.Contains(errOut, "NONEXISTENT") {
-		t.Errorf("expected 125 naming nonexistent key, got %d: %s", code, errOut)
-	}
+	assert.Equal(t, 125, code, "expected 125 naming nonexistent key, got %d: %s", code, errOut)
+	assert.Contains(t, errOut, "NONEXISTENT", "expected 125 naming nonexistent key, got %d: %s", code, errOut)
 
 	// 5. No --only at all is 125 naming the flag
 	_, errOut, code = runNovaSecrets(bin, "exec", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath,
 		"--", "echo", "NO")
-	if code != 125 || !strings.Contains(errOut, "--only") {
-		t.Errorf("expected 125 naming missing --only, got %d: %s", code, errOut)
-	}
+	assert.Equal(t, 125, code, "expected 125 naming missing --only, got %d: %s", code, errOut)
+	assert.Contains(t, errOut, "--only", "expected 125 naming missing --only, got %d: %s", code, errOut)
 
 	// 6. Every variable and every file in sops' identity lookup, planted and defeated.
 	execIdentityLookupIsDefeated(t, bin, sopsPath)
@@ -142,13 +129,9 @@ func sshKey(t *testing.T, path, kind string) string {
 	}
 	runCmd(t, "", "ssh-keygen", args...)
 	pub, err := os.ReadFile(path + ".pub")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	f := strings.Fields(string(pub))
-	if len(f) < 2 {
-		t.Fatalf("unreadable ssh public key %s", pub)
-	}
+	require.GreaterOrEqual(t, len(f), 2, "unreadable ssh public key %s", pub)
 	return f[0] + " " + f[1]
 }
 
@@ -177,19 +160,13 @@ func execIdentityLookupIsDefeated(t *testing.T, bin, sopsPath string) {
 	xdg := filepath.Join(td, "callerxdg")
 	plant := func(path string, data []byte) {
 		t.Helper()
-		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, data, 0600); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0700))
+		require.NoError(t, os.WriteFile(path, data, 0600))
 	}
 	ageIdentity := func(name string) (priv []byte, pub string) {
 		k := genKey(t, td, name)
 		b, err := os.ReadFile(k.privPath)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		return b, k.pubKey
 	}
 
@@ -215,9 +192,7 @@ func execIdentityLookupIsDefeated(t *testing.T, bin, sopsPath string) {
 	plant(envCmdKey, envCmdPriv)
 	sentinel := filepath.Join(td, "SOPS_AGE_KEY_CMD-ran")
 	envCmd := filepath.Join(td, "planted", "keycmd.sh")
-	if err := testbin.WriteExecutable(envCmd, []byte("#!/bin/sh\n: > '"+sentinel+"'\ncat '"+envCmdKey+"'\n"), 0700); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, testbin.WriteExecutable(envCmd, []byte("#!/bin/sh\n: > '"+sentinel+"'\ncat '"+envCmdKey+"'\n"), 0700))
 	sealedTo["idenvcmd"] = envCmdPub
 	sealedTo["idenvssh"] = sshKey(t, filepath.Join(td, "planted", "envssh"), "ed25519")
 
@@ -258,30 +233,23 @@ func execIdentityLookupIsDefeated(t *testing.T, bin, sopsPath string) {
 		for seat := range sealedTo {
 			out, errOut, code, _ := runWithEnv(bin, env, "exec", "--store", storeDir, "--as", seat, "--key", keyA.privPath,
 				"--sops", sopsPath, "--only", "all", "--", "env")
-			if code != 125 || !strings.Contains(errOut, "sops failed") {
-				t.Errorf("caller %s: %s.yaml is sealed only to a planted identity and must be refused as a failed decrypt (125), got %d: %s", callerName, seat, code, errOut)
-			}
-			if strings.Contains(out+errOut, "ghp_foreign_") {
-				t.Errorf("caller %s: a planted identity opened %s.yaml: %s%s", callerName, seat, out, errOut)
-			}
+			assert.Equal(t, 125, code, "caller %s: %s.yaml is sealed only to a planted identity and must be refused as a failed decrypt (125), got %d: %s", callerName, seat, code, errOut)
+			assert.Contains(t, errOut, "sops failed", "caller %s: %s.yaml is sealed only to a planted identity and must be refused as a failed decrypt (125), got %d: %s", callerName, seat, code, errOut)
+			assert.NotContains(t, out+errOut, "ghp_foreign_", "caller %s: a planted identity opened %s.yaml: %s%s", callerName, seat, out, errOut)
 		}
 
 		out, errOut, code, _ := runWithEnv(bin, env, "exec", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath,
 			"--sops", sopsPath, "--only", "all", "--", "env")
-		if code != 0 || !strings.Contains(out, "GH_TOKEN=ghp_mine\n") {
-			t.Errorf("caller %s: --key alone must open the seat's own file with every planted identity present, got %d: %s", callerName, code, errOut)
-		}
+		assert.Equal(t, 0, code, "caller %s: --key alone must open the seat's own file with every planted identity present, got %d: %s", callerName, code, errOut)
+		assert.Contains(t, out, "GH_TOKEN=ghp_mine\n", "caller %s: --key alone must open the seat's own file with every planted identity present, got %d: %s", callerName, code, errOut)
 		for name := range lookupVars {
 			for _, line := range strings.Split(out, "\n") {
-				if strings.HasPrefix(line, name+"=") {
-					t.Errorf("caller %s: %s reached the command: %s", callerName, name, line)
-				}
+				assert.False(t, strings.HasPrefix(line, name+"="), "caller %s: %s reached the command: %s", callerName, name, line)
 			}
 		}
 	}
-	if _, err := os.Stat(sentinel); err == nil {
-		t.Errorf("SOPS_AGE_KEY_CMD was run: %s exists", sentinel)
-	}
+	_, err := os.Stat(sentinel)
+	assert.Error(t, err, "SOPS_AGE_KEY_CMD was run: %s exists", sentinel)
 }
 
 // Test 3: TestExecReplacesItselfAndPassesTheStatusThrough
@@ -311,8 +279,11 @@ func TestExecReplacesItselfAndPassesTheStatusThrough(t *testing.T) {
 	cmd := exec.Command(bin, "exec", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath,
 		"--only", "GH_TOKEN", "--", "sh", "-c", "exit 7")
 	err := cmd.Run()
-	if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 7 {
-		t.Errorf("expected exit code 7, got %v", err)
+	{
+		exitErr, ok := err.(*exec.ExitError)
+		if assert.True(t, ok, "expected exit code 7, got %v", err) {
+			assert.Equal(t, 7, exitErr.ExitCode(), "expected exit code 7, got %v", err)
+		}
 	}
 
 	// Command exiting 1 and 2
@@ -322,12 +293,11 @@ func TestExecReplacesItselfAndPassesTheStatusThrough(t *testing.T) {
 			"--only", "GH_TOKEN", "--", "sh", "-c", fmt.Sprintf("exit %d", expectedCode))
 		cmd.Stderr = &stderr
 		err = cmd.Run()
-		if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != expectedCode {
-			t.Errorf("expected exit code %d, got %v", expectedCode, err)
+		exitErr, ok := err.(*exec.ExitError)
+		if assert.True(t, ok, "expected exit code %d, got %v", expectedCode, err) {
+			assert.Equal(t, expectedCode, exitErr.ExitCode(), "expected exit code %d, got %v", expectedCode, err)
 		}
-		if strings.Contains(stderr.String(), "SECRETS EXEC FAIL") {
-			t.Errorf("unexpected SECRETS EXEC FAIL on command exit %d: %s", expectedCode, stderr.String())
-		}
+		assert.NotContains(t, stderr.String(), "SECRETS EXEC REFUSED", "unexpected SECRETS EXEC REFUSED on command exit %d: %s", expectedCode, stderr.String())
 	}
 
 	// Command exiting 125 passed through, told from refusal by absence of our line
@@ -336,12 +306,13 @@ func TestExecReplacesItselfAndPassesTheStatusThrough(t *testing.T) {
 		"--only", "GH_TOKEN", "--", "sh", "-c", "exit 125")
 	cmd.Stderr = &stderr
 	err = cmd.Run()
-	if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 125 {
-		t.Errorf("expected exit code 125, got %v", err)
+	{
+		exitErr, ok := err.(*exec.ExitError)
+		if assert.True(t, ok, "expected exit code 125, got %v", err) {
+			assert.Equal(t, 125, exitErr.ExitCode(), "expected exit code 125, got %v", err)
+		}
 	}
-	if strings.Contains(stderr.String(), "SECRETS EXEC FAIL") {
-		t.Errorf("found SECRETS EXEC FAIL when command exited 125: %s", stderr.String())
-	}
+	assert.NotContains(t, stderr.String(), "SECRETS EXEC REFUSED", "found SECRETS EXEC REFUSED when command exited 125: %s", stderr.String())
 
 	if runtime.GOOS == "windows" {
 		t.Log("windows has no execve: the pid, RLIMIT_CORE and signal clauses do not apply there")
@@ -352,9 +323,8 @@ func TestExecReplacesItselfAndPassesTheStatusThrough(t *testing.T) {
 	// Same pid before and after: the command IS the process this test started.
 	out, errOut, code, pid := runWithEnv(bin, env, "exec", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath,
 		"--sops", sopsPath, "--only", "GH_TOKEN", "--", "sh", "-c", "echo $$")
-	if code != 0 || strings.TrimSpace(out) != fmt.Sprint(pid) {
-		t.Errorf("exec must replace itself: started pid %d, the command reported %q (exit %d): %s", pid, strings.TrimSpace(out), code, errOut)
-	}
+	assert.Equal(t, 0, code, "exec must replace itself: started pid %d, the command reported %q (exit %d): %s", pid, strings.TrimSpace(out), code, errOut)
+	assert.Equal(t, fmt.Sprint(pid), strings.TrimSpace(out), "exec must replace itself: started pid %d, the command reported %q (exit %d): %s", pid, strings.TrimSpace(out), code, errOut)
 
 	// A signal-killed command reproduces the shell's status: the process itself dies of
 	// the signal, because there is no wrapper left to turn it into an exit code.
@@ -364,16 +334,13 @@ func TestExecReplacesItselfAndPassesTheStatusThrough(t *testing.T) {
 	cmd.Stderr = &stderr
 	err = cmd.Run()
 	exitErr, ok := err.(*exec.ExitError)
-	if !ok {
-		t.Fatalf("a signal-killed command must not look like success, got %v", err)
-	}
+	require.True(t, ok, "a signal-killed command must not look like success, got %v", err)
 	ws, ok := exitErr.Sys().(syscall.WaitStatus)
-	if !ok || !ws.Signaled() || ws.Signal() != syscall.SIGTERM {
-		t.Errorf("the command killed by SIGTERM must leave the tool killed by SIGTERM (shell status 143), got %v", err)
+	if assert.True(t, ok, "the command killed by SIGTERM must leave the tool killed by SIGTERM (shell status 143), got %v", err) &&
+		assert.True(t, ws.Signaled(), "the command killed by SIGTERM must leave the tool killed by SIGTERM (shell status 143), got %v", err) {
+		assert.Equal(t, syscall.SIGTERM, ws.Signal(), "the command killed by SIGTERM must leave the tool killed by SIGTERM (shell status 143), got %v", err)
 	}
-	if strings.Contains(stderr.String(), "SECRETS EXEC FAIL") {
-		t.Errorf("a signal-killed command printed our failure line: %s", stderr.String())
-	}
+	assert.NotContains(t, stderr.String(), "SECRETS EXEC REFUSED", "a signal-killed command printed our failure line: %s", stderr.String())
 
 	// The command's RLIMIT_CORE is 0 even when the caller's soft limit is not: a core
 	// dump would write every value to disk.
@@ -387,9 +354,8 @@ func TestExecReplacesItselfAndPassesTheStatusThrough(t *testing.T) {
 	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 97 {
 		t.Skip("the caller's hard core limit is 0, so a nonzero soft limit cannot be planted; RLIMIT_CORE clause not provable here")
 	}
-	if err != nil || strings.TrimSpace(wOut.String()) != "0" {
-		t.Errorf("the command's RLIMIT_CORE must be 0 with the caller's at 1024, got %q (%v): %s", strings.TrimSpace(wOut.String()), err, wErr.String())
-	}
+	assert.NoError(t, err, "the command's RLIMIT_CORE must be 0 with the caller's at 1024, got %q (%v): %s", strings.TrimSpace(wOut.String()), err, wErr.String())
+	assert.Equal(t, "0", strings.TrimSpace(wOut.String()), "the command's RLIMIT_CORE must be 0 with the caller's at 1024, got %q (%v): %s", strings.TrimSpace(wOut.String()), err, wErr.String())
 }
 
 // Test 4: TestNoVerbPrintsAValue
@@ -421,9 +387,7 @@ func TestNoVerbPrintsAValue(t *testing.T) {
 	// keygen to refuse, and an empty receipts directory for placed.
 	looseKey := filepath.Join(td, "loose.key")
 	keyBytes, err := os.ReadFile(keyA.privPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	_ = os.WriteFile(looseKey, keyBytes, 0644)
 	_ = os.Chmod(looseKey, 0644)
 	receipts := filepath.Join(td, "receipts")
@@ -478,16 +442,10 @@ func TestNoVerbPrintsAValue(t *testing.T) {
 	const green = 11 // the first eleven are green runs; every one after is a refusal
 	for i, v := range verbs {
 		out, errOut, code := runNovaSecrets(bin, v...)
-		if (i < green) != (code == 0) {
-			t.Errorf("verb %v: exit %d is not the mode this row pins (green=%t): %s%s", v, code, i < green, out, errOut)
-		}
+		assert.Equal(t, code == 0, i < green, "verb %v: exit %d is not the mode this row pins (green=%t): %s%s", v, code, i < green, out, errOut)
 		both := strings.ReplaceAll(out+errOut, td, "<td>")
-		if strings.Contains(both, secretVal) {
-			t.Errorf("verb %v printed the value: %s", v, both)
-		}
-		if lengthToken.MatchString(both) {
-			t.Errorf("verb %v printed the value's length %d: %s", v, len(secretVal), both)
-		}
+		assert.NotContains(t, both, secretVal, "verb %v printed the value: %s", v, both)
+		assert.False(t, lengthToken.MatchString(both), "verb %v printed the value's length %d: %s", v, len(secretVal), both)
 	}
 }
 
@@ -496,17 +454,9 @@ func TestGetIsRefusedBeforeAnythingIsRead(t *testing.T) {
 	t.Parallel()
 	bin := buildNovaSecrets(t)
 	out, errOut, code := runNovaSecrets(bin, "get", "--store", "/nonexistent/store/that/would/panic")
-	if code != 2 {
-		t.Fatalf("expected exit code 2, got %d", code)
-	}
-	if out != "" {
-		t.Errorf("expected empty stdout, got %s", out)
-	}
+	require.Equal(t, 2, code, "expected exit code 2, got %d", code)
+	assert.Empty(t, out, "expected empty stdout, got %s", out)
 	lines := strings.Split(strings.TrimSpace(errOut), "\n")
-	if len(lines) != 1 {
-		t.Errorf("expected exactly one line on stderr, got %d: %s", len(lines), errOut)
-	}
-	if !strings.Contains(errOut, "sops -d") {
-		t.Errorf("expected stderr to name 'sops -d': %s", errOut)
-	}
+	assert.Len(t, lines, 1, "expected exactly one line on stderr, got %d: %s", len(lines), errOut)
+	assert.Contains(t, errOut, "sops -d", "expected stderr to name 'sops -d': %s", errOut)
 }

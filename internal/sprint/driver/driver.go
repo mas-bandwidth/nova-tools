@@ -17,6 +17,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -245,24 +247,6 @@ func (d *Driver) read(v any, args ...string) bool {
 	return json.Unmarshal([]byte(out), v) == nil
 }
 
-func sortedRows(t map[string]map[string]string) []string {
-	var out []string
-	for r := range t {
-		out = append(out, r)
-	}
-	sort.Strings(out)
-	return out
-}
-
-func sortedKeys(m map[string][]string) []string {
-	var out []string
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
-}
-
 func atoi(s string) int { n, _ := strconv.Atoi(s); return n }
 
 func orDash(s string) string {
@@ -342,12 +326,7 @@ func (d *Driver) stopCleared() string {
 // with the fleet short of what it started with. Each fleet up holds the
 // driver's epoch: after a clear it is refused.
 func (d *Driver) restore() {
-	var ms []string
-	for m := range d.downed {
-		ms = append(ms, m)
-	}
-	sort.Strings(ms)
-	for _, m := range ms {
+	for _, m := range slices.Sorted(maps.Keys(d.downed)) {
 		if code, _ := d.run(false, "fleet", "up", m, "--epoch", strconv.FormatUint(d.held, 10)); code == 0 {
 			delete(d.downed, m)
 		}
@@ -368,7 +347,7 @@ func (d *Driver) tick(tick int, c Config, w where) {
 	// it is alive: its status follows its beat. The facts' downs are a
 	// machine falling silent, or, with Hold, the coordinator's hold.
 	fleet := w.Tables["fleet"]
-	members := sortedRows(fleet)
+	members := slices.Sorted(maps.Keys(fleet))
 	up := map[string]bool{}
 	for _, m := range members {
 		if c.Hold {
@@ -479,15 +458,10 @@ func (d *Driver) tick(tick int, c Config, w where) {
 	}
 	as := strings.Join(finishers, ",")
 	d.batches(append([]string{"finish", "--as", as}, held...), good)
-	for _, report := range sortedKeys(bad) {
+	for _, report := range slices.Sorted(maps.Keys(bad)) {
 		d.batches(append([]string{"finish", "--as", as, "--failed", "--report", report}, held...), bad[report])
 	}
-	var limits []int
-	for n := range takers {
-		limits = append(limits, n)
-	}
-	sort.Ints(limits)
-	for _, n := range limits {
+	for _, n := range slices.Sorted(maps.Keys(takers)) {
 		if !anyReady {
 			break
 		}
@@ -496,7 +470,7 @@ func (d *Driver) tick(tick int, c Config, w where) {
 	var reporters, beginners []string
 	var begin, ok []string
 	broken := map[string][]string{}
-	for _, r := range sortedRows(w.Tables["readers"]) {
+	for _, r := range slices.Sorted(maps.Keys(w.Tables["readers"])) {
 		var q queue
 		if !d.read(&q, "queue", "--as", r) {
 			continue
@@ -524,7 +498,7 @@ func (d *Driver) tick(tick int, c Config, w where) {
 		}
 	}
 	d.batches(append([]string{"read", "--as", strings.Join(reporters, ","), "--ok"}, held...), ok)
-	for _, f := range sortedKeys(broken) {
+	for _, f := range slices.Sorted(maps.Keys(broken)) {
 		d.batches(append([]string{"read", "--as", strings.Join(reporters, ","), "--broken", "--finding", f}, held...), broken[f])
 	}
 	d.batches(append([]string{"read", "--as", strings.Join(beginners, ","), "--begin"}, held...), begin)

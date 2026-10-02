@@ -3,9 +3,11 @@ package tokens
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -275,7 +277,7 @@ func laneNames(dir string) ([]string, error) {
 		}
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf(`participants.json names no lane; it wants {"participants":[{"name":"Emma","lane":"from-emma"}]} -- one entry per friend, each lane "from-<slug>", and every <slug>/*.md whose Subject: is exactly "tokens YYYY-MM-DD" is read`)
+		return nil, fmt.Errorf(`participants.json names no lane; it wants {"participants":[{"name":"Ada","lane":"from-ada"}]} -- one entry per friend, each lane "from-<slug>", and every <slug>/*.md whose Subject: is exactly "tokens YYYY-MM-DD" is read`)
 	}
 	sort.Strings(out)
 	return out, nil
@@ -494,13 +496,7 @@ func foldLane(s *Source, lane string, notes []*note, all map[string]*note) {
 	for _, n := range notes {
 		byDay[n.subject.day] = append(byDay[n.subject.day], n)
 	}
-	days := make([]string, 0, len(byDay))
-	for d := range byDay {
-		days = append(days, d)
-	}
-	sort.Strings(days)
-
-	for _, day := range days {
+	for _, day := range slices.Sorted(maps.Keys(byDay)) {
 		var tips []*note
 		for _, n := range byDay[day] {
 			if n.dead != nil {

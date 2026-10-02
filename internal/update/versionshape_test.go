@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The two dogfood hurts of 2026-09-18, red before the repair. Every binary here
@@ -29,7 +32,7 @@ func TestSnapshotAcceptsAToolThatSaysOneMoreTrueThing(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "snapshot.tsv")
 	code, stdout, stderr := specRun(t, Environment{}, "snapshot", "--bin", bin, "--out", out)
 	if code != 0 {
-		t.Fatalf("snapshot refused a bin holding a tool with extras: exit %d\n%s", code, stderr)
+		require.EqualValuesf(t, 0, code, "snapshot refused a bin holding a tool with extras: exit %d\n%s", code, stderr)
 	}
 	need(t, stdout, "SNAPSHOT OK", "tools=3", "stamp="+field(stamp))
 	body := string(readFileOrFail(t, out))
@@ -39,14 +42,14 @@ func TestSnapshotAcceptsAToolThatSaysOneMoreTrueThing(t *testing.T) {
 		"nova-sandbox\t" + stamp + "\td576bf6bbabb\tdarwin/arm64",
 	} {
 		if !strings.Contains(body, want) {
-			t.Errorf("snapshot did not record %q:\n%s", want, body)
+			assert.Containsf(t, body, want, "snapshot did not record %q:\n%s", want, body)
 		}
 	}
 	// The extras are metadata about one tool, not a column of the set: the
 	// stamp every row carries is the same, so the mixed-set gate still reads
 	// field two and nothing else.
 	if strings.Contains(body, "build=") || strings.Contains(body, "backend=") {
-		t.Errorf("an extra leaked into the snapshot's own columns:\n%s", body)
+		assert.Failf(t, "", "an extra leaked into the snapshot's own columns:\n%s", body)
 	}
 }
 
@@ -62,11 +65,11 @@ func TestSnapshotStillRefusesALineThatIsNotAVersionLine(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "snapshot.tsv")
 	code, _, stderr := specRun(t, Environment{}, "snapshot", "--bin", bin, "--out", out)
 	if code != 2 {
-		t.Fatalf("exit %d, want 2; stderr=%s", code, stderr)
+		require.EqualValuesf(t, 2, code, "exit %d, want 2; stderr=%s", code, stderr)
 	}
 	need(t, stderr, "SNAPSHOT REFUSED", "nova-broken", "go build ./cmd/nova-broken")
 	if _, err := os.Stat(out); err == nil {
-		t.Error("a refused snapshot wrote its --out")
+		assert.Error(t, err, "a refused snapshot wrote its --out")
 	}
 }
 
@@ -108,7 +111,7 @@ esac`)
 
 	code, stdout, stderr := specRun(t, Environment{}, "report", "--file", file)
 	if strings.Contains(stdout, "REPORT UNKNOWN") {
-		t.Errorf("report ran our own tools bare and could not read them:\n%s", stdout)
+		assert.NotContainsf(t, stdout, "REPORT UNKNOWN", "report ran our own tools bare and could not read them:\n%s", stdout)
 	}
 	for _, want := range []string{
 		"REPORT TOOL name=nova-swarm",
@@ -118,11 +121,11 @@ esac`)
 		"unknown=0",
 	} {
 		if !strings.Contains(stdout, want) {
-			t.Errorf("missing %q in:\n%s\n%s", want, stdout, stderr)
+			assert.Containsf(t, stdout, want, "missing %q in:\n%s\n%s", want, stdout, stderr)
 		}
 	}
 	if code != 0 {
-		t.Errorf("exit %d, want 0; stderr=%s", code, stderr)
+		assert.EqualValuesf(t, 0, code, "exit %d, want 0; stderr=%s", code, stderr)
 	}
 }
 
@@ -140,7 +143,7 @@ func TestReportStillRefusesAToolThatAnswersNothing(t *testing.T) {
 	// A report that ran and failed prints on stderr, where a FAIL belongs.
 	need(t, stderr, "REPORT UNKNOWN name=nova-mute", "unknown=1")
 	if code != 1 {
-		t.Errorf("exit %d, want 1 (the check ran and failed)", code)
+		assert.EqualValuesf(t, 1, code, "exit %d, want 1 (the check ran and failed)", code)
 	}
 }
 
@@ -163,7 +166,7 @@ printf '%s\n' 'strict 4.5.6'`)
 	seen(t, strict)
 	code, stdout, stderr := specRun(t, Environment{}, "report", "--file", file)
 	if code != 0 || strings.Contains(stdout, "UNKNOWN") {
-		t.Fatalf("the ladder rewrote an explicit argv: exit %d\n%s\n%s", code, stdout, stderr)
+		require.Failf(t, "", "the ladder rewrote an explicit argv: exit %d\n%s\n%s", code, stdout, stderr)
 	}
 	need(t, stdout, "version=4.5.6")
 }
@@ -172,7 +175,7 @@ func readFileOrFail(t *testing.T, path string) []byte {
 	t.Helper()
 	b, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	return b
 }

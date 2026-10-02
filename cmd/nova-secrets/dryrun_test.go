@@ -6,6 +6,9 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // `--dry-run` through the built binary: place's plan is what the real run then does,
@@ -31,68 +34,47 @@ func TestPlaceDryRunPrintsThePlanAndWritesNothing(t *testing.T) {
 
 	args := append(f.placeArgs("mini", "DEEPSEEK_API_KEY", f.remotePath), "--dry-run")
 	stdout, stderr, code := runNovaSecrets(f.bin, args...)
-	if code != 0 {
-		t.Fatalf("place --dry-run exit=%d stdout=%q stderr=%q", code, stdout, stderr)
-	}
-	if stderr != "" {
-		t.Errorf("a dry run wrote to stderr: %q", stderr)
-	}
-	if strings.Contains(stdout, f.value) {
-		t.Fatalf("the value reached the plan:\n%s", stdout)
-	}
+	require.Equal(t, 0, code, "place --dry-run exit=%d stdout=%q stderr=%q", code, stdout, stderr)
+	assert.Empty(t, stderr, "a dry run wrote to stderr: %q", stderr)
+	require.NotContains(t, stdout, f.value, "the value reached the plan:\n%s", stdout)
 	for _, p := range []string{f.sshArgsFile, f.sshStdinFile, f.receipts} {
-		if _, err := os.Stat(p); err == nil {
-			t.Errorf("the dry run wrote %s", p)
-		}
+		_, err := os.Stat(p)
+		assert.Error(t, err, "the dry run wrote %s", p)
 	}
 
 	lines := strings.Split(strings.TrimRight(stdout, "\n"), "\n")
-	if len(lines) != 4 {
-		t.Fatalf("want 4 lines (path, ssh, receipt, DRY-RUN OK), got %d:\n%s", len(lines), stdout)
-	}
+	require.Len(t, lines, 4, "want 4 lines (path, ssh, receipt, DRY-RUN OK), got %d:\n%s", len(lines), stdout)
 	for i, prefix := range []string{
 		"SECRETS PLACE PLAN machine=mini secret=DEEPSEEK_API_KEY path=" + f.remotePath + " mode=0600 file=rowan.yaml head=- blob=",
 		"SECRETS PLACE PLAN ssh=" + f.ssh + " target=mini.example writes=" + f.remotePath,
 		"SECRETS PLACE PLAN receipt=" + filepath.Join(f.receipts, "mini.receipt") + " action=add",
 		"SECRETS PLACE DRY-RUN OK machine=mini secret=DEEPSEEK_API_KEY nothing written, no ssh run",
 	} {
-		if !strings.HasPrefix(lines[i], prefix) {
-			t.Errorf("line %d:\n got %s\nwant prefix %s", i, lines[i], prefix)
-		}
+		assert.True(t, strings.HasPrefix(lines[i], prefix), "line %d:\n got %s\nwant prefix %s", i, lines[i], prefix)
 	}
 	plannedBlob := fieldOf(t, lines[0], "blob")
 
 	// The real run does what was planned: the same path, the same sealed file.
 	stdout, stderr, code = runNovaSecrets(f.bin, f.placeArgs("mini", "DEEPSEEK_API_KEY", f.remotePath)...)
-	if code != 0 {
-		t.Fatalf("place exit=%d stdout=%q stderr=%q", code, stdout, stderr)
-	}
-	if got := fieldOf(t, stdout, "blob"); got != plannedBlob {
-		t.Errorf("the real run wrote blob=%s, the plan said %s", got, plannedBlob)
-	}
-	if got := fieldOf(t, stdout, "path"); got != f.remotePath {
-		t.Errorf("the real run wrote path=%s, the plan said %s", got, f.remotePath)
+	require.Equal(t, 0, code, "place exit=%d stdout=%q stderr=%q", code, stdout, stderr)
+	got := fieldOf(t, stdout, "blob")
+	assert.Equal(t, plannedBlob, got, "the real run wrote blob=%s, the plan said %s", got, plannedBlob)
+	{
+		got := fieldOf(t, stdout, "path")
+		assert.Equal(t, f.remotePath, got, "the real run wrote path=%s, the plan said %s", got, f.remotePath)
 	}
 	sshArgs, err := os.ReadFile(f.sshArgsFile)
-	if err != nil || !strings.Contains(string(sshArgs), f.remotePath) || !strings.Contains(string(sshArgs), "mini.example") {
-		t.Errorf("the real run's ssh call is not the planned target and path: %q (%v)", sshArgs, err)
-	}
+	assert.NoError(t, err, "the real run's ssh call is not the planned target and path: %q (%v)", sshArgs, err)
+	assert.Contains(t, string(sshArgs), f.remotePath, "the real run's ssh call is not the planned target and path: %q (%v)", sshArgs, err)
+	assert.Contains(t, string(sshArgs), "mini.example", "the real run's ssh call is not the planned target and path: %q (%v)", sshArgs, err)
 
 	// With the receipt now on disk the same dry run says the placement would change nothing.
 	again, stderr, code := runNovaSecrets(f.bin, args...)
-	if code != 0 {
-		t.Fatalf("second place --dry-run exit=%d stderr=%q", code, stderr)
-	}
-	if !strings.Contains(again, "action=unchanged") {
-		t.Errorf("a secret already placed from this sealed file is not reported as unchanged:\n%s", again)
-	}
+	require.Equal(t, 0, code, "second place --dry-run exit=%d stderr=%q", code, stderr)
+	assert.Contains(t, again, "action=unchanged", "a secret already placed from this sealed file is not reported as unchanged:\n%s", again)
 	receipt, err := os.ReadFile(filepath.Join(f.receipts, "mini.receipt"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Count(string(receipt), "\n") != 1 {
-		t.Errorf("the dry run changed the receipt file: %q", receipt)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, 1, strings.Count(string(receipt), "\n"), "the dry run changed the receipt file: %q", receipt)
 }
 
 // TestPlaceDryRunRefusesWhereTheRealRunRefuses: an unregistered machine and an absent
@@ -102,16 +84,15 @@ func TestPlaceDryRunRefusesWhereTheRealRunRefuses(t *testing.T) {
 	f := newPlaceFixture(t)
 
 	stdout, stderr, code := runNovaSecrets(f.bin, append(f.placeArgs("nowhere", "DEEPSEEK_API_KEY", f.remotePath), "--dry-run")...)
-	if code != 2 || stdout != "" || !strings.Contains(stderr, "nowhere") {
-		t.Errorf("unknown machine: exit=%d stdout=%q stderr=%q", code, stdout, stderr)
-	}
+	assert.Equal(t, 2, code, "unknown machine: exit=%d stdout=%q stderr=%q", code, stdout, stderr)
+	assert.Empty(t, stdout, "unknown machine: exit=%d stdout=%q stderr=%q", code, stdout, stderr)
+	assert.Contains(t, stderr, "nowhere", "unknown machine: exit=%d stdout=%q stderr=%q", code, stdout, stderr)
 	stdout, stderr, code = runNovaSecrets(f.bin, append(f.placeArgs("mini", "NOT_THERE", f.remotePath), "--dry-run")...)
-	if code != 2 || stdout != "" || !strings.Contains(stderr, "NOT_THERE") {
-		t.Errorf("absent secret: exit=%d stdout=%q stderr=%q", code, stdout, stderr)
-	}
-	if _, err := os.Stat(f.receipts); err == nil {
-		t.Errorf("a refused dry run created the receipts directory")
-	}
+	assert.Equal(t, 2, code, "absent secret: exit=%d stdout=%q stderr=%q", code, stdout, stderr)
+	assert.Empty(t, stdout, "absent secret: exit=%d stdout=%q stderr=%q", code, stdout, stderr)
+	assert.Contains(t, stderr, "NOT_THERE", "absent secret: exit=%d stdout=%q stderr=%q", code, stdout, stderr)
+	_, err := os.Stat(f.receipts)
+	assert.Error(t, err, "a refused dry run created the receipts directory")
 }
 
 var spaces = regexp.MustCompile(`\s+`)
@@ -128,13 +109,10 @@ func TestDryRunIsInTheHelpOfEveryVerbThatTakesIt(t *testing.T) {
 		t.Run(verb, func(t *testing.T) {
 			t.Parallel()
 			out, stderr, code := runNovaSecrets(bin, append(strings.Fields(verb), "-h")...)
-			if code != 0 || stderr != "" {
-				t.Fatalf("%s -h exit=%d stderr=%q", verb, code, stderr)
-			}
+			require.Equal(t, 0, code, "%s -h exit=%d stderr=%q", verb, code, stderr)
+			require.Empty(t, stderr, "%s -h exit=%d stderr=%q", verb, code, stderr)
 			flat := spaces.ReplaceAllString(out, " ")
-			if !strings.Contains(flat, "--dry-run prints the plan and writes nothing") {
-				t.Errorf("%s -h does not say what --dry-run does:\n%s", verb, out)
-			}
+			assert.Contains(t, flat, "--dry-run prints the plan and writes nothing", "%s -h does not say what --dry-run does:\n%s", verb, out)
 			example := false
 			for _, l := range strings.Split(out, "\n") {
 				l = strings.TrimSpace(l)
@@ -142,14 +120,35 @@ func TestDryRunIsInTheHelpOfEveryVerbThatTakesIt(t *testing.T) {
 					example = true
 				}
 			}
-			if !example {
-				t.Errorf("%s -h shows no example line ending in --dry-run:\n%s", verb, out)
-			}
+			assert.True(t, example, "%s -h shows no example line ending in --dry-run:\n%s", verb, out)
 		})
 	}
 
 	out, _, code := runNovaSecrets(bin, "help")
-	if code != 0 || !strings.Contains(spaces.ReplaceAllString(out, " "), "--dry-run prints the plan and writes nothing") {
-		t.Errorf("help does not say what --dry-run does (exit %d):\n%s", code, out)
+	assert.Equal(t, 0, code, "help does not say what --dry-run does (exit %d):\n%s", code, out)
+	assert.Contains(t, spaces.ReplaceAllString(out, " "), "--dry-run prints the plan and writes nothing", "help does not say what --dry-run does (exit %d):\n%s", code, out)
+}
+
+// The help says what a dry run reads, as well as what it does not write: each of the
+// three decrypts the seat file its real run reads first (place to find --secret, seal to
+// say add or replace, seat inject to find the names), and none reads a new value or
+// prints one. A help that said "no value read" over a dry run that decrypts was a claim
+// a reader of the code could catch the tool in.
+func TestEveryDryRunHelpSaysWhatItDecrypts(t *testing.T) {
+	t.Parallel()
+	help := func(args ...string) string {
+		var stdout, stderr strings.Builder
+		require.Equal(t, 0, run(args, strings.NewReader(""), &stdout, &stderr), stderr.String())
+		return stdout.String()
+	}
+	banner := help("help")
+	assert.NotContains(t, banner, "no value read", "the banner still says a dry run reads no value")
+	assert.Contains(t, banner, "seal: the existing <as>.yaml, to say add or replace")
+	for verb, says := range map[string]string{
+		"place":       "--dry-run still decrypts that file to find --secret, prints no value, writes nothing",
+		"seal":        "--dry-run reads no new value, decrypts the existing <as>.yaml (when there is one) to say whether NAME is added or replaced, prints no value and writes nothing",
+		"seat inject": "--dry-run decrypts the --from seat's file to find the names, prints no value and writes nothing",
+	} {
+		assert.Contains(t, help(append(strings.Fields(verb), "-h")...), says, "%s -h", verb)
 	}
 }

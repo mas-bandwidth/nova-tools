@@ -1,15 +1,10 @@
 package main
 
-// Red test for nova-tools#2676: the sprint table's friend working column,
-// friend:<name>:width in the fleet's Redis, was written by hand with redis-cli
-// through nova-secrets exec (Emma hers; Rowan wrote rowan=8 and johnny=6 from
-// statements; Johnny's own attempt hung without the seat exec). The fix's
-// nova-secrets leg: exec refuses to be the vehicle for that hand-write and
-// names the column's one writer on the refusal line, so the column is never a
-// redis-cli line through this exec. Since #3447 that writer is the friend row
-// loop and no beat writes the row (the retired nova-wake beat refused it), so
-// the line names the row loop and the queue, never a beat (#3807). sops and redis-cli are fakes on disk, so no test opens a real store or
-// touches a real Redis.
+// exec refuses to be the vehicle for a hand-write of the sprint table's working column,
+// friend:<name>:width in the fleet's Redis: a redis-cli line that writes that key is
+// refused before the command starts, naming the column's one writer (the friend row
+// loop), and a redis-cli line that reads it, or writes another key, still runs. sops and
+// redis-cli are fakes on disk, so no test opens a real store or touches a real Redis.
 
 import (
 	"fmt"
@@ -18,9 +13,12 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func TestIssue2676(t *testing.T) {
+func TestExecRefusesAHandWriteOfTheSprintWidthKey(t *testing.T) {
 	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("the fake sops and redis-cli run through /bin/sh; the fleet is a linux bench")
@@ -29,9 +27,7 @@ func TestIssue2676(t *testing.T) {
 
 	td := t.TempDir()
 	storeDir := filepath.Join(td, "store")
-	if err := os.MkdirAll(storeDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(storeDir, 0o755))
 	initGitStore(t, storeDir)
 
 	// Two age public keys the shape checker accepts (62 characters, age1 plus
@@ -40,26 +36,16 @@ func TestIssue2676(t *testing.T) {
 	// so neither needs to be a real X25519 key.
 	seatPub := "age1" + strings.Repeat("a", 57) + "a"
 	recPub := "age1" + strings.Repeat("a", 57) + "c"
-	if err := os.WriteFile(filepath.Join(storeDir, "recovery.pub"), []byte(recPub+"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(storeDir, "recovery.pub"), []byte(recPub+"\n"), 0o644))
 	sopsCfg := fmt.Sprintf("creation_rules:\n  - path_regex: ^emma\\.yaml$\n    age: %s,%s\n", seatPub, recPub)
-	if err := os.WriteFile(filepath.Join(storeDir, ".sops.yaml"), []byte(sopsCfg), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(storeDir, "emma.yaml"), []byte("REDISCLI_AUTH: ENC[AES256_GCM,data:fake]\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(storeDir, ".sops.yaml"), []byte(sopsCfg), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(storeDir, "emma.yaml"), []byte("REDISCLI_AUTH: ENC[AES256_GCM,data:fake]\n"), 0o644))
 	commitAndPush(t, storeDir)
 
 	keyDir := filepath.Join(td, "keys")
-	if err := os.MkdirAll(keyDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(keyDir, 0o700))
 	keyPath := filepath.Join(keyDir, "emma.key")
-	if err := os.WriteFile(keyPath, []byte("AGE-SECRET-KEY-1FAKE\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(keyPath, []byte("AGE-SECRET-KEY-1FAKE\n"), 0o600))
 
 	// The fake sops answers the two calls exec makes -- the version probe and
 	// the decrypt -- and exits 1 on anything else, as the real one refuses a
@@ -91,58 +77,38 @@ func TestIssue2676(t *testing.T) {
 	// The benign leg first, so a broken fixture fails as a fixture and not as
 	// the issue: a redis-cli SET of another key still runs through exec.
 	_, errOut, code := runNovaSecrets(bin, execArgs(fakeRedis, "SET", "other:key", "1")...)
-	if code != 0 {
-		t.Fatalf("a redis-cli line writing another key still runs: exit=%d stderr=%s", code, errOut)
-	}
-	if !strings.Contains(errOut, "SECRETS EXEC OK") {
-		t.Fatalf("the benign leg is exec running the command, not a crash; stderr=%s", errOut)
-	}
+	require.Equal(t, 0, code, "a redis-cli line writing another key still runs: exit=%d stderr=%s", code, errOut)
+	require.Contains(t, errOut, "SECRETS EXEC OK", "the benign leg is exec running the command, not a crash; stderr=%s", errOut)
 
 	// THE LINE OF THE ISSUE: redis-cli SET friend:emma:width 3 through
 	// nova-secrets exec. On base it runs -- the working column written by hand
 	// through this tool, which is the defect; the fix refuses it before the
 	// command starts and names the friend's own tool.
 	_, errOut, code = runNovaSecrets(bin, execArgs(fakeRedis, "SET", "friend:emma:width", "3")...)
-	if code != 125 {
-		t.Fatalf("the redis-cli line writing friend:emma:width must be refused at 125 before the command starts, got %d; stderr: %s", code, errOut)
-	}
+	require.Equal(t, 125, code, "the redis-cli line writing friend:emma:width must be refused at 125 before the command starts, got %d; stderr: %s", code, errOut)
 	lines := strings.Split(strings.TrimSpace(errOut), "\n")
-	if len(lines) != 1 || !strings.HasPrefix(lines[0], "SECRETS EXEC FAIL") {
-		t.Fatalf("the refusal is one SECRETS EXEC FAIL line, got %d lines:\n%s", len(lines), errOut)
-	}
+	require.Len(t, lines, 1, "the refusal is one SECRETS EXEC REFUSED line, got %d lines:\n%s", len(lines), errOut)
+	require.True(t, strings.HasPrefix(lines[0], "SECRETS EXEC REFUSED"), "the refusal is one SECRETS EXEC REFUSED line, got %d lines:\n%s", len(lines), errOut)
 	// Since #3447 the working column is the friend row's, written by the row
 	// loop; no beat writes the row (the retired nova-wake beat refused it),
 	// so the refusal names the row loop and never a beat (nova-tools #3807).
 	for _, want := range []string{"friend:emma:width", "friend row loop", "#3447"} {
-		if !strings.Contains(lines[0], want) {
-			t.Errorf("the refusal must name %s (the friend row loop, nova-tools#3807):\n%s", want, lines[0])
-		}
+		assert.Contains(t, lines[0], want, "the refusal must name %s (the friend row loop, nova-tools#3807):\n%s", want, lines[0])
 	}
-	if strings.Contains(lines[0], "nova-sprint") || strings.Contains(lines[0], "rowan-tools") {
-		t.Errorf("the refusal must name no parked tool and no tool outside nova-tools:\n%s", lines[0])
-	}
-	if strings.Contains(lines[0], "nova-wake beat") {
-		t.Errorf("the refusal must not send anyone to nova-wake beat, a retired verb that refused the friend row since #3447 (nova-tools#3807):\n%s", lines[0])
-	}
+	assert.NotContains(t, lines[0], "nova-sprint", "the refusal must name no parked tool and no tool outside nova-tools:\n%s", lines[0])
+	assert.NotContains(t, lines[0], "rowan-tools", "the refusal must name no parked tool and no tool outside nova-tools:\n%s", lines[0])
+	assert.NotContains(t, lines[0], "nova-wake beat", "the refusal must not send anyone to nova-wake beat, a retired verb that refused the friend row since #3447 (nova-tools#3807):\n%s", lines[0])
 
 	// A read of the same key still runs: the table's working column reads
 	// exactly that key, and only its write moved to the beat.
 	_, errOut, code = runNovaSecrets(bin, execArgs(fakeRedis, "GET", "friend:emma:width")...)
-	if code != 0 {
-		t.Fatalf("a redis-cli GET of friend:emma:width still runs: exit=%d stderr=%s", code, errOut)
-	}
+	require.Equal(t, 0, code, "a redis-cli GET of friend:emma:width still runs: exit=%d stderr=%s", code, errOut)
 
 	raw, err := os.ReadFile(witness)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	got := string(raw)
-	if strings.Contains(got, "SET\tfriend:emma:width") {
-		t.Errorf("the refused redis-cli line ran anyway; witness:\n%s", got)
-	}
+	assert.NotContains(t, got, "SET\tfriend:emma:width", "the refused redis-cli line ran anyway; witness:\n%s", got)
 	for _, want := range []string{"SET\tother:key", "GET\tfriend:emma:width"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("the running legs must be recorded in the witness; want %q in:\n%s", want, got)
-		}
+		assert.Contains(t, got, want, "the running legs must be recorded in the witness; want %q in:\n%s", want, got)
 	}
 }

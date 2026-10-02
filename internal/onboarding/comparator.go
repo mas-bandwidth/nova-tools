@@ -130,9 +130,10 @@ type VolatileField struct {
 // green" means the same in every binary. Growing it is a reading, not a call
 // site's decision -- which is what the refusal below is for.
 //
-// The seven entries are the ones docs/SPEC-TOOLWORK.md documents rule 2 names:
+// The eight entries are the ones docs/SPEC-TOOLWORK.md documents rule 2 names:
 // `at=`, `took=`, `created=`, a temporary directory, a fresh sha, a name a
-// recorded fixture carries, and the stamp on a `branch=` nova-secrets seals on.
+// recorded fixture carries, the build on a `build=`, and the stamp on a
+// `branch=` nova-secrets seals on.
 //
 // FIVE OF THE SIX ARE TOKEN-ANCHORED, and the sixth says why it is not. A norm
 // that names a field replaces only a whitespace-delimited token spelled
@@ -218,6 +219,24 @@ var Volatile = []VolatileField{
 		norm: func(f Field) Norm { return Recorded(f.Doc, f.Run) },
 	},
 	{
+		Name: "build",
+		What: "build= (this run's build: the version word of the binary that ran, or how long the run took to build its index)",
+		// Two run-owned values carry the name: nova-tokens stamps a day file and its
+		// summary lines with the build that wrote them (`devel` under `go test`, a stamp
+		// in a release), and nova-memory's STATS line measures its index build as a Go
+		// duration. The value is PARSED as one or the other, so a `build=` that is
+		// neither -- `unknown`, a word, nothing -- stays on the line and is compared.
+		norm: func(Field) Norm {
+			return Norm{
+				Name:  "build= (this run's build)",
+				Re:    regexp.MustCompile(`^build=.+$`),
+				As:    "build=<this run's build>",
+				field: "build",
+				valid: func(v string) bool { return isDuration(v) || buildWord.MatchString(v) },
+			}
+		},
+	},
+	{
 		Name: "branch",
 		What: "branch= (the seal branch this run stamped with its instant)",
 		// nova-secrets carries a change on `seal/<seat>-<NAMES>-<stamp>` and names
@@ -237,6 +256,10 @@ var Volatile = []VolatileField{
 		},
 	},
 }
+
+// buildWord is a build identity as internal/buildinfo resolves one: `devel`, a
+// module or release version, or a vcs stamp of a commit time and a revision.
+var buildWord = regexp.MustCompile(`^(devel|v[0-9]+\.[0-9]+\.[0-9]+[0-9A-Za-z.+-]*|([0-9]{14}-)?[0-9a-f]{7,12}(-dirty)?)$`)
 
 // isStampedBranch answers whether v ends in a real `-YYYYMMDD-HHMMSS` instant.
 func isStampedBranch(v string) bool {

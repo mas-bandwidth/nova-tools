@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -31,7 +32,7 @@ func RunGate(in GateInput) (string, int) {
 	storeDir, base, head := in.StoreDir, in.Base, in.Head
 	// The flags only: the gate judges any working copy, a store with no seat yet included.
 	if err := preflight("", need{storeDir, "--store <dir>", false}, need{base, "--base <git ref>", false}, need{head, "--head <git ref>", false}); err != nil {
-		return "SECRETS REFUSED: " + oneline.WithRemedy(err.Error(), "nova-secrets gate -h"), 2
+		return "SECRETS GATE REFUSED: " + oneline.WithRemedy(err.Error(), "nova-secrets gate -h"), 2
 	}
 	// The two refs become commits before anything reads them. A ref is handed to git as an
 	// argument, and one beginning with "-" is read by git as an OPTION: --head=--diff-filter=U
@@ -41,7 +42,7 @@ func RunGate(in GateInput) (string, int) {
 	// resolved SHA, again behind --end-of-options.
 	for _, r := range []struct{ flag, ref string }{{"--base", base}, {"--head", head}} {
 		if strings.HasPrefix(r.ref, "-") {
-			return fmt.Sprintf("SECRETS REFUSED: %s %s begins with \"-\", the shape of an option, not a git ref", r.flag, oneline.Field(r.ref)), 2
+			return fmt.Sprintf("SECRETS GATE REFUSED: %s %s begins with \"-\", the shape of an option, not a git ref; pass a branch, tag or commit; run: nova-secrets gate -h", r.flag, oneline.Field(r.ref)), 2
 		}
 	}
 	base, err := gateResolveCommit(storeDir, "--base", base)
@@ -104,7 +105,7 @@ func RunGate(in GateInput) (string, int) {
 
 	// 1. Every changed .sops.yaml rule: exactly two age recipients, one the
 	// declared recovery key, and a path_regex naming exactly one seat file.
-	if containsString(changed, ".sops.yaml") {
+	if slices.Contains(changed, ".sops.yaml") {
 		// The recipients the store already had. A key here is not a grant this pull request
 		// makes, so resealing a seat or editing its rule asks the registry nothing.
 		baseKeys, err := gateRecipientsAt(storeDir, base)
@@ -114,11 +115,8 @@ func RunGate(in GateInput) (string, int) {
 		for i := range cfg.CreationRules {
 			rule := cfg.CreationRules[i]
 			ruleNum := i + 1
-			if len(rule.Recipients) != 2 {
-				return gateRefuse(ruleNum, ".sops.yaml", fmt.Sprintf("rule has %d age recipients; expected exactly two", len(rule.Recipients))), 2
-			}
-			if !containsString(rule.Recipients, recoveryKey) {
-				return gateRefuse(ruleNum, ".sops.yaml", "rule recipients do not include the key recovery.pub declares"), 2
+			if problem := ruleRecipientsProblem(rule.Recipients, recoveryKey); problem != "" {
+				return gateRefuse(ruleNum, ".sops.yaml", "rule "+problem), 2
 			}
 			re, err := regexp.Compile(rule.PathRegex)
 			if err != nil {
@@ -165,7 +163,7 @@ func RunGate(in GateInput) (string, int) {
 		return gateRefuse(0, "", "unable to list the base tree: "+oneline.Escape(err.Error())), 2
 	}
 	for _, bf := range baseFiles {
-		if isSeatYAML(bf) && !containsString(headFiles, bf) {
+		if isSeatYAML(bf) && !slices.Contains(headFiles, bf) {
 			return gateRefuse(0, bf, "the seat file is in the store at the base and gone at the head; a seat is never removed here"), 2
 		}
 	}
@@ -256,15 +254,6 @@ func isSeatYAML(path string) bool {
 	return strings.HasSuffix(path, ".yaml") && path != ".sops.yaml"
 }
 
-func containsString(list []string, want string) bool {
-	for _, v := range list {
-		if v == want {
-			return true
-		}
-	}
-	return false
-}
-
 // matchingRuleIndex returns the index of the creation rule whose path_regex
 // matches relPath, or -1 when none does.
 func matchingRuleIndex(cfg *SopsConfig, relPath string) int {
@@ -301,12 +290,11 @@ func firstPlainValue(data []byte, unencryptedRegex string) (string, bool) {
 		if line == "" || strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") || strings.HasPrefix(line, "#") {
 			continue
 		}
-		idx := strings.Index(line, ":")
-		if idx < 0 {
+		key, val, found := strings.Cut(line, ":")
+		if !found {
 			continue
 		}
-		key := strings.TrimSpace(line[:idx])
-		val := strings.TrimSpace(line[idx+1:])
+		key, val = strings.TrimSpace(key), strings.TrimSpace(val)
 		if key == "" || val == "" || key == "sops" {
 			continue
 		}

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -41,8 +42,7 @@ func TestConcurrentTakesNeverExceedCapacity(t *testing.T) {
 				defer wg.Done()
 				<-start
 				ids, _, _, _, _, ok, err := TakeSlotLeases(store, "alice", 1, time.Hour, "u", now, os.Getpid())
-				if err != nil {
-					t.Errorf("take: %v", err)
+				if !assert.NoError(t, err, "take: %v", err) {
 					return
 				}
 				if ok {

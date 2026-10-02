@@ -518,12 +518,8 @@ func inReview(pr *Card, set map[string]string) *Card {
 	after := *pr
 	after.Col = Review
 	after.Fields = map[string]string{}
-	for k, v := range pr.Fields {
-		after.Fields[k] = v
-	}
-	for k, v := range set {
-		after.Fields[k] = v
-	}
+	maps.Copy(after.Fields, pr.Fields)
+	maps.Copy(after.Fields, set)
 	return &after
 }
 
@@ -1019,12 +1015,7 @@ type ReturnReq struct {
 var ReturnResolves = []string{NCIRed, NRed, NRejected, NRepairSkipped, NStalled}
 
 func answeredIn(notes []Note, id string) bool {
-	for _, n := range notes {
-		if n.Kind == Decided && n.Answers == id {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(notes, func(n Note) bool { return n.Kind == Decided && n.Answers == id })
 }
 
 // Return moves merging -> review: off the merge queue (or stuck), into the

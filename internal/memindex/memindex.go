@@ -55,7 +55,7 @@ import (
 // rules together. It is printed by stats and would key any future persisted
 // index, so a schema change can never silently mix token spaces —
 // preprocessing drift is a failure that corrupts quietly.
-const SchemaVersion = "nova-memory/1"
+const SchemaVersion = "nova-memory/2"
 
 // MinTerms is the floor below which a paragraph is not worth indexing: one or
 // two tokens is a heading fragment or a separator, and indexing them makes
@@ -169,11 +169,9 @@ func NormalizeNewlines(s string) string {
 // verify reports absence where a caller declares it required, and parsing
 // here never fails a build.
 func frontmatter(src string) (name, typ string) {
-	// Line endings are folded first, because a memory file whose frontmatter
-	// fence ends "---\r\n" was parsed as having NO frontmatter at all: every
-	// entry then reported "no name: in frontmatter", which reads as a corpus
-	// fault rather than a line-ending one. Found by CI on its first Windows
-	// run, in a tool other people are told to run against their own corpora.
+	// Line endings are folded first: a frontmatter fence ending "---\r\n" is
+	// still frontmatter, and reading it as none would report "no name: in
+	// frontmatter", a corpus fault where there is only a line ending.
 	// SCOPE, stated because this is narrower than it looks. Build already
 	// normalizes before the text reaches here, so the only caller this
 	// actually changes is FrontmatterPresent. And it does NOT handle a UTF-8
@@ -201,11 +199,32 @@ func frontmatter(src string) (name, typ string) {
 	return name, typ
 }
 
+// stripFrontmatter blanks the leading frontmatter block frontmatter reads (the opening
+// "---" fence through the line of the closing one), keeping its newlines: the block is
+// receipt metadata (FMName, FMType), never body text, so a query on a frontmatter key
+// matches no YAML and a snippet quotes none, and every line number after the block is
+// what it was in the file.
+func stripFrontmatter(src string) string {
+	if !strings.HasPrefix(src, "---\n") {
+		return src
+	}
+	end := strings.Index(src[4:], "\n---")
+	if end < 0 {
+		return src
+	}
+	close := 4 + end + len("\n---")
+	if nl := strings.IndexByte(src[close:], '\n'); nl >= 0 {
+		close += nl
+	} else {
+		close = len(src)
+	}
+	return strings.Repeat("\n", strings.Count(src[:close], "\n")) + src[close:]
+}
+
 // Truncate cuts s to at most n bytes on a rune boundary, appending an ellipsis
 // when it cut. Receipts are quoted inside a machine-scannable line, and a
-// mid-rune cut would put invalid UTF-8 into that line — the source this was
-// ported from sliced bytes directly, which is a latent defect on any corpus
-// holding a non-ASCII character near the cut.
+// mid-rune cut would put invalid UTF-8 into that line, on any corpus holding a
+// non-ASCII character near the cut.
 func Truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
@@ -268,6 +287,7 @@ func Build(fsys fs.FS, exclude func(p string) bool) (*Corpus, error) {
 		// platforms, where CRLF markdown is ordinary.
 		text := NormalizeNewlines(string(raw))
 		fmName, fmType := frontmatter(text)
+		text = stripFrontmatter(text)
 		class := "."
 		if i := strings.IndexByte(f, '/'); i >= 0 {
 			class = f[:i]

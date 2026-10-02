@@ -43,7 +43,8 @@ near the end, and the sections below say how each is met.
    the login variables their flags name (`NOVA_SPRINT_REDIS_USER`, the variable
    `--password-env` or `NOVA_SPRINT_REDIS_PASSWORD_ENV` names, else
    `NOVA_REDIS_BENCH_PASSWORD`; [SPEC-STATE.md](SPEC-STATE.md)). Every other
-   verb reads no environment and touches no network.
+   verb reads no environment and touches no network, but for one lookup:
+   `--opencode` runs `sqlite3` found on `$PATH`.
 2. **Sources are declared by flag, and every row names its sources.** A source
    is one of `--claude <label>=<dir>`, `--opencode <label>=<file>`,
    `--swarm <label>=<dir>` or `--bus <dir>`, each repeatable. The `sources`
@@ -204,7 +205,9 @@ near the end, and the sections below say how each is met.
     `utc` or a zone name with no whitespace, the version line carries
     `turns=` as an integer or `-`, the `date` column equals the
     file name, and rows are sorted and unique by `(model, repo)`. A missing day
-    is `CHECK MISSING date=<d>`, named, never filled. `check` exits 1 on any
+    is `CHECK MISSING date=<d>`, named, never filled. An `--out` holding no day
+    file at all is a finding too (a gate that cannot go red is no gate either),
+    with the fold that writes the first one as its remedy. `check` exits 1 on any
     finding and prints the count line either way. Never gate on `sum` or
     `sources`; `check` is the gate.
 

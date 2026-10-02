@@ -1,4 +1,3 @@
 # Migrated counted package ledger; original row keys preserved.
-# ceiling: 2
-internal/update:assert 470 bare assertions to convert to testify
+# ceiling: 1
 internal/update:env 34 t.Setenv and Chdir sites to inject through config

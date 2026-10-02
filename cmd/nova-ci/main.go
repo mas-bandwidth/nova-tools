@@ -2,9 +2,8 @@
 // Its first verb, slowtests, reads the newline-delimited `go test -json`
 // TestEvents on stdin, sums the package-level elapsed time for each package,
 // and prints a CI-SLOW line for every package whose total is over the budget, a
-// measurement that fails the run only under --enforce. It exists because a slow
-// test must surface the moment it happens:
-// nova-secrets sat at 120 seconds unnoticed until an alarm like this one.
+// measurement that fails the run only under --enforce, so a slow test surfaces
+// the moment it happens.
 //
 // Every path and every budget comes from a flag. There are no guessed paths; a
 // budget of zero or less is refused rather than read as unlimited.
@@ -12,13 +11,11 @@ package main
 
 import (
 	_ "embed"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"math"
 	"os"
-	"regexp"
 	"runtime"
 	"strings"
 
@@ -47,51 +44,34 @@ nova-tools checkout; github receipt writes one row of a CI run to a Redis store.
 first run: nothing to set up: slowtests --example reads a built-in event stream.
 In your own module: go test -json <packages> | nova-ci slowtests --budget 60.
 
-usage:
+usage, in any Go module (no state, no store):
   nova-ci help        print this banner and the verbs below (inspection)
   nova-ci version     which build this is: <version> <goos>/<goarch> <go version>
-  nova-ci slowtests --budget <seconds> [--example] [--json]
+  nova-ci slowtests [--budget <seconds> | --package-budget <s>] [--test-budget <s>]
+                    [--allowlist <file>] [--sleeps <file>] [--enforce]
+                    [--load <n> --cpus <n>] [--example] [--json]
                       (inspection) read newline-delimited ` + "`go test -json`" + `
                       TestEvents on stdin (or the built-in example stream with
                       --example) and print one CI-SLOW line per package whose
-                      total elapsed time is over --budget (default 60) and a
-                      CI-LOAD line; the times are a measurement unless
-                      --enforce is given (the nightly reference leg only).
-                      --json prints the same verdict as one JSON object.
-  nova-ci local [--base origin/dev] [--functional] [--dry-run]
-                      (runs tests, writes only a temp dir; nova-tools
-                      checkout) the unit tier CI runs for this diff, on this
-                      machine: the packages CI's selection picks
-                      against the merge base of --base and HEAD, run through
-                      the Makefile's test target (its go test flags and its
-                      slowtests budgets) under nice -n 15 at -p 2, GOMAXPROCS=2
-                      and -count=1; one PKG line per package with its seconds,
-                      one RED line per failing test with its output.
-                      --functional adds the functional build tag
-                      (GOTEST_TAGS=functional); CI runs those tests in its
-                      functional job as a stream merges. --dry-run prints the
-                      packages and the make line, and runs nothing.
-  nova-ci slowtests --package-budget <s> --test-budget <s> [--allowlist <file>]
-                    [--sleeps <file>] [--enforce] [--load <n> --cpus <n>]
-                      the unit tier's budgets: a package over --package-budget
-                      and a top-level test over --test-budget are each a CI-SLOW
-                      line, unless the allowlist (pkg<TAB>test<TAB>seconds<TAB>
+                      total elapsed time is over its budget (--budget, whole
+                      seconds, default 60; --package-budget replaces it) and
+                      per top-level test over --test-budget, then one CI-LOAD
+                      line. The allowlist (pkg<TAB>test<TAB>seconds<TAB>
                       <measured>s@<where>, where is run<id> or a bench, - in
-                      the test column for a package's own row) names a higher
-                      one. The host's load average (the larger of its 1- and
-                      5-minute figures, over its CPUs; --load and --cpus give
-                      them by hand) is printed as a CI-LOAD line and never
-                      read by the verdict. A CI-SLOW line fails the run only
-                      with --enforce. A test skipped with the SLEEPS marker and
-                      not on --sleeps (pkg<TAB>test<TAB>where) is a CI-SLEEPS
-                      line and fails the run on every leg.
-                      A package go test served from its test cache reports a
-                      package elapsed near zero, so a cached run can never
-                      trip --package-budget (or --budget); its tests replay
-                      the times of the run that was cached, which
-                      --test-budget still reads. CI's unit legs run with the
-                      cache on (GOTEST_COUNT_FLAG=); its --enforce leg runs
-                      -count=1, and so does a measurement by hand.
+                      the test column for a package's own row) raises one
+                      package's or test's budget. The host's load average (the
+                      larger of its 1- and 5-minute figures, over its CPUs;
+                      --load and --cpus give them by hand) is printed and never
+                      read by the verdict. The times are a measurement: a
+                      CI-SLOW line fails the run only with --enforce (the
+                      nightly reference leg). A test skipped with the SLEEPS
+                      marker and not on --sleeps (pkg<TAB>test<TAB>where) is a
+                      CI-SLEEPS line and fails the run on every leg. A package
+                      go test served from its test cache reports a package
+                      elapsed near zero, so a cached run never trips a package
+                      budget; its tests replay the cached times, which
+                      --test-budget still reads (measure with -count=1).
+                      --json prints the same verdict as one JSON object.
   nova-ci functional <package-dir>...
                       (inspection) print the packages among these that hold
                       functional tests (a _test.go built only under the
@@ -100,14 +80,29 @@ usage:
                       there are none, one line
                       CI FUNCTIONAL OK packages=0 reason=<why>. A flag, and a
                       pattern matching no package, are refused.
+
+usage, in a nova-tools checkout (this repository's own CI steps):
+  nova-ci local [--base origin/dev] [--functional] [--dry-run]
+                      (runs tests, writes only a temp dir; needs a nova-tools
+                      checkout) the unit tier CI runs for this diff, on this
+                      machine: the packages CI's selection picks against the
+                      merge base of --base and HEAD, run through the Makefile's
+                      test target (its go test flags and its slowtests budgets)
+                      under nice -n 15 at -p 2, GOMAXPROCS=2 and -count=1; one
+                      PKG line per package with its seconds, one RED line per
+                      failing test with its output. --functional adds the
+                      functional build tag (GOTEST_TAGS=functional); CI runs
+                      those tests in its functional job as a stream merges.
+                      --dry-run prints the packages and the make line, and
+                      runs nothing.
   nova-ci new-rule [--root <checkout>] [--dry-run] <rule-name>
-                      (local write; nova-tools checkout) scaffold a new class
-                      rule: class test, fixture and make target; --dry-run
-                      lists the files and writes nothing
-  nova-ci new-verb [--root <checkout>] [--dry-run] <tool> <verb>
-                      (local write; nova-tools checkout) scaffold a new verb of
-                      an existing tool: command, test, fixture and make target;
+                      (local write; needs a nova-tools checkout) scaffold a new
+                      class rule: class test, fixture and make target;
                       --dry-run lists the files and writes nothing
+  nova-ci new-verb [--root <checkout>] [--dry-run] <tool> <verb>
+                      (local write; needs a nova-tools checkout) scaffold a new
+                      verb of an existing tool: command, test, fixture and make
+                      target; --dry-run lists the files and writes nothing
   nova-ci github receipt --from-runner --redis <addr> --repo owner/name
                     --sha <40hex> --run-id <n> --workflow <name>
                     --conclusion success|failure|cancelled [--pr <n>] [--at <rfc3339>]
@@ -123,8 +118,8 @@ exit codes: 0 done and 2 usage or could not run, for every verb; by verb:
     measurement); 1 a CI-SLEEPS line, or a CI-SLOW line under --enforce
     (the check said no); 2 the invocation could not run (bad flag,
     unreadable stdin)
-  local: 0 green; 1 a red test or a package that did not build; 2 a
-    CI-SLEEPS line, a step that could not run, or usage
+  local: 0 green; 1 a red test, a package that did not build, or a
+    CI-SLEEPS line; 2 a step that could not run, or usage
   functional: 0 the selection printed (packages=0 included); 2 a flag, or
     a pattern that matches no package
   new-rule: 0 the files written (or listed, with --dry-run); 2 usage, not a
@@ -143,7 +138,19 @@ example:
 
 // verbs is every verb in the order the banner lists them: what a refusal for a
 // missing or unknown verb names.
-const verbs = "slowtests, local, functional, new-rule, new-verb, github receipt, version, help"
+const verbs = "slowtests, functional, local, new-rule, new-verb, github receipt, version, help"
+
+// verbEffect is what running a verb does beyond printing, the last line of its -h, in
+// internal/tool's words (inspection, local write or delivery; docs/STANDARD.md section 2).
+var verbEffect = map[string]tool.Effect{
+	"slowtests":      tool.Inspection,
+	"functional":     tool.Inspection,
+	"version":        tool.Inspection,
+	"local":          "local write: runs this checkout's unit tests, writing only a temp dir",
+	"new-rule":       tool.LocalWrite,
+	"new-verb":       tool.LocalWrite,
+	"github receipt": "delivery: writes one row of a CI run to a Redis store",
+}
 
 // refuse prints this tool's one refusal line, `nova-ci[ <verb>] REFUSED:
 // <what>; run: <remedy>` (STANDARD §2), at exit 2. The remedy is the verb's
@@ -164,38 +171,6 @@ func refuseRun(stderr io.Writer, where, what, next string) int {
 	fmt.Fprintf(stderr, "nova-ci%s REFUSED: %s; run: %s\n", where, oneline.Escape(what), oneline.Escape(next))
 	return 2
 }
-
-// flagProblem words a flag-parse error for a reader who has only the help: a
-// flag the verb does not define is named with the flags it does, and a value
-// that does not parse with the type its flag wants. Anything else is the flag
-// package's own words.
-func flagProblem(fs *flag.FlagSet, err error) string {
-	msg := err.Error()
-	if name, ok := strings.CutPrefix(msg, "flag provided but not defined: "); ok {
-		var names []string
-		fs.VisitAll(func(f *flag.Flag) { names = append(names, "--"+f.Name) })
-		return fmt.Sprintf("unknown flag --%s; the flags are %s", strings.TrimLeft(name, "-"), strings.Join(names, ", "))
-	}
-	if name, ok := strings.CutPrefix(msg, "flag needs an argument: "); ok {
-		return fmt.Sprintf("--%s needs a value after it", strings.TrimLeft(name, "-"))
-	}
-	if m := badValue.FindStringSubmatch(msg); m != nil {
-		if f := fs.Lookup(m[2]); f != nil {
-			kind, _ := flag.UnquoteUsage(f)
-			wants := map[string]string{"": "true or false", "int": "a whole number", "float": "a number"}[kind]
-			if wants == "" {
-				wants = "a " + kind
-			}
-			return fmt.Sprintf("--%s wants %s, got %s", m[2], wants, m[1])
-		}
-	}
-	return oneline.Cap(msg, oneline.TailBytes)
-}
-
-// badValue is the flag package's words for a value that does not parse:
-// `invalid value "x" for flag -name: ...`, or `invalid boolean value "x" for
-// -name: ...`.
-var badValue = regexp.MustCompile(`^invalid (?:boolean )?value (".*") for (?:flag )?-([A-Za-z0-9-]+): `)
 
 // exitTable is the exit-code paragraph a verb's -h quotes: the banner's first
 // line and that verb's own row, so no verb's help states another verb's codes.
@@ -227,9 +202,9 @@ func main() {
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
 	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
-	// before anything is read, run or written (the CLI style's rule (b), #4505),
-	// with that verb's own exit codes (verbflag.Recover would quote the whole
-	// table).
+	// before anything is read, run or written (the CLI style's rule (b)),
+	// with that verb's own exit codes (verbflag.RecoverWith would quote the
+	// whole table).
 	defer func() {
 		r := recover()
 		if r == nil {
@@ -239,7 +214,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
 		if !ok {
 			panic(r)
 		}
-		verbflag.Print(stdout, "nova-ci", exitTable(verbflag.Verb("nova-ci", h.FS)), h.FS)
+		verb := verbflag.Verb("nova-ci", h.FS)
+		verbflag.Print(stdout, "nova-ci", exitTable(verb), h.FS)
+		if e, ok := verbEffect[verb]; ok {
+			fmt.Fprintf(stdout, "effect: %s\n", e)
+		}
 		code = 0
 	}()
 	if len(args) == 0 {
@@ -274,7 +253,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
 // cmdSlowtests reads the events, sums them against the budgets, and prints one
 // CI-SLOW line per package or test over its budget (or the single CI-SLOW OK
 // line), one CI-SLEEPS line per unledgered SLEEPS skip, and the CI-LOAD line.
-// Exit 2 on a CI-SLEEPS line on every leg, on a CI-SLOW line only with
+// Exit 1 on a CI-SLEEPS line on every leg, and on a CI-SLOW line only with
 // --enforce; 0 otherwise. A malformed line or an unusable flag is a refusal,
 // and one run names every problem with the flags and the files they name.
 func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -292,7 +271,7 @@ func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 	example := fs.Bool("example", false, "read the built-in six-event example stream instead of stdin: a first run with no Go module")
 	asJSON := fs.Bool("json", false, "print the verdict, or the refusal, as one JSON object {result, facts, items} on stdout instead of lines")
 	if err := verbflag.Parse(fs, args); err != nil {
-		return slowtestsRefuse(stdout, stderr, verbflag.BoolAsked(args, "json"), []string{flagProblem(fs, err)}, "nova-ci slowtests -h")
+		return slowtestsRefuse(stdout, stderr, verbflag.BoolAsked(args, "json"), []string{verbflag.Explain(fs, err)}, "nova-ci slowtests -h")
 	}
 	problems := nonFinite(fs)
 	if fs.NArg() > 0 {
@@ -349,25 +328,12 @@ func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 	}
 	lines, code := slowtests.Verdict(report, load, *enforce, ledger)
 	if *asJSON {
-		return renderJSON(stdout, stderr, verdictJSON(report, load, *enforce, code))
+		return verdictJSON(report, load, *enforce, code).Render(stdout, true)
 	}
 	for _, line := range lines {
 		fmt.Fprintln(stdout, line)
 	}
 	return code
-}
-
-// renderJSON prints o as one JSON object on stdout and returns its exit. A
-// value that cannot be marshalled is never an empty line at exit 0: it is a
-// FAIL line on stderr and exit 1.
-func renderJSON(stdout, stderr io.Writer, o *tool.Out) int {
-	raw, err := json.Marshal(o)
-	if err != nil {
-		fmt.Fprintf(stderr, "nova-ci %s FAIL: the verdict could not be rendered as JSON: %s; run: nova-ci %s -h\n", o.Verb, oneline.Err(err), o.Verb)
-		return 1
-	}
-	fmt.Fprintf(stdout, "%s\n", raw)
-	return o.Exit
 }
 
 // slowtestsRefuse is slowtests' refusal: the house line on stderr, or with
@@ -376,7 +342,7 @@ func slowtestsRefuse(stdout, stderr io.Writer, asJSON bool, why []string, next s
 	if !asJSON {
 		return refuseRun(stderr, " slowtests", strings.Join(why, "; "), next)
 	}
-	return renderJSON(stdout, stderr, &tool.Out{Verb: "slowtests", Status: tool.Refused, Exit: 2, Why: why, Remedy: next})
+	return (&tool.Out{Verb: "slowtests", Status: tool.Refused, Exit: 2, Why: why, Remedy: next}).Render(stdout, true)
 }
 
 // nonFinite names every float flag of fs whose value is NaN or an infinity:

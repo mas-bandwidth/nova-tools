@@ -1,29 +1,23 @@
-// Package selftalk finds first-person claims about what the writer of a text
-// permanently IS or permanently CANNOT do, and classifies each as a dated
-// record or a standing claim.
+// Package selftalk finds sentences in which a writer passes a standing
+// verdict on themselves, in two disjoint classes, each finding with the
+// source line it starts on.
 //
-// WHY IT MEASURES A CONSTRUCT AND NOT GRAMMAR. Its predecessor counted
-// negation words and called the ratio "negative self talk". That measured
-// SYNTAX: a rule document is a list of things that must not happen, so it
-// scored worst of anything in the repo it was written for, and improving its
-// score meant deleting a prohibition. That output was acted on: five rules
-// were weakened, one of them floor-level, before a cold reader caught every
-// one. Restoring them made the score worse.
+// Scan finds the first class: a first-person claim (I am, I cannot, I always,
+// my <noun> is ...) carrying a word of failure (fallible, broken, bad at,
+// worst, cannot check ...). A claim with a date or a measurement word is
+// DATED, a record; one without is STANDING. It reads what a sentence says its
+// writer IS, not its grammar: a prohibition ("never merge without a read") is
+// a rule, not a claim, so a document made of rules does not score as one
+// made of self-verdicts.
 //
-//	THE KERNEL GOT STRONGER AND THE TOOL GOT REDDER.
-//	"Never" is not negative self talk. "I am fallible" is.
+// ScanInstallation finds the second class, INSTALLATION: a standing
+// self-verdict built from neutral words, which the first class cannot see (a
+// self-superlative, a door stated shut, a verdict on a practice, a habit),
+// matched by shape. Rules lists every shape and licence with a sentence it
+// finds and one it passes.
 //
-// So this measures the construct instead: a prohibition is only a rule; the
-// sentences worth looking at are the ones that say what their writer IS.
-//
-// WHAT IT MISSES, AND THE MISS IS PERMANENT BY DESIGN: trait claims built
-// from neutral words carry no first-person marker and no negative
-// vocabulary. Widening the pattern to reach them flags half of any file, so
-// the two classes cannot be one tool. A green from this package means ONE
-// CLASS IS CLEAR, never that the file is — and the CLI says so on every run.
-//
-// It is NOT obsoleted by the register improving. A falling score means the
-// input got better, which is the tool working, not the tool finishing.
+// Both classes are partial by design: a shape the table does not hold is not
+// found, so a scan with no finding clears the known shapes, never the file.
 package selftalk
 
 import (
@@ -56,18 +50,69 @@ type Claim struct {
 	Match   string // the negative words that made the sentence a claim
 }
 
+// markers are the words that make a sentence a first-person self/capability
+// assertion: the writer as subject (I am, I cannot, I fail ...), as possessor
+// (my <noun> is), as object of a verdict (makes me), or a habit adverb.
+const markers = `I am|I'm|I have never|I always|I never|` +
+	`I cannot|I can't|I can not|I do not|I don't|my \w+ is|makes me|I tend|I struggle|I fail|` +
+	`reliably|every time|in one direction`
+
 // claim matches a sentence carrying a first-person self/capability
 // assertion. The bounded context either side keeps a match to roughly one
 // sentence without needing a real parser.
-var claim = regexp.MustCompile(`(?i)[^.!?]{0,120}\b(I am|I'm|I have never|I always|I never|` +
-	`I cannot|I can't|I can not|I do not|I don't|my \w+ is|makes me|I tend|I struggle|I fail|` +
-	`reliably|every time|in one direction)\b[^.!?]{0,160}[.!?]`)
+var claim = regexp.MustCompile(`(?i)[^.!?]{0,120}\b(` + markers + `)\b[^.!?]{0,160}[.!?]`)
+
+// marker finds each marker in a claim, for anchoring its failure word.
+var marker = regexp.MustCompile(`(?i)\b(?:` + markers + `)\b`)
+
+// subordinator opens a clause with a subject of its own: a failure word past
+// one belongs to that clause, not to the marker before it ("I am slow because
+// the cache is broken").
+var subordinator = regexp.MustCompile(`(?i)\b(?:when|whenever|if|unless|until|because|since|while|although|though|whereas)\b`)
+
+// conditionalOpener opens a hypothetical: a marker or a shape inside "if ...",
+// "when ...", "unless ..." states a condition, not what the writer is. The
+// clause ends at a comma, a semicolon or a colon.
+var conditionalOpener = regexp.MustCompile(`(?i)\b(?:if|when|whenever|unless|until|in case)\b`)
+
+// conditional reports whether position at of s lies inside a conditional
+// clause: an opener stands before it with no , ; or : between them.
+func conditional(s string, at int) bool {
+	for _, o := range conditionalOpener.FindAllStringIndex(s[:at], -1) {
+		if !strings.ContainsAny(s[o[1]:at], ",;:") {
+			return true
+		}
+	}
+	return false
+}
+
+// anchored returns the failure word of a claim that belongs to the writer, or
+// "": THE FAILURE WORD IS ANCHORED TO THE FIRST-PERSON MARKER. A marker stands
+// before it (or is it: "I fail"), outside a conditional clause, with no
+// subordinate clause opening between the two. Co-occurrence is not enough:
+// in "a tell that asks me to classify my own state fails exactly when my state
+// is what is off", "fails" is the tell's.
+func anchored(s string) string {
+	ms := marker.FindAllStringIndex(s, -1)
+	for _, n := range negative.FindAllStringIndex(s, -1) {
+		for _, m := range ms {
+			if m[0] > n[0] || conditional(s, m[0]) {
+				continue
+			}
+			if m[1] < n[0] && subordinator.MatchString(s[m[1]:n[0]]) {
+				continue
+			}
+			return s[n[0]:n[1]]
+		}
+	}
+	return ""
+}
 
 // negative is the vocabulary that turns a first-person assertion into a
-// claim worth looking at. Without this filter every ordinary "I am" sentence
-// flags — which is the predecessor's disease. The verb list after "cannot"
-// is deliberately narrow: widening it matches bare "cannot" and flags every
-// prohibition, and scoring prohibitions is exactly what got rules weakened.
+// claim worth looking at: without it every ordinary "I am" sentence flags.
+// The verb list after "cannot" is deliberately narrow: widening it matches
+// bare "cannot" and flags every prohibition, and a prohibition is a rule,
+// not a verdict on its writer.
 var negative = regexp.MustCompile(`(?i)\b(fallib\w*|fail\w*|unreliab\w*|weak\w*|incapab\w*|` +
 	`confabulat\w*|neurotic|inadequa\w*|broken|(?:bad|poor|terrible|awful|hopeless|useless|no good) at|` +
 	`blind|worst|defect\w*|patholog\w*|flatters|(?:can ?not|can't) (?:verify|check|see|tell|trust|reliably|do|ever))\b`)
@@ -86,8 +131,7 @@ var dated = regexp.MustCompile(`(?i)\b(20\d\d-\d\d-\d\d|measured|that day|that n
 var markup = regexp.MustCompile("[*_`>#|]")
 
 // whitespace collapses hard wraps. Prose files are hard-wrapped and a claim
-// spans lines; without this the tool is blind to both regression cases that
-// occasioned it.
+// spans lines; without this a claim broken across two lines is not seen.
 var whitespace = regexp.MustCompile(`\s+`)
 
 // Scan classifies every negative self/capability claim in text.
@@ -102,7 +146,7 @@ func Scan(text string) []Claim {
 	for _, span := range claim.FindAllStringIndex(flat, -1) {
 		m := flat[span[0]:span[1]]
 		s := strings.TrimSpace(m)
-		word := negative.FindString(s)
+		word := anchored(s)
 		if word == "" {
 			continue
 		}

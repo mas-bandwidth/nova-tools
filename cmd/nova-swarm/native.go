@@ -657,10 +657,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	bench := cfg.benchName
 	if bench == "" {
 		if h, err := os.Hostname(); err == nil {
-			if idx := strings.Index(h, "."); idx != -1 {
-				h = h[:idx]
-			}
-			bench = h
+			bench, _, _ = strings.Cut(h, ".")
 		}
 	}
 	if bench == "" {
@@ -834,7 +831,9 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		refuseNative(errOut, "missing configured root for pool identity; refusing to launch under nobody's name")
 		return nativeRunResult{}, 2
 	}
-	writeNativeArgvLog(cfg.slotDir, runPath, runArgv, childEnv)
+	if err := writeNativeArgvLog(cfg.slotDir, runPath, runArgv, childEnv); err != nil {
+		fmt.Fprintf(errOut, "NATIVE NOTE argv log: %s; the run goes on without its record of the argv and environment the child is handed\n", oneline.Err(err))
+	}
 	devNull, err := os.Open(os.DevNull)
 	if err != nil {
 		refuseNative(errOut, fmt.Sprintf("the child's stdin %s could not be opened: %s", oneline.Field(os.DevNull), oneline.Escape(err.Error())))
@@ -1906,21 +1905,19 @@ func environWithoutName(env []string, name string) []string {
 // writeNativeArgvLog records the exact argv and environment the child is about to be handed
 // into <slot>/native-argv.log, so a later reader can prove what the wall was asked to run.
 // A value whose name carries KEY, TOKEN or SECRET is written as <redacted>, never the secret
-// itself.
-func writeNativeArgvLog(slotDir, runPath string, runArgv, env []string) {
-	f, err := os.OpenFile(filepath.Join(slotDir, "native-argv.log"), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-	fmt.Fprintf(f, "argv: %s\n", oneline.Escape(strings.Join(append([]string{runPath}, runArgv...), " ")))
+// itself. A log that cannot be written is the error returned, which the run names on a NOTE
+// line and goes on without.
+func writeNativeArgvLog(slotDir, runPath string, runArgv, env []string) error {
+	var f strings.Builder
+	fmt.Fprintf(&f, "argv: %s\n", oneline.Escape(strings.Join(append([]string{runPath}, runArgv...), " ")))
 	for _, kv := range env {
 		name, val, _ := strings.Cut(kv, "=")
 		if keepNativeSecretName(name) {
 			val = "<redacted>"
 		}
-		fmt.Fprintf(f, "env: %s=%s\n", oneline.Escape(name), oneline.Escape(val))
+		fmt.Fprintf(&f, "env: %s=%s\n", oneline.Escape(name), oneline.Escape(val))
 	}
+	return os.WriteFile(filepath.Join(slotDir, "native-argv.log"), []byte(f.String()), 0o644)
 }
 
 // keepNativeSecretName says whether a name carries a secret, which the argv log redacts.
@@ -2399,12 +2396,8 @@ func workStart(git, checkout, base string) (string, error) {
 // has a believable provider prefix: both sides nonempty, no slash inside the
 // provider.
 func providerOf(model string) (string, bool) {
-	i := strings.Index(model, "/")
-	if i <= 0 || i >= len(model)-1 {
-		return "", false
-	}
-	provider := model[:i]
-	if strings.Contains(provider, "/") {
+	provider, rest, ok := strings.Cut(model, "/")
+	if !ok || provider == "" || rest == "" {
 		return "", false
 	}
 	return provider, true

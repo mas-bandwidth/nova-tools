@@ -13,28 +13,8 @@
 // one spelling rather than eleven.
 package main
 
-import (
-	"fmt"
-	"io"
-
-	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-)
-
 // version is empty in every ordinary build and is the one override: a release stamps it
 // with -ldflags "-X main.version=<tag>". It is a var rather than a const because -X can
 // only write a string var, and it is package-level and unexported for the same reason.
+// The verb itself is the skeleton's (internal/tool): buildinfo.Line over this stamp.
 var version string
-
-// cmdVersion prints the one line. It takes no flags and no arguments: there is no
-// --short, no --json and no --long, because a second output shape is a second thing to
-// agree about and this verb exists to end an argument rather than to start one.
-func cmdVersion(args []string, stdout, stderr io.Writer) int {
-	verbflag.HelpIfAsked(args, "version")
-	if len(args) > 0 {
-		fmt.Fprintf(stderr, "nova-memory version: takes no flags and no arguments, got %d; run: nova-memory version -h\n", len(args))
-		return 2
-	}
-	fmt.Fprintln(stdout, buildinfo.Line("nova-memory", version))
-	return 0
-}

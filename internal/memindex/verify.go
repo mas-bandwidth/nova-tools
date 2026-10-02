@@ -3,8 +3,10 @@ package memindex
 import (
 	"fmt"
 	"io/fs"
+	"maps"
 	"path"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -331,13 +333,8 @@ func Wikilinks(fsys fs.FS, c *Corpus) ([]Finding, error) {
 			}
 		}
 	}
-	keys := make([]string, 0, len(unresolved))
-	for k := range unresolved {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
 	var out []Finding
-	for _, k := range keys {
+	for _, k := range slices.Sorted(maps.Keys(unresolved)) {
 		out = append(out, Finding{Kind: "wikilink",
 			Detail: fmt.Sprintf("[[%s]] resolves to no file (e.g. from %s)", k, strings.Join(unresolved[k], ", "))})
 	}
@@ -350,10 +347,8 @@ func Wikilinks(fsys fs.FS, c *Corpus) ([]Finding, error) {
 // otherwise fire forever, and a gate that fires forever on known-good files
 // trains wave-through.
 //
-// Nothing is exempt by default. The tool this was ported from hardcoded one
-// filename prefix from its own corpus, which is a guess about someone else's
-// layout; here the prefix is the caller's, stated per run, the same posture
-// nova-self-talk's --skip took as the condition of its own promotion.
+// Nothing is exempt by default: a built-in prefix would be a guess about someone
+// else's layout, so the prefix is the caller's, stated per run.
 func FrontmatterPresent(fsys fs.FS, glob string, exempt []string) ([]Finding, error) {
 	files, err := fs.Glob(fsys, glob)
 	if err != nil {

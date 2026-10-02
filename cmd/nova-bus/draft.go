@@ -37,6 +37,7 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 	f.fs.Var(&re, "re", "an id, a path, or the SUBJECT of a note on your open list that this note answers, or `new` to start a thread (repeatable)")
 	out := f.fs.String("out", "", "write the draft skeleton to this file instead of standard output")
 	overwrite := f.fs.Bool("overwrite", false, "allow replacing an existing file named by --out")
+	dryRun := f.fs.Bool("dry-run", false, "with --out, check the path and print it, and write nothing (the reply form, --reply-to, fetches the bus and has no dry run)")
 	f.fs.String("file", "", "retired: use --out instead")
 	// The reply form's flags. Every one of them is inert without --reply-to, which is what
 	// keeps the released form byte-identical: see cmd/nova-bus/reply.go.
@@ -53,11 +54,11 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 	given := map[string]bool{}
 	f.fs.Visit(func(fl *flag.Flag) { given[fl.Name] = true })
 	if given["file"] {
-		fmt.Fprint(stderr, "nova-bus draft: --file is retired because --file means input on send; use --out <path> (or --out <path> --overwrite)\n")
+		fmt.Fprint(stderr, "DRAFT REFUSED: --file is retired because --file means input on send; use --out <path> (or --out <path> --overwrite); run: nova-bus draft -h\n")
 		return 2
 	}
 	if *overwrite && strings.TrimSpace(*out) == "" {
-		fmt.Fprintln(stderr, "nova-bus draft: --overwrite requires --out")
+		fmt.Fprintln(stderr, "DRAFT REFUSED: --overwrite requires --out; run: nova-bus draft -h")
 		return 2
 	}
 	if !given["reply-to"] {
@@ -75,10 +76,14 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 			return 2
 		}
 		if strings.TrimSpace(*to) == "" {
-			fmt.Fprintf(stderr, "nova-bus draft: --to is required; refusing to guess; run: nova-bus help\n")
+			fmt.Fprintf(stderr, "DRAFT REFUSED: --to is required; refusing to guess; run: nova-bus draft -h\n")
 			return 2
 		}
 	} else {
+		if *dryRun {
+			fmt.Fprint(stderr, "DRAFT REFUSED: --dry-run is for --out; the reply form fetches and fast-forwards the checkout to resolve --reply-to, so it has no run that writes nothing; drop --dry-run; run: nova-bus draft -h\n")
+			return 2
+		}
 		return cmdDraftReply(replyOpts{
 			busDir: *busDir, as: *as, to: *to, cc: *cc, subject: *subject,
 			replyTo: *replyTo, bodyFile: *bodyFile, draftDir: *draftDir,
@@ -90,7 +95,7 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	c, err := bus.LoadConfig(*busDir)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-bus draft: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus draft -h"))
+		fmt.Fprintf(stderr, "DRAFT REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus draft -h"))
 		return 2
 	}
 	// Collected, like send's: a draft asked for with a misspelled name and a Re that is
@@ -157,7 +162,7 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if len(re) > 0 {
 		t, terr := bus.ReadBus(*busDir, c)
 		if terr != nil {
-			fmt.Fprintf(stderr, "nova-bus draft: %s\n", oneline.WithRemedy(oneline.Err(terr), "nova-bus draft -h"))
+			fmt.Fprintf(stderr, "DRAFT REFUSED: %s\n", oneline.WithRemedy(oneline.Err(terr), "nova-bus draft -h"))
 			return 2
 		}
 		var open []bus.OpenEntry
@@ -175,14 +180,18 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 			}
 			if openErr != nil {
 				if !openErrReported {
-					problems = append(problems, draftOpenReadFailure(*busDir, me, openErr))
+					// Resolve the actual inbox threshold for this bus and environment before
+					// suggesting a recovery command. If none is configured, the diagnostic
+					// keeps an explicit placeholder instead of guessing.
+					maxWords, haveMaxWords := f.receiptMaxWords(0, false, *busDir, io.Discard)
+					problems = append(problems, draftOpenReadFailure(*busDir, me, maxWords, haveMaxWords, openErr))
 					openErrReported = true
 				}
 				continue
 			}
 			matches := bus.MatchOpenSubject(open, r)
 			if len(matches) == 0 {
-				problems = append(problems, fmt.Errorf("--re %q is not an id on this bus, not a note that exists, and not the subject of a note on your open list; threads are named by id, and a slug is not a thread", r))
+				problems = append(problems, bus.UnresolvedRe(t, "--re", r))
 				continue
 			}
 			re[i] = matches[0].Target()
@@ -202,6 +211,9 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	skeleton := bus.Skeleton{From: me.Name, To: *to, Cc: *cc, Re: re, Subject: *subject}.Render()
 	if *out != "" {
+		if *dryRun {
+			return planDraftOut(*out, *overwrite, stdout, stderr)
+		}
 		return writeDraftOut(*out, *overwrite, skeleton, stdout, stderr)
 	}
 	fmt.Fprint(stdout, skeleton)
@@ -209,15 +221,39 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 	return 0
 }
 
-func draftOpenReadFailure(busDir string, me bus.Participant, err error) error {
-	recovery := fmt.Sprintf("nova-bus inbox --bus %s --as %s --receipt-max-words '<receipt-word-limit>' --full --carry-history --advance --remote '<your-remote>' --branch '<your-branch>'", oneline.Escape(shellQuote(busDir)), oneline.Escape(shellQuote(me.Name)))
+func draftOpenReadFailure(busDir string, me bus.Participant, maxWords int, haveMaxWords bool, err error) error {
+	wordLimit := "'<receipt-word-limit>'"
+	wordLimitNote := "replace the receipt-word-limit placeholder with a positive word-count threshold for classifying short receipts; configure it in <bus>/.nova-bus/defaults or NOVA_BUS_RECEIPT_MAX_WORDS"
+	if haveMaxWords {
+		wordLimit = fmt.Sprintf("%d", maxWords)
+		wordLimitNote = fmt.Sprintf("--receipt-max-words %d is the resolved positive word-count threshold for classifying short receipts", maxWords)
+	}
+	recovery := fmt.Sprintf("nova-bus inbox --bus %s --as %s --receipt-max-words %s --full --carry-history --advance --remote '<your-remote>' --branch '<your-branch>'", oneline.Escape(shellQuote(busDir)), oneline.Escape(shellQuote(me.Name)), oneline.Escape(wordLimit))
 	recoveryNote := "--carry-history preserves existing history, avoids first-advance refusal or discarding prior notes, and --advance moves and pushes the cursor"
-	placeholders := "replace the receipt-word-limit, remote, and branch placeholders; receipt-word-limit is a positive word-count threshold for classifying short receipts"
+	placeholders := "replace the remote and branch placeholders; " + wordLimitNote
 	var pathErr *os.PathError
 	if errors.As(err, &pathErr) {
 		return fmt.Errorf("cannot read %s (%v); repair access to that OPEN path first, then rebuild it from the bus; %s; run: %s; %s", bus.OpenPath(me.Lane), err, recoveryNote, recovery, placeholders)
 	}
-	return fmt.Errorf("%s is invalid (%v); rebuild it from the bus; %s; run: %s; %s", bus.OpenPath(me.Lane), err, recoveryNote, recovery, placeholders)
+	detail := strings.TrimSuffix(err.Error(), "; read once with --full --advance, which writes the list again from the whole bus")
+	return fmt.Errorf("%s is invalid (%s); rebuild it from the bus; %s; run: %s; %s", bus.OpenPath(me.Lane), detail, recoveryNote, recovery, placeholders)
+}
+
+// planDraftOut is writeDraftOut's dry run: the same refusals for the path, and the OK line
+// it would print, with nothing written.
+func planDraftOut(path string, overwrite bool, stdout, stderr io.Writer) int {
+	if fi, err := os.Lstat(path); err == nil {
+		if !overwrite {
+			fmt.Fprintf(stderr, "DRAFT REFUSED: %s exists; pass --overwrite to replace it\n", oneline.Field(path))
+			return 1
+		}
+		if fi.IsDir() {
+			fmt.Fprintf(stderr, "DRAFT REFUSED: %s is a directory; run: nova-bus draft -h\n", oneline.Field(path))
+			return 1
+		}
+	}
+	fmt.Fprintf(stdout, "DRAFT OK path=%s dry_run=true\n", oneline.Field(path))
+	return 0
 }
 
 func writeDraftOut(path string, overwrite bool, skeleton string, stdout, stderr io.Writer) int {

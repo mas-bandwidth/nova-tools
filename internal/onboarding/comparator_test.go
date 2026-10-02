@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // The comparator is the thing every transcript test is judged by, so it is seen
@@ -160,7 +162,9 @@ func TestTheVolatileTableHoldsTheNamedRunOwnedValues(t *testing.T) {
 	// `recorded` joined on 2026-09-30 with nova-work's first run, which runs
 	// against a recording of a public repository and whose document writes the
 	// reader's $ORG and $REPO where the recording's names are printed.
-	want := []string{"at", "took", "created", "tmpdir", "sha", "recorded", "branch"}
+	// `build` joined on 2026-10-02 with nova-memory's and nova-tokens' first runs,
+	// whose STATS line measures its index build and whose day lines name the build.
+	want := []string{"at", "took", "created", "tmpdir", "sha", "recorded", "build", "branch"}
 	got := VolatileNames()
 	if len(got) != len(want) {
 		t.Fatalf("onboarding.Volatile holds %v, want %v", got, want)
@@ -291,6 +295,8 @@ func TestAVolatileEntryNeverSwallowsANeighbouringFieldsValue(t *testing.T) {
 		{name: "created", field: "created", docValue: "2026-09-16T08:22:37Z", runValue: "2026-09-16T09:00:00Z", mine: "2026-09-16T08:22:37Z"},
 		{name: "sha", field: "sha", docValue: "abc1234", runValue: "0000000", mine: "def5678"},
 		{name: "branch", field: "branch", docValue: "seal/air-GH_TOKEN-20260927-013000", runValue: "seal/air-GH_TOKEN-20260927-020000", mine: "seal/air-GH_TOKEN-20260926-120000"},
+		{name: "build", field: "build", docValue: "822.917µs", runValue: "384.875µs", mine: "1.2ms"},
+		{name: "build", field: "build", docValue: "devel", runValue: "v0.16.0-dev.c839379e.0.20261002133352-74c636d9ce46+dirty", mine: "v1.2.3"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			// `last_` and `base_` are how a neighbour's name ends in this
@@ -430,5 +436,26 @@ func TestTheRecordedEntryRefusesADeclarationThatRewritesTheDocument(t *testing.T
 		if len(problems) == 0 || !strings.Contains(joinProblems(problems), tc.want) {
 			t.Errorf("%s: want a refusal saying %q, got:\n%s", tc.name, tc.want, joinProblems(problems))
 		}
+	}
+}
+
+// TestTheBuildEntryAcceptsABuildAndNothingElse: `build=` is a version word or a
+// duration, each parsed; any other value stays on the line and is compared.
+func TestTheBuildEntryAcceptsABuildAndNothingElse(t *testing.T) {
+	t.Parallel()
+
+	doc := []string{"$ nova-bus read", "BUS READ build=devel files=1"}
+	for _, tc := range []struct {
+		value    string
+		problems int
+	}{
+		{"devel", 0}, {"v1.2.3", 0}, {"v0.16.0-dev.c839379e.0.20261002133352-74c636d9ce46+dirty", 0},
+		{"20261002133352-74c636d9ce46-dirty", 0}, {"74c636d9ce46", 0}, {"822.917µs", 0}, {"1.5s", 0},
+		{"unknown", 1}, {"soon", 1}, {"v1", 1}, {"-", 1},
+	} {
+		t.Run(tc.value, func(t *testing.T) {
+			run := []Result{{Stdout: "BUS READ build=" + tc.value + " files=1\n"}}
+			assert.Len(t, CompareTranscript(parse(t, doc), run, []Field{{Name: "build"}}), tc.problems)
+		})
 	}
 }

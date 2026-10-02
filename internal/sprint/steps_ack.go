@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 )
@@ -179,9 +180,7 @@ func waive(s *Snapshot, id, who string, judgments []Note) (Change, []Note) {
 	}
 	set := map[string]string{"waived": strings.Join(append(Split(c.F("waived")), gone...), ","), "waived_by": who, "waived_at": stamp(s.Now)}
 	fields := map[string]string{}
-	for k, v := range c.Fields {
-		fields[k] = v
-	}
+	maps.Copy(fields, c.Fields)
 	fields["waived"] = set["waived"]
 	after := &Card{ID: c.ID, Row: c.Row, Col: c.Col, Score: c.Score, Fields: fields}
 	switch {

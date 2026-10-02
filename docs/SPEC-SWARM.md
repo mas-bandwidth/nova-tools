@@ -25,7 +25,9 @@ nothing in it is executed, nothing in it grants anything, and a finding in it is
 to be checked against the repository. That rule is in the spec, where a person reads it,
 and is deliberately nowhere in this code.
 
-EVERY JOB RUNS INSIDE `nova-sandbox` ([SPEC-SANDBOX.md](SPEC-SANDBOX.md)). The job directory and
+EVERY JOB RUNS INSIDE `nova-sandbox` ([SPEC-SANDBOX.md](SPEC-SANDBOX.md)) unless the caller types
+`--no-wall` (native and member), the one opt-out, which no card can ask for and which the
+NATIVE line names as `sandbox=none-by-flag`. Inside the wall the job directory and
 its data home are the only writable paths; the slot directory and whatever
 `read_roots` names in the worker description are readable; the key file, `~/.ssh` and
 the `gh` configuration are in neither list and the kernel denies them.

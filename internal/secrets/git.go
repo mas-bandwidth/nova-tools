@@ -8,9 +8,10 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
@@ -46,7 +47,7 @@ func CheckGitWorkingCopy(storeDir string) (GitRefStatus, error) {
 		return status, fmt.Errorf("store %s is not a git repository: missing .git directory; clone it: git clone <url> %s", storeDir, storeDir)
 	}
 	if !fi.IsDir() {
-		return status, fmt.Errorf("store %s: .git is a file (a worktree or submodule); expected a directory working copy", storeDir)
+		return status, fmt.Errorf("store %s has %s; %s", storeDir, gitIsAFile, gitFileRemedy(storeDir))
 	}
 
 	headBytes, err := os.ReadFile(filepath.Join(gitDir, "HEAD"))
@@ -121,13 +122,6 @@ func isValidHexSHA(s string) bool {
 		}
 	}
 	return true
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 func resolveRef(gitDir, refPath string) (string, error) {
@@ -245,12 +239,10 @@ func ReadHEADTreeBlobs(storeDir string) (map[string]string, error) {
 		scanner := bufio.NewScanner(bytes.NewReader(out))
 		for scanner.Scan() {
 			line := scanner.Text()
-			tabIdx := strings.IndexByte(line, '\t')
-			if tabIdx < 0 {
+			meta, filePath, found := strings.Cut(line, "\t")
+			if !found {
 				continue
 			}
-			filePath := line[tabIdx+1:]
-			meta := line[:tabIdx]
 			fields := strings.Fields(meta)
 			if len(fields) >= 3 && fields[1] == "blob" {
 				res[filepath.Clean(filepath.ToSlash(filePath))] = fields[2]
@@ -434,13 +426,7 @@ func ValidateAdmissibleStore(storeDir string) (status GitRefStatus, headBlobs ma
 		}
 	}
 
-	var sortedPaths []string
-	for p := range candidates {
-		sortedPaths = append(sortedPaths, p)
-	}
-	sort.Strings(sortedPaths)
-
-	for _, p := range sortedPaths {
+	for _, p := range slices.Sorted(maps.Keys(candidates)) {
 		headSHA, inHead := headBlobs[p]
 		indexEntry, inIndex := indexData.Entries[p]
 		filePath := filepath.Join(storeDir, filepath.FromSlash(p))

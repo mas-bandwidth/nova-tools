@@ -2,10 +2,9 @@ package tokens
 
 // The coordinator's own session, folded (G5 of pit stop 3, #828).
 //
-// Glenn, 2026-09-16: "This seems like a lot. How can we make the coordinator more
-// efficient?" The honest answer needed a number, and there was none: every worker's spend
-// was on a swarm CARD line and in the ledger, and the coordinator's own window -- the
-// single most expensive line on the bench -- was measured by hand, once, and never again.
+// How the coordinator could be more efficient needs a number: every worker's spend is on a
+// swarm CARD line and in the ledger, and the coordinator's own window -- the single most
+// expensive line on a bench -- is otherwise measured by hand.
 //
 // This reader folds one Claude Code session jsonl into the four counts and one weighted
 // equivalent, so the coordinator is a model line in the daily ledger like everybody else
@@ -20,8 +19,9 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -203,10 +203,7 @@ func ReadClaudeSession(path string) (SessionSum, error) {
 		m.CacheRead += t.cacheRead
 		m.Output += t.output
 	}
-	for m := range named {
-		s.Models = append(s.Models, m)
-	}
-	sort.Strings(s.Models)
+	s.Models = slices.Sorted(maps.Keys(named))
 	return s, nil
 }
 
@@ -249,12 +246,7 @@ func (s SessionSum) Line() string {
 
 // DayList is the days this session touched, sorted.
 func (s SessionSum) DayList() []string {
-	out := make([]string, 0, len(s.Days))
-	for d := range s.Days {
-		out = append(out, d)
-	}
-	sort.Strings(out)
-	return out
+	return slices.Sorted(maps.Keys(s.Days))
 }
 
 // UnbookableReason is why this session cannot be folded into the ledger, or "" when it can:
@@ -276,14 +268,9 @@ func (s SessionSum) UnbookableReason() string {
 // a measurement; a session that names no model has no rows.
 func (s SessionSum) Rows(day string) []DayRow {
 	byModel := s.DayModels[day]
-	names := make([]string, 0, len(s.Models))
+	names := s.Models
 	if len(byModel) > 0 {
-		for m := range byModel {
-			names = append(names, m)
-		}
-		sort.Strings(names)
-	} else {
-		names = append(names, s.Models...)
+		names = slices.Sorted(maps.Keys(byModel))
 	}
 	rows := make([]DayRow, 0, len(names))
 	for _, m := range names {

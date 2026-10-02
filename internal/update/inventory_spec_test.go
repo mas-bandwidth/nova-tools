@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+
+	"github.com/stretchr/testify/require"
 )
 
 // The red tests docs/SPEC-VERSION.md's snapshot/diff section demands. Every
@@ -21,7 +23,7 @@ func specStub(t *testing.T, dir, name, line string) string {
 	t.Helper()
 	p := filepath.Join(dir, name)
 	if err := testbin.WriteExecutable(p, []byte("#!/bin/sh\nprintf '%s\\n' '"+line+"'\n"), 0o755); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	return p
 }
@@ -30,7 +32,7 @@ func specScript(t *testing.T, dir, name, body string) string {
 	t.Helper()
 	p := filepath.Join(dir, name)
 	if err := testbin.WriteExecutable(p, []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	return p
 }
@@ -80,29 +82,29 @@ func TestSnapshotWritesOneRowPerBinary(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "snapshot.tsv")
 	code, stdout, stderr := specRun(t, Environment{}, "snapshot", "--bin", bin, "--out", out)
 	if code != 0 {
-		t.Fatalf("exit %d stderr=%s", code, stderr)
+		require.EqualValuesf(t, 0, code, "exit %d stderr=%s", code, stderr)
 	}
 	need(t, stdout, "SNAPSHOT OK bin="+field(bin), "out="+field(out), "tools=2", "stamp=20260909112233-0123456789ab")
 	b, err := os.ReadFile(out)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	body := string(b)
 	lines := strings.Split(strings.TrimSuffix(body, "\n"), "\n")
 	if len(lines) != 3 {
-		t.Fatalf("want a header and two rows, got %d:\n%s", len(lines), body)
+		require.Lenf(t, lines, 3, "want a header and two rows, got %d:\n%s", len(lines), body)
 	}
 	if lines[0] != "name\tstamp\trevision\tplatform" {
-		t.Fatalf("header=%q", lines[0])
+		require.EqualValuesf(t, "name\tstamp\trevision\tplatform", lines[0], "header=%q", lines[0])
 	}
 	if lines[1] != "nova-bus\t20260909112233-0123456789ab\t0123456789ab\tlinux/amd64" {
-		t.Fatalf("row 1=%q", lines[1])
+		require.EqualValuesf(t, "nova-bus\t20260909112233-0123456789ab\t0123456789ab\tlinux/amd64", lines[1], "row 1=%q", lines[1])
 	}
 	if lines[2] != "nova-check\t20260909112233-0123456789ab\t0123456789ab\tdarwin/arm64" {
-		t.Fatalf("row 2=%q", lines[2])
+		require.EqualValuesf(t, "nova-check\t20260909112233-0123456789ab\t0123456789ab\tdarwin/arm64", lines[2], "row 2=%q", lines[2])
 	}
 	if strings.Contains(body, "readme") {
-		t.Fatalf("a non-nova file was recorded:\n%s", body)
+		require.NotContainsf(t, body, "readme", "a non-nova file was recorded:\n%s", body)
 	}
 }
 
@@ -115,14 +117,14 @@ func TestSnapshotReadsVersionNotTheFileName(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "snapshot.tsv")
 	code, _, stderr := specRun(t, Environment{}, "snapshot", "--bin", bin, "--out", out)
 	if code != 0 {
-		t.Fatalf("exit %d stderr=%s", code, stderr)
+		require.EqualValuesf(t, 0, code, "exit %d stderr=%s", code, stderr)
 	}
 	b, err := os.ReadFile(out)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if !strings.Contains(string(b), "nova-renamed\tv9.9.9\t-") {
-		t.Fatalf("the row forged the printed stamp from the name:\n%s", b)
+		require.Failf(t, "", "the row forged the printed stamp from the name:\n%s", b)
 	}
 }
 
@@ -136,14 +138,14 @@ func TestSnapshotRefusesAMixedSetNamingThePair(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "snapshot.tsv")
 	code, _, stderr := specRun(t, Environment{}, "snapshot", "--bin", bin, "--out", out)
 	if code != 2 {
-		t.Fatalf("exit %d stderr=%s", code, stderr)
+		require.EqualValuesf(t, 2, code, "exit %d stderr=%s", code, stderr)
 	}
 	need(t, stderr, "nova-a", "nova-b", "v1.0.0", "v2.0.0", "nova-update release build --version", "nova-update release install --from")
 	if strings.Contains(stderr, "--sha") {
-		t.Fatalf("the remedy names a flag apply does not take: %s", stderr)
+		require.NotContainsf(t, stderr, "--sha", "the remedy names a flag apply does not take: %s", stderr)
 	}
 	if _, err := os.Stat(out); err == nil {
-		t.Fatalf("a mixed set was written to --out")
+		require.Errorf(t, err, "a mixed set was written to --out")
 	}
 }
 
@@ -165,7 +167,7 @@ func TestSnapshotRefusesAMissingFlag(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			code, _, stderr := specRun(t, Environment{}, tc.args...)
 			if code != 2 {
-				t.Fatalf("exit %d stderr=%s", code, stderr)
+				require.EqualValuesf(t, 2, code, "exit %d stderr=%s", code, stderr)
 			}
 			need(t, stderr, "refusing to guess", tc.flag)
 		})
@@ -181,7 +183,7 @@ func TestSnapshotRefusesABinaryWithNoVersion(t *testing.T) {
 		specScript(t, bin, "nova-nope", "exit 3")
 		code, _, stderr := specRun(t, Environment{}, "snapshot", "--bin", bin, "--out", filepath.Join(t.TempDir(), "s.tsv"))
 		if code != 2 {
-			t.Fatalf("exit %d stderr=%s", code, stderr)
+			require.EqualValuesf(t, 2, code, "exit %d stderr=%s", code, stderr)
 		}
 		need(t, stderr, "nova-nope")
 	})
@@ -190,7 +192,7 @@ func TestSnapshotRefusesABinaryWithNoVersion(t *testing.T) {
 		specStub(t, bin, "nova-blank", "not a version line")
 		code, _, stderr := specRun(t, Environment{}, "snapshot", "--bin", bin, "--out", filepath.Join(t.TempDir(), "s.tsv"))
 		if code != 2 {
-			t.Fatalf("exit %d stderr=%s", code, stderr)
+			require.EqualValuesf(t, 2, code, "exit %d stderr=%s", code, stderr)
 		}
 		need(t, stderr, "nova-blank")
 	})
@@ -203,22 +205,22 @@ func TestSnapshotRefusesAnUnreadableBin(t *testing.T) {
 	t.Run("bin is a file", func(t *testing.T) {
 		file := filepath.Join(t.TempDir(), "not-a-dir")
 		if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 		code, _, stderr := specRun(t, Environment{}, "snapshot", "--bin", file, "--out", filepath.Join(t.TempDir(), "s.tsv"))
 		if code != 2 {
-			t.Fatalf("exit %d stderr=%s", code, stderr)
+			require.EqualValuesf(t, 2, code, "exit %d stderr=%s", code, stderr)
 		}
 		need(t, stderr, file, "--bin")
 	})
 	t.Run("no nova files", func(t *testing.T) {
 		bin := t.TempDir()
 		if err := os.WriteFile(filepath.Join(bin, "readme.txt"), []byte("x"), 0o644); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 		code, _, stderr := specRun(t, Environment{}, "snapshot", "--bin", bin, "--out", filepath.Join(t.TempDir(), "s.tsv"))
 		if code != 2 {
-			t.Fatalf("exit %d stderr=%s", code, stderr)
+			require.EqualValuesf(t, 2, code, "exit %d stderr=%s", code, stderr)
 		}
 		need(t, stderr, bin, "--bin")
 	})
@@ -229,7 +231,7 @@ func specSnapshot(t *testing.T, rows ...string) string {
 	p := filepath.Join(t.TempDir(), "snap.tsv")
 	body := "name\tstamp\trevision\tplatform\n" + strings.Join(rows, "\n") + "\n"
 	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	return p
 }
@@ -242,11 +244,11 @@ func TestDiffNamesOneLinePerChangedBinary(t *testing.T) {
 	b := specSnapshot(t, "alpha\tv2.0.0\t-\tlinux/amd64", "beta\tv1.0.0\t-\tlinux/amd64")
 	code, stdout, stderr := specRun(t, Environment{}, "diff", "--from", a, "--to", b)
 	if code != 0 {
-		t.Fatalf("exit %d stderr=%s", code, stderr)
+		require.EqualValuesf(t, 0, code, "exit %d stderr=%s", code, stderr)
 	}
 	need(t, stdout, "DIFF CHANGED name=alpha from=v1.0.0 to=v2.0.0")
 	if strings.Contains(stdout, "name=beta") {
-		t.Fatalf("an unchanged binary printed a line:\n%s", stdout)
+		require.NotContainsf(t, stdout, "name=beta", "an unchanged binary printed a line:\n%s", stdout)
 	}
 	need(t, stdout, "DIFF OK from="+field(a), "to="+field(b), "tools=2", "changed=1")
 }
@@ -259,7 +261,7 @@ func TestDiffNamesAddedAndRemoved(t *testing.T) {
 	b := specSnapshot(t, "new\tv2.0.0\t-\tlinux/amd64", "same\tv1.0.0\t-\tlinux/amd64")
 	code, stdout, stderr := specRun(t, Environment{}, "diff", "--from", a, "--to", b)
 	if code != 0 {
-		t.Fatalf("exit %d stderr=%s", code, stderr)
+		require.EqualValuesf(t, 0, code, "exit %d stderr=%s", code, stderr)
 	}
 	need(t, stdout, "DIFF CHANGED name=gone from=v1.0.0 to=-", "DIFF CHANGED name=new from=- to=v2.0.0", "changed=2")
 }
@@ -271,24 +273,24 @@ func TestDiffRefusesANonSnapshotFile(t *testing.T) {
 	t.Run("wrong header", func(t *testing.T) {
 		bad := filepath.Join(t.TempDir(), "bad.tsv")
 		if err := os.WriteFile(bad, []byte("tool\tversion\nx\t1\n"), 0o644); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 		good := specSnapshot(t, "same\tv1.0.0\t-\tlinux/amd64")
 		code, _, stderr := specRun(t, Environment{}, "diff", "--from", bad, "--to", good)
 		if code != 2 {
-			t.Fatalf("exit %d stderr=%s", code, stderr)
+			require.EqualValuesf(t, 2, code, "exit %d stderr=%s", code, stderr)
 		}
 		need(t, stderr, bad, "nova-version snapshot")
 	})
 	t.Run("wrong arity", func(t *testing.T) {
 		bad := filepath.Join(t.TempDir(), "bad.tsv")
 		if err := os.WriteFile(bad, []byte("name\tstamp\trevision\tplatform\nx\t1\n"), 0o644); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 		good := specSnapshot(t, "same\tv1.0.0\t-\tlinux/amd64")
 		code, _, stderr := specRun(t, Environment{}, "diff", "--from", bad, "--to", good)
 		if code != 2 {
-			t.Fatalf("exit %d stderr=%s", code, stderr)
+			require.EqualValuesf(t, 2, code, "exit %d stderr=%s", code, stderr)
 		}
 		need(t, stderr, bad, "nova-version snapshot")
 	})
@@ -305,11 +307,11 @@ func TestSnapshotIsBoundedByTheClock(t *testing.T) {
 	env := Environment{Now: func() time.Time { return time.Date(2026, 9, 17, 0, 0, 0, 0, time.UTC) }}
 	code, _, stderr := specRun(t, env, "snapshot", "--bin", bin, "--out", out)
 	if code != 2 {
-		t.Fatalf("exit %d stderr=%s", code, stderr)
+		require.EqualValuesf(t, 2, code, "exit %d stderr=%s", code, stderr)
 	}
 	need(t, stderr, "nova-slow", snapshotChildTimeout.String())
 	if _, err := os.Stat(out); err == nil {
-		t.Fatalf("a partial --out was written")
+		require.Errorf(t, err, "a partial --out was written")
 	}
 }
 
@@ -328,11 +330,11 @@ func TestSnapshotTakesItsBoundsFromFlags(t *testing.T) {
 		out := filepath.Join(t.TempDir(), "s.tsv")
 		code, _, stderr := specRun(t, Environment{}, "snapshot", "--bin", bin, "--out", out, "--timeout", "20ms")
 		if code != 2 {
-			t.Fatalf("exit %d stderr=%s", code, stderr)
+			require.EqualValuesf(t, 2, code, "exit %d stderr=%s", code, stderr)
 		}
 		need(t, stderr, "nova-slow", "20ms")
 		if _, err := os.Stat(out); err == nil {
-			t.Fatal("a partial --out was written")
+			require.Error(t, err, "a partial --out was written")
 		}
 	})
 	t.Run("budget bounds the run", func(t *testing.T) {
@@ -343,7 +345,7 @@ func TestSnapshotTakesItsBoundsFromFlags(t *testing.T) {
 		out := filepath.Join(t.TempDir(), "s.tsv")
 		code, _, stderr := specRun(t, Environment{}, "snapshot", "--bin", bin, "--out", out, "--timeout", "10s", "--budget", "30ms")
 		if code != 2 {
-			t.Fatalf("exit %d stderr=%s", code, stderr)
+			require.EqualValuesf(t, 2, code, "exit %d stderr=%s", code, stderr)
 		}
 		need(t, stderr, "budget", "30ms")
 	})
@@ -353,7 +355,7 @@ func TestSnapshotTakesItsBoundsFromFlags(t *testing.T) {
 		out := filepath.Join(t.TempDir(), "s.tsv")
 		code, _, stderr := specRun(t, Environment{}, "snapshot", "--bin", bin, "--out", out, "--timeout", "0")
 		if code != 2 {
-			t.Fatalf("exit %d stderr=%s", code, stderr)
+			require.EqualValuesf(t, 2, code, "exit %d stderr=%s", code, stderr)
 		}
 		need(t, stderr, "--timeout")
 	})
@@ -368,12 +370,12 @@ func TestDiffLinesAndJSONAgreeOnAnAbsentSide(t *testing.T) {
 	b := specSnapshot(t, "new\tv2.0.0\t-\tlinux/amd64")
 	code, lines, stderr := specRun(t, Environment{}, "diff", "--from", a, "--to", b)
 	if code != 0 {
-		t.Fatalf("exit %d stderr=%s", code, stderr)
+		require.EqualValuesf(t, 0, code, "exit %d stderr=%s", code, stderr)
 	}
 	need(t, lines, "DIFF CHANGED name=gone from=v1.0.0 to=-", "DIFF CHANGED name=new from=- to=v2.0.0")
 	code, js, stderr := specRun(t, Environment{}, "diff", "--from", a, "--to", b, "--json")
 	if code != 0 {
-		t.Fatalf("--json exit %d stderr=%s", code, stderr)
+		require.EqualValuesf(t, 0, code, "--json exit %d stderr=%s", code, stderr)
 	}
 	need(t, js, `{"kind":"changed","fields":{"name":"gone","from":"v1.0.0","to":"-"}}`, `{"kind":"changed","fields":{"name":"new","from":"-","to":"v2.0.0"}}`)
 }

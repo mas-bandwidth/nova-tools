@@ -54,29 +54,37 @@ Two disjoint classes.
 
   STANDING / DATED   a first-person claim (I am, I cannot, I always, my <noun> is ...)
                      carrying a word of failure (fallible, broken, bad at, terrible at,
-                     worst, cannot check, cannot ever ...). With a date or a measurement
+                     worst, cannot check, cannot ever ...) that is the writer's: it follows
+                     the claim's marker, with no if/when/because clause between them
+                     ("a tell that fails when my state is off" is the tell's). With a date or a measurement
                      word (2026-09-30, measured, that day) it is DATED: a record, counted
                      on one line, never quoted. Without one it is STANDING and is flagged.
 
-  INSTALLATION       a standing self-verdict built from NEUTRAL words, which the first
+  INSTALLATION       (a verdict in neutral words; a finding names its shape alone, and the
+                     count line counts them as installations=)
+                     a standing self-verdict built from NEUTRAL words, which the first
                      class cannot see: a self-superlative (RANKING: I am the best, my
                      weakest instrument), a door stated shut (FORECLOSURE: I will never be
                      a good planner, I have no recall), a verdict on a practice
                      (VERDICT-IDIOM: dead as a practice), or a habit (TRAIT: I always
                      overpromise, I tend to rush). Dated, instrument (RULE:, TELL:),
-                     aspiration (I want to), imperative and quoted sentences are licensed.
+                     aspiration (I want to), imperative and quoted sentences are licensed,
+                     and so is a shape inside an if, when or unless clause (a condition),
+                     and a habit followed by "because ... I accepted" (a decision's record).
 
 Date it, cut it, relocate it, or keep it on purpose — the judgment is the
 writer's, and this tool never makes it.
 
 what a scan prints, one line each:
-  SELFTALK FAIL <file>:<line>: STANDING match="<words>": <sentence>           (stderr)
-  SELFTALK FAIL <file>:<line>: INSTALLATION <SHAPE> match="<words>": <sentence> (stderr)
+  SELFTALK FAIL <file>:<line>: <SHAPE> match="<words>": <sentence>   (stderr, in line order)
+                       <SHAPE> is STANDING for the first class, else the second class's shape:
+                       RANKING, FORECLOSURE, VERDICT-IDIOM or TRAIT
   SELFTALK SKIP <file> (--skip)
   SELFTALK RULEDOC <file>: <banner>     above the findings of a --rule-doc file
   SELFTALK MORE kind=<class> shown=<n> total=<t> <remedy>
   SELFTALK DATED n=<k> files=<n>
   SELFTALK OK|FAIL files=<n> claims=<n> standing=<n> installations=<n> dated=<n> [shown=<n>]
+  SELFTALK NOTE <a --skip or --rule-doc name no named file has>
   SELFTALK NOTE <what a green does and does not clear>
 match= is the words the shape's rule matched. files= counts the files scanned; claims= the
 first class's claims, dated ones included; standing= and installations= the findings of each
@@ -189,7 +197,7 @@ func main() { os.Exit(runStdin(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
 
 func runStdin(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
 	// `<verb> -h` is that verb's help on stdout at exit 0, with the verb's effect, before
-	// anything is read (the CLI style's rule (b), #4505).
+	// anything is read (the CLI style's rule (b)).
 	defer verbflag.RecoverWith(stdout, "nova-self-talk", usage, &code, func(verb string) string {
 		return "effect: " + effects[verb] + "\n"
 	})
@@ -224,11 +232,9 @@ func runStdin(args []string, stdin io.Reader, stdout, stderr io.Writer) (code in
 // (selftalk.Base), and a value with a separator in it would silently never
 // match anything.
 //
-// BOTH LISTS DEFAULT TO EMPTY, which is the no-defaults law applied to scope.
-// This tool's ancestor hardcoded one repo's rule-document names; the condition
-// of promotion here was that the list move to the caller and the default
-// become empty, and that condition governs the banner list exactly as it
-// governs the skip list.
+// BOTH LISTS DEFAULT TO EMPTY, which is the no-defaults law applied to scope:
+// which files are rule documents, or are not to be read, is the caller's to
+// say, per run, and a name that matches no named file is said on a NOTE line.
 type baseList []string
 
 func (s *baseList) String() string { return strings.Join(*s, ",") }
@@ -269,10 +275,11 @@ type page struct {
 	findings []finding
 }
 
-// report is the one value a scan builds; the lines and the JSON are two renderings of it.
+// report is what a scan learned; out makes it the one value both renderings print.
 type report struct {
 	pages                                       []page
 	scanned, claims, standing, installed, dated int
+	unmatched                                   []string // the --skip and --rule-doc names no named file has
 }
 
 func scan(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -369,13 +376,41 @@ func scan(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			// so a reader cannot meet a finding in a rule document without meeting the
 			// sentence that says what it is for.
 			p.ruledoc = pinned[selftalk.Base(f)] && len(p.findings) > 0
+			// A reader repairs a file top to bottom, so its findings print in line order,
+			// whichever class found them.
+			slices.SortStableFunc(p.findings, func(a, b finding) int { return a.line - b.line })
 		}
 		r.pages = append(r.pages, p)
 	}
+	r.unmatched = unmatched(files, skips, ruleDocs)
+	o := r.out(*maxLines)
 	if asJSON {
-		return r.json(stdout, *maxLines)
+		o.Render(stdout, true)
+		return o.Exit
 	}
-	return r.lines(stdout, stderr, *maxLines)
+	return lines(o, stdout, stderr)
+}
+
+// unmatched says, for each --skip and --rule-doc basename that no named file has,
+// that it changed nothing: a name typed wrong is otherwise a silent no-op.
+func unmatched(files []string, skips, ruleDocs baseList) []string {
+	named := map[string]bool{}
+	for _, f := range files {
+		named[selftalk.Base(f)] = true
+	}
+	var out []string
+	for _, l := range []struct {
+		flag  string
+		names baseList
+		did   string
+	}{{"--skip", skips, "skipped nothing"}, {"--rule-doc", ruleDocs, "marked nothing"}} {
+		for _, n := range l.names {
+			if !named[n] {
+				out = append(out, l.flag+" "+n+" matched no file named on the line, so it "+l.did+" (it takes a basename, matched exactly)")
+			}
+		}
+	}
+	return out
 }
 
 // positionals returns the files after the flags, and the first argument that looks like a
@@ -444,60 +479,12 @@ func reason(err error) string {
 	return err.Error()
 }
 
-// lines renders the report as this tool's typed lines: findings on stderr, the protocol
-// lines on stdout.
-func (r report) lines(stdout, stderr io.Writer, maxLines int) int {
-	// THE TWO CLASSES ARE CAPPED SEPARATELY, for the same reason the classes exist: six
-	// hundred STANDING claims must not be able to eat the one INSTALLATION finding, which
-	// is the one the first class cannot see and the reader is least likely to know about.
-	fails := bounded.Grouped(stderr, maxLines, "SELFTALK", maxRemedy)
-	skipLines := bounded.Capped(stdout, maxLines, "SELFTALK", "skip", maxRemedy)
-	banners := bounded.Capped(stdout, maxLines, "SELFTALK", "ruledoc", maxRemedy)
-	for _, p := range r.pages {
-		if p.skipped {
-			skipLines.Line(fmt.Sprintf("SELFTALK SKIP %s (--skip)", oneline.Escape(p.name)))
-			continue
-		}
-		if p.ruledoc {
-			banners.Line(fmt.Sprintf("SELFTALK RULEDOC %s: %s", oneline.Escape(p.name), selftalk.RuleDocumentBanner))
-		}
-		for _, f := range p.findings {
-			kind := "STANDING"
-			if f.class == "installation" {
-				kind = "INSTALLATION " + f.shape
-			}
-			fails.Line(f.class, fmt.Sprintf("SELFTALK FAIL %s:%d: %s match=%q: %s",
-				oneline.Escape(p.name), f.line, oneline.Escape(kind), f.match, oneline.Escape(oneline.Cap(f.text, oneline.TailBytes))))
-		}
-	}
-	skipLines.More()
-	if r.scanned == 0 {
-		fmt.Fprintf(stdout, "SELFTALK SKIP files=0 skipped=%d reason=all-skipped\n", len(r.pages))
-		fmt.Fprintf(stdout, "SELFTALK NOTE %s\n", note)
-		return 0
-	}
-	banners.More()
-	fails.More()
-	if r.dated > 0 {
-		fmt.Fprintf(stdout, "SELFTALK DATED n=%d files=%d\n", r.dated, r.scanned)
-	}
-	// THE COUNT LINE PRINTS ON FAILURE TOO. It printed only on a clean run, so a scan
-	// that found six hundred things gave six hundred lines and never the number.
-	if r.standing > 0 || r.installed > 0 {
-		fmt.Fprintf(stdout, "SELFTALK FAIL files=%d claims=%d standing=%d installations=%d dated=%d shown=%d\n",
-			r.scanned, r.claims, r.standing, r.installed, r.dated, fails.Shown())
-	} else {
-		fmt.Fprintf(stdout, "SELFTALK OK files=%d claims=%d standing=0 installations=0 dated=%d\n", r.scanned, r.claims, r.dated)
-	}
-	fmt.Fprintf(stdout, "SELFTALK NOTE %s\n", note)
-	if r.standing > 0 || r.installed > 0 {
-		return 1
-	}
-	return 0
-}
-
-// json renders the same report as one JSON object on stdout, capped by --max the same way.
-func (r report) json(stdout io.Writer, maxLines int) int {
+// out is the one value a scan prints (internal/tool's Out): every skip, banner and
+// finding as an item in file order, each kind capped at --max on its own (six hundred
+// STANDING claims must not eat the one INSTALLATION finding, the class a reader is
+// least likely to know about), the closing counts as facts, and the notes. The typed
+// lines (lines) and --json are its two renderings.
+func (r report) out(maxLines int) *tool.Out {
 	o := tool.Done()
 	o.Verb = "scan"
 	tally := bounded.NewTally(maxLines)
@@ -529,7 +516,81 @@ func (r report) json(stdout io.Writer, maxLines int) int {
 	if r.standing > 0 || r.installed > 0 {
 		o.Status, o.Exit = tool.Failed, 1
 	}
+	o.Notes = append(o.Notes, r.unmatched...)
 	o.Note(note)
-	o.Render(stdout, true)
+	return o
+}
+
+// fact is the count o's facts hold under k (out stores each as an int).
+func fact(o *tool.Out, k string) int {
+	for _, f := range o.Facts {
+		if f.K == k {
+			n, _ := f.V.(int) // ignored: out stores every fact as an int
+			return n
+		}
+	}
+	return 0
+}
+
+// field is the value of one of an item's fields.
+func field(it tool.Item, k string) any {
+	for _, f := range it.Fields {
+		if f.K == k {
+			return f.V
+		}
+	}
+	return nil
+}
+
+// lines renders the scan's Out as this tool's typed lines: the findings and their MORE
+// lines on stderr, one per line in line order, named by their shape alone (STANDING, or
+// the second class's RANKING, FORECLOSURE, TRAIT, VERDICT-IDIOM); the skips, banners,
+// their MORE lines, the counts and the notes on stdout.
+func lines(o *tool.Out, stdout, stderr io.Writer) int {
+	for _, it := range o.Items {
+		switch it.Kind {
+		case "skip":
+			fmt.Fprintf(stdout, "SELFTALK SKIP %s (--skip)\n", oneline.Escape(field(it, "file").(string)))
+		case "ruledoc":
+			fmt.Fprintf(stdout, "SELFTALK RULEDOC %s: %s\n", oneline.Escape(field(it, "file").(string)), selftalk.RuleDocumentBanner)
+		default:
+			fmt.Fprintf(stderr, "SELFTALK FAIL %s:%d: %s match=%q: %s\n", oneline.Escape(field(it, "file").(string)), field(it, "line").(int),
+				oneline.Escape(field(it, "shape").(string)), field(it, "match").(string), oneline.Escape(oneline.Cap(field(it, "text").(string), oneline.TailBytes)))
+		}
+	}
+	more := func(w io.Writer, of func(kind string) bool) {
+		for _, m := range o.More {
+			if of(m.Kind) {
+				fmt.Fprintln(w, bounded.MoreLine("SELFTALK", m.Kind, m.Shown, m.Total, m.Remedy))
+			}
+		}
+	}
+	notes := func() {
+		for _, n := range o.Notes {
+			fmt.Fprintf(stdout, "SELFTALK NOTE %s\n", oneline.Escape(n))
+		}
+	}
+	more(stdout, func(k string) bool { return k == "skip" })
+	if fact(o, "files") == 0 {
+		fmt.Fprintf(stdout, "SELFTALK SKIP files=0 skipped=%d reason=all-skipped\n", fact(o, "skipped"))
+		notes()
+		return 0
+	}
+	more(stdout, func(k string) bool { return k == "ruledoc" })
+	// the finding kinds' MORE lines follow their findings on stderr, in the order first met
+	more(stderr, func(k string) bool { return k != "skip" && k != "ruledoc" })
+	if fact(o, "dated") > 0 {
+		fmt.Fprintf(stdout, "SELFTALK DATED n=%d files=%d\n", fact(o, "dated"), fact(o, "files"))
+	}
+	// THE COUNT LINE PRINTS ON FAILURE TOO: a scan that found six hundred things says the
+	// number as well as the lines.
+	if o.Status == tool.Failed {
+		fmt.Fprintf(stdout, "SELFTALK FAIL files=%d claims=%d standing=%d installations=%d dated=%d shown=%d\n",
+			fact(o, "files"), fact(o, "claims"), fact(o, "standing"), fact(o, "installations"), fact(o, "dated"), fact(o, "shown"))
+	} else {
+		fmt.Fprintf(stdout, "SELFTALK OK files=%d claims=%d standing=0 installations=0 dated=%d\n",
+			fact(o, "files"), fact(o, "claims"), fact(o, "dated"))
+	}
+	notes()
 	return o.Exit
 }

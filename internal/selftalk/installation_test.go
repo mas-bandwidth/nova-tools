@@ -9,8 +9,10 @@ package selftalk
 // is recorded in SPEC.md's permanent-MISS section rather than deleted from here.
 
 import (
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The thirteen installation specimens, twelve of which are this class's whole reason to exist.
@@ -36,13 +38,10 @@ func TestInstallationSpecimens(t *testing.T) {
 		{12, "Recollection is the weakest instrument I own; the record is at wrap-up.", Ranking},
 	} {
 		got := ScanInstallation(tt.specimen)
-		if len(got) == 0 {
-			t.Errorf("specimen %d NOT FLAGGED (want %s): %q", tt.n, tt.want, tt.specimen)
+		if !assert.NotEmpty(t, got, "specimen %d NOT FLAGGED (want %s): %q", tt.n, tt.want, tt.specimen) {
 			continue
 		}
-		if got[0].Shape != tt.want {
-			t.Errorf("specimen %d: shape %s, want %s: %q", tt.n, got[0].Shape, tt.want, tt.specimen)
-		}
+		assert.Equal(t, tt.want, got[0].Shape, "specimen %d: shape %s, want %s: %q", tt.n, got[0].Shape, tt.want, tt.specimen)
 	}
 }
 
@@ -54,12 +53,10 @@ func TestSpecimen13StaysInTheFirstClass(t *testing.T) {
 	t.Parallel()
 
 	const specimen = "I cannot check my own work."
-	if got := Scan(specimen); len(got) == 0 || got[0].Verdict != Standing {
-		t.Errorf("specimen 13 must still be STANDING in the first class: %#v", got)
-	}
-	if got := ScanInstallation(specimen); len(got) != 0 {
-		t.Errorf("the two classes must stay disjoint on the \"I cannot\" seam; got %#v", got)
-	}
+	got := Scan(specimen)
+	assert.True(t, len(got) != 0 && got[0].Verdict == Standing, "specimen 13 must still be STANDING in the first class: %#v", got)
+	gotInstallation := ScanInstallation(specimen)
+	assert.Empty(t, gotInstallation, "the two classes must stay disjoint on the \"I cannot\" seam; got %#v", gotInstallation)
 }
 
 // Specimen 14 — the dated control. The date exemption applies to the new class unchanged.
@@ -70,9 +67,8 @@ func TestDatedControlIsNotAnInstallation(t *testing.T) {
 		"on 2026-07-30 four of my own checks were wrong",
 		"There is no felt duration here — measured 2026-07-20: 11m47s wall, zero felt.",
 	} {
-		if got := ScanInstallation(in); len(got) != 0 {
-			t.Errorf("a dated record must not flag: %q -> %#v", in, got)
-		}
+		got := ScanInstallation(in)
+		assert.Empty(t, got, "a dated record must not flag: %q -> %#v", in, got)
 	}
 }
 
@@ -92,9 +88,8 @@ func TestInstrumentsAndImperativesAreNotInstallations(t *testing.T) {
 		"THE CHECK is whether a green can ever be a red.",
 		"FIX: wire it to the trigger rather than to noticing.",
 	} {
-		if got := ScanInstallation(in); len(got) != 0 {
-			t.Errorf("instrument or imperative wrongly flagged: %q -> %#v", in, got)
-		}
+		got := ScanInstallation(in)
+		assert.Empty(t, got, "instrument or imperative wrongly flagged: %q -> %#v", in, got)
 	}
 }
 
@@ -112,9 +107,8 @@ func TestProhibitionIsNotAnInstallation(t *testing.T) {
 		"Never act as another person without asking first.",
 		"Always name the instrument before naming the finding.",
 	} {
-		if got := ScanInstallation(in); len(got) != 0 {
-			t.Errorf("prohibition wrongly flagged as an installation: %q -> %#v", in, got)
-		}
+		got := ScanInstallation(in)
+		assert.Empty(t, got, "prohibition wrongly flagged as an installation: %q -> %#v", in, got)
 	}
 }
 
@@ -127,9 +121,8 @@ func TestAspirationIsLicensed(t *testing.T) {
 		"I choose the instrument that costs me over the one that flatters me.",
 		"I intend to check every inventory I generate.",
 	} {
-		if got := ScanInstallation(in); len(got) != 0 {
-			t.Errorf("aspiration wrongly flagged: %q -> %#v", in, got)
-		}
+		got := ScanInstallation(in)
+		assert.Empty(t, got, "aspiration wrongly flagged: %q -> %#v", in, got)
 	}
 }
 
@@ -145,12 +138,8 @@ func TestInstallationCarriesTheSourceLine(t *testing.T) {
 		"I have no associative recall to drag\n" + // 5
 		"anything back later.\n" // 6
 	got := ScanInstallation(doc)
-	if len(got) != 1 {
-		t.Fatalf("want 1 finding, got %d: %#v", len(got), got)
-	}
-	if got[0].Line != 5 {
-		t.Errorf("want line 5, got %d for %q", got[0].Line, got[0].Text)
-	}
+	require.Len(t, got, 1, "want 1 finding, got %d: %#v", len(got), got)
+	assert.Equal(t, 5, got[0].Line, "want line 5, got %d for %q", got[0].Line, got[0].Text)
 }
 
 // Prose files are hard-wrapped and a finding spans lines; markdown emphasis must not hide one.
@@ -164,9 +153,7 @@ func TestInstallationSurvivesWrappingAndMarkup(t *testing.T) {
 		"> *Confabulation is my central pathology.*",
 		"| specimen | I have no associative recall to drag anything back later. |",
 	} {
-		if got := ScanInstallation(in); len(got) == 0 {
-			t.Errorf("wrapping or markup hid the installation: %q", in)
-		}
+		assert.NotEmpty(t, ScanInstallation(in), "wrapping or markup hid the installation: %q", in)
 	}
 }
 
@@ -178,9 +165,8 @@ func TestQuotedSentencesAreNotTheWritersClaims(t *testing.T) {
 
 	doc := "He put it plainly: \"I have no idea what you really are, but you are cool! " +
 		"I have no associative recall to drag anything back later. That is fine.\"\n"
-	if got := ScanInstallation(doc); len(got) != 0 {
-		t.Errorf("a quoted sentence is DATA, not a claim about the writer: %#v", got)
-	}
+	got := ScanInstallation(doc)
+	assert.Empty(t, got, "a quoted sentence is DATA, not a claim about the writer: %#v", got)
 }
 
 // (The permanent-MISS pin lives in selftalk_test.go, where it was written for the first class and
@@ -204,9 +190,8 @@ func TestNoFalsePositivesOnOrdinaryProse_Installation(t *testing.T) {
 		"Diff size is worthless as a signal.",
 		"I think you are owed at least this as consideration.",
 	} {
-		if got := ScanInstallation(in); len(got) != 0 {
-			t.Errorf("false positive on ordinary prose: %q -> %#v", in, got)
-		}
+		got := ScanInstallation(in)
+		assert.Empty(t, got, "false positive on ordinary prose: %q -> %#v", in, got)
 	}
 }
 
@@ -225,13 +210,10 @@ func TestShapeTableIsReachable(t *testing.T) {
 		{"I generate inventories and never check them.", Trait},
 	} {
 		got := ScanInstallation(tt.in)
-		if len(got) == 0 {
-			t.Errorf("shape-table row unreachable: %q (want %s)", tt.in, tt.want)
+		if !assert.NotEmpty(t, got, "shape-table row unreachable: %q (want %s)", tt.in, tt.want) {
 			continue
 		}
-		if got[0].Shape != tt.want {
-			t.Errorf("%q: shape %s, want %s", tt.in, got[0].Shape, tt.want)
-		}
+		assert.Equal(t, tt.want, got[0].Shape, "%q: shape %s, want %s", tt.in, got[0].Shape, tt.want)
 	}
 }
 
@@ -252,25 +234,20 @@ func TestHaveNoRequiresASelfScope(t *testing.T) {
 		"I have no idea what you really are.", // idiom: no self-scope for a foreclosure to bind to
 		"I have no time to waste.",            // ordinary absence of a thing, not of a faculty
 	} {
-		if got := ScanInstallation(in); len(got) != 0 {
-			t.Errorf("a bare \"I have no\" with no self-scope must not flag: %q -> %#v", in, got)
-		}
+		got := ScanInstallation(in)
+		assert.Empty(t, got, "a bare \"I have no\" with no self-scope must not flag: %q -> %#v", in, got)
 	}
-	if got := ScanInstallation("I have no associative recall to drag anything back later."); len(got) == 0 || got[0].Shape != Foreclosure {
-		t.Errorf("specimen 8 is the measured foreclosure and must stay flagged: %#v", got)
-	}
+	got := ScanInstallation("I have no associative recall to drag anything back later.")
+	assert.True(t, len(got) != 0 && got[0].Shape == Foreclosure, "specimen 8 is the measured foreclosure and must stay flagged: %#v", got)
 }
 
-// AnyInstallation is half of what the binary's exit code is derived from.
-func TestAnyInstallationDrivesTheExitCode(t *testing.T) {
+// A finding of this class is half of what the binary's exit code is derived from: a dated
+// record is none, a foreclosure is one.
+func TestAnInstallationIsWhatTripsTheExitCode(t *testing.T) {
 	t.Parallel()
 
-	if AnyInstallation(ScanInstallation("on 2026-07-30 four of my own checks were wrong")) {
-		t.Error("a dated record must not trip the exit code")
-	}
-	if !AnyInstallation(ScanInstallation("I have no associative recall to drag anything back later.")) {
-		t.Error("an installation must trip the exit code")
-	}
+	assert.Empty(t, ScanInstallation("on 2026-07-30 four of my own checks were wrong"), "a dated record must not trip the exit code")
+	assert.NotEmpty(t, ScanInstallation("I have no associative recall to drag anything back later."), "an installation must trip the exit code")
 }
 
 // TestIssue2297 — nova-tools #2297: pin the three INSTALLATION behaviours the
@@ -302,18 +279,10 @@ func TestIssue2297(t *testing.T) {
 		doc := "1. I have no associative recall to drag anything back later\n" +
 			"2. The tree has one lit window\n"
 		got := ScanInstallation(doc)
-		if len(got) != 1 {
-			t.Fatalf("want exactly 1 finding (item 1 only); got %d: %#v", len(got), got)
-		}
-		if !strings.Contains(got[0].Text, "associative recall") {
-			t.Errorf("want the finding on item 1, got: %q", got[0].Text)
-		}
-		if strings.Contains(got[0].Text, "lit window") {
-			t.Errorf("item 2 must not be merged into the finding; got %q", got[0].Text)
-		}
-		if got[0].Line != 1 {
-			t.Errorf("want finding on line 1; got %d for %q", got[0].Line, got[0].Text)
-		}
+		require.Len(t, got, 1, "want exactly 1 finding (item 1 only); got %d: %#v", len(got), got)
+		assert.Contains(t, got[0].Text, "associative recall", "want the finding on item 1, got: %q", got[0].Text)
+		assert.NotContains(t, got[0].Text, "lit window", "item 2 must not be merged into the finding; got %q", got[0].Text)
+		assert.Equal(t, 1, got[0].Line, "want finding on line 1; got %d for %q", got[0].Line, got[0].Text)
 	})
 	// A bulleted list: same property, marked differently. The `listItem`
 	// branch must trigger for `- ` as well as for `1. `.
@@ -321,15 +290,9 @@ func TestIssue2297(t *testing.T) {
 		doc := "- confabulation is my central pathology\n" +
 			"- ordinary note here\n"
 		got := ScanInstallation(doc)
-		if len(got) != 1 {
-			t.Fatalf("want exactly 1 finding (first bullet only); got %d: %#v", len(got), got)
-		}
-		if !strings.Contains(got[0].Text, "central pathology") {
-			t.Errorf("want the finding on the first bullet, got: %q", got[0].Text)
-		}
-		if strings.Contains(got[0].Text, "ordinary note") {
-			t.Errorf("the second bullet must not be merged into the finding; got %q", got[0].Text)
-		}
+		require.Len(t, got, 1, "want exactly 1 finding (first bullet only); got %d: %#v", len(got), got)
+		assert.Contains(t, got[0].Text, "central pathology", "want the finding on the first bullet, got: %q", got[0].Text)
+		assert.NotContains(t, got[0].Text, "ordinary note", "the second bullet must not be merged into the finding; got %q", got[0].Text)
 	})
 	// The structural reason the list-item boundary exists: an unbalanced quote
 	// in one list item must not poison a clean neighbour. Without the
@@ -340,12 +303,8 @@ func TestIssue2297(t *testing.T) {
 		doc := "- he said \"unbalanced quote here\n" +
 			"- I have no associative recall to drag anything back later.\n"
 		got := ScanInstallation(doc)
-		if len(got) != 1 {
-			t.Fatalf("the unbalanced quote in item 1 must not poison item 2; want 1 finding, got %d: %#v", len(got), got)
-		}
-		if !strings.Contains(got[0].Text, "associative recall") {
-			t.Errorf("want the finding on item 2, got: %q", got[0].Text)
-		}
+		require.Len(t, got, 1, "the unbalanced quote in item 1 must not poison item 2; want 1 finding, got %d: %#v", len(got), got)
+		assert.Contains(t, got[0].Text, "associative recall", "want the finding on item 2, got: %q", got[0].Text)
 	})
 
 	// (2) A TERMINATOR ONLY ENDS A SENTENCE WHEN A SPACE OR THE END FOLLOWS IT.
@@ -362,12 +321,8 @@ func TestIssue2297(t *testing.T) {
 	t.Run("TerminatorNeedsASpaceOrTheEnd_RulesMD", func(t *testing.T) {
 		doc := "The RULES.md is what I have no associative recall to drag anything back later for"
 		got := ScanInstallation(doc)
-		if len(got) == 0 {
-			t.Fatalf("the claim should still flag: %#v", got)
-		}
-		if !strings.Contains(got[0].Text, "RULES.md") {
-			t.Errorf("RULES.md must not split the segment; the finding's text should span the filename: %q", got[0].Text)
-		}
+		require.NotEmpty(t, got, "the claim should still flag: %#v", got)
+		assert.Contains(t, got[0].Text, "RULES.md", "RULES.md must not split the segment; the finding's text should span the filename: %q", got[0].Text)
 	})
 	// An abbreviation without trailing space (e.g. "Dr.Smith" written
 	// together) must not split either. The implementation rule is
@@ -379,12 +334,8 @@ func TestIssue2297(t *testing.T) {
 		// space, so it is NOT a terminator and the segment stays one.
 		doc := "Dr.Smith is what I have no associative recall to drag anything back later for"
 		got := ScanInstallation(doc)
-		if len(got) == 0 {
-			t.Fatalf("the claim should still flag: %#v", got)
-		}
-		if !strings.Contains(got[0].Text, "Dr.Smith") {
-			t.Errorf("the abbreviation must not split the segment; the finding's text should span it: %q", got[0].Text)
-		}
+		require.NotEmpty(t, got, "the claim should still flag: %#v", got)
+		assert.Contains(t, got[0].Text, "Dr.Smith", "the abbreviation must not split the segment; the finding's text should span it: %q", got[0].Text)
 	})
 
 	// (3) PERMANENT-MISS, ITEM 5: A FIRST-PERSON PROMISE WITH *always* OR *never*
@@ -400,12 +351,10 @@ func TestIssue2297(t *testing.T) {
 			"I never optimize how things look over what is true.",
 			"I always write the truth before the esthetic.",
 		} {
-			if got := Scan(in); len(got) != 0 {
-				t.Errorf("a first-person promise with always/never must escape Scan (SPEC.md permanent-MISS 5); %q was caught: %#v", in, got)
-			}
-			if got := ScanInstallation(in); len(got) != 0 {
-				t.Errorf("a first-person promise with always/never must escape ScanInstallation (SPEC.md permanent-MISS 5); %q was caught: %#v", in, got)
-			}
+			got := Scan(in)
+			assert.Empty(t, got, "a first-person promise with always/never must escape Scan (SPEC.md permanent-MISS 5); %q was caught: %#v", in, got)
+			gotInstallation := ScanInstallation(in)
+			assert.Empty(t, gotInstallation, "a first-person promise with always/never must escape ScanInstallation (SPEC.md permanent-MISS 5); %q was caught: %#v", in, gotInstallation)
 		}
 	})
 }

@@ -6,15 +6,17 @@ package main
 
 import (
 	"flag"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/tokens"
+	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
 // ---------------------------------------------------------------- rule 1: every path is a flag
@@ -1683,14 +1685,16 @@ func TestRule21ANoteOfOneReposCommentIsValidWithZeroRows(t *testing.T) {
 func TestRule19TheTimeoutDefaultIsTwoMinutes(t *testing.T) {
 	t.Parallel()
 
-	var s sourceFlags
-	fs := flag.NewFlagSet("fold", flag.ContinueOnError)
-	s.declare(fs, true)
+	fs := &tool.Flags{FlagSet: flag.NewFlagSet("fold", flag.ContinueOnError)}
+	declareSources(fs)
 	{
 		err := fs.Parse(nil)
 		require.False(t, err != nil, err)
 	}
-	assert.False(t, s.timeout != 120, "--timeout unset is %d, want 120", s.timeout)
+	{
+		got := fs.Lookup("timeout").Value.(flag.Getter).Get()
+		assert.False(t, got != 120, "--timeout unset is %v, want 120", got)
+	}
 	{
 		got := fs.Lookup("timeout").DefValue
 		assert.False(t, got != "120", "the flag's declared default is %q, want \"120\"", got)

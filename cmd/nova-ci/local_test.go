@@ -135,23 +135,19 @@ func TestLocalGreenRunsTheUnitTierAsCIDoes(t *testing.T) {
 	f := localFixture(t, "./cmd/a\n./internal/ci\n", localReply{prefix: "nice -n 15 make test ", stdout: localGreenStream})
 	code, stdout, stderr := runLocal(t, f)
 	require.Equal(t, 0, code, "exit = %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
-	if mb := f.call("git merge-base"); mb == nil || strings.Join(mb.Argv, " ") != "git merge-base origin/dev HEAD" || mb.Dir != f.root {
-		t.Fatalf("merge-base call = %+v, want `git merge-base origin/dev HEAD` in the checkout", mb)
-	}
-	if len(f.selAsked) != 1 || f.selAsked[0] != f.root+" "+localMergeBase {
-		t.Fatalf("selection asked = %v, want the checkout against the merge base", f.selAsked)
-	}
+	mb := f.call("git merge-base")
+	require.NotNil(t, mb, "merge-base call = %+v, want `git merge-base origin/dev HEAD` in the checkout", mb)
+	require.Equal(t, "git merge-base origin/dev HEAD", strings.Join(mb.Argv, " "), "merge-base call = %+v, want `git merge-base origin/dev HEAD` in the checkout", mb)
+	require.Equal(t, f.root, mb.Dir, "merge-base call = %+v, want `git merge-base origin/dev HEAD` in the checkout", mb)
+	require.Len(t, f.selAsked, 1, "selection asked = %v, want the checkout against the merge base", f.selAsked)
+	require.Equal(t, f.root+" "+localMergeBase, f.selAsked[0], "selection asked = %v, want the checkout against the merge base", f.selAsked)
 	mk := f.call("nice -n 15 make test ")
-	if mk == nil {
-		t.Fatalf("make test was not run; calls: %+v", f.calls)
-	}
-	if got, want := strings.Join(mk.Argv, "|"), "nice|-n|15|make|test|PKGS=./cmd/a ./internal/ci|GOTEST_P=2|GOTEST_COUNT_FLAG=-count=1|GOTEST_TAGS="; got != want {
-		t.Errorf("make argv = %s, want %s", got, want)
-	}
+	require.NotNil(t, mk, "make test was not run; calls: %+v", f.calls)
+	got, want := strings.Join(mk.Argv, "|"), "nice|-n|15|make|test|PKGS=./cmd/a ./internal/ci|GOTEST_P=2|GOTEST_COUNT_FLAG=-count=1|GOTEST_TAGS="
+	assert.Equal(t, want, got, "make argv = %s, want %s", got, want)
 	env := strings.Join(mk.Env, " ")
-	if !strings.Contains(env, "GOMAXPROCS=2") || !strings.Contains(env, "RUNNER_TEMP=") {
-		t.Errorf("make env = %q, want GOMAXPROCS=2 and a private RUNNER_TEMP", env)
-	}
+	assert.Contains(t, env, "GOMAXPROCS=2", "make env = %q, want GOMAXPROCS=2 and a private RUNNER_TEMP", env)
+	assert.Contains(t, env, "RUNNER_TEMP=", "make env = %q, want GOMAXPROCS=2 and a private RUNNER_TEMP", env)
 	for _, want := range []string{
 		"packages=2 ./cmd/a ./internal/ci",
 		"PKG ok      0.4s example.com/m/cmd/a",
@@ -214,21 +210,34 @@ func TestLocalBuildFailureIsRed(t *testing.T) {
 	}
 }
 
-// A SLEEPS skip off the ledger fails make test with no red test: the
-// CI-SLEEPS line is printed and the verb exits 2, as slowtests does on every
-// leg. (A CI-SLOW line alone exits make 0 now: it is a measurement.)
-func TestLocalSleepsOffTheLedgerExitsTwo(t *testing.T) {
+// make test failing with no red test is one of two things. A SLEEPS skip off
+// the ledger is a CI-SLEEPS line: the check said no, exit 1, as slowtests says
+// it on every leg. With no CI-SLEEPS line a step could not run: exit 2. (A
+// CI-SLOW line alone exits make 0: it is a measurement.)
+func TestLocalMakeFailureWithNoRedTest(t *testing.T) {
 	t.Parallel()
-	stream := `{"Action":"output","Package":"example.com/m/cmd/a","Test":"TestSleeps","Output":"SLEEPS: waits\n"}
+	sleeps := `{"Action":"output","Package":"example.com/m/cmd/a","Test":"TestSleeps","Output":"SLEEPS: waits\n"}
 {"Action":"skip","Package":"example.com/m/cmd/a","Test":"TestSleeps","Elapsed":0}
 {"Action":"pass","Package":"example.com/m/cmd/a","Elapsed":0.2}
 CI-SLEEPS test=TestSleeps package=example.com/m/cmd/a: skipped for a wall-clock wait and not on internal/ci/sleeps-skips_allowlist.txt; inject a clock or tag it //go:build functional
 `
-	f := localFixture(t, "./cmd/a\n", localReply{prefix: "nice -n 15 make test ", stdout: stream, code: 2})
-	code, stdout, _ := runLocal(t, f)
-	require.Equal(t, 2, code, "exit = %d, want 2\n%s", code, stdout)
-	for _, want := range []string{"CI-SLEEPS test=TestSleeps", "red=0 make-exit=2", "a SLEEPS skip off the ledger"} {
-		assert.Contains(t, stdout, want, "stdout lacks %q:\n%s", want, stdout)
+	for _, c := range []struct {
+		name, stream string
+		want         int
+		says         []string
+	}{
+		{"a CI-SLEEPS line is a no", sleeps, 1, []string{"CI-SLEEPS test=TestSleeps", "red=0 make-exit=2", "failed on 1 CI-SLEEPS line(s) above: a SLEEPS skip off the ledger"}},
+		{"no CI-SLEEPS line is a step that could not run", "make: *** [test] Error 2\n", 2, []string{"red=0 make-exit=2", "no CI-SLEEPS line: a step could not run"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			f := localFixture(t, "./cmd/a\n", localReply{prefix: "nice -n 15 make test ", stdout: c.stream, code: 2})
+			code, stdout, _ := runLocal(t, f)
+			assert.Equal(t, c.want, code, "exit = %d, want %d\n%s", code, c.want, stdout)
+			for _, want := range c.says {
+				assert.Contains(t, stdout, want, "stdout lacks %q:\n%s", want, stdout)
+			}
+		})
 	}
 }
 
@@ -239,8 +248,9 @@ func TestLocalNothingSelectedRunsNothing(t *testing.T) {
 	code, stdout, _ := runLocal(t, f, "--base", "origin/main")
 	require.Equal(t, 0, code, "exit = %d, want 0\n%s", code, stdout)
 	assert.Contains(t, stdout, "nothing to test for this change", "stdout lacks CI's words:\n%s", stdout)
-	if mb := f.call("git merge-base"); mb == nil || strings.Join(mb.Argv, " ") != "git merge-base origin/main HEAD" {
-		t.Errorf("--base was not used: %+v", mb)
+	mb := f.call("git merge-base")
+	if assert.NotNil(t, mb, "--base was not used: %+v", mb) {
+		assert.Equal(t, "git merge-base origin/main HEAD", strings.Join(mb.Argv, " "), "--base was not used: %+v", mb)
 	}
 	assert.Nil(t, f.call("nice -n 15 make"), "make ran for an empty selection")
 }
@@ -257,9 +267,8 @@ func TestLocalFunctionalAddsTheTag(t *testing.T) {
 	code, stdout, _ := runLocal(t, f, "--functional")
 	require.Equal(t, 1, code, "exit = %d, want 1\n%s", code, stdout)
 	mk := f.call("nice -n 15 make test ")
-	if mk == nil || strings.Join(mk.Argv, "|") != "nice|-n|15|make|test|PKGS=./cmd/a|GOTEST_P=2|GOTEST_COUNT_FLAG=-count=1|GOTEST_TAGS=functional" {
-		t.Fatalf("make call = %+v, want the test target with GOTEST_TAGS=functional", mk)
-	}
+	require.NotNil(t, mk, "make call = %+v, want the test target with GOTEST_TAGS=functional", mk)
+	require.Equal(t, "nice|-n|15|make|test|PKGS=./cmd/a|GOTEST_P=2|GOTEST_COUNT_FLAG=-count=1|GOTEST_TAGS=functional", strings.Join(mk.Argv, "|"), "make call = %+v, want the test target with GOTEST_TAGS=functional", mk)
 	for _, want := range []string{"RED package=example.com/m/cmd/a test=TestStore", "redis: connection refused"} {
 		assert.Contains(t, stdout, want, "stdout lacks %q:\n%s", want, stdout)
 	}
@@ -314,15 +323,10 @@ func TestLocalRefusalsPrint(t *testing.T) {
 			t.Parallel()
 			f := tc.fake(t)
 			code, stdout, stderr := runLocal(t, f, tc.args...)
-			if code != 2 {
-				t.Fatalf("exit = %d, want 2\nstdout: %s\nstderr: %s", code, stdout, stderr)
-			}
-			if !strings.Contains(stderr, tc.want) || !strings.Contains(stderr, "run: nova-ci local -h") {
-				t.Errorf("stderr = %q, want it to say %q and name the door", stderr, tc.want)
-			}
-			if f.call("nice -n 15 make") != nil {
-				t.Error("make ran after a refusal")
-			}
+			require.Equal(t, 2, code, "exit = %d, want 2\nstdout: %s\nstderr: %s", code, stdout, stderr)
+			assert.Contains(t, stderr, tc.want, "stderr = %q, want it to say %q and name the door", stderr, tc.want)
+			assert.Contains(t, stderr, "run: nova-ci local -h", "stderr = %q, want it to say %q and name the door", stderr, tc.want)
+			assert.Nil(t, f.call("nice -n 15 make"), "make ran after a refusal")
 		})
 	}
 }
@@ -333,9 +337,7 @@ func TestLocalRefusalsPrint(t *testing.T) {
 func TestMakefileTestTargetTakesGOTEST_P(t *testing.T) {
 	t.Parallel()
 	mk, err := os.ReadFile(filepath.Join("..", "..", "Makefile"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	var recipe string
 	lines := strings.Split(string(mk), "\n")
 	for i, line := range lines {
@@ -343,12 +345,8 @@ func TestMakefileTestTargetTakesGOTEST_P(t *testing.T) {
 			recipe = lines[i+1]
 		}
 	}
-	if recipe == "" {
-		t.Fatal("the Makefile has no `test:` rule followed by its recipe")
-	}
-	if !strings.Contains(recipe, "-p $(GOTEST_P)") {
-		t.Errorf("make test does not pass -p $(GOTEST_P); nova-ci local's GOTEST_P=%s would be a phantom:\n%s", localCores, recipe)
-	}
+	require.NotEqual(t, "", recipe, "the Makefile has no `test:` rule followed by its recipe")
+	assert.Contains(t, recipe, "-p $(GOTEST_P)", "make test does not pass -p $(GOTEST_P); nova-ci local's GOTEST_P=%s would be a phantom:\n%s", localCores, recipe)
 }
 
 // The real selection starts pkgselect's git and go commands through the verb's

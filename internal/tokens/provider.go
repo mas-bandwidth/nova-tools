@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -14,8 +16,8 @@ import (
 
 // --provider <label>=<file>: a billing export.
 //
-// For a harness that records nothing a tool can read — Emma's (Antigravity, Gemini),
-// Johnny's (Grok), Stella's (Codex). The account holder downloads the export; the label
+// For a harness that records nothing a tool can read (Antigravity and Gemini, Grok,
+// Codex). The account holder downloads the export; the label
 // names the provider and therefore the parser. The repo is the fixed word `unattributed`:
 // the tool never splits a provider total across repos by any proportion, because a split
 // nobody measured is a number nobody can defend.
@@ -37,7 +39,7 @@ func KnownParser(name string) bool {
 const zoneDeclaration = "# timezone:"
 
 // A shape is ONE provider's export, and the parser is chosen by the kind the caller
-// declared: `--provider google:emma=<file>` says this file is Google's export and Emma
+// declared: `--provider google:ada=<file>` says this file is Google's export and Ada
 // downloaded it. One union of every provider's column names would accept a Google export
 // declared as xAI and write `provider:xai` beside numbers that parser never read -- the
 // column that makes a number traceable naming the wrong source (measured 2026-09-11).
@@ -83,17 +85,14 @@ func ParserColumns(kind string) []string {
 	if !ok {
 		return nil
 	}
-	out := []string{sh.model}
-	for name := range sh.columns {
-		out = append(out, name)
-	}
+	out := slices.AppendSeq([]string{sh.model}, maps.Keys(sh.columns))
 	sort.Strings(out)
 	return append([]string{sh.stamp + " or " + sh.date}, out...)
 }
 
 // ReadProvider reads one billing export with the parser its kind names. The label on
-// every row it feeds is `<kind>:<name>` -- `google:emma`, as the spec's own day-file
-// example writes it -- so two friends' exports from one provider are two sources.
+// every row it feeds is `<kind>:<name>` -- `google:ada` -- so two friends' exports from
+// one provider are two sources.
 func ReadProvider(kind, name, path string, _ *Rules) *Source {
 	s := &Source{Label: Label(kind, name), Kind: KindProvider, Path: path, Basis: UTC}
 	s.Stat.Files = 1
@@ -389,10 +388,10 @@ func readXaiJSON(kind, path, text string, s *Source) *Source {
 		// ticks, the unit the fold's usd= holds (rule 20: the cost is "from the
 		// usage `usd` column or a cost tick the source reported"). A lexeme that
 		// is not a non-negative integer is an absence rather than a guess, and
-		// usd= is 0 where no source reported one.
+		// such a message is not Priced: usd= prints - where no source reported one.
 		if v, ok := turn["costUsdTicks"].(json.Number); ok {
 			if n, err := strconv.ParseInt(v.String(), 10, 64); err == nil && n >= 0 {
-				m.Usd = n
+				m.Usd, m.Priced = n, true
 			}
 		}
 		s.Stream = append(s.Stream, m)

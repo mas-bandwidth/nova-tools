@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // A backslash is part of a Unix filename. A neighbouring symlink whose name
@@ -20,19 +22,19 @@ func TestNoFollowPreservesLiteralTrailingBackslashes(t *testing.T) {
 			path := link + suffix
 			for _, body := range []string{"created", "replaced"} {
 				if err := writeNoFollow("write", path, []byte(body), 0644); err != nil {
-					t.Fatalf("literal path %q refused: %v", path, err)
+					require.NoError(t, err, "literal path %q refused: %v", path, err)
 				}
 				got, err := os.ReadFile(path)
 				if err != nil || string(got) != body {
-					t.Fatalf("exact path bytes=%q err=%v", got, err)
+					require.FailNowf(t, "", "exact path bytes=%q err=%v", got, err)
 				}
 			}
 			got, err := os.ReadFile(outside)
 			if err != nil || string(got) != "outside unchanged" {
-				t.Fatalf("neighbour target=%q err=%v", got, err)
+				require.FailNowf(t, "", "neighbour target=%q err=%v", got, err)
 			}
 			if target, err := os.Readlink(link); err != nil || target != outside {
-				t.Fatalf("neighbour link=%q err=%v", target, err)
+				require.FailNowf(t, "", "neighbour link=%q err=%v", target, err)
 			}
 		})
 	}

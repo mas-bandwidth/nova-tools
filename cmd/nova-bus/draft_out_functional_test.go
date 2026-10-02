@@ -16,7 +16,7 @@ import (
 // 2. send/prepare/reply accepted untouched template placeholder `<the note goes here>`.
 // 3. SEND OK did not report body_bytes.
 
-func TestIssue2043_DraftRefusesRetiredFileFlag(t *testing.T) {
+func TestDraftRefusesTheRetiredFileFlag(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
@@ -24,10 +24,10 @@ func TestIssue2043_DraftRefusesRetiredFileFlag(t *testing.T) {
 
 	r := invoke(t, "", "draft", "--bus", checkout, "--as", "Ada", "--to", "Bo", "--subject", "gate", "--file", target)
 	r.mustCode(t, 2).
-		mustContain(t, "stderr", "nova-bus draft: --file is retired because --file means input on send; use --out <path> (or --out <path> --overwrite)")
+		mustContain(t, "stderr", "DRAFT REFUSED: --file is retired because --file means input on send; use --out <path> (or --out <path> --overwrite)")
 }
 
-func TestIssue2043_DraftWritesOutFlag(t *testing.T) {
+func TestDraftWritesOutFlag(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
@@ -42,7 +42,7 @@ func TestIssue2043_DraftWritesOutFlag(t *testing.T) {
 	require.Containsf(t, string(data), "Subject: gate", "target missing header: %s", string(data))
 }
 
-func TestIssue2043_DraftRefusesExistingFileWithoutOverwrite(t *testing.T) {
+func TestDraftRefusesAnExistingFileWithoutOverwrite(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
@@ -59,7 +59,7 @@ func TestIssue2043_DraftRefusesExistingFileWithoutOverwrite(t *testing.T) {
 	require.Falsef(t, string(data) != original, "existing file was clobbered: got %q, want %q", string(data), original)
 }
 
-func TestIssue2043_DraftOverwritesWhenFlagGiven(t *testing.T) {
+func TestDraftOverwritesWhenTheFlagIsGiven(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
@@ -75,7 +75,7 @@ func TestIssue2043_DraftOverwritesWhenFlagGiven(t *testing.T) {
 	require.Containsf(t, string(data), "Subject: gate", "expected overwritten content, got: %s", string(data))
 }
 
-func TestIssue2043_SendRefusesUntouchedTemplatePlaceholder(t *testing.T) {
+func TestSendRefusesAnUntouchedTemplatePlaceholder(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
 	checkout, remote := busDir(t)
@@ -89,7 +89,7 @@ func TestIssue2043_SendRefusesUntouchedTemplatePlaceholder(t *testing.T) {
 		mustContain(t, "stderr", "the body is the unedited template placeholder (<the note goes here>)")
 }
 
-func TestIssue2043_PrepareRefusesUntouchedTemplatePlaceholder(t *testing.T) {
+func TestPrepareRefusesAnUntouchedTemplatePlaceholder(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
@@ -103,7 +103,7 @@ func TestIssue2043_PrepareRefusesUntouchedTemplatePlaceholder(t *testing.T) {
 		mustContain(t, "stderr", "the body is the unedited template placeholder (<the note goes here>)")
 }
 
-func TestIssue2043_ReplyRefusesUntouchedTemplatePlaceholder(t *testing.T) {
+func TestReplyRefusesAnUntouchedTemplatePlaceholder(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
 	checkout, remote := busDir(t)
@@ -117,7 +117,7 @@ func TestIssue2043_ReplyRefusesUntouchedTemplatePlaceholder(t *testing.T) {
 		mustContain(t, "stderr", "the body is the unedited template placeholder (<the note goes here>)")
 }
 
-func TestIssue2043_SendOKPrintsBodyBytes(t *testing.T) {
+func TestSendOKPrintsBodyBytes(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
 	checkout, remote := busDir(t)

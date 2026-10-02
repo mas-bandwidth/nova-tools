@@ -23,6 +23,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 func boxIn(t *testing.T) string {
@@ -540,7 +542,9 @@ func TestPreserveUnreadablePreservesExistingPermissions(t *testing.T) {
 // design, so the strings printed from it are authored by whoever can write the file. One
 // line per event is a promise to every caller scanning the grammar, and a control
 // character in a reason is what breaks it -- a newline forges a second event, an ESC
-// repaints an operator's terminal. Escaping is done at PRINT time and covers both.
+// repaints an operator's terminal. Escaping is done at print time, by oneline.Escape, the
+// escape cmd/nova-fuse renders every box string through, and this table pins it for the
+// strings a box can hold.
 func TestOneLineEscapesEveryControlCharacter(t *testing.T) {
 	t.Parallel()
 
@@ -573,13 +577,13 @@ func TestOneLineEscapesEveryControlCharacter(t *testing.T) {
 		{"only control characters, still not shortened to nothing", "\n\n", `\x0a\x0a`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := OneLine(tc.in)
-			assert.Equal(t, tc.want, got, "OneLine(%q) = %q, want %q", tc.in, got, tc.want)
-			assert.False(t, strings.ContainsFunc(got, unicode.IsControl), "OneLine(%q) = %q still holds a control character", tc.in, got)
-			assert.False(t, tc.in != "" && got == "", "OneLine(%q) emptied the text; a reason must never vanish", tc.in)
+			got := oneline.Escape(tc.in)
+			assert.Equal(t, tc.want, got, "oneline.Escape(%q) = %q, want %q", tc.in, got, tc.want)
+			assert.False(t, strings.ContainsFunc(got, unicode.IsControl), "oneline.Escape(%q) = %q still holds a control character", tc.in, got)
+			assert.False(t, tc.in != "" && got == "", "oneline.Escape(%q) emptied the text; a reason must never vanish", tc.in)
 			{
-				again := OneLine(tc.in)
-				assert.Equal(t, got, again, "OneLine(%q) is not deterministic: %q then %q", tc.in, got, again)
+				again := oneline.Escape(tc.in)
+				assert.Equal(t, got, again, "oneline.Escape(%q) is not deterministic: %q then %q", tc.in, got, again)
 			}
 		})
 	}
@@ -588,7 +592,7 @@ func TestOneLineEscapesEveryControlCharacter(t *testing.T) {
 // TestFoldCollapsesControlCharactersToSpaces pins the WRITE half: this tool's own writes
 // stay tidy, and nothing is ever refused for what it contains -- a fuse you cannot blow is
 // not a fuse. Folding is not the defense (a box written by another hand still arrives with
-// anything in it); OneLine is.
+// anything in it); oneline.Escape at print time is.
 func TestFoldCollapsesControlCharactersToSpaces(t *testing.T) {
 	t.Parallel()
 

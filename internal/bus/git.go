@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -119,10 +120,7 @@ type limitedGitBuffer struct{ bytes.Buffer }
 
 func (b *limitedGitBuffer) Write(p []byte) (int, error) {
 	if b.Len() < gitOutputCap {
-		remain := gitOutputCap - b.Len()
-		if remain > len(p) {
-			remain = len(p)
-		}
+		remain := min(gitOutputCap-b.Len(), len(p))
 		// ignored: a bytes.Buffer write never returns an error
 		_, _ = b.Buffer.Write(p[:remain])
 	}
@@ -260,14 +258,21 @@ func busGit(dir string) gitrun.Options {
 func git(dir string, args ...string) (string, error) {
 	budget := gitTimeout()
 	out, err := gitrun.Combined(context.Background(), busGit(dir), args...)
+	return string(out), gitFailure(dir, args, budget, string(out), err)
+}
+
+// gitFailure is what one git call's error says, apart from running it: a call killed on its
+// budget names the call, the budget and the flag that widens it; any other failure is a
+// gitError carrying git's own words; nil stays nil.
+func gitFailure(dir string, args []string, budget time.Duration, out string, err error) error {
 	var timedOut *subproc.TimeoutError
 	if errors.As(err, &timedOut) {
-		return string(out), fmt.Errorf("git %s did not finish within %s and was killed; nothing was left half-done by this tool, and a longer budget is --git-timeout <seconds>", strings.Join(args, " "), budget)
+		return fmt.Errorf("git %s did not finish within %s and was killed; nothing was left half-done by this tool, and a longer budget is --git-timeout <seconds>", strings.Join(args, " "), budget)
 	}
 	if err != nil {
-		return string(out), &gitError{args: append([]string{"-C", dir}, args...), err: err, output: string(out)}
+		return &gitError{args: append([]string{"-C", dir}, args...), err: err, output: out}
 	}
-	return string(out), nil
+	return nil
 }
 
 // ValidGitArg holds the shape a --remote or --branch may have: letters, digits, "-", "_",
@@ -360,12 +365,9 @@ func WithTrailer(message, what string) string {
 // rather than only the last paragraph, because a rebase, a cherry-pick or a person editing
 // a message can add lines under it, and a commit this tool made does not stop being one.
 func HasTrailer(message string) bool {
-	for _, line := range strings.Split(strings.ReplaceAll(message, "\r\n", "\n"), "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), TrailerKey+":") {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(strings.Split(strings.ReplaceAll(message, "\r\n", "\n"), "\n"), func(line string) bool {
+		return strings.HasPrefix(strings.TrimSpace(line), TrailerKey+":")
+	})
 }
 
 // HasExactTrailer reports whether a commit message carries the exact trailer key and value.

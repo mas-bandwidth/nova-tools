@@ -5,16 +5,16 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | dir | purpose | guard | command |
 | --- | --- | --- | --- |
 | `nova-bus/` | coordination bus inbox, send, and wait CLI | `go test ./cmd/nova-bus` | `go test ./cmd/nova-bus` |
-| `nova-cairn/` | dusk memory distillation CLI | `go test ./cmd/nova-cairn` | `go test ./cmd/nova-cairn` |
-| `nova-check/` | codebase hygiene and constraint check CLI | `go test ./cmd/nova-check` | `go test ./cmd/nova-check` |
+| `nova-cairn/` | session checkpoints: a session's exact words kept as plain files, with an index and receipts | `go test ./cmd/nova-cairn` | `go test ./cmd/nova-cairn` |
+| `nova-check/` | checks over markdown records and repositories: links, kernel budget, no-code, floors, corpus, hygiene, dogfood, spelling | `go test ./cmd/nova-check` | `go test ./cmd/nova-check` |
 | `nova-ci/` | CI slowtests budget and check CLI, and ci-ok's run receipt | `go test ./cmd/nova-ci` | `go test ./cmd/nova-ci` |
 | `nova-config/` | permanent configuration store (Postgres), friends and machines, applied into Redis | `go test ./cmd/nova-config` | `go test ./cmd/nova-config` |
-| `nova-fuse/` | workspace isolation and boundary CLI | `go test ./cmd/nova-fuse` | `go test ./cmd/nova-fuse` |
+| `nova-fuse/` | the ingestion fuse: a recorded decision to stop reading an untrusted source, checked before each read | `go test ./cmd/nova-fuse` | `go test ./cmd/nova-fuse` |
 | `nova-memory/` | memory indexing and search CLI | `go test ./cmd/nova-memory` | `go test ./cmd/nova-memory` |
 | `nova-redis/` | Redis instance owner: serve, scratch spill/recall, and fn load/check of the function library | `go test ./cmd/nova-redis` | `go test ./cmd/nova-redis` |
 | `nova-sandbox/` | OS-level process sandbox CLI | `go test ./cmd/nova-sandbox` | `go test ./cmd/nova-sandbox` |
 | `nova-secrets/` | zero-leak secrets store CLI | `go test ./cmd/nova-secrets` | `go test ./cmd/nova-secrets` |
-| `nova-self-talk/` | internal dialogue recording CLI | `go test ./cmd/nova-self-talk` | `go test ./cmd/nova-self-talk` |
+| `nova-self-talk/` | flags sentences where a writer passes a standing verdict on themselves | `go test ./cmd/nova-self-talk` | `go test ./cmd/nova-self-talk` |
 | `nova-sprint/` | the sprint table: four tables on nova-table, the moves between them, the coordinator's inbox, and the driver that plays the world | `go test ./cmd/nova-sprint` | `go test ./cmd/nova-sprint` |
 | `nova-swarm/` | native card runner, bench slot leases and card lint CLI | `go test ./cmd/nova-swarm` | `go test ./cmd/nova-swarm` |
 | `nova-table/` | tables of ordered sets, text and percentages over Redis | `go test ./cmd/nova-table` | `go test ./cmd/nova-table` |

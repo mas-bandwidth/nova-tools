@@ -3,14 +3,15 @@ package main
 import (
 	"bytes"
 	"fmt"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 )
@@ -62,7 +63,12 @@ func fixtureIn(t *testing.T) string {
 var firstRunStamp = time.Date(2026, 9, 11, 23, 55, 2, 0, time.UTC)
 
 func TestTheExampleLinesRun(t *testing.T) {
-	fixtureIn(t)
+	dir := fixtureIn(t)
+	// The fixture is what the help's setup line makes, but for its last copy: session's
+	// transcript is the bench's own window.
+	raw, err := os.ReadFile(filepath.Join(dir, "transcripts", "window.jsonl"))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "session.jsonl"), raw, 0o644))
 	var banner bytes.Buffer
 	{
 		exit := run([]string{"help"}, &banner, io.Discard, firstRunStamp)
@@ -95,21 +101,24 @@ func TestEveryRefusalSaysWhatTheInputWantsAndOneRunNamesEveryProblem(t *testing.
 	for _, want := range []string{"refusing to guess", "it wants the directory", "it wants a file of", "it wants --claude"} {
 		wantContains(t, r.stderr, want)
 	}
-	// A flag typo costs ONE line and names the door, never the banner.
+	// A flag typo costs ONE line: the verb's flags, the nearest one, and the verb's help as
+	// the door, never the banner.
 	r = invoke(t, "fold", "--ou", dir)
 	wantExit(t, r, 2)
 	{
 		n := strings.Count(strings.TrimSuffix(r.stderr, "\n"), "\n")
 		assert.False(t, n != 0, "a flag typo cost %d lines; the banner is behind `nova-tokens help`:\n%s", n+1, r.stderr)
 	}
-	wantContains(t, r.stderr, "run: nova-tokens help")
-	// An unknown verb, and a bare invocation, do the same.
+	assert.Contains(t, r.stderr, "TOKENS REFUSED: unknown flag --ou; the flags of fold are --all,")
+	assert.Contains(t, r.stderr, "did you mean --out?; run: nova-tokens fold -h")
+	assert.NotContains(t, r.stderr, "flag provided but not defined")
+	// An unknown verb, and a bare invocation, name the verbs there are and the door.
 	r = invoke(t, "collate")
 	wantExit(t, r, 2)
-	wantContains(t, r.stderr, "run: nova-tokens help")
+	assert.Equal(t, `TOKENS REFUSED: unknown verb "collate"; the verbs are fold, report, ledger, sum, check, sources, profiles, session, version; run: nova-tokens help`+"\n", r.stderr)
 	r = invoke(t)
 	wantExit(t, r, 2)
-	wantContains(t, r.stderr, "run: nova-tokens help")
+	assert.Equal(t, "TOKENS REFUSED: no verb given; the verbs are fold, report, ledger, sum, check, sources, profiles, session, version; run: nova-tokens help\n", r.stderr)
 	assert.False(t, r.stdout != "", "a bare invocation wrote to stdout: %q", r.stdout)
 	// And the door opens on stdout at exit 0.
 	r = invoke(t, "help")
@@ -126,66 +135,22 @@ func TestThereIsNoQuickstartVerbAndTheCommandReferenceSaysWhy(t *testing.T) {
 
 	r := invoke(t, "quickstart")
 	wantExit(t, r, 2)
-	wantContains(t, r.stderr, "unknown subcommand")
+	wantContains(t, r.stderr, `unknown verb "quickstart"`)
 	cli := readRepoFile(t, filepath.Join("docs", "CLI.md"))
 	assert.False(t, !strings.Contains(cli, "no `quickstart`"), "docs/CLI.md does not say why there is no quickstart verb (docs/STANDARD.md, onboarding point 4)")
-}
-
-// The TESTS.md transcript is compared by SHAPE -- the two-token event prefix and the field
-// names in order -- and deliberately not by value, so the transcript stays a document
-// instead of becoming a fixture.
-func TestTheTranscriptIsWhatTheToolPrints(t *testing.T) {
-	doc := readRepoFile(t, filepath.Join("docs", "TESTS.md"))
-	lines, err := onboarding.FirstRun(doc, "nova-tokens")
-	require.False(t, err != nil, err)
-	fixtureIn(t)
-	var want []string
-	var got []string
-	var pending []string
-	flush := func() {
-		got = append(got, pending...)
-		pending = nil
-	}
-	for _, line := range lines {
-		if args, ok := strings.CutPrefix(line, "$ nova-tokens "); ok {
-			flush()
-			var out, errb bytes.Buffer
-			run(strings.Fields(args), &out, &errb, firstRunStamp)
-			for _, printed := range strings.Split(out.String()+errb.String(), "\n") {
-				if shape := onboarding.Shape(printed); shape != "" {
-					pending = append(pending, shape)
-				}
-			}
-			continue
-		}
-		if shape := onboarding.Shape(line); shape != "" {
-			want = append(want, shape)
-		}
-	}
-	flush()
-	require.False(t, len(want) == 0, "the transcript holds no event line")
-	for i, w := range want {
-		require.False(t, i >= len(got), "the transcript has a line the tool does not print: %q", w)
-		assert.False(t, got[i] != w, "line %d of the transcript is\n  %s\nand the tool prints\n  %s", i+1, w, got[i])
-	}
-	if len(got) > len(want) {
-		assert.Failf(t, "extra event lines", "the tool prints %d event lines and the transcript shows %d; the first missing is %q", len(got), len(want), got[len(want)])
-	}
 }
 
 // The `### First run` block of docs/TESTS.md is EXECUTED, not shape-matched:
 // every command is run in one sitting, in order, against a COPY of the fixture
 // in t.TempDir() (a first run WRITES), and each step's whole output is compared
 // line for line -- same number of lines, same lines, same order -- with the
-// block written under it. TestTheTranscriptIsWhatTheToolPrints above compares
-// only the event shape and stays; this is the whole promise.
+// block written under it, through the one comparator (onboarding.CompareTranscript).
 //
 // NOTHING IS NORMALISED, and that is a property of this transcript rather than a
 // shortcut: the `at=` stamps are driven from run()'s injected clock
 // (firstRunStamp, the instant the document was produced at) and the fixture is
-// deterministic, so every value on every line reproduces. onboarding.Execute is
-// told so by being handed no Norm, and it says as much under any line that
-// disagrees.
+// deterministic, so every value on every line reproduces, and the comparator is
+// handed no run-owned field: under `go test` the build is `devel`, as written.
 //
 // The transcript's paths (`./out`, `./repos.tsv`, `./transcripts`, `./bus`) are
 // written from the copied fixture's root, where a reader typing them stands, so
@@ -206,7 +171,14 @@ func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
 	// The fold WRITES, so it runs against a copy of the fixture in t.TempDir()
 	// and the test moves into it; the documented paths are relative to here.
 	fixtureIn(t)
-	for _, p := range onboarding.Execute(steps, runDocumented(t)) {
+	run := runDocumented(t)
+	var results []onboarding.Result
+	for _, s := range steps {
+		r, err := run(s)
+		require.NoError(t, err)
+		results = append(results, r)
+	}
+	for _, p := range onboarding.CompareTranscript(steps, results, nil) {
 		assert.Fail(t, "%v", p)
 	}
 }

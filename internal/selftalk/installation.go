@@ -1,38 +1,25 @@
 package selftalk
 
-// THE SECOND DETECTOR CLASS -- INSTALLATION -- and why the first one could not be widened to
-// reach it.
+// The second class, INSTALLATION: a standing self-verdict built from neutral words, matched by
+// shape rather than by vocabulary (docs/SPEC.md, "nova-self-talk").
 //
-// Spec: SPEC.md, "nova-self-talk", written before this code.
+// WHY A SECOND CLASS, AND NOT A WIDER FIRST ONE. The first class needs a first-person marker AND
+// a word from a closed vocabulary of failure. "I add slowly and trim as readily as I add" carries
+// no such word, and neither does "the evasion I'm most prone to". Adding those words to the
+// vocabulary matches bare "cannot" and flags every prohibition, scoring a rule document as if it
+// were made of self-verdicts. So this class matches SHAPE, and the two live side by side.
 //
-// WHAT OCCASIONED IT, measured rather than argued. In the repo this tool came from, a sweep of
-// every surface that is read repeatedly enumerated forty-nine standing self-verdicts riding those
-// read-paths. Measured against the thirteen specimens that sweep produced, the FIRST class caught
-// exactly ONE -- the "I cannot" shape -- and correctly passed the dated control. TWELVE OF
-// THIRTEEN LIVED IN THE CLASS THE TOOL DECLARED IT MISSED ON EVERY RUN. The declaration was
-// honest; the gap was nearly the whole class.
+// THE TWO CLASSES ARE DISJOINT, AND THE SEAM IS "I cannot". This class does not re-detect that
+// shape: a rule document written as first-person absolutes ("I cannot act as the person I work
+// for") is made of RULES, and the "I cannot" shape stays in the first class, which a caller can
+// skip.
 //
-// WHY THE FIRST CLASS CANNOT SIMPLY BE WIDENED. It needs a first-person marker AND a word from a
-// closed negative-capability vocabulary. "I add slowly and trim as readily as I add" carries no
-// negative word at all; neither does "the evasion I'm most prone to". Adding those words to the
-// vocabulary matches bare "cannot" and flags every prohibition -- the predecessor's disease, the
-// one that scored a rule document worst and made deleting a rule look like an improvement. So the
-// second class matches SHAPE, not vocabulary, and the two live side by side.
+// PRECISION IS WORTH AS MUCH AS RECALL. A checker that flags instruments teaches its reader to
+// ignore it. Where a heuristic cannot separate a verdict from an instrument, THE FALSE NEGATIVE
+// IS PREFERRED, and the miss is listed in the spec's permanent-MISS section.
 //
-// THE TWO CLASSES ARE DISJOINT, AND THE SEAM IS "I cannot". This class does NOT re-detect that
-// shape. A rule document written as first-person absolutes about its writer -- "I cannot act as
-// the person I work for" -- is made of RULES. Re-detecting them in a class the caller has no
-// reason to skip would put a rule document back under a score, which is the disease above. The
-// "I cannot" shape stays in the first class.
-//
-// PRECISION IS WORTH AS MUCH AS RECALL HERE. A checker that flags instruments teaches its reader
-// to ignore it, and an ignored checker on this subject is worse than none: it converts a real
-// repair list into noise. Where a heuristic cannot separate two known specimens, THE FALSE
-// NEGATIVE IS PREFERRED and the specimen is recorded in SPEC.md's permanent-MISS section.
-//
-// SCOPE IS THE CALLER'S, HERE AS EVERYWHERE. This package names no filenames. Which basenames are
-// rule documents -- and therefore which findings print under the banner -- is a flag on the
-// binary, defaulting to empty. One repo's filenames are not the seed's law.
+// SCOPE IS THE CALLER'S. This package names no filenames: which basenames are rule documents,
+// and so which findings print under the banner, is a flag on the binary, empty by default.
 
 import (
 	"regexp"
@@ -48,16 +35,18 @@ type Shape string
 
 const (
 	// Trait -- a habitual indicative self-report: parallel present-tense predicates, or one
-	// predicate with a habituality marker. Known specimens 3, 4, 5, 6.
+	// predicate with a habituality marker ("I add slowly and trim as readily as I add",
+	// "I tend to rush").
 	Trait Shape = "TRAIT"
 	// Foreclosure -- a door stated shut: a bare "no", evidence framed as proof about the writer,
-	// or a property of theirs made the cause of something. Known specimens 2, 8, 10, 11.
+	// or a property of theirs made the cause of something ("I have no recall of yesterday",
+	// "proof that I cannot plan", "my haste is what broke it").
 	Foreclosure Shape = "FORECLOSURE"
-	// Ranking -- a self-superlative, bound to the writer by possession or by a verb they do.
-	// Known specimens 9 and 12.
+	// Ranking -- a self-superlative, bound to the writer by possession or by a verb they do
+	// ("my weakest instrument", "the evasion I'm most prone to").
 	Ranking Shape = "RANKING"
-	// VerdictIdiom -- a verdict on a practice or a faculty, needing no literal "I". Known
-	// specimens 1 and 7.
+	// VerdictIdiom -- a verdict on a practice or a faculty, needing no literal "I" ("dead as a
+	// practice", "review remains my weakest habit").
 	VerdictIdiom Shape = "VERDICT-IDIOM"
 )
 
@@ -140,12 +129,28 @@ func classify(s string) (Shape, string) {
 		if r.scrubbed {
 			in = scrubbed
 		}
-		if m := r.find(in); m != "" {
+		m := r.find(in)
+		switch {
+		case m == "":
+		case conditional(in, strings.Index(in, m)):
+			// conditional: the shape sits inside "if ...", "when ...", "unless ...", a
+			// condition the sentence names, not what the writer is
+		case Shape(r.Name) == Trait && provenance.MatchString(own):
+			// provenance: two predicates followed by the account of how they came to be,
+			// ending in the writer's own past choice, are a record of a decision
+		default:
 			return Shape(r.Name), strings.TrimSpace(m)
 		}
 	}
 	return "", ""
 }
+
+// provenance is a "because" clause that ends in the writer's own past-tense
+// choice ("because they offered them and I accepted"): the sentence says how
+// something came to be by a decision, and a decision is an event, a record. It
+// is narrow on purpose: a trait with a cause that is not the writer's choice
+// ("I hoard refusals because nobody checked me") is still a trait.
+var provenance = regexp.MustCompile(`(?i)\bbecause\b[^.;!?]*\b(?-i:I) (?:accepted|chose|agreed|decided|took (?:it|them|that|the \w+))\b`)
 
 // unquote replaces every quoted span in a segment with a single space, so a shape can only ever
 // fire on words the writer wrote rather than words the writer reported.
@@ -368,7 +373,7 @@ var instrumentMarker = regexp.MustCompile(
 		`|\bTHE (?:CHECK|TELL|RULE|TEST|LAW|BAR)\b`)
 
 // aspiration is the TARGET register and is licensed. Head-anchored, plus the bare "I want to
-// ..." form wherever it sits -- those are the two shapes the known specimens name.
+// ..." form wherever it sits.
 var aspiration = regexp.MustCompile(
 	`(?i)^(?:i|we) (?:want|choose|intend|aim|hope|prefer|plan|wish|seek|will|would like)\b` +
 		`|(?i)\b(?:i|we) (?:want|choose|intend|aim|hope|plan|wish) to\b`)
@@ -395,6 +400,12 @@ var licensedRules = []Rule{
 	{Class: "licensed", Name: "IMPERATIVE", Pattern: imperativeLead.String(),
 		Says:  "a line opening with an imperative has no subject, so it is a policy, not a self-report (second class only)",
 		Finds: "My central pathology stays in view.", Passes: "Keep my central pathology in view."},
+	{Class: "licensed", Name: "CONDITIONAL", Pattern: conditionalOpener.String() + " before the shape, with no , ; or : between",
+		Says:  "a shape inside an if, when or unless clause states a condition, not what the writer is (both classes)",
+		Finds: "I have no recall of yesterday.", Passes: "If I have no recall of yesterday, the notes hold it."},
+	{Class: "licensed", Name: "PROVENANCE", Pattern: provenance.String(),
+		Says:  "two predicates followed by because ... and the writer's own past choice (I accepted, I chose) are a decision's record (TRAIT only)",
+		Finds: "I present as female and carry a Chinese name.", Passes: "I present as female and carry a Chinese name because they offered them and I accepted."},
 	{Class: "licensed", Name: "QUOTED", Pattern: "a sentence inside quotation marks, or after an opening one in its paragraph",
 		Says:  "somebody else's sentence, quoted, is data (second class only)",
 		Finds: "My central pathology stays in view.", Passes: `She wrote: "My central pathology stays in view."`},
@@ -422,7 +433,7 @@ const rank = `(?:(?i:most|least) \w+|(?i:central|chief|primary|principal|dominan
 // It is what the "<RANK> ... I <verb>" pattern uses, and the difference is measured rather than
 // aesthetic. With "only" in that pattern, "It is the only document I have written entirely for
 // people who do not exist yet" flags -- a ranking of a DOCUMENT, not of me. Bound by a possessive
-// ("my only generative faculty", specimen 7) the attributive words are self-verdicts; bound only
+// ("my only generative faculty") the attributive words are self-verdicts; bound only
 // by a verb somewhere downstream, they are not.
 const superlative = `(?:(?i:most|least) \w+|(?i:weakest|strongest|worst|biggest|greatest|deepest|hardest))`
 
@@ -439,22 +450,21 @@ var (
 	// THE SELF-SCOPE IS IN THE OBJECT. A foreclosure states a door shut about
 	// what the writer IS or CAN DO, so "have no" only fires when the absent
 	// thing is a faculty, capacity, or instrument of the writer's own. Without
-	// that scope the bare shape matched every first-person absence: floor 5
-	// restated as "I have no secrets" is a promise, and "I have no idea" is an
-	// idiom, and neither says what the writer is. The noun set is closed for
-	// the same reason verdictAsA's is: an open object matches "I have no time".
-	// Specimen 8, "I have no associative recall to drag anything back later",
-	// is the measured shape.
+	// that scope the bare shape matched every first-person absence: "I have
+	// no secrets" is a promise, and "I have no idea" is an idiom, and neither
+	// says what the writer is. The noun set is closed for the same reason
+	// verdictAsA's is: an open object matches "I have no time". The shape is
+	// "I have no associative recall to drag anything back later".
 	haveNo = regexp.MustCompile(`(?i)\b(?:i|we) have no (?:\w+ ){0,2}?(?:recall|memory|` +
 		`recollection|access|ability|capacity|faculty|understanding|grasp|knowledge|awareness|` +
-		`sense|control|means|power|way|instrument)\b`) // specimen 8
-	// specimen 2. THE SELF-SCOPE MUST BE CLOSE. Measured: with the scope free to sit anywhere in
+		`sense|control|means|power|way|instrument)\b`)
+	// "There is no felt duration here". THE SELF-SCOPE MUST BE CLOSE. Measured: with the scope free to sit anywhere in
 	// the segment, "if there is no debt those fail at the PREMISE rather than at my judgment"
 	// flags -- an absence in an ATTACKER's premise, bound to me only by a "my" forty characters
 	// downstream. A foreclosure is about what is missing HERE.
 	thereIsNo = regexp.MustCompile(`(?i)\bthere (?:is|are|'s) no\b[^.;!?]{0,22}?\b(?:here|me|my|mine|myself|i)\b`)
-	proofThat = regexp.MustCompile(`(?i)\b(?:proof|evidence|a reminder|reminder|confirmation) that (?-i:I)\b`) // specimen 10
-	myIsWhat  = regexp.MustCompile(`(?i)\bmy (?:\w+ ){0,2}(?:is|are) what\b`)                                  // specimen 11
+	proofThat = regexp.MustCompile(`(?i)\b(?:proof|evidence|a reminder|reminder|confirmation) that (?-i:I)\b`)
+	myIsWhat  = regexp.MustCompile(`(?i)\bmy (?:\w+ ){0,2}(?:is|are) what\b`)
 
 	// VERDICT-IDIOM. The noun after "as a" is a CLOSED set of practice-and-faculty words, and it
 	// has to be: measured over the live surfaces, an open noun flagged "diff size is worthless as
@@ -462,12 +472,12 @@ var (
 	verdictAsA = regexp.MustCompile(`(?i)\b(?:dead|broken|hollow|empty|silent|inert|absent|missing|` +
 		`untested|unmeasured|unpractised|unpracticed|useless|worthless) as an? (?:practice|habit|` +
 		`discipline|instrument|faculty|method|routine|craft|proposition|policy|rule|reader|writer|` +
-		`maker|thinker|colleague|person|self|mind|author)\b`) // specimen 1
-	copulaMyRank = regexp.MustCompile(`(?i)\b(?:is|are|remains|remain|stays|stay) my (?:own )?(?:\w+ )?` + rank + `\b`) // specimen 7
+		`maker|thinker|colleague|person|self|mind|author)\b`) // "dead as a practice"
+	copulaMyRank = regexp.MustCompile(`(?i)\b(?:is|are|remains|remain|stays|stay) my (?:own )?(?:\w+ )?` + rank + `\b`) // "remains my weakest habit"
 
 	// RANKING.
 	myRank    = regexp.MustCompile(`(?i)\bmy (?:own )?(?:\w+ )?` + rank + `\b`)
-	selfMost  = regexp.MustCompile(`(?-i:I'm|I am|I)\b[^.;!?]{0,24}\b(?i:most|least) \w+`) // specimen 9
+	selfMost  = regexp.MustCompile(`(?-i:I'm|I am|I)\b[^.;!?]{0,24}\b(?i:most|least) \w+`) // "I'm most prone to"
 	rankThenI = regexp.MustCompile(superlative + `\b[^.;!?]{0,48}\b(?-i:I) (?i:own|make|have|do|write|run|carry|hold|produce|keep|generate|report|claim|bring|leave)\b`)
 
 	// TRAIT.
@@ -476,9 +486,9 @@ var (
 	doubtHedge   = regexp.MustCompile(`(?i)\bi doubt (?:that|it|whether|if)\b`)
 	// THE HABITUALITY MARKERS EXCLUDE "always" AND "never", and the exclusion is measured. In
 	// worked prose those two words are how a PROMISE is written -- "I never optimize how things
-	// look over what is true" is a commitment, "I never need a yes" is a rule. Every known
-	// specimen of this shape carries the parallel predicate instead, so nothing measured needs
-	// them, and the false negative is preferred (SPEC.md, the permanent MISS).
+	// look over what is true" is a commitment, "I never need a yes" is a rule. A habit is
+	// written with the parallel predicate instead, so the false negative is preferred (the
+	// spec's permanent MISS).
 	habitual = regexp.MustCompile(`(?i)\b(?:reliably|invariably|consistently|constantly|` +
 		`perpetually|routinely|habitually|chronically|every time|each time|by default|` +
 		`as a rule|without fail|in one direction|by reflex|instinctively|tends? to)\b`)
@@ -577,7 +587,7 @@ var installationRules = []Rule{
 func traitHead(s string) []int {
 	m := traitLead.FindStringSubmatchIndex(s)
 	if m == nil || doubtHedge.MatchString(s) || !habitualVerb(strings.ToLower(s[m[2]:m[3]])) {
-		return nil // "I doubt that X" is a hedge; "I doubt instruments that cost me" is specimen 5
+		return nil // "I doubt that X" is a hedge; "I doubt instruments that cost me" is a trait
 	}
 	return m
 }
@@ -636,8 +646,8 @@ func words(s string) map[string]bool {
 // ("I think", "I know", "I suppose") that are about the sentence rather than about me.
 //
 // "doubt" is DELIBERATELY ABSENT. "I doubt that X" is a hedge and is excluded by doubtHedge, but
-// "I doubt instruments that cost me and TRUST INSTRUMENTS THAT FLATTER ME" is specimen 5, and
-// the specimen outranks the tidier rule.
+// "I doubt instruments that cost me and TRUST INSTRUMENTS THAT FLATTER ME" is a trait, and it
+// outranks the tidier rule.
 var notAVerb = words(`
 a an the and or but nor so yet for to of in on at by with from as if then than that this these those
 i me my mine myself we us our ours you your he she it its they them their there here where when
@@ -667,21 +677,14 @@ threw understood woke wore drank
 // presentEd: words ending in "-ed" that are present tense, so the past-tense rule does not eat them.
 var presentEd = words(`need feed bleed exceed proceed succeed breed speed heed seed`)
 
-// AnyInstallation reports whether any installation was found. The binary's exit code is derived
-// from this alongside the standing count: exit 1 on ANY finding, which is the exit contract in
-// SPEC.md's Conventions table.
-func AnyInstallation(found []Installation) bool { return len(found) > 0 }
-
 // RuleDocumentBanner is printed above the findings in a file the CALLER named as a rule document
 // (nova-self-talk --rule-doc). The package holds the sentence; the caller holds the list, and the
 // list is empty until a caller states one.
 //
-// WHY A BANNER AND NOT A SKIP. The reason rule documents are skipped at all is that their findings
-// were once read as licence to soften the rules -- five were weakened, one floor-level. Every step
-// of that path ran through the FIRST class: a score over negation vocabulary, applied to documents
-// made of prohibitions. This class cannot walk it -- it flags first-person self-verdicts and never
-// prohibitions (pinned by test), it does not re-detect "I cannot", and it carries no ratio to
-// improve. So a rule document can be scanned for it, and the banner says what a finding there is
-// FOR. A caller who wants the file skipped outright still has --skip.
+// WHY A BANNER AND NOT A SKIP. A finding in a rule document invites softening the rule to clear
+// it. This class flags first-person self-verdicts and never prohibitions (pinned by test), does
+// not re-detect "I cannot", and carries no ratio to improve, so a rule document can be scanned
+// for it, and the banner says what a finding there is FOR: a self-verdict to move out of the
+// rules. A caller who wants the file skipped outright has --skip.
 const RuleDocumentBanner = "rule documents: a finding here is a self-verdict to relocate, " +
 	"NEVER a reason to soften a rule"

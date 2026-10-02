@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -89,8 +90,10 @@ func RunSeatAdd(opts SeatAddOptions) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("store %s: %w", opts.StoreDir, err)
 	}
-	if recoveryKey == opts.Pub {
-		return nil, fmt.Errorf("--pub is the store's recovery key; a seat's rule names its own key and the recovery key, not the recovery key twice")
+	// The rule this writes is --pub and the recovery key, held to the one judgement of a
+	// seat's recipients before anything is written.
+	if problem := ruleRecipientsProblem([]string{opts.Pub, recoveryKey}, recoveryKey); problem != "" {
+		return nil, fmt.Errorf("the rule seat add writes for %s %s; --pub is the new seat's own key, from its keygen receipt, never the store's recovery key", opts.AsName, problem)
 	}
 
 	seatFile := opts.AsName + ".yaml"
@@ -258,12 +261,9 @@ func seatAddRuleIsFree(config []byte, seatFile string) error {
 }
 
 func seatAddHasCreationRules(config []byte) bool {
-	for _, line := range strings.Split(string(config), "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), "creation_rules:") {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(strings.Split(string(config), "\n"), func(line string) bool {
+		return strings.HasPrefix(strings.TrimSpace(line), "creation_rules:")
+	})
 }
 
 // seatAddAppendRule adds one rule, in the shape invariant 1 demands and keygen prints:

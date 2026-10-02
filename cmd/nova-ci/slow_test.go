@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+	"github.com/stretchr/testify/assert"
 )
 
 // SLOW: 11.3 s on hetzner at dev 64b9bec48, over the five-second line.
@@ -32,12 +33,9 @@ func TestNewRuleYieldsABuildingTestingSkeleton(t *testing.T) {
 		"internal/ci/testdata/sample/fixture.txt",
 		"make/rule_sample.mk",
 	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("new-rule did not report writing %s:\n%s", want, out)
-		}
-		if _, err := os.Stat(filepath.Join(tree, filepath.FromSlash(want))); err != nil {
-			t.Errorf("new-rule did not write %s: %v", want, err)
-		}
+		assert.Contains(t, out, want, "new-rule did not report writing %s:\n%s", want, out)
+		_, err := os.Stat(filepath.Join(tree, filepath.FromSlash(want)))
+		assert.NoError(t, err, "new-rule did not write %s: %v", want, err)
 	}
 
 	// BUILDING: the package the rule lands in builds and vets cleanly
@@ -45,26 +43,24 @@ func TestNewRuleYieldsABuildingTestingSkeleton(t *testing.T) {
 	runIn(t, tree, "go", "vet", "./internal/ci")
 
 	// TESTING: the fixture test passes
-	if got := runIn(t, tree, "go", "test", "-v", "-count=1", "-run", "TestNoSampleViolations", "./internal/ci"); !strings.Contains(got, "PASS") && !strings.Contains(got, "ok") {
-		t.Errorf("go test of the class rule skeleton did not pass:\n%s", got)
-	}
+	got := runIn(t, tree, "go", "test", "-v", "-count=1", "-run", "TestNoSampleViolations", "./internal/ci")
+	assert.False(t, !strings.Contains(got, "PASS") && !strings.Contains(got, "ok"), "go test of the class rule skeleton did not pass:\n%s", got)
 
 	// Makefile integration: make test-rule-sample runs and passes
-	if got := runIn(t, tree, "make", "-f", "Makefile", "test-rule-sample"); !strings.Contains(got, "PASS") && !strings.Contains(got, "ok") {
-		t.Errorf("make test-rule-sample did not pass:\n%s", got)
-	}
+	got = runIn(t, tree, "make", "-f", "Makefile", "test-rule-sample")
+	assert.False(t, !strings.Contains(got, "PASS") && !strings.Contains(got, "ok"), "make test-rule-sample did not pass:\n%s", got)
 
 	// Write discipline: second run refuses rather than overwrite
 	cmd := exec.Command(bin, "new-rule", "--root", tree, "sample")
 	cmd.Env = goenv.Clean(os.Environ())
-	if got, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(got), "already exists") {
-		t.Errorf("second new-rule run was not refused (err %v):\n%s", err, got)
-	}
+	combined, err := cmd.CombinedOutput()
+	assert.Error(t, err, "second new-rule run was not refused (err %v):\n%s", err, combined)
+	assert.Contains(t, string(combined), "already exists", "second new-rule run was not refused (err %v):\n%s", err, combined)
 
 	// Invalid names are refused
 	cmd = exec.Command(bin, "new-rule", "--root", tree, "Invalid Name!")
 	cmd.Env = goenv.Clean(os.Environ())
-	if got, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(got), "rule name") {
-		t.Errorf("new-rule with invalid name was not refused (err %v):\n%s", err, got)
-	}
+	combined, err = cmd.CombinedOutput()
+	assert.Error(t, err, "new-rule with invalid name was not refused (err %v):\n%s", err, combined)
+	assert.Contains(t, string(combined), "rule name", "new-rule with invalid name was not refused (err %v):\n%s", err, combined)
 }

@@ -458,7 +458,11 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 		logf.Close()
 		return nil, err
 	}
-	_ = os.WriteFile(pidPath, []byte(strconv.Itoa(cmd.Process.Pid)+"\n"), 0o644)
+	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(cmd.Process.Pid)+"\n"), 0o644); err != nil && r.stderr != nil {
+		// the child runs; only a restart's way back to it is lost, so the member says so and goes on
+		fmt.Fprintf(r.stderr, "nova-swarm member: NOTE card %s runs as pid %d, and its pid file %s could not be written (%s): a member restarted while it runs cannot find it and may launch the card a second time; let it end before restarting this member; run: ls -ld %s\n",
+			oneline.Field(p.Card), cmd.Process.Pid, oneline.Field(pidPath), oneline.Err(err), oneline.Field(r.slots))
+	}
 	c := &nativeChild{card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{})}
 	go func() {
 		c.err = cmd.Wait()

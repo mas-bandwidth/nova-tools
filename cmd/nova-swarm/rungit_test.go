@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // runGit was publish_test.go's helper; native_stage_test.go still uses it after publish went (2026-09-24).
@@ -18,8 +20,7 @@ func runGit(t *testing.T, dir string, args ...string) string {
 	}
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, errb.String())
-	}
+	err := cmd.Run()
+	require.NoError(t, err, "git %s: %v\n%s", strings.Join(args, " "), err, errb.String())
 	return out.String()
 }

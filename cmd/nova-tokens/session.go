@@ -11,77 +11,110 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/tokens"
+	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
-func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
-	fs := newFlagSet("session")
-	session := fs.String("claude-session", "", "one Claude Code session transcript jsonl")
-	out := fs.String("out", "", "directory for the resulting daily token file")
-	day := fs.String("day", "", "one UTC day to write as YYYY-MM-DD; defaults to every stamped day")
-	if err := verbflag.Parse(fs, args); err != nil {
-		return refuse(stderr, " session", err.Error())
+func cmdSession(now time.Time) tool.Verb {
+	return tool.Verb{
+		Name:    "session",
+		Token:   "TOKENS",
+		Usage:   "session --claude-session <jsonl> [--out <dir>] [--day <YYYY-MM-DD>] [--dry-run]",
+		Example: "session --claude-session ./session.jsonl --out ./out",
+		Effect:  "local write: with --out it writes the session's days into the day files there, holding --out/fold.lock; without --out, or with --dry-run, it writes nothing",
+		Detail: `session is the coordinator's own window: it sums one Claude Code session jsonl per turn
+-- input, cache write, cache read, output, deduplicated on the message id so a streamed
+message counts once -- prints one SESSION line with the weighted fresh-input equivalent
+(input + 1.25 x cache write + 0.1 x cache read + 5 x output) and the average context per
+turn, and with --out folds it into the day file as <model>/coordinator, the model the
+transcript names (a transcript that names no model is refused, never booked under a guess).`,
+		Flags: func(f *tool.Flags) {
+			f.Required("claude-session", "one Claude Code session jsonl, the window whose turns this folds")
+			f.String("out", "", "directory for the resulting daily token file")
+			f.String("day", "", "one UTC day to write as YYYY-MM-DD; defaults to every stamped day")
+			f.Bool("dry-run", false, "with --out, print the days that would be written, and write nothing (no directory, no day file, no lock)")
+			f.Check(func(c *tool.Call) {
+				if day := c.Str("day"); day != "" && !tokens.ValidDay(day) {
+					c.Problem("--day wants one UTC day as YYYY-MM-DD, got " + oneline.Field(day))
+				}
+			})
+		},
+		Run: func(c *tool.Call) *tool.Out { return session(c, now) },
 	}
-	if n := fs.NArg(); n > 0 {
-		return refuse(stderr, " session", fmt.Sprintf("takes no positional arguments, got %d (flags come before arguments)", n))
-	}
-	r := &refusals{token: "TOKENS"}
-	r.required("claude-session", *session, "one Claude Code session jsonl, the window whose turns this folds")
-	if *day != "" && !tokens.ValidDay(*day) {
-		r.add("--day wants one UTC day as YYYY-MM-DD, got " + oneline.Field(*day))
-	}
-	if len(r.list) > 0 {
-		return r.print(stderr)
-	}
+}
 
-	sum, err := tokens.ReadClaudeSession(*session)
+// refuseVerb is one refusal of a verb's invocation, its remedy the verb's own help.
+func refuseVerb(verb, why string) *tool.Out {
+	o := tool.Refuse(why)
+	o.Remedy = "nova-tokens " + verb + " -h"
+	return o
+}
+
+func session(c *tool.Call, now time.Time) *tool.Out {
+	dryRun := c.DryRun()
+	session, out, day := c.Str("claude-session"), c.Str("out"), c.Str("day")
+	s := newSink(c, "session")
+	sum, err := tokens.ReadClaudeSession(session)
 	if err != nil {
-		return refuse(stderr, " session", fmt.Sprintf("cannot read %s: %s", oneline.Field(*session), oneline.Err(err)))
+		return refuseVerb("session", fmt.Sprintf("cannot read %s: %s", oneline.Field(session), oneline.Err(err)))
 	}
 	// Every field of the SESSION line is a %d over an integer, so the escape is a no-op --
 	// and it is here anyway, because the tripwire that keeps this binary's output one line
 	// per event does not take a promise about a value, only the call that enforces it.
-	fmt.Fprintln(stdout, oneline.Escape(sum.Line()))
+	fmt.Fprintln(s.out(), oneline.Escape(sum.Line()))
+	s.fact("turns", sum.Turns)
+	s.fact("input", sum.Input)
+	s.fact("cache_write", sum.CacheWrite)
+	s.fact("cache_read", sum.CacheRead)
+	s.fact("output", sum.Output)
+	s.fact("weighted", sum.Weighted())
+	s.fact("avg_context", sum.AvgContext())
 	if sum.Unstamped > 0 {
-		fmt.Fprintf(stdout, "TOKENS NOTE unstamped=%d turns are in the totals and in no day; they are not dated by a guess\n", sum.Unstamped)
+		note := fmt.Sprintf("unstamped=%d turns are in the totals and in no day; they are not dated by a guess", sum.Unstamped)
+		fmt.Fprintf(s.out(), "TOKENS NOTE %s\n", oneline.Escape(note))
+		s.note(note)
 	}
-	if *out == "" {
-		return 0
+	if out == "" {
+		return s.done(0, 0)
 	}
 
 	// THE ROW IS BOOKED UNDER THE MODEL THE TRANSCRIPT NAMES. A transcript that names none has
 	// no honest row, and the refusal says so before anything is created or written.
 	if why := sum.UnbookableReason(); why != "" {
-		return refuse(stderr, " session", why)
+		return refuseVerb("session", why)
 	}
 
 	// The fold. One day file per day the session's turns fell on, merged by source the way
 	// every other fold merges: this run recomputes the rows its own source wrote and keeps
-	// every other row exactly as it is.
-	if err := os.MkdirAll(*out, 0o755); err != nil {
-		return refuse(stderr, " session", fmt.Sprintf("cannot open --out: %s", oneline.Err(err)))
+	// every other row exactly as it is. A dry run reads the day files and writes nothing.
+	if !dryRun {
+		if err := os.MkdirAll(out, 0o755); err != nil {
+			return refuseVerb("session", fmt.Sprintf("cannot open --out: %s", oneline.Err(err)))
+		}
+		release, err := tokens.TakeFoldLock(out, tokens.LockWait)
+		if err != nil {
+			return refuseVerb("session", oneline.Err(err))
+		}
+		defer release()
 	}
-	release, err := tokens.TakeFoldLock(*out, tokens.LockWait)
-	if err != nil {
-		return refuse(stderr, " session", oneline.Err(err))
-	}
-	defer release()
 
 	days := sum.DayList()
-	if *day != "" {
-		days = []string{*day}
+	if day != "" {
+		days = []string{day}
 	}
 	if len(days) == 0 {
-		fmt.Fprintln(stdout, "TOKENS DAY day=- written=false rows=0 (no turn in this session carries a day)")
-		return 1
+		fmt.Fprintln(s.out(), "TOKENS DAY day=- written=false rows=0 (no turn in this session carries a day)")
+		s.o.Why = append(s.o.Why, "no turn in this session carries a day")
+		return s.done(1, 0)
+	}
+	if dryRun {
+		s.fact("dry_run", true)
 	}
 	exit := 0
 	for _, d := range days {
@@ -93,18 +126,20 @@ func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 		fresh := sum.Rows(d)
 		var old []tokens.DayRow
-		prior, findings, err := tokens.ReadDayFile(tokens.Path(*out, d))
+		prior, findings, err := tokens.ReadDayFile(tokens.Path(out, d))
 		if err != nil {
 			if !os.IsNotExist(err) {
-				fmt.Fprintf(stderr, "TOKENS REFUSED: cannot read %s: %s\n",
-					oneline.Field(tokens.Path(*out, d)), oneline.WithRemedy(oneline.Err(err), "nova-tokens session -h"))
+				fmt.Fprintf(s.err(), "TOKENS REFUSED: cannot read %s: %s\n",
+					oneline.Field(tokens.Path(out, d)), oneline.WithRemedy(oneline.Err(err), "nova-tokens session -h"))
+				s.item("refused", "day", d, "why", tool.Text("cannot read "+tokens.Path(out, d)+": "+err.Error()))
 				exit = 1
 				continue
 			}
 		} else {
 			if len(findings) > 0 {
-				fmt.Fprintf(stderr, "TOKENS REFUSED: the day file %s has %d findings; the repair is nova-tokens check --out %s\n",
-					oneline.Field(tokens.Path(*out, d)), len(findings), oneline.Field(*out))
+				fmt.Fprintf(s.err(), "TOKENS REFUSED: the day file %s has %d findings; the repair is nova-tokens check --out %s\n",
+					oneline.Field(tokens.Path(out, d)), len(findings), oneline.Field(out))
+				s.item("refused", "day", d, "findings", len(findings), "why", tool.Text("the day file has findings; the repair is nova-tokens check --out "+out))
 				exit = 1
 				continue
 			}
@@ -112,8 +147,8 @@ func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 		rows, retained, partials := tokens.MergeDay(old, fresh, []string{tokens.SessionLabel})
 		if len(partials) > 0 {
-			fmt.Fprintf(stderr, "TOKENS PARTIAL day=%s rows=%d: a row already summed over this source and another cannot be taken apart; nothing written; run: nova-tokens fold -h, and fold that day whole\n",
-				oneline.Field(d), len(partials))
+			fmt.Fprintln(s.err(), s.line("TOKENS", "PARTIAL", "a row already summed over this source and another cannot be taken apart; nothing written; run: nova-tokens fold -h, and fold that day whole",
+				"day", d, "rows", len(partials)))
 			exit = 1
 			continue
 		}
@@ -122,17 +157,25 @@ func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 			Turns:   strconv.Itoa(part.Turns),
 			Sources: tokens.SourcesOf(rows), Rows: rows,
 		}
-		if err := f.Save(*out); err != nil {
-			fmt.Fprintf(stderr, "TOKENS REFUSED: cannot write %s: %s\n", oneline.Field(tokens.Path(*out, d)), oneline.WithRemedy(oneline.Err(err), "nova-tokens session -h"))
-			exit = 1
-			continue
+		written := false
+		if !dryRun {
+			if err := f.Save(out); err != nil {
+				fmt.Fprintf(s.err(), "TOKENS REFUSED: cannot write %s: %s\n", oneline.Field(tokens.Path(out, d)), oneline.WithRemedy(oneline.Err(err), "nova-tokens session -h"))
+				s.item("refused", "day", d, "why", tool.Text("cannot write "+tokens.Path(out, d)+": "+err.Error()))
+				exit = 1
+				continue
+			}
+			written = true
 		}
 		booked := make([]string, 0, len(fresh))
 		for _, r := range fresh {
 			booked = append(booked, r.Model)
 		}
-		fmt.Fprintf(stdout, "TOKENS DAY day=%s written=true rows=%d retained=%d model=%s weighted=%d\n",
-			oneline.Field(d), len(rows), retained, oneline.Field(strings.Join(booked, ",")), part.Weighted())
+		kv := []any{"day", d, "written", written, "rows", len(rows), "retained", retained, "model", strings.Join(booked, ","), "weighted", part.Weighted()}
+		if dryRun {
+			kv = append(kv, "dry_run", true)
+		}
+		fmt.Fprintln(s.out(), s.line("TOKENS", "DAY", "", kv...))
 	}
-	return exit
+	return s.done(exit, 0)
 }

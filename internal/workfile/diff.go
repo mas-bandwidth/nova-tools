@@ -32,12 +32,7 @@ func Diff(got, want *Tree, scope []string) []Difference {
 		if len(scope) == 0 {
 			return true
 		}
-		for _, s := range scope {
-			if s == name {
-				return true
-			}
-		}
-		return false
+		return slices.Contains(scope, name)
 	}
 	drift := func(path, field, w, g string) {
 		if w != g {

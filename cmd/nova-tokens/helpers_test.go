@@ -17,6 +17,9 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
+// usage is the help banner: what `nova-tokens help` prints.
+var usage = tokensTool(foldStamp).Banner()
+
 // foldStamp is the clock every test hands run(), so that `at=` is a fixture and not a
 // reading of the machine the test happens to run on.
 var foldStamp = time.Date(2026, 9, 11, 23, 55, 2, 0, time.UTC)
@@ -169,13 +172,6 @@ func fakeSqlite3(t *testing.T, sessions, messages, parts string) (logPath string
 	return filepath.Join(answers, fakeArgvLog)
 }
 
-// fakeSqlite3Sleeping puts a stub sqlite3 on PATH that answers nothing and outlives any
-// timeout a test would set: the subprocess rule 19 is about.
-func fakeSqlite3Sleeping(t *testing.T) {
-	t.Helper()
-	fakeSqlite3OnPath(t, fakeSleepMode)
-}
-
 // The fake sqlite3 is THIS TEST BINARY under another name, re-entered through TestMain.
 //
 // It used to be a /bin/sh script, which Windows has no way to execute and no way to find
@@ -186,10 +182,13 @@ func fakeSqlite3Sleeping(t *testing.T) {
 // Go, rather than twice in two shell dialects.
 const (
 	fakeSqlite3Env = "NOVA_TOKENS_FAKE_SQLITE3"
-	fakeSleepMode  = "sleep"
 	fakeArgvLog    = "argv.log"
-	fakeSleep      = 30 * time.Second
 )
+
+// fakeModes are the fake's modes beyond answering from files, registered by the tier
+// whose tests use them (slow_test.go's sleeping sqlite3), so no unit-tier file holds a
+// wait on the wall clock.
+var fakeModes = map[string]func() int{}
 
 // fakeSqlite3OnPath places the test binary (by link, a copy only where a link is not
 // possible) at <tmp>/bin/sqlite3[.exe], puts that directory
@@ -228,9 +227,8 @@ func TestMain(m *testing.M) {
 
 // fakeSqlite3Main records the invocation and answers the last argument, which is the SQL.
 func fakeSqlite3Main(mode string, args []string, stdout io.Writer) int {
-	if mode == fakeSleepMode {
-		time.Sleep(fakeSleep)
-		return 0
+	if m, ok := fakeModes[mode]; ok {
+		return m()
 	}
 	f, err := os.OpenFile(filepath.Join(mode, fakeArgvLog), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {

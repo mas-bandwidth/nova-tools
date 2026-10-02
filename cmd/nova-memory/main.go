@@ -14,164 +14,77 @@
 // linear read that meets what you did not ask for), and not authoritative
 // (the tree is the store; the index stops existing when the process exits).
 //
-// Every path, every scope, and every budget comes from a flag. There are no
-// defaults, no config file, and no environment variable: a missing flag is a
-// refusal, never a guess. Exit 0 ran and passed, 1 ran and failed, 2 could
-// not run.
+// Every path and every scope comes from a flag, with no config file and no
+// environment variable: a missing --root is a refusal, never a guess. The
+// retrieval has defaults (every channel, k=10), named on every line that used
+// them. Exit 0 ran and passed, 1 ran and failed, 2 could not run.
 package main
 
 import (
 	"bufio"
-	"flag"
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"os"
 	"path"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/memindex"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
-const usage = `nova-memory: search your own markdown notes, and check a draft against what they already say
-
-how it works: each run reads the --root directories and builds its index in
+// memoryTool is the command: its banner, its verbs and their flags. Every verb is an
+// inspection: the index is built in memory from the corpus and nothing is written.
+func memoryTool() *tool.Tool {
+	return &tool.Tool{
+		Name: "nova-memory",
+		What: "search your own markdown notes, and check a draft against what they already say",
+		How: `each run reads the --root directories and builds its index in
 memory (bm25 words, trigrams); nothing is written. search prints the k best
 passages with file:line and the quoted text; check names the notes a draft
 repeats; verify gates links and frontmatter. The CAL line is the score a fixed
-unrelated probe gets here: a hit scoring at or below it is no better than noise.
-first run: quickstart --root on any folder of .md files, or create the small
-corpus in setup: and run the lines under example:.
-class is the top-level directory ("." for root files); name/type are frontmatter
-values, with "-" meaning absent.
-
-usage:
-  nova-memory version    print this build identity (--version also accepted)
-  nova-memory quickstart --root <dir>... [--words <w>]... [--draft <file>] [--exclude <glob>]...
-  nova-memory stats  --root <dir>... [--exclude <glob>]...
-  nova-memory search --root <dir>... --channels <list> --k <n> [--exclude <glob>]... [--json] <words>...
-  nova-memory check  --root <dir>... --channels <list> --k <n> [--exclude <glob>]... [--json] <file|->
-  nova-memory verify --root <dir> --links <gate|info> [--coverage <A:B>]...
-                     [--frontmatter <glob>]... [--exempt <prefix>]... [--exclude <glob>]...
-                     [--fail-max <n>]
-  nova-memory eval   --root <dir>... --channels <list> --k <n> --floor <f> [--exclude <glob>]...
-                     [--fail-max <n>] <gold.tsv>
-  nova-memory boot   --root <dir> --pin <file>
-
-quickstart is the first run and nothing else: it runs stats, then one search,
-then one check, PRINTING each command line above that command's output, so
-what you saw came from a line you can now edit and run yourself. It is not a
-default channel or a default k — it names both on every line it prints, and
-says so again at the end.
-
-flags:
-  --json                search/check: JSON of the same retrieval evidence.
-  --root <dir>          the corpus root. Required, always: there is no
-                        environment variable and no discovery from the working
-                        directory. Repeatable (--root <dir> --root <dir> ...):
-                        several roots are indexed together in one ranking, and
-                        every receipt names the root it came from. A tool that
-                        guesses which corpus you meant can answer "you already
-                        know this" about someone else's.
-  --channels <list>     comma-separated retrieval channels: bm25, trigram.
-                        Required: which retrieval you ran is part of what an
-                        answer means, and no channel set is right by default —
-                        on the corpus this was ported from, eval measured
-                        bm25+trigram WORSE than bm25 alone.
-  --k <n>               receipts per query, positive. Required: k IS the mind's
-                        budget, and zero is not "unlimited".
-  --exclude <glob>      path or glob to skip, repeatable. Nothing is excluded
-                        by default except .git; every exclusion is yours,
-                        stated this run.
-  --floor <f>           eval only: minimum recall@k, in (0,1]. Required — a
-                        harness with no floor cannot fail, so its green is
-                        worth nothing.
-  --links <gate|info>   verify only: whether unresolved [[wikilinks]] drive the
-                        exit code. Required — state it, do not inherit it.
-  --coverage <A:B>      verify only, repeatable: every file matching glob A is
-                        named in some file matching glob B.
-  --frontmatter <glob>  verify only, repeatable: files matching must carry a
-                        frontmatter name:.
-  --exempt <prefix>     verify only, repeatable: basename prefixes that are
-                        listings, not entries, and are exempt from
-                        --frontmatter. Nothing is exempt by default.
-  --fail-max <n>        verify and eval only: how many finding lines to PRINT
-                        before one MORE line stands for the rest. Default 20,
-                        and 0 means all. The count is never capped -- the
-                        summary line carries the total whether the run passed
-                        or failed -- because a reader who wanted the number
-                        should not have to pay for the list. verify caps each
-                        KIND separately, so ten thousand wikilink findings
-                        cannot bury the one frontmatter finding.
-  --words <w>           quickstart only, repeatable: the words the
-                        demonstration search runs. Default: the corpus's three
-                        most frequent terms that are not function words, named
-                        on the printed command line like any other choice.
-  --draft <file>        quickstart only: the candidate the demonstration check
-                        reads. Default: this corpus's own first paragraph, fed
-                        on stdin, which shows you what "you already know this"
-                        looks like when it is certainly true.
-  --pin <file>          boot only: the pin file naming the memories a session
-                        loads, one slash path per line relative to --root
-                        (# comments and blank lines ignored). Required — boot
-                        names the load, never walks the directory.
-
-A refusal reports every flag it can see at once — two missing flags are two
-sentences and one run, not two runs.
-
-exit codes: 0 ran and passed, 1 ran and failed, 2 could not run (bad invocation).
-
-setup:
-  mkdir -p ./corpus/notes
-  printf 'The lantern glazing needs clean cloths for brass and glass.\n' > ./corpus/notes/lantern.md
-  printf '[Lantern care](lantern.md) keeps the glazing clean.\n' > ./corpus/notes/index-notes.md
-  cp ./corpus/notes/lantern.md ./draft.md
-
-example:
-  nova-memory quickstart --root ./corpus
-  nova-memory search --root ./corpus --channels bm25 --k 3 lantern glazing brass
-  nova-memory check  --root ./corpus --channels bm25 --k 3 draft.md
-  nova-memory verify --root ./corpus --links info --coverage notes/lantern.md:notes/index-notes.md
-`
-
-// The three hints below turn this binary's three most-hit refusals into a next
-// step. The no-guessing law is unchanged — a missing flag is still exit 2 and
-// still says "refusing to guess" — but a refusal that only names what was
-// wrong leaves a first-time caller to guess what the flag wanted, which is the
-// same guessing the tool refuses to do, moved onto the reader. Each hint says
-// what the flag IS and what a first run should put there.
-const (
-	rootHint = `--root <dir> is your corpus directory, the tree to index; it is never guessed from the working directory or the environment, so write it out every run — and repeat it to index several roots in one ranking (the cairn beside memory/)`
-	// The same sentence serves the missing flag and the unknown name, because
-	// naming a directory is exactly how the flag gets misread.
-	channelsHint = `--channels names a retrieval method, not a directory; the channels are bm25 and trigram, and bm25 alone is the usual start`
-	kHint        = `--k is the number of hits to return and is required (search: 3 to 5; check: 2 or 3 per paragraph)`
-)
-
-// hintFor returns the already-indented hint line for a required flag, newline
-// included, or "" for a flag whose own usage entry is the whole story. It
-// returns package constants only, which is why printing its result is safe.
-func hintFor(name string) string {
-	switch name {
-	case "root":
-		return "  " + rootHint + "\n"
-	case "channels":
-		return "  " + channelsHint + "\n"
-	case "k":
-		return "  " + kHint + "\n"
-	case "links":
-		return "  --links gate makes unresolved wikilinks fail; --links info reports them without failing.\n"
+unrelated probe gets here: a hit scoring at or below it is no better than noise.`,
+		ExitTable: "0 ran and passed, 1 ran and failed, 2 could not run (bad invocation).",
+		Stamp:     version,
+		Setup: `mkdir -p ./corpus/notes && printf 'The lantern glazing needs clean cloths for brass and glass.\n' > ./corpus/notes/lantern.md && ` +
+			`printf '[Lantern care](lantern.md) keeps the glazing clean.\n' > ./corpus/notes/index-notes.md && cp ./corpus/notes/lantern.md ./draft.md`,
+		Verbs: []tool.Verb{cmdQuickstart(), cmdStats(), cmdSearch(), cmdCheck(), cmdVerify(), cmdEval(), cmdBoot()},
 	}
-	return ""
 }
+
+// inspection is every verb's effect.
+const inspection = tool.Inspection + " (the index lives in memory for the run)"
+
+func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
+
+// run is one invocation, through the shared skeleton (internal/tool).
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	return memoryTool().Run(args, stdin, stdout, stderr)
+}
+
+// rootWants is what --root is, in the words of its refusal: the flag is never guessed.
+const rootWants = "your corpus directory, the tree to index; it is never guessed from the working directory or the environment, so write it out every run, and repeat it to index several roots in one ranking"
+
+// channelsHint is what --channels names, for a value that names something else.
+const channelsHint = `--channels names a retrieval method, not a directory; the channels are bm25 and trigram, and bm25 alone is the usual start`
+
+// rankDetail is how search and check rank a hit, for their -h.
+const rankDetail = `class is the top-level directory ("." for root files); name/type are frontmatter
+values, with "-" meaning absent. With two channels a hit is ranked by fused= (rank
+fusion over the channels); its score= is its score in the channel named beside it
+(score-channel=), which compares only with scores of that channel and with the
+CAL line, so score= need not fall with rank.`
 
 // calibrationProbe is a fixed, corpus-unrelated English sentence, scored once
 // per run so every report carries a LIVE negative band — "unrelated text
@@ -190,56 +103,6 @@ const noteLexical = "lexical only — a paraphrase sharing almost no vocabulary 
 // shown says in the same breath how to see it.
 const failMaxRemedy = "--fail-max <n> raises the ceiling, --fail-max 0 prints every finding"
 
-// refuse is what an unusable invocation costs: ONE line naming what was wrong, and the
-// door to the usage rather than the usage itself.
-//
-// It used to be the whole 62-line banner, on every flag typo -- 3,908 bytes to say that
-// a dash was in the wrong place. That is the wrong trade twice over: a reader who
-// mistyped a flag knows what the flags are and wanted the one sentence, and a reader who
-// does not know can type the four words at the end of the line. The usage is still there,
-// still complete, and now it is asked for.
-func refuse(stderr io.Writer, where, what string) int {
-	fmt.Fprintf(stderr, "nova-memory%s: %s; run: nova-memory help\n", oneline.Escape(where), oneline.Escape(what))
-	return 2
-}
-
-func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
-
-func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
-	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
-	// before anything is read or written (the CLI style's rule (b), #4505).
-	defer verbflag.Recover(stdout, "nova-memory", usage, &code)
-	if len(args) == 0 {
-		return refuse(stderr, "", "no verb given; quickstart is the first run")
-	}
-	switch args[0] {
-	case "quickstart":
-		return cmdQuickstart(args[1:], stdout, stderr)
-	case "stats":
-		return cmdStats(args[1:], stdout, stderr)
-	case "search":
-		return cmdSearch(args[1:], stdout, stderr)
-	case "check":
-		return cmdCheck(args[1:], stdin, stdout, stderr)
-	case "verify":
-		return cmdVerify(args[1:], stdout, stderr)
-	case "eval":
-		return cmdEval(args[1:], stdout, stderr)
-	case "boot":
-		return cmdBoot(args[1:], stdout, stderr)
-	case "version", "--version":
-		return cmdVersion(args[1:], stdout, stderr)
-	case "help", "-h", "--help":
-		if args[0] == "help" && len(args) > 1 && args[1] != "help" && !verbflag.IsHelp(args[1]) {
-			return run(append(args[1:], "--help"), stdin, stdout, stderr)
-		}
-		fmt.Fprint(stdout, usage)
-		return 0
-	default:
-		return refuse(stderr, "", fmt.Sprintf("unknown subcommand %q", args[0]))
-	}
-}
-
 // ---------------------------------------------------------------------------
 // Flag plumbing: the no-guessing rule, enforced once
 
@@ -249,61 +112,31 @@ type multiFlag []string
 
 func (m *multiFlag) String() string     { return strings.Join(*m, ",") }
 func (m *multiFlag) Set(s string) error { *m = append(*m, s); return nil }
+func (m *multiFlag) Get() any           { return []string(*m) }
 
-// parse runs a subcommand flag set and enforces the no-guessing rule: every
-// required flag must have been GIVEN. Whether it was given is asked of the
-// flag set, not inferred from the value, so "--k 0" is a different (and
-// differently worded) refusal from a missing --k.
-//
-// EVERY missing flag is reported, not the first: a first run that is two flags
-// short must learn that in one run. The returned set says which flags were
-// given, so a caller can check the VALUE of each flag it actually received and
-// add those refusals to the same run — "--channels is required" and
-// "--channels named a directory" must never both print about one invocation,
-// and neither must a bad --k hide a bad --channels.
-//
-// given is nil when the arguments could not be parsed at all: nothing after
-// that is knowable, so the caller stops rather than guessing which flags
-// arrived.
-//
-// Package flag is given no stream: its error text quotes the argument it
-// could not parse, raw, and its usage dump follows -- so an argument holding
-// a newline authored a whole line of stderr before any code in this file ran.
-// The refusal is printed here instead, escaped. -h after a verb is not refused:
-// verbflag.Parse raises that verb's help, which run prints on stdout at exit 0.
-func parse(fs *flag.FlagSet, args []string, stderr io.Writer, required ...string) (given map[string]bool, ok bool) {
-	fs.SetOutput(io.Discard)
-	fs.Usage = func() {}
-	if err := verbflag.Parse(fs, args); err != nil {
-		refuse(stderr, " "+fs.Name(), oneline.Cap(err.Error(), oneline.TailBytes))
-		return nil, false
-	}
-	given = map[string]bool{}
-	fs.Visit(func(f *flag.Flag) { given[f.Name] = true })
-	sorted := append([]string(nil), required...)
-	sort.Strings(sorted) // deterministic order, not map or caller order
-	ok = true
-	for _, name := range sorted {
-		if !given[name] {
-			refuse(stderr, " "+fs.Name(), fmt.Sprintf("--%s is required; refusing to guess", name))
-			fmt.Fprint(stderr, hintFor(name))
-			ok = false
+// strs reads a repeatable flag.
+func strs(c *tool.Call, name string) []string { return c.Get(name).([]string) }
+
+// addRootFlags declares the flags every verb that indexes needs, and refuses a run
+// that names no root.
+func addRootFlags(f *tool.Flags) {
+	f.Var(new(multiFlag), "root", "the corpus `dir`, repeatable: several roots are indexed together in one ranking, every receipt naming its root (required)")
+	f.Var(new(multiFlag), "exclude", "a path or `glob` to skip, repeatable (nothing but .git is excluded by default)")
+	f.Check(func(c *tool.Call) {
+		if len(strs(c, "root")) == 0 {
+			c.Problem("--root is required; it wants " + rootWants + "; refusing to guess")
 		}
-	}
-	return given, ok
+	})
 }
 
 // rootFlags carries the flags every verb needs to build an index.
 type rootFlags struct {
-	root     multiFlag
-	excludes multiFlag
+	root     []string
+	excludes []string
 }
 
-func addRootFlags(fs *flag.FlagSet) *rootFlags {
-	r := &rootFlags{}
-	fs.Var(&r.root, "root", "corpus root directory, repeatable (required)")
-	fs.Var(&r.excludes, "exclude", "path or glob to skip, repeatable (nothing is excluded by default)")
-	return r
+func rootsOf(c *tool.Call) *rootFlags {
+	return &rootFlags{root: strs(c, "root"), excludes: strs(c, "exclude")}
 }
 
 func (r *rootFlags) excluded(p string) bool {
@@ -320,44 +153,35 @@ func (r *rootFlags) excluded(p string) bool {
 	return false
 }
 
-// build derives the index, or explains why it could not. Every failure here
-// is exit 2: the check could not run. With several roots each is built on its
+// build derives the index, or the refusal saying why it could not. Every failure
+// here is exit 2: the check could not run. With several roots each is built on its
 // own filesystem and the corpuses merged, so one ranking spans them and each
 // chunk remembers which root it came from.
-func (r *rootFlags) build(name string, stderr io.Writer) (*memindex.Corpus, time.Duration, bool) {
+func (r *rootFlags) build() (*memindex.Corpus, time.Duration, *tool.Out) {
 	t0 := time.Now()
 	parts := make([]*memindex.Corpus, 0, len(r.root))
 	for _, root := range r.root {
 		fi, err := os.Stat(root)
 		if err != nil || !fi.IsDir() {
-			refuse(stderr, " "+name, fmt.Sprintf("--root %s is not a readable directory", oneline.Escape(root)))
-			return nil, 0, false
+			return nil, 0, tool.Refuse(fmt.Sprintf("--root %s is not a readable directory", oneline.Escape(root)))
 		}
 		c, err := memindex.Build(os.DirFS(root), r.excluded)
 		if err != nil {
-			refuse(stderr, " "+name, fmt.Sprintf("building the index over %s: %s", oneline.Escape(root), oneline.Err(err)))
-			return nil, 0, false
+			return nil, 0, tool.Refuse(fmt.Sprintf("building the index over %s: %s", oneline.Escape(root), oneline.Err(err)))
 		}
 		parts = append(parts, c)
 	}
 	c := memindex.Merge(parts, r.root)
-	return c, time.Since(t0), true
+	return c, time.Since(t0), nil
 }
 
-// channelNames validates the --channels list and returns the names in it. An
-// unknown name is a refusal, never a silent drop: a run that quietly used
-// fewer channels than asked reports a number that means something else.
-//
-// It is deliberately separate from building the channels, and needs no
-// corpus, so a bad --channels is refused in the same run as a bad --k rather
-// than a build later — the reader who typed a directory name into --channels
-// is exactly the reader who should not have to run the tool three times to
-// find their three mistakes.
-func channelNames(spec, verb string, stderr io.Writer) ([]string, bool) {
+// channelNames validates the --channels list and returns the names in it, or the
+// problem with it. An unknown name is a refusal, never a silent drop: a run that
+// quietly used fewer channels than asked reports a number that means something else.
+// It needs no corpus, so a bad --channels is refused in the same run as a bad --k.
+func channelNames(spec string) ([]string, string) {
 	if strings.TrimSpace(spec) == "" {
-		refuse(stderr, " "+verb, "--channels named no channels; refusing to guess")
-		fmt.Fprintf(stderr, "  %s\n", channelsHint)
-		return nil, false
+		return nil, "--channels named no channels; " + channelsHint + "; refusing to guess"
 	}
 	var out []string
 	for _, name := range strings.Split(spec, ",") {
@@ -368,19 +192,34 @@ func channelNames(spec, verb string, stderr io.Writer) ([]string, bool) {
 			// A stray comma is a typo. Dropping it silently would run fewer
 			// channels than the caller asked for and report the number under
 			// a name that no longer describes it.
-			refuse(stderr, " "+verb, fmt.Sprintf("--channels %q has an empty entry; refusing to guess", spec))
-			return nil, false
+			return nil, fmt.Sprintf("--channels %q has an empty entry; refusing to guess", spec)
 		default:
-			// This hint is on the same line rather than indented below it, so the
-			// suffix is appended in place at the end; inserting the door before
-			// the hint would rewrite the line the caller is told to read. The
-			// ordering is deliberate, and firstrun_test.go:65 pins this line's
-			// shape.
-			fmt.Fprintf(stderr, "nova-memory %s: unknown channel %q: %s; run: nova-memory help\n", verb, n, channelsHint)
-			return nil, false
+			return nil, fmt.Sprintf("unknown channel %q: %s", n, channelsHint)
 		}
 	}
-	return out, true
+	return out, ""
+}
+
+// The retrieval defaults: every channel, and k=10 receipts. A run that names neither
+// says both on its OK line (channels=, k=), so what was chosen is never hidden.
+const (
+	allChannels = "bm25,trigram"
+	defaultK    = 10
+)
+
+// addRetrievalFlags declares --channels and --k, and refuses a value of either that
+// names no retrieval, in the same run as every other problem.
+func addRetrievalFlags(f *tool.Flags, kIs string) {
+	f.String("channels", allChannels, "a comma-separated `list` of retrieval channels, bm25 and trigram (default: both); the OK line names the channels that ran")
+	f.Int("k", defaultK, kIs+", positive (default 10): k is the mind's budget, and zero is not unlimited")
+	f.Check(func(c *tool.Call) {
+		if k := c.Int("k"); k <= 0 {
+			c.Problem(fmt.Sprintf("--k must be a positive receipt budget (got %d); refusing to guess", k))
+		}
+		if _, why := channelNames(c.Str("channels")); why != "" {
+			c.Problem(why)
+		}
+	})
 }
 
 // newChannels builds the channels for names channelNames already accepted, so
@@ -403,16 +242,6 @@ func chanNames(chans []memindex.Channel) string {
 		names = append(names, ch.Name())
 	}
 	return strings.Join(names, ",")
-}
-
-// checkK refuses a non-positive receipt budget. k is the mind's budget, and
-// zero does not mean unlimited.
-func checkK(k int, verb string, stderr io.Writer) bool {
-	if k <= 0 {
-		refuse(stderr, " "+verb, fmt.Sprintf("--k must be a positive receipt budget (got %d); refusing to guess", k))
-		return false
-	}
-	return true
 }
 
 // scoreFields renders the native-score pair. The score is the chunk's score in
@@ -547,7 +376,7 @@ func shellArg(s string, windows bool) string {
 // needsQuoting is true for every character but the ones a shell hands to the
 // program unchanged. The list is deliberately short — anything unlisted is
 // quoted, which is never wrong, only noisier — and it differs by platform in
-// the two characters this bug was about: a backslash is a path separator on
+// two characters: a backslash is a path separator on
 // Windows and an escape on a POSIX shell, and a tilde is an ordinary character
 // in a short Windows path (RUNNER~1) and an expansion on a POSIX one.
 func needsQuoting(s string, windows bool) bool {
@@ -572,11 +401,20 @@ func step(argv []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return run(argv, stdin, stdout, stderr)
 }
 
-// stepFailed reports a step that could not run. quickstart exits 0 only when
-// all three ran: a partial demonstration that exited 0 would be teaching the
-// green, and the green is the one thing this tool is careful about.
-func stepFailed(verb string, code int, stderr io.Writer) int {
-	return refuse(stderr, " quickstart", fmt.Sprintf("the %s step could not run (exit %d); nothing further was attempted", verb, code))
+// jsonStep runs one step under --json and records it as an item of o: the command line,
+// its exit, and its own result object.
+func jsonStep(o *tool.Out, argv []string, stdin io.Reader, stderr io.Writer) int {
+	var out bytes.Buffer
+	code := run(append(argv, "--json"), stdin, &out, stderr)
+	o.Item("step", "command", tool.Text("nova-memory "+commandLine(argv)), "exit", code, "result", json.RawMessage(bytes.TrimSpace(out.Bytes())))
+	return code
+}
+
+// stepFailed is a step that could not run. quickstart exits 0 only when all three
+// ran: a partial demonstration that exited 0 would be teaching the green, and the
+// green is the one thing this tool is careful about.
+func stepFailed(verb string, code int) *tool.Out {
+	return tool.Refuse(fmt.Sprintf("the %s step could not run (exit %d); nothing further was attempted", verb, code))
 }
 
 // topTerms picks the demonstration query when the caller gave none: the terms
@@ -607,230 +445,236 @@ func topTerms(c *memindex.Corpus, n int) []string {
 	return terms
 }
 
-func cmdQuickstart(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("quickstart", flag.ContinueOnError)
-	rf := addRootFlags(fs)
-	var words multiFlag
-	fs.Var(&words, "words", "word for the demonstration search, repeatable (default: the corpus's three most frequent non-function words)")
-	draft := fs.String("draft", "", "candidate file for the demonstration check (default: this corpus's own first paragraph)")
-	given, ok := parse(fs, args, stderr, "root")
-	if given == nil {
-		return 2
-	}
-	bad := !ok
-	if fs.NArg() > 0 {
-		refuse(stderr, " quickstart", fmt.Sprintf("unexpected argument %q; the words for the search go after --words", fs.Arg(0)))
-		bad = true
-	}
-	if given["draft"] && strings.TrimSpace(*draft) == "" {
-		refuse(stderr, " quickstart", "--draft names a candidate file; omit it to use this corpus's own first paragraph")
-		bad = true
-	}
-	if bad {
-		return 2
-	}
+func cmdQuickstart() tool.Verb {
+	return tool.Verb{
+		Name:    "quickstart",
+		Usage:   "quickstart --root <dir>... [--words <w>]... [--draft <file>] [--exclude <glob>]...",
+		Example: "quickstart --root ./corpus",
+		Effect:  inspection,
+		Detail: `quickstart is the first run and nothing else: it runs stats, then one search,
+then one check, PRINTING each command line above that command's output, so
+what you saw came from a line you can now edit and run yourself. It names the
+channel and the k on every line it prints, and says so again at the end.`,
+		Flags: func(f *tool.Flags) {
+			addRootFlags(f)
+			f.Var(new(multiFlag), "words", "a `word` for the demonstration search, repeatable (default: the corpus's three most frequent terms that are not function words)")
+			f.String("draft", "", "the candidate `file` the demonstration check reads (default: this corpus's own first paragraph, on stdin)")
+			f.Check(func(c *tool.Call) {
+				if c.Given("draft") && strings.TrimSpace(c.Str("draft")) == "" {
+					c.Problem("--draft names a candidate file; omit it to use this corpus's own first paragraph")
+				}
+			})
+		},
+		Run: func(c *tool.Call) *tool.Out {
+			rf, words, draft, asJSON := rootsOf(c), strs(c, "words"), c.Str("draft"), c.Bool("json")
+			// Built once here, before any step, only to choose what the caller did not:
+			// the query words and the demonstration candidate. Each step below builds
+			// its own index, because each step is a command the reader can run alone
+			// and must behave identically when they do.
+			corpus, _, refused := rf.build()
+			if refused != nil {
+				return refused
+			}
+			if len(corpus.Chunks) == 0 {
+				// memindex.Build refuses an empty corpus, so this is a guard and not a
+				// path — stated rather than assumed, because the alternative is an
+				// index panic on the friendliest verb in the tool.
+				return tool.Refuse("this corpus holds no indexable paragraph; there is nothing to demonstrate on")
+			}
+			wordsSource := "given"
+			if len(words) == 0 {
+				words, wordsSource = topTerms(corpus, 3), "corpus-top-terms"
+				if len(words) == 0 {
+					return tool.Refuse("this corpus has no term to demonstrate a search with; name some with --words")
+				}
+			}
+			candidate := "corpus-first-paragraph"
+			if draft != "" {
+				candidate = draft
+			}
 
-	// Built once here, before any step, only to choose what the caller did not:
-	// the query words and the demonstration candidate. Each step below builds
-	// its own index, because each step is a command the reader can run alone
-	// and must behave identically when they do.
-	c, _, ok := rf.build("quickstart", stderr)
-	if !ok {
-		return 2
-	}
-	if len(c.Chunks) == 0 {
-		// memindex.Build refuses an empty corpus, so this is a guard and not a
-		// path — stated rather than assumed, because the alternative is an
-		// index panic on the friendliest verb in the tool.
-		return refuse(stderr, " quickstart", "this corpus holds no indexable paragraph; there is nothing to demonstrate on")
-	}
-	wordsSource := "given"
-	if len(words) == 0 {
-		words, wordsSource = topTerms(c, 3), "corpus-top-terms"
-		if len(words) == 0 {
-			return refuse(stderr, " quickstart", "this corpus has no term to demonstrate a search with; name some with --words")
-		}
-	}
-	candidate := "corpus-first-paragraph"
-	if *draft != "" {
-		candidate = *draft
-	}
+			// Flags first, then positionals, so every echoed line reads the way the
+			// usage line writes it.
+			var common []string
+			for _, r := range rf.root {
+				common = append(common, "--root", r)
+			}
+			for _, e := range rf.excludes {
+				common = append(common, "--exclude", e)
+			}
+			// The words are free text, quoted at the end of the line as typed: one field per word
+			// would split a word holding a blank, and a hex escape is no way to show a reader what
+			// was searched.
+			o := tool.Done().Fact("root", strings.Join(rf.root, " ")).Fact("steps", 3).Fact("channels", "bm25").
+				Fact("k", quickstartSearchK+"/"+quickstartCheckK).Fact("words-source", wordsSource).Fact("candidate", candidate).
+				Fact("words", tool.Text(strings.Join(words, " ")))
+			runStep := func(argv []string, stdin io.Reader) int {
+				if asJSON {
+					return jsonStep(o, argv, stdin, c.Stderr)
+				}
+				return step(argv, stdin, c.Stdout, c.Stderr)
+			}
+			if !asJSON {
+				fmt.Fprintf(c.Stdout, "QUICKSTART RUN root=%s steps=3 channels=bm25 k=%s/%s words-source=%s candidate=%s words=%s\n",
+					oneline.Field(strings.Join(rf.root, " ")), quickstartSearchK, quickstartCheckK,
+					oneline.Field(wordsSource), oneline.Field(candidate), oneline.Quote(strings.Join(words, " ")))
+			}
 
-	// Flags first, then positionals: package flag stops at the first
-	// non-flag argument, and every echoed line has to be one a reader can run.
-	var common []string
-	for _, r := range rf.root {
-		common = append(common, "--root", r)
-	}
-	for _, e := range rf.excludes {
-		common = append(common, "--exclude", e)
-	}
-	fmt.Fprintf(stdout, "QUICKSTART RUN root=%s steps=3 channels=bm25 k=%s/%s words=%s words-source=%s candidate=%s\n",
-		oneline.Field(strings.Join(rf.root, " ")), quickstartSearchK, quickstartCheckK,
-		oneline.Field(strings.Join(words, " ")), oneline.Field(wordsSource), oneline.Field(candidate))
+			if code := runStep(append([]string{"stats"}, common...), strings.NewReader("")); code != 0 {
+				return stepFailed("stats", code)
+			}
 
-	statsArgs := append([]string{"stats"}, common...)
-	if code := step(statsArgs, strings.NewReader(""), stdout, stderr); code != 0 {
-		return stepFailed("stats", code, stderr)
-	}
+			searchArgs := append(append([]string{"search"}, common...), "--channels", "bm25", "--k", quickstartSearchK)
+			for _, w := range words {
+				if strings.HasPrefix(w, "-") {
+					searchArgs = append(searchArgs, "--")
+					break
+				}
+			}
+			if code := runStep(append(searchArgs, words...), strings.NewReader("")); code != 0 {
+				return stepFailed("search", code)
+			}
 
-	searchArgs := append([]string{"search"}, common...)
-	searchArgs = append(searchArgs, "--channels", "bm25", "--k", quickstartSearchK)
-	for _, w := range words {
-		if strings.HasPrefix(w, "-") {
-			searchArgs = append(searchArgs, "--")
-			break
-		}
-	}
-	searchArgs = append(searchArgs, words...)
-	if code := step(searchArgs, strings.NewReader(""), stdout, stderr); code != 0 {
-		return stepFailed("search", code, stderr)
-	}
+			checkArgs := append(append([]string{"check"}, common...), "--channels", "bm25", "--k", quickstartCheckK)
+			checkIn := strings.NewReader("")
+			if draft != "" {
+				checkArgs = append(checkArgs, draft)
+			} else {
+				// The demonstration with the answer known: a paragraph the corpus
+				// certainly holds, so a first run sees what "you already know this"
+				// looks like when it is true, and can compare it against the
+				// calibration band on the same screen.
+				first := corpus.Chunks[0]
+				checkArgs = append(checkArgs, "-")
+				checkIn = strings.NewReader(first.Original)
+				if asJSON {
+					o.Fact("demo", first.File+":"+strconv.Itoa(first.Line))
+				} else {
+					fmt.Fprintf(c.Stdout, "QUICKSTART DEMO no --draft given, so the candidate on stdin is this corpus's own first paragraph: %s:%d\n",
+						oneline.Escape(first.File), first.Line)
+				}
+			}
+			if code := runStep(checkArgs, checkIn); code != 0 {
+				return stepFailed("check", code)
+			}
 
-	checkArgs := append([]string{"check"}, common...)
-	checkArgs = append(checkArgs, "--channels", "bm25", "--k", quickstartCheckK)
-	checkIn := strings.NewReader("")
-	if *draft != "" {
-		checkArgs = append(checkArgs, *draft)
-	} else {
-		// The demonstration with the answer known: a paragraph the corpus
-		// certainly holds, so a first run sees what "you already know this"
-		// looks like when it is true, and can compare it against the
-		// calibration band on the same screen.
-		checkArgs = append(checkArgs, "-")
-		checkIn = strings.NewReader(c.Chunks[0].Original)
-		fmt.Fprintf(stdout, "QUICKSTART DEMO no --draft given, so the candidate on stdin is this corpus's own first paragraph: %s:%d\n",
-			oneline.Escape(c.Chunks[0].File), c.Chunks[0].Line)
+			if asJSON {
+				return o.Fact("done", 3).Note(quickstartChoiceNote)
+			}
+			fmt.Fprintf(c.Stdout, "QUICKSTART OK done=3\n")
+			fmt.Fprintf(c.Stdout, "QUICKSTART NOTE %s\n", quickstartChoiceNote)
+			return tool.Exit(0)
+		},
 	}
-	if code := step(checkArgs, checkIn, stdout, stderr); code != 0 {
-		return stepFailed("check", code, stderr)
-	}
-
-	fmt.Fprintf(stdout, "QUICKSTART OK done=3\n")
-	fmt.Fprintf(stdout, "QUICKSTART NOTE %s\n", quickstartChoiceNote)
-	return 0
 }
 
 // ---------------------------------------------------------------------------
 // stats — m, measured
 
-func cmdStats(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("stats", flag.ContinueOnError)
-	rf := addRootFlags(fs)
-	given, ok := parse(fs, args, stderr, "root")
-	if given == nil {
-		return 2
+func cmdStats() tool.Verb {
+	return tool.Verb{
+		Name:   "stats",
+		Usage:  "stats --root <dir>... [--exclude <glob>]...",
+		Effect: inspection,
+		Flags:  addRootFlags,
+		Run: func(c *tool.Call) *tool.Out {
+			corpus, buildTime, refused := rootsOf(c).build()
+			if refused != nil {
+				return refused
+			}
+			// build= is the one field that is not byte-reproducible: it is a measured
+			// duration, labelled as one. Everything else is derived from the tree.
+			if c.Bool("json") {
+				o := tool.Done().Fact("schema", memindex.SchemaVersion).Fact("files", len(corpus.Files)).Fact("chunks", len(corpus.Chunks)).
+					Fact("bytes", corpus.Bytes).Fact("vocab", len(corpus.DF)).Fact("avg-terms", math.Round(corpus.AvgLen*10)/10).Fact("build", buildTime.String())
+				for _, cl := range slices.Sorted(maps.Keys(corpus.ByClass)) {
+					o.Item("class", "class", cl, "chunks", corpus.ByClass[cl])
+				}
+				return o
+			}
+			fmt.Fprintf(c.Stdout, "STATS OK schema=%s files=%d chunks=%d bytes=%d vocab=%d avg-terms=%.1f build=%v\n",
+				memindex.SchemaVersion, len(corpus.Files), len(corpus.Chunks), corpus.Bytes, len(corpus.DF), corpus.AvgLen, buildTime)
+			for _, cl := range slices.Sorted(maps.Keys(corpus.ByClass)) {
+				fmt.Fprintf(c.Stdout, "STATS OK class=%s chunks=%d\n", oneline.Field(cl), corpus.ByClass[cl])
+			}
+			return tool.Exit(0)
+		},
 	}
-	bad := !ok
-	if fs.NArg() > 0 {
-		refuse(stderr, " stats", fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
-		bad = true
-	}
-	if bad {
-		return 2
-	}
-	c, buildTime, ok := rf.build("stats", stderr)
-	if !ok {
-		return 2
-	}
-	// build= is the one field that is not byte-reproducible: it is a measured
-	// duration, labelled as one. Everything else is derived from the tree.
-	fmt.Fprintf(stdout, "STATS OK schema=%s files=%d chunks=%d bytes=%d vocab=%d avg-terms=%.1f build=%v\n",
-		memindex.SchemaVersion, len(c.Files), len(c.Chunks), c.Bytes, len(c.DF), c.AvgLen, buildTime)
-	classes := make([]string, 0, len(c.ByClass))
-	for cl := range c.ByClass {
-		classes = append(classes, cl)
-	}
-	sort.Strings(classes)
-	for _, cl := range classes {
-		fmt.Fprintf(stdout, "STATS OK class=%s chunks=%d\n", oneline.Field(cl), c.ByClass[cl])
-	}
-	return 0
 }
 
 // ---------------------------------------------------------------------------
 // boot — the session loads a pin, never walks the directory
 
-func cmdBoot(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("boot", flag.ContinueOnError)
-	root := fs.String("root", "", "memory root directory (required)")
-	pin := fs.String("pin", "", "pin file naming the memories to load (required)")
-	given, ok := parse(fs, args, stderr, "root", "pin")
-	if given == nil {
-		return 2
+func cmdBoot() tool.Verb {
+	return tool.Verb{
+		Name:   "boot",
+		Usage:  "boot --root <dir> --pin <file>",
+		Effect: inspection,
+		Detail: "boot loads a pin, not a directory: it reads exactly the files the pin names and never walks --root.",
+		Flags: func(f *tool.Flags) {
+			f.Required("root", "the memory root directory the pin's paths are relative to")
+			f.Required("pin", "the pin file naming the memories a session loads, one slash path per line relative to --root (# comments and blank lines ignored)")
+		},
+		Run: func(c *tool.Call) *tool.Out {
+			n, bytes, why := loadPin(c.Str("root"), c.Str("pin"))
+			if why != "" {
+				return tool.Refuse(why)
+			}
+			if c.Bool("json") {
+				return tool.Done().Fact("files", n).Fact("bytes", bytes)
+			}
+			fmt.Fprintf(c.Stdout, "BOOT OK files=%d bytes=%d\n", n, bytes)
+			return tool.Exit(0)
+		},
 	}
-	bad := !ok
-	if fs.NArg() > 0 {
-		refuse(stderr, " boot", fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
-		bad = true
-	}
-	if given["pin"] && strings.TrimSpace(*pin) == "" {
-		refuse(stderr, " boot", "--pin names the file listing the memories to load; name it")
-		bad = true
-	}
-	if bad {
-		return 2
-	}
-	n, bytes, ok := loadPin(*root, *pin, stderr)
-	if !ok {
-		return 2
-	}
-	fmt.Fprintf(stdout, "BOOT OK files=%d bytes=%d\n", n, bytes)
-	return 0
 }
 
 // loadPin reads the pin file and loads exactly the files it names, relative to
 // root and never by walking the directory. It returns the count and the byte
-// total of the loaded memories. Every misshapen entry is a refusal, because a
-// boot that silently skipped a named memory is a self that loaded less than it
-// thinks it did.
-func loadPin(root, pin string, stderr io.Writer) (int, int64, bool) {
+// total of the loaded memories, or why it could not. Every misshapen entry is a
+// refusal, because a boot that silently skipped a named memory is a self that
+// loaded less than it thinks it did.
+func loadPin(root, pin string) (int, int64, string) {
 	entries, err := readPin(pin)
 	if err != nil {
-		refuse(stderr, " boot", oneline.Err(err))
-		return 0, 0, false
+		return 0, 0, oneline.Err(err)
 	}
 	if len(entries) == 0 {
-		refuse(stderr, " boot", fmt.Sprintf("--pin %s names no memories; a boot of nothing is not a boot", oneline.Escape(pin)))
-		return 0, 0, false
+		return 0, 0, fmt.Sprintf("--pin %s names no memories; a boot of nothing is not a boot", oneline.Escape(pin))
 	}
 	var total int64
 	seen := make(map[string]bool, len(entries))
 	for _, e := range entries {
-		if strings.HasPrefix(e, "/") || filepath.IsAbs(e) {
-			refuse(stderr, " boot", fmt.Sprintf("pin entry %q is absolute; every entry is relative to --root", oneline.Escape(e)))
-			return 0, 0, false
+		why := ""
+		switch {
+		case strings.HasPrefix(e, "/") || filepath.IsAbs(e):
+			why = "is absolute; every entry is relative to --root"
+		case e != path.Clean(e):
+			why = `is not canonical (no "./", "//", ".." or trailing "/")`
+		case e == ".." || strings.HasPrefix(e, "../"):
+			why = "escapes --root"
+		case seen[e]:
+			why = "appears twice; double-counted bytes are a lie"
 		}
-		if e != path.Clean(e) {
-			refuse(stderr, " boot", fmt.Sprintf("pin entry %q is not canonical (no \"./\", \"//\", \"..\" or trailing \"/\")", oneline.Escape(e)))
-			return 0, 0, false
+		if why == "" {
+			seen[e] = true
+			fi, err := os.Lstat(filepath.Join(root, filepath.FromSlash(e)))
+			switch {
+			case err != nil:
+				why = "does not exist under --root"
+			case !fi.Mode().IsRegular():
+				why = "is not a regular file"
+			case fi.Size() == 0:
+				why = "is empty; a memory of zero bytes cannot be loaded"
+			default:
+				total += fi.Size()
+			}
 		}
-		if e == ".." || strings.HasPrefix(e, "../") {
-			refuse(stderr, " boot", fmt.Sprintf("pin entry %q escapes --root", oneline.Escape(e)))
-			return 0, 0, false
+		if why != "" {
+			return 0, 0, fmt.Sprintf("pin entry %q %s", e, why)
 		}
-		if seen[e] {
-			refuse(stderr, " boot", fmt.Sprintf("pin entry %q appears twice; double-counted bytes are a lie", oneline.Escape(e)))
-			return 0, 0, false
-		}
-		seen[e] = true
-		full := filepath.Join(root, filepath.FromSlash(e))
-		fi, err := os.Lstat(full)
-		if err != nil {
-			refuse(stderr, " boot", fmt.Sprintf("pin entry %q does not exist under --root", oneline.Escape(e)))
-			return 0, 0, false
-		}
-		if !fi.Mode().IsRegular() {
-			refuse(stderr, " boot", fmt.Sprintf("pin entry %q is not a regular file", oneline.Escape(e)))
-			return 0, 0, false
-		}
-		if fi.Size() == 0 {
-			refuse(stderr, " boot", fmt.Sprintf("pin entry %q is empty; a memory of zero bytes cannot be loaded", oneline.Escape(e)))
-			return 0, 0, false
-		}
-		total += fi.Size()
 	}
-	return len(entries), total, true
+	return len(entries), total, ""
 }
 
 // readPin reads one memory path per line; blank lines and lines starting with
@@ -859,371 +703,325 @@ func readPin(name string) ([]string, error) {
 // ---------------------------------------------------------------------------
 // search — one query, k receipts
 
-func cmdSearch(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("search", flag.ContinueOnError)
-	asJSON := fs.Bool("json", false, "render the retrieval result as JSON")
-	var problems strings.Builder
-	errors := stderr
-	stderr = &problems
-	defer func() {
-		if problems.Len() == 0 {
-			return
-		}
-		if *asJSON {
-			out := tool.Refuse(strings.TrimSpace(problems.String()))
-			out.Verb = "search"
-			out.Remedy = "nova-memory help"
-			out.Render(stdout, true)
-		} else {
-			fmt.Fprint(errors, problems.String())
-		}
-	}()
-	rf := addRootFlags(fs)
-	channels := fs.String("channels", "", "comma-separated retrieval channels (required)")
-	k := fs.Int("k", 0, "receipts per query, positive (required)")
-	given, ok := parse(fs, args, stderr, "root", "channels", "k")
-	if given == nil {
-		return 2
+func cmdSearch() tool.Verb {
+	return tool.Verb{
+		Name:    "search",
+		Usage:   "search --root <dir>... [--channels <list>] [--k <n>] [--exclude <glob>]... <words>...",
+		Example: "search --root ./corpus --channels bm25 --k 3 lantern glazing brass",
+		Effect:  inspection,
+		Detail:  rankDetail,
+		Flags: func(f *tool.Flags) {
+			addRootFlags(f)
+			addRetrievalFlags(f, "receipts per query")
+			f.Args("<words>...")
+		},
+		Run: func(c *tool.Call) *tool.Out {
+			corpus, _, refused := rootsOf(c).build()
+			if refused != nil {
+				return refused
+			}
+			query, chans := strings.Join(c.Args(), " "), channelsOf(c, corpus)
+			hits := memindex.Retrieve(corpus, chans, query, c.Int("k"))
+			return retrievalResult{Verb: "search", Query: query, K: c.Int("k"), Channels: chanNames(chans), Files: len(corpus.Files), Chunks: len(corpus.Chunks),
+				Calibration: calibrationHits(corpus, chans), Candidates: []retrievalCandidate{{Hits: hits}}, Notes: []string{noteLexical}}.out(c)
+		},
 	}
-	// One run, every reason. A value is only judged when the flag carrying it
-	// was given, so a missing flag says one thing and not two.
-	bad := !ok
-	if given["k"] && !checkK(*k, "search", stderr) {
-		bad = true
-	}
-	var names []string
-	if given["channels"] {
-		if names, ok = channelNames(*channels, "search", stderr); !ok {
-			bad = true
-		}
-	}
-	if fs.NArg() == 0 {
-		refuse(stderr, " search", "no query words given; refusing to guess")
-		bad = true
-	}
-	if bad {
-		return 2
-	}
-	query := strings.Join(fs.Args(), " ")
-	c, _, ok := rf.build("search", stderr)
-	if !ok {
-		return 2
-	}
-	chans := newChannels(c, names)
-	hits := memindex.Retrieve(c, chans, query, *k)
-	result := retrievalResult{Verb: "search", Query: query, K: *k, Channels: chanNames(chans), Files: len(c.Files), Chunks: len(c.Chunks), Calibration: calibrationHits(c, chans), Candidates: []retrievalCandidate{{Hits: hits}}, Notes: []string{noteLexical}}
-	result.render(stdout, *asJSON)
-	return 0
+}
+
+// channelsOf builds the channels --channels names; the check above has refused any
+// other name.
+func channelsOf(c *tool.Call, corpus *memindex.Corpus) []memindex.Channel {
+	names, _ := channelNames(c.Str("channels"))
+	return newChannels(corpus, names)
 }
 
 // ---------------------------------------------------------------------------
 // check — the consolidation gate that never judges
 
-func cmdCheck(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("check", flag.ContinueOnError)
-	asJSON := fs.Bool("json", false, "render the retrieval result as JSON")
-	var problems strings.Builder
-	errors := stderr
-	stderr = &problems
-	defer func() {
-		if problems.Len() == 0 {
-			return
-		}
-		if *asJSON {
-			out := tool.Refuse(strings.TrimSpace(problems.String()))
-			out.Verb = "check"
-			out.Remedy = "nova-memory help"
-			out.Render(stdout, true)
-		} else {
-			fmt.Fprint(errors, problems.String())
-		}
-	}()
-	rf := addRootFlags(fs)
-	channels := fs.String("channels", "", "comma-separated retrieval channels (required)")
-	k := fs.Int("k", 0, "receipts per candidate, positive (required)")
-	given, ok := parse(fs, args, stderr, "root", "channels", "k")
-	if given == nil {
-		return 2
+func cmdCheck() tool.Verb {
+	return tool.Verb{
+		Name:    "check",
+		Token:   "MEMORY",
+		Usage:   "check --root <dir>... [--channels <list>] [--k <n>] [--exclude <glob>]... <file|->",
+		Example: "check --root ./corpus --channels bm25 --k 3 draft.md",
+		Effect:  inspection,
+		Detail:  rankDetail,
+		Flags: func(f *tool.Flags) {
+			addRootFlags(f)
+			addRetrievalFlags(f, "receipts per candidate paragraph")
+			f.Args("<file|->")
+		},
+		Run: func(c *tool.Call) *tool.Out {
+			src, name := c.Stdin, c.Args()[0]
+			if name != "-" {
+				f, err := os.Open(name)
+				if err != nil {
+					return tool.Refuse(oneline.Err(err))
+				}
+				defer f.Close()
+				src = f
+			}
+			raw, err := io.ReadAll(src)
+			if err != nil {
+				return tool.Refuse(fmt.Sprintf("reading %s: %s", oneline.Escape(name), oneline.Err(err)))
+			}
+			var candidates []string
+			// The same line-ending normalization memindex.Build does before its own
+			// blank-line split: a CRLF candidate file must chunk into the paragraphs
+			// its LF twin does, or check queries one giant blob against a corpus that
+			// was indexed paragraph by paragraph.
+			for _, p := range strings.Split(memindex.NormalizeNewlines(string(raw)), "\n\n") {
+				if len(memindex.Tokenize(p)) >= memindex.MinTerms {
+					candidates = append(candidates, p)
+				}
+			}
+			if len(candidates) == 0 {
+				// Unusable input, not a verdict: a run over nothing must never print
+				// a green that a caller reads as "nothing was already known".
+				return tool.Refuse(fmt.Sprintf("%s holds no candidate paragraph of at least %d terms; nothing to check", oneline.Escape(name), memindex.MinTerms))
+			}
+			corpus, _, refused := rootsOf(c).build()
+			if refused != nil {
+				return refused
+			}
+			chans, k := channelsOf(c, corpus), c.Int("k")
+			result := retrievalResult{Verb: "check", Source: name, K: k, Channels: chanNames(chans), Files: len(corpus.Files), Chunks: len(corpus.Chunks), Calibration: calibrationHits(corpus, chans), Notes: []string{noteLexical, "this verb asserts nothing and never exits 1: it hands you k receipts and the verdict stays yours", "a hit in a dated log class is evidence the event was recorded, not that the lesson was banked — the class on each receipt is the distinction"}}
+			for _, cand := range candidates {
+				result.Candidates = append(result.Candidates, retrievalCandidate{Text: memindex.Truncate(strings.TrimSpace(cand), 100), Hits: memindex.Retrieve(corpus, chans, cand, k)})
+			}
+			return result.out(c)
+		},
 	}
-	bad := !ok
-	if given["k"] && !checkK(*k, "check", stderr) {
-		bad = true
-	}
-	var names []string
-	if given["channels"] {
-		if names, ok = channelNames(*channels, "check", stderr); !ok {
-			bad = true
-		}
-	}
-	if fs.NArg() != 1 {
-		refuse(stderr, " check", "name exactly one candidate file, or - for stdin; refusing to guess")
-		bad = true
-	}
-	if bad {
-		return 2
-	}
-
-	src := stdin
-	name := "-"
-	if fs.Arg(0) != "-" {
-		f, err := os.Open(fs.Arg(0))
-		if err != nil {
-			return refuse(stderr, " check", oneline.Err(err))
-		}
-		defer f.Close()
-		src, name = f, fs.Arg(0)
-	}
-	raw, err := io.ReadAll(src)
-	if err != nil {
-		return refuse(stderr, " check", fmt.Sprintf("reading %s: %s", oneline.Escape(name), oneline.Err(err)))
-	}
-	var candidates []string
-	// The same line-ending normalization memindex.Build does before its own
-	// blank-line split: a CRLF candidate file must chunk into the paragraphs
-	// its LF twin does, or check queries one giant blob against a corpus that
-	// was indexed paragraph by paragraph.
-	for _, p := range strings.Split(memindex.NormalizeNewlines(string(raw)), "\n\n") {
-		if len(memindex.Tokenize(p)) >= memindex.MinTerms {
-			candidates = append(candidates, p)
-		}
-	}
-	if len(candidates) == 0 {
-		// Unusable input, not a verdict: a run over nothing must never print
-		// a green that a caller reads as "nothing was already known".
-		return refuse(stderr, " check", fmt.Sprintf("%s holds no candidate paragraph of at least %d terms; nothing to check", oneline.Escape(name), memindex.MinTerms))
-	}
-
-	c, _, ok := rf.build("check", stderr)
-	if !ok {
-		return 2
-	}
-	chans := newChannels(c, names)
-
-	result := retrievalResult{Verb: "check", Source: name, K: *k, Channels: chanNames(chans), Files: len(c.Files), Chunks: len(c.Chunks), Calibration: calibrationHits(c, chans), Notes: []string{noteLexical, "this verb asserts nothing and never exits 1: it hands you k receipts and the verdict stays yours", "a hit in a dated log class is evidence the event was recorded, not that the lesson was banked — the class on each receipt is the distinction"}}
-	for _, cand := range candidates {
-		result.Candidates = append(result.Candidates, retrievalCandidate{Text: memindex.Truncate(strings.TrimSpace(cand), 100), Hits: memindex.Retrieve(c, chans, cand, *k)})
-	}
-	result.render(stdout, *asJSON)
-	return 0
 }
 
 // ---------------------------------------------------------------------------
 // verify — the coverage ritual, mechanized
 
-func cmdVerify(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("verify", flag.ContinueOnError)
-	rf := addRootFlags(fs)
-	links := fs.String("links", "", "gate|info: whether unresolved wikilinks drive the exit code (required)")
-	var coverage, front, exempt multiFlag
-	fs.Var(&coverage, "coverage", "A:B glob pair, repeatable")
-	fs.Var(&front, "frontmatter", "glob whose files must carry a frontmatter name:, repeatable")
-	fs.Var(&exempt, "exempt", "basename prefix exempt from --frontmatter, repeatable (nothing is exempt by default)")
-	failMax := fs.Int("fail-max", bounded.Default, "finding lines to print per kind before one MORE line stands for the rest; 0 prints all")
-	given, ok := parse(fs, args, stderr, "root", "links")
-	if given == nil {
-		return 2
-	}
-	bad := !ok
-	if fs.NArg() > 0 {
-		refuse(stderr, " verify", fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
-		bad = true
-	}
-	gateLinks := false
-	if given["links"] {
-		switch *links {
-		case "gate":
-			gateLinks = true
-		case "info":
-			gateLinks = false
-		default:
-			refuse(stderr, " verify", fmt.Sprintf("--links must be gate or info (got %q); refusing to guess", *links))
-			bad = true
+// addFailMax declares --fail-max, the finding lines a capped listing prints.
+func addFailMax(f *tool.Flags, what string) {
+	f.Int("fail-max", bounded.Default, what+" to print before one MORE line stands for the rest; 0 prints all (the count is never capped)")
+	f.Check(func(c *tool.Call) {
+		if n := c.Int("fail-max"); n < 0 {
+			// Zero already means "all". A negative ceiling is neither a number of lines nor
+			// a way of asking for every line, so it is a typo with two readings and gets
+			// neither.
+			c.Problem(fmt.Sprintf("--fail-max must be a line ceiling of zero or more (got %d); 0 means print them all", n))
 		}
-	}
-	if given["fail-max"] && *failMax < 0 {
-		// Zero already means "all". A negative ceiling is neither a number of lines nor
-		// a way of asking for every line, so it is a typo with two readings and gets
-		// neither.
-		refuse(stderr, " verify", fmt.Sprintf("--fail-max must be a line ceiling of zero or more (got %d); 0 means print them all", *failMax))
-		bad = true
-	}
-	if bad {
-		return 2
-	}
-	if len(rf.root) != 1 {
-		// --coverage and --frontmatter globs and [[wikilink]] resolution all
-		// walk one tree, and a relative .md link resolves against one root, so
-		// verification names one root and no more.
-		return refuse(stderr, " verify", fmt.Sprintf("--root names exactly one tree for verification, but %d were given", len(rf.root)))
-	}
-	if len(coverage) == 0 && len(front) == 0 && !gateLinks {
-		// Every check is off and wikilinks are informational: this run can
-		// only ever exit 0. A green that could not have been anything else is
-		// not a check, so it is refused rather than printed.
-		return refuse(stderr, " verify", "no gating check requested (no --coverage, no --frontmatter, --links=info) — a run that cannot fail is not a verification")
-	}
-	if len(exempt) > 0 && len(front) == 0 {
-		return refuse(stderr, " verify", "--exempt only applies to --frontmatter, which was not given")
-	}
+	})
+}
 
-	c, _, ok := rf.build("verify", stderr)
-	if !ok {
-		return 2
-	}
-	fsys := memindex.Excluding(os.DirFS(rf.root[0]), rf.excluded)
+func cmdVerify() tool.Verb {
+	return tool.Verb{
+		Name:    "verify",
+		Usage:   "verify --root <dir> --links <gate|info> [--coverage <A:B>]... [--frontmatter <glob>]... [--exempt <prefix>]... [--exclude <glob>]... [--fail-max <n>]",
+		Example: "verify --root ./corpus --links info --coverage notes/lantern.md:notes/index-notes.md",
+		Effect:  inspection,
+		Detail: `verify caps each KIND of finding separately, so ten thousand wikilink findings
+cannot bury the one frontmatter finding; the count line carries every total.`,
+		Flags: func(f *tool.Flags) {
+			addRootFlags(f)
+			f.Required("links", "gate (unresolved [[wikilinks]] fail the run) or info (they are reported and do not)")
+			f.Var(new(multiFlag), "coverage", "an `A:B` pair of globs, repeatable: every file matching A is named in some file matching B")
+			f.Var(new(multiFlag), "frontmatter", "a `glob` whose files must carry a frontmatter name:, repeatable")
+			f.Var(new(multiFlag), "exempt", "a basename `prefix` of listings exempt from --frontmatter, repeatable (nothing is exempt by default)")
+			addFailMax(f, "finding lines per kind")
+			f.Check(func(c *tool.Call) {
+				if links := c.Str("links"); links != "" && links != "gate" && links != "info" {
+					c.Problem(fmt.Sprintf("--links must be gate or info (got %q); refusing to guess", links))
+				}
+			})
+		},
+		Run: func(c *tool.Call) *tool.Out {
+			rf, links, failMax := rootsOf(c), c.Str("links"), c.Int("fail-max")
+			coverage, front, exempt := strs(c, "coverage"), strs(c, "frontmatter"), strs(c, "exempt")
+			gateLinks := links == "gate"
+			switch {
+			case len(rf.root) != 1:
+				// --coverage and --frontmatter globs and [[wikilink]] resolution all
+				// walk one tree, and a relative .md link resolves against one root, so
+				// verification names one root and no more.
+				return tool.Refuse(fmt.Sprintf("--root names exactly one tree for verification, but %d were given", len(rf.root)))
+			case len(coverage) == 0 && len(front) == 0 && !gateLinks:
+				// Every check is off and wikilinks are informational: this run can
+				// only ever exit 0. A green that could not have been anything else is
+				// not a check, so it is refused rather than printed.
+				return tool.Refuse("no gating check requested (no --coverage, no --frontmatter, --links=info) — a run that cannot fail is not a verification")
+			case len(exempt) > 0 && len(front) == 0:
+				return tool.Refuse("--exempt only applies to --frontmatter, which was not given")
+			}
+			corpus, _, refused := rf.build()
+			if refused != nil {
+				return refused
+			}
+			fsys := memindex.Excluding(os.DirFS(rf.root[0]), rf.excluded)
 
-	var gating, info []memindex.Finding
-	coverageFindings, frontmatterFindings := 0, 0
-	for _, pair := range coverage {
-		a, b, found := strings.Cut(pair, ":")
-		if !found || a == "" || b == "" {
-			return refuse(stderr, " verify", fmt.Sprintf("--coverage wants A:B, got %q", pair))
-		}
-		fnds, err := memindex.Coverage(fsys, a, b)
-		if err != nil {
-			return refuse(stderr, " verify", oneline.Err(err))
-		}
-		coverageFindings += len(fnds)
-		gating = append(gating, fnds...)
-	}
-	for _, g := range front {
-		fnds, err := memindex.FrontmatterPresent(fsys, g, exempt)
-		if err != nil {
-			return refuse(stderr, " verify", oneline.Err(err))
-		}
-		frontmatterFindings += len(fnds)
-		gating = append(gating, fnds...)
-	}
-	wl, err := memindex.Wikilinks(fsys, c)
-	if err != nil {
-		return refuse(stderr, " verify", oneline.Err(err))
-	}
-	if gateLinks {
-		gating = append(gating, wl...)
-	} else {
-		info = wl
-	}
+			var gating, info []memindex.Finding
+			coverageFindings, frontmatterFindings := 0, 0
+			for _, pair := range coverage {
+				a, b, found := strings.Cut(pair, ":")
+				if !found || a == "" || b == "" {
+					return tool.Refuse(fmt.Sprintf("--coverage wants A:B, got %q", pair))
+				}
+				fnds, err := memindex.Coverage(fsys, a, b)
+				if err != nil {
+					return tool.Refuse(oneline.Err(err))
+				}
+				coverageFindings += len(fnds)
+				gating = append(gating, fnds...)
+			}
+			for _, g := range front {
+				fnds, err := memindex.FrontmatterPresent(fsys, g, exempt)
+				if err != nil {
+					return tool.Refuse(oneline.Err(err))
+				}
+				frontmatterFindings += len(fnds)
+				gating = append(gating, fnds...)
+			}
+			wl, err := memindex.Wikilinks(fsys, corpus)
+			if err != nil {
+				return tool.Refuse(oneline.Err(err))
+			}
+			if gateLinks {
+				gating = append(gating, wl...)
+			} else {
+				info = wl
+			}
 
-	// EACH KIND IS CAPPED SEPARATELY. A flat cap over the concatenated findings would
-	// mean that on a corpus with ten thousand unresolved wikilinks the twenty lines a
-	// reader gets are twenty wikilinks, and the one frontmatter finding -- the finding
-	// they did not already know about -- is the line the cap ate.
-	infos := bounded.Grouped(stdout, *failMax, "VERIFY", failMaxRemedy)
-	for _, f := range info {
-		infos.Line(f.Kind, fmt.Sprintf("VERIFY INFO %s: %s", f.Kind, oneline.Escape(oneline.Cap(f.Detail, oneline.TailBytes))))
-	}
-	infos.More()
+			if c.Bool("json") {
+				o := tool.Done()
+				for _, f := range info {
+					o.Item(f.Kind, "gating", false, "detail", tool.Text(f.Detail))
+				}
+				for _, f := range gating {
+					o.Item(f.Kind, "gating", true, "detail", tool.Text(f.Detail))
+				}
+				o.Fact("gating", len(gating)).Fact("info", len(info)).Fact("coverage", coverageFindings).
+					Fact("frontmatter", frontmatterFindings).Fact("links", links)
+				if len(gating) > 0 {
+					o.Status, o.Exit = tool.Failed, 1
+				}
+				return o.Cap(failMax)
+			}
 
-	fails := bounded.Grouped(stderr, *failMax, "VERIFY", failMaxRemedy)
-	for _, f := range gating {
-		fails.Line(f.Kind, fmt.Sprintf("VERIFY FAIL %s %s", f.Kind, oneline.Escape(oneline.Cap(f.Detail, oneline.TailBytes))))
-	}
-	fails.More()
+			// EACH KIND IS CAPPED SEPARATELY. A flat cap over the concatenated findings would
+			// mean that on a corpus with ten thousand unresolved wikilinks the twenty lines a
+			// reader gets are twenty wikilinks, and the one frontmatter finding -- the finding
+			// they did not already know about -- is the line the cap ate.
+			infos := bounded.Grouped(c.Stdout, failMax, "VERIFY", failMaxRemedy)
+			for _, f := range info {
+				infos.Line(f.Kind, fmt.Sprintf("VERIFY INFO %s: %s", f.Kind, oneline.Escape(oneline.Cap(f.Detail, oneline.TailBytes))))
+			}
+			infos.More()
 
-	// THE COUNT LINE PRINTS ON FAILURE TOO. It did not: a failing run gave N lines and
-	// never N, so a reader who wanted to know how bad it was had to count the output --
-	// and the output was capped from here on, which would have made counting it a lie.
-	if fails.Total() > 0 {
-		fmt.Fprintf(stderr, "VERIFY FAIL gating=%d shown=%d info=%d coverage=%d frontmatter=%d links=%s\n",
-			fails.Total(), fails.Shown(), infos.Total(), coverageFindings, frontmatterFindings, *links)
-		return 1
+			fails := bounded.Grouped(c.Stderr, failMax, "VERIFY", failMaxRemedy)
+			for _, f := range gating {
+				fails.Line(f.Kind, fmt.Sprintf("VERIFY FAIL %s %s", f.Kind, oneline.Escape(oneline.Cap(f.Detail, oneline.TailBytes))))
+			}
+			fails.More()
+
+			// THE COUNT LINE PRINTS ON FAILURE TOO: the listing above is capped, so counting
+			// its lines would understate how bad a failing run is, and the total is here.
+			if fails.Total() > 0 {
+				fmt.Fprintf(c.Stderr, "VERIFY FAIL gating=%d shown=%d info=%d coverage=%d frontmatter=%d links=%s\n",
+					fails.Total(), fails.Shown(), infos.Total(), coverageFindings, frontmatterFindings, links)
+				return tool.Exit(1)
+			}
+			fmt.Fprintf(c.Stdout, "VERIFY OK gating=0 info=%d shown=%d coverage=%d frontmatter=%d links=%s\n",
+				infos.Total(), infos.Shown(), coverageFindings, frontmatterFindings, links)
+			return tool.Exit(0)
+		},
 	}
-	fmt.Fprintf(stdout, "VERIFY OK gating=0 info=%d shown=%d coverage=%d frontmatter=%d links=%s\n",
-		infos.Total(), infos.Shown(), coverageFindings, frontmatterFindings, *links)
-	return 0
 }
 
 // ---------------------------------------------------------------------------
 // eval — the known-answer harness, shipped with the tool
 
-func cmdEval(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("eval", flag.ContinueOnError)
-	rf := addRootFlags(fs)
-	channels := fs.String("channels", "", "comma-separated retrieval channels (required)")
-	k := fs.Int("k", 0, "receipts per query, positive (required)")
-	floor := fs.Float64("floor", 0, "minimum recall@k in (0,1] (required)")
-	failMax := fs.Int("fail-max", bounded.Default, "MISS lines to print before one MORE line stands for the rest; 0 prints all")
-	given, ok := parse(fs, args, stderr, "root", "channels", "k", "floor")
-	if given == nil {
-		return 2
-	}
-	bad := !ok
-	if given["k"] && !checkK(*k, "eval", stderr) {
-		bad = true
-	}
-	var names []string
-	if given["channels"] {
-		if names, ok = channelNames(*channels, "eval", stderr); !ok {
-			bad = true
-		}
-	}
-	if given["floor"] && (math.IsNaN(*floor) || math.IsInf(*floor, 0) || *floor <= 0 || *floor > 1) {
-		refuse(stderr, " eval", fmt.Sprintf("--floor must be in (0,1] (got %g); a harness that cannot fail is not a measurement", *floor))
-		bad = true
-	}
-	if given["fail-max"] && *failMax < 0 {
-		refuse(stderr, " eval", fmt.Sprintf("--fail-max must be a line ceiling of zero or more (got %d); 0 means print them all", *failMax))
-		bad = true
-	}
-	if fs.NArg() != 1 {
-		refuse(stderr, " eval", "name exactly one gold file; refusing to guess")
-		bad = true
-	}
-	if bad {
-		return 2
-	}
-	rows, err := readGold(fs.Arg(0))
-	if err != nil {
-		return refuse(stderr, " eval", oneline.Err(err))
-	}
-
-	c, _, ok := rf.build("eval", stderr)
-	if !ok {
-		return 2
-	}
-	chans := newChannels(c, names)
-
-	// THE HIT IS THE GOOD CASE AND IT WAS THE OUTPUT. A five-hundred-row harness printed
-	// five hundred lines to say a number the summary line already carries; on a passing
-	// run every one of them said "this worked". So the hits are a count, and only the
-	// misses -- the rows a reader can act on -- are listed, capped like every other
-	// listing here.
-	misses := bounded.Capped(stdout, *failMax, "EVAL", "miss", failMaxRemedy)
-	hits := 0
-	var mrr float64
-	for _, row := range rows {
-		rank := 0
-		for i, h := range memindex.Retrieve(c, chans, row.query, *k) {
-			for _, e := range row.expected {
-				if strings.Contains(h.File, e) {
-					rank = i + 1
-					break
+func cmdEval() tool.Verb {
+	return tool.Verb{
+		Name:   "eval",
+		Usage:  "eval --root <dir>... [--channels <list>] [--k <n>] --floor <f> [--exclude <glob>]... [--fail-max <n>] <gold.tsv>",
+		Effect: inspection,
+		Detail: `eval is the known-answer harness: each gold row is query<TAB>path[,path], and the
+run measures recall@k and MRR and fails below --floor. Misses are listed; hits are a count.`,
+		Flags: func(f *tool.Flags) {
+			addRootFlags(f)
+			addRetrievalFlags(f, "receipts per query")
+			f.Float64("floor", 0, "the minimum recall@k, in (0,1]: a harness with no floor cannot fail (required)")
+			addFailMax(f, "MISS lines")
+			f.Args("<gold.tsv>")
+			f.Check(func(c *tool.Call) {
+				floor := c.Get("floor").(float64)
+				switch {
+				case !c.Given("floor"):
+					c.Problem("--floor is required; it wants the minimum recall@k, in (0,1]; refusing to guess")
+				case math.IsNaN(floor) || math.IsInf(floor, 0) || floor <= 0 || floor > 1:
+					c.Problem(fmt.Sprintf("--floor must be in (0,1] (got %g); a harness that cannot fail is not a measurement", floor))
 				}
+			})
+		},
+		Run: func(c *tool.Call) *tool.Out {
+			k, floor, failMax := c.Int("k"), c.Get("floor").(float64), c.Int("fail-max")
+			rows, err := readGold(c.Args()[0])
+			if err != nil {
+				return tool.Refuse(oneline.Err(err))
 			}
-			if rank != 0 {
-				break
+			corpus, _, refused := rootsOf(c).build()
+			if refused != nil {
+				return refused
 			}
-		}
-		if rank != 0 {
-			hits++
-			mrr += 1.0 / float64(rank)
-			continue
-		}
-		misses.Line(fmt.Sprintf("EVAL MISS query=%s expected=%s",
-			oneline.Field(oneline.Cap(row.query, oneline.TailBytes)),
-			oneline.Field(oneline.Cap(strings.Join(row.expected, ","), oneline.TailBytes))))
+			chans := channelsOf(c, corpus)
+
+			// THE HITS ARE A COUNT: a line per passing row would say "this worked" five hundred
+			// times beside the summary that already carries the number. Only the misses -- the
+			// rows a reader can act on -- are listed, capped like every other listing here.
+			listing := c.Stdout
+			if c.Bool("json") {
+				listing = io.Discard
+			}
+			o := tool.Done()
+			misses := bounded.Capped(listing, failMax, "EVAL", "miss", failMaxRemedy)
+			hits := 0
+			var mrr float64
+			for _, row := range rows {
+				rank := 0
+				for i, h := range memindex.Retrieve(corpus, chans, row.query, k) {
+					if slices.ContainsFunc(row.expected, func(e string) bool { return strings.Contains(h.File, e) }) {
+						rank = i + 1
+						break
+					}
+				}
+				if rank != 0 {
+					hits++
+					mrr += 1.0 / float64(rank)
+					continue
+				}
+				misses.Line(fmt.Sprintf("EVAL MISS query=%s expected=%s",
+					oneline.Field(oneline.Cap(row.query, oneline.TailBytes)),
+					oneline.Field(oneline.Cap(strings.Join(row.expected, ","), oneline.TailBytes))))
+				o.Item("miss", "query", tool.Text(row.query), "expected", strings.Join(row.expected, ","))
+			}
+			misses.More()
+			recall := float64(hits) / float64(len(rows))
+			mrr /= float64(len(rows))
+			if c.Bool("json") {
+				o.Fact("k", k).Fact("recall", recall).Fact("floor", floor).Fact("rows", len(rows)).Fact("hits", hits).
+					Fact("misses", misses.Total()).Fact("mrr", mrr).Fact("channels", chanNames(chans))
+				if recall < floor {
+					o.Status, o.Exit = tool.Failed, 1
+					o.Why = []string{fmt.Sprintf("recall@%d=%.3f is below the floor %.3f", k, recall, floor)}
+				}
+				return o.Cap(failMax)
+			}
+			if recall < floor {
+				fmt.Fprintf(c.Stderr, "EVAL FAIL recall@%d=%.3f below floor %.3f (%d/%d, misses=%d shown=%d, mrr=%.3f, channels=%s)\n",
+					k, recall, floor, hits, len(rows), misses.Total(), misses.Shown(), mrr, chanNames(chans))
+				return tool.Exit(1)
+			}
+			fmt.Fprintf(c.Stdout, "EVAL OK recall@%d=%.3f floor=%.3f rows=%d hits=%d misses=%d shown=%d mrr=%.3f channels=%s\n",
+				k, recall, floor, len(rows), hits, misses.Total(), misses.Shown(), mrr, chanNames(chans))
+			return tool.Exit(0)
+		},
 	}
-	misses.More()
-	recall := float64(hits) / float64(len(rows))
-	mrr /= float64(len(rows))
-	if recall < *floor {
-		fmt.Fprintf(stderr, "EVAL FAIL recall@%d=%.3f below floor %.3f (%d/%d, misses=%d shown=%d, mrr=%.3f, channels=%s)\n",
-			*k, recall, *floor, hits, len(rows), misses.Total(), misses.Shown(), mrr, chanNames(chans))
-		return 1
-	}
-	fmt.Fprintf(stdout, "EVAL OK recall@%d=%.3f floor=%.3f rows=%d hits=%d misses=%d shown=%d mrr=%.3f channels=%s\n",
-		*k, recall, *floor, len(rows), hits, misses.Total(), misses.Shown(), mrr, chanNames(chans))
-	return 0
 }
 
 // goldRow is one known-answer case: a query, and the paths any one of which

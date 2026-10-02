@@ -41,27 +41,23 @@ func TestRefusesToGuess(t *testing.T) {
 		wantStderr string
 	}{
 		{"no subcommand", nil, "run: nova-memory help"},
-		{"unknown subcommand", []string{"frobnicate"}, "unknown subcommand"},
+		{"unknown verb", []string{"frobnicate"}, `unknown verb "frobnicate"; the verbs are quickstart, stats, search, check, verify, eval, boot, version`},
 
 		{"stats without root", []string{"stats"}, "--root is required"},
-		{"stats stray argument", []string{"stats", "--root", corpus, "extra"}, "unexpected argument"},
-		{"quickstart stray argument", []string{"quickstart", "--root", corpus, "extra"}, "unexpected argument"},
+		{"stats stray argument", []string{"stats", "--root", corpus, "extra"}, `takes no positional arguments, got "extra"`},
+		{"quickstart stray argument", []string{"quickstart", "--root", corpus, "extra"}, `takes no positional arguments, got "extra"`},
 
 		{"search without root", []string{"search", "--channels", "bm25", "--k", "3", "x"}, "--root is required"},
-		{"search without channels", []string{"search", "--root", corpus, "--k", "3", "x"}, "--channels is required"},
-		{"search without k", []string{"search", "--root", corpus, "--channels", "bm25", "x"}, "--k is required"},
 		{"search with zero k", []string{"search", "--root", corpus, "--channels", "bm25", "--k", "0", "x"}, "--k must be a positive"},
 		{"search with negative k", []string{"search", "--root", corpus, "--channels", "bm25", "--k", "-2", "x"}, "--k must be a positive"},
-		{"search without a query", []string{"search", "--root", corpus, "--channels", "bm25", "--k", "3"}, "no query words"},
+		{"search without a query", []string{"search", "--root", corpus, "--channels", "bm25", "--k", "3"}, "takes <words>..., at least 1 argument, got 0"},
 		{"search with unknown channel", []string{"search", "--root", corpus, "--channels", "semantic", "--k", "3", "x"}, `unknown channel "semantic"`},
 		{"search with empty channels", []string{"search", "--root", corpus, "--channels", "", "--k", "3", "x"}, "named no channels"},
 		{"search with a stray comma in channels", []string{"search", "--root", corpus, "--channels", "bm25,", "--k", "3", "x"}, "empty entry"},
 
 		{"check without root", []string{"check", "--channels", "bm25", "--k", "3", "-"}, "--root is required"},
-		{"check without channels", []string{"check", "--root", corpus, "--k", "3", "-"}, "--channels is required"},
-		{"check without k", []string{"check", "--root", corpus, "--channels", "bm25", "-"}, "--k is required"},
-		{"check without a named input", []string{"check", "--root", corpus, "--channels", "bm25", "--k", "3"}, "exactly one candidate file"},
-		{"check with two inputs", []string{"check", "--root", corpus, "--channels", "bm25", "--k", "3", "a", "b"}, "exactly one candidate file"},
+		{"check without a named input", []string{"check", "--root", corpus, "--channels", "bm25", "--k", "3"}, "takes <file|->, exactly 1 argument, got 0"},
+		{"check with two inputs", []string{"check", "--root", corpus, "--channels", "bm25", "--k", "3", "a", "b"}, "takes <file|->, exactly 1 argument, got 2"},
 
 		{"verify without root", []string{"verify", "--links", "info", "--coverage", "a:b"}, "--root is required"},
 		{"verify without links", []string{"verify", "--root", corpus, "--coverage", "a:b"}, "--links is required"},
@@ -69,18 +65,16 @@ func TestRefusesToGuess(t *testing.T) {
 		{"verify with no gating check", []string{"verify", "--root", corpus, "--links", "info"}, "a run that cannot fail is not a verification"},
 		{"verify exempt without frontmatter", []string{"verify", "--root", corpus, "--links", "gate", "--exempt", "index-"}, "--exempt only applies"},
 		{"verify with a malformed coverage pair", []string{"verify", "--root", corpus, "--links", "info", "--coverage", "notes"}, "--coverage wants A:B"},
-		{"verify stray argument", []string{"verify", "--root", corpus, "--links", "gate", "extra"}, "unexpected argument"},
+		{"verify stray argument", []string{"verify", "--root", corpus, "--links", "gate", "extra"}, `takes no positional arguments, got "extra"`},
 
 		{"eval without root", []string{"eval", "--channels", "bm25", "--k", "3", "--floor", "0.8", exampleGold}, "--root is required"},
-		{"eval without channels", []string{"eval", "--root", corpus, "--k", "3", "--floor", "0.8", exampleGold}, "--channels is required"},
-		{"eval without k", []string{"eval", "--root", corpus, "--channels", "bm25", "--floor", "0.8", exampleGold}, "--k is required"},
 		{"eval without floor", []string{"eval", "--root", corpus, "--channels", "bm25", "--k", "3", exampleGold}, "--floor is required"},
 		{"eval with a zero floor", []string{"eval", "--root", corpus, "--channels", "bm25", "--k", "3", "--floor", "0", exampleGold}, "a harness that cannot fail is not a measurement"},
 		{"eval with a negative floor", []string{"eval", "--root", corpus, "--channels", "bm25", "--k", "3", "--floor", "-1", exampleGold}, "--floor must be in (0,1]"},
 		{"eval with a floor above one", []string{"eval", "--root", corpus, "--channels", "bm25", "--k", "3", "--floor", "1.5", exampleGold}, "--floor must be in (0,1]"},
 		{"eval with a NaN floor", []string{"eval", "--root", corpus, "--channels", "bm25", "--k", "3", "--floor", "NaN", exampleGold}, "--floor must be in (0,1]"},
 		{"eval with an Inf floor", []string{"eval", "--root", corpus, "--channels", "bm25", "--k", "3", "--floor", "+Inf", exampleGold}, "--floor must be in (0,1]"},
-		{"eval without a gold file", []string{"eval", "--root", corpus, "--channels", "bm25", "--k", "3", "--floor", "0.8"}, "exactly one gold file"},
+		{"eval without a gold file", []string{"eval", "--root", corpus, "--channels", "bm25", "--k", "3", "--floor", "0.8"}, "takes <gold.tsv>, exactly 1 argument, got 0"},
 		{"eval with a missing gold file", []string{"eval", "--root", corpus, "--channels", "bm25", "--k", "3", "--floor", "0.8", "testdata/no-such-gold.tsv"}, "no-such-gold.tsv"},
 	}
 	for _, tt := range tests {
@@ -93,15 +87,15 @@ func TestRefusesToGuess(t *testing.T) {
 	}
 }
 
-// Two missing flags must be reported in the same order every run: the check
-// is sorted, never map order.
+// Missing flags must be reported in the same order every run: the order the verb
+// declares its rules in, never map order.
 func TestRequiredFlagErrorOrderDeterministic(t *testing.T) {
 	t.Parallel()
 
 	for i := 0; i < 20; i++ {
 		exit, _, stderr := runCLI(t, "", "eval")
 		require.Equalf(t, 2, exit, "exit = %d, want 2", exit)
-		want := []string{"--channels is required", "--floor is required", "--k is required", "--root is required"}
+		want := []string{"--root is required", "--floor is required"}
 		at := -1
 		for _, w := range want {
 			idx := strings.Index(stderr, w)
@@ -153,7 +147,7 @@ func TestStats(t *testing.T) {
 	exit, stdout, stderr := runCLI(t, "", "stats", "--root", corpus)
 	require.Equalf(t, 0, exit, "exit = %d, want 0; stderr: %s", exit, stderr)
 	for _, want := range []string{
-		"STATS OK schema=nova-memory/1 files=6",
+		"STATS OK schema=nova-memory/2 files=6",
 		"STATS OK class=. chunks=",
 		"STATS OK class=log chunks=",
 		"STATS OK class=notes chunks=",
@@ -238,7 +232,7 @@ func TestCalibrationProbeAndSchemaVersionMoveTogether(t *testing.T) {
 	t.Parallel()
 
 	const wantProbe = "the quarterly marketing budget for the regional office needs revised headcount projections before the fiscal deadline"
-	const wantSchema = "nova-memory/1"
+	const wantSchema = "nova-memory/2"
 	assert.Equalf(t, wantProbe, calibrationProbe, "the calibration probe changed:\n got: %q\nwant: %q\n"+
 		"The probe defines the negative-control band, so every band printed under the old probe is incomparable "+
 		"with every band printed under the new one. If the change is intended, bump memindex.SchemaVersion in the "+
@@ -874,7 +868,7 @@ func TestNoCorpusOrCallerTextCanForgeALine(t *testing.T) {
 		exit, stdout, stderr := runCLI(t, "", "stats", "--root", corpus, "--bogus\n"+forged)
 		require.Equalf(t, 2, exit, "exit = %d, want 2; stderr: %s", exit, stderr)
 		noForgedLine(t, forged, stdout, stderr)
-		assert.Containsf(t, stderr, `nova-memory stats: flag provided but not defined: -bogus\x0aSTATS OK schema`, "stderr = %q, want this tool's own refusal with the flag escaped", stderr)
+		assert.Containsf(t, stderr, `STATS REFUSED: flag provided but not defined: -bogus\x0aSTATS OK schema`, "stderr = %q, want this tool's own refusal with the flag escaped", stderr)
 	})
 }
 

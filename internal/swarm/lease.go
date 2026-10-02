@@ -246,11 +246,7 @@ func parseJobLease(path string, raw []byte, st os.FileInfo) JobLease {
 // The release is safe to call more than once. It stops the heartbeat, WAITS for it, and
 // then removes the file only while the file is still this run's -- pid and nonce both.
 func StartJobLease(jobDir, label string) (release func(), err error) {
-	return startJobLeaseEvery(jobDir, label, JobLeaseHeartbeat)
-}
-
-func startJobLeaseEvery(jobDir, label string, every time.Duration) (func(), error) {
-	t := time.NewTicker(every)
+	t := time.NewTicker(JobLeaseHeartbeat)
 	return startJobLeaseTicking(jobDir, label, t.C, t.Stop, jobLeaseHooks{})
 }
 
@@ -292,9 +288,7 @@ func startJobLeaseTicking(jobDir, label string, ticks <-chan time.Time, stopTick
 
 	done := make(chan struct{})
 	var beating sync.WaitGroup
-	beating.Add(1)
-	go func() {
-		defer beating.Done()
+	beating.Go(func() {
 		defer stopTicks()
 		// THE PROVIDER-BYTE RULE (feature 87). The lease renews only when the
 		// supervisor has observed provider bytes, signalled by a .provider-beat
@@ -338,7 +332,7 @@ func startJobLeaseTicking(jobDir, label string, ticks <-chan time.Time, stopTick
 				_ = publishJobLease(path, body, hooks)
 			}
 		}
-	}()
+	})
 
 	var once sync.Once
 	return func() {

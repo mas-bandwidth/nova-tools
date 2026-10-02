@@ -66,7 +66,8 @@ Every command carries a `### First run` transcript in its `## <tool>` section of
    written**; the only values matched by shape are the run-owned fields of one shared
    table, `onboarding.Volatile` (`at=`, `took=`, `created=`, a temporary path, a fresh
    sha, a name a recorded fixture carries that the document writes as the reader's
-   variable, and the stamp on the `branch=` a nova-secrets seal or seat inject commits on).
+   variable, the build on a `build=` (a version word, or an index build's duration), and
+   the stamp on the `branch=` a nova-secrets seal or seat inject commits on).
    A test may name a field from that table and may not invent one.
 3. **The class test asserts execution, not existence.**
    `TestEveryTranscriptIsExecutedLineForLine` walks `docs/TESTS.md`'s sections and

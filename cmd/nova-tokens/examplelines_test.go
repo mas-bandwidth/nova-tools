@@ -2,7 +2,6 @@ package main
 
 import (
 	"errors"
-	"github.com/stretchr/testify/require"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,7 +9,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -34,10 +36,10 @@ func TestHelpExampleLinesRunAsPrinted(t *testing.T) {
 	lines := exampleBlockLines(usage)
 	require.False(t, len(lines) == 0, "the usage banner's `example:` blocks hold no line; this test would pass by running nothing")
 
-	setup := fixtureSetupLine(usage)
-	require.False(t, setup == "", "the usage banner has no fixture setup line above the block, so a stranger pasting it names\n"+
+	setup := onboarding.SetupLine(usage)
+	require.False(t, !strings.HasPrefix(setup, wantFixtureSetup), "the usage banner has no fixture setup line above the block, so a stranger pasting it names\n"+
 		"inputs they have not made (nova-tools #1455: an example exiting 2 is a broken example).\n"+
-		"The missing line is:\n  %s", wantFixtureSetup)
+		"The missing line begins:\n  %s", wantFixtureSetup)
 	assert.NotContains(t, setup, "cmd/nova-tokens/testdata", "the setup still depends on a source checkout")
 
 	bin := buildExampleBinary(t)
@@ -56,7 +58,7 @@ func TestHelpExampleLinesRunAsPrinted(t *testing.T) {
 	}
 }
 
-// wantFixtureSetup is the standalone shell setup expected above the example block.
+// wantFixtureSetup is how the shell setup line above the example block begins.
 const wantFixtureSetup = "mkdir -p ./transcripts"
 
 // exampleBlockLines returns every command under an `example:` heading in a usage banner, in
@@ -83,18 +85,6 @@ func exampleBlockLines(usage string) []string {
 		}
 	}
 	return out
-}
-
-// fixtureSetupLine returns the fixture setup line the block reads, or "" when the banner loses
-// one. It matches the shape the fix gives the line rather than its exact prose, so the printed
-// line is the source of truth and this test runs what the banner carries.
-func fixtureSetupLine(usage string) string {
-	for _, line := range strings.Split(usage, "\n") {
-		if trimmed := strings.TrimSpace(line); strings.HasPrefix(trimmed, wantFixtureSetup) {
-			return trimmed
-		}
-	}
-	return ""
 }
 
 // buildExampleBinary builds this command into a temp dir and returns its path. It builds rather

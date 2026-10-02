@@ -285,11 +285,11 @@ func prRepo(url string) string {
 		return url
 	}
 	u := strings.TrimSuffix(strings.TrimSuffix(url, "/"), ".git")
-	if i := strings.Index(u, "://"); i >= 0 {
-		u = u[i+3:]
+	if _, after, ok := strings.Cut(u, "://"); ok {
+		u = after
 	}
-	if i := strings.Index(u, "@"); i >= 0 && !strings.Contains(u[:i], "/") {
-		u = u[i+1:]
+	if before, after, ok := strings.Cut(u, "@"); ok && !strings.Contains(before, "/") {
+		u = after
 	}
 	u = strings.Replace(u, ":", "/", 1)
 	return strings.TrimPrefix(u, githubHost+"/")

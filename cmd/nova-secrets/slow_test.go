@@ -18,6 +18,9 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // SLOW: 6.5 s on hetzner at dev 64b9bec48, over the five-second line.
@@ -29,9 +32,7 @@ func TestASeatOpensTheFilesItsRulesNameAndNoOther(t *testing.T) {
 
 	td := t.TempDir()
 	storeDir := filepath.Join(td, "store")
-	if err := os.MkdirAll(storeDir, 0755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(storeDir, 0755))
 	initGitStore(t, storeDir)
 
 	// Keypairs: A_admin, A_keeper, B, C, R
@@ -42,9 +43,7 @@ func TestASeatOpensTheFilesItsRulesNameAndNoOther(t *testing.T) {
 	rKey := genKey(t, td, "recovery")
 
 	// recovery.pub
-	if err := os.WriteFile(filepath.Join(storeDir, "recovery.pub"), []byte(rKey.pubKey+"\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(storeDir, "recovery.pub"), []byte(rKey.pubKey+"\n"), 0644))
 
 	// .sops.yaml
 	sopsConfig := fmt.Sprintf(`creation_rules:
@@ -60,9 +59,7 @@ func TestASeatOpensTheFilesItsRulesNameAndNoOther(t *testing.T) {
     age: %s,%s
 `, aAdmin.pubKey, rKey.pubKey, aKeeper.pubKey, rKey.pubKey, bKey.pubKey, rKey.pubKey, bKey.pubKey, rKey.pubKey, cKey.pubKey, rKey.pubKey)
 
-	if err := os.WriteFile(filepath.Join(storeDir, ".sops.yaml"), []byte(sopsConfig), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(storeDir, ".sops.yaml"), []byte(sopsConfig), 0644))
 
 	// Seal 5 files
 	sealFileWithSops(t, sopsPath, filepath.Join(storeDir, "a.yaml"), []string{aAdmin.pubKey, rKey.pubKey}, "GH_TOKEN: ghp_admin\n")
@@ -75,74 +72,52 @@ func TestASeatOpensTheFilesItsRulesNameAndNoOther(t *testing.T) {
 
 	// 1. With A_admin: exec --as a succeeds, exec --as a-keeper exits 125, check is mine=1 foreign=4
 	out, errOut, code := runNovaSecrets(bin, "exec", "--store", storeDir, "--as", "a", "--key", aAdmin.privPath, "--sops", sopsPath, "--only", "GH_TOKEN", "--", "echo", "HELLO")
-	if code != 0 {
-		t.Fatalf("A_admin exec a failed: code %d, err: %s", code, errOut)
-	}
-	if !strings.Contains(out, "HELLO") {
-		t.Errorf("expected HELLO in stdout: %s", out)
-	}
+	require.Equal(t, 0, code, "A_admin exec a failed: code %d, err: %s", code, errOut)
+	assert.Contains(t, out, "HELLO", "expected HELLO in stdout: %s", out)
 
 	_, errOut, code = runNovaSecrets(bin, "exec", "--store", storeDir, "--as", "a-keeper", "--key", aAdmin.privPath, "--sops", sopsPath, "--only", "GH_TOKEN", "--", "echo", "HELLO")
-	if code != 125 {
-		t.Fatalf("expected code 125 on wrong key, got %d, err: %s", code, errOut)
-	}
+	require.Equal(t, 125, code, "expected code 125 on wrong key, got %d, err: %s", code, errOut)
 
 	// sops -d a-keeper.yaml exits 128 with A_admin key
 	cmd := exec.Command(sopsPath, "-d", filepath.Join(storeDir, "a-keeper.yaml"))
 	cmd.Env = []string{"SOPS_AGE_KEY_FILE=" + aAdmin.privPath, "PATH=/usr/bin:/bin"}
-	if err := cmd.Run(); err == nil {
-		t.Fatalf("expected sops -d to fail with wrong key")
-	} else if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() != 128 {
+	err := cmd.Run()
+	require.Error(t, err, "expected sops -d to fail with wrong key")
+	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() != 128 {
 		t.Logf("sops exit code: %d", exitErr.ExitCode())
 	}
 
 	out, errOut, code = runNovaSecrets(bin, "check", "--store", storeDir, "--as", "a", "--key", aAdmin.privPath, "--sops", sopsPath)
-	if code != 0 {
-		t.Fatalf("check failed for A_admin: code %d, err: %s", code, errOut)
-	}
-	if !strings.Contains(out, "mine=1") || !strings.Contains(out, "foreign=4") {
-		t.Errorf("expected mine=1 foreign=4 in check output: %s", out)
-	}
+	require.Equal(t, 0, code, "check failed for A_admin: code %d, err: %s", code, errOut)
+	assert.Contains(t, out, "mine=1", "expected mine=1 foreign=4 in check output: %s", out)
+	assert.Contains(t, out, "foreign=4", "expected mine=1 foreign=4 in check output: %s", out)
 
 	// 2. With A_keeper: mirror
 	out, errOut, code = runNovaSecrets(bin, "exec", "--store", storeDir, "--as", "a-keeper", "--key", aKeeper.privPath, "--sops", sopsPath, "--only", "GH_TOKEN", "--", "echo", "HELLO_KEEPER")
-	if code != 0 || !strings.Contains(out, "HELLO_KEEPER") {
-		t.Fatalf("A_keeper exec failed: code %d, out: %s, err: %s", code, out, errOut)
-	}
+	require.Equal(t, 0, code, "A_keeper exec failed: code %d, out: %s, err: %s", code, out, errOut)
+	require.Contains(t, out, "HELLO_KEEPER", "A_keeper exec failed: code %d, out: %s, err: %s", code, out, errOut)
 	_, _, code = runNovaSecrets(bin, "exec", "--store", storeDir, "--as", "a", "--key", aKeeper.privPath, "--sops", sopsPath, "--only", "GH_TOKEN", "--", "echo", "NO")
-	if code != 125 {
-		t.Fatalf("expected code 125, got %d", code)
-	}
+	require.Equal(t, 125, code, "expected code 125, got %d", code)
 
 	// 3. With B: mine=2 foreign=3
 	out, errOut, code = runNovaSecrets(bin, "check", "--store", storeDir, "--as", "b", "--key", bKey.privPath, "--sops", sopsPath)
-	if code != 0 {
-		t.Fatalf("check failed for B: code %d, err: %s", code, errOut)
-	}
-	if !strings.Contains(out, "mine=2") || !strings.Contains(out, "foreign=3") {
-		t.Errorf("expected mine=2 foreign=3: %s", out)
-	}
+	require.Equal(t, 0, code, "check failed for B: code %d, err: %s", code, errOut)
+	assert.Contains(t, out, "mine=2", "expected mine=2 foreign=3: %s", out)
+	assert.Contains(t, out, "foreign=3", "expected mine=2 foreign=3: %s", out)
 
 	// 4. With R: opens all five (mine=5 foreign=0)
 	out, errOut, code = runNovaSecrets(bin, "check", "--store", storeDir, "--as", "a", "--key", rKey.privPath, "--sops", sopsPath)
-	if code != 0 {
-		t.Fatalf("check failed for R: code %d, err: %s", code, errOut)
-	}
-	if !strings.Contains(out, "mine=5") || !strings.Contains(out, "foreign=0") {
-		t.Errorf("expected mine=5 foreign=0: %s", out)
-	}
+	require.Equal(t, 0, code, "check failed for R: code %d, err: %s", code, errOut)
+	assert.Contains(t, out, "mine=5", "expected mine=5 foreign=0: %s", out)
+	assert.Contains(t, out, "foreign=0", "expected mine=5 foreign=0: %s", out)
 
 	// Mutations:
 	// a) file's block listing keeper key while rule does not -> invariant 2 with updatekeys line
 	sealFileWithSops(t, sopsPath, filepath.Join(storeDir, "a.yaml"), []string{aAdmin.pubKey, aKeeper.pubKey, rKey.pubKey}, "GH_TOKEN: ghp_drift\n")
 	commitAndPush(t, storeDir)
 	out, errOut, code = runNovaSecrets(bin, "check", "--store", storeDir, "--as", "a", "--key", aAdmin.privPath, "--sops", sopsPath)
-	if code != 1 {
-		t.Fatalf("expected check exit 1 on recipient drift, got %d", code)
-	}
-	if !strings.Contains(errOut, "recipients differ from .sops.yaml; run: sops updatekeys a.yaml") {
-		t.Errorf("expected updatekeys line in errOut: %s", errOut)
-	}
+	require.Equal(t, 1, code, "expected check exit 1 on recipient drift, got %d", code)
+	assert.Contains(t, errOut, "recipients differ from .sops.yaml; run: sops updatekeys a.yaml", "expected updatekeys line in errOut: %s", errOut)
 	// Revert a.yaml
 	sealFileWithSops(t, sopsPath, filepath.Join(storeDir, "a.yaml"), []string{aAdmin.pubKey, rKey.pubKey}, "GH_TOKEN: ghp_admin\n")
 	commitAndPush(t, storeDir)
@@ -152,9 +127,8 @@ func TestASeatOpensTheFilesItsRulesNameAndNoOther(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(storeDir, ".sops.yaml"), []byte(brokenRuleCfg), 0644)
 	commitAndPush(t, storeDir)
 	_, errOut, code = runNovaSecrets(bin, "check", "--store", storeDir, "--as", "a", "--key", aAdmin.privPath, "--sops", sopsPath)
-	if code != 1 || !strings.Contains(errOut, "recipients differ from .sops.yaml; run: sops updatekeys a.yaml") {
-		t.Errorf("expected invariant 2 error: %s", errOut)
-	}
+	assert.Equal(t, 1, code, "expected invariant 2 error: %s", errOut)
+	assert.Contains(t, errOut, "recipients differ from .sops.yaml; run: sops updatekeys a.yaml", "expected invariant 2 error: %s", errOut)
 	// Restore config
 	_ = os.WriteFile(filepath.Join(storeDir, ".sops.yaml"), []byte(sopsConfig), 0644)
 	commitAndPush(t, storeDir)
@@ -169,14 +143,11 @@ func TestASeatOpensTheFilesItsRulesNameAndNoOther(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(storeDir, ".sops.yaml"), []byte(twoRuleCfg), 0644)
 	commitAndPush(t, storeDir)
 	_, errOut, code = runNovaSecrets(bin, "check", "--store", storeDir, "--as", "a", "--key", aAdmin.privPath, "--sops", sopsPath)
-	if code != 1 || !strings.Contains(errOut, "does not contain declared recovery key") {
-		t.Errorf("expected invariant 1 recovery mismatch error: %s", errOut)
-	}
+	assert.Equal(t, 1, code, "expected invariant 1 recovery mismatch error: %s", errOut)
+	assert.Contains(t, errOut, "does not contain declared recovery key", "expected invariant 1 recovery mismatch error: %s", errOut)
 	// Also asserted on exec -> 125
 	_, errOut, code = runNovaSecrets(bin, "exec", "--store", storeDir, "--as", "a", "--key", aAdmin.privPath, "--sops", sopsPath, "--only", "GH_TOKEN", "--", "echo", "NO")
-	if code != 125 {
-		t.Errorf("expected exec 125 on declared recovery mismatch, got %d: %s", code, errOut)
-	}
+	assert.Equal(t, 125, code, "expected exec 125 on declared recovery mismatch, got %d: %s", code, errOut)
 
 	// Restore config
 	_ = os.WriteFile(filepath.Join(storeDir, ".sops.yaml"), []byte(sopsConfig), 0644)
@@ -187,13 +158,9 @@ func TestASeatOpensTheFilesItsRulesNameAndNoOther(t *testing.T) {
 	testBadRecovery := func(state string, setup func(), cleanup func()) {
 		setup()
 		_, errOut, code := runNovaSecrets(bin, "check", "--store", storeDir, "--as", "a", "--key", aAdmin.privPath, "--sops", sopsPath)
-		if code != 1 {
-			t.Errorf("state %s: check expected 1, got %d (%s)", state, code, errOut)
-		}
+		assert.Equal(t, 1, code, "state %s: check expected 1, got %d (%s)", state, code, errOut)
 		_, errOut, code = runNovaSecrets(bin, "exec", "--store", storeDir, "--as", "a", "--key", aAdmin.privPath, "--sops", sopsPath, "--only", "GH_TOKEN", "--", "echo", "NO")
-		if code != 125 {
-			t.Errorf("state %s: exec expected 125, got %d (%s)", state, code, errOut)
-		}
+		assert.Equal(t, 125, code, "state %s: exec expected 125, got %d (%s)", state, code, errOut)
 		if cleanup != nil {
 			cleanup()
 		}
@@ -218,27 +185,24 @@ func TestASeatOpensTheFilesItsRulesNameAndNoOther(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(storeDir, ".sops.yaml"), []byte(badAnchorCfg), 0644)
 	commitAndPush(t, storeDir)
 	_, errOut, code = runNovaSecrets(bin, "check", "--store", storeDir, "--as", "a", "--key", aAdmin.privPath, "--sops", sopsPath)
-	if code != 1 || !strings.Contains(errOut, "not anchored at both ends") {
-		t.Errorf("expected unanchored regex failure: %s", errOut)
-	}
+	assert.Equal(t, 1, code, "expected unanchored regex failure: %s", errOut)
+	assert.Contains(t, errOut, "not anchored at both ends", "expected unanchored regex failure: %s", errOut)
 
 	// f) Recipient truncated to age1
 	truncCfg := strings.Replace(sopsConfig, aAdmin.pubKey, "age1", 1)
 	_ = os.WriteFile(filepath.Join(storeDir, ".sops.yaml"), []byte(truncCfg), 0644)
 	commitAndPush(t, storeDir)
 	_, errOut, code = runNovaSecrets(bin, "check", "--store", storeDir, "--as", "a", "--key", aAdmin.privPath, "--sops", sopsPath)
-	if code != 1 || !strings.Contains(errOut, "not a valid age public key") {
-		t.Errorf("expected truncated age key failure: %s", errOut)
-	}
+	assert.Equal(t, 1, code, "expected truncated age key failure: %s", errOut)
+	assert.Contains(t, errOut, "not a valid age public key", "expected truncated age key failure: %s", errOut)
 
 	// g) R listed twice in one rule
 	dupCfg := strings.Replace(sopsConfig, aAdmin.pubKey, rKey.pubKey, 1)
 	_ = os.WriteFile(filepath.Join(storeDir, ".sops.yaml"), []byte(dupCfg), 0644)
 	commitAndPush(t, storeDir)
 	_, errOut, code = runNovaSecrets(bin, "check", "--store", storeDir, "--as", "a", "--key", aAdmin.privPath, "--sops", sopsPath)
-	if code != 1 || !strings.Contains(errOut, "duplicate recipient") {
-		t.Errorf("expected duplicate recipient failure: %s", errOut)
-	}
+	assert.Equal(t, 1, code, "expected duplicate recipient failure: %s", errOut)
+	assert.Contains(t, errOut, "duplicate recipient", "expected duplicate recipient failure: %s", errOut)
 }
 
 // SLOW: 2.5 s on hetzner at dev 64b9bec48, a deadline/wedge/wall bound proved by waiting it out.
@@ -270,47 +234,40 @@ func TestAStaleWorkingCopyIsRefused(t *testing.T) {
 	runCmd(t, storeDir, "git", "commit", "-m", "local commit ahead")
 
 	_, errOut, code := runNovaSecrets(bin, "check", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath)
-	if code != 1 || !strings.Contains(errOut, "pull --ff-only") {
-		t.Errorf("ahead working copy expected check exit 1 naming pull, got %d: %s", code, errOut)
-	}
+	assert.Equal(t, 1, code, "ahead working copy expected check exit 1 naming pull, got %d: %s", code, errOut)
+	assert.Contains(t, errOut, "pull --ff-only", "ahead working copy expected check exit 1 naming pull, got %d: %s", code, errOut)
 
 	_, errOut, code = runNovaSecrets(bin, "exec", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath,
 		"--only", "all", "--", "true")
-	if code != 125 || !strings.Contains(errOut, "pull --ff-only") {
-		t.Errorf("ahead working copy expected exec exit 125 naming pull, got %d: %s", code, errOut)
-	}
+	assert.Equal(t, 125, code, "ahead working copy expected exec exit 125 naming pull, got %d: %s", code, errOut)
+	assert.Contains(t, errOut, "pull --ff-only", "ahead working copy expected exec exit 125 naming pull, got %d: %s", code, errOut)
 
 	// 2. Push to sync and verify green
 	runCmd(t, storeDir, "git", "push", "origin", "main")
 	out, _, code := runNovaSecrets(bin, "check", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath)
-	if code != 0 || !strings.Contains(out, "head=") {
-		t.Errorf("synced working copy expected check exit 0 with head=: %d, out=%s", code, out)
-	}
+	assert.Equal(t, 0, code, "synced working copy expected check exit 0 with head=: %d, out=%s", code, out)
+	assert.Contains(t, out, "head=", "synced working copy expected check exit 0 with head=: %d, out=%s", code, out)
 
 	// 3. Detached HEAD refusal (exit 2 on check, 125 on exec)
 	runCmd(t, storeDir, "git", "checkout", "--detach", "HEAD")
 	_, errOut, code = runNovaSecrets(bin, "check", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath)
-	if code != 2 || !strings.Contains(errOut, "detached HEAD") {
-		t.Errorf("detached HEAD expected check refusal 2, got %d: %s", code, errOut)
-	}
+	assert.Equal(t, 2, code, "detached HEAD expected check refusal 2, got %d: %s", code, errOut)
+	assert.Contains(t, errOut, "detached HEAD", "detached HEAD expected check refusal 2, got %d: %s", code, errOut)
 	_, errOut, code = runNovaSecrets(bin, "exec", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath,
 		"--only", "all", "--", "true")
-	if code != 125 || !strings.Contains(errOut, "detached HEAD") {
-		t.Errorf("detached HEAD expected exec refusal 125, got %d: %s", code, errOut)
-	}
+	assert.Equal(t, 125, code, "detached HEAD expected exec refusal 125, got %d: %s", code, errOut)
+	assert.Contains(t, errOut, "detached HEAD", "detached HEAD expected exec refusal 125, got %d: %s", code, errOut)
 	runCmd(t, storeDir, "git", "checkout", "main")
 
 	// 4. Branch with no upstream refusal (exit 2 on check, 125 on exec)
 	runCmd(t, storeDir, "git", "checkout", "-b", "local-no-upstream")
 	_, errOut, code = runNovaSecrets(bin, "check", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath)
-	if code != 2 || !strings.Contains(errOut, "no upstream") {
-		t.Errorf("no upstream branch expected check refusal 2, got %d: %s", code, errOut)
-	}
+	assert.Equal(t, 2, code, "no upstream branch expected check refusal 2, got %d: %s", code, errOut)
+	assert.Contains(t, errOut, "no upstream", "no upstream branch expected check refusal 2, got %d: %s", code, errOut)
 	_, errOut, code = runNovaSecrets(bin, "exec", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath,
 		"--only", "all", "--", "true")
-	if code != 125 || !strings.Contains(errOut, "no upstream") {
-		t.Errorf("no upstream branch expected exec refusal 125, got %d: %s", code, errOut)
-	}
+	assert.Equal(t, 125, code, "no upstream branch expected exec refusal 125, got %d: %s", code, errOut)
+	assert.Contains(t, errOut, "no upstream", "no upstream branch expected exec refusal 125, got %d: %s", code, errOut)
 	runCmd(t, storeDir, "git", "checkout", "main")
 
 	check := func(args ...string) (string, string, int) {
@@ -323,33 +280,28 @@ func TestAStaleWorkingCopyIsRefused(t *testing.T) {
 	// 5. head= on the green run is HEAD's short sha, exactly.
 	short := strings.TrimSpace(runCmd(t, storeDir, "git", "rev-parse", "--short=7", "HEAD"))
 	out, errOut, code = check()
-	if code != 0 || !regexp.MustCompile(`(^| )head=`+short+`( |$)`).MatchString(strings.TrimSpace(out)) {
-		t.Errorf("green check must carry head=%s, got %d: %s%s", short, code, out, errOut)
-	}
+	assert.Equal(t, 0, code, "green check must carry head=%s, got %d: %s%s", short, code, out, errOut)
+	assert.True(t, regexp.MustCompile(`(^| )head=`+short+`( |$)`).MatchString(strings.TrimSpace(out)), "green check must carry head=%s, got %d: %s%s", short, code, out, errOut)
 
 	// 6. HEAD BEHIND its remote-tracking ref: check exit 1 naming the pull, exec 125
 	// with the same line, and neither is green.
 	runCmd(t, storeDir, "git", "reset", "-q", "--hard", "HEAD~1")
 	_, checkErr, code := check()
-	if code != 1 || !strings.Contains(checkErr, "git -C "+storeDir+" pull --ff-only") {
-		t.Errorf("behind working copy expected check exit 1 naming git -C <store> pull --ff-only, got %d: %s", code, checkErr)
-	}
+	assert.Equal(t, 1, code, "behind working copy expected check exit 1 naming git -C <store> pull --ff-only, got %d: %s", code, checkErr)
+	assert.Contains(t, checkErr, "git -C "+storeDir+" pull --ff-only", "behind working copy expected check exit 1 naming git -C <store> pull --ff-only, got %d: %s", code, checkErr)
 	_, execErr, code := execTrue()
-	if code != 125 || !strings.Contains(execErr, "git -C "+storeDir+" pull --ff-only") {
-		t.Errorf("behind working copy expected exec 125 naming git -C <store> pull --ff-only, got %d: %s", code, execErr)
-	}
+	assert.Equal(t, 125, code, "behind working copy expected exec 125 naming git -C <store> pull --ff-only, got %d: %s", code, execErr)
+	assert.Contains(t, execErr, "git -C "+storeDir+" pull --ff-only", "behind working copy expected exec 125 naming git -C <store> pull --ff-only, got %d: %s", code, execErr)
 
 	// 7. The mutation the spec names, run as a fixture: point the tracking ref at HEAD
 	// and both are green, so the refusal above was the ref comparison and nothing else.
 	behindHead := strings.TrimSpace(runCmd(t, storeDir, "git", "rev-parse", "HEAD"))
 	remoteHead := strings.TrimSpace(runCmd(t, storeDir, "git", "rev-parse", "refs/remotes/origin/main"))
 	runCmd(t, storeDir, "git", "update-ref", "refs/remotes/origin/main", behindHead)
-	if _, errOut, code = check(); code != 0 {
-		t.Errorf("tracking ref pointed at HEAD: check must be green, got %d: %s", code, errOut)
-	}
-	if _, errOut, code = execTrue(); code != 0 {
-		t.Errorf("tracking ref pointed at HEAD: exec must be green, got %d: %s", code, errOut)
-	}
+	_, errOut, code = check()
+	assert.Equal(t, 0, code, "tracking ref pointed at HEAD: check must be green, got %d: %s", code, errOut)
+	_, errOut, code = execTrue()
+	assert.Equal(t, 0, code, "tracking ref pointed at HEAD: exec must be green, got %d: %s", code, errOut)
 	runCmd(t, storeDir, "git", "update-ref", "refs/remotes/origin/main", remoteHead)
 	runCmd(t, storeDir, "git", "merge", "-q", "--ff-only", "refs/remotes/origin/main")
 
@@ -361,20 +313,18 @@ func TestAStaleWorkingCopyIsRefused(t *testing.T) {
 	runCmd(t, "", "git", "clone", "-q", remoteURL, other)
 	runCmd(t, other, "git", "-c", "user.name=T", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "remote moves on")
 	runCmd(t, other, "git", "push", "-q", "origin", "main")
-	if _, errOut, code = check(); code != 0 {
-		t.Errorf("an unfetched remote move is green by design, got %d: %s", code, errOut)
-	}
-	if _, errOut, code = execTrue(); code != 0 {
-		t.Errorf("an unfetched remote move is green by design on exec, got %d: %s", code, errOut)
-	}
+	_, errOut, code = check()
+	assert.Equal(t, 0, code, "an unfetched remote move is green by design, got %d: %s", code, errOut)
+	_, errOut, code = execTrue()
+	assert.Equal(t, 0, code, "an unfetched remote move is green by design on exec, got %d: %s", code, errOut)
 
 	// 9. A .git that is a FILE (a worktree): a refusal naming that fact on both verbs,
 	// never the stale-ref sentence and never "no .git".
 	wt := filepath.Join(td, "worktree")
 	runCmd(t, storeDir, "git", "worktree", "add", "-q", "-b", "wt", wt)
-	if fi, err := os.Lstat(filepath.Join(wt, ".git")); err != nil || fi.IsDir() {
-		t.Fatalf("the worktree fixture has no .git file: %v", err)
-	}
+	fi, err := os.Lstat(filepath.Join(wt, ".git"))
+	require.NoError(t, err, "the worktree fixture has no .git file: %v", err)
+	require.False(t, fi.IsDir(), "the worktree fixture has no .git file: %v", err)
 	for _, v := range [][]string{
 		{"check", "--store", wt, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath},
 		{"exec", "--store", wt, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath, "--only", "all", "--", "true"},
@@ -384,12 +334,10 @@ func TestAStaleWorkingCopyIsRefused(t *testing.T) {
 			want = 125
 		}
 		_, errOut, code := runNovaSecrets(bin, v...)
-		if code != want || !strings.Contains(errOut, ".git is a file (a worktree or submodule)") {
-			t.Errorf("%s on a worktree: expected %d naming the .git file, got %d: %s", v[0], want, code, errOut)
-		}
-		if strings.Contains(errOut, "pull --ff-only") || strings.Contains(errOut, "no .git") {
-			t.Errorf("%s on a worktree named the wrong fact: %s", v[0], errOut)
-		}
+		assert.Equal(t, want, code, "%s on a worktree: expected %d naming the .git file, got %d: %s", v[0], want, code, errOut)
+		assert.Contains(t, errOut, "has a .git that is a file (a worktree or submodule)", "%s on a worktree: expected %d naming the .git file, got %d: %s", v[0], want, code, errOut)
+		assert.NotContains(t, errOut, "pull --ff-only", "%s on a worktree named the wrong fact: %s", v[0], errOut)
+		assert.NotContains(t, errOut, "no .git", "%s on a worktree named the wrong fact: %s", v[0], errOut)
 	}
 }
 
@@ -428,9 +376,7 @@ func TestCheckCapsEachKindSeparatelyAndAlwaysPrintsTheCount(t *testing.T) {
 		fp := filepath.Join(storeDir, name+".yaml")
 		sealFileWithSops(t, sopsPath, fp, []string{keyA.pubKey, recKey.pubKey}, "GH_TOKEN: ghp_for\n")
 		sealed, err := os.ReadFile(fp)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		_ = os.WriteFile(fp, []byte(strings.ReplaceAll(string(sealed), keyA.pubKey, foreignKey.pubKey)), 0644)
 	}
 	sealFileWithSops(t, sopsPath, filepath.Join(storeDir, "main.yaml"), []string{keyA.pubKey, recKey.pubKey}, "GH_TOKEN: ghp_main\n")
@@ -452,60 +398,37 @@ func TestCheckCapsEachKindSeparatelyAndAlwaysPrintsTheCount(t *testing.T) {
 	// Default --max 20: the loud kind (30 unsealed) caps at 20 with its own MORE line,
 	// and does not eat the quiet kind, whose two lines are all shown with no MORE.
 	_, errOut, code := runNovaSecrets(bin, "check", "--store", storeDir, "--as", "main", "--key", keyA.privPath, "--sops", sopsPath)
-	if code != 1 {
-		t.Fatalf("expected check exit 1, got %d: %s", code, errOut)
+	require.Equal(t, 1, code, "expected check exit 1, got %d: %s", code, errOut)
+	got := failLines(errOut, "outside unencrypted_regex")
+	assert.Equal(t, 20, got, "the loud kind shows %d lines at --max 20, want 20: %s", got, errOut)
+	assert.Contains(t, errOut, "SECRETS CHECK MORE kind=unsealed shown=20 total=30", "expected MORE line for unsealed: %s", errOut)
+	{
+		got := failLines(errOut, "recipients do not list it")
+		assert.Equal(t, 2, got, "the loud kind ate the quiet one: %d foreign lines shown, want both: %s", got, errOut)
 	}
-	if got := failLines(errOut, "outside unencrypted_regex"); got != 20 {
-		t.Errorf("the loud kind shows %d lines at --max 20, want 20: %s", got, errOut)
-	}
-	if !strings.Contains(errOut, "SECRETS CHECK MORE kind=unsealed shown=20 total=30") {
-		t.Errorf("expected MORE line for unsealed: %s", errOut)
-	}
-	if got := failLines(errOut, "recipients do not list it"); got != 2 {
-		t.Errorf("the loud kind ate the quiet one: %d foreign lines shown, want both: %s", got, errOut)
-	}
-	if strings.Contains(errOut, "MORE kind=foreign-openable") {
-		t.Errorf("a kind under its cap printed a MORE line: %s", errOut)
-	}
+	assert.NotContains(t, errOut, "MORE kind=foreign-openable", "a kind under its cap printed a MORE line: %s", errOut)
 	// The count line prints on the red run, and its numbers are the run's.
 	m := summary.FindStringSubmatch(errOut)
-	if m == nil {
-		t.Fatalf("the red run printed no count line: %s", errOut)
-	}
-	if m[2] != fmt.Sprint(failLines(errOut, "")) {
-		t.Errorf("the count line's shown=%s does not match the FAIL lines printed: %s", m[2], errOut)
-	}
+	require.NotNil(t, m, "the red run printed no count line: %s", errOut)
+	assert.Equal(t, fmt.Sprint(failLines(errOut, "")), m[2], "the count line's shown=%s does not match the FAIL lines printed: %s", m[2], errOut)
 
 	// --max 1: EACH kind caps separately, each with its own MORE line.
 	_, errOut1, code := runNovaSecrets(bin, "check", "--store", storeDir, "--as", "main", "--key", keyA.privPath, "--sops", sopsPath, "--max", "1")
-	if code != 1 {
-		t.Fatalf("expected exit 1 at --max 1, got %d", code)
-	}
-	if !strings.Contains(errOut1, "SECRETS CHECK MORE kind=unsealed shown=1 total=30") {
-		t.Errorf("--max 1: no MORE line of the loud kind's own: %s", errOut1)
-	}
-	if !regexp.MustCompile(`SECRETS CHECK MORE kind=foreign-openable shown=1 total=2 `).MatchString(errOut1) {
-		t.Errorf("--max 1: no MORE line of the quiet kind's own: %s", errOut1)
-	}
-	if summary.FindStringSubmatch(errOut1) == nil {
-		t.Errorf("--max 1: the count line is missing on the red run: %s", errOut1)
-	}
+	require.Equal(t, 1, code, "expected exit 1 at --max 1, got %d", code)
+	assert.Contains(t, errOut1, "SECRETS CHECK MORE kind=unsealed shown=1 total=30", "--max 1: no MORE line of the loud kind's own: %s", errOut1)
+	assert.True(t, regexp.MustCompile(`SECRETS CHECK MORE kind=foreign-openable shown=1 total=2 `).MatchString(errOut1), "--max 1: no MORE line of the quiet kind's own: %s", errOut1)
+	assert.NotNil(t, summary.FindStringSubmatch(errOut1), "--max 1: the count line is missing on the red run: %s", errOut1)
 
 	// --max 0 prints all
 	_, errOutAll, code := runNovaSecrets(bin, "check", "--store", storeDir, "--as", "main", "--key", keyA.privPath, "--sops", sopsPath, "--max", "0")
-	if code != 1 {
-		t.Fatalf("expected exit 1, got %d", code)
-	}
-	if strings.Contains(errOutAll, "MORE kind=") {
-		t.Errorf("max 0 should not print MORE line: %s", errOutAll)
-	}
-	if got := failLines(errOutAll, "outside unencrypted_regex"); got != 30 {
-		t.Errorf("--max 0 shows %d unsealed lines, want all 30", got)
+	require.Equal(t, 1, code, "expected exit 1, got %d", code)
+	assert.NotContains(t, errOutAll, "MORE kind=", "max 0 should not print MORE line: %s", errOutAll)
+	{
+		got := failLines(errOutAll, "outside unencrypted_regex")
+		assert.Equal(t, 30, got, "--max 0 shows %d unsealed lines, want all 30", got)
 	}
 
 	// Negative --max is refused at exit 2
 	_, errOutNeg, code := runNovaSecrets(bin, "check", "--store", storeDir, "--as", "main", "--key", keyA.privPath, "--sops", sopsPath, "--max", "-1")
-	if code != 2 {
-		t.Errorf("expected exit 2 on negative max, got %d: %s", code, errOutNeg)
-	}
+	assert.Equal(t, 2, code, "expected exit 2 on negative max, got %d: %s", code, errOutNeg)
 }
