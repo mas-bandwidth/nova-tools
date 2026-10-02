@@ -63,6 +63,8 @@ func TestTheShapesTheHelpNamesAreFoundInTheirPlainForms(t *testing.T) {
 		{"I am terrible at estimates.", "STANDING"},
 		{"I am useless at planning.", "STANDING"},
 		{"I cannot ever get this right.", "STANDING"},
+		{"I can't check my own work.", "STANDING"},
+		{"I can not verify my own claims.", "STANDING"},
 		{"I will never be a good planner.", string(Foreclosure)},
 		{"Nothing I do works.", string(Foreclosure)},
 		{"I am the best reviewer here.", string(Ranking)},
@@ -100,6 +102,7 @@ func TestThePlainFormsNearMissesAreNotFound(t *testing.T) {
 		"Nothing I write leaves this machine.",
 		"I am good at estimates.",
 		"I cannot merge without a read.",
+		"I can't merge without a read.",
 	} {
 		t.Run(in, func(t *testing.T) {
 			t.Parallel()

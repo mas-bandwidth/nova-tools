@@ -60,7 +60,7 @@ type Claim struct {
 // assertion. The bounded context either side keeps a match to roughly one
 // sentence without needing a real parser.
 var claim = regexp.MustCompile(`(?i)[^.!?]{0,120}\b(I am|I'm|I have never|I always|I never|` +
-	`I cannot|I can't|I do not|I don't|my \w+ is|makes me|I tend|I struggle|I fail|` +
+	`I cannot|I can't|I can not|I do not|I don't|my \w+ is|makes me|I tend|I struggle|I fail|` +
 	`reliably|every time|in one direction)\b[^.!?]{0,160}[.!?]`)
 
 // negative is the vocabulary that turns a first-person assertion into a
@@ -70,7 +70,7 @@ var claim = regexp.MustCompile(`(?i)[^.!?]{0,120}\b(I am|I'm|I have never|I alwa
 // prohibition, and scoring prohibitions is exactly what got rules weakened.
 var negative = regexp.MustCompile(`(?i)\b(fallib\w*|fail\w*|unreliab\w*|weak\w*|incapab\w*|` +
 	`confabulat\w*|neurotic|inadequa\w*|broken|(?:bad|poor|terrible|awful|hopeless|useless|no good) at|` +
-	`blind|worst|defect\w*|patholog\w*|flatters|cannot (?:verify|check|see|tell|trust|reliably|do|ever))\b`)
+	`blind|worst|defect\w*|patholog\w*|flatters|(?:can ?not|can't) (?:verify|check|see|tell|trust|reliably|do|ever))\b`)
 
 // standingRule is the first class's row of the detector table (Rules): the claim markers and
 // the negative vocabulary above are the whole of it.
