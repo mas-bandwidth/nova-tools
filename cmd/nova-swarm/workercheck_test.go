@@ -125,14 +125,14 @@ func TestWorkerCheckFlagTypes(t *testing.T) {
 	helpLines := strings.Split(help, "\n")
 	hasLine := func(want string) bool {
 		for _, l := range helpLines {
-			if l == want {
+			if strings.HasPrefix(l, want) {
 				return true
 			}
 		}
 		return false
 	}
-	assert.True(t, hasLine("  --env"), "help does not declare --env as a boolean flag (a bare `  --env` line):\n%s", help)
-	assert.True(t, hasLine("  --max <int>"), "help does not declare --max as an integer (`  --max <int>`):\n%s", help)
+	assert.True(t, hasLine("  --env  "), "help does not declare --env as a boolean flag (`  --env  <what it wants>`):\n%s", help)
+	assert.True(t, hasLine("  --max <int>  "), "help does not declare --max as an integer (`  --max <int>  <what it wants>`):\n%s", help)
 
 	// A description with two drifts: the harness is absent, and the named secret is not in
 	// this process's environment (which only --env asks about).
