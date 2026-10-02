@@ -1143,8 +1143,8 @@ $ nova-sandbox run --name j1 --scratch C:\nova --timeout 30m --memory 4g --cpu 5
   fallback: containment that only holds inside WSL is containment on a machine
   the card was not sent to.
 
-**This is not measured on a Windows machine.** The estate has none as of
-today. The verb's sequence is proven against a fake on every host, the
+**This is not measured on a Windows machine.** The estate has none. The
+verb's sequence is proven against a fake on every host, the
 binary cross-compiles and vets for `GOOS=windows`, and until the **wall**
 (AppContainer) is built the verb refuses there with `reason=no_sandbox` naming
 the half that is missing — a place without a wall is hygiene, not containment.
