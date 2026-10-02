@@ -223,7 +223,7 @@ func TestLinksNestedFourBacktickFenceHidesInnerThree(t *testing.T) {
 	})
 	_, checked, broken, err := Links(dir)
 	if err != nil {
-		require.FailNowf(t, "Links: %s", brief(err.Error()))
+		require.FailNowf(t, "assertion failed", "Links: %s", brief(err.Error()))
 	}
 	assert.Equal(t, 0, checked, "checked = %d, want 0: a link inside a four-backtick fence is illustration", checked)
 	if len(broken) != 0 {
@@ -244,7 +244,7 @@ func TestLinksUnclosedFenceDoesNotSwallowRealBrokenLink(t *testing.T) {
 	})
 	_, checked, broken, err := Links(dir)
 	if err != nil {
-		require.FailNowf(t, "Links: %s", brief(err.Error()))
+		require.FailNowf(t, "assertion failed", "Links: %s", brief(err.Error()))
 	}
 	assert.Equal(t, 1, checked, "checked = %d, want 1: the link below the closed four-fence must be checked", checked)
 	if len(broken) != 1 || broken[0].Target != "missing.md" {
@@ -269,7 +269,7 @@ func TestLinksLongerRunClosesShorterFence(t *testing.T) {
 	})
 	_, checked, broken, err := Links(dir)
 	if err != nil {
-		require.FailNowf(t, "Links: %s", brief(err.Error()))
+		require.FailNowf(t, "assertion failed", "Links: %s", brief(err.Error()))
 	}
 	assert.Equal(t, 1, checked, "checked = %d, want 1: a four-backtick run is at least as long as the three-backtick opener, so it closes it", checked)
 	if len(broken) != 1 || broken[0].Target != "missing.md" {
@@ -286,7 +286,7 @@ func TestLinksSameLengthRunWithTrailingTextDoesNotClose(t *testing.T) {
 	})
 	_, checked, broken, err := Links(dir)
 	if err != nil {
-		require.FailNowf(t, "Links: %s", brief(err.Error()))
+		require.FailNowf(t, "assertion failed", "Links: %s", brief(err.Error()))
 	}
 	assert.Equal(t, 0, checked, "checked = %d, want 0: a run carrying text after it does not close the fence, so both links stay illustration", checked)
 	if len(broken) != 0 {
@@ -377,7 +377,9 @@ func TestLinksUnlistableDirIsARefusalNotAPartialReport(t *testing.T) {
 
 	mdFiles, checked, broken, err := Links(dir)
 	require.Error(t, err, "want a refusal for an unlistable directory; got mdFiles=%d checked=%d broken=%d", mdFiles, checked, len(broken))
-	assert.ErrorContains(t, err, "locked", "error does not name the directory: %s", brief(err.Error()))
+	if !strings.Contains(err.Error(), "locked") {
+		assert.Failf(t, "assertion failed", "error does not name the directory: %s", brief(err.Error()))
+	}
 	assert.Zero(t, mdFiles, "a refusal must report nothing; got mdFiles=%d checked=%d broken=%d", mdFiles, checked, len(broken))
 	assert.Zero(t, checked, "a refusal must report nothing; got mdFiles=%d checked=%d broken=%d", mdFiles, checked, len(broken))
 	assert.Empty(t, broken, "a refusal must report nothing; got mdFiles=%d checked=%d broken=%d", mdFiles, checked, len(broken))

@@ -34,7 +34,8 @@ func TestStepsCutsCommandsFromTheirOutput(t *testing.T) {
 	steps, err := Steps("nova-alpha", transcriptLines)
 	require.NoError(t, err)
 	require.Len(t, steps, 2, "Steps cut %d steps, want 2: %#v", len(steps), steps)
-	assert.Equal(t, "put --name gate", strings.Join(steps[0].Args, " "), "step 0 args = %q, want %q", strings.Join(steps[0].Args, " "), "put --name gate")
+	got := strings.Join(steps[0].Args, " ")
+	assert.Equal(t, "put --name gate", got, "step 0 args = %q, want %q", got, "put --name gate")
 	// The blank line between the two commands belongs to neither: it is the
 	// document's spacing, and counting it would make every first block one line
 	// longer than the tool prints.
@@ -48,7 +49,8 @@ func TestStepsReadsTheOneRedirectTheTranscriptsUse(t *testing.T) {
 	steps, err := Steps("nova-alpha", []string{"$ nova-alpha count < testdata/events.jsonl", "COUNT OK n=2"})
 	require.NoError(t, err)
 	assert.Equal(t, "testdata/events.jsonl", steps[0].Stdin, "Stdin = %q, want testdata/events.jsonl", steps[0].Stdin)
-	assert.Equal(t, "count", strings.Join(steps[0].Args, " "), "args = %q, want %q; the redirect is not an argument", strings.Join(steps[0].Args, " "), "count")
+	got := strings.Join(steps[0].Args, " ")
+	assert.Equal(t, "count", got, "args = %q, want %q; the redirect is not an argument", got, "count")
 }
 
 // A line this harness cannot run is said so rather than truncated and run

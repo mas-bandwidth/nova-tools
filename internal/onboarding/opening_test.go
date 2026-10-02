@@ -59,7 +59,9 @@ func TestExampleCommandsCountsTheToolsLinesOnly(t *testing.T) {
 		"HOME=/tmp/x/home nova-foo probe --write /tmp/x",
 		`nova-foo run --write /tmp/x \`,
 	}
-	require.Equal(t, strings.Join(want, "\n"), strings.Join(got, "\n"), "ExampleCommands =\n  %s\nwant\n  %s", strings.Join(got, "\n  "), strings.Join(want, "\n  "))
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		require.FailNowf(t, "assertion failed", "ExampleCommands =\n  %s\nwant\n  %s", strings.Join(got, "\n  "), strings.Join(want, "\n  "))
+	}
 	got = ExampleCommands("usage:\n  nova-foo run\n", "nova-foo")
 	assert.Empty(t, got, "a banner with no example: block gave %q", got)
 	got = ExampleCommands("example:\n  FOO-BAR=1 nova-foo x\n  1X=2 nova-foo y\n", "nova-foo")

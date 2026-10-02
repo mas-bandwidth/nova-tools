@@ -254,7 +254,9 @@ func TestNoCodeUnlistableDirIsARefusalNotAPartialReport(t *testing.T) {
 
 	scanned, findings, err := NoCode(NoCodeOptions{Dir: dir})
 	require.Error(t, err, "want a refusal for an unlistable directory; got scanned=%d findings=%d", scanned, len(findings))
-	assert.ErrorContains(t, err, "locked", "error does not name the directory: %s", brief(err.Error()))
+	if !strings.Contains(err.Error(), "locked") {
+		assert.Failf(t, "assertion failed", "error does not name the directory: %s", brief(err.Error()))
+	}
 	assert.Zero(t, scanned, "a refusal must report nothing; got scanned=%d findings=%d", scanned, len(findings))
 	assert.Empty(t, findings, "a refusal must report nothing; got scanned=%d findings=%d", scanned, len(findings))
 }

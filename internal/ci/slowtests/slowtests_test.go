@@ -39,10 +39,16 @@ func TestSlowTestsUnderBudgetIsOK(t *testing.T) {
 {"Action":"pass","Package":"example.com/pkg","Elapsed":3.2}
 `
 	report := Sum(slowEvents(t, fixture), slowBudget)
-	assert.Equal(t, 0, report.ExitCode(), "ExitCode = %d, want %d (nothing is over budget)", report.ExitCode(), 0)
+	{
+		got := report.ExitCode()
+		assert.Equal(t, 0, got, "ExitCode = %d, want %d (nothing is over budget)", got, 0)
+	}
 	assert.Equal(t, 0, len(report.Over), "Over = %d packages, want %d", len(report.Over), 0)
 	want := "CI-SLOW OK packages=1 slowest=example.com/pkg:3.2s"
-	assert.Equal(t, want, report.OKLine(), "OKLine = %q, want %q", report.OKLine(), want)
+	{
+		got := report.OKLine()
+		assert.Equal(t, want, got, "OKLine = %q, want %q", got, want)
+	}
 }
 
 // A package over budget is one finding naming the package, its total, the
@@ -55,7 +61,10 @@ func TestSlowTestsOverBudgetNamesThePackageAndSlowestTests(t *testing.T) {
 {"Action":"pass","Package":"example.com/pkg","Elapsed":75.3}
 `
 	report := Sum(slowEvents(t, fixture), slowBudget)
-	assert.Equal(t, 1, report.ExitCode(), "ExitCode = %d, want %d (a package is over budget: the check said no)", report.ExitCode(), 1)
+	{
+		got := report.ExitCode()
+		assert.Equal(t, 1, got, "ExitCode = %d, want %d (a package is over budget: the check said no)", got, 1)
+	}
 	lines := report.OverLines()
 	require.Len(t, lines, 1, "OverLines = %d lines, want 1: %v", len(lines), lines)
 	want := "CI-SLOW package=example.com/pkg seconds=75.3s budget=60s slowest=TestA:3.2s,TestB:2.9s"
@@ -69,9 +78,15 @@ func TestSlowTestsEmptyInputIsOKWithZeroPackages(t *testing.T) {
 
 	report := Sum(nil, slowBudget)
 	assert.Equal(t, 0, report.Packages, "Packages = %d, want 0", report.Packages)
-	assert.Equal(t, 0, report.ExitCode(), "ExitCode = %d, want %d", report.ExitCode(), 0)
+	{
+		got := report.ExitCode()
+		assert.Equal(t, 0, got, "ExitCode = %d, want %d", got, 0)
+	}
 	want := "CI-SLOW OK packages=0 slowest=none"
-	assert.Equal(t, want, report.OKLine(), "OKLine = %q, want %q", report.OKLine(), want)
+	{
+		got := report.OKLine()
+		assert.Equal(t, want, got, "OKLine = %q, want %q", got, want)
+	}
 }
 
 // A line that is not a TestEvent is a refusal naming the line, never a silent
@@ -139,12 +154,18 @@ func TestSlowTestsJudgesPackagesAndTestsAgainstTheirRows(t *testing.T) {
 {"Action":"pass","Package":"example.com/m/cmd/fast","Elapsed":2.5}
 `
 	report := Judge(slowEvents(t, fixture), Budgets{Package: 2, Test: 1, Rows: rows})
-	assert.Equal(t, 1, report.ExitCode(), "ExitCode = %d, want %d", report.ExitCode(), 1)
+	{
+		got := report.ExitCode()
+		assert.Equal(t, 1, got, "ExitCode = %d, want %d", got, 1)
+	}
 	want := []string{
 		"CI-SLOW package=example.com/m/cmd/fast seconds=2.5s budget=2s slowest=TestA:0.4s",
 		"CI-SLOW test=TestSmall package=example.com/m/internal/ci seconds=1.2s budget=1s",
 	}
-	assert.Equal(t, strings.Join(want, "\n"), strings.Join(report.OverLines(), "\n"), "OverLines =\n%s\nwant\n%s", strings.Join(report.OverLines(), "\n"), strings.Join(want, "\n"))
+	{
+		got := report.OverLines()
+		assert.Equal(t, strings.Join(want, "\n"), strings.Join(got, "\n"), "OverLines =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
 }
 
 // A malformed allowlist row, a budget that is not positive, and a row written

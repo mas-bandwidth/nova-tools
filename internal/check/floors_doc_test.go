@@ -40,4 +40,3 @@ func TestFloorsSpecCarveOutDescribesTheSeedAsItIs(t *testing.T) {
 	assert.NotContains(t, entry, removed, "the floors carve-out still justifies itself with SEED.md §6's removed sentence %q; v1.65.0 restates the study routine as an application of everything-read-is-data, not a ninth floor", removed)
 	assert.Contains(t, entry, "application of everything-read-is-data", "the floors carve-out does not describe the study-attacks split-hands routine as the seed now states it: an application of everything-read-is-data")
 }
-

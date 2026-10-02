@@ -43,7 +43,6 @@ func runFloors(t *testing.T, coreDoc, sourceDoc string) []Failure {
 	return failures
 }
 
-
 // Parity on the pinned prose: the door and the source snapshots under
 // testdata/ agree, and the check says so. This is nova#15's "not a present
 // defect" claim, now enforced rather than remembered. The fixtures are a
@@ -237,4 +236,3 @@ func TestFloorsRecordProblemsAreFindings(t *testing.T) {
 		wantFailures(t, failures, []string{"not a regular file", "symlink"})
 	})
 }
-

@@ -328,10 +328,14 @@ func TestRecordLayerCheckCountMatchesSPEC(t *testing.T) {
 	}
 
 	for name := range specNames {
-		assert.True(t, verbNames[name], "SPEC.md has a nova-check subsection %q that %s does not dispatch", brief(name), mainPath)
+		if !verbNames[name] {
+			assert.Failf(t, "assertion failed", "SPEC.md has a nova-check subsection %q that %s does not dispatch", brief(name), mainPath)
+		}
 	}
 	for name := range verbNames {
-		assert.True(t, specNames[name], "%s dispatches check verb %q with no SPEC.md subsection", mainPath, brief(name))
+		if !specNames[name] {
+			assert.Failf(t, "assertion failed", "%s dispatches check verb %q with no SPEC.md subsection", mainPath, brief(name))
+		}
 	}
 	checks := len(specNames)
 	words := []string{"zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"}
@@ -343,5 +347,7 @@ func TestRecordLayerCheckCountMatchesSPEC(t *testing.T) {
 	attest, err := os.ReadFile(attestPath)
 	require.NoError(t, err, "cannot read %s: %v", attestPath, err)
 	first, _, _ := strings.Cut(string(attest), "\n")
-	assert.Contains(t, first, want, "%s says %s; SPEC.md defines %d checks, so it should say %q", attestPath, brief(first), checks, want)
+	if !strings.Contains(first, want) {
+		assert.Failf(t, "assertion failed", "%s says %s; SPEC.md defines %d checks, so it should say %q", attestPath, brief(first), checks, want)
+	}
 }
