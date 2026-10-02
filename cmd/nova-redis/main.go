@@ -110,7 +110,7 @@ neither, the store's default user). A --password-env that is not a variable
 name (capital letters, digits and underscores), a user name with whitespace,
 and a user whose password variable is empty are refused (exit 2) before
 anything is dialled. A store that cannot be reached, or a login it refuses,
-is one FAIL line on stderr with the next step (exit 2). A spill whose reply
+is one FAILED line on stderr with the next step (exit 2). A spill whose reply
 is lost after the store took it is SPILL UNCONFIRMED (exit 1): the write may
 have committed, so read it back with recall before spilling again.
 fn load puts the nova_sprint function library this binary embeds on the store
@@ -544,7 +544,7 @@ func connect(ctx context.Context, store login, d deps) (*redisconn.Conn, error) 
 	return redisconn.Open(ctx, store.options(d), d.getenv)
 }
 
-// failed prints a verb's one FAIL line for err, which is redisconn's (an
+// failed prints a verb's one FAILED line for err, which is redisconn's (an
 // Open failure, or a command's error through Conn.Explain), so it names the
 // store, the login, what came back and the next step. A store that could not
 // be reached and a login it refused exit 2: the fix is the caller's. The
@@ -561,7 +561,7 @@ func failed(r *report, verb, key string, err error, store login, d deps) int {
 	if class == redisconn.AuthRefused && d.getenv(*store.passwordEnv) == "" {
 		kv = append(kv, "remedy", quoted("nova-redis reads the store's password from "+*store.passwordEnv+", which is not set: export it, holding the password of the default user"))
 	}
-	r.line(true, verb+" FAIL", kv...)
+	r.line(true, verb+" FAILED", kv...)
 	if class == redisconn.Unreachable || class == redisconn.AuthRefused {
 		return r.done(2)
 	}
