@@ -254,15 +254,21 @@ per-machine artifact the fleet writes, and what removes it, when:
 
 | artifact | what removes it, and when |
 |---|---|
-| a launch's checkout, `<root>/slots/<launch>/` | the member, while its loop runs: at once when the launch is reported ok, a failed one kept (the newest 5 of the pool); swept at the member's start. A pool whose loop stopped (no process names its root, nothing moved for 30 minutes): the disk guard's next run, by the same rule; a work launch whose checkout holds commits past its staged one is kept and said on a `KEPT slot` line, every run, until a person removes it |
+| a launch's checkout, `<root>/slots/<launch>/` | the member, while its loop runs: at once when the launch is reported ok, a failed one kept (the newest 5 of the pool); swept at the member's start. A pool whose loop stopped (no process names its root or works in it, nothing moved for 30 minutes): the disk guard's next run, by the same rule; a work launch whose checkout holds commits past its staged one is kept and said on a `KEPT slot` line, every run, until a person removes it |
 | a launch's small files and results (`.native.log`, `.card.md`, `.frame.json`, `results/<launch>`) | the member's cleaner, once the sprint's epoch is two past theirs (docs/SPEC-SWARM.md, `member`) |
 | a root's Go build cache, `<root>/cache/go-build` | the member's cleaner, held under 10 GiB while it runs; the disk guard every run, under `--cache-max-gb` (10), whether or not a loop runs |
 | the login's Go build cache (`$GOCACHE`, else the user cache directory's `go-build`) and every `--cache` (the CI runners' `_cache/go-build`) | the disk guard every run, under `--cache-max-gb`: entries used longest ago first, never one used in the last two hours, down to the cap less a fifth |
-| a module cache (`<root>/cache/go-mod`, the login's `$GOMODCACHE` or `~/go/pkg/mod`) | the disk guard, emptied when over `--modcache-max-gb` (50) and no `go` command runs |
+| a module cache (`<root>/cache/go-mod`, the login's `$GOMODCACHE` or `~/go/pkg/mod`) | the disk guard, emptied when over `--modcache-max-gb` (50), no `go` command runs and no process holds a file in it |
 | a loop log, `~/nova-bench/loops/*.log` | the disk guard, over `--log-max-mb` (50): copied to `<log>.1` and emptied in place, the copies shifted, the one past `--log-keep` (3) removed |
-| a land clone, `<user cache dir>/nova-sprint/land/<repo>-<hash>` (`~/Library/Caches` on darwin, `~/.cache` on linux; never `/tmp`) | the disk guard, unused for `--clone-age` (24h), with no uncommitted work and no process naming it; land clones it again on its next use |
-| a mirror's temporary packs, `~/nova-bench/mirror/<repo>/objects/pack/tmp_pack_*` and `.tmp-*` (an aborted fetch's) | the disk guard, older than an hour, when no process names the mirror and no git fetch naming no path runs; never `git prune` |
+| a land clone, `<user cache dir>/nova-sprint/land/<repo>-<hash>` (`~/Library/Caches` on darwin, `~/.cache` on linux; never `/tmp`) | the disk guard, unused for `--clone-age` (24h), with no uncommitted work and no process naming it or working in it; land clones it again on its next use |
+| a mirror's temporary packs, `~/nova-bench/mirror/<repo>/objects/pack/tmp_pack_*` and `.tmp-*` (an aborted fetch's) | the disk guard, older than an hour, when no process names the mirror or works in it and no git fetch naming no path runs; never `git prune` |
 | release copies, `nova_release_out` | `tools.yml`, after a build: all but the built, the running and the 3 newest |
+
+A process works in a path when its working directory or a file it holds open
+lies under it (lsof on darwin, `/proc/<pid>/cwd` and `/proc/<pid>/fd` on Linux):
+a `git push` or a `make` run inside a land clone names no path on its argument
+line, and keeps the clone all the same. A run that cannot read the open files
+removes nothing that needs them and ends `INCOMPLETE`.
 
 Each run prints one line per action (`REMOVED`, `TRIMMED`, `CLEANED`,
 `ROTATED`, with `freed=<bytes>`, or `KEPT` with why), a `DISK-GUARD WARN` line

@@ -39,19 +39,21 @@ import (
 //     (lazyclean.go, cacheTrim): entries used longest ago first, never one used in the last
 //     two hours, so a build running against the cache never loses what it is reading;
 //   - empties a module cache over --modcache-max-gb, as go clean -modcache does, only
-//     while no go command runs on the machine;
+//     while no go command runs on the machine and no process holds a file in it;
 //   - rotates every loop log over --log-max-mb: copied to <log>.1 and emptied in place (the
 //     unit's supervisor appends to the file it opened), the copies shifted up, the one past
 //     --log-keep removed;
-//   - sweeps the pool of a loop that stopped (no process names its root or its slots, and
-//     nothing in its slots moved for --pool-idle) as the member sweeps its own at start:
-//     ended launches beyond the newest five go; a live pid's stays, and so does a work
-//     launch whose checkout moved past its staged commit (the guard cannot prove it pushed);
+//   - sweeps the pool of a loop that stopped (no process names its root or its slots or
+//     works in it, and nothing in its slots moved for --pool-idle) as the member sweeps
+//     its own at start: ended launches beyond the newest five go; a live pid's stays, and
+//     so does a work launch whose checkout moved past its staged commit (the guard cannot
+//     prove it pushed);
 //   - removes a land clone unused for --clone-age, never one with uncommitted work or one
-//     a process names;
+//     a process names or works in (its cwd or an open file under it: a `git push` run
+//     inside a clone names no path);
 //   - removes a mirror's leftover temporary packs (an aborted fetch's tmp_pack_*, .tmp-*)
-//     older than an hour when nothing may be fetching into it; never git prune, which can
-//     delete objects a clone borrowing the mirror is reading;
+//     older than an hour when nothing may be fetching into it or working in it; never git
+//     prune, which can delete objects a clone borrowing the mirror is reading;
 //   - warns, under --disk-floor, on its own output, which is its loop log.
 //
 // One line per action, with the bytes it freed; one line at the end. Nothing is removed
@@ -77,8 +79,8 @@ const (
 )
 
 // guard is one disk-guard run: what it looks at, its limits, and its world (the seams a
-// test fakes: the clock, the process list, the free disk, the module cache's clean and a
-// land clone's status).
+// test fakes: the clock, the process list, the paths processes hold open, the free disk,
+// the module cache's clean and a land clone's status).
 type guard struct {
 	roots, caches, modCaches   []string
 	logDir, landDir, mirrorDir string
@@ -89,6 +91,7 @@ type guard struct {
 	now                        time.Time
 	home                       string
 	procs                      func() ([]string, error)
+	held                       func() ([]string, error)
 	free                       func(string) (uint64, error)
 	cleanMod                   func(dir string) error
 	dirty                      func(dir string) (bool, error)
@@ -96,8 +99,10 @@ type guard struct {
 	freed                      int64
 	failed                     int
 	list                       []string // the process list, read once a run
+	open                       []string // the paths live processes hold, read once a run
 	dry                        bool     // --dry-run: every rule judged, nothing removed or rotated
 	listRead, listFailed       bool
+	openRead, openFailed       bool
 }
 
 // say is one line of the run's output.
@@ -156,6 +161,53 @@ func naming(list []string, paths ...string) string {
 				if w == p || strings.HasPrefix(w, p+string(filepath.Separator)) {
 					return line
 				}
+			}
+		}
+	}
+	return ""
+}
+
+// openPaths is every path a live process holds (its working directory, its open files),
+// read once a run; ok is false when it cannot be read, and then nothing that needs it is
+// removed. A process's argument line may name no path at all (a `git push` or a `make` run
+// inside a land clone): what it holds is where it works.
+func (g *guard) openPaths() ([]string, bool) {
+	if !g.openRead {
+		g.openRead = true
+		open, err := g.held()
+		if err != nil {
+			g.openFailed = true
+			g.fail(fmt.Sprintf("the open files of live processes could not be read (%s); nothing a live process may hold is removed this run", oneline.Err(err)))
+		}
+		g.open = open
+	}
+	return g.open, !g.openFailed
+}
+
+// holds is the first path a live process holds that is one of paths or lies under it, ""
+// when none does; ok is false when the open paths cannot be read.
+func (g *guard) holds(paths ...string) (string, bool) {
+	open, ok := g.openPaths()
+	if !ok {
+		return "", false
+	}
+	return holding(open, paths...), true
+}
+
+// holding is the first of open that is one of paths or lies under it. The kernel reports a
+// path with its links resolved, so each of paths is matched as given and resolved.
+func holding(open []string, paths ...string) string {
+	var want []string
+	for _, p := range paths {
+		want = append(want, p)
+		if r, err := filepath.EvalSymlinks(p); err == nil && r != p {
+			want = append(want, r)
+		}
+	}
+	for _, o := range open {
+		for _, p := range want {
+			if o == p || strings.HasPrefix(o, p+string(filepath.Separator)) {
+				return o
 			}
 		}
 	}
@@ -299,8 +351,9 @@ func (g *guard) buildCaches() {
 	}
 }
 
-// modules empties a module cache over its cap, only while no go command runs: a build
-// reading it would lose its modules mid-read.
+// modules empties a module cache over its cap, only while no go command runs and no
+// process holds a file in it (a gopls or a staticcheck reading it is not named go): a
+// build or a tool reading it would lose its modules mid-read.
 func (g *guard) modules() {
 	for _, dir := range g.modCaches {
 		if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
@@ -316,6 +369,14 @@ func (g *guard) modules() {
 		}
 		if line := goRunning(list); line != "" {
 			g.say(fmt.Sprintf("KEPT go-mod %s: a go command is running (%s)", oneline.Field(dir), oneline.Escape(line)))
+			continue
+		}
+		held, ok := g.holds(dir)
+		if !ok {
+			continue
+		}
+		if held != "" {
+			g.say(fmt.Sprintf("KEPT go-mod %s: a live process holds %s", oneline.Field(dir), oneline.Field(held)))
 			continue
 		}
 		if err := g.unless(func() error { return g.cleanMod(dir) }); err != nil {
@@ -366,6 +427,9 @@ func (g *guard) pools() {
 		list, ok := g.processes()
 		if !ok || naming(list, root, slots) != "" {
 			continue // its loop, or a child of it, runs: the pool is its loop's to clean
+		}
+		if held, ok := g.holds(root, slots); !ok || held != "" {
+			continue // a process works in it: what it holds is not the guard's
 		}
 		g.sweep(slots, entries)
 	}
@@ -526,6 +590,14 @@ func (g *guard) landClones() {
 			g.say(fmt.Sprintf("KEPT land clone %s: a live process names it", oneline.Field(dir)))
 			continue
 		}
+		held, ok := g.holds(dir)
+		if !ok {
+			return
+		}
+		if held != "" {
+			g.say(fmt.Sprintf("KEPT land clone %s: a live process holds %s", oneline.Field(dir), oneline.Field(held)))
+			continue
+		}
 		dirty, err := g.dirty(dir)
 		if err != nil {
 			g.say(fmt.Sprintf("KEPT land clone %s: its status could not be read (%s)", oneline.Field(dir), oneline.Err(err)))
@@ -601,6 +673,14 @@ func (g *guard) mirrors() {
 		}
 		if line := fetching(list, repo); line != "" {
 			g.say(fmt.Sprintf("KEPT mirror %s: a fetch or clone of it may be running (%s)", oneline.Field(repo), oneline.Escape(line)))
+			continue
+		}
+		held, ok := g.holds(repo)
+		if !ok {
+			return
+		}
+		if held != "" {
+			g.say(fmt.Sprintf("KEPT mirror %s: a live process holds %s", oneline.Field(repo), oneline.Field(held)))
 			continue
 		}
 		var n int
@@ -742,7 +822,7 @@ func cmdDiskGuard(args []string, stdout, stderr io.Writer) int {
 		cacheMax: int64(*cacheGB) * gib, modMax: int64(*modGB) * gib, logMax: int64(*logMB) << 20, logKeep: *logKeep,
 		floor: int64(*floor) * gib, poolIdle: *poolIdle, cloneAge: *cloneAge, now: time.Now(), home: home,
 		logDir: tilde(*logs), mirrorDir: tilde(*mirror), roots: guardRoots(roots, scans, tilde),
-		dry: *dry, procs: processList, free: diskFree, cleanMod: cleanModCache, dirty: landDirty, out: stdout,
+		dry: *dry, procs: processList, held: heldPaths, free: diskFree, cleanMod: cleanModCache, dirty: landDirty, out: stdout,
 	}
 	if *land != "" {
 		g.landDir = tilde(*land)
@@ -832,6 +912,73 @@ func processList() ([]string, error) {
 		return nil, err
 	}
 	return psLines(b, os.Getpid()), nil
+}
+
+// heldPaths is every path a process other than this one holds, its working directory and
+// its open files, links resolved by the kernel: on Linux from /proc (lsof is not on every
+// machine), elsewhere from lsof's -F listing (about a second and a half on a desktop with
+// 750 processes).
+func heldPaths() ([]string, error) {
+	if runtime.GOOS == "linux" {
+		return procPaths("/proc", os.Getpid())
+	}
+	cmd, cancel := subproc.CommandFor(context.Background(), time.Minute, "lsof", "-n", "-P", "-w", "-F", "pn")
+	defer cancel()
+	b, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	return lsofPaths(b, os.Getpid()), nil
+}
+
+// lsofPaths is lsof's -F pn listing (a p<pid> line, then an f<fd> and an n<name> line per
+// file) as the absolute names, each once, the files of pid self left out. A name that is
+// not a path (a socket's address) is no place a process works.
+func lsofPaths(b []byte, self int) []string {
+	var out []string
+	seen := map[string]bool{}
+	mine := false
+	for _, line := range strings.Split(string(b), "\n") {
+		switch {
+		case strings.HasPrefix(line, "p"):
+			n, err := strconv.Atoi(line[1:])
+			mine = err == nil && n == self
+		case strings.HasPrefix(line, "n/") && !mine && !seen[line[1:]]:
+			seen[line[1:]] = true
+			out = append(out, line[1:])
+		}
+	}
+	return out
+}
+
+// procPaths is every process's cwd and open files under proc (/proc), each once, pid self
+// left out. A process that ended, or that is another user's, is skipped: what this login
+// cannot read is no process working in what the guard removes.
+func procPaths(proc string, self int) ([]string, error) {
+	entries, err := os.ReadDir(proc)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	seen := map[string]bool{}
+	add := func(link string) {
+		if p, err := os.Readlink(link); err == nil && filepath.IsAbs(p) && !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	for _, e := range entries {
+		if n, err := strconv.Atoi(e.Name()); err != nil || n == self {
+			continue
+		}
+		dir := filepath.Join(proc, e.Name())
+		add(filepath.Join(dir, "cwd"))
+		fds, _ := os.ReadDir(filepath.Join(dir, "fd")) // ignored: a process that ended or is not ours holds nothing here
+		for _, fd := range fds {
+			add(filepath.Join(dir, "fd", fd.Name()))
+		}
+	}
+	return out, nil
 }
 
 // psLines is ps's "pid args" output as argument lines, the line of pid self left out.

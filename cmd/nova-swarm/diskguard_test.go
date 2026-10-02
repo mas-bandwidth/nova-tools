@@ -52,7 +52,7 @@ func dgAge(t *testing.T, root string, at time.Time) {
 }
 
 // dgGuard is a guard with nothing to look at and limits nothing reaches: a test sets what
-// it holds. Its process list is empty, its volume has 100 GiB free.
+// it holds. Its process list and its open paths are empty, its volume has 100 GiB free.
 func dgGuard(t *testing.T) (*guard, *bytes.Buffer) {
 	t.Helper()
 	out := &bytes.Buffer{}
@@ -60,6 +60,7 @@ func dgGuard(t *testing.T) (*guard, *bytes.Buffer) {
 		cacheMax: 1 << 40, modMax: 1 << 40, logMax: 1 << 40, logKeep: 3, floor: 10 * gib,
 		poolIdle: 30 * time.Minute, cloneAge: 24 * time.Hour, now: dgNow, home: t.TempDir(),
 		procs:    func() ([]string, error) { return nil, nil },
+		held:     func() ([]string, error) { return nil, nil },
 		free:     func(string) (uint64, error) { return 100 * gib, nil },
 		cleanMod: func(string) error { return errors.New("no module cache is cleaned in this test") },
 		dirty:    func(string) (bool, error) { return false, nil },
@@ -457,4 +458,134 @@ func TestDiskGuardProcessListLeavesOutItsOwnLine(t *testing.T) {
 	t.Parallel()
 	ps := "    1 /sbin/launchd\n  42 /home/u/.local/bin/nova-swarm disk-guard --root /home/u/pool\n 77 /home/u/.local/bin/nova-swarm member --root /home/u/pool\n\n"
 	assert.Equal(t, []string{"/sbin/launchd", "/home/u/.local/bin/nova-swarm member --root /home/u/pool"}, psLines([]byte(ps), 42))
+}
+
+// A live process whose argument line names none of a rule's paths but whose working
+// directory or an open file lies under one (a `git push` or a `make` run inside a land
+// clone, a fetch in a mirror, a test in a stopped pool's launch, a gopls reading the module
+// cache) holds it: no rule removes or empties it (Zhi's HOLD on #5136, 2026-10-02). The
+// open path is the one the kernel reports, links resolved, so a rule's path reached
+// through a link (t.TempDir() on darwin is under /var, a link to /private/var) still
+// matches.
+func TestDiskGuardKeepsWhatALiveProcessHoldsOpen(t *testing.T) {
+	t.Parallel()
+	real := func(p string) string {
+		r, err := filepath.EvalSymlinks(p)
+		require.NoError(t, err)
+		return r
+	}
+	old := dgNow.Add(-48 * time.Hour)
+
+	// a land clone a `git push` runs in, its cwd the clone, its argv naming no path
+	land := t.TempDir()
+	clone := filepath.Join(land, "github.com-o-r-0123456789abcdef")
+	dgText(t, filepath.Join(clone, ".git", "HEAD"), "ref: refs/heads/land/s1\n")
+	dgFile(t, filepath.Join(clone, "main.go"), 100, old)
+	dgAge(t, clone, old)
+	g, out := dgGuard(t)
+	g.landDir = land
+	g.procs = func() ([]string, error) { return []string{"git push -q origin HEAD:land/s1"}, nil }
+	g.held = func() ([]string, error) { return []string{"/", real(clone)}, nil }
+	g.landClones()
+	assert.DirExists(t, clone, "a process working in the clone keeps it")
+	assert.Equal(t, "KEPT land clone "+clone+": a live process holds "+real(clone)+"\n", out.String())
+
+	// a stopped pool one of whose launches a process holds a file open in
+	root := t.TempDir()
+	slots := filepath.Join(root, "slots")
+	for i := 1; i <= 7; i++ {
+		dgLaunch(t, slots, "c"+strconv.Itoa(i)+".a1.e3", old.Add(time.Duration(i)*time.Minute), "", "")
+	}
+	require.NoError(t, os.Chtimes(slots, old, old))
+	g, _ = dgGuard(t)
+	g.roots = []string{root}
+	g.held = func() ([]string, error) {
+		return []string{filepath.Join(real(slots), "c1.a1.e3", "out.log")}, nil
+	}
+	g.pools()
+	for i := 1; i <= 7; i++ {
+		assert.DirExists(t, filepath.Join(slots, "c"+strconv.Itoa(i)+".a1.e3"), "a held pool is not swept")
+	}
+
+	// a mirror a fetch runs in by its cwd: the fetch's line names an absolute path that is
+	// not the mirror, so the line alone would let the packs go
+	mirrors := t.TempDir()
+	repo := filepath.Join(mirrors, "nova-tools.git")
+	dgText(t, filepath.Join(repo, "HEAD"), "ref: refs/heads/dev\n")
+	tmp := filepath.Join(repo, "objects", "pack", "tmp_pack_AbC123")
+	dgFile(t, tmp, 500, dgNow.Add(-2*time.Hour))
+	g, out = dgGuard(t)
+	g.mirrorDir = mirrors
+	g.procs = func() ([]string, error) { return []string{"git fetch -q /srv/upstream.git"}, nil }
+	g.held = func() ([]string, error) { return []string{real(repo)}, nil }
+	g.mirrors()
+	assert.FileExists(t, tmp, "a held mirror keeps its packs")
+	assert.Equal(t, "KEPT mirror "+repo+": a live process holds "+real(repo)+"\n", out.String())
+
+	// a module cache a tool that is not go reads
+	mod := t.TempDir()
+	dgFile(t, filepath.Join(mod, "a@v1", "a.go"), 2000, dgNow)
+	var cleaned []string
+	g, out = dgGuard(t)
+	g.modCaches, g.modMax = []string{mod}, 1000
+	g.cleanMod = func(dir string) error { cleaned = append(cleaned, dir); return nil }
+	g.procs = func() ([]string, error) { return []string{"/opt/bin/gopls serve"}, nil }
+	g.held = func() ([]string, error) { return []string{filepath.Join(real(mod), "a@v1", "a.go")}, nil }
+	g.modules()
+	assert.Empty(t, cleaned, "a held module cache is not emptied")
+	assert.Equal(t, "KEPT go-mod "+mod+": a live process holds "+filepath.Join(real(mod), "a@v1", "a.go")+"\n", out.String())
+
+	// a path that only shares a prefix with the clone does not hold it
+	g, out = dgGuard(t)
+	g.landDir = land
+	g.held = func() ([]string, error) { return []string{real(clone) + "-other"}, nil }
+	g.landClones()
+	assert.NoDirExists(t, clone)
+	assert.Contains(t, out.String(), "REMOVED land clone "+clone+" freed=")
+}
+
+// A run that cannot read the open paths removes nothing that needs them, says so, and ends
+// INCOMPLETE, exit 1, as without the process list.
+func TestDiskGuardWithoutTheOpenPathsRemovesNothingThatNeedsThem(t *testing.T) {
+	t.Parallel()
+	land := t.TempDir()
+	clone := filepath.Join(land, "github.com-o-r-0123456789abcdef")
+	dgFile(t, filepath.Join(clone, "main.go"), 100, dgNow.Add(-48*time.Hour))
+	dgAge(t, clone, dgNow.Add(-48*time.Hour))
+	g, out := dgGuard(t)
+	g.landDir = land
+	g.held = func() ([]string, error) { return nil, errors.New("lsof: not found") }
+	assert.Equal(t, 1, g.run())
+	assert.DirExists(t, clone)
+	assert.Contains(t, out.String(), "NOTE the open files of live processes could not be read (lsof: not found)")
+	assert.Contains(t, out.String(), "DISK-GUARD INCOMPLETE freed=0 free=107374182400 failed=1\n")
+}
+
+// lsofPaths reads lsof's -F pn listing: every absolute name, the guard's own pid's left out.
+func TestDiskGuardLsofPathsLeavesOutItsOwnFiles(t *testing.T) {
+	t.Parallel()
+	in := "p1\nfcwd\nn/\nftxt\nn/sbin/launchd\np42\nfcwd\nn/home/u/pool\np77\nfcwd\nn/home/u/land/c1\nf3\nnlocalhost:6379\nf4\nn/home/u/land/c1/.git/index.lock\n"
+	assert.Equal(t, []string{"/", "/sbin/launchd", "/home/u/land/c1", "/home/u/land/c1/.git/index.lock"}, lsofPaths([]byte(in), 42))
+}
+
+// procPaths reads a /proc tree: each process's cwd and fd links, each path once, the
+// guard's own pid and every name that is not a path (a socket) left out.
+func TestDiskGuardProcPathsReadsCwdAndOpenFiles(t *testing.T) {
+	t.Parallel()
+	proc := t.TempDir()
+	link := func(target, at string) {
+		require.NoError(t, os.MkdirAll(filepath.Dir(at), 0o755))
+		require.NoError(t, os.Symlink(target, at))
+	}
+	link("/home/u/land/c1", filepath.Join(proc, "77", "cwd"))
+	link("/home/u/land/c1/.git/index.lock", filepath.Join(proc, "77", "fd", "4"))
+	link("socket:[123]", filepath.Join(proc, "77", "fd", "5"))
+	link("/home/u/land/c1", filepath.Join(proc, "78", "cwd"))
+	link("/home/u/pool", filepath.Join(proc, "42", "cwd"))
+	require.NoError(t, os.MkdirAll(filepath.Join(proc, "self-not-a-pid"), 0o755))
+	got, err := procPaths(proc, 42)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"/home/u/land/c1", "/home/u/land/c1/.git/index.lock"}, got)
+	_, err = procPaths(filepath.Join(proc, "missing"), 42)
+	assert.Error(t, err, "an unreadable /proc is no empty list")
 }
