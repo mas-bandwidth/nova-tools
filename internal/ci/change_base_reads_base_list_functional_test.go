@@ -13,13 +13,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestIssue2218ChangeBaseReadsTheBasesList is the git half of
-// TestIssue2218AddedUnexecutedRowFails (rowan hold 3 at d3f2ddf5, item 1): in a
+// TestChangeBaseListAtCommitAndAddedListRowsAgreeInAGitHistory is the git half of
+// TestAddedUnexecutedRowFails (rowan hold 3 at d3f2ddf5, item 1): in a
 // real history, ChangeBase finds the change's base both ways, ListAtCommit reads
 // the list as the base had it, and the row the change appended is the one
 // AddedListRows reports. It runs git a dozen times: exec of a whole program is
 // the functional tier's (Glenn 2026-09-26, nova-tools#4328).
-func TestIssue2218ChangeBaseReadsTheBasesList(t *testing.T) {
+func TestChangeBaseListAtCommitAndAddedListRowsAgreeInAGitHistory(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()

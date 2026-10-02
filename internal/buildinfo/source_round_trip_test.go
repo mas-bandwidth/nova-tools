@@ -10,7 +10,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 )
 
-// TestIssue2291 reproduces nova-tools#2291 from the buildinfo slice the issue
+// TestSourceMetadataRoundTripsThroughTheVersionLine reproduces nova-tools#2291 from the buildinfo slice the issue
 // names: a binary's source metadata — the repository, revision, dirty flag and
 // build host that say WHERE the binary was actually built — travels through the
 // version line so a reader can verify the build came from the checkout the
@@ -23,9 +23,9 @@ import (
 // record, verify at every stamp — and the slice of it this package owns is
 // this one. apply --sha calls LineWithSource on every binary it builds, and
 // apply --sha's postflight, the snapshot, and `moved`'s readback call
-// FindSource on every line they read; that pair is what TestIssue2291
+// FindSource on every line they read; that pair is what TestSourceMetadataRoundTripsThroughTheVersionLine
 // exercises, so the rest of the issue has a writer and a parser to lean on.
-func TestIssue2291(t *testing.T) {
+func TestSourceMetadataRoundTripsThroughTheVersionLine(t *testing.T) {
 	t.Parallel()
 
 	// The four fields the spec demands (#2291, SPEC-VERSION item 6): every

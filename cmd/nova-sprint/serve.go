@@ -19,10 +19,10 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 )
 
-// The sprint's server (the owner, 2026-10-01: "single threaded server,
-// pipelined batches like redis." / "I think we should not use redis as the
-// transport, but have a client/server" / "so we have our own redis-like thing
-// that the distributed things talk to."). The run loop is the one writer of the
+// The sprint's server is single threaded and takes pipelined batches like
+// redis, but it is its own client/server, not redis as the transport: a
+// redis-like thing the distributed things talk to.
+// The run loop is the one writer of the
 // sprint; with --listen it also takes the workers' verbs. A worker (a member, a
 // reader) sends a batch: its verbs, each the argument list it would give
 // nova-sprint, in order. serve runs each through the verb's own code, in this
@@ -35,9 +35,9 @@ import (
 // out, the sprint moved. The listener is a shell around it (ServeHTTP), and a
 // test steps it with batches and ticks in one process, with no connection.
 //
-// The fleet pass that showed the need (2026-10-01 17:00 ET): from 108 ms away
-// a worker's write lost the fence for about 50 s and gave up, and a finished
-// card took a median 391 s to be reported, against 12 to 21 s beside the store.
+// The need is distance: a worker far from the store loses a write's fence for
+// long enough to give up, and a finished card takes minutes to be reported,
+// against seconds beside the store.
 
 // workerVerb is the worker a verb of a batch acts as and how many words its
 // verb is, or why the server does not run it. A worker sends its own verbs only:
@@ -211,8 +211,8 @@ func (a *app) serveHTTP(w http.ResponseWriter, r *http.Request, local bool) {
 	w.Header().Set("Content-Type", "application/json")
 	// THE ANSWER IS COMPRESSED FOR A CLIENT THAT TAKES IT. A worker's queue carries each of
 	// its cards' briefs, every pass: 46 to 93 KB an answer on a sprint of 1000 cards, and a
-	// worker 300 ms away took 1.3 to 2.4 s to read one (the fleet pass of 2026-10-01
-	// 20:18 ET). The briefs are text and alike, and go to a twentieth. Go's client asks
+	// worker on a slow link takes seconds to read one.
+	// The briefs are text and alike, and go to a twentieth. Go's client asks
 	// for gzip and reads it by itself.
 	var out io.Writer = w
 	if takesGzip(r.Header.Get("Accept-Encoding")) {
@@ -245,8 +245,8 @@ func takesGzip(accept string) bool {
 // listen starts the server on the address for the store the run loop ticks,
 // and returns once it is listening. The address is the coordinator's machine's
 // on the fleet's private network, which is what keeps others out: the server
-// checks no credential (the owner, 2026-10-01: "I am OK with relying on tailnet
-// as secure"), so an address every network can reach is refused.
+// checks no credential, relying on the fleet's private network as the whole
+// of its access control, so an address every network can reach is refused.
 func (a *app) listen(addr, store string, stdout io.Writer) error {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {

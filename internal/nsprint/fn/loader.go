@@ -52,8 +52,8 @@ const (
 // Lua file in lua/; no central Lua registry needs to change. Each file is
 // wrapped in its own do-block, so its top-level locals leave scope at its end:
 // the main function holds len(Prelude locals) + the largest file's locals at
-// once, not the sum over every file (Lua's limit is 200 active locals; the sum
-// passed it at #3487). A file shares nothing by bare local; what a later file
+// once, not the sum over every file (Lua allows 200 active locals). A file shares
+// nothing by bare local; what a later file
 // needs goes through NS.
 func Source() (string, error) {
 	names, err := fs.Glob(sources, "lua/*.lua")
@@ -100,8 +100,8 @@ func Load(ctx context.Context, client *redis.Client) error {
 // loads on the way to its FCALL (card push, drain and release, the
 // reconciler's calls and expire duty) runs whatever binary its host has; with
 // Load, an older binary REPLACEd the deployed library with its own and every
-// function added since vanished from the store ("ERR Function not found" from
-// the reconciler's ns_fleet_step, #3620). Upgrading the library is the
+// function added since can vanish from the store, leaving newer callers without
+// the functions they need. Upgrading the library is the
 // deploy's job (`nova-sprint fn load`, which uses redisfn.Ensure). A caller whose ACL
 // refuses FUNCTION LIST is not the deployer: it loads nothing and its FCALL
 // answers for the store.

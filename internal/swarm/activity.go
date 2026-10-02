@@ -3,9 +3,8 @@ package swarm
 // Child activity: what tells a working card from a dead one when neither writes a byte.
 //
 // Idle was a property of one file: a card whose log had not grown for --idle was killed.
-// On 2026-09-15 cards 664-670 died "idle 300s" inside a `go test` that prints nothing for
-// minutes (issue #593). The work was alive and the log was not, so the loop raised --idle to
-// 900 s, which only delays the same kill. A card is idle when NOTHING moved: not its log and
+// A measured run kept the work alive while its log was still, so the loop raised --idle to
+// 900 s; that only delays the same kill. A card is idle when NOTHING moved: not its log and
 // not its process tree.
 //
 // The reading here is CPU TIME OVER THE WHOLE TREE the card's runner started -- a
@@ -55,7 +54,7 @@ type procSnapshot struct {
 // TreeCPU sums the CPU time of pid and every descendant of it in this snapshot, in
 // nanoseconds on every platform -- linux scales its clock ticks to the same unit. The unit
 // never leaves this file as a physical quantity: the caller compares two readings of the
-// same counter and, since issue #916, asks that the growth be a real share of the interval
+// same counter and asks that the growth be a real share of the interval
 // rather than any increment at all. The second return is false when the platform cannot read
 // the table, or when the tree holds no live process at all: neither is an activity reading.
 func (s *procSnapshot) TreeCPU(pid int) (uint64, bool) {

@@ -172,14 +172,14 @@ type Note struct {
 	// from it, as every deadline does.
 	ReviewSet time.Time `json:"review_set,omitempty"`
 	// To is who a happened note is addressed to: the coordinator, for "the
-	// sprint is done" (errata 3 amendment 6). The inbox shows a note
+	// sprint is done". The inbox shows a note
 	// addressed to someone first, above the judgments; empty is no one.
 	To string `json:"to,omitempty"`
 	// Hint is what to do next, in words, for a note addressed to someone.
 	Hint string `json:"hint,omitempty"`
 }
 
-// NTickEnd is the tick's end note (errata 3 amendment 8): written once at the
+// NTickEnd is the tick's end note: written once at the
 // end of a tick that addressed the coordinator something, "judgments=N";
 // inbox --wait wakes on it, and the inbox does not list it.
 const NTickEnd = "tick end"

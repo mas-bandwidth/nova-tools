@@ -53,9 +53,9 @@ The runner has a **single 120-second wall-clock budget**, including all selected
 
 Keep every baseline Lua witness. Reverse the desired-contract outcomes against the corrected Lua: duplicate add, lossy bind/row-add and owned aliases must refuse without changing any affected key; permitted cross-table placement still succeeds. Add real-Redis record/set checks for all destructive paths, stale callers after epoch advancement, retained historical placements, score preservation, epoch-zero behavior, and wrong-type/ACL refusal before mutation. The one-exchange tests and existing caller tests remain gates. A green candidate model does not substitute for these implementation tests or an independent review.
 
-## Local result
+## Recorded result
 
-The default suite completes in **83.96 seconds**, all queues exhausted in the positive cases: member large 11,372,299 generated / 372,127 distinct states; member fixed point 15,518 / 263; epoch large 15,971,793 / 198,223; epoch fixed point 3,323,874 / 17,397. All four deliberately broken controls fail for the expected named property. Counts are evidence for these exact instances, not a scale-independent proof.
+One recorded run of the default suite completed in **83.96 seconds**, all queues exhausted in the positive cases: member large 11,372,299 generated / 372,127 distinct states; member fixed point 15,518 / 263; epoch large 15,971,793 / 198,223; epoch fixed point 3,323,874 / 17,397. All four deliberately broken controls failed for the expected named property. The run used four workers for the positive cases and one for the controls, on tla2tools v1.7.4 (TLC 2.19). Counts are evidence for these exact instances, not a scale-independent proof.
 
 
 ## Implementation trace check

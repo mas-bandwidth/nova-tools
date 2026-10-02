@@ -1,4 +1,4 @@
-# The note wake and the verdict receipt — Johnny's rows on #1142
+# The note wake and the verdict receipt
 
 Nova-bus carries messages over Git and uses only the Go standard library and
 its general bus, build-info and one-line modules. It does not classify notes
@@ -84,7 +84,7 @@ RECEIPT OK verdict=<APPROVE|HOLD|ADOPTED> re=<id> recorded=<n> already=<m> commi
 that woke a 500k-context parent on every note — 53 tool calls per empty tick — and
 its service restart removes the silent poller death at the harness's ten-hour cap;
 `receipt --verdict` removes the hand-shaped receipt note; and `send`'s fold removes
-`SEND FAIL` on a BEAT rebase conflict (#488).
+`SEND FAIL` on a BEAT rebase conflict.
 
 **The refusals.** Each is exit 2 with one remedy line.
 - `--on-note` without `--timeout`, `--bus`, `--as`, `--remote` or `--branch`: `nova-bus wait: --on-note needs <flag>; give it, refusing to guess`.

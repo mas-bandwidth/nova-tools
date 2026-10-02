@@ -10,7 +10,7 @@ import (
 
 // The six markers of profiles/darwin.sb.tmpl. A line whose WHOLE content is one of
 // these is replaced; the template's own header says what each becomes, and this file is
-// This file fills them, so the policy is generated rather than hand-edited,
+// the only thing that fills them: the policy is generated, never hand-edited,
 // and the tool never accepts a caller-supplied profile file.
 const (
 	markerOptRoots  = "@@OPTROOTS@@"

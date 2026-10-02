@@ -117,8 +117,8 @@ const (
 	MaxReadReasks = 2
 )
 
-// FieldLeveled marks a read card with the requested level so that a move
-// never repeats the same level, preventing the card from staying put.
+// FieldLeveled marks a read card the level moved: the level moves it no more, so a
+// read is never shuttled between readers tick after tick and the level never sticks on one card.
 const FieldLeveled = "leveled"
 
 // liveReadsAt is the primary's placed read cards at an attempt less the reads
@@ -176,8 +176,8 @@ func sweepReads(s *Snapshot, p *Plan) {
 // read, asked and not begun, to another reader (levelReads).
 const RetiredByLevel = "level"
 
-// TickLevelReads is the readers' rebalance, once at the start of every tick
-// before any other part levels reads across readers, in one plan.
+// TickLevelReads is the readers' rebalance, once at the start of every tick,
+// before any other part: levelReads, in one plan.
 func TickLevelReads(s *Snapshot, _ TickReq) (Plan, int) {
 	var p Plan
 	levelReads(s, &p)

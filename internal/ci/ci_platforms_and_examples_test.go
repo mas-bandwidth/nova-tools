@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestIssue2218(t *testing.T) {
+func TestPlatformsMatchCILegsAndUnexecutedExamplesOnlyShrink(t *testing.T) {
 	t.Parallel()
 
 	t.Run("platform_line_must_name_a_ci_leg", func(t *testing.T) {

@@ -52,12 +52,12 @@ running. A path is added to the Go file and to this block in the same commit.
 
 The forge names at most **300 files** for one compare. A file list at that number is a list that **may be
 short**, and a gate that reads a truncated list is a gate that passes the one file it did not see. So a
-range whose forge file list reaches the ceiling is refused, and rule 4 says how. `cut` never classifies a
+range whose forge file list reaches the ceiling is refused, and the truncation is named first. `cut` never classifies a
 prefix of the truth and calls it clean.
 
 ### What `--security-read` may be
 
-A note id (`johnny-4b9200ddc994`) or the url of the comment carrying the read. It is held to the field law
+A note id or the url of the comment carrying the read. It is held to the field law
 before anything is tagged — no whitespace, no `=`, one token — because it travels into the one-line receipt
 above, and a read nobody could print is a read nobody could look up in six months.
 
@@ -104,7 +104,7 @@ them. The ways to give it one:
 - **`--expect-sums <sha256>`** names it outright, from the CHANGELOG entry. It serves a tag that carries no
   annotation, and it **wins** when more than one source is given: a digest a person typed deliberately is a
   decision, not a default.
-- **`--expect-sums-from <file>`** reads it from the digest file this host's build wrote (rule 7).
+- **`--expect-sums-from <file>`** reads it from the digest file this host's build wrote.
 
 A mismatch **refuses and names both** — the digest of what was fetched, the digest the expectation says the
 release was cut with, and which source the expectation came from. Which one is wrong is the whole question,
@@ -237,7 +237,7 @@ so symlinks and case aliases cannot cause newly installed binaries to be pruned.
 
 ## 7. No tag, still a digest: `SUMS.digest`
 
-Rule 2 gives `adopt` a digest that did not travel with the bits — off the annotated tag, or out of
+Section 2 gives `adopt` a digest that did not travel with the bits — off the annotated tag, or out of
 the CHANGELOG. Both belong to a **tagged** release. A dev build has no tag, and the only other place
 to get a digest would be the machine being adopted from, which is that machine vouching for its own
 bytes and is not evidence at all.
@@ -291,10 +291,10 @@ that stops the work it exists to protect.
 ## 9. No path is guessed
 
 `nova-version snapshot --bin <dir> --out <file.tsv>` requires both flags and defaults neither:
-SPEC-UPDATE rule 1 is that no path is guessed from the cwd or `$HOME`, because a guessed path makes
+The rule is that no path is guessed from the cwd or `$HOME`, because a guessed path makes
 two runs of one command mean different things. The command is written out in
 [CLI.md](CLI.md#nova-version). The one default in the release verbs, and why it is the exception, is
-in rule 12.
+in the spec.
 
 *Test: `TestSnapshotRefusesAMissingFlag`.*
 
@@ -354,11 +354,11 @@ a host can say about windows code.
 **And one thing the bench's own filesystem decides.** Windows will not replace a file that is open for
 execution, and the file being replaced is frequently `nova-update.exe` replacing itself — `adopt` runs
 the release's own `nova-update.exe` there and that process holds its own image open. It *will* let a
-running file be renamed aside, so `install` falls back to moving the old one out of the way and
+running file be renamed aside, so `install` falls back to moving the existing one out of the way and
 renaming the new one into place. The name it moves aside to is dot-prefixed, which keeps it out of
-`nova-version snapshot` and out of `--retire`, both of which take `nova-*` only; the old image may
+`nova-version snapshot` and out of `--retire`, both of which take `nova-*` only; the existing image may
 survive until the process ends, and has to be inert while it does. A rename that fails for a real
-reason still fails, with the old binary put back under its own name.
+reason still fails, with the existing binary put back under its own name.
 
 *Tests: `TestAdoptTakesWindowsDrivePathsForBinAndDest`, `TestAdoptComposesSlashPathsForAWindowsBench`,
 `TestAdoptRefusesAWindowsPathForALinuxTarget`, `TestAWindowsPathMayStillCarryNoShellSyntax`,
@@ -413,7 +413,7 @@ cannot be read refuses naming its path: an I/O error is not a tool outside the r
 **The two inputs, and the one default in this package.** `--cli` names the command reference and
 defaults to `docs/CLI.md` beside the checkout the verb was already given (`--changelog` for `cut`,
 `--source` for `build`). `--receipts` names the receipts directory and defaults to
-`~/rowan-working/dogfood` **when that directory exists** — the single exception to SPEC-UPDATE rule 1,
+`~/rowan-working/dogfood` **when that directory exists** — the single exception to no path being guessed,
 taken because the alternative fails in the direction that lets a tool ship. A run with neither is not a
 run that passed: it prints `RELEASE CUT NOTE dogfood-gate=skipped …` naming what was missing.
 
@@ -443,7 +443,7 @@ network or a real machine.
 ## Tests this spec demands
 
 The release tests run entirely against fakes and temp dirs — a `fakeForge`, a `fakeSSH`, a `fakeToolchain`, a `fakeGit` — and never reach a network or a real machine; the sensitive-list, command-reference and windows-spec parity checks live in `internal/ci` and read the spec file directly.
-One numbered line per test; where one test holds several behaviours, they share its line, and lines 37 and 38 also name, in parentheses, a second test holding the other side of the same behaviour. The dogfood gate's tests are named under rule 12. The behaviours this spec demands that no test proves yet follow, unnumbered.
+One numbered line per test; where one test holds several behaviours, they share its line, and the tests for drive paths and backslash folding also name, in parentheses, a second test holding the other side of the same behaviour. The dogfood gate's tests are named in the gate section. The behaviours this spec demands that no test proves yet follow, unnumbered.
 
 1. `TestCutRefusesASensitiveRangeWithoutJohnnysRead` — a cut whose range touched a sensitive prefix is refused (exit 2) and names the paths, until `--security-read` is supplied.
 2. `TestCutWithJohnnysReadSaysSoOnItsOwnLine` — with `--security-read` the cut prints `RELEASE CUT SENSITIVE paths=<n> read=<id>` above its receipt.
@@ -490,7 +490,7 @@ One numbered line per test; where one test holds several behaviours, they share 
 43. `TestInstallOnAWindowsArtifactDirectoryUsesExeNamesThroughout` — `install` reads names out of `SHA256SUMS` rather than rebuilding them, using `.exe` throughout on windows.
 44. `TestAdoptDryRunProbesTheExeOnAWindowsBench` — `adopt` sends/runs `nova-update.exe` (and `pull` removes `.exe`, `snapshot` records the suffix).
 45. `TestAWindowsBuildDoesNotClaimToHaveRunItsOwnArtifacts` — a cross-built windows artifact is not self-verified; the build claims only the checksum round trip.
-46. `TestInstallMovesARunningFileAsideWhenTheRenameIsRefused` — `install` moves a running binary aside (dot-prefixed) when its rename is refused, and restores the old binary if the fallback also fails.
+46. `TestInstallMovesARunningFileAsideWhenTheRenameIsRefused` — `install` moves a running binary aside (dot-prefixed) when its rename is refused, and restores the existing binary if the fallback also fails.
 47. `TestTheWindowsBenchIsInTheReleaseSpec` — the windows bench is in the release spec.
 
 Demanded, and proven by no test yet (8):

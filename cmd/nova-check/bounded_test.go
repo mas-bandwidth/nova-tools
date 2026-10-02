@@ -100,7 +100,7 @@ func TestQuickstartInheritsTheCaps(t *testing.T) {
 	require.EqualValues(t, 1, exit, "exit = %d, want 1; stderr: %s", exit, stderr)
 	total := countLines(stdout) + countLines(stderr)
 	assert.LessOrEqual(t, total, 50, "a first run on a 1,000-file repo costs %d lines; it should cost about forty", total)
-	assert.False(t, !strings.Contains(stderr, "LINKS MORE") || !strings.Contains(stderr, "NOCODE MORE"), "quickstart did not pass the cap down to both checks:\n%s", stderr)
+	assert.True(t, strings.Contains(stderr, "LINKS MORE") && strings.Contains(stderr, "NOCODE MORE"), "quickstart did not pass the cap down to both checks:\n%s", stderr)
 	assert.Contains(t, stdout, "QUICKSTART FAIL checks=2", "the closing line is missing: %q", stdout)
 }
 
@@ -134,7 +134,7 @@ func TestRefusesANegativeCeiling(t *testing.T) {
 	dir := largeSelf(t, 2)
 	for _, verb := range []string{"links", "nocode", "quickstart"} {
 		exit, _, stderr := runCheck(t, verb, "--dir", dir, "--fail-max", "-1")
-		assert.False(t, exit != 2 || !strings.Contains(stderr, "--fail-max must be a line ceiling"), "%s: exit = %d, stderr = %q", verb, exit, stderr)
+		assert.True(t, exit == 2 && strings.Contains(stderr, "--fail-max must be a line ceiling"), "%s: exit = %d, stderr = %q", verb, exit, stderr)
 	}
 }
 
@@ -158,5 +158,5 @@ func TestAFlagTypoIsOneLine(t *testing.T) {
 		assert.EqualValues(t, "", stdout, "%v: a refusal wrote to stdout: %q", args, stdout)
 	}
 	exit, stdout, _ := runCheck(t, "help")
-	assert.False(t, exit != 0 || !strings.Contains(stdout, "usage:"), "`help` did not print the usage: exit %d", exit)
+	assert.True(t, exit == 0 && strings.Contains(stdout, "usage:"), "`help` did not print the usage: exit %d", exit)
 }

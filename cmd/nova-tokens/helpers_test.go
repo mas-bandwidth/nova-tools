@@ -44,12 +44,12 @@ func invokeAt(t *testing.T, now time.Time, args ...string) result {
 
 func wantExit(t *testing.T, r result, want int) {
 	t.Helper()
-	assert.False(t, r.exit != want, "exit %d, want %d\nstdout:\n%s\nstderr:\n%s", r.exit, want, r.stdout, r.stderr)
+	assert.Equal(t, want, r.exit, "exit %d, want %d\nstdout:\n%s\nstderr:\n%s", r.exit, want, r.stdout, r.stderr)
 }
 
 func wantContains(t *testing.T, got, want string) {
 	t.Helper()
-	assert.False(t, !strings.Contains(got, want), "output does not contain %q:\n%s", want, got)
+	assert.True(t, strings.Contains(got, want), "output does not contain %q:\n%s", want, got)
 }
 
 func wantNotContains(t *testing.T, got, want string) {
@@ -78,11 +78,11 @@ func write(t *testing.T, path, content string) string {
 	t.Helper()
 	{
 		err := os.MkdirAll(filepath.Dir(path), 0o755)
-		require.False(t, err != nil, err)
+		require.NoError(t, err)
 	}
 	{
 		err := os.WriteFile(path, []byte(content), 0o644)
-		require.False(t, err != nil, err)
+		require.NoError(t, err)
 	}
 	return path
 }
@@ -90,7 +90,7 @@ func write(t *testing.T, path, content string) string {
 func read(t *testing.T, path string) string {
 	t.Helper()
 	raw, err := os.ReadFile(path)
-	require.False(t, err != nil, err)
+	require.NoError(t, err)
 	return string(raw)
 }
 
@@ -98,7 +98,7 @@ func mkdir(t *testing.T, path string) string {
 	t.Helper()
 	{
 		err := os.MkdirAll(path, 0o755)
-		require.False(t, err != nil, err)
+		require.NoError(t, err)
 	}
 	return path
 }
@@ -197,7 +197,7 @@ const (
 func fakeSqlite3OnPath(t *testing.T, mode string) {
 	t.Helper()
 	self, err := os.Executable()
-	require.False(t, err != nil, err)
+	require.NoError(t, err)
 	bin := mkdir(t, filepath.Join(t.TempDir(), "bin"))
 	name := "sqlite3"
 	if runtime.GOOS == "windows" {
@@ -205,7 +205,7 @@ func fakeSqlite3OnPath(t *testing.T, mode string) {
 	}
 	{
 		err := testbin.Place(self, filepath.Join(bin, name))
-		require.False(t, err != nil, err)
+		require.NoError(t, err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv(fakeSqlite3Env, mode)

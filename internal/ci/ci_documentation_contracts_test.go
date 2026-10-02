@@ -32,7 +32,7 @@ func writeDocs(t *testing.T, root string, body map[string]string, skip ...string
 
 // Item 1: a named doc that is missing is an error naming it, never a silent
 // skip that shrinks the scan to fewer docs.
-func TestIssue2218MissingDocIsAnError(t *testing.T) {
+func TestMissingDocIsAnError(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
@@ -44,7 +44,7 @@ func TestIssue2218MissingDocIsAnError(t *testing.T) {
 
 // Item 2: a GOOS is a whole word on the Platform line, never a substring of
 // another word ("js" in "json", "ios" in "ratios", "aix" in "plaix").
-func TestIssue2218PlatformGOOSIsAWholeWord(t *testing.T) {
+func TestPlatformGOOSIsAWholeWord(t *testing.T) {
 	t.Parallel()
 
 	cases := map[string][]string{
@@ -62,7 +62,7 @@ func TestIssue2218PlatformGOOSIsAWholeWord(t *testing.T) {
 // Item 3: a compared_examples.txt entry is tied to ITS example: the test file
 // lives in the example's tool's package, and the named test itself reads a
 // doc the example is pasted in.
-func TestIssue2218ComparedEntryIsTiedToItsExample(t *testing.T) {
+func TestComparedEntryIsTiedToItsExample(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
@@ -91,7 +91,7 @@ func writeGo(t *testing.T, root, rel, src string) {
 // same file no longer validates an arbitrary example. The control is the
 // hold's own: `$ nova-wake awake --bus ./bus` named under the presence test,
 // which never mentions awake, fails.
-func TestIssue2218ComparedEntryNamesItsCommand(t *testing.T) {
+func TestComparedEntryNamesItsCommand(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
@@ -158,9 +158,9 @@ func runTranscript(t *testing.T, doc string) {
 // change's base, and a row the change adds fails. The control is the hold's
 // own: a new doc example appended with the same row appended to the list. The
 // half that reads the base's list out of a real git history is
-// TestIssue2218ChangeBaseReadsTheBasesList (change_base_reads_base_list_functional_test.go:
+// TestChangeBaseListAtCommitAndAddedListRowsAgreeInAGitHistory (change_base_reads_base_list_functional_test.go:
 // it runs git, the functional tier's, nova-tools#4328).
-func TestIssue2218AddedUnexecutedRowFails(t *testing.T) {
+func TestAddedUnexecutedRowFails(t *testing.T) {
 	t.Parallel()
 
 	got := AddedListRows("# c\n$ a\n$ b\n", "# c\n$ a\n\n$ nova-foo newverb --x 1\n")
@@ -175,7 +175,7 @@ func TestIssue2218AddedUnexecutedRowFails(t *testing.T) {
 // compared_examples.txt, and every help banner's example lines are counted,
 // not only banners pasted in the four docs; an unlisted new help example
 // fails the class test.
-func TestIssue2218HelpBannersAreCounted(t *testing.T) {
+func TestHelpBannersAreCounted(t *testing.T) {
 	t.Parallel()
 
 	list, err := allowlist.Parse("compared_examples.txt", "cmd/nova-work/main_test.go:TestReady example: nova-work ready --node a\n", comparedListOptions)
@@ -207,7 +207,7 @@ func TestIssue2218HelpBannersAreCounted(t *testing.T) {
 // Item 4: `example:` lines of a help banner pasted in a fenced block of a
 // named doc are pasted examples too (the spec's "every $/example: line"),
 // enumerated through HelpExampleLines.
-func TestIssue2218HelpExampleBlocksInDocsAreCounted(t *testing.T) {
+func TestHelpExampleBlocksInDocsAreCounted(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
@@ -226,7 +226,7 @@ func TestIssue2218HelpExampleBlocksInDocsAreCounted(t *testing.T) {
 // ("Linux" at docs/TESTS.md:165 and :702 names linux), and a Platform line in
 // a `## nova-*` section that names no recognised GOOS is an error naming its
 // line, never a line silently left out of the check.
-func TestIssue2218PlatformGOOSIsCaseNormalized(t *testing.T) {
+func TestPlatformGOOSIsCaseNormalized(t *testing.T) {
 	t.Parallel()
 
 	cases := map[string][]string{
@@ -241,7 +241,7 @@ func TestIssue2218PlatformGOOSIsCaseNormalized(t *testing.T) {
 	}
 }
 
-func TestIssue2218PlatformLineWithNoGOOSFails(t *testing.T) {
+func TestPlatformLineWithNoGOOSFails(t *testing.T) {
 	t.Parallel()
 
 	md := "# Tests\n\nPlatform: prose outside a tool section is not checked\n\n## nova-foo\n\nPlatform: darwin\n\nPlatform: recorded on a machine whose wall probe fails\n\n## nova-bar\n\nPlatform: macOS\n"
@@ -262,7 +262,7 @@ func TestIssue2218PlatformLineWithNoGOOSFails(t *testing.T) {
 // The old section walker skipped every other `## nova-*` section (it cut the
 // NEXT heading off as the separator), so the second of two adjacent tool
 // sections was never read; each section is read.
-func TestIssue2218EveryToolSectionIsRead(t *testing.T) {
+func TestEveryToolSectionIsRead(t *testing.T) {
 	t.Parallel()
 
 	md := "## nova-a\n\nPlatform: linux\n\n## nova-b\n\nPlatform: bogus\n\n## nova-c\n\nPlatform: darwin\n"
@@ -276,7 +276,7 @@ func TestIssue2218EveryToolSectionIsRead(t *testing.T) {
 // `labels: '["self-hosted","macOS"]'`) behind a `runs-on: ${{ ... }}`
 // expression, which the runs-on-only reader never saw: legs are read from the
 // matrix values too, and a comment never declares a leg.
-func TestIssue2218CILegsIncludeMatrixLegs(t *testing.T) {
+func TestCILegsIncludeMatrixLegs(t *testing.T) {
 	t.Parallel()
 
 	yaml := "jobs:\n  a:\n    # a macOS leg is described here, in a comment only\n    strategy:\n      matrix:\n        os: [ubuntu-latest, macos-latest]\n    runs-on: ${{ matrix.os }}\n"
@@ -298,7 +298,7 @@ func TestIssue2218CILegsIncludeMatrixLegs(t *testing.T) {
 // first-run reader (onboarding.ExampleLines) stops there, so the nova-redis
 // lines under it went uncounted and their list rows read as stale. A line
 // continued with ` \` is one command, counted by its first line.
-func TestIssue2218HelpBannerLineLedByAnotherToolIsCounted(t *testing.T) {
+func TestHelpBannerLineLedByAnotherToolIsCounted(t *testing.T) {
 	t.Parallel()
 
 	banner := "usage: nova-foo serve\n\nexample:\n  nova-foo version\n  nova-secrets exec --only K -- nova-foo serve --port 1\n  nova-foo spill --ttl   10m \\\n           --value hi\n  nova-foo recall --name note\n\nnova-foo prose after the block is not an example\n"

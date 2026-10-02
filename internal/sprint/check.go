@@ -66,7 +66,7 @@ func (p *Pending) ranking(primary string, a, b float64) bool {
 // exactly, member by member, never by their counts. pending is the operation
 // the sprint's fence holds, if any: rules 2, 3, 4, 5 and 9 hold whenever no
 // operation is pending, and are not judged while one is; 1, 6, 7 and 8 always,
-// rule 7 against a pending rank's own new scores.
+// the score rule judged against a pending rank's own new scores.
 func Check(s *Snapshot, pending *Pending) []Violation {
 	var out []Violation
 	// The work table's queue is between the tables as a pending operation
@@ -222,10 +222,9 @@ func Check(s *Snapshot, pending *Pending) []Violation {
 			out = append(out, Violation{11, fmt.Sprintf("%s is %s and needs %s, not landed", c.ID, c.Col, strings.Join(w, ","))})
 		}
 	}
-	// 11. The needs make no cycle: add refuses the add that would close one
-	// (errata 3 amendment 7), and a store written before add walked the
-	// sentinels' needs may still hold one; each is named with the cards it
-	// keeps from ever being reached.
+	// 11. The needs make no cycle: add refuses the add that would close one,
+	// and a store written before add walked the sentinels' needs may still
+	// hold one; each is named with the cards it keeps from ever being reached.
 	for _, f := range Cycles(s) {
 		out = append(out, Violation{11, f.String()})
 	}

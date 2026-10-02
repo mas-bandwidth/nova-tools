@@ -22,7 +22,7 @@ import (
 // all -- which is the rule this whole file is written under: nova-bus is released, and a
 // slice that changed a working invocation would break a loop nobody here can see.
 //
-// The contract is docs/SPEC-BUS-REPLY.md (nova-tools#267). The READ half of that document
+// The contract is docs/SPEC-BUS-REPLY.md. The READ half of that document
 // -- `--bodies` and its frame -- is a separate contract and is not this file's business.
 
 // replyOnlyFlags are accepted ONLY in the reply form. Given without `--reply-to` they are

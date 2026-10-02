@@ -290,7 +290,7 @@ HYGIENE NO base=main head=card paths=sign/** findings=4
 ```
 
 The `MORE` line is the same run with the cap lifted, quoted so it can be pasted
-back (#1804) — it is the command that prints the rest, and it carries the
+back — it is the command that prints the rest, and it carries the
 `--identity`, `--paths` and `--kind` without which it would not run at all:
 
 ```
@@ -311,7 +311,7 @@ nova-check hygiene: --identity "Ada <<ada@example.com>>": the email carries an a
 ```
 
 `--kind` is a card kind the toolchain declares, and there is no default one. One
-it does not hold is refused by name rather than left to unlock nothing (#1848):
+it does not hold is refused by name rather than left to unlock nothing:
 
 ```
 $ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --kind fix-with-red-test
@@ -327,8 +327,8 @@ A line below opening `! ` is one this tool writes to standard ERROR: the
 findings go there and the protocol lines go to standard output, and the order a
 terminal interleaves the two in is not the same twice — the second block's last
 finding arrived after the `NOTE` line on one bench and before it on another.
-That is why the block cannot be read as one stream (#1549, and the marker is
-#1570's). `# Stderr: whole` on a command line says the marked lines are ALL it
+That is why the block cannot be read as one stream.
+`# Stderr: whole` on a command line says the marked lines are ALL it
 writes there: these are findings, not narration, and a transcript that quietly
 lost one would be hiding the thing the tool exists to say.
 
@@ -451,7 +451,7 @@ the examples below. The [quickstart guide](nova-swarm-quickstart.md) shows a
 ### The budget word on the native route
 
 Every `nova-swarm native` launch carries `--tokens <n>` or `--tokens unmetered`
-(SPEC-SWARM rule 13d, issue #1545). Recorded against the fake harness, with the paths
+(SPEC-SWARM). Recorded against the fake harness, with the paths
 abridged:
 
 ```
@@ -471,7 +471,7 @@ do not exist afterwards. `budget=` follows `harness=` on every `NATIVE OK` line.
 
 ### A budget nothing can observe, refused before anything is made
 
-A budget wants a source this tool can read (rule 13d). The source is the worker
+A budget wants a source this tool can read. The source is the worker
 description's `usage`, and `opencode` — read with `sqlite3` — when there is no `--worker`:
 
 ```
@@ -496,7 +496,7 @@ After every refusal above, `<slot>` is empty: nothing was made.
 ### What the line reports against the number
 
 The fake harness writes a **real sqlite database** in the harness's own shape
-(`FAKE-USAGE-DB`, the five token counts in rule 12's order then `usd`, with `-` for a type
+(`FAKE-USAGE-DB`, the five token counts in order then `usd`, with `-` for a type
 the provider did not report). Under `--tokens 50000`, the `NATIVE OK` line's `budget=`:
 
 ```
@@ -626,16 +626,16 @@ TOKENS FOLD at=2026-09-11T23:55:02Z build=devel out=./out sources=3 days=2026-09
 TOKENS SOURCE label=claude:bench kind=claude path=./transcripts reports=input,output,cache_write,cache_read day_basis=utc files=1 unreadable=0 messages=3 dup=1 noid=0 nousage=- unparsed=- comments=- redated=- superseded=- rows=2
 TOKENS SOURCE label=bus:emma kind=bus path=bus/from-emma reports=input,output day_basis=utc files=1 unreadable=0 messages=- dup=- noid=- nousage=- unparsed=0 comments=1 redated=0 superseded=0 rows=1
 TOKENS SOURCE label=bus:rowan kind=bus path=bus/from-rowan reports=- day_basis=utc files=0 unreadable=0 messages=- dup=- noid=- nousage=- unparsed=0 comments=0 redated=0 superseded=0 rows=0
-TOKENS TOUCHED label=bus:emma day=2026-09-11 repos=schema,serialize
-TOKENS DAY date=2026-09-11 rows=3 models=2 repos=2 turns=3 unknown=0.0% other=0.0% rough=0 dashes=6 nonutc=0 sources=bus:emma,claude:bench written=true
+TOKENS TOUCHED label=<source> day=<date> repos=<names>
+TOKENS DAY date=<date> rows=<n> models=<n> repos=<n> turns=<n> unknown=<pct> other=<pct> rough=<n> dashes=<n> nonutc=<n> sources=<sources> written=true
 TOKENS OK days=1 rows=3 sources=3 unreadable=0 unparsed=0 mixed=0 conflict=0 shrank=0 partial=0 quiet=0
 TOKENS NOTE nothing was wrong; nova-tokens check --out ./out is the gate
 
 $ nova-tokens check --out ./out
-CHECK OK at=2026-09-11T23:55:02Z build=devel files=1 rows=3 first=2026-09-11 last=2026-09-11 missing=0 stray=0 gap=0 notes=0
+CHECK OK at=<timestamp> build=devel files=<n> rows=<n> first=<date> last=<date> missing=<n> stray=<n> gap=<n> notes=<n>
 
 $ nova-tokens sum --out ./out --month 2026-09
-SUM MONTH month=2026-09 at=2026-09-11T23:55:02Z build=devel days=1 first=2026-09-11 last=2026-09-11 missing=0 rows=3 turns=3
+SUM MONTH month=<date> at=<timestamp> build=devel days=<n> first=<date> last=<date> missing=<n> rows=<n> turns=<n>
 SUM PAIR model=claude-fable-5-1 repo=schema input=908 output=1535 cache_write=1200 cache_read=242000 reasoning=- rough=0 dashes=0,0,0,0,1 nonutc=0 days=1
 SUM PAIR model=gemini-2.5-pro repo=schema input=123456 output=7890 cache_write=- cache_read=- reasoning=- rough=0 dashes=0,0,1,1,1 nonutc=0 days=1
 SUM PAIR model=claude-fable-5-1 repo=serialize input=430 output=58 cache_write=- cache_read=4000 reasoning=- rough=0 dashes=0,0,1,0,1 nonutc=0 days=1
@@ -659,7 +659,7 @@ $ nova-update example --out versions.tsv
 EXAMPLE OK wrote=versions.tsv entries=1 unchanged=false
 EXAMPLE NOTE next: nova-update report --file versions.tsv
 $ nova-update report --file versions.tsv
-REPORT OK checked=1 known=1 unknown=0 changed=- sent=- took=23ms file=versions.tsv host=- as=- entries=1 kinds=tool at=2026-10-02T02:55:03Z timeout=5s budget=1m0s max=20 snapshot=-
+REPORT OK checked=<n> known=<n> unknown=<n> changed=- sent=- took=<duration> file=versions.tsv host=- as=- entries=<n> kinds=tool at=<timestamp> timeout=<timeout> budget=<budget> max=<n> snapshot=-
 REPORT TOOL name=go kind=tool version=1.27.1 raw=go\x20version\x20go1.27.1\x20darwin/arm64 path=/opt/homebrew/bin/go
 ```
 
@@ -677,7 +677,7 @@ $ nova-version example --out versions.tsv
 EXAMPLE OK wrote=versions.tsv entries=1 unchanged=false
 EXAMPLE NOTE next: nova-version report --file versions.tsv
 $ nova-version report --file versions.tsv
-REPORT OK checked=1 known=1 unknown=0 changed=- sent=- took=24ms file=versions.tsv host=- as=- entries=1 kinds=tool at=2026-10-02T02:55:03Z timeout=5s budget=1m0s max=20 snapshot=-
+REPORT OK checked=<n> known=<n> unknown=<n> changed=- sent=- took=<duration> file=versions.tsv host=- as=- entries=<n> kinds=tool at=<timestamp> timeout=<timeout> budget=<budget> max=<n> snapshot=-
 REPORT TOOL name=go kind=tool version=1.27.1 raw=go\x20version\x20go1.27.1\x20darwin/arm64 path=/opt/homebrew/bin/go
 ```
 
@@ -710,8 +710,8 @@ MACHINE name=m1 user=nova seat=s1 slots=8 runners=0 width=6
 CONFIG LIST kind=machine rows=1
 
 $ nova-config machine history m1 --file try.json
-HISTORY id=1 kind=machine name=m1 op=add actor=a1 at=2026-10-02T03:18:20Z runners=0 seat=s1 slots=8 user=nova width=4
-HISTORY id=2 kind=machine name=m1 op=set actor=a1 at=2026-10-02T03:18:20Z width=4>6
+HISTORY id=<n> kind=<kind> name=<name> op=<op> actor=<actor> at=<timestamp> runners=<n> seat=<seat> slots=<n> user=<user> width=<n>
+HISTORY id=<n> kind=<kind> name=<name> op=<op> actor=<actor> at=<timestamp> width=<before>><after>
 CONFIG HISTORY kind=machine name=m1 changes=2
 ```
 
@@ -742,17 +742,17 @@ it and the real clock answers instead.
 
 ```text
 $ nova-cairn open --store ./cairns --session s1 --source bench-a/session-7 --publish manual --now 2026-09-17T12:00:00Z
-OPEN OK session=s1 store=./cairns source=bench-a/session-7 publish=manual stamp=2026-09-17T12:00:00Z
+OPEN OK session=<session> store=<store> source=<source> publish=<publish> stamp=<timestamp>
 
 $ nova-cairn append --store ./cairns --session s1 --entry e1 --text "the words to keep" --source bench-a/session-7#L3 --publish manual --now 2026-09-17T12:05:00Z
-APPEND OK session=s1 entry=e1 source=bench-a/session-7#L3 persisted=true published=false publish=manual duplicate=false stamp=2026-09-17T12:05:00Z
+APPEND OK session=<session> entry=<entry> source=<source>#<n> persisted=<bool> published=<bool> publish=<publish> duplicate=<bool> stamp=<timestamp>
 
 $ nova-cairn index --store ./cairns
 INDEX OK sessions=1 entries=1
-INDEX ENTRY session=s1 entry=e1 stamp=2026-09-17T12:05:00Z bytes=17 source=bench-a/session-7#L3
+INDEX ENTRY session=<session> entry=<entry> stamp=<timestamp> bytes=<n> source=<source>#<n>
 
 $ nova-cairn receipt --store ./cairns --session s1 --entry e1
-RECEIPT OK session=s1 entry=e1 stamp=2026-09-17T12:05:00Z bytes=17 source=bench-a/session-7#L3 persisted=true published=false publish=manual
+RECEIPT OK session=<session> entry=<entry> stamp=<timestamp> bytes=<n> source=<source>#<n> persisted=<bool> published=<bool> publish=<publish>
 ```
 
 ## nova-redis
