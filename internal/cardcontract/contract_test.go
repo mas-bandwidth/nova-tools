@@ -164,4 +164,3 @@ func TestReadJobTextCarriesTheFourChecks(t *testing.T) {
 		assert.NotContains(t, text, BrokenFindingText, family)
 	}
 }
-
