@@ -91,8 +91,7 @@ floor-level. If you find the next one of those, we want it.
 
 ## Reporting
 
-Use the reporting email route. That is the route available now, and it is
-the whole route.
+Submit security reports to the project's security address, published in the repository's root.
 
 GitHub private vulnerability reporting is switched off on this repository and
 on nova as of 2026-08. Where a repository has that feature enabled, GitHub puts
@@ -131,7 +130,7 @@ wire, and the credit offer below becomes one you cannot later claim.
 
 We aim to acknowledge within a few days. If about a week passes with no reply,
 that is a failure on our side and not a judgment on your report — send it again
-to the reporting address with SECURITY in the subject, since that address
+to the reporting address with SECURITY in the subject.
 also takes general mail and the word is how it gets found. That gets you a
 different pair of eyes rather than a faster answer, and it is no more private
 than the first: same unencrypted medium, same domain.
