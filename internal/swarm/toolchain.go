@@ -198,7 +198,7 @@ func ToolchainRootOSes() []string {
 
 // ToolchainRoots is the wall's side: this machine's list, absolute, carrying each root's
 // kind, and SKIPPED IF ABSENT. Absent is the machine's shape and not the caller's mistake --
-// a Mac bench has no `~/sdk` and may have no dotnet -- while rule 5 of the wall REFUSES a
+// a Mac bench has no `~/sdk` and may have no dotnet -- while the wall REFUSES a
 // `--read` or a `--read-noexec` naming a path that is not there, so a root that does not
 // exist must never reach the argv. An empty home names no HOME-relative root, because a
 // relative root is a refusal and a root at the filesystem's top is not a toolchain; a system
