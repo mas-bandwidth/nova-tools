@@ -74,7 +74,9 @@ Both loops name the identity every child commits under, `--identity
 hand; a loop without it reads the pool's `identity.tsv`. With neither, every
 card is refused before its checkout is staged: nova-swarm carries no identity of
 its own, and the staged checkout's git config and the child's author and
-committer are both this one.
+committer are both this one. The owner is one branch name component (a letter or
+digit, then letters, digits, `-` and `_`, case kept): a card staged with no frame
+branch commits on `<owner>/<label>`.
 
 The inventory reads the store `NOVA_SPRINT_REDIS` names (or `--redis`); export
 it, and `NOVA_MACHINE` when the machine running the play is a row, before the

@@ -34,8 +34,8 @@ func TestParseCardBaseReadsThePushedHeader(t *testing.T) {
 	require.Equal(t, "dev", cb.Ref, "ReadCardBase = %+v, want Ref=dev Named=mas-bandwidth/nova-tools", cb)
 	require.Equal(t, "mas-bandwidth/nova-tools", cb.Named, "ReadCardBase = %+v, want Ref=dev Named=mas-bandwidth/nova-tools", cb)
 	require.True(t, CardNamesRepo(pushedHeader(sha)), "CardNamesRepo = false on a card with a REPO: line")
-	got := CardStageBranch(pushedHeader(sha))
-	require.Equal(t, "rowan/s00-0302-quack-hulk-flash", got, "CardStageBranch = %q", got)
+	got := CardStageBranch("ada", pushedHeader(sha))
+	require.Equal(t, "ada/s00-0302-quack-hulk-flash", got, "CardStageBranch = %q", got)
 
 	// The owner/name resolves through the bench mirror exactly as a base-repo URL does.
 	home := t.TempDir()

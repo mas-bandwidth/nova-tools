@@ -90,3 +90,63 @@ func TestPoolIdentityRemedyNamesWhatAnyAdopterHas(t *testing.T) {
 	_, err := LoadPoolIdentity(t.TempDir())
 	require.ErrorContains(t, err, PoolIdentityRemedy)
 }
+
+// THE STAGING BRANCH IS THE OWNER'S. A card staged with no frame branch commits on
+// <owner>/<label>, the owner being the identity's first field, so one fleet's checkouts are
+// rowan/<label> and another adopter's carry their own name; never a prefix built in here.
+func TestStageCardBranchIsTheIdentitysOwner(t *testing.T) {
+	t.Parallel()
+	origin, sha := baseRepo(t)
+	for _, owner := range []string{"ada", "Ada-Bench_2"} {
+		t.Run(owner, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			target := filepath.Join(root, "job", "repo")
+			res, err := StageCard(StageOptions{
+				Card:      []byte("RESULT: c1 sha=aaaaaaaaaaaa\nbase-repo: " + origin + "\nbase-sha: " + sha + "\n"),
+				TargetDir: target, JobDir: filepath.Join(root, "job"),
+				BenchHome: filepath.Join(root, "home"), BenchName: "testhost", Timeout: 30 * time.Second,
+				Identity: StagingIdentity{Owner: owner, Name: "Ada Bench", Email: "ada@example.com"},
+			})
+			require.NoError(t, err)
+			assert.Equal(t, owner+"/c1", res.Branch, "the owner is used as written, never folded")
+		})
+	}
+}
+
+// An owner is one ref component git takes as it is: a letter or digit, then letters,
+// digits, `-` and `_`. Empty, a slash, a dot (`..`, `.lock`), a space or anything git
+// refuses in a ref is refused before the clone, as a missing name or email is.
+func TestStageCardRefusesAnOwnerThatIsNoRefComponent(t *testing.T) {
+	t.Parallel()
+	origin, sha := baseRepo(t)
+	for _, owner := range []string{"", "ada/bench", "ada..b", "ada.lock", "-ada", "ada bench", "ada~1", "ada@{0}"} {
+		t.Run(owner, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			target := filepath.Join(root, "job", "repo")
+			_, err := StageCard(StageOptions{
+				Base:      &CardBase{Repo: origin, Sha: sha},
+				TargetDir: target, JobDir: filepath.Join(root, "job"),
+				BenchHome: filepath.Join(root, "home"), BenchName: "testhost", Timeout: 30 * time.Second,
+				Identity: StagingIdentity{Owner: owner, Name: "Ada Bench", Email: "ada@example.com"},
+			})
+			require.ErrorContains(t, err, "staging refused: the identity's owner")
+			assert.NoDirExists(t, target, "a stage refused for its owner cloned anyway")
+		})
+	}
+}
+
+// The same owner rule holds where an identity is first read: the flag and identity.tsv.
+func TestParseIdentityAndThePoolFileRefuseAnOwnerThatIsNoRefComponent(t *testing.T) {
+	t.Parallel()
+	_, err := ParseIdentity("ada/bench,Ada Bench,ada@example.com")
+	require.ErrorContains(t, err, "owner")
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "identity.tsv"), []byte("owner\tname\temail\nada bench\tAda Bench\tada@example.com\n"), 0o644))
+	_, err = LoadPoolIdentity(dir)
+	require.ErrorContains(t, err, "owner")
+	id, err := ParseIdentity("Ada-Bench_2,Ada Bench,ada@example.com")
+	require.NoError(t, err)
+	assert.Equal(t, "Ada-Bench_2", id.Owner)
+}

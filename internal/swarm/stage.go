@@ -139,17 +139,18 @@ func CardNamesRepo(card []byte) bool {
 }
 
 // CardStageBranch is the branch the staged checkout is on, so the card commits on a named
-// branch rather than a detached HEAD: rowan/<label> from line 1 (RESULT: <label> sha=...),
-// rowan/card when line 1 names no label.
-func CardStageBranch(card []byte) string {
+// branch rather than a detached HEAD: <owner>/<label> from line 1 (RESULT: <label> sha=...),
+// <owner>/card when line 1 names no label. The owner is the staging identity's (its first
+// field), which StageCard has held to identityOwnerRE.
+func CardStageBranch(owner string, card []byte) string {
 	first, _, _ := strings.Cut(string(card), "\n")
 	first = strings.TrimSpace(first)
 	first = strings.TrimPrefix(first, "RESULT:")
 	first = strings.TrimPrefix(first, "RESULT")
 	if f := strings.Fields(first); len(f) > 0 && cardLabelRE.MatchString(f[0]) {
-		return "rowan/" + f[0]
+		return owner + "/" + f[0]
 	}
-	return "rowan/card"
+	return owner + "/card"
 }
 
 // FindBenchMirror finds the path to the bench's local mirror for baseRepo.
@@ -304,10 +305,11 @@ type StageOptions struct {
 	// what the card's header lines say (docs/SPEC-CARD-CONTRACT.md layer 2).
 	Base   *CardBase
 	Branch string
-	// Identity is the name and email the staged checkout's local git config carries, the
-	// caller's (native's pool identity: --identity, else <root>/identity.tsv). A stage
-	// given no name or no email is refused before any git runs: this tool has no identity
-	// of its own to fall back to.
+	// Identity is the name and email the staged checkout's local git config carries, and
+	// the owner its branch is under when no Branch is given (CardStageBranch), the caller's
+	// (native's pool identity: --identity, else <root>/identity.tsv). A stage given no name,
+	// no email, or an owner that is no ref component is refused before any git runs: this
+	// tool has no identity of its own to fall back to.
 	Identity StagingIdentity
 
 	// git, when set, builds every staging git call in place of stageGit: a test's seam for
@@ -402,6 +404,9 @@ func StageCard(opts StageOptions) (StageResult, error) {
 	if strings.TrimSpace(opts.Identity.Name) == "" || strings.TrimSpace(opts.Identity.Email) == "" {
 		return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Ref: cb.Ref, Mirror: mirror}, errors.New(NoStageIdentity)
 	}
+	if p := ownerProblem(opts.Identity.Owner); p != "" {
+		return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Ref: cb.Ref, Mirror: mirror}, fmt.Errorf("staging refused: %s; %s", p, PoolIdentityRemedy)
+	}
 
 	cloneSource := mirror
 	if cloneSource == "" {
@@ -453,7 +458,7 @@ func StageCard(opts StageOptions) (StageResult, error) {
 	}
 
 	// Fetch and checkout baseSha (else the BASE: ref) on the card's branch.
-	branch := CardStageBranch(opts.Card)
+	branch := CardStageBranch(opts.Identity.Owner, opts.Card)
 	if opts.Branch != "" {
 		if err := refuseOptionLike("branch", opts.Branch); err != nil {
 			return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Ref: cb.Ref, Mirror: mirror, Wall: time.Since(start)}, err

@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
@@ -36,6 +37,20 @@ type StagingIdentity struct {
 // #3193): what any adopter can do, give the identity on the command line (a member loop's
 // argv carries it) or write the pool's file, whose shape it says.
 const PoolIdentityRemedy = "remedy: give --identity <owner>,<name>,<email>, or write <root>/identity.tsv: a header line and one row, each of owner, name and email tab-separated"
+
+// identityOwnerRE is what an identity's owner may be: one ref component git takes as it is,
+// since a card staged with no frame branch commits on <owner>/<label> (CardStageBranch). A
+// letter or digit, then letters, digits, `-` and `_`: no slash, no dot (so no `..`, no
+// `.lock`), no blank and nothing else git refuses in a ref. Case is kept as written.
+var identityOwnerRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
+
+// ownerProblem is "" for an owner identityOwnerRE takes, else what is wrong with it.
+func ownerProblem(owner string) string {
+	if identityOwnerRE.MatchString(owner) {
+		return ""
+	}
+	return fmt.Sprintf("the identity's owner %q is no branch name component: it wants a letter or digit, then letters, digits, `-` and `_` (the staging branch is <owner>/<label>)", owner)
+}
 
 // LoadPoolIdentity reads the pool's identity.tsv: a header
 // `owner\tname\temail` plus the pool's identity row. A pool with no identity
@@ -67,6 +82,9 @@ func LoadPoolIdentity(poolDir string) (StagingIdentity, error) {
 		if owner == "" || name == "" || email == "" {
 			return StagingIdentity{}, fmt.Errorf("pool %s identity.tsv line %d: owner, name and email are all required; %s", poolDir, i+1, PoolIdentityRemedy)
 		}
+		if p := ownerProblem(owner); p != "" {
+			return StagingIdentity{}, fmt.Errorf("pool %s identity.tsv line %d: %s; %s", poolDir, i+1, p, PoolIdentityRemedy)
+		}
 		id = StagingIdentity{Owner: owner, Name: name, Email: email}
 		break
 	}
@@ -89,6 +107,9 @@ func ParseIdentity(s string) (StagingIdentity, error) {
 	id := StagingIdentity{Owner: strings.TrimSpace(s[:first]), Name: strings.TrimSpace(s[first+1 : last]), Email: strings.TrimSpace(s[last+1:])}
 	if id.Owner == "" || id.Name == "" || !strings.Contains(id.Email, "@") {
 		return StagingIdentity{}, fmt.Errorf("--identity %q: owner, name and an email with an @ are all required: <owner>,<name>,<email>", s)
+	}
+	if p := ownerProblem(id.Owner); p != "" {
+		return StagingIdentity{}, fmt.Errorf("--identity %q: %s", s, p)
 	}
 	return id, nil
 }

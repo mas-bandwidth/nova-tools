@@ -300,9 +300,9 @@ func TestStagePushedHeaderStagesRepoBeforeTheModel(t *testing.T) {
 	repoDir := filepath.Join(slot, "jobs", "card-pushed-header", "repo")
 	head := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
 	require.Equal(t, base, head, "<job>/repo HEAD = %s, want base-sha %s", head, base)
-	wantBranch := swarm.CardStageBranch(cardText)
+	wantBranch := swarm.CardStageBranch("test-owner", cardText)
 	require.NotEqual(t, "", wantBranch, "the card's branch is %q, want one derived from its label", wantBranch)
-	require.NotEqual(t, wantBranch, swarm.CardStageBranch(nil), "the card's branch is %q, want one derived from its label", wantBranch)
+	require.NotEqual(t, wantBranch, swarm.CardStageBranch("test-owner", nil), "the card's branch is %q, want one derived from its label", wantBranch)
 	branch := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "--abbrev-ref", "HEAD"))
 	require.Equal(t, wantBranch, branch, "<job>/repo is on %q, want the card's branch %q", branch, wantBranch)
 }
