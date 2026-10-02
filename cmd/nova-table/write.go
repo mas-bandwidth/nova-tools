@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 )
@@ -15,7 +16,44 @@ func (app *application) writeFlags(fs *flag.FlagSet) (*ntable.WriteOptions, *boo
 	fs.StringVar(&opts.Actor, "actor", app.defaults.Actor, "actor recorded with the change")
 	fs.StringVar(&opts.Fence, "fence", app.defaults.Fence, "coordinator fence recorded with the change")
 	fs.StringVar(&opts.Idem, "idem", app.defaults.Idem, "attempt identifier recorded with the change; does not deduplicate")
+	dryRunFlag(fs, app.dryRun)
 	return opts, fs.Bool("receipt", app.receipts, "print the committed event ID, epoch and revision")
+}
+
+// dryRunFlag declares --dry-run on a verb that writes (planned answers it).
+func dryRunFlag(fs *flag.FlagSet, value bool) {
+	fs.Bool("dry-run", value, "check the arguments, print the call the verb would send and stop: nothing is dialled or written")
+}
+
+// planned answers --dry-run on a verb that writes, at the point the real run
+// would dial: the arguments have been checked as the real run checks them, so
+// one line names the call (the verb, its arguments, the flags given) and the
+// store it would go to, and nothing is dialled or written. What only the store
+// can check (the table, its epoch, its rows and columns, a bound cell) is left
+// to the real run. It reports whether it answered, and the exit: 0, or 1 when
+// the line did not reach stdout (a closed pipe), as a verb's own output does.
+func planned(stdout io.Writer, fs *flag.FlagSet, verb, addr string, args []string) (int, bool) {
+	if f := fs.Lookup("dry-run"); f == nil || f.Value.String() != "true" {
+		return 0, false
+	}
+	var b strings.Builder
+	b.WriteString("TABLE DRY-RUN verb=" + strings.Join(strings.Fields(verb), "-"))
+	for i, a := range args {
+		fmt.Fprintf(&b, " arg%d=%s", i+1, field(a))
+	}
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name != "dry-run" && f.Name != "redis" {
+			fmt.Fprintf(&b, " %s=%s", f.Name, field(f.Value.String()))
+		}
+	})
+	if strings.TrimSpace(addr) == "" {
+		addr = "-"
+	}
+	fmt.Fprintf(&b, " redis=%s dialled=0 written=0\n", field(addr))
+	if _, err := io.WriteString(stdout, b.String()); err != nil {
+		return 1, true
+	}
+	return 0, true
 }
 
 func printReceipt(out io.Writer, opts *ntable.WriteOptions, enabled bool) {

@@ -37,6 +37,9 @@ func (app *application) cmdRowAdd(args []string, stdout, stderr io.Writer) int {
 			}
 		}
 		if batch {
+			if code, ok := planned(stdout, fs, verb, *addr, pos); ok {
+				return code
+			}
 			ctx := context.Background()
 			st, c, code := app.client(ctx, verb, *addr, stderr)
 			if code != 0 {
@@ -65,6 +68,9 @@ func (app *application) cmdRowAdd(args []string, stdout, stderr io.Writer) int {
 	}
 	if len(spec.Binds) > 0 && spec.Owner == "" {
 		return refuse(stderr, verb, "a row that binds a set wants --owner <verb>, the verb that writes it, so a write here can name it")
+	}
+	if code, ok := planned(stdout, fs, verb, *addr, pos); ok {
+		return code
 	}
 	ctx := context.Background()
 	st, c, code := app.client(ctx, verb, *addr, stderr)
@@ -99,6 +105,9 @@ func (app *application) cmdRowDel(args []string, stdout, stderr io.Writer) int {
 	}
 	if len(pos) != 2 {
 		return refuse(stderr, verb, "wants a table and a row: row del <table> <row>")
+	}
+	if code, ok := planned(stdout, fs, verb, *addr, pos); ok {
+		return code
 	}
 	ctx := context.Background()
 	st, c, code := app.client(ctx, verb, *addr, stderr)
@@ -142,6 +151,9 @@ func (app *application) cmdRowSet(args []string, stdout, stderr io.Writer) int {
 		}
 		texts[col] = v
 	}
+	if code, ok := planned(stdout, fs, verb, *addr, pos); ok {
+		return code
+	}
 	ctx := context.Background()
 	st, c, code := app.client(ctx, verb, *addr, stderr)
 	if code != 0 {
@@ -174,6 +186,9 @@ func (app *application) cmdRowsHide(args []string, stdout, stderr io.Writer, hid
 	}
 	if len(pos) < 2 {
 		return refuse(stderr, verb, "wants a table and at least one row: "+verb+" <table> <row> ...")
+	}
+	if code, ok := planned(stdout, fs, verb, *addr, pos); ok {
+		return code
 	}
 	ctx := context.Background()
 	st, c, code := app.client(ctx, verb, *addr, stderr)

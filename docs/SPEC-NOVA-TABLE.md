@@ -787,8 +787,9 @@ A revision is always labelled for what it counts: `table_revision` is the table'
 usage: nova-table batch (<manifest-file> | - | '<json>')
 
 example:
-  nova-table batch manifest.json
-  nova-table batch - < manifest.json
+  nova-table show demo
+  nova-table member read demo b1
+  nova-table batch --dry-run '{"schema":1,"table":"demo","epoch":"0","expected_table_revision":"2","operation_id":"create-b1","members":[{"id":"b1","expect":{"absent":true},"create":{"row":"build","col":"ready","score":0}}]}'
 
 manifest: one JSON object; required keys are schema (1), table, epoch,
 expected_table_revision, operation_id and members. Epoch and revisions are
@@ -801,13 +802,16 @@ Example manifest (demo has row build and column ready; revision 2 was observed):
   "members":[{"id":"b1","expect":{"absent":true},"create":{"row":"build","col":"ready","score":0}}]}
 Read the current epoch/revision with nova-table show demo and existing members
 with nova-table member read demo b1 before choosing expectations.
-Use the same --redis or --seat for these reads and the batch.
+Use the same --redis or --seat for these reads and the batch. The manifest is
+a file path, - with the file on stdin (nova-table batch - < manifest.json), or
+the JSON itself, as in example:.
 Retry the same manifest with the same operation_id to replay its recorded
 result; changing the manifest under that id is refused. --idem on individual
 write verbs records receipt metadata only and does not deduplicate retries.
 
 flags:
-  --json  print the receipt as one JSON object instead of the lines
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+  --json  print the receipt (or the --dry-run plan) as one JSON object instead of the lines
 
 connection:
   --redis <string>  the Redis address (else NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR, then the seat's)
@@ -819,6 +823,7 @@ write epoch and receipt:
   --receipt  print the committed event ID, epoch and revision
 
 exit codes: 0 done, 1 refused, 2 usage
+effect: store write: applies the manifest in one atomic call and prints a receipt; --dry-run makes every check made before sending and prints the plan instead, dialling nothing; the epoch, the revision and each member's expectation are the store's to check, on the real run
 ```
 
 ### Model

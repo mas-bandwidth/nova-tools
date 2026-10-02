@@ -27,6 +27,9 @@ func (app *application) cmdMember(args []string, stdout, stderr io.Writer) int {
 	if len(pos) != 2 {
 		return refuse(stderr, verb, "wants a table and a new member ID: member create <table> <id>")
 	}
+	if code, ok := planned(stdout, fs, verb, *addr, pos); ok {
+		return code
+	}
 	ctx := context.Background()
 	st, c, code := app.client(ctx, verb, *addr, stderr)
 	if code != 0 {

@@ -11,6 +11,9 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 )
 
+// A command's example is the lines its help prints under example:, each a
+// whole command that runs as written once the banner's example: has run (a
+// line before the verb's own makes what it needs), the verb's own line last.
 type command struct {
 	name, syntax, example string
 	run                   func(*application, []string, io.Writer, io.Writer) int
@@ -22,53 +25,53 @@ var commands []command
 
 func init() {
 	commands = []command{
-		{"create", "<table> --columns <name[:projection[:fold[:label]]],...> [--footer <label>] [--width <col=n,...>]", "create demo --columns 'ready,working,done,note:text,progress:pct(done)'", (*application).cmdCreate},
-		{"set", "<table> [--footer <label>] [--rename <name>] [--columns <spec>] [--hide <cols>] [--show <cols>] [--hidden | --visible]", "set demo --hide ready", (*application).cmdSet},
-		{"drop", "<table> [--definition]", "drop demo", (*application).cmdDrop},
-		{"list", "", "list", (*application).cmdList},
-		{"row add", "<table> <row>... [--label <text>] [--exclude <member>] [--owner <verb>] [<col>=<key> ...]", "row add demo build review", (*application).cmdRowAdd},
-		{"row set", "<table> <row> <col>=<value>...", "row set demo build 'note=Checks passed'", (*application).cmdRowSet},
-		{"row hide", "<table> <row>...", "row hide demo build", func(app *application, a []string, o, e io.Writer) int { return app.cmdRowsHide(a, o, e, true) }},
-		{"row show", "<table> <row>...", "row show demo build", func(app *application, a []string, o, e io.Writer) int { return app.cmdRowsHide(a, o, e, false) }},
-		{"row del", "<table> <row>", "row del demo build", (*application).cmdRowDel},
-		{"row move", "<table> <row> --first | --last | --before <row> | --after <row>", "row move demo review --before build", (*application).cmdRowMove},
-		{"row order", "<table> <row>...", "row order demo review build", (*application).cmdRowOrder},
-		{"row sort", "<table> [--by name|label|<col>] [--desc] [--keep] | --manual", "row sort demo --by name --keep", (*application).cmdRowSort},
-		{"col add", "<table> <name[:projection[:fold[:label]]]> [--first | --last | --before <col> | --after <col>]", "col add demo note:text --after done", (*application).cmdColAdd},
-		{"col del", "<table> <col>", "col del demo note", (*application).cmdColDel},
-		{"col move", "<table> <col> --first | --last | --before <col> | --after <col>", "col move demo done --after working", (*application).cmdColMove},
-		{"cell add", "<table> <row> <col> <member>... [--score <n>]", "cell add demo build ready b1 b2", (*application).cmdCellAdd},
-		{"cell remove", "<table> <row> <col> <member>...", "cell remove demo build ready b1 b2", (*application).cmdCellRemove},
-		{"cell move", "<table> <row> <from-col> <to-col> <member>...", "cell move demo build ready working b1 b2", (*application).cmdCellMove},
-		{"cell members", "<table> <row> <col>", "cell members demo build ready", (*application).cmdCellMembers},
-		{"member create", "<table> <id>", "member create demo b3", func(app *application, a []string, o, e io.Writer) int {
+		{"create", "<table> --columns <name[:projection[:fold[:label]]],...> [--footer <label>] [--width <col=n,...>]", "nova-table create notes --columns 'todo,done,note:text,progress:pct(done)'", (*application).cmdCreate},
+		{"set", "<table> [--footer <label>] [--rename <name>] [--columns <spec>] [--hide <cols>] [--show <cols>] [--hidden | --visible]", "nova-table set demo --hide ready", (*application).cmdSet},
+		{"drop", "<table> [--definition]", "nova-table drop demo", (*application).cmdDrop},
+		{"list", "", "nova-table list", (*application).cmdList},
+		{"row add", "<table> <row>... [--label <text>] [--exclude <member>] [--owner <verb>] [<col>=<key> ...]", "nova-table row add demo review", (*application).cmdRowAdd},
+		{"row set", "<table> <row> <col>=<value>...", "nova-table col add demo note:text --after done\nnova-table row set demo build 'note=Checks passed'", (*application).cmdRowSet},
+		{"row hide", "<table> <row>...", "nova-table row hide demo build", func(app *application, a []string, o, e io.Writer) int { return app.cmdRowsHide(a, o, e, true) }},
+		{"row show", "<table> <row>...", "nova-table row show demo build", func(app *application, a []string, o, e io.Writer) int { return app.cmdRowsHide(a, o, e, false) }},
+		{"row del", "<table> <row>", "nova-table row del demo build", (*application).cmdRowDel},
+		{"row move", "<table> <row> --first | --last | --before <row> | --after <row>", "nova-table row add demo review\nnova-table row move demo review --before build", (*application).cmdRowMove},
+		{"row order", "<table> <row>...", "nova-table row add demo review\nnova-table row order demo review build", (*application).cmdRowOrder},
+		{"row sort", "<table> [--by name|label|<col>] [--desc] [--keep] | --manual", "nova-table row sort demo --by name --keep", (*application).cmdRowSort},
+		{"col add", "<table> <name[:projection[:fold[:label]]]> [--first | --last | --before <col> | --after <col>]", "nova-table col add demo note:text --after done", (*application).cmdColAdd},
+		{"col del", "<table> <col>", "nova-table col add demo note:text\nnova-table col del demo note", (*application).cmdColDel},
+		{"col move", "<table> <col> --first | --last | --before <col> | --after <col>", "nova-table col move demo done --first", (*application).cmdColMove},
+		{"cell add", "<table> <row> <col> <member>... [--score <n>]", "nova-table cell add demo build ready b3 b4", (*application).cmdCellAdd},
+		{"cell remove", "<table> <row> <col> <member>...", "nova-table cell remove demo build ready b2", (*application).cmdCellRemove},
+		{"cell move", "<table> <row> <from-col> <to-col> <member>...", "nova-table cell move demo build ready done b2", (*application).cmdCellMove},
+		{"cell members", "<table> <row> <col>", "nova-table cell members demo build working", (*application).cmdCellMembers},
+		{"member create", "<table> <id>", "nova-table member create demo b5", func(app *application, a []string, o, e io.Writer) int {
 			return app.cmdMember(append([]string{"create"}, a...), o, e)
 		}},
-		{"member find", "<table> <id>", "member find demo b1", (*application).cmdMemberFind},
-		{"member read", "<table> <id>... | <table> --cell <row:col>", "member read demo b1 b2", (*application).cmdMemberRead},
-		{"batch", "(<manifest-file> | - | '<json>')", "batch manifest.json", (*application).cmdBatch},
-		{"check", "<table>", "check demo", (*application).cmdCheck},
-		{"clear", "<table>", "clear demo", (*application).cmdClear},
-		{"show", "<table> [--at-epoch <n>]", "show demo", (*application).cmdShow},
-		{"render", "<table> | --view <name> [--at-epoch <n>] [--width <col=n,...>] [--label-width <n>]", "render --view work", (*application).cmdRender},
-		{"watch", "<table>[,<table>...] | --view <name> [--every <duration>] [--out <file>] [--title <text>] [--width <col=n,...>] [--label-width <n>] [--check] [--once]", "watch --view work --once", (*application).cmdWatch},
-		{"view set", "<name> --tables <a,b,...> [--title <text>] [--summary <count-column>]", "view set work --tables demo --title Work --summary done", func(app *application, a []string, o, e io.Writer) int {
+		{"member find", "<table> <id>", "nova-table member find demo b1", (*application).cmdMemberFind},
+		{"member read", "<table> <id>... | <table> --cell <row:col>", "nova-table member read demo b1 b2", (*application).cmdMemberRead},
+		{"batch", "(<manifest-file> | - | '<json>')", "nova-table show demo\nnova-table member read demo b1\nnova-table batch --dry-run '{\"schema\":1,\"table\":\"demo\",\"epoch\":\"0\",\"expected_table_revision\":\"2\",\"operation_id\":\"create-b1\",\"members\":[{\"id\":\"b1\",\"expect\":{\"absent\":true},\"create\":{\"row\":\"build\",\"col\":\"ready\",\"score\":0}}]}'", (*application).cmdBatch},
+		{"check", "<table>", "nova-table check demo", (*application).cmdCheck},
+		{"clear", "<table>", "nova-table clear demo", (*application).cmdClear},
+		{"show", "<table> [--at-epoch <n>]", "nova-table show demo", (*application).cmdShow},
+		{"render", "<table> | --view <name> [--at-epoch <n>] [--width <col=n,...>] [--label-width <n>]", "nova-table render demo", (*application).cmdRender},
+		{"watch", "<table>[,<table>...] | --view <name> [--every <duration>] [--out <file>] [--title <text>] [--width <col=n,...>] [--label-width <n>] [--check] [--once]", "nova-table watch demo --once", (*application).cmdWatch},
+		{"view set", "<name> --tables <a,b,...> [--title <text>] [--summary <count-column>]", "nova-table view set work --tables demo --title Work --summary done", func(app *application, a []string, o, e io.Writer) int {
 			return app.cmdView(append([]string{"set"}, a...), o, e)
 		}},
-		{"view state", "<name> (<text> | --clear)", "view state work STOPPED", func(app *application, a []string, o, e io.Writer) int {
+		{"view state", "<name> (<text> | --clear)", "nova-table view set work --tables demo\nnova-table view state work STOPPED", func(app *application, a []string, o, e io.Writer) int {
 			return app.cmdView(append([]string{"state"}, a...), o, e)
 		}},
-		{"view show", "<name>", "view show work", func(app *application, a []string, o, e io.Writer) int {
+		{"view show", "<name>", "nova-table view set work --tables demo\nnova-table view show work", func(app *application, a []string, o, e io.Writer) int {
 			return app.cmdView(append([]string{"show"}, a...), o, e)
 		}},
-		{"view list", "", "view list", func(app *application, a []string, o, e io.Writer) int {
+		{"view list", "", "nova-table view list", func(app *application, a []string, o, e io.Writer) int {
 			return app.cmdView(append([]string{"list"}, a...), o, e)
 		}},
-		{"view del", "<name>", "view del work", func(app *application, a []string, o, e io.Writer) int {
+		{"view del", "<name>", "nova-table view set work --tables demo\nnova-table view del work", func(app *application, a []string, o, e io.Writer) int {
 			return app.cmdView(append([]string{"del"}, a...), o, e)
 		}},
-		{"shell", "[--redis <addr> | --seat <name>] [--keep-going] [--epoch <n>] [--receipt=false]", "shell --redis localhost:6379", (*application).cmdShell},
-		{"version", "", "version", func(app *application, a []string, o, e io.Writer) int {
+		{"shell", "[--redis <addr> | --seat <name>] [--keep-going] [--epoch <n>] [--receipt=false]", "printf 'show demo\\nrender demo\\n' | nova-table shell", (*application).cmdShell},
+		{"version", "", "nova-table version", func(app *application, a []string, o, e io.Writer) int {
 			if len(a) == 1 && isHelp(a[0]) {
 				panic(verbflag.Help{FS: verbflag.New("version")})
 			}
@@ -196,9 +199,10 @@ func recoverHelp(out io.Writer, code *int) {
 func printCommandHelp(out io.Writer, c command, fs *flag.FlagSet) {
 	fmt.Fprintln(out, "usage: nova-table "+strings.TrimSpace(c.name+" "+c.syntax))
 	fmt.Fprintln(out, "\nexample:")
-	fmt.Fprintln(out, "  nova-table "+c.example)
+	for _, l := range strings.Split(c.example, "\n") {
+		fmt.Fprintln(out, "  "+l)
+	}
 	if c.name == "batch" {
-		fmt.Fprintln(out, "  nova-table batch - < manifest.json")
 		fmt.Fprintln(out, "\n"+batchUsageDetails)
 	}
 	if fs != nil {
@@ -240,4 +244,32 @@ func printCommandHelp(out io.Writer, c command, fs *flag.FlagSet) {
 		fmt.Fprintln(out, "\nA missing row succeeds with existed=0 and leaves a no-op receipt.")
 	}
 	fmt.Fprintln(out, "\nexit codes: 0 done, 1 refused, 2 usage")
+	fmt.Fprintln(out, "effect: "+effectOf(c.name))
+}
+
+// dryRunWords is what --dry-run does on every verb that writes.
+const dryRunWords = "--dry-run checks the arguments as the real run does and prints the call instead, dialling nothing; " +
+	"what only the store can check (the table, its epoch, its rows and columns, a bound cell) is left to the real run"
+
+// effectOf is what running a verb does to the world, the last line of its
+// help (docs/STANDARD.md section 2: an inspection, a local write, a store
+// write or a delivery; a verb that writes takes --dry-run).
+func effectOf(verb string) string {
+	switch verb {
+	case "list", "cell members", "member find", "member read", "check", "show", "render", "view show", "view list":
+		return "inspection: reads the store, writes nothing"
+	case "watch":
+		return "inspection: reads the store every --every and writes nothing to it; --out writes that one local file, by rename"
+	case "version":
+		return "inspection: reads nothing, writes nothing"
+	case "shell":
+		return "store write: runs each line's verb on one connection, so a line that writes changes the store; " +
+			"entered with --dry-run, every write line is planned instead and nothing is written (a line that reads still reads the store)"
+	case "batch":
+		return "store write: applies the manifest in one atomic call and prints a receipt; --dry-run makes every check made before sending " +
+			"and prints the plan instead, dialling nothing; the epoch, the revision and each member's expectation are the store's to check, on the real run"
+	case "view set", "view state", "view del":
+		return "store write: changes the view in the store in one call (a view has no epoch and no receipt); " + dryRunWords
+	}
+	return "store write: changes the table in the store in one call and prints a receipt; " + dryRunWords
 }
