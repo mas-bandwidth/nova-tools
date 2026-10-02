@@ -224,6 +224,16 @@ func TestUpdateVerbsTakeJSONAndLeadWithTheirStatus(t *testing.T) {
 	})
 }
 
+// snapshot --file takes the --timeout its help offers: a slow tool is UNKNOWN
+// for its timeout, and the remedy names a flag that works for this shape.
+func TestSnapshotOfAManifestTakesItsTimeout(t *testing.T) {
+	t.Parallel()
+	m := writeFile(t, "m.tsv", Header+"\nslow\ttool\tsleep 9\tgithub:example/slow\tnone\tme\n")
+	code, _, errs := runTool(t, "nova-version", "snapshot", "--file", m, "--timeout", "50ms")
+	assert.Equal(t, 1, code)
+	assert.Contains(t, errs, "SNAPSHOT UNKNOWN name=slow reason=timeout remedy=increase\\x20--timeout")
+}
+
 // moved reads the usage lines of every tool's help, indented or not: a tool on
 // the shared skeleton indents them under usage:, and its verbs were invisible.
 func TestMovedReadsAnIndentedUsageBlock(t *testing.T) {

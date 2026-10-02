@@ -131,7 +131,13 @@ func parseVersionLine(s string) (stamp, revision, platform string, src buildinfo
 // from a flag; neither the file's name nor PATH is trusted for the reading.
 func snapshotVerb(c *tool.Call) *tool.Out {
 	if c.Given("file") {
-		return snapshotAdopted(c.Str("file"))
+		// The manifest shape reads as report does, five seconds a tool, unless
+		// the caller names --timeout; --budget bounds the run in both shapes.
+		timeout := snapshotAdoptedTimeout
+		if c.Given("timeout") {
+			timeout = c.Dur("timeout")
+		}
+		return snapshotAdopted(c.Str("file"), timeout, c.Dur("budget"))
 	}
 	bin, outPath := c.Str("bin"), c.Str("out")
 	timeout, budget := c.Dur("timeout"), c.Dur("budget")
@@ -246,7 +252,7 @@ func snapshotVerb(c *tool.Call) *tool.Out {
 // is written: the manifest is adopted, not discovered. The verdict mirrors
 // report's: one count line, exit 0 when every adopted tool answers and exit 1
 // when any does not.
-func snapshotAdopted(file string) *tool.Out {
+func snapshotAdopted(file string, timeout, budget time.Duration) *tool.Out {
 	f, err := os.Open(file)
 	if err != nil {
 		return tool.Refuse(fmt.Sprintf("cannot open %s (supply a readable --file: %s)", file, manifestShape))
@@ -258,10 +264,12 @@ func snapshotAdopted(file string) *tool.Out {
 	}
 	o := tool.Done()
 	known := 0
+	run, cancelRun := context.WithTimeout(context.Background(), budget)
+	defer cancelRun()
 	for _, e := range entries {
-		ctx, cancel := context.WithTimeout(context.Background(), snapshotAdoptedTimeout)
-		r := Installed(ctx, e, snapshotAdoptedTimeout, true)
-		cancel()
+		// Installed bounds the tool by timeout under the run's context, and tells a
+		// spent budget from a slow tool by that context.
+		r := Installed(run, e, timeout, true)
 		if r.Known() {
 			known++
 			continue
