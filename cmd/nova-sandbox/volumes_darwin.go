@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/filelock"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
@@ -249,56 +250,34 @@ func rootOwnedAndWritable(mount string) error {
 }
 
 // lockVolumeCreate takes the one lock that makes a concurrent `nova-sandbox run` safe:
-// an exclusive `flock` on a file under the CALLER's cache directory. Not /tmp and not
-// /var: a lock at a path any process can write is a lock any process can take, and the
-// contained command of a run is exactly a process this tool does not trust.
+// internal/filelock's kernel lock (tla/FileLock.tla) on a file under the CALLER's cache
+// directory. Not /tmp and not /var: a lock at a path any process can write is a lock any
+// process can take, and the contained command of a run is exactly a process this tool
+// does not trust.
 //
-// It polls rather than blocking, because a wait with no deadline is how a fleet ends up
-// with idle lines holding a file (**wait loops need a deadline**). The bound is generous
-// on purpose — a real addVolume is seconds and a queue of them is minutes — and it is
+// The wait has a deadline, because a wait with no deadline is how a fleet ends up with
+// idle lines holding a file (**wait loops need a deadline**). The bound is generous on
+// purpose — a real addVolume is seconds and a queue of them is minutes — and it is
 // production code's own wait, never a test's.
 func lockVolumeCreate() (func(), error) {
 	path, err := volumeLockPath()
 	if err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+	l, err := filelock.Lock(path, "nova-sandbox run: diskutil apfs addVolume", volumeLockWait)
+	if errors.Is(err, filelock.ErrHeld) || errors.Is(err, filelock.ErrBusy) {
+		return nil, fmt.Errorf("another nova-sandbox held the volume-creation lock at %s for %s; concurrent `diskutil apfs addVolume` is what this lock prevents, so this run waits rather than making a volume it could not write",
+			path, volumeLockWait)
+	}
 	if err != nil {
-		return nil, fmt.Errorf("the volume-creation lock at %s could not be opened: %w", path, err)
+		return nil, fmt.Errorf("the volume-creation lock at %s could not be taken: %w", path, err)
 	}
-	fd := int(f.Fd())
-	deadline := time.Now().Add(volumeLockWait)
-	for {
-		err := syscall.Flock(fd, syscall.LOCK_EX|syscall.LOCK_NB)
-		if err == nil {
-			return func() {
-				// ignored: the lock is released when the descriptor closes on the next line either way
-				_ = syscall.Flock(fd, syscall.LOCK_UN)
-				// ignored: a close of the lock file; nothing was written through it
-				_ = f.Close()
-			}, nil
-		}
-		if !errors.Is(err, syscall.EWOULDBLOCK) {
-			// ignored: a close on the failure path; the flock error is the one returned
-			_ = f.Close()
-			return nil, fmt.Errorf("the volume-creation lock at %s could not be taken: %w", path, err)
-		}
-		if time.Now().After(deadline) {
-			// ignored: a close on the failure path; the deadline error is the one returned
-			_ = f.Close()
-			return nil, fmt.Errorf("another nova-sandbox held the volume-creation lock at %s for %s; concurrent `diskutil apfs addVolume` is what this lock prevents, so this run waits rather than making a volume it could not write",
-				path, volumeLockWait)
-		}
-		time.Sleep(volumeLockPoll)
-	}
+	// ignored: release has no caller to report to; the kernel lock goes with the descriptor either way
+	return func() { _ = l.Unlock() }, nil
 }
 
-// volumeLockWait is how long a run waits for its turn to create, and volumeLockPoll how
-// often it asks. Production's own numbers.
-const (
-	volumeLockWait = 15 * time.Minute
-	volumeLockPoll = 50 * time.Millisecond
-)
+// volumeLockWait is how long a run waits for its turn to create. Production's own number.
+const volumeLockWait = 15 * time.Minute
 
 // volumeLockPath is where the lock lives, as a seam so a test locks a file of its own.
 var volumeLockPath = defaultVolumeLockPath
