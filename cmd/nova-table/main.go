@@ -153,8 +153,7 @@ func (app *application) run(args []string, stdout, stderr io.Writer) (code int) 
 	return app.dispatch(args, stdout, stderr)
 }
 
-// selectSeat is the seat resolution nova-sprint defined
-// (the old nova-sprint's seat.go, nova-tools#4330), carried here:
+// selectSeat resolves seat configuration for Redis access.
 // --seat <name> (or NOVA_SPRINT_SEAT, then NOVA_SEAT) is taken off the line,
 // its row in nova-sprint's seats.tsv names its Redis address (the --redis
 // default) and login, and a seat with no row is the nova-secrets seat of that
@@ -267,8 +266,8 @@ func parseInterleaved(fs *flag.FlagSet, args []string) ([]string, error) {
 	return pos, nil
 }
 
-// open dials the store for a verb through redisconn, the one way a nova
-// tool opens Redis (#4492): the dial and the handshake (HELLO 3, with the
+// open dials the store for a verb through redisconn. It performs the
+// handshake (HELLO 3, with the login) or refuses in one line.
 // login) are done, or refused in one line, before the verb's first command,
 // which is still its first round trip. The client's first hook puts the
 // function library on a store that holds none (withLibrary, library.go).

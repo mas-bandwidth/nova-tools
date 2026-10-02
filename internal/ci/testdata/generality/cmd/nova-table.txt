@@ -1,4 +1,3 @@
 # Migrated counted package ledger; original row keys preserved.
 # ceiling: 2
 cmd/nova-table/main.go:space 1
-cmd/nova-table/order.go:glenn 1

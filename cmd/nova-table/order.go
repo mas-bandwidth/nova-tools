@@ -10,10 +10,9 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 )
 
-// The order verbs (Glenn 2026-09-27: "take column y and put it after column
-// z", "friends on top, machines on bottom"): col add, col del, col move, row
-// move, row order, row sort. Each is one call to the staged set kernel, so
-// each is atomic and leaves one receipt (tla/TableOrder.tla).
+// The order verbs allow repositioning of columns and rows: col add, col del,
+// col move, row move, row order, row sort. Each is one call to the staged
+// set kernel, making each operation atomic and leaving one receipt.
 
 const placeUsage = "--first | --last | --before <name> | --after <name>"
 
