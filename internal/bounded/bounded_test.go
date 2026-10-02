@@ -38,7 +38,7 @@ func TestCapPrintsMaxLinesThenOneMoreLine(t *testing.T) {
 	assert.Equal(t, "VERIFY FAIL wikilink entry-19", got[Default-1], "last item line is %q, want entry-19", got[Default-1])
 	want := "VERIFY MORE kind=wikilink shown=20 total=500 --fail-max <n> (0 = all)"
 	assert.Equal(t, want, got[Default], "MORE line is\n  %q\nwant\n  %q", got[Default], want)
-	assert.Equal(t, [3]int{20, 500, 480}, [3]int{l.Shown(), l.Total(), l.Elided()}, "counted shown/total/elided; the count must be the truth about the STATE, not about the output")
+	assert.Equal(t, [2]int{20, 500}, [2]int{l.Shown(), l.Total()}, "counted shown/total; the count must be the truth about the STATE, not about the output")
 }
 
 // A cap that cannot be turned off is a tool deciding what its user may see.
@@ -53,7 +53,6 @@ func TestMaxZeroPrintsEverythingAndNoMoreLine(t *testing.T) {
 	l.More()
 	got := lines(&out)
 	require.Len(t, got, 300, "got %d lines, want 300 and no MORE line", len(got))
-	assert.Equal(t, 0, l.Elided(), "elided=%d, want 0", l.Elided())
 }
 
 // Below the ceiling nothing is added: a MORE line saying total equals shown carries no
@@ -145,7 +144,6 @@ func TestGroupCapsEachKindSoOneCannotBuryAnother(t *testing.T) {
 	assert.Equal(t, "VERIFY FAIL frontmatter the one that matters", got[20], "the buried kind is missing; line 21 is %q", got[20])
 	assert.Equal(t, "VERIFY MORE kind=wikilink shown=20 total=500 --fail-max <n> (0 = all)", got[21], "MORE line is %q", got[21])
 	assert.Equal(t, [2]int{21, 501}, [2]int{g.Shown(), g.Total()}, "group counted shown/total, want 21/501")
-	assert.Equal(t, []string{"wikilink", "frontmatter"}, g.Kinds(), "kinds are %q; want first-seen order", g.Kinds())
 }
 
 // Determinism: the same findings in the same order print the same bytes, run after run.
@@ -172,24 +170,6 @@ func TestGroupOutputIsDeterministic(t *testing.T) {
 	}
 }
 
-// A verb whose MORE line carries a field this package does not print still gets
-// the per-kind capping from here rather than hand-rolling a second map.
-func TestAGroupHandsBackEachKindsList(t *testing.T) {
-	t.Parallel()
-
-	var out strings.Builder
-	g := Grouped(&out, 1, "WAKE", "--max-lines 0 prints them all")
-	g.Line("bus", "WAKE BUS id=a")
-	g.Line("bus", "WAKE BUS id=b")
-	g.Line("entry", "WAKE ENTRY one")
-	bus, entry := g.List("bus"), g.List("entry")
-	require.NotNil(t, bus, "the bus list is missing; a caller needs its own kind's numbers to write its own summary line")
-	assert.Equal(t, [3]int{1, 2, 1}, [3]int{bus.Shown(), bus.Total(), bus.Elided()}, "the bus list is %+v; a caller needs its own kind's numbers to write its own summary line", bus)
-	require.NotNil(t, entry, "the entry list is missing")
-	assert.Equal(t, 0, entry.Elided(), "the entry list elided something it should not have: %+v", entry)
-	assert.Nil(t, g.List("report"), "a kind this group never saw must not be invented")
-}
-
 // A listing whose writer fails has not shown anything, and says so: a caller
 // whose delivery record follows Shown() must not mark a line delivered that
 // never reached the stream.
@@ -201,7 +181,6 @@ func TestAFailedWriteIsNotShown(t *testing.T) {
 	l.Line("WAKE REPORT path=b")
 	assert.Equal(t, 0, l.Shown(), "Shown() = %d over a writer that failed every write, want 0", l.Shown())
 	assert.Equal(t, 2, l.Total(), "Total() = %d, want 2: the count is the truth about the state even when the output is not", l.Total())
-	assert.Error(t, l.Err(), "the write error was discarded")
 }
 
 type brokenWriter struct{}

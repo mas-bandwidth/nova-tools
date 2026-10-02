@@ -69,7 +69,6 @@ type List struct {
 	remedy string
 	shown  int
 	total  int
-	err    error
 }
 
 // Capped returns a List that writes to w, prints at most max lines, and stands the rest
@@ -101,19 +100,14 @@ func (l *List) Line(line string) {
 	// SHOWN MEANS IT REACHED THE STREAM. A writer that failed -- a closed pipe,
 	// a reader that has gone, a full disk -- has not shown anything, and a
 	// caller whose delivery record follows Shown() would mark a line delivered
-	// that nobody ever read. So the error is not discarded: the line is counted
-	// in Total, which is the truth about the state, and not in Shown, which is
-	// the truth about the output.
+	// that nobody ever read. So a failed write is counted in Total, which is
+	// the truth about the state, and not in Shown, which is the truth about
+	// the output.
 	if _, err := fmt.Fprintf(l.w, "%s\n", oneline.Escape(strings.TrimSuffix(line, "\n"))); err != nil {
-		l.err = err
 		return
 	}
 	l.shown++
 }
-
-// Err is the first write error this listing hit, or nil. A caller that records
-// what it has delivered asks this before it writes that record down.
-func (l *List) Err() error { return l.err }
 
 // More prints the one line that stands for everything Line counted and did not print,
 // and prints nothing at all when nothing was elided -- a MORE line saying total equals
@@ -139,9 +133,6 @@ func (l *List) Shown() int { return l.shown }
 // Total is how many there were. This is the number a summary line must carry, and the
 // reason Line counts past the ceiling instead of stopping at it.
 func (l *List) Total() int { return l.total }
-
-// Elided is Total minus Shown: what the reader would have to widen the cap to see.
-func (l *List) Elided() int { return l.total - l.shown }
 
 // Group is one cap per kind over a single stream, for a verb that runs several checks and
 // prints their findings together.
@@ -203,16 +194,6 @@ func (g *Group) Total() int {
 	}
 	return n
 }
-
-// List is one kind's list, or nil when this group has not seen that kind. It is
-// here for a verb whose MORE line carries a field this package does not print
-// -- nova-wake's carries n=<elided>, which its spec requires -- so that such a
-// verb can reuse the per-kind capping and still write its own summary, rather
-// than hand-rolling a second map of lists beside this one.
-func (g *Group) List(kind string) *List { return g.lists[kind] }
-
-// Kinds returns the kinds seen, in first-seen order.
-func (g *Group) Kinds() []string { return append([]string(nil), g.order...) }
 
 // Tally counts a capped listing without printing it, for a caller that keeps
 // the listing as a value (internal/tool): Add reports whether an item of a kind
