@@ -204,7 +204,7 @@ func TestRowOrderIsStableAcrossReAdds(t *testing.T) {
 	require.Equal(t, "b", tb.Rows[1].Key, "rows after delete")
 	dropped, err := ntable.Drop(ctx, c, "demo")
 	require.NoError(t, err)
-	require.Equal(t, 2, dropped, "Drop")
+	require.Equal(t, 2, dropped.Rows, "Drop")
 	for _, pattern := range []string{"table:demo:row:*", "table:demo:cell:*"} {
 		keys, err := c.Keys(ctx, pattern).Result()
 		require.NoError(t, err)

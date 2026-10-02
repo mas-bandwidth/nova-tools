@@ -136,3 +136,24 @@ func TestACreateOverADroppedDefinitionNamesBothWaysOut(t *testing.T) {
 		})
 	}
 }
+
+// A drop's reply is the rows it removed and then the views that name the
+// table, each of which refuses to render without it, so the drop names them
+// (USE defect 4: the drop said nothing, and every such view broke).
+func TestADropsReplyNamesTheViewsThatNameTheTable(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name  string
+		reply []any
+		want  Dropped
+	}{
+		{"no view", []any{"OK", int64(3)}, Dropped{Rows: 3}},
+		{"two views", []any{"OK", int64(0), "v1", "v2"}, Dropped{Views: []string{"v1", "v2"}}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := dropped(c.reply)
+			assert.NoError(t, err, "%s", c.name)
+			assert.Equal(t, c.want, got, "%s", c.name)
+		})
+	}
+}

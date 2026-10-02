@@ -2040,7 +2040,7 @@ first, connection flags next, epoch and receipt metadata last. For example,
 | --- | --- |
 | `create <table> --columns <spec>` | Creates a definition; repeated identical creates are accepted; another shape points to `set --columns`, or, over a dropped table (whose saved definition stays until `drop --definition`), names the create that brings it back and `drop --definition` |
 | `set <table>` | Edits footer, columns, visibility or name; see `help set` |
-| `drop <table> [--definition]` | Removes active rows/owned cells; `--definition` also removes the saved column definition and the table's identity hash and the rows of every epoch (it also repairs a store left with the identity alone); the definition snapshots of earlier epochs stay |
+| `drop <table> [--definition]` | Removes active rows/owned cells; `--definition` also removes the saved column definition and the table's identity hash and the rows of every epoch (it also repairs a store left with the identity alone); the definition snapshots of earlier epochs stay; each view that names the table, which refuses to render without it, is named on a `NOTE view <v> ...; run: nova-table view show <v>` line |
 | `list` | Lists active tables with row and column counts |
 | `row add <table> <row>...` | Adds one or many rows; optional label, exclusion, owner and bound cells |
 | `row set <table> <row> <col>=<value>...` | Writes text values; `col=` clears one |

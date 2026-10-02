@@ -1609,7 +1609,7 @@ func (h *harness) drop(*rapid.T) {
 			require.ErrorIs(h, readErr, ntable.ErrNoTable, "%s: dropped epoch remains readable", action)
 		}
 		delete(h.m.live, tn)
-		require.Equal(h, len(rows), n, "%s: the verb's count of rows dropped; the %s had %d", action, h.oracle(), len(rows))
+		require.Equal(h, len(rows), n.Rows, "%s: the verb's count of rows dropped; the %s had %d", action, h.oracle(), len(rows))
 		// 5. drop leaves the external set
 		h.checkExternal(action)
 	}

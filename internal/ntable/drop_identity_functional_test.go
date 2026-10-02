@@ -61,7 +61,7 @@ func TestDropDefinitionRemovesEveryKeyOfTheTableButItsRecord(t *testing.T) {
 
 	n, err := ntable.DropDefinition(ctx, c, "demo")
 	require.NoError(t, err)
-	assert.Equal(t, 2, n)
+	assert.Equal(t, 2, n.Rows)
 	assert.Empty(t, existing(ctx, c, keys), "keys of the table left after drop --definition")
 	assert.ElementsMatch(t, keptKeys("demo"), existing(ctx, c, keptKeys("demo")), "the revision, the change log and the epoch snapshot stay")
 	assert.False(t, c.SIsMember(ctx, "tables", "demo").Val(), "the table is still in the catalog")
@@ -121,7 +121,7 @@ func TestAnOrphanIdentityIsNamedAndRemovedByDropDefinition(t *testing.T) {
 
 	n, err := ntable.DropDefinition(ctx, c, "demo")
 	require.NoError(t, err, "drop --definition repairs the orphan")
-	assert.Zero(t, n)
+	assert.Zero(t, n.Rows)
 	assert.Empty(t, existing(ctx, c, liveKeys("demo", nil, nil)))
 	assert.False(t, c.SIsMember(ctx, "tables", "demo").Val(), "the repair adds nothing to the catalog")
 	_, err = ntable.Read(ctx, c, "demo")

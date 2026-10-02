@@ -172,7 +172,11 @@ dropped table (absent at its active epoch, which `set` refuses) the refusal
 carries the epoch and the saved definition, so its words name the `create`
 that brings the table back as it was and its remedy is the
 `drop <table> --definition` that forgets it. Over a present table the remedy
-is `set --columns`.
+is `set --columns`. A view names tables that exist (`view set` refuses one
+that does not), and a view naming a dropped table refuses to render, so a
+drop's reply names, after its row count, every view that names the table, and
+the drop prints a `NOTE view <v> names the dropped table <t> ...; run:
+nova-table view show <v>` line for each.
 
 ---
 

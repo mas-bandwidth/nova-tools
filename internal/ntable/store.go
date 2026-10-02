@@ -1070,24 +1070,44 @@ func isRedisReply(err error) bool {
 
 // Drop removes the active epoch and its owned cells. The template and older
 // epochs survive; a later epoch starts with the same definition and no rows.
-func Drop(ctx context.Context, c redis.Cmdable, name string, opts ...WriteOptions) (int, error) {
+func Drop(ctx context.Context, c redis.Cmdable, name string, opts ...WriteOptions) (Dropped, error) {
 	reply, err := (operation{table: name}).write(ctx, c, FnDrop, opts)
 	if err != nil {
-		return 0, err
+		return Dropped{}, err
 	}
+	return dropped(reply)
+}
+
+// Dropped is what a drop did: the rows it removed, and the views that name
+// the table, each of which refuses to render until it is set without the
+// table or deleted.
+type Dropped struct {
+	Rows  int
+	Views []string
+}
+
+// dropped reads a drop's reply: OK, the rows removed, then the views that
+// name the table.
+func dropped(reply []any) (Dropped, error) {
 	n, err := replyCount(reply)
-	return int(n), err
+	if err != nil {
+		return Dropped{}, err
+	}
+	d := Dropped{Rows: int(n)}
+	for _, v := range reply[2:] {
+		d.Views = append(d.Views, fmt.Sprint(v))
+	}
+	return d, nil
 }
 
 // DropDefinition also removes the stable template. Materialised epoch
 // snapshots and immutable member identities remain available for inspection.
-func DropDefinition(ctx context.Context, c redis.Cmdable, name string, opts ...WriteOptions) (int, error) {
+func DropDefinition(ctx context.Context, c redis.Cmdable, name string, opts ...WriteOptions) (Dropped, error) {
 	reply, err := (operation{table: name}).write(ctx, c, FnDropDefinition, opts)
 	if err != nil {
-		return 0, err
+		return Dropped{}, err
 	}
-	n, err := replyCount(reply)
-	return int(n), err
+	return dropped(reply)
 }
 
 // MemberCreate allocates an unplaced identity in the table's record namespace.

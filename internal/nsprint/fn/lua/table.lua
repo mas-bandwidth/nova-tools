@@ -1560,7 +1560,19 @@ do
       d.newidentity = false
       T.stage(d, 'SREM', 'tables', d.name)
     end
-    return {'OK', #rows}
+    local reply = {'OK', #rows}
+    if (op == 'drop' or op == 'drop_definition') and redis.acl_check_cmd('SMEMBERS', 'views') then
+      -- a view that names the table refuses to render without it: the reply
+      -- names every such view the caller may read, so the drop says so (the
+      -- views are few; a writer granted no view keys drops as before)
+      local views = redis.call('SMEMBERS', 'views')
+      table.sort(views)
+      for _, v in ipairs(views) do
+        local tables = redis.acl_check_cmd('HGET', 'view:' .. v, 'tables') and redis.call('HGET', 'view:' .. v, 'tables')
+        if tables and string.find(',' .. tables .. ',', ',' .. d.name .. ',', 1, true) then reply[#reply + 1] = v end
+      end
+    end
+    return reply
   end
   redis.register_function('ns_table_drop', T.write('drop', 2, function(d, args) return T.delete(d, args, 'drop') end))
   redis.register_function('ns_table_drop_definition', T.write('drop_definition', 2, function(d, args) return T.delete(d, args, 'drop_definition') end))

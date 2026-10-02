@@ -195,7 +195,7 @@ func (app *application) cmdDrop(args []string, stdout, stderr io.Writer) int {
 		drop = ntable.DropDefinition
 	}
 	ctx := context.Background()
-	call := func(c redis.Cmdable) (int, error) { return drop(ctx, c, pos[0], *write) }
+	call := func(c redis.Cmdable) (ntable.Dropped, error) { return drop(ctx, c, pos[0], *write) }
 	if code, done := app.preflight(stdout, stderr, fs, verb, *addr, pos, sent(call)); done {
 		return code
 	}
@@ -205,11 +205,15 @@ func (app *application) cmdDrop(args []string, stdout, stderr io.Writer) int {
 	}
 	defer st.Close()
 	trips := st.CountTrips()
-	n, err := call(c)
+	d, err := call(c)
 	if err != nil {
 		return st.refusal(stderr, verb, err)
 	}
-	fmt.Fprintf(stdout, "TABLE DROP table=%s rows=%d trips=%d\n", pos[0], n, trips.N())
+	fmt.Fprintf(stdout, "TABLE DROP table=%s rows=%d trips=%d\n", pos[0], d.Rows, trips.N())
+	// a view that names the table refuses to render without it: the drop says so
+	for _, v := range d.Views {
+		fmt.Fprintf(stdout, "NOTE view %s names the dropped table %s and refuses to render until it is set without it or deleted; run: nova-table view show %s\n", v, pos[0], v)
+	}
 	printReceipt(stdout, write, *receipt)
 	return 0
 }
