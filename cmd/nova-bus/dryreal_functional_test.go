@@ -118,7 +118,7 @@ func TestEveryDryRunIsTheRealRunWithoutItsWrites(t *testing.T) {
 
 // dryRealVerbs is every verb TestEveryDryRunIsTheRealRunWithoutItsWrites holds: every verb
 // of this tool that takes --dry-run but wait, which has none.
-var dryRealVerbs = []string{"inbox --advance"}
+var dryRealVerbs = []string{"inbox --advance", "draft --out"}
 
 // treeBytes is every file under root, .git included, with its bytes, and every directory.
 func treeBytes(t *testing.T, root string) map[string]string {
