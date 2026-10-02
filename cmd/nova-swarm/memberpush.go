@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/member"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
@@ -50,6 +52,9 @@ type gitPusher struct {
 	// sleep waits between two tries of a push origin rejected on its own side
 	// (pushWaits); nil is time.Sleep, a test gives its own.
 	sleep func(time.Duration)
+	// notes is where the pusher says what it pushed that the result did not name (the
+	// member's own output); nil says nothing.
+	notes io.Writer
 }
 
 // pushWaits is the waits before a push that origin rejected on its own side, git's
@@ -106,22 +111,37 @@ func (g *gitPusher) Push(p member.Packet, r member.Result) member.Push {
 	verify := []string{"rev-parse", "--verify", "-q", "--end-of-options", head + "^{commit}"}
 	res, err := g.run(ctx, repo, nil, verify...)
 	full := strings.TrimSpace(string(res.Stdout))
+	refused := ""
 	if err != nil || len(full) < 40 {
-		return member.Push{Refused: "the result's head " + head + " is not a commit on the checkout's branches"}
-	}
-	// the head must be one this launch's checkout holds: the push repository keeps
-	// every launch's objects, so a commit being there is no evidence it is this one's
-	res, err = g.run(ctx, repo, nil, "for-each-ref", "--count=1", "--format=%(refname)", "--contains", full, ns+"/")
-	if err != nil || strings.TrimSpace(string(res.Stdout)) == "" {
-		return member.Push{Refused: "the result's head " + full + " is not on this checkout's branches or HEAD"}
+		refused = "the result's head " + head + " is not a commit on the checkout's branches"
+	} else if res, err := g.run(ctx, repo, nil, "for-each-ref", "--count=1", "--format=%(refname)", "--contains", full, ns+"/"); err != nil || strings.TrimSpace(string(res.Stdout)) == "" {
+		// the head must be one this launch's checkout holds: the push repository keeps
+		// every launch's objects, so a commit being there is no evidence it is this one's
+		refused = "the result's head " + full + " is not on this checkout's branches or HEAD"
 	}
 	// the child committed when its head has a commit the staged commit does not:
 	// counted from the commit native recorded in the slot, never from the
 	// checkout's own refs, which a stale mirror or the child can move
 	// (docs/SPEC-CARD-CONTRACT.md section 4; tla/CardContract.tla Push)
-	staged, err := os.ReadFile(filepath.Join(g.slots, launchName(p), cardcontract.StagedName))
+	staged, serr := os.ReadFile(filepath.Join(g.slots, launchName(p), cardcontract.StagedName))
 	base := strings.TrimSpace(string(staged))
-	if err != nil || !typedrec.IsFullSha(base) {
+	if refused != "" {
+		// a result whose head names no commit of the checkout (a model that wrote a sha's
+		// first characters right and invented its tail) is the checkout's own head when the
+		// child made exactly one line of work; else the refusal stands
+		tip := ""
+		if serr == nil && typedrec.IsFullSha(base) {
+			tip = g.checkoutTip(ctx, repo, ns, base)
+		}
+		if tip == "" {
+			return member.Push{Refused: refused}
+		}
+		if g.notes != nil {
+			fmt.Fprintf(g.notes, "NOTE push %s head: the result named %s, which is no commit of the checkout; the checkout's own head %s was pushed\n", oneline.Field(p.Card), oneline.Field(head), oneline.Field(tip))
+		}
+		full = tip
+	}
+	if serr != nil || !typedrec.IsFullSha(base) {
 		return member.Push{None: "no staged commit is recorded for this launch to count the child's commits from"}
 	}
 	if res, err := g.run(ctx, repo, nil, "merge-base", "--is-ancestor", "--end-of-options", base, full); err != nil {
@@ -155,6 +175,33 @@ func (g *gitPusher) Push(p member.Packet, r member.Result) member.Push {
 		pu.PR, pu.PRNote = g.openPR(url, ref, p.Branch, r.Title, r.Body)
 	}
 	return pu
+}
+
+// checkoutTip is the one tip of the checkout's HEAD and branches (fetched under ns) that holds
+// a commit the staged commit does not and descends from it: the child's one line of work. ""
+// when there is none, or more than one. On the 1000-card load test of 2026-10-01 five of the
+// first twelve failures were a result naming a sha whose first characters were right and whose
+// tail was invented, from one route, with the commit itself on the checkout's branch.
+func (g *gitPusher) checkoutTip(ctx context.Context, repo, ns, base string) string {
+	res, err := g.run(ctx, repo, nil, "for-each-ref", "--format=%(objectname)", ns+"/")
+	if err != nil {
+		return ""
+	}
+	var tips []string
+	seen := map[string]bool{base: true}
+	for _, sha := range strings.Fields(string(res.Stdout)) {
+		if seen[sha] {
+			continue
+		}
+		seen[sha] = true
+		if _, err := g.run(ctx, repo, nil, "merge-base", "--is-ancestor", "--end-of-options", base, sha); err == nil {
+			tips = append(tips, sha)
+		}
+	}
+	if len(tips) != 1 {
+		return ""
+	}
+	return tips[0]
 }
 
 // cardRepo is the repository and base ref of a launch: its frame's, else the brief's header.
