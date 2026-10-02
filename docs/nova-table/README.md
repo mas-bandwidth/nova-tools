@@ -1,6 +1,6 @@
 # nova-table: work tables and live views over Redis
 
-## The design, in Glenn's words (2026-09-27)
+## The design, in the owner's words
 
 "at an even simpler level, I think there should be a concept of ordered
 sets." / "The work stream table is really just a series of ordered sets,
@@ -97,7 +97,7 @@ kinds of cell:
   a label, default its key), in front of every declared column. Labels, not
   sets.
 - **Body cells.** A set cell is printed by its column's
-  *projection*: `count` (the set's size, Glenn's |s|; the default),
+  *projection*: `count` (the set's size, |s|; the default),
   `members` (the members in score order, comma-joined), `first` and `last`
   (the lowest and highest scored member), or `text` (a value per row, set
   by `row set`, blank when none; no set). `pct(<count-column>)`,
@@ -141,7 +141,7 @@ record. A removed record may be placed again in its original epoch.
 Records default to `table::member:<id>`, with immutable `epoch` and a
 `place:<table>` field holding `row:column`. A definition's `--member-prefix`
 can select an existing namespace, such as `task:`. Existing unrelated hash
-fields survive; absent epoch on a legacy record means zero. Generic task
+fields survive; absent epoch on a record means zero. Generic task
 create/move fields cannot write `place:*`. Other record owners must likewise
 reserve those fields and preserve identity. Table operations do not implement
 the task/card lifecycle or protect against out-of-band raw Redis writes.
@@ -391,7 +391,7 @@ member's `place:<table>` field. A destination with any existing table namespace
 keys, including old history, is refused. The final receipt is written at the
 new name and records all physical key moves in `renamed_keys`; prior stream
 events remain byte-for-byte the same. Consumers must switch to the new name.
-Rename does not create an alias or rewrite stored views referencing the old name.
+Rename does not create an alias or rewrite stored views referencing the former name.
 
 The raw function wire ends every table write with the JSON options object.
 `set` takes `name, editJSON, optionsJSON`; `row_set` takes
