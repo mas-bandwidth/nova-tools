@@ -24,13 +24,12 @@ promise:
 
 Run the lines with the two streams kept apart. Merging them with `2>&1` drops a
 progress line into the middle of a protocol one and makes a correct run look
-like a defect: six of the twenty-one defect readings in the 2026-09-19
-two-bench dogfood run were only that, on three different tools
-(nova-tools#1549). A harness that grades this file grades standard output
+like a defect: some defect readings in a dogfood run were only that, across
+different tools. A harness that grades this file grades standard output
 against the unmarked lines and standard error against the `!` lines, and records
 which stream each expectation was on.
 
-The marker is being applied section by section under nova-tools#1549. Until a
+The marker is being applied section by section. Until a
 section carries it, read an unmarked line as *not yet checked* rather than as
 *checked and found to be standard output*. The one line known today to be
 mismarked by that gap is `DRAFT NOTE …` under [`## nova-bus`](#nova-bus), which
@@ -150,13 +149,13 @@ DRAFT OK path=./drafts/2026-09-12T2015Z-re-bo-ce10834fbfea.md re=bo-ce10834fbfea
 
 **`heard` and `closed` are different answers.** Bo's `receipt` says she read Ada's note without answering it: one line in her lane's `RECEIPTS`, pushed, and the note leaves her carried list. A note is *closed* instead by a `Re:` line naming it, which is what `draft --re` and `send` write for you.
 
-**The cursor is why a read costs the change and not the bus.** Bo's `--advance` records the commit she has read to, in her own lane, and pushes it like a receipt; her first one on a bus holding notes older than today is refused until she says what to do with the history, and `--legacy-now` is that sentence — everything already there is history, everything after it is news. The `INBOX LEGACY` line counts what the line hid.
+**The cursor is why a read costs the change and not the bus.** `--advance` records the commit read to, in the reader's own lane, and pushes it like a receipt; the first advance on a bus holding notes that predate it is refused until the reader says what to do with the history, and `--legacy-now` is that sentence — everything already there is history, everything after it is news. The `INBOX LEGACY` line counts what the line hid.
 
 Ada's first line above is the refusal worth meeting here rather than on a live bus: **the example bus ships a `CURSOR` naming a commit from the history it was written in**, and copying it out gives it a new one, so that commit is not an ancestor of `HEAD`. The tool says so instead of diffing from it, and names the way out. Her `--full --advance` replaces it, and the read after that is `mode=since` over `changed=2` — two changed lane paths. That is the property the whole design is for, and it is visible in one pair of lines.
 
 ## nova-sandbox
 
-Fixture: a job directory of yours. Every path below is one you name — this tool has no defaults and guesses nothing — so the transcript is a worked example with `/path/to/pool` standing in for yours, and the lines are what this Mac printed on 2026-09-12 with the paths shortened.
+Fixture: a job directory of yours. Every path below is one you name — this tool has no defaults and guesses nothing — so the transcript is a worked example with `/path/to/pool` standing in for yours, and the lines are what the platform prints with the paths shortened.
 
 Platform: recorded on macOS (darwin) — the `backend=sandbox-exec` and `abi=-` fields and the `/path/to/pool` fixture below are that Mac's; a Linux bench prints `backend=landlock`, an `abi=` value, and, where the wall is built below the ABI the kernel reports, a `used=` field this transcript has no slot for.
 
@@ -164,7 +163,7 @@ Platform: recorded on macOS (darwin) — the `backend=sandbox-exec` and `abi=-` 
 exercises is "the directory of the resolved command" and the probe's child is this
 binary; a transcript that named a shell there would be measuring `/bin`, which the
 profile grants verbatim. `TestTheTranscriptNamesTheToolsOwnBinary` holds that line here.
-The probe sets `HOME` for rule 9's reason: `HOME` must resolve inside a `--write`, and
+The probe sets `HOME` because `HOME` must resolve inside a `--write`, and
 the dispatcher's own `HOME` does not.
 
 ### First run
@@ -198,7 +197,7 @@ The last run is the whole tool: the wall named, the job's own write landed, the 
 
 `nova-sandbox run --go` is what a card that builds Go uses; a plain `go build` inside a disposable volume was measured working with no flags at all once the optional roots' ancestors were granted (`internal/sandbox`, `TestAnOptionalRootsAncestorsAreGranted`).
 
-Measured on macOS 26 arm64, 2026-09-18: a 64m volume made, `sh -c 'echo hi > out; sleep 1'` run inside the wall with the volume as its only writable directory, and the volume gone from `/Volumes` and from `diskutil apfs list` afterwards — `SANDBOX DONE name=e2e63562 exit=0 wall=9.500 freed=32768`.
+The disposable-volume check makes a volume, runs `sh -c 'echo hi > out; sleep 1'` inside the wall with the volume as its only writable directory, and removes the volume from `/Volumes` and `diskutil apfs list` afterwards — `SANDBOX DONE name=e2e63562 exit=0 wall=9.500 freed=32768`.
 
 ## nova-secrets
 
@@ -239,7 +238,7 @@ fake-gh
 
 `nova-secrets seat inject` is measured against the real sops and age
 (`cmd/nova-secrets/seat_inject_functional_test.go`, functional tier): a store with
-two seats, the coordinator's holding the new value and the bench's holding the old
+two seats, one holding the new value and the other holding the to-be-replaced
 one; the verb run with the coordinator's key and `--no-pr`; then the seal branch's
 file opens with the bench's key alone and holds the new value beside the names it
 had, the store is back on `main`, and `nova-secrets gate` approves the branch. The
