@@ -14,9 +14,9 @@ import (
 
 // Process snapshots are supplied; no foreign process is started. A known
 // candidate using this checkout must not disappear solely because of its UID.
-// The ps half of Stella's probe; the /proc half is TestStellaKnownForeignGitKeepsItsLockLinuxView
+// The ps half of Stella's probe; the /proc half is TestKnownForeignGitKeepsItsLockLinuxView
 // in unreadable_cwd_git_keeps_lock_test.go, built on every OS so it runs on the linux shard.
-func TestStellaKnownForeignGitKeepsItsLock(t *testing.T) {
+func TestKnownForeignGitKeepsItsLock(t *testing.T) {
 	t.Parallel()
 	for _, uid := range []uint32{501, 502} {
 		t.Run(fmt.Sprintf("darwin/uid-%d", uid), func(t *testing.T) {
