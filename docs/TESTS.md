@@ -861,21 +861,23 @@ build |     1 |       1 |    0
 
 ## nova-sprint
 
-The first run needs no Redis: `--redis mem:<file>` runs every verb against an
-in-memory twin of the store kept in a file (for learning and tests, not for a
-fleet), and the sitting below is the card flow `nova-sprint help` shows, one
-process a line, with `NOVA_SPRINT_REDIS=mem:sprint.twin` and
-`NOVA_SPRINT_ACTOR=boss` set; the help's last two lines, the tick after the
-merge and where, land the card and show the sprint, and are left out here
-because the time a finished sprint took and the instant where prints are the
-clock's. A verb's move of a card is queued for the work table and shown by the
-next tick's pump (`MOVED drain`), and a member that comes up in a tick is dealt
-to in the tick after it. It is run by
-`cmd/nova-sprint/firstrun_test.go`, in the unit tier, over a twin file in a
-temporary directory (a twin counts its operation ids, `t1`, `t2`, so they read
-the same on every run); the functional tests beside it
-(`cmd/nova-sprint/*_functional_test.go`) run the same verbs against a real
-store. Nothing is normalised: every value on every line reproduces.
+The first run needs no Redis. `--redis mem:<file>` loads an in-memory twin
+from a file and saves it after each command. The twin is for learning and
+tests; commands run one at a time. This transcript follows the card flow in
+`nova-sprint help`, with `NOVA_SPRINT_REDIS=mem:sprint.twin` and
+`NOVA_SPRINT_ACTOR=boss` set. It uses `finish` without `--head` and `merge`
+to record a landing without git. The help's final `tick` moves the card to
+landed, and `where` shows the sprint. Those two commands are omitted here
+because they print clock-dependent times; `cmd/nova-sprint/twin_test.go`
+runs them.
+
+A card's move is queued until the next tick prints `MOVED drain`. A member
+that comes up in one tick receives cards in the next.
+`cmd/nova-sprint/firstrun_test.go` runs this transcript in the unit tier over
+a twin file in a temporary directory. The twin counts its operation ids
+(`t1`, `t2`), so every value reproduces without normalization. The functional
+tests beside it (`cmd/nova-sprint/*_functional_test.go`) run against a real
+store.
 
 ### First run
 
