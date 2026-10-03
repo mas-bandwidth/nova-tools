@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -12,6 +13,28 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/diffcheck"
 )
+
+func TestLandGitPreservesNULStatus(t *testing.T) {
+	t.Parallel()
+	r := newLandRig(t)
+	r.files("tracked statuses", map[string]string{"a.txt": "base\n", "b.txt": "base\n", "c.txt": "base\n"})
+	for _, name := range []string{"a.txt", "b.txt", "c.txt", " new.txt "} {
+		require.NoError(t, os.WriteFile(filepath.Join(r.worker, name), []byte("changed\n"), 0o600))
+	}
+	r.git(r.worker, "add", "--", "b.txt", "c.txt")
+	require.NoError(t, os.WriteFile(filepath.Join(r.worker, "c.txt"), []byte("changed again\n"), 0o600))
+	l := &lander{a: r.a}
+	status, err := l.git(context.Background(), r.worker, "status", "--porcelain=v1", "-z", "--untracked-files=all")
+	require.NoError(t, err)
+	assert.Equal(t, " M a.txt\x00M  b.txt\x00MM c.txt\x00??  new.txt \x00", status)
+	assert.Equal(t, []string{"a.txt", "c.txt", " new.txt "}, updateWrote(status))
+	paths, err := l.git(context.Background(), r.worker, "ls-files", "--others", "--exclude-standard", "-z")
+	require.NoError(t, err)
+	assert.Equal(t, " new.txt \x00", paths)
+	head, err := l.git(context.Background(), r.worker, "rev-parse", "HEAD")
+	require.NoError(t, err)
+	assert.Equal(t, r.git(r.worker, "rev-parse", "HEAD"), head)
+}
 
 // fakeLedger is the generated ledger of these tests, a generality ledger by its path.
 const fakeLedger = "internal/ci/testdata/generality/rows.txt"
