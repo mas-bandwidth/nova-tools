@@ -221,9 +221,28 @@ func (w world) ask(c *tool.Call) *tool.Out {
 }
 
 func (w world) read(c *tool.Call) *tool.Out {
-	inputs, texts := map[string]string{}, map[string]string{}
+	texts, inputs, refused := readFiles(c, "card", "diff", "rule")
+	if refused != nil {
+		return refused
+	}
+	return w.decision(c, decide.ReadSchema(), decide.ReadState(texts["card"], texts["diff"], texts["rule"]), inputs)
+}
+
+// score reads the card and the landed diff and makes the score decision.
+func (w world) score(c *tool.Call) *tool.Out {
+	texts, inputs, refused := readFiles(c, "card", "diff")
+	if refused != nil {
+		return refused
+	}
+	return w.decision(c, decide.ScoreSchema(), decide.ReadState(texts["card"], texts["diff"], ""), inputs)
+}
+
+// readFiles reads each named file flag that is given: its text, and the record's inputs
+// (the path and its SHA-256); every file it cannot read is named in one refusal.
+func readFiles(c *tool.Call, names ...string) (texts, inputs map[string]string, refused *tool.Out) {
+	texts, inputs = map[string]string{}, map[string]string{}
 	var problems []string
-	for _, name := range []string{"card", "diff", "rule"} {
+	for _, name := range names {
 		if !c.Given(name) {
 			continue
 		}
@@ -236,28 +255,9 @@ func (w world) read(c *tool.Call) *tool.Out {
 		inputs[name], inputs[name+"_sha256"] = c.Str(name), decide.Sum(raw)
 	}
 	if len(problems) > 0 {
-		return tool.Refuse(problems...)
+		return nil, nil, tool.Refuse(problems...)
 	}
-	return w.decision(c, decide.ReadSchema(), decide.ReadState(texts["card"], texts["diff"], texts["rule"]), inputs)
-}
-
-// score reads the card and the landed diff and makes the score decision.
-func (w world) score(c *tool.Call) *tool.Out {
-	inputs, texts := map[string]string{}, map[string]string{}
-	var problems []string
-	for _, name := range []string{"card", "diff"} {
-		raw, err := os.ReadFile(c.Str(name))
-		if err != nil {
-			problems = append(problems, err.Error())
-			continue
-		}
-		texts[name] = string(raw)
-		inputs[name], inputs[name+"_sha256"] = c.Str(name), decide.Sum(raw)
-	}
-	if len(problems) > 0 {
-		return tool.Refuse(problems...)
-	}
-	return w.decision(c, decide.ScoreSchema(), decide.ReadState(texts["card"], texts["diff"], ""), inputs)
+	return texts, inputs, nil
 }
 
 // findings prints the record's score decisions in the window clustered by class.

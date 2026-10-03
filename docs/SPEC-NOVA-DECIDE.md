@@ -224,7 +224,10 @@ first in table order on a tie), and that p: `SCORE OK id=... top=<class> p=<p>`.
 over the card's brief and the merge's own diff, recorded in
 `decide/score.jsonl` under the land root, and reports each card's top class and
 p to the store; a batch whose cards' top class meets the sprint row's
-`decide_score_bar` raises one "landed work scored low" judgment listing them.
+`decide_score_bar` raises one "landed work scored low" judgment listing them. The
+bar is empty by default (the scores are recorded and clustered, no judgment is
+raised); 0.7 is the starting point once a review round labels cards
+independently, the calibration below being in sample.
 A review's finding is attached with `outcome`, the label the classes it found
 joined by `+` (or `clean`), so each class is calibrated on its own:
 `calibrate --decision score --question <class> --positive <class> --negative clean`
@@ -251,6 +254,7 @@ its p against the clean cards (positives in brackets): `cut_citation` 0.945
 `test_weakened` 0.971 (1), `renamed_file_assumed` 0.994 (1), `outside_paths`
 0.439 (1). Against the clean cards of the same streams only (docs and diary,
 80), the AUCs are lower: `cut_citation` 0.903, `stranded_fragment` 0.739,
-`record_made_claim` 0.936, `invented_reason` 0.875. The top class at the bar
-0.5 flags 40 of the 49 class-labelled cards and 54 of the 157 clean ones; at
-0.7, 26 and 14.
+`record_made_claim` 0.936, `invented_reason` 0.875, and the top class, the
+judgment's score, 0.716 (0.835 against all clean cards). The top class at the bar
+0.5 flags 40 of the 49 class-labelled cards and 54 of the 157 clean ones (51 of
+the 80 clean docs and diary cards); at 0.7, 26 and 14.

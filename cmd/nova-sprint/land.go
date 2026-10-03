@@ -72,11 +72,12 @@ Landing, the coordinator's: an external delivery (git pushes the base) and a sto
     script and no model: a head whose diff changes a file outside its brief's
     PATHS, or leaves a stranded sentence fragment or an unmatched backquote in
     prose, ends the batch as a head in conflict does. The clone is --repo-dir,
-    else the dir= each line names; git uses the caller's environment. A batch
-    landed, each merge diff is scored (nova-decide's score decision, with the
-    key JEV_API_KEY holds; recorded in decide/score.jsonl under the land root):
-    a batch whose cards' top class meets the sprint row's decide_score_bar
-    raises one judgment, landed work scored low, listing them (scored=, judged=).
+    else the dir= each line names; git uses the caller's environment. After
+    the whole pass each landed merge diff is scored (nova-decide's score
+    decision, with the key JEV_API_KEY holds, a minute for the pass; recorded in
+    decide/score.jsonl under the land root): a batch whose cards' top class meets
+    the sprint row's decide_score_bar (empty: none) raises one judgment, landed
+    work scored low, listing them (scored=, judged=).
   nova-sprint land --stream s1 --dry-run
     reads the store only: no git, no push, no report. The window: land pins
     each card's head and attempt as it reads them; a caller's --epoch is held
@@ -231,6 +232,7 @@ type lander struct {
 	out                        []landBatch
 	epoch                      uint64            // the epoch land read: every report is fenced to it
 	diffs                      map[string]string // each card's merge diff, as checkCard read it, for its score
+	toScore                    []scoreJob        // the landed batches, scored after the whole pass (landscore.go)
 }
 
 func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
@@ -315,6 +317,13 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 	if !a.landLazy && !l.dry {
 		pruned = a.flushPrune(ctx, true)
 	}
+	// the landed diffs' scores, last: under the land loop's context when the loop runs this
+	// land, so its shutdown ends the pass, and one deadline for the pass (landscore.go)
+	sctx := ctx
+	if a.landCtx != nil {
+		sctx = a.landCtx
+	}
+	l.scoreAll(sctx)
 	return l.report(failed, pruned, stdout, stderr)
 }
 
@@ -372,7 +381,8 @@ func (l *lander) report(failed bool, pruned []pruneResult, stdout, stderr io.Wri
 			fmt.Fprintf(w, "NOTE nothing was pushed or reported for stream %s; its cards stay queued\n", oneline.Field(b.Stream))
 		}
 		if s := b.Score; s != nil && s.Why != "" {
-			fmt.Fprintf(w, "NOTE %s\n", oneline.Escape(s.Why))
+			// what was not scored is said where the land loop shows what went wrong
+			fmt.Fprintf(stderr, "NOTE %s\n", oneline.Escape(s.Why))
 		}
 		if p := b.Prune; p != nil {
 			if p.Why != "" {
@@ -707,9 +717,9 @@ func (l *lander) landed(b landBatch, stream string, pins []landCard) bool {
 	// pushed AND reported: only now are its cards' branches tagged for the cleanup (a
 	// batch pushed and not reported keeps them: land is run again and may need the heads)
 	l.tag(context.Background(), &b, pins)
-	// and only now is each landed diff scored (landscore.go): a score never holds a landing
-	l.score(&b, stream, pins)
 	l.out = append(l.out, b)
+	// its diffs are scored after the whole pass (landscore.go): a score never holds a landing
+	l.toScore = append(l.toScore, scoreJob{at: len(l.out) - 1, stream: stream, pins: pins})
 	return true
 }
 

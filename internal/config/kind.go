@@ -327,7 +327,7 @@ var Kinds = []*Kind{
 			{Name: "coordinator", Type: TypeRef, Ref: KindFriend, Help: "the friend who holds the coordinator role (a friend row), or empty; set it to hand over"},
 			{Name: FieldDecideBounce, Type: TypeDecimal, Default: "0.5", Help: "the decide read's bounce bar: a flash card whose first read gives p(defect) at or above it is bounced with the read's finding; a probability, at least --decide_review; 0.5 (the default); empty, with --decide_review empty, turns the decide read off"},
 			{Name: FieldDecideReview, Type: TypeDecimal, Default: "0.3", Help: "the decide read's review bar: below it the card lands with no model read, and from it up to --decide_bounce it goes to a strings read; a probability; 0.3 (the default)"},
-			{Name: FieldDecideScoreBar, Type: TypeDecimal, Default: "0.5", Help: "the landed score's bar: land scores every landed diff (nova-decide's score decision), and a batch whose cards' top class has a p at or above it raises one landed work scored low judgment listing them; a probability; 0.5 (the default); empty raises none"},
+			{Name: FieldDecideScoreBar, Type: TypeDecimal, Help: "the landed score's bar: land scores every landed diff (nova-decide's score decision), and a batch whose cards' top class has a p at or above it raises one landed work scored low judgment listing them; a probability; empty (the default) records the scores and raises none; 0.7 is the starting point once a review round labels cards independently"},
 		},
 		Check: checkSprint,
 	},

@@ -150,13 +150,13 @@ func TestTheSprintRowHoldsTheDecideBarsTogether(t *testing.T) {
 }
 
 // The sprint row holds the landed score's bar (docs/SPEC-SPRINT.md section 7, the landed
-// score): a decimal, 0.5 by default, a probability or empty (no judgment).
+// score): a decimal, a probability or empty, and empty by default (no judgment).
 func TestTheSprintRowHoldsTheLandedScoreBar(t *testing.T) {
 	t.Parallel()
 	sprint, _ := Lookup(KindSprint)
 	bar, ok := sprint.Field(FieldDecideScoreBar)
 	require.True(t, ok)
-	assert.Equal(t, "0.5", bar.Default)
+	assert.Equal(t, "", bar.Default, "report only until a review round labels cards independently")
 	assert.Equal(t, TypeDecimal, bar.Type)
 	for raw, says := range map[string]string{"0.5": "", "0": "", "1": "", "": "", "1.5": "decide_score_bar \"1.5\" is not a probability", "x": "decide_score_bar \"x\" is not a probability"} {
 		err := sprint.Check(Row{Name: KindSprint, Fields: map[string]string{FieldDecideScoreBar: raw}})

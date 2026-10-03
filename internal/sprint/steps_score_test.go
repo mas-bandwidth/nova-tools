@@ -20,23 +20,24 @@ func landedCards(w *world, ids ...string) {
 // card nothing else holds (docs/SPEC-SPRINT.md section 7, the landed score).
 func TestRecordScoresRaisesOneJudgmentForTheBatch(t *testing.T) {
 	t.Parallel()
-	w := setup(t, 3)
-	landedCards(w, "s1-1", "s1-2", "s1-3")
+	w := setup(t, 4)
+	landedCards(w, "s1-1", "s1-2", "s1-3", "s1-4")
 	w.s.DecideScoreBar = "0.5"
 	req := ScoreReq{Stream: "s1", Who: "lander", Scores: []CardScore{
 		{ID: "s1-1", Op: "s1-1@landed@aaa", Class: "cut_citation", P: 0.62},
-		{ID: "s1-2", Op: "s1-2@landed@bbb", Class: "record_made_claim", P: 0.2},
+		{ID: "s1-2", Op: "s1-2@landed@bbb", Class: "record_made_claim", P: 0.5},
 		{ID: "s1-3", Op: "s1-3@landed@ccc", Class: "stranded_fragment", P: 0.91},
+		{ID: "s1-4", Op: "s1-4@landed@ddd", Class: "cut_citation", P: 0.4999},
 	}}
 	p := w.must(RecordScores(w.s, req))
-	require.Len(t, p.Units, 3)
+	require.Len(t, p.Units, 4)
 	assert.Equal(t, "s1-3 scored stranded_fragment 0.910", p.Units[2].Moved)
 	c := w.s.Work.Card("s1-1")
 	assert.Equal(t, []string{"0.620", "cut_citation", "s1-1@landed@aaa"}, []string{c.F(FieldLandedP), c.F(FieldLandedClass), c.F(FieldLandedOp)})
 	low := w.notesOf(NScoredLow)
 	require.Len(t, low, 1, "one judgment for the batch")
-	assert.Equal(t, []string{"s1-3", "s1-1"}, low[0].Primaries, "the highest first, only the cards at the bar")
-	assert.Equal(t, "s1-3 stranded_fragment 0.91, s1-1 cut_citation 0.62 (the bar 0.5; nova-decide findings clusters the classes)", low[0].What)
+	assert.Equal(t, []string{"s1-3", "s1-1", "s1-2"}, low[0].Primaries, "the highest first, only the cards at or above the bar: exactly at it is in, just under it is out")
+	assert.Equal(t, "s1-3 stranded_fragment 0.91, s1-1 cut_citation 0.62, s1-2 record_made_claim 0.50 (the bar 0.5; nova-decide findings clusters the classes)", low[0].What)
 	assert.Equal(t, []string{"add a repair card", "ack"}, low[0].Decisions)
 
 	again := w.must(RecordScores(w.s, req))
