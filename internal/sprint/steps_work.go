@@ -1289,6 +1289,14 @@ type FleetReq struct {
 	// HeldBy, with hold, marks the hold as made by that mechanism (the sync's,
 	// fleet_sync.go) and not the coordinator's: the control card's held_by.
 	HeldBy string `json:",omitempty"`
+	// Machines, with Op sync, is every machine row of the inventory, a member
+	// or not (width 0): a fleet row it does not name has no machine row and
+	// leaves the fleet once no card stays on it (fleet_sync.go).
+	Machines []string `json:",omitempty"`
+	// Remove, with hold, takes the member's control card off the fleet when no
+	// card stays on it after the hold's redeal (memberKeeps): the sync's
+	// removal of a member with no machine row.
+	Remove bool `json:",omitempty"`
 }
 
 // Fleet brings a member up (and levels the ready queues), takes one down
@@ -1493,6 +1501,7 @@ func downPlan(s *Snapshot, r FleetReq, up []string, rr *round, moves roundMoves,
 	}
 	cards := append(append([]*Card{}, s.Fleet.Cell(r.Member, Ready)...), s.Fleet.Cell(r.Member, Working)...)
 	SortCards(cards)
+	withdrew := 0
 	for _, c := range cards {
 		taken := c.Col == Working
 		if len(up) > 0 && !(taken && c.Int("redeals") >= MaxRedeals) {
@@ -1513,6 +1522,7 @@ func downPlan(s *Snapshot, r FleetReq, up []string, rr *round, moves roundMoves,
 				continue
 			}
 		}
+		withdrew++
 		set := nextGen(c, "", s.Now)
 		set["withdrawn"] = stamp(s.Now)
 		if taken {
@@ -1528,6 +1538,13 @@ func downPlan(s *Snapshot, r FleetReq, up []string, rr *round, moves roundMoves,
 			u.Notes = append(u.Notes, w)
 		}
 		p.Units = append(p.Units, u)
+	}
+	if r.Remove && withdrew == 0 && memberKeeps(s, r.Member) == 0 {
+		// no card stays on it: its control card leaves the fleet, held by the
+		// sync so a return to the inventory releases it (fleet_sync.go)
+		head = []Change{change(Fleet, removeEntry(ctl, map[string]string{"status": Down, "since": stamp(s.Now), "held": stamp(s.Now), FieldHeldBy: r.HeldBy}))}
+		n = statusNote(s, r, NMemberDown, "removed")
+		line = r.Member + " removed: " + r.Why + ", and no card stays on it; its row and its width leave the fleet"
 	}
 	// where the member's cards went, and which stayed (nova-tools#5096 item 21)
 	to, stayed := map[string]int{}, []string{}

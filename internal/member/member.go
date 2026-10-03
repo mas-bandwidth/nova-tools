@@ -233,6 +233,9 @@ type Packet struct {
 	Model    string `json:"model,omitempty"`
 	Tokens   string `json:"tokens,omitempty"`
 	Deadline int    `json:"deadline,omitempty"`
+	// Tier is the tier the route was drawn from when the sprint decided it (a read's
+	// read tier, a rework's --tier); empty when the brief's line 1 names it.
+	Tier string `json:"tier,omitempty"`
 }
 
 // queueCard is one card of `nova-sprint queue --as <me> --json`. Its claim is the

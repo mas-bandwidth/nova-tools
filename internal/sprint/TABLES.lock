@@ -21,6 +21,13 @@
 # drawn by where after merge and before fleet and never stored as a table. Held by
 # TestSprintTablesAreLocked.
 #
+# Change, 2026-10-02, asked by Glenn in words, at a fleet footer of 132 over members of
+# which 52 could take a card: "width 132?!". The fleet table's footer in the view's text
+# (nova-sprint where) folds ready, working, width, done and ok% over the members whose
+# status is up only; a held or down member's numbers show on its own row and not in the
+# total. No column, fold or row changes here: the shape below is the same. Held by
+# TestTheFleetFooterSumsOnlyTheMembersUp (cmd/nova-sprint).
+#
 # Change, 2026-10-02, asked by Glenn in words: "please give friends in the friends
 # table the same ready, working, width, done, ok%, status that we have for machines,
 # but no load, since they don't correspond to a machine (at the moment...)" and "you

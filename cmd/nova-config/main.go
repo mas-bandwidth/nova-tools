@@ -676,10 +676,9 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 		}
 	}
 	var notes []string
-	width := row.Int("width")
-	if add && k.Name == config.KindMachine && width == 0 {
-		// width is set apart from slots and defaults to no member: say so where a newcomer meets it
-		notes = append(notes, fmt.Sprintf("machine=%s width=0: no sprint member, so it is dealt no work; its width is set apart from its slots; run: %s machine set %s --width <n> --as %s%s", config.Value(name), toolName, name, actor, c.again()))
+	if add && k.Name == config.KindMachine && row.Fields["width"] == "" {
+		// width is set apart from slots and is the default when unset: say so where a newcomer meets it
+		notes = append(notes, fmt.Sprintf("machine=%s width=default: a sprint member at half its cores, as nova-sprint fleet sync reads them from its beat; its width is set apart from its slots; run: %s machine set %s --width <n> (0: no member) --as %s%s", config.Value(name), toolName, name, actor, c.again()))
 	}
 	var id int64
 	var changed []string

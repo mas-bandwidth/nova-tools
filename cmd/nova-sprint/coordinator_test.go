@@ -95,6 +95,8 @@ func TestEveryCoordinatorVerbIsTheCoordinators(t *testing.T) {
 		"reader up":     "reader up reader-a",
 		"reader remove": "reader remove reader-c",
 		"stream remove": "stream remove s1",
+		"stream set":    "stream set s1 --read-tier pro",
+		"set":           "set --read-tier pro",
 		"wait":          "wait x --for 1m",
 		"ack":           "ack x --reason r",
 		"clear":         "clear --confirm sprint",

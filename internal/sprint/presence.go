@@ -48,11 +48,13 @@ type LoadSample struct {
 
 // Beat is a member's presence record: its last beat, to the second, the
 // highest load of its beats within LoadWindow of it, how the last one was
-// measured, those beats' loads, and the measuring state the next beat starts
-// from.
+// measured, those beats' loads, the measuring state the next beat starts
+// from, and the machine's logical cores, which a member with the default width
+// takes half of (WidthOfCores; fleet sync).
 type Beat struct {
 	At      time.Time      `json:"at"`
 	Load    float64        `json:"load"`
+	Cores   int            `json:"cores,omitempty"`
 	How     string         `json:"how,omitempty"`
 	Samples []LoadSample   `json:"samples,omitempty"`
 	Meter   hostload.State `json:"meter"`

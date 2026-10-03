@@ -37,8 +37,7 @@ const (
 // Deadlines, each against running time: time the machine was STOPPED does
 // not count.
 const (
-	DeadlineUntaken    = 15 * time.Minute // a work card dealt and not taken
-	DeadlineUnfinished = 2 * time.Hour    // a work card taken and not finished
+	DeadlineUnfinished = 2 * time.Hour    // a work card taken and not finished (a card dealt and never taken: the dealt bound, settings.go)
 	DeadlineUnbegun    = 30 * time.Minute // a read card asked and not begun
 	DeadlineUnreported = 2 * time.Hour    // a read card begun and not reported
 	DeadlineMergeIdle  = 30 * time.Minute // a stream with cards to merge and no merge step
@@ -120,7 +119,7 @@ var TickDecisions = map[string][]string{
 	NNoMember:   {"fleet beat", "fleet up", "wait"},
 	NNoRoute:    {"route add", "look at the card", "drop", "wait"},
 	NInvariant:  {"look at the card", "repair", "wait"},
-	NWorkLate:   {"fleet down <member>", "wait", "drop"},
+	NWorkLate:   {"fleet level", "fleet down <member>", "wait", "drop"},
 	NReadLate:   {"ask --another", "wait", "drop"},
 	NMergeLate:  {"merge --stream <s>", "look", "wait"},
 	NStalled:    {"look at the card", "wait"},
@@ -797,25 +796,41 @@ func TickDeadlines(s *Snapshot, r TickReq) (Plan, int) {
 		d, ok := r.running(s.Now, c.F(stampField))
 		return c.F(stampField), ok && d > limit
 	}
-	// N4: work cards dealt and not taken, taken and not finished, by the
-	// card's state (WorkDeadline): not taken from the first deal since its
-	// last take, not finished from the attempt's first take. No redeal or
-	// withdrawal rewrites either: a member whose beat lapses again and again
-	// cannot reset them, and the time a card spends withdrawn counts.
+	// N4: work cards dealt and never taken, taken and not finished, by the
+	// card's state (WorkDeadline): never taken past the dealt bound from the
+	// first deal since its last take, not finished from the attempt's first
+	// take. No redeal or withdrawal rewrites either: a member whose beat
+	// lapses again and again cannot reset them, and the time a card spends
+	// withdrawn counts.
 	for _, c := range s.Fleet.Column(Ready, Working, Withdrawn) {
-		field, limit, word, own := WorkDeadline(c)
-		if at, ok := late(field, c, limit); ok {
-			// fleet down names the member only when it has had its own whole
-			// deadline: a card late at the moment it is redealt is not the
-			// new member's fault
-			decisions := []string{"wait", "drop"}
-			if _, mine := late(own, c, limit); own != "" && mine && s.MemberCtl(c.Row).F("status") == Up {
-				decisions = append([]string{"fleet down " + c.Row}, decisions...)
-			}
-			conds = append(conds, cond{typ: NWorkLate, stream: c.F("stream"), card: c.ID, primaries: []string{c.F("primary")},
-				what:      fmt.Sprintf("%s %s at %s, %s; at %s", c.ID, strings.TrimPrefix(strings.Replace(field, "untaken_since", "dealt", 1), "first_"), at, word, placeOf(c)),
-				decisions: decisions})
+		field, limit, word, own := WorkDeadline(s, c)
+		at, ok := late(field, c, limit)
+		if !ok {
+			continue
 		}
+		// fleet down names the member only when it has had its own whole
+		// deadline: a card late at the moment it is redealt is not the new
+		// member's fault
+		_, mine := late(own, c, limit)
+		down := own != "" && mine && s.MemberCtl(c.Row).F("status") == Up
+		what := fmt.Sprintf("%s %s at %s, %s; at %s", c.ID, strings.TrimPrefix(field, "first_"), at, word, placeOf(c))
+		decisions := []string{"wait", "drop"}
+		switch {
+		case word == WordNeverTaken && c.Col == Ready:
+			// dealt and waiting in a member's queue past the dealt bound: the
+			// queue's, so the answers are the fleet's (nova-tools#5096 item 22)
+			what = fmt.Sprintf("%s %s, at %s (dealt %s, over the dealt bound %s)", c.ID, word, placeOf(c), at, limit)
+			decisions = []string{"fleet level", "wait"}
+			if down {
+				decisions = []string{"fleet level", "fleet down " + c.Row, "wait"}
+			}
+		case word == WordNeverTaken:
+			what = fmt.Sprintf("%s %s, %s (dealt %s, over the dealt bound %s)", c.ID, word, placeOf(c), at, limit)
+		case down:
+			decisions = append([]string{"fleet down " + c.Row}, decisions...)
+		}
+		conds = append(conds, cond{typ: NWorkLate, stream: c.F("stream"), card: c.ID, primaries: []string{c.F("primary")},
+			what: what, decisions: decisions})
 	}
 	// N5: read cards asked and not begun, begun and not reported.
 	for _, c := range s.Readers.Column(Asked, Reading) {
@@ -963,8 +978,11 @@ func condKey(typ, subject, card, what string) string {
 }
 
 // lateKind is a lateness's kind, from its text: "<card> <stamp> at <time>,
-// <kind>; at <place>".
+// <kind>; at <place>", or "<card> dealt, never taken, at <place> (...)".
 func lateKind(what string) string {
+	if strings.Contains(what, WordNeverTaken) {
+		return WordNeverTaken
+	}
 	what, _, _ = strings.Cut(what, "; at ")
 	if i := strings.LastIndex(what, ", "); i >= 0 {
 		return what[i+2:]
@@ -975,7 +993,7 @@ func lateKind(what string) string {
 // LateStands says the cause of a lateness still stands: no move that resolves
 // it has happened. Not finished stands while the attempt's work card is
 // ready, working or withdrawn (a redeal or a return to ready does not finish
-// it); not taken while the card is not taken (ready or withdrawn); not begun
+// it); never taken while the card is not taken (ready or withdrawn); not begun
 // while the read is asked; not reported while it is asked or reading. While
 // its cause stands a lateness stays raised, whether or not it is late at
 // this moment: no judgment flaps closed and open again.
@@ -987,7 +1005,7 @@ func LateStands(s *Snapshot, n Note) bool {
 		if c == nil {
 			return false
 		}
-		if kind == "not taken" {
+		if kind == WordNeverTaken || kind == "not taken" { // "not taken": raised before the dealt bound
 			return c.Col == Ready || c.Col == Withdrawn
 		}
 		return c.Col == Ready || c.Col == Working || c.Col == Withdrawn
@@ -1152,15 +1170,18 @@ func MovesDue(s *Snapshot) int {
 
 // WorkDeadline is the deadline a work card is held to, by its state: a card
 // not taken since its last deal (ready, or withdrawn again before a take) is
-// late not taken 15 minutes from untaken_since, the first deal since its last
-// take, which no later redeal or withdrawal rewrites; a card working, or
+// late never taken past the dealt bound (s.DealtMax) from untaken_since, the
+// first deal since its last take, which no later redeal or withdrawal rewrites:
+// a card waiting in a member's ready queue is the machine's queue, so its own
+// deadline starts at its take (nova-tools#5096 item 22); a card working, or
 // withdrawn from a take, is late not finished 2 hours from first_taken, the
 // attempt's first take. The tick's deadline part and the no-stall rule both
 // call it, so they speak at the same moment. field is the stamp it counts
 // from; own is the stamp of the current member's own deal or take, which
 // says whether that member has had its whole deadline ("" when the card is
-// withdrawn: no member holds it).
-func WorkDeadline(c *Card) (field string, limit time.Duration, word, own string) {
+// withdrawn: no member holds it). The model is tla/SprintEvents.tla, the
+// untaken timer of DealtMax units.
+func WorkDeadline(s *Snapshot, c *Card) (field string, limit time.Duration, word, own string) {
 	first := func(fields ...string) string {
 		for _, f := range fields[:len(fields)-1] {
 			if c.F(f) != "" {
@@ -1179,12 +1200,15 @@ func WorkDeadline(c *Card) (field string, limit time.Duration, word, own string)
 	case c.Col == Working:
 		return first("first_taken", "taken"), DeadlineUnfinished, "not finished", own
 	case c.F("untaken_since") != "":
-		return "untaken_since", DeadlineUntaken, "not taken", own
+		return "untaken_since", s.DealtMax(), WordNeverTaken, own
 	case c.F("first_taken") != "":
 		return "first_taken", DeadlineUnfinished, "not finished", own
 	}
-	return first("first_dealt", "dealt"), DeadlineUntaken, "not taken", own
+	return first("first_dealt", "dealt"), s.DealtMax(), WordNeverTaken, own
 }
+
+// WordNeverTaken is the words of a work card late past the dealt bound.
+const WordNeverTaken = "dealt, never taken"
 
 // PartDone is the name of the tick's last part, the done part.
 const PartDone = "done"

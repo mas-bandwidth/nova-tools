@@ -379,18 +379,24 @@ func TestCheckIsQuietWhenEveryRuleHolds(t *testing.T) {
 	expect(t, refmodel.CheckMoves(w.snapshot(w.fresh()), later(0)))
 }
 
-func TestDeadlinesJudgeAWorkCardNotTakenPastFifteenMinutes(t *testing.T) {
+// A work card's deadline runs from its take (nova-tools#5096 item 22): dealt and
+// waiting in its member's ready queue it is the machine's queue, not the card's
+// fault, so it is late only past the dealt bound, three take deadlines from its
+// deal, and the judgment says where it waits and offers the fleet's answers.
+func TestDeadlinesJudgeAWorkCardDealtAndNeverTakenOnlyPastTheDealtBound(t *testing.T) {
 	t.Parallel()
 	w := sprintOf(t, "m1")
 	w.add(t, "s1", 1)
 	w.deal(t, "s1-1")
 	snap := w.snapshot(nil)
-	expect(t, refmodel.DeadlineMoves(snap, later(15*time.Minute)))
-	got := refmodel.DeadlineMoves(snap, later(15*time.Minute+time.Second))
+	expect(t, refmodel.DeadlineMoves(snap, later(16*time.Minute)))
+	expect(t, refmodel.DeadlineMoves(snap, later(sprint.DealtMaxDefault)))
+	require.Equal(t, 6*time.Hour, sprint.DealtMaxDefault, "the dealt bound is three take deadlines")
+	got := refmodel.DeadlineMoves(snap, later(sprint.DealtMaxDefault+time.Second))
 	expect(t, got, "open a work card is past its deadline [s1-1]")
 	assert.Equal(t, "s1-1.w1", got[0].Card, "the judgment names the card and what is late: %+v", got[0])
-	assert.Contains(t, got[0].Words, "not taken", "the judgment names the card and what is late: %+v", got[0])
-	want := []string{"fleet down m1", "wait", "drop"}
+	assert.Contains(t, got[0].Words, "dealt, never taken, at m1:ready", "the judgment says where the card waits: %+v", got[0])
+	want := []string{"fleet level", "fleet down m1", "wait"}
 	assert.Equal(t, want, got[0].Decisions, "the decisions offered: %q, want %q", got[0].Decisions, want)
 }
 
@@ -398,14 +404,14 @@ func TestDeadlinesCountRunningTimeOnly(t *testing.T) {
 	t.Parallel()
 	w := sprintOf(t, "m1")
 	w.add(t, "s1", 1)
-	w.deal(t, "s1-1")
+	w.drive(t, "s1-1", sprint.Working)
 	snap := w.snapshot(nil)
 	snap.Stopped = []sprint.Span{{From: t0.Add(time.Minute), To: t0.Add(20 * time.Minute)}}
 	// 20 minutes of the clock, 19 of them STOPPED: one minute has run
 	expect(t, refmodel.DeadlineMoves(snap, later(20*time.Minute)))
-	// 15 minutes of running time are 34 of the clock: not past the deadline, and a second more is
-	expect(t, refmodel.DeadlineMoves(snap, later(34*time.Minute)))
-	expect(t, refmodel.DeadlineMoves(snap, later(34*time.Minute+time.Second)),
+	// two hours of running time are 2h19m of the clock: not past the deadline, and a second more is
+	expect(t, refmodel.DeadlineMoves(snap, later(sprint.DeadlineUnfinished+19*time.Minute)))
+	expect(t, refmodel.DeadlineMoves(snap, later(sprint.DeadlineUnfinished+19*time.Minute+time.Second)),
 		"open a work card is past its deadline [s1-1]")
 }
 
@@ -562,8 +568,8 @@ func TestDecideReadsTheTimeItIsGivenAndNotTheSnapshots(t *testing.T) {
 		assert.Failf(t, "assertion failed", "a card dealt a minute ago is not late:%s", show(got))
 	}
 	snap.Tables.Now = t0
-	got := refmodel.Decide(snap, later(time.Hour))
-	assert.NotEmpty(t, got, "a card dealt an hour ago is late")
+	got := refmodel.Decide(snap, later(sprint.DealtMaxDefault+time.Hour))
+	assert.NotEmpty(t, got, "a card dealt and never taken an hour past the dealt bound is late")
 }
 
 func TestEveryPartOfTheTickIsADutyAndEveryDutyIsNamedInOrder(t *testing.T) {
