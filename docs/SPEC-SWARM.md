@@ -517,6 +517,15 @@ printed. `nova-swarm lint --rules` prints every token below with its remedy. A c
 for a bench worker under the shape rules carries none of the child rules and is linted without
 the flag exactly as before.
 
+A bare `nova-swarm lint --card` drift on a shape token does not bind admission.
+`nova-sprint add` holds a brief to the coordinator's child rules (the same checks as
+`nova-swarm lint --card --child-rules`), to a tree card's step checks, and to the brief's
+model lines. Both helps state that contract in one sentence (`swarm.AdmissionContract`).
+A drift on a token admission holds is the same check, and add still refuses it. A drift
+on any other token can leave lint at exit 1 while add admits the same text. When lint
+drifts on such a token it prints one `LINT NOTE` line, `admission=not-bound`, naming the
+tokens, with the contract as its remedy.
+
 **The rule set is the coordinator's, and the tool is general.** The required sentences are not
 one repository's. They come from a rules file, one required sentence per line:
 

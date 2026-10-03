@@ -93,10 +93,12 @@ func TestAnEmptyCardIsSaidOnce(t *testing.T) {
 	assert.Contains(t, out.String(), "LINT DRIFT card=empty.md empty: 1: the card is empty remedy=")
 }
 
-// lint's help says which of its rules nova-sprint add holds a brief to.
+// lint's help states the one admission contract, the same sentence nova-sprint add prints.
 func TestLintHelpSaysWhichRulesAddHolds(t *testing.T) {
 	t.Parallel()
+	require.Contains(t, usage, swarm.AdmissionContract)
 	help := swarmHelp(t, "lint", "-h")
-	assert.Contains(t, help, "nova-sprint add holds a brief to the --child-rules tokens only")
-	assert.Contains(t, help, "nova-sprint add holds a brief to the rule-<name> and step-<what> tokens")
+	assert.Contains(t, help, swarm.AdmissionContract)
+	assert.NotContains(t, help, "--child-rules tokens only")
+	assert.NotContains(t, help, "every other token --rules lists is this lint's alone")
 }

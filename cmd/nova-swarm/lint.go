@@ -72,7 +72,10 @@ var cardLintAdvisory = map[string]bool{"size": true, swarm.PlaceholderCheck: tru
 // The child rules of internal/swarm/lintchild.go -- one `rule-<name>` per sentence of the
 // brief the coordinator gives every child and one `step-<what>` per forbidden command --
 // join the same set, so `--rules` prints them and this count includes them. They are
-// checked under `--child-rules`, and always by `nova-sprint add` over every brief.
+// checked under `--child-rules`. nova-sprint add holds a brief to those tokens, to a
+// tree card's step checks and to the brief's model lines. swarm.AdmissionContract is
+// the sentence both helps print. A drift on any other token of this lint does not
+// bind that admission.
 //
 // And `placeholder`: a line of the card template left with its <...> fill-ins.
 //
@@ -736,7 +739,7 @@ func cmdLint(args []string, stdout, stderr io.Writer, getenv func(string) string
 	// on bash 4 or on zsh's word-splitting differences takes every launch down with it.
 	// The same verb, the same one-file contract, the same drift lines and remedies.
 	fleet := f.fs.String("fleet", "", "a launcher script to lint instead of a card")
-	rules := f.fs.Bool("rules", false, "print every rule token with what it wants, and lint nothing; nova-sprint add holds a brief to the rule-<name> and step-<what> tokens of its rule set (and rule-libraries-considered when the set carries it) and to no other")
+	rules := f.fs.Bool("rules", false, "print every rule token with what it wants, and lint nothing; which of them nova-sprint add holds is the admission contract in this verb's help")
 	// THE TYPED HEADER IS CHECKED WHEN THE CARD HAS ONE, AND ON DEMAND WHEN IT DOES NOT.
 	// A card cut under SPEC-TOOLWORK §5 carries five typed lines; every card written before
 	// it carries none, and those are still linted by the twelve older rules. So the header
@@ -1039,6 +1042,25 @@ func cmdLint(args []string, stdout, stderr io.Writer, getenv func(string) string
 	}
 	for _, fd := range notes {
 		note(fd)
+	}
+	// A drift on a token nova-sprint add does not hold is named once, with the
+	// contract both helps print (swarm.AdmissionContract). Every such token is
+	// listed, including one --max did not print. When every drift is a token
+	// add refuses, there is no note: that check is the same one.
+	var unbound []string
+	seenUnbound := map[string]bool{}
+	for _, fd := range drifts {
+		if swarm.AdmissionBinds(fd.check) || seenUnbound[fd.check] {
+			continue
+		}
+		seenUnbound[fd.check] = true
+		unbound = append(unbound, fd.check)
+	}
+	if len(unbound) > 0 {
+		slices.Sort(unbound)
+		fmt.Fprintf(stdout, "LINT NOTE card=%s admission=not-bound tokens=%s remedy=%s\n",
+			oneline.Field(name), oneline.Field(strings.Join(unbound, ",")),
+			oneline.Escape(swarm.AdmissionContract))
 	}
 	// A drifting card gets the size too: a writer cutting a card down to fix a drift is
 	// exactly the writer who needs to know how close to the ceiling the card already is --
