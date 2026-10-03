@@ -95,13 +95,26 @@ and `ok%` is `pct(ok/ok+failed)`, pooled over the friends in the footer, the
 fleet table's own formulas.
 
 A friend says she is there with `friend beat <friend>`, which her own machinery
-runs every few seconds beside her harness (it writes `friend-beat:<friend>`,
-the time to the second; a friend not in the record is refused, exit 1). Her
-status is the fleet's rule (`sprint.PresenceStatus`): `held` while the
-coordinator holds her (`friend down`; `friend up` releases the hold), whatever
-she beats; else `up` until she has missed MissedBeatsDown beat windows of
-BeatDeadline in a row; else `down`, and `down` when she has never beaten. The
-rows are in the fleet table's order (`FleetOrder`): up, then held, then down,
+runs every second (`FriendBeatEvery`) beside her harness (it writes
+`friend-beat:<friend>`, the time to the second; a friend not in the record is
+refused, exit 1). Her status is the friends' rule (`sprint.FriendStatus`):
+`held` while the coordinator holds her (`friend down`; `friend up` releases the
+hold), whatever she beats; else `up` while her last beat is under
+`FriendAsleepAfter` (15 s) old; else `asleep`, and `asleep` when she has never
+beaten. A beat wakes her at once. `friend up` is not a beat: a friend released
+with no beat in the last 15 s is `asleep` until she beats. A friend's statuses
+are `up`, `held` and `asleep`; `down` is the fleet's word and never hers. A
+friend `asleep` shows `working` 0 in the table, its footer and `where --json`:
+her jobs stay in her outbox and count again when she beats, and `ready` and
+`done` are as they were (the owner, 2026-10-02 9:48 PM ET: "[a friend] being down,
+she automatically is 0/8 working OK?"). The
+owner, 2026-10-02 9:44 PM ET, on a friend shown up while she was gone: "two
+minutes is too long. 1m", "maybe even 30 secs."; and at 9:46 PM ET: "heartbeat
+should ping once every 10sec", then "or every 1sec if you really want, then
+after 15 sec. asleep. better." The fleet's rule (`MissedBeatsDown` windows of
+`BeatDeadline`, down past 45 s, section 5) is separate and stays longer: a
+machine down has its cards taken back, a friend holds none. The
+rows are in the fleet table's order (`FleetOrder`): up, then held, then asleep,
 each by name. The table is drawn by `where` from those records when it draws
 the frame, never stored as a table: no tick, step, epoch or clear touches it,
 `teardown` deletes its records (the roster, each friend's beat and jobs), and
@@ -1212,8 +1225,8 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | fleet | `up|down <member>`, `level`; down and up say on the member's MOVED line where its cards went (nova-tools#5096 item 21): down `moved=N to m2(n),m3(n); stayed=K withdrawn: <primaries>` (a card no member up has room for, or at its redeal bound, is withdrawn), up `moved=N to <member>(n) from m2(n),...` when the level moves cards onto it; a member going down in the tick's presence part says the same |
 | friend sync | the friends table's rows made nova-config's friend rows (section 1) |
 | friend clean | the retention rule of the friends' working directories (docs/FRIENDS.md; ideas#833), run nightly from a loop row on the machine that holds them, never by the server and never on the store: `friend clean [--pg <dsn>] [--root <dir>] [--days <n>] [--dry-run]`. For each friend row of nova-config (as `friend sync` reads them; the coordinator is one), `<root>/<friend>-working` (`--root`, else HOME); a friend with no directory there is said and skipped. A job is `inbox/<job>/` or `jobs/<job>/`, done when `outbox/<job>/REPORT.md` is a regular file, its age that file's. Inside a done job at least `--days` old (default 3) a clone (a directory holding `.git`) is removed when `git status --porcelain` is empty, it holds no stash and no commit of `HEAD` or a local branch is missing from every remote-tracking ref (`git log HEAD --branches --not --remotes`, no network); build output (`node_modules`, `target`, `gocache`, `gocache-*`, `.gocache`, `go-build`, `wt-*`) that is no clone is removed. A clone that fails the check, or whose git fails, is dirty: listed each run, `FRIENDS-CLEAN DIRTY friend= path= age=<d>d why=`, and removed once its job is 14 days old whatever its state, its line saying `dirty=<why>`. Nothing else is touched: the brief and any text of the job, `outbox/`, every file outside `inbox/` and `jobs/`; a link is never followed; a job under `jobs/` that is itself a clone is one target, one under `inbox/` is never removed (a NOTE). Every removal is `safepath.RemoveUnderRoots` under the job's directory. The friend's one build cache, `<friend>-working/.cache/go-build`, is held under 10 GiB by the member's trim (`internal/gocache`). `--dry-run` says `WOULD-REMOVE` in place of `REMOVED` with the bytes and removes nothing. Lines `FRIENDS-CLEAN REMOVED\|WOULD-REMOVE friend= path= bytes= age=<d>d kind=clone\|build[ dirty=<why>]`, `FRIENDS-CLEAN CACHE ...`, `FRIENDS-CLEAN FRIEND <f> dir= jobs= done= freed= listed=` (or `absent`), `FRIENDS-CLEAN FAILED friend= path=: <why>`, and last `FRIENDS-CLEAN OK freed=<bytes> listed=<n>` (a dry run adds `dry-run: nothing was removed`), or `FRIENDS-CLEAN INCOMPLETE ... failed=<n>`, exit 1; a config that cannot be read or holds no friend row, exit 3, nothing removed; `--json` one object with the lines |
-| friend beat | a friend's beat, `friend beat <friend>`, run by its own machinery every few seconds; through the sprint's server it is `friend beat <friend>` and nothing more |
-| friend down, friend up | hold a friend (status `held`, whatever it beats) and release the hold |
+| friend beat | a friend's beat, `friend beat <friend>`, run by its own machinery every second; through the sprint's server it is `friend beat <friend>` and nothing more |
+| friend down, friend up | hold a friend (status `held`, whatever it beats) and release the hold (not a beat: `asleep` until she beats) |
 | reader add | declares readers |
 | reader away | holds readers away whatever they beat: no read is asked of them, and a read asked and not begun is asked of another at the next tick |
 | reader up | releases the hold; the reader's state is then its beat's |

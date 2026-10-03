@@ -128,12 +128,12 @@ it, with `NOVA_SPRINT_SERVER` (the run loop's loopback address) or
 `NOVA_SPRINT_REDIS` set for the friend:
 
 ```
-while :; do nova-sprint friend beat friend-a >/dev/null 2>&1; sleep 5; done &
+while :; do nova-sprint friend beat friend-a >/dev/null 2>&1; sleep 1; done &
 trap 'kill $!' EXIT
 ```
 
-so the beat stops when the friend's harness does, and the friend is down three
-windows later.
+so the beat stops when the friend's harness does, and the friend is asleep 15 s
+later (`sprint.FriendAsleepAfter`; docs/SPEC-SPRINT.md section 1).
 
 The inventory reads the store `NOVA_SPRINT_REDIS` names (or `--redis`); export
 it, and `NOVA_MACHINE` when the machine running the play is a row, before the

@@ -431,7 +431,7 @@ type RowsOrderer interface {
 }
 
 // statusRank is a fleet row's place by its status cell: up first, then held,
-// then down (the owner, 2026-10-01: "Please sort the fleet table such that we
+// then down, a friend's asleep with down (the owner, 2026-10-01: "Please sort the fleet table such that we
 // sort first alphabetically by machine name (as is current), then stable sort
 // by status, such that "up" is first, then "held" then "down"").
 func statusRank(status string) int {
@@ -440,14 +440,14 @@ func statusRank(status string) int {
 		return 0
 	case sprint.Held:
 		return 1
-	case sprint.Down:
+	case sprint.Down, sprint.Asleep:
 		return 2
 	}
 	return 3
 }
 
 // FleetOrder is the fleet's rows by name, then stably by status: up, held,
-// down, anything else last. status is each row's status cell. The friends
+// down (or a friend's asleep), anything else last. status is each row's status cell. The friends
 // table is ordered by it too (FriendRows): one order for both.
 func FleetOrder(rows []string, status map[string]string) []string {
 	out := slices.Clone(rows)
