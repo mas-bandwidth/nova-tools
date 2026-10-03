@@ -34,6 +34,7 @@ The TLA+ modules here are the specifications of the state machines this repo imp
 | `CardContract.tla` | `MCCardContract*` | the card contract's finish (docs/SPEC-CARD-CONTRACT.md): what a launch is staged from, how its child ends, the member's push and the one judgment (internal/member `Judge`): ok only with a commit the member pushed and the result's shape and verdict ok, a reaped launch never reported, a rework staged only from a head origin holds, and at the last pushed head of any earlier attempt, so no pushed work is unreachable from it; nine reversed witnesses (the finish of 2026-09-30 that sent a card with no commit to review, ok without the shape, ok over a refused push, a reaped launch reported, a rework staged from a branch name, a rework staged from the immediately previous attempt only, a provider failure judged as failed work, a redeal on the route that failed, a redeal past MaxRedeals); a run the provider failed with no result is finished `provider`, redealt (the same attempt, restaged from the same base) within MaxRedeals and retired at the bound with one judgment; the instance is one card |
 | `DirtyTick.tla` | `MCDirtyTick*` | the sprint machine's tick as the owner shaped it on 2026-09-30, before it is built: four tables updated in turn (work, readers, merge, fleet), a queue per table as its dirty bit, readers, merge and fleet drained until empty, the work table written only by the one pump at the start of each tick; placements by counter modulo the count, width, one wake at the tick's end; 16 reversed witnesses and three goals for the holes it found (a placement blind to the fleet's status never ends the tick; room read from an undrained fleet queue over-fills a machine; the v2.1 rules write the work table in their own steps). The readers' presence (`MCDirtyTickReader`, `MCDirtyTickReaderAway`, W21, W22) abstracts two things away from the Go code: `ReadsStandOnReadersUp` says a read is held only by a reader that is up at every state, but the code keeps a read already begun on a reader that went away (only a read asked and not begun is taken back), and the model has one read per card on a host while the code has none. The model's `raway` always finds a reader to ask again, but the code with fewer than two readers up takes nothing back and asks none, raising the one judgment `fewer than two readers up` instead. `README-DirtyTick.md` says the rest |
 | `RouteIndex.tla` | `MCRouteIndex*` | the deal's route choice (internal/sprint/route.go): each tier's route array taken at a uint64 counter modulo its length, one step a card dealt, a redeal moved past the entries it leaves out, a pinned card moving nothing, a read card drawn from the reader tier's array at the same index; 3 routes x 2 tiers x 7 cards (one a read), three reversed witnesses (a random draw breaks RouteFair, a redeal that does not move past the excluded entry breaks ExcludedNeverDrawn, a read that leaves the index where it is breaks RouteIndexAdvancesOncePerCard) and one reach witness (ReachSkip) |
+| `Level.tla` | `MCLevel*` | the fleet's level (internal/sprint `level`, `round.levelTo`), the rebalance at the start of every tick and inside every planner that computes holds: one call's loop over every start of a bounded fleet (every up order, every start of the deal's index, members over their width, a card with a refuser). It ends by two guards, each enough alone: every move lowers the sum of squared backlogs by at least two (`PotentialFalls`), and a moved card is never queued again, so a call makes no more moves than there were ready cards (`MovesBounded`); no card lands on a member that refused it at staging, and an older card moves when the newest is blocked (`SelectionComplete`). Five reversed witnesses: the rule of the wedge of 2026-10-02 (nova-tools#5122) does not end, nor does the gap test removed, a moved card queued again moves twice, the gap tested only on the newest card stops early, the refusers not skipped lands a card on one |
 | `Land.tla` | `MCLand*` | `nova-sprint land` (cmd/nova-sprint/land.go): a batch of a stream's merge queue pushed to a remote base, then reported to the store through the merge step, with the outside between them (an accept anywhere in the queue, a return, a rework that replaces a card's head and keeps its id and epoch, another lander, a clear that moves the epoch, the base moving, a crash at any step); a head is <<card, attempt>>, and the check before the push and the push are separate steps, as in the code. It proves: the store records a card landed only at a head the base holds (LandedInBase), a card lands only with every card ahead of it (LandsInOrder), no push for a caller whose epoch the store was not at when read (CallerEpochCheckedBeforePush), no report records at an epoch the lander does not hold (ReportHoldsTheEpoch), and a batch pushed and not reported is recorded by running land again (Recovers, under fairness). It does not claim that no push follows a clear: a clear between the check and the push makes a push for an epoch just left (ReachStalePush reaches it), which nothing records and nothing undoes. Five reversed witnesses (the report before the push, the caller's epoch checked only after the push, a report with no guard, a guard on ids and not heads, a report with no epoch fence) and two reach witnesses (ReachStranded: the lander's own push for the store's epoch left unreported, marked by the ghost lpushed, to which a push for an epoch the store has left adds nothing; ReachStalePush). Recovers is proved only once the outside goes quiet (the instance caps outside events at 4), so it does not cover (a) a lander that crashes between the push and the report on every run, which never records the batch, or (b) a base that moves twice inside every read-to-push window: one rebuild, then the lander gives up (the rejected fact), every run; nothing is pushed or lost, the cards stay queued, and the coordinator resumes the stream and runs land again |
 
 Runners. `tools/tlacheck` (Go, over `internal/tlc` and `internal/tablemodel`) runs the checks. Run it on a bench that has java and, for the replays, redis-server: neither belongs on a working machine. Every run is bounded by `--timeout` (a timeout is a failure, never a green), downloads nothing, and runs TLC in a private copy of the models under `--dir`, so the checkout never gains the error-trace files TLC writes beside a spec. The jar is `--jar`, or the environment variable `TLC_JAR`; java and redis-server are found on PATH, or named with `--java` and `--redis-server`, and the path found is echoed. `tlacheck help` and `tlacheck <verb> -h` say the rest.
@@ -538,3 +539,51 @@ named order `writeOther, sendAccepted, readAll, writeOther, writeProbe`
 and 8, `%` read and the probe taken, then no read is enabled because the
 witness reads the store, which sent nothing; the code at :257-263 reads the
 answer from `probeAnswer` and never touches the store while answering.
+
+## The fleet's level (Level)
+
+`Level.tla`: one call of the fleet's level (internal/sprint/steps_work.go
+`level`, round.go `levelTo`). On 2026-10-02 at 2:26 PM the call did not end:
+the emptiest member had refused the longest queue's newest card at staging, the
+card went to a member one below instead, the receiver became the donor and the
+card went back, a unit appended per turn under the server's mutex, until the
+process held 244 GB (nova-tools#5122). The module's header says what it holds
+and what it leaves out; the instances are in `MCLevel.tla`.
+
+The model found one defect beyond the wedge, in PR #5127 as it stood: a card the
+call moved was appended to its receiver's queue, so it could be moved again in
+the same call. `MCLevelBrokenRequeue` is the call: widths 2, 1 and 3, members up
+in the order c, a, b, three ready cards on b, the middle one refused by c; b3
+goes b -> a, b2 b -> a, then a is the longest, its newest (b2) is refused by c,
+so b3 goes a -> c, and b1 b -> c: four moves for three ready cards. Checked by
+hand against the code at 0a79ad873 and by `TestLevelMovesNoCardTwice`, red there:
+the second unit of b3 is guarded on b3's place before the first unit, so the plan
+the engine writes is not the plan it computed (`fleet: b3.w1: revision 2,
+expected 1`). The code no longer queues a moved card again.
+
+Run on a macOS arm64 working machine, not the bench (TLC 2.19, jar SHA-256 `936a2620...`, OpenJDK 27, one worker,
+niced, 2026-10-02 ET), the eight cases with `-lncheck final -deadlock`; the bench
+records in `RUNS.tsv` are owed (the class test is red for these eight until a
+Linux bench run is merged):
+
+| config | result | distinct states | time |
+|---|---|---|---|
+| `MCLevel` | no error (exit 0), three members, three cards, every up order: TypeOK, NeverOnARefuser, MovesBounded, SelectionComplete, PotentialFalls, Terminates | 649,537 | 57 s |
+| `MCLevelFour` | no error (exit 0), the wedge's four members: the same six | 472,115 | 57 s |
+| `MCLevelOldRuleNoRequeue` | no error (exit 0): the rule of the wedge with no second move ends, within the ready count, off every refuser | 473,903 | 42 s |
+| `MCLevelBrokenOld` | expected Terminates violation (exit 13): c3 goes a -> t -> a for ever | 466,243 | 62 s |
+| `MCLevelBrokenNoGap` | expected Terminates violation (exit 13): c2 goes a -> c -> a for ever | 654,916 | 74 s |
+| `MCLevelBrokenRequeue` | expected MovesBounded violation (exit 12): four moves for three ready cards, b3 twice | 643,223 | 62 s |
+| `MCLevelBrokenNaive` | expected SelectionComplete violation (exit 12): the call returns with c2 able to move | 360,485 | 36 s |
+| `MCLevelBrokenNoSkip` | expected NeverOnARefuser violation (exit 12): c3 onto c, its refuser | 360,485 | 37 s |
+
+Every counterexample was read against the code by hand. Old: the wedge's shape
+in four members (a 2 above its width with c1 and c3, c3 refused by s; s 0, the
+emptiest; t 1, at the mean; u 4 and full): c3 goes a -> t at the mean, then t is
+the longest and c3 goes back to a, for ever (levelTo at b7776ca3, the longest
+and the refusers avoided, no gap). NoGap: the same shape in three members with
+the gap test removed from PR #5127's levelTo. Naive: a holds c2 and c3, c3
+refused by c, the emptiest two below; only c3 is tried, and the call returns
+with c2 still able to go to c. NoSkip: c3 goes onto c, its refuser (the code
+before #5000).
+
