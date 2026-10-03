@@ -667,12 +667,16 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 		return whereView{}, "", err
 	}
 	for i, f := range friends {
+		// the counts are the friend's sprint cards on her fleet row, and nothing
+		// else: ready, working, done ok and failed, all from the fleet table
+		// (splitFriendRows), with width and status from the roster (store.FriendRows)
 		c := friendCards[f.Name]
-		friends[i].Ready += c.Ready
-		friends[i].OK += c.OK
-		friends[i].Failed += c.Failed
-		if f.Status != sprint.Down {
-			friends[i].Working += c.Working // down, she shows working 0 (store.FriendRows)
+		friends[i].Ready = c.Ready
+		friends[i].Working = c.Working
+		friends[i].OK = c.OK
+		friends[i].Failed = c.Failed
+		if f.Status == sprint.Down {
+			friends[i].Working = 0 // down, she works nothing
 		}
 	}
 	ft := friendsTable(friends)
@@ -751,8 +755,8 @@ func providersView(ctx context.Context, st *store.Store, shapes []ntable.Table, 
 }
 
 // friendsTable is the friends table (sprint.FriendsDef) with a row per friend
-// in the order given: her job cards' counts in ready, working and the hidden
-// ok and failed, her width and her status as text; done and ok% are the
+// in the order given: her sprint cards' counts in ready, working and the
+// hidden ok and failed, her width and her status as text; done and ok% are the
 // table's own formulas over the counts (ntable.CellText), as the fleet
 // table's are.
 func friendsTable(friends []store.FriendRow) ntable.Table {

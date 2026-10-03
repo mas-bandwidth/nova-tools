@@ -147,6 +147,28 @@ func TestAHoldReportRaisesTheWorkCameBackFailedJudgment(t *testing.T) {
 	assert.Equal(t, "friend amy LAND with no Head: <full sha>; Done.", r.Report)
 }
 
+// A friend's report with no verdict word — no Verdict: line, or one whose word
+// is none of LAND, HOLD, FAIL, FAILED, BROKEN — finishes the card failed, never
+// ok, and asks no tip: the absent-verdict-means-ok rule of the removed
+// directory scan has no place on the sprint-card path.
+func TestAReportWithNoVerdictIsFailedNeverOk(t *testing.T) {
+	t.Parallel()
+	for _, report := range []string{
+		"",
+		"# done\n\nAll green.\n",
+		"Verdict: OK\n",
+	} {
+		noTip := func(context.Context, string, string) (string, error) {
+			t.Fatalf("a report with no LAND asked for a tip: %q", report)
+			return "", nil
+		}
+		r, err := friendFinish(context.Background(), "amy", sprint.Packet{Card: "c.w1", Gen: 1}, report, noTip)
+		require.NoError(t, err)
+		assert.True(t, r.Failed, "%q: no LAND/HOLD/FAIL verdict is failed, never ok", report)
+		assert.Contains(t, r.Report, "is not LAND, HOLD or FAIL", "%q", report)
+	}
+}
+
 // A friend's LAND finishes ok only at origin's tip of the card's branch: a Head that is
 // not the tip (an invented sha, another branch's commit, an older push) is refused naming
 // both shas, as is a branch origin does not hold or a tip that cannot be read; the card is
@@ -206,19 +228,6 @@ func TestTheInboxRefusesABadCardIDAndASymlinkedJob(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, why)
 	assert.Equal(t, filepath.Join(dir, "inbox", "s1-2.w1~3"), in)
-}
-
-// Only a job named for a card of this sprint is a card's job: a directory named like a
-// work card whose primary is not on the work table is one of her jobs.
-func TestOnlyAJobOfACardOnTheWorkTableIsLeftOutOfHerJobs(t *testing.T) {
-	t.Parallel()
-	onWork := map[string]bool{"s1-1": true, "s2-1~2": true}
-	for name, want := range map[string]bool{
-		"s1-1.w1": true, "s1-1.w3": true, "s2-1.w1~2": true,
-		"s2-1.w1": false, "s1-1.w1~2": false, "other.w1": false, "notes": false, "s1-1": false,
-	} {
-		assert.Equal(t, want, isCardJob(name, onWork), name)
-	}
 }
 
 // A twin's verbs beat its machines, never a friend's row: a twin holding a friend's card
