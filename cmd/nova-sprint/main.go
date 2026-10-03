@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
@@ -95,6 +96,9 @@ type app struct {
 	// landRoot is the directory land keeps its clones under when it is given
 	// no --repo-dir (land.go): os.UserCacheDir's nova-sprint/land.
 	landRoot func() (string, error)
+	// scoreBackend, when set (a test), is the backend land scores landed diffs through
+	// (landscore.go); nil is Jev with the key JEV_API_KEY holds.
+	scoreBackend decide.Backend
 	// gitEnv is the environment land's git and check run in: nil is the
 	// caller's, untouched (a test gives git an identity and no global config).
 	gitEnv []string
@@ -122,6 +126,9 @@ type app struct {
 	// rounds: land itself then leaves the queue as it is.
 	prune    pruneQueue
 	landLazy bool
+	// landCtx is the land loop's context while it runs a land (landOnce): the landed
+	// diffs' scoring runs under it, so the loop's shutdown ends the pass; nil is none.
+	landCtx context.Context
 	// tickDeadline is how long the run loop waits for one tick (run
 	// --tick-deadline; 0, a test's loop, waits for ever); after is the clock
 	// it waits on (time.After unless a test sets it), and exit how the loop

@@ -697,7 +697,7 @@ Postgres and a throwaway Redis.
 
 ```text
 $ nova-config migrate --file try.json
-CONFIG MIGRATE file=try.json from=0 to=21 applied=21
+CONFIG MIGRATE file=try.json from=0 to=22 applied=22
 
 $ nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --as a1 --file try.json
 CONFIG ADD kind=machine name=m1 rev=1
@@ -758,11 +758,12 @@ RECEIPT OK session=s1 entry=e1 stamp=2026-09-17T12:05:00Z bytes=17 source=bench-
 ## nova-decide
 
 Fixture: `cmd/nova-decide/testdata/`: a schema and a state, a card and its
-diff, the fixed backend's answers for each, and a record of eight labelled read
-decisions. Every line below uses the fixed backend, so it needs no network and
-no key; `cmd/nova-decide/firstrun_test.go` runs each `$` line from a checkout
-root in one sitting, with `./decisions.jsonl` a file in the test's own
-directory. The ids come from `--op`, so every line reads the same twice.
+diff, the fixed backend's answers for each (the read's and the score's), and a
+record of eight labelled read decisions and five score decisions of landed
+diffs. Every line below uses the fixed backend, so it needs no network and no
+key; `cmd/nova-decide/firstrun_test.go` runs each `$` line from a checkout root
+in one sitting, with `./decisions.jsonl` a file in the test's own directory.
+The ids come from `--op`, so every line reads the same twice.
 
 ### First run
 
@@ -780,6 +781,25 @@ READ ANSWER question=inside_paths type=noul value=yes p=yes:0.99
 READ ANSWER question=lines_changed type=noul value=yes p=yes:0.97
 READ ANSWER question=verdict type=choice value=LAND p=BOUNCE:0.05,LAND:0.92,UNSURE:0.03
 
+$ nova-decide score --card ./cmd/nova-decide/testdata/card.md --diff ./cmd/nova-decide/testdata/card.diff --backend fixed --answers ./cmd/nova-decide/testdata/score-answers.json --record ./decisions.jsonl --op card-1@landed@0123456789ab
+SCORE OK id=card-1@landed@0123456789ab decision=score backend=fixed top=record_made_claim p=0.08 tokens_in=0 tokens_out=0 recorded=new
+SCORE ANSWER question=asserted_data_cut type=noul value=no p=yes:0.05
+SCORE ANSWER question=comment_contradicts_code type=noul value=no p=yes:0.05
+SCORE ANSWER question=cut_citation type=noul value=no p=yes:0.07
+SCORE ANSWER question=defect type=noul value=no p=yes:0.06
+SCORE ANSWER question=does_task type=noul value=yes p=yes:0.95
+SCORE ANSWER question=fenced_block_edit type=noul value=no p=yes:0.03
+SCORE ANSWER question=inside_paths type=noul value=yes p=yes:0.99
+SCORE ANSWER question=invented_reason type=noul value=no p=yes:0.06
+SCORE ANSWER question=ledger_ceiling type=noul value=no p=yes:0.03
+SCORE ANSWER question=lines_changed type=noul value=yes p=yes:0.96
+SCORE ANSWER question=load_bearing_word_cut type=noul value=no p=yes:0.04
+SCORE ANSWER question=record_made_claim type=noul value=no p=yes:0.08
+SCORE ANSWER question=renamed_file_assumed type=noul value=no p=yes:0.02
+SCORE ANSWER question=stranded_fragment type=noul value=no p=yes:0.04
+SCORE ANSWER question=test_weakened type=noul value=no p=yes:0.02
+SCORE ANSWER question=verdict type=choice value=LAND p=BOUNCE:0.05,LAND:0.92,UNSURE:0.03
+
 $ nova-decide outcome --record ./decisions.jsonl --id card-1 --label ok --note "the review found nothing"
 OUTCOME OK id=card-1 decision=read label=ok changed=true
 
@@ -789,11 +809,19 @@ CALIBRATE BAR at=0.5 caught=2 of=3 bounced=1 of_negatives=5
 CALIBRATE BAR at=0.7 caught=2 of=3 bounced=0 of_negatives=5
 CALIBRATE BAR at=0.9 caught=0 of=3 bounced=0 of_negatives=5
 CALIBRATE CATCH-ALL at=0.45 caught=3 of=3 bounced=1 of_negatives=5
+
+$ nova-decide findings --record ./cmd/nova-decide/testdata/record.jsonl --since 2026-10-01
+FINDINGS OK scored=5 classes=4 bar=0.5 since=2026-10-01T00:00:00Z
+FINDINGS FINDING class=stranded_fragment count=2 cards=s1-1,s1-2
+FINDINGS FINDING class=cut_citation count=2 cards=s1-1,s1-3
+FINDINGS FINDING class=invented_reason count=1 cards=s1-2
+FINDINGS FINDING class=unnamed count=1 cards=s1-4
 ```
 
-The first three lines write `./decisions.jsonl`; the fourth reads the fixture
-record, because a calibration wants positives and negatives both. With
-`--backend jev` the same `ask` and `read` lines ask the model instead, under
+The ask, read, score and outcome lines write `./decisions.jsonl`; calibrate and
+findings read the fixture record, because a calibration wants positives and
+negatives both and findings wants scores to cluster. With `--backend jev` the
+same `ask`, `read` and `score` lines ask the model instead, under
 `nova-secrets exec --only JEV_API_KEY`, and their lines carry the tokens spent.
 
 ## nova-redis

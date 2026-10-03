@@ -71,9 +71,9 @@ func (a *app) landOnce(ctx context.Context, addr string, more []string, stdout i
 		lines, code = []string{"LAND FAILED the merge queue could not be read: " + oneline.Err(err) + "; nothing was landed, and the next round tries again; run: nova-sprint where"}, 2
 	case queued && coordinator != "":
 		var out, errb bytes.Buffer
-		a.landLazy = true
+		a.landLazy, a.landCtx = true, ctx
 		code = a.cmdLand(append([]string{"--redis", addr, "--actor", coordinator}, more...), &out, &errb)
-		a.landLazy = false
+		a.landLazy, a.landCtx = false, nil
 		// what landed (stdout's LAND lines, but its summary), and everything land said
 		// was wrong (stderr: a refused or failed batch, a refusal before any batch, the
 		// remedy)

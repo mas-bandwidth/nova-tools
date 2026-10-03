@@ -1,0 +1,55 @@
+{
+ "does_task": {
+  "noul": 0.95
+ },
+ "lines_changed": {
+  "noul": 0.96
+ },
+ "inside_paths": {
+  "noul": 0.99
+ },
+ "defect": {
+  "noul": 0.06
+ },
+ "stranded_fragment": {
+  "noul": 0.04
+ },
+ "cut_citation": {
+  "noul": 0.07
+ },
+ "renamed_file_assumed": {
+  "noul": 0.02
+ },
+ "ledger_ceiling": {
+  "noul": 0.03
+ },
+ "comment_contradicts_code": {
+  "noul": 0.05
+ },
+ "test_weakened": {
+  "noul": 0.02
+ },
+ "record_made_claim": {
+  "noul": 0.08
+ },
+ "invented_reason": {
+  "noul": 0.06
+ },
+ "fenced_block_edit": {
+  "noul": 0.03
+ },
+ "asserted_data_cut": {
+  "noul": 0.05
+ },
+ "load_bearing_word_cut": {
+  "noul": 0.04
+ },
+ "verdict": {
+  "choice": "LAND",
+  "p": {
+   "BOUNCE": 0.05,
+   "LAND": 0.92,
+   "UNSURE": 0.03
+  }
+ }
+}
