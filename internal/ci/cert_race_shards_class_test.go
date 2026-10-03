@@ -32,11 +32,12 @@ var certRaceMinShards = map[string]int{
 // ubuntu-latest and macos-latest, run 36375296705 at 3314df055 plus this
 // change): internal/ci 49.3 s, cmd/nova-tokens 46.4, cmd/nova-sandbox 34.2,
 // cmd/nova-self-talk 21.3, internal/update 19.1, cmd/nova-secrets 16.7,
-// internal/bus 16.6.
+// internal/bus 16.6. Run 37158353472 also shows cmd/nova-sprint reaching the
+// 75 s test timeout alongside internal/ci on macOS.
 // certification.yml's deal step spells the same list.
 var certRaceHeavy = []string{
 	"internal/ci", "cmd/nova-tokens", "cmd/nova-sandbox", "cmd/nova-self-talk",
-	"internal/update", "cmd/nova-secrets", "internal/bus",
+	"internal/update", "cmd/nova-secrets", "internal/bus", "cmd/nova-sprint",
 }
 
 const certRaceDealStep = "deal this shard's packages"
