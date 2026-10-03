@@ -55,8 +55,11 @@ type AddReq struct {
 	// cards, none after the last unless Last: a stream in stops, one step.
 	Every int
 	Last  bool
-	Only  []string
-	Who   string
+	// Held admits every card held (IsHeld): waiting, a sentinel never
+	// reached, nothing dealt, until the coordinator's release.
+	Held bool
+	Only []string
+	Who  string
 }
 
 // gatePrefix is the prefix of the sentinels add --sentinel-every names.
@@ -327,7 +330,13 @@ func Add(s *Snapshot, r AddReq) Plan {
 		if a.sent || a.gate {
 			kind, col = "sentinel", Waiting
 		}
+		if r.Held {
+			col = Waiting
+		}
 		fields := map[string]string{"kind": kind, "stream": r.Stream, "attempt": "0", "admitted": stamp(s.Now)}
+		if r.Held {
+			fields[FieldHeld] = stamp(s.Now)
+		}
 		if a.brief != "" && !a.gate {
 			fields["brief"] = a.brief
 		}
@@ -337,6 +346,9 @@ func Add(s *Snapshot, r AddReq) Plan {
 		u := Unit{Key: a.id, Stream: r.Stream, Moved: fmt.Sprintf("%s -> %s stream=%s score=%s", a.id, col, r.Stream, fmtScore(a.score))}
 		if a.gate {
 			u.Moved = "sentinel " + u.Moved
+		}
+		if r.Held {
+			u.Moved += "; held until release"
 		}
 		if r.Sentinel {
 			u.Moved = "sentinel " + u.Moved
@@ -352,7 +364,7 @@ func Add(s *Snapshot, r AddReq) Plan {
 				}
 			}
 			// reached only after something: a stop with nothing before it is simply next
-			if len(open) == 0 && (len(a.needs) > 0 || anyBefore(s, r.Stream, a.id, a.score) || workInFlight(s, nil) == "") {
+			if len(open) == 0 && !r.Held && (len(a.needs) > 0 || anyBefore(s, r.Stream, a.id, a.score) || workInFlight(s, nil) == "") {
 				fields["reached"] = stamp(s.Now)
 				u.Notes = append(u.Notes, reachedNote(s, &Card{ID: a.id, Row: r.Stream}, nil, len(pulled), r.Who))
 				u.Moved += "; reached"
@@ -637,6 +649,12 @@ func resolvePlan(s *Snapshot, r ResolveReq) Plan {
 			}
 			continue
 		}
+		if IsHeld(c) { // held, never reached or ready: the coordinator releases it
+			if len(r.IDs) > 0 {
+				p.refuse(c.ID, "held (add --held): the coordinator releases it: nova-sprint release "+c.ID+" --reason <text>")
+			}
+			continue
+		}
 		if IsSentinel(c) { // reached, never ready: the coordinator releases it
 			if c.F("reached") == "" && Reachable(s, c, nil) {
 				p.Units = append(p.Units, reachUnit(s, c, nil, r.Who))
@@ -658,7 +676,7 @@ func resolvePlan(s *Snapshot, r ResolveReq) Plan {
 func resolveAfter(s *Snapshot, landing map[string]bool, who string) []Unit {
 	var out []Unit
 	for _, c := range s.Work.Column(Waiting) {
-		if landing[c.ID] || len(WaitsFor(s, c, landing)) > 0 {
+		if landing[c.ID] || IsHeld(c) || len(WaitsFor(s, c, landing)) > 0 {
 			continue
 		}
 		if IsSentinel(c) {
@@ -1396,6 +1414,14 @@ func fleetStepPlan(s *Snapshot, r FleetReq, rr *round, moves roundMoves) Plan {
 		}
 		if comeUp {
 			level(s, &p, orderLike(s.Fleet.Rows(), append(liveFor(s, r), r.Member), r.Member), rr, moves, nil)
+			if len(moves) > 0 {
+				to, from := map[string]int{}, map[string]int{}
+				for id, m := range moves {
+					to[m]++
+					from[s.Fleet.Card(id).Row]++
+				}
+				line += fmt.Sprintf("; moved=%d to %s from %s", len(moves), countsByMember(to), countsByMember(from))
+			}
 		}
 		headOf(&p, r.Member, head, n, line)
 	case "down", "hold":
@@ -1503,8 +1529,34 @@ func downPlan(s *Snapshot, r FleetReq, up []string, rr *round, moves roundMoves,
 		}
 		p.Units = append(p.Units, u)
 	}
+	// where the member's cards went, and which stayed (nova-tools#5096 item 21)
+	to, stayed := map[string]int{}, []string{}
+	for _, c := range cards {
+		if m, ok := moves[c.ID]; ok {
+			to[m]++
+		} else {
+			stayed = append(stayed, c.F("primary"))
+		}
+	}
+	line += fmt.Sprintf("; moved=%d", len(cards)-len(stayed))
+	if len(to) > 0 {
+		line += " to " + countsByMember(to)
+	}
+	line += fmt.Sprintf("; stayed=%d", len(stayed))
+	if len(stayed) > 0 {
+		line += " withdrawn: " + Preview(stayed, ",")
+	}
 	headOf(&p, r.Member, head, n, line)
 	return p
+}
+
+// countsByMember is a count per member, in name order: "m2(3),m3(1)".
+func countsByMember(n map[string]int) string {
+	var out []string
+	for _, m := range slices.Sorted(maps.Keys(n)) {
+		out = append(out, fmt.Sprintf("%s(%d)", m, n[m]))
+	}
+	return strings.Join(out, ",")
 }
 
 // sweep is the rebalance's safety (the owner, 2026-10-01: "and it's a safety, if

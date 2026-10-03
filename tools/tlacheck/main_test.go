@@ -351,10 +351,11 @@ func TestRunRefusesWhatItCannotRunAndRunsNothing(t *testing.T) {
 		want  string
 	}{
 		{"an unknown group", []string{"--group", "nope"}, nil, "unknown group: nope"},
-		{"a group with shards", []string{"--group", "alpha", "--shards", "2"}, nil, "--group and shard selection cannot be combined"},
+		{"more shards than the group has cases", []string{"--group", "alpha", "--shards", "3"}, nil, "shard count exceeds the 2 cases of group alpha"},
 		{"a timeout over the cap", []string{"--timeout", "111s"}, nil, "at most 1m50s"},
 		{"a zero timeout", []string{"--timeout", "0s"}, nil, "must be positive"},
 		{"three workers", []string{"--workers", "3"}, nil, "workers must be 1 or 2"},
+		{"a trough flag without --bench", []string{"--group", "alpha", "--trough-poll", "5s"}, nil, "--trough-poll is taken only with --bench"},
 		{"a manual run in CI", []string{"--manual", "--group", "alpha"}, func(e *env) { e.getenv = ci }, "--manual is forbidden in CI"},
 		{"a platform that is not Linux", []string{"--group", "alpha"}, func(e *env) { e.goos = "darwin" }, "TLC runs on a Linux bench, and this is darwin"},
 		{"no java", []string{"--group", "alpha"}, func(e *env) { e.lookPath = func(string) (string, error) { return "", errors.New("no") } }, "java is not on PATH"},

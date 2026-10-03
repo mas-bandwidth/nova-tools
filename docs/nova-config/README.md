@@ -125,17 +125,17 @@ field and refuses a value outside its type, naming every problem in one line.
 
 A machine of the fleet, named by its tailnet host: `ssh <name>` reaches it
 ("All fleet machines *must* be on the tailnet. This is a hard requirement."),
-so there is no address field. The row is exactly the five declared facts
+so there is no address field. The row is exactly the six declared facts
 something reads, "not invented rando stuff".
 
 ```
 nova-config machine add m2 --user gaffer --seat swarm-m2 --slots 40 --runners 0 --width 32 --as f1
 CONFIG ADD kind=machine name=m2 rev=1
-nova-config machine add m1 --user nova --seat m1 --slots 64 --runners 1 --width 16 --as f1
+nova-config machine add m1 --user nova --seat m1 --slots 64 --runners 1 --width 16 --tla true --as f1
 CONFIG ADD kind=machine name=m1 rev=2
 nova-config machine list
-MACHINE name=m1 user=nova seat=m1 slots=64 runners=1 width=16
-MACHINE name=m2 user=gaffer seat=swarm-m2 slots=40 runners=0 width=32
+MACHINE name=m1 user=nova seat=m1 slots=64 runners=1 width=16 tla=true note=-
+MACHINE name=m2 user=gaffer seat=swarm-m2 slots=40 runners=0 width=32 tla=false note=-
 CONFIG LIST kind=machine rows=2
 ```
 
@@ -144,7 +144,10 @@ nova-secrets seat; `--slots` the machine ceiling apply writes
 (`machine:<m>:ceiling`), which the friends' desired slots must fit under, and
 not the sprint's width; `--runners` how many CI runners it hosts (0, the
 default, hosts none); `--width` the most work cards the sprint's member on it
-runs at once (0, the default, is no member).
+runs at once (0, the default, is no member); `--tla` whether it is a TLC record
+machine (false, the default, is none): the inventory's `tla` group, where the
+tools play holds the pinned TLC jar, and the machines `tlacheck run --bench
+any` picks from (tla/README.md, "The record machines").
 
 Measured facts (os, arch, cores, memory) are never typed: "I like measured
 facts coming live ... It's more robust." With a Redis named (`--redis`, or
@@ -154,8 +157,8 @@ beat does not carry yet and `beat=none` for a machine that has never beaten:
 
 ```
 nova-config machine list --redis db1:6380
-MACHINE name=m1 user=nova seat=m1 slots=64 runners=1 width=16 beat=none
-MACHINE name=m2 user=gaffer seat=swarm-m2 slots=40 runners=0 width=32 os=- arch=- cores=64 memory_gb=- beat=2026-09-27T03:00:00Z
+MACHINE name=m1 user=nova seat=m1 slots=64 runners=1 width=16 tla=true note=- beat=none
+MACHINE name=m2 user=gaffer seat=swarm-m2 slots=40 runners=0 width=32 tla=false note=- os=- arch=- cores=64 memory_gb=- beat=2026-09-27T03:00:00Z
 CONFIG LIST kind=machine rows=2
 ```
 
@@ -268,34 +271,30 @@ a JSON array, the program first, so a word may hold a blank and nothing is
 split by a shell; a secret is never in it, it goes by name in `--keys`:
 
 ```
-nova-config loop add reader-m1 --machine m1 --argv '["/opt/bin/nova-swarm","member","--reader"]' --keepalive true --seat s-m1 --keys A_KEY,B_KEY --width 2 --as a1
+nova-config loop add reader-m1 --machine m1 --argv '["/opt/bin/nova-swarm","member","--as","reader-m1","--reader"]' --keepalive true --seat s-m1 --keys A_KEY,B_KEY --as a1
 CONFIG ADD kind=loop name=reader-m1 rev=12
 nova-config loop add refresh-m1 --machine m1 --argv '["/opt/bin/refresh","--once"]' --every 60 --as a1
 CONFIG ADD kind=loop name=refresh-m1 rev=13
 nova-config loop list
-LOOP name=reader-m1 machine=m1 argv=["/opt/bin/nova-swarm","member","--reader"] seat=s-m1 keys=A_KEY,B_KEY every=0 keepalive=true width=2 enabled=true
-LOOP name=refresh-m1 machine=m1 argv=["/opt/bin/refresh","--once"] seat=- keys=- every=60 keepalive=false width=0 enabled=true
+LOOP name=reader-m1 machine=m1 argv=["/opt/bin/nova-swarm","member","--as","reader-m1","--reader"] seat=s-m1 keys=A_KEY,B_KEY every=0 keepalive=true enabled=true
+LOOP name=refresh-m1 machine=m1 argv=["/opt/bin/refresh","--once"] seat=- keys=- every=60 keepalive=false enabled=true
 CONFIG LIST kind=loop rows=2
-nova-config loop set reader-m1 --width 16 --as a1
-CONFIG SET kind=loop name=reader-m1 rev=14 changed=width
-nova-config loop show reader-m1
-LOOP name=reader-m1 machine=m1 argv=["/opt/bin/nova-swarm","member","--reader"] seat=s-m1 keys=A_KEY,B_KEY every=0 keepalive=true width=16 enabled=true created=2026-09-30T02:00:00Z updated=2026-09-30T02:10:00Z command=["/opt/bin/nova-swarm","member","--reader","--width","16"]
+nova-config loop set reader-m1 --argv '["/opt/bin/nova-swarm","member","--as","reader-m1","--reader","--width","16"]' --as a1
+nova-config loop set REFUSED: loop reader-m1: its argv carries --width, and a nova-swarm member's width (a reader's too) is its machine row's, read from the fleet row every tick; drop --width from the argv and set the machine's: machine set <m> --width <n>; run: nova-config loop show reader-m1
 nova-config machine show m1
-MACHINE name=m1 user=u1 seat=s-m1 slots=4 runners=0 created=2026-09-30T02:00:00Z updated=2026-09-30T02:00:00Z loops=reader-m1,refresh-m1
+MACHINE name=m1 user=u1 seat=s-m1 slots=4 runners=0 width=4 tla=false note=- created=2026-09-30T02:00:00Z updated=2026-09-30T02:00:00Z loops=reader-m1,refresh-m1
 ```
 
 `--every <seconds>` runs it periodically and `--keepalive true` keeps a
-long-running one up; a loop has exactly one of the two. `--width` is the
-`--width` the command runs with, set as one value and never by editing the
-argv: above 0 it replaces the argv's own `--width` (the last one before any
-`--`), or is appended when the argv has none; 0, the default, runs the argv
-as written. `loop show` prints the command the unit runs as `command=`, and
-the inventory hands the plays that command as the loop's `argv`
-(`LoopCommand`, `internal/config/kind.go`). It is a reader loop's width; a
-work member's width is its machine row's (`machine set <m> --width <n>`, moved
-to the fleet table by `nova-sprint fleet sync`), so its loop leaves the field
-0. Migration 0013 set each existing row's field to the `--width` its argv
-carried (0 when none), so no command changed. `--enabled false` writes the unit and
+long-running one up; a loop has exactly one of the two. A loop has no width:
+a `nova-swarm member`'s, a reader's too, is its machine row's (`machine set <m>
+--width <n>`, moved to the fleet table by `nova-sprint fleet sync` and read by
+the worker with its queue every tick; a reader is named for its machine,
+`reader-<m>`, one per machine, and runs at that machine's width), so an argv
+that spells `--width` is refused naming the rule. The argv is the command the
+unit runs, word for word. Migration 0017 took `--width` out of every member
+argv that carried one, removed the second reader rows (`reader-<m>-2`) and
+dropped the width field 0013 had added. `--enabled false` writes the unit and
 does not start it. `--keys` needs a `--seat`. Its log is
 `~/nova-bench/loops/<name>.log`, derived from the name and never typed. A
 machine a loop names cannot be removed until the loop is.
@@ -363,6 +362,37 @@ A change of prices is a row in the route's history like any other set
 (`nova-config route history <name>`), and apply writes the fields into
 `route:<name>` beside the rest.
 
+### The note: why a route or a machine is as it is
+
+The route row and the machine row carry a `note`: one line of free text, empty
+by default, the reason a choice was made (the owner, 2026-10-02: "your choices,
+these should be saved somewhere permanent with notes (ideally, nova-config)").
+It is the last field of the row. Set it with `--note` on `add` and `set`, clear
+it with `--note ''`:
+
+```
+nova-config route set flash-a --enabled false --note "2 ok of 12 on the day's record; not suited to flash work on this card shape" --as a1
+nova-config machine set m1 --note "held 1:46 PM: reads kernel-bound" --as a1
+nova-config route show flash-a
+nova-config route history flash-a
+```
+
+`show` prints the note whole, and `--json` does in `show` and in `list`; the list
+verbs cut it to 60 characters and end it in `...`, so a row stays one short
+line. The history carries it like every other field: `route history` and
+`machine history` show `note=<before>><after>` with the actor and the time, so
+who wrote which note when is in the store. Apply writes it into `route:<name>`
+and `machine:<name>` beside the other fields.
+
+A disabled route carries its reason. `route set <name> --enabled false` with no
+`--note` is refused, before anything is written, with `say why: --note '<the
+measured reason>'`; so is `route add --enabled false` with none, and
+`--note ''` on a route that is disabled. `--enabled true` needs no note, and
+the note of a route that is on may stay or be cleared. A route disabled before
+migration 0015 has an empty note; the day's are seeded by
+`tools/notes-2026-10-02.sh <machine>` (nova-tools#5101), which skips any route that is not
+disabled and enables nothing.
+
 ### Refusals
 
 One stderr line each, `nova-config <verb> REFUSED: <what>; run: <next>`:
@@ -374,6 +404,7 @@ nova-config friend set REFUSED: friend f9 not found; run: nova-config friend add
 nova-config machine remove REFUSED: machine m1 is the --coordinator of the fleet; run: nova-config machine list
 nova-config friend remove REFUSED: friend f1 is the --coordinator of the sprint; run: nova-config friend list
 nova-config route remove REFUSED: route flash-a is in the --routes of tier flash; set it out of the list first (tier set flash --routes <the rest>); run: nova-config route list
+nova-config route set REFUSED: --enabled false takes a route out of the deal and a disabled route carries its reason; say why: --note '<the measured reason>'; run: nova-config route set -h
 nova-config fleet set REFUSED: fleet takes no name: it is one row; want fleet set --<field> <value> ...; run: nova-config fleet set -h
 nova-config loop set REFUSED: loop refresh-m1 has --every 60 and --keepalive true; a loop runs every n seconds or is kept alive, so set one: --every 0 or --keepalive false; run: nova-config loop show refresh-m1
 nova-config machine list REFUSED: unknown flag --jsno (nearest: --json); this verb takes --file, --json, --pg, --redis; run: nova-config machine list -h

@@ -28,7 +28,7 @@ func TestStartAndStopSayTheStateBeforeAndAfter(t *testing.T) {
 	out = ta.ok("start")
 	require.Contains(t, out, "START OK before=STOPPED after=RUNNING changed", "start")
 	require.Contains(t, out, "nothing is ticking: run: nova-sprint run", "start")
-	require.Contains(t, out, "0/3 0.0% -> ETA  machine: running", "start")
+	require.Contains(t, out, "0/3 0.0% -> ETA -  machine: running", "start")
 	require.Contains(t, ta.ok("start"), "unchanged: the machine is RUNNING already", "start when running")
 	out = ta.ok("tick")
 	require.Contains(t, out, "MOVED deal: s1-1 work ready -> working", "tick")
@@ -61,7 +61,7 @@ func TestRunTicksOnlyWhileRunning(t *testing.T) {
 	ta.a.runLoop(context.Background(), st, 20, 3, &out, &errb)
 	require.Contains(t, out.String(), "machine RUNNING", "run while running:\n%s", out.String())
 	require.Contains(t, out.String(), "MOVED deal: s1-1 work ready -> working", "run while running:\n%s", out.String())
-	require.Contains(t, ta.ok("where"), "SPRINT TABLE  coordinator coordinator\n\n0/3 0.0% -> ETA\n\n", "where after run")
+	require.Contains(t, ta.ok("where"), "SPRINT TABLE  coordinator coordinator\n\n0/3 0.0% -> ETA -\n\n", "where after run")
 }
 
 // whereHead is what the where view says under its title: the lines between
@@ -84,13 +84,13 @@ func TestWhereHeaderIsStoppedOrTheProgressLine(t *testing.T) {
 	// running with no cards
 	ta.ok("start")
 	got = whereHead(t, ta.ok("where"))
-	require.True(t, strings.HasPrefix(got, "SPRINT TABLE  coordinator coordinator\n\n0/0 0.0% -> ETA\n\n"), "running with no cards:\n%q", got)
+	require.True(t, strings.HasPrefix(got, "SPRINT TABLE  coordinator coordinator\n\n0/0 0.0% -> ETA -\n\n"), "running with no cards:\n%q", got)
 	// running with cards
 	ta.ok("add --stream s1 --count 3")
 	ta.ok("tick")
 	out := ta.ok("where")
 	got = whereHead(t, out)
-	require.True(t, strings.HasPrefix(got, "SPRINT TABLE  coordinator coordinator\n\n0/3 0.0% -> ETA\n\n"), "running with cards:\n%q", out)
+	require.True(t, strings.HasPrefix(got, "SPRINT TABLE  coordinator coordinator\n\n0/3 0.0% -> ETA -\n\n"), "running with cards:\n%q", out)
 	require.NotContains(t, out, "machine:", "running with cards:\n%q", out)
 	require.NotContains(t, out, "coordinator:", "running with cards:\n%q", out)
 	// running but silent: never hidden

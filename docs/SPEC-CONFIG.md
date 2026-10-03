@@ -45,12 +45,12 @@ Where each field of this cut sits:
 
 | side | fields |
 | --- | --- |
-| machine (varies per machine) | `user`, `seat`, `slots`, `runners`, `width` |
+| machine (varies per machine) | `user`, `seat`, `slots`, `runners`, `width`, `tla`, `note` |
 | fleet (one value for the whole fleet) | `store`, `coordinator` (both machines), `redis_port`, `pg_dsn` |
 | friend (decided for her) | `slots`, `tiers`, `roles` |
 | sprint (one value for the whole sprint) | `coordinator` (a friend) |
 | loop (decided per supervised process) | `machine`, `argv`, `seat`, `keys`, `every`, `keepalive`, `width`, `enabled` |
-| route (decided per way to run a tier) | `tier`, `provider`, `model`, `tokens`, `deadline`, `enabled`, and the price sheet: `price_input`, `price_cache_read`, `price_cache_write`, `price_output`, `reasoning_as_output`, `long_context`, `price_input_long`, `price_output_long`, `price_request`, `billing`, `gateway_percent`, `price_source`, `price_as_of` |
+| route (decided per way to run a tier) | `tier`, `provider`, `model`, `tokens`, `deadline`, `enabled`, and the price sheet: `price_input`, `price_cache_read`, `price_cache_write`, `price_output`, `reasoning_as_output`, `long_context`, `price_input_long`, `price_output_long`, `price_request`, `billing`, `gateway_percent`, `price_source`, `price_as_of`, `note` |
 | tier (decided per tier) | `routes` |
 
 A kind is one registry: one table under schema `config`, one Go descriptor
@@ -68,8 +68,9 @@ nova-config <kind> history <name>
 
 Every kind's table has the same shape: `name text PRIMARY KEY` (the row key,
 `^[a-z0-9][a-z0-9-]*$`), the kind's fields as columns of the same names,
-`created_at` and `updated_at`. There is no `note` column on any kind: notes
-are history, and history lives in git. The CLI's flags, help, refusals, SQL,
+`created_at` and `updated_at`. Two kinds, the two an operator decides about
+by hand, carry a `note` column, the reason a choice was made (see "The note"
+below); no other kind has one. The CLI's flags, help, refusals, SQL,
 typed lines and apply diff are all generated from the descriptor, so every
 kind has identical verbs and a new kind adds no verb code.
 
@@ -137,6 +138,8 @@ nothing invented.
 | `slots` | int | yes | apply: the machine ceiling the friends' desired slots must fit under (`ns_capacity_machine`, `ns_capacity_desired`); not the sprint's width | `machine:<m>:ceiling` (`ns_capacity_machine`) and `machine:<m>` |
 | `runners` | int | (0) | the CI play: how many runners it hosts; 0 hosts none | `machine:<m>` |
 | `width` | int | (0) | `nova-sprint fleet sync`: the most work cards the sprint's member on it runs at once; 0 is no member | `machine:<m>` |
+| `tla` | bool | (false) | the inventory's `tla` group and `nova_tla`, so the tools play's tla play holds the pinned TLC jar there; `tlacheck run --bench any` picks among these (tla/README.md, "The record machines") | `machine:<m>` |
+| `note` | text | (empty) | a reader: why the machine is as it is, a hold, a rest, the load that was measured (see "The note") | `machine:<m>` |
 
 **Declared and measured.** Measured facts (os, arch, cores, memory) are
 never typed and never columns: they come live from the machine's own
@@ -224,20 +227,24 @@ only. The plays render one unit per row from the Redis view apply writes.
 | field | type | required | who reads it | Redis |
 | --- | --- | --- | --- | --- |
 | `machine` | ref machine | yes | the plays: the machine the unit is installed on | `loop:<l>` |
-| `argv` | argv | yes | the plays: the unit's command, word for word, with `width` as its `--width` | `loop:<l>` |
+| `argv` | argv | yes | the plays: the unit's command, word for word; a `nova-swarm member` argv spells no `--width`, its width is its machine row's (`Check`) | `loop:<l>` |
 | `seat` | text | | the plays: the nova-secrets seat on that machine the unit opens its secrets from; empty when it needs none | `loop:<l>` |
 | `keys` | keys | | the plays: the names of the secrets the unit opens from the seat; empty when none, and a non-empty list needs a seat | `loop:<l>` |
 | `every` | int | (0) | the plays: seconds between runs of a periodic unit | `loop:<l>` |
 | `keepalive` | bool | (false) | the plays: a long-running unit, restarted when it exits | `loop:<l>` |
-| `width` | int | (0) | the plays, through the inventory: above 0 the value of the command's `--width` (the argv's last one replaced, or appended when it has none, `LoopCommand`); 0 runs the argv as written. A reader loop's width; a work member's is its machine row's | `loop:<l>` |
 | `enabled` | bool | (true) | the plays: false writes the unit and does not start it | `loop:<l>` |
 
 The kind's `Check`: exactly one of `every` above 0 and `keepalive` true (a
-loop runs every n seconds or is kept alive), and `keys` only with a `seat`.
-The command a unit runs is `LoopCommand(argv, width)`: the inventory's
-`nova_loops` argv and `loop show`'s `command=`; migration 0013 set each
-existing row's `width` to the `--width` its argv carried, 0 when none, so the
-rule changed no command.
+loop runs every n seconds or is kept alive), `keys` only with a `seat`, and a
+`nova-swarm member` argv (a reader's too) that spells no `--width` before any
+`--`: a worker's width is its machine row's, moved to the fleet row by `fleet
+sync` and read with its queue every tick, a member's own row and a reader's
+the row of the machine it is named for (`reader-<m>`, docs/SPEC-SPRINT.md
+section 6); the refusal names the rule and `machine set <m> --width <n>`.
+Migration 0013 had made a loop's width a field its command ran with;
+migration 0017 removed the field, took `--width` out of every member argv that
+carried one and removed the second reader rows (`reader-<m>-2`), one reader
+per machine.
 The log path is derived from the name, `~/nova-bench/loops/<name>.log`
 (`LoopLog`), and is never typed. A machine a loop names cannot be removed
 (`machine m1 is the --machine of loop member-m1`); `machine show <m>` names
@@ -258,7 +265,7 @@ row: the code names no provider or model.
 | `model` | text | yes | the deal: the model name after the provider; it may hold slashes (`x-ai/grok-4`) | `route:<r>` |
 | `tokens` | int | (0) | the deal: the token budget per card; 0 is unmetered and the deadline is the only stop | `route:<r>` |
 | `deadline` | int | yes | the deal: the seconds a card on this route may run, above 0 | `route:<r>` |
-| `enabled` | bool | (true) | the deal: false takes it out of the deal | `route:<r>` |
+| `enabled` | bool | (true) | the deal: false takes it out of the deal, and needs a `note` | `route:<r>` |
 | `price_input` | decimal | (empty) | a card's cost: USD per million uncached input tokens | `route:<r>` |
 | `price_cache_read` | decimal | (empty) | a card's cost: USD per million cached input tokens read | `route:<r>` |
 | `price_cache_write` | decimal | (empty) | a card's cost: USD per million tokens written to the cache | `route:<r>` |
@@ -272,6 +279,7 @@ row: the code names no provider or model.
 | `gateway_percent` | decimal | (empty) | a card's cost: the percent a gateway adds on top | `route:<r>` |
 | `price_source` | text | (empty) | a reader: where the prices were read (a URL) | `route:<r>` |
 | `price_as_of` | text, `YYYY-MM-DD` | (empty) | a reader: the date the prices were read | `route:<r>` |
+| `note` | text | (empty) | a reader: why the route is as it is; a disabled route carries its reason (see "The note") | `route:<r>` |
 
 The price sheet is optional: the owner, 2026-10-01, "the pricing
 configuration saved per-tuple, so it is known and easily look upable". A
@@ -282,7 +290,43 @@ no exponent, kept as text in its one spelling (`internal/cardcost`,
 The kind's `Check`: `provider` is one word with no slash or blank, `model`
 is not empty and has no blank, and `deadline` is above 0; `long_context`
 above 0 comes with both long prices, and a long price with a threshold;
-`price_as_of` is a date. A route names no row of another kind.
+`price_as_of` is a date; a route that is disabled has a note. A route names no row of another kind.
+
+### The note
+
+The owner, 2026-10-02, on the route and width choices the first real sprint made
+by hand: "your choices, these should be saved somewhere permanent with notes
+(ideally, nova-config)" (nova-tools#5101). The route row and the machine row
+carry a `note`: free text on one line, empty by default, the last field of the
+row, so the reason a route was taken out of the deal or a machine held is kept
+with the row and no longer in a comment.
+
+- `--note '<text>'` sets it on `route add`, `route set`, `machine add` and
+  `machine set`; `--note ''` clears it.
+- `route show` and `machine show` print it whole; the list verbs cut it to
+  `ListNoteRunes` (60) characters and end it in `...`, so a row stays one short
+  line (`ListLine`; a field's `Cut` flag in the descriptor); `--json` prints it
+  whole in both.
+- It is a field like any other, so `route history` and `machine history` show
+  `note=<before>><after>` with the actor and the time of every change: who
+  wrote which note when.
+- Apply writes it into the hash `route:<r>` and `machine:<m>` beside the other
+  fields, so the sprint can show it later; nothing reads it yet.
+- **A disabled route carries its reason.** `route set --enabled false` with no
+  `--note` in the same set is refused, before any store is opened, with
+  `say why: --note '<the measured reason>'` (`Kind.CheckChanges`); so is a
+  `route add --enabled false` with no note, and a set that would leave a
+  disabled route with an empty note, as `--note ''` on one (the kind's
+  `Check`, which every store runs). `--enabled true` needs none. A route
+  disabled before migration 0015 has an empty note until someone writes one;
+  setting its note is the way, and any other set of it that leaves it disabled
+  is refused until then.
+
+Migration 0015 (`0015_row_notes.sql`) adds the column to `config.routes` and
+`config.machines`, `text NOT NULL DEFAULT ''`: every old row backfills to
+empty, and the file run again keeps a note written since. A binary with the
+note refuses every machine verb on a store older than 0015 as it refuses
+every route verb on one older than 0007 (`behindSchema`).
 
 **`tier`** (`config.tiers`): a model tier's route array (the owner,
 2026-10-01: "the per-tier provider/model array should be specified in
@@ -334,7 +378,9 @@ config.history           (id bigserial PK, kind, name, op add|set|remove,
 config.machines          (name PK, "user", seat, slots, runners,
                           created_at, updated_at; width added by 0012,
                           filled with slots less the friends' slots on the
-                          coordinator machine, slots elsewhere)
+                          coordinator machine, slots elsewhere; note added
+                          by 0015, text NOT NULL DEFAULT ''; tla added by
+                          0016, false)
 config.fleet             (name PK = 'fleet', store -> machines.name,
                           coordinator -> machines.name, redis_port, pg_dsn,
                           created_at, updated_at;
@@ -358,7 +404,8 @@ config.routes            (name PK, tier flash|pro, provider, model, tokens,
                           the price sheet added by 0009: the decimals as
                           text with a CHECK on their shape,
                           reasoning_as_output boolean, long_context,
-                          billing metered|plan, price_source, price_as_of)
+                          billing metered|plan, price_source, price_as_of;
+                          note added by 0015, text NOT NULL DEFAULT '')
 config.tiers             (name PK flash|pro, routes, created_at, updated_at;
                           CHECK routes a comma list of names; the two rows
                           inserted by the migration)
@@ -434,7 +481,7 @@ each machine running its ceiling check before its write transaction).
 `CEILING` when the friends and benches on it already desire more than
 `slots`; cores and memory are never declared, so the call carries none and
 derives no budget); the hash `machine:<m>` with user, seat, slots, runners,
-width, rev, at; the set `machines`. slots is read back from the ceiling, the key the
+width, tla, note, rev, at; the set `machines`. slots is read back from the ceiling, the key the
 runtime guards on, so a ceiling moved by hand is put back by the next apply.
 Remove: refused while any friend or bench desired hash names the machine;
 else `machine:<m>`, `machine:<m>:ceiling` and `machine:<m>:budget` are
@@ -490,7 +537,7 @@ prints as `-`.
 CONFIG ADD kind=<k> name=<n> rev=<id>
 CONFIG SET kind=<k> name=<n> rev=<id> changed=<f,g>
 CONFIG REMOVE kind=<k> name=<n> rev=<id>
-<KIND> name=<n> <field>=<v> ...                          (list: one per row)
+<KIND> name=<n> <field>=<v> ...                          (list: one per row; a note is cut to 60 characters and ends in ...)
 MACHINE name=<n> <field>=<v> ... os=<v> arch=<v> cores=<n> memory_gb=<n> beat=<t>   (list and show with a Redis: the live facts, - each when the beat lacks it)
 MACHINE name=<n> <field>=<v> ... beat=none                (with a Redis: no beat)
 MACHINE name=<n> <field>=<v> ... created=<t> updated=<t> loops=<l,...> [live facts]   (show: the machine's loops, - for none)
@@ -511,7 +558,7 @@ CONFIG MIGRATE pg=<user@host:port/db>|file=<path> from=<v> to=<v> applied=<n> [d
 CONFIG STATUS pg=<...>|file=<path> schema=<v> <kind>=<rows> <kind>_rev=<r> ... redis=<addr> <kind>_applied=<r> ...   (a singleton: <kind>_rev alone)
 CONFIG DRY-RUN op=<op> kind=<k> name=<n> actor=<a> wrote=nothing <field>=<v>|<field>=<before>><after> ...   (add, set, remove --dry-run)
 NOTE machine=<m> width=0: no sprint member, ...; run: nova-config machine set <m> --width <n> ...   (machine add with no --width)
-LOOP name=<n> <field>=<v> ... created=<t> updated=<t> command=<json>   (loop show: the words the unit runs)
+LOOP name=<n> <field>=<v> ... created=<t> updated=<t>   (loop show; the argv is the words the unit runs)
 CONFIG KIND name=<k> table=config.<t> fields=<f,...> required=<f,...> rows=many|one
 CONFIG KINDS count=<n>
 ```

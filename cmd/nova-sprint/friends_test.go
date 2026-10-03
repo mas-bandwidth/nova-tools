@@ -212,7 +212,9 @@ func (ta *testApp) friendStatus() map[string]string {
 // The table of two friends, one up and one held: the header, a rule, the friend
 // up first and then the one held, a rule and the summary row with its cell blank.
 // The empty store draws the header, its one rule and the summary row, as every
-// empty table does. Either way it stands after merge and before fleet.
+// empty table does. Either way it stands after work and before fleet in the default
+// frame, which hides the readers and merge tables, and after merge and before fleet
+// in the frame of where --all.
 func TestTheFriendsTableShowsAfterMergeAndBeforeFleet(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -239,13 +241,17 @@ func TestTheFriendsTableShowsAfterMergeAndBeforeFleet(t *testing.T) {
 			}
 			frame := ta.frame()
 			assert.Equal(t, tc.want, tableOf(frame, sprint.Friends))
-			var order []string
-			for _, block := range strings.Split(frame, "\n\n") {
-				if title, _, ok := strings.Cut(block, " |"); ok && !strings.Contains(title, "\n") {
-					order = append(order, strings.TrimSpace(title))
+			titles := func(frame string) []string {
+				var order []string
+				for _, block := range strings.Split(frame, "\n\n") {
+					if title, _, ok := strings.Cut(block, " |"); ok && !strings.Contains(title, "\n") {
+						order = append(order, strings.TrimSpace(title))
+					}
 				}
+				return order
 			}
-			assert.Equal(t, []string{"work", "readers", "merge", "friends", "fleet"}, order)
+			assert.Equal(t, []string{"work", "friends", "fleet"}, titles(frame))
+			assert.Equal(t, []string{"work", "readers", "merge", "friends", "fleet"}, titles(ta.ok("where --all")))
 		})
 	}
 }

@@ -36,6 +36,7 @@ make	apt	make
 mkdir	base	coreutils
 nc	absent	only the darwin sandbox socket test dials with it and that test skips on Linux
 nova-check	tree	built from the checkout by the tests, or stubbed by them; never expected on the PATH
+nova-config	absent	only tlacheck run --bench any reads the fleet's machine rows with it, on a working machine; its tests hand in the rows
 opencode	absent	the vendor harness binary belongs to the card image; the tier drives a fake harness
 pg_ctl	apt	postgresql-16
 ps	apt	procps
@@ -46,6 +47,7 @@ sh	base	dash
 sleep	base	coreutils
 sops	source	sops
 sqlite3	apt	sqlite3
+ssh	absent	only tlacheck run --bench reaches a TLC record machine with it, from a working machine; its tests drive a bench that is a temp dir
 ssh-keygen	absent	only the nova-secrets keygen path for ssh keys calls it and its tests use a stand-in
 stty	absent	reads a password from a terminal; the tier has no terminal
 tailscale	absent	machine self asks the tailnet for this host's name only where the program is installed; the tier has no tailnet, and the tests that resolve a name hand in the status

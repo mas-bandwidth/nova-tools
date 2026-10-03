@@ -113,7 +113,7 @@ func TestMigrateTwiceThenTheSixVerbs(t *testing.T) {
 	out, _ = r.run(t, 0, "friend", "list")
 	require.Equal(t, "FRIEND name=rowan slots=64 tiers=frontier,pro roles=-\nCONFIG LIST kind=friend rows=1\n", out, "friend list: %q", out)
 	out, _ = r.run(t, 0, "machine", "show", "studio")
-	require.True(t, strings.HasPrefix(out, "MACHINE name=studio user=glenn seat=studio slots=64 runners=1 width=0 created="), "machine show: %q", out)
+	require.True(t, strings.HasPrefix(out, "MACHINE name=studio user=glenn seat=studio slots=64 runners=1 width=0 tla=false note=- created="), "machine show: %q", out)
 	// The fleet row: there since migrate, set without a name, a machine it
 	// names cannot be removed.
 	out, _ = r.run(t, 0, "fleet", "show")
@@ -211,7 +211,9 @@ func TestApplyEndToEnd(t *testing.T) {
 	require.Equal(t, "64", gotCheck250["slots"], "machine:hulk %v", gotCheck250)
 	require.Equal(t, "2", gotCheck250["runners"], "machine:hulk %v", gotCheck250)
 	require.Equal(t, "0", gotCheck250["width"], "machine:hulk %v", gotCheck250)
-	require.Len(t, gotCheck250, 7, "machine:hulk %v", gotCheck250)
+	require.Equal(t, "false", gotCheck250["tla"], "machine:hulk %v", gotCheck250)
+	require.Equal(t, "", gotCheck250["note"], "machine:hulk %v", gotCheck250)
+	require.Len(t, gotCheck250, 9, "machine:hulk %v", gotCheck250)
 	gotCheck253 := r.client.HGet(ctx, "machine:hulk:ceiling", "slots").Val()
 	require.Equal(t, "64", gotCheck253, "hulk ceiling %q", gotCheck253)
 	gotCheck256 := r.client.Get(ctx, config.FleetKey("store")).Val()
@@ -231,9 +233,9 @@ func TestApplyEndToEnd(t *testing.T) {
 	// machine that has not beaten; nothing is stored.
 	r.client.HSet(ctx, config.BeatKey("hulk"), "host", "hulk", "at", "1790000000000", "load1", "0.5", "ncpu", "64", "cpu", "3")
 	out, _ = r.run(t, 0, "machine", "list")
-	require.Equal(t, "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=64 runners=2 width=0 os=- arch=- cores=64 memory_gb=- beat=2026-09-21T14:13:20Z\nMACHINE name=studio user=glenn seat=studio slots=64 runners=0 width=0 beat=none\nCONFIG LIST kind=machine rows=2\n", out, "machine list with the live facts: %q", out)
+	require.Equal(t, "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=64 runners=2 width=0 tla=false note=- os=- arch=- cores=64 memory_gb=- beat=2026-09-21T14:13:20Z\nMACHINE name=studio user=glenn seat=studio slots=64 runners=0 width=0 tla=false note=- beat=none\nCONFIG LIST kind=machine rows=2\n", out, "machine list with the live facts: %q", out)
 	out, _ = r.run(t, 0, "machine", "show", "hulk")
-	require.True(t, strings.HasPrefix(out, "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=64 runners=2 width=0 created="), "machine show with the live facts: %q", out)
+	require.True(t, strings.HasPrefix(out, "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=64 runners=2 width=0 tla=false note=- created="), "machine show with the live facts: %q", out)
 	require.True(t, strings.HasSuffix(out, " os=- arch=- cores=64 memory_gb=- beat=2026-09-21T14:13:20Z\n"), "machine show with the live facts: %q", out)
 	gotCheck282 := r.client.HGet(ctx, "machine:hulk", "cores").Val()
 	require.Equal(t, "", gotCheck282, "a live fact was stored in the registry hash")
