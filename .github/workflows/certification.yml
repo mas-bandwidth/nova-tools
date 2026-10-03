@@ -130,8 +130,9 @@ jobs:
     # 36375296705 at 3314df055 plus this change: internal/ci 49.3 s, cmd/nova-tokens 46.4,
     # cmd/nova-sandbox 34.2, cmd/nova-self-talk 21.3, internal/update 19.1, cmd/nova-secrets 16.7,
     # internal/bus 16.6. Run 37158353472 also shows cmd/nova-sprint reaching the 75 s test
-    # timeout alongside internal/ci on macOS. Eight heavy packages, eight shards: each heavy
-    # package has a shard of its own, with the other live packages dealt round-robin.
+    # timeout alongside internal/ci on macOS. Run 37159703304 puts internal/sprint/store
+    # (65.470 s on Linux) alongside cmd/nova-sandbox on a capped leg. Nine heavy packages,
+    # nine shards: each has its own shard, with the other live packages dealt round-robin.
     #
     # BUILD AND VET ARE NOT HERE ANY MORE. They are ci.yml's: its lint job runs `make build` and
     # `make vet` on every event (Linux), and its test-hosted legs run `make build` and
@@ -157,12 +158,12 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9]
         include:
           - os: ubuntu-latest
-            shards: 8
+            shards: 9
           - os: macos-latest
-            shards: 8
+            shards: 9
     runs-on: ${{ matrix.os }}
     timeout-minutes: 2
     steps:
@@ -229,7 +230,7 @@ jobs:
         # internal/ci: TestCertificationRaceShardsPartitionTheLiveTree (certRaceHeavy).
         shell: bash
         run: |
-          "$RUNNER_TEMP/ci" deal --shards ${{ matrix.shards }} --shard ${{ matrix.shard }} --heavy "internal/ci cmd/nova-tokens cmd/nova-sandbox cmd/nova-self-talk internal/update cmd/nova-secrets internal/bus cmd/nova-sprint"
+          "$RUNNER_TEMP/ci" deal --shards ${{ matrix.shards }} --shard ${{ matrix.shard }} --heavy "internal/ci cmd/nova-tokens cmd/nova-sandbox cmd/nova-self-talk internal/update cmd/nova-secrets internal/bus cmd/nova-sprint internal/sprint/store"
 
       - name: fetch origin/dev for the deprecated-imports ratchet
         # internal/ci's TestDeprecatedImportsAllowlistOnlyShrinksAgainstMergeBase compares the
@@ -606,42 +607,15 @@ jobs:
         shell: bash
         run: go run ./tools/ghrelease controls
 
-  perf:
-    # THE WALL CLOCK, nightly, because a wall clock is not a per-commit test.
-    #
-    # cmd/nova-bus/timing_test.go runs every verb over a ten-thousand-note bus and holds
-    # each to a bound in SECONDS. That bound is the only assertion in this repository whose
-    # answer depends on what else the machine is doing, and on 2026-09-11 it was exactly
-    # that: eleven seconds alone, one minute fifty-one under the load of `go test ./...`,
-    # and the package hitting Go's ten-minute timeout with it in (#63). The house rule is
-    # that a per-commit test finishes in a minute, two at most, or it becomes nightly.
-    #
-    # The property it guards did NOT move: the cost of a read is the size of the change, and
-    # that is proved by COUNTING PARSES in TestInboxParsesOnlyWhatIsNewSinceTheCursor, which
-    # runs in the CL tier on every commit. This job is the crude second net under
-    # it, for a regression that is not a parse.
-    #
-    # One runner, no race detector, no matrix: the file skips itself under `-race` because
-    # the instrumentation is what a wall clock would then be measuring, and a bound measured
-    # on three different runner classes is three different bounds. Linux is the one the
-    # number in that file was written against.
-    #
-    # It is NOT gated on the test job. A red perf job is a thing to go and read in the
-    # morning, and making it wait on three operating systems' worth of tests would mean a
-    # night where an unrelated flake means no perf evidence at all.
-    #
-    # THE PERF TESTS ONLY, discovered, never named. This job used to run every test of `./...`
-    # under the tag one at a time (`-p 1 -parallel 1`); green in 175 s (36303146135) and 644 s
-    # (36137551959), then cancelled by the two-minute cap on every run, still inside
-    # cmd/nova-bus. Every other test in that run is run by the test job above and by ci.yml;
-    # what only this job runs is the tests the `perf` tag adds. So the job finds them: the live
-    # packages holding a file whose build constraint names `perf`, and in each, the tests
-    # `go test -tags perf -list` names and `go test -list` does not. A perf test added in any
-    # live package tomorrow is in that difference without anyone editing this file, and a test
-    # that is not behind the tag is not re-run here. Today that is the two tests of
-    # cmd/nova-bus/timing_test.go, 8.3 s together on the Studio.
+  perf-plan:
+    # Discovery compiles both test lists for every perf package. Run 37159703304 spends
+    # 70 s here, leaving only time for the first package before the two-minute cap.
+    # Discover once, vet every selected package, and save the compiled cache before
+    # handing every package and its exact test regexp to a separate Linux runner.
     runs-on: ubuntu-latest
     timeout-minutes: 2
+    outputs:
+      matrix: ${{ steps.discover.outputs.matrix }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -659,8 +633,9 @@ jobs:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: perf-${{ hashFiles('go.mod', 'go.sum') }}
+          key: perf-${{ hashFiles('go.mod', 'go.sum') }}-${{ github.sha }}
           restore-keys: |
+            perf-${{ hashFiles('go.mod', 'go.sum') }}-
             perf-
 
       - name: build tools/ci once
@@ -670,18 +645,14 @@ jobs:
         run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
 
       - name: find the perf-tagged tests
-        # Writes `<import path> <run regexp>`, one line per package, to $RUNNER_TEMP/perf-runs.
-        # A perf-tagged package with no test behind the tag is reported and skipped; a tree
-        # with no perf-tagged test at all is red, because then this job asserts nothing
-        # (`go run ./tools/ci help perf-tests`).
+        id: discover
+        # An empty discovery is red; selection remains the live tree's tagged-minus-base
+        # test list, so new perf tests join without a workflow edit.
         shell: bash
         run: |
           "$RUNNER_TEMP/ci" perf-tests
 
       - name: vet the perf-tagged tests
-        # `go vet` without the tag cannot see a file behind it, so the one place a perf file is
-        # vetted is here: every package that holds one. Vet before test, so a perf file that
-        # stopped compiling says that rather than failing as a bound.
         run: go vet -tags perf $PERF_PKGS
 
       - name: save the perf build cache
@@ -695,25 +666,67 @@ jobs:
             ~/go/pkg/mod
           key: ${{ steps.gocache.outputs.cache-primary-key }}
 
+  perf:
+    # One discovered package per runner; its tests remain serial and non-race on Linux.
+    # Each leg keeps the same test and job caps. fail-fast:false collects every result.
+    needs: perf-plan
+    strategy:
+      fail-fast: false
+      matrix:
+        run: ${{ fromJSON(needs.perf-plan.outputs.matrix) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    env:
+      PERF_PACKAGE: ${{ matrix.run.Package }}
+      PERF_RUN: ${{ matrix.run.Run }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          # This job manages its cache below; setup-go's own saves in a post step.
+          cache: false
+
+      - name: restore the perf build cache
+        id: gocache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: perf-${{ hashFiles('go.mod', 'go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            perf-${{ hashFiles('go.mod', 'go.sum') }}-
+            perf-
+
+      - name: build tools/ci once
+        # The verbs are built ONCE here and every later step calls the binary: `go run` compiles
+        # and links the tool again on every step that names it. internal/ci: TestToolsCIIsBuiltOnceAndNeverRun.
+        shell: bash
+        run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
+
+      - name: save the perf build cache
+        # On a miss or a restore-keys fallback only; before the tests, for the reason the test
+        # job gives.
+        if: steps.gocache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ steps.gocache.outputs.cache-primary-key }}
+
       - name: install redis-server
-        # #3113: NOVA_CI fails a control that wants redis-server and cannot find it. The
-        # binary is not the fleet store.
         run: |
           "$RUNNER_TEMP/ci" install-redis-server
 
       - name: the wall-clock tests, one at a time
-        # `-p 1 -parallel 1` because these are wall clocks: a bound in seconds measured while
-        # siblings spawn git processes measures the siblings. One at a time on an otherwise
-        # idle runner is the condition the numbers in timing_test.go were written against.
-        #
-        # `-timeout 60s`: a perf test that gets stuck fails as a TEST timeout, which names the
-        # test and dumps every goroutine, before the job cap cancels it naming nothing.
+        # Discovery already compiles the selected test binaries and vets their files.
+        # Matrix values enter the shell through quoted environment variables.
         shell: bash
-        run: |
-          set -euo pipefail
-          while read -r pkg run; do
-            go test -tags perf -count=1 -v -p 1 -parallel 1 -timeout 60s -run "$run" "$pkg"
-          done < "${RUNNER_TEMP}/perf-runs"
+        run: go test -tags perf -count=1 -v -p 1 -parallel 1 -timeout 60s -run "$PERF_RUN" "$PERF_PACKAGE"
 
   tick-gate:
     # THE TICK'S WALL CLOCK, the owner's law of 2026-09-30: "the whole intent is sub-second
@@ -794,7 +807,7 @@ jobs:
     # succeeded, so a leg renamed out of existence shows up here as a missing success and
     # not as silence. A red certification is a blocker for the next release, never for a
     # CL, whose gate is ci-ok in ci.yml.
-    needs: [race-cache, test, smoke, release-build, release-dry-run, release-checks, perf, tick-gate]
+    needs: [race-cache, test, smoke, release-build, release-dry-run, release-checks, perf-plan, perf, tick-gate]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -844,5 +857,5 @@ jobs:
           "$RUNNER_TEMP/ci" aggregate --skip-ok tick-gate \
             race-cache=${{ needs.race-cache.result }} test=${{ needs.test.result }} smoke=${{ needs.smoke.result }} \
             release-build=${{ needs.release-build.result }} release-dry-run=${{ needs.release-dry-run.result }} \
-            release-checks=${{ needs.release-checks.result }} perf=${{ needs.perf.result }} \
+            release-checks=${{ needs.release-checks.result }} perf-plan=${{ needs.perf-plan.result }} perf=${{ needs.perf.result }} \
             tick-gate=${{ needs.tick-gate.result }}

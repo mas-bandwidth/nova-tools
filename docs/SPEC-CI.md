@@ -1259,11 +1259,12 @@ branch expressions are GitHub's.
 ### `cert-race-shards` — the whole-tree race run meets the cap by shards, its cache saved before the tests
 
 **The rule.** certification.yml's `test` job keeps `timeout-minutes: 2` and meets
-it by shard count: ubuntu-latest and macos-latest each run shards 1..8, every leg
+it by shard count: ubuntu-latest and macos-latest each run shards 1..9, every leg
 carrying its OS's `shards`. Its `deal this shard's packages` step is test-hosted's
 deal over the live packages (`go run ./tools/ci deal`), with the measured heavy list
 (`internal/ci`, `cmd/nova-tokens`, `cmd/nova-sandbox`,
-`cmd/nova-self-talk`, `internal/update`, `cmd/nova-secrets`, `internal/bus`) dealt
+`cmd/nova-self-talk`, `internal/update`, `cmd/nova-secrets`, `internal/bus`,
+`cmd/nova-sprint`, `internal/sprint/store`) dealt
 first, one per shard. Every shard
 restores the `<os>-gorace-` cache (the race build cache, the module cache and the
 Go toolchain's tool-cache directory, so setup-go finds the toolchain rather than
@@ -1278,7 +1279,7 @@ the race tests alone take minutes, so the cap cancels it on every push, and a
 post-step cache save never runs, so every run starts cold.
 **The test.** `TestCertificationRaceShardsPartitionTheLiveTree`
 (`internal/ci/cert_race_shards_class_test.go`): both OSes at shards 1..n with n at
-least 8; the deal step, run over the real `go list ./...`, lands every live
+least 9; the deal step, run over the real `go list ./...`, lands every live
 package in exactly one shard and no deprecated one in any; no two heavy packages
 share a shard; restore, race dependency build, save and test in that order; the
 test step carries `-race`, `-count=1` and `$HOSTED_PKGS`.
