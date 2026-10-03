@@ -51,7 +51,7 @@ func TestNovaTokensEfficiencyCardNamesItsRules(t *testing.T) {
 		// what a run waits on: `--timeout` is one source, not the run.
 		"120 s",
 		"`--timeout`",
-		"CHECK FAIL files=9 rows=0 first=<d> last=<d> bad=9 missing=36 stray=2",
+		"CHECK FAIL files=9 rows=0 first=2026-07-29 last=2026-09-11 bad=9 missing=36 stray=2",
 		"`sum --month 2026-09`",
 		"fold --day <d>",
 		// the Red tests list.

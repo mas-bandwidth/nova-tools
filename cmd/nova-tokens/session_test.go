@@ -101,7 +101,10 @@ func TestHelpNamesTheSessionVerb(t *testing.T) {
 	r := invoke(t, "help")
 	wantExit(t, r, 0)
 	wantContains(t, r.stdout, "nova-tokens session --claude-session <jsonl>")
-	wantContains(t, r.stdout, "<model>/coordinator")
+
+	h := invoke(t, "session", "-h")
+	wantExit(t, h, 0)
+	wantContains(t, h.stdout, "a comparison, not a price: the defaults are the ratios of one vendor's published list prices; set your own")
 }
 
 // TestSessionBooksTheModelTheTranscriptNames: a transcript of another model is booked as that

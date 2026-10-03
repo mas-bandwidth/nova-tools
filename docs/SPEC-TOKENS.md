@@ -404,16 +404,17 @@ nova-tokens sources --repos <file> (--day <YYYY-MM-DD> | --all)
                     [--provider <label>=<file>]...
                     [--scratch <dir>] [--timeout <seconds>] [--max <n>]
 nova-tokens profiles --swarm-root <dir>
-nova-tokens session --claude-session <jsonl> [--out <dir>] [--day <YYYY-MM-DD>]
+nova-tokens session --claude-session <jsonl> [--out <dir>] [--day <YYYY-MM-DD>] [--role <name>] [--weights <in,cw,cr,out>]
 nova-tokens help
 nova-tokens version
 ```
 
 The binary is `nova-tokens`, and that is its only name.
 
-**No guessed anything, with one named exception.** `--timeout` defaults to
-120 seconds. Nothing else has a default: not the output directory,
-not a source, not the rules file, not the scratch directory. `--scratch` is
+**No guessed anything, with two named exceptions.** `--timeout` defaults to
+120 seconds, and `--weights` defaults to `1,1.25,0.1,5`. Nothing else has a
+default: not the output directory, not a source, not the rules file, not the
+scratch directory. `--scratch` is
 required when `--opencode` is given and refused otherwise, because a scratch
 directory with nothing to put in it is a flag that does nothing. A label in a
 source flag is `[a-z0-9-]+`, at most 32 characters, and unique across the
