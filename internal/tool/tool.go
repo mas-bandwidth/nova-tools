@@ -1,22 +1,19 @@
 // Package tool is the one shape of a nova command. A Tool is its verbs; a Verb
 // declares its flags and returns one value, Out, which is rendered either as
 // typed lines or as the JSON of the same value (out.go). Everything a command
-// writes for itself lives here once: the verb dispatch, the banner (what
-// the tool is, how it works, its usage lines, its exit codes, a runnable
-// example block), `help` and `<verb> -h`, the `version` verb, the standard
-// flags (--json on every verb; --max, --actor, --op, --redis and --dry-run
-// where a verb opts in), refusing to guess (every problem of one invocation
-// named at once), and the refusal line with its remedy: an unknown verb or
-// flag is answered with the nearest name and the ones there are, and a verb
-// group's -h lists its verbs. A row carries a prose tail (Out.ItemText): a
-// reason or a command renders plain after the row's typed fields and as the
-// `text` field of the row's JSON, so the line and the object stay one value.
-// A flag given twice or comma-separated is a Repeatable: one spelling every
-// tool shares, read back as []string. A tool whose exit 0 already means CLEAR
-// sets HelpRefused, and `<verb> -h` is then a refusal at exit 2 naming `help`,
-// never an answer at exit 0. A tool may name a default verb (`<tool> <file>`)
-// and its own status words (STALE beside FAIL). A command holds only what its
-// verbs do.
+// writes for itself lives here once: the verb dispatch, the banner (what the
+// tool is, how it works, its usage lines, its exit codes, a runnable example
+// block), `help` and `<verb> -h`, the `version` verb, the standard flags
+// (--json on every verb; --max and --dry-run where a verb opts in), refusing to
+// guess (every problem of one invocation named at once), and the refusal line
+// with its remedy: an unknown verb or flag is answered with the nearest name
+// and the ones there are, and a verb group's -h lists its verbs. A row carries
+// a prose tail (Out.ItemText): a reason or a command renders plain after the
+// row's typed fields and as the `text` field of the row's JSON, so the line and
+// the object stay one value. A tool whose exit 0 already means CLEAR sets
+// HelpRefused, and `<verb> -h` is then a refusal at exit 2 naming `help`, never
+// an answer at exit 0. A tool may name a default verb (`<tool> <file>`) and its
+// own status words (STALE beside FAIL). A command holds only what its verbs do.
 package tool
 
 import (
@@ -522,7 +519,7 @@ func (f *Flags) Required(name, wants string) {
 	f.required = append(f.required, [2]string{name, wants})
 }
 
-// Check adds a rule over the parsed flags (c.Problem, c.Want, c.WantCount),
+// Check adds a rule over the parsed flags (c.Problem, c.Want),
 // run with the required flags, --max and the arguments before the verb runs.
 func (f *Flags) Check(rule func(c *Call)) { f.checks = append(f.checks, rule) }
 
@@ -532,50 +529,10 @@ func (f *Flags) Max() {
 	f.Int("max", bounded.Default, "items listed before one MORE line stands for the rest; 0 lists all")
 }
 
-// Actor adds --actor: who is acting, recorded with the change.
-func (f *Flags) Actor() { f.String("actor", "", "who is acting, recorded with the change") }
-
-// Op adds --op: the caller's operation id, for a write retried safely.
-func (f *Flags) Op() {
-	f.String("op", "", "the caller's operation id: the same id again returns the recorded result and changes nothing")
-}
-
-// Redis adds --redis with the tool's seat-first default (the address of the
-// seat the process runs as, else the environment's), so a verb reads
-// c.Want("redis", ...) and an empty address is a refusal, never a guess.
-func (f *Flags) Redis(seatFirst string) {
-	f.String("redis", seatFirst, "the Redis address, host:port (default: the seat's)")
-}
-
 // Prints marks a verb that writes its own output (a payload a program reads,
 // a child's stream, or a body shared with a tool not yet on this package): it
 // gets no --json, and returns Exit(code) after writing to c.Stdout and c.Stderr.
 func (f *Flags) Prints() { f.prints = true }
-
-// Repeatable is the one repeatable string flag every tool shares (STANDARD
-// §2, one shape across the set): a verb declares `var tags Repeatable` and
-// `f.Var(&tags, "tag", "what each value is")`, and the caller repeats the
-// flag or separates values with commas. Call.Get returns it as []string.
-type Repeatable []string
-
-// String is the flag package's default rendering: the values comma-separated.
-func (r *Repeatable) String() string { return strings.Join(*r, ",") }
-
-// Set appends one occurrence: every comma-separated value of it, in order,
-// each trimmed of surrounding spaces, empty ones skipped.
-func (r *Repeatable) Set(v string) error {
-	for _, s := range strings.Split(v, ",") {
-		if s = strings.TrimSpace(s); s != "" {
-			*r = append(*r, s)
-		}
-	}
-	return nil
-}
-
-// Get is the flag.Getter half: the values as []string, so Call.Get works.
-func (r *Repeatable) Get() any { return []string(*r) }
-
-var _ flag.Getter = (*Repeatable)(nil)
 
 // Call is one invocation of a verb: its streams and its parsed flags.
 type Call struct {
@@ -615,15 +572,6 @@ func (c *Call) Want(name, wants string) string {
 	v := c.Str(name)
 	if strings.TrimSpace(v) == "" {
 		c.Problem(fmt.Sprintf("--%s is required; it wants %s; refusing to guess", name, wants))
-	}
-	return v
-}
-
-// WantCount is Want for a count whose floor is one.
-func (c *Call) WantCount(name, wants string) int {
-	v := c.Int(name)
-	if v < 1 {
-		c.Problem(fmt.Sprintf("--%s is required and is at least 1, got %d; it wants %s; refusing to guess", name, v, wants))
 	}
 	return v
 }

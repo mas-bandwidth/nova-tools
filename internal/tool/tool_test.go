@@ -3,7 +3,6 @@ package tool
 import (
 	"bytes"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"math"
 	"path/filepath"
@@ -305,12 +304,16 @@ func demo() *Tool {
 				},
 			},
 			{Name: "who", Usage: "who --width <n> [--actor <a>] [--op <id>] [--redis <addr>]", Flags: func(f *Flags) {
-				f.Actor()
-				f.Op()
-				f.Redis("seat.example:6379")
+				f.String("actor", "", "who is acting")
+				f.String("op", "", "the caller's operation id")
+				f.String("redis", "seat.example:6379", "the Redis address")
 				f.Int("width", 0, "slots")
 			}, Run: func(c *Call) *Out {
-				width, redis := c.WantCount("width", "the slots"), c.Want("redis", "host:port")
+				width := c.Int("width")
+				if width < 1 {
+					c.Problem(fmt.Sprintf("--width is required and is at least 1, got %d", width))
+				}
+				redis := c.Want("redis", "host:port")
 				if o := c.Refused(); o != nil {
 					return o
 				}
@@ -750,45 +753,6 @@ func TestItemTextRendersPlainAndAsAField(t *testing.T) {
 			require.NoError(t, json.Unmarshal(js.Bytes(), &j))
 			require.Len(t, j.Items, 1)
 			assert.Equal(t, tc.text, j.Items[0].Text, "the JSON text and the line tail are one value")
-		})
-	}
-}
-
-// TestRepeatableIsAGetter pins the one repeatable string flag: repeated or
-// comma-separated on the command line, read back as []string through Call.Get.
-func TestRepeatableIsAGetter(t *testing.T) {
-	t.Parallel()
-	var r Repeatable
-	assert.Implements(t, (*flag.Getter)(nil), &r)
-	for _, tc := range []struct {
-		name string
-		args []string
-		want []string
-	}{
-		{"repeated", []string{"--tag", "a", "--tag", "b"}, []string{"a", "b"}},
-		{"comma-separated", []string{"--tag", "a,b"}, []string{"a", "b"}},
-		{"comma or repeat together", []string{"--tag", "a,b", "--tag", "c"}, []string{"a", "b", "c"}},
-		{"spaces trimmed, empties skipped", []string{"--tag", "a, b,,c "}, []string{"a", "b", "c"}},
-		{"absent is empty", nil, nil},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			var tags Repeatable
-			var got any
-			tool := &Tool{Name: "nova-demo", What: "a tool that exists to be tested",
-				ExitTable: "0 done, 1 said no, 2 could not run.",
-				Verbs: []Verb{{Name: "ls", Usage: "ls", Effect: Inspection,
-					Flags: func(f *Flags) { f.Var(&tags, "tag", "a tag to keep") },
-					Run: func(c *Call) *Out {
-						got = c.Get("tag")
-						return Done().Fact("n", len(c.Get("tag").([]string)))
-					}}}}
-			var out, errs bytes.Buffer
-			code := tool.Run(append([]string{"ls"}, tc.args...), strings.NewReader(""), &out, &errs)
-			require.Equal(t, 0, code, "stdout %q stderr %q", out.String(), errs.String())
-			vals, ok := got.([]string)
-			require.True(t, ok, "Call.Get is %T, want []string", got)
-			assert.Equal(t, tc.want, vals)
 		})
 	}
 }
