@@ -6,7 +6,6 @@
 # also a cmd/ directory (TestFleetPlaysReadOnlyTheInventory).
 nova-board
 nova-card
-nova-decide
 nova-friend
 nova-merge
 nova-message-bus

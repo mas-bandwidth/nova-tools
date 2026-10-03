@@ -26,6 +26,7 @@ var DefaultCatalog = []Entry{
 	// cmd/
 	E("cmd/nova-bus", "coordination bus inbox, send, and wait CLI", "go test ./cmd/nova-bus", "go test ./cmd/nova-bus"),
 	E("cmd/nova-cairn", "dusk memory distillation CLI", "go test ./cmd/nova-cairn", "go test ./cmd/nova-cairn"),
+	E("cmd/nova-decide", "typed decisions with probabilities through a backend, recorded and calibrated against their outcomes", "go test ./cmd/nova-decide", "go test ./cmd/nova-decide"),
 	E("cmd/nova-config", "permanent configuration store (Postgres), friends and machines, applied into Redis", "go test ./cmd/nova-config", "go test ./cmd/nova-config"),
 	E("cmd/nova-check", "codebase hygiene and constraint check CLI", "go test ./cmd/nova-check", "go test ./cmd/nova-check"),
 	E("cmd/nova-ci", "CI slowtests budget and check CLI, and ci-ok's run receipt", "go test ./cmd/nova-ci", "go test ./cmd/nova-ci"),
@@ -59,6 +60,7 @@ var DefaultCatalog = []Entry{
 	E("internal/cireceipt", "ci-ok's run receipt: one ev:github row of the workflow_run shape", "go test ./internal/cireceipt", "go test -tags functional ./internal/cireceipt"),
 	E("internal/config", "nova-config library: kind descriptors, the Postgres store and history, apply into Redis, the Ansible inventory of the applied state", "go test ./internal/config", "go test ./internal/config"),
 	E("internal/converge", "convergence state and progress math", "go test ./internal/converge", "go test ./internal/converge"),
+	E("internal/decide", "nova-decide's decision system: schemas, backends (Jev, fixed), the record and calibration", "go test ./internal/decide", "go test ./internal/decide"),
 	E("internal/delayproxy", "a TCP proxy that holds each write of its clients back by a fixed delay: a store at a distance, made on the loopback, for testredis.Far and tools/fardelay", "go test ./internal/delayproxy", "go test ./internal/delayproxy"),
 	E("internal/docs", "documentation guards and map generator", "go test ./internal/docs", "go test ./internal/docs"),
 	E("internal/dogfood", "dogfood self-test gates", "go test ./internal/dogfood", "go test ./internal/dogfood"),
