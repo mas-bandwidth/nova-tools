@@ -215,9 +215,9 @@ func (r *round) next(up []string, q, room map[string]int, avoid string) string {
 // down, or, when none such is below it, at it. A member that receives is
 // at least two below the source's backlog. Each move therefore strictly
 // decreases the sum of squared backlogs, even when staging refusals prevent
-// reaching the shortest queue. The single-card model (tla/CardContract.tla,
-// LevelTargets and Level) models refusal safety, not this backlog potential.
-// A member of avoid (the card's StagingRefusers) is never the target. "" when none.
+// reaching the shortest queue (tla/Level.tla, PotentialFalls). A member of
+// avoid (the card's StagingRefusers) is never the target. "" when none, and the
+// index does not move.
 func (r *round) levelTo(up []string, n, held, widths map[string]int, from string, avoid []string) string {
 	if len(up) == 0 {
 		return ""
