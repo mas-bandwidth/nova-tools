@@ -277,3 +277,15 @@ func TestSaveRefusesToWriteOutsideTheBus(t *testing.T) {
 		require.Error(t, err, "a file was written outside the bus root")
 	}
 }
+
+// The empty-host refusal names no machine: the example is a neutral pair, so a reader on
+// any fleet sees the shape, not someone else's host.
+func TestHostRefusalNamesNoMachine(t *testing.T) {
+	t.Parallel()
+	err := ValidHost("")
+	require.Error(t, err)
+	require.Equal(t, "--host: empty; a host is the machine's short name, such as `bench-a` or `laptop`", err.Error())
+	for _, name := range []string{"air", "studio", "hulk", "space", "hetzner", "vision", "batman", "superman", "mini", "captainamerica", "antman", "macbook"} {
+		require.NotContains(t, err.Error(), name, "the refusal names the machine %q", name)
+	}
+}
