@@ -9,7 +9,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
+	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
@@ -19,7 +22,7 @@ import (
 
 // A friend's sprint cards (the owner, 2026-10-03: "Could we try expressing the work left
 // for nova-tools-1.1.0 into cards, and doing it via the sprint, but doing parts on friends
-// where we would normally do friend work."; docs/SPEC-SPRINT.md section 5, a friend's
+// where we would normally do friend work."; docs/SPEC-SPRINT.md section 1, a friend's
 // card). The tick deals a card whose brief says WHO: friend to a friend's fleet row
 // (sprint.FriendDeal); friend sync, which runs where the friends' working directories are
 // and is the coordinator's own loop (only the coordinator reaches out), carries it across
@@ -40,11 +43,13 @@ const (
 func friendJobOf(p sprint.Packet) string { return sprint.StoredID(p.Card, p.Epoch) }
 
 // isCardJob says an inbox directory is a sprint card's job (friendJobOf), counted from the
-// fleet table as her cards, never as one of her jobs.
-func isCardJob(name string) bool {
+// fleet table as her cards, never as one of her jobs: a work card's stored id whose
+// primary, at the same epoch, is on the work table (onWork, its stored ids). Any other
+// directory, named like a work card or not, is one of her jobs.
+func isCardJob(name string, onWork map[string]bool) bool {
 	id := sprint.CardID(name)
-	_, _, ok := sprint.ParseWorkCard(id)
-	return ok && sprint.ValidCardID(id)
+	primary, _, ok := sprint.ParseWorkCard(id)
+	return ok && sprint.ValidCardID(id) && onWork[primary+name[len(id):]]
 }
 
 // friendBrief is the BRIEF.md of a friend's sprint card: its STATUS line (the card, its
@@ -107,20 +112,62 @@ func firstWord(s string) string {
 // maxFriendReport bounds the paragraph a friend's report puts on the work card.
 const maxFriendReport = 1024
 
+// tipFn is origin's tip of a branch of a repository (a card's REPO: line, as
+// swarm.ReadCardBase resolves it), "" when origin has no such branch; an error is a tip
+// that could not be read.
+type tipFn func(ctx context.Context, repo, branch string) (string, error)
+
+// friendTipBudget bounds the one ls-remote of a friend's LAND, well inside the period of
+// the loop friend sync runs in.
+const friendTipBudget = 10 * time.Second
+
+// branchTip is the real tipFn: one git ls-remote of the one ref, bounded.
+func (a *app) branchTip(ctx context.Context, repo, branch string) (string, error) {
+	ref := "refs/heads/" + branch
+	out, err := gitrun.Output(ctx, gitrun.Options{Env: a.gitEnv, Timeout: friendTipBudget}, "ls-remote", "--", repo, ref)
+	if err != nil {
+		return "", err
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if f := strings.Fields(line); len(f) == 2 && f[1] == ref {
+			return f[0], nil
+		}
+	}
+	return "", nil
+}
+
 // friendFinish is the finish a friend's report gives her card: LAND with a full sha Head
-// is work ok at that head, as a member's ok finish; HOLD, FAIL (or FAILED, BROKEN) is work
-// that came back failed, its report the first paragraph, as a member's failed finish
-// raises "work came back failed"; a LAND with no full sha Head, or any other verdict, is
-// failed too, saying what the report lacks. The report begins with the friend's name, so
-// it is never read as a provider failure, no result or a staging refusal.
-func friendFinish(name string, p sprint.Packet, report string) sprint.FinishReq {
+// that is origin's tip of the card's branch (tip, read once) is work ok at that tip, as a
+// member's ok finish; HOLD, FAIL (or FAILED, BROKEN) is work that came back failed, its
+// report the first paragraph, as a member's failed finish raises "work came back failed";
+// a LAND with no full sha Head, or any other verdict, is failed too, saying what the
+// report lacks. The report begins with the friend's name, so it is never read as a
+// provider failure, no result or a staging refusal. An error refuses the finish: a Head
+// that is not origin's tip (naming both shas), a branch origin does not hold, a card with
+// no REPO: line, or a tip that could not be read; the card is not finished, and the next
+// sync reads the report again.
+func friendFinish(ctx context.Context, name string, p sprint.Packet, report string, tip tipFn) (sprint.FinishReq, error) {
 	verdict, head, para := friendReportOf(report)
 	para = oneline.Cap(para, maxFriendReport)
 	row := sprint.FriendRow(name)
 	r := sprint.FinishReq{Sel: sprint.Sel{IDs: []string{p.Card}}, As: row, Gens: map[string]int{p.Card: p.Gen}, Branch: p.Branch, Who: row}
 	switch {
 	case verdict == VerdictLand && typedrec.IsFullSha(head):
-		r.Head, r.Report = head, "friend "+name+" LAND: "+para
+		// the head is origin's tip, never the report's word: what lands is what is there
+		repo := swarm.ReadCardBase([]byte(p.Brief)).Repo
+		if repo == "" {
+			return r, fmt.Errorf("the card names no REPO: line, so origin's tip of %s cannot be read", p.Branch)
+		}
+		at, err := tip(ctx, repo, p.Branch)
+		switch {
+		case err != nil:
+			return r, fmt.Errorf("origin's tip of %s in %s cannot be read: %w", p.Branch, repo, err)
+		case at == "":
+			return r, fmt.Errorf("Head %s, and origin has no branch %s", head, p.Branch)
+		case !strings.EqualFold(at, head):
+			return r, fmt.Errorf("Head %s is not origin's tip of %s, %s", head, p.Branch, at)
+		}
+		r.Head, r.Report = at, "friend "+name+" LAND: "+para
 	case verdict == VerdictLand:
 		r.Failed, r.Report = true, "friend "+name+" LAND with no Head: <full sha>; "+para
 	case verdict == VerdictHold || verdict == VerdictFail || verdict == "FAILED" || verdict == "BROKEN":
@@ -128,14 +175,38 @@ func friendFinish(name string, p sprint.Packet, report string) sprint.FinishReq 
 	default:
 		r.Failed, r.Report = true, "friend "+name+" verdict "+cmp.Or(verdict, "none")+" is not LAND, HOLD or FAIL; "+para
 	}
-	return r
+	return r, nil
+}
+
+// friendInbox is the directory a friend's card is delivered into, inbox/<job> of her
+// working directory dir; why is a refusal: a card id that is not one (the job directory
+// is named by it), or an inbox/<job> that is a symlink or a file, so nothing is written
+// outside her working directory.
+func friendInbox(dir string, p sprint.Packet) (in, why string, err error) {
+	if !sprint.ValidCardID(p.Card) {
+		return "", "the card id is not one a job directory may be named by", nil
+	}
+	job := friendJobOf(p)
+	in = filepath.Join(dir, "inbox", job)
+	fi, err := os.Lstat(in)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return in, "", nil
+	case err != nil:
+		return "", "", err
+	case !fi.IsDir():
+		return "", "inbox/" + job + " is a symlink or a file, not a directory; run: ls -la " + in, nil
+	}
+	return in, "", nil
 }
 
 // friendCardsOf delivers and collects one friend's sprint cards in her working directory
 // dir: every card working on her row is written as inbox/<job>/BRIEF.md when it is not
-// there (written whole, then renamed into place), and finished from outbox/<job>/REPORT.md
-// when that is there. It says what it did, a line each, and how many it delivered and
-// finished.
+// there (written whole, never over a file there, by atomicfile), and finished from
+// outbox/<job>/REPORT.md when that is there. A card whose id is not a card id, or whose
+// inbox/<job> is a symlink or no directory, is refused, a line each: nothing is written
+// outside her working directory. It says what it did, a line each, and how many it
+// delivered and finished.
 func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir string, say func(string)) (delivered, finished int, err error) {
 	cards, err := st.ReadCells(ctx, sprint.Fleet, sprint.FriendRow(name), sprint.Working)
 	if err != nil || len(cards) == 0 {
@@ -147,13 +218,26 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 	}
 	for _, p := range packets {
 		job := friendJobOf(p)
-		in := filepath.Join(dir, "inbox", job)
-		if _, err := os.Stat(filepath.Join(in, "BRIEF.md")); errors.Is(err, fs.ErrNotExist) {
-			if err := writeWhole(in, "BRIEF.md", friendBrief(name, p)); err != nil {
+		in, why, err := friendInbox(dir, p)
+		if err != nil {
+			return delivered, finished, err
+		}
+		if why != "" {
+			say(fmt.Sprintf("FRIEND-CARD REFUSED friend=%s card=%s: %s; nothing was written", name, oneline.Field(p.Card), oneline.Escape(why)))
+			continue
+		}
+		brief := filepath.Join(in, "BRIEF.md")
+		if _, err := os.Lstat(brief); errors.Is(err, fs.ErrNotExist) {
+			if err := os.MkdirAll(in, 0o755); err != nil {
 				return delivered, finished, err
 			}
-			delivered++
-			say(fmt.Sprintf("FRIEND-CARD DELIVERED friend=%s card=%s job=%s branch=%s", name, p.Card, oneline.Field(job), p.Branch))
+			switch err := atomicfile.WriteFile(brief, []byte(friendBrief(name, p)), 0o644, atomicfile.NoReplace()); {
+			case err == nil:
+				delivered++
+				say(fmt.Sprintf("FRIEND-CARD DELIVERED friend=%s card=%s job=%s branch=%s", name, p.Card, oneline.Field(job), p.Branch))
+			case !errors.Is(err, fs.ErrExist):
+				return delivered, finished, err
+			}
 		} else if err != nil {
 			return delivered, finished, err
 		}
@@ -164,7 +248,11 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 		if err != nil {
 			return delivered, finished, err
 		}
-		r := friendFinish(name, p, string(report))
+		r, err := friendFinish(ctx, name, p, string(report), a.tip)
+		if err != nil {
+			say(fmt.Sprintf("FRIEND-CARD REFUSED friend=%s card=%s: %s; the card is not finished, and the next sync reads the report again", name, p.Card, oneline.Escape(err.Error())))
+			continue
+		}
 		step := store.FinishStep(r)
 		step.Actor, step.Epoch = r.Who, &p.Epoch
 		res, err := st.Run(ctx, step)
@@ -183,17 +271,4 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 		say(fmt.Sprintf("FRIEND-CARD FINISHED friend=%s card=%s result=%s head=%s: %s", name, p.Card, result, cmp.Or(r.Head, "-"), oneline.Escape(oneline.Cap(r.Report, 200))))
 	}
 	return delivered, finished, nil
-}
-
-// writeWhole writes one file into dir (made when it is not there) whole: to a temporary
-// name beside it, then renamed into place, so a reader never sees half of it.
-func writeWhole(dir, name, text string) error {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	tmp := filepath.Join(dir, "."+name+".tmp")
-	if err := os.WriteFile(tmp, []byte(text), 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, filepath.Join(dir, name))
 }

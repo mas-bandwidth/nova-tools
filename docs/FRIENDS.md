@@ -44,7 +44,7 @@ asks:`), a blank line, and the card's brief. What a friend does with it:
 
 1. Work in `jobs/<card>/` as for any job; commit, and push the commit to the
    branch the STATUS line names (never another: the sprint reads and lands
-   that branch).
+   origin's tip of that branch, and nothing else).
 2. Write `outbox/<card>/REPORT.md` in this form, exactly:
 
    ```
@@ -61,10 +61,15 @@ asks:`), a blank line, and the card's brief. What a friend does with it:
    are fine); the first paragraph that is neither of them nor a heading goes
    onto the card, cut to 1 KiB.
 
-The sync finishes the card within 15 s of the report: `LAND` with a full sha
-goes to review at that head, `HOLD` and `FAIL` come back failed to the
-coordinator with the paragraph; a `LAND` with no full sha, or any other word,
-comes back failed saying what it lacks. A sprint card is not counted among the
+The sync finishes the card on its next run after the report (the period of the
+loop that runs it: 15 s in the coordinator's loop): `LAND` goes to review at
+origin's tip of the branch when that tip is the full sha `Head:` names; a Head
+that is not the tip (a commit not pushed there, or pushed to after the report)
+or a branch origin does not hold finishes nothing, and the sync says so naming
+both shas each run until the report's Head is the tip (or the card's deadline
+passes); a `LAND` with no full sha, or any other word, comes back failed saying
+what it lacks; `HOLD` and `FAIL` come back failed to the coordinator with the
+paragraph. A sprint card is not counted among the
 inbox's jobs: the friends table counts it from the sprint.
 
 ## Where a job's work lives

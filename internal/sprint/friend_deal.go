@@ -10,7 +10,7 @@ import (
 
 // A friend's card (the owner, 2026-10-03: "Could we try expressing the work left for
 // nova-tools-1.1.0 into cards, and doing it via the sprint, but doing parts on friends
-// where we would normally do friend work."; docs/SPEC-SPRINT.md section 5, a friend's
+// where we would normally do friend work."; docs/SPEC-SPRINT.md section 1, a friend's
 // card). A brief whose header carries `WHO: friend` (any friend) or `WHO: friend <name>`
 // (cardhdr.ReadWho) is dealt by the tick to a friend instead of a machine: its work card
 // is placed on the friend's own fleet row, FriendRow(<name>), straight into working

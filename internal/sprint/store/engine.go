@@ -858,6 +858,19 @@ func (st *Store) addRows(ctx context.Context, rows []sprint.RowAdd) error {
 		if err := st.B.RowsAdd(ctx, st.Names.Table(t), by[t]); err != nil {
 			return err
 		}
+		// a friend's fleet row holds her sprint cards and is no machine: the stored view
+		// sprint does not draw it, as where does not (docs/SPEC-SPRINT.md section 1)
+		var friends []string
+		for _, r := range by[t] {
+			if t == sprint.Fleet && sprint.IsFriendRow(r) {
+				friends = append(friends, r)
+			}
+		}
+		if len(friends) > 0 {
+			if err := st.B.RowsHide(ctx, st.Names.Table(t), friends); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }

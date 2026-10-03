@@ -18,8 +18,8 @@ func TestReadWhoReadsAFriendOrNone(t *testing.T) {
 	}{
 		{"c1: do it (s1)\nREPO: o/r\n\nThe task.", Who{}, ""},
 		{"c1: do it\nREPO: o/r\nWHO: friend\n\nThe task.", Who{Friend: true}, ""},
-		{"c1: do it\nwho: Friend stella\n", Who{Friend: true, Name: "stella"}, ""},
-		{"c1: do it\n\nWHO: friend stella is prose here", Who{}, ""},
+		{"c1: do it\nwho: Friend amy\n", Who{Friend: true, Name: "amy"}, ""},
+		{"c1: do it\n\nWHO: friend amy is prose here", Who{}, ""},
 		{"c1: do it\nWHO: machine\n", Who{}, "WHO: machine is not `friend` or `friend <name>`"},
 		{"c1: do it\nWHO: friend a b\n", Who{}, "is not `friend` or `friend <name>`"},
 		{"c1: do it\nWHO: friend st.ella\n", Who{}, "is not `friend` or `friend <name>`"},

@@ -161,30 +161,45 @@ any work card. The machines' `deal` verb refuses a friend's card, and
 `rework` of one sends its primary ready with the fix, for the tick to deal to
 a friend.
 
-`friend sync`, the coordinator's own loop where the directories are (every
-15 s), carries a friend's card across the inbox/outbox standard
+`friend sync`, run by the coordinator's own loop where the directories are
+(each run once, at the loop's period: 15 s in the coordinator's loop), carries
+a friend's card across the inbox/outbox standard
 (docs/FRIENDS.md, a sprint card): for each card working on a friend's row it
-writes `inbox/<job>/BRIEF.md` when that is not there (written whole, then
-renamed into place), `<job>` the card's id as the table layer holds it at its
+writes `inbox/<job>/BRIEF.md` when that is not there (written whole by
+`internal/atomicfile`, never over a file there), `<job>` the card's id as the table layer holds it at its
 epoch (`sprint.StoredID`: the card id at epoch 0, `<card>~<epoch>` after a
 clear, so a card id a clear brings back is another job), and only the
 coordinator reaches out; once `outbox/<job>/REPORT.md` is there it finishes
 the card as the friend (`finish` at the card's generation and epoch, as
 `friend.<name>`): `Verdict: LAND` with `Head: <full sha>` is a worker's ok
-finish at that head on the branch BRIEF.md names, and the card goes to review,
-its reads and its landing as any card's; `Verdict: HOLD` or `FAIL` (or
+finish at origin's tip of the branch BRIEF.md names, read once by one `git
+ls-remote` of that branch in the card's `REPO:` repository (bounded at 10 s),
+and only when the tip is that Head: what is read and landed is what origin
+holds, never the report's word; the card goes to review, its reads and its
+landing as any card's. A Head that is not the tip is refused, one line naming
+both shas (`FRIEND-CARD REFUSED friend= card=: Head <head> is not origin's tip
+of <branch>, <tip>; ...`), as are a branch origin does not hold, a card with no
+`REPO:` line and a tip that cannot be read: the card is not finished (the
+deadline still judges it), and the next sync reads the report again; `Verdict: HOLD` or `FAIL` (or
 `FAILED`, `BROKEN`) is a failed finish, the judgment "work came back failed"
 carrying `friend <name> <VERDICT>: <the report's first paragraph>`; a LAND with
 no full sha Head, or any other verdict or none, is failed too, its report
 saying what it lacks. It collects from a friend whatever her status. It prints
 `FRIEND-CARD DELIVERED friend= card= job= branch=`, `FRIEND-CARD FINISHED
 friend= card= result=ok|failed head=: <report>`, and `FRIEND-CARD REFUSED
-friend= card=: <why>` for a finish the sprint refused, and its OK line adds
+friend= card=: <why>` for a finish the sprint or the tip refused, and for a card whose
+id is not a card id or whose `inbox/<job>` is a symlink or a file (checked by
+`Lstat`; nothing is written outside her working directory), and its OK line adds
 `delivered=<n> finished=<n>` when either is above zero (`--json` `delivered`,
-`finished`, `cards`). A card's job (an inbox directory named as a work card)
-is none of her jobs: `where` counts her cards from her fleet row into her
+`finished`, `cards`). A card's job (an inbox directory named as a work card
+whose primary, at that epoch, is on the work table) is none of her jobs; a
+directory named so for no card of the sprint is one of them: `where` counts her cards from her fleet row into her
 friends row (ready, working, done ok and failed; working 0 while she is
 down), and draws no friend's row in the fleet table or its `--json`.
+Her row is hidden in the stored fleet table (the table layer's row hide, when
+the deal first adds it), so the stored view `sprint` does not draw it either;
+as for any hidden row, its counts stay in that table's folded footer there,
+where `where` leaves them out.
 
 The frame of `where` and `where --watch` shows work, friends, fleet in that order: the
 readers and merge tables are hidden from it (the owner, 2026-10-02: "I feel like
