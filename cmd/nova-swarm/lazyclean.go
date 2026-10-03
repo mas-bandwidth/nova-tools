@@ -15,6 +15,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/gocache"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // THE CLEANER'S LAZY WORK (docs/SPEC-SWARM.md, `member`).
@@ -96,8 +97,8 @@ func (r *nativeRunner) lazy(now time.Time) {
 // goBuildCache is the build cache this loop's launches share: native's GOCACHE under the
 // root (nativeCacheDir, nativeChildEnv); "" with no root.
 func (r *nativeRunner) goBuildCache() string {
-	if d := nativeCacheDir(nativeRunConfig{root: r.root}); d != "" {
-		return filepath.Join(d, "go-build")
+	if nativeCacheDir(nativeRunConfig{root: r.root}) != "" {
+		return swarm.GoBuildCacheDir(r.root)
 	}
 	return ""
 }
