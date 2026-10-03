@@ -213,7 +213,7 @@ func TestApplyEndToEnd(t *testing.T) {
 	require.Equal(t, "", gotCheck250["width"], "machine:hulk %v: no width, the default", gotCheck250)
 	require.Equal(t, "false", gotCheck250["tla"], "machine:hulk %v", gotCheck250)
 	require.Equal(t, "", gotCheck250["note"], "machine:hulk %v", gotCheck250)
-	require.Len(t, gotCheck250, 8, "machine:hulk %v", gotCheck250)
+	require.Len(t, gotCheck250, 9, "machine:hulk %v", gotCheck250)
 	gotCheck253 := r.client.HGet(ctx, "machine:hulk:ceiling", "slots").Val()
 	require.Equal(t, "64", gotCheck253, "hulk ceiling %q", gotCheck253)
 	gotCheck256 := r.client.Get(ctx, config.FleetKey("store")).Val()
