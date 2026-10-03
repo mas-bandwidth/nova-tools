@@ -78,8 +78,12 @@ func restageAtTip(ctx context.Context, git func(context.Context, ...string) *exe
 		if stageTimedOut(ctx, err) || uerr != nil || len(strings.TrimSpace(string(unmerged))) == 0 {
 			return nil, "merge of the previous head onto the tip, which is no conflict,", merged, err
 		}
-		// it does not apply cleanly: the checkout goes back to the bare tip
-		if out, err := stageTimedOutput(git(ctx, in("reset", "-q", "--hard", "--end-of-options", tip)...), checkoutTime); err != nil {
+		// it does not apply cleanly: the checkout goes back to the bare tip. A squash merge never
+		// moves HEAD, so HEAD is still the tip and the reset names no commit: `git reset` 2.43 (the
+		// CI runners' git) refuses a commit after `--end-of-options` ("option '--end-of-options'
+		// must come before non-option arguments"), and a reset with no operand is one command on
+		// every git
+		if out, err := stageTimedOutput(git(ctx, in("reset", "-q", "--hard")...), checkoutTime); err != nil {
 			return nil, "reset to the base branch's tip after a carry that did not apply", out, err
 		}
 		c.State = cardcontract.CarryConflict
