@@ -339,26 +339,34 @@ func writeCommon(b *strings.Builder, f Frame, s Staged) {
 	}
 	if f.Attempt > 1 {
 		fmt.Fprintf(b, "\nAttempt %d of this card.", f.Attempt)
-		if f.PrevHead != "" {
+		switch {
+		case s.Carry != nil:
+			b.WriteString(" " + s.Carry.sentence())
+		case f.PrevHead != "":
 			fmt.Fprintf(b, " This checkout continues attempt %d: its head, %s, is the last pushed by any attempt before this one, and the checkout starts from it.", f.PrevFrom, f.PrevHead)
 		}
 		b.WriteString("\n")
-		writeWhy(b, f)
+		writeWhy(b, f, s.Carry)
 	}
 }
 
 // writeWhy is what a rework's JOB.md says right after the attempt line, so the child learns
 // why the attempt exists and what to do first (docs/SPEC-CARD-CONTRACT.md, JOB.md): how the
-// attempt before ended, what a reader found, what the coordinator asks; a line whose value is
-// empty is left out, and the coordinator's line too when its words are the finding's or
-// already in how the attempt ended (a rework with no --fix takes the finding as its fix).
-func writeWhy(b *strings.Builder, f Frame) {
+// attempt before ended, what a reader found, what the coordinator asks, and, when the work
+// before did not carry onto the tip, that it must be redone; a line whose value is empty is
+// left out, and the coordinator's line too when its words are the finding's or already in how
+// the attempt ended (a rework with no --fix takes the finding as its fix).
+func writeWhy(b *strings.Builder, f Frame, c *Carry) {
 	why, finding, fix := strings.TrimSpace(f.Why), strings.TrimSpace(f.Finding), strings.TrimSpace(f.Fix)
 	if fix == finding || fix != "" && strings.Contains(why, fix) {
 		fix = ""
 	}
+	redo := ""
+	if c != nil {
+		redo = c.redo()
+	}
 	n := 0
-	for _, l := range []struct{ label, text string }{{"This attempt exists because: ", why}, {"A reader found: ", finding}, {"The coordinator asks: ", fix}} {
+	for _, l := range []struct{ label, text string }{{"This attempt exists because: ", why}, {"A reader found: ", finding}, {"The coordinator asks: ", fix}, {"The previous work: ", redo}} {
 		if l.text != "" {
 			fmt.Fprintf(b, "%s%s\n", l.label, l.text)
 			n++

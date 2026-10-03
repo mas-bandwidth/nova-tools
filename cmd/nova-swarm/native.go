@@ -694,6 +694,11 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		}
 		stageOpts.Base = &swarm.CardBase{Repo: url, Sha: fr.StageSha, Ref: fr.BaseRef, Named: fr.Repo}
 		stageOpts.Branch = fr.Branch
+		if fr.Kind == "work" && fr.Attempt > 1 {
+			// a rework is staged at its base branch's tip, the work before it carried on top
+			// where it applies (docs/SPEC-CARD-CONTRACT.md, where a rework starts)
+			stageOpts.Rework = &swarm.Rework{Prev: fr.PrevHead, From: fr.PrevFrom}
+		}
 	}
 	stageRes, stageErr := swarm.StageCard(stageOpts)
 	if stageErr != nil {
@@ -751,6 +756,9 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// -- which detaches 2s after seeing a STAGE OK/FAIL line on stdout instead of waiting
 	// the full 135s -- printed STAGE UNSEEN on every #3050 launch. One line, on success.
 	writeStageOK(os.Stdout, bench, stageRes)
+	if stageRes.Carry != nil {
+		fmt.Fprintln(os.Stdout, oneline.Escape(stageRes.Carry.Line()))
+	}
 	if stageRes.Shared {
 		cfg.borrowed = filepath.Join(stageRes.Mirror, "objects")
 	}
@@ -763,7 +771,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// defect the frame closes.
 	decided := "" // the decide read's op id when a strings read follows it (nativedecide.go)
 	if cfg.frame != nil && stageRes.Staged {
-		start, err := installFrameTimed(cfg, jobDir, stageRes.BaseSha, os.Stdout)
+		start, err := installFrameTimed(cfg, jobDir, stageRes.BaseSha, stageRes.Carry, os.Stdout)
 		if err != nil {
 			if errors.Is(err, errReadStart) {
 				// a read whose start cannot be known is refused at staging, as a stage that
@@ -2401,9 +2409,9 @@ func writeStageOK(w io.Writer, bench string, st swarm.StageResult) {
 
 // installFrameTimed reports the whole successful frame installation, including
 // recipes and shims, separately from staging (docs/SPEC-CARD-CONTRACT.md, staging).
-func installFrameTimed(cfg nativeRunConfig, jobDir, head string, w io.Writer) (start string, err error) {
+func installFrameTimed(cfg nativeRunConfig, jobDir, head string, carry *cardcontract.Carry, w io.Writer) (start string, err error) {
 	started := time.Now()
-	if start, err = installFrame(cfg, jobDir, head); err != nil {
+	if start, err = installFrame(cfg, jobDir, head, carry); err != nil {
 		return "", err
 	}
 	fmt.Fprintf(w, "FRAME OK secs=%.1f\n", time.Since(started).Seconds())
@@ -2411,10 +2419,11 @@ func installFrameTimed(cfg nativeRunConfig, jobDir, head string, w io.Writer) (s
 }
 
 // installFrame records the staged commit in the slot and writes a framed launch's JOB.md
-// and its family's shims into <slot>/shim, the shims handing through to the real git. It
+// and its family's shims into <slot>/shim, the shims handing through to the real git; a
+// rework's carry (where it was staged, and whether the work before it came) is JOB.md's. It
 // returns a read's start: the commit the work it reads started from (workStart), "" for
 // work or when none is known.
-func installFrame(cfg nativeRunConfig, jobDir, head string) (string, error) {
+func installFrame(cfg nativeRunConfig, jobDir, head string, carry *cardcontract.Carry) (string, error) {
 	git, err := exec.LookPath("git")
 	if err != nil {
 		return "", fmt.Errorf("no git on PATH for the shims to hand through to: %w", err)
@@ -2422,7 +2431,7 @@ func installFrame(cfg nativeRunConfig, jobDir, head string) (string, error) {
 	if git, err = filepath.Abs(git); err != nil {
 		return "", err
 	}
-	st := cardcontract.Staged{Job: jobDir, Repo: filepath.Join(jobDir, swarm.JobRepo), Head: head, Git: git}
+	st := cardcontract.Staged{Job: jobDir, Repo: filepath.Join(jobDir, swarm.JobRepo), Head: head, Git: git, Carry: carry}
 	if nativeCacheDir(cfg) != "" {
 		st.GoCache = swarm.GoBuildCacheDir(cfg.root) // the GOCACHE nativeChildEnv hands the child
 	}

@@ -59,6 +59,9 @@ type Staged struct {
 	Start   string
 	GoCache string // the machine's shared build cache the child's GOCACHE names; "" when it has none
 	Gate    *Gate  // a read's gate (ReadGate); nil: the card's
+	// Carry is a rework's staging at the tip of its base branch (Carry); nil for a first
+	// attempt, a read, and a rework whose base is a sha or a tag, which never moves.
+	Carry *Carry
 }
 
 // Shim is one script a profile writes first on the child's PATH.

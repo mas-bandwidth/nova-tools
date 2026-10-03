@@ -137,6 +137,11 @@ type Result struct {
 	// (treeFinish; docs/SPEC-SPRINT.md, a card is a tree of steps). Judge names it as the
 	// failed finish's reason; "" for every other card.
 	Step string
+	// Carry is where a rework was staged, as native's STAGE CARRY line says it
+	// (cardcontract.Carry.Words: the staged commit, the tip of its base branch, and whether
+	// the work before it carried); the finish's report carries it, so the card's timeline
+	// says it. "" for a first attempt and a read.
+	Carry string
 }
 
 // The ends Judge names first in a failed finish.
@@ -838,6 +843,10 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 			pu := *l.push
 			fin, why := Judge(r, pu)
 			report := oneLine(r.Report)
+			if r.Carry != "" {
+				// where the rework was staged, before the child's words and after the push
+				report = cut("stage: " + oneLine(r.Carry) + "; " + report)
+			}
 			switch {
 			case pu.Sha != "":
 				// the report carries the push first, so the 500-byte cut never takes it
