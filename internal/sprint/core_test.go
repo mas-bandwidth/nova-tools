@@ -100,7 +100,7 @@ func TestTheWholeLifeOfAPrimary(t *testing.T) {
 
 	// A broken read, rework with the finding; the fixed work is asked of two different readers again.
 	second := readsAt(w.s, w.s.Work.Card("s1-2"), 1)
-	w.must(Read(w.s, ReadReq{As: second[0].F("reader"), Verdict: "broken", Finding: "off by one", Sel: Sel{IDs: []string{second[0].ID}}}))
+	w.must(Read(w.s, ReadReq{As: second[0].F("reader"), Verdict: "broken", Finding: "line 1: off by one", Sel: Sel{IDs: []string{second[0].ID}}}))
 	require.Len(t, w.openOn("s1-2"), 1, "a broken read is not an open judgment")
 	score := w.s.Work.Card("s1-2").Score
 	w.must(Rework(w.s, ReworkReq{Sel: Sel{IDs: []string{"s1-2"}}, Fix: "off by one"}))

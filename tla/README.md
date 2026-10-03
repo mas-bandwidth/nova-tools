@@ -12,7 +12,7 @@
 > cards, checked in the model with one read and no redeal; `SprintEvents` and `CardMachine` describe designs no longer run.
 > The run records (`RUNS.tsv`) still match these model files, which is all `TestTLCRecordsCoverCurrentModels` checks: it
 > does not check the models against the code. At the contraction pass each is either re-derived from the behaviour the
-> fleet passes proved, or deleted. The table-layer models below (`TableMachine`, `MemberTable`, `EpochMemberTable`,
+> fleet passes proved, or deleted. `BenchStage` is current. The table-layer models below (`TableMachine`, `MemberTable`, `EpochMemberTable`,
 > `TableEdit`, `TableOrder`, `TableSession`, `RedisFn`, `TableFirstContact`, `FirstConn`, `FuseBox`) are current.
 
 The TLA+ modules here are the specifications of the state machines this repo implements (rowan-new SPEC-COORDINATOR section 8: the backend is the state machine, the verbs are its actions; Glenn 2026-09-27: TLA+ for every state machine, every project). The findings each model produced, verified against the code by hand, are in rowan-new `specs/tla/FINDINGS.md`; the model documents (`TABLE-MODEL.md`, `MEMBER-TABLE-MODEL.md`) are copied here beside the modules they describe.
@@ -28,11 +28,13 @@ The TLA+ modules here are the specifications of the state machines this repo imp
 | `FirstConn.tla` | `MCFirstConn*` | `internal/redisconn`'s first connection: the probe Open sends, taken and answered in the store's place only after HELLO was accepted, with seven reversed witnesses |
 | `TableFirstContact.tla` | `MCTableFirstContact*` | nova-table's first contact with a store (cmd/nova-table/library.go): a verb that meets "Function not found" loads the library with LoadMissing at most once per process and is sent again once, only when its first send ran nothing, with three reversed witnesses |
 | `FuseBox.tla` | `MCFuseBox*` | nova-fuse's box: the gate answers only from a box it read and from every box named, only a lift, init or your person's hand makes a surface clear, init never replaces a box, a lockdown always blows; five reversed witnesses |
+| `BenchStage.tla` | `MCBenchStage*` | one bench's release stage under `fleet/tools.yml` (nova-tools#5102; written by Zhi, adopted with the send rule of today): a stage seeded from the installed build's directory unverified, the files sent, `release install`'s whole verification, refusal and runs that crash anywhere, over a healthy, corrupt and two partial installed builds. `ReusedByteIdentical` (once the send is done every stage file holds the release's bytes), `NoWrongBinary`, `NoVerifiedWithWrong` and `Liveness` hold when the send list is measured from the stage's bytes (`MCBenchStage`); one reversed witness, the first cut's send list by `SHA256SUMS` line, breaks `ReusedByteIdentical` (`MCBenchStageBrokenLines`) |
 | `SprintEvents.tla` | `MCSprintEvents*` | the upper layers of nova-sprint (layers 3 to 8 of the event-driven tick design, standing on the table layer's guarantees): the log turned into keys, due times in running time, the rules with plan and apply separate, the tick, the verbs; 29 reversed witness configurations (W1 to W27, W7 split in two, and W5's reach half, which breaks reach and unreach and not the verb), 27 of which fail with the property their row names while W1 and W25 pass because the design holds there in depth, each with its unbroken control; goal cases that fail for the seventeen holes the model found (thirteen in the design as written, four in repairs errata 3 decided, three of them decided in its amendment 2 and repaired here; H12 and H15 on the bench), each decided repair with a case that passes. The larger runs are in `sprintevents-bench/`, outside `CASES.tsv`. `README-SprintEvents.md` says the rest, including what is not modelled |
 | `WorkImport.tla` | `MCWorkImport*` | nova-work v1 (docs/SPEC-WORK-V1.md section 1): an issue under import (absent, fetched, in the tree, mirrored, closed by the destructive mode, re-opened by export) and a repository's sync, with outside edits at any time; a tree is written only whole, only a verify receipt at GitHub's current version licenses a close, an issue the import closed is held by the tree exactly, an external issue is never closed, export restores; five reversed witnesses |
 | `CardContract.tla` | `MCCardContract*` | the card contract's finish (docs/SPEC-CARD-CONTRACT.md): what a launch is staged from, how its child ends, the member's push and the one judgment (internal/member `Judge`): ok only with a commit the member pushed and the result's shape and verdict ok, a reaped launch never reported, a rework staged only from a head origin holds, and at the last pushed head of any earlier attempt, so no pushed work is unreachable from it; nine reversed witnesses (the finish of 2026-09-30 that sent a card with no commit to review, ok without the shape, ok over a refused push, a reaped launch reported, a rework staged from a branch name, a rework staged from the immediately previous attempt only, a provider failure judged as failed work, a redeal on the route that failed, a redeal past MaxRedeals); a run the provider failed with no result is finished `provider`, redealt (the same attempt, restaged from the same base) within MaxRedeals and retired at the bound with one judgment; the instance is one card |
 | `DirtyTick.tla` | `MCDirtyTick*` | the sprint machine's tick as the owner shaped it on 2026-09-30, before it is built: four tables updated in turn (work, readers, merge, fleet), a queue per table as its dirty bit, readers, merge and fleet drained until empty, the work table written only by the one pump at the start of each tick; placements by counter modulo the count, width, one wake at the tick's end; 16 reversed witnesses and three goals for the holes it found (a placement blind to the fleet's status never ends the tick; room read from an undrained fleet queue over-fills a machine; the v2.1 rules write the work table in their own steps). The readers' presence (`MCDirtyTickReader`, `MCDirtyTickReaderAway`, W21, W22) abstracts two things away from the Go code: `ReadsStandOnReadersUp` says a read is held only by a reader that is up at every state, but the code keeps a read already begun on a reader that went away (only a read asked and not begun is taken back), and the model has one read per card on a host while the code has none. The model's `raway` always finds a reader to ask again, but the code with fewer than two readers up takes nothing back and asks none, raising the one judgment `fewer than two readers up` instead. `README-DirtyTick.md` says the rest |
 | `RouteIndex.tla` | `MCRouteIndex*` | the deal's route choice (internal/sprint/route.go): each tier's route array taken at a uint64 counter modulo its length, one step a card dealt, a redeal moved past the entries it leaves out, a pinned card moving nothing, a read card drawn from the reader tier's array at the same index; 3 routes x 2 tiers x 7 cards (one a read), three reversed witnesses (a random draw breaks RouteFair, a redeal that does not move past the excluded entry breaks ExcludedNeverDrawn, a read that leaves the index where it is breaks RouteIndexAdvancesOncePerCard) and one reach witness (ReachSkip) |
+| `Level.tla` | `MCLevel*` | the fleet's level (internal/sprint `level`, `round.levelTo`), the rebalance at the start of every tick and inside every planner that computes holds: one call's loop over every start of a bounded fleet (every up order, every start of the deal's index, members over their width, a card with a refuser). It ends by two guards, each enough alone: every move lowers the sum of squared backlogs by at least two (`PotentialFalls`), and a moved card is never queued again, so a call makes no more moves than there were ready cards (`MovesBounded`); no card lands on a member that refused it at staging, and an older card moves when the newest is blocked (`SelectionComplete`). Five reversed witnesses: the rule of the wedge of 2026-10-02 (nova-tools#5122) does not end, nor does the gap test removed, a moved card queued again moves twice, the gap tested only on the newest card stops early, the refusers not skipped lands a card on one |
 | `Land.tla` | `MCLand*` | `nova-sprint land` (cmd/nova-sprint/land.go): a batch of a stream's merge queue pushed to a remote base, then reported to the store through the merge step, with the outside between them (an accept anywhere in the queue, a return, a rework that replaces a card's head and keeps its id and epoch, another lander, a clear that moves the epoch, the base moving, a crash at any step); a head is <<card, attempt>>, and the check before the push and the push are separate steps, as in the code. It proves: the store records a card landed only at a head the base holds (LandedInBase), a card lands only with every card ahead of it (LandsInOrder), no push for a caller whose epoch the store was not at when read (CallerEpochCheckedBeforePush), no report records at an epoch the lander does not hold (ReportHoldsTheEpoch), and a batch pushed and not reported is recorded by running land again (Recovers, under fairness). It does not claim that no push follows a clear: a clear between the check and the push makes a push for an epoch just left (ReachStalePush reaches it), which nothing records and nothing undoes. Five reversed witnesses (the report before the push, the caller's epoch checked only after the push, a report with no guard, a guard on ids and not heads, a report with no epoch fence) and two reach witnesses (ReachStranded: the lander's own push for the store's epoch left unreported, marked by the ghost lpushed, to which a push for an epoch the store has left adds nothing; ReachStalePush). Recovers is proved only once the outside goes quiet (the instance caps outside events at 4), so it does not cover (a) a lander that crashes between the push and the report on every run, which never records the batch, or (b) a base that moves twice inside every read-to-push window: one rebuild, then the lander gives up (the rejected fact), every run; nothing is pushed or lost, the cards stay queued, and the coordinator resumes the stream and runs land again |
 
 Runners. `tools/tlacheck` (Go, over `internal/tlc` and `internal/tablemodel`) runs the checks. Run it on a bench that has java and, for the replays, redis-server: neither belongs on a working machine. Every run is bounded by `--timeout` (a timeout is a failure, never a green), downloads nothing, and runs TLC in a private copy of the models under `--dir`, so the checkout never gains the error-trace files TLC writes beside a spec. The jar is `--jar`, or the environment variable `TLC_JAR`; java and redis-server are found on PATH, or named with `--java` and `--redis-server`, and the path found is echoed. `tlacheck help` and `tlacheck <verb> -h` say the rest.
@@ -75,6 +77,22 @@ The fingerprint is the SHA-256 over those inputs in path order, each as its path
 
 Editing one model therefore stales the records of the cases that read it and no other: a change to a module stales every case whose module extends or instantiates it, a change to a configuration or to a case's own row stales that case, and a change to a result file of the runner stales every case. `tlacheck inputs --case <config>` prints each input with its hash, then the fingerprint and the count (`inputs`, `groups --stale`, `merge` and `run` refuse a binary whose embedded result files or `inputs.go` differ from the ones under `--root`, and say to build `tlacheck` from that tree); a record is current when its two columns equal them and its `module`, `expected` and `property` cells equal the case's row (the row is hashed and the cells are not, so a merge refuses a record whose cells were edited, naming the cell and both values, and `groups --stale` counts its group stale). `TestTLCRecordsCoverCurrentModels` refuses a stale record by naming its case and the files it reads, a configuration with no record, a record with no configuration, and a case whose module or extended modules cannot be found.
 
+### The record machines
+
+A record machine is a Linux bench of the fleet whose machine row says `tla=true` (`nova-config machine list` prints it; `nova-config machine set <m> --tla true --as <actor>`, then `nova-config apply`, makes one). Which benches they are is that list's answer, never this file's: `nova-config machine list | grep ' tla=true'`. On each, the tools play's tla play (`fleet/tools.yml`, the inventory's `tla` group; `--tags tla` runs it alone) holds the TLC jar at `/opt/tla/tla2tools.jar`, owned by the bench's login, and refuses the machine when the jar is missing or its SHA-256 is not the one `tla/tla2tools.sha256` pins (the `jar_sha256` the records name), or when no java runs. The play downloads nothing: a jar is placed by hand, `scp` from a record machine that holds it, then `sha256sum` there, which has to print the pinned hash.
+
+A record refresh is one command from the working machine, in the checkout of the change:
+
+```sh
+go build -o /tmp/tlacheck ./tools/tlacheck
+runs=$(mktemp -d)
+/tmp/tlacheck run --root . --dir "$runs" --bench any
+```
+
+`--bench any` reads the machine rows (`nova-config machine list`, in the command's environment: `NOVA_PG_DSN`) and takes the record machine with the lowest load per CPU among those holding the pinned jar; `--bench <machine>` names one, whose rows are not read: the pinned jar at the path is the check. Without `--group` it runs every group `groups --stale` lists. It builds this tree's `tlacheck` for the bench, stages it with the top of `tla/` in `~/tla-runs/tlacheck-*` there, and runs each case of each group as its own bounded run (`--group <g> --shards <n> --shard <i>`, `n` the group's size), under `nice -n 15` with `--workers 2`, each after the bench's 1-minute load falls under `--load-below` (default 0.8 x its logical CPUs; it waits at most `--trough-wait`, default 30m, reading every `--trough-poll`, 15s). Each record is under the 110 s cap; a group's total is not one budget. The records come back under `--dir`, and when every case is as declared they are merged into `tla/RUNS.tsv` with `merge --keep`, so `groups --stale` prints `[]` after it; when one is not, nothing is merged and the logs are under `--dir`. The staged directory is removed when the run ends, and one a dead run left is removed by the next run after a day.
+
+A `models` card names its bench in its JOB.md with this sentence, the card builder filling in the record machine it chose (a row with `tla=true`) and the card's name: "Refresh the TLC records from this checkout with `go build -o /tmp/tlacheck ./tools/tlacheck && /tmp/tlacheck run --root . --dir /tmp/tlc-<card> --bench <machine>`; <machine> is a TLC record machine (its nova-config machine row says tla=true, and its pinned jar is at /opt/tla/tla2tools.jar), so never run TLC on this machine, and commit tla/RUNS.tsv only when the command ends with MERGE OK."
+
 ### Refreshing the records after a model edit
 
 The author of a model change refreshes only the records the change staled. Start from the branch with the change rebased on the base branch (`git rebase origin/dev`), including a branch that still holds records in an older column layout: the base branch's `tla/RUNS.tsv` replaces the branch's, and the runs below measure again whatever the edit staled. The commands run as they stand, in this order, from the checkout root.
@@ -90,7 +108,7 @@ go build -o /tmp/tlacheck ./tools/tlacheck
 
 `[]` means the edit staled nothing: `tla/RUNS.tsv` is already current, and steps 2 and 3 have nothing to do. Otherwise the output lists the groups to run.
 
-2. On a Linux bench with java (never on a working machine), with the same tree, run each stale group into a clean directory of its own (a directory that holds an earlier run's records would be merged with them) and join the runs onto the base branch's records. Use the jar the kept records name (`cut -f5 tla/RUNS.tsv | sed 1d | sort -u`): one jar measures the whole file, and `merge` refuses a set of records with more than one. The tool downloads nothing and the records name the jar only by its SHA-256, so the jar comes from you: a `tla2tools.jar` of the TLA+ project (its releases are at github.com/tlaplus/tlaplus), checked by `sha256sum /path/to/tla2tools.jar`, which has to print the hash the records name. When no jar you can obtain has that hash, run every group with the one jar you have and merge without `--keep`, as below:
+2. Run the stale groups on a record machine and merge them, from here: `/tmp/tlacheck run --root . --dir "$runs" --bench any` with `runs=$(mktemp -d)` (above, "The record machines"), which ends with `MERGE OK`. By hand instead, on a Linux bench with java (never on a working machine), with the same tree, run each stale group into a clean directory of its own (a directory that holds an earlier run's records would be merged with them) and join the runs onto the base branch's records. Use the jar the kept records name (`cut -f5 tla/RUNS.tsv | sed 1d | sort -u`): one jar measures the whole file, and `merge` refuses a set of records with more than one. The tool downloads nothing and the records name the jar only by its SHA-256, so the jar comes from you: a `tla2tools.jar` of the TLA+ project (its releases are at github.com/tlaplus/tlaplus), checked by `sha256sum /path/to/tla2tools.jar`, which has to print the hash the records name. When no jar you can obtain has that hash, run every group with the one jar you have and merge without `--keep`, as below:
 
 ```sh
 runs=$(mktemp -d)
@@ -521,3 +539,51 @@ named order `writeOther, sendAccepted, readAll, writeOther, writeProbe`
 and 8, `%` read and the probe taken, then no read is enabled because the
 witness reads the store, which sent nothing; the code at :257-263 reads the
 answer from `probeAnswer` and never touches the store while answering.
+
+## The fleet's level (Level)
+
+`Level.tla`: one call of the fleet's level (internal/sprint/steps_work.go
+`level`, round.go `levelTo`). On 2026-10-02 at 2:26 PM the call did not end:
+the emptiest member had refused the longest queue's newest card at staging, the
+card went to a member one below instead, the receiver became the donor and the
+card went back, a unit appended per turn under the server's mutex, until the
+process held 244 GB (nova-tools#5122). The module's header says what it holds
+and what it leaves out; the instances are in `MCLevel.tla`.
+
+The model found one defect beyond the wedge, in PR #5127 as it stood: a card the
+call moved was appended to its receiver's queue, so it could be moved again in
+the same call. `MCLevelBrokenRequeue` is the call: widths 2, 1 and 3, members up
+in the order c, a, b, three ready cards on b, the middle one refused by c; b3
+goes b -> a, b2 b -> a, then a is the longest, its newest (b2) is refused by c,
+so b3 goes a -> c, and b1 b -> c: four moves for three ready cards. Checked by
+hand against the code at 0a79ad873 and by `TestLevelMovesNoCardTwice`, red there:
+the second unit of b3 is guarded on b3's place before the first unit, so the plan
+the engine writes is not the plan it computed (`fleet: b3.w1: revision 2,
+expected 1`). The code no longer queues a moved card again.
+
+Run on a macOS arm64 working machine, not the bench (TLC 2.19, jar SHA-256 `936a2620...`, OpenJDK 27, one worker,
+niced, 2026-10-02 ET), the eight cases with `-lncheck final -deadlock`; the bench
+records in `RUNS.tsv` are owed (the class test is red for these eight until a
+Linux bench run is merged):
+
+| config | result | distinct states | time |
+|---|---|---|---|
+| `MCLevel` | no error (exit 0), three members, three cards, every up order: TypeOK, NeverOnARefuser, MovesBounded, SelectionComplete, PotentialFalls, Terminates | 649,537 | 57 s |
+| `MCLevelFour` | no error (exit 0), the wedge's four members: the same six | 472,115 | 57 s |
+| `MCLevelOldRuleNoRequeue` | no error (exit 0): the rule of the wedge with no second move ends, within the ready count, off every refuser | 473,903 | 42 s |
+| `MCLevelBrokenOld` | expected Terminates violation (exit 13): c3 goes a -> t -> a for ever | 466,243 | 62 s |
+| `MCLevelBrokenNoGap` | expected Terminates violation (exit 13): c2 goes a -> c -> a for ever | 654,916 | 74 s |
+| `MCLevelBrokenRequeue` | expected MovesBounded violation (exit 12): four moves for three ready cards, b3 twice | 643,223 | 62 s |
+| `MCLevelBrokenNaive` | expected SelectionComplete violation (exit 12): the call returns with c2 able to move | 360,485 | 36 s |
+| `MCLevelBrokenNoSkip` | expected NeverOnARefuser violation (exit 12): c3 onto c, its refuser | 360,485 | 37 s |
+
+Every counterexample was read against the code by hand. Old: the wedge's shape
+in four members (a 2 above its width with c1 and c3, c3 refused by s; s 0, the
+emptiest; t 1, at the mean; u 4 and full): c3 goes a -> t at the mean, then t is
+the longest and c3 goes back to a, for ever (levelTo at b7776ca3, the longest
+and the refusers avoided, no gap). NoGap: the same shape in three members with
+the gap test removed from PR #5127's levelTo. Naive: a holds c2 and c3, c3
+refused by c, the emptiest two below; only c3 is tried, and the call returns
+with c2 still able to go to c. NoSkip: c3 goes onto c, its refuser (the code
+before #5000).
+

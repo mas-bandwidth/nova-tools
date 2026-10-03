@@ -2002,3 +2002,30 @@ func TestNativeRunTakesThePoolIdentityFromTheLoopsArgv(t *testing.T) {
 		})
 	}
 }
+
+// TestNativeSandboxArgvNamesEachDirectoryOnce: the shared cache root is ONE directory for the
+// whole bench, and the wall argv names it once. It used to go in twice -- as the Go caches'
+// write (card 8963) and again as the shared cache root (#1048), which are the same
+// <root>/cache -- so every card's darwin profile carried two identical WRITE grants and two
+// identical socket grants. Measured 2026-10-02 the profile's size is not the wall's cost on
+// any Mac bench; this is the duplicate, removed, not a speed-up.
+func TestNativeSandboxArgvNamesEachDirectoryOnce(t *testing.T) {
+	t.Parallel()
+	root, slot := aSlot(t)
+	jobDir := filepath.Join(slot, "jobs", "once")
+	cfg := nativeRunConfig{slotDir: slot, root: root, benchHome: t.TempDir(), benchOS: "linux"}
+	argv := nativeSandboxArgv([]string{"/bin/true"}, cfg, filepath.Join(slot, "data"), jobDir, filepath.Join(slot, "tmp", "once"))
+	seen := map[string]int{}
+	for i, a := range argv {
+		if a == "--" {
+			break
+		}
+		if strings.HasPrefix(a, "--") && i+1 < len(argv) && filepath.IsAbs(argv[i+1]) {
+			seen[a+" "+argv[i+1]]++
+		}
+	}
+	for pair, n := range seen {
+		assert.Equal(t, 1, n, "the wall argv names %q %d times:\n%s", pair, n, strings.Join(argv, " "))
+	}
+	assert.Equal(t, 1, seen["--write "+swarm.CacheRoot(root)], "the shared cache root is not a --write exactly once:\n%s", strings.Join(argv, " "))
+}

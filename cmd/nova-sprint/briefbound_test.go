@@ -69,7 +69,7 @@ func TestAddTakesABriefUpToTheBriefBound(t *testing.T) {
 			fmt.Sprintf("field brief is %d bytes, over the bound of 16384 bytes", n),
 			"a brief is a child's whole brief, up to 16 KiB, and the card lint advises at most 12000 bytes",
 			"shorten it, or point to a file or a comment",
-			"ADD FAILED moved=0 refused=1 notes=0",
+			"ADD FAILED stream=s3 cards=0 before=- moved=0 refused=1 notes=0",
 		} {
 			require.Contains(t, errs, want)
 		}

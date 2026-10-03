@@ -105,7 +105,7 @@ func TestAReportOnAnAskedCardBeginsIt(t *testing.T) {
 	w.tick(time.Minute)
 	for i, verdict := range []string{"ok", "broken"} {
 		rc := reads[i]
-		w.must(Read(w.s, ReadReq{As: rc.F("reader"), Verdict: verdict, Sel: Sel{IDs: []string{rc.ID}}}))
+		w.must(Read(w.s, ReadReq{As: rc.F("reader"), Verdict: verdict, Finding: "f:1", Sel: Sel{IDs: []string{rc.ID}}}))
 		require.Equal(t, verdict, rc.Col, "%s on an asked card: %s %v", verdict, rc.Col, rc.Fields)
 		require.Equal(t, stamp(w.s.Now), rc.F("begun"), "%s on an asked card: %s %v", verdict, rc.Col, rc.Fields)
 		require.Equal(t, rc.F("begun"), rc.F("read"), "%s on an asked card: %s %v", verdict, rc.Col, rc.Fields)

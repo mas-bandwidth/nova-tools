@@ -1403,6 +1403,21 @@ read:
   *tool* added and the caller never named, so it belongs in the generator. The
   grant stays `file-read-metadata`: `/opt` becomes traversable, never readable.
 
+**What the wall costs, measured (2026-10-02).** A card is walled once:
+`nova-swarm native` wraps the harness in one `nova-sandbox`, `sandbox-exec`
+applies the profile and execs in place, and every process the harness starts
+inherits the sandbox; nothing re-enters it. A card's filled profile is 50-60
+rules (most of them the ancestor and PATH-directory metadata grants), not
+hundreds. On two Intel Mac benches (8 cores at 3.2 GHz, 18 cores at 2.3 GHz) and
+an Apple Silicon Mac, 500 execs of `/usr/bin/true`, a `git clone --shared` with
+checkout, and a warm-cache `go build ./cmd/nova-sprint` cost the same, best of
+five, inside this profile, inside a ten-rule profile of broad `subpath` grants,
+inside `(allow default)` and outside any sandbox: the generated profile against
+no sandbox was at most +7% (0.05 s on a clone), and the four walls showed no
+consistent order between them. So the profile's shape is not the wall's cost,
+and widening it to save time would trade a denial for nothing. A slow Intel
+bench is slow in the kernel for every process, walled or not.
+
 **`tools/sandboxcheck`** is how that file is known to be right. It is a Go
 driver (`internal/sandbox/darwincheck`) around the real probes, and it fills the
 embedded template for a scratch write set under the working directory (no

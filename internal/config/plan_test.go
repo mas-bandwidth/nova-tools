@@ -34,7 +34,7 @@ func TestPlanWriteIsTheChangeAndRefusalOfTheWrite(t *testing.T) {
 		before  string // the width before, for a set or remove
 		after   string // the width after, for an add or set
 	}{
-		{name: "add a new row", op: OpAdd, kind: KindMachine, row: m2, after: "0"},
+		{name: "add a new row", op: OpAdd, kind: KindMachine, row: m2, after: ""}, // no width: the default
 		{name: "add a name taken", op: OpAdd, kind: KindMachine, row: m1, want: ErrExists},
 		{name: "set a field", op: OpSet, kind: KindMachine, row: Row{Name: "m1"}, changes: map[string]string{"width": "6"}, before: "4", after: "6"},
 		{name: "set a row not there", op: OpSet, kind: KindMachine, row: Row{Name: "m9"}, changes: map[string]string{"width": "6"}, want: ErrNotFound},

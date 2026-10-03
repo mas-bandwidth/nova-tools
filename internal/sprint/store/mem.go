@@ -651,6 +651,61 @@ func (m *Mem) RowsDel(_ context.Context, table string, rows []string) error {
 	if err := m.writeEpoch(t); err != nil {
 		return err
 	}
+	m.rowsDel(t, rows)
+	return nil
+}
+
+// RowsDelIf removes each guard's row only while its record is on no cell at
+// the guard's revision, checked and removed under the one lock, as RowsDel does.
+func (m *Mem) RowsDelIf(_ context.Context, table string, guards []RowGuard) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.Calls["rowsdelif"]++
+	t, err := m.table(table)
+	if err != nil {
+		return nil, err
+	}
+	if err := m.writeEpoch(t); err != nil {
+		return nil, err
+	}
+	var rows []string
+	for _, g := range guards {
+		if mm := t.members[g.ID]; mm != nil && !mm.placed && mm.rev == g.Rev {
+			rows = append(rows, g.Row)
+		}
+	}
+	if len(rows) > 0 {
+		m.rowsDel(t, rows)
+	}
+	return rows, nil
+}
+
+// KeysDelIf deletes each guard's keys only while its record is on no cell at the
+// guard's revision and its row is not in the table, under the one lock.
+func (m *Mem) KeysDelIf(_ context.Context, table string, guards []RowGuard) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.Calls["keysdelif"]++
+	t, err := m.table(table)
+	if err != nil {
+		return nil, err
+	}
+	rows := t.at(m.active(t)).rows
+	var out []string
+	for _, g := range guards {
+		if mm := t.members[g.ID]; mm == nil || mm.placed || mm.rev != g.Rev || slices.Contains(rows, g.Row) {
+			continue
+		}
+		for _, k := range g.Keys {
+			m.deleteKey(k)
+		}
+		out = append(out, g.Row)
+	}
+	return out, nil
+}
+
+// rowsDel is the row delete itself, under m.mu and the epoch check.
+func (m *Mem) rowsDel(t *memTable, rows []string) {
 	ep := t.at(m.active(t))
 	// unplaced is the members the delete took off the table: the change names
 	// them, as the table layer's change stream does (a twin catching up reads
@@ -675,11 +730,43 @@ func (m *Mem) RowsDel(_ context.Context, table string, rows []string) error {
 	t.rev++
 	t.wrote[m.active(t)] = true
 	t.changes = append(t.changes, memChange{epoch: m.active(t), before: t.rev - 1, after: t.rev, verb: "row_del", ids: unplaced})
-	return nil
 }
 
 // writeEpoch refuses a write pinned to an epoch that is not the table's
 // active one, as the table layer refuses a stale epoch.
+// Place puts a record of the active epoch that is on no cell back into an owned
+// cell, as the table layer's cell add does; a record placed already, of another
+// epoch, or absent is refused.
+func (m *Mem) Place(_ context.Context, table, row, col, id string, score float64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.Calls["place"]++
+	t, err := m.table(table)
+	if err != nil {
+		return err
+	}
+	if err := m.writeEpoch(t); err != nil {
+		return err
+	}
+	mm := t.members[id]
+	switch {
+	case mm == nil:
+		return refusal("NOTMEMBER", "member "+id+": no member record")
+	case mm.epoch != m.active(t):
+		return refusal("MEMBEREPOCH", fmt.Sprintf("member %s belongs to epoch %d, the active epoch is %d", id, mm.epoch, m.active(t)))
+	case mm.placed:
+		return refusal("MEMBEREXISTS", "member "+id+": placed at "+place(mm))
+	case !t.owned(m.active(t), row, col):
+		return refusal("NOCOL", "member "+id+": no owned cell "+row+":"+col)
+	}
+	mm.placed, mm.row, mm.col, mm.score = true, row, col, score
+	mm.rev++
+	t.rev++
+	t.wrote[m.active(t)] = true
+	t.changes = append(t.changes, memChange{epoch: m.active(t), before: t.rev - 1, after: t.rev, verb: "cell_add", ids: []string{id}})
+	return nil
+}
+
 func (m *Mem) writeEpoch(t *memTable) error {
 	m.touch(m.epoch)
 	if a := m.active(t); m.epoch != a {
@@ -884,6 +971,16 @@ func (m *Mem) Release(_ context.Context, op OpRecord, commit bool) error {
 		}
 		if op.CallerOp != "" {
 			l.done[op.CallerOp] = op.Result
+		}
+		if op.Seat != nil {
+			rec, err := seatRecord(op.Seat)
+			if err != nil {
+				return err
+			}
+			if m.kv == nil {
+				m.kv = map[string]string{}
+			}
+			m.kv[keyCoordinator], m.kv[keySeat] = op.Seat.Holder, rec
 		}
 	}
 	l.fence = nil

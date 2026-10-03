@@ -21,6 +21,12 @@ func (h *harness) machine() TickResult {
 	return res
 }
 
+// dealtMax sets the sprint's dealt bound, as the coordinator's set --dealt-max does.
+func (h *harness) dealtMax(d time.Duration) {
+	h.t.Helper()
+	h.must(SetStep(sprint.SetReq{DealtMax: d.String(), Who: h.st.Actor}))
+}
+
 func (h *harness) startMachine() {
 	h.t.Helper()
 	_, _, _, err := h.st.SetMachine(h.ctx, true)
@@ -464,12 +470,13 @@ func TestAStoppedTickSaysItLooked(t *testing.T) {
 }
 
 // A member whose beat lapses again and again has its card dealt to another
-// and back each time, re-stamping dealt: the unfinished deadline counts from
-// the attempt's first deal, so three hours of it are late all the same.
+// and back each time, re-stamping dealt: the dealt bound counts from the
+// attempt's first deal, so three hours of it are late all the same.
 func TestAFlappingMemberCannotHideALateCard(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.live = []string{"m1"}
+	h.dealtMax(15 * time.Minute)
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 1}))
 	h.startMachine()
@@ -492,18 +499,19 @@ func TestAFlappingMemberCannotHideALateCard(t *testing.T) {
 	h.machine()
 	c := h.snap().Fleet.Card("s1-1.w1")
 	require.Equal(t, first, c.F("first_dealt"), "first_dealt moved: %s, was %s", c.F("first_dealt"), first)
-	require.NotEqual(t, 0, h.written(sprint.NWorkLate), "three hours of a card dealt and never finished, and no deadline")
+	require.NotEqual(t, 0, h.written(sprint.NWorkLate), "three hours of a card dealt and never taken, and no deadline")
 }
 
 // The deadlines count from the attempt's first deal and first take: a member
 // whose beat lapses and returns four times, its card withdrawn and dealt
-// again each time, is late "not taken" once 15 minutes of running time have
-// passed since the first deal; taken, then lapsing three times, it is late
-// "not finished" 2 hours after the first take.
+// again each time, is late "dealt, never taken" once the dealt bound (15
+// minutes here) of running time has passed since the first deal; taken, then
+// lapsing three times, it is late "not finished" 2 hours after the first take.
 func TestAFlappingMemberIsLateFromTheFirstDealAndTheFirstTake(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.live = []string{"m1"}
+	h.dealtMax(15 * time.Minute)
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 1}))
 	h.startMachine()
@@ -527,14 +535,14 @@ func TestAFlappingMemberIsLateFromTheFirstDealAndTheFirstTake(t *testing.T) {
 		n := 0
 		notes, _, _ := h.m.NotesSince(h.ctx, "", 100000)
 		for _, x := range notes {
-			if x.Type == sprint.NWorkLate && x.Kind == sprint.Judgment && strings.Contains(x.What, "not taken") {
+			if x.Type == sprint.NWorkLate && x.Kind == sprint.Judgment && strings.Contains(x.What, sprint.WordNeverTaken) {
 				n++
 			}
 		}
 		return n
 	}
 	n := notTaken()
-	require.Equal(t, 1, n, "four laps, over 15 minutes of running time from the first deal: %d not-taken judgments", n)
+	require.Equal(t, 1, n, "four laps, over 15 minutes of running time from the first deal: %d never-taken judgments", n)
 	// taken, then lapsing: late not finished two hours from the first take
 	h2 := newHarness(t)
 	h2.live = []string{"m1"}
@@ -569,13 +577,14 @@ func TestAFlappingMemberIsLateFromTheFirstDealAndTheFirstTake(t *testing.T) {
 }
 
 // A card taken, its member silent, redealt to a member that is up and never
-// taken again: the clock follows the card's state. It is late not taken, 15
-// minutes from the redeal (the first deal since its last take), on the full
-// tick, and no stalled judgment speaks for it instead; the holder and the
-// deadline part end at the same moment.
+// taken again: the clock follows the card's state. It is late never taken, the
+// dealt bound (15 minutes here) from the redeal (the first deal since its last
+// take), on the full tick, and no stalled judgment speaks for it instead; the
+// holder and the deadline part end at the same moment.
 func TestARedealtCardAfterATakeIsLateNotTaken(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
+	h.dealtMax(15 * time.Minute)
 	h.live = []string{"m1", "m2"}
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m2"}))
@@ -622,8 +631,8 @@ func TestARedealtCardAfterATakeIsLateNotTaken(t *testing.T) {
 		h.machine() // a full tick
 		h.machine() // an idle tick
 	}
-	n = judged(sprint.NWorkLate, "not taken")
-	require.Equal(t, 1, n, "16 minutes after the redeal after a take: %d not-taken judgments, want 1", n)
+	n = judged(sprint.NWorkLate, sprint.WordNeverTaken)
+	require.Equal(t, 1, n, "16 minutes after the redeal after a take: %d never-taken judgments, want 1", n)
 	n = judged(sprint.NWorkLate, "not finished")
 	require.Equal(t, 0, n, "a ready card is never late not finished: %d", n)
 	notes, _, _ := h.m.NotesSince(h.ctx, "", 100000)
@@ -675,6 +684,7 @@ func TestACardLateAtItsRedealDoesNotBlameTheNewMember(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.live = []string{"m1"}
+	h.dealtMax(15 * time.Minute)
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 1}))
 	h.startMachine()

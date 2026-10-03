@@ -161,7 +161,7 @@ func TestTakeAndQueueHandTheirPackets(t *testing.T) {
 func TestWhereHidesTheMergeTablesSince(t *testing.T) {
 	t.Parallel()
 	ta := whereFixture(t)
-	out := ta.ok("where")
+	out := ta.ok("where --all")
 	block := tableOf(out, "merge")
 	require.NotEmpty(t, block, "no merge table:\n%s", out)
 	require.NotContains(t, block, "since", "where shows since:\n%s", out)

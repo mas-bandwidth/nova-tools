@@ -221,6 +221,14 @@ func install(ctx context.Context, o options, deps Deps, out, errs io.Writer) int
 			skipped++
 			continue
 		}
+		// AND WHEN ITS BYTES ARE ALREADY THESE. An --incremental build ships
+		// an unchanged tool as the earlier build's binary, which answers the
+		// earlier version; renaming identical bytes over it would only make
+		// the loop running it drain and restart on a binary nothing changed.
+		if sum, err := fileSum(target); err == nil && sum == a.Sum {
+			skipped++
+			continue
+		}
 		progress(errs, "installing %s", a.Name)
 		if err := atomicInstall(filepath.Join(dir, a.Name), target); err != nil {
 			fmt.Fprintf(errs, "INSTALL FAIL tool=%s bin=%s: %s (fix the permission or the disk and install again; %d of %d were in place)\n",

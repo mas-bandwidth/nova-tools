@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -83,4 +85,20 @@ func TestBriefReplacesAnUnstartedPrimarysBriefOnAStoppedSprint(t *testing.T) {
 	assert.Contains(t, errs, remedy)
 	assert.NotContains(t, errs, "run: nova-sprint stop")
 	ta.clean()
+}
+
+// brief with --rules opens the store itself (the wave-2 card builder, 2026-10-02: `brief <id>
+// --brief-file <f> --rules <file>` panicked on a nil store): briefRules reads the rules from
+// the file and opens no store, so brief opens it as add does, and the brief is replaced.
+func TestBriefWithRulesOpensTheStoreAndReplacesTheBrief(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	ta.ok("add --stream a --count 1 --brief-file " + writeBrief(t, "the old work"))
+	dir := t.TempDir()
+	rules, brief := filepath.Join(dir, "rules.txt"), filepath.Join(dir, "new.md")
+	require.NoError(t, os.WriteFile(rules, []byte("Be careful.\n"), 0o600))
+	require.NoError(t, os.WriteFile(brief, []byte("the new work\n\nBe careful.\n"), 0o600))
+	assert.Contains(t, ta.ok("brief a-1 --rules "+rules+" --brief-file "+brief), "a-1 brief replaced")
+	assert.Equal(t, "the new work\n\nBe careful.", ta.primary("a-1").F("brief"))
 }

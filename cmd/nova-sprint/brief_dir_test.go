@@ -38,7 +38,7 @@ func TestAddBriefDirLandsCardsInFileOrderWithTheirNeeds(t *testing.T) {
 	writeNeedsBrief(t, dir, "b", "Fix b.", "c")
 	writeNeedsBrief(t, dir, "c", "Fix c.", "")
 	out := ta.ok("add --stream s1 --brief-dir " + dir)
-	require.Contains(t, out, "ADD OK moved=3")
+	require.Contains(t, out, "ADD OK stream=s1 cards=3 before=- moved=3")
 	lines := strings.Split(strings.TrimSpace(out), "\n")
 	require.Contains(t, lines[0], "MOVED a ->")
 	require.Contains(t, lines[1], "MOVED b ->")

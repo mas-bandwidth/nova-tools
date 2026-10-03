@@ -343,7 +343,7 @@ func (c *held) actor(pr *Card) string {
 		if wc == nil || wc.F("primary") != pr.ID || (wc.Col != Ready && wc.Col != Working) || s.MemberCtl(wc.Row).F("status") != Up {
 			return ""
 		}
-		field, limit, _, _ := WorkDeadline(wc) // the tick's own deadline
+		field, limit, _, _ := WorkDeadline(s, wc) // the tick's own deadline
 		if d, ok := c.running(wc.F(field)); ok && d <= limit {
 			return fmt.Sprintf("member %s holds %s@%s (%s), %s of %s running", wc.Row, wc.ID, wc.F("gen"), wc.Col, d.Round(time.Second), limit)
 		}
@@ -412,6 +412,9 @@ func (c *held) tickOn(pr *Card) string {
 // tick, that names the primary, its stopped stream, or its stream while it
 // merges there; "" when none.
 func (c *held) judgment(pr *Card) string {
+	if IsHeld(pr) {
+		return "held by the coordinator (add --held) until release"
+	}
 	if j := c.judged[pr.ID]; len(j) > 0 {
 		return "open: " + strings.Join(j, ", ")
 	}
@@ -456,6 +459,15 @@ func (c *held) waits(pr *Card) (why, root string, ok bool) {
 		if len(w) == 0 {
 			if IsSentinel(pr) && pr.F("reached") != "" {
 				return "reached, and no judgment is open on it", "", false
+			}
+			if IsSentinel(pr) && !HasBefore(s, pr) {
+				// a stop with nothing placed before it is next, for the coordinator's
+				// release (docs/SPEC-SPRINT.md section 16): held while other work of the
+				// sprint moves; when none does, the step that ends it, or the tick, marks
+				// it reached (Reachable)
+				if id := workInFlight(s, nil); id != "" {
+					return "a stop with nothing placed before it, next for the coordinator's release while " + id + " moves", "", true
+				}
 			}
 			return "every need has landed or was waived, and nothing moves it", "", false
 		}
@@ -576,7 +588,7 @@ func (c *held) overdueUnmarked() []Finding {
 func (c *held) decisions(pr *Card) []string {
 	var out []string
 	switch {
-	case IsSentinel(pr) && pr.F("reached") != "":
+	case IsHeld(pr) || IsSentinel(pr) && (pr.F("reached") != "" || !HasBefore(c.s, pr)):
 		out = []string{"release", "drop"}
 	case pr.Col == Ready:
 		out = []string{"fleet up", "drop"}

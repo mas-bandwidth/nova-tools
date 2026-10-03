@@ -102,11 +102,12 @@ func machineLoops(ctx context.Context, st config.Store, machine string) ([]strin
 type widthJSON struct {
 	Machine string `json:"machine"`
 	Width   int    `json:"width"`
+	Default bool   `json:"default,omitempty"` // no width: half its cores, as fleet sync resolves it
 	Member  bool   `json:"member"`
 }
 
 func toJSON(w config.MachineWidth) widthJSON {
-	return widthJSON{Machine: w.Machine, Width: w.Width, Member: w.Member()}
+	return widthJSON{Machine: w.Machine, Width: w.Width, Default: w.Default, Member: w.Member()}
 }
 
 // runMachineWidth is `machine width <name>`: the width of the sprint's member

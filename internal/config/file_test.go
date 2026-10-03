@@ -144,7 +144,7 @@ func TestAFileStoreReadsOnlyItsOwnShape(t *testing.T) {
 		row, found, err := f.Get(context.Background(), KindMachine, "m1")
 		require.NoError(t, err)
 		require.True(t, found)
-		assert.Equal(t, "0", row.Fields["width"])
+		assert.Equal(t, "", row.Fields["width"], "width is unset: the default width")
 	})
 }
 

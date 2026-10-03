@@ -2,23 +2,30 @@ package sprint
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 )
 
 // fleet sync makes the fleet table match the inventory (nova-config): every
-// machine the inventory names a member is a row at its width, and every row
-// the inventory no longer names is held. The inventory is the one place a
+// machine the inventory names a member is a row at its width, every row whose
+// machine has width 0 is held, and every row with no machine row at all leaves
+// the fleet once no card stays on it. The inventory is the one place a
 // machine's existence and capacity are written, so the fleet table is never
 // typed by hand (docs/SPEC-SPRINT.md, section 5, "The fleet from the
 // inventory").
 //
-// There is no new state. A sync only makes the moves fleet up and fleet down
-// already make, for many members in one plan: a missing member is added down
-// until it beats (presence brings it up, as for fleet up), a member whose
-// width differs has its width set, a member the inventory dropped is held and
-// its unfinished work cards are dealt to the members that stay up
-// (tla/SprintEvents.tla, PlanDown: R2). The status of a member that stays is
+// A sync makes the moves fleet up and fleet down already make, for many
+// members in one plan: a missing member is added down until it beats (presence
+// brings it up, as for fleet up), a member whose width differs has its width
+// set, a member the inventory dropped is held and its unfinished work cards are
+// dealt to the members that stay up (tla/SprintEvents.tla, PlanDown: R2). One
+// move is its own: a member with no machine row on which no card stays after
+// that redeal (memberKeeps) has its control card taken off the table in the same
+// step, held by the sync, and the verb then deletes its row (store.DropMembers),
+// so its width leaves the fleet's total; a machine row that comes back places
+// the same control card again (store.RejoinMembers), and the sync releases it.
+// The status of a member that stays is
 // never written, and the deal's rolling index moves only with the cards a held
 // member's redeal places (round.go): presence and the index are the tick's.
 // A hold is marked by who made it (the control card's held_by): the sync
@@ -46,6 +53,7 @@ const (
 	DriftWidth   = "width"   // a member's width differs
 	DriftHold    = "hold"    // the table has a member the inventory no longer names
 	DriftRelease = "release" // a member the sync held is back in the inventory with room
+	DriftRemove  = "remove"  // a member with no machine row on which no card stays
 )
 
 // Drift is one difference between the fleet table and the inventory: what
@@ -66,6 +74,8 @@ func (d Drift) Line() string {
 		return fmt.Sprintf("%s has width %d and the inventory says %d", d.Member, d.From, d.To)
 	case DriftRelease:
 		return fmt.Sprintf("%s was held by the sync and is back in the inventory: release it", d.Member)
+	case DriftRemove:
+		return fmt.Sprintf("%s has no machine row in the inventory and no card stays on it: remove it from the fleet", d.Member)
 	}
 	return fmt.Sprintf("%s is a member of the fleet and not of the inventory: hold it down", d.Member)
 }
@@ -99,10 +109,13 @@ func ValidSync(want []SyncMember) string {
 }
 
 // FleetDrift is what a sync of want would write on the snapshot: the members
-// to add, the widths to set and the members to hold, by name. It is empty
-// exactly when the plan of a sync is empty, so a check and a sync agree, and
-// a sync after a sync has nothing to write.
-func FleetDrift(s *Snapshot, want []SyncMember) []Drift {
+// to add, the widths to set, the members to hold and the members to remove, by
+// name; machines is every machine row of the inventory, a member or not. It is
+// empty exactly when the plan of a sync is empty, so a check and a sync agree,
+// and a sync after a sync has nothing to write. A member with no machine row
+// that holds ready or working cards is a hold: the sync deals them away and
+// removes it in the same step when none stays (downPlan, Remove).
+func FleetDrift(s *Snapshot, want []SyncMember, machines []string) []Drift {
 	wanted := map[string]int{}
 	for _, m := range want {
 		wanted[m.Name] = m.Width
@@ -125,11 +138,51 @@ func FleetDrift(s *Snapshot, want []SyncMember) []Drift {
 		if _, ok := wanted[name]; ok {
 			continue
 		}
-		if ctl := s.MemberCtl(name); ctl != nil && (ctl.F("held") == "" || ctl.F("status") != Down) {
+		ctl := s.MemberCtl(name)
+		gone := !slices.Contains(machines, name)
+		switch {
+		case ctl == nil:
+			// a row whose control card a sync took off: its row delete is owed
+			out = append(out, Drift{Member: name, Kind: DriftRemove})
+		case gone && s.Fleet.Count(name, Ready)+s.Fleet.Count(name, Working)+memberKeeps(s, name) == 0:
+			out = append(out, Drift{Member: name, Kind: DriftRemove})
+		case ctl.F("held") == "" || ctl.F("status") != Down:
 			out = append(out, Drift{Member: name, Kind: DriftHold})
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Member < out[j].Member })
+	return out
+}
+
+// memberKeeps is how many cards stay on the member whatever a hold deals away:
+// its withdrawn cards (their primaries are ready, and the next deal places them
+// from here), and each finished work card that is the live work card of a
+// primary still on the table and not landed (its review, its reads and its merge
+// read it). A finished card of an earlier attempt, a landed primary or one off
+// the table is its history only, which the card's record keeps.
+func memberKeeps(s *Snapshot, member string) int {
+	n := s.Fleet.Count(member, Withdrawn)
+	for _, wc := range append(append([]*Card{}, s.Fleet.Cell(member, DoneOK)...), s.Fleet.Cell(member, DoneFailed)...) {
+		if pr := s.Work.Placed(wc.F(PrimaryField)); pr != nil && pr.Col != Landed && pr.F("work") == wc.ID {
+			n++
+		}
+	}
+	return n
+}
+
+// GoneHolding is a line for each member with no machine row in the inventory
+// that cards keep on the fleet: it stays held, and a sync removes it once no
+// card stays on it.
+func GoneHolding(s *Snapshot, want []SyncMember, machines []string) []string {
+	var out []string
+	for _, name := range s.Fleet.Rows() {
+		if slices.Contains(machines, name) || slices.ContainsFunc(want, func(m SyncMember) bool { return m.Name == name }) || s.MemberCtl(name) == nil {
+			continue
+		}
+		if n := memberKeeps(s, name); n > 0 {
+			out = append(out, fmt.Sprintf("%s has no machine row in the inventory and %d cards stay on it (withdrawn, or the live work of a primary not landed); it stays held, and a sync removes it once none does", name, n))
+		}
+	}
 	return out
 }
 
@@ -159,7 +212,7 @@ func fleetSyncPlan(s *Snapshot, r FleetReq, rr *round, moves roundMoves) Plan {
 		p.refuse(pr.Key, pr.Why)
 		refused[pr.Key] = true
 	}
-	drift := FleetDrift(s, r.Sync)
+	drift := FleetDrift(s, r.Sync, r.Machines)
 	newWidth := map[string]int{}
 	for _, m := range r.Sync {
 		newWidth[m.Name] = m.Width
@@ -171,7 +224,7 @@ func fleetSyncPlan(s *Snapshot, r FleetReq, rr *round, moves roundMoves) Plan {
 		if refused[d.Member] {
 			continue
 		}
-		if d.Kind == DriftHold {
+		if d.Kind == DriftHold || d.Kind == DriftRemove {
 			holding[d.Member] = true
 			continue
 		}
@@ -224,10 +277,15 @@ func fleetSyncPlan(s *Snapshot, r FleetReq, rr *round, moves roundMoves) Plan {
 		}
 	}
 	for _, d := range drift {
-		if d.Kind != DriftHold || refused[d.Member] {
+		if d.Kind != DriftHold && d.Kind != DriftRemove || refused[d.Member] || s.MemberCtl(d.Member) == nil {
+			// a row with no control card has nothing to plan: the verb deletes it
 			continue
 		}
-		hp := downPlan(s, FleetReq{Op: "hold", Member: d.Member, Who: r.Who, Why: "gone from the inventory", HeldBy: HeldBySync}, stay, rr, moves, q, widths)
+		hold := FleetReq{Op: "hold", Member: d.Member, Who: r.Who, Why: "gone from the inventory", HeldBy: HeldBySync}
+		if !slices.Contains(r.Machines, d.Member) {
+			hold.Why, hold.Remove = "no machine row in the inventory", true
+		}
+		hp := downPlan(s, hold, stay, rr, moves, q, widths)
 		p.Units = append(p.Units, hp.Units...)
 		p.Refused = append(p.Refused, hp.Refused...)
 		p.Notes = append(p.Notes, hp.Notes...)

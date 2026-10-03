@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// THE CLASS RULE: THE FOUR SPRINT TABLES ARE LOCKED.
+// THE CLASS RULE: THE SPRINT TABLES ARE LOCKED.
 //
 // Glenn 2026-10-01: "i never want new things unless i ask for them" / "i dislike this
 // drift from the design of nova sprint tables that is *complete and locked*." A column
@@ -20,17 +20,18 @@ import (
 // tick on the real store.
 //
 // internal/sprint/TABLES.lock pins, as plain text a reader sees in a diff, every column
-// of the work, readers, merge and fleet tables (name, projection, fold, hidden flag, and
-// the header label where one is set) in order, and the order the sprint view shows the
-// tables in. This test renders the same text from internal/sprint/schema.go and is red
+// of the work, readers, merge and fleet tables and of the friends table where draws
+// (name, projection, fold, hidden flag, and the header label where one is set) in order,
+// the order where shows the tables in by default (view) and with --all (view-all).
+// This test renders the same text from internal/sprint/schema.go and is red
 // on any difference. A change to a table's shape is made by editing the lock file in the
 // same PR, which a read then sees.
 
 // renderTablesLock is the lock's body as schema.go has it now: one line per column,
-// then the view order.
+// then the view order, default and --all.
 func renderTablesLock() string {
 	var b strings.Builder
-	for _, t := range (sprint.Names{}).Definitions() {
+	for _, t := range append((sprint.Names{}).Definitions(), sprint.FriendsDef()) {
 		hidden := map[string]bool{}
 		for _, h := range t.Hidden {
 			hidden[h] = true
@@ -47,7 +48,8 @@ func renderTablesLock() string {
 			b.WriteByte('\n')
 		}
 	}
-	fmt.Fprintf(&b, "view %s\n", strings.Join(sprint.ViewOrder, " "))
+	fmt.Fprintf(&b, "view %s\n", strings.Join(sprint.ShownOrder, " "))
+	fmt.Fprintf(&b, "view-all %s\n", strings.Join(sprint.AllOrder, " "))
 	return b.String()
 }
 

@@ -61,7 +61,10 @@ type app struct {
 	// inventory reads the machines of nova-config and their widths (fleet
 	// sync): tests give it the config's in-memory store.
 	inventory inventoryFn
-	loc       *time.Location // the zone times print in: nil is the machine's local zone
+	// friends reads the names of nova-config's friend rows (friend sync):
+	// tests give it the config's in-memory store.
+	friends friendsFn
+	loc     *time.Location // the zone times print in: nil is the machine's local zone
 	// notify is how an interrupt reaches a command that runs until it is
 	// interrupted (where --watch): the context it returns is done at one.
 	notify func(ctx context.Context) (context.Context, context.CancelFunc)
@@ -115,13 +118,25 @@ type app struct {
 	// rounds: land itself then leaves the queue as it is.
 	prune    pruneQueue
 	landLazy bool
+	// tickDeadline is how long the run loop waits for one tick (run
+	// --tick-deadline; 0, a test's loop, waits for ever); after is the clock
+	// it waits on (time.After unless a test sets it), and exit how the loop
+	// ends the process when a tick runs past it (os.Exit unless a test sets it).
+	tickDeadline time.Duration
+	after        func(time.Duration) <-chan time.Time
+	exit         func(code int)
+	// home is the directory a seat's inbox is under (inbox --wait --push seat:
+	// ~/<holder>-working/inbox): os.UserHomeDir unless a test sets it.
+	home func() (string, error)
 }
 
 func newApp(getenv func(string) string) *app {
-	a := &app{getenv: getenv, now: time.Now, sleep: time.Sleep, conns: map[string]*redisconn.Conn{}, cached: map[string]store.Backend{}, meter: hostload.Local(), notify: interruptContext, screen: screenSize}
+	a := &app{getenv: getenv, now: time.Now, sleep: time.Sleep, after: time.After, exit: os.Exit, conns: map[string]*redisconn.Conn{}, cached: map[string]store.Backend{}, meter: hostload.Local(), notify: interruptContext, screen: screenSize}
 	a.backend = a.redisBackend
 	a.inventory = a.readInventory
+	a.friends = a.readFriends
 	a.landRoot = defaultLandRoot
+	a.home = os.UserHomeDir
 	return a
 }
 
@@ -219,6 +234,10 @@ type common struct {
 	// set, adds to it from the step's result.
 	says  []string
 	after func(ctx context.Context, st *store.Store, res store.Result) []string
+	// addStream and addBefore are add's own: its result line names them
+	// (stream=<s> cards=<n> before=<sentinel>).
+	addStream string
+	addBefore string
 }
 
 func (c *common) register(fs flagSet, getenv func(string) string) {

@@ -34,6 +34,8 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
 // Sprint runs one sprint verb and returns its exit code and stdout.
@@ -190,11 +192,11 @@ func Judge(r Result, pu Push) (fin Finish, why string) {
 		if len(why) >= len("nothing:") && strings.EqualFold(why[:len("nothing:")], "nothing:") {
 			why = strings.TrimSpace(why[len("nothing:"):])
 		}
-		return FinishFailed, "nothing to do: " + why
+		return FinishFailed, cardhdr.EndNothing + ": " + why
 	case r.Verdict != "ok":
 		return FinishFailed, "verdict " + r.Verdict
 	case pu.Sha == "":
-		return FinishFailed, "no commit: " + pu.None
+		return FinishFailed, cardhdr.EndNoCommit + ": " + pu.None
 	}
 	return FinishOK, ""
 }
@@ -231,6 +233,9 @@ type Packet struct {
 	Model    string `json:"model,omitempty"`
 	Tokens   string `json:"tokens,omitempty"`
 	Deadline int    `json:"deadline,omitempty"`
+	// Tier is the tier the route was drawn from when the sprint decided it (a read's
+	// read tier, a rework's --tier); empty when the brief's line 1 names it.
+	Tier string `json:"tier,omitempty"`
 }
 
 // queueCard is one card of `nova-sprint queue --as <me> --json`. Its claim is the
@@ -249,8 +254,12 @@ type queueCard struct {
 type queueOut struct {
 	As    string      `json:"as"`
 	Epoch uint64      `json:"epoch"`
-	Width int         `json:"width"` // the member's width, from its fleet row (0 for a reader)
+	Width int         `json:"width"` // the worker's width, from its fleet row: a member's own, a reader's its machine's (0: no row)
 	Cards []queueCard `json:"cards"`
+	// Reader is whether the name is a row of the readers table (nil: a server from before
+	// the field). A reader with no row beats nothing and is asked nothing until the
+	// coordinator declares it (reader add).
+	Reader *bool `json:"reader,omitempty"`
 }
 
 type takeOut struct {
@@ -260,9 +269,11 @@ type takeOut struct {
 // Config is one member's or reader's standing.
 type Config struct {
 	As string // the member's (reader's) name in the fleet (readers) table
-	// Width is an override of the most cards it runs at once: a reader's
-	// width, or a twin's. A member with none runs the width its fleet row
-	// names, read with its queue every tick (the fleet row is the truth).
+	// Width is an override of the most cards it runs at once, a twin's. A
+	// worker with none runs the width its fleet row names, read with its
+	// queue every tick (the fleet row is the truth): a member's own row, a
+	// reader's the row of the machine it is named for (reader-<m> runs at
+	// m's width, sprint.ReaderMachine).
 	Width  int
 	Reader bool // run the readers-table loop instead of the fleet's
 	// Room is asked once a tick before any child is started (a recovered card or a taken
@@ -326,8 +337,10 @@ type Member struct {
 	// stage failure of the card is returned, whichever path launches it
 	stageRetried map[string]bool
 	epoch        uint64
-	width        int // the width this tick runs to: the override, else the fleet row's
+	width        int  // the width this tick runs to: the override, else the fleet row's
+	saidNoWidth  bool // the NOTE that no row names a width has been said
 	drain        bool
+	noRow        bool   // a reader whose queue said it is no row of the readers table, said once
 	beaten       uint64 // the Meter's samples the last written beat has carried
 	noRoom       bool   // Room said no on the last tick it was asked
 	// spent is where the last pass's time went, by part (PassTimes)
@@ -386,6 +399,32 @@ func New(cfg Config, s Sprint, r Runner, pu Pusher, out io.Writer) *Member {
 // card, not a recovered one). A member whose binary was replaced drains, and
 // stops when Running is 0.
 func (m *Member) Drain() { m.drain = true }
+
+// DrainMost is the longest a draining member waits for its children: the stop timeout of
+// the loop units (fleet/templates: TimeoutStopSec, ExitTimeOut) is DrainMost and a minute,
+// so a member always stops by itself before its supervisor kills what is left.
+const DrainMost = 2 * time.Hour
+
+// DrainBound is how long a member stopped by its supervisor (SIGTERM) waits for the children
+// it runs: the longest deadline they run to, and LongStall for the push and the report after
+// it, at most DrainMost (nova-tools#5096 item 26).
+func DrainBound(longest time.Duration) time.Duration {
+	return min(longest+LongStall, DrainMost)
+}
+
+// LongestDeadline is the longest deadline of the cards the member runs: each packet's
+// route deadline, or override (the member's own --deadline) for one that names none, and
+// override whenever it is longer (a reader given --deadline runs every read to it).
+func (m *Member) LongestDeadline(override time.Duration) time.Duration {
+	longest := time.Duration(0)
+	for _, l := range m.running {
+		if l.spent {
+			continue
+		}
+		longest = max(longest, time.Duration(l.packet.Deadline)*time.Second, override)
+	}
+	return longest
+}
 
 // Running is how many lanes the member holds: one for every launch from its start until
 // its card is reported (a spent launch holds none). A child that has exited holds its lane
@@ -601,10 +640,26 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 	if e, ok := m.runner.(Epocher); ok {
 		e.Epoch(q.Epoch)
 	}
+	if m.cfg.Reader && q.Reader != nil && *q.Reader == m.noRow {
+		// the readers table is the coordinator's (init --readers, reader add): a reader
+		// with no row is never asked, so the loop says so once, and once when it came
+		m.noRow = !*q.Reader
+		if m.noRow {
+			fmt.Fprintf(m.out, "MEMBER NOT A READER %s: no row of the readers table, so its queue is no beat and it is asked nothing; the coordinator declares it: nova-sprint reader add %s\n", oneLine(m.cfg.As), oneLine(m.cfg.As))
+		} else {
+			fmt.Fprintf(m.out, "NOTE reader %s: the readers table has its row; it beats and is asked reads\n", oneLine(m.cfg.As))
+		}
+	}
 	if m.cfg.Width == 0 && q.Width != m.width {
 		// the fleet row changed (fleet up --width, fleet sync): said once, run from now
 		fmt.Fprintf(m.out, "width %d -> %d (the fleet row)\n", m.width, q.Width)
 		m.width = q.Width
+	}
+	if m.cfg.Width == 0 && m.width == 0 && !m.saidNoWidth {
+		// no row names a width: a member before its fleet row, a reader named for no
+		// machine; it takes nothing until one does, said once
+		m.saidNoWidth = true
+		fmt.Fprintf(m.out, "NOTE width 0: no fleet row names this worker's width, so it takes nothing; a member runs at its own fleet row's, a reader named reader-<m> runs at machine m's (nova-config machine set <m> --width <n>, then nova-sprint fleet sync)\n")
 	}
 	held := []string{"--epoch", strconv.FormatUint(q.Epoch, 10)}
 	// every card this tick would start is started, or, when Config.Room says no, finished as
@@ -705,7 +760,15 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 				}
 				continue
 			}
-			if !r.Ran || (r.Verdict != "ok" && r.Verdict != "broken") {
+			finding := oneLine(r.Report)
+			if r.Verdict == "broken" {
+				finding = findingOf(r)
+			}
+			// a broken verdict whose finding names no file, line or rule is no verdict
+			// (docs/SPEC-CARD-CONTRACT.md section 3): handed back as "no finding", so the
+			// sprint asks another reader and the coordinator never judges on nothing
+			noFinding := r.Ran && r.Verdict == "broken" && !typedrec.NamesADefect(finding)
+			if !r.Ran || (r.Verdict != "ok" && r.Verdict != "broken") || noFinding {
 				// no verdict is no finding, and not a read: the read is
 				// returned, and the sprint's next tick asks it of another
 				// reader free at the attempt, or of this reader again, which
@@ -714,10 +777,16 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 				// JudgedOnlyAfterTheBound). A return refused leaves the
 				// launch spent: the read stays for the lateness rule.
 				why := oneLine(r.Report)
-				if r.End == EndStaging {
+				switch {
+				case r.End == EndStaging:
 					why = EndStaging + ": " + oneLine(r.Staging) // the stage's reason, to the inbox
+				case r.End == EndProvider && r.Provider != "":
+					why = EndProvider + ": " + oneLine(r.Provider) // the provider's cause, as Judge names it
 				}
 				reason := cut(fmt.Sprintf("no verdict (ran=%t verdict=%q): %s", r.Ran, r.Verdict, why))
+				if noFinding {
+					reason = cut(NoFinding + ": the broken read names no file, line or rule: " + finding)
+				}
 				args := append(append([]string{"read", "--as", m.cfg.As, "--return", id, "--reason", reason}, usageArgs(r)...), launched...)
 				code, out := m.run(args...)
 				fmt.Fprintf(m.out, "read %s: returned exit=%d: %s\n", id, code, reason)
@@ -739,7 +808,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 			if r.Verdict == "broken" {
 				word = "--broken"
 			}
-			args = append(append([]string{"read", "--as", m.cfg.As, word, id, "--finding", oneLine(r.Report)}, usageArgs(r)...), launched...)
+			args = append(append([]string{"read", "--as", m.cfg.As, word, id, "--finding", finding}, usageArgs(r)...), launched...)
 		} else {
 			pu := *l.push
 			fin, why := Judge(r, pu)
@@ -1303,6 +1372,39 @@ func cut(s string) string {
 	return s
 }
 
+// NoFinding begins the reason of a read the member hands back because its broken verdict
+// names no defect (docs/SPEC-CARD-CONTRACT.md section 3).
+const NoFinding = "no finding"
+
+// MaxFindingBytes bounds a broken read's finding as the member reports it: under the
+// sprint's bound on a card's text field (sprint.MaxCardTextBytes), so a long review is cut,
+// never refused.
+const MaxFindingBytes = 6 << 10
+
+// findingOf is a broken read's finding as the member reports it: every line of its report
+// and its body in order, the body's repeat of the report and markdown headings left out,
+// joined with " / " and cut to MaxFindingBytes, never its first line alone
+// (docs/SPEC-SPRINT.md section 6: the coordinator's judgment shows the finding in full).
+func findingOf(r Result) string {
+	report := oneLine(r.Report)
+	lines := []string{}
+	if report != "" {
+		lines = append(lines, report)
+	}
+	repeat := report != ""
+	for _, l := range strings.Split(r.Body, "\n") {
+		l = strings.TrimSpace(l)
+		switch {
+		case l == "" || strings.HasPrefix(l, "#"):
+		case repeat && l == report:
+			repeat = false
+		default:
+			lines = append(lines, l)
+		}
+	}
+	return oneline.Cap(strings.Join(lines, " / "), MaxFindingBytes)
+}
+
 // oneLine is a report as one line for a verb's flag: the first non-empty
 // line, cut at 500 bytes; "" when there is none.
 func oneLine(s string) string {
@@ -1358,14 +1460,14 @@ func CardText(p Packet) string {
 		}
 	}
 	if p.Kind == "read" {
-		b.WriteString("Your verdict is RESULT.md's `verdict: ok` or `verdict: broken` (broken means the work is wrong for the card, with the finding as your report; a problem of your own run is not a verdict, leave the line out). ")
+		b.WriteString("Your verdict is RESULT.md's `verdict: ok` or `verdict: broken` (broken means the work is wrong for the card; a problem of your own run is not a verdict, leave the line out). ")
+		b.WriteString("A broken verdict tells them what to do: at least one finding line names the file (file:line), the line, or the card's STEP or RULE the work breaks, and says what to change. A broken verdict that names none is no verdict: the sprint asks another reader. ")
+		b.WriteString("Your RESULT.md's `report:` line and its body are what the sprint records as your finding, in full; the member reports it for you as:\n\n")
+		fmt.Fprintf(&b, "    nova-sprint read --as %s (--ok | --broken) %s --epoch %d --finding '<your findings>'\n", p.As, p.Card, p.Epoch)
+		return b.String()
 	}
 	b.WriteString("Your RESULT.md's `report:` line is what the sprint records as your report; the member reports it for you as:\n\n")
-	if p.Kind == "read" {
-		fmt.Fprintf(&b, "    nova-sprint read --as %s (--ok | --broken) %s --epoch %d --finding '<one line>'\n", p.As, p.Card, p.Epoch)
-	} else {
-		fmt.Fprintf(&b, "    nova-sprint finish --as %s %s@%d --epoch %d --branch %s --head <sha> --report '<one line>' [--failed]\n", p.As, p.Card, p.Gen, p.Epoch, p.Branch)
-	}
+	fmt.Fprintf(&b, "    nova-sprint finish --as %s %s@%d --epoch %d --branch %s --head <sha> --report '<one line>' [--failed]\n", p.As, p.Card, p.Gen, p.Epoch, p.Branch)
 	return b.String()
 }
 
