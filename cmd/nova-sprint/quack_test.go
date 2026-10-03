@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -40,7 +41,9 @@ func (ta *testApp) quackCards(line string) ([]string, map[string]string) {
 // quack cuts n cards per stream into a running store: ids that carry the run's
 // stamp and so never repeat across passes, the tiers taken in turn down each
 // stream, and a brief that names the card's own file, the repository and the
-// base, and passes the card lint of the repository's own rules file.
+// base, and passes the card lint of the repository's own rules file by reference:
+// the members hold the file and inject it at stage time, so the stored brief does
+// not carry it, and each stream records it (nova-tools#5174 rule 6).
 func TestQuackCutsStampedCardsThatAlternateTiersAndPassTheLint(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
@@ -63,9 +66,15 @@ func TestQuackCutsStampedCardsThatAlternateTiersAndPassTheLint(t *testing.T) {
 			for _, want := range []string{"quacks/" + id + ".txt", "REPO: " + repo, "BASE: dev", "`quack: " + id + "`"} {
 				assert.Contains(t, brief, want, id)
 			}
-			assert.Empty(t, swarm.LintCardChildWith([]byte(brief), rs), "%s passes the repository's card lint", id)
+			assert.Empty(t, swarm.LintCardChildByReference([]byte(brief), rs), "%s passes the repository's card lint", id)
+			assert.NotContains(t, brief, "RULES.", "%s does not carry the rules the member injects", id)
 		}
 	}
+	st, err := ta.a.store(common{redis: "mem:0", actor: "coordinator"})
+	require.NoError(t, err)
+	recorded, err := st.StreamRules(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"a": swarm.DefaultRulesName, "b": swarm.DefaultRulesName}, recorded)
 	second, _ := ta.quackCards("quack --streams a --count 2 --tiers pro --base main --repo " + repo)
 	require.Len(t, second, 2)
 	for _, id := range second {

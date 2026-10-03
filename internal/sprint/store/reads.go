@@ -104,6 +104,10 @@ func (st *Store) Packets(ctx context.Context, cards []*sprint.Card) ([]sprint.Pa
 		return nil, err
 	}
 	pt, ft := byID(ps), byID(ws)
+	rules, err := st.StreamRules(ctx)
+	if err != nil {
+		return nil, err
+	}
 	var out []sprint.Packet
 	for _, c := range cards {
 		p, earlier, w := sprint.PacketCards(c)
@@ -117,7 +121,9 @@ func (st *Store) Packets(ctx context.Context, cards []*sprint.Card) ([]sprint.Pa
 		if w != "" {
 			wc = ft[w]
 		}
-		out = append(out, sprint.PacketOf(st.Names.Prefix, st.epoch, c, pt[p], ec, wc))
+		pk := sprint.PacketOf(st.Names.Prefix, st.epoch, c, pt[p], ec, wc)
+		pk.Rules = rules[pk.Stream] // the stream's rules by reference, the member injects them
+		out = append(out, pk)
 	}
 	return out, nil
 }

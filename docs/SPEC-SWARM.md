@@ -487,6 +487,9 @@ one repository's. They come from a rules file, one required sentence per line:
   `--rules` reads it;
 - `nova-swarm lint --card <card> --child-rules-file <file>` holds a card to the file, and
   implies `--child-rules`;
+- `nova-swarm lint --card <card> --member-injects` lints the card as the member stages it, rules
+  by reference (docs/SPEC-SPRINT.md section 2): the rules of the file the member holds are
+  appended, so a card need not carry them, and a line that contradicts them is still a finding;
 - with no file the set is the built-in general rules, below.
 
 A rules file line is a sentence; a blank line and a line starting `#` are skipped. A line may

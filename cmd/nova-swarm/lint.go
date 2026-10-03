@@ -753,6 +753,9 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 	// without being asked.
 	childRules := f.fs.Bool("child-rules", false, "also hold the card to the child rules: the built-in general rules, or the sentences of --child-rules-file")
 	childRulesFile := f.fs.String("child-rules-file", "", "the rules `file` to hold the card to instead of the built-in general rules (it implies --child-rules): one required sentence per line, [name] sentence to name the token")
+	// `--member-injects` IS RULES BY REFERENCE (nova-tools#5174 rule 6): the member appends
+	// the rules to the card at stage time, so the card is linted as the child is handed it.
+	memberInjects := f.fs.Bool("member-injects", false, "the member injects the child rules at stage time (rules by reference): the card need not carry them, and a line that contradicts them is still a finding; the rules are --child-rules-file's, else the file the member holds for the card's repository (fleet/child-rules.<repo>.txt, else fleet/child-rules.txt); it implies --child-rules")
 	repoDir := f.fs.String("repo", ".", "with --base-check: the git checkout the card's PATHS are resolved in at the base sha (default the working directory)")
 	legsPath := f.fs.String("legs", "", "with --base-check: the fleet leg table, one leg per line or a TSV whose first column is the leg")
 	p95Path := f.fs.String("p95", "", "with --base-check: a `file` of <kind> <seconds> rows, the p95 wall of each kind's finished cards (* answers for any kind)")
@@ -898,11 +901,19 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 	// rules file the flag names (internal/swarm/lintchild.go). A rule of a file has its own
 	// token, so its remedy is built here and read back where the drift prints.
 	var ruleRemedies map[string]string
-	if *childRulesFile != "" {
-		*childRules = true // a rules file is the ask for the child rules
+	if *childRulesFile != "" || *memberInjects {
+		*childRules = true // a rules file, or the member's, is the ask for the child rules
 	}
 	if *childRules {
 		rules := swarm.DefaultChildRules
+		if *memberInjects && *childRulesFile == "" {
+			rs, err := swarm.HeldRules(swarm.RulesNameFor("", string(raw)))
+			if err != nil {
+				fmt.Fprintf(stderr, "nova-swarm lint: --member-injects: %s; run: nova-swarm lint --card <file> --member-injects --child-rules-file <file>\n", oneline.Err(err))
+				return 2
+			}
+			rules = rs
+		}
 		if *childRulesFile != "" {
 			rs, err := swarm.ReadChildRules(*childRulesFile)
 			if err != nil {
@@ -915,7 +926,11 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 		for _, r := range rules {
 			ruleRemedies["rule-"+r.Name] = swarm.ChildRemedy(rules, "rule-"+r.Name)
 		}
-		for _, hf := range swarm.LintCardChildWith(raw, rules) {
+		lintChild := swarm.LintCardChildWith
+		if *memberInjects {
+			lintChild = swarm.LintCardChildByReference
+		}
+		for _, hf := range lintChild(raw, rules) {
 			findings = append(findings, cardFinding{check: hf.Check, line: hf.Line, excerpt: hf.Excerpt})
 		}
 	}

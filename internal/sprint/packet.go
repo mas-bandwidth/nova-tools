@@ -23,7 +23,12 @@ type Packet struct {
 	Gen     int    `json:"gen,omitempty"`
 	Epoch   uint64 `json:"epoch"`
 	Brief   string `json:"brief,omitempty"`
-	Fix     string `json:"fix,omitempty"`
+	// Rules is the held rules file the stream records by reference (nova-tools#5174 rule
+	// 6): the member appends its RULES paragraph to the brief at stage time
+	// (swarm.StagedBrief); "" when the stream records none, and the member injects its own
+	// (swarm.RulesNameFor).
+	Rules string `json:"rules,omitempty"`
+	Fix   string `json:"fix,omitempty"`
 	// A rework's: the words of the readers that found the attempt before broken, and how
 	// that attempt ended (steps_review.go reworkGiven); the member's frame writes both
 	// into JOB.md, so the child learns why its attempt exists.

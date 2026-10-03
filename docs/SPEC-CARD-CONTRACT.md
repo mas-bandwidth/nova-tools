@@ -94,8 +94,14 @@ a 36-thread bench, 2026-10-02, sixteen reads each ran `go test ./internal/ci/`, 
 of processes and build every command, and the machine spent 85% of its CPU in the kernel; the
 work's own gate ran those tests, and CI runs them again. A checkout with no `go.mod` has no gate
 of its own, and its JOB.md says to run the card's. JOB.md repeats no rules:
-the card's own RULES paragraph is in the brief, where the add lint holds it, and the child
-reads it once.
+the RULES paragraph is in the card the child is handed, once. Rules by reference (the owner,
+2026-10-02: "Rules by reference: the member injects fleet/child-rules.txt once; the card does not
+carry it; a per-repo rules file for second repos."; nova-tools#5174 rule 6): the stored brief is
+the card's text alone, and the member, when it writes the card file at the start of a launch,
+appends the RULES paragraph of the rules file it holds (the stream's, else the repository's
+`fleet/child-rules.<repo>.txt`, else `fleet/child-rules.txt`; docs/SPEC-SPRINT.md section 2),
+so what the child reads is the shape it read when the card carried them
+(`TestTheChildsCardIsUnchangedByRulesByReference`).
 
 **Where a rework starts.** `sprint.BaseOf` is the one place that decides it: the packet's `base_head`
 is the head of the latest earlier attempt whose finish was ok at a full sha, with `base_attempt` its

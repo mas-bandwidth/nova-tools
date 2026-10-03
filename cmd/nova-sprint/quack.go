@@ -99,7 +99,7 @@ func (a *app) cmdQuack(args []string, stdout, stderr io.Writer) int {
 		r := sprint.AddReq{Stream: s, Who: c.actor}
 		for i := 1; i <= *count; i++ {
 			id := fmt.Sprintf("quack-%s-%s-%03d", stamp, s, i)
-			card := sprint.CardAdd{ID: id, File: id, Brief: quackBrief(id, s, ts[(i-1)%len(ts)], *repo, *base, rs)}
+			card := sprint.CardAdd{ID: id, File: id, Brief: quackBrief(id, s, ts[(i-1)%len(ts)], *repo, *base, embedded(rs))}
 			r.Cards = append(r.Cards, card)
 			all = append(all, card)
 		}
@@ -134,7 +134,16 @@ func (a *app) cmdQuack(args []string, stdout, stderr io.Writer) int {
 		step = store.AddStep(reqs[0])
 	}
 	step.Args = store.ArgsOf(quackArgs{Verb: "quack", Streams: ss, Count: *count, Tiers: ts, Repo: *repo, Base: *base})
-	return a.runStep("quack", *c, st, step, stdout, stderr)
+	return a.recordStreamRules("quack", a.runStep("quack", *c, st, step, stdout, stderr), st, ss, rs, stderr)
+}
+
+// embedded is the rules a brief carries itself: none when the members hold the set and
+// inject it at stage time (rules by reference, nova-tools#5174 rule 6), else every rule.
+func embedded(rs ruleSet) []swarm.ChildRule {
+	if rs.held != "" {
+		return nil
+	}
+	return rs.rules
 }
 
 // quackStampBytes is the stamp's length: six bytes, twelve hex digits. A
@@ -166,8 +175,9 @@ func quackStamp() (string, error) {
 // quackBrief is one quack card's whole brief: line 1 names the card and its
 // tier (cardhdr.ReadModel), BASE and REPO the staged checkout, then what to
 // do, the known answer, how it finishes and how it is read, and the RULES
-// paragraph of the rule set the sprint holds briefs to (swarm.RulesParagraph),
-// so the card lint passes by construction.
+// paragraph of rules (swarm.RulesParagraph), so the card lint passes by construction;
+// with no rules (a set the members hold and inject at stage time) the brief is the
+// card's text alone.
 func quackBrief(id, stream, tier, repo, base string, rules []swarm.ChildRule) string {
 	file := "quacks/" + id + ".txt"
 	lines := []string{
@@ -184,6 +194,9 @@ func quackBrief(id, stream, tier, repo, base string, rules []swarm.ChildRule) st
 		fmt.Sprintf("Gate: none; `cat %s` prints quack.", file),
 		fmt.Sprintf("Finish: the report is the PR. `gh pr create` with the title `quack: %s` and the body `quack` plus the diff stat, last line 🤖 Generated with [Claude Code](https://claude.com/claude-code); or, as JOB.md says for your profile, RESULT.md with output and report both containing quack.", id),
 		fmt.Sprintf("As a read (only when JOB.md's first line is `%s <card>, attempt <n>`; under any other JOB.md you are the work, which does the What above and never reviews): change nothing, commit nothing. Approve (`gh pr review --approve`) when, and only when, the report contains the word quack and the work's diff, from the start commit JOB.md names, is exactly the one file %s holding the one line quack; a diff against BASE's tip shows every card landed since as deleted, and that is never the work's. Otherwise `gh pr review --request-changes --body <what is missing>`. A read of a quack takes under a minute: do not run tests or read the repo.", cardcontract.ReadTitle, file),
+	}
+	if len(rules) == 0 {
+		return strings.Join(lines, "\n")
 	}
 	return strings.Join(lines, "\n") + "\n\n" + strings.TrimSuffix(swarm.RulesParagraph(rules), "\n")
 }
