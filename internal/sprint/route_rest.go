@@ -26,23 +26,36 @@ const (
 // PropRouteRest is the fleet table's property that holds a route's last rest.
 func PropRouteRest(route string) string { return "route_rest_" + route }
 
-// NRouteRested is the happened note of a rest the tick wrote, to the coordinator.
-const NRouteRested = "a route rested: its children ended with no result"
+// PropProviderRest is the fleet table's property that holds a provider's last rest: ONE per
+// provider, never a copy on each of its routes, so a provider's rest is one write and the
+// table's properties (ntable.LimitTableProps) grow with the providers, not the routes.
+func PropProviderRest(provider string) string { return "provider_rest_" + provider }
 
-// RouteRest is a route's last rest: when it began, when it ends, the cards whose takes on
-// it rested it, and why: the cause (RestNoResult, rule 3's; RestCredit, RestAuth and
+// NRouteRested is the happened note of a rest the tick wrote, to the coordinator, and
+// NProviderRested the note of a provider's (provider_funds.go).
+const (
+	NRouteRested    = "a route rested: its children ended with no result"
+	NProviderRested = "a provider rested: its funds or its key"
+)
+
+// RouteRest is a rest: rule 3's of a route (Route, PropRouteRest) or a provider's (Provider,
+// PropProviderRest; read through RouteRests it names each route of the provider too): when
+// it began, when it ends (for a rest that has ended, when it ended), the cards whose takes
+// rested it, and why: the cause (RestNoResult, rule 3's; RestCredit, RestAuth and
 // RestBalance, the provider's, provider_funds.go) and, for the provider's, its words.
 type RouteRest struct {
 	Route     string
+	Provider  string
 	At, Until time.Time
 	Cards     []string
 	Cause     string
 	Why       string
 }
 
-// The causes of a rest: rule 3's children that ended with no result, a take the provider
-// refused for want of credit or for its key, and a balance under an hour of the provider's
-// spend (provider_funds.go).
+// The causes of a rest: rule 3's children that ended with no result; a provider out of
+// credit (a take it refused for want of credit, or a balance at or under zero); a take it
+// refused for its key; and a provider low on funds, its balance over zero but not over one
+// hour of its spend (balance.go). Only out of credit counts toward stopping the sprint.
 const (
 	RestNoResult = "no-result"
 	RestCredit   = "out-of-credit"
@@ -73,9 +86,13 @@ func (r RouteRest) UntilSaid() string {
 // Resting says the rest holds at now.
 func (r RouteRest) Resting(now time.Time) bool { return now.Before(r.Until) }
 
-// Funds says the rest is the provider's want of funds: a take refused for credit, or a
-// balance under an hour of its spend.
+// Funds says the rest is the provider's want of funds: out of credit, or low.
 func (r RouteRest) Funds() bool { return r.Cause == RestCredit || r.Cause == RestBalance }
+
+// Out says the provider is out of credit (RestCredit): the one rest that counts toward
+// stopping the sprint (AllOutOfCredit). A provider low on funds still has money, and the
+// sprint never stops while one does.
+func (r RouteRest) Out() bool { return r.Cause == RestCredit }
 
 // value is the rest as the property holds it: its start, its end, the cards ("-" for
 // none), its cause and its words. A value of the first three alone (a rest written before
@@ -100,44 +117,96 @@ func (r RouteRest) Said() string {
 	return "its children ended with no result"
 }
 
-// RouteRests is the last rest the fleet table records for each route of routes that has one.
-func RouteRests(routes []Route, fleet *Table) map[string]RouteRest {
+// parseRest is a rest as its property holds it (value); ok is false for a value that is
+// not one.
+func parseRest(v string) (RouteRest, bool) {
+	f := strings.Fields(v)
+	if len(f) < 2 {
+		return RouteRest{}, false
+	}
+	at, e1 := time.Parse(time.RFC3339, f[0])
+	until, e2 := OpenUntil, error(nil)
+	if f[1] != restOpen {
+		until, e2 = time.Parse(time.RFC3339, f[1])
+	}
+	if e1 != nil || e2 != nil {
+		return RouteRest{}, false
+	}
+	rest := RouteRest{At: at, Until: until, Cause: RestNoResult}
+	if len(f) > 2 && f[2] != "-" {
+		rest.Cards = Split(f[2])
+	}
+	if len(f) > 3 {
+		rest.Cause, rest.Why = f[3], strings.Join(f[4:], " ")
+	}
+	return rest, true
+}
+
+// ProviderRests is the last rest the fleet table records for each provider that has one.
+func ProviderRests(fleet *Table) map[string]RouteRest {
 	out := map[string]RouteRest{}
-	for _, r := range routes {
-		v, _ := fleet.Prop(PropRouteRest(r.Name))
-		f := strings.Fields(v)
-		if len(f) < 2 {
+	if fleet == nil {
+		return out
+	}
+	for name, v := range fleet.Props() {
+		p, ok := strings.CutPrefix(name, PropProviderRest(""))
+		if !ok {
 			continue
 		}
-		at, e1 := time.Parse(time.RFC3339, f[0])
-		until, e2 := OpenUntil, error(nil)
-		if f[1] != restOpen {
-			until, e2 = time.Parse(time.RFC3339, f[1])
+		if rest, ok := parseRest(v); ok {
+			rest.Provider = p
+			out[p] = rest
 		}
-		if e1 != nil || e2 != nil {
-			continue
-		}
-		rest := RouteRest{Route: r.Name, At: at, Until: until, Cause: RestNoResult}
-		if len(f) > 2 && f[2] != "-" {
-			rest.Cards = Split(f[2])
-		}
-		if len(f) > 3 {
-			rest.Cause, rest.Why = f[3], strings.Join(f[4:], " ")
-		}
-		out[r.Name] = rest
 	}
 	return out
 }
 
-// routeEnd is one ended take on a route: the work card, when it ended, whether its child
-// left no result, and the provider's line when the provider refused it for credit or for
-// its key (refusal, provider_funds.go), "" otherwise.
+// RouteRests is the rest that decides each route of routes that has one: its own last rest
+// (rule 3's) or its provider's, whichever ends later, the provider's on a tie, named for
+// the route.
+func RouteRests(routes []Route, fleet *Table) map[string]RouteRest {
+	out := map[string]RouteRest{}
+	byProvider := ProviderRests(fleet)
+	for _, r := range routes {
+		v, _ := fleet.Prop(PropRouteRest(r.Name))
+		own, hasOwn := parseRest(v)
+		pr, hasProvider := byProvider[r.Provider]
+		switch {
+		case r.Provider != "" && hasProvider && (!hasOwn || !own.Until.After(pr.Until)):
+			pr.Route = r.Name
+			out[r.Name] = pr
+		case hasOwn:
+			own.Route = r.Name
+			out[r.Name] = own
+		}
+	}
+	return out
+}
+
+// restedRoutes is the routes a rest holds: its route, or every route of its provider.
+func restedRoutes(r RouteRest, routes []Route) []string {
+	if r.Route != "" {
+		return []string{r.Route}
+	}
+	var out []string
+	for _, x := range routes {
+		if x.Provider == r.Provider {
+			out = append(out, x.Name)
+		}
+	}
+	return out
+}
+
+// routeEnd is one ended take on a route: the work card, when it ended, when it was taken
+// (its child launched; zero when its record holds none), whether its child left no result,
+// and the provider's line when the provider refused it for credit or for its key (refusal,
+// provider_funds.go), "" otherwise.
 type routeEnd struct {
-	card     string
-	take     int
-	at       time.Time
-	noResult bool
-	refused  string
+	card      string
+	take      int
+	at, taken time.Time
+	noResult  bool
+	refused   string
 }
 
 // routeEnds is every ended take the fleet table's work cards record, by route: each take
@@ -152,7 +221,8 @@ func routeEnds(fleet *Table) map[string][]routeEnd {
 			if t.Route == "" || t.Route == RoutePin || err != nil {
 				continue
 			}
-			out[t.Route] = append(out[t.Route], routeEnd{card: c.ID, take: numbers[i], at: at, noResult: IsNoResult(t.Error), refused: refusal(t.Error)})
+			taken, _ := time.Parse(time.RFC3339, t.Taken)
+			out[t.Route] = append(out[t.Route], routeEnd{card: c.ID, take: numbers[i], at: at, taken: taken, noResult: IsNoResult(t.Error), refused: refusal(t.Error)})
 		}
 		if c.Col != DoneOK && c.Col != DoneFailed {
 			continue
@@ -168,7 +238,9 @@ func routeEnds(fleet *Table) map[string][]routeEnd {
 // RestsDue is the rests the rule writes now: each route of the store not resting at s.Now
 // whose window (its last RouteRestWindow ended takes after its last rest began, in the
 // order they ended) holds RouteRestAfter or more that left no result, rested from s.Now
-// for RouteRestFor, naming those takes' cards; in route name order.
+// for RouteRestFor, naming those takes' cards; and each provider a refusal rests
+// (providerRestsDue: one rest, Route "", over rule 3's on its routes); the providers' first,
+// then the routes', in name order.
 func RestsDue(s *Snapshot) []RouteRest {
 	if len(s.Routes) == 0 {
 		return nil
@@ -198,14 +270,18 @@ func RestsDue(s *Snapshot) []RouteRest {
 			out = append(out, RouteRest{Route: r.Name, At: s.Now, Until: s.Now.Add(RouteRestFor), Cards: cards, Cause: RestNoResult})
 		}
 	}
-	// a provider's refusal rests every route of the provider, over rule 3's on the same route
-	byProvider := providerRestsDue(s, rests, ends)
-	out = slices.DeleteFunc(out, func(r RouteRest) bool { _, ok := byProvider[r.Route]; return ok })
-	for _, r := range byProvider {
-		out = append(out, r)
+	// a provider's refusal rests the provider, every route of it, over rule 3's on its routes
+	byProvider := providerRestsDue(s, ProviderRests(s.Fleet), ends)
+	if len(byProvider) == 0 {
+		return out
 	}
-	slices.SortFunc(out, func(a, b RouteRest) int { return strings.Compare(a.Route, b.Route) })
-	return out
+	rested := map[string]bool{}
+	for _, p := range byProvider {
+		for _, name := range restedRoutes(p, s.Routes) {
+			rested[name] = true
+		}
+	}
+	return append(byProvider, slices.DeleteFunc(out, func(r RouteRest) bool { return rested[r.Route] })...)
 }
 
 // cmpEnd orders ended takes by when they ended, then by card and take.
@@ -238,7 +314,11 @@ func (s *Snapshot) withRests() (*Snapshot, []RouteRest) {
 	}
 	due := RestsDue(s)
 	for _, r := range due {
-		n.rests[r.Route] = r
+		for _, name := range restedRoutes(r, s.Routes) {
+			x := r
+			x.Route = name
+			n.rests[name] = x
+		}
 	}
 	return &n, due
 }
@@ -251,10 +331,21 @@ func (s *Snapshot) resting(route string) (RouteRest, bool) {
 	return r, ok
 }
 
-// restWrites puts each due rest in the plan: the fleet table's property, guarded on the
-// value read, and a happened note to the coordinator naming the cards.
+// restWrites puts each due rest in the plan: the fleet table's property (the route's, or the
+// provider's one), guarded on the value read, and a happened note to the coordinator naming
+// the cards, or the provider's words.
 func restWrites(p *Plan, s *Snapshot, due []RouteRest, who string) {
 	for _, r := range due {
+		if r.Route == "" {
+			was, had := s.Fleet.Prop(PropProviderRest(r.Provider))
+			p.Props = append(p.Props, PropWrite{Table: Fleet, Name: PropProviderRest(r.Provider), Value: r.value(), Was: was, WasAbsent: !had})
+			n := happened(NProviderRested, ProviderSubject(r.Provider), s.Now)
+			n.To, n.Who = s.Coordinator, who
+			n.What = fmt.Sprintf("provider %s rested until %s, its routes %s: %s; the deal draws no work card on them until then; nova-sprint routes shows it",
+				r.Provider, r.UntilSaid(), strings.Join(restedRoutes(r, s.Routes), ", "), r.Why)
+			p.Notes = append(p.Notes, n)
+			continue
+		}
 		was, had := s.Fleet.Prop(PropRouteRest(r.Route))
 		p.Props = append(p.Props, PropWrite{Table: Fleet, Name: PropRouteRest(r.Route), Value: r.value(), Was: was, WasAbsent: !had})
 		tier := ""
@@ -267,9 +358,6 @@ func restWrites(p *Plan, s *Snapshot, due []RouteRest, who string) {
 		n.To, n.Who = s.Coordinator, who
 		n.What = fmt.Sprintf("route %s rested until %s: %d of its last %d ended takes or fewer left no result (%s); the deal draws no work card on it until then; nova-sprint routes shows it",
 			r.Route, stamp(r.Until), len(r.Cards), RouteRestWindow, strings.Join(r.Cards, ", "))
-		if r.Cause != RestNoResult {
-			n.What = fmt.Sprintf("route %s rested until %s: %s; the deal draws no work card on it until then; nova-sprint routes shows it", r.Route, r.UntilSaid(), r.Why)
-		}
 		p.Notes = append(p.Notes, n)
 	}
 }

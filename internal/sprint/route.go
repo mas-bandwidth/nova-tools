@@ -453,12 +453,19 @@ func AttemptLine(wc *Card) string {
 // card beside the takes after it (FieldProviderTake plus the take's number, the card's
 // redeals when it ended plus one): the route and model it ran on, the member, when it
 // ended, what it spent and the error line. `card <id>` prints one ATTEMPT line for each,
-// and the route stats count it against its route.
-type ProviderTake struct{ Route, Model, Member, Finished, Usage, Error string }
+// and the route stats count it against its route. Taken is when the member took the card for
+// the take, its child launched ("" in a record written before it was kept): a provider's
+// refusal is read against the rest window its launch fell in (provider_funds.go).
+type ProviderTake struct{ Route, Model, Member, Finished, Usage, Error, Taken string }
 
-// String is the take as the card's field holds it: tab separated, the line last.
+// String is the take as the card's field holds it: tab separated, the line, whose tabs are
+// blanks, before the launch's time, so a record written before Taken reads as it did.
 func (t ProviderTake) String() string {
-	return strings.Join([]string{t.Route, t.Model, t.Member, t.Finished, t.Usage, strings.ReplaceAll(t.Error, "\t", " ")}, "\t")
+	v := strings.Join([]string{t.Route, t.Model, t.Member, t.Finished, t.Usage, strings.ReplaceAll(t.Error, "\t", " ")}, "\t")
+	if t.Taken != "" {
+		v += "\t" + t.Taken
+	}
+	return v
 }
 
 // ProviderTakes is the takes of the work card the provider failed, in the order they ended,

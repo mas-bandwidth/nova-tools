@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The rule's window (rule 3): the last RouteRestWindow ended takes on a route after its last
@@ -74,11 +75,13 @@ func TestRestsDueCountsNoResultEndsInTheRoutesWindow(t *testing.T) {
 	}
 }
 
-// A provider's refusal (nova-tools#5199): a take refused for want of credit rests every route
-// of its provider until a balance returns, one refused for the key for RouteRestFor, naming
-// the take; a rate limit, an outage and a no-result
-// take do not; a refusal before the route's last rest began does not; a route resting now
-// is not rested again, and its refusal is not read.
+// A provider's refusal (nova-tools#5199): a take refused for want of credit rests its
+// provider, ONE rest of every route of it, until a balance returns; one refused for the key
+// for RouteRestFor, naming the take; a rate limit, an outage and a no-result take do not. A
+// refusal is attributed to the rest window its child launched in: one launched before the
+// provider's last rest ended (in flight when it began, or launched while it held) does not
+// rest it again however late it arrives; one launched after the end does; a record with no
+// launch time does not. A provider resting now is not rested again.
 func TestProviderRestsDueRestEveryRouteOfTheRefusedProvider(t *testing.T) {
 	t.Parallel()
 	t0 := time.Date(2030, 1, 2, 3, 0, 0, 0, time.UTC)
@@ -86,49 +89,68 @@ func TestProviderRestsDueRestEveryRouteOfTheRefusedProvider(t *testing.T) {
 	line := func(class, status string) string {
 		return "provider: class=" + class + " status=" + status + " msg=the provider's words"
 	}
+	credit := line("out-of-credit", "402")
+	ended := at(2) + " " + at(4) + " - out-of-credit x; ended: funded by coordinator: paid" // began 3:02, ended 3:04
 	routes := []Route{{Name: "a", Tier: "flash", Provider: "p", Enabled: true}, {Name: "b", Tier: "pro", Provider: "p", Enabled: true}, {Name: "c", Tier: "flash", Provider: "q", Enabled: true}}
 	for _, tc := range []struct {
-		name  string
-		err   string
-		ended int
-		rest  string // route a's rest before
-		want  []string
-		cause string
+		name          string
+		err           string
+		taken, finish int    // minutes after t0; taken -1 is a record with no launch time
+		rest          string // provider p's rest before
+		cause         string // "" rests nothing
 	}{
-		{"out of credit", line("out-of-credit", "402"), 1, "", []string{"a", "b"}, RestCredit},
-		{"the key refused", line("auth", "401"), 1, "", []string{"a", "b"}, RestAuth},
-		{"a rate limit", line("rate-limited", "429"), 1, "", nil, ""},
-		{"an outage", line("provider-5xx", "503"), 1, "", nil, ""},
-		{"no result", "no result: no RESULT.md shape", 1, "", nil, ""},
-		{"before the last rest", line("out-of-credit", "402"), 1, at(2) + " " + at(4) + " - out-of-credit x", nil, ""},
-		{"resting now", line("out-of-credit", "402"), 1, at(0) + " " + at(60) + " - out-of-credit x", nil, ""},
+		{"out of credit", credit, 0, 1, "", RestCredit},
+		{"the key refused", line("auth", "401"), 0, 1, "", RestAuth},
+		{"a rate limit", line("rate-limited", "429"), 0, 1, "", ""},
+		{"an outage", line("provider-5xx", "503"), 0, 1, "", ""},
+		{"no result", "no result: no RESULT.md shape", 0, 1, "", ""},
+		{"launched before the last rest began", credit, 0, 1, ended, ""},
+		{"in flight when the rest began, refused after it ended", credit, 1, 5, ended, ""},
+		{"launched while the rest held, refused after it ended", credit, 3, 5, ended, ""},
+		{"launched after the last rest ended", credit, 5, 6, ended, RestCredit},
+		{"a record with no launch time", credit, -1, 6, ended, ""},
+		{"resting now", credit, 0, 1, at(0) + " " + at(60) + " - out-of-credit x", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+			take := ProviderTake{Route: "a", Finished: at(tc.finish), Error: tc.err}
+			if tc.taken >= 0 {
+				take.Taken = at(tc.taken)
+			}
 			f := NewTable(Fleet)
 			f.SetRows([]string{"m1"})
-			f.Put(&Card{ID: "c1", Row: "m1", Col: Withdrawn, Fields: map[string]string{FieldProviderTake + "1": ProviderTake{Route: "a", Finished: at(tc.ended), Error: tc.err}.String()}})
+			f.Put(&Card{ID: "c1", Row: "m1", Col: Withdrawn, Fields: map[string]string{FieldProviderTake + "1": take.String()}})
 			if tc.rest != "" {
-				f.SetProps(map[string]string{PropRouteRest("a"): tc.rest})
+				f.SetProps(map[string]string{PropProviderRest("p"): tc.rest})
 			}
 			s := &Snapshot{Now: t0.Add(10 * time.Minute), Fleet: f, Routes: routes}
 			due := RestsDue(s)
-			var got []string
-			for _, r := range due {
-				got = append(got, r.Route)
-				assert.Equal(t, tc.cause, r.Cause)
-				assert.Equal(t, []string{"c1"}, r.Cards)
-				words, until := "provider p refused its key: card c1 on route a: ", s.Now.Add(RouteRestFor)
-				if tc.cause == RestCredit {
-					// out of credit: excluded until a balance returns, never for a time
-					words, until = "out of credit: provider p refused card c1 on route a: ", OpenUntil
-				}
-				assert.Equal(t, words+strings.TrimPrefix(tc.err, "provider: "), r.Why)
-				assert.Equal(t, until, r.Until)
-				s.Fleet.SetProps(map[string]string{PropRouteRest(r.Route): r.value()})
-				assert.Equal(t, r, RouteRests(routes, s.Fleet)[r.Route], "the property reads back as written")
+			if tc.cause == "" {
+				assert.Empty(t, due)
+				return
 			}
-			assert.Equal(t, tc.want, got)
+			require.Len(t, due, 1, "one rest of the provider, never one per route")
+			r := due[0]
+			assert.Equal(t, "", r.Route)
+			assert.Equal(t, "p", r.Provider)
+			assert.Equal(t, tc.cause, r.Cause)
+			assert.Equal(t, []string{"c1"}, r.Cards)
+			words, until := "provider p refused its key: card c1 on route a: ", s.Now.Add(RouteRestFor)
+			if tc.cause == RestCredit {
+				// out of credit: excluded until a balance returns, never for a time
+				words, until = "out of credit: provider p refused card c1 on route a: ", OpenUntil
+			}
+			assert.Equal(t, words+strings.TrimPrefix(tc.err, "provider: "), r.Why)
+			assert.Equal(t, until, r.Until)
+			s.Fleet.SetProps(map[string]string{PropProviderRest("p"): r.value()})
+			assert.Equal(t, r, ProviderRests(s.Fleet)["p"], "the property reads back as written")
+			rests := RouteRests(routes, s.Fleet)
+			for _, name := range []string{"a", "b"} {
+				want := r
+				want.Route = name
+				assert.Equal(t, want, rests[name], "every route of the provider rests, read from the one property")
+			}
+			assert.NotContains(t, rests, "c", "another provider's route serves")
 		})
 	}
 }
@@ -140,7 +162,7 @@ func TestDollarsRoundUpToTheCent(t *testing.T) {
 	for _, tc := range []struct {
 		v    float64
 		want string
-	}{{credits - usage, "$-0.51"}, {1.231, "$1.24"}, {4.2, "$4.20"}, {0, "$0.00"}, {-0.001, "$0.00"}} {
+	}{{credits - usage, "-$0.51"}, {1.231, "$1.24"}, {4.2, "$4.20"}, {0, "$0.00"}, {-0.001, "$0.00"}} {
 		assert.Equal(t, tc.want, Dollars(tc.v), "%v", tc.v)
 	}
 }

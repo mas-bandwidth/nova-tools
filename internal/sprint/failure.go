@@ -89,8 +89,8 @@ func identicalEnds(wc *Card) string {
 
 // parseTake is one ended take's record (ProviderTake.String).
 func parseTake(v string) ProviderTake {
-	f := append(strings.SplitN(v, "\t", 6), "", "", "", "", "", "")
-	return ProviderTake{Route: f[0], Model: f[1], Member: f[2], Finished: f[3], Usage: f[4], Error: f[5]}
+	f := append(strings.SplitN(v, "\t", 7), "", "", "", "", "", "", "")
+	return ProviderTake{Route: f[0], Model: f[1], Member: f[2], Finished: f[3], Usage: f[4], Error: f[5], Taken: f[6]}
 }
 
 // The primary's record of its failed work, written by the failed finish (Finish): the

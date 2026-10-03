@@ -1308,7 +1308,7 @@ func takeEnded(s *Snapshot, c, pr *Card, r FinishReq, kind string) Unit {
 	// the ended take's own record, kept through the redeals: its route, member, usage and line
 	take := c.Int("redeals") + 1
 	set[FieldProviderTake+itoa(take)] = ProviderTake{Route: c.F(FieldRoute), Model: c.F(FieldModel), Member: c.Row,
-		Finished: stamp(s.Now), Usage: usage, Error: line}.String()
+		Finished: stamp(s.Now), Usage: usage, Error: line, Taken: taken}.String()
 	// and the producer's record of it (cost.go): it still cost tokens and time
 	prSet := map[string]string{}
 	addConsumer(pr, prSet, workConsumer(s, c, take, kind, rec))

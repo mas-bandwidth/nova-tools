@@ -120,6 +120,7 @@ var TickDecisions = map[string][]string{
 	NNoRoute:    {"route add", "look at the card", "drop", "wait"},
 	// a payment and a key are the owner's: no rework is offered (provider_funds.go)
 	NProviderFunds:  {"ack", "wait"}, // and "funded <provider>", named per provider (providerConds)
+	NProviderLow:    {"ack", "wait"}, // the same
 	NProviderKey:    {"ack", "wait"},
 	NAllOutOfCredit: {"ack", "wait"},
 	NInvariant:      {"look at the card", "repair", "wait"},
@@ -601,7 +602,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 		}
 	}
 	restWrites(&p, s, rests, r.who())
-	due += notify(&p, s, conds, []string{NNoMember, NBound, NNoRoute, NProviderFunds, NProviderKey, NAllOutOfCredit}, r)
+	due += notify(&p, s, conds, []string{NNoMember, NBound, NNoRoute, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit}, r)
 	// every provider out of credit: the binding stops the machine as the plan commits
 	p.Stop = stop
 	return p, due
@@ -1011,7 +1012,7 @@ type cond struct {
 // stays one condition, so they are keyed by their type and subject only.
 func condKey(typ, subject, card, what string) string {
 	switch typ {
-	case NNoMember, NCannotAsk, NNoRoute, NFewReaders, NProviderFunds, NProviderKey, NAllOutOfCredit:
+	case NNoMember, NCannotAsk, NNoRoute, NFewReaders, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit:
 		what = ""
 	case NWorkLate, NReadLate:
 		// a lateness is one per attempt's card and kind (not taken, not

@@ -14,22 +14,27 @@ import (
 // the transport), and this step writes what it read: the fleet table's property
 // provider_balance_<provider> (ProviderBalance), the spend an hour measured from the
 // provider's own count of dollars used (else the balance's fall) since the read before,
-// and the rests the balance calls for:
+// and the provider's rest (PropProviderRest), one of two, each until the poll reads enough
+// (OpenUntil), never for a time (the owner, 2026-10-03, 8:18 AM ET: "you'll need to detect
+// when a provider runs out of credits, and exclude that provider moving forward, and let me
+// know."):
 //
-//   - a balance at or under zero rests every route of the provider "out of credit" (cause
-//     out-of-credit), and one under one hour of the measured spend rests them too (cause
-//     balance), each until a balance returns (OpenUntil), never for a time (the owner,
-//     2026-10-03, 8:18 AM ET: "you'll need to detect when a provider runs out of credits,
-//     and exclude that provider moving forward, and let me know."): the deal draws none of
-//     them, and the provider's one judgment is open (provider_funds.go), before any take is
-//     refused;
-//   - a balance read over zero and over an hour of the spend (a payment came) ends at once
-//     every rest of the provider's funds, a refused take's included; the judgment closes at
-//     the next tick, and a machine the tick stopped because every provider was out of
-//     credit is the coordinator's to start.
+//   - OUT OF CREDIT (RestCredit) at a balance at or under zero: the provider has no money.
+//     It counts toward stopping the sprint (AllOutOfCredit);
+//   - LOW ON FUNDS (RestBalance) at a balance over zero but not over one hour of the spend:
+//     the provider is excluded before it runs dry, but it still has money, so it never
+//     counts toward stopping the sprint. A provider out of credit whose balance is read
+//     over zero again is low on funds from then, not out.
+//
+// Both exclude the provider from the deal and open its one judgment (provider_funds.go).
+// The spend is measured before the rest began: while the provider rests for its funds it
+// spends next to nothing, so the poll keeps the hour of spend it measured then, and the rest
+// ends only when a balance is read over that figure (or at funded), never because the
+// resting provider's spend fell. The judgment closes at the next tick, and a machine the
+// tick stopped because every provider was out of credit is the coordinator's to start.
 //
 // A provider whose balance cannot be read (no endpoint, no key, an answer that is not the
-// shape) is recorded unknown with why; nothing is rested or ended on it.
+// shape) is recorded unknown with why; its rest is neither written nor ended on it.
 
 // BalancePollEvery is how often the run loop reads the providers' balances.
 const BalancePollEvery = 10 * time.Minute
@@ -55,8 +60,9 @@ type BalanceReq struct {
 // NProviderFunded is the happened note of a rest of a provider's funds the poll ended.
 const NProviderFunded = "a provider's routes serve again: its balance is back"
 
-// Low says a balance calls for a rest: at or under zero, or under one hour of the spend.
-func (b ProviderBalance) Low() bool { return b.Known && (b.Balance <= 0 || b.Balance < b.SpendHour) }
+// Low says a balance calls for a rest of the provider's funds: at or under zero (out of
+// credit), or not over one hour of the spend (low on funds).
+func (b ProviderBalance) Low() bool { return b.Known && b.Balance <= max(0, b.SpendHour) }
 
 // spendSince is the spend an hour between the read before (was) and this one at now: from
 // the provider's count used when both reads have one, else from the balance's fall; the
@@ -74,59 +80,70 @@ func spendSince(was ProviderBalance, r ProviderRead, now time.Time) float64 {
 	return was.SpendHour
 }
 
-// Balance is the poll's step: each read written to its provider's property, and the rests it
-// calls for written or ended on the provider's routes (see above), each with a happened note
+// Balance is the poll's step: each read written to its provider's property, and the rest it
+// calls for written, changed or ended on the provider (see above), each with a happened note
 // to the coordinator.
 func Balance(s *Snapshot, r BalanceReq) Plan {
 	var p Plan
-	balances, rests := ProviderBalances(s.Fleet), RouteRests(s.Routes, s.Fleet)
+	balances, rests := ProviderBalances(s.Fleet), ProviderRests(s.Fleet)
+	routesOf := map[string][]string{}
+	for _, route := range s.Routes {
+		routesOf[route.Provider] = append(routesOf[route.Provider], route.Name)
+	}
 	var said []string
 	reads := slices.Clone(r.Reads)
 	slices.SortFunc(reads, func(a, b ProviderRead) int { return strings.Compare(a.Provider, b.Provider) })
 	for _, rd := range reads {
 		was := balances[rd.Provider]
-		b := ProviderBalance{Provider: rd.Provider, Known: rd.Known, Balance: rd.Balance, At: s.Now, HasUsed: rd.HasUsed, Used: rd.Used, Note: rd.Note,
-			SpendHour: spendSince(was, rd, s.Now)}
+		rest, has := rests[rd.Provider]
+		resting := has && rest.Resting(s.Now)
+		spend := spendSince(was, rd, s.Now)
+		if resting && rest.Funds() {
+			spend = was.SpendHour // measured before the rest began: a resting provider spends next to nothing
+		}
+		b := ProviderBalance{Provider: rd.Provider, Known: rd.Known, Balance: rd.Balance, At: s.Now, HasUsed: rd.HasUsed, Used: rd.Used, Note: rd.Note, SpendHour: spend}
 		prop, had := s.Fleet.Prop(PropProviderBalance(rd.Provider))
 		p.Props = append(p.Props, PropWrite{Table: Fleet, Name: PropProviderBalance(rd.Provider), Value: b.value(), Was: prop, WasAbsent: !had})
 		said = append(said, rd.Provider+" "+b.Said())
 		if !b.Known {
+			continue // an unknown balance writes and ends no rest
+		}
+		cause := ""
+		switch {
+		case b.Balance <= 0:
+			cause = RestCredit
+		case b.Low():
+			cause = RestBalance
+		}
+		var next RouteRest
+		switch {
+		case cause != "" && (!resting || rest.Funds() && rest.Cause != cause):
+			next = RouteRest{Provider: rd.Provider, At: s.Now, Until: OpenUntil, Cause: cause,
+				Why: oneLine(fmt.Sprintf("low on funds: provider %s balance %s is not over one hour of its spend (%s an hour)", rd.Provider, b.Said(), Dollars(b.SpendHour)))}
+			if cause == RestCredit {
+				next.Why = oneLine(fmt.Sprintf("out of credit: provider %s balance %s", rd.Provider, b.Said()))
+			}
+			if resting {
+				next.At = rest.At // the same rest, its cause changed: its spend was measured before it began
+			}
+		case cause == "" && resting && rest.Funds():
+			next = rest
+			next.Until = s.Now // the rest's end: a refusal launched before it starts no new rest
+			next.Why = oneLine(rest.Why + "; ended: balance " + b.Said())
+		default:
 			continue
 		}
-		for _, route := range s.Routes {
-			if route.Provider != rd.Provider {
-				continue
-			}
-			rest, has := rests[route.Name]
-			resting := has && rest.Resting(s.Now)
-			var next RouteRest
-			switch {
-			case b.Low() && !resting:
-				next = RouteRest{Route: route.Name, At: s.Now, Until: OpenUntil, Cause: RestBalance,
-					Why: oneLine(fmt.Sprintf("provider %s balance %s is under one hour of its spend (%s an hour)", rd.Provider, b.Said(), Dollars(b.SpendHour)))}
-				if b.Balance <= 0 {
-					next.Cause, next.Why = RestCredit, oneLine(fmt.Sprintf("out of credit: provider %s balance %s", rd.Provider, b.Said()))
-				}
-			case !b.Low() && resting && rest.Funds():
-				next = rest
-				next.Until = s.Now
-				next.Why = oneLine(rest.Why + "; ended: balance " + b.Said())
-			default:
-				continue
-			}
-			was, hadRest := s.Fleet.Prop(PropRouteRest(route.Name))
-			p.Props = append(p.Props, PropWrite{Table: Fleet, Name: PropRouteRest(route.Name), Value: next.value(), Was: was, WasAbsent: !hadRest})
-			n := happened(NRouteRested, TierSubject(route.Tier), s.Now)
-			if !next.Resting(s.Now) {
-				n = happened(NProviderFunded, ProviderSubject(rd.Provider), s.Now)
-			}
-			n.To, n.Who = s.Coordinator, r.Who
-			n.What = fmt.Sprintf("route %s rested until %s: %s; the deal draws no work card on it until then; nova-sprint routes shows it", route.Name, next.UntilSaid(), next.Why)
-			if !next.Resting(s.Now) {
-				n.What = fmt.Sprintf("route %s serves again: provider %s's balance is %s, over one hour of its spend (%s an hour)", route.Name, rd.Provider, b.Said(), Dollars(b.SpendHour))
-			}
-			p.Notes = append(p.Notes, n)
+		prior, hadRest := s.Fleet.Prop(PropProviderRest(rd.Provider))
+		p.Props = append(p.Props, PropWrite{Table: Fleet, Name: PropProviderRest(rd.Provider), Value: next.value(), Was: prior, WasAbsent: !hadRest})
+		routes := strings.Join(routesOf[rd.Provider], ", ")
+		n := happened(NProviderRested, ProviderSubject(rd.Provider), s.Now)
+		n.What = fmt.Sprintf("provider %s rested until %s, its routes %s: %s; the deal draws no work card on them until then; nova-sprint routes shows it", rd.Provider, next.UntilSaid(), routes, next.Why)
+		if !next.Resting(s.Now) {
+			n = happened(NProviderFunded, ProviderSubject(rd.Provider), s.Now)
+			n.What = fmt.Sprintf("provider %s serves again, its routes %s: its balance is %s, over one hour of its spend (%s an hour)", rd.Provider, routes, b.Said(), Dollars(b.SpendHour))
 		}
+		n.To, n.Who = s.Coordinator, r.Who
+		p.Notes = append(p.Notes, n)
 	}
 	p.Units = append(p.Units, Unit{Key: "balance", Moved: "provider balances: " + strings.Join(said, "; ")})
 	return p
