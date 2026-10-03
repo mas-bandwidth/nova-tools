@@ -307,3 +307,33 @@ func TestASecondIdenticalTakeBelowTheCeilingEscalatesNamingTheClass(t *testing.T
 	assert.Empty(t, h.openOf(sprint.NBound))
 	h.clean("escalated at the second identical take")
 }
+
+// A failed finish that reports no usage (a run that ended before its harness counted, a
+// member with nothing to say) reads the routes all the same: the second identical failed
+// attempt below the ceiling escalates in the finish, never a judgment for want of a usage
+// line. Before the fix the finish read the routes only to price a usage, NextTier found no
+// route, and the bound's judgment was raised in place of the escalation.
+func TestASecondIdenticalFailureWithNoUsageStillEscalates(t *testing.T) {
+	t.Parallel()
+	h := flashAndPro(t)
+	h.addReady("s1", 1, briefOf("pro", ""))
+	h.startMachine()
+	h.machine()
+	failBare := func(card, report string) {
+		h.t.Helper()
+		wc := h.snap().Fleet.Card(card)
+		require.NotNil(t, wc)
+		gens := map[string]int{wc.ID: wc.Int("gen")}
+		h.must(TakeStep(sprint.TakeReq{As: wc.Row, Sel: sprint.Sel{IDs: []string{wc.ID}}, Gens: gens, Who: wc.Row}))
+		h.must(FinishStep(sprint.FinishReq{As: wc.Row, Sel: sprint.Sel{IDs: []string{wc.ID}}, Gens: gens, Failed: true, Report: report, Who: wc.Row}))
+	}
+	failBare("s1-1.w1", "verdict not-done; tests red in x")
+	h.must(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: "make them pass", Who: "tester"}))
+	h.machine()
+	failBare("s1-1.w2", "verdict not-done; tests red in y")
+	pr := h.snap().Work.Card("s1-1")
+	assert.Equal(t, sprint.Ready, pr.Col, "escalated, not held for a judgment")
+	assert.Equal(t, "pro", pr.F(sprint.FieldTierNow))
+	assert.Empty(t, h.openOf(sprint.NBound), "no judgment below the ceiling")
+	h.clean("escalated with no usage")
+}
