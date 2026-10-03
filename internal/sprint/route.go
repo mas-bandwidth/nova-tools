@@ -177,7 +177,7 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 			continue
 		}
 		if rest, ok := s.resting(r.Name); ok {
-			rested = append(rested, r.Name+" until "+stamp(rest.Until))
+			rested = append(rested, r.Name+" until "+rest.UntilSaid()+": "+rest.Said())
 			continue
 		}
 		served[r.Name] = r
@@ -218,7 +218,7 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 		return set, tier, ""
 	}
 	if len(rested) > 0 {
-		return nil, tier, "every enabled route of tier " + tier + " in its array rests, its children having ended with no result (" + strings.Join(rested, ", ") + "): the deal draws one when its rest ends; or run nova-config route add <name> --tier " + tier + " ..., or pin the card with a model: <provider>/<model> line"
+		return nil, tier, "every enabled route of tier " + tier + " in its array rests (" + strings.Join(rested, "; ") + "): the deal draws one when its rest ends; or run nova-config route add <name> --tier " + tier + " ..., or pin the card with a model: <provider>/<model> line"
 	}
 	return nil, tier, "no enabled route serves tier " + tier + ": run nova-config route add <name> --tier " + tier + " ..., name it in nova-config tier set " + tier + " --routes <name,...>, then nova-config apply; or pin the card with a model: <provider>/<model> line"
 }
@@ -453,12 +453,19 @@ func AttemptLine(wc *Card) string {
 // card beside the takes after it (FieldProviderTake plus the take's number, the card's
 // redeals when it ended plus one): the route and model it ran on, the member, when it
 // ended, what it spent and the error line. `card <id>` prints one ATTEMPT line for each,
-// and the route stats count it against its route.
-type ProviderTake struct{ Route, Model, Member, Finished, Usage, Error string }
+// and the route stats count it against its route. Taken is when the member took the card for
+// the take, its child launched ("" in a record written before it was kept): a provider's
+// refusal is read against the rest window its launch fell in (provider_funds.go).
+type ProviderTake struct{ Route, Model, Member, Finished, Usage, Error, Taken string }
 
-// String is the take as the card's field holds it: tab separated, the line last.
+// String is the take as the card's field holds it: tab separated, the line, whose tabs are
+// blanks, before the launch's time, so a record written before Taken reads as it did.
 func (t ProviderTake) String() string {
-	return strings.Join([]string{t.Route, t.Model, t.Member, t.Finished, t.Usage, strings.ReplaceAll(t.Error, "\t", " ")}, "\t")
+	v := strings.Join([]string{t.Route, t.Model, t.Member, t.Finished, t.Usage, strings.ReplaceAll(t.Error, "\t", " ")}, "\t")
+	if t.Taken != "" {
+		v += "\t" + t.Taken
+	}
+	return v
 }
 
 // ProviderTakes is the takes of the work card the provider failed, in the order they ended,
@@ -513,6 +520,12 @@ type RouteStat struct {
 	// RestedUntil is when the route's rest ends while it rests (rule 3, route_rest.go):
 	// RFC3339, "" when it does not rest; `routes` fills it at its clock.
 	RestedUntil string `json:"rested_until,omitempty"`
+	// RestedFor is why it rests (RouteRest.Cause and its words), and Balance and
+	// BalanceAt its provider's balance as the balance poll last read it (balance.go):
+	// dollars and cents rounded up, or "unknown"; "" before any read.
+	RestedFor string `json:"rested_for,omitempty"`
+	Balance   string `json:"balance,omitempty"`
+	BalanceAt string `json:"balance_at,omitempty"`
 }
 
 // RouteStats is every route's record over the fleet table's work cards, the

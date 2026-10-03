@@ -268,11 +268,22 @@ harness's own record in the job's data home, at the places the harness profile n
 (`opencode/log/opencode.log`), from where it stood when the run began and bounded to its last
 64 KiB, and its session database (`opencode/opencode.db`, the `message` table). A run that ended
 with no result, by no end of the machinery's (the deadline, a TERM, the watch, the wall, the
-budget, a lost response, a question), is a provider failure when either holds: the log carries
-a provider error written by this run, an `ERROR` line that says a stream error, `server_error`,
-a rate limit, an overload or an HTTP 5xx status; or the run exited 0 and the session's
-last message is not a final assistant message (the last assistant message finished
-`tool-calls`, or none finished). The reason is the cause (`internal/swarm` providercause.go):
+budget, a lost response, a question), is a provider failure when one holds: the session's
+record of a failed message names the provider's refusal for credit (class `out-of-credit`: a
+402, insufficient credit or funds, a payment required), whatever the run's exit and wall; the
+harness's printed output (what the run appended to `<job>/harness-output.log`, where the harness
+prints its `ERROR` lines), or else its log, carries a provider error written by this run, an
+`ERROR` line that says a stream error, `server_error`, a rate limit, an overload, an account out
+of credit or quota (`Insufficient credits`, `Insufficient account funds`, `out of credit`, a
+quota, a payment required) or an HTTP 402, 429 or 5xx status; or the run exited 0 and the
+session's last message is not a final assistant message (the last assistant message finished
+`tool-calls`, or none finished). A session error of any other class is not a provider failure
+by itself; when one of the others holds, it names the cause. The refusal for credit is read
+first (nova-tools#5199; the owner, 2026-10-03: "provider out of funds should never be a mystery
+failure."): a non-retryable 402 at launch makes the harness exit 1 within two seconds, before
+its log holds a line, so the 402 is in the printed output and the session alone
+(`TestANonRetryableProviderRefusalAtLaunchIsAProviderFailure`,
+`TestASessionErrorThatIsNotARefusalForCreditIsNotAProviderFailureByItself`). The reason is the cause (`internal/swarm` providercause.go):
 `provider: class=<class> status=<status|-> msg=<words>`. The class is one of `unknown-model`
 (the provider does not know or serve the model id: a config error), `auth`, `out-of-credit`,
 `rate-limited`, `provider-5xx`, `timeout` and `other` (none of these, or the harness recorded

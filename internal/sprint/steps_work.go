@@ -1044,6 +1044,11 @@ func takeOne(s *Snapshot, r TakeReq) Plan {
 		if !c.Placed() || c.Row != r.As || c.Col != Ready {
 			return "not in " + r.As + " ready (it is " + placeWord(c) + ")"
 		}
+		// a card dealt before its route rested is never taken there: the provider would
+		// refuse it, spending a redeal; the tick withdraws it (restWithdrawals)
+		if rest, ok := cardRest(s, c); ok {
+			return "its route " + c.F(FieldRoute) + " rests until " + rest.UntilSaid() + " (" + rest.Said() + "): the tick withdraws it and deals it again on a route that serves"
+		}
 		if byID {
 			if room == 0 {
 				return fmt.Sprintf("member %s is at its width (%d working of %d): a card is taken when one is reported", r.As, len(s.Fleet.Cell(r.As, Working)), s.Width(r.As))
@@ -1316,7 +1321,7 @@ func takeEnded(s *Snapshot, c, pr *Card, r FinishReq, kind string) Unit {
 	// the ended take's own record, kept through the redeals: its route, member, usage and line
 	take := c.Int("redeals") + 1
 	set[FieldProviderTake+itoa(take)] = ProviderTake{Route: c.F(FieldRoute), Model: c.F(FieldModel), Member: c.Row,
-		Finished: stamp(s.Now), Usage: usage, Error: line}.String()
+		Finished: stamp(s.Now), Usage: usage, Error: line, Taken: taken}.String()
 	// and the producer's record of it (cost.go): it still cost tokens and time
 	prSet := map[string]string{}
 	addConsumer(pr, prSet, workConsumer(s, c, take, kind, rec))
@@ -1363,6 +1368,32 @@ func stagingRefused(s *Snapshot, c, pr *Card, r FinishReq) Unit {
 		change(Fleet, moveEntry(c, c.Row, Withdrawn, set, "taken", "dealt")),
 		change(Work, moveEntry(pr, pr.Row, Ready, prSet, "work")),
 	}, Notes: notes, Moved: fmt.Sprintf("%s working -> withdrawn gen=%d, %s refused it at staging; %s working -> ready", c.ID, c.Int("gen")+1, c.Row, pr.ID)}
+}
+
+// withdrawCard is the unit that withdraws work card c from its member, the one path of a
+// member going down (FleetStep) and of a ready card on a resting route (restWithdrawals): a
+// new generation and the withdrawn stamp, and FieldTakeEnded only when its take ended
+// (ended), which spends a redeal (redeal); its primary, working on c, goes back to ready for
+// the next deal, with a happened note of typ to its stream that says what, by who.
+func withdrawCard(s *Snapshot, c *Card, ended bool, typ, who, what string) Unit {
+	set := nextGen(c, "", s.Now)
+	set["withdrawn"] = stamp(s.Now)
+	if ended {
+		set[FieldTakeEnded] = stamp(s.Now)
+	}
+	u := Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, c.Row, Withdrawn, set, "taken", "dealt"))},
+		Moved: fmt.Sprintf("%s withdrawn gen=%d", c.ID, c.Int("gen")+1)}
+	if what != "" {
+		u.Moved += ", " + what
+	}
+	if pr := s.Work.Placed(c.F("primary")); pr != nil && pr.Col == Working && pr.F("work") == c.ID {
+		u.Changes = append(u.Changes, change(Work, moveEntry(pr, pr.Row, Ready, nil, "work")))
+		u.Moved += "; " + pr.ID + " working -> ready"
+		n := happened(typ, pr.Row, s.Now, pr.ID)
+		n.Who, n.What = who, what
+		u.Notes = append(u.Notes, n)
+	}
+	return u
 }
 
 // FleetReq is a fleet move: a member up or down, or the ready queues
@@ -1624,21 +1655,7 @@ func downPlan(s *Snapshot, r FleetReq, up []string, rr *round, moves roundMoves,
 			}
 		}
 		withdrew++
-		set := nextGen(c, "", s.Now)
-		set["withdrawn"] = stamp(s.Now)
-		if taken {
-			set[FieldTakeEnded] = stamp(s.Now)
-		}
-		u := Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, c.Row, Withdrawn, set, "taken", "dealt"))},
-			Moved: fmt.Sprintf("%s withdrawn gen=%d", c.ID, c.Int("gen")+1)}
-		if pr := s.Work.Placed(c.F("primary")); pr != nil && pr.Col == Working && pr.F("work") == c.ID {
-			u.Changes = append(u.Changes, change(Work, moveEntry(pr, pr.Row, Ready, nil, "work")))
-			u.Moved += "; " + pr.ID + " working -> ready"
-			w := happened(NWithdrawn, pr.Row, s.Now, pr.ID)
-			w.Who = r.Who
-			u.Notes = append(u.Notes, w)
-		}
-		p.Units = append(p.Units, u)
+		p.Units = append(p.Units, withdrawCard(s, c, taken, NWithdrawn, r.Who, ""))
 	}
 	if r.Remove && withdrew == 0 && memberKeeps(s, r.Member) == 0 {
 		// no card stays on it: its control card leaves the fleet, held by the
