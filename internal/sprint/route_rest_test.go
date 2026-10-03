@@ -61,7 +61,7 @@ func TestRestsDueCountsNoResultEndsInTheRoutesWindow(t *testing.T) {
 			t.Parallel()
 			s := &Snapshot{Now: t0.Add(45 * time.Minute), Fleet: fleet(tc.takes, tc.ok), Routes: []Route{{Name: "a", Tier: "pro", Enabled: true}}}
 			if tc.rest != "" {
-				s.Fleet.SetProps(map[string]string{PropRouteRest("a"): tc.rest})
+				s.Fleet.SetProps(map[string]string{PropRule3Rest(""): "a " + tc.rest})
 			}
 			due := RestsDue(s)
 			if tc.cards == nil {
@@ -69,10 +69,65 @@ func TestRestsDueCountsNoResultEndsInTheRoutesWindow(t *testing.T) {
 				return
 			}
 			assert.Equal(t, []RouteRest{{Route: "a", At: s.Now, Until: s.Now.Add(RouteRestFor), Cards: tc.cards, Cause: RestNoResult}}, due)
-			s.Fleet.SetProps(map[string]string{PropRouteRest("a"): due[0].value()})
+			s.Fleet.SetProps(map[string]string{PropRule3Rest(""): "a " + due[0].value()})
 			assert.Equal(t, due[0], RouteRests(s.Routes, s.Fleet)["a"], "the property reads back as written")
 		})
 	}
+}
+
+// A route_rest_<route> value is ignored. The route rests from the line in
+// rule3_rest_<provider>, and from nowhere else.
+func TestAnOldPerRouteRestPropertyIsIgnored(t *testing.T) {
+	t.Parallel()
+	t0 := time.Date(2030, 1, 2, 3, 0, 0, 0, time.UTC)
+	routes := []Route{{Name: "a", Tier: "pro", Provider: "p", Enabled: true}}
+	f := NewTable(Fleet)
+	old := stamp(t0) + " " + stamp(t0.Add(time.Hour)) + " c1,c2,c3"
+	f.SetProps(map[string]string{"route_rest_a": old})
+	assert.Empty(t, RouteRests(routes, f), "the old per-route property rests nothing")
+	f.SetProp(PropRule3Rest("p"), "a "+old)
+	got := RouteRests(routes, f)["a"]
+	assert.Equal(t, "a", got.Route)
+	assert.True(t, got.Resting(t0.Add(time.Minute)))
+	assert.Equal(t, []string{"c1", "c2", "c3"}, got.Cards)
+}
+
+// Two routes of one provider are one property. A later rest of a third route of
+// that provider rewrites the same property and keeps the lines already there.
+func TestTwoRoutesOfOneProviderAreOneProperty(t *testing.T) {
+	t.Parallel()
+	t0 := time.Date(2030, 1, 2, 3, 0, 0, 0, time.UTC)
+	s := &Snapshot{Now: t0, Fleet: NewTable(Fleet), Routes: []Route{
+		{Name: "a", Provider: "p", Tier: "flash", Enabled: true},
+		{Name: "b", Provider: "p", Tier: "flash", Enabled: true},
+		{Name: "c", Provider: "q", Tier: "flash", Enabled: true},
+	}}
+	due := []RouteRest{
+		{Route: "b", At: t0, Until: t0.Add(RouteRestFor), Cards: []string{"c2"}, Cause: RestNoResult},
+		{Route: "a", At: t0, Until: t0.Add(RouteRestFor), Cards: []string{"c1"}, Cause: RestNoResult},
+		{Route: "c", At: t0, Until: t0.Add(RouteRestFor), Cards: []string{"c3"}, Cause: RestNoResult},
+	}
+	var plan Plan
+	restWrites(&plan, s, due, "tick")
+	require.Len(t, plan.Props, 2, "one property per provider, never one per route")
+	assert.Equal(t, PropRule3Rest("p"), plan.Props[0].Name)
+	assert.Equal(t, PropRule3Rest("q"), plan.Props[1].Name)
+	assert.True(t, plan.Props[0].WasAbsent)
+	lines := parseRule3(plan.Props[0].Value)
+	assert.Equal(t, []string{"c2"}, lines["b"].Cards)
+	assert.Equal(t, []string{"c1"}, lines["a"].Cards)
+	assert.Equal(t, "a "+lines["a"].value()+"\nb "+lines["b"].value(), plan.Props[0].Value, "lines in route-name order")
+
+	s.Fleet.SetProp(plan.Props[0].Name, plan.Props[0].Value)
+	again := []RouteRest{{Route: "b", At: t0.Add(time.Hour), Until: t0.Add(2 * time.Hour), Cards: []string{"c9"}, Cause: RestNoResult}}
+	var next Plan
+	restWrites(&next, s, again, "tick")
+	require.Len(t, next.Props, 1)
+	assert.Equal(t, plan.Props[0].Value, next.Props[0].Was)
+	assert.False(t, next.Props[0].WasAbsent)
+	kept := parseRule3(next.Props[0].Value)
+	assert.Equal(t, []string{"c1"}, kept["a"].Cards, "the route not due now keeps its line")
+	assert.Equal(t, []string{"c9"}, kept["b"].Cards)
 }
 
 // A provider's refusal (nova-tools#5199): a take refused for want of credit rests its

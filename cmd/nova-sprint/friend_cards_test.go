@@ -292,3 +292,24 @@ func TestAddHoldsTheWhoLineToTheFriendsTable(t *testing.T) {
 	code, _ = add("friend amy")
 	assert.Equal(t, 0, code)
 }
+
+// A friend's later attempt starts from the current tip of the card's base branch, as a member's
+// rework is staged (nova-tools#5215): she carries the last pushed attempt's work onto it herself,
+// and the Head she reports is on that tip; a first attempt's brief says nothing of it.
+func TestAFriendsReworkStartsFromTheTipOfItsBase(t *testing.T) {
+	t.Parallel()
+	p := sprint.Packet{Card: "s1-1.w3", Epoch: 0, Attempt: 3, Branch: "sprint/s1-1.w3.g1.e0", BaseHead: landHead, BaseAttempt: 2,
+		Brief: "s1-1: a friend's card\nREPO: mas-bandwidth/nova-tools\nBASE: sprint/s1\nWHO: friend amy\n\nThe task.", Fix: "assert the bound"}
+	text := friendBrief("amy", p)
+	assert.Contains(t, text, "This attempt starts from the current tip of sprint/s1 on origin, never from an older base: fetch it and start your branch there. "+
+		"Carry the work of attempt 2 onto it yourself: its head, "+landHead+", is the last pushed by any attempt before this one (`git diff origin/sprint/s1..."+landHead+"` shows that work); where it does not apply cleanly, redo it. "+
+		"The Head you report must be on that tip: a commit that descends from origin's sprint/s1 as you fetched it.\nThe coordinator asks: assert the bound\n")
+	assert.NotContains(t, text, "start from it.", "never the old head")
+
+	p.BaseHead, p.BaseAttempt = "", 0
+	p.Brief = "s1-1: a friend's card\nREPO: mas-bandwidth/nova-tools\nWHO: friend amy\n\nThe task."
+	assert.Contains(t, friendBrief("amy", p), "the current tip of the repository's default branch on origin, never from an older base: fetch it and start your branch there. No attempt before this one pushed work to carry. The Head you report must be on that tip: a commit that descends from origin's default branch as you fetched it.\n")
+
+	p.Attempt = 1
+	assert.NotContains(t, friendBrief("amy", p), "This attempt starts")
+}

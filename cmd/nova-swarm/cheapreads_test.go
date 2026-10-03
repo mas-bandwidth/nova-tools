@@ -98,7 +98,7 @@ func TestAReadsGateIsReadOffItsDiff(t *testing.T) {
 	st, err := swarm.StageCard(swarm.StageOptions{TargetDir: filepath.Join(job, swarm.JobRepo), JobDir: job,
 		BenchHome: filepath.Join(root, "no-bench"), Base: &swarm.CardBase{Repo: origin, Sha: head, Ref: "main", Named: origin}, Branch: fr.Branch})
 	require.NoError(t, err)
-	_, ferr := installFrame(nativeRunConfig{slotDir: slot, root: root, model: fr.Model, frame: fr}, job, st.BaseSha)
+	_, ferr := installFrame(nativeRunConfig{slotDir: slot, root: root, model: fr.Model, frame: fr}, job, st.BaseSha, nil)
 	require.NoError(t, ferr)
 	text, err := os.ReadFile(filepath.Join(job, cardcontract.JobName))
 	require.NoError(t, err)

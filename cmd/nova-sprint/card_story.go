@@ -112,9 +112,16 @@ func tell(run []sprint.Line) []storyLine {
 			n.What = ""
 			words = sprint.Render(sprint.Line{Kind: l.Kind, Note: &n})
 		}
-		if l.Note == nil && l.Table == sprint.Merge && strings.HasSuffix(l.To, ":"+sprint.Merged) && batch != nil {
-			stream, _, _ := strings.Cut(l.To, ":")
-			words = fmt.Sprintf("merged into %s and landed %s%s", stream, byOf(l), batchWords(*batch, l.Card))
+		if l.Note == nil && l.Table == sprint.Merge && strings.HasSuffix(l.To, ":"+sprint.Merged) {
+			if batch != nil {
+				stream, _, _ := strings.Cut(l.To, ":")
+				words = fmt.Sprintf("merged into %s and landed %s%s", stream, byOf(l), batchWords(*batch, l.Card))
+			}
+			// what the landing did past a merge of the head (land: the generated ledgers
+			// regenerated)
+			if n := strings.TrimSpace(l.Text["note"]); n != "" {
+				words += "; " + n
+			}
 		}
 		out = append(out, storyLine{Words: words, Lines: []sprint.Line{l}})
 	}

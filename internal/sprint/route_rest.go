@@ -14,18 +14,21 @@ import (
 // on." The tick counts the ended takes of each route over a sliding window, the last
 // RouteRestWindow takes on it that ended after its last rest began, and when
 // RouteRestAfter of them left no result it rests the route for RouteRestFor: the rest is
-// a fleet table property, route_rest_<route>, written in the deal's batch with a happened
-// note to the coordinator naming the cards; the deal draws no work card (a first deal, a
-// redeal or a rework's) on a resting route, and the rest ends by itself at its time. The
-// rest is the sprint's, never config: nova-config's enabled stays the coordinator's.
+// one line in the fleet table's property rule3_rest_<provider>, one property per provider
+// however many of its routes rest, written in the deal's batch with a happened note to the
+// coordinator naming the cards; the deal draws no work card (a first deal, a redeal or a
+// rework's) on a resting route, and the rest ends by itself at its time. The rest is the
+// sprint's, never config: nova-config's enabled stays the coordinator's.
 const (
 	RouteRestWindow = 10
 	RouteRestAfter  = 3
 	RouteRestFor    = 30 * time.Minute
 )
 
-// PropRouteRest is the fleet table's property that holds a route's last rest.
-func PropRouteRest(route string) string { return "route_rest_" + route }
+// PropRule3Rest is the fleet table's property that holds one provider's rule-3 rests:
+// one property per provider, one line per route that has rested, so the table's
+// properties (ntable.LimitTableProps) grow with the providers and never with the routes.
+func PropRule3Rest(provider string) string { return "rule3_rest_" + provider }
 
 // PropProviderRest is the fleet table's property that holds a provider's last rest: ONE per
 // provider, never a copy on each of its routes, so a provider's rest is one write and the
@@ -39,8 +42,8 @@ const (
 	NProviderRested = "a provider rested: its funds or its key"
 )
 
-// RouteRest is a rest: rule 3's of a route (Route, PropRouteRest) or a provider's (Provider,
-// PropProviderRest; read through RouteRests it names each route of the provider too): when
+// RouteRest is a rest: rule 3's of a route (Route, one line of PropRule3Rest) or a provider's
+// (Provider, PropProviderRest; read through RouteRests it names each route of the provider too): when
 // it began, when it ends (for a rest that has ended, when it ended), the cards whose takes
 // rested it, and why: the cause (RestNoResult, rule 3's; RestCredit, RestAuth and
 // RestBalance, the provider's, provider_funds.go) and, for the provider's, its words. A
@@ -171,6 +174,64 @@ func parseRest(v string) (RouteRest, bool) {
 	return rest, true
 }
 
+// parseRule3 is one provider's rule-3 rests as PropRule3Rest holds them: one line per
+// route, `<route> <rest>`, the rest as parseRest reads it. A line that is not one is
+// skipped. The route name is the line's first field, one token.
+func parseRule3(v string) map[string]RouteRest {
+	out := map[string]RouteRest{}
+	for _, line := range strings.Split(v, "\n") {
+		line = strings.TrimSpace(line)
+		route, restv, ok := strings.Cut(line, " ")
+		if !ok || route == "" {
+			continue
+		}
+		rest, ok := parseRest(restv)
+		if !ok {
+			continue
+		}
+		rest.Route = route
+		out[route] = rest
+	}
+	return out
+}
+
+// rule3Text is the provider's rule-3 rests as PropRule3Rest holds them, lines in
+// route-name order, so a later write guards on the same bytes.
+func rule3Text(m map[string]RouteRest) string {
+	names := make([]string, 0, len(m))
+	for name := range m {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	var b strings.Builder
+	for i, name := range names {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString(name)
+		b.WriteByte(' ')
+		b.WriteString(m[name].value())
+	}
+	return b.String()
+}
+
+// rule3Rests is each provider's rule-3 rests as the fleet table records them.
+// A route_rest_<route> property is not read.
+func rule3Rests(fleet *Table) map[string]map[string]RouteRest {
+	out := map[string]map[string]RouteRest{}
+	if fleet == nil {
+		return out
+	}
+	for name, v := range fleet.Props() {
+		p, ok := strings.CutPrefix(name, PropRule3Rest(""))
+		if !ok {
+			continue
+		}
+		out[p] = parseRule3(v)
+	}
+	return out
+}
+
 // ProviderRests is the last rest the fleet table records for each provider that has one.
 func ProviderRests(fleet *Table) map[string]RouteRest {
 	out := map[string]RouteRest{}
@@ -196,9 +257,9 @@ func ProviderRests(fleet *Table) map[string]RouteRest {
 func RouteRests(routes []Route, fleet *Table) map[string]RouteRest {
 	out := map[string]RouteRest{}
 	byProvider := ProviderRests(fleet)
+	rule3 := rule3Rests(fleet)
 	for _, r := range routes {
-		v, _ := fleet.Prop(PropRouteRest(r.Name))
-		own, hasOwn := parseRest(v)
+		own, hasOwn := rule3[r.Provider][r.Name]
 		pr, hasProvider := byProvider[r.Provider]
 		switch {
 		case r.Provider != "" && hasProvider && (!hasOwn || !own.Until.After(pr.Until)):
@@ -399,10 +460,16 @@ func restWithdrawals(s *Snapshot, who string) []Unit {
 	return out
 }
 
-// restWrites puts each due rest in the plan: the fleet table's property (the route's, or the
-// provider's one), guarded on the value read, and a happened note to the coordinator naming
-// the cards, or the provider's words.
+// restWrites puts each due rest in the plan: the provider's one property, or one
+// property per provider for the routes' rule-3 rests (every route of that provider
+// that rests, the lines already held and the ones due now), guarded on the value
+// read, and a happened note to the coordinator naming the cards, or the provider's words.
 func restWrites(p *Plan, s *Snapshot, due []RouteRest, who string) {
+	type batch struct {
+		routes []RouteRest
+	}
+	grouped := map[string]*batch{}
+	var order []string
 	for _, r := range due {
 		if r.Route == "" {
 			was, had := s.Fleet.Prop(PropProviderRest(r.Provider))
@@ -414,18 +481,47 @@ func restWrites(p *Plan, s *Snapshot, due []RouteRest, who string) {
 			p.Notes = append(p.Notes, n)
 			continue
 		}
-		was, had := s.Fleet.Prop(PropRouteRest(r.Route))
-		p.Props = append(p.Props, PropWrite{Table: Fleet, Name: PropRouteRest(r.Route), Value: r.value(), Was: was, WasAbsent: !had})
-		tier := ""
-		for _, x := range s.Routes {
-			if x.Name == r.Route {
-				tier = x.Tier
-			}
+		prov := routeProvider(s, r.Route)
+		b := grouped[prov]
+		if b == nil {
+			b = &batch{}
+			grouped[prov] = b
+			order = append(order, prov)
 		}
-		n := happened(NRouteRested, TierSubject(tier), s.Now)
-		n.To, n.Who = s.Coordinator, who
-		n.What = fmt.Sprintf("route %s rested until %s: %d of its last %d ended takes or fewer left no result (%s); the deal draws no work card on it until then; nova-sprint routes shows it",
-			r.Route, stamp(r.Until), len(r.Cards), RouteRestWindow, strings.Join(r.Cards, ", "))
-		p.Notes = append(p.Notes, n)
+		b.routes = append(b.routes, r)
 	}
+	for _, prov := range order {
+		b := grouped[prov]
+		name := PropRule3Rest(prov)
+		was, had := s.Fleet.Prop(name)
+		merged := parseRule3(was)
+		for _, r := range b.routes {
+			merged[r.Route] = r
+		}
+		p.Props = append(p.Props, PropWrite{Table: Fleet, Name: name, Value: rule3Text(merged), Was: was, WasAbsent: !had})
+		for _, r := range b.routes {
+			tier := ""
+			for _, x := range s.Routes {
+				if x.Name == r.Route {
+					tier = x.Tier
+				}
+			}
+			n := happened(NRouteRested, TierSubject(tier), s.Now)
+			n.To, n.Who = s.Coordinator, who
+			n.What = fmt.Sprintf("route %s rested until %s: %d of its last %d ended takes or fewer left no result (%s); the deal draws no work card on it until then; nova-sprint routes shows it",
+				r.Route, stamp(r.Until), len(r.Cards), RouteRestWindow, strings.Join(r.Cards, ", "))
+			p.Notes = append(p.Notes, n)
+		}
+	}
+}
+
+// routeProvider is the provider the route's rule-3 rest is filed under. A route
+// the snapshot does not know is filed with the routes that name no provider.
+func routeProvider(s *Snapshot, route string) string {
+	for _, x := range s.Routes {
+		if x.Name == route {
+			return x.Provider
+		}
+	}
+	return ""
 }

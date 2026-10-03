@@ -66,7 +66,7 @@ func init() {
 		{"move", "<id>... --stream <s> [--before <id> | --after <id> | --score <n>]", "move s1-4 s1-5 --stream s2", (*app).cmdMove},
 		{"merge", "--stream <s> [--batch <n>] [--conflict <id> | --cross <id>=<other> | --red [--suspect <id>...] | --rejected] [--note <text>]", "merge --stream s1 --batch 100", (*app).cmdMerge},
 		{"land", "[--stream <s>...] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]", "land --stream s1 --dry-run", (*app).cmdLand},
-		{"resume", "--stream <s> [--did <text>] [--answers <note>]", "resume --stream s1 --did 'rebased s1-4'", (*app).cmdResume},
+		{"resume", "--stream <s> [--did <text>] [--answers <note>]", "resume --stream s1 --did 'land merges s1-4 again'", (*app).cmdResume},
 		{"fleet beat", "<member> [--load <percent>]", "fleet beat m1", (*app).cmdFleetBeat},
 		{"fleet up", "<member> [--width <n>]", "fleet up m1 --width 64", func(a *app, args []string, o, e io.Writer) int { return a.cmdFleet("up", args, o, e) }},
 		{"fleet down", "<member>", "fleet down m1", func(a *app, args []string, o, e io.Writer) int { return a.cmdFleet("down", args, o, e) }},
@@ -271,7 +271,7 @@ one answer to each judgment (every one prints its own, filled in):
   ready to accept             accept --group <id> --expect <n> --answers <notes>
   work came back failed       rework --group <id> --expect <n> --answers <notes>  (each fix is the work's report; --fix for all)
   a reader found it broken    rework --group <id> --expect <n> --answers <notes>  (each fix is the reader's finding)
-  conflict on a card          resume --stream <s> --did 'rebased <card>' --answers <note>
+  conflict on a card          resume --stream <s> --did '<what you did>' --answers <note>  (land merges again, regenerating the ledgers; a conflict outside them: rework or drop)
   stream branch red           return <suspect> --answers <note>, then resume --stream <s> --did 'returned <suspect>' --answers <note>
   needs another stream first  rank <other> --first, then resume --stream <s> once <other> has landed
   merge queue rejected        resume --stream <s> --did '<what you did>' --answers <note>
@@ -2010,7 +2010,7 @@ func (a *app) cmdAccept(args []string, stdout, stderr io.Writer) int {
 func (a *app) cmdRework(args []string, stdout, stderr io.Writer) int {
 	var fix, ans, tier *string
 	return a.setVerb("rework", args, stdout, stderr, false, func(fs flagSet) {
-		fix = fs.String("fix", "", "the fix for every primary; without it each takes its own: the finding of its broken read, or the report of its failed work")
+		fix = fs.String("fix", "", "the fix for every primary; without it each takes its own: the finding of its broken read, or the report of its failed work; the next attempt is staged at the tip of the card's base branch, the last pushed attempt's work carried on top where it applies cleanly, and where it does not the child is told that work must be redone")
 		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
 		tier = fs.String("tier", "", "the tier ("+cardhdr.RouteList+") this attempt and every later deal of the card draws its route from, over its brief's line 1, kept on the card: it pins the card, never escalated past it (flash first); a card whose brief pins a model is refused; at a redeal bound it never names a lower tier, and when the attempt before also ended at its bound on the card's tier the rework is refused unless it names a tier above (flash, pro, frontier) or the provider its takes failed on is back, which lifts it once per tier per card")
 	}, func(ids []string, s *sel) string {

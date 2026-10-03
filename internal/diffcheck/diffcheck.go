@@ -89,6 +89,27 @@ func Ledger(p string) bool {
 	return slices.Contains(ledgerShards, dir) && path.Ext(file) == ".txt"
 }
 
+// GeneralityRoots are where the generality ledgers live: the shard directories of the Go
+// scan and the text scan, and the text scan's fixtures allowlist. Their update run
+// (TestGeneralityGuardrail and TestGeneralityText) rewrites all three.
+var GeneralityRoots = []string{LedgerDir + "generality", LedgerDir + "generality-text", LedgerDir + "generality_text_fixtures_allowlist.txt"}
+
+// GeneralityLedger says p is a generality ledger: a class ledger (Ledger: a .txt shard or
+// a list file, never a directory, a Go file or a class test's fixture) under one of the
+// GeneralityRoots. The lander regenerates these at a merge (docs/SPEC-SPRINT.md section 7).
+func GeneralityLedger(p string) bool {
+	return Ledger(p) && slices.ContainsFunc(GeneralityRoots, func(r string) bool { return p == r || strings.HasPrefix(p, r+"/") })
+}
+
+// UpdateEnv is the variable that turns the class tests' ledger checks into a rewrite
+// (internal/ci/allowlist): only the value "1" does. UpdatedRerun is the sentence the one
+// failure of a run that rewrote carries. The lander runs that update to regenerate the
+// ledgers at a merge, and reads its result by these.
+const (
+	UpdateEnv    = "NOVA_CI_UPDATE"
+	UpdatedRerun = "updated, rerun"
+)
+
 // Outside is every file the diff changes that the card may not (E12); nil when paths is
 // empty (a card that names no PATHS is held to none). A file is the card's when its
 // PATHS globs name it or it is a ledger (Ledger). A rename holds both sides: the file it

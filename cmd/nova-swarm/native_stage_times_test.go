@@ -40,7 +40,7 @@ func TestFrameTimingReportsOnlySuccessfulInstallation(t *testing.T) {
 			}
 			cfg := nativeRunConfig{slotDir: slot, model: "fake/model", frame: &cardcontract.Frame{Kind: "work", Card: "c"}}
 			var out bytes.Buffer
-			_, err := installFrameTimed(cfg, job, "0123456789abcdef0123456789abcdef01234567", &out)
+			_, err := installFrameTimed(cfg, job, "0123456789abcdef0123456789abcdef01234567", nil, &out)
 			if !success {
 				assert.Error(t, err)
 				assert.Empty(t, out.String(), "a refused frame cannot claim readiness")

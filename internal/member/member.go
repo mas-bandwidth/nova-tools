@@ -143,6 +143,11 @@ type Result struct {
 	// passed their rerun), which the reader of the result takes as the verdict ok; "" for none.
 	Gate      string
 	GateTests string
+	// Carry is where a rework was staged, as native's STAGE CARRY line says it
+	// (cardcontract.Carry.Words: the staged commit, the tip of its base branch, and whether
+	// the work before it carried); the finish's report carries it, so the card's timeline
+	// says it. "" for a first attempt and a read.
+	Carry string
 }
 
 // The gate routes the member acts on (native's NATIVE GATE line): a gate red only on
@@ -1436,6 +1441,10 @@ func (m *Member) endEnded(ids []string, byID map[string]queueCard) {
 func finishReport(r Result, pu Push, branch string) (fin Finish, why, report string) {
 	fin, why = Judge(r, pu)
 	report = oneLine(r.Report)
+	if r.Carry != "" {
+		// where the rework was staged, before the child's words and after the push
+		report = cut("stage: " + oneLine(r.Carry) + "; " + report)
+	}
 	if pu.Sha != "" {
 		said := "pushed=" + pu.Sha + " to " + branch
 		if pu.PR != "" {
