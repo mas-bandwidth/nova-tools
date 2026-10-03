@@ -95,6 +95,8 @@ func TestRefusalsNameTheFlag(t *testing.T) {
 		{"bad repo name", []string{"import", "--org", "o", "--dry-run", "--repo", "bad"}, 2, []string{"is not owner/name"}},
 		{"nonexistent gh", []string{"import", "--org", "o", "--dry-run", "--gh", "/nonexistent/gh-cli"}, 2, []string{"is not found", "--gh"}},
 		{"bogus flag", []string{"import", "--bogus"}, 2, []string{"bogus", "run: nova-work import -h"}},
+		{"json on import", []string{"import", "--org", "o", "--dry-run", "--json"}, 2, []string{"unknown flag --json", "run: nova-work import -h"}},
+		{"json on verify", []string{"verify", "--tree", "t.lisp", "--json"}, 2, []string{"unknown flag --json", "run: nova-work verify -h"}},
 		{"bare verify", []string{"verify"}, 2, []string{"--tree is required", "run: nova-work help"}},
 		{"nonexistent tree", []string{"verify", "--tree", "/nonexistent/t.lisp"}, 2, []string{"VERIFY FAILED"}},
 		{"unknown verb", []string{"frob"}, 2, []string{"unknown verb", "import, verify"}},
@@ -271,6 +273,20 @@ func TestStatusGrammar(t *testing.T) {
 				"%s: want word %s and exit %d, got word %q and exit %d\nstdout:\n%s\nstderr:\n%s",
 				tc.name, tc.wantWord, tc.wantCode, gotWord, res.Code, res.Stdout, res.Stderr)
 		})
+	}
+}
+
+// TestTheVerbsThatPrintTheirOwnLinesSaySo pins Flags.Prints on import and
+// verify: each writes its own lines and answers tool.Exit, so the skeleton
+// renders nothing for them, offers neither --json, and the banner names both as
+// the verbs that do not take it (internal/tool, Banner).
+func TestTheVerbsThatPrintTheirOwnLinesSaySo(t *testing.T) {
+	t.Parallel()
+	cli := workCLI(nil)
+	assert.Contains(t, cli.OK(t, "help").Stdout, "Every verb but import, verify takes --json",
+		"the banner offers --json on a verb that prints its own lines")
+	for _, verb := range []string{"import", "verify"} {
+		assert.NotContains(t, cli.OK(t, verb, "-h").Stdout, "--json", "%s -h lists a flag the verb does not take", verb)
 	}
 }
 

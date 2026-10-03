@@ -19,8 +19,12 @@ var lookPath = exec.LookPath
 var now = time.Now
 
 // importFlags declares import's flags: the shared ones, --org, --out, and the
-// rules that tie --out to --dry-run and --repo to --org.
+// rules that tie --out to --dry-run and --repo to --org. It declares Prints
+// because runImport writes its own lines (GH, PLAN, REPO, IMPORT) and answers
+// tool.Exit, so the skeleton renders nothing for it and offers no --json
+// (internal/tool, Flags.Prints).
 func importFlags(f *tool.Flags) {
+	f.Prints()
 	commonFlags(f)
 	f.Required("org", "the organization")
 	f.String("out", "", "the tree file to write (created or replaced; its directory must exist). Required unless --dry-run.")

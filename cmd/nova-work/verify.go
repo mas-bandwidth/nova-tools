@@ -13,8 +13,11 @@ import (
 )
 
 // verifyFlags declares verify's flags: the shared ones, --tree, --max and
-// --max-bytes.
+// --max-bytes. It declares Prints because runVerify writes its own lines (GH,
+// the differences, MORE, VERIFY) and answers tool.Exit, so the skeleton renders
+// nothing for it and offers no --json (internal/tool, Flags.Prints).
 func verifyFlags(f *tool.Flags) {
+	f.Prints()
 	commonFlags(f)
 	f.Required("tree", "the tree file")
 	f.Max()
