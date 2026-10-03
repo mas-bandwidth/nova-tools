@@ -19,12 +19,12 @@ const (
 	EndUnknown      = "unknown"
 	// EndProvider is a launch that did not take: the harness died inside the launch
 	// grace with a provider server error in its tail. It is retried with backoff and,
-	// after repeated fast failures, records the provider's reference for diagnosis.
+	// after the third fast failure, is filed with the provider's own ref.
 	EndProvider = "provider"
 	// EndWall is a job the harness's own fence stopped at a path outside it, with no
-	// RESULT.md: the result names the path and the commits the repository kept. It is
+	// RESULT.md: the death names the path and the commits ./repo kept. It is
 	// also a card the harness's own fence or the OS wall stopped before it could publish:
-	// the harness or operating-system wall ended the task before the worker could publish it.
+	// the machinery ended the task, not the model.
 	EndWall = "wall"
 )
 
@@ -77,9 +77,9 @@ func (u ProviderUsage) Budget() (sum int, seen int, partial bool) { return u.add
 //	            budget was reached and can never show that the job stayed under it
 //	<s>/<n>     a whole observation
 //
-// THE POOL'S `RUN DONE`/`RUN KILLED` AND `native`'s `NATIVE OK` BOTH COME THROUGH HERE
-// This one path keeps the budget fields in one rendering (the word, the sum, the stop, the record, and a
-// source that cannot be read) for a native card. Two renderings of one field is how
+// THE POOL'S `RUN DONE`/`RUN KILLED` AND `native`'s `NATIVE OK` BOTH COME THROUGH HERE:
+// what is said of the word, the sum, the stop, the record and a source that cannot be read
+// holds for a native card too. Two renderings of one field is how
 // one of them drifts, and a reader who learned the field on one line would misread it on
 // the other.
 func BudgetWord(unmetered bool, tokens, spent int, observed, partial bool) string {
