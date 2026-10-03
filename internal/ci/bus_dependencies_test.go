@@ -10,21 +10,26 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The bus is messages over Git. Only its bus, build-info and one-line modules
-// are needed, the verb-help seam every living tool parses its flags through
+// The bus is messages over Git. It reaches its bus, build-info and one-line
+// modules, the verb-help seam every living tool parses its flags through
 // (internal/nsprint/verbflag: standard library only, no decision and no
-// storage; it prints a verb's help on -h), and the three general process and file
-// doors: internal/gitrun (the one git runner) and internal/subproc (the deadline
-// and WaitDelay every child gets), both standard library only, and
-// internal/atomicfile (write-then-rename with fsync; it imports only
-// internal/oneline). Every other import is standard library. Walk all platforms
-// transitively so an intermediate package cannot hide an added dependency.
+// storage; it prints a verb's help on -h), the shared command skeleton
+// (internal/tool) and the listing cap that skeleton renders through
+// (internal/bounded, which imports only internal/oneline), and the three
+// general process and file doors: internal/gitrun (the one git runner) and
+// internal/subproc (the deadline and WaitDelay every child gets), both
+// standard library only, and internal/atomicfile (write-then-rename with
+// fsync; it imports only internal/oneline). None of these decides or stores.
+// Every other import is standard library. Walk all platforms transitively so
+// an intermediate package cannot hide an added dependency.
 // busAllowed is the module-local packages cmd/nova-bus may reach.
 var busAllowed = map[string]bool{
 	"github.com/mas-bandwidth/nova-tools/internal/bus":              true,
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo":        true,
 	"github.com/mas-bandwidth/nova-tools/internal/oneline":          true,
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag": true,
+	"github.com/mas-bandwidth/nova-tools/internal/tool":             true,
+	"github.com/mas-bandwidth/nova-tools/internal/bounded":          true,
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile":       true,
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun":           true,
 	"github.com/mas-bandwidth/nova-tools/internal/subproc":          true,

@@ -5,19 +5,16 @@ import (
 	"testing"
 )
 
-// #1496: parse ranges over a Go map, so a bare `nova-bus send` -- missing --bus,
-// --remote and --branch at once -- names whichever flag map order reaches first,
-// a different one from run to run. The repetition is the assertion: a single run
-// names --bus about a third of the time, so a one-shot check passes against the
-// unfixed tool by luck. Asserting the set of three would still allow the order to
-// vary between runs; the exact ordered string pins the fixed order the repair promises.
+// A bare send names --branch, --bus and --remote together, in that fixed
+// order, on every run. The skeleton prints each as SEND REFUSED and says
+// what the flag wants; the flags and their order are the fact this pins.
 
 func TestIssue1496ABareVerbNamesEveryMissingRequiredFlagInAFixedOrder(t *testing.T) {
 	t.Parallel()
 
-	const want = "nova-bus send: --branch is required; refusing to guess; run: nova-bus help\n" +
-		"nova-bus send: --bus is required; refusing to guess; run: nova-bus help\n" +
-		"nova-bus send: --remote is required; refusing to guess; run: nova-bus help\n"
+	const want = "SEND REFUSED: --branch is required; it wants the branch the bus lives on; refusing to guess; run: nova-bus help\n" +
+		"SEND REFUSED: --bus is required; it wants the bus's repository root; refusing to guess; run: nova-bus help\n" +
+		"SEND REFUSED: --remote is required; it wants the git remote to push to; refusing to guess; run: nova-bus help\n"
 	first := ""
 	for i := 0; i < 20; i++ {
 		r := invoke(t, "", "send")

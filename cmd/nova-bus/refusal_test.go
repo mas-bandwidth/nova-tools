@@ -13,19 +13,22 @@ import (
 // open-list work on `inbox` and `wait` belongs to another line and is not touched here.
 func TestARefusalIsOneLineAndNamesTheDoor(t *testing.T) {
 	t.Parallel()
-	for _, args := range [][]string{
-		nil,
-		{"wibble"},
-		{"inbox", "--azz", "Ada"},
+	for _, tc := range []struct {
+		args []string
+		door string
+	}{
+		{nil, "run: nova-bus help"},
+		{[]string{"wibble"}, "run: nova-bus help"},
+		{[]string{"inbox", "--azz", "Ada"}, "run: nova-bus inbox -h"},
 	} {
-		r := invoke(t, "", args...)
-		assert.Equalf(t, 2, r.code, "%v: exit = %d, want 2", args, r.code)
+		r := invoke(t, "", tc.args...)
+		assert.Equalf(t, 2, r.code, "%v: exit = %d, want 2", tc.args, r.code)
 		{
 			n := strings.Count(r.stderr, "\n")
-			assert.Equalf(t, 1, n, "%v: the refusal is %d lines, want 1:\n%s", args, n, r.stderr)
+			assert.Equalf(t, 1, n, "%v: the refusal is %d lines, want 1:\n%s", tc.args, n, r.stderr)
 		}
-		assert.Containsf(t, r.stderr, "run: nova-bus help", "%v: the refusal names no door: %q", args, r.stderr)
-		assert.Emptyf(t, r.stdout, "%v: a refusal wrote to stdout: %q", args, r.stdout)
+		assert.Containsf(t, r.stderr, tc.door, "%v: the refusal names no door: %q", tc.args, r.stderr)
+		assert.Emptyf(t, r.stdout, "%v: a refusal wrote to stdout: %q", tc.args, r.stdout)
 	}
 	// And the door opens.
 	invoke(t, "", "help").mustCode(t, 0).mustContain(t, "stdout", "usage:")
