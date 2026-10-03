@@ -261,14 +261,14 @@ func (s *Selection) FromArgs(args []string, getenv func(string) string) ([]strin
 		switch {
 		case a == "--seat" || a == "-seat":
 			if i+1 >= len(args) || args[i+1] == "" || strings.HasPrefix(args[i+1], "-") {
-				return nil, fmt.Errorf("--seat wants a seat name, for example --seat studio")
+				return nil, fmt.Errorf("--seat <name>, for example --seat bench-a")
 			}
 			seat, flagged = args[i+1], true
 			i++
 		case strings.HasPrefix(a, "--seat=") || strings.HasPrefix(a, "-seat="):
 			seat, flagged = a[strings.IndexByte(a, '=')+1:], true
 			if seat == "" {
-				return nil, fmt.Errorf("--seat wants a seat name, for example --seat studio")
+				return nil, fmt.Errorf("--seat <name>, for example --seat bench-a")
 			}
 		default:
 			rest = append(rest, a)
