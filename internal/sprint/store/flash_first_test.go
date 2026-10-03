@@ -18,13 +18,14 @@ import (
 // attempt on the next tier, no judgment raised; at its ceiling the bound's judgment is
 // the coordinator's as before. On the mem twin, injected clock, no socket.
 
-// setPrimary writes fields onto a primary as a step that wrote them would leave it.
+// setPrimary writes fields onto a primary as a step that wrote them would leave it, on
+// the store's own backend (the mem twin, or Redis in the functional tier).
 func (h *harness) setPrimary(id string, set map[string]string) {
 	h.t.Helper()
 	s := h.snap()
 	c := s.Work.Card(id)
 	require.NotNil(h.t, c)
-	_, err := h.m.Apply(h.ctx, ntable.BatchManifest{Schema: 1, Table: "t-work", Epoch: "0", ExpectedTableRevision: fmt.Sprint(s.Work.Revision),
+	_, err := h.st.B.Apply(h.ctx, ntable.BatchManifest{Schema: 1, Table: h.st.Names.Table(sprint.Work), Epoch: fmt.Sprint(s.Epoch), ExpectedTableRevision: fmt.Sprint(s.Work.Revision),
 		OperationID: "set-primary-" + id, Members: []ntable.BatchMemberEntry{{ID: c.ID, Expect: &ntable.MemberExpect{Revision: fmt.Sprint(c.Rev)}, Set: set}}})
 	require.NoError(h.t, err)
 }
