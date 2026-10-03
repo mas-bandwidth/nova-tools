@@ -105,6 +105,9 @@ type app struct {
 	// beforePush, when set (a test), runs before each push land makes, with
 	// the attempt (1, then 2 after the base moved).
 	beforePush func(attempt int)
+	// ledgers, when set (a test), is the generated ledgers land regenerates at a merge
+	// (landledger.go); nil is landLedgers.
+	ledgers []landLedger
 	// serial is the server's one line of control (serve.go): a worker's batch
 	// and a tick of the run loop each hold it, so neither runs during the other.
 	// serveAddr is the store the server runs the workers' verbs on.

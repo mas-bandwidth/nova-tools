@@ -430,7 +430,10 @@ func commands(g Group, first Note, prefix string) []Command {
 		case g.Type == NConflict:
 			switch d {
 			case "resolve and resume":
-				add(d, resume(didText))
+				// resume puts the card back marked with the head it stopped on, and land
+				// then lands its branch tip when the tip descends from that head
+				// (docs/SPEC-SPRINT.md section 7)
+				add(d, resume("'<what you did: merged the base into the branch of "+card+", resolved, pushed; land then lands its tip>'"))
 			case "rework":
 				add(d, cmd+"return "+card+" --reason conflict", cmd+"rework "+card+" --fix "+fixText, resume("'returned "+card+" for rework'"))
 			case "drop":

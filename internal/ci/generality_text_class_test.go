@@ -370,17 +370,66 @@ func TestGeneralityText(t *testing.T) {
 		if len(problems) > 0 {
 			return
 		}
+		all := measureTextGenerality(files)
 		counts := map[string]int{}
-		for k, n := range measureTextGenerality(files) {
+		for k, n := range all {
 			if !skip[fileOfKey(k)] {
 				counts[k] = n
 			}
 		}
 		allowlist.CheckPackagesCounted(t, debt, counts)
+		dropStaleTextFixtures(t, fixtures, all, true)
 		return
 	}
 	for _, v := range checkTextGenerality(files, fixtures, debt) {
 		assert.Fail(t, v)
+	}
+}
+
+// dropStaleTextFixtures is the update's pass over the fixtures allowlist: a row whose
+// file has no finding any more is stale, as the check outside an update reports it, and
+// the update drops it (the list only shrinks). A ledger shard the same run empties is
+// still read with its findings, so its row goes on the rerun the update asks for.
+func dropStaleTextFixtures(r allowlist.Reporter, fixtures *allowlist.List, counts map[string]int, update bool) allowlist.Result {
+	hit := map[string]bool{}
+	for k := range counts {
+		if f := fileOfKey(k); fixtures.Has(f) {
+			hit[f] = true
+		}
+	}
+	return allowlist.CheckMode(r, fixtures, hit, update)
+}
+
+// The update drops a fixtures row whose file has no finding any more and lowers the
+// ceiling with it, and keeps the row whose file still has one; outside an update it
+// writes nothing and names the stale row.
+func TestGeneralityTextUpdateDropsStaleFixtureRows(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		update bool
+		want   string
+	}{
+		{"update", true, "# ceiling: 1\nkept.txt a captured record that names a host\n"},
+		{"check", false, "# ceiling: 2\nkept.txt a captured record that names a host\ngone.txt a captured record that names nothing now\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), "fixtures_allowlist.txt")
+			require.NoError(t, os.WriteFile(path, []byte("# ceiling: 2\nkept.txt a captured record that names a host\ngone.txt a captured record that names nothing now\n"), 0o600))
+			fixtures, err := allowlist.Load(path, shrinkOnly)
+			require.NoError(t, err)
+			r := &generalityMessageReporter{}
+			res := dropStaleTextFixtures(r, fixtures, map[string]int{"kept.txt:rowan": 1, "debt.txt:rowan": 2}, tc.update)
+			got, err := os.ReadFile(path)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, string(got))
+			assert.Equal(t, tc.update, res.Updated)
+			if !tc.update {
+				require.Len(t, res.Stale, 1)
+				assert.Equal(t, "gone.txt", res.Stale[0].Key)
+			}
+		})
 	}
 }
 

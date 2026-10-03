@@ -26,6 +26,15 @@ type MergeReq struct {
 	Rejected bool     // the merge queue rejected the batch
 	Note     string
 	Who      string
+	// Resolved is, by card, what its landing did beyond merging its recorded head
+	// (docs/SPEC-SPRINT.md section 7: the generated ledgers regenerated at the merge, a
+	// resumed card's branch tip landed); written on its merge card as it lands, its note
+	// on the card's timeline.
+	Resolved map[string]string
+	// Heads is, by card, the commit it landed at when that is not its head (a resumed
+	// card's branch tip that descends from it): written on the card as it lands
+	// (FieldLandedHead); its head stays the one its readers read.
+	Heads map[string]string
 }
 
 // streamDone says every primary of the stream on the table has landed, given
@@ -294,8 +303,15 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 				u.Changes = append(u.Changes, change(Merge, setEntry(ctl, ctlSet)))
 				u.Notes = notes
 			}
-			u.Changes = append(u.Changes, change(Merge, moveEntry(c, r.Stream, Merged, map[string]string{"merged": now})))
+			merged := map[string]string{"merged": now}
+			if v := r.Resolved[c.ID]; v != "" {
+				merged["note"] = v
+			}
+			u.Changes = append(u.Changes, change(Merge, moveEntry(c, r.Stream, Merged, merged)))
 			set := map[string]string{"ci": "green", "landed": now}
+			if v := r.Heads[c.ID]; v != "" {
+				set[FieldLandedHead] = v
+			}
 			if v := costs[c.ID]; v != "" {
 				set[FieldCost] = v
 			}
@@ -323,6 +339,15 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 	return p
 }
 
+// FieldResumedHead is the head a card's merge card names when a resume after a
+// conflict put it back in the queue: the lander lands the card's branch tip in its
+// place when the tip descends from it and the card is still at that head.
+const FieldResumedHead = "resumed_head"
+
+// FieldLandedHead is the commit a card landed at when that is not its head: the branch
+// tip a resumed card landed, which descends from the head its readers read.
+const FieldLandedHead = "landed_head"
+
 // ResumeReq moves a stopped stream again.
 type ResumeReq struct {
 	Stream  string
@@ -338,7 +363,10 @@ type ResumeReq struct {
 // landed (ranking it is not landing it). The other causes (a conflict, a red
 // branch, a rejected batch) are resolved by the coordinator, who says what
 // was done; after a red branch saying it is required. It answers every
-// judgment open on the stream.
+// judgment open on the stream. After a conflict each card goes back marked with
+// the head it stopped on (resumed_head), so the lander lands the card's branch tip
+// when the coordinator resolved there and the tip descends from that head
+// (docs/SPEC-SPRINT.md section 7).
 func Resume(s *Snapshot, r ResumeReq) Plan {
 	var p Plan
 	ctl := s.StreamCtl(r.Stream)
@@ -390,7 +418,11 @@ func Resume(s *Snapshot, r ResumeReq) Plan {
 		}
 	}
 	for _, c := range stuck {
-		u.Changes = append(u.Changes, change(Merge, moveEntry(c, r.Stream, Queued, nil, "need_card", "need_stream")))
+		var set map[string]string
+		if pr := s.Work.Placed(c.ID); pr != nil && pr.F("head") != "" && ctl.F("cause") == "conflict" {
+			set = map[string]string{FieldResumedHead: pr.F("head")}
+		}
+		u.Changes = append(u.Changes, change(Merge, moveEntry(c, r.Stream, Queued, set, "need_card", "need_stream")))
 	}
 	p.Units = append(p.Units, u)
 	answered(&p, s, r.Answers, r.Who)
