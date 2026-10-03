@@ -3,6 +3,7 @@ package tool
 import (
 	"bytes"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"math"
 	"path/filepath"
@@ -702,6 +703,143 @@ func TestTheFailureWordIsFAILED(t *testing.T) {
 			assert.Equal(t, "test", j.Result.Verb)
 			assert.Equal(t, tc.wantJSONWord, j.Result.Status)
 			assert.Equal(t, tc.wantExit, j.Result.Exit)
+		})
+	}
+}
+
+// TestItemTextRendersPlainAndAsAField pins the prose tail: the text renders
+// plain after the row's typed fields in the line, and as the `text` field
+// beside them in the JSON, so the line and the object stay one value.
+func TestItemTextRendersPlainAndAsAField(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		kind     string
+		text     string
+		kv       []any
+		wantLine string
+		wantJSON string
+	}{
+		{"spaces stay spaces, never one escaped field", "entry", "no version line: it printed nothing",
+			[]any{"name", "nova-x"},
+			"DEMO OK\nDEMO ENTRY name=nova-x: no version line: it printed nothing\n",
+			`{"result":{"verb":"demo","status":"ok","exit":0},"facts":{},"items":[{"kind":"entry","fields":{"name":"nova-x"},"text":"no version line: it printed nothing"}]}`},
+		{"a newline in the tail is escaped, the spaces are not", "entry", "first\nsecond",
+			[]any{"name", "nova-x"},
+			"DEMO OK\nDEMO ENTRY name=nova-x: first\\x0asecond\n",
+			`{"result":{"verb":"demo","status":"ok","exit":0},"facts":{},"items":[{"kind":"entry","fields":{"name":"nova-x"},"text":"first\nsecond"}]}`},
+		{"an empty tail is no tail and no field", "entry", "",
+			[]any{"name", "nova-x"},
+			"DEMO OK\nDEMO ENTRY name=nova-x\n",
+			`{"result":{"verb":"demo","status":"ok","exit":0},"facts":{},"items":[{"kind":"entry","fields":{"name":"nova-x"}}]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			o := Done().ItemText(tc.kind, tc.text, tc.kv...)
+			o.Verb, o.token = "demo", "DEMO"
+			var text, js bytes.Buffer
+			require.Equal(t, 0, o.Render(&text, false))
+			assert.Equal(t, tc.wantLine, text.String())
+			require.Equal(t, 0, o.Render(&js, true))
+			assert.JSONEq(t, tc.wantJSON, js.String())
+			var j struct {
+				Items []struct {
+					Text string `json:"text"`
+				} `json:"items"`
+			}
+			require.NoError(t, json.Unmarshal(js.Bytes(), &j))
+			require.Len(t, j.Items, 1)
+			assert.Equal(t, tc.text, j.Items[0].Text, "the JSON text and the line tail are one value")
+		})
+	}
+}
+
+// TestRepeatableIsAGetter pins the one repeatable string flag: repeated or
+// comma-separated on the command line, read back as []string through Call.Get.
+func TestRepeatableIsAGetter(t *testing.T) {
+	t.Parallel()
+	var r Repeatable
+	assert.Implements(t, (*flag.Getter)(nil), &r)
+	for _, tc := range []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{"repeated", []string{"--tag", "a", "--tag", "b"}, []string{"a", "b"}},
+		{"comma-separated", []string{"--tag", "a,b"}, []string{"a", "b"}},
+		{"comma or repeat together", []string{"--tag", "a,b", "--tag", "c"}, []string{"a", "b", "c"}},
+		{"spaces trimmed, empties skipped", []string{"--tag", "a, b,,c "}, []string{"a", "b", "c"}},
+		{"absent is empty", nil, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var tags Repeatable
+			var got any
+			tool := &Tool{Name: "nova-demo", What: "a tool that exists to be tested",
+				ExitTable: "0 done, 1 said no, 2 could not run.",
+				Verbs: []Verb{{Name: "ls", Usage: "ls", Effect: Inspection,
+					Flags: func(f *Flags) { f.Var(&tags, "tag", "a tag to keep") },
+					Run: func(c *Call) *Out {
+						got = c.Get("tag")
+						return Done().Fact("n", len(c.Get("tag").([]string)))
+					}}}}
+			var out, errs bytes.Buffer
+			code := tool.Run(append([]string{"ls"}, tc.args...), strings.NewReader(""), &out, &errs)
+			require.Equal(t, 0, code, "stdout %q stderr %q", out.String(), errs.String())
+			vals, ok := got.([]string)
+			require.True(t, ok, "Call.Get is %T, want []string", got)
+			assert.Equal(t, tc.want, vals)
+		})
+	}
+}
+
+// TestHelpRefusedAnswersDashH pins the refused help: with HelpRefused a
+// verb's -h is a refusal at exit 2 naming help, never an answer at exit 0,
+// while `help <verb>` still answers and the switch off changes nothing.
+func TestHelpRefusedAnswersDashH(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name        string
+		helpRefused bool
+		args        []string
+		code        int
+		stdout      string
+		stderr      string
+	}{
+		{"-h is refused at exit 2", true, []string{"put", "-h"}, 2, "",
+			"PUT REFUSED: -h is not an answer this tool gives, its exit 0 means CLEAR; run: nova-demo help\n"},
+		{"--help is refused the same way", true, []string{"put", "--help"}, 2, "",
+			"PUT REFUSED: -h is not an answer this tool gives, its exit 0 means CLEAR; run: nova-demo help\n"},
+		{"help of the verb still answers at exit 0", true, []string{"help", "put"}, 0,
+			"usage: nova-demo put [flags]", ""},
+		{"with the switch off -h still answers at exit 0", false, []string{"put", "-h"}, 0,
+			"usage: nova-demo put [flags]", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tool := &Tool{Name: "nova-demo", What: "a tool that exists to be tested",
+				How:       "It keeps nothing.",
+				ExitTable: "0 done, 1 said no, 2 could not run.", HelpRefused: tc.helpRefused,
+				Verbs: []Verb{{Name: "put", Usage: "put --store <dir>", Effect: Inspection,
+					Flags: func(f *Flags) { f.String("store", "", "a directory") },
+					Run:   func(*Call) *Out { return Done() }}}}
+			var out, errs bytes.Buffer
+			code := tool.Run(tc.args, strings.NewReader(""), &out, &errs)
+			assert.Equal(t, tc.code, code, "stdout %q stderr %q", out.String(), errs.String())
+			if tc.stdout == "" {
+				assert.Empty(t, out.String())
+			} else if tc.code == 2 {
+				assert.Equal(t, tc.stdout, out.String())
+			} else {
+				assert.Contains(t, out.String(), tc.stdout)
+			}
+			if tc.stderr == "" {
+				assert.Empty(t, errs.String())
+			} else if tc.code == 2 {
+				assert.Equal(t, tc.stderr, errs.String())
+			} else {
+				assert.Contains(t, errs.String(), tc.stderr)
+			}
 		})
 	}
 }

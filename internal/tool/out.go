@@ -30,13 +30,13 @@ var word = map[Status]string{OK: "OK", Failed: "FAILED", Refused: "REFUSED"}
 // Out is the one value every verb returns. Render writes it as typed lines:
 //
 //	<TOKEN> OK|FAILED|REFUSED k=v ...[: <why>][; run: <remedy>]   one line per why
-//	<TOKEN> <KIND> k=v ...                                      one line per item
+//	<TOKEN> <KIND> k=v ...[: <text>]                            one line per item, the text its prose tail
 //	<TOKEN> MORE kind=<kind> shown=<n> total=<n> <remedy>       one per capped kind
 //	<TOKEN> NOTE <text>                                         one per note
 //
 // or as the JSON of the same value:
 //
-//	{"result":{"verb","status","exit","remedy","why"},"facts":{},"items":[{"kind","fields"}],
+//	{"result":{"verb","status","exit","remedy","why"},"facts":{},"items":[{"kind","fields","text"}],
 //	 "more":[{"kind","shown","total","remedy"}],"notes":[],"payload":""}
 //
 // A payload (the version line, a document a program reads) is printed as it is,
@@ -79,10 +79,14 @@ type Field struct {
 // Fields keeps its keys in the order they were added, in both renderings.
 type Fields []Field
 
-// Item is one typed row: `<TOKEN> <KIND> k=v ...`.
+// Item is one typed row: `<TOKEN> <KIND> k=v ...[: <text>]`, where the text
+// is the row's prose tail (ItemText): a reason or a command, printed plain
+// after the typed fields and carried as the `text` field of the JSON, so the
+// line and the object stay one value.
 type Item struct {
 	Kind   string `json:"kind"`
 	Fields Fields `json:"fields"`
+	Text   string `json:"text,omitempty"`
 }
 
 // More stands for the items of one kind that --max did not list.
@@ -138,6 +142,17 @@ func (o *Out) Item(kind string, kv ...any) *Out {
 		it.Fields = append(it.Fields, Field{fmt.Sprint(kv[i]), kv[i+1]})
 	}
 	o.Items = append(o.Items, it)
+	return o
+}
+
+// ItemText adds one row of a kind with a prose tail: the typed fields render
+// as key=value tokens and the text renders plain after them, `: <text>`
+// (oneline.Escape), while the JSON carries it as the `text` field beside the
+// typed fields (STANDARD §2, one output structure, two renderings). A reason
+// or a command lives in the tail, never escaped into one key=value field.
+func (o *Out) ItemText(kind, text string, kv ...any) *Out {
+	o.Item(kind, kv...)
+	o.Items[len(o.Items)-1].Text = text
 	return o
 }
 
@@ -210,7 +225,11 @@ func (o *Out) render(w, found, failed io.Writer, asJSON bool) int {
 		if slices.Contains(o.findings, it.Kind) {
 			to = found
 		}
-		fmt.Fprintln(to, oneline.Field(token)+" "+oneline.Field(strings.ToUpper(it.Kind))+it.Fields.text())
+		line := oneline.Field(token) + " " + oneline.Field(strings.ToUpper(it.Kind)) + it.Fields.text()
+		if it.Text != "" {
+			line += ": " + oneline.Escape(it.Text)
+		}
+		fmt.Fprintln(to, line)
 	}
 	for _, m := range o.More {
 		fmt.Fprintln(w, bounded.MoreLine(token, m.Kind, m.Shown, m.Total, m.Remedy))
