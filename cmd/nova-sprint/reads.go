@@ -24,17 +24,18 @@ import (
 // object for a program; the driver reads the sprint through them.
 
 // summary is the sprint's line: landed / all primaries on the table, percent,
-// ETA. The ETA is an estimate once five cards have landed: the dealable cards
-// left (all but the landed and the held), each at the average time a card has
-// taken to land (since, the time from the
-// machine's first start, over the cards landed), in whole minutes rounded up,
-// with no seconds ("47m", "1h12m"); before five have landed, or with no start
-// known, the ETA reads a dash. Every primary landed, it has no ETA: it is done
-// (errata 3 amendment 6).
+// ETA. The ETA is the time until every card on the table has landed (the owner,
+// 2026-10-02: "it's the ETA to all cards being done, not the cards that are in
+// flight or not blocked"): every primary neither landed nor dropped, held ones
+// too, at the landing rate (sprint.LandingRate), in whole minutes rounded up,
+// with no seconds ("47m", "1h12m"), and from a day on in days and hours, the
+// hours rounded up ("52d2h"); before five have landed, or with no rate, the ETA
+// reads a dash. Every primary landed, it has no ETA: it is done (errata 3
+// amendment 6).
 // eta is the minutes left (etaMinutes, or the view's held value), 0 when there
 // is no estimate. held is the cards no tick moves on its own (sprint.HeldBack:
 // behind a sentinel not released, or admitted held), shown apart as held=N
-// when there are any; the ETA leaves them out (nova-tools#5096 item 16).
+// when there are any, and counted in the ETA.
 func summary(t ntable.Table, held, eta int64) string {
 	landed, all := counts(t)
 	line := progress(t)
@@ -44,6 +45,9 @@ func summary(t ntable.Table, held, eta int64) string {
 	switch {
 	case all > 0 && landed == all:
 		return progress(t) + " done"
+	case eta >= 24*60:
+		h := (eta + 59) / 60
+		return fmt.Sprintf("%s -> ETA %dd%dh", line, h/24, h%24)
 	case eta >= 60:
 		return fmt.Sprintf("%s -> ETA %dh%dm", line, eta/60, eta%60)
 	case eta > 0:
@@ -52,17 +56,16 @@ func summary(t ntable.Table, held, eta int64) string {
 	return line + " -> ETA -"
 }
 
-// etaMinutes is the estimate of the minutes left, rounded up: the dealable
-// cards left (all but the landed and the held), each at since over the cards
-// landed; 0 when there is none (fewer than five landed, nothing dealable left,
-// or no first start known).
-func etaMinutes(t ntable.Table, held int64, since time.Duration, started bool) int64 {
+// etaMinutes is the estimate of the minutes left, rounded up: every card not
+// landed, held ones too, at rate cards an hour; 0 when there is none (fewer
+// than five landed, nothing left, or no rate).
+func etaMinutes(t ntable.Table, rate float64) int64 {
 	landed, all := counts(t)
-	left := all - landed - held
-	if !started || landed < 5 || left <= 0 {
+	left := all - landed
+	if rate <= 0 || landed < 5 || left <= 0 {
 		return 0
 	}
-	return int64(math.Ceil(float64(since) * float64(left) / float64(landed) / float64(time.Minute)))
+	return int64(math.Ceil(float64(left) * 60 / rate))
 }
 
 // etaHold is how long the view holds an estimate: it shows the largest of the
@@ -75,16 +78,29 @@ type etaSample struct {
 	m  int64
 }
 
-// heldETA is the largest estimate of the last etaHold, m at now among them: a
-// stable value. No estimate (0) is shown as none and forgets what was held. One
+// etaKey is what the cards still to land are made of apart from the landings:
+// every primary on the table and the held ones. A landing changes neither; add,
+// drop and release change one (a brief, a rework and a stream remove change
+// neither: none adds, takes off or frees a card), and their change reaches the
+// table at the next tick's drain.
+type etaKey struct{ all, held int64 }
 
-// process holds its own: a where run once shows its estimate, a watch and the
-// server hold theirs.
-func (a *app) heldETA(now time.Time, m int64) int64 {
+// heldETA is the largest estimate of the last etaHold, m at now among them: a
+// stable value while landings arrive in rounds. The hold is over the same cards
+// to land: an estimate made over another key is dirty and is forgotten, so the
+// first read after the tick that drained an add, a drop or a release shows the
+// estimate recomputed over the new count at the rate measured (the owner,
+// 2026-10-02: "When you add new cards, the ETA needs to be made dirty and
+// recalculated."; nova-tools#5171). No estimate (0) is shown as none and
+// forgets what was held. One process holds its own: a where run once shows its
+// estimate, a watch and the server hold theirs.
+func (a *app) heldETA(now time.Time, k etaKey, m int64) int64 {
 	a.etaMu.Lock()
 	defer a.etaMu.Unlock()
+	if m == 0 || k != a.etaKey {
+		a.etas, a.etaKey = nil, k
+	}
 	if m == 0 {
-		a.etas = nil
 		return 0
 	}
 	a.etas = append(slices.DeleteFunc(a.etas, func(s etaSample) bool { return now.Sub(s.at) >= etaHold }), etaSample{now, m})
@@ -408,7 +424,7 @@ type whereView struct {
 	At          time.Time                               `json:"at"`
 	Landed      int64                                   `json:"landed"`
 	All         int64                                   `json:"all"`
-	Held        int64                                   `json:"held,omitempty"` // behind a sentinel not released, or admitted held: not in the ETA
+	Held        int64                                   `json:"held,omitempty"` // behind a sentinel not released, or admitted held: in the ETA
 	Summary     string                                  `json:"summary"`
 	Tables      map[string]map[string]map[string]string `json:"tables"` // table -> row -> column -> cell as printed
 	Streams     []sprint.StreamClock                    `json:"streams"`
@@ -593,8 +609,14 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 		return whereView{}, "", err
 	}
 	v.Held = int64(held)
-	since, started := st.SinceFirstStart(ctx)
-	v.Summary = summary(shapes[0], v.Held, a.heldETA(now, etaMinutes(shapes[0], v.Held, since, started)))
+	// the landed stamps for the last hour's rate; a read of them that fails (the
+	// landed column busy with landings) leaves the whole sprint's average, never a
+	// failed view
+	landedAt, err := st.LandedAt(ctx)
+	if err != nil {
+		landedAt = nil
+	}
+	v.Summary = summary(shapes[0], v.Held, a.heldETA(now, etaKey{v.All, v.Held}, etaMinutes(shapes[0], st.LandingRate(ctx, landedAt, v.Landed))))
 
 	if f.Pending != nil {
 		v.Pending = f.Pending.ID
@@ -1338,7 +1360,8 @@ func (a *app) cmdCheck(args []string, stdout, stderr io.Writer) int {
 // cmdRoutes is each route of the store with what its attempts did: the work
 // cards dealt on it, finished ok, failed, failed by the provider, and the mean
 // wall from take to finish, so a bad route shows (docs/SPEC-SPRINT.md, the
-// deal's route).
+// deal's route), and when its rest ends while the machine rests it for children
+// that ended with no result (rule 3, sprint.RouteRests).
 func (a *app) cmdRoutes(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("routes")
 	if pos, err := parse(fs, args); err != nil || len(pos) > 0 {
@@ -1358,6 +1381,12 @@ func (a *app) cmdRoutes(args []string, stdout, stderr io.Writer) int {
 		return a.readFailed("routes", err, stderr)
 	}
 	stats := sprint.RouteStats(rs, s.Fleet)
+	rests := sprint.RouteRests(rs, s.Fleet)
+	for i := range stats {
+		if r, ok := rests[stats[i].Route.Name]; ok && r.Resting(s.Now) {
+			stats[i].RestedUntil = r.Until.UTC().Format(time.RFC3339)
+		}
+	}
 	if c.json {
 		b, _ := json.Marshal(map[string]any{"tiers": sprint.TierRoutes(rs), "routes": stats})
 		fmt.Fprintln(stdout, string(b))
@@ -1378,8 +1407,8 @@ func (a *app) cmdRoutes(args []string, stdout, stderr io.Writer) int {
 		} else if r.Tier == "" {
 			how = "gone" // a route the cards name that the store no longer holds
 		}
-		fmt.Fprintf(stdout, "ROUTE %s model=%s %s attempts=%d ok=%d failed=%d provider_failures=%d mean_wall=%s\n",
-			oneline.Field(r.Name), oneline.Field(model), how, x.Attempts, x.OK, x.Failed, x.Provider, x.MeanWall)
+		fmt.Fprintf(stdout, "ROUTE %s model=%s %s attempts=%d ok=%d failed=%d provider_failures=%d mean_wall=%s rested_until=%s\n",
+			oneline.Field(r.Name), oneline.Field(model), how, x.Attempts, x.OK, x.Failed, x.Provider, x.MeanWall, orDashStr(x.RestedUntil, "-"))
 	}
 	fmt.Fprintf(stdout, "ROUTES OK routes=%d\n", len(stats))
 	return 0

@@ -21,7 +21,7 @@ import (
 
 // briefOf is a brief that passes the card lint, about 2.5 KB, as a fleet card's is.
 func briefOf(i int) string {
-	lead := fmt.Sprintf("Fix part %d. ", i)
+	lead := fmt.Sprintf("Fix part %d, tier: pro. ", i) // pro: read by both readers
 	for len(passingBrief(lead)) < 2500 {
 		lead += "The work, in the words a child reads. "
 	}

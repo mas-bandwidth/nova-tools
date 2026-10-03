@@ -5,12 +5,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/big"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 )
 
 // THE USAGE SOURCE IS THE DATABASE THE HARNESS WRITES (SPEC-SWARM rule 12, rule 13).
@@ -80,7 +83,9 @@ const messagesSQL = `SELECT ` +
 	`json_extract(data, '$.tokens.output'), ` +
 	`json_extract(data, '$.tokens.cache.write'), ` +
 	`json_extract(data, '$.tokens.cache.read'), ` +
-	`json_extract(data, '$.tokens.reasoning') ` +
+	`json_extract(data, '$.tokens.reasoning'), ` +
+	// the harness's own cost of the message, what a dollar budget is held to (#5094)
+	`json_extract(data, '$.cost') ` +
 	`FROM message WHERE json_extract(data, '$.tokens') IS NOT NULL`
 
 // readOpenCodeUsage reads one job's accounting out of its own database.
@@ -319,8 +324,9 @@ func foldOpenCodeRows(rows [][]string) (ProviderUsage, error) {
 	maxInt := int64(^uint(0) >> 1)
 	var total int64
 	provider, model := "", ""
+	cost, costed := new(big.Rat), false
 	for rowIndex, row := range rows {
-		if len(row) != 2+len(TokenColumns) {
+		if len(row) != 2+len(TokenColumns)+1 {
 			return ProviderUsage{}, fmt.Errorf("opencode usage row %d column count is invalid", rowIndex+1)
 		}
 		if v := strings.TrimSpace(row[0]); v != "" {
@@ -348,6 +354,18 @@ func foldOpenCodeRows(rows [][]string) (ProviderUsage, error) {
 			total += n
 			reported[i] = true
 		}
+		// the message's cost, exactly: a float the store printed, never added as a float
+		if cell := strings.TrimSpace(row[2+len(TokenColumns)]); cell != "" && cell != Dash {
+			r, ok := new(big.Rat).SetString(cell)
+			if !ok || r.Sign() < 0 {
+				return ProviderUsage{}, fmt.Errorf("opencode usage row %d column cost is not a nonnegative number", rowIndex+1)
+			}
+			cost.Add(cost, r)
+			costed = true
+		}
+	}
+	if costed {
+		values["cost"] = cardcost.Text(cost)
 	}
 	for i, c := range TokenColumns {
 		if reported[i] {

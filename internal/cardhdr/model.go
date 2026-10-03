@@ -119,6 +119,11 @@ func IsModelID(id string) bool {
 // (tla/CardContract.tla, StageRefused).
 const EndStaging = "staging refused"
 
+// EndLaunch is how a member's failed finish begins when it could not launch a taken card
+// (no model, budget or deadline from its packet or its override): the member's failure,
+// never the card's, like a staging refusal.
+const EndLaunch = "launch refused"
+
 // EndNothing and EndNoCommit are how a member's failed finish begins when its child found
 // nothing to do (verdict nothing) or committed nothing: no new work. The sprint returns
 // such a rework to review at the head an earlier attempt pushed when a reader passed that

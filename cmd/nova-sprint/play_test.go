@@ -36,7 +36,8 @@ func (ta *testApp) coordinate() {
 			continue
 		}
 		switch {
-		case g.Type == sprint.NWorkFailed || g.Type == sprint.NReadBroken:
+		case g.Type == sprint.NWorkFailed || g.Type == sprint.NReadBroken || g.Type == sprint.NBound:
+			// the bound's judgment: the second identical failure too (rule 2), reworked with a fix
 			ta.ok(fmt.Sprintf("rework --group %s --expect %d --fix 'the fix'", g.ID, g.Size))
 			return // read the inbox again next round
 		case g.Type == sprint.NCross:

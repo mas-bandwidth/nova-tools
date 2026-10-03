@@ -176,7 +176,7 @@ type held struct {
 	tick       map[string]string
 	tickStream map[string]string
 	noMember   bool
-	fewReaders bool // the tick writes that fewer than two readers are up
+	fewReaders bool // the tick writes that fewer readers are up than a primary needs
 	marks      map[string]bool
 	due        int
 	// judged is the judgments open on a subject, and the tick's conditions
@@ -213,7 +213,11 @@ var heldParts = []TickPartFn{TickLevel, TickLevelReads, TickResolve, TickResume,
 
 func newHeld(h HeldState, now time.Time) *held {
 	s := *h.Snap
-	s.Now = now
+	s.Now, s.rests = now, nil
+	// the resting routes, settled once at this clock: the rule asks noRoute of every
+	// ready primary (judgment), each a map read (route_rest.go)
+	sp, _ := s.withRests()
+	s = *sp
 	c := &held{h: h, s: &s, req: TickReq{Who: MachineActor, Stopped: h.Stopped},
 		tick: map[string]string{}, tickStream: map[string]string{}, marks: map[string]bool{},
 		judged: map[string][]string{}, memo: map[string]Hold{}, on: map[string]bool{}}
@@ -380,10 +384,11 @@ func (c *held) actor(pr *Card) string {
 	return ""
 }
 
-// waitsToBeAsked says the primary is in review with fewer than two reads at
-// its attempt and work that did not fail: the ask is owed it.
+// waitsToBeAsked says the primary is in review with fewer reads at its
+// attempt than it needs (ReadsNeeded) and work that did not fail: the ask is
+// owed it.
 func (c *held) waitsToBeAsked(pr *Card) bool {
-	return pr.Col == Review && pr.F("result") != "failed" && len(liveReadsAt(c.s, pr, pr.Int("attempt"))) < 2
+	return pr.Col == Review && pr.F("result") != "failed" && len(liveReadsAt(c.s, pr, pr.Int("attempt"))) < ReadsNeeded(pr)
 }
 
 // tickOn is what the next tick does to the primary, "" when nothing.
@@ -399,7 +404,7 @@ func (c *held) tickOn(pr *Card) string {
 	if pr.Col == Ready && !IsSentinel(pr) && c.noMember {
 		return "writes " + NNoMember
 	}
-	if c.fewReaders && c.waitsToBeAsked(pr) {
+	if c.fewReaders && c.waitsToBeAsked(pr) && !enoughReadersUp(c.s, pr) {
 		return "writes " + NFewReaders
 	}
 	if c.due > 0 && pr.Col != Merging {
@@ -439,7 +444,7 @@ func (c *held) judgment(pr *Card) string {
 			}
 		}
 	}
-	if c.waitsToBeAsked(pr) {
+	if c.waitsToBeAsked(pr) && !enoughReadersUp(c.s, pr) {
 		for _, j := range c.judged[StreamSubject("")] {
 			if strings.HasPrefix(j, NFewReaders) {
 				return "fewer than two readers are up; open: " + j
@@ -533,8 +538,8 @@ func (c *held) waits(pr *Card) (why, root string, ok bool) {
 		return "no live work card of an up member holds it before its deadline, and no judgment is open on it", "", false
 	case Review:
 		switch {
-		case len(okReaders(s, pr)) >= 2:
-			return "acceptable (two different readers said ok at its head), and no judgment is open on it", "", false
+		case acceptable(s, pr):
+			return "acceptable (" + readersWord(ReadsNeeded(pr)) + " said ok at its head), and no judgment is open on it", "", false
 		case pr.F("result") == "failed":
 			return "its work came back failed, and no judgment is open on it", "", false
 		}
@@ -597,11 +602,11 @@ func (c *held) decisions(pr *Card) []string {
 			out = append(out, "fleet down "+wc.Row)
 		}
 		out = append(out, "drop")
-	case pr.Col == Review && len(okReaders(c.s, pr)) >= 2:
+	case pr.Col == Review && acceptable(c.s, pr):
 		out = []string{"accept", "rework", "drop"}
 	case pr.Col == Review && pr.F("result") == "failed":
 		out = []string{"rework", "drop"}
-	case pr.Col == Review && len(liveReadsAt(c.s, pr, pr.Int("attempt"))) >= 2:
+	case pr.Col == Review && len(liveReadsAt(c.s, pr, pr.Int("attempt"))) >= ReadsNeeded(pr):
 		out = []string{"ask --another", "rework", "drop"} // ask alone is refused: asked already
 	case pr.Col == Review:
 		out = []string{"ask", "rework", "drop"}

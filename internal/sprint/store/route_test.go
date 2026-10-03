@@ -1,6 +1,7 @@
 package store
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -71,6 +72,37 @@ func TestTheDealDrawsARouteOfTheCardsTierAndThePacketCarriesIt(t *testing.T) {
 	assert.Equal(t, "prov-"+r+"/model-"+r, ps[0].Model)
 	assert.Equal(t, "1000", ps[0].Tokens)
 	assert.Equal(t, 600, ps[0].Deadline)
+}
+
+// A route's dollar budget rides the work card and its packet beside the token budget, so the
+// member launches native with --usd (nova-tools #5094); a route with none writes none, and
+// the field is written empty so a redeal onto such a route clears what an earlier draw set.
+func TestARoutesDollarBudgetRidesTheCardAndThePacket(t *testing.T) {
+	t.Parallel()
+	priced := route("pro-a", "pro")
+	priced.USD = "0.5"
+	h := routeHarness(t, priced, route("flash-a", "flash"))
+	h.addReady("s1", 1, briefOf("pro", ""))
+	h.addReady("s2", 1, briefOf("flash", ""))
+	h.must(DealStep(sprint.DealReq{}))
+	wc := h.workCards()
+	require.NotNil(t, wc["s1-1.w1"])
+	require.NotNil(t, wc["s2-1.w1"])
+	assert.Equal(t, "0.5", wc["s1-1.w1"].F(sprint.FieldUSD), "the route's dollar budget is on the work card")
+	assert.Empty(t, wc["s2-1.w1"].F(sprint.FieldUSD), "a route with no dollar budget writes none")
+	ps, err := h.st.Packets(h.ctx, []*sprint.Card{wc["s1-1.w1"], wc["s2-1.w1"]})
+	require.NoError(t, err)
+	assert.Equal(t, "0.5", ps[0].USD, "the packet hands the member the dollar budget")
+	assert.Empty(t, ps[1].USD)
+	// an empty dollar budget is no cap: the packet the member reads carries no usd at all,
+	// so the member puts no --usd on the launch (member.go; TestAMemberLaunchesEachCardOnItsPacketsRoute)
+	raw, err := json.Marshal(ps[1])
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), `"usd"`, "an empty dollar budget is no word in the packet: %s", raw)
+	raw, err = json.Marshal(ps[0])
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"usd":"0.5"`)
+	assert.Equal(t, "0.5", RouteOf("r", map[string]string{"usd": "0.5", "tier": "pro"}).USD, "the route's hash carries it")
 }
 
 func TestAPinnedCardRunsOnItsPinAndBypassesTheDraw(t *testing.T) {
@@ -453,10 +485,12 @@ func TestATickOf1000CardsKeepsTheTripPin(t *testing.T) {
 
 // A read runs on its card's tier (the owner, 2026-10-01: "i think readers being
 // conservatively the same tier as the work being done seems fine?"; route.go,
-// readRouteOf; tla/RouteIndex.tla, THE READS): in one sprint a flash card's reads
-// carry flash routes and a pro card's reads pro routes, each drawn at its tier's
-// rolling index, which the deal and the reads share; the route, model, budget and
-// deadline are on the read card and in its packet, so a reader loop needs no --model.
+// readRouteOf; tla/RouteIndex.tla, THE READS): in one sprint a flash card's one
+// read carries a flash route and a pro card's two reads pro routes (the owner,
+// 2026-10-02, cost rule 4: "one cold read per flash card on a flash route; two per
+// pro card"; ReadsNeeded), each drawn at its tier's rolling index, which the deal
+// and the reads share; the route, model, budget and deadline are on the read card
+// and in its packet, so a reader loop needs no --model.
 func TestAReadRunsOnItsCardsTierAtThatTiersIndex(t *testing.T) {
 	t.Parallel()
 	h := routeHarness(t, route("pro-a", "pro"), route("pro-b", "pro"), route("flash-a", "flash"), route("flash-b", "flash"))
@@ -472,9 +506,17 @@ func TestAReadRunsOnItsCardsTierAtThatTiersIndex(t *testing.T) {
 	h.work("m2")
 	h.machine()
 	s := h.snap()
-	for id, tier := range map[string]string{"s1-1": "pro", "s2-1": "flash"} {
+	for id, want := range map[string]struct {
+		tier   string
+		routes []string
+		index  string
+	}{
+		"s1-1": {"pro", []string{"pro-b", "pro-a"}, "3"}, // the deal took pro-a: the reads take entries 1 and 2
+		"s2-1": {"flash", []string{"flash-b"}, "2"},      // the deal took flash-a: the one read takes entry 1
+	} {
+		tier := want.tier
 		reads := s.Readers.Of(id)
-		require.Len(t, reads, 2, "%s asked of two readers", id)
+		require.Len(t, reads, len(want.routes), "%s, a %s card, asked of %d readers", id, tier, len(want.routes))
 		var got []string
 		for _, rc := range reads {
 			name := rc.F(sprint.FieldRoute)
@@ -486,10 +528,12 @@ func TestAReadRunsOnItsCardsTierAtThatTiersIndex(t *testing.T) {
 			assert.Equal(t, "prov-"+name+"/model-"+name, p.Model, "the read's packet carries its model")
 			assert.Equal(t, routeSeconds, p.Deadline)
 		}
-		// the tier's index stood at 1 after the deal: the reads take entries 1 and 2
-		assert.ElementsMatch(t, []string{tier + "-a", tier + "-b"}, got, "%s, a %s card, is read on %s routes", id, tier, tier)
+		assert.ElementsMatch(t, want.routes, got, "%s, a %s card, is read on %s routes", id, tier, tier)
+		for _, rc := range reads {
+			assert.Equal(t, tier, rc.F(sprint.FieldTier), "%s records the tier of its route", rc.ID)
+		}
 		v, _ := s.Fleet.Prop(sprint.PropRouteIndex(tier))
-		assert.Equal(t, "3", v, "the %s index moves once a card, work or read", tier)
+		assert.Equal(t, want.index, v, "the %s index moves once a card, work or read", tier)
 	}
 	h.clean("reads drawn")
 }
@@ -524,13 +568,13 @@ func TestReadsTheirCardsTierCannotServeAreJudgedAtOnce(t *testing.T) {
 
 // One path asks (commit 255180e2; fleet pass 7, 2026-10-01): the finish of reworked work
 // asks no reader; the machine's ask, in the tick the finish wakes, asks two different
-// readers round the readers, each read with the route it draws. A read the finish asked itself carried
-// no route, and no reader could start it.
+// readers round the readers (a pro card's two reads), each read with the route it draws.
+// A read the finish asked itself carried no route, and no reader could start it.
 func TestAReadOfReworkedWorkCarriesARoute(t *testing.T) {
 	t.Parallel()
 	h := routeHarness(t, route("pro-a", "pro"), route("pro-b", "pro"), route("flash-a", "flash"), route("flash-b", "flash"))
 	require.NoError(t, h.st.BeatReaders(h.ctx))
-	h.addReady("s1", 1, briefOf("flash", ""))
+	h.addReady("s1", 1, briefOf("pro", ""))
 	h.startMachine()
 	h.machine()
 	h.finishAttempt("s1-1", false, pushedA)

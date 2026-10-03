@@ -45,11 +45,11 @@ func (ta *testApp) readerRows() []string {
 	return out
 }
 
-// inReview is n primaries of stream s1 finished and in review, the machine
+// inReview is n pro primaries of stream s1 finished and in review, the machine
 // STOPPED (the ask is the coordinator's by hand).
 func (ta *testApp) inReview(n int) {
 	ta.t.Helper()
-	ta.ok(fmt.Sprintf("add --stream s1 --count %d", n))
+	ta.ok(fmt.Sprintf("add --stream s1 --count %d --brief-file %s", n, proBriefFile(ta.t))) // pro: two readers each
 	ta.deal(n)
 	ta.ok(fmt.Sprintf("take --as m1 --limit %d", n))
 	var words []string

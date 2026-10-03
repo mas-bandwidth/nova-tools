@@ -73,10 +73,23 @@ func TestAMemberLaunchesEachCardOnItsPacketsRoute(t *testing.T) {
 		assert.Equal(t, c.model, args["--model"], c.card)
 		assert.Equal(t, c.tokens, args["--tokens"], c.card)
 		assert.Equal(t, (time.Duration(c.deadline) * time.Second).String(), args["--deadline"], c.card)
+		_, hasUSD := args["--usd"]
+		assert.False(t, hasUSD, "a packet with no dollar budget launches with no --usd: %s", c.card)
 		assert.Equal(t, c.model, f.Model, "%s: the frame names the model the card runs on", c.card)
 		assert.Equal(t, c.tier, f.Tier, c.card)
 		assert.NotEqual(t, "claude", cardcontract.FamilyOf("openai/gpt-mini"))
 	}
+}
+
+// A route's dollar budget reaches native as --usd beside --tokens (nova-tools #5094).
+func TestAMemberLaunchesACardWithItsRoutesDollarBudget(t *testing.T) {
+	t.Parallel()
+	r := argsRunner(t, "override/model", "999", 9*time.Second)
+	routeSeconds := 600
+	args, _ := launched(t, r, member.Packet{Card: "u1", Kind: "work", Attempt: 1, Gen: 1, Branch: "work/u1",
+		Route: "flash-m", Model: "inception/mercury-2.5", Tokens: "2000000", USD: "0.5", Deadline: routeSeconds})
+	assert.Equal(t, "0.5", args["--usd"], "the packet's dollar budget is native's --usd")
+	assert.Equal(t, "2000000", args["--tokens"], "and the token budget stays beside it")
 }
 
 // A card with no route (a store with no route: a twin, one machine) runs on the

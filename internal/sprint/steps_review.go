@@ -43,8 +43,9 @@ func readsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 	return out
 }
 
-// Ask deals every primary in review that lacks reads to TWO DIFFERENT readers
-// up (readers.go), in work order, each the next reader round the readers
+// Ask deals every primary in review that lacks reads to as many different
+// readers up as it needs (ReadsNeeded: one for a flash card, two for a pro
+// card; readers.go), in work order, each the next reader round the readers
 // (round.go, errata 3 amendment 5: from the rolling index, wrapping, each the
 // first that has no read card at the attempt, the index moved past it: the
 // readers table's ask_index, written with the ask). Reworked work is asked by
@@ -81,7 +82,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		if another && asked == 0 {
 			return "not asked yet at attempt " + itoa(c.Int("attempt")) + ": the machine's tick asks it, or run: nova-sprint ask " + c.ID + "; --another adds a reader to one already asked"
 		}
-		if !another && have >= 2 {
+		if !another && have >= ReadsNeeded(c) {
 			return "asked already"
 		}
 		return ""
@@ -134,7 +135,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 				free = append(free, rd)
 			}
 		}
-		want := 2 - len(all) // a read taken back from a reader away leaves one to ask
+		want := max(0, ReadsNeeded(c)-len(all)) // a read taken back from a reader away leaves one to ask
 		if another {
 			want = 1
 		}
@@ -596,7 +597,7 @@ func reviewJudgment(s *Snapshot, pr *Card, st reviewStep) (Note, bool) {
 	}
 	var typ, why string
 	switch {
-	case len(oks) >= 2:
+	case len(oks) >= ReadsNeeded(pr):
 		if offers || s.Running && AcceptHeld(pr) == "" {
 			// a RUNNING machine's pump accepts it: "accept is mechanical"
 			return Note{}, false
@@ -611,7 +612,7 @@ func reviewJudgment(s *Snapshot, pr *Card, st reviewStep) (Note, bool) {
 	case reads == 0:
 		typ, why = NStranded, "never asked at attempt "+itoa(attempt)+" and nothing is open on it"
 	default:
-		typ, why = NReadsExhausted, "no read is outstanding and two different readers have not said ok at "+orDash(pr.F("head"))
+		typ, why = NReadsExhausted, fmt.Sprintf("no read is outstanding and %s not said ok at %s", readersWord(ReadsNeeded(pr)), orDash(pr.F("head")))
 	}
 	if contains(st.acked, typ) {
 		return Note{}, false
@@ -631,19 +632,30 @@ type AcceptReq struct {
 	Who     string
 }
 
-// okReaders is two ok read cards from different readers at the primary's
-// current attempt and head, in reader row order; fewer when it has fewer.
+// okReaders is the primary's ok read cards from different readers at its
+// current attempt and head, in reader row order, as many as it needs
+// (ReadsNeeded); fewer when it has fewer.
 func okReaders(s *Snapshot, pr *Card) []*Card {
 	var out []*Card
 	seen := map[string]bool{}
+	need := ReadsNeeded(pr)
 	for _, c := range readsAt(s, pr, pr.Int("attempt")) {
 		r := c.F("reader")
-		if c.Col == OK && c.F("head") == pr.F("head") && ReadCardAgrees(c) && !seen[r] && len(out) < 2 {
+		if c.Col == OK && c.F("head") == pr.F("head") && ReadCardAgrees(c) && !seen[r] && len(out) < need {
 			seen[r] = true
 			out = append(out, c)
 		}
 	}
 	return out
+}
+
+// readersWord names the readers a primary needs (ReadsNeeded, one or two):
+// "one reader" for a flash card, "two different readers" for a pro card.
+func readersWord(n int) string {
+	if n == 1 {
+		return "one reader"
+	}
+	return "two different readers"
 }
 
 // ReadCardAgrees says a read card is where its identity says: the row it
@@ -655,11 +667,12 @@ func ReadCardAgrees(c *Card) bool {
 }
 
 // Accept moves review -> merging and places the primary in merge queued with
-// its score. It is refused without ok reads from two different readers at the
-// primary's head, whoever the readers. The primary's read cards still asked
+// its score. It is refused without ok reads from as many different readers at
+// the primary's head as it needs (ReadsNeeded: one for a flash card, two for a
+// pro card), whoever the readers. The primary's read cards still asked
 // or reading are retired in the same step, marked retired by accept, so no
 // read is outstanding on a primary that is not in review. Named ids are all or nothing under one
-// pre-state; a selection (a stream, the primaries with two ok reads, an inbox
+// pre-state; a selection (a stream, the primaries with the ok reads they need, an inbox
 // group) moves the eligible and lists the rest with the reason.
 func Accept(s *Snapshot, r AcceptReq) Plan {
 	var p Plan
@@ -672,12 +685,12 @@ func Accept(s *Snapshot, r AcceptReq) Plan {
 		if why := inState(c, Review); why != "" {
 			return why
 		}
-		if oks := okReaders(s, c); len(oks) < 2 {
+		if oks := okReaders(s, c); len(oks) < ReadsNeeded(c) {
 			var names []string
 			for _, o := range oks {
 				names = append(names, o.F("reader"))
 			}
-			return fmt.Sprintf("needs ok from two different readers at head %s; has ok from %d (%s)", orDash(c.F("head")), len(oks), orDash(strings.Join(names, ",")))
+			return fmt.Sprintf("needs ok from %s at head %s; has ok from %d (%s)", readersWord(ReadsNeeded(c)), orDash(c.F("head")), len(oks), orDash(strings.Join(names, ",")))
 		}
 		if m := s.Merge.Card(c.ID); m != nil && (!m.Placed() || m.Col != Returned) {
 			return "its merge record is " + placeWord(m)
@@ -716,7 +729,11 @@ func Accept(s *Snapshot, r AcceptReq) Plan {
 			u.Changes = append(u.Changes, change(Merge, createEntry(c.ID, c.Row, Queued, c.Score,
 				map[string]string{"kind": "merge", "primary": c.ID, "stream": c.Row})))
 		}
-		readers := oks[0].F("reader") + "," + oks[1].F("reader")
+		var names []string
+		for _, o := range oks {
+			names = append(names, o.F("reader"))
+		}
+		readers := strings.Join(names, ",")
 		u.Changes = append(u.Changes, change(Work, moveEntry(c, c.Row, Merging, map[string]string{"readers": readers, "accepted": stamp(s.Now)})))
 		u.Moved = fmt.Sprintf("%s review -> merging queued (ok from %s)", c.ID, strings.ReplaceAll(readers, ",", ", "))
 		if retired > 0 {
@@ -827,6 +844,7 @@ var ReworkResolves = []string{NWorkFailed, NReadBroken, NCIRed, NRepairSkipped, 
 // A primary that takes no rework is refused with what to run instead, by its
 // state (reworkWhy), as brief is (briefStarted).
 func Rework(s *Snapshot, r ReworkReq) Plan {
+	s, _ = s.withRests() // the resting routes, read once (rule 3, route_rest.go)
 	var p Plan
 	// a primary in review, or one at its redeal bound (ready, its work card
 	// withdrawn and dealt no more): rework is its next attempt
@@ -1061,7 +1079,7 @@ func answeredIn(notes []Note, id string) bool {
 // merge table's hidden returned column, so a later accept moves it back. The
 // primary is marked returned at its attempt (FieldReturnedAttempt): the
 // coordinator decides it, by accept, rework or drop, and the pump accepts it
-// again only at a new attempt with its own two reads.
+// again only at a new attempt with its own reads.
 func Return(s *Snapshot, r ReturnReq) Plan {
 	var p Plan
 	chosen := pick(&p, r.Sel, s.Work.Column(Merging), rowOf, func(c *Card) string {
@@ -1115,11 +1133,11 @@ func Return(s *Snapshot, r ReturnReq) Plan {
 		// Back in review, the coordinator decides again.
 		j := judgment(NReturned, c.Row, s.Now, c.Int("returns"), c.ID)
 		j.Who, j.Attempt, j.What = r.Who, c.Int("attempt"), r.Reason
-		if len(okReaders(s, c)) < 2 {
+		if !acceptable(s, c) {
 			j.Decisions = removeDecision(j.Decisions, "accept")
 		}
 		u.Notes = append(u.Notes, j)
-		// Back in review with ok reads from two different readers at its
+		// Back in review with the ok reads it needs at its
 		// head, the returned judgment offers accept: the one judgment it
 		// needs; the call below writes nothing more then.
 		if ra, ok := reviewJudgment(s, inReview(c, set), reviewStep{closing: noteIDs(u.Closes), writes: u.Notes, who: r.Who}); ok {

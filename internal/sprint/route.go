@@ -41,7 +41,10 @@ type Route struct {
 	Tier     string `json:"tier"`
 	Provider string `json:"provider"`
 	Model    string `json:"model"`
-	Tokens   int    `json:"tokens"`   // 0 is unmetered
+	Tokens   int    `json:"tokens"` // 0 is unmetered
+	// USD is the route's dollar budget per card, a canonical decimal ("0.5"), "" for none:
+	// the harness's reported cost at which native stops the card (nova-tools #5094).
+	USD      string `json:"usd,omitempty"`
 	Deadline int    `json:"deadline"` // seconds
 	Enabled  bool   `json:"enabled"`
 	// Prices is the route's price sheet (cardcost.PricesOf), what a card that ran on it
@@ -57,6 +60,7 @@ const (
 	FieldRoute    = "route"
 	FieldModel    = "model"
 	FieldTokens   = "tokens"
+	FieldUSD      = "usd"
 	FieldDeadline = "deadline"
 	FieldRoutes   = "routes"
 	FieldUsage    = "usage"
@@ -150,7 +154,7 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 		return nil, tier, "its brief's model lines: " + bad
 	}
 	if m.Pin != "" {
-		return map[string]string{FieldRoute: RoutePin, FieldModel: m.Pin, FieldTokens: m.Tokens, FieldDeadline: strconv.Itoa(m.Deadline)}, "", ""
+		return map[string]string{FieldRoute: RoutePin, FieldModel: m.Pin, FieldTokens: m.Tokens, FieldUSD: "", FieldDeadline: strconv.Itoa(m.Deadline)}, "", ""
 	}
 	if len(s.Routes) == 0 {
 		return nil, "", ""
@@ -158,11 +162,18 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 	if tier == cardhdr.RouteFrontier {
 		return nil, tier, "a frontier card waits for the coordinator: run it, or pin it with a model: <provider>/<model> line"
 	}
+	// a resting route (rule 3, route_rest.go) serves no work card until its rest ends
 	served := map[string]Route{}
+	var rested []string
 	for _, r := range s.Routes {
-		if r.Tier == tier && r.Enabled {
-			served[r.Name] = r
+		if r.Tier != tier || !r.Enabled {
+			continue
 		}
+		if rest, ok := s.resting(r.Name); ok {
+			rested = append(rested, r.Name+" until "+stamp(rest.Until))
+			continue
+		}
+		served[r.Name] = r
 	}
 	arr := s.tierArray(tier)
 	drawn := Split(c.F(FieldRoutes))
@@ -192,8 +203,11 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 			ri[tier].r.count += i + 1
 			ri[tier].moves[c.ID] = strconv.FormatUint(i+1, 10)
 		}
-		return map[string]string{FieldRoute: r.Name, FieldModel: r.Provider + "/" + r.Model, FieldTokens: tokensWord(r.Tokens),
+		return map[string]string{FieldRoute: r.Name, FieldModel: r.Provider + "/" + r.Model, FieldTokens: tokensWord(r.Tokens), FieldUSD: r.USD,
 			FieldDeadline: strconv.Itoa(r.Deadline), FieldRoutes: strings.Join(append(Split(c.F(FieldRoutes)), r.Name), ",")}, tier, ""
+	}
+	if len(rested) > 0 {
+		return nil, tier, "every enabled route of tier " + tier + " in its array rests, its children having ended with no result (" + strings.Join(rested, ", ") + "): the deal draws one when its rest ends; or run nova-config route add <name> --tier " + tier + " ..., or pin the card with a model: <provider>/<model> line"
 	}
 	return nil, tier, "no enabled route serves tier " + tier + ": run nova-config route add <name> --tier " + tier + " ..., name it in nova-config tier set " + tier + " --routes <name,...>, then nova-config apply; or pin the card with a model: <provider>/<model> line"
 }
@@ -267,7 +281,7 @@ func (s *Snapshot) readRouteOf(ri routeIndexes, pr *Card, avoid []string) map[st
 		ri[tier].r.count += i + 1
 		was, _ := strconv.ParseUint(ri[tier].moves[key], 10, 64)
 		ri[tier].moves[key] = strconv.FormatUint(was+i+1, 10)
-		return map[string]string{FieldRoute: r.Name, FieldModel: r.Provider + "/" + r.Model, FieldTokens: tokensWord(r.Tokens),
+		return map[string]string{FieldRoute: r.Name, FieldModel: r.Provider + "/" + r.Model, FieldTokens: tokensWord(r.Tokens), FieldUSD: r.USD,
 			FieldDeadline: strconv.Itoa(r.Deadline), FieldTier: tier}
 	}
 	return map[string]string{FieldTier: tier}
@@ -377,8 +391,7 @@ func ProviderTakes(wc *Card) (takes []ProviderTake, numbers []int) {
 		if v == "" {
 			continue
 		}
-		f := append(strings.SplitN(v, "\t", 6), "", "", "", "", "", "")
-		takes, numbers = append(takes, ProviderTake{Route: f[0], Model: f[1], Member: f[2], Finished: f[3], Usage: f[4], Error: f[5]}), append(numbers, n)
+		takes, numbers = append(takes, parseTake(v)), append(numbers, n)
 	}
 	return takes, numbers
 }
@@ -419,6 +432,9 @@ type RouteStat struct {
 	Failed   int    `json:"failed"`
 	Provider int    `json:"provider_failures"`
 	MeanWall string `json:"mean_wall"` // taken to finished, over the finished; "-" when none
+	// RestedUntil is when the route's rest ends while it rests (rule 3, route_rest.go):
+	// RFC3339, "" when it does not rest; `routes` fills it at its clock.
+	RestedUntil string `json:"rested_until,omitempty"`
 }
 
 // RouteStats is every route's record over the fleet table's work cards, the

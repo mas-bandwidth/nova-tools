@@ -16,7 +16,10 @@ import (
 // setting over the sprint's, and a pro card's reads stay on pro under a flash
 // setting. The read card records the tier its route was drawn from and its packet
 // hands it on, so the reader's JOB.md names it; with no setting a read is on its
-// card's tier, as before.
+// card's tier, as before. A setting raises the route and never the count: a flash
+// card is read once, on whatever tier, and a pro card twice (ReadsNeeded; the owner,
+// 2026-10-02, cost rule 4: "one cold read per flash card on a flash route; two per
+// pro card").
 func TestAReadTierSettingRaisesTheReadsAndNeverLowersThem(t *testing.T) {
 	t.Parallel()
 	routes := []sprint.Route{route("pro-a", "pro"), route("pro-b", "pro"), route("flash-a", "flash"), route("flash-b", "flash")}
@@ -34,7 +37,7 @@ func TestAReadTierSettingRaisesTheReadsAndNeverLowersThem(t *testing.T) {
 		h.t.Helper()
 		s := h.snap()
 		reads := s.Readers.Of(id)
-		require.Len(h.t, reads, 2, "%s asked of two readers", id)
+		require.Len(h.t, reads, sprint.ReadsNeeded(s.Work.Card(id)), "%s asked of as many readers as its tier needs", id)
 		for _, rc := range reads {
 			drawn = append(drawn, tierOf(rc.F(sprint.FieldRoute)))
 			recorded = append(recorded, rc.F(sprint.FieldTier))
@@ -60,7 +63,14 @@ func TestAReadTierSettingRaisesTheReadsAndNeverLowersThem(t *testing.T) {
 		h.work("m2")
 		h.machine()
 	}
-	two := func(tier string) []string { return []string{tier, tier} }
+	// reads is the tier once for each read the card's own tier needs: s3, the pro
+	// card, is read twice, the flash cards once, whatever the setting
+	reads := func(id, tier string) []string {
+		if id == "s3-1" {
+			return []string{tier, tier}
+		}
+		return []string{tier}
+	}
 	t.Run("a stream's read tier", func(t *testing.T) {
 		t.Parallel()
 		h := routeHarness(t, routes...)
@@ -76,9 +86,9 @@ func TestAReadTierSettingRaisesTheReadsAndNeverLowersThem(t *testing.T) {
 		h.machine()
 		for id, want := range map[string]string{"s1-1": "pro", "s2-1": "flash", "s3-1": "pro"} {
 			drawn, recorded, packed := readsOf(h, id)
-			assert.Equal(t, two(want), drawn, "%s's reads drew %s routes", id, want)
-			assert.Equal(t, two(want), recorded, "%s's read cards record their tier", id)
-			assert.Equal(t, two(want), packed, "%s's read packets hand the reader its tier", id)
+			assert.Equal(t, reads(id, want), drawn, "%s's reads drew %s routes", id, want)
+			assert.Equal(t, reads(id, want), recorded, "%s's read cards record their tier", id)
+			assert.Equal(t, reads(id, want), packed, "%s's read packets hand the reader its tier", id)
 		}
 		h.clean("a stream's read tier")
 	})
@@ -91,8 +101,8 @@ func TestAReadTierSettingRaisesTheReadsAndNeverLowersThem(t *testing.T) {
 		read(h)
 		for id, want := range map[string]string{"s1-1": "flash", "s2-1": "pro", "s3-1": "pro"} {
 			drawn, recorded, _ := readsOf(h, id)
-			assert.Equal(t, two(want), drawn, "%s's reads drew %s routes", id, want)
-			assert.Equal(t, two(want), recorded, "%s's read cards record their tier", id)
+			assert.Equal(t, reads(id, want), drawn, "%s's reads drew %s routes", id, want)
+			assert.Equal(t, reads(id, want), recorded, "%s's read cards record their tier", id)
 		}
 		h.clean("the sprint's read tier")
 	})
@@ -107,7 +117,7 @@ func TestAReadTierSettingRaisesTheReadsAndNeverLowersThem(t *testing.T) {
 		read(h)
 		for id, want := range map[string]string{"s1-1": "flash", "s2-1": "flash", "s3-1": "pro"} {
 			drawn, _, _ := readsOf(h, id)
-			assert.Equal(t, two(want), drawn, "%s's reads drew %s routes", id, want)
+			assert.Equal(t, reads(id, want), drawn, "%s's reads drew %s routes", id, want)
 		}
 	})
 	t.Run("refused, writing nothing", func(t *testing.T) {
