@@ -22,14 +22,31 @@ func Value(s string) string {
 	return oneline.Field(s)
 }
 
+// ListNoteRunes is how many characters of a Cut field (a note) a list line
+// prints before "..." marks the cut.
+const ListNoteRunes = 60
+
 // RowLine is a row: `FRIEND name=<n> <field>=<v> ...`, every field of the
-// kind in declaration order.
-func RowLine(k *Kind, row Row) string {
+// kind in declaration order, every value whole.
+func RowLine(k *Kind, row Row) string { return rowLine(k, row, false) }
+
+// ListLine is RowLine for a list: a Cut field longer than ListNoteRunes
+// characters is cut there and ends in "...", so a row is one short line; show
+// and --json print it whole.
+func ListLine(k *Kind, row Row) string { return rowLine(k, row, true) }
+
+func rowLine(k *Kind, row Row, cut bool) string {
 	var b strings.Builder
 	b.WriteString(strings.ToUpper(k.Name))
 	b.WriteString(" name=" + Value(row.Name))
 	for _, f := range k.Fields {
-		b.WriteString(" " + f.Name + "=" + Value(row.Fields[f.Name]))
+		v := row.Fields[f.Name]
+		if cut && f.Cut {
+			if r := []rune(v); len(r) > ListNoteRunes {
+				v = string(r[:ListNoteRunes]) + "..."
+			}
+		}
+		b.WriteString(" " + f.Name + "=" + Value(v))
 	}
 	return b.String()
 }

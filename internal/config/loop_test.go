@@ -55,17 +55,17 @@ func TestTheLoopRowIsTheRecordThePlaysRead(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "loops", k.Table)
 	assert.False(t, k.Singleton, "a loop kind is many rows")
-	assert.Equal(t, "machine,argv,seat,keys,every,keepalive,width,enabled", strings.Join(k.FieldNames(), ","), "the plays render units from exactly these names")
-	types := map[string]Type{"machine": TypeRef, "argv": TypeArgv, "seat": TypeText, "keys": TypeKeys, "every": TypeInt, "keepalive": TypeBool, "width": TypeInt, "enabled": TypeBool}
+	assert.Equal(t, "machine,argv,seat,keys,every,keepalive,enabled", strings.Join(k.FieldNames(), ","), "the plays render units from exactly these names")
+	types := map[string]Type{"machine": TypeRef, "argv": TypeArgv, "seat": TypeText, "keys": TypeKeys, "every": TypeInt, "keepalive": TypeBool, "enabled": TypeBool}
 	for _, f := range k.Fields {
 		assert.Equal(t, types[f.Name], f.Type, "--%s", f.Name)
 		assert.Equal(t, f.Name == "machine" || f.Name == "argv", f.Required, "--%s required", f.Name)
 	}
 	machine, _ := k.Field("machine")
 	assert.Equal(t, KindMachine, machine.Ref)
-	for _, invented := range []string{"log", "user", "host", "friend", "schedule", "note", "command"} {
+	for _, invented := range []string{"log", "user", "host", "friend", "schedule", "note", "command", "width"} {
 		_, has := k.Field(invented)
-		assert.False(t, has, "loop has a field %s: the log is derived, the user is the machine's, the rest is not a fact anything reads", invented)
+		assert.False(t, has, "loop has a field %s: the log is derived, the user is the machine's, the width is the machine row's, the rest is not a fact anything reads", invented)
 	}
 	assert.Equal(t, "~/nova-bench/loops/l1.log", LoopLog("l1"))
 	names := strings.Join(KindNames(), ",")
@@ -90,12 +90,12 @@ func TestLoopNewRowCanonicalisesAndRefusesEveryProblemAtOnce(t *testing.T) {
 		{
 			name: "a periodic loop with defaults",
 			raw:  map[string]string{"machine": "m1", "argv": `[ "/bin/prog" , "--once" ]`, "every": "60"},
-			want: map[string]string{"argv": `["/bin/prog","--once"]`, "every": "60", "keepalive": "false", "width": "0", "enabled": "true", "seat": "", "keys": ""},
+			want: map[string]string{"argv": `["/bin/prog","--once"]`, "every": "60", "keepalive": "false", "enabled": "true", "seat": "", "keys": ""},
 		},
 		{
 			name: "a member loop kept alive with secrets by name",
-			raw:  map[string]string{"machine": "m1", "argv": `["/bin/member","--width","2"]`, "keepalive": "TRUE", "seat": "s1", "keys": "Z_KEY, A_KEY,Z_KEY", "width": "2", "enabled": "0"},
-			want: map[string]string{"keepalive": "true", "enabled": "false", "keys": "A_KEY,Z_KEY", "width": "2", "every": "0"},
+			raw:  map[string]string{"machine": "m1", "argv": `["/bin/member","--as","m1"]`, "keepalive": "TRUE", "seat": "s1", "keys": "Z_KEY, A_KEY,Z_KEY", "enabled": "0"},
+			want: map[string]string{"keepalive": "true", "enabled": "false", "keys": "A_KEY,Z_KEY", "every": "0"},
 		},
 		{
 			name: "an argument with spaces and an equals sign is kept exactly",
@@ -183,9 +183,9 @@ func TestLoopNewRowCanonicalisesAndRefusesEveryProblemAtOnce(t *testing.T) {
 			errs: []string{"--argv: want the command as a JSON array of strings", "has neither --every nor --keepalive"},
 		},
 		{
-			name: "a bool that is not one, a negative width, and no machine, all at once",
-			raw:  map[string]string{"argv": `["/bin/prog"]`, "every": "5", "enabled": "maybe", "width": "-1"},
-			errs: []string{"--machine is required", `--enabled "maybe": want true or false`, `--width "-1": want a non-negative integer`},
+			name: "a bool that is not one, a negative every, and no machine, all at once",
+			raw:  map[string]string{"argv": `["/bin/prog"]`, "every": "-1", "enabled": "maybe"},
+			errs: []string{"--machine is required", `--enabled "maybe": want true or false`, `--every "-1": want a non-negative integer`},
 		},
 	}
 	for _, tc := range cases {
@@ -349,35 +349,4 @@ func TestLoopArgvKeepsHTMLCharactersReadable(t *testing.T) {
 	row, err = k.NewRow("l2", map[string]string{"machine": "m1", "argv": `["/bin/sh","-c","a \u0026\u0026 b \u003e c"]`, "every": "5"})
 	require.NoError(t, err)
 	assert.Equal(t, `["/bin/sh","-c","a && b > c"]`, row.Fields["argv"])
-}
-
-// A loop's command runs with its width field: above 0 it is the value of the
-// argv's last --width (any spelling, before any --), appended before the
-// -- (or at the end) when the argv has none; 0 leaves the argv as written, so
-// a row that carries --width in its argv and no field keeps it (LoopCommand).
-func TestALoopCommandRunsWithItsWidthField(t *testing.T) {
-	t.Parallel()
-
-	cases := []struct {
-		name  string
-		argv  []string
-		width int
-		want  []string
-	}{
-		{"width 0 keeps the argv", []string{"nova-swarm", "member", "--width", "8"}, 0, []string{"nova-swarm", "member", "--width", "8"}},
-		{"the field replaces the argv's value", []string{"nova-swarm", "member", "--reader", "--width", "8", "--root", "r"}, 16, []string{"nova-swarm", "member", "--reader", "--width", "16", "--root", "r"}},
-		{"the last spelling is the one replaced", []string{"p", "-width", "1", "--width=2", "-width=3"}, 4, []string{"p", "-width", "1", "--width=2", "-width=4"}},
-		{"a single-dash pair", []string{"p", "-width", "1", "-x"}, 4, []string{"p", "-width", "4", "-x"}},
-		{"appended when the argv has none", []string{"nova-swarm", "member", "--reader"}, 5, []string{"nova-swarm", "member", "--reader", "--width", "5"}},
-		{"inserted before --", []string{"p", "--a", "--", "--width", "9"}, 3, []string{"p", "--a", "--width", "3", "--", "--width", "9"}},
-		{"the program word is never read as a flag", []string{"--width", "x"}, 2, []string{"--width", "x", "--width", "2"}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			in := append([]string{}, tc.argv...)
-			assert.Equal(t, tc.want, LoopCommand(tc.argv, tc.width))
-			assert.Equal(t, in, tc.argv, "LoopCommand changed its argument")
-		})
-	}
 }

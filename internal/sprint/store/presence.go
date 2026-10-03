@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"runtime"
 	"slices"
 	"sort"
 	"time"
@@ -176,6 +177,11 @@ func (st *Store) Beat(ctx context.Context, member string, given *float64, src ho
 		}
 	}
 	b := sprint.NextBeat(prev, now, pct, how, meter)
+	// the machine's logical cores: the source's when it names them (a meter's,
+	// or fleet beat --cores), else this process's machine
+	if b.Cores = src.NCPU; b.Cores <= 0 {
+		b.Cores = runtime.NumCPU()
+	}
 	out, err := json.Marshal(b)
 	if err != nil {
 		return b, err
@@ -447,7 +453,8 @@ func statusRank(status string) int {
 }
 
 // FleetOrder is the fleet's rows by name, then stably by status: up, held,
-// down, anything else last. status is each row's status cell.
+// down, anything else last. status is each row's status cell. The friends
+// table is ordered by it too (FriendRows): one order for both.
 func FleetOrder(rows []string, status map[string]string) []string {
 	out := slices.Clone(rows)
 	slices.Sort(out)

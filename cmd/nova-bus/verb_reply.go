@@ -91,11 +91,11 @@ func cmdReply(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	if !*dryRun {
 		if err := checkoutReady(*busDir, *branch, []string{bus.BeatPath(me.Lane)}); err != nil {
-			fmt.Fprintf(stderr, "REPLY FAIL: %s\n", oneline.Err(err))
+			fmt.Fprintf(stderr, "REPLY FAILED: %s\n", oneline.Err(err))
 			return 1
 		}
 		if _, err := refreshCheckout(*busDir, *remote, *branch); err != nil {
-			fmt.Fprintf(stderr, "REPLY FAIL: %s\n", oneline.Err(err))
+			fmt.Fprintf(stderr, "REPLY FAILED: %s\n", oneline.Err(err))
 			printTranscript(stderr, err)
 			return 1
 		}
@@ -117,7 +117,7 @@ func cmdReply(args []string, stdout, stderr io.Writer, now time.Time) int {
 	prepared, err := bus.PrepareReplyFrom(t, me, original, body, now, hostName)
 	if err != nil {
 		for _, reason := range bus.Reasons(err) {
-			fmt.Fprintf(stderr, "REPLY FAIL %s: %s\n", oneline.Escape(me.Name), oneline.Err(reason))
+			fmt.Fprintf(stderr, "REPLY FAILED %s: %s\n", oneline.Escape(me.Name), oneline.Err(reason))
 		}
 		return 1
 	}
@@ -126,39 +126,39 @@ func cmdReply(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return 0
 	}
 	if err := prepared.Save(*busDir); err != nil {
-		fmt.Fprintf(stderr, "REPLY FAIL %s: %s\n", oneline.Escape(prepared.Path), oneline.Err(err))
+		fmt.Fprintf(stderr, "REPLY FAILED %s: %s\n", oneline.Escape(prepared.Path), oneline.Err(err))
 		return 1
 	}
 	if err := prepared.AppendIndex(*busDir); err != nil {
-		fmt.Fprintf(stderr, "REPLY FAIL %s: %s\n", oneline.Escape(prepared.Path), oneline.Err(err))
+		fmt.Fprintf(stderr, "REPLY FAILED %s: %s\n", oneline.Escape(prepared.Path), oneline.Err(err))
 		return 1
 	}
 	paths := []string{prepared.Path, bus.IndexPath(me.Lane)}
 	if *advance {
 		head, err := bus.HeadCommit(*busDir)
 		if err != nil {
-			fmt.Fprintf(stderr, "REPLY FAIL: %s\n", oneline.Err(err))
+			fmt.Fprintf(stderr, "REPLY FAILED: %s\n", oneline.Err(err))
 			return 1
 		}
 		held, err := bus.ReadCursor(*busDir, me.Lane)
 		if err != nil {
-			fmt.Fprintf(stderr, "REPLY FAIL %s: %s\n", oneline.Escape(bus.CursorPath(me.Lane)), oneline.Err(err))
+			fmt.Fprintf(stderr, "REPLY FAILED %s: %s\n", oneline.Escape(bus.CursorPath(me.Lane)), oneline.Err(err))
 			return 1
 		}
 		open, err := bus.ReadOpen(*busDir, me.Lane)
 		if err != nil {
-			fmt.Fprintf(stderr, "REPLY FAIL %s: %s\n", oneline.Escape(bus.OpenPath(me.Lane)), oneline.Err(err))
+			fmt.Fprintf(stderr, "REPLY FAILED %s: %s\n", oneline.Escape(bus.OpenPath(me.Lane)), oneline.Err(err))
 			return 1
 		}
 		if err := bus.WriteCursor(*busDir, me.Lane, head, len(open), held.Legacy, now); err != nil {
-			fmt.Fprintf(stderr, "REPLY FAIL %s: %s\n", oneline.Escape(bus.CursorPath(me.Lane)), oneline.Err(err))
+			fmt.Fprintf(stderr, "REPLY FAILED %s: %s\n", oneline.Escape(bus.CursorPath(me.Lane)), oneline.Err(err))
 			return 1
 		}
 		paths = append(paths, bus.CursorPath(me.Lane))
 	}
 	wroteAttrs, err := bus.EnsureMergeAttributes(*busDir)
 	if err != nil {
-		fmt.Fprintf(stderr, "REPLY FAIL %s: %s\n", oneline.Escape(bus.AttributesName), oneline.Err(err))
+		fmt.Fprintf(stderr, "REPLY FAILED %s: %s\n", oneline.Escape(bus.AttributesName), oneline.Err(err))
 		return 1
 	}
 	if wroteAttrs {
@@ -166,14 +166,14 @@ func cmdReply(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	staged, err := bus.StagePaths(*busDir, paths)
 	if err != nil {
-		fmt.Fprintf(stderr, "REPLY FAIL %s: %s\n", oneline.Escape(prepared.Path), oneline.Err(err))
+		fmt.Fprintf(stderr, "REPLY FAILED %s: %s\n", oneline.Escape(prepared.Path), oneline.Err(err))
 		return 1
 	}
 	res, err := commit(*busDir, me, staged,
 		bus.WithTrailer(prepared.Message, bus.TrailerSend+" "+prepared.Note.Header.ID),
 		*remote, *branch, *attempts, false)
 	if err != nil {
-		fmt.Fprintf(stderr, "REPLY FAIL %s: %s\n", oneline.Escape(prepared.Path), oneline.Err(err))
+		fmt.Fprintf(stderr, "REPLY FAILED %s: %s\n", oneline.Escape(prepared.Path), oneline.Err(err))
 		printTranscript(stderr, err)
 		return 1
 	}

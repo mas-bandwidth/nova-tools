@@ -45,7 +45,7 @@ func TestFromArgsTakesTheSeatFlagOrTheEnvironment(t *testing.T) {
 		rest, err := seatcred.FromArgs(c.args, env(c.env))
 		if c.refusing {
 			require.Error(t, err, "%v: err %v, want a refusal naming --seat", c.args, err)
-			require.Contains(t, err.Error(), "--seat wants a seat name", "%v: err %v, want a refusal naming --seat", c.args, err)
+			require.Contains(t, err.Error(), "--seat <name>", "%v: err %v, want a refusal naming --seat", c.args, err)
 			continue
 		}
 		require.NoError(t, err, "%v env=%q: rest %v seat %q err %v; want %v %q", c.args, c.env, rest, seatcred.Selected(), err, c.rest, c.seat)
@@ -179,6 +179,29 @@ func TestSelectClearsLookupFromArgs(t *testing.T) {
 	called = false
 	_, _, _ = s.Active()
 	assert.False(t, called, "SelectWith did not clear lookup recorded by FromArgs; custom lookup was still called")
+}
+
+func TestSeatRefusalNamesNoMachine(t *testing.T) {
+	t.Parallel()
+
+	for _, args := range [][]string{
+		{"table", "--seat"},
+		{"table", "--seat="},
+		{"table", "-seat"},
+		{"table", "-seat="},
+	} {
+		_, err := seatcred.FromArgs(args, nil)
+		require.Error(t, err)
+		assert.Equal(t, "--seat <name>, for example --seat bench-a", err.Error())
+		for _, name := range []string{
+			"alex", "antman", "batman", "captainamerica", "emma",
+			"freddy", "glenn", "hetzner", "hulk", "johnny",
+			"macbook", "mas-bandwidth", "mini", "rowan", "space",
+			"spacegame", "stella", "studio", "superman", "vision",
+		} {
+			assert.NotContains(t, err.Error(), name)
+		}
+	}
 }
 
 func same(c seatcred.Cred, want string) bool {

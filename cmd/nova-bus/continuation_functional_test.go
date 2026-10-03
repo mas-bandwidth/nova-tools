@@ -572,7 +572,7 @@ func TestBrokenOutputCannotAcknowledgeUnprintedBodies(t *testing.T) {
 			code := run([]string{"inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
 				"--bodies", "--advance", "--remote", "origin", "--branch", "main"},
 				strings.NewReader(""), &breakingWriter{limit: after}, &stderr, now())
-			require.Falsef(t, code != 1 || !strings.Contains(stderr.String(), "INBOX FAIL output"), "broken stdout did not refuse safely: code=%d stderr=%s", code, stderr.String())
+			require.Falsef(t, code != 1 || !strings.Contains(stderr.String(), "INBOX FAILED output"), "broken stdout did not refuse safely: code=%d stderr=%s", code, stderr.String())
 			now, err := bus.ReadCursor(checkout, "from-ada")
 			require.NoError(t, err)
 			require.Falsef(t, now.Commit != was.Commit, "cursor advanced across unprinted output: %s -> %s", was.Commit, now.Commit)

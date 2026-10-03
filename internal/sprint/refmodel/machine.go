@@ -277,8 +277,8 @@ func Release(s State, ids []string, who string) (State, error) {
 	}
 	for _, id := range ids {
 		p, ok := s.Primaries[id]
-		if !ok || p.Kind != KindSentinel || p.State != Waiting || !p.Reached {
-			return s, refuse("%s is not a reached sentinel", id)
+		if !ok || p.Kind != KindSentinel || p.State != Waiting || !p.Reached && (s.HasBefore(id) || !s.NeedsMet(id)) {
+			return s, refuse("%s is not a reached sentinel, nor one with nothing before it", id)
 		}
 	}
 	n := s.Clone()

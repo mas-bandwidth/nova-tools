@@ -360,7 +360,7 @@ func stellaPrepared(t *testing.T) (string, string, Prepared, PreparedArtifact) {
 	return bare, clone, p, a
 }
 
-func TestStellaPreparedRequiresCompleteRemoteIndex(t *testing.T) {
+func TestPreparedRequiresCompleteRemoteIndex(t *testing.T) {
 	t.Parallel()
 
 	_, clone, p, a := stellaPrepared(t)
@@ -392,7 +392,7 @@ func TestStellaPreparedRequiresCompleteRemoteIndex(t *testing.T) {
 	}
 }
 
-func TestStellaPreparedCannotConfirmCommitWithoutIndex(t *testing.T) {
+func TestPreparedCannotConfirmCommitWithoutIndex(t *testing.T) {
 	t.Parallel()
 
 	bare, clone, p, a := stellaPrepared(t)
@@ -411,7 +411,7 @@ func TestStellaPreparedCannotConfirmCommitWithoutIndex(t *testing.T) {
 	require.False(t, r.Pushed && (e != nil || !strings.Contains(index, IndexLine(p.Index))), "claimed success after publishing note-only commit without INDEX entry")
 }
 
-func TestStellaPreparedPreservesUnrelatedAttributeEdit(t *testing.T) {
+func TestPreparedPreservesUnrelatedAttributeEdit(t *testing.T) {
 	t.Parallel()
 
 	bare, clone, p, a := stellaPrepared(t)
@@ -429,7 +429,7 @@ func TestStellaPreparedPreservesUnrelatedAttributeEdit(t *testing.T) {
 	require.Equal(t, string(want), string(now), "refusal changed unrelated dirty attribute content")
 }
 
-func TestStellaPreparedRefusesUnknownArtifactField(t *testing.T) {
+func TestPreparedRefusesUnknownArtifactField(t *testing.T) {
 	t.Parallel()
 
 	_, clone, p, a := stellaPrepared(t)
@@ -453,7 +453,7 @@ func TestPreparedRefusesDuplicateKeys(t *testing.T) {
 	}
 }
 
-func TestStellaPreparedPreservesUnrelatedAheadAttributeEdit(t *testing.T) {
+func TestPreparedPreservesUnrelatedAheadAttributeEdit(t *testing.T) {
 	t.Parallel()
 
 	bare, clone, p, a := stellaPrepared(t)
@@ -902,7 +902,7 @@ func TestSendPreparedChildExecutionAndRecovery(t *testing.T) {
 	}
 }
 
-func TestRowanProbeAheadMergeCommitPublishesUnrelatedTree(t *testing.T) {
+func TestPreparedAheadMergeCommitWithholdsUnrelatedTree(t *testing.T) {
 	t.Parallel()
 
 	bare, clone, p, a := stellaIndependentPrepared(t)
@@ -935,7 +935,7 @@ func TestRowanProbeAheadMergeCommitPublishesUnrelatedTree(t *testing.T) {
 	}
 }
 
-func TestRowanProbeStaleIndexLock(t *testing.T) {
+func TestPreparedStaleIndexLockRefusesWithPreparedID(t *testing.T) {
 	t.Parallel()
 
 	_, clone, p, a := stellaIndependentPrepared(t)

@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-func TestRowanOpusLockSequenceFreshStaleOwnedAndBack(t *testing.T) {
+func TestIndexLockSequenceFreshStaleOwnedAndBack(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
 	const self, other = 501, 502

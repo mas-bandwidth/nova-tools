@@ -23,8 +23,8 @@ permissions:
   contents: read
 
 env:
-  # #3113: the same fail-closed switch as ci.yml. The test and perf jobs
-  # install redis-server before they run the suite.
+  # NOVA_CI is the fail-closed switch: test and perf jobs install redis-server before they
+  # run the suite.
   NOVA_CI: "1"
 
 concurrency:
@@ -112,15 +112,14 @@ jobs:
     # those runs. ci.yml's CL tier runs the same tests without -race, and its hosted legs run
     # -short.
     #
-    # SHARDED BY PACKAGE (2026-09-27). Unsharded, this job ran `go build ./...`, `go vet ./...`
-    # and `go test -race ./...` on one runner under the two-minute cap and was cancelled by the
-    # cap on every dev push since the cap landed (27c9ffc66, 2026-09-26): runs 36355661583,
-    # 36356115183, 36357522017, 36357749379 and 36360296846. ubuntu-latest reached the test step
-    # 97-119 s into the job (setup-go 8-10 s, build 52-67 s cold, vet 16-22 s, redis 11-18 s) and
-    # was cancelled in it every time, at most two packages reported; macos-latest reached it at
-    # 78-128 s in three runs and was cancelled in build or vet in the other two.
-    # The last green whole-tree race run (dev push 36137551959, 2026-09-25, 15-minute cap) took
-    # 421 s of test step on ubuntu-latest and 497 s on macos-latest. The cap stays two minutes;
+    # The job is sharded by package because one runner cannot finish the whole-tree race
+    # build, vet and test under the two-minute cap: `ubuntu-latest` reached the test step
+    # 97-119 s into the job (setup-go 8-10 s, build 52-67 s cold, vet 16-22 s, redis 11-18 s)
+    # and was cancelled in it every time, at most two packages reported, in runs
+    # 36355661583, 36356115183, 36357522017, 36357749379 and 36360296846; `macos-latest`
+    # reached it at 78-128 s in three runs and was cancelled in build or vet in the other two.
+    # A green whole-tree race run took 421 s of test step on `ubuntu-latest` and 497 s on
+    # `macos-latest` under a 15-minute cap in run 36137551959. The cap stays two minutes;
     # the legs meet it by shard count, with the deal of ci.yml's test-hosted (heavy packages
     # first, one per shard, then round-robin) over the live packages only (internal/pkgselect/DEPRECATED:
     # deprecated packages are never tested).
@@ -139,18 +138,16 @@ jobs:
     # Each shard's `go test -race` still compiles every package it tests, so the union of the
     # shards compiles the whole live tree for both platforms. gofmt stays, on one leg.
     #
-    # THE RACE BUILD CACHE, the shape of ci.yml's test-hosted (#4482): Go's own cache path per
-    # OS, restored first and SAVED BEFORE THE TESTS, because actions/cache's post-step save
-    # never runs in a job the cap cancels, and this job was never green to save one (setup-go's
-    # own cache logged "Cache is not found" on all ten legs of the runs above). What is saved is the
-    # race-instrumented build of every external module package the live tree's tests import
-    # (139 packages at 82429246b): measured cold on the Studio at -p 4, 18.3 s and 384 MB, then
-    # 0.2 s warm. Every shard builds the same list, so whichever shard saves first saves the
-    # entry every shard needs; the tree's own packages compile per shard in the test step
-    # (the whole live tree's race test binaries, compiled and linked with warm dependencies:
-    # 24.1 s at -p 4 on the Studio, about an eighth of that a shard). The key says `gorace`, so
-    # it is never ci.yml's non-race entry (whose restore prefix is `<os>-go-`, which this key
-    # does not start with).
+    # The race build cache is Go's own cache path per OS, restored first and saved before the
+    # tests because actions/cache's post-step save does not run when the cap cancels the job.
+    # What is saved is the race-instrumented build of every external module package the live
+    # tree's tests import (139 packages): measured cold on a macOS runner at -p 4, 18.3 s and
+    # 384 MB, then 0.2 s warm. Every shard builds the same external list, so the first shard
+    # to save stores the entry every shard needs; the tree's own packages compile per shard in
+    # the test step (the whole live tree's race test binaries, compiled and linked with warm
+    # dependencies: 24.1 s at -p 4 on a macOS runner, about an eighth of that a shard). The key
+    # says `gorace`, so it is never ci.yml's non-race entry (whose restore prefix is `<os>-go-`,
+    # which this key does not start with).
     name: test (${{ matrix.os }}, ${{ matrix.shard }})
     needs: race-cache
     strategy:
@@ -259,6 +256,9 @@ jobs:
         # must be sprint/foundation's and its history excuses what it deleted. A shallow
         # ancestry is a red run naming this fetch (internal/ci foundationHistoryFetch).
         # A one-parent commit on a dev run has no promotion to read, so nothing is fetched.
+        # Nor is anything when origin has no sprint/foundation: dev is the integration branch and
+        # that branch lives only while a promotion is in flight; the step says so and the dev run
+        # excuses nothing (the merge is compared as everywhere), as a one-parent commit's is.
         if: (github.event_name == 'push' && github.ref_name == 'dev')
         shell: bash
         run: |
@@ -284,9 +284,9 @@ jobs:
           key: ${{ steps.gocache.outputs.cache-primary-key }}
 
       - name: install redis-server
-        # #3113. This job is the hosted full suite, ubuntu-latest and
-        # macos-latest. The controls spawn redis-server; they do not dial a bench.
-        # Finishes (or waits on) the background install started earlier in the job.
+        # This job is the hosted full suite on `ubuntu-latest` and `macos-latest`. The controls
+        # spawn redis-server; they do not dial a bench. Finishes (or waits on) the background
+        # install started earlier in the job.
         shell: bash
         run: |
           "$RUNNER_TEMP/ci" install-redis-server || { cat "${RUNNER_TEMP}/redis-install.log"; exit 1; }
@@ -451,7 +451,7 @@ jobs:
     # ONE LEG PER PLATFORM, in parallel, under the two-minute cap. One runner cross-building
     # all five platforms cold was cancelled by the cap inside the build (run 36357749379,
     # about 146 s into the step). A leg compiles one platform: 45 s of CPU for the fifteen
-    # tools and their dependencies cold on the Studio, 1.2 s warm.
+    # tools and their dependencies cold on a macOS runner, 1.2 s warm.
     #
     # THE GO BUILD CACHE, per platform, restored first and SAVED right after the build,
     # before the upload, for the reason the test job gives: a post-step save never runs in a
@@ -608,9 +608,9 @@ jobs:
     #
     # cmd/nova-bus/timing_test.go runs every verb over a ten-thousand-note bus and holds
     # each to a bound in SECONDS. That bound is the only assertion in this repository whose
-    # answer depends on what else the machine is doing, and on 2026-09-11 it was exactly
-    # that: eleven seconds alone, one minute fifty-one under the load of `go test ./...`,
-    # and the package hitting Go's ten-minute timeout with it in (#63). The house rule is
+    # answer depends on what else the machine is doing: eleven seconds alone, one minute
+    # fifty-one under the load of `go test ./...`, and Go's ten-minute timeout when the load
+    # keeps the package from finishing. The house rule is
     # that a per-commit test finishes in a minute, two at most, or it becomes nightly.
     #
     # The property it guards did NOT move: the cost of a read is the size of the change, and
@@ -627,16 +627,16 @@ jobs:
     # morning, and making it wait on three operating systems' worth of tests would mean a
     # night where an unrelated flake means no perf evidence at all.
     #
-    # THE PERF TESTS ONLY, discovered, never named. This job used to run every test of `./...`
-    # under the tag one at a time (`-p 1 -parallel 1`); green in 175 s (36303146135) and 644 s
-    # (36137551959), then cancelled by the two-minute cap on every run, still inside
+    # This job runs only the perf-tagged tests one at a time (`-p 1 -parallel 1`) because a
+    # whole-tree run under the tag took 175 s in run 36303146135 and 644 s in run 36137551959,
+    # and later runs were cancelled by the two-minute cap every time while still inside
     # cmd/nova-bus. Every other test in that run is run by the test job above and by ci.yml;
     # what only this job runs is the tests the `perf` tag adds. So the job finds them: the live
     # packages holding a file whose build constraint names `perf`, and in each, the tests
     # `go test -tags perf -list` names and `go test -list` does not. A perf test added in any
     # live package tomorrow is in that difference without anyone editing this file, and a test
-    # that is not behind the tag is not re-run here. Today that is the two tests of
-    # cmd/nova-bus/timing_test.go, 8.3 s together on the Studio.
+    # that is not behind the tag is not re-run here. That is currently the two tests of
+    # cmd/nova-bus/timing_test.go, 8.3 s together on a macOS runner.
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -693,8 +693,8 @@ jobs:
           key: ${{ steps.gocache.outputs.cache-primary-key }}
 
       - name: install redis-server
-        # #3113: NOVA_CI fails a control that wants redis-server and cannot find it. The
-        # binary is not the fleet store.
+        # NOVA_CI fails a control that wants redis-server and cannot find it. The binary is
+        # not the fleet store.
         run: |
           "$RUNNER_TEMP/ci" install-redis-server
 
@@ -713,11 +713,10 @@ jobs:
           done < "${RUNNER_TEMP}/perf-runs"
 
   tick-gate:
-    # THE TICK'S WALL CLOCK, the owner's law of 2026-09-30: "the whole intent is sub-second
-    # ticks. This is a requirement." cmd/nova-sprint's TestTheDirtyTickDriveOnAStore drives
+    # This job is the tick's wall clock: cmd/nova-sprint's TestTheDirtyTickDriveOnAStore drives
     # 3 x 1000 cards over 8 members of width 64 against a redis-server with the world played
     # every 10 ms, and asserts every tick under MaxTickWall (1 s) only when
-    # NOVA_SPRINT_GATE_STORE=1: this job. In the functional tier (ci.yml's functional job, the
+    # NOVA_SPRINT_GATE_STORE=1. In the functional tier (ci.yml's functional job, the
     # container) the same drive asserts its invariants and prints the bound, because two
     # cores shared by the store, the loop and the world driver holding the fence are not the
     # store the bound is about.
@@ -763,8 +762,8 @@ jobs:
           go version
 
       - name: install redis-server
-        # #3113: the drive spawns a throwaway redis-server on loopback; it does not dial the
-        # fleet store.
+        # The drive spawns a throwaway redis-server on loopback; it does not dial the fleet
+        # store.
         run: bash .github/scripts/install-redis-server.sh
 
       - name: the tick gate, against the bench's store

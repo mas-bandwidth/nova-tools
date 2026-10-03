@@ -34,11 +34,11 @@ func TestPrepareDecidingTests(t *testing.T) {
 	require.Equalf(t, bus.PreparedSchema, art.Schema, "schema = %q, want %q", art.Schema, bus.PreparedSchema)
 	require.True(t, strings.HasSuffix(art.Note, "\n"), "prepared note must end with LF")
 
-	// 2. Draft refusal exits 1 with PREPARE FAIL
+	// 2. Draft refusal exits 1 with PREPARE FAILED
 	badDraft := filepath.Join(scratch, "bad-draft.md")
 	require.NoError(t, os.WriteFile(badDraft, []byte("From: Ada\nSubject: No To line\n\nBody.\n"), 0o644))
 	rBad := invoke(t, "", "prepare", "--bus", checkout, "--as", "Ada", "--file", badDraft)
-	rBad.mustCode(t, 1).mustContain(t, "stderr", "PREPARE FAIL")
+	rBad.mustCode(t, 1).mustContain(t, "stderr", "PREPARE FAILED")
 
 	// 3. Invocation errors exit 2
 	invoke(t, "", "prepare", "--as", "Ada", "--file", draftFile).mustCode(t, 2).mustContain(t, "stderr", "--bus is required")
@@ -91,7 +91,7 @@ func TestSendPreparedDecidingTests(t *testing.T) {
 	dirtyFile := filepath.Join(checkout, "dirty.txt")
 	require.NoError(t, os.WriteFile(dirtyFile, []byte("dirty work\n"), 0o644))
 	rDirty := invoke(t, "", "send", "--bus", checkout, "--as", "Ada", "--remote", "origin", "--branch", "main", "--prepared", artFileDirty)
-	rDirty.mustCode(t, 1).mustContain(t, "stderr", "SEND FAIL")
+	rDirty.mustCode(t, 1).mustContain(t, "stderr", "SEND FAILED")
 	{
 		data, err := os.ReadFile(dirtyFile)
 		require.NoError(t, err, "failed to preserve dirty file")

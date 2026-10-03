@@ -1797,6 +1797,28 @@ so an edit elsewhere selects no shard to run its class tests`.
 expression over `internal/pkgselect/select.go`; another path into the package set
 would need its own row here, and the test cannot know it exists.
 
+**A second edge (nova-tools#5111): a changed file that is not Go selects the
+packages whose tests read it.** `Select` also adds every package whose
+`_test.go` files or `testdata` name a changed non-Go file (by its base name, as
+a whole name: a test names a doc through `filepath.Join("..", "..", "docs",
+"X.md")`, so the path as one string is not in its text), and the package a
+changed file under its `testdata` belongs to (`keyedPackages`,
+`internal/pkgselect/keyed.go`). Card docsd-16 changed a heading in
+`docs/SPEC-SWARM.md`, `internal/swarm`'s test asserts the heading, and the run
+tested only the touched packages and their importers, so a red test landed
+green. A reference over-selects (a `README.md` is named by many tests) and never
+under-selects. A non-test source file's mention does not select its package; a
+deprecated package is dropped as everywhere. A test that reads a whole
+directory of docs (a glob, `os.ReadDir`) names no file and is not found; such a
+test belongs in `internal/docs` or `internal/ci`, which every run selects.
+**Its test.** `TestSelectPackagesAddsThePackagesWhoseTestsReadAChangedFile`
+(`internal/ci/ci_selection_test.go`), over a fixture where the doc is named by a
+test in a package the diff did not touch, with a doc no test names as the
+reversed witness; `internal/pkgselect`'s
+`TestSelectChangeMapsANonGoFileToThePackagesWhoseTestsReadIt` holds the
+boundaries (a longer name ending the same way, a source file's mention, a
+deprecated package's test, a testdata file's owner).
+
 ### `toolchainroots` — the bench standard and the wall name one list per OS, with one kind each
 
 **The rule.** `internal/swarm/toolchain.go` is the ONE list of the bench
@@ -2460,18 +2482,29 @@ history, or one `origin/dev` cannot vouch for here (stale, or shallow),
 excuses nothing and is a finding of its own naming the fetch. On dev a merge
 commit whose second parent is not sprint/foundation's is not a promotion: it
 excuses nothing and is compared as everywhere, with a NOTE and no finding of
-its own; a missing or shallow `origin/sprint/foundation` is the finding naming
-the fetch, as on main. What is not excused is a finding as everywhere: a file
+its own; a shallow `origin/sprint/foundation` is the finding naming the fetch,
+as on main. A missing one is not: dev is the integration branch and
+sprint/foundation exists only while a promotion is in flight, and `ci
+fetch-ancestry --promotion sprint/foundation` (which asks the remote with `git
+ls-remote --exit-code --heads`, exit 2) says "origin has no branch
+sprint/foundation: no promotion to read" and fetches nothing; the dev run then
+has no promotion branch to excuse anything, so the merge is compared as
+everywhere (every deletion a finding, the merge's own change still checked
+against the second parent) and the note names the fetch to run if the branch
+does exist. Nothing is loosened: only an excuse is lost, never a check. Any other
+`ls-remote` failure is a red run, and a main run's missing `origin/dev` stays a
+finding (`TestDevLandingWithNoPromotionBranchIsOrdinary`). What is not excused is a finding as everywhere: a file
 the base branch alone had and the merge lost, since the side branch never
 deleted it. And the merge's own change is checked against the second parent:
 every guarded path the side branch's tip has and HEAD lacks is a finding
 unless a row added beyond it declares it, which first-parent comparison alone
 never sees. The NOTE names how many deletions and rows the history excused. A
 one-parent commit on main or dev is compared with its parent as everywhere:
-the dev queue's merge method is squash, so a promotion that lands through the
-queue as a squash is the ordinary comparison and is red for every deletion the
-promoted branch made; only a promotion that lands as a merge commit is read as
-one (the squash of the same tree is not excused). The ancestry must be
+the dev queue's merge method is merge (fleet/land/ruleset-dev.json), so a batch
+lands as a merge commit; a promotion that lands as a one-parent squash (a pull
+request merged by hand with the squash method) is the ordinary comparison and is
+red for every deletion the promoted branch made; only a promotion that lands as a
+merge commit is read as one (the squash of the same tree is not excused). The ancestry must be
 complete: the landing steps of ci.yml (`test`, `test-hosted`) and
 certification.yml (`test`) run `git fetch --no-tags --filter=blob:none
 --unshallow origin +dev:refs/remotes/origin/dev` after checkout on the default
@@ -2665,7 +2698,9 @@ stales every case, and edits to files no case reads stale none.
 each change stales the case. `TestTLCRecordHostIsAPlatformLabel` refuses a `host` cell that is not a listed platform label
 and a CPU count that is not a count. `TestTLCRecordFileHoldsOneJar` holds the record file to one `jar_sha256`, and `tlacheck merge` refuses a
 set of records measured with more than one jar, naming each jar with its record count and the
-groups to run again. `TestTLCRecordFreshnessAndCoverageWitnesses` proves failed
+groups to run again. `TestTLCRecordsNameThePinnedJar` holds that jar to the SHA-256
+`tla/tla2tools.sha256` pins, the one the record machines hold (the tools play's tla play)
+and `tlacheck run --bench` checks before it runs. `TestTLCRecordFreshnessAndCoverageWitnesses` proves failed
 records, wrong exits, invalid gate waivers and manual required records refuse, while a
 declared failed bench measurement is retained as debt, never PASS.
 
@@ -2764,6 +2799,24 @@ the original failed measurement.
 **Its allowlist.** None.
 **Its remedy line.** each finding names the play or template, the task and what it reads or runs.
 **Its narrowings.** Variables are found by their prefixes (`nova_`, `loop_`, `ansible_`, `l.`) in the plays' uncommented text and the templates' Jinja blocks; a variable of another spelling is not read.
+
+### `member-units-drain` — a member loop's unit stops it by draining it
+
+**The rule.** The loop templates stop a member loop (a record whose argv runs `nova-swarm member`, `loop_member`) by signalling the member alone and waiting: systemd's `KillMode=mixed` with `TimeoutStopSec={{ nova_member_stop_timeout }}`, launchd's `ExitTimeOut` of the same; and `nova_member_stop_timeout` in `fleet/group_vars/all.yml` is `member.DrainMost` and a minute, so a member's drain (SIGTERM: it takes nothing new, its running cards finish and are reported) always ends before its supervisor kills anything.
+**The mistake it prevents.** A unit restart that killed a member's whole cgroup, every harness child with it (nova-tools#5096 item 26): a plain loops play over five drifted member units would have killed 52 working cards on 2026-10-02.
+**The test.** `TestMemberUnitsStopByDraining` (`internal/ci/fleetplays_drain_class_test.go`); the functional half is in `TestFleetPlaysPassSyntaxAndCheckOnTheFixture`, which asserts the member's rendered unit alone carries the settings.
+**Its allowlist.** None.
+**Its remedy line.** the assertion names the template line or the group_vars value that differs.
+**Its narrowings.** The templates' text is matched as written; a member found by another shape of argv than `nova-swarm member` after its env words is not marked.
+
+### `drain-wait-exit` — a wait for a command's non-zero exit does not fail on that exit
+
+**The rule.** A task under `fleet/` that retries a command until it exits non-zero (`until: <reg>.rc != 0`, the darwin drain wait in `loops.yml`) says how it fails (`failed_when`), because ansible fails a command task on any non-zero rc: the drain wait fails only when the member is still held after every retry.
+**The mistake it prevents.** The loops play of 2026-10-02 7:35 PM: the drain wait's own answer (`launchctl print` exiting 113 once the member had stopped) failed every darwin machine in the run, so their booted-out member, reader, mirror and sprint-server units were never loaded again.
+**The test.** `TestAWaitForANonZeroExitIsNotAFailure` (`internal/ci/fleetplays_drain_class_test.go`): reads every play under `fleet/`, finds each task whose `until` waits for `.rc != 0`, and asserts it has `failed_when`; it also asserts the drain wait is found.
+**Its allowlist.** None.
+**Its remedy line.** the assertion names the play, the task and its `until`.
+**Its narrowings.** Only an `until` spelled `.rc != 0` is read; a wait spelled another way is not checked.
 
 ### `sprint-tables-locked` — the four sprint tables change only with their lock file
 

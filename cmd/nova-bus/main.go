@@ -170,7 +170,7 @@ reads like a reply and names nothing gets one SEND NOTE saying so. None of the
 three refuses anything.
 
 --legacy-before draws the switch-day line on a bus that existed before this
-tool: check WARNS instead of failing on an older note's header, and inbox does
+tool: check prints a NOTE instead of failing on an older note's header, and inbox does
 not carry an older note on your open list, counting them on one INBOX LEGACY
 line instead -- notes= for the notes, unreadable= for the files that will not
 parse, which are not named one by one either once they are behind the line. A
@@ -331,14 +331,14 @@ it a repository of its own. Every line above is run against it by the tests, and
 docs/TESTS.md carries the whole first sitting: read, receipt, advance, send.
 `
 
-// refuse is what an unusable invocation costs: ONE line naming what was wrong, and the
-// door to the usage rather than the usage itself. It was the whole 102-line banner, on
-// every flag typo -- 6,473 bytes, about 1.6K tokens, to say that a dash was in the wrong
-// place. THE THREE SITES BELOW ARE THE ONLY ONES THIS CHANGE TOUCHES in this binary: the
-// bare invocation, the unknown verb, and the flag parse error. Everything else nova-bus
-// prints is another line's work.
-func refuse(stderr io.Writer, where, what string) int {
-	fmt.Fprintf(stderr, "nova-bus%s: %s; run: nova-bus help\n", oneline.Escape(where), oneline.Escape(what))
+// busVerbs is the dispatch list, in the order run switches on them, help aside.
+// docs/STANDARD.md section 2: a bare command and an unknown verb name the verbs.
+const busVerbs = "draft, prepare, send, reply, inbox, receipt, close, wait, check, names, version"
+
+// refuseDispatch is the bare command and the unknown verb (docs/STANDARD.md section 2):
+// BUS REFUSED: <reason>; the verbs are ...; run: nova-bus help, on stderr, exit 2.
+func refuseDispatch(stderr io.Writer, reason string) int {
+	fmt.Fprintf(stderr, "BUS REFUSED: %s; the verbs are %s; run: nova-bus help\n", oneline.Escape(reason), busVerbs)
 	return 2
 }
 
@@ -352,7 +352,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 	// before anything is read, dialed or written: help is never a refusal.
 	defer verbflag.Recover(stdout, "nova-bus", usage, &code)
 	if len(args) == 0 {
-		return refuse(stderr, "", "no verb given; `inbox --as <name>` is the one that only looks")
+		return refuseDispatch(stderr, "no verb given")
 	}
 	cmd, rest := args[0], args[1:]
 	switch cmd {
@@ -385,7 +385,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 	case "version", "--version":
 		return cmdVersion(rest, stdout, stderr)
 	}
-	return refuse(stderr, "", fmt.Sprintf("unknown subcommand %q", cmd))
+	return refuseDispatch(stderr, fmt.Sprintf("unknown verb %q", cmd))
 }
 
 // ------------------------------------------------------------------------------- flags
@@ -426,7 +426,7 @@ func (f *flags) parse(args []string, stderr io.Writer, required map[string]*stri
 	// -h, -help and --help never land here: verbflag.Parse raises the verb's help, which
 	// run prints on stdout at exit 0.
 	if err := verbflag.Parse(f.fs, args); err != nil {
-		refuse(stderr, " "+f.verb, oneline.Cap(err.Error(), oneline.TailBytes))
+		fmt.Fprintf(stderr, "%s REFUSED: %s; run: nova-bus help\n", oneline.Escape(strings.ToUpper(f.verb)), oneline.Escape(verbflag.Explain(f.fs, err)))
 		return false
 	}
 	if n := f.fs.NArg(); n > 0 {
@@ -717,7 +717,7 @@ func quoteList(names []string) string {
 // printTranscript puts git's own output on stderr, VERBATIM, under the one actionable line
 // that has already been printed and escaped.
 //
-// THE FAILURE THIS CLOSES: a `SEND FAIL` on a rebase conflict would otherwise carry git's whole
+// THE FAILURE THIS CLOSES: a `SEND FAILED` on a rebase conflict would otherwise carry git's whole
 // transcript inside the reason, rendered through the one-line escape, so forty lines of git
 // arrived as one line of `\x0d\x0a` and nobody could read any of it. The one-line guarantee
 // is about the EVENT line -- the line above this, which a scanner reads -- and a transcript
@@ -791,7 +791,7 @@ func cmdPrepare(args []string, stdin io.Reader, stdout, stderr io.Writer, now ti
 	prepared, err := bus.PrepareDraft(t, text, now, *slug, *as)
 	if err != nil {
 		for _, reason := range bus.Reasons(err) {
-			fmt.Fprintf(stderr, "PREPARE FAIL %s: %s\n", oneline.Escape(source), oneline.Err(reason))
+			fmt.Fprintf(stderr, "PREPARE FAILED %s: %s\n", oneline.Escape(source), oneline.Err(reason))
 		}
 		return 1
 	}
@@ -800,7 +800,7 @@ func cmdPrepare(args []string, stdin io.Reader, stdout, stderr io.Writer, now ti
 	}
 	artifactJSON, err := bus.RenderPreparedArtifact(prepared)
 	if err != nil {
-		fmt.Fprintf(stderr, "PREPARE FAIL %s: %s\n", oneline.Escape(source), oneline.Err(err))
+		fmt.Fprintf(stderr, "PREPARE FAILED %s: %s\n", oneline.Escape(source), oneline.Err(err))
 		return 1
 	}
 	fmt.Fprint(stdout, artifactJSON)
@@ -898,7 +898,7 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 		art, p, err := bus.ValidatePreparedArtifact(raw, *busDir, c, *as)
 		if err != nil {
 			for _, reason := range bus.Reasons(err) {
-				fmt.Fprintf(stderr, "SEND FAIL %s: %s\n", oneline.Escape(source), oneline.Err(reason))
+				fmt.Fprintf(stderr, "SEND FAILED %s: %s\n", oneline.Escape(source), oneline.Err(reason))
 			}
 			return 1
 		}
@@ -911,7 +911,7 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 
 		res, err := bus.SendPreparedArtifact(*busDir, *remote, *branch, p, art, *attempts)
 		if err != nil {
-			fmt.Fprintf(stderr, "SEND FAIL %s: %s\n", oneline.Escape(art.Path), oneline.Err(err))
+			fmt.Fprintf(stderr, "SEND FAILED %s: %s\n", oneline.Escape(art.Path), oneline.Err(err))
 			printTranscript(stderr, err)
 			return 1
 		}
@@ -964,7 +964,7 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 		prepared, err := bus.PrepareWith(t, text, now, bus.SendOptions{Slug: *slug, As: *as, Host: hostName})
 		if err != nil {
 			for _, reason := range bus.Reasons(err) {
-				fmt.Fprintf(stderr, "SEND FAIL %s: %s\n", oneline.Escape(source), oneline.Err(reason))
+				fmt.Fprintf(stderr, "SEND FAILED %s: %s\n", oneline.Escape(source), oneline.Err(reason))
 			}
 			return 1
 		}
@@ -991,7 +991,7 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 		// a draft cost the writer three runs to find the other two, and the tool had read
 		// all three before it printed anything.
 		for _, reason := range bus.Reasons(err) {
-			fmt.Fprintf(stderr, "SEND FAIL %s: %s\n", oneline.Escape(source), oneline.Err(reason))
+			fmt.Fprintf(stderr, "SEND FAILED %s: %s\n", oneline.Escape(source), oneline.Err(reason))
 		}
 		return 1
 	}
@@ -1010,7 +1010,7 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 	// Every other path in the tree is still the refusal it always was.
 	beat := bus.BeatPath(prepared.Sender.Lane)
 	if err := checkoutReady(*busDir, *branch, []string{beat}); err != nil {
-		fmt.Fprintf(stderr, "SEND FAIL %s: %s\n", oneline.Escape(source), oneline.Err(err))
+		fmt.Fprintf(stderr, "SEND FAILED %s: %s\n", oneline.Escape(source), oneline.Err(err))
 		return 1
 	}
 	if err := levelWithRemote(*busDir, *remote, *branch, *noPush); err != nil {
@@ -1018,7 +1018,7 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 		return 1
 	}
 	if err := prepared.Save(*busDir); err != nil {
-		fmt.Fprintf(stderr, "SEND FAIL %s: %s\n", oneline.Escape(source), oneline.Err(err))
+		fmt.Fprintf(stderr, "SEND FAILED %s: %s\n", oneline.Escape(source), oneline.Err(err))
 		return 1
 	}
 	// The lane's catalogue is appended in the SAME commit as the note. A catalogue that
@@ -1026,7 +1026,7 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 	// wrongly, and a note that landed without its line would be invisible to every later
 	// id lookup until somebody ran a rebuild.
 	if err := prepared.AppendIndex(*busDir); err != nil {
-		fmt.Fprintf(stderr, "SEND FAIL %s: %s\n", oneline.Escape(source), oneline.Err(err))
+		fmt.Fprintf(stderr, "SEND FAILED %s: %s\n", oneline.Escape(source), oneline.Err(err))
 		return 1
 	}
 	// The union-merge rules, written once per bus and committed with the note that first
@@ -1038,7 +1038,7 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 	paths := prepared.Paths()
 	wroteAttrs, err := bus.EnsureMergeAttributes(*busDir)
 	if err != nil {
-		fmt.Fprintf(stderr, "SEND FAIL %s: %s\n", oneline.Escape(bus.AttributesName), oneline.Err(err))
+		fmt.Fprintf(stderr, "SEND FAILED %s: %s\n", oneline.Escape(bus.AttributesName), oneline.Err(err))
 		return 1
 	}
 	if wroteAttrs {
@@ -1049,14 +1049,14 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 	// exit 128, and a sender who has never run `wait` has no BEAT at all.
 	paths, err = bus.StagePaths(*busDir, append(paths, beat))
 	if err != nil {
-		fmt.Fprintf(stderr, "SEND FAIL %s: %s\n", oneline.Escape(source), oneline.Err(err))
+		fmt.Fprintf(stderr, "SEND FAILED %s: %s\n", oneline.Escape(source), oneline.Err(err))
 		return 1
 	}
 	res, err := commit(*busDir, prepared.Sender, paths,
 		bus.WithTrailer(prepared.Message, bus.TrailerSend+" "+prepared.Note.Header.ID),
 		*remote, *branch, *attempts, *noPush)
 	if err != nil {
-		fmt.Fprintf(stderr, "SEND FAIL %s: %s\n", oneline.Escape(prepared.Path), oneline.Err(err))
+		fmt.Fprintf(stderr, "SEND FAILED %s: %s\n", oneline.Escape(prepared.Path), oneline.Err(err))
 		printTranscript(stderr, err)
 		return 1
 	}
@@ -1180,7 +1180,7 @@ func cmdReceipt(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	plan, err := bus.PlanReceipts(t, me, notes, now)
 	if err != nil {
-		fmt.Fprintf(stderr, "RECEIPT FAIL %s: %s\n", oneline.Escape(me.Name), oneline.Err(err))
+		fmt.Fprintf(stderr, "RECEIPT FAILED %s: %s\n", oneline.Escape(me.Name), oneline.Err(err))
 		return 1
 	}
 	for _, already := range plan.Already {
@@ -1194,7 +1194,7 @@ func cmdReceipt(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// machinery and not a change that is "not this receipt".
 	beat := bus.BeatPath(me.Lane)
 	if err := checkoutReady(*busDir, *branch, []string{plan.Path, beat}); err != nil {
-		fmt.Fprintf(stderr, "RECEIPT FAIL %s: %s\n", oneline.Escape(plan.Path), oneline.Err(err))
+		fmt.Fprintf(stderr, "RECEIPT FAILED %s: %s\n", oneline.Escape(plan.Path), oneline.Err(err))
 		return 1
 	}
 	if err := levelWithRemote(*busDir, *remote, *branch, *noPush); err != nil {
@@ -1202,19 +1202,19 @@ func cmdReceipt(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return 1
 	}
 	if err := plan.Append(*busDir); err != nil {
-		fmt.Fprintf(stderr, "RECEIPT FAIL %s: %s\n", oneline.Escape(plan.Path), oneline.Err(err))
+		fmt.Fprintf(stderr, "RECEIPT FAILED %s: %s\n", oneline.Escape(plan.Path), oneline.Err(err))
 		return 1
 	}
 	paths, err := bus.StagePaths(*busDir, []string{plan.Path, beat})
 	if err != nil {
-		fmt.Fprintf(stderr, "RECEIPT FAIL %s: %s\n", oneline.Escape(plan.Path), oneline.Err(err))
+		fmt.Fprintf(stderr, "RECEIPT FAILED %s: %s\n", oneline.Escape(plan.Path), oneline.Err(err))
 		return 1
 	}
 	res, err := commit(*busDir, me, paths,
 		bus.WithTrailer(plan.Message(me), bus.TrailerReceipt),
 		*remote, *branch, *attempts, *noPush)
 	if err != nil {
-		fmt.Fprintf(stderr, "RECEIPT FAIL %s: %s\n", oneline.Escape(plan.Path), oneline.Err(err))
+		fmt.Fprintf(stderr, "RECEIPT FAILED %s: %s\n", oneline.Escape(plan.Path), oneline.Err(err))
 		printTranscript(stderr, err)
 		return 1
 	}
@@ -1278,7 +1278,7 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	plan, err := bus.PlanClose(t, me, before, now)
 	if err != nil {
-		fmt.Fprintf(stderr, "CLOSE FAIL %s: %s\n", oneline.Escape(me.Name), oneline.Err(err))
+		fmt.Fprintf(stderr, "CLOSE FAILED %s: %s\n", oneline.Escape(me.Name), oneline.Err(err))
 		return 1
 	}
 	// closed= COUNTS NOTES, not receipts: one receipt closes every note one
@@ -1293,7 +1293,7 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return 0
 	}
 	if err := checkoutReady(*busDir, *branch, nil); err != nil {
-		fmt.Fprintf(stderr, "CLOSE FAIL: %s\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "CLOSE FAILED: %s\n", oneline.Err(err))
 		return 1
 	}
 	if err := levelWithRemote(*busDir, *remote, *branch, *noPush); err != nil {
@@ -1318,13 +1318,13 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time) int {
 		p := &plan.Prepared[i]
 		if err := p.Save(*busDir); err != nil {
 			undo()
-			fmt.Fprintf(stderr, "CLOSE FAIL %s: %s\n", oneline.Escape(p.Path), oneline.Err(err))
+			fmt.Fprintf(stderr, "CLOSE FAILED %s: %s\n", oneline.Escape(p.Path), oneline.Err(err))
 			return 1
 		}
 		written = append(written, p.Path)
 		if err := p.AppendIndex(*busDir); err != nil {
 			undo()
-			fmt.Fprintf(stderr, "CLOSE FAIL %s: %s\n", oneline.Escape(p.Path), oneline.Err(err))
+			fmt.Fprintf(stderr, "CLOSE FAILED %s: %s\n", oneline.Escape(p.Path), oneline.Err(err))
 			return 1
 		}
 		paths = append(paths, p.Path)
@@ -1332,7 +1332,7 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time) int {
 	paths = append(paths, bus.IndexPath(me.Lane))
 	wroteAttrs, err := bus.EnsureMergeAttributes(*busDir)
 	if err != nil {
-		fmt.Fprintf(stderr, "CLOSE FAIL %s: %s\n", oneline.Escape(bus.AttributesName), oneline.Err(err))
+		fmt.Fprintf(stderr, "CLOSE FAILED %s: %s\n", oneline.Escape(bus.AttributesName), oneline.Err(err))
 		return 1
 	}
 	if wroteAttrs {
@@ -1342,7 +1342,7 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time) int {
 		bus.WithTrailer(plan.Message(me), bus.TrailerClose),
 		*remote, *branch, *attempts, *noPush)
 	if err != nil {
-		fmt.Fprintf(stderr, "CLOSE FAIL: %s\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "CLOSE FAILED: %s\n", oneline.Err(err))
 		printTranscript(stderr, err)
 		return 1
 	}
@@ -1962,7 +1962,7 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 				return 2, r
 			}
 			if err := printBodyPage(stdout, page, o.maxBytes); err != nil {
-				fmt.Fprintf(stderr, "INBOX FAIL output: %s\n", oneline.Err(err))
+				fmt.Fprintf(stderr, "INBOX FAILED output: %s\n", oneline.Err(err))
 				return 1, r
 			}
 			r.BodyPrinted, r.BodyBytes, r.BodyGaps, r.Next = page.Frames, page.PrintedBytes, page.GapCount, page.Next
@@ -1986,17 +1986,17 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 					kind, retry = "over-ceiling", "-"
 				}
 				if _, err := fmt.Fprintf(stdout, "INBOX BODIES GAP id=%s kind=%s retry-max-bytes=%s path=%s\n", oneline.Field(dash(gap.ID)), oneline.Field(kind), oneline.Field(retry), oneline.Field(gap.Path)); err != nil {
-					fmt.Fprintf(stderr, "INBOX FAIL output: %s\n", oneline.Err(err))
+					fmt.Fprintf(stderr, "INBOX FAILED output: %s\n", oneline.Err(err))
 					return 1, inboxReading{}
 				}
 			}
 			if _, err := fmt.Fprintf(stdout, "INBOX BODIES printed=%d bytes=%d oversize=%d gaps=%d drained=%t complete=%t next=%s\n", r.BodyPrinted, r.BodyBytes, len(page.Gaps), r.BodyGaps, page.Drained, page.Complete, oneline.Field(dash(r.Next))); err != nil {
-				fmt.Fprintf(stderr, "INBOX FAIL output: %s\n", oneline.Err(err))
+				fmt.Fprintf(stderr, "INBOX FAILED output: %s\n", oneline.Err(err))
 				return 1, inboxReading{}
 			}
 		} else {
 			if _, err := printOpenEntries(stdout, res.Fresh, len(res.Fresh)); err != nil {
-				fmt.Fprintf(stderr, "INBOX FAIL output: %s\n", oneline.Err(err))
+				fmt.Fprintf(stderr, "INBOX FAILED output: %s\n", oneline.Err(err))
 				return 1, r
 			}
 		}
@@ -2036,7 +2036,7 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 		rows := bus.SortForListing(res.Open)
 		shown, err := printOpenEntries(stdout, rows, o.openMax)
 		if err != nil {
-			fmt.Fprintf(stderr, "INBOX FAIL output: %s\n", oneline.Err(err))
+			fmt.Fprintf(stderr, "INBOX FAILED output: %s\n", oneline.Err(err))
 			return 1, r
 		}
 		if more := countListable(rows) - shown; more > 0 {
@@ -2198,7 +2198,7 @@ func advanceCursorTo(busDir string, me bus.Participant, open []bus.OpenEntry, le
 		paths = append(paths, bus.BeatPath(me.Lane))
 	}
 	if err := checkoutReady(busDir, branch, paths); err != nil {
-		fmt.Fprintf(stderr, "INBOX FAIL %s: %s\n", oneline.Escape(bus.CursorPath(me.Lane)), oneline.Err(err))
+		fmt.Fprintf(stderr, "INBOX FAILED %s: %s\n", oneline.Escape(bus.CursorPath(me.Lane)), oneline.Err(err))
 		return 1
 	}
 	if err := levelWithRemote(busDir, remote, branch, noPush); err != nil {
@@ -2206,11 +2206,11 @@ func advanceCursorTo(busDir string, me bus.Participant, open []bus.OpenEntry, le
 		return 1
 	}
 	if err := bus.WriteOpen(busDir, me.Lane, open); err != nil {
-		fmt.Fprintf(stderr, "INBOX FAIL %s: %s\n", oneline.Escape(bus.OpenPath(me.Lane)), oneline.Err(err))
+		fmt.Fprintf(stderr, "INBOX FAILED %s: %s\n", oneline.Escape(bus.OpenPath(me.Lane)), oneline.Err(err))
 		return 1
 	}
 	if err := bus.WriteCursor(busDir, me.Lane, head, len(open), legacy, now); err != nil {
-		fmt.Fprintf(stderr, "INBOX FAIL %s: %s\n", oneline.Escape(bus.CursorPath(me.Lane)), oneline.Err(err))
+		fmt.Fprintf(stderr, "INBOX FAILED %s: %s\n", oneline.Escape(bus.CursorPath(me.Lane)), oneline.Err(err))
 		return 1
 	}
 	// The commit names both paths, so an OPEN file this run REMOVED -- a reader with
@@ -2219,14 +2219,14 @@ func advanceCursorTo(busDir string, me bus.Participant, open []bus.OpenEntry, le
 	// git to stage a path that is neither on disk nor in the index is exit 128.
 	staged, err := bus.StagePaths(busDir, paths)
 	if err != nil {
-		fmt.Fprintf(stderr, "INBOX FAIL %s: %s\n", oneline.Escape(bus.CursorPath(me.Lane)), oneline.Err(err))
+		fmt.Fprintf(stderr, "INBOX FAILED %s: %s\n", oneline.Escape(bus.CursorPath(me.Lane)), oneline.Err(err))
 		return 1
 	}
 	res, err := commit(busDir, me, staged,
 		bus.WithTrailer(me.Slug()+": read to "+head[:shortSHA], bus.TrailerCursor),
 		remote, branch, attempts, noPush)
 	if err != nil {
-		fmt.Fprintf(stderr, "INBOX FAIL %s: %s\n", oneline.Escape(bus.CursorPath(me.Lane)), oneline.Err(err))
+		fmt.Fprintf(stderr, "INBOX FAILED %s: %s\n", oneline.Escape(bus.CursorPath(me.Lane)), oneline.Err(err))
 		printTranscript(stderr, err)
 		return 1
 	}
@@ -3539,7 +3539,10 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	since := f.fs.String("since", "", "check what changed since this commit: a revision, a UTC date (YYYY-MM-DD, so the last commit written before that day), or an RFC 3339 UTC instant")
 	legacyBefore := f.fs.String("legacy-before", "", "a finding about the header of a note dated before this UTC date (YYYY-MM-DD, midnight at its start) or UTC instant (RFC 3339, e.g. 2026-09-09T18:07:00Z) warns instead of failing")
 	rebuildIndex := f.fs.Bool("rebuild-index", false, "with --full, rewrite each lane's INDEX from the notes on disk")
-	maxFindings := f.fs.Int("max", defaultCheckMax, "findings to print before one BUS MORE line naming the rest (default 20, 0 = all)")
+	var maxFindings int
+	f.fs.IntVar(&maxFindings, "max", defaultCheckMax, "findings to print before one BUS MORE line naming the rest (default 20, 0 = all)")
+	// --fail-max is --max for one release (docs/STANDARD.md section 2). It sets the same value.
+	f.fs.IntVar(&maxFindings, "fail-max", defaultCheckMax, "alias of --max, accepted for one release")
 	gitSeconds := f.fs.Int("git-timeout", defaultGitTimeoutSeconds, "how long one git subprocess may take before this run gives up on it")
 	if !f.parse(args, stderr, map[string]*string{"bus": busDir}) {
 		return 2
@@ -3547,7 +3550,10 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if !f.gitTimeoutFlag(*gitSeconds, stderr) {
 		return 2
 	}
-	if !f.atLeastZero("max", *maxFindings, stderr) {
+	if f.set("fail-max") {
+		fmt.Fprintln(stderr, "NOTE --fail-max is --max")
+	}
+	if !f.atLeastZero("max", maxFindings, stderr) {
 		return 2
 	}
 	// A check with no baseline is not a check of nothing, it is a caller who has not said
@@ -3645,7 +3651,7 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 			for _, lane := range c.Lanes() {
 				n, rerr := bus.RebuildLaneIndex(*busDir, c, t, lane)
 				if rerr != nil {
-					fmt.Fprintf(stderr, "BUS FAIL %s: %s\n", oneline.Escape(bus.IndexPath(lane)), oneline.Err(rerr))
+					fmt.Fprintf(stderr, "BUS FAILED %s: %s\n", oneline.Escape(bus.IndexPath(lane)), oneline.Err(rerr))
 					return 1
 				}
 				fmt.Fprintf(stdout, "BUS INDEX lane=%s notes=%d\n", oneline.Field(lane), n)
@@ -3693,31 +3699,27 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// code and the counts come from the whole walk, exactly as an uncapped run said them.
 	counts := bus.CountCheckFindings(problems)
 	shown := len(problems)
-	if *maxFindings > 0 && shown > *maxFindings {
-		shown = *maxFindings
+	if maxFindings > 0 && shown > maxFindings {
+		shown = maxFindings
 	}
 	for i, p := range problems {
 		if i == shown {
 			break
 		}
-		// A WARN GOES TO STDOUT, and it went to stderr. The grammar says which stream a
-		// line is on and the rule is one sentence: FAIL lines and refusals to stderr,
-		// everything else to stdout. A WARN is neither -- it is a finding that was
-		// TOLERATED, reported by a run that passed -- so putting it on stderr made every
-		// clean-but-forgiving run look like a failing one to anything reading the streams
-		// apart, which is what CI does. It is an informational line and it is now where the
-		// informational lines are.
+		// A tolerated finding is a NOTE on stdout (docs/STANDARD.md section 2). FAILED
+		// lines and refusals go to stderr, and everything else goes to stdout. A NOTE
+		// is a finding a passing run reports, so it is not a failure word on exit 0.
 		if p.Warn {
-			fmt.Fprintf(stdout, "BUS WARN %s: %s\n", oneline.Escape(p.Where), oneline.Escape(p.Reason))
+			fmt.Fprintf(stdout, "BUS NOTE %s: %s\n", oneline.Escape(p.Where), oneline.Escape(p.Reason))
 			continue
 		}
-		fmt.Fprintf(stderr, "BUS FAIL %s: %s\n", oneline.Escape(p.Where), oneline.Escape(p.Reason))
+		fmt.Fprintf(stderr, "BUS FAILED %s: %s\n", oneline.Escape(p.Where), oneline.Escape(p.Reason))
 	}
 	if shown < len(problems) {
 		fmt.Fprintf(stderr, "BUS MORE shown=%d total=%d remedy=%s\n", shown, len(problems), oneline.Quote("--max 0"))
 	}
-	// THE CAP'S OWN LINES GO WHERE THE FAIL LINES GO, and no further than they do. The
-	// findings report's gate half is the BUS FAIL lines on stderr, and the two lines that
+	// THE CAP'S OWN LINES GO WHERE THE FAILED LINES GO, and no further than they do. The
+	// findings report's gate half is the BUS FAILED lines on stderr, and the two lines that
 	// account for it -- what the cap held back, and the count by class -- end that same
 	// report on that same stream: a count a caller could read as a pass never enters
 	// stdout of a failing run, which is the law TestCheckFailsAndNamesEveryFinding keeps,
