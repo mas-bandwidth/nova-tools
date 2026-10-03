@@ -5,7 +5,7 @@ Build: 2c02b2aa2042
 Score: 8/10
 
 ## Reasons
-The tool behaves predictably and reliably when communicating across clones using local git repositories. The draft and send lifecycle works cleanly end to end, note identities and timestamps are deterministic, and replies reliably link threads without manual header formatting. The wait command handles timeouts gracefully and emits an actionable rearm command upon completion.
+The tool behaves predictably and reliably when communicating across clones using local git repositories. The draft and send lifecycle works cleanly end to end, note identities and timestamps are deterministic, and replies reliably link threads without manual header formatting. The wait command handles timeouts gracefully and emits an actionable rearm command upon completion across bounded polling intervals.
 
 A score of 10 would require auto-fetching or warning when reading stale checkouts, allowing absolute paths in receipt commands, providing a sensible default for receipt-max-words, providing structured output flags across inspection verbs, and including actionable remedy hints on invalid integer flags.
 
