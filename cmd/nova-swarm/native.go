@@ -821,25 +821,18 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		refuseNative(errOut, fmt.Sprintf("%s wall cannot express repo rule", oneline.Field(cfg.label)))
 		return nativeRunResult{}, 2
 	}
-	if stepArgv != nil {
-		// the executor walls each command itself (cardtree.Wall): it is handed this run's wall,
-		// or --no-wall when the caller typed it, and is never wrapped in the child's
-		stepWallFlags := []string{"--no-wall"}
-		if wall != "" {
-			abs, err := filepath.Abs(wall) // the executor runs from the job directory
-			if err != nil {
-				refuseNative(errOut, fmt.Sprintf("%s the wall %s could not be made absolute: %s", oneline.Field(cfg.label), oneline.Field(wall), oneline.Err(err)))
-				return nativeRunResult{}, 2
-			}
-			stepWallFlags = []string{"--sandbox", abs}
-		}
-		runPath, runArgv = stepArgv[0], append(append([]string{}, stepArgv[1:]...), stepWallFlags...)
-		wall = ""
-	}
 	// THE CHILD'S PRIORITY, where the wall forbids the child to lower its own (the darwin
 	// wall denies setpriority): native lowers the group after the start, and the card's own
 	// `nice -n 19` resolves to the shim's, which runs the command without the wall's warning.
 	niced := nativeNicesChild(runtime.GOOS, wall != "")
+	if stepArgv != nil {
+		var err error
+		if runPath, runArgv, niced, err = nativeStepLaunch(runtime.GOOS, stepArgv, wall); err != nil {
+			refuseNative(errOut, fmt.Sprintf("%s the wall %s could not be made absolute: %s", oneline.Field(cfg.label), oneline.Field(wall), oneline.Err(err)))
+			return nativeRunResult{}, 2
+		}
+		wall = ""
+	}
 	if niced && shimDir != "" {
 		if err := writeNativeNiceShim(shimDir); err != nil {
 			fmt.Fprintf(errOut, "NATIVE NOTE: %s; a card's nice inside the wall warns setpriority and runs its command anyway\n", oneline.Err(err))

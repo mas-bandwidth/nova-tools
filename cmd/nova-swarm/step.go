@@ -242,3 +242,21 @@ func named(flags []string, dir string) bool {
 	}
 	return false
 }
+
+// nativeStepLaunch is a script card's executor in the child's place (docs/SPEC-SPRINT.md, a
+// card is a tree of steps): its path and argv, handed the run's wall as an absolute path (the
+// executor runs from the job directory) or --no-wall when the run has none, never wrapped in
+// the child's wall; and whether native lowers its priority, decided from the run's wall as
+// for any child (nativeNicesChild): the step's own darwin wall forbids setpriority too, so the
+// executor and every command it starts run at the nice a walled child runs at.
+func nativeStepLaunch(goos string, stepArgv []string, wall string) (path string, argv []string, niced bool, err error) {
+	flags := []string{"--no-wall"}
+	if wall != "" {
+		abs, err := filepath.Abs(wall)
+		if err != nil {
+			return "", nil, false, err
+		}
+		flags = []string{"--sandbox", abs}
+	}
+	return stepArgv[0], append(append([]string{}, stepArgv[1:]...), flags...), nativeNicesChild(goos, wall != ""), nil
+}

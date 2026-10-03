@@ -127,3 +127,32 @@ func TestTheStepVerbRefusesAProgramOutsideAWallItWasNotToldToDrop(t *testing.T) 
 	require.Equal(t, 2, exit)
 	assert.Contains(t, stderr, "a card whose every work step is a script step")
 }
+
+// A script card's executor takes the child's place outside the child's wall, and is niced as
+// a walled child is: decided from the run's wall before native clears it for the executor.
+func TestAScriptCardIsNicedOnDarwin(t *testing.T) {
+	t.Parallel()
+	step := []string{"/bin/nova-swarm", "step", "--card", "c.md"}
+	cwd, err := os.Getwd()
+	require.NoError(t, err)
+	for _, c := range []struct {
+		name, goos, wall string
+		niced            bool
+		tail             []string
+	}{
+		{"darwin, walled", "darwin", "/w/nova-sandbox", true, []string{"--sandbox", "/w/nova-sandbox"}},
+		{"darwin, a relative wall made absolute", "darwin", "w/nova-sandbox", true, []string{"--sandbox", filepath.Join(cwd, "w", "nova-sandbox")}},
+		{"darwin, --no-wall", "darwin", "", false, []string{"--no-wall"}},
+		{"linux, walled", "linux", "/w/nova-sandbox", false, []string{"--sandbox", "/w/nova-sandbox"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			path, argv, niced, err := nativeStepLaunch(c.goos, step, c.wall)
+			require.NoError(t, err)
+			assert.Equal(t, "/bin/nova-swarm", path)
+			assert.Equal(t, append([]string{"step", "--card", "c.md"}, c.tail...), argv)
+			assert.Equal(t, c.niced, niced)
+		})
+	}
+	assert.Equal(t, []string{"/bin/nova-swarm", "step", "--card", "c.md"}, step, "the argv handed in is not written through")
+}
