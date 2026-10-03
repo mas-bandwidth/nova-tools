@@ -1031,6 +1031,7 @@ nova-sprint stream remove <stream>...
 nova-sprint ci <id>... (--red | --green) --epoch <n> [--head <h>] [--run <id>] [--source <s>] [--note <text>]
 nova-sprint wait <note> (--for <duration> | --until <RFC3339>)
 nova-sprint ack <note>... --reason <text>
+nova-sprint answer [--dry-run] [--bar <p>] [--every <duration>] [--timeout <duration>] [--backend jev|fixed] [--answers <file>] [--record <file>]
 nova-sprint inbox [--open <group>] [--read] [--wait [--timeout <duration>]] [--deadline <duration>] [--stale <duration>]
 nova-sprint card <id>
 nova-sprint log [--card <id>] [--stream <s>] [--member <m>] [--since <10m|RFC3339>] [--at-epoch <n>]
@@ -1074,6 +1075,31 @@ state) and `routes` each route's `balance=`. When every provider is out of credi
 stops the machine (`machine: STOPPED (every provider is out of credit)`) and `start` is refused
 until one is paid; a provider low on funds never stops it. `funded <provider> --reason <text>`
 says one was paid. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md), "A provider out of funds".
+
+### Answering the routine judgments
+
+`nova-sprint answer` answers the routine judgments (a reader found it
+broken, work came back failed, blocked on something dropped, stalled, a conflict,
+past its deadline, cannot ask, ready to accept, a card at its bound) by
+nova-decide's judgment decision, card by card: it applies the verb chosen when
+its probability is at or above `decide_judgment_bar` (nova-config's sprint row,
+empty by default: with no bar it applies nothing, records every decision and lists
+what a bar would apply; `--bar` gives one for a run; 0.8 is a starting point measured on 100 of the coordinator's own judgments,
+not an independent calibration), by the line the inbox prints for that card,
+and lists the rest for you: every drop, everything under the bar, and a provider
+refusal for want of payment, which it never asks about. It prints one table, a
+row a card, and records every decision (`--record`, default
+`~/nova-sprint/decide/judgment.jsonl`, its directory made 0700) with its outcome once the card lands, is dropped
+or comes back. Each verb it applies carries the decision's op id (`--op
+decide.<decision id>`), recorded as `applying` before the verb runs and `applied`
+or `refused` after, so a pass stopped between the two is finished by the next
+through the same op and nothing is applied twice. One ask may take `--timeout`
+(60s by default); an ask past it, or one that fails, is that card's `failed` row,
+nothing is applied for it, and the pass exits 1. `--dry-run` applies and records
+nothing; `--every 60s` runs it as the seat's loop until the machine is STOPPED. Jev's key comes from `JEV_API_KEY`:
+`nova-secrets exec --only JEV_API_KEY -- nova-sprint answer`. The
+contract is [SPEC-SPRINT.md section 8](SPEC-SPRINT.md#answered-by-nova-decide)
+and [SPEC-NOVA-DECIDE.md section 13](SPEC-NOVA-DECIDE.md#13-the-judgment-decision).
 
 ### Exit codes
 

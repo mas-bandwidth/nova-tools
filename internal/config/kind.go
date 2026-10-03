@@ -253,6 +253,12 @@ const (
 	FieldDecideGatePreexisting = "decide_gate_preexisting"
 )
 
+// FieldDecideJudgment is the sprint row's bar on a judgment decision's probability
+// (internal/decide, Choose; docs/SPEC-SPRINT.md section 8, answered by nova-decide):
+// nova-sprint answer applies the verb it chose at or above it. Apply writes
+// it to SprintKey(FieldDecideJudgment), which the sprint's routes read takes.
+const FieldDecideJudgment = "decide_judgment_bar"
+
 // checkSprint holds the decide read's bars together: both set, as probabilities with the
 // review bar at most the bounce bar (decide.ParseBars), or both empty (no decide read);
 // the landed score's bar a probability, or empty (no judgment); the gate's each a
@@ -265,6 +271,11 @@ func checkSprint(r Row) error {
 	if bar := r.Fields[FieldDecideScoreBar]; bar != "" {
 		if p, err := strconv.ParseFloat(bar, 64); err != nil || p > 1 {
 			return fmt.Errorf("sprint: decide_score_bar %q is not a probability in [0, 1]; set it to one, or empty to raise no landed-score judgment", bar)
+		}
+	}
+	if bar := r.Fields[FieldDecideJudgment]; bar != "" {
+		if _, err := decide.ParseJudgmentBar(bar); err != nil {
+			return fmt.Errorf("sprint: %v; want --%s <p>, a probability", err, FieldDecideJudgment)
 		}
 	}
 	var p []string
@@ -365,7 +376,7 @@ var Kinds = []*Kind{
 		Name:      KindSprint,
 		Table:     "sprint",
 		Singleton: true,
-		Doc:       "the one row of sprint-global facts: which friend coordinates, the two bars a flash card's decide read is routed by, the bar a landed diff's score is judged at, the attempt decision's no-result and nothing-to-do bars, the grade decision's bar, and the two a failed gate's decisions are",
+		Doc:       "the one row of sprint-global facts: which friend coordinates, the two bars a flash card's decide read is routed by, the bar a landed diff's score is judged at, the attempt decision's no-result and nothing-to-do bars, the grade decision's bar, the two a failed gate's decisions are, and the bar a judgment decision is applied at",
 		Fields: []Field{
 			{Name: "coordinator", Type: TypeRef, Ref: KindFriend, Help: "the friend who holds the coordinator role (a friend row), or empty; set it to hand over"},
 			{Name: FieldDecideBounce, Type: TypeDecimal, Default: "0.5", Help: "the decide read's bounce bar: a flash card whose first read gives p(defect) at or above it is bounced with the read's finding; a probability, at least --decide_review; 0.5 (the default); empty, with --decide_review empty, turns the decide read off"},
@@ -376,6 +387,7 @@ var Kinds = []*Kind{
 			{Name: FieldDecideGrade, Type: TypeDecimal, Help: "the grade decision's bar: a card graded pro at or above it starts on pro instead of flash; a probability; empty (the default) keeps the grade a hint on the card; 0.7 is the starting point the calibration of 2026-10-03 supports (docs/SPEC-NOVA-DECIDE.md section 11)"},
 			{Name: FieldDecideGateFlaky, Type: TypeDecimal, Default: "", Help: "the gate decision's flaky bar: a failing test of a red gate (a work card's, the lander's batch) whose p(flaky) is at or above it is rerun once before the take or the batch is reported red; a probability, summing above 1 with --decide_gate_preexisting when both are set; empty (the default) reruns nothing, and every gate decision is still recorded and shown; 0.8 is the starting point the calibration of 2026-10-03 reads (docs/SPEC-NOVA-DECIDE.md section 12)"},
 			{Name: FieldDecideGatePreexisting, Type: TypeDecimal, Default: "", Help: "the gate decision's pre-existing bar: a work card's failing test whose p(pre-existing) is at or above it is reported `pre-existing: <test>`, the base's or the member's and never the card's; a probability; empty (the default) reclassifies nothing; 0.8 is the starting point, though at 0.8 24 of the calibration's 39 flaky failures would have been reported pre-existing"},
+			{Name: FieldDecideJudgment, Type: TypeDecimal, Help: "the judgment bar: nova-sprint answer applies the verb the judgment decision chose when its probability is at or above it, and lists it for the coordinator below it; a probability; empty (the default) applies nothing: every decision is recorded and what a bar would apply is listed; 0.8 is a starting point measured on 100 of the coordinator's own judgments (docs/SPEC-NOVA-DECIDE.md section 13), not an independent calibration"},
 		},
 		Check: checkSprint,
 	},

@@ -303,7 +303,7 @@ func (l *decideLane) gradeOne(ctx context.Context, g sprint.GradeAsk) (decide.De
 	if err != nil {
 		return decide.Decided{}, err
 	}
-	value, p := decide.Chosen(d, decide.GradeQuestion)
+	value, p := decide.ChoiceOf(d, decide.GradeQuestion)
 	return decide.Decided{Value: value, P: p, Op: d.ID}, nil
 }
 

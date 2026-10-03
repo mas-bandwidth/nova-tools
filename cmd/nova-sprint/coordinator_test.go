@@ -100,6 +100,7 @@ func TestEveryCoordinatorVerbIsTheCoordinators(t *testing.T) {
 		"funded":        "funded openrouter --reason paid",
 		"wait":          "wait x --for 1m",
 		"ack":           "ack x --reason r",
+		"answer":        "answer --dry-run --record /dev/null",
 		"clear":         "clear --confirm sprint",
 		"teardown":      "teardown --confirm sprint",
 		"repair":        "repair",

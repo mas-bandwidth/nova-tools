@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 )
 
 // The Jev backend (SPEC-NOVA-DECIDE section 3): TypeSafe's System One model,
@@ -20,6 +21,9 @@ const (
 	JevURL    = "https://api.typesafe.ai/v1/systemone"
 	JevModel  = "jev-latest"
 	JevSecret = "JEV_API_KEY" // the variable `nova-secrets exec --only JEV_API_KEY` sets
+	// JevTimeout is how long one ask may take by default: a backend that does not answer
+	// within it fails that ask, and never holds its caller (nova-decide's --timeout).
+	JevTimeout = time.Minute
 )
 
 // Send carries one request body to the backend and returns the response body.
@@ -91,10 +95,10 @@ func jevAnswers(raw []byte) (map[string]Answer, Usage, error) {
 	return out, wire.Usage, nil
 }
 
-// JevHTTP is the Jev backend over the real transport with key: what nova-decide and the
-// sprint's decide read ask through.
-func JevHTTP(key string) Jev {
-	return Jev{Model: JevModel, Send: HTTPSend(http.DefaultClient, JevURL, key)}
+// JevHTTP is the Jev backend over the real transport with key, each ask bounded by
+// timeout: what the sprint's decide read and answer ask through.
+func JevHTTP(key string, timeout time.Duration) Jev {
+	return Jev{Model: JevModel, Send: HTTPSend(&http.Client{Timeout: timeout}, JevURL, key)}
 }
 
 // HTTPSend is the real transport, and the one function of this package that

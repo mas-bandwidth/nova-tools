@@ -47,7 +47,7 @@ func deciderOf(cfg nativeRunConfig) *decider {
 	if key == "" {
 		return nil
 	}
-	return &decider{backend: decide.JevHTTP(key), now: time.Now}
+	return &decider{backend: decide.JevHTTP(key, decide.JevTimeout), now: time.Now}
 }
 
 // decideWait bounds the backend's answer, as nova-decide's own --timeout default does.

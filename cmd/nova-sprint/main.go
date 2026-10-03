@@ -144,6 +144,9 @@ type app struct {
 	// decide is the server's decide lane (run --decide, decidelane.go): nil records no
 	// attempt or grade decision and grades nothing.
 	decide *decideLane
+	// decider, when set (a test), is answer's backend for the judgment decision:
+	// nil is the one --backend names (decide.Jev with JEV_API_KEY, or a fixed file).
+	decider decide.Backend
 	// home is the directory a seat's inbox is under (inbox --wait --push seat:
 	// ~/<holder>-working/inbox): os.UserHomeDir unless a test sets it.
 	home func() (string, error)
@@ -264,12 +267,20 @@ type common struct {
 }
 
 func (c *common) register(fs flagSet, getenv func(string) string) {
-	fs.StringVar(&c.redis, "redis", firstEnv(getenv, "NOVA_SPRINT_REDIS", "NOVA_REDIS_ADDR"), "the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)")
-	fs.StringVar(&c.actor, "actor", getenv("NOVA_SPRINT_ACTOR"), "who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)")
+	c.registerStore(fs, getenv)
 	fs.StringVar(&c.op, "op", "", "the caller's operation id: the same id again returns the recorded result and changes nothing")
-	fs.BoolVar(&c.json, "json", false, "print one JSON object for a program instead of the lines")
 	fs.IntVar(&c.max, "max", 20, "listed items of each kind; 0 is all")
 	fs.Int64Var(&c.epoch, "epoch", -1, "the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none")
+}
+
+// registerStore is the shared flags of a verb that takes no --op, --epoch or --max
+// (answer: each verb it applies carries its decision's own op): the store, the actor
+// and --json.
+func (c *common) registerStore(fs flagSet, getenv func(string) string) {
+	c.epoch = -1
+	fs.StringVar(&c.redis, "redis", firstEnv(getenv, "NOVA_SPRINT_REDIS", "NOVA_REDIS_ADDR"), "the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)")
+	fs.StringVar(&c.actor, "actor", getenv("NOVA_SPRINT_ACTOR"), "who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)")
+	fs.BoolVar(&c.json, "json", false, "print one JSON object for a program instead of the lines")
 }
 
 func firstEnv(getenv func(string) string, names ...string) string {

@@ -24,7 +24,7 @@ func testWorld(key string, calls *atomic.Int32, reply func(body []byte) ([]byte,
 	return world{
 		now:    func() time.Time { return time.Date(2026, 10, 2, 21, 0, 0, 0, time.UTC) },
 		getenv: func(name string) string { return map[string]string{decide.JevSecret: key}[name] },
-		send: func(got string) decide.Send {
+		send: func(got string, _ time.Duration) decide.Send {
 			return func(_ context.Context, body []byte) ([]byte, error) {
 				if got != key {
 					return nil, errors.New("the transport was handed another key")

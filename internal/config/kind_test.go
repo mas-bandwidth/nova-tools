@@ -110,9 +110,9 @@ func TestTheFriendRowIsWhatSomeoneDecidesForHer(t *testing.T) {
 		assert.Equal(t, "flash,frontier,pro", strings.Join(Tiers, ","), assertionMsg98...)
 	}()
 	sprint, _ := Lookup(KindSprint)
-	assertionMsg100 := []any{"sprint %+v: one row, one optional ref to a friend, the decide read's two bars, the landed score's bar, layer 2's three and the gate decision's two", sprint}
+	assertionMsg100 := []any{"sprint %+v: one row, one optional ref to a friend, the decide read's two bars, the landed score's bar, layer 2's three, the gate decision's two and the judgment bar", sprint}
 	require.True(t, sprint.Singleton, assertionMsg100...)
-	require.Len(t, sprint.Fields, 9, assertionMsg100...)
+	require.Len(t, sprint.Fields, 10, assertionMsg100...)
 	require.Equal(t, "coordinator", sprint.Fields[0].Name, assertionMsg100...)
 	require.Equal(t, TypeRef, sprint.Fields[0].Type, assertionMsg100...)
 	require.Equal(t, KindFriend, sprint.Fields[0].Ref, assertionMsg100...)
@@ -511,4 +511,19 @@ func TestTheSprintRowHoldsTheGateBarsTogether(t *testing.T) {
 	err := sprint.Check(Row{Name: KindSprint, Fields: map[string]string{FieldDecideBounce: "0.3", FieldDecideReview: "0.5", FieldDecideGateFlaky: "0.4", FieldDecideGatePreexisting: "0.4"}})
 	assert.ErrorContains(t, err, "decide_review 0.5 is above decide_bounce 0.3", "both pairs' problems in one error")
 	assert.ErrorContains(t, err, "sum to at most 1")
+}
+
+// The sprint row holds the bar a judgment decision is applied at (nova-sprint answer
+// --decide), empty by default (nothing is applied until the coordinator sets it); a value
+// that is no probability is refused, naming the flag.
+func TestTheSprintRowHoldsTheJudgmentBar(t *testing.T) {
+	t.Parallel()
+	sprint, _ := Lookup(KindSprint)
+	bar, ok := sprint.Field(FieldDecideJudgment)
+	require.True(t, ok)
+	assert.Empty(t, bar.Default)
+	assert.NoError(t, checkSprint(Row{Name: "sprint", Fields: map[string]string{FieldDecideJudgment: ""}}), "empty is no bar")
+	assert.Equal(t, TypeDecimal, bar.Type)
+	assert.NoError(t, checkSprint(Row{Name: "sprint", Fields: map[string]string{FieldDecideJudgment: "0.9"}}))
+	assert.ErrorContains(t, checkSprint(Row{Name: "sprint", Fields: map[string]string{FieldDecideJudgment: "1.5"}}), "want --decide_judgment_bar <p>, a probability")
 }

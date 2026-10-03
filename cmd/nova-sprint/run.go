@@ -295,7 +295,7 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 	if decideDir != "" {
 		var b decide.Backend
 		if key := a.getenv(decide.JevSecret); key != "" {
-			b = decide.JevHTTP(key)
+			b = decide.JevHTTP(key, decide.JevTimeout)
 		}
 		if a.decide == nil { // a test's lane, with its backend, is kept
 			a.decide = newDecideLane(decideDir, b, a.now, GradeWait)

@@ -46,5 +46,5 @@ func workAttempt(reader bool, getenv func(string) string) func(member.Packet, st
 	if reader || key == "" {
 		return nil
 	}
-	return attemptDecider(decide.JevHTTP(key), time.Now)
+	return attemptDecider(decide.JevHTTP(key, decide.JevTimeout), time.Now)
 }

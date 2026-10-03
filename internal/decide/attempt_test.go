@@ -164,7 +164,7 @@ func TestGradesAreTheBriefsAndOutcomesTheCardsFate(t *testing.T) {
 	d, existing, err := Make(context.Background(), fixture(t, "grade-pro.json"), GradeSchema(), state, record, GradeOp("c1", state), nil, at)
 	require.NoError(t, err)
 	assert.False(t, existing)
-	value, p := Chosen(d, GradeQuestion)
+	value, p := ChoiceOf(d, GradeQuestion)
 	assert.Equal(t, GradePro, value)
 	assert.InDelta(t, 0.81, p, 1e-9)
 	_, existing, err = Make(context.Background(), Fixed{}, GradeSchema(), state, record, GradeOp("c1", state), nil, at)

@@ -145,8 +145,8 @@ func ParseAttempt(raw []byte) (Decision, error) {
 	return d, nil
 }
 
-// Chosen is a choice's chosen option and its probability (Top is the score decision's).
-func Chosen(d Decision, question string) (string, float64) {
+// ChoiceOf is a choice's chosen option and its probability (Top is the score decision's).
+func ChoiceOf(d Decision, question string) (string, float64) {
 	a := d.Answers[question]
 	return a.Value, a.Prob(a.Value)
 }
@@ -205,7 +205,7 @@ func (d Decided) Over(raw string) bool {
 // AttemptDecided is the attempt decision as it rides with a finish: its class, the class's
 // probability and its op id. An answer that is not one of the six classes is an error.
 func AttemptDecided(d Decision) (Decided, error) {
-	class, p := Chosen(d, AttemptQuestion)
+	class, p := ChoiceOf(d, AttemptQuestion)
 	if _, known := AttemptSchema().Questions[AttemptQuestion].Criteria[class]; !known || d.Decision != AttemptName {
 		return Decided{}, errors.New("the decision is not an attempt decision with a class")
 	}

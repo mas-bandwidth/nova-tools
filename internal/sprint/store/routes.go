@@ -90,13 +90,16 @@ type RouteSet struct {
 
 // Bars is the sprint row's nova-decide bars, each by the name of its field, so no bar is
 // ever read as another: the decide read's bounce and review bars, the attempt decision's
-// no-result and nothing-to-do bars, the grade's, the landed score's, and the gate decision's flaky and pre-existing bars. "" is no bar.
+// no-result and nothing-to-do bars, the grade's, the landed score's, the gate decision's
+// flaky and pre-existing bars, and the judgment decision's (nova-sprint answer reads it
+// from routes --json). "" is no bar.
 type Bars struct {
 	Bounce, Review                      string // decide_bounce, decide_review
 	AttemptNoResult, AttemptNothingToDo string // decide_attempt_no_result, decide_attempt_nothing_to_do
 	Grade                               string // decide_grade
 	Score                               string // decide_score_bar
 	GateFlaky, GatePreexisting          string // decide_gate_flaky, decide_gate_preexisting
+	Judgment                            string // decide_judgment_bar
 }
 
 // fields is each bar by its sprint row field (config.SprintKey(field) holds it).
@@ -110,6 +113,7 @@ func (b *Bars) fields() map[string]*string {
 		config.FieldDecideScoreBar:           &b.Score,
 		config.FieldDecideGateFlaky:          &b.GateFlaky,
 		config.FieldDecideGatePreexisting:    &b.GatePreexisting,
+		config.FieldDecideJudgment:           &b.Judgment,
 	}
 }
 
@@ -272,6 +276,14 @@ func (m *Mem) SetScoreBar(bar string) {
 	m.bars.Score = bar
 }
 
+// SetJudgmentBar gives the store the judgment decision's bar, as nova-config's apply
+// does a live one (sprint:decide_judgment_bar).
+func (m *Mem) SetJudgmentBar(bar string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.bars.Judgment = bar
+}
+
 // SetRoutes gives the store its routes, as nova-config's apply does a live one.
 func (m *Mem) SetRoutes(rs []sprint.Route) {
 	m.mu.Lock()
@@ -309,4 +321,11 @@ func (st *Store) OutOfCredit(ctx context.Context) (string, error) {
 	fleet := sprint.NewTable(sprint.Fleet)
 	fleet.SetProps(shapes[0].Props)
 	return sprint.AllOutOfCredit(routes, sprint.RouteRests(routes, fleet), st.now()), nil
+}
+
+// JudgmentBar is the judgment decision's bar as nova-config applied it, read with the
+// routes: for routes --json, which answer reads. "" when none is applied.
+func (st *Store) JudgmentBar(ctx context.Context) (string, error) {
+	set, err := st.routes(ctx)
+	return set.Bars.Judgment, err
 }
