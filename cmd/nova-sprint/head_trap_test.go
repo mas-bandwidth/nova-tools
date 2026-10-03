@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -9,9 +11,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The head trap: a finish without --head records the card's id as its head,
-// which land cannot merge. The worker's packet names --head <commit> on its
-// report line, so the command it pastes names the commit.
+// The head trap: a finish without --head of a card whose brief names no repository
+// records the card's id as its head, which land cannot merge. The worker's packet names
+// --head <commit> on its report line, so the command it pastes names the commit.
 func TestThePacketsReportLineNamesTheHead(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
@@ -116,4 +118,46 @@ func TestLandNamesEveryProblemOfABatchAtOnce(t *testing.T) {
 		}
 	}
 	assert.Equal(t, applies, r.applies(), "a refusal before any git wrote")
+}
+
+// finish --head's default (nova-tools#5154, Zhi's cold read of every verb's -h: the help
+// named the card's id as the default, "so a coordinator can 'finish' successfully and
+// then cannot land"): an ok finish that names no head records origin's tip of the work's
+// branch in the repository its card's REPO: line names, the head land merges, and the
+// card lands. Before the work is pushed the finish is refused, naming the branch and the
+// remedy, and nothing is finished. The help says so.
+func TestAFinishWithTheDefaultHeadLands(t *testing.T) {
+	t.Parallel()
+	r := newLandRig(t)
+	brief := filepath.Join(t.TempDir(), "s1-1.md")
+	require.NoError(t, os.WriteFile(brief, []byte(passingBrief("REPO: "+r.remote+"\nBASE: main\n\nWrite a.txt.")), 0o600))
+	r.ok("add --stream s1 s1-1 --brief-file " + brief)
+	r.deal(1)
+	out := r.ok("take --as m1 s1-1.w1@1")
+	branch := "sprint/s1-1.w1.g1.e0"
+	require.Contains(t, out, "--branch "+branch, "the packet names the branch")
+
+	code, _, errs := r.do("finish --as m1 s1-1.w1@1 --report done")
+	assert.Equal(t, 2, code, "a finish before the push: %s", errs)
+	assert.Contains(t, errs, "s1-1.w1: origin holds no branch "+branch+" in "+r.remote+"; push the work there, or name the commit: --head <commit>")
+	assert.Equal(t, "working", r.primary("s1-1").Col, "a refused finish finished nothing")
+
+	r.git(r.worker, "switch", "-q", "--no-track", "-c", branch, "refs/remotes/origin/main")
+	head := r.commit("a.txt", "a\n", "work of s1-1")
+	r.git(r.worker, "push", "-q", "origin", "HEAD:refs/heads/"+branch)
+	r.ok("finish --as m1 s1-1.w1@1 --report done")
+	assert.Equal(t, head, r.primary("s1-1").F("head"), "the head is origin's tip of the branch")
+	r.ok("ask")
+	r.ok("read --as reader-a --ok --limit 100")
+	r.ok("read --as reader-b --ok --limit 100")
+	r.ok("accept --read-ok")
+	out = r.ok("land --repo-dir " + r.clone + " --base main")
+	assert.Contains(t, out, "LAND DONE batches=1 cards=1 refused=0")
+	assert.Equal(t, map[string]string{"s1-1": "landed/merged"}, r.places("s1-1"))
+	r.git(r.remote, "merge-base", "--is-ancestor", head, "main")
+	r.clean()
+
+	help := r.ok("finish -h")
+	assert.Contains(t, help, "default for an ok finish: origin's tip of the work's branch")
+	assert.NotContains(t, help, "default: the card's id")
 }

@@ -62,8 +62,8 @@ var realSteps = []string{
 }
 
 // twinSteps is the same flow with no git, as the first-run transcript
-// (docs/TESTS.md) records it: the finish names no head (it is then the card's
-// id, which land refuses) and merge records the landing land would report. The
+// (docs/TESTS.md) records it: the finish names no head (of a card that names no
+// repository it is then the card's id, which land refuses) and merge records the landing land would report. The
 // help shows its two lines that differ; the test that runs them holds the help
 // to what a twin does.
 var twinSteps = []string{
@@ -104,8 +104,10 @@ the forge; work is the worker's checkout and the clone land merges and pushes in
 	}
 	b.WriteString(`
 With no git, these two lines stand in for the finish and the land: a finish
-with no --head records the card's id as its head (land refuses it; a worker
-names its commit), and merge records a landing with no push. play's
+with no --head of a card that names no repository records the card's id as its
+head (land refuses it; a worker names its commit, and with a REPO: line an ok
+finish records origin's tip of the work's branch), and merge records a landing
+with no push. play's
 simulation finishes that way on purpose.
 `)
 	for _, l := range twinSteps {
