@@ -269,3 +269,105 @@ func TestEveryProviderOutOfCreditStopsTheMachine(t *testing.T) {
 	assert.Equal(t, sprint.Ready, h.snap().Fleet.Card("s1-1.w1").Col, "dealt again")
 	h.clean("a provider funded after every one was out")
 }
+
+// refusedTakes is the takes the fleet table's work cards record as refused by a provider for
+// credit or its key.
+func (h *harness) refusedTakes() int {
+	h.t.Helper()
+	n := 0
+	for _, c := range h.workCards() {
+		takes, _ := sprint.ProviderTakes(c)
+		for _, t := range takes {
+			if strings.Contains(t.Error, "class=out-of-credit") || strings.Contains(t.Error, "class=auth") {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+// A card dealt on a provider's route before its rest began is never taken there and refused
+// (nova-tools#5205, the third cold read's (5)): the take refuses it, naming the rest, and the
+// tick that rests the provider withdraws it while ready, spending no redeal, and its primary
+// is dealt again on a route that serves. Four cards stay ready on openrouter when one of its
+// takes is refused: after the tick none is on it, none was taken there, the only refused take
+// is the first, and each is dealt again on opencode at its first redeal count.
+func TestACardReadyOnARestingProvidersRouteIsWithdrawnNeverTakenAndRefused(t *testing.T) {
+	t.Parallel()
+	routes := []sprint.Route{providerRoute("or-a", "flash", "openrouter"), providerRoute("or-b", "flash", "openrouter"), providerRoute("oc-a", "flash", "opencode")}
+	h := routeHarness(t, routes...)
+	h.addReady("s1", 8, briefOf("flash", ""))
+	h.startMachine()
+	h.machine()
+	onOR := h.onProvider(routes, "openrouter")
+	require.Len(t, onOR, 5, "the deal draws the openrouter routes")
+	h.tick(30 * time.Second)
+	h.failTake(onOR[0], creditLine)
+	waiting := onOR[1:]
+	require.Len(t, waiting, 4, "four cards ready on openrouter at the moment the rest begins")
+	primaries := map[string]string{}
+	for _, id := range waiting {
+		primaries[id] = h.snap().Fleet.Card(id).F("primary")
+	}
+
+	h.machine() // the tick rests the provider and withdraws its ready cards
+	s := h.snap()
+	require.True(t, sprint.ProviderRests(s.Fleet)["openrouter"].Resting(s.Now))
+	assert.Empty(t, h.onProvider(routes, "openrouter"), "no card stays ready on the resting provider")
+	for _, id := range waiting {
+		wc := s.Fleet.Card(id)
+		require.NotNil(t, wc)
+		assert.Equal(t, sprint.Withdrawn, wc.Col, "%s: withdrawn while ready", id)
+		assert.Empty(t, wc.F(sprint.FieldTakeEnded), "%s: no take ended", id)
+		assert.Equal(t, sprint.Ready, s.Work.Card(primaries[id]).Col, "%s: its primary is ready for the deal", id)
+	}
+
+	for range 3 {
+		h.tick(10 * time.Second)
+		h.machine()
+	}
+	s = h.snap()
+	for _, id := range waiting {
+		wc := s.Fleet.Card(id)
+		require.NotNil(t, wc)
+		assert.Equal(t, sprint.Ready, wc.Col, "%s: dealt again", id)
+		assert.Equal(t, "oc-a", wc.F(sprint.FieldRoute), "%s: on the provider that serves", id)
+		assert.Equal(t, 0, wc.Int("redeals"), "%s: no redeal spent", id)
+	}
+	assert.Equal(t, 1, h.refusedTakes(), "the first take is the only one refused")
+	h.clean("ready cards withdrawn from a resting provider")
+}
+
+// The take checks the rests itself, for a rest written between two ticks (the balance poll
+// writes one): a take by id of a card ready on the resting provider's route is refused,
+// naming the rest, and changes nothing; a take by count passes over it; the next tick
+// withdraws it.
+func TestATakeOfACardOnARestingRouteIsRefused(t *testing.T) {
+	t.Parallel()
+	routes := []sprint.Route{providerRoute("or-a", "flash", "openrouter"), providerRoute("oc-a", "flash", "opencode")}
+	h := routeHarness(t, routes...)
+	h.addReady("s1", 4, briefOf("flash", ""))
+	h.startMachine()
+	h.machine()
+	onOR := h.onProvider(routes, "openrouter")
+	require.NotEmpty(t, onOR)
+	h.poll(openrouter(148, 148)) // $0: the poll rests the provider, out of credit
+	require.True(t, sprint.ProviderRests(h.snap().Fleet)["openrouter"].Resting(h.snap().Now))
+
+	wc := h.snap().Fleet.Card(onOR[0])
+	res := h.run(TakeStep(sprint.TakeReq{As: wc.Row, Sel: sprint.Sel{IDs: []string{wc.ID}}, Gens: map[string]int{wc.ID: wc.Int("gen")}, Who: wc.Row}))
+	require.Len(t, res.Refused, 1)
+	assert.Contains(t, res.Refused[0].Why, "its route or-a rests until paid (out of credit: provider openrouter balance $0.00 at ")
+	assert.Equal(t, sprint.Ready, h.snap().Fleet.Card(wc.ID).Col, "not taken")
+
+	for _, m := range []string{"m1", "m2"} {
+		h.must(TakeStep(sprint.TakeReq{As: m, Sel: sprint.Sel{Limit: -1}, Who: m}))
+	}
+	for _, c := range h.snap().Fleet.Column(sprint.Working) {
+		assert.Equal(t, "oc-a", c.F(sprint.FieldRoute), "%s: a take by count passes over the resting route", c.ID)
+	}
+	h.machine()
+	assert.Empty(t, h.onProvider(routes, "openrouter"), "the tick withdraws it")
+	assert.Zero(t, h.refusedTakes())
+	h.clean("a take on a resting route")
+}

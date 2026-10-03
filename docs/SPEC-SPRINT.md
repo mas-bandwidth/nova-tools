@@ -568,7 +568,7 @@ outcome and reason are kept.
 | waiting -> ready | everything it needs has landed or was waived | mechanical |
 | ready -> working | deal: the machine's tick cuts and deals a work card | mechanical |
 | working -> review | its work card finished, ok or failed | mechanical; failed notifies for judgment |
-| working -> ready | its work card was withdrawn because no fleet member is up | mechanical, notifies |
+| working -> ready | its work card was withdrawn because no fleet member is up, or, still ready, because its route rests (the rest's note names it) | mechanical, notifies |
 | review -> merging | accept: the readers it needs said ok at this head (one for a flash card, two different readers for a pro card; section 6) | mechanical (the tick), unless its CI is red at its head or it was returned to review at its attempt; the coordinator's verb takes those; refused without them |
 | review -> working | rework with a fix: the next attempt is delegated at once | the coordinator's verb |
 | review -> ready | rework with a fix when no fleet member is up or none is below its width; the tick deals it when one has room | the coordinator's verb |
@@ -752,9 +752,12 @@ and it is the coordinator's decision, receipted.
         cannot cover, so a provider that refuses can still read a small balance over zero. It
         stays out of credit, with its balance beside it on the providers table, and counts
         toward the stop (`TestARefusedProviderReadingASmallBalanceRestsOnceBesideAServingOne`,
-        `TestARefusedProviderAloneStopsTheMachineOnceUntilAPayment`).
-      - Begun by a balance at or under zero, it ends on a balance read over zero: over the
-        hour of spend the rest ends, not over it the provider is low on funds from then.
+        `TestARefusedProviderAloneStopsTheMachineOnceUntilAPayment`,
+        `TestAReadHigherThanTheReadBeforeItEndsARefusedTakesRest`).
+      - Begun by a balance at or under zero, it ends on a balance read over zero, after an
+        unknown read too (the rest names no card, so it is no refused take's): over the hour of
+        spend the rest ends, not over it the provider is low on funds from then
+        (`TestABalanceAtZerosRestEndsOnAReadOverZeroAfterAnUnknownOne`).
     - LOW ON FUNDS (cause `balance`): a balance the poll reads over zero but not over one hour
       of the provider's spend. The provider is excluded before it runs dry, and still has
       money: it NEVER counts toward stopping the sprint. It ends on a balance read over the
@@ -770,6 +773,14 @@ and it is the coordinator's decision, receipted.
     by it; a take launched after the end and refused rests the provider again
     (`sprint.RestsDue`, `providerRestsDue`; `TestAnOutOfCreditTakeRestsEveryRouteOfItsProvider`,
     `TestProviderRestsDueRestEveryRouteOfTheRefusedProvider`).
+  - A card dealt on a route before its rest began is never taken there. `take` reads the
+    rests itself (the route's and its provider's properties, for a rest the balance poll
+    wrote between two ticks): a take by id of a ready card on a resting route is refused,
+    naming the rest, and a take by count passes over it. The tick withdraws every ready card on
+    a route resting then, as a member going down leaves one: no take ended, so no redeal is
+    spent, and its primary goes back to ready for the deal to place on a route that serves
+    (`sprint.restWithdrawals`, `cardRest`; `TestACardReadyOnARestingProvidersRouteIsWithdrawnNeverTakenAndRefused`,
+    `TestATakeOfACardOnARestingRouteIsRefused`).
   - The balance poll. `run` reads each provider's balance when it begins and every 10 minutes
     after (`sprint.BalancePollEvery`), outside every tick, through the seat's key in its own
     environment (`nova-secrets exec --only OPENROUTER_API_KEY -- nova-sprint run ...`;
@@ -803,7 +814,10 @@ and it is the coordinator's decision, receipted.
     machine as the step commits: its record's cause `every provider is out of credit`, the
     machine line `machine: STOPPED (every provider is out of credit)`, and one judgment, `every
     provider is out of credit`, naming the providers. A provider low on funds keeps the machine
-    running: its tier's `no route serves the tier` says why nothing deals. `start` is refused
+    running: its tier's `no route serves the tier` says why nothing deals. The line says what
+    counts as paid: `the sprint is STOPPED until a provider is paid: a balance the poll reads
+    higher than the one before (over zero after a balance at zero), or nova-sprint funded
+    <provider>`. `start` is refused
     with the same line (exit 1) while every provider stays out; once one is paid (a read that
     ends its rest, or `funded`), the coordinator starts it and the judgment closes
     (`TestEveryProviderOutOfCreditStopsTheMachine`, `TestEveryProviderOutOfCreditStopsTheSprint`).
@@ -1654,7 +1668,7 @@ command that loads it.
 | start, stop | set the machine RUNNING or STOPPED (section 14) |
 | run | ticks on every line of the log (at most every 100 ms) and once a second while the log is quiet; before each tick it reads its own binary's file, and when a new build was installed under it since it began it stops (`RUN STOP the binary this loop runs was replaced ...`, exit 3) so its supervisor starts the new one: a loop never ticks the store with older code than the verbs run |
 | tick | one tick by hand |
-| take | a worker moves work cards fleet ready -> working; `--as <member>`, `<card>@<gen>`. The width is hard: a member's working cards never pass its fleet row's width, held here whatever is asked; a take by count is cut to the room, a take by id past it is refused; a take by count that took fewer than asked says why on a NOTE line (the member at its width, its ready queue empty, or not up) |
+| take | a worker moves work cards fleet ready -> working; `--as <member>`, `<card>@<gen>`. The width is hard: a member's working cards never pass its fleet row's width, held here whatever is asked; a take by count is cut to the room, a take by id past it is refused; a take by count that took fewer than asked says why on a NOTE line (the member at its width, its ready queue empty, or not up); a card on a route that rests is never taken: refused by id, naming the rest, and passed over by count (the tick withdraws it) |
 | finish | work cards done ok or failed; primaries to review; `--as <member>`, `<card>@<gen>`; `--usage <text>` (what the run spent) is kept on the attempt's record, timed and priced (section 2, What a card cost) |
 | ask | deals primaries in review to the readers each needs (one for a flash card, two different readers for a pro card; section 6); `--another`; `ask <primary> --instead <reader>` takes that reader's read, asked or reading, of the primary at its attempt back (`retired_by: coordinator`, a later report of it refused naming that) and asks one other reader in the same step, chosen and routed as `--another` (the owner, 2026-10-01: "get the verbs in man."); refused, nothing changed, when the primary is not in review, the reader holds no live read of it, no other reader is free, or with `--another`, `--group` or more than one primary |
 | queue | a reader's read cards or a member's work cards, oldest first (`--as`; `--json` carries the worker's `width`: a member's fleet row's, a reader's its machine's, `reader-<m>`), or a stream's merge queue (`--stream`) |

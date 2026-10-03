@@ -1036,6 +1036,11 @@ func takeOne(s *Snapshot, r TakeReq) Plan {
 		if !c.Placed() || c.Row != r.As || c.Col != Ready {
 			return "not in " + r.As + " ready (it is " + placeWord(c) + ")"
 		}
+		// a card dealt before its route rested is never taken there: the provider would
+		// refuse it, spending a redeal; the tick withdraws it (restWithdrawals)
+		if rest, ok := cardRest(s, c); ok {
+			return "its route " + c.F(FieldRoute) + " rests until " + rest.UntilSaid() + " (" + rest.Said() + "): the tick withdraws it and deals it again on a route that serves"
+		}
 		if byID {
 			if room == 0 {
 				return fmt.Sprintf("member %s is at its width (%d working of %d): a card is taken when one is reported", r.As, len(s.Fleet.Cell(r.As, Working)), s.Width(r.As))

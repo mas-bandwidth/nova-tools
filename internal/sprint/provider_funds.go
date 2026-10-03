@@ -137,7 +137,7 @@ func AllOutOfCredit(routes []Route, rests map[string]RouteRest, now time.Time) s
 	if len(providers) == 0 {
 		return ""
 	}
-	return FundsCause + " (" + strings.Join(slices.Sorted(maps.Keys(providers)), ", ") + "): a payment is the owner's; the sprint is STOPPED until a provider is paid"
+	return FundsCause + " (" + strings.Join(slices.Sorted(maps.Keys(providers)), ", ") + "): a payment is the owner's; the sprint is STOPPED until a provider is paid: a balance the poll reads higher than the one before (over zero after a balance at zero), or nova-sprint funded <provider>"
 }
 
 // OutOfCredit is AllOutOfCredit of the snapshot's routes and the fleet table's rests.

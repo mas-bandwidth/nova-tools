@@ -62,8 +62,8 @@ func balanceApp(t *testing.T, routes ...sprint.Route) (*testApp, *creditsAnswer,
 // owner, 2026-10-03, 8:18 AM ET: "you'll need to detect when a provider runs out of
 // credits, and exclude that provider moving forward, and let me know."): every route of it
 // rests "out of credit" with no time, hours do not end it, the coordinator is told in one
-// judgment naming it (a payment is the owner's), and the poll that reads a balance over
-// zero ends the rest.
+// judgment naming it (a payment is the owner's), an unknown read ends nothing, and the poll
+// that reads a balance over zero ends the rest, after the unknown one too.
 func TestAPolledBalanceAtZeroExcludesTheProviderUntilABalanceReturns(t *testing.T) {
 	t.Parallel()
 	ta, fake, poll := balanceApp(t,
@@ -90,7 +90,13 @@ func TestAPolledBalanceAtZeroExcludesTheProviderUntilABalanceReturns(t *testing.
 	ta.ok("tick")
 	assert.Equal(t, 2, strings.Count(ta.ok("routes"), " rested_until=open "), "hours end nothing")
 
-	fake.body = `{"data":{"total_credits":2250,"total_usage":1251}}` // a payment
+	fake.body = `{"data":{}}` // an answer that is not the shape: unknown, and it ends no rest
+	poll()
+	assert.Equal(t, 2, strings.Count(ta.ok("routes"), " rested_until=open "), "an unknown read ends nothing")
+
+	// a payment after the unknown read: the rest a balance began names no card, so it is no
+	// refused take's (RouteRest.Refused reads the cards) and a read over zero ends it
+	fake.body = `{"data":{"total_credits":2250,"total_usage":1251}}`
 	poll()
 	routes = ta.ok("routes")
 	assert.Equal(t, 3, strings.Count(routes, " rested_until=- "), "the poll that reads a balance ends the rests:\n%s", routes)
@@ -120,7 +126,7 @@ func TestEveryProviderOutOfCreditStopsTheSprint(t *testing.T) {
 
 	code, _, errs := ta.do("start")
 	assert.Equal(t, 1, code, "start is refused while every provider is out")
-	assert.Contains(t, errs, "every provider is out of credit (openrouter): a payment is the owner's; the sprint is STOPPED until a provider is paid")
+	assert.Contains(t, errs, "every provider is out of credit (openrouter): a payment is the owner's; the sprint is STOPPED until a provider is paid: a balance the poll reads higher than the one before (over zero after a balance at zero), or nova-sprint funded <provider>")
 
 	fake.body = `{"data":{"total_credits":2250,"total_usage":1251}}`
 	poll()

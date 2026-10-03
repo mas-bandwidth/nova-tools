@@ -166,3 +166,37 @@ func TestDollarsRoundUpToTheCent(t *testing.T) {
 		assert.Equal(t, tc.want, Dollars(tc.v), "%v", tc.v)
 	}
 }
+
+// A provider's rest round-trips through its property, with the balance at a refused take
+// (`balance=<x>`) and without it: a value written before the token (the older form) reads
+// back with the same words and no balance, and writes back unchanged; a malformed token
+// stays in the words (nova-tools#5205, the third cold read).
+func TestARestRoundTripsWithAndWithoutItsBalance(t *testing.T) {
+	t.Parallel()
+	at := time.Date(2026, 10, 3, 9, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name, value, why string
+		has              bool
+		balance          float64
+	}{
+		{"older, no balance", "2026-10-03T09:00:00Z open c1 out-of-credit out of credit: provider p refused card c1", "out of credit: provider p refused card c1", false, 0},
+		{"a balance", "2026-10-03T09:00:00Z open c1 out-of-credit balance=0.3 out of credit: provider p refused card c1", "out of credit: provider p refused card c1", true, 0.3},
+		{"a balance under zero", "2026-10-03T09:00:00Z open c1 out-of-credit balance=-0.51 out of credit", "out of credit", true, -0.51},
+		{"a malformed balance", "2026-10-03T09:00:00Z open c1 out-of-credit balance=abc out of credit", "balance=abc out of credit", false, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r, ok := parseRest(tc.value)
+			require.True(t, ok)
+			assert.Equal(t, at, r.At)
+			assert.True(t, r.Open())
+			assert.Equal(t, []string{"c1"}, r.Cards)
+			assert.Equal(t, RestCredit, r.Cause)
+			assert.True(t, r.Refused())
+			assert.Equal(t, tc.why, r.Why)
+			assert.Equal(t, tc.has, r.HasBalance)
+			assert.InDelta(t, tc.balance, r.Balance, 1e-9)
+			assert.Equal(t, tc.value, r.value(), "written back unchanged")
+		})
+	}
+}

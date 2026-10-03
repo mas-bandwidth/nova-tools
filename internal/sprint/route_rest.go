@@ -360,6 +360,58 @@ func (s *Snapshot) resting(route string) (RouteRest, bool) {
 	return r, ok
 }
 
+// cardRest is the rest that holds, at s.Now, the route a ready work card was dealt on: the
+// rests a dealing step settled (withRests) when it has them, else the fleet table's
+// properties, the route's own (rule 3's) and its provider's (the provider its model line
+// names), so a take, which loads no routes, reads two properties and no more. ok is false
+// for a pinned card and for a route that serves.
+func cardRest(s *Snapshot, c *Card) (RouteRest, bool) {
+	route := c.F(FieldRoute)
+	if route == "" || route == RoutePin {
+		return RouteRest{}, false
+	}
+	if s.rests != nil {
+		return s.resting(route)
+	}
+	provider, _, _ := strings.Cut(c.F(FieldModel), "/")
+	for _, name := range []string{PropProviderRest(provider), PropRouteRest(route)} {
+		v, ok := s.Fleet.Prop(name)
+		if !ok {
+			continue
+		}
+		if rest, ok := parseRest(v); ok && rest.Resting(s.Now) {
+			return rest, true
+		}
+	}
+	return RouteRest{}, false
+}
+
+// restWithdrawals is the tick's units that withdraw each ready work card dealt on a route
+// resting at s.Now (nova-tools#5205, the third cold read): a card dealt before its
+// provider's rest began is never taken and refused there (takeOne refuses it), so it is
+// withdrawn while ready, as a member going down leaves one (FleetStep): no take ended, so
+// no redeal is spent (redeal), and its primary goes back to ready for the next deal to place
+// on a route that serves (routeOf).
+func restWithdrawals(s *Snapshot) []Unit {
+	var out []Unit
+	for _, c := range s.Fleet.Column(Ready) {
+		rest, ok := cardRest(s, c)
+		if !ok {
+			continue
+		}
+		set := nextGen(c, "", s.Now)
+		set["withdrawn"] = stamp(s.Now)
+		u := Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, c.Row, Withdrawn, set, "taken", "dealt"))},
+			Moved: fmt.Sprintf("%s %s:ready -> withdrawn gen=%d, its route %s rests until %s", c.ID, c.Row, c.Int("gen")+1, c.F(FieldRoute), rest.UntilSaid())}
+		if pr := s.Work.Placed(c.F("primary")); pr != nil && pr.Col == Working && pr.F("work") == c.ID {
+			u.Changes = append(u.Changes, change(Work, moveEntry(pr, pr.Row, Ready, nil, "work")))
+			u.Moved += "; " + pr.ID + " working -> ready"
+		}
+		out = append(out, u)
+	}
+	return out
+}
+
 // restWrites puts each due rest in the plan: the fleet table's property (the route's, or the
 // provider's one), guarded on the value read, and a happened note to the coordinator naming
 // the cards, or the provider's words.
