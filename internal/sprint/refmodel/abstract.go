@@ -4,7 +4,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
@@ -74,17 +73,10 @@ func Abstract(o Observed) State {
 		p.Head = headAttempt(c.F("head"))
 		p.CI, p.CIHead = c.F("ci"), headAttempt(c.F("ci_head"))
 		p.ReturnedAt = c.Int(sprint.FieldReturnedAttempt)
-		m, _ := cardhdr.ReadModel(c.F("brief"))
-		switch {
-		case c.F(sprint.FieldTierNow) != "":
-			p.Tier = c.F(sprint.FieldTierNow)
-		case m.Tier != "":
-			p.Tier = m.Tier
-		case c.F(sprint.FieldTier) != "":
-			p.Tier = c.F(sprint.FieldTier)
-		default:
-			p.Tier = "flash"
-		}
+		// The tier the card is on, the one calculation `card` prints (sprint.CardTiers,
+		// docs/SPEC-SPRINT.md section 5). A second reading of tier_now or the brief drifts
+		// when a pin or an explicit tier disagrees with either.
+		p.Tier, _ = sprint.CardTiers(c)
 		a.Primaries[id] = p
 	}
 	// A primary ready or waiting whose card at its attempt field is done

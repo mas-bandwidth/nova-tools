@@ -53,3 +53,55 @@ func TestALandedScriptCardsTierIsScript(t *testing.T) {
 	assert.Equal(t, decide.GradeScript, LandedTier(&Card{ID: "c", Fields: map[string]string{"brief": script}}))
 	assert.Equal(t, "flash", LandedTier(&Card{ID: "c", Fields: map[string]string{"brief": "c: x (s1) tier: pro\n", FieldTierNow: "flash"}}))
 }
+
+// CardTiers is the tier the card is on and its ceiling (docs/SPEC-SPRINT.md section 5).
+// Before a deal, and with no route, that tier is the ceiling. A pin or an explicit
+// tier is the ceiling even when tier_now or the brief names the other one. A pro
+// grade does not move it. LandedTier reads the same tier, so a no-route landing
+// keeps the ceiling. copied is a wrong tier the row refuses: where tier_now or the
+// brief disagrees with the tier the card is on, it is that other value, so copying
+// the engine's tier fails the row.
+func TestCardTiersIsTheCeilingBeforeADealAndWhenNothingPinsARoute(t *testing.T) {
+	t.Parallel()
+	pin := "model: prov/model-a\ntokens: 1000\ndeadline: 60\n"
+	grade := decide.Decided{Value: decide.GradePro, P: 0.9, Op: "g-pro"}.String()
+	cases := []struct {
+		name, brief  string
+		extra        map[string]string
+		now, ceiling string
+		copied       string
+	}{
+		{name: "a pro brief before a deal", brief: "c: work (s1) tier: pro\n",
+			now: "pro", ceiling: "pro", copied: "flash"},
+		{name: "a pro grade leaves the pro ceiling", brief: "c: work (s1) tier: pro\n",
+			extra: map[string]string{FieldGrade: grade}, now: "pro", ceiling: "pro", copied: "flash"},
+		{name: "a pro grade does not raise a flash ceiling", brief: "c: work (s1) tier: flash\n",
+			extra: map[string]string{FieldGrade: grade}, now: "flash", ceiling: "flash", copied: "pro"},
+		{name: "a brief that names no tier is flash", brief: "c: work (s1)\n",
+			now: "flash", ceiling: "flash", copied: "pro"},
+		{name: "tier_now after a deal", brief: "c: work (s1) tier: pro\n",
+			extra: map[string]string{FieldTierNow: "flash"}, now: "flash", ceiling: "pro", copied: "pro"},
+		{name: "an explicit tier ignores tier_now", brief: "c: work (s1) tier: flash\n",
+			extra: map[string]string{FieldTier: "pro", FieldTierNow: "flash"}, now: "pro", ceiling: "pro", copied: "flash"},
+		{name: "an explicit tier beats the brief", brief: "c: work (s1) tier: pro\n",
+			extra: map[string]string{FieldTier: "flash"}, now: "flash", ceiling: "flash", copied: "pro"},
+		{name: "a pin ignores tier_now", brief: "c: work (s1) tier: flash\n" + pin,
+			extra: map[string]string{FieldTierNow: "pro"}, now: "flash", ceiling: "flash", copied: "pro"},
+		{name: "a frontier card ignores tier_now", brief: "c: work (s1) tier: frontier\n",
+			extra: map[string]string{FieldTierNow: "flash"}, now: "frontier", ceiling: "frontier", copied: "flash"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := map[string]string{"brief": tc.brief}
+			for k, v := range tc.extra {
+				f[k] = v
+			}
+			c := &Card{ID: "c", Fields: f}
+			now, ceiling := CardTiers(c)
+			assert.Equal(t, []string{tc.now, tc.ceiling}, []string{now, ceiling})
+			assert.NotEqual(t, tc.copied, now)
+			assert.Equal(t, tc.now, LandedTier(c))
+		})
+	}
+}

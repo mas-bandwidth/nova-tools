@@ -282,17 +282,10 @@ func ceilingTier(c *Card, m cardhdr.Model) string {
 }
 
 // CardTiers is the tier the primary is on (cardTier) and its ceiling, as `card` prints
-// them.
+// them (docs/SPEC-SPRINT.md section 5).
 func CardTiers(c *Card) (now, ceiling string) {
 	m, _ := cardhdr.ReadModel(c.F("brief"))
-	ceiling = ceilingTier(c, m)
-	if c.F(FieldTierNow) == "" && !pinnedTier(c, m) {
-		if g, ok := decide.ParseDecided(c.F(FieldGrade)); ok && g.Value == decide.GradePro {
-			return cardhdr.RoutePro, ceiling
-		}
-		return cardhdr.RouteFlash, ceiling
-	}
-	return cardTier(c, m), ceiling
+	return cardTier(c, m), ceilingTier(c, m)
 }
 
 // NextTier is the tier the primary c escalates to when it reaches its bound: the next tier
