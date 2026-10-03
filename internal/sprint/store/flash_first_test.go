@@ -235,3 +235,72 @@ func TestAStoreWithNoRouteEscalatesNothing(t *testing.T) {
 	assert.Empty(t, pr.F(sprint.FieldTierNow))
 	assert.Len(t, h.openOf(sprint.NBound), 1, "the bound's judgment")
 }
+
+// The second identical failure across attempts below the ceiling escalates (rules 1 and 2
+// of nova-tools#5174): a pro card whose second flash attempt fails the way its first did
+// raises no judgment; the finish writes tier_now and the why on the primary and sends it
+// back to ready, as a rework with no member up does, and the tick deals its next attempt
+// on pro. Pro counts its own failures: its first failure is failed work, and its second
+// identical one, at the ceiling, is the bound's judgment.
+func TestASecondIdenticalFailedAttemptBelowTheCeilingEscalates(t *testing.T) {
+	t.Parallel()
+	h := flashAndPro(t)
+	h.addReady("s1", 1, briefOf("pro", ""))
+	h.startMachine()
+	h.machine()
+	rework := func() {
+		h.t.Helper()
+		h.must(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: "make them pass", Who: "tester"}))
+		h.machine()
+	}
+	h.failTake("s1-1.w1", "verdict not-done; tests red in x")
+	assert.Equal(t, 1, h.notesOf(sprint.NWorkFailed), "the first is failed work")
+	rework()
+	require.Equal(t, "flash", h.workCards()["s1-1.w2"].F(sprint.FieldTier))
+	h.failTake("s1-1.w2", "verdict not-done; tests red in y")
+	pr := h.snap().Work.Card("s1-1")
+	assert.Equal(t, sprint.Ready, pr.Col, "back to ready, as a rework with no member up leaves it")
+	assert.Equal(t, "pro", pr.F(sprint.FieldTierNow))
+	assert.Contains(t, pr.F("why"), "escalated from flash to pro: attempts 1 and 2 failed the same way (verdict not-done; tests red in)")
+	assert.Empty(t, h.openOf(sprint.NBound), "no judgment below the ceiling")
+	assert.Equal(t, 1, h.notesOf(sprint.NWorkFailed), "and no failed-work one")
+	h.machine()
+	w3 := h.workCards()["s1-1.w3"]
+	require.NotNil(t, w3, "the tick deals the next attempt")
+	assert.Equal(t, "pro", tierOfRoute(w3.F(sprint.FieldRoute)), "on pro: %s", w3.F(sprint.FieldRoute))
+	assert.Contains(t, w3.F("why"), "escalated from flash to pro")
+	h.clean("escalated by the failed finish")
+
+	h.failTake("s1-1.w3", "verdict not-done; tests red in z")
+	assert.Equal(t, 2, h.notesOf(sprint.NWorkFailed), "pro's first failure is failed work")
+	assert.Empty(t, h.openOf(sprint.NBound))
+	rework()
+	h.failTake("s1-1.w4", "verdict not-done; tests red in w")
+	h.machine()
+	open := h.openOf(sprint.NBound)
+	require.Len(t, open, 1, "at the ceiling the second identical failure is the bound's judgment")
+	assert.Contains(t, open[0].Note.What, "attempts 3 and 4 failed the same way")
+}
+
+// The second identical failure inside one attempt below the ceiling escalates through the
+// deal (redealBound counts the two identical ends), and the new attempt's why names the
+// class, not a redeal count.
+func TestASecondIdenticalTakeBelowTheCeilingEscalatesNamingTheClass(t *testing.T) {
+	t.Parallel()
+	h := flashAndPro(t)
+	h.addReady("s1", 1, briefOf("pro", ""))
+	h.startMachine()
+	h.machine()
+	h.failTake("s1-1.w1", noResultLine)
+	h.machine()
+	h.failTake("s1-1.w1", noResultLine)
+	h.machine()
+	h.machine()
+	w2 := h.workCards()["s1-1.w2"]
+	require.NotNil(t, w2, "escalated: a new attempt")
+	assert.Equal(t, "pro", tierOfRoute(w2.F(sprint.FieldRoute)))
+	assert.Contains(t, w2.F("why"), "escalated from flash to pro: attempt 1 reached its bound on flash (its last two takes ended the same way: no result)")
+	assert.NotContains(t, w2.F("why"), "redealt")
+	assert.Empty(t, h.openOf(sprint.NBound))
+	h.clean("escalated at the second identical take")
+}

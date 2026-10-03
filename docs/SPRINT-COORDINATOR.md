@@ -208,6 +208,10 @@ never answers a sentinel or composes a command the inbox did not print, and stop
 - A provider's failure is not a verdict on a route: a run the provider failed is redealt, never failed work,
   leaving out the routes already drawn for the card. A limit or an empty balance never takes a route out of
   the deal; it clears by itself, and a route taken out for it stays out.
+- The machine rests a route by itself when three of its last ten ended takes left no result (rule 3 of
+  nova-tools#5174): no work card is drawn on it for 30 minutes, the inbox says so with the cards, and
+  `nova-sprint routes` prints `rested_until`. That rest is the sprint's and ends by itself; the row change
+  below is yours, for work that comes back bad.
 - A route rests when measured work on it is bad: its ok and failed counts from `nova-sprint routes` against
   the other routes of the tier, over the whole sprint. Resting is a reversible row change (`--dry-run` first on
   each command); bringing the route back is `--enabled true` and the same apply:

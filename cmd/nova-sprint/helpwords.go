@@ -65,6 +65,11 @@ words:
   route        a nova-config route row: tier, provider/model, token budget, deadline; the deal draws
                one of the tier the card is on for each work card, the ask one for each read
   provider     the first half of provider/model; a run the provider failed is redealt, never failed work
+  rested       a route the deal draws no work card on for 30 minutes: 3 of its last 10 ended takes left
+               no result; the tick rests it, tells the inbox, and routes prints rested_until
+  bound        a card tried no more on its tier: its work card redealt 3 times, or its second try
+               failed the way its first did (the second identical failure: two takes with no result,
+               or two attempts with the same reason); a card reached its bound, answered by rework or drop
   head         the commit a work card finished at (finish --head, default the work card's id);
                reads and merges are of that head
   the stream's base  a first attempt's base in its packet: the branch its brief's BASE: line names

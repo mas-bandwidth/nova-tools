@@ -164,11 +164,18 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 	if tier == cardhdr.RouteFrontier {
 		return nil, tier, "a frontier card waits for the coordinator: run it, or pin it with a model: <provider>/<model> line"
 	}
+	// a resting route (rule 3, route_rest.go) serves no work card until its rest ends
 	served := map[string]Route{}
+	var rested []string
 	for _, r := range s.Routes {
-		if r.Tier == tier && r.Enabled {
-			served[r.Name] = r
+		if r.Tier != tier || !r.Enabled {
+			continue
 		}
+		if rest, ok := s.resting(r.Name); ok {
+			rested = append(rested, r.Name+" until "+stamp(rest.Until))
+			continue
+		}
+		served[r.Name] = r
 	}
 	arr := s.tierArray(tier)
 	drawn := Split(c.F(FieldRoutes))
@@ -200,6 +207,9 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 		}
 		return map[string]string{FieldRoute: r.Name, FieldModel: r.Provider + "/" + r.Model, FieldTokens: tokensWord(r.Tokens),
 			FieldDeadline: strconv.Itoa(r.Deadline), FieldTier: tier, FieldRoutes: strings.Join(append(Split(c.F(FieldRoutes)), r.Name), ",")}, tier, ""
+	}
+	if len(rested) > 0 {
+		return nil, tier, "every enabled route of tier " + tier + " in its array rests, its children having ended with no result (" + strings.Join(rested, ", ") + "): the deal draws one when its rest ends; or run nova-config route add <name> --tier " + tier + " ..., or pin the card with a model: <provider>/<model> line"
 	}
 	return nil, tier, "no enabled route serves tier " + tier + ": run nova-config route add <name> --tier " + tier + " ..., name it in nova-config tier set " + tier + " --routes <name,...>, then nova-config apply; or pin the card with a model: <provider>/<model> line"
 }
@@ -434,8 +444,7 @@ func ProviderTakes(wc *Card) (takes []ProviderTake, numbers []int) {
 		if v == "" {
 			continue
 		}
-		f := append(strings.SplitN(v, "\t", 6), "", "", "", "", "", "")
-		takes, numbers = append(takes, ProviderTake{Route: f[0], Model: f[1], Member: f[2], Finished: f[3], Usage: f[4], Error: f[5]}), append(numbers, n)
+		takes, numbers = append(takes, parseTake(v)), append(numbers, n)
 	}
 	return takes, numbers
 }
@@ -476,6 +485,9 @@ type RouteStat struct {
 	Failed   int    `json:"failed"`
 	Provider int    `json:"provider_failures"`
 	MeanWall string `json:"mean_wall"` // taken to finished, over the finished; "-" when none
+	// RestedUntil is when the route's rest ends while it rests (rule 3, route_rest.go):
+	// RFC3339, "" when it does not rest; `routes` fills it at its clock.
+	RestedUntil string `json:"rested_until,omitempty"`
 }
 
 // RouteStats is every route's record over the fleet table's work cards, the
