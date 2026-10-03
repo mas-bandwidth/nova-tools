@@ -2807,6 +2807,15 @@ the original failed measurement.
 **Its remedy line.** the assertion names the template line or the group_vars value that differs.
 **Its narrowings.** The templates' text is matched as written; a member found by another shape of argv than `nova-swarm member` after its env words is not marked.
 
+### `drain-wait-exit` — a wait for a command's non-zero exit does not fail on that exit
+
+**The rule.** A task under `fleet/` that retries a command until it exits non-zero (`until: <reg>.rc != 0`, the darwin drain wait in `loops.yml`) says how it fails (`failed_when`), because ansible fails a command task on any non-zero rc: the drain wait fails only when the member is still held after every retry.
+**The mistake it prevents.** The loops play of 2026-10-02 7:35 PM: the drain wait's own answer (`launchctl print` exiting 113 once the member had stopped) failed the Studio, batman and superman, so their booted-out member, reader, mirror and sprint-server units were never loaded again.
+**The test.** `TestAWaitForANonZeroExitIsNotAFailure` (`internal/ci/fleetplays_drain_class_test.go`): reads every play under `fleet/`, finds each task whose `until` waits for `.rc != 0`, and asserts it has `failed_when`; it also asserts the drain wait is found.
+**Its allowlist.** None.
+**Its remedy line.** the assertion names the play, the task and its `until`.
+**Its narrowings.** Only an `until` spelled `.rc != 0` is read; a wait spelled another way is not checked.
+
 ### `sprint-tables-locked` — the four sprint tables change only with their lock file
 
 **The rule.** `internal/sprint/TABLES.lock` pins the work, readers, merge and fleet tables as `schema.go` defines them (one line per column: `table.column projection fold hidden`, with `label=` where the column has a header label, in table order) and the order the sprint view shows the tables in. A PR that changes any table's shape turns the test red until the lock file changes in the same PR, where a read sees it.
