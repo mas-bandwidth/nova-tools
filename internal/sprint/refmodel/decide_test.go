@@ -315,6 +315,21 @@ func TestAskAsksTwoReadersOfAPrimaryInReview(t *testing.T) {
 		"prop readers stream_index_ask=1")
 }
 
+func TestAskAsksOneReaderOfAFlashPrimaryInReview(t *testing.T) {
+	t.Parallel()
+	w := sprintOf(t, "m1")
+	w.addFlash(t, "s1", 1)
+	w.deal(t, "s1-1")
+	w.take(t, "s1-1")
+	w.finish(t, "s1-1", false)
+	got := refmodel.AskMoves(w.snapshot(w.fresh()), later(0))
+	expect(t, got,
+		"set work s1-1 asked=reader-a",
+		"prop readers ask_index=1",
+		"create readers s1-1.r1.reader-a >reader-a:asked",
+		"prop readers stream_index_ask=1")
+}
+
 func TestAcceptMovesAPrimaryWithTwoOkReadsToMergingAndTellsTheCoordinatorOnce(t *testing.T) {
 	t.Parallel()
 	w := sprintOf(t, "m1")
@@ -343,6 +358,97 @@ func TestAcceptMovesAPrimaryWithTwoOkReadsToMergingAndTellsTheCoordinatorOnce(t 
 	if notices != 1 {
 		assert.Failf(t, "assertion failed", "the coordinator is told %d times that a stream is ready to merge, want once:%s", notices, show(got))
 	}
+}
+
+func TestAcceptMovesAFlashPrimaryWithOneOkReadToMerging(t *testing.T) {
+	t.Parallel()
+	w := sprintOf(t, "m1")
+	w.addFlash(t, "s1", 1)
+	w.deal(t, "s1-1")
+	w.take(t, "s1-1")
+	w.finish(t, "s1-1", false)
+	w.ask(t, "s1-1")
+	w.report(t, "s1-1", "ok")
+	got := refmodel.AcceptMoves(w.snapshot(w.fresh()), later(0))
+	require.NotEmpty(t, got, "a flash primary in review with one ok read is accepted by the tick")
+	notices := 0
+	for _, m := range got {
+		if m.Kind == refmodel.KindNotice && m.Type == sprint.NReadyToMerge {
+			notices++
+		}
+	}
+	assert.Equal(t, 1, notices)
+}
+
+func TestMachineTickAsksFlashCardOneReaderAndProCardTwoReaders(t *testing.T) {
+	t.Parallel()
+	s := refmodel.New([]string{"reader-a", "reader-b", "reader-c"}, []string{"m1"}, "coordinator")
+	s.Machine = refmodel.Running
+	s.Members["m1"] = refmodel.Up
+	s.Streams["s1"] = refmodel.Stream{State: refmodel.SWaiting}
+	s.Primaries["s1-1"] = refmodel.Primary{Stream: "s1", Kind: refmodel.KindPrimary, State: refmodel.Review, Attempt: 1, Head: 1, Tier: "flash"}
+	s.Primaries["s1-2"] = refmodel.Primary{Stream: "s1", Kind: refmodel.KindPrimary, State: refmodel.Review, Attempt: 1, Head: 1, Tier: "pro"}
+	s.Work[refmodel.WC("s1-1", 1)] = refmodel.WorkCard{Primary: "s1-1", Attempt: 1, Member: "m1", Place: sprint.Done, OK: "ok"}
+	s.Work[refmodel.WC("s1-2", 1)] = refmodel.WorkCard{Primary: "s1-2", Attempt: 1, Member: "m1", Place: sprint.Done, OK: "ok"}
+
+	next, err := refmodel.Tick(s, refmodel.TickChoices{})
+	require.NoError(t, err)
+
+	assert.Len(t, next.LiveReadsOf("s1-1"), 1)
+	assert.Equal(t, []string{"reader-a"}, next.Primaries["s1-1"].Pair)
+
+	assert.Len(t, next.LiveReadsOf("s1-2"), 2)
+	assert.Equal(t, []string{"reader-b", "reader-c"}, next.Primaries["s1-2"].Pair)
+
+	assert.Equal(t, "3", next.AskLast)
+}
+
+func TestAskDirectlyForFlashAndProCards(t *testing.T) {
+	t.Parallel()
+	s := refmodel.New([]string{"reader-a", "reader-b"}, []string{"m1"}, "coordinator")
+	s.Primaries["f1"] = refmodel.Primary{Stream: "s1", Kind: refmodel.KindPrimary, State: refmodel.Review, Attempt: 1, Tier: "flash"}
+	s.Primaries["p1"] = refmodel.Primary{Stream: "s1", Kind: refmodel.KindPrimary, State: refmodel.Review, Attempt: 1, Tier: "pro"}
+	s.Work[refmodel.WC("f1", 1)] = refmodel.WorkCard{Primary: "f1", Attempt: 1, Place: sprint.Done, OK: "ok"}
+	s.Work[refmodel.WC("p1", 1)] = refmodel.WorkCard{Primary: "p1", Attempt: 1, Place: sprint.Done, OK: "ok"}
+
+	// Flash card needs 1 reader
+	assert.Equal(t, 1, s.ReadsNeeded("f1"))
+	// Wrong count: 2 readers for flash
+	_, err := refmodel.Ask(s, "f1", []string{"reader-a", "reader-b"})
+	assert.Error(t, err)
+
+	// Correct: 1 reader for flash
+	s2, err := refmodel.Ask(s, "f1", []string{"reader-a"})
+	require.NoError(t, err)
+	assert.Len(t, s2.LiveReadsOf("f1"), 1)
+	assert.Equal(t, []string{"reader-a"}, s2.Primaries["f1"].Pair)
+	assert.Equal(t, "1", s2.AskLast)
+
+	// Pro card needs 2 readers
+	assert.Equal(t, 2, s2.ReadsNeeded("p1"))
+	// Wrong count: 1 reader for pro
+	_, err = refmodel.Ask(s2, "p1", []string{"reader-b"})
+	assert.Error(t, err)
+
+	// Correct: 2 readers for pro (next from 1 is reader-b, then reader-a)
+	s3, err := refmodel.Ask(s2, "p1", []string{"reader-b", "reader-a"})
+	require.NoError(t, err)
+	assert.Len(t, s3.LiveReadsOf("p1"), 2)
+	assert.Equal(t, []string{"reader-a", "reader-b"}, s3.Primaries["p1"].Pair)
+	assert.Equal(t, "3", s3.AskLast)
+
+	// Test fewer than k readers refusal
+	sNoReaders := refmodel.New(nil, nil, "coordinator")
+	sNoReaders.Primaries["f1"] = refmodel.Primary{Stream: "s1", Kind: refmodel.KindPrimary, State: refmodel.Review, Attempt: 1, Tier: "flash"}
+	_, err = refmodel.Ask(sNoReaders, "f1", []string{"reader-a"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "fewer than 1 readers")
+
+	sOneReader := refmodel.New([]string{"reader-a"}, nil, "coordinator")
+	sOneReader.Primaries["p1"] = refmodel.Primary{Stream: "s1", Kind: refmodel.KindPrimary, State: refmodel.Review, Attempt: 1, Tier: "pro"}
+	_, err = refmodel.Ask(sOneReader, "p1", []string{"reader-a", "reader-b"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "fewer than 2 readers")
 }
 
 func TestAskTellsOnceWhenFewerThanTwoReadersAreFree(t *testing.T) {

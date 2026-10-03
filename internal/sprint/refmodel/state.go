@@ -157,6 +157,7 @@ type Primary struct {
 	Stream  string
 	Kind    string   // primary or sentinel
 	State   string   // a work cell, or Off
+	Tier    string   // the tier the card is on: flash, pro, ...
 	Needs   []string // sorted
 	Waived  []string // sorted: the dropped needs the coordinator waived
 	Score   float64
@@ -652,8 +653,17 @@ func (s State) OkReaders(p string) []string {
 	return out
 }
 
+// ReadsNeeded is how many ok reads at p's head make the primary acceptable:
+// one for a flash card, two for a pro card (matching sprint.ReadsNeeded).
+func (s State) ReadsNeeded(p string) int {
+	if s.Primaries[p].Tier == "flash" {
+		return 1
+	}
+	return 2
+}
+
 // Acceptable is SprintTables.tla Acceptable(p) (Broken = "none").
-func (s State) Acceptable(p string) bool { return len(s.OkReaders(p)) >= 2 }
+func (s State) Acceptable(p string) bool { return len(s.OkReaders(p)) >= s.ReadsNeeded(p) }
 
 // Failed is SprintTables.tla Failed(p).
 func (s State) Failed(p string) bool {

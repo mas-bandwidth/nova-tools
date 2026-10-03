@@ -37,10 +37,20 @@ func sprintOf(t *testing.T, members ...string) *world {
 	return w
 }
 
+// flashBrief is a flash card's brief: line 1 names tier flash, so its reads are one
+// (sprint.ReadsNeeded).
+const flashBrief = "tier: flash"
+
 // add admits n primaries into the stream, s1-1 and so on, needing nothing.
 func (w *world) add(t *testing.T, stream string, n int, needs ...string) {
 	t.Helper()
 	w.must(t, sprint.Add(w.s, sprint.AddReq{Brief: proBrief, Stream: stream, Count: n, Needs: needs, Who: coordinator}))
+}
+
+// addFlash admits n flash primaries into the stream, s1-1 and so on, needing nothing.
+func (w *world) addFlash(t *testing.T, stream string, n int, needs ...string) {
+	t.Helper()
+	w.must(t, sprint.Add(w.s, sprint.AddReq{Brief: flashBrief, Stream: stream, Count: n, Needs: needs, Who: coordinator}))
 }
 
 // addOne admits one named primary, with needs.

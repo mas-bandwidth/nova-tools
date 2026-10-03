@@ -23,6 +23,7 @@ func TestCardPrintsTheTierAndItsCeiling(t *testing.T) {
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	ta.m.SetRoutes(costRoutes())
 	ta.ok("add --stream s1 --count 1 --brief-file " + writeBrief(t, "s1: the work (s1) tier: pro"))
+	assert.Contains(t, ta.ok("card s1-1"), "tier=flash ceiling=pro")
 	ta.deal(1)
 	tiers := func() (string, string) {
 		t.Helper()

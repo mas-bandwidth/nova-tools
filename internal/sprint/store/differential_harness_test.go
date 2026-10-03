@@ -17,11 +17,30 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/refmodel"
 	"github.com/stretchr/testify/require"
 )
+
+// flashBrief is a flash card's brief: line 1 names tier flash, so its reads are one
+// (sprint.ReadsNeeded).
+const flashBrief = "s: flash work tier: flash\ntier: flash"
+
+// costDeadline is the routes' deadline: seconds, as nova-config's route row holds it.
+var costDeadline = 1800
+
+// costRoutes are the twin's routes: the flash route the cards are dealt on, and a pro
+// route of the model the first reader runs, each with a price sheet.
+func costRoutes() []sprint.Route {
+	return []sprint.Route{
+		{Name: "flash-a", Tier: "flash", Provider: "opencode", Model: "deepseek-v4-flash", Tokens: 400000, Deadline: costDeadline, Enabled: true,
+			Prices: cardcost.Prices{Input: "0.14", CacheRead: "0.028", Output: "0.28", ReasoningAsOutput: true, AsOf: "2026-10-01"}},
+		{Name: "pro-a", Tier: "pro", Provider: "opencode", Model: "deepseek-v4-pro", Tokens: 400000, Deadline: costDeadline, Enabled: true,
+			Prices: cardcost.Prices{Input: "0.5", CacheRead: "0.1", Output: "2", ReasoningAsOutput: true}},
+	}
+}
 
 // dAction is one step of a sequence: a verb, a tick or an outside fact, with
 // every argument concrete, so a sequence replays exactly.
@@ -50,6 +69,7 @@ type dAction struct {
 	// the state while it is cut, before the repair.
 	CutAt int
 	Leave bool
+	Brief string
 }
 
 func (a dAction) id() string {
@@ -87,6 +107,11 @@ func (a dAction) verb() string {
 		}
 		if a.After != "" {
 			s += " --after " + a.After
+		}
+		if a.Brief == flashBrief {
+			s += " [flash]"
+		} else if a.Brief == proBrief {
+			s += " [pro]"
 		}
 		return s
 	case "tick":
@@ -161,6 +186,7 @@ type dFinding struct {
 	Kind   string    // state, refusal, choice
 	Diffs  []refmodel.Difference
 	Detail string
+	Routed bool
 }
 
 // Sig is the finding without its ids: the action's verb, what differs and
@@ -249,9 +275,24 @@ type dHarness struct {
 	// not cut).
 	cutTable string
 	mid      *refmodel.State // the state while cut, before repair (Leave)
+	routed   bool
 }
 
-func newDHarness(t testing.TB) *dHarness {
+type dHarnessOption func(*dHarness)
+
+// withRoutes gives the harness's store routes: costRoutes() when no routes are given.
+func withRoutes(routes ...sprint.Route) dHarnessOption {
+	return func(h *dHarness) {
+		h.routed = true
+		if len(routes) == 0 {
+			h.m.SetRoutes(costRoutes())
+		} else {
+			h.m.SetRoutes(routes)
+		}
+	}
+}
+
+func newDHarness(t testing.TB, opts ...dHarnessOption) *dHarness {
 	h := &dHarness{t: t, ctx: context.Background(), m: NewMem(), now: t0, resync: true}
 	n := 0
 	h.st = &Store{B: h.m, Names: sprint.Names{Prefix: "d-"}, Actor: dCoordinator,
@@ -261,9 +302,23 @@ func newDHarness(t testing.TB) *dHarness {
 	require.NoError(t, h.st.Init(h.ctx))
 	require.NoError(t, h.m.RowsAdd(h.ctx, "d-readers", dReaders))
 	require.NoError(t, h.m.SetCoordinator(h.ctx, dCoordinator))
+	for _, opt := range opts {
+		opt(h)
+	}
 	h.model = refmodel.New(dReaders, nil, dCoordinator)
 	h.Acted, h.Tried = map[string]int{}, map[string]int{}
 	h.seen = map[string]map[string]bool{}
+	return h
+}
+
+// SetRoutes gives the harness's store routes: costRoutes() when no routes are given.
+func (h *dHarness) SetRoutes(routes ...sprint.Route) *dHarness {
+	h.routed = true
+	if len(routes) == 0 {
+		h.m.SetRoutes(costRoutes())
+	} else {
+		h.m.SetRoutes(routes)
+	}
 	return h
 }
 
@@ -397,7 +452,7 @@ func (h *dHarness) do(a dAction) []dFinding {
 		// finishes it from its record.
 		want := refmodel.Crash(h.model, next, h.mid.Pending)
 		if d := refmodel.Compare(*h.mid, want); len(d) > 0 {
-			out = append(out, dFinding{Seq: append([]dAction(nil), h.seq...), Kind: "state", Detail: "while the step is cut, before repair", Diffs: d})
+			out = append(out, dFinding{Seq: append([]dAction(nil), h.seq...), Kind: "state", Detail: "while the step is cut, before repair", Diffs: d, Routed: h.routed})
 			h.findings = append(h.findings, out...)
 		}
 	}
@@ -438,6 +493,9 @@ func (h *dHarness) record(a dAction, post, next refmodel.State, merr error, refu
 			}
 			out = append(out, f)
 		}
+	}
+	for i := range out {
+		out[i].Routed = h.routed
 	}
 	h.model = next
 	if len(out) > 0 && h.resync {
@@ -504,7 +562,11 @@ func (h *dHarness) engine(a dAction, pre refmodel.State) (refused string, cutOK 
 	}
 	switch a.Kind {
 	case "add":
-		return run(AddStep(sprint.AddReq{Brief: proBrief, Stream: a.Stream, IDs: a.IDs, Needs: a.Needs, Sentinel: a.Sentinel, Before: a.Before, After: a.After, Who: dCoordinator})), cutOK
+		b := a.Brief
+		if b == "" {
+			b = proBrief
+		}
+		return run(AddStep(sprint.AddReq{Brief: b, Stream: a.Stream, IDs: a.IDs, Needs: a.Needs, Sentinel: a.Sentinel, Before: a.Before, After: a.After, Who: dCoordinator})), cutOK
 	case "tick":
 		_, err := h.st.Tick(h.ctx)
 		return engineErr(err, nil), cutOK
@@ -631,7 +693,13 @@ func (h *dHarness) needsOf(note string) []string {
 // modelStep applies the action to the model, with the choices the engine
 // made read from its state before and after.
 func (h *dHarness) modelStep(a dAction, pre, post refmodel.State) (refmodel.State, error) {
-	s := h.model
+	s := h.model.Clone()
+	for id, p := range post.Primaries {
+		if cur, ok := s.Primaries[id]; ok && p.Tier != "" {
+			cur.Tier = p.Tier
+			s.Primaries[id] = cur
+		}
+	}
 	var next refmodel.State
 	var err error
 	switch a.Kind {
@@ -720,7 +788,11 @@ func (h *dHarness) modelStep(a dAction, pre, post refmodel.State) (refmodel.Stat
 		}
 		next, err = refmodel.Ack(s, a.Type, subs, h.preNeeds)
 	case "ask":
-		next, err = refmodel.Ask(s, a.id(), newReaders(pre, post, a.id()))
+		rs := newReaders(pre, post, a.id())
+		if rs == nil {
+			rs = s.NextReaders(a.id(), s.ReadsNeeded(a.id()))
+		}
+		next, err = refmodel.Ask(s, a.id(), rs)
 	case "another":
 		r := ""
 		if rs := newReaders(pre, post, a.id()); len(rs) == 1 {
@@ -738,6 +810,12 @@ func (h *dHarness) modelStep(a dAction, pre, post refmodel.State) (refmodel.Stat
 	}
 	if err != nil {
 		return s, err
+	}
+	for id, p := range post.Primaries {
+		if cur, ok := next.Primaries[id]; ok && p.Tier != "" {
+			cur.Tier = p.Tier
+			next.Primaries[id] = cur
+		}
 	}
 	return next, nil
 }
@@ -1097,15 +1175,19 @@ func dSetup() []dAction {
 		{Kind: "fleet", Op: "up", Member: "m1"},
 		{Kind: "fleet", Op: "up", Member: "m2"},
 		{Kind: "start"},
-		{Kind: "add", Stream: "s1", IDs: []string{"a1", "a2", "a3"}},
-		{Kind: "add", Stream: "s2", IDs: []string{"b1", "b2"}, Needs: []string{"a1"}},
+		{Kind: "add", Stream: "s1", IDs: []string{"a1", "a2", "a3"}, Brief: proBrief},
+		{Kind: "add", Stream: "s2", IDs: []string{"b1", "b2"}, Needs: []string{"a1"}, Brief: flashBrief},
 	}
 }
 
 // dGenerate is the sequence of one seed: the setup, then steps actions drawn
 // against the engine as it goes.
 func dGenerate(t testing.TB, seed uint64, steps int) ([]dAction, []dFinding) {
-	h := newDHarness(t)
+	var opts []dHarnessOption
+	if seed%2 == 1 {
+		opts = append(opts, withRoutes())
+	}
+	h := newDHarness(t, opts...)
 	rng := rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15))
 	n := 0
 	for _, a := range dSetup() {
@@ -1118,8 +1200,8 @@ func dGenerate(t testing.TB, seed uint64, steps int) ([]dAction, []dFinding) {
 }
 
 // dReplay runs a sequence from a new store and returns its findings.
-func dReplay(t testing.TB, seq []dAction) []dFinding {
-	h := newDHarness(t)
+func dReplay(t testing.TB, seq []dAction, opts ...dHarnessOption) []dFinding {
+	h := newDHarness(t, opts...)
 	for _, a := range seq {
 		h.do(a)
 	}
@@ -1131,8 +1213,12 @@ func dReplay(t testing.TB, seq []dAction) []dFinding {
 // kept) one chunk at a time while it still reproduces.
 func dShrink(t testing.TB, f dFinding) dFinding {
 	sig := f.Sig()
+	var opts []dHarnessOption
+	if f.Routed {
+		opts = append(opts, withRoutes())
+	}
 	find := func(seq []dAction) (dFinding, bool) {
-		for _, g := range dReplay(t, seq) {
+		for _, g := range dReplay(t, seq, opts...) {
 			if g.Sig() == sig {
 				return g, true
 			}
