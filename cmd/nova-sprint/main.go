@@ -107,6 +107,9 @@ type app struct {
 	// beforePush, when set (a test), runs before each push land makes, with
 	// the attempt (1, then 2 after the base moved).
 	beforePush func(attempt int)
+	// ledgers, when set (a test), is the generated ledgers land regenerates at a merge
+	// (landledger.go); nil is landLedgers.
+	ledgers []landLedger
 	// gateBackend, when set (a test), is the gate decision's backend and clock for land's
 	// red batch gate (landgate.go); nil asks Jev with the key JEV_API_KEY holds, on the
 	// wall clock.

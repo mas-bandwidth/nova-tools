@@ -26,6 +26,10 @@ type MergeReq struct {
 	Rejected bool     // the merge queue rejected the batch
 	Note     string
 	Who      string
+	// Resolved is, by card, what its landing did beyond merging its head (docs/SPEC-SPRINT.md
+	// section 7: the generated ledgers regenerated at the merge); written on its merge card
+	// as it lands, its note on the card's timeline.
+	Resolved map[string]string
 }
 
 // streamDone says every primary of the stream on the table has landed, given
@@ -294,7 +298,11 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 				u.Changes = append(u.Changes, change(Merge, setEntry(ctl, ctlSet)))
 				u.Notes = notes
 			}
-			u.Changes = append(u.Changes, change(Merge, moveEntry(c, r.Stream, Merged, map[string]string{"merged": now})))
+			merged := map[string]string{"merged": now}
+			if v := r.Resolved[c.ID]; v != "" {
+				merged["note"] = v
+			}
+			u.Changes = append(u.Changes, change(Merge, moveEntry(c, r.Stream, Merged, merged)))
 			set := map[string]string{"ci": "green", "landed": now}
 			if v := costs[c.ID]; v != "" {
 				set[FieldCost] = v
