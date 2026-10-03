@@ -29,6 +29,11 @@
 # file and changes nothing. A loop logs to its record's log, under
 # ~/nova-bench/loops.
 #
+# Beside the records, every machine gets one more unit, disk-guard: nova-swarm
+# disk-guard every nova_disk_guard_every seconds, which keeps the disk from
+# filling (Go caches, loop logs, stopped pools, land clones, mirror temp packs;
+# docs/FLEET.md says what removes each and when).
+#
 # A unit whose file (or timer) changed is restarted, said as RESTART (WOULD-RESTART
 # under --check) with why. A member's (a record that runs nova-swarm member, a
 # reader's too) is never killed mid-card: its restart is the drain signal, SIGTERM
@@ -50,11 +55,42 @@
     loop_other_dir: "{{ loop_user_dir if loop_system else loop_system_dir }}"
     loop_domain: "{{ 'system' if loop_system else 'gui/' ~ ansible_user_uid }}"
     loop_patterns: "{{ ['com.nova.loop.*.plist'] if loop_darwin else ['nova-loop-*.service', 'nova-loop-*.timer'] }}"
+    # The disk guard every machine runs (nova-swarm disk-guard, docs/FLEET.md): a
+    # periodic row this play adds beside the records, its --root each root a
+    # record's argv names (--root <dir> or --root=<dir>), then
+    # nova_disk_guard_args. A record named disk-guard on the host takes its
+    # place; nova_disk_guard false leaves it out.
+    loop_guard_roots: >-
+      {%- set out = [] -%}
+      {%- for r in nova_loops -%}
+      {%- for w in r.argv -%}
+      {%- if loop.index0 > 0 and r.argv[loop.index0 - 1] == '--root' -%}{%- set _ = out.append(w) -%}{%- endif -%}
+      {%- if w.startswith('--root=') -%}{%- set _ = out.append(w[7:]) -%}{%- endif -%}
+      {%- endfor -%}
+      {%- endfor -%}
+      {{ out | unique | list }}
+    loop_guard_argv: >-
+      {%- set out = ['nova-swarm', 'disk-guard'] -%}
+      {%- for r in loop_guard_roots -%}{%- set _ = out.extend(['--root', r]) -%}{%- endfor -%}
+      {{ out + nova_disk_guard_args }}
+    loop_guard:
+      name: disk-guard
+      argv: "{{ loop_guard_argv }}"
+      seat: ""
+      keys: []
+      every: "{{ nova_disk_guard_every | int }}"
+      keepalive: false
+      width: 0
+      enabled: true
+      log: ~/nova-bench/loops/disk-guard.log
     # the records this run renders and restarts: nova_loop_only's, else every one
     loop_only: >-
       {{ ((nova_loop_only.split(',') if nova_loop_only is string else nova_loop_only) | map('trim') | reject('equalto', '') | list)
          if nova_loop_only else [] }}
-    loop_records: "{{ (nova_loops | selectattr('name', 'in', loop_only) | list) if loop_only else nova_loops }}"
+    loop_records: >-
+      {%- set with_guard = nova_loops + ([loop_guard] if (nova_disk_guard | bool)
+          and 'disk-guard' not in (nova_loops | map(attribute='name') | list) else []) -%}
+      {{ (with_guard | selectattr('name', 'in', loop_only) | list) if loop_only else with_guard }}
     loop_names: "{{ loop_records | map(attribute='name') | list }}"
     loop_scope: "{{ 'system' if loop_system else 'user' }}"
     loop_runtime: { XDG_RUNTIME_DIR: "/run/user/{{ ansible_user_uid }}" }

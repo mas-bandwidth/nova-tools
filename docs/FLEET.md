@@ -181,6 +181,7 @@ an explicit localhost; it is never derived from the Redis store machine.
 | `nova_launchd_domain` | `auto` | darwin: `gui` (a LaunchAgent in the login's GUI domain), `system` (a LaunchDaemon dropped to the login; sudo), or `auto`, which asks launchd whether the login has a GUI domain and takes `system` when it has not |
 | `nova_systemd_scope` | `user` | linux: a user unit (with linger) or `system` |
 | `nova_retire_units` | `[]` | units of another tool's to retire by name (below) |
+| `nova_disk_guard`, `nova_disk_guard_every`, `nova_disk_guard_args` | `true`, `900`, `--scan ~/nova-bench/run --cache ~/runner-*/_cache/go-build` | the disk guard `loops.yml` adds to every machine (below): on or off, its period in seconds, and its arguments after the `--root` of each record |
 | `nova_redis_port`, `nova_redis_addr` | the explicit applied fleet row (no port default) | the store |
 | `nova_redis_deploy_user`, `nova_redis_deploy_password_key` | `coordinator`, `NOVA_REDIS_COORDINATOR_PASSWORD` | who loads the library, and the secret holding its password in the `store_deployer` seat |
 | `nova_redis_admin_user`, `nova_redis_admin_password_key` | `admin`, `NOVA_REDIS_ADMIN_PASSWORD` | who writes the ACL, and its secret |
@@ -310,6 +311,43 @@ linux the daemon reload before the restart gives the stop its new settings; on
 darwin the old plist's bootout gives the member launchd's default 20 s, after
 which the member is killed and its children, abandoned with its group, are
 adopted by the new member while they live.
+
+### The disk guard, on every machine
+
+Beside the records, the play adds one periodic row to every machine,
+`disk-guard`: `nova-swarm disk-guard` every `nova_disk_guard_every` seconds
+(900), its `--root` each root a record's argv names, then
+`nova_disk_guard_args`, logging to `~/nova-bench/loops/disk-guard.log`. A record
+named `disk-guard` on the machine takes its place; `nova_disk_guard: false` in
+`host_vars` leaves it out (and retires the unit). Owner's rule, 2026-10-02: "We
+must not fill discs again", "cleanup must be auto!". Every per-card or
+per-machine artifact the fleet writes, and what removes it, when:
+
+| artifact | what removes it, and when |
+|---|---|
+| a launch's checkout, `<root>/slots/<launch>/` | the member, while its loop runs: at once when the launch is reported ok, a failed one kept (the newest 5 of the pool); swept at the member's start. A pool whose loop stopped (no process names its root or works in it, nothing moved for 30 minutes): the disk guard's next run, by the same rule; a work launch whose checkout holds commits past its staged one is kept and said on a `KEPT slot` line, every run, until a person removes it |
+| a launch's small files and results (`.native.log`, `.card.md`, `.frame.json`, `results/<launch>`) | the member's cleaner, once the sprint's epoch is two past theirs (docs/SPEC-SWARM.md, `member`) |
+| a root's Go build cache, `<root>/cache/go-build` | the member's cleaner, held under 10 GiB while it runs; the disk guard every run, under `--cache-max-gb` (10), whether or not a loop runs |
+| the login's Go build cache (`$GOCACHE`, else the user cache directory's `go-build`) and every `--cache` (the CI runners' `_cache/go-build`) | the disk guard every run, under `--cache-max-gb`: entries used longest ago first, never one used in the last two hours, down to the cap less a fifth |
+| a module cache (`<root>/cache/go-mod`, the login's `$GOMODCACHE` or `~/go/pkg/mod`) | the disk guard, emptied when over `--modcache-max-gb` (50), no `go` command runs and no process holds a file in it |
+| a loop log, `~/nova-bench/loops/*.log` | the disk guard, over `--log-max-mb` (50): copied to `<log>.1` and emptied in place, the copies shifted, the one past `--log-keep` (3) removed |
+| a land clone, `<user cache dir>/nova-sprint/land/<repo>-<hash>` (`~/Library/Caches` on darwin, `~/.cache` on linux; never `/tmp`) | the disk guard, unused for `--clone-age` (24h), with no uncommitted work and no process naming it or working in it; land clones it again on its next use |
+| a mirror's temporary packs, `~/nova-bench/mirror/<repo>/objects/pack/tmp_pack_*` and `.tmp-*` (an aborted fetch's) | the disk guard, older than an hour, when no process names the mirror or works in it and no git fetch naming no path runs; never `git prune` |
+| release copies, `nova_release_out` | `tools.yml`, after a build: all but the built, the running and the 3 newest |
+
+A process works in a path when its working directory or a file it holds open
+lies under it (lsof on darwin, `/proc/<pid>/cwd` and `/proc/<pid>/fd` on Linux):
+a `git push` or a `make` run inside a land clone names no path on its argument
+line, and keeps the clone all the same. A run that cannot read the open files
+removes nothing that needs them and ends `INCOMPLETE`.
+
+Each run prints one line per action (`REMOVED`, `TRIMMED`, `CLEANED`,
+`ROTATED`, with `freed=<bytes>`, or `KEPT` with why), a `DISK-GUARD WARN` line
+for a volume under `--disk-floor` (10 GiB, the member's own: a member there
+starts no card), and ends `DISK-GUARD OK freed=<bytes> free=<bytes>`, or
+`DISK-GUARD INCOMPLETE ... failed=<n>` and exit 1 when something could not be
+read or removed. Nothing under `/tmp` is the guard's: a clone a person or a
+child made there by hand is theirs to remove.
 
 The inventory carries `nova_loops` only once the loop kind has been applied to
 the store; until then `loops.yml` refuses each machine by name instead of
