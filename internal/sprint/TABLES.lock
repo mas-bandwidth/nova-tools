@@ -52,6 +52,12 @@
 # it is recorded here because it is output Glenn sees, which he asked for in words:
 # "I'd like to really really load up the sprint in waiting, and stick sentinels in".
 #
+# Note, 2026-10-02 (10:13 PM ET): where reads the table, not every card. held=N and the
+# ETA's landings of the hour come from the where record the tick counts (docs/SPEC-SPRINT.md
+# section 1), not from every waiting and landed card's record: where --json took 5.2 to
+# 7.0 s at 2,843 cards, and the requirement is under 1 s at 3,000. The progress line reads
+# as it did, every table and column is as it was; no shape below changes.
+#
 # Change, 2026-10-02, the where view's title line, not a table: Glenn, 5:15 PM: "We need
 # to make handover MORE SMOOTH."; 5:20 PM: "you can be given coordinator status, or you
 # can take it (with my permission only)". The seat's holder shows beside the title,

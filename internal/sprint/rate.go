@@ -1,6 +1,9 @@
 package sprint
 
-import "time"
+import (
+	"slices"
+	"time"
+)
 
 // The landing rate the ETA is measured at (docs/SPEC-SPRINT.md section 1).
 const (
@@ -60,4 +63,30 @@ func runningStart(spans []Span, first, now time.Time, w time.Duration) time.Time
 		return from
 	}
 	return first
+}
+
+// MaxRecentLandings bounds the landings RecentLandings keeps: the newest. It
+// is far above the landings of an hour at any width the fleet has; past it,
+// the hour's count, and so the rate, reads low.
+const MaxRecentLandings = 10000
+
+// RecentLandings is the landings LandingRate can count at now or at any later
+// reading: the stamps from the start of the last RateWindow of running time
+// before now, oldest first, at most MaxRecentLandings (the newest). The window
+// only moves forward (running time never runs back), so what is before it now
+// is before it at every later reading. None before the first start (first
+// zero): no landing before it is ever counted.
+func RecentLandings(landed []time.Time, spans []Span, first, now time.Time) []time.Time {
+	if first.IsZero() {
+		return nil
+	}
+	from := runningStart(spans, first, now, RateWindow)
+	var out []time.Time
+	for _, at := range landed {
+		if !at.Before(from) {
+			out = append(out, at)
+		}
+	}
+	slices.SortFunc(out, time.Time.Compare)
+	return out[max(0, len(out)-MaxRecentLandings):]
 }
