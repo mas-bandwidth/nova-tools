@@ -44,6 +44,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/diffcheck"
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -67,8 +68,11 @@ Landing, the coordinator's: an external delivery (git pushes the base) and a sto
     forced, rebuilding once on a moved base; then reports the batch as merge
     --stream s1 --batch <n> does. A head missing or in conflict ends the batch
     before it and is reported as merge --conflict, a red check as --red, a
-    second rejected push as --rejected. The clone is --repo-dir, else the dir=
-    each line names; git uses the caller's environment.
+    second rejected push as --rejected. Each head merged is checked first, by
+    script and no model: a head whose diff changes a file outside its brief's
+    PATHS, or leaves a stranded sentence fragment or an unmatched backquote in
+    prose, ends the batch as a head in conflict does. The clone is --repo-dir,
+    else the dir= each line names; git uses the caller's environment.
   nova-sprint land --stream s1 --dry-run
     reads the store only: no git, no push, no report. The window: land pins
     each card's head and attempt as it reads them; a caller's --epoch is held
@@ -196,6 +200,7 @@ func idSpan(ids []string) string {
 // keeps the id and the epoch), and the repository and base its brief names.
 type landCard struct {
 	id, head, attempt, repo, base string
+	paths                         []string // the brief's PATHS globs, nil when it names none (checkCard)
 }
 
 // pin is the card as the report's guard and the operation's arguments name
@@ -416,7 +421,7 @@ func (l *lander) stream(ctx context.Context, s *sprint.Snapshot, stream string) 
 		if pr := s.Work.Placed(c.ID); pr != nil {
 			lc.head, lc.attempt = pr.F("head"), pr.F("attempt")
 			cb := swarm.ReadCardBase([]byte(pr.F("brief")))
-			lc.repo = cb.Repo
+			lc.repo, lc.paths = cb.Repo, cardPaths(pr.F("brief"))
 			if cb.Ref != "" {
 				lc.base = cb.Ref
 			}
@@ -438,6 +443,18 @@ func (l *lander) stream(ctx context.Context, s *sprint.Snapshot, stream string) 
 		cards = cards[n:]
 	}
 	return true
+}
+
+// cardPaths is a brief's PATHS globs; nil for none (no line, or `PATHS: none`).
+func cardPaths(brief string) []string {
+	var out []string
+	value, _ := swarm.CardHeaderValue([]byte(brief), "PATHS")
+	for _, g := range strings.Split(value, ",") {
+		if g = strings.TrimSpace(g); g != "" && g != "none" {
+			out = append(out, g)
+		}
+	}
+	return out
 }
 
 // shaRE is a commit id as a head names it: hex, abbreviated or whole.
@@ -837,7 +854,14 @@ func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard
 		return nil, failed, "the base " + base + " could not be cut from origin in " + dir + ": " + firstLine("", err)
 	}
 	for _, c := range cards {
+		before, err := l.git(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}")
+		if err != nil {
+			return nil, failed, "the batch branch has no tip before the merge of " + c.id + ": " + firstLine("", err) + "; no card is blamed and nothing was pushed or reported"
+		}
 		card, env := l.mergeHead(ctx, dir, stream, c)
+		if card == "" && env == "" {
+			card, env = l.checkCard(ctx, dir, c, before)
+		}
 		switch {
 		case env != "":
 			return nil, failed, env + "; no card is blamed and nothing was pushed or reported"
@@ -901,6 +925,38 @@ func (l *lander) mergeHead(ctx context.Context, dir, stream string, c landCard) 
 		return "the head " + c.head + " of " + c.id + " does not merge: " + firstLine("", err), ""
 	}
 	return "", "the merge of " + c.id + " failed in git, not on its changes: " + firstLine("", err)
+}
+
+// checkCard is the lander's mechanical checks of one card merged onto the batch branch
+// at before (internal/diffcheck; docs/SPEC-SPRINT.md section 7, the lander's checks): the
+// merge's own diff touches no file outside the card's PATHS (E12) and leaves no stranded
+// sentence fragment or unmatched backquote (E4). A card that fails is taken off the batch
+// branch (reset to before) and ends the batch as a head that does not merge does, with
+// what failed; card and env are mergeHead's. A merge that made no commit (the head is in
+// the base already) is not checked: it changes nothing the base does not hold.
+func (l *lander) checkCard(ctx context.Context, dir string, c landCard, before string) (card, env string) {
+	after, err := l.git(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil || after == before {
+		return "", ""
+	}
+	diff, err := l.git(ctx, dir, "diff", "-M", "--no-color", before, after)
+	if err != nil {
+		return "", "the diff of the merge of " + c.id + " could not be read: " + firstLine("", err)
+	}
+	var why []string
+	if out := diffcheck.Outside(c.paths, diff); len(out) > 0 {
+		why = append(why, "it changes files outside its PATHS (E12): "+strings.Join(out, ", "))
+	}
+	for _, f := range diffcheck.Fragments(diff) {
+		why = append(why, f.String()+" (E4)")
+	}
+	if len(why) == 0 {
+		return "", ""
+	}
+	if _, err := l.git(ctx, dir, "reset", "-q", "--hard", before); err != nil {
+		return "", "the batch branch could not be reset after " + c.id + " failed the lander's checks: " + firstLine("", err)
+	}
+	return "the head " + c.head + " of " + c.id + " fails the lander's checks: " + strings.Join(why, "; "), ""
 }
 
 // containsAny says s holds one of words.

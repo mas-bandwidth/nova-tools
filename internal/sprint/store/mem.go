@@ -62,6 +62,7 @@ type memState struct {
 	logged  chan struct{}       // closed, and replaced, by every commit that appends to a log
 	routes  []sprint.Route      // the model tiers' routes (routes.go)
 	tiers   map[string][]string // the tiers' route arrays (routes.go)
+	bars    [2]string           // the decide read's bounce and review bars (routes.go)
 }
 
 // memLog is one epoch's sprint keys.

@@ -38,6 +38,11 @@ type Frame struct {
 	ReviewBase string   `json:"review_base,omitempty"`  // a read: the ref the change is reviewed against
 	Stage      []string `json:"stage,omitempty"`        // the recipe files the brief's Stage: header lines name, relative to Recipes
 	Recipes    string   `json:"recipes,omitempty"`      // the member's recipes directory, <root>/recipes
+	// A decide read's bars on p(defect) (docs/SPEC-SPRINT.md section 6): native asks the
+	// read decision over the card and the diff before any child and routes the read by
+	// them; both empty for a strings read.
+	DecideBounce string `json:"decide_bounce,omitempty"`
+	DecideReview string `json:"decide_review,omitempty"`
 }
 
 // Staged is what native knows once the checkout is staged: the job directory, the checkout,

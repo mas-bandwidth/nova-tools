@@ -91,6 +91,12 @@ func jevAnswers(raw []byte) (map[string]Answer, Usage, error) {
 	return out, wire.Usage, nil
 }
 
+// JevHTTP is the Jev backend over the real transport with key: what nova-decide and the
+// sprint's decide read ask through.
+func JevHTTP(key string) Jev {
+	return Jev{Model: JevModel, Send: HTTPSend(http.DefaultClient, JevURL, key)}
+}
+
 // HTTPSend is the real transport, and the one function of this package that
 // opens a socket (through client): one POST to url with the key as a bearer
 // token. The key travels on the wire only; an error names the status and the
@@ -113,6 +119,9 @@ func HTTPSend(client *http.Client, url, key string) Send {
 			return nil, fmt.Errorf("reading the backend's answer: %w", err)
 		}
 		if resp.StatusCode != http.StatusOK {
+			if key != "" { // a body that echoes the key never carries it into an error
+				raw = bytes.ReplaceAll(raw, []byte(key), []byte("<key>"))
+			}
 			return nil, fmt.Errorf("the backend answered HTTP %d: %q", resp.StatusCode, head(raw))
 		}
 		return raw, nil

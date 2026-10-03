@@ -25,6 +25,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
+	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
@@ -146,6 +147,10 @@ type nativeRunConfig struct {
 	// frame, when set, is the member's frame of this launch (docs/SPEC-CARD-CONTRACT.md):
 	// staging stages its commit on its branch, and its profile writes JOB.md and the shims.
 	frame *cardcontract.Frame
+	// decider, when set, is the decide read's backend and clock (nativedecide.go): a
+	// test's; nil is Jev over its real transport with the key JEV_API_KEY holds, and the
+	// wall clock.
+	decider *decider
 }
 
 // nativeRunResult is what one run records when the child has gone.
@@ -758,8 +763,10 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// gh pr create its finish), so the child meets the frame through the commands it knows.
 	// A frame that cannot be installed refuses the launch: a child outside its frame is the
 	// defect the frame closes.
+	decided := "" // the decide read's op id when a strings read follows it (nativedecide.go)
 	if cfg.frame != nil && stageRes.Staged {
-		if err := installFrameTimed(cfg, jobDir, stageRes.BaseSha, os.Stdout); err != nil {
+		start, err := installFrameTimed(cfg, jobDir, stageRes.BaseSha, os.Stdout)
+		if err != nil {
 			if errors.Is(err, errReadStart) {
 				// a read whose start cannot be known is refused at staging, as a stage that
 				// failed is: no child ran, and the sprint deals the read again
@@ -770,6 +777,17 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			}
 			refuseNative(errOut, fmt.Sprintf("%s the card's frame could not be installed: %s", oneline.Field(cfg.label), oneline.Err(err)))
 			return nativeRunResult{}, 2
+		}
+		// THE DECIDE READ (nativedecide.go; docs/SPEC-SPRINT.md section 6): a flash card's
+		// first read is decided here, before any child, when its p(defect) is past a bar
+		switch route, op := nativeDecide(cfg, jobDir, start, stageRes.BaseSha, os.Stdout, errOut); route {
+		case decide.RouteStrings:
+			decided = op
+		case decide.RouteBounce, decide.RouteLand:
+			res := nativeRunResult{rc: 0, harness: "ok", wall: "none", cardSHA256: hex.EncodeToString(cardHash[:]), binarySHA256: binaryHash,
+				job: jobDir, root: cfg.root, configSHA: configSHA, tmp: tmpDir, end: "done", wallSeconds: time.Since(startTime).Seconds()}
+			res.resultsDir = publishDecided(cfg, jobDir, errOut)
+			return res, 0
 		}
 	}
 
@@ -1437,6 +1455,10 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			}
 		}
 	}
+	// the strings read after a decide read: its verdict is the decision's outcome
+	if decided != "" {
+		settleDecided(cfg, jobDir, decided, errOut)
+	}
 	// Publish after the blocked report and the asked report exist, and before any
 	// return that has finished the child: the sweep (and --sweep-now) run only once
 	// this dir is set.
@@ -1824,8 +1846,13 @@ func benchOS(cfg nativeRunConfig) string {
 // resolve to the toolchain the wall grants whatever PATH the loop unit started the member
 // with. Empty names no Go and leaves PATH as it was.
 func nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell, goBin string) []string {
+	return nativeChildEnvFrom(os.Environ(), dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell, goBin)
+}
+
+// nativeChildEnvFrom is nativeChildEnv over environ, native's own environment.
+func nativeChildEnvFrom(environ []string, dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell, goBin string) []string {
 	var kept []string
-	for _, kv := range os.Environ() {
+	for _, kv := range environ {
 		name, _, _ := strings.Cut(kv, "=")
 		if keepNativeEnv(name) {
 			kept = append(kept, kv)
@@ -1841,6 +1868,8 @@ func nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shim
 	if secretEnv != "" {
 		remove = append(remove, secretEnv)
 	}
+	// the decide read's key is native's own (nativedecide.go), never the child's
+	remove = append(remove, decide.JevSecret)
 	for _, name := range remove {
 		kept = environWithoutName(kept, name)
 	}
@@ -1871,9 +1900,13 @@ func nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shim
 	if shimShell != "" {
 		out = append(out, "SHELL="+shimShell)
 	}
-	if secretEnv != "" {
-		if v, ok := os.LookupEnv(secretEnv); ok {
-			out = append(out, secretEnv+"="+v)
+	// a worker whose description names the decide read's key is handed nothing by it: the
+	// key is native's alone (nativedecide.go)
+	if secretEnv != "" && secretEnv != decide.JevSecret {
+		for _, kv := range environ {
+			if v, ok := strings.CutPrefix(kv, secretEnv+"="); ok {
+				out = append(out, secretEnv+"="+v)
+			}
 		}
 	}
 	return out
@@ -2341,24 +2374,26 @@ func writeStageOK(w io.Writer, bench string, st swarm.StageResult) {
 
 // installFrameTimed reports the whole successful frame installation, including
 // recipes and shims, separately from staging (docs/SPEC-CARD-CONTRACT.md, staging).
-func installFrameTimed(cfg nativeRunConfig, jobDir, head string, w io.Writer) error {
+func installFrameTimed(cfg nativeRunConfig, jobDir, head string, w io.Writer) (start string, err error) {
 	started := time.Now()
-	if err := installFrame(cfg, jobDir, head); err != nil {
-		return err
+	if start, err = installFrame(cfg, jobDir, head); err != nil {
+		return "", err
 	}
 	fmt.Fprintf(w, "FRAME OK secs=%.1f\n", time.Since(started).Seconds())
-	return nil
+	return start, nil
 }
 
 // installFrame records the staged commit in the slot and writes a framed launch's JOB.md
-// and its family's shims into <slot>/shim, the shims handing through to the real git.
-func installFrame(cfg nativeRunConfig, jobDir, head string) error {
+// and its family's shims into <slot>/shim, the shims handing through to the real git. It
+// returns a read's start: the commit the work it reads started from (workStart), "" for
+// work or when none is known.
+func installFrame(cfg nativeRunConfig, jobDir, head string) (string, error) {
 	git, err := exec.LookPath("git")
 	if err != nil {
-		return fmt.Errorf("no git on PATH for the shims to hand through to: %w", err)
+		return "", fmt.Errorf("no git on PATH for the shims to hand through to: %w", err)
 	}
 	if git, err = filepath.Abs(git); err != nil {
-		return err
+		return "", err
 	}
 	st := cardcontract.Staged{Job: jobDir, Repo: filepath.Join(jobDir, swarm.JobRepo), Head: head, Git: git}
 	if nativeCacheDir(cfg) != "" {
@@ -2367,23 +2402,23 @@ func installFrame(cfg nativeRunConfig, jobDir, head string) error {
 	if cfg.frame.Kind == "read" {
 		// first, so a read whose start cannot be known leaves nothing of its frame behind
 		if st.Start, err = workStart(git, st.Repo, cfg.frame.ReviewBase); err != nil {
-			return err
+			return "", err
 		}
 		if st.Start != "" {
 			if st.Gate, err = readGate(git, st.Repo, st.Start); err != nil {
-				return err
+				return "", err
 			}
 		}
 	}
 	// the commit staged, recorded in the slot (outside the job the child writes): the
 	// member counts the child's commits from it, never from the checkout's own refs
 	if err := atomicfile.Write(filepath.Join(cfg.slotDir, cardcontract.StagedName), []byte(head+"\n"), 0o644); err != nil {
-		return fmt.Errorf("recording the staged commit: %w", err)
+		return "", fmt.Errorf("recording the staged commit: %w", err)
 	}
 	if err := cardcontract.StageRecipes(*cfg.frame, jobDir); err != nil {
-		return err
+		return "", err
 	}
-	return cardcontract.Install(cardcontract.For(cardcontract.FamilyOf(cfg.model)), *cfg.frame, st, nativeShellShimDir(cfg.slotDir))
+	return st.Start, cardcontract.Install(cardcontract.For(cardcontract.FamilyOf(cfg.model)), *cfg.frame, st, nativeShellShimDir(cfg.slotDir))
 }
 
 // errReadStart marks a read refused at staging because the commit its work started from
