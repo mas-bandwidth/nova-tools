@@ -18,8 +18,8 @@
 # WHERE THINGS RUN. Pull requests run on the self-hosted runners ONLY: a
 # per-package matrix — ./cmd/<tool> and ./internal/... dealt into twelve
 # shards on the four Linux space runners and four on the Intel macOS runners
-# (self-hosted,macOS,X64) — fanned out in parallel, fail-fast off, so a change's feedback path is a
-# fan-out over the eight machines and never a serial queue, and never
+# (`self-hosted,macOS,X64` selects them) — fanned out in parallel, fail-fast off, so a change's feedback path is a
+# fan-out over the 4+4 machines and never a serial queue, and never
 # GitHub-hosted compute. The GitHub-hosted runners (ubuntu-latest, macos-latest)
 # run only on push to main and on the nightly schedule, with the full suite.
 # There is ONE exception, for the one platform the self-hosted runners cannot
@@ -109,7 +109,7 @@ concurrency:
   # mechanical red gate always has a completed run to read. A PR keys on its number so
   # its newest head supersedes older runs; every other branch keys on its ref.
   group: ci-${{ github.event.pull_request.number || (contains(fromJSON('["refs/heads/main","refs/heads/dev"]'), github.ref) && github.sha) || github.ref }}-${{ github.event_name }}-${{ inputs.bench }}
-  # cancel-in-progress is a constant. The
+  # `cancel-in-progress` is a constant. The
   # sha-keyed group above is what protects an integration branch's verdict: its
   # group holds that one run and nothing else, so there is never a sibling for
   # cancel-in-progress to cancel. Everywhere else — a PR's newest head, a
@@ -165,7 +165,7 @@ jobs:
           find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
 
       - name: borrow objects from the bench mirror
-        # Every self-hosted job empties its
+        # THE CHECKOUT FETCH WAS THE HANG. Every self-hosted job empties its
         # workspace above, so actions/checkout fetches the whole commit from
         # GitHub (11 MB at --depth=1) on every job. When a bench keeps a mirror,
         # the workspace borrows its objects (objects/info/alternates) and starts
