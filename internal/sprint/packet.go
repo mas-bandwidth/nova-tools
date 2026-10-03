@@ -60,9 +60,6 @@ type Packet struct {
 	// read by them (docs/SPEC-SPRINT.md section 6); empty for a strings read.
 	DecideBounce string `json:"decide_bounce,omitempty"`
 	DecideReview string `json:"decide_review,omitempty"`
-	// A work card's attempt bar, as the deal wrote it (decide.go, FieldDecideAttempt): its
-	// member asks the attempt decision when its take ends and finishes with it; empty asks none.
-	DecideAttempt string `json:"decide_attempt,omitempty"`
 	// A read's: the work it reads.
 	Worker     string `json:"worker,omitempty"`
 	Head       string `json:"head,omitempty"`
@@ -150,7 +147,6 @@ func PacketOf(prefix string, epoch uint64, c, primary *Card, earlier []*Card, wo
 	if p.Kind == "work" {
 		p.Branch = BranchOf(prefix, epoch, c.ID, c.Int("gen"))
 		p.Finding, p.Why = c.F("finding"), c.F("why")
-		p.DecideAttempt = c.F(FieldDecideAttempt)
 		// the attempt's own words, written with its card: the primary's are queued for the next
 		// tick's drain, so a take before it sees the primary at the attempt before
 		if fix := c.F("fix"); fix != "" {

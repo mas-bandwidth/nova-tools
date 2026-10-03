@@ -232,6 +232,10 @@ Against the reason line's prefix, at 0.7: 23 of the 24 takes a budget or a deadl
 ended with no RESULT.md are `no-result`, 16 of the 20 `nothing to do` takes are
 `nothing-to-do`, 18 of the 30 ok takes are `done`, and 11 of the 20 `push refused`
 takes are `needs-pro`. `needs-pro` has four positives: no bar is read from it yet.
+The sprint row's `decide_attempt` is empty by default, so no decision routes a finish
+until a review round labels cards independently; 0.7 is the starting point these numbers
+support. At 0.7, 26 of the 70 failed takes would go from failed work to an ended take,
+redealt with no judgment (14 of them landed later, 12 were dropped).
 
 ## 10. The grade decision
 
@@ -264,4 +268,5 @@ The calibration of 2026-10-03, schema `ad287c9232ad5008`, `grade=pro` with posit
 The reviewed set is the mechanical flash sprint, two cards of it landed on pro: it
 holds no measure of `pro`. Over the store's landed cards the brief's own `tier:`
 word carries part of the separation (the third row); the sprint asks over the brief
-as it is, and a grade raises no card above its ceiling.
+as it is, and a grade raises no card above its ceiling. The sprint row's `decide_grade`
+is empty by default, the grade a hint; 0.7 is the starting point.

@@ -228,8 +228,8 @@ facts.
 | `coordinator` | ref friend | | the deal and the routing: who holds the coordinator role; `sprint set --coordinator <friend>` is the handover | `sprint:coordinator`, and the `coordinator` word in that friend's `friend:<f>:roles` |
 | `decide_bounce` | decimal, default 0.5 | | the ask: a flash card's first read is a decide read (docs/SPEC-SPRINT.md section 6), and p(defect) at or above this bar bounces the work; a probability, at least `decide_review`; both bars empty turns the decide read off | `sprint:decide_bounce` |
 | `decide_review` | decimal, default 0.3 | | the ask: below this bar the decide read lands the work with no model read; from it up to `decide_bounce` the card goes to a strings read | `sprint:decide_review` |
-| `decide_attempt` | decimal, default 0.7 | | the deal writes it on every work card, and its member asks the attempt decision when a take ends (docs/SPEC-SPRINT.md section 2): a failed finish whose class is at or above it is routed by the class, not by its report's prefix; a probability; empty asks no attempt decision | `sprint:decide_attempt` |
-| `decide_grade` | decimal, default empty | | the deal: a card graded pro at or above it, its ceiling pro, starts on pro instead of flash (docs/SPEC-SPRINT.md section 5, the grade); a probability; empty keeps the grade a hint on the card | `sprint:decide_grade` |
+| `decide_attempt` | decimal, default empty | | the deal writes it on every work card (docs/SPEC-SPRINT.md section 2, the attempt decision): a failed finish whose attempt class is at or above it is routed by the class, not by its report's prefix; a probability; empty routes nothing on a decision, which is still asked, recorded and shown (nothing routes until a review round labels cards independently); 0.7 is the starting point (class=done AUC 0.937, class=no-result 0.883, docs/SPEC-NOVA-DECIDE.md section 9) | `sprint:decide_attempt` |
+| `decide_grade` | decimal, default empty | | the deal: a card graded pro at or above it, its ceiling pro, starts on pro instead of flash (docs/SPEC-SPRINT.md section 5, the grade); a probability; empty keeps the grade a hint on the card; 0.7 is the starting point (grade=pro AUC 0.930 over the store's landed cards, 0.547 over the mechanical set, docs/SPEC-NOVA-DECIDE.md section 10) | `sprint:decide_grade` |
 
 **`loop`** (`config.loops`): a supervised process on one machine. Every
 value is data in the row: the code names no machine, seat, secret or
@@ -410,7 +410,7 @@ config.sprint            (name PK = 'sprint', coordinator -> friends.name,
                           by 0011; decide_bounce and decide_review added by
                           0021, text NOT NULL DEFAULT '0.5' and '0.3', a
                           decimal or ''; decide_attempt and decide_grade
-                          added by 0022, DEFAULT '0.7' and '')
+                          added by 0022, both DEFAULT '')
 config.loops             (name PK, machine -> machines.name, argv, seat, keys,
                           every, keepalive boolean, width, enabled boolean,
                           created_at, updated_at; CHECK exactly one of

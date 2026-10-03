@@ -150,14 +150,15 @@ func TestTheSprintRowHoldsTheDecideBarsTogether(t *testing.T) {
 }
 
 // The sprint row holds layer 2's two bars (docs/SPEC-SPRINT.md sections 2 and 5): the
-// attempt decision's, 0.7 by default, and the grade's, empty by default (the grade a hint);
-// each a probability or empty, every problem named at once.
+// attempt decision's and the grade's, both empty by default (nothing routes on a decision
+// until a review round labels cards independently); each a probability or empty, every
+// problem named at once.
 func TestTheSprintRowHoldsTheAttemptAndGradeBars(t *testing.T) {
 	t.Parallel()
 	sprint, _ := Lookup(KindSprint)
 	attempt, _ := sprint.Field(FieldDecideAttempt)
 	grade, _ := sprint.Field(FieldDecideGrade)
-	assert.Equal(t, []string{"0.7", ""}, []string{attempt.Default, grade.Default})
+	assert.Equal(t, []string{"", ""}, []string{attempt.Default, grade.Default})
 	assert.Equal(t, []Type{TypeDecimal, TypeDecimal}, []Type{attempt.Type, grade.Type})
 	for _, tc := range []struct {
 		attempt, grade, says string

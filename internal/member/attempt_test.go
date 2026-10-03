@@ -29,28 +29,34 @@ func (a *attemptAsks) decide(p Packet, result, reason string) (string, []byte, e
 	return "needs-pro p=0.840 op=" + p.Primary + "@1.0123456789ab", []byte(`{"id":"` + p.Primary + `@1.0123456789ab"}`), nil
 }
 
-// A work take whose packet carries the attempt bar is decided in its end's long work, over
-// the child's result as RESULT.md says it and the finish's own report, and the finish
-// carries the decision (--decision). No bar, no decider: no ask and no flag. A decision that
-// cannot be made is said on one NOTE line and the finish goes by its reason line alone.
+// Every work take of a member with a decider is decided in its end's long work, over the
+// child's result as RESULT.md says it and the finish's own report, and the finish carries the
+// decision (--decision); whether it routes the finish is the card's bar, read by the server.
+// A member with no decider asks nothing and carries no flag. A decision that cannot be made
+// is said on one NOTE line and the finish goes by its reason line alone.
 func TestAnEndedTakeIsDecidedAndTheFinishCarriesTheDecision(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name, bar string
-		err       error
-		flag      bool
-		asks      int
+		name   string
+		decide bool
+		err    error
+		flag   bool
+		asks   int
 	}{
-		{"the bar asks", "0.7", nil, true, 1},
-		{"no bar asks nothing", "", nil, false, 0},
-		{"a failed ask is a note", "0.7", errors.New("the backend answered 402"), false, 1},
+		{"a decider asks", true, nil, true, 1},
+		{"no decider asks nothing", false, nil, false, 0},
+		{"a failed ask is a note", true, errors.New("the backend answered 402"), false, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			a := &attemptAsks{err: tc.err}
-			g := newRig(Config{As: "m", Width: 2, Attempt: a.decide})
+			cfg := Config{As: "m", Width: 2}
+			if tc.decide {
+				cfg.Attempt = a.decide
+			}
+			g := newRig(cfg)
 			p := pk("c1")
-			p.Gen, p.DecideAttempt = 2, tc.bar
+			p.Gen = 2
 			g.s.set("queue", 0, queueJSON(t, 7, working("c1", 2, &p)))
 			_, err := g.tick(t) // restart: the child is ours now
 			require.NoError(t, err)

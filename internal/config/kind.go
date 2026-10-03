@@ -226,7 +226,9 @@ const (
 // The sprint row's two bars of nova-decide's layer 2 (internal/decide, attempt.go and
 // grade.go; docs/SPEC-SPRINT.md sections 2 and 5): the attempt decision's class replaces a
 // failed finish's reason prefix at or above decide_attempt, and a card graded pro at or above
-// decide_grade starts on pro; empty is no bar (decide_grade's default: the grade is a hint).
+// decide_grade starts on pro. Both are empty by default (the coordinator, 2026-10-03: nothing
+// routes on a decision until a review round labels cards independently): the decisions are
+// asked, recorded and shown, and route nothing.
 const (
 	FieldDecideAttempt = "decide_attempt"
 	FieldDecideGrade   = "decide_grade"
@@ -334,8 +336,8 @@ var Kinds = []*Kind{
 			{Name: "coordinator", Type: TypeRef, Ref: KindFriend, Help: "the friend who holds the coordinator role (a friend row), or empty; set it to hand over"},
 			{Name: FieldDecideBounce, Type: TypeDecimal, Default: "0.5", Help: "the decide read's bounce bar: a flash card whose first read gives p(defect) at or above it is bounced with the read's finding; a probability, at least --decide_review; 0.5 (the default); empty, with --decide_review empty, turns the decide read off"},
 			{Name: FieldDecideReview, Type: TypeDecimal, Default: "0.3", Help: "the decide read's review bar: below it the card lands with no model read, and from it up to --decide_bounce it goes to a strings read; a probability; 0.3 (the default)"},
-			{Name: FieldDecideAttempt, Type: TypeDecimal, Default: "0.7", Help: "the attempt decision's bar: a failed take whose class nova-decide gives at or above it is routed by the class, not by its reason line's prefix; a probability; 0.7 (the default); empty asks no attempt decision"},
-			{Name: FieldDecideGrade, Type: TypeDecimal, Help: "the grade decision's bar: a card graded pro at or above it starts on pro instead of flash; a probability; empty (the default) keeps the grade a hint on the card"},
+			{Name: FieldDecideAttempt, Type: TypeDecimal, Help: "the attempt decision's bar: a failed take whose class nova-decide gives at or above it is routed by the class, not by its reason line's prefix; a probability; empty (the default) routes nothing on a decision, which is still asked, recorded and shown; 0.7 is the starting point the calibration of 2026-10-03 supports (docs/SPEC-NOVA-DECIDE.md section 9)"},
+			{Name: FieldDecideGrade, Type: TypeDecimal, Help: "the grade decision's bar: a card graded pro at or above it starts on pro instead of flash; a probability; empty (the default) keeps the grade a hint on the card; 0.7 is the starting point the calibration of 2026-10-03 supports (docs/SPEC-NOVA-DECIDE.md section 10)"},
 		},
 		Check: checkSprint,
 	},

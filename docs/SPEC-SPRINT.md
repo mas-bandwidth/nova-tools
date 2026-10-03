@@ -426,10 +426,13 @@ have no class, and are never identical. Two places count tries:
 **The attempt decision** (nova-decide's layer 2; the owner, 2026-10-02, the agreed
 plan: "result classification after each attempt (done / nothing to do / wrong scope /
 no result / needs pro)"; 2026-10-03: "Please push Jev wide."; docs/SPEC-NOVA-DECIDE.md
-section 9). The deal writes the sprint row's `decide_attempt` bar (nova-config, 0.7 by
-default; empty asks no decision) on every work card it cuts or deals again
-(`decide_attempt`), and the packet hands it to the member. When a take of such a card
-ends, the member, in the end's long work beside the push and never in its pass, asks
+section 9). The deal writes the sprint row's `decide_attempt` bar (nova-config) on every
+work card it cuts or deals again (`decide_attempt`). The bar is empty by default (the
+coordinator, 2026-10-03: nothing routes on a decision until a review round labels cards
+independently, as for layers 4 and 6): every take is decided, recorded and shown, and no
+decision routes a finish; 0.7 is the starting point, with the calibration beside it in
+docs/SPEC-NOVA-DECIDE.md section 9 (class=done AUC 0.937, class=no-result 0.883). When
+any take ends, a member whose environment holds the key, in the end's long work beside the push and never in its pass, asks
 the attempt decision over the card's brief, the child's RESULT.md as the member read
 it (`member.ResultText`) and the finish's own report, through Jev with the key
 `JEV_API_KEY` its loop's nova-secrets keys hold (the member's own: native and the child
@@ -751,7 +754,11 @@ and it is the coordinator's decision, receipted.
   ungraded, waiting or ready, never a sentinel; a brief replaced clears it).
   `card` prints it on its CARD OK line (`grade=<g>:<p>`; `--json` `grade`).
   The grade is a hint while the sprint row's `decide_grade` is empty (its
-  default; nova-config); with a bar set, a card graded pro at or above it whose
+  default, nova-config: nothing routes on a decision until a review round labels
+  cards independently; 0.7 is the starting point, the calibration beside it in
+  docs/SPEC-NOVA-DECIDE.md section 10: grade=pro AUC 0.930 over the store's
+  landed cards, 0.547 over the mechanical set, part of it the brief's own `tier:`
+  word); with a bar set, a card graded pro at or above it whose
   ceiling is pro starts on pro instead of flash (`Snapshot.startTier`): the
   deal draws its first route from pro and writes `tier_now` pro, and flash
   first is overridden for that card alone. A grade never raises a card above
@@ -2004,8 +2011,8 @@ its drop). A round prints one `DECIDE recorded= graded= written= attached=` line
 did something and nothing when it did not; a failure is `DECIDE FAILED <why>`, once until
 it changes. A grade is asked once per server process; the record is loaded whole on each
 write, as every record of nova-decide is, and its rotation is owed with the read's. A
-member's decision that reaches a server with no `--decide` is used and kept on the card,
-and recorded nowhere.
+member's decision that reaches a server with no `--decide` is kept on the card (and routes
+the finish when the card's bar is set), and recorded nowhere.
 
 The address is one address of the coordinator's machine on the fleet's private network; an
 address every network can reach is refused. The server checks no credential (the owner: "I am OK

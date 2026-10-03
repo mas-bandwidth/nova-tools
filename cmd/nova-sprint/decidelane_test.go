@@ -30,7 +30,6 @@ func TestTheDecideLaneGradesRecordsAndAttachesOutcomes(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
-	ta.m.SetDecideLayer2("0.7", "")
 	ta.ok("add --stream s1 --count 3 --brief-file " + proBriefFile(t))
 	dir := t.TempDir()
 	ta.a.decide = newDecideLane(dir, fixedGrade(), ta.a.now)
@@ -58,7 +57,6 @@ func TestTheDecideLaneGradesRecordsAndAttachesOutcomes(t *testing.T) {
 	ta.json("queue --as m1", &q)
 	for _, c := range q.Cards {
 		gens[c.ID] = strconv.Itoa(c.Gen)
-		assert.Equal(t, "0.7", c.Packet.DecideAttempt, "the packet hands the member the attempt bar")
 	}
 	attempt := decide.Fixed{Table: map[string]decide.FixedAnswer{decide.AttemptQuestion: {Choice: decide.ClassDone, P: map[string]float64{decide.ClassDone: 0.9, decide.ClassNeedsPro: 0.1}}}}
 	d, err := decide.AttemptDecision(ctx, attempt, "s1-1", 1, ta.primary("s1-1").F("brief"), "head: x\nverdict: ok\nreport: done\n", "pushed=x to b: done", ta.a.now())

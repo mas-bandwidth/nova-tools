@@ -256,10 +256,6 @@ type Packet struct {
 	// (docs/SPEC-SPRINT.md section 6, the decide read); empty for a strings read.
 	DecideBounce string `json:"decide_bounce,omitempty"`
 	DecideReview string `json:"decide_review,omitempty"`
-	// A work card's attempt bar (docs/SPEC-SPRINT.md section 2, the attempt decision): when
-	// set and the member has an Attempt decider, the take's end is classified and the finish
-	// carries the decision; empty asks none.
-	DecideAttempt string `json:"decide_attempt,omitempty"`
 }
 
 // queueCard is one card of `nova-sprint queue --as <me> --json`. Its claim is the
@@ -320,8 +316,9 @@ type Config struct {
 	// one posted or a child exited. false (the tests' member) does each where the pass
 	// asks for it, so a pass is one step.
 	Background bool
-	// Attempt asks the attempt decision over a work take's end (docs/SPEC-SPRINT.md section
-	// 2, the attempt decision), for a card whose packet carries the attempt bar: the packet,
+	// Attempt asks the attempt decision over every work take's end (docs/SPEC-SPRINT.md
+	// section 2, the attempt decision; the card's bar decides at the server whether it routes
+	// the finish, never whether it is asked): the packet,
 	// the child's RESULT.md as text and the finish's reason line in; the decision's card line
 	// (decide.Decided) and the decision as one JSON record line out, both carried by the
 	// finish. It is long (a backend's answer), so it runs in the end's long work, beside the
@@ -1432,10 +1429,10 @@ func finishReport(r Result, pu Push, branch string) (fin Finish, why, report str
 }
 
 // attempt is a work take's attempt decision (Config.Attempt), asked in its end's long work
-// when its packet carries the attempt bar: over the child's result as RESULT.md says it and
-// the finish's report; nil when none is asked.
+// over the child's result as RESULT.md says it and the finish's report; nil when the member
+// has no decider, or no take ran (a launch refused at staging).
 func (m *Member) attempt(p Packet, r Result, pu Push, branch string) *decided {
-	if p.DecideAttempt == "" || m.cfg.Attempt == nil || r.End == EndStaging {
+	if m.cfg.Attempt == nil || r.End == EndStaging {
 		return nil
 	}
 	_, _, report := finishReport(r, pu, branch)

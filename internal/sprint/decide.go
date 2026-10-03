@@ -18,10 +18,15 @@ import (
 //
 //   - the attempt decision: after a work take ends, its member asks how it ended (done,
 //     nothing-to-do, wrong-scope, no-result, needs-pro, provider-failure) over the brief, the
-//     child's RESULT.md and the reason line, when the work card carries the sprint row's
-//     decide_attempt bar (the deal writes it); the finish carries the class, its p and the op
-//     id. A failed finish whose class is at or above the bar is routed by the class where the
-//     reason line's prefix routed it (finishKind); below the bar the prefix rule stands.
+//     child's RESULT.md and the reason line, whenever it holds the key; the finish carries
+//     the class, its p and the op id. A failed finish whose class is at or above the work
+//     card's decide_attempt bar (the deal writes the sprint row's) is routed by the class
+//     where the reason line's prefix routed it (finishKind); below it, and with no bar, the
+//     prefix rule stands.
+//
+// Both bars are empty by default (the coordinator, 2026-10-03: nothing routes on a decision
+// until a review round labels cards independently): every decision is asked, recorded and
+// shown, and none routes; 0.7 is the starting point the calibration supports for each.
 //   - the grade decision: before a card's first deal, the server's decide lane grades its
 //     convergence from the brief alone (script, flash, pro) and writes it on the card
 //     (Grade). It is a hint, shown by `card`, until the sprint row's decide_grade bar is set:

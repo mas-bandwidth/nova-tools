@@ -26,7 +26,7 @@ func (h *harness) decideTake(card, report, decided string) {
 	gens := map[string]int{wc.ID: wc.Int("gen")}
 	h.must(TakeStep(sprint.TakeReq{As: wc.Row, Sel: sprint.Sel{IDs: []string{wc.ID}}, Gens: gens, Who: wc.Row}))
 	h.must(FinishStep(sprint.FinishReq{As: wc.Row, Sel: sprint.Sel{IDs: []string{wc.ID}}, Gens: gens, Failed: true,
-		Report: report, Decided: decided, Who: wc.Row}))
+		Report: report, Decided: decided, Usage: "wall=450.00s budget=1/1000", Who: wc.Row}))
 }
 
 // decidedLine is an attempt decision's card line for card at attempt.
@@ -34,9 +34,9 @@ func decidedLine(class string, p float64, card string) string {
 	return decide.Decided{Value: class, P: p, Op: card + "@1.0123456789ab"}.String()
 }
 
-// The deal writes the sprint row's attempt bar on the work card it cuts, and its packet
-// hands it to the member, who asks the attempt decision when it is set; with no bar the card
-// carries none. A redeal writes the bar the row holds then.
+// The deal writes the sprint row's attempt bar on the work card it cuts, which the finish
+// routes by; with no bar (the default) the card carries none and no decision routes it. A
+// redeal writes the bar the row holds then.
 func TestTheDealWritesTheAttemptBarAndThePacketCarriesIt(t *testing.T) {
 	t.Parallel()
 	h := routeHarness(t, route("flash-a", "flash"), route("flash-b", "flash"))
@@ -45,12 +45,10 @@ func TestTheDealWritesTheAttemptBarAndThePacketCarriesIt(t *testing.T) {
 	h.must(DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
 	wc := h.snap().Fleet.Card("s1-1.w1")
 	assert.Equal(t, "0.7", wc.F(sprint.FieldDecideAttempt))
-	p := sprint.PacketOf("t-", 1, wc, h.snap().Work.Card("s1-1"), nil, nil)
-	assert.Equal(t, "0.7", p.DecideAttempt)
 
 	h.m.SetDecideLayer2("", "")
 	h.must(DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-2"}}}))
-	assert.Empty(t, h.snap().Fleet.Card("s1-2.w1").F(sprint.FieldDecideAttempt), "no bar: no attempt decision")
+	assert.Empty(t, h.snap().Fleet.Card("s1-2.w1").F(sprint.FieldDecideAttempt), "no bar: no decision routes it")
 
 	h.m.SetDecideLayer2("0.8", "")
 	h.failTake("s1-1.w1", providerLine)
@@ -136,8 +134,6 @@ func TestAFailedFinishGoesByItsAttemptDecisionAtTheBar(t *testing.T) {
 // Two failed attempts the decision classes needs-pro at the bar are the second identical
 // failure, though their reason lines differ: below its ceiling the machine escalates the
 // card to pro at once (flash first). Under the bar the same two lines are two failures.
-// The finishes report no usage: a failed finish reads the routes all the same, so the
-// escalation never waits on a usage line (store.FinishStep).
 func TestTwoDecidedNeedsProFailuresEscalateTheCard(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {

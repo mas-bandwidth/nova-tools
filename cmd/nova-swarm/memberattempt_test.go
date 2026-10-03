@@ -19,7 +19,7 @@ func TestAWorkMembersAttemptDecisionIsTheRecordLineTheServerTakes(t *testing.T) 
 	t.Parallel()
 	at := time.Date(2026, 10, 3, 9, 0, 0, 0, time.UTC)
 	b := decide.Fixed{Table: map[string]decide.FixedAnswer{decide.AttemptQuestion: {Choice: decide.ClassNoResult, P: map[string]float64{decide.ClassNoResult: 0.93, decide.ClassDone: 0.07}}}}
-	p := member.Packet{Card: "c1.w2", Primary: "c1", Attempt: 2, Brief: "c: the work (s1) tier: flash\n", DecideAttempt: "0.7"}
+	p := member.Packet{Card: "c1.w2", Primary: "c1", Attempt: 2, Brief: "c: the work (s1) tier: flash\n"}
 	line, raw, err := attemptDecider(b, func() time.Time { return at })(p, "", "budget: no RESULT.md shape; the child ended without a result")
 	require.NoError(t, err)
 	d, err := decide.ParseAttempt(raw)
