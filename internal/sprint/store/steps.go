@@ -206,9 +206,14 @@ func ScoreStep(r sprint.ScoreReq) Step {
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.RecordScores(s, r) }}
 }
 
-// ReleaseStep is the coordinator releasing reached sentinels.
+// ReleaseStep is the coordinator releasing sentinels. The fleet table and the
+// records of needs off the table are read so that release tells a wait in flight
+// (taken, dropped) from one not started (nova-tools#5096 item c13).
 func ReleaseStep(r sprint.ReleaseReq) Step {
-	return Step{Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "release", Load: tables(sprint.Work, sprint.Merge), Mirrors: true,
+	return Step{Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "release", Load: tables(sprint.Work, sprint.Merge, sprint.Fleet), Mirrors: true,
+		Extras: func(s *sprint.Snapshot) map[string][]string {
+			return map[string][]string{sprint.Work: sprint.ResolveExtras(s)}
+		},
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Release(s, r) }}
 }
 
