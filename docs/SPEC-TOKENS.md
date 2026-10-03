@@ -1005,7 +1005,7 @@ There is no clock in this tool. `--timeout` (default **120 s**) is how long it
 waits on one source and not a deadline on the run. What a fold or a check
 actually waits on is a person running it, and on the measured bench it was not
 being run: `check` printed
-`CHECK FAIL files=9 rows=0 first=<d> last=<d> bad=9 missing=36 stray=2`,
+`CHECK FAIL files=9 rows=0 first=2026-07-29 last=2026-09-11 bad=9 missing=36 stray=2`,
 and `sum --month 2026-09` refused because the first line of a day file was not
 the version line, with `fold --day <d>` as the repair. Nine of nine day files
 were bad. A stale ledger is repaired by `fold --day <d>` before `check` is
