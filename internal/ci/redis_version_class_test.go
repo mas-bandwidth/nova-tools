@@ -27,11 +27,12 @@ import (
 // The reference is `ARG REDIS_VERSION` in infra/functional-image/Containerfile,
 // the version the functional image builds: `make test-functional-container`
 // runs the functional tier in that image. CI's functional job does not run in
-// the image: it runs `make test-functional` on the runner's own redis-server,
-// and the installer keeps a redis-server already on PATH, so a runner can be on
-// another version. Every other place that names a Redis version must equal the
-// reference, and this rule reads them as text, in the unit tier, with no
-// container and no server:
+// the image: it runs `make test-functional` on the runner's redis-server, which
+// the installer makes the pinned build (it builds it into $HOME/.local/bin when
+// the first on PATH reports another version), and internal/testredis refuses a
+// redis-server that reports another (#5151). Every other place that names a
+// Redis version must equal the reference, and this rule reads them as text, in
+// the unit tier, with no container and no server:
 //
 //   - the named places each name it at least once (redisVersionNamedFiles), so
 //     a reworded README cannot drop out of the check unseen;
@@ -63,10 +64,10 @@ import (
 // `go-redis v9.22.0` and `nova-redis 1.0.0` are library and tool versions and
 // are not read.
 //
-// It cannot read what apt or Homebrew installs on a hosted runner, or the
-// redis-server a runner already holds, and it cannot check a sha256 against a
-// version offline: the image build's `sha256sum -c` does that, against the
-// tarball itself.
+// It cannot read the redis-server a runner holds (internal/testredis refuses
+// one of another version when a test starts it), and it cannot check a sha256
+// against a version offline: the image build's `sha256sum -c` does that,
+// against the tarball itself.
 
 const (
 	redisVersionRef       = "infra/functional-image/Containerfile"
@@ -75,11 +76,12 @@ const (
 )
 
 // redisVersionNamedFiles are the places that must each name the version: the
-// reference itself, the installer's source build, and the two documents that
-// tell a reader which Redis to run.
+// reference itself, the installer's source build, the test harness that refuses
+// any other, and the two documents that tell a reader which Redis to run.
 var redisVersionNamedFiles = []string{
 	redisVersionRef,
 	redisVersionInstaller,
+	"internal/testredis/testredis.go",
 	"infra/functional-image/README.md",
 	"docs/nova-table/README.md",
 }

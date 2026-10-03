@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -79,7 +80,63 @@ func init() {
 func fake() launch {
 	l := real
 	l.look = func(string) (string, error) { return os.Args[0], nil }
+	l.version = func(string) (string, error) { return RedisVersion, nil }
 	return l
+}
+
+// fakeServer writes a redis-server under the test's directory that prints
+// out on standard output and err on standard error and exits code, and returns
+// its path.
+func fakeServer(t *testing.T, out, err string, code int) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake server is a /bin/sh script")
+	}
+	bin := filepath.Join(t.TempDir(), "redis-server")
+	body := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' %q\nprintf '%%s\\n' %q >&2\nexit %d\n", out, err, code)
+	// No fork while the file is open for writing: a child another parallel
+	// test forks in that window holds the descriptor until it execs, and the
+	// exec of this file fails with "text file busy" (seen on spacegame).
+	syscall.ForkLock.RLock()
+	werr := os.WriteFile(bin, []byte(body), 0o755)
+	syscall.ForkLock.RUnlock()
+	require.NoError(t, werr)
+	return bin
+}
+
+// #5151 with a real binary: a redis-server that prints another version in
+// `--version` is refused with both versions, before it is started; the pinned
+// one is taken; one that prints no version (the unit tier's shim) is refused
+// with what it said.
+func TestAFakeRedisServerOfAnotherVersionIsRefused(t *testing.T) {
+	t.Parallel()
+
+	line := func(v string) string {
+		return "Redis server v=" + v + " sha=00000000:0 malloc=jemalloc-5.3.0 bits=64 build=e53ff17674aa6190"
+	}
+	for _, found := range []string{"7.0.15", "8.0.5"} {
+		bin := fakeServer(t, line(found), "", 0)
+		l := real
+		l.look = func(string) (string, error) { return bin, nil }
+		l.version = serverVersion
+		r := provoke(t, func(tb testing.TB) { l.start(tb, nil) })
+		want := bin + " is Redis " + found + ", want Redis " + RedisVersion
+		assert.Truef(t, strings.Contains(r.fatal, want), "Start with a redis-server of %s: failed with %q, skipped with %q; want %q", found, r.fatal, r.skipped, want)
+	}
+
+	bin := fakeServer(t, line(RedisVersion), "", 0)
+	got, err := serverVersion(bin)
+	require.NoError(t, err)
+	assert.Equal(t, RedisVersion, got)
+	l := real
+	l.look = func(string) (string, error) { return bin, nil }
+	l.version = serverVersion
+	assert.Equal(t, bin, l.program(t), "the pinned version was not taken")
+
+	shim := fakeServer(t, "", shimLine, 86)
+	l.look = func(string) (string, error) { return shim, nil }
+	r := provoke(t, func(tb testing.TB) { l.program(tb) })
+	assert.Truef(t, strings.Contains(r.fatal, "cannot read the version of "+shim+", want Redis "+RedisVersion) && strings.Contains(r.fatal, shimLine), "the shim: failed with %q; want the refusal carrying its line", r.fatal)
 }
 
 // fakePID reads the pid a fake printed out of a failure.
@@ -600,6 +657,7 @@ func TestARedisServerThatCannotRunFailsTheTestWithItsName(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "redis-server")
 	l := real
 	l.look = func(string) (string, error) { return missing, nil }
+	l.version = func(string) (string, error) { return RedisVersion, nil } // the start is what is under test
 	r := provoke(t, func(tb testing.TB) { l.start(tb, User("bench", "the-password")) })
 	for _, want := range []string{"did not start", missing, `arguments: "--bind" "127.0.0.1" "--port"`, `"--user" "bench" "on" "***"`} {
 		if !strings.Contains(r.fatal, want) {

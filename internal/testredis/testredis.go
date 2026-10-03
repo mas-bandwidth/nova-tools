@@ -29,7 +29,11 @@
 // A MISSING redis-server skips the test on a laptop and fails it under
 // NOVA_CI=1, which the CI workflows set: a skip there would let a green run be
 // a run that never executed the store. A redis-server that is found and does
-// not come up fails the test anywhere.
+// not come up fails the test anywhere. ONE VERSION: a redis-server that does
+// not report RedisVersion fails the test anywhere, with the version found and
+// the one wanted, before it starts: another version fails later on a command
+// it lacks, deep inside a test, and a green run on it proves nothing about the
+// pinned one (#5151).
 //
 // THE IMAGE OF A STORE. Image reads every key under a prefix, with its type
 // and a sum of its content and expiry time, by SCAN and pipelines, from any
@@ -60,6 +64,12 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
+
+// RedisVersion is the repository's one Redis version (tools/ci
+// install-redis-server builds it; internal/ci TestRedisIsOneVersionEverywhere
+// holds every place that names one together). Start and Program refuse a
+// redis-server that reports another.
+const RedisVersion = "8.10.2"
 
 // CIEnv is set to "1" by the CI workflows. A missing redis-server fails the
 // test in that environment. Anywhere else it skips, so a laptop without the
@@ -176,6 +186,10 @@ type launch struct {
 	sentry *sentry                           // kills the servers of a test binary that is gone
 	wait   time.Duration                     // how long one server may take to come up
 	tries  int                               // how many ports are taken before Start gives up
+
+	// version is what a redis-server reports in `--version`'s v= field
+	// (serverVersion); program refuses one that is not RedisVersion.
+	version func(bin string) (string, error)
 }
 
 // real is what Start runs with.
@@ -187,6 +201,8 @@ var real = launch{
 	sentry: &sentry{enlist: func() (*post, error) { return enlist(realSentry) }},
 	wait:   30 * time.Second,
 	tries:  5,
+
+	version: func(bin string) (string, error) { return versions.of(bin, serverVersion) },
 }
 
 // ioWait bounds the wait for a killed server's output to end. A child the
@@ -208,8 +224,59 @@ func (l launch) program(t testing.TB) string {
 	bin, err := l.look("redis-server")
 	if err != nil {
 		absent(t, err, l.getenv)
+		return ""
+	}
+	v, err := l.version(bin)
+	switch {
+	case err != nil:
+		t.Fatalf("testredis: cannot read the version of %s, want Redis %s: %v", bin, RedisVersion, err)
+	case v != RedisVersion:
+		t.Fatalf("testredis: %s is Redis %s, want Redis %s, the repository's one version; put it first on PATH (go run ./tools/ci install-redis-server builds it into $HOME/.local/bin)", bin, v, RedisVersion)
 	}
 	return bin
+}
+
+// versionCache is the version each redis-server reported, read once per
+// binary per test process: Start runs many servers of one binary.
+type versionCache struct {
+	mu   sync.Mutex
+	seen map[string]versionAnswer
+}
+
+type versionAnswer struct {
+	v   string
+	err error
+}
+
+var versions = &versionCache{seen: map[string]versionAnswer{}}
+
+func (c *versionCache) of(bin string, read func(string) (string, error)) (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if a, ok := c.seen[bin]; ok {
+		return a.v, a.err
+	}
+	v, err := read(bin)
+	c.seen[bin] = versionAnswer{v, err}
+	return v, err
+}
+
+// serverVersion runs `bin --version` and returns its v= field ("Redis server
+// v=8.10.2 sha=..." is 8.10.2). A program that exits non-zero, or prints no
+// v= field, is an error carrying what it printed.
+func serverVersion(bin string) (string, error) {
+	b := subproc.Prepare(context.Background(), subproc.BudgetOf(bin, []string{"--version"}), bin, "--version")
+	defer b.Cancel()
+	out, err := b.Cmd.CombinedOutput()
+	if err = b.Wrap(bin+" --version", err); err != nil {
+		return "", fmt.Errorf("%s --version: %w: %s", bin, err, strings.TrimSpace(string(out)))
+	}
+	for _, f := range strings.Fields(string(out)) {
+		if v, ok := strings.CutPrefix(f, "v="); ok {
+			return v, nil
+		}
+	}
+	return "", fmt.Errorf("%s --version printed no v= field: %q", bin, strings.TrimSpace(string(out)))
 }
 
 func (l launch) freePort(t testing.TB) string {

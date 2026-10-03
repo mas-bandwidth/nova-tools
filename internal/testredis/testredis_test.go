@@ -254,9 +254,74 @@ func TestAMissingRedisServerSkipsOnALaptopAndFailsUnderCI(t *testing.T) {
 		}
 	}
 	l.look = func(string) (string, error) { return "the-program", nil }
+	l.version = func(string) (string, error) { return RedisVersion, nil }
 	if got := l.program(t); got != "the-program" {
 		require.Equal(t, "the-program", got, "Program = %q; want what the lookup found", got)
 	}
+}
+
+// #5151: the bench runners started their distribution's server (7.0.15,
+// 8.0.5) and the tests failed deep inside on a command it lacks. A redis-server
+// that is not the repository's version is refused by name, with the version
+// found and the one wanted, before any port is taken, under CI or not. The
+// same refusal of a real binary is in the functional tier
+// (TestAFakeRedisServerOfAnotherVersionIsRefused).
+func TestARedisServerOfAnotherVersionIsRefusedWithBothVersions(t *testing.T) {
+	t.Parallel()
+
+	for _, ci := range []string{"", "1"} {
+		for _, found := range []string{"7.0.15", "8.0.5", "8.10.3", ""} {
+			l := real
+			l.sentry = standing()
+			l.getenv = func(k string) string {
+				if k == CIEnv {
+					return ci
+				}
+				return ""
+			}
+			l.look = func(string) (string, error) { return "/usr/bin/redis-server", nil }
+			l.version = func(bin string) (string, error) {
+				assert.Equal(t, "/usr/bin/redis-server", bin, "asked the version of %q; want the binary found", bin)
+				return found, nil
+			}
+			l.port = func() (string, error) {
+				assert.Fail(t, "a port was taken for a refused redis-server")
+				return "", errors.New("unreachable")
+			}
+			want := "/usr/bin/redis-server is Redis " + found + ", want Redis " + RedisVersion
+			for name, call := range map[string]func(testing.TB){
+				"Program": func(tb testing.TB) { l.program(tb) },
+				"Start":   func(tb testing.TB) { l.start(tb, nil) },
+			} {
+				r := provoke(t, call)
+				assert.Truef(t, r.skipped == "" && strings.Contains(r.fatal, want), "NOVA_CI=%q %s with Redis %q: skipped with %q, failed with %q; want a failure saying %q", ci, name, found, r.skipped, r.fatal, want)
+			}
+		}
+	}
+
+	l := real
+	l.look = func(string) (string, error) { return "/usr/bin/redis-server", nil }
+	l.version = func(string) (string, error) {
+		return "", errors.New("exit status 86: unit tier: redis-server is functional-only")
+	}
+	r := provoke(t, func(tb testing.TB) { l.program(tb) })
+	assert.Truef(t, strings.Contains(r.fatal, "cannot read the version of /usr/bin/redis-server, want Redis "+RedisVersion) && strings.Contains(r.fatal, "functional-only"), "a version that cannot be read: failed with %q; want the refusal carrying the cause", r.fatal)
+}
+
+func TestTheVersionIsReadOncePerBinary(t *testing.T) {
+	t.Parallel()
+
+	c := &versionCache{seen: map[string]versionAnswer{}}
+	reads := 0
+	read := func(bin string) (string, error) { reads++; return "v-" + bin, nil }
+	for range 3 {
+		for _, bin := range []string{"/a/redis-server", "/b/redis-server"} {
+			v, err := c.of(bin, read)
+			require.NoError(t, err)
+			require.Equal(t, "v-"+bin, v)
+		}
+	}
+	assert.Equal(t, 2, reads, "two binaries read %d times; want once each", reads)
 }
 
 // The exported Absent and Program read the real environment and the real
