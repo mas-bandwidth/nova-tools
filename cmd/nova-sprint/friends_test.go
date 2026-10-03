@@ -46,13 +46,8 @@ func friendApp(t *testing.T, friends ...string) (*testApp, *config.Mem) {
 		return prev(k)
 	}
 	cfg := config.NewMem()
-	ta.a.friends = func(ctx context.Context, _ string) ([]string, error) {
-		rows, err := cfg.List(ctx, config.KindFriend)
-		var names []string
-		for _, r := range rows {
-			names = append(names, r.Name)
-		}
-		return names, err
+	ta.a.friends = func(ctx context.Context, _ string) ([]config.Row, error) {
+		return cfg.List(ctx, config.KindFriend)
 	}
 	for _, f := range friends {
 		addFriendRow(t, cfg, f)
@@ -84,7 +79,8 @@ func jobs(t *testing.T, root, friend string, inbox []string, working []string, d
 // The friends table has the fleet table's columns but load, from the job cards
 // friend sync reads of each friend's working directory: a job of inbox/ is ready
 // until outbox/<job>/ exists, working until outbox/<job>/REPORT.md exists, then
-// done, ok unless the report's verdict says otherwise; width is 1; done and ok%
+// done, ok unless the report's verdict says otherwise; width is the friend row's,
+// 8 when it names none (TestFriendSyncWritesTheConfiguredWidth); done and ok%
 // are the formulas over ok and failed, and the footer sums and pools them. A
 // friend with no directory, or no jobs, shows zeros. A sync after the directories
 // moved moves the counts, and a sync after a sync writes nothing. The same cells
@@ -103,22 +99,60 @@ func TestTheFriendsTableCountsTheJobCardsFriendSyncReads(t *testing.T) {
 	ta.ok("friend beat amy")
 	assert.Equal(t, "friends | ready | working | width | done | ok%   | status\n"+
 		"--------+-------+---------+-------+------+-------+-------\n"+
-		"amy     |     1 |       1 |     1 |    2 | 50.0% | up\n"+
-		"bob     |     0 |       0 |     1 |    0 | 0.0%  | down\n"+
-		"cat     |     0 |       0 |     1 |    0 | 0.0%  | down\n"+
+		"amy     |     1 |       1 |     8 |    2 | 50.0% | up\n"+
+		"bob     |     0 |       0 |     8 |    0 | 0.0%  | down\n"+
+		"cat     |     0 |       0 |     8 |    0 | 0.0%  | down\n"+
 		"--------+-------+---------+-------+------+-------+-------\n"+
-		"        |     1 |       1 |     3 |    2 | 50.0% |", tableOf(ta.frame(), sprint.Friends))
+		"        |     1 |       1 |    24 |    2 | 50.0% |", tableOf(ta.frame(), sprint.Friends))
 	var w whereView
 	ta.json("where", &w)
-	assert.Equal(t, map[string]string{"ready": "1", "working": "1", "width": "1", "done": "2", "okpct": "50.0%", "status": "up", "ok": "1", "failed": "1"}, w.Tables[sprint.Friends]["amy"])
-	assert.Equal(t, map[string]string{"ready": "0", "working": "0", "width": "1", "done": "0", "okpct": "0.0%", "status": "down", "ok": "0", "failed": "0"}, w.Tables[sprint.Friends]["cat"])
+	assert.Equal(t, map[string]string{"ready": "1", "working": "1", "width": "8", "done": "2", "okpct": "50.0%", "status": "up", "ok": "1", "failed": "1"}, w.Tables[sprint.Friends]["amy"])
+	assert.Equal(t, map[string]string{"ready": "0", "working": "0", "width": "8", "done": "0", "okpct": "0.0%", "status": "down", "ok": "0", "failed": "0"}, w.Tables[sprint.Friends]["cat"])
 
 	assert.Contains(t, ta.ok("friend sync --root "+root), "nothing to do")
 
 	// amy starts j1 and finishes j2 with a report that names no verdict: ok
 	jobs(t, root, "amy", nil, []string{"j1"}, map[string]string{"j2": "# j2\n\nAll green.\n"})
 	assert.Contains(t, ta.ok("friend sync --root "+root), "FRIEND-SYNC OK added=- removed=- updated=amy friends=3 jobs=4")
-	assert.Equal(t, "amy     |     0 |       1 |     1 |    3 | 66.7% | up", strings.Split(tableOf(ta.frame(), sprint.Friends), "\n")[2])
+	assert.Equal(t, "amy     |     0 |       1 |     8 |    3 | 66.7% | up", strings.Split(tableOf(ta.frame(), sprint.Friends), "\n")[2])
+}
+
+// A friend's width is her friend row's (the owner, 2026-10-02: "6/1 seems a bit
+// wrong -- need to setup width for friends? Start at 8 for each?"): friend sync
+// writes the row's width, 8 when the row has no width field; a width changed
+// in nova-config moves the friends table at the next sync (updated=<friend>);
+// and a row whose width is below 1 is refused in one line naming the
+// nova-config set that fixes it, with nothing written.
+func TestFriendSyncWritesTheConfiguredWidth(t *testing.T) {
+	t.Parallel()
+	ta, cfg := friendApp(t, "amy")
+	_, err := cfg.Insert(context.Background(), config.KindFriend, config.Row{Name: "cat", Fields: map[string]string{"slots": "2", "tiers": "flash", "width": "3"}}, "t")
+	require.NoError(t, err)
+	ta.ok("friend sync")
+	width := func() map[string]string {
+		var w whereView
+		ta.json("where", &w)
+		out := map[string]string{}
+		for f, row := range w.Tables[sprint.Friends] {
+			out[f] = row[sprint.FieldWidth]
+		}
+		return out
+	}
+	assert.Equal(t, map[string]string{"amy": "8", "cat": "3"}, width(), "amy's row has no width: the default; cat's is 3")
+
+	_, _, err = cfg.Update(context.Background(), config.KindFriend, "amy", map[string]string{"width": "2"}, "t")
+	require.NoError(t, err)
+	assert.Contains(t, ta.ok("friend sync"), "FRIEND-SYNC OK added=- removed=- updated=amy friends=2 jobs=0")
+	assert.Equal(t, map[string]string{"amy": "2", "cat": "3"}, width())
+
+	ta.a.friends = func(context.Context, string) ([]config.Row, error) {
+		return []config.Row{{Name: "amy", Fields: map[string]string{"width": "0"}}, {Name: "cat", Fields: map[string]string{"width": "5"}}}, nil
+	}
+	code, out, errs := ta.do("friend sync")
+	assert.Equal(t, 1, code)
+	assert.Empty(t, out)
+	assert.Equal(t, "nova-sprint friend sync: friend amy has width 0, and a friend's width is at least 1; run: nova-config friend set amy --width <n>; nothing was changed\n", errs)
+	assert.Equal(t, map[string]string{"amy": "2", "cat": "3"}, width(), "nothing was written")
 }
 
 // The one rule of a report's verdict: the first line of REPORT.md whose key is
@@ -185,6 +219,18 @@ func treeOf(t *testing.T, root string) map[string]int64 {
 	return out
 }
 
+// friendRows is a friendsFn over friend rows of the names given, each with
+// no width field (so the default width).
+func friendRows(names ...string) friendsFn {
+	return func(context.Context, string) ([]config.Row, error) {
+		rows := make([]config.Row, len(names))
+		for i, n := range names {
+			rows[i] = config.Row{Name: n, Fields: map[string]string{"slots": "2", "tiers": "flash"}}
+		}
+		return rows, nil
+	}
+}
+
 func addFriendRow(t *testing.T, cfg *config.Mem, name string) {
 	t.Helper()
 	_, err := cfg.Insert(context.Background(), config.KindFriend, config.Row{Name: name, Fields: map[string]string{"slots": "2", "tiers": "flash"}}, "t")
@@ -212,7 +258,9 @@ func (ta *testApp) friendStatus() map[string]string {
 // The table of two friends, one up and one held: the header, a rule, the friend
 // up first and then the one held, a rule and the summary row with its cell blank.
 // The empty store draws the header, its one rule and the summary row, as every
-// empty table does. Either way it stands after merge and before fleet.
+// empty table does. Either way it stands after work and before fleet in the default
+// frame, which hides the readers and merge tables, and after merge and before fleet
+// in the frame of where --all.
 func TestTheFriendsTableShowsAfterMergeAndBeforeFleet(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -226,10 +274,10 @@ func TestTheFriendsTableShowsAfterMergeAndBeforeFleet(t *testing.T) {
 			lines: []string{"friend sync", "friend beat friend-b", "friend down friend-a"},
 			want: "friends  | ready | working | width | done | ok%  | status\n" +
 				"---------+-------+---------+-------+------+------+-------\n" +
-				"friend-b |     0 |       0 |     1 |    0 | 0.0% | up\n" +
-				"friend-a |     0 |       0 |     1 |    0 | 0.0% | held\n" +
+				"friend-b |     0 |       0 |     8 |    0 | 0.0% | up\n" +
+				"friend-a |     0 |       0 |     8 |    0 | 0.0% | held\n" +
 				"---------+-------+---------+-------+------+------+-------\n" +
-				"         |     0 |       0 |     2 |    0 | 0.0% |"},
+				"         |     0 |       0 |    16 |    0 | 0.0% |"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -239,13 +287,17 @@ func TestTheFriendsTableShowsAfterMergeAndBeforeFleet(t *testing.T) {
 			}
 			frame := ta.frame()
 			assert.Equal(t, tc.want, tableOf(frame, sprint.Friends))
-			var order []string
-			for _, block := range strings.Split(frame, "\n\n") {
-				if title, _, ok := strings.Cut(block, " |"); ok && !strings.Contains(title, "\n") {
-					order = append(order, strings.TrimSpace(title))
+			titles := func(frame string) []string {
+				var order []string
+				for _, block := range strings.Split(frame, "\n\n") {
+					if title, _, ok := strings.Cut(block, " |"); ok && !strings.Contains(title, "\n") {
+						order = append(order, strings.TrimSpace(title))
+					}
 				}
+				return order
 			}
-			assert.Equal(t, []string{"work", "readers", "merge", "friends", "fleet"}, order)
+			assert.Equal(t, []string{"work", "friends", "fleet"}, titles(frame))
+			assert.Equal(t, []string{"work", "readers", "merge", "friends", "fleet"}, titles(ta.ok("where --all")))
 		})
 	}
 }
@@ -328,7 +380,7 @@ func TestTheFriendVerbsRefuse(t *testing.T) {
 	assert.Equal(t, 2, code)
 	assert.Contains(t, errs, "wants one friend")
 
-	ta.a.friends = func(context.Context, string) ([]string, error) { return nil, errors.New("connection refused") }
+	ta.a.friends = func(context.Context, string) ([]config.Row, error) { return nil, errors.New("connection refused") }
 	code, _, errs = ta.do("friend sync")
 	assert.Equal(t, exitCannotRead, code)
 	assert.Contains(t, errs, "the config cannot be read")
@@ -340,12 +392,12 @@ func TestTheFriendVerbsRefuse(t *testing.T) {
 func TestAFriendBeatsThroughTheServer(t *testing.T) {
 	t.Parallel()
 	r := newServerRig(t, "nova-sprint init --readers reader-a,reader-b --members m1:2")
-	r.a.friends = func(context.Context, string) ([]string, error) { return []string{"amy"}, nil }
+	r.a.friends = friendRows("amy")
 	r.boss("nova-sprint friend sync --root " + t.TempDir())
 	res := r.one("friend", "beat", "amy")
 	require.Equal(t, 0, res.Code, res.Stderr)
 	assert.Contains(t, res.Stdout, "FRIEND-BEAT OK amy")
-	assert.Contains(t, r.boss("nova-sprint where"), "amy     |     0 |       0 |     1 |    0 | 0.0% | up")
+	assert.Contains(t, r.boss("nova-sprint where"), "amy     |     0 |       0 |     8 |    0 | 0.0% | up")
 	for name, argv := range map[string][]string{
 		"no friend":       {"friend", "beat"},
 		"another actor":   {"friend", "beat", "amy", "--actor", "boss"},

@@ -52,7 +52,7 @@ func TestTheStoryTellsEveryReadersFinding(t *testing.T) {
 	ta.ok("take --as m1")
 	ta.ok("finish --as m1 s1-1.w1@1 --report one")
 	ta.ok("tick")
-	ta.ok("read --as reader-a --broken --finding 'the empty case is not handled'")
+	ta.ok("read --as reader-a --broken --finding 'line 3: the empty case is not handled'")
 	ta.ok("read --as reader-b --ok --finding 'looks fine'")
 	ta.ok("rework s1-1")
 	ta.ok("tick")

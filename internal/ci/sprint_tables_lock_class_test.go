@@ -22,12 +22,13 @@ import (
 // internal/sprint/TABLES.lock pins, as plain text a reader sees in a diff, every column
 // of the work, readers, merge and fleet tables and of the friends table where draws
 // (name, projection, fold, hidden flag, and the header label where one is set) in order,
-// and the order where shows the tables in. This test renders the same text from internal/sprint/schema.go and is red
+// the order where shows the tables in by default (view) and with --all (view-all).
+// This test renders the same text from internal/sprint/schema.go and is red
 // on any difference. A change to a table's shape is made by editing the lock file in the
 // same PR, which a read then sees.
 
 // renderTablesLock is the lock's body as schema.go has it now: one line per column,
-// then the view order.
+// then the view order, default and --all.
 func renderTablesLock() string {
 	var b strings.Builder
 	for _, t := range append((sprint.Names{}).Definitions(), sprint.FriendsDef()) {
@@ -48,6 +49,7 @@ func renderTablesLock() string {
 		}
 	}
 	fmt.Fprintf(&b, "view %s\n", strings.Join(sprint.ShownOrder, " "))
+	fmt.Fprintf(&b, "view-all %s\n", strings.Join(sprint.AllOrder, " "))
 	return b.String()
 }
 

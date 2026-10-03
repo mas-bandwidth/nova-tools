@@ -885,6 +885,16 @@ func (m *Mem) Release(_ context.Context, op OpRecord, commit bool) error {
 		if op.CallerOp != "" {
 			l.done[op.CallerOp] = op.Result
 		}
+		if op.Seat != nil {
+			rec, err := seatRecord(op.Seat)
+			if err != nil {
+				return err
+			}
+			if m.kv == nil {
+				m.kv = map[string]string{}
+			}
+			m.kv[keyCoordinator], m.kv[keySeat] = op.Seat.Holder, rec
+		}
 	}
 	l.fence = nil
 	return nil

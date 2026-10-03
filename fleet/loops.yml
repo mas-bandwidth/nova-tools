@@ -9,6 +9,11 @@
 #   ansible-playbook -i ./nova-inventory fleet/loops.yml --check --diff </dev/null 2>&1 | cat
 #   ansible-playbook -i ./nova-inventory fleet/loops.yml </dev/null 2>&1 | cat
 #
+# nova_loop_only names the records a run renders and restarts (a list, or one
+# comma-separated word: -e nova_loop_only=reader-a,reader-a-2); every other
+# unit on the machine is left as it is and nothing is retired. A name no
+# record of the run's machines carries is refused before anything is written.
+#
 # A unit runs as the machine's login. On darwin it is a LaunchAgent in the
 # login's GUI domain when the login has one, else a LaunchDaemon dropped to the
 # login (sudo); nova_launchd_domain (auto, gui, system) decides it per host. On
@@ -28,6 +33,16 @@
 # disk-guard every nova_disk_guard_every seconds, which keeps the disk from
 # filling (Go caches, loop logs, stopped pools, land clones, mirror temp packs;
 # docs/FLEET.md says what removes each and when).
+#
+# A unit whose file (or timer) changed is restarted, said as RESTART (WOULD-RESTART
+# under --check) with why. A member's (a record that runs nova-swarm member, a
+# reader's too) is never killed mid-card: its restart is the drain signal, SIGTERM
+# to the member alone (systemd KillMode=mixed; launchd's bootout), and the
+# supervisor waits for it up to nova_member_stop_timeout while it takes nothing
+# new, lets its running cards finish and reports them, then starts the new unit;
+# an idle member stops at once (nova-tools#5096 items 25, 26). On darwin the
+# play waits until launchd no longer holds the drained member before it loads
+# the new unit.
 - name: loop units from the loop records
   hosts: all
   gather_facts: true
@@ -40,7 +55,6 @@
     loop_other_dir: "{{ loop_user_dir if loop_system else loop_system_dir }}"
     loop_domain: "{{ 'system' if loop_system else 'gui/' ~ ansible_user_uid }}"
     loop_patterns: "{{ ['com.nova.loop.*.plist'] if loop_darwin else ['nova-loop-*.service', 'nova-loop-*.timer'] }}"
-    loop_names: "{{ loop_records | map(attribute='name') | list }}"
     # The disk guard every machine runs (nova-swarm disk-guard, docs/FLEET.md): a
     # periodic row this play adds beside the records, its --root each root a
     # record's argv names (--root <dir> or --root=<dir>), then
@@ -69,11 +83,28 @@
       width: 0
       enabled: true
       log: ~/nova-bench/loops/disk-guard.log
+    # the records this run renders and restarts: nova_loop_only's, else every one
+    loop_only: >-
+      {{ ((nova_loop_only.split(',') if nova_loop_only is string else nova_loop_only) | map('trim') | reject('equalto', '') | list)
+         if nova_loop_only else [] }}
     loop_records: >-
-      {{ nova_loops + ([loop_guard] if (nova_disk_guard | bool)
-         and 'disk-guard' not in (nova_loops | map(attribute='name') | list) else []) }}
+      {%- set with_guard = nova_loops + ([loop_guard] if (nova_disk_guard | bool)
+          and 'disk-guard' not in (nova_loops | map(attribute='name') | list) else []) -%}
+      {{ (with_guard | selectattr('name', 'in', loop_only) | list) if loop_only else with_guard }}
+    loop_names: "{{ loop_records | map(attribute='name') | list }}"
     loop_scope: "{{ 'system' if loop_system else 'user' }}"
     loop_runtime: { XDG_RUNTIME_DIR: "/run/user/{{ ansible_user_uid }}" }
+    # The records that run a member or a reader (nova-swarm member, after any
+    # env words): their units stop the member by draining it (SIGTERM, then
+    # nova_member_stop_timeout), never by killing its cards.
+    loop_member_names: >-
+      {%- set out = [] -%}
+      {%- for r in nova_loops -%}
+      {%- if ((r.argv | map('basename') | join(' ')) ~ ' ') is search('(^| )nova-swarm member ') -%}
+      {%- set _ = out.append(r.name) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
     # The mark every unit this play writes carries (its templates' first
     # comment); find's contains matches a line from its start, hence the .*.
     loop_mark: written by fleet/loops.yml from the loop record
@@ -85,6 +116,16 @@
           {{ inventory_hostname }} has no nova_loops: the loop kind was never applied to the store, and an absent
           list is not an empty one; run: nova-config apply --kind loop, then print the inventory again
         quiet: true
+
+    - name: every record nova_loop_only names is on one of this run's machines
+      ansible.builtin.assert:
+        that: loop_only | reject('in', loop_all) | list | length == 0
+        fail_msg: >-
+          nova_loop_only names {{ loop_only | reject('in', loop_all) | join(',') }}, which no loop record of this run's
+          machines is (their records: {{ loop_all | join(',') or 'none' }}); nothing was written
+        quiet: true
+      vars:
+        loop_all: "{{ ansible_play_hosts_all | map('extract', hostvars, 'nova_loops') | select('defined') | flatten | map(attribute='name') | list }}"
 
     - name: the fleet declares the Redis endpoint
       ansible.builtin.assert:
@@ -154,6 +195,7 @@
               + (item['keys'] | map('regex_replace', '^', '--require=') | list) + ['--']) if item['keys'] else [] }}
         loop_exec: "{{ loop_secrets + loop_argv }}"
         loop_log: "{{ item.log | regex_replace('^~/', nova_home ~ '/') }}"
+        loop_member: "{{ item.name in loop_member_names }}"
       loop: "{{ loop_records }}"
       loop_control: { label: "{{ item.name }}" }
       become: "{{ loop_system }}"
@@ -190,6 +232,7 @@
         loop_ours: "{{ loop_marked.results | map(attribute='files') | flatten | map(attribute='path') | list }}"
         loop_retire: >-
           {%- set out = [] -%}
+          {%- if not loop_only -%}
           {%- set ours = loop_marked.results | map(attribute='files') | flatten | map(attribute='path') | list -%}
           {%- for found in loop_present.results -%}
           {%- set here = found.item == loop_dir -%}
@@ -200,6 +243,7 @@
           {%- endif -%}
           {%- endfor -%}
           {%- endfor -%}
+          {%- endif -%}
           {{ out }}
 
     - name: the units of other tools, left as they are
@@ -208,7 +252,7 @@
       loop: >-
         {{ loop_present.results | map(attribute='files') | flatten | map(attribute='path')
            | reject('in', loop_ours) | reject('in', loop_retire | map(attribute='file') | list)
-           | reject('search', '/(com[.]nova[.]loop[.]|nova-loop-)(' ~ (loop_names | join('|') or '-') ~ ')[.](plist|service|timer)$') | list }}
+           | reject('search', '/(com[.]nova[.]loop[.]|nova-loop-)(' ~ (nova_loops | map(attribute='name') | join('|') or '-') ~ ')[.](plist|service|timer)$') | list }}
 
     - name: what --check would retire
       ansible.builtin.debug:
@@ -229,9 +273,22 @@
       become: "{{ loop_system }}"
       when: loop_darwin
 
+    - name: the units a run restarts, and why
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'WOULD-RESTART' if ansible_check_mode else 'RESTART' }} {{ item.name }} on {{ inventory_hostname }}: its unit file changed;
+          {{ ('a member: the restart drains it (SIGTERM: it takes no new card, lets its running cards finish and reports them), waiting up to '
+              ~ nova_member_stop_timeout ~ ' s, then the new unit starts') if item.name in loop_member_names else 'not a member: restarted at once' }}
+      loop: "{{ loop_records | selectattr('enabled') | list }}"
+      loop_control: { label: "{{ item.name }}" }
+      when: >-
+        ((loop_units.results + (loop_timers.results | default([]))) | selectattr('item.name', 'equalto', item.name) | selectattr('changed') | list | length > 0)
+        and (not loop_darwin or (loop_loaded.results | selectattr('item', 'equalto', item.name) | first).rc == 0)
+
     - name: unload the disabled and the changed (darwin)
       ansible.builtin.command: "launchctl bootout {{ loop_domain }}/com.nova.loop.{{ item.item }}"
       changed_when: true
+      register: loop_unloaded
       loop: "{{ loop_loaded.results | default([]) }}"
       loop_control: { label: "{{ item.item }}" }
       become: "{{ loop_system }}"
@@ -239,6 +296,23 @@
         loop_darwin and item.rc | default(1) == 0 and (
           not (loop_records | selectattr('name', 'equalto', item.item) | first).enabled
           or (loop_units.results | selectattr('item.name', 'equalto', item.item) | first).changed)
+
+    # A member drains on the bootout's SIGTERM: launchd holds it until it has
+    # reported its last card (ExitTimeOut), and its new unit loads only after.
+    - name: a member unloaded has drained before its unit loads again (darwin)
+      ansible.builtin.command: "launchctl print {{ loop_domain }}/com.nova.loop.{{ item.item.item }}"
+      register: loop_drained
+      until: loop_drained.rc != 0
+      retries: "{{ (nova_member_stop_timeout | int / 5) | round(0, 'ceil') | int }}"
+      delay: 5
+      changed_when: false
+      # the non-zero exit is the answer it waits for ("launchd no longer holds it"),
+      # never a failure; a member still held after every retry is the failure
+      failed_when: loop_drained.rc == 0
+      loop: "{{ loop_unloaded.results | default([]) | selectattr('changed', 'defined') | selectattr('changed') | list }}"
+      loop_control: { label: "{{ item.item.item }}" }
+      become: "{{ loop_system }}"
+      when: loop_darwin and not ansible_check_mode and item.item.item in loop_member_names
 
     - name: load the enabled (darwin)
       ansible.builtin.command: "launchctl bootstrap {{ loop_domain }} {{ loop_dir }}/com.nova.loop.{{ item.name }}.plist"
@@ -312,4 +386,4 @@
           LOOPS host={{ inventory_hostname }} place={{ loop_dir }} records={{ loop_records | length }}
           enabled={{ loop_records | selectattr('enabled') | list | length }}
           written={{ loop_units.results | default([]) | selectattr('changed') | list | length }}
-          retired={{ loop_retire | length }}{{ ' (check: nothing changed)' if ansible_check_mode else '' }}
+          retired={{ loop_retire | length }}{{ (' only=' ~ (loop_only | join(','))) if loop_only else '' }}{{ ' (check: nothing changed)' if ansible_check_mode else '' }}

@@ -16,6 +16,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
+	"github.com/mas-bandwidth/nova-tools/internal/gocache"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
@@ -36,7 +37,7 @@ import (
 // (fleet/loops.yml adds the row to every machine), one pass, and each pass:
 //
 //   - holds every Go build cache it knows under --cache-max-gb by the member's own trim
-//     (lazyclean.go, cacheTrim): entries used longest ago first, never one used in the last
+//     (internal/gocache): entries used longest ago first, never one used in the last
 //     two hours, so a build running against the cache never loses what it is reading;
 //   - empties a module cache over --modcache-max-gb, as go clean -modcache does, only
 //     while no go command runs on the machine and no process holds a file in it;
@@ -327,26 +328,26 @@ func rotate(path string, keep int, dry bool) (freed int64, err error) {
 
 // buildCaches holds every Go build cache under the cap: one walk measures it, and one more,
 // only when it is over, removes its entries used longest ago until it is under the cap less
-// a fifth (cacheTrim, the member's trim, with the whole cache in one round).
+// a fifth (internal/gocache, the member's trim, with the whole cache in one round).
 func (g *guard) buildCaches() {
 	for _, dir := range g.caches {
 		if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
 			continue
 		}
-		t := &cacheTrim{}
-		b := cacheBounds{limit: g.cacheMax, slack: g.cacheMax / 5, dirs: cacheSubdirs, remove: math.MaxInt}
-		if c := t.round(dir, g.now, b); c.size <= g.cacheMax { // measures, removes nothing
+		t := &gocache.Trim{}
+		b := gocache.Bounds{Limit: g.cacheMax, Slack: g.cacheMax / 5, Dirs: gocache.Subdirs, Remove: math.MaxInt}
+		if c := t.Round(dir, g.now, b); c.Size <= g.cacheMax { // measures, removes nothing
 			continue
 		}
 		if g.dry {
-			g.say(fmt.Sprintf("TRIMMED go-build %s size=%d cap=%d", oneline.Field(dir), t.total(), g.cacheMax))
+			g.say(fmt.Sprintf("TRIMMED go-build %s size=%d cap=%d", oneline.Field(dir), t.Total(), g.cacheMax))
 			continue
 		}
-		c := t.round(dir, g.now, b)
-		g.freed += c.freed
-		g.say(fmt.Sprintf("TRIMMED go-build %s freed=%d size=%d cap=%d", oneline.Field(dir), c.freed, c.size, g.cacheMax))
-		if c.failed > 0 {
-			g.fail(fmt.Sprintf("the go build cache %s: %d entries were not removed (%s)", oneline.Field(dir), c.failed, oneline.Escape(c.why)))
+		c := t.Round(dir, g.now, b)
+		g.freed += c.Freed
+		g.say(fmt.Sprintf("TRIMMED go-build %s freed=%d size=%d cap=%d", oneline.Field(dir), c.Freed, c.Size, g.cacheMax))
+		if c.Failed > 0 {
+			g.fail(fmt.Sprintf("the go build cache %s: %d entries were not removed (%s)", oneline.Field(dir), c.Failed, oneline.Escape(c.Why)))
 		}
 	}
 }
@@ -829,8 +830,8 @@ func cmdDiskGuard(args []string, stdout, stderr io.Writer) int {
 	} else if cache, err := os.UserCacheDir(); err == nil {
 		g.landDir = filepath.Join(cache, "nova-sprint", "land")
 	}
-	gocache, gomod := loginGoCaches(home)
-	g.caches, g.modCaches = []string{gocache}, []string{gomod}
+	buildCache, gomod := loginGoCaches(home)
+	g.caches, g.modCaches = []string{buildCache}, []string{gomod}
 	for _, r := range g.roots {
 		g.caches = append(g.caches, filepath.Join(r, "cache", "go-build"))
 		g.modCaches = append(g.modCaches, filepath.Join(r, "cache", "go-mod"))

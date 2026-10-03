@@ -46,7 +46,7 @@ func TestAckOfBrokenReadsIsRefused(t *testing.T) {
 	// open per card and cause: the second broken read writes no second
 	require.Len(t, nids, 1, "open %v", nids)
 	r := p.do("ack", AckStep(sprint.AckReq{Notes: nids, Reason: "looked"}))
-	if len(r.Moved) != 0 || len(r.Refused) != 1 || !strings.Contains(r.Refused[0].Why, "nova-sprint rework --group") {
+	if len(r.Moved) != 0 || len(r.Refused) != 1 || !strings.Contains(r.Refused[0].Why, "nova-sprint rework s1-1") {
 		assert.Fail(t, fmt.Sprintf("ack of the broken reads: %+v", r))
 	}
 	o := p.openOn("s1-1")

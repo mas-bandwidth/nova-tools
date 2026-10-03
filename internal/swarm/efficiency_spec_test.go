@@ -28,8 +28,7 @@ func TestEfficiencyCardSectionNamesItsTwoMeasuredOperations(t *testing.T) {
 		"REPEATS: one full clone of the repository per job",
 		"WAITS ON: a deadline, a sampler, and a person",
 		// REPEATS: the shape the card points at.
-		"--reference-if-able",
-		"--dissociate",
+		"--shared",
 		"86,794 cache-read tokens per tool call",
 		// WAITS ON: the deadline and the sampler.
 		"--deadline",

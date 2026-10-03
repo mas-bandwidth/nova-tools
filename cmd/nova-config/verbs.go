@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/config"
@@ -47,13 +48,13 @@ var kindExamples = []struct{ kind, verb, line string }{
 	{"sprint", "set", "nova-config sprint set --coordinator f1 --as a1 --file try.json"},
 	{"sprint", "show", "nova-config sprint show --file try.json"},
 	{"sprint", "history", "nova-config sprint history --file try.json"},
-	{"loop", "add", `nova-config loop add reader-1 --machine m1 --argv '["nova-swarm","member","--reader"]' --keepalive true --width 8 --as a1 --file try.json`},
-	{"loop", "set", "nova-config loop set reader-1 --width 16 --as a1 --file try.json"},
+	{"loop", "add", `nova-config loop add reader-m1 --machine m1 --argv '["nova-swarm","member","--as","reader-m1","--reader"]' --keepalive true --as a1 --file try.json`},
+	{"loop", "set", "nova-config loop set reader-m1 --enabled false --as a1 --file try.json"},
 	{"loop", "list", "nova-config loop list --file try.json"},
-	{"loop", "show", "nova-config loop show reader-1 --file try.json"},
-	{"loop", "history", "nova-config loop history reader-1 --file try.json"},
+	{"loop", "show", "nova-config loop show reader-m1 --file try.json"},
+	{"loop", "history", "nova-config loop history reader-m1 --file try.json"},
 	{"route", "add", "nova-config route add flash-a --tier flash --provider p1 --model small-1 --deadline 900 --tokens 200000 --as a1 --file try.json"},
-	{"route", "set", "nova-config route set flash-a --price_input 0.30 --price_output 1.20 --as a1 --file try.json"},
+	{"route", "set", "nova-config route set flash-a --price_input 0.30 --price_output 1.20 --note 'prices from the provider page' --as a1 --file try.json"},
 	{"route", "list", "nova-config route list --file try.json"},
 	{"route", "show", "nova-config route show flash-a --file try.json"},
 	{"route", "history", "nova-config route history flash-a --file try.json"},
@@ -63,7 +64,7 @@ var kindExamples = []struct{ kind, verb, line string }{
 	{"tier", "history", "nova-config tier history flash --file try.json"},
 	// a row another names is held (the sprint names f1, the fleet m1, the tier
 	// flash-a): the run test clears those fields before these lines
-	{"loop", "remove", "nova-config loop remove reader-1 --as a1 --file try.json"},
+	{"loop", "remove", "nova-config loop remove reader-m1 --as a1 --file try.json"},
 	{"friend", "remove", "nova-config friend remove f1 --as a1 --file try.json"},
 	{"route", "remove", "nova-config route remove flash-a --as a1 --file try.json"},
 	{"machine", "remove", "nova-config machine remove m1 --as a1 --file try.json"},
@@ -115,6 +116,12 @@ func verbExtra(verb string) string {
 		if k, ok := config.Lookup(words[0]); ok && words[1] == "add" {
 			more = requiredLine(k)
 		}
+		if words[0] == config.KindRoute && (words[1] == "add" || words[1] == "set") {
+			more += noteMore(words[0])
+		}
+		if words[0] == config.KindMachine && (words[1] == "add" || words[1] == "set") {
+			more += noteMore(words[0])
+		}
 		if words[0] == config.KindTier && words[1] == "remove" {
 			more = "a tier row is made by migrate and never removed: set its --routes instead\n"
 		}
@@ -138,6 +145,17 @@ func verbExtra(verb string) string {
 	return out
 }
 
+// noteMore is what a route's and a machine's add and set -h say of the note:
+// where it is written, how it is cleared and read, and the rule on a disabled
+// route.
+func noteMore(kind string) string {
+	line := "the note is why a choice was made, and its history says who wrote it and when: show prints it whole, list cuts it to " + strconv.Itoa(config.ListNoteRunes) + " characters\n"
+	if kind == config.KindRoute {
+		line += "a disabled route carries its reason: --enabled false is refused without --note '<the measured reason>' (--enabled true needs none)\n"
+	}
+	return line
+}
+
 // requiredLine names the fields add refuses a row without.
 func requiredLine(k *config.Kind) string {
 	var req []string
@@ -154,7 +172,7 @@ func requiredLine(k *config.Kind) string {
 
 // inventoryMore is inventory's own help: what it prints and how ansible
 // reads it.
-const inventoryMore = `prints an Ansible dynamic JSON inventory of the applied state (the Redis view apply writes, never Postgres): groups all and benches are every machine; coordinator, store and store_deployer (the coordinator machine) come from the fleet row; runners is every machine with at least one runner; every host's variables are under _meta.hostvars: ansible_user, nova_seat, slots, runners, nova_redis_port, nova_redis_addr and the explicit nova_pg_dsn, nova_os and nova_arch from the machine's beat when it has one, and nova_loops, its loop records (each argv with the loop's width as its --width), once the loop kind has been applied; all.vars holds nova_store and nova_config_rev
+const inventoryMore = `prints an Ansible dynamic JSON inventory of the applied state (the Redis view apply writes, never Postgres): groups all and benches are every machine; coordinator, store and store_deployer (the coordinator machine) come from the fleet row; runners is every machine with at least one runner; every host's variables are under _meta.hostvars: ansible_user, nova_seat, slots, runners, nova_redis_port, nova_redis_addr and the explicit nova_pg_dsn, nova_os and nova_arch from the machine's beat when it has one, and nova_loops, its loop records (each argv as the loop was set, without a width: a member's width, and a reader's, is its machine's), once the loop kind has been applied; all.vars holds nova_store and nova_config_rev
 first run, with no store: nova-config inventory --fixture fleet/testdata/inventory-fixture.yml
 against the store: export NOVA_SPRINT_REDIS=127.0.0.1:6379; nova-config inventory
 ansible's -i wants an executable file whose first line is #!/bin/sh at column one; write it with these two commands, then run ansible with ANSIBLE_INVENTORY_UNPARSED_FAILED=true, because without it a failed inventory is an empty inventory and the play does nothing (ansible.cfg: [inventory] unparsed_is_failed = True):

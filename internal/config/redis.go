@@ -18,7 +18,8 @@ import (
 // The Redis keys apply writes, per kind. A friend's keys are the ones the
 // nova-sprint verbs wrote by hand until now, through the same Redis
 // Functions (internal/nsprint/fn/lua: capacity.lua's ns_capacity_desired
-// for slots and tiers, friend_roles.lua's ns_friend_roles for roles). Her
+// for slots and tiers, friend_roles.lua's ns_friend_roles for roles), and her
+// width, a plain field of friend:<f>:desired no function touches. Her
 // logins and wake path are what she would just know: her own presence
 // writes them, apply never touches friends:login or friend:<f>:wakepath. A
 // machine's ceiling goes through ns_capacity_machine; its registry row has
@@ -230,7 +231,7 @@ func (a *RedisApplier) readFriends(ctx context.Context) (map[string]View, int64,
 	roles := make([]*redis.StringCmd, len(names))
 	beats := make([]*redis.StringCmd, len(names))
 	for i, f := range names {
-		desired[i] = pipe.HMGet(ctx, "friend:"+f+":desired", "slots", "tiers")
+		desired[i] = pipe.HMGet(ctx, "friend:"+f+":desired", "slots", "tiers", "width")
 		roles[i] = pipe.HGet(ctx, "friend:"+f+":roles", "roles")
 		beats[i] = pipe.HGet(ctx, FriendBeatKey(f), "host")
 	}
@@ -252,6 +253,7 @@ func (a *RedisApplier) readFriends(ctx context.Context) (map[string]View, int64,
 			"slots": intText(str(d, 0)),
 			"tiers": sortedList(str(d, 1)),
 			"roles": sortedList(roles[i].Val()),
+			"width": intText(str(d, 2)),
 		}
 	}
 	return views, revValue(rev), nil
@@ -410,11 +412,33 @@ func (a *RedisApplier) writeFriend(ctx context.Context, row Row, prev View, acto
 	default:
 		return fmt.Errorf("redis: friend %s slots: %s", f, strings.Join(words, " "))
 	}
-	// 2. roles (ns_friend_roles: the actor must be a coordinator, or nobody
-	// is one yet and this row makes the first; the sprint row's coordinator
-	// carries the role here, derived by Kind.Derive).
-	if prev == nil && row.Fields["roles"] != "" || prev != nil && prev["roles"] != row.Fields["roles"] {
-		reply, err := a.Client.FCall(ctx, "ns_friend_roles", nil, f, row.Fields["roles"], actor, idem).Result()
+	// 2. her width, the desired hash's own field beside slots and tiers that
+	// ns_capacity_desired neither reads nor writes, and 3. roles
+	// (ns_friend_roles: the actor must be a coordinator, or nobody is one
+	// yet and this row makes the first; the sprint row's coordinator carries
+	// the role here, derived by Kind.Derive): each only when it differs,
+	// both in one round trip, after slots registered her.
+	writeWidth := prev == nil || prev["width"] != row.Fields["width"]
+	writeRoles := prev == nil && row.Fields["roles"] != "" || prev != nil && prev["roles"] != row.Fields["roles"]
+	if !writeWidth && !writeRoles {
+		return nil
+	}
+	pipe := a.Client.Pipeline()
+	var roles *redis.Cmd
+	if writeWidth {
+		pipe.HSet(ctx, "friend:"+f+":desired", "width", row.Fields["width"])
+	}
+	if writeRoles {
+		roles = pipe.FCall(ctx, "ns_friend_roles", nil, f, row.Fields["roles"], actor, idem)
+	}
+	// An error of the width's own is returned here; one the roles call
+	// carries (its refusal, or the connection's, which every command of the
+	// pipe carries) is read below with the roles call's words.
+	if err := redisconn.Exec(ctx, pipe); err != nil && (roles == nil || roles.Err() == nil) {
+		return fmt.Errorf("redis: friend %s width: %w", f, err)
+	}
+	if roles != nil {
+		reply, err := roles.Result()
 		if err != nil {
 			if strings.Contains(err.Error(), "ACTOR") {
 				return &RefusedError{Err: ErrActor, Detail: fmt.Sprintf("roles of %s: --as %s is not a registered friend; apply as a friend that holds the coordinator role", f, actor)}

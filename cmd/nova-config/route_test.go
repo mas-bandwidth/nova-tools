@@ -14,7 +14,7 @@ import (
 // noPrices is a route line's price sheet when none is set: every price a dash,
 // reasoning billed as output, no threshold, metered.
 const noPrices = " price_input=- price_cache_read=- price_cache_write=- price_output=- reasoning_as_output=true long_context=0 price_input_long=- " +
-	"price_output_long=- price_request=- billing=metered gateway_percent=- price_source=- price_as_of=-"
+	"price_output_long=- price_request=- billing=metered gateway_percent=- price_source=- price_as_of=- note=-"
 
 func TestRouteVerbsEndToEndOnTheFake(t *testing.T) {
 	t.Parallel()
@@ -69,7 +69,7 @@ func TestRouteVerbsEndToEndOnTheFake(t *testing.T) {
 			args: []string{"route", "show", "pro-deepseek-opencode"},
 			out: "ROUTE name=pro-deepseek-opencode tier=pro provider=opencode model=deepseek-v4 tokens=400000 deadline=1800 enabled=true price_input=0.27 price_cache_read=0.07 " +
 				"price_cache_write=- price_output=1.1 reasoning_as_output=true long_context=128000 price_input_long=0.54 price_output_long=2.2 price_request=- billing=metered " +
-				"gateway_percent=5 price_source=https://example.com/pricing price_as_of=2026-10-01 created=",
+				"gateway_percent=5 price_source=https://example.com/pricing price_as_of=2026-10-01 note=- created=",
 			pre: true,
 		},
 		{
@@ -91,9 +91,9 @@ func TestRouteVerbsEndToEndOnTheFake(t *testing.T) {
 			errs: "route pro-grok-openrouter has --deadline 0; want the seconds a card on it may run, above 0; run: nova-config route show pro-grok-openrouter",
 		},
 		{
-			name: "set takes a route out of the deal",
-			args: []string{"route", "set", "pro-grok-openrouter", "--enabled", "false"},
-			out:  "CONFIG SET kind=route name=pro-grok-openrouter rev=5 changed=enabled\n",
+			name: "set takes a route out of the deal, with its reason",
+			args: []string{"route", "set", "pro-grok-openrouter", "--enabled", "false", "--note", "not measured yet"},
+			out:  "CONFIG SET kind=route name=pro-grok-openrouter rev=5 changed=enabled,note\n",
 		},
 		{
 			name: "history names every change",
@@ -204,7 +204,7 @@ func TestTierVerbsEndToEndOnTheFake(t *testing.T) {
 	for _, args := range [][]string{
 		{"route", "add", "a", "--tier", "flash", "--provider", "p", "--model", "m", "--deadline", "60"},
 		{"route", "add", "b", "--tier", "flash", "--provider", "p", "--model", "m", "--deadline", "60"},
-		{"route", "add", "off", "--tier", "flash", "--provider", "p", "--model", "m", "--deadline", "60", "--enabled", "false"},
+		{"route", "add", "off", "--tier", "flash", "--provider", "p", "--model", "m", "--deadline", "60", "--enabled", "false", "--note", "off for the test"},
 	} {
 		code, _, errs := h.run(t, args...)
 		require.Equal(t, 0, code, errs)

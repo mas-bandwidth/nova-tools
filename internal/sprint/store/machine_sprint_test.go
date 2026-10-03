@@ -237,7 +237,7 @@ func (w *crWorld) round(r int) {
 				if w.rng.Float64() < 0.1 {
 					v = "broken"
 				}
-				h.run(ReadStep(sprint.ReadReq{As: rd, Verdict: v, Finding: "f", Sel: sprint.Sel{IDs: []string{c.ID}}, Who: rd}))
+				h.run(ReadStep(sprint.ReadReq{As: rd, Verdict: v, Finding: "f:1", Sel: sprint.Sel{IDs: []string{c.ID}}, Who: rd}))
 			}
 		}
 		h.clean(fmt.Sprintf("round %d after the readers", r))

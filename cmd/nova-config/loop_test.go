@@ -39,7 +39,7 @@ func TestLoopVerbsEndToEndOnTheFake(t *testing.T) {
 	}{
 		{
 			name: "add a member loop kept alive",
-			args: []string{"loop", "add", "member-m1", "--machine", "m1", "--argv", `["/bin/member","--as","m1"]`, "--keepalive", "true", "--seat", "s-m1", "--keys", "B_KEY,A_KEY", "--width", "2"},
+			args: []string{"loop", "add", "member-m1", "--machine", "m1", "--argv", `["/bin/member","--as","m1"]`, "--keepalive", "true", "--seat", "s-m1", "--keys", "B_KEY,A_KEY"},
 			out:  "CONFIG ADD kind=loop name=member-m1 rev=3\n",
 		},
 		{
@@ -50,23 +50,23 @@ func TestLoopVerbsEndToEndOnTheFake(t *testing.T) {
 		{
 			name: "list prints every field in declaration order",
 			args: []string{"loop", "list"},
-			out:  "LOOP name=member-m1 machine=m1 argv=[\"/bin/member\",\"--as\",\"m1\"] seat=s-m1 keys=A_KEY,B_KEY every=0 keepalive=true width=2 enabled=true\nLOOP name=refresh machine=m1 argv=[\"/bin/refresh\",\"--once\"] seat=- keys=- every=60 keepalive=false width=0 enabled=true\nCONFIG LIST kind=loop rows=2\n",
+			out:  "LOOP name=member-m1 machine=m1 argv=[\"/bin/member\",\"--as\",\"m1\"] seat=s-m1 keys=A_KEY,B_KEY every=0 keepalive=true enabled=true\nLOOP name=refresh machine=m1 argv=[\"/bin/refresh\",\"--once\"] seat=- keys=- every=60 keepalive=false enabled=true\nCONFIG LIST kind=loop rows=2\n",
 		},
 		{
 			name: "show carries the stamps",
 			args: []string{"loop", "show", "refresh"},
-			out:  "LOOP name=refresh machine=m1 argv=[\"/bin/refresh\",\"--once\"] seat=- keys=- every=60 keepalive=false width=0 enabled=true created=",
+			out:  "LOOP name=refresh machine=m1 argv=[\"/bin/refresh\",\"--once\"] seat=- keys=- every=60 keepalive=false enabled=true created=",
 			pre:  true,
 		},
 		{
 			name: "machine show lists the machine's loops",
 			args: []string{"machine", "show", "m1"},
-			out:  "MACHINE name=m1 user=u seat=s slots=160 runners=0 width=4 created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z loops=member-m1,refresh beat=none\n",
+			out:  "MACHINE name=m1 user=u seat=s slots=160 runners=0 width=4 tla=false note=- created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z loops=member-m1,refresh beat=none\n",
 		},
 		{
 			name: "a machine with no loop says so",
 			args: []string{"machine", "show", "m2"},
-			out:  "MACHINE name=m2 user=u seat=s slots=160 runners=0 width=4 created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z loops=- beat=none\n",
+			out:  "MACHINE name=m2 user=u seat=s slots=160 runners=0 width=4 tla=false note=- created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z loops=- beat=none\n",
 		},
 		{
 			name: "set that leaves a loop both periodic and kept alive is refused",
@@ -195,28 +195,29 @@ func TestApplyKindLoopWritesTheViewAndStatusShowsParity(t *testing.T) {
 	assert.Contains(t, out, " loop_applied=2 ")
 }
 
-// A reader loop's width is one value: loop set <name> --width <n> changes the
-// command loop show prints and the argv the inventory hands the plays, with
-// the argv as typed left alone (config.LoopCommand).
-func TestAReaderLoopsWidthIsSetAsOneValue(t *testing.T) {
+// A loop carries no width: a nova-swarm member's, a reader's too, is its
+// machine row's (machine set <m> --width <n>), so an argv that spells --width
+// is refused at add and at set, naming the rule, and the row is left as it was.
+func TestALoopArgvWithAWidthIsRefused(t *testing.T) {
 	t.Parallel()
 
 	h := loopHarness(t, "m1")
-	h.env["NOVA_MACHINE"] = "m1"
-	code, _, errs := h.run(t, "loop", "add", "reader-1", "--machine", "m1", "--argv", `["nova-swarm","member","--reader","--width","8"]`, "--keepalive", "true")
-	require.Equal(t, 0, code, errs)
-	code, out, errs := h.run(t, "loop", "show", "reader-1")
-	require.Equal(t, 0, code, errs)
-	assert.Contains(t, out, ` width=0 `)
-	assert.Contains(t, out, ` command=["nova-swarm","member","--reader","--width","8"]`, "width 0 runs the argv as typed")
+	code, _, errs := h.run(t, "loop", "add", "reader-m1", "--machine", "m1", "--argv", `["nova-swarm","member","--as","reader-m1","--reader","--width","8"]`, "--keepalive", "true")
+	require.Equal(t, 2, code, errs)
+	assert.Contains(t, errs, "loop reader-m1: its argv carries --width, and a nova-swarm member's width (a reader's too) is its machine row's")
+	assert.Contains(t, errs, "machine set <m> --width <n>")
+	code, _, _ = h.run(t, "loop", "show", "reader-m1")
+	assert.NotEqual(t, 0, code, "the refused add wrote a row")
 
-	code, out, errs = h.run(t, "loop", "set", "reader-1", "--width", "16")
+	code, _, errs = h.run(t, "loop", "add", "reader-m1", "--machine", "m1", "--argv", `["nova-swarm","member","--as","reader-m1","--reader"]`, "--keepalive", "true")
 	require.Equal(t, 0, code, errs)
-	assert.Equal(t, "CONFIG SET kind=loop name=reader-1 rev=3 changed=width\n", out)
-	code, out, errs = h.run(t, "loop", "show", "reader-1")
+	code, _, errs = h.run(t, "loop", "set", "reader-m1", "--argv", `["nova-swarm","member","--as","reader-m1","--reader","--width=8"]`)
+	require.Equal(t, 1, code, errs)
+	assert.Contains(t, errs, "its argv carries --width")
+	code, out, errs := h.run(t, "loop", "show", "reader-m1")
 	require.Equal(t, 0, code, errs)
-	assert.Contains(t, out, ` argv=["nova-swarm","member","--reader","--width","8"] `, "the argv as typed is kept")
-	assert.Contains(t, out, ` command=["nova-swarm","member","--reader","--width","16"]`, "the command runs the field")
+	assert.Contains(t, out, ` argv=["nova-swarm","member","--as","reader-m1","--reader"] `, "the row as it was")
+	assert.NotContains(t, out, "width=", "a loop has no width field")
 
 	code, _, errs = h.run(t, "fleet", "set", "--redis_port", "6380", "--pg_dsn", dsn)
 	require.Equal(t, 0, code, errs)
@@ -225,8 +226,8 @@ func TestAReaderLoopsWidthIsSetAsOneValue(t *testing.T) {
 		require.Equal(t, 0, code, "%s\n%s", out, errs)
 	}
 	// the fake Redis writes a row's fields; apply's derived log field is the real applier's (redis.go)
-	h.redis.views["loop"]["reader-1"]["log"] = config.LoopLog("reader-1")
+	h.redis.views["loop"]["reader-m1"]["log"] = config.LoopLog("reader-m1")
 	code, out, errs = h.run(t, "inventory", "--host", "m1")
 	require.Equal(t, 0, code, errs)
-	assert.Contains(t, strings.Join(strings.Fields(out), ""), `"argv":["nova-swarm","member","--reader","--width","16"]`, "the plays render the field's width:\n%s", out)
+	assert.Contains(t, strings.Join(strings.Fields(out), ""), `"argv":["nova-swarm","member","--as","reader-m1","--reader"]`, "the plays render the argv the row holds, with no width:\n%s", out)
 }

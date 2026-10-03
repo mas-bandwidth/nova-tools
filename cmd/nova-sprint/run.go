@@ -132,6 +132,7 @@ func (a *app) cmdTick(args []string, stdout, stderr io.Writer) int {
 	}
 	ctx := context.Background()
 	res, err := st.Tick(ctx)
+	err = noSprintYet(err)
 	line := sprintLine(ctx, st)
 	if c.json {
 		o := machineOut{Tick: &res, Notes: res.Notes(), Sprint: line, Moved: res.Moved()}
@@ -228,6 +229,7 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 		fs.BoolVar(&land, "land", false, "also land what the readers passed, every "+LandEvery.String()+", one landing at a time, as the coordinator (land's defaults: each card's REPO: and BASE: lines); land is then not run by hand")
 		fs.StringVar(&profile, "cpuprofile", "", "write a CPU profile of the loop's first ticks to this file (see --profile-ticks)")
 		fs.IntVar(&profileTicks, "profile-ticks", 10, "the ticks --cpuprofile covers; the profile is written after the last of them")
+		fs.DurationVar(&a.tickDeadline, "tick-deadline", TickDeadline, "give up a tick that has not ended in this long: print the stacks and exit so the supervisor starts the loop again (0: wait for ever)")
 	})
 	if st == nil {
 		return code
@@ -283,6 +285,50 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 // exitReplaced is run's exit when its binary was replaced under it: not 0, so
 // a supervisor that restarts only a failed loop restarts it too.
 const exitReplaced = 3
+
+// TickDeadline is how long run waits for one tick before it gives the tick up
+// (--tick-deadline). A tick takes tens of milliseconds; on 2026-10-02 one whose
+// plan never ended held serial, the server's one line of control, for half an
+// hour while its heap grew to 244 GB, and no verb was answered
+// (nova-tools#5122).
+const TickDeadline = 10 * time.Second
+
+// exitTickDeadline is run's exit when a tick ran past its deadline: not 0, so
+// its supervisor starts it again.
+const exitTickDeadline = 4
+
+// tickWithin runs one tick, begun at began, and waits for it at most d (0 waits
+// for ever). Past d it says so on stdout and writes every goroutine's stack to
+// stderr (the stack names the planner the tick is in), and returns over: the
+// tick's goroutine cannot be stopped and still holds the plan it is making, so
+// the caller ends the process, and the supervisor starts it again, rather than
+// hold serial for ever. The plan is never written; a write already in flight is
+// the store's fence's to finish or repair.
+func (a *app) tickWithin(tick func() (store.TickResult, error), d time.Duration, began time.Time, stdout, stderr io.Writer) (res store.TickResult, err error, over bool) {
+	if d <= 0 {
+		res, err = tick()
+		return res, err, false
+	}
+	type ended struct {
+		res store.TickResult
+		err error
+	}
+	done := make(chan ended, 1)
+	go func() {
+		res, err := tick()
+		done <- ended{res, err}
+	}()
+	select {
+	case e := <-done:
+		return e.res, e.err, false
+	case <-a.after(d):
+		fmt.Fprintf(stdout, "%s TICK DEADLINE the tick begun at %s did not end within %s: its plan is given up and run exits %d so its supervisor starts it again; the stacks follow on stderr\n",
+			a.now().Format("15:04:05"), began.Format("15:04:05"), d, exitTickDeadline)
+		// ignored: the process is about to exit, and the line above says why
+		_ = pprof.Lookup("goroutine").WriteTo(stderr, 2)
+		return store.TickResult{}, nil, true
+	}
+}
 
 // binaryStamp is the binary file this process was started from, as it is on disk
 // now: its path, size and modification time; "" when it cannot be read.
@@ -363,7 +409,12 @@ func (a *app) runLoop(ctx context.Context, st *store.Store, max, n int, stdout, 
 		began := a.now()
 		// one tick, or one worker's batch, at a time (serve.go)
 		a.serial.Lock()
-		res, err := st.Tick(ctx)
+		res, err, over := a.tickWithin(func() (store.TickResult, error) { return st.Tick(ctx) }, a.tickDeadline, began, stdout, stderr)
+		if over {
+			// serial stays held: the tick's goroutine is still in its plan
+			a.exit(exitTickDeadline)
+			return false
+		}
 		a.serial.Unlock()
 		if a.ticked != nil {
 			a.ticked(i+1, began, why)

@@ -287,6 +287,7 @@ SELFTALK FAIL ./pages/RULES.md:8: INSTALLATION VERDICT-IDIOM match="dead as a pr
 ## nova-fuse
 
 ```
+nova-fuse version    print this build identity (--version also accepted)
 nova-fuse init --box <path>                              make an empty box where none is; never replaces one
 nova-fuse status --box <path> [--max <n>]                what is blown, and since when (reports; never gate on it)
 nova-fuse check --box <path> [surface]                   may I read? -- act only on exit 0
@@ -746,7 +747,7 @@ usage:
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
   nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--frame <file>] [--identity <owner>,<name>,<email>]
   nova-swarm member    --as <name> --server <host:port> --harness <path> --root <dir> [--slots <dir>] [--results-root <dir>] [--width <n>] [--model <provider/model>] [--deadline <duration>] [--tokens <n>|unmetered] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--no-wall] [--gh <path>] [--pass <NAME,...>] [--disk-floor <GiB>] [--identity <owner>,<name>,<email>]
-                       (this machine as one member of a sprint's fleet, every sprint verb sent to the sprint's server --server, the run loop nova-sprint run --listen started, so this machine opens no store: beat, queue, push and finish what ended (the child's commit to origin's sprint branch, from outside the wall, never forced; the pull request the child's gh pr create asked for, opened with --gh), each finish judged ok, failed or reaped (docs/SPEC-CARD-CONTRACT.md), take to the width its fleet row names (read with its queue every tick; --width is a reader's, or a twin's override), each card one native child with its frame and an allowlist environment, on the model, budget and deadline its packet's route names (the card decides: the deal draws a route of its tier, or its model: pin; --model, --tokens and --deadline are the override a card with no route runs on); --pass names the secrets a child is handed, the loop record's nova-secrets keys: a loop whose harness reads its provider key from the environment carries --pass <KEY>, else its children start without it and fail at the provider; --reader runs the readers-table loop, each read on the route the ask drew from the reader tier unless --model, --tokens or --deadline is given; --identity names the pool identity every child commits under, from the loop's nova-config argv, else the pool's identity.tsv; a launch it is done with leaves no checkout behind (a failed one keeps its directory, the newest 5 of the pool), and it starts no card while the slots' volume has less free than --disk-floor GiB, default 10; a card it will not start is finished staging refused: <why>, so the sprint deals it to another member and says why)
+                       (this machine as one member of a sprint's fleet, every sprint verb sent to the sprint's server --server, the run loop nova-sprint run --listen started, so this machine opens no store: beat, queue, push and finish what ended (the child's commit to origin's sprint branch, from outside the wall, never forced; the pull request the child's gh pr create asked for, opened with --gh), each finish judged ok, failed or reaped (docs/SPEC-CARD-CONTRACT.md), take to the width its fleet row names (read with its queue every tick: a member's own row, a reader's its machine's, reader-<m> running at m's width; --width is a twin's override), each card one native child with its frame and an allowlist environment, on the model, budget and deadline its packet's route names (the card decides: the deal draws a route of its tier, or its model: pin; --model, --tokens and --deadline are the override a card with no route runs on); --pass names the secrets a child is handed, the loop record's nova-secrets keys: a loop whose harness reads its provider key from the environment carries --pass <KEY>, else its children start without it and fail at the provider; --reader runs the readers-table loop, each read on the route the ask drew from the reader tier unless --model, --tokens or --deadline is given; --identity names the pool identity every child commits under, from the loop's nova-config argv, else the pool's identity.tsv; a launch it is done with leaves no checkout behind (a failed one keeps its directory, the newest 5 of the pool), and it starts no card while the slots' volume has less free than --disk-floor GiB, default 10; a card it will not start is finished staging refused: <why>, so the sprint deals it to another member and says why)
   nova-swarm disk-guard [--root <dir>]... [--scan <dir>]... [--cache <dir|glob>]... [--cache-max-gb <GiB>] [--modcache-max-gb <GiB>] [--logs <dir>] [--log-max-mb <MiB>] [--log-keep <n>] [--pool-idle <duration>] [--land <dir>] [--clone-age <duration>] [--mirrors <dir>] [--disk-floor <GiB>] [--dry-run]
                        (one pass over this machine, run every few minutes by the disk-guard loop row fleet/loops.yml adds to every machine: every Go build cache (the login's, each root's cache/go-build, each --cache) held under --cache-max-gb, default 10, by the member's trim, oldest entries first and never one used in the last two hours; a module cache over --modcache-max-gb, default 50, emptied while no go command runs; every loop log over --log-max-mb, default 50, copied to <log>.1 and emptied in place, --log-keep copies, default 3; the pool of a loop that stopped (no process names its root, nothing moved for --pool-idle, default 30m) swept as the member sweeps its own, a work launch whose checkout holds commits past its staged one kept; land clones unused for --clone-age, default 24h, removed; a mirror's temporary packs older than an hour removed while nothing fetches into it, never git prune; never anything with uncommitted work or a live process; one REMOVED, TRIMMED, CLEANED, ROTATED or KEPT line per action with freed=<bytes>, a DISK-GUARD WARN line under --disk-floor, default 10, and DISK-GUARD OK freed=<bytes> free=<bytes> at the end; --dry-run judges the same and removes nothing, each action said WOULD-REMOVE, WOULD-TRIM, WOULD-CLEAN or WOULD-ROTATE)
   nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
@@ -923,6 +924,151 @@ When the check itself is the problem, the refusal's own next action is the way o
 named binary's `version` by hand to see what it does, then rebuild it or remove it.
 Removing the copy under `~/.local/bin` is tolerated: with no local copy there is nothing to
 shadow with, and the check passes on the PATH binary alone. No flag skips the check.
+
+## nova-sprint
+
+nova-sprint: a sprint of work cards, dealt to a fleet of workers and read before they land
+
+One store — a Redis, or a twin file — holds one sprint as four tables (work,
+merge, readers, fleet) and the view `sprint`. A card is one unit of work in a
+stream; each tick deals ready cards to members (machines with a width), sends
+finished work to readers, queues what they pass to merge by stream, and puts
+every judgment it cannot make in the coordinator's inbox. The contract is
+[SPEC-SPRINT.md](SPEC-SPRINT.md).
+
+### First run
+
+No Redis, no git: `--redis mem:<file>` (or `NOVA_SPRINT_REDIS=mem:<file>`) runs
+every verb against an in-memory twin of the store kept in a file — for learning
+and tests, not for a fleet — one command at a time. These lines are one card's
+whole flow, with the store and actor set on the first line; the two stand-ins at
+the end (`finish` with no `--head`, then `merge`) record a landing with no push,
+so nothing here needs a forge:
+
+```sh
+export NOVA_SPRINT_REDIS=mem:sprint.twin NOVA_SPRINT_ACTOR=boss
+nova-sprint init --readers reader-a,reader-b --members m1
+nova-sprint add --stream s1 --count 1
+nova-sprint start
+nova-sprint tick
+nova-sprint tick
+nova-sprint take --as m1 --epoch 0
+nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --report done
+nova-sprint tick
+nova-sprint read --as reader-a --begin --epoch 0
+nova-sprint read --as reader-b --begin --epoch 0
+nova-sprint read --as reader-a --ok --epoch 0
+nova-sprint read --as reader-b --ok --epoch 0
+nova-sprint tick
+nova-sprint merge --stream s1 --batch 1
+```
+
+A twin beats every member and reader at every verb, so `m1` is up after the
+first tick; nothing runs between commands, so the tick is yours (`nova-sprint
+tick`), and `run`, `inbox --wait` and `where --watch` are refused. Each verb
+prints what moved (`MOVED`), what did not and why (`REFUSED`, on stderr), its
+summary line, and the sprint's line (`landed/all percent -> ETA ...`). The card
+moves ready -> working (`take`), working -> done (`finish`), is asked of both
+readers and passed (`read --ok`), and lands on `merge`. The transcript, line for
+line, is [TESTS.md](TESTS.md#nova-sprint), run by
+`cmd/nova-sprint/firstrun_test.go`.
+
+### Verbs
+
+```
+nova-sprint init [--readers <a,b,...>] [--members <m1[:<width>],m2,...>] [--coordinator <name>] [--rules <file>]
+nova-sprint add --stream <s> (<id>... | --count <n> | --sentinel <id> | --brief-dir <dir> | --brief-file <f1> --brief-file <f2>...: a card per file, its id the file's name without .md) [--needs <a,b>] [--before <id> | --after <id> | --score <n>] [--brief <text> | --brief-file <path>: once, the brief of the cards named] [--rules <file>]
+nova-sprint quack --streams <a,b,...> --count <n> --repo <clone url> [--tiers <t,...>] [--base <branch>]
+nova-sprint release <sentinel>... --reason <text> [--answers <note>]
+nova-sprint resolve [<id>...] [--stream <s>] [--limit <n>]
+nova-sprint start
+nova-sprint stop
+nova-sprint run
+nova-sprint tick
+nova-sprint goal set <name> [--file <path>] [--to file:<path>]
+nova-sprint goal show [<name>]
+nova-sprint goal drop <name>
+nova-sprint take --as <member> [<card>@<gen>...] [--epoch <n>] [--limit <n>]
+nova-sprint finish --as <member> <card>@<gen>... --epoch <n> (--head <commit> | --failed) [--report <text>] [--usage <text>]
+nova-sprint ask [<id>... | --group <id> [--expect <n>]] [--stream <s>] [--limit <n>] [--another] [--answers <note>]
+nova-sprint queue --as <reader|member> | --stream <s>
+nova-sprint read --as <reader> (--begin | --ok | --broken) [<card>...] --epoch <n> [--limit <n>] [--finding <text>] [--usage <text>] | --as <reader> --return <card> --reason <text> --epoch <n> [--usage <text>]
+nova-sprint accept (<id>... | --stream <s> | --read-ok | --group <id> [--expect <n>]) [--answers <note>]
+nova-sprint rework (<id>... | --group <id> [--expect <n>]) [--fix <text>] [--answers <note>]
+nova-sprint return (<id>... | --group <id> [--expect <n>]) [--reason <text>] [--answers <note>]
+nova-sprint drop (<id>... | --stream <s> --col <state> | --group <id> [--expect <n>]) --reason <text> [--answers <note>]
+nova-sprint rank <id>... (--score <n> | --first) [--answers <note>]
+nova-sprint brief <id> (--brief <text> | --brief-file <path>) [--rules <file>]
+nova-sprint move <id>... --stream <s> [--before <id> | --after <id> | --score <n>]
+nova-sprint merge --stream <s> [--batch <n>] [--conflict <id> | --cross <id>=<other> | --red [--suspect <id>...] | --rejected] [--note <text>]
+nova-sprint land [--stream <s>...] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]
+nova-sprint resume --stream <s> [--did <text>] [--answers <note>]
+nova-sprint fleet beat <member> [--load <percent>]
+nova-sprint fleet up <member> [--width <n>]
+nova-sprint fleet down <member>
+nova-sprint fleet sync [--check] [--pg <dsn>]
+nova-sprint fleet level
+nova-sprint friend sync [--pg <dsn>]
+nova-sprint friend beat <friend>
+nova-sprint friend down <friend>
+nova-sprint friend up <friend>
+nova-sprint reader add <reader>...
+nova-sprint reader away <reader>...
+nova-sprint reader up <reader>...
+nova-sprint reader remove <reader>...
+nova-sprint stream remove <stream>...
+nova-sprint ci <id>... (--red | --green) --epoch <n> [--head <h>] [--run <id>] [--source <s>] [--note <text>]
+nova-sprint wait <note> (--for <duration> | --until <RFC3339>)
+nova-sprint ack <note>... --reason <text>
+nova-sprint inbox [--open <group>] [--read] [--wait [--timeout <duration>]] [--deadline <duration>] [--stale <duration>]
+nova-sprint card <id>
+nova-sprint log [--card <id>] [--stream <s>] [--member <m>] [--since <10m|RFC3339>] [--at-epoch <n>]
+nova-sprint check
+nova-sprint repair
+nova-sprint where [--watch] [--every <duration>]
+nova-sprint routes
+nova-sprint stats
+nova-sprint play [--simulation] [--seed <n>] [--every <duration>] [--broken <p>] [--fail <p>] [--stuck <p>] [--cross <p>] [--down <p>] [--up <p>] [--red <p>] [--flap <p>] [--batch <n>] [--hold] [--silent <member>@<from>+<for>]... [--ticks <n>]
+nova-sprint clear --confirm sprint
+nova-sprint teardown --confirm sprint
+```
+
+Every store verb takes `--redis <addr>` (else `NOVA_SPRINT_REDIS`, then
+`NOVA_REDIS_ADDR`), `--actor <name>` (else `NOVA_SPRINT_ACTOR`; no default — a
+verb that writes wants one), `--op <id>` (the same id again returns the recorded
+result), `--json` and `--max <n>` (listed items; 0 is all). The coordinator's
+verbs are the coordinator's alone (the first `init` names it: `--coordinator`,
+else the actor); `take`, `finish`, `read`, `fleet beat` and `friend beat` are the
+workers', whose actor is the member, reader or friend named; `merge` and `ci`
+are reports; `tick` and `run` are the machine's; the reads need no actor. A set
+is ids, a stream, a column, `--limit n`, or an inbox group: `--group <id>`, the
+id `inbox` prints, with `--expect <n>` the size it printed, which refuses a group
+that has changed. `nova-sprint help <verb>` (or `<verb> -h`) prints one verb's
+usage, flags and exit codes; `nova-sprint help <group>` (fleet, friend, reader,
+goal, stream) one group's.
+
+### Exit codes
+
+| exit | meaning |
+|---|---|
+| 0 | done |
+| 1 | failed or incomplete (including refused) |
+| 2 | usage, or a store that did not answer (`fleet sync --check`: there is drift) |
+| 3 | `fleet sync` or `friend sync` could not read the config, or `run`: its binary was replaced (its supervisor starts the new one) |
+
+### What it does not prove
+
+The sprint is the plumbing, not the verdict. A card lands when its worker
+reports it done and its readers pass it, and the coordinator `accept`s — the
+green means the flow completed, never that the work is correct: `finish
+--report done` takes the worker's word, `read --ok` takes the readers', and the
+coordinator's accept takes those. A twin is not a fleet: nothing beats or ticks
+between commands, so timing, the `run` loop, `inbox --wait` and liveness go
+unproven, and `finish` with no `--head` (then `merge`) records a landing with no
+push. The work table's cost column is, per stream, the sum of its landed cards'
+total cost in US dollars — each card's actual cost where one was priced, else its
+predicted one, `-` when none was — so a total is a ledger of recorded spend, not
+a proof of it.
 
 ## nova-sandbox
 
@@ -1339,7 +1485,7 @@ or a larger `--budget`; never remove a lock file to break a live lock.
 ### The release verb
 
 `nova-update release` is the last mile: a green commit becomes a version, a set of stamped binaries,
-and the same binaries answering for themselves on every bench in the fleet. Five verbs, each of which
+and the same binaries answering for themselves on every bench in the fleet. Six verbs, each of which
 can refuse. The gates are in [docs/SPEC-RELEASE.md](SPEC-RELEASE.md) and the verbs in
 [docs/SPEC-UPDATE.md](SPEC-UPDATE.md).
 
@@ -1386,6 +1532,14 @@ to `SUMS.digest` beside it. An unsupported `goos-goarch` refuses before the firs
 half-made directory is left behind. One `RELEASE BUILT` line per platform, then one
 `RELEASE BUILD OK … platforms=<a,b,c> sums=<sha256,…> pruned=<n> prune-failed=<n>`.
 
+`--incremental` compiles only the tools whose packages, or the packages they import, changed since
+the newest clean build recorded under `--out` (`<out>/<version>/<goos-goarch>.build`, written by every
+build beside its platform directory), and copies every other tool from that build, verified; it says
+`RELEASE BUILD INCREMENTAL … base=<v> rebuilt=<tools> reused=<n>`, or `RELEASE BUILD WHOLE …
+reason=<why>` when it cannot trust a base. `--gate report --reason <why>` runs the dogfood gate,
+prints its open edges and builds (`dogfood=report`); `cut` has no such flag. See
+[SPEC-RELEASE.md](SPEC-RELEASE.md) rule 13.
+
 Retention, after a successful `build` (in `--out`) and a successful `install` (in `--from`): a
 directory directly under that root whose name is a version (`release.ValidVersion`) is removed unless
 it is the version just built or installed, the version the machine had installed before it (`build`:
@@ -1398,7 +1552,8 @@ on stderr and counted in `prune-failed=`; it never fails the build or the instal
 nova-update release install --from ./release --version v0.17.0 --bin ~/.local/bin --retire ~/go/bin
 ```
 
-`install` verifies the checksums, puts the binaries in place by rename, skips what is already current
+`install` verifies the checksums, puts the binaries in place by rename, skips what is already current (answering the version, or
+holding the same bytes)
 and clears this release's own files out of `--retire`. Run it **on the coordinator before adopting**:
 `adopt` fans out with the nova-update this host is holding, and a coordinator behind the release
 refuses and says so.
@@ -1440,6 +1595,19 @@ nova-update release pull --version v0.17.0 --out ./release --changelog ./CHANGEL
 `pull` withdraws a release: the artifacts go here and on every machine, by name, from that release's
 own `SHA256SUMS` — never recursively — and the tag stays while the changelog section is marked with
 the date and `--reason`. `--dry-run` says what would be deleted and deletes nothing.
+
+```sh
+nova-update release cycle --version v1.1.0-dev.abcdef12 --source . --out ~/nova-bench/release-build --inventory ./nova-inventory --benches bench-a,bench-b --reason "the member fix, PR 5092" --ansible "$(command -v ansible-playbook)"
+```
+
+`cycle` is the fix-land-install cycle from the coordinator in one command: `fleet/tools.yml` with
+`--check`, then for real, limited to `--benches` and `localhost`, the build `--incremental --gate
+report --reason <why>`. Each machine's new version directory is seeded from its installed build's
+and only the files whose `SHA256SUMS` line differs are sent; `install` leaves a binary that already
+holds the same bytes in place, so only the loops of the tools that changed restart. One `CYCLE
+BENCH host=<h> … version=<v> state=<s> installed=<n>` line per bench, then `CYCLE OK … check=<d>
+apply=<d> total=<d>`; both plays' output is kept under `<out>/<version>/`. `--dry-run` is the check
+alone. It runs in the inventory's environment, as the play does.
 
 ## nova-version
 
@@ -1783,15 +1951,15 @@ nova-config machine self [--check] [--json]                              # this 
 nova-config fleet set --store <m> --coordinator <m> --redis_port <port> --pg_dsn <uri> --as <name>         # the one fleet row: no name, no add, remove or list
 nova-config sprint set --coordinator <friend> --as <name>                # the one sprint row: who coordinates; set it to hand over
 nova-config fleet|sprint show|history                                    # the one row, its stamps, its changes
-nova-config loop add <name> --machine <m> --argv '["/path/prog","--flag","v"]' (--every <seconds> | --keepalive true) [--seat <seat> --keys <NAME,...>] [--width <n>] [--enabled false] --as <name>   # a supervised loop on one machine: the command as a JSON array, the secrets by name from the seat, every n seconds or kept alive; --width is the command's --width
-nova-config loop set|remove|list|show|history                             # the one grammar, as for every kind; loop show prints command=, the words the unit runs; machine show <m> names the machine's loops (loops=<a,b>)
+nova-config loop add <name> --machine <m> --argv '["/path/prog","--flag","v"]' (--every <seconds> | --keepalive true) [--seat <seat> --keys <NAME,...>] [--enabled false] --as <name>   # a supervised loop on one machine: the command as a JSON array, the secrets by name from the seat, every n seconds or kept alive; a nova-swarm member argv spells no --width, its width is its machine row's
+nova-config loop set|remove|list|show|history                             # the one grammar, as for every kind; the argv is the words the unit runs; machine show <m> names the machine's loops (loops=<a,b>)
 nova-config route add <name> --tier flash|pro --provider <p> --model <m> --deadline <seconds> [--tokens <n>] [--enabled false] --as <friend>   # one way to run a model tier: the harness runs <provider>/<model>; frontier cards escalate to the coordinator and are never dealt from routes
 nova-config route set <name> --price_input <usd> --price_cache_read <usd> --price_cache_write <usd> --price_output <usd> [--reasoning_as_output false] [--long_context <tokens> --price_input_long <usd> --price_output_long <usd>] [--price_request <usd>] [--billing metered|plan] [--gateway_percent <pct>] [--price_source <text>] [--price_as_of YYYY-MM-DD] --as <friend>   # the route's price sheet, optional: USD per million tokens of each class, each a decimal kept exactly; a route with none prices no card
 nova-config tier set flash|pro --routes <route,route,...> --as <friend>   # the tier's route array: the deal takes routes[index mod len] for each card of the tier, the index a uint64 counter on the fleet table; a route named twice takes two turns
 nova-config route set|remove|list|show|history                            # the one grammar, as for every kind
 ```
 
-`nova-config` is the one tool for the fleet's permanent, non-ephemeral configuration: Postgres (schema `config`) is the permanent store, and `apply` writes it into Redis so Redis is always a rebuildable copy. The kinds are `machine` (user, seat, slots, runners, width; the name is the tailnet host), `fleet` (one row: the store and coordinator machines, Redis port and explicit password-free Postgres URI), `friend` (slots, tiers, roles), `sprint` (one row: the coordinating friend), `loop` (a supervised process on one machine: machine, argv, seat, keys, every or keepalive, width, enabled; apply writes `loop:<name>` and the set `loops`, which the plays read) `route` (one way to run a flash or pro tier: tier, provider, model, tokens, deadline, enabled; apply writes `route:<name>` and the set `routes`, which the deal reads) and `tier` (one row each for flash and pro, made by migrate: routes, the ordered route array the deal takes at the tier's index; apply writes `tier:<name>` and the set `tiers`); the contract is [SPEC-CONFIG.md](SPEC-CONFIG.md) and the guide is [nova-config/README.md](nova-config/README.md).
+`nova-config` is the one tool for the fleet's permanent, non-ephemeral configuration: Postgres (schema `config`) is the permanent store, and `apply` writes it into Redis so Redis is always a rebuildable copy. The kinds are `machine` (user, seat, slots, runners, width, tla; the name is the tailnet host; `tla=true` marks a TLC record machine), `fleet` (one row: the store and coordinator machines, Redis port and explicit password-free Postgres URI), `friend` (slots, tiers, roles, width: the jobs she works at once, 8 by default), `sprint` (one row: the coordinating friend), `loop` (a supervised process on one machine: machine, argv, seat, keys, every or keepalive, width, enabled; apply writes `loop:<name>` and the set `loops`, which the plays read) `route` (one way to run a flash or pro tier: tier, provider, model, tokens, deadline, enabled; apply writes `route:<name>` and the set `routes`, which the deal reads) and `tier` (one row each for flash and pro, made by migrate: routes, the ordered route array the deal takes at the tier's index; apply writes `tier:<name>` and the set `tiers`); the contract is [SPEC-CONFIG.md](SPEC-CONFIG.md) and the guide is [nova-config/README.md](nova-config/README.md).
 
 ### First run
 
@@ -1820,7 +1988,7 @@ nova-config apply --redis 127.0.0.1:6379 --as a1
 
 **What the flags want.** `--pg` is `postgres://user@host:port/db` with no password in it (env `NOVA_PG_DSN`); the password is read from the variable `NOVA_PG_PASSWORD_ENV` names (`NOVA_PG_PASSWORD` when unset), never from the line, and a `--pg` carrying one is refused. `--file <path>` stands in for it and the two are exclusive. `--redis` is `host:port` (env `NOVA_SPRINT_REDIS`, then `NOVA_REDIS_ADDR`, then the seat's address). `--as` is the name a write is recorded under (env `NOVA_FRIEND`), required on every write (omitted on `apply --dry-run`) and recorded in `config.history`. A name is lower-case letters, digits and dashes. `add` needs every required field (its `-h` marks them `required:`) and refuses a value outside its type, every problem in one line; `set` changes only the fields named. `--dry-run` on `add`, `set` and `remove` prints `CONFIG DRY-RUN op=<op> kind=<k> name=<n> actor=<a> wrote=nothing` with the fields as `history` would print them, from the same checks, and writes nothing; `--json` on every verb but `inventory` (already JSON) prints one object in `internal/tool`'s shape. A run missing several flags names all of them at once; an unknown flag names the flags the verb takes and the nearest one.
 
-**Ansible inventory.** `inventory` reads the applied state, the Redis view `apply` writes, and never Postgres: what the fleet plays converge machines to is what the running tools read. It makes two round trips whatever the fleet's size: the names (the machines and loops sets, the fleet row, `config:decl`), then every machine's hash, ceiling and beat and every loop's hash. It prints an Ansible dynamic JSON inventory: the groups `all` and `benches` (every machine), `coordinator`, `store` and `store_deployer` (the machines the fleet row names; `store_deployer` is the coordinator machine, whose seat loads the function library and the ACL onto the store; empty when the row names none) and `runners` (every machine with at least one runner). Every host's variables are under `_meta.hostvars`: `ansible_host`, `ansible_user`, `nova_seat`, `slots`, `runners`, `kind=machine`, `nova_os` and `nova_arch` from the machine's beat when it has one, and `nova_loops`, its loop records typed (`name`, `argv`, `seat`, `keys`, `every`, `keepalive`, `width`, `enabled`, `log`), once the loop kind has been applied (`rev:loop` in `config:decl`; before that the variable is absent, which is not an empty list). `all.vars` holds `nova_store` and `nova_config_rev`. A loop record the plays could not render a unit from (an argv that is not a JSON list, keys without a seat, both or neither of `every` and `keepalive`, a machine with no row) exits 1 naming it. `--redis` is the store (env `NOVA_SPRINT_REDIS`, then `NOVA_REDIS_ADDR`, then the seat's); `--fixture <file>` reads a YAML or JSON file of the same rows in its place and opens no store (`fleet/testdata/inventory-fixture.yml` is one), and the two are exclusive. `--list` (the default with no flag) prints all of it; because `_meta.hostvars` is there, ansible never calls `--host <name>`, which prints one machine's variables and exits 1 with the known names when no row has that name. `--list` and `--host` together are refused. `--timeout` (a Go duration, default `10s`) bounds the wait for the store; on expiry, at the connection or the read, the verb exits 2 with `timed out after <d> waiting for the store at <addr> while <stage>` and the command to repeat with a longer timeout. Env `NOVA_MACHINE` names the machine row the command runs on (an empty value counts as unset), matched by exact machine name and refused with exit 1 and the known names when no row has it; unset, the lower-cased first label of the hostname (machine names are lower-case) is matched the same way and nothing is marked local when no row has it. The matched host gets `ansible_connection=local`. Ansible's `-i` wants an executable, so a two-line wrapper carries the tool and its environment:
+**Ansible inventory.** `inventory` reads the applied state, the Redis view `apply` writes, and never Postgres: what the fleet plays converge machines to is what the running tools read. It makes two round trips whatever the fleet's size: the names (the machines and loops sets, the fleet row, `config:decl`), then every machine's hash, ceiling and beat and every loop's hash. It prints an Ansible dynamic JSON inventory: the groups `all` and `benches` (every machine), `coordinator`, `store` and `store_deployer` (the machines the fleet row names; `store_deployer` is the coordinator machine, whose seat loads the function library and the ACL onto the store; empty when the row names none) `runners` (every machine with at least one runner) and `tla` (every machine whose row says `tla=true`: the TLC record machines, where the tools play holds the pinned TLC jar). Every host's variables are under `_meta.hostvars`: `ansible_host`, `ansible_user`, `nova_seat`, `slots`, `runners`, `nova_tla`, `kind=machine`, `nova_os` and `nova_arch` from the machine's beat when it has one, and `nova_loops`, its loop records typed (`name`, `argv`, `seat`, `keys`, `every`, `keepalive`, `width`, `enabled`, `log`), once the loop kind has been applied (`rev:loop` in `config:decl`; before that the variable is absent, which is not an empty list). `all.vars` holds `nova_store` and `nova_config_rev`. A loop record the plays could not render a unit from (an argv that is not a JSON list, keys without a seat, both or neither of `every` and `keepalive`, a machine with no row) exits 1 naming it. `--redis` is the store (env `NOVA_SPRINT_REDIS`, then `NOVA_REDIS_ADDR`, then the seat's); `--fixture <file>` reads a YAML or JSON file of the same rows in its place and opens no store (`fleet/testdata/inventory-fixture.yml` is one), and the two are exclusive. `--list` (the default with no flag) prints all of it; because `_meta.hostvars` is there, ansible never calls `--host <name>`, which prints one machine's variables and exits 1 with the known names when no row has that name. `--list` and `--host` together are refused. `--timeout` (a Go duration, default `10s`) bounds the wait for the store; on expiry, at the connection or the read, the verb exits 2 with `timed out after <d> waiting for the store at <addr> while <stage>` and the command to repeat with a longer timeout. Env `NOVA_MACHINE` names the machine row the command runs on (an empty value counts as unset), matched by exact machine name and refused with exit 1 and the known names when no row has it; unset, the lower-cased first label of the hostname (machine names are lower-case) is matched the same way and nothing is marked local when no row has it. The matched host gets `ansible_connection=local`. Ansible's `-i` wants an executable, so a two-line wrapper carries the tool and its environment:
 
 The applied fleet row also gives every host `nova_redis_port`,
 `nova_redis_addr` and the explicit `nova_pg_dsn`. Inventory and fleet apply
