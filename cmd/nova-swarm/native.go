@@ -1880,7 +1880,9 @@ func nativeChildEnvFrom(environ []string, dataHome, jobDir, tmpDir, cacheDir, se
 	if shimShell != "" {
 		out = append(out, "SHELL="+shimShell)
 	}
-	if secretEnv != "" {
+	// a worker whose description names the decide read's key is handed nothing by it: the
+	// key is native's alone (nativedecide.go)
+	if secretEnv != "" && secretEnv != decide.JevSecret {
 		for _, kv := range environ {
 			if v, ok := strings.CutPrefix(kv, secretEnv+"="); ok {
 				out = append(out, secretEnv+"="+v)
@@ -2348,7 +2350,7 @@ func writeStageOK(w io.Writer, bench string, st swarm.StageResult) {
 // recipes and shims, separately from staging (docs/SPEC-CARD-CONTRACT.md, staging).
 func installFrameTimed(cfg nativeRunConfig, jobDir, head string, w io.Writer) (start string, err error) {
 	started := time.Now()
-	if start, err = installFrameStart(cfg, jobDir, head); err != nil {
+	if start, err = installFrame(cfg, jobDir, head); err != nil {
 		return "", err
 	}
 	fmt.Fprintf(w, "FRAME OK secs=%.1f\n", time.Since(started).Seconds())
@@ -2356,15 +2358,10 @@ func installFrameTimed(cfg nativeRunConfig, jobDir, head string, w io.Writer) (s
 }
 
 // installFrame records the staged commit in the slot and writes a framed launch's JOB.md
-// and its family's shims into <slot>/shim, the shims handing through to the real git.
-func installFrame(cfg nativeRunConfig, jobDir, head string) error {
-	_, err := installFrameStart(cfg, jobDir, head)
-	return err
-}
-
-// installFrameStart is installFrame, and a read's start: the commit the work it reads
-// started from (workStart), "" for work or when none is known.
-func installFrameStart(cfg nativeRunConfig, jobDir, head string) (string, error) {
+// and its family's shims into <slot>/shim, the shims handing through to the real git. It
+// returns a read's start: the commit the work it reads started from (workStart), "" for
+// work or when none is known.
+func installFrame(cfg nativeRunConfig, jobDir, head string) (string, error) {
 	git, err := exec.LookPath("git")
 	if err != nil {
 		return "", fmt.Errorf("no git on PATH for the shims to hand through to: %w", err)

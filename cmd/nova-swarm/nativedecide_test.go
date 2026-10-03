@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
+	"github.com/mas-bandwidth/nova-tools/internal/member"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
@@ -63,7 +65,8 @@ func readFrame(fr cardcontract.Frame, origin, head string) *cardcontract.Frame {
 }
 
 // readCard is the card a read of readOrigin's work is handed.
-var readCard = []byte("c: change the box (s1) tier: flash\n\nThe task.\n")
+var readCard = []byte(member.CardText(member.Packet{Card: "w.r1", Kind: "read", Attempt: 1, Primary: "w", Worker: "m1", Head: "abc",
+	Report: "the worker says it is fine", Brief: "c: change the box (s1) tier: flash\n\nThe task.\n"}))
 
 // stagedRead is a read's checkout staged as native stages it, its frame installed: the
 // config, the job, its start and its head.
@@ -79,7 +82,7 @@ func stagedRead(t *testing.T, bars cardcontract.Frame) (cfg nativeRunConfig, job
 	require.NoError(t, err)
 	cfg = nativeRunConfig{slotDir: slot, root: root, model: fr.Model, frame: fr, label: "w.r1", card: readCard,
 		resultsRoot: filepath.Join(root, "results", "w.r1")}
-	start, err = installFrameStart(cfg, job, st.BaseSha)
+	start, err = installFrame(cfg, job, st.BaseSha)
 	require.NoError(t, err)
 	require.NotEmpty(t, start)
 	return cfg, job, start, head
@@ -108,6 +111,65 @@ func TestNativeRunEndsADecidedReadWithNoChild(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join(res.resultsDir, "RESULT.md"))
 	require.NoError(t, err)
 	assert.Equal(t, "broken", typedrec.ParseCardResult(raw).Verdict)
+}
+
+// A decide read that cannot be made falls back to the strings read, never to a verdict:
+// whole native runs over a backend that answers 402, one whose context ran out and one
+// whose answer is outside the schema each run the child, publish no ok read of their own
+// and record nothing, and say why on one NOTE line. A read in the band between the bars
+// runs the child too, its decision recorded.
+func TestNativeRunFallsBackToTheStringsReadWhenNoDecisionIsMade(t *testing.T) {
+	t.Parallel()
+	bin := nativeHarness(t)
+	jev := func(send decide.Send) decide.Backend { return decide.Jev{Model: decide.JevModel, Send: send} }
+	for _, tc := range []struct {
+		name     string
+		backend  decide.Backend
+		note     string
+		recorded int
+	}{
+		{"402", jev(func(context.Context, []byte) ([]byte, error) {
+			return nil, errors.New(`the backend answered HTTP 402: "payment required"`)
+		}), "no decide read: the backend answered HTTP 402", 0},
+		{"timeout", jev(func(context.Context, []byte) ([]byte, error) { return nil, context.DeadlineExceeded }), "no decide read: context deadline exceeded", 0},
+		{"malformed", jev(func(context.Context, []byte) ([]byte, error) { return []byte(`{"answers":{}}`), nil }), "no decide read: the backend's answers do not fit the schema", 0},
+		{"strings band", &fakeDecide{defect: 0.4}, "", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root, origin, head := readOrigin(t)
+			slot := filepath.Join(root, "slot-1")
+			require.NoError(t, os.MkdirAll(slot, 0o755))
+			write(t, filepath.Join(root, "identity.tsv"), "owner\tname\temail\ntest-owner\tPool Worker\tpool@example.com\n")
+			var errOut bytes.Buffer
+			res, code := nativeRun(nativeRunConfig{binary: bin, model: "fake/fake-model", label: "w.r1", card: readCard, slotDir: slot, root: root,
+				deadline: 30 * time.Second, noWall: true, benchHome: filepath.Join(root, "no-bench"), resultsRoot: filepath.Join(root, "results", "w.r1"),
+				frame: readFrame(cardcontract.Frame{DecideBounce: "0.5", DecideReview: "0.3"}, origin, head), decider: &decider{backend: tc.backend, now: time.Now}}, &errOut)
+			require.Equal(t, 0, code, errOut.String())
+			_, err := os.Stat(filepath.Join(res.job, "harness-output.log"))
+			assert.NoError(t, err, "the strings read's child ran")
+			if raw, err := os.ReadFile(swarm.ResultPath(res.job)); err == nil {
+				assert.NotEqual(t, "ok", typedrec.ParseCardResult(raw).Verdict, "no ok read is published for an undecided read")
+			}
+			ds, err := decide.Load(decideRecord(root))
+			require.NoError(t, err)
+			assert.Len(t, ds, tc.recorded)
+			if tc.note != "" {
+				assert.Contains(t, errOut.String(), "NATIVE NOTE: w.r1 "+tc.note)
+				assert.Contains(t, errOut.String(), "; the strings read runs")
+			}
+		})
+	}
+}
+
+// The frame carries the packet's bars as they are, bounce as bounce and review as review:
+// swapped, ParseBars would refuse them and no decide read would ever run.
+func TestTheFrameCarriesTheDecideBars(t *testing.T) {
+	t.Parallel()
+	f := frameOf(member.Packet{Card: "c1.r1", Kind: "read", Attempt: 1, Head: "abc", Brief: "c1: do it (s1) tier: flash\n\nThe task.", DecideBounce: "0.5", DecideReview: "0.3"}, "p/m", t.TempDir())
+	assert.Equal(t, []string{"0.5", "0.3"}, []string{f.DecideBounce, f.DecideReview})
+	f = frameOf(member.Packet{Card: "c1.w1", Kind: "work", Attempt: 1, Brief: "c1: do it (s1) tier: flash\n\nThe task.", DecideBounce: "0.5", DecideReview: "0.3"}, "p/m", t.TempDir())
+	assert.Empty(t, f.DecideBounce+f.DecideReview, "a work card is never decided")
 }
 
 // A flash card's first read is decided before any child at the frame's bars (0.5 and 0.3,
@@ -143,6 +205,8 @@ func TestADecideReadRoutesTheReadByItsBars(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, ds, 1)
 			assert.Contains(t, ds[0].State, "+The box holds four cards.", "the decision is asked over the work's diff")
+			assert.Contains(t, ds[0].State, "CARD (the whole task the worker was given):\nc: change the box (s1) tier: flash\n\nThe task.\n\nDIFF", "the card is the work card's brief alone, as the bars were calibrated")
+			assert.NotContains(t, ds[0].State, "the worker says it is fine", "never the read's mechanics or the worker's report")
 			raw, err := os.ReadFile(swarm.ResultPath(job))
 			if tc.route == decide.RouteStrings {
 				require.True(t, os.IsNotExist(err), "a strings read writes its own result")
@@ -197,7 +261,10 @@ func TestAReadWithNoBarsAsksNoDecision(t *testing.T) {
 // environment holds, and a worker's own secret still is.
 func TestTheDecideKeyIsNeverTheChilds(t *testing.T) {
 	t.Parallel()
-	env := nativeChildEnvFrom([]string{"PATH=/bin", decide.JevSecret + "=jev-test-key", "PROVIDER_API_KEY=p"}, "data", "job", "tmp", "", "PROVIDER_API_KEY", "", "", "")
+	environ := []string{"PATH=/bin", decide.JevSecret + "=jev-test-key", "PROVIDER_API_KEY=p"}
+	env := nativeChildEnvFrom(environ, "data", "job", "tmp", "", "PROVIDER_API_KEY", "", "", "")
 	assert.NotContains(t, env, decide.JevSecret+"=jev-test-key")
 	assert.Contains(t, env, "PROVIDER_API_KEY=p")
+	env = nativeChildEnvFrom(environ, "data", "job", "tmp", "", decide.JevSecret, "", "", "")
+	assert.NotContains(t, env, decide.JevSecret+"=jev-test-key", "not when a worker description names it as its secret either")
 }

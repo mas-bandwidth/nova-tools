@@ -304,7 +304,7 @@ func (f roundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f
 
 // HTTPSend posts the body with the key as a bearer token and JSON as its type;
 // a status other than 200 is an error naming the status and the body's head,
-// and never the key.
+// and never the key, not even a body that echoes it.
 func TestHTTPSendPostsWithTheKeyAndNamesAFailure(t *testing.T) {
 	t.Parallel()
 	const key = "k-secret-test"
@@ -316,6 +316,7 @@ func TestHTTPSendPostsWithTheKeyAndNamesAFailure(t *testing.T) {
 	}{
 		{"ok", http.StatusOK, `{"answers":{}}`, ""},
 		{"payment", http.StatusPaymentRequired, `{"detail":{"error_type":"billing_error"}}`, `HTTP 402: "{\"detail\":{\"error_type\":\"billing_error\"}}"`},
+		{"echoed key", http.StatusUnauthorized, `{"detail":"bad token Bearer k-secret-test"}`, `HTTP 401: "{\"detail\":\"bad token Bearer <key>\"}"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var got *http.Request

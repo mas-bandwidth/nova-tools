@@ -13,6 +13,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/diffcheck"
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
+	"github.com/mas-bandwidth/nova-tools/internal/member"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
@@ -98,7 +99,7 @@ func nativeDecide(cfg nativeRunConfig, jobDir, start, head string, out, errOut i
 	ctx, cancel := context.WithTimeout(context.Background(), decideWait)
 	defer cancel()
 	op = decideOp(fr.Card, head)
-	d, route, err := decide.FirstRead(ctx, dc.backend, bars, string(cfg.card), diff, decideRecord(cfg.root), op, dc.now())
+	d, route, err := decide.FirstRead(ctx, dc.backend, bars, member.BriefOf(string(cfg.card)), diff, decideRecord(cfg.root), op, dc.now())
 	if err != nil {
 		return note(err.Error())
 	}
@@ -138,11 +139,11 @@ func publishDecided(cfg nativeRunConfig, jobDir string, errOut io.Writer) string
 
 // settleDecided attaches the strings read's verdict to the decide read it followed, as the
 // decision's outcome (decide.Settle): ok is LAND, broken is BOUNCE, and a run with no verdict
-// attaches nothing. The decider that made the decision stamps it.
+// attaches nothing. The test's decider's clock stamps it, else the wall clock.
 func settleDecided(cfg nativeRunConfig, jobDir, op string, errOut io.Writer) {
 	now := time.Now
-	if dc := deciderOf(cfg); dc != nil {
-		now = dc.now
+	if cfg.decider != nil {
+		now = cfg.decider.now
 	}
 	path, ok := swarm.FindCardResult(jobDir)
 	if !ok {

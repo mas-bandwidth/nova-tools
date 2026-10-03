@@ -1431,6 +1431,22 @@ func oneLine(s string) string {
 	return ""
 }
 
+// fromTheSprint opens what CardText appends to the brief.
+const fromTheSprint = "## From the sprint\n\n"
+
+// BriefOf is the brief a card file (CardText) begins with, the sprint's mechanics after it
+// cut off: what the decide read is asked over, as its bars were calibrated (the work card
+// alone, never the read's mechanics or the worker's report).
+func BriefOf(card string) string {
+	if i := strings.Index(card, "\n\n"+fromTheSprint); i >= 0 {
+		return card[:i+1]
+	}
+	if strings.HasPrefix(card, fromTheSprint) {
+		return ""
+	}
+	return card
+}
+
 // CardText is the card file a child is given: the brief VERBATIM first (a
 // card's brief is a whole child brief in the card grammar `nova-swarm lint
 // --card` checks, whose line 1 is the contract line), then, appended, the
@@ -1444,7 +1460,7 @@ func CardText(p Packet) string {
 		b.WriteString(brief)
 		b.WriteString("\n\n")
 	}
-	b.WriteString("## From the sprint\n\n")
+	b.WriteString(fromTheSprint)
 	if p.Kind == "read" {
 		fmt.Fprintf(&b, "This is read %s: attempt %d of %s, worked by %s, at head %s on branch %s", p.Card, p.Attempt, p.Primary, p.Worker, p.Head, p.WorkBranch)
 		if p.WorkBase != "" {

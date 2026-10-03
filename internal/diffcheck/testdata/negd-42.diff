@@ -2,23 +2,23 @@ diff --git a/internal/bus/prepared_delivery_refuses_unrelated_content_test.go b/
 index af5aa383a..0a9d15264 100644
 --- a/internal/bus/prepared_delivery_refuses_unrelated_content_test.go
 +++ b/internal/bus/prepared_delivery_refuses_unrelated_content_test.go
-@@ -106,7 +106,7 @@ func TestStellaIndependentPreparedCannotConfirmCommitWithoutIndex(t *testing.T)
+@@ -106,7 +106,7 @@ func TestPeerIndependentPreparedCannotConfirmCommitWithoutIndex(t *testing.T)
  		return
  	}
  	index, e := git(bare, "show", "main:"+IndexPath(p.Sender.Lane))
 -	require.False(t, r.Pushed && (e != nil || !strings.Contains(index, IndexLine(p.Index))), "claimed success after publishing note-only commit without INDEX entry")
 +	require.True(t, (e == nil && strings.Contains(index, IndexLine(p.Index))) || !r.Pushed, "claimed success after publishing note-only commit without INDEX entry")
  }
- func TestStellaIndependentPreparedPreservesUnrelatedAttributeEdit(t *testing.T) {
+ func TestPeerIndependentPreparedPreservesUnrelatedAttributeEdit(t *testing.T) {
  	t.Parallel()
-@@ -123,7 +123,7 @@ func TestStellaIndependentPreparedPreservesUnrelatedAttributeEdit(t *testing.T)
+@@ -123,7 +123,7 @@ func TestPeerIndependentPreparedPreservesUnrelatedAttributeEdit(t *testing.T)
  		require.NotContains(t, remote, sentinel, "published unrelated dirty attribute content during prepared delivery")
  	}
  	now, _ := os.ReadFile(path)
 -	require.False(t, string(now) != string(want), "refusal changed unrelated dirty attribute content")
 +	require.Equal(t, string(want), string(now), "refusal changed unrelated dirty attribute content")
  }
- func TestStellaIndependentPreparedRefusesUnknownArtifactField(t *testing.T) {
+ func TestPeerIndependentPreparedRefusesUnknownArtifactField(t *testing.T) {
  	t.Parallel()
 diff --git a/internal/bus/symlink_discipline_test.go b/internal/bus/symlink_discipline_test.go
 index 572be1deb..5151927db 100644

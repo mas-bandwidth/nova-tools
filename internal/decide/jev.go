@@ -119,6 +119,9 @@ func HTTPSend(client *http.Client, url, key string) Send {
 			return nil, fmt.Errorf("reading the backend's answer: %w", err)
 		}
 		if resp.StatusCode != http.StatusOK {
+			if key != "" { // a body that echoes the key never carries it into an error
+				raw = bytes.ReplaceAll(raw, []byte(key), []byte("<key>"))
+			}
 			return nil, fmt.Errorf("the backend answered HTTP %d: %q", resp.StatusCode, head(raw))
 		}
 		return raw, nil

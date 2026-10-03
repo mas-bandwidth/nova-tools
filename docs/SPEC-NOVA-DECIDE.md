@@ -176,7 +176,9 @@ probabilities, the review bar at most the bounce bar):
 | from the review bar to under the bounce bar | `strings` | a strings read runs |
 | below the review bar | `land` | ok, with no model read |
 
-The verdict answer and inside_paths are recorded and never routed on (the
+The card the sprint passes is the work card's brief alone, the state the bars
+were calibrated on; no rule is passed yet, where the calibration passed the E1
+rule for docs and diary cards. The verdict answer and inside_paths are recorded and never routed on (the
 calibration of 2026-10-02: p(defect) AUC 0.869, the verdict 0.711, inside_paths
 0.612). `Settle` attaches a strings read's verdict as the decision's outcome, ok
 as `LAND` and broken as `BOUNCE`, so the record trains on every read that took

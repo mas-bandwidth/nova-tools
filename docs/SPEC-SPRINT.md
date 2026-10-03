@@ -745,11 +745,13 @@ id (`--op`) returns the original result, with no second counter or notification.
   read card it places at a flash card's attempt (`steps_review.go`, decideFields:
   drawn on flash, not `ask --another` or `--instead`, and no read that stays at
   the attempt is one); the packet hands them to the reader, and a read the level
-  moves keeps them. Every other read is a strings read: a pro card's reads always
-  are, two of them (the read count per tier), and both bars empty in the sprint
-  row turns the decide read off. Its reader's native, once the checkout is staged
+  moves keeps them. Every other read is a strings read: a read drawn on pro
+  always is, and both bars empty in the sprint row turns the decide read off. Its reader's native, once the checkout is staged
   and before any child, asks nova-decide's read decision (docs/SPEC-NOVA-DECIDE.md
-  section 8) over the card and the work's diff, start..HEAD, through the Jev
+  section 8) over the work card's brief alone (the sprint's mechanics and the
+  worker's report cut off, the state the bars were calibrated on; the E1 rule the
+  calibration added for docs and diary cards is not sent yet) and the work's
+  diff, start..HEAD, through the Jev
   backend with the key `JEV_API_KEY` the reader loop's nova-secrets keys hold
   (native's own: no child is handed it), and routes the read by p(defect) alone,
   never by the decision's verdict or its inside_paths answer:
@@ -765,7 +767,9 @@ id (`--op`) returns the original result, with no second counter or notification.
   `<root>/decide/read.jsonl`, under the read card's id at the head it read
   (`<card>@<head 12>`), so a read returned and asked again replays it with no
   call; a review round's label is attached later with `nova-decide outcome`, and
-  `nova-decide calibrate` reads the bars the record supports. A decide read that
+  `nova-decide calibrate` reads the bars the record supports. The record is
+  loaded whole on every read and not yet rotated: a cap or a rotation is owed
+  before it grows past the spec's thousand reads. A decide read that
   cannot be made (no key, a backend that fails, bars it cannot read) is said on
   one `NATIVE NOTE` line and the strings read runs.
 - A reader moves its own read cards: asked -> reading -> ok | broken, with the finding.
@@ -873,16 +877,23 @@ when it cannot; it adds no state of its own.
 **The lander's checks.** Each head `land` merges is checked by script, no model,
 before the batch's check runs (`internal/diffcheck`), the two checks the decide
 read's calibration of 2026-10-02 found a model read does not make: the merge's
-own diff changes no file outside the brief's `PATHS` globs, either side of a
-rename counting and the class ledgers under `internal/ci/testdata/` excepted
-(E12: p(inside_paths) was 0.98 on the card that left its PATHS); and it leaves no
+own diff changes no file outside the brief's `PATHS` globs (E12: p(inside_paths)
+was 0.98 on the card that left its PATHS), the class ledgers excepted (under
+`internal/ci/testdata/`, a list file as internal/ci spells its lists or a `.txt`
+shard of a counted ledger, never the class tests' fixtures beside them); a rename
+holds both sides: it moves from a file the card names, to one it names or within
+the directory the file was in (a name card's rename in place); and it leaves no
 stranded fragment in prose, a Go comment or a Markdown or text line (E4): a
 change that takes away backquotes of one parity and puts back the other, or a
 line that ends mid-sentence (on a letter, a digit or a comma, and not on a word
 that opens a sentence) whose old text went on with a word that opens no sentence
 and whose new text goes on with one that does (a capital and lower case after
 it). Over the 234 reviewed cards the fragment rule found four cards, each one the
-review called wrong for a fragment, and no other. A head that fails is taken off
+review called wrong for a fragment, and no other; over the land merges of 215 of
+them it finds those four and one more, diaryr-37, a lead-in left without its end
+the review passed. On those land merges the PATHS rule flags negd-42 and three
+cards of its shape (negd-17, -32, -41: a file the card edited after a name card
+renamed it from the name its PATHS gives), which the review passed. A head that fails is taken off
 the batch branch and ends the batch as a head in conflict does: the conflict fact
 on it names every failure, `<file>:<line>` and the rule.
 

@@ -64,14 +64,37 @@ func newStart(header string) int {
 	return n
 }
 
-// Ledgers is the directory of the class ledgers a card may update beyond its PATHS
-// (the cards' own words: "Those ledger files are the only files beyond PATHS you may
-// change").
-const Ledgers = "internal/ci/testdata/"
+// The class ledgers a card may update beyond its PATHS (the cards' own words: "Those
+// ledger files are the only files beyond PATHS you may change"): under LedgerDir, a list
+// file named as internal/ci spells its lists (allowlist_update_test.go, listFilePatterns,
+// and the deleted-tests ledger) or a .txt shard of one of its counted-ledger directories
+// (countedShardDirectories). The class tests' fixtures beside them are not ledgers.
+const LedgerDir = "internal/ci/testdata/"
 
-// Outside is every file the diff changes that no glob of paths names (E12), either side
-// of a rename counting, the ledgers excepted; nil when paths is empty (a card that
-// names no PATHS is held to none).
+var (
+	ledgerLists  = []string{"*allowlist*.txt", "*.allow", "*_examples.txt", "deleted-tests.txt"}
+	ledgerShards = []string{"discarded", "scripthide", "okonfailure", "remedy", "generality", "generality-text", "testify"}
+)
+
+// Ledger says p is a class ledger (LedgerDir).
+func Ledger(p string) bool {
+	rest, ok := strings.CutPrefix(p, LedgerDir)
+	if !ok {
+		return false
+	}
+	dir, file, nested := strings.Cut(rest, "/")
+	if !nested {
+		return slices.ContainsFunc(ledgerLists, func(g string) bool { ok, _ := path.Match(g, rest); return ok })
+	}
+	return slices.Contains(ledgerShards, dir) && path.Ext(file) == ".txt"
+}
+
+// Outside is every file the diff changes that the card may not (E12); nil when paths is
+// empty (a card that names no PATHS is held to none). A file is the card's when its
+// PATHS globs name it or it is a ledger (Ledger). A rename holds both sides: the file it
+// moves from is the card's, and the file it moves to is the card's too or stays in the
+// directory it was in (a name card renames a file in place). A rename out of a PATHS
+// file to anywhere else, and a file moved into the ledgers' directory, are outside.
 func Outside(paths []string, diff string) []string {
 	if len(paths) == 0 {
 		return nil
@@ -79,9 +102,12 @@ func Outside(paths []string, diff string) []string {
 	named := func(p string) bool {
 		return slices.ContainsFunc(paths, func(g string) bool { return hygiene.MatchGlob(g, p) })
 	}
+	mine := func(p string) bool { return named(p) || Ledger(p) }
 	var out []string
 	for _, f := range Parse(diff) {
-		if !named(f.Old) && !named(f.New) && !strings.HasPrefix(f.New, Ledgers) {
+		from := mine(f.Old)
+		to := mine(f.New) || f.Old != f.New && named(f.Old) && path.Dir(f.Old) == path.Dir(f.New)
+		if !from || !to {
 			out = append(out, f.New)
 		}
 	}
