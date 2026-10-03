@@ -159,7 +159,7 @@ applies nothing twice; one ask that takes past `--timeout` (60s) is that card's 
   nova-sprint add --stream <s> --brief-dir <dir> --rules fleet/child-rules.txt
   ```
 
-  `add` holds each brief to the card lint and refuses, writing nothing, one that fails.
+  `add` holds each brief to the coordinator's child rules (the same checks as `nova-swarm lint --card --child-rules`) and refuses, writing nothing, one that fails. A bare `nova-swarm lint --card` drift on any other token does not bind that admission; `nova-swarm lint -h` states the contract.
   `nova-swarm template --name card` prints a card that passes once its `<...>` lines are filled;
   `nova-swarm lint --card <file> --child-rules` checks a file first; `nova-sprint init --rules <file>` records
   the rule set `add` uses by default. Under `fleet/child-rules.txt`, a file the members hold, a card on

@@ -861,7 +861,7 @@ func (a *app) cmdInit(args []string, stdout, stderr io.Writer) int {
 	members := fs.String("members", "", fmt.Sprintf("fleet members to bring up, comma separated, each <name> or <name>:<width>, its width the most work cards it runs at once; it holds %d times that, ready and working (default %d)", sprint.DealAhead, sprint.DefaultWidth))
 	coordinator := fs.String("coordinator", "", "the sprint's coordinator, the one actor who releases sentinels (default: the actor); the seat then moves by coordinator <name>")
 	owner := fs.String("owner", "", "the sprint's owner, who may give the seat and whose name a take of it carries (coordinator --take --approved-by); set once, never changed (else "+OwnerEnv+")")
-	rules := fs.String("rules", "", "the child rules file every brief is held to: one required sentence per line, its path recorded for the sprint (default: the built-in general rules; add --rules <file> overrides it for one add)")
+	rules := fs.String("rules", "", "the child rules file every brief is held to: one required sentence per line, its path recorded for the sprint (default: the built-in general rules; add --rules <file> overrides it for one add). The recorded file is the admission set; nova-swarm lint -h states the contract")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "init", err.Error())
@@ -980,11 +980,11 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	stream := fs.String("stream", "", "the stream the primaries belong to, for life; with --count, several streams comma separated, one step")
 	count := fs.Int("count", 0, "admit n primaries with generated ids <stream>-<n>")
 	needs := fs.String("needs", "", "primaries that must land first, comma separated; each is a primary on the table or of this add (default: the brief's Needs: or DEPENDS-ON: line; with a brief per card, added to each card's own)")
-	brief := fs.String("brief", "", fmt.Sprintf("the brief: a child's whole brief, at most %d KiB (the card lint advises %d bytes), held to the card lint (the sentences of the rules file: --rules, else the one init --rules recorded, else the built-in general rules; nova-swarm template --name card prints a card that passes the general ones, nova-swarm lint --rules lists them) and refused, exit 2, nothing written, when it fails; a card with no brief is not linted; under JEV_API_KEY each card's brief is then asked nova-decide's brief decision (one BRIEF line per card, an uncalibrated rank) and refused under the sprint row's decide_brief_bar, empty by default", cardlimits.MaxBriefBytes>>10, cardlimits.BriefAdvisoryBytes))
+	brief := fs.String("brief", "", fmt.Sprintf("the brief: a child's whole brief, at most %d KiB (the card lint advises %d bytes). %s Refused, exit 2, nothing written, when it fails; a card with no brief is not linted; under JEV_API_KEY each card's brief is then asked nova-decide's brief decision (one BRIEF line per card, an uncalibrated rank) and refused under the sprint row's decide_brief_bar, empty by default", cardlimits.MaxBriefBytes>>10, cardlimits.BriefAdvisoryBytes, swarm.AdmissionContract))
 	var briefFiles stringList
-	fs.Var(&briefFiles, "brief-file", "the brief, read from this file: its bytes as they are, its one trailing newline cut (a brief of many paragraphs), then held to the card lint like --brief; given once with ids, --count or --sentinel, the brief of the cards they name; given alone or again, one card per file in the order given, each card's id its file's name without .md (a1.md is a1); not with --brief or --brief-dir")
+	fs.Var(&briefFiles, "brief-file", "the brief, read from this file: its bytes as they are, its one trailing newline cut (a brief of many paragraphs), then held to the same checks as --brief; given once with ids, --count or --sentinel, the brief of the cards they name; given alone or again, one card per file in the order given, each card's id its file's name without .md (a1.md is a1); not with --brief or --brief-dir")
 	briefDir := fs.String("brief-dir", "", "one card per *.md file in this directory, in byte order of file name, each card's id its file's name without .md (a1.md is a1); not with --brief-file")
-	rules := fs.String("rules", "", "the child rules `file`, read at add time: one required sentence per line, [name] sentence names its token (default: the file init --rules recorded, else the built-in general rules); e.g. --rules rules/card.txt. A file the members hold (fleet/child-rules*.txt of this build) is by reference: a card on a repository with a held file (fleet/child-rules.txt for nova-tools, fleet/child-rules.<repo>.txt) need not carry it, the card names the file, and the member injects it at stage time")
+	rules := fs.String("rules", "", "the child rules `file`, read at add time: one required sentence per line, [name] sentence names its token (default: the file init --rules recorded, else the built-in general rules); e.g. --rules rules/card.txt. This file is the admission set; nova-swarm lint -h states the contract. A file the members hold (fleet/child-rules*.txt of this build) is by reference: a card on a repository with a held file (fleet/child-rules.txt for nova-tools, fleet/child-rules.<repo>.txt) need not carry it, the card names the file, and the member injects it at stage time")
 	score := fs.String("score", "", "the first primary's score; the rest follow it (default: after every primary)")
 	sentinel := fs.String("sentinel", "", "admit a sentinel with this id: a stop the coordinator releases; what sorts after it waits for it")
 	before := fs.String("before", "", "place the cards in line in front of this primary of the stream")
@@ -1470,7 +1470,7 @@ func lintBriefFiles(cards []sprint.CardAdd, rs ruleSet, max int, stderr io.Write
 	if more {
 		fmt.Fprintf(stderr, "LINT MORE brief findings=%d remedy=add --max 0\n", len(all))
 	}
-	return refuse(stderr, "add", fmt.Sprintf("the brief of %s fails the card lint (%s); a brief is a child's whole brief and carries every rule of its rule set (--rules, else the file init --rules recorded, else the general rules); run: nova-swarm template --name card", strings.Join(failed, ", "), findingsCount(len(all))))
+	return refuse(stderr, "add", fmt.Sprintf("the brief of %s fails the card lint (%s); a brief is held to the coordinator's child rules, not to the other tokens of nova-swarm lint --card (nova-swarm lint -h states the contract); it carries every rule of its rule set (--rules, else the file init --rules recorded, else the general rules); run: nova-swarm template --name card", strings.Join(failed, ", "), findingsCount(len(all))))
 }
 
 // ruleSet is the rule set a brief is held to, and held, the base name of the rules file the
@@ -1599,7 +1599,7 @@ func lintBrief(verbName, brief string, rs ruleSet, max int, stderr io.Writer) in
 	if more {
 		fmt.Fprintf(stderr, "LINT MORE brief findings=%d remedy=%s --max 0\n", len(findings), verbName)
 	}
-	return refuse(stderr, verbName, fmt.Sprintf("the brief fails the card lint (%s); a brief is a child's whole brief and carries every rule of its rule set (--rules, else the file init --rules recorded, else the general rules); run: nova-swarm template --name card", findingsCount(len(findings))))
+	return refuse(stderr, verbName, fmt.Sprintf("the brief fails the card lint (%s); a brief is held to the coordinator's child rules, not to the other tokens of nova-swarm lint --card (nova-swarm lint -h states the contract); it carries every rule of its rule set (--rules, else the file init --rules recorded, else the general rules); run: nova-swarm template --name card", findingsCount(len(findings))))
 }
 
 func (a *app) cmdRelease(args []string, stdout, stderr io.Writer) int {
@@ -2063,14 +2063,14 @@ func (a *app) cmdDrop(args []string, stdout, stderr io.Writer) int {
 // cmdBrief replaces the brief of a primary that has not started (the owner,
 // 2026-10-01: "What other things should you be able to do to mutate a stopped
 // sprint" / "I don't want you manually hopping in and working around it and
-// doing manual stuff."): the brief held to the card lint as add's is
+// doing manual stuff."): the brief is held to the same checks as add
 // (holdBrief), then one step (sprint.Brief), refused on a RUNNING machine and
 // for a card dealt; the card keeps its id, stream, score and needs.
 func (a *app) cmdBrief(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("brief")
-	brief := fs.String("brief", "", fmt.Sprintf("the new brief: a child's whole brief, at most %d KiB, held to the card lint as add holds one (--rules, else the file init --rules recorded, else the built-in general rules) and refused, exit 2, nothing written, when it fails", cardlimits.MaxBriefBytes>>10))
-	briefFile := fs.String("brief-file", "", "the new brief, read from this file: its bytes as they are, its one trailing newline cut; not with --brief")
-	rules := fs.String("rules", "", "the child rules file the brief is held to (default: the file init --rules recorded, else the built-in general rules)")
+	brief := fs.String("brief", "", fmt.Sprintf("the new brief: a child's whole brief, at most %d KiB, held to the same checks as add --brief. %s Refused, exit 2, nothing written, when it fails", cardlimits.MaxBriefBytes>>10, swarm.AdmissionContract))
+	briefFile := fs.String("brief-file", "", "the new brief, read from this file: its bytes as they are, its one trailing newline cut, then held to the same checks as --brief; not with --brief")
+	rules := fs.String("rules", "", "the child rules file the brief is held to, the admission set (default: the file init --rules recorded, else the built-in general rules); nova-swarm lint -h states the contract")
 	ids, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "brief", err.Error())
