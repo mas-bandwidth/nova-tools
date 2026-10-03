@@ -39,13 +39,17 @@ func TestTheWidthIsSetByInitAndFleetUpAndShown(t *testing.T) {
 	assert.Contains(t, errs, "width", "init --members m1:0: exit %d, %s", code, errs)
 }
 
-// The fleet table's footer sums the width column, the fleet's total width:
-// eight machines of 64 total 512; a machine whose width changes moves the
-// total, and a machine added adds its width.
+// The fleet table's footer sums the width column of the members up, the
+// fleet's total width: eight machines of 64 up total 512; a machine whose width
+// changes moves the total (TestTheFleetFooterSumsOnlyTheMembersUp: a member
+// held or down adds nothing).
 func TestTheFleetFooterTotalsTheWidths(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
+	ta.live = []string{"m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8"}
 	ta.ok("init --readers reader-a,reader-b --members m1,m2,m3,m4,m5,m6,m7,m8")
+	ta.ok("start")
+	ta.ok("tick") // presence brings the eight beating members up
 	footer := func() string {
 		out := ta.ok("where")
 		i := strings.Index(out, "fleet |")

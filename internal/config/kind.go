@@ -90,6 +90,9 @@ type Field struct {
 	Default string
 	// Nullable leaves an omitted field unset, represented as SQL NULL.
 	Nullable bool
+	// Clear, on a Nullable field, is the word a set takes to clear the field
+	// back to unset ("default" for a machine's width).
+	Clear string
 	// Cut is a free-text field the list verbs print cut to ListNoteRunes
 	// characters (ListLine), so one row stays one short line; show, --json and
 	// the history keep it whole.
@@ -239,7 +242,7 @@ var Kinds = []*Kind{
 			{Name: "seat", Type: TypeText, Required: true, Help: "its nova-secrets seat: the identity it opens secrets as, one <seat>.yaml in the store"},
 			{Name: "slots", Type: TypeInt, Required: true, Help: "the machine ceiling apply writes to machine:<m>:ceiling, which the friends' desired slots must fit under; not the sprint's width"},
 			{Name: "runners", Type: TypeInt, Help: "how many CI runners it hosts; 0 (the default) hosts none"},
-			{Name: "width", Type: TypeInt, Help: "the most work cards the sprint's member on it runs at once, what nova-sprint fleet sync sets; set apart from --slots, never derived from it; 0 (the default) is no member, dealt no work"},
+			{Name: "width", Type: TypeInt, Nullable: true, Clear: "default", Help: "the most work cards the sprint's member on it runs at once, what nova-sprint fleet sync sets; set apart from --slots, never derived from it; unset (the default, or --width default) is half the machine's cores as its beat reports them, which fleet sync resolves; 0 is no member, dealt no work"},
 			{Name: "tla", Type: TypeBool, Help: "a TLC record machine: the tools play installs the pinned TLC jar on it and tlacheck run --bench any picks among them; false (the default) is none"},
 			noteField("why the machine is as it is: a hold, a rest, the load that was measured"),
 		},
@@ -668,6 +671,9 @@ func (f Field) Canonical(raw string) (string, error) {
 		}
 		return raw, nil
 	case TypeInt:
+		if f.Nullable && f.Clear != "" && raw == f.Clear {
+			return "", nil // unset
+		}
 		if raw == "" {
 			return "", fmt.Errorf("--%s: want a non-negative integer", f.Name)
 		}

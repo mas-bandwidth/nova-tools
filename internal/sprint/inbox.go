@@ -494,6 +494,8 @@ func commands(g Group, first Note, prefix string) []Command {
 			// the tier's route is config: nova-config's, applied to the store
 			tier := strings.TrimPrefix(g.Stream, "tier:")
 			add(d, "nova-config route add '<name>' --tier "+tier+" --provider '<provider>' --model '<model>' --deadline '<seconds>'", "nova-config apply")
+		case d == "fleet level":
+			add(d, cmd+"fleet level")
 		case d == "fleet up":
 			add(d, cmd+"fleet up '<member>'")
 		case d == "fleet beat":
