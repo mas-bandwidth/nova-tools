@@ -41,9 +41,9 @@ func statusAfter(out, token string) (string, bool) {
 // One FAILED row's line is not the verb's own: native's public-class gate (the
 // CARD-8390 gate, before any directory is made) refuses any card of a public-class
 // worker whose root carries no public-repos.txt, with the card's CARD REFUSED line at
-// exit 1. Three OK rows carry no status line: template prints a verbatim document,
-// version prints the one buildinfo line and profile prints its PROFILE and PROFILE
-// SUMMARY event lines, and none is a status line.
+// exit 1. Four OK rows carry no status line: help prints the banner, template prints
+// a verbatim document, version prints the one buildinfo line and profile prints its
+// PROFILE and PROFILE SUMMARY event lines, and none is a status line.
 func TestStatusGrammar(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -53,6 +53,9 @@ func TestStatusGrammar(t *testing.T) {
 		token    string
 		wantWord string
 	}{
+		{"help_ok", func(t *testing.T) (int, string, string) {
+			return runSwarm(t, "help")
+		}, 0, "", ""},
 		{"template_ok", func(t *testing.T) (int, string, string) {
 			return runSwarm(t, "template", "--name", "card")
 		}, 0, "", ""},
