@@ -100,6 +100,11 @@ func TestRefusalsNameEveryProblemAtOnce(t *testing.T) {
 			Says: "nope.json"},
 		{Args: []string{"ask", "--schema", td + "nope.json", "--state", td + "nope.txt", "--backend", "fixed", "--answers", td + "answers.json", "--record", rec}, Code: 2,
 			Says: "nope.txt"},
+		// a dry run whose backend cannot be made is refused as a dry run, never as a verb that may have written
+		{Args: []string{"read", "--card", td + "card.md", "--diff", td + "card.diff", "--backend", "fixed", "--answers", td + "nope.json", "--record", rec, "--dry-run"}, Code: 2,
+			Says: "nope.json: no such file"},
+		{Args: []string{"ask", "--schema", td + "schema.json", "--state", td + "state.txt", "--backend", "fixed", "--answers", td + "nope.json", "--record", rec, "--dry-run"}, Code: 2,
+			Says: "nope.json: no such file"},
 	})
 	r := cli.Do(t, "ask", "--schema", td+"schema.json", "--state", td+"state.txt", "--backend", "fixed", "--answers", td+"read-answers.json", "--record", rec)
 	r.Exit(2)

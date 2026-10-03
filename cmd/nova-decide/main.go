@@ -208,11 +208,12 @@ func (w world) decision(c *tool.Call, s decide.Schema, state string, inputs map[
 	if id == "" {
 		id = s.Name + "-" + decide.Sum([]byte(s.Hash() + "\n" + now.UTC().Format(time.RFC3339) + "\n" + state))[:12]
 	}
+	dry := c.DryRun() // read before any refusal below, so a refused dry run says so
 	b, err := w.backend(c)
 	if err != nil {
 		return tool.Refuse(err.Error())
 	}
-	if c.DryRun() {
+	if dry {
 		ds, err := decide.Load(record)
 		if err != nil {
 			return tool.Refuse(err.Error())
