@@ -105,7 +105,7 @@ func TestTheTickAsksTwoReadersAndSaysWhenItCannot(t *testing.T) {
 	}
 	h.quiet("asked")
 
-	// a sprint with one reader up: the tick asks none, and says so once (one judgment, the sprint's)
+	// a sprint with one reader up: the tick asks no pro card, and says so once (one judgment, the sprint's)
 	h2 := newHarness(t)
 	h2.m = NewMem()
 	h2.st.B = h2.m

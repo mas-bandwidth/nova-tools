@@ -280,8 +280,8 @@ names its live work card.
 `<primary>.r<attempt>.<reader>`. Fields: primary, stream, kind=read, reader,
 attempt, head, asked and begun (clock times), verdict, finding, usage. It takes its
 primary's score. `queue` shows each card's times. A read card
-exists because a member has one place per table and a primary has two readers
-at once.
+exists because a member has one place per table and a pro card has two readers
+at once (a flash card one; section 6).
 
 **What a card cost.** The owner, 2026-10-01: "the producer card by the time it
 gets to landed, should have the history of consumer cards that did work for it,
@@ -650,7 +650,7 @@ id (`--op`) returns the original result, with no second counter or notification.
   differ by more than one, so no reader up is idle while another holds a
   backlog. A moved read is retired (by `level`) and asked of the other reader
   at the same attempt and head, its route kept, as a fresh ask (not returned,
-  reasked 0); a primary's two reads stay with two different readers, and no
+  reasked 0); a pro card's two reads stay with two different readers, and no
   reader is asked an attempt it already had. A read is moved at most once: the
   read card a level move asks carries `leveled`, and the level moves no card
   that carries it, so a late read is not asked afresh
@@ -745,8 +745,9 @@ id (`--op`) returns the original result, with no second counter or notification.
   readRouteMissing), closed when a route serves the tier.
   Work that came back failed is not read: it waits for the coordinator.
   `ask --another` deals a primary already asked to one more reader, for that
-  attempt only (the primary's `asked` field still names the two the attempt
-  was asked of, and after a rework two readers are asked round the readers);
+  attempt only (the primary's `asked` field still names the readers the
+  attempt was asked of, and after a rework the readers its tier needs are
+  asked round the readers);
   before
   the first ask of its attempt it is refused, naming `ask` and the tick as
   what asks first.
@@ -765,7 +766,7 @@ id (`--op`) returns the original result, with no second counter or notification.
   the coordinator's: a green at its head, or the coordinator's accept, takes
   it) and one the coordinator returned to review at its attempt ("returned to
   review" decides it: accept, rework, drop; its reads stand, and a rework's new
-  attempt with its own two reads is the tick's to accept again). An
+  attempt with its own reads is the tick's to accept again). An
   acceptable primary the tick does not accept is told as ready to accept when
   no open judgment on it offers accept.
 - A primary is acceptable when as many different readers as it needs have an
@@ -795,8 +796,8 @@ id (`--op`) returns the original result, with no second counter or notification.
   the finding as the fix and delegates the next attempt at once (section 3);
   the primary's read cards are retired in the same step. When the fixed work
   returns, its finish asks no reader: the machine's ask, in the tick the
-  finish wakes, asks two different readers round the readers, at the new
-  head, on new read cards of the new attempt, each with the route it draws
+  finish wakes, asks the readers its tier needs (one for a flash card, two
+  different readers for a pro card) round the readers, at the new head, on new read cards of the new attempt, each with the route it draws
   (one path asks). A report against a retired
   read card is refused, naming the retirement.
 - A rework of a primary a reader passed (an ok read at its head when it is sent
@@ -804,7 +805,7 @@ id (`--op`) returns the original result, with no second counter or notification.
   nothing to do or commits nothing (its failed finish begins `nothing to do:` or
   `no commit:`, and pushed no head), the card was right: it is no failed work and
   no judgment; the primary goes back to review at the passed head, and the tick
-  asks two readers at the new attempt (`TestNothingToDoAtAHeadAReaderPassedIsBackInReview`).
+  asks the readers its tier needs at the new attempt (`TestNothingToDoAtAHeadAReaderPassedIsBackInReview`).
   With no pass at the head it is failed work for the coordinator, as before.
 
 ## 7. Merging
@@ -910,7 +911,7 @@ the tick would make, no other open judgment on it).
 | repair skipped changes the store refused as recorded | card (look), return, drop, rework, ack | yes |
 | an operation was stuck | check, ack | yes |
 | a reminder could not be delivered | goal set (a new route), goal drop, ack | yes |
-| cannot ask (two readers are up, and a primary has no two to be asked of) | reader add, rework, drop, wait | no |
+| cannot ask (enough readers are up, and a primary has fewer free readers than its tier needs: one for a flash card, two for a pro card) | reader add, rework, drop, wait | no |
 | fewer than two readers up | reader up, reader add, wait | no |
 | no fleet member is up (when every member that beats is held, it says so and offers only fleet up and wait) | fleet beat (on a machine), fleet up (releases a hold), wait | no |
 | a card reached its bound (an attempt's work card redealt MaxRedeals, 3, times after takes that ended, the provider's failures among them, and a take of it ended again; the judgment names the provider and the last error line when the provider failed that take) | rework with a fix (a new attempt), drop, wait | no |
@@ -1476,8 +1477,9 @@ tick. Running a tick twice in a row changes nothing the second time.
 The tick writes a judgment once while its condition holds and closes it when
 the condition clears (closing a primary's last judgment in review, it writes
 the judgment the primary needs next, as every step that leaves one in review
-does): cannot ask (two readers are up and fewer than two different readers are
-free for a primary, who has not already read its attempt;
+does): cannot ask (enough readers are up and fewer different readers than its
+tier needs, one for a flash card and two for a pro card, are free for a
+primary, who has not already read its attempt;
 one condition per primary whatever its count of free readers),
 fewer than two readers up (the sprint's, one whatever the primaries waiting:
 the ask asks no primary that needs more readers than are up while it stands,

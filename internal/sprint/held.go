@@ -400,7 +400,7 @@ func (c *held) tickOn(pr *Card) string {
 	if pr.Col == Ready && !IsSentinel(pr) && c.noMember {
 		return "writes " + NNoMember
 	}
-	if c.fewReaders && c.waitsToBeAsked(pr) {
+	if c.fewReaders && c.waitsToBeAsked(pr) && !enoughReadersUp(c.s, pr) {
 		return "writes " + NFewReaders
 	}
 	if c.due > 0 && pr.Col != Merging {
@@ -440,7 +440,7 @@ func (c *held) judgment(pr *Card) string {
 			}
 		}
 	}
-	if c.waitsToBeAsked(pr) {
+	if c.waitsToBeAsked(pr) && !enoughReadersUp(c.s, pr) {
 		for _, j := range c.judged[StreamSubject("")] {
 			if strings.HasPrefix(j, NFewReaders) {
 				return "fewer than two readers are up; open: " + j

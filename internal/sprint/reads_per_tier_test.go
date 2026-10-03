@@ -1,6 +1,8 @@
 package sprint
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -173,4 +175,104 @@ func TestOneReaderUpReadsTheFlashCardAndHoldsTheProCard(t *testing.T) {
 		}
 	}
 	require.Len(t, few, 1, "one judgment for the sprint: %+v", p.Notes)
+}
+
+// readersWith sets each reader's state: up for the readers named up, away for
+// those named away, down for every other.
+func readersWith(w *world, up, away []string) {
+	w.s.ReaderStates = map[string]string{}
+	for _, r := range w.s.Readers.Rows() {
+		switch {
+		case contains(up, r):
+			w.s.ReaderStates[r] = ReaderUp
+		case contains(away, r):
+			w.s.ReaderStates[r] = ReaderAway
+		default:
+			w.s.ReaderStates[r] = ReaderDown
+		}
+	}
+}
+
+// begunReads is tierWorld asked with every reader up and every read begun:
+// s1-1's one read is reader-a's, s1-2's two are reader-b's and reader-c's.
+func begunReads(t *testing.T) *world {
+	t.Helper()
+	w := tierWorld(t)
+	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1", "s1-2"}}}))
+	for id, readers := range map[string][]string{"s1-1": {"reader-a"}, "s1-2": {"reader-b", "reader-c"}} {
+		got := readerNames(liveReadsAt(w.s, w.s.Work.Card(id), 1))
+		require.ElementsMatch(t, readers, got, "%s asked of %v", id, got)
+		for _, rd := range readers {
+			w.must(Read(w.s, ReadReq{As: rd, Begin: true, Sel: Sel{IDs: []string{ReadCardID(id, 1, rd)}}}))
+		}
+	}
+	return w
+}
+
+// The readers' rebalance takes back a flash card's read begun by a reader that
+// went away when the one reader up could take it, and the tick's ask asks it
+// there (readers.go, sweepReads: one reader up is enough for a flash card).
+func TestTheRebalanceTakesAFlashReadToTheOneReaderUp(t *testing.T) {
+	t.Parallel()
+	w := begunReads(t)
+	readersWith(w, []string{"reader-b"}, []string{"reader-a"})
+	w.part(TickLevelReads, TickReq{})
+	left := w.s.Readers.Card(ReadCardID("s1-1", 1, "reader-a"))
+	assert.False(t, left.Placed(), "the read begun on the reader away is taken back")
+	assert.Equal(t, "away", left.F("retired_by"))
+	w.part(TickAsk, TickReq{})
+	assert.Equal(t, []string{"reader-b"}, readerNames(liveReadsAt(w.s, w.s.Work.Card("s1-1"), 1)), "asked of the one reader up")
+}
+
+// A pro card's read begun by a reader that went away stays where it is while
+// one reader is up: the ask could not place it, as the pro card needs two
+// (readers.go, sweepReads).
+func TestTheRebalanceLeavesAProReadWhenOneReaderIsUp(t *testing.T) {
+	t.Parallel()
+	w := begunReads(t)
+	// reader-a, up, holds no read of s1-2 and could take one; s1-2's readers are away and down
+	readersWith(w, []string{"reader-a"}, []string{"reader-b"})
+	w.part(TickLevelReads, TickReq{})
+	for _, rd := range []string{"reader-b", "reader-c"} {
+		rc := w.s.Readers.Card(ReadCardID("s1-2", 1, rd))
+		assert.True(t, rc.Placed(), "the pro card's read on %s stays with its reader", rd)
+		assert.Equal(t, Reading, rc.Col, rd)
+	}
+}
+
+// "Fewer than two readers up" holds only the cards that need more readers than
+// are up (held.go): with one reader up, a flash card the next tick does not ask
+// (past the tick's bound) is not told as waiting on that judgment, by the tick
+// that writes it (tickOn) or once it is open (judgment); a pro card is, both ways.
+func TestFewReadersHoldsOnlyTheCardsThatNeedMoreReaders(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t, "reader-a", "reader-b", "reader-c")
+	w.s.Work.SetRows(append(w.s.Work.Rows(), "s1"))
+	put := func(id, brief string, score float64) {
+		w.s.Work.Put(&Card{ID: id, Row: "s1", Col: Review, Score: score, Rev: 1,
+			Fields: map[string]string{"kind": "primary", "attempt": "1", "stream": "s1", "head": "h-" + id, "brief": brief}})
+	}
+	put("pro", proBrief, 0)
+	for i := 1; i <= TickMaxMoves+1; i++ {
+		put(fmt.Sprintf("f%04d", i), "", float64(i))
+	}
+	last := fmt.Sprintf("f%04d", TickMaxMoves+1) // past the tick's bound: the next tick does not ask it
+	readersWith(w, []string{"reader-a"}, []string{"reader-b", "reader-c"})
+	few := func(why string) bool {
+		return strings.Contains(why, NFewReaders) || strings.Contains(why, "fewer than two readers are up")
+	}
+	// the next tick writes the judgment (the pro card waits): tickOn
+	for _, running := range []bool{false, true} {
+		c := newHeld(HeldState{Snap: w.s, Running: running}, w.s.Now)
+		require.True(t, c.fewReaders, "the next tick writes fewer than two readers up")
+		assert.False(t, few(c.tickOn(w.s.Work.Card(last))), "the flash card past the bound (running %v): %s", running, c.tickOn(w.s.Work.Card(last)))
+		assert.True(t, few(c.tickOn(w.s.Work.Card("pro"))), "the pro card (running %v): %s", running, c.tickOn(w.s.Work.Card("pro")))
+	}
+	// the judgment is open: judgment
+	p, _ := TickAsk(w.s, TickReq{})
+	w.must(p)
+	require.NotEmpty(t, w.openOn(StreamSubject("")), "fewer than two readers up is open")
+	c := newHeld(HeldState{Snap: w.s, Running: true}, w.s.Now)
+	assert.False(t, few(c.judgment(w.s.Work.Card(last))), "the flash card past the bound: %s", c.judgment(w.s.Work.Card(last)))
+	assert.True(t, few(c.judgment(w.s.Work.Card("pro"))), "the pro card: %s", c.judgment(w.s.Work.Card("pro")))
 }
