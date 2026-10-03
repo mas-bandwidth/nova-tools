@@ -128,3 +128,26 @@ func TestOutsideHoldsRenamesAndTheLedgersNarrowly(t *testing.T) {
 		})
 	}
 }
+
+// The generality ledgers are the class ledgers under the generality roots: the .txt
+// shards and the fixtures allowlist, never a root directory itself, a Go file, a
+// neighbouring directory or another list.
+func TestGeneralityLedgerIsALedgerUnderTheGeneralityRoots(t *testing.T) {
+	t.Parallel()
+	for p, want := range map[string]bool{
+		"internal/ci/testdata/generality/cmd/nova-bus.txt":                true,
+		"internal/ci/testdata/generality-text/docs.txt":                   true,
+		"internal/ci/testdata/generality-text/cmd/x/testdata/y.txt":       true,
+		"internal/ci/testdata/generality_text_fixtures_allowlist.txt":     true,
+		"internal/ci/testdata/generality":                                 false,
+		"internal/ci/testdata/generality/x.go":                            false,
+		"internal/ci/testdata/generality-text/sub/y_test.go":              false,
+		"internal/ci/testdata/testify/internal/ci.txt":                    false,
+		"internal/ci/testdata/net-allowlist.txt":                          false,
+		"internal/ci/testdata/generalityX/a.txt":                          false,
+		"cmd/internal/ci/testdata/generality/a.txt":                       false,
+		"internal/ci/testdata/generality_text_fixtures_allowlist.txt.bak": false,
+	} {
+		assert.Equal(t, want, GeneralityLedger(p), p)
+	}
+}

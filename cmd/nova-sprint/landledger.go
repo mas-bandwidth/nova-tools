@@ -29,7 +29,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
 	"github.com/mas-bandwidth/nova-tools/internal/diffcheck"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -50,21 +49,11 @@ type landLedger struct {
 // fixtures allowlist, so its update run (which drops the fixtures rows that went stale)
 // regenerates them together.
 var landLedgers = []landLedger{{
-	owns:  generalityLedger,
-	roots: []string{diffcheck.LedgerDir + "generality", diffcheck.LedgerDir + "generality-text", diffcheck.LedgerDir + "generality_text_fixtures_allowlist.txt"},
+	owns:  diffcheck.GeneralityLedger,
+	roots: diffcheck.GeneralityRoots,
 	tests: "TestGeneralityGuardrail, TestGeneralityText",
 	run:   []string{"go", "test", "-count=1", "-timeout", "600s", "-run", "^(TestGeneralityGuardrail|TestGeneralityText)$", "./internal/ci"},
 }}
-
-// generalityLedger says p is a generality ledger: a class ledger as the lander's checks
-// define one (diffcheck.Ledger: a .txt shard of a counted-ledger directory or a list file,
-// never a directory, a Go file or a class test's fixture), in the generality family (the
-// shards under generality/ and generality-text/, and the text scan's fixtures allowlist).
-func generalityLedger(p string) bool {
-	rest, _ := strings.CutPrefix(p, diffcheck.LedgerDir)
-	dir, _, nested := strings.Cut(rest, "/")
-	return diffcheck.Ledger(p) && (nested && (dir == "generality" || dir == "generality-text") || rest == "generality_text_fixtures_allowlist.txt")
-}
 
 // landRegenPasses bounds the update runs of one resolution: an update that writes
 // fails once with "updated, rerun", and a ledger that reads another (the text scan
@@ -181,7 +170,7 @@ func updateWrote(status string) []string {
 // regenDone reads one update run: done when it passed (nothing left to write), again
 // when it wrote and asks for a rerun; neither is a failure, with its words.
 func regenDone(err error, out string) (done, again bool) {
-	return err == nil, err != nil && strings.Contains(out, allowlist.UpdatedRerun)
+	return err == nil, err != nil && strings.Contains(out, diffcheck.UpdatedRerun)
 }
 
 // testsOf is the owners' tests, as one list.
@@ -196,7 +185,7 @@ func testsOf(owners []landLedger) string {
 // ledgerNote is the card's note for a resolved merge, on its timeline: the ledgers and
 // the tests that regenerated them.
 func ledgerNote(paths []string, tests string) string {
-	return "the generated ledgers " + sprint.Preview(paths, ", ") + " conflicted and were regenerated at the merge by " + tests + " (" + allowlist.UpdateEnv + "=1)"
+	return "the generated ledgers " + sprint.Preview(paths, ", ") + " conflicted and were regenerated at the merge by " + tests + " (" + diffcheck.UpdateEnv + "=1)"
 }
 
 // ledgerMessage is the merge commit of a resolved merge: the landing's own subject, and
@@ -204,7 +193,7 @@ func ledgerNote(paths []string, tests string) string {
 func ledgerMessage(id, stream string, paths []string, tests string) []string {
 	return []string{"land " + id + " (sprint stream " + stream + ")",
 		"The generated ledgers " + strings.Join(paths, ", ") + " conflicted. The tip's side was taken and " + tests +
-			" regenerated them at the merged tree (" + allowlist.UpdateEnv + "=1)."}
+			" regenerated them at the merged tree (" + diffcheck.UpdateEnv + "=1)."}
 }
 
 // resolveLedgers resolves a merge stopped on unmerged paths that are all generated
@@ -340,7 +329,7 @@ func (l *lander) regen(ctx context.Context, dir string, run []string) (string, e
 	if env == nil {
 		env = os.Environ()
 	}
-	b.Cmd.Dir, b.Cmd.Env = dir, append(slices.Clone(env), allowlist.UpdateEnv+"=1")
+	b.Cmd.Dir, b.Cmd.Env = dir, append(slices.Clone(env), diffcheck.UpdateEnv+"=1")
 	out, err := b.Cmd.CombinedOutput()
 	return string(out), b.Wrap(strings.Join(run, " "), err)
 }

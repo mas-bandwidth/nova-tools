@@ -9,6 +9,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/diffcheck"
 )
 
 // fakeLedger is the generated ledger of these tests, a generality ledger by its path.
@@ -203,33 +205,13 @@ func TestLandRefusesAResolutionThroughASymlink(t *testing.T) {
 	}
 }
 
-// The decisions behind a resolution, apart from git: which files are generality ledgers,
-// which ledgers own the conflicted paths, the paths git ls-files --unmerged names and the
+// The decisions behind a resolution, apart from git: which ledgers own the conflicted paths, the paths git ls-files --unmerged names and the
 // tip's side among them, a tracked symlink an update could write through and the paths
 // the disk check walks, what an update wrote,
 // and when an update run is done.
 func TestLandLedgerDecisions(t *testing.T) {
 	t.Parallel()
-	t.Run("generality ledgers", func(t *testing.T) {
-		t.Parallel()
-		for p, want := range map[string]bool{
-			"internal/ci/testdata/generality/cmd/nova-bus.txt":                true,
-			"internal/ci/testdata/generality-text/docs.txt":                   true,
-			"internal/ci/testdata/generality-text/cmd/x/testdata/y.txt":       true,
-			"internal/ci/testdata/generality_text_fixtures_allowlist.txt":     true,
-			"internal/ci/testdata/generality":                                 false,
-			"internal/ci/testdata/generality/x.go":                            false,
-			"internal/ci/testdata/generality-text/sub/y_test.go":              false,
-			"internal/ci/testdata/testify/internal/ci.txt":                    false,
-			"internal/ci/testdata/net-allowlist.txt":                          false,
-			"internal/ci/testdata/generalityX/a.txt":                          false,
-			"cmd/internal/ci/testdata/generality/a.txt":                       false,
-			"internal/ci/testdata/generality_text_fixtures_allowlist.txt.bak": false,
-		} {
-			assert.Equal(t, want, generalityLedger(p), p)
-		}
-	})
-	ledgers := []landLedger{{owns: generalityLedger, tests: "A"}, {owns: func(p string) bool { return strings.HasPrefix(p, "other/") }, tests: "B"}}
+	ledgers := []landLedger{{owns: diffcheck.GeneralityLedger, tests: "A"}, {owns: func(p string) bool { return strings.HasPrefix(p, "other/") }, tests: "B"}}
 	t.Run("owners", func(t *testing.T) {
 		t.Parallel()
 		for _, tc := range []struct {
