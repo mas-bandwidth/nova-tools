@@ -26,7 +26,8 @@ type Bar struct {
 // Calibrate scores every decision named decision whose outcome label is in
 // positive or negative. The schema is the newest one the record holds for that
 // decision: answers to other questions are never pooled. question is
-// "<name>" (a noul, scored by its yes) or "<name>=<option>" (a choice).
+// "<name>" (a noul, scored by its yes) or "<name>=<option>" (a choice). A label of
+// words joined by + is positive (or negative) when one of its words is listed.
 func Calibrate(ds []Decision, decision, question string, positive, negative []string) (Calibration, error) {
 	name, option, isChoice := strings.Cut(question, "=")
 	c := Calibration{Decision: decision, Question: name, Option: "yes"}
@@ -57,9 +58,9 @@ func Calibrate(ds []Decision, decision, question string, positive, negative []st
 			return c, fmt.Errorf("decision %s asked no question %s; its questions are in the schema %s", d.ID, name, d.Schema)
 		case isChoice && a.Type != Choice, !isChoice && a.Type != Noul:
 			return c, fmt.Errorf("%s is a %s; score a noul as <name> and a choice as <name>=<option>", name, a.Type)
-		case slices.Contains(positive, d.Outcome.Label):
+		case labelIn(d.Outcome.Label, positive):
 			c.Positives = append(c.Positives, a.Prob(c.Option))
-		case slices.Contains(negative, d.Outcome.Label):
+		case labelIn(d.Outcome.Label, negative):
 			c.Negatives = append(c.Negatives, a.Prob(c.Option))
 		default:
 			c.Skipped++
@@ -72,6 +73,12 @@ func Calibrate(ds []Decision, decision, question string, positive, negative []st
 		return c, fmt.Errorf("%d positive and %d negative outcomes of %s; a calibration wants at least one of each", len(c.Positives), len(c.Negatives), decision)
 	}
 	return c, nil
+}
+
+// labelIn says one of the label's words is in set: a label of several words joined by +
+// (a score's classes, stranded_fragment+invented_reason) is each of them.
+func labelIn(label string, set []string) bool {
+	return slices.ContainsFunc(strings.Split(label, "+"), func(w string) bool { return slices.Contains(set, w) })
 }
 
 // AUC is the probability that a positive scores above a negative (ties count

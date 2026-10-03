@@ -421,6 +421,10 @@ func commands(g Group, first Note, prefix string) []Command {
 			case "drop":
 				add(d, cmd+"drop "+ids+" --reason "+whyText+ans)
 			}
+		case g.Type == NScoredLow && d == "add a repair card":
+			// the work landed: its repair is a new card, then the judgment is answered by ack
+			add(d, append(look(), cmd+"add --stream "+s+" '<fix id>' --brief '<the finding: file:line, the class, the wanted text>'",
+				cmd+"ack "+strings.Join(g.Notes, ",")+" --reason 'repair card <fix id> added'")...)
 		case g.Type == NStreamStale:
 			add(d, cmd+"where", cmd+"queue --stream "+s)
 		case g.Type == NConflict:

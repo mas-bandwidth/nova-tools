@@ -111,6 +111,7 @@ var Decisions = map[string][]string{
 	NStreamStale:     {"look", "wait"},
 	NSprintDone:      {"clear", "add"},
 	NSentinelReached: {"release", "do more before going on", "drop"},
+	NScoredLow:       {"add a repair card", "ack"}, // landed: a rework is a new card; ack accepts the landing
 	NStalled:         {"look at the card", "wait"}, // each stall names its own
 }
 

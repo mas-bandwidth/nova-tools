@@ -183,6 +183,13 @@ func CIStep(r sprint.CIReq) Step {
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.RecordCI(s, r) }}
 }
 
+// ScoreStep is a landed batch's scores (sprint.RecordScores): it reads the sprint row's
+// bars with the routes, the landed score's bar among them.
+func ScoreStep(r sprint.ScoreReq) Step {
+	return Step{Named: len(r.Scores) > 0, Args: ArgsOf(r), Verb: "score", Load: tables(sprint.Work), Routes: true,
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.RecordScores(s, r) }}
+}
+
 // ReleaseStep is the coordinator releasing reached sentinels.
 func ReleaseStep(r sprint.ReleaseReq) Step {
 	return Step{Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "release", Load: tables(sprint.Work, sprint.Merge), Mirrors: true,

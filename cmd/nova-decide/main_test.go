@@ -216,3 +216,57 @@ func TestAskReadsStdinAndNamesItsDecision(t *testing.T) {
 	assert.Equal(t, "Please rerun the check.\n", ds[0].State)
 	assert.Equal(t, "-", ds[0].Inputs["state"])
 }
+
+// jevScoreReply is a score answered by the model: every question asked, every class low
+// but stranded_fragment at frag.
+func jevScoreReply(frag float64) func([]byte) ([]byte, error) {
+	return func(body []byte) ([]byte, error) {
+		var req struct {
+			Questions map[string]struct{ Type string }
+		}
+		if err := json.Unmarshal(body, &req); err != nil || len(req.Questions) != len(decide.ScoreSchema().Questions) {
+			return nil, errors.New("not a score request")
+		}
+		answers := map[string]any{}
+		for name, q := range req.Questions {
+			switch {
+			case q.Type == decide.Choice:
+				answers[name] = map[string]any{"type": "choice", "choice": "BOUNCE", "probabilities": map[string]float64{"BOUNCE": 0.6, "LAND": 0.3, "UNSURE": 0.1}}
+			case name == "stranded_fragment":
+				answers[name] = map[string]any{"type": "noul", "noul": frag}
+			case name == "inside_paths":
+				answers[name] = map[string]any{"type": "noul", "noul": 0.97}
+			default:
+				answers[name] = map[string]any{"type": "noul", "noul": 0.1}
+			}
+		}
+		return json.Marshal(map[string]any{"answers": answers, "usage": map[string]int{"input_tokens": 1200, "output_tokens": 40}})
+	}
+}
+
+// A landed diff scored through Jev names its top class and p, is recorded under its
+// landed op once, and findings clusters it; a score outside the window or below the bar
+// counts nothing.
+func TestScoreThroughJevNamesTheTopClassAndFindingsClustersIt(t *testing.T) {
+	t.Parallel()
+	calls := new(atomic.Int32)
+	jev := testkit.Main(decideTool(testWorld("k-test", calls, jevScoreReply(0.83))).Run)
+	rec := filepath.Join(t.TempDir(), "decisions.jsonl")
+	score := []string{"score", "--card", td + "card.md", "--diff", td + "card.diff", "--backend", "jev", "--record", rec, "--op", "c1@landed@0123456789ab"}
+	jev.Do(t, score...).Exit(0).Out(
+		"SCORE OK id=c1@landed@0123456789ab decision=score backend=jev:jev-latest top=stranded_fragment p=0.83 tokens_in=1200 tokens_out=40 recorded=new",
+		"SCORE ANSWER question=stranded_fragment type=noul value=yes p=yes:0.83")
+	jev.Do(t, score...).Exit(0).Out("recorded=existing")
+	assert.Equal(t, int32(1), calls.Load(), "the landed op retried asked nothing")
+	jev.Do(t, "findings", "--record", rec, "--since", "2026-10-02").Exit(0).Out(
+		"FINDINGS OK scored=1 classes=1 bar=0.5 since=2026-10-02T00:00:00Z",
+		"FINDINGS FINDING class=stranded_fragment count=1 cards=c1")
+	jev.Do(t, "findings", "--record", rec).Exit(0).Out("FINDINGS OK scored=1 classes=1 bar=0.5 since=2026-09-25T21:00:00Z")
+	jev.Do(t, "findings", "--record", rec, "--bar", "0.9").Exit(0).Out("FINDINGS OK scored=1 classes=0 bar=0.9")
+	jev.Do(t, "findings", "--record", rec, "--since", "2026-10-03").Exit(0).Out("FINDINGS OK scored=0 classes=0")
+	testkit.Refusals(t, cli, []testkit.Refusal{
+		{Args: []string{"findings", "--record", rec, "--since", "yesterday"}, Code: 2, Says: `--since "yesterday" is not an RFC 3339 time or a date`},
+		{Args: []string{"findings", "--record", rec, "--bar", "0.5,0.7"}, Code: 2, Says: `--bar "0.5,0.7" wants one probability from 0 to 1`},
+		{Args: []string{"score", "--card", td + "card.md", "--diff", td + "nope.diff", "--backend", "fixed", "--answers", td + "score-answers.json", "--record", rec}, Code: 2, Says: "nope.diff"},
+	})
+}

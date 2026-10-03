@@ -2145,16 +2145,29 @@ network and no key (the transcript is in [TESTS.md](TESTS.md#nova-decide)):
 ```sh
 nova-decide ask --schema ./cmd/nova-decide/testdata/schema.json --state ./cmd/nova-decide/testdata/state.txt --backend fixed --answers ./cmd/nova-decide/testdata/answers.json --record ./decisions.jsonl --op first
 nova-decide read --card ./cmd/nova-decide/testdata/card.md --diff ./cmd/nova-decide/testdata/card.diff --backend fixed --answers ./cmd/nova-decide/testdata/read-answers.json --record ./decisions.jsonl --op card-1
+nova-decide score --card ./cmd/nova-decide/testdata/card.md --diff ./cmd/nova-decide/testdata/card.diff --backend fixed --answers ./cmd/nova-decide/testdata/score-answers.json --record ./decisions.jsonl --op card-1@landed@0123456789ab
 nova-decide outcome --record ./decisions.jsonl --id card-1 --label ok --note "the review found nothing"
 nova-decide calibrate --record ./cmd/nova-decide/testdata/record.jsonl --decision read --question defect --positive wrong --negative ok
+nova-decide findings --record ./cmd/nova-decide/testdata/record.jsonl --since 2026-10-01
 ```
 
 `read` prints `READ OK id= decision=read backend= verdict= p= tokens_in=
 tokens_out= recorded=new|existing` and one `READ ANSWER question= type= value=
 p=` line per question: a noul's `p=yes:<p>`, a choice's `p=<option>:<p>,...`.
-`calibrate` prints the AUC, one `BAR` line per `--bars` value (positives caught,
-negatives bounced) and the `CATCH-ALL` bar, the highest that flags every
-positive. What a first run gets wrong:
+`score` is the read's five questions and one noul per escalation class of
+landed work (`stranded_fragment`, `cut_citation`, `renamed_file_assumed`,
+`ledger_ceiling`, `comment_contradicts_code`, `test_weakened`,
+`record_made_claim`, `invented_reason`, `fenced_block_edit`,
+`asserted_data_cut`, `load_bearing_word_cut`; `outside_paths` is
+1 - `inside_paths`); its line names the `top=` class and its `p=`. `nova-sprint
+land` asks it of every landed head as `<card>@landed@<head>`. `calibrate` prints
+the AUC, one `BAR` line per `--bars` value (positives caught, negatives bounced)
+and the `CATCH-ALL` bar, the highest that flags every positive; a label of
+classes joined by `+` (`stranded_fragment+invented_reason`) counts for each of
+them. `findings` prints one `FINDING class= count= cards=` line per class the
+score decisions since `--since` give a p at or above `--bar`, most cards first;
+`unnamed` is p(defect) at the bar with no class there. What a first run gets
+wrong:
 
 - `--backend jev` with no key: `JEV_API_KEY is absent from this environment`.
   The key reaches the tool only through `nova-secrets exec --only JEV_API_KEY --

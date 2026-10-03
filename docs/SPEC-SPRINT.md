@@ -1179,6 +1179,25 @@ renamed it from the name its PATHS gives), which the review passed. A head that 
 the batch branch and ends the batch as a head in conflict does: the conflict fact
 on it names every failure, `<file>:<line>` and the rule.
 
+**The landed score.** After a batch is pushed and reported, `land` scores each
+card's merge diff (the diff its checks read) against the card's brief with
+nova-decide's score decision (docs/SPEC-NOVA-DECIDE.md section 9: the read's five
+questions and one per escalation class of landed work), recorded in
+`decide/score.jsonl` under the land root as `<card>@landed@<head>`, and reports the
+batch's scores in one store step (`score`, sprint.RecordScores): each landed card
+carries `landed_class`, its top class, `landed_p`, that class's p, and
+`landed_op`, the decision's id; the cards whose `landed_p` meets the sprint row's
+`decide_score_bar` (nova-config, 0.5 by default; empty raises none) are listed,
+the highest first, in one judgment for the batch, "landed work scored low", whose
+decisions are to add a repair card (`add`, then `ack` naming it) or to accept the
+landing as it is (`ack`). The step writes nothing for a card already carrying the
+same decision id, so a replay raises no second judgment. A score never holds a
+landing back: the batch has landed before it is asked, and a score that cannot be
+made (no `JEV_API_KEY` in land's environment, a backend that fails) is a `NOTE`
+on the batch's line, which carries `scored=<n>` and `judged=yes` when the
+judgment was raised. `nova-decide findings` over the record clusters the classes
+into the material for new finder rules.
+
 A cross-stream need is recorded as data on the stuck card (the needed card and
 its stream); it is resolved when that card has landed, and ranking the needed
 card is not landing it. The notification names both streams and both cards.

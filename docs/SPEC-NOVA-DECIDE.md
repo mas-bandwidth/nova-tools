@@ -9,8 +9,8 @@ above it: decisions, backends, and the record.
 
 | side | verbs | what it does |
 | --- | --- | --- |
-| decide | `ask`, `read` | asks a schema over a state through a backend; prints every answer with its probabilities; appends the decision to the record |
-| train | `outcome`, `calibrate` | attaches what turned out true to a recorded decision; reads the bar a decision's answer supports from the decisions whose outcome is known |
+| decide | `ask`, `read`, `score` | asks a schema over a state through a backend; prints every answer with its probabilities; appends the decision to the record |
+| train | `outcome`, `calibrate`, `findings` | attaches what turned out true to a recorded decision; reads the bar a decision's answer supports from the decisions whose outcome is known; clusters the classes the score decisions find |
 
 Both sides read and write one file, the record (`--record`). The truth lives
 there and nowhere else: the calibration is computed from it on every call and
@@ -112,6 +112,10 @@ by its p of yes) or `<choice>=<option>` (scored by that option's p). It prints:
   negatives it bounces there. That is the bar the record supports when no
   positive may pass.
 
+A label of words joined by `+` (a score's classes, `stranded_fragment+invented_reason`)
+is positive, or negative, when one of its words is listed: one outcome per
+decision labels every class a review found in it.
+
 A record with no positive or no negative outcome is refused: a bar is read from
 both. An option no scored decision chose or gave a probability (a misspelling,
 `verdict=BOUNCEE`) is refused too, rather than scoring every decision 0.
@@ -184,3 +188,69 @@ calibration of 2026-10-02: p(defect) AUC 0.869, the verdict 0.711, inside_paths
 0.612). `Settle` attaches a strings read's verdict as the decision's outcome, ok
 as `LAND` and broken as `BOUNCE`, so the record trains on every read that took
 the strings route; a review round attaches its own label with `outcome`.
+
+## 9. The score of a landed diff, and the findings
+
+Rule 7 of the sprint's cost rules: sample the landed work, and every ugly
+finding becomes a finder rule or a class test. The score decision is that
+sample, made of every landed head: `score --card <file> --diff <file>` asks the
+read's five questions (section 6) and one noul per escalation class the cold
+reviews of landed work found (the two reviews of 2026-10-02, E1 to E16), over
+the same state as the read (the card, then the diff). Each class's statement is
+the probability that the diff carries that class of defect:
+
+| class | escalations | yes is |
+| --- | --- | --- |
+| `stranded_fragment` | E4 | a changed comment or paragraph, read whole, is broken English: a fragment, a line opening with a comma, a deleted sentence's tail, an unmatched backquote, a comment made a preformatted block |
+| `cut_citation` | E1, E14 | a live cross-reference deleted: a rule number of a list the document still numbers, a table cell naming a rule, a test name, an identifier, a docs/ or tla/ path, a model citation; or a mechanism's comment collapsed into a summary |
+| `renamed_file_assumed` | E3 | a renamed file's bare name rewritten where it named another file of that name in another directory |
+| `outside_paths` | E12 | a file changed outside the card's PATHS; not asked: 1 - p(`inside_paths`) |
+| `ledger_ceiling` | E6, E15 | a ledger left with a ceiling that is not its row count, or a blank line |
+| `comment_contradicts_code` | E7 | a changed comment states what the code beside it contradicts |
+| `test_weakened` | E2 | a rewritten assertion that no longer fails exactly when the old one failed |
+| `record_made_claim` | E5 | a measured record (a run's number, a dated incident, its provenance) made a present-tense claim, or a replaced behaviour described as the present one |
+| `invented_reason` | E10 | a reason put in place of the removed one that nothing supports |
+| `fenced_block_edit` | E8 | a line changed inside a fenced block, a transcript or an example of output |
+| `asserted_data_cut` | E11, E13 | text a test, a format or a tool's output asserts cut or made a placeholder: a heading, a dated fixture name, a format field, a printed field |
+| `load_bearing_word_cut` | E9 | a word that carried the meaning dropped or swapped ("the old", "had to be") |
+
+E16 (one card landed twice) is a property of a batch branch, not of a diff, and
+is no class. The line names the top class, the class with the highest p (the
+first in table order on a tie), and that p: `SCORE OK id=... top=<class> p=<p>`.
+`TestScoreSchemaAsksTheReadAndEveryClass` holds this table to the code.
+
+`nova-sprint land` asks it of every head of a batch it pushed and reported
+(docs/SPEC-SPRINT.md section 7, the landed score), as `<card>@landed@<head>`,
+over the card's brief and the merge's own diff, recorded in
+`decide/score.jsonl` under the land root, and reports each card's top class and
+p to the store; a batch whose cards' top class meets the sprint row's
+`decide_score_bar` raises one "landed work scored low" judgment listing them.
+A review's finding is attached with `outcome`, the label the classes it found
+joined by `+` (or `clean`), so each class is calibrated on its own:
+`calibrate --decision score --question <class> --positive <class> --negative clean`
+(and `outside_paths` as `--question inside_paths --positive clean --negative outside_paths`).
+The record is the training data, kept as the read's record is: about the state
+plus 1 KB a landed card.
+
+`findings --record <file> [--since <time>] [--bar <p>]` clusters the score
+decisions made since `--since` (default: seven days before now) by every class
+each gives a p at or above `--bar` (default 0.5): one `FINDING class= count=
+cards=` line per class, most cards first, the cards by id. `unnamed` counts the
+decisions whose p(defect) meets the bar while no class does: a defect no class
+names yet. A class that keeps coming back is the material for a finder rule or
+a class test; an unnamed cluster, for a new class.
+
+The calibration of 2026-10-03: the 234 reviewed cards of the two reviews, each
+landed diff scored by Jev and labelled per class from the reports (157 clean,
+28 ugly with no class named and so in no class's count). Per class, the AUC of
+its p against the clean cards (positives in brackets): `cut_citation` 0.945
+(18), `stranded_fragment` 0.864 (15), `record_made_claim` 0.967 (10),
+`invented_reason` 0.933 (9), `fenced_block_edit` 0.970 (9),
+`asserted_data_cut` 0.871 (4), `load_bearing_word_cut` 0.887 (3),
+`ledger_ceiling` 0.742 (3), `comment_contradicts_code` 0.959 (2),
+`test_weakened` 0.971 (1), `renamed_file_assumed` 0.994 (1), `outside_paths`
+0.439 (1). Against the clean cards of the same streams only (docs and diary,
+80), the AUCs are lower: `cut_citation` 0.903, `stranded_fragment` 0.739,
+`record_made_claim` 0.936, `invented_reason` 0.875. The top class at the bar
+0.5 flags 40 of the 49 class-labelled cards and 54 of the 157 clean ones; at
+0.7, 26 and 14.
