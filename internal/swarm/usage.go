@@ -79,7 +79,7 @@ func (u ProviderUsage) Budget() (sum int, seen int, partial bool) { return u.add
 //
 // THE POOL'S `RUN DONE`/`RUN KILLED` AND `native`'s `NATIVE OK` BOTH COME THROUGH HERE
 // This one path keeps the budget fields in one rendering (the word, the sum, the stop, the record, and a
-// source that cannot be read holds for a native card). Two renderings of one field is how
+// source that cannot be read) for a native card. Two renderings of one field is how
 // one of them drifts, and a reader who learned the field on one line would misread it on
 // the other.
 func BudgetWord(unmetered bool, tokens, spent int, observed, partial bool) string {
