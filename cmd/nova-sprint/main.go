@@ -1,12 +1,15 @@
-// nova-sprint: the sprint table (docs/SPEC-SPRINT.md). Four tables on
-// nova-table (work, readers, merge, fleet), the moves between them, and the
-// notifications that bring the coordinator its decisions. Every verb takes a
-// set and is one step; the command is a face over internal/sprint (the pure
-// core) and internal/sprint/store (the binding to the table layer).
+// nova-sprint coordinates work cards, review and landing (docs/SPEC-SPRINT.md).
+// One store holds the work, readers, merge and fleet tables on nova-table.
+// Each tick moves eligible cards and sends judgments to the coordinator's
+// inbox. This command exposes internal/sprint's pure core and
+// internal/sprint/store's binding to the tables; run drives the ticks, and
+// run --listen serves the fleet's clients.
 //
-// Exit 0 done, 1 refused (a card or the store said no), 2 usage or a store
-// that did not answer (fleet sync --check: there is drift), 3 (fleet sync: the
-// config cannot be read).
+// Exit 0 means done; 1 means failed or incomplete, including refused; 2 means
+// usage or a store that did not answer (fleet sync --check also uses 2 for
+// drift). Exit 3 means an unreadable config (fleet sync, friend sync, friend
+// clean), missing friend rows (friend sync, friend clean), or a replaced
+// binary (run, dashboard).
 package main
 
 import (

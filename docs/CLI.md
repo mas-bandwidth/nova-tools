@@ -927,21 +927,21 @@ shadow with, and the check passes on the PATH binary alone. No flag skips the ch
 
 nova-sprint: a sprint of work cards, dealt to a fleet of workers and read before they land
 
-One store — a Redis, or a twin file — holds one sprint as four tables (work,
-merge, readers, fleet) and the view `sprint`. A card is one unit of work in a
-stream; each tick deals ready cards to members (machines with a width), sends
-finished work to readers, queues what they pass to merge by stream, and puts
-every judgment it cannot make in the coordinator's inbox. The contract is
+One store (Redis or a twin file) holds the work, readers, merge and fleet
+tables and the `sprint` view. A card is one unit of work in a stream. Each tick
+deals ready cards to members (machines with a width), sends finished work to
+readers and queues passed work for merging by stream. Decisions it cannot
+make go to the coordinator's inbox. The contract is
 [SPEC-SPRINT.md](SPEC-SPRINT.md).
 
 ### First run
 
-No Redis, no git: `--redis mem:<file>` (or `NOVA_SPRINT_REDIS=mem:<file>`) runs
-every verb against an in-memory twin of the store kept in a file — for learning
-and tests, not for a fleet — one command at a time. These lines are one card's
-whole flow, with the store and actor set on the first line; the two stand-ins at
-the end (`finish` with no `--head`, then `merge`) record a landing with no push,
-so nothing here needs a forge:
+Try one card's whole flow with no Redis or git. `--redis mem:<file>` (or
+`NOVA_SPRINT_REDIS=mem:<file>`) loads an in-memory twin from a file and saves it
+after each command. A twin is for learning and tests; run one command at a
+time. The first line sets the store and actor. `finish` without `--head` and
+`merge` stand in for a worker's pushed commit and its landing, so this flow
+needs no forge:
 
 ```sh
 export NOVA_SPRINT_REDIS=mem:sprint.twin NOVA_SPRINT_ACTOR=boss
@@ -962,14 +962,14 @@ nova-sprint merge --stream s1 --batch 1
 ```
 
 A twin beats every member and reader at every verb, so `m1` is up after the
-first tick; nothing runs between commands, so the tick is yours (`nova-sprint
-tick`), and `run`, `inbox --wait` and `where --watch` are refused. Each verb
-prints what moved (`MOVED`), what did not and why (`REFUSED`, on stderr), its
-summary line, and the sprint's line (`landed/all percent -> ETA ...`). The card
-moves ready -> working (`take`), working -> done (`finish`), is asked of both
-readers and passed (`read --ok`), and lands on `merge`. The transcript, line for
-line, is [TESTS.md](TESTS.md#nova-sprint), run by
-`cmd/nova-sprint/firstrun_test.go`.
+first tick. Nothing runs between commands: tick by hand with `nova-sprint
+tick`. `run`, `inbox --wait` and `where --watch` are refused. A card's move is
+queued until the next tick prints `MOVED drain`; the tick after `merge`
+completes its move to landed. The flow's output shows results, moves (`MOVED`),
+refusals with reasons (`REFUSED`, on stderr), and the sprint's summary
+(`landed/all percent -> ETA ...`).
+[TESTS.md](TESTS.md#nova-sprint) carries the exact transcript through `merge`;
+`cmd/nova-sprint/firstrun_test.go` runs it line by line.
 
 ### Verbs
 
@@ -1038,12 +1038,13 @@ result), `--json` and `--max <n>` (listed items; 0 is all). The coordinator's
 verbs are the coordinator's alone (the first `init` names it: `--coordinator`,
 else the actor); `take`, `finish`, `read`, `fleet beat` and `friend beat` are the
 workers', whose actor is the member, reader or friend named; `merge` and `ci`
-are reports; `tick` and `run` are the machine's; the reads need no actor. A set
-is ids, a stream, a column, `--limit n`, or an inbox group: `--group <id>`, the
-id `inbox` prints, with `--expect <n>` the size it printed, which refuses a group
-that has changed. `nova-sprint help <verb>` (or `<verb> -h`) prints one verb's
-usage, flags and exit codes; `nova-sprint help <group>` (fleet, friend, reader,
-goal, stream) one group's.
+are reports; `tick`, `run` and `friend clean` are the machine's. Reads need no
+actor except `inbox --read`, which moves the coordinator's cursor. A set is
+ids, a stream, a column, `--max n` (`--limit` is an alias), or an inbox group:
+`--group <id>`, the id `inbox` prints, with `--expect <n>` the size it printed,
+which refuses a group that has changed. `nova-sprint help <verb>` (or
+`<verb> -h`) prints one verb's usage, flags and exit codes; `nova-sprint help
+<group>` (fleet, friend, reader, goal, stream) prints one group's.
 
 ### Exit codes
 
@@ -1052,21 +1053,20 @@ goal, stream) one group's.
 | 0 | done |
 | 1 | failed or incomplete (including refused) |
 | 2 | usage, or a store that did not answer (`fleet sync --check`: there is drift) |
-| 3 | `fleet sync` or `friend sync` could not read the config, or `run`: its binary was replaced (its supervisor starts the new one) |
+| 3 | unreadable config (`fleet sync`, `friend sync`, `friend clean`), missing friend rows (`friend sync`, `friend clean`), or a replaced binary (`run`, `dashboard`) |
 
 ### What it does not prove
 
-The sprint is the plumbing, not the verdict. A card lands when its worker
-reports it done and its readers pass it, and the coordinator `accept`s — the
-green means the flow completed, never that the work is correct: `finish
---report done` takes the worker's word, `read --ok` takes the readers', and the
-coordinator's accept takes those. A twin is not a fleet: nothing beats or ticks
-between commands, so timing, the `run` loop, `inbox --wait` and liveness go
-unproven, and `finish` with no `--head` (then `merge`) records a landing with no
-push. The work table's cost column is, per stream, the sum of its landed cards'
-total cost in US dollars — each card's actual cost where one was priced, else its
-predicted one, `-` when none was — so a total is a ledger of recorded spend, not
-a proof of it.
+A landed card records a completed flow: the worker reports done, two different
+readers pass that head, the tick (or the coordinator's `accept`) queues it for
+merging, and the landing is reported. These are recorded judgments, not a
+proof that the work is correct. A twin exercises that flow one command at a
+time. It has no beats or ticks between commands, so it does not test fleet
+timing, the `run` loop, `inbox --wait` or liveness. `finish` without `--head`,
+then `merge`, records a landing without a push. The work table's cost column
+is, per stream, the sum of its landed cards' total cost in US dollars — each
+card's actual cost where one was priced, else its predicted one, `-` when
+none was — so a total is a ledger of recorded spend, not a proof of it.
 
 ## nova-sandbox
 

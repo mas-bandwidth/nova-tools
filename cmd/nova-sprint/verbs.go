@@ -132,19 +132,20 @@ func groupVerbs(word string) []string {
 // point 6).
 const opening = `nova-sprint: a sprint of work cards, dealt to a fleet of workers and read before they land
 
-how it works: one store (a Redis, or a twin file) holds one sprint as four
-tables (work, merge, readers, fleet) and the view sprint. A card is one unit of
-work in a stream; each tick deals ready cards to members (machines with a
-width), sends finished work to readers, queues what they pass to merge by
-stream, and puts every judgment it cannot make in the coordinator's inbox.
-first run, no Redis (the store is the file sprint.twin):
+how it works: one store (Redis or a twin file) holds the work, readers, merge
+and fleet tables and the sprint view. A card is one unit of work in a stream.
+Each tick deals ready cards to members (machines with a width), sends finished
+work to readers and queues passed work for merging by stream. Decisions it
+cannot make go to the coordinator's inbox.
+first run: no Redis needed; the store is the file sprint.twin:
   export NOVA_SPRINT_REDIS=mem:sprint.twin NOVA_SPRINT_ACTOR=boss
-then the card's flow under "trying it without a Redis", ticking by hand; the
-example: block is the coordinator's day on a real store, and "A real fleet"
-below connects the machines (run --listen, NOVA_SPRINT_SERVER, nova-swarm member).
-the rest: this help is long; nova-sprint help <verb> (or <verb> -h) prints one
-verb's usage, examples, flags and exit codes, and nova-sprint help <group>
-(fleet, friend, reader, goal, stream) one group's.`
+Follow the card flow under "trying it without a Redis", ticking by hand.
+For a real fleet, "A real fleet" explains the server and clients; the example:
+block shows the coordinator's day on that store.
+For one verb's usage, examples, flags and exit codes:
+  nova-sprint help <verb> (or <verb> -h)
+For one group's help: nova-sprint help <group> (fleet, friend, reader, goal,
+stream).`
 
 func banner() string {
 	var b strings.Builder
