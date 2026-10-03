@@ -1310,4 +1310,3 @@ deprecated/internal/workreconcile/reconcile_test.go deprecated/ removed 2026-10-
 deprecated/internal/workreconcile/sprint_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
 deprecated/internal/workreconcile/types_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
 internal/ci/sizetable_test.go dead: its only helper readSizeTable had no caller; the size tables it read are checked nowhere else (dead-code pass 2026-10-01)
-cmd/nova-sprint/where_cost_functional_test.go moved behind -tags perf as cmd/nova-sprint/where_cost_perf_test.go (TestWhereAtThreeThousandCardsIsInsideTheWallBound, same bound): a wall-clock bound gates a release, never a change (docs/STANDARD.md section 8; PR 5190 cold read, 2026-10-02)
