@@ -32,7 +32,23 @@ func resultLine(out, errs, token string) string {
 	return ""
 }
 
-// add --brief-dir of 10 briefs adds the 10 cards, and says ADD OK moved=10.
+// add closes with a line naming its stream, how many cards it admitted, and
+// the sentinel it placed them before (--before, else -): ADD OK stream=<s>
+// cards=<n> before=<sentinel>, instead of only the bare progress line; the
+// MOVED and REFUSED lines still name every card admitted and refused.
+func TestAddClosingLineNamesStreamCardsAndBefore(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	out := ta.ok("add --stream s1 --count 3")
+	require.Contains(t, out, "ADD OK stream=s1 cards=3 before=- ", "add with no --before: %s", out)
+	ta.ok("add --stream s1 --sentinel stop")
+	out = ta.ok("add --stream s1 --count 2 --before stop")
+	require.Contains(t, out, "ADD OK stream=s1 cards=2 before=stop ", "add --before: %s", out)
+	ta.clean()
+}
+
+// add --brief-dir of 10 briefs adds the 10 cards, and says ADD OK stream=s1 cards=10.
 func TestAddBriefDirOfTenAddsTen(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
@@ -40,7 +56,7 @@ func TestAddBriefDirOfTenAddsTen(t *testing.T) {
 	dir := writeBriefDir(t, 10)
 	code, out, errs := ta.do("add --stream s1 --brief-dir " + dir)
 	require.Equal(t, 0, code, out+errs)
-	require.Contains(t, resultLine(out, errs, "ADD"), "ADD OK moved=10 ")
+	require.Contains(t, resultLine(out, errs, "ADD"), "ADD OK stream=s1 cards=10 before=- moved=10 ")
 	var w whereView
 	ta.json("where", &w)
 	assert.Equal(t, int64(10), w.All)
@@ -49,7 +65,7 @@ func TestAddBriefDirOfTenAddsTen(t *testing.T) {
 
 // The write committed and the display cells then failed to sync (the 2026-10-01
 // 07:45 failure: ADD FAIL moved=10 changed=no over ten cards that were in the
-// table): the result line says what the table holds, ADD OK moved=10, and the
+// table): the result line says what the table holds, ADD OK stream=s1 cards=10, and the
 // exit is 0; the sync's own error is still said, on its own line.
 func TestAddResultLineMatchesTheTableWhenTheDisplaySyncFails(t *testing.T) {
 	t.Parallel()
@@ -73,7 +89,7 @@ func TestAddResultLineMatchesTheTableWhenTheDisplaySyncFails(t *testing.T) {
 	ta.json("where", &w)
 	require.Equal(t, int64(10), w.All, "the table holds the cards")
 	assert.NotContains(t, line, "FAIL", "a FAIL over cards in the table: %s", line)
-	assert.Contains(t, line, "ADD OK moved=10 ")
+	assert.Contains(t, line, "ADD OK stream=s1 cards=10 before=- moved=10 ")
 	assert.NotContains(t, line, "changed=no")
 	assert.Equal(t, 0, code, out+errs)
 	assert.Contains(t, errs, "display cells")
@@ -89,7 +105,10 @@ func TestAddResultLineMatchesTheTableWhenTheDisplaySyncFails(t *testing.T) {
 func TestAVerbWhoseDisplaySyncFailsAfterItsWriteReportsOK(t *testing.T) {
 	t.Parallel()
 	cards := func(n int) func(*testApp) {
-		return func(ta *testApp) { ta.ok(fmt.Sprintf("add --stream s1 --count %d", n)) }
+		// pro: two readers
+		return func(ta *testApp) {
+			ta.ok(fmt.Sprintf("add --stream s1 --count %d --brief-file %s", n, proBriefFile(t)))
+		}
 	}
 	for _, tc := range []struct {
 		name, token, line string

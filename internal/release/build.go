@@ -170,6 +170,17 @@ func build(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	// workflow: `-X main.version=` with an empty value is a legal linker flag
 	// that stamps nothing, and nothing downstream notices (#118).
 	args := []string{"-trimpath", "-ldflags", Ldflags(o.version)}
+	// What the checkout is, once: the record every platform writes, and the
+	// base an --incremental build diffs against.
+	src := deps.Source
+	if src == nil {
+		src = ExecSource{}
+	}
+	commit, clean, err := src.Head(ctx, o.source)
+	if err != nil {
+		commit = ""
+	}
+	goVersion, _ := src.GoVersion(ctx)
 	// What the summary line names: every platform built, and every platform's
 	// digest, in the order they were asked for. A release half a platform
 	// short used to print one cheerful line and say nothing about the half
@@ -181,8 +192,18 @@ func build(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return refusal(errs, "BUILD", fmt.Errorf("cannot create %s: %w (name a writable --out)", dir, err))
 		}
-		for i, tool := range tools {
-			progress(errs, "building %s for %s/%s (%d/%d)", tool, goos, goarch, i+1, len(tools))
+		p := plan{rebuild: tools}
+		if o.incremental {
+			p = planIncremental(ctx, src, o, tools, goos, goarch, commit, goVersion, clean)
+			incrementalLine(out, o.version, goos+"-"+goarch, p)
+			for _, tool := range p.reuse {
+				if err := reuseFrom(p, tool, goos, dir); err != nil {
+					return refusal(errs, "BUILD", fmt.Errorf("cannot reuse %s from %s: %w (build without --incremental)", tool, p.base, err))
+				}
+			}
+		}
+		for i, tool := range p.rebuild {
+			progress(errs, "building %s for %s/%s (%d/%d)", tool, goos, goarch, i+1, len(p.rebuild))
 			output, err := tc.Build(ctx, o.source, "./cmd/"+tool, filepath.Join(dir, ToolFile(tool, goos)), goos, goarch, args)
 			if err != nil {
 				fmt.Fprintf(errs, "BUILD FAIL tool=%s platform=%s version=%s: %s (fix the compile error and build again; no %s was written)\n",
@@ -222,6 +243,16 @@ func build(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		digestPath := filepath.Join(dir, DigestFile)
 		if err := writeNoFollow("write digest", digestPath, []byte(digest+"\n"), 0o644); err != nil {
 			return refusal(errs, "BUILD", fmt.Errorf("cannot write %s: %w (name a writable --out)", digestPath, err))
+		}
+		// THE RECORD, LAST, beside the platform directory and never in it: what
+		// a later --incremental build diffs against. A dirty or non-git
+		// checkout records no commit, and such a record is never a base.
+		rec := buildRecord{Go: goVersion, Ldflags: ldflagsShape(), Base: p.base, Rebuilt: p.rebuild, Reused: p.reuse, Gate: gate, Reason: o.reason}
+		if clean {
+			rec.Commit = commit
+		}
+		if err := writeNoFollow("write build record", recordPath(o.out, o.version, goos+"-"+goarch), rec.encode(), 0o644); err != nil {
+			return refusal(errs, "BUILD", fmt.Errorf("cannot write the build record: %w (name a writable --out)", err))
 		}
 		names = append(names, goos+"-"+goarch)
 		digests = append(digests, digest)

@@ -48,7 +48,7 @@ func TestAMisspelledFlagNamesTheNearestAndTheVerbsFlags(t *testing.T) {
 	ta := newTestApp(t)
 	code, _, errs := ta.do("add --strem s1 --count 1")
 	assert.Equal(t, 2, code)
-	assert.Equal(t, "nova-sprint add REFUSED: unknown flag --strem; the flags of add are --actor, --after, --before, --brief, --brief-dir, --brief-file, --count, --epoch, --json, --max, --needs, --op, --redis, --rules, --score, --sentinel and 3 more; did you mean --stream?; run: nova-sprint help add\n", errs)
+	assert.Equal(t, "nova-sprint add REFUSED: unknown flag --strem; the flags of add are --actor, --after, --allow-shared-paths, --before, --brief, --brief-dir, --brief-file, --count, --epoch, --held, --json, --max, --needs, --op, --redis, --rules and 5 more; did you mean --stream?; run: nova-sprint help add\n", errs)
 	assert.Contains(t, errs, "; run: nova-sprint help add\n")
 	assert.NotContains(t, errs, "provided but not defined")
 	code, _, errs = ta.do("fleet up m1 --wdth 3")
@@ -75,7 +75,7 @@ func TestAGroupsHelpIsHelpAndABareGroupNamesItsVerbs(t *testing.T) {
 		})
 	}
 	_, _, errs := ta.do("stream bogus")
-	assert.Contains(t, errs, "unknown verb stream bogus; its verbs are stream remove; run: nova-sprint help stream")
+	assert.Contains(t, errs, "unknown verb stream bogus; its verbs are stream remove, stream set; run: nova-sprint help stream")
 }
 
 func TestAVerbsHelpCarriesItsOwnExitCodes(t *testing.T) {

@@ -199,18 +199,38 @@ func FindBenchMirror(benchHome, baseRepo string) string {
 	return ""
 }
 
-// MirrorCloneArgs is the git argv of the one staging convention, for cards (StageCard) and
-// for ci run: a local clone of the bench mirror that borrows its
-// objects and dissociates, so staging never reads the network and a later gc of the
-// mirror cannot take objects from under the clone. noCheckout leaves the worktree empty
-// for a caller that checks out an exact sha next. The mirror and the target follow `--`:
-// a card names the repository, and a name that starts with `-` is an operand, never an option.
-func MirrorCloneArgs(mirror, target string, noCheckout bool) []string {
-	args := []string{"clone", "-q"}
-	if noCheckout {
-		args = append(args, "--no-checkout")
+// MirrorCloneArgs is the git argv of the one staging convention (StageCard): a local clone
+// of the bench mirror, so staging never reads the network. borrow borrows the mirror's
+// objects (`--shared`: the clone's alternates name the mirror's object directory, and no
+// object is copied), for a mirror that keeps every object (mirrorKeepsObjects); otherwise the
+// objects are copied in (`--reference` then `--dissociate`), so the clone owes nothing to a
+// repository that may drop one. The copy is the cost a 36-thread bench paid on 2026-10-02: 21 s at
+// load 31 against 3.4 s borrowed, 73-79 s median under the afternoon's load, over a 120 s
+// wall (docs/SPEC-SWARM.md, the clone). The mirror and the target follow `--`: a card names
+// the repository, and a name that starts with `-` is an operand, never an option.
+func MirrorCloneArgs(mirror, target string, borrow bool) []string {
+	if borrow {
+		return []string{"clone", "-q", "--shared", "--", mirror, target}
 	}
-	return append(args, "--reference", mirror, "--dissociate", "--", mirror, target)
+	return []string{"clone", "-q", "--reference", mirror, "--dissociate", "--", mirror, target}
+}
+
+// mirrorKeepsObjects makes the bench mirror keep every object a borrowing clone reads, and
+// reports whether it does: `gc.auto=0`, so no fetch of the refresh starts a gc that would
+// drop an object a live checkout borrows (a fetch adds objects and removes none). The setting
+// is read first and written only when absent; a mirror whose setting cannot be written (another
+// writer holds its config's lock, or the bench user cannot write it) is copied from this time.
+func mirrorKeepsObjects(ctx context.Context, git func(context.Context, ...string) *exec.Cmd, mirror string) bool {
+	auto := func() string {
+		out, _ := git(ctx, "-C", mirror, "config", "--get", "gc.auto").Output()
+		return strings.TrimSpace(string(out))
+	}
+	if auto() == "0" {
+		return true
+	}
+	// ignored: the read below says whether the setting holds, whoever wrote it
+	_ = git(ctx, "-C", mirror, "config", "gc.auto", "0").Run()
+	return auto() == "0"
 }
 
 // refuseOptionLike is the refusal of a card value git would read as an option. Every git
@@ -318,6 +338,7 @@ type StageResult struct {
 	Branch   string // the branch the staged checkout is on (CardStageBranch)
 	Mirror   string
 	Staged   bool
+	Shared   bool // the checkout borrows Mirror's objects (MirrorCloneArgs): the wall must read <Mirror>/objects
 	TimedOut bool
 	Wall     time.Duration
 	// Clone, Fetch and Checkout sum their Git command times; Clone includes
@@ -332,7 +353,7 @@ type StageResult struct {
 // The checkout is at the sha (else the ref, else the clone's default head) on the branch
 // CardStageBranch names, so the card commits on a branch, not a detached HEAD.
 // If base-repo is remote and no bench mirror is found, staging fails without contacting GitHub.
-// Staging runs git clone --reference <mirror> and git fetch/checkout <base-sha> with a hard timeout (default 120s).
+// Staging runs git clone --shared <mirror> (MirrorCloneArgs) and git fetch/checkout <base-sha> with a hard timeout (default 120s).
 // If the timeout expires, it writes RESULT.md:
 //
 //	RESULT: BLOCKED stage-timeout <bench> <secs>
@@ -403,8 +424,12 @@ func StageCard(opts StageOptions) (StageResult, error) {
 	start := time.Now()
 	var cloneTime, fetchTime, checkoutTime time.Duration
 	cloneArgs := []string{"clone", "-q", "--", cloneSource, opts.TargetDir}
+	// a repository the card names on disk is no bench mirror: its objects are copied in, and
+	// its config is never touched
+	shared := false
 	if mirror != "" {
-		cloneArgs = MirrorCloneArgs(mirror, opts.TargetDir, false)
+		shared = mirror != baseRepo && mirrorKeepsObjects(ctx, stageCmd, mirror)
+		cloneArgs = MirrorCloneArgs(mirror, opts.TargetDir, shared)
 	}
 
 	cloneCmd := stageCmd(ctx, cloneArgs...)
@@ -522,6 +547,7 @@ func StageCard(opts StageOptions) (StageResult, error) {
 		Branch:   branch,
 		Mirror:   mirror,
 		Staged:   true,
+		Shared:   shared,
 		Wall:     time.Since(start),
 		Clone:    cloneTime,
 		Fetch:    fetchTime,

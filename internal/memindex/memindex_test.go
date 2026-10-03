@@ -852,3 +852,20 @@ func TestFrontmatterIsMetadataNeverBodyText(t *testing.T) {
 		})
 	}
 }
+
+// A file that opens with a thematic break and has another rule further down holds prose
+// between them, not frontmatter: that prose stays in the index, at its own line.
+func TestAnOpeningThematicBreakIsNotFrontmatter(t *testing.T) {
+	t.Parallel()
+	src := "---\nThe relief boat leaves the harbour at dawn every day.\n\n---\nMore words after the rule.\n"
+	c, err := Build(fstest.MapFS{"b.md": {Data: []byte(src)}}, nil)
+	require.NoError(t, err)
+	found := false
+	for _, ch := range c.Chunks {
+		if strings.Contains(ch.Original, "relief boat") {
+			found = true
+			assert.Equal(t, 1, ch.Line)
+		}
+	}
+	assert.True(t, found, "the prose between an opening rule and the next was dropped from the index: %+v", c.Chunks)
+}

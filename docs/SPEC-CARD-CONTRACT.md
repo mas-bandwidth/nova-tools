@@ -33,7 +33,11 @@ shims and the read base refresh.
 first.` and then carries the card. It says, in the profile's words: the repository, the branch
 and the commit the checkout is at, the base it came from, that the child works there and
 commits as usual, how its commit and its pull request leave (the sprint does both), the test
-environment (`GOCACHE=<job>/gocache`, niced, `-count=1 -timeout`), the attempt, and for attempt
+environment (the child's `GOCACHE` is the machine's shared, warm build cache `<root>/cache/go-build`,
+already set and named, never a cold one of its own under the job: `go help cache` says "The cache
+is safe for concurrent invocations of the go command.", and sixteen reads each compiling the
+repository from nothing kept a 36-thread bench 85% in the kernel on 2026-10-02; niced, `-count=1 -timeout`;
+`TestJobTextNamesTheSharedBuildCache`), the attempt, and for attempt
 2 and later the attempt it continues and its head (`This checkout continues attempt <n>: its head,
 <sha>, is the last pushed by any attempt before this one, and the checkout starts from it.`; left
 out when no earlier attempt pushed, and the checkout is the base) and, right after the attempt
@@ -73,9 +77,31 @@ the checkout is cloned from the bench mirror, whose base can be older than the w
 merge base against it was that older tip, and readers judged correct work broken because the diff
 held every card landed in between ("diff has 22 files not exactly one"). origin's base holds the
 work's start and not the work, so the merge base against it is the start however far the base
-has moved (`TestAReadsDiffIsExactlyTheWorkWhereverTheBaseIs`). JOB.md repeats no rules:
-the card's own RULES paragraph is in the brief, where the add lint holds it, and the child
-reads it once.
+has moved (`TestAReadsDiffIsExactlyTheWorkWhereverTheBaseIs`).
+
+**The read's gate.** A read's JOB.md names the gate it runs, as commands, in place of the card's
+and of any rule that asks for more (`cardcontract.ReadGate`, `TestAReadIsGatedOnThePackagesItsDiffTouches`,
+`TestAReadsGateIsReadOffItsDiff`): `go vet` and `go test` of the packages the work's change
+touches (`git diff --name-only <start>..HEAD`: the directory of a changed `.go` file that still
+holds one, and the package whose `testdata/` holds a changed file), and of the packages whose
+tests read a changed `docs/*.md` (a `_test.go` that names its path in a string, `"docs/<name>.md"` or
+`"../../docs/<name>.md"`, or as `filepath.Join`'s `"docs", "<name>.md"`; nova-tools#5111); `go build ./...`
+when `go.mod` or `go.sum` changed. The class-test packages the pull request's CI runs whole on
+every change (`pkgselect.EveryRun`: `internal/ci`, `internal/docs`) are never run whole by a read:
+of them it runs only the Test functions of a test file the change touches or of one that reads a
+changed doc, with `-run`. A change that reaches nothing says the read runs no go command. On
+a 36-thread bench, 2026-10-02, sixteen reads each ran `go test ./internal/ci/`, whose tests fork thousands
+of processes and build every command, and the machine spent 85% of its CPU in the kernel; the
+work's own gate ran those tests, and CI runs them again. A checkout with no `go.mod` has no gate
+of its own, and its JOB.md says to run the card's. JOB.md repeats no rules:
+the RULES paragraph is in the card the child is handed, once. Rules by reference (the owner,
+2026-10-02: "Rules by reference: the member injects fleet/child-rules.txt once; the card does not
+carry it; a per-repo rules file for second repos."; nova-tools#5174 rule 6): the stored brief is
+the card's text alone, and the member, when it writes the card file at the start of a launch,
+appends the RULES paragraph of the held rules file the card names (none when it names none:
+such a card carries its own; docs/SPEC-SPRINT.md section 2), so what the child
+reads is the shape it read when the card carried them
+(`TestTheChildsCardIsUnchangedByRulesByReference`).
 
 **Where a rework starts.** `sprint.BaseOf` is the one place that decides it: the packet's `base_head`
 is the head of the latest earlier attempt whose finish was ok at a full sha, with `base_attempt` its
@@ -140,6 +166,15 @@ template asked) overwrites nothing: it rides at the end of the pull request body
 writes `<job>/RESULT.md` itself. The finish record wins over RESULT.md. A result without the six
 keys is no result.
 
+**The verdict per step.** A tree card's result (docs/SPEC-SPRINT.md, a card is a tree of steps)
+also carries one line per work step in its body (under `## Body`, never among the header's
+keys), in walk order: `step <n>: <ok|broken|not-done|skipped> <commit sha|-> <one line>`, the
+commit a full sha or its first twelve; a line whose commit is any other word is a defect, read as
+not-done (`TestAStepLineWhoseCommitIsAWordIsADefect`). `cardtree.ParseVerdicts` reads the body's
+lines, and the member's finish of a tree card is judged from them (`member.treeFinish`,
+`TestAFailedStepTwoOfThreeLandsStepOneAndWritesTheRemainder`). A script card's body is written by
+`nova-swarm step --result`, one line per step it ran.
+
 The rulings of 2026-09-30 on the shape:
 
 - **Every work card ends with a commit.** A child with nothing to do says `verdict: nothing`
@@ -148,6 +183,24 @@ The rulings of 2026-09-30 on the shape:
   the coordinator.
 - **The report line is the pull request title**, and the body carries the whole RESULT.md,
   with the gate's output, so the readers see it.
+
+**A broken read names its defect.** A read's `verdict: broken` tells the work what to do: at
+least one line of its report or body names the file (a path, or `file:line`), the line
+(`line <n>`), or the card's `STEP <n>` or RULE the work breaks, and says what to change
+(`typedrec.FindingPattern`, `typedrec.NamesADefect`; `TestABrokenFindingNamesAFileALineOrARule`).
+"Request changes." alone, or an approval's words under a broken verdict, is no finding. Every
+profile's read JOB.md says so (`cardcontract.BrokenFindingText`); the claude and openai gh shims
+refuse a `gh pr review --request-changes` whose body names none, in one line, so the reader names
+it before it ends (`TestGhPrReviewIsTheRead`, functional tier). The member reports a broken read's
+finding in full, every line of its report and body joined with ` / ` and cut to
+`member.MaxFindingBytes`, never its first line alone; a broken verdict whose finding names no
+defect is no verdict: the member hands the read back (`read --return`, its reason beginning
+`no finding:`), and the sprint asks another reader as for any return
+(`TestABrokenReadNamesItsDefectOrIsHandedBack`). The sprint's own `read --broken` refuses a
+finding naming none, so the rule is one predicate consulted at the review (the shim), at the
+hand-back (the member) and at the record (the store); refused, the read stays the reader's to
+report or hand back (`TestAuthoritativeBrokenReadFindingBoundary`). A file is any name with an
+extension, `a.go` too; `e.g.` and `i.e.` are not, since a dot follows.
 
 ## 4. The finish
 
@@ -161,10 +214,13 @@ A work card's finish is judged in one place, `member.Judge`, cited from the mode
   reason is `no result: no RESULT.md shape`, and the sprint treats it as an ended take
   (docs/SPEC-SPRINT.md, the work card's redeals), never as the card's failure: no work came
   back, so there is nothing to judge (the owner, 2026-10-01: "that's fine with me."). A run
-  its budget or its deadline ended with no result is failed work, the end said first
-  (`budget: no RESULT.md shape`);
-- **failed** otherwise, with the reason: `<end>: no RESULT.md shape`, `nothing to do: <why>`,
-  `verdict <word>`, `no commit: <why>`, `push refused: <git's line>`; a failed finish passes
+  its budget or its deadline ended with no result is failed work, the end said first, and
+  for a budget which budget and at what count, from native's `NATIVE BUDGET` line, the cost
+  the harness reported to the cent and rounded up
+  (`budget: tokens 509,940 of 400,000, $0.03: no RESULT.md shape`);
+- **failed** otherwise, with the reason: `<end>: no RESULT.md shape`, `nothing to do: <why>`
+  (`cardhdr.EndNothing`),
+  `verdict <word>`, `no commit: <why>` (`cardhdr.EndNoCommit`), `push refused: <git's line>`; a failed finish passes
   `--failed` and opens the failed-work judgment, never review, and passes `--head` and
   `--branch` only when a push landed;
 - **provider failure**, a failed finish of its own kind, when the run ended with no result and
@@ -252,7 +308,10 @@ description's secret; everything else is dropped. Native puts the bench's Go fir
 child's `PATH` after its shell wrappers: the directory the bench's `go` really lives in
 (`swarm.BenchGoBin`: the first `go` in `~/sdk/bin`, `~/go/bin`, then the member's own `PATH`,
 resolved through its links), so a card's bare `go` and `gofmt` resolve whatever `PATH` the loop
-unit started the member with. A name matching
+unit started the member with. Under the darwin wall, which denies `setpriority`, native
+starts the child's process group at nice 19 and the wrappers' directory carries a `nice` that
+runs its command without asking for a priority the group already has, so a gate's
+`nice -n 19` prints no warning. A name matching
 `TOKEN|SECRET|PASSWORD|PASSWD|KEY|CREDENTIAL|AUTH` is dropped unless `--pass` names it, even in
 an allowed family. The member keeps the forge credentials for its own push and pull request. A loop record whose harness reads its provider key from the environment carries `--pass <KEY>`; without it the children start with no provider key and fail at the provider, and a member started with no `--pass`, no worker secret and no `--auth` file for a model that is not a local one (`ollama`, `lmstudio`, `llamacpp`, `local`) says so in one `NOTE` line. When the result carries a `title`, the member opens the pull
 request after the push, as itself, from the card's branch into the base ref, with the title and

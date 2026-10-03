@@ -234,7 +234,7 @@ func TestInboxJSONCarriesTheJudgmentsToActOn(t *testing.T) {
 		}
 	}
 	require.Len(t, drop2, 1, "the s2 drop answers: %+v", j2.Answers)
-	require.True(t, strings.HasPrefix(drop2[0], "nova-sprint drop --group "+j2.ID+" --expect 1 --reason '<why>' --answers "), "the s2 drop answers: %+v", j2.Answers)
+	require.True(t, strings.HasPrefix(drop2[0], "nova-sprint drop s2-1 --reason '<why>'"), "the s2 drop answers: %+v", j2.Answers)
 	var h inboxHappened
 	for _, x := range in.Happened {
 		if x.Type == sprint.NWorkOK {
@@ -325,10 +325,10 @@ func TestInboxWaitWithJSONOnTimeoutEmitsOnlyValidJSON(t *testing.T) {
 		require.NoError(t, json.Unmarshal([]byte(out), &in), "%s: stdout is not valid JSON:\n%s", cmd, out)
 		require.Contains(t, in, "woke", "%s: the timeout is in the JSON too", cmd)
 		require.Equal(t, false, in["woke"], "%s: no tick end arrived", cmd)
-		require.Contains(t, errs, "inbox --wait: no tick end in", "%s: the human timeout line is on stderr", cmd)
+		require.Contains(t, errs, "inbox --wait: nothing new in", "%s: the human timeout line is on stderr", cmd)
 	}
 	code, out, errs := ta.do("inbox --wait --timeout 50ms")
 	require.Zero(t, code, errs)
-	require.Contains(t, out, "inbox --wait: no tick end in 50ms")
+	require.Contains(t, out, "inbox --wait: nothing new in 50ms")
 	require.Empty(t, errs)
 }

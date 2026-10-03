@@ -697,7 +697,7 @@ Postgres and a throwaway Redis.
 
 ```text
 $ nova-config migrate --file try.json
-CONFIG MIGRATE file=try.json from=0 to=14 applied=14
+CONFIG MIGRATE file=try.json from=0 to=21 applied=21
 
 $ nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --as a1 --file try.json
 CONFIG ADD kind=machine name=m1 rev=1
@@ -706,11 +706,11 @@ $ nova-config machine set m1 --width 6 --as a1 --file try.json
 CONFIG SET kind=machine name=m1 rev=2 changed=width
 
 $ nova-config machine list --file try.json
-MACHINE name=m1 user=nova seat=s1 slots=8 runners=0 width=6
+MACHINE name=m1 user=nova seat=s1 slots=8 runners=0 width=6 tla=false note=-
 CONFIG LIST kind=machine rows=1
 
 $ nova-config machine history m1 --file try.json
-HISTORY id=1 kind=machine name=m1 op=add actor=a1 at=2026-10-02T03:18:20Z runners=0 seat=s1 slots=8 user=nova width=4
+HISTORY id=1 kind=machine name=m1 op=add actor=a1 at=2026-10-02T03:18:20Z note=- runners=0 seat=s1 slots=8 tla=false user=nova width=4
 HISTORY id=2 kind=machine name=m1 op=set actor=a1 at=2026-10-02T03:18:20Z width=4>6
 CONFIG HISTORY kind=machine name=m1 changes=2
 ```
@@ -754,6 +754,47 @@ INDEX ENTRY session=s1 entry=e1 stamp=2026-09-17T12:05:00Z bytes=17 source=bench
 $ nova-cairn receipt --store ./cairns --session s1 --entry e1
 RECEIPT OK session=s1 entry=e1 stamp=2026-09-17T12:05:00Z bytes=17 source=bench-a/session-7#L3 persisted=true published=false publish=manual
 ```
+
+## nova-decide
+
+Fixture: `cmd/nova-decide/testdata/`: a schema and a state, a card and its
+diff, the fixed backend's answers for each, and a record of eight labelled read
+decisions. Every line below uses the fixed backend, so it needs no network and
+no key; `cmd/nova-decide/firstrun_test.go` runs each `$` line from a checkout
+root in one sitting, with `./decisions.jsonl` a file in the test's own
+directory. The ids come from `--op`, so every line reads the same twice.
+
+### First run
+
+```text
+$ nova-decide ask --schema ./cmd/nova-decide/testdata/schema.json --state ./cmd/nova-decide/testdata/state.txt --backend fixed --answers ./cmd/nova-decide/testdata/answers.json --record ./decisions.jsonl --op first
+ASK OK id=first decision=reply backend=fixed tokens_in=0 tokens_out=0 recorded=new
+ASK ANSWER question=asks_something type=noul value=yes p=yes:0.94
+ASK ANSWER question=kind type=choice value=request p=question:0.08,report:0.05,request:0.87
+
+$ nova-decide read --card ./cmd/nova-decide/testdata/card.md --diff ./cmd/nova-decide/testdata/card.diff --backend fixed --answers ./cmd/nova-decide/testdata/read-answers.json --record ./decisions.jsonl --op card-1
+READ OK id=card-1 decision=read backend=fixed verdict=LAND p=0.92 tokens_in=0 tokens_out=0 recorded=new
+READ ANSWER question=defect type=noul value=no p=yes:0.04
+READ ANSWER question=does_task type=noul value=yes p=yes:0.96
+READ ANSWER question=inside_paths type=noul value=yes p=yes:0.99
+READ ANSWER question=lines_changed type=noul value=yes p=yes:0.97
+READ ANSWER question=verdict type=choice value=LAND p=BOUNCE:0.05,LAND:0.92,UNSURE:0.03
+
+$ nova-decide outcome --record ./decisions.jsonl --id card-1 --label ok --note "the review found nothing"
+OUTCOME OK id=card-1 decision=read label=ok changed=true
+
+$ nova-decide calibrate --record ./cmd/nova-decide/testdata/record.jsonl --decision read --question defect --positive wrong --negative ok
+CALIBRATE OK decision=read schema=505bd379c3753631 question=defect option=yes positives=3 negatives=5 skipped=0 auc=0.933
+CALIBRATE BAR at=0.5 caught=2 of=3 bounced=1 of_negatives=5
+CALIBRATE BAR at=0.7 caught=2 of=3 bounced=0 of_negatives=5
+CALIBRATE BAR at=0.9 caught=0 of=3 bounced=0 of_negatives=5
+CALIBRATE CATCH-ALL at=0.45 caught=3 of=3 bounced=1 of_negatives=5
+```
+
+The first three lines write `./decisions.jsonl`; the fourth reads the fixture
+record, because a calibration wants positives and negatives both. With
+`--backend jev` the same `ask` and `read` lines ask the model instead, under
+`nova-secrets exec --only JEV_API_KEY`, and their lines carry the tokens spent.
 
 ## nova-redis
 
@@ -890,26 +931,26 @@ NOTE a twin beats every member at every verb: each member added is up after the 
 
 $ nova-sprint add --stream s1 --count 1
 MOVED s1-1 -> ready stream=s1 score=1
-ADD OK moved=1 refused=0 notes=0 op=add-t2-1
+ADD OK stream=s1 cards=1 before=- moved=1 refused=0 notes=0 op=add-t2-1
 NOTE the cards have no brief, so a worker is handed no task with them; give each one before it is dealt, on a STOPPED machine: nova-sprint brief <id> --brief-file <path>
 STOPPED  0/1 0.0%
 
 $ nova-sprint start
 START OK before=STOPPED after=RUNNING changed
 nothing is ticking between commands in a twin: tick by hand: nova-sprint tick
-0/1 0.0% -> ETA  machine: running
+0/1 0.0% -> ETA -  machine: running
 
 $ nova-sprint tick
 MOVED presence: m1 up
 TABLES rows changed: work=0 readers=0 merge=0 fleet=1
 TICK OK state=RUNNING idle=no moved=1 notes=2
-0/1 0.0% -> ETA  machine: running
+0/1 0.0% -> ETA -  machine: running
 
 $ nova-sprint tick
 MOVED deal: s1-1 work ready -> working card=s1-1.w1 member=m1 (fleet ready)
 TABLES rows changed: work=1 readers=0 merge=0 fleet=1
 TICK OK state=RUNNING idle=no moved=1 notes=1
-0/1 0.0% -> ETA  machine: running
+0/1 0.0% -> ETA -  machine: running
 
 $ nova-sprint take --as m1 --epoch 0
 MOVED s1-1.w1 fleet ready -> working member=m1 gen=1
@@ -919,51 +960,41 @@ PACKET s1-1.w1 attempt=1 gen=1 epoch=0
   notes: none
   report it: nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --branch sprint/s1-1.w1.g1.e0 --head <commit> --report '<what you did>' [--failed]
 TAKE OK moved=1 refused=0 notes=0 op=take-t23-1
-0/1 0.0% -> ETA  machine: running
+0/1 0.0% -> ETA -  machine: running
 
 $ nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --report done
 MOVED s1-1.w1 working -> done ok; s1-1 working -> review
 FINISH OK moved=1 refused=0 notes=1 op=finish-t24-1
-0/1 0.0% -> ETA  machine: running
+0/1 0.0% -> ETA -  machine: running
 
 $ nova-sprint tick
 MOVED drain: s1-1.w1 working -> done ok; s1-1 working -> review (finish by m1)
-MOVED ask: s1-1 asked of reader-a, reader-b
-TABLES rows changed: work=1 readers=2 merge=0 fleet=0
+MOVED ask: s1-1 asked of reader-a
+TABLES rows changed: work=1 readers=1 merge=0 fleet=0
 TICK OK state=RUNNING idle=no moved=2 notes=0
-0/1 0.0% -> ETA  machine: running
+0/1 0.0% -> ETA -  machine: running
 
 $ nova-sprint read --as reader-a --begin --epoch 0
 MOVED s1-1.r1.reader-a asked -> reading
 READ OK moved=1 refused=0 notes=0 op=read-t27-1
-0/1 0.0% -> ETA  machine: running
-
-$ nova-sprint read --as reader-b --begin --epoch 0
-MOVED s1-1.r1.reader-b asked -> reading
-READ OK moved=1 refused=0 notes=0 op=read-t28-1
-0/1 0.0% -> ETA  machine: running
+0/1 0.0% -> ETA -  machine: running
 
 $ nova-sprint read --as reader-a --ok --epoch 0
 MOVED s1-1.r1.reader-a reading -> ok
-READ OK moved=1 refused=0 notes=0 op=read-t29-1
-0/1 0.0% -> ETA  machine: running
-
-$ nova-sprint read --as reader-b --ok --epoch 0
-MOVED s1-1.r1.reader-b reading -> ok
-READ OK moved=1 refused=0 notes=0 op=read-t30-1
-0/1 0.0% -> ETA  machine: running
+READ OK moved=1 refused=0 notes=0 op=read-t28-1
+0/1 0.0% -> ETA -  machine: running
 
 $ nova-sprint tick
-MOVED drain: s1-1 asked of reader-a, reader-b (tick ask by machine); s1-1.r1.reader-a reading -> ok (read by reader-a); s1-1.r1.reader-b reading -> ok (read by reader-b)
-MOVED accept: s1-1 review -> merging queued (ok from reader-a, reader-b)
+MOVED drain: s1-1 asked of reader-a (tick ask by machine); s1-1.r1.reader-a reading -> ok (read by reader-a)
+MOVED accept: s1-1 review -> merging queued (ok from reader-a)
 TABLES rows changed: work=1 readers=0 merge=1 fleet=0
 TICK OK state=RUNNING idle=no moved=2 notes=2
-0/1 0.0% -> ETA  machine: running
+0/1 0.0% -> ETA -  machine: running
 
 $ nova-sprint merge --stream s1 --batch 1
 MOVED s1-1 merging -> landed
-MERGE OK moved=1 refused=0 notes=2 op=merge-t34-1
-0/1 0.0% -> ETA  machine: running
+MERGE OK moved=1 refused=0 notes=2 op=merge-t32-1
+0/1 0.0% -> ETA -  machine: running
 ```
 
 ## nova-work

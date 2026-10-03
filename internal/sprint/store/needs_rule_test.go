@@ -80,7 +80,7 @@ func (h *harness) nReadAll(id, verdict string) {
 	s := h.snap()
 	for _, rc := range s.Readers.Of(id) {
 		if rc.Col == sprint.Asked || rc.Col == sprint.Reading {
-			h.nDo(ReadStep(sprint.ReadReq{As: rc.Row, Verdict: verdict, Finding: "f", Sel: sprint.Sel{IDs: []string{rc.ID}}}))
+			h.nDo(ReadStep(sprint.ReadReq{As: rc.Row, Verdict: verdict, Finding: "f:1", Sel: sprint.Sel{IDs: []string{rc.ID}}}))
 		}
 	}
 }
@@ -139,7 +139,7 @@ func TestStampsOnEveryPath(t *testing.T) {
 		require.Failf(t, "", "re-deal after withdrawal: %s dealt=%q withdrawn=%q", wc4.Col, wc4.F("dealt"), wc4.F("withdrawn"))
 	}
 	// level: more cards on m1, m2 comes up, the newest moves with dealt new
-	h.nDo(AddStep(sprint.AddReq{Stream: "s1", Count: 3}))
+	h.nDo(AddStep(sprint.AddReq{Brief: proBrief, Stream: "s1", Count: 3}))
 	h.nDo(DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-2", "s1-3", "s1-4"}}}))
 	before := h.snap()
 	h.nDo(FleetStep(sprint.FleetReq{Op: "up", Member: "m2"}))
@@ -165,7 +165,7 @@ func TestStampsOnEveryPath(t *testing.T) {
 		}
 	}
 	h.nDo(ReadStep(sprint.ReadReq{As: rcs[0].Row, Begin: true, Sel: sprint.Sel{IDs: []string{rcs[0].ID}}}))
-	h.nDo(ReadStep(sprint.ReadReq{As: rcs[1].Row, Verdict: "broken", Finding: "x", Sel: sprint.Sel{IDs: []string{rcs[1].ID}}}))
+	h.nDo(ReadStep(sprint.ReadReq{As: rcs[1].Row, Verdict: "broken", Finding: "x:1", Sel: sprint.Sel{IDs: []string{rcs[1].ID}}}))
 	s = h.snap()
 	for _, id := range []string{rcs[0].ID, rcs[1].ID} {
 		require.NotEmpty(t, s.Readers.Card(id).F("begun"), "%s: no begun", id)
@@ -220,7 +220,7 @@ func TestReadyToAcceptOncePerAttempt(t *testing.T) {
 	s := h.snap()
 	rcs := s.Readers.Of("s1-2")
 	h.nDo(ReadStep(sprint.ReadReq{As: rcs[0].Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{rcs[0].ID}}}))
-	h.nDo(ReadStep(sprint.ReadReq{As: rcs[1].Row, Verdict: "broken", Finding: "b", Sel: sprint.Sel{IDs: []string{rcs[1].ID}}}))
+	h.nDo(ReadStep(sprint.ReadReq{As: rcs[1].Row, Verdict: "broken", Finding: "b:1", Sel: sprint.Sel{IDs: []string{rcs[1].ID}}}))
 	require.Empty(t, h.nOpenOf(sprint.NReadyToAccept, "s1-2"), "ready to accept on one ok")
 	h.nDo(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-2"}}, Another: true}))
 	h.nReadAll("s1-2", "ok")

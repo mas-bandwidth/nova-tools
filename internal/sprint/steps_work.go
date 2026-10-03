@@ -25,6 +25,9 @@ func stamp(t time.Time) string { return t.UTC().Format(time.RFC3339) }
 type CardAdd struct {
 	ID    string
 	Brief string
+	// Rules is the held rules file the member injects into this card at stage time
+	// (FieldRules), "" when the brief carries its own.
+	Rules string
 	Needs []string
 	File  string
 	// Sentinel marks this card a sentinel (a stop), not a primary: the
@@ -39,6 +42,7 @@ type AddReq struct {
 	Count  int // generate this many ids, <stream>-<n>
 	Needs  []string
 	Brief  string
+	Rules  string // the held rules file of every card the add admits with Brief (FieldRules)
 	// Cards, when set, is the many-brief form: one card per entry, in order,
 	// each with its own brief and needs (a need names a primary already on
 	// the table or one of this add). IDs, Count, Brief and Needs are then
@@ -55,8 +59,11 @@ type AddReq struct {
 	// cards, none after the last unless Last: a stream in stops, one step.
 	Every int
 	Last  bool
-	Only  []string
-	Who   string
+	// Held admits every card held (IsHeld): waiting, a sentinel never
+	// reached, nothing dealt, until the coordinator's release.
+	Held bool
+	Only []string
+	Who  string
 }
 
 // gatePrefix is the prefix of the sentinels add --sentinel-every names.
@@ -175,6 +182,12 @@ func Add(s *Snapshot, r AddReq) Plan {
 		}
 		return r.Brief
 	}
+	rulesOf := func(i int) string {
+		if len(r.Cards) > 0 {
+			return r.Cards[i].Rules
+		}
+		return r.Rules
+	}
 	// isSent says the i'th card admitted is a sentinel: the one --sentinel form,
 	// or a card of the many-brief form marked one (its --sentinel <id>).
 	isSent := func(i int) bool {
@@ -189,6 +202,7 @@ func Add(s *Snapshot, r AddReq) Plan {
 		score  float64
 		needs  []string
 		brief  string
+		rules  string // FieldRules
 		behind string // the sentinel it waits behind by position
 		gate   bool   // a stop of --sentinel-every
 		sent   bool   // a stop: --sentinel or a many-brief card marked one
@@ -225,7 +239,7 @@ func Add(s *Snapshot, r AddReq) Plan {
 			continue
 		}
 		seen[id] = true
-		a := admit{id: id, score: scores[i], needs: needs, brief: briefOf(i), gate: r.IsGate(id), sent: isSent(i)}
+		a := admit{id: id, score: scores[i], needs: needs, brief: briefOf(i), rules: rulesOf(i), gate: r.IsGate(id), sent: isSent(i)}
 		if st := sentinelBefore(s, r.Stream, a.score); st != nil && !a.sent {
 			a.behind = st.ID // it waits behind the stop by its place; nothing is written of it
 		}
@@ -327,9 +341,18 @@ func Add(s *Snapshot, r AddReq) Plan {
 		if a.sent || a.gate {
 			kind, col = "sentinel", Waiting
 		}
+		if r.Held {
+			col = Waiting
+		}
 		fields := map[string]string{"kind": kind, "stream": r.Stream, "attempt": "0", "admitted": stamp(s.Now)}
+		if r.Held {
+			fields[FieldHeld] = stamp(s.Now)
+		}
 		if a.brief != "" && !a.gate {
 			fields["brief"] = a.brief
+			if a.rules != "" {
+				fields[FieldRules] = a.rules
+			}
 		}
 		if len(a.needs) > 0 {
 			fields["needs"] = strings.Join(a.needs, ",")
@@ -337,6 +360,9 @@ func Add(s *Snapshot, r AddReq) Plan {
 		u := Unit{Key: a.id, Stream: r.Stream, Moved: fmt.Sprintf("%s -> %s stream=%s score=%s", a.id, col, r.Stream, fmtScore(a.score))}
 		if a.gate {
 			u.Moved = "sentinel " + u.Moved
+		}
+		if r.Held {
+			u.Moved += "; held until release"
 		}
 		if r.Sentinel {
 			u.Moved = "sentinel " + u.Moved
@@ -351,7 +377,8 @@ func Add(s *Snapshot, r AddReq) Plan {
 					open = append(open, c.ID)
 				}
 			}
-			if len(open) == 0 {
+			// reached only after something: a stop with nothing before it is simply next
+			if len(open) == 0 && !r.Held && (len(a.needs) > 0 || anyBefore(s, r.Stream, a.id, a.score) || workInFlight(s, nil) == "") {
 				fields["reached"] = stamp(s.Now)
 				u.Notes = append(u.Notes, reachedNote(s, &Card{ID: a.id, Row: r.Stream}, nil, len(pulled), r.Who))
 				u.Moved += "; reached"
@@ -636,8 +663,14 @@ func resolvePlan(s *Snapshot, r ResolveReq) Plan {
 			}
 			continue
 		}
+		if IsHeld(c) { // held, never reached or ready: the coordinator releases it
+			if len(r.IDs) > 0 {
+				p.refuse(c.ID, "held (add --held): the coordinator releases it: nova-sprint release "+c.ID+" --reason <text>")
+			}
+			continue
+		}
 		if IsSentinel(c) { // reached, never ready: the coordinator releases it
-			if c.F("reached") == "" {
+			if c.F("reached") == "" && Reachable(s, c, nil) {
 				p.Units = append(p.Units, reachUnit(s, c, nil, r.Who))
 			} else if len(r.IDs) > 0 {
 				p.refuse(c.ID, "a reached sentinel: the coordinator releases it: nova-sprint release "+c.ID+" --reason <text>")
@@ -657,11 +690,11 @@ func resolvePlan(s *Snapshot, r ResolveReq) Plan {
 func resolveAfter(s *Snapshot, landing map[string]bool, who string) []Unit {
 	var out []Unit
 	for _, c := range s.Work.Column(Waiting) {
-		if landing[c.ID] || len(WaitsFor(s, c, landing)) > 0 {
+		if landing[c.ID] || IsHeld(c) || len(WaitsFor(s, c, landing)) > 0 {
 			continue
 		}
 		if IsSentinel(c) {
-			if c.F("reached") == "" {
+			if c.F("reached") == "" && Reachable(s, c, landing) {
 				out = append(out, reachUnit(s, c, landing, who))
 			}
 			continue
@@ -691,6 +724,7 @@ type DealReq struct {
 // same card dealt again at a new generation, its attempt unchanged; otherwise
 // the next attempt's card is cut.
 func Deal(s *Snapshot, r DealReq) Plan {
+	s, _ = s.withRests() // the resting routes, read once (rule 3, route_rest.go)
 	rr, ri := dealRound(s), routeIndexesOf(s)
 	p, moves := dealPlan(s, r, rr, ri)
 	p = Lawful(p)
@@ -724,7 +758,31 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 	for _, c := range chosen {
 		if wc := s.Fleet.Placed(WorkCardID(c.ID, c.Int("attempt"))); wc != nil && wc.Col == Withdrawn {
 			if redealBound(wc) {
-				p.refuse(c.ID, fmt.Sprintf("%s was redealt %d times, its bound: rework it with a fix, or drop it", wc.ID, wc.Int("redeals")))
+				tier := s.NextTier(c)
+				if tier == "" {
+					p.refuse(c.ID, boundWhat(wc, c.ID)+": rework it with a fix, or drop it")
+					continue
+				}
+				// below its ceiling: the machine escalates it, a new attempt on the next tier
+				m := next()
+				if m == "" {
+					p.refuse(c.ID, noRoomWhy)
+					continue
+				}
+				on, _ := CardTiers(c)
+				why := fmt.Sprintf("attempt %s reached its bound on %s (redealt %d times)%s", wc.F("attempt"), on, wc.Int("redeals"), providerWhy(wc))
+				if class := identicalEnds(wc); class != "" {
+					// rule 2 inside one attempt: its last two takes ended the same way (failure.go)
+					why = fmt.Sprintf("attempt %s reached its bound on %s (its last two takes ended the same way: %s)", wc.F("attempt"), on, class)
+				}
+				u, refused := escalate(s, c, wc, tier, why, m, q, ri)
+				if refused != "" {
+					p.refuse(c.ID, refused)
+					continue
+				}
+				rr.moved(m)
+				moves[c.ID] = m
+				p.Units = append(p.Units, u)
 				continue
 			}
 			if _, why := s.noRoute(c); why != "" {
@@ -817,6 +875,27 @@ func deal(s *Snapshot, c *Card, fix, m string, q map[string]int, ri routeIndexes
 		change(Fleet, createEntry(card, m, Ready, c.Score, fields)),
 		change(Work, moveEntry(c, c.Row, Working, set, append(unset, "result")...)),
 	}, Moved: fmt.Sprintf("%s work %s -> working card=%s member=%s (fleet ready)", c.ID, c.Col, card, m)}, ""
+}
+
+// escalate deals the primary c a new attempt on the next tier, tier (NextTier), into the
+// ready queue of the up member m, when its attempt reached its bound below its ceiling:
+// the machine's step, raising no judgment (route.go, tierLadder; the owner, 2026-10-02,
+// cost rule 1 of nova-tools#5174: "Flash first on every card; pro only on escalation").
+// The primary records the tier (FieldTierNow) and every later deal draws from it; the
+// attempt that reached its bound, prev, is retired as a rework at the bound retires it;
+// the new attempt's work card is told why (the bound and the tiers), the brief and the
+// fix are the card's own.
+func escalate(s *Snapshot, c, prev *Card, tier, why, m string, q map[string]int, ri routeIndexes) (Unit, string) {
+	from, _ := CardTiers(c)
+	set := map[string]string{FieldTierNow: tier}
+	given := map[string]string{"finding": c.F("finding"), "why": fmt.Sprintf("escalated from %s to %s: %s", from, tier, why)}
+	u, refused := deal(s, withField(c, FieldTierNow, tier), c.F("fix"), m, q, ri, set, given)
+	if refused != "" {
+		return Unit{}, refused
+	}
+	u.Changes = append([]Change{change(Fleet, removeEntry(prev, map[string]string{"retired": stamp(s.Now), "retired_by": "escalation"}))}, u.Changes...)
+	u.Moved += fmt.Sprintf("; escalated %s -> %s: %s", from, tier, why)
+	return u, ""
 }
 
 // redeal deals a withdrawn work card again, into the ready queue of the up
@@ -1075,6 +1154,14 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		if r.Failed {
 			result, okWord, into = "failed", "no", DoneFailed
 		}
+		// A rework whose child found nothing to do, or committed nothing, at the head an
+		// earlier attempt pushed and a reader passed is no failed work: the card was right.
+		// It goes back to review at that head, where the machine's ask asks its readers
+		// (docs/SPEC-SPRINT.md section 6; Rework sets FieldPassedHead).
+		passed := r.Failed && r.Head == "" && IsNothingNew(r.Report) && pr.F(FieldPassedHead) != ""
+		if passed {
+			head, result, okWord, into = pr.F(FieldPassedHead), "ok", "yes", DoneOK
+		}
 		cardSet := map[string]string{"ok": okWord, "head": head, "finished": stamp(s.Now)}
 		if r.Report != "" {
 			cardSet["report"] = r.Report
@@ -1093,22 +1180,60 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 			cardSet[FieldUsage] = rec
 		}
 		set := map[string]string{"head": head, "result": result}
-		if r.Failed {
+		identical := false
+		if r.Failed && !passed {
 			set["failed"] = itoa(pr.Int("failed") + 1)
+			// rule 2: the attempt before failed the same way, so this is the bound's (failure.go)
+			identical = failureSet(pr, pr.Int("attempt"), r.Report, set)
 		}
 		addConsumer(pr, set, workConsumer(s, c, 0, result, rec))
 		u := Unit{Key: c.ID, Stream: pr.Row, Changes: []Change{change(Fleet, moveEntry(c, c.Row, into, cardSet))},
 			Moved: fmt.Sprintf("%s working -> done %s; %s working -> review", c.ID, result, pr.ID)}
 		attempt := pr.Int("attempt")
+		if next := s.NextTier(pr); identical && next != "" {
+			// the second identical failure below its ceiling (rules 1 and 2, nova-tools#5174:
+			// "Flash first on every card; pro only on escalation"): no judgment; the primary
+			// takes the next tier and its why and goes back to ready, as a rework with no
+			// member up leaves it, and the tick's deal cuts its next attempt there. The new
+			// tier counts its own failures: the record of this one is not carried up.
+			from, _ := CardTiers(pr)
+			why := fmt.Sprintf("escalated from %s to %s: attempts %d and %d failed the same way (%s) on %s", from, next, attempt-1, attempt, set[FieldFailure], from)
+			set[FieldTierNow], set["why"] = next, why
+			delete(set, "result")
+			delete(set, FieldFailure)
+			delete(set, FieldFailureAt)
+			u.Changes = append(u.Changes, change(Work, moveEntry(pr, pr.Row, Ready, set, "result", FieldFailure, FieldFailureAt)))
+			u.Moved = fmt.Sprintf("%s working -> done %s; %s working -> ready (%s)", c.ID, result, pr.ID, why)
+			p.Units = append(p.Units, u)
+			continue
+		}
 		// ONE PATH ASKS: the finish asks no reader. The machine's ask does, in the tick the
 		// finish wakes, the earlier pair first (Ask, the primary's asked field), each read
 		// with the route it draws. A read the finish created itself carried no route (a
 		// finish loads none) and no reader could start it (fleet pass 7, 2026-10-01: two
 		// such reads held a card twelve minutes)
 		asked := map[string]string{}
-		if !r.Failed {
+		if passed {
 			n := happened(NWorkOK, pr.Row, s.Now, pr.ID)
 			n.Who, n.Attempt = who, attempt
+			n.What = "nothing new at " + head + ", which a reader passed: back in review at it; " + r.Report
+			u.Notes = append(u.Notes, n)
+		} else if !r.Failed {
+			n := happened(NWorkOK, pr.Row, s.Now, pr.ID)
+			n.Who, n.Attempt = who, attempt
+			if strings.Contains(r.Report, cardhdr.RemainderKey) {
+				// a tree card that finished at the step before its failed step: the note
+				// names the remainder card for the coordinator to add (docs/SPEC-SPRINT.md,
+				// a card is a tree of steps)
+				n.What = r.Report
+			}
+			u.Notes = append(u.Notes, n)
+		} else if identical {
+			// the second identical failure (rule 2): the bound's judgment at once, in the words
+			// the tick holds it by (AtIdenticalFailure), never a third try on the same tier
+			n := Note{Kind: Judgment, Type: NBound, Stream: pr.Row, Primaries: []string{pr.ID}, Count: 1, At: s.Now, Who: who, Marked: true,
+				Card: c.ID, Attempt: attempt, What: identicalWorkWhat(c.ID, attempt, set[FieldFailure], pr.ID),
+				Decisions: append([]string(nil), TickDecisions[NBound]...)}
 			u.Notes = append(u.Notes, n)
 		} else {
 			n := judgment(NWorkFailed, pr.Row, s.Now, pr.Int("failed"), pr.ID)
@@ -1126,6 +1251,16 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		p.Units = append(p.Units, u)
 	}
 	return p
+}
+
+// FieldPassedHead is the head of the attempt a rework sent back when a reader had passed
+// it (an ok read at it): what a next attempt that finds nothing new returns to review at.
+const FieldPassedHead = "passed_head"
+
+// IsNothingNew says a failed finish's report is the member's word for no new work: its
+// child found nothing to do (cardhdr.EndNothing) or committed nothing (cardhdr.EndNoCommit).
+func IsNothingNew(report string) bool {
+	return strings.HasPrefix(report, cardhdr.EndNothing+":") || strings.HasPrefix(report, cardhdr.EndNoCommit+":")
 }
 
 // IsProviderFailure says a failed finish's report names the provider as the cause: it
@@ -1247,6 +1382,14 @@ type FleetReq struct {
 	// HeldBy, with hold, marks the hold as made by that mechanism (the sync's,
 	// fleet_sync.go) and not the coordinator's: the control card's held_by.
 	HeldBy string `json:",omitempty"`
+	// Machines, with Op sync, is every machine row of the inventory, a member
+	// or not (width 0): a fleet row it does not name has no machine row and
+	// leaves the fleet once no card stays on it (fleet_sync.go).
+	Machines []string `json:",omitempty"`
+	// Remove, with hold, takes the member's control card off the fleet when no
+	// card stays on it after the hold's redeal (memberKeeps): the sync's
+	// removal of a member with no machine row.
+	Remove bool `json:",omitempty"`
 }
 
 // Fleet brings a member up (and levels the ready queues), takes one down
@@ -1372,6 +1515,14 @@ func fleetStepPlan(s *Snapshot, r FleetReq, rr *round, moves roundMoves) Plan {
 		}
 		if comeUp {
 			level(s, &p, orderLike(s.Fleet.Rows(), append(liveFor(s, r), r.Member), r.Member), rr, moves, nil)
+			if len(moves) > 0 {
+				to, from := map[string]int{}, map[string]int{}
+				for id, m := range moves {
+					to[m]++
+					from[s.Fleet.Card(id).Row]++
+				}
+				line += fmt.Sprintf("; moved=%d to %s from %s", len(moves), countsByMember(to), countsByMember(from))
+			}
 		}
 		headOf(&p, r.Member, head, n, line)
 	case "down", "hold":
@@ -1443,6 +1594,7 @@ func downPlan(s *Snapshot, r FleetReq, up []string, rr *round, moves roundMoves,
 	}
 	cards := append(append([]*Card{}, s.Fleet.Cell(r.Member, Ready)...), s.Fleet.Cell(r.Member, Working)...)
 	SortCards(cards)
+	withdrew := 0
 	for _, c := range cards {
 		taken := c.Col == Working
 		if len(up) > 0 && !(taken && c.Int("redeals") >= MaxRedeals) {
@@ -1463,6 +1615,7 @@ func downPlan(s *Snapshot, r FleetReq, up []string, rr *round, moves roundMoves,
 				continue
 			}
 		}
+		withdrew++
 		set := nextGen(c, "", s.Now)
 		set["withdrawn"] = stamp(s.Now)
 		if taken {
@@ -1479,8 +1632,41 @@ func downPlan(s *Snapshot, r FleetReq, up []string, rr *round, moves roundMoves,
 		}
 		p.Units = append(p.Units, u)
 	}
+	if r.Remove && withdrew == 0 && memberKeeps(s, r.Member) == 0 {
+		// no card stays on it: its control card leaves the fleet, held by the
+		// sync so a return to the inventory releases it (fleet_sync.go)
+		head = []Change{change(Fleet, removeEntry(ctl, map[string]string{"status": Down, "since": stamp(s.Now), "held": stamp(s.Now), FieldHeldBy: r.HeldBy}))}
+		n = statusNote(s, r, NMemberDown, "removed")
+		line = r.Member + " removed: " + r.Why + ", and no card stays on it; its row and its width leave the fleet"
+	}
+	// where the member's cards went, and which stayed (nova-tools#5096 item 21)
+	to, stayed := map[string]int{}, []string{}
+	for _, c := range cards {
+		if m, ok := moves[c.ID]; ok {
+			to[m]++
+		} else {
+			stayed = append(stayed, c.F("primary"))
+		}
+	}
+	line += fmt.Sprintf("; moved=%d", len(cards)-len(stayed))
+	if len(to) > 0 {
+		line += " to " + countsByMember(to)
+	}
+	line += fmt.Sprintf("; stayed=%d", len(stayed))
+	if len(stayed) > 0 {
+		line += " withdrawn: " + Preview(stayed, ",")
+	}
 	headOf(&p, r.Member, head, n, line)
 	return p
+}
+
+// countsByMember is a count per member, in name order: "m2(3),m3(1)".
+func countsByMember(n map[string]int) string {
+	var out []string
+	for _, m := range slices.Sorted(maps.Keys(n)) {
+		out = append(out, fmt.Sprintf("%s(%d)", m, n[m]))
+	}
+	return strings.Join(out, ",")
 }
 
 // sweep is the rebalance's safety (the owner, 2026-10-01: "and it's a safety, if
@@ -1515,14 +1701,32 @@ func sweep(s *Snapshot, p *Plan, r FleetReq, up []string, rr *round, moves round
 // ready and working, less its width: below zero it has free lanes its ready
 // cards do not fill, above zero it holds ready cards it cannot start. While the
 // largest backlog of a member with a ready card and the smallest of the members
-// below DealAhead times their width differ by more than one, the newest card
-// (the last in work order) of the largest moves to the next member round the
-// fleet below DealAhead times its width and at or below the mean backlog
+// below DealAhead times their width differ by more than one, the newest ready
+// card (the last in work order) of the largest that has a target moves to the
+// next member round the fleet below DealAhead times its width, at least two
+// below, at or below the mean backlog and no refuser of the card
 // (round.levelTo, errata 3 amendment 5: the levelling moves the deal's index
 // too). So no up member has free lanes and an empty ready column while another
 // holds ready cards it cannot start, a member that comes up takes its share at
 // once, and none is levelled past DealAhead times its width (width.go).
+//
+// The call ends, by two guards, each enough alone (tla/Level.tla; the wedge of
+// 2026-10-02, nova-tools#5122, was a call that did not): every move lowers the
+// sum of squared backlogs by at least two (levelTo's gap), and a card it moved
+// is never one it moves again, so it makes at most as many moves as the fleet
+// had ready cards. A newest card whose only target is refused or one below
+// does not stop an older card that has one.
 func level(s *Snapshot, p *Plan, up []string, rr *round, moves roundMoves, held map[string]int) {
+	levelWith(s, p, up, rr, moves, held, (*round).levelTo)
+}
+
+// levelTarget is where level sends a card: round.levelTo. A test hands level
+// the rule of the wedge (b7776ca3) to show that the ready count alone ends the
+// loop (tla/Level.tla, MCLevelOldRuleNoRequeue).
+type levelTarget func(r *round, up []string, n, held, widths map[string]int, from string, avoid []string) string
+
+// levelWith is level with its target.
+func levelWith(s *Snapshot, p *Plan, up []string, rr *round, moves roundMoves, held map[string]int, target levelTarget) {
 	if len(up) < 2 {
 		return
 	}
@@ -1556,7 +1760,7 @@ func level(s *Snapshot, p *Plan, up []string, rr *round, moves roundMoves, held 
 		q := queues[long]
 		i, to := len(q)-1, ""
 		for ; i >= 0 && to == ""; i-- {
-			to = rr.levelTo(up, n, held, widths, append(StagingRefusers(q[i]), long))
+			to = target(rr, up, n, held, widths, long, StagingRefusers(q[i]))
 		}
 		if to == "" {
 			return
@@ -1565,8 +1769,11 @@ func level(s *Snapshot, p *Plan, up []string, rr *round, moves roundMoves, held 
 		held[long]--
 		held[to]++
 		c := q[i]
+		// the card leaves the queues and is not queued on its receiver: no card
+		// moves twice in one call (each unit is guarded on the place the card
+		// was read at), so the call makes at most as many moves as the fleet
+		// had ready cards, whatever the target (tla/Level.tla, MovesBounded)
 		queues[long] = append(q[:i:i], q[i+1:]...)
-		queues[to] = append(queues[to], c)
 		moves[c.ID] = to
 		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, to, Ready, nextGen(c, to, s.Now)))},
 			Moved: fmt.Sprintf("%s %s:ready -> %s:ready gen=%d", c.ID, long, to, c.Int("gen")+1)})

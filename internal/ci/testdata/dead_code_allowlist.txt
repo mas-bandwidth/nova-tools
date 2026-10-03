@@ -21,7 +21,7 @@ internal/hygiene 1
 internal/nogh 1
 internal/nsprint/fn 5
 internal/nsprint/store 3
-internal/ntable 19
+internal/ntable 17
 internal/pkgselect 22
 internal/redisconn 1
 internal/redisfn 9
@@ -35,7 +35,7 @@ internal/subproc 1
 internal/swarm 42
 internal/testguard 5
 internal/tokens 2
-internal/tool 5
+internal/tool 4
 internal/typedrec 11
 internal/workfile 2
 internal/workgh 1

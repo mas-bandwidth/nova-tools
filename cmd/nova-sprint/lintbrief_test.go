@@ -106,8 +106,44 @@ func writeRules(t *testing.T, text string) string {
 	return path
 }
 
-// ourRulesFile is this repository's own rules file, read relative to this package.
+// help add says the rules file is read at add time, with an example path.
+func TestHelpAddSaysTheRulesFileIsReadAtAddTime(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	out := ta.ok("help add")
+	require.Contains(t, out, "read at add time", "help add says when the rules file is read:\n%s", out)
+	require.Contains(t, out, "rules/card.txt", "help add shows an example path:\n%s", out)
+}
+
+// add --rules refuses naming the absolute path it tried, even when the caller
+// named a relative one (init --rules records its absolute path the same way).
+func TestAddRulesRefusalNamesTheAbsolutePath(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	cwd, err := os.Getwd()
+	require.NoError(t, err)
+	missing := filepath.Join("docs", "no-such-rules-file.txt")
+	abs := filepath.Join(cwd, missing)
+	code, out, errs := ta.do("add --stream s1 --count 1 --rules " + missing + " --brief 'Keep it short.'")
+	require.Equal(t, 2, code, "out %q err %q", out, errs)
+	require.Contains(t, errs, "--rules: ", "the refusal names --rules: %q", errs)
+	require.Contains(t, errs, abs, "the refusal names the absolute path it tried: %q", errs)
+	require.NotContains(t, out, "MOVED", "nothing moved: %q", out)
+}
+
+// ourRulesFile is this repository's own rules file, read relative to this package: a file
+// the members hold, so a brief is held to it by reference (nova-tools#5174 rule 6).
 const ourRulesFile = "../../fleet/child-rules.txt"
+
+// copyRules is ourRulesFile's text under another name, a file the members do not hold: a
+// brief is held to carry it, as to any rules file of the coordinator's own.
+func copyRules(t *testing.T) string {
+	t.Helper()
+	raw, err := os.ReadFile(ourRulesFile)
+	require.NoError(t, err)
+	return writeRules(t, string(raw))
+}
 
 // The tool is general: a brief for any other project, with none of one repository's rules
 // in it, is admitted under the default rules, and the same brief is refused under a rules
@@ -119,27 +155,28 @@ func TestAddAdmitsAnyProjectsBriefUnderTheDefaultRules(t *testing.T) {
 	brief := "Fix the typo in site/index.html, then run npm test and push the branch.\n\n" + swarm.ChildRulesParagraph()
 	code, _, errs := ta.do("add --stream web --count 1 --brief '" + strings.ReplaceAll(brief, "'", "") + "'")
 	require.Equal(t, 0, code, "a non-Go brief with the general rules: exit %d\n%s", code, errs)
-	code, _, errs = ta.do("add --stream web2 --count 1 --max 0 --rules " + ourRulesFile + " --brief '" + strings.ReplaceAll(brief, "'", "") + "'")
+	code, _, errs = ta.do("add --stream web2 --count 1 --max 0 --rules " + copyRules(t) + " --brief '" + strings.ReplaceAll(brief, "'", "") + "'")
 	require.Equal(t, 2, code, "the same brief under this repository's file: exit %d\n%s", code, errs)
 	require.Contains(t, errs, "LINT DRIFT brief rule-gocache: 1: missing: Export a private GOCACHE", "the same brief under this repository's file: exit %d\n%s", code, errs)
 	require.Contains(t, errs, "LINT DRIFT brief rule-commit-trailer: ", "the same brief under this repository's file: exit %d\n%s", code, errs)
 }
 
-// This repository's own file admits a card that carries its rules, and refuses one that
-// lacks one, naming it; the rules file is read whole, one sentence per line.
+// A rules file of the coordinator's own admits a card that carries its rules, and refuses
+// one that lacks one, naming it; the rules file is read whole, one sentence per line.
 func TestAddHoldsABriefToTheRulesFileItIsGiven(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a --members m1")
 	ours, err := swarm.ReadChildRules(ourRulesFile)
 	require.NoError(t, err)
+	file := copyRules(t)
 	body := "handle the empty case\n\n" + swarm.RulesParagraph(ours)
 	brief := filepath.Join(t.TempDir(), "brief.md")
 	require.NoError(t, os.WriteFile(brief, []byte(body), 0o600))
-	ta.ok("add --stream s1 --count 1 --rules " + ourRulesFile + " --brief-file " + brief)
+	ta.ok("add --stream s1 --count 1 --rules " + file + " --brief-file " + brief)
 	without := strings.Replace(body, "Every new test opens with `t.Parallel()`.\n", "", 1)
 	require.NoError(t, os.WriteFile(brief, []byte(without), 0o600))
-	code, _, errs := ta.do("add --stream s2 --count 1 --rules " + ourRulesFile + " --brief-file " + brief)
+	code, _, errs := ta.do("add --stream s2 --count 1 --rules " + file + " --brief-file " + brief)
 	require.Equal(t, 2, code, "a brief missing one named rule: exit %d\n%s", code, errs)
 	require.Equal(t, 1, strings.Count(errs, "LINT DRIFT brief "), "a brief missing one named rule: exit %d\n%s", code, errs)
 	require.Contains(t, errs, "LINT DRIFT brief rule-parallel: 1: missing: Every new test opens with `t.Parallel()`.", "a brief missing one named rule: exit %d\n%s", code, errs)

@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"maps"
 	"net/url"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
@@ -27,6 +28,7 @@ import (
 	"unicode"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
+	"github.com/mas-bandwidth/nova-tools/internal/decide"
 )
 
 // Type is a field's type. It decides the SQL column, the flag's parsing and
@@ -89,6 +91,13 @@ type Field struct {
 	Default string
 	// Nullable leaves an omitted field unset, represented as SQL NULL.
 	Nullable bool
+	// Clear, on a Nullable field, is the word a set takes to clear the field
+	// back to unset ("default" for a machine's width).
+	Clear string
+	// Cut is a free-text field the list verbs print cut to ListNoteRunes
+	// characters (ListLine), so one row stays one short line; show, --json and
+	// the history keep it whole.
+	Cut bool
 }
 
 // Kind is one kind of configuration. See the package comment.
@@ -130,6 +139,11 @@ type Kind struct {
 	// and a rule that needs it is skipped (the field's own refusal says
 	// what is wrong).
 	Check func(r Row) error
+	// CheckChanges, when set, is the rule on what a set names, which the row it
+	// leaves cannot tell (a route set --enabled false names its reason in the
+	// same set). Changes runs it on the canonical values before any store is
+	// opened. nil checks nothing.
+	CheckChanges func(changes map[string]string) error
 }
 
 // NamePattern is the shape of a row key: lower-case, digits and dashes, the
@@ -167,6 +181,32 @@ const (
 // still sees exactly one coordinator.
 var FriendRoles = []string{"builder", "may-hold", "reader"}
 
+// DefaultFriendWidth is a friend's width when her row names none: the jobs
+// she works at once (the owner, 2026-10-02: "6/1 seems a bit wrong -- need to
+// setup width for friends? Start at 8 for each?"). Migration 0018 fills every
+// row there before it with this; nova-sprint friend sync reads a row without
+// the field as this.
+const DefaultFriendWidth = 8
+
+// FriendWidth is a friend row's width: its width field, DefaultFriendWidth
+// when the row has none.
+func FriendWidth(r Row) int {
+	if r.Fields["width"] == "" {
+		return DefaultFriendWidth
+	}
+	return r.Int("width")
+}
+
+// checkFriend is the friend kind's Check: her width is at least 1, a friend
+// working no job at once being no friend of the sprint's (remove the row
+// instead). A width that failed its own validation is absent and skipped.
+func checkFriend(r Row) error {
+	if w, ok := r.Fields["width"]; ok && w != "" && r.Int("width") < 1 {
+		return fmt.Errorf("friend %s has width %s; a friend's width is the jobs she works at once, at least 1: want --width <n> with n >= 1", r.Name, w)
+	}
+	return nil
+}
+
 // Tiers are the model tiers a friend can do, capacity.lua's filter_ok
 // spelling (frontier, pro, flash).
 var Tiers = []string{"flash", "frontier", "pro"}
@@ -174,6 +214,28 @@ var Tiers = []string{"flash", "frontier", "pro"}
 // RouteTiers are the tiers a route serves: Tiers less frontier, whose cards
 // are never drawn from routes and escalate to the coordinator.
 var RouteTiers = []string{"flash", "pro"}
+
+// The sprint row's two bars on a decide read's p(defect) (internal/decide, Bars;
+// docs/SPEC-SPRINT.md section 6, the decide read): apply writes them to
+// SprintKey(field), which the sprint's routes read takes.
+const (
+	FieldDecideBounce = "decide_bounce"
+	FieldDecideReview = "decide_review"
+)
+
+// checkSprint holds the decide read's bars together: both set, as probabilities with the
+// review bar at most the bounce bar (decide.ParseBars), or both empty (no decide read).
+func checkSprint(r Row) error {
+	bounce, hasB := r.Fields[FieldDecideBounce]
+	review, hasR := r.Fields[FieldDecideReview]
+	if !hasB || !hasR || bounce == "" && review == "" {
+		return nil
+	}
+	if _, err := decide.ParseBars(bounce, review); err != nil {
+		return fmt.Errorf("sprint: %v; set both bars (--decide_bounce and --decide_review), or both empty to turn the decide read off", err)
+	}
+	return nil
+}
 
 // CoordinatorRole is the Redis role ns_friend_roles and the deal read
 // (friend:<f>:roles), derived at apply from the sprint row.
@@ -197,13 +259,15 @@ var Kinds = []*Kind{
 	{
 		Name:  KindMachine,
 		Table: "machines",
-		Doc:   "a machine of the fleet, named by its tailnet host: the login, the seat, its ceiling, its runners, and the sprint member's width on it",
+		Doc:   "a machine of the fleet, named by its tailnet host: the login, the seat, its ceiling, its runners, the sprint member's width on it, and whether it is a TLC record machine",
 		Fields: []Field{
 			{Name: "user", Type: TypeText, Required: true, Help: "the login the plays and seals use on it (ssh <user>@<name>)"},
 			{Name: "seat", Type: TypeText, Required: true, Help: "its nova-secrets seat: the identity it opens secrets as, one <seat>.yaml in the store"},
 			{Name: "slots", Type: TypeInt, Required: true, Help: "the machine ceiling apply writes to machine:<m>:ceiling, which the friends' desired slots must fit under; not the sprint's width"},
 			{Name: "runners", Type: TypeInt, Help: "how many CI runners it hosts; 0 (the default) hosts none"},
-			{Name: "width", Type: TypeInt, Help: "the most work cards the sprint's member on it runs at once, what nova-sprint fleet sync sets; set apart from --slots, never derived from it; 0 (the default) is no member, dealt no work"},
+			{Name: "width", Type: TypeInt, Nullable: true, Clear: "default", Help: "the most work cards the sprint's member on it runs at once, what nova-sprint fleet sync sets; set apart from --slots, never derived from it; unset (the default, or --width default) is half the machine's cores as its beat reports them, which fleet sync resolves; 0 is no member, dealt no work"},
+			{Name: "tla", Type: TypeBool, Help: "a TLC record machine: the tools play installs the pinned TLC jar on it and tlacheck run --bench any picks among them; false (the default) is none"},
+			noteField("why the machine is as it is: a hold, a rest, the load that was measured"),
 		},
 	},
 	{
@@ -227,12 +291,14 @@ var Kinds = []*Kind{
 		// know").
 		Name:  KindFriend,
 		Table: "friends",
-		Doc:   "an AI friend: how wide she runs, which tiers she can do, and her roles",
+		Doc:   "an AI friend: her slots, which tiers she can do, her roles, and her width, the jobs she works at once",
 		Fields: []Field{
 			{Name: "slots", Type: TypeInt, Required: true, Help: "her desired slots, under the ceiling of the machine her beat reports; no machine's width"},
 			{Name: "tiers", Type: TypeList, Enum: Tiers, Required: true, Help: "which tiers she can do: comma list of " + strings.Join(Tiers, ", ")},
 			{Name: "roles", Type: TypeList, Enum: FriendRoles, Help: "comma list of " + strings.Join(FriendRoles, ", ") + " (who coordinates is the sprint row's)"},
+			{Name: "width", Type: TypeInt, Default: strconv.Itoa(DefaultFriendWidth), Help: "the jobs she works at once, the width nova-sprint friend sync sets on her friends row; at least 1, " + strconv.Itoa(DefaultFriendWidth) + " by default"},
 		},
+		Check: checkFriend,
 		ApplyOrder: func(r Row) int {
 			if hasWord(r.Fields["roles"], CoordinatorRole) {
 				return 0
@@ -245,10 +311,13 @@ var Kinds = []*Kind{
 		Name:      KindSprint,
 		Table:     "sprint",
 		Singleton: true,
-		Doc:       "the one row of sprint-global facts: which friend coordinates",
+		Doc:       "the one row of sprint-global facts: which friend coordinates, and the two bars a flash card's decide read is routed by",
 		Fields: []Field{
 			{Name: "coordinator", Type: TypeRef, Ref: KindFriend, Help: "the friend who holds the coordinator role (a friend row), or empty; set it to hand over"},
+			{Name: FieldDecideBounce, Type: TypeDecimal, Default: "0.5", Help: "the decide read's bounce bar: a flash card whose first read gives p(defect) at or above it is bounced with the read's finding; a probability, at least --decide_review; 0.5 (the default); empty, with --decide_review empty, turns the decide read off"},
+			{Name: FieldDecideReview, Type: TypeDecimal, Default: "0.3", Help: "the decide read's review bar: below it the card lands with no model read, and from it up to --decide_bounce it goes to a strings read; a probability; 0.3 (the default)"},
 		},
+		Check: checkSprint,
 	},
 	{
 		// A loop is a supervised process on one machine: the command, the
@@ -260,7 +329,7 @@ var Kinds = []*Kind{
 		// from the name (LoopLog), never typed.
 		Name:  KindLoop,
 		Table: "loops",
-		Doc:   "a supervised loop on one machine: its command, the seat and secret names it opens, and how it runs (every n seconds or kept alive)",
+		Doc:   "a supervised loop on one machine: its command, the seat and secret names it opens, and how it runs (every n seconds or kept alive); a nova-swarm member's width, a reader's too, is its machine row's, never the argv's",
 		Fields: []Field{
 			{Name: "machine", Type: TypeRef, Ref: KindMachine, Required: true, Help: "the machine it runs on (a machine row)"},
 			{Name: "argv", Type: TypeArgv, Required: true, Help: `the command as a JSON array of strings, the program first: '["/path/prog","--flag","v"]'; never a secret, which goes by name in --keys`},
@@ -268,7 +337,6 @@ var Kinds = []*Kind{
 			{Name: "keys", Type: TypeKeys, Help: "comma list of the names of the secrets it needs from the seat (API_KEY,...), never a value; empty when none"},
 			{Name: "every", Type: TypeInt, Help: "seconds between runs of a periodic loop; 0 (the default) when it is kept alive"},
 			{Name: "keepalive", Type: TypeBool, Help: "true for a long-running unit restarted when it exits; false (the default) when it runs --every n"},
-			{Name: "width", Type: TypeInt, Help: "the --width its command runs with: above 0 it replaces the argv's --width, or is appended when the argv has none; 0 (the default) runs the argv as written. A reader loop's width; a work member's is its machine row's (machine set <m> --width <n>), so leave it 0 there"},
 			{Name: "enabled", Type: TypeBool, Default: "true", Help: "false writes the unit and does not start it; true (the default) runs it"},
 		},
 		Check: checkLoop,
@@ -286,8 +354,9 @@ var Kinds = []*Kind{
 			{Name: "provider", Type: TypeText, Required: true, Help: "the provider word of the model id <provider>/<model> the harness is launched with: one word, no slash"},
 			{Name: "model", Type: TypeText, Required: true, Help: "the model name after the provider, which may hold slashes (x-ai/grok-4); no blank"},
 			{Name: "tokens", Type: TypeInt, Help: "the token budget per card; 0 (the default) is unmetered and the deadline is the only stop"},
+			{Name: "usd", Type: TypeDecimal, Help: "the dollar budget per card, a decimal like 0.50: the harness's reported cost at which the card is stopped, beside the token budget; empty (the default) is none"},
 			{Name: "deadline", Type: TypeInt, Required: true, Help: "the seconds a card on this route may run, above 0"},
-			{Name: "enabled", Type: TypeBool, Default: "true", Help: "false takes it out of the deal; true (the default) keeps it in"},
+			{Name: "enabled", Type: TypeBool, Default: "true", Help: "false takes it out of the deal and needs --note, the measured reason (a disabled route carries its reason); true (the default) keeps it in and needs none"},
 			// The price sheet: optional, so a card's predicted cost can be worked
 			// out from its tokens (the owner, 2026-10-01: "the pricing configuration
 			// saved per-tuple"; internal/cardcost). Prices are USD per million tokens.
@@ -304,8 +373,10 @@ var Kinds = []*Kind{
 			{Name: cardcost.FieldGateway, Type: TypeDecimal, Help: "the percent a gateway adds on top of the prices, a decimal like 5.5; empty when none"},
 			{Name: cardcost.FieldSource, Type: TypeText, Help: "where the prices were read, free text (a URL)"},
 			{Name: cardcost.FieldAsOf, Type: TypeText, Help: "the date the prices were read, YYYY-MM-DD"},
+			noteField("why the route is as it is: the measured reason it is disabled, for one (ok out of total, the deadline it ran to)"),
 		},
-		Check: checkRoute,
+		Check:        checkRoute,
+		CheckChanges: checkRouteChanges,
 	},
 	{
 		// A tier's route array: the deal takes routes[index mod len] for each
@@ -322,6 +393,18 @@ var Kinds = []*Kind{
 		Seed:  RouteTiers,
 		Check: checkTier,
 	},
+}
+
+// SayWhy is the remedy of a disabled route with no reason: a disabled route
+// carries its reason (the owner, 2026-10-02: the choices on route and width
+// "should be saved somewhere permanent with notes").
+const SayWhy = "say why: --note '<the measured reason>'"
+
+// noteField is the note column of a kind an operator decides about: free
+// text, one line, empty by default, cleared by giving an empty --note, and cut
+// by the list.
+func noteField(what string) Field {
+	return Field{Name: "note", Type: TypeText, Cut: true, Help: what + "; one line, empty (the default) when none; --note '' clears it"}
 }
 
 // checkFleet keeps both store endpoints explicit and safe to print. The
@@ -386,6 +469,19 @@ func checkRoute(r Row) error {
 	if _, ok := r.Fields["deadline"]; ok && r.Int("deadline") <= 0 {
 		problems = append(problems, fmt.Sprintf("route %s has --deadline 0; want the seconds a card on it may run, above 0", r.Name))
 	}
+	// a dollar budget is above 0: empty is no cap, and a 0 would be dealt onto every card
+	// and refused by native at every launch (nova-tools #5094)
+	if v := r.Fields["usd"]; v != "" {
+		if d, err := cardcost.Decimal(v); err != nil || d.Sign() <= 0 {
+			problems = append(problems, fmt.Sprintf("route %s has --usd %s; want a dollar budget above 0, or --usd \"\" (empty) for no cap", r.Name, v))
+		}
+	}
+	// a disabled route carries its reason (a field absent from the row is skipped as above)
+	if e, ok := r.Fields["enabled"]; ok && e == "false" {
+		if n, ok := r.Fields["note"]; ok && n == "" {
+			problems = append(problems, fmt.Sprintf("route %s is disabled with no --note; a disabled route carries its reason; %s", r.Name, SayWhy))
+		}
+	}
 	// the long prices go with the threshold: one without the other prices nothing
 	if _, ok := r.Fields[cardcost.FieldLongContext]; ok {
 		long := r.Int(cardcost.FieldLongContext) > 0
@@ -410,54 +506,24 @@ func checkRoute(r Row) error {
 	return nil
 }
 
+// checkRouteChanges is the route kind's CheckChanges: a set that names
+// --enabled false names its reason in the same set, whatever note the row
+// already has, so the reason is the one written for taking it out now.
+func checkRouteChanges(changes map[string]string) error {
+	if changes["enabled"] == "false" && changes["note"] == "" {
+		return fmt.Errorf("--enabled false takes a route out of the deal and a disabled route carries its reason; %s", SayWhy)
+	}
+	return nil
+}
+
 // LoopLog is where a loop's unit writes its output on its machine, derived
 // from the name and never typed: ~/nova-bench/loops/<name>.log. apply writes
 // it into the loop's Redis hash beside the row's fields.
 func LoopLog(name string) string { return "~/nova-bench/loops/" + name + ".log" }
 
-// LoopCommand is the command a loop's unit runs: its argv, with the width
-// field as the value of its --width when the field is above 0, so a loop's
-// width is set as one value (loop set <name> --width <n>) and never by
-// editing the argv. The last spelling of the flag (--width n, -width n,
-// --width=n, -width=n) after the program word and before a --, the one a
-// flag parser keeps, takes the value; an argv with none gets --width n
-// before its -- or at its end. A
-// width of 0 leaves the argv as written, so a row whose argv carries --width
-// and whose field is 0 keeps its own (migration 0013 sets the field from
-// the argv). The inventory renders nova_loops' argv with it (parseLoop), and
-// loop show prints it as command=.
-func LoopCommand(argv []string, width int) []string {
-	out := append([]string{}, argv...)
-	if width <= 0 || len(out) == 0 {
-		return out
-	}
-	n := strconv.Itoa(width)
-	end := len(out)
-	for i := 1; i < len(out); i++ {
-		if out[i] == "--" {
-			end = i
-			break
-		}
-	}
-	last, prefix := -1, "" // the index of the last spelling's value, and what precedes the value there
-	for i := 1; i < end; i++ {
-		switch t := out[i]; {
-		case (t == "--width" || t == "-width") && i+1 < end:
-			last, prefix = i+1, ""
-			i++
-		case strings.HasPrefix(t, "--width=") || strings.HasPrefix(t, "-width="):
-			last, prefix = i, t[:strings.IndexByte(t, '=')+1]
-		}
-	}
-	if last < 0 {
-		return append(out[:end:end], append([]string{"--width", n}, out[end:]...)...)
-	}
-	out[last] = prefix + n
-	return out
-}
-
 // checkLoop is the loop kind's Check: exactly one of every and keepalive
-// says how it runs, and secret names need a seat to open them from.
+// says how it runs, secret names need a seat to open them from, and a
+// nova-swarm member's argv carries no width of its own.
 func checkLoop(r Row) error {
 	var problems []string
 	// A field absent from the row failed its own validation in add; a rule
@@ -479,10 +545,55 @@ func checkLoop(r Row) error {
 	if keysOK && seatOK && r.Fields["keys"] != "" && r.Fields["seat"] == "" {
 		problems = append(problems, fmt.Sprintf("loop %s names secrets (--keys %s) and no --seat to open them from; want --seat <seat>", r.Name, r.Fields["keys"]))
 	}
+	if memberArgvSpellsWidth(Argv(r.Fields["argv"])) {
+		problems = append(problems, fmt.Sprintf("loop %s: its argv carries --width, and a nova-swarm member's width (a reader's too) is its machine row's, read from the fleet row every tick; drop --width from the argv and set the machine's: machine set <m> --width <n>", r.Name))
+	}
 	if len(problems) > 0 {
 		return fmt.Errorf("%s", strings.Join(problems, "; "))
 	}
 	return nil
+}
+
+// memberArgvSpellsWidth says a nova-swarm member argv carries a --width of its
+// own (--width n, -width n, --width=n or -width=n, before any --). A loop has
+// no width: the member's, a reader's too, is its machine row's (machine set
+// <m> --width <n>), moved to the fleet row by fleet sync and read with the
+// queue every tick, so an argv that spells one is refused (the owner,
+// 2026-10-02: "The reader widths seem to be very ad-hoc, unlike the machine
+// widths"). Another program's --width is its own; migration 0017 stripped the
+// member argvs that carried one.
+func memberArgvSpellsWidth(argv []string) bool {
+	at, ok := memberAt(argv)
+	if !ok {
+		return false
+	}
+	for _, w := range argv[at+2:] {
+		switch {
+		case w == "--":
+			return false
+		case w == "--width" || w == "-width" || strings.HasPrefix(w, "--width=") || strings.HasPrefix(w, "-width="):
+			return true
+		}
+	}
+	return false
+}
+
+// memberAt is the index of a nova-swarm member argv's program word: 0, or,
+// under env, the first word after env's NAME=value words (the fleet's member
+// rows run as /usr/bin/env NOVA_SPRINT_REDIS_USER=... nova-swarm member ...);
+// false when the argv is not a nova-swarm member's.
+func memberAt(argv []string) (int, bool) {
+	at := 0
+	if len(argv) > 0 && filepath.Base(argv[0]) == "env" {
+		at = 1
+		for at < len(argv) && strings.Contains(argv[at], "=") {
+			at++
+		}
+	}
+	if at+1 >= len(argv) || filepath.Base(argv[at]) != "nova-swarm" || argv[at+1] != "member" {
+		return 0, false
+	}
+	return at, true
 }
 
 // deriveCoordinator is the friend kind's Derive: the sprint row's
@@ -594,6 +705,9 @@ func (f Field) Canonical(raw string) (string, error) {
 		}
 		return raw, nil
 	case TypeInt:
+		if f.Nullable && f.Clear != "" && raw == f.Clear {
+			return "", nil // unset
+		}
 		if raw == "" {
 			return "", fmt.Errorf("--%s: want a non-negative integer", f.Name)
 		}
@@ -729,17 +843,6 @@ func marshalArgv(words []string) ([]byte, error) {
 	return bytes.TrimSuffix(b.Bytes(), []byte("\n")), nil
 }
 
-// LoopCommandText is a loop row's command (LoopCommand of its argv and
-// width) in the argv's own canonical JSON text: what loop show prints as
-// command=, the words the unit runs.
-func LoopCommandText(row Row) (string, error) {
-	raw, err := marshalArgv(LoopCommand(Argv(row.Fields["argv"]), row.Int("width")))
-	if err != nil {
-		return "", fmt.Errorf("loop %s: render its command: %w", row.Name, err)
-	}
-	return string(raw), nil
-}
-
 // Argv decodes a canonical TypeArgv value ("" is none).
 func Argv(canonical string) []string {
 	var words []string
@@ -852,6 +955,11 @@ func (k *Kind) Changes(raw map[string]string) (map[string]string, error) {
 	}
 	if len(out) == 0 && len(problems) == 0 {
 		problems = append(problems, "set names no field; the fields are "+strings.Join(k.FieldNames(), ", "))
+	}
+	if len(problems) == 0 && k.CheckChanges != nil {
+		if err := k.CheckChanges(out); err != nil {
+			problems = append(problems, err.Error())
+		}
 	}
 	if len(problems) > 0 {
 		sort.Strings(problems)

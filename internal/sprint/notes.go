@@ -61,7 +61,13 @@ const (
 	NAbandoned      = "an operation was abandoned"
 	NSentinelLanded = "sentinel landed" // released by the coordinator
 
-	NReadyToAccept   = "ready to accept"    // two different readers said ok at its head
+	// The coordinator's seat moved (docs/SPEC-SPRINT.md, "Handing over the
+	// seat"): given by its holder or the owner, or taken with the owner's name,
+	// which is addressed to the holder it was taken from.
+	NSeat      = "seat"
+	NSeatTaken = "seat TAKEN"
+
+	NReadyToAccept   = "ready to accept"    // the readers it needs said ok at its head (ReadsNeeded)
 	NReturned        = "returned to review" // sent back from merging: the coordinator decides again
 	NWorkFailed      = "work came back failed"
 	NReadBroken      = "a reader found it broken"
@@ -102,7 +108,7 @@ var Decisions = map[string][]string{
 	NRepairSkipped:   {"look at the card", "return", "drop", "rework", "ack"},
 	NOpStuck:         {"check", "ack"},
 	NOverdue:         {"act"},
-	NStreamStale:     {"look"},
+	NStreamStale:     {"look", "wait"},
 	NSprintDone:      {"clear", "add"},
 	NSentinelReached: {"release", "do more before going on", "drop"},
 	NStalled:         {"look at the card", "wait"}, // each stall names its own

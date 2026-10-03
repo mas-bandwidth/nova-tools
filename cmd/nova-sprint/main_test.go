@@ -179,7 +179,7 @@ func TestTheCommandDrivesAStreamToLanded(t *testing.T) {
 	out := ta.ok("init --readers reader-a,reader-b,reader-c --members m1,m2")
 	require.Contains(t, out, "INIT OK tables=work,readers,merge,fleet view=sprint", "init")
 	out = ta.ok("add --stream s1 --count 4")
-	require.Contains(t, out, "ADD OK moved=4", "add")
+	require.Contains(t, out, "ADD OK stream=s1 cards=4 before=- moved=4", "add")
 	require.Contains(t, out, "\nSTOPPED  0/4 0.0%", "add")
 	require.NotContains(t, out, "-> ETA", "add")
 	ta.clean()
@@ -209,8 +209,8 @@ func TestTheCommandDrivesAStreamToLanded(t *testing.T) {
 	// the landings are queued for the next tick's pump, which drains them, and
 	// the tick's done part stops the machine of a sprint that is done
 	ta.ok("tick")
-	out = ta.ok("where")
-	for _, want := range []string{"SPRINT TABLE", "DONE", "work ", "merge ", "fleet "} {
+	out = ta.ok("where --all")
+	for _, want := range []string{"SPRINT TABLE", "DONE", "work ", "merge ", "friends ", "fleet "} {
 		assert.Contains(t, out, want, "where lacks %q", want)
 	}
 	var w whereView
@@ -232,7 +232,7 @@ func TestJudgmentsReachTheInboxAndTheCoordinatorAnswers(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
-	ta.ok("add --stream s1 --count 3")
+	ta.ok("add --stream s1 --count 3 --brief-file " + proBriefFile(t))
 	ta.ok("start")
 	ta.ok("tick")
 	ta.ok("take --as m1 --limit 3")
@@ -343,7 +343,7 @@ func TestTablesAreNamedPlainlyAndConfirmIsTheViewName(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	ta.ok("add --stream s1 --count 2")
-	out := ta.ok("where")
+	out := ta.ok("where --all")
 	require.Contains(t, out, "work | waiting", "where with no prefix: %s", out)
 	require.Contains(t, out, "readers ", "where with no prefix: %s", out)
 	require.Contains(t, out, "fleet |", "where with no prefix: %s", out)
@@ -407,7 +407,7 @@ func TestVerbLineOnAStoppedMachineHasNoETA(t *testing.T) {
 	out = ta.ok("add --stream s2 --count 1")
 	// the added card is queued for the next tick's pump: the table counts it
 	// once the pump has drained the queue
-	require.Equal(t, "0/3 0.0% -> ETA  machine: running", lastLine(out), "add on a running machine: last line %q in %s", lastLine(out), out)
+	require.Equal(t, "0/3 0.0% -> ETA -  machine: running", lastLine(out), "add on a running machine: last line %q in %s", lastLine(out), out)
 	out = ta.ok("tick")
 	last := lastLine(out)
 	require.True(t, strings.HasPrefix(last, "0/4 0.0% -> ETA"), "the tick after an add on a running machine: last line %q in %s", last, out)

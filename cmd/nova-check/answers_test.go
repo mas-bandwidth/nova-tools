@@ -72,6 +72,18 @@ func TestAFailedQuickstartNamesTheCheckToFix(t *testing.T) {
 	assert.NotContains(t, last, "kernel")
 }
 
+// The quickstart's next= is a command to paste and run, so a --dir with a
+// blank in it comes back as one shell word.
+func TestAFailedQuickstartsNextQuotesADirWithABlank(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), "my self")
+	require.NoError(t, os.Mkdir(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.md"), []byte("[x](missing.md)\n"), 0o644))
+	exit, stdout, _ := runCheck(t, "quickstart", "--dir", dir)
+	assert.Equal(t, 1, exit)
+	assert.Contains(t, stdout, "next=nova-check links --dir '"+dir+"' (fix what it names")
+}
+
 // dogfood record names every problem of one run: the missing flags and the
 // missing verdict together.
 func TestDogfoodRecordNamesEveryProblemAtOnce(t *testing.T) {

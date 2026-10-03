@@ -24,12 +24,16 @@ import (
 // (config.ResolveDSN), and types no machine name and no width.
 //
 // It is one step (sprint.FleetReq, Op sync): the members missing come up at
-// their width, the widths that differ are set, and the members the inventory
-// no longer names are held, never deleted, so their cards are dealt again. A
-// sync after a sync writes nothing and says so. There is no new state, so no
-// model is owed: every move is one fleet up or fleet down already makes
-// (tla/SprintEvents.tla, PlanDown), and the sync's plan is checked against
-// the drift it reports (FleetDrift).
+// their width, the widths that differ are set, the members whose machine has
+// width 0 are held, so their cards are dealt again, and a member with no machine
+// row is held the same way and, once no card stays on it, removed: the step takes
+// its control card off and the verb then deletes its row (store.DropMembers). A
+// member removed in this epoch whose machine row comes back is placed again before
+// the step (store.RejoinMembers) and released by it. A sync after a sync writes
+// nothing and says so. The sync's plan is checked against the drift it reports
+// (FleetDrift). The removal is the one move fleet down does not make; no model
+// holds it: the sprint's models are not the design (tla/README.md, the owner's
+// ruling of 2026-10-01), and the twin-store tests here and in internal/sprint hold it.
 
 // exitCannotRead is fleet sync's exit when the inventory cannot be read: the
 // config is unreachable, unmigrated, or holds no machine row at all (a store
@@ -90,7 +94,13 @@ type syncReport struct {
 	Drift   []syncDrift `json:"drift"`
 	// Held are the members the inventory names that the coordinator holds:
 	// the sync leaves their hold.
-	Held    []string `json:"held"`
+	Held []string `json:"held"`
+	// Holding is a line for each member with no machine row that cards keep on
+	// the fleet: it stays held until none does.
+	Holding []string `json:"holding"`
+	// Waiting is a line for each machine with the default width whose cores no
+	// beat has reported: not a member until one does.
+	Waiting []string `json:"waiting"`
 	Moved   []string `json:"moved"`
 	Refused []string `json:"refused"`
 	Error   string   `json:"error,omitempty"`
@@ -139,16 +149,47 @@ func (a *app) cmdFleetSync(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s %s: the config holds no machine row, and syncing to none would hold every member down; is this the fleet's config? run: nova-config machine list; nothing was changed\n", prog, name)
 		return exitCannotRead
 	}
-	var want []sprint.SyncMember
+	// a row with no width has the default, half the cores its machine's beat
+	// reports (sprint.WidthOfCores); the sync writes the number it resolves
+	var defaults []string
 	for _, w := range ws {
+		if w.Default {
+			defaults = append(defaults, w.Machine)
+		}
+	}
+	beats := map[string]sprint.Beat{}
+	if len(defaults) > 0 {
+		if beats, err = st.Beats(ctx, defaults); err != nil {
+			fmt.Fprintf(stderr, "%s %s: the beats of the machines with the default width cannot be read: %s; nothing was changed; run: %s %s --check\n", prog, name, oneline.Escape(err.Error()), prog, name)
+			return exitCannotRead
+		}
+	}
+	var want []sprint.SyncMember
+	var machines, names []string
+	waiting := []string{}
+	for _, w := range ws {
+		machines = append(machines, w.Machine)
+		width := w.Width
+		if w.Default {
+			if width = sprint.WidthOfCores(beats[w.Machine].Cores); width == 0 {
+				waiting = append(waiting, fmt.Sprintf("%s has the default width, half its cores, and no beat has reported its cores yet; it joins the fleet at the sync after it beats (nova-sprint fleet beat %s on the machine)", w.Machine, w.Machine))
+				continue
+			}
+		}
 		if w.Member() {
-			want = append(want, sprint.SyncMember{Name: w.Machine, Width: w.Width})
+			want = append(want, sprint.SyncMember{Name: w.Machine, Width: width})
+			names = append(names, w.Machine)
+		}
+	}
+	for _, l := range waiting {
+		if !c.json {
+			fmt.Fprintf(stdout, "NOTE %s\n", oneline.Escape(l))
 		}
 	}
 	sort.Slice(want, func(i, j int) bool { return want[i].Name < want[j].Name })
 	if problems := sprint.SyncProblems(want); len(problems) > 0 {
 		if c.json {
-			rep := syncReport{Verb: name, Check: *check, Members: len(want), Drift: []syncDrift{}, Held: []string{}, Moved: []string{}, Refused: []string{}}
+			rep := syncReport{Verb: name, Check: *check, Members: len(want), Drift: []syncDrift{}, Held: []string{}, Holding: []string{}, Waiting: waiting, Moved: []string{}, Refused: []string{}}
 			for _, p := range problems {
 				rep.Refused = append(rep.Refused, p.Key+": "+p.Why)
 			}
@@ -159,6 +200,15 @@ func (a *app) cmdFleetSync(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s %s: %s; fix the machine row in nova-config; nothing was changed\n", prog, name, oneline.Escape(problems[0].Why))
 		return 1
 	}
+	var rejoined []string
+	if !*check {
+		// a member removed in this epoch whose machine row is back: its control
+		// card placed again, held by the sync, which this sync releases
+		if rejoined, err = st.RejoinMembers(ctx, names); err != nil {
+			fmt.Fprintf(stderr, "%s %s: placing a removed member's control card again: %s\n", prog, name, oneline.WithRemedy(oneline.Escape(err.Error()), prog+" "+name))
+			return 2
+		}
+	}
 	snap, err := st.Load(ctx, []string{sprint.Fleet, sprint.Work}, nil)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s %s: %s\n", prog, name, oneline.WithRemedy(nothingChanged(err), prog+" "+name+" -h"))
@@ -167,12 +217,22 @@ func (a *app) cmdFleetSync(args []string, stdout, stderr io.Writer) int {
 		}
 		return 2
 	}
-	drift := sprint.FleetDrift(snap, want)
+	drift := sprint.FleetDrift(snap, want, machines)
 	held := sprint.HeldInInventory(snap, want)
 	if held == nil {
 		held = []string{}
 	}
-	rep := syncReport{Verb: name, Check: *check, Members: len(want), Drift: []syncDrift{}, Held: held, Moved: []string{}, Refused: []string{}}
+	holding := sprint.GoneHolding(snap, want, machines)
+	if holding == nil {
+		holding = []string{}
+	}
+	rep := syncReport{Verb: name, Check: *check, Members: len(want), Drift: []syncDrift{}, Held: held, Holding: holding, Waiting: waiting, Moved: []string{}, Refused: []string{}}
+	for _, m := range rejoined {
+		rep.Moved = append(rep.Moved, m+" placed again: its machine row is back")
+		if !c.json {
+			fmt.Fprintf(stdout, "NOTE %s rejoins the fleet: its control card is placed again, held by the sync, which releases it now\n", oneline.Escape(m))
+		}
+	}
 	for _, d := range drift {
 		rep.Drift = append(rep.Drift, syncDrift{Member: d.Member, Kind: d.Kind, From: d.From, To: d.To})
 	}
@@ -180,19 +240,55 @@ func (a *app) cmdFleetSync(args []string, stdout, stderr io.Writer) int {
 		return a.syncCheck(c.json, rep, drift, stdout)
 	}
 	if len(drift) == 0 {
+		// the beat records a cleanup cut short still owes, whose rows are gone
+		if err := st.FinishDrops(ctx); err != nil {
+			fmt.Fprintf(stderr, "%s %s: the fleet table matches the inventory; deleting the beat records of members removed before: %s\n", prog, name, oneline.WithRemedy(oneline.Escape(err.Error()), prog+" "+name))
+			return 2
+		}
 		return a.syncNothing(c.json, rep, stdout)
 	}
-	step := store.FleetStep(sprint.FleetReq{Op: "sync", Sync: want, Who: c.actor})
+	step := store.FleetStep(sprint.FleetReq{Op: "sync", Sync: want, Machines: machines, Who: c.actor})
 	if c.json {
-		return a.syncWriteJSON(ctx, c, st, step, rep, stdout)
+		return a.syncWriteJSON(ctx, c, st, step, rep, want, machines, stdout)
 	}
 	code := a.runStep(name, *c, st, step, stdout, stderr)
 	if code == 0 {
+		gone, holding, err := afterSync(ctx, st, want, machines)
+		if err != nil {
+			fmt.Fprintf(stderr, "%s %s: the step is written; deleting the rows of the members it removed (%s): %s\n", prog, name, strings.Join(gone, ","), oneline.WithRemedy(oneline.Escape(err.Error()), prog+" "+name))
+			return 2
+		}
 		for _, m := range held {
 			fmt.Fprintf(stdout, "NOTE %s is held by the coordinator and stays held; run: nova-sprint fleet up %s\n", oneline.Escape(m), oneline.Escape(m))
 		}
+		for _, l := range holding {
+			fmt.Fprintf(stdout, "NOTE %s\n", oneline.Escape(l))
+		}
 	}
 	return code
+}
+
+// afterSync deletes the row of every member that is not a member of the
+// inventory whose control card is off the table (the members the sync's step
+// removed, and a row a sync before left when its delete failed), each delete
+// conditional at its commit on the control card still off the table at the
+// revision read (store.DropMembers, RowsDelIf), so a member placed again in
+// between (fleet up) keeps its row and its cards. holding is the members with
+// no machine row that cards keep on the fleet, held (sprint.GoneHolding), as
+// read after the delete.
+func afterSync(ctx context.Context, st *store.Store, want []sprint.SyncMember, machines []string) (gone, holding []string, err error) {
+	keep := make([]string, len(want))
+	for i, w := range want {
+		keep[i] = w.Name
+	}
+	if gone, err = st.DropMembers(ctx, keep); err != nil {
+		return gone, nil, err
+	}
+	snap, err := st.Load(ctx, []string{sprint.Fleet, sprint.Work}, nil)
+	if err != nil {
+		return gone, nil, err
+	}
+	return gone, sprint.GoneHolding(snap, want, machines), nil
 }
 
 // nothingChanged is an error as one line ending in "nothing was changed",
@@ -223,6 +319,9 @@ func (a *app) syncCheck(asJSON bool, rep syncReport, drift []sprint.Drift, stdou
 	for _, m := range rep.Held {
 		fmt.Fprintf(stdout, "NOTE %s is held by the coordinator and stays held; run: nova-sprint fleet up %s\n", oneline.Escape(m), oneline.Escape(m))
 	}
+	for _, l := range rep.Holding {
+		fmt.Fprintf(stdout, "NOTE %s\n", oneline.Escape(l))
+	}
 	if len(drift) == 0 {
 		fmt.Fprintf(stdout, "FLEET-SYNC CHECK OK drift=0 members=%d: the fleet table matches the inventory\n", rep.Members)
 		return 0
@@ -233,13 +332,11 @@ func (a *app) syncCheck(asJSON bool, rep syncReport, drift []sprint.Drift, stdou
 
 // syncWriteJSON writes the sync and prints the one JSON shape: the exit code
 // is the step's, as the lines' is (1 refused, 2 the store did not answer).
-func (a *app) syncWriteJSON(ctx context.Context, c *common, st *store.Store, step store.Step, rep syncReport, stdout io.Writer) int {
+func (a *app) syncWriteJSON(ctx context.Context, c *common, st *store.Store, step store.Step, rep syncReport, want []sprint.SyncMember, machines []string, stdout io.Writer) int {
 	step.CallerOp = c.op
 	res, err := st.Run(ctx, step)
 	code := 0
-	if res.Moved != nil {
-		rep.Moved = res.Moved
-	}
+	rep.Moved = append(rep.Moved, res.Moved...)
 	for _, r := range res.Refused {
 		rep.Refused = append(rep.Refused, r.Key+": "+r.Why)
 		code = 1
@@ -252,6 +349,15 @@ func (a *app) syncWriteJSON(ctx context.Context, c *common, st *store.Store, ste
 		var cleared *store.ClearedError
 		if errors.As(err, &pe) || errors.As(err, &cut) || errors.As(err, &cleared) {
 			code = 1
+		}
+	}
+	if code == 0 {
+		gone, holding, err := afterSync(ctx, st, want, machines)
+		if err != nil {
+			rep.Error, code = "the step is written; deleting the rows of the members it removed ("+strings.Join(gone, ",")+"): "+err.Error()+"; run: "+prog+" fleet sync", 2
+		}
+		if holding != nil {
+			rep.Holding = holding
 		}
 	}
 	b, _ := json.Marshal(rep)
@@ -269,6 +375,9 @@ func (a *app) syncNothing(asJSON bool, rep syncReport, stdout io.Writer) int {
 	fmt.Fprintf(stdout, "FLEET-SYNC OK moved=0 members=%d: nothing to do, the fleet table already matches the inventory\n", rep.Members)
 	for _, m := range rep.Held {
 		fmt.Fprintf(stdout, "NOTE %s is held by the coordinator and stays held; run: nova-sprint fleet up %s\n", oneline.Escape(m), oneline.Escape(m))
+	}
+	for _, l := range rep.Holding {
+		fmt.Fprintf(stdout, "NOTE %s\n", oneline.Escape(l))
 	}
 	return 0
 }

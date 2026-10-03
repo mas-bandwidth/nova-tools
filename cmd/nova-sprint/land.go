@@ -44,6 +44,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/diffcheck"
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -67,8 +68,11 @@ Landing, the coordinator's: an external delivery (git pushes the base) and a sto
     forced, rebuilding once on a moved base; then reports the batch as merge
     --stream s1 --batch <n> does. A head missing or in conflict ends the batch
     before it and is reported as merge --conflict, a red check as --red, a
-    second rejected push as --rejected. The clone is --repo-dir, else the dir=
-    each line names; git uses the caller's environment.
+    second rejected push as --rejected. Each head merged is checked first, by
+    script and no model: a head whose diff changes a file outside its brief's
+    PATHS, or leaves a stranded sentence fragment or an unmatched backquote in
+    prose, ends the batch as a head in conflict does. The clone is --repo-dir,
+    else the dir= each line names; git uses the caller's environment.
   nova-sprint land --stream s1 --dry-run
     reads the store only: no git, no push, no report. The window: land pins
     each card's head and attempt as it reads them; a caller's --epoch is held
@@ -109,7 +113,10 @@ type landBatch struct {
 	// whether the store holds it.
 	WouldRecord string `json:"would_record,omitempty"`
 	Reason      string `json:"reason,omitempty"`
-	DryRun      bool   `json:"dry_run,omitempty"`
+	// Also is every cause of the refusal after the first, each with its one next command,
+	// and on a twin the verb that stands in for land: one NOTE line each.
+	Also   []string `json:"also,omitempty"`
+	DryRun bool     `json:"dry_run,omitempty"`
 	// Times is how long each of the batch's steps took; nil for a batch refused before
 	// its git ran, and for a dry run.
 	Times *landTimes `json:"times,omitempty"`
@@ -193,6 +200,7 @@ func idSpan(ids []string) string {
 // keeps the id and the epoch), and the repository and base its brief names.
 type landCard struct {
 	id, head, attempt, repo, base string
+	paths                         []string // the brief's PATHS globs, nil when it names none (checkCard)
 }
 
 // pin is the card as the report's guard and the operation's arguments name
@@ -205,7 +213,7 @@ type lander struct {
 	c                          common
 	st                         *store.Store
 	repoDir, base, check, root string
-	dry                        bool
+	dry, twin                  bool // twin: a mem twin, which has no git
 	out                        []landBatch
 	epoch                      uint64 // the epoch land read: every report is fenced to it
 }
@@ -253,7 +261,7 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s land: the sprint is at epoch %d, not %d (cleared since): nothing was fetched, pushed or reported; run: nova-sprint where\n", prog, st.PinnedEpoch(), c.epoch)
 		return 1
 	}
-	l := &lander{a: a, c: *c, st: st, repoDir: *repoDir, base: *base, check: *check, dry: *dry, epoch: st.PinnedEpoch()}
+	l := &lander{a: a, c: *c, st: st, repoDir: *repoDir, base: *base, check: *check, dry: *dry, twin: a.twinOpen(c.redis), epoch: st.PinnedEpoch()}
 	if *repoDir != "" {
 		if abs, err := filepath.Abs(*repoDir); err == nil {
 			l.repoDir = abs
@@ -337,6 +345,9 @@ func (l *lander) report(failed bool, pruned []pruneResult, stdout, stderr io.Wri
 			w = stderr
 		}
 		fmt.Fprintln(w, b.line())
+		for _, x := range b.Also {
+			fmt.Fprintf(w, "NOTE %s\n", oneline.Escape(x))
+		}
 		switch {
 		case b.WouldRecord != "":
 			fmt.Fprintf(w, "NOTE land would report this as merge --%s and stop stream %s; nothing was reported (dry run)\n", b.WouldRecord, oneline.Field(b.Stream))
@@ -410,7 +421,7 @@ func (l *lander) stream(ctx context.Context, s *sprint.Snapshot, stream string) 
 		if pr := s.Work.Placed(c.ID); pr != nil {
 			lc.head, lc.attempt = pr.F("head"), pr.F("attempt")
 			cb := swarm.ReadCardBase([]byte(pr.F("brief")))
-			lc.repo = cb.Repo
+			lc.repo, lc.paths = cb.Repo, cardPaths(pr.F("brief"))
 			if cb.Ref != "" {
 				lc.base = cb.Ref
 			}
@@ -434,6 +445,18 @@ func (l *lander) stream(ctx context.Context, s *sprint.Snapshot, stream string) 
 	return true
 }
 
+// cardPaths is a brief's PATHS globs; nil for none (no line, or `PATHS: none`).
+func cardPaths(brief string) []string {
+	var out []string
+	value, _ := swarm.CardHeaderValue([]byte(brief), "PATHS")
+	for _, g := range strings.Split(value, ",") {
+		if g = strings.TrimSpace(g); g != "" && g != "none" {
+			out = append(out, g)
+		}
+	}
+	return out
+}
+
 // shaRE is a commit id as a head names it: hex, abbreviated or whole.
 var shaRE = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
 
@@ -451,7 +474,8 @@ func (l *lander) batch(ctx context.Context, stream string, cards []landCard) (la
 		l.out = append(l.out, b)
 		return false, true
 	}
-	if why := l.placeWhy(stream, cards); why != "" {
+	if why, also := l.placeWhy(stream, cards); why != "" {
+		b.Also = also
 		return refuse(why)
 	}
 	dir, why := l.clone(ctx, b.Repo)
@@ -529,11 +553,14 @@ func (l *lander) batch(ctx context.Context, stream string, cards []landCard) (la
 // every problem of the batch at once (a base missing, a repository missing with
 // no clone given, and with them every head that is not a commit id, which land
 // would meet next), so one run names all of them (docs/STANDARD.md, a refusal
-// names every problem at once). A base that is not a branch name is refused alone.
-func (l *lander) placeWhy(stream string, cards []landCard) string {
+// names every problem at once), each cause on its own line with its one next
+// command: the first is the refusal's reason, the rest (also) its NOTE lines, and on a
+// twin, which has no git, the merge that stands in for land. A base that is not a
+// branch name is refused alone.
+func (l *lander) placeWhy(stream string, cards []landCard) (string, []string) {
 	id, base := cards[0].id, cards[0].base
 	if strings.HasPrefix(base, "-") {
-		return "card " + id + " names the base " + base + ", which is not a branch name; run: nova-sprint card " + id
+		return "card " + id + " names the base " + base + ", which is not a branch name; run: nova-sprint card " + id, nil
 	}
 	var why, flags []string
 	if base == "" {
@@ -545,15 +572,20 @@ func (l *lander) placeWhy(stream string, cards []landCard) string {
 		flags = append(flags, "--repo-dir <clone>")
 	}
 	if len(why) == 0 {
-		return ""
+		return "", nil
 	}
-	out := strings.Join(why, ", and ") + "; run: nova-sprint land " + strings.Join(flags, " ")
+	var also []string
 	for _, c := range cards {
-		if w := headNotCommit(stream, c); w != "" {
-			out += "; " + w
+		if !shaRE.MatchString(c.head) {
+			// before any git nothing was recorded and no stream stopped: the one next
+			// command is the return; its judgment offers the rework
+			also = append(also, "the head "+dashed(c.head)+" of "+c.id+" is not a commit id (a finish without --head records the card's id); run: nova-sprint return "+c.id+" --reason 'its head is not a commit'")
 		}
 	}
-	return out
+	if l.twin {
+		also = append(also, fmt.Sprintf("this twin has no git: nova-sprint merge --stream %s --batch %d records the landing in land's place (land merges and pushes)", stream, len(cards)))
+	}
+	return strings.Join(why, ", and ") + "; run: nova-sprint land " + strings.Join(flags, " "), also
 }
 
 // dryBatch is the dry run's outcome of a batch land can place: it stops where
@@ -822,7 +854,14 @@ func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard
 		return nil, failed, "the base " + base + " could not be cut from origin in " + dir + ": " + firstLine("", err)
 	}
 	for _, c := range cards {
+		before, err := l.git(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}")
+		if err != nil {
+			return nil, failed, "the batch branch has no tip before the merge of " + c.id + ": " + firstLine("", err) + "; no card is blamed and nothing was pushed or reported"
+		}
 		card, env := l.mergeHead(ctx, dir, stream, c)
+		if card == "" && env == "" {
+			card, env = l.checkCard(ctx, dir, c, before)
+		}
 		switch {
 		case env != "":
 			return nil, failed, env + "; no card is blamed and nothing was pushed or reported"
@@ -886,6 +925,38 @@ func (l *lander) mergeHead(ctx context.Context, dir, stream string, c landCard) 
 		return "the head " + c.head + " of " + c.id + " does not merge: " + firstLine("", err), ""
 	}
 	return "", "the merge of " + c.id + " failed in git, not on its changes: " + firstLine("", err)
+}
+
+// checkCard is the lander's mechanical checks of one card merged onto the batch branch
+// at before (internal/diffcheck; docs/SPEC-SPRINT.md section 7, the lander's checks): the
+// merge's own diff touches no file outside the card's PATHS (E12) and leaves no stranded
+// sentence fragment or unmatched backquote (E4). A card that fails is taken off the batch
+// branch (reset to before) and ends the batch as a head that does not merge does, with
+// what failed; card and env are mergeHead's. A merge that made no commit (the head is in
+// the base already) is not checked: it changes nothing the base does not hold.
+func (l *lander) checkCard(ctx context.Context, dir string, c landCard, before string) (card, env string) {
+	after, err := l.git(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil || after == before {
+		return "", ""
+	}
+	diff, err := l.git(ctx, dir, "diff", "-M", "--no-color", before, after)
+	if err != nil {
+		return "", "the diff of the merge of " + c.id + " could not be read: " + firstLine("", err)
+	}
+	var why []string
+	if out := diffcheck.Outside(c.paths, diff); len(out) > 0 {
+		why = append(why, "it changes files outside its PATHS (E12): "+strings.Join(out, ", "))
+	}
+	for _, f := range diffcheck.Fragments(diff) {
+		why = append(why, f.String()+" (E4)")
+	}
+	if len(why) == 0 {
+		return "", ""
+	}
+	if _, err := l.git(ctx, dir, "reset", "-q", "--hard", before); err != nil {
+		return "", "the batch branch could not be reset after " + c.id + " failed the lander's checks: " + firstLine("", err)
+	}
+	return "the head " + c.head + " of " + c.id + " fails the lander's checks: " + strings.Join(why, "; "), ""
 }
 
 // containsAny says s holds one of words.

@@ -32,6 +32,7 @@ func TestATakeOfSeveralMembersTakesEachOnesQueue(t *testing.T) {
 func TestTwoReadersOksInOneReadMakeOneJudgment(t *testing.T) {
 	t.Parallel()
 	w := fleetWorld(t, 1, 64, "m1")
+	proCards(w)
 	w.s.Readers.SetRows(append(w.s.Readers.Rows(), "reader-b"))
 	w.must(Deal(w.s, DealReq{Sel: Sel{Limit: 1}}))
 	w.must(Take(w.s, TakeReq{As: "m1", Sel: Sel{Limit: 1}}))

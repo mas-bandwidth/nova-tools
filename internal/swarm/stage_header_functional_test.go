@@ -49,7 +49,7 @@ func TestStageCardStagesThePushedHeaderFromTheMirror(t *testing.T) {
 	require.Equal(t, "rowan/s00-0302-quack-hulk-flash", b, "branch = %q (res %q), want rowan/s00-0302-quack-hulk-flash", b, res.Branch)
 	require.Equal(t, b, res.Branch, "branch = %q (res %q), want rowan/s00-0302-quack-hulk-flash", b, res.Branch)
 	_, err = os.Stat(filepath.Join(target, ".git", "objects", "info", "alternates"))
-	require.True(t, os.IsNotExist(err), "staging did not dissociate from the mirror: %v", err)
+	require.NoError(t, err, "staging borrows the mirror's objects")
 	origin := strings.TrimSpace(execCmd(t, target, "git", "remote", "get-url", "origin"))
 	require.Equal(t, defaultProbeBase+"/mas-bandwidth/nova-tools.git", origin, "origin = %q", origin)
 }

@@ -161,12 +161,13 @@ func TestAWatchThroughTheServerSendsOneReadAFrame(t *testing.T) {
 }
 
 // inbox --wait through the server waits here: it reads the server's log for a tick end
-// once a second on this process's clock, and wakes at the tick end after a judgment
-// opens, or says its timeout, then prints the inbox as inbox --wait prints it.
+// once a second on this process's clock, reads the inbox at the tick end after a
+// judgment opens and wakes for the new judgment, or says its timeout, then prints the
+// inbox as inbox --wait prints it.
 func TestAnInboxWaitThroughTheServerPollsForATickEnd(t *testing.T) {
 	t.Parallel()
 	r := newServerRig(t, "nova-sprint init --readers reader-a,reader-b --members m1:2",
-		"nova-sprint add --stream s1 --count 1", "nova-sprint start", "nova-sprint tick", "nova-sprint tick",
+		"nova-sprint add --stream s1 --count 1 --brief-file "+proBriefFile(t), "nova-sprint start", "nova-sprint tick", "nova-sprint tick",
 		"nova-sprint take --as m1 --limit 1", "nova-sprint finish --as m1 --epoch 0 s1-1.w1@1")
 	clock := r.a.now()
 	r.a.now = func() time.Time { return clock } // the server's clock, still: what it prints is the same at every read
@@ -186,19 +187,20 @@ func TestAnInboxWaitThroughTheServerPollsForATickEnd(t *testing.T) {
 	code, out, errs := boss("inbox", "--wait", "--timeout", "4s")
 	require.Equal(t, 0, code, errs)
 	assert.Equal(t, 2, polls, "woke at the tick end after the judgment, not at the timeout")
-	assert.Equal(t, r.boss("nova-sprint inbox"), out, "the inbox, as inbox --wait prints it when it woke")
+	plain := r.boss("nova-sprint inbox")
+	assert.Equal(t, "inbox --wait: new=tick-ask-t26-1.1\n"+plain, out, "the wake line, then the inbox as inbox --wait prints it when it woke")
 	assert.Contains(t, out, "fewer than two readers up")
-	assert.Len(t, sent, 4, "three reads of the log, then the inbox")
+	assert.Len(t, sent, 6, "the log and the inbox at the start, two reads of the log, the inbox at the tick end, then the inbox")
 
 	code, out, errs = boss("inbox", "--wait", "--timeout", "3s", "--json")
 	require.Equal(t, 0, code, errs)
 	assert.Equal(t, 5, polls, "three more polls of a second: the timeout")
-	assert.Equal(t, "inbox --wait: no tick end in 3s\n", errs, "said on stderr under --json, as inbox --wait says it")
+	assert.Equal(t, "inbox --wait: nothing new in 3s\n", errs, "said on stderr under --json, as inbox --wait says it")
 	var got map[string]any
 	require.NoError(t, json.Unmarshal([]byte(out), &got), out)
 	assert.Equal(t, false, got["woke"])
-	_, plain, _ := boss("inbox", "--json")
-	assert.Equal(t, strings.TrimSuffix(plain, "}\n")+`,"woke":false}`+"\n", out, "the inbox's own object, with woke last, as encoding/json orders a map")
+	_, plainJSON, _ := boss("inbox", "--json")
+	assert.Equal(t, strings.TrimSuffix(plainJSON, "}\n")+`,"new":[],"woke":false}`+"\n", out, "the inbox's own object, with new and woke last, as encoding/json orders a map")
 
 	code, _, errs = boss("inbox", "--wait", "--timeout", "0s")
 	assert.Equal(t, 2, code)

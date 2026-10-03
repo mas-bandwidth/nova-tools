@@ -422,7 +422,7 @@ func cmdQuickstart(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "QUICKSTART OK done=2 worst-exit=%d next=kernel,attest,floors,corpus (kernel wants a size budget, attest a manifest of what a full boot reads, floors a derived copy and its source, corpus a ledger of protected lines: nova-check help)\n", worst)
 	} else {
 		fmt.Fprintf(stdout, "QUICKSTART FAIL checks=2 failed=%s worst-exit=%d next=%s (fix what it names, then run quickstart again)\n",
-			oneline.Field(strings.Join(failed, ",")), worst, oneline.Escape("nova-check "+failed[0]+" --dir "+*dir))
+			oneline.Field(strings.Join(failed, ",")), worst, oneline.Escape("nova-check "+failed[0]+" --dir "+oneline.ShellWord(*dir)))
 	}
 	return worst
 }

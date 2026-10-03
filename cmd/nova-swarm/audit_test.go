@@ -26,6 +26,7 @@ var swarmAudit = audit.Config{
 	// text in the same function share an entry. Each is a claim a reader can check.
 	Exempt: map[string]string{
 		"member.go|cmdMember|note": "passNote's one line, a literal with no argument interpolated",
+		"step.go|cmdStep|rem":      "the second named verbatim site: the remainder is a CARD, a document the coordinator redirects into a brief file for nova-sprint add, the bytes of the card it was handed with its base rewritten and two header lines added (cardtree.Remainder); escaping it would fold the card into one unusable line. TestTheStepVerbRunsAScriptCardInItsWallAndPrintsTheRemainder asserts its lines.",
 		"main.go|want|name":        "a required flag's name, a literal at every call site in this file",
 		"main.go|want|wants":       "the guidance that flag wants, a literal at every call site in this file",
 		"main.go|wantCount|name":   "a required count flag's name, a literal at every call site in this file",
@@ -193,6 +194,11 @@ var swarmAudit = audit.Config{
 		// pushed.tsv into values. It prints nothing to any stream of this binary; the lines
 		// the shims print are their own, in the card's shell, never nova-swarm's.
 		`"github.com/mas-bandwidth/nova-tools/internal/cardcontract"`,
+		// cardtree (internal/cardtree) reads a card into a tree of steps, lints it into
+		// findings and runs a script step into a Result value; it holds no writer of this
+		// binary's and prints nothing: its programs' output is captured into an error's
+		// words, which this package prints through oneline.
+		`"github.com/mas-bandwidth/nova-tools/internal/cardtree"`,
 		// cardhdr reads a card's header lines (its tier, a model: pin) into a value: the
 		// one parser the frame and the deal share. It holds no writer and prints nothing.
 		`"github.com/mas-bandwidth/nova-tools/internal/cardhdr"`,
@@ -200,6 +206,9 @@ var swarmAudit = audit.Config{
 		// as one word (SpendWord) or one record line (Usage.String); it holds no writer and
 		// prints nothing. The spend word reaches the NATIVE line only through oneline.Field.
 		`"github.com/mas-bandwidth/nova-tools/internal/cardcost"`,
+		// math/big (main.go, native.go, nativesample.go) holds the dollar budget and compares
+		// a cost with it (#5094): exact arithmetic on values, no writer, no stream.
+		`"math/big"`,
 		// typedrec (the one-typed-parser rule, #2506) reads a card's RESULT.md into a value
 		// and says whether a string is a commit id; it holds no writer and prints nothing.
 		`"github.com/mas-bandwidth/nova-tools/internal/typedrec"`,
@@ -226,6 +235,15 @@ var swarmAudit = audit.Config{
 		// nothing. What the push keeps from them reaches a stream only as a member.Push
 		// value the member loop folds onto one line.
 		`"github.com/mas-bandwidth/nova-tools/internal/gitrun"`,
+		// gocache (lazyclean.go, member.go) holds the pool's Go build cache under its
+		// limit and returns counts and a failure's path and reason to this package; it holds
+		// no writer and prints nothing. Its reason reaches a stream only through the CLEAN
+		// line, which escapes it.
+		`"github.com/mas-bandwidth/nova-tools/internal/gocache"`,
+		// diffcheck (nativedecide.go) parses the work's diff to name the files it changes; it
+		// holds no writer and prints nothing, and those names reach a stream only inside the
+		// decide read's finding, which is escaped.
+		`"github.com/mas-bandwidth/nova-tools/internal/diffcheck"`,
 		// decide (pull --decide, SPEC-JOBS section 5) makes one typed HTTP
 		// request and returns typed answers; it holds no writer of this
 		// package's stream, and the one value this binary takes from it -- the

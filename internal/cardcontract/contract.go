@@ -38,6 +38,11 @@ type Frame struct {
 	ReviewBase string   `json:"review_base,omitempty"`  // a read: the ref the change is reviewed against
 	Stage      []string `json:"stage,omitempty"`        // the recipe files the brief's Stage: header lines name, relative to Recipes
 	Recipes    string   `json:"recipes,omitempty"`      // the member's recipes directory, <root>/recipes
+	// A decide read's bars on p(defect) (docs/SPEC-SPRINT.md section 6): native asks the
+	// read decision over the card and the diff before any child and routes the read by
+	// them; both empty for a strings read.
+	DecideBounce string `json:"decide_bounce,omitempty"`
+	DecideReview string `json:"decide_review,omitempty"`
 }
 
 // Staged is what native knows once the checkout is staged: the job directory, the checkout,
@@ -51,7 +56,9 @@ type Staged struct {
 	// merge base of Head and the review base, found when the checkout was staged), so the
 	// read sees exactly the work's change however far the base branch has moved since;
 	// "" for work, or when no merge base was found.
-	Start string
+	Start   string
+	GoCache string // the machine's shared build cache the child's GOCACHE names; "" when it has none
+	Gate    *Gate  // a read's gate (ReadGate); nil: the card's
 }
 
 // Shim is one script a profile writes first on the child's PATH.
@@ -251,6 +258,10 @@ func LastPushed(job string) (branch, head string) {
 	}
 	return branch, head
 }
+
+// BrokenFindingText is what every profile's read JOB.md says of a broken verdict
+// (docs/SPEC-CARD-CONTRACT.md section 3): it names the defect, or it is no verdict.
+const BrokenFindingText = "A broken verdict tells them what to do: at least one finding line names the file (file:line), the line, or the card's STEP or RULE the work breaks, and says what to change. \"Request changes.\" alone, or an approval's words, is no finding: a broken verdict that names no file, line or rule is not a verdict, and the sprint asks another reader."
 
 // ShapeText is the result shape as JOB.md quotes it, for a work card or a read.
 func ShapeText(kind string) string {

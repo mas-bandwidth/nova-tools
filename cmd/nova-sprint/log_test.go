@@ -67,7 +67,7 @@ func TestCardTellsTheStory(t *testing.T) {
 	ta := newTestApp(t)
 	ta.a.loc = time.UTC
 	ta.ok("init --readers reader-a,reader-b --members m1")
-	ta.ok("add --stream s1 --count 1 --brief-file " + writeBrief(t, "handle the empty case"))
+	ta.ok("add --stream s1 --count 1 --brief-file " + writeBrief(t, "handle the empty case, tier: pro")) // pro: two readers
 	ta.deal(1)
 	ta.ok("take --as m1 s1-1.w1@1")
 	ta.ok("finish --as m1 s1-1.w1@1 --failed --report 'the tests went red'")
@@ -161,7 +161,7 @@ func TestTakeAndQueueHandTheirPackets(t *testing.T) {
 func TestWhereHidesTheMergeTablesSince(t *testing.T) {
 	t.Parallel()
 	ta := whereFixture(t)
-	out := ta.ok("where")
+	out := ta.ok("where --all")
 	block := tableOf(out, "merge")
 	require.NotEmpty(t, block, "no merge table:\n%s", out)
 	require.NotContains(t, block, "since", "where shows since:\n%s", out)

@@ -45,6 +45,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
+	"regexp"
 	"sort"
 	"strings"
 	"unicode"
@@ -203,7 +204,9 @@ func frontmatter(src string) (name, typ string) {
 // "---" fence through the line of the closing one), keeping its newlines: the block is
 // receipt metadata (FMName, FMType), never body text, so a query on a frontmatter key
 // matches no YAML and a snippet quotes none, and every line number after the block is
-// what it was in the file.
+// what it was in the file. A block with a line that is not YAML-shaped (yamlLine) is a
+// thematic break opening the file, not frontmatter, and stays body text: blanking prose
+// between two rules would drop it from the index in silence.
 func stripFrontmatter(src string) string {
 	if !strings.HasPrefix(src, "---\n") {
 		return src
@@ -211,6 +214,11 @@ func stripFrontmatter(src string) string {
 	end := strings.Index(src[4:], "\n---")
 	if end < 0 {
 		return src
+	}
+	for _, l := range strings.Split(src[4:4+end], "\n") {
+		if !yamlLine.MatchString(l) {
+			return src
+		}
 	}
 	close := 4 + end + len("\n---")
 	if nl := strings.IndexByte(src[close:], '\n'); nl >= 0 {
@@ -220,6 +228,10 @@ func stripFrontmatter(src string) string {
 	}
 	return strings.Repeat("\n", strings.Count(src[:close], "\n")) + src[close:]
 }
+
+// yamlLine is a line a frontmatter block may hold: blank, a comment, a "key:" line, or
+// an indented or list continuation of the key above it.
+var yamlLine = regexp.MustCompile(`^(\s*|\s*#.*|[A-Za-z_][A-Za-z0-9_.-]*\s*:.*|[ \t].*|-( .*)?)$`)
 
 // Truncate cuts s to at most n bytes on a rune boundary, appending an ellipsis
 // when it cut. Receipts are quoted inside a machine-scannable line, and a

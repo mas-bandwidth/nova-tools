@@ -56,9 +56,12 @@ func TestARefusedReturnedReadMovesNoRouteTheNextPrimaryDraws(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 2)
 	for _, m := range []string{"a", "b", "c"} {
-		r := Route{Name: "flash-" + m, Tier: "flash", Provider: "p", Model: m, Tokens: 1000, Enabled: true}
+		r := Route{Name: "pro-" + m, Tier: "pro", Provider: "p", Model: m, Tokens: 1000, Enabled: true}
 		r.Deadline = 600 // seconds, as the route row holds it
 		w.s.Routes = append(w.s.Routes, r)
+	}
+	for _, id := range []string{"s1-1", "s1-2"} {
+		w.s.Work.Card(id).Fields[FieldTierNow] = "pro" // pro cards on pro (flash first: escalated)
 	}
 	toReview(w, "s1-1", "s1-2")
 	// s1-1: asked of reader-a, now away; returned by reader-b; reader-c read
@@ -66,7 +69,7 @@ func TestARefusedReturnedReadMovesNoRouteTheNextPrimaryDraws(t *testing.T) {
 	away := putRead(w, "s1-1", 1, "reader-a", Asked)
 	away.Fields["asked"] = stamp(t0)
 	back := putRead(w, "s1-1", 1, "reader-b", Asked)
-	back.Fields["asked"], back.Fields[FieldReturned], back.Fields[FieldRoute] = stamp(t0), stamp(t0), "flash-c"
+	back.Fields["asked"], back.Fields[FieldReturned], back.Fields[FieldRoute] = stamp(t0), stamp(t0), "pro-c"
 	old := putRead(w, "s1-1", 1, "reader-c", "")
 	old.Fields["retired"], old.Fields["retired_by"] = stamp(t0), "returned"
 	w.s.ReaderStates = map[string]string{"reader-a": ReaderAway, "reader-b": ReaderUp, "reader-c": ReaderUp}
@@ -80,8 +83,8 @@ func TestARefusedReturnedReadMovesNoRouteTheNextPrimaryDraws(t *testing.T) {
 		require.NotNil(t, rc, "s1-2 asked of %s", rd)
 		drawn = append(drawn, rc.F(FieldRoute))
 	}
-	v, _ := w.s.Fleet.Prop(PropRouteIndex("flash"))
-	arr := w.s.tierArray("flash")
+	v, _ := w.s.Fleet.Prop(PropRouteIndex("pro"))
+	arr := w.s.tierArray("pro")
 	n := roundCount(nil, v)
 	last := arr[(n+uint64(len(arr))-1)%uint64(len(arr))]
 	assert.Contains(t, drawn, last, "the index written (%s) is past a route s1-2 drew (%v)", v, drawn)

@@ -393,7 +393,7 @@ func (r *propRun) act(a pAct) {
 			if a.F {
 				v = "broken"
 			}
-			r.run(fmt.Sprintf("nova-sprint read %s --as %s --verdict %s --finding f", c.ID, reader, v), ReadStep(sprint.ReadReq{As: reader, Verdict: v, Finding: "f", Sel: sprint.Sel{IDs: []string{c.ID}}, Who: reader}))
+			r.run(fmt.Sprintf("nova-sprint read %s --as %s --verdict %s --finding f:1", c.ID, reader, v), ReadStep(sprint.ReadReq{As: reader, Verdict: v, Finding: "f:1", Sel: sprint.Sel{IDs: []string{c.ID}}, Who: reader}))
 		}
 	case "merge":
 		r.merge(stream, a.B, a.C, a.F)
@@ -433,7 +433,7 @@ func (r *propRun) tick() {
 // admitted, in line before a reached sentinel of the stream when inLine.
 func (r *propRun) add(stream string, picks []int, inLine bool) {
 	id := r.newID("p")
-	req := sprint.AddReq{Stream: stream, IDs: []string{id}, Who: "coord"}
+	req := sprint.AddReq{Brief: proBrief, Stream: stream, IDs: []string{id}, Who: "coord"}
 	for _, k := range picks {
 		if n, ok := pickOf(r.ids, k); ok && !contains(req.Needs, n) {
 			req.Needs = append(req.Needs, n)

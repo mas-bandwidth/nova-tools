@@ -237,7 +237,7 @@ func (w *crWorld) round(r int) {
 				if w.rng.Float64() < 0.1 {
 					v = "broken"
 				}
-				h.run(ReadStep(sprint.ReadReq{As: rd, Verdict: v, Finding: "f", Sel: sprint.Sel{IDs: []string{c.ID}}, Who: rd}))
+				h.run(ReadStep(sprint.ReadReq{As: rd, Verdict: v, Finding: "f:1", Sel: sprint.Sel{IDs: []string{c.ID}}, Who: rd}))
 			}
 		}
 		h.clean(fmt.Sprintf("round %d after the readers", r))
@@ -308,8 +308,9 @@ func (w *crWorld) coordinate(r int) {
 	for _, o := range open {
 		sub := o.Subject()
 		switch o.Note.Type {
-		case sprint.NWorkFailed, sprint.NReadBroken, sprint.NReadsExhausted, sprint.NCIRed, sprint.NRepairSkipped:
-			if pr := s.Work.Placed(sub); pr != nil && pr.Col == sprint.Review {
+		case sprint.NWorkFailed, sprint.NReadBroken, sprint.NReadsExhausted, sprint.NCIRed, sprint.NRepairSkipped, sprint.NBound:
+			// a second identical failure ("boom" twice) is the bound's judgment (rule 2): reworked too
+			if pr := s.Work.Placed(sub); pr != nil && (pr.Col == sprint.Review || sprint.AtRedealBound(s, pr) != nil) {
 				rework = append(rework, sub)
 			}
 		case sprint.NBlocked:

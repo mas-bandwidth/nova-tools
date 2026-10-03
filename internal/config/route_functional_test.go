@@ -29,7 +29,7 @@ func TestPostgresRouteRoundTripsAndHoldsItsRules(t *testing.T) {
 	ctx := context.Background()
 	st := migrated(t)
 	direct := newRoute(t, "pro-direct", map[string]string{"tier": "pro", "provider": "deepseek", "model": "deepseek-v4", "tokens": "400000", "deadline": "1800"})
-	slashed := newRoute(t, "pro-openrouter", map[string]string{"tier": "pro", "provider": "openrouter", "model": "x-ai/grok-4", "deadline": "1800", "enabled": "false"})
+	slashed := newRoute(t, "pro-openrouter", map[string]string{"tier": "pro", "provider": "openrouter", "model": "x-ai/grok-4", "deadline": "1800", "enabled": "false", "note": "held while the price is read"})
 	for _, row := range []Row{direct, slashed} {
 		_, err := st.Insert(ctx, KindRoute, row, "t")
 		require.NoError(t, err)
@@ -90,10 +90,10 @@ func TestApplyWritesTheRouteViewTheDealReads(t *testing.T) {
 	got := c.HGetAll(ctx, RouteKey("pro-a")).Val()
 	want := map[string]string{
 		"name": "pro-a", "tier": "pro", "provider": "openrouter", "model": "x-ai/grok-4",
-		"tokens": "300000", "deadline": "1800", "enabled": "true",
+		"tokens": "300000", "usd": "", "deadline": "1800", "enabled": "true", // usd empty: no dollar cap
 		// the price sheet, not set: every price empty, never 0
 		"price_input": "", "price_cache_read": "", "price_cache_write": "", "price_output": "", "reasoning_as_output": "true", "long_context": "0",
-		"price_input_long": "", "price_output_long": "", "price_request": "", "billing": "metered", "gateway_percent": "", "price_source": "", "price_as_of": "",
+		"price_input_long": "", "price_output_long": "", "price_request": "", "billing": "metered", "gateway_percent": "", "price_source": "", "price_as_of": "", "note": "",
 	}
 	for f, v := range want {
 		assert.Equal(t, v, got[f], "route:pro-a %s", f)
@@ -141,7 +141,7 @@ func TestTheTierArrayRoundTripsAndApplyWritesIt(t *testing.T) {
 	require.Len(t, tiers, 2, "migrate makes flash and pro")
 	for _, row := range []Row{
 		newRoute(t, "flash-a", map[string]string{"tier": "flash", "provider": "p", "model": "m", "deadline": "600"}),
-		newRoute(t, "flash-off", map[string]string{"tier": "flash", "provider": "p", "model": "m", "deadline": "600", "enabled": "false"}),
+		newRoute(t, "flash-off", map[string]string{"tier": "flash", "provider": "p", "model": "m", "deadline": "600", "enabled": "false", "note": "off for the test"}),
 		newRoute(t, "pro-a", map[string]string{"tier": "pro", "provider": "p", "model": "m", "deadline": "600"}),
 	} {
 		_, err := st.Insert(ctx, KindRoute, row, "t")

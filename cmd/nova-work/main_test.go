@@ -213,7 +213,7 @@ func TestRefusalsNameTheFlag(t *testing.T) {
 		{"bare verify", []string{"verify"}, []string{"VERIFY REFUSED", "--tree is required", "run: nova-work help"}},
 		{"bad max-bytes", []string{"verify", "--tree", "t.lisp", "--max-bytes", "0"}, []string{"--max-bytes must be positive"}},
 		{"unknown verb", []string{"frob"}, []string{"REFUSED", `unknown verb "frob"`, "import", "verify"}},
-		{"no verb", []string{}, []string{"REFUSED", "no verb given", "import", "verify", "run: nova-work help", "\n  " + preAlpha + "\n"}},
+		{"no verb", []string{}, []string{"REFUSED", "no verb given", "import", "verify", "run: nova-work help", "\n  NOTE " + preAlpha + "\n"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -222,7 +222,7 @@ func TestRefusalsNameTheFlag(t *testing.T) {
 			assert.Equal(t, 2, res.Code, "%v: exit %d\n%s%s", tc.args, res.Code, res.Stdout, res.Stderr)
 			assert.Empty(t, res.Stdout, "%v: a refusal on stdout", tc.args)
 			for _, l := range strings.SplitAfter(strings.TrimSuffix(res.Stderr, "\n"), "\n") {
-				if strings.TrimSpace(l) != preAlpha { // the bare command's indented stage hint
+				if strings.TrimSpace(l) != "NOTE "+preAlpha { // the bare command's indented NOTE stage hint
 					assert.Contains(t, l, " REFUSED", "%v: a refusal line without the word:\n%s", tc.args, res.Stderr)
 				}
 			}

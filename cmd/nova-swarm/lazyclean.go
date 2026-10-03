@@ -3,20 +3,19 @@ package main
 import (
 	"fmt"
 	"io/fs"
-	"maps"
-	"math"
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
+	"github.com/mas-bandwidth/nova-tools/internal/gocache"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // THE CLEANER'S LAZY WORK (docs/SPEC-SWARM.md, `member`).
@@ -36,8 +35,8 @@ import (
 //     read after a run is stopped and cleared. A name that does not parse as a launch's, a
 //     link, and anything of a launch that is running or claimed is left alone, always.
 //   - the build cache: the Go build cache this loop's launches share (GOCACHE, nativeChildEnv)
-//     is held under cacheLimit, least recently used entries removed first, never one used in
-//     the last hour (trimCache).
+//     is held under gocache.Limit, least recently used entries removed first, never one used
+//     in the last hour (internal/gocache).
 
 // keepEpochs is how many epochs, the current one included, keep their slot entries and
 // results: the current one, which is running, and the one before it, whose logs are read
@@ -55,31 +54,15 @@ const lazyRound = 32
 // directory listing.
 const lazyEvery = 2 * time.Second
 
-// The build cache's bound. cacheLimit is the size the shared cache is held under (the
-// owner's order of magnitude, 10 GiB; a day of cards grew one past 50); once over it, the
-// trim removes until it is cacheSlack under it, so it does not trim again every round.
-const (
-	cacheLimit int64 = 10 * gib
-	cacheSlack int64 = 2 * gib
-)
-
-// cacheRecent is how recently used an entry of the build cache is never removed. Go marks
-// an entry used by setting its modification time, and only when that is over an hour old
-// (the go command's cache package, its mtimeInterval), so an entry whose time is two hours old has not
-// been used in the last hour: a build that just looked it up never finds it gone.
-const cacheRecent = 2 * time.Hour
-
-// cacheDirsPerRound is how many of the cache's 256 subdirectories a round reads (measures,
-// and trims when over): the size is never measured by walking the whole cache at once, but
-// as a running sum, each subdirectory's part re-read once every 64 rounds. cacheRemovePerRound
-// is the most entries one round removes.
+// The build cache's trim (internal/gocache): held under gocache.Limit, then gocache.Slack
+// under it. cacheDirsPerRound is how many of the cache's 256 subdirectories a round reads
+// (measures, and trims when over): the size is never measured by walking the whole cache at
+// once, but as a running sum, each subdirectory's part re-read once every 64 rounds.
+// cacheRemovePerRound is the most entries one round removes.
 const (
 	cacheDirsPerRound   = 4
 	cacheRemovePerRound = 256
 )
-
-// cacheSubdirs is the number of subdirectories of a Go build cache: two hex digits.
-const cacheSubdirs = 256
 
 // Epoch records the sprint's epoch the member's pass read (member.Epocher): a store, never a
 // wait. The cleaner reads it on its own clock.
@@ -104,28 +87,28 @@ func (r *nativeRunner) lazy(now time.Time) {
 	if dir == "" {
 		return
 	}
-	if c := r.cache.round(dir, now, cacheBounds{limit: cacheLimit, slack: cacheSlack, dirs: cacheDirsPerRound, remove: cacheRemovePerRound}); c.removed > 0 || c.failed > 0 {
-		fmt.Fprintf(r.stderr, "CLEAN go build cache: removed %d entries, %s freed, %s now, limit %s%s\n", c.removed,
-			oneline.Escape(sizeWord(c.freed)), oneline.Escape(sizeWord(c.size)), oneline.Escape(sizeWord(cacheLimit)), oneline.Escape(c.failures()))
+	if c := r.cache.Round(dir, now, gocache.Bounds{Limit: gocache.Limit, Slack: gocache.Slack, Dirs: cacheDirsPerRound, Remove: cacheRemovePerRound}); c.Removed > 0 || c.Failed > 0 {
+		failures := lazyCount{failed: c.Failed, why: c.Why}.failures()
+		fmt.Fprintf(r.stderr, "CLEAN go build cache: removed %d entries, %s freed, %s now, limit %s%s\n", c.Removed,
+			oneline.Escape(sizeWord(c.Freed)), oneline.Escape(sizeWord(c.Size)), oneline.Escape(sizeWord(gocache.Limit)), oneline.Escape(failures))
 	}
 }
 
 // goBuildCache is the build cache this loop's launches share: native's GOCACHE under the
 // root (nativeCacheDir, nativeChildEnv); "" with no root.
 func (r *nativeRunner) goBuildCache() string {
-	if d := nativeCacheDir(nativeRunConfig{root: r.root}); d != "" {
-		return filepath.Join(d, "go-build")
+	if nativeCacheDir(nativeRunConfig{root: r.root}) != "" {
+		return swarm.GoBuildCacheDir(r.root)
 	}
 	return ""
 }
 
-// lazyCount is what one round did: removed, failed (each said once, why the first), the
-// bytes freed, and what is left (old entries still there; the cache's size).
+// lazyCount is what one round of old epochs did: removed, failed (each said once, why the
+// first), the bytes freed, and the old entries left.
 type lazyCount struct {
 	removed, failed int
 	freed           int64
 	left            int
-	size            int64
 	why             string
 }
 
@@ -312,132 +295,6 @@ func treeSize(dir string) (n int64) {
 		return 0 // unreachable while the walk is never stopped; no size is better than a wrong one
 	}
 	return n
-}
-
-// cacheBounds are a trim's limits: the constants above in the member, a test's own.
-type cacheBounds struct {
-	limit, slack int64
-	dirs, remove int
-}
-
-// cacheTrim is the running measure of a Go build cache and its trim. sizes and hours are
-// each subdirectory's bytes, in all and by the hour (unix) of each entry's last use, as
-// last read; measured counts the subdirectories read at least once (they are read in order
-// from 00, so the first 256 reads measure them all); over is set when the measured size
-// passed the limit and cleared when it fell to the limit less the slack.
-type cacheTrim struct {
-	sizes    [cacheSubdirs]int64
-	hours    [cacheSubdirs]map[int64]int64
-	measured int
-	next     int
-	over     bool
-	failed   map[string]bool // paths a read or a removal failed on: said once, not tried again
-}
-
-// cacheEntryRE is an entry of a Go build cache: an action (-a) or an output (-d), named by
-// its hash (the go command's cache package). Anything else in the cache is never removed or counted.
-var cacheEntryRE = regexp.MustCompile(`^[0-9a-f]{64}-[ad]$`)
-
-// round reads b.dirs of the cache's subdirectories, the next ones in turn, and, once the
-// whole cache has been measured and its size is over the limit, removes from those
-// subdirectories the entries last used before the cutoff (cutoff) and over cacheRecent ago,
-// at most b.remove a round. Oldest first, to the hour: Go records a use to the hour
-// (cacheRecent), so an entry's time is no finer than that. A missing entry is a cache miss
-// that Go rebuilds, so removing an unused one costs at most a rebuild.
-func (t *cacheTrim) round(dir string, now time.Time, b cacheBounds) (c lazyCount) {
-	cutoff := int64(math.MinInt64) // nothing is old enough until the cache is measured and over
-	if t.measured >= cacheSubdirs {
-		total := t.total()
-		switch {
-		case total > b.limit:
-			t.over = true
-		case total <= b.limit-b.slack:
-			t.over = false
-		}
-		if t.over {
-			cutoff = t.cutoff(total - (b.limit - b.slack))
-		}
-	}
-	for range b.dirs {
-		i := t.next
-		t.next = (t.next + 1) % cacheSubdirs
-		size, hours := int64(0), map[int64]int64{}
-		sub := filepath.Join(dir, fmt.Sprintf("%02x", i))
-		entries, err := os.ReadDir(sub)
-		if err != nil && !os.IsNotExist(err) && !t.failed[sub] {
-			t.noteFailed(sub)
-			c.fail(sub, err)
-		}
-		for _, d := range entries {
-			if !d.Type().IsRegular() || !cacheEntryRE.MatchString(d.Name()) {
-				continue
-			}
-			fi, err := d.Info()
-			if err != nil {
-				continue // gone since the listing (Go's own trim, or a rename into place)
-			}
-			at := fi.ModTime()
-			hour := at.Unix() / 3600
-			path := filepath.Join(sub, d.Name())
-			if hour < cutoff && now.Sub(at) >= cacheRecent && c.removed < b.remove && !t.failed[path] {
-				if err := safepath.RemoveUnder(dir, path); err != nil {
-					t.noteFailed(path)
-					c.fail(path, err)
-				} else {
-					c.removed++
-					c.freed += fi.Size()
-					continue
-				}
-			}
-			size += fi.Size()
-			hours[hour] += fi.Size()
-		}
-		t.sizes[i], t.hours[i] = size, hours
-		if t.measured < cacheSubdirs {
-			t.measured++
-		}
-	}
-	c.size = t.total()
-	return c
-}
-
-// noteFailed marks a path a read or a removal failed on.
-func (t *cacheTrim) noteFailed(path string) {
-	if t.failed == nil {
-		t.failed = map[string]bool{}
-	}
-	t.failed[path] = true
-}
-
-// total is the cache's measured size: the sum of its subdirectories' last reads.
-func (t *cacheTrim) total() (n int64) {
-	for _, s := range t.sizes {
-		n += s
-	}
-	return n
-}
-
-// cutoff is the hour before which every entry goes to free need bytes: the oldest hours'
-// bytes summed until they reach need.
-func (t *cacheTrim) cutoff(need int64) int64 {
-	all := map[int64]int64{}
-	for _, h := range t.hours {
-		for hour, n := range h {
-			all[hour] += n
-		}
-	}
-	hours := slices.Sorted(maps.Keys(all))
-	var sum int64
-	for _, hour := range hours {
-		sum += all[hour]
-		if sum >= need {
-			return hour + 1
-		}
-	}
-	if len(hours) == 0 {
-		return math.MinInt64
-	}
-	return hours[len(hours)-1] + 1
 }
 
 // sizeWord is a byte count as a person reads it.

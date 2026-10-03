@@ -88,8 +88,10 @@ func TestAFriendRowAffectsNoWidth(t *testing.T) {
 	require.Equal(t, before, widthsByName(t, m), "a friend row changed a width")
 }
 
-// TestWidthDefaultsToNoMember: a machine added with no width is no member.
-func TestWidthDefaultsToNoMember(t *testing.T) {
+// TestWidthDefaultsToTheDefaultWidth: a machine added with no width has the
+// default width, half its cores, which fleet sync resolves: a member whose
+// config holds no number.
+func TestWidthDefaultsToTheDefaultWidth(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	m := NewMem()
@@ -97,5 +99,18 @@ func TestWidthDefaultsToNoMember(t *testing.T) {
 	require.NoError(t, err)
 	got := widthsByName(t, m)
 	require.Zero(t, got["m1"].Width, "%+v", got["m1"])
-	require.False(t, got["m1"].Member())
+	require.True(t, got["m1"].Default, "%+v", got["m1"])
+	require.True(t, got["m1"].Member())
+	require.Equal(t, "CONFIG WIDTH machine=m1 width=default member=true", got["m1"].Line())
+}
+
+// TestAnUnsetWidthIsUnsetInTheAppliedView: apply writes an unset width as an
+// empty field, and reads it back unset, so a steady apply finds no difference
+// and writes nothing (machineView; a "0" there would rewrite every machine on
+// every apply).
+func TestAnUnsetWidthIsUnsetInTheAppliedView(t *testing.T) {
+	t.Parallel()
+	require.Equal(t, "", machineView(map[string]string{"width": ""}, "8")["width"])
+	require.Equal(t, "0", machineView(map[string]string{"width": "0"}, "8")["width"])
+	require.Equal(t, "16", machineView(map[string]string{"width": "16"}, "8")["width"])
 }

@@ -48,16 +48,28 @@ words:
   DECIDED      an inbox note recording a judgment's answer: what was decided, by whom
   group        one inbox line: the notes of one type, stream and cause, named by its oldest note's id
   cursor       the coordinator's place in the notes; inbox --read moves it; it bounds HAPPENED and
-               DECIDED lines, never the open judgments
+               DECIDED lines, never the open judgments; inbox --wait wakes for a judgment or a note
+               to the coordinator that was not there when it began, and --push <dir> writes each
+               once as <dir>/<note id>.md, the files there being its cursor; --push seat writes to
+               the holder's inbox, ~/<holder>-working/inbox/sprint-judgments, and follows the seat
+  seat         the coordinator's place: coordinator <name> gives it (the holder or the owner) or
+               takes it (--take --approved-by <owner>); handover prints what the next seat needs
   deal         the tick placing a ready primary's work card on an up member below twice its width
   level        moving cards dealt and not taken from a member that cannot start them to one with
                free lanes; asked reads are levelled across the readers up the same way
   drain        the tick's first update of the work table: every change steps queued since the last
                tick; MEMBER DRAIN is a member whose binary was replaced, taking no new card
-  tier         a card's class of model, line 1 of its brief: tier: flash|pro|frontier (none is flash)
+  tier         a card's class of model: flash first on every card; line 1 of its brief (tier:
+               flash|pro|frontier, none is flash) is its ceiling; at its bound below it the machine
+               escalates it a tier (tier_now); rework --tier pins it; frontier is never dealt
   route        a nova-config route row: tier, provider/model, token budget, deadline; the deal draws
-               one of the card's tier for each work card, the ask one for each read
+               one of the tier the card is on for each work card, the ask one for each read
   provider     the first half of provider/model; a run the provider failed is redealt, never failed work
+  rested       a route the deal draws no work card on for 30 minutes: 3 of its last 10 ended takes left
+               no result; the tick rests it, tells the inbox, and routes prints rested_until
+  bound        a card tried no more on its tier: its work card redealt 3 times, or its second try
+               failed the way its first did (the second identical failure: two takes with no result,
+               or two attempts with the same reason); a card reached its bound, answered by rework or drop
   head         the commit a work card finished at (finish --head, default the work card's id);
                reads and merges are of that head
   the stream's base  a first attempt's base in its packet: the branch its brief's BASE: line names

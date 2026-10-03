@@ -16,7 +16,7 @@ func TestInboxWaitRunsOutItsTimeout(t *testing.T) {
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	before := ta.a.now()
 	out := ta.ok("inbox --wait --timeout 2s")
-	require.Contains(t, out, "inbox --wait: no tick end in 2s", "inbox --wait with nothing to come")
+	require.Contains(t, out, "inbox --wait: nothing new in 2s", "inbox --wait with nothing to come")
 	require.GreaterOrEqual(t, ta.a.now().Sub(before), 2*time.Second, "inbox --wait returned before its timeout of 2s of the store's clock") // wall-ok: the test app's fake clock, which the wait advances
 	code, _, errs := ta.do("inbox --wait --timeout 0s")
 	require.NotEqual(t, 0, code, "a timeout of zero: exit %d\n%s", code, errs)
@@ -30,7 +30,7 @@ func TestAcceptReadOkRefusesOneOkRead(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
-	ta.ok("add --stream s1 --count 1")
+	ta.ok("add --stream s1 --count 1 --brief-file " + proBriefFile(t))
 	ta.ok("start")
 	ta.ok("tick")
 	ta.ok("take --as m1 --limit 5")

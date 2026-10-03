@@ -504,7 +504,7 @@ func (h *dHarness) engine(a dAction, pre refmodel.State) (refused string, cutOK 
 	}
 	switch a.Kind {
 	case "add":
-		return run(AddStep(sprint.AddReq{Stream: a.Stream, IDs: a.IDs, Needs: a.Needs, Sentinel: a.Sentinel, Before: a.Before, After: a.After, Who: dCoordinator})), cutOK
+		return run(AddStep(sprint.AddReq{Brief: proBrief, Stream: a.Stream, IDs: a.IDs, Needs: a.Needs, Sentinel: a.Sentinel, Before: a.Before, After: a.After, Who: dCoordinator})), cutOK
 	case "tick":
 		_, err := h.st.Tick(h.ctx)
 		return engineErr(err, nil), cutOK
@@ -522,7 +522,7 @@ func (h *dHarness) engine(a dAction, pre refmodel.State) (refused string, cutOK 
 		if !a.OK {
 			v = "broken"
 		}
-		return run(ReadStep(sprint.ReadReq{As: a.Reader, Sel: sprint.Sel{IDs: []string{a.Card}}, Verdict: v, Finding: "finding"})), cutOK
+		return run(ReadStep(sprint.ReadReq{As: a.Reader, Sel: sprint.Sel{IDs: []string{a.Card}}, Verdict: v, Finding: "finding:1"})), cutOK
 	case "accept":
 		return run(AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{IDs: a.IDs}})), cutOK
 	case "rework":

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,11 +14,13 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/cardlimits"
+	"github.com/mas-bandwidth/nova-tools/internal/cardtree"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -36,10 +39,10 @@ var verbs []verb
 
 func init() {
 	verbs = []verb{
-		{"init", "[--readers <a,b,...>] [--members <m1[:<width>],m2,...>] [--coordinator <name>] [--rules <file>]", "init --readers reader-a,reader-b,reader-c --members m1:64,m2:64", (*app).cmdInit},
-		{"add", "--stream <s> (<id>... | --count <n> | --sentinel <id> | --brief-dir <dir> | --brief-file <f1> --brief-file <f2>...: a card per file, its id the file's name without .md) [--needs <a,b>] [--before <id> | --after <id> | --score <n>] [--brief <text> | --brief-file <path>: once, the brief of the cards named] [--rules <file>]", "add --stream s1 --count 100", (*app).cmdAdd},
+		{"init", "[--readers <a,b,...>] [--members <m1[:<width>],m2,...>] [--coordinator <name>] [--owner <name>] [--rules <file>]", "init --readers reader-a,reader-b,reader-c --members m1:64,m2:64", (*app).cmdInit},
+		{"add", "--stream <s> (<id>... | --count <n> | --sentinel <id> | --brief-dir <dir> | --brief-file <f1> [--brief-file <f2>...]: a card per file, its id the file's name without .md) [--needs <a,b>] [--before <id> | --after <id> | --score <n>] [--brief <text> | --brief-file <path>: once, the brief of the cards named] [--rules <file>] [--held] [--allow-shared-paths]", "add --stream s1 --count 100", (*app).cmdAdd},
 		{"quack", "--streams <a,b,...> --count <n> --repo <clone url> [--tiers <t,...>] [--base <branch>]", "quack --streams a,b --count 2 --repo https://example.com/quack.git", (*app).cmdQuack},
-		{"release", "<sentinel>... --reason <text> [--answers <note>]", "release s1-stop --reason 'the layer is green and read'", (*app).cmdRelease},
+		{"release", "<sentinel or held card>... --reason <text> [--answers <note>]", "release s1-stop --reason 'the layer is green and read'", (*app).cmdRelease},
 		{"resolve", "[<id>...] [--stream <s>] [--limit <n>]", "resolve", (*app).cmdResolve},
 		{"start", "", "start", (*app).cmdMachineStart},
 		{"stop", "", "stop", (*app).cmdMachineStop},
@@ -54,7 +57,7 @@ func init() {
 		{"queue", "--as <reader|member> | --stream <s>", "queue --as reader-a", (*app).cmdQueue},
 		{"read", "--as <reader> (--begin | --ok | --broken) [<card>...] --epoch <n> [--limit <n>] [--finding <text>] [--usage <text>] | --as <reader> --return <card> --reason <text> --epoch <n> [--usage <text>]", "read --as reader-a --ok --limit 5 --epoch 0", (*app).cmdRead},
 		{"accept", "(<id>... | --stream <s> | --read-ok | --group <id> [--expect <n>]) [--answers <note>]", "accept --read-ok", (*app).cmdAccept},
-		{"rework", "(<id>... | --group <id> [--expect <n>]) [--fix <text>] [--answers <note>]", "rework s1-4 --fix 'handle the empty case'", (*app).cmdRework},
+		{"rework", "(<id>... | --group <id> [--expect <n>]) [--fix <text>] [--tier <tier>] [--answers <note>]", "rework s1-4 --fix 'handle the empty case'", (*app).cmdRework},
 		{"return", "(<id>... | --group <id> [--expect <n>]) [--reason <text>] [--answers <note>]", "return s1-7 --reason 'suspect of the red batch'", (*app).cmdReturn},
 		{"drop", "(<id>... | --stream <s> --col <state> | --group <id> [--expect <n>]) --reason <text> [--answers <note>]", "drop s1-9 --reason obsolete", (*app).cmdDrop},
 		{"rank", "<id>... (--score <n> | --first) [--answers <note>]", "rank s2-3 --first", (*app).cmdRank},
@@ -68,29 +71,36 @@ func init() {
 		{"fleet down", "<member>", "fleet down m1", func(a *app, args []string, o, e io.Writer) int { return a.cmdFleet("down", args, o, e) }},
 		{"fleet sync", "[--check] [--pg <dsn>]", "fleet sync --check", (*app).cmdFleetSync},
 		{"fleet level", "", "fleet level", func(a *app, args []string, o, e io.Writer) int { return a.cmdFleet("level", args, o, e) }},
-		{"friend sync", "[--pg <dsn>]", "friend sync", (*app).cmdFriendSync},
+		{"friend sync", "[--pg <dsn>] [--root <dir>]", "friend sync", (*app).cmdFriendSync},
 		{"friend beat", "<friend>", "friend beat friend-a", (*app).cmdFriendBeat},
 		{"friend down", "<friend>", "friend down friend-a", func(a *app, args []string, o, e io.Writer) int { return a.cmdFriendHold(true, args, o, e) }},
 		{"friend up", "<friend>", "friend up friend-a", func(a *app, args []string, o, e io.Writer) int { return a.cmdFriendHold(false, args, o, e) }},
+		{"friend clean", "[--pg <dsn> | --file <path>] [--root <dir>] [--days <n>] [--dry-run]", "friend clean --dry-run", (*app).cmdFriendClean},
 		{"reader add", "<reader>...", "reader add reader-d", (*app).cmdReaderAdd},
 		{"reader away", "<reader>...", "reader away reader-d", func(a *app, args []string, o, e io.Writer) int { return a.cmdReaderHold(true, args, o, e) }},
 		{"reader up", "<reader>...", "reader up reader-d", func(a *app, args []string, o, e io.Writer) int { return a.cmdReaderHold(false, args, o, e) }},
 		{"reader remove", "<reader>...", "reader remove reader-d", (*app).cmdReaderRemove},
 		{"stream remove", "<stream>...", "stream remove a b c", (*app).cmdStreamRemove},
+		{"stream set", "<stream>... --read-tier <flash|pro|default>", "stream set skips --read-tier pro", (*app).cmdStreamSet},
+		{"set", "[--read-tier <flash|pro|default>] [--dealt-max <duration|default>]", "set --read-tier pro", (*app).cmdSet},
 		{"ci", "<id>... (--red | --green) --epoch <n> [--head <h>] [--run <id>] [--source <s>] [--note <text>]", "ci s1-3 --red --run 812 --source ci --epoch 0", (*app).cmdCI},
 		{"wait", "<note> (--for <duration> | --until <RFC3339>)", "wait tick-ask-x-1.2 --for 30m", (*app).cmdWait},
-		{"ack", "<note>... --reason <text>", "ack ci-x-1.1 --reason 'a flaky runner; the rerun is green'", (*app).cmdAck},
-		{"inbox", "[--open <group>] [--read] [--wait [--timeout <duration>]] [--deadline <duration>] [--stale <duration>]", "inbox --wait", (*app).cmdInbox},
+		{"ack", "<note>[,<note>]... --reason <text>", "ack ci-x-1.1 --reason 'a flaky runner; the rerun is green'", (*app).cmdAck},
+		{"inbox", "[--open <group>] [--read] [--wait [--timeout <duration>] [--push <dir> | --push seat]] [--deadline <duration>] [--stale <duration>]", "inbox --wait", (*app).cmdInbox},
 		{"card", "<id>", "card s1-4", (*app).cmdCard},
 		{"log", "[--card <id>] [--stream <s>] [--member <m>] [--since <10m|RFC3339>] [--at-epoch <n>]", "log --card s1-4", (*app).cmdLog},
 		{"check", "", "check", (*app).cmdCheck},
 		{"repair", "", "repair", (*app).cmdRepair},
-		{"where", "[--watch] [--every <duration>]", "where", (*app).cmdWhere},
+		{"where", "[--watch] [--every <duration>] [--all]", "where", (*app).cmdWhere},
+		{"dashboard", "[--listen <address:port>[,<address:port>...]] [--logo <file>] [--every <duration>]", "dashboard --listen 127.0.0.1:7390", (*app).cmdDashboard},
+		{"handover", "", "handover", (*app).cmdHandover},
 		{"routes", "", "routes", (*app).cmdRoutes},
 		{"stats", "", "stats", (*app).cmdStats},
 		{"play", "[--simulation] [--seed <n>] [--every <duration>] [--broken <p>] [--fail <p>] [--stuck <p>] [--cross <p>] [--down <p>] [--up <p>] [--red <p>] [--flap <p>] [--batch <n>] [--hold] [--silent <member>@<from>+<for>]... [--ticks <n>]", "play --seed 7 --every 1s", (*app).cmdPlay},
 		{"clear", "--confirm sprint", "clear --confirm sprint", (*app).cmdClear},
 		{"teardown", "--confirm sprint", "teardown --confirm sprint", (*app).cmdTeardown},
+		// last: its example moves the seat, and every coordinator verb's example before it is the holder's
+		{"coordinator", "<name> --reason <text> | <name> --take --approved-by <owner> --reason <text>", "coordinator friend-b --reason 'friend-a is out of credits; friend-b holds the seat'", (*app).cmdCoordinator},
 	}
 }
 
@@ -152,15 +162,21 @@ the recorded result), --json and --max <n> (listed items; 0 is all). The
 coordinator's verbs are the coordinator's alone (the first init names it:
 --coordinator, else the actor); take, finish, read, fleet beat and friend
 beat are the workers', whose actor is the member, reader or friend named; merge and ci are
-reports; tick and run are the machine's; the reads need no actor (inbox
---read, which moves the coordinator's cursor, is the coordinator's). A set is
+reports; tick, run and friend clean are the machine's; the reads need no actor (inbox
+--read, which moves the coordinator's cursor, is the coordinator's). The seat
+moves by coordinator <name> --reason <text>: given by its holder or the owner
+(init --owner), or taken by <name> itself with --take --approved-by <owner>,
+each in the log; handover prints what the next seat needs. A set is
 ids, a stream, a column, --limit n, or an inbox group: --group <id>, the id
 inbox prints, which does not move, with --expect <n>, the size it printed,
 which refuses a group that has changed. Each verb prints what moved (MOVED),
 what did not and why (REFUSED, on stderr), its summary line, and the sprint's
-line: landed/all percent -> ETA <estimate> (the cards left, each at the average
-time a card has taken to land, in minutes rounded up; where shows the largest
-of the last 10 s; the word alone until one has landed; a stopped
+line: landed/all percent -> ETA <estimate> (every card left, held ones too, at
+the cards landed an hour: where's over the last hour of running time, the
+whole sprint's average with fewer than five there and on this line; in minutes
+rounded up, days and hours from a day; where shows the largest
+of the last 10 s, and held=N, the cards behind a sentinel not released or
+admitted held; the word alone until one has landed; a stopped
 machine has no ETA: STOPPED, then
 landed/all and the percent when there are cards; every card landed, no ETA:
 done in <time from the first start> while it runs, and STOPPED ... done once
@@ -690,6 +706,7 @@ func stepExit(res store.Result, err error) int {
 }
 
 func (a *app) report(ctx context.Context, verbName string, c common, st *store.Store, res store.Result, err error, stdout, stderr io.Writer) int {
+	err = noSprintYet(err)
 	code := stepExit(res, err)
 	var synced *store.SyncError
 	line := sprintLine(ctx, st)
@@ -728,6 +745,9 @@ func (a *app) report(ctx context.Context, verbName string, c common, st *store.S
 		status = "FAIL"
 	}
 	fields := fmt.Sprintf("moved=%d refused=%d notes=%d", len(res.Moved), len(res.Refused), res.Notes)
+	if verbName == "add" {
+		fields = fmt.Sprintf("stream=%s cards=%d before=%s %s", oneline.Field(c.addStream), len(res.Moved), oneline.Field(dashed(c.addBefore)), fields)
+	}
 	if res.Op != "" {
 		fields += " op=" + oneline.Escape(res.Op)
 	}
@@ -804,8 +824,8 @@ func sprintLine(ctx context.Context, st *store.Store) string {
 	case full:
 		return strings.TrimSpace(progress(shapes[0]) + " done" + tookSince(ctx, st) + "  " + machine)
 	}
-	since, started := st.SinceFirstStart(ctx)
-	return strings.TrimSpace(summary(shapes[0], etaMinutes(shapes[0], since, started)) + "  " + machine)
+	// reads no cards: the rate is the whole sprint's average
+	return strings.TrimSpace(summary(shapes[0], 0, etaMinutes(shapes[0], st.LandingRate(ctx, nil, landed))) + "  " + machine)
 }
 
 // tookSince is " in <duration>": the wall time from the machine's first start
@@ -821,7 +841,8 @@ func (a *app) cmdInit(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("init")
 	readers := fs.String("readers", "", "the readers' rows, comma separated")
 	members := fs.String("members", "", fmt.Sprintf("fleet members to bring up, comma separated, each <name> or <name>:<width>, its width the most work cards it runs at once; it holds %d times that, ready and working (default %d)", sprint.DealAhead, sprint.DefaultWidth))
-	coordinator := fs.String("coordinator", "", "the sprint's coordinator, the one actor who releases sentinels (default: the actor)")
+	coordinator := fs.String("coordinator", "", "the sprint's coordinator, the one actor who releases sentinels (default: the actor); the seat then moves by coordinator <name>")
+	owner := fs.String("owner", "", "the sprint's owner, who may give the seat and whose name a take of it carries (coordinator --take --approved-by); set once, never changed (else "+OwnerEnv+")")
 	rules := fs.String("rules", "", "the child rules file every brief is held to: one required sentence per line, its path recorded for the sprint (default: the built-in general rules; add --rules <file> overrides it for one add)")
 	pos, err := parse(fs, args)
 	if err != nil {
@@ -852,9 +873,27 @@ func (a *app) cmdInit(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "init", err.Error())
 	}
 	ctx := context.Background()
+	if *owner != "" {
+		if !sprint.ValidID(*owner) {
+			return refuse(stderr, "init", "--owner wants letters, digits, _ and -: "+*owner)
+		}
+		was, err := st.Owner(ctx)
+		if err != nil {
+			return a.readFailed("init", err, stderr)
+		}
+		if was != "" && was != *owner {
+			return refuse(stderr, "init", "the sprint's owner is "+was+", and init does not change the owner; nothing was changed")
+		}
+	}
 	if err := st.Init(ctx); err != nil {
 		fmt.Fprintf(stderr, "%s init: %s\n", prog, oneline.Escape(err.Error()))
 		return 1
+	}
+	if *owner != "" {
+		if err := st.SetOwner(ctx, *owner); err != nil {
+			fmt.Fprintf(stderr, "%s init: %s\n", prog, oneline.Escape(err.Error()))
+			return 1
+		}
 	}
 	if *coordinator == "" {
 		*coordinator = c.actor
@@ -922,18 +961,20 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("add")
 	stream := fs.String("stream", "", "the stream the primaries belong to, for life; with --count, several streams comma separated, one step")
 	count := fs.Int("count", 0, "admit n primaries with generated ids <stream>-<n>")
-	needs := fs.String("needs", "", "primaries that must land first, comma separated; each is a primary on the table")
+	needs := fs.String("needs", "", "primaries that must land first, comma separated; each is a primary on the table or of this add (default: the brief's Needs: or DEPENDS-ON: line; with a brief per card, added to each card's own)")
 	brief := fs.String("brief", "", fmt.Sprintf("the brief: a child's whole brief, at most %d KiB (the card lint advises %d bytes), held to the card lint (the sentences of the rules file: --rules, else the one init --rules recorded, else the built-in general rules; nova-swarm template --name card prints a card that passes the general ones, nova-swarm lint --rules lists them) and refused, exit 2, nothing written, when it fails; a card with no brief is not linted", cardlimits.MaxBriefBytes>>10, cardlimits.BriefAdvisoryBytes))
 	var briefFiles stringList
-	fs.Var(&briefFiles, "brief-file", "the brief, read from this file: its bytes as they are, its one trailing newline cut (a brief of many paragraphs), then held to the card lint like --brief; given once, the brief of the cards the ids, --count or --sentinel name; given again, one card per file in the order given, each card's id its file's name without .md (a1.md is a1); not with --brief or --brief-dir")
+	fs.Var(&briefFiles, "brief-file", "the brief, read from this file: its bytes as they are, its one trailing newline cut (a brief of many paragraphs), then held to the card lint like --brief; given once with ids, --count or --sentinel, the brief of the cards they name; given alone or again, one card per file in the order given, each card's id its file's name without .md (a1.md is a1); not with --brief or --brief-dir")
 	briefDir := fs.String("brief-dir", "", "one card per *.md file in this directory, in byte order of file name, each card's id its file's name without .md (a1.md is a1); not with --brief-file")
-	rules := fs.String("rules", "", "the child rules file this add holds the brief to: one required sentence per line, `[name] sentence` to name its token (default: the file init --rules recorded, else the built-in general rules)")
+	rules := fs.String("rules", "", "the child rules `file`, read at add time: one required sentence per line, [name] sentence names its token (default: the file init --rules recorded, else the built-in general rules); e.g. --rules rules/card.txt. A file the members hold (fleet/child-rules*.txt of this build) is by reference: a card on a repository with a held file (fleet/child-rules.txt for nova-tools, fleet/child-rules.<repo>.txt) need not carry it, the card names the file, and the member injects it at stage time")
 	score := fs.String("score", "", "the first primary's score; the rest follow it (default: after every primary)")
 	sentinel := fs.String("sentinel", "", "admit a sentinel with this id: a stop the coordinator releases; what sorts after it waits for it")
 	before := fs.String("before", "", "place the cards in line in front of this primary of the stream")
 	after := fs.String("after", "", "place the cards in line after this primary of the stream")
 	every := fs.Int("sentinel-every", 0, "with --count: a sentinel <stream>-gate-<n> after every k cards (a stop by its place in line)")
 	last := fs.Bool("sentinel-last", false, "with --sentinel-every: a sentinel after the last card too")
+	allowShared := fs.Bool("allow-shared-paths", false, "with a card per brief file (--brief-dir, or --brief-file with no ids): admit cards that name one file in their PATHS: lines though neither needs the other (by default refused, naming the file and the cards)")
+	held := fs.Bool("held", false, "admit the cards held: waiting, a sentinel never reached and no card dealt, nothing raised, until nova-sprint release <id> --reason <text>; a wave loads behind a held sentinel with nothing before it")
 	ids, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "add", err.Error())
@@ -942,15 +983,16 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 		// a negative count admitted no card and opened the stream with an OK
 		return refuse(stderr, "add", fmt.Sprintf("--count wants the number of cards to admit, at least 1, got %d", *count))
 	}
-	// The many-brief form: --brief-dir <dir>, or --brief-file given again,
-	// names one brief file per card. One --brief-file alone is the one brief
-	// for every card the ids, --count or --sentinel name.
-	if *briefDir != "" || len(briefFiles) > 1 {
+	// The many-brief form: --brief-dir <dir>, or --brief-file given alone or
+	// again, names one brief file per card, its id the file's name. One
+	// --brief-file with ids, --count or --sentinel is the one brief for every
+	// card they name.
+	if *briefDir != "" || len(briefFiles) > 1 || len(briefFiles) == 1 && len(ids) == 0 && *count == 0 && *sentinel == "" {
 		if *briefDir != "" && len(briefFiles) > 0 {
 			return refuse(stderr, "add", "--brief-dir and --brief-file are two ways to name the brief files: give one")
 		}
 		if *brief != "" {
-			return refuse(stderr, "add", "--brief and --brief-dir (or a repeated --brief-file) are two ways to give the brief: give one")
+			return refuse(stderr, "add", "--brief and --brief-dir (or --brief-file, a card per file) are two ways to give the brief: give one")
 		}
 		if len(ids) > 0 {
 			return refuse(stderr, "add", "takes no ids with --brief-dir or a repeated --brief-file: the cards are the files")
@@ -961,7 +1003,7 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 		if *every != 0 || *last {
 			return refuse(stderr, "add", "--sentinel-every goes with --count, not a card per brief file")
 		}
-		return a.cmdAddMany(*stream, *needs, *briefDir, briefFiles, *sentinel, *rules, *score, *before, *after, c, stdout, stderr)
+		return a.cmdAddMany(*stream, *needs, *briefDir, briefFiles, *sentinel, *rules, *score, *before, *after, *held, *allowShared, c, stdout, stderr)
 	}
 	if len(briefFiles) == 1 {
 		if *brief != "" {
@@ -979,14 +1021,8 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 		}
 		ids = []string{*sentinel}
 	}
-	if len(briefFiles) == 1 && len(ids) == 0 && *count == 0 {
-		// one --brief-file is the brief of the cards named, and names none itself
-		f := briefFiles[0]
-		id := strings.TrimSuffix(filepath.Base(f), ".md")
-		return refuse(stderr, "add", fmt.Sprintf("one --brief-file is the brief of the cards the ids, --count or --sentinel name, and this add names none; for a card with its id from the file, name the id (nova-sprint add --stream %s %s --brief-file %s), or give --brief-file twice or more, or --brief-dir <dir>: a card per file", orDashStr(*stream, "<s>"), id, f))
-	}
 	if *stream == "" || (len(ids) == 0) == (*count == 0) {
-		return refuse(stderr, "add", "wants --stream and either ids, --count <n> or --sentinel <id> (or --brief-dir <dir>, or --brief-file twice or more: a card per file)")
+		return refuse(stderr, "add", "wants --stream and either ids, --count <n> or --sentinel <id> (or --brief-dir <dir>, or --brief-file: a card per file)")
 	}
 	if *last && *every == 0 {
 		return refuse(stderr, "add", "--sentinel-last goes with --sentinel-every <k>")
@@ -1004,16 +1040,22 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	if *rules != "" && *brief == "" {
 		return refuse(stderr, "add", "--rules is the rule set a brief is held to, and this add gives no brief; give --brief or --brief-file")
 	}
+	var rs0 ruleSet
 	if *sentinel == "" && *brief != "" {
-		if code := a.holdBrief("add", *brief, *rules, c, &st, stderr); code != 0 {
+		var code int
+		if rs0, code = a.holdBrief("add", *brief, *rules, c, &st, stderr); code != 0 {
 			return code
 		}
 		c.says = append(c.says, unfilledSays("the brief", *brief)...)
 	}
+	cardNeeds := sprint.Split(*needs)
+	if *needs == "" {
+		cardNeeds = briefNeeds(*brief) // its Needs: or DEPENDS-ON: line, when --needs is not given
+	}
 	var rs []sprint.AddReq
 	for _, sn := range streams {
-		r := sprint.AddReq{Stream: sn, IDs: ids, Count: *count, Needs: sprint.Split(*needs), Brief: *brief, Who: c.actor,
-			Sentinel: *sentinel != "", Before: *before, After: *after, Every: *every, Last: *last}
+		r := sprint.AddReq{Stream: sn, IDs: ids, Count: *count, Needs: cardNeeds, Brief: *brief, Rules: cardRules(*brief, rs0).held, Who: c.actor,
+			Sentinel: *sentinel != "", Before: *before, After: *after, Every: *every, Last: *last, Held: *held}
 		if *score != "" {
 			f, err := strconv.ParseFloat(*score, 64)
 			if err != nil {
@@ -1032,10 +1074,13 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	if *brief == "" && *sentinel == "" {
 		c.says = append(c.says, "the cards have no brief, so a worker is handed no task with them; give each one before it is dealt, on a STOPPED machine: nova-sprint brief <id> --brief-file <path>")
 	}
+	c.addStream = *stream
+	c.addBefore = *before
+	step := store.AddEachStep(rs)
 	if len(rs) == 1 {
-		return a.runStep("add", *c, st, store.AddStep(rs[0]), stdout, stderr)
+		step = store.AddStep(rs[0])
 	}
-	return a.runStep("add", *c, st, store.AddEachStep(rs), stdout, stderr)
+	return a.runStep("add", *c, st, step, stdout, stderr)
 }
 
 // cmdAddMany is add --brief-dir <dir>, or add with --brief-file given again:
@@ -1043,9 +1088,9 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 // the order the files were named. Every brief is read and linted first (one
 // failing brief refuses the whole call, exit 2, nothing written), and one
 // store write adds every card.
-func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, sentinel, rules, score, before, after string, c *common, stdout, stderr io.Writer) int {
+func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, sentinel, rules, score, before, after string, held, allowShared bool, c *common, stdout, stderr io.Writer) int {
 	if stream == "" {
-		return refuse(stderr, "add", "wants --stream and --brief-dir <dir> or a repeated --brief-file")
+		return refuse(stderr, "add", "wants --stream and --brief-dir <dir> or --brief-file <file>...")
 	}
 	if strings.Contains(stream, ",") {
 		return refuse(stderr, "add", "--brief-dir and a repeated --brief-file name the cards by file in one stream: give one stream")
@@ -1077,10 +1122,18 @@ func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, se
 		}
 		cards = append(cards, sprint.CardAdd{ID: id, Brief: briefText, Needs: uniquify(append(briefNeeds(briefText), extra...)), File: path})
 	}
+	if !allowShared {
+		if why := sharedPaths(cards); why != "" {
+			return refuse(stderr, "add", why)
+		}
+	}
 	// Every brief is linted first: one failing brief refuses the whole call,
 	// nothing written, every failing file named with its findings.
 	if code := lintBriefFiles(cards, rs, c.max, stderr); code != 0 {
 		return code
+	}
+	for i := range cards {
+		cards[i].Rules = cardRules(cards[i].Brief, rs).held // each card names the rules the member injects into it
 	}
 	// --sentinel <id> admits a stop after every card of the call: the sentinel
 	// sorts after the cards, and what sorts after it waits for it.
@@ -1094,7 +1147,7 @@ func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, se
 		}
 		st = s
 	}
-	r := sprint.AddReq{Stream: stream, Cards: cards, Who: c.actor, Before: before, After: after}
+	r := sprint.AddReq{Stream: stream, Cards: cards, Who: c.actor, Before: before, After: after, Held: held}
 	if score != "" {
 		f, err := strconv.ParseFloat(score, 64)
 		if err != nil {
@@ -1106,6 +1159,8 @@ func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, se
 	for _, cd := range cards {
 		c.says = append(c.says, unfilledSays("the brief of "+cd.ID, cd.Brief)...)
 	}
+	c.addStream = stream
+	c.addBefore = before
 	return a.runStep("add", *c, st, store.AddStep(r), stdout, stderr)
 }
 
@@ -1134,29 +1189,88 @@ func (a *app) briefFiles(dir string, files []string, stderr io.Writer) ([]string
 }
 
 // briefNeeds is the needs a brief names: the first `Needs:` header line (read
-// by cardhdr.KeyValue), its ids comma separated, each cut at an opening
-// parenthesis. "none" or "-" (also after the cut, so "none (first card)") or
-// no such line is no needs.
+// by cardhdr.KeyValue), else the DEPENDS-ON: line of its typed header block
+// (swarm.CardHeaderValue; nova-tools#5096 item 17), its ids comma separated,
+// each cut at an opening parenthesis. "none" or "-" (also after the cut, so
+// "none (first card)"), an owner/repo#n reference (a pull request or issue,
+// not a card), or no such line is no needs.
 func briefNeeds(brief string) []string {
+	value, found := "", false
 	for _, line := range strings.Split(brief, "\n") {
-		key, value, ok := cardhdr.KeyValue(line)
-		if !ok || key != "Needs" {
+		if key, v, ok := cardhdr.KeyValue(line); ok && key == "Needs" {
+			value, found = v, true
+			break
+		}
+	}
+	if !found {
+		value, _ = swarm.CardHeaderValue([]byte(brief), "DEPENDS-ON")
+	}
+	var out []string
+	for _, id := range strings.Split(value, ",") {
+		if cut, _, ok := strings.Cut(id, "("); ok {
+			id = cut
+		}
+		switch id = strings.TrimSpace(id); {
+		case id == "", id == "-", id == "none", strings.Contains(id, "#"):
 			continue
 		}
-		var out []string
-		for _, id := range strings.Split(value, ",") {
-			if cut, _, ok := strings.Cut(id, "("); ok {
-				id = cut
+		out = append(out, id)
+	}
+	return out
+}
+
+// sharedPaths is the refusal of a many-brief add whose cards name one file in
+// their PATHS: header lines (swarm.CardHeaderValue; commas or blanks between them)
+// when neither needs the other through the needs of the add: they would edit
+// it at once (nova-tools#5096 item 17). "" when none does.
+func sharedPaths(cards []sprint.CardAdd) string {
+	needs := map[string][]string{}
+	for _, c := range cards {
+		needs[c.ID] = c.Needs
+	}
+	// reaches says a needs b, through the needs of the add's cards
+	var reaches func(a, b string, seen map[string]bool) bool
+	reaches = func(a, b string, seen map[string]bool) bool {
+		if seen[a] {
+			return false
+		}
+		seen[a] = true
+		for _, n := range needs[a] {
+			if n == b || reaches(n, b, seen) {
+				return true
 			}
-			switch id = strings.TrimSpace(id); id {
-			case "", "-", "none":
+		}
+		return false
+	}
+	byPath := map[string][]string{}
+	var order []string
+	for _, c := range cards {
+		value, _ := swarm.CardHeaderValue([]byte(c.Brief), "PATHS")
+		for _, p := range strings.FieldsFunc(value, func(r rune) bool { return r == ',' || unicode.IsSpace(r) }) {
+			if p == "none" || p == "-" || slices.Contains(byPath[p], c.ID) {
 				continue
 			}
-			out = append(out, id)
+			if len(byPath[p]) == 0 {
+				order = append(order, p)
+			}
+			byPath[p] = append(byPath[p], c.ID)
 		}
-		return out
 	}
-	return nil
+	var clash []string
+	for _, p := range order {
+		ids := byPath[p]
+		for i := range ids {
+			for _, b := range ids[i+1:] {
+				if a := ids[i]; !reaches(a, b, map[string]bool{}) && !reaches(b, a, map[string]bool{}) {
+					clash = append(clash, fmt.Sprintf("%s is named in PATHS by %s and %s, and neither needs the other", p, a, b))
+				}
+			}
+		}
+	}
+	if len(clash) == 0 {
+		return ""
+	}
+	return strings.Join(clash, "; ") + "; two cards that edit one file at once conflict at the merge: chain them (DEPENDS-ON: or Needs: in the later brief), or give --allow-shared-paths"
 }
 
 // uniquify keeps the first of each id, in order: a need named by a brief and
@@ -1185,26 +1299,63 @@ func modelLinesWhy(why string) string {
 // model lines: it returns the model-line why ("" when the lines read) and the
 // lint findings. The single-brief and many-brief paths both call it, so one
 // brief is held the same however it is given.
-func lintBriefReads(brief string, rules []swarm.ChildRule) (modelWhy string, findings []swarm.CardHeaderFinding) {
+func lintBriefReads(brief string, rs ruleSet) (modelWhy string, findings []swarm.CardHeaderFinding) {
 	if _, why := cardhdr.ReadModel(brief); why != "" {
 		return why, nil
 	}
-	return "", swarm.LintCardChildWith([]byte(brief), rules)
+	if rs = cardRules(brief, rs); rs.held != "" {
+		// rules by reference: the member injects the held file at stage time, so the brief
+		// is linted as the child is handed it (nova-tools#5174 rule 6)
+		findings = swarm.LintCardChildByReference([]byte(brief), rs.rules)
+	} else {
+		findings = swarm.LintCardChildWith([]byte(brief), rs.rules)
+	}
+	// a tree card's steps are held too (internal/cardtree; docs/SPEC-SPRINT.md, a card is
+	// a tree of steps): a flat brief has no such finding
+	for _, f := range cardtree.Lint(brief) {
+		findings = append(findings, swarm.CardHeaderFinding{Check: f.Check, Line: f.Line, Excerpt: f.Excerpt})
+	}
+	return "", findings
+}
+
+// cardRules is the rule set one brief is held to under the add's set rs (nova-tools#5174
+// rule 6): under a set the members hold, the held file of the brief's repository by reference
+// (swarm.OwnRulesName: fleet/child-rules.txt for this repository, fleet/child-rules.<repo>.txt
+// for another that has one; rs itself for a brief naming no repository), and rs carried, as
+// before rules by reference, for a repository the members hold no file for; rs carried when
+// the members do not hold it. Its held name is the one the card names (sprint.FieldRules).
+func cardRules(brief string, rs ruleSet) ruleSet {
+	if rs.held == "" {
+		return rs
+	}
+	switch own := swarm.OwnRulesName(brief, rs.held); own {
+	case "":
+		return ruleSet{rules: rs.rules}
+	case rs.held:
+		return rs
+	default:
+		rules, err := swarm.HeldRules(own)
+		if err != nil { // own is a file this build holds, so it parses (swarm.TestTheHeldRulesAreTheFleetFile)
+			return ruleSet{rules: rs.rules}
+		}
+		return ruleSet{rules: rules, held: own}
+	}
 }
 
 // lintBriefFiles holds every brief of a many-brief add to the card lint's
 // child rules and its model lines: one failing brief refuses the whole call,
 // exit 2, nothing written, every failing file named with its findings, at most
 // max of them (0 is all) before the one MORE line.
-func lintBriefFiles(cards []sprint.CardAdd, rules []swarm.ChildRule, max int, stderr io.Writer) int {
+func lintBriefFiles(cards []sprint.CardAdd, rs ruleSet, max int, stderr io.Writer) int {
 	type finding struct {
-		file string
-		f    swarm.CardHeaderFinding
+		file  string
+		f     swarm.CardHeaderFinding
+		rules []swarm.ChildRule
 	}
 	var all []finding
 	var failed []string
 	for _, c := range cards {
-		modelWhy, findings := lintBriefReads(c.Brief, rules)
+		modelWhy, findings := lintBriefReads(c.Brief, rs)
 		if modelWhy != "" {
 			return refuse(stderr, "add", c.File+": "+modelLinesWhy(modelWhy))
 		}
@@ -1213,7 +1364,7 @@ func lintBriefFiles(cards []sprint.CardAdd, rules []swarm.ChildRule, max int, st
 		}
 		failed = append(failed, c.File)
 		for _, f := range findings {
-			all = append(all, finding{c.File, f})
+			all = append(all, finding{c.File, f, cardRules(c.Brief, rs).rules})
 		}
 	}
 	if len(all) == 0 {
@@ -1225,7 +1376,7 @@ func lintBriefFiles(cards []sprint.CardAdd, rules []swarm.ChildRule, max int, st
 	}
 	for _, x := range printed {
 		fmt.Fprintf(stderr, "LINT DRIFT brief %s: %s: %d: %s remedy=%s\n", oneline.Field(x.file), oneline.Field(x.f.Check), x.f.Line,
-			oneline.Escape(oneline.Cap(x.f.Excerpt, oneline.TailBytes)), oneline.Escape(swarm.ChildRemedy(rules, x.f.Check)))
+			oneline.Escape(oneline.Cap(x.f.Excerpt, oneline.TailBytes)), oneline.Escape(swarm.ChildRemedy(x.rules, x.f.Check)))
 	}
 	if more {
 		fmt.Fprintf(stderr, "LINT MORE brief findings=%d remedy=add --max 0\n", len(all))
@@ -1233,46 +1384,80 @@ func lintBriefFiles(cards []sprint.CardAdd, rules []swarm.ChildRule, max int, st
 	return refuse(stderr, "add", fmt.Sprintf("the brief of %s fails the card lint (%s); a brief is a child's whole brief and carries every rule of its rule set (--rules, else the file init --rules recorded, else the general rules); run: nova-swarm template --name card", strings.Join(failed, ", "), findingsCount(len(all))))
 }
 
+// ruleSet is the rule set a brief is held to, and held, the base name of the rules file the
+// members hold that it is (swarm.HeldRulesText), "" when they hold none: a held set is by
+// reference (nova-tools#5174 rule 6), the member injects it at stage time, so the stored brief
+// need not carry it and is linted as the child is handed it (lintBriefReads).
+type ruleSet struct {
+	rules []swarm.ChildRule
+	held  string
+}
+
 // briefRules is the rule set an add holds its brief to: the file --rules names, else the
 // file init --rules recorded for the sprint (read through the store, opened once into *st
 // for the add to use), else swarm.DefaultChildRules. A file that cannot be read or is no
-// rule set is a usage refusal naming it.
-func (a *app) briefRules(verbName, file string, c *common, st **store.Store, stderr io.Writer) ([]swarm.ChildRule, int) {
+// rule set is a usage refusal naming it, and so is a file named as one the members hold
+// (fleet/child-rules*.txt) whose text is not this build's copy, the one they inject.
+func (a *app) briefRules(verbName, file string, c *common, st **store.Store, stderr io.Writer) (ruleSet, int) {
 	if file != "" {
-		rs, err := swarm.ReadChildRules(file)
+		abs, err := filepath.Abs(file)
 		if err != nil {
-			return nil, refuse(stderr, verbName, "--rules: "+err.Error())
+			return ruleSet{}, refuse(stderr, verbName, "--rules: "+err.Error())
 		}
-		return rs, 0
+		rs, err := swarm.ReadChildRules(abs)
+		if err != nil {
+			return ruleSet{}, refuse(stderr, verbName, "--rules: "+err.Error())
+		}
+		return heldSet(verbName, abs, rs, stderr)
 	}
 	s, err := a.store(*c)
 	if err != nil {
-		return nil, refuse(stderr, verbName, err.Error())
+		return ruleSet{}, refuse(stderr, verbName, err.Error())
 	}
 	*st = s
 	path, err := s.RulesPath(context.Background())
 	if err != nil {
-		return nil, a.readFailed(verbName, err, stderr)
+		return ruleSet{}, a.readFailed(verbName, err, stderr)
 	}
 	if path == "" {
-		return swarm.DefaultChildRules, 0
+		return ruleSet{rules: swarm.DefaultChildRules}, 0
 	}
 	rs, err := swarm.ReadChildRules(path)
 	if err != nil {
-		return nil, refuse(stderr, verbName, "the sprint's rules file (recorded by init --rules) cannot serve: "+err.Error()+"; give --rules <file> for this "+verbName+", or run: nova-sprint init --rules <file>")
+		return ruleSet{}, refuse(stderr, verbName, "the sprint's rules file (recorded by init --rules) cannot serve: "+err.Error()+"; give --rules <file> for this "+verbName+", or run: nova-sprint init --rules <file>")
 	}
-	return rs, 0
+	return heldSet(verbName, path, rs, stderr)
+}
+
+// heldSet is the rule set read from path, held by reference when its base name is a rules
+// file the members hold and its text is this build's copy; a held name whose text differs is
+// refused, since the members inject their copy and not the file named.
+func heldSet(verbName, path string, rules []swarm.ChildRule, stderr io.Writer) (ruleSet, int) {
+	base := filepath.Base(path)
+	want, ok := swarm.HeldRulesText(base)
+	if !ok {
+		return ruleSet{rules: rules}, 0
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		return ruleSet{}, refuse(stderr, verbName, "--rules: "+err.Error())
+	}
+	if !bytes.Equal(got, want) {
+		return ruleSet{}, refuse(stderr, verbName, fmt.Sprintf("%s is the rules file fleet/%s the members hold and inject at stage time, and its text is not this build's copy: the members would inject the copy they hold, not this file; install the build that carries it (nova-update), or name a file of another name", path, base))
+	}
+	return ruleSet{rules: rules, held: base}, 0
 }
 
 // holdBrief holds one brief to the card lint under the rule set briefRules
 // finds (rules, else the sprint's, else the general ones): add's one brief and
-// brief's replacement, so a brief is held the same however it comes.
-func (a *app) holdBrief(verbName, brief, rules string, c *common, st **store.Store, stderr io.Writer) int {
+// brief's replacement, so a brief is held the same however it comes. It returns
+// the rule set, whose held file (cardRules) the card names.
+func (a *app) holdBrief(verbName, brief, rules string, c *common, st **store.Store, stderr io.Writer) (ruleSet, int) {
 	rs, code := a.briefRules(verbName, rules, c, st, stderr)
 	if code != 0 {
-		return code
+		return ruleSet{}, code
 	}
-	return lintBrief(verbName, brief, rs, c.max, stderr)
+	return rs, lintBrief(verbName, brief, rs, c.max, stderr)
 }
 
 // readBriefFile is a --brief-file's brief: the file's bytes as they are, read
@@ -1299,8 +1484,8 @@ func briefFromFile(path, text string) (string, error) {
 // (lintBriefReads): the findings print on stderr in the lint's own grammar, at
 // most max of them (0 is all) before a MORE line, and a brief with any is
 // refused, exit 2.
-func lintBrief(verbName, brief string, rules []swarm.ChildRule, max int, stderr io.Writer) int {
-	modelWhy, findings := lintBriefReads(brief, rules)
+func lintBrief(verbName, brief string, rs ruleSet, max int, stderr io.Writer) int {
+	modelWhy, findings := lintBriefReads(brief, rs)
 	if modelWhy != "" {
 		return refuse(stderr, verbName, modelLinesWhy(modelWhy))
 	}
@@ -1313,7 +1498,7 @@ func lintBrief(verbName, brief string, rules []swarm.ChildRule, max int, stderr 
 	}
 	for _, f := range printed {
 		fmt.Fprintf(stderr, "LINT DRIFT brief %s: %d: %s remedy=%s\n", oneline.Field(f.Check), f.Line,
-			oneline.Escape(oneline.Cap(f.Excerpt, oneline.TailBytes)), oneline.Escape(swarm.ChildRemedy(rules, f.Check)))
+			oneline.Escape(oneline.Cap(f.Excerpt, oneline.TailBytes)), oneline.Escape(swarm.ChildRemedy(cardRules(brief, rs).rules, f.Check)))
 	}
 	if more {
 		fmt.Fprintf(stderr, "LINT MORE brief findings=%d remedy=%s --max 0\n", len(findings), verbName)
@@ -1323,14 +1508,14 @@ func lintBrief(verbName, brief string, rules []swarm.ChildRule, max int, stderr 
 
 func (a *app) cmdRelease(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("release")
-	reason := fs.String("reason", "", "what you looked at and found: recorded on the sentinel and in its notification")
+	reason := fs.String("reason", "", "what you looked at and found: recorded on the sentinel or held card, and in a sentinel's notification")
 	ans := fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
 	ids, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "release", err.Error())
 	}
 	if len(ids) == 0 {
-		return refuse(stderr, "release", "wants the sentinels it releases and --reason <text>")
+		return refuse(stderr, "release", "wants the sentinels or held cards it releases and --reason <text>")
 	}
 	st, err := a.store(*c)
 	if err != nil {
@@ -1610,7 +1795,7 @@ func (a *app) cmdRead(args []string, stdout, stderr io.Writer) int {
 	begin := fs.Bool("begin", false, "asked -> reading")
 	ok := fs.Bool("ok", false, "the read found it good")
 	broken := fs.Bool("broken", false, "the read found it broken")
-	finding := fs.String("finding", "", "what the read found")
+	finding := fs.String("finding", "", "what the read found; with --broken it names the file (file:line), the line, or the card's STEP or RULE the work breaks, and what to change, or the read is refused")
 	limit := fs.Int("limit", 0, "the first n of the reader's queue (default 1)")
 	ret := fs.String("return", "", "hand back a read the reader holds and has no verdict on: not a read; the next tick asks it of another reader free at the attempt, or of this reader again; no finding against the work")
 	reason := fs.String("reason", "", "with --return: why the read has no verdict (it reaches the inbox)")
@@ -1686,7 +1871,7 @@ func (a *app) cmdAccept(args []string, stdout, stderr io.Writer) int {
 	var readOK *bool
 	var ans *string
 	return a.setVerb("accept", args, stdout, stderr, false, func(fs flagSet) {
-		readOK = fs.Bool("read-ok", false, "every primary in review with ok reads from two different readers; moves eligible primaries into the merge queue")
+		readOK = fs.Bool("read-ok", false, "every primary in review with the ok reads it needs (one reader's for a flash card, two different readers' for a pro card); moves eligible primaries into the merge queue")
 		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
 	}, func(ids []string, s *sel) string {
 		if len(ids) == 0 && s.stream == "" && !*readOK && s.limit == 0 {
@@ -1703,17 +1888,22 @@ func (a *app) cmdAccept(args []string, stdout, stderr io.Writer) int {
 }
 
 func (a *app) cmdRework(args []string, stdout, stderr io.Writer) int {
-	var fix, ans *string
+	var fix, ans, tier *string
 	return a.setVerb("rework", args, stdout, stderr, false, func(fs flagSet) {
 		fix = fs.String("fix", "", "the fix for every primary; without it each takes its own: the finding of its broken read, or the report of its failed work")
 		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
+		tier = fs.String("tier", "", "the tier ("+cardhdr.RouteList+") this attempt and every later deal of the card draws its route from, over its brief's line 1, kept on the card: it pins the card, never escalated past it (flash first); a card whose brief pins a model is refused")
 	}, func(ids []string, s *sel) string {
+		var why []string
 		if len(ids) == 0 && s.stream == "" {
-			return "wants ids (or --group, --stream); --fix <text> for all, else each primary's own finding or report"
+			why = append(why, "wants ids (or --group, --stream); --fix <text> for all, else each primary's own finding or report")
 		}
-		return ""
+		if *tier != "" && !cardhdr.IsRoute(*tier) {
+			why = append(why, "--tier wants "+cardhdr.RouteList+", found "+oneline.Escape(*tier))
+		}
+		return strings.Join(why, "; ")
 	}, func(ids []string, s *sel, c *common) store.Step {
-		return store.ReworkStep(sprint.ReworkReq{Sel: s.sel(ids), Fix: *fix, Answers: answers(*ans), Who: c.actor})
+		return store.ReworkStep(sprint.ReworkReq{Sel: s.sel(ids), Fix: *fix, Answers: answers(*ans), Tier: *tier, Who: c.actor})
 	})
 }
 
@@ -1773,11 +1963,18 @@ func (a *app) cmdBrief(args []string, stdout, stderr io.Writer) int {
 		*brief = text
 	}
 	var st *store.Store
-	if code := a.holdBrief("brief", *brief, *rules, c, &st, stderr); code != 0 {
+	rs, code := a.holdBrief("brief", *brief, *rules, c, &st, stderr)
+	if code != 0 {
 		return code
 	}
+	if st == nil { // --rules named the rule set: briefRules opened no store
+		var err error
+		if st, err = a.store(*c); err != nil {
+			return refuse(stderr, "brief", err.Error())
+		}
+	}
 	c.says = append(c.says, unfilledSays("the brief of "+ids[0], *brief)...)
-	return a.runStep("brief", *c, st, store.BriefStep(sprint.BriefReq{ID: ids[0], Brief: *brief, Who: c.actor}), stdout, stderr)
+	return a.runStep("brief", *c, st, store.BriefStep(sprint.BriefReq{ID: ids[0], Brief: *brief, Rules: cardRules(*brief, rs).held, Who: c.actor}), stdout, stderr)
 }
 
 // cmdMove moves unstarted primaries to another stream (the owner,
@@ -2085,7 +2282,50 @@ a STOPPED machine only (nova-sprint stop first), refused while a stream holds a
 card (a primary or a sentinel in any column of its work row, a merge card in
 its merge row: nova-sprint clear --confirm sprint, or drop) and all or none
 for the streams named. A clear does not bring a removed stream back, and its
-name is added again only after the next clear.`) + "\n"
+name is added again only after the next clear. stream set <s> --read-tier pro
+puts the reads of the stream's cards on pro, over the sprint's read tier (set
+--read-tier); a read tier raises a card's reads and never lowers them below the
+card's own tier, and default takes the stream's off.`) + "\n"
+}
+
+// cmdSet writes the sprint's settings (sprint.Set): its read tier, the tier every
+// card's reads are raised to, and its dealt bound, how long a work card may wait
+// dealt and never taken before it is a judgment (nova-tools#5096 items 22, 27).
+func (a *app) cmdSet(args []string, stdout, stderr io.Writer) int {
+	fs, c := a.verbSetup("set")
+	tier := fs.String("read-tier", "", "the tier every card's reads draw their route from when it is stronger than the card's own (flash or pro; default takes it off: each card's own tier)")
+	dealt := fs.String("dealt-max", "", fmt.Sprintf("how long a work card may wait dealt and never taken (in its member's ready queue, or withdrawn) before it is a judgment: a duration, or default (%s, 3 times the take deadline); a taken card's own deadline starts at its take", sprint.DealtMaxDefault))
+	pos, err := parse(fs, args)
+	if err != nil {
+		return refuse(stderr, "set", err.Error())
+	}
+	if len(pos) > 0 {
+		return refuse(stderr, "set", "takes no positional words (a stream's read tier: nova-sprint stream set <s> --read-tier <tier>)")
+	}
+	st, err := a.store(*c)
+	if err != nil {
+		return refuse(stderr, "set", err.Error())
+	}
+	return a.runStep("set", *c, st, store.SetStep(sprint.SetReq{ReadTier: *tier, DealtMax: *dealt, Who: c.actor}), stdout, stderr)
+}
+
+// cmdStreamSet writes the read tier of the streams named (sprint.Set), over the
+// sprint's.
+func (a *app) cmdStreamSet(args []string, stdout, stderr io.Writer) int {
+	fs, c := a.verbSetup("stream set")
+	tier := fs.String("read-tier", "", "the tier the stream's reads draw their route from when it is stronger than the card's own (flash or pro; default takes it off: the sprint's)")
+	names, err := parse(fs, args)
+	if err != nil {
+		return refuse(stderr, "stream set", err.Error())
+	}
+	if len(names) == 0 || *tier == "" {
+		return refuse(stderr, "stream set", "wants at least one stream and --read-tier <flash|pro|default>")
+	}
+	st, err := a.store(*c)
+	if err != nil {
+		return refuse(stderr, "stream set", err.Error())
+	}
+	return a.runStep("stream set", *c, st, store.SetStep(sprint.SetReq{Streams: names, ReadTier: *tier, Who: c.actor}), stdout, stderr)
 }
 
 // cmdStreamRemove takes the named streams off the work and merge tables (the
@@ -2184,12 +2424,30 @@ func (a *app) cmdWait(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s wait: %s\n", prog, oneline.Escape(err.Error()))
 		return 1
 	}
+	if _, stale := sprint.StaleStream(pos[0]); stale {
+		fmt.Fprintf(stdout, "WAIT OK note=%s quiet until=%s: the inbox shows the stream stale again then if it still has not moved\n", oneline.Escape(pos[0]), at.UTC().Format(time.RFC3339))
+		return 0
+	}
 	if held {
 		fmt.Fprintf(stdout, "WAIT OK note=%s held until=%s of running time: the tick raises it again then if it still holds\n", oneline.Escape(pos[0]), at.UTC().Format(time.RFC3339))
 		return 0
 	}
 	fmt.Fprintf(stdout, "WAIT OK note=%s review=%s\n", oneline.Escape(pos[0]), at.UTC().Format(time.RFC3339))
 	return 0
+}
+
+// splitCommas is the words with each comma list among them split into its
+// items: ack takes the ack line inbox prints, whose notes are joined by commas.
+func splitCommas(words []string) []string {
+	var out []string
+	for _, w := range words {
+		for _, item := range strings.Split(w, ",") {
+			if item != "" {
+				out = append(out, item)
+			}
+		}
+	}
+	return out
 }
 
 func (a *app) cmdAck(args []string, stdout, stderr io.Writer) int {
@@ -2199,6 +2457,7 @@ func (a *app) cmdAck(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, "ack", err.Error())
 	}
+	notes = splitCommas(notes) // the ack line inbox prints joins a group's notes with commas
 	if len(notes) == 0 || *reason == "" {
 		return refuse(stderr, "ack", "wants notification ids and --reason <text>")
 	}

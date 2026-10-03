@@ -20,6 +20,66 @@
 # friend of nova-config's friend rows, its status up, down or held by the fleet's rule,
 # drawn by where after merge and before fleet and never stored as a table. Held by
 # TestSprintTablesAreLocked.
+#
+# Change, 2026-10-02, asked by Glenn in words, at a fleet footer of 132 over members of
+# which 52 could take a card: "width 132?!". The fleet table's footer in the view's text
+# (nova-sprint where) folds ready, working, width, done and ok% over the members whose
+# status is up only; a held or down member's numbers show on its own row and not in the
+# total. No column, fold or row changes here: the shape below is the same. Held by
+# TestTheFleetFooterSumsOnlyTheMembersUp (cmd/nova-sprint).
+#
+# Change, 2026-10-02, asked by Glenn in words: "please give friends in the friends
+# table the same ready, working, width, done, ok%, status that we have for machines,
+# but no load, since they don't correspond to a machine (at the moment...)" and "you
+# can even use the inbox/outbox standard in friend's working dirs". The friends table
+# takes the fleet table's columns but load: ready and working count a friend's job
+# cards (friend sync reads each friend's working directory, inbox/<job> and
+# outbox/<job>/REPORT.md, and writes the cards into the store; the view never reads
+# the directories), width is her width as text (1, one job at a time), ok and failed
+# (hidden) count her jobs done, done and ok% are the same formulas as the fleet's with
+# the footer pooling ok%, and status stays up, down or held by the fleet's rule. Held by
+# TestSprintTablesAreLocked.
+#
+# Change, 2026-10-02 (2:45 PM ET), asked by Glenn in words: "I feel like reading and merging
+# is something you can handle now. it seems to work, so please hide the reader and merge
+# tables." The view line is the default frame of where and where --watch: work, friends,
+# fleet. The view-all line is the frame of where --all: every table, readers and merge
+# after work as before. No table changes shape; where --json carries every table and
+# every row of it either way. Held by TestSprintTablesAreLocked.
+# Note, 2026-10-02 (nova-tools#5096 item 16): the progress line above the tables shows
+# held=N, the cards held back behind a sentinel not released or admitted held, and its
+# ETA is over the rest. No table's shape changes and this lock does not cover that line;
+# it is recorded here because it is output Glenn sees, which he asked for in words:
+# "I'd like to really really load up the sprint in waiting, and stick sentinels in".
+# Note, 2026-10-02 (9:57 PM ET, nova-tools#5183): the ETA on that line now counts every
+# card left, the held ones included; held=N still shows them apart. Glenn, in words:
+# "it's the ETA to all cards being done, not the cards that are in flight or not
+# blocked". No table's shape changes; this lock does not cover that line.
+#
+# Note, 2026-10-02 (10:13 PM ET): where reads the table, not every card. held=N and the
+# ETA's landings of the hour come from the where record the tick counts (docs/SPEC-SPRINT.md
+# section 1), not from every waiting and landed card's record: where --json took 5.2 to
+# 7.0 s at 2,843 cards, and the requirement is under 1 s at 3,000. The progress line reads
+# as it did, every table and column is as it was; no shape below changes.
+#
+# Change, 2026-10-02, the where view's title line, not a table: Glenn, 5:15 PM: "We need
+# to make handover MORE SMOOTH."; 5:20 PM: "you can be given coordinator status, or you
+# can take it (with my permission only)". The seat's holder shows beside the title,
+# "SPRINT TABLE  coordinator rowan", and after a take "(taken 5:21 PM)" until the next
+# handover is given (Rowan's brief of that hour, nova-tools#5096 item 28). The progress
+# line under it and every table are as they were; no column changed, so the lines below
+# are unchanged. Held by TestTheSeatIsTakenWithTheOwnersName and the where goldens.
+#
+# Change, 2026-10-02, a cell's word, not a column: Glenn, 9:44 PM ET, on the friends
+# table, of a friend: "[she] is down." / "two minutes is too long. 1m" / "maybe even 30 secs."; and
+# 9:46 PM ET: "heartbeat should ping once every 10sec", then "or every 1sec if you really
+# want, then after 15 sec. asleep. better." friends.status is up, held or asleep: asleep
+# after 15 s with no beat (sprint.FriendAsleepAfter, sprint.FriendStatus), or never
+# beaten; down stays the fleet's word. 9:48 PM ET: "[a friend] being down, she
+# automatically is 0/8 working OK?": an asleep friend's working cell is 0. No column
+# changed, so the lines below are unchanged. Held by
+# TestAFriendsStatusIsTheFriendsRuleOverItsBeatsAndItsHold and
+# TestAnAsleepFriendShowsNoneWorking.
 work.waiting count sum shown
 work.ready count sum shown
 work.working count sum shown
@@ -50,5 +110,13 @@ fleet.withdrawn count sum hidden
 fleet.ok count sum hidden
 fleet.failed count sum hidden
 fleet.ctl first none hidden
+friends.ready count sum shown
+friends.working count sum shown
+friends.width text sum shown
+friends.done sum(ok+failed) sum shown
+friends.okpct pct(ok/ok+failed) pooled shown label=ok%
 friends.status text none shown
-view work readers merge friends fleet
+friends.ok count sum hidden
+friends.failed count sum hidden
+view work friends fleet
+view-all work readers merge friends fleet

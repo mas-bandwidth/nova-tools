@@ -64,29 +64,32 @@ func TestRedisAWorkersStepsRunUnderTheRenderedMemberACL(t *testing.T) {
 	w := &harness{t: t, st: &Store{B: &Redis{C: bench, Names: names, Now: time.Now}, Names: names, Actor: "m1"}, ctx: ctx, now: time.Now()}
 
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1", Width: 8}))
-	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 3, Brief: "c: the work (s1) tier: flash\n\nThe task.\n"}))
+	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 4, Brief: "c: the work (s1) tier: flash\n\nThe task.\n"}))
 	h.must(DealStep(sprint.DealReq{}))
 	usage := "wall=1.00s budget=11/400000 input=10 output=1 model=opencode/m actual_usd=0.001 actual_by=harness"
-	ids := []string{"s1-1.w1", "s1-2.w1", "s1-3.w1"}
+	ids := []string{"s1-1.w1", "s1-2.w1", "s1-3.w1", "s1-4.w1"}
 	gens := map[string]int{}
 	for _, id := range ids {
 		gens[id] = h.snap().Fleet.Card(id).Int("gen")
 	}
 	w.must(TakeStep(sprint.TakeReq{Sel: sprint.Sel{IDs: ids}, As: "m1", Gens: gens, Who: "m1"}))
-	for _, id := range ids[:2] {
+	for _, id := range ids[:3] {
 		w.must(FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{id}}, As: "m1", Gens: map[string]int{id: gens[id]}, Report: "done", Usage: usage, Who: "m1"}))
 	}
-	w.must(FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{ids[2]}}, As: "m1", Gens: map[string]int{ids[2]: gens[ids[2]]}, Failed: true,
+	w.must(FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{ids[3]}}, As: "m1", Gens: map[string]int{ids[3]: gens[ids[3]]}, Failed: true,
 		Report: "tests red", Usage: usage, Who: "m1"}))
 	assert.Contains(t, h.snap().Fleet.Card(ids[0]).F(sprint.FieldUsage), "price_route=flash-a", "the finish priced the take with the route it may read")
 
 	h.beat()
 	h.must(AskStep(sprint.AskReq{}))
+	// a flash card is read once (cost rule 4): s1-1's read says ok, s1-2's broken, s1-3's is returned
 	reads := h.snap().Readers.Of("s1-1")
-	require.Len(t, reads, 2)
+	require.Len(t, reads, 1)
 	w.must(ReadStep(sprint.ReadReq{Sel: sprint.Sel{IDs: []string{reads[0].ID}}, As: reads[0].Row, Verdict: "ok", Finding: "good", Usage: usage, Who: reads[0].Row}))
-	w.must(ReadStep(sprint.ReadReq{Sel: sprint.Sel{IDs: []string{reads[1].ID}}, As: reads[1].Row, Verdict: "broken", Finding: "bad", Usage: usage, Who: reads[1].Row}))
-	ret := h.snap().Readers.Of("s1-2")
+	bad := h.snap().Readers.Of("s1-2")
+	require.Len(t, bad, 1)
+	w.must(ReadStep(sprint.ReadReq{Sel: sprint.Sel{IDs: []string{bad[0].ID}}, As: bad[0].Row, Verdict: "broken", Finding: "bad:1", Usage: usage, Who: bad[0].Row}))
+	ret := h.snap().Readers.Of("s1-3")
 	require.NotEmpty(t, ret)
 	w.must(ReadStep(sprint.ReadReq{Sel: sprint.Sel{IDs: []string{ret[0].ID}}, As: ret[0].Row, Return: true, Reason: "no verdict", Usage: usage, Who: ret[0].Row}))
 

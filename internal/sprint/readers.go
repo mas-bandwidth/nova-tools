@@ -7,13 +7,17 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 )
 
 // A reader's state (docs/SPEC-SPRINT.md section 6, the readers table; the
 // model is tla/DirtyTick.tla, the readers update: a read is placed only on a
 // reader up, and a read asked of a reader that goes away is taken back). A
-// reader says it is there by asking for its own queue (queue --as <reader>
-// writes its beat). Its state is derived, never typed: away while the
+// reader is a row of the readers table, which the coordinator declares (init
+// --readers, reader add); a reader with its row says it is there by asking for its
+// own queue (queue --as <reader> writes its beat; a name with no row writes none,
+// and its queue answers reader false). Its state is derived, never typed: away while the
 // coordinator holds it away (reader away; reader up releases the hold),
 // whatever it beats; else up while its last beat is within ReaderBeatBound;
 // else away when it beat once and has lapsed, down when it has never beaten.
@@ -79,9 +83,9 @@ func readersText(s *Snapshot) string {
 	return strings.Join(out, ", ")
 }
 
-// NFewReaders is the tick's judgment that fewer than two readers are up while
-// a primary in review waits to be asked: the ask raises it once, and asks no
-// absent reader.
+// NFewReaders is the tick's judgment that fewer readers are up than a primary
+// in review waiting to be asked needs (two for a pro card, one for a flash
+// card; ReadsNeeded): the ask raises it once, and asks no absent reader.
 const NFewReaders = "fewer than two readers up"
 
 // fewReaders is the text of the judgment.
@@ -106,6 +110,25 @@ func returnedRead(rc *Card) bool { return rc.Col == Asked && rc.F(FieldReturned)
 // the ask asks it again.
 const FieldReturned = "returned"
 
+// ReaderPrefix names a reader for its machine: reader-<m> is the one reader on
+// the fleet machine m, and it runs at m's width, the fleet row's, read with its
+// queue every tick as the member on m reads its own (the owner, 2026-10-02:
+// "The reader widths seem to be very ad-hoc, unlike the machine widths"; "why
+// not just have as many readers as workers per-machine"). The sprint holds no
+// reader's width of its own: `queue --as reader-<m>` carries m's fleet row's
+// width, and a reader named for no row carries none and begins nothing.
+const ReaderPrefix = "reader-"
+
+// ReaderMachine is the machine a reader is named for: reader-<m> names m; a
+// name of another shape names no machine.
+func ReaderMachine(reader string) (machine string, ok bool) {
+	m, found := strings.CutPrefix(reader, ReaderPrefix)
+	if !found || !ValidID(m) {
+		return "", false
+	}
+	return m, true
+}
+
 // FieldReasked is how many times a read card's reader returned it and it went
 // back to asked on the reader's row, counted by Read itself at each return, so
 // the bound holds whatever the tick does and however many readers are up (the
@@ -121,6 +144,35 @@ const (
 // moves it no more (the owner, 2026-10-01: "We can't get stuck on the last
 // card.").
 const FieldLeveled = "leveled"
+
+// ReadsNeeded is how many different readers' ok reads at its head make the
+// primary acceptable, and so how many readers the ask asks at an attempt: one
+// when the tier the card is on (cardTier) is flash, and two at any stronger tier
+// (pro, or frontier, read on pro); each read is drawn on a route of the card's
+// read tier (readTierOf) (the owner,
+// 2026-10-02, cost rule 4, nova-tools#5174: "Reads: one cold read per flash
+// card on a flash route; two per pro card; readers still equal workers per
+// machine"). The tier is the card's own, the tier it is on (cardTier: flash first,
+// then the tier it escalated to, or the tier a rework recorded), never a setting, so
+// a card in merging or landed is held to the count it was accepted on.
+func ReadsNeeded(pr *Card) int {
+	m, _ := cardhdr.ReadModel(pr.F("brief"))
+	if cardTier(pr, m) == cardhdr.RouteFlash {
+		return 1
+	}
+	return 2
+}
+
+// enoughReadersUp says as many readers are up as the primary needs
+// (ReadsNeeded), or the snapshot carries no reader states (every reader up):
+// the ask may ask it (TickAsk); else it waits, judged NFewReaders.
+func enoughReadersUp(s *Snapshot, pr *Card) bool {
+	return s.ReaderStates == nil || len(s.UpReaders()) >= ReadsNeeded(pr)
+}
+
+// acceptable says the primary has ok reads from ReadsNeeded different readers
+// at its current attempt and head (okReaders).
+func acceptable(s *Snapshot, pr *Card) bool { return len(okReaders(s, pr)) >= ReadsNeeded(pr) }
 
 // liveReadsAt is the primary's placed read cards at an attempt less the reads
 // the ask takes back or places again: the reads that stand.
@@ -140,16 +192,20 @@ func liveReadsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 // back, retired as the ask takes back a read asked of a reader away
 // (retired_by away: that reader keeps its card at the attempt, so it is not
 // asked that attempt again), and the tick's ask asks it of the readers up. A
-// read stays where it is when the ask could not place it (fewer than two
-// readers up, or none up without a card at its attempt): it is judged while its
-// reader is away and read when the reader is back (read_return_test.go). A
-// snapshot with no reader states holds every reader up: nothing moves.
+// read stays where it is when the ask could not place it (fewer readers up
+// than its primary needs, ReadsNeeded, or none up without a card at its
+// attempt): it is judged while its reader is away and read when the reader is
+// back (read_return_test.go). A snapshot with no reader states holds every
+// reader up: nothing moves.
 func sweepReads(s *Snapshot, p *Plan) {
 	up := s.UpReaders()
-	if s.ReaderStates == nil || len(up) < 2 {
+	if s.ReaderStates == nil || len(up) == 0 {
 		return
 	}
 	taker := func(c *Card) bool {
+		if pr := s.Work.Card(c.F("primary")); pr == nil || !enoughReadersUp(s, pr) {
+			return false
+		}
 		for _, rd := range up {
 			if s.Readers.Card(ReadCardID(c.F("primary"), c.Int("attempt"), rd)) == nil {
 				return true
@@ -207,9 +263,10 @@ func TickLevelReads(s *Snapshot, _ TickReq) (Plan, int) {
 // reader that is not up is neither a source nor a target: sweepReads takes
 // its reads back first.
 //
-// The sprint knows no reader's width: a reader loop's --width is the loop's
-// own, and the readers table has no width column, so every reader up counts
-// alike and nothing here bounds a reader at DealAhead times a width.
+// The sprint knows no reader's width: a reader runs at its machine's width,
+// not a loop's own --width (there is none), and the readers table has no width
+// column, so every reader up counts alike and nothing here bounds a reader at
+// DealAhead times a width.
 func levelReads(s *Snapshot, p *Plan) {
 	sweepReads(s, p)
 	up := s.UpReaders()
@@ -252,7 +309,7 @@ func levelReads(s *Snapshot, p *Plan) {
 					avoid = append(avoid, rd)
 				}
 			}
-			to = rr.levelTo(up, maps.Clone(held), held, room, avoid)
+			to = rr.levelTo(up, maps.Clone(held), held, room, long, avoid)
 		}
 		if to == "" {
 			break

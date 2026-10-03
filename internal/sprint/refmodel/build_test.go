@@ -10,6 +10,12 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/refmodel"
 )
 
+// proBrief is a pro card's brief: line 1 names tier pro, so its reads are two,
+// from two different readers (sprint.ReadsNeeded). The tests of the
+// two-reader machinery admit pro cards; a card with no tier is flash and needs
+// one read.
+const proBrief = "tier: pro"
+
 // The fixtures are built the way a sprint is: with the steps, on a world, so
 // every card is in a place its lifecycle allows and carries the fields the
 // planners read.
@@ -34,13 +40,13 @@ func sprintOf(t *testing.T, members ...string) *world {
 // add admits n primaries into the stream, s1-1 and so on, needing nothing.
 func (w *world) add(t *testing.T, stream string, n int, needs ...string) {
 	t.Helper()
-	w.must(t, sprint.Add(w.s, sprint.AddReq{Stream: stream, Count: n, Needs: needs, Who: coordinator}))
+	w.must(t, sprint.Add(w.s, sprint.AddReq{Brief: proBrief, Stream: stream, Count: n, Needs: needs, Who: coordinator}))
 }
 
 // addOne admits one named primary, with needs.
 func (w *world) addOne(t *testing.T, stream, id string, needs ...string) {
 	t.Helper()
-	w.must(t, sprint.Add(w.s, sprint.AddReq{Stream: stream, IDs: []string{id}, Needs: needs, Who: coordinator}))
+	w.must(t, sprint.Add(w.s, sprint.AddReq{Brief: proBrief, Stream: stream, IDs: []string{id}, Needs: needs, Who: coordinator}))
 }
 
 // sentinel admits one named sentinel into the stream.
@@ -80,7 +86,7 @@ func (w *world) ask(t *testing.T, id string) {
 func (w *world) report(t *testing.T, id, verdict string) {
 	t.Helper()
 	for _, rc := range w.s.Readers.Of(id) {
-		w.must(t, sprint.Read(w.s, sprint.ReadReq{As: rc.Row, Verdict: verdict, Finding: "f", Sel: sprint.Sel{IDs: []string{rc.ID}}, Who: rc.Row}))
+		w.must(t, sprint.Read(w.s, sprint.ReadReq{As: rc.Row, Verdict: verdict, Finding: "f:1", Sel: sprint.Sel{IDs: []string{rc.ID}}, Who: rc.Row}))
 	}
 }
 

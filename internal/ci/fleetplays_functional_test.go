@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -139,10 +140,26 @@ func TestFleetPlaysPassSyntaxAndCheckOnTheFixture(t *testing.T) {
 		"WOULD-RETIRE old on localhost (" + filepath.Join(units, "nova-loop-old.service") + ")",
 		"NOTE localhost " + filepath.Join(units, "nova-loop-mirror.service") + ": not written by this play",
 		"retired=1 (check: nothing changed)",
+		// the disk guard the play adds to every machine, its --root the member record's
+		`ExecStart="` + home + `/.local/bin/nova-swarm" "disk-guard" "--root" "` + home + `/nova-bench/run/member-local" "--scan" "` + home + `/nova-bench/run" "--cache" "` + home + `/runner-*/_cache/go-build"`,
+		"OnUnitActiveSec=900",
+		"StandardOutput=append:" + home + "/nova-bench/loops/disk-guard.log",
+		"records=3 enabled=2",
 	} {
 		assert.Contains(t, loops, w)
 	}
+	assert.NotContains(t, loops, "WOULD-RETIRE disk-guard")
+	off := play("loops.yml", append(check, "-e", "ansible_system=Linux", "-e", "nova_disk_guard=false")...)
+	assert.NotContains(t, off, "nova-loop-disk-guard")
+	assert.Contains(t, off, "records=2 ")
 	assert.NotContains(t, loops, "WOULD-RETIRE member-local")
+	// --check says which units a run restarts and why: a member's restart drains it
+	// (nova-tools#5096 item 25); a disabled loop is stopped, not restarted
+	assert.Contains(t, loops, "WOULD-RESTART member-local on localhost: its unit file changed; a member: the restart drains it (SIGTERM: it takes no new card, lets its running cards finish and reports them), waiting up to 7260 s, then the new unit starts")
+	assert.NotContains(t, loops, "WOULD-RESTART tick-local")
+	// the member's unit stops it by draining it; the periodic loop's is as it was
+	assert.Equal(t, 1, strings.Count(loops, "+KillMode=mixed"), "the member's unit alone")
+	assert.Equal(t, 1, strings.Count(loops, "+TimeoutStopSec=7260"))
 	assert.NotContains(t, loops, `\u0001`)
 	plist := play("loops.yml", append(check, "-e", "ansible_system=Darwin", "-e", "nova_launchd_domain=gui")...)
 	for _, w := range []string{
@@ -156,9 +173,13 @@ func TestFleetPlaysPassSyntaxAndCheckOnTheFixture(t *testing.T) {
 		"<string>localhost:6380</string>",
 		"<string>50%</string>",
 		"<key>Disabled</key>",
+		"<string>com.nova.loop.disk-guard</string>",
+		"<integer>900</integer>",
 	} {
 		assert.Contains(t, plist, w)
 	}
+	assert.Equal(t, 1, strings.Count(plist, "+<key>ExitTimeOut</key>"), "the member's plist alone")
+	assert.Contains(t, plist, "+<integer>7260</integer>")
 	assert.NotContains(t, loops+plist, "NOVA_SPRINT_REDIS=old-store:6379")
 	_, err := os.Stat(filepath.Join(home, ".config", "nova"))
 	assert.True(t, os.IsNotExist(err), "--check wrote the build fact")
@@ -266,4 +287,298 @@ func TestToolsPlayNamesTheDogfoodReceipts(t *testing.T) {
 	assert.NotContains(t, out, "WOULD-BUILD")
 	out = r.play(t, "tools.yml", append(vars, "-e", `{"nova_release_gate_args": ["--no-dogfood-gate", "--reason", "the test"]}`)...)
 	assert.Contains(t, out, "WOULD-BUILD version=v0.0.0-check")
+}
+
+// tlaRig is the tla play on the machine running the test: the tla fixture
+// (localhost a record machine), a jar directory, a java and the facts saying
+// Linux, all under the test's own temp dir.
+type tlaRig struct {
+	*fleetPlayRig
+	jarDir, jar, java string
+}
+
+func newTLARig(t *testing.T) *tlaRig {
+	t.Helper()
+	r := &tlaRig{fleetPlayRig: newFleetPlayRig(t, "tla-fixture.yml")}
+	r.jarDir = filepath.Join(r.dir, "opt-tla")
+	require.NoError(t, os.MkdirAll(r.jarDir, 0o755))
+	r.jar = filepath.Join(r.jarDir, "tla2tools.jar")
+	r.java = filepath.Join(r.dir, "java")
+	require.NoError(t, os.WriteFile(r.java, []byte("#!/bin/sh\necho 'openjdk version \"21.0.12.1\" 2026-08-18 LTS' >&2\n"), 0o755))
+	return r
+}
+
+// vars are the play's -e for this rig, the sum file the repository's unless
+// one is given.
+func (r *tlaRig) vars(sum string, extra ...string) []string {
+	java, err := json.Marshal(map[string][]string{"nova_tla_java_candidates": {filepath.Join(r.dir, "no-java"), r.java}})
+	if err != nil {
+		panic(err) // a map of strings always marshals
+	}
+	v := []string{"--tags", "tla", "-e", "ansible_system=Linux", "-e", "nova_home=" + r.home, "-e", "nova_tla_dir=" + r.jarDir, "-e", string(java)}
+	if sum != "" {
+		v = append(v, "-e", "nova_tla_sha256_file="+sum)
+	}
+	return append(v, extra...)
+}
+
+// repoSum is the SHA-256 the repository pins the TLC jar to.
+func repoSum(t *testing.T, root string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(root, "tla", "tla2tools.sha256"))
+	require.NoError(t, err)
+	f := strings.Fields(string(b))
+	require.NotEmpty(t, f)
+	require.Regexp(t, `^[0-9a-f]{64}$`, f[0])
+	return f[0]
+}
+
+// TestTLAPlayHoldsTheJarToTheRepositorysSum runs the tools play's tla play on
+// a record machine: its --check rendering names the repository's sum
+// (tla/tla2tools.sha256); a missing jar and a jar whose SHA-256 differs are
+// refused, naming the path, both sums and how to place the jar; the pinned
+// jar (here a jar the test pins with a sum file of its own) passes, owned by
+// the login, with the java found echoed.
+func TestTLAPlayHoldsTheJarToTheRepositorysSum(t *testing.T) {
+	t.Parallel()
+	r := newTLARig(t)
+	want := repoSum(t, r.root)
+
+	check, err := r.playResult(t, "tools.yml", r.vars("", "--check")...)
+	require.Error(t, err, "--check with no jar passed:\n%s", check)
+	assert.Contains(t, check, "TLA REFUSED host=localhost jar="+r.jar+" want="+want+" got=none")
+	assert.Contains(t, check, "scp a tla2tools.jar whose sha256sum is "+want+" to localhost:"+r.jar)
+
+	require.NoError(t, os.WriteFile(r.jar, []byte("not the pinned jar\n"), 0o644))
+	got := sha256.Sum256([]byte("not the pinned jar\n"))
+	out, err := r.playResult(t, "tools.yml", r.vars("")...)
+	require.Error(t, err, "a jar whose sum differs passed:\n%s", out)
+	assert.Contains(t, out, "TLA REFUSED host=localhost jar="+r.jar+" want="+want+" got="+hex.EncodeToString(got[:]))
+
+	sum := filepath.Join(r.dir, "tla2tools.sha256")
+	require.NoError(t, os.WriteFile(sum, []byte(hex.EncodeToString(got[:])+"  tla2tools.jar\n"), 0o644))
+	out = r.play(t, "tools.yml", r.vars(sum)...)
+	assert.Contains(t, out, "TLA OK host=localhost jar="+r.jar+" sha256="+hex.EncodeToString(got[:])+" java="+r.java+" version=21.0.12.1")
+	assert.Regexp(t, `localhost\s+: ok=\d+\s+changed=0 `, out, "a converged record machine changes nothing")
+}
+
+// TestLoopsPlayRecordFilter: nova_loop_only names the records a run renders and
+// restarts (nova-tools#5096 item 24, the readers-only pass of 2026-10-02); every
+// other unit on the machine is left as it is, and none is retired, not even a
+// marked unit no record names. A name no record on the run's machines carries is
+// refused before anything is written.
+func TestLoopsPlayRecordFilter(t *testing.T) {
+	t.Parallel()
+	r := newFleetPlayRig(t, "check-fixture.yml")
+	units := filepath.Join(r.home, ".config", "systemd", "user")
+	require.NoError(t, os.MkdirAll(units, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(units, "nova-loop-old.service"), []byte("# written by fleet/loops.yml from the loop record old\n[Service]\n"), 0o644))
+	check := []string{"--check", "--diff", "-e", "ansible_system=Linux", "-e", "nova_home=" + r.home, "-e", "nova_sops=/usr/bin/sops-of-the-fixture"}
+
+	plain := r.play(t, "loops.yml", check...)
+	assert.Contains(t, plain, "WOULD-RETIRE old on localhost")
+	assert.Contains(t, plain, "nova-loop-tick-local.timer")
+
+	only := r.play(t, "loops.yml", append(check, "-e", "nova_loop_only=member-local")...)
+	assert.Contains(t, only, "nova-loop-member-local.service")
+	assert.NotContains(t, only, "nova-loop-tick-local", "a record not named is not rendered")
+	assert.NotContains(t, only, "WOULD-RETIRE", "a filtered run retires nothing")
+	assert.Contains(t, only, "WOULD-RESTART member-local on localhost")
+	assert.Contains(t, only, "LOOPS host=localhost place="+units+" records=1 enabled=1 written=1 retired=0 only=member-local (check: nothing changed)")
+	assert.False(t, strings.Contains(only, "FAILED!"), "a task failed")
+
+	list := r.play(t, "loops.yml", append(check, "-e", `{"nova_loop_only": ["member-local", "tick-local"]}`)...)
+	assert.Contains(t, list, "records=2 enabled=1 written=")
+	assert.Contains(t, list, "only=member-local,tick-local")
+
+	out, err := r.playResult(t, "loops.yml", append(check, "-e", "nova_loop_only=member-locl")...)
+	require.Error(t, err)
+	assert.Contains(t, out, "nova_loop_only names member-locl, which no loop record of this run's machines is")
+	assert.NotContains(t, out, "LOOPS host=")
+}
+
+// TestLoopsPlayLeavesAnUnchangedUnitAlone: a record whose unit file is already
+// what the play renders is not restarted, and the run does not fail. The
+// restart line's condition was a list where it was empty (no changed unit), and
+// ansible-core 2.19 on refuses a condition that is not a boolean, so the play
+// failed on every machine with one unchanged unit (the Studio, 2026-10-02).
+func TestLoopsPlayLeavesAnUnchangedUnitAlone(t *testing.T) {
+	t.Parallel()
+	r := newFleetPlayRig(t, "check-fixture.yml")
+	units := filepath.Join(r.home, ".config", "systemd", "user")
+	require.NoError(t, os.MkdirAll(units, 0o755))
+	check := []string{"--check", "--diff", "-e", "ansible_system=Linux", "-e", "nova_home=" + r.home, "-e", "nova_sops=/usr/bin/sops-of-the-fixture", "-e", "nova_loop_only=member-local"}
+	unit := filepath.Join(units, "nova-loop-member-local.service")
+
+	first := r.play(t, "loops.yml", check...)
+	require.Contains(t, first, "WOULD-RESTART member-local on localhost", "a new unit is a changed one")
+	require.NoError(t, os.WriteFile(unit, renderedByDiff(t, first, unit), 0o644))
+
+	again := r.play(t, "loops.yml", check...)
+	assert.NotContains(t, again, "FAILED!", "a task failed on an unchanged unit")
+	assert.NotContains(t, again, "WOULD-RESTART member-local", "an unchanged unit is not restarted")
+	assert.Contains(t, again, "LOOPS host=localhost place="+units+" records=1 enabled=1 written=0 retired=0 only=member-local (check: nothing changed)", "the unit is written by no one")
+}
+
+// renderedByDiff is the content --diff shows a new unit at path getting: the
+// "+" lines of the hunk whose first line is the unit's mark naming path (the
+// diff's header names the template, not the unit).
+func renderedByDiff(t *testing.T, out, path string) []byte {
+	t.Helper()
+	for _, hunk := range strings.Split(out, "@@ -0,0 ")[1:] {
+		_, body, _ := strings.Cut(hunk, "\n")
+		if !strings.HasPrefix(body, "+# "+path+": ") {
+			continue
+		}
+		var b strings.Builder
+		for _, line := range strings.Split(body, "\n") {
+			after, ok := strings.CutPrefix(line, "+")
+			if !ok {
+				break
+			}
+			b.WriteString(after + "\n")
+		}
+		return []byte(b.String())
+	}
+	require.Fail(t, "no diff renders "+path, out)
+	return nil
+}
+
+// TestToolsPlaySendsOnlyTheFilesTheInstalledBuildLacks runs tools.yml for
+// real twice, the second time at a version an --incremental build would
+// leave: nova-update the first version's bytes (reused), nova-extra rebuilt.
+// The new version's directory is seeded on the machine from the installed
+// build's, only nova-extra and the checksum files are sent, and the install
+// leaves the identical nova-update in place (the same file), so the loop
+// running it is not restarted.
+func TestToolsPlaySendsOnlyTheFilesTheInstalledBuildLacks(t *testing.T) {
+	t.Parallel()
+	r := newFleetPlayRig(t, "check-fixture.yml")
+	platform := runtime.GOOS + "-" + runtime.GOARCH
+	out := filepath.Join(r.dir, "release")
+	stage := func(version, extra string, update []byte) {
+		dir := filepath.Join(out, version, platform)
+		require.NoError(t, os.MkdirAll(dir, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "nova-update"), update, 0o755))
+		script := []byte("#!/bin/sh\necho nova-extra " + extra + "\n")
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "nova-extra"), script, 0o755))
+		var sums strings.Builder
+		for _, f := range []struct {
+			name string
+			body []byte
+		}{{"nova-extra", script}, {"nova-update", update}} {
+			s := sha256.Sum256(f.body)
+			sums.WriteString(hex.EncodeToString(s[:]) + "  " + f.name + "\n")
+		}
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "SHA256SUMS"), []byte(sums.String()), 0o644))
+		d := sha256.Sum256([]byte(sums.String()))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "SUMS.digest"), []byte(hex.EncodeToString(d[:])+"\n"), 0o644))
+	}
+	built := filepath.Join(r.dir, "built")
+	r.build(t, filepath.Join(built, "nova-update"), "v0.0.0-one", "./cmd/nova-update")
+	update, err := os.ReadFile(filepath.Join(built, "nova-update"))
+	require.NoError(t, err)
+	stage("v0.0.0-one", "v0.0.0-one", update)
+	stage("v0.0.0-two", "v0.0.0-two", update)
+	vars := func(version string) []string {
+		return []string{"-e", "nova_home=" + r.home, "-e", "nova_version=" + version, "-e", "nova_source=" + r.root,
+			"-e", "nova_dogfood_receipts=" + filepath.Join(r.dir, "dogfood"), "-e", "nova_release_out=" + out}
+	}
+
+	first := r.play(t, "tools.yml", vars("v0.0.0-one")...)
+	assert.Contains(t, first, "RELEASE INSTALLED version=v0.0.0-one tools=2 skipped=0 ")
+	installed := filepath.Join(r.home, ".local", "bin", "nova-update")
+	before, err := os.Stat(installed)
+	require.NoError(t, err)
+
+	second := r.play(t, "tools.yml", vars("v0.0.0-two")...)
+	assert.Regexp(t, `TASK \[the stage seeded from the installed build's directory, on the machine\][^\n]*\n(?:[^\n]*\n)?changed: \[localhost\]`, second)
+	assert.Contains(t, second, "(item=nova-extra)")
+	assert.Contains(t, second, "(item=SHA256SUMS)")
+	assert.NotContains(t, second, "(item=nova-update)", "a file the machine already held was sent")
+	assert.Contains(t, second, "was=v0.0.0-one removed=0 INSTALLED RELEASE INSTALLED version=v0.0.0-two tools=1 skipped=1 ")
+	after, err := os.Stat(installed)
+	require.NoError(t, err)
+	assert.True(t, os.SameFile(before, after), "the identical nova-update was replaced")
+	extra, err := exec.Command(filepath.Join(r.home, ".local", "bin", "nova-extra")).Output()
+	require.NoError(t, err)
+	assert.Equal(t, "nova-extra v0.0.0-two\n", string(extra))
+
+	check := r.play(t, "tools.yml", append(vars("v0.0.0-two"), "--check")...)
+	assert.Contains(t, check, "was=v0.0.0-two removed=0 UP-TO-DATE", "a reused nova-update answers the earlier version; the build fact says the install is done")
+}
+
+// TestToolsPlaySendsEveryStagedFileWhoseBytesDiffer is BenchStage.tla's
+// ReusedByteIdentical on the real play: the seed copies the installed build's
+// directory on the machine unverified, so the files sent are those whose
+// bytes in the stage differ from the release's SHA256SUMS, measured after the
+// seed (one listing with sha256), never those whose SHA256SUMS line differs.
+// A seeded file corrupted on the machine whose line matches the release's,
+// the binary the play runs or any other, is sent again in the same run, the
+// install takes the rebuilt tool and skips the rest, and an intact reused
+// file is not sent.
+func TestToolsPlaySendsEveryStagedFileWhoseBytesDiffer(t *testing.T) {
+	t.Parallel()
+	built := ""
+	var update []byte
+	for _, corrupt := range []string{"nova-update", "nova-same"} {
+		t.Run(corrupt, func(t *testing.T) {
+			r := newFleetPlayRig(t, "check-fixture.yml")
+			platform := runtime.GOOS + "-" + runtime.GOARCH
+			out := filepath.Join(r.dir, "release")
+			if built == "" {
+				built = filepath.Join(r.dir, "built")
+				r.build(t, filepath.Join(built, "nova-update"), "v0.0.0-one", "./cmd/nova-update")
+				var err error
+				update, err = os.ReadFile(filepath.Join(built, "nova-update"))
+				require.NoError(t, err)
+			}
+			for _, version := range []string{"v0.0.0-one", "v0.0.0-two"} {
+				dir := filepath.Join(out, version, platform)
+				require.NoError(t, os.MkdirAll(dir, 0o755))
+				var sums strings.Builder
+				for _, f := range []struct {
+					name string
+					body []byte
+				}{
+					{"nova-extra", []byte("#!/bin/sh\necho nova-extra " + version + "\n")},
+					{"nova-same", []byte("#!/bin/sh\necho nova-same\n")},
+					{"nova-update", update},
+				} {
+					require.NoError(t, os.WriteFile(filepath.Join(dir, f.name), f.body, 0o755))
+					s := sha256.Sum256(f.body)
+					sums.WriteString(hex.EncodeToString(s[:]) + "  " + f.name + "\n")
+				}
+				require.NoError(t, os.WriteFile(filepath.Join(dir, "SHA256SUMS"), []byte(sums.String()), 0o644))
+			}
+			vars := func(version string) []string {
+				return []string{"-e", "nova_home=" + r.home, "-e", "nova_version=" + version, "-e", "nova_source=" + r.root,
+					"-e", "nova_dogfood_receipts=" + filepath.Join(r.dir, "dogfood"), "-e", "nova_release_out=" + out}
+			}
+			r.play(t, "tools.yml", vars("v0.0.0-one")...)
+			seed := filepath.Join(r.home, "nova-bench", "release", "v0.0.0-one", platform, corrupt)
+			require.NoError(t, os.WriteFile(seed, []byte("corrupt on the machine\n"), 0o755))
+			extraNow := func() string {
+				b, err := exec.Command(filepath.Join(r.home, ".local", "bin", "nova-extra")).Output()
+				require.NoError(t, err)
+				return string(b)
+			}
+
+			second := r.play(t, "tools.yml", vars("v0.0.0-two")...)
+			assert.Contains(t, second, "changed: [localhost] => (item="+corrupt+")", "the corrupt seeded file was not sent again")
+			assert.Contains(t, second, "changed: [localhost] => (item=nova-extra)")
+			for _, intact := range []string{"nova-update", "nova-same"} {
+				if intact != corrupt {
+					assert.NotContains(t, second, "(item="+intact+")", "an intact reused file was sent")
+				}
+			}
+			assert.Contains(t, second, "INSTALLED RELEASE INSTALLED version=v0.0.0-two tools=1 skipped=2 ")
+			assert.Equal(t, "nova-extra v0.0.0-two\n", extraNow())
+			staged, err := os.ReadFile(filepath.Join(r.home, "nova-bench", "release", "v0.0.0-two", platform, corrupt))
+			require.NoError(t, err)
+			want, err := os.ReadFile(filepath.Join(out, "v0.0.0-two", platform, corrupt))
+			require.NoError(t, err)
+			assert.Equal(t, want, staged, "the stage holds bytes the release does not")
+		})
+	}
 }

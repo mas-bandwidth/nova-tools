@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
@@ -115,6 +116,94 @@ func (st *Store) loadOnce(ctx context.Context, tables []string, extras func(*spr
 		}
 	}
 	return s, nil
+}
+
+// HeldBack is sprint.HeldBack over the work table's waiting column, read
+// alone (workColumn). A table with nothing waiting is read no further than its
+// shape.
+func (st *Store) HeldBack(ctx context.Context) (int, error) {
+	t, err := st.workColumn(ctx, sprint.Waiting)
+	if err != nil || t == nil {
+		return 0, err
+	}
+	return sprint.HeldBack(&sprint.Snapshot{Work: t}), nil
+}
+
+// LandedAt is the landed stamps of the work table's landed column, read alone
+// (workColumn), for the landing rate of the ETA (sprint.LandingRate); a card
+// with no stamp is left out.
+func (st *Store) LandedAt(ctx context.Context) ([]time.Time, error) {
+	t, err := st.workColumn(ctx, sprint.Landed)
+	if err != nil || t == nil {
+		return nil, err
+	}
+	var out []time.Time
+	for _, c := range t.Column(sprint.Landed) {
+		if at, err := time.Parse(time.RFC3339, c.F("landed")); err == nil {
+			out = append(out, at)
+		}
+	}
+	return out, nil
+}
+
+// workColumn is the work table with the cards of one column read: its shape,
+// the ids of that column's cells, and their records, taken again as Load takes
+// a read that saw the table move; nil when the column is empty.
+func (st *Store) workColumn(ctx context.Context, col string) (*sprint.Table, error) {
+	st, err := st.pin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	r := st.retry(ctx)
+	for r.next(LoadTries) {
+		t, err := st.workColumnOnce(ctx, col)
+		if !errors.Is(err, errMoved) {
+			return t, err
+		}
+	}
+	return nil, fmt.Errorf("the tables are busy: the work table kept changing while its %s cards were read, %d reads in %s", col, r.tries, r.slept().Round(time.Millisecond))
+}
+
+func (st *Store) workColumnOnce(ctx context.Context, col string) (*sprint.Table, error) {
+	shapes, err := st.shapes(ctx, []string{st.Names.Table(sprint.Work)})
+	if err != nil {
+		return nil, err
+	}
+	shape := shapes[0]
+	if st.pinned && shape.Epoch != st.epoch {
+		return nil, errCleared
+	}
+	j := shape.Column(col)
+	n := int64(0)
+	for _, row := range shape.Rows {
+		if j >= 0 && j < len(row.Cells) {
+			n += row.Cells[j].Count
+		}
+	}
+	if n == 0 {
+		return nil, nil
+	}
+	// only the column's cells are read: every other set column is read as
+	// text, which has no cell ids
+	shape.Columns = slices.Clone(shape.Columns)
+	for k := range shape.Columns {
+		if k != j && shape.Columns[k].HasSet() {
+			shape.Columns[k].Projection = ntable.Text
+		}
+	}
+	ids, err := st.B.CellIDs(ctx, []ntable.Table{shape})
+	if err != nil {
+		return nil, err
+	}
+	t := sprint.NewTable(sprint.Work)
+	t.Epoch, t.Revision = shape.Epoch, shape.Revision
+	for _, row := range shape.Rows {
+		t.SetRows(append(t.Rows(), row.Key))
+	}
+	if err := st.readInto(ctx, t, ids[shape.Name], true); err != nil {
+		return nil, err
+	}
+	return t, nil
 }
 
 // shapes reads the tables' shapes in one exchange. Reading an earlier epoch,

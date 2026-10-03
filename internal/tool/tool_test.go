@@ -653,8 +653,8 @@ func TestProblems(t *testing.T) {
 }
 
 // TestAStageLineIsWhereEveryReaderMeetsTheTool: a tool's Stage is the
-// banner's line 2, the second line of every verb's -h, and an indented hint
-// under a bare command's one-line refusal; a tool without one prints none.
+// banner's line 2, the second line of every verb's -h, and an indented NOTE
+// line under a bare command's one-line refusal (STANDARD section 3 point 1); a tool without one prints none.
 func TestAStageLineIsWhereEveryReaderMeetsTheTool(t *testing.T) {
 	t.Parallel()
 	const stage = "nova-demo is pre-alpha: not ready for production use."
@@ -680,7 +680,7 @@ func TestAStageLineIsWhereEveryReaderMeetsTheTool(t *testing.T) {
 			got := out.String()
 			if tc.stream == "err" {
 				got = errs.String()
-				assert.True(t, strings.HasSuffix(got, "\n  "+stage+"\n"), "the bare refusal has no indented stage hint:\n%s", got)
+				assert.True(t, strings.HasSuffix(got, "\n  NOTE "+stage+"\n"), "the bare refusal has no indented NOTE stage hint:\n%s", got)
 			}
 			if tc.want == "" {
 				assert.NotContains(t, got, "pre-alpha", got)

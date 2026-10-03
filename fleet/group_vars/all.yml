@@ -28,6 +28,26 @@ nova_systemd_scope: user
 # alone and listed.
 nova_retire_units: []
 
+# The disk guard loops.yml adds to every machine (nova-swarm disk-guard): on
+# when true, run every nova_disk_guard_every seconds, with these arguments
+# after the --root of each loop record's argv. The scan finds the readers'
+# roots, a stopped loop's too; the glob holds the CI runners' Go build caches.
+nova_disk_guard: true
+nova_disk_guard_every: 900
+nova_disk_guard_args: ["--scan", "~/nova-bench/run", "--cache", "~/runner-*/_cache/go-build"]
+
+# The loop records loops.yml renders and restarts, by name (a list, or one
+# comma-separated word); empty is every record of the machine. Under it every
+# other unit is left as it is and nothing is retired.
+nova_loop_only: []
+
+# How long the supervisor waits for a member loop (nova-swarm member) it stops
+# before it kills what is left, in seconds: a member drains on SIGTERM (takes
+# nothing new, lets its running cards finish and reports them) for at most
+# member.DrainMost, two hours, and this is a minute above it (KillMode=mixed
+# and TimeoutStopSec under systemd, ExitTimeOut under launchd).
+nova_member_stop_timeout: 7260
+
 # The nova-secrets layout a loop with keys opens its secrets through: the
 # store, the directory of seat keys (<seat>.key) and the sops binary: nova_sops
 # when a host sets it, else the first of these that exists on the machine.
@@ -68,3 +88,19 @@ nova_pg_password_key: NOVA_PG_CONFIG_PASSWORD
 nova_release_out: "{{ lookup('env', 'HOME') }}/nova-bench/release-build"
 nova_release_gocache: "{{ lookup('env', 'HOME') }}/nova-bench/release-gocache"
 nova_release_gate_args: ["--cli", "{{ nova_source }}/docs/CLI.md", "--receipts", "{{ nova_dogfood_receipts }}"]
+# nova_release_build_args is appended to the build after the gate's: empty for
+# a whole build; `nova-update release cycle` passes --incremental and
+# --gate report --reason <why> (docs/SPEC-RELEASE.md rule 13).
+nova_release_build_args: []
+
+# The TLC record machines (the inventory's tla group: the machine rows with
+# tla=true) hold the pinned TLC jar at nova_tla_jar, owned by the login. The
+# tools play's tla play checks its SHA-256 against the sum the repository
+# holds (nova_tla_sha256_file, read on the machine running the play) and
+# refuses a jar that differs or is missing; it downloads nothing, so the jar
+# is placed by hand (tla/README.md, "The record machines"). java is the first
+# of nova_tla_java_candidates that exists on the machine.
+nova_tla_dir: /opt/tla
+nova_tla_jar: "{{ nova_tla_dir }}/tla2tools.jar"
+nova_tla_sha256_file: "{{ playbook_dir }}/../tla/tla2tools.sha256"
+nova_tla_java_candidates: ["{{ nova_home }}/sdk/bin/java", /usr/bin/java, /usr/local/bin/java]

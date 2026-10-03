@@ -38,7 +38,7 @@ type Tool struct {
 	What string // line 1 of the banner: what the tool is for
 	// Stage, when set, is one sentence on how ready the tool is ("nova-x is
 	// pre-alpha: not ready for production use."): the banner's line 2, the
-	// second line of every verb's -h, and an indented hint under a bare
+	// second line of every verb's -h, and an indented NOTE line under a bare
 	// command's refusal, so no reader meets the tool without it.
 	Stage     string
 	How       string // how it works: the paragraph under line 1
@@ -106,7 +106,7 @@ func (t *Tool) Run(args []string, stdin io.Reader, stdout, stderr io.Writer) (co
 		}
 		code := t.emit(nil, Refuse(given+"; the verbs are "+verbflag.List(t.names())), false, stdout, stderr)
 		if t.Stage != "" {
-			fmt.Fprintf(stderr, "  %s\n", t.Stage)
+			fmt.Fprintf(stderr, "  NOTE %s\n", t.Stage)
 		}
 		return code
 	}

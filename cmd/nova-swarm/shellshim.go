@@ -192,3 +192,101 @@ func pathWithDirFirst(env []string, shimDir string) []string {
 	}
 	return out
 }
+
+// THE GO SHIM: A CARD'S BUILD HITS THE MACHINE'S WARM CACHE (nova-tools#5174, cost rule 5).
+//
+// Every card's GOCACHE is the machine's one shared build cache (nativeChildEnv), but Go puts
+// a package's absolute directory into its cache key unless the build is -trimpath
+// (the go command's own buildActionID: `fmt.Fprintf(h, "dir %s\n", p.Dir)`), and
+// every launch stages its checkout at a path of its own. So the standard library and the
+// modules came from the warm cache and the repository's own packages, the gate's, were
+// compiled again by every card. Measured on a 16-thread Linux bench, 2026-10-02, `go build ./... && go vet
+// ./...` of nova-tools in a fresh slot: 15.6-16.4 s with a cold cache of its own, 6.6 s
+// from the shared cache, 1.9-2.0 s from the shared cache with -trimpath (a rebuild in
+// place: 1.8 s).
+//
+// The flag cannot ride the environment alone: the cards tell the model to `export
+// GOFLAGS=-mod=readonly ...`, which replaces whatever GOFLAGS the child was handed. So a
+// `go` wrapper sits in <slot>/shim beside the shell wrappers, first on the child's PATH, and
+// adds -trimpath to GOFLAGS before it execs the bench's go; a GOFLAGS that already names
+// -trimpath (either way) is left as it is. It changes no other flag and no other name.
+// Written only with the shared caches on, and only on POSIX benches, like the shells'.
+
+// nativeGoShimName is the wrapper's name in <slot>/shim.
+const nativeGoShimName = "go"
+
+// goShimScript is the go wrapper for one real go, spelt exactly as the filesystem does.
+func goShimScript(real string) string {
+	return `#!/bin/sh
+# nova-swarm go shim (nova-tools#5174, cost rule 5): every go command builds -trimpath, so
+# the machine's shared GOCACHE serves this checkout; without it the checkout's absolute
+# path is in each of its packages' cache keys and every card compiles the repository again.
+case " ${GOFLAGS-} " in
+*" -trimpath"* | *" --trimpath"*) ;;
+*) GOFLAGS="${GOFLAGS:+$GOFLAGS }-trimpath"; export GOFLAGS ;;
+esac
+exec '` + real + `' "$@"
+`
+}
+
+// writeNativeGoShim writes the go wrapper into dir (<slot>/shim) for the go in goBin. It
+// writes nothing on windows, with no shim directory, or with no bench go to wrap.
+func writeNativeGoShim(dir, goBin string) error {
+	if runtime.GOOS == "windows" || dir == "" || goBin == "" {
+		return nil
+	}
+	real := filepath.Join(goBin, nativeGoShimName)
+	if within(dir, real) {
+		return fmt.Errorf("the bench's go resolved inside the shim directory %s, which would make the wrapper exec itself", oneline.Field(dir))
+	}
+	if strings.ContainsAny(real, "'\n") {
+		return fmt.Errorf("the path of the bench's go holds a quote or a newline, which no wrapper can spell safely")
+	}
+	path := filepath.Join(dir, nativeGoShimName)
+	if err := atomicfile.Write(path, []byte(goShimScript(real)), 0o755, atomicfile.ExactMode()); err != nil {
+		return fmt.Errorf("the go shim %s could not be written: %w", oneline.Field(path), err)
+	}
+	return nil
+}
+
+// THE DARWIN WALL FORBIDS setpriority (its `system-sched` operation; the template is
+// `(deny default)` and grants none), so a card's `nice -n 19 <gate>` printed `nice:
+// setpriority: Operation not permitted` into every worker's output and ran the gate at the
+// priority it started with. Where nativeNicesChild says so, native lowers the child's whole
+// group itself, outside the wall (lowerChildPriority), and writes this `nice` beside the
+// shell wrappers: it runs the command as nice would, without asking the wall for the
+// priority the group already has. Linux's wall leaves setpriority alone and gets neither.
+
+// nativeNicesChild says whether native lowers the child's priority itself: the darwin wall.
+func nativeNicesChild(goos string, walled bool) bool {
+	return goos == "darwin" && walled
+}
+
+// childNice is the priority a walled child runs at where the wall forbids it to lower its
+// own: the `nice -n 19` every card's gate line asks for.
+const childNice = 19
+
+// niceShimScript is the `nice` for a child already at nice 19: the adjustment (`-n N`,
+// `-nN`, `-N`, `--adjustment=N`, `--adjustment N`) and a `--` are read and dropped, and the
+// command is exec'd; with no command it prints the group's niceness, as nice does.
+const niceShimScript = `#!/bin/sh
+# nova-swarm nice shim: the darwin wall forbids setpriority, and native already started
+# this card's whole process group at nice 19 outside it, so the command runs as it is.
+case "$1" in
+-n|--adjustment) shift; shift ;;
+-n*|--adjustment=*|-[0-9]*) shift ;;
+esac
+if [ "$1" = "--" ]; then shift; fi
+if [ $# -eq 0 ]; then echo 19; exit 0; fi
+exec "$@"
+`
+
+// writeNativeNiceShim writes the `nice` into the shim directory dir, which is first on
+// the child's PATH and outside its write set.
+func writeNativeNiceShim(dir string) error {
+	path := filepath.Join(dir, "nice")
+	if err := atomicfile.Write(path, []byte(niceShimScript), 0o755, atomicfile.ExactMode()); err != nil {
+		return fmt.Errorf("the nice shim %s could not be written: %w", oneline.Field(path), err)
+	}
+	return nil
+}

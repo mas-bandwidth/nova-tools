@@ -1468,7 +1468,7 @@ it is shown is not a check.
 
 ```
 nova-check dogfood ledger (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] [--git-timeout <s>] [--tools-timeout <s>] [--fail-max <n>]
-nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] [--closes <id>] --receipts <dir> [--tools-timeout <s>] [--fail-max <n>]
+nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] [--closes <id>] --receipts <dir> [--tools-timeout <s>] [--fail-max <n>] [--dry-run]
 nova-check dogfood gate   (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--shipped <cmd dir>] [--authors <file>] [--repo <dir>] [--require-all] [--fail-max <n>]
 ```
 
@@ -1536,7 +1536,9 @@ against**, and refuses a `--tool`/`--verb` pair nothing declares, naming the
 nearest verb that is declared — a verb written INSIDE a declared one wins
 (`--verb ledger` for `dogfood ledger`), then the nearest by edit distance within
 half the spelling, and nothing at all rather than a guess. A receipt accepted
-in silence is discovered later only as a count.
+in silence is discovered later only as a count. `record --dry-run` makes every
+one of these checks and refuses where the write refuses, then prints the
+receipt line it would append with `dry_run=true` and writes no file.
 
 **Asserts** (`ledger`, exit 0 — it reports rather than gates): one
 `DOGFOOD tool=… verb=… by=<who|nobody> at=… ok=<yes|no|-> issue=<n|->` row per
@@ -1646,7 +1648,7 @@ different lane.
 ```
 nova-check convergence --repo <owner/name> --ledger <md> --receipts <dir> --retired <file> --since <RFC3339|24h>
       [--bin <dir>] [--repo-dir <dir>] [--batch-logs <dir>] [--versions <tsv>] [--certs <tsv>]
-      [--state <file>] [--by <name>] [--json] [--timeout <n>]
+      [--state <file>] [--by <name>] [--json] [--timeout <n>] [--dry-run]
 ```
 
 **Why it exists.** *Convergence is the health metric* — the contraction ratio
@@ -1675,14 +1677,16 @@ The full rules, the refusals and the red tests are in
 **Deliberately does not check:** *whether a trend is anybody's fault.* It reads
 records and prints ratios; why a stream widened is a person's to say. Nor does it
 write: not to the forge, not to `--repo-dir`, not to `--bin`. The only file it
-writes is `--state`, and that holds one number per stream.
+writes is `--state`, and that holds one number per stream; `--dry-run` takes
+the same reading and writes no `--state`, saying so in one
+`CONVERGENCE NOTE dry_run=true` line (a `dry_run` field under `--json`).
 
 ### spelling — known misspellings in prose, with code blocks blanked
 
 ```
 nova-check spelling (--dir <dir> | --file <path> | --path <pattern>)
                     [--ignore <word|@file>] [--write] [--exclude <prefix>]
-                    [--fail-max <n>]
+                    [--fail-max <n>] [--dry-run]
 ```
 
 **Why it exists.** Prose committed into a self repo or prepared for publishing
@@ -1698,7 +1702,10 @@ loads words one per line, with blank lines and `#` comments ignored.
 **Write mode.** In check mode (default), findings are reported and the check
 exits 1 if any misspellings are found. With `--write`, corrections are applied in
 place atomically, preserving surrounding formatting, code blocks, and line
-structures, exiting 0.
+structures, exiting 0. With `--write --dry-run`, each correction it would make is
+one `SPELLING FIX` line and the verdict is `SPELLING OK ... written=0
+dry_run=true`, exit 0, with nothing written; `--dry-run` without `--write` is
+the check mode.
 
 **Deliberately does not check:** *code blocks or identifiers.* Code is not
 prose: identifiers and code snippets in fences and backticks are skipped.
@@ -2375,7 +2382,12 @@ indexable paragraph ordinal stays the stable retrieval ID and tie-break. Every c
 **top-level directory** (`.` for root files): the corpus classifies itself,
 and the tool assumes nothing whatever about layout. Frontmatter `name:` and
 `type:` are carried into receipts when a file has them, surfaced and never
-invented.
+invented. The frontmatter block itself is metadata, not body text (schema
+`nova-memory/2`): it is never indexed and no receipt quotes it, and the body
+keeps the line numbers it has in the file. A file that opens with a `---` rule
+whose block holds a line that is not YAML-shaped (a `key:` line, a comment, an
+indented or `-` continuation) has a thematic break there, not frontmatter, and
+that text is indexed like any other.
 
 **Two verbs are checks; five assert nothing.** `verify` and `eval` are walls
 and exit 1 when they fail. `quickstart`, `stats`, `search`, `check`, and `boot` are reports: they

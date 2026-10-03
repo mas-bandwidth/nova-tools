@@ -398,7 +398,7 @@ func TestAClaudeReadersReviewAloneIsItsVerdict(t *testing.T) {
 			e := newCaseEnv(t, false)
 			bin := builtSprint(t)
 			d := &memberDrive{t: t, addr: "mem:" + filepath.Join(e.dir, "sprint.twin"), bin: bin}
-			d.must("init", "--members", "m1:1", "--readers", "reader-a,reader-b") // a read asks two readers; reader-a's is the one run here
+			d.must("init", "--members", "m1:1", "--readers", "reader-a,reader-b") // a flash card is read once, by reader-a, the first round the readers
 			d.must("add", "--stream", "a", "--count", "1", "--brief", e.brief())
 			d.must("start")
 			e.member(t)

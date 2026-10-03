@@ -16,14 +16,14 @@ func TestCardShowsTheHeadTheNextAttemptStartsFrom(t *testing.T) {
 	const sha = "0123456789abcdef0123456789abcdef01234567"
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
-	ta.ok("add --stream s1 --count 1 --brief-file " + writeBrief(t, "handle the empty case"))
+	ta.ok("add --stream s1 --count 1 --brief-file " + writeBrief(t, "handle the empty case, tier: pro")) // pro: two readers
 	ta.deal(1)
 	ta.ok("take --as m1 s1-1.w1@1")
 	ta.ok("finish --as m1 s1-1.w1@1 --head " + sha + " --report 'pushed'")
 	assert.Contains(t, ta.ok("card s1-1"), "NEXT starts from attempt 1 head="+sha)
 	ta.ok("ask")
 	ta.ok("read --as reader-a --ok s1-1.r1.reader-a --finding 'fine'")
-	ta.ok("read --as reader-b --broken s1-1.r1.reader-b --finding 'the test is missing'")
+	ta.ok("read --as reader-b --broken s1-1.r1.reader-b --finding 'line 3: the test is missing'")
 	ta.ok("rework s1-1 --fix 'add the test'")
 	ta.deal(1)
 	ta.ok("take --as m1 s1-1.w2@1")

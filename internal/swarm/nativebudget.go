@@ -3,6 +3,7 @@ package swarm
 import (
 	"fmt"
 	"os/exec"
+	"strings"
 	"time"
 )
 
@@ -41,21 +42,29 @@ func NativeUsageSource(worker *Worker) string {
 // description set `max_turns` or `max_cache_read`, and `cardBudgetNames` names which, so the
 // refusal tells a caller which field of their description put them here rather than making
 // them guess.
-func NativeBudgetSourceRefusal(source string, tokens int, unmetered bool, worker *Worker) string {
+//
+// `usd` is whether a dollar budget (--usd) was given: it is read from the same source, the
+// harness's own cost beside its tokens (nova-tools #5094).
+func NativeBudgetSourceRefusal(source string, tokens int, unmetered, usd bool, worker *Worker) string {
 	numeric := !unmetered && tokens > 0
 	card := worker != nil && worker.HasCardBudget()
-	if !numeric && !card {
+	if !numeric && !card && !usd {
 		// `--tokens unmetered` with no card budget: there is no number to observe, the
 		// deadline is the only stop, and rule 13d says such a launch runs under both
 		// conditions.
 		return ""
 	}
-	why := "a numeric --tokens"
-	if !numeric {
-		why = "this worker description's " + cardBudgetFields(worker)
-	} else if card {
-		why = "a numeric --tokens and this worker description's " + cardBudgetFields(worker)
+	var whys []string
+	if numeric {
+		whys = append(whys, "a numeric --tokens")
 	}
+	if usd {
+		whys = append(whys, "a dollar budget --usd")
+	}
+	if card {
+		whys = append(whys, "this worker description's "+cardBudgetFields(worker))
+	}
+	why := strings.Join(whys, " and ")
 	switch source {
 	case UsageNone:
 		return fmt.Sprintf("%s wants a usage source this tool can read, and the worker description says `usage: none`, which reports nothing; a budget nothing can observe is a promise the tool cannot keep, so this launch is refused rather than run under a cap that would never fire. Give the description `usage: opencode`, or launch with --tokens unmetered and no max_turns or max_cache_read", why)

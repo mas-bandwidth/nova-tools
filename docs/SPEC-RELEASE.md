@@ -433,6 +433,74 @@ is a gate nobody has. The `RELEASE CUT` and `RELEASE BUILD OK` receipts carry
 `TestReadShippedRefusesAToolDirectoryItCannotRead`, `TestTheGateRefusesAToolDirectoryItCannotRead`,
 `TestDogfoodGateShippedJudgesOnlyTheToolsUnderCmd`.*
 
+## 13. A machinery install is incremental, reported, and one command
+
+The ask, 2026-10-02: fast iterations, fix and repeat. A fix merged to the foundation
+reached five benches in about 25 minutes (nova-tools#5096 item 12): a whole cross-platform build, a
+waiver composed by hand, then the tools play's check and apply typed one at a time. Every restamped
+binary differed from the bench's copy, so every binary was sent and every loop drained and restarted.
+
+**The build record.** Every `build` writes `<out>/<version>/<goos-goarch>.build` beside the platform
+directory, never in it (so it is in no `SHA256SUMS` and reaches no bench): the commit, the Go, the
+stamp shape, the base, what was rebuilt and reused, the gate and its reason. A dirty or non-git
+checkout records no commit.
+
+**`build --incremental`** finds the newest record under `--out` with a commit, the same Go and the same
+stamp shape, verifies that build's artifacts against its `SHA256SUMS`, and asks
+`git diff --name-only --no-renames <recorded> <head>` (a tree diff, so the branch does not matter
+and a rename is two paths) and one `go list -deps` per platform. A tool is compiled when a changed
+path that is not a `_test.go` lies under its own package directory or any package it imports, when
+`go.mod` or `go.sum` changed, when the base lacks it, or when `go list` did not answer for it; every
+other tool is the base's binary, byte for byte, and answers the version it was built at. Anything
+that stops the question being asked honestly — a dirty checkout, no usable record, a base that does
+not verify — is a whole build, never a refusal:
+
+```
+RELEASE BUILD INCREMENTAL version=<v> platform=<p> base=<v> changed=<n> rebuilt=<tool,...> reused=<n>
+RELEASE BUILD WHOLE version=<v> platform=<p> rebuilt=<n> reason=<why>
+```
+
+`install` skips a tool whose installed file already holds the artifact's bytes, as it skips one
+answering the version: renaming identical bytes over a running loop's binary would only make it drain.
+
+**`build --gate report --reason <why>`** runs the gate, prints its open edges, says
+`RELEASE BUILD DOGFOOD REPORTED open=<n> reason=<why>` and builds; the receipt carries
+`dogfood=report` and the build record keeps the reason. It is for a machinery install during a
+sprint, where the receipts still name tools nova-tools no longer ships. **`cut` has no `--gate` flag**:
+a tag is still refused on an open edge, and still waived only with the CHANGELOG line of rule 12.
+
+**`release cycle`** is the fix-land-install cycle from the coordinator in one command: the tools play
+(`<source>/fleet/tools.yml`) with `--check`, then the play, limited to `--benches` and `localhost`, the
+build `--incremental --gate report --reason <why>`. The play seeds a new version's directory on each
+machine from the installed build's, unverified, then measures the sha256 of every file in the stage in
+one listing and sends exactly the files whose bytes differ from the release's `SHA256SUMS` (absent,
+rebuilt, or corrupt on the machine). Every file in the stage holds the release's bytes before anything
+in it runs, a reused one included, and `release install` verifies the whole set again before its first
+rename. `tla/BenchStage.tla` is the model: `ReusedByteIdentical`, `NoWrongBinary`,
+`NoVerifiedWithWrong` and, with crashes anywhere, `Liveness` hold (`MCBenchStage`); the first cut's
+rule, sending the files whose `SHA256SUMS` line differs, breaks `ReusedByteIdentical`
+(`MCBenchStageBrokenLines`).
+One line per bench, then the cycle:
+
+```
+CYCLE BENCH host=<h> platform=<p> version=<v> was=<v> state=INSTALLED|UP-TO-DATE installed=<n> skipped=<n>
+CYCLE OK version=<v> benches=<n> changed=<n> check=<d> apply=<d> total=<d> logs=<out>/<version>
+```
+
+A failed check applies nothing (`CYCLE FAIL step=check`); a bench with no receipt fails the cycle;
+`--dry-run` is the check alone (`CYCLE WOULD …`, `CYCLE DRY-RUN …`).
+
+*Tests: `TestRebuildSetChoosesTheToolsWhoseImportsChanged`,
+`TestParsePackagesAnswersEachToolsDirectoriesInsideTheCheckout`,
+`TestIncrementalBuildRebuildsOnlyWhatChangedSinceTheRecordedCommit`,
+`TestIncrementalBuildIsWholeWhenItCannotTrustTheBase`,
+`TestABuildWithoutIncrementalBuildsEverythingAndStillRecords`,
+`TestBuildGateReportPrintsTheOpenEdgesAndBuilds`, `TestCutHasNoReportGate`,
+`TestInstallSkipsAToolThatAlreadyHoldsTheBytes`, `TestCycleDryRunChecksAndInstallsNothing`,
+`TestCycleChecksThenAppliesAndSaysWhatEachBenchRuns`, `TestCycleStopsOnAFailedBench`,
+`TestCycleRefusesBeforeAnyPlay`, `TestToolsPlaySendsOnlyTheFilesTheInstalledBuildLacks`,
+`TestATransitiveChangeRebuildsTheTool`, `TestToolsPlaySendsEveryStagedFileWhoseBytesDiffer`.*
+
 ## What this file does not cover
 
 The verbs themselves, the machines file, the retire rule, where `adopt` runs from and the security rules
@@ -492,6 +560,21 @@ One numbered line per test; where one test holds several behaviours, they share 
 45. `TestAWindowsBuildDoesNotClaimToHaveRunItsOwnArtifacts` — a cross-built windows artifact is not self-verified; the build claims only the checksum round trip.
 46. `TestInstallMovesARunningFileAsideWhenTheRenameIsRefused` — `install` moves a running binary aside (dot-prefixed) when its rename is refused, and restores the old binary if the fallback also fails.
 47. `TestTheWindowsBenchIsInTheReleaseSpec` — the windows bench is in the release spec.
+48. `TestRebuildSetChoosesTheToolsWhoseImportsChanged` — an incremental build compiles a tool when a changed non-test path lies under its package or an import's (an embedded file below one included), when `go.mod`/`go.sum` changed, when the base lacks it or `go list` did not list it; nothing else.
+49. `TestParsePackagesAnswersEachToolsDirectoriesInsideTheCheckout` — `go list -deps` is read as each tool's directories inside the checkout; standard and module-cache packages are left out.
+50. `TestIncrementalBuildRebuildsOnlyWhatChangedSinceTheRecordedCommit` — the diff runs from the newest record's commit to the head, only the changed tool compiles, every other is the base's bytes, the record names commit and base and sits outside the artifact directory.
+51. `TestIncrementalBuildIsWholeWhenItCannotTrustTheBase` — a dirty checkout, no record with a commit, or a base whose bytes no longer verify is a whole build with `RELEASE BUILD WHOLE … reason=`.
+52. `TestABuildWithoutIncrementalBuildsEverythingAndStillRecords` — without `--incremental` every tool compiles, and the record is still written.
+53. `TestBuildGateReportPrintsTheOpenEdgesAndBuilds` — `--gate report --reason` prints the open edges and `RELEASE BUILD DOGFOOD REPORTED` and builds (`dogfood=report`); without a reason, with `--no-dogfood-gate`, with another value, or by default it refuses before compiling.
+54. `TestCutHasNoReportGate` — `cut --gate report` is an unknown flag.
+55. `TestInstallSkipsAToolThatAlreadyHoldsTheBytes` — `install` leaves a binary that already holds the artifact's bytes in place (the same file), whatever version it answers.
+56. `TestCycleDryRunChecksAndInstallsNothing` — `cycle --dry-run` runs the play once, `--check`, limited to the benches and localhost, with the build `--incremental --gate report --reason`, and keeps its output.
+57. `TestCycleChecksThenAppliesAndSaysWhatEachBenchRuns` — `cycle` checks, then applies, echoes the build's lines and prints one `CYCLE BENCH` per bench and `CYCLE OK`.
+58. `TestCycleStopsOnAFailedBench` — a failed check applies nothing; a bench the apply has no receipt for fails the cycle.
+59. `TestCycleRefusesBeforeAnyPlay` — a `--benches` entry that is not a machine name, an empty list, or a `--source` without `fleet/tools.yml` refuses before any play.
+60. `TestToolsPlaySendsOnlyTheFilesTheInstalledBuildLacks` (functional) — the tools play seeds a new version's directory from the installed build's on the machine, sends only the differing files, and the install skips the identical binary.
+61. `TestATransitiveChangeRebuildsTheTool` (functional) — the real `go list` on a chain A -> B -> C (a tool, a package it imports, a package that one imports) puts C in A's set (`.Deps` is recursive), and a change under C, an embedded-style file included, rebuilds A and reuses a tool beside it.
+62. `TestToolsPlaySendsEveryStagedFileWhoseBytesDiffer` (functional) — a seeded file corrupt on the machine whose `SHA256SUMS` line matches the release's (the binary the play runs, or any other) is sent again in the same run and the install succeeds; an intact reused file is not sent (`tla/BenchStage.tla` `ReusedByteIdentical`).
 
 Demanded, and proven by no test yet (8):
 
