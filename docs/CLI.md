@@ -57,8 +57,14 @@ receipts. `cmd/nova-dev/testdata/example-dogfood` holds both, the size of a
 first run, and the tests run the example commands against them.
 
 ```
-$ nova-dev dogfood ledger --cli ./docs/CLI.md --receipts ./dogfood-receipts
+$ nova-dev dogfood ledger --cli ./cmd/nova-dev/testdata/example-dogfood/CLI.md --receipts ./cmd/nova-dev/testdata/example-dogfood/receipts
+DOGFOOD tool=nova-example verb=quickstart by=nobody at=- ok=- issue=- open=0
 DOGFOOD tool=nova-example verb=links by=Ada at=2026-09-18T09:00:00Z ok=yes issue=- open=0
+DOGFOOD tool=nova-example verb=nocode by=Lin at=2026-09-18T10:15:00Z ok=no issue=1301 open=1
+DOGFOOD tool=nova-dev verb=dogfood ledger by=nobody at=- ok=- issue=- open=0
+DOGFOOD tool=nova-dev verb=dogfood record by=nobody at=- ok=- issue=- open=0
+DOGFOOD tool=nova-dev verb=dogfood gate by=nobody at=- ok=- issue=- open=0
+DOGFOOD tool=nova-dev verb=hygiene by=nobody at=- ok=- issue=- open=0
 DOGFOOD OK verbs=7 dogfooded=2 by-nonauthor=1 open-edges=1 unfiled=0 unmatched=0
 ```
 
@@ -77,17 +83,17 @@ binaries or from this file, the runs come from receipts, and the gate is one
 exit code a release lane can call.
 
 ```
-$ nova-dev dogfood record --tool nova-check --verb links --by Stella --ok \
+$ nova-check dogfood record --tool nova-check --verb links --by Stella --ok \
     --notes "ran it over my own self repo before the merge; found nothing" \
     --receipts ./dogfood-receipts
 DOGFOOD RECORD OK tool=nova-check verb=links by=Stella at=2026-09-18T09:00:00Z ok=yes issue=- file=./dogfood-receipts/20260918T090000Z-nova-check-links-stella-8e9b64a4.json
 
-$ nova-dev dogfood ledger --cli ./docs/CLI.md --receipts ./dogfood-receipts
+$ nova-check dogfood ledger --cli ./docs/CLI.md --receipts ./dogfood-receipts
 DOGFOOD tool=nova-check verb=quickstart by=nobody at=- ok=- issue=- open=0
 DOGFOOD tool=nova-check verb=links by=Stella at=2026-09-18T09:00:00Z ok=yes issue=- open=0
 DOGFOOD OK verbs=105 dogfooded=1 by-nonauthor=1 open-edges=0 unfiled=0 unmatched=0
 
-$ nova-dev dogfood gate --cli ./docs/CLI.md --receipts ./dogfood-receipts --require-all
+$ nova-check dogfood gate --cli ./docs/CLI.md --receipts ./dogfood-receipts --require-all
 DOGFOOD GATE FAIL tool=nova-check verb=quickstart: not dogfooded by a non-author; a tool is done when somebody who did not write it has run it on real work
 DOGFOOD GATE FAIL verbs=105 findings=104 shown=20 unmatched=0
 ```
@@ -191,12 +197,12 @@ nothing else. A kind the tool does not hold is not answered with
 refused by name, listing the kinds there are:
 
 ```
-$ nova-dev hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --kind fix-with-red-test
+$ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --kind fix-with-red-test
 nova-dev hygiene: --kind "fix-with-red-test" is not a kind this tool declares; one of: fix-red, transcript-test, rebase, sweep, mutation-kill, guard, read, probe, text, tone, report; run: nova-dev help
 ```
 
 ```
-$ nova-dev hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**"
+$ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**"
 HYGIENE OK base=main head=card paths=sign/** findings=0
 ```
 
@@ -209,7 +215,7 @@ command that prints the rest — the same run with the cap lifted, quoted so it
 can be pasted:
 
 ```
-$ nova-dev hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**" --max 2
+$ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**" --max 2
 HYGIENE FINDING reason=identity at=0a19082d2973: author someone@elsewhere.example and committer someone@elsewhere.example are not the pool's identity
 HYGIENE FINDING reason=out-of-path at=elsewhere.go: this path matches none of the card's declared PATHS:
 HYGIENE MORE kind=finding shown=2 total=4 nova-dev hygiene --repo "." --base "main" --head "card" --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**" --max 0
@@ -225,7 +231,7 @@ each read from a real source, each printed as a number now, the same number at
 travel.
 
 ```
-$ nova-dev convergence --repo mas-bandwidth/nova-tools \
+$ nova-check convergence --repo mas-bandwidth/nova-tools \
     --ledger ./receipts/pit-stop.md \
     --receipts ./receipts \
     --retired ./bin/RETIRED.md \
@@ -1527,7 +1533,7 @@ past it: classify from a complete local list instead, with `--local-diff <checko
 (`git diff --name-only <previous>...<head>`) and `--paths-from <file>` to write it or read it back.
 `--dry-run` decides and prints and writes nothing.
 
-**Before any of that, `cut` and `build` run the dogfood gate.** It is `nova-check dogfood gate --cli
+**Before any of that, `cut` and `build` run the dogfood gate.** It is `nova-dev dogfood gate --cli
 <reference> --receipts <dir>` in process: a verb somebody ran that did not do what they needed, and
 that nobody has run since and said it did, is an **open edge**, and an open edge refuses —
 `RELEASE CUT REFUSED reason=dogfood-gate open=<n> remedy="fix the open edges or --no-dogfood-gate

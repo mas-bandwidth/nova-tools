@@ -160,3 +160,62 @@ func TestDevToolMeetsTheStandard(t *testing.T) {
 	t.Parallel()
 	assert.Empty(t, devTool([]string{"dogfood"}).Problems(), "the tool definition falls short of STANDARD section 3")
 }
+
+// The `### First run` block of docs/TESTS.md is EXECUTED: the documented
+// command is run against a copy of the fixture at the path the document
+// names, and its whole output is compared line for line through the one
+// comparator (onboarding.CompareTranscript).
+func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
+	require.NoError(t, err)
+	lines, err := onboarding.FirstRun(string(raw), "nova-dev")
+	require.NoError(t, err)
+	steps, err := onboarding.Steps("nova-dev", lines)
+	require.NoError(t, err)
+	require.NotEmpty(t, steps, "the `### First run` block holds no nova-dev command; this test would pass by running nothing")
+
+	// The document's paths are the repository root's; the fixture is copied to
+	// those names in a directory of this test's own, so every count on every
+	// line is of the fixture and reproduces as written.
+	dir := t.TempDir()
+	fixture, err := filepath.Abs(exampleDogfood)
+	require.NoError(t, err)
+	t.Chdir(dir)
+	for _, name := range []string{"CLI.md"} {
+		body, err := os.ReadFile(filepath.Join(fixture, name))
+		require.NoError(t, err)
+		require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(dir, "cmd/nova-dev/testdata/example-dogfood", name)), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "cmd/nova-dev/testdata/example-dogfood", name), body, 0o644))
+	}
+	require.NoError(t, copyTreeShallow(t, filepath.Join(fixture, "receipts"), filepath.Join(dir, "cmd/nova-dev/testdata/example-dogfood", "receipts")))
+
+	var got []onboarding.Result
+	for _, s := range steps {
+		res, err := runDocumented(s)
+		require.NoError(t, err, "the documented command\n  %s\ncould not be run: %v", s.Line, err)
+		got = append(got, res)
+	}
+	assert.Empty(t, onboarding.CompareTranscript(steps, got, nil), "the `### First run` block and the tool disagree")
+}
+
+// copyTreeShallow copies one directory's files into a fresh directory.
+func copyTreeShallow(t *testing.T, from, to string) error {
+	t.Helper()
+	entries, err := os.ReadDir(from)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(to, 0o755); err != nil {
+		return err
+	}
+	for _, e := range entries {
+		body, err := os.ReadFile(filepath.Join(from, e.Name()))
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(to, e.Name()), body, 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
+}

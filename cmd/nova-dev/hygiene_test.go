@@ -445,14 +445,16 @@ func TestHygieneIdentityIsDocumentedAsOneNameAndEmail(t *testing.T) {
 		}
 	}
 	require.NotEmpty(t, refusals, "the `### hygiene, on a branch` block holds no refusal step; this test would pass by running nothing")
+	var got []onboarding.Result
 	for _, s := range refusals {
 		res, err := runDocumented(s)
-		if !assert.NoError(t, err, "the documented command\n  %s\ncould not be run: %v", s.Line, err) {
-			continue
-		}
-		for _, p := range onboarding.Compare(s, res, nil) {
-			assert.Fail(t, "check failed", p)
-		}
+		require.NoError(t, err, "the documented command\n  %s\ncould not be run: %v", s.Line, err)
+		got = append(got, res)
+	}
+	// CompareTranscript is the one comparison a transcript test may make: same
+	// number of lines, same lines, same order, every value as written.
+	for _, p := range onboarding.CompareTranscript(refusals, got, nil) {
+		assert.Fail(t, "check failed", p)
 	}
 }
 
