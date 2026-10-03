@@ -337,7 +337,7 @@ read — and `convergence` is a reading of the work itself. Each is a ledger
 written in advance, read back, and held to.
 
 Verbs: `quickstart`, `attest`, `links`, `kernel`, `nocode`, `floors`,
-`corpus`, `hygiene`, `dogfood`, `convergence`, `spelling`, plus `version` and `help`.
+`corpus`, `spelling`, plus `version` and `help`; `hygiene`, `dogfood` and `convergence` moved to nova-dev (below).
 `nova-check version` is the Conventions' build line, exit 0, so a green from
 this tool names its build.
 
@@ -1380,6 +1380,36 @@ four-column table indented after a blank line is not checked. Indented rows
 
 ---
 
+### spelling — known misspellings in prose, with code blocks blanked
+
+```
+nova-check spelling (--dir <dir> | --file <path> | --path <pattern>)
+                    [--ignore <word|@file>] [--write] [--exclude <prefix>]
+                    [--fail-max <n>]
+```
+
+**Why it exists.** Prose committed into a self repo or prepared for publishing
+deserves a mechanical spelling pass. Fenced code blocks and inline code spans
+are blanked with spaces so identifiers, code snippets, and technical symbols
+are not falsely flagged as misspellings. Compares against a pure-Go corpus
+(`github.com/client9/misspell`) in US locale.
+
+**The allowlist.** Known project terms and technical words are excluded via
+`--ignore <word|@file>` (repeatable, or comma-separated). An `@file` reference
+loads words one per line, with blank lines and `#` comments ignored.
+
+**Write mode.** In check mode (default), findings are reported and the check
+exits 1 if any misspellings are found. With `--write`, corrections are applied in
+place atomically, preserving surrounding formatting, code blocks, and line
+structures, exiting 0.
+
+**Deliberately does not check:** *code blocks or identifiers.* Code is not
+prose: identifiers and code snippets in fences and backticks are skipped.
+
+---
+
+## nova-dev — this repository's own development process
+
 ### hygiene — is this branch's range clean, before anybody reads it
 
 ```
@@ -1676,34 +1706,6 @@ The full rules, the refusals and the red tests are in
 records and prints ratios; why a stream widened is a person's to say. Nor does it
 write: not to the forge, not to `--repo-dir`, not to `--bin`. The only file it
 writes is `--state`, and that holds one number per stream.
-
-### spelling — known misspellings in prose, with code blocks blanked
-
-```
-nova-check spelling (--dir <dir> | --file <path> | --path <pattern>)
-                    [--ignore <word|@file>] [--write] [--exclude <prefix>]
-                    [--fail-max <n>]
-```
-
-**Why it exists.** Prose committed into a self repo or prepared for publishing
-deserves a mechanical spelling pass. Fenced code blocks and inline code spans
-are blanked with spaces so identifiers, code snippets, and technical symbols
-are not falsely flagged as misspellings. Compares against a pure-Go corpus
-(`github.com/client9/misspell`) in US locale.
-
-**The allowlist.** Known project terms and technical words are excluded via
-`--ignore <word|@file>` (repeatable, or comma-separated). An `@file` reference
-loads words one per line, with blank lines and `#` comments ignored.
-
-**Write mode.** In check mode (default), findings are reported and the check
-exits 1 if any misspellings are found. With `--write`, corrections are applied in
-place atomically, preserving surrounding formatting, code blocks, and line
-structures, exiting 0.
-
-**Deliberately does not check:** *code blocks or identifiers.* Code is not
-prose: identifiers and code snippets in fences and backticks are skipped.
-
----
 
 ## nova-self-talk — the self-talk register, classified
 
