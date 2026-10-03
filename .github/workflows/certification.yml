@@ -129,9 +129,9 @@ jobs:
     # (`ok <pkg> <seconds>`), the larger of ubuntu-latest and macos-latest, in the cold run
     # 36375296705 at 3314df055 plus this change: internal/ci 49.3 s, cmd/nova-tokens 46.4,
     # cmd/nova-sandbox 34.2, cmd/nova-self-talk 21.3, internal/update 19.1, cmd/nova-secrets 16.7,
-    # internal/bus 16.6, every other live package under 13 (cmd/nova-bus 1.2). Seven heavy
-    # packages, eight shards: each heavy package has a shard of its own and the rest are about
-    # twelve packages a shard.
+    # internal/bus 16.6. Run 37158353472 also shows cmd/nova-sprint reaching the 75 s test
+    # timeout alongside internal/ci on macOS. Eight heavy packages, eight shards: each heavy
+    # package has a shard of its own, with the other live packages dealt round-robin.
     #
     # BUILD AND VET ARE NOT HERE ANY MORE. They are ci.yml's: its lint job runs `make build` and
     # `make vet` on every event (Linux), and its test-hosted legs run `make build` and
@@ -229,7 +229,7 @@ jobs:
         # internal/ci: TestCertificationRaceShardsPartitionTheLiveTree (certRaceHeavy).
         shell: bash
         run: |
-          "$RUNNER_TEMP/ci" deal --shards ${{ matrix.shards }} --shard ${{ matrix.shard }} --heavy "internal/ci cmd/nova-tokens cmd/nova-sandbox cmd/nova-self-talk internal/update cmd/nova-secrets internal/bus"
+          "$RUNNER_TEMP/ci" deal --shards ${{ matrix.shards }} --shard ${{ matrix.shard }} --heavy "internal/ci cmd/nova-tokens cmd/nova-sandbox cmd/nova-self-talk internal/update cmd/nova-secrets internal/bus cmd/nova-sprint"
 
       - name: fetch origin/dev for the deprecated-imports ratchet
         # internal/ci's TestDeprecatedImportsAllowlistOnlyShrinksAgainstMergeBase compares the
