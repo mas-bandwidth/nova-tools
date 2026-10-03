@@ -6,7 +6,7 @@ Score: 7.5/10
 README: 8/10
 
 ## Reasons
-The tool provides a thoughtful and disciplined communication mechanism over git. It avoids central servers, keeps human-readable markdown notes, and ensures cursors and open backlogs remain manageable across distributed participants. The documentation explains the mental model clearly, and the tool delivers strong protections against lost notes and race conditions.
+The tool provides a thoughtful and disciplined communication mechanism over git. It avoids central servers, keeps human-readable markdown notes, and ensures cursors and open backlogs remain manageable across distributed participants. The documentation explains the mental model clearly, and the tool delivers strong protections against lost notes and race conditions across concurrent sessions.
 
 A score of 10 would require breaking down monolithic functions, eliminating 13-parameter calls in favor of option structs, standardizing exit codes for refusals, cleaning up retired flag declarations, and removing historical incident narratives from documentation and comments.
 
