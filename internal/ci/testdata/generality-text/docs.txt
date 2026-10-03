@@ -56,5 +56,5 @@ docs/SPEC.md:rowan 4
 docs/SPEC.md:space 16
 docs/SPEC.md:studio 1
 docs/TESTING.md:space 1
-docs/TESTS.md:emma 2
+docs/TESTS.md:emma 4
 docs/TESTS.md:rowan 2
