@@ -288,6 +288,12 @@ func CardTiers(c *Card) (now, ceiling string) {
 	return cardTier(c, m), ceilingTier(c, m)
 }
 
+// cardTierOf is the tier the primary c is on (cardTier).
+func cardTierOf(c *Card) string {
+	now, _ := CardTiers(c)
+	return now
+}
+
 // NextTier is the tier the primary c escalates to when it reaches its bound: the next tier
 // of the ladder above the one it is on, up to its ceiling; "" at its ceiling (a pinned
 // model or tier is on its ceiling, cardTier), for brief lines that cannot be read, and in
