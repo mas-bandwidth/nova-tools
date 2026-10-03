@@ -25,7 +25,6 @@
 # base lacks is red, so a wait and its row in one change is red). The remedy
 # for a row is an injected clock seam or //go:build functional, then delete it.
 cmd/nova-redis	TestRestartOnTheSameDirKeepsTheStore	#4221 calls time.Sleep
-cmd/nova-sandbox	TestAForkedChildIsReapedWithTheCallersGroup	#4221 calls time.Sleep
 cmd/nova-sandbox	TestWindowsHasNo128PlusN	#4221 calls time.Sleep
 cmd/nova-tokens	TestConcurrentWritersDoNotMutateTheBareRemote	#4221 calls time.Sleep
 cmd/nova-update	TestHelpExampleLinesRunAsPrinted	#4221 measured over 5 s on the 2026-09-25 PR run
