@@ -71,7 +71,7 @@ func TestAReadIsToldTheWorksChangeWhenTheBaseMoved(t *testing.T) {
 			require.ElementsMatch(t, []string{"landed-a.txt", "landed-b.txt", "quacks/w.txt"},
 				strings.Fields(runGit(t, checkout, "diff", "--name-only", "origin/main")), "the base moved: a diff against it is more than the work")
 
-			_, ferr := installFrame(nativeRunConfig{slotDir: slot, model: model, frame: fr}, job, st.BaseSha)
+			_, ferr := installFrame(nativeRunConfig{slotDir: slot, model: model, frame: fr}, job, st.BaseSha, nil)
 			require.NoError(t, ferr)
 			jobText, err := os.ReadFile(filepath.Join(job, cardcontract.JobName))
 			require.NoError(t, err)
@@ -199,7 +199,7 @@ func TestAReadsDiffIsExactlyTheWorkWhereverTheBaseIs(t *testing.T) {
 				require.NotEqual(t, f.start, gitAs(t, filepath.Join(job, swarm.JobRepo), "merge-base", "HEAD", "origin/main"),
 					"the clone's base is the mirror's, older than the work's start")
 			}
-			_, ferr := installFrame(nativeRunConfig{slotDir: slot, model: "fake/fake-model", frame: f.frame("main")}, job, f.head)
+			_, ferr := installFrame(nativeRunConfig{slotDir: slot, model: "fake/fake-model", frame: f.frame("main")}, job, f.head, nil)
 			require.NoError(t, ferr)
 			f.assertExactlyTheWork(t, job)
 		})
@@ -217,7 +217,7 @@ func TestAReadAgainstATagOrAShaNeedsNoFetch(t *testing.T) {
 			slot := filepath.Join(t.TempDir(), "slot")
 			job := f.stage(t, slot)
 			runGit(t, filepath.Join(job, swarm.JobRepo), "remote", "set-url", "origin", filepath.Join(t.TempDir(), "no-such-origin.git"))
-			_, ferr := installFrame(nativeRunConfig{slotDir: slot, model: "fake/fake-model", frame: f.frame(base)}, job, f.head)
+			_, ferr := installFrame(nativeRunConfig{slotDir: slot, model: "fake/fake-model", frame: f.frame(base)}, job, f.head, nil)
 			require.NoError(t, ferr)
 			f.assertExactlyTheWork(t, job)
 		})

@@ -61,8 +61,8 @@ func friendBrief(name string, p sprint.Packet) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "STATUS: nova-sprint card %s, epoch %d, attempt %d; push your work to the branch %s; when done, write outbox/%s/REPORT.md with Verdict: LAND|HOLD|FAIL and Head: <sha>\n", p.Card, p.Epoch, p.Attempt, p.Branch, job)
 	fmt.Fprintf(&b, "Work in ~/%[1]s-working/jobs/%[2]s/: every clone, worktree and build output goes inside it, GOCACHE=~/%[1]s-working/.cache/go-build, and the report goes to ~/%[1]s-working/outbox/%[2]s/REPORT.md.\n", name, job)
-	if p.BaseHead != "" {
-		fmt.Fprintf(&b, "This attempt continues attempt %d: its head, %s, is the last pushed by any attempt before this one; start from it.\n", p.BaseAttempt, p.BaseHead)
+	if p.Attempt > 1 {
+		b.WriteString(friendStart(p))
 	}
 	for _, l := range [][2]string{{"This attempt exists because: ", p.Why}, {"A reader found: ", p.Finding}, {"The coordinator asks: ", p.Fix}} {
 		if l[1] != "" {
@@ -76,6 +76,29 @@ func friendBrief(name string, p sprint.Packet) string {
 		}
 	}
 	b.WriteString("\n" + strings.TrimRight(brief, "\n") + "\n")
+	return b.String()
+}
+
+// friendStart is where a friend's later attempt starts, the rule a member's rework is staged
+// by (docs/SPEC-CARD-CONTRACT.md, where a rework starts; nova-tools#5215): the current tip of
+// the card's base branch on origin, never an older base, with the work of the last attempt that
+// pushed carried onto it by the friend herself, and the Head she reports on that tip. A friend
+// has no staged commit: nothing checks that her Head descends from the tip, and the ls-remote of
+// friendFinish (Head is origin's tip of her branch) is the only guard on her finish.
+func friendStart(p sprint.Packet) string {
+	base := swarm.ReadCardBase([]byte(p.Brief)).Ref
+	at, ref := "origin's "+base, "origin/"+base
+	if base == "" || typedrec.IsFullSha(base) {
+		base, at, ref = "the repository's default branch", "origin's default branch", "origin/HEAD"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "This attempt starts from the current tip of %s on origin, never from an older base: fetch it and start your branch there.", base)
+	if p.BaseHead != "" {
+		fmt.Fprintf(&b, " Carry the work of attempt %d onto it yourself: its head, %s, is the last pushed by any attempt before this one (`git diff %s...%s` shows that work); where it does not apply cleanly, redo it.", p.BaseAttempt, p.BaseHead, ref, p.BaseHead)
+	} else {
+		b.WriteString(" No attempt before this one pushed work to carry.")
+	}
+	fmt.Fprintf(&b, " The Head you report must be on that tip: a commit that descends from %s as you fetched it.\n", at)
 	return b.String()
 }
 

@@ -16,8 +16,8 @@ and opens the pull request). The model is `tla/CardContract.tla`.
 
 | layer | what it guarantees | checked by |
 |---|---|---|
-| 1. the frame | the member writes `<slot>.frame.json` from the packet and the brief's header lines: the repository, the base ref, the commit to stage (the base, or for a rework the last pushed head of any earlier attempt, `base_head` and its attempt `base_attempt` in the packet, or for a read the head under read), the branch, the attempt, the head it continues and that head's attempt, why the attempt exists (`why`), the readers' finding and the coordinator's fix, the tier, the model | `TestTheFrameIsThePackets`, `TestALaterAttemptStartsFromTheLastPushedHeadOfAnyEarlierAttempt`, `TestAReworkStagesAtTheLastPushedHeadOfAnyEarlierAttempt` |
-| 2. staging | `native --frame` stages that commit on that branch (never the brief's prose, never a branch name that never reached origin) and writes `JOB.md` into the job directory | `TestStageCardStagesTheFramesCommitOnItsBranch` (functional tier) |
+| 1. the frame | the member writes `<slot>.frame.json` from the packet and the brief's header lines: the repository, the base ref, the commit to stage (the base, or for a rework the last pushed head of any earlier attempt, `base_head` and its attempt `base_attempt` in the packet, which staging carries onto the tip of the base branch, or for a read the head under read), the branch, the attempt, the head it continues and that head's attempt, why the attempt exists (`why`), the readers' finding and the coordinator's fix, the tier, the model | `TestTheFrameIsThePackets`, `TestALaterAttemptStartsFromTheLastPushedHeadOfAnyEarlierAttempt`, `TestAReworkStagesAtTheLastPushedHeadOfAnyEarlierAttempt` |
+| 2. staging | `native --frame` stages that commit on that branch (never the brief's prose, never a branch name that never reached origin), a rework at the tip of its base branch with that commit's work carried on top where it applies cleanly, and writes `JOB.md` into the job directory | `TestStageCardStagesTheFramesCommitOnItsBranch`, `TestAReworkIsStagedAtTheTipOfItsBase`, `TestAReworkCarriesThePreviousWorkThatApplies`, `TestAReworkWhoseWorkDoesNotApplyIsTheBareTip` (functional tier) |
 | 3. the profile | the child's model family picks a profile; the profile writes the shims first on the child's `PATH` and the text of `JOB.md` | `internal/cardcontract`: unit tests of the text and the shape, functional tests of every shim verb form |
 | 4. the finish | the member reads the result shape, pushes the head, opens the pull request, and judges the finish: ok, failed with its reason, or reaped | `TestJudgeIsTheFinishRule`, `TestJudgeNamesTheProviderForARunItFailed` and the push tests of `internal/member`, the twin tests of `cmd/nova-sprint`, `tla/CardContract.tla` |
 | 5. end to end | a scripted child (clone, branch, commit, push, `gh pr create`) runs under the real member and native on the mem twin with a local bare origin, once per profile | `TestTheScriptedChildEndToEnd` (functional tier) |
@@ -38,14 +38,20 @@ already set and named, never a cold one of its own under the job: `go help cache
 is safe for concurrent invocations of the go command.", and sixteen reads each compiling the
 repository from nothing kept a 36-thread bench 85% in the kernel on 2026-10-02; niced, `-count=1 -timeout`;
 `TestJobTextNamesTheSharedBuildCache`), the attempt, and for attempt
-2 and later the attempt it continues and its head (`This checkout continues attempt <n>: its head,
-<sha>, is the last pushed by any attempt before this one, and the checkout starts from it.`; left
-out when no earlier attempt pushed, and the checkout is the base) and, right after the attempt
+2 and later where it was staged: the tip of its base branch and, when an earlier attempt pushed,
+whether that attempt's work was carried on top (`This checkout is staged at the tip of <base> as
+origin held it when it was staged, <sha>, with the work of attempt <n> (its head <sha>) carried on
+top as one commit, <sha>, ...`), the tip already held it, or it did not apply cleanly and is not in
+the checkout; a base that never moves (a sha, a tag) keeps the sentence `This checkout continues
+attempt <n>: its head, <sha>, is the last pushed by any attempt before this one, and the checkout
+starts from it.` (`TestJobTextSaysWhereAReworkWasStaged`) and, right after the attempt
 line, why the attempt exists. A rework
 says three lines, each left out when its value is empty: `This attempt exists because: <how the
 attempt before ended>`, `A reader found: <the finding of its broken read>`, `The coordinator
 asks: <the --fix text>` (left out too when it is the finding, or already in how the attempt
-ended); then `Do that first; a finish with no new commit is refused.` The three are the
+ended), and, when the work before did not apply at the tip, `The previous work: the work of
+attempt <n> must be redone from this tip: ...`; then `Do that first; a finish with no new commit is
+refused.` The three are the
 packet's `why`, `finding` and `fix`, which the rework wrote on the attempt's work card
 (`TestReworkCarriesTheFixTheFindingAndWhyInTheNextPacket`; the lines:
 `TestJobTextOfAReworkSaysWhyAndWhatToDoFirst`). A read's `JOB.md` says to review the
@@ -111,6 +117,20 @@ changes nothing); with no such attempt both are empty and the base is staged
 rework staged from the immediately previous attempt only). `nova-sprint card <id>` prints each
 attempt's pushed head (`head=`, `-` when none) and one `NEXT` line: the attempt whose head the next
 attempt starts from, or the base (`TestCardShowsTheHeadTheNextAttemptStartsFrom`).
+
+The member stages that work at the tip of the card's base branch (docs/SPEC-SWARM.md, "A rework
+is staged at its base branch's tip"; nova-tools#5215): origin's branch is fetched when the rework
+is staged, and `base_head`'s work is carried onto its tip as one commit, a squashed three-way merge;
+a head that already descends from the tip is staged as it is, work the tip already holds adds
+nothing, and work that does not apply cleanly leaves the bare tip, which JOB.md says. The finish's
+staged commit is that commit, so a child that starts again from the tip is accepted and a head on
+the old base is refused (`TestAReworkStagedAtTheTipFinishesFromItAndNotFromTheOldHead`; end to end, the base moved after
+attempt one, `TestAReworkAfterTheBaseMovedIsStagedAtANewCarryOnItsTip`), and the
+finish's report begins, after the push, with the stage's words (`stage: staged=<sha> tip=<sha> of
+<base> carry=<carried|held|conflict|none>`), so the card's timeline says it. A base that is a full sha
+or a tag never moves, and its rework is staged at `base_head` itself. A rework staged at the old
+head kept a base hours old, and its child, told to start again from the tip, was refused at its
+finish for not descending from the staged commit.
 
 The frame reads the brief's **header only**: line 1 and the `key: value` lines that follow it,
 up to the first blank line or line of prose (`swarm.ReadCardBase`). A `base-repo:`, `BASE:` or
