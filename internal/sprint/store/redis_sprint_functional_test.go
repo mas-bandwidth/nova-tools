@@ -951,3 +951,29 @@ func TestRedisTheFenceRefusesWhatItShould(t *testing.T) {
 		require.Fail(t, fmt.Sprintf("acquire at epoch 1: %v %v", ok, err))
 	}
 }
+
+// TestRedisTwinCatchesUpFromARowOrderWithoutAWholeRead pins the fix for
+// nova-tools#5214: a fleet reorder (a "set" change-stream event, written
+// outside the fence when a member's beat lapses and comes back under load)
+// once read the fleet table whole because "set" named no records in the
+// twin's catch-up verbs. The twin now advances the revision and re-reads the
+// rows from the shape, so the drive's "no whole read after the first tick"
+// holds.
+func TestRedisTwinCatchesUpFromARowOrderWithoutAWholeRead(t *testing.T) {
+	c := liveClient(t)
+	names := sprint.Names{Prefix: "g-"}
+	now := time.Now().UTC().Truncate(time.Second)
+	st := &Store{B: &Redis{C: c, Names: names, Now: func() time.Time { return now }},
+		Names: names, Actor: "tester", Now: func() time.Time { return now }}
+	ctx := context.Background()
+	require.NoError(t, st.Init(ctx))
+	require.NoError(t, st.B.RowsAdd(ctx, names.Table(sprint.Fleet), []string{"m1", "m2"}))
+	tw := st.twin()
+	_, _, err := st.twinRead(ctx, tw, All, nil, nil)
+	require.NoError(t, err)
+	before := st.stats().reads.Load()
+	require.NoError(t, st.B.(RowsOrderer).RowsOrder(ctx, names.Table(sprint.Fleet), []string{"m2", "m1"}))
+	_, _, err = st.twinRead(ctx, tw, All, nil, nil)
+	require.NoError(t, err)
+	assert.Equal(t, before, st.stats().reads.Load(), "a fleet reorder read the fleet whole; the twin should catch up from its change stream")
+}

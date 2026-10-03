@@ -882,10 +882,15 @@ type changeEvent struct {
 // changePage is how many events one read of a change stream takes.
 const changePage = 64
 
-// twinVerbs are the table writes whose events name every record they changed
-// (a batch's account names each of its entries; a row's texts and rows name
-// none): any other write in the span makes the twin read the table whole.
-var twinVerbs = map[string]bool{"apply": true, "row_set": true, "rows_add": true, "row_add": true}
+// twinVerbs are the table writes whose events name every record they changed,
+// or that name none (the twin then re-reads the table's rows, texts and
+// properties from the shape, which every read brings up to date): a batch's
+// account names each of its entries ("apply"); a row's texts ("row_set") and
+// rows ("rows_add", "row_add") name none; a table's order, sort and columns
+// ("set") name none, and the shape's rows carry the order; a row's delete
+// ("row_del") names the cards it unplaced. Any other write in the span makes
+// the twin read the table whole.
+var twinVerbs = map[string]bool{"apply": true, "row_set": true, "rows_add": true, "row_add": true, "set": true, "row_del": true}
 
 // TableChanges reads the table's change stream from its newest event back to
 // the one that left revision from, and says the records the writes between
