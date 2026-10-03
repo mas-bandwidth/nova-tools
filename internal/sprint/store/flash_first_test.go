@@ -236,7 +236,22 @@ func TestAStoreWithNoRouteEscalatesNothing(t *testing.T) {
 	pr := h.snap().Work.Card("s1-1")
 	assert.Equal(t, 1, pr.Int("attempt"), "no second attempt")
 	assert.Empty(t, pr.F(sprint.FieldTierNow))
+	assert.Empty(t, h.snap().NextTier(pr), "NextTier returns empty when store has no routes")
 	assert.Len(t, h.openOf(sprint.NBound), 1, "the bound's judgment")
+}
+
+// NextTier returns "" when s.Routes has length 0 (route.go len(s.Routes)==0 guard) even
+// if the card is at its bound.
+func TestNextTierReturnsEmptyWhenRoutesEmptyEvenAtBound(t *testing.T) {
+	t.Parallel()
+	h := routeHarness(t)
+	h.addReady("s1", 1, briefOf("pro", ""))
+	h.startMachine()
+	h.machine()
+	h.boundOut("s1-1")
+	pr := h.snap().Work.Card("s1-1")
+	require.Empty(t, h.snap().Routes)
+	assert.Empty(t, h.snap().NextTier(pr))
 }
 
 // The second identical failure across attempts below the ceiling escalates (rules 1 and 2
@@ -264,6 +279,7 @@ func TestASecondIdenticalFailedAttemptBelowTheCeilingEscalates(t *testing.T) {
 	pr := h.snap().Work.Card("s1-1")
 	assert.Equal(t, sprint.Ready, pr.Col, "back to ready, as a rework with no member up leaves it")
 	assert.Equal(t, "pro", pr.F(sprint.FieldTierNow))
+	assert.Empty(t, pr.F(sprint.FieldIdenticalAt), "identical_at cleared on escalation")
 	assert.Contains(t, pr.F("why"), "escalated from flash to pro: attempts 1 and 2 failed the same way (verdict not-done; tests red in)")
 	assert.Empty(t, h.openOf(sprint.NBound), "no judgment below the ceiling")
 	assert.Equal(t, 1, h.notesOf(sprint.NWorkFailed), "and no failed-work one")
@@ -334,6 +350,7 @@ func TestASecondIdenticalFailureWithNoUsageStillEscalates(t *testing.T) {
 	pr := h.snap().Work.Card("s1-1")
 	assert.Equal(t, sprint.Ready, pr.Col, "escalated, not held for a judgment")
 	assert.Equal(t, "pro", pr.F(sprint.FieldTierNow))
+	assert.Empty(t, pr.F(sprint.FieldIdenticalAt), "identical_at cleared on escalation")
 	assert.Empty(t, h.openOf(sprint.NBound), "no judgment below the ceiling")
 	h.clean("escalated with no usage")
 }
