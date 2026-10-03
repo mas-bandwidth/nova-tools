@@ -99,6 +99,7 @@ func TestEveryCoordinatorVerbIsTheCoordinators(t *testing.T) {
 		"set":           "set --read-tier pro",
 		"wait":          "wait x --for 1m",
 		"ack":           "ack x --reason r",
+		"answer":        "answer --decide --dry-run --record /dev/null",
 		"clear":         "clear --confirm sprint",
 		"teardown":      "teardown --confirm sprint",
 		"repair":        "repair",

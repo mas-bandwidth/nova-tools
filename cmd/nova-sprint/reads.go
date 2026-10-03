@@ -1391,7 +1391,12 @@ func (a *app) cmdRoutes(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	if c.json {
-		b, _ := json.Marshal(map[string]any{"tiers": sprint.TierRoutes(rs), "routes": stats})
+		// the judgment bar rides here for answer --decide, which reads it through the server
+		bar, err := st.JudgmentBar(ctx)
+		if err != nil {
+			return a.readFailed("routes", err, stderr)
+		}
+		b, _ := json.Marshal(map[string]any{"tiers": sprint.TierRoutes(rs), "routes": stats, "decide_judgment_bar": bar})
 		fmt.Fprintln(stdout, string(b))
 		return 0
 	}

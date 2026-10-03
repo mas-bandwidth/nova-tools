@@ -697,7 +697,7 @@ Postgres and a throwaway Redis.
 
 ```text
 $ nova-config migrate --file try.json
-CONFIG MIGRATE file=try.json from=0 to=21 applied=21
+CONFIG MIGRATE file=try.json from=0 to=22 applied=22
 
 $ nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --as a1 --file try.json
 CONFIG ADD kind=machine name=m1 rev=1
@@ -995,6 +995,95 @@ $ nova-sprint merge --stream s1 --batch 1
 MOVED s1-1 merging -> landed
 MERGE OK moved=1 refused=0 notes=2 op=merge-t32-1
 0/1 0.0% -> ETA -  machine: running
+```
+
+### Answered by nova-decide
+
+The routine judgments answered by the judgment decision
+([SPEC-SPRINT.md section 8](SPEC-SPRINT.md#answered-by-nova-decide)): two cards
+come back failed in one note, and `answer --decide` asks the decision for each
+card and reworks each by the line the inbox prints for it alone. The backend is
+the fixed one (`--backend fixed`), answering from
+`cmd/nova-sprint/testdata/judgment-answers.json` whatever the state, so no key or
+network is needed; with Jev it is `nova-secrets exec --only JEV_API_KEY --
+nova-sprint answer --decide`. Run from a checkout root over a fresh twin, with
+the first run's environment, by `cmd/nova-sprint/answer_transcript_test.go`,
+which keeps the record in a temporary directory and prints it as
+`./judgment.jsonl`; nothing else is normalised.
+
+```text
+$ nova-sprint init --readers reader-a,reader-b --members m1
+INIT OK tables=work,readers,merge,fleet view=sprint readers=reader-a,reader-b
+MOVED m1 added, down until it beats
+FLEET-UP OK moved=1 refused=0 notes=0 op=fleet-release-t1-1
+STOPPED
+NOTE a twin beats every member at every verb: each member added is up after the next nova-sprint tick
+
+$ nova-sprint add --stream s1 --count 2
+MOVED s1-1 -> ready stream=s1 score=1
+MOVED s1-2 -> ready stream=s1 score=2
+ADD OK stream=s1 cards=2 before=- moved=2 refused=0 notes=0 op=add-t2-1
+NOTE the cards have no brief, so a worker is handed no task with them; give each one before it is dealt, on a STOPPED machine: nova-sprint brief <id> --brief-file <path>
+STOPPED  0/2 0.0%
+
+$ nova-sprint start
+START OK before=STOPPED after=RUNNING changed
+nothing is ticking between commands in a twin: tick by hand: nova-sprint tick
+0/2 0.0% -> ETA -  machine: running
+
+$ nova-sprint tick
+MOVED presence: m1 up
+TABLES rows changed: work=0 readers=0 merge=0 fleet=1
+TICK OK state=RUNNING idle=no moved=1 notes=2
+0/2 0.0% -> ETA -  machine: running
+
+$ nova-sprint tick
+MOVED deal: s1-1 work ready -> working card=s1-1.w1 member=m1 (fleet ready)
+MOVED deal: s1-2 work ready -> working card=s1-2.w1 member=m1 (fleet ready)
+TABLES rows changed: work=1 readers=0 merge=0 fleet=1
+TICK OK state=RUNNING idle=no moved=2 notes=1
+0/2 0.0% -> ETA -  machine: running
+
+$ nova-sprint take --as m1 --limit 2 --epoch 0
+MOVED s1-1.w1 fleet ready -> working member=m1 gen=1
+MOVED s1-2.w1 fleet ready -> working member=m1 gen=1
+PACKET s1-1.w1 attempt=1 gen=1 epoch=0
+  branch: sprint/s1-1.w1.g1.e0
+  base: the stream's base
+  notes: none
+  report it: nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --branch sprint/s1-1.w1.g1.e0 --head <commit> --report '<what you did>' [--failed]
+PACKET s1-2.w1 attempt=1 gen=1 epoch=0
+  branch: sprint/s1-2.w1.g1.e0
+  base: the stream's base
+  notes: none
+  report it: nova-sprint finish --as m1 s1-2.w1@1 --epoch 0 --branch sprint/s1-2.w1.g1.e0 --head <commit> --report '<what you did>' [--failed]
+TAKE OK moved=2 refused=0 notes=0 op=take-t23-1
+0/2 0.0% -> ETA -  machine: running
+
+$ nova-sprint finish --as m1 s1-1.w1@1 s1-2.w1@1 --epoch 0 --failed --report 'the tests went red'
+MOVED s1-1.w1 working -> done failed; s1-1 working -> review
+MOVED s1-2.w1 working -> done failed; s1-2 working -> review
+FINISH OK moved=2 refused=0 notes=1 op=finish-t24-1
+0/2 0.0% -> ETA -  machine: running
+
+$ nova-sprint tick
+MOVED drain: s1-1.w1 working -> done failed; s1-1 working -> review (finish by m1)
+MOVED drain: s1-2.w1 working -> done failed; s1-2 working -> review (finish by m1)
+TABLES rows changed: work=1 readers=0 merge=0 fleet=0
+TICK OK state=RUNNING idle=no moved=2 notes=0
+0/2 0.0% -> ETA -  machine: running
+
+$ nova-sprint answer --decide --dry-run --backend fixed --answers ./cmd/nova-sprint/testdata/judgment-answers.json --record ./judgment.jsonl
+judgment        card  kind    verb    p     act          why
+finish-t24-1.1  s1-1  failed  rework  0.91  would-apply  nova-sprint rework s1-1
+finish-t24-1.1  s1-2  failed  rework  0.91  would-apply  nova-sprint rework s1-2
+ANSWER DRY-RUN rows=2 applied=0 would_apply=2 listed=0 refused=0 failed=0 left=0 outcomes=0 bar=0.80 record=./judgment.jsonl; run: nova-sprint inbox
+
+$ nova-sprint answer --decide --backend fixed --answers ./cmd/nova-sprint/testdata/judgment-answers.json --record ./judgment.jsonl
+judgment        card  kind    verb    p     act      why
+finish-t24-1.1  s1-1  failed  rework  0.91  applied  nova-sprint rework s1-1
+finish-t24-1.1  s1-2  failed  rework  0.91  applied  nova-sprint rework s1-2
+ANSWER OK rows=2 applied=2 would_apply=0 listed=0 refused=0 failed=0 left=0 outcomes=0 bar=0.80 record=./judgment.jsonl; run: nova-sprint inbox
 ```
 
 ## nova-work

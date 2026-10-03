@@ -1021,6 +1021,7 @@ nova-sprint stream remove <stream>...
 nova-sprint ci <id>... (--red | --green) --epoch <n> [--head <h>] [--run <id>] [--source <s>] [--note <text>]
 nova-sprint wait <note> (--for <duration> | --until <RFC3339>)
 nova-sprint ack <note>... --reason <text>
+nova-sprint answer --decide [--dry-run] [--bar <p>] [--every <duration>] [--backend jev|fixed] [--answers <file>] [--record <file>]
 nova-sprint inbox [--open <group>] [--read] [--wait [--timeout <duration>]] [--deadline <duration>] [--stale <duration>]
 nova-sprint card <id>
 nova-sprint log [--card <id>] [--stream <s>] [--member <m>] [--since <10m|RFC3339>] [--at-epoch <n>]
@@ -1047,6 +1048,24 @@ id `inbox` prints, with `--expect <n>` the size it printed, which refuses a grou
 that has changed. `nova-sprint help <verb>` (or `<verb> -h`) prints one verb's
 usage, flags and exit codes; `nova-sprint help <group>` (fleet, friend, reader,
 goal, stream) one group's.
+
+### Answering the routine judgments
+
+`nova-sprint answer --decide` answers the routine judgments (a reader found it
+broken, work came back failed, blocked on something dropped, stalled, a conflict,
+past its deadline, cannot ask, ready to accept, a card at its bound) by
+nova-decide's judgment decision, card by card: it applies the verb chosen when
+its probability is at or above `decide_judgment_bar` (nova-config's sprint row,
+0.8 by default; `--bar` overrides), by the line the inbox prints for that card,
+and lists the rest for you: every drop, everything under the bar, and a provider
+refusal for want of payment, which it never asks about. It prints one table, a
+row a card, and records every decision (`--record`, default
+`~/.nova/decide/judgment.jsonl`) with its outcome once the card lands, is dropped
+or comes back. `--dry-run` applies and records nothing; `--every 60s` runs it as
+the seat's loop until the machine is STOPPED. Jev's key comes from `JEV_API_KEY`:
+`nova-secrets exec --only JEV_API_KEY -- nova-sprint answer --decide`. The
+contract is [SPEC-SPRINT.md section 8](SPEC-SPRINT.md#answered-by-nova-decide)
+and [SPEC-NOVA-DECIDE.md section 9](SPEC-NOVA-DECIDE.md#9-the-judgment-decision).
 
 ### Exit codes
 

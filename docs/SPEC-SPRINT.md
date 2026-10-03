@@ -1386,6 +1386,64 @@ a need) is held by what it waits on, which the table shows, and is never stale.
 control card (`stale_review`), and the stream is not shown stale before it.
 This is pull visibility; nothing claims to detect a dead process.
 
+### Answered by nova-decide
+
+`answer --decide` answers the routine judgments by the judgment decision
+(docs/SPEC-NOVA-DECIDE.md section 9; the owner, 2026-10-03: "Please push Jev
+wide"). The routine kinds are the ones a coordinator's own loop answered by the
+printed lines: a reader found it broken, work came back failed, a primary is
+blocked on something dropped, stalled, stream stopped: conflict on a card, a
+work card is past its deadline, cannot ask, ready to accept, and a card reached
+its bound. Every other judgment, a sentinel reached among them, is left, and
+listed `left`. A judgment the coordinator set a wait on is the coordinator's
+until it comes due, and is not read.
+
+Each card of a judgment is decided by itself: a grouped judgment (several cards
+in one note, or several notes in one group) is several decisions, each over its
+own card's state, recorded under the note's id (`<note id>:<card>` for a note of
+several cards). The verbs allowed are the decisions the judgment prints; the
+lines applied are the lines the inbox prints for that card (a judgment of one card:
+its group's lines; one card of several: the lines `inbox` prints for a group of
+that card alone, the card named where a group's form would name `--group <note>
+--expect 1`), with the placeholders filled from the decision: `'<fix>'` the fix's
+text, `'<why nothing is to be done>'` the ack's reason. A note's own verb (`wait`,
+`ack`) runs once a pass, and an ack is applied only to a note of one card.
+
+The verb is applied when its probability is at or above the bar: `--bar`, else
+nova-config's sprint row `decide_judgment_bar` (applied to `sprint:decide_judgment_bar`
+and read with the routes; `routes --json` carries it), else 0.8. A drop is never
+applied, whatever its probability: it is listed with the reason chosen. A card
+whose judgment text or last ten log lines carry a provider's refusal for want of
+payment (HTTP 402, out of credit) is never asked: it is listed, "a payment is the
+owner's". A card decided before is answered from the record and asked nothing; one
+applied before whose judgment is still open is listed, never applied twice; and a
+card the decision reworked within the last hour (the record says when) is listed,
+not reworked again, so no loop reworks a card round and round under a dead
+provider.
+
+At the start of each pass the outcome of earlier decisions is attached from the
+card's state (at most 25 a pass, newest first): landed, dropped (off the table),
+or came back (another judgment open on it). Each pass prints one table, a row a
+card (`judgment`, `card`, `kind`, `verb`, `p`, `act`: applied, would-apply,
+listed, refused, failed or left, and `why`: the lines applied, or why it is
+listed), an `OUTCOME <decision> card=<c> label=<l>` line per outcome attached, and
+`ANSWER OK rows=<n> applied=<n> would_apply=<n> listed=<n> refused=<n> failed=<n>
+left=<n> outcomes=<n> bar=<p> record=<file>; run: nova-sprint inbox`; `--json` is the same as one object.
+`--dry-run` asks the decision and prints `would-apply`, and writes neither the
+sprint nor the record (`ANSWER DRY-RUN`). `--every <d>` is the coordinator seat's
+loop: a pass every `<d>` until a pass finds the machine STOPPED (or DONE), then
+`ANSWER STOPPED <state>: the loop ends`, exit 0. Exit 1 is a pass with an applied
+line refused or a decision whose backend failed; exit 2 a usage, an actor other
+than the coordinator, or a sprint that did not answer.
+
+answer is a client of the sprint as the coordinator's shell is: every read and
+every answer is a verb, sent to the server when `NOVA_SPRINT_SERVER` names one
+(the server never runs answer itself), else run on the store `--redis` names.
+The backend is Jev (`--backend jev`, the key from `JEV_API_KEY`, which
+`nova-secrets exec --only JEV_API_KEY` sets; with no key every ask fails, naming
+that command) or a fixed file (`--backend fixed --answers <file>`). The record is
+`--record`, default `~/.nova/decide/judgment.jsonl`.
+
 ## 9. What is always true
 
 Checked by `nova-sprint check`, and by the model. Sets of primaries are compared
@@ -1528,7 +1586,7 @@ refused), `--json` and `--max`. `--actor` has no default: it is `--actor`, else
 NOVA_SPRINT_ACTOR, and a verb that writes with neither is refused. Every verb
 has one class of who may run it. The coordinator's verbs (init, add, quack, release,
 resolve, start, stop, ask, accept, rework, return, drop, rank, brief, move, resume, land, fleet
-up, fleet down, fleet level, fleet sync, friend sync, friend down, friend up, reader add, reader away, reader up, reader remove, stream remove, wait, ack, clear, teardown, repair,
+up, fleet down, fleet level, fleet sync, friend sync, friend down, friend up, reader add, reader away, reader up, reader remove, stream remove, wait, ack, answer, clear, teardown, repair,
 goal set, goal drop, play) are the sprint's coordinator's alone: the first
 init names the coordinator (`--coordinator`, else the actor), a later init is
 refused unless its actor is that coordinator and never changes it (the seat
@@ -1602,6 +1660,7 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | ci | records a CI observation for primaries in any state |
 | wait | sets a judgment's next review time |
 | ack | closes a judgment the coordinator looked at, with the reason |
+| answer | `--decide`: each card of each routine judgment answered by the judgment decision, the verb chosen applied at or above `decide_judgment_bar` and the rest listed, every decision recorded with its outcome ("Answered by nova-decide", section 8); `--dry-run`, `--bar <p>`, `--every <d>` (until STOPPED), `--backend jev\|fixed`, `--answers <file>`, `--record <file>`; run where typed, its verbs sent to the server |
 | inbox | every open judgment and the notifications since the cursor, grouped, judgment first; `--open <id>`, `--read`; `--json` carries `judgments` (each with `id`, `kind`, `type`, `what`, `stream`, `size`, `cards` whole, `notes`, and `answers`: every decision with the exact command lines that make it, in order), `happened` (the notifications since the cursor, grouped), `done` (the machine has stopped because the sprint is done) and `groups`, every group in the order the text prints; `--wait --timeout <d>` blocks until the inbox holds a judgment, or a note addressed to the coordinator, that was not in it when the wait began (by note id: a held or waited judgment is open already and never wakes it; the owner, 2026-10-02: "push notifications for inbox from nova-sprint so she doesn't have to poll"), or the machine stops having run, or `<d>` passes; it sleeps on the tick-end notes and looks at the inbox at each one and every 15 s while nothing ticks; then it says how it ended on one line (`inbox --wait: new=<group id,...>`, `inbox --wait: the machine stopped`, `inbox --wait: nothing new in <d>`) and shows the inbox; `--json` carries `woke` and `new` (the new groups' ids), the line only for a wait that found nothing, on stderr (stdout stays one JSON object); `--wait --push <dir>` keeps running until it is interrupted: each new judgment and note to the coordinator is written once as `<dir>/<note id>.md` (the group as `inbox --open` prints it, then `clock: <RFC3339>`; a `:` in a read-time group's id becomes `-`), said as `INBOX OK pushed=<id> file=<path>` (`--json`: one object a file), and the files there are its cursor: a note with a file is never written again, so a restart pushes nothing twice and misses nothing; a timeout is quiet and the loop goes on, the machine stopping is its line and the loop goes on; a local write, into the coordinator's own inbox directory; `--push seat` is the holder's inbox, and follows the seat ("Handing over the seat"); `--push` takes no `--read`, `--open` or `--at-epoch`; `--json` carries `coordinator`, the seat's holder |
 | card | one primary's story, told from the log: for a card in flight, first what holds it now (each open judgment with the commands that answer it, or the actor and its deadline); its place in its stream's line; its brief, and the fix its attempt was given; its timeline in local time, an attempt at a time ("attempt 2, because attempt 1 failed"), one line per event a person would name (two readers asked, a merge and its batch, a step and its answer are one line each), a finish and a read with the first line of their words; the reports, findings and fixes whole as paragraphs; a card that has ended says so in one line; a COST line per consumer that ended and the COST TOTAL (section 2, What a card cost); the CARD OK line ends with the tier it is on and its ceiling (`tier=<t> ceiling=<t>`, section 5, flash first); `--fields` prints every field of the primary and its cards instead; `--json` carries both, the timeline's events with the log lines each tells, and the cost |
 | queue --as, take | a member's or a reader's cards (a reader's `queue --as` is its beat), each with its packet: what it is handed so that it needs no other read to learn its task (the card, its epoch and generation, the brief, this attempt's fix, the notes on it, for a rework the finding of the read that found the attempt before broken and why that attempt ended (the work card's own words: the primary's are written at the next tick's drain, after a member may have taken the card), and for a work card the branch to work on, `sprint/<card>.g<gen>.e<epoch>` (the epoch makes it one per epoch, a card id coming back after a clear, and the generation one per launch, a card dealt again within an epoch, withdrawn from a member or redealt after a staging or provider failure, being another launch whose push must not meet the first's), and the one to start from, the attempt before's branch for a rework, with `base_head`, the head that attempt finished ok at, which a rework is staged from (docs/SPEC-CARD-CONTRACT.md: never a branch name alone, which may never have reached origin); for a read card the work it reads: the worker, its head, branch and base, and the worker's report), and the command that reports it (a work card's names `--head <commit>`: a finish without `--head` records the card's id as its head, which `land` refuses as not a commit id); `queue --as <w> --packets <n> [--have <id,...>]` hands only the packets the worker asks for: the first n cards it may start (asked, ready) and every card in flight (reading, working), each not named in `--have`; every other card is listed with its id, column, attempt and gen, and the answer's epoch, which are its claim, and no packet (a reader of width 8 holding 150 asked reads with 2.5 KB briefs: 445,525 bytes without the flag, 51,623 asking for 8; the fleet load test of 2026-10-01 measured 579,181 bytes a pass); without `--packets` every card carries its packet, as before; take prints the packets of the cards it took, `--json` as `packets`; finish takes `--branch` and `--base`, which the work card keeps and the reader's packet and card show; a fleet member (`nova-swarm member`) pushes the child's commit to origin's `sprint/<card>.g<gen>.e<epoch>` before its finish, so the finish's `--head` is the pushed sha the merge queue carries and the merge reads the work from origin; a finish is ok only with the result's shape, its verdict ok and a pushed commit, and every other is a `--failed` finish naming no head and no branch, its report starting with the reason (`no RESULT.md shape`, `nothing to do: <why>`, `verdict <word>`, `no commit: <why>`, `push refused: <git's line>`), so it opens the failed-work judgment and never goes to review with nothing to read (docs/SPEC-CARD-CONTRACT.md section 4) |

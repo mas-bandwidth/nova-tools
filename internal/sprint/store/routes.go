@@ -87,6 +87,10 @@ type RouteSet struct {
 	Routes []sprint.Route
 	Tiers  map[string][]string
 	Bars   [2]string
+	// JudgmentBar is the sprint row's bar on a judgment decision's probability
+	// (sprint:decide_judgment_bar), read with the bars: nova-sprint answer --decide
+	// reads it from routes --json. "" when nova-config has not applied one.
+	JudgmentBar string
 }
 
 // into is the set as the snapshot carries it.
@@ -166,6 +170,7 @@ func (r *Redis) Routes(ctx context.Context) (RouteSet, int64, error) {
 		arrays[t] = pipe.HGet(ctx, config.TierKey(t), "routes")
 	}
 	bounce, review := pipe.Get(ctx, config.SprintKey(config.FieldDecideBounce)), pipe.Get(ctx, config.SprintKey(config.FieldDecideReview))
+	judgment := pipe.Get(ctx, config.SprintKey(config.FieldDecideJudgment))
 	if err := redisconn.Exec(ctx, pipe); err != nil {
 		return RouteSet{}, 2, err
 	}
@@ -179,7 +184,7 @@ func (r *Redis) Routes(ctx context.Context) (RouteSet, int64, error) {
 			tiers[t] = a
 		}
 	}
-	return RouteSet{Routes: out, Tiers: tiers, Bars: [2]string{bounce.Val(), review.Val()}}, 2, nil
+	return RouteSet{Routes: out, Tiers: tiers, Bars: [2]string{bounce.Val(), review.Val()}, JudgmentBar: judgment.Val()}, 2, nil
 }
 
 // RouteOf is a route from its hash as nova-config's apply writes it: a field
@@ -202,7 +207,7 @@ func (m *Mem) Routes(context.Context) (RouteSet, int64, error) {
 	for t, a := range m.tiers {
 		tiers[t] = append([]string(nil), a...)
 	}
-	return RouteSet{Routes: append([]sprint.Route(nil), m.routes...), Tiers: tiers, Bars: m.bars}, 0, nil
+	return RouteSet{Routes: append([]sprint.Route(nil), m.routes...), Tiers: tiers, Bars: m.bars, JudgmentBar: m.judgmentBar}, 0, nil
 }
 
 // SetDecideBars gives the store the decide read's bounce and review bars, as
@@ -211,6 +216,14 @@ func (m *Mem) SetDecideBars(bounce, review string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.bars = [2]string{bounce, review}
+}
+
+// SetJudgmentBar gives the store the judgment decision's bar, as nova-config's apply
+// does a live one (sprint:decide_judgment_bar).
+func (m *Mem) SetJudgmentBar(bar string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.judgmentBar = bar
 }
 
 // SetRoutes gives the store its routes, as nova-config's apply does a live one.
@@ -233,4 +246,11 @@ func (m *Mem) SetTiers(tiers map[string][]string) {
 func (st *Store) Routes(ctx context.Context) ([]sprint.Route, map[string][]string, error) {
 	set, err := st.routes(ctx)
 	return set.Routes, set.Tiers, err
+}
+
+// JudgmentBar is the judgment decision's bar as nova-config applied it, read with the
+// routes: for routes --json, which answer --decide reads. "" when none is applied.
+func (st *Store) JudgmentBar(ctx context.Context) (string, error) {
+	set, err := st.routes(ctx)
+	return set.JudgmentBar, err
 }

@@ -113,8 +113,29 @@ Notes on the rows:
   stranded in review, fewer than two readers up (`reader up`), no member up, an operation stuck (`check`).
 - Before PR 5129 the printed `ack` line with several notes is refused: ack one note at a time.
 
-A loop of the coordinator's own may answer the first six kinds with the lines `inbox --open <id>` prints; it
-never answers a sentinel or composes a command the inbox did not print, and stops at a kind it does not know.
+The routine kinds are answered by `nova-sprint answer --decide` (SPEC-SPRINT.md section 8, "Answered by
+nova-decide"), never by a shell loop of the coordinator's own: the night of 2026-10-02 one such loop read one card
+of a grouped judgment and every stream waited under it until morning. Run it as the seat's loop, a row of its own
+beside the server, with the key from the seat's secrets and never on a command line:
+
+```
+nova-secrets exec --only JEV_API_KEY -- nova-sprint answer --decide --dry-run
+nova-secrets exec --only JEV_API_KEY -- nova-sprint answer --decide --every 60s
+```
+
+It answers each card of a broken, failed, blocked, stalled, conflict, deadline, cannot-ask, ready-to-accept or
+bound judgment by itself: the verb nova-decide chose is applied, by the line the inbox prints for that card, when
+its probability is at or above `decide_judgment_bar` (nova-config's sprint row, default 0.8:
+`nova-config sprint set --decide_judgment_bar <p> --as <coordinator>`, then `nova-config apply --kind sprint`);
+`--bar <p>` overrides it for one run. What it lists is yours, each with why: every drop (with the reason the
+decision chose), everything under the bar, a verb the judgment does not print, a card applied before whose
+judgment is still open, a card it reworked within the last hour, and a provider refusal for want of payment (402, out of credit), which it never asks
+about: a payment is the owner's, so it goes to the owner on the bus. A sentinel and every other kind are left. A
+card is decided once (the record, `~/.nova/decide/judgment.jsonl`, answers it again), so the loop never reworks a
+card round and round; each decision's outcome (landed, dropped, came back) is attached as the card's state says
+it, and `nova-decide calibrate --record ~/.nova/decide/judgment.jsonl --decision judgment --question
+verb=rework --positive landed --negative came-back` reads the bar the record supports. The loop ends when the
+machine is STOPPED; it never composes a command the inbox did not print.
 
 ## 3. Loading work
 

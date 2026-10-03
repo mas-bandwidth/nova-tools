@@ -28,9 +28,11 @@ func TestRedisTheDealReadsTheRoutesApplyWrites(t *testing.T) {
 	require.NoError(t, c.HSet(ctx, config.RouteKey("flash-a"), "tier", "flash", "provider", "deepseek", "model", "v4-flash",
 		"tokens", "0", "deadline", "900", "enabled", "true").Err())
 	require.NoError(t, c.HSet(ctx, config.TierKey("flash"), "name", "flash", "routes", "flash-a,flash-a", "rev", "8", "at", "0").Err())
+	require.NoError(t, c.Set(ctx, config.SprintKey(config.FieldDecideJudgment), "0.85", 0).Err())
 	set, trips, err := st.B.(RouteReader).Routes(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), trips, "the arrays ride in the routes' second trip")
+	assert.Equal(t, "0.85", set.JudgmentBar, "the judgment bar rides with them too (answer --decide reads it from routes --json)")
 	assert.Equal(t, map[string][]string{"flash": {"flash-a", "flash-a"}}, set.Tiers, "pro has no array: it takes its routes in name order")
 	rs, _, err := st.Routes(ctx)
 	require.NoError(t, err)

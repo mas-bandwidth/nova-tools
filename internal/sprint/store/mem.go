@@ -63,6 +63,8 @@ type memState struct {
 	routes  []sprint.Route      // the model tiers' routes (routes.go)
 	tiers   map[string][]string // the tiers' route arrays (routes.go)
 	bars    [2]string           // the decide read's bounce and review bars (routes.go)
+	// judgmentBar is the judgment decision's bar (routes.go)
+	judgmentBar string
 }
 
 // memLog is one epoch's sprint keys.

@@ -184,3 +184,115 @@ calibration of 2026-10-02: p(defect) AUC 0.869, the verdict 0.711, inside_paths
 0.612). `Settle` attaches a strings read's verdict as the decision's outcome, ok
 as `LAND` and broken as `BOUNCE`, so the record trains on every read that took
 the strings route; a review round attaches its own label with `outcome`.
+
+## 9. The judgment decision
+
+`nova-sprint answer --decide` (docs/SPEC-SPRINT.md section 8, answered by
+nova-decide) asks the judgment decision for each card of each routine judgment in
+the sprint's inbox, through the library (`JudgmentSchema`, `JudgmentState`,
+`Choose`), never the binary. A routine judgment is one of these kinds; every other
+judgment is left for the coordinator:
+
+| the inbox's type | kind |
+| --- | --- |
+| a reader found it broken | `broken` |
+| work came back failed | `failed` |
+| a primary is blocked on something dropped | `blocked` |
+| stalled | `stalled` |
+| stream stopped: conflict on a card | `conflict` |
+| a work card is past its deadline | `deadline` |
+| cannot ask | `cannot-ask` |
+| ready to accept | `ready` |
+| a card reached its bound | `bound` |
+
+The state is the judgment's type and its note's text, the card and how many cards the
+judgment holds, the verbs the judgment prints (`ALLOWED VERBS`, read from the decisions
+`inbox` prints for it: `VerbOf`), and the card's log (`nova-sprint log --card`, less its
+summary, cost and field-change lines: `HistoryOf`), its last 40 lines, each cut at 300
+characters. Three choices:
+
+- `verb`, the answer, one of seven options (each option's criterion, word for word;
+  `TestJudgmentSchemaIsValidAndPinnedToTheSpec` holds this table to the code):
+
+| option | criterion |
+| --- | --- |
+| `rework` | send the card back for another attempt, carrying its own finding or report, or the FIX: right when another attempt can succeed |
+| `ask-another` | ask another reader: the finding is wrong, or the read ended with no verdict, and the work itself looks done |
+| `accept` | accept it for merge: the readers it needs said ok at its head |
+| `ack` | acknowledge it: the card can run without the dropped need it names, so nothing is to be done |
+| `wait` | leave it open for 30 minutes: the cause is outside the card (a member working through its queue, a reader still reading) and time alone clears it |
+| `drop` | take the card off the table: it is done already, cannot be done as written, or cannot run without what was dropped; never for a failure a retry or a fix cures |
+| `release` | release the sentinel: the gate for its wave is passed |
+
+- `fix`, the text a rework carries where the printed command takes `--fix '<fix>'`:
+  `own` (the card's own finding or report: no text, so a command that wants one is
+  listed), `from-tip` (the conflict text: start again from the tip, redo only the listed
+  lines), `pro-tier` (run on the pro tier, the task unchanged), `retry` (run it again,
+  the task unchanged). Each is a fixed text (`Fixes`): the decision chooses, it does not
+  write.
+- `reason`, why a drop is chosen: `already-done`, `cannot-be-done`, `need-dropped`,
+  `reads-exhausted` (`Reasons`); shown with the listed drop.
+
+`Choose` applies the verb chosen when the judgment prints it, it is neither `drop` nor
+`release`, and its probability is at or above the bar (`decide_judgment_bar` in
+nova-config's sprint row, default 0.8; `--bar` overrides it). Anything else is listed
+for the coordinator with why. An applied `ack` gives the reason `nova-decide (p=<p>):
+the card can run without the dropped need; a conflict is handled at merge`.
+
+A card whose judgment text or last ten log lines carry a provider's refusal for want of
+payment (HTTP 402, out of credit, insufficient funds or quota: `PaymentRefusal`) is not
+asked at all: it is listed, "a payment is the owner's".
+
+Each decision is recorded under its judgment's id: the note's id (`<note id>:<card>` for
+a note of several cards), with `inputs` naming the judgment, the note, the kind, the
+card, the verb chosen and what was done (`act`: applied, listed, refused). A card of a
+judgment is decided once: the same id again is answered from the record and asks
+nothing, and one applied before whose judgment is still open is listed, never applied
+twice; a card the decision reworked within the last hour is listed, not reworked again. Its outcome is attached once the card's state says it (`JudgmentOutcome`):
+`landed`, `dropped` (off the table), or `came-back` (another judgment open on it).
+
+The calibration fixture (`internal/decide/testdata/judgment-calibration.jsonl`) is 100
+judgments the coordinator answered on 2026-10-02 and 03, read from the sprint's log,
+each with the coordinator's verb and the card's outcome; the record of Jev's answers to
+them is `internal/decide/testdata/judgment-record.jsonl`, and
+`TestJudgmentCalibrationAgreement` recomputes the agreement it states. Each state is
+built by `JudgmentState` from the card's log up to the second the coordinator answered,
+as answer --decide builds it live (one card a judgment), with the fleet's machine,
+person and home-directory names replaced by placeholders (m1, coordinator, owner,
+friend-a, /home/user) before Jev was asked, so the record holds the very state each
+answer was given. The kinds are as the log held them, at most two judgments of one
+card a kind (the bound's 752 answers were the night's runaway of a few cards); no
+ready-to-accept judgment was answered by the coordinator that day. Jev's 100 answers
+cost 189,920 input tokens, under a cent.
+
+| kind | judgments | the coordinator's verb | applied at 0.8 | of those, the coordinator's verb |
+| --- | --- | --- | --- | --- |
+| blocked | 21 | 3 | 0 | 0 |
+| bound | 13 | 3 | 1 | 1 |
+| broken | 19 | 18 | 16 | 15 |
+| cannot-ask | 6 | 1 | 0 | 0 |
+| conflict | 6 | 6 | 5 | 5 |
+| deadline | 10 | 6 | 0 | 0 |
+| failed | 22 | 20 | 18 | 18 |
+| stalled | 3 | 2 | 0 | 0 |
+| all | 100 | 59 | 40 | 39 |
+
+| the card's outcome | judgments | the coordinator's verb |
+| --- | --- | --- |
+| landed | 15 | 10 |
+| dropped | 7 | 1 |
+| came-back | 74 | 45 |
+| open | 4 | 3 |
+
+What it says. At 0.8 the decision applies 40 of the 100, and 39 of those are the
+coordinator's own verb; the one that is not is a rework where the coordinator asked
+another reader. Of the 40, 8 cards landed and 32 came back: the routine judgments of
+that day mostly came back whoever answered them, so landing is not yet a label the
+bar can be read from, and the coordinator's verb is the better label for now. Where
+it disagrees it mostly chooses drop: 18 of the 21 blocked cards the coordinator acked
+under the owner's ruling of that afternoon ("safe to run, not dependent", which the
+state does not carry), 10 of the 13 bound cards the coordinator reworked (nine of
+which came back and one was still open: the night's runaway), 4 deadline cards the
+coordinator waited on, and 2 failed cards. A drop is never applied, so each of those
+is listed for the coordinator, which is what the bar is for. Deadline, stalled,
+blocked and cannot-ask judgments all stay under the bar.

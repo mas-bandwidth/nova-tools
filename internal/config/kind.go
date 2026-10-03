@@ -223,11 +223,22 @@ const (
 	FieldDecideReview = "decide_review"
 )
 
+// FieldDecideJudgment is the sprint row's bar on a judgment decision's probability
+// (internal/decide, Choose; docs/SPEC-SPRINT.md section 8, answered by nova-decide):
+// nova-sprint answer --decide applies the verb it chose at or above it. Apply writes
+// it to SprintKey(FieldDecideJudgment), which the sprint's routes read takes.
+const FieldDecideJudgment = "decide_judgment_bar"
+
 // checkSprint holds the decide read's bars together: both set, as probabilities with the
 // review bar at most the bounce bar (decide.ParseBars), or both empty (no decide read).
 func checkSprint(r Row) error {
 	bounce, hasB := r.Fields[FieldDecideBounce]
 	review, hasR := r.Fields[FieldDecideReview]
+	if bar := r.Fields[FieldDecideJudgment]; bar != "" {
+		if _, err := decide.ParseBar(bar); err != nil {
+			return fmt.Errorf("sprint: %v; want --%s <p>, a probability", err, FieldDecideJudgment)
+		}
+	}
 	if !hasB || !hasR || bounce == "" && review == "" {
 		return nil
 	}
@@ -311,11 +322,12 @@ var Kinds = []*Kind{
 		Name:      KindSprint,
 		Table:     "sprint",
 		Singleton: true,
-		Doc:       "the one row of sprint-global facts: which friend coordinates, and the two bars a flash card's decide read is routed by",
+		Doc:       "the one row of sprint-global facts: which friend coordinates, the two bars a flash card's decide read is routed by, and the bar a judgment decision is applied at",
 		Fields: []Field{
 			{Name: "coordinator", Type: TypeRef, Ref: KindFriend, Help: "the friend who holds the coordinator role (a friend row), or empty; set it to hand over"},
 			{Name: FieldDecideBounce, Type: TypeDecimal, Default: "0.5", Help: "the decide read's bounce bar: a flash card whose first read gives p(defect) at or above it is bounced with the read's finding; a probability, at least --decide_review; 0.5 (the default); empty, with --decide_review empty, turns the decide read off"},
 			{Name: FieldDecideReview, Type: TypeDecimal, Default: "0.3", Help: "the decide read's review bar: below it the card lands with no model read, and from it up to --decide_bounce it goes to a strings read; a probability; 0.3 (the default)"},
+			{Name: FieldDecideJudgment, Type: TypeDecimal, Default: "0.8", Help: "the judgment bar: nova-sprint answer --decide applies the verb the judgment decision chose when its probability is at or above it, and lists it for the coordinator below it; a probability; 0.8 (the default)"},
 		},
 		Check: checkSprint,
 	},

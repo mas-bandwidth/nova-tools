@@ -86,6 +86,7 @@ func init() {
 		{"ci", "<id>... (--red | --green) --epoch <n> [--head <h>] [--run <id>] [--source <s>] [--note <text>]", "ci s1-3 --red --run 812 --source ci --epoch 0", (*app).cmdCI},
 		{"wait", "<note> (--for <duration> | --until <RFC3339>)", "wait tick-ask-x-1.2 --for 30m", (*app).cmdWait},
 		{"ack", "<note>[,<note>]... --reason <text>", "ack ci-x-1.1 --reason 'a flaky runner; the rerun is green'", (*app).cmdAck},
+		{"answer", "--decide [--dry-run] [--bar <p>] [--every <duration>] [--backend jev|fixed] [--answers <file>] [--record <file>]", "answer --decide --dry-run", (*app).cmdAnswer},
 		{"inbox", "[--open <group>] [--read] [--wait [--timeout <duration>] [--push <dir> | --push seat]] [--deadline <duration>] [--stale <duration>]", "inbox --wait", (*app).cmdInbox},
 		{"card", "<id>", "card s1-4", (*app).cmdCard},
 		{"log", "[--card <id>] [--stream <s>] [--member <m>] [--since <10m|RFC3339>] [--at-epoch <n>]", "log --card s1-4", (*app).cmdLog},
@@ -285,6 +286,14 @@ one answer to each judgment (every one prints its own, filled in):
   returned to review          rework, accept (its reads standing) or drop --group <id> --expect <n> --answers <notes>
   stranded in review          rework or drop (or ask, if never asked) --group <id> --expect <n> --answers <notes>
   stalled                     card <primary> (HELD says what holds it), then the decision it prints, or ack <note> --reason '<why>'
+
+the routine judgments answered by nova-decide (broken, failed, blocked, stalled, conflict,
+deadline, cannot ask, ready to accept, a card at its bound), card by card:
+  nova-secrets exec --only JEV_API_KEY -- nova-sprint answer --decide [--dry-run] [--bar <p>] [--every 60s]
+the verb the judgment decision chose is applied at or above decide_judgment_bar (nova-config's
+sprint row, default 0.8) by the line the inbox prints for that card; every drop, everything
+under the bar and a provider's refusal for want of payment (never asked: a payment is the
+owner's) are listed for you; every decision is recorded with its outcome (--record)
 `
 
 // verbExamples holds one more worked example per form a verb's -h shows,
