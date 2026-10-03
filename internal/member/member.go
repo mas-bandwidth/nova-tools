@@ -317,7 +317,7 @@ type Config struct {
 	// asks for it, so a pass is one step.
 	Background bool
 	// Attempt asks the attempt decision over every work take's end (docs/SPEC-SPRINT.md
-	// section 2, the attempt decision; the card's bar decides at the server whether it routes
+	// section 2, the attempt decision; the card's bars decide at the server whether it routes
 	// the finish, never whether it is asked): the packet,
 	// the child's RESULT.md as text and the finish's reason line in; the decision's card line
 	// (decide.Decided) and the decision as one JSON record line out, both carried by the

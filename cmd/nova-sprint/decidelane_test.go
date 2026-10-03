@@ -8,12 +8,15 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 )
 
 // fixedGrade is the fixed backend answering every grade with pro at 0.81.
@@ -32,7 +35,7 @@ func TestTheDecideLaneGradesRecordsAndAttachesOutcomes(t *testing.T) {
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	ta.ok("add --stream s1 --count 3 --brief-file " + proBriefFile(t))
 	dir := t.TempDir()
-	ta.a.decide = newDecideLane(dir, fixedGrade(), ta.a.now)
+	ta.a.decide = newDecideLane(dir, fixedGrade(), ta.a.now, GradeWait)
 	ctx := context.Background()
 	var out bytes.Buffer
 	round := func() string {
@@ -110,7 +113,7 @@ func TestTheDecideLaneSaysAFailureOnceAndGradesNothingWithNoKey(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	ta.ok("add --stream s1 --count 1 --brief-file " + proBriefFile(t))
-	ta.a.decide = newDecideLane(t.TempDir(), nil, ta.a.now)
+	ta.a.decide = newDecideLane(t.TempDir(), nil, ta.a.now, GradeWait)
 	var out bytes.Buffer
 	ta.a.decideRound(context.Background(), "mem:0", &out)
 	assert.Empty(t, out.String(), "no backend: nothing graded, nothing said")
@@ -124,4 +127,96 @@ func TestTheDecideLaneSaysAFailureOnceAndGradesNothingWithNoKey(t *testing.T) {
 	stop()
 	ta.a.decideLoop(stopped, "mem:0", &out)
 	assert.Contains(t, out.String(), "no grading: JEV_API_KEY is absent from this environment", "the loop says it grades nothing")
+}
+
+// hangingBackend answers nothing: each ask says it was asked, then blocks until its
+// context ends, as a backend that took the connection and never replied.
+type hangingBackend struct{ asked chan string }
+
+func (hangingBackend) Name() string { return "hanging" }
+
+func (h hangingBackend) Ask(ctx context.Context, _ decide.Schema, state string) (map[string]decide.Answer, decide.Usage, error) {
+	h.asked <- state
+	<-ctx.Done()
+	return nil, decide.Usage{}, ctx.Err()
+}
+
+// The lane cannot stall the tick: while its grade asks hang on a backend that never
+// answers, the server's line of control is free, a tick and a worker's finish both run
+// with no time passing, and the round ends when the lane's wait (injected, no real time:
+// the synctest bubble's clock) runs out, each card said not graded. A grade whose ask
+// failed is asked again on the next round, once a round, and graded when the backend
+// answers.
+func TestTheDecideLaneCannotStallTheTickOnAHangingBackend(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		ta := newTestApp(t)
+		ta.ok("init --readers reader-a,reader-b --members m1")
+		ta.ok("add --stream s1 --count 3 --brief-file " + proBriefFile(t))
+		ta.deal(1) // s1-1 is the worker's; s1-2 and s1-3 are never dealt, so graded
+		ta.ok("take --as m1 --limit 1")
+		var q struct{ Cards []queueCard }
+		ta.json("queue --as m1", &q)
+		require.Len(t, q.Cards, 1)
+		st, _, code := ta.a.machineVerb("run", nil, &bytes.Buffer{})
+		require.NotNil(t, st, "run: %d", code)
+		ta.a.serveAddr = "mem:0"
+
+		const wait = 3 * time.Minute
+		hang := hangingBackend{asked: make(chan string, GradeWidth)}
+		ta.a.decide = newDecideLane(t.TempDir(), hang, ta.a.now, wait)
+		ctx := context.Background()
+		round := func() <-chan string {
+			done := make(chan string, 1)
+			go func() {
+				var out bytes.Buffer
+				ta.a.decideRound(ctx, "mem:0", &out)
+				done <- out.String()
+			}()
+			return done
+		}
+		start := time.Now()
+		done := round()
+		<-hang.asked
+		<-hang.asked // both asks are out, and hang
+
+		require.True(t, ta.a.serial.TryLock(), "the lane holds no line of control while its asks wait")
+		ta.a.serial.Unlock()
+		var out, errb bytes.Buffer
+		ta.a.runLoop(ctx, st, 20, 1, &out, &errb) // one tick, under the line of control
+		assert.Empty(t, errb.String())
+		ta.beat()
+		finish := ta.withEpoch([]string{"finish", "--as", "m1", q.Cards[0].ID + "@" + strconv.Itoa(q.Cards[0].Gen), "--report", "done"})
+		res := ta.a.serveFrom(sprintwire.Request{Verbs: [][]string{finish}}, false).Results
+		require.Len(t, res, 1)
+		require.Equal(t, 0, res[0].Code, "%s%s", res[0].Stdout, res[0].Stderr)
+		assert.Equal(t, time.Duration(0), time.Since(start), "the tick and the finish waited on nothing")
+		select {
+		case said := <-done:
+			t.Fatalf("the round ended before its wait: %q", said)
+		default:
+		}
+
+		said := <-done
+		assert.Equal(t, wait, time.Since(start), "the round ends at the lane's wait, no sooner, no later")
+		assert.Contains(t, said, "DECIDE FAILED s1-2 not graded: ")
+		assert.Contains(t, said, "s1-3 not graded: ")
+		assert.Contains(t, said, "deadline exceeded")
+		assert.Empty(t, ta.primary("s1-2").F(sprint.FieldGrade))
+
+		// the next round asks each failed grade again, once
+		done = round()
+		<-hang.asked
+		<-hang.asked
+		<-done
+		assert.Len(t, hang.asked, 0, "once a round")
+		assert.Equal(t, 2*wait, time.Since(start))
+
+		ta.a.decide.backend = fixedGrade() // the backend answers again
+		done = round()
+		assert.Contains(t, <-done, "DECIDE recorded=0 graded=2 written=2 attached=0")
+		g, ok := decide.ParseDecided(ta.primary("s1-2").F(sprint.FieldGrade))
+		require.True(t, ok)
+		assert.Equal(t, decide.GradePro, g.Value)
+	})
 }

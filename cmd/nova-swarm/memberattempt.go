@@ -11,9 +11,10 @@ import (
 
 // THE ATTEMPT DECISION (docs/SPEC-SPRINT.md section 2; internal/decide, attempt.go). A work
 // member whose environment holds JEV_API_KEY (the loop row's nova-secrets keys) asks, when
-// any take ends, how it ended (whether the class routes the finish is the card's bar, read
-// by the server): the member's own process asks it, in the end's long work beside the push, and never hands the
-// key to native or the child (nativeChildEnv removes it). The finish carries the decision.
+// any take ends, how it ended (whether the class routes the finish is the server's to say,
+// by the card's bars): the member's own process asks it, in the end's long work beside the
+// push, and never hands the key to native or the child (nativeChildEnv removes it). The
+// finish carries the decision.
 
 // attemptWait bounds the backend's answer, as the decide read's does (decideWait).
 const attemptWait = decideWait

@@ -13,8 +13,9 @@ import (
 // The attempt decision (SPEC-NOVA-DECIDE section 9): after a work take ends, how it ended,
 // read from the card's brief, the child's RESULT.md and the member's reason line. Its one
 // question is a choice of six classes, each with a probability; the sprint routes a failed
-// finish by the class when its probability is at or above the sprint row's decide_attempt
-// bar, and by the reason line's prefix otherwise (docs/SPEC-SPRINT.md section 2).
+// finish by two of them, no-result and nothing-to-do, each when its probability is at or
+// above its own bar on the sprint row (decide_attempt_no_result, decide_attempt_nothing_to_do),
+// and by the reason line's prefix otherwise (docs/SPEC-SPRINT.md section 2).
 
 // AttemptName is the attempt decision's name in the record.
 const AttemptName = "attempt"
@@ -83,8 +84,22 @@ func orNone(s string) string {
 func Op(base, state string) string { return base + "." + Sum([]byte(state))[:12] }
 
 // AttemptOp is a take's attempt decision id: `<card>@<attempt>.<12 hex of the state>`.
+// It is per attempt and state, not per take: two takes of one attempt that ended with the
+// same state (the same reason line and RESULT.md) are one decision.
 func AttemptOp(card string, attempt int, state string) string {
 	return Op(card+"@"+strconv.Itoa(attempt), state)
+}
+
+// AttemptOf is the card and attempt an attempt decision's op id names (AttemptOp); ok false
+// when it is not `<card>@<attempt>.<hex>`.
+func AttemptOf(op string) (card string, attempt int, ok bool) {
+	card, rest, found := strings.Cut(op, "@")
+	num, _, dot := strings.Cut(rest, ".")
+	n, err := strconv.Atoi(num)
+	if !found || !dot || err != nil || card == "" {
+		return "", 0, false
+	}
+	return card, n, true
 }
 
 // AttemptDecision asks the attempt decision of a take of card at attempt through b and
@@ -120,9 +135,7 @@ func ParseAttempt(raw []byte) (Decision, error) {
 	if err := s.Check(d.Answers); err != nil {
 		p = append(p, err.Error())
 	}
-	card, rest, ok := strings.Cut(d.ID, "@")
-	n, err := strconv.Atoi(strings.SplitN(rest, ".", 2)[0])
-	if !ok || err != nil || d.ID != AttemptOp(card, n, d.State) {
+	if card, n, ok := AttemptOf(d.ID); !ok || d.ID != AttemptOp(card, n, d.State) {
 		p = append(p, fmt.Sprintf("its id %q is not <card>@<attempt>.<12 hex of its state>", d.ID))
 	}
 	if len(p) > 0 {

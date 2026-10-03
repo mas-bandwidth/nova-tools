@@ -81,7 +81,16 @@ func TestAnAttemptDecisionRidesWithTheFinishAndParsesBack(t *testing.T) {
 
 	again, err := AttemptDecision(context.Background(), fixture(t, "attempt-no-result.json"), "c1", 2, brief, "", "no result: no RESULT.md shape", at)
 	require.NoError(t, err)
-	assert.NotEqual(t, d.ID, again.ID, "another take of the attempt is another decision")
+	assert.NotEqual(t, d.ID, again.ID, "another take of the attempt that ended another way is another decision")
+	same, err := AttemptDecision(context.Background(), fixture(t, "attempt-no-result.json"), "c1", 2, brief, result, reason, at)
+	require.NoError(t, err)
+	assert.Equal(t, d.ID, same.ID, "two takes of one attempt with the same state are one decision: the op is per attempt and state")
+	card, n, ok := AttemptOf(d.ID)
+	assert.Equal(t, []any{"c1", 2, true}, []any{card, n, ok}, "the op names its card and attempt")
+	for _, bad := range []string{"c1", "c1@x.0123", "c1@2", "@2.0123"} {
+		_, _, ok := AttemptOf(bad)
+		assert.False(t, ok, bad)
+	}
 	assert.Contains(t, again.State, "RESULT (the child's RESULT.md):\n(none: the child wrote no RESULT.md)")
 
 	for name, bend := range map[string]func(*Decision){
@@ -132,8 +141,8 @@ func TestTheDecidedLineRoundTripsAndHoldsItsBar(t *testing.T) {
 		_, ok := ParseDecided(bad)
 		assert.False(t, ok, bad)
 	}
-	for raw, want := range map[string]string{"": "", "0.7": "", " 0.5 ": "", "x": `decide_attempt "x" is not a decimal`, "-0.1": "decide_attempt -0.1 is not a probability in [0, 1]"} {
-		_, _, err := ParseBar("decide_attempt", raw)
+	for raw, want := range map[string]string{"": "", "0.7": "", " 0.5 ": "", "x": `decide_attempt_no_result "x" is not a decimal`, "-0.1": "decide_attempt_no_result -0.1 is not a probability in [0, 1]"} {
+		_, _, err := ParseBar("decide_attempt_no_result", raw)
 		if want == "" {
 			assert.NoError(t, err, raw)
 		} else {

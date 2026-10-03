@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -39,29 +40,32 @@ const DecideEvery = 5 * time.Second
 // GradeWidth is the most grade asks one round makes at once.
 const GradeWidth = 8
 
-// gradeWait bounds one grade's answer.
-const gradeWait = time.Minute
+// GradeWait is the default bound on one grade's answer (newDecideLane's wait).
+const GradeWait = time.Minute
 
 // decideLane is the lane's state: where the record is, the backend that grades (nil: no
-// grading, no key), the decisions the finishes handed it, and what it has done this process.
+// grading, no key), how long one grade's answer may take, the decisions the finishes handed
+// it, and what it has done this process.
 type decideLane struct {
 	dir     string
 	backend decide.Backend
 	now     func() time.Time
+	wait    time.Duration
 
 	mu     sync.Mutex
 	queued []decide.Decision
 
 	attached map[string]bool // ops whose outcome is in the record, or that it cannot take
-	graded   map[string]bool // cards asked this process, answered or failed: asked once
+	graded   map[string]bool // cards graded this process; a card whose ask failed is asked again the next round
 	watched  map[string]bool // primaries with a decision on them, read placed or not (a drop unplaces them)
 	loaded   bool
 	said     string // the last failure said, said once until it changes
 }
 
-// newDecideLane is the lane over dir, grading through b (nil grades nothing).
-func newDecideLane(dir string, b decide.Backend, now func() time.Time) *decideLane {
-	return &decideLane{dir: dir, backend: b, now: now, attached: map[string]bool{}, graded: map[string]bool{}, watched: map[string]bool{}}
+// newDecideLane is the lane over dir, grading through b (nil grades nothing), each grade's
+// answer bounded by wait (GradeWait in the run loop).
+func newDecideLane(dir string, b decide.Backend, now func() time.Time, wait time.Duration) *decideLane {
+	return &decideLane{dir: dir, backend: b, now: now, wait: wait, attached: map[string]bool{}, graded: map[string]bool{}, watched: map[string]bool{}}
 }
 
 func (l *decideLane) record(decision string) string {
@@ -133,7 +137,7 @@ func (a *app) decideRound(ctx context.Context, addr string, stdout io.Writer) {
 		fmt.Fprintf(stdout, "%s DECIDE recorded=%d graded=%d written=%d attached=%d\n", at, recorded, len(got), written, attached)
 	}
 	if len(problems) > 0 {
-		l.fail(stdout, at, joinProblems(problems))
+		l.fail(stdout, at, strings.Join(problems, "; "))
 		return
 	}
 	l.said = ""
@@ -145,14 +149,6 @@ func (l *decideLane) fail(stdout io.Writer, at, why string) {
 		fmt.Fprintf(stdout, "%s DECIDE FAILED %s; the next round tries again\n", at, oneline.Escape(why))
 	}
 	l.said = why
-}
-
-func joinProblems(p []string) string {
-	out := p[0]
-	for _, s := range p[1:] {
-		out += "; " + s
-	}
-	return out
 }
 
 // decideStore runs fn on the lane's store, the machine's (the run loop's address).
@@ -251,10 +247,11 @@ func (l *decideLane) attach(outcomes []sprint.DecideOutcome) (int, []string) {
 	return n, problems
 }
 
-// grade asks the grade of each card to grade, GradeWidth at a time, recording each in
-// grade.jsonl (decide.Make: a brief graded before is answered from the record): the grades
-// made by card, and why each card that was not graded was not. A card is asked once per
-// process; with no backend nothing is asked.
+// grade asks the grade of each card to grade, GradeWidth at a time, each bounded by the
+// lane's wait, recording each in grade.jsonl (decide.Make: a brief graded before is answered
+// from the record): the grades made by card, and why each card that was not graded was not.
+// A card graded is not asked again this process; a card whose ask failed is asked again on
+// the next round, at most once a round; with no backend nothing is asked.
 func (l *decideLane) grade(ctx context.Context, asks []sprint.GradeAsk) (map[string]decide.Decided, []string) {
 	var todo []sprint.GradeAsk
 	for _, g := range asks {
@@ -285,6 +282,7 @@ func (l *decideLane) grade(ctx context.Context, asks []sprint.GradeAsk) (map[str
 			defer mu.Unlock()
 			if err != nil {
 				problems = append(problems, fmt.Sprintf("%s not graded: %v", g.Card, err))
+				delete(l.graded, g.Card) // asked again on the next round
 				return
 			}
 			got[g.Card] = dec
@@ -297,7 +295,7 @@ func (l *decideLane) grade(ctx context.Context, asks []sprint.GradeAsk) (map[str
 
 // gradeOne is one card's grade decision, made and recorded (decide.Make).
 func (l *decideLane) gradeOne(ctx context.Context, g sprint.GradeAsk) (decide.Decided, error) {
-	ctx, cancel := context.WithTimeout(ctx, gradeWait)
+	ctx, cancel := context.WithTimeout(ctx, l.wait)
 	defer cancel()
 	state := decide.GradeState(g.Brief)
 	d, _, err := decide.Make(ctx, l.backend, decide.GradeSchema(), state, l.record(decide.GradeName), decide.GradeOp(g.Card, state),
@@ -315,7 +313,7 @@ func (l *decideLane) watch(s *sprint.Snapshot) {
 	for _, c := range s.Work.Cards() {
 		open := false
 		for k := range c.Fields {
-			if op, ok := cutDecided(k); ok && !l.attached[op] {
+			if op, ok := strings.CutPrefix(k, sprint.PrefixDecided); ok && !l.attached[op] {
 				open = true
 			}
 		}
@@ -328,12 +326,4 @@ func (l *decideLane) watch(s *sprint.Snapshot) {
 			delete(l.watched, c.ID)
 		}
 	}
-}
-
-// cutDecided is the op of a primary's attempt decision field (sprint.PrefixDecided).
-func cutDecided(k string) (string, bool) {
-	if len(k) > len(sprint.PrefixDecided) && k[:len(sprint.PrefixDecided)] == sprint.PrefixDecided {
-		return k[len(sprint.PrefixDecided):], true
-	}
-	return "", false
 }

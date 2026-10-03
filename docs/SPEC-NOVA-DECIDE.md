@@ -207,8 +207,12 @@ holds this table to the code):
 | `provider-failure` | the provider or its harness failed the run (an HTTP error, a rate limit, a balance, a crash), not the work: the same card on a working route would run |
 
 An attempt decision's op id is `<card>@<attempt>.<12 hex of its state>` (`AttemptOp`):
-a finish reported again replays its decision, and two takes of one attempt are two
-decisions. The sprint asks it through the library, not the binary
+it is per attempt and state, not per take. A finish reported again replays its
+decision; two takes of one attempt are two decisions when their states differ, and
+two takes that ended with identical states (the same reason line and RESULT.md) share
+one decision, recorded once (the sprint's `decided:<op>` is set once). The sprint's
+server routes a finish only by a decision whose op names that finish's own card and
+attempt (`AttemptOf`), and refuses any other. The sprint asks it through the library, not the binary
 (docs/SPEC-SPRINT.md section 2, the attempt decision): the member asks
 `AttemptDecision` through the backend it is handed and the finish carries the
 decision, one JSON record line, which the sprint's server holds to the schema
@@ -232,16 +236,27 @@ Against the reason line's prefix, at 0.7: 23 of the 24 takes a budget or a deadl
 ended with no RESULT.md are `no-result`, 16 of the 20 `nothing to do` takes are
 `nothing-to-do`, 18 of the 30 ok takes are `done`, and 11 of the 20 `push refused`
 takes are `needs-pro`. `needs-pro` has four positives: no bar is read from it yet.
-The sprint row's `decide_attempt` is empty by default, so no decision routes a finish
-until a review round labels cards independently; 0.7 is the starting point these numbers
-support. At 0.7, 26 of the 70 failed takes would go from failed work to an ended take,
-redealt with no judgment (14 of them landed later, 12 were dropped).
+
+Two classes may route a failed finish, each from its own bar on the sprint row:
+`no-result` from `decide_attempt_no_result` (an ended take, redealt) and
+`nothing-to-do` from `decide_attempt_nothing_to_do` (failed work of that class). No
+other class has a bar in this layer: `needs-pro`, `wrong-scope`, `provider-failure` and
+`done` are recorded and shown only, and a report native ended as a provider failure is
+never overridden by any decision (docs/SPEC-SPRINT.md section 2, the attempt decision).
+Both bars are empty by default, so no decision routes a finish until a review round
+labels cards independently; 0.7 is the starting point the numbers above support for
+`no-result`, and `nothing-to-do`'s AUC (0.618) is near chance until that round. (Measured
+under the first rule, one bar on which `no-result` and `provider-failure` both ended the
+take: at 0.7, 26 of the 70 failed takes would have gone from failed work to an ended
+take, redealt with no judgment; 14 of them landed later, 12 were dropped. The split per
+class was not measured.)
 
 ## 10. The grade decision
 
-`grade --brief <file>` is a card's convergence before its first deal (the agreed plan's
-layer 2: "convergence grade and route choice before the deal"; the owner's grade is
-"confidence of convergence, work we are confident is going to converge"). The state
+`grade --brief <file>` is a card's convergence before its first deal (the owner,
+2026-10-02, the agreed plan's layer 2: "convergence grade and route choice before the
+deal"; and the same evening, of what the grade measures: "work we are confident is
+going to converge"). The state
 is the brief alone. One question, `grade`, a choice:
 
 | option | criterion |

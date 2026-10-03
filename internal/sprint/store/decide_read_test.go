@@ -28,7 +28,7 @@ func TestTheFirstReadOfAFlashCardIsADecideRead(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			h := routeHarness(t, route("pro-a", "pro"), route("pro-b", "pro"), route("flash-a", "flash"), route("flash-b", "flash"))
-			h.m.SetDecideBars(tc.bounce, tc.review)
+			h.m.SetDecideBars(Bars{Bounce: tc.bounce, Review: tc.review})
 			require.NoError(t, h.st.BeatReaders(h.ctx))
 			h.addReady("s1", 1, briefOf("pro", "model: prov-pro-a/model-pro-a\ntokens: 1000\ndeadline: 60"))
 			h.addReady("s2", 1, briefOf("flash", ""))
@@ -74,7 +74,7 @@ func TestAReadAskedAgainKeepsOneDecideReadAtTheAttempt(t *testing.T) {
 		t.Run(which, func(t *testing.T) {
 			t.Parallel()
 			h := routeHarness(t, route("flash-a", "flash"), route("flash-b", "flash"))
-			h.m.SetDecideBars("0.5", "0.3")
+			h.m.SetDecideBars(Bars{Bounce: "0.5", Review: "0.3"})
 			require.NoError(t, h.st.BeatReaders(h.ctx))
 			h.addReady("s1", 1, briefOf("flash", ""))
 			h.startMachine()

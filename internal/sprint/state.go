@@ -316,11 +316,13 @@ type Snapshot struct {
 	// sprint:decide_review), read with the routes; both "" is no decide read
 	// (steps_review.go, decideFields; docs/SPEC-SPRINT.md section 6).
 	DecideBounce, DecideReview string
-	// DecideAttempt and DecideGrade are the sprint row's bars of nova-decide's layer 2
-	// (sprint:decide_attempt, sprint:decide_grade), read with the routes: the deal writes
-	// the attempt bar on each work card it cuts (decide.go), and starts a card graded pro at
-	// or above the grade bar on pro; "" is no bar (docs/SPEC-SPRINT.md sections 2 and 5).
-	DecideAttempt, DecideGrade string
+	// DecideAttemptNoResult, DecideAttemptNothingToDo and DecideGrade are the sprint row's
+	// bars of nova-decide's layer 2 (sprint:decide_attempt_no_result,
+	// sprint:decide_attempt_nothing_to_do, sprint:decide_grade), read with the routes: the
+	// deal writes the two attempt bars on each work card it cuts (decide.go), and starts a
+	// card graded pro at or above the grade bar on pro; "" is no bar (docs/SPEC-SPRINT.md
+	// sections 2 and 5).
+	DecideAttemptNoResult, DecideAttemptNothingToDo, DecideGrade string
 	// ReaderStates is each reader's state as the store derives it (ReaderState:
 	// up, away or down), read by a step that asks (docs/SPEC-SPRINT.md section
 	// 6); nil is none read, and every reader is held up.

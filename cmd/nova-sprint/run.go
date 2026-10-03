@@ -283,7 +283,7 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 			b = decide.JevHTTP(key)
 		}
 		if a.decide == nil { // a test's lane, with its backend, is kept
-			a.decide = newDecideLane(decideDir, b, a.now)
+			a.decide = newDecideLane(decideDir, b, a.now, GradeWait)
 		}
 		go a.decideLoop(context.Background(), c.redis, stdout)
 	}

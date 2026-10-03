@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// attemptAsks is a fake attempt decider: it records what it was attemptAsks over and answers with a
+// attemptAsks is a fake attempt decider: it records what it was asked over and answers with a
 // card line and a record line, or with err.
 type attemptAsks struct {
 	mu      sync.Mutex
@@ -31,7 +31,7 @@ func (a *attemptAsks) decide(p Packet, result, reason string) (string, []byte, e
 
 // Every work take of a member with a decider is decided in its end's long work, over the
 // child's result as RESULT.md says it and the finish's own report, and the finish carries the
-// decision (--decision); whether it routes the finish is the card's bar, read by the server.
+// decision (--decision); whether it routes the finish is for the server, by the card's bars.
 // A member with no decider asks nothing and carries no flag. A decision that cannot be made
 // is said on one NOTE line and the finish goes by its reason line alone.
 func TestAnEndedTakeIsDecidedAndTheFinishCarriesTheDecision(t *testing.T) {
@@ -70,11 +70,31 @@ func TestAnEndedTakeIsDecidedAndTheFinishCarriesTheDecision(t *testing.T) {
 			assert.Equal(t, tc.flag, strings.Contains(lines[0], ` --decision {"id":"p-c1@1.0123456789ab"}`), lines[0])
 			require.Len(t, a.reasons, tc.asks)
 			if tc.asks > 0 {
-				assert.Equal(t, "verdict not-done; tests red in x", a.reasons[0], "attemptAsks over the finish's report")
+				assert.Equal(t, "verdict not-done; tests red in x", a.reasons[0], "asked over the finish's report")
 				assert.Equal(t, "head: abc\nverdict: not-done\nreport: tests red in x\n\n## Gate\nFAIL TestX\n", a.results[0], "and the result as RESULT.md says it")
 			}
 			assert.Equal(t, tc.err != nil, strings.Contains(g.out.String(), "NOTE attempt c1 not decided: the backend answered 402; the reason line routes the finish"), g.out.String())
 		})
 	}
 	assert.Empty(t, ResultText(Result{}), "a child that wrote no result has no RESULT.md")
+}
+
+// A launch refused at staging ran no take: the member asks no attempt decision of it, says
+// nothing about one, and its finish carries none (member.go, attempt: no take ran).
+func TestALaunchRefusedAtStagingIsNeverDecided(t *testing.T) {
+	t.Parallel()
+	a := &attemptAsks{}
+	g := newRig(Config{As: "m", Width: 2, Attempt: a.decide})
+	p := pk("c1")
+	p.Gen = 2
+	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 2, &p)))
+	_, err := g.tick(t)
+	require.NoError(t, err)
+	g.r.child("c1").end(Result{Report: "no child ran", End: EndStaging, Staging: "no bench mirror for https://example.com/o/quack.git"})
+	g.s.reset()
+	_, err = g.tick(t)
+	require.NoError(t, err)
+	require.Equal(t, []string{"finish --as m c1@2 --report staging refused: no bench mirror for https://example.com/o/quack.git; no child ran --failed --epoch 7"}, g.s.lines("finish"))
+	assert.Empty(t, a.reasons, "no attempt decision asked")
+	assert.NotContains(t, g.out.String(), "attempt c1")
 }

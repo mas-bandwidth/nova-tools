@@ -19,74 +19,106 @@ import (
 //   - the attempt decision: after a work take ends, its member asks how it ended (done,
 //     nothing-to-do, wrong-scope, no-result, needs-pro, provider-failure) over the brief, the
 //     child's RESULT.md and the reason line, whenever it holds the key; the finish carries
-//     the class, its p and the op id. A failed finish whose class is at or above the work
-//     card's decide_attempt bar (the deal writes the sprint row's) is routed by the class
-//     where the reason line's prefix routed it (finishKind); below it, and with no bar, the
-//     prefix rule stands.
-//
-// Both bars are empty by default (the coordinator, 2026-10-03: nothing routes on a decision
-// until a review round labels cards independently): every decision is asked, recorded and
-// shown, and none routes; 0.7 is the starting point the calibration supports for each.
+//     the class, its p and the op id, which must name the take's own card and attempt
+//     (decidedFor). Two classes may route a failed finish, each from its own bar, which the
+//     deal writes on the work card from the sprint row: no-result at or above
+//     decide_attempt_no_result ends the take, nothing-to-do at or above
+//     decide_attempt_nothing_to_do is failed work of that class (finishKind). No other class
+//     has a bar (needs-pro had four positives in the calibration): those decisions are
+//     recorded and shown only. A report the provider failed, and a launch refused, are never
+//     overridden by a decision.
 //   - the grade decision: before a card's first deal, the server's decide lane grades its
 //     convergence from the brief alone (script, flash, pro) and writes it on the card
 //     (Grade). It is a hint, shown by `card`, until the sprint row's decide_grade bar is set:
 //     then a card graded pro at or above it starts on pro instead of flash, up to its
 //     ceiling (startTier).
 //
-// Every decision is recorded by the server's decide lane, and its outcome is attached when
-// the card lands or is dropped (DecideDue): the record trains, and calibrate reads the bars.
+// Every bar is empty by default (the coordinator, 2026-10-03: nothing routes on a decision
+// until a review round labels cards independently): every decision is asked, recorded and
+// shown, and none routes; 0.7 is the starting point the calibration supports. Every
+// decision is recorded by the server's decide lane, and its outcome is attached when the
+// card lands or is dropped (DecideDue): the record trains, and calibrate reads the bars.
 
 // The fields of layer 2.
 const (
-	// FieldDecideAttempt is a work card's attempt bar, the sprint row's decide_attempt as the
-	// deal read it: its member asks the attempt decision when it is set, and the finish
-	// routes by the decided class at or above it.
-	FieldDecideAttempt = "decide_attempt"
+	// FieldDecideAttemptNoResult and FieldDecideAttemptNothingToDo are a work card's attempt
+	// bars, the sprint row's as the deal read them: a failed finish whose decision is that
+	// class at or above its bar is routed by the class (finishKind).
+	FieldDecideAttemptNoResult    = "decide_attempt_no_result"
+	FieldDecideAttemptNothingToDo = "decide_attempt_nothing_to_do"
 	// FieldDecided is a work card's attempt decision as its last finish carried it
 	// (decide.Decided: `<class> p=<p> op=<op>`), and FieldDecidedUsed is "yes" when the
 	// finish was routed by it.
 	FieldDecided     = "decided"
 	FieldDecidedUsed = "decided_used"
 	// PrefixDecided keys a primary's record of each attempt decision of its takes:
-	// `decided:<op>` = `<class> p=<p> used=<yes|no>`, set once, read by DecideDue.
+	// `decided:<op>` = `<class> p=<p> used=<yes|no>`, set once (the op is per attempt and
+	// state, so two takes that ended alike share it), read by DecideDue.
 	PrefixDecided = "decided:"
 	// FieldGrade is a primary's grade decision (decide.Decided: `<grade> p=<p> op=<op>`).
 	FieldGrade = "grade"
 )
 
-// attemptBar is the work card fields the deal writes for the attempt decision: the sprint
-// row's bar when it is set, nil when it is not.
-func (s *Snapshot) attemptBar() map[string]string {
-	if s.DecideAttempt == "" {
-		return nil
+// attemptBars is the work card fields the deal writes for the attempt decision: each of the
+// sprint row's two bars that is set, and the fields of those that are not (a redeal unsets
+// them).
+func (s *Snapshot) attemptBars() (set map[string]string, unset []string) {
+	set = map[string]string{}
+	for f, bar := range map[string]string{FieldDecideAttemptNoResult: s.DecideAttemptNoResult, FieldDecideAttemptNothingToDo: s.DecideAttemptNothingToDo} {
+		if bar == "" {
+			unset = append(unset, f)
+		} else {
+			set[f] = bar
+		}
 	}
-	return map[string]string{FieldDecideAttempt: s.DecideAttempt}
+	slices.Sort(unset)
+	return set, unset
+}
+
+// decidedFor is why the attempt decision a finish carries (line) cannot route or ride with
+// the finish of the work card c: its op id must name c's primary and attempt
+// (decide.AttemptOf), so a finish is only ever routed by a decision of its own take. "" when
+// it does, or when the finish carries none.
+func decidedFor(c *Card, line string) string {
+	if line == "" {
+		return ""
+	}
+	d, ok := decide.ParseDecided(line)
+	if !ok {
+		return fmt.Sprintf("the attempt decision %q is not `<class> p=<p> op=<op>`", line)
+	}
+	card, attempt, ok := decide.AttemptOf(d.Op)
+	if ok && card == c.F("primary") && attempt == c.Int("attempt") {
+		return ""
+	}
+	named := d.Op
+	if ok {
+		named = card + "@" + strconv.Itoa(attempt)
+	}
+	return fmt.Sprintf("the attempt decision names %s (op=%s), not this take's %s@%d (%s); finish with the take's own decision, or none",
+		named, d.Op, c.F("primary"), c.Int("attempt"), c.ID)
 }
 
 // finishKind is how a failed finish of the work card c is routed (finishPlan): the take's
 // end kind (cardhdr.EndProvider and cardhdr.EndNoResult are takes that ended with no work to
 // judge; "" is failed work) and the failure class failed work is compared by (FailureClass;
 // "" for the reason line's own). A staging refusal and a launch refused are the member's, no
-// take ran, and nothing overrides them. A decision at or above the card's bar
-// (FieldDecideAttempt) routes by its class: provider-failure and no-result end the take,
-// nothing-to-do, wrong-scope and needs-pro are failed work of that class; done is never a
-// failed finish's route (the machine cannot land work it was not handed), so the prefix
-// rule stands for it, as for every decision under the bar.
+// take ran, and a report the provider failed is native's own hard end: no decision
+// overrides them. Otherwise two classes route, each at or above its own bar on the card:
+// no-result ends the take (FieldDecideAttemptNoResult), nothing-to-do is failed work of the
+// class `decided nothing-to-do` (FieldDecideAttemptNothingToDo). Every other class, and
+// every decision under its bar or with no bar, leaves the prefix rule standing.
 func finishKind(c *Card, r FinishReq) (kind, class string, used bool) {
 	kind = prefixKind(r.Report)
-	if kind == cardhdr.EndStaging || strings.HasPrefix(strings.TrimSpace(r.Report), cardhdr.EndLaunch) {
+	if kind == cardhdr.EndStaging || kind == cardhdr.EndProvider || strings.HasPrefix(strings.TrimSpace(r.Report), cardhdr.EndLaunch) {
 		return kind, "", false
 	}
 	d, ok := decide.ParseDecided(r.Decided)
-	if !ok || !d.Over(c.F(FieldDecideAttempt)) {
-		return kind, "", false
-	}
-	switch d.Value {
-	case decide.ClassProviderFailure:
-		return cardhdr.EndProvider, "", true
-	case decide.ClassNoResult:
+	switch {
+	case !ok:
+	case d.Value == decide.ClassNoResult && d.Over(c.F(FieldDecideAttemptNoResult)):
 		return cardhdr.EndNoResult, "", true
-	case decide.ClassNothingToDo, decide.ClassWrongScope, decide.ClassNeedsPro:
+	case d.Value == decide.ClassNothingToDo && d.Over(c.F(FieldDecideAttemptNothingToDo)):
 		return "", "decided " + d.Value, true
 	}
 	return kind, "", false
@@ -107,19 +139,22 @@ func prefixKind(report string) string {
 }
 
 // decidedSets is what a finish carrying an attempt decision writes: on the work card the
-// decision and whether it routed the finish, on the primary its record of the decision
-// (PrefixDecided), set once. Nothing when the finish carries none.
-func decidedSets(r FinishReq, used bool, card, primary map[string]string) {
+// decision and whether it routed the finish, on the primary pr its record of the decision
+// (PrefixDecided), set once: a second take with the same op leaves the first record. Nothing
+// when the finish carries none.
+func decidedSets(r FinishReq, used bool, pr *Card, card, primary map[string]string) {
 	d, ok := decide.ParseDecided(r.Decided)
 	if !ok {
 		return
 	}
-	word := map[bool]string{true: "yes", false: "no"}[used]
 	card[FieldDecided] = d.String()
 	if used {
 		card[FieldDecidedUsed] = "yes"
 	}
-	primary[PrefixDecided+d.Op] = fmt.Sprintf("%s p=%s used=%s", d.Value, strconv.FormatFloat(d.P, 'f', 3, 64), word)
+	if pr.F(PrefixDecided+d.Op) == "" {
+		word := map[bool]string{true: "yes", false: "no"}[used]
+		primary[PrefixDecided+d.Op] = fmt.Sprintf("%s p=%s used=%s", d.Value, strconv.FormatFloat(d.P, 'f', 3, 64), word)
+	}
 }
 
 // startTier is the tier a card with no tier yet (its first deal on a route) is drawn from:
@@ -200,7 +235,8 @@ func DecideDue(s *Snapshot) (grades []GradeAsk, outcomes []DecideOutcome) {
 			if !ok {
 				continue
 			}
-			outcomes = append(outcomes, DecideOutcome{Decision: decide.AttemptName, Op: op, Label: decide.AttemptLabel(opAttempt(op), at, tier), Note: c.ID + " " + note})
+			_, n, _ := decide.AttemptOf(op)
+			outcomes = append(outcomes, DecideOutcome{Decision: decide.AttemptName, Op: op, Label: decide.AttemptLabel(n, at, tier), Note: c.ID + " " + note})
 		}
 		if g, ok := decide.ParseDecided(c.F(FieldGrade)); ok {
 			outcomes = append(outcomes, DecideOutcome{Decision: decide.GradeName, Op: g.Op, Label: decide.GradeLabel(tier), Note: c.ID + " " + note})
@@ -217,12 +253,4 @@ func LandedTier(c *Card) string {
 	}
 	now, _ := CardTiers(c)
 	return now
-}
-
-// opAttempt is the attempt an attempt decision's op id names (decide.AttemptOp:
-// `<card>@<attempt>.<hex>`); 0 when it names none.
-func opAttempt(op string) int {
-	_, rest, _ := strings.Cut(op, "@")
-	n, _ := strconv.Atoi(strings.SplitN(rest, ".", 2)[0])
-	return n
 }

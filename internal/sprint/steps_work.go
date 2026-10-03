@@ -856,8 +856,9 @@ func deal(s *Snapshot, c *Card, fix, m string, q map[string]int, ri routeIndexes
 	if fix != "" {
 		fields["fix"] = fix
 	}
-	// its member asks the attempt decision at its end (decide.go)
-	maps.Copy(fields, s.attemptBar())
+	// the attempt decision's bars, which its failed finish is routed by (decide.go)
+	bars, _ := s.attemptBars()
+	maps.Copy(fields, bars)
 	for k, v := range given { // what a rework adds on the attempt's work card: its finding and why
 		if v != "" {
 			fields[k] = v
@@ -920,12 +921,10 @@ func redeal(s *Snapshot, c, wc *Card, m string, q map[string]int, ri routeIndexe
 		set["redeals"] = itoa(wc.Int("redeals") + 1)
 	}
 	unset := []string{"withdrawn", FieldTakeEnded, FieldProviderError, FieldDecided, FieldDecidedUsed}
-	// the attempt bar as the sprint row holds it now (decide.go)
-	if bar := s.attemptBar(); bar != nil {
-		maps.Copy(set, bar)
-	} else {
-		unset = append(unset, FieldDecideAttempt)
-	}
+	// the attempt decision's bars as the sprint row holds them now (decide.go)
+	bars, none := s.attemptBars()
+	maps.Copy(set, bars)
+	unset = append(unset, none...)
 	work, primary := splitRoute(route)
 	for k, v := range work {
 		if v == "" {
@@ -1079,9 +1078,10 @@ type FinishReq struct {
 	// kept on the work card, the attempt's record, timed and priced (cost.go).
 	Usage string
 	// Decided is the take's attempt decision, as its member asked it (decide.Decided:
-	// `<class> p=<p> op=<op>`; decide.go): kept on the work card and the primary, and a
-	// failed finish whose class is at or above the card's bar is routed by it (finishKind).
-	// A finish carrying one names one card.
+	// `<class> p=<p> op=<op>`; decide.go): its op names the take's card and attempt, else the
+	// finish is refused (decidedFor); kept on the work card and the primary, and a failed
+	// finish whose class is no-result or nothing-to-do at or above that class's bar on the
+	// card is routed by it (finishKind). A finish carrying one names one card.
 	Decided string
 	Who     string
 }
@@ -1145,6 +1145,11 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		return p
 	}
 	for _, c := range chosen {
+		// a finish is routed only by a decision of its own take (decide.go, decidedFor)
+		if why := decidedFor(c, r.Decided); why != "" {
+			p.refuse(c.ID, why)
+			continue
+		}
 		// the member that finished it: the one --as names, each card's own
 		// when it names several
 		who := r.As
@@ -1156,7 +1161,7 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		}
 		pr := s.Work.Placed(c.F("primary"))
 		// how a failed finish is routed: by the reason line's prefix, or by the take's
-		// attempt decision at or above the card's bar (decide.go, finishKind)
+		// attempt decision at or above its class's bar on the card (decide.go, finishKind)
 		kind, class, used := "", "", false
 		if r.Failed {
 			kind, class, used = finishKind(c, r)
@@ -1203,7 +1208,7 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 			cardSet[FieldUsage] = rec
 		}
 		set := map[string]string{"head": head, "result": result}
-		decidedSets(r, used, cardSet, set)
+		decidedSets(r, used, pr, cardSet, set)
 		identical := false
 		if r.Failed && !passed {
 			set["failed"] = itoa(pr.Int("failed") + 1)
@@ -1314,15 +1319,12 @@ func takeEnded(s *Snapshot, c, pr *Card, r FinishReq, kind string, decided bool)
 	set["withdrawn"], set[FieldTakeEnded] = stamp(s.Now), stamp(s.Now)
 	line := cutText(strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(r.Report, kind), ":")), MaxProviderErrorBytes)
 	why := "the provider failed the take"
-	if decided {
-		why = "nova-decide classed the take " + map[string]string{cardhdr.EndProvider: decide.ClassProviderFailure, cardhdr.EndNoResult: decide.ClassNoResult}[kind]
-	}
 	if kind == cardhdr.EndNoResult {
 		// the record's line says which kind it was: the routes' count of a route's ended
 		// takes holds both, and a reader of the card tells them apart
-		line = cutText(kind+": "+strings.TrimPrefix(line, kind+": "), MaxProviderErrorBytes)
-		if !decided {
-			why = "the child left no result"
+		line, why = cutText(kind+": "+strings.TrimPrefix(line, kind+": "), MaxProviderErrorBytes), "the child left no result"
+		if decided {
+			why = "nova-decide classed the take " + decide.ClassNoResult // a provider failure is never decided (finishKind)
 		}
 	}
 	set[FieldProviderError] = line
@@ -1343,7 +1345,7 @@ func takeEnded(s *Snapshot, c, pr *Card, r FinishReq, kind string, decided bool)
 	// and the producer's record of it (cost.go): it still cost tokens and time
 	prSet := map[string]string{}
 	addConsumer(pr, prSet, workConsumer(s, c, take, kind, rec))
-	decidedSets(r, decided, set, prSet)
+	decidedSets(r, decided, pr, set, prSet)
 	return Unit{Key: c.ID, Stream: pr.Row, Changes: []Change{
 		change(Fleet, moveEntry(c, c.Row, Withdrawn, set, "taken", "dealt")),
 		change(Work, moveEntry(pr, pr.Row, Ready, prSet, "work")),

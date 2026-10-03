@@ -110,9 +110,9 @@ func TestTheFriendRowIsWhatSomeoneDecidesForHer(t *testing.T) {
 		assert.Equal(t, "flash,frontier,pro", strings.Join(Tiers, ","), assertionMsg98...)
 	}()
 	sprint, _ := Lookup(KindSprint)
-	assertionMsg100 := []any{"sprint %+v: one row, one optional ref to a friend, the decide read's two bars and layer 2's two", sprint}
+	assertionMsg100 := []any{"sprint %+v: one row, one optional ref to a friend, the decide read's two bars and layer 2's three", sprint}
 	require.True(t, sprint.Singleton, assertionMsg100...)
-	require.Len(t, sprint.Fields, 5, assertionMsg100...)
+	require.Len(t, sprint.Fields, 6, assertionMsg100...)
 	require.Equal(t, "coordinator", sprint.Fields[0].Name, assertionMsg100...)
 	require.Equal(t, TypeRef, sprint.Fields[0].Type, assertionMsg100...)
 	require.Equal(t, KindFriend, sprint.Fields[0].Ref, assertionMsg100...)
@@ -149,27 +149,30 @@ func TestTheSprintRowHoldsTheDecideBarsTogether(t *testing.T) {
 	}
 }
 
-// The sprint row holds layer 2's two bars (docs/SPEC-SPRINT.md sections 2 and 5): the
-// attempt decision's and the grade's, both empty by default (nothing routes on a decision
-// until a review round labels cards independently); each a probability or empty, every
-// problem named at once.
+// The sprint row holds layer 2's three bars (docs/SPEC-SPRINT.md sections 2 and 5): the
+// attempt decision's no-result and nothing-to-do bars, each its own named field, and the
+// grade's, all empty by default (nothing routes on a decision until a review round labels
+// cards independently); each a probability or empty, every problem named at once.
 func TestTheSprintRowHoldsTheAttemptAndGradeBars(t *testing.T) {
 	t.Parallel()
 	sprint, _ := Lookup(KindSprint)
-	attempt, _ := sprint.Field(FieldDecideAttempt)
+	noResult, _ := sprint.Field(FieldDecideAttemptNoResult)
+	nothing, _ := sprint.Field(FieldDecideAttemptNothingToDo)
 	grade, _ := sprint.Field(FieldDecideGrade)
-	assert.Equal(t, []string{"", ""}, []string{attempt.Default, grade.Default})
-	assert.Equal(t, []Type{TypeDecimal, TypeDecimal}, []Type{attempt.Type, grade.Type})
+	assert.Equal(t, []string{"", "", ""}, []string{noResult.Default, nothing.Default, grade.Default})
+	assert.Equal(t, []Type{TypeDecimal, TypeDecimal, TypeDecimal}, []Type{noResult.Type, nothing.Type, grade.Type})
 	for _, tc := range []struct {
-		attempt, grade, says string
+		noResult, nothing, grade, says string
 	}{
-		{"0.7", "", ""},
-		{"", "", ""},
-		{"0.7", "0.8", ""},
-		{"1.2", "", "decide_attempt 1.2 is not a probability"},
-		{"x", "2", `decide_attempt "x" is not a decimal; decide_grade 2 is not a probability`},
+		{"0.7", "", "", ""},
+		{"", "", "", ""},
+		{"0.7", "0.8", "0.8", ""},
+		{"1.2", "", "", "decide_attempt_no_result 1.2 is not a probability"},
+		{"", "-1", "", "decide_attempt_nothing_to_do -1 is not a probability"},
+		{"x", "", "2", `decide_attempt_no_result "x" is not a decimal; decide_grade 2 is not a probability`},
 	} {
-		err := sprint.Check(Row{Name: KindSprint, Fields: map[string]string{FieldDecideBounce: "0.5", FieldDecideReview: "0.3", FieldDecideAttempt: tc.attempt, FieldDecideGrade: tc.grade}})
+		err := sprint.Check(Row{Name: KindSprint, Fields: map[string]string{FieldDecideBounce: "0.5", FieldDecideReview: "0.3",
+			FieldDecideAttemptNoResult: tc.noResult, FieldDecideAttemptNothingToDo: tc.nothing, FieldDecideGrade: tc.grade}})
 		if tc.says == "" {
 			assert.NoError(t, err, "%+v", tc)
 		} else {
