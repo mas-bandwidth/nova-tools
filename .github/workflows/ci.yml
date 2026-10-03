@@ -310,23 +310,22 @@ jobs:
         run: make vet-windows
 
   test-packages:
-    # The list the CL tier's test shards run on, read from the source: ./cmd/*
-    # and ./internal/... dealt round-robin into twelve shards on the Linux
-    # `space` runners and four on the macOS darwin-x64 runners (`batman`,
-    # `superman`). The split reflects a measurement: the macOS runner group
-    # carried the swarm, and its legs waited forty minutes for a runner while
-    # the `space` legs took two minutes, so weight moved off it — 8/4 with eight
-    # `space` runners, not 8/8. A package that builds on both platforms runs once
-    # per OS; the darwin-only packages run on the darwin-x64 shards only. On
-    # pull_request and merge_group it selects only the packages the change
-    # touches and their in-module importers; the push to dev and the nightly run
-    # keep the whole tree. The darwin shards are dealt only when the target
-    # branch is dev or main (a pull_request's base, the merge queue's base_ref,
-    # a push's ref name), on schedule and on workflow_dispatch; for a working
-    # branch the matrix is Linux only (pkgselect.DarwinOn, read by `ci
-    # test-matrix --target-branch` in the list step). It runs on the nightly
-    # schedule too, for the `functional` job's list and for the unit `test` job's
-    # nightly space shards.
+    # The list the CL tier's test shards run on, READ OUT OF THE SOURCE rather
+    # than written down: ./cmd/* and ./internal/... dealt round-robin into
+    # twelve shards on the Linux space runners and four on the macOS darwin-x64
+    # runners (batman, superman; off the Studio since nova-tools#3634). The split is a measurement: the Studio also carried the swarm,
+    # and at 02:48Z 2026-09-16 its legs waited forty minutes for a runner while
+    # the space legs took two, so weight moved off it — 8/4 with eight space runners since 03:10Z, not 8/8. A
+    # package that builds on both platforms runs once per OS; the darwin-only
+    # packages run on the darwin-x64 shards only. On pull_request and merge_group it
+    # selects only the packages the change touches and their in-module
+    # importers; the push to dev and the nightly run keep the whole tree.
+    # The darwin shards are dealt only when the target branch is dev or main
+    # (a pull_request's base, the merge queue's base_ref, a push's ref name), on
+    # schedule and on workflow_dispatch; for a working branch the matrix is Linux
+    # only (pkgselect.DarwinOn, read by `ci test-matrix --target-branch` in the list step).
+    # It runs on the nightly schedule too, for the `functional` job's list and
+    # for the unit `test` job's nightly space shards (#4413).
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, linux, x64, space]
     timeout-minutes: 2
@@ -340,16 +339,17 @@ jobs:
         # The sweep below is `rm -rf` over whatever the workspace holds, so it only
         # ever runs on a directory this repository has checked out: an empty
         # variable is refused, a workspace that does not exist yet is the normal
-        # first-run state, and a workspace with no `.git` is not ours to
+        # first-run state (#1751), and a workspace with no `.git` is not ours to
         # empty — actions/checkout clears a non-repository workspace itself.
         shell: bash
         run: |
           [ -n "${GITHUB_WORKSPACE}" ] || exit 1
           [ -d "${GITHUB_WORKSPACE}" ] || exit 0
           [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0
-          # Clean in place, keep the tree (fs_usage on a macOS runner: four
-          # `find ... rm -rf` sweeps and the re-seeds behind them were the
-          # file-event storm fseventsd digested at 100% CPU). A checkout of
+          # Clean in place, keep the tree (Glenn 2026-09-26 10:20 AM ET, fs_usage
+          # on the Studio: four `find ... rm -rf` sweeps and the re-seeds behind
+          # them were the file-event storm fseventsd digested at 100% CPU;
+          # "lots of tiny files is a really slow way to work"). A checkout of
           # ours is reset to its HEAD and every untracked or ignored file is
           # removed: the same hygiene as emptying it, a few hundred operations
           # instead of a hundred thousand, and the next checkout fetches only
@@ -536,16 +536,17 @@ jobs:
         # The sweep below is `rm -rf` over whatever the workspace holds, so it only
         # ever runs on a directory this repository has checked out: an empty
         # variable is refused, a workspace that does not exist yet is the normal
-        # first-run state, and a workspace with no `.git` is not ours to
+        # first-run state (#1751), and a workspace with no `.git` is not ours to
         # empty — actions/checkout clears a non-repository workspace itself.
         shell: bash
         run: |
           [ -n "${GITHUB_WORKSPACE}" ] || exit 1
           [ -d "${GITHUB_WORKSPACE}" ] || exit 0
           [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0
-          # Clean in place, keep the tree (fs_usage on a macOS runner: four
-          # `find ... rm -rf` sweeps and the re-seeds behind them were the
-          # file-event storm fseventsd digested at 100% CPU). A checkout of
+          # Clean in place, keep the tree (Glenn 2026-09-26 10:20 AM ET, fs_usage
+          # on the Studio: four `find ... rm -rf` sweeps and the re-seeds behind
+          # them were the file-event storm fseventsd digested at 100% CPU;
+          # "lots of tiny files is a really slow way to work"). A checkout of
           # ours is reset to its HEAD and every untracked or ignored file is
           # removed: the same hygiene as emptying it, a few hundred operations
           # instead of a hundred thousand, and the next checkout fetches only
@@ -562,13 +563,13 @@ jobs:
         # workspace above, so actions/checkout fetched the whole commit from
         # GitHub (11 MB at --depth=1) on every job, and on the house benches
         # that fetch stalled: 17 of the cancelled jobs in the last 25 PR runs
-        # died at `git fetch --depth=1 origin +<merge sha>` at the two-minute
-        # job cap (9 on one Linux bench, 5 on another, 3 on a macOS runner),
-        # the same stall that failed 566 staged cards. Every bench
+        # (2026-09-23 02:00Z) died at `git fetch --depth=1 origin +<merge
+        # sha>` at the two-minute job cap (hulk 9, vision 5, studio 3, #2795),
+        # the same stall that failed 566 staged cards (#2882). Every bench
         # already keeps $HOME/nova-bench/mirror/nova-tools.git fresh, so the
         # workspace borrows its objects (objects/info/alternates) and starts
         # detached at the mirror's HEAD: the fetch then carries only what the
-        # mirror lacks. Measured on a Linux bench: 11 MB and 3.1 s -> 24 KB and 1.1 s.
+        # mirror lacks. Measured on hulk: 11 MB and 3.1 s -> 24 KB and 1.1 s.
         # actions/checkout keeps a workspace whose origin URL matches and whose
         # HEAD is a commit (it cleans and resets it, both no-ops here), so the
         # checkout step itself is unchanged.
@@ -1224,16 +1225,17 @@ jobs:
         # The sweep below is `rm -rf` over whatever the workspace holds, so it only
         # ever runs on a directory this repository has checked out: an empty
         # variable is refused, a workspace that does not exist yet is the normal
-        # first-run state, and a workspace with no `.git` is not ours to
+        # first-run state (#1751), and a workspace with no `.git` is not ours to
         # empty — actions/checkout clears a non-repository workspace itself.
         shell: bash
         run: |
           [ -n "${GITHUB_WORKSPACE}" ] || exit 1
           [ -d "${GITHUB_WORKSPACE}" ] || exit 0
           [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0
-          # Clean in place, keep the tree (fs_usage on a macOS runner: four
-          # `find ... rm -rf` sweeps and the re-seeds behind them were the
-          # file-event storm fseventsd digested at 100% CPU). A checkout of
+          # Clean in place, keep the tree (Glenn 2026-09-26 10:20 AM ET, fs_usage
+          # on the Studio: four `find ... rm -rf` sweeps and the re-seeds behind
+          # them were the file-event storm fseventsd digested at 100% CPU;
+          # "lots of tiny files is a really slow way to work"). A checkout of
           # ours is reset to its HEAD and every untracked or ignored file is
           # removed: the same hygiene as emptying it, a few hundred operations
           # instead of a hundred thousand, and the next checkout fetches only
@@ -1249,13 +1251,13 @@ jobs:
         # workspace above, so actions/checkout fetched the whole commit from
         # GitHub (11 MB at --depth=1) on every job, and on the house benches
         # that fetch stalled: 17 of the cancelled jobs in the last 25 PR runs
-        # died at `git fetch --depth=1 origin +<merge sha>` at the two-minute
-        # job cap (9 on one Linux bench, 5 on another, 3 on a macOS runner),
-        # the same stall that failed 566 staged cards. Every bench
+        # (2026-09-23 02:00Z) died at `git fetch --depth=1 origin +<merge
+        # sha>` at the two-minute job cap (hulk 9, vision 5, studio 3, #2795),
+        # the same stall that failed 566 staged cards (#2882). Every bench
         # already keeps $HOME/nova-bench/mirror/nova-tools.git fresh, so the
         # workspace borrows its objects (objects/info/alternates) and starts
         # detached at the mirror's HEAD: the fetch then carries only what the
-        # mirror lacks. Measured on a Linux bench: 11 MB and 3.1 s -> 24 KB and 1.1 s.
+        # mirror lacks. Measured on hulk: 11 MB and 3.1 s -> 24 KB and 1.1 s.
         # actions/checkout keeps a workspace whose origin URL matches and whose
         # HEAD is a commit (it cleans and resets it, both no-ops here), so the
         # checkout step itself is unchanged.
@@ -1340,16 +1342,17 @@ jobs:
         # The sweep below is `rm -rf` over whatever the workspace holds, so it only
         # ever runs on a directory this repository has checked out: an empty
         # variable is refused, a workspace that does not exist yet is the normal
-        # first-run state, and a workspace with no `.git` is not ours to
+        # first-run state (#1751), and a workspace with no `.git` is not ours to
         # empty — actions/checkout clears a non-repository workspace itself.
         shell: bash
         run: |
           [ -n "${GITHUB_WORKSPACE}" ] || exit 1
           [ -d "${GITHUB_WORKSPACE}" ] || exit 0
           [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0
-          # Clean in place, keep the tree (fs_usage on a macOS runner: four
-          # `find ... rm -rf` sweeps and the re-seeds behind them were the
-          # file-event storm fseventsd digested at 100% CPU). A checkout of
+          # Clean in place, keep the tree (Glenn 2026-09-26 10:20 AM ET, fs_usage
+          # on the Studio: four `find ... rm -rf` sweeps and the re-seeds behind
+          # them were the file-event storm fseventsd digested at 100% CPU;
+          # "lots of tiny files is a really slow way to work"). A checkout of
           # ours is reset to its HEAD and every untracked or ignored file is
           # removed: the same hygiene as emptying it, a few hundred operations
           # instead of a hundred thousand, and the next checkout fetches only
@@ -1365,13 +1368,13 @@ jobs:
         # workspace above, so actions/checkout fetched the whole commit from
         # GitHub (11 MB at --depth=1) on every job, and on the house benches
         # that fetch stalled: 17 of the cancelled jobs in the last 25 PR runs
-        # died at `git fetch --depth=1 origin +<merge sha>` at the two-minute
-        # job cap (9 on one Linux bench, 5 on another, 3 on a macOS runner),
-        # the same stall that failed 566 staged cards. Every bench
+        # (2026-09-23 02:00Z) died at `git fetch --depth=1 origin +<merge
+        # sha>` at the two-minute job cap (hulk 9, vision 5, studio 3, #2795),
+        # the same stall that failed 566 staged cards (#2882). Every bench
         # already keeps $HOME/nova-bench/mirror/nova-tools.git fresh, so the
         # workspace borrows its objects (objects/info/alternates) and starts
         # detached at the mirror's HEAD: the fetch then carries only what the
-        # mirror lacks. Measured on a Linux bench: 11 MB and 3.1 s -> 24 KB and 1.1 s.
+        # mirror lacks. Measured on hulk: 11 MB and 3.1 s -> 24 KB and 1.1 s.
         # actions/checkout keeps a workspace whose origin URL matches and whose
         # HEAD is a commit (it cleans and resets it, both no-ops here), so the
         # checkout step itself is unchanged.
@@ -1466,16 +1469,17 @@ jobs:
         # The sweep below is `rm -rf` over whatever the workspace holds, so it only
         # ever runs on a directory this repository has checked out: an empty
         # variable is refused, a workspace that does not exist yet is the normal
-        # first-run state, and a workspace with no `.git` is not ours to
+        # first-run state (#1751), and a workspace with no `.git` is not ours to
         # empty — actions/checkout clears a non-repository workspace itself.
         shell: bash
         run: |
           [ -n "${GITHUB_WORKSPACE}" ] || exit 1
           [ -d "${GITHUB_WORKSPACE}" ] || exit 0
           [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0
-          # Clean in place, keep the tree (fs_usage on a macOS runner: four
-          # `find ... rm -rf` sweeps and the re-seeds behind them were the
-          # file-event storm fseventsd digested at 100% CPU). A checkout of
+          # Clean in place, keep the tree (Glenn 2026-09-26 10:20 AM ET, fs_usage
+          # on the Studio: four `find ... rm -rf` sweeps and the re-seeds behind
+          # them were the file-event storm fseventsd digested at 100% CPU;
+          # "lots of tiny files is a really slow way to work"). A checkout of
           # ours is reset to its HEAD and every untracked or ignored file is
           # removed: the same hygiene as emptying it, a few hundred operations
           # instead of a hundred thousand, and the next checkout fetches only
@@ -1491,13 +1495,13 @@ jobs:
         # workspace above, so actions/checkout fetched the whole commit from
         # GitHub (11 MB at --depth=1) on every job, and on the house benches
         # that fetch stalled: 17 of the cancelled jobs in the last 25 PR runs
-        # died at `git fetch --depth=1 origin +<merge sha>` at the two-minute
-        # job cap (9 on one Linux bench, 5 on another, 3 on a macOS runner),
-        # the same stall that failed 566 staged cards. Every bench
+        # (2026-09-23 02:00Z) died at `git fetch --depth=1 origin +<merge
+        # sha>` at the two-minute job cap (hulk 9, vision 5, studio 3, #2795),
+        # the same stall that failed 566 staged cards (#2882). Every bench
         # already keeps $HOME/nova-bench/mirror/nova-tools.git fresh, so the
         # workspace borrows its objects (objects/info/alternates) and starts
         # detached at the mirror's HEAD: the fetch then carries only what the
-        # mirror lacks. Measured on a Linux bench: 11 MB and 3.1 s -> 24 KB and 1.1 s.
+        # mirror lacks. Measured on hulk: 11 MB and 3.1 s -> 24 KB and 1.1 s.
         # actions/checkout keeps a workspace whose origin URL matches and whose
         # HEAD is a commit (it cleans and resets it, both no-ops here), so the
         # checkout step itself is unchanged.
@@ -1710,16 +1714,17 @@ jobs:
         # The sweep below is `rm -rf` over whatever the workspace holds, so it only
         # ever runs on a directory this repository has checked out: an empty
         # variable is refused, a workspace that does not exist yet is the normal
-        # first-run state, and a workspace with no `.git` is not ours to
+        # first-run state (#1751), and a workspace with no `.git` is not ours to
         # empty — actions/checkout clears a non-repository workspace itself.
         shell: bash
         run: |
           [ -n "${GITHUB_WORKSPACE}" ] || exit 1
           [ -d "${GITHUB_WORKSPACE}" ] || exit 0
           [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0
-          # Clean in place, keep the tree (fs_usage on a macOS runner: four
-          # `find ... rm -rf` sweeps and the re-seeds behind them were the
-          # file-event storm fseventsd digested at 100% CPU). A checkout of
+          # Clean in place, keep the tree (Glenn 2026-09-26 10:20 AM ET, fs_usage
+          # on the Studio: four `find ... rm -rf` sweeps and the re-seeds behind
+          # them were the file-event storm fseventsd digested at 100% CPU;
+          # "lots of tiny files is a really slow way to work"). A checkout of
           # ours is reset to its HEAD and every untracked or ignored file is
           # removed: the same hygiene as emptying it, a few hundred operations
           # instead of a hundred thousand, and the next checkout fetches only
@@ -1736,13 +1741,13 @@ jobs:
         # workspace above, so actions/checkout fetched the whole commit from
         # GitHub (11 MB at --depth=1) on every job, and on the house benches
         # that fetch stalled: 17 of the cancelled jobs in the last 25 PR runs
-        # died at `git fetch --depth=1 origin +<merge sha>` at the two-minute
-        # job cap (9 on one Linux bench, 5 on another, 3 on a macOS runner),
-        # the same stall that failed 566 staged cards. Every bench
+        # (2026-09-23 02:00Z) died at `git fetch --depth=1 origin +<merge
+        # sha>` at the two-minute job cap (hulk 9, vision 5, studio 3, #2795),
+        # the same stall that failed 566 staged cards (#2882). Every bench
         # already keeps $HOME/nova-bench/mirror/nova-tools.git fresh, so the
         # workspace borrows its objects (objects/info/alternates) and starts
         # detached at the mirror's HEAD: the fetch then carries only what the
-        # mirror lacks. Measured on a Linux bench: 11 MB and 3.1 s -> 24 KB and 1.1 s.
+        # mirror lacks. Measured on hulk: 11 MB and 3.1 s -> 24 KB and 1.1 s.
         # actions/checkout keeps a workspace whose origin URL matches and whose
         # HEAD is a commit (it cleans and resets it, both no-ops here), so the
         # checkout step itself is unchanged.

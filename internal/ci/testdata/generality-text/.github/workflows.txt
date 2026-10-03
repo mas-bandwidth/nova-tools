@@ -3,13 +3,13 @@
 .github/workflows/certification.yml:space 2
 .github/workflows/certification.yml:studio 4
 .github/workflows/ci.yml:batman 18
-.github/workflows/ci.yml:glenn 7
-.github/workflows/ci.yml:hulk 11
+.github/workflows/ci.yml:glenn 13
+.github/workflows/ci.yml:hulk 21
 .github/workflows/ci.yml:mini 1
 .github/workflows/ci.yml:rowan 1
 .github/workflows/ci.yml:space 34
-.github/workflows/ci.yml:studio 23
+.github/workflows/ci.yml:studio 36
 .github/workflows/ci.yml:superman 15
-.github/workflows/ci.yml:vision 3
+.github/workflows/ci.yml:vision 8
 .github/workflows/nightly-slow.yml:glenn 1
 .github/workflows/revert-on-red.yml:glenn 1
