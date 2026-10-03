@@ -127,7 +127,15 @@ table's waiting cells alone; `where --json` carries it as `held`). The ETA is
 over the dealable cards, the ones neither landed nor held, so loading a wave in
 waiting behind sentinels leaves the estimate where it was (nova-tools#5096
 item 16; the owner: "I'd like to really really load up the sprint in waiting,
-and stick sentinels in"): `3/10 30.0% held=4 -> ETA 12m`. The verbs' sprint
+and stick sentinels in"): `3/10 30.0% held=4 -> ETA 12m`. A reading process
+shows the largest estimate of the last 10 s (the owner, 2026-10-01: "take
+largest ETA in last 10 secs, so it is a stable value"), held over the same
+cards to land: an add, a drop or a release changes the primaries on the table
+or the held ones, which a landing never does, and makes the held estimate
+dirty (the owner, 2026-10-02: "When you add new cards, the ETA needs to be
+made dirty and recalculated."; nova-tools#5171), so the first read of `where`,
+`where --json` and the dashboard after the tick that drains the change shows
+the estimate recomputed over the new count at the rate measured. The verbs' sprint
 line, printed after every step, reads no cards and keeps the ETA over every
 card left.
 

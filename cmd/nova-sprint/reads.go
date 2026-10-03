@@ -75,16 +75,29 @@ type etaSample struct {
 	m  int64
 }
 
-// heldETA is the largest estimate of the last etaHold, m at now among them: a
-// stable value. No estimate (0) is shown as none and forgets what was held. One
+// etaKey is what the cards still to land are made of apart from the landings:
+// every primary on the table and the held ones. A landing changes neither; add,
+// drop and release change one (a brief, a rework and a stream remove change
+// neither: none adds, takes off or frees a card), and their change reaches the
+// table at the next tick's drain.
+type etaKey struct{ all, held int64 }
 
-// process holds its own: a where run once shows its estimate, a watch and the
-// server hold theirs.
-func (a *app) heldETA(now time.Time, m int64) int64 {
+// heldETA is the largest estimate of the last etaHold, m at now among them: a
+// stable value while landings arrive in rounds. The hold is over the same cards
+// to land: an estimate made over another key is dirty and is forgotten, so the
+// first read after the tick that drained an add, a drop or a release shows the
+// estimate recomputed over the new count at the rate measured (the owner,
+// 2026-10-02: "When you add new cards, the ETA needs to be made dirty and
+// recalculated."; nova-tools#5171). No estimate (0) is shown as none and
+// forgets what was held. One process holds its own: a where run once shows its
+// estimate, a watch and the server hold theirs.
+func (a *app) heldETA(now time.Time, k etaKey, m int64) int64 {
 	a.etaMu.Lock()
 	defer a.etaMu.Unlock()
+	if m == 0 || k != a.etaKey {
+		a.etas, a.etaKey = nil, k
+	}
 	if m == 0 {
-		a.etas = nil
 		return 0
 	}
 	a.etas = append(slices.DeleteFunc(a.etas, func(s etaSample) bool { return now.Sub(s.at) >= etaHold }), etaSample{now, m})
@@ -594,7 +607,7 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 	}
 	v.Held = int64(held)
 	since, started := st.SinceFirstStart(ctx)
-	v.Summary = summary(shapes[0], v.Held, a.heldETA(now, etaMinutes(shapes[0], v.Held, since, started)))
+	v.Summary = summary(shapes[0], v.Held, a.heldETA(now, etaKey{v.All, v.Held}, etaMinutes(shapes[0], v.Held, since, started)))
 
 	if f.Pending != nil {
 		v.Pending = f.Pending.ID
