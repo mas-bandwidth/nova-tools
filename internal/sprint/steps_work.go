@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/internal/decide"
 )
 
 // The steps that move primaries through the work table and the fleet: add,
@@ -855,6 +856,8 @@ func deal(s *Snapshot, c *Card, fix, m string, q map[string]int, ri routeIndexes
 	if fix != "" {
 		fields["fix"] = fix
 	}
+	// its member asks the attempt decision at its end (decide.go)
+	maps.Copy(fields, s.attemptBar())
 	for k, v := range given { // what a rework adds on the attempt's work card: its finding and why
 		if v != "" {
 			fields[k] = v
@@ -916,7 +919,13 @@ func redeal(s *Snapshot, c, wc *Card, m string, q map[string]int, ri routeIndexe
 	if wc.F(FieldTakeEnded) != "" {
 		set["redeals"] = itoa(wc.Int("redeals") + 1)
 	}
-	unset := []string{"withdrawn", FieldTakeEnded, FieldProviderError}
+	unset := []string{"withdrawn", FieldTakeEnded, FieldProviderError, FieldDecided, FieldDecidedUsed}
+	// the attempt bar as the sprint row holds it now (decide.go)
+	if bar := s.attemptBar(); bar != nil {
+		maps.Copy(set, bar)
+	} else {
+		unset = append(unset, FieldDecideAttempt)
+	}
 	work, primary := splitRoute(route)
 	for k, v := range work {
 		if v == "" {
@@ -1069,7 +1078,12 @@ type FinishReq struct {
 	// budget word and wall, the tokens by class, the harness's cost: cardcost.Usage):
 	// kept on the work card, the attempt's record, timed and priced (cost.go).
 	Usage string
-	Who   string
+	// Decided is the take's attempt decision, as its member asked it (decide.Decided:
+	// `<class> p=<p> op=<op>`; decide.go): kept on the work card and the primary, and a
+	// failed finish whose class is at or above the card's bar is routed by it (finishKind).
+	// A finish carrying one names one card.
+	Decided string
+	Who     string
 }
 
 // Finish moves work cards working -> done and their primaries working ->
@@ -1123,6 +1137,13 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		}
 		chosen = append(chosen, c)
 	}
+	if r.Decided != "" && len(chosen) > 1 {
+		// an attempt decision is one take's: it names the card it decided
+		for _, c := range chosen {
+			p.refuse(c.ID, "a finish carrying an attempt decision (--decision) names one card; finish each card in its own verb")
+		}
+		return p
+	}
 	for _, c := range chosen {
 		// the member that finished it: the one --as names, each card's own
 		// when it names several
@@ -1134,15 +1155,17 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 			who = r.Who
 		}
 		pr := s.Work.Placed(c.F("primary"))
-		if r.Failed && IsProviderFailure(r.Report) {
-			p.Units = append(p.Units, takeEnded(s, c, pr, r, cardhdr.EndProvider))
-			continue
+		// how a failed finish is routed: by the reason line's prefix, or by the take's
+		// attempt decision at or above the card's bar (decide.go, finishKind)
+		kind, class, used := "", "", false
+		if r.Failed {
+			kind, class, used = finishKind(c, r)
 		}
-		if r.Failed && IsNoResult(r.Report) {
-			p.Units = append(p.Units, takeEnded(s, c, pr, r, cardhdr.EndNoResult))
+		switch kind {
+		case cardhdr.EndProvider, cardhdr.EndNoResult:
+			p.Units = append(p.Units, takeEnded(s, c, pr, r, kind, used))
 			continue
-		}
-		if r.Failed && IsStagingRefusal(r.Report) {
+		case cardhdr.EndStaging:
 			p.Units = append(p.Units, stagingRefused(s, c, pr, r))
 			continue
 		}
@@ -1180,11 +1203,13 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 			cardSet[FieldUsage] = rec
 		}
 		set := map[string]string{"head": head, "result": result}
+		decidedSets(r, used, cardSet, set)
 		identical := false
 		if r.Failed && !passed {
 			set["failed"] = itoa(pr.Int("failed") + 1)
-			// rule 2: the attempt before failed the same way, so this is the bound's (failure.go)
-			identical = failureSet(pr, pr.Int("attempt"), r.Report, set)
+			// rule 2: the attempt before failed the same way, so this is the bound's (failure.go);
+			// a decided class is the class when the decision routed the finish
+			identical = failureSet(pr, pr.Int("attempt"), r.Report, class, set)
 		}
 		addConsumer(pr, set, workConsumer(s, c, 0, result, rec))
 		u := Unit{Key: c.ID, Stream: pr.Row, Changes: []Change{change(Fleet, moveEntry(c, c.Row, into, cardSet))},
@@ -1284,15 +1309,21 @@ func IsNoResult(report string) bool { return strings.HasPrefix(report, cardhdr.E
 // primary's failed count does not move: such a take is never the card's. At the redeal
 // bound the card stays withdrawn and the bound's judgment names it. The card keeps a
 // record of the take that ended (ProviderTake: the route, the member, the line).
-func takeEnded(s *Snapshot, c, pr *Card, r FinishReq, kind string) Unit {
+func takeEnded(s *Snapshot, c, pr *Card, r FinishReq, kind string, decided bool) Unit {
 	set := nextGen(c, "", s.Now)
 	set["withdrawn"], set[FieldTakeEnded] = stamp(s.Now), stamp(s.Now)
 	line := cutText(strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(r.Report, kind), ":")), MaxProviderErrorBytes)
 	why := "the provider failed the take"
+	if decided {
+		why = "nova-decide classed the take " + map[string]string{cardhdr.EndProvider: decide.ClassProviderFailure, cardhdr.EndNoResult: decide.ClassNoResult}[kind]
+	}
 	if kind == cardhdr.EndNoResult {
 		// the record's line says which kind it was: the routes' count of a route's ended
 		// takes holds both, and a reader of the card tells them apart
-		line, why = cutText(kind+": "+line, MaxProviderErrorBytes), "the child left no result"
+		line = cutText(kind+": "+strings.TrimPrefix(line, kind+": "), MaxProviderErrorBytes)
+		if !decided {
+			why = "the child left no result"
+		}
 	}
 	set[FieldProviderError] = line
 	// what the take cost, timed and priced before its stamps go (cost.go): it still cost
@@ -1312,6 +1343,7 @@ func takeEnded(s *Snapshot, c, pr *Card, r FinishReq, kind string) Unit {
 	// and the producer's record of it (cost.go): it still cost tokens and time
 	prSet := map[string]string{}
 	addConsumer(pr, prSet, workConsumer(s, c, take, kind, rec))
+	decidedSets(r, decided, set, prSet)
 	return Unit{Key: c.ID, Stream: pr.Row, Changes: []Change{
 		change(Fleet, moveEntry(c, c.Row, Withdrawn, set, "taken", "dealt")),
 		change(Work, moveEntry(pr, pr.Row, Ready, prSet, "work")),

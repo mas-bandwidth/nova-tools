@@ -697,7 +697,7 @@ Postgres and a throwaway Redis.
 
 ```text
 $ nova-config migrate --file try.json
-CONFIG MIGRATE file=try.json from=0 to=21 applied=21
+CONFIG MIGRATE file=try.json from=0 to=22 applied=22
 
 $ nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --as a1 --file try.json
 CONFIG ADD kind=machine name=m1 rev=1
@@ -758,8 +758,8 @@ RECEIPT OK session=s1 entry=e1 stamp=2026-09-17T12:05:00Z bytes=17 source=bench-
 ## nova-decide
 
 Fixture: `cmd/nova-decide/testdata/`: a schema and a state, a card and its
-diff, the fixed backend's answers for each, and a record of eight labelled read
-decisions. Every line below uses the fixed backend, so it needs no network and
+diff, a child's RESULT.md, the fixed backend's answers for each decision (ask,
+read, attempt, grade), and a record of eight labelled read decisions. Every line below uses the fixed backend, so it needs no network and
 no key; `cmd/nova-decide/firstrun_test.go` runs each `$` line from a checkout
 root in one sitting, with `./decisions.jsonl` a file in the test's own
 directory. The ids come from `--op`, so every line reads the same twice.
@@ -780,6 +780,14 @@ READ ANSWER question=inside_paths type=noul value=yes p=yes:0.99
 READ ANSWER question=lines_changed type=noul value=yes p=yes:0.97
 READ ANSWER question=verdict type=choice value=LAND p=BOUNCE:0.05,LAND:0.92,UNSURE:0.03
 
+$ nova-decide attempt --brief ./cmd/nova-decide/testdata/card.md --result ./cmd/nova-decide/testdata/result.md --reason "verdict not-done: tests red in internal/decide" --backend fixed --answers ./cmd/nova-decide/testdata/attempt-answers.json --record ./decisions.jsonl --op c1@1
+ATTEMPT OK id=c1@1 decision=attempt backend=fixed class=needs-pro p=0.78 tokens_in=0 tokens_out=0 recorded=new
+ATTEMPT ANSWER question=class type=choice value=needs-pro p=done:0.04,needs-pro:0.78,no-result:0.08,nothing-to-do:0.02,provider-failure:0.02,wrong-scope:0.06
+
+$ nova-decide grade --brief ./cmd/nova-decide/testdata/card.md --backend fixed --answers ./cmd/nova-decide/testdata/grade-answers.json --record ./decisions.jsonl --op c1@grade
+GRADE OK id=c1@grade decision=grade backend=fixed grade=flash p=0.71 tokens_in=0 tokens_out=0 recorded=new
+GRADE ANSWER question=grade type=choice value=flash p=flash:0.71,pro:0.08,script:0.21
+
 $ nova-decide outcome --record ./decisions.jsonl --id card-1 --label ok --note "the review found nothing"
 OUTCOME OK id=card-1 decision=read label=ok changed=true
 
@@ -791,9 +799,9 @@ CALIBRATE BAR at=0.9 caught=0 of=3 bounced=0 of_negatives=5
 CALIBRATE CATCH-ALL at=0.45 caught=3 of=3 bounced=1 of_negatives=5
 ```
 
-The first three lines write `./decisions.jsonl`; the fourth reads the fixture
+The first five lines write `./decisions.jsonl`; the last reads the fixture
 record, because a calibration wants positives and negatives both. With
-`--backend jev` the same `ask` and `read` lines ask the model instead, under
+`--backend jev` the same `ask`, `read`, `attempt` and `grade` lines ask the model instead, under
 `nova-secrets exec --only JEV_API_KEY`, and their lines carry the tokens spent.
 
 ## nova-redis

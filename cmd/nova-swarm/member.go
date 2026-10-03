@@ -214,7 +214,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	if *diskFloor > 0 {
 		room = diskRoom(*slots, *diskFloor, diskFree)
 	}
-	m := member.New(member.Config{As: *as, Width: *width, Reader: *reader, Meter: meter, Room: room, Sleep: time.Sleep, Background: true}, sp, rn, pu, stdout) // Sleep: harness starts StartGap apart
+	m := member.New(member.Config{As: *as, Width: *width, Reader: *reader, Meter: meter, Room: room, Sleep: time.Sleep, Background: true, Attempt: workAttempt(*reader, os.Getenv)}, sp, rn, pu, stdout) // Sleep: harness starts StartGap apart
 	kind := "member"
 	if *reader {
 		kind = "reader"

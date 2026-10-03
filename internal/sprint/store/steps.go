@@ -66,8 +66,10 @@ func TakeStep(r sprint.TakeReq) Step {
 // FinishStep is a worker finishing work cards.
 func FinishStep(r sprint.FinishReq) Step {
 	// a finish that reports what the run spent prices it with the routes alone, the keys
-	// a member may read (sprint's cost.go; Step.Prices)
-	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "finish", Load: tables(sprint.Fleet, sprint.Readers, sprint.Work), Mirrors: true, Prices: r.Usage != "",
+	// a member may read (sprint's cost.go; Step.Prices); a failed finish reads them too,
+	// with or without its usage: the second identical failure below its ceiling escalates
+	// the card in the finish, by the tiers its routes serve (sprint.NextTier)
+	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "finish", Load: tables(sprint.Fleet, sprint.Readers, sprint.Work), Mirrors: true, Prices: r.Usage != "" || r.Failed,
 		Extras: sprint.NamedExtras(sprint.Fleet, r.IDs),
 		Plan:   func(s *sprint.Snapshot) sprint.Plan { return sprint.Finish(s, r) }}
 }
@@ -211,4 +213,15 @@ func WaitStep(r sprint.WaitReq) Step {
 	}
 	return Step{Args: ArgsOf(r), Verb: "wait",
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Wait(s, r) }}
+}
+
+// GradeStep is the server's decide lane writing the grade decisions it made on the cards
+// still ungraded and never dealt (sprint.Grade): the machine's, as a tick's part is.
+func GradeStep(r sprint.GradeReq) Step {
+	ids := make([]string, 0, len(r.Grades))
+	for id := range r.Grades {
+		ids = append(ids, id)
+	}
+	return Step{Named: true, Args: ArgsOf(r), Verb: "grade", Actor: sprint.MachineActor, Load: tables(sprint.Work), Extras: sprint.NamedExtras(sprint.Work, ids),
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Grade(s, r) }}
 }

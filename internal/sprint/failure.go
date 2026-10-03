@@ -106,9 +106,13 @@ const (
 
 // failureSet is what a failed finish at attempt writes on its primary pr (FieldFailure,
 // FieldFailureAt) and whether it is the second identical failure: the attempt before
-// failed with the same class.
-func failureSet(pr *Card, attempt int, report string, set map[string]string) (identical bool) {
+// failed with the same class. The class is the report's (FailureClass), or decided, the
+// take's attempt decision as `decided <class>`, when that decision routed the finish.
+func failureSet(pr *Card, attempt int, report, decided string, set map[string]string) (identical bool) {
 	class := FailureClass(report)
+	if decided != "" {
+		class = decided // the attempt decision's class, when it routed the finish (decide.go)
+	}
 	identical = class != "" && attempt > 1 && pr.Int(FieldFailureAt) == attempt-1 && pr.F(FieldFailure) == class
 	set[FieldFailure], set[FieldFailureAt] = class, itoa(attempt)
 	if identical {

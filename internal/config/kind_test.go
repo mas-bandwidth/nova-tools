@@ -110,9 +110,9 @@ func TestTheFriendRowIsWhatSomeoneDecidesForHer(t *testing.T) {
 		assert.Equal(t, "flash,frontier,pro", strings.Join(Tiers, ","), assertionMsg98...)
 	}()
 	sprint, _ := Lookup(KindSprint)
-	assertionMsg100 := []any{"sprint %+v: one row, one optional ref to a friend and the decide read's two bars", sprint}
+	assertionMsg100 := []any{"sprint %+v: one row, one optional ref to a friend, the decide read's two bars and layer 2's two", sprint}
 	require.True(t, sprint.Singleton, assertionMsg100...)
-	require.Len(t, sprint.Fields, 3, assertionMsg100...)
+	require.Len(t, sprint.Fields, 5, assertionMsg100...)
 	require.Equal(t, "coordinator", sprint.Fields[0].Name, assertionMsg100...)
 	require.Equal(t, TypeRef, sprint.Fields[0].Type, assertionMsg100...)
 	require.Equal(t, KindFriend, sprint.Fields[0].Ref, assertionMsg100...)
@@ -141,6 +141,34 @@ func TestTheSprintRowHoldsTheDecideBarsTogether(t *testing.T) {
 		{"0.5", "", "decide_review \"\" is not a decimal"},
 	} {
 		err := sprint.Check(Row{Name: KindSprint, Fields: map[string]string{FieldDecideBounce: tc.bounce, FieldDecideReview: tc.review}})
+		if tc.says == "" {
+			assert.NoError(t, err, "%+v", tc)
+		} else {
+			assert.ErrorContains(t, err, tc.says, "%+v", tc)
+		}
+	}
+}
+
+// The sprint row holds layer 2's two bars (docs/SPEC-SPRINT.md sections 2 and 5): the
+// attempt decision's, 0.7 by default, and the grade's, empty by default (the grade a hint);
+// each a probability or empty, every problem named at once.
+func TestTheSprintRowHoldsTheAttemptAndGradeBars(t *testing.T) {
+	t.Parallel()
+	sprint, _ := Lookup(KindSprint)
+	attempt, _ := sprint.Field(FieldDecideAttempt)
+	grade, _ := sprint.Field(FieldDecideGrade)
+	assert.Equal(t, []string{"0.7", ""}, []string{attempt.Default, grade.Default})
+	assert.Equal(t, []Type{TypeDecimal, TypeDecimal}, []Type{attempt.Type, grade.Type})
+	for _, tc := range []struct {
+		attempt, grade, says string
+	}{
+		{"0.7", "", ""},
+		{"", "", ""},
+		{"0.7", "0.8", ""},
+		{"1.2", "", "decide_attempt 1.2 is not a probability"},
+		{"x", "2", `decide_attempt "x" is not a decimal; decide_grade 2 is not a probability`},
+	} {
+		err := sprint.Check(Row{Name: KindSprint, Fields: map[string]string{FieldDecideBounce: "0.5", FieldDecideReview: "0.3", FieldDecideAttempt: tc.attempt, FieldDecideGrade: tc.grade}})
 		if tc.says == "" {
 			assert.NoError(t, err, "%+v", tc)
 		} else {

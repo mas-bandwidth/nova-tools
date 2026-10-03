@@ -300,7 +300,9 @@ line, never FAIL: the table holds what the step wrote.
 **Primary.** One unit of work, between an issue and a pull request. One stream
 for life. Fields: stream, score, brief, rules (the held rules file the member injects, section 2's rules by reference), needs, head, attempt, fix, finding and why (a rework's, kept
 for the attempt a rework with no member up deals later), work (its live
-work card), asked (its readers), readers (the two whose ok it was accepted on),
+work card), grade (nova-decide's convergence grade before its first deal: section 5,
+the grade), decided:<op> (each attempt decision of its takes: the attempt decision,
+below), asked (its readers), readers (the two whose ok it was accepted on),
 tier (the tier the coordinator pinned it to, `rework --tier`: its tier and its
 ceiling both) and tier_now (the tier it is on: flash at its first deal on a route,
 then the tier the machine escalated it to: section 5, flash first),
@@ -339,7 +341,9 @@ rules, and a member older than it injects none, so its children would read no ru
 the place to work, and on a later attempt the fix, the finding of the broken read that
 caused it and why the attempt before ended. Identity `<primary>.w<attempt>`.
 Fields: primary, stream, kind=work, attempt, fix, finding, why, member, tier (the tier
-its route was drawn from: section 5, flash first), gen (its assignment
+its route was drawn from: section 5, flash first), decide_attempt, decided and
+decided_used (the attempt decision's bar and the decision its last finish carried: the
+attempt decision, below), gen (its assignment
 generation), dealt and taken (the clock times it was dealt and taken),
 first_dealt and first_taken (the attempt's first deal and first take, kept
 through every redeal and withdrawal), untaken_since (the first deal since its last take: a take unsets it, and
@@ -418,6 +422,46 @@ have no class, and are never identical. Two places count tries:
   identical failure`) in place of "work came back failed"; the tick holds it while the
   primary stays in review at that attempt (`AtIdenticalFailure`), and a rework or a
   drop closes it (`TestASecondIdenticalFailureRaisesTheBoundAtOnce`).
+
+**The attempt decision** (nova-decide's layer 2; the owner, 2026-10-02, the agreed
+plan: "result classification after each attempt (done / nothing to do / wrong scope /
+no result / needs pro)"; 2026-10-03: "Please push Jev wide."; docs/SPEC-NOVA-DECIDE.md
+section 9). The deal writes the sprint row's `decide_attempt` bar (nova-config, 0.7 by
+default; empty asks no decision) on every work card it cuts or deals again
+(`decide_attempt`), and the packet hands it to the member. When a take of such a card
+ends, the member, in the end's long work beside the push and never in its pass, asks
+the attempt decision over the card's brief, the child's RESULT.md as the member read
+it (`member.ResultText`) and the finish's own report, through Jev with the key
+`JEV_API_KEY` its loop's nova-secrets keys hold (the member's own: native and the child
+are never handed it), and the finish carries the decision, one JSON record line
+(`finish --decision`; one card a finish): its class (done, nothing-to-do, wrong-scope,
+no-result, needs-pro, provider-failure), its p, and its op id `<card>@<attempt>.<12 hex
+of its state>`. A decision that cannot be made (no key, a backend that fails) is one
+`NOTE attempt <card> not decided` line, and the finish goes by its report alone. The
+server holds the decision to the attempt schema (`decide.ParseAttempt`, else the finish
+is refused), writes it on the work card (`decided`: `<class> p=<p> op=<op>`; `card`
+prints `decided=<class>:<p>` on the ATTEMPT line, `decided_used=yes` when it routed the
+finish) and on the primary (`decided:<op>`: `<class> p=<p> used=<yes|no>`, set once,
+the outcome's key), and hands it to the decide lane, which records it in
+`<dir>/attempt.jsonl`. A failed finish whose class's p is at or above the card's bar is
+routed by the class where the report's prefix routed it (`sprint.finishKind`;
+`TestAFailedFinishGoesByItsAttemptDecisionAtTheBar`):
+
+| class at or above the bar | the failed finish |
+| --- | --- |
+| provider-failure | an ended take the provider failed, as a `provider failure` report is |
+| no-result | an ended take with no result, as a `no result:` report is: redealt on another route, counted against the bound and by the route's rest, its record's line `no result: <report>` |
+| nothing-to-do, wrong-scope, needs-pro | failed work, its class `decided <class>`, so two attempts the decision classes alike are the second identical failure whatever their reports say |
+| done | the report's prefix: the machine cannot land work it was not handed |
+
+Under the bar, with no bar, and for a launch refused at staging or at launch (no take
+ran, and no decision is asked) the report's prefix routes the finish as before; an ok
+finish is recorded and never routed. The decide lane attaches each decision's outcome
+when its card lands or is dropped (`sprint.DecideDue`): `landed` for an attempt decided
+at the attempt that landed, `later-<tier>` for one decided earlier (the tier that landed
+it), `dropped`; a grade's outcome is that tier, or `dropped`. A failed finish reads the
+routes whether or not it reports usage, so the second identical failure below the
+ceiling escalates in the finish (`TestTwoDecidedNeedsProFailuresEscalateTheCard`).
 
 **Read card.** One reader's read of one primary at one attempt. Identity
 `<primary>.r<attempt>.<reader>`. Fields: primary, stream, kind=read, reader,
@@ -697,6 +741,21 @@ and it is the coordinator's decision, receipted.
   (`tier=<t> ceiling=<t>`; `--json` `tier`, `ceiling`). One function decides
   the next tier for every bound that escalates (`Snapshot.NextTier`,
   `internal/sprint/route.go`): the take bound and the attempt bound.
+  **The grade** (nova-decide's layer 2; the owner, 2026-10-02, the agreed plan:
+  "convergence grade and route choice before the deal"; docs/SPEC-NOVA-DECIDE.md
+  section 10). Before a card's first deal the server's decide lane (`run
+  --decide`, section 12) grades its convergence from its brief alone, script,
+  flash or pro with a p each, records the decision in `<dir>/grade.jsonl`
+  under `<card>@grade.<12 hex>` and writes it on the primary, `grade` (`<grade>
+  p=<p> op=<op>`; `sprint.Grade`, written only on a card never dealt and still
+  ungraded, waiting or ready, never a sentinel; a brief replaced clears it).
+  `card` prints it on its CARD OK line (`grade=<g>:<p>`; `--json` `grade`).
+  The grade is a hint while the sprint row's `decide_grade` is empty (its
+  default; nova-config); with a bar set, a card graded pro at or above it whose
+  ceiling is pro starts on pro instead of flash (`Snapshot.startTier`): the
+  deal draws its first route from pro and writes `tier_now` pro, and flash
+  first is overridden for that card alone. A grade never raises a card above
+  its ceiling, and a card dealt before its grade came starts on flash.
 - A route whose children end without a result rests (the owner, 2026-10-02,
   nova-tools#5174: "A route whose children end without a result three times is
   rested by the machine, never redealt on."). The tick's deal counts each route's
@@ -1566,7 +1625,7 @@ command that loads it.
 | run | ticks on every line of the log (at most every 100 ms) and once a second while the log is quiet; before each tick it reads its own binary's file, and when a new build was installed under it since it began it stops (`RUN STOP the binary this loop runs was replaced ...`, exit 3) so its supervisor starts the new one: a loop never ticks the store with older code than the verbs run |
 | tick | one tick by hand |
 | take | a worker moves work cards fleet ready -> working; `--as <member>`, `<card>@<gen>`. The width is hard: a member's working cards never pass its fleet row's width, held here whatever is asked; a take by count is cut to the room, a take by id past it is refused; a take by count that took fewer than asked says why on a NOTE line (the member at its width, its ready queue empty, or not up) |
-| finish | work cards done ok or failed; primaries to review; `--as <member>`, `<card>@<gen>`; `--usage <text>` (what the run spent) is kept on the attempt's record, timed and priced (section 2, What a card cost) |
+| finish | work cards done ok or failed; primaries to review; `--as <member>`, `<card>@<gen>`; `--usage <text>` (what the run spent) is kept on the attempt's record, timed and priced (section 2, What a card cost); `--decision <json>` (the take's attempt decision, one card a finish) is kept on the card, recorded by the server's decide lane, and routes a failed finish at or above the card's bar (section 2, the attempt decision) |
 | ask | deals primaries in review to the readers each needs (one for a flash card, two different readers for a pro card; section 6); `--another`; `ask <primary> --instead <reader>` takes that reader's read, asked or reading, of the primary at its attempt back (`retired_by: coordinator`, a later report of it refused naming that) and asks one other reader in the same step, chosen and routed as `--another` (the owner, 2026-10-01: "get the verbs in man."); refused, nothing changed, when the primary is not in review, the reader holds no live read of it, no other reader is free, or with `--another`, `--group` or more than one primary |
 | queue | a reader's read cards or a member's work cards, oldest first (`--as`; `--json` carries the worker's `width`: a member's fleet row's, a reader's its machine's, `reader-<m>`), or a stream's merge queue (`--stream`) |
 | routes | each route of the store (nova-config's `route` kind) with what its attempts did: attempts, ok, failed, provider failures, mean wall from take to finish, and `rested_until`, when its rest ends while the machine rests it for children that ended with no result (section 5; `-` when it does not rest); `TIERS flash=<n> pro=<n>` first, the enabled routes per tier; `--json` (`rested_until` only while it rests) |
@@ -1930,6 +1989,23 @@ what landed and everything land said was wrong (a refused or failed batch, a ref
 batch, its remedy); a round that could not read the merge queue prints `LAND FAILED` with why,
 since an unreadable queue is not an empty one, and the next round tries again. A failure is
 printed once, when it begins: the same failure again prints nothing until it changes or clears.
+
+With `run --decide <dir>` the server keeps the record of nova-decide's layer 2 (section 2,
+the attempt decision; section 5, the grade): `<dir>/attempt.jsonl` and `<dir>/grade.jsonl`,
+of which it is the one writer. Its decide lane runs a round every five seconds
+(`DecideEvery`), apart from the line of control but for a read of the work table and a
+grade's write: it records the attempt decisions the finishes carried, grades every card
+never dealt and ungraded through Jev (with `JEV_API_KEY` from the run loop's own
+environment, its loop row's nova-secrets keys; with no key it grades nothing and says so
+when it starts), eight at a time, each recorded and its grade written on the card
+(`store.GradeStep`, the machine's step), and attaches the outcome of each decision of a
+card that landed or was dropped, once (a primary with a decision is read unplaced after
+its drop). A round prints one `DECIDE recorded= graded= written= attached=` line when it
+did something and nothing when it did not; a failure is `DECIDE FAILED <why>`, once until
+it changes. A grade is asked once per server process; the record is loaded whole on each
+write, as every record of nova-decide is, and its rotation is owed with the read's. A
+member's decision that reaches a server with no `--decide` is used and kept on the card,
+and recorded nowhere.
 
 The address is one address of the coordinator's machine on the fleet's private network; an
 address every network can reach is refused. The server checks no credential (the owner: "I am OK

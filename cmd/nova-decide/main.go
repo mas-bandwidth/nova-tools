@@ -92,6 +92,37 @@ or UNSURE). The state is the card, the rule when --rule names one, and the diff,
 				Run: w.read,
 			},
 			{
+				Name:    "attempt",
+				Usage:   "attempt --brief <file> [--result <file>] --reason <line> --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
+				Example: "attempt --brief " + fixture + "card.md --result " + fixture + "result.md --reason \"verdict not-done: tests red in internal/decide\" --backend fixed --answers " + fixture + "attempt-answers.json --record ./decisions.jsonl --op c1@1",
+				Effect:  tool.Delivery + "; with --backend jev it sends the brief, result and reason to the backend, and it appends to --record",
+				Detail: `The attempt decision: how a work take ended, one choice, class: done, nothing-to-do,
+wrong-scope, no-result, needs-pro or provider-failure, each with its p. The state is the brief,
+the child's RESULT.md (none when --result is not given) and the member's reason line.`,
+				DryRun: true,
+				Flags: func(f *tool.Flags) {
+					f.Required("brief", "the card's brief the worker was given, a file")
+					f.String("result", "", "the child's RESULT.md, a file; absent when the child wrote none")
+					f.Required("reason", "the member's reason line for the take's end, as text")
+					w.asking(f)
+				},
+				Run: w.attempt,
+			},
+			{
+				Name:    "grade",
+				Usage:   "grade --brief <file> --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
+				Example: "grade --brief " + fixture + "card.md --backend fixed --answers " + fixture + "grade-answers.json --record ./decisions.jsonl --op c1@grade",
+				Effect:  tool.Delivery + "; with --backend jev it sends the brief to the backend, and it appends to --record",
+				Detail: `The grade decision: a card's convergence before its first deal, one choice, grade: script
+(no model), flash or pro, each with its p. The state is the brief alone.`,
+				DryRun: true,
+				Flags: func(f *tool.Flags) {
+					f.Required("brief", "the card's brief, a file")
+					w.asking(f)
+				},
+				Run: w.grade,
+			},
+			{
 				Name:    "outcome",
 				Usage:   "outcome --record <file> --id <decision-id> --label <word> [--note <text>] [--dry-run]",
 				Example: "outcome --record ./decisions.jsonl --id card-1 --label ok --note \"the review found nothing\"",
@@ -180,9 +211,37 @@ func (w world) ask(c *tool.Call) *tool.Out {
 }
 
 func (w world) read(c *tool.Call) *tool.Out {
-	inputs, texts := map[string]string{}, map[string]string{}
-	var problems []string
-	for _, name := range []string{"card", "diff", "rule"} {
+	texts, inputs, problems := readFiles(c, "card", "diff", "rule")
+	if len(problems) > 0 {
+		return tool.Refuse(problems...)
+	}
+	return w.decision(c, decide.ReadSchema(), decide.ReadState(texts["card"], texts["diff"], texts["rule"]), inputs)
+}
+
+// attempt asks the attempt decision over a brief, a result and a reason line.
+func (w world) attempt(c *tool.Call) *tool.Out {
+	texts, inputs, problems := readFiles(c, "brief", "result")
+	if len(problems) > 0 {
+		return tool.Refuse(problems...)
+	}
+	inputs["reason"] = c.Str("reason")
+	return w.decision(c, decide.AttemptSchema(), decide.AttemptState(texts["brief"], texts["result"], c.Str("reason")), inputs)
+}
+
+// grade asks the grade decision over a brief.
+func (w world) grade(c *tool.Call) *tool.Out {
+	texts, inputs, problems := readFiles(c, "brief")
+	if len(problems) > 0 {
+		return tool.Refuse(problems...)
+	}
+	return w.decision(c, decide.GradeSchema(), decide.GradeState(texts["brief"]), inputs)
+}
+
+// readFiles reads each named file flag that was given: its text, and its path and SHA-256
+// as the record's inputs; every file it cannot read is a problem.
+func readFiles(c *tool.Call, names ...string) (texts, inputs map[string]string, problems []string) {
+	texts, inputs = map[string]string{}, map[string]string{}
+	for _, name := range names {
 		if !c.Given(name) {
 			continue
 		}
@@ -194,10 +253,7 @@ func (w world) read(c *tool.Call) *tool.Out {
 		texts[name] = string(raw)
 		inputs[name], inputs[name+"_sha256"] = c.Str(name), decide.Sum(raw)
 	}
-	if len(problems) > 0 {
-		return tool.Refuse(problems...)
-	}
-	return w.decision(c, decide.ReadSchema(), decide.ReadState(texts["card"], texts["diff"], texts["rule"]), inputs)
+	return texts, inputs, problems
 }
 
 // decision makes one decision and records it (decide.Make): an op id already
@@ -246,12 +302,15 @@ func (w world) decision(c *tool.Call, s decide.Schema, state string, inputs map[
 	return answered(d, "new")
 }
 
-// answered is a decision's result: its id and backend, the verdict when the
-// schema has one, and one ANSWER item per question in name order.
+// answered is a decision's result: its id and backend, the headline choice when the
+// schema has one (a read's verdict, an attempt's class, a grade's grade), and one
+// ANSWER item per question in name order.
 func answered(d decide.Decision, recorded string) *tool.Out {
 	o := tool.Done().Fact("id", d.ID).Fact("decision", d.Decision).Fact("backend", d.Backend)
-	if v, ok := d.Answers["verdict"]; ok && v.Type == decide.Choice {
-		o.Fact("verdict", v.Value).Fact("p", round(v.Prob(v.Value)))
+	for _, head := range []string{"verdict", decide.AttemptQuestion, decide.GradeQuestion} {
+		if v, ok := d.Answers[head]; ok && v.Type == decide.Choice {
+			o.Fact(head, v.Value).Fact("p", round(v.Prob(v.Value)))
+		}
 	}
 	o.Fact("tokens_in", d.Usage.InputTokens).Fact("tokens_out", d.Usage.OutputTokens).Fact("recorded", recorded)
 	for _, name := range slices.Sorted(maps.Keys(d.Answers)) {

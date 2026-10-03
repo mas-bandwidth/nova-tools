@@ -126,6 +126,9 @@ type app struct {
 	tickDeadline time.Duration
 	after        func(time.Duration) <-chan time.Time
 	exit         func(code int)
+	// decide is the server's decide lane (run --decide, decidelane.go): nil records no
+	// attempt or grade decision and grades nothing.
+	decide *decideLane
 	// home is the directory a seat's inbox is under (inbox --wait --push seat:
 	// ~/<holder>-working/inbox): os.UserHomeDir unless a test sets it.
 	home func() (string, error)

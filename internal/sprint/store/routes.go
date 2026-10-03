@@ -81,18 +81,21 @@ func (m *Mem) PriceRoutes(context.Context) ([]sprint.Route, int64, error) {
 }
 
 // RouteSet is what a step that deals or asks plans with: the routes, the
-// tiers' arrays, and the decide read's bounce and review bars (the sprint row's,
-// read with them).
+// tiers' arrays, and the sprint row's nova-decide bars, read with them: the decide
+// read's bounce and review bars, the attempt decision's bar and the grade's (BarsOrder).
 type RouteSet struct {
 	Routes []sprint.Route
 	Tiers  map[string][]string
-	Bars   [2]string
+	Bars   [4]string
 }
+
+// BarsOrder is the sprint row's fields a RouteSet's Bars hold, in order.
+var BarsOrder = [4]string{config.FieldDecideBounce, config.FieldDecideReview, config.FieldDecideAttempt, config.FieldDecideGrade}
 
 // into is the set as the snapshot carries it.
 func (rs RouteSet) into(s *sprint.Snapshot) {
 	s.Routes, s.Tiers = rs.Routes, rs.Tiers
-	s.DecideBounce, s.DecideReview = rs.Bars[0], rs.Bars[1]
+	s.DecideBounce, s.DecideReview, s.DecideAttempt, s.DecideGrade = rs.Bars[0], rs.Bars[1], rs.Bars[2], rs.Bars[3]
 }
 
 // routes is the routes a dealing step plans with, by name, and the tiers'
@@ -148,7 +151,7 @@ func (st *Store) cached(ctx context.Context, c *RouteCache) (RouteSet, error) {
 }
 
 // Routes reads the set, then every route's hash, each tier's array and the
-// decide read's two bars in one pipeline: two round trips, the second only when
+// sprint row's four nova-decide bars in one pipeline: two round trips, the second only when
 // the set names a route (the arrays and the bars ride in it, so the tick's trips
 // do not rise; with no route a read card has none to draw, and no decide read).
 func (r *Redis) Routes(ctx context.Context) (RouteSet, int64, error) {
@@ -165,7 +168,10 @@ func (r *Redis) Routes(ctx context.Context) (RouteSet, int64, error) {
 	for _, t := range config.RouteTiers {
 		arrays[t] = pipe.HGet(ctx, config.TierKey(t), "routes")
 	}
-	bounce, review := pipe.Get(ctx, config.SprintKey(config.FieldDecideBounce)), pipe.Get(ctx, config.SprintKey(config.FieldDecideReview))
+	var bars [4]interface{ Val() string }
+	for i, f := range BarsOrder {
+		bars[i] = pipe.Get(ctx, config.SprintKey(f))
+	}
 	if err := redisconn.Exec(ctx, pipe); err != nil {
 		return RouteSet{}, 2, err
 	}
@@ -179,7 +185,11 @@ func (r *Redis) Routes(ctx context.Context) (RouteSet, int64, error) {
 			tiers[t] = a
 		}
 	}
-	return RouteSet{Routes: out, Tiers: tiers, Bars: [2]string{bounce.Val(), review.Val()}}, 2, nil
+	var vals [4]string
+	for i, b := range bars {
+		vals[i] = b.Val()
+	}
+	return RouteSet{Routes: out, Tiers: tiers, Bars: vals}, 2, nil
 }
 
 // RouteOf is a route from its hash as nova-config's apply writes it: a field
@@ -210,7 +220,15 @@ func (m *Mem) Routes(context.Context) (RouteSet, int64, error) {
 func (m *Mem) SetDecideBars(bounce, review string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.bars = [2]string{bounce, review}
+	m.bars[0], m.bars[1] = bounce, review
+}
+
+// SetDecideLayer2 gives the store the attempt decision's bar and the grade's, as
+// nova-config's apply does a live one (sprint:decide_attempt, sprint:decide_grade).
+func (m *Mem) SetDecideLayer2(attempt, grade string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.bars[2], m.bars[3] = attempt, grade
 }
 
 // SetRoutes gives the store its routes, as nova-config's apply does a live one.

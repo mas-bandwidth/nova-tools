@@ -223,16 +223,34 @@ const (
 	FieldDecideReview = "decide_review"
 )
 
+// The sprint row's two bars of nova-decide's layer 2 (internal/decide, attempt.go and
+// grade.go; docs/SPEC-SPRINT.md sections 2 and 5): the attempt decision's class replaces a
+// failed finish's reason prefix at or above decide_attempt, and a card graded pro at or above
+// decide_grade starts on pro; empty is no bar (decide_grade's default: the grade is a hint).
+const (
+	FieldDecideAttempt = "decide_attempt"
+	FieldDecideGrade   = "decide_grade"
+)
+
 // checkSprint holds the decide read's bars together: both set, as probabilities with the
-// review bar at most the bounce bar (decide.ParseBars), or both empty (no decide read).
+// review bar at most the bounce bar (decide.ParseBars), or both empty (no decide read); and
+// layer 2's two bars each a probability or empty (decide.ParseBar).
 func checkSprint(r Row) error {
 	bounce, hasB := r.Fields[FieldDecideBounce]
 	review, hasR := r.Fields[FieldDecideReview]
-	if !hasB || !hasR || bounce == "" && review == "" {
-		return nil
+	if hasB && hasR && (bounce != "" || review != "") {
+		if _, err := decide.ParseBars(bounce, review); err != nil {
+			return fmt.Errorf("sprint: %v; set both bars (--decide_bounce and --decide_review), or both empty to turn the decide read off", err)
+		}
 	}
-	if _, err := decide.ParseBars(bounce, review); err != nil {
-		return fmt.Errorf("sprint: %v; set both bars (--decide_bounce and --decide_review), or both empty to turn the decide read off", err)
+	var p []string
+	for _, f := range []string{FieldDecideAttempt, FieldDecideGrade} {
+		if _, _, err := decide.ParseBar(f, r.Fields[f]); err != nil {
+			p = append(p, err.Error())
+		}
+	}
+	if len(p) > 0 {
+		return fmt.Errorf("sprint: %s; a bar is a probability, or empty for none", strings.Join(p, "; "))
 	}
 	return nil
 }
@@ -311,11 +329,13 @@ var Kinds = []*Kind{
 		Name:      KindSprint,
 		Table:     "sprint",
 		Singleton: true,
-		Doc:       "the one row of sprint-global facts: which friend coordinates, and the two bars a flash card's decide read is routed by",
+		Doc:       "the one row of sprint-global facts: which friend coordinates, the two bars a flash card's decide read is routed by, and the bars of the attempt and grade decisions",
 		Fields: []Field{
 			{Name: "coordinator", Type: TypeRef, Ref: KindFriend, Help: "the friend who holds the coordinator role (a friend row), or empty; set it to hand over"},
 			{Name: FieldDecideBounce, Type: TypeDecimal, Default: "0.5", Help: "the decide read's bounce bar: a flash card whose first read gives p(defect) at or above it is bounced with the read's finding; a probability, at least --decide_review; 0.5 (the default); empty, with --decide_review empty, turns the decide read off"},
 			{Name: FieldDecideReview, Type: TypeDecimal, Default: "0.3", Help: "the decide read's review bar: below it the card lands with no model read, and from it up to --decide_bounce it goes to a strings read; a probability; 0.3 (the default)"},
+			{Name: FieldDecideAttempt, Type: TypeDecimal, Default: "0.7", Help: "the attempt decision's bar: a failed take whose class nova-decide gives at or above it is routed by the class, not by its reason line's prefix; a probability; 0.7 (the default); empty asks no attempt decision"},
+			{Name: FieldDecideGrade, Type: TypeDecimal, Help: "the grade decision's bar: a card graded pro at or above it starts on pro instead of flash; a probability; empty (the default) keeps the grade a hint on the card"},
 		},
 		Check: checkSprint,
 	},

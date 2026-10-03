@@ -21,6 +21,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/cardlimits"
 	"github.com/mas-bandwidth/nova-tools/internal/cardtree"
+	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -1752,9 +1753,22 @@ func (a *app) cmdFinish(args []string, stdout, stderr io.Writer) int {
 	branch := fs.String("branch", "", "the branch the work is on (its packet names the one to use)")
 	baseBranch := fs.String("base", "", "the branch the work started from")
 	usage := fs.String("usage", "", "what the run spent, one line (the member passes its child's budget, wall, tokens by class and cost): kept on the attempt's record, timed and priced")
+	decision := fs.String("decision", "", "the take's attempt decision, one JSON record line as nova-decide makes it (the member asks it when the card carries the attempt bar): kept on the card, recorded by the server's decide lane, and a failed finish whose class is at or above the bar is routed by it (docs/SPEC-SPRINT.md section 2)")
 	words, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "finish", err.Error())
+	}
+	var decided string
+	var d decide.Decision
+	if *decision != "" {
+		if d, err = decide.ParseAttempt([]byte(*decision)); err == nil {
+			var dec decide.Decided
+			dec, err = decide.AttemptDecided(d)
+			decided = dec.String()
+		}
+		if err != nil {
+			return refuse(stderr, "finish", "--decision: "+err.Error())
+		}
 	}
 	ids, gens, err := cardGens(words)
 	if err != nil {
@@ -1768,8 +1782,13 @@ func (a *app) cmdFinish(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, "finish", err.Error())
 	}
+	if decided != "" && a.decide != nil {
+		// the decide lane records it (decidelane.go); a finish refused records it all the same,
+		// since the take it decided ended
+		defer a.decide.put(d)
+	}
 	return a.runStep("finish", *c, st, store.FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: ids}, As: *as, Gens: gens, Failed: *failed,
-		Head: *head, Report: *report, Branch: *branch, Base: *baseBranch, Usage: *usage, Who: *as}), stdout, stderr)
+		Head: *head, Report: *report, Branch: *branch, Base: *baseBranch, Usage: *usage, Decided: decided, Who: *as}), stdout, stderr)
 }
 
 func (a *app) cmdAsk(args []string, stdout, stderr io.Writer) int {

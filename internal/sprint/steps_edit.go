@@ -64,9 +64,10 @@ func Brief(s *Snapshot, r BriefReq) Plan {
 		p.refuse(r.ID, why)
 		return p
 	}
-	set, unset := map[string]string{"brief": r.Brief}, []string{FieldRules} // a brief that carries its own rules names none
+	// a brief that carries its own rules names none; a grade was of the brief replaced
+	set, unset := map[string]string{"brief": r.Brief}, []string{FieldRules, FieldGrade}
 	if r.Rules != "" {
-		set[FieldRules], unset = r.Rules, nil
+		set[FieldRules], unset = r.Rules, []string{FieldGrade}
 	}
 	p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, setEntry(c, set, unset...))},
 		Moved: fmt.Sprintf("%s brief replaced (%d bytes) stream=%s %s", c.ID, len(r.Brief), c.Row, c.Col)})

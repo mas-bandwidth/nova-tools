@@ -48,7 +48,7 @@ Where each field of this cut sits:
 | machine (varies per machine) | `user`, `seat`, `slots`, `runners`, `width`, `tla`, `note` |
 | fleet (one value for the whole fleet) | `store`, `coordinator` (both machines), `redis_port`, `pg_dsn` |
 | friend (decided for her) | `slots`, `tiers`, `roles`, `width` |
-| sprint (one value for the whole sprint) | `coordinator` (a friend), `decide_bounce`, `decide_review` |
+| sprint (one value for the whole sprint) | `coordinator` (a friend), `decide_bounce`, `decide_review`, `decide_attempt`, `decide_grade` |
 | loop (decided per supervised process) | `machine`, `argv`, `seat`, `keys`, `every`, `keepalive`, `width`, `enabled` |
 | route (decided per way to run a tier) | `tier`, `provider`, `model`, `tokens`, `deadline`, `enabled`, and the price sheet: `price_input`, `price_cache_read`, `price_cache_write`, `price_output`, `reasoning_as_output`, `long_context`, `price_input_long`, `price_output_long`, `price_request`, `billing`, `gateway_percent`, `price_source`, `price_as_of`, `note` |
 | tier (decided per tier) | `routes` |
@@ -228,6 +228,8 @@ facts.
 | `coordinator` | ref friend | | the deal and the routing: who holds the coordinator role; `sprint set --coordinator <friend>` is the handover | `sprint:coordinator`, and the `coordinator` word in that friend's `friend:<f>:roles` |
 | `decide_bounce` | decimal, default 0.5 | | the ask: a flash card's first read is a decide read (docs/SPEC-SPRINT.md section 6), and p(defect) at or above this bar bounces the work; a probability, at least `decide_review`; both bars empty turns the decide read off | `sprint:decide_bounce` |
 | `decide_review` | decimal, default 0.3 | | the ask: below this bar the decide read lands the work with no model read; from it up to `decide_bounce` the card goes to a strings read | `sprint:decide_review` |
+| `decide_attempt` | decimal, default 0.7 | | the deal writes it on every work card, and its member asks the attempt decision when a take ends (docs/SPEC-SPRINT.md section 2): a failed finish whose class is at or above it is routed by the class, not by its report's prefix; a probability; empty asks no attempt decision | `sprint:decide_attempt` |
+| `decide_grade` | decimal, default empty | | the deal: a card graded pro at or above it, its ceiling pro, starts on pro instead of flash (docs/SPEC-SPRINT.md section 5, the grade); a probability; empty keeps the grade a hint on the card | `sprint:decide_grade` |
 
 **`loop`** (`config.loops`): a supervised process on one machine. Every
 value is data in the row: the code names no machine, seat, secret or
@@ -407,7 +409,8 @@ config.sprint            (name PK = 'sprint', coordinator -> friends.name,
                           the migration; reader_tier added by 0010, dropped
                           by 0011; decide_bounce and decide_review added by
                           0021, text NOT NULL DEFAULT '0.5' and '0.3', a
-                          decimal or '')
+                          decimal or ''; decide_attempt and decide_grade
+                          added by 0022, DEFAULT '0.7' and '')
 config.loops             (name PK, machine -> machines.name, argv, seat, keys,
                           every, keepalive boolean, width, enabled boolean,
                           created_at, updated_at; CHECK exactly one of
