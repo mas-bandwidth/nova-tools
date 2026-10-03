@@ -9,6 +9,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/internal/decide"
 )
 
 // The card decides the model it runs on (the owner, 2026-10-01: "the card should
@@ -154,6 +155,9 @@ func (ri routeIndexes) write(p *Plan) {
 func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string, tier, why string) {
 	m, bad := cardhdr.ReadModel(c.F("brief"))
 	tier = drawTier(c, m)
+	if tier == "" {
+		tier = s.startTier(c, m) // its first deal on a route: flash first, or its grade's pro (decide.go)
+	}
 	if bad != "" {
 		tier = ceilingTier(c, m)
 		// a card admitted before the lint read its lines: judged under the tier it
@@ -249,15 +253,14 @@ func cardTier(c *Card, m cardhdr.Model) string {
 }
 
 // drawTier is the tier the deal draws the primary c's route from: its ceiling when its
-// tier is pinned (pinnedTier), else the tier the machine escalated it to, else flash.
+// tier is pinned (pinnedTier), else the tier the machine escalated it to, else "": its first
+// deal on a route, whose tier is the snapshot's to say (startTier: flash first, or pro by
+// its grade).
 func drawTier(c *Card, m cardhdr.Model) string {
 	if pinnedTier(c, m) {
 		return ceilingTier(c, m)
 	}
-	if t := c.F(FieldTierNow); t != "" {
-		return t
-	}
-	return cardhdr.RouteFlash
+	return c.F(FieldTierNow)
 }
 
 // pinnedTier says the primary c climbs no ladder: the coordinator pinned its tier
@@ -444,9 +447,24 @@ func AttemptLine(wc *Card) string {
 	case !wc.Placed():
 		end = "retired"
 	}
-	return fmt.Sprintf("ATTEMPT %s card=%s gen=%s route=%s model=%s tier=%s member=%s dealt=%s taken=%s finished=%s head=%s usage=%s end=%s",
+	return fmt.Sprintf("ATTEMPT %s card=%s gen=%s route=%s model=%s tier=%s member=%s dealt=%s taken=%s finished=%s head=%s%s usage=%s end=%s",
 		orDash(wc.F("attempt")), wc.ID, orDash(wc.F("gen")), orDash(wc.F(FieldRoute)), orDash(wc.F(FieldModel)), orDash(wc.F(FieldTier)), orDash(wc.F("member")),
-		orDash(wc.F("dealt")), orDash(wc.F("taken")), orDash(wc.F("finished")), orDash(PushedHead(wc)), orDash(wc.F(FieldUsage)), end)
+		orDash(wc.F("dealt")), orDash(wc.F("taken")), orDash(wc.F("finished")), orDash(PushedHead(wc)), DecidedWords(wc.F(FieldDecided), wc.F(FieldDecidedUsed) == "yes"), orDash(wc.F(FieldUsage)), end)
+}
+
+// DecidedWords is a work card's attempt decision as `card` prints it on its ATTEMPT line,
+// " decided=<class>:<p>", with " decided_used=yes" when it routed the finish; "" when the
+// card carries none.
+func DecidedWords(line string, used bool) string {
+	d, ok := decide.ParseDecided(line)
+	if !ok {
+		return ""
+	}
+	w := " decided=" + d.Value + ":" + strconv.FormatFloat(d.P, 'f', 2, 64)
+	if used {
+		w += " decided_used=yes"
+	}
+	return w
 }
 
 // ProviderTake is the record of one take of a work card the provider failed, kept on the

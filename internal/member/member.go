@@ -316,6 +316,14 @@ type Config struct {
 	// one posted or a child exited. false (the tests' member) does each where the pass
 	// asks for it, so a pass is one step.
 	Background bool
+	// Attempt asks the attempt decision over every work take's end (docs/SPEC-SPRINT.md
+	// section 2, the attempt decision; the card's bars decide at the server whether it routes
+	// the finish, never whether it is asked): the packet,
+	// the child's RESULT.md as text and the finish's reason line in; the decision's card line
+	// (decide.Decided) and the decision as one JSON record line out, both carried by the
+	// finish. It is long (a backend's answer), so it runs in the end's long work, beside the
+	// push, never in the pass. nil asks none.
+	Attempt func(p Packet, result, reason string) (decided string, decision []byte, err error)
 }
 
 // launch is one child and the claim it was started for: the card at the
@@ -337,6 +345,7 @@ type launch struct {
 	busyAt  time.Time // when that long work began
 	res     *Result   // how the child ended, once its end has been collected
 	push    *Push     // the push at its end, once made (a finish the store did not answer is reported again, never pushed again)
+	decided *decided  // the take's attempt decision, once asked (Config.Attempt): reported with the finish, never asked again
 	spent   bool      // a read whose child ended with no verdict: not ours to report, not run again until the sprint moves the card
 	retryAt time.Time // a read whose stage failed: when this reader runs it again; zero before the failure is seen
 	retried bool      // a read run again after a stage failure: a second one is returned
@@ -406,6 +415,15 @@ type post struct {
 	startErr error
 	res      *Result
 	push     *Push
+	decided  *decided
+}
+
+// decided is a take's attempt decision as the finish carries it (Config.Attempt): its card
+// line and its record line, or why none was made.
+type decided struct {
+	line     string
+	decision []byte
+	err      error
 }
 
 // New is a member with nothing running. A reader pushes nothing, and its
@@ -836,16 +854,9 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 			args = append(append([]string{"read", "--as", m.cfg.As, word, id, "--finding", finding}, usageArgs(r)...), launched...)
 		} else {
 			pu := *l.push
-			fin, why := Judge(r, pu)
-			report := oneLine(r.Report)
+			fin, why, report := finishReport(r, pu, l.branch)
 			switch {
 			case pu.Sha != "":
-				// the report carries the push first, so the 500-byte cut never takes it
-				said := "pushed=" + pu.Sha + " to " + l.branch
-				if pu.PR != "" {
-					said += " pr=" + pu.PR
-				}
-				report = cut(said + ": " + report)
 				fmt.Fprintf(m.out, "push %s pushed=%s branch=%s\n", id, pu.Sha, l.branch)
 				if pu.PRNote != "" {
 					fmt.Fprintf(m.out, "NOTE pr %s not opened: %s\n", id, oneLine(pu.PRNote))
@@ -856,7 +867,6 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 				fmt.Fprintf(m.out, "push %s: not pushed: %s\n", id, pu.None)
 			}
 			if fin != FinishOK {
-				report = cut(why + "; " + report)
 				fmt.Fprintf(m.out, "NOTE finish %s failed: %s\n", id, why)
 			}
 			args = []string{"finish", "--as", m.cfg.As, id + "@" + strconv.Itoa(l.gen), "--report", report}
@@ -871,6 +881,13 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 				args = append(args, "--failed")
 			}
 			args = append(args, usageArgs(r)...)
+			// the take's attempt decision, when one was asked (attempt): the finish carries it
+			if d := l.decided; d != nil && d.err != nil {
+				fmt.Fprintf(m.out, "NOTE attempt %s not decided: %s; the reason line routes the finish\n", id, oneLine(d.err.Error()))
+			} else if d != nil {
+				fmt.Fprintf(m.out, "decide %s attempt %s\n", id, d.line)
+				args = append(args, "--decision", string(d.decision))
+			}
 			ok = fin == FinishOK
 			args = append(args, launched...)
 		}
@@ -1151,7 +1168,7 @@ func (m *Member) collect() (acted int) {
 			m.running[card] = l
 			fmt.Fprintf(m.out, "start %s attempt=%d gen=%d running=%d/%d%s\n", card, l.attempt, l.gen, m.Running(), m.width, routeWords(l.packet))
 		default:
-			l.res, l.push = po.res, po.push
+			l.res, l.push, l.decided = po.res, po.push, po.decided
 			m.running[card] = l
 		}
 	}
@@ -1382,13 +1399,66 @@ func (m *Member) endEnded(ids []string, byID map[string]queueCard) {
 					pu.Refused = "the pusher said nothing"
 				}
 			}
-			m.post(id, post{res: &r, push: &pu})
+			m.post(id, post{res: &r, push: &pu, decided: m.attempt(p, r, pu, branch)})
 		}()
 	}
 	m.longWork()
 	if !m.cfg.Background {
 		ends.Wait() // a pass is one step: the ends it began, side by side, are its own
 	}
+}
+
+// finishReport is a work card's finish as the member reports it, from its result and its
+// push (Judge): ok or failed, why when failed, and the report: the push first, so the
+// 500-byte cut never takes it, then the child's line, and a failed finish's reason before
+// both. The attempt decision is asked over the same report (attempt).
+func finishReport(r Result, pu Push, branch string) (fin Finish, why, report string) {
+	fin, why = Judge(r, pu)
+	report = oneLine(r.Report)
+	if pu.Sha != "" {
+		said := "pushed=" + pu.Sha + " to " + branch
+		if pu.PR != "" {
+			said += " pr=" + pu.PR
+		}
+		report = cut(said + ": " + report)
+	}
+	if fin != FinishOK {
+		report = cut(why + "; " + report)
+	}
+	return fin, why, report
+}
+
+// attempt is a work take's attempt decision (Config.Attempt), asked in its end's long work
+// over the child's result as RESULT.md says it and the finish's report; nil when the member
+// has no decider, or no take ran (a launch refused at staging).
+func (m *Member) attempt(p Packet, r Result, pu Push, branch string) *decided {
+	if m.cfg.Attempt == nil || r.End == EndStaging {
+		return nil
+	}
+	_, _, report := finishReport(r, pu, branch)
+	line, decision, err := m.cfg.Attempt(p, ResultText(r), report)
+	return &decided{line: line, decision: decision, err: err}
+}
+
+// ResultText is a child's result as its RESULT.md says it (docs/SPEC-CARD-CONTRACT.md
+// section 3), the fields the member read and its body; "" when it wrote none.
+func ResultText(r Result) string {
+	if !r.Shaped && r.Head == "" && r.Verdict == "" && r.Report == "" && r.Body == "" {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "head: %s\nverdict: %s\nreport: %s\n", orDash(r.Head), orDash(r.Verdict), orDash(oneLine(r.Report)))
+	if body := strings.TrimSpace(r.Body); body != "" {
+		b.WriteString("\n" + body + "\n")
+	}
+	return b.String()
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
 }
 
 // cut is a report cut at 500 bytes, the bound oneLine keeps.

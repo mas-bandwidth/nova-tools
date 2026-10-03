@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/binstamp"
+	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
@@ -234,11 +235,12 @@ func (a *app) printTick(res store.TickResult, err error, max int, stdout, stderr
 }
 
 func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
-	var profile, listen string
+	var profile, listen, decideDir string
 	var profileTicks int
 	var land bool
 	st, c, code := a.machineVerb("run", args, stderr, func(fs flagSet) {
 		fs.StringVar(&listen, "listen", "", "also be the sprint's server: the workers' verbs on this `address:port` (this machine's address on the fleet's private network; 0.0.0.0 and other every-network addresses are refused), where nova-swarm member --server <address>:<port> sends them, and the coordinator's verbs on 127.0.0.1 at the same port, where NOVA_SPRINT_SERVER=127.0.0.1:<port> sends them")
+		fs.StringVar(&decideDir, "decide", "", "also keep the record of the sprint's attempt and grade decisions in this `dir` (nova-decide's layer 2: attempt.jsonl, grade.jsonl): the finishes' attempt decisions recorded, every card graded before its first deal with JEV_API_KEY from this environment, and each decision's outcome attached when its card lands or is dropped, every "+DecideEvery.String())
 		fs.BoolVar(&land, "land", false, "also land what the readers passed, every "+LandEvery.String()+", one landing at a time, as the coordinator (land's defaults: each card's REPO: and BASE: lines); land is then not run by hand")
 		fs.StringVar(&profile, "cpuprofile", "", "write a CPU profile of the loop's first ticks to this file (see --profile-ticks)")
 		fs.IntVar(&profileTicks, "profile-ticks", 10, "the ticks --cpuprofile covers; the profile is written after the last of them")
@@ -290,6 +292,16 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 	}
 	// the providers' balances, read outside every tick (balance.go)
 	go a.balanceLoop(context.Background(), st, stdout)
+	if decideDir != "" {
+		var b decide.Backend
+		if key := a.getenv(decide.JevSecret); key != "" {
+			b = decide.JevHTTP(key)
+		}
+		if a.decide == nil { // a test's lane, with its backend, is kept
+			a.decide = newDecideLane(decideDir, b, a.now, GradeWait)
+		}
+		go a.decideLoop(context.Background(), c.redis, stdout)
+	}
 	fmt.Fprintf(stdout, "RUN ticking on every line of the log (at most every %s) and every %s while it is quiet; %s\n", store.TickFloor, store.TickEvery, st.MachineLine(context.Background()))
 	if a.runLoop(context.Background(), st, c.max, 0, stdout, stderr) {
 		return exitReplaced

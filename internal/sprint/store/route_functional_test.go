@@ -28,9 +28,15 @@ func TestRedisTheDealReadsTheRoutesApplyWrites(t *testing.T) {
 	require.NoError(t, c.HSet(ctx, config.RouteKey("flash-a"), "tier", "flash", "provider", "deepseek", "model", "v4-flash",
 		"tokens", "0", "deadline", "900", "enabled", "true").Err())
 	require.NoError(t, c.HSet(ctx, config.TierKey("flash"), "name", "flash", "routes", "flash-a,flash-a", "rev", "8", "at", "0").Err())
+	// each nova-decide bar by its own field: a distinct value per key, read back by name
+	for f, v := range map[string]string{config.FieldDecideBounce: "0.5", config.FieldDecideReview: "0.3", config.FieldDecideAttemptNoResult: "0.71",
+		config.FieldDecideAttemptNothingToDo: "0.72", config.FieldDecideGrade: "0.73"} {
+		require.NoError(t, c.Set(ctx, config.SprintKey(f), v, 0).Err())
+	}
 	set, trips, err := st.B.(RouteReader).Routes(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, int64(2), trips, "the arrays ride in the routes' second trip")
+	assert.Equal(t, int64(2), trips, "the arrays and the bars ride in the routes' second trip")
+	assert.Equal(t, Bars{Bounce: "0.5", Review: "0.3", AttemptNoResult: "0.71", AttemptNothingToDo: "0.72", Grade: "0.73"}, set.Bars, "each bar read by its field's name")
 	assert.Equal(t, map[string][]string{"flash": {"flash-a", "flash-a"}}, set.Tiers, "pro has no array: it takes its routes in name order")
 	rs, _, err := st.Routes(ctx)
 	require.NoError(t, err)

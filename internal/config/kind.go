@@ -228,9 +228,24 @@ const (
 // meets it raises one "landed work scored low" judgment listing them.
 const FieldDecideScoreBar = "decide_score_bar"
 
+// The sprint row's bars of nova-decide's layer 2 (internal/decide, attempt.go and grade.go;
+// docs/SPEC-SPRINT.md sections 2 and 5): a failed finish whose attempt decision is
+// no-result at or above decide_attempt_no_result ends as a take with no result, one whose
+// decision is nothing-to-do at or above decide_attempt_nothing_to_do is failed work of that
+// class (no other class has a bar), and a card graded pro at or above decide_grade starts on
+// pro. All three are empty by default (the coordinator, 2026-10-03: nothing routes on a
+// decision until a review round labels cards independently): the decisions are asked,
+// recorded and shown, and route nothing.
+const (
+	FieldDecideAttemptNoResult    = "decide_attempt_no_result"
+	FieldDecideAttemptNothingToDo = "decide_attempt_nothing_to_do"
+	FieldDecideGrade              = "decide_grade"
+)
+
 // checkSprint holds the decide read's bars together: both set, as probabilities with the
 // review bar at most the bounce bar (decide.ParseBars), or both empty (no decide read);
-// and the landed score's bar a probability, or empty (no judgment).
+// the landed score's bar a probability, or empty (no judgment); and layer 2's three bars
+// each a probability or empty (decide.ParseBar).
 func checkSprint(r Row) error {
 	bounce, hasB := r.Fields[FieldDecideBounce]
 	review, hasR := r.Fields[FieldDecideReview]
@@ -239,11 +254,19 @@ func checkSprint(r Row) error {
 			return fmt.Errorf("sprint: decide_score_bar %q is not a probability in [0, 1]; set it to one, or empty to raise no landed-score judgment", bar)
 		}
 	}
-	if !hasB || !hasR || bounce == "" && review == "" {
-		return nil
+	if hasB && hasR && (bounce != "" || review != "") {
+		if _, err := decide.ParseBars(bounce, review); err != nil {
+			return fmt.Errorf("sprint: %v; set both bars (--decide_bounce and --decide_review), or both empty to turn the decide read off", err)
+		}
 	}
-	if _, err := decide.ParseBars(bounce, review); err != nil {
-		return fmt.Errorf("sprint: %v; set both bars (--decide_bounce and --decide_review), or both empty to turn the decide read off", err)
+	var p []string
+	for _, f := range []string{FieldDecideAttemptNoResult, FieldDecideAttemptNothingToDo, FieldDecideGrade} {
+		if _, _, err := decide.ParseBar(f, r.Fields[f]); err != nil {
+			p = append(p, err.Error())
+		}
+	}
+	if len(p) > 0 {
+		return fmt.Errorf("sprint: %s; a bar is a probability, or empty for none", strings.Join(p, "; "))
 	}
 	return nil
 }
@@ -322,12 +345,15 @@ var Kinds = []*Kind{
 		Name:      KindSprint,
 		Table:     "sprint",
 		Singleton: true,
-		Doc:       "the one row of sprint-global facts: which friend coordinates, the two bars a flash card's decide read is routed by, and the bar a landed diff's score is judged at",
+		Doc:       "the one row of sprint-global facts: which friend coordinates, the two bars a flash card's decide read is routed by, the bar a landed diff's score is judged at, the attempt decision's no-result and nothing-to-do bars, and the grade decision's bar",
 		Fields: []Field{
 			{Name: "coordinator", Type: TypeRef, Ref: KindFriend, Help: "the friend who holds the coordinator role (a friend row), or empty; set it to hand over"},
 			{Name: FieldDecideBounce, Type: TypeDecimal, Default: "0.5", Help: "the decide read's bounce bar: a flash card whose first read gives p(defect) at or above it is bounced with the read's finding; a probability, at least --decide_review; 0.5 (the default); empty, with --decide_review empty, turns the decide read off"},
 			{Name: FieldDecideReview, Type: TypeDecimal, Default: "0.3", Help: "the decide read's review bar: below it the card lands with no model read, and from it up to --decide_bounce it goes to a strings read; a probability; 0.3 (the default)"},
 			{Name: FieldDecideScoreBar, Type: TypeDecimal, Help: "the landed score's bar: land scores every landed diff (nova-decide's score decision), and a batch whose cards' top class has a p at or above it raises one landed work scored low judgment listing them; a probability; empty (the default) records the scores and raises none; 0.7 is the starting point once a review round labels cards independently"},
+			{Name: FieldDecideAttemptNoResult, Type: TypeDecimal, Help: "the attempt decision's no-result bar: a failed take nova-decide classes no-result at or above it ends as a take with no result (redealt, never failed work), whatever its reason line's prefix, but never a provider failure, a staging refusal or a launch refused; a probability; empty (the default) routes nothing on the decision, which is still asked, recorded and shown; 0.7 is the starting point the calibration of 2026-10-03 supports (class=no-result AUC 0.883; docs/SPEC-NOVA-DECIDE.md section 10)"},
+			{Name: FieldDecideAttemptNothingToDo, Type: TypeDecimal, Help: "the attempt decision's nothing-to-do bar: a failed take nova-decide classes nothing-to-do at or above it is failed work of the class `decided nothing-to-do`, whatever its reason line says, but never a provider failure, a staging refusal or a launch refused; a probability; empty (the default) routes nothing on the decision, which is still asked, recorded and shown (class=nothing-to-do AUC 0.618 in the calibration of 2026-10-03; docs/SPEC-NOVA-DECIDE.md section 10)"},
+			{Name: FieldDecideGrade, Type: TypeDecimal, Help: "the grade decision's bar: a card graded pro at or above it starts on pro instead of flash; a probability; empty (the default) keeps the grade a hint on the card; 0.7 is the starting point the calibration of 2026-10-03 supports (docs/SPEC-NOVA-DECIDE.md section 11)"},
 		},
 		Check: checkSprint,
 	},

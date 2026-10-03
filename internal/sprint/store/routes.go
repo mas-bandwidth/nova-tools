@@ -81,18 +81,41 @@ func (m *Mem) PriceRoutes(context.Context) ([]sprint.Route, int64, error) {
 }
 
 // RouteSet is what a step that deals or asks plans with: the routes, the
-// tiers' arrays, and the sprint row's bars read with them: the decide read's bounce
-// and review bars, and the landed score's bar (Bars[2]).
+// tiers' arrays, and the sprint row's nova-decide bars, read with them (Bars).
 type RouteSet struct {
 	Routes []sprint.Route
 	Tiers  map[string][]string
-	Bars   [3]string
+	Bars   Bars
+}
+
+// Bars is the sprint row's nova-decide bars, each by the name of its field, so no bar is
+// ever read as another: the decide read's bounce and review bars, the attempt decision's
+// no-result and nothing-to-do bars, the grade's, and the landed score's. "" is no bar.
+type Bars struct {
+	Bounce, Review                      string // decide_bounce, decide_review
+	AttemptNoResult, AttemptNothingToDo string // decide_attempt_no_result, decide_attempt_nothing_to_do
+	Grade                               string // decide_grade
+	Score                               string // decide_score_bar
+}
+
+// fields is each bar by its sprint row field (config.SprintKey(field) holds it).
+func (b *Bars) fields() map[string]*string {
+	return map[string]*string{
+		config.FieldDecideBounce:             &b.Bounce,
+		config.FieldDecideReview:             &b.Review,
+		config.FieldDecideAttemptNoResult:    &b.AttemptNoResult,
+		config.FieldDecideAttemptNothingToDo: &b.AttemptNothingToDo,
+		config.FieldDecideGrade:              &b.Grade,
+		config.FieldDecideScoreBar:           &b.Score,
+	}
 }
 
 // into is the set as the snapshot carries it.
 func (rs RouteSet) into(s *sprint.Snapshot) {
 	s.Routes, s.Tiers = rs.Routes, rs.Tiers
-	s.DecideBounce, s.DecideReview, s.DecideScoreBar = rs.Bars[0], rs.Bars[1], rs.Bars[2]
+	s.DecideBounce, s.DecideReview, s.DecideGrade = rs.Bars.Bounce, rs.Bars.Review, rs.Bars.Grade
+	s.DecideAttemptNoResult, s.DecideAttemptNothingToDo = rs.Bars.AttemptNoResult, rs.Bars.AttemptNothingToDo
+	s.DecideScoreBar = rs.Bars.Score
 }
 
 // routes is the routes a dealing step plans with, by name, and the tiers'
@@ -148,7 +171,7 @@ func (st *Store) cached(ctx context.Context, c *RouteCache) (RouteSet, error) {
 }
 
 // Routes reads the set, then every route's hash, each tier's array and the
-// sprint row's three bars in one pipeline: two round trips, the second only when
+// sprint row's nova-decide bars (Bars) in one pipeline: two round trips, the second only when
 // the set names a route (the arrays and the bars ride in it, so the tick's trips
 // do not rise; with no route a read card has none to draw, and no decide read).
 func (r *Redis) Routes(ctx context.Context) (RouteSet, int64, error) {
@@ -165,8 +188,11 @@ func (r *Redis) Routes(ctx context.Context) (RouteSet, int64, error) {
 	for _, t := range config.RouteTiers {
 		arrays[t] = pipe.HGet(ctx, config.TierKey(t), "routes")
 	}
-	bounce, review := pipe.Get(ctx, config.SprintKey(config.FieldDecideBounce)), pipe.Get(ctx, config.SprintKey(config.FieldDecideReview))
-	score := pipe.Get(ctx, config.SprintKey(config.FieldDecideScoreBar))
+	var set RouteSet
+	bars := map[string]interface{ Val() string }{}
+	for f := range set.Bars.fields() {
+		bars[f] = pipe.Get(ctx, config.SprintKey(f))
+	}
 	if err := redisconn.Exec(ctx, pipe); err != nil {
 		return RouteSet{}, 2, err
 	}
@@ -180,7 +206,11 @@ func (r *Redis) Routes(ctx context.Context) (RouteSet, int64, error) {
 			tiers[t] = a
 		}
 	}
-	return RouteSet{Routes: out, Tiers: tiers, Bars: [3]string{bounce.Val(), review.Val(), score.Val()}}, 2, nil
+	for f, v := range set.Bars.fields() {
+		*v = bars[f].Val()
+	}
+	set.Routes, set.Tiers = out, tiers
+	return set, 2, nil
 }
 
 // RouteOf is a route from its hash as nova-config's apply writes it: a field
@@ -206,12 +236,13 @@ func (m *Mem) Routes(context.Context) (RouteSet, int64, error) {
 	return RouteSet{Routes: append([]sprint.Route(nil), m.routes...), Tiers: tiers, Bars: m.bars}, 0, nil
 }
 
-// SetDecideBars gives the store the decide read's bounce and review bars, as
-// nova-config's apply does a live one (sprint:decide_bounce, sprint:decide_review).
-func (m *Mem) SetDecideBars(bounce, review string) {
+// SetDecideBars gives the store the sprint row's nova-decide bars, as nova-config's apply
+// does a live one (sprint:decide_bounce, sprint:decide_review,
+// sprint:decide_attempt_no_result, sprint:decide_attempt_nothing_to_do, sprint:decide_grade).
+func (m *Mem) SetDecideBars(b Bars) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.bars[0], m.bars[1] = bounce, review
+	m.bars = b
 }
 
 // SetScoreBar gives the store the landed score's bar, as nova-config's apply does a live
@@ -219,7 +250,7 @@ func (m *Mem) SetDecideBars(bounce, review string) {
 func (m *Mem) SetScoreBar(bar string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.bars[2] = bar
+	m.bars.Score = bar
 }
 
 // SetRoutes gives the store its routes, as nova-config's apply does a live one.

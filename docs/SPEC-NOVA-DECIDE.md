@@ -9,7 +9,7 @@ above it: decisions, backends, and the record.
 
 | side | verbs | what it does |
 | --- | --- | --- |
-| decide | `ask`, `read`, `score` | asks a schema over a state through a backend; prints every answer with its probabilities; appends the decision to the record |
+| decide | `ask`, `read`, `score`, `attempt`, `grade` | asks a schema over a state through a backend; prints every answer with its probabilities; appends the decision to the record |
 | train | `outcome`, `calibrate`, `findings` | attaches what turned out true to a recorded decision; reads the bar a decision's answer supports from the decisions whose outcome is known; clusters the classes the score decisions find |
 
 Both sides read and write one file, the record (`--record`). The truth lives
@@ -156,14 +156,15 @@ The read line carries the verdict and its probability; a gate decides on
 ## 7. Output, refusals and exits
 
 Every verb prints one result through internal/tool: the typed line
-(`READ OK id=... verdict=... p=...`, one `READ ANSWER` item per question) or,
+(`READ OK id=... verdict=... p=...`, `ATTEMPT OK ... class=... p=...`,
+`GRADE OK ... grade=... p=...`, one `<VERB> ANSWER` item per question) or,
 with `--json`, the same value as one JSON object. A refusal is one line,
 `<VERB> REFUSED: <every problem, each with what it wants>; run: <remedy>`, at
 exit 2, and writes nothing. A backend that fails (no answer, an HTTP status, an
 answer outside the schema) is `<VERB> FAIL id=... backend=...: <why>; run:
 <remedy>` at exit 2, and records nothing. Exit 1 is an outcome that conflicts
-with the one recorded. `ask`, `read` and `outcome` take `--dry-run`: the plan,
-with no backend call and no write.
+with the one recorded. `ask`, `read`, `attempt`, `grade` and `outcome` take
+`--dry-run`: the plan, with no backend call and no write.
 
 ## 8. The first read of a flash card
 
@@ -258,3 +259,103 @@ its p against the clean cards (positives in brackets): `cut_citation` 0.945
 judgment's score, 0.716 (0.835 against all clean cards). The top class at the bar
 0.5 flags 40 of the 49 class-labelled cards and 54 of the 157 clean ones (51 of
 the 80 clean docs and diary cards); at 0.7, 26 and 14.
+
+## 10. The attempt decision
+
+`attempt --brief <file> [--result <file>] --reason <line>` is how a work take ended,
+asked after it ends (the agreed plan of 2026-10-02, layer 2: result classification
+after each attempt, done, nothing to do, wrong scope, no result or needs pro; the owner
+agreed to the plan: "OK let's do this too", 2026-10-02 ~9:20 PM ET). The state is the card's brief, the child's RESULT.md (cut to 16 KB;
+`(none: the child wrote no RESULT.md)` when there is none) and the member's reason
+line for the take's end, each under its own heading. One question, `class`, a choice;
+each option's criterion, word for word (`TestAttemptAndGradeSchemasAreThePinnedOnes`
+holds this table to the code):
+
+| option | criterion |
+| --- | --- |
+| `done` | the take did the card's task: the work is committed and the gate the card names ran green |
+| `nothing-to-do` | the card's task was already done at its base, or asks for nothing that can change: there was nothing to do |
+| `wrong-scope` | the card cannot be done as written: the change it asks for lies outside its PATHS, or the card asks for the wrong thing; the fix is to the card, not another try |
+| `no-result` | the child ended without leaving a result to judge (no RESULT.md, or a budget or deadline reached before any finding): another try may converge |
+| `needs-pro` | the work was attempted and came back wrong in a way a stronger model would get right: tests red, the change incomplete or broken |
+| `provider-failure` | the provider or its harness failed the run (an HTTP error, a rate limit, a balance, a crash), not the work: the same card on a working route would run |
+
+An attempt decision's op id is `<card>@<attempt>.<12 hex of its state>` (`AttemptOp`):
+it is per attempt and state, not per take. A finish reported again replays its
+decision; two takes of one attempt are two decisions when their states differ, and
+two takes that ended with identical states (the same reason line and RESULT.md) share
+one decision, recorded once (the sprint's `decided:<op>` is set once). The sprint's
+server routes a finish only by a decision whose op names that finish's own card and
+attempt (`AttemptOf`), and refuses any other. The sprint asks it through the library, not the binary
+(docs/SPEC-SPRINT.md section 2, the attempt decision): the member asks
+`AttemptDecision` through the backend it is handed and the finish carries the
+decision, one JSON record line, which the sprint's server holds to the schema
+(`ParseAttempt`: the name, the schema's hash, the answers and the op id over the
+state) and records. Its outcome labels are the card's fate after the decided attempt
+(`AttemptLabel`): `landed` (it landed at that attempt), `later-<tier>` (it landed at a
+later attempt, on that tier: `later-flash`, `later-pro`, `later-script`) or `dropped`.
+
+The calibration of 2026-10-03, 100 ended takes of the store of 2026-10-02 (70 failed,
+30 ok; their RESULT.md rebuilt from the reports the store keeps; 16 `landed`, 26
+`later-flash`, 4 `later-pro`, 54 `dropped`), schema `3156747c139f228f`:
+
+| question | positive | negative | AUC | at 0.7 |
+| --- | --- | --- | --- | --- |
+| `class=done` | landed | later-flash, later-pro, dropped | 0.937 | 11 of 16 caught, 7 of 84 bounced |
+| `class=no-result` | later-flash, later-pro | landed | 0.883 | 14 of 30 caught, 0 of 16 bounced |
+| `class=nothing-to-do` | dropped | landed, later-flash, later-pro | 0.618 | 14 of 54 caught, 2 of 46 bounced |
+| `class=needs-pro` | later-pro | landed, later-flash | 0.494 | 1 of 4 caught, 3 of 42 bounced |
+
+Against the reason line's prefix, at 0.7: 23 of the 24 takes a budget or a deadline
+ended with no RESULT.md are `no-result`, 16 of the 20 `nothing to do` takes are
+`nothing-to-do`, 18 of the 30 ok takes are `done`, and 11 of the 20 `push refused`
+takes are `needs-pro`. `needs-pro` has four positives: no bar is read from it yet.
+
+Two classes may route a failed finish, each from its own bar on the sprint row:
+`no-result` from `decide_attempt_no_result` (an ended take, redealt) and
+`nothing-to-do` from `decide_attempt_nothing_to_do` (failed work of that class). No
+other class has a bar in this layer: `needs-pro`, `wrong-scope`, `provider-failure` and
+`done` are recorded and shown only, and a report native ended as a provider failure is
+never overridden by any decision (docs/SPEC-SPRINT.md section 2, the attempt decision).
+Both bars are empty by default, so no decision routes a finish until a review round
+labels cards independently; 0.7 is the starting point the numbers above support for
+`no-result`, and `nothing-to-do`'s AUC (0.618) is near chance until that round. (Measured
+under the first rule, one bar on which `no-result` and `provider-failure` both ended the
+take: at 0.7, 26 of the 70 failed takes would have gone from failed work to an ended
+take, redealt with no judgment; 14 of them landed later, 12 were dropped. The split per
+class was not measured.)
+
+## 11. The grade decision
+
+`grade --brief <file>` is a card's convergence before its first deal (the agreed plan
+of 2026-10-02, layer 2: a convergence grade and route choice before the deal; and the
+owner the same evening, of what the grade measures: "work we are confident is going to
+converge"). The state
+is the brief alone. One question, `grade`, a choice:
+
+| option | criterion |
+| --- | --- |
+| `script` | the card's answer is known exactly: a mechanical replacement a program (a regex, a short Go or Lisp program) makes with no model |
+| `flash` | a fast, cheap model converges: a bounded edit with the lines or files named, little reasoning, and a gate that says when it is done |
+| `pro` | a strong model is needed to converge: reasoning across files, judgement the card cannot spell out, or work a cheap model gets wrong |
+
+A grade's op id is `<card>@grade.<12 hex of its state>` (`GradeOp`): a brief graded
+before is answered from the record, and a card id that comes back with another brief
+is graded again. The sprint's server grades every card before its first deal
+(docs/SPEC-SPRINT.md section 5, the grade); its outcome label is the tier that landed
+the card (`GradeLabel`: `script`, `flash` or `pro`) or `dropped`.
+
+The calibration of 2026-10-03, schema `ad287c9232ad5008`, `grade=pro` with positive
+`pro` and negative `flash`:
+
+| set | pro | flash | AUC | at 0.7 |
+| --- | --- | --- | --- | --- |
+| the 234 reviewed cards of 2026-10-02 | 2 | 232 | 0.547 | 0 of 2 caught, 0 of 232 bounced |
+| every card of the store that landed | 34 | 298 | 0.930 | 16 of 34 caught, 0 of 298 bounced |
+| the same, line 1's `tier:` word cut | 34 | 298 | 0.824 | 16 of 34 caught, 10 of 298 bounced |
+
+The reviewed set is the mechanical flash sprint, two cards of it landed on pro: it
+holds no measure of `pro`. Over the store's landed cards the brief's own `tier:`
+word carries part of the separation (the third row); the sprint asks over the brief
+as it is, and a grade raises no card above its ceiling. The sprint row's `decide_grade`
+is empty by default, the grade a hint; 0.7 is the starting point.

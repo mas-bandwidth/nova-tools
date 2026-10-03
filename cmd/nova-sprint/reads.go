@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -1231,8 +1232,9 @@ func groupText(g sprint.Group, now time.Time, opened bool) string {
 // cardView is everything about one primary.
 type cardView struct {
 	Primary *sprint.Card `json:"primary"`
-	Tier    string       `json:"tier"`    // the tier it is on (sprint.CardTiers)
-	Ceiling string       `json:"ceiling"` // the highest the machine escalates it to
+	Tier    string       `json:"tier"`            // the tier it is on (sprint.CardTiers)
+	Ceiling string       `json:"ceiling"`         // the highest the machine escalates it to
+	Grade   string       `json:"grade,omitempty"` // nova-decide's grade, as the card holds it (sprint.FieldGrade)
 	// Who is the worker its brief's WHO line names (sprint.FieldWho): friend for any
 	// friend, friend.<name> for one; absent on a machine's card.
 	Who      string             `json:"who,omitempty"`
@@ -1295,7 +1297,7 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 			texts = []storyText{}
 		}
 		tier, ceiling := sprint.CardTiers(v.Primary)
-		b, _ := json.Marshal(cardView{Primary: v.Primary, Tier: tier, Ceiling: ceiling, Who: v.Primary.F(sprint.FieldWho), Work: v.Work, Reads: v.Reads, Merge: v.Merge, Open: v.Open, Needs: v.Needs, NeededBy: v.NeededBy, Held: held,
+		b, _ := json.Marshal(cardView{Primary: v.Primary, Tier: tier, Ceiling: ceiling, Grade: v.Primary.F(sprint.FieldGrade), Who: v.Primary.F(sprint.FieldWho), Work: v.Work, Reads: v.Reads, Merge: v.Merge, Open: v.Open, Needs: v.Needs, NeededBy: v.NeededBy, Held: held,
 			Cost: sprint.CardCostOf(v.Primary), Timeline: events, Texts: texts})
 		fmt.Fprintln(stdout, string(b))
 		return 0
@@ -1324,7 +1326,12 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 		}
 		// the tier it is on and its ceiling: flash first, pro on escalation
 		tier, ceiling := sprint.CardTiers(v.Primary)
-		fmt.Fprintf(stdout, "CARD OK id=%s epoch=%d work_cards=%d read_cards=%d open=%d tier=%s ceiling=%s%s\n", oneline.Escape(id), epoch, len(v.Work), len(v.Reads), len(v.Open), tier, ceiling, whoWord(v.Primary))
+		// and its grade, nova-decide's convergence grade before its first deal (decide.go)
+		grade := ""
+		if g, ok := decide.ParseDecided(v.Primary.F(sprint.FieldGrade)); ok {
+			grade = " grade=" + g.Value + ":" + strconv.FormatFloat(g.P, 'f', 2, 64)
+		}
+		fmt.Fprintf(stdout, "CARD OK id=%s epoch=%d work_cards=%d read_cards=%d open=%d tier=%s ceiling=%s%s%s\n", oneline.Escape(id), epoch, len(v.Work), len(v.Reads), len(v.Open), tier, ceiling, grade, whoWord(v.Primary))
 		return 0
 	}
 	printCard(stdout, "PRIMARY", v.Primary)

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -269,4 +270,59 @@ func TestScoreThroughJevNamesTheTopClassAndFindingsClustersIt(t *testing.T) {
 		{Args: []string{"findings", "--record", rec, "--bar", "0.5,0.7"}, Code: 2, Says: `--bar "0.5,0.7" wants one probability from 0 to 1`},
 		{Args: []string{"score", "--card", td + "card.md", "--diff", td + "nope.diff", "--backend", "fixed", "--answers", td + "score-answers.json", "--record", rec}, Code: 2, Says: "nope.diff"},
 	})
+}
+
+// jevChoice answers a one-choice decision (attempt, grade) with the option at p, the rest of
+// the mass on the other options.
+func jevChoice(question, option string, p float64) func([]byte) ([]byte, error) {
+	return func(body []byte) ([]byte, error) {
+		var req struct{ Questions map[string]decide.Question }
+		if err := json.Unmarshal(body, &req); err != nil || len(req.Questions) != 1 {
+			return nil, errors.New("not a one-question request")
+		}
+		probs := map[string]float64{}
+		rest := (1 - p) / float64(len(req.Questions[question].Criteria)-1)
+		for o := range req.Questions[question].Criteria {
+			probs[o] = rest
+		}
+		probs[option] = p
+		return json.Marshal(map[string]any{"answers": map[string]any{question: map[string]any{"type": "choice", "choice": option, "probabilities": probs}},
+			"usage": map[string]int{"input_tokens": 400, "output_tokens": 0}})
+	}
+}
+
+// The attempt and grade verbs ask their decisions through the backend and record them, the
+// same op id again answered from the record; their states are the brief, the result and the
+// reason (attempt), the brief alone (grade); a result that is not given is said as none; a
+// dry run asks nothing; the refusals name every missing input at once.
+func TestAttemptAndGradeAreAskedThroughJevAndRecordedOnce(t *testing.T) {
+	t.Parallel()
+	calls := new(atomic.Int32)
+	rec := filepath.Join(t.TempDir(), "decisions.jsonl")
+	attempt := testkit.Main(decideTool(testWorld("k-test", calls, jevChoice(decide.AttemptQuestion, decide.ClassNoResult, 0.91))).Run)
+	args := []string{"attempt", "--brief", td + "card.md", "--reason", "budget: no RESULT.md shape", "--backend", "jev", "--record", rec, "--op", "c1@1"}
+	attempt.Do(t, append(args, "--dry-run")...).Exit(0).Out("ATTEMPT OK id=c1@1 decision=attempt backend=jev:jev-latest questions=1", "recorded=no")
+	assert.Zero(t, calls.Load())
+	attempt.Do(t, args...).Exit(0).Out("ATTEMPT OK id=c1@1 decision=attempt backend=jev:jev-latest class=no-result p=0.91 tokens_in=400 tokens_out=0 recorded=new")
+	attempt.Do(t, args...).Exit(0).Out("recorded=existing")
+	assert.Equal(t, int32(1), calls.Load())
+
+	grade := testkit.Main(decideTool(testWorld("k-test", calls, jevChoice(decide.GradeQuestion, decide.GradeScript, 0.8))).Run)
+	grade.Do(t, "grade", "--brief", td+"card.md", "--backend", "jev", "--record", rec, "--op", "c1@grade").Exit(0).Out("GRADE OK id=c1@grade decision=grade backend=jev:jev-latest grade=script p=0.8")
+	ds, err := decide.Load(rec)
+	require.NoError(t, err)
+	require.Len(t, ds, 2)
+	assert.Contains(t, ds[0].State, "RESULT (the child's RESULT.md):\n(none: the child wrote no RESULT.md)\n\nREASON (the member's line for the take's end):\nbudget: no RESULT.md shape\n")
+	assert.Equal(t, "budget: no RESULT.md shape", ds[0].Inputs["reason"])
+	assert.True(t, strings.HasPrefix(ds[1].State, "CARD (the whole task a worker will be given):\n"), ds[1].State)
+
+	testkit.Refusals(t, cli, []testkit.Refusal{
+		{Args: []string{"attempt", "--backend", "fixed", "--answers", td + "attempt-answers.json", "--record", rec}, Code: 2, Says: "--brief is required"},
+		{Args: []string{"attempt", "--backend", "fixed", "--answers", td + "attempt-answers.json", "--record", rec}, Code: 2, Says: "--reason is required"},
+		{Args: []string{"attempt", "--brief", td + "nope.md", "--result", td + "nope-result.md", "--reason", "r", "--backend", "fixed", "--answers", td + "attempt-answers.json", "--record", rec}, Code: 2, Says: "nope-result.md"},
+		{Args: []string{"grade", "--backend", "fixed", "--answers", td + "grade-answers.json", "--record", rec}, Code: 2, Says: "--brief is required"},
+	})
+	r := cli.Do(t, "grade", "--brief", td+"card.md", "--backend", "fixed", "--answers", td+"attempt-answers.json", "--record", rec, "--op", "g2")
+	r.Exit(2)
+	assert.Contains(t, r.Stderr, "GRADE FAIL id=g2 backend=fixed: the answers file has no answer to grade", "an attempt's answers do not answer a grade")
 }

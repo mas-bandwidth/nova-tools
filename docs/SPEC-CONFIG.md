@@ -48,7 +48,7 @@ Where each field of this cut sits:
 | machine (varies per machine) | `user`, `seat`, `slots`, `runners`, `width`, `tla`, `note` |
 | fleet (one value for the whole fleet) | `store`, `coordinator` (both machines), `redis_port`, `pg_dsn` |
 | friend (decided for her) | `slots`, `tiers`, `roles`, `width` |
-| sprint (one value for the whole sprint) | `coordinator` (a friend), `decide_bounce`, `decide_review`, `decide_score_bar` |
+| sprint (one value for the whole sprint) | `coordinator` (a friend), `decide_bounce`, `decide_review`, `decide_score_bar`, `decide_attempt_no_result`, `decide_attempt_nothing_to_do`, `decide_grade` |
 | loop (decided per supervised process) | `machine`, `argv`, `seat`, `keys`, `every`, `keepalive`, `width`, `enabled` |
 | route (decided per way to run a tier) | `tier`, `provider`, `model`, `tokens`, `deadline`, `enabled`, and the price sheet: `price_input`, `price_cache_read`, `price_cache_write`, `price_output`, `reasoning_as_output`, `long_context`, `price_input_long`, `price_output_long`, `price_request`, `billing`, `gateway_percent`, `price_source`, `price_as_of`, `note` |
 | tier (decided per tier) | `routes` |
@@ -229,6 +229,9 @@ facts.
 | `decide_bounce` | decimal, default 0.5 | | the ask: a flash card's first read is a decide read (docs/SPEC-SPRINT.md section 6), and p(defect) at or above this bar bounces the work; a probability, at least `decide_review`; both bars empty turns the decide read off | `sprint:decide_bounce` |
 | `decide_review` | decimal, default 0.3 | | the ask: below this bar the decide read lands the work with no model read; from it up to `decide_bounce` the card goes to a strings read | `sprint:decide_review` |
 | `decide_score_bar` | decimal, default empty | | land: every landed diff is scored (docs/SPEC-SPRINT.md section 7, the landed score), and a batch whose cards' top class has a p at or above this bar raises one "landed work scored low" judgment listing them; a probability; empty (the default) records the scores and raises none; 0.7 is the starting point once a review round labels cards independently | `sprint:decide_score_bar` |
+| `decide_attempt_no_result` | decimal, default empty | | the deal writes it on every work card (docs/SPEC-SPRINT.md section 2, the attempt decision): a failed finish whose attempt decision is no-result at or above it ends as a take with no result (redealt, never failed work), unless its report is a provider failure; a probability; empty routes nothing on the decision, which is still asked, recorded and shown (nothing routes until a review round labels cards independently); 0.7 is the starting point (class=no-result AUC 0.883, docs/SPEC-NOVA-DECIDE.md section 10) | `sprint:decide_attempt_no_result` |
+| `decide_attempt_nothing_to_do` | decimal, default empty | | the deal writes it on every work card (docs/SPEC-SPRINT.md section 2, the attempt decision): a failed finish whose attempt decision is nothing-to-do at or above it is failed work of the class `decided nothing-to-do`, unless its report is a provider failure; a probability; empty routes nothing on the decision (class=nothing-to-do AUC 0.618, docs/SPEC-NOVA-DECIDE.md section 10). No other class of the attempt decision has a bar | `sprint:decide_attempt_nothing_to_do` |
+| `decide_grade` | decimal, default empty | | the deal: a card graded pro at or above it, its ceiling pro, starts on pro instead of flash (docs/SPEC-SPRINT.md section 5, the grade); a probability; empty keeps the grade a hint on the card; 0.7 is the starting point (grade=pro AUC 0.930 over the store's landed cards, 0.547 over the mechanical set, docs/SPEC-NOVA-DECIDE.md section 11) | `sprint:decide_grade` |
 
 **`loop`** (`config.loops`): a supervised process on one machine. Every
 value is data in the row: the code names no machine, seat, secret or
@@ -409,7 +412,10 @@ config.sprint            (name PK = 'sprint', coordinator -> friends.name,
                           by 0011; decide_bounce and decide_review added by
                           0021, text NOT NULL DEFAULT '0.5' and '0.3', a
                           decimal or ''; decide_score_bar added by 0022,
-                          text NOT NULL DEFAULT '', a decimal or '')
+                          text NOT NULL DEFAULT '', a decimal or '';
+                          decide_attempt_no_result,
+                          decide_attempt_nothing_to_do and decide_grade
+                          added by 0023, all DEFAULT '')
 config.loops             (name PK, machine -> machines.name, argv, seat, keys,
                           every, keepalive boolean, width, enabled boolean,
                           created_at, updated_at; CHECK exactly one of

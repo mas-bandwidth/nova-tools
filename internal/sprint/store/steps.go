@@ -233,3 +233,14 @@ func WaitStep(r sprint.WaitReq) Step {
 	return Step{Args: ArgsOf(r), Verb: "wait",
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Wait(s, r) }}
 }
+
+// GradeStep is the server's decide lane writing the grade decisions it made on the cards
+// still ungraded and never dealt (sprint.Grade): the machine's, as a tick's part is.
+func GradeStep(r sprint.GradeReq) Step {
+	ids := make([]string, 0, len(r.Grades))
+	for id := range r.Grades {
+		ids = append(ids, id)
+	}
+	return Step{Named: true, Args: ArgsOf(r), Verb: "grade", Actor: sprint.MachineActor, Load: tables(sprint.Work), Extras: sprint.NamedExtras(sprint.Work, ids),
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Grade(s, r) }}
+}

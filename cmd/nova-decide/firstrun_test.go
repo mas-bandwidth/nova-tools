@@ -37,7 +37,7 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 	t.Parallel()
 	examples, err := onboarding.ExampleLines(cli.OK(t, "help").Stdout, "nova-decide")
 	require.NoError(t, err)
-	verbs := []string{"ask", "read", "score", "outcome", "calibrate", "findings"}
+	verbs := []string{"ask", "read", "score", "attempt", "grade", "outcome", "calibrate", "findings"}
 	require.Len(t, examples, len(verbs), "want one example of each of %v under `example:`, got %q", verbs, examples)
 	run := sitting(t)
 	for i, verb := range verbs {
@@ -62,6 +62,8 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 		"nova-decide ask --schema ./cmd/nova-decide/testdata/schema.json --state ./cmd/nova-decide/testdata/state.txt --backend fixed --answers ./cmd/nova-decide/testdata/answers.json --record ./decisions.jsonl --op first",
 		"nova-decide read --card ./cmd/nova-decide/testdata/card.md --diff ./cmd/nova-decide/testdata/card.diff --backend fixed --answers ./cmd/nova-decide/testdata/read-answers.json --record ./decisions.jsonl --op card-1",
 		"nova-decide score --card ./cmd/nova-decide/testdata/card.md --diff ./cmd/nova-decide/testdata/card.diff --backend fixed --answers ./cmd/nova-decide/testdata/score-answers.json --record ./decisions.jsonl --op card-1@landed@0123456789ab",
+		`nova-decide attempt --brief ./cmd/nova-decide/testdata/card.md --result ./cmd/nova-decide/testdata/result.md --reason "verdict not-done: tests red in internal/decide" --backend fixed --answers ./cmd/nova-decide/testdata/attempt-answers.json --record ./decisions.jsonl --op c1@1`,
+		"nova-decide grade --brief ./cmd/nova-decide/testdata/card.md --backend fixed --answers ./cmd/nova-decide/testdata/grade-answers.json --record ./decisions.jsonl --op c1@grade",
 		`nova-decide outcome --record ./decisions.jsonl --id card-1 --label ok --note "the review found nothing"`,
 		"nova-decide calibrate --record ./cmd/nova-decide/testdata/record.jsonl --decision read --question defect --positive wrong --negative ok",
 		"nova-decide findings --record ./cmd/nova-decide/testdata/record.jsonl --since 2026-10-01",
