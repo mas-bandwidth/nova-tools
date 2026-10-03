@@ -27,6 +27,8 @@ func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 	session := fs.String("claude-session", "", "one Claude Code session transcript jsonl")
 	out := fs.String("out", "", "directory for the resulting daily token file")
 	day := fs.String("day", "", "one UTC day to write as YYYY-MM-DD; defaults to every stamped day")
+	role := fs.String("role", "", "the role the rows are booked under: given, the row is <model>/<role>; the default books the bare model")
+	weights := fs.String("weights", tokens.DefaultWeights.Flag(), "the WEIGHTED ratios as in,cw,cr,out -- a comparison, not a price: the defaults are the ratios of one vendor's published list prices; set your own")
 	if err := verbflag.Parse(fs, args); err != nil {
 		return refuse(stderr, " session", err.Error())
 	}
@@ -37,6 +39,10 @@ func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 	r.required("claude-session", *session, "one Claude Code session jsonl, the window whose turns this folds")
 	if *day != "" && !tokens.ValidDay(*day) {
 		r.add("--day wants one UTC day as YYYY-MM-DD, got " + oneline.Field(*day))
+	}
+	w, werr := tokens.ParseWeights(*weights)
+	if werr != nil {
+		r.add(werr.Error())
 	}
 	if len(r.list) > 0 {
 		return r.print(stderr)
@@ -49,7 +55,7 @@ func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// Every field of the SESSION line is a %d over an integer, so the escape is a no-op --
 	// and it is here anyway, because the tripwire that keeps this binary's output one line
 	// per event does not take a promise about a value, only the call that enforces it.
-	fmt.Fprintln(stdout, oneline.Escape(sum.Line()))
+	fmt.Fprintln(stdout, oneline.Escape(sum.Line(w)))
 	if sum.Unstamped > 0 {
 		fmt.Fprintf(stdout, "TOKENS NOTE unstamped=%d turns are in the totals and in no day; they are not dated by a guess\n", sum.Unstamped)
 	}
@@ -91,7 +97,7 @@ func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 		if part == nil {
 			part = &tokens.SessionSum{}
 		}
-		fresh := sum.Rows(d)
+		fresh := sum.Rows(d, *role)
 		var old []tokens.DayRow
 		prior, findings, err := tokens.ReadDayFile(tokens.Path(*out, d))
 		if err != nil {
@@ -132,7 +138,7 @@ func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 			booked = append(booked, r.Model)
 		}
 		fmt.Fprintf(stdout, "TOKENS DAY day=%s written=true rows=%d retained=%d model=%s weighted=%d\n",
-			oneline.Field(d), len(rows), retained, oneline.Field(strings.Join(booked, ",")), part.Weighted())
+			oneline.Field(d), len(rows), retained, oneline.Field(strings.Join(booked, ",")), part.Weighted(w))
 	}
 	return exit
 }

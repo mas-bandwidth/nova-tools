@@ -1,14 +1,18 @@
 package tokens
 
-// The coordinator's own session, folded.
+// One session window, folded.
 //
 // This reader folds one Claude Code session jsonl into the four counts and one weighted
-// equivalent, so the coordinator is a model line in the daily ledger like everybody else.
+// equivalent, so a window's spend is a model line in the daily ledger like everybody
+// else's. The tool carries the concepts and none of the fleet (docs/STANDARD.md section
+// 4): the row's role and the weights are the caller's flags, never constants here.
 //
 // WEIGHTED is the comparable number. A cache read is not a fresh input token and an output
 // token is not one either, so a raw sum of the four flatters a window that reads a huge
-// cache and understates one that writes a lot. The weights are the provider's own price
-// ratios: cache write 1.25x an input token, cache read 0.1x, output 5x.
+// cache and understates one that writes a lot. The weights are a comparison, not a price:
+// DefaultWeights is the ratios of one vendor's published list prices (cache write 1.25x
+// an input token, cache read 0.1x, output 5x), and the session verb's --weights flag
+// carries them and takes yours.
 
 import (
 	"bufio"
@@ -17,31 +21,49 @@ import (
 	"maps"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-// The weights the WEIGHTED equivalent is built from, as the provider prices them.
-const (
-	WeightCacheWrite = 1.25
-	WeightCacheRead  = 0.1
-	WeightOutput     = 5.0
-)
+// Weights is the four ratios the WEIGHTED equivalent is built from: how many fresh input
+// tokens one input, one cache write, one cache read and one output token are worth.
+type Weights struct{ Input, CacheWrite, CacheRead, Output float64 }
 
-// CoordinatorSeat is the suffix of the ledger row a coordinator's session folds into. The row
-// names the model the TRANSCRIPT names and the seat: `<model>/coordinator`. The same model
-// driving a worker is a different line, because the question the ledger answers is what the
-// coordinating cost, not what the model cost. The model is read from each turn (the same
-// `message.model` field the spend fold reads) and never assumed: a transcript of another
-// model is booked under that model, and a transcript that names none is refused.
-const CoordinatorSeat = "/coordinator"
+// DefaultWeights is a comparison, not a price: the ratios of one vendor's published list
+// prices (cache write 1.25x an input token, cache read 0.1x, output 5x). The session
+// verb's --weights flag carries these four numbers and takes yours.
+var DefaultWeights = Weights{Input: 1, CacheWrite: 1.25, CacheRead: 0.1, Output: 5}
 
-// CoordinatorModelOf is the ledger model cell of a coordinator turn made by `model`.
-func CoordinatorModelOf(model string) string { return model + CoordinatorSeat }
+// Flag renders w as the in,cw,cr,out four comma-separated numbers the session verb's
+// --weights flag takes, so the flag's default is DefaultWeights printed and never a
+// second copy of it.
+func (w Weights) Flag() string {
+	g := func(v float64) string { return strconv.FormatFloat(v, 'g', -1, 64) }
+	return g(w.Input) + "," + g(w.CacheWrite) + "," + g(w.CacheRead) + "," + g(w.Output)
+}
 
-// CoordinatorRepo is the repo cell of that row. A coordinator's turns are not one repo's
-// work -- they are the bench's -- and a row attributed to whichever repo a tool call
-// happened to name would move the cost around from day to day.
-const CoordinatorRepo = "coordinator"
+// ParseWeights reads the in,cw,cr,out four numbers --weights takes. A value that is not
+// four finite numbers is a refusal saying what the flag WANTS, never a guess
+// (docs/STANDARD.md section 3, onboarding point 2).
+func ParseWeights(s string) (Weights, error) {
+	parts := strings.Split(s, ",")
+	if len(parts) != 4 {
+		return Weights{}, fmt.Errorf("--weights wants four comma-separated numbers in,cw,cr,out, got %d in %s", len(parts), oneline.Field(s))
+	}
+	nums := make([]float64, 4)
+	for i, p := range parts {
+		v, err := strconv.ParseFloat(strings.TrimSpace(p), 64)
+		// v*0 is zero for every finite number and NaN for a NaN and both infinities:
+		// one product refuses the three values no token count can carry.
+		if err != nil || v*0 != 0 {
+			return Weights{}, fmt.Errorf("--weights wants four comma-separated numbers in,cw,cr,out, and %s is not a finite number", oneline.Field(p))
+		}
+		nums[i] = v
+	}
+	return Weights{Input: nums[0], CacheWrite: nums[1], CacheRead: nums[2], Output: nums[3]}, nil
+}
 
 // SessionLabel is the source label the row names, so every number stays traceable to the
 // flag of the run that wrote it.
@@ -214,13 +236,13 @@ func usageOf(usage map[string]json.RawMessage, key string) int64 {
 	return v
 }
 
-// Weighted is the fresh-input-equivalent: input + 1.25 x cache write + 0.1 x cache read +
-// 5 x output, rounded down to a whole token.
-func (s SessionSum) Weighted() int64 {
-	return int64(float64(s.Input) +
-		WeightCacheWrite*float64(s.CacheWrite) +
-		WeightCacheRead*float64(s.CacheRead) +
-		WeightOutput*float64(s.Output))
+// Weighted is the fresh-input-equivalent under w: w.Input x input + w.CacheWrite x cache
+// write + w.CacheRead x cache read + w.Output x output, rounded down to a whole token.
+func (s SessionSum) Weighted(w Weights) int64 {
+	return int64(w.Input*float64(s.Input) +
+		w.CacheWrite*float64(s.CacheWrite) +
+		w.CacheRead*float64(s.CacheRead) +
+		w.Output*float64(s.Output))
 }
 
 // AvgContext is the average context a turn carried: everything read (input, cache write,
@@ -233,10 +255,10 @@ func (s SessionSum) AvgContext() int64 {
 	return (s.Input + s.CacheWrite + s.CacheRead) / int64(s.Turns)
 }
 
-// Line is the one line the session verb prints.
-func (s SessionSum) Line() string {
+// Line is the one line the session verb prints, WEIGHTED under w.
+func (s SessionSum) Line(w Weights) string {
 	return fmt.Sprintf("SESSION turns=%d input=%d cache_write=%d cache_read=%d output=%d weighted=%d avg_context=%d",
-		s.Turns, s.Input, s.CacheWrite, s.CacheRead, s.Output, s.Weighted(), s.AvgContext())
+		s.Turns, s.Input, s.CacheWrite, s.CacheRead, s.Output, s.Weighted(w), s.AvgContext())
 }
 
 // DayList is the days this session touched, sorted.
@@ -258,10 +280,16 @@ func (s SessionSum) UnbookableReason() string {
 }
 
 // Rows is the day file rows one day of this session folds into: one per model the turns of
-// that day name, each `<model>/coordinator`. A day the session has no turn on is a row of
-// zeros for every model the session names, because "this window spent nothing that day" is
-// a measurement; a session that names no model has no rows.
-func (s SessionSum) Rows(day string) []DayRow {
+// that day name. The row names the model the TRANSCRIPT names and, when the caller's
+// --role flag names a role, the seat too: `<model>/<role>`, with the role in the repo
+// cell. The same model driving another line of work is a different row, because the
+// question the ledger answers is what that work cost, not what the model cost; a window's
+// turns are not one repo's work, and a row attributed to whichever repo a tool call
+// happened to name would move the cost around from day to day, so with no role the model
+// stands alone and the repo cell is the fixed word `unattributed`. A day the session has
+// no turn on is a row of zeros for every model the session names, because "this window
+// spent nothing that day" is a measurement; a session that names no model has no rows.
+func (s SessionSum) Rows(day, role string) []DayRow {
 	byModel := s.DayModels[day]
 	names := s.Models
 	if len(byModel) > 0 {
@@ -273,7 +301,11 @@ func (s SessionSum) Rows(day string) []DayRow {
 		if d == nil {
 			d = &SessionSum{}
 		}
-		r := DayRow{Date: day, Model: CoordinatorModelOf(m), Repo: CoordinatorRepo, Basis: UTC, Sources: []string{SessionLabel}}
+		model, repo := m, Unattributed
+		if role != "" {
+			model, repo = m+"/"+role, role
+		}
+		r := DayRow{Date: day, Model: model, Repo: repo, Basis: UTC, Sources: []string{SessionLabel}}
 		r.Counts.Set(Input, d.Input)
 		r.Counts.Set(Output, d.Output)
 		r.Counts.Set(CacheWrite, d.CacheWrite)

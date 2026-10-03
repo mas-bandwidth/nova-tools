@@ -191,7 +191,7 @@ func Shrinks(old, now Counts, day string) []Shrink {
 // sources wrote, and rule 10 cannot see it: the shrink comparison is over the day's per-type
 // TOTALS, so a run whose own numbers are bigger than what it deleted writes a smaller file
 // with a bigger total and says written=true. Measured at tip, 2026-09-14: a day holding
-// `claude-x 410` folded with only `--swarm freddy=<pool>` (mercury-2.5, 2000) came back
+// `claude-x 410` folded with only `--swarm lin=<pool>` (mercury-2.5, 2000) came back
 // holding the mercury row alone, exit 0, no TOKENS SHRANK.
 //
 // So the fold merges by source instead. This run's rows replace the rows its own sources

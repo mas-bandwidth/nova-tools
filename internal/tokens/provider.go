@@ -16,11 +16,11 @@ import (
 
 // --provider <label>=<file>: a billing export.
 //
-// For a harness that records nothing a tool can read — Emma's (Antigravity, Gemini),
-// Johnny's (Grok), Stella's (Codex). The account holder downloads the export; the label
-// names the provider and therefore the parser. The repo is the fixed word `unattributed`:
-// the tool never splits a provider total across repos by any proportion, because a split
-// nobody measured is a number nobody can defend.
+// Some harnesses record nothing a tool can read: Antigravity, Gemini, Grok, Codex. The
+// account holder downloads the export; the label names the provider and therefore the
+// parser. The repo is the fixed word `unattributed`: the tool never splits a provider
+// total across repos by any proportion, because a split nobody measured is a number
+// nobody can defend.
 
 // Parsers are the export shapes this tool knows, one per provider. A label that is not
 // one of them is a bad invocation rather than an unreadable file: the caller named a
@@ -39,7 +39,7 @@ func KnownParser(name string) bool {
 const zoneDeclaration = "# timezone:"
 
 // A shape is ONE provider's export, and the parser is chosen by the kind the caller
-// declared: `--provider google:emma=<file>` says this file is Google's export and Emma
+// declared: `--provider google:ada=<file>` says this file is Google's export and Ada
 // downloaded it. One union of every provider's column names would accept a Google export
 // declared as xAI and write `provider:xai` beside numbers that parser never read -- the
 // column that makes a number traceable naming the wrong source (measured 2026-09-11).
@@ -91,8 +91,8 @@ func ParserColumns(kind string) []string {
 }
 
 // ReadProvider reads one billing export with the parser its kind names. The label on
-// every row it feeds is `<kind>:<name>` -- `google:emma`, as the spec's own day-file
-// example writes it -- so two friends' exports from one provider are two sources.
+// every row it feeds is `<kind>:<name>` -- `google:ada` -- so two friends' exports from
+// one provider are two sources.
 func ReadProvider(kind, name, path string, _ *Rules) *Source {
 	s := &Source{Label: Label(kind, name), Kind: KindProvider, Path: path, Basis: UTC}
 	s.Stat.Files = 1

@@ -472,11 +472,15 @@ writes.
 cards whose output exceeded their own card budget line) and one `PROFILES OK`
 line, exit 0 whenever it ran. `session --claude-session <jsonl>` prints one
 `SESSION` line (the weighted fresh-input equivalent and average context) and,
-with `--out`, folds the coordinator's turns into the day file as one row per
-model the transcript names, `<model>/coordinator`, beside retained rows; a
-transcript that names no model on some turn is refused, never booked under a
-guess. Their lines are in the output grammar; a scanner
-that reads the grammar parses them.
+with `--out`, folds the window's turns into the day file as one row per model
+the transcript names, beside retained rows; a transcript that names no model
+on some turn is refused, never booked under a guess. `--role <name>` books
+each row as `<model>/<role>`, with the role in the repo cell too; with no
+role the model stands alone and the repo cell is the fixed word
+`unattributed`. `--weights <in,cw,cr,out>` sets the four ratios the weighted
+equivalent is built from, defaulting to `1,1.25,0.1,5` — a comparison, not a
+price: the ratios of one vendor's published list prices; set your own. Their
+lines are in the output grammar; a scanner that reads the grammar parses them.
 
 `report --redis` and `ledger` are the Redis
 token ledger's verbs, specified in [SPEC-STATE.md](SPEC-STATE.md).
@@ -1017,7 +1021,7 @@ The card earns the same red-first bar as every rule here: seen red before it is
 trusted.
 
 - one `--all` fold walks each transcript file once and folds every day from that stream, so a day-at-a-time fold is not the retained-accounting route;
-- the coordinator read is one `TOKENS SOURCE` per source, one `TOKENS DAY` per day and one `TOKENS OK`, and `check` is one line per finding bounded by `--max`;
+- one read of the ledger is one `TOKENS SOURCE` per source, one `TOKENS DAY` per day and one `TOKENS OK`, and `check` is one line per finding bounded by `--max`;
 - `--timeout` bounds one source and not the run, and a stale ledger is repaired by `fold --day <d>` before `check` is trusted.
 
 ## What it deliberately does not do
