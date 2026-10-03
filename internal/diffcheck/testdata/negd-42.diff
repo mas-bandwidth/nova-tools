@@ -1,0 +1,87 @@
+diff --git a/internal/bus/prepared_delivery_refuses_unrelated_content_test.go b/internal/bus/prepared_delivery_refuses_unrelated_content_test.go
+index af5aa383a..0a9d15264 100644
+--- a/internal/bus/prepared_delivery_refuses_unrelated_content_test.go
++++ b/internal/bus/prepared_delivery_refuses_unrelated_content_test.go
+@@ -106,7 +106,7 @@ func TestStellaIndependentPreparedCannotConfirmCommitWithoutIndex(t *testing.T)
+ 		return
+ 	}
+ 	index, e := git(bare, "show", "main:"+IndexPath(p.Sender.Lane))
+-	require.False(t, r.Pushed && (e != nil || !strings.Contains(index, IndexLine(p.Index))), "claimed success after publishing note-only commit without INDEX entry")
++	require.True(t, (e == nil && strings.Contains(index, IndexLine(p.Index))) || !r.Pushed, "claimed success after publishing note-only commit without INDEX entry")
+ }
+ func TestStellaIndependentPreparedPreservesUnrelatedAttributeEdit(t *testing.T) {
+ 	t.Parallel()
+@@ -123,7 +123,7 @@ func TestStellaIndependentPreparedPreservesUnrelatedAttributeEdit(t *testing.T)
+ 		require.NotContains(t, remote, sentinel, "published unrelated dirty attribute content during prepared delivery")
+ 	}
+ 	now, _ := os.ReadFile(path)
+-	require.False(t, string(now) != string(want), "refusal changed unrelated dirty attribute content")
++	require.Equal(t, string(want), string(now), "refusal changed unrelated dirty attribute content")
+ }
+ func TestStellaIndependentPreparedRefusesUnknownArtifactField(t *testing.T) {
+ 	t.Parallel()
+diff --git a/internal/bus/symlink_discipline_test.go b/internal/bus/symlink_discipline_test.go
+index 572be1deb..5151927db 100644
+--- a/internal/bus/symlink_discipline_test.go
++++ b/internal/bus/symlink_discipline_test.go
+@@ -41,7 +41,7 @@ func unchangedHolding(t *testing.T, v, content string) {
+ 	raw, err := os.ReadFile(v)
+ 	require.NoError(t, err)
+ 	if string(raw) != content {
+-		require.False(t, string(raw) != content, "the file outside the bus was written through the link: %q", string(raw))
++		require.Equal(t, content, string(raw), "the file outside the bus was written through the link: %q", string(raw))
+ 	}
+ }
+ 
+@@ -175,7 +175,7 @@ func TestReplaceLaneFileDoesNotWriteThroughAPlantedTemp(t *testing.T) {
+ 	unchanged(t, v)
+ 	raw, err := os.ReadFile(filepath.Join(root, "from-x", IndexName))
+ 	if err != nil || string(raw) != "a line\n" {
+-		require.False(t, err != nil || string(raw) != "a line\n", "the lane file did not get its content: %q %v", string(raw), err)
++		require.True(t, err == nil && string(raw) == "a line\n", "the lane file did not get its content: %q %v", string(raw), err)
+ 	}
+ }
+ 
+@@ -184,12 +184,12 @@ func TestReplaceLaneFileDoesNotWriteThroughAPlantedTemp(t *testing.T) {
+ func TestAStrandedUniqueTempIsStillALaneStateTemp(t *testing.T) {
+ 	t.Parallel()
+ 
+-	require.False(t, !isLaneStateTemp(IndexName+TempSuffix), "the fixed temp name stopped being recognised")
+-	require.False(t, !isLaneStateTemp(IndexName+".ab12cd34ef56"+TempSuffix), "a unique temp name for a lane state file is not recognised as one")
+-	require.False(t, !isLaneStateTemp("."+IndexName+".tmp-0a1b2c3d"), "atomicfile's temporary for a lane state file is not recognised as one")
++	require.True(t, isLaneStateTemp(IndexName+TempSuffix), "the fixed temp name stopped being recognised")
++	require.True(t, isLaneStateTemp(IndexName+".ab12cd34ef56"+TempSuffix), "a unique temp name for a lane state file is not recognised as one")
++	require.True(t, isLaneStateTemp("."+IndexName+".tmp-0a1b2c3d"), "atomicfile's temporary for a lane state file is not recognised as one")
+ 	require.False(t, isLaneStateTemp(".notes.tmp-0a1b2c3d") || isLaneStateTemp("."+IndexName+".tmp-xyz") || isLaneStateTemp("."+IndexName+".tmp-0a1b"), "a stray dot-temporary became a lane state temp")
+ 	require.False(t, isLaneStateTemp("notes"+TempSuffix) || isLaneStateTemp("notes.ab12"+TempSuffix), "a stray temporary became a lane state temp")
+-	require.False(t, !strings.HasSuffix(IndexName+".ab12"+TempSuffix, TempSuffix), "a unique temp no longer ends in the reserved suffix")
++	require.True(t, strings.HasSuffix(IndexName+".ab12"+TempSuffix, TempSuffix), "a unique temp no longer ends in the reserved suffix")
+ }
+ 
+ // A LANE IS A DIRECTORY IN THE BUS, NOT A DOOR OUT OF IT (Fable's cold read of #226, F1).
+diff --git a/internal/bus/timeout_test.go b/internal/bus/timeout_test.go
+index 7bb78c94c..2e3c9d4d2 100644
+--- a/internal/bus/timeout_test.go
++++ b/internal/bus/timeout_test.go
+@@ -84,7 +84,7 @@ func checkGitTimeoutInChild(t *testing.T, fake string) {
+ 	require.NoError(t, testbin.WriteExecutable(filepath.Join(fake, "git"), []byte(quick), 0o755))
+ 	out, err := git(t.TempDir(), "fetch", "origin", "main")
+ 	require.NoError(t, err, "a git well inside the budget was refused: %v", err)
+-	require.False(t, strings.TrimSpace(out) != "fine", "git printed %q", out)
++	require.Equal(t, "fine", strings.TrimSpace(out), "git printed %q", out)
+ 	// And a budget of nothing is a bad invocation rather than a call with no budget at all.
+ 	{
+ 		err := SetGitTimeout(0)
+diff --git a/internal/bus/unaddressed_test.go b/internal/bus/unaddressed_test.go
+index 0b71e60b9..499cc4222 100644
+--- a/internal/bus/unaddressed_test.go
++++ b/internal/bus/unaddressed_test.go
+@@ -46,7 +46,7 @@ func TestUnaddressedReason(t *testing.T) {
+ 	require.Equal(t, strings.Join(want, ","), strings.Join(paths, ","), "unaddressed = %v, want %v", paths, want)
+ 	// The reason names the token that reached nobody, so the writer knows what to fix.
+ 	if !strings.Contains(got[0].Reason, `"Team"`) || !strings.Contains(got[0].Reason, "in nobody's inbox") {
+-		require.False(t, !strings.Contains(got[0].Reason, `"Team"`) || !strings.Contains(got[0].Reason, "in nobody's inbox"), "the reason does not name the token or say what it costs: %q", got[0].Reason)
++		require.True(t, strings.Contains(got[0].Reason, `"Team"`) && strings.Contains(got[0].Reason, "in nobody's inbox"), "the reason does not name the token or say what it costs: %q", got[0].Reason)
+ 	}
+ 	if !strings.Contains(got[2].Reason, "no To line") {
+ 		require.Contains(t, got[2].Reason, "no To line", "a note with no To line is reported as %q", got[2].Reason)

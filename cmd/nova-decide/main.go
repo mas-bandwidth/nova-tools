@@ -205,52 +205,48 @@ func (w world) read(c *tool.Call) *tool.Out {
 	return w.decision(c, decide.ReadSchema(), decide.ReadState(texts["card"], texts["diff"], texts["rule"]), inputs)
 }
 
-// decision makes one decision and records it: an op id already recorded over
-// the same state returns the recorded decision and asks nothing.
+// decision makes one decision and records it (decide.Make): an op id already
+// recorded over the same state returns the recorded decision and asks nothing.
 func (w world) decision(c *tool.Call, s decide.Schema, state string, inputs map[string]string) *tool.Out {
-	record, dry := c.Str("record"), c.DryRun()
-	ds, err := decide.Load(record)
-	if err != nil {
-		return tool.Refuse(err.Error())
-	}
-	at := w.now().UTC().Format(time.RFC3339)
+	record, now := c.Str("record"), w.now()
 	id := c.Str("op")
 	if id == "" {
-		id = s.Name + "-" + decide.Sum([]byte(s.Hash() + "\n" + at + "\n" + state))[:12]
-	}
-	if have := decide.Find(ds, id); have != nil {
-		if have.State != state || have.Decision != s.Name || have.Schema != s.Hash() {
-			return tool.Refuse(fmt.Sprintf("the op id %s is recorded for another decision, schema or state; an op id names one operation, so choose another", id))
-		}
-		return answered(*have, "existing")
+		id = s.Name + "-" + decide.Sum([]byte(s.Hash() + "\n" + now.UTC().Format(time.RFC3339) + "\n" + state))[:12]
 	}
 	b, err := w.backend(c)
 	if err != nil {
 		return tool.Refuse(err.Error())
 	}
-	if dry {
+	if c.DryRun() {
+		ds, err := decide.Load(record)
+		if err != nil {
+			return tool.Refuse(err.Error())
+		}
+		if have := decide.Find(ds, id); have != nil {
+			if err := decide.Replays(*have, s, state); err != nil {
+				return tool.Refuse(err.Error())
+			}
+			return answered(*have, "existing")
+		}
 		return tool.Done().Fact("id", id).Fact("decision", s.Name).Fact("backend", b.Name()).
 			Fact("questions", len(s.Questions)).Fact("state_bytes", len(state)).Fact("recorded", "no")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), c.Dur("timeout"))
 	defer cancel()
-	answers, usage, err := decide.Ask(ctx, b, s, state)
-	if err != nil {
+	d, existing, err := decide.Make(ctx, b, s, state, record, id, inputs, now)
+	var failed *decide.BackendError
+	switch {
+	case errors.As(err, &failed):
 		o := tool.Fail(err.Error()).Fact("id", id).Fact("backend", b.Name())
 		o.Exit, o.Remedy = 2, "make --answers answer every question of the schema"
 		if _, isJev := b.(decide.Jev); isJev {
 			o.Remedy = "check the backend's account and the key nova-secrets delivers, then run the same line again"
 		}
 		return o
-	}
-	d := decide.Decision{ID: id, Decision: s.Name, Schema: s.Hash(), Backend: b.Name(), At: at,
-		Inputs: inputs, State: state, Answers: answers, Usage: usage}
-	have, err := decide.Append(record, d)
-	if err != nil {
+	case err != nil:
 		return tool.Refuse(err.Error())
-	}
-	if have != nil {
-		return answered(*have, "existing")
+	case existing:
+		return answered(d, "existing")
 	}
 	return answered(d, "new")
 }

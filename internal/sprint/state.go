@@ -311,6 +311,11 @@ type Snapshot struct {
 	// tier, read with the routes; a tier with none deals from its enabled routes
 	// in name order (tierArray).
 	Tiers map[string][]string
+	// DecideBounce and DecideReview are the sprint row's bars on a decide read's
+	// p(defect) as nova-config applied them (sprint:decide_bounce,
+	// sprint:decide_review), read with the routes; both "" is no decide read
+	// (steps_review.go, decideFields; docs/SPEC-SPRINT.md section 6).
+	DecideBounce, DecideReview string
 	// ReaderStates is each reader's state as the store derives it (ReaderState:
 	// up, away or down), read by a step that asks (docs/SPEC-SPRINT.md section
 	// 6); nil is none read, and every reader is held up.

@@ -1,0 +1,4 @@
+diff --git a/cmd/nova-self-talk/issue1468_test.go b/cmd/nova-self-talk/plain_first_person_absolutes_caught_test.go
+similarity index 100%
+rename from cmd/nova-self-talk/issue1468_test.go
+rename to cmd/nova-self-talk/plain_first_person_absolutes_caught_test.go

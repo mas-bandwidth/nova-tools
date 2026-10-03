@@ -159,3 +159,25 @@ answer outside the schema) is `<VERB> FAIL id=... backend=...: <why>; run:
 <remedy>` at exit 2, and records nothing. Exit 1 is an outcome that conflicts
 with the one recorded. `ask`, `read` and `outcome` take `--dry-run`: the plan,
 with no backend call and no write.
+
+## 8. The first read of a flash card
+
+The sprint asks the read decision as the first read of a flash card
+(docs/SPEC-SPRINT.md section 6, the decide read) through the library, not the
+binary: `FirstRead` asks the read schema over the card and the diff through the
+backend it is handed (`Make`: the same ask, check, record and replay `ask` and
+`read` run) and routes the decision by p(defect) at two bars (`Bars`, read from
+the sprint row's `decide_bounce` and `decide_review` by `ParseBars`: both
+probabilities, the review bar at most the bounce bar):
+
+| p(defect) | route | the read |
+| --- | --- | --- |
+| at or above the bounce bar | `bounce` | broken, its finding `Finding`'s line |
+| from the review bar to under the bounce bar | `strings` | a strings read runs |
+| below the review bar | `land` | ok, with no model read |
+
+The verdict answer and inside_paths are recorded and never routed on (the
+calibration of 2026-10-02: p(defect) AUC 0.869, the verdict 0.711, inside_paths
+0.612). `Settle` attaches a strings read's verdict as the decision's outcome, ok
+as `LAND` and broken as `BOUNCE`, so the record trains on every read that took
+the strings route; a review round attaches its own label with `outcome`.

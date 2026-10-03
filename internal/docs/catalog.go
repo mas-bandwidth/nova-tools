@@ -61,6 +61,7 @@ var DefaultCatalog = []Entry{
 	E("internal/config", "nova-config library: kind descriptors, the Postgres store and history, apply into Redis, the Ansible inventory of the applied state", "go test ./internal/config", "go test ./internal/config"),
 	E("internal/converge", "convergence state and progress math", "go test ./internal/converge", "go test ./internal/converge"),
 	E("internal/decide", "nova-decide's decision system: schemas, backends (Jev, fixed), the record and calibration", "go test ./internal/decide", "go test ./internal/decide"),
+	E("internal/diffcheck", "the lander's mechanical checks of a card's diff: files outside PATHS, stranded fragments", "go test ./internal/diffcheck", "go test ./internal/diffcheck"),
 	E("internal/delayproxy", "a TCP proxy that holds each write of its clients back by a fixed delay: a store at a distance, made on the loopback, for testredis.Far and tools/fardelay", "go test ./internal/delayproxy", "go test ./internal/delayproxy"),
 	E("internal/docs", "documentation guards and map generator", "go test ./internal/docs", "go test ./internal/docs"),
 	E("internal/dogfood", "dogfood self-test gates", "go test ./internal/dogfood", "go test ./internal/dogfood"),

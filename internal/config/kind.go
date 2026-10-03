@@ -28,6 +28,7 @@ import (
 	"unicode"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
+	"github.com/mas-bandwidth/nova-tools/internal/decide"
 )
 
 // Type is a field's type. It decides the SQL column, the flag's parsing and
@@ -214,6 +215,28 @@ var Tiers = []string{"flash", "frontier", "pro"}
 // are never drawn from routes and escalate to the coordinator.
 var RouteTiers = []string{"flash", "pro"}
 
+// The sprint row's two bars on a decide read's p(defect) (internal/decide, Bars;
+// docs/SPEC-SPRINT.md section 6, the decide read): apply writes them to
+// SprintKey(field), which the sprint's routes read takes.
+const (
+	FieldDecideBounce = "decide_bounce"
+	FieldDecideReview = "decide_review"
+)
+
+// checkSprint holds the decide read's bars together: both set, as probabilities with the
+// review bar at most the bounce bar (decide.ParseBars), or both empty (no decide read).
+func checkSprint(r Row) error {
+	bounce, hasB := r.Fields[FieldDecideBounce]
+	review, hasR := r.Fields[FieldDecideReview]
+	if !hasB || !hasR || bounce == "" && review == "" {
+		return nil
+	}
+	if _, err := decide.ParseBars(bounce, review); err != nil {
+		return fmt.Errorf("sprint: %v; set both bars (--decide_bounce and --decide_review), or both empty to turn the decide read off", err)
+	}
+	return nil
+}
+
 // CoordinatorRole is the Redis role ns_friend_roles and the deal read
 // (friend:<f>:roles), derived at apply from the sprint row.
 const CoordinatorRole = "coordinator"
@@ -288,10 +311,13 @@ var Kinds = []*Kind{
 		Name:      KindSprint,
 		Table:     "sprint",
 		Singleton: true,
-		Doc:       "the one row of sprint-global facts: which friend coordinates",
+		Doc:       "the one row of sprint-global facts: which friend coordinates, and the two bars a flash card's decide read is routed by",
 		Fields: []Field{
 			{Name: "coordinator", Type: TypeRef, Ref: KindFriend, Help: "the friend who holds the coordinator role (a friend row), or empty; set it to hand over"},
+			{Name: FieldDecideBounce, Type: TypeDecimal, Default: "0.5", Help: "the decide read's bounce bar: a flash card whose first read gives p(defect) at or above it is bounced with the read's finding; a probability, at least --decide_review; 0.5 (the default); empty, with --decide_review empty, turns the decide read off"},
+			{Name: FieldDecideReview, Type: TypeDecimal, Default: "0.3", Help: "the decide read's review bar: below it the card lands with no model read, and from it up to --decide_bounce it goes to a strings read; a probability; 0.3 (the default)"},
 		},
+		Check: checkSprint,
 	},
 	{
 		// A loop is a supervised process on one machine: the command, the

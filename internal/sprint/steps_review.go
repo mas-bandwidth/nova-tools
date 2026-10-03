@@ -31,6 +31,25 @@ type AskReq struct {
 // the read back and asked another reader instead (ask --instead).
 const RetiredByCoordinator = "coordinator"
 
+// A decide read's fields on its read card: the sprint row's two bars on p(defect) it is
+// routed by (docs/SPEC-SPRINT.md section 6, the decide read; internal/decide, Bars).
+const (
+	FieldDecideBounce = "decide_bounce"
+	FieldDecideReview = "decide_review"
+)
+
+// decideFields is the bars a read of pr carries when it is a decide read: the first read
+// the ask places at pr's attempt (first: not --another or --instead, and no read that
+// stays at the attempt is one), drawn on flash (readTierOf), with both bars set in the
+// sprint row (the owner, 2026-10-02: "i'd really like to start using jev to do cheap
+// reads/evals/scoring of work"). nil otherwise: a pro card's reads are strings reads.
+func (s *Snapshot) decideFields(pr *Card, first bool) map[string]string {
+	if !first || s.DecideBounce == "" || s.DecideReview == "" || s.readTierOf(pr) != cardhdr.RouteFlash {
+		return nil
+	}
+	return map[string]string{FieldDecideBounce: s.DecideBounce, FieldDecideReview: s.DecideReview}
+}
+
 // readsAt is the primary's placed read cards at an attempt, in reader row order.
 func readsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 	var out []*Card
@@ -103,7 +122,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		var all []string
 		var takenBack []Change
 		var away []string
-		var returned []*Card
+		var returned, kept []*Card
 		instead := ""
 		for _, rc := range readsAt(s, c, attempt) {
 			if rc.F("reader") == r.Instead {
@@ -125,6 +144,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			}
 			have[rc.F("reader")] = true
 			all = append(all, rc.F("reader"))
+			kept = append(kept, rc)
 		}
 		var free []string
 		for _, rd := range s.Readers.Rows() {
@@ -165,6 +185,12 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			p.refuse(c.ID, fmt.Sprintf("needs %d different readers and %d is free who has not already read attempt %d of %s; a reader away or down is not asked (readers: %s); run: nova-sprint reader add <name>, or nova-sprint reader up <name>", want, len(chosenReaders)+len(again), attempt, c.ID, readersText(s)))
 			continue
 		}
+		// the first read of a flash card's attempt is a decide read (decideFields): one
+		// placed again keeps its bars, and a new one is it while no read that stays is
+		decided := false
+		for _, rc := range slices.Concat(kept, inPlace) {
+			decided = decided || rc.F(FieldDecideBounce) != ""
+		}
 		for _, rc := range inPlace {
 			set := map[string]string{"asked": stamp(s.Now)}
 			maps.Copy(set, s.readRouteOf(ri, c, failed))
@@ -175,9 +201,10 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			rr.moved(rd)
 			moves[c.ID] = joinMoves(moves[c.ID], rd)
 		}
-		for _, rd := range chosenReaders {
+		for i, rd := range chosenReaders {
 			fields := map[string]string{"kind": "read", "primary": c.ID, "stream": c.Row, "reader": rd, "attempt": itoa(attempt), "head": c.F("head"), "asked": stamp(s.Now)}
 			maps.Copy(fields, s.readRouteOf(ri, c, failed))
+			maps.Copy(fields, s.decideFields(c, !another && !decided && i == 0))
 			u.Changes = append(u.Changes, change(Readers, createEntry(ReadCardID(c.ID, attempt, rd), rd, Asked, c.Score, fields)))
 		}
 		all = append(append(all, chosenReaders...), again...)

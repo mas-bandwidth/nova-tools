@@ -48,7 +48,7 @@ Where each field of this cut sits:
 | machine (varies per machine) | `user`, `seat`, `slots`, `runners`, `width`, `tla`, `note` |
 | fleet (one value for the whole fleet) | `store`, `coordinator` (both machines), `redis_port`, `pg_dsn` |
 | friend (decided for her) | `slots`, `tiers`, `roles`, `width` |
-| sprint (one value for the whole sprint) | `coordinator` (a friend) |
+| sprint (one value for the whole sprint) | `coordinator` (a friend), `decide_bounce`, `decide_review` |
 | loop (decided per supervised process) | `machine`, `argv`, `seat`, `keys`, `every`, `keepalive`, `width`, `enabled` |
 | route (decided per way to run a tier) | `tier`, `provider`, `model`, `tokens`, `deadline`, `enabled`, and the price sheet: `price_input`, `price_cache_read`, `price_cache_write`, `price_output`, `reasoning_as_output`, `long_context`, `price_input_long`, `price_output_long`, `price_request`, `billing`, `gateway_percent`, `price_source`, `price_as_of`, `note` |
 | tier (decided per tier) | `routes` |
@@ -226,6 +226,8 @@ facts.
 | field | type | required | who reads it | Redis |
 | --- | --- | --- | --- | --- |
 | `coordinator` | ref friend | | the deal and the routing: who holds the coordinator role; `sprint set --coordinator <friend>` is the handover | `sprint:coordinator`, and the `coordinator` word in that friend's `friend:<f>:roles` |
+| `decide_bounce` | decimal, default 0.5 | | the ask: a flash card's first read is a decide read (docs/SPEC-SPRINT.md section 6), and p(defect) at or above this bar bounces the work; a probability, at least `decide_review`; both bars empty turns the decide read off | `sprint:decide_bounce` |
+| `decide_review` | decimal, default 0.3 | | the ask: below this bar the decide read lands the work with no model read; from it up to `decide_bounce` the card goes to a strings read | `sprint:decide_review` |
 
 **`loop`** (`config.loops`): a supervised process on one machine. Every
 value is data in the row: the code names no machine, seat, secret or
@@ -402,7 +404,9 @@ config.friends           (name PK, slots, tiers, roles, created_at, updated_at;
 config.sprint            (name PK = 'sprint', coordinator -> friends.name,
                           created_at, updated_at; the one row inserted by
                           the migration; reader_tier added by 0010, dropped
-                          by 0011)
+                          by 0011; decide_bounce and decide_review added by
+                          0020, text NOT NULL DEFAULT '0.5' and '0.3', a
+                          decimal or '')
 config.loops             (name PK, machine -> machines.name, argv, seat, keys,
                           every, keepalive boolean, width, enabled boolean,
                           created_at, updated_at; CHECK exactly one of

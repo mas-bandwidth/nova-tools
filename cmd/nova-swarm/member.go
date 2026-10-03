@@ -22,6 +22,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/gocache"
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/log"
@@ -49,7 +50,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	f := &flags{verb: "member", fs: fs}
 	as := fs.String("as", "", "required: this machine's `name`, its row in the fleet table (with --reader, its row in the readers table, reader-<machine>)")
 	width := fs.Int("width", 0, "an override of the most cards it runs at once, a twin's; a worker runs its fleet row's width, read every tick: a member its own row's, a reader its machine's (reader-<m> runs at m's width)")
-	reader := fs.Bool("reader", false, "run as a reader: take and run reads of finished work instead of work cards, at its machine's width")
+	reader := fs.Bool("reader", false, "run as a reader: take and run reads of finished work instead of work cards, at its machine's width; a flash card's first read is a decide read, asked with JEV_API_KEY from this environment (docs/SPEC-SPRINT.md section 6)")
 	harness := fs.String("harness", "", "required: the harness binary `path` each card's child runs under (native --harness)")
 	model := fs.String("model", "", "the `provider/model` a card with no route runs on; a reader given it runs every read on it")
 	root := fs.String("root", "", "required: the `dir` the launches and results sit under")
@@ -177,10 +178,17 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 		send = sprintwire.Client{Addr: *server}.Do
 	}
 	sp := &sprintwire.Worker{Send: send, Failed: sprintFailureOutput}
+	// a reader hands native the decide read's key when its environment holds it (the loop
+	// row's nova-secrets keys): native asks the decide read with it and never hands it to
+	// the child (nativedecide.go, nativeChildEnv)
+	nativePass := pass
+	if *reader {
+		nativePass = append(append([]string{}, pass...), decide.JevSecret)
+	}
 	rn := &nativeRunner{
 		self: self, harness: *harness, model: *model, root: *root, slots: *slots,
 		resultsRoot: *resultsRoot, deadline: deadline.d, stageWall: stageWall.d, tokens: *tokensWord, auth: *auth, config: *config,
-		worker: *workerFile, noWall: *noWall, stderr: stderr, pass: pass, identity: *identity,
+		worker: *workerFile, noWall: *noWall, stderr: stderr, pass: nativePass, identity: *identity,
 	}
 	// a work card's commit is pushed by the member, outside the wall, at its
 	// finish (memberpush.go); a read pushes nothing
@@ -823,6 +831,7 @@ func frameOf(p member.Packet, model, root string) cardcontract.Frame {
 	}
 	if p.Kind == "read" {
 		f.Branch, f.ReviewBase = p.WorkBranch, cb.Ref
+		f.DecideBounce, f.DecideReview = p.DecideBounce, p.DecideReview
 		if p.WorkBase != "" {
 			f.ReviewBase = p.WorkBase
 		}

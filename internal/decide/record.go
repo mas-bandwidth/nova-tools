@@ -120,11 +120,8 @@ func Find(ds []Decision, id string) *Decision {
 func Append(path string, d Decision) (recorded *Decision, err error) {
 	err = locked(path, func(ds []Decision) (*line, error) {
 		if have := Find(ds, d.ID); have != nil {
-			if have.State != d.State || have.Decision != d.Decision || have.Schema != d.Schema {
-				return nil, &ConflictError{fmt.Sprintf("the id %s is recorded for another decision, schema or state; an op id names one operation", d.ID)}
-			}
 			recorded = have
-			return nil, nil
+			return nil, replays(*have, d.Decision, d.Schema, d.State)
 		}
 		d.Outcome = nil
 		return &line{Decision: &d}, nil

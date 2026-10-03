@@ -236,6 +236,10 @@ type Packet struct {
 	// Tier is the tier the route was drawn from when the sprint decided it (a read's
 	// read tier, a rework's --tier); empty when the brief's line 1 names it.
 	Tier string `json:"tier,omitempty"`
+	// A decide read's bars on p(defect), as the ask wrote them on the read card
+	// (docs/SPEC-SPRINT.md section 6, the decide read); empty for a strings read.
+	DecideBounce string `json:"decide_bounce,omitempty"`
+	DecideReview string `json:"decide_review,omitempty"`
 }
 
 // queueCard is one card of `nova-sprint queue --as <me> --json`. Its claim is the

@@ -110,13 +110,43 @@ func TestTheFriendRowIsWhatSomeoneDecidesForHer(t *testing.T) {
 		assert.Equal(t, "flash,frontier,pro", strings.Join(Tiers, ","), assertionMsg98...)
 	}()
 	sprint, _ := Lookup(KindSprint)
-	assertionMsg100 := []any{"sprint %+v: one row, one optional ref to a friend", sprint}
+	assertionMsg100 := []any{"sprint %+v: one row, one optional ref to a friend and the decide read's two bars", sprint}
 	require.True(t, sprint.Singleton, assertionMsg100...)
-	require.Len(t, sprint.Fields, 1, assertionMsg100...)
+	require.Len(t, sprint.Fields, 3, assertionMsg100...)
 	require.Equal(t, "coordinator", sprint.Fields[0].Name, assertionMsg100...)
 	require.Equal(t, TypeRef, sprint.Fields[0].Type, assertionMsg100...)
 	require.Equal(t, KindFriend, sprint.Fields[0].Ref, assertionMsg100...)
 	require.False(t, sprint.Fields[0].Required, assertionMsg100...)
+}
+
+// The sprint row holds the two bars a flash card's decide read is routed by
+// (docs/SPEC-SPRINT.md section 6), the calibration's by default (0.5 and 0.3), so the
+// owner sets them in nova-config and no number is in the code: both are probabilities,
+// the review bar at most the bounce bar, and both empty turns the read off.
+func TestTheSprintRowHoldsTheDecideBarsTogether(t *testing.T) {
+	t.Parallel()
+	sprint, _ := Lookup(KindSprint)
+	bounce, _ := sprint.Field(FieldDecideBounce)
+	review, _ := sprint.Field(FieldDecideReview)
+	assert.Equal(t, []string{"0.5", "0.3"}, []string{bounce.Default, review.Default})
+	assert.Equal(t, TypeDecimal, bounce.Type)
+	for _, tc := range []struct {
+		bounce, review, says string
+	}{
+		{"0.5", "0.3", ""},
+		{"0.4", "0.4", ""},
+		{"", "", ""},
+		{"0.3", "0.5", "decide_review 0.5 is above decide_bounce 0.3"},
+		{"1.5", "0.3", "decide_bounce 1.5 is not a probability"},
+		{"0.5", "", "decide_review \"\" is not a decimal"},
+	} {
+		err := sprint.Check(Row{Name: KindSprint, Fields: map[string]string{FieldDecideBounce: tc.bounce, FieldDecideReview: tc.review}})
+		if tc.says == "" {
+			assert.NoError(t, err, "%+v", tc)
+		} else {
+			assert.ErrorContains(t, err, tc.says, "%+v", tc)
+		}
+	}
 }
 
 // TestDeriveGivesTheSprintCoordinatorTheRole: the rows apply plans carry
