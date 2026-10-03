@@ -203,9 +203,9 @@ func (n *State) tickDeal(choice map[string]string) error {
 	return nil
 }
 
-// tickAsk is T2: two different readers for each primary in review with no
+// tickAsk is T2: readers for each primary in review with no
 // read card, whose work did not fail, in stream turns from the ask's stream
-// index.
+// index (ReadsNeeded: one for a flash card, two for a pro card).
 func (n *State) tickAsk(choice map[string][]string) error {
 	var review []string
 	for id, p := range n.Primaries {
@@ -217,11 +217,11 @@ func (n *State) tickAsk(choice map[string][]string) error {
 	// Ask moves it past each primary's stream
 	review = n.streamTurns(review, n.AskStreamLast)
 	for _, p := range review {
-		two := choice[p]
-		if two == nil {
-			two = n.NextReaders(p, 2)
+		readers := choice[p]
+		if readers == nil {
+			readers = n.NextReaders(p, n.ReadsNeeded(p))
 		}
-		next, err := Ask(*n, p, two)
+		next, err := Ask(*n, p, readers)
 		if err != nil {
 			return err
 		}
@@ -231,7 +231,7 @@ func (n *State) tickAsk(choice map[string][]string) error {
 }
 
 // tickAccept is the machine's accept (sprint.TickAccept): every primary in
-// review whose work did not fail, with ok reads from two different readers,
+// review whose work did not fail, with ok reads from ReadsNeeded readers,
 // not held (AcceptHeld: its CI red at its head, or returned at its attempt),
 // and no merge record but a returned one, moves to merging and into its
 // stream's merge queue, in stream turns from the accept's stream index, in one

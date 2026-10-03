@@ -403,35 +403,46 @@ func Finish(s State, m, c string, gen int, ok bool) (State, error) {
 // ------------------------------------------------------------------ readers
 
 // Ask is SprintTables.tla Ask(p) (line 375): a primary in review whose work
-// did not fail, with no read card on the table, is dealt to two different
-// readers: the next two round the readers (NextReaders, errata 3 amendment 5),
+// did not fail, with no read card on the table, is dealt to as many different
+// readers as it needs (ReadsNeeded): the next round the readers (NextReaders, errata 3 amendment 5),
 // the rolling index moved past them; reworked work too, no reader of an earlier
 // attempt preferred (the owner, 2026-10-01: "yes on the decision."). It closes
 // stranded in review (spec section 6).
-func Ask(s State, p string, two []string) (State, error) {
+func Ask(s State, p string, readers []string) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
 	}
 	if !s.InWork(p, Review) || s.Failed(p) || len(s.LiveReadsOf(p)) > 0 {
 		return s, refuse("%s is not a primary in review lacking reads", p)
 	}
-	if len(s.Readers) < 2 {
-		return s, refuse("fewer than two readers")
+	k := s.ReadsNeeded(p)
+	if len(s.Readers) < k {
+		return s, refuse("fewer than %d readers", k)
 	}
-	if len(two) != 2 || two[0] == two[1] {
-		return s, badChoice("%s asked of %v, not two different readers", p, two)
+	if len(readers) != k || (k == 2 && readers[0] == readers[1]) {
+		if k == 1 {
+			return s, badChoice("%s asked of %v, not one reader", p, readers)
+		}
+		return s, badChoice("%s asked of %v, not two different readers", p, readers)
 	}
 	pr := s.Primaries[p]
-	sorted := addSorted(nil, two...)
-	next := s.NextReaders(p, 2)
+	sorted := addSorted(nil, readers...)
+	next := s.NextReaders(p, k)
 	if Join(sorted) != Join(addSorted(nil, next...)) {
-		return s, badChoice("%s asked of %v, not the next two readers round the readers, %v (past %q)", p, two, next, s.AskLast)
+		if k == 1 {
+			return s, badChoice("%s asked of %v, not the next reader round the readers, %v (past %q)", p, readers, next, s.AskLast)
+		}
+		return s, badChoice("%s asked of %v, not the next two readers round the readers, %v (past %q)", p, readers, next, s.AskLast)
 	}
 	n := s.Clone()
 	order := addSorted(nil, s.Readers...)
-	n.AskLast = roundPast(order, roundPast(order, s.AskLast, next[0]), next[1])
+	if k == 1 {
+		n.AskLast = roundPast(order, s.AskLast, next[0])
+	} else {
+		n.AskLast = roundPast(order, roundPast(order, s.AskLast, next[0]), next[1])
+	}
 	n.AskStreamLast = roundPast(s.streamOrder(pr.Stream), s.AskStreamLast, pr.Stream) // the ask's stream index moves past it (errata 3 amendment 10)
-	for _, r := range two {
+	for _, r := range readers {
 		id := RC(p, pr.Attempt, r)
 		if _, made := n.Reads[id]; made {
 			return s, badChoice("%s cut a second time (NoCardLostOrTwice)", id)
