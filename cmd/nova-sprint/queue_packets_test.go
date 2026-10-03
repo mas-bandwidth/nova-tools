@@ -13,7 +13,7 @@ import (
 
 // A worker's queue hands the packets the worker asks for and no others (the fleet load test
 // of 2026-10-01 20:18 ET: a reader's answer, its 150 asked reads each with its brief, was
-// 579,181 bytes, every pass). These tests pin the rule on the server, over a twin, through
+// 579,181 bytes, every pass). These tests pin the rule on the server, over its in-memory store, through
 // the fleet listener (serverRig.one): --packets n is the first n cards the worker may start
 // and every card in flight, each not named by --have; a card left without its packet still
 // carries its id, column, attempt and gen, and the answer its epoch; no flag is the answer
@@ -37,8 +37,16 @@ func workedRig(t *testing.T, n, ready int) (*serverRig, []string) {
 	for i := 0; i < n+ready; i++ {
 		writeNeedsBrief(t, dir, fmt.Sprintf("b%03d", i), briefOf(i), "")
 	}
-	r := newServerRig(t, fmt.Sprintf("nova-sprint init --readers r,r2 --members m:%d", n),
-		"nova-sprint add --stream s --brief-dir "+dir, "nova-sprint start", "nova-sprint tick", "nova-sprint tick")
+	// Queue packet selection uses the store, not twin-file persistence. Reuse
+	// the memory/clock fixture so each finish does not serialize every brief.
+	ta := newTestApp(t)
+	ta.live = []string{"m"}
+	for _, line := range []string{fmt.Sprintf("init --readers r,r2 --members m:%d", n),
+		"add --stream s --brief-dir " + dir, "start", "tick", "tick"} {
+		ta.ok(line)
+	}
+	ta.a.serveAddr = "mem:0"
+	r := &serverRig{t: t, a: ta.a}
 	cards := taken(t, r.one("take", "--as", "m", "--limit", fmt.Sprint(n), "--epoch", "0", "--json"))
 	require.Len(t, cards, n)
 	return r, cards
