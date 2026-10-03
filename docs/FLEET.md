@@ -175,10 +175,11 @@ names none. `docs/CLI.md` ("The store's ACL") has the verbs' lines.
 
 One unit per record of `nova_loops`, from the record's fields and the host's
 layout: the command is the record's `argv`, which the inventory renders with
-the loop row's width as its `--width` when the width is above 0 (a bare program is the installed
-tool, `~/` the login's home) behind `nova-secrets exec --as <seat> --only
-<keys> --require=<key>...` when the record names keys; its output goes to the
-record's log under `~/nova-bench/loops/`, which the play creates. Every unit
+the loop row's width as its `--width` when the width is above 0 (a bare program
+is the installed tool, `~/` the login's home) behind `nova-secrets exec --as
+<seat> --only <keys> --require=<key>...` when the record names keys; its output
+goes to the record's log under the fleet row's `loops_dir` (seeded with
+`~/nova-bench/loops`), which the play creates. Every unit
 gets `NOVA_SPRINT_REDIS=<store>:<redis_port>` from the applied fleet row. For
 a `nova-swarm member`, inventory removes an older endpoint assignment from the
 rendered `/usr/bin/env` prefix while preserving its Redis user, password

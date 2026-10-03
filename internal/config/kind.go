@@ -213,6 +213,7 @@ var Kinds = []*Kind{
 			{Name: "coordinator", Type: TypeRef, Ref: KindMachine, Help: "the machine the coordinator's loops run on (a machine row), or empty"},
 			{Name: "redis_port", Type: TypeInt, Nullable: true, Help: "the explicit TCP port Redis listens on, from 1 through 65535; unset until declared"},
 			{Name: "pg_dsn", Type: TypeText, Help: "the explicit password-free postgres:// URI the configuration store uses; empty until set"},
+			{Name: "loops_dir", Type: TypeText, Help: "the directory on each machine where loops write their logs; seeded with ~/nova-bench/loops"},
 		},
 		Check: checkFleet,
 	},
@@ -253,7 +254,7 @@ var Kinds = []*Kind{
 		// value is data in the row; the code names no machine, seat or
 		// secret (docs/SPEC-CONFIG.md, "loop"). The plays render one unit
 		// per row from the Redis view apply writes; the log path is derived
-		// from the name (LoopLog), never typed.
+		// from the fleet row's loops_dir and the loop's name (LoopLog), never typed.
 		Name:  KindLoop,
 		Table: "loops",
 		Doc:   "a supervised loop on one machine: its command, the seat and secret names it opens, and how it runs (every n seconds or kept alive)",
@@ -318,14 +319,20 @@ var Kinds = []*Kind{
 	},
 }
 
-// checkFleet keeps both store endpoints explicit and safe to print. The
-// endpoints may be unset so an older fleet can migrate before an operator
-// declares them; apply and inventory refuse incomplete endpoints.
+// checkFleet keeps both store endpoints explicit and safe to print, and
+// checks that the loops directory is non-empty. The endpoints may be unset
+// so an older fleet can migrate before an operator declares them; apply
+// and inventory refuse incomplete endpoints.
 func checkFleet(r Row) error {
 	if raw := r.Fields["redis_port"]; raw != "" {
 		port, err := strconv.Atoi(raw)
 		if err != nil || port < 1 || port > 65535 {
 			return fmt.Errorf("--redis_port wants an integer from 1 through 65535")
+		}
+	}
+	if dir, ok := r.Fields["loops_dir"]; ok && dir == "" {
+		if len(r.Fields) == 1 || (r.Fields["store"] == "" && r.Fields["coordinator"] == "" && r.Fields["redis_port"] == "" && r.Fields["pg_dsn"] == "") {
+			return fmt.Errorf("--loops_dir cannot be empty; run: fleet set --loops-dir <path>")
 		}
 	}
 	dsn, ok := r.Fields["pg_dsn"]
@@ -405,9 +412,11 @@ func checkRoute(r Row) error {
 }
 
 // LoopLog is where a loop's unit writes its output on its machine, derived
-// from the name and never typed: ~/nova-bench/loops/<name>.log. apply writes
-// it into the loop's Redis hash beside the row's fields.
-func LoopLog(name string) string { return "~/nova-bench/loops/" + name + ".log" }
+// from the fleet row's loops_dir and the loop's name: <loops_dir>/<name>.log. apply
+// writes it into the loop's Redis hash beside the row's fields.
+func LoopLog(dir, name string) string {
+	return strings.TrimRight(dir, "/") + "/" + name + ".log"
+}
 
 // LoopCommand is the command a loop's unit runs: its argv, with the width
 // field as the value of its --width when the field is above 0, so a loop's

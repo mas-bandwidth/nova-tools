@@ -46,7 +46,7 @@ Where each field of this cut sits:
 | side | fields |
 | --- | --- |
 | machine (varies per machine) | `user`, `seat`, `slots`, `runners`, `width` |
-| fleet (one value for the whole fleet) | `store`, `coordinator` (both machines), `redis_port`, `pg_dsn` |
+| fleet (one value for the whole fleet) | `store`, `coordinator` (both machines), `redis_port`, `pg_dsn`, `loops_dir` |
 | friend (decided for her) | `slots`, `tiers`, `roles` |
 | sprint (one value for the whole sprint) | `coordinator` (a friend) |
 | loop (decided per supervised process) | `machine`, `argv`, `seat`, `keys`, `every`, `keepalive`, `width`, `enabled` |
@@ -186,6 +186,7 @@ row's.
 | `coordinator` | ref machine | | the plays: where the coordinator's loops run; apply: the machine a friend with no beat is charged to | `fleet:coordinator` |
 | `redis_port` | nullable int (no default) | | the inventory and plays: explicit Redis TCP port, 1 through 65535; unset until declared | `fleet:redis_port` |
 | `pg_dsn` | text | | the inventory and tools play: the explicit password-free Postgres URI; empty until set, never derived from `store` | `fleet:pg_dsn` |
+| `loops_dir` | text | | the inventory and plays: directory where loops write their logs; seeded with `~/nova-bench/loops` | `fleet:loops_dir` |
 
 The kind's `Check` bounds `redis_port` and accepts only a password-free
 `postgres://user@host[:port]/database` URI for a nonempty `pg_dsn`. A refusal
@@ -238,7 +239,7 @@ The command a unit runs is `LoopCommand(argv, width)`: the inventory's
 `nova_loops` argv and `loop show`'s `command=`; migration 0013 set each
 existing row's `width` to the `--width` its argv carried, 0 when none, so the
 rule changed no command.
-The log path is derived from the name, `~/nova-bench/loops/<name>.log`
+The log path is derived from the fleet row's `loops_dir` and the name
 (`LoopLog`), and is never typed. A machine a loop names cannot be removed
 (`machine m1 is the --machine of loop member-m1`); `machine show <m>` names
 the machine's loops (`loops=<a,b>`, `-` for none).

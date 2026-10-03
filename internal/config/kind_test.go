@@ -156,7 +156,7 @@ func TestTheFleetIsOneRowOfEndpointsAndMachineRefs(t *testing.T) {
 	require.True(t, fleet.Singleton, assertionMsg144...)
 	require.Equal(t, "fleet", fleet.Table, assertionMsg144...)
 	scopedGot169 := strings.Join(fleet.FieldNames(), ",")
-	require.Equal(t, "store,coordinator,redis_port,pg_dsn", scopedGot169, "fleet fields %s", scopedGot169)
+	require.Equal(t, "store,coordinator,redis_port,pg_dsn,loops_dir", scopedGot169, "fleet fields %s", scopedGot169)
 	for _, name := range []string{"store", "coordinator"} {
 		f, ok := fleet.Field(name)
 		require.True(t, ok)

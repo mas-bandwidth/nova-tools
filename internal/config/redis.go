@@ -28,9 +28,10 @@ import (
 // name; the sprint row is sprint:coordinator, a friend's name (each absent
 // when the row names none).
 //
-// A loop's row is the hash loop:<name> with every field, the derived log
-// path, rev and at, and its name in the set `loops`: nova-config's own keys,
-// which the plays read to render one unit per row. A route's row is the hash
+// A loop's row is the hash loop:<name> with every field, the log path
+// derived from the fleet row's loops_dir (LoopLog), rev and at, and its
+// name in the set `loops`: nova-config's own keys, which the plays read to
+// render one unit per row. A route's row is the hash
 // route:<name> with every field, rev and at, and its name in the set
 // `routes`, which the deal reads (hashKinds); a tier's row is the hash
 // tier:<name> and its name in the set `tiers`, read by the deal beside the
@@ -61,7 +62,7 @@ func RouteKey(name string) string { return "route:" + name }
 func TierKey(name string) string { return "tier:" + name }
 
 // FleetKey is the plain key one fleet field is written to: fleet:store,
-// fleet:coordinator.
+// fleet:coordinator, fleet:redis_port, fleet:pg_dsn, fleet:loops_dir.
 func FleetKey(field string) string { return "fleet:" + field }
 
 // SprintKey is the plain key one sprint field is written to:
@@ -95,7 +96,24 @@ type RedisApplier struct {
 
 	coordinator     string
 	coordinatorRead bool
+	loopsDir        string
+	loopsDirRead    bool
 	friendHosts     map[string]string // friend name -> beat host
+}
+
+func (a *RedisApplier) getLoopsDir(ctx context.Context) (string, error) {
+	if !a.loopsDirRead {
+		dir, err := a.Client.Get(ctx, FleetKey("loops_dir")).Result()
+		if err != nil && !errors.Is(err, redis.Nil) {
+			return "", fmt.Errorf("redis: read %s: %w", FleetKey("loops_dir"), err)
+		}
+		if dir == "" {
+			dir = "~/nova-bench/loops"
+		}
+		a.loopsDir = dir
+		a.loopsDirRead = true
+	}
+	return a.loopsDir, nil
 }
 
 func (a *RedisApplier) now() int64 {
@@ -661,11 +679,11 @@ type hashKind struct {
 	kind  string
 	set   string
 	key   func(string) string
-	extra func(name string) []any // derived fields beside the row's; nil for none
+	extra func(dir, name string) []any // derived fields beside the row's; nil for none
 }
 
 var hashKinds = map[string]hashKind{
-	KindLoop:  {kind: KindLoop, set: LoopsKey, key: LoopKey, extra: func(n string) []any { return []any{"log", LoopLog(n)} }},
+	KindLoop:  {kind: KindLoop, set: LoopsKey, key: LoopKey, extra: func(dir, n string) []any { return []any{"log", LoopLog(dir, n)} }},
 	KindRoute: {kind: KindRoute, set: RoutesKey, key: RouteKey},
 	KindTier:  {kind: KindTier, set: TiersKey, key: TierKey},
 }
@@ -728,7 +746,11 @@ func (a *RedisApplier) writeHash(ctx context.Context, h hashKind, row Row, idem 
 	rev, _ := strings.CutPrefix(idem, "config:"+h.kind+":")
 	fields := []any{"name", row.Name, "rev", rev, "at", strconv.FormatInt(a.now(), 10)}
 	if h.extra != nil {
-		fields = append(fields, h.extra(row.Name)...)
+		dir, err := a.getLoopsDir(ctx)
+		if err != nil {
+			return err
+		}
+		fields = append(fields, h.extra(dir, row.Name)...)
 	}
 	for _, f := range k.Fields {
 		fields = append(fields, f.Name, row.Fields[f.Name])
@@ -794,6 +816,9 @@ func (a *RedisApplier) writeSingleton(ctx context.Context, kind string, key func
 	}
 	if _, err := pipe.Exec(ctx); err != nil {
 		return fmt.Errorf("redis: write %s: %w", kind, err)
+	}
+	if kind == KindFleet {
+		a.loopsDirRead = false
 	}
 	return nil
 }
