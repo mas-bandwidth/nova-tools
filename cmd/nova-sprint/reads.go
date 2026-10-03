@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -438,6 +439,10 @@ type whereView struct {
 	// Seat is the seat's last change (coordinator <name>): who gave or took
 	// it, when and why; absent while the seat has not moved since init.
 	Seat *sprint.SeatChange `json:"seat,omitempty"`
+	// Providers is the providers table (nova-tools#5199): each provider the routes name,
+	// its balance as the run loop's poll last read it, the spend an hour measured, and
+	// whether its routes serve; absent with no route. The text frame does not draw it.
+	Providers []sprint.ProviderRow `json:"providers,omitempty"`
 }
 
 // whereRun is what one where was asked, its flags read.
@@ -692,6 +697,9 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 	}
 	b.WriteString(strings.Join(shown, "\n"))
 	a.goalsView(ctx, st, &v)
+	if v.Providers, err = providersView(ctx, st, shapes, now); err != nil {
+		return whereView{}, "", err
+	}
 	for _, c := range clocks {
 		if c.Stalled(now, stale) {
 			v.Stalled = append(v.Stalled, c.Stream)
@@ -726,6 +734,20 @@ func splitFriendRows(t ntable.Table) (ntable.Table, map[string]store.FriendRow) 
 			OK: count(r, sprint.DoneOK), Failed: count(r, sprint.DoneFailed)}
 	}
 	return machines, out
+}
+
+// providersView is the providers table from the routes and the fleet table's properties as
+// the view's shapes read them (no card is read).
+func providersView(ctx context.Context, st *store.Store, shapes []ntable.Table, now time.Time) ([]sprint.ProviderRow, error) {
+	routes, _, err := st.Routes(ctx)
+	if err != nil || len(routes) == 0 {
+		return nil, err
+	}
+	fleet := sprint.NewTable(sprint.Fleet)
+	if i := slices.Index(sprint.ViewOrder, sprint.Fleet); i >= 0 && i < len(shapes) {
+		fleet.SetProps(shapes[i].Props)
+	}
+	return sprint.ProviderRows(routes, fleet, now), nil
 }
 
 // friendsTable is the friends table (sprint.FriendsDef) with a row per friend
@@ -1210,8 +1232,9 @@ func groupText(g sprint.Group, now time.Time, opened bool) string {
 // cardView is everything about one primary.
 type cardView struct {
 	Primary *sprint.Card `json:"primary"`
-	Tier    string       `json:"tier"`    // the tier it is on (sprint.CardTiers)
-	Ceiling string       `json:"ceiling"` // the highest the machine escalates it to
+	Tier    string       `json:"tier"`            // the tier it is on (sprint.CardTiers)
+	Ceiling string       `json:"ceiling"`         // the highest the machine escalates it to
+	Grade   string       `json:"grade,omitempty"` // nova-decide's grade, as the card holds it (sprint.FieldGrade)
 	// Who is the worker its brief's WHO line names (sprint.FieldWho): friend for any
 	// friend, friend.<name> for one; absent on a machine's card.
 	Who      string             `json:"who,omitempty"`
@@ -1274,7 +1297,7 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 			texts = []storyText{}
 		}
 		tier, ceiling := sprint.CardTiers(v.Primary)
-		b, _ := json.Marshal(cardView{Primary: v.Primary, Tier: tier, Ceiling: ceiling, Who: v.Primary.F(sprint.FieldWho), Work: v.Work, Reads: v.Reads, Merge: v.Merge, Open: v.Open, Needs: v.Needs, NeededBy: v.NeededBy, Held: held,
+		b, _ := json.Marshal(cardView{Primary: v.Primary, Tier: tier, Ceiling: ceiling, Grade: v.Primary.F(sprint.FieldGrade), Who: v.Primary.F(sprint.FieldWho), Work: v.Work, Reads: v.Reads, Merge: v.Merge, Open: v.Open, Needs: v.Needs, NeededBy: v.NeededBy, Held: held,
 			Cost: sprint.CardCostOf(v.Primary), Timeline: events, Texts: texts})
 		fmt.Fprintln(stdout, string(b))
 		return 0
@@ -1303,7 +1326,12 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 		}
 		// the tier it is on and its ceiling: flash first, pro on escalation
 		tier, ceiling := sprint.CardTiers(v.Primary)
-		fmt.Fprintf(stdout, "CARD OK id=%s epoch=%d work_cards=%d read_cards=%d open=%d tier=%s ceiling=%s%s\n", oneline.Escape(id), epoch, len(v.Work), len(v.Reads), len(v.Open), tier, ceiling, whoWord(v.Primary))
+		// and its grade, nova-decide's convergence grade before its first deal (decide.go)
+		grade := ""
+		if g, ok := decide.ParseDecided(v.Primary.F(sprint.FieldGrade)); ok {
+			grade = " grade=" + g.Value + ":" + strconv.FormatFloat(g.P, 'f', 2, 64)
+		}
+		fmt.Fprintf(stdout, "CARD OK id=%s epoch=%d work_cards=%d read_cards=%d open=%d tier=%s ceiling=%s%s%s\n", oneline.Escape(id), epoch, len(v.Work), len(v.Reads), len(v.Open), tier, ceiling, grade, whoWord(v.Primary))
 		return 0
 	}
 	printCard(stdout, "PRIMARY", v.Primary)
@@ -1439,14 +1467,29 @@ func (a *app) cmdRoutes(args []string, stdout, stderr io.Writer) int {
 		return a.readFailed("routes", err, stderr)
 	}
 	stats := sprint.RouteStats(rs, s.Fleet)
-	rests := sprint.RouteRests(rs, s.Fleet)
+	rests, balances := sprint.RouteRests(rs, s.Fleet), sprint.ProviderBalances(s.Fleet)
 	for i := range stats {
 		if r, ok := rests[stats[i].Route.Name]; ok && r.Resting(s.Now) {
 			stats[i].RestedUntil = r.Until.UTC().Format(time.RFC3339)
+			if r.Open() {
+				stats[i].RestedUntil = "open" // until paid
+			}
+			stats[i].RestedFor = r.Cause + ": " + r.Said()
+		}
+		if b, ok := balances[stats[i].Route.Provider]; ok {
+			stats[i].Balance, stats[i].BalanceAt = "unknown", b.At.UTC().Format(time.RFC3339)
+			if b.Known {
+				stats[i].Balance = sprint.Dollars(b.Balance)
+			}
 		}
 	}
 	if c.json {
-		b, _ := json.Marshal(map[string]any{"tiers": sprint.TierRoutes(rs), "routes": stats})
+		// the judgment bar rides here for answer, which reads it through the server
+		bar, err := st.JudgmentBar(ctx)
+		if err != nil {
+			return a.readFailed("routes", err, stderr)
+		}
+		b, _ := json.Marshal(map[string]any{"tiers": sprint.TierRoutes(rs), "routes": stats, "decide_judgment_bar": bar})
 		fmt.Fprintln(stdout, string(b))
 		return 0
 	}
@@ -1465,8 +1508,8 @@ func (a *app) cmdRoutes(args []string, stdout, stderr io.Writer) int {
 		} else if r.Tier == "" {
 			how = "gone" // a route the cards name that the store no longer holds
 		}
-		fmt.Fprintf(stdout, "ROUTE %s model=%s %s attempts=%d ok=%d failed=%d provider_failures=%d mean_wall=%s rested_until=%s\n",
-			oneline.Field(r.Name), oneline.Field(model), how, x.Attempts, x.OK, x.Failed, x.Provider, x.MeanWall, orDashStr(x.RestedUntil, "-"))
+		fmt.Fprintf(stdout, "ROUTE %s model=%s %s attempts=%d ok=%d failed=%d provider_failures=%d mean_wall=%s rested_until=%s balance=%s\n",
+			oneline.Field(r.Name), oneline.Field(model), how, x.Attempts, x.OK, x.Failed, x.Provider, x.MeanWall, orDashStr(x.RestedUntil, "-"), oneline.Field(orDashStr(x.Balance, "-")))
 	}
 	fmt.Fprintf(stdout, "ROUTES OK routes=%d\n", len(stats))
 	return 0

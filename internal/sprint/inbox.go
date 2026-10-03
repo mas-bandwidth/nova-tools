@@ -514,6 +514,8 @@ func commands(g Group, first Note, prefix string) []Command {
 			add(d, cmd+d+" --epoch "+strconv.FormatUint(IDEpoch(g.ID), 10))
 		case strings.HasPrefix(d, "fleet down ") || strings.HasPrefix(d, "goal "):
 			add(d, cmd+d)
+		case strings.HasPrefix(d, "funded "):
+			add(d, cmd+d+" --reason '<the payment made>'")
 		case d == "ack":
 			add(d, cmd+"ack "+strings.Join(g.Notes, ",")+" --reason "+noneText)
 		case d == "resume" && s != "":

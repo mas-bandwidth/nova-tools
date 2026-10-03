@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardlimits"
 	"github.com/mas-bandwidth/nova-tools/internal/cardtree"
@@ -726,7 +727,7 @@ func fleetNameByte(c byte) bool {
 	return c == '_' || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
 }
 
-func cmdLint(args []string, stdout, stderr io.Writer) int {
+func cmdLint(args []string, stdout, stderr io.Writer, getenv func(string) string, now time.Time) (code int) {
 	f := newFlags("lint")
 	card := f.fs.String("card", "", "the card file to lint before any spend")
 	// `--fleet <file>` IS THE LAUNCHER'S OWN LINT (issue #2012). A card is checked for
@@ -772,6 +773,11 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 	repoDir := f.fs.String("repo", ".", "with --base-check: the git checkout the card's PATHS are resolved in at the base sha (default the working directory)")
 	legsPath := f.fs.String("legs", "", "with --base-check: the fleet leg table, one leg per line or a TSV whose first column is the leg")
 	p95Path := f.fs.String("p95", "", "with --base-check: a `file` of <kind> <seconds> rows, the p95 wall of each kind's finished cards (* answers for any kind)")
+	// `--decide` IS THE BRIEF DECISION add asks (lintdecide.go): one LINT DECIDE line after
+	// the lint's own, never a change to its verdict.
+	decideBrief := f.fs.Bool("decide", false, "also ask the brief decision nova-sprint add asks (p(converges), the minutes, the questions the card leaves open) and print it on one LINT DECIDE line; Jev with JEV_API_KEY from the environment, or --decide-answers; the lint's verdict is unchanged, and a failing backend prints it, then why, exit 2")
+	decideAnswers := f.fs.String("decide-answers", "", "with --decide: the fixed backend's answers `file` (nova-decide's shape), in place of Jev: no network, no key")
+	decideRecord := f.fs.String("decide-record", "", "with --decide: the record `file` the decision is appended to (nova-decide's; created if absent); none records nothing")
 	max := maxFlag(f.fs)
 	if !f.parse(args, stderr) {
 		return 2
@@ -796,8 +802,8 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 		if *card != "" {
 			f.add("--card and --fleet want one input: --card is a worker card, --fleet is a launcher script; give one and lint the other in its own run")
 		}
-		if *typed || *trustPath != "" || *lineupPath != "" {
-			f.add("--typed, --trust and --lineup are card checks; --fleet holds a launcher script, and a card flag over a script is a guess about a different file")
+		if *typed || *trustPath != "" || *lineupPath != "" || *decideBrief {
+			f.add("--typed, --trust, --lineup and --decide are card checks; --fleet holds a launcher script, and a card flag over a script is a guess about a different file")
 		}
 		if f.refused(stderr) {
 			return 2
@@ -843,6 +849,28 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	name := filepath.Base(*card)
+	if (*decideAnswers != "" || *decideRecord != "") && !*decideBrief {
+		fmt.Fprintf(stderr, "nova-swarm lint: --decide-answers and --decide-record go with --decide; run: nova-swarm lint --card %s --decide\n", oneline.Field(*card))
+		return 2
+	}
+	if *decideBrief && strings.TrimSpace(string(raw)) != "" {
+		b, err := lintBackend(*decideAnswers, getenv)
+		if err != nil { // no backend to ask: nothing is linted
+			fmt.Fprintf(stderr, "nova-swarm lint: --decide: %s; run: nova-secrets exec --only JEV_API_KEY -- nova-swarm lint --card %s --decide, or give --decide-answers <file> (no network, no key)\n",
+				oneline.Escape(err.Error()), oneline.Field(*card))
+			return 2
+		}
+		line, err := lintDecide(name, raw, b, *decideRecord, now)
+		if err != nil { // the backend failed: the lint's verdict, then why, exit 2
+			defer func() {
+				fmt.Fprintf(stderr, "nova-swarm lint: --decide: %s; the lint's verdict above stands; run: nova-swarm lint --card %s --decide again once the backend answers, or give --decide-answers <file> (no network, no key)\n",
+					oneline.Escape(err.Error()), oneline.Field(*card))
+				code = 2
+			}()
+		} else {
+			defer fmt.Fprintln(stdout, oneline.Escape(line)) // after the lint's own lines, whatever they say
+		}
+	}
 	// AN EMPTY CARD IS SAID ONCE (swarm.EmptyCardCheck): every rule it fails is the one fact
 	// that there is nothing in it.
 	if strings.TrimSpace(string(raw)) == "" {

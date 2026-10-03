@@ -45,6 +45,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/diffcheck"
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -218,8 +219,9 @@ func idSpan(ids []string) string {
 // keeps the id and the epoch), and the repository and base its brief names.
 type landCard struct {
 	id, head, attempt, repo, base string
-	paths                         []string // the brief's PATHS globs, nil when it names none (checkCard)
-	brief                         string   // the brief, the card a landed diff is scored against (landscore.go)
+	paths                         []string     // the brief's PATHS globs, nil when it names none (checkCard)
+	brief                         string       // the brief, the card a landed diff is scored against (landscore.go)
+	primary                       *sprint.Card // the primary, whose brief decision its landing attaches to (briefdecide.go)
 	// resolved is the card's note when its landing did more than merge its head (the
 	// generated ledgers regenerated, landledger.go): set by each build, reported with the
 	// batch
@@ -241,6 +243,10 @@ type lander struct {
 	epoch                      uint64            // the epoch land read: every report is fenced to it
 	diffs                      map[string]string // each card's merge diff, as checkCard read it, for its score
 	toScore                    []scoreJob        // the landed batches, scored after the whole pass (landscore.go)
+	// gate is the gate decision's backend, clock, bars and record for a red batch gate
+	// (landgate.go), nil when none is made; gateNote says why none is, once.
+	gate     *landGate
+	gateNote string
 }
 
 func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
@@ -287,6 +293,11 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	l := &lander{a: a, c: *c, st: st, repoDir: *repoDir, base: *base, check: *check, dry: *dry, twin: a.twinOpen(c.redis), epoch: st.PinnedEpoch(), diffs: map[string]string{}}
+	if *check != "" && !*dry {
+		a.serial.Lock()
+		l.gate, l.gateNote = a.landGate(context.Background(), st)
+		a.serial.Unlock()
+	}
 	if *repoDir != "" {
 		if abs, err := filepath.Abs(*repoDir); err == nil {
 			l.repoDir = abs
@@ -455,7 +466,7 @@ func (l *lander) stream(ctx context.Context, s *sprint.Snapshot, stream string) 
 	for _, c := range queue {
 		lc := landCard{id: c.ID, base: l.base}
 		if pr := s.Work.Placed(c.ID); pr != nil {
-			lc.head, lc.attempt = pr.F("head"), pr.F("attempt")
+			lc.head, lc.attempt, lc.primary = pr.F("head"), pr.F("attempt"), pr
 			cb := swarm.ReadCardBase([]byte(pr.F("brief")))
 			lc.repo, lc.paths, lc.brief = cb.Repo, cardPaths(pr.F("brief")), pr.F("brief")
 			if cb.Ref != "" {
@@ -540,7 +551,10 @@ func (l *lander) batch(ctx context.Context, stream string, cards []landCard) (la
 			return refuse("the batch branch has no tip: " + firstLine("", err))
 		}
 		start := time.Now()
-		why := l.runCheck(ctx, dir)
+		why, out := l.runCheck(ctx, dir)
+		if why != "" {
+			why = l.gateRerun(ctx, dir, stream, b.Base, tip, cards[:len(merged)], why, out)
+		}
 		since(&b.Times.Check, start)
 		if why != "" {
 			b.Cards, b.IDs = len(merged), ids[:len(merged)]
@@ -725,6 +739,12 @@ func (l *lander) landed(b landBatch, stream string, pins []landCard) bool {
 	// pushed AND reported: only now are its cards' branches tagged for the cleanup (a
 	// batch pushed and not reported keeps them: land is run again and may need the heads)
 	l.tag(context.Background(), &b, pins)
+	var ends []briefEnd // each card's end, attached to the brief decision it names (briefdecide.go)
+	for _, c := range pins {
+		label, note := decide.LandLabel(c.attempt)
+		ends = append(ends, briefEndOf(c.id, c.primary, decide.End{Label: label, Note: note}))
+	}
+	b.Also = append(b.Also, l.a.attachBriefs(ends)...)
 	l.out = append(l.out, b)
 	// its diffs are scored after the whole pass (landscore.go): a score never holds a landing
 	l.toScore = append(l.toScore, scoreJob{at: len(l.out) - 1, stream: stream, pins: pins})
@@ -1038,19 +1058,20 @@ func containsAny(s string, words []string) bool {
 	return slices.ContainsFunc(words, func(w string) bool { return strings.Contains(s, w) })
 }
 
-// runCheck runs --check in the clone: "" when it passed or there is none.
-func (l *lander) runCheck(ctx context.Context, dir string) string {
+// runCheck runs --check in the clone: why "" when it passed or there is none, and its
+// output.
+func (l *lander) runCheck(ctx context.Context, dir string) (why, out string) {
 	if l.check == "" {
-		return ""
+		return "", ""
 	}
 	b := subproc.Prepare(ctx, landCheckBudget, "sh", "-c", l.check)
 	defer b.Cancel()
 	b.Cmd.Dir, b.Cmd.Env = dir, l.a.gitEnv
-	out, err := b.Cmd.CombinedOutput()
+	raw, err := b.Cmd.CombinedOutput()
 	if err = b.Wrap("check "+l.check, err); err != nil {
-		return "the check " + l.check + " failed: " + oneline.Err(err) + checkTail(string(out))
+		return "the check " + l.check + " failed: " + oneline.Err(err) + checkTail(string(raw)), string(raw)
 	}
-	return ""
+	return "", string(raw)
 }
 
 // checkTail is ": <the output's last line>", "" for no output.

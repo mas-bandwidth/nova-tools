@@ -64,9 +64,14 @@ func Brief(s *Snapshot, r BriefReq) Plan {
 		p.refuse(r.ID, why)
 		return p
 	}
-	set, unset := map[string]string{"brief": r.Brief}, []string{FieldRules} // a brief that carries its own rules names none
+	// a brief that carries its own rules names none; a grade was of the brief replaced; a
+	// replaced brief is no longer the one its brief decision was asked over, so the card
+	// names that decision no more
+	set, unset := map[string]string{"brief": r.Brief}, []string{FieldGrade, FieldBriefOp, FieldBriefRecord}
 	if r.Rules != "" {
-		set[FieldRules], unset = r.Rules, nil
+		set[FieldRules] = r.Rules
+	} else {
+		unset = append(unset, FieldRules)
 	}
 	if who := WhoOfBrief(r.Brief); who != "" {
 		set[FieldWho] = who // the new brief's WHO line names its worker (friend_deal.go)

@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strings"
 	"sync"
@@ -40,6 +41,7 @@ var version string
 
 func main() {
 	a := newApp(os.Getenv)
+	a.briefRecord = a.defaultBriefRecord // a test's app has none: no brief record, no brief decision
 	defer a.close()
 	os.Exit(a.run(os.Args[1:], os.Stdout, os.Stderr))
 }
@@ -108,6 +110,10 @@ type app struct {
 	// ledgers, when set (a test), is the generated ledgers land regenerates at a merge
 	// (landledger.go); nil is landLedgers.
 	ledgers []landLedger
+	// gateBackend, when set (a test), is the gate decision's backend and clock for land's
+	// red batch gate (landgate.go); nil asks Jev with the key JEV_API_KEY holds, on the
+	// wall clock.
+	gateBackend func() (decide.Backend, func() time.Time)
 	// serial is the server's one line of control (serve.go): a worker's batch
 	// and a tick of the run loop each hold it, so neither runs during the other.
 	// serveAddr is the store the server runs the workers' verbs on.
@@ -139,9 +145,28 @@ type app struct {
 	tickDeadline time.Duration
 	after        func(time.Duration) <-chan time.Time
 	exit         func(code int)
+	// decide is the server's decide lane (run --decide, decidelane.go): nil records no
+	// attempt or grade decision and grades nothing.
+	decide *decideLane
+	// decider, when set (a test), is answer's backend for the judgment decision:
+	// nil is the one --backend names (decide.Jev with JEV_API_KEY, or a fixed file).
+	decider decide.Backend
 	// home is the directory a seat's inbox is under (inbox --wait --push seat:
 	// ~/<holder>-working/inbox): os.UserHomeDir unless a test sets it.
 	home func() (string, error)
+	// transport carries the balance poll's requests to the providers (balance.go):
+	// nil is http.DefaultTransport, a test gives a fake.
+	transport http.RoundTripper
+	// The brief decision before add (briefdecide.go): decideBackend is the backend over
+	// the key (Jev over its real transport unless a test sets it), briefRecord the record
+	// of brief decisions when add names none (nil, as in a test's app: none), and
+	// briefBar the sprint row's decide_brief_bar (nova-config's unless a test sets it).
+	// gateOnly, while set, runs add's checks and its brief decisions and stops before the
+	// store, keeping what was asked: the half of a served add that runs here.
+	decideBackend func(key string) decide.Backend
+	briefRecord   func() (string, error)
+	briefBar      func(ctx context.Context) (string, error)
+	gateOnly      *briefAsked
 }
 
 func newApp(getenv func(string) string) *app {
@@ -152,6 +177,8 @@ func newApp(getenv func(string) string) *app {
 	a.tip = a.branchTip
 	a.landRoot = defaultLandRoot
 	a.home = os.UserHomeDir
+	a.decideBackend = func(key string) decide.Backend { return decide.JevHTTP(key, decide.JevTimeout) }
+	a.briefBar = a.readBriefBar
 	return a
 }
 
@@ -253,15 +280,26 @@ type common struct {
 	// (stream=<s> cards=<n> before=<sentinel>).
 	addStream string
 	addBefore string
+	// brief is add's BRIEF and NOTE brief lines under --json (briefdecide.go), which its
+	// one JSON object holds.
+	brief []string
 }
 
 func (c *common) register(fs flagSet, getenv func(string) string) {
-	fs.StringVar(&c.redis, "redis", firstEnv(getenv, "NOVA_SPRINT_REDIS", "NOVA_REDIS_ADDR"), "the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)")
-	fs.StringVar(&c.actor, "actor", getenv("NOVA_SPRINT_ACTOR"), "who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)")
+	c.registerStore(fs, getenv)
 	fs.StringVar(&c.op, "op", "", "the caller's operation id: the same id again returns the recorded result and changes nothing")
-	fs.BoolVar(&c.json, "json", false, "print one JSON object for a program instead of the lines")
 	fs.IntVar(&c.max, "max", 20, "listed items of each kind; 0 is all")
 	fs.Int64Var(&c.epoch, "epoch", -1, "the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none")
+}
+
+// registerStore is the shared flags of a verb that takes no --op, --epoch or --max
+// (answer: each verb it applies carries its decision's own op): the store, the actor
+// and --json.
+func (c *common) registerStore(fs flagSet, getenv func(string) string) {
+	c.epoch = -1
+	fs.StringVar(&c.redis, "redis", firstEnv(getenv, "NOVA_SPRINT_REDIS", "NOVA_REDIS_ADDR"), "the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)")
+	fs.StringVar(&c.actor, "actor", getenv("NOVA_SPRINT_ACTOR"), "who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)")
+	fs.BoolVar(&c.json, "json", false, "print one JSON object for a program instead of the lines")
 }
 
 func firstEnv(getenv func(string) string, names ...string) string {

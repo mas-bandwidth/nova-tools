@@ -110,9 +110,9 @@ func TestTheFriendRowIsWhatSomeoneDecidesForHer(t *testing.T) {
 		assert.Equal(t, "flash,frontier,pro", strings.Join(Tiers, ","), assertionMsg98...)
 	}()
 	sprint, _ := Lookup(KindSprint)
-	assertionMsg100 := []any{"sprint %+v: one row, one optional ref to a friend, the decide read's two bars and the landed score's bar", sprint}
+	assertionMsg100 := []any{"sprint %+v: one row, one optional ref to a friend, the decide read's two bars, the landed score's bar, layer 2's three, the gate decision's two, the judgment bar and the brief bar", sprint}
 	require.True(t, sprint.Singleton, assertionMsg100...)
-	require.Len(t, sprint.Fields, 4, assertionMsg100...)
+	require.Len(t, sprint.Fields, 11, assertionMsg100...)
 	require.Equal(t, "coordinator", sprint.Fields[0].Name, assertionMsg100...)
 	require.Equal(t, TypeRef, sprint.Fields[0].Type, assertionMsg100...)
 	require.Equal(t, KindFriend, sprint.Fields[0].Ref, assertionMsg100...)
@@ -164,6 +164,58 @@ func TestTheSprintRowHoldsTheLandedScoreBar(t *testing.T) {
 			assert.NoError(t, err, "%q", raw)
 		} else {
 			assert.ErrorContains(t, err, says, "%q", raw)
+		}
+	}
+}
+
+// The sprint row holds layer 2's three bars (docs/SPEC-SPRINT.md sections 2 and 5): the
+// attempt decision's no-result and nothing-to-do bars, each its own named field, and the
+// grade's, all empty by default (nothing routes on a decision until a review round labels
+// cards independently); each a probability or empty, every problem named at once.
+func TestTheSprintRowHoldsTheAttemptAndGradeBars(t *testing.T) {
+	t.Parallel()
+	sprint, _ := Lookup(KindSprint)
+	noResult, _ := sprint.Field(FieldDecideAttemptNoResult)
+	nothing, _ := sprint.Field(FieldDecideAttemptNothingToDo)
+	grade, _ := sprint.Field(FieldDecideGrade)
+	assert.Equal(t, []string{"", "", ""}, []string{noResult.Default, nothing.Default, grade.Default})
+	assert.Equal(t, []Type{TypeDecimal, TypeDecimal, TypeDecimal}, []Type{noResult.Type, nothing.Type, grade.Type})
+	for _, tc := range []struct {
+		noResult, nothing, grade, says string
+	}{
+		{"0.7", "", "", ""},
+		{"", "", "", ""},
+		{"0.7", "0.8", "0.8", ""},
+		{"1.2", "", "", "decide_attempt_no_result 1.2 is not a probability"},
+		{"", "-1", "", "decide_attempt_nothing_to_do -1 is not a probability"},
+		{"x", "", "2", `decide_attempt_no_result "x" is not a decimal; decide_grade 2 is not a probability`},
+	} {
+		err := sprint.Check(Row{Name: KindSprint, Fields: map[string]string{FieldDecideBounce: "0.5", FieldDecideReview: "0.3",
+			FieldDecideAttemptNoResult: tc.noResult, FieldDecideAttemptNothingToDo: tc.nothing, FieldDecideGrade: tc.grade}})
+		if tc.says == "" {
+			assert.NoError(t, err, "%+v", tc)
+		} else {
+			assert.ErrorContains(t, err, tc.says, "%+v", tc)
+		}
+	}
+}
+
+// The sprint row holds the bar a card's brief is added at (docs/SPEC-NOVA-DECIDE.md
+// section 14): empty by default, which asks the brief decision and reports only, else a
+// probability nova-sprint add refuses a card under.
+func TestTheSprintRowHoldsTheBriefBar(t *testing.T) {
+	t.Parallel()
+	sprint, _ := Lookup(KindSprint)
+	bar, ok := sprint.Field(FieldDecideBriefBar)
+	require.True(t, ok)
+	assert.Equal(t, "", bar.Default)
+	assert.Equal(t, TypeDecimal, bar.Type)
+	for raw, says := range map[string]string{"": "", "0.6": "", "1.5": "decide_brief_bar \"1.5\" is not a probability in [0, 1]"} {
+		err := sprint.Check(Row{Name: KindSprint, Fields: map[string]string{FieldDecideBriefBar: raw}})
+		if says == "" {
+			assert.NoError(t, err, raw)
+		} else {
+			assert.ErrorContains(t, err, says, raw)
 		}
 	}
 }
@@ -443,4 +495,55 @@ func TestAFriendsWidthDefaultsToEightAndIsAtLeastOne(t *testing.T) {
 	assert.Equal(t, "friend amy has width 0; a friend's width is the jobs she works at once, at least 1: want --width <n> with n >= 1", err.Error(), "one refusal")
 	assert.NoError(t, friend.Check(Row{Name: "amy", Fields: map[string]string{"width": "1"}}))
 	assert.Error(t, friend.Check(Row{Name: "amy", Fields: map[string]string{"width": "0"}}))
+}
+
+// The sprint row holds the two bars a failed gate's decisions are routed by
+// (docs/SPEC-SPRINT.md section 5, the gate verdict), empty by default: the decisions are
+// recorded and nothing is routed until the owner sets one. Each is a probability or empty;
+// two set ones sum above 1, so no failure meets both; a problem of each pair is named in one
+// error.
+func TestTheSprintRowHoldsTheGateBarsTogether(t *testing.T) {
+	t.Parallel()
+	sprint, _ := Lookup(KindSprint)
+	flaky, _ := sprint.Field(FieldDecideGateFlaky)
+	pre, _ := sprint.Field(FieldDecideGatePreexisting)
+	assert.Equal(t, []string{"", ""}, []string{flaky.Default, pre.Default})
+	assert.Equal(t, TypeDecimal, flaky.Type)
+	for _, tc := range []struct {
+		flaky, pre, says string
+	}{
+		{"0.8", "0.8", ""},
+		{"0.6", "0.5", ""},
+		{"", "", ""},
+		{"0.5", "0.5", "decide_gate_flaky 0.5 and decide_gate_preexisting 0.5 sum to at most 1"},
+		{"1.5", "0.8", "decide_gate_flaky 1.5 is not a probability"},
+		{"0.8", "", ""},
+		{"", "0.8", ""},
+		{"x", "", "decide_gate_flaky \"x\" is not a decimal; set each gate bar (--decide_gate_flaky, --decide_gate_preexisting) to a probability, or empty to record the decisions and route none"},
+	} {
+		err := sprint.Check(Row{Name: KindSprint, Fields: map[string]string{FieldDecideGateFlaky: tc.flaky, FieldDecideGatePreexisting: tc.pre}})
+		if tc.says == "" {
+			assert.NoError(t, err, "%+v", tc)
+		} else {
+			assert.ErrorContains(t, err, tc.says, "%+v", tc)
+		}
+	}
+	err := sprint.Check(Row{Name: KindSprint, Fields: map[string]string{FieldDecideBounce: "0.3", FieldDecideReview: "0.5", FieldDecideGateFlaky: "0.4", FieldDecideGatePreexisting: "0.4"}})
+	assert.ErrorContains(t, err, "decide_review 0.5 is above decide_bounce 0.3", "both pairs' problems in one error")
+	assert.ErrorContains(t, err, "sum to at most 1")
+}
+
+// The sprint row holds the bar a judgment decision is applied at (nova-sprint answer
+// --decide), empty by default (nothing is applied until the coordinator sets it); a value
+// that is no probability is refused, naming the flag.
+func TestTheSprintRowHoldsTheJudgmentBar(t *testing.T) {
+	t.Parallel()
+	sprint, _ := Lookup(KindSprint)
+	bar, ok := sprint.Field(FieldDecideJudgment)
+	require.True(t, ok)
+	assert.Empty(t, bar.Default)
+	assert.NoError(t, checkSprint(Row{Name: "sprint", Fields: map[string]string{FieldDecideJudgment: ""}}), "empty is no bar")
+	assert.Equal(t, TypeDecimal, bar.Type)
+	assert.NoError(t, checkSprint(Row{Name: "sprint", Fields: map[string]string{FieldDecideJudgment: "0.9"}}))
+	assert.ErrorContains(t, checkSprint(Row{Name: "sprint", Fields: map[string]string{FieldDecideJudgment: "1.5"}}), "want --decide_judgment_bar <p>, a probability")
 }

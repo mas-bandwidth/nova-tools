@@ -43,6 +43,11 @@ type Frame struct {
 	// them; both empty for a strings read.
 	DecideBounce string `json:"decide_bounce,omitempty"`
 	DecideReview string `json:"decide_review,omitempty"`
+	// A work card's gate decision bars (docs/SPEC-SPRINT.md section 5, the gate verdict):
+	// native classifies a red gate's failures by them after the child, before the member
+	// reports the take; both empty for none.
+	DecideGateFlaky       string `json:"decide_gate_flaky,omitempty"`
+	DecideGatePreexisting string `json:"decide_gate_preexisting,omitempty"`
 }
 
 // Staged is what native knows once the checkout is staged: the job directory, the checkout,
