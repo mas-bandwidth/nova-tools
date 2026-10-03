@@ -1672,7 +1672,10 @@ passed. The default budget is 60 seconds per package; a package over it is a
 not a TestEvent is refused at exit 2, and so is a float flag that is not a finite
 number (`NaN`, `Inf`). `--json` prints the same verdict as one JSON object
 (`{"result":{...},"facts":{...},"items":[...]}`), and a refusal as that object
-with `"status":"refused"` on stdout. CI exceptions belong in the
+with `"status":"refused"` on stdout. A run with more than `--max` finding
+lines (20 by default) prints the first `--max` and one `CI-SLOW MORE
+shown=<n> total=<n>` line naming the flag that prints the rest; `--max 0`
+prints every finding. CI exceptions belong in the
 dated project policy, not in an assumed higher tool default.
 
 A refusal is one line, `nova-ci <verb> REFUSED: <every problem>; run: <next
@@ -1745,7 +1748,7 @@ environment's seat (`NOVA_SPRINT_REDIS_USER`, `NOVA_SPRINT_REDIS_PASSWORD_ENV`);
 `CI RECEIPT <owner/name> sha=<sha> run=<id> workflow=<name> conclusion=<word>
 pr=<n|-> ev=<stream id>`, exit 0; a write the store refuses or cannot confirm
 (`XADD ev:github: WRONGTYPE ...`, a NOPERM seat, reply loss, or a store that is
-down) is one line on stderr, `nova-ci github receipt FAIL: ...`, ending `receipt
+down) is one line on stderr, `nova-ci github receipt FAILED: ...`, ending `receipt
 write could not be confirmed: fix the store or the bench seat and rerun ci-ok`,
 exit 1, which reddens ci-ok (repeat receipts from retries or reruns are
 acceptable wake hints for consumers). `--dry-run` checks the fields and prints
