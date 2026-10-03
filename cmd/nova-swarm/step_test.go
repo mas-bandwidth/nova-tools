@@ -66,7 +66,12 @@ func TestTheStepVerbRunsAScriptCardInItsWallAndPrintsTheRemainder(t *testing.T) 
 	wall := filepath.Join(t.TempDir(), "wall")
 	require.NoError(t, os.WriteFile(wall, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> '"+log+"'\nwhile [ \"$1\" != -- ]; do shift; done\nshift\nexec \"$@\"\n"), 0o755))
 
-	exit, stdout, stderr := runSwarm(t, "step", "--card", cardFile, "--dir", repo, "--work", t.TempDir(), "--result", result, "--sandbox", wall)
+	cwd, err := os.Getwd()
+	require.NoError(t, err)
+	rel, err := filepath.Rel(cwd, wall)
+	require.NoError(t, err)
+	// a relative wall path: every command runs from the checkout, so the step makes it absolute
+	exit, stdout, stderr := runSwarm(t, "step", "--card", cardFile, "--dir", repo, "--work", t.TempDir(), "--result", result, "--sandbox", rel)
 	require.Equal(t, 0, exit, "stdout: %s\nstderr: %s", stdout, stderr)
 	head := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
 	assert.Equal(t, "STEP OK step 2: ok "+head+" post holds\n", stdout)

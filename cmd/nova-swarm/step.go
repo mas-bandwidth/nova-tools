@@ -124,18 +124,28 @@ func stepWall(sandbox string, noWall bool) (cardtree.Wall, string) {
 	case noWall:
 		return cardtree.Wall{}, ""
 	case sandbox != "":
-		return cardtree.Wall{Bin: sandbox}, ""
+		// absolute, since every command runs from the checkout
+		abs, err := filepath.Abs(sandbox)
+		if err != nil {
+			return cardtree.Wall{}, "--sandbox: " + err.Error()
+		}
+		return cardtree.Wall{Bin: abs}, ""
 	}
 	found, err := exec.LookPath(swarm.SandboxBinary)
 	if err != nil {
 		return cardtree.Wall{}, "no wall: " + swarm.SandboxBinary + " is on no PATH entry; a script step's program runs only in its own wall: name it with --sandbox <path>, or give --no-wall to run it unconfined"
 	}
-	return cardtree.Wall{Bin: found}, ""
+	abs, err := filepath.Abs(found)
+	if err != nil {
+		return cardtree.Wall{}, "the wall on PATH: " + err.Error()
+	}
+	return cardtree.Wall{Bin: abs}, ""
 }
 
 // stepReads is what a step's wall lets it read beside the system: the built programs, the
-// bench's toolchain (Go, sbcl) and /opt/homebrew where git and sbcl live, and the objects the
-// checkout borrows (its alternates), never executable.
+// bench's toolchain (Go, sbcl) and /opt/homebrew where git and sbcl live, and, never
+// executable, the module cache GOMODCACHE names and the objects the checkout borrows (its
+// alternates).
 func stepReads(dir, bin string) []string {
 	out := []string{"--read", bin}
 	if fi, err := os.Stat("/opt/homebrew"); err == nil && fi.IsDir() {
@@ -153,6 +163,13 @@ func stepReads(dir, bin string) []string {
 			flag = "--read"
 		}
 		out = append(out, flag, r.Path)
+	}
+	// the module cache the caller names (native names the bench's shared one): read, never
+	// written or run, so a POST's go vet or go test finds its modules and fetches none
+	if mod := os.Getenv("GOMODCACHE"); filepath.IsAbs(mod) && !named(out, mod) {
+		if fi, err := os.Stat(mod); err == nil && fi.IsDir() {
+			out = append(out, "--read-noexec", mod)
+		}
 	}
 	if b, err := os.ReadFile(filepath.Join(dir, ".git", "objects", "info", "alternates")); err == nil {
 		for _, l := range strings.Split(string(b), "\n") {
@@ -214,4 +231,14 @@ func installTreeSteps(card []byte, slotDir, jobDir string) ([]string, error) {
 		return nil, err
 	}
 	return []string{self, "step", "--card", path, "--dir", filepath.Join(jobDir, swarm.JobRepo), "--result", filepath.Join(jobDir, "RESULT.md")}, nil
+}
+
+// named says the wall's read flags already name dir.
+func named(flags []string, dir string) bool {
+	for _, f := range flags {
+		if f == dir {
+			return true
+		}
+	}
+	return false
 }

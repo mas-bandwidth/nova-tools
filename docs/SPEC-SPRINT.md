@@ -382,9 +382,14 @@ deal, one finish, one push, one pull request, its reads; dependencies stay at th
   runs it in place of the harness, outside the child's wall (a wall does not nest), with no
   credential in its environment. Each command of a step runs in the step's own wall, tighter
   than a child's: `--net-deny` (refused where the wall cannot enforce it), no variable whose name
-  carries KEY, TOKEN, SECRET, AUTH, PASSWORD, PASSWD or CREDENTIAL, HOME a private one, and the
-  checkout and a private temp the only writes; reads are the system, the built programs, the
-  bench toolchain and the checkout's borrowed objects (no data home, no auth copy). `regex` runs
+  carries KEY, TOKEN, SECRET, AUTH, PASSWORD, PASSWD or CREDENTIAL and none whose value holds
+  a URL's `user:password@` (a denylist: under native the executor's environment is already the
+  child's allowlist), HOME a private one, Go's build cache a private one in the temp
+  (`GOCACHE=<temp>/go-build`, `GOFLAGS=-mod=readonly`, `GOPROXY=off`: no step reads or writes
+  the bench's shared cache), and the checkout and a private temp the only writes; reads are the
+  system, the built programs, the bench toolchain, the module cache GOMODCACHE names and the
+  checkout's borrowed objects, the last two never executable (no data home, no auth copy). The
+  wall binary is named by an absolute path, since each command runs from the checkout. `regex` runs
   in process over the step's PATHS through the checkout's `os.Root`, so a link out of it is
   never followed; `go` is built by the toolchain from its one file (no cgo, no module fetched)
   and the binary runs in the wall; `lisp` runs under `sbcl --script` in the wall; each POST

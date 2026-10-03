@@ -819,7 +819,12 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		// or --no-wall when the caller typed it, and is never wrapped in the child's
 		stepWallFlags := []string{"--no-wall"}
 		if wall != "" {
-			stepWallFlags = []string{"--sandbox", wall}
+			abs, err := filepath.Abs(wall) // the executor runs from the job directory
+			if err != nil {
+				refuseNative(errOut, fmt.Sprintf("%s the wall %s could not be made absolute: %s", oneline.Field(cfg.label), oneline.Field(wall), oneline.Err(err)))
+				return nativeRunResult{}, 2
+			}
+			stepWallFlags = []string{"--sandbox", abs}
 		}
 		runPath, runArgv = stepArgv[0], append(append([]string{}, stepArgv[1:]...), stepWallFlags...)
 		wall = ""

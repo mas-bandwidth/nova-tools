@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -40,23 +41,40 @@ func (w Wall) Argv(dir string, argv []string) []string {
 }
 
 // Env is the environment of a command in the step's wall: the caller's, scrubbed of every
-// credential (ScrubEnv), HOME the private one, and git kept off any configuration but the
-// checkout's own.
+// credential (ScrubEnv), HOME the private one, git kept off any configuration but the
+// checkout's own, and Go's build cache a private one in the temp (the bench's shared cache is
+// neither read nor written by a step, so no card's program can poison it), modules read
+// from the module cache the wall reads and never fetched.
 func (w Wall) Env(env []string) []string {
-	return append(ScrubEnv(env), "HOME="+filepath.Join(w.Tmp, "home"), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1")
+	var kept []string
+	for _, kv := range ScrubEnv(env) {
+		switch name, _, _ := strings.Cut(kv, "="); name {
+		case "GOCACHE", "GOFLAGS", "GOPROXY":
+		default:
+			kept = append(kept, kv)
+		}
+	}
+	return append(kept, "HOME="+filepath.Join(w.Tmp, "home"), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1",
+		"GOCACHE="+filepath.Join(w.Tmp, "go-build"), "GOFLAGS=-mod=readonly", "GOPROXY=off")
 }
+
+// userinfoRE is a URL carrying a password: `redis://:pw@host`, `https://user:pw@host`.
+var userinfoRE = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^/@\s]*:[^/@\s]*@`)
 
 // secretWords mark a variable that may carry a credential: a script step runs with none.
 var secretWords = []string{"KEY", "TOKEN", "SECRET", "AUTH", "PASSWORD", "PASSWD", "CREDENTIAL"}
 
-// ScrubEnv is env without a variable whose name carries a credential word, and without HOME,
-// GIT_CONFIG_GLOBAL and GIT_CONFIG_NOSYSTEM, which the step's wall sets for itself.
+// ScrubEnv is env without a variable whose name carries a credential word or whose value holds
+// a URL's `user:password@`, and without HOME, GIT_CONFIG_GLOBAL and GIT_CONFIG_NOSYSTEM, which
+// the step's wall sets for itself. It is a denylist: run by native, the executor's
+// environment is already the child's allowlist (keepNativeEnv), and this is the second
+// filter; run directly, `nova-swarm step` passes the caller's other variables through.
 func ScrubEnv(env []string) []string {
 	var out []string
 	for _, kv := range env {
-		name, _, _ := strings.Cut(kv, "=")
+		name, value, _ := strings.Cut(kv, "=")
 		up := strings.ReplaceAll(strings.ToUpper(name), "AUTHOR", "") // GIT_AUTHOR_NAME is an identity, no credential
-		drop := up == "HOME" || up == "GIT_CONFIG_GLOBAL" || up == "GIT_CONFIG_NOSYSTEM"
+		drop := up == "HOME" || up == "GIT_CONFIG_GLOBAL" || up == "GIT_CONFIG_NOSYSTEM" || userinfoRE.MatchString(value)
 		for _, w := range secretWords {
 			drop = drop || strings.Contains(up, w)
 		}

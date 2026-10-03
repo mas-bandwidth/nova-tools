@@ -72,3 +72,31 @@ func TestAGoScriptStepIsBuiltAndRunInItsOwnWall(t *testing.T) {
 	assert.Equal(t, "FOO AND FOO\n", string(b), "the program ran, with no network")
 	assert.Equal(t, "upper-case a\n", runGit(t, repo, "log", "-1", "--format=%s"))
 }
+
+// TestAGoVetPostRunsInTheStepsWall is a regex step whose POST is `exit0 go vet ./...`, run in
+// the real wall with GOCACHE naming a cache outside the wall (this process's own): the step's
+// go gets a private build cache in its temp and reads no shared one (docs/SPEC-SPRINT.md, a
+// card is a tree of steps).
+func TestAGoVetPostRunsInTheStepsWall(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		t.Skipf("the repository builds real wall backends only on Darwin and Linux, not %s", runtime.GOOS)
+	}
+	realWallBackend(t)
+	repo := stepRepo(t)
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "go.mod"), []byte("module example.com/step\n\ngo 1.22\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "a.go"), []byte("package step\n\nfunc Foo() int { return 1 }\n"), 0o644))
+	runGit(t, repo, "add", "go.mod", "a.go")
+	runGit(t, repo, "commit", "-q", "-m", "module")
+	card := "RESULT: s1-6 sha=0123456789ab\nPATHS: a.go\n\nSTEP 1. Enter with cd repo.\n" +
+		"STEP 2. Rename.\n  PATHS: a.go\n  COMMIT: rename Foo to Bar\n  VERDICT: the vet is clean\n  SCRIPT: regex\n  ```\n  s/Foo/Bar/\n  ```\n  POST: exit0 go vet ./...\nSTEP 3. End as JOB.md says.\n"
+	work, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	require.NotEmpty(t, os.Getenv("GOCACHE")+os.Getenv("HOME"), "a build cache outside the wall is what this test is about")
+	exit, stdout, stderr := runSwarm(t, "step", "--card", writeLintCard(t, "s1-6.md", card), "--dir", repo, "--work", work, "--sandbox", builtSandbox)
+	require.Equal(t, 0, exit, "stdout: %s\nstderr: %s", stdout, stderr)
+	assert.Contains(t, stdout, "STEP OK step 2: ok ")
+	assert.Equal(t, "rename Foo to Bar\n", runGit(t, repo, "log", "-1", "--format=%s"))
+	_, err = os.Stat(filepath.Join(work, "tmp", "go-build"))
+	assert.NoError(t, err, "go vet's build cache is the step's own, in its temp")
+}

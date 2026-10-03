@@ -239,8 +239,12 @@ func TestTheStepWallDeniesTheNetworkAndCarriesNoCredential(t *testing.T) {
 	w := Wall{Bin: "/w/nova-sandbox", Read: []string{"--read", "/bin-dir"}, Tmp: "/t"}
 	assert.Equal(t, []string{"--write", "/t", "--write", "/co", "--tmp", "/t", "--cwd", "/co", "--net-deny", "--read", "/bin-dir", "--", "go", "vet"},
 		w.Argv("/co", []string{"go", "vet"}), "the writes are the private temp and the checkout only")
-	env := w.Env([]string{"PATH=/bin", "OPENAI_API_KEY=k", "GH_TOKEN=t", "NOVA_SECRET=s", "SSH_AUTH_SOCK=a", "HOME=/u", "GIT_AUTHOR_NAME=n", "MY_PASSWORD=p"})
-	assert.Equal(t, []string{"PATH=/bin", "GIT_AUTHOR_NAME=n", "HOME=/t/home", "GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_CONFIG_NOSYSTEM=1"}, env)
+	env := w.Env([]string{"PATH=/bin", "OPENAI_API_KEY=k", "GH_TOKEN=t", "NOVA_SECRET=s", "SSH_AUTH_SOCK=a", "HOME=/u", "GIT_AUTHOR_NAME=n", "MY_PASSWORD=p",
+		"REDIS_URL=redis://:pw@10.0.0.1:6379", "MIRROR=https://user:pw@example.com/r.git", "PLAIN_URL=https://example.com/r.git",
+		"GOCACHE=/shared/go-build", "GOFLAGS=-toolexec=/x", "GOPROXY=https://example.com/proxy", "GOMODCACHE=/shared/mod"})
+	assert.Equal(t, []string{"PATH=/bin", "GIT_AUTHOR_NAME=n", "PLAIN_URL=https://example.com/r.git", "GOMODCACHE=/shared/mod",
+		"HOME=/t/home", "GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_CONFIG_NOSYSTEM=1", "GOCACHE=/t/go-build", "GOFLAGS=-mod=readonly", "GOPROXY=off"}, env,
+		"no credential by name or in a URL's user:password@, and Go's build cache a private one")
 }
 
 func TestAFailedStepTwoOfThreeLandsStepOneAndWritesTheRemainder(t *testing.T) {
