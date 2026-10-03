@@ -386,7 +386,7 @@ func checkFleet(r Row) error {
 			return fmt.Errorf("--redis_port wants an integer from 1 through 65535")
 		}
 	}
-	if loopsDir := r.Fields["loops_dir"]; loopsDir != "" && strings.TrimSpace(loopsDir) == "" {
+	if loopsDir, ok := r.Fields["loops_dir"]; ok && strings.TrimSpace(loopsDir) == "" {
 		return fmt.Errorf("--loops_dir wants a non-empty directory path; run: nova-config fleet set --loops-dir <path>")
 	}
 	dsn, ok := r.Fields["pg_dsn"]

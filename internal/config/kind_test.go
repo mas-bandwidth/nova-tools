@@ -415,13 +415,15 @@ func TestLoopLogIsTheFleetRowsDirectory(t *testing.T) {
 	assert.Equal(t, "/custom/loops/tick.log", custom)
 
 	// An empty directory is refused by the kind's Check with a remedy.
-	row := Row{Name: KindFleet, Fields: map[string]string{"loops_dir": "   "}}
-	err := fleet.Check(row)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "--loops_dir wants a non-empty directory path")
-	assert.Contains(t, err.Error(), "nova-config fleet set --loops-dir")
+	for _, empty := range []string{"", "   "} {
+		row := Row{Name: KindFleet, Fields: map[string]string{"loops_dir": empty}}
+		err := fleet.Check(row)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "--loops_dir wants a non-empty directory path")
+		assert.Contains(t, err.Error(), "nova-config fleet set --loops-dir")
+	}
 
 	// A valid non-empty directory passes Check.
-	row.Fields["loops_dir"] = "/valid/path"
+	row := Row{Name: KindFleet, Fields: map[string]string{"loops_dir": "/valid/path"}}
 	assert.NoError(t, fleet.Check(row))
 }

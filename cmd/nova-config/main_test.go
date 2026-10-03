@@ -474,10 +474,10 @@ func TestTheSixVerbsEndToEndOnTheFake(t *testing.T) {
 	out, _ = step(0, "machine", "show", "studio")
 	require.Equal(t, "MACHINE name=studio user=glenn seat=studio slots=64 runners=1 width=- tla=false note=- created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z loops=-\n", out, "machine show without a Redis: %q", out)
 
-// The fleet: one row, there from the start, set without a name, its
-// history the sets alone.
-out, _ = step(0, "fleet", "show")
-require.Equal(t, "FLEET name=fleet store=- coordinator=- redis_port=- pg_dsn=- loops_dir=~/nova-bench/loops created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z\n", out, "fleet show before a set: %q", out)
+	// The fleet: one row, there from the start, set without a name, its
+	// history the sets alone.
+	out, _ = step(0, "fleet", "show")
+	require.Equal(t, "FLEET name=fleet store=- coordinator=- redis_port=- pg_dsn=- loops_dir=~/nova-bench/loops created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z\n", out, "fleet show before a set: %q", out)
 	out, _ = step(0, "fleet", "history")
 	require.Equal(t, "CONFIG HISTORY kind=fleet name=fleet changes=0\n", out, "fleet history before a set: %q", out)
 	_, errs = step(1, "fleet", "set", "--store", "space")
