@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -16,29 +18,33 @@ import (
 )
 
 // cmdStep is the script-step executor (docs/SPEC-SPRINT.md, a card is a tree of steps;
-// internal/cardtree): it runs a tree card's script steps in a checkout with no model, checks
-// each step's POST lines and commits it, and prints the step's verdict line. A mixed card's
-// child runs it through the `nova-step` shim at each script step; an all-script card is run
-// by native with `all` in place of the harness, and `--result` writes the card's RESULT.md.
-// `--remainder <id> --from <n>` prints instead the card a failed step n leaves.
+// internal/cardtree): it walks a card whose every work step is a script step, in a checkout,
+// with no model: each program, its POST lines and its commit, each command in the step's own
+// wall (the network denied, no credential, the checkout and a private temp the only writes),
+// and it stops at the first step that is not ok. native runs it in place of the harness.
+// Without a wall binary it refuses unless --no-wall is given, and then says the programs run
+// unconfined. `--remainder <id> --from <n> --land <sha>` prints instead the card a failed step
+// n leaves.
 func cmdStep(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("step")
 	card := f.fs.String("card", "", "required: the tree card's `file`")
 	dir := f.fs.String("dir", "", "the `checkout` the steps run in (cwd of every program and POST command); required unless --remainder")
-	work := f.fs.String("work", "", "the `directory` the programs are written into (default: a new one under TMPDIR)")
-	result := f.fs.String("result", "", "with all: the RESULT.md `file` to write in the result shape, the step lines in its body")
-	remainder := f.fs.String("remainder", "", "print the remainder card of this card `id` from --from, and run nothing")
+	work := f.fs.String("work", "", "the `directory` the programs are built in and the steps' private temp made under (default: a new one under TMPDIR)")
+	result := f.fs.String("result", "", "the RESULT.md `file` to write in the result shape, the step lines in its body")
+	sandbox := f.fs.String("sandbox", "", "the wall `binary` each program, POST command and git runs in (default: nova-sandbox on PATH)")
+	noWall := f.fs.Bool("no-wall", false, "run the card's programs with no wall, with this process's own powers: network, environment and every file it can write")
+	remainder := f.fs.String("remainder", "", "print the remainder card of this card `id` from --from, staged at --land, and run nothing")
 	from := f.fs.String("from", "", "with --remainder: the failed `step` the remainder starts at")
-	which := f.fs.String("steps", "", "the script `steps` to run, comma separated (3.1,3.2), or all for a card whose every work step is a script step; required unless --remainder")
+	land := f.fs.String("land", "", "with --remainder: the full `sha` steps 1..n-1 landed at (the finish's pushed=)")
 	if !f.parse(args, stderr) {
 		return 2
 	}
 	f.want(*card, "card", "the tree card's file")
 	if *remainder != "" {
 		f.want(*from, "from", "the step number the remainder starts at")
+		f.want(*land, "land", "the full sha the steps before it landed at")
 	} else {
 		f.want(*dir, "dir", "the checkout the steps run in")
-		f.want(*which, "steps", "the script steps to run, comma separated, or all")
 	}
 	if f.refused(stderr) {
 		return 2
@@ -52,47 +58,52 @@ func cmdStep(args []string, stdout, stderr io.Writer) int {
 		if _, ok := t.Step(*from); !ok {
 			return refuse(stderr, "step", fmt.Sprintf("--from %s names no step of the card", oneline.Field(*from)))
 		}
-		fmt.Fprint(stdout, cardtree.Remainder(string(raw), *remainder, *from))
+		rem, err := cardtree.Remainder(string(raw), *remainder, *from, *land)
+		if err != nil {
+			return refuse(stderr, "step", "--land: "+err.Error())
+		}
+		fmt.Fprint(stdout, rem)
 		return 0
 	}
 	if fs := cardtree.Lint(string(raw)); len(fs) > 0 {
 		return refuse(stderr, "step", fmt.Sprintf("the card's tree has %d finding(s), the first %s: %d: %s; run: nova-swarm lint --card %s", len(fs), oneline.Field(fs[0].Check), fs[0].Line, oneline.Escape(fs[0].Excerpt), oneline.Field(*card)))
+	}
+	if !t.AllScript() {
+		return refuse(stderr, "step", "the card has no script step, or has model steps too; the executor runs a card whose every work step is a script step")
+	}
+	wall, why := stepWall(*sandbox, *noWall)
+	if why != "" {
+		return refuse(stderr, "step", why)
 	}
 	if *work == "" {
 		if *work, err = os.MkdirTemp("", "nova-step-"); err != nil {
 			return refuse(stderr, "step", "no directory for the programs: "+err.Error())
 		}
 	}
-	sys := cardtree.OSSys(*work)
-	var todo []cardtree.Step
-	steps := strings.Split(*which, ",")
-	if *which == "all" {
-		if !t.AllScript() {
-			return refuse(stderr, "step", "all runs a card whose every work step is a script step; this card has model steps: run each script step by its number")
-		}
-		todo = t.Work()
-	} else {
-		for _, n := range steps {
-			s, ok := t.Step(n)
-			if !ok || !s.Script() {
-				return refuse(stderr, "step", fmt.Sprintf("step %s is no script step of the card (a work step with SCRIPT:)", oneline.Field(n)))
-			}
-			todo = append(todo, s)
+	if *work, err = filepath.Abs(*work); err != nil {
+		return refuse(stderr, "step", "--work: "+err.Error())
+	}
+	bin, tmp := filepath.Join(*work, "bin"), filepath.Join(*work, "tmp")
+	for _, d := range []string{bin, tmp} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			return refuse(stderr, "step", "--work: "+err.Error())
 		}
 	}
-	var done []cardtree.Result
-	for _, s := range todo {
-		r := cardtree.RunScript(*dir, s, sys)
-		done = append(done, r)
+	wall.Tmp = tmp
+	if wall.Bin == "" {
+		fmt.Fprintln(stdout, "STEP NOTE no wall (--no-wall): the card's programs run unconfined, with this process's network, environment and files")
+	} else {
+		wall.Read = stepReads(*dir, bin)
+	}
+	done := cardtree.Walk(t, func(s cardtree.Step) cardtree.Result {
+		r := cardtree.RunScript(*dir, s, cardtree.OSSys(bin, wall))
 		word := "OK"
 		if r.Verdict != cardtree.OK {
 			word = "FAILED"
 		}
 		fmt.Fprintf(stdout, "STEP %s %s\n", oneline.Field(word), oneline.Escape(r.Line()))
-		if r.Verdict != cardtree.OK {
-			break
-		}
-	}
+		return r
+	})
 	if *result != "" {
 		if err := os.WriteFile(*result, []byte(stepResult(*dir, t, done)), 0o644); err != nil {
 			return refuse(stderr, "step", "--result could not be written: "+err.Error())
@@ -102,6 +113,55 @@ func cmdStep(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// stepWall is the wall binary a step runs in: --sandbox, else nova-sandbox on PATH; none only
+// when --no-wall says so, and a refusal when there is no wall and no --no-wall.
+func stepWall(sandbox string, noWall bool) (cardtree.Wall, string) {
+	switch {
+	case noWall && sandbox != "":
+		return cardtree.Wall{}, "--no-wall and --sandbox name two different walls; give one"
+	case noWall:
+		return cardtree.Wall{}, ""
+	case sandbox != "":
+		return cardtree.Wall{Bin: sandbox}, ""
+	}
+	found, err := exec.LookPath(swarm.SandboxBinary)
+	if err != nil {
+		return cardtree.Wall{}, "no wall: " + swarm.SandboxBinary + " is on no PATH entry; a script step's program runs only in its own wall: name it with --sandbox <path>, or give --no-wall to run it unconfined"
+	}
+	return cardtree.Wall{Bin: found}, ""
+}
+
+// stepReads is what a step's wall lets it read beside the system: the built programs, the
+// bench's toolchain (Go, sbcl) and /opt/homebrew where git and sbcl live, and the objects the
+// checkout borrows (its alternates), never executable.
+func stepReads(dir, bin string) []string {
+	out := []string{"--read", bin}
+	if fi, err := os.Stat("/opt/homebrew"); err == nil && fi.IsDir() {
+		out = append(out, "--read", "/opt/homebrew")
+	}
+	if git, err := exec.LookPath("git"); err == nil {
+		if real, err := filepath.EvalSymlinks(git); err == nil {
+			out = append(out, "--read", filepath.Dir(real))
+		}
+	}
+	home, _ := os.UserHomeDir() // ignored: no home names no home-relative toolchain root
+	for _, r := range swarm.ToolchainRoots(runtime.GOOS, home) {
+		flag := "--read-noexec"
+		if r.Exec {
+			flag = "--read"
+		}
+		out = append(out, flag, r.Path)
+	}
+	if b, err := os.ReadFile(filepath.Join(dir, ".git", "objects", "info", "alternates")); err == nil {
+		for _, l := range strings.Split(string(b), "\n") {
+			if l = strings.TrimSpace(l); filepath.IsAbs(l) {
+				out = append(out, "--read-noexec", l)
+			}
+		}
+	}
+	return out
 }
 
 // stepResult is an all-script card's RESULT.md in the result shape (docs/SPEC-CARD-CONTRACT.md
@@ -134,43 +194,24 @@ func gitOut(dir string, args ...string) string {
 	return "-"
 }
 
-// stepShim is the `nova-step` command a mixed tree card's child runs at a script step: the
-// executor, on the slot's copy of the card (read-only inside the wall), in the staged checkout.
-func stepShim(self, card, repo string) string {
-	q := func(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
-	return "#!/bin/sh\n# nova-swarm step shim: a tree card's script step is the machine's (docs/SPEC-SPRINT.md, a card is a tree of steps)\n" +
-		"IFS=,\nexec " + q(self) + " step --card " + q(card) + " --dir " + q(repo) + " --steps \"$*\"\n"
-}
-
 // treeCardName is the slot's copy of a tree card the executor reads.
 const treeCardName = "tree-card.md"
 
-// installTreeSteps readies a tree card with script steps (docs/SPEC-SPRINT.md, a card is a
-// tree of steps): the card copied into the slot, which the wall reads and the child cannot
-// write, and the `nova-step` shim beside the profile's shims. It returns the executor's
-// binary (the wall reads its directory) and, for an all-script card, the argv native runs in
-// place of the harness; nothing for a card with no script step.
-func installTreeSteps(card []byte, slotDir, jobDir, shimDir string) (self string, all []string, err error) {
-	t := cardtree.Parse(string(card))
-	if !t.HasScript() {
-		return "", nil, nil
+// installTreeSteps readies a card whose every work step is a script step (docs/SPEC-SPRINT.md,
+// a card is a tree of steps): the card copied into the slot, and the executor's argv native
+// runs in place of the harness, outside the child's wall (a wall does not nest), each of its
+// commands in the step's own wall; nothing for any other card.
+func installTreeSteps(card []byte, slotDir, jobDir string) ([]string, error) {
+	if !cardtree.Parse(string(card)).AllScript() {
+		return nil, nil
 	}
-	if self, err = os.Executable(); err != nil {
-		return "", nil, err
+	self, err := os.Executable()
+	if err != nil {
+		return nil, err
 	}
 	path := filepath.Join(slotDir, treeCardName)
-	repo := filepath.Join(jobDir, swarm.JobRepo)
 	if err := os.WriteFile(path, card, 0o644); err != nil {
-		return "", nil, err
+		return nil, err
 	}
-	if err := os.MkdirAll(shimDir, 0o755); err != nil {
-		return "", nil, err
-	}
-	if err := os.WriteFile(filepath.Join(shimDir, "nova-step"), []byte(stepShim(self, path, repo)), 0o755); err != nil {
-		return "", nil, err
-	}
-	if t.AllScript() {
-		all = []string{self, "step", "--card", path, "--dir", repo, "--result", filepath.Join(jobDir, "RESULT.md"), "--steps", "all"}
-	}
-	return self, all, nil
+	return []string{self, "step", "--card", path, "--dir", filepath.Join(jobDir, swarm.JobRepo), "--result", filepath.Join(jobDir, "RESULT.md")}, nil
 }

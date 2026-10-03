@@ -24,6 +24,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
+	"github.com/mas-bandwidth/nova-tools/internal/cardtree"
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
@@ -139,9 +140,6 @@ type nativeRunConfig struct {
 	// borrowed is the object directory the staged checkout borrows (the bench mirror's,
 	// swarm.MirrorCloneArgs), a read of the wall; "" when its objects are its own.
 	borrowed string
-	// stepBin is the script-step executor a tree card with script steps runs (installTreeSteps):
-	// the wall reads its directory so the child's `nova-step` can run it; "" for any other card.
-	stepBin string
 	// frame, when set, is the member's frame of this launch (docs/SPEC-CARD-CONTRACT.md):
 	// staging stages its commit on its branch, and its profile writes JOB.md and the shims.
 	frame *cardcontract.Frame
@@ -769,21 +767,21 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		}
 	}
 
-	// (4g) A TREE CARD'S SCRIPT STEPS (docs/SPEC-SPRINT.md, a card is a tree of steps). A work
-	// card with script steps gets the `nova-step` shim, so its child runs each script step
-	// through the machine and no model writes it; a card whose every work step is a script
-	// step runs the executor in place of the harness, inside the same wall, and no model is
-	// launched at all.
+	// (4g) A SCRIPT CARD (docs/SPEC-SPRINT.md, a card is a tree of steps). A work card whose
+	// every work step is a script step runs the executor in place of the harness, and no model
+	// is launched at all. The executor is not the child: it runs outside the child's wall (a
+	// wall does not nest) with no credential in its environment, and puts each program, POST
+	// command and git in the step's own wall, tighter than a child's (below, at the wall).
+	var stepArgv []string
 	if cfg.frame != nil && stageRes.Staged && cfg.frame.Kind == "work" {
-		self, all, err := installTreeSteps(cfg.card, cfg.slotDir, jobDir, nativeShellShimDir(cfg.slotDir))
+		all, err := installTreeSteps(cfg.card, cfg.slotDir, jobDir)
 		if err != nil {
 			refuseNative(errOut, fmt.Sprintf("%s the card's script steps could not be installed: %s", oneline.Field(cfg.label), oneline.Err(err)))
 			return nativeRunResult{}, 2
 		}
-		cfg.stepBin = self
 		if all != nil {
-			launch = all
-			fmt.Fprintf(os.Stdout, "NATIVE NOTE label=%s every work step is a script step: the executor runs in place of the harness, no model\n", oneline.Field(cfg.label))
+			stepArgv = all
+			fmt.Fprintf(os.Stdout, "NATIVE NOTE label=%s every work step is a script step: the executor runs in place of the harness, no model, each step in its own wall\n", oneline.Field(cfg.label))
 		}
 	}
 
@@ -815,6 +813,16 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	} else if len(cfg.repos) > 0 {
 		refuseNative(errOut, fmt.Sprintf("%s wall cannot express repo rule", oneline.Field(cfg.label)))
 		return nativeRunResult{}, 2
+	}
+	if stepArgv != nil {
+		// the executor walls each command itself (cardtree.Wall): it is handed this run's wall,
+		// or --no-wall when the caller typed it, and is never wrapped in the child's
+		stepWallFlags := []string{"--no-wall"}
+		if wall != "" {
+			stepWallFlags = []string{"--sandbox", wall}
+		}
+		runPath, runArgv = stepArgv[0], append(append([]string{}, stepArgv[1:]...), stepWallFlags...)
+		wall = ""
 	}
 
 	// THE CHILD. The deadline is a context, so the process (and any it started in its
@@ -1013,6 +1021,9 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// previousLaunchEnd is the floor under the NEXT launch's usage window. The zero time is
 	// no floor, which is what the first launch has.
 	var previousLaunchEnd time.Time
+	if stepArgv != nil {
+		childEnv = append(cardtree.ScrubEnv(childEnv), "HOME="+dataHome) // the step needs no model and no credential
+	}
 	// The harness is a long-lived child: it runs under this run's cancellable context and
 	// no deadline (the run's own deadline and idle rules end it), and the context ends
 	// with the run, so no launch outlives the function that started it.
@@ -1717,9 +1728,6 @@ func nativeSandboxArgv(launch []string, cfg nativeRunConfig, dataHome, jobDir, t
 	// Without the harness directory the wall denies even the resolver's own files, and
 	// without /opt/homebrew the common toolchain roots are invisible.
 	argv = append(argv, "--read", filepath.Dir(bin))
-	if cfg.stepBin != "" && filepath.Dir(cfg.stepBin) != filepath.Dir(bin) {
-		argv = append(argv, "--read", filepath.Dir(cfg.stepBin)) // the `nova-step` shim runs it
-	}
 	if fi, err := os.Stat("/opt/homebrew"); err == nil && fi.IsDir() {
 		argv = append(argv, "--read", "/opt/homebrew")
 	}

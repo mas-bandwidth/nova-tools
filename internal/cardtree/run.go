@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -22,8 +24,8 @@ const (
 )
 
 // Result is one work step's verdict: `step <n>: <verdict> <sha|-> <words>`, one line per work
-// step in the result, in walk order (docs/SPEC-CARD-CONTRACT.md section 3, the verdict per
-// step). Sha is the step's own commit, "" when it made none.
+// step in the result's body, in walk order (docs/SPEC-CARD-CONTRACT.md section 3, the verdict
+// per step). Sha is the step's own commit, "" when it made none.
 type Result struct {
 	Num     string
 	Verdict string
@@ -40,13 +42,18 @@ func (r Result) Line() string {
 	return strings.TrimSpace(fmt.Sprintf("step %s: %s %s %s", r.Num, r.Verdict, sha, oneline.Cap(strings.Join(strings.Fields(r.Words), " "), 300)))
 }
 
-var verdictRE = regexp.MustCompile(`(?i)^[ \t*-]*step[ \t-]?([0-9]+(?:\.[0-9]+)*):[ \t]*(ok|broken|not-done|skipped)\b[ \t]*(\S*)[ \t]*(.*)$`)
+var (
+	verdictRE = regexp.MustCompile(`(?i)^[ \t*-]*step[ \t-]?([0-9]+(?:\.[0-9]+)*):[ \t]*(ok|broken|not-done|skipped)\b[ \t]*(\S*)[ \t]*(.*)$`)
+	// stepShaRE is a step line's commit: a full sha or the twelve-digit short one, never a word
+	stepShaRE = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{12})$`)
+)
 
-// ParseVerdicts reads every step line of a result (its header block or its body), by step
-// number; the first line for a step wins.
-func ParseVerdicts(text string) map[string]Result {
+// ParseVerdicts reads every step line of a result's body, by step number; the first line for
+// a step wins. A line whose commit is neither `-` nor a sha (40 or 12 hex) is a defect: the
+// step is not-done, its words say why, so no word is ever pushed as a head.
+func ParseVerdicts(body string) map[string]Result {
 	out := map[string]Result{}
-	for _, l := range strings.Split(text, "\n") {
+	for _, l := range strings.Split(body, "\n") {
 		m := verdictRE.FindStringSubmatch(strings.TrimRight(l, "\r"))
 		if m == nil {
 			continue
@@ -54,20 +61,23 @@ func ParseVerdicts(text string) map[string]Result {
 		if _, dup := out[m[1]]; dup {
 			continue
 		}
-		sha := strings.ToLower(m[3])
-		if sha == "-" {
-			sha = ""
+		r := Result{Num: m[1], Verdict: strings.ToLower(m[2]), Sha: strings.ToLower(m[3]), Words: strings.TrimSpace(m[4])}
+		switch {
+		case r.Sha == "-" || r.Sha == "":
+			r.Sha = ""
+		case !stepShaRE.MatchString(r.Sha):
+			r = Result{Num: r.Num, Verdict: NotDone, Words: "the step line's commit " + m[3] + " is no sha (40 or 12 hex, or -): " + strings.TrimSpace(m[3]+" "+m[4])}
 		}
-		out[m[1]] = Result{Num: m[1], Verdict: strings.ToLower(m[2]), Sha: sha, Words: strings.TrimSpace(m[4])}
+		out[m[1]] = r
 	}
 	return out
 }
 
-// Land is where a tree card's result lands (TREE-CARD-RULES rule 1; the owner, 2026-10-02:
-// a failed step n "lands 1..n-1 and redeals n.. as a new card"): the first work step whose
-// verdict is not ok (a step with no line is not-done), and the commit of the last ok step
-// before it that made one. failed is nil when every step is ok; land is "" when no step
-// before the failed one committed anything.
+// Land is where a tree card's result lands (docs/SPEC-SPRINT.md, a card is a tree of steps:
+// the coordinator's failed-step rule of 2026-10-02): the first work step whose verdict is not
+// ok (a step with no line is not-done), and the commit of the last ok step before it that made
+// one. failed is nil when every step is ok; land is "" when no step before the failed one
+// committed anything.
 func Land(t Tree, v map[string]Result) (failed *Result, land string) {
 	for _, s := range t.Work() {
 		r, ok := v[s.Num]
@@ -84,17 +94,25 @@ func Land(t Tree, v map[string]Result) (failed *Result, land string) {
 	return nil, land
 }
 
-// Remainder is the card a failed step leaves: the brief as it is, with `From: STEP <n>` (the
-// walk starts there) and `Needs: <id>` (it lands after the card it continues) as header lines
-// after line 1. An existing From: line is replaced, an existing Needs: line extended.
-func Remainder(card, id, from string) string {
-	lines := strings.Split(card, "\n")
-	if len(lines) == 0 {
-		return card
+var (
+	contractShaRE = regexp.MustCompile(`\bsha=[0-9A-Fa-f]+`)
+	fullShaRE     = regexp.MustCompile(`^[0-9a-f]{40}$`)
+)
+
+// Remainder is the card a failed step leaves (docs/SPEC-SPRINT.md, a card is a tree of steps):
+// the brief as it is, staged at land, the full commit steps 1..n-1 landed at, with
+// `From: STEP <n>` (the walk starts there) and `Needs: <id>` (it is dealt after the card it
+// continues). In the header: line 1's `sha=` becomes land's first twelve, `BASE: <ref>[@<sha>]`
+// becomes `BASE: <ref>@<land>` and `base-sha:` becomes land (a card with neither gains a
+// `base-sha:` line); an existing From: line is replaced, an existing Needs: line extended.
+func Remainder(card, id, from, land string) (string, error) {
+	if !fullShaRE.MatchString(land) {
+		return "", fmt.Errorf("the land commit %q is no full sha (40 hex)", land)
 	}
-	needs := false
-	head := []string{lines[0]}
+	lines := strings.Split(card, "\n")
+	head := []string{contractShaRE.ReplaceAllString(lines[0], "sha="+land[:12])}
 	rest := lines[1:]
+	needs, pinned := false, false
 	for i, l := range rest {
 		if strings.TrimSpace(l) == "" {
 			break // the header block ends at its first blank line
@@ -103,6 +121,7 @@ func Remainder(card, id, from string) string {
 		if !ok {
 			continue
 		}
+		v = strings.TrimSpace(v)
 		switch strings.ToUpper(strings.TrimSpace(k)) {
 		case "FROM":
 			rest[i] = "From: STEP " + from
@@ -110,12 +129,17 @@ func Remainder(card, id, from string) string {
 		case "NEEDS":
 			if !needs {
 				needs = true
-				if v = strings.TrimSpace(v); v == "" || v == "-" || strings.EqualFold(v, "none") {
+				if v == "" || v == "-" || strings.EqualFold(v, "none") {
 					rest[i] = "Needs: " + id
 				} else {
 					rest[i] = "Needs: " + v + ", " + id
 				}
 			}
+		case "BASE":
+			ref, _, _ := strings.Cut(v, "@")
+			rest[i], pinned = "BASE: "+strings.TrimSpace(ref)+"@"+land, true
+		case "BASE-SHA":
+			rest[i], pinned = "base-sha: "+land, true
 		}
 	}
 	if from != "" {
@@ -124,27 +148,40 @@ func Remainder(card, id, from string) string {
 	if !needs {
 		head = append(head, "Needs: "+id)
 	}
-	return strings.Join(append(head, rest...), "\n")
+	if !pinned {
+		head = append(head, "base-sha: "+land)
+	}
+	return strings.Join(append(head, rest...), "\n"), nil
 }
 
-// RemainderID is the id of the card the step n of card id leaves: `<id>-r<n>`.
-func RemainderID(id, from string) string { return id + "-r" + from }
+// RemainderID is the id of the card the step n of card id leaves: `<id>-r<n>`, a dotted
+// step's dots as dashes (`c1-r3-2`), so the id is one the sprint takes (sprint.ValidID).
+func RemainderID(id, from string) string { return id + "-r" + strings.ReplaceAll(from, ".", "-") }
 
-// Sys is what a script step needs of the machine: run a program in a directory (no shell),
-// commit a step's paths with its message (the sha, "" when nothing changed), and a directory
-// the programs are written into. The executor's is the real one; a test's is its own.
+// Sys is what a script step needs of the machine (docs/SPEC-SPRINT.md, a card is a tree of
+// steps): Build runs the toolchain over a program's source, never the card's code; Run runs
+// the card's code (a built program, sbcl, an exit0 command) in the step's own wall; Commit
+// stages the step's paths and commits them, in that wall too, and says the sha ("" when
+// nothing changed). Work is where the programs are written and built. The executor's is
+// OSSys; a test's is its own.
 type Sys struct {
+	Build  func(dir string, argv ...string) error
 	Run    func(dir string, argv ...string) error
 	Commit func(dir string, paths []string, message string) (sha string, err error)
 	Work   string
 }
 
-// RunScript runs one script step in the checkout dir, with no model (TREE-CARD-RULES rule 3:
-// "the member runs it, the gate checks the result"): the program, then every POST line, then
-// the step's commit. A program or a POST that fails is broken and commits nothing; a program
-// that changed nothing while its POST holds is ok with no commit.
+// RunScript runs one script step in the checkout dir with no model: the program, then every
+// POST line, then the step's commit (docs/SPEC-SPRINT.md, a card is a tree of steps). A
+// program or a POST that fails is broken and commits nothing; a program that changed nothing
+// while its POST holds is ok with no commit. A path that is not local to the checkout, and a
+// POST command an interpreter would run, are refused here as the lint refuses them.
 func RunScript(dir string, s Step, sys Sys) Result {
 	r := Result{Num: s.Num, Verdict: Broken}
+	if err := localPaths(s); err != nil {
+		r.Words = err.Error()
+		return r
+	}
 	if err := runProgram(dir, s, sys); err != nil {
 		r.Words = "program: " + err.Error()
 		return r
@@ -167,6 +204,35 @@ func RunScript(dir string, s Step, sys Sys) Result {
 	return r
 }
 
+// localPaths refuses a step whose PATHS glob or POST path is not a relative path inside the
+// checkout: absolute, or climbing with `..`.
+func localPaths(s Step) error {
+	for _, g := range s.Paths {
+		if !filepath.IsLocal(g) {
+			return fmt.Errorf("PATHS: %s is not a relative path inside the checkout", g)
+		}
+	}
+	for _, p := range s.Post {
+		if p.Kind == "sha256" && !filepath.IsLocal(p.Path) {
+			return fmt.Errorf("POST: sha256 %s is not a relative path inside the checkout", p.Path)
+		}
+	}
+	return nil
+}
+
+// RefusedCommand says why an exit0 command is refused, "" when it is not: its first word is
+// an interpreter (or env, which runs one), the "never bash or python" rule a POST line could
+// otherwise walk round.
+func RefusedCommand(argv []string) string {
+	if len(argv) == 0 {
+		return "exit0 names no command"
+	}
+	if w := filepath.Base(argv[0]); slices.Contains(refused, w) || w == "env" {
+		return "exit0 " + argv[0] + ": never bash or python, nor an interpreter run by another name; name the checking command itself (go vet, go test, a built tool)"
+	}
+	return ""
+}
+
 func runProgram(dir string, s Step, sys Sys) error {
 	if s.Lang == "regex" {
 		return applyRegex(dir, s)
@@ -180,9 +246,10 @@ func runProgram(dir string, s Step, sys Sys) error {
 		if err := os.WriteFile(filepath.Join(work, "main.go"), []byte(s.Program), 0o644); err != nil {
 			return err
 		}
-		// built where it is written (no module around it), run where the checkout is
+		// built where it is written (no module around it) by the toolchain, run in the
+		// step's wall where the checkout is
 		bin := filepath.Join(work, "step")
-		if err := sys.Run(work, "go", "build", "-o", bin, "main.go"); err != nil {
+		if err := sys.Build(work, "go", "build", "-o", bin, "main.go"); err != nil {
 			return fmt.Errorf("go build: %w", err)
 		}
 		return sys.Run(dir, bin)
@@ -196,13 +263,19 @@ func runProgram(dir string, s Step, sys Sys) error {
 	return fmt.Errorf("SCRIPT: %s is not one of %s", s.Lang, strings.Join(Langs, ", "))
 }
 
-// applyRegex is the regex program, in process: every edit over every file the step's PATHS
-// globs match in the checkout.
+// applyRegex is the regex program, in process: every edit over every regular file the step's
+// PATHS globs match in the checkout, each read and written through the checkout's os.Root, so
+// a link out of the checkout is refused, never followed.
 func applyRegex(dir string, s Step) error {
 	edits, err := ParseRegex(s.Program)
 	if err != nil {
 		return err
 	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
 	matched := 0
 	for _, g := range s.Paths {
 		files, err := filepath.Glob(filepath.Join(dir, g))
@@ -210,10 +283,14 @@ func applyRegex(dir string, s Step) error {
 			return err
 		}
 		for _, f := range files {
-			if fi, err := os.Stat(f); err != nil || !fi.Mode().IsRegular() {
+			rel, err := filepath.Rel(dir, f)
+			if err != nil {
+				return err
+			}
+			if fi, err := root.Lstat(rel); err != nil || !fi.Mode().IsRegular() {
 				continue
 			}
-			b, err := os.ReadFile(f)
+			b, err := root.ReadFile(rel)
 			if err != nil {
 				return err
 			}
@@ -223,7 +300,7 @@ func applyRegex(dir string, s Step) error {
 				out = e.RE.ReplaceAll(out, []byte(e.Repl))
 			}
 			if !bytes.Equal(out, b) {
-				if err := os.WriteFile(f, out, 0o644); err != nil {
+				if err := root.WriteFile(rel, out, 0o644); err != nil {
 					return err
 				}
 			}
@@ -238,7 +315,12 @@ func applyRegex(dir string, s Step) error {
 func check(dir string, p Post, sys Sys) error {
 	switch p.Kind {
 	case "sha256":
-		b, err := os.ReadFile(filepath.Join(dir, p.Path))
+		root, err := os.OpenRoot(dir)
+		if err != nil {
+			return err
+		}
+		defer root.Close()
+		b, err := root.ReadFile(p.Path)
 		if err != nil {
 			return err
 		}
@@ -248,6 +330,9 @@ func check(dir string, p Post, sys Sys) error {
 		}
 		return nil
 	case "exit0":
+		if why := RefusedCommand(p.Argv); why != "" {
+			return errors.New(why)
+		}
 		if err := sys.Run(dir, p.Argv...); err != nil {
 			return fmt.Errorf("exit0 %s: %w", strings.Join(p.Argv, " "), err)
 		}
@@ -272,7 +357,8 @@ func Walk(t Tree, do func(Step) Result) []Result {
 
 // Guide is what a tree card's child is told beside its brief (member.CardText): walk the
 // work steps depth first, one commit per step, a step line each in the pull request body,
-// stop at the first that is not ok; and run each script step through the machine.
+// stop at the first that is not ok. A card with a script step never reaches a child: every
+// work step of it is a script step (the lint), which the executor runs.
 func Guide(t Tree) string {
 	if !t.IsTree() {
 		return ""
@@ -283,10 +369,7 @@ func Guide(t Tree) string {
 		fmt.Fprintf(&b, ", from STEP %s (the steps before it have landed)", t.From)
 	}
 	b.WriteString(", one commit per step, its COMMIT: line the message, touching only that step's PATHS:. ")
-	b.WriteString("The pull request body carries one line per work step: `step <n>: <ok|broken|not-done|skipped> <commit sha|-> <one line>`. ")
+	b.WriteString("The pull request body carries one line per work step: `step <n>: <ok|broken|not-done|skipped> <commit sha|-> <one line>`, the sha the step's full commit or its first twelve. ")
 	b.WriteString("A step that is not ok ends the walk: say why on its line and finish with the steps before it committed; the member lands those and the rest becomes a new card.")
-	if t.HasScript() {
-		b.WriteString(" A script step (SCRIPT:) is the machine's: in its turn run `nova-step <n>`, which runs its program, checks its POST lines and commits; copy the line it prints after `STEP OK ` or `STEP FAILED ` into the body, and do nothing else for that step.")
-	}
 	return b.String() + "\n\n"
 }

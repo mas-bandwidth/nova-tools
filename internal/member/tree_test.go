@@ -57,7 +57,13 @@ func TestAFlatCardLintsAndRunsAsBefore(t *testing.T) {
 	p.Brief = treeBrief
 	assert.Equal(t, r.Head, treeFinish(p, Result{Ran: true, Shaped: true, Verdict: "ok", Head: fullSha, Report: "done"}).Head,
 		"a tree card whose result carries no step line keeps its own verdict")
-	assert.NotContains(t, CardText(pk("c1")), "tree of steps")
+	flat := pk("c1")
+	flat.Brief = "RESULT: c1 sha=0123456789ab\nREPO: o/r\n\nSTEP 1. Enter your worktree with cd repo.\n  verdict: prose, not a field\nSTEP 2. End as JOB.md says; write RESULT.md.\n"
+	assert.Equal(t, flat.Brief+"\n## From the sprint\n\n"+
+		"This is c1: attempt 1 of p-c1 (stream a). The checkout is on branch work/c1; JOB.md, which the prompt names first, says where it is and how this card ends. When you end, the member pushes your commit to origin's branch work/c1 from outside the wall.\n\n"+
+		"Your RESULT.md's `report:` line is what the sprint records as your report; the member reports it for you as:\n\n"+
+		"    nova-sprint finish --as m c1@1 --epoch 7 --branch work/c1 --head <sha> --report '<one line>' [--failed]\n",
+		CardText(flat), "a flat card's child text is byte for byte what it was")
 	assert.Contains(t, CardText(p), "This card is a tree of steps.")
 }
 

@@ -26,7 +26,7 @@ var swarmAudit = audit.Config{
 	// text in the same function share an entry. Each is a claim a reader can check.
 	Exempt: map[string]string{
 		"member.go|cmdMember|note": "passNote's one line, a literal with no argument interpolated",
-		"step.go|cmdStep|cardtree.Remainder(string(raw), *remainder, *from)": "the second named verbatim site: the remainder is a CARD, a document the coordinator redirects into a brief file for nova-sprint add, the bytes of the card it was handed with two header lines added (cardtree.Remainder); escaping it would fold the card into one unusable line. TestTheStepVerbRunsAScriptCardAndPrintsTheRemainder asserts its lines.",
+		"step.go|cmdStep|rem":      "the second named verbatim site: the remainder is a CARD, a document the coordinator redirects into a brief file for nova-sprint add, the bytes of the card it was handed with its base rewritten and two header lines added (cardtree.Remainder); escaping it would fold the card into one unusable line. TestTheStepVerbRunsAScriptCardInItsWallAndPrintsTheRemainder asserts its lines.",
 		"main.go|want|name":        "a required flag's name, a literal at every call site in this file",
 		"main.go|want|wants":       "the guidance that flag wants, a literal at every call site in this file",
 		"main.go|wantCount|name":   "a required count flag's name, a literal at every call site in this file",

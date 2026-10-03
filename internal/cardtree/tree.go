@@ -7,6 +7,7 @@ package cardtree
 
 import (
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -60,9 +61,9 @@ type Tree struct {
 	FromLine int
 }
 
-// The languages a script step may be written in (TREE-CARD-RULES rule 3: "preference:
-// lisp, or golang obv.", a regex at simplest), and the ones refused by name: never bash or
-// python.
+// The languages a script step may be written in (docs/SPEC-SPRINT.md, a card is a tree of
+// steps: "preference: lisp, or golang obv.", a regex at simplest), and the interpreters
+// refused by name, as a SCRIPT: language and as an exit0 command's first word.
 var (
 	Langs   = []string{"regex", "go", "lisp"}
 	refused = []string{"bash", "sh", "zsh", "python", "python3", "perl"}
@@ -119,8 +120,9 @@ func Parse(card string) Tree {
 		if !ok {
 			continue
 		}
-		key := strings.ToUpper(k)
+		key := k        // a step's field is upper case, as written: an indented `verdict:` is prose
 		if cur == nil { // the header, above the first STEP line
+			key = strings.ToUpper(k)
 			if raw != trim { // a header key sits at column 0
 				continue
 			}
@@ -266,8 +268,8 @@ const (
 // Remedies is the remedy of each rule token, for `nova-swarm lint --rules`.
 var Remedies = map[string]string{
 	CheckNested: "a dotted step `STEP <n>.<k>.` sits under its parent `STEP <n>.`, and the children of one parent are numbered 1, 2, 3 with no gap and no repeat",
-	CheckStep:   "a work step (one with COMMIT:) carries its own PATHS:, COMMIT: and VERDICT: lines, every glob of its PATHS: is one of the card's PATHS: or NEW: globs, a step with PATHS:, VERDICT:, SCRIPT: or POST: and no COMMIT: is missing its COMMIT:, and From: STEP <n> names a step of the card",
-	CheckScript: "a script step says `SCRIPT: regex|go|lisp` (never bash or python), carries its program in one fenced block under it, and at least one `POST: sha256 <path> <64 hex>` or `POST: exit0 <command>` line the gate asserts; a regex program is lines of `s/<re>/<replacement>/` in Go regexp syntax",
+	CheckStep:   "a work step (one with COMMIT:) carries its own PATHS:, COMMIT: and VERDICT: lines, every glob of its PATHS: is a relative path inside the checkout and one of the card's PATHS: or NEW: globs, a step with PATHS:, VERDICT:, SCRIPT: or POST: and no COMMIT: is missing its COMMIT:, and From: STEP <n> names a step of the card",
+	CheckScript: "a script step says `SCRIPT: regex|go|lisp` (never bash or python), carries its program in one fenced block under it, and at least one `POST: sha256 <path> <64 hex>` or `POST: exit0 <command>` line the gate asserts (a path inside the checkout; a command that is no interpreter: never bash, sh, zsh, python, python3, perl or env), and every work step of its card is a script step; a regex program is lines of `s/<re>/<replacement>/` in Go regexp syntax",
 }
 
 // Lint is every defect of a tree card, in card order; nothing for a flat card. The top-level
@@ -295,6 +297,14 @@ func Lint(card string) []Finding {
 		}
 		seen[s.Num] = true
 		out = append(out, lintStep(t, s)...)
+	}
+	if t.HasScript() && !t.AllScript() {
+		for _, s := range t.Work() {
+			if s.Script() {
+				add(CheckScript, s.Line, "STEP %s is a script step in a card with model steps: a script step runs in its own wall, outside any child's, so a card with one is script steps only; put the model steps in a card of their own, Needs: between the two", s.Num)
+				break
+			}
+		}
 	}
 	if t.FromLine > 0 {
 		if s, ok := t.Step(t.From); !ok {
@@ -338,9 +348,14 @@ func lintStep(t Tree, s Step) []Finding {
 	if s.Verdict == "" {
 		add(CheckStep, s.Line, "work step %s has no VERDICT:", s.Num)
 	}
+	for _, g := range s.Paths {
+		if !filepath.IsLocal(g) {
+			add(CheckStep, s.fields["PATHS"], "STEP %s's glob %s is not a relative path inside the checkout", s.Num, g)
+		}
+	}
 	if len(t.Paths) > 0 {
 		for _, g := range s.Paths {
-			if !slices.Contains(t.Paths, g) {
+			if filepath.IsLocal(g) && !slices.Contains(t.Paths, g) {
 				add(CheckStep, s.fields["PATHS"], "STEP %s's glob %s is not in the card's PATHS: or NEW:", s.Num, g)
 			}
 		}
@@ -374,8 +389,13 @@ func lintStep(t Tree, s Step) []Finding {
 		add(CheckScript, line, "script step %s has no POST: line for the gate to assert", s.Num)
 	}
 	for _, p := range s.Post {
-		if p.Kind == "" {
+		switch {
+		case p.Kind == "":
 			add(CheckScript, p.Line, "POST: %s is neither `sha256 <path> <64 hex>` nor `exit0 <command>`", p.Raw)
+		case p.Kind == "sha256" && !filepath.IsLocal(p.Path):
+			add(CheckScript, p.Line, "POST: sha256 %s is not a relative path inside the checkout", p.Path)
+		case p.Kind == "exit0" && RefusedCommand(p.Argv) != "":
+			add(CheckScript, p.Line, "POST: %s", RefusedCommand(p.Argv))
 		}
 	}
 	return out
