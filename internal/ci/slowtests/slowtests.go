@@ -3,9 +3,10 @@
 // newline-delimited TestEvent objects `go test -json` writes, sums the
 // package-level Elapsed for each package, keeps the slowest few test-level rows
 // so a finding can name where the time went, and reports every package whose
-// total is over the budget. It reads and writes no file and never touches the
-// network or the clock: the events and the budget come from the caller, so a
-// test feeds canned lines and asserts a verdict.
+// total is over the budget. The one file it reads is ci.yml, which names the
+// runners a measured row may name, and it never touches the network or the
+// clock: the events and the budget come from the caller, so a test feeds canned
+// lines and asserts a verdict.
 package slowtests
 
 import (
@@ -14,13 +15,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"gopkg.in/yaml.v3"
 )
 
 // Event is one decoded TestEvent line. The field names are `go test -json`'s
@@ -92,10 +98,10 @@ type Budgets struct {
 // in the test column for a package's own row. Package is module-relative
 // (internal/ci) and matches an event's import path by its trailing path
 // elements. Seconds is the budget the row enforces; Measured is the time the row
-// was cut from and Where the CI run (`run<id>`) or bench (Benches) that
-// measured it, so no number on the list is a guess: the measured column is
-// `<seconds>s@<where>`, and the budget may not exceed MaxHeadroom times the
-// measurement.
+// was cut from and Where the CI run (`run<id>`) or the bench label Benches
+// reads from ci.yml that measured it, so no number on the list is a guess: the
+// measured column is `<seconds>s@<where>`, and the budget may not exceed
+// MaxHeadroom times the measurement.
 type Row struct {
 	Package  string
 	Test     string
@@ -174,11 +180,24 @@ func Parse(r io.Reader) ([]Event, error) {
 // ParseAllowlist reads `pkg<TAB>test<TAB>seconds<TAB>measured` rows. Blank
 // lines and lines starting with # are skipped; `-` in the test column is the
 // package's own row. The measured column is `<seconds>s@<where>`: the time the
-// row was cut from and where it was measured. A malformed row, a budget that is
-// not a positive number, a row with no measurement, a budget under its
-// measurement or over MaxHeadroom times it, or a row written twice is an error
-// naming its 1-based line.
+// row was cut from and where it was measured, a CI run or a runner label
+// ciBenches reads from ci.yml. A malformed row, a budget that is not a
+// positive number, a row with no measurement, a budget under its measurement
+// or over MaxHeadroom times it, or a row written twice is an error naming its
+// 1-based line.
 func ParseAllowlist(r io.Reader) ([]Row, error) {
+	benches, err := ciBenches()
+	if err != nil {
+		return nil, err
+	}
+	return parseAllowlist(r, benches)
+}
+
+// parseAllowlist reads the rows and holds each measured where to benches, so a
+// caller that has ci.yml's own text judges the rows against that text and
+// reads no file itself (docs/STANDARD.md section 5: a model where there is a
+// machine).
+func parseAllowlist(r io.Reader, benches []string) ([]Row, error) {
 	sc := bufio.NewScanner(r)
 	var rows []Row
 	seen := map[string]int{}
@@ -197,7 +216,7 @@ func ParseAllowlist(r io.Reader) ([]Row, error) {
 		if err != nil || secs <= 0 {
 			return nil, fmt.Errorf("line %d: budget %q is not a positive number of seconds", line, f[2])
 		}
-		measured, where, err := parseMeasured(f[3])
+		measured, where, err := parseMeasured(f[3], benches)
 		if err != nil {
 			return nil, fmt.Errorf("line %d: %w", line, err)
 		}
@@ -221,15 +240,88 @@ func ParseAllowlist(r io.Reader) ([]Row, error) {
 	return rows, nil
 }
 
-// Benches are the machines a row may name as where it was measured: the
-// self-hosted runner groups ci.yml's test legs run on. The internal/ci test
-// TestMeasuredBenchesAreCIRunners holds each to ci.yml.
-var Benches = []string{"space", "studio", "superman", "batman", "air"}
+// ciYMLPath is the workflow the bench labels are read from, module-relative:
+// the one home of the runner inventory, which docs/STANDARD.md section 4 holds
+// to one place and never a second.
+const ciYMLPath = ".github/workflows/ci.yml"
+
+// groupFlag matches the flag a ci.yml step names a runner group with
+// (`--linux-group <label>`): a group is a runs-on label the legs carry, and a
+// leg dealt by a matrix writes it nowhere else.
+var groupFlag = regexp.MustCompile(`--[a-z]+-group (\S+)`)
+
+// runsOnLabel is the machine label of one `runs-on` value: the last of a
+// self-hosted list, the labels before it being the platform's own
+// (self-hosted, the OS, the arch). A hosted `runs-on: <string>` and a list
+// whose last label is a `${{ }}` expression name no machine of their own.
+func runsOnLabel(key, value *yaml.Node) string {
+	items := value.Content
+	if key.Value != "runs-on" || len(items) < 2 || items[0].Value != "self-hosted" {
+		return ""
+	}
+	return items[len(items)-1].Value
+}
+
+// Benches reads the labels a row may name as where it was measured from ci.yml's
+// own text, so the inventory has the one home ci.yml is (docs/STANDARD.md
+// section 4): the machine label of every self-hosted `runs-on` list and every
+// runner group a step's groupFlag names, in the order the file names them and
+// once each. An expression is no label: it names the matrix that fills it in.
+func Benches(ciYML []byte) ([]string, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(ciYML, &doc); err != nil {
+		return nil, err
+	}
+	var labels []string
+	add := func(label string) {
+		if label != "" && !strings.HasPrefix(label, "${") && !slices.Contains(labels, label) {
+			labels = append(labels, label)
+		}
+	}
+	var walk func(node *yaml.Node)
+	walk = func(node *yaml.Node) {
+		for i, child := range node.Content {
+			if node.Kind == yaml.MappingNode && i%2 == 1 {
+				add(runsOnLabel(node.Content[i-1], child))
+			}
+			if child.Kind == yaml.ScalarNode {
+				for _, match := range groupFlag.FindAllStringSubmatch(child.Value, -1) {
+					add(match[1])
+				}
+			}
+			walk(child)
+		}
+	}
+	walk(&doc)
+	return labels, nil
+}
+
+// ciBenches reads ciYMLPath from the checkout the working directory is in,
+// walking up to the directory that holds it, and returns the labels Benches
+// reads from that text. A tree with no ci.yml has no bench labels: a row then
+// names a CI run, and a bench label is refused with the file named.
+var ciBenches = sync.OnceValues(func() ([]string, error) {
+	dir, err := os.Getwd()
+	if err != nil {
+		return nil, nil
+	}
+	for {
+		if text, readErr := os.ReadFile(filepath.Join(dir, filepath.FromSlash(ciYMLPath))); readErr == nil {
+			return Benches(text)
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return nil, nil
+		}
+		dir = parent
+	}
+})
 
 // parseMeasured reads `<seconds>s@<where>`: a positive time, and where is a
-// CI run (`run<id>`, the digits of a GitHub Actions run id) or a bench in
-// Benches. Free text is refused: `2s@guess` names nothing a reader can open.
-func parseMeasured(field string) (float64, string, error) {
+// CI run (`run<id>`, the digits of a GitHub Actions run id) or one of benches,
+// the labels Benches reads from ci.yml. Free text is refused: `2s@guess` names
+// nothing a reader can open.
+func parseMeasured(field string, benches []string) (float64, string, error) {
 	before, where, found := strings.Cut(field, "s@")
 	if !found || before == "" || where == "" {
 		return 0, "", fmt.Errorf("measured %q is not <seconds>s@<where>; a row names the time it was cut from and where", field)
@@ -238,14 +330,14 @@ func parseMeasured(field string) (float64, string, error) {
 	if err != nil || secs <= 0 {
 		return 0, "", fmt.Errorf("measured %q is not a positive number of seconds", field)
 	}
-	if !measuredWhere(where) {
-		return 0, "", fmt.Errorf("measured %q: where %q is neither run<id> (a CI run) nor a bench (%s)", field, where, strings.Join(Benches, ", "))
+	if !measuredWhere(where, benches) {
+		return 0, "", fmt.Errorf("measured %q: where %q is neither run<id> (a CI run) nor a runner label %s names (%s)", field, where, ciYMLPath, strings.Join(benches, ", "))
 	}
 	return secs, where, nil
 }
 
-// measuredWhere reports whether where is `run<digits>` or a bench name.
-func measuredWhere(where string) bool {
+// measuredWhere reports whether where is `run<digits>` or one of benches.
+func measuredWhere(where string, benches []string) bool {
 	if id, ok := strings.CutPrefix(where, "run"); ok && id != "" {
 		for _, c := range id {
 			if c < '0' || c > '9' {
@@ -254,7 +346,7 @@ func measuredWhere(where string) bool {
 		}
 		return true
 	}
-	return slices.Contains(Benches, where)
+	return slices.Contains(benches, where)
 }
 
 // ParseSleeps reads the SLEEPS ledger: `pkg<TAB>test<TAB>where` rows, blank
