@@ -203,6 +203,7 @@ func TestSettleGateAttachesTheRerunsResult(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+			fake := &classed{p: fake.p}
 			record := filepath.Join(t.TempDir(), "gate.jsonl")
 			r, err := Gate(context.Background(), fake, bars, GateInput{Failures: tc.failures, BaseRed: tc.base}, record, "op", at)
 			require.NoError(t, err)
