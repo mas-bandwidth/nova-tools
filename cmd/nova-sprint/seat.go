@@ -186,7 +186,7 @@ const handoverDecisions = 10
 // decisionVerbs are the coordinator's decisions handover shows from the log,
 // beside the seat's own changes, by the verb of the step that wrote the line
 // (fleet down's is fleet hold): rework only with a fix.
-var decisionVerbs = []string{"release", "drop", "fleet hold", "rework"}
+var decisionVerbs = []string{"release", "drop", "needs", "fleet hold", "rework"}
 
 // handover reads what the next seat needs and renders it: the holder and since
 // when, the machine and the progress, each stream's counts, the sentinels held

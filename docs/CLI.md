@@ -999,6 +999,7 @@ nova-sprint rework (<id>... | --group <id> [--expect <n>]) [--fix <text>] [--ans
 nova-sprint return (<id>... | --group <id> [--expect <n>]) [--reason <text>] [--answers <note>]
 nova-sprint drop (<id>... | --stream <s> --col <state> | --group <id> [--expect <n>]) --reason <text> [--answers <note>]
 nova-sprint rank <id>... (--score <n> | --first) [--answers <note>]
+nova-sprint needs <id> --cut <need>[,<need>...] --reason <text> [--answers <note>]
 nova-sprint brief <id> (--brief <text> | --brief-file <path>) [--rules <file>]
 nova-sprint move <id>... --stream <s> [--before <id> | --after <id> | --score <n>]
 nova-sprint merge --stream <s> [--batch <n>] [--conflict <id> | --cross <id>=<other> | --red [--suspect <id>...] | --rejected] [--note <text>]

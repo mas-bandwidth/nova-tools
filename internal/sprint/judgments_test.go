@@ -38,7 +38,7 @@ func TestReadyToAcceptIsClosedByReworkAndDrop(t *testing.T) {
 }
 
 // H3: add with a need that names a dropped primary writes the blocked
-// judgment itself, in the same step; its decisions are drop and ack.
+// judgment itself, in the same step; its decisions are drop, ack and the cut.
 func TestAddOnADroppedNeedIsBlockedAtOnce(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 1)
@@ -52,14 +52,15 @@ func TestAddOnADroppedNeedIsBlockedAtOnce(t *testing.T) {
 	require.Equal(t, NBlocked, notes[0].Type, "add did not write the blocked judgment: %+v", notes)
 	require.Len(t, w.openOn("later"), 1, "add did not write the blocked judgment: %+v", notes)
 	got := notes[0].Decisions
-	require.Equal(t, []string{"drop", "ack"}, got, "decisions: %v", got)
+	require.Equal(t, []string{"drop", "ack", CutDecision}, got, "decisions: %v", got)
 	g := Inbox(InboxReq{Now: w.s.Now, Open: w.s.Open})
 	var ds []string
 	for _, c := range g[0].Commands {
 		ds = append(ds, c.Decision+": "+c.Lines[0])
 	}
-	require.Len(t, ds, 2, "commands: %v", ds)
+	require.Len(t, ds, 3, "commands: %v", ds)
 	require.Equal(t, "ack: nova-sprint ack "+g[0].ID+" --reason "+noneText, ds[1], "commands: %v", ds)
+	require.Equal(t, CutDecision+": nova-sprint needs later --cut "+strings.Join(notes[0].Needs, ",")+" --reason "+whyText+" --answers "+g[0].ID, ds[2], "commands: %v", ds)
 	w.must(Resolve(w.s, ResolveReq{}))
 	require.Len(t, w.notesOf(NBlocked), 1, "blocked written again")
 	w.clean("blocked")

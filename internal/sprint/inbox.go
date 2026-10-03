@@ -348,7 +348,7 @@ const (
 // NoteCommands is one open judgment's decisions as commands, the members it
 // names its subjects: as the inbox prints them for a group of one.
 func NoteCommands(n Note, members []string) []Command {
-	g := Group{ID: n.ID, Kind: Judgment, Type: n.Type, Stream: n.Stream, Size: len(members), Notes: []string{n.ID}, Members: members, Decisions: n.Decisions}
+	g := Group{ID: n.ID, Kind: Judgment, Type: n.Type, Stream: n.Stream, Size: len(members), Notes: []string{n.ID}, Members: members, Decisions: n.Decisions, Needs: n.Needs}
 	return commands(g, n, "")
 }
 
@@ -421,6 +421,17 @@ func commands(g Group, first Note, prefix string) []Command {
 			case "drop":
 				add(d, cmd+"drop "+ids+" --reason "+whyText+ans)
 			}
+		case d == CutDecision:
+			// the card and the dropped needs its judgment names; a group of
+			// several cards names each card's needs on its own judgment
+			subject, needs, answer := "'<card>'", "'<dropped need>'", ""
+			if g.Size == 1 && len(g.Members) == 1 {
+				subject, answer = g.Members[0], ans
+				if len(g.Needs) > 0 {
+					needs = strings.Join(g.Needs, ",")
+				}
+			}
+			add(d, cmd+"needs "+subject+" --cut "+needs+" --reason "+whyText+answer)
 		case g.Type == NStreamStale:
 			add(d, cmd+"where", cmd+"queue --stream "+s)
 		case g.Type == NConflict:

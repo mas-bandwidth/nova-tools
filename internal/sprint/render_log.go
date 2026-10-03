@@ -96,6 +96,9 @@ func renderPrimary(l Line, fromCol, toCol string, moved bool, by string) string 
 		return s
 	case l.Removed:
 		return fmt.Sprintf("%s taken off the table %s", id, by)
+	case !moved && l.Set["cut_by"] != "":
+		// needs --cut: the edges to dropped cards cut so far, and what it needs now
+		return fmt.Sprintf("%s: needs on dropped cards cut %s (cut: %s; needs now: %s)", id, by, l.Set["cut"], orDash(l.Set["needs"]))
 	case !moved:
 		return fmt.Sprintf("%s changed %s: %s", id, by, setWords(l.Set))
 	}

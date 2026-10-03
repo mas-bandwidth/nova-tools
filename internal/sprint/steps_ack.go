@@ -287,7 +287,7 @@ func silenceRefusal(s *Snapshot, u Unit, pr string) string {
 		members = append(members, o.Subject())
 	}
 	g := Group{ID: n.ID, Kind: Judgment, Type: n.Type, Stream: n.Stream, Size: len(members), Notes: []string{n.ID},
-		Members: members, Decisions: removeDecision(n.Decisions, "ack")}
+		Members: members, Decisions: removeDecision(n.Decisions, "ack"), Needs: n.Needs}
 	var lines []string
 	for _, c := range commands(g, n, "") {
 		lines = append(lines, c.Decision+": "+strings.Join(c.Lines, " && "))
@@ -386,4 +386,92 @@ func waitStale(s *Snapshot, r WaitReq, stream string) Plan {
 	p.Units = append(p.Units, Unit{Key: ctl.ID, Stream: stream, Changes: []Change{change(Merge, setEntry(ctl, map[string]string{FieldStaleReview: until}))},
 		Moved: "stream " + stream + " not shown stale until " + until})
 	return p
+}
+
+// NeedsReq is the coordinator cutting DEPENDS-ON edges of a waiting card: the
+// needs named in Cut, each a card dropped off the table in this epoch.
+type NeedsReq struct {
+	ID      string
+	Cut     []string
+	Reason  string
+	Answers []string
+	Who     string
+}
+
+// CutNeeds removes needs of a waiting primary or sentinel (nova-sprint needs
+// --cut): each need cut must be one the card names and a card dropped off the
+// table, so a dead edge goes and a live one never does; a card past waiting has
+// every need landed or waived, and is refused. The card keeps a record of each
+// edge cut (cut, cut_by, cut_at) and the reason, a line of its timeline. Every
+// blocked judgment open on the card that names a need cut is closed; the
+// dropped needs it named that were not cut are a blocked judgment again, so
+// none goes unsaid. Nothing moves here: the next tick's resolve moves the card
+// to ready when nothing else holds it.
+func CutNeeds(s *Snapshot, r NeedsReq) Plan {
+	var p Plan
+	p.on(s)
+	c := s.Work.Placed(r.ID)
+	why := ""
+	switch {
+	case strings.TrimSpace(r.Reason) == "":
+		why = "needs --cut wants --reason <why the need is cut>; nothing was changed"
+	case len(r.Cut) == 0:
+		why = "needs wants --cut <need>, the dropped card the edge goes to; nothing was changed"
+	case c == nil:
+		why = "no card " + r.ID + " on the work table; nothing was changed"
+	case c.Col != Waiting:
+		why = fmt.Sprintf("%s is %s, not waiting: a card past waiting has every need landed or waived, and only a waiting card's needs are cut; nothing was changed", r.ID, c.Col)
+	}
+	if why != "" {
+		p.refuse(r.ID, why)
+		return p
+	}
+	needs := Split(c.F("needs"))
+	for i, n := range r.Cut {
+		switch {
+		case contains(r.Cut[:i], n):
+			why = n + " is named twice"
+		case !contains(needs, n):
+			why = fmt.Sprintf("%s does not need %s (its needs: %s)", r.ID, n, orDash(strings.Join(needs, ",")))
+		case len(droppedNeeds(s, []string{n})) == 0 && s.Work.Card(n) == nil:
+			why = fmt.Sprintf("%s has no record in this epoch: only a need dropped off the table is cut; a missing need is answered by ack of its judgment (nova-sprint inbox)", n)
+		case len(droppedNeeds(s, []string{n})) == 0:
+			why = fmt.Sprintf("%s is %s, not dropped: only a need dropped off the table is cut; a live need lands, or is dropped first (nova-sprint drop %s --reason '<why>')", n, placeWord(s.Work.Card(n)), n)
+		}
+		if why != "" {
+			p.refuse(r.ID, why+"; nothing was changed")
+			return p
+		}
+	}
+	set := map[string]string{"cut": strings.Join(append(Split(c.F("cut")), r.Cut...), ","), "cut_by": r.Who, "cut_at": stamp(s.Now), "reason": r.Reason}
+	var unset []string
+	if left := without(needs, r.Cut); len(left) > 0 {
+		set["needs"] = strings.Join(left, ",")
+	} else {
+		unset = append(unset, "needs")
+	}
+	u := Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, setEntry(c, set, unset...))},
+		Moved: fmt.Sprintf("%s no longer needs %s, dropped (cut by %s: %s)", c.ID, strings.Join(r.Cut, ","), orDash(r.Who), r.Reason)}
+	var rest []string
+	for _, o := range closesFor(s.Open, []string{NBlocked}, c.ID) {
+		named := o.Note.Needs
+		if len(named) == 0 { // a judgment naming none names every dropped need
+			named = droppedNeeds(s, needs)
+		}
+		if len(without(named, r.Cut)) == len(named) {
+			continue
+		}
+		u.Closes = append(u.Closes, o)
+		for _, n := range without(named, append(r.Cut, Split(c.F("waived"))...)) {
+			if !contains(rest, n) {
+				rest = append(rest, n)
+			}
+		}
+	}
+	if len(rest) > 0 {
+		u.Notes = append(u.Notes, blockedNote(s, c.Row, c.ID, r.Who, rest))
+	}
+	p.Units = append(p.Units, u)
+	answered(&p, s, r.Answers, r.Who)
+	return Lawful(p)
 }

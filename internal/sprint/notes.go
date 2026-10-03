@@ -100,7 +100,7 @@ var Decisions = map[string][]string{
 	NRed:             {"take the suspect off and resume", "rework the suspect"},
 	NCross:           {"rank that card first", "wait", "look at both", "return", "drop"},
 	NRejected:        {"resume", "return", "drop"},
-	NBlocked:         {"drop", "ack"},
+	NBlocked:         {"drop", "ack", CutDecision},
 	NMissingNeed:     {"drop", "ack"},
 	NCIRed:           {"rework with a fix", "return", "drop", "look", "ack"},
 	NReadsExhausted:  {"ask another reader", "rework", "drop"},
@@ -113,6 +113,11 @@ var Decisions = map[string][]string{
 	NSentinelReached: {"release", "do more before going on", "drop"},
 	NStalled:         {"look at the card", "wait"}, // each stall names its own
 }
+
+// CutDecision is the blocked judgment's third decision: the dead edge cut
+// (nova-sprint needs <card> --cut <need>), the card kept and its other needs
+// with it.
+const CutDecision = "cut the dropped need"
 
 // RepeatDecision is added to a judgment for a primary that came back a second
 // time for the same cause.

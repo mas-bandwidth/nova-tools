@@ -1226,7 +1226,7 @@ the tick would make, no other open judgment on it).
 | stream stopped: the merge queue rejected | resume, return, drop | no |
 | ci red on a primary | rework (with a fix), return, drop, card (look), ack (looked, nothing to do) | yes |
 | a primary came back a second time for the same cause | card (stop and look) | no |
-| a primary is blocked on something dropped | drop, ack (waives the dropped need) | yes |
+| a primary is blocked on something dropped | drop, ack (waives the dropped need), needs --cut (cuts the dead edge) | yes |
 | a primary is blocked on something missing | drop, ack (waives the named missing need) | yes |
 | reads exhausted | ask --another, rework, drop | no |
 | ready to accept | accept, rework, drop | no |
@@ -1278,7 +1278,22 @@ when there is one, is pushed it. add with a need on a
 dropped primary writes the blocked judgment in the same step. The blocked
 judgment names the dropped needs; acknowledging it waives those only (a need
 dropped later is its own judgment), and `card <id>` shows each waived need, by
-whom and when. An add counts only valid candidate IDs as proposed dependencies;
+whom and when. `needs <id> --cut <need>[,<need>...] --reason <text> [--answers <note>]`
+cuts DEPENDS-ON edges of a waiting primary or sentinel, each to a card dropped
+off the table in this epoch, so a chain behind a dropped card is mended where it
+breaks, with no card dropped and added again and no hold lost. It is refused,
+nothing written, for a card that is not waiting (past waiting every need has
+landed or was waived), for a need the card does not name, and for a need that is
+not dropped: a live need lands or is dropped first, and a missing one is
+answered by ack of its judgment. The card keeps each edge cut, by whom and when
+(`cut`, `cut_by`, `cut_at`), and the reason, one line of its timeline; every
+blocked judgment open on it that names a need cut closes in the same step
+(`--answers` names it), and the dropped needs that judgment named and the cut
+left are one blocked judgment again. The cut moves nothing: the next tick
+resolves the card to ready when nothing else holds it (a held card stays held, a
+sentinel is reached). The blocked judgment offers it as its third decision,
+beside drop and ack:
+`cut the dropped need: nova-sprint needs <card> --cut <dropped needs> --reason '<why>' --answers <note>`. An add counts only valid candidate IDs as proposed dependencies;
 a missing prerequisite refuses the dependent too. An add naming its ids is
 all or nothing, as every verb that names its cards is: one refused id refuses
 them all. A stored waiting primary
@@ -1576,6 +1591,7 @@ command that loads it.
 | rework | delegates the next attempt at once with a fix, and writes on that attempt's work card `fix`, `finding` (its broken reads' findings, each once) and `why` (how the attempt before ended: failed with its report, finished and found broken, or sent back), each cut to MaxCardTextBytes with a trailing `...` and never refused for its size, and kept on the primary too for a rework that deals later; its packet carries them to the child's JOB.md and `card` prints per attempt; ready when no member is up; a primary at its redeal bound (ready, its work card withdrawn) is reworked too, with `--fix`, its withdrawn card taken off; without `--fix` each primary's fix is the finding of its broken read, else the report of its failed work, and a primary with neither is refused by name; `--tier <flash|pro|frontier>` writes the tier on the primary (`tier`), and this attempt's deal and every later deal and read of the card draw from it over its brief's line 1, so a flash card that failed twice is reworked on pro, the same card and brief; it pins the card: the tier is its ceiling too and the machine never escalates it (section 5, flash first); a word that names no tier is usage (exit 2), and a card whose brief pins a model is refused by name, since it runs on its pin whatever its tier |
 | return | merging -> review, off the merge queue |
 | drop | off the table with the reason |
+| needs | `needs <id> --cut <need>[,<need>...] --reason <text> [--answers <note>]`: cuts a waiting card's DEPENDS-ON edges to cards dropped off the table, answering its blocked judgment (section 8) |
 | rank | changes a score and every copy |
 | brief | replaces the brief of a primary that has not started (the owner, 2026-10-01: "What other things should you be able to do to mutate a stopped sprint" / "Are there other verbs you need as you work with sprints?" / "I don't want you manually hopping in and working around it and doing manual stuff."): `brief <id> (--brief <text> \| --brief-file <path>) [--rules <file>]`; the new brief is held to the card lint and the size bound as `add --brief` holds one (the same function, refused exit 2, nothing written, with the lint's own lines); refused (exit 1, nothing written) on a RUNNING machine (`nova-sprint stop` first) and for a card that is no primary or has started: only a primary waiting or ready with no work card ever dealt (attempt 0) takes one, a card dealt, working, in review, merging or landed keeps its brief, its state named, and is refused so whatever the machine's state, with what changes it instead: from review `rework <id> --fix`, the next attempt's change (from merging after a `return`); from any open state a `drop` and the new brief added as a new card; once landed, a new card. The card keeps its id, stream, score and needs; before this verb the coordinator dropped the card and added it again, which changed its id and place (`sprint.Brief`) |
 | move | moves primaries that have not started to another stream (the owner, 2026-10-01: "What other things should you be able to do to mutate a stopped sprint" / "Are there other verbs you need as you work with sprints?" / "I don't want you manually hopping in and working around it and doing manual stuff."): `move <id>... --stream <s> [--before <id> \| --after <id> \| --score <n>]`, one step, all or none for the ids named; refused (exit 1, nothing written) on a RUNNING machine (`nova-sprint stop` first), for a card that is no primary or has started (only a primary waiting or ready with no work card ever dealt moves; a card dealt, working, in review, merging or landed keeps its stream, its state named), and for a card of the destination already (`rank` changes a place in line). The destination is placed exactly as `add` places cards (the same plan, on the sprint without the moved cards): a stream new to the sprint is made as `add --stream` makes one, the cards go in line by `--before`/`--after`/`--score`, else at the end in the order named, waiting or ready by their needs and the stream's sentinels, a reached sentinel behind them no longer reached, a cycle of needs refused naming it, and a ready card the destination would put behind a sentinel refused by the lifecycle (ready -> waiting is only the effect of inserting a sentinel; `--before` the sentinel moves it). The card is the same card moved: its id, brief, needs and admission stay, and a need naming it still holds (a need is by id) (`sprint.MoveCards`) |
@@ -2004,7 +2020,8 @@ and it is reached when they have landed. Only `release <id> --reason <text>`, by
 before it; the same step moves what
 waited behind it, up to the next sentinel, to ready as one set, marks reached
 any sentinel now due, and always writes a notification that it landed. A need
-it names that is dropped blocks it like any waiting card; ack waives the need.
+it names that is dropped blocks it like any waiting card; ack waives the need,
+and `needs <id> --cut <need>` cuts it.
 It counts in the sprint line and in waiting and landed, and the sprint is not
 done while one waits. A ready primary whose work card was withdrawn (no member
 up) stays ready when a sentinel is inserted in front of it: it has started,

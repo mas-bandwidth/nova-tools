@@ -61,6 +61,7 @@ func init() {
 		{"return", "(<id>... | --group <id> [--expect <n>]) [--reason <text>] [--answers <note>]", "return s1-7 --reason 'suspect of the red batch'", (*app).cmdReturn},
 		{"drop", "(<id>... | --stream <s> --col <state> | --group <id> [--expect <n>]) --reason <text> [--answers <note>]", "drop s1-9 --reason obsolete", (*app).cmdDrop},
 		{"rank", "<id>... (--score <n> | --first) [--answers <note>]", "rank s2-3 --first", (*app).cmdRank},
+		{"needs", "<id> --cut <need>[,<need>...] --reason <text> [--answers <note>]", "needs s2-1 --cut s1-1 --reason 's1-1 was dropped as obsolete; s2-1 stands without it'", (*app).cmdNeeds},
 		{"brief", "<id> (--brief <text> | --brief-file <path>) [--rules <file>]", "brief s1-4 --brief-file s1-4.md", (*app).cmdBrief},
 		{"move", "<id>... --stream <s> [--before <id> | --after <id> | --score <n>]", "move s1-4 s1-5 --stream s2", (*app).cmdMove},
 		{"merge", "--stream <s> [--batch <n>] [--conflict <id> | --cross <id>=<other> | --red [--suspect <id>...] | --rejected] [--note <text>]", "merge --stream s1 --batch 100", (*app).cmdMerge},
@@ -1935,6 +1936,29 @@ func (a *app) cmdDrop(args []string, stdout, stderr io.Writer) int {
 	}, func(ids []string, s *sel, c *common) store.Step {
 		return store.DropStep(sprint.DropReq{Sel: s.sel(ids), Reason: *reason, Answers: answers(*ans), Who: c.actor})
 	})
+}
+
+// cmdNeeds cuts DEPENDS-ON edges of a waiting card to cards dropped off the
+// table (sprint.CutNeeds): the dead edge goes and the card stays, so a chain
+// behind a dropped card is mended without dropping and adding it again.
+func (a *app) cmdNeeds(args []string, stdout, stderr io.Writer) int {
+	fs, c := a.verbSetup("needs")
+	var cut listFlag
+	fs.Var(&cut, "cut", "a need the card names that was dropped off the table in this epoch, the edge to remove; again or comma separated for more; a live or missing need is refused")
+	reason := fs.String("reason", "", "why the edge goes: recorded on the card and in its timeline")
+	ans := fs.String("answers", "", "the blocked judgment this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
+	ids, err := parse(fs, args)
+	if err != nil {
+		return refuse(stderr, "needs", err.Error())
+	}
+	if len(ids) != 1 || len(cut) == 0 || *reason == "" {
+		return refuse(stderr, "needs", "wants one waiting card, --cut <need> and --reason <text>")
+	}
+	st, err := a.store(*c)
+	if err != nil {
+		return refuse(stderr, "needs", err.Error())
+	}
+	return a.runStep("needs", *c, st, store.NeedsStep(sprint.NeedsReq{ID: ids[0], Cut: cut, Reason: *reason, Answers: answers(*ans), Who: c.actor}), stdout, stderr)
 }
 
 // cmdBrief replaces the brief of a primary that has not started (the owner,

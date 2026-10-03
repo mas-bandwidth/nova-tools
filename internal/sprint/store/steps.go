@@ -143,6 +143,16 @@ func MoveStep(r sprint.MoveReq) Step {
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.MoveCards(s, r) }}
 }
 
+// NeedsStep is the coordinator cutting a waiting card's needs on dropped cards
+// (sprint.CutNeeds): it reads the card and the needs it names, placed or not.
+func NeedsStep(r sprint.NeedsReq) Step {
+	return Step{Named: true, Args: ArgsOf(r), Verb: "needs", Load: tables(sprint.Work),
+		Extras: func(s *sprint.Snapshot) map[string][]string {
+			return map[string][]string{sprint.Work: append([]string{r.ID}, sprint.Split(s.Work.Placed(r.ID).F("needs"))...)}
+		},
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.CutNeeds(s, r) }}
+}
+
 // RankStep is the coordinator changing scores.
 func RankStep(r sprint.RankReq) Step {
 	return Step{Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "rank", Load: All,
