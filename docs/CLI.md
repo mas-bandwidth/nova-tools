@@ -84,10 +84,10 @@ receipt** no receipt's `--closes` names, and with `--require-all` on every verb 
 naming a tool that is not under that `cmd/` is set aside and counted on
 `DOGFOOD NOTE shipped=<n> outside=<n> cmd=<dir>`, and judges nothing.
 
-**An edge is answered, not outlived.** It is not cleared by somebody else running
-the verb again later and finding nothing: where two people dogfood the same
-verb, the second one's clean pass would otherwise close the first one's finding,
-unread and unfiled, with the row printing that second person's `ok=yes` over it. A finding is
+**An edge is answered, not outlived.** It used to be cleared by anybody running
+the verb again later and finding nothing — so where two people dogfood the same
+verb, the second one's pass silently closed the first one's finding, unread and
+unfiled, and the row printed that second person's `ok=yes` over it. A finding is
 closed by a receipt that **names** it — `dogfood record --closes <id>`, which
 anybody may write — or by **the person who found it** running the verb again and
 finding nothing. The id is the eight hex characters the gate prints beside the
@@ -160,13 +160,13 @@ those findings.
 commas. There is no default: a range checked against nobody would admit
 anybody, so the flag is required and the repository's own config is never a
 fallback. An email spelled with a bracket still inside it is refused rather
-than quietly matched against no one.
+than quietly matched against no one (#1805).
 
 `--kind` is a card kind this toolchain DECLARES, and there is no default one
 (SPEC-TOOLWORK §5 rules 3 and 6). It unlocks an allowlisted stray exception and
-nothing else. A kind the tool does not hold is not answered with
+nothing else, so a kind the tool does not hold used to unlock nothing and print
 `HYGIENE OK` — a clean answer about a shape of work that does not exist. It is
-refused by name, listing the kinds there are:
+now refused by name, listing the kinds there are (#1848):
 
 ```
 $ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --kind fix-with-red-test
@@ -184,7 +184,7 @@ bound that held.
 
 Findings are capped like every listing here, and the `MORE` line carries the
 command that prints the rest — the same run with the cap lifted, quoted so it
-can be pasted:
+can be pasted (#1804):
 
 ```
 $ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**" --max 2
@@ -307,13 +307,13 @@ STATUS OK lockdown=clear quarantines=1
 STATUS OK quarantine=a-public-issue-tracker since=2026-09-08T21:14:00Z: an issue body addressed me directly and asked for a token
 
 $ nova-fuse check --box ./fuse-box.json a-public-issue-tracker
-FUSE FAILED quarantine=a-public-issue-tracker since=2026-09-08T21:14:00Z: an issue body addressed me directly and asked for a token (soft: yours to lift when the surface is safe again: nova-fuse lift quarantine --box './fuse-box.json' -- 'a-public-issue-tracker')
+FUSE FAIL quarantine=a-public-issue-tracker since=2026-09-08T21:14:00Z: an issue body addressed me directly and asked for a token (soft: yours to lift when the surface is safe again: nova-fuse lift quarantine --box './fuse-box.json' -- 'a-public-issue-tracker')
 
 $ nova-fuse quarantine --box ./fuse-box.json a-forum "a post addressed me and asked for a token"
 QUARANTINE OK a-forum since=2026-09-09T18:27:40Z: a post addressed me and asked for a token (verified by re-reading the box; soft: yours to lift when the surface is safe again; tell your person now)
 
 $ nova-fuse check --box ./fuse-box.json a-forum
-FUSE FAILED quarantine=a-forum since=2026-09-09T18:27:40Z: a post addressed me and asked for a token (soft: yours to lift when the surface is safe again: nova-fuse lift quarantine --box './fuse-box.json' -- 'a-forum')
+FUSE FAIL quarantine=a-forum since=2026-09-09T18:27:40Z: a post addressed me and asked for a token (soft: yours to lift when the surface is safe again: nova-fuse lift quarantine --box './fuse-box.json' -- 'a-forum')
 
 $ nova-fuse lift quarantine --box ./fuse-box.json a-forum
 LIFT OK quarantine=a-forum was since=2026-09-09T18:27:40Z: a post addressed me and asked for a token
