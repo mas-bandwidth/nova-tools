@@ -1,14 +1,20 @@
 # Proposal: nova-decide, decisions and learning
 
-**Status: proposed rollout, with source reviewed at
-[PR #5175](https://github.com/mas-bandwidth/nova-tools/pull/5175), head
-`05c273e04a4cbf65257b09a6a1c3c9833469cbcc`, against dev
-`dc33c985809517cd67893f404ebd9ea40a3c5dbe`.** The PR implements `ask`, `read`,
-`outcome` and `calibrate`; export, training and sprint integration remain
-proposed. A completed retrospective calibration answers 234 cards in a reported
-97 seconds for about $0.05. It demonstrates useful ranking, but three known
-wrong cards fall below the proposed automatic-pass threshold. No first-read
-replacement threshold is established.
+**Status: proposed acceptance contract; implementation comparison pinned to dev
+`2ced4eeae1b5fe760074b32d4dcc3b66a39a755d`.** Layers 0–6 have implementation
+on that revision. Implementation and adoption are separate: the checks below
+remain requirements until their evidence is supplied. The five added layer PRs
+are #5204 (layer 2), #5206 (layer 3), #5201 (layer 4), #5207 (layer 5) and #5203
+(layer 6). This comparison is a source review, not an execution of those PRs or
+an independent reproduction of their model evaluations.
+
+The original layer-0 source review covers
+[PR #5175](https://github.com/mas-bandwidth/nova-tools/pull/5175) at
+`05c273e04a4cbf65257b09a6a1c3c9833469cbcc`. Its retrospective first-read
+calibration covers 234 cards in a reported 97 seconds for about $0.05.
+It demonstrates useful ranking, but three known wrong cards fall below the
+proposed automatic-pass threshold. No first-read replacement threshold is
+established. Export and backend training remain acceptance targets.
 
 nova-decide is a decision system that learns from the results of its decisions.
 It owns both sides: asking a named set of typed questions through a backend,
@@ -78,6 +84,72 @@ ID and an outcome only after its decision. Crash and concurrent-read behavior
 need their own evidence; the lock alone does not establish durability. Failure
 records, outcome correction and training export extend that same model before
 those transitions are adopted.
+
+## Implementation map and adoption bars
+
+The layer numbers below are stable. The implementation's numbered spec sections
+are a different index: layer 4 maps to section 9, layer 2 to sections 10–11,
+layer 3 to section 12, layer 5 to section 13 and layer 6 to section 14 of
+[the implemented spec](https://github.com/mas-bandwidth/nova-tools/blob/2ced4eeae1b5fe760074b32d4dcc3b66a39a755d/docs/SPEC-NOVA-DECIDE.md)
+at the pinned dev revision. The executable contract
+there describes the implemented verbs; this proposal defines the additional
+acceptance evidence for their adoption. A discrepancy is an open requirement,
+not permission to weaken the bar to match the implementation.
+
+| Layer | Implemented surface | Routing controls and acceptance status |
+| --- | --- | --- |
+| 0. Questions and record | `ask`, `outcome`, `calibrate`; shared [decide library](https://github.com/mas-bandwidth/nova-tools/tree/2ced4eeae1b5fe760074b32d4dcc3b66a39a755d/internal/decide) | Typed validation and replay exist; complete distributions, resolved model identity, failed-call records and record-model evidence remain required. |
+| 1. First read | `read`, sprint `FirstRead`; PR #5188 | `decide_bounce` routes at or above its bar; `decide_review` routes below its bar to an okay read without a strings read. The interval between them uses strings. This implemented route has no accepted replacement threshold in this proposal. |
+| 2. Grade and attempt | `grade`, `attempt`; PR #5204 | `decide_grade`, `decide_attempt_no_result` and `decide_attempt_nothing_to_do` ship empty. The reported 0.7 candidates do not authorize activation. Only the latter two attempt classes can change finish routing. |
+| 3. Gate cause | `gate`, member and lander integration; PR #5206 | `decide_gate_flaky` and `decide_gate_preexisting` ship empty. Both must be probabilities and, when both are set, sum above 1. Reported 0.8 candidates remain unaccepted; a model answer cannot turn a red gate green. |
+| 4. Score and findings | `score`, `findings`, post-land scoring; PR #5201 | `decide_score_bar` ships empty: scores are retained without raising its judgment. `findings --bar` defaults to 0.5 for clustering only. The reported 0.7 score candidate does not establish a finder rule or an independent calibration. |
+| 5. Routine judgment | `nova-sprint answer`; PR #5207 | `decide_judgment_bar` ships empty; `--bar` can override it. No bar means no action, including an interrupted action's resume. The 0.8 result is in-sample agreement with coordinator verbs, not an accepted action policy. |
+| 6. Card quality | `brief`, sprint add and lint integration; PR #5203 | `decide_brief_bar` ships empty, report only. The 0.5 need-question display cutoff is diagnostic, not a convergence bar. The implementation labels readings `uncalibrated=true`; no adoption bar is established. |
+
+These are source defaults, not a reading of a running sprint's configuration.
+A nonempty setting or an installed provider key does not supply the missing
+adoption evidence. Each routing policy needs a versioned eligible population,
+independent labels, a frozen threshold, error and coverage limits, and a rollback
+condition. Diagnostic scoring can collect evidence without approving automated
+routing. No setting is changed by this review.
+
+The source comparison leaves these requirements open:
+
+- **Layer 1:** `FirstRead` routes on `p(defect)` alone. It records but does not
+  reconcile the verdict and `inside_paths` answers, and supplies no rule text.
+  The acceptance check below still requires contradictory or incomplete evidence
+  to escalate and exact path enforcement to remain mechanical. A merged route
+  does not resolve the three demonstrated low-score wrong cases.
+- **Layer 2:** the implementation adds `provider-failure` as a sixth attempt
+  class. It never overrides a native provider-failure report with a model
+  classification; `done`, `needs-pro`, `wrong-scope` and `provider-failure` are
+  diagnostic only. Outcomes such as `landed`, `later-<tier>` and `dropped` describe
+  subsequent fate; they do not independently establish that an attempt was
+  correct, empty, or impossible. `nothing-to-do` needs verified satisfaction,
+  and tier adoption needs matched convergence evidence rather than the tier
+  that happened to land the card.
+- **Layer 3:** the source distinguishes an unrun base from a passing base and
+  retains `red-again` when a red rerun cannot distinguish causes. The reported
+  base-run calibration routes 24 of 39 labelled flaky failures as pre-existing
+  at 0.8. Keep the bars unset while adjudicating that confusion and validating
+  actual rerun and gate behavior.
+- **Layer 4:** findings are clusters of model scores, not independently verified
+  defects. No generated finder rule is accepted without its separate clean set,
+  mutation witness and measured false positives. Post-land scoring is detection
+  after the event; it supplies no retrospective permission to skip a read.
+- **Layer 5:** the source limits choices to offered verbs, reserves drop and
+  release for the coordinator, lists payment failures without asking, prevents
+  repeated application and records applying/applied/refused acts. Acceptance
+  still needs stale-state and interrupted-action evidence for the complete
+  consumer, including grouped judgments and the state at execution. The fixture
+  has no ready-to-accept examples; results for other kinds cannot certify that
+  kind. A card landing later does not prove a chosen judgment was sound.
+- **Layer 6:** the implementation can refuse under an explicitly configured bar,
+  but missing keys, unavailable configuration or unanswered requests can leave
+  add proceeding with a note. Report-only fallback is permissible while
+  collecting evidence; before adopting a semantic admission gate, its policy
+  must explicitly define these unknown cases. A brief-only packet also cannot
+  establish repository-wide ownership or dependency correctness by itself.
 
 ## The layers and their checks
 
@@ -230,8 +302,8 @@ review misses.
 ### 2. Work tier before an attempt, result after it
 
 The first decision grades the card as script, flash or pro before dealing it.
-The second classifies an attempt as done, nothing to do, wrong scope, no result
-or needs pro. These have different input times and labels. Convergence means reaching an independently accepted implementation of the
+The second classifies an attempt as done, nothing to do, wrong scope, no result,
+needs pro or provider failure. These have different input times and labels. Convergence means reaching an independently accepted implementation of the
 original task within a declared attempt budget. Record attempts until acceptance,
 abandonment and exhausted budgets as well as first-attempt acceptance. A script
 grade means a fully specified deterministic transformation with a mechanical
@@ -242,7 +314,7 @@ The grading input contains no later result; the result classifier cannot save
 an already spent attempt. Existing eligibility, capacity and gate rules remain
 authoritative.
 
-**Check:** exact-card fixtures for all five outcomes; a missing RESULT is not
+**Check:** exact-card fixtures for all six attempt classes; a missing RESULT is not
 classified as success; scope comparison remains mechanical; a claimed no-op
 requires a verified satisfied task. Compare grades on matched task classes using the same attempt budget and
 independent acceptance criteria: more tasks accepted within budget or fewer
