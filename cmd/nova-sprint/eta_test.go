@@ -1,13 +1,18 @@
 package main
 
 import (
+	"context"
+	"fmt"
+	"math"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 )
 
 // etaWork is a work table of one stream with these cards ready and landed.
@@ -91,17 +96,98 @@ func TestWhereShowsHeldCardsApart(t *testing.T) {
 
 // The view shows the largest estimate of the last 10 s, so the value is stable (Glenn,
 // 2026-10-01: "take largest ETA in last 10 secs, so it is a stable value"): a smaller
-// estimate is shown only once every larger one is 10 s old.
+// estimate is shown only once every larger one is 10 s old. The hold is over the same
+// cards to land (Glenn, 2026-10-02: "When you add new cards, the ETA needs to be made
+// dirty and recalculated."): an estimate over another count is dirty and forgotten.
 func TestTheViewHoldsTheLargestETAOfTheLastTenSeconds(t *testing.T) {
 	t.Parallel()
 	a := &app{}
 	t0 := time.Date(2026, 10, 1, 21, 0, 0, 0, time.UTC)
 	at := func(sec int) time.Time { return t0.Add(time.Duration(sec) * time.Second) }
-	assert.Equal(t, int64(40), a.heldETA(at(0), 40))
-	assert.Equal(t, int64(40), a.heldETA(at(2), 35), "a smaller estimate inside 10 s: the larger is held")
-	assert.Equal(t, int64(42), a.heldETA(at(4), 42), "a larger estimate shows at once")
-	assert.Equal(t, int64(42), a.heldETA(at(13), 30), "40 has aged out, 42 has not")
-	assert.Equal(t, int64(30), a.heldETA(at(14), 30), "42 is 10 s old: the largest of the last 10 s is 30")
-	assert.Equal(t, int64(0), a.heldETA(at(15), 0), "no estimate is shown as none")
-	assert.Equal(t, int64(5), a.heldETA(at(16), 5), "and nothing held survives it")
+	k := etaKey{all: 100}
+	assert.Equal(t, int64(40), a.heldETA(at(0), k, 40))
+	assert.Equal(t, int64(40), a.heldETA(at(2), k, 35), "a smaller estimate inside 10 s: the larger is held")
+	assert.Equal(t, int64(42), a.heldETA(at(4), k, 42), "a larger estimate shows at once")
+	assert.Equal(t, int64(42), a.heldETA(at(13), k, 30), "40 has aged out, 42 has not")
+	assert.Equal(t, int64(30), a.heldETA(at(14), k, 30), "42 is 10 s old: the largest of the last 10 s is 30")
+	assert.Equal(t, int64(0), a.heldETA(at(15), k, 0), "no estimate is shown as none")
+	assert.Equal(t, int64(5), a.heldETA(at(16), k, 5), "and nothing held survives it")
+	assert.Equal(t, int64(9), a.heldETA(at(17), k, 9))
+	assert.Equal(t, int64(4), a.heldETA(at(18), etaKey{all: 90}, 4), "cards dropped: the held estimate is dirty, the new one shows at once")
+	assert.Equal(t, int64(4), a.heldETA(at(19), etaKey{all: 90}, 3), "and is held over the new count")
+	assert.Equal(t, int64(2), a.heldETA(at(20), etaKey{all: 90, held: 5}, 2), "cards held: dirty")
+	assert.Equal(t, int64(3), a.heldETA(at(21), etaKey{all: 90}, 3), "cards released: dirty")
+}
+
+// An add, a drop and a release on a running sprint make its ETA dirty (Glenn, 2026-10-02:
+// "When you add new cards, the ETA needs to be made dirty and recalculated.";
+// nova-tools#5171): the tick that drains the change puts it on the work table, and the next
+// read of where and where --json shows the estimate recomputed over the new count of cards to
+// land at the rate measured, the time from the first start over the cards landed, with no
+// 10 s hold of the estimate made over the count before. No real time: the clock is the test's.
+func TestTheETAIsRecomputedOnTheTickAfterAnAddADropOrARelease(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b,reader-c --members m1,m2")
+	ta.ok("add --stream s1 --count 30")
+	ta.ok("start")
+	var w whereView
+	for round := 1; ; round++ {
+		require.Less(t, round, 200, "five never landed: %s", ta.ok("where"))
+		ta.ok("tick")
+		if ta.json("where", &w); w.Landed >= 5 {
+			break
+		}
+		ta.ok(fmt.Sprintf("play --seed %d --ticks 1 --every 1s --fail 0 --broken 0 --stuck 0 --cross 0 --batch 10 --take 20 --reads 20", round))
+		ta.coordinate()
+	}
+	ta.mu.Lock()
+	ta.now = ta.now.Add(40 * time.Minute) // a rate in minutes a card, not seconds
+	ta.mu.Unlock()
+	st := &store.Store{B: ta.m, Names: sprint.Names{}, Now: ta.a.now}
+	// read is where --json's summary, and the ETA the measured rate gives its count
+	read := func() (whereView, string) {
+		t.Helper()
+		var v whereView
+		ta.json("where", &v)
+		since, started := st.SinceFirstStart(context.Background())
+		require.True(t, started)
+		left := v.All - v.Landed - v.Held
+		want := int64(math.Ceil(float64(since) * float64(left) / float64(v.Landed) / float64(time.Minute)))
+		if want < 60 {
+			return v, fmt.Sprintf("-> ETA %dm", want)
+		}
+		return v, fmt.Sprintf("-> ETA %dh%dm", want/60, want%60)
+	}
+	before, want := read()
+	require.Contains(t, before.Summary, want, "the estimate before the add")
+	landed := before.Landed
+
+	ta.ok("add --stream s2 --count 20")
+	ta.ok("tick")
+	added, want := read()
+	require.Equal(t, landed, added.Landed, "nothing landed between: the rate is the same")
+	require.Equal(t, before.All+20, added.All, "the tick drained the add")
+	require.Contains(t, added.Summary, want, "20 more cards at the rate measured")
+	require.NotEqual(t, before.Summary, added.Summary)
+
+	ta.ok("drop s2-1 s2-2 s2-3 s2-4 s2-5 s2-6 s2-7 s2-8 s2-9 s2-10 s2-11 s2-12 --reason 'not wanted'")
+	ta.ok("tick")
+	dropped, want := read()
+	require.Equal(t, landed, dropped.Landed)
+	require.Equal(t, added.All-12, dropped.All, "the tick drained the drop")
+	require.Contains(t, dropped.Summary, want, "12 fewer cards at once, inside 10 s of the larger estimate")
+
+	ta.ok("add --stream s3 h1 h2 h3 h4 h5 h6 --held")
+	ta.ok("tick")
+	heldBack, want := read()
+	require.Equal(t, int64(6), heldBack.Held)
+	require.Contains(t, heldBack.Summary, "held=6 "+want, "held cards are not in the estimate")
+	ta.ok("release h1 h2 h3 h4 h5 h6 --reason 'the wave is loaded'")
+	ta.ok("tick")
+	released, want := read()
+	require.Equal(t, landed, released.Landed)
+	require.Zero(t, released.Held)
+	require.Contains(t, released.Summary, want, "6 released cards are in the estimate")
+	require.NotEqual(t, heldBack.Summary, released.Summary)
 }
