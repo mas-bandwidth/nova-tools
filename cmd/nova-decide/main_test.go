@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -100,7 +101,17 @@ func TestRefusalsNameEveryProblemAtOnce(t *testing.T) {
 			Says: "nope.json"},
 		{Args: []string{"ask", "--schema", td + "nope.json", "--state", td + "nope.txt", "--backend", "fixed", "--answers", td + "answers.json", "--record", rec}, Code: 2,
 			Says: "nope.txt"},
+		{Args: []string{"gate", "--output", td + "card.diff", "--card", td + "card.md", "--backend", "fixed", "--answers", td + "gate-answers.json", "--record", rec}, Code: 2,
+			Says: "holds no go test failure (no `--- FAIL:` or `FAIL <pkg>` line)"},
+		{Args: []string{"gate", "--output", td + "gate-output.txt", "--card", td + "card.md", "--backend", "fixed", "--answers", td + "gate-answers.json", "--record", rec, "--bars", "0.5,0.5"}, Code: 2,
+			Says: "sum to at most 1"},
+		{Args: []string{"gate", "--output", td + "gate-output.txt", "--card", td + "card.md", "--backend", "fixed", "--answers", td + "gate-answers.json", "--record", rec, "--bars", "0.8"}, Code: 2,
+			Says: "wants two probabilities, the flaky and the pre-existing bar"},
+		{Args: []string{"gate", "--output", td + "nope.txt", "--card", td + "nope.md", "--backend", "fixed", "--answers", td + "gate-answers.json", "--record", rec}, Code: 2,
+			Says: "nope.md"},
 		// a dry run whose backend cannot be made is refused as a dry run, never as a verb that may have written
+		{Args: []string{"gate", "--output", td + "gate-output.txt", "--card", td + "card.md", "--backend", "fixed", "--answers", td + "nope.json", "--record", rec, "--dry-run"}, Code: 2,
+			Says: "nope.json: no such file"},
 		{Args: []string{"read", "--card", td + "card.md", "--diff", td + "card.diff", "--backend", "fixed", "--answers", td + "nope.json", "--record", rec, "--dry-run"}, Code: 2,
 			Says: "nope.json: no such file"},
 		{Args: []string{"ask", "--schema", td + "schema.json", "--state", td + "state.txt", "--backend", "fixed", "--answers", td + "nope.json", "--record", rec, "--dry-run"}, Code: 2,
@@ -220,4 +231,63 @@ func TestAskReadsStdinAndNamesItsDecision(t *testing.T) {
 	require.Len(t, ds, 1)
 	assert.Equal(t, "Please rerun the check.\n", ds[0].State)
 	assert.Equal(t, "-", ds[0].Inputs["state"])
+}
+
+// gateReply answers each failure of the gate decision by the test its state names:
+// TestPortInUse flaky, every other caused.
+func gateReply(body []byte) ([]byte, error) {
+	var req struct {
+		State     string
+		Questions map[string]any
+	}
+	if err := json.Unmarshal(body, &req); err != nil || len(req.Questions) != 1 {
+		return nil, errors.New("not a gate request")
+	}
+	p := map[string]float64{"caused": 0.9, "flaky": 0.05, "pre-existing": 0.05}
+	if strings.Contains(req.State, "TestPortInUse in") {
+		p = map[string]float64{"caused": 0.05, "flaky": 0.85, "pre-existing": 0.1}
+	}
+	return json.Marshal(map[string]any{"answers": map[string]any{"class": map[string]any{"type": "choice", "choice": "caused", "probabilities": p}},
+		"usage": map[string]int{"input_tokens": 400, "output_tokens": 0}})
+}
+
+// gate asks each failing test of the output once through the backend, one decision under
+// <op>/<pkg>.<Test>, and prints each failure's class, p and route and the gate's route: with
+// no --bars (unset, the sprint row's default) every failure routes caused, and --bars routes
+// it; the same op again asks nothing; --base-red names the tests red at the base in each
+// state, and the record keeps no key. With no --op its id is the decision's name and a hash.
+func TestGateAsksEachFailureOnceAndRoutesTheGate(t *testing.T) {
+	t.Parallel()
+	calls := new(atomic.Int32)
+	jev := testkit.Main(decideTool(testWorld("k-test", calls, gateReply)).Run)
+	rec := filepath.Join(t.TempDir(), "decisions.jsonl")
+	gate := []string{"gate", "--output", td + "gate-output.txt", "--card", td + "card.md", "--diff", td + "card.diff", "--base-red", "TestPortInUse", "--backend", "jev", "--record", rec}
+	jev.Do(t, append(gate, "--op", "c1@1@gate", "--dry-run")...).Exit(0).Out("GATE OK op=c1@1@gate decision=gate backend=jev:jev-latest failures=2 recorded=no dry_run=true",
+		"GATE FAILURE key=example/tools/internal/serve.TestPortInUse id=c1@1@gate/example/tools/internal/serve.TestPortInUse state_bytes=")
+	assert.Zero(t, calls.Load())
+	jev.Do(t, append(gate, "--op", "c1@1@gate")...).Exit(0).Out(
+		"GATE OK op=c1@1@gate decision=gate backend=jev:jev-latest failures=2 route=caused",
+		"GATE FAILURE key=example/tools/internal/serve.TestPortInUse id=c1@1@gate/example/tools/internal/serve.TestPortInUse class=caused p=caused:0.05,flaky:0.85,pre-existing:0.1 route=caused recorded=new",
+		"GATE FAILURE key=example/tools/internal/greet.TestGreetNamesTheReader id=c1@1@gate/example/tools/internal/greet.TestGreetNamesTheReader class=caused p=caused:0.9,flaky:0.05,pre-existing:0.05 route=caused recorded=new")
+	assert.Equal(t, int32(2), calls.Load())
+	jev.Do(t, append(gate, "--op", "c1@1@gate", "--bars", "0.8,0.8")...).Exit(0).Out("route=flaky recorded=existing")
+	jev.Do(t, append(gate, "--op", "c1@1@gate", "--bars", "0.8,")...).Exit(0).Out("route=flaky recorded=existing")
+	assert.Equal(t, int32(2), calls.Load(), "the same op asks nothing")
+	jev.Do(t, append(gate, "--op", "c1@1@gate", "--bars", "0.9,0.8")...).Exit(0).Out("GATE OK op=c1@1@gate", "route=caused recorded=existing")
+	ds, err := decide.Load(rec)
+	require.NoError(t, err)
+	require.Len(t, ds, 2)
+	assert.Contains(t, ds[0].State, "AT THE BASE (the same test on the commit the card started from): red\n")
+	assert.Contains(t, ds[1].State, "AT THE BASE (the same test on the commit the card started from): green\n")
+	assert.Contains(t, ds[0].State, "CARD PATHS (the files the card may change): internal/greet/greet_test.go\n")
+	raw, err := os.ReadFile(rec)
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), "k-test")
+	r := jev.Do(t, "gate", "--output", td+"gate-output.txt", "--card", td+"card.md", "--backend", "jev", "--record", rec, "--json")
+	r.Exit(0)
+	var got struct {
+		Facts map[string]any `json:"facts"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(r.Stdout), &got), r.Stdout)
+	assert.Regexp(t, `^gate-[0-9a-f]{12}$`, got.Facts["op"])
 }

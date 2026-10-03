@@ -110,9 +110,9 @@ func TestTheFriendRowIsWhatSomeoneDecidesForHer(t *testing.T) {
 		assert.Equal(t, "flash,frontier,pro", strings.Join(Tiers, ","), assertionMsg98...)
 	}()
 	sprint, _ := Lookup(KindSprint)
-	assertionMsg100 := []any{"sprint %+v: one row, one optional ref to a friend and the decide read's two bars", sprint}
+	assertionMsg100 := []any{"sprint %+v: one row, one optional ref to a friend, the decide read's two bars and the gate decision's two", sprint}
 	require.True(t, sprint.Singleton, assertionMsg100...)
-	require.Len(t, sprint.Fields, 3, assertionMsg100...)
+	require.Len(t, sprint.Fields, 5, assertionMsg100...)
 	require.Equal(t, "coordinator", sprint.Fields[0].Name, assertionMsg100...)
 	require.Equal(t, TypeRef, sprint.Fields[0].Type, assertionMsg100...)
 	require.Equal(t, KindFriend, sprint.Fields[0].Ref, assertionMsg100...)
@@ -424,4 +424,40 @@ func TestAFriendsWidthDefaultsToEightAndIsAtLeastOne(t *testing.T) {
 	assert.Equal(t, "friend amy has width 0; a friend's width is the jobs she works at once, at least 1: want --width <n> with n >= 1", err.Error(), "one refusal")
 	assert.NoError(t, friend.Check(Row{Name: "amy", Fields: map[string]string{"width": "1"}}))
 	assert.Error(t, friend.Check(Row{Name: "amy", Fields: map[string]string{"width": "0"}}))
+}
+
+// The sprint row holds the two bars a failed gate's decisions are routed by
+// (docs/SPEC-SPRINT.md section 5, the gate verdict), empty by default: the decisions are
+// recorded and nothing is routed until the owner sets one. Each is a probability or empty;
+// two set ones sum above 1, so no failure meets both; a problem of each pair is named in one
+// error.
+func TestTheSprintRowHoldsTheGateBarsTogether(t *testing.T) {
+	t.Parallel()
+	sprint, _ := Lookup(KindSprint)
+	flaky, _ := sprint.Field(FieldDecideGateFlaky)
+	pre, _ := sprint.Field(FieldDecideGatePreexisting)
+	assert.Equal(t, []string{"", ""}, []string{flaky.Default, pre.Default})
+	assert.Equal(t, TypeDecimal, flaky.Type)
+	for _, tc := range []struct {
+		flaky, pre, says string
+	}{
+		{"0.8", "0.8", ""},
+		{"0.6", "0.5", ""},
+		{"", "", ""},
+		{"0.5", "0.5", "decide_gate_flaky 0.5 and decide_gate_preexisting 0.5 sum to at most 1"},
+		{"1.5", "0.8", "decide_gate_flaky 1.5 is not a probability"},
+		{"0.8", "", ""},
+		{"", "0.8", ""},
+		{"x", "", "decide_gate_flaky \"x\" is not a decimal; set each gate bar (--decide_gate_flaky, --decide_gate_preexisting) to a probability, or empty to record the decisions and route none"},
+	} {
+		err := sprint.Check(Row{Name: KindSprint, Fields: map[string]string{FieldDecideGateFlaky: tc.flaky, FieldDecideGatePreexisting: tc.pre}})
+		if tc.says == "" {
+			assert.NoError(t, err, "%+v", tc)
+		} else {
+			assert.ErrorContains(t, err, tc.says, "%+v", tc)
+		}
+	}
+	err := sprint.Check(Row{Name: KindSprint, Fields: map[string]string{FieldDecideBounce: "0.3", FieldDecideReview: "0.5", FieldDecideGateFlaky: "0.4", FieldDecideGatePreexisting: "0.4"}})
+	assert.ErrorContains(t, err, "decide_review 0.5 is above decide_bounce 0.3", "both pairs' problems in one error")
+	assert.ErrorContains(t, err, "sum to at most 1")
 }

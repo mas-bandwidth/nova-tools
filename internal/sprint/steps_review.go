@@ -38,6 +38,26 @@ const (
 	FieldDecideReview = "decide_review"
 )
 
+// A work card's gate decision fields: the sprint row's two bars on a failed gate's
+// decisions (docs/SPEC-SPRINT.md section 5, the gate verdict; internal/decide, GateBars).
+const (
+	FieldDecideGateFlaky       = "decide_gate_flaky"
+	FieldDecideGatePreexisting = "decide_gate_preexisting"
+)
+
+// gateFields is the bars every deal of a work card carries, at the deal (a redeal takes
+// the row's bars then): the sprint row's that are set. A bar left out is unset: its member's
+// native still records and shows each gate decision, and takes no route on that bar.
+func (s *Snapshot) gateFields() map[string]string {
+	out := map[string]string{}
+	for k, v := range map[string]string{FieldDecideGateFlaky: s.DecideGateFlaky, FieldDecideGatePreexisting: s.DecideGatePreexisting} {
+		if v != "" {
+			out[k] = v
+		}
+	}
+	return out
+}
+
 // decideFields is the bars a read of pr carries when it is a decide read: the first read
 // the ask places at pr's attempt (first: not --another or --instead, and no read that
 // stays at the attempt is one), drawn on flash (readTierOf), with both bars set in the

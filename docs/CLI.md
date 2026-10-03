@@ -2145,6 +2145,7 @@ network and no key (the transcript is in [TESTS.md](TESTS.md#nova-decide)):
 ```sh
 nova-decide ask --schema ./cmd/nova-decide/testdata/schema.json --state ./cmd/nova-decide/testdata/state.txt --backend fixed --answers ./cmd/nova-decide/testdata/answers.json --record ./decisions.jsonl --op first
 nova-decide read --card ./cmd/nova-decide/testdata/card.md --diff ./cmd/nova-decide/testdata/card.diff --backend fixed --answers ./cmd/nova-decide/testdata/read-answers.json --record ./decisions.jsonl --op card-1
+nova-decide gate --output ./cmd/nova-decide/testdata/gate-output.txt --card ./cmd/nova-decide/testdata/card.md --diff ./cmd/nova-decide/testdata/card.diff --base-red TestPortInUse --backend fixed --answers ./cmd/nova-decide/testdata/gate-answers.json --record ./decisions.jsonl --op c1@1@gate
 nova-decide outcome --record ./decisions.jsonl --id card-1 --label ok --note "the review found nothing"
 nova-decide calibrate --record ./cmd/nova-decide/testdata/record.jsonl --decision read --question defect --positive wrong --negative ok
 ```
@@ -2152,6 +2153,10 @@ nova-decide calibrate --record ./cmd/nova-decide/testdata/record.jsonl --decisio
 `read` prints `READ OK id= decision=read backend= verdict= p= tokens_in=
 tokens_out= recorded=new|existing` and one `READ ANSWER question= type= value=
 p=` line per question: a noul's `p=yes:<p>`, a choice's `p=<option>:<p>,...`.
+`gate` prints `GATE OK op= decision=gate backend= failures= route=caused|flaky|pre-existing`
+and one `GATE FAILURE key=<pkg>.<Test> id=<op>/<key> class= p= route= recorded=` line
+per failing test of the go test output, each one decision; a build failure is
+`route=caused recorded=unasked`.
 `calibrate` prints the AUC, one `BAR` line per `--bars` value (positives caught,
 negatives bounced) and the `CATCH-ALL` bar, the highest that flags every
 positive. What a first run gets wrong:
@@ -2163,6 +2168,11 @@ positive. What a first run gets wrong:
 - `calibrate` over a record with no positive or no negative outcome refuses:
   a bar is read from both; so does an option no decision names
   (`--question verdict=BOUNCEE`).
+- `gate` over output with no `--- FAIL:` or `FAIL <pkg>` line refuses: it reads a
+  red go test run; `--bars` is `<flaky>,<pre-existing>`, each a probability or empty,
+  two set ones summing above 1. With no `--bars` (as the sprint row's defaults) every
+  failure is recorded with its class and routed `caused`; `--bars 0.8,0.8` is the
+  starting point.
 - The same `--op` over another card, diff or schema refuses; over the same inputs it
   returns the recorded decision and asks nothing, so a long run resumes.
 

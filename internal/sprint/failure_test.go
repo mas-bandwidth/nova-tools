@@ -35,6 +35,8 @@ func TestSameFailureIsTheOneDefinitionOfAnIdenticalFailure(t *testing.T) {
 		{"another why", "nothing to do: done in #12; r", "nothing to do: the file is gone; r", "nothing to do: done in #12", false},
 		{"a provider failure is never the card's", "provider failure: provider: class=5xx status=502 msg=bad gateway", "provider failure: provider: class=5xx status=502 msg=bad gateway", "", false},
 		{"a staging refusal is the member's", "staging refused: no bench mirror", "staging refused: no bench mirror", "", false},
+		{"a gate red only on pre-existing failures is the base's", "pre-existing: TestA; pushed=abc to b: tests red in x", "pre-existing: TestA; pushed=def to b: tests red in x", "", false},
+		{"a test named pre-existing by the child alone is the card's", "verdict not-done; pre-existing: TestA", "verdict not-done; pre-existing: TestA", "verdict not-done; pre-existing: TestA", true},
 		{"an end with no line has no class", "", "", "", false},
 		{"a long reason is cut, and cut alike", long + "; a", long + "; b", cutText(long, MaxProviderErrorBytes), true},
 	} {

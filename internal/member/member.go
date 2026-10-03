@@ -137,7 +137,20 @@ type Result struct {
 	// (treeFinish; docs/SPEC-SPRINT.md, a card is a tree of steps). Judge names it as the
 	// failed finish's reason; "" for every other card.
 	Step string
+	// Gate is where native's gate decision sent a not-done child's red gate, its NATIVE GATE
+	// line's route (docs/SPEC-SPRINT.md section 5, the gate verdict): GatePreExisting, which
+	// Judge names as the failed finish's reason with GateTests; GateGreen (its flaky failures
+	// passed their rerun), which the reader of the result takes as the verdict ok; "" for none.
+	Gate      string
+	GateTests string
 }
+
+// The gate routes the member acts on (native's NATIVE GATE line): a gate red only on
+// pre-existing failures, and a gate whose every failure was flaky and passed its rerun.
+const (
+	GatePreExisting = cardhdr.EndPreExisting
+	GateGreen       = "green"
+)
 
 // The ends Judge names first in a failed finish.
 const (
@@ -207,6 +220,10 @@ func Judge(r Result, pu Push) (fin Finish, why string) {
 			why = strings.TrimSpace(why[len("nothing:"):])
 		}
 		return FinishFailed, cardhdr.EndNothing + ": " + why
+	case r.Verdict == "not-done" && r.Gate == GatePreExisting:
+		// the gate decision classed every failure that stayed red pre-existing: the base's
+		// or the member's, never the card's (sprint.FailureClass gives it no class)
+		return FinishFailed, cardhdr.EndPreExisting + ": " + r.GateTests
 	case r.Verdict != "ok":
 		return FinishFailed, "verdict " + r.Verdict
 	case pu.Sha == "":
@@ -256,6 +273,10 @@ type Packet struct {
 	// (docs/SPEC-SPRINT.md section 6, the decide read); empty for a strings read.
 	DecideBounce string `json:"decide_bounce,omitempty"`
 	DecideReview string `json:"decide_review,omitempty"`
+	// A work card's gate decision bars, as the deal wrote them on the work card
+	// (docs/SPEC-SPRINT.md section 5, the gate verdict); empty for none.
+	DecideGateFlaky       string `json:"decide_gate_flaky,omitempty"`
+	DecideGatePreexisting string `json:"decide_gate_preexisting,omitempty"`
 }
 
 // queueCard is one card of `nova-sprint queue --as <me> --json`. Its claim is the

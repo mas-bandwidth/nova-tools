@@ -152,6 +152,9 @@ type nativeRunConfig struct {
 	// test's; nil is Jev over its real transport with the key JEV_API_KEY holds, and the
 	// wall clock.
 	decider *decider
+	// gateRun, when set, is the gate decision's test runner (nativegate.go): a test's; nil
+	// runs go test in the child's wall with the child's environment.
+	gateRun gateRunner
 }
 
 // nativeRunResult is what one run records when the child has gone.
@@ -764,7 +767,8 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// gh pr create its finish), so the child meets the frame through the commands it knows.
 	// A frame that cannot be installed refuses the launch: a child outside its frame is the
 	// defect the frame closes.
-	decided := "" // the decide read's op id when a strings read follows it (nativedecide.go)
+	decided := ""   // the decide read's op id when a strings read follows it (nativedecide.go)
+	workStart := "" // a framed work card's start: the gate decision's base (nativegate.go)
 	if cfg.frame != nil && stageRes.Staged {
 		start, err := installFrameTimed(cfg, jobDir, stageRes.BaseSha, os.Stdout)
 		if err != nil {
@@ -779,6 +783,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			refuseNative(errOut, fmt.Sprintf("%s the card's frame could not be installed: %s", oneline.Field(cfg.label), oneline.Err(err)))
 			return nativeRunResult{}, 2
 		}
+		workStart = start
 		// THE DECIDE READ (nativedecide.go; docs/SPEC-SPRINT.md section 6): a flash card's
 		// first read is decided here, before any child, when its p(defect) is past a bar
 		switch route, op := nativeDecide(cfg, jobDir, start, stageRes.BaseSha, os.Stdout, errOut); route {
@@ -1488,6 +1493,16 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// the strings read after a decide read: its verdict is the decision's outcome
 	if decided != "" {
 		settleDecided(cfg, jobDir, decided, errOut)
+	}
+	// THE GATE VERDICT (nativegate.go; docs/SPEC-SPRINT.md section 5): a work card's red gate
+	// is classified, its flaky failures rerun once, before the member reports the take; a
+	// script card's steps are their own gate
+	if !res.lost && stepArgv == nil {
+		run := cfg.gateRun
+		if run == nil {
+			run = nativeGateRunner(wall, func(argv []string) []string { return nativeSandboxArgv(argv, cfg, dataHome, jobDir, tmpDir) }, childEnv, jobDir, goBin)
+		}
+		nativeGate(cfg, jobDir, tmpDir, workStart, run, os.Stdout, errOut)
 	}
 	// Publish after the blocked report and the asked report exist, and before any
 	// return that has finished the child: the sweep (and --sweep-now) run only once

@@ -124,6 +124,13 @@ const EndStaging = "staging refused"
 // never the card's, like a staging refusal.
 const EndLaunch = "launch refused"
 
+// EndPreExisting is how a member's failed finish begins when its child's gate was red only on
+// failures the gate decision classed pre-existing (docs/SPEC-SPRINT.md section 5, the gate
+// verdict): `pre-existing: <test>, ...`. The test fails without the card's change, at the base
+// or on the machine, so the failure is the base's or the member's and never the card's: it has
+// no failure class and is never the second identical failure (sprint.FailureClass).
+const EndPreExisting = "pre-existing"
+
 // EndNothing and EndNoCommit are how a member's failed finish begins when its child found
 // nothing to do (verdict nothing) or committed nothing: no new work. The sprint returns
 // such a rework to review at the head an earlier attempt pushed when a reader passed that

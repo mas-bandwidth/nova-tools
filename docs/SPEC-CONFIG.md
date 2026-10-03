@@ -48,7 +48,7 @@ Where each field of this cut sits:
 | machine (varies per machine) | `user`, `seat`, `slots`, `runners`, `width`, `tla`, `note` |
 | fleet (one value for the whole fleet) | `store`, `coordinator` (both machines), `redis_port`, `pg_dsn` |
 | friend (decided for her) | `slots`, `tiers`, `roles`, `width` |
-| sprint (one value for the whole sprint) | `coordinator` (a friend), `decide_bounce`, `decide_review` |
+| sprint (one value for the whole sprint) | `coordinator` (a friend), `decide_bounce`, `decide_review`, `decide_gate_flaky`, `decide_gate_preexisting` |
 | loop (decided per supervised process) | `machine`, `argv`, `seat`, `keys`, `every`, `keepalive`, `width`, `enabled` |
 | route (decided per way to run a tier) | `tier`, `provider`, `model`, `tokens`, `deadline`, `enabled`, and the price sheet: `price_input`, `price_cache_read`, `price_cache_write`, `price_output`, `reasoning_as_output`, `long_context`, `price_input_long`, `price_output_long`, `price_request`, `billing`, `gateway_percent`, `price_source`, `price_as_of`, `note` |
 | tier (decided per tier) | `routes` |
@@ -228,6 +228,8 @@ facts.
 | `coordinator` | ref friend | | the deal and the routing: who holds the coordinator role; `sprint set --coordinator <friend>` is the handover | `sprint:coordinator`, and the `coordinator` word in that friend's `friend:<f>:roles` |
 | `decide_bounce` | decimal, default 0.5 | | the ask: a flash card's first read is a decide read (docs/SPEC-SPRINT.md section 6), and p(defect) at or above this bar bounces the work; a probability, at least `decide_review`; both bars empty turns the decide read off | `sprint:decide_bounce` |
 | `decide_review` | decimal, default 0.3 | | the ask: below this bar the decide read lands the work with no model read; from it up to `decide_bounce` the card goes to a strings read | `sprint:decide_review` |
+| `decide_gate_flaky` | decimal, default empty | | the deal (on each work card) and the lander: a failing test of a red gate whose p(flaky) is at or above this bar is rerun once before the take or the batch is reported red (docs/SPEC-SPRINT.md section 5, the gate verdict); a probability, summing above 1 with `decide_gate_preexisting` when both are set; empty (the default) reruns nothing, and every gate decision is still recorded and shown; 0.8 is the starting point (docs/SPEC-NOVA-DECIDE.md section 9) | `sprint:decide_gate_flaky` |
+| `decide_gate_preexisting` | decimal, default empty | | the deal: a work card's failing test whose p(pre-existing) is at or above this bar is reported `pre-existing: <test>`, the base's or the member's, never the card's failure; empty (the default) reclassifies nothing; 0.8 is the starting point, not set yet because at 0.8 24 of the calibration's 39 flaky failures would have been reported pre-existing | `sprint:decide_gate_preexisting` |
 
 **`loop`** (`config.loops`): a supervised process on one machine. Every
 value is data in the row: the code names no machine, seat, secret or
@@ -407,7 +409,9 @@ config.sprint            (name PK = 'sprint', coordinator -> friends.name,
                           the migration; reader_tier added by 0010, dropped
                           by 0011; decide_bounce and decide_review added by
                           0021, text NOT NULL DEFAULT '0.5' and '0.3', a
-                          decimal or '')
+                          decimal or ''; decide_gate_flaky and
+                          decide_gate_preexisting added by 0022, text NOT
+                          NULL DEFAULT '' each, a decimal or '')
 config.loops             (name PK, machine -> machines.name, argv, seat, keys,
                           every, keepalive boolean, width, enabled boolean,
                           created_at, updated_at; CHECK exactly one of

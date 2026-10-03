@@ -697,7 +697,7 @@ Postgres and a throwaway Redis.
 
 ```text
 $ nova-config migrate --file try.json
-CONFIG MIGRATE file=try.json from=0 to=21 applied=21
+CONFIG MIGRATE file=try.json from=0 to=22 applied=22
 
 $ nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --as a1 --file try.json
 CONFIG ADD kind=machine name=m1 rev=1
@@ -758,8 +758,8 @@ RECEIPT OK session=s1 entry=e1 stamp=2026-09-17T12:05:00Z bytes=17 source=bench-
 ## nova-decide
 
 Fixture: `cmd/nova-decide/testdata/`: a schema and a state, a card and its
-diff, the fixed backend's answers for each, and a record of eight labelled read
-decisions. Every line below uses the fixed backend, so it needs no network and
+diff, a red gate's go test output, the fixed backend's answers for each, and a
+record of eight labelled read decisions. Every line below uses the fixed backend, so it needs no network and
 no key; `cmd/nova-decide/firstrun_test.go` runs each `$` line from a checkout
 root in one sitting, with `./decisions.jsonl` a file in the test's own
 directory. The ids come from `--op`, so every line reads the same twice.
@@ -780,6 +780,11 @@ READ ANSWER question=inside_paths type=noul value=yes p=yes:0.99
 READ ANSWER question=lines_changed type=noul value=yes p=yes:0.97
 READ ANSWER question=verdict type=choice value=LAND p=BOUNCE:0.05,LAND:0.92,UNSURE:0.03
 
+$ nova-decide gate --output ./cmd/nova-decide/testdata/gate-output.txt --card ./cmd/nova-decide/testdata/card.md --diff ./cmd/nova-decide/testdata/card.diff --base-red TestPortInUse --backend fixed --answers ./cmd/nova-decide/testdata/gate-answers.json --record ./decisions.jsonl --op c1@1@gate
+GATE OK op=c1@1@gate decision=gate backend=fixed failures=2 route=caused
+GATE FAILURE key=example/tools/internal/serve.TestPortInUse id=c1@1@gate/example/tools/internal/serve.TestPortInUse class=flaky p=caused:0.06,flaky:0.86,pre-existing:0.08 route=caused recorded=new
+GATE FAILURE key=example/tools/internal/greet.TestGreetNamesTheReader id=c1@1@gate/example/tools/internal/greet.TestGreetNamesTheReader class=flaky p=caused:0.06,flaky:0.86,pre-existing:0.08 route=caused recorded=new
+
 $ nova-decide outcome --record ./decisions.jsonl --id card-1 --label ok --note "the review found nothing"
 OUTCOME OK id=card-1 decision=read label=ok changed=true
 
@@ -791,10 +796,15 @@ CALIBRATE BAR at=0.9 caught=0 of=3 bounced=0 of_negatives=5
 CALIBRATE CATCH-ALL at=0.45 caught=3 of=3 bounced=1 of_negatives=5
 ```
 
-The first three lines write `./decisions.jsonl`; the fourth reads the fixture
-record, because a calibration wants positives and negatives both. With
-`--backend jev` the same `ask` and `read` lines ask the model instead, under
-`nova-secrets exec --only JEV_API_KEY`, and their lines carry the tokens spent.
+The first four lines write `./decisions.jsonl`; the fifth reads the fixture
+record, because a calibration wants positives and negatives both. The fixed
+backend answers every failure of the gate alike, and with no `--bars` (the sprint
+row's default) every failure is recorded with its class and routed caused, the
+take as reported; `--bars 0.8,0.8` routes both flaky; with `--backend jev` the same
+`ask`, `read` and `gate` lines ask the model instead, under
+`nova-secrets exec --only JEV_API_KEY`, each failure of a gate on its own. The
+gate decision's calibration records (base run, and base not run) are
+`internal/decide/testdata/gate-calibration-*.jsonl`.
 
 ## nova-redis
 

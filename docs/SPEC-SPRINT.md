@@ -697,6 +697,57 @@ and it is the coordinator's decision, receipted.
   (`tier=<t> ceiling=<t>`; `--json` `tier`, `ceiling`). One function decides
   the next tier for every bound that escalates (`Snapshot.NextTier`,
   `internal/sprint/route.go`): the take bound and the attempt bound.
+- The gate verdict (docs/SPEC-NOVA-DECIDE.md section 9; the owner, 2026-10-02,
+  layer 3 of the nova-decide plan: "gate verdict: flaky vs caused vs
+  pre-existing"). Every deal of a work card (a first deal, a redeal, a rework's)
+  writes the sprint row's gate bars that are set on it, `decide_gate_flaky` and
+  `decide_gate_preexisting` (nova-config, `sprint set`), read with the routes in
+  the same round trip (a store with no route reads none). **Both are empty by
+  default** (the coordinator's rule for every nova-decide layer): every gate
+  decision is made, recorded and shown, and nothing is rerun or reclassified until
+  the owner sets a bar; 0.8 each is the starting point (docs/SPEC-NOVA-DECIDE.md
+  section 9: with the base run, p(flaky) AUC 0.716, p(caused) 0.914,
+  p(pre-existing) 0.907; without it, p(pre-existing) 0.522), and it is not routed
+  yet because at 0.8 24 of the calibration's 39 flaky failures would have been
+  reported pre-existing. The packet hands the bars to the member, and
+  the member hands native the key `JEV_API_KEY` its loop's nova-secrets keys
+  hold (native's own: no child is handed it). When the child ends `verdict:
+  not-done` and the gate output it names (its result's `output:` file, inside the
+  job or the child's temp, else its body) holds go test failures, native, before
+  the member reports the take: runs the failing tests once at the work's start, in
+  a worktree, in the child's own wall and environment, bounded by `gateRunWait`
+  (three minutes; are they red at the base? a run past it is asked `not run`);
+  asks the gate decision of each failure over its lines, the base's result, the
+  gate's other failures, the card's PATHS and the diff's summary, recorded in the
+  machine's `<root>/decide/gate.jsonl` under `<primary>@<attempt>@gate/<pkg>.<Test>`;
+  reruns at the head, once and bounded the same, every failure flaky at or above
+  the flaky bar when it is set, and attaches each rerun's result as its decision's
+  outcome; and prints one line, `NATIVE GATE label=<l> op=<op>
+  route=<green|pre-existing|caused> tests=<names> classes=<Test>:<class>:<p>,...`,
+  every decision shown whatever the route:
+  - `green` (every failure flaky, and the rerun passed): the member reads the
+    child's verdict as ok, its report beginning `gate: <tests> flaky, green on the
+    rerun; `, and the take is judged as any ok take (its push), so the readers
+    read it;
+  - `pre-existing` (every failure that stayed red was classed pre-existing at or
+    above its bar): the take is failed `pre-existing: <tests>` (`member.Judge`,
+    `cardhdr.EndPreExisting`), the base's or the member's and never the card's:
+    `FailureClass` gives it no class, so it is never the second identical failure
+    and spends no bound (section 2), and its judgment is the failed work's as
+    before;
+  - `caused` (one failure caused, a rerun red again, or the bars unset): the take
+    as the child reported it.
+
+  A gate decision that cannot be made (no key, bars it cannot read, a backend that
+  fails) is one `NATIVE NOTE` line and the take is the child's; a base that cannot
+  be run is asked `not run`; a rerun that cannot run is red again. A script card's
+  steps are their own gate and are never decided. `tla/CardContract.tla`'s
+  `JudgeOf` is unchanged: the decision changes the verdict Judge reads (green) or
+  the reason of a failed finish (pre-existing), never the finish kinds. The
+  calibration of 2026-10-03 (60 failing tests of the coordinator bench's CI runs,
+  labelled by git and the other runs): with the base run, p(caused) AUC 0.914,
+  p(pre-existing) 0.907, p(flaky) 0.716, and at the starting bars no caused failure
+  was routed flaky or pre-existing (internal/decide, `TestTheGateCalibrationRecordsSupportTheBars`).
 - A route whose children end without a result rests (the owner, 2026-10-02,
   nova-tools#5174: "A route whose children end without a result three times is
   rested by the machine, never redealt on."). The tick's deal counts each route's
@@ -1178,6 +1229,23 @@ cards of its shape (negd-17, -32, -41: a file the card edited after a name card
 renamed it from the name its PATHS gives), which the review passed. A head that fails is taken off
 the batch branch and ends the batch as a head in conflict does: the conflict fact
 on it names every failure, `<file>:<line>` and the rule.
+
+**The lander's gate.** A batch whose `--check` is red on go test failures has each
+failure classified by the gate decision (docs/SPEC-NOVA-DECIDE.md section 9; section 5,
+the gate verdict) at the sprint row's bars, read once a land run, over its lines, the
+batch's PATHS and its diff from the base; the base is not run. Each decision is recorded
+and shown in a red batch's reason, `(the gate decision, <op>: <Test>:<class>:<p>,...;
+recorded; the flaky bar is unset, so nothing is rerun)` while the bar is empty, its
+default. When the flaky bar is set, no failure is caused and one is flaky at or above it,
+the check runs once more: green, the batch
+lands as any green batch; red, it is red as before, the reason ending `(run once more:
+the gate decision classed <tests> flaky, op <op>)`. The rerun's result is each flaky
+decision's outcome (`flaky`, or `red-again`). Every decision is in
+`<land root>/decide/gate.jsonl` under `land/<stream>@<tip 12>@gate/<pkg>.<Test>`. A gate
+red otherwise is red as before, its reason naming the decision's route; no key, or bars it
+cannot read, is red as before with why no decision was made. Asked with the base not run,
+the calibration of 2026-10-03 gave p(caused) AUC 0.8 and p(pre-existing) 0.522, so the
+lander acts on flaky alone.
 
 A cross-stream need is recorded as data on the stuck card (the needed card and
 its stream); it is resolved when that card has landed, and ranking the needed
