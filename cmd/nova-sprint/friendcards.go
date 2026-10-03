@@ -168,8 +168,6 @@ func friendFinish(ctx context.Context, name string, p sprint.Packet, report stri
 			return r, fmt.Errorf("Head %s is not origin's tip of %s, %s", head, p.Branch, at)
 		}
 		r.Head, r.Report = at, "friend "+name+" LAND: "+para
-	case verdict == VerdictLand && head == "":
-		return r, errors.New("a LAND report must name the commit Head: <full sha>, none given")
 	case verdict == VerdictLand:
 		r.Failed, r.Report = true, "friend "+name+" LAND with no Head: <full sha>; "+para
 	case verdict == VerdictHold || verdict == VerdictFail || verdict == "FAILED" || verdict == "BROKEN":
