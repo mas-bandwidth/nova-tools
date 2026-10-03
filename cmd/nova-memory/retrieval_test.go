@@ -58,11 +58,13 @@ func TestRetrievalJSONAndTextCarryTheSameSourceEvidence(t *testing.T) {
 
 func TestRetrievalJSONRefusalReportsAllMissingInputs(t *testing.T) {
 	t.Parallel()
-	code, stdout, stderr := runCLI(t, "", "search", "--json")
+	code, raw, stderr := runCLI(t, "", "search", "--json")
 	assert.Equal(t, 2, code)
-	assert.Empty(t, stdout)
+	assert.Empty(t, stderr)
+	var out map[string]any
+	require.NoError(t, json.Unmarshal([]byte(raw), &out))
 	for _, missing := range []string{"--root", "--k", "--channels", "no query words"} {
-		assert.Contains(t, stderr, missing)
+		assert.Contains(t, raw, missing)
 	}
 }
 

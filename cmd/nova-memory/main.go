@@ -58,10 +58,13 @@ const (
 const calibrationProbe = "the quarterly marketing budget for the regional office needs revised headcount projections before the fiscal deadline"
 
 // noteLexical prints on every retrieval run, pass or fail. This is a lexical
-// index and nothing else.
+// index and nothing else: a green from a partial instrument reads exactly
+// like a green from a complete one.
 const noteLexical = "lexical only — a paraphrase sharing almost no vocabulary with the corpus will not surface in any lexical top-k, and no channel here is semantic"
 
-// failMaxRemedy is the second half of every MORE line verify and eval print.
+// failMaxRemedy is the second half of every MORE line this binary prints. A cap with no
+// remedy is censorship; a cap with one is an index, so the line that says what was not
+// shown says in the same breath how to see it.
 const failMaxRemedy = "--fail-max <n> raises the ceiling, --fail-max 0 prints every finding"
 
 func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
@@ -309,6 +312,13 @@ func (r *rootFlags) build() (*memindex.Corpus, time.Duration, string) {
 	return memindex.Merge(parts, r.root), time.Since(t0), ""
 }
 
+// scoreFields renders the native-score pair. The score is the chunk's score in
+// the channel that ACTUALLY surfaced it, and that channel is named on the same
+// line, because a fused hit in a multi-channel run need not have been scored
+// by the first channel named — and a fabricated 0.00 read against the
+// calibration band says "weaker than unrelated control text" about a hit that
+// was never scored there at all. "-" in both fields when nothing scored it, so
+// the field count never changes.
 func scoreFields(score float64, chn string) string {
 	if chn == "" {
 		return "score=- score-channel=-"
@@ -316,6 +326,11 @@ func scoreFields(score float64, chn string) string {
 	return fmt.Sprintf("score=%.2f score-channel=%s", score, chn)
 }
 
+// hitLine renders one receipt as a single machine-scannable line. Absent
+// frontmatter prints as "-" so the field count never changes. The class, the
+// name and the type are the corpus's own text and are fields, so each is one
+// token; the file is a positional slot and keeps its spaces; the snippet is
+// Go-quoted, which is one line in a different escape form.
 func hitLine(token, prefix string, rank int, h memindex.FileHit) string {
 	name, typ := h.FMName, h.FMType
 	if name == "" {
@@ -355,18 +370,18 @@ func statsFlags(f *tool.Flags) {
 }
 
 func searchFlags(f *tool.Flags) {
-	retrievalFlags(f, "no query words given; refusing to guess", func(n int) bool { return n > 0 })
+	retrievalFlags(f)
 }
 
 func checkFlags(f *tool.Flags) {
-	retrievalFlags(f, "name exactly one candidate file, or - for stdin; refusing to guess", func(n int) bool { return n == 1 })
+	retrievalFlags(f)
 }
 
 // retrievalFlags declares the flags search and check share. Prints is set
 // because the skeleton cannot render the query prose tail, the MEMORY token
 // or the file:line receipt (docs/STANDARD.md section 2); retrieval.go keeps
 // that printer, named as kept.
-func retrievalFlags(f *tool.Flags, wordsProblem string, wordsOK func(int) bool) {
+func retrievalFlags(f *tool.Flags) {
 	f.Prints()
 	f.Bool("json", false, "render the retrieval result as JSON of the same evidence")
 	addRootFlags(f.FlagSet)
@@ -374,14 +389,48 @@ func retrievalFlags(f *tool.Flags, wordsProblem string, wordsOK func(int) bool) 
 	f.Int("k", 0, kHint)
 	var words multiFlag
 	f.Var(&words, "words", "the free words after the flags; also accepted positionally")
-	f.Check(func(c *tool.Call) {
-		wantChannels(c)
-		wantK(c)
-		wantRoot(c)
-		if !wordsOK(len(wordsOf(c))) {
-			c.Problem(wordsProblem)
+}
+
+// retrievalChecks returns every reason search or check cannot run, in the order
+// the refusal is printed, so one invocation names every independent problem.
+func retrievalChecks(c *tool.Call, wordsProblem string, wordsOK func(int) bool) []string {
+	var probs []string
+	if !c.Given("channels") {
+		probs = append(probs, "--channels is required; it wants "+channelsHint+"; refusing to guess")
+	} else {
+		if strings.TrimSpace(c.Str("channels")) == "" {
+			probs = append(probs, "--channels named no channels; refusing to guess; "+channelsHint)
+		} else if _, prob := channelNames(c.Str("channels")); prob != "" {
+			probs = append(probs, prob)
 		}
-	})
+	}
+	if !c.Given("k") {
+		probs = append(probs, "--k is required; it wants "+kHint+"; refusing to guess")
+	} else if c.Int("k") <= 0 {
+		probs = append(probs, fmt.Sprintf("--k must be a positive receipt budget (got %d); refusing to guess", c.Int("k")))
+	}
+	if len(c.Get("root").([]string)) == 0 {
+		probs = append(probs, "--root is required; it wants "+rootHint+"; refusing to guess")
+	}
+	if !wordsOK(len(wordsOf(c))) {
+		probs = append(probs, wordsProblem)
+	}
+	return probs
+}
+
+// retrievalRefuse renders a refusal for search or check. When --json is set
+// the refusal is the JSON of the same result on stdout and the skeleton is told
+// the result is already printed; otherwise the skeleton renders the usual text
+// refusal on stderr.
+func retrievalRefuse(c *tool.Call, verb string, probs ...string) *tool.Out {
+	if c.Bool("json") {
+		out := tool.Refuse(probs...)
+		out.Verb = verb
+		out.Remedy = "nova-memory help"
+		out.Render(c.Stdout, true)
+		return tool.Exit(2)
+	}
+	return tool.Refuse(probs...)
 }
 
 func verifyFlags(f *tool.Flags) {
@@ -498,8 +547,20 @@ var quickstartFunctionWords = map[string]bool{
 	"would": true, "you": true, "your": true,
 }
 
+// commandLine renders a step's argv as a line a reader can PASTE BACK into the
+// shell of the machine that printed it. Every argument goes through
+// oneline.Escape first, so the echo is one line whatever an argument holds —
+// Escape keeps a path's spaces and its backslashes, which is what a path is
+// made of. The quoting on top of that is the shell's, and WHICH shell is a
+// platform fact rather than a style: rendering an argument as a Go string
+// literal doubled every backslash in it, so on Windows the echoed check step
+// named a path that does not exist, in a line that does not paste. Nothing is
+// quoted that does not need it, so the ordinary case — a path of ordinary
+// characters — is echoed verbatim on every platform.
 func commandLine(argv []string) string { return commandLineFor(argv, runtime.GOOS == "windows") }
 
+// commandLineFor is commandLine with the platform passed in, so both shells'
+// rules are testable from either one.
 func commandLineFor(argv []string, windows bool) string {
 	parts := make([]string, 0, len(argv))
 	for _, a := range argv {
@@ -508,17 +569,34 @@ func commandLineFor(argv []string, windows bool) string {
 	return strings.Join(parts, " ")
 }
 
+// shellArg renders one argument for that platform's shell, and quotes only
+// when the argument holds something the shell would otherwise act on.
 func shellArg(s string, windows bool) string {
 	esc := oneline.Escape(s)
 	if esc != "" && !needsQuoting(esc, windows) {
 		return esc
 	}
 	if windows {
+		// cmd.exe and PowerShell both take a double-quoted argument literally,
+		// backslashes included, which is exactly what a Windows path needs. A
+		// double quote cannot appear in a Windows path at all; one arriving
+		// from --words is doubled, which is how that shell spells its own
+		// quote.
 		return `"` + strings.ReplaceAll(esc, `"`, `""`) + `"`
 	}
+	// A single-quoted POSIX word is literal up to its closing quote, so the
+	// backslashes, dollars and spaces inside it survive the paste. The one
+	// character it cannot hold is its own quote, which is closed, escaped and
+	// reopened.
 	return "'" + strings.ReplaceAll(esc, "'", `'\''`) + "'"
 }
 
+// needsQuoting is true for every character but the ones a shell hands to the
+// program unchanged. The list is deliberately short — anything unlisted is
+// quoted, which is never wrong, only noisier — and it differs by platform in
+// the two characters this bug was about: a backslash is a path separator on
+// Windows and an escape on a POSIX shell, and a tilde is an ordinary character
+// in a short Windows path (RUNNER~1) and an expansion on a POSIX one.
 func needsQuoting(s string, windows bool) bool {
 	for _, r := range s {
 		switch {
@@ -714,10 +792,13 @@ func readPin(name string) ([]string, error) {
 }
 
 func cmdSearch(c *tool.Call) *tool.Out {
+	if probs := retrievalChecks(c, "no query words given; refusing to guess", func(n int) bool { return n > 0 }); len(probs) > 0 {
+		return retrievalRefuse(c, "search", probs...)
+	}
 	names, _ := channelNames(c.Str("channels"))
 	corpus, _, prob := rootsOf(c).build()
 	if prob != "" {
-		return tool.Refuse(prob)
+		return retrievalRefuse(c, "search", prob)
 	}
 	chans := newChannels(corpus, names)
 	query := strings.Join(wordsOf(c), " ")
@@ -728,15 +809,18 @@ func cmdSearch(c *tool.Call) *tool.Out {
 }
 
 func cmdCheck(c *tool.Call) *tool.Out {
+	if probs := retrievalChecks(c, "name exactly one candidate file, or - for stdin; refusing to guess", func(n int) bool { return n == 1 }); len(probs) > 0 {
+		return retrievalRefuse(c, "check", probs...)
+	}
 	names, _ := channelNames(c.Str("channels"))
 	src, name, prob := openCandidate(c)
 	if prob != "" {
-		return tool.Refuse(prob)
+		return retrievalRefuse(c, "check", prob)
 	}
 	defer src.Close()
 	raw, err := io.ReadAll(src)
 	if err != nil {
-		return tool.Refuse(fmt.Sprintf("reading %s: %s", oneline.Escape(name), oneline.Err(err)))
+		return retrievalRefuse(c, "check", fmt.Sprintf("reading %s: %s", oneline.Escape(name), oneline.Err(err)))
 	}
 	var candidates []string
 	for _, p := range strings.Split(memindex.NormalizeNewlines(string(raw)), "\n\n") {
@@ -745,11 +829,11 @@ func cmdCheck(c *tool.Call) *tool.Out {
 		}
 	}
 	if len(candidates) == 0 {
-		return tool.Refuse(fmt.Sprintf("%s holds no candidate paragraph of at least %d terms; nothing to check", oneline.Escape(name), memindex.MinTerms))
+		return retrievalRefuse(c, "check", fmt.Sprintf("%s holds no candidate paragraph of at least %d terms; nothing to check", oneline.Escape(name), memindex.MinTerms))
 	}
 	corpus, _, prob := rootsOf(c).build()
 	if prob != "" {
-		return tool.Refuse(prob)
+		return retrievalRefuse(c, "check", prob)
 	}
 	chans := newChannels(corpus, names)
 	result := retrievalResult{Verb: "check", Source: name, K: c.Int("k"), Channels: chanNames(chans), Files: len(corpus.Files), Chunks: len(corpus.Chunks), Calibration: calibrationHits(corpus, chans), Notes: []string{noteLexical, "this verb asserts nothing and never exits 1: it hands you k receipts and the verdict stays yours", "a hit in a dated log class is evidence the event was recorded, not that the lesson was banked — the class on each receipt is the distinction"}}
