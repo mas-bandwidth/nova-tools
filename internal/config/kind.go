@@ -180,6 +180,32 @@ const (
 // still sees exactly one coordinator.
 var FriendRoles = []string{"builder", "may-hold", "reader"}
 
+// DefaultFriendWidth is a friend's width when her row names none: the jobs
+// she works at once (the owner, 2026-10-02: "6/1 seems a bit wrong -- need to
+// setup width for friends? Start at 8 for each?"). Migration 0018 fills every
+// row there before it with this; nova-sprint friend sync reads a row without
+// the field as this.
+const DefaultFriendWidth = 8
+
+// FriendWidth is a friend row's width: its width field, DefaultFriendWidth
+// when the row has none.
+func FriendWidth(r Row) int {
+	if r.Fields["width"] == "" {
+		return DefaultFriendWidth
+	}
+	return r.Int("width")
+}
+
+// checkFriend is the friend kind's Check: her width is at least 1, a friend
+// working no job at once being no friend of the sprint's (remove the row
+// instead). A width that failed its own validation is absent and skipped.
+func checkFriend(r Row) error {
+	if w, ok := r.Fields["width"]; ok && w != "" && r.Int("width") < 1 {
+		return fmt.Errorf("friend %s has width %s; a friend's width is the jobs she works at once, at least 1: want --width <n> with n >= 1", r.Name, w)
+	}
+	return nil
+}
+
 // Tiers are the model tiers a friend can do, capacity.lua's filter_ok
 // spelling (frontier, pro, flash).
 var Tiers = []string{"flash", "frontier", "pro"}
@@ -242,12 +268,14 @@ var Kinds = []*Kind{
 		// know").
 		Name:  KindFriend,
 		Table: "friends",
-		Doc:   "an AI friend: how wide she runs, which tiers she can do, and her roles",
+		Doc:   "an AI friend: her slots, which tiers she can do, her roles, and her width, the jobs she works at once",
 		Fields: []Field{
 			{Name: "slots", Type: TypeInt, Required: true, Help: "her desired slots, under the ceiling of the machine her beat reports; no machine's width"},
 			{Name: "tiers", Type: TypeList, Enum: Tiers, Required: true, Help: "which tiers she can do: comma list of " + strings.Join(Tiers, ", ")},
 			{Name: "roles", Type: TypeList, Enum: FriendRoles, Help: "comma list of " + strings.Join(FriendRoles, ", ") + " (who coordinates is the sprint row's)"},
+			{Name: "width", Type: TypeInt, Default: strconv.Itoa(DefaultFriendWidth), Help: "the jobs she works at once, the width nova-sprint friend sync sets on her friends row; at least 1, " + strconv.Itoa(DefaultFriendWidth) + " by default"},
 		},
+		Check: checkFriend,
 		ApplyOrder: func(r Row) int {
 			if hasWord(r.Fields["roles"], CoordinatorRole) {
 				return 0

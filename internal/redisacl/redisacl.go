@@ -50,7 +50,7 @@ var Families = []Family{
 	{"sprint", []string{"sprint:*"}, "internal/sprint Names.Key: the epoch, the beats, the tick's keys"},
 	{"machines", []string{"machine:*", "machines"}, "internal/config MachineKey, MachineCeilingKey, MachinesKey"},
 	{"beats", []string{"bench:*"}, "internal/config BeatKey: a machine's measured facts"},
-	{"friends", []string{"friend:*", "friends", "friends:*"}, "internal/config FriendBeatKey, FriendsKey: a friend's beat, desired slots and roles"},
+	{"friends", []string{"friend:*", "friends", "friends:*"}, "internal/config FriendBeatKey, FriendsKey: a friend's beat, desired slots, width and roles"},
 	{"fleet", []string{"fleet:*"}, "internal/config FleetKey"},
 	{"loops", []string{"loops", "loop:*"}, "internal/config LoopsKey, LoopKey"},
 	{"routes", []string{"routes", "route:*"}, "internal/config RoutesKey, RouteKey"},
