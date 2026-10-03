@@ -1292,6 +1292,35 @@ two OSes); the class test does not time a hosted leg, a certification run does. 
 ci.yml's (lint on every event, test-hosted on push); a package's race compile in
 its shard is the macOS and Linux compile of the race build.
 
+### `cert-perf-shards` — discover every perf test once and run each package on its own runner
+
+**The rule.** certification.yml's `perf-plan` discovers the tests added by the
+`perf` tag across the live tree, vets every selected package, and saves the
+compiled cache before `perf` starts. Its complete package-and-regexp list becomes
+one Linux matrix leg per package. Each leg runs uncached, without race
+instrumentation, with `-p 1 -parallel 1` and the same 60-second test timeout.
+Both jobs keep the two-minute cap; one failed leg does not cancel the others.
+`certification-ok` requires discovery and every matrix leg to succeed.
+**The mistake it prevents.** Run 37159703304 spends 70 seconds discovering
+17 packages and reaches only the first package before the job cap cancels it.
+Separating discovery from execution gives each wall-clock leg its own job
+budget and the compiled cache. A failed ordinary or tagged test listing must fail discovery,
+because treating it as an empty list silently omits a broken package from both
+the matrix and vet.
+**The test.** `TestCertificationPerfRunsEveryDiscoveredPackage`
+(`internal/ci/cert_perf_shards_class_test.go`) holds the discovery output, complete
+matrix axis, quoted package and regexp environment values, serial test command,
+job caps, vet/cache ordering, and both aggregate dependencies.
+`TestPerfRunsRefuseEitherFailedTestListing` (`internal/pkgselect`) refuses a
+failed ordinary or tagged listing even after another package yields valid tests.
+**Its allowlist.** None.
+**Its remedy line.** Restore the complete discovered matrix and its aggregate
+dependencies, or fix the package that cannot list its tests; never skip the
+package, add a fixed test list, or raise the cap.
+**Its narrowings.** The class test reads workflow structure; it does not execute
+GitHub's matrix expansion or measure hosted runtime. The selector's negative
+controls use a fake command runner. Hosted certification measures the timing.
+
 ### `release-legs` — the release and its dry run build one leg per platform and sum the whole set on one machine
 
 **The rule.** release.yml's `build` and certification.yml's `release-build` are a
