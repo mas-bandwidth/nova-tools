@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"maps"
 	"net/url"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
@@ -206,13 +207,14 @@ var Kinds = []*Kind{
 	{
 		Name:  KindMachine,
 		Table: "machines",
-		Doc:   "a machine of the fleet, named by its tailnet host: the login, the seat, its ceiling, its runners, and the sprint member's width on it",
+		Doc:   "a machine of the fleet, named by its tailnet host: the login, the seat, its ceiling, its runners, the sprint member's width on it, and whether it is a TLC record machine",
 		Fields: []Field{
 			{Name: "user", Type: TypeText, Required: true, Help: "the login the plays and seals use on it (ssh <user>@<name>)"},
 			{Name: "seat", Type: TypeText, Required: true, Help: "its nova-secrets seat: the identity it opens secrets as, one <seat>.yaml in the store"},
 			{Name: "slots", Type: TypeInt, Required: true, Help: "the machine ceiling apply writes to machine:<m>:ceiling, which the friends' desired slots must fit under; not the sprint's width"},
 			{Name: "runners", Type: TypeInt, Help: "how many CI runners it hosts; 0 (the default) hosts none"},
 			{Name: "width", Type: TypeInt, Help: "the most work cards the sprint's member on it runs at once, what nova-sprint fleet sync sets; set apart from --slots, never derived from it; 0 (the default) is no member, dealt no work"},
+			{Name: "tla", Type: TypeBool, Help: "a TLC record machine: the tools play installs the pinned TLC jar on it and tlacheck run --bench any picks among them; false (the default) is none"},
 			noteField("why the machine is as it is: a hold, a rest, the load that was measured"),
 		},
 	},
@@ -270,7 +272,7 @@ var Kinds = []*Kind{
 		// from the name (LoopLog), never typed.
 		Name:  KindLoop,
 		Table: "loops",
-		Doc:   "a supervised loop on one machine: its command, the seat and secret names it opens, and how it runs (every n seconds or kept alive)",
+		Doc:   "a supervised loop on one machine: its command, the seat and secret names it opens, and how it runs (every n seconds or kept alive); a nova-swarm member's width, a reader's too, is its machine row's, never the argv's",
 		Fields: []Field{
 			{Name: "machine", Type: TypeRef, Ref: KindMachine, Required: true, Help: "the machine it runs on (a machine row)"},
 			{Name: "argv", Type: TypeArgv, Required: true, Help: `the command as a JSON array of strings, the program first: '["/path/prog","--flag","v"]'; never a secret, which goes by name in --keys`},
@@ -278,7 +280,6 @@ var Kinds = []*Kind{
 			{Name: "keys", Type: TypeKeys, Help: "comma list of the names of the secrets it needs from the seat (API_KEY,...), never a value; empty when none"},
 			{Name: "every", Type: TypeInt, Help: "seconds between runs of a periodic loop; 0 (the default) when it is kept alive"},
 			{Name: "keepalive", Type: TypeBool, Help: "true for a long-running unit restarted when it exits; false (the default) when it runs --every n"},
-			{Name: "width", Type: TypeInt, Help: "the --width its command runs with: above 0 it replaces the argv's --width, or is appended when the argv has none; 0 (the default) runs the argv as written. A reader loop's width; a work member's is its machine row's (machine set <m> --width <n>), so leave it 0 there"},
 			{Name: "enabled", Type: TypeBool, Default: "true", Help: "false writes the unit and does not start it; true (the default) runs it"},
 		},
 		Check: checkLoop,
@@ -455,49 +456,9 @@ func checkRouteChanges(changes map[string]string) error {
 // it into the loop's Redis hash beside the row's fields.
 func LoopLog(name string) string { return "~/nova-bench/loops/" + name + ".log" }
 
-// LoopCommand is the command a loop's unit runs: its argv, with the width
-// field as the value of its --width when the field is above 0, so a loop's
-// width is set as one value (loop set <name> --width <n>) and never by
-// editing the argv. The last spelling of the flag (--width n, -width n,
-// --width=n, -width=n) after the program word and before a --, the one a
-// flag parser keeps, takes the value; an argv with none gets --width n
-// before its -- or at its end. A
-// width of 0 leaves the argv as written, so a row whose argv carries --width
-// and whose field is 0 keeps its own (migration 0013 sets the field from
-// the argv). The inventory renders nova_loops' argv with it (parseLoop), and
-// loop show prints it as command=.
-func LoopCommand(argv []string, width int) []string {
-	out := append([]string{}, argv...)
-	if width <= 0 || len(out) == 0 {
-		return out
-	}
-	n := strconv.Itoa(width)
-	end := len(out)
-	for i := 1; i < len(out); i++ {
-		if out[i] == "--" {
-			end = i
-			break
-		}
-	}
-	last, prefix := -1, "" // the index of the last spelling's value, and what precedes the value there
-	for i := 1; i < end; i++ {
-		switch t := out[i]; {
-		case (t == "--width" || t == "-width") && i+1 < end:
-			last, prefix = i+1, ""
-			i++
-		case strings.HasPrefix(t, "--width=") || strings.HasPrefix(t, "-width="):
-			last, prefix = i, t[:strings.IndexByte(t, '=')+1]
-		}
-	}
-	if last < 0 {
-		return append(out[:end:end], append([]string{"--width", n}, out[end:]...)...)
-	}
-	out[last] = prefix + n
-	return out
-}
-
 // checkLoop is the loop kind's Check: exactly one of every and keepalive
-// says how it runs, and secret names need a seat to open them from.
+// says how it runs, secret names need a seat to open them from, and a
+// nova-swarm member's argv carries no width of its own.
 func checkLoop(r Row) error {
 	var problems []string
 	// A field absent from the row failed its own validation in add; a rule
@@ -519,10 +480,55 @@ func checkLoop(r Row) error {
 	if keysOK && seatOK && r.Fields["keys"] != "" && r.Fields["seat"] == "" {
 		problems = append(problems, fmt.Sprintf("loop %s names secrets (--keys %s) and no --seat to open them from; want --seat <seat>", r.Name, r.Fields["keys"]))
 	}
+	if memberArgvSpellsWidth(Argv(r.Fields["argv"])) {
+		problems = append(problems, fmt.Sprintf("loop %s: its argv carries --width, and a nova-swarm member's width (a reader's too) is its machine row's, read from the fleet row every tick; drop --width from the argv and set the machine's: machine set <m> --width <n>", r.Name))
+	}
 	if len(problems) > 0 {
 		return fmt.Errorf("%s", strings.Join(problems, "; "))
 	}
 	return nil
+}
+
+// memberArgvSpellsWidth says a nova-swarm member argv carries a --width of its
+// own (--width n, -width n, --width=n or -width=n, before any --). A loop has
+// no width: the member's, a reader's too, is its machine row's (machine set
+// <m> --width <n>), moved to the fleet row by fleet sync and read with the
+// queue every tick, so an argv that spells one is refused (the owner,
+// 2026-10-02: "The reader widths seem to be very ad-hoc, unlike the machine
+// widths"). Another program's --width is its own; migration 0017 stripped the
+// member argvs that carried one.
+func memberArgvSpellsWidth(argv []string) bool {
+	at, ok := memberAt(argv)
+	if !ok {
+		return false
+	}
+	for _, w := range argv[at+2:] {
+		switch {
+		case w == "--":
+			return false
+		case w == "--width" || w == "-width" || strings.HasPrefix(w, "--width=") || strings.HasPrefix(w, "-width="):
+			return true
+		}
+	}
+	return false
+}
+
+// memberAt is the index of a nova-swarm member argv's program word: 0, or,
+// under env, the first word after env's NAME=value words (the fleet's member
+// rows run as /usr/bin/env NOVA_SPRINT_REDIS_USER=... nova-swarm member ...);
+// false when the argv is not a nova-swarm member's.
+func memberAt(argv []string) (int, bool) {
+	at := 0
+	if len(argv) > 0 && filepath.Base(argv[0]) == "env" {
+		at = 1
+		for at < len(argv) && strings.Contains(argv[at], "=") {
+			at++
+		}
+	}
+	if at+1 >= len(argv) || filepath.Base(argv[at]) != "nova-swarm" || argv[at+1] != "member" {
+		return 0, false
+	}
+	return at, true
 }
 
 // deriveCoordinator is the friend kind's Derive: the sprint row's
@@ -767,17 +773,6 @@ func marshalArgv(words []string) ([]byte, error) {
 		return nil, err
 	}
 	return bytes.TrimSuffix(b.Bytes(), []byte("\n")), nil
-}
-
-// LoopCommandText is a loop row's command (LoopCommand of its argv and
-// width) in the argv's own canonical JSON text: what loop show prints as
-// command=, the words the unit runs.
-func LoopCommandText(row Row) (string, error) {
-	raw, err := marshalArgv(LoopCommand(Argv(row.Fields["argv"]), row.Int("width")))
-	if err != nil {
-		return "", fmt.Errorf("loop %s: render its command: %w", row.Name, err)
-	}
-	return string(raw), nil
 }
 
 // Argv decodes a canonical TypeArgv value ("" is none).

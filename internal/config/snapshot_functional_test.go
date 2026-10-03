@@ -60,7 +60,7 @@ func TestSnapshotIsTheAppliedStateInTwoRoundTrips(t *testing.T) {
 	require.NoError(t, c.SAdd(ctx, LoopsKey, "member-a").Err())
 	require.NoError(t, c.HSet(ctx, LoopKey("member-a"), map[string]any{
 		"name": "member-a", "machine": beatOf, "argv": `["nova-swarm","member"]`, "seat": "s", "keys": "",
-		"every": "0", "keepalive": "true", "width": "2", "enabled": "true", "log": "~/nova-bench/loops/member-a.log",
+		"every": "0", "keepalive": "true", "enabled": "true", "log": "~/nova-bench/loops/member-a.log",
 	}).Err())
 	require.NoError(t, c.HSet(ctx, DeclKey, "rev:"+KindLoop, "1").Err())
 	snap, err = ap.Snapshot(ctx)

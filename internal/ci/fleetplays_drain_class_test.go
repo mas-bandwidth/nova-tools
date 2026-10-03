@@ -43,3 +43,39 @@ func TestMemberUnitsStopByDraining(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, strings.Contains(string(loops), "loop_member: "), "the play says which records are members")
 }
+
+// TestAWaitForANonZeroExitIsNotAFailure: a task that retries a command until it
+// exits non-zero (the drain wait: launchctl print fails once launchd no longer
+// holds the member) must not fail on that exit. A command task fails on any
+// non-zero rc unless failed_when says otherwise, so without it the exit the task
+// waits for failed the host, and the play never loaded the new units: the
+// Studio's sprint server and member stayed unloaded, 2026-10-02 7:36 PM.
+func TestAWaitForANonZeroExitIsNotAFailure(t *testing.T) {
+	t.Parallel()
+	root := repoRoot(t)
+	plays, err := filepath.Glob(filepath.Join(root, "fleet", "*.yml"))
+	require.NoError(t, err)
+	waits := 0
+	for _, p := range plays {
+		b, err := os.ReadFile(p)
+		require.NoError(t, err)
+		var doc []struct {
+			Tasks []map[string]any `yaml:"tasks"`
+		}
+		if yaml.Unmarshal(b, &doc) != nil {
+			continue // a vars file, not a play
+		}
+		for _, play := range doc {
+			for _, task := range play.Tasks {
+				until, _ := task["until"].(string)
+				if !strings.Contains(until, ".rc != 0") {
+					continue
+				}
+				waits++
+				_, ok := task["failed_when"]
+				assert.True(t, ok, "%s: task %q waits for a non-zero exit (until: %s) and has no failed_when, so that exit fails the host", filepath.Base(p), task["name"], until)
+			}
+		}
+	}
+	assert.NotZero(t, waits, "the drain wait in fleet/loops.yml is found")
+}

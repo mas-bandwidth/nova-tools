@@ -261,3 +261,80 @@
 
     - name: the library receipt
       ansible.builtin.debug: { var: tools_fn.stdout_lines }
+
+# The tla play: on every TLC record machine (the inventory's tla group, the
+# machine rows with tla=true), the pinned TLC jar at nova_tla_jar, owned by the
+# login, its SHA-256 the one the repository holds (tla/tla2tools.sha256), and
+# a java that runs. It downloads and copies nothing: a jar that is missing or
+# differs refuses the play with the scp line that places it (tla/README.md,
+# "The record machines"). A record machine is Linux: TLC records are measured
+# there only (internal/tlc/records.go, Platforms). sudo is used only to make
+# the directory, or hand it or the jar to the login, when it is not the
+# login's already; a converged machine changes nothing. Run it alone with
+# --tags tla.
+- name: the tla play, the pinned TLC jar on the record machines
+  hosts: tla
+  gather_facts: true
+  gather_subset: [min]
+  tags: [tla]
+  vars:
+    tla_want: "{{ (lookup('ansible.builtin.file', nova_tla_sha256_file).split() | first | default('')) | lower }}"
+  tasks:
+    - name: a record machine is Linux, and the repository's sum is one SHA-256
+      ansible.builtin.assert:
+        that:
+          - ansible_system == 'Linux'
+          - tla_want is match('^[0-9a-f]{64}$')
+        fail_msg: >-
+          TLA REFUSED host={{ inventory_hostname }}: {{ ('a record machine is Linux (TLC records are measured on Linux only) and this is '
+          ~ ansible_system ~ '; run: nova-config machine set ' ~ inventory_hostname ~ ' --tla false --as <actor>, then nova-config apply')
+          if ansible_system != 'Linux' else (nova_tla_sha256_file ~ ' holds no SHA-256 (64 hex digits) first') }}
+        quiet: true
+
+    - name: the jar's directory
+      ansible.builtin.stat: { path: "{{ nova_tla_dir }}" }
+      register: tla_dir
+
+    - name: the jar's directory, the login's
+      ansible.builtin.file: { path: "{{ nova_tla_dir }}", state: directory, owner: "{{ ansible_facts['user_id'] }}", mode: "0755" }
+      become: "{{ not (tla_dir.stat.exists and tla_dir.stat.pw_name == ansible_facts['user_id']) }}"
+
+    - name: the jar and its SHA-256
+      ansible.builtin.stat: { path: "{{ nova_tla_jar }}", checksum_algorithm: sha256 }
+      register: tla_jar
+
+    - name: the jar is the pinned one (refused when it is missing or its SHA-256 differs)
+      ansible.builtin.assert:
+        that: tla_jar.stat.exists and tla_jar.stat.checksum == tla_want
+        fail_msg: >-
+          TLA REFUSED host={{ inventory_hostname }} jar={{ nova_tla_jar }} want={{ tla_want }}
+          got={{ tla_jar.stat.checksum | default('none') if tla_jar.stat.exists else 'none' }}: the play downloads nothing;
+          scp a tla2tools.jar whose sha256sum is {{ tla_want }} to {{ inventory_hostname }}:{{ nova_tla_jar }}
+          (another record machine holds one), then run the play again
+        quiet: true
+
+    - name: the jar, the login's
+      ansible.builtin.file: { path: "{{ nova_tla_jar }}", owner: "{{ ansible_facts['user_id'] }}", mode: "0644" }
+      become: "{{ tla_jar.stat.pw_name != ansible_facts['user_id'] }}"
+
+    - name: java (the first of nova_tla_java_candidates on the machine)
+      ansible.builtin.stat: { path: "{{ item }}" }
+      loop: "{{ nova_tla_java_candidates }}"
+      register: tla_javas
+
+    - name: the java the record machine runs TLC with
+      ansible.builtin.set_fact:
+        tla_java: "{{ tla_javas.results | selectattr('stat.exists') | map(attribute='item') | first | default('') }}"
+
+    - name: java runs
+      ansible.builtin.command: { argv: ["{{ tla_java }}", -version] }
+      register: tla_java_version
+      changed_when: false
+      check_mode: false
+      failed_when: tla_java == '' or tla_java_version.rc != 0 or not ((tla_java_version.stderr ~ tla_java_version.stdout) is search('version "'))
+
+    - name: the receipt
+      ansible.builtin.debug:
+        msg: >-
+          TLA OK host={{ inventory_hostname }} jar={{ nova_tla_jar }} sha256={{ tla_jar.stat.checksum }} java={{ tla_java }}
+          version={{ (tla_java_version.stderr ~ '\n' ~ tla_java_version.stdout) | regex_search('version "[^"]*"') | replace('version ', '') | replace('"', '') }}

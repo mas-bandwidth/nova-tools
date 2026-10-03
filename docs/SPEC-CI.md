@@ -2698,7 +2698,9 @@ stales every case, and edits to files no case reads stale none.
 each change stales the case. `TestTLCRecordHostIsAPlatformLabel` refuses a `host` cell that is not a listed platform label
 and a CPU count that is not a count. `TestTLCRecordFileHoldsOneJar` holds the record file to one `jar_sha256`, and `tlacheck merge` refuses a
 set of records measured with more than one jar, naming each jar with its record count and the
-groups to run again. `TestTLCRecordFreshnessAndCoverageWitnesses` proves failed
+groups to run again. `TestTLCRecordsNameThePinnedJar` holds that jar to the SHA-256
+`tla/tla2tools.sha256` pins, the one the record machines hold (the tools play's tla play)
+and `tlacheck run --bench` checks before it runs. `TestTLCRecordFreshnessAndCoverageWitnesses` proves failed
 records, wrong exits, invalid gate waivers and manual required records refuse, while a
 declared failed bench measurement is retained as debt, never PASS.
 
@@ -2806,6 +2808,15 @@ the original failed measurement.
 **Its allowlist.** None.
 **Its remedy line.** the assertion names the template line or the group_vars value that differs.
 **Its narrowings.** The templates' text is matched as written; a member found by another shape of argv than `nova-swarm member` after its env words is not marked.
+
+### `drain-wait-exit` — a wait for a command's non-zero exit does not fail on that exit
+
+**The rule.** A task under `fleet/` that retries a command until it exits non-zero (`until: <reg>.rc != 0`, the darwin drain wait in `loops.yml`) says how it fails (`failed_when`), because ansible fails a command task on any non-zero rc: the drain wait fails only when the member is still held after every retry.
+**The mistake it prevents.** The loops play of 2026-10-02 7:35 PM: the drain wait's own answer (`launchctl print` exiting 113 once the member had stopped) failed every darwin machine in the run, so their booted-out member, reader, mirror and sprint-server units were never loaded again.
+**The test.** `TestAWaitForANonZeroExitIsNotAFailure` (`internal/ci/fleetplays_drain_class_test.go`): reads every play under `fleet/`, finds each task whose `until` waits for `.rc != 0`, and asserts it has `failed_when`; it also asserts the drain wait is found.
+**Its allowlist.** None.
+**Its remedy line.** the assertion names the play, the task and its `until`.
+**Its narrowings.** Only an `until` spelled `.rc != 0` is read; a wait spelled another way is not checked.
 
 ### `sprint-tables-locked` — the four sprint tables change only with their lock file
 

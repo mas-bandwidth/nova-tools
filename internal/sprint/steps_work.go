@@ -1591,14 +1591,32 @@ func sweep(s *Snapshot, p *Plan, r FleetReq, up []string, rr *round, moves round
 // ready and working, less its width: below zero it has free lanes its ready
 // cards do not fill, above zero it holds ready cards it cannot start. While the
 // largest backlog of a member with a ready card and the smallest of the members
-// below DealAhead times their width differ by more than one, the newest card
-// (the last in work order) of the largest moves to the next member round the
-// fleet below DealAhead times its width and at or below the mean backlog
+// below DealAhead times their width differ by more than one, the newest ready
+// card (the last in work order) of the largest that has a target moves to the
+// next member round the fleet below DealAhead times its width, at least two
+// below, at or below the mean backlog and no refuser of the card
 // (round.levelTo, errata 3 amendment 5: the levelling moves the deal's index
 // too). So no up member has free lanes and an empty ready column while another
 // holds ready cards it cannot start, a member that comes up takes its share at
 // once, and none is levelled past DealAhead times its width (width.go).
+//
+// The call ends, by two guards, each enough alone (tla/Level.tla; the wedge of
+// 2026-10-02, nova-tools#5122, was a call that did not): every move lowers the
+// sum of squared backlogs by at least two (levelTo's gap), and a card it moved
+// is never one it moves again, so it makes at most as many moves as the fleet
+// had ready cards. A newest card whose only target is refused or one below
+// does not stop an older card that has one.
 func level(s *Snapshot, p *Plan, up []string, rr *round, moves roundMoves, held map[string]int) {
+	levelWith(s, p, up, rr, moves, held, (*round).levelTo)
+}
+
+// levelTarget is where level sends a card: round.levelTo. A test hands level
+// the rule of the wedge (b7776ca3) to show that the ready count alone ends the
+// loop (tla/Level.tla, MCLevelOldRuleNoRequeue).
+type levelTarget func(r *round, up []string, n, held, widths map[string]int, from string, avoid []string) string
+
+// levelWith is level with its target.
+func levelWith(s *Snapshot, p *Plan, up []string, rr *round, moves roundMoves, held map[string]int, target levelTarget) {
 	if len(up) < 2 {
 		return
 	}
@@ -1632,7 +1650,7 @@ func level(s *Snapshot, p *Plan, up []string, rr *round, moves roundMoves, held 
 		q := queues[long]
 		i, to := len(q)-1, ""
 		for ; i >= 0 && to == ""; i-- {
-			to = rr.levelTo(up, n, held, widths, long, StagingRefusers(q[i]))
+			to = target(rr, up, n, held, widths, long, StagingRefusers(q[i]))
 		}
 		if to == "" {
 			return
@@ -1641,8 +1659,11 @@ func level(s *Snapshot, p *Plan, up []string, rr *round, moves roundMoves, held 
 		held[long]--
 		held[to]++
 		c := q[i]
+		// the card leaves the queues and is not queued on its receiver: no card
+		// moves twice in one call (each unit is guarded on the place the card
+		// was read at), so the call makes at most as many moves as the fleet
+		// had ready cards, whatever the target (tla/Level.tla, MovesBounded)
 		queues[long] = append(q[:i:i], q[i+1:]...)
-		queues[to] = append(queues[to], c)
 		moves[c.ID] = to
 		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, to, Ready, nextGen(c, to, s.Now)))},
 			Moved: fmt.Sprintf("%s %s:ready -> %s:ready gen=%d", c.ID, long, to, c.Int("gen")+1)})

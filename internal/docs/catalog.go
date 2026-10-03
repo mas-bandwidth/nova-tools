@@ -68,6 +68,7 @@ var DefaultCatalog = []Entry{
 	Page("internal/ghevent", "the GitHub event Redis stream: append and read", "go test ./internal/ghevent", "go test ./internal/ghevent"),
 	E("internal/ghevent/wire", "shared GitHub event stream identity without ingestion dependencies", "go test ./internal/ci", "go test ./internal/ci"),
 	E("internal/gitrun", "the one runner for a one-shot git child: a deadline, WaitDelay and the caller's environment choice", "go test ./internal/gitrun", "go test ./internal/gitrun"),
+	E("internal/gocache", "Go build cache held under a size, least recently used first", "go test ./internal/gocache", "go test ./internal/gocache"),
 	E("internal/goenv", "Go environment scrubber for child processes", "go test ./internal/goenv", "go test ./internal/goenv"),
 	E("internal/hostload", "a machine's load: CPU busy percent of all its cores, else the load average over them", "go test ./internal/hostload", "go test ./internal/hostload"),
 	E("internal/hygiene", "clean checkout and leak assertions", "go test ./internal/hygiene", "go test ./internal/hygiene"),

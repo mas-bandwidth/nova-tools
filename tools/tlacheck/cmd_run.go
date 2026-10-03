@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -95,8 +97,29 @@ func cmdRun(e env, args []string) int {
 	timeout := fs.Duration("timeout", tlc.BoundedCap, "")
 	workers := fs.Int("workers", 2, "")
 	manual := fs.Bool("manual", false, "")
+	bench := fs.String("bench", "", "")
+	loadBelow := fs.Float64("load-below", 0, "")
+	troughWait := fs.Duration("trough-wait", 30*time.Minute, "")
+	troughPoll := fs.Duration("trough-poll", 15*time.Second, "")
 	if done, code := parse(e, "run", fs, args, helpRun); done {
 		return code
+	}
+	if *bench != "" {
+		set := map[string]bool{}
+		fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+		for _, n := range []string{"shards", "shard"} {
+			if set[n] {
+				return refuse(e, "run", "--"+n+" is not taken with --bench: it runs a group's cases one at a time itself", tool+" run --bench <machine> --group <group> ...")
+			}
+		}
+	} else {
+		set := map[string]bool{}
+		fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+		for _, n := range []string{"load-below", "trough-wait", "trough-poll"} {
+			if set[n] {
+				return refuse(e, "run", "--"+n+" is taken only with --bench", tool+" run --bench <machine> ...")
+			}
+		}
 	}
 	if code, stop := missing(e, "run", "dir", *dir); stop {
 		return code
@@ -111,11 +134,25 @@ func cmdRun(e env, args []string) int {
 	if *manual && (e.getenv("GITHUB_ACTIONS") == "true" || e.getenv("NOVA_CI") == "1") {
 		return refuse(e, "run", "--manual is forbidden in CI; every workflow job stays under two minutes", tool+" run --group <group> ... without --manual")
 	}
-	if e.goos != "linux" {
-		return refuse(e, "run", "TLC runs on a Linux bench, and this is "+e.goos+"; nothing was run", "ssh <bench> "+tool+" run ... (or the Linux CI job)")
-	}
 	if err := tlc.CheckLimits(*timeout, *workers, *manual); err != nil {
 		return refuse(e, "run", err.Error(), tool+" run -h")
+	}
+	if *bench != "" {
+		if *loadBelow < 0 || *troughPoll <= 0 || *troughWait < 0 {
+			return refuse(e, "run", "--load-below, --trough-wait and --trough-poll take a load of 0 or more (0: 0.8 x the bench's CPUs), a wait of 0 or more and a poll above 0", tool+" run -h")
+		}
+		jar := *jarFlag
+		if jar == "" {
+			jar = defaultBenchJar
+		}
+		return runOnBench(e, benchOpts{
+			root: *root, dir: *dir, machine: *bench, jar: jar, java: *javaFlag, group: *group,
+			timeout: *timeout, workers: *workers, manual: *manual,
+			loadBelow: *loadBelow, troughWait: *troughWait, troughPoll: *troughPoll, cases: cases,
+		})
+	}
+	if e.goos != "linux" {
+		return refuse(e, "run", "TLC runs on a Linux bench, and this is "+e.goos+"; nothing was run", tool+" run --bench any ... (a record machine runs it), or the Linux CI job")
 	}
 	chosen, err := tlc.Select(cases, *group, *shards, *shard)
 	if err != nil {

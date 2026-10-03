@@ -246,7 +246,7 @@
       loop: "{{ loop_records | selectattr('enabled') | list }}"
       loop_control: { label: "{{ item.name }}" }
       when: >-
-        ((loop_units.results + (loop_timers.results | default([]))) | selectattr('item.name', 'equalto', item.name) | selectattr('changed') | list)
+        ((loop_units.results + (loop_timers.results | default([]))) | selectattr('item.name', 'equalto', item.name) | selectattr('changed') | list | length > 0)
         and (not loop_darwin or (loop_loaded.results | selectattr('item', 'equalto', item.name) | first).rc == 0)
 
     - name: unload the disabled and the changed (darwin)
@@ -270,6 +270,9 @@
       retries: "{{ (nova_member_stop_timeout | int / 5) | round(0, 'ceil') | int }}"
       delay: 5
       changed_when: false
+      # the non-zero exit is the answer it waits for ("launchd no longer holds it"),
+      # never a failure; a member still held after every retry is the failure
+      failed_when: loop_drained.rc == 0
       loop: "{{ loop_unloaded.results | default([]) | selectattr('changed', 'defined') | selectattr('changed') | list }}"
       loop_control: { label: "{{ item.item.item }}" }
       become: "{{ loop_system }}"

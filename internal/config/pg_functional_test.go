@@ -6,7 +6,6 @@ import (
 	"context"
 	"net"
 	"os"
-	"strconv"
 	"testing"
 	"time"
 
@@ -166,6 +165,9 @@ func TestMigrationTwelveFillsTheOldWidth(t *testing.T) {
 				require.NoError(t, err, q)
 			}
 			require.NoError(t, st.applyOne(ctx, twelve))
+			for _, m := range all[12:] { // the rows are read with the kind as it is now
+				require.NoError(t, st.applyOne(ctx, m), "migration %s", m.Name)
+			}
 			widths := func() map[string]string {
 				t.Helper()
 				// by SQL: the store at version 12 has no note column, which List reads
@@ -277,11 +279,12 @@ func TestAppliedIsTheLedger(t *testing.T) {
 	assert.Equal(t, len(all), got[len(got)-1])
 }
 
-// TestMigrationThirteenKeepsEveryLoopsCommand: 0013 sets each loop's width
-// field to the value its argv's --width carries (0 when none), so the command
-// LoopCommand renders after it is the command the argv ran before it, row by
-// row.
-func TestMigrationThirteenKeepsEveryLoopsCommand(t *testing.T) {
+// 0017 makes a loop's width the machine's: the second reader rows of
+// 2026-10-02 (reader-<m>-2) are removed, every nova-swarm member argv that
+// spells a width loses it (before any --; another program's is its own; the
+// rest of the argv kept word for word, canonical), and the loops' width column
+// goes. A row's argv after it is one the loop kind's Check accepts.
+func TestMigrationSeventeenMovesTheLoopWidthToTheMachine(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	st, err := OpenPG(ctx, server.Database(t))
@@ -289,47 +292,68 @@ func TestMigrationThirteenKeepsEveryLoopsCommand(t *testing.T) {
 	defer st.Close()
 	all, err := Migrations()
 	require.NoError(t, err)
-	var thirteen Migration
+	var seventeen Migration
 	for _, m := range all {
-		if m.Version == 13 {
-			thirteen = m
+		if m.Version == 17 {
+			seventeen = m
 			break
 		}
 		require.NoError(t, st.applyOne(ctx, m), "migration %s", m.Name)
 	}
-	require.Equal(t, "0013_loop_width_from_argv.sql", thirteen.Name)
+	require.Equal(t, "0017_loop_width_is_the_machines.sql", seventeen.Name)
 	_, err = st.db.ExecContext(ctx, `INSERT INTO config.machines (name, "user", seat, slots, runners) VALUES ('m1', 'u', 's', 4, 0)`)
 	require.NoError(t, err)
+	_, err = st.db.ExecContext(ctx, `INSERT INTO config.machines (name, "user", seat, slots, runners) VALUES ('bench-2', 'u', 's', 4, 0)`)
+	require.NoError(t, err)
 	loops := []struct {
-		name, argv  string
-		width, want int
+		name, argv, machine string
+		width               int
+		want                string // the argv after; "" when the row is removed
 	}{
-		{"reader", `["nova-swarm","member","--reader","--width","8"]`, 0, 8},
-		{"member", `["nova-swarm","member","--as","m1"]`, 2, 0},
-		{"equals", `["p","--width=12"]`, 0, 12},
-		{"single-dash", `["p","-width","3"]`, 7, 3},
-		{"last-wins", `["p","--width","1","--width","5"]`, 0, 5},
-		{"after-terminator", `["p","--","--width","9"]`, 4, 0},
-		{"not-a-number", `["p","--width","many"]`, 0, 0},
-		{"program-word", `["--width","6"]`, 0, 0},
+		{"reader-m1", `["nova-swarm","member","--as","reader-m1","--reader","--width","8"]`, "m1", 8, `["nova-swarm","member","--as","reader-m1","--reader"]`},
+		{"reader-m1-2", `["nova-swarm","member","--as","reader-m1-2","--reader","--width","8"]`, "m1", 8, ""},
+		{"member-m1", `["/opt/bin/nova-swarm","member","--as","m1","--width=4","--root","r"]`, "m1", 0, `["/opt/bin/nova-swarm","member","--as","m1","--root","r"]`},
+		{"single-dash", `["nova-swarm","member","-width","3","--reader"]`, "m1", 3, `["nova-swarm","member","--reader"]`},
+		{"blank-word", `["nova-swarm","member","--as","a b","--width","2","--x","&<>"]`, "m1", 0, `["nova-swarm","member","--as","a b","--x","&<>"]`},
+		{"after-terminator", `["nova-swarm","member","--","--width","9"]`, "m1", 0, `["nova-swarm","member","--","--width","9"]`},
+		{"another-program", `["p","--width","12"]`, "m1", 12, `["p","--width","12"]`},
+		// the fleet's member rows: env, the endpoint names, then the member
+		{"member-env", `["/usr/bin/env","NOVA_SPRINT_REDIS_USER=bench","NOVA_SPRINT_REDIS_PASSWORD_ENV=P","~/.local/bin/nova-swarm","member","--as","m1","--width","4"]`, "m1", 4, `["/usr/bin/env","NOVA_SPRINT_REDIS_USER=bench","NOVA_SPRINT_REDIS_PASSWORD_ENV=P","~/.local/bin/nova-swarm","member","--as","m1"]`},
+		{"other-env", `["/usr/bin/env","A=b","p","--width","5"]`, "m1", 5, `["/usr/bin/env","A=b","p","--width","5"]`},
+		{"reader-2", `["p","--reader"]`, "m1", 1, `["p","--reader"]`}, // its name ends in -2 and names no machine: kept
+		// a machine whose own name ends in -2: its one reader reader-bench-2 is
+		// kept, not mistaken for a second reader of a machine named bench
+		{"reader-bench-2", `["nova-swarm","member","--as","reader-bench-2","--reader"]`, "bench-2", 0, `["nova-swarm","member","--as","reader-bench-2","--reader"]`},
 	}
 	for _, l := range loops {
-		_, err = st.db.ExecContext(ctx, `INSERT INTO config.loops (name, machine, argv, keepalive, width) VALUES ($1, 'm1', $2, true, $3)`, l.name, l.argv, l.width)
+		_, err = st.db.ExecContext(ctx, `INSERT INTO config.loops (name, machine, argv, keepalive, width) VALUES ($1, $2, $3, true, $4)`, l.name, l.machine, l.argv, l.width)
 		require.NoError(t, err, l.name)
 	}
-	require.NoError(t, st.applyOne(ctx, thirteen))
+	require.NoError(t, st.applyOne(ctx, seventeen))
 	rows, err := st.List(ctx, KindLoop)
 	require.NoError(t, err)
 	got := map[string]Row{}
 	for _, r := range rows {
 		got[r.Name] = r
 	}
+	loop, _ := Lookup(KindLoop)
 	for _, l := range loops {
-		r := got[l.name]
-		assert.Equal(t, strconv.Itoa(l.want), r.Fields["width"], "%s: the width field", l.name)
-		argv := Argv(r.Fields["argv"])
-		assert.Equal(t, argv, LoopCommand(argv, r.Int("width")), "%s: the command after 0013 is the argv as it ran", l.name)
+		r, there := got[l.name]
+		if l.want == "" {
+			assert.False(t, there, "%s: a second reader row is removed", l.name)
+			continue
+		}
+		require.True(t, there, "%s: the row is kept", l.name)
+		assert.Equal(t, l.want, r.Fields["argv"], "%s: the argv after 0017", l.name)
+		assert.NotContains(t, r.Fields, "width", "%s: no width field", l.name)
+		canonical, err := marshalArgv(Argv(r.Fields["argv"]))
+		require.NoError(t, err)
+		assert.Equal(t, string(canonical), r.Fields["argv"], "%s: the argv is canonical", l.name)
+		assert.NoError(t, loop.Check(r), "%s: the row after 0017 passes the loop kind's Check", l.name)
 	}
+	var column bool
+	require.NoError(t, st.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'config' AND table_name = 'loops' AND column_name = 'width')`).Scan(&column))
+	assert.False(t, column, "config.loops still has a width column")
 }
 
 // TestPostgresStoreKeepsTheContract runs the one store contract the Mem

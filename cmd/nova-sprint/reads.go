@@ -234,6 +234,17 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 			add(t.table, own)
 			mine = append(mine, own...)
 		}
+		// a reader runs at its machine's width: reader-<m>'s is m's fleet row's
+		// (sprint.ReaderMachine), read here as the member's own is above
+		if m, ok := sprint.ReaderMachine(*as); isReader && ok {
+			ctl, err := st.ReadCells(ctx, sprint.Fleet, m, sprint.Ctl)
+			if err != nil {
+				return a.readFailed("queue", err, stderr)
+			}
+			if len(ctl) > 0 {
+				width = sprint.MemberWidth(ctl[0])
+			}
+		}
 		at := want.of(mine)
 		need := make([]*sprint.Card, len(at))
 		for k, i := range at {
@@ -253,7 +264,7 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 		}
 		out := map[string]any{"as": *as, "stream": *stream, "epoch": epoch, "cards": cards}
 		if width > 0 {
-			out["width"] = width // the member runs this many: the fleet row is the truth
+			out["width"] = width // the worker runs this many: the fleet row is the truth
 		}
 		if *as != "" {
 			out["reader"] = isReader // --as is a row of the readers table
