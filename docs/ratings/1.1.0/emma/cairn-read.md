@@ -40,5 +40,5 @@ Whole-verb remedy generation in noRecord errors quoting exact shell-executable c
 ## Compared with earlier ratings
 | earlier | now | evidence |
 |---|---|---|
-| the store keeps two shapes tangled in one file | CHANGED | internal/cairn/read_existing.go:28 |
+| the store keeps two shapes tangled in one file | STILL THERE | internal/cairn/cairn.go:245 |
 | same-id concurrent appends can overwrite what the banner promises never is | STILL THERE | internal/cairn/cairn.go:536 |
