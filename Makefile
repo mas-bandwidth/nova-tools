@@ -163,7 +163,7 @@ vet-functional:
 
 # THE SLOW TIER, the mirror of vet-functional: a test behind `//go:build
 # slow` is compiled by no plain `go vet` and runs only in the nightly job, so a
-# PR that breaks one stays green until the morning. vet-slow compiles them on
+# PR that breaks one stayed green until the morning. vet-slow compiles them on
 # every change; internal/ci's TestEveryTestBuildTagIsVettedByCIVetSteps keeps
 # the tag on.
 vet-slow:
@@ -222,7 +222,7 @@ lint: fmt vet vet-functional vet-slow vet-laws
 # the ones the caller sees.
 # No `preflight: PKGS ?= ...` line: under GNU make 3.81 (macOS /usr/bin/make) a
 # target-specific `?=` on PKGS made `test: PKGS :=` beat the command line, so
-# every shard of dev push run 35999520176 ran the whole tree instead of its
+# every macOS shard of dev push run 35999520176 ran the whole tree instead of its
 # PKGS; with PKGS ?= ./... above, that line was a no-op everywhere else.
 preflight:
 	$(GO) build -o bin/preflight ./tools/preflight && exec ./bin/preflight $(if $(RUN),-run "$(RUN)",) $(PKGS)
