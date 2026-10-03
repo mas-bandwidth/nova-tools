@@ -27,7 +27,7 @@ fleet | ready | working | width | done | ok% | status | load
 | readers | readers | read cards | the reads of primaries in review |
 | merge | streams | primaries | merging, made visible |
 | fleet | fleet members | work cards | the swarm across machines |
-| friends | friends | job cards | who of the friends is here to help, and her jobs |
+| friends | friends | sprint cards | who of the friends is here to help, and her cards |
 
 The work table's last column, `cost` (the owner, 2026-10-01: "can you please
 add a final column to the work stream table, which is "cost". This is the sum of
@@ -59,41 +59,28 @@ fleet table's columns but `load`: `ready`, `working`, `width`, `done`, `ok%`,
 are. Its rows are nova-config's friend rows and nothing else: `friend sync`
 (`--pg`, else NOVA_PG_DSN, as nova-config takes it) copies their names into the
 store's `friends` record, adding a friend the record lacks, taking off one
-nova-config no longer has with her beat and her jobs, and keeping the hold of a
+nova-config no longer has with her beat, and keeping the hold of a
 friend that stays; a config that cannot be read or holds no friend row is
 refused (exit 3) and changes nothing.
 
-A friend's unit of work is a job, and her jobs are the inbox/outbox standard of
-her working directory, `<root>/<friend>-working` (`friend sync --root <dir>`,
-else `HOME`): she works only inside it; the coordinator delivers a job as the
-directory `inbox/<job>/` (its `BRIEF.md` and everything the job needs), and
-only the coordinator reaches out; the friend makes `outbox/<job>/` when she
-starts the job and writes `outbox/<job>/REPORT.md` when it is done, and only
-she writes there. `friend sync` reads every friend's directory and writes her
-job cards into the store (`friend-jobs:<friend>`): each directory under
-`inbox/` is a job (a file, or a name beginning with a dot, is none); it is
-`ready` while `outbox/<job>/` is not there, `working` while it is there without
-`REPORT.md`, and `done` once `REPORT.md` is there, done ok or done failed by
-the one rule of a report's verdict: the first line of `REPORT.md` whose key,
-after any markdown marks (`#`, `*`, `-`, `_`, spaces), is `Verdict` or
-`Status` in any case; its first word HOLD, FAIL, FAILED or BROKEN, in any case,
-is a job done failed, and any other word, or no such line, is a job done ok. The
-records are set from the directories, never added to, so a sync after a sync
-writes nothing and says so; a friend with no directory, or no `inbox/`, has no
-jobs; a directory that cannot be read is refused (exit 1), naming it, with
-nothing written. The sync reads the directories and writes in them only a
-friend's card's brief (a friend's card, below), and
-runs where they are (the coordinator's machine), by the coordinator's loop or
-by hand after a job is delivered or collected; the view reads the store, never
-a directory (the card is the persistent store). `ready` and `working` count
-her job cards in those states; `width` is her width, the jobs she works at
-once: her nova-config friend row's `width` (`nova-config friend set <friend>
---width <n>`, at least 1, 8 by default; the owner, 2026-10-02: "6/1 seems a bit
-wrong -- need to setup width for friends? Start at 8 for each?"), which friend
-sync writes to her row each pass (a row whose width is below 1 is refused, exit
-1, nothing written), summed in the footer; `ok` and `failed` count her jobs done; `done` is `sum(ok+failed)`
-and `ok%` is `pct(ok/ok+failed)`, pooled over the friends in the footer, the
-fleet table's own formulas.
+A friend's counts are her sprint cards' (a friend's card, below), read by
+`where` from her fleet row `friend.<name>`, never from her working directory: a
+card dealt to her is `working`; a `Verdict: LAND` report (with its `Head:` the
+tip) finishes it done ok, a `Verdict: HOLD` or `FAIL` (or `FAILED`, `BROKEN`)
+report done failed, and a report with no verdict word is done failed too,
+never ok. `ready` is never a friend's card's state: the tick deals a card
+straight into `working` (`sprint.FriendDeal`). A hand-written inbox job that is
+no card (an `inbox/<job>/` directory named for no card of the sprint) is
+outside the sprint and is shown nowhere in the table; the coordinator's NOW.md
+is its pointer. `ready` and `working` count her cards in those states; `width`
+is her width, the jobs she works at once: her nova-config friend row's `width`
+(`nova-config friend set <friend> --width <n>`, at least 1, 8 by default; the
+owner, 2026-10-02: "6/1 seems a bit wrong -- need to setup width for friends?
+Start at 8 for each?"), which friend sync writes to her row each pass (a row
+whose width is below 1 is refused, exit 1, nothing written), summed in the
+footer; `ok` and `failed` count her cards done; `done` is `sum(ok+failed)` and
+`ok%` is `pct(ok/ok+failed)`, pooled over the friends in the footer, the fleet
+table's own formulas.
 
 A friend says she is there with `friend beat <friend>`, which her own machinery
 runs every second (`FriendBeatEvery`) beside her harness (it writes
@@ -106,7 +93,7 @@ beaten (`friend down` holds her and shows `held`, never `down`). A beat wakes he
 with no beat in the last 15 s is `down` until she beats. A friend's statuses
 are `up`, `held` and `down`, the same words as the fleet table's. A
 friend `down` shows `working` 0 in the table, its footer and `where --json`:
-her jobs stay in her outbox and count again when she beats, and `ready` and
+her cards stay on her row and count again when she beats, and `ready` and
 `done` are as they were (the owner, 2026-10-02 9:48 PM ET: "[a friend] being down,
 she automatically is 0/8 working OK?"). The
 owner, 2026-10-02 9:44 PM ET, on a friend shown up while she was gone: "two
@@ -122,7 +109,7 @@ deadline judging them. The
 rows are in the fleet table's order (`FleetOrder`): up, then held, then down,
 each by name. The table is drawn by `where` from those records when it draws
 the frame, never stored as a table: no tick, step, epoch or clear touches it,
-`teardown` deletes its records (the roster, each friend's beat and jobs), and
+`teardown` deletes its records (the roster, each friend's beat), and
 the stored view `sprint` has the four tables only. Its footer is the table
 layer's: the sums of `ready`, `working`, `width` and `done`, the pooled `ok%`,
 and a blank status cell, as the fleet table's; an empty friends table is its
@@ -191,11 +178,11 @@ friend= card=: <why>` for a finish the sprint or the tip refused, and for a card
 id is not a card id or whose `inbox/<job>` is a symlink or a file (checked by
 `Lstat`; nothing is written outside her working directory), and its OK line adds
 `delivered=<n> finished=<n>` when either is above zero (`--json` `delivered`,
-`finished`, `cards`). A card's job (an inbox directory named as a work card
-whose primary, at that epoch, is on the work table) is none of her jobs; a
-directory named so for no card of the sprint is one of them: `where` counts her cards from her fleet row into her
-friends row (ready, working, done ok and failed; working 0 while she is
-down), and draws no friend's row in the fleet table or its `--json`.
+`finished`, `cards`). A hand-written inbox directory that is no card of the
+sprint is outside the sprint and shown nowhere in the table: `where` counts her
+cards from her fleet row into her friends row (ready, working, done ok and
+failed; working 0 while she is down), and draws no friend's row in the fleet
+table or its `--json`.
 Her row is hidden in the stored fleet table (the table layer's row hide, when
 the deal first adds it), so the stored view `sprint` does not draw it either;
 as for any hidden row, its counts stay in that table's folded footer there,

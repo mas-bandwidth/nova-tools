@@ -42,16 +42,6 @@ const (
 // friendJobOf is the job a friend's sprint card is delivered as: its stored id.
 func friendJobOf(p sprint.Packet) string { return sprint.StoredID(p.Card, p.Epoch) }
 
-// isCardJob says an inbox directory is a sprint card's job (friendJobOf), counted from the
-// fleet table as her cards, never as one of her jobs: a work card's stored id whose
-// primary, at the same epoch, is on the work table (onWork, its stored ids). Any other
-// directory, named like a work card or not, is one of her jobs.
-func isCardJob(name string, onWork map[string]bool) bool {
-	id := sprint.CardID(name)
-	primary, _, ok := sprint.ParseWorkCard(id)
-	return ok && sprint.ValidCardID(id) && onWork[primary+name[len(id):]]
-}
-
 // friendBrief is the BRIEF.md of a friend's sprint card: its STATUS line (the card, its
 // epoch and attempt, the branch to push and the report to write), the working-directory
 // line of docs/FRIENDS.md, a later attempt's start and why it exists (as a child's JOB.md

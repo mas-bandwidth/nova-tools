@@ -36,7 +36,7 @@ func TestTeardownLeavesTheKeysAsBeforeInit(t *testing.T) {
 		step.CallerOp = "caller-1"
 		h.must(step)
 		require.NoError(t, m.SetCursor(h.ctx, "1-0"))
-		_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "friend-a", Width: 1, Jobs: []FriendJob{{ID: "j1", State: JobReady}}}, {Name: "friend-b", Width: 1}})
+		_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "friend-a", Width: 1}, {Name: "friend-b", Width: 1}})
 		require.NoError(t, err)
 		_, err = h.st.FriendBeat(h.ctx, "friend-a")
 		require.NoError(t, err)
@@ -44,7 +44,7 @@ func TestTeardownLeavesTheKeysAsBeforeInit(t *testing.T) {
 	}
 	work()
 	during := m.Keys(h.st.Names)
-	for _, want := range []string{"table:t-work:changes", "table:t-work:identity", "t-sprint:w:s1-2", "t-sprint:done", "t-sprint:fencegen", "t-sprint:cursor", "t-sprint:inbox", "view:t-sprint", "t-sprint:friends", "t-sprint:friend-beat:friend-a", "t-sprint:friend-jobs:friend-a"} {
+	for _, want := range []string{"table:t-work:changes", "table:t-work:identity", "t-sprint:w:s1-2", "t-sprint:done", "t-sprint:fencegen", "t-sprint:cursor", "t-sprint:inbox", "view:t-sprint", "t-sprint:friends", "t-sprint:friend-beat:friend-a"} {
 		require.True(t, slices.Contains(during, want), "the work made no key %s: %v", want, during)
 	}
 	_, err = h.st.Teardown(h.ctx)
