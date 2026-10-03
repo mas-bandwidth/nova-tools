@@ -62,8 +62,10 @@ func TestAPinnedCardOnTheTwinIsReadBackByCardAndRoutes(t *testing.T) {
 
 	_, routes, _ := run("nova-sprint routes")
 	assert.Contains(t, routes, "ROUTE pin:x/y model=x/y pinned attempts=1 ok=0 failed=1 provider_failures=1 mean_wall=")
+	assert.Contains(t, routes, " rested_until=-\n", "a route the machine does not rest (rule 3)")
 	assert.Contains(t, routes, "ROUTES OK routes=1")
 	_, js, _ := run("nova-sprint routes --json")
+	assert.NotContains(t, js, `"rested_until"`, "only while it rests")
 	assert.Contains(t, js, `"route":{"name":"pin:x/y","tier":"","provider":"x","model":"y"`)
 	assert.Contains(t, js, `"pinned":true`)
 	_, q, _ := run("nova-sprint queue --as m1 --json")

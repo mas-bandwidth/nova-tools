@@ -319,6 +319,12 @@ type Snapshot struct {
 	// pump accepts a primary with two ok reads, so no step opens a "ready to
 	// accept" judgment for it ("accept is mechanical").
 	Running bool
+	// rests is the routes resting at Now, settled once by a step that deals
+	// (withRests, route_rest.go); nil is not yet settled.
+	rests map[string]RouteRest
+	// restScans, when set, counts withRests' scans of the fleet table: the tick's
+	// cost gate (TestTheTicksCheckSettlesTheRestsOnceAtScale) holds them to one a part.
+	restScans *int
 }
 
 // T is the loaded table by logical name.

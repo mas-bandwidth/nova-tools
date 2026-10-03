@@ -1360,7 +1360,8 @@ func (a *app) cmdCheck(args []string, stdout, stderr io.Writer) int {
 // cmdRoutes is each route of the store with what its attempts did: the work
 // cards dealt on it, finished ok, failed, failed by the provider, and the mean
 // wall from take to finish, so a bad route shows (docs/SPEC-SPRINT.md, the
-// deal's route).
+// deal's route), and when its rest ends while the machine rests it for children
+// that ended with no result (rule 3, sprint.RouteRests).
 func (a *app) cmdRoutes(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("routes")
 	if pos, err := parse(fs, args); err != nil || len(pos) > 0 {
@@ -1380,6 +1381,12 @@ func (a *app) cmdRoutes(args []string, stdout, stderr io.Writer) int {
 		return a.readFailed("routes", err, stderr)
 	}
 	stats := sprint.RouteStats(rs, s.Fleet)
+	rests := sprint.RouteRests(rs, s.Fleet)
+	for i := range stats {
+		if r, ok := rests[stats[i].Route.Name]; ok && r.Resting(s.Now) {
+			stats[i].RestedUntil = r.Until.UTC().Format(time.RFC3339)
+		}
+	}
 	if c.json {
 		b, _ := json.Marshal(map[string]any{"tiers": sprint.TierRoutes(rs), "routes": stats})
 		fmt.Fprintln(stdout, string(b))
@@ -1400,8 +1407,8 @@ func (a *app) cmdRoutes(args []string, stdout, stderr io.Writer) int {
 		} else if r.Tier == "" {
 			how = "gone" // a route the cards name that the store no longer holds
 		}
-		fmt.Fprintf(stdout, "ROUTE %s model=%s %s attempts=%d ok=%d failed=%d provider_failures=%d mean_wall=%s\n",
-			oneline.Field(r.Name), oneline.Field(model), how, x.Attempts, x.OK, x.Failed, x.Provider, x.MeanWall)
+		fmt.Fprintf(stdout, "ROUTE %s model=%s %s attempts=%d ok=%d failed=%d provider_failures=%d mean_wall=%s rested_until=%s\n",
+			oneline.Field(r.Name), oneline.Field(model), how, x.Attempts, x.OK, x.Failed, x.Provider, x.MeanWall, orDashStr(x.RestedUntil, "-"))
 	}
 	fmt.Fprintf(stdout, "ROUTES OK routes=%d\n", len(stats))
 	return 0
