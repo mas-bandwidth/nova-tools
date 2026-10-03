@@ -259,12 +259,12 @@ func TestPositiveTimeoutUnderJobCapWitnesses(t *testing.T) {
 // the verb that deals the legs.
 var macOSGroupFlagRe = regexp.MustCompile(`--macos-group (\S+)`)
 
-// TestDarwinTestShardsSelectStudioARM64Group pins the 2026-09-25 decision: the
-// darwin test shards select the studio runner group on ARM64 until the Mac minis
-// take them. The group is the label the workflow passes (--macos-group); the
-// arch and OS are what the fan-out (pkgselect.Fanout) writes into every macOS
-// leg. The merge group uses sharded test legs on own benches, not hosted runners.
-func TestDarwinTestShardsSelectStudioARM64Group(t *testing.T) {
+// TestDarwinTestShardsSelectSelfHostedARM64Group pins that the darwin test
+// shards select the self-hosted runner group on ARM64. The group is the label
+// the workflow passes (--macos-group); the arch and OS are what the fan-out
+// (pkgselect.Fanout) writes into every macOS leg. The merge group uses sharded
+// test legs on our own benches, not hosted runners.
+func TestDarwinTestShardsSelectSelfHostedARM64Group(t *testing.T) {
 	t.Parallel()
 
 	src := readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
