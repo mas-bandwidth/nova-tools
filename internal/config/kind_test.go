@@ -427,13 +427,15 @@ func TestAFriendsWidthDefaultsToEightAndIsAtLeastOne(t *testing.T) {
 }
 
 // The sprint row holds the bar a judgment decision is applied at (nova-sprint answer
-// --decide), 0.8 by default; a value that is no probability is refused, naming the flag.
+// --decide), empty by default (nothing is applied until the coordinator sets it); a value
+// that is no probability is refused, naming the flag.
 func TestTheSprintRowHoldsTheJudgmentBar(t *testing.T) {
 	t.Parallel()
 	sprint, _ := Lookup(KindSprint)
 	bar, ok := sprint.Field(FieldDecideJudgment)
 	require.True(t, ok)
-	assert.Equal(t, "0.8", bar.Default)
+	assert.Empty(t, bar.Default)
+	assert.NoError(t, checkSprint(Row{Name: "sprint", Fields: map[string]string{FieldDecideJudgment: ""}}), "empty is no bar")
 	assert.Equal(t, TypeDecimal, bar.Type)
 	assert.NoError(t, checkSprint(Row{Name: "sprint", Fields: map[string]string{FieldDecideJudgment: "0.9"}}))
 	assert.ErrorContains(t, checkSprint(Row{Name: "sprint", Fields: map[string]string{FieldDecideJudgment: "1.5"}}), "want --decide_judgment_bar <p>, a probability")

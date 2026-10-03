@@ -125,9 +125,12 @@ nova-secrets exec --only JEV_API_KEY -- nova-sprint answer --decide --every 60s
 
 It answers each card of a broken, failed, blocked, stalled, conflict, deadline, cannot-ask, ready-to-accept or
 bound judgment by itself: the verb nova-decide chose is applied, by the line the inbox prints for that card, when
-its probability is at or above `decide_judgment_bar` (nova-config's sprint row, default 0.8:
-`nova-config sprint set --decide_judgment_bar <p> --as <coordinator>`, then `nova-config apply --kind sprint`);
-`--bar <p>` overrides it for one run. What it lists is yours, each with why: every drop (with the reason the
+its probability is at or above `decide_judgment_bar` (nova-config's sprint row: `nova-config sprint set
+--decide_judgment_bar <p> --as <coordinator>`, then `nova-config apply --kind sprint`); `--bar <p>` gives one for
+a run. The row ships it empty, and with no bar nothing is applied: every decision is recorded and each row says
+what a bar would apply, so the record trains first. 0.8 is the calibrated bar (SPEC-NOVA-DECIDE.md section 9: 59
+of 100 the coordinator's own verb; at 0.8 it applies 40, 39 of them the coordinator's; on blocked, 3 of 21, and
+bound, 3 of 13, Jev says drop, and a drop is never applied). What it lists is yours, each with why: every drop (with the reason the
 decision chose), everything under the bar, a verb the judgment does not print, a card applied before whose
 judgment is still open, a card it reworked within the last hour, and a provider refusal for want of payment (402, out of credit), which it never asks
 about: a payment is the owner's, so it goes to the owner on the bus. A sentinel and every other kind are left. A

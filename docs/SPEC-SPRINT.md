@@ -1411,7 +1411,12 @@ text, `'<why nothing is to be done>'` the ack's reason. A note's own verb (`wait
 
 The verb is applied when its probability is at or above the bar: `--bar`, else
 nova-config's sprint row `decide_judgment_bar` (applied to `sprint:decide_judgment_bar`
-and read with the routes; `routes --json` carries it), else 0.8. A drop is never
+and read with the routes; `routes --json` carries it). The row ships it empty (the
+owner, 2026-10-03: "same rule as the other layers"): with no bar, nothing is applied;
+each decision is asked and recorded (`act` listed) and its row says what a bar would
+apply, so the record trains before anything acts; once a bar is set or given, a
+recorded decision is applied from the record without asking again. 0.8 is the bar
+the calibration documents (docs/SPEC-NOVA-DECIDE.md section 9). A drop is never
 applied, whatever its probability: it is listed with the reason chosen. A card
 whose judgment text or last ten log lines carry a provider's refusal for want of
 payment (HTTP 402, out of credit) is never asked: it is listed, "a payment is the
@@ -1428,7 +1433,7 @@ card (`judgment`, `card`, `kind`, `verb`, `p`, `act`: applied, would-apply,
 listed, refused, failed or left, and `why`: the lines applied, or why it is
 listed), an `OUTCOME <decision> card=<c> label=<l>` line per outcome attached, and
 `ANSWER OK rows=<n> applied=<n> would_apply=<n> listed=<n> refused=<n> failed=<n>
-left=<n> outcomes=<n> bar=<p> record=<file>; run: nova-sprint inbox`; `--json` is the same as one object.
+left=<n> outcomes=<n> bar=<p, or - for none> record=<file>; run: nova-sprint inbox`; `--json` is the same as one object.
 `--dry-run` asks the decision and prints `would-apply`, and writes neither the
 sprint nor the record (`ANSWER DRY-RUN`). `--every <d>` is the coordinator seat's
 loop: a pass every `<d>` until a pass finds the machine STOPPED (or DONE), then

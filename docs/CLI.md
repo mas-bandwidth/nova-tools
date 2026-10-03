@@ -1056,7 +1056,9 @@ broken, work came back failed, blocked on something dropped, stalled, a conflict
 past its deadline, cannot ask, ready to accept, a card at its bound) by
 nova-decide's judgment decision, card by card: it applies the verb chosen when
 its probability is at or above `decide_judgment_bar` (nova-config's sprint row,
-0.8 by default; `--bar` overrides), by the line the inbox prints for that card,
+empty by default: with no bar it applies nothing, records every decision and lists
+what a bar would apply; `--bar` gives one for a run; 0.8 is the bar the calibration
+of 2026-10-03 documents), by the line the inbox prints for that card,
 and lists the rest for you: every drop, everything under the bar, and a provider
 refusal for want of payment, which it never asks about. It prints one table, a
 row a card, and records every decision (`--record`, default

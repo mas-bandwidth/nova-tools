@@ -433,7 +433,7 @@ CHECK SET kind=fleet name=fleet changed=store,coordinator,redis_port,pg_dsn
 CONFIG CHECK kind=fleet add=0 set=1 remove=0 rev=3 applied=0
 CHECK ADD kind=friend name=f1
 CONFIG CHECK kind=friend add=1 set=0 remove=0 rev=5 applied=0
-CHECK SET kind=sprint name=sprint changed=coordinator,decide_bounce,decide_review,decide_judgment_bar
+CHECK SET kind=sprint name=sprint changed=coordinator,decide_bounce,decide_review
 CONFIG CHECK kind=sprint add=0 set=1 remove=0 rev=6 applied=0
 CONFIG CHECK kind=loop add=0 set=0 remove=0 rev=0 applied=0
 CONFIG CHECK kind=route add=0 set=0 remove=0 rev=0 applied=0
@@ -445,7 +445,7 @@ APPLY SET kind=fleet name=fleet changed=store,coordinator,redis_port,pg_dsn
 CONFIG APPLY kind=fleet add=0 set=1 remove=0 rev=3 ms=1
 APPLY ADD kind=friend name=f1
 CONFIG APPLY kind=friend add=1 set=0 remove=0 rev=5 ms=6
-APPLY SET kind=sprint name=sprint changed=coordinator,decide_bounce,decide_review,decide_judgment_bar
+APPLY SET kind=sprint name=sprint changed=coordinator,decide_bounce,decide_review
 CONFIG APPLY kind=sprint add=0 set=1 remove=0 rev=6 ms=1
 CONFIG APPLY kind=loop add=0 set=0 remove=0 rev=0 ms=0
 CONFIG APPLY kind=route add=0 set=0 remove=0 rev=0 ms=0

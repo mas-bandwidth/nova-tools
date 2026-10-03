@@ -235,8 +235,11 @@ characters. Three choices:
 
 `Choose` applies the verb chosen when the judgment prints it, it is neither `drop` nor
 `release`, and its probability is at or above the bar (`decide_judgment_bar` in
-nova-config's sprint row, default 0.8; `--bar` overrides it). Anything else is listed
-for the coordinator with why. An applied `ack` gives the reason `nova-decide (p=<p>):
+nova-config's sprint row; `--bar` overrides it). Anything else is listed for the
+coordinator with why. The row ships the bar empty: with none, answer --decide applies
+nothing, records every decision and lists what a bar would apply, until the coordinator
+sets one. 0.8 is the bar the calibration below documents: at it the decision applies 40
+of the 100 and 39 of those are the coordinator's own verb. An applied `ack` gives the reason `nova-decide (p=<p>):
 the card can run without the dropped need; a conflict is handled at merge`.
 
 A card whose judgment text or last ten log lines carry a provider's refusal for want of

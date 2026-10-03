@@ -1002,7 +1002,10 @@ MERGE OK moved=1 refused=0 notes=2 op=merge-t32-1
 The routine judgments answered by the judgment decision
 ([SPEC-SPRINT.md section 8](SPEC-SPRINT.md#answered-by-nova-decide)): two cards
 come back failed in one note, and `answer --decide` asks the decision for each
-card and reworks each by the line the inbox prints for it alone. The backend is
+card. With no `decide_judgment_bar` set (the sprint row ships it empty) and no
+`--bar`, it applies nothing: it records each decision and lists what a bar would
+apply. Given `--bar 0.8` it applies the recorded decisions, asking nothing again,
+and reworks each card by the line the inbox prints for it alone. The backend is
 the fixed one (`--backend fixed`), answering from
 `cmd/nova-sprint/testdata/judgment-answers.json` whatever the state, so no key or
 network is needed; with Jev it is `nova-secrets exec --only JEV_API_KEY --
@@ -1073,13 +1076,13 @@ TABLES rows changed: work=1 readers=0 merge=0 fleet=0
 TICK OK state=RUNNING idle=no moved=2 notes=0
 0/2 0.0% -> ETA -  machine: running
 
-$ nova-sprint answer --decide --dry-run --backend fixed --answers ./cmd/nova-sprint/testdata/judgment-answers.json --record ./judgment.jsonl
-judgment        card  kind    verb    p     act          why
-finish-t24-1.1  s1-1  failed  rework  0.91  would-apply  nova-sprint rework s1-1
-finish-t24-1.1  s1-2  failed  rework  0.91  would-apply  nova-sprint rework s1-2
-ANSWER DRY-RUN rows=2 applied=0 would_apply=2 listed=0 refused=0 failed=0 left=0 outcomes=0 bar=0.80 record=./judgment.jsonl; run: nova-sprint inbox
-
 $ nova-sprint answer --decide --backend fixed --answers ./cmd/nova-sprint/testdata/judgment-answers.json --record ./judgment.jsonl
+judgment        card  kind    verb    p     act     why
+finish-t24-1.1  s1-1  failed  rework  0.91  listed  no decide_judgment_bar is set, so nothing is applied; at a bar at or under 0.91 it would apply: nova-sprint rework s1-1
+finish-t24-1.1  s1-2  failed  rework  0.91  listed  no decide_judgment_bar is set, so nothing is applied; at a bar at or under 0.91 it would apply: nova-sprint rework s1-2
+ANSWER OK rows=2 applied=0 would_apply=0 listed=2 refused=0 failed=0 left=0 outcomes=0 bar=- record=./judgment.jsonl; run: nova-sprint inbox
+
+$ nova-sprint answer --decide --bar 0.8 --backend fixed --answers ./cmd/nova-sprint/testdata/judgment-answers.json --record ./judgment.jsonl
 judgment        card  kind    verb    p     act      why
 finish-t24-1.1  s1-1  failed  rework  0.91  applied  nova-sprint rework s1-1
 finish-t24-1.1  s1-2  failed  rework  0.91  applied  nova-sprint rework s1-2

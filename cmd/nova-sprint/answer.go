@@ -35,9 +35,6 @@ import (
 // NOVA_SPRINT_SERVER names one, else run here on the store --redis names. Nothing it does is a
 // move the coordinator could not type.
 
-// defaultJudgmentBar is the bar when neither --bar nor the sprint row gives one.
-const defaultJudgmentBar = 0.8
-
 // answerRow is one card of one judgment, and what was done with it.
 type answerRow struct {
 	Judgment string  `json:"judgment"`
@@ -76,6 +73,7 @@ type answerer struct {
 	backend decide.Backend
 	record  string
 	bar     string // --bar as given; "" reads the sprint row's
+	barSet  bool   // this pass has a bar: with none, nothing is applied
 	dry     bool
 	now     func() time.Time
 	done    map[string]bool // the command lines run in this pass: a note's verb runs once
@@ -85,7 +83,7 @@ type answerer struct {
 type answerPass struct {
 	Rows     []answerRow     `json:"rows"`
 	Outcomes []answerOutcome `json:"outcomes"`
-	Bar      float64         `json:"bar"`
+	Bar      *float64        `json:"bar"` // null: no bar is set, and nothing is applied
 	Machine  string          `json:"machine"`
 	Record   string          `json:"record"`
 	DryRun   bool            `json:"dry_run,omitempty"`
@@ -110,7 +108,7 @@ func (a *app) cmdAnswer(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("answer")
 	useDecide := fs.Bool("decide", false, "answer the routine judgments by the judgment decision (nova-decide): the one way answer runs")
 	dry := fs.Bool("dry-run", false, "ask the decision and print what would be applied; apply nothing and write no record")
-	bar := fs.String("bar", "", "apply a verb whose probability is at or above this bar (else the sprint row's decide_judgment_bar, else 0.8)")
+	bar := fs.String("bar", "", "apply a verb whose probability is at or above this bar (else the sprint row's decide_judgment_bar; with neither, nothing is applied: every decision is recorded and what a bar would apply is listed)")
 	every := fs.Duration("every", 0, "run a pass every duration until the machine is STOPPED (or DONE): the coordinator seat's loop; 0 is one pass")
 	backend := fs.String("backend", "jev", "the decision's backend: jev (its key from JEV_API_KEY, which nova-secrets exec sets) or fixed (--answers)")
 	answers := fs.String("answers", "", "the fixed backend's answers, a JSON file (--backend fixed)")
@@ -267,28 +265,31 @@ func (w *answerer) coordinator(ctx context.Context, actor string) (string, error
 	return "", nil
 }
 
-// judgmentBar is the bar this pass applies at: --bar, else the sprint row's, else 0.8.
-func (w *answerer) judgmentBar(ctx context.Context) (float64, error) {
+// judgmentBar is the bar this pass applies at: --bar, else the sprint row's; set is false
+// when neither gives one, and then nothing is applied (the row ships empty: the owner,
+// 2026-10-03, "same rule as the other layers").
+func (w *answerer) judgmentBar(ctx context.Context) (bar float64, set bool, err error) {
 	raw := w.bar
 	if raw == "" {
 		var r struct {
 			Bar string `json:"decide_judgment_bar"`
 		}
 		if err := w.get(ctx, &r, "routes", "--json"); err != nil {
-			return 0, err
+			return 0, false, err
 		}
 		raw = r.Bar
 	}
 	if raw == "" {
-		return defaultJudgmentBar, nil
+		return 0, false, nil
 	}
-	return decide.ParseBar(raw)
+	bar, err = decide.ParseBar(raw)
+	return bar, err == nil, err
 }
 
 // pass answers the inbox once and attaches the outcomes now known.
 func (w *answerer) pass(ctx context.Context) (answerPass, error) {
 	w.done = map[string]bool{}
-	bar, err := w.judgmentBar(ctx)
+	bar, set, err := w.judgmentBar(ctx)
 	if err != nil {
 		return answerPass{}, err
 	}
@@ -299,7 +300,11 @@ func (w *answerer) pass(ctx context.Context) (answerPass, error) {
 	if err := w.get(ctx, &in, "inbox", "--json"); err != nil {
 		return answerPass{}, err
 	}
-	p := answerPass{Bar: bar, Machine: in.Machine, Record: w.record, DryRun: w.dry, Rows: []answerRow{}, Outcomes: []answerOutcome{}}
+	w.barSet = set
+	p := answerPass{Machine: in.Machine, Record: w.record, DryRun: w.dry, Rows: []answerRow{}, Outcomes: []answerOutcome{}}
+	if set {
+		p.Bar = &bar
+	}
 	// the outcomes first: a card that came back is seen before this pass answers it again
 	if !w.dry {
 		if p.Outcomes, err = w.outcomes(ctx); err != nil {
@@ -392,7 +397,7 @@ func (w *answerer) card(ctx context.Context, g sprint.Group, kind, card string, 
 		return row, nil
 	}
 	row.Recorded = map[bool]string{true: "existing", false: "new"}[existing]
-	ch := decide.Choose(d.Answers, allowed, bar)
+	ch := decide.Choose(d.Answers, allowed, bar) // with no bar set, bar is 0: what any bar would allow
 	row.Verb, row.P = ch.Verb, ch.P
 	if existing && d.Inputs["act"] == actApplied {
 		row.Act, row.Why = actListed, "applied at "+d.At+" and the judgment is still open: the coordinator's"
@@ -414,6 +419,8 @@ func (w *answerer) card(ctx context.Context, g sprint.Group, kind, card string, 
 		row.Act, row.Why = actListed, ch.Why
 	case why != "":
 		row.Act, row.Why = actListed, why
+	case !w.barSet:
+		row.Act, row.Why = actListed, "no decide_judgment_bar is set, so nothing is applied; at a bar at or under "+strconv.FormatFloat(ch.P, 'f', 2, 64)+" it would apply: "+shown(lines)
 	case w.dry:
 		row.Act, row.Why = actWouldApply, shown(lines)
 	default:
@@ -706,9 +713,13 @@ func printPass(p answerPass, asJSON bool, stdout io.Writer) int {
 	if p.DryRun {
 		word = "DRY-RUN"
 	}
-	fmt.Fprintf(stdout, "ANSWER %s rows=%d applied=%d would_apply=%d listed=%d refused=%d failed=%d left=%d outcomes=%d bar=%.2f record=%s; run: nova-sprint inbox\n", word,
+	bar := "-"
+	if p.Bar != nil {
+		bar = strconv.FormatFloat(*p.Bar, 'f', 2, 64)
+	}
+	fmt.Fprintf(stdout, "ANSWER %s rows=%d applied=%d would_apply=%d listed=%d refused=%d failed=%d left=%d outcomes=%d bar=%s record=%s; run: nova-sprint inbox\n", word,
 		len(p.Rows), p.count(actApplied), p.count(actWouldApply), p.count(actListed), p.count(actRefused), p.count(actFailed), p.count(actLeft),
-		len(p.Outcomes), p.Bar, oneline.Field(p.Record))
+		len(p.Outcomes), bar, oneline.Field(p.Record))
 	return code
 }
 

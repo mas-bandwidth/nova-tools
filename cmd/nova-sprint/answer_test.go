@@ -84,7 +84,7 @@ func TestAnswerDecideReworksEachCardOfAGroupedJudgment(t *testing.T) {
 	ta.ok("finish --as m1 s1-1.w1@1 s1-2.w1@1 --failed --report 'the tests went red'")
 	g := ta.group(sprint.NWorkFailed, "s1")
 	require.Equal(t, 2, g.Size)
-	out := ta.ok("answer --decide --record " + record)
+	out := ta.ok("answer --decide --bar 0.8 --record " + record)
 	assert.Contains(t, out, g.ID+"  s1-1  failed  rework  0.93  applied  nova-sprint rework s1-1")
 	assert.Contains(t, out, g.ID+"  s1-2  failed  rework  0.93  applied  nova-sprint rework s1-2")
 	assert.Contains(t, out, "ANSWER OK rows=2 applied=2 would_apply=0 listed=0 refused=0 failed=0 left=0 outcomes=0 bar=0.80")
@@ -100,7 +100,7 @@ func TestAnswerDecideReworksEachCardOfAGroupedJudgment(t *testing.T) {
 	for _, g := range ta.inboxGroups() {
 		assert.NotEqual(t, sprint.Judgment, g.Kind, "nothing is left open: %+v", g)
 	}
-	out = ta.ok("answer --decide --record " + record)
+	out = ta.ok("answer --decide --bar 0.8 --record " + record)
 	assert.Contains(t, out, "ANSWER OK rows=0 ")
 	assert.Equal(t, 2, j.asks(), "a pass with nothing open asks nothing")
 }
@@ -120,7 +120,7 @@ func TestAnswerDecideListsDropsAndWhatIsUnderTheBar(t *testing.T) {
 	ta.deal(2)
 	ta.failOnce("m1", "s1-1.w1@1", "nothing to do: already applied")
 	ta.failOnce("m1", "s1-2.w1@1", "the build broke")
-	out := ta.ok("answer --decide --record " + record)
+	out := ta.ok("answer --decide --bar 0.8 --record " + record)
 	assert.Contains(t, out, "s1-1  failed  drop    0.99  listed  a drop is the coordinator's: the listed edits were already made")
 	assert.Contains(t, out, "s1-2  failed  rework  0.60  listed  p=0.60 is under the bar 0.80")
 	assert.Contains(t, out, "applied=0 would_apply=0 listed=2")
@@ -128,7 +128,7 @@ func TestAnswerDecideListsDropsAndWhatIsUnderTheBar(t *testing.T) {
 	for _, d := range recorded(t, record) {
 		assert.Equal(t, "listed", d.Inputs["act"], d.ID)
 	}
-	out = ta.ok("answer --decide --record " + record + " --bar 0.5")
+	out = ta.ok("answer --decide --bar 0.5 --record " + record)
 	assert.Equal(t, 2, j.asks(), "a decided card is answered from the record")
 	assert.Contains(t, out, "s1-2  failed  rework  0.60  applied  nova-sprint rework s1-2", "the record's answer meets the lower bar")
 }
@@ -141,7 +141,7 @@ func TestAnswerDecideNeverAnswersAPaymentRefusal(t *testing.T) {
 	ta.ok("add --stream s1 --count 1")
 	ta.deal(1)
 	ta.failOnce("m1", "s1-1.w1@1", `provider: 402 "Insufficient account funds"`)
-	out := ta.ok("answer --decide --record " + record)
+	out := ta.ok("answer --decide --bar 0.8 --record " + record)
 	assert.Contains(t, out, "s1-1  failed  -     -  listed  a provider refused it for want of payment (402, out of credit): a payment is the owner's")
 	assert.Zero(t, j.asks())
 	_, err := os.Stat(record)
@@ -158,7 +158,7 @@ func TestAnswerDecideAcksABlockedCard(t *testing.T) {
 	ta.ok("add --stream s2 b --needs s1-1")
 	ta.ok("drop s1-1 --reason obsolete")
 	g := ta.group(sprint.NBlocked, "s2")
-	out := ta.ok("answer --decide --record " + record)
+	out := ta.ok("answer --decide --bar 0.8 --record " + record)
 	assert.Contains(t, out, g.ID+"  b     blocked  ack   0.88  applied  nova-sprint ack "+g.Notes[0]+" --reason 'nova-decide (p=0.88): the card can run without the dropped need; a conflict is handled at merge'")
 	assert.Contains(t, ta.ok("card b"), "needs s1-1 (off the table (dropped)), waived")
 	for _, g := range ta.inboxGroups() {
@@ -174,7 +174,7 @@ func TestAnswerDecideDryRunWritesNothing(t *testing.T) {
 	ta.deal(1)
 	ta.failOnce("m1", "s1-1.w1@1", "the tests went red")
 	before := ta.applies()
-	out := ta.ok("answer --decide --dry-run --record " + record)
+	out := ta.ok("answer --decide --bar 0.8 --dry-run --record " + record)
 	assert.Contains(t, out, "s1-1  failed  rework  0.95  would-apply  nova-sprint rework s1-1")
 	assert.Contains(t, out, "ANSWER DRY-RUN rows=1 applied=0 would_apply=1 ")
 	assert.Equal(t, 1, j.asks())
@@ -197,12 +197,12 @@ func TestAnswerDecideAttachesTheOutcome(t *testing.T) {
 	ta.deal(2)
 	ta.failOnce("m1", "s1-1.w1@1", "red")
 	ta.failOnce("m1", "s1-2.w1@1", "the brief names lines that are not there")
-	ta.ok("answer --decide --record " + record)
+	ta.ok("answer --decide --bar 0.8 --record " + record)
 	ta.ok("drop s1-2 --reason 'the brief is wrong'")
 	ta.ok("tick")
 	ta.failOnce("m1", "s1-1.w2@1", "red again")
 	var p answerPass
-	require.NoError(t, json.Unmarshal([]byte(ta.ok("answer --decide --json --record "+record)), &p))
+	require.NoError(t, json.Unmarshal([]byte(ta.ok("answer --decide --bar 0.8 --json --record "+record)), &p))
 	labels := map[string]string{}
 	for _, o := range p.Outcomes {
 		labels[o.Card] = o.Label
@@ -236,7 +236,7 @@ func TestAnswerDecideLoopEndsWhenTheMachineStops(t *testing.T) {
 		}
 	})
 	start := ta.a.now()
-	out := ta.ok("answer --decide --every 60s --record " + record)
+	out := ta.ok("answer --decide --bar 0.8 --every 60s --record " + record)
 	assert.Equal(t, 3, strings.Count(out, "ANSWER OK "), out)
 	assert.Contains(t, out, "s1-1  failed  rework  0.90  applied")
 	assert.Contains(t, out, "s1-2  failed  rework  0.90  applied")
@@ -287,14 +287,14 @@ func TestAnswerDecideRunsThroughTheServer(t *testing.T) {
 	var sent [][]string
 	c, boss := clientOf(t, r, "boss", &sent)
 	c.decider = &judge{by: always(decide.VerbRework, 0.9, "own", "cannot-be-done")}
-	code, out, errs := boss("answer", "--decide", "--record", filepath.Join(t.TempDir(), "j.jsonl"))
+	code, out, errs := boss("answer", "--decide", "--bar", "0.8", "--record", filepath.Join(t.TempDir(), "j.jsonl"))
 	require.Equal(t, 0, code, "%s%s", out, errs)
 	assert.Contains(t, out, "s1-1  failed  rework  0.90  applied  nova-sprint rework s1-1")
 	var verbs []string
 	for _, v := range sent {
 		verbs = append(verbs, v[0])
 	}
-	assert.Subset(t, verbs, []string{"inbox", "routes", "card", "log", "rework"})
+	assert.Subset(t, verbs, []string{"inbox", "card", "log", "rework"})
 	assert.Contains(t, r.boss("log --card s1-1"), "reworked by boss")
 }
 
@@ -332,11 +332,36 @@ func TestAnswerDecideReworksACardAtMostOnceAnHour(t *testing.T) {
 	ta.ok("add --stream s1 --count 1")
 	ta.deal(1)
 	ta.failOnce("m1", "s1-1.w1@1", "red")
-	assert.Contains(t, ta.ok("answer --decide --record "+record), "s1-1  failed  rework  0.95  applied")
+	assert.Contains(t, ta.ok("answer --decide --bar 0.8 --record "+record), "s1-1  failed  rework  0.95  applied")
 	ta.failOnce("m1", "s1-1.w2@1", "the build broke")
-	assert.Contains(t, ta.ok("answer --decide --record "+record), "s1-1  failed  rework  0.95  listed  nova-decide reworked it at ")
+	assert.Contains(t, ta.ok("answer --decide --bar 0.8 --record "+record), "s1-1  failed  rework  0.95  listed  nova-decide reworked it at ")
 	ta.ok("rework s1-1 --fix 'the coordinator looked'")
 	ta.a.sleep(time.Hour)
 	ta.failOnce("m1", "s1-1.w3@1", "the gate timed out")
-	assert.Contains(t, ta.ok("answer --decide --record "+record), "s1-1  failed  rework  0.95  applied")
+	assert.Contains(t, ta.ok("answer --decide --bar 0.8 --record "+record), "s1-1  failed  rework  0.95  applied")
+}
+
+// The sprint row's bar ships empty (the owner, 2026-10-03: "same rule as the other
+// layers"): with no bar set and none given, answer applies nothing; it asks, records every
+// decision as listed, and says what a bar would apply. The same decisions are applied from
+// the record, asking nothing, once a bar is given.
+func TestAnswerDecideAppliesNothingWithNoBar(t *testing.T) {
+	t.Parallel()
+	ta, j, record := answering(t, always(decide.VerbRework, 0.91, "own", "cannot-be-done"))
+	ta.ok("add --stream s1 --count 1")
+	ta.deal(1)
+	ta.failOnce("m1", "s1-1.w1@1", "red")
+	before := ta.applies()
+	out := ta.ok("answer --decide --record " + record)
+	assert.Contains(t, out, "s1-1  failed  rework  0.91  listed  no decide_judgment_bar is set, so nothing is applied; at a bar at or under 0.91 it would apply: nova-sprint rework s1-1")
+	assert.Contains(t, out, "applied=0 would_apply=0 listed=1 refused=0 failed=0 left=0 outcomes=0 bar=- ")
+	assert.Equal(t, before, ta.applies(), "the sprint is not written")
+	var p answerPass
+	require.NoError(t, json.Unmarshal([]byte(ta.ok("answer --decide --json --record "+record)), &p))
+	assert.Nil(t, p.Bar, "--json says no bar as null")
+	for _, d := range recorded(t, record) {
+		assert.Equal(t, "listed", d.Inputs["act"], "recorded: %s", d.ID)
+	}
+	assert.Contains(t, ta.ok("answer --decide --bar 0.9 --record "+record), "s1-1  failed  rework  0.91  applied  nova-sprint rework s1-1")
+	assert.Equal(t, 1, j.asks(), "the bar applies the recorded decision; nothing is asked again")
 }
