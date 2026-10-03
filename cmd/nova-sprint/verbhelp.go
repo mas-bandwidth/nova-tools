@@ -28,7 +28,7 @@ var verbExit = map[string]string{
 // states one (docs/STANDARD.md: `effect: inspection|local write|delivery`).
 var verbEffect = map[string]string{
 	"handover":    "inspection: reads the store, writes nothing",
-	"dashboard":   "inspection: serves the page and reads the sprint as where --json does, writes nothing",
+	"dashboard":   "inspection: serves the page and the pull routes, reads the sprint as where --json --cards does, writes nothing",
 	"coordinator": "delivery: moves the seat in the sprint's store, a note to the old holder on a take; --dry-run writes nothing",
 	"answer":      "delivery: sends the routine judgments' state to the decision's backend (Jev), applies the verbs chosen through the sprint's verbs, and appends to --record; --dry-run asks and writes nothing",
 }

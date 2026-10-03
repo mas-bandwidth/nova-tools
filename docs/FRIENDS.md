@@ -76,6 +76,15 @@ what it lacks; `HOLD` and `FAIL` come back failed to the coordinator with the
 paragraph. A sprint card is not counted among the
 inbox's jobs: the friends table counts it from the sprint.
 
+A friend pulls her own view of the sprint whenever she wants it with one curl, `curl -s
+http://<tailnet address>:<port>/friend/<name>` (the coordinator's dashboard pull port,
+`7395` by default; `/api/friend/<name>` is the same as JSON), and reads the sprint line,
+her row, and a line per card dealt to her with its state, its deadline and its branch. It
+is read-only: it changes nothing, and her inbox and outbox stay how work arrives and is
+reported.
+`curl -s http://<tailnet address>:<port>/team` is every friend at once, each with the
+cards she holds, so friends see what each other are on (`/api/team` as JSON).
+
 ## Where a job's work lives
 
 inbox/ and outbox/ hold text: the brief, the report, the evidence. A job's

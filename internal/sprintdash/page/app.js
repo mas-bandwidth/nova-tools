@@ -1,6 +1,8 @@
-// Sprint dashboard: polls /api/sprint (the server's cached `where --json`)
-// every second and patches the DOM in place. Nothing is blanked on a failed
-// poll; the page holds the last data and says nothing.
+// Sprint dashboard: keeps /events open (each new copy of the server's cached
+// `where --json` pushed as it is read) and patches the DOM in place; while the
+// stream is not open it polls /api/sprint every second on a fixed timer, never
+// after an answer. Nothing is blanked on a failed poll; the page holds the last
+// data and says nothing.
 "use strict";
 
 // Left to right in the bars: done first, so the bar fills like progress.
@@ -458,23 +460,25 @@ function render(d) {
   renderHero(d, s);
   fitTables();
 }
+var stream = null;
 function poll() {
-  if (inFlight) return;
+  if (inFlight || (stream && stream.readyState === 1)) return;
   inFlight = true;
   fetch("/api/sprint", { cache: "no-store" }).then(function (r) {
     if (!r.ok) throw new Error("HTTP " + r.status);
     return r.json();
-  }).then(function (j) {
-    if (j.data) {
-      throughput = j.throughput == null ? null : j.throughput; throughputMinutes = j.throughputMinutes || 0;
-      if (!lastGood || lastGood.at !== j.data.at) { try { render(j.data); } catch (e) { console.error(e); } }
-      lastGood = j.data;
-    }
-    if (j.data) setLive(new Date(j.data.at));
-    if (j.build) { if (build == null) build = j.build; else if (build !== j.build) { location.reload(); return; } }
-  }).catch(function () {
+  }).then(apply).catch(function () {
     // hold: nothing changes on the page
   }).then(function () { inFlight = false; });
+}
+function apply(j) {
+  if (j.data) {
+    throughput = j.throughput == null ? null : j.throughput; throughputMinutes = j.throughputMinutes || 0;
+    if (!lastGood || lastGood.at !== j.data.at) { try { render(j.data); } catch (e) { console.error(e); } }
+    lastGood = j.data;
+    setLive(new Date(j.data.at));
+  }
+  if (j.build) { if (build == null) build = j.build; else if (build !== j.build) location.reload(); }
 }
 
 // theme: dark by default, light by the toggle only
@@ -486,5 +490,10 @@ $("theme").addEventListener("click", function () {
   syncThemeButton();
 });
 syncThemeButton();
+// the stream reconnects on its own; while it is not open, the timer's poll runs
+if (window.EventSource) {
+  stream = new EventSource("/events");
+  stream.addEventListener("sprint", function (e) { try { apply(JSON.parse(e.data)); } catch (x) { console.error(x); } });
+}
 poll();
 setInterval(poll, POLL_MS);

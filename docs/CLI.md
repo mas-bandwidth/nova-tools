@@ -1038,7 +1038,8 @@ nova-sprint card <id>
 nova-sprint log [--card <id>] [--stream <s>] [--member <m>] [--since <10m|RFC3339>] [--at-epoch <n>]
 nova-sprint check
 nova-sprint repair
-nova-sprint where [--watch] [--every <duration>]
+nova-sprint where [--watch] [--every <duration>] [--all] [--json [--cards]]
+nova-sprint dashboard [--listen <address:port>[,...] | none] [--pull <address:port>[,...] | none] [--logo <file>] [--every <duration>]
 nova-sprint routes
 nova-sprint funded <provider> --reason <text>
 nova-sprint stats
@@ -1060,6 +1061,21 @@ id `inbox` prints, with `--expect <n>` the size it printed, which refuses a grou
 that has changed. `nova-sprint help <verb>` (or `<verb> -h`) prints one verb's
 usage, flags and exit codes; `nova-sprint help <group>` (fleet, friend, reader,
 goal, stream) one group's.
+
+### A worker's own view: the dashboard's pull routes
+
+`dashboard` serves the page on `--listen` (default `127.0.0.1:7390`) and, on listeners of
+their own, the pull routes on `--pull` (default `127.0.0.1:7395`; `none` for either serves
+nothing there): `curl -s http://<tailnet address>:7395/friend/<name>` is one friend's view
+as plain text, a line an item (the sprint line, her friends-table row, a line per card
+dealt to her: id, stream, state, how long, the time to its deadline, the branch; then the
+open judgments on them); `/machine/<name>` is a fleet row's; `/team` is every friend and
+the cards she holds; `/api/team`, `/api/friend/<name>`,
+`/api/machine/<name>` and `/api/sprint` are JSON; `/events`, `/events/friend/<name>` and
+`/events/machine/<name>` push each new copy as server-sent events. All of it is read-only,
+no-store, carries the copy's time in `Sprint-At`, and comes from one copy of `where --json
+--cards` read at most once a second however many pull. An unknown name is a 404 of one
+line. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md), the dashboard.
 
 ### A provider out of funds
 

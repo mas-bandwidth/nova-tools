@@ -340,6 +340,71 @@ nothing. `dashboard` serves a page that is a second view of the same JSON
 ([SPEC-SPRINT-DASHBOARD.md](SPEC-SPRINT-DASHBOARD.md)); the frame `where` draws stays
 the canonical view.
 
+The dashboard also serves each worker its own view, pulled when the worker wants it (the
+owner, 2026-10-03 11:18 AM: "Think from the point of view of the worker. How to get the
+current in the dashboard to them efficiently for their own visibility, on request (pull)."
+and "This should be part of nova-sprint tool, dashboard, maybe a different URL on the
+tailnet that gives them the json or xml or whatever you choose."). `dashboard --pull
+<address:port>[,...]` (default `127.0.0.1:7395`; `none` serves none; the same addresses
+`--listen` takes, so loopback or the tailnet and never a public one) serves the pull routes
+on listeners of their own, so a proxy that publishes the page never fronts them, and
+`--listen none` serves no page. Every route answers from the one cached copy the page
+reads: `where --json --cards`, read at most once a second however many workers pull (the
+owner, 2026-10-03 11:21 AM: "updated once per-second."). `--cards` adds to `where --json`
+the work cards dealt to a fleet row and not finished (each card's row, state, since,
+deadline and branch, read from the fleet's ready and working cells alone, so the read is
+bounded by the fleet's width and never by the sprint's cards) and the open judgments
+naming them (id and kind). The routes: `/api/sprint` is the whole copy as the page reads
+it; `/api/friend/<name>` is one friend's view as JSON: the sprint line (landed, all, held,
+ETA, the machine's state), her friends-table row (status, ready, working, width, done,
+ok%), the cards dealt to her row `friend.<name>` (id, stream, state, since, deadline,
+branch) and the open judgments naming them; `/friend/<name>` is the same as plain text,
+one line an item and no markup, the form an AI pulls with one curl and reads whole (about
+a kilobyte for sixteen cards: 1.0 KB to 1.2 KB by the length of the stream names):
+
+```
+sprint 352/1205 landed held 770 eta 2d7h machine running at 11:20:00 AM
+friend amy up ready 1 working 1/8 done 9 ok 33.3%
+ci-03.w2 ci working 16m due 1h10m sprint/ci-03.w2.g1.e15
+ci-07.w1 ci ready 2m due 5h58m sprint/ci-07.w1.g1.e15
+judgment ci-03-failed.2 work came back failed on ci-03
+```
+
+Each card line is the card, its stream, its state, how long it has been in it, the time to
+its deadline (`late 5m` past it; the deadline by the clock, as the tick would hold it if
+the machine does not stop), and the branch its work is pushed to. `/api/machine/<name>` and
+`/machine/<name>` are the same for a fleet row, with its load. `/team` is every friend at
+once (the owner, 2026-10-03 11:56 AM: "we need to get the friends working together."):
+the sprint line, then for each friend of the friends table, by name, a line of her row
+and an indented line per card she holds (id, stream, state, how long in it), so each
+friend sees what every other is on with one curl; `/api/team` is the same as JSON
+(`friends`: name, row, cards). About 2 KB for six friends holding eight cards each:
+
+```
+sprint 352/1205 landed held 770 eta 2d7h machine running at 11:20:00 AM
+friend amy up working 1/8 ready 1 done 9 ok 33.3%
+  ci-03.w2 ci working 16m
+  ci-07.w1 ci ready 2m
+friend bob down working 0/8 ready 0 done 0 ok 0.0%
+```
+ A name is a row of its table
+or a 404 of one line (`no friend named "zed" on the friends table`); a name is looked up,
+never read as a path. Every answer is `Cache-Control: no-store` and carries the copy's
+time in `Sprint-At`; nothing is written, any method but GET and HEAD is refused, and no
+key or secret is in the copy (`where --json` carries none). The event streams push each
+new copy as it is read instead of waiting to be asked (the owner, 2026-10-03 11:30 AM:
+"nova sprint website is not updating once per-second. something is chug."; a page that
+polls after each answer sees the answer's latency, ~0.7 s through the public proxy, on top
+of the second): `/events` on both listeners, and `/events/friend/<name>` and
+`/events/machine/<name>` on the pull listeners, are server-sent events
+(`text/event-stream`, no-store), the event `sprint` whose data is the JSON its
+`/api/` route answers, the first at once from the copy there is, then one per new copy;
+while a stream is open the dashboard reads the sprint each `--every` on its own ticker,
+and a `: keepalive` comment goes every 15 s. The page and any client prefer `/events`
+(an EventSource reconnects on its own) and, while it is not open, poll `/api/sprint` once
+a second on a fixed timer, never after an answer. A friend pulls her view as
+docs/FRIENDS.md says.
+
 Each table keeps its member records under a prefix of its own, so a primary's
 record in work and its record in merge are separate. The tables are named
 plainly: `work`, `merge`, `readers` and `fleet`, and the view is `sprint`; the
