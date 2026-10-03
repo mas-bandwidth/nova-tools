@@ -353,6 +353,9 @@ func Add(s *Snapshot, r AddReq) Plan {
 			if a.rules != "" {
 				fields[FieldRules] = a.rules
 			}
+			if who := WhoOfBrief(a.brief); who != "" {
+				fields[FieldWho] = who // a friend's card: the tick deals it to a friend (friend_deal.go)
+			}
 		}
 		if len(a.needs) > 0 {
 			fields["needs"] = strings.Join(a.needs, ",")
@@ -744,7 +747,12 @@ const noRoomWhy = "every up fleet member is at its room (DealAhead times its wid
 func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMoves) {
 	var p Plan
 	moves := roundMoves{}
-	ready := func(c *Card) string { return inState(c, Ready) }
+	ready := func(c *Card) string {
+		if _, ok := FriendCard(c); ok {
+			return friendCardWhy
+		}
+		return inState(c, Ready)
+	}
 	chosen := pick(&p, r.Sel, eligibleTurns(s.Work.Column(Ready), ready, streamRound(s, PropStreamIndex)), rowOf, ready, s.primaryCard)
 	up := s.UpMembers()
 	if len(up) == 0 {
@@ -1027,7 +1035,7 @@ func takeOne(s *Snapshot, r TakeReq) Plan {
 	// them: a member holding DealAhead times its width takes its width of them
 	// from every stream alike, never one stream's lowest scores first (errata 3
 	// amendment 10)
-	chosen := pick(&p, sel, takeTurns(s.Fleet.Cell(r.As, Ready), slices.Index(s.Fleet.Rows(), r.As)), fieldStream, func(c *Card) string {
+	chosen := pick(&p, sel, takeTurns(s.Fleet.Cell(r.As, Ready), slices.Index(s.Members(), r.As)), fieldStream, func(c *Card) string {
 		if byID {
 			if why := liveGen("take", c, r.Gens); why != "" {
 				return why
@@ -1514,7 +1522,7 @@ func fleetStepPlan(s *Snapshot, r FleetReq, rr *round, moves roundMoves) Plan {
 			line += " width=" + itoa(r.Width)
 		}
 		if comeUp {
-			level(s, &p, orderLike(s.Fleet.Rows(), append(liveFor(s, r), r.Member), r.Member), rr, moves, nil)
+			level(s, &p, orderLike(s.Members(), append(liveFor(s, r), r.Member), r.Member), rr, moves, nil)
 			if len(moves) > 0 {
 				to, from := map[string]int{}, map[string]int{}
 				for id, m := range moves {
@@ -1679,7 +1687,7 @@ func countsByMember(n map[string]int) string {
 // cards placed here included, for the level after it.
 func sweep(s *Snapshot, p *Plan, r FleetReq, up []string, rr *round, moves roundMoves, held map[string]int) {
 	widths := memberWidths(s, up)
-	for _, m := range s.Fleet.Rows() {
+	for _, m := range s.Members() {
 		ctl := s.MemberCtl(m)
 		if ctl == nil || ctl.F("status") == Up || s.Fleet.Count(m, Ready)+s.Fleet.Count(m, Working) == 0 {
 			continue

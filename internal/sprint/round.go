@@ -251,7 +251,7 @@ func (r *round) levelTo(up []string, n, held, widths map[string]int, from string
 // names given that it has no row of yet (a member added by the step that
 // places cards on it).
 func dealRoundWith(s *Snapshot, extra ...string) *round {
-	names := append([]string(nil), s.Fleet.Rows()...)
+	names := s.Members()
 	for _, x := range extra {
 		if x != "" && !contains(names, x) {
 			names = append(names, x)
@@ -269,7 +269,7 @@ func tableRound(t *Table, name string, names []string) *round {
 }
 
 // dealRound is the deal's rolling index over the fleet's members.
-func dealRound(s *Snapshot) *round { return tableRound(s.Fleet, PropDealIndex, s.Fleet.Rows()) }
+func dealRound(s *Snapshot) *round { return tableRound(s.Fleet, PropDealIndex, s.Members()) }
 
 // askRound is the ask's rolling index over the readers.
 func askRound(s *Snapshot) *round { return tableRound(s.Readers, PropAskIndex, s.Readers.Rows()) }

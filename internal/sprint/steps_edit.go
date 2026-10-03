@@ -68,6 +68,11 @@ func Brief(s *Snapshot, r BriefReq) Plan {
 	if r.Rules != "" {
 		set[FieldRules], unset = r.Rules, nil
 	}
+	if who := WhoOfBrief(r.Brief); who != "" {
+		set[FieldWho] = who // the new brief's WHO line names its worker (friend_deal.go)
+	} else {
+		unset = append(unset, FieldWho)
+	}
 	p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, setEntry(c, set, unset...))},
 		Moved: fmt.Sprintf("%s brief replaced (%d bytes) stream=%s %s", c.ID, len(r.Brief), c.Row, c.Col)})
 	return p

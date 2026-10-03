@@ -65,7 +65,10 @@ type app struct {
 	// friends reads the names of nova-config's friend rows (friend sync):
 	// tests give it the config's in-memory store.
 	friends friendsFn
-	loc     *time.Location // the zone times print in: nil is the machine's local zone
+	// tip reads origin's tip of a branch (friend sync, a friend's LAND): tests give
+	// it a table of tips and open no socket.
+	tip tipFn
+	loc *time.Location // the zone times print in: nil is the machine's local zone
 	// notify is how an interrupt reaches a command that runs until it is
 	// interrupted (where --watch): the context it returns is done at one.
 	notify func(ctx context.Context) (context.Context, context.CancelFunc)
@@ -136,6 +139,7 @@ func newApp(getenv func(string) string) *app {
 	a.backend = a.redisBackend
 	a.inventory = a.readInventory
 	a.friends = a.readFriends
+	a.tip = a.branchTip
 	a.landRoot = defaultLandRoot
 	a.home = os.UserHomeDir
 	return a

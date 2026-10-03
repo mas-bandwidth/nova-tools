@@ -623,8 +623,14 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 	var b strings.Builder
 	b.WriteString(a.seatTitle(v.Coordinator, v.Seat, now) + "\n\n" + whereHeader(v.Summary, v.Machine) + "\n\n")
 	parts := map[string]string{}
+	var friendCards map[string]store.FriendRow
 	for i, t := range shapes {
 		logical := sprint.ViewOrder[i]
+		if logical == sprint.Fleet {
+			// a friend's row holds her sprint cards: counted on the friends table, never a
+			// machine of the fleet table (sprint.FriendRow)
+			t, friendCards = splitFriendRows(t)
+		}
 		rows := map[string]map[string]string{}
 		for _, r := range t.Rows {
 			cells := map[string]string{}
@@ -655,6 +661,15 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 	if err != nil {
 		return whereView{}, "", err
 	}
+	for i, f := range friends {
+		c := friendCards[f.Name]
+		friends[i].Ready += c.Ready
+		friends[i].OK += c.OK
+		friends[i].Failed += c.Failed
+		if f.Status != sprint.Down {
+			friends[i].Working += c.Working // down, she shows working 0 (store.FriendRows)
+		}
+	}
 	ft := friendsTable(friends)
 	v.Tables[sprint.Friends] = map[string]map[string]string{}
 	for _, r := range ft.Rows {
@@ -683,6 +698,34 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 		}
 	}
 	return v, b.String(), nil
+}
+
+// splitFriendRows is the fleet table without the friends' rows (sprint.FriendRow), and
+// each friend's sprint cards counted off her row: ready, working, and done ok and failed.
+func splitFriendRows(t ntable.Table) (ntable.Table, map[string]store.FriendRow) {
+	at := map[string]int{}
+	for j, c := range t.Columns {
+		at[c.Name] = j
+	}
+	count := func(r ntable.Row, col string) int {
+		if j, ok := at[col]; ok && j < len(r.Cells) {
+			return int(r.Cells[j].Count)
+		}
+		return 0
+	}
+	out := map[string]store.FriendRow{}
+	machines := t
+	machines.Rows = nil
+	for _, r := range t.Rows {
+		name, ok := sprint.FriendOfRow(r.Key)
+		if !ok {
+			machines.Rows = append(machines.Rows, r)
+			continue
+		}
+		out[name] = store.FriendRow{Name: name, Ready: count(r, string(sprint.Ready)), Working: count(r, string(sprint.Working)),
+			OK: count(r, sprint.DoneOK), Failed: count(r, sprint.DoneFailed)}
+	}
+	return machines, out
 }
 
 // friendsTable is the friends table (sprint.FriendsDef) with a row per friend
@@ -1166,9 +1209,12 @@ func groupText(g sprint.Group, now time.Time, opened bool) string {
 
 // cardView is everything about one primary.
 type cardView struct {
-	Primary  *sprint.Card       `json:"primary"`
-	Tier     string             `json:"tier"`    // the tier it is on (sprint.CardTiers)
-	Ceiling  string             `json:"ceiling"` // the highest the machine escalates it to
+	Primary *sprint.Card `json:"primary"`
+	Tier    string       `json:"tier"`    // the tier it is on (sprint.CardTiers)
+	Ceiling string       `json:"ceiling"` // the highest the machine escalates it to
+	// Who is the worker its brief's WHO line names (sprint.FieldWho): friend for any
+	// friend, friend.<name> for one; absent on a machine's card.
+	Who      string             `json:"who,omitempty"`
 	Work     []*sprint.Card     `json:"work_cards"`
 	Reads    []*sprint.Card     `json:"read_cards"`
 	Merge    *sprint.Card       `json:"merge,omitempty"`
@@ -1228,7 +1274,7 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 			texts = []storyText{}
 		}
 		tier, ceiling := sprint.CardTiers(v.Primary)
-		b, _ := json.Marshal(cardView{Primary: v.Primary, Tier: tier, Ceiling: ceiling, Work: v.Work, Reads: v.Reads, Merge: v.Merge, Open: v.Open, Needs: v.Needs, NeededBy: v.NeededBy, Held: held,
+		b, _ := json.Marshal(cardView{Primary: v.Primary, Tier: tier, Ceiling: ceiling, Who: v.Primary.F(sprint.FieldWho), Work: v.Work, Reads: v.Reads, Merge: v.Merge, Open: v.Open, Needs: v.Needs, NeededBy: v.NeededBy, Held: held,
 			Cost: sprint.CardCostOf(v.Primary), Timeline: events, Texts: texts})
 		fmt.Fprintln(stdout, string(b))
 		return 0
@@ -1257,7 +1303,7 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 		}
 		// the tier it is on and its ceiling: flash first, pro on escalation
 		tier, ceiling := sprint.CardTiers(v.Primary)
-		fmt.Fprintf(stdout, "CARD OK id=%s epoch=%d work_cards=%d read_cards=%d open=%d tier=%s ceiling=%s\n", oneline.Escape(id), epoch, len(v.Work), len(v.Reads), len(v.Open), tier, ceiling)
+		fmt.Fprintf(stdout, "CARD OK id=%s epoch=%d work_cards=%d read_cards=%d open=%d tier=%s ceiling=%s%s\n", oneline.Escape(id), epoch, len(v.Work), len(v.Reads), len(v.Open), tier, ceiling, whoWord(v.Primary))
 		return 0
 	}
 	printCard(stdout, "PRIMARY", v.Primary)
@@ -1296,8 +1342,17 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 	if pinned, err := st.Pinned(ctx); err == nil {
 		epoch = pinned.PinnedEpoch()
 	}
-	fmt.Fprintf(stdout, "CARD OK id=%s epoch=%d work_cards=%d read_cards=%d open=%d\n", oneline.Escape(id), epoch, len(v.Work), len(v.Reads), len(v.Open))
+	fmt.Fprintf(stdout, "CARD OK id=%s epoch=%d work_cards=%d read_cards=%d open=%d%s\n", oneline.Escape(id), epoch, len(v.Work), len(v.Reads), len(v.Open), whoWord(v.Primary))
 	return 0
+}
+
+// whoWord is the CARD OK line's who of a friend's card (sprint.FieldWho: who=friend for
+// any friend, who=friend.<name> for one); nothing for a machine's card.
+func whoWord(pr *sprint.Card) string {
+	if w := pr.F(sprint.FieldWho); w != "" {
+		return " who=" + oneline.Field(w)
+	}
+	return ""
 }
 
 func printCard(w io.Writer, kind string, c *sprint.Card) {

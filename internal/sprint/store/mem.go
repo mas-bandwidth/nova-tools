@@ -110,9 +110,10 @@ type memChange struct {
 
 // memEpoch is a table's rows, text cells and properties at one epoch.
 type memEpoch struct {
-	rows  []string
-	texts map[string]map[string]string
-	props map[string]string // the table's properties (docs/SPEC-NOVA-TABLE.md)
+	rows   []string
+	hidden map[string]bool // the rows hidden (RowsHide)
+	texts  map[string]map[string]string
+	props  map[string]string // the table's properties (docs/SPEC-NOVA-TABLE.md)
 }
 
 type memMember struct {
@@ -283,6 +284,7 @@ func (m *Mem) Shapes(_ context.Context, tables []string) ([]ntable.Table, error)
 		}
 		for _, r := range ep.rows {
 			row := ntable.NewRow(s, r)
+			row.Hidden = ep.hidden[r]
 			row.Texts = map[string]string{}
 			maps.Copy(row.Texts, ep.texts[r])
 			for j, c := range s.Columns {
@@ -639,6 +641,34 @@ func (m *Mem) RowsAdd(_ context.Context, table string, rows []string) error {
 	return nil
 }
 
+// RowsHide marks rows of the table hidden, as the table layer's row hide does, under
+// RowsAdd's epoch check; a row the table does not have is skipped.
+func (m *Mem) RowsHide(_ context.Context, table string, rows []string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.Calls["rowshide"]++
+	t, err := m.table(table)
+	if err != nil {
+		return err
+	}
+	if err := m.writeEpoch(t); err != nil {
+		return err
+	}
+	ep := t.at(m.active(t))
+	for _, r := range rows {
+		if slices.Contains(ep.rows, r) {
+			if ep.hidden == nil {
+				ep.hidden = map[string]bool{}
+			}
+			ep.hidden[r] = true
+		}
+	}
+	t.rev++
+	t.wrote[m.active(t)] = true
+	t.changes = append(t.changes, memChange{epoch: m.active(t), before: t.rev - 1, after: t.rev, verb: "rows_hide"})
+	return nil
+}
+
 // RowsDel removes rows and unplaces the cards in them, as the table layer's row
 // delete does, under RowsAdd's epoch check.
 func (m *Mem) RowsDel(_ context.Context, table string, rows []string) error {
@@ -719,6 +749,7 @@ func (m *Mem) rowsDel(t *memTable, rows []string) {
 		}
 		ep.rows = slices.Delete(ep.rows, i, i+1)
 		delete(ep.texts, r)
+		delete(ep.hidden, r)
 		for id, mm := range t.members {
 			if mm.placed && mm.epoch == m.active(t) && mm.row == r {
 				mm.placed, mm.row, mm.col = false, "", ""
