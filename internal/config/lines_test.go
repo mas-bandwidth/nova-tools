@@ -13,7 +13,7 @@ func TestRowLineNamesEveryFieldAndEscapesValues(t *testing.T) {
 
 	friend, _ := Lookup(KindFriend)
 	row := Row{Name: "rowan", Fields: map[string]string{"slots": "64", "roles": "builder,reader"}, CreatedAt: "2026-09-27T01:00:00Z", UpdatedAt: "2026-09-27T02:00:00Z"}
-	want := `FRIEND name=rowan slots=64 tiers=- roles=builder,reader`
+	want := `FRIEND name=rowan slots=64 tiers=- roles=builder,reader width=-`
 	scopedGot17 := RowLine(friend, row)
 	require.Equal(t, want, scopedGot17, "row line\n got %s\nwant %s", scopedGot17, want)
 	scopedGot21 := ShowLine(friend, row)
@@ -50,7 +50,7 @@ func TestOpAndKindLines(t *testing.T) {
 	scopedGot66, scopedWant66 := OpLine("CHECK", "machine", Op{Op: OpRemove, Name: "mini"}), "CHECK REMOVE kind=machine name=mini"
 	assert.Equal(t, scopedWant66, scopedGot66, "remove\n got %s\nwant %s", scopedGot66, scopedWant66)
 	friend, _ := Lookup(KindFriend)
-	scopedGot71, scopedWant71 := KindLine(friend), "CONFIG KIND name=friend table=config.friends fields=slots,tiers,roles required=slots,tiers rows=many"
+	scopedGot71, scopedWant71 := KindLine(friend), "CONFIG KIND name=friend table=config.friends fields=slots,tiers,roles,width required=slots,tiers rows=many"
 	assert.Equal(t, scopedWant71, scopedGot71, "kind\n got %s\nwant %s", scopedGot71, scopedWant71)
 	fleet, _ := Lookup(KindFleet)
 	scopedGot76, scopedWant76 := KindLine(fleet), "CONFIG KIND name=fleet table=config.fleet fields=store,coordinator,redis_port,pg_dsn required=- rows=one"

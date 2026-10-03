@@ -47,7 +47,7 @@ Where each field of this cut sits:
 | --- | --- |
 | machine (varies per machine) | `user`, `seat`, `slots`, `runners`, `width`, `tla`, `note` |
 | fleet (one value for the whole fleet) | `store`, `coordinator` (both machines), `redis_port`, `pg_dsn` |
-| friend (decided for her) | `slots`, `tiers`, `roles` |
+| friend (decided for her) | `slots`, `tiers`, `roles`, `width` |
 | sprint (one value for the whole sprint) | `coordinator` (a friend) |
 | loop (decided per supervised process) | `machine`, `argv`, `seat`, `keys`, `every`, `keepalive`, `width`, `enabled` |
 | route (decided per way to run a tier) | `tier`, `provider`, `model`, `tokens`, `deadline`, `enabled`, and the price sheet: `price_input`, `price_cache_read`, `price_cache_write`, `price_output`, `reasoning_as_output`, `long_context`, `price_input_long`, `price_output_long`, `price_request`, `billing`, `gateway_percent`, `price_source`, `price_as_of`, `note` |
@@ -209,6 +209,7 @@ configuration. Who coordinates is not her field either: it is the sprint's.
 | `slots` | int | yes | apply: her desired slots, under the ceiling of the machine she is charged to; no machine's width | `friend:<f>:desired` slots (`ns_capacity_desired`) |
 | `tiers` | list: flash, frontier, pro | yes | the deal's tier filter (capacity.lua `filter_ok`): which she can do | `friend:<f>:desired` tiers (`ns_capacity_desired`) |
 | `roles` | list: builder, may-hold, reader | | the deal and the routing: what she may hold | `friend:<f>:roles` (`ns_friend_roles`) |
+| `width` | int, at least 1, default 8 | | nova-sprint friend sync: the jobs she works at once, her friends-table width (the owner, 2026-10-02: "6/1 seems a bit wrong -- need to setup width for friends? Start at 8 for each?") | `friend:<f>:desired` width |
 
 **`sprint`** (`config.sprint`, singleton): the one row of sprint-global
 facts.
@@ -385,7 +386,9 @@ config.fleet             (name PK = 'fleet', store -> machines.name,
                           coordinator -> machines.name, redis_port, pg_dsn,
                           created_at, updated_at;
                           the one row inserted by the migration)
-config.friends           (name PK, slots, tiers, roles, created_at, updated_at)
+config.friends           (name PK, slots, tiers, roles, created_at, updated_at;
+                          width added by 0018, every row there set to 8; integer NOT NULL DEFAULT 8
+                          CHECK (width >= 1))
 config.sprint            (name PK = 'sprint', coordinator -> friends.name,
                           created_at, updated_at; the one row inserted by
                           the migration; reader_tier added by 0010, dropped
@@ -496,7 +499,9 @@ The machine is the one her slots are charged to: the `host` her own beat
 (`friend:<f>:beat`) reports when she has one (friends may run on any bench),
 else the fleet's coordinator machine (`fleet:coordinator`, written a moment
 before) as the default charge; neither is a refusal naming `nova-config
-fleet set --coordinator <machine>`. `ns_friend_roles(f, roles)` when the
+fleet set --coordinator <machine>`. Her width, when it differs, is a plain
+`HSET friend:<f>:desired width <n>`, a field no function reads or writes.
+`ns_friend_roles(f, roles)` when the
 roles differ (the actor must hold the coordinator role in Redis, or nobody
 does yet and this row makes the first): the roles written are the row's
 plus `coordinator` for the friend the sprint row names. Nothing else: her
