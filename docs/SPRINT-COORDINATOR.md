@@ -94,8 +94,9 @@ Notes on the rows:
   not merge onto the sprint branch's tip: a file you touched changed after your base. Start again from the
   current tip, redo only the lines your card lists, and lower a ledger's ceiling from its value at the tip by
   exactly your own count." The other printed decision, after a conflict the coordinator resolved itself on the card's branch
-  (the base merged in, resolved, pushed), is `resume --stream <s> --did '<what you did>' --answers <id>`;
-  land then lands the branch tip when it descends from the head that conflicted.
+  (the base merged in and pushed), is `resume --stream <s> --did '<what you did>' --answers <id>`;
+  land then lands the branch tip only when it is exactly the base merge plus regenerated ledgers, so a
+  resolution by hand goes back through review as a rework.
 - Past its deadline. A work card not taken is late 15 minutes after it was dealt (counted from the first deal
   since its last take); a card taken and not finished, 2 hours after its first take; a read, 30 minutes asked
   or 2 hours begun ([SPEC-SPRINT.md section 14](SPEC-SPRINT.md#14-the-machine)). A card dealt and not taken

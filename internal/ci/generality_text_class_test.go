@@ -362,23 +362,7 @@ func TestGeneralityText(t *testing.T) {
 	debt, err := allowlist.LoadPackages(debtPath, allowlist.Options{Ceiling: true, Counted: true})
 	require.NoError(t, err)
 	if allowlist.Updating() {
-		skip, problems := textFixtureFiles(fixtures)
-		problems = append(problems, textDebtShapeViolations(debt)...)
-		for _, problem := range problems {
-			assert.Fail(t, problem)
-		}
-		if len(problems) > 0 {
-			return
-		}
-		all := measureTextGenerality(files)
-		counts := map[string]int{}
-		for k, n := range all {
-			if !skip[fileOfKey(k)] {
-				counts[k] = n
-			}
-		}
-		allowlist.CheckPackagesCounted(t, debt, counts)
-		dropStaleTextFixtures(t, fixtures, all, true)
+		updateTextGenerality(t, files, fixtures, debt)
 		return
 	}
 	for _, v := range checkTextGenerality(files, fixtures, debt) {
@@ -386,51 +370,58 @@ func TestGeneralityText(t *testing.T) {
 	}
 }
 
-// dropStaleTextFixtures is the update's pass over the fixtures allowlist: a row whose
-// file has no finding any more is stale, as the check outside an update reports it, and
-// the update drops it (the list only shrinks). A ledger shard the same run empties is
-// still read with its findings, so its row goes on the rerun the update asks for.
-func dropStaleTextFixtures(r allowlist.Reporter, fixtures *allowlist.List, counts map[string]int, update bool) allowlist.Result {
+// updateTextGenerality is the update run (NOVA_CI_UPDATE=1) over both lists: the debt
+// ledger to the findings outside the fixture files, and the fixtures allowlist to the
+// files that still have a finding (all of them, the fixture files' own included): a row
+// whose file has none is stale, as the check outside an update reports it, and the
+// update drops it (the list only shrinks). A ledger shard the same run empties is still
+// read with its findings, so its row goes on the rerun the update asks for.
+func updateTextGenerality(r allowlist.Reporter, files []textScanFile, fixtures *allowlist.List, debt *allowlist.Packages) {
+	r.Helper()
+	skip, problems := textFixtureFiles(fixtures)
+	problems = append(problems, textDebtShapeViolations(debt)...)
+	for _, problem := range problems {
+		r.Errorf("%s", problem)
+	}
+	if len(problems) > 0 {
+		return
+	}
+	all := measureTextGenerality(files)
+	counts := map[string]int{}
+	for k, n := range all {
+		if !skip[fileOfKey(k)] {
+			counts[k] = n
+		}
+	}
+	allowlist.CheckPackagesCountedMode(r, debt, counts, true)
 	hit := map[string]bool{}
-	for k := range counts {
+	for k := range all {
 		if f := fileOfKey(k); fixtures.Has(f) {
 			hit[f] = true
 		}
 	}
-	return allowlist.CheckMode(r, fixtures, hit, update)
+	allowlist.CheckMode(r, fixtures, hit, true)
 }
 
-// The update drops a fixtures row whose file has no finding any more and lowers the
-// ceiling with it, and keeps the row whose file still has one; outside an update it
-// writes nothing and names the stale row.
-func TestGeneralityTextUpdateDropsStaleFixtureRows(t *testing.T) {
+// The update keeps the fixtures row whose file still has a finding (a finding the debt
+// ledger never counts, the file being a fixture), drops the row whose file has none and
+// lowers the ceiling with it, and leaves the debt ledger as it is.
+func TestGeneralityTextUpdateDropsOnlyStaleFixtureRows(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct {
-		name   string
-		update bool
-		want   string
-	}{
-		{"update", true, "# ceiling: 1\nkept.txt a captured record that names a host\n"},
-		{"check", false, "# ceiling: 2\nkept.txt a captured record that names a host\ngone.txt a captured record that names nothing now\n"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			path := filepath.Join(t.TempDir(), "fixtures_allowlist.txt")
-			require.NoError(t, os.WriteFile(path, []byte("# ceiling: 2\nkept.txt a captured record that names a host\ngone.txt a captured record that names nothing now\n"), 0o600))
-			fixtures, err := allowlist.Load(path, shrinkOnly)
-			require.NoError(t, err)
-			r := &generalityMessageReporter{}
-			res := dropStaleTextFixtures(r, fixtures, map[string]int{"kept.txt:rowan": 1, "debt.txt:rowan": 2}, tc.update)
-			got, err := os.ReadFile(path)
-			require.NoError(t, err)
-			assert.Equal(t, tc.want, string(got))
-			assert.Equal(t, tc.update, res.Updated)
-			if !tc.update {
-				require.Len(t, res.Stale, 1)
-				assert.Equal(t, "gone.txt", res.Stale[0].Key)
-			}
-		})
-	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "fixtures_allowlist.txt")
+	require.NoError(t, os.WriteFile(path, []byte("# ceiling: 2\nkept.md a captured record that names a host\ngone.md a captured record that names nothing now\n"), 0o600))
+	fixtures, err := allowlist.Load(path, shrinkOnly)
+	require.NoError(t, err)
+	debt, err := allowlist.LoadPackages(filepath.Join(dir, "debt"), allowlist.Options{Ceiling: true, Counted: true})
+	require.NoError(t, err)
+	files := []textScanFile{{Rel: "kept.md", Src: []byte("captured: ssh rowan@host\n")}, {Rel: "gone.md", Src: []byte("nothing here\n")}}
+	r := &generalityMessageReporter{}
+	updateTextGenerality(r, files, fixtures, debt)
+	got, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, "# ceiling: 1\nkept.md a captured record that names a host\n", string(got))
+	assert.Len(t, r.messages, 1, "one updated, rerun: %v", r.messages)
 }
 
 // TestGeneralityTextFindings pins what a line's findings are: the names, the three

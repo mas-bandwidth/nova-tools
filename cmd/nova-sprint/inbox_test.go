@@ -392,7 +392,7 @@ func TestAStoppedStreamsCommandsRunAndAnswerIt(t *testing.T) {
 			ta.ok("merge --stream s1 " + c.fact)
 			g := ta.group(c.typ, "s1")
 			fill := strings.NewReplacer("'<fix>'", "x", "'<why>'", "x", "'<what you did>'", "x", "'<suspect>'", "s1-3",
-				"'<what you did: merged the base into the branch of s1-2, resolved, pushed; land then lands its tip>'", "x")
+				"'<what you did: merged the base into the branch of s1-2 and pushed; land lands that tip only when it is exactly the base merge>'", "x")
 			found := false
 			for _, cmd := range g.Commands {
 				if cmd.Decision != c.decision {

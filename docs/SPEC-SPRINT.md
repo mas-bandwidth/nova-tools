@@ -1258,10 +1258,12 @@ the batch branch and ends the batch as a head in conflict does: the conflict fac
 on it names every failure, `<file>:<line>` and the rule.
 
 **The generated ledgers.** A merge that stops only on generated ledgers lands.
-The generated ledgers are a fixed list of path globs, each owned by named tests
-(today the generality ledgers: `internal/ci/testdata/generality-text/`,
+The generated ledgers are the class ledgers the checks above name (a `.txt` shard
+of a counted-ledger directory or a list file, never a directory, a Go file or a
+symlink), narrowed to a family owned by named tests: today the generality family,
+the `.txt` shards under `internal/ci/testdata/generality-text/` and
 `internal/ci/testdata/generality/` and the generality text fixtures allowlist,
-owned by `TestGeneralityGuardrail` and `TestGeneralityText`). Such a ledger is
+owned by `TestGeneralityGuardrail` and `TestGeneralityText`. Such a ledger is
 shrink-only and a function of the tree: two cards that both delete rows and both
 move its ceiling line conflict line by line, and regenerating it at the merged
 tree gives the one answer. When every unmerged path of a head's merge is a
@@ -1269,11 +1271,13 @@ generated ledger, `land` takes the tip's side of each, runs the owning tests'
 update mode (`NOVA_CI_UPDATE=1`) in the clone until a run writes nothing (at most
 four runs; the update drops the fixtures allowlist rows whose files have no
 finding any more), and commits the merge as `land <id> (sprint stream <s>)` with
-a body naming the ledgers and the tests. An update run that fails, or that writes
-a file outside the ledgers, refuses the card with the conflict fact, its words in
-the note; so does any unmerged path outside the list, as for any conflict. The
-landing writes the resolution on the card's merge card (`note`), and the card's
-timeline tells it on the line of its merge.
+a body naming the ledgers and the tests. An update run that fails, one still
+writing at the fourth run, and one that changes or adds any file outside the
+ledgers (`git status`, untracked files included) refuse the card with the
+conflict fact, its words in the note, the merge ended and what the runs wrote
+taken back; so does any unmerged path outside the family, as for any conflict.
+The landing writes the resolution on the card's merge card (`note`), and the
+card's timeline tells it on the line of its merge.
 
 **The landed score.** Once every stream of the run has landed what it could,
 `land` scores each landed card's merge diff (the diff its checks read) against
@@ -1318,15 +1322,25 @@ when the stop's cause is cross. A merge step on a stream with nothing queued
 
 After a conflict, `resume` puts each stuck card back marked with the head it
 stopped on (`resumed_head` on its merge card). The coordinator resolves on the
-card's branch, the one its attempt recorded: merges the base into it, resolves,
-and pushes it (never a rebase). While the card is still at that head, `land`
-fetches the branch and lands its tip in the head's place when the tip descends
-from the head; the card records the tip as `landed_head`, its head stays the one
-its readers read, and its timeline says it landed the tip. A branch gone from
-origin, or still at the head, lands the head. A tip that does not descend is
-refused with the conflict fact in one line naming both commits, and the stream
-stops again. The conflict judgment's "resolve and resume" decision says so in its
-`--did` text.
+card's branch, the one its attempt recorded, by merging the base into it and
+pushing it (never a rebase). While the card is still at that head, `land` fetches
+the branch, and a resumed tip lands only when it is exactly the base merge plus
+regenerated ledgers: the tip descends from the head, one of its parents is a
+commit of the base the head does not reach, and its tree equals what `land`
+itself makes of the head and that base commit in a scratch worktree (the base
+merged in, the generated ledgers regenerated where they conflict). So no change a
+reader has not read lands. Any other tip (one that does not descend, or carries
+any change beyond the base merge and the ledgers, a hand resolution of a conflict
+outside the ledgers among them) is refused with the conflict fact in one line
+naming both commits, and the stream stops again; such a resolution goes back
+through review as a rework. The first `land` that verifies a tip pins it on the
+merge card (`resumed_tip`), and every build after, a run again after a push whose
+report did not go through among them, merges that commit and no later one the
+branch may hold; a resume clears the pin. The card records the tip it landed as
+`landed_head`, its head stays the one its readers read, and its timeline says it
+landed the tip. A branch gone from origin, or still at the head, lands the head.
+The conflict judgment's "resolve and resume" decision says so in its `--did`
+text.
 
 ## 8. Notifications
 
