@@ -177,7 +177,7 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 			continue
 		}
 		if rest, ok := s.resting(r.Name); ok {
-			rested = append(rested, r.Name+" until "+stamp(rest.Until)+": "+rest.Said())
+			rested = append(rested, r.Name+" until "+rest.UntilSaid()+": "+rest.Said())
 			continue
 		}
 		served[r.Name] = r

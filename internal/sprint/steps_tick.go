@@ -119,13 +119,14 @@ var TickDecisions = map[string][]string{
 	NNoMember:   {"fleet beat", "fleet up", "wait"},
 	NNoRoute:    {"route add", "look at the card", "drop", "wait"},
 	// a payment and a key are the owner's: no rework is offered (provider_funds.go)
-	NProviderFunds: {"ack", "wait"},
-	NProviderKey:   {"ack", "wait"},
-	NInvariant:     {"look at the card", "repair", "wait"},
-	NWorkLate:      {"fleet level", "fleet down <member>", "wait", "drop"},
-	NReadLate:      {"ask --another", "wait", "drop"},
-	NMergeLate:     {"merge --stream <s>", "look", "wait"},
-	NStalled:       {"look at the card", "wait"},
+	NProviderFunds:  {"ack", "wait"}, // and "funded <provider>", named per provider (providerConds)
+	NProviderKey:    {"ack", "wait"},
+	NAllOutOfCredit: {"ack", "wait"},
+	NInvariant:      {"look at the card", "repair", "wait"},
+	NWorkLate:       {"fleet level", "fleet down <member>", "wait", "drop"},
+	NReadLate:       {"ask --another", "wait", "drop"},
+	NMergeLate:      {"merge --stream <s>", "look", "wait"},
+	NStalled:        {"look at the card", "wait"},
 }
 
 // TickReq is what a tick is given beside the snapshot.
@@ -373,7 +374,7 @@ func ReturnedAtAttempt(c *Card) bool {
 
 // Empty says a plan writes nothing.
 func (p Plan) Empty() bool {
-	return len(p.Units) == 0 && len(p.Notes) == 0 && len(p.Closes) == 0 && len(p.Rows) == 0 && len(p.Updates) == 0
+	return len(p.Units) == 0 && len(p.Notes) == 0 && len(p.Closes) == 0 && len(p.Rows) == 0 && len(p.Updates) == 0 && p.Stop == ""
 }
 
 // bound keeps the first TickMaxMoves units, and says how many it left out:
@@ -574,7 +575,8 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	}
 	// one judgment per provider while its routes rest for its funds or its key, never one
 	// per card (provider_funds.go)
-	conds = append(conds, providerConds(s)...)
+	pc, stop := providerConds(s)
+	conds = append(conds, pc...)
 	ready = streamTurns(ready, streamRound(s, PropStreamIndex))
 	if len(up) == 0 && len(ready) > 0 {
 		c := cond{typ: NNoMember, streamLevel: true,
@@ -599,7 +601,9 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 		}
 	}
 	restWrites(&p, s, rests, r.who())
-	due += notify(&p, s, conds, []string{NNoMember, NBound, NNoRoute, NProviderFunds, NProviderKey}, r)
+	due += notify(&p, s, conds, []string{NNoMember, NBound, NNoRoute, NProviderFunds, NProviderKey, NAllOutOfCredit}, r)
+	// every provider out of credit: the binding stops the machine as the plan commits
+	p.Stop = stop
 	return p, due
 }
 
@@ -1007,7 +1011,7 @@ type cond struct {
 // stays one condition, so they are keyed by their type and subject only.
 func condKey(typ, subject, card, what string) string {
 	switch typ {
-	case NNoMember, NCannotAsk, NNoRoute, NFewReaders, NProviderFunds, NProviderKey:
+	case NNoMember, NCannotAsk, NNoRoute, NFewReaders, NProviderFunds, NProviderKey, NAllOutOfCredit:
 		what = ""
 	case NWorkLate, NReadLate:
 		// a lateness is one per attempt's card and kind (not taken, not

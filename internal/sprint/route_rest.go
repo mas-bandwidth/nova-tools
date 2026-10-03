@@ -50,6 +50,26 @@ const (
 	RestBalance  = "balance"
 )
 
+// OpenUntil is the end of a rest that has no time: a provider out of credit rests until a
+// balance poll reads a balance again, or the coordinator says it was paid (funded), never
+// until a clock (the owner, 2026-10-03: "exclude that provider moving forward"). The
+// property holds it as `open`.
+var OpenUntil = time.Date(9999, 12, 31, 0, 0, 0, 0, time.UTC)
+
+// restOpen is how the property and the lines say OpenUntil.
+const restOpen = "open"
+
+// Open says the rest has no time: it holds until a balance returns.
+func (r RouteRest) Open() bool { return r.Until.Equal(OpenUntil) }
+
+// UntilSaid is when the rest ends as a line says it: its time, or until a balance returns.
+func (r RouteRest) UntilSaid() string {
+	if r.Open() {
+		return "a balance returns"
+	}
+	return stamp(r.Until)
+}
+
 // Resting says the rest holds at now.
 func (r RouteRest) Resting(now time.Time) bool { return now.Before(r.Until) }
 
@@ -65,7 +85,11 @@ func (r RouteRest) value() string {
 	if cards == "" {
 		cards = "-"
 	}
-	return strings.TrimSpace(stamp(r.At) + " " + stamp(r.Until) + " " + cards + " " + cmp.Or(r.Cause, RestNoResult) + " " + r.Why)
+	until := stamp(r.Until)
+	if r.Open() {
+		until = restOpen
+	}
+	return strings.TrimSpace(stamp(r.At) + " " + until + " " + cards + " " + cmp.Or(r.Cause, RestNoResult) + " " + r.Why)
 }
 
 // Said is the rest's reason as a line says it: the provider's words, else rule 3's.
@@ -86,7 +110,10 @@ func RouteRests(routes []Route, fleet *Table) map[string]RouteRest {
 			continue
 		}
 		at, e1 := time.Parse(time.RFC3339, f[0])
-		until, e2 := time.Parse(time.RFC3339, f[1])
+		until, e2 := OpenUntil, error(nil)
+		if f[1] != restOpen {
+			until, e2 = time.Parse(time.RFC3339, f[1])
+		}
 		if e1 != nil || e2 != nil {
 			continue
 		}
@@ -241,7 +268,7 @@ func restWrites(p *Plan, s *Snapshot, due []RouteRest, who string) {
 		n.What = fmt.Sprintf("route %s rested until %s: %d of its last %d ended takes or fewer left no result (%s); the deal draws no work card on it until then; nova-sprint routes shows it",
 			r.Route, stamp(r.Until), len(r.Cards), RouteRestWindow, strings.Join(r.Cards, ", "))
 		if r.Cause != RestNoResult {
-			n.What = fmt.Sprintf("route %s rested until %s: %s; the deal draws no work card on it until then; nova-sprint routes shows it", r.Route, stamp(r.Until), r.Why)
+			n.What = fmt.Sprintf("route %s rested until %s: %s; the deal draws no work card on it until then; nova-sprint routes shows it", r.Route, r.UntilSaid(), r.Why)
 		}
 		p.Notes = append(p.Notes, n)
 	}

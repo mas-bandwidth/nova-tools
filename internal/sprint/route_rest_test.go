@@ -74,8 +74,9 @@ func TestRestsDueCountsNoResultEndsInTheRoutesWindow(t *testing.T) {
 	}
 }
 
-// A provider's refusal (nova-tools#5199): a take refused for want of credit or for the key
-// rests every route of its provider, naming the take; a rate limit, an outage and a no-result
+// A provider's refusal (nova-tools#5199): a take refused for want of credit rests every route
+// of its provider until a balance returns, one refused for the key for RouteRestFor, naming
+// the take; a rate limit, an outage and a no-result
 // take do not; a refusal before the route's last rest began does not; a route resting now
 // is not rested again, and its refusal is not read.
 func TestProviderRestsDueRestEveryRouteOfTheRefusedProvider(t *testing.T) {
@@ -117,7 +118,13 @@ func TestProviderRestsDueRestEveryRouteOfTheRefusedProvider(t *testing.T) {
 				got = append(got, r.Route)
 				assert.Equal(t, tc.cause, r.Cause)
 				assert.Equal(t, []string{"c1"}, r.Cards)
-				assert.Equal(t, "provider p refused card c1 on route a: "+strings.TrimPrefix(tc.err, "provider: "), r.Why)
+				words, until := "provider p refused its key: card c1 on route a: ", s.Now.Add(RouteRestFor)
+				if tc.cause == RestCredit {
+					// out of credit: excluded until a balance returns, never for a time
+					words, until = "out of credit: provider p refused card c1 on route a: ", OpenUntil
+				}
+				assert.Equal(t, words+strings.TrimPrefix(tc.err, "provider: "), r.Why)
+				assert.Equal(t, until, r.Until)
 				s.Fleet.SetProps(map[string]string{PropRouteRest(r.Route): r.value()})
 				assert.Equal(t, r, RouteRests(routes, s.Fleet)[r.Route], "the property reads back as written")
 			}

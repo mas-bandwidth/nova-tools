@@ -63,6 +63,7 @@ func TestTheBalancePollRestsAProviderUnderAnHourOfItsSpend(t *testing.T) {
 	open := h.openOf(sprint.NProviderFunds)
 	require.Len(t, open, 1)
 	assert.Contains(t, open[0].Note.What, "provider openrouter is out of funds (balance $40.00 at ")
+	assert.True(t, rests["or-a"].Open(), "until a balance returns")
 	for _, c := range h.snap().Fleet.Column(sprint.Ready) {
 		assert.Equal(t, "oc-a", c.F(sprint.FieldRoute), "%s: dealt on the provider with funds", c.ID)
 	}

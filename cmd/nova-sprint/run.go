@@ -62,6 +62,19 @@ func (a *app) setMachine(name string, running bool, args []string, stdout, stder
 		return refuse(stderr, name, err.Error())
 	}
 	ctx := context.Background()
+	if running {
+		// every provider out of credit: the machine stays STOPPED until a balance returns
+		// (nova-tools#5199; the owner, 2026-10-03: "if all providers are out, then you stop
+		// the sprint.")
+		why, err := st.OutOfCredit(ctx)
+		if err != nil {
+			return a.readFailed(name, err, stderr)
+		}
+		if why != "" {
+			fmt.Fprintf(stderr, "%s %s: %s\n", prog, name, oneline.WithRemedy(why, prog+" where --json (its providers), then "+prog+" funded <provider> --reason <the payment> once one is paid"))
+			return 1
+		}
+	}
 	before, after, res, err := st.SetMachine(ctx, running)
 	changed := before.Running() != after.Running()
 	line := sprintLine(ctx, st)

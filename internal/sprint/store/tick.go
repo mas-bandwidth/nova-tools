@@ -208,6 +208,9 @@ func MachineLine(now time.Time, m Machine, hb Heartbeat) string {
 	if m.Done() {
 		return "machine: " + DoneState
 	}
+	if !m.Running() && m.Cause == sprint.FundsCause {
+		return "machine: STOPPED (" + sprint.FundsCause + ")"
+	}
 	if !m.Running() {
 		return "machine: STOPPED"
 	}
@@ -1081,6 +1084,7 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 		began := t.st.meter()
 		due := 0
 		var done *sprint.Note
+		stop := "" // the deal's: every provider out of credit (sprint.FundsCause)
 		var planned sprint.Plan
 		fn := func(s *sprint.Snapshot, r sprint.TickReq) (sprint.Plan, int) {
 			if drain {
@@ -1089,6 +1093,7 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 			}
 			p, d := part.Fn(s, r)
 			planned = p
+			stop = p.Stop
 			if part.Name == sprint.PartDone {
 				done = nil
 				if len(p.Notes) > 0 {
@@ -1164,6 +1169,15 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 					t.dirtied = append(t.dirtied, x)
 				}
 			}
+		}
+		if stop != "" && !r.Lost {
+			// Every provider is out of credit: the machine stops itself as the part's step
+			// commits, with the cause, and the tick ends here (nova-tools#5199).
+			if err := t.st.stopFor(t.ctx, sprint.FundsCause, stop, t.res); err != nil {
+				t.err = fmt.Errorf("tick %s: stopping the machine: %w", part.Name, err)
+				return tickFailed
+			}
+			return tickDone
 		}
 		if done != nil && r.Notes > 0 && !r.Lost {
 			// The sprint is done: the machine stops itself as the part's step
@@ -1372,6 +1386,28 @@ func (st *Store) stopDone(ctx context.Context, n sprint.Note, res *TickResult) e
 		return err
 	}
 	return st.pushDone(ctx, n, res)
+}
+
+// stopFor stops the machine as the tick's step commits, its record STOPPED with the cause
+// and a STOPPED span opened (the done part's stop, stopDone, is the other): the tick's
+// result says why. A machine STOPPED already is left as it is.
+func (st *Store) stopFor(ctx context.Context, cause, why string, res *TickResult) error {
+	m, _, err := st.Machine(ctx)
+	if err != nil {
+		return err
+	}
+	res.State, res.Halted = Stopped, why
+	if !m.Running() {
+		return nil
+	}
+	now := st.now()
+	after := m
+	after.Spans = append(append([]Span(nil), m.Spans...), Span{From: now})
+	if len(after.Spans) > MaxStopSpans {
+		after.Spans = after.Spans[len(after.Spans)-MaxStopSpans:]
+	}
+	after.State, after.Since, after.Who, after.Cause = Stopped, now, sprint.MachineActor, cause
+	return st.putMachine(ctx, after)
 }
 
 // pushDone delivers "the sprint is done" down the route of the goal of the

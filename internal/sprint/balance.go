@@ -16,12 +16,17 @@ import (
 // provider's own count of dollars used (else the balance's fall) since the read before,
 // and the rests the balance calls for:
 //
-//   - a balance at or under zero, or under one hour of the measured spend, rests every route
-//     of the provider (cause balance) from the clock for RouteRestFor, or extends a rest of
-//     its funds already holding: the deal draws none of them, and the provider's one
-//     judgment is open (provider_funds.go), before any take is refused;
-//   - a balance read above that ends at once a rest of the provider's funds (a payment
-//     came), and the judgment closes at the next tick.
+//   - a balance at or under zero rests every route of the provider "out of credit" (cause
+//     out-of-credit), and one under one hour of the measured spend rests them too (cause
+//     balance), each until a balance returns (OpenUntil), never for a time (the owner,
+//     2026-10-03, 8:18 AM ET: "you'll need to detect when a provider runs out of credits,
+//     and exclude that provider moving forward, and let me know."): the deal draws none of
+//     them, and the provider's one judgment is open (provider_funds.go), before any take is
+//     refused;
+//   - a balance read over zero and over an hour of the spend (a payment came) ends at once
+//     every rest of the provider's funds, a refused take's included; the judgment closes at
+//     the next tick, and a machine the tick stopped because every provider was out of
+//     credit is the coordinator's to start.
 //
 // A provider whose balance cannot be read (no endpoint, no key, an answer that is not the
 // shape) is recorded unknown with why; nothing is rested or ended on it.
@@ -96,11 +101,11 @@ func Balance(s *Snapshot, r BalanceReq) Plan {
 			resting := has && rest.Resting(s.Now)
 			var next RouteRest
 			switch {
-			case b.Low() && (!resting || rest.Funds()):
-				next = RouteRest{Route: route.Name, At: s.Now, Until: s.Now.Add(RouteRestFor), Cause: RestBalance,
+			case b.Low() && !resting:
+				next = RouteRest{Route: route.Name, At: s.Now, Until: OpenUntil, Cause: RestBalance,
 					Why: oneLine(fmt.Sprintf("provider %s balance %s is under one hour of its spend (%s an hour)", rd.Provider, b.Said(), Dollars(b.SpendHour)))}
-				if resting {
-					next.At, next.Cards = rest.At, rest.Cards // extended: the takes it counts from stay where they were
+				if b.Balance <= 0 {
+					next.Cause, next.Why = RestCredit, oneLine(fmt.Sprintf("out of credit: provider %s balance %s", rd.Provider, b.Said()))
 				}
 			case !b.Low() && resting && rest.Funds():
 				next = rest
@@ -116,7 +121,7 @@ func Balance(s *Snapshot, r BalanceReq) Plan {
 				n = happened(NProviderFunded, ProviderSubject(rd.Provider), s.Now)
 			}
 			n.To, n.Who = s.Coordinator, r.Who
-			n.What = fmt.Sprintf("route %s rested until %s: %s; the deal draws no work card on it until then; nova-sprint routes shows it", route.Name, stamp(next.Until), next.Why)
+			n.What = fmt.Sprintf("route %s rested until %s: %s; the deal draws no work card on it until then; nova-sprint routes shows it", route.Name, next.UntilSaid(), next.Why)
 			if !next.Resting(s.Now) {
 				n.What = fmt.Sprintf("route %s serves again: provider %s's balance is %s, over one hour of its spend (%s an hour)", route.Name, rd.Provider, b.Said(), Dollars(b.SpendHour))
 			}
@@ -181,11 +186,14 @@ func ProviderRows(routes []Route, fleet *Table, now time.Time) []ProviderRow {
 		}
 		switch {
 		case len(resting) == len(byProvider[name]):
-			row.State = "resting until " + stamp(until) + " (" + why + ")"
+			row.State = "resting until " + untilSaid(until) + " (" + why + ")"
 		case len(resting) > 0:
-			row.State = "serving; resting " + strings.Join(resting, ", ") + " until " + stamp(until) + " (" + why + ")"
+			row.State = "serving; resting " + strings.Join(resting, ", ") + " until " + untilSaid(until) + " (" + why + ")"
 		}
 		out = append(out, row)
 	}
 	return out
 }
+
+// untilSaid is a rest's end as a line says it (RouteRest.UntilSaid).
+func untilSaid(t time.Time) string { return RouteRest{Until: t}.UntilSaid() }

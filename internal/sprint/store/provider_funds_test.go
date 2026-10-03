@@ -25,8 +25,11 @@ func providerRoute(name, tier, provider string) sprint.Route {
 // tick that sees it (nova-tools#5199; the owner, 2026-10-03: "provider out of funds should
 // never be a mystery failure."), with the reason on each rest; the card is dealt again on
 // another provider's route; ONE judgment of the provider is open while its routes rest,
-// never one per card, decided by ack or wait and never by a rework; another refused take
-// while they rest writes nothing more; the judgment closes when the rest ends.
+// never one per card, decided by funded, ack or wait and never by a rework; another refused
+// take while they rest writes nothing more. The provider is excluded until a balance returns
+// (the owner, 2026-10-03, 8:18 AM ET: "exclude that provider moving forward"): no clock ends
+// the rest; the coordinator's funded does (a poll's balance is TestTheBalancePoll...), and
+// the judgment closes with it.
 func TestAnOutOfCreditTakeRestsEveryRouteOfItsProvider(t *testing.T) {
 	t.Parallel()
 	routes := []sprint.Route{providerRoute("or-a", "flash", "openrouter"), providerRoute("or-b", "flash", "openrouter"), providerRoute("oc-a", "flash", "opencode")}
@@ -52,9 +55,9 @@ func TestAnOutOfCreditTakeRestsEveryRouteOfItsProvider(t *testing.T) {
 		assert.Equal(t, sprint.RestCredit, rest.Cause)
 		assert.True(t, rest.Funds())
 		assert.Equal(t, []string{onOR[0]}, rest.Cards)
-		assert.Contains(t, rest.Why, "provider openrouter refused card "+onOR[0])
+		assert.Contains(t, rest.Why, "out of credit: provider openrouter refused card "+onOR[0])
 		assert.Contains(t, rest.Why, "class=out-of-credit status=402 msg=Insufficient credits.")
-		assert.Equal(t, sprint.RouteRestFor, rest.Until.Sub(rest.At))
+		assert.True(t, rest.Open(), "until a balance returns, never for a time")
 	}
 	_, ocRests := rests["oc-a"]
 	assert.False(t, ocRests, "another provider's route serves on")
@@ -66,8 +69,8 @@ func TestAnOutOfCreditTakeRestsEveryRouteOfItsProvider(t *testing.T) {
 	n := open[0].Note
 	assert.Equal(t, sprint.ProviderSubject("openrouter"), n.Stream)
 	assert.Contains(t, n.What, "provider openrouter is out of funds (balance unknown: not polled yet): a payment is the owner's")
-	assert.Contains(t, n.What, "its routes or-a, or-b rest until")
-	assert.Equal(t, []string{"ack", "wait"}, n.Decisions, "a payment is the owner's: no rework is offered")
+	assert.Contains(t, n.What, "it is excluded: its routes or-a, or-b rest until a balance returns")
+	assert.Equal(t, []string{"funded openrouter", "ack", "wait"}, n.Decisions, "a payment is the owner's: no rework is offered")
 	assert.Empty(t, h.openOf(sprint.NBound), "no card's judgment")
 	assert.Contains(t, h.noteWhats(sprint.NRouteRested)[0], "class=out-of-credit status=402", "the rest's note names the reason")
 
@@ -81,17 +84,37 @@ func TestAnOutOfCreditTakeRestsEveryRouteOfItsProvider(t *testing.T) {
 	assert.Equal(t, "oc-a", h.snap().Fleet.Card(onOR[1]).F(sprint.FieldRoute))
 	h.clean("a provider resting for its funds")
 
-	// the rest ends by itself, and the judgment closes with it
-	h.tick(sprint.RouteRestFor)
+	// no clock ends it: the provider stays excluded
+	h.tick(4 * sprint.RouteRestFor)
+	h.machine()
+	assert.Len(t, h.openOf(sprint.NProviderFunds), 1, "still out of credit hours later")
+	assert.True(t, sprint.RouteRests(routes, h.snap().Fleet)["or-a"].Resting(h.snap().Now))
+
+	// the coordinator's word that it was paid ends the rests, and the judgment closes
+	res, err := h.st.Run(h.ctx, FundedStep(sprint.FundedReq{Provider: "opencode", Reason: "paid", Who: "coordinator"}))
+	require.NoError(t, err)
+	require.Len(t, res.Refused, 1, "a provider with no rest of its funds: nothing to end")
+	assert.Contains(t, res.Refused[0].Why, "provider opencode has no route resting for its funds")
+	h.must(FundedStep(sprint.FundedReq{Provider: "openrouter", Reason: "paid $100 in the console", Who: "coordinator"}))
+	s = h.snap()
+	for _, name := range []string{"or-a", "or-b"} {
+		rest := sprint.RouteRests(routes, s.Fleet)[name]
+		assert.False(t, rest.Resting(s.Now), "%s serves again", name)
+		assert.Contains(t, rest.Why, "ended: funded by coordinator: paid $100 in the console")
+	}
+	assert.Len(t, h.noteWhats(sprint.NProviderFunded), 2, "one note a route")
 	h.machine()
 	assert.Empty(t, h.openOf(sprint.NProviderFunds), "the routes serve again: the judgment closes")
 	assert.Equal(t, 1, h.written(sprint.NProviderFunds))
-	h.clean("the provider's rest ended")
+	h.clean("the provider funded")
 }
 
-// When every route of a tier is the refused provider's, the deal holds the cards under the
-// tier's one judgment, and its words name the provider's reason.
-func TestATierWhoseOnlyProviderIsOutOfFundsWaitsUnderOneJudgment(t *testing.T) {
+// When every enabled route is the refused provider's, the tick STOPS the machine itself
+// (the owner, 2026-10-03, 8:18 AM ET: "if all providers are out, then you stop the
+// sprint."): STOPPED with the cause, one judgment, the tier's judgment naming the reason; a
+// start is refused while they stay out; the coordinator's funded ends the rests, and a start
+// runs the machine again.
+func TestEveryProviderOutOfCreditStopsTheMachine(t *testing.T) {
 	t.Parallel()
 	routes := []sprint.Route{providerRoute("or-a", "flash", "openrouter"), providerRoute("or-b", "flash", "openrouter")}
 	h := routeHarness(t, routes...)
@@ -99,11 +122,33 @@ func TestATierWhoseOnlyProviderIsOutOfFundsWaitsUnderOneJudgment(t *testing.T) {
 	h.startMachine()
 	h.machine()
 	h.failTake("s1-1.w1", creditLine)
-	h.machine()
+	res := h.machine()
+	m := h.machineRecord()
+	assert.False(t, m.Running(), "the tick stopped the machine")
+	assert.Equal(t, sprint.FundsCause, m.Cause)
+	assert.Equal(t, "machine: STOPPED (every provider is out of credit)", MachineLine(h.now, m, Heartbeat{}))
+	assert.Contains(t, res.Halted, "every provider is out of credit (openrouter): a payment is the owner's")
+	all := h.openOf(sprint.NAllOutOfCredit)
+	require.Len(t, all, 1, "one judgment")
+	assert.Contains(t, all[0].Note.What, "every provider is out of credit (openrouter)")
+	assert.Len(t, h.openOf(sprint.NProviderFunds), 1)
 	open := h.openOf(sprint.NNoRoute)
 	require.Len(t, open, 1, "the tier waits, once")
 	assert.Contains(t, open[0].Note.What, "class=out-of-credit status=402")
 	assert.Equal(t, sprint.Withdrawn, h.snap().Fleet.Card("s1-1.w1").Col, "not dealt on a resting provider")
-	assert.Len(t, h.openOf(sprint.NProviderFunds), 1)
-	h.clean("a tier with no provider in funds")
+
+	why, err := h.st.OutOfCredit(h.ctx)
+	require.NoError(t, err)
+	assert.Contains(t, why, sprint.FundsCause, "a start is refused with this line")
+
+	h.must(FundedStep(sprint.FundedReq{Provider: "openrouter", Reason: "paid", Who: "coordinator"}))
+	why, err = h.st.OutOfCredit(h.ctx)
+	require.NoError(t, err)
+	assert.Empty(t, why, "a provider in funds: the start is the coordinator's")
+	h.startMachine()
+	h.machine()
+	assert.True(t, h.machineRecord().Running())
+	assert.Empty(t, h.openOf(sprint.NAllOutOfCredit), "the judgment closes")
+	assert.Equal(t, sprint.Ready, h.snap().Fleet.Card("s1-1.w1").Col, "dealt again")
+	h.clean("a provider funded after every one was out")
 }

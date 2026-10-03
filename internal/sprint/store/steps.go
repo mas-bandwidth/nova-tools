@@ -170,6 +170,13 @@ func BalanceStep(r sprint.BalanceReq) Step {
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Balance(s, r) }}
 }
 
+// FundedStep is the coordinator's word that a provider was paid: every rest of its funds
+// ends (sprint.Funded; nova-tools#5199).
+func FundedStep(r sprint.FundedReq) Step {
+	return Step{Named: true, Args: ArgsOf(r), Verb: "funded", Load: tables(sprint.Fleet), Routes: true,
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Funded(s, r) }}
+}
+
 // ResumeStep moves a stopped stream again.
 func ResumeStep(r sprint.ResumeReq) Step {
 	return Step{Args: ArgsOf(r), Verb: "resume", Load: tables(sprint.Merge, sprint.Work), Mirrors: true,

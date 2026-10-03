@@ -234,3 +234,20 @@ func (st *Store) Routes(ctx context.Context) ([]sprint.Route, map[string][]strin
 	set, err := st.routes(ctx)
 	return set.Routes, set.Tiers, err
 }
+
+// OutOfCredit is the words of sprint.FundsCause when every enabled route of the store rests
+// for its provider's funds (sprint.AllOutOfCredit), "" otherwise: what a start is refused
+// with. It reads the routes and the fleet table's properties, no card.
+func (st *Store) OutOfCredit(ctx context.Context) (string, error) {
+	routes, _, err := st.Routes(ctx)
+	if err != nil || len(routes) == 0 {
+		return "", err
+	}
+	shapes, err := st.B.Shapes(ctx, []string{st.Names.Table(sprint.Fleet)})
+	if err != nil {
+		return "", err
+	}
+	fleet := sprint.NewTable(sprint.Fleet)
+	fleet.SetProps(shapes[0].Props)
+	return sprint.AllOutOfCredit(routes, sprint.RouteRests(routes, fleet), st.now()), nil
+}
