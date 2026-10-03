@@ -11,10 +11,9 @@ import (
 )
 
 // takeFold where there is no flock: lock_other.go's exclusive create of a sibling file,
-// polled until wait runs out, with the holder's pid written into the lock file. This is
-// the loop every platform ran before the unix build moved onto internal/filelock; it stays
-// as it was until a migration in which an old and a new binary on one machine still
-// exclude each other: both try to create the same sibling file and only one succeeds.
+// polled until wait runs out, with the holder's pid written into the lock file. The
+// exclusion is the create itself: two folds on one machine both try to create the same
+// sibling file and only one succeeds.
 func takeFold(path string, wait time.Duration) (func(), bool, error) {
 	f, err := openFoldLock(path)
 	if err != nil {

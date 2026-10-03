@@ -30,11 +30,12 @@ import (
 // not this is refused by `sum` and named by `check`, and the repair is `fold --day <d>`.
 const Version = "nova-tokens v1"
 
-// TempSuffix is the fixed temp name earlier binaries gave their day-file
-// temporaries; it is a legacy input pattern, kept because check still steps
-// over files of this shape. The current writer goes through internal/atomicfile
-// and produces unique `.<day>.tsv.tmp-<rand>` siblings, so nothing new carries
-// this plain suffix.
+// TempSuffix is the fixed temp name of the legacy day-file temporary, a file
+// shape check still steps over: a temporary of this shape is a live input, and
+// `check` reads it as a step-over rather than reporting it as a stray. The
+// writer goes through internal/atomicfile and produces unique
+// `.<day>.tsv.tmp-<rand>` siblings, so nothing this tool writes carries this
+// plain suffix.
 const TempSuffix = ".tsv.tmp"
 
 // FileSuffix is a day file's extension.
