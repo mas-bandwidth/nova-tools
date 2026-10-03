@@ -595,30 +595,40 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 	if err != nil {
 		return whereView{}, "", err
 	}
+	judgments, _ := sprint.SplitOpen(open)
 	var stoppedMerge, readyWork, askedReaders int
 	for _, row := range v.Tables[sprint.Merge] {
-		if row[sprint.StateCol] == sprint.StreamStopped {
-			stoppedMerge++
+		if row[sprint.StateCol] != sprint.StreamStopped {
+			continue
 		}
+		n, err := strconv.Atoi(row[sprint.Queued])
+		if err != nil {
+			return whereView{}, "", fmt.Errorf("merge queued cell for a stopped stream: %w", err)
+		}
+		stoppedMerge += n
 	}
 	for _, row := range v.Tables[sprint.Work] {
-		if n, err := strconv.Atoi(row[sprint.Ready]); err == nil {
-			readyWork += n
+		n, err := strconv.Atoi(row[sprint.Ready])
+		if err != nil {
+			return whereView{}, "", fmt.Errorf("work ready cell: %w", err)
 		}
+		readyWork += n
 	}
 	for _, row := range v.Tables[sprint.Readers] {
-		if n, err := strconv.Atoi(row[sprint.Asked]); err == nil {
-			askedReaders += n
+		n, err := strconv.Atoi(row[sprint.Asked])
+		if err != nil {
+			return whereView{}, "", fmt.Errorf("readers asked cell: %w", err)
 		}
+		askedReaders += n
 	}
 	v.Attention = attention{
-		OpenJudgmentSubjects: len(open),
+		OpenJudgmentSubjects: len(judgments),
 		StoppedMergeCards:    stoppedMerge,
 		Ready:                readyWork,
 		Asked:                askedReaders,
-		WaitingOnCoordinator: len(open) + stoppedMerge,
+		WaitingOnCoordinator: len(judgments) + stoppedMerge,
 		Takeable:             readyWork + askedReaders,
-		OnePersonBound:       len(open)+stoppedMerge > readyWork+askedReaders,
+		OnePersonBound:       len(judgments)+stoppedMerge > readyWork+askedReaders,
 	}
 	var shown []string
 	for _, t := range sprint.ShownOrder {
