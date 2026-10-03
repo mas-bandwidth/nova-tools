@@ -7,7 +7,7 @@ Score: 8/10
 ## Reasons
 The tool provides a rich and capable state machine that coordinates multi-agent work through all stages of execution. Running offline on an in-memory twin makes testing and local verification straightforward, and core workflows for card admission, dealing, execution reporting, reader reviews, and landing function smoothly. Provoked refusals clearly identify missing requirements and supply executable recovery commands.
 
-A score of 10 would require fixing output bounding on inspection verbs like log, ensuring invocation refusals honor requested JSON formatting, rejecting unexpected arguments on version, enabling play simulation to advance twin state without stalling on heartbeats, and eliminating manual multi-tick guesswork for state settling.
+A score of 10 would require fixing output bounding on inspection verbs like log, ensuring invocation refusals honor requested JSON formatting, rejecting unexpected arguments on version, enabling play simulation to advance twin state by ticking the machine rather than leaving ticks to the hand, and eliminating manual multi-tick guesswork for state settling.
 
 Verbs requiring external daemons or network infrastructure (run, where --watch, inbox --wait, dashboard, fleet sync, and friend sync) were judged from their help and dry-run output rather than live execution.
 
@@ -16,7 +16,7 @@ Verbs requiring external daemons or network infrastructure (run, where --watch, 
 |---|---|---|---|---|
 | 1 | `nova-sprint log --max 1` | the --max flag has no effect on output length and prints all lines without bounding | respect --max parameter and bound rendered log lines with a MORE continuation | S |
 | 2 | `nova-sprint take --json` | invocation errors on missing required parameters emit plain text and ignore requested JSON output | serialize invocation refusals as JSON when --json is present on the command line | M |
-| 3 | `nova-sprint play --ticks 2` | running play on a twin exits with status OK without advancing cards because twin heartbeats do not beat | ensure play simulation automatically beats members and drives state progression on twin backends | M |
+| 3 | `nova-sprint play --ticks 2` | running play on a twin exits with status OK without advancing cards because a twin is ticked only by hand and the driver never runs tick | drive state progression during play on twin backends by ticking the machine rather than leaving ticks to the hand | M |
 | 4 | `nova-sprint version --unknown` | version silently ignores unrecognized arguments instead of refusing invalid input | validate arguments and reject unknown flags on version | S |
 | 5 | `nova-sprint tick` | state transitions on twin mode require guessing the number of manual ticks needed for card movement | document the exact tick count needed for transitions or provide an auto-settling tick flag | S |
 
