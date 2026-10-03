@@ -95,16 +95,16 @@ func TestNoUpstreamRefusalNamesTheSafeNextAction(t *testing.T) {
 		"git init --bare <dir> && git -C " + storeDir + " remote add origin <dir> && git -C " + storeDir + " push -u origin main",
 	}
 	_, errOut, code := runNovaSecrets(bin, checkArgs...)
-	require.Equal(t, 2, code, "check on a no-upstream store: want one SECRETS REFUSED line and exit 2, got %d: %q", code, errOut)
-	require.True(t, strings.HasPrefix(errOut, "SECRETS REFUSED: "), "check on a no-upstream store: want one SECRETS REFUSED line and exit 2, got %d: %q", code, errOut)
-	require.Equal(t, 1, strings.Count(errOut, "\n"), "check on a no-upstream store: want one SECRETS REFUSED line and exit 2, got %d: %q", code, errOut)
+	require.Equal(t, 2, code, "check on a no-upstream store: want one SECRETS CHECK REFUSED line and exit 2, got %d: %q", code, errOut)
+	require.True(t, strings.HasPrefix(errOut, "SECRETS CHECK REFUSED: "), "check on a no-upstream store: want one SECRETS CHECK REFUSED line and exit 2, got %d: %q", code, errOut)
+	require.Equal(t, 1, strings.Count(errOut, "\n"), "check on a no-upstream store: want one SECRETS CHECK REFUSED line and exit 2, got %d: %q", code, errOut)
 	for _, w := range wants {
 		assert.Contains(t, errOut, w, "check refusal lacks %q:\n%s", w, errOut)
 	}
 	_, errOut, code = runNovaSecrets(bin, execArgs...)
-	require.Equal(t, 125, code, "exec on a no-upstream store: want one SECRETS EXEC FAIL line and exit 125, got %d: %q", code, errOut)
-	require.True(t, strings.HasPrefix(errOut, "SECRETS EXEC FAIL "), "exec on a no-upstream store: want one SECRETS EXEC FAIL line and exit 125, got %d: %q", code, errOut)
-	require.Equal(t, 1, strings.Count(errOut, "\n"), "exec on a no-upstream store: want one SECRETS EXEC FAIL line and exit 125, got %d: %q", code, errOut)
+	require.Equal(t, 125, code, "exec on a no-upstream store: want one SECRETS EXEC REFUSED line and exit 125, got %d: %q", code, errOut)
+	require.True(t, strings.HasPrefix(errOut, "SECRETS EXEC REFUSED: "), "exec on a no-upstream store: want one SECRETS EXEC REFUSED line and exit 125, got %d: %q", code, errOut)
+	require.Equal(t, 1, strings.Count(errOut, "\n"), "exec on a no-upstream store: want one SECRETS EXEC REFUSED line and exit 125, got %d: %q", code, errOut)
 	for _, w := range wants {
 		assert.Contains(t, errOut, w, "exec refusal lacks %q:\n%s", w, errOut)
 	}

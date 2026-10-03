@@ -1,3 +1,2 @@
 # flag-usage: flags registered with no description; each row's count only falls
-# ceiling: 1
-cmd/nova-swarm/workercheck.go:cmdWorker 2 declared before the rule (tool ledger X7); the tool's author describes each flag
+# ceiling: 0

@@ -279,7 +279,9 @@ budgets makes the verdict depend on the load instead. So:
 - **Enforced on every leg, load-independent, static:** no unit test waits on
   the wall clock (the `unitwaits` class test below), and a test skipped with
   the SLEEPS marker that the ledger does not name is `CI-SLEEPS test=<name>
-  package=<pkg>` and exit 2, the push leg included.
+  package=<pkg>` and exit 1 from `nova-ci slowtests` (the check said no;
+  `make test` turns that no into status 2 when the tests passed), the push leg
+  included.
 - **Measured on every leg:** every CI-SLOW line and one `CI-LOAD load=<n>
   cpus=<n> per-cpu=<n>: measured, not a verdict` line (the host's load
   average, the larger of its 1- and 5-minute figures; `load=unknown` with the

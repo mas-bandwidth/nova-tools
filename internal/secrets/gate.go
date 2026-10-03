@@ -32,7 +32,7 @@ func RunGate(in GateInput) (string, int) {
 	storeDir, base, head := in.StoreDir, in.Base, in.Head
 	// The flags only: the gate judges any working copy, a store with no seat yet included.
 	if err := preflight("", need{storeDir, "--store <dir>", false}, need{base, "--base <git ref>", false}, need{head, "--head <git ref>", false}); err != nil {
-		return "SECRETS REFUSED: " + oneline.WithRemedy(err.Error(), "nova-secrets gate -h"), 2
+		return "SECRETS GATE REFUSED: " + oneline.WithRemedy(err.Error(), "nova-secrets gate -h"), 2
 	}
 	// The two refs become commits before anything reads them. A ref is handed to git as an
 	// argument, and one beginning with "-" is read by git as an OPTION: --head=--diff-filter=U
@@ -42,7 +42,7 @@ func RunGate(in GateInput) (string, int) {
 	// resolved SHA, again behind --end-of-options.
 	for _, r := range []struct{ flag, ref string }{{"--base", base}, {"--head", head}} {
 		if strings.HasPrefix(r.ref, "-") {
-			return fmt.Sprintf("SECRETS REFUSED: %s %s begins with \"-\", the shape of an option, not a git ref", r.flag, oneline.Field(r.ref)), 2
+			return fmt.Sprintf("SECRETS GATE REFUSED: %s %s begins with \"-\", the shape of an option, not a git ref; pass a branch, tag or commit; run: nova-secrets gate -h", r.flag, oneline.Field(r.ref)), 2
 		}
 	}
 	base, err := gateResolveCommit(storeDir, "--base", base)
@@ -115,11 +115,8 @@ func RunGate(in GateInput) (string, int) {
 		for i := range cfg.CreationRules {
 			rule := cfg.CreationRules[i]
 			ruleNum := i + 1
-			if len(rule.Recipients) != 2 {
-				return gateRefuse(ruleNum, ".sops.yaml", fmt.Sprintf("rule has %d age recipients; expected exactly two", len(rule.Recipients))), 2
-			}
-			if !slices.Contains(rule.Recipients, recoveryKey) {
-				return gateRefuse(ruleNum, ".sops.yaml", "rule recipients do not include the key recovery.pub declares"), 2
+			if problem := ruleRecipientsProblem(rule.Recipients, recoveryKey); problem != "" {
+				return gateRefuse(ruleNum, ".sops.yaml", "rule "+problem), 2
 			}
 			re, err := regexp.Compile(rule.PathRegex)
 			if err != nil {
@@ -187,6 +184,13 @@ func RunGate(in GateInput) (string, int) {
 		}
 		if !bytes.Contains(data, []byte("sops:")) {
 			return gateRefuse(ruleNum, f, "file is not encrypted (missing sops metadata)"), 2
+		}
+		_, recipients, _, err := parseStoreFile(bytes.NewReader(data))
+		if err != nil {
+			return gateRefuse(ruleNum, f, "unreadable sops metadata: "+oneline.Escape(err.Error())), 2
+		}
+		if problem := seatFileRecipientsProblem(recipients, cfg.CreationRules[ruleIdx].Recipients, recoveryKey); problem != "" {
+			return gateRefuse(ruleNum, f, problem), 2
 		}
 		if key, plain := firstPlainValue(data, cfg.CreationRules[ruleIdx].UnencryptedRegex); plain {
 			return gateRefuse(ruleNum, f, fmt.Sprintf("key %s is a plain value, not encrypted", oneline.Field(key))), 2

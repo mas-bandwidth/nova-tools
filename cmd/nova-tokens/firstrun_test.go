@@ -95,21 +95,24 @@ func TestEveryRefusalSaysWhatTheInputWantsAndOneRunNamesEveryProblem(t *testing.
 	for _, want := range []string{"refusing to guess", "it wants the directory", "it wants a file of", "it wants --claude"} {
 		wantContains(t, r.stderr, want)
 	}
-	// A flag typo costs ONE line and names the door, never the banner.
+	// A flag typo costs ONE line: the verb's flags, the nearest one, and the verb's help as
+	// the door, never the banner.
 	r = invoke(t, "fold", "--ou", dir)
 	wantExit(t, r, 2)
 	{
 		n := strings.Count(strings.TrimSuffix(r.stderr, "\n"), "\n")
 		assert.False(t, n != 0, "a flag typo cost %d lines; the banner is behind `nova-tokens help`:\n%s", n+1, r.stderr)
 	}
-	wantContains(t, r.stderr, "run: nova-tokens help")
-	// An unknown verb, and a bare invocation, do the same.
+	assert.Contains(t, r.stderr, "TOKENS REFUSED: unknown flag --ou; the flags of fold are --all,")
+	assert.Contains(t, r.stderr, "did you mean --out?; run: nova-tokens fold -h")
+	assert.NotContains(t, r.stderr, "flag provided but not defined")
+	// An unknown verb, and a bare invocation, name the verbs there are and the door.
 	r = invoke(t, "collate")
 	wantExit(t, r, 2)
-	wantContains(t, r.stderr, "run: nova-tokens help")
+	assert.Equal(t, `TOKENS REFUSED: unknown verb "collate"; the verbs are fold, report, ledger, sum, check, sources, profiles, session, version; run: nova-tokens help`+"\n", r.stderr)
 	r = invoke(t)
 	wantExit(t, r, 2)
-	wantContains(t, r.stderr, "run: nova-tokens help")
+	assert.Equal(t, "TOKENS REFUSED: no verb given; the verbs are fold, report, ledger, sum, check, sources, profiles, session, version, and sources is the one that only looks; run: nova-tokens help\n", r.stderr)
 	assert.False(t, r.stdout != "", "a bare invocation wrote to stdout: %q", r.stdout)
 	// And the door opens on stdout at exit 0.
 	r = invoke(t, "help")
@@ -126,7 +129,7 @@ func TestThereIsNoQuickstartVerbAndTheCommandReferenceSaysWhy(t *testing.T) {
 
 	r := invoke(t, "quickstart")
 	wantExit(t, r, 2)
-	wantContains(t, r.stderr, "unknown subcommand")
+	wantContains(t, r.stderr, `unknown verb "quickstart"`)
 	cli := readRepoFile(t, filepath.Join("docs", "CLI.md"))
 	assert.False(t, !strings.Contains(cli, "no `quickstart`"), "docs/CLI.md does not say why there is no quickstart verb (docs/STANDARD.md, onboarding point 4)")
 }

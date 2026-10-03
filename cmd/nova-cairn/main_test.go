@@ -17,7 +17,7 @@ import (
 )
 
 // cli is the tool's entry point in process.
-var cli = testkit.Main(run)
+var cli = testkit.Main(cairnTool().Run)
 
 // rig is one store under test: a fresh directory and the tool pointed at it.
 type rig struct {
@@ -100,7 +100,8 @@ func TestReceiptTextReturnsStoredWordsInBothRenderings(t *testing.T) {
 	c.ok("append", "--session", "s", "--entry", "e", "--text", prose, "--publish", "manual")
 
 	plain := c.ok("receipt", "--session", "s", "--entry", "e", "--text")
-	require.Contains(t, plain, `text=line\x20one\x0aline\x20"two"`, "text is one safely quoted fact: %s", plain)
+	// Quoted, with its spaces kept: the words read as words, never as \x20 escapes.
+	require.True(t, strings.HasSuffix(plain, ` text="line one\nline \"two\""`+"\n"), "text is one quoted fact, last on the line: %s", plain)
 
 	result := c.run("receipt", "--session", "s", "--entry", "e", "--text", "--json")
 	require.Zero(t, result.Code, result.Stderr)
@@ -332,7 +333,13 @@ func TestEveryProblemIsNamedAtOnce(t *testing.T) {
 		{"open", []string{"open", "--store", "./c", "--now", "yesterday", "stray"},
 			[]string{"--session is required", "--publish is required", "--now must parse", `takes no positional arguments, got "stray"`}},
 		{"append", []string{"append", "--text", "a", "--file", "b"},
-			[]string{"--store is required", "--session is required", "--entry is required", "--publish is required", "--text and --file both"}},
+			[]string{"--store is required", "--session is required", "--entry is required", "--text and --file both"}},
+		// Bad values are named with each other, not one per run: an id that is
+		// not an id and a policy that is not a policy beside a --now that is not a clock.
+		{"bad values", []string{"append", "--store", "./c", "--session", "a b", "--entry", "x/y", "--text", "w", "--publish", "sometimes", "--now", "tomorrow"},
+			[]string{`--session "a b" is not an id`, "--now must parse", "--publish \"sometimes\" is not a policy", `--entry "x/y" is not an id`}},
+		{"open bad values", []string{"open", "--store", "./c", "--session", "..", "--publish", "always", "--now", "tomorrow"},
+			[]string{`--session ".." is not an id`, "--now must parse", "--publish \"always\" is not a policy"}},
 		{"two bad things", []string{"receipt", "--store", "s", "--session", "x", "stray"},
 			[]string{"--entry is required", `takes no positional arguments, got "stray"`}},
 	} {

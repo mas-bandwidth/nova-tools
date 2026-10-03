@@ -37,6 +37,7 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 	f.fs.Var(&re, "re", "an id, a path, or the SUBJECT of a note on your open list that this note answers, or `new` to start a thread (repeatable)")
 	out := f.fs.String("out", "", "write the draft skeleton to this file instead of standard output")
 	overwrite := f.fs.Bool("overwrite", false, "allow replacing an existing file named by --out")
+	dryRun := f.fs.Bool("dry-run", false, "with --out, check the path and print it, and write nothing (the reply form, --reply-to, fetches the bus and has no dry run)")
 	f.fs.String("file", "", "retired: use --out instead")
 	// The reply form's flags. Every one of them is inert without --reply-to, which is what
 	// keeps the released form byte-identical: see cmd/nova-bus/reply.go.
@@ -53,11 +54,11 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 	given := map[string]bool{}
 	f.fs.Visit(func(fl *flag.Flag) { given[fl.Name] = true })
 	if given["file"] {
-		fmt.Fprint(stderr, "nova-bus draft: --file is retired because --file means input on send; use --out <path> (or --out <path> --overwrite)\n")
+		fmt.Fprint(stderr, "DRAFT REFUSED: --file is retired because --file means input on send; use --out <path> (or --out <path> --overwrite); run: nova-bus draft -h\n")
 		return 2
 	}
 	if *overwrite && strings.TrimSpace(*out) == "" {
-		fmt.Fprintln(stderr, "nova-bus draft: --overwrite requires --out")
+		fmt.Fprintln(stderr, "DRAFT REFUSED: --overwrite requires --out; run: nova-bus draft -h")
 		return 2
 	}
 	if !given["reply-to"] {
@@ -75,10 +76,14 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 			return 2
 		}
 		if strings.TrimSpace(*to) == "" {
-			fmt.Fprintf(stderr, "nova-bus draft: --to is required; refusing to guess; run: nova-bus help\n")
+			fmt.Fprintf(stderr, "DRAFT REFUSED: --to is required; refusing to guess; run: nova-bus draft -h\n")
 			return 2
 		}
 	} else {
+		if *dryRun {
+			fmt.Fprint(stderr, "DRAFT REFUSED: --dry-run is for --out; the reply form fetches and fast-forwards the checkout to resolve --reply-to, so it has no run that writes nothing; drop --dry-run; run: nova-bus draft -h\n")
+			return 2
+		}
 		return cmdDraftReply(replyOpts{
 			busDir: *busDir, as: *as, to: *to, cc: *cc, subject: *subject,
 			replyTo: *replyTo, bodyFile: *bodyFile, draftDir: *draftDir,
@@ -90,7 +95,7 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	c, err := bus.LoadConfig(*busDir)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-bus draft: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus draft -h"))
+		fmt.Fprintf(stderr, "DRAFT REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus draft -h"))
 		return 2
 	}
 	// Collected, like send's: a draft asked for with a misspelled name and a Re that is
@@ -157,7 +162,7 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if len(re) > 0 {
 		t, terr := bus.ReadBus(*busDir, c)
 		if terr != nil {
-			fmt.Fprintf(stderr, "nova-bus draft: %s\n", oneline.WithRemedy(oneline.Err(terr), "nova-bus draft -h"))
+			fmt.Fprintf(stderr, "DRAFT REFUSED: %s\n", oneline.WithRemedy(oneline.Err(terr), "nova-bus draft -h"))
 			return 2
 		}
 		var open []bus.OpenEntry
@@ -186,7 +191,7 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 			}
 			matches := bus.MatchOpenSubject(open, r)
 			if len(matches) == 0 {
-				problems = append(problems, fmt.Errorf("--re %q is not an id on this bus, not a note that exists, and not the subject of a note on your open list; threads are named by id, and a slug is not a thread", r))
+				problems = append(problems, bus.UnresolvedRe(t, "--re", r))
 				continue
 			}
 			re[i] = matches[0].Target()
@@ -206,7 +211,7 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	skeleton := bus.Skeleton{From: me.Name, To: *to, Cc: *cc, Re: re, Subject: *subject}.Render()
 	if *out != "" {
-		return writeDraftOut(*out, *overwrite, skeleton, stdout, stderr)
+		return writeDraftOut(*out, *overwrite, *dryRun, skeleton, stdout, stderr)
 	}
 	fmt.Fprint(stdout, skeleton)
 	fmt.Fprintf(stderr, "DRAFT NOTE redirect this to a file, then send: nova-bus send --file <that file>\n")
@@ -231,7 +236,46 @@ func draftOpenReadFailure(busDir string, me bus.Participant, maxWords int, haveM
 	return fmt.Errorf("%s is invalid (%s); rebuild it from the bus; %s; run: %s; %s", bus.OpenPath(me.Lane), detail, recoveryNote, recovery, placeholders)
 }
 
-func writeDraftOut(path string, overwrite bool, skeleton string, stdout, stderr io.Writer) int {
+// draftOutPreflight is every refusal writeDraftOut can know before it writes, read-only,
+// so the real run and the dry run refuse alike: a path that is there without --overwrite,
+// a directory, a path Lstat cannot read, and a parent that is missing or is not a
+// directory. It prints the refusal and returns its exit code, or 0 when the write may go.
+func draftOutPreflight(path string, overwrite bool, stderr io.Writer) int {
+	fi, err := os.Lstat(path)
+	switch {
+	case err == nil && !overwrite:
+		fmt.Fprintf(stderr, "DRAFT REFUSED: %s exists; pass --overwrite to replace it\n", oneline.Field(path))
+		return 1
+	case err == nil && fi.IsDir():
+		fmt.Fprintf(stderr, "DRAFT REFUSED: %s is a directory; run: nova-bus draft -h\n", oneline.Field(path))
+		return 1
+	case err != nil && !errors.Is(err, os.ErrNotExist):
+		fmt.Fprintf(stderr, "DRAFT REFUSED: write %s: %s\n", oneline.Field(path), oneline.WithRemedy(oneline.Err(err), "nova-bus draft -h"))
+		return 2
+	}
+	parent := filepath.Dir(path)
+	if pi, err := os.Stat(parent); err != nil || !pi.IsDir() {
+		fmt.Fprintf(stderr, "DRAFT REFUSED: write %s: the directory %s is not there; make it, or name a file in a directory that is; run: nova-bus draft -h\n", oneline.Field(path), oneline.Field(parent))
+		return 2
+	}
+	return 0
+}
+
+// writeDraftOut writes the skeleton to path, after the preflight both forms share; a dry
+// run stops after the preflight and prints the line the write would.
+func writeDraftOut(path string, overwrite, dryRun bool, skeleton string, stdout, stderr io.Writer) int {
+	if code := draftOutPreflight(path, overwrite, stderr); code != 0 {
+		return code
+	}
+	if dryRun {
+		fmt.Fprintf(stdout, "DRAFT OK path=%s dry_run=true\n", oneline.Field(path))
+		return 0
+	}
+	return writeSkeleton(path, overwrite, skeleton, stdout, stderr)
+}
+
+// writeSkeleton is the write itself: atomic creation, or a replacement under --overwrite.
+func writeSkeleton(path string, overwrite bool, skeleton string, stdout, stderr io.Writer) int {
 	if !overwrite {
 		// Atomic creation: refuse if the path already exists (including dangling symlinks).
 		// os.Lstat catches existing files, directories, and symlinks on platforms where

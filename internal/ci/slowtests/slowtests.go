@@ -146,8 +146,10 @@ func terminalAction(action string) bool {
 }
 
 // Parse decodes newline-delimited TestEvent JSON. Blank lines are skipped; a
-// line that is not an object is an error naming its 1-based line, never a
-// silent skip, so a truncated pipe cannot read as a clean run.
+// line that is not an object, or an object with no Action (every event go test
+// -json writes has one, the bookkeeping ones included), is an error naming its
+// 1-based line, never a silent skip, so a truncated pipe or a stream of other
+// JSON cannot read as a clean run.
 func Parse(r io.Reader) ([]Event, error) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
@@ -159,9 +161,15 @@ func Parse(r io.Reader) ([]Event, error) {
 		if len(b) == 0 {
 			continue
 		}
+		if b[0] != '{' {
+			return nil, fmt.Errorf("line %d: not a JSON object; a TestEvent is one", line)
+		}
 		var ev Event
 		if err := json.Unmarshal(b, &ev); err != nil {
 			return nil, fmt.Errorf("line %d: %w", line, err)
+		}
+		if ev.Action == "" {
+			return nil, fmt.Errorf("line %d: a JSON object with no Action is not a TestEvent", line)
 		}
 		events = append(events, ev)
 	}

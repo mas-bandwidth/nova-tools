@@ -8,34 +8,26 @@ import "strings"
 // the interface rather than a habit of whoever wrote the line:
 //
 //	stdout is the PROTOCOL stream. Every line a listing verb writes on it
-//	begins with one of the documented two-word prefixes below, and the
-//	consumers -- nova-wake watch, nova-wake serve, anything that shells out to
-//	`nova-bus inbox` or `nova-bus wait` -- parse it line by line.
+//	begins with one of the documented two-word prefixes below, and its
+//	consumers -- a watcher or harness that shells out to `nova-bus inbox` or
+//	`nova-bus wait` -- parse it line by line.
 //
 //	stderr carries refusals, failures and PROGRESS: what the program is doing
 //	while it is doing it. A consumer reads it so that an INBOX REFUSED is never
-//	lost (the grep of 2026-09-10), but nothing on it is protocol.
+//	lost, but nothing on it is protocol.
 //
-// Glenn's rule has two halves and until 2026-09-18 only the first was written
-// down: a program that takes longer than 0.1 s says what it is doing on stderr,
-// AND a progress line never enters a protocol stream a consumer parses.
+// The rule has two halves: a program that takes longer than 0.1 s says what it
+// is doing on stderr, AND a progress line never enters a protocol stream a
+// consumer parses. A consumer that reads the two streams together must drop
+// progress before it classifies anything: the since-walk's
+// `INBOX WALK commits=1/1 notes=0 elapsed=3ms` is on stderr, and a consumer
+// that relayed every line it could not classify would count it as news and
+// return before the note it was waiting for.
 //
-// The second half was paid for the same day. The since-walk's
-// `INBOX WALK commits=1/1 notes=0 elapsed=3ms` went to stderr, exactly as the
-// first half asks -- and nova-wake reads nova-bus's stdout and stderr TOGETHER,
-// so the progress line arrived at a classifier whose default case is PRINT. It
-// was relayed as `WAKE BUS LINE INBOX WALK ...`, counted as a change in the
-// world, and the poll that found "news" returned before the mail the watcher
-// was waiting for came down: `relayed=2` where the test wanted one note. The
-// same line had broken nova-bus's own continuation tests hours earlier.
-//
-// The fix is a class fix and it lives HERE, in one place both sides read:
-// nova-bus's own test asserts that no progress prefix ever reaches stdout, and
-// every consumer that reads the two streams together drops progress before it
-// classifies anything. A NEW progress line is then one entry in
-// ProgressPrefixes and is safe in every consumer at once -- which is the
-// property the instance fix (teach nova-wake about INBOX WALK) would not have
-// had.
+// The rule lives HERE, in one place both sides read: nova-bus's own test
+// asserts that no progress prefix ever reaches stdout, and a consumer drops
+// every line IsProgress names. A NEW progress line is one entry in
+// ProgressPrefixes and is safe in every consumer at once.
 
 // ProgressPrefixes are the line prefixes nova-bus uses for progress: what it is
 // doing while it does it. They are written on stderr ONLY, they are not
@@ -65,7 +57,7 @@ var ProtocolPrefixes = []string{
 	"INBOX NOTE", "INBOX OK", "INBOX OPEN", "INBOX RECEIPT", "INBOX SCOPE",
 	"INBOX SWITCH", "INBOX UNADDRESSED", "INBOX UNREADABLE",
 	"NAMES GROUP", "NAMES NAME", "NAMES OK",
-	"RECEIPT ALREADY", "RECEIPT OK",
+	"RECEIPT ALREADY", "RECEIPT OK", "RECEIPT RECORD",
 	"REPLY OK",
 	"SEND DRAFT", "SEND NOTE", "SEND OK",
 	"WAIT DONE", "WAIT NOTE", "WAIT OK", "WAIT TIMEOUT",

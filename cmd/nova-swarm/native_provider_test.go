@@ -221,3 +221,24 @@ func TestAChildTheProviderFailedIsJudgedProviderFailure(t *testing.T) {
 		assert.Equal(t, tc.want, why, tc.name)
 	}
 }
+
+// providerOf takes the provider from a model id's first slash, and only when both sides
+// of it are there: a model id with no provider, or none after it, names no harness.
+func TestProviderOfNeedsBothSidesOfTheSlash(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		model, provider string
+		ok              bool
+	}{
+		{"openai/gpt-5", "openai", true},
+		{"a/b/c", "a", true},
+		{"openai/", "", false},
+		{"/gpt-5", "", false},
+		{"gpt-5", "", false},
+		{"", "", false},
+	} {
+		provider, ok := providerOf(c.model)
+		assert.Equal(t, c.provider, provider, c.model)
+		assert.Equal(t, c.ok, ok, c.model)
+	}
+}

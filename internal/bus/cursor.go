@@ -901,6 +901,13 @@ func AppendIndexLine(root string, e IndexEntry) error {
 // A note with no id contributes no line. A legacy note is addressed by path, everywhere,
 // and putting it in a catalogue keyed on ids would be inventing an id for it.
 func RebuildLaneIndex(root string, c *Config, t *Bus, lane string) (int, error) {
+	n, content := PlanLaneIndex(c, t, lane)
+	return n, replaceLaneFile(root, IndexPath(lane), content)
+}
+
+// PlanLaneIndex is what RebuildLaneIndex writes for one lane, and how many notes it holds,
+// without writing it: the plan `check --rebuild-index --dry-run` prints.
+func PlanLaneIndex(c *Config, t *Bus, lane string) (int, string) {
 	var entries []IndexEntry
 	for i := range t.Notes {
 		n := &t.Notes[i]
@@ -914,7 +921,7 @@ func RebuildLaneIndex(root string, c *Config, t *Bus, lane string) (int, error) 
 	for _, e := range entries {
 		b.WriteString(IndexLine(e) + "\n")
 	}
-	return len(entries), replaceLaneFile(root, IndexPath(lane), b.String())
+	return len(entries), b.String()
 }
 
 // replaceLaneFile writes a lane state file whole, refusing to write outside the bus for

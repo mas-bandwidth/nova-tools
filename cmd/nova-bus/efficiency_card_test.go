@@ -14,9 +14,9 @@ import (
 //
 // The card is a MEASUREMENT, taken read-only against the live checkout on
 // 2026-09-12, of the work nova-bus pays for twice and the one report that has
-// no ceiling. Its contract lives in the spec, the way the rest of the
-// efficiency-card set does: the git fetch behind every poll, the bounded
-// `inbox` against the uncapped `check --full`, and the turn a wait costs
+// no ceiling then (`check` has had --max since). Its contract lives in the spec,
+// the way the rest of the efficiency-card set does: the git fetch behind every
+// poll, the bounded `inbox` and `check`, and the turn a wait costs
 // whatever its length. This doc test reads the section out of docs/SPEC.md the
 // way TestNovaCheckEfficiencyCardNamesItsRules reads #86's section: the spec is
 // the one place the contract is written.
@@ -37,7 +37,7 @@ func TestNovaBusEfficiencyCardNamesItsRules(t *testing.T) {
 		"carrying=986",
 		// the three measured operations, named as the card names them.
 		"REPEATS: a git fetch per poll, and a whole-history walk on `check --full`",
-		"COORDINATOR READ: bounded on `inbox`, unbounded on `check --full`",
+		"COORDINATOR READ: bounded on `inbox` and on `check`",
 		"WAITS ON: its own clock, and a quiet poll prints nothing",
 		// REPEATS: the fetch and the measured poll budget.
 		"0.98 s",
@@ -64,13 +64,11 @@ func TestNovaBusEfficiencyCardNamesItsRules(t *testing.T) {
 		"652M cache read",
 		"1,204 turns",
 		"542K cache-read tokens",
-		// the missing bound and the flag that closes it.
-		"`--fail-max`",
-		"`--fail-max 0`",
-		"BUS FINDING",
+		// the bound check has now, and the measurement marked as taken before it.
+		"historical measurement, taken before `check` had `--max`",
+		"`--max <n>` (default 20, `0` for all)",
 		"BUS MORE",
-		"BUS SUMMARY",
-		"`--after`",
+		"BUS CHECK",
 		// the Red tests list.
 		"Red tests",
 	} {

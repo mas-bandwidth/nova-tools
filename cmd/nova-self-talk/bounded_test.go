@@ -69,7 +69,7 @@ func TestScanCapsEachClassSeparately(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "journal.md")
 	require.NoError(t, os.WriteFile(path, []byte(b.String()), 0o644))
 	_, _, stderr := runSelfTalk(t, path)
-	require.Contains(t, stderr, "INSTALLATION", "the buried class never printed:\n%s", stderr)
+	require.Contains(t, stderr, ":1201: RANKING match=", "the buried class never printed:\n%s", stderr)
 	assert.Contains(t, stderr, "SELFTALK MORE kind=standing", "the loud class was not capped:\n%s", stderr)
 	assert.NotContains(t, stderr, "SELFTALK MORE kind=installation", "the quiet class was capped though it had one finding:\n%s", stderr)
 }

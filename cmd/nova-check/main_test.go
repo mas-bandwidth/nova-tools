@@ -26,7 +26,7 @@ func TestRunRefusesToGuess(t *testing.T) {
 		wantStderr string
 	}{
 		{"no subcommand", nil, "run: nova-check help"},
-		{"unknown subcommand", []string{"frobnicate"}, "unknown subcommand"},
+		{"unknown subcommand", []string{"frobnicate"}, "unknown verb \"frobnicate\"; the verbs are quickstart"},
 		{"attest without home", []string{"attest", "--manifest", "m.txt"}, "--home is required"},
 		{"attest without manifest", []string{"attest", "--home", "."}, "--manifest is required"},
 		{"links without dir", []string{"links"}, "--dir is required"},
@@ -805,7 +805,7 @@ func TestNoCallerPathCanForgeALine(t *testing.T) {
 			require.EqualValues(t, 2, got, "exit = %d, want 2; stderr: %s", got, stderr.String())
 		}
 		oneEvent(t, forged, stdout.String(), stderr.String())
-		assert.Contains(t, stderr.String(), `nova-check links: flag provided but not defined: -bogus\x0aLINKS OK files`, "stderr = %q, want this tool's own refusal with the flag escaped", stderr.String())
+		assert.Contains(t, stderr.String(), `nova-check links REFUSED: flag provided but not defined: -bogus\x0aLINKS OK files`, "stderr = %q, want this tool's own refusal with the flag escaped", stderr.String())
 	})
 }
 

@@ -1,9 +1,12 @@
 package oneline
 
 import (
+	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestWithRemedyEndsEveryLineWithANextStep pins the two halves: a line with no
@@ -52,5 +55,39 @@ func TestHasRemedyIsNotFooledByProse(t *testing.T) {
 		"see `nova-sprint cards`",
 	} {
 		assert.True(t, HasRemedy(s), "HasRemedy(%q) = false; the line names its next step", s)
+	}
+}
+
+// TestShellWordReadsBackAsOneWord: a value through ShellWord, split as a POSIX
+// shell splits it (onboarding.SplitShell, nothing executed), is that one value;
+// a value with nothing a shell reads is printed as it is.
+func TestShellWordReadsBackAsOneWord(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ value, printed string }{
+		{"./tree.lisp", "./tree.lisp"},
+		{"/usr/local/bin/gh", "/usr/local/bin/gh"},
+		{"-x", "-x"},
+		{"", "''"},
+		{"work trees", "'work trees'"},
+		{"it's", `'it'"'"'s'`},
+		{`say "hi"`, `'say "hi"'`},
+		{"$(x)", "'$(x)'"},
+		{"a;b", "'a;b'"},
+		{"`id`", "'`id`'"},
+		{"line\nbreak", "'line\nbreak'"},
+		{`back\slash`, `'back\slash'`},
+		{"*", "'*'"},
+	} {
+		t.Run(tc.printed, func(t *testing.T) {
+			t.Parallel()
+			got := ShellWord(tc.value)
+			assert.Equal(t, tc.printed, got)
+			if strings.Contains(tc.value, "`") {
+				return // the splitter refuses a backquote anywhere; the quoting is pinned above
+			}
+			words, err := onboarding.SplitShell("cmd " + got + " tail")
+			require.NoError(t, err)
+			assert.Equal(t, []string{"cmd", tc.value, "tail"}, words)
+		})
 	}
 }

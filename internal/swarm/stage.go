@@ -531,8 +531,14 @@ func StageCard(opts StageOptions) (StageResult, error) {
 	}
 	head := strings.TrimSpace(string(headOut))
 
-	_ = stageCmd(ctx, "-C", opts.TargetDir, "config", "user.name", "Rowan").Run()
-	_ = stageCmd(ctx, "-C", opts.TargetDir, "config", "user.email", "rowan@mas-bandwidth.com").Run()
+	// A checkout whose identity could not be set would take the model's commits under no
+	// name, found only when it commits: the stage fails here instead, saying which.
+	if out, err := stageCmd(ctx, "-C", opts.TargetDir, "config", "user.name", "Rowan").CombinedOutput(); err != nil {
+		return fail("config user.name", out, err)
+	}
+	if out, err := stageCmd(ctx, "-C", opts.TargetDir, "config", "user.email", "rowan@mas-bandwidth.com").CombinedOutput(); err != nil {
+		return fail("config user.email", out, err)
+	}
 
 	return StageResult{
 		BaseRepo: baseRepo,

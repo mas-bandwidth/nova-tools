@@ -87,8 +87,8 @@ its service restart removes the silent poller death at the harness's ten-hour ca
 `SEND FAIL` on a BEAT rebase conflict (#488).
 
 **The refusals.** Each is exit 2 with one remedy line.
-- `--on-note` without `--timeout`, `--bus`, `--as`, `--remote` or `--branch`: `nova-bus wait: --on-note needs <flag>; give it, refusing to guess`.
-- `--on-note` with `--open` or `--full`, which would print the frame it suppresses: `nova-bus wait: --on-note prints no open frame; drop --open`.
+- `--on-note` without `--timeout`, `--bus`, `--as`, `--remote` or `--branch`: `WAIT REFUSED: --on-note needs <flag>; give it, refusing to guess; run: nova-bus wait -h`.
+- `--on-note` with `--open` or `--full`, which would print the frame it suppresses: `WAIT REFUSED: --on-note prints no open frame; drop --open; run: nova-bus wait -h`.
 - `--verdict` outside the three: `nova-bus receipt: --verdict <value> is not APPROVE, HOLD or ADOPTED; give one of the three`.
 - `--verdict` without `--re`, or with `--note`: `nova-bus receipt: --verdict writes one receipt and needs --re <id-or-path>; name the note it answers`.
 - `--text` without `--verdict`: `nova-bus receipt: --text belongs to --verdict; add --verdict or drop --text`.
@@ -153,13 +153,13 @@ REPLY OK id=<id> re=<id> path=<path> to=<name> subject=<text> commit=<commit> pu
 ```
 
 **The refusals.** Each is exit 2 with one remedy line.
-- a hand-written `Id:` header: `nova-bus send: the tool mints the Id; delete the Id: header from <draft>; run: nova-bus send -h`.
-- more than one id in `Re:`: `nova-bus send: Re: names one thread; name one id in <draft>; run: nova-bus send -h`.
-- `--dry-run` with `--prepared`: `nova-bus send: --dry-run shapes an ordinary draft; drop --prepared or drop --dry-run`.
-- `reply` without `--re`: `nova-bus reply: --re is required; name the note being answered`.
-- `reply --re` naming no note: `nova-bus reply: --re <id> names no note; run nova-bus inbox --open and name one`.
-- `reply` draft carrying a header it fills: `nova-bus reply: reply fills From, To, Re and Subject; delete the <Key>: line from <draft>; run: nova-bus reply -h`.
-- `reply --advance` with `--dry-run`: `nova-bus reply: --advance moves the cursor and --dry-run writes nothing; drop one`.
+- a hand-written `Id:` header: `SEND REFUSED: the tool mints the Id; delete the Id: header from <draft>; run: nova-bus send -h`.
+- more than one id in `Re:`: `SEND REFUSED: Re: names one thread; name one id in <draft>; run: nova-bus send -h`.
+- `--dry-run` with `--prepared`: `SEND REFUSED: --dry-run shapes an ordinary draft; drop --prepared or drop --dry-run; run: nova-bus send -h`.
+- `reply` without `--re`: `REPLY REFUSED: --re is required; name the note being answered; run: nova-bus reply -h`.
+- `reply --re` naming no note: `REPLY REFUSED: --re <id> names no note on this bus; name one from your open list; run: nova-bus inbox --bus <dir> --as <name> --receipt-max-words <n> --open`.
+- `reply` draft carrying a header it fills: `REPLY REFUSED: reply fills From, To, Re and Subject; delete the <Key>: line from <draft>; run: nova-bus reply -h`.
+- `reply --advance` with `--dry-run`: `REPLY REFUSED: --advance moves the cursor and --dry-run writes nothing; drop one; run: nova-bus reply -h`.
 
 **The mistake it removes.** The mistake it removes is hand-crafted `Id:` headers in
 drafts, comma-separated ids in `Re:`, a date warning on every send, and the hand-shaped

@@ -46,7 +46,7 @@ func TestSendRefusesAHandWrittenId(t *testing.T) {
 	before := headSHA(t, checkout)
 	invoke(t, "", "send", "--bus", checkout, "--file", draft, "--remote", "origin", "--branch", "main", "--attempts", "3").
 		mustCode(t, 2).
-		mustContain(t, "stderr", "nova-bus send: the tool mints the Id; delete the Id: header from "+draft)
+		mustContain(t, "stderr", "SEND REFUSED: the tool mints the Id; delete the Id: header from "+draft)
 	{
 		got := headSHA(t, checkout)
 		require.Falsef(t, got != before, "a refused draft committed: HEAD moved from %s to %s", before, got)
@@ -64,7 +64,7 @@ func TestSendRefusesTwoIdsInRe(t *testing.T) {
 	draft := writeDraftFile(t, "From: Ada\nTo: Bo\nRe: bo-111111111111, bo-222222222222\nSubject: s\n\nbody\n")
 	invoke(t, "", "send", "--bus", checkout, "--file", draft, "--remote", "origin", "--branch", "main", "--attempts", "3").
 		mustCode(t, 2).
-		mustContain(t, "stderr", "nova-bus send: Re: names one thread; name one id in "+draft)
+		mustContain(t, "stderr", "SEND REFUSED: Re: names one thread; name one id in "+draft)
 }
 
 func TestSendWarnsOnceOnADateItReplaces(t *testing.T) {
@@ -134,7 +134,7 @@ func TestReplyRefusesAnUnknownRe(t *testing.T) {
 	invoke(t, "", "reply", "--bus", checkout, "--as", "Ada", "--re", "bo-999999999999", "--file", draft,
 		"--remote", "origin", "--branch", "main", "--attempts", "3").
 		mustCode(t, 2).
-		mustContain(t, "stderr", "nova-bus reply: --re bo-999999999999 names no note; run nova-bus inbox --open and name one")
+		mustContain(t, "stderr", "REPLY REFUSED: --re bo-999999999999 names no note on this bus; name one from your open list; run: nova-bus inbox --bus ")
 	{
 		got := headSHA(t, checkout)
 		require.Falsef(t, got != before, "a refused reply committed: HEAD moved from %s to %s", before, got)
@@ -153,7 +153,7 @@ func TestReplyRefusesAHandShapedHeader(t *testing.T) {
 	invoke(t, "", "reply", "--bus", checkout, "--as", "Ada", "--re", "bo-abcdef012345", "--file", draft,
 		"--remote", "origin", "--branch", "main", "--attempts", "3").
 		mustCode(t, 2).
-		mustContain(t, "stderr", "nova-bus reply: reply fills From, To, Re and Subject; delete the To: line from "+draft)
+		mustContain(t, "stderr", "REPLY REFUSED: reply fills From, To, Re and Subject; delete the To: line from "+draft)
 }
 
 func TestReplyAdvanceMovesTheCursorInTheReplyCommit(t *testing.T) {
@@ -187,7 +187,7 @@ func TestReplyAdvanceWithDryRunIsRefused(t *testing.T) {
 	invoke(t, "", "reply", "--bus", checkout, "--as", "Ada", "--re", "bo-abcdef012345", "--file", draft,
 		"--remote", "origin", "--branch", "main", "--attempts", "3", "--advance", "--dry-run").
 		mustCode(t, 2).
-		mustContain(t, "stderr", "nova-bus reply: --advance moves the cursor and --dry-run writes nothing; drop one")
+		mustContain(t, "stderr", "REPLY REFUSED: --advance moves the cursor and --dry-run writes nothing; drop one")
 	{
 		got := headSHA(t, checkout)
 		require.Falsef(t, got != before, "a refused reply committed: HEAD moved from %s to %s", before, got)

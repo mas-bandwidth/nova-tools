@@ -164,14 +164,27 @@ func (f *seatFixture) options(t *testing.T, only string) SeatAddOptions {
 // before any test runs (see fakeSopsScript for why).
 var sharedFakeSops string
 
+// sharedSopsOpensAll and sharedSopsOpensNone are two blunter fakes, written beside it:
+// a sops whose -d opens every file it is given, and one that opens none, for the check
+// that a seat's key opens exactly the files that list it.
+var sharedSopsOpensAll, sharedSopsOpensNone string
+
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "secrets-fake-sops")
 	if err != nil {
 		panic(err)
 	}
 	sharedFakeSops = filepath.Join(dir, "sops")
-	if err := os.WriteFile(sharedFakeSops, []byte(fakeSopsScript), 0o755); err != nil {
-		panic(err)
+	sharedSopsOpensAll = filepath.Join(dir, "sops-opens-all")
+	sharedSopsOpensNone = filepath.Join(dir, "sops-opens-none")
+	for path, script := range map[string]string{
+		sharedFakeSops:      fakeSopsScript,
+		sharedSopsOpensAll:  "#!/bin/sh\nexit 0\n",
+		sharedSopsOpensNone: "#!/bin/sh\necho 'no identity matched any of the recipients' >&2\nexit 128\n",
+	} {
+		if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+			panic(err)
+		}
 	}
 	code := m.Run()
 	_ = os.RemoveAll(dir)

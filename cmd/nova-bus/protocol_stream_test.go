@@ -27,6 +27,7 @@ func TestTheProgressRegistryMatchesTheLineThisProgramWrites(t *testing.T) {
 		"INBOX OPEN carrying=2 heard=1 large=false remedy=-",
 		"INBOX OK as=Ada carrying=2 open=0 notes=1 receipts=0 heard=1 unaddressed=0 unreadable=0",
 		"INBOX HEARD id=bo-111111111111 from=Bo addr=to at=2026-09-07T00:02:00Z path=from-bo/y.md: Heard",
+		"RECEIPT RECORD note=bo-abcdef012345 lane=from-ada",
 	} {
 		assert.Falsef(t, bus.IsProgress(line), "a protocol line is dropped as progress, which is the false quiet arriving by the other road:\n%s", line)
 		assert.Truef(t, bus.IsProtocol(line), "a documented protocol line is not in internal/bus.ProtocolPrefixes:\n%s", line)

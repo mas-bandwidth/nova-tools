@@ -88,3 +88,40 @@ func TestSingleOpenSenderIsOneRecipientWhoIsWaiting(t *testing.T) {
 	got = SingleOpenSender(c, "Bo", nil)
 	require.Empty(t, got, "an empty open list has nobody waiting, got %q", got)
 }
+
+// A Re target that matches nothing is refused with WHY the subject did not match (a subject
+// is matched only on the reader's open list) and what to write instead: the id of the newest
+// note on the bus with that subject, when there is one.
+func TestAnUnresolvedReSaysWhyAndNamesTheId(t *testing.T) {
+	t.Parallel()
+	root := writeBus(t, map[string]string{
+		"from-bo/2026-09-07T0001Z-hello-aaaaaaaaaaaa.md": "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:01:00 UTC 2026\nId: bo-aaaaaaaaaaaa\nSubject: hello\n\nfirst\n",
+		"from-bo/2026-09-08T0001Z-hello-bbbbbbbbbbbb.md": "From: Bo\nTo: Ada\nDate: Tue Sep  8 00:01:00 UTC 2026\nId: bo-bbbbbbbbbbbb\nSubject: hello\n\nsecond\n",
+	})
+	tab := loadBus(t, root)
+	for _, tc := range []struct{ name, re, want string }{
+		{"a subject on the bus", "Re: hello", "the bus holds 2 note(s) with that subject, the newest bo-bbbbbbbbbbbb; name it by id: Re: bo-bbbbbbbbbbbb"},
+		{"a subject nowhere", "nothing like it", "no note on this bus has that subject; name the note by its id, which `nova-bus inbox --open` lists"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := UnresolvedRe(tab, "Re:", tc.re)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "no note with that subject is on your open list (the list `inbox --advance` writes")
+			assert.Contains(t, err.Error(), tc.want)
+		})
+	}
+}
+
+// The newest note with a subject is the newest by date, across lanes: a newer note in
+// from-ada/ is named over an older one in from-bo/, though from-bo/ sorts after it.
+func TestAnUnresolvedReNamesTheNewestNoteAcrossLanes(t *testing.T) {
+	t.Parallel()
+	root := writeBus(t, map[string]string{
+		"from-bo/2026-09-07T0001Z-hello-bbbbbbbbbbbb.md":  "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:01:00 UTC 2026\nId: bo-bbbbbbbbbbbb\nSubject: hello\n\nolder, in the later lane\n",
+		"from-ada/2026-09-09T0001Z-hello-aaaaaaaaaaaa.md": "From: Ada\nTo: Bo\nDate: Wed Sep  9 00:01:00 UTC 2026\nId: ada-aaaaaaaaaaaa\nSubject: hello\n\nnewer, in the earlier lane\n",
+	})
+	err := UnresolvedRe(loadBus(t, root), "Re:", "hello")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "the bus holds 2 note(s) with that subject, the newest ada-aaaaaaaaaaaa; name it by id: Re: ada-aaaaaaaaaaaa")
+}

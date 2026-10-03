@@ -11,8 +11,6 @@
 # to NOVA_TEST_WAIT (default 30s) or a fake clock.
 cmd/nova-bus/timing_test.go:122 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
 cmd/nova-tokens/slow_test.go:38 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
-internal/swarm/regular_size_test.go:116 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
-internal/swarm/result_collision_test.go:236 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
 internal/update/helper_timing_functional_test.go:12 sleep 2026-09-17 a fixed sleep in a helper or child process, not a pass/fail poll; predates the checker
 internal/update/slow_test.go:135 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
 internal/update/stella_deadline_unix_test.go:21 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker

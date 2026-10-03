@@ -13,6 +13,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/redis/go-redis/v9"
 )
 
 // batchUsageDetails states the manifest grammar from SPEC-NOVA-TABLE's
@@ -28,7 +29,9 @@ Example manifest (demo has row build and column ready; revision 2 was observed):
   "members":[{"id":"b1","expect":{"absent":true},"create":{"row":"build","col":"ready","score":0}}]}
 Read the current epoch/revision with nova-table show demo and existing members
 with nova-table member read demo b1 before choosing expectations.
-Use the same --redis or --seat for these reads and the batch.
+Use the same --redis or --seat for these reads and the batch. The manifest is
+a file path, - with the file on stdin (nova-table batch - < manifest.json), or
+the JSON itself, as in example:.
 Retry the same manifest with the same operation_id to replay its recorded
 result; changing the manifest under that id is refused. --idem on individual
 write verbs records receipt metadata only and does not deduplicate retries.`
@@ -40,7 +43,8 @@ func (app *application) cmdBatch(args []string, stdout, stderr io.Writer) int {
 	epoch := fs.Uint64("epoch", app.defaults.Epoch, "the epoch this write observed; it must equal the manifest's epoch")
 	actor := fs.String("actor", app.defaults.Actor, "actor recorded with the change; it must equal the manifest's actor when the manifest names one")
 	receipt := fs.Bool("receipt", app.receipts, "print the committed event ID, epoch and revision")
-	asJSON := fs.Bool("json", false, "print the receipt as one JSON object instead of the lines")
+	asJSON := fs.Bool("json", false, "print the receipt (or the refusal, or the --dry-run plan) as one JSON object instead of the lines")
+	dryRunFlag(fs, app.dryRun)
 	// ignored: Set on a flag this function just defined, with a value its parser accepts
 	_ = fs.Set("receipt", "true")
 	if app.shared != nil && !app.receipts {
@@ -122,7 +126,17 @@ func (app *application) cmdBatch(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, verb, fmt.Sprintf("--actor %q differs from the manifest's actor %q; make them equal or drop --actor; changed=no; run: nova-table batch -h", *actor, manifest.Actor))
 	}
 
+	// The real run's own call, checked before any dial: ApplyBatch encodes the
+	// reconciled manifest (the actor above included) and checks the bytes it
+	// would send, so a manifest that grows past a bound when encoded is refused
+	// here, with or without --dry-run (preflight).
 	ctx := context.Background()
+	call := func(c redis.Cmdable) (ntable.Receipt, error) { return ntable.ApplyBatch(ctx, c, *manifest) }
+	if code, done := app.preflightWith(stderr, fs, verb, sent(call), func(p *planClient) int {
+		return batchPlan(stdout, stderr, manifest, *addr, *asJSON, p)
+	}); done {
+		return code
+	}
 	st, c, code := app.client(ctx, verb, *addr, stderr)
 	if code != 0 {
 		return code
@@ -130,7 +144,7 @@ func (app *application) cmdBatch(args []string, stdout, stderr io.Writer) int {
 	defer st.Close()
 	trips := st.CountTrips()
 
-	rcpt, err := ntable.ApplyBatch(ctx, c, *manifest)
+	rcpt, err := call(c)
 	if errors.Is(err, ntable.ErrUnknownOutcome) {
 		// the store did not confirm: the batch may or may not be applied. Send the same manifest again.
 		text := err.Error()
@@ -171,6 +185,36 @@ func (app *application) cmdBatch(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "MEMBER %s place=%s->%s score=%s->%s member_revision=%s->%s fields=%s\n",
 			field(m.ID), placeOrDash(m.BeforePlace), placeOrDash(m.AfterPlace),
 			scoreOrDash(m.BeforeScoreText), scoreOrDash(m.AfterScoreText), m.BeforeRev, m.AfterRev, fieldChanges(m))
+	}
+	return 0
+}
+
+// batchPlan answers batch --dry-run: the manifest has passed every check made
+// before sending (its grammar, its bounds, its rules, the --epoch and --actor
+// it must agree with, and ApplyBatch's own check of the bytes it would send),
+// so the plan is what the store would be sent, and nothing is dialled or
+// written. The store's own checks (the table's epoch
+// and revision, each member's expectation) are left to the real run.
+func batchPlan(stdout, stderr io.Writer, m *ntable.BatchManifest, addr string, asJSON bool, p *planClient) int {
+	if strings.TrimSpace(addr) == "" {
+		addr = "-"
+	}
+	changes := 0
+	for _, mb := range m.Members {
+		if mb.Create != nil || mb.Move != nil || mb.Remove || len(mb.Set) > 0 || len(mb.Unset) > 0 {
+			changes++
+		}
+	}
+	if asJSON {
+		return printJSON(stdout, stderr, "batch", map[string]any{
+			"dry_run": true, "table": m.Table, "operation_id": m.OperationID, "epoch": m.Epoch,
+			"expected_table_revision": m.ExpectedTableRevision, "members": len(m.Members),
+			"changes": changes, "guards": len(m.Members) - changes, "sends": p.sends, "redis": addr, "dialled": p.dials, "written": 0,
+		})
+	}
+	if _, err := fmt.Fprintf(stdout, "TABLE DRY-RUN verb=batch table=%s operation=%s epoch=%s expected_table_revision=%s members=%d changes=%d guards=%d sends=%s redis=%s dialled=%d written=0\n",
+		m.Table, field(m.OperationID), m.Epoch, m.ExpectedTableRevision, len(m.Members), changes, len(m.Members)-changes, field(p.sends), field(addr), p.dials); err != nil {
+		return 1
 	}
 	return 0
 }

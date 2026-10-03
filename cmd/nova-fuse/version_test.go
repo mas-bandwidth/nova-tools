@@ -5,7 +5,6 @@ import (
 	"runtime"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -85,7 +84,7 @@ func TestVersionVerbIsReachableFromTheDispatch(t *testing.T) {
 	t.Parallel()
 	for _, verb := range []string{"version", "--version"} {
 		var out, errOut bytes.Buffer
-		if !assert.Equal(t, 0, run([]string{verb}, &out, &errOut, time.Now().UTC()), "%s: want exit 0\nstderr: %s", verb, errOut.String()) {
+		if !assert.Equal(t, 0, run([]string{verb}, &out, &errOut, nowish()), "%s: want exit 0\nstderr: %s", verb, errOut.String()) {
 			continue
 		}
 		assert.True(t, strings.HasPrefix(out.String(), "nova-fuse "), "%s: not the version line: %q", verb, out.String())

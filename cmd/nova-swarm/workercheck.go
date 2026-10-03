@@ -59,8 +59,8 @@ func cmdWorker(args []string, stdout, stderr io.Writer) int {
 		switch {
 		case workerHelpFlag(rest[i]):
 			fs := flag.NewFlagSet("worker check", flag.ContinueOnError)
-			fs.Bool("env", false, "")
-			fs.Int("max", bounded.Default, "")
+			fs.Bool("env", false, "also require every secret the description names to be set in this process's environment")
+			fs.Int("max", bounded.Default, "at most this many WORKER DRIFT lines, then one MORE line; 0 for all")
 			panic(verbflag.Help{FS: fs})
 		case rest[i] == "--env":
 			requireEnv = true
@@ -188,12 +188,12 @@ func checkWorkerDescription(path string, requireEnv bool, env func(string) strin
 func driftOf(err error) workerDrift {
 	msg := err.Error()
 	rest := msg
-	if i := strings.Index(msg, ": "); i >= 0 {
-		rest = msg[i+2:]
+	if _, after, ok := strings.Cut(msg, ": "); ok {
+		rest = after
 	}
 	field, why := rest, rest
-	if j := strings.IndexByte(rest, ' '); j >= 0 {
-		field, why = rest[:j], rest[j+1:]
+	if f, w, ok := strings.Cut(rest, " "); ok {
+		field, why = f, w
 	}
 	field = strings.TrimRight(field, ",:;")
 	switch {

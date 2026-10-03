@@ -3,10 +3,11 @@ package main
 import (
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -148,12 +149,7 @@ func init() {
 
 // cardLintRuleNames is every rule token in one order, so the listing is byte-stable.
 func cardLintRuleNames() []string {
-	names := make([]string, 0, len(cardLintRemedies))
-	for name := range cardLintRemedies {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
+	return slices.Sorted(maps.Keys(cardLintRemedies))
 }
 
 // cardLintRemedy is what one rule wants, in one line. A rule with no entry is a defect this

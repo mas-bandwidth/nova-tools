@@ -33,11 +33,11 @@ func cmdReply(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return 2
 	}
 	if strings.TrimSpace(*re) == "" {
-		fmt.Fprint(stderr, "nova-bus reply: --re is required; name the note being answered; run: nova-bus reply -h\n")
+		fmt.Fprint(stderr, "REPLY REFUSED: --re is required; name the note being answered; run: nova-bus reply -h\n")
 		return 2
 	}
 	if *advance && *dryRun {
-		fmt.Fprint(stderr, "nova-bus reply: --advance moves the cursor and --dry-run writes nothing; drop one\n")
+		fmt.Fprint(stderr, "REPLY REFUSED: --advance moves the cursor and --dry-run writes nothing; drop one; run: nova-bus reply -h\n")
 		return 2
 	}
 	if !f.attempts(*attempts, stderr) {
@@ -55,45 +55,49 @@ func cmdReply(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	raw, err := os.ReadFile(*file)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-bus reply: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus reply -h"))
+		fmt.Fprintf(stderr, "REPLY REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus reply -h"))
 		return 2
 	}
 	body := string(raw)
 	if key, ok := replyFilledHeader(body); ok {
-		fmt.Fprintf(stderr, "nova-bus reply: reply fills From, To, Re and Subject; delete the %s: line from %s; run: nova-bus reply -h\n",
+		fmt.Fprintf(stderr, "REPLY REFUSED: reply fills From, To, Re and Subject; delete the %s: line from %s; run: nova-bus reply -h\n",
 			oneline.Field(key), oneline.Field(*file))
 		return 2
 	}
 	if err := bus.IsRepoRoot(*busDir); err != nil {
-		fmt.Fprintf(stderr, "nova-bus reply: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus reply -h"))
+		fmt.Fprintf(stderr, "REPLY REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus reply -h"))
 		return 2
 	}
-	release, lockErr := bus.LockCheckout(*busDir, checkoutLockWait)
-	if lockErr != nil {
-		fmt.Fprintf(stderr, "REPLY REFUSED: %s\n", oneline.WithRemedy(oneline.Err(lockErr), "nova-bus reply -h"))
-		return 1
+	if !*dryRun { // the lock is a file in .git; a dry run writes nothing
+		release, lockErr := bus.LockCheckout(*busDir, checkoutLockWait)
+		if lockErr != nil {
+			fmt.Fprintf(stderr, "REPLY REFUSED: %s\n", oneline.WithRemedy(oneline.Err(lockErr), "nova-bus reply -h"))
+			return 1
+		}
+		defer release()
 	}
-	defer release()
 	c, err := bus.LoadConfig(*busDir)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-bus reply: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus reply -h"))
+		fmt.Fprintf(stderr, "REPLY REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus reply -h"))
 		return 2
 	}
 	me, found := c.Lookup(*as)
 	if !found {
-		fmt.Fprintf(stderr, "nova-bus reply: --as %s names no one on this bus (known: %s); run: nova-bus reply -h\n",
+		fmt.Fprintf(stderr, "REPLY REFUSED: --as %s names no one on this bus (known: %s); run: nova-bus reply -h\n",
 			oneline.Field(*as), oneline.Escape(strings.Join(c.KnownNames(), "; ")))
 		return 2
 	}
 	if me.Lane == "" {
-		fmt.Fprintf(stderr, "nova-bus reply: --as %s has no lane on this bus, so has nowhere to send from; run: nova-bus reply -h\n", oneline.Field(me.Name))
+		fmt.Fprintf(stderr, "REPLY REFUSED: --as %s has no lane on this bus, so has nowhere to send from; run: nova-bus reply -h\n", oneline.Field(me.Name))
 		return 2
 	}
+	if err := checkoutReady(*busDir, *branch, []string{bus.BeatPath(me.Lane)}); err != nil {
+		fmt.Fprintf(stderr, "REPLY FAIL: %s\n", oneline.Err(err))
+		return 1
+	}
+	// The refresh fetches and fast-forwards the checkout, which writes; a dry run resolves
+	// --re against the checkout as it stands, and says so in its -h.
 	if !*dryRun {
-		if err := checkoutReady(*busDir, *branch, []string{bus.BeatPath(me.Lane)}); err != nil {
-			fmt.Fprintf(stderr, "REPLY FAIL: %s\n", oneline.Err(err))
-			return 1
-		}
 		if _, err := refreshCheckout(*busDir, *remote, *branch); err != nil {
 			fmt.Fprintf(stderr, "REPLY FAIL: %s\n", oneline.Err(err))
 			printTranscript(stderr, err)
@@ -106,12 +110,12 @@ func cmdReply(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	t, err := bus.ReadBus(*busDir, c)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-bus reply: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus reply -h"))
+		fmt.Fprintf(stderr, "REPLY REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus reply -h"))
 		return 2
 	}
 	original, ok := t.Resolve(*re)
 	if !ok {
-		fmt.Fprintf(stderr, "nova-bus reply: --re %s names no note; run nova-bus inbox --open and name one\n", oneline.Field(*re))
+		fmt.Fprintf(stderr, "REPLY REFUSED: --re %s names no note on this bus; name one from your open list; run: nova-bus inbox --bus %s --as %s --receipt-max-words <n> --open\n", oneline.Field(*re), oneline.Escape(shellQuote(*busDir)), oneline.Escape(shellQuote(*as)))
 		return 2
 	}
 	prepared, err := bus.PrepareReplyFrom(t, me, original, body, now, hostName)

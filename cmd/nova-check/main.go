@@ -1,20 +1,24 @@
-// nova-check runs the record-layer checks described in SPEC.md: boot
-// attestation, link integrity, the kernel size budget, the self/machinery
-// separation, the SEED-CORE ↔ SEED.md floor-set parity, the protected
-// corpus a line has chosen never to lose silently, and the dogfood ledger --
-// whether anybody but a verb's own author has run it. Exit 0 pass,
-// 1 check failed, 2 could not run.
+// nova-check runs checks over markdown records and repositories (SPEC-CHECK.md):
+// quickstart (links, then nocode), boot attestation, link integrity, the
+// kernel size budget, the self/machinery separation (nocode, and nocode
+// --staged over the git index), the floor-set parity of a derived door and its
+// source, the protected corpus, branch hygiene, the dogfood ledger (record,
+// ledger, gate), convergence and spelling. Exit 0 pass, 1 check failed, 2 could
+// not run.
 //
-// Every path and every budget comes from a flag. There are no defaults:
-// a missing flag is a refusal, never a guess.
+// Every path and every budget comes from a flag. There are no defaults: a
+// missing flag is a refusal, never a guess. Three verbs write, each only when
+// asked and each with --dry-run: dogfood record appends a receipt, spelling
+// --write edits files, convergence --state stores its streak.
 package main
 
 import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"os"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
@@ -26,7 +30,7 @@ import (
 const usage = `nova-check: checks over markdown records and repositories, each finding named by file and line
 
 how it works: most verbs inspect named paths and keep no state between runs.
-dogfood record appends a receipt; spelling --write edits files in place.
+dogfood record appends a receipt; spelling --write edits files in place (--dry-run: neither writes).
 convergence reads forge data through gh, an optional checkout through git, and
 the files you name; --state stores its two-tick streak. Other repository checks
 read the manifests, ledgers and receipts you name.
@@ -81,7 +85,7 @@ usage:
                                                      whether it did what they needed
   nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok)
                             --notes <text> [--issue <n>] [--closes <id>] --receipts <dir>
-                            [--tools-timeout <s>] [--fail-max <n>]
+                            [--tools-timeout <s>] [--fail-max <n>] [--dry-run]
                                                      append one receipt: I ran this verb,
                                                      on real work, and here is how it went
   nova-check dogfood gate --cli <file> --receipts <dir> [--shipped <cmd dir>] [--require-all] [--allow-empty]
@@ -91,7 +95,7 @@ usage:
   nova-check convergence --repo <owner/name> --ledger <md> --receipts <dir>
                          --retired <file> --since <RFC3339|24h>
         [--bin <dir>] [--repo-dir <dir>] [--batch-logs <dir>] [--versions <tsv>]
-        [--certs <tsv>] [--state <file>] [--by <name>] [--json]
+        [--certs <tsv>] [--state <file>] [--by <name>] [--json] [--dry-run]
                                                      LANDING and PRS read the forge through
                                                      gh; CLASSES reads the optional checkout
                                                      through git. SCRIPTS, EDGES, FLEET and
@@ -103,7 +107,7 @@ usage:
                                                      widening ticks.
   nova-check spelling (--dir <dir> | --file <path> | --path <pattern>)
                       [--ignore <word|@file>] [--write] [--exclude <prefix>]
-                      [--fail-max <n>]
+                      [--fail-max <n>] [--dry-run]
                                                      check markdown or prose for misspellings;
                                                      fenced code blocks and inline code spans
                                                      are blanked so code is not prose;
@@ -200,24 +204,59 @@ func hintFor(name string) string {
 // shown says in the same breath how to see it.
 const failMaxRemedy = "--fail-max <n> raises the ceiling, --fail-max 0 prints every finding"
 
-// refuse is what an unusable invocation costs: ONE line naming what was wrong, and the
-// door to the usage rather than the usage itself. It was the whole 38-line banner, on
-// every flag typo -- 2,411 bytes to say a dash was in the wrong place.
+// refuse is what an unusable invocation costs: one line, `nova-check[ <verb>]
+// REFUSED: <what was wrong>; run: nova-check help`, the door to the usage rather
+// than the usage itself.
 func refuse(stderr io.Writer, where, what string) int {
 	if out, ok := stderr.(*jsonOutput); ok && *out.enabled {
 		return out.refuse(where, what)
 	}
-	fmt.Fprintf(stderr, "nova-check%s: %s; run: nova-check help\n", oneline.Escape(where), oneline.Escape(what))
+	fmt.Fprintf(stderr, "nova-check%s REFUSED: %s; run: nova-check help\n", oneline.Escape(where), oneline.Escape(what))
 	return 2
 }
 
-// refuseRan is what a check that RAN and answered NO costs: ONE line naming the
+// verbs is every first word run dispatches, for the unknown-verb answer.
+var verbs = []string{"quickstart", "attest", "links", "kernel", "nocode", "floors", "corpus", "hygiene", "dogfood", "convergence", "spelling", "version"}
+
+// effects is each verb's effect, the line its -h ends its own lines with, in
+// the grammar every tool's help uses: inspection, local write or delivery, and
+// the flag that changes it.
+var effects = map[string]string{
+	"quickstart":     "inspection: reads the directory, writes nothing",
+	"attest":         "inspection: reads the manifest and the files it names, writes nothing",
+	"links":          "inspection: reads the markdown under --dir, writes nothing",
+	"kernel":         "inspection: reads the one file, writes nothing",
+	"nocode":         "inspection: reads the tree, or with --staged the git index, writes nothing",
+	"floors":         "inspection: reads the two files, writes nothing",
+	"corpus":         "inspection: reads the ledger and the files it names, writes nothing",
+	"hygiene":        "inspection: reads the repository through git, writes nothing",
+	"dogfood":        "inspection for ledger and gate; local write for record, which appends one receipt (--dry-run writes none)",
+	"dogfood ledger": "inspection: reads the verb list and the receipts (--repo reads git, --tools runs each binary's help), writes nothing",
+	"dogfood gate":   "inspection: reads the verb list and the receipts (--repo reads git, --tools runs each binary's help), writes nothing",
+	"dogfood record": "local write: appends one receipt file to --receipts (--dry-run writes none)",
+	"convergence":    "local write: --state stores the two-tick streak (--dry-run writes none); LANDING and PRS read the forge through gh, over the network, and CLASSES reads --repo-dir through git",
+	"spelling":       "local write: --write edits the files in place (--dry-run, or no --write, writes nothing)",
+	"version":        "inspection: prints this build identity",
+}
+
+// verbHelp is the lines run adds to a verb's -h: its effect, and for the
+// dogfood verbs the shape of the command reference they read.
+func verbHelp(verb string) string {
+	lines := ""
+	if strings.HasPrefix(verb, "dogfood") {
+		lines = "  " + cliShapeHint + "\n"
+	}
+	if e := effects[verb]; e != "" {
+		lines += "effect: " + e + "\n"
+	}
+	return lines
+}
+
+// refuseRan is what a check that ran and answered no costs: one line naming the
 // verdict and its remedy, and no door. The door is for an unusable invocation
-// (refuse), where a reader mis-spelled something and needs the usage; pointing a
-// reader at `nova-check help` after a gate has run is noise, and it sends them to
-// look up a shape that was never the problem.
+// (refuse), where a reader needs the usage; after a gate has run, it is noise.
 func refuseRan(stderr io.Writer, where, what string) int {
-	fmt.Fprintf(stderr, "nova-check%s: %s\n", oneline.Escape(where), oneline.Escape(what))
+	fmt.Fprintf(stderr, "nova-check%s FAIL: %s\n", oneline.Escape(where), oneline.Escape(what))
 	return 1
 }
 
@@ -226,11 +265,11 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) (code int) {
-	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
-	// before anything is read or written (the CLI style's rule (b), #4505).
-	defer verbflag.Recover(stdout, "nova-check", usage, &code)
+	// `<verb> -h` and `help <verb>` print that verb's help, with its effect, on
+	// stdout at exit 0, before anything is read or written.
+	defer verbflag.RecoverWith(stdout, "nova-check", usage, &code, verbHelp)
 	if len(args) == 0 {
-		return refuse(stderr, "", "no verb given; quickstart is the first run")
+		return refuse(stderr, "", "no verb given; quickstart is the first run; the verbs are "+strings.Join(verbs, ", "))
 	}
 	switch args[0] {
 	case "quickstart":
@@ -264,7 +303,11 @@ func run(args []string, stdout, stderr io.Writer) (code int) {
 		fmt.Fprint(stdout, usage)
 		return 0
 	default:
-		return refuse(stderr, "", fmt.Sprintf("unknown subcommand %q; verbs: quickstart, attest, links, kernel, nocode, floors, corpus, hygiene, dogfood, convergence, spelling, version", args[0]))
+		near := ""
+		if n := verbflag.Nearest(args[0], verbs); n != "" {
+			near = " did you mean " + n + "?"
+		}
+		return refuse(stderr, "", fmt.Sprintf("unknown verb %q;%s the verbs are %s", args[0], oneline.Escape(near), oneline.Escape(strings.Join(verbs, ", "))))
 	}
 }
 
@@ -290,7 +333,7 @@ func parseFlags(fs *flag.FlagSet, args []string, stderr io.Writer) bool {
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
 	if err := verbflag.Parse(fs, args); err != nil {
-		refuse(stderr, " "+fs.Name(), oneline.Cap(err.Error(), oneline.TailBytes))
+		refuse(stderr, " "+fs.Name(), oneline.Cap(verbflag.Explain(fs, err), oneline.TailBytes))
 		return false
 	}
 	if fs.NArg() > 0 {
@@ -308,13 +351,8 @@ func parseFlags(fs *flag.FlagSet, args []string, stderr io.Writer) bool {
 // in one run rather than being sent back for a second refusal. Each one carries
 // the hint that says what the flag wants.
 func requireFlags(fs *flag.FlagSet, stderr io.Writer, required map[string]*string) bool {
-	names := make([]string, 0, len(required))
-	for name := range required {
-		names = append(names, name)
-	}
-	sort.Strings(names) // deterministic order, not map order
 	ok := true
-	for _, name := range names {
+	for _, name := range slices.Sorted(maps.Keys(required)) { // deterministic order, not map order
 		if *required[name] == "" {
 			refuse(stderr, " "+fs.Name(), fmt.Sprintf("--%s is required; refusing to guess", name))
 			fmt.Fprint(stderr, hintFor(name))
@@ -358,36 +396,33 @@ func cmdQuickstart(args []string, stdout, stderr io.Writer) int {
 	if !checkFailMax(fs, *failMax, stderr) {
 		return 2
 	}
-	// THE CAPS ARE INHERITED, and this is the verb that most needed them: quickstart is
-	// the FIRST RUN, the one a stranger makes on a repo nobody has checked before, and
-	// uncapped it answered with 1,400 lines for two lines of verdict. A first run should
-	// cost about forty.
-	max := fmt.Sprintf("%d", *failMax)
+	// The caps are inherited: quickstart is the first run, the one made on a repo
+	// nobody has checked, and a first run should cost about forty lines, not a
+	// thousand.
+	ceiling := fmt.Sprintf("%d", *failMax)
 	fmt.Fprintf(stdout, "QUICKSTART RUN dir=%s checks=2: links, then nocode\n", oneline.Field(*dir))
-	linksCode := cmdLinks(append([]string{"--dir", *dir, "--fail-max", max}, excludeFlags(exclude)...), stdout, stderr)
-	nocodeCode := cmdNoCode([]string{"--dir", *dir, "--fail-max", max}, stdout, stderr)
-	worst := 0
+	linksCode := cmdLinks(append([]string{"--dir", *dir, "--fail-max", ceiling}, excludeFlags(exclude)...), stdout, stderr)
+	nocodeCode := cmdNoCode([]string{"--dir", *dir, "--fail-max", ceiling}, stdout, stderr)
+	worst := max(linksCode, nocodeCode)
 	var failed []string
 	for _, c := range []struct {
 		name string
 		code int
 	}{{"links", linksCode}, {"nocode", nocodeCode}} {
-		if c.code > worst {
-			worst = c.code
-		}
 		if c.code != 0 {
 			failed = append(failed, c.name)
 		}
 	}
-	// The closing line is printed on every outcome, because the verb a first
-	// run needs NEXT does not depend on whether this one was green. THE OK WORD
-	// IS A CLAIM THAT BOTH CHECKS PASSED, so it is printed only then: a run with
-	// a failed check closes with FAIL and the names of the checks that failed
-	// (a cold rating of the tools, 2026-09-30: `QUICKSTART OK` over two failures).
+	// The closing line is printed on every outcome. The OK word is a claim that
+	// both checks passed, so it is printed only then. What comes next depends on
+	// the outcome: after a pass, the checks that want an input of yours; after a
+	// failure or a refusal, the failed check run alone, which is the one to fix
+	// before anything else.
 	if len(failed) == 0 {
-		fmt.Fprintf(stdout, "QUICKSTART OK done=2 worst-exit=%d next=kernel,attest,floors,corpus (each wants a budget, a manifest or a ledger of yours: nova-check help)\n", worst)
+		fmt.Fprintf(stdout, "QUICKSTART OK done=2 worst-exit=%d next=kernel,attest,floors,corpus (kernel wants a size budget, attest a manifest of what a full boot reads, floors a derived copy and its source, corpus a ledger of protected lines: nova-check help)\n", worst)
 	} else {
-		fmt.Fprintf(stdout, "QUICKSTART FAIL checks=2 failed=%s worst-exit=%d next=kernel,attest,floors,corpus (each wants a budget, a manifest or a ledger of yours: nova-check help)\n", oneline.Field(strings.Join(failed, ",")), worst)
+		fmt.Fprintf(stdout, "QUICKSTART FAIL checks=2 failed=%s worst-exit=%d next=%s (fix what it names, then run quickstart again)\n",
+			oneline.Field(strings.Join(failed, ",")), worst, oneline.Escape("nova-check "+failed[0]+" --dir "+oneline.ShellWord(*dir)))
 	}
 	return worst
 }
@@ -621,7 +656,7 @@ func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(io.Discard) // see parse: the flag package is not allowed to print
 	fs.Usage = func() {}
 	if err := verbflag.Parse(fs, args); err != nil {
-		return refuse(stderr, " nocode", oneline.Cap(err.Error(), oneline.TailBytes))
+		return refuse(stderr, " nocode", oneline.Cap(verbflag.Explain(fs, err), oneline.TailBytes))
 	}
 	if fs.NArg() > 0 {
 		// nocode parses its own flags rather than through parse(), so it carried the
@@ -705,7 +740,7 @@ func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 	if scanned == 0 {
 		// The audit had no such warning, so a --dir that resolved to an empty
 		// or unreadable tree read as a clean repo with nothing to say.
-		fmt.Fprintf(stderr, "nova-check nocode: classified NOTHING under %s — an empty tree, everything allowed, or the wrong directory\n", oneline.Escape(*dir))
+		fmt.Fprintf(stderr, "NOCODE NOTE classified NOTHING under %s — an empty tree, everything allowed, or the wrong directory\n", oneline.Escape(*dir))
 	}
 	fmt.Fprintf(stdout, "NOCODE OK files=%d clean deny-list=%s\n", scanned, oneline.Field(source))
 	return 0
@@ -739,12 +774,7 @@ func effectiveDenyList(replace, add string) ([]string, string, error) {
 	for _, e := range extra {
 		seen[e] = true
 	}
-	merged := make([]string, 0, len(seen))
-	for e := range seen {
-		merged = append(merged, e)
-	}
-	sort.Strings(merged)
-	return merged, check.DenyExtended, nil
+	return slices.Sorted(maps.Keys(seen)), check.DenyExtended, nil
 }
 
 func cmdFloors(args []string, stdout, stderr io.Writer) int {
@@ -866,12 +896,10 @@ func cmdCorpus(args []string, stdout, stderr io.Writer) int {
 }
 
 // sortedNames returns the name-floor keys in a stable order, so that
-// --print-deny-list output can be diffed between runs and between versions.
+// --print-deny-list output can be diffed between runs and between versions. It
+// is never nil: the JSON rendering prints an empty floor as [], not null.
 func sortedNames(m map[string]bool) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
+	out := slices.AppendSeq(make([]string, 0, len(m)), maps.Keys(m))
+	slices.Sort(out)
 	return out
 }

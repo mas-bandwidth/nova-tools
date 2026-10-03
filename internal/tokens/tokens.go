@@ -19,7 +19,9 @@ package tokens
 import (
 	"fmt"
 	"io"
+	"maps"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -85,6 +87,18 @@ func (c Counts) Cell(t Type) string {
 }
 
 // Total is the five types summed, for the shares on a day line. A dash adds nothing.
+// Billed is the tokens a cost covers: input, output, cache write and cache read, the
+// four types a provider prices. Reasoning is its own column and in none of them.
+func (c Counts) Billed() int64 {
+	var n int64
+	for _, t := range []Type{Input, Output, CacheWrite, CacheRead} {
+		if v, ok := c.Get(t); ok {
+			n += v
+		}
+	}
+	return n
+}
+
 func (c Counts) Total() int64 {
 	var n int64
 	for t := Type(0); t < NTypes; t++ {
@@ -131,6 +145,7 @@ type Message struct {
 	Rough    int    // how many `~` bus lines this message stands for
 	Turn     bool   // counted into turns= (the sources that count messages)
 	Usd      int64  // micro-dollars, from a usage `usd` column or a cost tick; 0 where absent
+	Priced   bool   // a source reported Usd for this message; false is "no cost given", never a zero cost
 	Provider string // the provider prefix for model= on an AVG line; "" where unknown
 }
 
@@ -142,12 +157,16 @@ type Key struct{ Day, Model, Repo string }
 // Row is one line of a day file while it is still being accumulated.
 type Row struct {
 	Key
-	Counts   Counts
-	Rough    int
-	Usd      int64  // micro-dollars summed over the messages that fed the row
-	Provider string // the provider prefix of the messages that fed the row; "" where unknown
-	bases    map[string]bool
-	sources  map[string]bool
+	Counts Counts
+	Rough  int
+	Usd    int64 // micro-dollars summed over the messages that fed the row
+	Priced bool  // some message that fed the row reported a cost; false: Usd is no measurement
+	// PricedTokens is the Billed tokens of the messages that reported a cost: what Usd
+	// covers, and the only tokens a rate over Usd may divide by.
+	PricedTokens int64
+	Provider     string // the provider prefix of the messages that fed the row; "" where unknown
+	bases        map[string]bool
+	sources      map[string]bool
 }
 
 // Bases is the day bases that fed this row, sorted. More than one is a row that is not
@@ -234,6 +253,10 @@ func (f *Folder) Add(label string, m Message) {
 	r.Counts.Add(m.Counts)
 	r.Rough += m.Rough
 	r.Usd += m.Usd
+	r.Priced = r.Priced || m.Priced
+	if m.Priced {
+		r.PricedTokens += m.Counts.Billed()
+	}
 	if m.Provider != "" {
 		r.Provider = m.Provider
 	}
@@ -523,12 +546,11 @@ func ValidZone(s string) bool {
 	return strings.IndexFunc(s, func(r rune) bool { return r == ' ' || r == '\t' || r == '\n' || r == '\r' }) < 0
 }
 
+// sortedKeys is m's keys, sorted, and never nil: an empty map gives an empty slice, so a
+// row with no source and a day file with no rows encode and compare as before.
 func sortedKeys(m map[string]bool) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
+	out := slices.AppendSeq(make([]string, 0, len(m)), maps.Keys(m))
+	slices.Sort(out)
 	return out
 }
 

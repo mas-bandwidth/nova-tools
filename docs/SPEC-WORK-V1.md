@@ -1,5 +1,7 @@
 # nova-work v1, layer 1: the tree (SPEC-WORK-V1)
 
+nova-work is pre-alpha: not ready for production use.
+
 `nova-work` holds every issue of every repository of an organization in **one tree file**: a
 restricted s-expression that `internal/worklang` reads and never evaluates
 ([SPEC-WORKLANG.md](SPEC-WORKLANG.md) section 1). The tree is the working store the verbs above
@@ -126,25 +128,29 @@ its parts in verify's lines. Walking up is the path's prefix: an issue's reposit
 ```text
 nova-work import --org <org> (--out <tree.lisp> | --dry-run) [--repo <owner/name>]... [--max-calls <n>] [--page-size <n>] [--gh <path>] [--timeout <d>]
 nova-work verify --tree <tree.lisp> [--repo <owner/name>]... [--max <n>] [--max-calls <n>] [--page-size <n>] [--gh <path>] [--timeout <d>] [--max-bytes <n>]
+nova-work verify --tree <tree.lisp> --against <tree.lisp> [--repo <owner/name>]... [--max <n>] [--max-bytes <n>]
 ```
 
 **import** is non-destructive: it only reads. It lists the organization's repositories (or reads
-each `--repo`), prints `PLAN OK` with the calls the run needs, refuses at exit 2 when that passes
-`--max-calls`, reads every issue of every repository in scope, and prints `REPO OK` per
-repository. Before anything is written it encodes the tree, reads the bytes back through the
-strict reader and compares the result with what was fetched: any difference is `IMPORT FAIL` at
-exit 1 and nothing is written. The file is written through a temporary file and a rename. The
-last line is `IMPORT OK` with the counts, the bytes, the file's SHA-256, `calls=` (GraphQL calls),
-`points=` (what GitHub charged for them) and `rest=0`. `--dry-run` does all of it and writes
-nothing.
+each `--repo`), plans the calls the run needs, refuses at exit 2 when that passes `--max-calls`
+(`IMPORT REFUSED` with the plan, and the same import with the budget it needs as the remedy),
+and reads every issue of every repository in scope. Before anything is written it encodes the
+tree, reads the bytes back through the strict reader and compares the result with what was
+fetched: any difference is `IMPORT FAIL` at exit 1 and nothing is written. The file is written
+through a temporary file and a rename. The first line is `IMPORT OK` with the counts, the bytes,
+the file's SHA-256, `calls=` (GraphQL calls), `points=` (what GitHub charged for them), `rest=0`
+and `gh=`; then `IMPORT PLAN` and one `IMPORT REPO` per repository. `--dry-run` does all of it,
+reading GitHub exactly as the import does (every issue, the same calls), and writes nothing; its
+last line is `IMPORT NOTE` saying so. `--json` prints the same result as one JSON object.
 
 **verify** reads the tree, reads the same repositories from GitHub again, and compares them with
-`workfile.Diff`. Every difference is one line on stdout:
+`workfile.Diff`. Every difference is one line under `VERIFY FAIL ... differences=` (on stderr, as
+every FAIL), its values quoted:
 
 ```text
-MISSING path=<path> field=<field> want=<value>
-EXTRA path=<path> field=<field> got=<value>
-DRIFT path=<path> field=<field> want=<value> got=<value>
+VERIFY MISSING path=<path> field=<field> want="<value>"
+VERIFY EXTRA path=<path> field=<field> got="<value>"
+VERIFY DRIFT path=<path> field=<field> want="<value>" got="<value>"
 ```
 
 MISSING is on GitHub and not in the tree (a repository, an issue, a comment, a reference, a linked
@@ -156,18 +162,25 @@ assignees are compared as the sequences the file holds. Want
 is GitHub's value, got the tree's; a value over 80 bytes or of more than one line is shown as its
 length and the head of its SHA-256, so a line never carries a body. With no `--repo` the scope is
 the tree's organization, both ways: every repository GitHub lists and every repository the tree
-holds. `--max` bounds the lines shown (default 20, 0 all) and never the count. Zero differences
+holds. `--max` bounds the lines shown of each kind (default 20, 0 all, `VERIFY MORE` for the
+rest) and never the count. Zero differences
 prints `VERIFY OK ... differences=0` with the tree's SHA-256: that line is the receipt the
 destructive mode requires. An issue edited on GitHub after the import is DRIFT on `updated` and
 the fields that changed; that is the check working, and the remedy is to import again.
+`--against <tree.lisp>` puts a second tree where GitHub stands (want is its value) and reads no
+network: the same lines, no gh, so the comparison can be tried and two imports compared offline;
+a flag of the GitHub read beside it (`--gh`, `--max-calls`, `--page-size`, `--timeout`) is
+refused. `verify -h` prints the tree's grammar and a minimal tree to try it on.
 
 **Exits**, as every nova tool's: 0 done, or no difference; 1 verify found differences, or
 import's own round trip did; 2 could not run (a missing flag, an unreadable or refused tree, a
-refused budget, GitHub unreachable or refusing). A refusal names what is wrong and ends
-`run: nova-work <verb> -h`.
+refused budget, GitHub unreachable or refusing). A refusal is `<VERB> REFUSED: <what is wrong>;
+run: <the next command>`, one line per problem, every problem of a malformed invocation at once.
+Every value the caller gave that a remedy carries (a path, the gh program, an organization) is one
+POSIX shell word (`oneline.ShellWord`), so the remedy pasted runs with those values and no others.
 
 **GitHub.** Both verbs read through `internal/workgh`: GraphQL documents run by `gh api graphql`,
-the program found on PATH or named with `--gh` and echoed as `GH OK path=`. The seam refuses a
+the program found on PATH or named with `--gh` and echoed as `gh=`. The seam refuses a
 document that is not a plain query, so neither verb can write to GitHub. Every call is counted
 against `--max-calls` (default 1500). A page GitHub fails to answer is asked again at half the
 size, down to 5 issues. GraphQL is used because one call returns up to 100 issues with their
@@ -240,6 +253,19 @@ The whole of an organization of 96 repositories, one run each way from a working
     listing, before any issue is read.
 14. `TestRefusalsNameTheFlag`: missing flags, a bad page size and a zero budget exit 2 naming
     each; `help` and `<verb> -h` exit 0.
+15. `TestTheDryRunSaysWhatItReads`: a dry run reads every call the import reads and writes
+    nothing, and the run, `import -h` and the banner say so.
+16. `TestACouldNotRunIsRefusedInPlainWords`: a run that cannot go on (gh without a login, a file
+    that is no tree, no file) is `REFUSED`, its reason keeps its spaces, and its remedy is the
+    next command for that failure.
+17. `TestVerifyHelpShowsATreeTheReaderAccepts`: the minimal tree `verify -h` prints reads back.
+18. `TestVerifyAgainstASecondTreeReadsNoNetwork`: `verify --against` gives the same lines with
+    no gh and no network, and the worked example of `verify -h` runs as written.
+19. `TestARemedyKeepsEveryValueOneShellWord`: a blank, a quote, `$(x)`, a `;`, a leading dash or a
+    newline in `--out`, `--gh` or a tree path stays one shell word in every remedy that carries it.
+20. `TestGhQueryRunsTheProgramWithTheBodyOnStdin` (`internal/workgh`, functional): the gh adapter
+    itself, against a stand-in program; every other test answers from the recording through
+    `workgh.Replay` and starts no process.
 
 ## 1.11 Open decisions
 

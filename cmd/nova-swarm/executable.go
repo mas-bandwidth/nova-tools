@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -57,12 +58,7 @@ func executableByExtension(path, pathext string) bool {
 	if ext == "" {
 		return false
 	}
-	for _, want := range splitPathExt(pathext) {
-		if ext == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(splitPathExt(pathext), ext)
 }
 
 // splitPathExt is PATHEXT split into upper-cased suffixes, each with its leading dot, or
