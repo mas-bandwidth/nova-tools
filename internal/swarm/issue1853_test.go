@@ -84,9 +84,8 @@ func TestIssue1853(t *testing.T) {
 		})
 	}
 
-	// Every gated kind named by SPEC-TOOLWORK.md §5 rule 2 refuses TEST: none;
-	// every ungated kind accepts it.
-	for _, kind := range []string{"fix-red", "transcript-test", "mutation-kill"} {
+	// Every gated name in kinds.txt refuses TEST: none; every ungated name accepts it.
+	for _, kind := range []string{"fix-red", "transcript-test", "rebase", "sweep", "mutation-kill", "guard"} {
 		t.Run(fmt.Sprintf("TEST: none on gated kind %s", kind), func(t *testing.T) {
 			raw := headerCard(t, "KIND: "+kind, "PATHS: internal/swarm/a.go", "TEST: none the fixture has a why")
 			fs := findingsOn(raw)

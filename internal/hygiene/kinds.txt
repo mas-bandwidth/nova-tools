@@ -8,6 +8,10 @@
 # There is no default kind. A kind that is not in this file is refused by name.
 #
 # Format: <kind><TAB><what the card does><TAB><gated|ungated>
+#
+# The third field is gated or ungated. A missing third field, or any other
+# value, is gated. ungated is the only value for which TEST: none is a
+# declaration. The field selects no command.
 
 fix-red	fixes one defect, red test first	gated
 transcript-test	makes one docs/TESTS.md section executed line for line	gated

@@ -98,25 +98,48 @@ func parseKeyShapes(data string) ([]keyShape, error) {
 var kindData string
 
 var (
-	kindOnce  sync.Once
-	kindNames []string
-	kindSet   map[string]bool
+	kindOnce    sync.Once
+	kindNames   []string
+	kindSet     map[string]bool
+	kindUngated map[string]bool
 )
+
+// parseKindRows reads kinds.txt (docs/SPEC-TOOLWORK.md hygiene rule 6). The name
+// is the first field. The third field is the classification: only the exact
+// value ungated is ungated. A missing field or any other value is gated, which
+// is recorded by leaving the name out of the ungated set. The first row of a
+// repeated name wins. Blank lines and comments are not rows. A name the data
+// does not hold is not returned and is not ungated.
+func parseKindRows(data string) (names []string, ungated map[string]bool) {
+	ungated = map[string]bool{}
+	seen := map[string]bool{}
+	for _, line := range strings.Split(data, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if strings.TrimSpace(line) == "" || strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		fields := strings.Split(line, "\t")
+		name := strings.TrimSpace(fields[0])
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		names = append(names, name)
+		if len(fields) >= 3 && strings.TrimSpace(fields[2]) == "ungated" {
+			ungated[name] = true
+		}
+	}
+	return names, ungated
+}
 
 func loadKinds() ([]string, map[string]bool) {
 	kindOnce.Do(func() {
-		kindSet = map[string]bool{}
-		for _, line := range strings.Split(kindData, "\n") {
-			line = strings.TrimRight(line, "\r")
-			if strings.TrimSpace(line) == "" || strings.HasPrefix(strings.TrimSpace(line), "#") {
-				continue
-			}
-			name := strings.TrimSpace(strings.SplitN(line, "\t", 2)[0])
-			if name == "" || kindSet[name] {
-				continue
-			}
+		var ungated map[string]bool
+		kindNames, ungated = parseKindRows(kindData)
+		kindSet = make(map[string]bool, len(kindNames))
+		kindUngated = ungated
+		for _, name := range kindNames {
 			kindSet[name] = true
-			kindNames = append(kindNames, name)
 		}
 	})
 	return kindNames, kindSet
@@ -137,6 +160,16 @@ func Kinds() []string {
 func KindDeclared(name string) bool {
 	_, set := loadKinds()
 	return set[name]
+}
+
+// KindUngated reports whether name is a declared kind whose third field in
+// kinds.txt is exactly ungated. TEST: none is a declaration only then
+// (docs/SPEC-TOOLWORK.md hygiene rule 6). A missing third field, any other
+// value, or a name the file does not hold is not ungated. The field selects
+// no command.
+func KindUngated(name string) bool {
+	loadKinds()
+	return kindUngated[name]
 }
 
 // StrayKinds is every kind named in the stray list's exception column, so a test can

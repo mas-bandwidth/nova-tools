@@ -43,7 +43,11 @@ nothing.
 6. **A kind is declared by the tool.** The kinds are the name set in
    `internal/hygiene/kinds.txt`. `--kind` names one of them or is refused with the
    list; there is no default kind. A kind unlocks only the stray exceptions that name
-   it, and nothing a branch contains widens it.
+   it, and nothing a branch contains widens it. The third field of a row is `gated`
+   or `ungated`. A missing field or any other value is `gated`. The header lint
+   reads that field when it decides whether `TEST: none` is a declaration. The
+   field selects no command, and a name the file does not hold is not declared
+   and is not `ungated`.
 
 **Tests:** `internal/hygiene` and `cmd/nova-check` hold each check red on a fixture
 repository: a foreign committer, a merge commit, a rename on both sides, `RESULT.md`
