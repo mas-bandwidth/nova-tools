@@ -16,9 +16,9 @@ func TestVersionLineRetainsBuildIdentity(t *testing.T) {
 	version = "v1.2.3-rc1+build.7"
 
 	var stdout, stderr bytes.Buffer
-	code := cmdVersion(nil, &stdout, &stderr)
-	require.Equal(t, 0, code, "cmdVersion exit = %d, stderr = %s", code, stderr.String())
-	require.Equal(t, 0, stderr.Len(), "cmdVersion wrote stderr: %q", stderr.String())
+	code := secretsTool().Run([]string{"version"}, strings.NewReader(""), &stdout, &stderr)
+	require.Equal(t, 0, code, "version exit = %d, stderr = %s", code, stderr.String())
+	require.Equal(t, 0, stderr.Len(), "version wrote stderr: %q", stderr.String())
 	line := stdout.String()
 	require.Equal(t, 1, strings.Count(line, "\n"), "version is not one line: %q", line)
 	fields := strings.Fields(strings.TrimSuffix(line, "\n"))
@@ -48,8 +48,8 @@ func TestVersionVerbsNeedNoSecretsSetup(t *testing.T) {
 func TestVersionRefusesArguments(t *testing.T) {
 	t.Parallel()
 	var stdout, stderr bytes.Buffer
-	code := cmdVersion([]string{"--store", "/never-opened"}, &stdout, &stderr)
-	require.Equal(t, 2, code, "cmdVersion exit = %d, want 2", code)
-	require.Equal(t, 0, stdout.Len(), "cmdVersion refusal stdout=%q stderr=%q", stdout.String(), stderr.String())
-	require.Contains(t, stderr.String(), "takes no flags and no arguments", "cmdVersion refusal stdout=%q stderr=%q", stdout.String(), stderr.String())
+	code := secretsTool().Run([]string{"version", "--store", "/never-opened"}, strings.NewReader(""), &stdout, &stderr)
+	require.Equal(t, 2, code, "version exit = %d, want 2", code)
+	require.Equal(t, 0, stdout.Len(), "version refusal stdout=%q stderr=%q", stdout.String(), stderr.String())
+	require.Contains(t, stderr.String(), "unknown flag --store", "version refusal stdout=%q stderr=%q", stdout.String(), stderr.String())
 }
