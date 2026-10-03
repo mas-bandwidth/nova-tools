@@ -714,7 +714,7 @@ func (r *propRun) decide(v InboxView, g sprint.Group, choice int, progress bool)
 		rework(members, "", notes)
 	case d == "rework with a fix" || d == "rework":
 		rework(members, "fix", notes)
-	case d == sprint.ReworkOnAnotherTier:
+	case d == sprint.ReworkOnAHigherTier:
 		r.run("nova-sprint rework "+strings.Join(members, " ")+" --fix 'fix' --tier pro --answers "+strings.Join(notes, ","),
 			ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: members}, Fix: "fix", Tier: "pro", Answers: notes, Who: "coord"}))
 	case d == "ask":

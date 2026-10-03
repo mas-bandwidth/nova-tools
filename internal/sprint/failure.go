@@ -2,7 +2,9 @@ package sprint
 
 import (
 	"fmt"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 )
@@ -97,50 +99,43 @@ func parseTake(v string) ProviderTake {
 
 // The primary's record of its failed work, written by the failed finish (Finish) and by the
 // rework of an attempt at its redeal bound (Rework: its takes ended with no work to judge,
-// BoundClass): the class of the last failed attempt, that attempt and the tier it ran on (its
-// work card's tier: a new tier counts its own failures), and the attempt whose failure was
-// the same as the attempt before's (rule 2): the tick holds the bound's judgment on the
-// primary while it stays in review at that attempt (AtIdenticalFailure).
+// BoundClass): the class of the last failed attempt, that attempt and the tier the card was on
+// (CardTiers: a new tier counts its own failures), whether it ended at its bound, and the
+// attempt whose failure was the same as the attempt before's (rule 2): the tick holds the
+// bound's judgment on the primary while it stays in review at that attempt (AtIdenticalFailure).
 const (
-	FieldFailure     = "failure"
-	FieldFailureAt   = "failure_at"
-	FieldFailureTier = "failure_tier"
-	FieldIdenticalAt = "identical_at"
+	FieldFailure      = "failure"
+	FieldFailureAt    = "failure_at"
+	FieldFailureTier  = "failure_tier"
+	FieldFailureBound = "failure_bound"
+	FieldIdenticalAt  = "identical_at"
 )
 
-// failureSet is what a failed finish at attempt on tier writes on its primary pr
-// (FieldFailure, FieldFailureAt, FieldFailureTier) and whether it is the second identical
-// failure: the attempt before failed the same way on the same tier (sameAsBefore). The
-// class is the report's (FailureClass), or decided, the take's attempt decision as
-// `decided <class>`, when that decision routed the finish.
+// failureSet is what a failed finish at attempt on tier writes on its primary pr (the record,
+// not at a bound) and whether it is the second identical failure: the attempt before failed
+// the same way on the same tier. The class is the report's (FailureClass), or decided, the
+// take's attempt decision as `decided <class>`, when that decision routed the finish.
 func failureSet(pr *Card, attempt int, report, decided, tier string, set map[string]string) (identical bool) {
 	class := FailureClass(report)
 	if decided != "" {
 		class = decided // the attempt decision's class, when it routed the finish (decide.go)
 	}
-	identical = sameAsBefore(pr, attempt, class, tier)
-	set[FieldFailure], set[FieldFailureAt], set[FieldFailureTier] = class, itoa(attempt), tier
+	identical = class != "" && attempt > 1 && pr.Int(FieldFailureAt) == attempt-1 && pr.F(FieldFailure) == class && pr.F(FieldFailureTier) == tier
+	set[FieldFailure], set[FieldFailureAt], set[FieldFailureTier], set[FieldFailureBound] = class, itoa(attempt), tier, ""
 	if identical {
 		set[FieldIdenticalAt] = itoa(attempt)
 	}
 	return identical
 }
 
-// sameAsBefore says the primary pr's attempt, ended with class on tier, failed the way the
-// attempt before it did (the record failureSet and Rework write): rule 2 across attempts.
-func sameAsBefore(pr *Card, attempt int, class, tier string) bool {
-	return class != "" && attempt > 1 && pr.Int(FieldFailureAt) == attempt-1 && pr.F(FieldFailure) == class && pr.F(FieldFailureTier) == tier
-}
-
 // BoundClass is the class of the attempt whose withdrawn work card wc reached its redeal bound,
-// as rule 2 across attempts compares it (sameAsBefore): the class of its last two takes when
-// they ended the same way (identicalEnds), else the class of the take that ended last. A take
-// the provider failed has no class inside an attempt (it is the provider's, and is redealt);
-// across attempts it is `provider failure` with the provider's class word when its line has
-// one (`provider failure: class=out-of-credit`), so an attempt the provider ended counts toward
-// the next attempt's identical failure as a take that left no result does (the coordinator's
-// finding of 2026-10-03, docs/SPEC-SPRINT.md section 5). "" when the last take kept no record
-// (its member went down): never the same as another.
+// the record's class (failureSet): the class of its last two takes when they ended the same
+// way (identicalEnds), else the class of the take that ended last. A take the provider failed
+// has no class inside an attempt (it is the provider's, and is redealt); across attempts it
+// is `provider failure` with the provider's class word when its line has one (`provider
+// failure: class=out-of-credit`), so an attempt the provider ended counts toward rule 2 as a
+// take that left no result does, and is what lets the provider's return lift the bound
+// (providerBack). "" when the last take kept no record (its member went down).
 func BoundClass(wc *Card) string {
 	if class := identicalEnds(wc); class != "" {
 		return class
@@ -161,19 +156,82 @@ func BoundClass(wc *Card) string {
 	return cardhdr.EndProvider
 }
 
-// reworkAtTheSameBound is the refusal of a rework of the primary pr at its redeal bound (wc,
-// its withdrawn work card) when the attempt before it ended the same way on the same tier
-// (sameAsBefore over BoundClass and the work card's tier) and tier, the rework's --tier, names
-// no other tier: a rework there would be its third try at one failure. "" when the rework is
-// its next attempt. The coordinator's finding of 2026-10-03: an answer loop reworked one card
-// at its bound 231 times, each rework a fresh bound (docs/SPEC-SPRINT.md section 5).
-func reworkAtTheSameBound(pr, wc *Card, tier string) string {
-	attempt, class, on := pr.Int("attempt"), BoundClass(wc), wc.F(FieldTier)
-	if !sameAsBefore(pr, attempt, class, on) || tier != "" && tier != on {
+// reworkLadder is the tiers a rework at the bound climbs, lowest first: a card's attempts that
+// end at a bound are bounded by it (reworkAtTheSameBound).
+var reworkLadder = []string{cardhdr.RouteFlash, cardhdr.RoutePro, cardhdr.RouteFrontier}
+
+// providerBack says the provider is back for the attempt whose bound wc is: its bound was a
+// provider failure (BoundClass), and a take on its tier, of any card, finished ok after the
+// attempt's last take ended.
+func providerBack(s *Snapshot, wc *Card) bool {
+	if !strings.HasPrefix(BoundClass(wc), cardhdr.EndProvider) {
+		return false
+	}
+	since, err := time.Parse(time.RFC3339, parseTake(wc.F(FieldProviderTake+itoa(wc.Int("redeals")+1))).Finished)
+	if err != nil {
+		return false
+	}
+	for _, c := range s.Fleet.Column(DoneOK) {
+		if c.F(FieldTier) == wc.F(FieldTier) && stampAt(c, "finished").After(since) {
+			return true
+		}
+	}
+	return false
+}
+
+// reworkAtTheSameBound is the refusal of a rework of the primary pr at its redeal bound (wc, its
+// withdrawn work card), tier its --tier; "" when the rework is its next attempt. The bound holds
+// across attempts (the coordinator's finding of 2026-10-03: an answer loop reworked one card at
+// its bound 231 times, each rework a fresh bound; docs/SPEC-SPRINT.md section 5): a rework at the
+// bound never lowers the tier the card is on; and when the attempt before also ended at its bound
+// on that tier, it is refused unless --tier names a tier above (reworkLadder) or the provider is
+// back (providerBack). So whoever answers, a card makes at most two attempts per tier of the
+// ladder that end at a bound, the provider's return aside.
+func reworkAtTheSameBound(s *Snapshot, pr, wc *Card, tier string) string {
+	on := cardTierOf(pr)
+	at, rank := pr.Int("attempt"), slices.Index(reworkLadder, on)
+	above := reworkLadder[rank+1:]
+	drop := fmt.Sprintf("drop it (nova-sprint drop %s --reason <why>)", pr.ID)
+	if tier != "" && slices.Index(reworkLadder, tier) < rank {
+		return fmt.Sprintf("--tier %s is below the tier it is on (%s): a rework at its bound never lowers its tier (the ladder: %s); rework it with a fix and no --tier or a tier above %s, or %s",
+			tier, on, strings.Join(reworkLadder, ", "), on, drop)
+	}
+	repeated := pr.F(FieldFailureBound) != "" && pr.Int(FieldFailureAt) == at-1 && pr.F(FieldFailureTier) == on
+	if !repeated || slices.Contains(above, tier) || providerBack(s, wc) {
 		return ""
 	}
-	return fmt.Sprintf("attempt %d reached its bound the way attempt %d ended (%s) on tier %s, and is not reworked there a third time: rework it with a fix and --tier <another tier>, drop it (nova-sprint drop %s --reason <why>), or wait",
-		attempt, attempt-1, class, orDash(on), pr.ID)
+	offers := []string{drop}
+	if dealt := dealtAbove(on); len(dealt) > 0 {
+		offers = append([]string{"rework it with a fix and --tier " + strings.Join(dealt, " or ") + " (a tier above " + on + "; the ladder: " + strings.Join(reworkLadder, ", ") + ", and frontier is never dealt)"}, offers...)
+	}
+	if strings.HasPrefix(BoundClass(wc), cardhdr.EndProvider) {
+		offers = append(offers, "wait: a take on tier "+on+" that finishes ok (the provider back) lets one rework on it")
+	}
+	return fmt.Sprintf("attempt %d reached its bound on tier %s as attempt %d did (%s), and is not reworked on %s again: %s",
+		at, on, at-1, orDash(BoundClass(wc)), on, strings.Join(offers, ", or "))
+}
+
+// dealtAbove is the tiers of the ladder above tier that a deal draws from: frontier is the
+// coordinator's and never dealt, so a rework onto it is refused and never offered.
+func dealtAbove(tier string) []string {
+	above := reworkLadder[slices.Index(reworkLadder, tier)+1:]
+	return slices.DeleteFunc(slices.Clone(above), func(t string) bool { return t == cardhdr.RouteFrontier })
+}
+
+// boundAgainDecisions is the bound's decisions on a card whose rework reworkAtTheSameBound
+// refuses: a rework on a tier above when the ladder has one, drop, and wait only when the
+// provider's return can lift it.
+func boundAgainDecisions(pr, wc *Card) []string {
+	on := cardTierOf(pr)
+	var d []string
+	if len(dealtAbove(on)) > 0 {
+		d = append(d, ReworkOnAHigherTier)
+	}
+	d = append(d, "drop")
+	if strings.HasPrefix(BoundClass(wc), cardhdr.EndProvider) {
+		d = append(d, "wait")
+	}
+	return d
 }
 
 // AtIdenticalFailure is the primary's failed work card when its attempt failed the way the

@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 
@@ -119,13 +120,15 @@ func (h *harness) reworkOf(fix, tier string) []sprint.Refusal {
 // reworked ci-03 231 times and docsd-03 244 times overnight, each rework a fresh attempt
 // whose bound started again; docs/SPEC-SPRINT.md section 5). The loop's exact sequence: the
 // attempt reaches its bound (two takes that left no result), a rework with a fix is accepted,
-// the next attempt reaches the same bound the same way on the same tier, and the second
-// rework is refused, one line naming the attempt before and the class and offering --tier,
-// drop or wait; the judgment lists rework only on another tier. A rework with --tier naming
-// another tier is accepted, and that tier counts its own failures; a drop is accepted.
+// the next attempt reaches its bound on the same tier, and the second rework is refused, one
+// line naming the attempt before, the class and the tiers above, never "wait" for a cause no
+// wait changes; the judgment lists only a rework on a higher tier and drop. A rework never
+// lowers the tier at a bound, so an answerer alternating flash and pro is refused at its second
+// turn, and one that climbs is bounded by the ladder: two attempts per tier that end at a
+// bound. A drop is accepted.
 func TestASecondReworkAtTheSameBoundIsRefused(t *testing.T) {
 	t.Parallel()
-	twoBounds := func(t *testing.T) *harness {
+	start := func(t *testing.T) *harness {
 		h := flashAndPro(t)
 		h.addReady("s1", 1, briefOf("flash", ""))
 		h.startMachine()
@@ -133,28 +136,33 @@ func TestASecondReworkAtTheSameBoundIsRefused(t *testing.T) {
 		h.boundBy("s1-1", noResultLine)
 		open := h.openOf(sprint.NBound)
 		assert.Equal(t, []string{"rework with a fix", "drop", "wait"}, open[0].Note.Decisions, "the first bound: a rework with a fix")
+		return h
+	}
+	twoBounds := func(t *testing.T) *harness {
+		h := start(t)
 		require.Empty(t, h.reworkOf("run on the pro tier", ""), "the first rework at the bound is the next attempt")
 		pr := h.snap().Work.Card("s1-1")
 		require.Equal(t, 2, pr.Int("attempt"))
-		assert.Equal(t, []string{"no result", "1", "flash"}, []string{pr.F(sprint.FieldFailure), pr.F(sprint.FieldFailureAt), pr.F(sprint.FieldFailureTier)},
+		assert.Equal(t, []string{"no result", "1", "flash", "yes"}, []string{pr.F(sprint.FieldFailure), pr.F(sprint.FieldFailureAt), pr.F(sprint.FieldFailureTier), pr.F(sprint.FieldFailureBound)},
 			"the bound's end is the primary's record of its failed work")
 		h.boundBy("s1-1", noResultLine)
 		return h
 	}
-	refusal := "attempt 2 reached its bound the way attempt 1 ended (no result) on tier flash, and is not reworked there a third time"
+	refusal := "attempt 2 reached its bound on tier flash as attempt 1 did (no result), and is not reworked on flash again: rework it with a fix and --tier pro (a tier above flash"
 	t.Run("a fix alone is refused", func(t *testing.T) {
 		t.Parallel()
 		h := twoBounds(t)
 		open := h.openOf(sprint.NBound)
 		require.Len(t, open, 1)
-		assert.Equal(t, sprint.BoundAgainDecisions, open[0].Note.Decisions, "the judgment lists rework only on another tier")
+		assert.Equal(t, []string{sprint.ReworkOnAHigherTier, "drop"}, open[0].Note.Decisions, "a rework only on a higher tier, and no wait")
+		assert.Contains(t, open[0].Note.What, "a second bound on tier flash: not reworked on it again")
 		for _, tier := range []string{"", "flash"} {
 			refused := h.reworkOf("run on the pro tier", tier)
 			require.Len(t, refused, 1, "--tier %q", tier)
 			assert.Contains(t, refused[0].Why, refusal)
-			assert.Contains(t, refused[0].Why, "--tier <another tier>")
+			assert.Contains(t, refused[0].Why, "the ladder: flash, pro, frontier")
 			assert.Contains(t, refused[0].Why, "nova-sprint drop s1-1")
-			assert.Contains(t, refused[0].Why, "or wait")
+			assert.NotContains(t, refused[0].Why, "wait")
 			assert.NotContains(t, refused[0].Why, "\n", "one line")
 		}
 		pr := h.snap().Work.Card("s1-1")
@@ -168,14 +176,25 @@ func TestASecondReworkAtTheSameBoundIsRefused(t *testing.T) {
 		assert.Contains(t, res.Refused[0].Why, refusal, "the deal verb says the same")
 		h.clean("a second rework at the same bound refused")
 	})
-	t.Run("another tier is accepted, and counts its own failures", func(t *testing.T) {
+	t.Run("the alternating-tier answerer is refused at its second turn", func(t *testing.T) {
+		t.Parallel()
+		h := start(t)
+		require.Empty(t, h.reworkOf("run on the pro tier", "pro"), "turn 1: the first bound, a tier above")
+		require.Equal(t, "pro", tierOfRoute(h.workCards()[h.snap().Work.Card("s1-1").F("work")].F(sprint.FieldRoute)))
+		h.boundBy("s1-1", noResultLine)
+		refused := h.reworkOf("run on the flash tier", "flash")
+		require.Len(t, refused, 1, "turn 2: back down to flash")
+		assert.Contains(t, refused[0].Why, "--tier flash is below the tier it is on (pro): a rework at its bound never lowers its tier")
+		assert.Equal(t, 2, h.snap().Work.Card("s1-1").Int("attempt"))
+		h.clean("the alternating answerer refused")
+	})
+	t.Run("a climbing answerer is bounded by the ladder", func(t *testing.T) {
 		t.Parallel()
 		h := twoBounds(t)
 		require.Empty(t, h.reworkOf("run on the pro tier", "pro"))
 		pr := h.snap().Work.Card("s1-1")
 		require.Equal(t, 3, pr.Int("attempt"))
 		assert.Equal(t, "pro", pr.F(sprint.FieldTier))
-		assert.Equal(t, "pro", tierOfRoute(h.workCards()[pr.F("work")].F(sprint.FieldRoute)))
 		h.machine()
 		assert.Empty(t, h.openOf(sprint.NBound), "the rework closed the judgment")
 		h.boundBy("s1-1", noResultLine)
@@ -183,7 +202,12 @@ func TestASecondReworkAtTheSameBoundIsRefused(t *testing.T) {
 		h.boundBy("s1-1", noResultLine)
 		refused := h.reworkOf("again on pro", "")
 		require.Len(t, refused, 1, "the second on pro is refused")
-		assert.Contains(t, refused[0].Why, "attempt 4 reached its bound the way attempt 3 ended (no result) on tier pro")
+		assert.Contains(t, refused[0].Why, "attempt 4 reached its bound on tier pro as attempt 3 did (no result), and is not reworked on pro again: drop it (nova-sprint drop s1-1")
+		assert.Equal(t, []string{"drop"}, h.openOf(sprint.NBound)[0].Note.Decisions, "no tier above pro is dealt")
+		require.Len(t, h.reworkOf("again on flash", "flash"), 1, "nor lowered")
+		top := h.reworkOf("on frontier", "frontier")
+		require.Len(t, top, 1, "the top of the ladder is the coordinator's, never dealt: the ladder ends here")
+		assert.Contains(t, top[0].Why, "a frontier card waits for the coordinator")
 		h.clean("the bound held on pro")
 	})
 	t.Run("a drop is accepted", func(t *testing.T) {
@@ -196,12 +220,14 @@ func TestASecondReworkAtTheSameBoundIsRefused(t *testing.T) {
 	})
 }
 
-// A withdrawn take's end counts toward rule 2 across attempts, not only a failed finish
-// (the coordinator's finding of 2026-10-03: 240 bounds in a row were never the second
-// identical failure, because only a failed finish wrote the primary's record). An attempt
-// bounded by takes the provider failed ends with the provider's class; the next attempt
-// bounded the same way is the second identical failure, and its rework on the same tier is
-// refused; a bound that ended another way is not, and the rework is its next attempt.
+// A withdrawn take's end counts as the attempt's failure, not only a failed finish (the
+// coordinator's finding of 2026-10-03: 240 bounds in a row were never the second identical
+// failure, because only a failed finish wrote the primary's record). An attempt bounded by
+// takes the provider failed ends with the provider's class; the next attempt bounded on the
+// same tier is refused, offering wait, because the provider's return is a change of cause: a
+// take on that tier, of any card, that finishes ok after the attempt's last take ended lets
+// one rework on the same tier, and the next bound the same way is refused again. A bound that
+// ended another way is still a second bound on the tier.
 func TestAWithdrawnTakeCountsTowardTheIdenticalFailure(t *testing.T) {
 	t.Parallel()
 	credit := cardhdr.EndProvider + ": provider: class=out-of-credit status=402 msg=Insufficient credits"
@@ -217,22 +243,45 @@ func TestAWithdrawnTakeCountsTowardTheIdenticalFailure(t *testing.T) {
 			[]string{pr.F(sprint.FieldFailure), pr.F(sprint.FieldFailureAt), pr.F(sprint.FieldFailureTier)}, "the provider's class is the attempt's end")
 		return h
 	}
-	t.Run("the same provider failure", func(t *testing.T) {
+	t.Run("the same provider failure offers wait", func(t *testing.T) {
 		t.Parallel()
 		h := start(t)
 		h.boundBy("s1-1", credit)
 		refused := h.reworkOf("again", "")
 		require.Len(t, refused, 1)
-		assert.Contains(t, refused[0].Why, "attempt 2 reached its bound the way attempt 1 ended (provider failure: class=out-of-credit) on tier flash")
-		assert.Equal(t, sprint.BoundAgainDecisions, h.openOf(sprint.NBound)[0].Note.Decisions)
+		assert.Contains(t, refused[0].Why, "attempt 2 reached its bound on tier flash as attempt 1 did (provider failure: class=out-of-credit)")
+		assert.Contains(t, refused[0].Why, "or wait: a take on tier flash that finishes ok (the provider back) lets one rework on it")
+		assert.Equal(t, []string{sprint.ReworkOnAHigherTier, "drop", "wait"}, h.openOf(sprint.NBound)[0].Note.Decisions)
 	})
-	t.Run("another end", func(t *testing.T) {
+	t.Run("the provider back accepts one same-tier rework", func(t *testing.T) {
+		t.Parallel()
+		h := start(t)
+		h.boundBy("s1-1", credit)
+		require.Len(t, h.reworkOf("again", ""), 1, "the provider is still out")
+		h.tick(time.Minute)
+		h.addReady("s2", 1, briefOf("flash", ""))
+		h.machine()
+		h.finishAttempt("s2-1", false, "abc123")
+		require.Equal(t, "flash", h.snap().Fleet.Card("s2-1.w1").F(sprint.FieldTier), "a take on flash finished ok")
+		h.machine()
+		open := h.openOf(sprint.NBound)
+		require.Len(t, open, 1, "the held judgment closed and the bound's plain one opened")
+		assert.Equal(t, []string{"rework with a fix", "drop", "wait"}, open[0].Note.Decisions, "the provider is back")
+		require.Empty(t, h.reworkOf("again", ""), "the provider is back: one rework on flash")
+		assert.Equal(t, 3, h.snap().Work.Card("s1-1").Int("attempt"))
+		h.tick(time.Minute)
+		h.boundBy("s1-1", credit)
+		require.Len(t, h.reworkOf("again", ""), 1, "out again, with no take ok since: refused again")
+		h.clean("the provider back, once")
+	})
+	t.Run("another end on the same tier is still a second bound", func(t *testing.T) {
 		t.Parallel()
 		h := start(t)
 		h.boundBy("s1-1", noResultLine)
-		assert.Equal(t, []string{"rework with a fix", "drop", "wait"}, h.openOf(sprint.NBound)[0].Note.Decisions)
-		require.Empty(t, h.reworkOf("again", ""), "no result after the provider: not the same failure")
-		assert.Equal(t, 3, h.snap().Work.Card("s1-1").Int("attempt"))
+		refused := h.reworkOf("again", "")
+		require.Len(t, refused, 1, "no result after the provider, on flash: the tier's second bound")
+		assert.Contains(t, refused[0].Why, "as attempt 1 did (no result)")
+		assert.NotContains(t, refused[0].Why, "wait")
 	})
 	for _, tc := range []struct {
 		name    string

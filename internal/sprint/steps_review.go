@@ -934,9 +934,9 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		}
 		bound := AtRedealBound(s, c)
 		if bound != nil {
-			// rule 2 across attempts: the attempt before ended at its bound the same way on
-			// this tier, so a rework there is refused unless --tier names another (failure.go)
-			if why := reworkAtTheSameBound(c, bound, r.Tier); why != "" {
+			// the bound holds across attempts: never a lower tier, and a second bound on one
+			// tier only with --tier above it or the provider back (failure.go)
+			if why := reworkAtTheSameBound(s, c, bound, r.Tier); why != "" {
 				p.refuse(c.ID, why)
 				stays()
 				continue
@@ -969,7 +969,7 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		if bound != nil {
 			// the attempt ended at its bound: its end is the primary's record of its failed
 			// work, as a failed finish writes it (failureSet), read by the next rework at a bound
-			set[FieldFailure], set[FieldFailureAt], set[FieldFailureTier] = BoundClass(bound), c.F("attempt"), bound.F(FieldTier)
+			set[FieldFailure], set[FieldFailureAt], set[FieldFailureTier], set[FieldFailureBound] = BoundClass(bound), c.F("attempt"), cardTierOf(c), "yes"
 		}
 		if r.Tier != "" {
 			// the card records its tier and this attempt's deal draws from it already

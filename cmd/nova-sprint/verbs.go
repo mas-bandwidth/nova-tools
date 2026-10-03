@@ -2012,7 +2012,7 @@ func (a *app) cmdRework(args []string, stdout, stderr io.Writer) int {
 	return a.setVerb("rework", args, stdout, stderr, false, func(fs flagSet) {
 		fix = fs.String("fix", "", "the fix for every primary; without it each takes its own: the finding of its broken read, or the report of its failed work")
 		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
-		tier = fs.String("tier", "", "the tier ("+cardhdr.RouteList+") this attempt and every later deal of the card draws its route from, over its brief's line 1, kept on the card: it pins the card, never escalated past it (flash first); a card whose brief pins a model is refused; a card at its redeal bound whose attempt before ended there the same way on the same tier is reworked only with --tier naming another")
+		tier = fs.String("tier", "", "the tier ("+cardhdr.RouteList+") this attempt and every later deal of the card draws its route from, over its brief's line 1, kept on the card: it pins the card, never escalated past it (flash first); a card whose brief pins a model is refused; at a redeal bound it never names a lower tier, and a card whose attempt before also ended at its bound on its tier is reworked only with a tier above (flash, pro, frontier) or once the provider is back")
 	}, func(ids []string, s *sel) string {
 		var why []string
 		if len(ids) == 0 && s.stream == "" {

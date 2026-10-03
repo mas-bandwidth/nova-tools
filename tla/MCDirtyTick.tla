@@ -104,8 +104,11 @@ ScnHandBackLapse == [ScnHandBack EXCEPT !.lapse = TRUE]
 
 \* THE BOUND ACROSS ATTEMPTS. c1 dealt to m1 and not taken; its worker may take
 \* it and its machine lapse and beat again, so an attempt reaches its redeal
-\* bound, and the coordinator may rework it there, naming a class and a tier.
-ScnReworkBound == [rework |-> TRUE] @@ ScnTake
+\* bound, and the coordinator may rework it there, naming a class and a tier;
+\* a take on a tier of a card not modelled may finish ok (TierOK).
+\* No take finishes: the bound's cycles alone (an attempt that ends otherwise
+\* resets the count, and is the broken read's, modelled elsewhere).
+ScnReworkBound == [rework |-> TRUE, finish |-> FALSE] @@ ScnTake
 
 \* Reachability probes, expected to fail: every card lands; a card reaches
 \* its bound; a tick drains a queue after the first pass; a take ends at the

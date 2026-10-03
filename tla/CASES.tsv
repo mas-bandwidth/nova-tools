@@ -263,6 +263,7 @@ MCDirtyTickHandBackLiveLapse.cfg	MCDirtyTick.tla	pass	-	ignore-terminal	dirtytic
 MCDirtyTickReworkBound.cfg	MCDirtyTick.tla	pass	-	ignore-terminal	dirtytick-small	required	-
 MCDirtyTickProbeBoundAgain.cfg	MCDirtyTick.tla	invariant	ProbeNoBoundAgain	ignore-terminal	dirtytick	required	-
 MCDirtyTickW29.cfg	MCDirtyTick.tla	invariant	ReworksBounded	ignore-terminal	dirtytick-witnesses	required	-
+MCDirtyTickW30.cfg	MCDirtyTick.tla	invariant	ReworksBounded	ignore-terminal	dirtytick-witnesses	required	-
 MCDirtyTickRead.cfg	MCDirtyTickRead.tla	pass	-	ignore-terminal	dirtytickread	required	-
 MCDirtyTickReadAcquire.cfg	MCDirtyTickRead.tla	invariant	TwinIsTheStore	ignore-terminal	dirtytickread-acquire	required	-
 MCDirtyTickReadHalt.cfg	MCDirtyTickRead.tla	invariant	BeganRunning	ignore-terminal	dirtytickread-halt	required	-
