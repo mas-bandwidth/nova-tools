@@ -118,11 +118,14 @@ var TickDecisions = map[string][]string{
 	NFewReaders: {"reader up", "reader add", "wait"},
 	NNoMember:   {"fleet beat", "fleet up", "wait"},
 	NNoRoute:    {"route add", "look at the card", "drop", "wait"},
-	NInvariant:  {"look at the card", "repair", "wait"},
-	NWorkLate:   {"fleet level", "fleet down <member>", "wait", "drop"},
-	NReadLate:   {"ask --another", "wait", "drop"},
-	NMergeLate:  {"merge --stream <s>", "look", "wait"},
-	NStalled:    {"look at the card", "wait"},
+	// a payment and a key are the owner's: no rework is offered (provider_funds.go)
+	NProviderFunds: {"ack", "wait"},
+	NProviderKey:   {"ack", "wait"},
+	NInvariant:     {"look at the card", "repair", "wait"},
+	NWorkLate:      {"fleet level", "fleet down <member>", "wait", "drop"},
+	NReadLate:      {"ask --another", "wait", "drop"},
+	NMergeLate:     {"merge --stream <s>", "look", "wait"},
+	NStalled:       {"look at the card", "wait"},
 }
 
 // TickReq is what a tick is given beside the snapshot.
@@ -569,6 +572,9 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 		conds = append(conds, cond{typ: NNoRoute, stream: TierSubject(tier), streamLevel: true, primaries: unserved[tier],
 			what: fmt.Sprintf("%d primaries of tier %s wait: %s", len(unserved[tier]), tier, whyOf[tier])})
 	}
+	// one judgment per provider while its routes rest for its funds or its key, never one
+	// per card (provider_funds.go)
+	conds = append(conds, providerConds(s)...)
 	ready = streamTurns(ready, streamRound(s, PropStreamIndex))
 	if len(up) == 0 && len(ready) > 0 {
 		c := cond{typ: NNoMember, streamLevel: true,
@@ -593,7 +599,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 		}
 	}
 	restWrites(&p, s, rests, r.who())
-	due += notify(&p, s, conds, []string{NNoMember, NBound, NNoRoute}, r)
+	due += notify(&p, s, conds, []string{NNoMember, NBound, NNoRoute, NProviderFunds, NProviderKey}, r)
 	return p, due
 }
 
@@ -1001,7 +1007,7 @@ type cond struct {
 // stays one condition, so they are keyed by their type and subject only.
 func condKey(typ, subject, card, what string) string {
 	switch typ {
-	case NNoMember, NCannotAsk, NNoRoute, NFewReaders:
+	case NNoMember, NCannotAsk, NNoRoute, NFewReaders, NProviderFunds, NProviderKey:
 		what = ""
 	case NWorkLate, NReadLate:
 		// a lateness is one per attempt's card and kind (not taken, not

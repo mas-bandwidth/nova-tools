@@ -582,7 +582,7 @@ func TestAckAnswersOnlyTheTypesThatListIt(t *testing.T) {
 		all[typ] = ds
 	}
 	all[NRemindFailed] = []string{"goal set friend-a --to <route>", "goal drop friend-a", "ack"}
-	ackable := map[string]bool{NBlocked: true, NMissingNeed: true, NCIRed: true, NRepairSkipped: true, NOpStuck: true, NRemindFailed: true}
+	ackable := map[string]bool{NBlocked: true, NMissingNeed: true, NCIRed: true, NRepairSkipped: true, NOpStuck: true, NRemindFailed: true, NProviderFunds: true, NProviderKey: true}
 	for typ, ds := range all {
 		w := setup(t, 1)
 		n := Note{ID: "n-x.1", Kind: Judgment, Type: typ, Stream: "s1", Primaries: []string{"s1-1"}, Count: 1, Decisions: ds, At: w.s.Now}
@@ -605,7 +605,7 @@ func TestAckAnswersOnlyTheTypesThatListIt(t *testing.T) {
 // judgment the coordinator's answer closes is none of them.
 func TestTickKeptList(t *testing.T) {
 	t.Parallel()
-	keeps := []string{NBound, NCannotAsk, NFewReaders, NNoMember, NNoRoute, NInvariant, NWorkLate, NReadLate, NMergeLate, NStalled, NRemindFailed}
+	keeps := []string{NBound, NCannotAsk, NFewReaders, NNoMember, NNoRoute, NProviderFunds, NProviderKey, NInvariant, NWorkLate, NReadLate, NMergeLate, NStalled, NRemindFailed}
 	got := []string{NRemindFailed}
 	for typ := range TickDecisions {
 		got = append(got, typ)

@@ -177,7 +177,7 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 			continue
 		}
 		if rest, ok := s.resting(r.Name); ok {
-			rested = append(rested, r.Name+" until "+stamp(rest.Until))
+			rested = append(rested, r.Name+" until "+stamp(rest.Until)+": "+rest.Said())
 			continue
 		}
 		served[r.Name] = r
@@ -218,7 +218,7 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 		return set, tier, ""
 	}
 	if len(rested) > 0 {
-		return nil, tier, "every enabled route of tier " + tier + " in its array rests, its children having ended with no result (" + strings.Join(rested, ", ") + "): the deal draws one when its rest ends; or run nova-config route add <name> --tier " + tier + " ..., or pin the card with a model: <provider>/<model> line"
+		return nil, tier, "every enabled route of tier " + tier + " in its array rests (" + strings.Join(rested, "; ") + "): the deal draws one when its rest ends; or run nova-config route add <name> --tier " + tier + " ..., or pin the card with a model: <provider>/<model> line"
 	}
 	return nil, tier, "no enabled route serves tier " + tier + ": run nova-config route add <name> --tier " + tier + " ..., name it in nova-config tier set " + tier + " --routes <name,...>, then nova-config apply; or pin the card with a model: <provider>/<model> line"
 }

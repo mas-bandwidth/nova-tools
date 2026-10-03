@@ -1,6 +1,7 @@
 package sprint
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
 	"strings"
@@ -28,20 +29,51 @@ func PropRouteRest(route string) string { return "route_rest_" + route }
 // NRouteRested is the happened note of a rest the tick wrote, to the coordinator.
 const NRouteRested = "a route rested: its children ended with no result"
 
-// RouteRest is a route's last rest: when it began, when it ends, and the cards whose
-// takes on it left no result.
+// RouteRest is a route's last rest: when it began, when it ends, the cards whose takes on
+// it rested it, and why: the cause (RestNoResult, rule 3's; RestCredit, RestAuth and
+// RestBalance, the provider's, provider_funds.go) and, for the provider's, its words.
 type RouteRest struct {
 	Route     string
 	At, Until time.Time
 	Cards     []string
+	Cause     string
+	Why       string
 }
+
+// The causes of a rest: rule 3's children that ended with no result, a take the provider
+// refused for want of credit or for its key, and a balance under an hour of the provider's
+// spend (provider_funds.go).
+const (
+	RestNoResult = "no-result"
+	RestCredit   = "out-of-credit"
+	RestAuth     = "auth"
+	RestBalance  = "balance"
+)
 
 // Resting says the rest holds at now.
 func (r RouteRest) Resting(now time.Time) bool { return now.Before(r.Until) }
 
-// value is the rest as the property holds it: its start, its end, the cards.
+// Funds says the rest is the provider's want of funds: a take refused for credit, or a
+// balance under an hour of its spend.
+func (r RouteRest) Funds() bool { return r.Cause == RestCredit || r.Cause == RestBalance }
+
+// value is the rest as the property holds it: its start, its end, the cards ("-" for
+// none), its cause and its words. A value of the first three alone (a rest written before
+// the cause) reads as rule 3's.
 func (r RouteRest) value() string {
-	return stamp(r.At) + " " + stamp(r.Until) + " " + strings.Join(r.Cards, ",")
+	cards := strings.Join(r.Cards, ",")
+	if cards == "" {
+		cards = "-"
+	}
+	return strings.TrimSpace(stamp(r.At) + " " + stamp(r.Until) + " " + cards + " " + cmp.Or(r.Cause, RestNoResult) + " " + r.Why)
+}
+
+// Said is the rest's reason as a line says it: the provider's words, else rule 3's.
+func (r RouteRest) Said() string {
+	if r.Why != "" {
+		return r.Why
+	}
+	return "its children ended with no result"
 }
 
 // RouteRests is the last rest the fleet table records for each route of routes that has one.
@@ -58,22 +90,27 @@ func RouteRests(routes []Route, fleet *Table) map[string]RouteRest {
 		if e1 != nil || e2 != nil {
 			continue
 		}
-		rest := RouteRest{Route: r.Name, At: at, Until: until}
-		if len(f) > 2 {
+		rest := RouteRest{Route: r.Name, At: at, Until: until, Cause: RestNoResult}
+		if len(f) > 2 && f[2] != "-" {
 			rest.Cards = Split(f[2])
+		}
+		if len(f) > 3 {
+			rest.Cause, rest.Why = f[3], strings.Join(f[4:], " ")
 		}
 		out[r.Name] = rest
 	}
 	return out
 }
 
-// routeEnd is one ended take on a route: the work card, when it ended, and whether its
-// child left no result.
+// routeEnd is one ended take on a route: the work card, when it ended, whether its child
+// left no result, and the provider's line when the provider refused it for credit or for
+// its key (refusal, provider_funds.go), "" otherwise.
 type routeEnd struct {
 	card     string
 	take     int
 	at       time.Time
 	noResult bool
+	refused  string
 }
 
 // routeEnds is every ended take the fleet table's work cards record, by route: each take
@@ -88,7 +125,7 @@ func routeEnds(fleet *Table) map[string][]routeEnd {
 			if t.Route == "" || t.Route == RoutePin || err != nil {
 				continue
 			}
-			out[t.Route] = append(out[t.Route], routeEnd{card: c.ID, take: numbers[i], at: at, noResult: IsNoResult(t.Error)})
+			out[t.Route] = append(out[t.Route], routeEnd{card: c.ID, take: numbers[i], at: at, noResult: IsNoResult(t.Error), refused: refusal(t.Error)})
 		}
 		if c.Col != DoneOK && c.Col != DoneFailed {
 			continue
@@ -131,8 +168,14 @@ func RestsDue(s *Snapshot) []RouteRest {
 			}
 		}
 		if len(cards) >= RouteRestAfter {
-			out = append(out, RouteRest{Route: r.Name, At: s.Now, Until: s.Now.Add(RouteRestFor), Cards: cards})
+			out = append(out, RouteRest{Route: r.Name, At: s.Now, Until: s.Now.Add(RouteRestFor), Cards: cards, Cause: RestNoResult})
 		}
+	}
+	// a provider's refusal rests every route of the provider, over rule 3's on the same route
+	byProvider := providerRestsDue(s, rests, ends)
+	out = slices.DeleteFunc(out, func(r RouteRest) bool { _, ok := byProvider[r.Route]; return ok })
+	for _, r := range byProvider {
+		out = append(out, r)
 	}
 	slices.SortFunc(out, func(a, b RouteRest) int { return strings.Compare(a.Route, b.Route) })
 	return out
@@ -197,6 +240,9 @@ func restWrites(p *Plan, s *Snapshot, due []RouteRest, who string) {
 		n.To, n.Who = s.Coordinator, who
 		n.What = fmt.Sprintf("route %s rested until %s: %d of its last %d ended takes or fewer left no result (%s); the deal draws no work card on it until then; nova-sprint routes shows it",
 			r.Route, stamp(r.Until), len(r.Cards), RouteRestWindow, strings.Join(r.Cards, ", "))
+		if r.Cause != RestNoResult {
+			n.What = fmt.Sprintf("route %s rested until %s: %s; the deal draws no work card on it until then; nova-sprint routes shows it", r.Route, stamp(r.Until), r.Why)
+		}
 		p.Notes = append(p.Notes, n)
 	}
 }
