@@ -248,3 +248,45 @@ func writeNativeGoShim(dir, goBin string) error {
 	}
 	return nil
 }
+
+// THE DARWIN WALL FORBIDS setpriority (its `system-sched` operation; the template is
+// `(deny default)` and grants none), so a card's `nice -n 19 <gate>` printed `nice:
+// setpriority: Operation not permitted` into every worker's output and ran the gate at the
+// priority it started with. Where nativeNicesChild says so, native lowers the child's whole
+// group itself, outside the wall (lowerChildPriority), and writes this `nice` beside the
+// shell wrappers: it runs the command as nice would, without asking the wall for the
+// priority the group already has. Linux's wall leaves setpriority alone and gets neither.
+
+// nativeNicesChild says whether native lowers the child's priority itself: the darwin wall.
+func nativeNicesChild(goos string, walled bool) bool {
+	return goos == "darwin" && walled
+}
+
+// childNice is the priority a walled child runs at where the wall forbids it to lower its
+// own: the `nice -n 19` every card's gate line asks for.
+const childNice = 19
+
+// niceShimScript is the `nice` for a child already at nice 19: the adjustment (`-n N`,
+// `-nN`, `-N`, `--adjustment=N`, `--adjustment N`) and a `--` are read and dropped, and the
+// command is exec'd; with no command it prints the group's niceness, as nice does.
+const niceShimScript = `#!/bin/sh
+# nova-swarm nice shim: the darwin wall forbids setpriority, and native already started
+# this card's whole process group at nice 19 outside it, so the command runs as it is.
+case "$1" in
+-n|--adjustment) shift; shift ;;
+-n*|--adjustment=*|-[0-9]*) shift ;;
+esac
+if [ "$1" = "--" ]; then shift; fi
+if [ $# -eq 0 ]; then echo 19; exit 0; fi
+exec "$@"
+`
+
+// writeNativeNiceShim writes the `nice` into the shim directory dir, which is first on
+// the child's PATH and outside its write set.
+func writeNativeNiceShim(dir string) error {
+	path := filepath.Join(dir, "nice")
+	if err := atomicfile.Write(path, []byte(niceShimScript), 0o755, atomicfile.ExactMode()); err != nil {
+		return fmt.Errorf("the nice shim %s could not be written: %w", oneline.Field(path), err)
+	}
+	return nil
+}

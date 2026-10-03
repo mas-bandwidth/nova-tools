@@ -24,6 +24,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math/big"
 	"os"
 
 	"path/filepath"
@@ -33,6 +34,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
+	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -374,6 +376,14 @@ func (f *flags) tokens(value string) (int, bool) {
 	return n, false
 }
 
+// ratText is a budget's decimal, "" for none.
+func ratText(r *big.Rat) string {
+	if r == nil {
+		return ""
+	}
+	return cardcost.Text(r)
+}
+
 // maxFlag is the ceiling every listing here carries.
 func maxFlag(fs *flag.FlagSet) *int {
 	return fs.Int("max", bounded.Default, "at most this many item lines, 0 for all")
@@ -530,6 +540,7 @@ type nativeFlags struct {
 	resultsRootFlag *string
 	sweepNow        *bool
 	tokensWord      *string
+	usd             *string
 	usageInterval   *secondsFlag
 	benchFlag       *string
 	stageTimeout    *string
@@ -575,6 +586,7 @@ func nativeFlagSet() (*flags, *nativeFlags) {
 	_ = f.fs.String("slots-store", "", "accepted and read by nothing: native takes no slot lease (the dealer holds a bench's capacity)")
 	_ = f.fs.String("owner", "", "accepted and read by nothing, with --slots-store")
 	nf.tokensWord = f.fs.String("tokens", "", "required: the token budget, a number of tokens, or the word unmetered when the provider has no live accounting and the deadline is the only stop (`n|unmetered`)")
+	nf.usd = f.fs.String("usd", "", "the dollar budget per card, a decimal such as 0.50: the harness's reported cost at which the card is stopped (stopped=usd), beside --tokens; empty for none")
 	nf.usageInterval = newSecondsFlag(f.fs, "usage-interval", swarm.DefaultUsageInterval, "how often the token budget's source is read, a `duration` or whole seconds, at least 1s and under --deadline (default 5s)")
 	nf.benchFlag = f.fs.String("bench", "", "this bench's `name`, in a staging timeout's report (default: this machine's host name up to its first dot)")
 	nf.stageTimeout = f.fs.String("stage-timeout", "", "the bound on staging the card's checkout from the bench mirror, a `duration` (default 120s)")
@@ -657,6 +669,19 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	// nativeRun's own job directory, data home and temp directory -- because 13d
 	// refuses "before any directory is made".
 	budgetTokens, budgetUnmetered := f.tokens(*tokensWord)
+	// THE DOLLAR BUDGET (nova-tools #5094), optional: a decimal, refused with the rest.
+	var budgetUSD *big.Rat
+	if w := strings.TrimSpace(*nf.usd); w != "" {
+		r, err := cardcost.Decimal(w)
+		switch {
+		case err != nil:
+			f.add(fmt.Sprintf("--usd wants a dollar budget per card, a decimal like 0.50: %s", oneline.Err(err)))
+		case r.Sign() <= 0:
+			f.add("--usd is a budget and is above 0; leave it out for no dollar budget")
+		default:
+			budgetUSD = r
+		}
+	}
 	if f.refused(stderr) {
 		return 2
 	}
@@ -688,7 +713,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	if workerGiven {
 		workerForBudget = &w
 	}
-	if reason := swarm.NativeBudgetSourceRefusal(swarm.NativeUsageSource(workerForBudget), budgetTokens, budgetUnmetered, workerForBudget); reason != "" {
+	if reason := swarm.NativeBudgetSourceRefusal(swarm.NativeUsageSource(workerForBudget), budgetTokens, budgetUnmetered, budgetUSD != nil, workerForBudget); reason != "" {
 		refuseNative(stderr, reason)
 		return 2
 	}
@@ -772,6 +797,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		noSharedCaches: *noSharedCaches,
 		resultsRoot:    resultsRootOf(*resultsRootFlag, *root),
 		tokens:         budgetTokens,
+		usd:            budgetUSD,
 		unmetered:      budgetUnmetered,
 		usageInterval:  usageInterval.d,
 		benchName:      *benchFlag,
@@ -854,6 +880,13 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	// here it is printed and nothing is written.
 	if res.defect != "" {
 		fmt.Fprintln(stdout, oneline.Escape(res.defect))
+	}
+	// WHICH BUDGET ENDED THE CARD, AND AT WHAT COUNT (nova-tools #5094): the member carries
+	// these words into the finish's reason, so the coordinator reads "budget: tokens 509,940
+	// of 400,000, $0.03" and not only "budget".
+	if res.stopped != "" {
+		fmt.Fprintf(stdout, "NATIVE BUDGET label=%s budget: %s\n", oneline.Field(cfg.label),
+			oneline.Escape(nativeBudgetWords(res.stopped, cfg.tokens, res.spent, res.partial, cardcost.ParseSpend(res.spend).Actual, ratText(cfg.usd))))
 	}
 	// THE WALL REPORT (issue #918): a run the fence stopped with no result ends `wall`,
 	// and the line names the path and the commits so the harvester pushes the work.

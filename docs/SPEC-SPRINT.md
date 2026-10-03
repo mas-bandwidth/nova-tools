@@ -540,7 +540,7 @@ and it is the coordinator's decision, receipted.
   redeal or a later attempt takes the next entry whose route was not taken for
   the card while another remains, the index moved past the entries it skipped
   (ExcludedNeverDrawn), and an entry that names no enabled route of the tier is
-  skipped the same way. The work card keeps `route`, `model`, `tokens` and `deadline` (its
+  skipped the same way. The work card keeps `route`, `model`, `tokens`, `usd` (the route's dollar budget, empty for none) and `deadline` (its
   packet hands them to the member) and the primary `routes`, every route taken
   for it. A card no route serves stays ready: the deal refuses it naming the
   tier, and the tick writes one judgment, `no route serves the tier`, per tier
@@ -844,7 +844,7 @@ id (`--op`) returns the original result, with no second counter or notification.
   `reader add` answer it.
   The machine's tick asks for every such primary; `ask` is the coordinator's
   own. Each read card the ask creates carries a route as a work card does
-  (`route`, `model`, `tokens`, `deadline`), and `tier`, the tier it is drawn
+  (`route`, `model`, `tokens`, `usd`, `deadline`), and `tier`, the tier it is drawn
   from: the tier of the card it reads, the tier the deal draws that card's
   work from (line 1's tier, flash when it names none, so a card that pins a
   model and names no tier is read on flash; a frontier card, a tier no route

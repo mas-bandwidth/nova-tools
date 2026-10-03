@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"net"
 	"net/url"
 	"os"
@@ -82,6 +83,9 @@ type nativeRunConfig struct {
 	// loop record), the name and email every commit carries; nil reads the pool's
 	// <root>/identity.tsv (swarm.LoadPoolIdentity).
 	identity *swarm.StagingIdentity
+	// usd is the dollar budget (--usd, a route's usd): the harness's reported cost at which
+	// the card is stopped, beside the token budget; nil for none (nova-tools #5094).
+	usd *big.Rat
 	// netAllow is the provider's loopback host:port, passed to the wall as --net-allow
 	// (issue #591).
 	netAllow string
@@ -798,6 +802,15 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		refuseNative(errOut, fmt.Sprintf("%s wall cannot express repo rule", oneline.Field(cfg.label)))
 		return nativeRunResult{}, 2
 	}
+	// THE CHILD'S PRIORITY, where the wall forbids the child to lower its own (the darwin
+	// wall denies setpriority): native lowers the group after the start, and the card's own
+	// `nice -n 19` resolves to the shim's, which runs the command without the wall's warning.
+	niced := nativeNicesChild(runtime.GOOS, wall != "")
+	if niced && shimDir != "" {
+		if err := writeNativeNiceShim(shimDir); err != nil {
+			fmt.Fprintf(errOut, "NATIVE NOTE: %s; a card's nice inside the wall warns setpriority and runs its command anyway\n", oneline.Err(err))
+		}
+	}
 
 	// THE CHILD. The deadline is a context, so the process (and any it started in its
 	// own group) is killed when the wall runs out, not merely handed a suggestion.
@@ -979,7 +992,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// card at their own instants whatever a read is doing (nativesample.go says why at
 	// length).
 	sampler := startLiveSampler("", 0, cfg, outLog)
-	if !cfg.unmetered && cfg.tokens > 0 || (cfg.worker != nil && cfg.worker.HasCardBudget()) {
+	if !cfg.unmetered && cfg.tokens > 0 || cfg.usd != nil || (cfg.worker != nil && cfg.worker.HasCardBudget()) {
 		sampler = startLiveSampler(dataHome, cfg.usageInterval, cfg, outLog)
 	}
 	defer sampler.Stop()
@@ -1017,6 +1030,11 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			return nativeRunResult{}, 2
 		}
 		pgid := cmd.Process.Pid
+		if niced {
+			if err := lowerChildPriority(pgid); err != nil {
+				fmt.Fprintf(errOut, "NATIVE NOTE: the child's priority could not be lowered: %s\n", oneline.Err(err))
+			}
+		}
 		started := swarm.StartStamp(pgid)
 		done := make(chan error, 1)
 		go func() { done <- cmd.Wait() }()
@@ -1191,7 +1209,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		_, published := swarm.FindCardResult(jobDir)
 		if cause, failed := harnessStartFailed(tail, elapsed, launchTokens, published); failed {
 			if startRetries < len(harnessStartWaits) {
-				if word := sampler.StopWordAtFinal(jobSpent, jobObserved); word != "" {
+				if word := sampler.StopWordAtFinal(jobSpent, jobObserved, spendCost(launchSpends)); word != "" {
 					res.stopped = word
 					break
 				}
@@ -1228,7 +1246,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			// AND THE FINAL READS COUNT (review finding 6 on #1635): the job's spend just
 			// folded from this launch's final read is tested too, so a launch that died
 			// before its first sample cannot buy a relaunch past the budget.
-			if word := sampler.StopWordAtFinal(jobSpent, jobObserved); word != "" {
+			if word := sampler.StopWordAtFinal(jobSpent, jobObserved, spendCost(launchSpends)); word != "" {
 				res.stopped = word
 				break
 			}
@@ -2131,6 +2149,12 @@ func launchSpend(v map[string]string) cardcost.Usage {
 		u.Model = v["provider"] + "/" + v["model"]
 	}
 	return u
+}
+
+// spendCost is the harness's cost of the launches so far, "" unless every launch that
+// reported tokens reported one (the cost spendWord carries).
+func spendCost(launches []cardcost.Usage) string {
+	return cardcost.ParseSpend(spendWord(launches)).Actual
 }
 
 // spendWord is the job's spend= word over its launches' records: their sum, the model the

@@ -90,7 +90,7 @@ func TestApplyWritesTheRouteViewTheDealReads(t *testing.T) {
 	got := c.HGetAll(ctx, RouteKey("pro-a")).Val()
 	want := map[string]string{
 		"name": "pro-a", "tier": "pro", "provider": "openrouter", "model": "x-ai/grok-4",
-		"tokens": "300000", "deadline": "1800", "enabled": "true",
+		"tokens": "300000", "usd": "", "deadline": "1800", "enabled": "true", // usd empty: no dollar cap
 		// the price sheet, not set: every price empty, never 0
 		"price_input": "", "price_cache_read": "", "price_cache_write": "", "price_output": "", "reasoning_as_output": "true", "long_context": "0",
 		"price_input_long": "", "price_output_long": "", "price_request": "", "billing": "metered", "gateway_percent": "", "price_source": "", "price_as_of": "", "note": "",
