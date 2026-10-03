@@ -736,7 +736,7 @@ type DealReq struct {
 // same card dealt again at a new generation, its attempt unchanged; otherwise
 // the next attempt's card is cut.
 func Deal(s *Snapshot, r DealReq) Plan {
-	s, _ = s.withRests() // the resting routes, read once (rule 3, route_rest.go)
+	s, _, _ = s.withRests() // the resting routes, read once (rule 3, route_rest.go)
 	rr, ri := dealRound(s), routeIndexesOf(s)
 	p, moves := dealPlan(s, r, rr, ri)
 	p = Lawful(p)

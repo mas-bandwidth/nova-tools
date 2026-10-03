@@ -400,3 +400,41 @@ func TestABalanceAtZerosRestEndsOnAReadOverZeroAfterAnUnknownOne(t *testing.T) {
 	assert.False(t, sprint.ProviderRests(s.Fleet)["openrouter"].Resting(s.Now), "a read over zero ends a balance's rest")
 	h.clean("a balance at zero, paid")
 }
+
+// restValue is a rest's property value as RouteRest.value writes it, open until paid.
+func restValue(at time.Time, cards, cause, why string) string {
+	return at.UTC().Format(time.RFC3339) + " open " + cards + " " + cause + " " + why
+}
+
+// A pre-start refusal's rest lifts on a balance read over zero whose previous read was
+// unknown: a payment seen against nothing (a cold start; the owner, 2026-10-03: the
+// openrouter read of $942.68 at 10:45:11 should have lifted the stored rest itself). Before
+// the read the rest, which keeps no balance, counts nothing toward the stop.
+func TestAPreStartRefusalsRestLiftsOnAReadOverZeroAfterAnUnknownRead(t *testing.T) {
+	t.Parallel()
+	routes := []sprint.Route{providerRoute("or-a", "flash", "openrouter")}
+	h := routeHarness(t, routes...)
+	h.addReady("s1", 1, briefOf("flash", ""))
+	h.startMachine()
+	// a rest written by a previous process: begun before this start, no balance kept
+	h.setProp(sprint.PropProviderRest("openrouter"), restValue(t0.Add(-time.Hour), "docsd-29.w26", sprint.RestCredit,
+		"out of credit: provider openrouter refused card docsd-29.w26 on route or-a: class=out-of-credit status=402 msg=Insufficient credits."))
+	require.True(t, sprint.ProviderRests(h.snap().Fleet)["openrouter"].Resting(h.snap().Now))
+
+	// the read before this one was unknown
+	h.poll(sprint.ProviderRead{Provider: "openrouter", Note: "credits endpoint answered 503"})
+	s := h.snap()
+	assert.True(t, sprint.ProviderRests(s.Fleet)["openrouter"].Resting(s.Now), "an unknown read ends no rest")
+
+	h.tick(sprint.BalancePollEvery)
+	h.poll(openrouter(942.68, 0)) // $942.68 over zero, against an unknown read before it
+	s = h.snap()
+	rest := sprint.ProviderRests(s.Fleet)["openrouter"]
+	assert.False(t, rest.Resting(s.Now), "a read over zero after an unknown one lifts a pre-start refusal's rest")
+	assert.Contains(t, rest.Why, "ended: balance $942.68")
+	assert.Len(t, h.noteWhats(sprint.NProviderFunded), 1)
+	why, err := h.st.OutOfCredit(h.ctx)
+	require.NoError(t, err)
+	assert.Empty(t, why, "the rest ended: nothing is out")
+	h.clean("a pre-start refusal paid")
+}

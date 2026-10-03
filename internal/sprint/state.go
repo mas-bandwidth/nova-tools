@@ -283,6 +283,16 @@ type Snapshot struct {
 	Now     time.Time
 	Epoch   uint64    // the sprint's epoch the tables were read at
 	Cleared time.Time // when that epoch began (the last clear); zero for the first
+	// Start is when this server process's run loop began (the store's
+	// Started): a refusal recorded before it is stale, and a cold start judges
+	// no provider out of funds from it. Zero is no start known (treat refusals
+	// as fresh, as before).
+	Start time.Time
+	// NotedStale is the stale refusals this process has already named in one
+	// happened note, keyed by the note's words, shared across the process's
+	// ticks: the tick names each stale refusal once, never once a tick. nil
+	// is none named yet (a step that is not a tick's names none).
+	NotedStale map[string]bool
 	// Coordinator is the sprint's coordinator: judgments are theirs to
 	// answer. Actor is who runs the step (a request's Who, when it names
 	// none).

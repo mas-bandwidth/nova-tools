@@ -269,10 +269,11 @@ func routeEnds(fleet *Table) map[string][]routeEnd {
 // order they ended) holds RouteRestAfter or more that left no result, rested from s.Now
 // for RouteRestFor, naming those takes' cards; and each provider a refusal rests
 // (providerRestsDue: one rest, Route "", over rule 3's on its routes); the providers' first,
-// then the routes', in name order.
-func RestsDue(s *Snapshot) []RouteRest {
+// then the routes', in name order. stale is the providers' refusals whose take launched
+// before this process started: they rest nothing (providerRestsDue).
+func RestsDue(s *Snapshot) ([]RouteRest, []staleRefusal) {
 	if len(s.Routes) == 0 {
-		return nil
+		return nil, nil
 	}
 	rests, ends := RouteRests(s.Routes, s.Fleet), routeEnds(s.Fleet)
 	var out []RouteRest
@@ -300,9 +301,9 @@ func RestsDue(s *Snapshot) []RouteRest {
 		}
 	}
 	// a provider's refusal rests the provider, every route of it, over rule 3's on its routes
-	byProvider := providerRestsDue(s, ProviderRests(s.Fleet), ends)
+	byProvider, stale := providerRestsDue(s, ProviderRests(s.Fleet), ends)
 	if len(byProvider) == 0 {
-		return out
+		return out, stale
 	}
 	rested := map[string]bool{}
 	for _, p := range byProvider {
@@ -310,7 +311,7 @@ func RestsDue(s *Snapshot) []RouteRest {
 			rested[name] = true
 		}
 	}
-	return append(byProvider, slices.DeleteFunc(out, func(r RouteRest) bool { return rested[r.Route] })...)
+	return append(byProvider, slices.DeleteFunc(out, func(r RouteRest) bool { return rested[r.Route] })...), stale
 }
 
 // cmpEnd orders ended takes by when they ended, then by card and take.
@@ -326,10 +327,12 @@ func cmpEnd(a, b routeEnd) int {
 
 // withRests is the snapshot with the routes resting at s.Now settled (rests): those the
 // fleet table records and those the rule rests now (RestsDue, returned as due), so a step
-// that deals reads them once. A snapshot that has them already is returned as it is.
-func (s *Snapshot) withRests() (*Snapshot, []RouteRest) {
+// that deals reads them once, and stale the providers' refusals from before this process
+// started (RestsDue), which rest nothing. A snapshot that has them already is returned as
+// it is.
+func (s *Snapshot) withRests() (*Snapshot, []RouteRest, []staleRefusal) {
 	if s.rests != nil {
-		return s, nil
+		return s, nil, nil
 	}
 	if s.restScans != nil {
 		*s.restScans++
@@ -341,7 +344,7 @@ func (s *Snapshot) withRests() (*Snapshot, []RouteRest) {
 			n.rests[name] = r
 		}
 	}
-	due := RestsDue(s)
+	due, stale := RestsDue(s)
 	for _, r := range due {
 		for _, name := range restedRoutes(r, s.Routes) {
 			x := r
@@ -349,7 +352,7 @@ func (s *Snapshot) withRests() (*Snapshot, []RouteRest) {
 			n.rests[name] = x
 		}
 	}
-	return &n, due
+	return &n, due, stale
 }
 
 // resting is the rest that holds a route at s.Now, and whether one does: the rests a step

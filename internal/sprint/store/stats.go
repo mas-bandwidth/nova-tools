@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
 // What a tick costs, part by part (the owner's requirement of 2026-09-30:
@@ -85,6 +87,34 @@ func (st *Store) stats() *Stats {
 		st.Stats = &Stats{}
 	}
 	return st.Stats
+}
+
+// NoteStaleSet is the process's set of stale refusals already named in a note,
+// made on first use; the store's clones share it (clone copies the reference),
+// so the tick names each stale refusal once a process, never once a tick.
+func (st *Store) NoteStaleSet() map[string]bool {
+	lazyMu.Lock()
+	defer lazyMu.Unlock()
+	if st.notedStale == nil {
+		st.notedStale = map[string]bool{}
+	}
+	return st.notedStale
+}
+
+// MarkNotedStale records the stale-refusal notes of a plan as written, once
+// the step that planned them has committed: the next tick's deal skips them.
+// Called only after a successful commit, so a plan retried before its commit
+// does not mark refusals that were never named.
+func (st *Store) MarkNotedStale(notes []sprint.Note) {
+	if len(notes) == 0 {
+		return
+	}
+	set := st.NoteStaleSet()
+	for _, n := range notes {
+		if n.Type == sprint.NProviderStale {
+			set[n.What] = true
+		}
+	}
 }
 
 // trips is the backend's round trips so far; 0 when it does not count them.

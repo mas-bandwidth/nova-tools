@@ -60,10 +60,17 @@ import (
 
 // Store runs sprint steps against a Backend.
 type Store struct {
-	B        Backend
-	Names    sprint.Names
-	Actor    string
-	Now      func() time.Time
+	B     Backend
+	Names sprint.Names
+	Actor string
+	Now   func() time.Time
+	// Started is when this server process's run loop began (its process
+	// start): a refusal whose take launched before it is stale, and a cold
+	// start judges no provider out of funds from it. Set once by run when the
+	// loop begins; a test injects its clock. A manual stop/start is not a new
+	// process, so it keeps the same Started. Zero is no start known (treat
+	// refusals as fresh, as before).
+	Started  time.Time
 	NewID    func() string       // a fresh operation id family; nil is NewID
 	Sleep    func(time.Duration) // the wait between tries on busy tables or fence; nil is time.Sleep
 	Rand     func(n int64) int64 // the jitter of that wait, a number in [0, n); nil is math/rand/v2
@@ -98,6 +105,12 @@ type Store struct {
 	cleared time.Time // when the pinned epoch began
 	pinned  bool
 	old     bool // pinned to an earlier epoch, for reading
+	// notedStale is the stale refusals this process has already named in one
+	// happened note, keyed by the note's words: the tick names each once,
+	// never once a tick, so a refusal kept in the fleet table does not note
+	// every tick. Shared with the store's clones; made on the store the run
+	// loop keeps.
+	notedStale map[string]bool
 }
 
 // Step is one verb's step: the tables its plan reads, any records it reads

@@ -72,9 +72,13 @@ type BalanceReq struct {
 const NProviderFunded = "a provider's routes serve again: its balance is back"
 
 // paid says the poll saw a payment to a provider resting since it refused a take: the read
-// b is strictly higher than the read before it (was) or than the balance at the refusal.
-func paid(rest RouteRest, was, b ProviderBalance) bool {
-	return was.Known && b.Balance > was.Balance || rest.HasBalance && b.Balance > rest.Balance
+// b is strictly higher than the read before it (was) or than the balance at the refusal; or
+// the refusal is from before this process started (rest.At before start), the read before it
+// was unknown, and b reads over zero: a payment seen against nothing (a cold start).
+func paid(rest RouteRest, was, b ProviderBalance, start time.Time) bool {
+	return was.Known && b.Balance > was.Balance ||
+		rest.HasBalance && b.Balance > rest.Balance ||
+		rest.At.Before(start) && !was.Known && b.Known && b.Balance > 0
 }
 
 // Low says a balance calls for a rest of the provider's funds: at or under zero (out of
@@ -125,7 +129,7 @@ func Balance(s *Snapshot, r BalanceReq) Plan {
 		if !b.Known {
 			continue // an unknown balance writes and ends no rest
 		}
-		if resting && rest.Refused() && !paid(rest, was, b) {
+		if resting && rest.Refused() && !paid(rest, was, b, s.Start) {
 			continue // no payment seen: the refused take's rest holds, out of credit
 		}
 		cause := ""

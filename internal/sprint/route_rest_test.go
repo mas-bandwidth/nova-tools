@@ -63,7 +63,7 @@ func TestRestsDueCountsNoResultEndsInTheRoutesWindow(t *testing.T) {
 			if tc.rest != "" {
 				s.Fleet.SetProps(map[string]string{PropRouteRest("a"): tc.rest})
 			}
-			due := RestsDue(s)
+			due, _ := RestsDue(s)
 			if tc.cards == nil {
 				assert.Empty(t, due)
 				return
@@ -124,7 +124,7 @@ func TestProviderRestsDueRestEveryRouteOfTheRefusedProvider(t *testing.T) {
 				f.SetProps(map[string]string{PropProviderRest("p"): tc.rest})
 			}
 			s := &Snapshot{Now: t0.Add(10 * time.Minute), Fleet: f, Routes: routes}
-			due := RestsDue(s)
+			due, _ := RestsDue(s)
 			if tc.cause == "" {
 				assert.Empty(t, due)
 				return

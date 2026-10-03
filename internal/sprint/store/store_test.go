@@ -45,7 +45,11 @@ func newHarness(t *testing.T) *harness {
 	h.st = &Store{B: h.m, Names: sprint.Names{Prefix: "t-"}, Actor: "tester",
 		Now:   func() time.Time { h.mu.Lock(); defer h.mu.Unlock(); return h.now },
 		NewID: func() string { h.mu.Lock(); defer h.mu.Unlock(); n++; return fmt.Sprint(n) },
-		Sleep: func(time.Duration) {}}
+		Sleep: func(time.Duration) {},
+		// the process start is the harness's clock, never real time: a refusal
+		// taken after it is fresh; a test that wants a cold start takes the
+		// refusals in an earlier process (restart) and begins a new one after.
+		Started: t0}
 	// every part a tick plans on its twin is checked against a fresh read
 	h.st.CheckTwin = checkTwin
 	require.NoError(t, h.st.Init(h.ctx))
@@ -54,6 +58,23 @@ func newHarness(t *testing.T) *harness {
 	require.NoError(t, h.m.SetCoordinator(h.ctx, h.st.Actor))
 	h.beat()
 	return h
+}
+
+// restart is the harness as a new server process on the same backend: a new
+// Store with the same B, Names, Now and NewID, whose Started is the clock now
+// (the new process began). The old store is the process that wrote the
+// refusals; the new one is the cold start, whose first tick judges no provider
+// out of funds from them.
+func (h *harness) restart() *harness {
+	h.t.Helper()
+	h2 := &harness{t: h.t, m: h.m, ctx: h.ctx, now: h.now, live: append([]string(nil), h.live...)}
+	h2.st = &Store{B: h.m, Names: h.st.Names, Actor: h.st.Actor,
+		Now:     func() time.Time { h2.mu.Lock(); defer h2.mu.Unlock(); return h2.now },
+		NewID:   h.st.NewID,
+		Sleep:   func(time.Duration) {},
+		Started: h.now}
+	h2.st.CheckTwin = checkTwin
+	return h2
 }
 
 func (h *harness) tick(d time.Duration) { h.mu.Lock(); h.now = h.now.Add(d); h.mu.Unlock(); h.beat() }

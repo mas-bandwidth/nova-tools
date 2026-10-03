@@ -122,11 +122,11 @@ func TestEveryProviderOutOfCreditStopsTheSprint(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(ta.ok("where --json")), &v))
 	assert.Equal(t, "machine: STOPPED (every provider is out of credit)", v.Machine)
 	inbox := ta.ok("inbox")
-	assert.Equal(t, 1, strings.Count(inbox, "every provider is out of credit (openrouter): a payment is the owner's"), "one judgment:\n%s", inbox)
+	assert.Equal(t, 1, strings.Count(inbox, "every provider is out of credit (openrouter: balance at or under zero): a payment is the owner's"), "one judgment:\n%s", inbox)
 
 	code, _, errs := ta.do("start")
 	assert.Equal(t, 1, code, "start is refused while every provider is out")
-	assert.Contains(t, errs, "every provider is out of credit (openrouter): a payment is the owner's; the sprint is STOPPED until a provider is paid: a balance over zero the poll reads higher than the one before or than the balance at the refusal, or nova-sprint funded <provider>")
+	assert.Contains(t, errs, "every provider is out of credit (openrouter: balance at or under zero): a payment is the owner's; the sprint is STOPPED until a provider is paid: a balance over zero the poll reads higher than the one before or than the balance at the refusal, a balance over zero that ends a refusal from before this start, or nova-sprint funded <provider>")
 
 	fake.body = `{"data":{"total_credits":2250,"total_usage":1251}}`
 	poll()

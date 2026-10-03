@@ -302,6 +302,12 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 		}
 		go a.decideLoop(context.Background(), c.redis, stdout)
 	}
+	// the process start: a refusal recorded before it is stale, and a cold start
+	// judges no provider out of funds from it (nova-tools#5199). Set once here,
+	// when the loop begins; a manual stop/start is not a new process, so it keeps
+	// this Started. The store's clones share it.
+	st.Started = a.now()
+	st.NoteStaleSet()
 	fmt.Fprintf(stdout, "RUN ticking on every line of the log (at most every %s) and every %s while it is quiet; %s\n", store.TickFloor, store.TickEvery, st.MachineLine(context.Background()))
 	if a.runLoop(context.Background(), st, c.max, 0, stdout, stderr) {
 		return exitReplaced

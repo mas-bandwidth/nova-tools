@@ -320,7 +320,7 @@ func (st *Store) OutOfCredit(ctx context.Context) (string, error) {
 	}
 	fleet := sprint.NewTable(sprint.Fleet)
 	fleet.SetProps(shapes[0].Props)
-	return sprint.AllOutOfCredit(routes, sprint.RouteRests(routes, fleet), st.now()), nil
+	return sprint.AllOutOfCredit(routes, sprint.RouteRests(routes, fleet), st.Started, st.now()), nil
 }
 
 // JudgmentBar is the judgment decision's bar as nova-config applied it, read with the

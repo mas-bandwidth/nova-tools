@@ -519,7 +519,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	// the routes resting now, and those the no-result rule rests in this tick (rule 3,
 	// route_rest.go): no card of this tick is drawn on one, and the new rests are written
 	// in its plan
-	s, rests := s.withRests()
+	s, rests, stale := s.withRests()
 	var p Plan
 	due := 0
 	var ready []*Card
@@ -631,6 +631,20 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	// a ready card dealt on a route that rests now is withdrawn, never taken there
 	p.Units = append(p.Units, restWithdrawals(s, r.who())...)
 	restWrites(&p, s, rests, r.who())
+	// a provider's refusal from before this process started rests nothing, and the
+	// coordinator is told which one, once a process, never once a tick: the store
+	// marks a note as written after the plan commits, and this skips one already
+	// named in this process.
+	for _, ref := range stale {
+		n := happened(NProviderStale, ProviderSubject(ref.provider), s.Now)
+		n.To, n.Who = s.Coordinator, r.who()
+		n.What = fmt.Sprintf("provider %s: a stored refusal of card %s on route %s, taken %s, is from before this start and rests nothing: a cold start judges no provider out of funds from a stored refusal",
+			ref.provider, ref.card, ref.route, stamp(ref.taken))
+		if s.NotedStale[n.What] {
+			continue
+		}
+		p.Notes = append(p.Notes, n)
+	}
 	due += notify(&p, s, conds, []string{NNoMember, NBound, NNoRoute, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit}, r)
 	// every provider out of credit: the binding stops the machine as the plan commits
 	p.Stop = stop
