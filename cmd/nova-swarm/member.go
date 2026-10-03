@@ -561,19 +561,20 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	return c, nil
 }
 
-// childCard is the card file a child is handed: the packet's brief with the rules injected
-// at stage time (rules by reference, nova-tools#5174 rule 6: the held rules file the stream
-// records, else the repository's, else fleet/child-rules.txt; swarm.RulesNameFor and
-// swarm.StagedBrief), then what the sprint adds (member.CardText). A brief that already
-// carries its rules is handed as it is; a stream naming a rules file this build does not
-// hold is refused, and the card is not started.
+// childCard is the card file a child is handed: the packet's brief with the rules its stream
+// records injected at stage time (rules by reference, nova-tools#5174 rule 6:
+// swarm.StagedBrief), then what the sprint adds (member.CardText). A stream that records
+// none injects nothing: its cards carry their own rules. A brief that already carries the
+// rules is handed as it is; a stream naming a rules file this build does not hold is
+// refused, and the card is not started.
 func childCard(p member.Packet) (string, error) {
-	name := swarm.RulesNameFor(p.Rules, p.Brief)
-	rules, err := swarm.HeldRules(name)
-	if err != nil {
-		return "", fmt.Errorf("card %s: the rules by reference: %w", p.Card, err)
+	if p.Rules != "" {
+		rules, err := swarm.HeldRules(p.Rules)
+		if err != nil {
+			return "", fmt.Errorf("card %s: the rules by reference: %w", p.Card, err)
+		}
+		p.Brief = swarm.StagedBrief(p.Brief, rules)
 	}
-	p.Brief = swarm.StagedBrief(p.Brief, rules)
 	return member.CardText(p), nil
 }
 

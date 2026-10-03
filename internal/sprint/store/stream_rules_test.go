@@ -12,7 +12,7 @@ import (
 // A stream's rules by reference (nova-tools#5174 rule 6) ride in its packets: a stream that
 // records none hands an empty name (the member injects its own), a recorded one hands its
 // name to every card of the stream and of no other, a later record replaces it, a clear
-// keeps it, and teardown removes it.
+// keeps it, an empty name removes it, and teardown removes it.
 func TestAStreamsRulesByReferenceRideInItsPackets(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
@@ -32,6 +32,10 @@ func TestAStreamsRulesByReferenceRideInItsPackets(t *testing.T) {
 	got, err = h.st.StreamRules(h.ctx)
 	require.NoError(t, err)
 	assert.Equal(t, "child-rules.space.txt", got["s1"], "a clear keeps the record")
+	require.NoError(t, h.st.SetStreamRules(h.ctx, []string{"s2"}, ""))
+	got, err = h.st.StreamRules(h.ctx)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"s1": "child-rules.space.txt"}, got, "an empty name removes the record")
 	assert.Contains(t, TeardownKeys(h.st.Names, nil, Epochs{}), h.st.Names.Key(keyStreamRules), "teardown removes the record")
 	h.m.kv[keyStreamRules] = "not json"
 	_, err = h.st.StreamRules(h.ctx)

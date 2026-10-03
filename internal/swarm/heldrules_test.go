@@ -40,24 +40,27 @@ func TestTheHeldRulesAreTheFleetFile(t *testing.T) {
 	assert.Contains(t, err.Error(), "holds no rules file child-rules.absent.txt (it holds "+DefaultRulesName)
 }
 
-// Which file a member injects: the stream's, else the repository's own when held, else
-// fleet/child-rules.txt.
-func TestRulesNameForTakesTheStreamThenTheRepositoryThenTheDefault(t *testing.T) {
+// Which file a brief's repository has: fleet/child-rules.txt for this repository, its own
+// file for another that has one, none for a repository with none (its card carries its own
+// rules), and the add's held set for a brief that names no repository.
+func TestOwnRulesNameIsTheRepositorysFileOrNone(t *testing.T) {
 	t.Parallel()
 	held := func(name string) bool { return name == "child-rules.netcode.txt" }
 	netcode := strings.Replace(refCard, "mas-bandwidth/nova-tools", "mas-bandwidth/netcode", 1)
 	url := strings.Replace(refCard, "mas-bandwidth/nova-tools", "https://example.com/mas-bandwidth/netcode.git", 1)
-	for _, c := range []struct{ stream, brief, want string }{
-		{"child-rules.space.txt", netcode, "child-rules.space.txt"},
-		{"", netcode, "child-rules.netcode.txt"},
-		{"", url, "child-rules.netcode.txt"},
-		{"", refCard, DefaultRulesName},
-		{"", "no header at all", DefaultRulesName},
-		{"", "", DefaultRulesName},
+	schema := strings.Replace(refCard, "mas-bandwidth/nova-tools", "mas-bandwidth/schema", 1)
+	for _, c := range []struct{ brief, want string }{
+		{refCard, DefaultRulesName},
+		{netcode, "child-rules.netcode.txt"},
+		{url, "child-rules.netcode.txt"},
+		{schema, ""},
+		{"no header at all", "child-rules.space.txt"},
+		{"", "child-rules.space.txt"},
 	} {
-		assert.Equal(t, c.want, rulesNameIn(c.stream, c.brief, held), "stream %q brief %.40q", c.stream, c.brief)
+		assert.Equal(t, c.want, ownRulesIn(c.brief, "child-rules.space.txt", held), "brief %.40q", c.brief)
 	}
-	assert.Equal(t, DefaultRulesName, RulesNameFor("", netcode), "this build holds no netcode file")
+	assert.Equal(t, "", OwnRulesName(netcode, DefaultRulesName), "this build holds no netcode file")
+	assert.Equal(t, DefaultRulesName, OwnRulesName(refCard, "child-rules.space.txt"))
 }
 
 // The staged brief is the card's text, one blank line, then the RULES paragraph: exactly

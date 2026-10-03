@@ -99,7 +99,12 @@ func (a *app) cmdQuack(args []string, stdout, stderr io.Writer) int {
 		r := sprint.AddReq{Stream: s, Who: c.actor}
 		for i := 1; i <= *count; i++ {
 			id := fmt.Sprintf("quack-%s-%s-%03d", stamp, s, i)
-			card := sprint.CardAdd{ID: id, File: id, Brief: quackBrief(id, s, ts[(i-1)%len(ts)], *repo, *base, embedded(rs))}
+			brief := quackBrief(id, s, ts[(i-1)%len(ts)], *repo, *base, nil)
+			if cs := cardRules(brief, rs); cs.held == "" {
+				// the members hold no rules file for the repository: the card carries its own
+				brief = quackBrief(id, s, ts[(i-1)%len(ts)], *repo, *base, cs.rules)
+			}
+			card := sprint.CardAdd{ID: id, File: id, Brief: brief}
 			r.Cards = append(r.Cards, card)
 			all = append(all, card)
 		}
@@ -129,21 +134,16 @@ func (a *app) cmdQuack(args []string, stdout, stderr io.Writer) int {
 	if code := lintBriefFiles(all, rs, c.max, stderr); code != 0 {
 		return code
 	}
+	record, code := streamRecord("quack", all, rs, stderr)
+	if code != 0 {
+		return code
+	}
 	step := store.AddEachStep(reqs)
 	if len(reqs) == 1 {
 		step = store.AddStep(reqs[0])
 	}
 	step.Args = store.ArgsOf(quackArgs{Verb: "quack", Streams: ss, Count: *count, Tiers: ts, Repo: *repo, Base: *base})
-	return a.recordStreamRules("quack", a.runStep("quack", *c, st, step, stdout, stderr), st, ss, rs, stderr)
-}
-
-// embedded is the rules a brief carries itself: none when the members hold the set and
-// inject it at stage time (rules by reference, nova-tools#5174 rule 6), else every rule.
-func embedded(rs ruleSet) []swarm.ChildRule {
-	if rs.held != "" {
-		return nil
-	}
-	return rs.rules
+	return a.recordStreamRules("quack", a.runStep("quack", *c, st, step, stdout, stderr), st, ss, record, stderr)
 }
 
 // quackStampBytes is the stamp's length: six bytes, twelve hex digits. A

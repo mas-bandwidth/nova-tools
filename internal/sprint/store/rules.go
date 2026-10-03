@@ -62,18 +62,30 @@ func (st *Store) StreamRules(ctx context.Context) (map[string]string, error) {
 }
 
 // SetStreamRules records name as the rules file by reference of each of streams, over what
-// they recorded before. It is refused when the backend keeps no keys.
+// they recorded before; an empty name removes their record. A call that changes nothing
+// writes nothing, so an add that records none on a backend with no keys is no error; one that
+// records a name there is refused.
 func (st *Store) SetStreamRules(ctx context.Context, streams []string, name string) error {
-	kv, ok := st.B.(KV)
-	if !ok {
-		return errNoKeys
-	}
 	all, err := st.StreamRules(ctx)
 	if err != nil {
 		return err
 	}
+	changed := false
 	for _, s := range streams {
-		all[s] = name
+		if was, ok := all[s]; name == "" && ok {
+			delete(all, s)
+			changed = true
+		} else if name != "" && was != name {
+			all[s] = name
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
+	}
+	kv, ok := st.B.(KV)
+	if !ok {
+		return errNoKeys
 	}
 	raw, err := json.Marshal(all)
 	if err != nil {

@@ -755,7 +755,7 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 	childRulesFile := f.fs.String("child-rules-file", "", "the rules `file` to hold the card to instead of the built-in general rules (it implies --child-rules): one required sentence per line, [name] sentence to name the token")
 	// `--member-injects` IS RULES BY REFERENCE (nova-tools#5174 rule 6): the member appends
 	// the rules to the card at stage time, so the card is linted as the child is handed it.
-	memberInjects := f.fs.Bool("member-injects", false, "the member injects the child rules at stage time (rules by reference): the card need not carry them, and a line that contradicts them is still a finding; the rules are --child-rules-file's, else the file the member holds for the card's repository (fleet/child-rules.<repo>.txt, else fleet/child-rules.txt); it implies --child-rules")
+	memberInjects := f.fs.Bool("member-injects", false, "the member injects the child rules at stage time (rules by reference): the card need not carry them, and a line that contradicts them is still a finding; the rules are --child-rules-file's, else the held file of the card's repository (fleet/child-rules.txt for nova-tools, fleet/child-rules.<repo>.txt for another); it implies --child-rules")
 	repoDir := f.fs.String("repo", ".", "with --base-check: the git checkout the card's PATHS are resolved in at the base sha (default the working directory)")
 	legsPath := f.fs.String("legs", "", "with --base-check: the fleet leg table, one leg per line or a TSV whose first column is the leg")
 	p95Path := f.fs.String("p95", "", "with --base-check: a `file` of <kind> <seconds> rows, the p95 wall of each kind's finished cards (* answers for any kind)")
@@ -907,7 +907,12 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 	if *childRules {
 		rules := swarm.DefaultChildRules
 		if *memberInjects && *childRulesFile == "" {
-			rs, err := swarm.HeldRules(swarm.RulesNameFor("", string(raw)))
+			name := swarm.OwnRulesName(string(raw), swarm.DefaultRulesName)
+			if name == "" {
+				fmt.Fprintf(stderr, "nova-swarm lint: --member-injects: the card's REPO: names a repository with no rules file the members hold (fleet/child-rules.<repo>.txt), so its card carries its own rules; run: nova-swarm lint --card <file> --child-rules-file <file>\n")
+				return 2
+			}
+			rs, err := swarm.HeldRules(name)
 			if err != nil {
 				fmt.Fprintf(stderr, "nova-swarm lint: --member-injects: %s; run: nova-swarm lint --card <file> --member-injects --child-rules-file <file>\n", oneline.Err(err))
 				return 2

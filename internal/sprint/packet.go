@@ -25,8 +25,7 @@ type Packet struct {
 	Brief   string `json:"brief,omitempty"`
 	// Rules is the held rules file the stream records by reference (nova-tools#5174 rule
 	// 6): the member appends its RULES paragraph to the brief at stage time
-	// (swarm.StagedBrief); "" when the stream records none, and the member injects its own
-	// (swarm.RulesNameFor).
+	// (swarm.StagedBrief); "" when the stream records none, and the card carries its own.
 	Rules string `json:"rules,omitempty"`
 	Fix   string `json:"fix,omitempty"`
 	// A rework's: the words of the readers that found the attempt before broken, and how

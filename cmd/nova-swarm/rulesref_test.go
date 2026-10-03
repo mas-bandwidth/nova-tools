@@ -21,8 +21,10 @@ const refBrief = "RESULT: c1 sha=0123456789ab\nREPO: mas-bandwidth/nova-tools\nB
 
 // The staged card a child is handed is byte for byte the same before rules by reference (the
 // card carries fleet/child-rules.txt's paragraph at its end) and after (the stored card is
-// its text alone, the member injects the paragraph): for a work card and a read, with the
-// stream's record or with none. A stream naming a file this build does not hold is refused.
+// its text alone, the member injects the paragraph the stream records): for a work card and a
+// read. A stream that records nothing injects nothing: a card of another repository carrying
+// its own rules is handed as it is, with one RULES paragraph. A stream naming a file this
+// build does not hold is refused.
 func TestTheChildsCardIsUnchangedByRulesByReference(t *testing.T) {
 	t.Parallel()
 	rules, err := swarm.HeldRules(swarm.DefaultRulesName)
@@ -34,14 +36,23 @@ func TestTheChildsCardIsUnchangedByRulesByReference(t *testing.T) {
 		want, err := childCard(before)
 		require.NoError(t, err)
 		assert.Equal(t, member.CardText(before), want, "%s: a card that carries its rules is handed as it is", kind)
-		for _, stream := range []string{swarm.DefaultRulesName, ""} {
-			after := before
-			after.Brief, after.Rules = refBrief, stream
-			got, err := childCard(after)
-			require.NoError(t, err)
-			assert.Equal(t, want, got, "%s, stream record %q: the child's card is unchanged", kind, stream)
-		}
+		after := before
+		after.Brief, after.Rules = refBrief, swarm.DefaultRulesName
+		got, err := childCard(after)
+		require.NoError(t, err)
+		assert.Equal(t, want, got, "%s: the child's card is unchanged", kind)
+		before.Rules = swarm.DefaultRulesName
+		got, err = childCard(before)
+		require.NoError(t, err)
+		assert.Equal(t, want, got, "%s: a card that carries the recorded rules gets no second paragraph", kind)
 	}
+	schema := member.Packet{Card: "c2", Kind: "work", As: "m1", Primary: "c2", Stream: "s2", Attempt: 1, Gen: 1, Epoch: 3, Branch: "sprint/c2.g1.e3",
+		Brief: strings.Replace(refBrief, "mas-bandwidth/nova-tools", "mas-bandwidth/schema", 1) + "\n\n" + swarm.ChildRulesParagraph()}
+	got, err := childCard(schema)
+	require.NoError(t, err)
+	assert.Equal(t, member.CardText(schema), got, "no record: the card is handed as it is")
+	assert.Equal(t, 1, strings.Count(got, "RULES."), "one RULES paragraph, the card's own")
+	assert.NotContains(t, got, "GOCACHE", "no Go rule reaches a card of another repository")
 	_, err = childCard(member.Packet{Card: "c1", Kind: "work", Brief: refBrief, Rules: "child-rules.absent.txt"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "card c1: the rules by reference: this build holds no rules file child-rules.absent.txt")
@@ -65,4 +76,8 @@ func TestLintMemberInjectsHoldsOnlyWhatContradictsTheRules(t *testing.T) {
 	assert.NotEqual(t, 0, exit, "a card that contradicts the rules: exit %d\n%s", exit, stdout)
 	assert.Contains(t, stdout, "step-go-test-timeout: ", "a go test with no -timeout contradicts the rules:\n%s", stdout)
 	assert.NotContains(t, stdout, "rule-no-redis-server", "no rule is missing by reference:\n%s", stdout)
+	schema := writeLintCard(t, "schema.card", strings.Replace(refBrief, "mas-bandwidth/nova-tools", "mas-bandwidth/schema", 1)+"\n")
+	exit, _, stderr = runSwarm(t, "lint", "--card", schema, "--member-injects")
+	assert.Equal(t, 2, exit, "a card on a repository with no held file: exit %d\n%s", exit, stderr)
+	assert.Contains(t, stderr, "so its card carries its own rules; run: nova-swarm lint --card <file> --child-rules-file <file>")
 }

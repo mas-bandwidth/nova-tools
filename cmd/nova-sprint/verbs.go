@@ -1075,20 +1075,25 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	if len(rs) == 1 {
 		step = store.AddStep(rs[0])
 	}
-	return a.recordStreamRules("add", a.runStep("add", *c, st, step, stdout, stderr), st, streams, rs0, stderr)
+	code := a.runStep("add", *c, st, step, stdout, stderr)
+	if *sentinel != "" || *brief == "" {
+		return code // no brief: the stream's record stands
+	}
+	return a.recordStreamRules("add", code, st, streams, cardRules(*brief, rs0).held, stderr)
 }
 
-// recordStreamRules records, once an add's step is applied (code 0), the held rules file
-// its briefs were held to by reference as each stream's (store.SetStreamRules): the member
-// injects that file into the stream's cards at stage time (nova-tools#5174 rule 6). A rule
-// set the members do not hold records nothing, and a refused add writes nothing.
-func (a *app) recordStreamRules(verbName string, code int, st *store.Store, streams []string, rs ruleSet, stderr io.Writer) int {
-	if code != 0 || rs.held == "" {
+// recordStreamRules records, once an add's step is applied (code 0), the held rules file its
+// briefs were held to by reference as each stream's (store.SetStreamRules), over an older
+// record: the member injects that file into the stream's cards at stage time (nova-tools#5174
+// rule 6). An add whose briefs carry their own rules (name "") removes the record, so the
+// member injects nothing into the stream. A refused add writes nothing.
+func (a *app) recordStreamRules(verbName string, code int, st *store.Store, streams []string, name string, stderr io.Writer) int {
+	if code != 0 {
 		return code
 	}
-	if err := st.SetStreamRules(context.Background(), streams, rs.held); err != nil {
-		fmt.Fprintf(stderr, "%s %s: the cards are added, and the record of their rules by reference failed: %s; the member injects the repository's rules file, else %s, until it is written; run the add again with --rules fleet/%s\n",
-			prog, verbName, oneline.Escape(err.Error()), swarm.DefaultRulesName, rs.held)
+	if err := st.SetStreamRules(context.Background(), streams, name); err != nil {
+		fmt.Fprintf(stderr, "%s %s: the cards are added, and the record of their rules by reference (%s) failed: %s; the member injects the record as it was until it is written; run the add again\n",
+			prog, verbName, orDashStr(name, "none"), oneline.Escape(err.Error()))
 		return 1
 	}
 	return 0
@@ -1143,6 +1148,10 @@ func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, se
 	if code := lintBriefFiles(cards, rs, c.max, stderr); code != 0 {
 		return code
 	}
+	record, code := streamRecord("add", cards, rs, stderr)
+	if code != 0 {
+		return code
+	}
 	// --sentinel <id> admits a stop after every card of the call: the sentinel
 	// sorts after the cards, and what sorts after it waits for it.
 	if sentinel != "" {
@@ -1169,7 +1178,7 @@ func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, se
 	}
 	c.addStream = stream
 	c.addBefore = before
-	return a.recordStreamRules("add", a.runStep("add", *c, st, store.AddStep(r), stdout, stderr), st, []string{stream}, rs, stderr)
+	return a.recordStreamRules("add", a.runStep("add", *c, st, store.AddStep(r), stdout, stderr), st, []string{stream}, record, stderr)
 }
 
 // briefFiles is the brief files of a many-brief add, in order: the *.md files
@@ -1311,12 +1320,54 @@ func lintBriefReads(brief string, rs ruleSet) (modelWhy string, findings []swarm
 	if _, why := cardhdr.ReadModel(brief); why != "" {
 		return why, nil
 	}
-	if rs.held != "" {
+	if rs = cardRules(brief, rs); rs.held != "" {
 		// rules by reference: the member injects the held file at stage time, so the brief
 		// is linted as the child is handed it (nova-tools#5174 rule 6)
 		return "", swarm.LintCardChildByReference([]byte(brief), rs.rules)
 	}
 	return "", swarm.LintCardChildWith([]byte(brief), rs.rules)
+}
+
+// cardRules is the rule set one brief is held to under the add's set rs (nova-tools#5174
+// rule 6): under a set the members hold, the held file of the brief's repository by reference
+// (swarm.OwnRulesName: fleet/child-rules.txt for this repository, fleet/child-rules.<repo>.txt
+// for another that has one; rs itself for a brief naming no repository), and rs carried, as
+// before rules by reference, for a repository the members hold no file for; rs carried when
+// the members do not hold it.
+func cardRules(brief string, rs ruleSet) ruleSet {
+	if rs.held == "" {
+		return rs
+	}
+	switch own := swarm.OwnRulesName(brief, rs.held); own {
+	case "":
+		return ruleSet{rules: rs.rules}
+	case rs.held:
+		return rs
+	default:
+		rules, err := swarm.HeldRules(own)
+		if err != nil { // own is a file this build holds, so it parses (swarm.TestTheHeldRulesAreTheFleetFile)
+			return ruleSet{rules: rs.rules}
+		}
+		return ruleSet{rules: rules, held: own}
+	}
+}
+
+// streamRecord is the rules file by reference an add's briefs record for their stream: the
+// held name each brief is held to (cardRules), "" when they carry their own. A stream holds
+// one rules file, so briefs of one add held to two are refused naming both, nothing written.
+func streamRecord(verbName string, cards []sprint.CardAdd, rs ruleSet, stderr io.Writer) (string, int) {
+	first, name := "", ""
+	for i, c := range cards {
+		got := cardRules(c.Brief, rs).held
+		if i == 0 {
+			first, name = c.File, got
+			continue
+		}
+		if got != name {
+			return "", refuse(stderr, verbName, fmt.Sprintf("a stream holds one rules file, and %s is held to %s while %s is held to %s; add them to two streams", first, orDashStr(name, "its own rules"), c.File, orDashStr(got, "its own rules")))
+		}
+	}
+	return name, 0
 }
 
 // lintBriefFiles holds every brief of a many-brief add to the card lint's
@@ -1325,8 +1376,9 @@ func lintBriefReads(brief string, rs ruleSet) (modelWhy string, findings []swarm
 // max of them (0 is all) before the one MORE line.
 func lintBriefFiles(cards []sprint.CardAdd, rs ruleSet, max int, stderr io.Writer) int {
 	type finding struct {
-		file string
-		f    swarm.CardHeaderFinding
+		file  string
+		f     swarm.CardHeaderFinding
+		rules []swarm.ChildRule
 	}
 	var all []finding
 	var failed []string
@@ -1340,7 +1392,7 @@ func lintBriefFiles(cards []sprint.CardAdd, rs ruleSet, max int, stderr io.Write
 		}
 		failed = append(failed, c.File)
 		for _, f := range findings {
-			all = append(all, finding{c.File, f})
+			all = append(all, finding{c.File, f, cardRules(c.Brief, rs).rules})
 		}
 	}
 	if len(all) == 0 {
@@ -1352,7 +1404,7 @@ func lintBriefFiles(cards []sprint.CardAdd, rs ruleSet, max int, stderr io.Write
 	}
 	for _, x := range printed {
 		fmt.Fprintf(stderr, "LINT DRIFT brief %s: %s: %d: %s remedy=%s\n", oneline.Field(x.file), oneline.Field(x.f.Check), x.f.Line,
-			oneline.Escape(oneline.Cap(x.f.Excerpt, oneline.TailBytes)), oneline.Escape(swarm.ChildRemedy(rs.rules, x.f.Check)))
+			oneline.Escape(oneline.Cap(x.f.Excerpt, oneline.TailBytes)), oneline.Escape(swarm.ChildRemedy(x.rules, x.f.Check)))
 	}
 	if more {
 		fmt.Fprintf(stderr, "LINT MORE brief findings=%d remedy=add --max 0\n", len(all))
@@ -1474,7 +1526,7 @@ func lintBrief(verbName, brief string, rs ruleSet, max int, stderr io.Writer) in
 	}
 	for _, f := range printed {
 		fmt.Fprintf(stderr, "LINT DRIFT brief %s: %d: %s remedy=%s\n", oneline.Field(f.Check), f.Line,
-			oneline.Escape(oneline.Cap(f.Excerpt, oneline.TailBytes)), oneline.Escape(swarm.ChildRemedy(rs.rules, f.Check)))
+			oneline.Escape(oneline.Cap(f.Excerpt, oneline.TailBytes)), oneline.Escape(swarm.ChildRemedy(cardRules(brief, rs).rules, f.Check)))
 	}
 	if more {
 		fmt.Fprintf(stderr, "LINT MORE brief findings=%d remedy=%s --max 0\n", len(findings), verbName)

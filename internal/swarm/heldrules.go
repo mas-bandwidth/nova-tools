@@ -18,13 +18,17 @@ import (
 // runs, package fleet), so the child reads card text + rules, the shape it read when the card
 // carried them (docs/SPEC-SPRINT.md, rules by reference; docs/SPEC-CARD-CONTRACT.md).
 //
-// Which file: the one the card's stream records (`nova-sprint add --rules`, the packet's
-// rules), else fleet/child-rules.<repo>.txt when the card's REPO: names a repository that has
-// one, else fleet/child-rules.txt (RulesNameFor).
+// Which file: the one the card's stream records (the packet's rules), and none when it records
+// none: such a card carries its own rules, as every card did before. `nova-sprint add` records
+// the file of the card's repository (OwnRulesName): fleet/child-rules.txt for this repository,
+// fleet/child-rules.<repo>.txt for another that has one, and nothing for a repository with
+// none, whose cards carry their own.
 
-// DefaultRulesName is the held rules file a card is staged with when its stream records none
-// and its repository has none of its own.
+// DefaultRulesName is this repository's own rules file, fleet/child-rules.txt.
 const DefaultRulesName = "child-rules.txt"
+
+// HomeRepo is the repository whose rules file is DefaultRulesName: the one these files live in.
+const HomeRepo = "nova-tools"
 
 // HeldRulesText is the text of the held rules file name (a base name under fleet/), and
 // whether this build holds it.
@@ -51,24 +55,27 @@ func HeldRulesNames() []string {
 	return names
 }
 
-// RulesNameFor is the held rules file a member injects into a card: the stream's (stream,
-// the name its packet carries), else child-rules.<repo>.txt when the brief's REPO: (or
-// base-repo:) names a repository this build holds a file for, else DefaultRulesName.
-func RulesNameFor(stream, brief string) string {
-	return rulesNameIn(stream, brief, func(name string) bool { _, ok := HeldRulesText(name); return ok })
+// OwnRulesName is the held rules file of the repository the brief's REPO: (or base-repo:)
+// names: DefaultRulesName for HomeRepo, child-rules.<repo>.txt when this build holds one,
+// and "" for a repository with none (its cards carry their own rules). A brief that names no
+// repository has none of its own: it is unnamed, the add's held set.
+func OwnRulesName(brief, unnamed string) string {
+	return ownRulesIn(brief, unnamed, func(name string) bool { _, ok := HeldRulesText(name); return ok })
 }
 
-// rulesNameIn is RulesNameFor over held, which says whether a rules file is held.
-func rulesNameIn(stream, brief string, held func(name string) bool) string {
-	if stream != "" {
-		return stream
-	}
+// ownRulesIn is OwnRulesName over held, which says whether a rules file is held.
+func ownRulesIn(brief, unnamed string, held func(name string) bool) string {
 	repo := ReadCardBase([]byte(brief)).Named
 	repo = strings.TrimSuffix(path.Base(strings.TrimRight(repo, "/")), ".git")
-	if name := "child-rules." + repo + ".txt"; repo != "" && repo != "." && held(name) {
+	switch name := "child-rules." + repo + ".txt"; {
+	case repo == "" || repo == ".":
+		return unnamed
+	case repo == HomeRepo:
+		return DefaultRulesName
+	case held(name):
 		return name
 	}
-	return DefaultRulesName
+	return ""
 }
 
 // StagedBrief is the brief a child is handed: the card's text, then its rule set's RULES
