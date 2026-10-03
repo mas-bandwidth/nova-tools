@@ -368,7 +368,7 @@ func (s *Snapshot) MemberCtl(member string) *Card { return s.Fleet.Placed(CtlID(
 // UpMembers is the fleet members whose status is up, in row order.
 func (s *Snapshot) UpMembers() []string {
 	var out []string
-	for _, m := range s.Fleet.Rows() {
+	for _, m := range s.Members() {
 		if s.MemberCtl(m).F("status") == Up {
 			out = append(out, m)
 		}

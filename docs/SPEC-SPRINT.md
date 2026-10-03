@@ -81,7 +81,8 @@ is a job done failed, and any other word, or no such line, is a job done ok. The
 records are set from the directories, never added to, so a sync after a sync
 writes nothing and says so; a friend with no directory, or no `inbox/`, has no
 jobs; a directory that cannot be read is refused (exit 1), naming it, with
-nothing written. The sync reads the directories and never writes them, and
+nothing written. The sync reads the directories and writes in them only a
+friend's card's brief (a friend's card, below), and
 runs where they are (the coordinator's machine), by the coordinator's loop or
 by hand after a job is delivered or collected; the view reads the store, never
 a directory (the card is the persistent store). `ready` and `working` count
@@ -115,7 +116,9 @@ after 15 sec. asleep. better."; the word was `asleep` until the owner,
 2026-10-03 8:04 AM ET, looking at the friends table: "Please change 'asleep' to
 'down' so we have consistency across all tables". The fleet's rule (`MissedBeatsDown` windows of
 `BeatDeadline`, down past 45 s, section 5) is separate and stays longer: a
-machine down has its cards taken back, a friend holds none. The
+machine down has its cards taken back; a friend holds the cards dealt to
+her row (a friend's card, below) and keeps them when she goes down, the
+deadline judging them. The
 rows are in the fleet table's order (`FleetOrder`): up, then held, then down,
 each by name. The table is drawn by `where` from those records when it draws
 the frame, never stored as a table: no tick, step, epoch or clear touches it,
@@ -124,6 +127,64 @@ the stored view `sprint` has the four tables only. Its footer is the table
 layer's: the sums of `ready`, `working`, `width` and `done`, the pooled `ok%`,
 and a blank status cell, as the fleet table's; an empty friends table is its
 header, its one rule and that footer at zero, as every empty table is.
+
+**A friend's card** (the owner, 2026-10-03: "Could we try expressing the work
+left for nova-tools-1.1.0 into cards, and doing it via the sprint, but doing
+parts on friends where we would normally do friend work."). A card whose
+brief's header carries `WHO: friend` (any friend) or `WHO: friend <name>` is a
+friend's card (docs/SPEC-CARD-CONTRACT.md, the WHO line; `cardhdr.ReadWho` is
+the one parser). `add` and `brief` refuse any other WHO value, a name that is
+no row of the friends table, and `WHO: friend` while the table has no row
+(exit 2, nothing written); the primary's field `who` is `friend` or
+`friend.<name>`, written with its brief, and `card` prints `who=` on its
+`CARD OK` line (`--json` `who`). A card with no WHO line is a machine's, dealt
+as before. The tick's deal deals a friend's card ready, in the deal's stream
+turns, to a friend up (the friends' rule: not held, a beat within 15 s) below
+her width (her friends row's `width`; the cards on her row, ready and working,
+count against it): the friend it names, or for `WHO: friend` the friend up
+with the most free width, the first by name among equals, as the machines'
+rule fills the member with room; with none it waits ready, held by the
+no-stall rule as waiting for a friend (`sprint.FriendDeal`). The tick reads the
+friends' records (the roster, then the beats: two round trips) only when a
+friend's card is ready. Its work card, `<primary>.w<attempt>`, is placed on
+the friend's own fleet row, `friend.<name>` (a dot, which no member's name
+holds, so it is no machine's and no fleet verb names it), straight into
+`working` at generation 1, dealt and taken at once (nothing takes it), member
+`friend.<name>`, with the primary's fix, finding and why as a machine's deal
+carries them; its primary moves ready -> working. The fleet's members are its
+rows but the friends' (`Snapshot.Members`): presence, the rebalance, the
+level, `fleet sync`, the machines' deal and the shape a clear keeps never
+touch a friend's row, so a friend who goes quiet or is held keeps her card
+(no take-back), the no-stall rule holds it as hers whatever her status, and
+the deadline rule (not finished 2 hours from its deal) judges it as it judges
+any work card. The machines' `deal` verb refuses a friend's card, and
+`rework` of one sends its primary ready with the fix, for the tick to deal to
+a friend.
+
+`friend sync`, the coordinator's own loop where the directories are (every
+15 s), carries a friend's card across the inbox/outbox standard
+(docs/FRIENDS.md, a sprint card): for each card working on a friend's row it
+writes `inbox/<job>/BRIEF.md` when that is not there (written whole, then
+renamed into place), `<job>` the card's id as the table layer holds it at its
+epoch (`sprint.StoredID`: the card id at epoch 0, `<card>~<epoch>` after a
+clear, so a card id a clear brings back is another job), and only the
+coordinator reaches out; once `outbox/<job>/REPORT.md` is there it finishes
+the card as the friend (`finish` at the card's generation and epoch, as
+`friend.<name>`): `Verdict: LAND` with `Head: <full sha>` is a worker's ok
+finish at that head on the branch BRIEF.md names, and the card goes to review,
+its reads and its landing as any card's; `Verdict: HOLD` or `FAIL` (or
+`FAILED`, `BROKEN`) is a failed finish, the judgment "work came back failed"
+carrying `friend <name> <VERDICT>: <the report's first paragraph>`; a LAND with
+no full sha Head, or any other verdict or none, is failed too, its report
+saying what it lacks. It collects from a friend whatever her status. It prints
+`FRIEND-CARD DELIVERED friend= card= job= branch=`, `FRIEND-CARD FINISHED
+friend= card= result=ok|failed head=: <report>`, and `FRIEND-CARD REFUSED
+friend= card=: <why>` for a finish the sprint refused, and its OK line adds
+`delivered=<n> finished=<n>` when either is above zero (`--json` `delivered`,
+`finished`, `cards`). A card's job (an inbox directory named as a work card)
+is none of her jobs: `where` counts her cards from her fleet row into her
+friends row (ready, working, done ok and failed; working 0 while she is
+down), and draws no friend's row in the fleet table or its `--json`.
 
 The frame of `where` and `where --watch` shows work, friends, fleet in that order: the
 readers and merge tables are hidden from it (the owner, 2026-10-02: "I feel like
@@ -300,7 +361,7 @@ line, never FAIL: the table holds what the step wrote.
 ## 2. The cards
 
 **Primary.** One unit of work, between an issue and a pull request. One stream
-for life. Fields: stream, score, brief, rules (the held rules file the member injects, section 2's rules by reference), needs, head, attempt, fix, finding and why (a rework's, kept
+for life. Fields: stream, score, brief, rules (the held rules file the member injects, section 2's rules by reference), who (the friend its brief's WHO line names, section 1, a friend's card), needs, head, attempt, fix, finding and why (a rework's, kept
 for the attempt a rework with no member up deals later), work (its live
 work card), asked (its readers), readers (the two whose ok it was accepted on),
 tier (the tier the coordinator pinned it to, `rework --tier`: its tier and its

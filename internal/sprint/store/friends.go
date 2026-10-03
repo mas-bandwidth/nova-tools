@@ -327,3 +327,38 @@ func (st *Store) friendNames(ctx context.Context) []string {
 	}
 	return slices.Sorted(maps.Keys(r))
 }
+
+// friendSeats is every friend of the roster as the tick's deal gives her a friend's card
+// (sprint.FriendDeal): her name, width and status at now, read only when the snapshot
+// holds a friend's card ready; nil, and no read, when it holds none.
+func (st *Store) friendSeats(ctx context.Context, s *sprint.Snapshot, now time.Time) ([]sprint.FriendSeat, error) {
+	ready := false
+	for _, c := range s.Work.Column(sprint.Ready) {
+		if _, ok := sprint.FriendCard(c); ok {
+			ready = true
+			break
+		}
+	}
+	if !ready {
+		return nil, nil
+	}
+	rows, err := st.FriendRows(ctx, now)
+	if err != nil {
+		return nil, err
+	}
+	seats := make([]sprint.FriendSeat, len(rows))
+	for i, r := range rows {
+		seats[i] = sprint.FriendSeat{Name: r.Name, Width: r.Width, Status: r.Status}
+	}
+	return seats, nil
+}
+
+// FriendNames is every friend of the roster in name order (the friends table's rows), for
+// add's hold of a WHO line's name; none when the store keeps no records.
+func (st *Store) FriendNames(ctx context.Context) ([]string, error) {
+	r, kv, err := st.roster(ctx)
+	if kv == nil || err != nil {
+		return nil, err
+	}
+	return slices.Sorted(maps.Keys(r)), nil
+}

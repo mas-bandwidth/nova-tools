@@ -344,7 +344,8 @@ func (c *held) actor(pr *Card) string {
 	switch pr.Col {
 	case Working:
 		wc := s.Fleet.Placed(pr.F("work"))
-		if wc == nil || wc.F("primary") != pr.ID || (wc.Col != Ready && wc.Col != Working) || s.MemberCtl(wc.Row).F("status") != Up {
+		// a friend holds her card whatever her status (no take-back): the deadline rule judges it
+		if wc == nil || wc.F("primary") != pr.ID || (wc.Col != Ready && wc.Col != Working) || s.MemberCtl(wc.Row).F("status") != Up && !IsFriendRow(wc.Row) {
 			return ""
 		}
 		field, limit, _, _ := WorkDeadline(s, wc) // the tick's own deadline
@@ -512,6 +513,14 @@ func (c *held) waits(pr *Card) (why, root string, ok bool) {
 		}
 		return strings.Join(held, "; "), "", true
 	case Ready:
+		if name, ok := FriendCard(pr); ok {
+			// a friend's card waits for a friend up below her width (FriendDeal), whose
+			// beats and widths are the friends' records, not the tables'
+			if name == "" {
+				name = "any friend"
+			}
+			return "a friend's card, waiting for " + name + " to be up with room", "", true
+		}
 		up := s.UpMembers()
 		if len(up) == 0 {
 			return "no fleet member is up, and no judgment says so", "", false

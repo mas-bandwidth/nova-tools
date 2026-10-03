@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -52,9 +53,9 @@ friend with no directory has no jobs), and writes her job cards: each directory
 under inbox/ is a job, ready until outbox/<job>/ exists (the friend makes it
 when she starts), working until outbox/<job>/REPORT.md exists, then done; done
 failed when the report's first Verdict: or Status: line says HOLD, FAIL, FAILED
-or BROKEN, else done ok. The sync reads the directories and never writes them;
-run it on the machine that holds them, by the coordinator's loop or by hand
-after a job is delivered or collected. The sync also writes each friend's width,
+or BROKEN, else done ok. The sync reads the directories and writes in them only
+a friend's card's brief (below); run it on the machine that holds them, by the
+coordinator's loop or by hand after a job is delivered or collected. The sync also writes each friend's width,
 the jobs she works at once: her friend row's width (nova-config friend set
 <friend> --width <n>, at least 1), `+fmt.Sprint(config.DefaultFriendWidth)+` when the row names none; a row whose width is
 below 1 is refused with nothing changed. where counts the cards: ready, working,
@@ -72,7 +73,18 @@ in the last `+sprint.FriendDownAfter.String()+` is down until she beats. A frien
 working 0: her jobs stay in her outbox and count again when she beats; ready
 and done are as they were. where shows the
 friends after merge and before fleet, up first, then held, then down, each by
-name, with no load column.`) + "\n"
+name, with no load column.
+
+A friend's card: a card whose brief says WHO: friend (any friend) or
+WHO: friend <name> (a row of the friends table; add and brief refuse any other)
+is dealt by the tick to a friend up below her width, the one it names or the
+one with the most free width, on her own fleet row friend.<name>, straight into
+working; no machine is dealt it, and no presence or rebalance takes it back.
+friend sync writes it as <friend>-working/inbox/<card>/BRIEF.md (its STATUS line
+names the card, the branch to push and the report), and finishes it from
+outbox/<card>/REPORT.md: Verdict: LAND with Head: <full sha> goes to review at
+that head; Verdict: HOLD or FAIL is work that came back failed, with the
+report's first paragraph. card prints who=; where counts it on her friends row.`) + "\n"
 }
 
 // friendsFn reads nova-config's friend rows (friend sync, friends clean), given
@@ -107,8 +119,8 @@ func friendJobs(dir string) ([]store.FriendJob, error) {
 	}
 	var jobs []store.FriendJob
 	for _, e := range entries {
-		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
-			continue
+		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") || isCardJob(e.Name()) {
+			continue // a sprint card's job is counted from the fleet table (friendcards.go)
 		}
 		job := store.FriendJob{ID: e.Name(), State: store.JobReady}
 		out := filepath.Join(dir, "outbox", e.Name())
@@ -135,24 +147,28 @@ func friendJobs(dir string) ([]store.FriendJob, error) {
 // case, is a job done failed, and any other word, or no such line, is a job
 // done ok.
 func reportOK(report string) bool {
-	for _, line := range strings.Split(report, "\n") {
-		key, rest, ok := strings.Cut(strings.TrimLeft(line, "#*-_ \t"), ":")
-		if !ok {
-			continue
-		}
-		switch strings.ToLower(strings.TrimSpace(key)) {
-		case "verdict", "status":
-		default:
-			continue
-		}
-		word, _, _ := strings.Cut(strings.TrimSpace(strings.TrimLeft(rest, "*_ \t")), " ")
-		switch strings.ToUpper(strings.Trim(word, "*_.,;:!")) {
-		case "HOLD", "FAIL", "FAILED", "BROKEN":
-			return false
-		}
+	v, ok := reportValue(report, "verdict", "status")
+	if !ok {
 		return true
 	}
+	switch strings.ToUpper(strings.Trim(firstWord(v), "*_.,;:!")) {
+	case "HOLD", "FAIL", "FAILED", "BROKEN":
+		return false
+	}
 	return true
+}
+
+// reportValue is the value of a report's first line whose key, after any markdown marks
+// (#, *, -, _, spaces), is one of keys in any case: the rest of the line after the colon;
+// false when no line has one.
+func reportValue(report string, keys ...string) (string, bool) {
+	for _, line := range strings.Split(report, "\n") {
+		key, rest, ok := strings.Cut(strings.TrimLeft(line, "#*-_ \t"), ":")
+		if ok && slices.Contains(keys, strings.ToLower(strings.TrimSpace(key))) {
+			return strings.TrimSpace(rest), true
+		}
+	}
+	return "", false
 }
 
 func (a *app) cmdFriendSync(args []string, stdout, stderr io.Writer) int {
@@ -212,11 +228,33 @@ func (a *app) cmdFriendSync(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return a.readFailed(name, err, stderr)
 	}
+	// the friends' sprint cards: each one dealt to her delivered into her inbox, each one
+	// she reported on finished from her outbox (friendcards.go)
+	delivered, finished := 0, 0
+	var said []string
+	say := func(l string) {
+		said = append(said, l)
+		if !c.json {
+			fmt.Fprintln(stdout, l)
+		}
+	}
+	for _, s := range specs {
+		d, f, err := a.friendCardsOf(ctx, st, s.Name, filepath.Join(*root, s.Name+"-working"), say)
+		delivered, finished = delivered+d, finished+f
+		if err != nil {
+			fmt.Fprintf(stderr, "%s %s: the sprint cards of %s cannot be delivered or collected: %s; the friends table is synced; run: nova-sprint friend sync\n", prog, name, s.Name, oneline.Escape(err.Error()))
+			return 1
+		}
+	}
 	line := fmt.Sprintf("FRIEND-SYNC OK added=%s removed=%s updated=%s friends=%d jobs=%d", orDashStr(strings.Join(added, ","), "-"), orDashStr(strings.Join(removed, ","), "-"), orDashStr(strings.Join(updated, ","), "-"), len(rows), jobs)
-	if len(added)+len(removed)+len(updated) == 0 {
+	if delivered+finished > 0 {
+		line += fmt.Sprintf(" delivered=%d finished=%d", delivered, finished)
+	}
+	if len(added)+len(removed)+len(updated)+delivered+finished == 0 {
 		line += ": nothing to do, the friends table already matches the config and the directories"
 	}
-	sayOK(stdout, c.json, name, line, map[string]any{"added": orEmpty(added), "removed": orEmpty(removed), "updated": orEmpty(updated), "friends": len(rows), "jobs": jobs})
+	sayOK(stdout, c.json, name, line, map[string]any{"added": orEmpty(added), "removed": orEmpty(removed), "updated": orEmpty(updated), "friends": len(rows), "jobs": jobs,
+		"delivered": delivered, "finished": finished, "cards": orEmpty(said)})
 	return 0
 }
 

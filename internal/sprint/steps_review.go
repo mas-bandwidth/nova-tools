@@ -953,7 +953,8 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		// the next member round the fleet with room (width.go; tla/DirtyTick.tla, WidthRespected):
 		// none up, or none below its width, and the primary waits ready for the tick's deal
 		m := ""
-		if len(up) > 0 {
+		_, friend := FriendCard(c)
+		if len(up) > 0 && !friend {
 			m = rr.next(up, q, room, reworkAvoid(s, c))
 		}
 		if m != "" {
@@ -970,7 +971,10 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 			u.Moved = strings.Replace(u.Moved, " review -> working", " review -> working (rework)", 1)
 		} else {
 			later := "no fleet member is up: start delegates it"
-			if len(up) > 0 {
+			switch {
+			case friend:
+				later = "a friend's card: the tick deals it to a friend up with room"
+			case len(up) > 0:
 				later = "no fleet member has room: the tick deals it when one has"
 			}
 			u = Unit{Key: c.ID, Stream: c.Row, Changes: append(retire, change(Work, moveEntry(c, c.Row, Ready, set, append(unset, "result")...))),

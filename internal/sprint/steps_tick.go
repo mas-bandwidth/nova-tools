@@ -138,6 +138,10 @@ type TickReq struct {
 	// Started is the machine's first start of the sprint's epoch, the time
 	// the done part's note counts from; zero is not known.
 	Started time.Time
+	// Friends is each friend the deal may give a friend's card to, read by
+	// the binding with the tick when a friend's card is ready (FriendDeal);
+	// nil is none, and a friend's card waits ready.
+	Friends []FriendSeat
 }
 
 func (r TickReq) who() string {
@@ -512,7 +516,13 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	var conds []cond
 	unserved, whyOf := map[string][]string{}, map[string]string{}
 	up := s.UpMembers()
+	var friends []*Card
 	for _, c := range s.Work.Column(Ready) {
+		if _, ok := FriendCard(c); ok && !IsSentinel(c) {
+			// a friend's card: dealt to a friend below, never to a machine (friend_deal.go)
+			friends = append(friends, c)
+			continue
+		}
 		if wc := AtRedealBound(s, c); wc != nil {
 			conds = append(conds, cond{typ: NBound, stream: c.Row, card: wc.ID, primaries: []string{c.ID}, what: boundWhat(wc, c.ID)})
 			continue
@@ -592,6 +602,10 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 			p = Deal(s, DealReq{Sel: Sel{Only: ids}, Who: r.who()})
 		}
 	}
+	if len(friends) > 0 {
+		fp := FriendDeal(s, streamTurns(friends, streamRound(s, PropStreamIndex)), r.Friends)
+		p.Rows, p.Units, p.Refused = append(p.Rows, fp.Rows...), append(p.Units, fp.Units...), append(p.Refused, fp.Refused...)
+	}
 	restWrites(&p, s, rests, r.who())
 	due += notify(&p, s, conds, []string{NNoMember, NBound, NNoRoute}, r)
 	return p, due
@@ -618,7 +632,7 @@ func readsWithoutRoute(s *Snapshot, pr *Card) bool {
 // not a missing beat, keeps the fleet down).
 func beatingHeld(s *Snapshot, r TickReq) bool {
 	beats := false
-	for _, m := range s.Fleet.Rows() {
+	for _, m := range s.Members() {
 		if !r.Beats[m].Fresh(s.Now) {
 			continue
 		}

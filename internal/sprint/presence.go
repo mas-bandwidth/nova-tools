@@ -44,10 +44,11 @@ const (
 	// and at 9:46 PM: "then after 15 sec. asleep. better." The word was
 	// asleep until the owner, 2026-10-03 8:04 AM ET, looking at the friends
 	// table: "Please change 'asleep' to 'down' so we have consistency across
-	// all tables". A friend holds no
-	// card of the sprint, so nothing is taken back when she goes down, and the
-	// fleet's MissedBeatsDown windows (kept long so a working machine is not
-	// taken down by one slow store call) do not apply to her.
+	// all tables". A friend holds the cards dealt to her row (FriendRow) and
+	// keeps them when she goes down: nothing is taken back, the deadline
+	// judges them. The fleet's MissedBeatsDown windows (kept long so a
+	// working machine is not taken down by one slow store call) do not apply
+	// to her.
 	FriendDownAfter = 15 * time.Second
 )
 
@@ -195,7 +196,7 @@ func presence(s *Snapshot, r TickReq) (Plan, int) {
 		return Plan{}, 0
 	}
 	var live, ups, downs []string
-	for _, m := range s.Fleet.Rows() {
+	for _, m := range s.Members() {
 		ctl := s.MemberCtl(m)
 		if ctl == nil {
 			continue
@@ -228,7 +229,7 @@ func presence(s *Snapshot, r TickReq) (Plan, int) {
 		p.Units = append(p.Units, q.Units...)
 		p.Refused = append(p.Refused, q.Refused...)
 	}
-	receivers := orderLike(s.Fleet.Rows(), all, "")
+	receivers := orderLike(s.Members(), all, "")
 	q, widths := memberLoads(s, receivers), memberWidths(s, receivers)
 	for _, m := range downs {
 		why := "no beat for " + (MissedBeatsDown * BeatDeadline).String()

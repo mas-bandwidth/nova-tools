@@ -898,6 +898,11 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	if err := pinned.readerStatesInto(ctx, &first); err != nil {
 		return last, err
 	}
+	// the friends the deal may give a friend's card to, read only when one is ready
+	// (sprint.FriendDeal): a sprint with none reads nothing more
+	if req.Friends, err = pinned.friendSeats(ctx, &first, now); err != nil {
+		return last, err
+	}
 	t := &tickRun{st: st, ctx: ctx, res: res, req: req, at: at, snap: &first, queues: map[string]int{}, twin: twin, readers: first.ReaderStates}
 	defer func() { res.RouteTrips = t.routes.Trips }()
 	updates := st.Updates

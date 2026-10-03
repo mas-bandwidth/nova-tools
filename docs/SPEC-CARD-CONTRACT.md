@@ -139,6 +139,18 @@ finish reports failed; JOB.md lists what was staged. Each source opens through a
 recipes directory, so no path component leaves it, a symlinked directory included; the refusal
 names the `Stage:` path and the reason.
 
+**The WHO line** (the owner, 2026-10-03: "Could we try expressing the work left for
+nova-tools-1.1.0 into cards, and doing it via the sprint, but doing parts on friends where we
+would normally do friend work."). A header line `WHO: friend` makes the card a friend's, dealt to
+any friend up with room; `WHO: friend <name>` deals it to that friend, her name a row of the
+sprint's friends table. A card with no WHO line is a machine's and is framed as this page says;
+a friend's card is never framed or staged: the sprint delivers it to her inbox as
+`inbox/<card>/BRIEF.md` and finishes it from her `outbox/<card>/REPORT.md` (docs/SPEC-SPRINT.md
+section 1, a friend's card; docs/FRIENDS.md, a sprint card). `cardhdr.ReadWho` is the one parser:
+the key in any case, under line 1 and above the first blank line; `nova-sprint add` and `brief`
+refuse any other value, and a name the friends table lacks (`TestReadWhoReadsAFriendOrNone`,
+`TestAddHoldsTheWhoLineToTheFriendsTable`).
+
 ## 3. The result shape
 
 The child's end is one shape, one `key: value` per line, then free text. `typedrec.ParseCardResult`
