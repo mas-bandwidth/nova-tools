@@ -378,7 +378,7 @@ func TestMigrationEighteenGivesEveryFriendAWidthOfEight(t *testing.T) {
 		require.NoError(t, st.applyOne(ctx, m), "migration %s", m.Name)
 	}
 	require.Equal(t, "0018_friend_width.sql", eighteen.Name)
-	six := []string{"alex", "emma", "johnny", "rowan", "stella", "zhi"}
+	six := []string{"f1", "f2", "f3", "f4", "f5", "f6"}
 	for _, f := range six {
 		_, err = st.db.ExecContext(ctx, `INSERT INTO config.friends (name, slots, tiers, roles) VALUES ($1, 2, 'flash', '')`, f)
 		require.NoError(t, err, f)
@@ -393,20 +393,20 @@ func TestMigrationEighteenGivesEveryFriendAWidthOfEight(t *testing.T) {
 		}
 		return out
 	}
-	assert.Equal(t, map[string]string{"alex": "8", "emma": "8", "johnny": "8", "rowan": "8", "stella": "8", "zhi": "8"}, widths(), "every friend there before 0018 has width 8")
+	assert.Equal(t, map[string]string{"f1": "8", "f2": "8", "f3": "8", "f4": "8", "f5": "8", "f6": "8"}, widths(), "every friend there before 0018 has width 8")
 
-	_, err = st.db.ExecContext(ctx, `INSERT INTO config.friends (name, slots, tiers, roles) VALUES ('cairn', 2, 'flash', '')`)
+	_, err = st.db.ExecContext(ctx, `INSERT INTO config.friends (name, slots, tiers, roles) VALUES ('f7', 2, 'flash', '')`)
 	require.NoError(t, err)
-	_, err = st.db.ExecContext(ctx, `UPDATE config.friends SET width = 3 WHERE name = 'zhi'`)
+	_, err = st.db.ExecContext(ctx, `UPDATE config.friends SET width = 3 WHERE name = 'f6'`)
 	require.NoError(t, err)
-	_, err = st.db.ExecContext(ctx, `UPDATE config.friends SET width = 0 WHERE name = 'emma'`)
+	_, err = st.db.ExecContext(ctx, `UPDATE config.friends SET width = 0 WHERE name = 'f2'`)
 	require.Error(t, err, "a width below 1 is refused by the CHECK")
 	_, err = st.db.ExecContext(ctx, eighteen.SQL)
 	require.NoError(t, err, "the file runs again")
 	got := widths()
-	assert.Equal(t, "8", got["cairn"], "a row added later takes the default")
-	assert.Equal(t, "3", got["zhi"], "a width set since is kept when the file runs again")
-	assert.Equal(t, "8", got["emma"])
+	assert.Equal(t, "8", got["f7"], "a row added later takes the default")
+	assert.Equal(t, "3", got["f6"], "a width set since is kept when the file runs again")
+	assert.Equal(t, "8", got["f2"])
 }
 
 // TestPostgresStoreKeepsTheContract runs the one store contract the Mem

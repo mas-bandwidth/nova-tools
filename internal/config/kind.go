@@ -265,7 +265,7 @@ var Kinds = []*Kind{
 		// know").
 		Name:  KindFriend,
 		Table: "friends",
-		Doc:   "an AI friend: how wide she runs, which tiers she can do, her roles, and her width, the jobs she works at once",
+		Doc:   "an AI friend: her slots, which tiers she can do, her roles, and her width, the jobs she works at once",
 		Fields: []Field{
 			{Name: "slots", Type: TypeInt, Required: true, Help: "her desired slots, under the ceiling of the machine her beat reports; no machine's width"},
 			{Name: "tiers", Type: TypeList, Enum: Tiers, Required: true, Help: "which tiers she can do: comma list of " + strings.Join(Tiers, ", ")},

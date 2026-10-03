@@ -225,8 +225,8 @@ FLEET name=fleet store=m2 coordinator=m1 redis_port=6380 pg_dsn=postgres://nova_
 
 ### friend
 
-What someone decides for a friend: how wide she runs, which tiers she can
-do, her roles, and her width, the jobs she works at once. "Anything that a friend would just know, is runtime redis
+What someone decides for a friend: her slots, which tiers she can do, her
+roles, and her width, the jobs she works at once. "Anything that a friend would just know, is runtime redis
 data": where she runs, her harness, her logins and her wake path are her own
 presence's, never here. Who coordinates is the sprint row's.
 

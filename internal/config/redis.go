@@ -431,8 +431,9 @@ func (a *RedisApplier) writeFriend(ctx context.Context, row Row, prev View, acto
 	if writeRoles {
 		roles = pipe.FCall(ctx, "ns_friend_roles", nil, f, row.Fields["roles"], actor, idem)
 	}
-	// An error the roles call did not answer (the width's, the connection's)
-	// is returned here; the roles call's own is read below, word by word.
+	// An error of the width's own is returned here; one the roles call
+	// carries (its refusal, or the connection's, which every command of the
+	// pipe carries) is read below with the roles call's words.
 	if err := redisconn.Exec(ctx, pipe); err != nil && (roles == nil || roles.Err() == nil) {
 		return fmt.Errorf("redis: friend %s width: %w", f, err)
 	}

@@ -387,7 +387,7 @@ config.fleet             (name PK = 'fleet', store -> machines.name,
                           created_at, updated_at;
                           the one row inserted by the migration)
 config.friends           (name PK, slots, tiers, roles, created_at, updated_at;
-                          width added by 0018, every row there set to 8; integer NOT NULL DEFAULT 8
+                          width added by 0018, integer NOT NULL DEFAULT 8, which fills every row there
                           CHECK (width >= 1))
 config.sprint            (name PK = 'sprint', coordinator -> friends.name,
                           created_at, updated_at; the one row inserted by
