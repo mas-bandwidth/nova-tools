@@ -282,6 +282,8 @@ MCCardContractBrokenUnbounded.cfg	MCCardContract.tla	invariant	RedealBound	ignor
 MCCardContractBrokenPreviousOnly.cfg	MCCardContract.tla	invariant	NoPushedWorkUnreachable	ignore-terminal	cardcontract	required	-
 MCCardContractBrokenStagingFailed.cfg	MCCardContract.tla	invariant	StagingIsNotFailedWork	ignore-terminal	cardcontract	required	-
 MCCardContractBrokenLevelRefuser.cfg	MCCardContract.tla	invariant	NeverOnARefuser	ignore-terminal	cardcontract	required	-
+MCCardContractBrokenOldHead.cfg	MCCardContract.tla	invariant	ReworkStagedAtTheTip	ignore-terminal	cardcontract	required	-
+MCCardContractBrokenSilentConflict.cfg	MCCardContract.tla	invariant	NoPushedWorkUnreachable	ignore-terminal	cardcontract	required	-
 MCRouteIndex.cfg	MCRouteIndex.tla	pass	-	ignore-terminal	routeindex	required	-
 MCRouteIndexBrokenRandom.cfg	MCRouteIndex.tla	invariant	RouteFair	ignore-terminal	routeindex	required	-
 MCRouteIndexBrokenNoAdvance.cfg	MCRouteIndex.tla	invariant	ExcludedNeverDrawn	ignore-terminal	routeindex	required	-

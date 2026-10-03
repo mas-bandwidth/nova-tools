@@ -38,8 +38,12 @@ normally do friend work."). It arrives as a job like any other:
 STATUS: nova-sprint card <card>, epoch <e>, attempt <n>; push your work to the branch sprint/<card>.g<gen>.e<e>; when done, write outbox/<card>/REPORT.md with Verdict: LAND|HOLD|FAIL and Head: <sha>
 ```
 
-then the working-directory line below, a later attempt's start and why it
-exists (`This attempt exists because:`, `A reader found:`, `The coordinator
+then the working-directory line below, a later attempt's start (the current tip
+of the card's base branch on origin, never an older base, with the work of the
+last attempt that pushed carried onto it by her, redone where it does not
+apply, and the Head she reports on that tip; nothing checks that descent, and
+the sprint's only check of her finish is that Head is origin's tip of her
+branch) and why it exists (`This attempt exists because:`, `A reader found:`, `The coordinator
 asks:`), a blank line, and the card's brief. What a friend does with it:
 
 1. Work in `jobs/<card>/` as for any job; commit, and push the commit to the

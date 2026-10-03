@@ -82,7 +82,7 @@ func stagedRead(t *testing.T, bars cardcontract.Frame) (cfg nativeRunConfig, job
 	require.NoError(t, err)
 	cfg = nativeRunConfig{slotDir: slot, root: root, model: fr.Model, frame: fr, label: "w.r1", card: readCard,
 		resultsRoot: filepath.Join(root, "results", "w.r1")}
-	start, err = installFrame(cfg, job, st.BaseSha)
+	start, err = installFrame(cfg, job, st.BaseSha, nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, start)
 	return cfg, job, start, head

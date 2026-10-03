@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -169,6 +170,19 @@ func (e *caseEnv) directRun(t *testing.T, p member.Packet, harness, model string
 	return r, push, fin, why
 }
 
+// landedOnMain lands a commit on origin's main after pushedWork (in its clone), as another card
+// landing moves a stream's base, and returns main's new tip.
+func landedOnMain(t *testing.T, e *caseEnv) string {
+	t.Helper()
+	w := filepath.Join(e.dir, "w")
+	gitAs(t, w, "switch", "-q", "-C", "main", "origin/main")
+	write(t, filepath.Join(w, "g"), "landed since\n")
+	gitAs(t, w, "add", "g")
+	gitAs(t, w, "commit", "-q", "-m", "landed since")
+	runGit(t, w, "push", "-q", "origin", "main")
+	return gitAs(t, w, "rev-parse", "HEAD")
+}
+
 // pushedWork puts attempt one's commit on origin's sprint/a-1.w1 and returns it.
 func pushedWork(t *testing.T, e *caseEnv) string {
 	t.Helper()
@@ -303,6 +317,54 @@ func TestAReworkIsOkOnlyWithACommitOfItsOwn(t *testing.T) {
 			assert.Equal(t, tc.fin, fin, "push %+v: %s", push, why)
 		})
 	}
+}
+
+// A rework whose base moved after attempt one is staged, end to end (the member's frame,
+// native's stage, the slot's staged commit, the member's push), at a new carry on the base's
+// tip, said by native's STAGE CARRY line: a finish from that commit is ok, and one from attempt
+// one's old head is refused for not descending from the staged commit (nova-tools#5215; red
+// when native stages a rework as a first attempt). A read at attempt two stays on its head.
+func TestAReworkAfterTheBaseMovedIsStagedAtANewCarryOnItsTip(t *testing.T) {
+	t.Parallel()
+	staged := regexp.MustCompile(`STAGED ([0-9a-f]{40}) parent ([0-9a-f]{40})`)
+	for _, tc := range []struct {
+		name, body string
+		fin        member.Finish
+		why        string
+	}{
+		{"from the staged commit", "cd repo && echo two >> f && git commit -q -am two && git push && cd .. && ", member.FinishOK, ""},
+		{"from the old head", "cd repo && git checkout -q -B old \"$H1\" && echo two >> f && git commit -q -am two && git push origin old && cd .. && ",
+			member.FinishFailed, "does not descend from the staged commit"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newCaseEnv(t, false)
+			h1 := pushedWork(t, e)
+			tip := landedOnMain(t, e)
+
+			h := e.script(t, "H1="+h1+`; echo "STAGED $(git -C repo rev-parse HEAD) parent $(git -C repo rev-parse HEAD^)" >&2; `+tc.body+`gh pr create --title T2 --body B2 >&2`)
+			p := member.Packet{Card: "a-1.w2", Kind: "work", As: "m1", Primary: "a-1", Stream: "a", Attempt: 2, Gen: 2, Epoch: 1,
+				Brief: e.brief(), Branch: "sprint/a-1.w2", Base: "sprint/a-1.w1", BaseHead: h1, BaseFrom: 1, Fix: "fix the thing"}
+			r, push, fin, why := e.directRun(t, p, h, "anthropic/claude-x")
+			m := staged.FindStringSubmatch(e.log())
+			require.NotNil(t, m, e.log())
+			assert.NotEqual(t, h1, m[1], "the rework is not staged at attempt one's head")
+			assert.Equal(t, tip, m[2], "the staged commit is one carry on the base's new tip")
+			assert.Equal(t, "staged="+m[1][:12]+" tip="+tip[:12]+" of main carry=carried attempt=1 prev="+h1[:12], r.Carry, "native's STAGE CARRY line")
+			assert.Equal(t, tc.fin, fin, "push %+v: %s", push, why)
+			assert.Contains(t, why, tc.why)
+		})
+	}
+
+	e := newCaseEnv(t, false)
+	h1 := pushedWork(t, e)
+	landedOnMain(t, e)
+	h := e.script(t, `echo "READ STAGED $(git -C repo rev-parse HEAD)" >&2`)
+	read := member.Packet{Card: "a-1.r2", Kind: "read", As: "r1", Primary: "a-1", Stream: "a", Attempt: 2, Gen: 1, Epoch: 1,
+		Brief: e.brief(), Head: h1, WorkBranch: "sprint/a-1.w1", WorkBase: "main"}
+	r, _, _, _ := e.directRun(t, read, h, "anthropic/claude-x")
+	assert.Contains(t, e.log(), "READ STAGED "+h1, "a read at attempt two is staged at the head it reads")
+	assert.Empty(t, r.Carry)
 }
 
 // A claude child that, after gh pr create, also writes RESULT.md as an older
