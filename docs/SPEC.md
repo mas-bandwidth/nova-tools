@@ -1413,7 +1413,7 @@ prose: identifiers and code snippets in fences and backticks are skipped.
 ### hygiene — is this branch's range clean, before anybody reads it
 
 ```
-nova-check hygiene --repo <dir> --base <ref> --head <ref> --identity "<Name> <email>"[,...] [--paths <glob>[,<glob>...]] [--kind <card kind>] [--max <n>] [--timeout <seconds>]
+nova-dev hygiene --repo <dir> --base <ref> --head <ref> --identity "<Name> <email>"[,...] [--paths <glob>[,<glob>...]] [--kind <card kind>] [--max <n>] [--timeout <seconds>]
 ```
 
 **Why it exists.** Four mechanical questions decide whether a range is clean
@@ -1451,10 +1451,10 @@ able to give.
 
 ```
 HYGIENE FINDING reason=<identity|out-of-path|stray-file|secret> at=<sha12>|<path>|<path>:<line>: <why>
-HYGIENE MORE kind=finding shown=<n> total=<t> nova-check hygiene --repo <dir> … --max 0
+HYGIENE MORE kind=finding shown=<n> total=<t> nova-dev hygiene --repo <dir> … --max 0
 HYGIENE OK base=<ref> head=<ref> paths=<glob,…|-> findings=0
 HYGIENE NO base=<ref> head=<ref> paths=<glob,…|-> findings=<n>
-nova-check hygiene: <what was wrong>; run: nova-check help
+nova-dev hygiene: <what was wrong>; run: nova-dev help
 ```
 
 The listing is capped at `--max` (default 20, `0` for all) and counted, like
@@ -1497,9 +1497,9 @@ it is shown is not a check.
 ### dogfood — has anybody but the author run it
 
 ```
-nova-check dogfood ledger (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] [--git-timeout <s>] [--tools-timeout <s>] [--fail-max <n>]
-nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] [--closes <id>] --receipts <dir> [--tools-timeout <s>] [--fail-max <n>]
-nova-check dogfood gate   (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--shipped <cmd dir>] [--authors <file>] [--repo <dir>] [--require-all] [--fail-max <n>]
+nova-dev dogfood ledger (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] [--git-timeout <s>] [--tools-timeout <s>] [--fail-max <n>]
+nova-dev dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] [--closes <id>] --receipts <dir> [--tools-timeout <s>] [--fail-max <n>]
+nova-dev dogfood gate   (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--shipped <cmd dir>] [--authors <file>] [--repo <dir>] [--require-all] [--fail-max <n>]
 ```
 
 **Why it exists.** *A tool is not finished until it is tested, dogfooded by
@@ -1674,7 +1674,7 @@ different lane.
 ### convergence — are we converging
 
 ```
-nova-check convergence --repo <owner/name> --ledger <md> --receipts <dir> --retired <file> --since <RFC3339|24h>
+nova-dev convergence --repo <owner/name> --ledger <md> --receipts <dir> --retired <file> --since <RFC3339|24h>
       [--bin <dir>] [--repo-dir <dir>] [--batch-logs <dir>] [--versions <tsv>] [--certs <tsv>]
       [--state <file>] [--by <name>] [--json] [--timeout <n>]
 ```

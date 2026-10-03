@@ -1343,7 +1343,7 @@ yet — a new command joins the standard on the day it appears, not the day
 somebody remembers a table. The skip map `notYetOnTheStandard` is EMPTY and that
 is the point: a skip that outlives the branch it names excuses a tool from the
 standard for good. The same lesson from the other side: a tool whose `CLI.md`
-section is prose-shaped contributes ZERO rows to `nova-check dogfood`.
+section is prose-shaped contributes ZERO rows to `nova-dev dogfood`.
 **The test.** `TestEveryCommandMeetsTheOnboardingStandard`
 (`internal/ci/onboarding_test.go`).
 **Its allowlist.** `notYetOnTheStandard` in the test file: empty, and an entry
