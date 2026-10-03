@@ -162,19 +162,15 @@ func newFnHarness(t *testing.T) *fnHarness {
 			return ""
 		},
 	}
+	h.d.fnOpen = h.open
 	return h
 }
 
-// run is nova-redis over the harness: fn through fnVerb and the harness's
-// store, anything else through run().
+// run is nova-redis over the harness: fn through the harness's store, anything
+// else through run().
 func (h *fnHarness) run(args ...string) (int, string, string) {
 	var out, errb bytes.Buffer
-	var code int
-	if len(args) > 0 && args[0] == "fn" {
-		code = fnVerb(args[1:], &out, &errb, h.d, h.open)
-	} else {
-		code = run(args, &out, &errb, h.d)
-	}
+	code := run(args, &out, &errb, h.d)
 	return code, out.String(), errb.String()
 }
 
@@ -361,10 +357,10 @@ func TestFnRefusesBeforeTheDial(t *testing.T) {
 	}{
 		{[]string{"fn"}, "nova-redis fn REFUSED: no subverb given; load puts this binary's function library on the store, check compares the store's with it; run: nova-redis help fn\n"},
 		{[]string{"fn", "deploy", "--addr", "127.0.0.1:6379"}, "nova-redis fn REFUSED: unknown subverb \"deploy\"; want load or check; run: nova-redis help fn\n"},
-		{[]string{"fn", "load"}, "nova-redis fn load REFUSED: --addr is required: the store's address as <host:port>, such as 127.0.0.1:6379 (no default); refusing to guess; run: nova-redis help fn load\n"},
-		{[]string{"fn", "check", "--addr", "127.0.0.1"}, "nova-redis fn check REFUSED: --addr \"127.0.0.1\" is not <host:port>; refusing to guess; run: nova-redis help fn check\n"},
-		{[]string{"fn", "check", "--addr", ":6379"}, "nova-redis fn check REFUSED: --addr \":6379\" names no host; refusing to guess localhost; run: nova-redis help fn check\n"},
-		{[]string{"fn", "load", "--addr", "127.0.0.1:6379", "extra"}, "nova-redis fn load REFUSED: unexpected argument \"extra\"; every input is a flag; run: nova-redis help fn load\n"},
+		{[]string{"fn", "load"}, "FN-LOAD REFUSED: --addr is required: the store's address as <host:port>, such as 127.0.0.1:6379 (no default); refusing to guess; run: nova-redis help\n"},
+		{[]string{"fn", "check", "--addr", "127.0.0.1"}, "FN-CHECK REFUSED: --addr \"127.0.0.1\" is not <host:port>; refusing to guess; run: nova-redis help\n"},
+		{[]string{"fn", "check", "--addr", ":6379"}, "FN-CHECK REFUSED: --addr \":6379\" names no host; refusing to guess localhost; run: nova-redis help\n"},
+		{[]string{"fn", "load", "--addr", "127.0.0.1:6379", "extra"}, "FN-LOAD REFUSED: unexpected argument \"extra\"; every input is a flag; run: nova-redis help\n"},
 	}
 	for _, c := range cases {
 		h := newFnHarness(t)
@@ -447,7 +443,7 @@ func TestEveryVerbLogsInAsTheUserItIsGiven(t *testing.T) {
 		user, password, _ := strings.Cut(c.want, "/")
 
 		fs := flag.NewFlagSet("login", flag.ContinueOnError)
-		l := loginFlags(fs)
+		l := loginFromFlags(fs)
 		{
 			err := fs.Parse(append([]string{"--addr", "127.0.0.1:1"}, c.flag...))
 			require.NoError(t, err, err)
@@ -477,17 +473,13 @@ func TestEveryVerbLogsInAsTheUserItIsGiven(t *testing.T) {
 			}
 			var got []string
 			var out, errb bytes.Buffer
-			var code int
-			if verb[0] == "fn" {
-				code = fnVerb(args[1:], &out, &errb, d, func(_ context.Context, store login) (redis.UniversalClient, func() error, error) {
-					o := store.options(d)
-					got = append(got, o.User+"/"+d.getenv(o.PasswordEnv))
-					s := newFnStore()
-					return s, s.Close, nil
-				})
-			} else {
-				code = run(args, &out, &errb, d)
+			d.fnOpen = func(_ context.Context, store login) (redis.UniversalClient, func() error, error) {
+				o := store.options(d)
+				got = append(got, o.User+"/"+d.getenv(o.PasswordEnv))
+				s := newFnStore()
+				return s, s.Close, nil
 			}
+			code := run(args, &out, &errb, d)
 			if c.refusal != "" {
 				verbName := verb[0]
 				if verb[0] == "fn" {
@@ -532,7 +524,7 @@ func TestLoginFlagsEchoWhatWasGiven(t *testing.T) {
 	}
 	for _, c := range cases {
 		fs := flag.NewFlagSet("fn check", flag.ContinueOnError)
-		l := loginFlags(fs)
+		l := loginFromFlags(fs)
 		{
 			err := fs.Parse(c.args)
 			require.NoError(t, err, err)
