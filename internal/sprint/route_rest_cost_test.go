@@ -7,22 +7,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// restWorld is the cold read's scale (PR 5179): one member of width 8, two pro routes,
-// 1000 pro primaries added (16 dealt, 984 ready the tick does not deal) and 3000 work
+// restWorld is the cold read's scale (PR 5179): one member of width 8, two flash routes,
+// 1000 flash primaries added (16 dealt, 984 ready the tick does not deal) and 3000 work
 // cards done on the routes beside them: every tick's held rule asks noRoute of each
 // ready primary.
 func restWorld(t testing.TB) *Snapshot {
 	w := newWorld(t, "reader-a", "reader-b")
-	for _, name := range []string{"pro-a", "pro-b"} {
-		w.s.Routes = append(w.s.Routes, Route{Name: name, Tier: "pro", Provider: "p", Model: name, Enabled: true})
+	for _, name := range []string{"flash-a", "flash-b"} {
+		w.s.Routes = append(w.s.Routes, Route{Name: name, Tier: "flash", Provider: "p", Model: name, Enabled: true})
 	}
 	w.must(FleetStep(w.s, FleetReq{Op: "up", Member: "m1", Width: 8}))
-	w.must(Add(w.s, AddReq{Stream: "s1", Count: 1000, Brief: "c: the work tier: pro\nThe task.\n"}))
+	w.must(Add(w.s, AddReq{Stream: "s1", Count: 1000, Brief: "c: the work tier: flash\nThe task.\n"}))
 	p, _ := TickDeal(w.s, TickReq{})
 	w.do(p)
 	for i := range 3000 {
 		w.s.Fleet.Put(&Card{ID: fmt.Sprintf("old-%d.w1", i), Row: "m1", Col: DoneOK, Fields: map[string]string{
-			"ok": "yes", FieldRoute: []string{"pro-a", "pro-b"}[i%2], "finished": stamp(t0)}})
+			"ok": "yes", FieldRoute: []string{"flash-a", "flash-b"}[i%2], "finished": stamp(t0)}})
 	}
 	return w.s
 }

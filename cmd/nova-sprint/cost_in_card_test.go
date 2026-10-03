@@ -21,6 +21,7 @@ func TestTheCardCarriesEveryConsumerWhoeverIsRemoved(t *testing.T) {
 	ta.ok("init --readers reader-a,reader-b,reader-c --members m1:8")
 	ta.m.SetRoutes(costRoutes())
 	ta.ok("add --stream s1 --count 1 --brief-file " + proBriefFile(t))
+	ta.tierNow("s1-1", "pro") // read by two readers: a pro card on pro
 	ta.deal(1)
 	use := func(usd string) string {
 		return " --usage 'input=10 output=1 actual_usd=" + usd + " actual_by=harness'"

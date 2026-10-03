@@ -60,6 +60,9 @@ func TestARefusedReturnedReadMovesNoRouteTheNextPrimaryDraws(t *testing.T) {
 		r.Deadline = 600 // seconds, as the route row holds it
 		w.s.Routes = append(w.s.Routes, r)
 	}
+	for _, id := range []string{"s1-1", "s1-2"} {
+		w.s.Work.Card(id).Fields[FieldTierNow] = "pro" // pro cards on pro (flash first: escalated)
+	}
 	toReview(w, "s1-1", "s1-2")
 	// s1-1: asked of reader-a, now away; returned by reader-b; reader-c read
 	// it already (retired). No reader is free for it: refused.

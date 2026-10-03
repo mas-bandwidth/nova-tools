@@ -85,6 +85,9 @@ func TestTheWorkTableCostColumnIsEachStreamsLandedCostAndTheTotal(t *testing.T) 
 	ta.ok("add --stream s1 --count 2 --brief-file " + proBriefFile(t))
 	ta.ok("add --stream s2 --count 2 --brief-file " + proBriefFile(t))
 	ta.ok("add --stream s3 --count 1 --brief-file " + proBriefFile(t))
+	for _, id := range []string{"s1-1", "s1-2", "s2-1", "s2-2", "s3-1"} {
+		ta.tierNow(id, "pro") // read by two readers: pro cards on pro
+	}
 	ta.ok("start")
 	// s1-1: actual 0.0012 + 0.0003 + 0.0001; s1-2: actual 0.002, a read with no actual
 	// priced by its route (2000 input at 0.5 a million: 0.001), a read with nothing

@@ -301,6 +301,9 @@ line, never FAIL: the table holds what the step wrote.
 for life. Fields: stream, score, brief, rules (the held rules file the member injects, section 2's rules by reference), needs, head, attempt, fix, finding and why (a rework's, kept
 for the attempt a rework with no member up deals later), work (its live
 work card), asked (its readers), readers (the two whose ok it was accepted on),
+tier (the tier the coordinator pinned it to, `rework --tier`: its tier and its
+ceiling both) and tier_now (the tier it is on: flash at its first deal on a route,
+then the tier the machine escalated it to: section 5, flash first),
 counters (failed, reworks, broken_reads, stuck, returns), failure, failure_at and
 identical_at (its last failed work's class and attempt, and the attempt that failed the
 way the one before did: section 2, the second identical failure), returned_attempt (its
@@ -335,7 +338,8 @@ rules, and a member older than it injects none, so its children would read no ru
 **Work card** (consumer). What a child with a worktree is handed: the brief and
 the place to work, and on a later attempt the fix, the finding of the broken read that
 caused it and why the attempt before ended. Identity `<primary>.w<attempt>`.
-Fields: primary, stream, kind=work, attempt, fix, finding, why, member, gen (its assignment
+Fields: primary, stream, kind=work, attempt, fix, finding, why, member, tier (the tier
+its route was drawn from: section 5, flash first), gen (its assignment
 generation), dealt and taken (the clock times it was dealt and taken),
 first_dealt and first_taken (the attempt's first deal and first take, kept
 through every redeal and withdrawal), untaken_since (the first deal since its last take: a take unsets it, and
@@ -351,7 +355,8 @@ or, withdrawn because no member had room, by the deal that places it later,
 and until then take_ended marks it; a working card whose member goes down
 with its count at MaxRedeals, 3, stays withdrawn, its primary ready and dealt
 no more, and the judgment "a card reached its bound" names it until a rework
-with a fix or a drop; so the card is dealt again after each of its first three
+with a fix or a drop (below its tier's ceiling the deal escalates it instead,
+a new attempt on the next tier with no judgment: section 5, flash first); so the card is dealt again after each of its first three
 ended takes and retired when a fourth ends; each counted redeal's
 line in the log says "redeal n of 3"; a take the provider failed is an ended
 take: the member's failed finish whose report begins `provider failure`
@@ -486,7 +491,8 @@ primary from the read step, a change of the work table: while the machine runs,
 it waits in the work table's queue for the next tick's pump with the read's
 words, as a finish's change of its primary does. `card <id>` prints, from the
 primary alone, a COST line for each record (kind, card, attempt, take, member
-or reader, route, model, end, the tokens, wait, run, predicted, actual and
+or reader, route, model, tier (the tier its route was drawn from: flash first,
+section 5), end, the tokens, wait, run, predicted, actual and
 `actual_by`) and a COST TOTAL line (`predicted_of=<n>/<consumers>`,
 `actual_by=harness`, `charged_usd`, and `cut=<n>` when the list was cut);
 `--json` carries the same value as `cost`. No reader or member removed, no read
@@ -656,6 +662,41 @@ and it is the coordinator's decision, receipted.
   the tick's later parts. A member that cannot launch a taken card (no model,
   budget or deadline from its packet or its override) reports it at once as a
   `--failed` finish, `launch refused: <why>`, never leaving it working.
+- Flash first on every card (the owner, 2026-10-02, cost rule 1 of
+  nova-tools#5174, agreed after "The cost of the sprint at $5,400 seems
+  excessive.": "Flash first on every card; pro only on escalation"). The tier
+  line 1 names is the card's ceiling, what it likely needs, never its first
+  deal: every card is dealt on flash, and the deal draws from the tier the
+  card is on, the primary's `tier_now` (flash when unset), which every deal on
+  a route writes. The tier a card is on (its reads, its read count, its
+  escalation) is `tier_now`; before its first deal on a route, and always in a
+  store with no route (where its member runs its own model and no deal draws a
+  tier), it is its ceiling. An attempt that
+  reaches its bound on a tier below its ceiling is escalated by the machine,
+  raising no judgment. At the take bound (the redeal bound, section 2, the work
+  card's redeals, or its last two takes ending the same way, the second
+  identical failure) the deal retires the work card at its bound
+  (`retired_by=escalation`), writes the next tier of the ladder flash, pro on
+  the primary (`tier_now`), and deals a new attempt on it, the brief and fix the
+  card's own, its work card's `why` `escalated from flash to pro: attempt <n>
+  reached its bound on flash (redealt 3 times)`, or `(its last two takes ended
+  the same way: <class>)`. At the attempt bound (two attempts whose work came
+  back failed the same way) the failed finish writes `tier_now` and the why
+  (`escalated from flash to pro: attempts <n-1> and <n> failed the same way
+  (<class>)`) on the primary and returns it to ready, as a rework with no
+  member up does, and the tick's deal cuts the new attempt on the next tier. A
+  tier no route serves is the tick's judgment of that tier, the card held by it. At its ceiling the bound is the judgment "a card
+  reached its bound" as before. The ladder has flash and pro: a frontier card
+  is the coordinator's and is never dealt, a pinned model runs on its pin (read
+  on the tier line 1 names), and a tier the coordinator pinned with `rework
+  --tier` is the card's tier and its ceiling both, never escalated. A store with
+  no route escalates nothing (its member runs its own model whatever the tier).
+  Each work card records `tier`, the tier its route was drawn from, which its
+  packet hands the child and its JOB.md names; `card` prints it on each ATTEMPT
+  and COST line and the tier now and the ceiling on its CARD OK line
+  (`tier=<t> ceiling=<t>`; `--json` `tier`, `ceiling`). One function decides
+  the next tier for every bound that escalates (`Snapshot.NextTier`,
+  `internal/sprint/route.go`): the take bound and the attempt bound.
 - A route whose children end without a result rests (the owner, 2026-10-02,
   nova-tools#5174: "A route whose children end without a result three times is
   rested by the machine, never redealt on."). The tick's deal counts each route's
@@ -892,8 +933,9 @@ id (`--op`) returns the original result, with no second counter or notification.
   per pro card; readers still equal workers per machine"): a flash card needs
   ONE read, a pro card (or a frontier card, read on pro) TWO, from two
   different readers (`sprint.ReadsNeeded`). The tier is the card's own, the tier
-  the deal draws its work from (line 1's tier, flash when it names none, or the
-  tier a rework recorded), never a setting, so a card in merging or landed is
+  it is on (section 5, flash first: flash at its first deal on a route, then the
+  tier it escalated to, or the tier a rework recorded; its ceiling, line 1's
+  tier, in a store with no route), never a setting, so a card in merging or landed is
   held to the count it was accepted on; a read tier set for the stream or the
   sprint (below) raises the route its reads are drawn on and never their
   count. The reads per machine are unchanged: a reader still runs at its
@@ -946,9 +988,9 @@ id (`--op`) returns the original result, with no second counter or notification.
   own. Each read card the ask creates carries a route as a work card does
   (`route`, `model`, `tokens`, `usd`, `deadline`), and `tier`, the tier it is drawn
   from: the tier of the card it reads, the tier the deal draws that card's
-  work from (line 1's tier, flash when it names none, so a card that pins a
-  model and names no tier is read on flash; a frontier card, a tier no route
-  serves, is read on pro; the owner, 2026-10-01: "i think readers being
+  work from (flash first, the tier it escalated to after; a card that pins a
+  model is read on line 1's tier, flash when it names none; a frontier card, a
+  tier no route serves, is read on pro; the owner, 2026-10-01: "i think readers being
   conservatively the same tier as the work being done seems fine?"), raised
   to the read tier set for its stream (`stream set <s> --read-tier <tier>`, the
   stream's control card's `read_tier`) or else for the sprint (`set --read-tier
@@ -1197,7 +1239,7 @@ the tick would make, no other open judgment on it).
 | cannot ask (enough readers are up, and a primary has fewer free readers than its tier needs: one for a flash card, two for a pro card) | reader add, rework, drop, wait | no |
 | fewer than two readers up | reader up, reader add, wait | no |
 | no fleet member is up (when every member that beats is held, it says so and offers only fleet up and wait) | fleet beat (on a machine), fleet up (releases a hold), wait | no |
-| a card reached its bound (an attempt's work card redealt MaxRedeals, 3, times after takes that ended, the provider's failures among them, and a take of it ended again; the judgment names the provider and the last error line when the provider failed that take; or the second identical failure, section 2: two takes of the card, or two attempts of its primary, failed the same way, and the judgment names the class) | rework with a fix (a new attempt, on the next tier), drop, wait | no |
+| a card reached its bound (at its ceiling tier, flash first, section 5: an attempt's work card redealt MaxRedeals, 3, times after takes that ended, the provider's failures among them, and a take of it ended again; the judgment names the provider and the last error line when the provider failed that take; or the second identical failure, section 2: two takes of the card, or two attempts of its primary, failed the same way, and the judgment names the class) | rework with a fix (a new attempt, on the next tier), drop, wait | no |
 | a work card is past its deadline | fleet down (the member, only when it has held the card its own whole deadline: never the member a late card was just redealt to, nor one it was withdrawn from), wait, drop | no |
 | a read card is past its deadline | ask --another, wait, drop | no |
 | a stream has had no merge step past its deadline | merge --stream, card (look), wait | no |
@@ -1531,7 +1573,7 @@ command that loads it.
 | stats | the epoch's pass in seconds, each as median, max and count, from one read of the work, fleet and readers tables (every primary's work and read cards of every attempt, retired ones too, in read sets; `sprint.Stats`, pure): the stages (deal wait: admitted to the first work card's `first_dealt`; finish to two reads: the last ok take's `finished` to `accepted`; accept to land; total: admitted to landed), each member's work cards (cards, failed, take wait `dealt` to `taken`, run wall the usage's `wall`, report lag `finished` - `taken` - wall), each reader's read cards (cards asked, begin wait `asked` to `begun`, run wall, report lag `read` - `begun` - wall), and each route's takes from the primaries' cost records (takes; ok: a work take finished ok or a read with its verdict; provider: provider failure or no result; failed: every other end; a launch refused at staging is no take; a read whose record names no route counts on its card's route; run wall); members, readers and routes in name order; changes nothing; `--json` |
 | read | a reader records ok or broken with the finding; `--as <reader>`, `--begin`; `--usage <text>` (what the read spent) is kept on the read card, timed and priced (section 2, What a card cost) |
 | accept | review -> merging and into merge queued; refused without the ok reads it needs (one reader for a flash card, two different readers for a pro card); named ids all or nothing, a selection moves the eligible |
-| rework | delegates the next attempt at once with a fix, and writes on that attempt's work card `fix`, `finding` (its broken reads' findings, each once) and `why` (how the attempt before ended: failed with its report, finished and found broken, or sent back), each cut to MaxCardTextBytes with a trailing `...` and never refused for its size, and kept on the primary too for a rework that deals later; its packet carries them to the child's JOB.md and `card` prints per attempt; ready when no member is up; a primary at its redeal bound (ready, its work card withdrawn) is reworked too, with `--fix`, its withdrawn card taken off; without `--fix` each primary's fix is the finding of its broken read, else the report of its failed work, and a primary with neither is refused by name; `--tier <flash|pro|frontier>` writes the tier on the primary (`tier`), and this attempt's deal and every later deal and read of the card draw from it over its brief's line 1, so a flash card that failed twice is reworked on pro, the same card and brief; a word that names no tier is usage (exit 2), and a card whose brief pins a model is refused by name, since it runs on its pin whatever its tier |
+| rework | delegates the next attempt at once with a fix, and writes on that attempt's work card `fix`, `finding` (its broken reads' findings, each once) and `why` (how the attempt before ended: failed with its report, finished and found broken, or sent back), each cut to MaxCardTextBytes with a trailing `...` and never refused for its size, and kept on the primary too for a rework that deals later; its packet carries them to the child's JOB.md and `card` prints per attempt; ready when no member is up; a primary at its redeal bound (ready, its work card withdrawn) is reworked too, with `--fix`, its withdrawn card taken off; without `--fix` each primary's fix is the finding of its broken read, else the report of its failed work, and a primary with neither is refused by name; `--tier <flash|pro|frontier>` writes the tier on the primary (`tier`), and this attempt's deal and every later deal and read of the card draw from it over its brief's line 1, so a flash card that failed twice is reworked on pro, the same card and brief; it pins the card: the tier is its ceiling too and the machine never escalates it (section 5, flash first); a word that names no tier is usage (exit 2), and a card whose brief pins a model is refused by name, since it runs on its pin whatever its tier |
 | return | merging -> review, off the merge queue |
 | drop | off the table with the reason |
 | rank | changes a score and every copy |
@@ -1561,7 +1603,7 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | wait | sets a judgment's next review time |
 | ack | closes a judgment the coordinator looked at, with the reason |
 | inbox | every open judgment and the notifications since the cursor, grouped, judgment first; `--open <id>`, `--read`; `--json` carries `judgments` (each with `id`, `kind`, `type`, `what`, `stream`, `size`, `cards` whole, `notes`, and `answers`: every decision with the exact command lines that make it, in order), `happened` (the notifications since the cursor, grouped), `done` (the machine has stopped because the sprint is done) and `groups`, every group in the order the text prints; `--wait --timeout <d>` blocks until the inbox holds a judgment, or a note addressed to the coordinator, that was not in it when the wait began (by note id: a held or waited judgment is open already and never wakes it; the owner, 2026-10-02: "push notifications for inbox from nova-sprint so she doesn't have to poll"), or the machine stops having run, or `<d>` passes; it sleeps on the tick-end notes and looks at the inbox at each one and every 15 s while nothing ticks; then it says how it ended on one line (`inbox --wait: new=<group id,...>`, `inbox --wait: the machine stopped`, `inbox --wait: nothing new in <d>`) and shows the inbox; `--json` carries `woke` and `new` (the new groups' ids), the line only for a wait that found nothing, on stderr (stdout stays one JSON object); `--wait --push <dir>` keeps running until it is interrupted: each new judgment and note to the coordinator is written once as `<dir>/<note id>.md` (the group as `inbox --open` prints it, then `clock: <RFC3339>`; a `:` in a read-time group's id becomes `-`), said as `INBOX OK pushed=<id> file=<path>` (`--json`: one object a file), and the files there are its cursor: a note with a file is never written again, so a restart pushes nothing twice and misses nothing; a timeout is quiet and the loop goes on, the machine stopping is its line and the loop goes on; a local write, into the coordinator's own inbox directory; `--push seat` is the holder's inbox, and follows the seat ("Handing over the seat"); `--push` takes no `--read`, `--open` or `--at-epoch`; `--json` carries `coordinator`, the seat's holder |
-| card | one primary's story, told from the log: for a card in flight, first what holds it now (each open judgment with the commands that answer it, or the actor and its deadline); its place in its stream's line; its brief, and the fix its attempt was given; its timeline in local time, an attempt at a time ("attempt 2, because attempt 1 failed"), one line per event a person would name (two readers asked, a merge and its batch, a step and its answer are one line each), a finish and a read with the first line of their words; the reports, findings and fixes whole as paragraphs; a card that has ended says so in one line; a COST line per consumer that ended and the COST TOTAL (section 2, What a card cost); `--fields` prints every field of the primary and its cards instead; `--json` carries both, the timeline's events with the log lines each tells, and the cost |
+| card | one primary's story, told from the log: for a card in flight, first what holds it now (each open judgment with the commands that answer it, or the actor and its deadline); its place in its stream's line; its brief, and the fix its attempt was given; its timeline in local time, an attempt at a time ("attempt 2, because attempt 1 failed"), one line per event a person would name (two readers asked, a merge and its batch, a step and its answer are one line each), a finish and a read with the first line of their words; the reports, findings and fixes whole as paragraphs; a card that has ended says so in one line; a COST line per consumer that ended and the COST TOTAL (section 2, What a card cost); the CARD OK line ends with the tier it is on and its ceiling (`tier=<t> ceiling=<t>`, section 5, flash first); `--fields` prints every field of the primary and its cards instead; `--json` carries both, the timeline's events with the log lines each tells, and the cost |
 | queue --as, take | a member's or a reader's cards (a reader's `queue --as` is its beat), each with its packet: what it is handed so that it needs no other read to learn its task (the card, its epoch and generation, the brief, this attempt's fix, the notes on it, for a rework the finding of the read that found the attempt before broken and why that attempt ended (the work card's own words: the primary's are written at the next tick's drain, after a member may have taken the card), and for a work card the branch to work on, `sprint/<card>.g<gen>.e<epoch>` (the epoch makes it one per epoch, a card id coming back after a clear, and the generation one per launch, a card dealt again within an epoch, withdrawn from a member or redealt after a staging or provider failure, being another launch whose push must not meet the first's), and the one to start from, the attempt before's branch for a rework, with `base_head`, the head that attempt finished ok at, which a rework is staged from (docs/SPEC-CARD-CONTRACT.md: never a branch name alone, which may never have reached origin); for a read card the work it reads: the worker, its head, branch and base, and the worker's report), and the command that reports it (a work card's names `--head <commit>`: a finish without `--head` records the card's id as its head, which `land` refuses as not a commit id); `queue --as <w> --packets <n> [--have <id,...>]` hands only the packets the worker asks for: the first n cards it may start (asked, ready) and every card in flight (reading, working), each not named in `--have`; every other card is listed with its id, column, attempt and gen, and the answer's epoch, which are its claim, and no packet (a reader of width 8 holding 150 asked reads with 2.5 KB briefs: 445,525 bytes without the flag, 51,623 asking for 8; the fleet load test of 2026-10-01 measured 579,181 bytes a pass); without `--packets` every card carries its packet, as before; take prints the packets of the cards it took, `--json` as `packets`; finish takes `--branch` and `--base`, which the work card keeps and the reader's packet and card show; a fleet member (`nova-swarm member`) pushes the child's commit to origin's `sprint/<card>.g<gen>.e<epoch>` before its finish, so the finish's `--head` is the pushed sha the merge queue carries and the merge reads the work from origin; a finish is ok only with the result's shape, its verdict ok and a pushed commit, and every other is a `--failed` finish naming no head and no branch, its report starting with the reason (`no RESULT.md shape`, `nothing to do: <why>`, `verdict <word>`, `no commit: <why>`, `push refused: <git's line>`), so it opens the failed-work judgment and never goes to review with nothing to read (docs/SPEC-CARD-CONTRACT.md section 4) |
 | log | the epoch's log, every line in order: --card (a primary with its work, read and merge cards), --stream, --member, --since, --at-epoch, --json (section 17); a line's words are printed under it, a brief by its size and the card that shows it (`card <id>`), never whole (`--json` carries it) |
 | check, repair | section 9 and section 10 |

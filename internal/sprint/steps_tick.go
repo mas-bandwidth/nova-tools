@@ -530,9 +530,10 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 		if IsSentinel(c) {
 			continue
 		}
-		if tier, why := s.noRoute(c); why != "" {
-			// no route serves its tier, or its model lines cannot be read (a card
-			// admitted before the lint): one judgment per tier either way
+		if tier, why := s.noRoute(escalating(s, c)); why != "" {
+			// no route serves its tier (the tier it escalates to, at its bound below its
+			// ceiling), or its model lines cannot be read (a card admitted before the
+			// lint): one judgment per tier either way
 			unserved[tier] = append(unserved[tier], c.ID)
 			whyOf[tier] = why
 			continue
@@ -630,16 +631,18 @@ func beatingHeld(s *Snapshot, r TickReq) bool {
 }
 
 // AtRedealBound is the primary's withdrawn work card when it is at its
-// redeal bound: a take of it ended (FieldTakeEnded) with its count at
+// redeal bound at its ceiling: a take of it ended (FieldTakeEnded) with its count at
 // MaxRedeals, so the deal that would place it again would pass the bound. The
 // tick deals it no more. nil when it is not: a card withdrawn while ready
-// keeps its count and is dealt again (tla/DirtyTick.tla AtRB).
+// keeps its count and is dealt again (tla/DirtyTick.tla AtRB), and a card below its
+// ceiling (NextTier) is the deal's to escalate, no judgment raised (route.go,
+// tierLadder).
 func AtRedealBound(s *Snapshot, pr *Card) *Card {
 	if pr == nil || pr.Col != Ready {
 		return nil
 	}
 	wc := s.Fleet.Placed(WorkCardID(pr.ID, pr.Int("attempt")))
-	if wc != nil && wc.Col == Withdrawn && redealBound(wc) {
+	if wc != nil && wc.Col == Withdrawn && redealBound(wc) && s.NextTier(pr) == "" {
 		return wc
 	}
 	return nil
@@ -695,6 +698,19 @@ func providerWhy(wc *Card) string {
 	}
 	provider, _, _ := strings.Cut(wc.F(FieldModel), "/")
 	return fmt.Sprintf(": the provider %s failed it, last error: %s", orDash(provider), line)
+}
+
+// escalating is the primary c as its next deal draws its route: at its redeal bound
+// below its ceiling, on the tier it escalates to (NextTier, escalate); else c.
+func escalating(s *Snapshot, c *Card) *Card {
+	wc := s.Fleet.Placed(WorkCardID(c.ID, c.Int("attempt")))
+	if wc == nil || wc.Col != Withdrawn || !redealBound(wc) {
+		return c
+	}
+	if t := s.NextTier(c); t != "" {
+		return withField(c, FieldTierNow, t)
+	}
+	return c
 }
 
 // redealBound says the withdrawn work card's next deal would count a take
