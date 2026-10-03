@@ -68,8 +68,9 @@ const (
 	// card, the tier its route was drawn from, which its packet hands the child or reader,
 	// its JOB.md names and its cost record keeps.
 	FieldTier = "tier"
-	// FieldTierNow is the tier the machine escalated the primary to (NextTier): flash
-	// first on every card, the tier its brief's line 1 names its ceiling.
+	// FieldTierNow is the tier the primary is on, written by every deal on a route:
+	// flash first on every card, then the tier the machine escalated it to (NextTier);
+	// the tier its brief's line 1 names is its ceiling.
 	FieldTierNow = "tier_now"
 )
 
@@ -148,7 +149,7 @@ func (ri routeIndexes) write(p *Plan) {
 // the array was set) is skipped as an excluded one is.
 func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string, tier, why string) {
 	m, bad := cardhdr.ReadModel(c.F("brief"))
-	tier = cardTier(c, m)
+	tier = drawTier(c, m)
 	if bad != "" {
 		tier = ceilingTier(c, m)
 		// a card admitted before the lint read its lines: judged under the tier it
@@ -205,8 +206,12 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 			ri[tier].r.count += i + 1
 			ri[tier].moves[c.ID] = strconv.FormatUint(i+1, 10)
 		}
-		return map[string]string{FieldRoute: r.Name, FieldModel: r.Provider + "/" + r.Model, FieldTokens: tokensWord(r.Tokens),
-			FieldDeadline: strconv.Itoa(r.Deadline), FieldTier: tier, FieldRoutes: strings.Join(append(Split(c.F(FieldRoutes)), r.Name), ",")}, tier, ""
+		set := map[string]string{FieldRoute: r.Name, FieldModel: r.Provider + "/" + r.Model, FieldTokens: tokensWord(r.Tokens),
+			FieldDeadline: strconv.Itoa(r.Deadline), FieldTier: tier, FieldRoutes: strings.Join(append(Split(c.F(FieldRoutes)), r.Name), ",")}
+		if !pinnedTier(c, m) {
+			set[FieldTierNow] = tier // the primary is on the tier drawn (cardTier)
+		}
+		return set, tier, ""
 	}
 	if len(rested) > 0 {
 		return nil, tier, "every enabled route of tier " + tier + " in its array rests, its children having ended with no result (" + strings.Join(rested, ", ") + "): the deal draws one when its rest ends; or run nova-config route add <name> --tier " + tier + " ..., or pin the card with a model: <provider>/<model> line"
@@ -226,19 +231,35 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 // ceiling both.
 var tierLadder = []string{cardhdr.RouteFlash, cardhdr.RoutePro}
 
-// cardTier is the tier the deal draws the primary c's route from: the tier the
-// coordinator pinned (FieldTier, a rework's --tier: the card is the persistent store);
-// for a frontier card (the coordinator's) or a pinned model (run on its pin, read on the
-// tier its line 1 names) its ceiling; else the tier the machine escalated it to
-// (FieldTierNow), else flash.
+// cardTier is the tier the primary c is on, what its reads, its read count and its
+// escalation go by: the tier its last deal on a route drew (FieldTierNow, which every
+// such deal writes: flash first, then the tier the machine escalated it to); before
+// any (a card not dealt yet, or a store with no route, where its member runs its own
+// model and no deal draws a tier) and for a pinned tier or model or a frontier card,
+// its ceiling.
 func cardTier(c *Card, m cardhdr.Model) string {
-	if m.Tier == cardhdr.RouteFrontier || m.Pin != "" || c.F(FieldTier) != "" {
+	if t := c.F(FieldTierNow); t != "" && !pinnedTier(c, m) {
+		return t
+	}
+	return ceilingTier(c, m)
+}
+
+// drawTier is the tier the deal draws the primary c's route from: its ceiling when its
+// tier is pinned (pinnedTier), else the tier the machine escalated it to, else flash.
+func drawTier(c *Card, m cardhdr.Model) string {
+	if pinnedTier(c, m) {
 		return ceilingTier(c, m)
 	}
 	if t := c.F(FieldTierNow); t != "" {
 		return t
 	}
 	return cardhdr.RouteFlash
+}
+
+// pinnedTier says the primary c climbs no ladder: the coordinator pinned its tier
+// (FieldTier, rework --tier), its brief pins a model, or it is a frontier card.
+func pinnedTier(c *Card, m cardhdr.Model) bool {
+	return m.Tier == cardhdr.RouteFrontier || m.Pin != "" || c.F(FieldTier) != ""
 }
 
 // ceilingTier is the highest tier the machine escalates the primary c to: the tier the
@@ -253,8 +274,8 @@ func ceilingTier(c *Card, m cardhdr.Model) string {
 	return m.Tier
 }
 
-// CardTiers is the primary's tier now, the one its next deal draws from, and its ceiling,
-// as `card` prints them.
+// CardTiers is the tier the primary is on (cardTier) and its ceiling, as `card` prints
+// them.
 func CardTiers(c *Card) (now, ceiling string) {
 	m, _ := cardhdr.ReadModel(c.F("brief"))
 	return cardTier(c, m), ceilingTier(c, m)
@@ -373,7 +394,7 @@ func tokensWord(n int) string {
 func splitRoute(route map[string]string) (work, primary map[string]string) {
 	work, primary = map[string]string{}, map[string]string{}
 	for k, v := range route {
-		if k == FieldRoutes {
+		if k == FieldRoutes || k == FieldTierNow {
 			primary[k] = v
 			continue
 		}

@@ -1147,7 +1147,7 @@ func groupText(g sprint.Group, now time.Time, opened bool) string {
 // cardView is everything about one primary.
 type cardView struct {
 	Primary  *sprint.Card       `json:"primary"`
-	Tier     string             `json:"tier"`    // the tier its next deal draws from (sprint.CardTiers)
+	Tier     string             `json:"tier"`    // the tier it is on (sprint.CardTiers)
 	Ceiling  string             `json:"ceiling"` // the highest the machine escalates it to
 	Work     []*sprint.Card     `json:"work_cards"`
 	Reads    []*sprint.Card     `json:"read_cards"`
@@ -1235,7 +1235,7 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 		if pinned, err := st.Pinned(ctx); err == nil {
 			epoch = pinned.PinnedEpoch()
 		}
-		// the tier its next deal draws from and its ceiling: flash first, pro on escalation
+		// the tier it is on and its ceiling: flash first, pro on escalation
 		tier, ceiling := sprint.CardTiers(v.Primary)
 		fmt.Fprintf(stdout, "CARD OK id=%s epoch=%d work_cards=%d read_cards=%d open=%d tier=%s ceiling=%s\n", oneline.Escape(id), epoch, len(v.Work), len(v.Reads), len(v.Open), tier, ceiling)
 		return 0
