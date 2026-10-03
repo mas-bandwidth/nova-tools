@@ -2126,6 +2126,42 @@ shape holds refuses with the whole remedy verb: `open first: nova-cairn open
 --store <dir> --session <id> --publish <policy>`.
 
 
+## nova-decide
+
+Typed decisions with probabilities, recorded so each one can be calibrated
+against its outcome. The decide side asks a schema (named, typed questions)
+over one state through a backend; the train side records every decision,
+attaches its outcome when it is known, and reads the bar the record supports.
+See [SPEC-NOVA-DECIDE.md](SPEC-NOVA-DECIDE.md).
+
+### First run
+
+From a checkout root; the fixed backend answers from a file, so these need no
+network and no key (the transcript is in [TESTS.md](TESTS.md#nova-decide)):
+
+```sh
+nova-decide read --card ./cmd/nova-decide/testdata/card.md --diff ./cmd/nova-decide/testdata/card.diff --backend fixed --answers ./cmd/nova-decide/testdata/read-answers.json --record ./decisions.jsonl --op card-1
+nova-decide outcome --record ./decisions.jsonl --id card-1 --label ok
+nova-decide calibrate --record ./cmd/nova-decide/testdata/record.jsonl --decision read --question defect --positive wrong --negative ok
+```
+
+`read` prints `READ OK id= decision=read backend= verdict= p= tokens_in=
+tokens_out= recorded=new|existing` and one `READ ANSWER question= type= value=
+p=` line per question: a noul's `p=yes:<p>`, a choice's `p=<option>:<p>,...`.
+`calibrate` prints the AUC, one `BAR` line per `--bars` value (positives caught,
+negatives bounced) and the `CATCH-ALL` bar, the highest that flags every
+positive. What a first run gets wrong:
+
+- `--backend jev` with no key: `JEV_API_KEY is absent from this environment`.
+  The key reaches the tool only through `nova-secrets exec --only JEV_API_KEY --
+  nova-decide ...`; it is never a flag or a file.
+- `--backend fixed` with no `--answers`: the fixed backend answers from a file.
+- `calibrate` over a record with no positive or no negative outcome refuses:
+  a bar is read from both.
+- The same `--op` over another card or diff refuses; over the same inputs it
+  returns the recorded decision and asks nothing, so a long run resumes.
+
+
 ## nova-table
 
 Work tables over Redis: ordered-set cells, text notes, percentage formulas,
