@@ -19,7 +19,7 @@ func TestPlanWriteIsTheChangeAndRefusalOfTheWrite(t *testing.T) {
 	require.NoError(t, err)
 	_, err = st.Insert(ctx, KindMachine, m1, "a1")
 	require.NoError(t, err)
-	_, _, err = st.Update(ctx, KindFleet, KindFleet, map[string]string{"coordinator": "m1"}, "a1")
+	_, _, err = st.Update(ctx, KindFleet, KindFleet, map[string]string{"coordinator": "m1", "loops_dir": "/loops"}, "a1")
 	require.NoError(t, err)
 	m2, err := machine.NewRow("m2", map[string]string{"user": "u", "seat": "s", "slots": "8"})
 	require.NoError(t, err)

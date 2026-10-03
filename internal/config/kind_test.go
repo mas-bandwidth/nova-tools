@@ -175,14 +175,14 @@ func TestTheFleetIsOneRowOfEndpointsAndMachineRefs(t *testing.T) {
 			assert.False(t, f.Required, assertionMsg158...)
 		}()
 	}
-	row, err := fleet.NewRow(KindFleet, map[string]string{"store": "hulk"})
+	row, err := fleet.NewRow(KindFleet, map[string]string{"store": "hulk", "loops_dir": "/loops"})
 	assertionMsg153 := []any{"fleet row %+v %v", row.Fields, err}
 	require.NoError(t, err, assertionMsg153...)
 	require.Equal(t, "hulk", row.Fields["store"], assertionMsg153...)
 	require.Equal(t, "", row.Fields["coordinator"], assertionMsg153...)
 	require.Empty(t, row.Fields["redis_port"], assertionMsg153...)
 	require.Equal(t, "", row.Fields["pg_dsn"], assertionMsg153...)
-	require.Equal(t, "~/nova-bench/loops", row.Fields["loops_dir"], assertionMsg153...)
+	require.Equal(t, "/loops", row.Fields["loops_dir"], assertionMsg153...)
 	{
 		_, err := fleet.NewRow(KindFleet, map[string]string{"store": "Hulk"})
 		assertionMsg156 := []any{"a ref that is not a name: %v", err}
@@ -216,16 +216,20 @@ func TestTheFleetIsOneRowOfEndpointsAndMachineRefs(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := fleet.NewRow(KindFleet, tc.raw)
+			raw := map[string]string{"loops_dir": "/loops"}
+			for k, v := range tc.raw {
+				raw[k] = v
+			}
+			_, err := fleet.NewRow(KindFleet, raw)
 			require.ErrorContains(t, err, tc.want)
 			assert.NotContains(t, err.Error(), "do-not-print")
 		})
 	}
-	row, err = fleet.NewRow(KindFleet, map[string]string{"redis_port": "6380", "pg_dsn": "postgres://user@localhost:5432/nova"})
+	row, err = fleet.NewRow(KindFleet, map[string]string{"redis_port": "6380", "pg_dsn": "postgres://user@localhost:5432/nova", "loops_dir": "/loops"})
 	require.NoError(t, err)
 	assert.Equal(t, "6380", row.Fields["redis_port"])
 	assert.Equal(t, "postgres://user@localhost:5432/nova", row.Fields["pg_dsn"])
-	_, err = fleet.NewRow(KindFleet, map[string]string{"pg_dsn": "postgres://user@localhost/nova?sslmode=require&application_name=nova%3Bconfig"})
+	_, err = fleet.NewRow(KindFleet, map[string]string{"pg_dsn": "postgres://user@localhost/nova?sslmode=require&application_name=nova%3Bconfig", "loops_dir": "/loops"})
 	assert.NoError(t, err, "an omitted port and a percent-encoded query value are valid")
 }
 
@@ -398,9 +402,9 @@ func TestAFriendsWidthDefaultsToEightAndIsAtLeastOne(t *testing.T) {
 }
 
 // TestLoopLogIsTheFleetRowsDirectory: the seeded loops_dir reproduces
-// today's literal; a different directory changes the log path; an empty
-// directory is refused by the fleet kind's Check with a remedy naming
-// fleet set --loops-dir.
+// today's literal; a different directory changes the log path; an empty or
+// missing directory is refused by the fleet kind's Check with a remedy
+// naming fleet set --loops_dir.
 func TestLoopLogIsTheFleetRowsDirectory(t *testing.T) {
 	t.Parallel()
 
@@ -414,13 +418,18 @@ func TestLoopLogIsTheFleetRowsDirectory(t *testing.T) {
 	custom := LoopLog("/custom/loops", "tick")
 	assert.Equal(t, "/custom/loops/tick.log", custom)
 
-	// An empty directory is refused by the kind's Check with a remedy.
-	for _, empty := range []string{"", "   "} {
-		row := Row{Name: KindFleet, Fields: map[string]string{"loops_dir": empty}}
+	// An empty or missing directory is refused by the kind's Check with a
+	// remedy.
+	for _, fields := range []map[string]string{
+		{"loops_dir": ""},
+		{"loops_dir": "   "},
+		nil,
+	} {
+		row := Row{Name: KindFleet, Fields: fields}
 		err := fleet.Check(row)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "--loops_dir wants a non-empty directory path")
-		assert.Contains(t, err.Error(), "nova-config fleet set --loops-dir")
+		assert.Contains(t, err.Error(), "nova-config fleet set --loops_dir")
 	}
 
 	// A valid non-empty directory passes Check.

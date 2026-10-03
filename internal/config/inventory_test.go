@@ -32,7 +32,7 @@ func snapshot(loops map[string]View) *Snapshot {
 			"bench-alpha": {"user": "user-a", "seat": "seat-a", "slots": "64", "runners": "1"},
 			"bench-beta":  {"user": "user-b", "seat": "seat-b", "slots": "40", "runners": "0"},
 		},
-		Fleet: View{"store": "bench-beta", "coordinator": "bench-alpha", "redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova"},
+		Fleet: View{"store": "bench-beta", "coordinator": "bench-alpha", "redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova", "loops_dir": "~/nova-bench/loops"},
 		Loops: loops,
 		Beats: map[string]*Beat{"bench-beta": {OS: "linux", Arch: "amd64"}},
 		Revs:  map[string]int64{KindMachine: 3, KindFleet: 2},
@@ -182,7 +182,7 @@ func TestBuildInventoryOmitsEmptyValues(t *testing.T) {
 // A fleet with declared endpoints and no machines has every group present.
 func TestBuildInventoryOfAnEmptyStore(t *testing.T) {
 	t.Parallel()
-	inv, err := BuildInventory(&Snapshot{Fleet: View{"redis_port": "6380", "pg_dsn": "postgres://user@localhost:5432/nova"}}, "")
+	inv, err := BuildInventory(&Snapshot{Fleet: View{"redis_port": "6380", "pg_dsn": "postgres://user@localhost:5432/nova", "loops_dir": "/loops"}}, "")
 	require.NoError(t, err)
 	raw, err := inv.JSON()
 	require.NoError(t, err)
@@ -215,7 +215,7 @@ func TestLoadFixtureIsTheAppliedStateOfTheSameRows(t *testing.T) {
 machines:
   bench-alpha: {user: user-a, seat: seat-a, slots: 4, runners: 1, os: darwin, arch: arm64}
   bench-beta: {user: user-b, seat: seat-b, slots: 2}
-fleet: {store: bench-beta, coordinator: bench-alpha, redis_port: 6380, pg_dsn: postgres://nova_config@localhost:5432/nova}
+fleet: {store: bench-beta, coordinator: bench-alpha, redis_port: 6380, pg_dsn: postgres://nova_config@localhost:5432/nova, loops_dir: ~/nova-bench/loops}
 loops:
   member-beta: {machine: bench-beta, argv: [nova-swarm, member], seat: seat-b, keys: [Z_KEY, A_KEY], keepalive: true}
   tick: {machine: bench-alpha, argv: ["~/bin/tick", "--once"], every: 30, enabled: false}
@@ -225,7 +225,7 @@ loops:
 	assert.Equal(t, View{"user": "user-a", "seat": "seat-a", "slots": "4", "runners": "1", "tla": "false"}, snap.Machines["bench-alpha"])
 	assert.Equal(t, &Beat{OS: "darwin", Arch: "arm64"}, snap.Beats["bench-alpha"])
 	assert.NotContains(t, snap.Beats, "bench-beta")
-	assert.Equal(t, View{"store": "bench-beta", "coordinator": "bench-alpha", "redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova"}, snap.Fleet)
+	assert.Equal(t, View{"store": "bench-beta", "coordinator": "bench-alpha", "redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova", "loops_dir": "~/nova-bench/loops"}, snap.Fleet)
 	assert.Equal(t, View{
 		"name": "member-beta", "machine": "bench-beta", "argv": `["nova-swarm","member"]`, "seat": "seat-b",
 		"keys": "A_KEY,Z_KEY", "every": "0", "keepalive": "true", "enabled": "true",
@@ -285,7 +285,7 @@ func TestTLAMachinesAreTheTLAGroup(t *testing.T) {
 	assert.Equal(t, false, inv.Meta.Hostvars["bench-alpha"]["nova_tla"], "a view with no tla key")
 
 	path := filepath.Join(t.TempDir(), "fx.yml")
-	require.NoError(t, os.WriteFile(path, []byte("machines:\n  bench-alpha: {user: u, seat: s, slots: 1, tla: true}\n  bench-beta: {user: u, seat: s, slots: 1}\nfleet: {redis_port: 6380, pg_dsn: postgres://u@localhost:5432/nova}\n"), 0o600))
+	require.NoError(t, os.WriteFile(path, []byte("machines:\n  bench-alpha: {user: u, seat: s, slots: 1, tla: true}\n  bench-beta: {user: u, seat: s, slots: 1}\nfleet: {redis_port: 6380, pg_dsn: postgres://u@localhost:5432/nova, loops_dir: /loops}\n"), 0o600))
 	snap, err := LoadFixture(path)
 	require.NoError(t, err)
 	assert.Equal(t, "true", snap.Machines["bench-alpha"]["tla"])
@@ -293,7 +293,7 @@ func TestTLAMachinesAreTheTLAGroup(t *testing.T) {
 	inv, err = BuildInventory(snap, "")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"bench-alpha"}, inv.TLA.Hosts)
-	empty, err := BuildInventory(&Snapshot{Fleet: View{"redis_port": "6380", "pg_dsn": "postgres://user@localhost:5432/nova"}}, "")
+	empty, err := BuildInventory(&Snapshot{Fleet: View{"redis_port": "6380", "pg_dsn": "postgres://user@localhost:5432/nova", "loops_dir": "/loops"}}, "")
 	require.NoError(t, err)
 	assert.Equal(t, []string{}, empty.TLA.Hosts, "an empty group is [], never null")
 }

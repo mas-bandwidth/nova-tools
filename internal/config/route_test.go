@@ -50,7 +50,7 @@ func TestTheRouteRowIsWhatTheDealReads(t *testing.T) {
 	assert.Equal(t, "route:r1", h.key("r1"))
 	assert.Equal(t, RoutesKey, h.set)
 	assert.Nil(t, h.extra, "a route has no derived field")
-	assert.Equal(t, "~/nova-bench/loops/l1.log", LoopLog("~/nova-bench/loops", "l1"))
+	assert.NotNil(t, hashKinds[KindLoop].extra, "a loop's view keeps its derived log field")
 	assert.Equal(t, LoopsKey, hashKinds[KindLoop].set)
 }
 

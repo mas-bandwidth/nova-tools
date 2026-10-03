@@ -83,7 +83,7 @@ func TestAFriendRowAffectsNoWidth(t *testing.T) {
 	for _, f := range []string{"f1", "f2", "f3", "f4"} {
 		addFriend(t, m, f, "32")
 	}
-	_, _, err := m.Update(ctx, KindFleet, KindFleet, map[string]string{"coordinator": "m1"}, "t")
+	_, _, err := m.Update(ctx, KindFleet, KindFleet, map[string]string{"coordinator": "m1", "loops_dir": "/loops"}, "t")
 	require.NoError(t, err)
 	require.Equal(t, before, widthsByName(t, m), "a friend row changed a width")
 }

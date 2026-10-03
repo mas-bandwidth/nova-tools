@@ -226,7 +226,7 @@ func TestALoopArgvWithAWidthIsRefused(t *testing.T) {
 		require.Equal(t, 0, code, "%s\n%s", out, errs)
 	}
 	// the fake Redis writes a row's fields; apply's derived log field is the real applier's (redis.go)
-	h.redis.views["loop"]["reader-m1"]["log"] = config.LoopLog("~/nova-bench/loops", "reader-m1")
+	h.redis.views["loop"]["reader-m1"]["log"] = config.LoopLog("reader-m1")
 	code, out, errs = h.run(t, "inventory", "--host", "m1")
 	require.Equal(t, 0, code, errs)
 	assert.Contains(t, strings.Join(strings.Fields(out), ""), `"argv":["nova-swarm","member","--as","reader-m1","--reader"]`, "the plays render the argv the row holds, with no width:\n%s", out)
