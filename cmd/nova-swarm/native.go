@@ -2586,6 +2586,11 @@ func within(root, path string) bool {
 // looser than 0600 or the copy cannot end 0600. Both mode questions are asked of the
 // platform (authmode.go): windows reports 0666 for every readable file, so neither rule
 // refuses there (#915).
+//
+// Both copies are published with swarm.WriteFileNoFollow (security#47). The data home
+// is a write root of the wall, so a card can plant a symlink at auth.json or at
+// opencode; os.WriteFile and os.MkdirAll would follow it and the provider body would
+// land outside the slot. A symlink there is a refusal and nothing is written through it.
 func copyAuth(src, provider, dataHome string) string {
 	st, err := os.Stat(src)
 	if err != nil {
@@ -2609,18 +2614,18 @@ func copyAuth(src, provider, dataHome string) string {
 	}
 	body, _ := json.Marshal(one)
 	dst := filepath.Join(dataHome, "auth.json")
-	if err := os.WriteFile(dst, body, 0o600); err != nil {
+	if err := swarm.WriteFileNoFollow(dataHome, dst, body, 0o600); err != nil {
 		return fmt.Sprintf("the auth copy %s could not be written: %s", oneline.Field(dst), oneline.Escape(err.Error()))
 	}
-	if dstSt, err := os.Stat(dst); err == nil && authModeNotOwnerOnly(runtime.GOOS, dstSt.Mode()) {
+	if dstSt, err := os.Lstat(dst); err == nil && (!dstSt.Mode().IsRegular() || authModeNotOwnerOnly(runtime.GOOS, dstSt.Mode())) {
+		if !dstSt.Mode().IsRegular() {
+			return fmt.Sprintf("the auth copy %s could not be written: not a regular file", oneline.Field(dst))
+		}
 		return fmt.Sprintf("the auth copy would not be 0600: %s ended mode %04o", oneline.Field(dst), dstSt.Mode().Perm())
 	}
-	ocDir := filepath.Join(dataHome, "opencode")
-	if err := os.MkdirAll(ocDir, 0o755); err != nil {
-		return fmt.Sprintf("the auth directory %s could not be made: %s", oneline.Field(ocDir), oneline.Escape(err.Error()))
-	}
-	if err := os.WriteFile(filepath.Join(ocDir, "auth.json"), body, 0o600); err != nil {
-		return fmt.Sprintf("the auth copy %s could not be written: %s", oneline.Field(filepath.Join(ocDir, "auth.json")), oneline.Escape(err.Error()))
+	ocAuth := filepath.Join(dataHome, "opencode", "auth.json")
+	if err := swarm.WriteFileNoFollow(dataHome, ocAuth, body, 0o600); err != nil {
+		return fmt.Sprintf("the auth copy %s could not be written: %s", oneline.Field(ocAuth), oneline.Escape(err.Error()))
 	}
 	return ""
 }
@@ -2635,29 +2640,94 @@ func copyAuth(src, provider, dataHome string) string {
 // THE CARD OWNS THE DATA HOME WHILE IT RUNS, so it can take the write bit off dataHome or
 // dataHome/opencode (chmod 0555) and an unlink there fails with permission denied. The
 // cleanup therefore gives each parent directory -- only a real directory, never through a
-// symlink the card planted -- its owner rwx back before the unlink. A copy that is still
-// there afterwards is returned: the caller fails the run on it, because a plaintext key
-// that outlives its card is the drift this cleanup exists to stop.
+// symlink the card planted -- its owner rwx back before the unlink. A symlink at any
+// component below the data home is unlinked itself and the file it names is left where it
+// is (security#47): os.Remove of the final path would follow a directory symlink and
+// delete that file. A copy that is still there afterwards is returned: the caller fails
+// the run on it, because a plaintext key that outlives its card is the drift this cleanup
+// exists to stop.
 func removeAuthCopy(dataHome string, errOut io.Writer) []string {
 	var left []string
 	for _, p := range []string{
 		filepath.Join(dataHome, "auth.json"),
 		filepath.Join(dataHome, "opencode", "auth.json"),
 	} {
-		dir := filepath.Dir(p)
-		if st, err := os.Lstat(dir); err == nil && st.IsDir() && st.Mode().Perm()&0o700 != 0o700 {
-			if err := os.Chmod(dir, st.Mode().Perm()|0o700); err != nil {
-				fmt.Fprintf(errOut, "NATIVE NOTE: the directory %s holding the auth copy could not be made writable again: %s\n", oneline.Field(dir), oneline.Escape(err.Error()))
-			}
-		}
-		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
-			fmt.Fprintf(errOut, "NATIVE NOTE: the auth copy %s could not be removed at the run's end: %s\n", oneline.Field(p), oneline.Escape(err.Error()))
-		}
-		if _, err := os.Lstat(p); !os.IsNotExist(err) {
+		if removeAuthPath(dataHome, p, errOut) {
 			left = append(left, p)
 		}
 	}
 	return left
+}
+
+// removeAuthPath unlinks path when it sits inside root. A symlink component is removed
+// as a link and the walk stops, so nothing past it is opened or deleted. A real parent
+// that the card made read-only is given its owner rwx back before the unlink. It reports
+// whether anything still stands at a component of path.
+func removeAuthPath(root, path string, errOut io.Writer) bool {
+	root = filepath.Clean(root)
+	path = filepath.Clean(path)
+	rel, err := filepath.Rel(root, path)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		noteAuthRemove(errOut, path, fmt.Errorf("path is outside the data home"))
+		return true
+	}
+	st, err := os.Lstat(root)
+	if os.IsNotExist(err) {
+		return false
+	}
+	if err != nil {
+		noteAuthRemove(errOut, path, err)
+		return true
+	}
+	if st.Mode()&os.ModeSymlink != 0 || !st.IsDir() {
+		noteAuthRemove(errOut, path, fmt.Errorf("data home is not a real directory"))
+		return true
+	}
+	cur := root
+	parts := strings.Split(rel, string(filepath.Separator))
+	for i, part := range parts {
+		next := filepath.Join(cur, part)
+		st, err = os.Lstat(next)
+		if os.IsNotExist(err) {
+			return false
+		}
+		if err != nil {
+			noteAuthRemove(errOut, path, err)
+			return true
+		}
+		final := i == len(parts)-1
+		if st.Mode()&os.ModeSymlink != 0 || final {
+			chmodRealDir(cur, errOut)
+			if err := os.Remove(next); err != nil && !os.IsNotExist(err) {
+				noteAuthRemove(errOut, path, err)
+			}
+			_, still := os.Lstat(next)
+			return !os.IsNotExist(still)
+		}
+		if !st.IsDir() {
+			noteAuthRemove(errOut, path, fmt.Errorf("%s is not a directory", next))
+			return true
+		}
+		cur = next
+	}
+	return true
+}
+
+// chmodRealDir gives a real directory the owner rwx a cleanup unlink needs. A symlink
+// is not a directory here -- Lstat does not follow -- so the mode fix never lands on
+// the directory a planted link names.
+func chmodRealDir(dir string, errOut io.Writer) {
+	st, err := os.Lstat(dir)
+	if err != nil || st.Mode()&os.ModeSymlink != 0 || !st.IsDir() || st.Mode().Perm()&0o700 == 0o700 {
+		return
+	}
+	if err := os.Chmod(dir, st.Mode().Perm()|0o700); err != nil {
+		fmt.Fprintf(errOut, "NATIVE NOTE: the directory %s holding the auth copy could not be made writable again: %s\n", oneline.Field(dir), oneline.Escape(err.Error()))
+	}
+}
+
+func noteAuthRemove(errOut io.Writer, path string, err error) {
+	fmt.Fprintf(errOut, "NATIVE NOTE: the auth copy %s could not be removed at the run's end: %s\n", oneline.Field(path), oneline.Escape(err.Error()))
 }
 
 // writeJobConfig writes the ONE opencode.json the job's harness reads, beside the carried
@@ -2745,14 +2815,9 @@ func writeJobConfig(cfg nativeRunConfig, provider, dataHome, jobDir string, read
 	}
 	sum := sha256.Sum256(body)
 	dst := filepath.Join(dataHome, ".config", "opencode", "opencode.json")
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		if proxy != nil {
-			// ignored: a close on the refusal path; the reason returned below is the one reported
-			_ = proxy.Close()
-		}
-		return "", fmt.Sprintf("the config directory %s could not be made: %s", oneline.Field(filepath.Dir(dst)), oneline.Escape(err.Error())), nil
-	}
-	if err := os.WriteFile(dst, body, 0o600); err != nil {
+	// The same no-follow publish as the auth copy (security#47): a symlink at .config,
+	// at opencode, or at opencode.json is refused, and the bytes stay inside the data home.
+	if err := swarm.WriteFileNoFollow(dataHome, dst, body, 0o600); err != nil {
 		if proxy != nil {
 			// ignored: a close on the refusal path; the reason returned below is the one reported
 			_ = proxy.Close()

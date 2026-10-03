@@ -13,9 +13,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io/fs"
 	"math/big"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -257,8 +259,24 @@ func foldCardMessages(rows [][]string) (ProviderUsage, string) {
 // per attempt -- attempt=1,2,3 for one card -- so the file holds the header and one row per
 // launch, and a reader folds them. A field the provider did not report stays a dash, never a
 // zero, and a tab or a newline in a value is scrubbed so the row is always one row.
+//
+// The file lives in a directory the card can write. A symlink at the name, or a parent
+// that is itself a symlink, is refused and not followed (security#47): the open is
+// O_NOFOLLOW, and a FIFO cannot park it because the open is also non-blocking and the
+// fd is checked to be a regular file.
 func AppendCardUsage(path string, row UsageRow) error {
-	_, statErr := os.Stat(path)
+	parent := filepath.Dir(filepath.Clean(path))
+	pst, err := os.Lstat(parent)
+	if err != nil {
+		return err
+	}
+	if pst.Mode()&os.ModeSymlink != 0 || !pst.IsDir() {
+		return &fs.PathError{Op: "open", Path: path, Err: fmt.Errorf("parent is not a real directory (%s); this write follows no symlink: %w", kindOf(pst.Mode()), errNotRegular)}
+	}
+	_, statErr := os.Lstat(path)
+	if statErr != nil && !missing(statErr) {
+		return statErr
+	}
 	var b strings.Builder
 	if statErr != nil {
 		b.WriteString(strings.Join(CardUsageColumns, "\t"))
@@ -275,7 +293,7 @@ func AppendCardUsage(path string, row UsageRow) error {
 	}
 	b.WriteString(strings.Join(values, "\t"))
 	b.WriteByte('\n')
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
+	f, err := openRegularWrite(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND|oNonBlock, 0o644)
 	if err != nil {
 		return err
 	}
