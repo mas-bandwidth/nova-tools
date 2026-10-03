@@ -59,9 +59,11 @@ words:
                free lanes; asked reads are levelled across the readers up the same way
   drain        the tick's first update of the work table: every change steps queued since the last
                tick; MEMBER DRAIN is a member whose binary was replaced, taking no new card
-  tier         a card's class of model, line 1 of its brief: tier: flash|pro|frontier (none is flash)
+  tier         a card's class of model: flash first on every card; line 1 of its brief (tier:
+               flash|pro|frontier, none is flash) is its ceiling; at its bound below it the machine
+               escalates it a tier (tier_now); rework --tier pins it; frontier is never dealt
   route        a nova-config route row: tier, provider/model, token budget, deadline; the deal draws
-               one of the card's tier for each work card, the ask one for each read
+               one of the tier the card is on for each work card, the ask one for each read
   provider     the first half of provider/model; a run the provider failed is redealt, never failed work
   head         the commit a work card finished at (finish --head, default the work card's id);
                reads and merges are of that head

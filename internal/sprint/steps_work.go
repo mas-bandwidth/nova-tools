@@ -865,8 +865,7 @@ func deal(s *Snapshot, c *Card, fix, m string, q map[string]int, ri routeIndexes
 // The primary records the tier (FieldTierNow) and every later deal draws from it; the
 // attempt that reached its bound, prev, is retired as a rework at the bound retires it;
 // the new attempt's work card is told why (the bound and the tiers), the brief and the
-// fix are the card's own. A failure bound that escalates (rule 2's) calls it with the
-// attempt it retires and its own why.
+// fix are the card's own.
 func escalate(s *Snapshot, c, prev *Card, tier, why, m string, q map[string]int, ri routeIndexes) (Unit, string) {
 	from, _ := CardTiers(c)
 	set := map[string]string{FieldTierNow: tier}
@@ -875,9 +874,7 @@ func escalate(s *Snapshot, c, prev *Card, tier, why, m string, q map[string]int,
 	if refused != "" {
 		return Unit{}, refused
 	}
-	if prev != nil {
-		u.Changes = append([]Change{change(Fleet, removeEntry(prev, map[string]string{"retired": stamp(s.Now), "retired_by": "escalation"}))}, u.Changes...)
-	}
+	u.Changes = append([]Change{change(Fleet, removeEntry(prev, map[string]string{"retired": stamp(s.Now), "retired_by": "escalation"}))}, u.Changes...)
 	u.Moved += fmt.Sprintf("; escalated %s -> %s: %s", from, tier, why)
 	return u, ""
 }

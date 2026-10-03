@@ -124,7 +124,7 @@ type routeIndexes map[string]*routeIndex
 // routeIndexesOf is the route indexes at the counters the fleet table's properties hold.
 func routeIndexesOf(s *Snapshot) routeIndexes {
 	out := routeIndexes{}
-	for _, t := range []string{cardhdr.RouteFlash, cardhdr.RoutePro} {
+	for _, t := range tierLadder {
 		r := tableRound(s.Fleet, PropRouteIndex(t), nil)
 		r.steps = true
 		out[t] = &routeIndex{r: r, moves: roundMoves{}}
@@ -135,7 +135,7 @@ func routeIndexesOf(s *Snapshot) routeIndexes {
 // write writes where the plan's kept units left each tier's index, in its batch
 // (roundWrites; tla/RouteIndex.tla, Deal and Redeal).
 func (ri routeIndexes) write(p *Plan) {
-	for _, t := range []string{cardhdr.RouteFlash, cardhdr.RoutePro} {
+	for _, t := range tierLadder {
 		roundWrites(p, ri[t].r, ri[t].moves)
 	}
 }
@@ -251,13 +251,14 @@ func CardTiers(c *Card) (now, ceiling string) {
 }
 
 // NextTier is the tier the primary c escalates to when it reaches its bound: the next tier
-// of the ladder above the one it is on, up to its ceiling; "" at its ceiling, for a pinned
-// model or tier, for brief lines that cannot be read, and in a store with no route (a
-// twin: its member runs its own model whatever the tier). One function decides it for
-// every bound that escalates: the redeal bound (Deal) and the failure bounds.
+// of the ladder above the one it is on, up to its ceiling; "" at its ceiling (a pinned
+// model or tier is on its ceiling, cardTier), for brief lines that cannot be read, and in
+// a store with no route (a twin: its member runs its own model whatever the tier). One
+// function decides it for every bound that escalates: the redeal bound (Deal) and the
+// failure bounds.
 func (s *Snapshot) NextTier(c *Card) string {
 	m, bad := cardhdr.ReadModel(c.F("brief"))
-	if bad != "" || m.Pin != "" || c.F(FieldTier) != "" || len(s.Routes) == 0 {
+	if bad != "" || len(s.Routes) == 0 {
 		return ""
 	}
 	i, top := slices.Index(tierLadder, cardTier(c, m)), slices.Index(tierLadder, ceilingTier(c, m))

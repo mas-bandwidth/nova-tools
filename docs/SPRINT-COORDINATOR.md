@@ -121,8 +121,9 @@ never answers a sentinel or composes a command the inbox did not print, and stop
 - A stream is one line of cards: `nova-sprint add --stream <s> ...` opens it. Cards that touch one file or
   ledger belong to one stream, in order or chained with `--needs a,b` (primaries that must land first; a
   dropped or missing need raises its own judgment); `add` does not see two open cards naming one file.
-- A card is a brief, a child's whole brief (at most 16 KiB; `REPO:` and `BASE:` lines; a `tier: pro|frontier`
-  line 1 picks the tier, none is flash). From files, the card's id being the file's name without `.md`:
+- A card is a brief, a child's whole brief (at most 16 KiB; `REPO:` and `BASE:` lines; a a `tier: pro|frontier`
+  line 1 is its ceiling, none is flash: every card is dealt on flash first and the machine escalates it a tier
+  at its bound below the ceiling). From files, the card's id being the file's name without `.md`:
 
   ```
   nova-sprint add --stream <s> --brief-dir <dir>
@@ -199,8 +200,11 @@ never answers a sentinel or composes a command the inbox did not print, and stop
   wall. Routes are nova-config rows applied to the store (`nova-config route list`, `route show <name>`). The
   tiers are flash and pro; a frontier card is the coordinator's and is never dealt. A tier's order is
   `nova-config tier set <tier> --routes <a>,<b>,<a> --as <coordinator>`, a route named twice taking two turns.
-  A card's tier is line 1 of its brief; after PR 5097 `rework <card> --tier <tier>` raises it for the next
-  attempt.
+  Flash first on every card (cost rule 1, nova-tools#5174): line 1 of its brief is its ceiling, never its
+  first deal. An attempt at its bound below the ceiling is escalated by the machine (`tier_now`, a new
+  attempt on the next tier, no judgment); at the ceiling the bound is your judgment. `rework <card> --tier
+  <tier>` pins the card to a tier, its ceiling too, never escalated; `card <id>` prints `tier=` and
+  `ceiling=` on its CARD OK line.
 - A provider's failure is not a verdict on a route: a run the provider failed is redealt, never failed work,
   leaving out the routes already drawn for the card. A limit or an empty balance never takes a route out of
   the deal; it clears by itself, and a route taken out for it stays out.

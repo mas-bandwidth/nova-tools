@@ -197,3 +197,41 @@ func TestAnEscalationNoRouteServesIsJudgedUnderItsTier(t *testing.T) {
 	assert.Equal(t, "pro-a", h.workCards()["s1-1.w2"].F(sprint.FieldRoute), "a pro route deals the escalation")
 	assert.Empty(t, h.a2Open(sprint.NNoRoute))
 }
+
+// The reads follow the tier the work is on (route.go, readTierOf through cardTier): a pro
+// card's first attempt, on flash, is read on flash routes; escalated to pro, on pro.
+func TestAProCardsFlashAttemptIsReadOnFlash(t *testing.T) {
+	t.Parallel()
+	h := flashAndPro(t)
+	require.NoError(t, h.st.BeatReaders(h.ctx))
+	h.addReady("s1", 1, briefOf("pro", ""))
+	h.startMachine()
+	h.machine()
+	require.Equal(t, "flash", h.workCards()["s1-1.w1"].F(sprint.FieldTier))
+	h.work("m1")
+	h.work("m2")
+	h.machine()
+	reads := h.snap().Readers.Of("s1-1")
+	require.Len(t, reads, 2)
+	for _, rc := range reads {
+		assert.Equal(t, "flash", tierOfRoute(rc.F(sprint.FieldRoute)), "%s read on %s", rc.ID, rc.F(sprint.FieldRoute))
+		assert.Equal(t, "flash", rc.F(sprint.FieldTier))
+	}
+	h.clean("a flash attempt read on flash")
+}
+
+// A store with no route escalates nothing (NextTier): its member runs its own model
+// whatever the tier, so a pro card at its bound on a twin is the bound's judgment, never
+// a silent second attempt.
+func TestAStoreWithNoRouteEscalatesNothing(t *testing.T) {
+	t.Parallel()
+	h := routeHarness(t)
+	h.addReady("s1", 1, briefOf("pro", ""))
+	h.startMachine()
+	h.machine()
+	h.boundOut("s1-1")
+	pr := h.snap().Work.Card("s1-1")
+	assert.Equal(t, 1, pr.Int("attempt"), "no second attempt")
+	assert.Empty(t, pr.F(sprint.FieldTierNow))
+	assert.Len(t, h.openOf(sprint.NBound), 1, "the bound's judgment")
+}

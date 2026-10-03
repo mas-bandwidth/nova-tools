@@ -101,23 +101,25 @@ func TestAStoreWithNoRouteDealsAsBefore(t *testing.T) {
 // A card whose tier no enabled route serves is not dealt: the deal verb refuses it
 // naming the tier, and the tick writes one judgment for the tier however many cards
 // of it wait, never one per card and never again while it is open; a route added
-// for the tier deals them, and the judgment closes. A pro card's first deal is on
-// flash (flash first), so it waits under flash's. A frontier card with no pin is
+// for the tier deals them, and the judgment closes. The pro cards are on pro (escalated:
+// flash first, flash_first_test.go). A frontier card with no pin is
 // the coordinator's, judged the same way, and a pinned one is dealt.
 func TestACardWithNoRouteIsNotDealtAndJudgedOncePerTier(t *testing.T) {
 	t.Parallel()
-	h := routeHarness(t, route("pro-a", "pro"), func() sprint.Route { r := route("flash-off", "flash"); r.Enabled = false; return r }())
-	h.addReady("s1", 3, briefOf("flash", ""))
-	h.addReady("s2", 1, briefOf("pro", ""))
+	h := routeHarness(t, route("flash-a", "flash"), func() sprint.Route { r := route("pro-off", "pro"); r.Enabled = false; return r }())
+	h.addReady("s1", 3, briefOf("pro", ""))
+	for _, id := range []string{"s1-1", "s1-2", "s1-3"} {
+		h.setPrimary(id, map[string]string{sprint.FieldTierNow: "pro"})
+	}
+	h.addReady("s2", 1, briefOf("flash", ""))
 	h.addReady("s3", 1, briefOf("frontier", ""))
 	h.addReady("s4", 1, briefOf("frontier", "model: anthropic/claude-frontier\ntokens: unmetered\ndeadline: 3600"))
 	res := h.run(DealStep(sprint.DealReq{}))
 	refused := fmt.Sprint(res.Refused)
-	assert.Contains(t, refused, "no enabled route serves tier flash")
-	assert.NotContains(t, refused, "tier pro")
+	assert.Contains(t, refused, "no enabled route serves tier pro")
 	assert.Contains(t, refused, "a frontier card waits for the coordinator")
 	cards := h.workCards()
-	assert.NotContains(t, cards, "s2-1.w1", "the pro card waits for flash, its first deal's tier")
+	assert.Contains(t, cards, "s2-1.w1", "the flash card is dealt")
 	assert.Contains(t, cards, "s4-1.w1", "the pinned frontier card is dealt")
 	assert.NotContains(t, cards, "s1-1.w1")
 	assert.NotContains(t, cards, "s3-1.w1")
@@ -131,7 +133,7 @@ func TestACardWithNoRouteIsNotDealtAndJudgedOncePerTier(t *testing.T) {
 	for _, o := range open {
 		subjects = append(subjects, o.Subject())
 	}
-	assert.ElementsMatch(t, []string{sprint.StreamSubject(sprint.TierSubject("flash")), sprint.StreamSubject(sprint.TierSubject("frontier"))}, subjects,
+	assert.ElementsMatch(t, []string{sprint.StreamSubject(sprint.TierSubject("pro")), sprint.StreamSubject(sprint.TierSubject("frontier"))}, subjects,
 		"one judgment per tier, however many cards of it wait")
 	assert.Equal(t, 2, h.notesOf(sprint.NNoRoute), "written once each, never every tick")
 	h.clean("the cards no route serves are held by their tier's judgment")
@@ -139,12 +141,12 @@ func TestACardWithNoRouteIsNotDealtAndJudgedOncePerTier(t *testing.T) {
 	h.m.SetRoutes([]sprint.Route{route("flash-a", "flash"), route("pro-a", "pro")})
 	h.machine()
 	cards = h.workCards()
-	for _, id := range []string{"s1-1.w1", "s1-2.w1", "s1-3.w1", "s2-1.w1"} {
+	for _, id := range []string{"s1-1.w1", "s1-2.w1", "s1-3.w1"} {
 		require.Contains(t, cards, id, "a route for the tier deals its cards")
-		assert.Equal(t, "flash-a", cards[id].F(sprint.FieldRoute))
+		assert.Equal(t, "pro-a", cards[id].F(sprint.FieldRoute))
 	}
 	open = h.a2Open(sprint.NNoRoute)
-	require.Len(t, open, 1, "the flash judgment closes; the frontier one stays")
+	require.Len(t, open, 1, "the pro judgment closes; the frontier one stays")
 	assert.Equal(t, sprint.StreamSubject(sprint.TierSubject("frontier")), open[0].Subject())
 }
 
