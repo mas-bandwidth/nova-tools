@@ -954,9 +954,7 @@ nova-sprint take --as m1 --epoch 0
 nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --report done
 nova-sprint tick
 nova-sprint read --as reader-a --begin --epoch 0
-nova-sprint read --as reader-b --begin --epoch 0
 nova-sprint read --as reader-a --ok --epoch 0
-nova-sprint read --as reader-b --ok --epoch 0
 nova-sprint tick
 nova-sprint merge --stream s1 --batch 1
 ```

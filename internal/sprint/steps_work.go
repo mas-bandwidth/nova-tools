@@ -1097,7 +1097,7 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		}
 		// A rework whose child found nothing to do, or committed nothing, at the head an
 		// earlier attempt pushed and a reader passed is no failed work: the card was right.
-		// It goes back to review at that head, where the machine's ask asks two readers
+		// It goes back to review at that head, where the machine's ask asks its readers
 		// (docs/SPEC-SPRINT.md section 6; Rework sets FieldPassedHead).
 		passed := r.Failed && r.Head == "" && IsNothingNew(r.Report) && pr.F(FieldPassedHead) != ""
 		if passed {

@@ -227,7 +227,7 @@ type seqRun struct {
 func streamsRun(t *testing.T, h *harness, ticks int) seqRun {
 	seqFleet(h, 2)
 	for _, st := range seqStreams {
-		h.must(AddStep(sprint.AddReq{Stream: st, Count: 60}))
+		h.must(AddStep(sprint.AddReq{Brief: proBrief, Stream: st, Count: 60}))
 	}
 	var r seqRun
 	for i := 1; i <= ticks; i++ {

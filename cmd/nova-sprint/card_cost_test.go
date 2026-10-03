@@ -61,6 +61,7 @@ func costCard(t *testing.T) *testApp {
 	ta.a.sleep(30 * time.Second)
 	ta.ok("finish --as m1 s1-1.w2@1 --usage '" + usageOK + "'")
 	ta.ok("ask")
+	ta.ok("ask s1-1 --another") // a flash card is read once: a second reader, for a second read's cost
 	ta.a.sleep(3 * time.Second)
 	ta.ok("read --as reader-a --begin --limit 1")
 	ta.a.sleep(20 * time.Second)
@@ -191,7 +192,7 @@ func TestAReturnedReadKeepsItsRunInTheTotal(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b,reader-c --members m1")
 	ta.m.SetRoutes(costRoutes())
-	ta.ok("add --stream s1 --count 1")
+	ta.ok("add --stream s1 --count 1 --brief-file " + proBriefFile(t))
 	ta.deal(1)
 	ta.ok("take --as m1 s1-1.w1@1")
 	ta.ok("finish --as m1 s1-1.w1@1")

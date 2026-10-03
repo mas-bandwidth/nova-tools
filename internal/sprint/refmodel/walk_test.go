@@ -192,7 +192,7 @@ func (k *walk) add() bool {
 	if sentinel {
 		needs = nil
 	}
-	return k.try(sprint.Add(k.s, sprint.AddReq{Stream: k.stream(), IDs: []string{id}, Needs: needs, Sentinel: sentinel, Who: coordinator}))
+	return k.try(sprint.Add(k.s, sprint.AddReq{Brief: proBrief, Stream: k.stream(), IDs: []string{id}, Needs: needs, Sentinel: sentinel, Who: coordinator}))
 }
 
 // fleet has the coordinator hold a member down or release it.

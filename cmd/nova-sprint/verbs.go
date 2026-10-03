@@ -1796,7 +1796,7 @@ func (a *app) cmdAccept(args []string, stdout, stderr io.Writer) int {
 	var readOK *bool
 	var ans *string
 	return a.setVerb("accept", args, stdout, stderr, false, func(fs flagSet) {
-		readOK = fs.Bool("read-ok", false, "every primary in review with ok reads from two different readers; moves eligible primaries into the merge queue")
+		readOK = fs.Bool("read-ok", false, "every primary in review with the ok reads it needs (one reader's for a flash card, two different readers' for a pro card); moves eligible primaries into the merge queue")
 		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
 	}, func(ids []string, s *sel) string {
 		if len(ids) == 0 && s.stream == "" && !*readOK && s.limit == 0 {
