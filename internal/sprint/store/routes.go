@@ -183,7 +183,7 @@ func (r *Redis) Routes(ctx context.Context) (RouteSet, int64, error) {
 func RouteOf(name string, h map[string]string) sprint.Route {
 	n := func(k string) int { v, _ := strconv.Atoi(h[k]); return v }
 	enabled, _ := strconv.ParseBool(h["enabled"])
-	return sprint.Route{Name: name, Tier: h["tier"], Provider: h["provider"], Model: h["model"], Tokens: n("tokens"),
+	return sprint.Route{Name: name, Tier: h["tier"], Provider: h["provider"], Model: h["model"], Tokens: n("tokens"), USD: h["usd"],
 		Deadline: n("deadline"), Enabled: enabled, Prices: cardcost.PricesOf(h)}
 }
 

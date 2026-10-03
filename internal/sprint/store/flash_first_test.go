@@ -201,7 +201,7 @@ func TestAnEscalationNoRouteServesIsJudgedUnderItsTier(t *testing.T) {
 }
 
 // The reads follow the tier the work is on (route.go, readTierOf through cardTier): a pro
-// card's first attempt, on flash, is read on flash routes; escalated to pro, on pro.
+// card's first attempt, on flash, is read once on a flash route (cost rule 4).
 func TestAProCardsFlashAttemptIsReadOnFlash(t *testing.T) {
 	t.Parallel()
 	h := flashAndPro(t)
@@ -214,7 +214,7 @@ func TestAProCardsFlashAttemptIsReadOnFlash(t *testing.T) {
 	h.work("m2")
 	h.machine()
 	reads := h.snap().Readers.Of("s1-1")
-	require.Len(t, reads, 2)
+	require.Len(t, reads, 1, "a card on flash is read once (cost rule 4, readers.go ReadsNeeded)")
 	for _, rc := range reads {
 		assert.Equal(t, "flash", tierOfRoute(rc.F(sprint.FieldRoute)), "%s read on %s", rc.ID, rc.F(sprint.FieldRoute))
 		assert.Equal(t, "flash", rc.F(sprint.FieldTier))

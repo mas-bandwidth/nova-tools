@@ -57,6 +57,7 @@ type app struct {
 	meter   hostload.Source  // how fleet beat measures this machine
 	etaMu   sync.Mutex
 	etas    []etaSample // the view's estimates of the last etaHold (heldETA)
+	etaKey  etaKey      // the cards to land the held estimates were made over
 
 	// inventory reads the machines of nova-config and their widths (fleet
 	// sync): tests give it the config's in-memory store.

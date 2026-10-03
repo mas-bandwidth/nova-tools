@@ -61,6 +61,7 @@ func costCard(t *testing.T) *testApp {
 	ta.a.sleep(30 * time.Second)
 	ta.ok("finish --as m1 s1-1.w2@1 --usage '" + usageOK + "'")
 	ta.ok("ask")
+	ta.ok("ask s1-1 --another") // a flash card is read once: a second reader, for a second read's cost
 	ta.a.sleep(3 * time.Second)
 	ta.ok("read --as reader-a --begin --limit 1")
 	ta.a.sleep(20 * time.Second)
@@ -191,7 +192,8 @@ func TestAReturnedReadKeepsItsRunInTheTotal(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b,reader-c --members m1")
 	ta.m.SetRoutes(costRoutes())
-	ta.ok("add --stream s1 --count 1")
+	ta.ok("add --stream s1 --count 1 --brief-file " + proBriefFile(t))
+	ta.tierNow("s1-1", "pro") // read by two readers: a pro card on pro
 	ta.deal(1)
 	ta.ok("take --as m1 s1-1.w1@1")
 	ta.ok("finish --as m1 s1-1.w1@1")
@@ -203,7 +205,7 @@ func TestAReturnedReadKeepsItsRunInTheTotal(t *testing.T) {
 	out := ta.ok("card s1-1")
 	lines := costLines(out)
 	require.Len(t, lines, 4, out) // the work card's take (it reported nothing), two reads, the total
-	assert.Contains(t, lines[1], "COST kind=read card=s1-1.r1.reader-a attempt=1 take=1 who=reader-a route=pro-a model=opencode/deepseek-v4-pro tier=flash end=returned input=2000 ")
+	assert.Contains(t, lines[1], "COST kind=read card=s1-1.r1.reader-a attempt=1 take=1 who=reader-a route=pro-a model=opencode/deepseek-v4-pro tier=pro end=returned input=2000 ")
 	assert.Contains(t, lines[1], "wait=0s run=9s predicted_usd=0.0014 actual_usd=0.0015 actual_by=harness cost=both")
 	assert.Contains(t, lines[2], "COST kind=read card=s1-1.r1.reader-b attempt=1 who=reader-b ")
 	assert.Contains(t, lines[3], "COST TOTAL consumers=3 input=2100 ")

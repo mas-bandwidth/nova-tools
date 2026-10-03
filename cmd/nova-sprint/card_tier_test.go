@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
@@ -55,4 +56,22 @@ func TestCardPrintsTheTierAndItsCeiling(t *testing.T) {
 	assert.Contains(t, out, "ATTEMPT 2 card=s1-1.w2 gen=1 route=pro-a model=opencode/deepseek-v4-pro tier=pro member=m1")
 	now, ceiling = tiers()
 	assert.Equal(t, []string{"pro", "pro"}, []string{now, ceiling}, "--json")
+}
+
+// tierNow puts the primary id on a tier, as the machine's escalation leaves it (flash
+// first: every card's first deal is on flash): a test of the two-reader machinery
+// (cost rule 4) on a store with routes means a card on pro.
+func (ta *testApp) tierNow(id, tier string) {
+	ta.t.Helper()
+	ctx := context.Background()
+	st, err := ta.a.store(common{redis: "mem:0", actor: "tester"})
+	require.NoError(ta.t, err)
+	snap, err := st.Load(ctx, []string{sprint.Work}, nil)
+	require.NoError(ta.t, err)
+	c := snap.Work.Card(id)
+	require.NotNil(ta.t, c, id)
+	_, err = ta.m.Apply(ctx, ntable.BatchManifest{Schema: 1, Table: st.Names.Table(sprint.Work), Epoch: fmt.Sprint(st.PinnedEpoch()),
+		ExpectedTableRevision: fmt.Sprint(snap.Work.Revision), OperationID: "tier-now-" + id,
+		Members: []ntable.BatchMemberEntry{{ID: c.ID, Expect: &ntable.MemberExpect{Revision: fmt.Sprint(c.Rev)}, Set: map[string]string{sprint.FieldTierNow: tier}}}})
+	require.NoError(ta.t, err)
 }

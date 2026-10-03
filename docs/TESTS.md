@@ -697,7 +697,7 @@ Postgres and a throwaway Redis.
 
 ```text
 $ nova-config migrate --file try.json
-CONFIG MIGRATE file=try.json from=0 to=19 applied=19
+CONFIG MIGRATE file=try.json from=0 to=20 applied=20
 
 $ nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --as a1 --file try.json
 CONFIG ADD kind=machine name=m1 rev=1
@@ -928,8 +928,8 @@ FINISH OK moved=1 refused=0 notes=1 op=finish-t24-1
 
 $ nova-sprint tick
 MOVED drain: s1-1.w1 working -> done ok; s1-1 working -> review (finish by m1)
-MOVED ask: s1-1 asked of reader-a, reader-b
-TABLES rows changed: work=1 readers=2 merge=0 fleet=0
+MOVED ask: s1-1 asked of reader-a
+TABLES rows changed: work=1 readers=1 merge=0 fleet=0
 TICK OK state=RUNNING idle=no moved=2 notes=0
 0/1 0.0% -> ETA -  machine: running
 
@@ -938,31 +938,21 @@ MOVED s1-1.r1.reader-a asked -> reading
 READ OK moved=1 refused=0 notes=0 op=read-t27-1
 0/1 0.0% -> ETA -  machine: running
 
-$ nova-sprint read --as reader-b --begin --epoch 0
-MOVED s1-1.r1.reader-b asked -> reading
+$ nova-sprint read --as reader-a --ok --epoch 0
+MOVED s1-1.r1.reader-a reading -> ok
 READ OK moved=1 refused=0 notes=0 op=read-t28-1
 0/1 0.0% -> ETA -  machine: running
 
-$ nova-sprint read --as reader-a --ok --epoch 0
-MOVED s1-1.r1.reader-a reading -> ok
-READ OK moved=1 refused=0 notes=0 op=read-t29-1
-0/1 0.0% -> ETA -  machine: running
-
-$ nova-sprint read --as reader-b --ok --epoch 0
-MOVED s1-1.r1.reader-b reading -> ok
-READ OK moved=1 refused=0 notes=0 op=read-t30-1
-0/1 0.0% -> ETA -  machine: running
-
 $ nova-sprint tick
-MOVED drain: s1-1 asked of reader-a, reader-b (tick ask by machine); s1-1.r1.reader-a reading -> ok (read by reader-a); s1-1.r1.reader-b reading -> ok (read by reader-b)
-MOVED accept: s1-1 review -> merging queued (ok from reader-a, reader-b)
+MOVED drain: s1-1 asked of reader-a (tick ask by machine); s1-1.r1.reader-a reading -> ok (read by reader-a)
+MOVED accept: s1-1 review -> merging queued (ok from reader-a)
 TABLES rows changed: work=1 readers=0 merge=1 fleet=0
 TICK OK state=RUNNING idle=no moved=2 notes=2
 0/1 0.0% -> ETA -  machine: running
 
 $ nova-sprint merge --stream s1 --batch 1
 MOVED s1-1 merging -> landed
-MERGE OK moved=1 refused=0 notes=2 op=merge-t34-1
+MERGE OK moved=1 refused=0 notes=2 op=merge-t32-1
 0/1 0.0% -> ETA -  machine: running
 ```
 

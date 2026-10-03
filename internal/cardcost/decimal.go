@@ -116,3 +116,16 @@ func Text(r *big.Rat) string {
 	}
 	return s
 }
+
+// Cents is a dollar amount as a table or a line shows it: "$" and the amount in dollars
+// and cents, rounded up to the next cent ("$1.24" for 1.2345, "$20.22" for 20.2111; the
+// owner's rule, money to the cent, rounded up). What is kept of an amount elsewhere is
+// exact; this is only how it is shown.
+func Cents(usd *big.Rat) string {
+	cents := new(big.Rat).Mul(usd, big.NewRat(100, 1))
+	up := new(big.Int).Quo(cents.Num(), cents.Denom())
+	if cents.Sign() > 0 && !cents.IsInt() {
+		up.Add(up, big.NewInt(1))
+	}
+	return "$" + new(big.Rat).SetFrac(up, big.NewInt(100)).FloatString(2)
+}

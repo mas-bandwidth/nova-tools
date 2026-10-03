@@ -94,8 +94,14 @@ a 36-thread bench, 2026-10-02, sixteen reads each ran `go test ./internal/ci/`, 
 of processes and build every command, and the machine spent 85% of its CPU in the kernel; the
 work's own gate ran those tests, and CI runs them again. A checkout with no `go.mod` has no gate
 of its own, and its JOB.md says to run the card's. JOB.md repeats no rules:
-the card's own RULES paragraph is in the brief, where the add lint holds it, and the child
-reads it once.
+the RULES paragraph is in the card the child is handed, once. Rules by reference (the owner,
+2026-10-02: "Rules by reference: the member injects fleet/child-rules.txt once; the card does not
+carry it; a per-repo rules file for second repos."; nova-tools#5174 rule 6): the stored brief is
+the card's text alone, and the member, when it writes the card file at the start of a launch,
+appends the RULES paragraph of the held rules file the card names (none when it names none:
+such a card carries its own; docs/SPEC-SPRINT.md section 2), so what the child
+reads is the shape it read when the card carried them
+(`TestTheChildsCardIsUnchangedByRulesByReference`).
 
 **Where a rework starts.** `sprint.BaseOf` is the one place that decides it: the packet's `base_head`
 is the head of the latest earlier attempt whose finish was ok at a full sha, with `base_attempt` its
@@ -199,8 +205,10 @@ A work card's finish is judged in one place, `member.Judge`, cited from the mode
   reason is `no result: no RESULT.md shape`, and the sprint treats it as an ended take
   (docs/SPEC-SPRINT.md, the work card's redeals), never as the card's failure: no work came
   back, so there is nothing to judge (the owner, 2026-10-01: "that's fine with me."). A run
-  its budget or its deadline ended with no result is failed work, the end said first
-  (`budget: no RESULT.md shape`);
+  its budget or its deadline ended with no result is failed work, the end said first, and
+  for a budget which budget and at what count, from native's `NATIVE BUDGET` line, the cost
+  the harness reported to the cent and rounded up
+  (`budget: tokens 509,940 of 400,000, $0.03: no RESULT.md shape`);
 - **failed** otherwise, with the reason: `<end>: no RESULT.md shape`, `nothing to do: <why>`
   (`cardhdr.EndNothing`),
   `verdict <word>`, `no commit: <why>` (`cardhdr.EndNoCommit`), `push refused: <git's line>`; a failed finish passes
@@ -291,7 +299,10 @@ description's secret; everything else is dropped. Native puts the bench's Go fir
 child's `PATH` after its shell wrappers: the directory the bench's `go` really lives in
 (`swarm.BenchGoBin`: the first `go` in `~/sdk/bin`, `~/go/bin`, then the member's own `PATH`,
 resolved through its links), so a card's bare `go` and `gofmt` resolve whatever `PATH` the loop
-unit started the member with. A name matching
+unit started the member with. Under the darwin wall, which denies `setpriority`, native
+starts the child's process group at nice 19 and the wrappers' directory carries a `nice` that
+runs its command without asking for a priority the group already has, so a gate's
+`nice -n 19` prints no warning. A name matching
 `TOKEN|SECRET|PASSWORD|PASSWD|KEY|CREDENTIAL|AUTH` is dropped unless `--pass` names it, even in
 an allowed family. The member keeps the forge credentials for its own push and pull request. A loop record whose harness reads its provider key from the environment carries `--pass <KEY>`; without it the children start with no provider key and fail at the provider, and a member started with no `--pass`, no worker secret and no `--auth` file for a model that is not a local one (`ollama`, `lmstudio`, `llamacpp`, `local`) says so in one `NOTE` line. When the result carries a `title`, the member opens the pull
 request after the push, as itself, from the card's branch into the base ref, with the title and

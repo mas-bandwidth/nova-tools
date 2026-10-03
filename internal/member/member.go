@@ -128,6 +128,10 @@ type Result struct {
 	// Staging is why End is EndStaging: the reason of native's STAGE FAIL line, the launch
 	// refused before any child ran (tla/CardContract.tla, StageRefused).
 	Staging string
+	// Budget is which budget ended a run whose End is EndBudget, and at what count, as
+	// native's NATIVE BUDGET line says it ("tokens 509,940 of 400,000, $0.03"); Judge
+	// says it after the end (nova-tools #5094). "" when native named none.
+	Budget string
 }
 
 // The ends Judge names first in a failed finish.
@@ -165,6 +169,9 @@ func Judge(r Result, pu Push) (fin Finish, why string) {
 		// a budget or a deadline names how the run ended first; the provider's kind is
 		// the provider case's own (below), never a prefix on another reason
 		if fin == FinishFailed && r.End != "" && r.End != EndProvider && r.End != EndStaging {
+			if r.End == EndBudget && r.Budget != "" {
+				why = r.Budget + ": " + why // which budget, and at what count (#5094)
+			}
 			why = r.End + ": " + why
 		}
 	}()
@@ -213,6 +220,7 @@ type Packet struct {
 	Gen        int      `json:"gen,omitempty"`
 	Epoch      uint64   `json:"epoch"`
 	Brief      string   `json:"brief,omitempty"`
+	Rules      string   `json:"rules,omitempty"` // the held rules file the card names, "" when it carries its own (sprint.Packet)
 	Fix        string   `json:"fix,omitempty"`
 	Finding    string   `json:"finding,omitempty"` // a rework's: the readers' words that found the attempt before broken
 	Why        string   `json:"why,omitempty"`     // a rework's: how the attempt before ended
@@ -232,6 +240,7 @@ type Packet struct {
 	Route    string `json:"route,omitempty"`
 	Model    string `json:"model,omitempty"`
 	Tokens   string `json:"tokens,omitempty"`
+	USD      string `json:"usd,omitempty"` // the dollar budget per card, a decimal; "" for none (#5094)
 	Deadline int    `json:"deadline,omitempty"`
 	// Tier is the tier the route was drawn from when the sprint decided it (a read's
 	// read tier, a rework's --tier); empty when the brief's line 1 names it.

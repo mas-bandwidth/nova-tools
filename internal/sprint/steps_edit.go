@@ -40,6 +40,7 @@ func unstarted(s *Snapshot, id, keeps string) string {
 // BriefReq replaces the brief of a primary that has not started.
 type BriefReq struct {
 	ID, Brief, Who string
+	Rules          string // the held rules file the new brief is held to by reference (FieldRules), "" when it carries its own
 }
 
 // Brief replaces a primary's brief (nova-sprint brief): on a STOPPED machine
@@ -63,7 +64,11 @@ func Brief(s *Snapshot, r BriefReq) Plan {
 		p.refuse(r.ID, why)
 		return p
 	}
-	p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, setEntry(c, map[string]string{"brief": r.Brief}))},
+	set, unset := map[string]string{"brief": r.Brief}, []string{FieldRules} // a brief that carries its own rules names none
+	if r.Rules != "" {
+		set[FieldRules], unset = r.Rules, nil
+	}
+	p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, setEntry(c, set, unset...))},
 		Moved: fmt.Sprintf("%s brief replaced (%d bytes) stream=%s %s", c.ID, len(r.Brief), c.Row, c.Col)})
 	return p
 }
