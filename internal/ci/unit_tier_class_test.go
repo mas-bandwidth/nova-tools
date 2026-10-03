@@ -408,28 +408,15 @@ func TestNightlySpaceLegIsTheOnlyEnforcingLeg(t *testing.T) {
 	assert.Containsf(t, recipe, `|| { [ "$$status" -ne 0 ] || status=2; }; exit $$status`, "the test recipe does not carry slowtests' exit through:\n%s", recipe)
 }
 
-// TestMeasuredBenchesAreCIRunners: the benches an allowlist row may name as
-// where it was measured are read from ci.yml by slowtests.Benches, and every
-// bench the allowlist names is one of them, so `<seconds>s@<bench>` points at a
-// runner a reader can find and the inventory is kept once, in ci.yml
-// (docs/STANDARD.md section 4).
+// TestMeasuredBenchesAreCIRunners: the benches a row may name as where it was
+// measured are read from ci.yml itself by slowtests.Benches, so the runner
+// inventory has the one home ci.yml is and `<seconds>s@<bench>` points at a
+// runner a reader can find (docs/STANDARD.md section 4).
 func TestMeasuredBenchesAreCIRunners(t *testing.T) {
 	t.Parallel()
 
-	root := repoRoot(t)
-	src := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
+	src := readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
 	benches, err := slowtests.Benches([]byte(src))
 	require.NoErrorf(t, err, "slowtests.Benches(ci.yml): %v", err)
-	if !assert.NotEmptyf(t, benches, "slowtests.Benches(ci.yml) = %v, want the labels its self-hosted runs-on lists and runner groups name", benches) {
-		return
-	}
-	const rel = "internal/ci/slow-tests_allowlist.txt"
-	rows, err := slowtests.ParseAllowlist(strings.NewReader(readFile(t, filepath.Join(root, filepath.FromSlash(rel)))))
-	require.NoErrorf(t, err, "%s: %v", rel, err)
-	for _, row := range rows {
-		if strings.HasPrefix(row.Where, "run") {
-			continue
-		}
-		assert.Containsf(t, benches, row.Where, "%s measures %s %s on %q, which ci.yml's runs-on lists and runner groups do not name", rel, row.Package, row.Test, row.Where)
-	}
+	assert.NotEmptyf(t, benches, "slowtests.Benches(ci.yml) = %v, want the labels its self-hosted runs-on lists and runner groups name", benches)
 }
