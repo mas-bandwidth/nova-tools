@@ -160,7 +160,7 @@ func TestTheFleetIsOneRowOfEndpointsAndMachineRefs(t *testing.T) {
 	require.True(t, fleet.Singleton, assertionMsg144...)
 	require.Equal(t, "fleet", fleet.Table, assertionMsg144...)
 	scopedGot169 := strings.Join(fleet.FieldNames(), ",")
-	require.Equal(t, "store,coordinator,redis_port,pg_dsn", scopedGot169, "fleet fields %s", scopedGot169)
+	require.Equal(t, "store,coordinator,redis_port,pg_dsn,loops_dir", scopedGot169, "fleet fields %s", scopedGot169)
 	for _, name := range []string{"store", "coordinator"} {
 		f, ok := fleet.Field(name)
 		require.True(t, ok)
@@ -175,7 +175,7 @@ func TestTheFleetIsOneRowOfEndpointsAndMachineRefs(t *testing.T) {
 			assert.False(t, f.Required, assertionMsg158...)
 		}()
 	}
-	row, err := fleet.NewRow(KindFleet, map[string]string{"store": "hulk"})
+	row, err := fleet.NewRow(KindFleet, map[string]string{"store": "hulk", "loops_dir": seededLoopsDir})
 	assertionMsg153 := []any{"fleet row %+v %v", row.Fields, err}
 	require.NoError(t, err, assertionMsg153...)
 	require.Equal(t, "hulk", row.Fields["store"], assertionMsg153...)
@@ -220,11 +220,11 @@ func TestTheFleetIsOneRowOfEndpointsAndMachineRefs(t *testing.T) {
 			assert.NotContains(t, err.Error(), "do-not-print")
 		})
 	}
-	row, err = fleet.NewRow(KindFleet, map[string]string{"redis_port": "6380", "pg_dsn": "postgres://user@localhost:5432/nova"})
+	row, err = fleet.NewRow(KindFleet, map[string]string{"redis_port": "6380", "pg_dsn": "postgres://user@localhost:5432/nova", "loops_dir": seededLoopsDir})
 	require.NoError(t, err)
 	assert.Equal(t, "6380", row.Fields["redis_port"])
 	assert.Equal(t, "postgres://user@localhost:5432/nova", row.Fields["pg_dsn"])
-	_, err = fleet.NewRow(KindFleet, map[string]string{"pg_dsn": "postgres://user@localhost/nova?sslmode=require&application_name=nova%3Bconfig"})
+	_, err = fleet.NewRow(KindFleet, map[string]string{"pg_dsn": "postgres://user@localhost/nova?sslmode=require&application_name=nova%3Bconfig", "loops_dir": seededLoopsDir})
 	assert.NoError(t, err, "an omitted port and a percent-encoded query value are valid")
 }
 
@@ -394,4 +394,18 @@ func TestAFriendsWidthDefaultsToEightAndIsAtLeastOne(t *testing.T) {
 	assert.Equal(t, "friend amy has width 0; a friend's width is the jobs she works at once, at least 1: want --width <n> with n >= 1", err.Error(), "one refusal")
 	assert.NoError(t, friend.Check(Row{Name: "amy", Fields: map[string]string{"width": "1"}}))
 	assert.Error(t, friend.Check(Row{Name: "amy", Fields: map[string]string{"width": "0"}}))
+}
+
+// TestLoopLogIsTheFleetRowsDirectory pins the log path to the fleet row's
+// loops_dir: the migration's seed reproduces the path apply wrote before the
+// field, another directory changes it, and an empty directory is refused.
+func TestLoopLogIsTheFleetRowsDirectory(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, "~/nova-bench/loops/l1.log", LoopLog(seededLoopsDir, "l1"))
+	assert.Equal(t, "/var/log/loops/l1.log", LoopLog("/var/log/loops", "l1"))
+	fleet, ok := Lookup(KindFleet)
+	require.True(t, ok)
+	err := fleet.Check(Row{Name: KindFleet, Fields: map[string]string{"loops_dir": ""}})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "fleet set --loops-dir")
 }

@@ -687,11 +687,11 @@ type hashKind struct {
 	kind  string
 	set   string
 	key   func(string) string
-	extra func(name string) []any // derived fields beside the row's; nil for none
+	extra func(dir, name string) []any // derived fields beside the row's; nil for none
 }
 
 var hashKinds = map[string]hashKind{
-	KindLoop:  {kind: KindLoop, set: LoopsKey, key: LoopKey, extra: func(n string) []any { return []any{"log", LoopLog(n)} }},
+	KindLoop:  {kind: KindLoop, set: LoopsKey, key: LoopKey, extra: func(dir, n string) []any { return []any{"log", LoopLog(dir, n)} }},
 	KindRoute: {kind: KindRoute, set: RoutesKey, key: RouteKey},
 	KindTier:  {kind: KindTier, set: TiersKey, key: TierKey},
 }
@@ -754,7 +754,15 @@ func (a *RedisApplier) writeHash(ctx context.Context, h hashKind, row Row, idem 
 	rev, _ := strings.CutPrefix(idem, "config:"+h.kind+":")
 	fields := []any{"name", row.Name, "rev", rev, "at", strconv.FormatInt(a.now(), 10)}
 	if h.extra != nil {
-		fields = append(fields, h.extra(row.Name)...)
+		dir := ""
+		if h.kind == KindLoop {
+			d, err := a.Client.Get(ctx, FleetKey("loops_dir")).Result()
+			if err != nil && !errors.Is(err, redis.Nil) {
+				return fmt.Errorf("redis: read %s: %w", FleetKey("loops_dir"), err)
+			}
+			dir = d
+		}
+		fields = append(fields, h.extra(dir, row.Name)...)
 	}
 	for _, f := range k.Fields {
 		fields = append(fields, f.Name, row.Fields[f.Name])

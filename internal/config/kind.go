@@ -66,6 +66,10 @@ const (
 	// or exponent), stored as text in its one spelling (cardcost.Canonical), ""
 	// when not set: a price, never a float.
 	TypeDecimal Type = "decimal"
+	// TypePath is a directory path, one line, stored as text. Empty is the
+	// type's zero; the kind's Check refuses it when a path is required
+	// (docs/SPEC-CONFIG.md, "Field types").
+	TypePath Type = "path"
 )
 
 // Field is one column of a kind: the flag `--<Name>` on add and set, the
@@ -254,6 +258,7 @@ var Kinds = []*Kind{
 			{Name: "coordinator", Type: TypeRef, Ref: KindMachine, Help: "the machine the coordinator's loops run on (a machine row), or empty"},
 			{Name: "redis_port", Type: TypeInt, Nullable: true, Help: "the explicit TCP port Redis listens on, from 1 through 65535; unset until declared"},
 			{Name: "pg_dsn", Type: TypeText, Help: "the explicit password-free postgres:// URI the configuration store uses; empty until set"},
+			{Name: "loops_dir", Type: TypePath, Help: "the directory a loop's unit writes its log under, on the machine the loop runs on; empty is refused"},
 		},
 		Check: checkFleet,
 	},
@@ -295,8 +300,8 @@ var Kinds = []*Kind{
 		// needs, and how it runs (every n seconds, or kept alive). Every
 		// value is data in the row; the code names no machine, seat or
 		// secret (docs/SPEC-CONFIG.md, "loop"). The plays render one unit
-		// per row from the Redis view apply writes; the log path is derived
-		// from the name (LoopLog), never typed.
+		// per row from the Redis view apply writes; the log path is the
+		// fleet row's loops_dir and the loop's name (LoopLog), never typed.
 		Name:  KindLoop,
 		Table: "loops",
 		Doc:   "a supervised loop on one machine: its command, the seat and secret names it opens, and how it runs (every n seconds or kept alive); a nova-swarm member's width, a reader's too, is its machine row's, never the argv's",
@@ -374,9 +379,11 @@ func noteField(what string) Field {
 	return Field{Name: "note", Type: TypeText, Cut: true, Help: what + "; one line, empty (the default) when none; --note '' clears it"}
 }
 
-// checkFleet keeps both store endpoints explicit and safe to print. The
-// endpoints may be unset so an older fleet can migrate before an operator
-// declares them; apply and inventory refuse incomplete endpoints.
+// checkFleet keeps both store endpoints explicit and safe to print, and
+// refuses an empty loops_dir: a loop's log is that directory and the name
+// (docs/STANDARD.md section 4). The endpoints may be unset so an older fleet
+// can migrate before an operator declares them; apply and inventory refuse
+// incomplete endpoints.
 func checkFleet(r Row) error {
 	if raw := r.Fields["redis_port"]; raw != "" {
 		port, err := strconv.Atoi(raw)
@@ -384,31 +391,32 @@ func checkFleet(r Row) error {
 			return fmt.Errorf("--redis_port wants an integer from 1 through 65535")
 		}
 	}
-	dsn, ok := r.Fields["pg_dsn"]
-	if !ok || dsn == "" {
-		return nil
-	}
-	u, err := url.Parse(dsn)
-	if err != nil || (u.Scheme != "postgres" && u.Scheme != "postgresql") || u.Hostname() == "" || u.User == nil || u.User.Username() == "" || strings.TrimPrefix(u.Path, "/") == "" {
-		return fmt.Errorf("--pg_dsn wants a password-free postgres://user@host/database URI (port optional)")
-	}
-	if _, has := u.User.Password(); has {
-		return fmt.Errorf("--pg_dsn carries a password; leave it out and deliver the password through NOVA_PG_PASSWORD_ENV")
-	}
-	if port := u.Port(); port != "" || strings.HasSuffix(u.Host, ":") {
-		n, err := strconv.Atoi(port)
-		if err != nil || n < 1 || n > 65535 {
-			return fmt.Errorf("--pg_dsn wants a TCP port from 1 through 65535 when a port is supplied")
+	if dsn := r.Fields["pg_dsn"]; dsn != "" {
+		u, err := url.Parse(dsn)
+		if err != nil || (u.Scheme != "postgres" && u.Scheme != "postgresql") || u.Hostname() == "" || u.User == nil || u.User.Username() == "" || strings.TrimPrefix(u.Path, "/") == "" {
+			return fmt.Errorf("--pg_dsn wants a password-free postgres://user@host/database URI (port optional)")
 		}
-	}
-	query, err := url.ParseQuery(u.RawQuery)
-	if err != nil {
-		return fmt.Errorf("--pg_dsn wants a valid URI query with percent-encoded values and & between parameters; leave passwords out and deliver them through NOVA_PG_PASSWORD_ENV")
-	}
-	for key := range query {
-		if strings.EqualFold(key, "password") {
+		if _, has := u.User.Password(); has {
 			return fmt.Errorf("--pg_dsn carries a password; leave it out and deliver the password through NOVA_PG_PASSWORD_ENV")
 		}
+		if port := u.Port(); port != "" || strings.HasSuffix(u.Host, ":") {
+			n, err := strconv.Atoi(port)
+			if err != nil || n < 1 || n > 65535 {
+				return fmt.Errorf("--pg_dsn wants a TCP port from 1 through 65535 when a port is supplied")
+			}
+		}
+		query, err := url.ParseQuery(u.RawQuery)
+		if err != nil {
+			return fmt.Errorf("--pg_dsn wants a valid URI query with percent-encoded values and & between parameters; leave passwords out and deliver them through NOVA_PG_PASSWORD_ENV")
+		}
+		for key := range query {
+			if strings.EqualFold(key, "password") {
+				return fmt.Errorf("--pg_dsn carries a password; leave it out and deliver the password through NOVA_PG_PASSWORD_ENV")
+			}
+		}
+	}
+	if r.Fields["loops_dir"] == "" {
+		return fmt.Errorf("loops_dir is empty; want the directory a loop's log is written under; run: fleet set --loops-dir")
 	}
 	return nil
 }
@@ -476,10 +484,16 @@ func checkRouteChanges(changes map[string]string) error {
 	return nil
 }
 
-// LoopLog is where a loop's unit writes its output on its machine, derived
-// from the name and never typed: ~/nova-bench/loops/<name>.log. apply writes
-// it into the loop's Redis hash beside the row's fields.
-func LoopLog(name string) string { return "~/nova-bench/loops/" + name + ".log" }
+// seededLoopsDir is the directory migration 0020 writes on the fleet row that
+// already exists, so apply of that row writes the same log paths as before
+// the field. The field's default in code is none (docs/STANDARD.md section 4).
+const seededLoopsDir = "~/nova-bench/loops"
+
+// LoopLog is where a loop's unit writes its output on its machine: the fleet
+// row's loops_dir and the loop's name, never a path kept in code
+// (docs/STANDARD.md section 4). apply writes it into the loop's Redis hash
+// beside the row's fields.
+func LoopLog(dir, name string) string { return strings.TrimRight(dir, "/") + "/" + name + ".log" }
 
 // checkLoop is the loop kind's Check: exactly one of every and keepalive
 // says how it runs, secret names need a seat to open them from, and a
@@ -730,6 +744,11 @@ func (f Field) Canonical(raw string) (string, error) {
 			return "", fmt.Errorf("--%s %v", f.Name, err)
 		}
 		return c, nil
+	case TypePath:
+		if strings.ContainsAny(raw, "\n\r") {
+			return "", fmt.Errorf("--%s: want one line, a directory path", f.Name)
+		}
+		return raw, nil
 	case TypeSeq:
 		var words []string
 		for _, w := range strings.Split(raw, ",") {

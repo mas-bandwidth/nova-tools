@@ -19,7 +19,7 @@ func TestPlanWriteIsTheChangeAndRefusalOfTheWrite(t *testing.T) {
 	require.NoError(t, err)
 	_, err = st.Insert(ctx, KindMachine, m1, "a1")
 	require.NoError(t, err)
-	_, _, err = st.Update(ctx, KindFleet, KindFleet, map[string]string{"coordinator": "m1"}, "a1")
+	_, _, err = st.Update(ctx, KindFleet, KindFleet, map[string]string{"coordinator": "m1", "loops_dir": seededLoopsDir}, "a1")
 	require.NoError(t, err)
 	m2, err := machine.NewRow("m2", map[string]string{"user": "u", "seat": "s", "slots": "8"})
 	require.NoError(t, err)
@@ -38,7 +38,7 @@ func TestPlanWriteIsTheChangeAndRefusalOfTheWrite(t *testing.T) {
 		{name: "add a name taken", op: OpAdd, kind: KindMachine, row: m1, want: ErrExists},
 		{name: "set a field", op: OpSet, kind: KindMachine, row: Row{Name: "m1"}, changes: map[string]string{"width": "6"}, before: "4", after: "6"},
 		{name: "set a row not there", op: OpSet, kind: KindMachine, row: Row{Name: "m9"}, changes: map[string]string{"width": "6"}, want: ErrNotFound},
-		{name: "set a ref to no row", op: OpSet, kind: KindFleet, row: Row{Name: KindFleet}, changes: map[string]string{"store": "m9"}, want: ErrNoRef},
+		{name: "set a ref to no row", op: OpSet, kind: KindFleet, row: Row{Name: KindFleet}, changes: map[string]string{"store": "m9", "loops_dir": seededLoopsDir}, want: ErrNoRef},
 		{name: "remove a row another names", op: OpRemove, kind: KindMachine, row: Row{Name: "m1"}, want: ErrReferenced},
 		{name: "remove a row not there", op: OpRemove, kind: KindMachine, row: Row{Name: "m9"}, want: ErrNotFound},
 	}

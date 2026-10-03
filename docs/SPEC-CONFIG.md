@@ -107,6 +107,7 @@ never an `ADD` or a `REMOVE`.
 | `bool` | `true` or `false` (any spelling `strconv.ParseBool` reads, stored in that one) | `boolean` |
 | `keys` | a comma list of environment variable names (letters, digits, underscores, not starting with a digit), deduplicated and sorted: the names of secrets, never a value | `text` |
 | `argv` | a command as a JSON array of strings, the program first and not empty, no line break or NUL in a word, at most 64 words and 4096 bytes; stored in its compact JSON spelling | `text` |
+| `path` | one line, a directory path; empty is the type's zero, and the kind's Check may refuse it | `text` |
 
 A value is canonicalised before it is stored (`Field.Canonical`), so a row
 compares equal to its Redis view field by field. A field add is not given is
@@ -198,10 +199,14 @@ row's.
 | `coordinator` | ref machine | | the plays: where the coordinator's loops run; apply: the machine a friend with no beat is charged to | `fleet:coordinator` |
 | `redis_port` | nullable int (no default) | | the inventory and plays: explicit Redis TCP port, 1 through 65535; unset until declared | `fleet:redis_port` |
 | `pg_dsn` | text | | the inventory and tools play: the explicit password-free Postgres URI; empty until set, never derived from `store` | `fleet:pg_dsn` |
+| `loops_dir` | path | | apply and the inventory: the directory a loop's log is written under; empty is refused | `fleet:loops_dir` |
 
 The kind's `Check` bounds `redis_port` and accepts only a password-free
 `postgres://user@host[:port]/database` URI for a nonempty `pg_dsn`. A refusal
-never reproduces a password from the input.
+never reproduces a password from the input. An empty `loops_dir` is refused,
+and the remedy names `fleet set --loops-dir`. Migration 0020
+(`0020_fleet_loops_dir.sql`) adds the column and seeds the existing row with
+`~/nova-bench/loops`, so apply writes the same log paths as before.
 Fleet apply and inventory refuse either endpoint unset, naming one
 `nova-config fleet set --redis_port <port> --pg_dsn <dsn>` command. Migration 0014 (`0014_fleet_endpoints.sql`)
 leaves the port NULL and the DSN empty. Full apply checks both before writing
@@ -255,8 +260,8 @@ Migration 0013 had made a loop's width a field its command ran with;
 migration 0017 removed the field, took `--width` out of every member argv that
 carried one and removed the second reader rows (`reader-<m>-2`), one reader
 per machine.
-The log path is derived from the name, `~/nova-bench/loops/<name>.log`
-(`LoopLog`), and is never typed. A machine a loop names cannot be removed
+The log path is the fleet row's `loops_dir` and the loop's name (`LoopLog`),
+and is never typed. A machine a loop names cannot be removed
 (`machine m1 is the --machine of loop member-m1`); `machine show <m>` names
 the machine's loops (`loops=<a,b>`, `-` for none).
 
