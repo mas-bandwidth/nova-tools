@@ -24,7 +24,7 @@ Real jobs tried:
 Refusals provoked:
 - Missing required flags: `nova-decide read` reported all missing required flags at once (--card, --diff, --backend, --record), explained what each expects, and stated the remedy.
 - Unknown flag: `nova-decide read --bogus` named the unknown flag, printed all supported flags of read, and pointed to `nova-decide read -h`.
-- Unknown verb: `nova-decide bogus` named the unknown verb, listed all eleven available verbs, and referenced `nova-decide help`.
+- Unknown verb: `nova-decide bogus` named the unknown verb, listed all ten available verbs, and referenced `nova-decide help`.
 - Bad value: `nova-decide calibrate --record ./testdata/record.jsonl --decision read --question defect --positive wrong --negative ok --bars 0.5,2` caught the out-of-range value "2" and explained that probabilities must be between 0 and 1.
 
 Flags tested:
@@ -36,20 +36,18 @@ Verbs not tried live:
 - Remote model calls via jev were not executed against the live endpoint because credentials are not configured in this test environment; they were evaluated via --dry-run and refusal tests.
 
 Where guessing was needed:
-- In calibrate, passing `--question verdict` without an explicit option refused because choice questions require `<question>=<option>` format, which is explained in the refusal but omitted in flag usage.
+- In calibrate, passing `--question verdict` without an explicit option refused because choice questions require `<question>=<option>` format: the help names the syntax but shows no worked example.
 - In calibrate, attempting to calibrate a freshly created record with only positive labels refused because both positive and negative labels are required.
 
 To reach a 10/10:
 1. Add an explicit syntax example for choice questions (`<name>=<option>`) directly in the help text for calibrate --question.
 2. Document in calibrate help that the target record must contain at least one positive and one negative outcome.
-3. Include a note in gate help showing the two-value comma-separated format for --bars.
 
 ## Findings
 | # | where | finding | fix | size |
 |---|---|---|---|---|
-| 1 | `nova-decide help calibrate` | Help does not document the question=option syntax required for choice questions | Add syntax note explaining choice questions take name equals option | S |
+| 1 | `nova-decide help calibrate` | the help names the syntax but shows no worked example | Add worked example showing choice question syntax | S |
 | 2 | `nova-decide help calibrate` | Help omits requirement that calibration dataset must contain both positive and negative outcomes | State in help that at least one positive and one negative outcome must exist | S |
-| 3 | `nova-decide help gate` | Flag description for bars does not highlight that two comma-separated probabilities are mandatory | Add concise format hint in flag summary | S |
 
 ## Good, keep
 Offline execution via fixed backend allowing full verification without network or keys.
