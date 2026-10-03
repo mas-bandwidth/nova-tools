@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-func TestRowanOpusLockReplacedDuringScanSequence(t *testing.T) {
+func TestLockReplacedDuringScanSameOwnerInodeSequence(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
 	self := effectiveUID()

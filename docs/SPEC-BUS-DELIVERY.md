@@ -156,17 +156,17 @@ remain unproven by any test.
 16. `TestMakeAndValidatePreparedArtifact` — a changed roster/speaker that no longer resolves the prepared identity is a named refusal.
 17. `TestSendPreparedDecidingTests` — artifact content is data, not permission; bus/remote/branch/speaker are still named and there is no `--id` override.
 18. `TestSendPreparedArtifactAlreadyPublished` — locate the exact note by ID; if note bytes and its INDEX agree, return `SEND OK … attempts=0 state=already-published` with no new note, commit or push.
-19. `TestStellaPreparedRequiresCompleteRemoteIndex` — remote INDEX alone is insufficient proof of already-published.
+19. `TestPreparedRequiresCompleteRemoteIndex` — remote INDEX alone is insufficient proof of already-published.
 20. `TestSendPreparedArtifactRefusals` — same-ID different-content, unsafe path, inconsistent INDEX, or different note at the prepared path are refused; evidence is preserved, never overwritten.
 21. `TestSendPreparedArtifactInterruptedRecoveries` — absent remotely, reconcile the exact note + INDEX from an interrupted attempt; complete exact-matching partial writes, refuse conflicting bytes.
 22. `TestSendPreparedArtifactInterruptedRecoveries` — reuse an existing pending commit when possible.
-23. `TestStellaPreparedPreservesUnrelatedAttributeEdit` — the final contribution holds one note, one INDEX entry, only the standard merge-attributes change, and the normal send trailer.
+23. `TestPreparedPreservesUnrelatedAttributeEdit` — the final contribution holds one note, one INDEX entry, only the standard merge-attributes change, and the normal send trailer.
 24. `TestSendPreparedArtifactRefusals` — refuse unrelated dirty/staged work or unrelated local commits ahead of the named remote.
-25. `TestStellaPreparedPreservesUnrelatedAheadAttributeEdit` — another tool's valid trailer does not authorize publishing its pending contribution during this retry.
+25. `TestPreparedPreservesUnrelatedAheadAttributeEdit` — another tool's valid trailer does not authorize publishing its pending contribution during this retry.
 26. `TestSendPreparedArtifactRefusals` — refusal preserves the caller's index, files and commits; no stash, reset, clean, delete, remote-config change or credential use.
 27. `TestSendPreparedArtifactConcurrentRemoteLanding` — push without force through bounded race handling; reconcile the exact identity after an ambiguous push; a racing unrelated remote note is preserved.
 28. `TestSendPreparedArtifactConcurrentRemoteLanding` — success returns `SEND OK … pushed=true` plus `state=published`; only remote confirmation establishes success.
-29. `TestRowanProbeStaleIndexLock` — known failure or uncertainty returns 1 with the prepared ID and a bounded diagnostic; no raw source blob enters a diagnostic.
+29. `TestPreparedStaleIndexLockRefusesWithPreparedID` — known failure or uncertainty returns 1 with the prepared ID and a bounded diagnostic; no raw source blob enters a diagnostic.
 30. `TestTheBusIsHandedFiniteBoundsOutOfTheRemainingBudget` — retries use finite `--attempts`/`--git-timeout` inside the reporter's budget; exhaustion leaves the artifact; same-ID never stands in for full note equality.
 31. `TestNewObservationCannotReplaceUnresolvedPending` — with `--snapshot`, store `pending` (scope + artifact + observed map) before sending.
 32. `TestPendingBeforeDispatchAndQuietRetry` — each later `--send` resolves the pending artifact first, even when no installed version changed.

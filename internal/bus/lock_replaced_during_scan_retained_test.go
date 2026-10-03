@@ -10,7 +10,7 @@ import (
 // The scan may overlap another repair or git completing the old lock and a
 // new git acquiring a different lock at the same path. Preserve the old inode
 // under another name so inode reuse cannot obscure the replacement.
-func TestStellaLockReplacedDuringScanIsRetained(t *testing.T) {
+func TestLockReplacedDuringScanIsRetained(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
 	dir, lock := oldIndexLock(t)

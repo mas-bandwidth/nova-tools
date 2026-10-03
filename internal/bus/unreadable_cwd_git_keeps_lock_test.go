@@ -14,7 +14,7 @@ import (
 // half): a supplied /proc view of a git, of this account or another, naming this checkout
 // with -C and whose cwd cannot be read, keeps the lock. No build tag, so the case runs on
 // the linux shard as well as on darwin; the view is injected, no foreign process is started.
-func TestStellaKnownForeignGitKeepsItsLockLinuxView(t *testing.T) {
+func TestKnownForeignGitKeepsItsLockLinuxView(t *testing.T) {
 	t.Parallel()
 	for _, uid := range []uint32{501, 502} {
 		t.Run(fmt.Sprintf("linux-view/uid-%d", uid), func(t *testing.T) {
