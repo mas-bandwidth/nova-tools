@@ -20,7 +20,6 @@ The score stopped short of 10 because acl apply remedy mentions only the first u
 | 2 | `nova-redis spill --addr /var/run/redis.sock` | The --addr parser requires host:port and refuses Unix domain socket paths used by sibling tools | Allow absolute filesystem paths as socket addresses in validAddr | S |
 | 3 | `nova-redis recall --addr 127.0.0.1:6379 --owner trial --name note` | Line output renders string values via oneline.Field which hex-escapes whitespace characters | Format value with oneline.Quote or print raw string in a trailing positional slot | S |
 | 4 | `nova-redis fn load --dry-run` | The fn load and fn check verbs offer no dry-run flag to inspect embedded function library metadata without dialing | Add --dry-run support to fn load and fn check to preview library digest and registration plan | M |
-| 5 | `nova-redis spill` | Refusal remedies suggest running general help instead of verb-specific flag options | Point refusal remedy to nova-redis help spill or spill -h | S |
 
 ## Good, keep
 Store-free dry-run mode on spill that calculates expiry timestamps and byte counts without dialing the store.
@@ -30,7 +29,7 @@ Structured JSON refusal reporting that aggregates all independent parameter erro
 ## Compared with earlier ratings
 | earlier | now | evidence |
 |---|---|---|
-| acl apply's remedy names one of four missing users | STILL THERE | cmd/nova-redis/acl.go:306 formats unsourced[0] only |
+| acl apply's remedy names one of four missing users | STILL THERE | cmd/nova-redis/acl.go:306 (code-verified, store-free) |
 | recall hex-escapes the value | STILL THERE | cmd/nova-redis/main.go:406 formats value with oneline.Field |
-| --addr refuses the socket nova-table's first run makes | STILL THERE | nova-redis spill --addr /var/run/redis.sock exits 2 with not host:port |
+| --addr refuses the socket nova-table's first run makes | STILL THERE | cmd/nova-redis/main.go:527-529 and nova-redis spill --addr /var/run/redis.sock -> --addr "/var/run/redis.sock" is not <host:port> |
 | bounded store-free plans and aggregated JSON refusals | STILL THERE | `nova-redis spill --dry-run` and `nova-redis spill --json` |
