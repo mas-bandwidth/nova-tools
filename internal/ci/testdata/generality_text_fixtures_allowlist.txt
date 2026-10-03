@@ -31,7 +31,6 @@ internal/ci/testdata/generality-text/internal/ci/timing/testdata.txt this scan's
 internal/ci/testdata/generality-text/internal/fleet/testdata.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality-text/internal/fleet/workloads.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality-text/internal/hygiene.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
-internal/ci/testdata/generality-text/internal/nsprint/fn/lua.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality-text/internal/swarm/testdata.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality-text/internal/textbody.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality-text/testdata/ci.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
