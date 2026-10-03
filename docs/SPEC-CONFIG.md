@@ -410,7 +410,7 @@ config.sprint            (name PK = 'sprint', coordinator -> friends.name,
                           by 0011; decide_bounce and decide_review added by
                           0021, text NOT NULL DEFAULT '0.5' and '0.3', a
                           decimal or ''; decide_gate_flaky and
-                          decide_gate_preexisting added by 0024, text NOT
+                          decide_gate_preexisting added by 0022, text NOT
                           NULL DEFAULT '' each, a decimal or '')
 config.loops             (name PK, machine -> machines.name, argv, seat, keys,
                           every, keepalive boolean, width, enabled boolean,

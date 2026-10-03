@@ -1,4 +1,4 @@
--- 0024: the sprint row's two bars on a failed gate's decisions
+-- 0022: the sprint row's two bars on a failed gate's decisions
 -- (internal/config/kind.go: Kinds, "sprint"; internal/decide, GateBars): a failing
 -- test of a red gate whose p(flaky) is at or above decide_gate_flaky is rerun once
 -- before the take (or the lander's batch) is reported red; a work card's failing
