@@ -778,7 +778,7 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 				tier := s.NextTier(c)
 				if tier == "" {
 					why := ": rework it with a fix, or drop it"
-					if held := reworkAtTheSameBound(s, c, wc, ""); held != "" {
+					if held, _ := reworkAtTheSameBound(s, c, wc, ""); held != "" {
 						why = "; " + held // the attempt before ended at its bound on its tier (failure.go)
 					}
 					p.refuse(c.ID, boundWhat(wc, c.ID)+why)

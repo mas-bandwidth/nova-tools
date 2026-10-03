@@ -535,12 +535,13 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 		}
 		if wc := AtRedealBound(s, c); wc != nil {
 			cd := cond{typ: NBound, stream: c.Row, card: wc.ID, primaries: []string{c.ID}, what: boundWhat(wc, c.ID)}
-			if reworkAtTheSameBound(s, c, wc, "") != "" {
+			held, _ := reworkAtTheSameBound(s, c, wc, "")
+			if held != "" {
 				// the attempt before ended at its bound on its tier: its own judgment, which
-				// closes and opens again as plain when the provider is back (failure.go)
+				// closes and opens again as plain when the provider is back, once (failure.go)
 				cd.what += "; a second bound on tier " + cardTierOf(c) + ": not reworked on it again"
-				cd.decisions = boundAgainDecisions(c, wc)
 			}
+			cd.decisions = boundDecisions(c, wc, held != "")
 			conds = append(conds, cd)
 			continue
 		}
