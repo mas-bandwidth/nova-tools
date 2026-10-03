@@ -88,3 +88,31 @@ func MoveSeat(s *Snapshot, r SeatReq) Plan {
 	p.Seat = c
 	return p
 }
+
+// FriendSpec is what friend sync knows of one friend: her name (a friend row
+// of nova-config), her width, and her tiers.
+type FriendSpec struct {
+	Name  string   `json:"name"`
+	Width int      `json:"width"`
+	Tiers []string `json:"tiers,omitempty"`
+}
+
+// FriendHoldChange is the coordinator holding or releasing a friend.
+type FriendHoldChange struct {
+	Name string    `json:"name"`
+	Held bool      `json:"held"`
+	At   time.Time `json:"at"`
+	By   string    `json:"by"`
+}
+
+// FriendSpecSync is the full set of specs synchronized into the roster.
+type FriendSpecSync struct {
+	Specs []FriendSpec `json:"specs"`
+}
+
+// FriendRosterChange is one durable mutation of the friends roster, committed
+// atomically with table changes in Store.Run.
+type FriendRosterChange struct {
+	Hold *FriendHoldChange `json:"hold,omitempty"`
+	Sync *FriendSpecSync   `json:"sync,omitempty"`
+}

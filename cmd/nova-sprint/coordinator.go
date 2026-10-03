@@ -40,7 +40,7 @@ var verbClasses = map[string]string{
 	"ack": classCoordinator, "answer": classCoordinator, "clear": classCoordinator, "teardown": classCoordinator, "repair": classCoordinator,
 	"goal set": classCoordinator, "goal drop": classCoordinator, "play": classCoordinator,
 
-	"take": classWorker, "finish": classWorker, "read": classWorker, "fleet beat": classWorker, "friend beat": classWorker,
+	"take": classWorker, "finish": classWorker, "read": classWorker, "fleet beat": classWorker, "friend beat": classWorker, "friend take": classWorker,
 
 	"merge": classReport, "ci": classReport,
 
@@ -63,6 +63,9 @@ func (c *common) orActor(name string) {
 func needsActor(c common) string {
 	switch verbClasses[c.verb] {
 	case "", classRead, classMachine:
+		return ""
+	}
+	if c.verb == "friend take" {
 		return ""
 	}
 	if c.actor != "" {

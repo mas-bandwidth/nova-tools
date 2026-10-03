@@ -92,6 +92,8 @@ func friendVerbWords(name string) string {
 		return "friend down holds the named friend. The friend stays held whatever beat arrives, and where counts working as 0 while the friend is held. friend up releases the hold. " + sync + "\n"
 	case "friend up":
 		return "friend up releases a hold that friend down set. It is not a beat: a friend released with no beat in the last " + down + " is down until the friend beats. " + sync + "\n"
+	case "friend take":
+		return "friend take claims one or more cards dealt to a friend, moving them from ready reserve to working on her row and starting their deadline. " + sync + "\n"
 	default:
 		return ""
 	}
@@ -247,6 +249,68 @@ func (a *app) cmdFriendHold(held bool, args []string, stdout, stderr io.Writer) 
 	}
 	sayOK(stdout, c.json, name, token(name)+" OK "+friend+" held="+fmt.Sprint(held), map[string]any{"friend": friend, "held": held})
 	return 0
+}
+
+func (a *app) cmdFriendTake(args []string, stdout, stderr io.Writer) int {
+	const name = "friend take"
+	fs, c := a.verbSetup(name)
+	as := fs.String("as", "", "the friend taking her cards (friend.<name> or <name>; inferred from card if omitted)")
+	words, err := parse(fs, args)
+	if err != nil {
+		return refuse(stderr, name, err.Error())
+	}
+	ids, gens, err := cardGens(words)
+	if err != nil {
+		return refuse(stderr, name, err.Error())
+	}
+	if len(ids) == 0 {
+		return refuse(stderr, name, "wants one or more cards: nova-sprint friend take <card>...")
+	}
+	target := *as
+	if target != "" {
+		c.orActor(strings.TrimPrefix(target, "friend."))
+	}
+	st, err := a.store(*c)
+	if err != nil {
+		return refuse(stderr, name, err.Error())
+	}
+	ctx := context.Background()
+	if target == "" && len(ids) > 0 {
+		if s, err := st.Load(ctx, []string{sprint.Fleet}, nil); err == nil {
+			if card := s.Fleet.Card(ids[0]); card != nil && card.Placed() {
+				if friend, ok := sprint.FriendOfRow(card.Row); ok {
+					target = sprint.FriendRow(friend)
+					c.orActor(friend)
+					st.Actor = friend
+				}
+			}
+		}
+	}
+	c.packets = func(ctx context.Context, st *store.Store, res store.Result) []sprint.Packet {
+		taken := map[string]bool{}
+		for _, m := range res.Moved {
+			if f := strings.Fields(m); len(f) > 0 {
+				taken[f[0]] = true
+			}
+		}
+		row := target
+		if !strings.HasPrefix(row, "friend.") && row != "" {
+			row = sprint.FriendRow(row)
+		}
+		cs, err := st.ReadCells(ctx, sprint.Fleet, row, sprint.Working)
+		if err != nil {
+			return nil
+		}
+		var mine []*sprint.Card
+		for _, x := range cs {
+			if taken[x.ID] {
+				mine = append(mine, x)
+			}
+		}
+		ps, _ := st.Packets(ctx, mine)
+		return ps
+	}
+	return a.runStep(name, *c, st, store.FriendTakeStep(ids, gens, target, c.actor), stdout, stderr)
 }
 
 // oneFriend is the one friend a verb names, or its refusal.

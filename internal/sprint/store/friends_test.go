@@ -135,3 +135,95 @@ func TestStoreFriendTakeFencingAndHoldReclaim(t *testing.T) {
 	require.Len(t, rows, 1)
 	assert.Equal(t, sprint.Held, rows[0].Status)
 }
+
+// TestFriendHoldCrashReplay proves that a hold operation acquired in the fence but
+// interrupted before Release is durably committed by store recovery/replay.
+func TestFriendHoldCrashReplay(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 2, Tiers: []string{"flash"}}})
+	require.NoError(t, err)
+	_, err = h.st.FriendBeat(h.ctx, "amy")
+	require.NoError(t, err)
+
+	// Verify initially Up
+	rows, err := h.st.FriendRows(h.ctx, h.now)
+	require.NoError(t, err)
+	require.Equal(t, sprint.Up, rows[0].Status)
+
+	// Simulate crash: Acquire fence with FriendHold, apply manifests, but DO NOT Release
+	snap, gen, err := h.st.Fenced(h.ctx, tables(sprint.Fleet, sprint.Work), nil, nil)
+	require.NoError(t, err)
+	snap.Friends = []sprint.FriendSeat{{Name: "amy", Width: 2, Status: sprint.Up, Tiers: []string{"flash"}}}
+	plan := sprint.Applied(snap, sprint.FriendHold(snap, "amy", "glenn"))
+	require.NotNil(t, plan.Roster)
+
+	op, err := h.st.operation("friend down", "glenn", "crash-hold-op-1", plan, snap)
+	require.NoError(t, err)
+	ok, err := h.st.B.Acquire(h.ctx, gen, op)
+	require.True(t, ok)
+	require.NoError(t, err)
+
+	applied, _, err := h.st.apply(h.ctx, op)
+	require.True(t, applied)
+	require.NoError(t, err)
+
+	// Verify fence holds pending operation
+	f, err := h.st.B.ReadFence(h.ctx)
+	require.NoError(t, err)
+	require.NotNil(t, f.Pending)
+	require.Equal(t, "crash-hold-op-1", f.Pending.ID)
+
+	// Next fenced store access triggers repair/finish of the pending hold
+	var repaired []string
+	_, _, err = h.st.Fenced(h.ctx, tables(sprint.Fleet), nil, &repaired)
+	require.NoError(t, err)
+	require.NotEmpty(t, repaired)
+
+	// Verify the roster hold was durably committed during replay
+	rowsAfter, err := h.st.FriendRows(h.ctx, h.now)
+	require.NoError(t, err)
+	require.Len(t, rowsAfter, 1)
+	assert.Equal(t, sprint.Held, rowsAfter[0].Status)
+}
+
+// TestSyncFriendsPreservesLiveHoldState proves that SyncFriends never overwrites
+// an active friend hold when syncing config specs.
+func TestSyncFriendsPreservesLiveHoldState(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 2, Tiers: []string{"flash"}}})
+	require.NoError(t, err)
+
+	// Hold Amy
+	require.NoError(t, h.st.SetFriendHeld(h.ctx, "amy", true, "glenn"))
+
+	// Verify Amy is Held
+	rows, err := h.st.FriendRows(h.ctx, h.now)
+	require.NoError(t, err)
+	require.Equal(t, sprint.Held, rows[0].Status)
+
+	// SyncFriends runs with updated width and tiers
+	added, removed, updated, err := h.st.SyncFriends(h.ctx, []FriendSpec{
+		{Name: "amy", Width: 4, Tiers: []string{"flash", "pro"}},
+	})
+	require.NoError(t, err)
+	assert.Empty(t, added)
+	assert.Empty(t, removed)
+	assert.Equal(t, []string{"amy"}, updated)
+
+	// Amy MUST still be Held, with her updated width and tiers preserved!
+	rowsAfter, err := h.st.FriendRows(h.ctx, h.now)
+	require.NoError(t, err)
+	require.Len(t, rowsAfter, 1)
+	assert.Equal(t, sprint.Held, rowsAfter[0].Status)
+	assert.Equal(t, 4, rowsAfter[0].Width)
+	assert.Equal(t, []string{"flash", "pro"}, rowsAfter[0].Tiers)
+
+	// And when friend up is called, she is released cleanly
+	require.NoError(t, h.st.SetFriendHeld(h.ctx, "amy", false, "glenn"))
+	rowsReleased, err := h.st.FriendRows(h.ctx, h.now)
+	require.NoError(t, err)
+	assert.Equal(t, sprint.Down, rowsReleased[0].Status) // Down until she beats
+	assert.Equal(t, 4, rowsReleased[0].Width)
+}

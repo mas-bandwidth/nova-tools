@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -44,10 +45,64 @@ type friendEntry struct {
 
 // FriendSpec is what friend sync knows of one friend: her name (a friend row
 // of nova-config), her width, and her tiers.
-type FriendSpec struct {
-	Name  string
-	Width int
-	Tiers []string
+type FriendSpec = sprint.FriendSpec
+
+func readRoster(raw string) (map[string]friendEntry, error) {
+	out := map[string]friendEntry{}
+	if raw == "" {
+		return out, nil
+	}
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return nil, fmt.Errorf("the friends record cannot be read (%v); run: nova-sprint friend sync", err)
+	}
+	return out, nil
+}
+
+func applyRosterChange(r map[string]friendEntry, ch *sprint.FriendRosterChange) {
+	if ch == nil {
+		return
+	}
+	if h := ch.Hold; h != nil {
+		e := r[h.Name]
+		if h.Held {
+			e.Held, e.At, e.By = true, h.At, h.By
+		} else {
+			e.Held, e.At, e.By = false, time.Time{}, ""
+		}
+		r[h.Name] = e
+	}
+	if sy := ch.Sync; sy != nil {
+		want := map[string]bool{}
+		for _, s := range sy.Specs {
+			want[s.Name] = true
+			e := r[s.Name]
+			e.Width = s.Width
+			tiers := append([]string(nil), s.Tiers...)
+			slices.Sort(tiers)
+			e.Tiers = tiers
+			r[s.Name] = e
+		}
+		for n := range r {
+			if !want[n] {
+				delete(r, n)
+			}
+		}
+	}
+}
+
+func removedFriends(r map[string]friendEntry, specs []sprint.FriendSpec) []string {
+	want := map[string]bool{}
+	for _, s := range specs {
+		want[s.Name] = true
+	}
+	var removed []string
+	for n := range r {
+		if !want[n] {
+			removed = append(removed, n)
+		}
+	}
+	slices.Sort(removed)
+	return removed
 }
 
 // FriendRow is one row of the friends table as where draws it: the counts of
@@ -70,15 +125,12 @@ func (st *Store) roster(ctx context.Context) (map[string]friendEntry, KV, error)
 	if err != nil {
 		return nil, nil, err
 	}
-	out := map[string]friendEntry{}
 	raw, ok, err := kv.GetKey(ctx, keyFriends)
 	if err != nil || !ok {
-		return out, kv, err
+		return map[string]friendEntry{}, kv, err
 	}
-	if err := json.Unmarshal([]byte(raw), &out); err != nil {
-		return nil, kv, fmt.Errorf("the friends record cannot be read (%v); run: nova-sprint friend sync", err)
-	}
-	return out, kv, nil
+	out, err := readRoster(raw)
+	return out, kv, err
 }
 
 func putRoster(ctx context.Context, kv KV, r map[string]friendEntry) error {
@@ -105,7 +157,7 @@ func noFriend(r map[string]friendEntry, friend string) error {
 // when there is nothing to change, and says who was added, who taken off and
 // who stayed with a width that changed, each in name order.
 func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, removed, updated []string, err error) {
-	r, kv, err := st.roster(ctx)
+	r, _, err := st.roster(ctx)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -124,13 +176,10 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 			updated = append(updated, s.Name)
 			rosterChanged = true
 		}
-		e.Width, e.Tiers = s.Width, tiers
-		r[s.Name] = e
 	}
 	for n := range r {
 		if _, ok := want[n]; !ok {
 			removed = append(removed, n)
-			delete(r, n)
 			rosterChanged = true
 		}
 	}
@@ -140,17 +189,10 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 	if !rosterChanged {
 		return nil, nil, nil, nil
 	}
-	if err := putRoster(ctx, kv, r); err != nil {
+	step := FriendSyncStep(specs, st.Actor)
+	_, err = st.Run(ctx, step)
+	if err != nil {
 		return nil, nil, nil, err
-	}
-	if len(removed) > 0 {
-		keys := make([]string, 0, len(removed))
-		for _, n := range removed {
-			keys = append(keys, st.Names.Key(friendBeatKey(n)))
-		}
-		if _, err := st.B.DeleteKeys(ctx, keys); err != nil {
-			return added, removed, updated, err
-		}
 	}
 	return added, removed, updated, nil
 }
@@ -179,33 +221,27 @@ func (st *Store) FriendBeat(ctx context.Context, friend string) (sprint.Beat, er
 // returned to the ready pool without penalty (FriendHoldStep), and the roster
 // hold state is committed under the same serialized operation.
 func (st *Store) SetFriendHeld(ctx context.Context, friend string, held bool, who string) error {
-	r, kv, err := st.roster(ctx)
+	r, _, err := st.roster(ctx)
 	if err != nil {
 		return err
 	}
-	_, ok := r[friend]
-	if !ok {
+	if _, ok := r[friend]; !ok {
 		return noFriend(r, friend)
 	}
-	if !held {
-		e := r[friend]
-		e.Held, e.At, e.By = false, time.Time{}, ""
-		r[friend] = e
-		return putRoster(ctx, kv, r)
+	var step Step
+	if held {
+		step = FriendHoldStep(friend, who)
+	} else {
+		step = FriendReleaseStep(friend, who)
 	}
-	step := FriendHoldStep(friend, who)
-	step.After = func(ctx context.Context, _ Result) error {
-		r, kv, err := st.roster(ctx)
-		if err != nil {
-			return err
-		}
-		e := r[friend]
-		e.Held, e.At, e.By = true, st.now().UTC().Truncate(time.Second), who
-		r[friend] = e
-		return putRoster(ctx, kv, r)
+	res, err := st.Run(ctx, step)
+	if err != nil {
+		return err
 	}
-	_, err = st.Run(ctx, step)
-	return err
+	if len(res.Refused) > 0 {
+		return errors.New(res.Refused[0].Why)
+	}
+	return nil
 }
 
 // FriendRows is the friends table at now: every friend of the roster with her

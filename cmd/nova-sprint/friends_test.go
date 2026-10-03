@@ -428,3 +428,38 @@ func TestAFriendBeatsThroughTheServer(t *testing.T) {
 		assert.Contains(t, res.Stderr, "nothing was changed", name)
 	}
 }
+
+// A friend takes her dealt card using the exact command format in BRIEF.md:
+// `nova-sprint friend take <job>`, without --as or @gen.
+func TestFriendTakeCommandInBriefE2E(t *testing.T) {
+	t.Parallel()
+	ta, root := friendCardApp(t, "friend amy", "amy")
+	ta.ok("tick")
+	ta.ok("friend sync --root " + root)
+
+	// verify card is in ready reserve
+	var w whereView
+	ta.json("where", &w)
+	assert.Equal(t, "1", w.Tables[sprint.Friends]["amy"]["ready"])
+	assert.Equal(t, "0", w.Tables[sprint.Friends]["amy"]["working"])
+
+	// verify BRIEF.md was delivered with the exact command format
+	text, err := os.ReadFile(filepath.Join(root, "amy-working", "inbox", "s1-1.w1", "BRIEF.md"))
+	require.NoError(t, err)
+	assert.Contains(t, string(text), "first take it: nova-sprint friend take s1-1.w1")
+
+	// execute exact command from BRIEF.md: nova-sprint friend take <job>
+	out := ta.ok("friend take s1-1.w1")
+	assert.Contains(t, out, "MOVED s1-1.w1 fleet ready -> working friend=amy gen=1")
+	assert.Contains(t, out, "FRIEND-TAKE OK moved=1")
+
+	// verify card moved from ready to working
+	ta.json("where", &w)
+	assert.Equal(t, "0", w.Tables[sprint.Friends]["amy"]["ready"])
+	assert.Equal(t, "1", w.Tables[sprint.Friends]["amy"]["working"])
+
+	// a duplicate take is refused: not in ready
+	code, _, errs := ta.do("friend take s1-1.w1")
+	assert.Equal(t, 1, code)
+	assert.Contains(t, errs, "not in friend.amy ready (it is friend.amy:working)")
+}

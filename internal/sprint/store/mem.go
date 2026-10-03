@@ -1014,6 +1014,28 @@ func (m *Mem) Release(_ context.Context, op OpRecord, commit bool) error {
 			}
 			m.kv[keyCoordinator], m.kv[keySeat] = op.Seat.Holder, rec
 		}
+		if op.Roster != nil {
+			r, err := readRoster(m.kv[keyFriends])
+			if err != nil {
+				return err
+			}
+			var removed []string
+			if op.Roster.Sync != nil {
+				removed = removedFriends(r, op.Roster.Sync.Specs)
+			}
+			applyRosterChange(r, op.Roster)
+			b, err := json.Marshal(r)
+			if err != nil {
+				return err
+			}
+			if m.kv == nil {
+				m.kv = map[string]string{}
+			}
+			m.kv[keyFriends] = string(b)
+			for _, n := range removed {
+				delete(m.kv, friendBeatKey(n))
+			}
+		}
 	}
 	l.fence = nil
 	return nil

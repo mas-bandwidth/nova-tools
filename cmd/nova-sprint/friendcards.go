@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -244,10 +245,12 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 			continue
 		}
 		brief := filepath.Join(in, "BRIEF.md")
+		genFile := filepath.Join(in, ".gen")
 		if _, err := os.Lstat(brief); errors.Is(err, fs.ErrNotExist) {
 			if err := os.MkdirAll(in, 0o755); err != nil {
 				return delivered, finished, err
 			}
+			_ = os.WriteFile(genFile, []byte(strconv.Itoa(p.Gen)+"\n"), 0o644)
 			switch err := atomicfile.WriteFile(brief, []byte(friendBrief(name, p)), 0o644, atomicfile.NoReplace()); {
 			case err == nil:
 				delivered++
@@ -270,7 +273,15 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 			say(fmt.Sprintf("FRIEND-CARD REFUSED friend=%s card=%s: reported, and never taken; the card is not finished; run: nova-sprint friend take %s", name, p.Card, oneline.Field(job)))
 			continue
 		}
-		r, err := friendFinish(ctx, name, p, string(report), a.tip)
+		pBound := p
+		if data, err := os.ReadFile(genFile); err == nil {
+			if n, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil && n > 0 {
+				pBound.Gen = n
+			}
+		} else if _, err := os.Lstat(brief); err == nil {
+			_ = os.WriteFile(genFile, []byte(strconv.Itoa(p.Gen)+"\n"), 0o644)
+		}
+		r, err := friendFinish(ctx, name, pBound, string(report), a.tip)
 		if err != nil {
 			say(fmt.Sprintf("FRIEND-CARD REFUSED friend=%s card=%s: %s; the card is not finished, and the next sync reads the report again", name, p.Card, oneline.Escape(err.Error())))
 			continue

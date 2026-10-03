@@ -206,7 +206,16 @@ func FriendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) Plan {
 			declared[row] = true
 		}
 		width := seatsMap[name].Width
-		p.Units = append(p.Units, friendDealUnit(s, c, card, row, width))
+		if wc := s.Fleet.Placed(WorkCardID(c.ID, c.Int("attempt"))); wc != nil && wc.Col == Withdrawn {
+			p.Units = append(p.Units, friendRedealUnit(s, c, wc, row, width))
+		} else {
+			card := WorkCardID(c.ID, c.Int("attempt")+1)
+			if s.Fleet.Card(card) != nil {
+				p.refuse(c.ID, "work card "+card+" exists already")
+				continue
+			}
+			p.Units = append(p.Units, friendDealUnit(s, c, card, row, width))
+		}
 	}
 	return Lawful(p)
 }
@@ -216,6 +225,7 @@ func FriendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) Plan {
 func friendDealUnit(s *Snapshot, c *Card, card, row string, width int) Unit {
 	attempt := c.Int("attempt") + 1
 	now := stamp(s.Now)
+	tier := FriendTier(c)
 	fields := map[string]string{
 		"kind":         "work",
 		"primary":      c.ID,
@@ -226,6 +236,7 @@ func friendDealUnit(s *Snapshot, c *Card, card, row string, width int) Unit {
 		"dealt":        now,
 		"first_dealt":  now,
 		"friend_width": itoa(width),
+		"tier":         tier,
 	}
 	for _, k := range []string{"fix", "finding", "why"} {
 		if v := c.F(k); v != "" {
@@ -236,6 +247,23 @@ func friendDealUnit(s *Snapshot, c *Card, card, row string, width int) Unit {
 		change(Fleet, createEntry(card, row, Ready, c.Score, fields)),
 		change(Work, moveEntry(c, c.Row, Working, map[string]string{"attempt": itoa(attempt), "work": card}, "result")),
 	}, Moved: fmt.Sprintf("%s work %s -> working card=%s member=%s (a friend's card, ready in reserve: friend sync delivers it to her inbox, and she takes it)", c.ID, c.Col, card, row)}
+}
+
+// friendRedealUnit is a withdrawn friend work card redealt: preserves attempt and card id,
+// increments generation (nextGen), moves fleet Withdrawn -> Ready on row, and marks primary
+// working on it.
+func friendRedealUnit(s *Snapshot, c, wc *Card, row string, width int) Unit {
+	now := stamp(s.Now)
+	set := nextGen(wc, row, s.Now)
+	set["tier"] = FriendTier(c)
+	set["member"] = row
+	set["friend_width"] = itoa(width)
+	set["dealt"] = now
+	unset := []string{"withdrawn", FieldTakeEnded, "taken", "untaken_since"}
+	return Unit{Key: c.ID, Stream: c.Row, Changes: []Change{
+		change(Fleet, moveEntry(wc, row, Ready, set, unset...)),
+		change(Work, moveEntry(c, c.Row, Working, map[string]string{"work": wc.ID}, "result")),
+	}, Moved: fmt.Sprintf("%s work %s -> working card=%s member=%s gen=%d (friend ready in reserve, redealt)", c.ID, c.Col, wc.ID, row, wc.Int("gen")+1)}
 }
 
 // friendTake is a take by id on a friend's row (friend take; Take with As a friend's
@@ -281,13 +309,13 @@ func friendTake(s *Snapshot, r TakeReq, name string) Plan {
 			p.refuse(id, "not dealt to friend "+name+" ("+where+")")
 			continue
 		}
-		if why := liveGen("take", c, r.Gens); why != "" {
-			p.refuse(id, why)
-			continue
-		}
-		if c.Col == Working {
-			p.refuse(id, "taken already at "+orDash(c.F("taken"))+": a card is taken once")
-			continue
+		if len(r.Gens) > 0 {
+			if g, ok := r.Gens[c.ID]; ok {
+				if g != c.Int("gen") {
+					p.refuse(id, fmt.Sprintf("stale: generation %d is not the live one (%d): the card was dealt again to %s", g, c.Int("gen"), orDash(c.Row)))
+					continue
+				}
+			}
 		}
 		if c.Col != Ready {
 			p.refuse(id, "not in "+r.As+" ready (it is "+placeWord(c)+")")
@@ -312,7 +340,17 @@ func friendTake(s *Snapshot, r TakeReq, name string) Plan {
 			p.refuse(id, fmt.Sprintf("friend %s is at active width (%d working); wait for an active card to finish", name, width))
 			continue
 		}
-		tier := FriendTier(c)
+		primaryID := c.F("primary")
+		var pr *Card
+		if primaryID != "" {
+			pr = s.Work.Card(primaryID)
+		}
+		tier := c.F("tier")
+		if tier == "" && pr != nil {
+			tier = FriendTier(pr)
+		} else if tier == "" {
+			tier = FriendTier(c)
+		}
 		if !slices.Contains(seat.Tiers, tier) {
 			p.refuse(id, fmt.Sprintf("friend %s cannot do tier %s (allowed: %s)", name, tier, strings.Join(noneIfEmpty(seat.Tiers), ",")))
 			continue
@@ -333,6 +371,20 @@ func friendTake(s *Snapshot, r TakeReq, name string) Plan {
 // her row is untouched if it holds none.
 func FriendHold(s *Snapshot, friend, who string) Plan {
 	var p Plan
+	p.Roster = &FriendRosterChange{Hold: &FriendHoldChange{
+		Name: friend,
+		Held: true,
+		At:   s.Now.UTC().Truncate(time.Second),
+		By:   who,
+	}}
+	p.Notes = []Note{{
+		Kind: Happened,
+		Type: "friend.held",
+		At:   s.Now,
+		Who:  who,
+		To:   friend,
+		What: fmt.Sprintf("friend %s held by %s", friend, who),
+	}}
 	row := FriendRow(friend)
 	if !s.Fleet.HasRow(row) {
 		return p
@@ -343,4 +395,42 @@ func FriendHold(s *Snapshot, friend, who string) Plan {
 		p.Units = append(p.Units, withdrawCard(s, c, false, NWithdrawn, who, "friend "+friend+" held"))
 	}
 	return Lawful(p)
+}
+
+// FriendRelease releases the coordinator's hold on a friend (friend up).
+func FriendRelease(s *Snapshot, friend, who string) Plan {
+	var p Plan
+	p.Roster = &FriendRosterChange{Hold: &FriendHoldChange{
+		Name: friend,
+		Held: false,
+	}}
+	p.Notes = []Note{{
+		Kind: Happened,
+		Type: "friend.released",
+		At:   s.Now,
+		Who:  who,
+		To:   friend,
+		What: fmt.Sprintf("friend %s released by %s", friend, who),
+	}}
+	return p
+}
+
+// FriendSync updates the friends roster from specs.
+func FriendSync(s *Snapshot, specs []FriendSpec, who string) Plan {
+	var p Plan
+	p.Roster = &FriendRosterChange{Sync: &FriendSpecSync{Specs: specs}}
+	p.Notes = []Note{{
+		Kind: Happened,
+		Type: "friend.sync",
+		At:   s.Now,
+		Who:  who,
+		What: fmt.Sprintf("friends table synced (%d friends)", len(specs)),
+	}}
+	for _, spec := range specs {
+		row := FriendRow(spec.Name)
+		if !s.Fleet.HasRow(row) {
+			p.Rows = append(p.Rows, RowAdd{Table: Fleet, Row: row})
+		}
+	}
+	return p
 }

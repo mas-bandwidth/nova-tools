@@ -326,3 +326,55 @@ func TestAFriendsReworkStartsFromTheTipOfItsBase(t *testing.T) {
 	p.Attempt = 1
 	assert.NotContains(t, friendBrief("amy", p), "This attempt starts")
 }
+
+// Bound generation recorded in inbox/<job>/.gen ensures an old report written for
+// generation 1 cannot finish a later generation assignment after hold/withdrawal and redeal.
+func TestBoundGenerationPreventsStaleReportFromFinishingNewAssignment(t *testing.T) {
+	t.Parallel()
+	ta, root := friendCardApp(t, "friend amy", "amy")
+	ta.ok("tick")
+	ta.ok("friend sync --root " + root)
+	ta.ok("friend take s1-1.w1")
+
+	// verify .gen was written on delivery with gen 1
+	genData, err := os.ReadFile(filepath.Join(root, "amy-working", "inbox", "s1-1.w1", ".gen"))
+	require.NoError(t, err)
+	assert.Equal(t, "1\n", string(genData))
+
+	// friend writes a report for gen 1
+	outboxReport(t, root, "amy", "s1-1.w1", "Verdict: LAND\nHead: "+landHead+"\n\nDone attempt 1.\n")
+
+	// now coordinator holds amy before sync collects the report
+	ta.ok("friend down amy")
+	ta.ok("tick") // hold reclaims card: ready -> withdrawn, gen 1 -> 2
+
+	// release amy and tick to redeal: redeals existing card s1-1.w1 preserving attempt 1, gen 2 -> 3
+	ta.ok("friend up amy")
+	ta.ok("friend beat amy")
+	ta.ok("tick") // redealt to ready reserve at gen 3
+
+	// verify card is back in ready reserve at gen 3
+	var c cardView
+	ta.json("card s1-1", &c)
+	require.Len(t, c.Work, 1)
+	assert.Equal(t, "s1-1.w1", c.Work[0].ID)
+	assert.Equal(t, 1, c.Work[0].Int("attempt"))
+	assert.Equal(t, 3, c.Work[0].Int("gen"))
+	assert.Equal(t, sprint.Ready, c.Work[0].Col)
+
+	// friend claims the new assignment (moves to working at gen 3)
+	ta.ok("friend take s1-1.w1")
+
+	// sync runs: it finds the old REPORT.md in outbox, but inbox/.gen binds it to gen 1
+	out := ta.ok("friend sync --root " + root)
+	// Finish is refused because gen 1 != 3 (world has moved on)
+	assert.Contains(t, out, "FRIEND-CARD REFUSED")
+	assert.Contains(t, out, "stale: generation 1 is not the live one (3)")
+	assert.NotContains(t, out, "FRIEND-CARD FINISHED")
+
+	// verify card remains working at gen 3 and was NOT finished by the stale report
+	ta.json("card s1-1", &c)
+	require.Len(t, c.Work, 1)
+	assert.Equal(t, sprint.Working, c.Work[0].Col)
+	assert.Equal(t, 3, c.Work[0].Int("gen"))
+}

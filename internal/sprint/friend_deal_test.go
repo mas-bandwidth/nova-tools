@@ -399,11 +399,74 @@ func TestFriendHoldReclaimsTasksToReady(t *testing.T) {
 	require.Len(t, p.Refused, 1)
 	assert.Contains(t, p.Refused[0].Why, "generation")
 
-	// Redeal after release: generates attempt 2 cleanly without card id collision
+	// Redeal after release: redeals existing withdrawn card s1-1.w1 preserving attempt 1 and bumping gen
 	seats[0].Status = Up
 	dealWith(w, seats...)
-	wc1Attempt2 := w.s.Fleet.Card("s1-1.w2")
-	require.NotNil(t, wc1Attempt2, "s1-1.w2 dealt cleanly")
-	assert.Equal(t, Ready, wc1Attempt2.Col)
-	assert.Equal(t, "1", wc1Attempt2.F("gen"))
+	wc1 := w.s.Fleet.Card("s1-1.w1")
+	require.NotNil(t, wc1, "s1-1.w1 redealt cleanly")
+	assert.Equal(t, Ready, wc1.Col)
+	assert.Equal(t, 1, wc1.Int("attempt"))
+	assert.Equal(t, 3, wc1.Int("gen"))
+	assert.Nil(t, w.s.Fleet.Card("s1-1.w2"), "did not consume attempt 2")
+}
+
+func TestFriendTakeTierDerivation(t *testing.T) {
+	t.Parallel()
+
+	proBrief := "c: work on pro tier: pro\nWHO: friend amy\n\npro task"
+	flashBrief := "c: work on flash\nWHO: friend amy\n\nflash task"
+
+	// 1. Pro primary card dealt to friend Amy who can do pro
+	w := friendWorld(t, proBrief)
+	require.Equal(t, "pro", FriendTier(w.s.Primary("s1-1")))
+
+	seats := []FriendSeat{
+		{Name: "amy", Width: 2, Status: Up, Tiers: []string{"flash", "pro"}},
+	}
+	dealWith(w, seats...)
+	wc := w.s.Fleet.Card("s1-1.w1")
+	require.NotNil(t, wc)
+	assert.Equal(t, "pro", wc.F("tier"))
+
+	// Amy takes it with tiers ["flash", "pro"]: succeeds
+	plan := friendTakes(w, "amy", "s1-1.w1")
+	require.Empty(t, plan.Refused)
+	require.Equal(t, Working, w.s.Fleet.Card("s1-1.w1").Col)
+
+	// 2. Pro primary card dealt, but Amy only allowed ["flash"]: claim is refused
+	w2 := friendWorld(t, proBrief)
+	dealWith(w2, FriendSeat{Name: "amy", Width: 2, Status: Up, Tiers: []string{"pro"}})
+	wc2 := w2.s.Fleet.Card("s1-1.w1")
+	require.NotNil(t, wc2)
+
+	// When taking, Amy's current seat tiers are flash-only
+	w2.s.Friends = []FriendSeat{
+		{Name: "amy", Width: 2, Status: Up, Tiers: []string{"flash"}},
+	}
+	plan2 := Take(w2.s, TakeReq{Sel: Sel{IDs: []string{"s1-1.w1"}}, As: FriendRow("amy"), Gens: gensOf(w2.s, "s1-1.w1"), Who: FriendRow("amy")})
+	require.Len(t, plan2.Refused, 1)
+	assert.Contains(t, plan2.Refused[0].Why, "cannot do tier pro (allowed: flash)")
+
+	// 3. Flash primary card dealt, Amy allowed only ["pro"]: claim is refused
+	w3 := friendWorld(t, flashBrief)
+	require.Equal(t, "flash", FriendTier(w3.s.Primary("s1-1")))
+	dealWith(w3, FriendSeat{Name: "amy", Width: 2, Status: Up, Tiers: []string{"flash"}})
+	wc3 := w3.s.Fleet.Card("s1-1.w1")
+	require.NotNil(t, wc3)
+	assert.Equal(t, "flash", wc3.F("tier"))
+
+	// Amy only has pro
+	w3.s.Friends = []FriendSeat{
+		{Name: "amy", Width: 2, Status: Up, Tiers: []string{"pro"}},
+	}
+	plan3 := Take(w3.s, TakeReq{Sel: Sel{IDs: []string{"s1-1.w1"}}, As: FriendRow("amy"), Gens: gensOf(w3.s, "s1-1.w1"), Who: FriendRow("amy")})
+	require.Len(t, plan3.Refused, 1)
+	assert.Contains(t, plan3.Refused[0].Why, "cannot do tier flash (allowed: pro)")
+
+	// 4. Pro-only friend taking pro card succeeds
+	w4 := friendWorld(t, proBrief)
+	dealWith(w4, FriendSeat{Name: "amy", Width: 2, Status: Up, Tiers: []string{"pro"}})
+	plan4 := friendTakes(w4, "amy", "s1-1.w1")
+	require.Empty(t, plan4.Refused)
+	require.Equal(t, Working, w4.s.Fleet.Card("s1-1.w1").Col)
 }

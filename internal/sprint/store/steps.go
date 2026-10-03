@@ -202,10 +202,63 @@ func FleetStep(r sprint.FleetReq) Step {
 // FriendHoldStep holds a friend's row, withdrawing its cards back to ready.
 func FriendHoldStep(friend, who string) Step {
 	return Step{
-		Verb:    "friend-hold",
+		Verb:    "friend down",
 		Load:    tables(sprint.Fleet, sprint.Work),
+		Friends: true,
 		Mirrors: true,
 		Plan:    func(s *sprint.Snapshot) sprint.Plan { return sprint.FriendHold(s, friend, who) },
+	}
+}
+
+// FriendReleaseStep releases a hold on a friend's row.
+func FriendReleaseStep(friend, who string) Step {
+	return Step{
+		Verb:    "friend up",
+		Load:    tables(sprint.Fleet),
+		Friends: true,
+		Mirrors: true,
+		Plan:    func(s *sprint.Snapshot) sprint.Plan { return sprint.FriendRelease(s, friend, who) },
+	}
+}
+
+// FriendSyncStep synchronizes the friends roster.
+func FriendSyncStep(specs []sprint.FriendSpec, who string) Step {
+	return Step{
+		Verb:    "friend sync",
+		Load:    tables(sprint.Fleet),
+		Friends: true,
+		Mirrors: true,
+		Plan:    func(s *sprint.Snapshot) sprint.Plan { return sprint.FriendSync(s, specs, who) },
+	}
+}
+
+// FriendTakeStep takes work cards on a friend's row.
+func FriendTakeStep(ids []string, gens map[string]int, as, who string) Step {
+	return Step{
+		Named:   len(ids) > 0,
+		Verb:    "friend take",
+		Load:    tables(sprint.Fleet, sprint.Work),
+		Friends: true,
+		Extras:  sprint.NamedExtras(sprint.Fleet, ids),
+		Plan: func(s *sprint.Snapshot) sprint.Plan {
+			target := as
+			if target != "" && !sprint.IsFriendRow(target) {
+				target = sprint.FriendRow(target)
+			}
+			if target == "" && len(ids) > 0 {
+				c := s.Fleet.Card(ids[0])
+				if c != nil && c.Placed() {
+					if name, ok := sprint.FriendOfRow(c.Row); ok {
+						target = sprint.FriendRow(name)
+					}
+				}
+			}
+			actor := who
+			if actor == "" {
+				actor = target
+			}
+			return sprint.Take(s, sprint.TakeReq{Sel: sprint.Sel{IDs: ids}, As: target, Gens: gens, Who: actor})
+		},
 	}
 }
 

@@ -164,9 +164,6 @@ type Step struct {
 	// the friend seats (store.FriendSeats), read in the same atomic snapshot
 	// before its plan runs.
 	Friends bool
-	// After, when set, is called after the step's write has committed to the
-	// store (st.after), before returning.
-	After func(ctx context.Context, res Result) error
 	// DrainMax, above zero, is the most entries of the queue's head a drain
 	// takes: the pump's second drain takes only what its first requeued.
 	DrainMax int
@@ -594,7 +591,7 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			res.Attempts--
 			continue
 		}
-		if len(op.Manifests) == 0 && len(op.Notes)+len(op.Decided)+len(op.Closes)+len(op.Updates)+len(op.Queue)+op.Drain == 0 {
+		if len(op.Manifests) == 0 && len(op.Notes)+len(op.Decided)+len(op.Closes)+len(op.Updates)+len(op.Queue)+op.Drain == 0 && op.Seat == nil && op.Roster == nil {
 			res.Moved = nil
 			return st.after(ctx, step, res)
 		}
@@ -854,11 +851,6 @@ func (st *Store) after(ctx context.Context, step Step, res Result) (Result, erro
 				return res, &ClearedError{Held: st.epoch, Now: es.N, At: es.Cleared, Finished: true}
 			}
 			return res, &SyncError{Cause: err}
-		}
-	}
-	if step.After != nil {
-		if err := step.After(ctx, res); err != nil {
-			return res, err
 		}
 	}
 	return res, nil
@@ -1203,7 +1195,7 @@ func hasChanges(e ntable.BatchMemberEntry) bool {
 // entries, each expecting the revision the one before it leaves; then the
 // notifications and the answers.
 func (st *Store) operation(verb, actor, id string, plan sprint.Plan, snap *sprint.Snapshot) (OpRecord, error) {
-	op := OpRecord{ID: id, Verb: verb, At: snap.Now, Seat: plan.Seat}
+	op := OpRecord{ID: id, Verb: verb, At: snap.Now, Seat: plan.Seat, Roster: plan.Roster}
 	entries := map[string][]ntable.BatchMemberEntry{}
 	seen := map[entryKey]int{} // index+1 in entries[table]
 	cause := map[entryKey]string{}
