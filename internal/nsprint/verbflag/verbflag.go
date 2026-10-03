@@ -352,12 +352,46 @@ func hasFlags(fs *flag.FlagSet) bool {
 
 // UsageLine is `usage: <prog> <verb> [flags]`, and for a group, a verb whose
 // words only lead to its verbs (subs), `usage: <prog> <group> <a|b> [flags]`.
+// The bracketed word is the placeholder for a caller that passes no synopsis
+// (UsageLineSynopsis). A tool whose help already prints that placeholder keeps it.
 func UsageLine(prog, verb string, subs []string) string {
+	return UsageLineSynopsis(prog, verb, subs, "")
+}
+
+// UsageLineSynopsis is UsageLine with the verb's own synopsis in place of the
+// placeholder [flags]: positionals and the flags the verb takes, as its usage
+// line names them. An empty synopsis keeps the placeholder. A group (subs)
+// keeps `<a|b> [flags]`; its verbs are the synopsis.
+func UsageLineSynopsis(prog, verb string, subs []string, synopsis string) string {
 	name := strings.TrimSpace(prog + " " + verb)
 	if len(subs) > 0 {
 		name += " <" + strings.Join(subs, "|") + ">"
+	} else if s := strings.TrimSpace(synopsis); s != "" {
+		return "usage: " + name + " " + s
 	}
 	return "usage: " + name + " [flags]"
+}
+
+// FlagSynopsis names each flag of fs for a usage line, `[--name]` or
+// `[--name <kind>]`, sorted by name. Empty when fs is nil or defines none.
+// It never prints the placeholder [flags], and it never prints a default.
+func FlagSynopsis(fs *flag.FlagSet) string {
+	if fs == nil {
+		return ""
+	}
+	var names []string
+	fs.VisitAll(func(f *flag.Flag) { names = append(names, f.Name) })
+	sort.Strings(names)
+	parts := make([]string, 0, len(names))
+	for _, n := range names {
+		kind, _ := flag.UnquoteUsage(fs.Lookup(n))
+		if kind == "" {
+			parts = append(parts, "[--"+n+"]")
+			continue
+		}
+		parts = append(parts, "[--"+n+" <"+kind+">]")
+	}
+	return strings.Join(parts, " ")
 }
 
 // subverbRe is one word that names a verb, or several joined by | (list|show).

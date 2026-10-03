@@ -78,6 +78,25 @@ is refused naming both shas, the card left working, when it is not; Verdict: HOL
 came back failed, with the report's first paragraph. card prints who=; where counts it on her friends row.`) + "\n"
 }
 
+// friendVerbWords is what friend beat, friend down, and friend up say on -h.
+// The friends section (friendWords) stays on nova-sprint help friend. A name
+// the table lacks is refused and names friend sync; friend sync exits 3 when
+// the config cannot be read or holds no friend row (docs/SPEC-SPRINT.md section 1).
+func friendVerbWords(name string) string {
+	every, down := sprint.FriendBeatEvery.String(), sprint.FriendDownAfter.String()
+	sync := "The name is one friend row of the friends table. friend sync copies those rows from nova-config; a name the table lacks is refused and the line names friend sync. friend sync exits 3 when the config cannot be read or holds no friend row. nova-sprint help friend says how the friends table is kept."
+	switch name {
+	case "friend beat":
+		return "friend beat records that this friend is present. The friend's own machinery runs it every " + every + ". The friend is up while the last beat is under " + down + " old, and down once that long has passed with no beat, or when the friend has never beaten. A beat wakes the friend at once. " + sync + "\n"
+	case "friend down":
+		return "friend down holds the named friend. The friend stays held whatever beat arrives, and where counts working as 0 while the friend is held. friend up releases the hold. " + sync + "\n"
+	case "friend up":
+		return "friend up releases a hold that friend down set. It is not a beat: a friend released with no beat in the last " + down + " is down until the friend beats. " + sync + "\n"
+	default:
+		return ""
+	}
+}
+
 // friendsFn reads nova-config's friend rows (friend sync, friends clean), given
 // the address of the config store (its --pg, else NOVA_PG_DSN).
 type friendsFn func(ctx context.Context, pg string) ([]config.Row, error)

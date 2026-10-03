@@ -419,8 +419,9 @@ func TestAStoppedStreamsCommandsRunAndAnswerIt(t *testing.T) {
 func TestHelpShowsTheWorkedExample(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
-	for _, line := range []string{"help", "help inbox"} {
+	for _, line := range []string{"help", "help inbox", "inbox -h"} {
 		out := ta.ok(line)
+		require.Equal(t, 1, strings.Count(out, "reading the inbox and answering a judgment:"), "%s drops or repeats the walkthrough", line)
 		for _, want := range []string{"reading the inbox and answering a judgment:", "$ nova-sprint inbox",
 			"nova-sprint rework --group finish-0314a1b2-1.1 --expect 2 --answers finish-0314a1b2-1.1", "a group number is refused",
 			"one answer to each judgment"} {
@@ -437,6 +438,14 @@ func TestHelpShowsTheWorkedExample(t *testing.T) {
 		require.Contains(t, out, "  HAPPENED tick-done-0317a1b2-1.1   the sprint is done  x1  for=coordinator", "%s does not show the sprint done", line)
 	}
 	out := ta.ok("help inbox")
-	require.True(t, strings.HasPrefix(out, "usage: nova-sprint inbox [flags]"), "help inbox: %s", out)
+	var syntax string
+	for _, v := range verbs {
+		if v.name == "inbox" {
+			syntax = strings.TrimSpace(v.syntax)
+		}
+	}
+	first, _, _ := strings.Cut(out, "\n")
+	require.Equal(t, "usage: nova-sprint inbox "+syntax, first, "help inbox: %s", out)
+	require.NotContains(t, first, "[flags]", "help inbox usage line went back to the placeholder: %s", first)
 	require.Contains(t, out, "--open <string>", "help inbox")
 }
