@@ -12,172 +12,66 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
-	"flag"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
-	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/tool"
 	"github.com/mas-bandwidth/nova-tools/internal/workgh"
 )
 
 var version string
 
-const banner = `nova-work: every issue of an organization's repositories in one tree file, verified field for field
+func main() { os.Exit(workTool(nil).Main()) }
 
-how it works: import reads issues through your gh login, read-only, and writes
-one tree file: a (work-tree ...) record holding each repository and every field
-of each issue. verify reads GitHub again and prints one MISSING, EXTRA or DRIFT
-line per difference; no lines is the proof. The calls are counted and checked
-against --max-calls before any issue is read.
-first run: needs gh logged in (gh auth status) and ORG and REPO set to one
-repository you can read; then the lines under example:, in order.
-
-usage:
-  nova-work import --org <org> (--out <tree.lisp> | --dry-run) [--repo <owner/name>]... [--max-calls <n>] [--page-size <n>] [--gh <path>] [--timeout <d>]
-  nova-work verify --tree <tree.lisp> [--repo <owner/name>]... [--max <n>] [--max-calls <n>] [--page-size <n>] [--gh <path>] [--timeout <d>] [--max-bytes <n>]
-  nova-work help [<verb>]
-  nova-work version
-
-import reads every issue of every repository of --org (or of each --repo)
-from GitHub, read-only, with its full contents, and writes the tree to --out.
-verify reads the same repositories again and prints one line for every
-difference from the tree: MISSING (on GitHub, not in the tree), EXTRA (in the
-tree, not on GitHub), DRIFT (a field that differs). Zero lines is the proof.
-
-exit: 0 done, or verify found no difference; 1 verify found differences, or
-import's own round trip through the file failed; 2 could not run.
-
-In a scratch directory, export ORG=<an organization> REPO=<one of its
-repositories> first. The dry run plans the calls and writes nothing; the import
-writes ./tree.lisp; the verify reads GitHub again against it.
-
-example:
-  nova-work import --org $ORG --repo $ORG/$REPO --page-size 15 --dry-run
-  nova-work import --org $ORG --repo $ORG/$REPO --page-size 15 --out ./tree.lisp
-  nova-work verify --tree ./tree.lisp --repo $ORG/$REPO --page-size 15
-`
-
-const importHelp = `nova-work import --org <org> (--out <tree.lisp> | --dry-run) [flags]
-
-Reads every issue (open and closed) of every repository of --org from GitHub,
-read-only, with its full contents: number, url, node id, title, body, state and
-state reason, author and association, origin (internal or external), created,
-updated and closed times, lock, labels, assignees, milestone, every comment
-(id, url, author, association, times, body), every cross-reference to it, and
-the pull requests that close it. Nothing is cut at a bound: a connection longer
-than one page is read to its end. The tree is written to --out only after it
+// workTool is the command: its two verbs, import and verify, and the shared
+// skeleton (internal/tool) that dispatches, refuses and renders. q is the
+// GitHub seam; nil means the real gh on PATH, and a test passes a replay.
+func workTool(q workgh.Query) *tool.Tool {
+	return &tool.Tool{
+		Name:  "nova-work",
+		What:  "every issue of an organization's repositories in one tree file, verified field for field",
+		Stamp: version,
+		How: `import reads issues through your gh login and writes one tree file: a (work-tree ...)
+record holding each repository and every field of each issue. verify reads GitHub again and prints
+one MISSING, EXTRA or DRIFT line per difference; no lines is the proof.
+The calls are counted and checked against --max-calls before any issue is read.
+first run: needs gh logged in (gh auth status) and ORG and REPO set to one repository you can read.`,
+		ExitTable: "0 done, or verify found no difference; 1 verify found differences, or import's own round trip through the file failed; 2 could not run.",
+		Verbs: []tool.Verb{
+			{
+				Name:    "import",
+				Usage:   "import --org <org> (--out <tree.lisp> | --dry-run) [--repo <owner/name>]... [--max-calls <n>] [--page-size <n>] [--gh <path>] [--timeout <d>]",
+				Example: "import --org $ORG --repo $ORG/$REPO --page-size 15 --dry-run\nimport --org $ORG --repo $ORG/$REPO --page-size 15 --out ./tree.lisp",
+				Effect:  tool.LocalWrite,
+				Detail: `Reads every issue (open and closed) of every repository of --org from GitHub,
+read-only, with its full contents, and writes the tree to --out only after it
 has been encoded, read back and compared with what was fetched, with zero
-differences.
-
-flags:
-  --org <org>          the organization. Required.
-  --repo <owner/name>  read only this repository; repeat for more. Default:
-                       every repository of --org.
-  --out <file>         the tree file to write (created or replaced; its
-                       directory must exist). Required unless --dry-run.
-  --dry-run            fetch and check everything, write nothing.
-  --max-calls <n>      the GitHub call budget of the run (default 1500; 0 is
-                       refused). The plan's estimate is checked against it
-                       before the first issue is read.
-  --page-size <n>      issues per page, 1 to 100 (default 50). A page GitHub
-                       fails to answer is asked again at half the size.
-  --gh <path>          the GitHub CLI (default gh on PATH); the path found is
-                       echoed.
-  --timeout <d>        the whole run's deadline (default 30m).
-
-output (stdout): PLAN OK, then REPO OK per repository, then
-  IMPORT OK org= out= repos= issues= comments= references= linked_prs= bytes=
-  sha256= calls= points= rest=0 seconds= dry_run=
-calls are GraphQL calls; points are what GitHub charged for them; rest is REST
-calls, always 0. Failures go to stderr as IMPORT FAILED <reason>.
-
-exit: 0 the tree is written (or, with --dry-run, fetched and checked); 1 the
-encoded tree did not read back equal to what was fetched, nothing written;
-2 could not run (a flag, the budget, GitHub, the --out directory).
-`
-
-const verifyHelp = `nova-work verify --tree <tree.lisp> [flags]
-
-Reads the tree, reads the same repositories from GitHub again (read-only), and
-compares them field for field. Every difference is one line on stdout:
-
-  MISSING path=<path> field=<field> want=<value>   on GitHub, not in the tree
-  EXTRA path=<path> field=<field> got=<value>      in the tree, not on GitHub
-  DRIFT path=<path> field=<field> want=<value> got=<value>
-
-A path is repos/<owner>/<repo>/issues/<n>, with /comments/<id>,
-/references or /linked-prs below it. A value longer than 80 bytes, or of more
-than one line, is shown as its length and the head of its SHA-256.
-
-With no --repo, the scope is the tree's organization: every repository GitHub
-lists for it and every repository the tree holds. An issue edited on GitHub
-after the import is DRIFT on its updated time and the fields that changed:
-that is the check working.
-
-flags:
-  --tree <file>        the tree file. Required.
-  --repo <owner/name>  compare only this repository; repeat for more.
-  --max <n>            difference lines shown (default 20; 0 shows all). The
-                       total is always counted.
-  --max-calls <n>      the GitHub call budget of the run (default 1500).
-  --page-size <n>      issues per page, 1 to 100 (default 50).
-  --gh <path>          the GitHub CLI (default gh on PATH).
-  --timeout <d>        the whole run's deadline (default 30m).
-  --max-bytes <n>      the largest tree file read (default 1073741824).
-
-output: VERIFY OK tree= sha256= repos= issues= comments= calls= points= rest=0
-seconds= on stdout when there is no difference; VERIFY FAILED ... differences=
-on stderr when there is.
-
-exit: 0 no difference; 1 one or more differences; 2 could not run (a flag,
-an unreadable or refused tree, the budget, GitHub).
-`
-
-func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, nil)) }
-
-// run is the command; q, when not nil, replaces the GitHub seam (tests).
-func run(args []string, stdout, stderr io.Writer, q workgh.Query) int {
-	if len(args) == 0 {
-		// ONBOARDING.md point 1: a bare command refuses in one line and names the
-		// door; the banner is behind help, not in front of every mistake.
-		fmt.Fprint(stderr, "nova-work: no verb; verbs: import verify help version; run: nova-work help\n")
-		return 2
+differences.`,
+				DryRun: true,
+				Flags:  importFlags,
+				Run:    func(c *tool.Call) *tool.Out { return runImport(c, q) },
+			},
+			{
+				Name:    "verify",
+				Usage:   "verify --tree <tree.lisp> [--repo <owner/name>]... [--max <n>] [--max-calls <n>] [--page-size <n>] [--gh <path>] [--timeout <d>] [--max-bytes <n>]",
+				Example: "verify --tree ./tree.lisp --repo $ORG/$REPO --page-size 15",
+				Effect:  tool.Inspection,
+				Detail: `Reads the tree, reads the same repositories from GitHub again (read-only), and
+compares them field for field. Every difference is one line: MISSING, EXTRA or
+DRIFT.`,
+				Flags: verifyFlags,
+				Run:   func(c *tool.Call) *tool.Out { return runVerify(c, q) },
+			},
+		},
 	}
-	switch args[0] {
-	case "help", "-h", "--help":
-		if len(args) > 1 {
-			switch args[1] {
-			case "import":
-				fmt.Fprint(stdout, importHelp)
-				return 0
-			case "verify":
-				fmt.Fprint(stdout, verifyHelp)
-				return 0
-			}
-			fmt.Fprintf(stderr, "nova-work help: unknown verb %q; verbs: import verify help version; run: nova-work help\n", args[1])
-			return 2
-		}
-		fmt.Fprint(stdout, banner)
-		return 0
-	case "version", "--version":
-		fmt.Fprintln(stdout, buildinfo.Line("nova-work", version))
-		return 0
-	case "import":
-		return runImport(args[1:], stdout, stderr, q)
-	case "verify":
-		return runVerify(args[1:], stdout, stderr, q)
-	}
-	fmt.Fprintf(stderr, "nova-work: unknown verb %q; verbs: import verify help version; run: nova-work help\n", args[0])
-	return 2
 }
 
+// repoList is a repeatable --repo flag: every occurrence appends one
+// owner/name, refused when it is not one.
 type repoList []string
 
 func (r *repoList) String() string { return strings.Join(*r, ",") }
@@ -189,71 +83,34 @@ func (r *repoList) Set(v string) error {
 	*r = append(*r, v)
 	return nil
 }
+func (r *repoList) Get() any { return []string(*r) }
 
-type common struct {
-	repos    repoList
-	maxCalls int
-	pageSize int
-	gh       string
-	timeout  time.Duration
+// commonFlags declares the flags import and verify share.
+func commonFlags(f *tool.Flags) {
+	f.Var(&repoList{}, "repo", "read only this repository; repeat for more. Default: every repository of --org.")
+	f.Int("max-calls", 1500, "the GitHub call budget of the run (default 1500; 0 is refused). The plan's estimate is checked against it before the first issue is read.")
+	f.Int("page-size", 50, "issues per page, 1 to 100 (default 50). A page GitHub fails to answer is asked again at half the size.")
+	f.String("gh", "", "the GitHub CLI (default gh on PATH); the path found is echoed.")
+	f.Duration("timeout", 30*time.Minute, "the whole run's deadline (default 30m).")
 }
 
-func (c *common) bind(fs *flag.FlagSet) {
-	fs.Var(&c.repos, "repo", "")
-	fs.IntVar(&c.maxCalls, "max-calls", 1500, "")
-	fs.IntVar(&c.pageSize, "page-size", 50, "")
-	fs.StringVar(&c.gh, "gh", "", "")
-	fs.DurationVar(&c.timeout, "timeout", 30*time.Minute, "")
-}
-
-// check validates the shared flags and resolves the GitHub seam, echoing
-// the program found.
-func (c *common) check(verb string, q workgh.Query, stdout io.Writer) (workgh.Query, []string) {
-	var bad []string
-	if c.maxCalls <= 0 {
-		bad = append(bad, "--max-calls must be positive")
-	}
-	if c.pageSize < 1 || c.pageSize > 100 {
-		bad = append(bad, "--page-size must be 1 to 100")
-	}
-	if c.timeout <= 0 {
-		bad = append(bad, "--timeout must be positive")
-	}
-	if q != nil || len(bad) > 0 {
-		return q, bad
-	}
-	prog := c.gh
-	if prog == "" {
-		prog = workgh.DefaultProgram()
-	}
-	found, err := lookPath(prog)
-	if err != nil {
-		return nil, []string{fmt.Sprintf("the GitHub CLI %q is not found (%v); install it or name it with --gh", prog, err)}
-	}
-	fmt.Fprintf(stdout, "GH OK path=%s\n", oneline.Field(found))
-	return workgh.GhQuery(found), nil
-}
-
-func parse(verb string, fs *flag.FlagSet, args []string, stderr io.Writer) (int, bool) {
-	fs.SetOutput(io.Discard)
-	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return -1, false
+// commonChecks declares the rules over the shared flags.
+func commonChecks(f *tool.Flags) {
+	f.Check(func(c *tool.Call) {
+		if c.Int("max-calls") <= 0 {
+			c.Problem("--max-calls must be positive")
 		}
-		fmt.Fprintf(stderr, "%s REFUSED: %s; run: nova-work %s -h\n", strings.ToUpper(verb), oneline.Escape(err.Error()), verb)
-		return 2, false
-	}
-	if fs.NArg() > 0 {
-		fmt.Fprintf(stderr, "%s REFUSED: unexpected argument %q; run: nova-work %s -h\n", strings.ToUpper(verb), fs.Arg(0), verb)
-		return 2, false
-	}
-	return 0, true
+		if c.Int("page-size") < 1 || c.Int("page-size") > 100 {
+			c.Problem("--page-size must be 1 to 100")
+		}
+		if c.Dur("timeout") <= 0 {
+			c.Problem("--timeout must be positive")
+		}
+	})
 }
 
-func refuse(stderr io.Writer, verb string, problems []string) int {
-	fmt.Fprintf(stderr, "%s REFUSED: %s; run: nova-work %s -h\n", strings.ToUpper(verb), strings.Join(problems, "; "), verb)
-	return 2
-}
+// repos reads the --repo flags as a slice.
+func repos(c *tool.Call) []string { return c.Get("repo").([]string) }
 
 func sum(b []byte) string {
 	s := sha256.Sum256(b)
