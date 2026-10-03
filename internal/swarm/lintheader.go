@@ -15,8 +15,8 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
 )
 
-// THE TYPED CARD HEADER, CHECKED BEFORE ANY SPEND, SO A CARD DIES AT THE LINT
-// RATHER THAN AT THE GATE.
+// The typed card header, checked before any spend so a card dies at the lint
+// rather than at the gate.
 //
 // `cut` writes five lines under the contract line and inside its hash:
 //
@@ -27,10 +27,9 @@ import (
 //	SOURCE: <owner>/<repo>#<n> | <file:line at the pinned head>
 //
 // `lint --card` checks the tokens `kind-declared`, `paths-declared`,
-// `paused` (the coordinator paused this kind; the remedy is the `trust --set trial`
-// command) and `test-named`. That is what this file is.
+// `paused`, and `test-named`. That is what this file is.
 //
-// THREE READERS, ONE GRAMMAR. `cut` renders the lines, the gate reads them at
+// Three readers, one grammar. `cut` renders the lines, the gate reads them at
 // `accept`, and the lint checks them on the bench before a token is spent. A lint that
 // accepted a line the gate refuses would send a card out to die at `accept`; a lint
 // that refused a line the gate reads would stop a card that was fine. So the rules
@@ -39,25 +38,21 @@ import (
 //   - the block starts at line 2 and ends at the first non-empty line that is not
 //     `KEY: value`, blank lines skipped, unknown keys read past;
 //   - the key is one word and a colon at column 0 and nowhere else:
-//     `^[A-Za-z][A-Za-z0-9-]*:`, any case.
+//     `^[A-Za-z][A-Za-z0-9-]*:`.
 //   - `PATHS: none` declares no paths; otherwise the value is comma-separated;
-//   - TEST is read by cardhdr.ParseTest, the one TEST grammar the copy wrapper's gate
-//     runs: `none <why>` is a declaration where the kind allows it (a
-//     bare `none` is refused: the reader must see why); otherwise `[-tags <tags>]
-//     <package> <TestName>`, the name matching `^Test[A-Za-z0-9_]*$`;
+//   - TEST is read by cardhdr.ParseTest, the one TEST grammar the gate runs:
+//     `none <why>` is a declaration where the kind allows it (a bare `none` is
+//     refused: the reader must see why); otherwise `[-tags <tags>] <package>
+//     <TestName>`, the name matching `^Test[A-Za-z0-9_]*$`;
 //   - KIND, PATHS and TEST are the three a gated card must carry.
 //
-// THE VALIDATOR IS CALLED, NOT RESTATED. `validGlobs` below calls
-// `hygiene.ValidatePaths` rather than restating the PATHS: rule: a restated copy
-// drifts from the validator, which is the whole argument for calling a validator
-// instead of restating one.
+// The validator is called, not restated. `validGlobs` below calls
+// `hygiene.ValidatePaths` rather than restating the PATHS: rule.
 //
-// KIND: IS THE NAME SET, NOT A SECOND TABLE. `hygiene.KindDeclared` reads
+// KIND is the name set, not a second table. `hygiene.KindDeclared` reads
 // internal/hygiene/kinds.txt, which is the names `cut` and `nova-check hygiene`
-// already refuse. The gate's TABLE -- steps, control, reject tokens -- is a second
-// structure that `TEST: none` on a gated kind needs, so that half of the check waits
-// for it. Writing a second name list here would be the same mistake `validGlobs` just
-// undid.
+// already refuse. The gate's TABLE is a second structure that `TEST: none` on
+// a gated kind needs.
 
 // CardHeaderFinding is one typed-header defect: the check's token, the 1-based line it
 // sits on and the line's own text. It is the shape `cmd/nova-swarm/lint.go` prints on a
@@ -88,30 +83,27 @@ func CardHeaderChecks() []string {
 type TrustState map[string]string
 
 // headerKeyRE is what makes a line a `KEY: value` line: one word, starting with a
-// letter, then letters, digits and hyphens, then a colon, at column 0, ANY CASE.
+// letter, then letters, digits and hyphens, then a colon, at column 0.
 //
-// THE BLOCK IS EVERY KEY LINE, NOT EVERY UPPER-CASE KEY LINE. The two lines every card
-// the darwin launchers stage MUST carry are lower case: the launcher scripts read
-// `base-repo:` and `base-sha:` out of the card's first 40 lines with a case-sensitive
-// `sed`, and refuse to launch without both. A key pattern that reads upper case only
-// ends the header block at those two lower-case lines, and every subsequent typed key
-// sits outside the block the gate reads; `PATHS:`, `FILES:`, `TEST:`, `RUN:`, `SYMBOL:`,
-// `RED-WHEN:`, `DONE-WHEN:`, `NO-SUBAGENTS:` and `SOURCE:` -- every key under them --
-// sit outside the header the gate reads.
+// The block is every key line, not every upper-case key line. The two lines every
+// card must carry are lower case: the launcher scripts read `base-repo:` and
+// `base-sha:` out of the card's first 40 lines with a case-sensitive `sed`.
+// A key pattern that reads upper case only ends the header block at those two
+// lower-case lines, and every subsequent typed key sits outside the block the
+// gate reads; `PATHS:`, `FILES:`, `TEST:`, `RUN:`, `SYMBOL:`, `RED-WHEN:`,
+// `DONE-WHEN:`, `NO-SUBAGENTS:` and `SOURCE:` -- every key under them -- sit
+// outside the header the gate reads.
 //
-// WIDENED, NOT ALLOWLISTED. An allowlist of those two names fixes those two cards
-// and breaks on the next launcher key; the rule the card writer can hold in one
-// sentence is "the header is the leading run of `word:` lines". The cost is a prose line
-// that happens to be one word and a colon at column 0 (`Note: ...`) no longer ending the
-// block -- which the negative control in the table test pins, alongside the prose line
-// that does.
+// Widened, not allowlisted. An allowlist of those two names fixes those two cards
+// and breaks on the next launcher key; the rule is "the header is the leading
+// run of `word:` lines". The cost is a prose line that happens to be one word
+// and a colon at column 0 (`Note: ...`) no longer ending the block.
 //
-// THE KEY NAMES STAY UPPER CASE. Widening what CONTINUES the block is not the same as
-// widening what a typed key IS: `cut` writes `KIND:`, `PATHS:`, `TEST:`, `LEGS:` and
-// `SOURCE:` in upper case and says nothing anywhere about case, so `paths:` is not
-// `PATHS:` here and the card that writes it still draws `paths-declared`. cardTypedKeys
-// is the exact names; the day a spec line rules case-insensitive keys, this is the one
-// place to say so.
+// The key names stay upper case. Widening what continues the block is not the same as
+// widening what a typed key is: `cut` writes `KIND:`, `PATHS:`, `TEST:`, `LEGS:` and
+// `SOURCE:` in upper case, so `paths:` is not `PATHS:` here. cardTypedKeys is the
+// exact names; if a spec line rules case-insensitive keys, this is the one place
+// to say so.
 var (
 	headerKeyRE  = regexp.MustCompile(`^([A-Za-z][A-Za-z0-9-]*):\s*(.*)$`)
 	goTestNameRE = regexp.MustCompile(`^Test[A-Za-z0-9_]*$`)
@@ -129,17 +121,15 @@ type headerField struct {
 // cardHeaderBlock reads the typed header the way the gate's parser reads it, stops where
 // it stops, and returns what it had to ignore.
 //
-// THE BLOCK'S END STAYS THE GATE'S; WHAT IT SWALLOWED DOES NOT. The block ending at the
-// first line that is not `KEY: value` is the parser's own rule and moving it here would
-// be worse than the defect: a lint that read a header the gate will not read passes a
-// card that dies at `accept`. What was wrong is that a card with one sentence above its
-// `KIND:` line got NO typed checks at all and was called clean. So the keys BELOW the
-// block are collected and handed back, to be named as findings where they sit -- the gate
-// will never read them, and now neither does the card writer have to find that out at
-// the gate.
+// The block's end stays the gate's; what it swallowed does not. The block ending at
+// the first line that is not `KEY: value` is the parser's own rule. A lint that
+// reads a header the gate will not read passes a card that dies at `accept`. So
+// the keys below the block are collected and handed back to be named as findings
+// where they sit. The gate will never read them, so the card writer doesn't
+// discover it at the gate.
 //
-// A SECOND LINE WITH THE SAME KEY IS RECORDED, NOT DROPPED. Silently taking the first of
-// two `KIND:` lines is the one answer a writer cannot act on.
+// A second line with the same key is recorded, not dropped. Silently taking the
+// first of two `KIND:` lines is the one answer a writer cannot act on.
 func cardHeaderBlock(raw []byte) (block map[string]headerField, stranded map[string]int) {
 	block, stranded = map[string]headerField{}, map[string]int{}
 	sc := bufio.NewScanner(bytes.NewReader(raw))
@@ -201,18 +191,9 @@ var cardKeyCheck = map[string]string{
 	"SOURCE": "kind-declared",
 }
 
-// validGlobs is the PATHS: rule, and it is `hygiene.ValidatePaths` ITSELF, not a
-// restatement of it (#1853, Emma's item-4 dogfood).
-//
-// This function used to write the rule out a second time, because T02's validator was
-// not on `dev` when the checks were first written, and the comment above said in so many
-// words that it should become a call the day T02 landed. T02 landed, this did not, and
-// the copy drifted in BOTH directions within a day: it let a Windows drive letter
-// (`C:/Windows/system32/evil.go`) through as repo-relative, it had no cap at all where
-// the rule's cap is eight (SPEC-TOOLWORK.md:579-580), and it refused `*.go` and
-// `**/*.go`, which the validator clears. A card writer got a different answer from the
-// lint on the bench and from the gate at `accept`, which is the one thing these checks
-// exist to prevent.
+// validGlobs is the PATHS: rule, implemented by `hygiene.ValidatePaths` itself
+// rather than by restating it. The function used to write the rule out a second
+// time, and a copy drifted in both directions within a day.
 func validGlobs(globs []string) (string, bool) {
 	if err := hygiene.ValidatePaths(globs); err != nil {
 		return err.Error(), false
@@ -290,7 +271,7 @@ func LintCardHeader(raw []byte, trust TrustState, required bool) []CardHeaderFin
 		// AN EMPTY ENTRY IS NOT A SKIPPABLE ONE. `PATHS: , , ` used to have each empty
 		// entry `continue`d past and the line called fine, which is the worst of the
 		// three answers a reader could get: the line declares no glob and it is not
-		// `none` (#1853, Emma's item-4 dogfood).
+		// `none`.
 		var globs []string
 		empty := false
 		for _, g := range strings.Split(paths.value, ",") {
