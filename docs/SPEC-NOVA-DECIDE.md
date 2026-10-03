@@ -229,32 +229,42 @@ at most `BriefWidth` (8, add's width and `--width`'s default) at a time, and eve
 new decision is appended in one write under the record's lock. Once the batch's
 context is done no further card is asked; each card unanswered is its own error,
 nothing is recorded for it, and the rest are. With no record a batch keeps
-nothing. `nova-decide brief` fails at exit 2 when a card went unanswered, so a
-script runs it again (a recorded card costs nothing).
+nothing. A batch has one deadline, `BriefDeadline` (a minute), in `nova-sprint add`
+and in `nova-decide brief` alike (`--timeout` bounds each card under it). `nova-decide
+brief` fails at exit 2 when a card went unanswered, so a script runs it again (a
+recorded card costs nothing).
 
 **Where it is asked.** `nova-sprint add`, under `JEV_API_KEY`, asks it of every
 card it names with a brief (a card per brief file, or the one brief of each id;
 a `--count` add names no id before the store numbers it, and a sentinel carries
-no brief) after its own checks (the arguments, the files, the card lint), so a
-card add refuses costs no call, and before it writes. The whole batch has one
+no brief) after every check of its own (the arguments, `--score` among them, the
+files, the size, shared `PATHS:`, the card lint), in both forms, so a card add
+refuses costs no call, and before it writes. The whole batch has one
 deadline, a minute: past it each unanswered card is a `NOTE brief:` line and the
 add goes on. With a server named, add runs its checks and asks where it is typed
 (the caller's key and files; the server's one line of control holds no backend
 call) and sends the server the add with each card's op (`--brief-op <id>=<op>`)
-and the record; in that half the card lint runs only under `--rules`, since the
+and the record; `--brief-op` is that wire word only: typed on an add no server
+runs it is refused, and the server takes an op only as `<id>@brief-...`, the
+card's own, so no op can point a card's end at another card's decision; in that half the card lint runs only under `--rules`, since the
 sprint's recorded rules file is the server's to read, so a brief the server's
 lint refuses may have cost a call. One `BRIEF card=<id> op=<op> <reading>
-recorded=<new|existing>` line per card (on stderr under `--json`). The record is
+recorded=<new|existing>` line per card; under `--json` the add's one JSON object
+holds these lines and its `NOTE brief:` lines in its `brief` field, served or not. The record is
 the coordinator's, `<root>/decide/brief.jsonl` with the root `~/nova-sprint`
 (never a cache directory), or the file `add --decide-record` names. A card stores
 its op and its record (`brief_op`, `brief_record`); a brief replaced by `nova-sprint
 brief` drops both. With `decide_brief_bar` set, a card under it refuses the whole
 add, exit 2, nothing written, naming each such card, its p and the questions it
-failed, and saying the decision is uncalibrated. A decision that cannot be made (no
-key, the bar or the record unreadable, the backend failing a card) is one `NOTE
-brief:` line and the add goes on. `nova-swarm lint --card <file> --decide` prints
+failed, and saying the decision is uncalibrated. No key asks nothing and says
+nothing: the key is the opt-in, and a keyless add is the add it was before this
+section. A decision that cannot be made (the record unnamed, as when the home
+directory cannot be found, or unmade; the bar unreadable; the backend failing a
+card) is one `NOTE brief:` line and the add goes on. `nova-swarm lint --card <file> --decide` prints
 the same reading on one `LINT DECIDE` line after the lint's own and never changes
-its verdict (`--decide-answers` answers from a file, `--decide-record` records).
+its verdict (`--decide-answers` answers from a file, `--decide-record` records);
+when the backend fails, the lint's verdict is printed all the same, then why the
+decision was not made, exit 2.
 
 **The outcome** is the card's end in the sprint, attached by the exact op the card
 stores, in the record it names: `landed` when land lands it at attempt 1,

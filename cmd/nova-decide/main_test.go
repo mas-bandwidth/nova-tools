@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
@@ -22,8 +23,9 @@ import (
 // opens a socket.
 func testWorld(key string, calls *atomic.Int32, reply func(body []byte) ([]byte, error)) world {
 	return world{
-		now:    func() time.Time { return time.Date(2026, 10, 2, 21, 0, 0, 0, time.UTC) },
-		getenv: func(name string) string { return map[string]string{decide.JevSecret: key}[name] },
+		now:      func() time.Time { return time.Date(2026, 10, 2, 21, 0, 0, 0, time.UTC) },
+		getenv:   func(name string) string { return map[string]string{decide.JevSecret: key}[name] },
+		deadline: decide.BriefDeadline,
 		send: func(got string) decide.Send {
 			return func(_ context.Context, body []byte) ([]byte, error) {
 				if got != key {
@@ -270,9 +272,9 @@ func TestBriefAsksEveryCardOfADirectoryOnce(t *testing.T) {
 	op := decide.BriefOp("a1", strings.TrimSuffix(string(greet), "\n"))
 	jev.Do(t, brief...).Exit(0).Out(
 		"BRIEF OK decision=brief backend=jev:jev-latest cards=2 asked=2 existing=0 failed=0",
-		"BRIEF CARD id=a1 op="+op+" p_converges=0.8 minutes=10-20 failed=- recorded=new",
+		"BRIEF CARD id=a1 op="+op+" p_converges=0.8 minutes=10-20 failed=- uncalibrated=true recorded=new",
 		"BRIEF CARD id=a2 op=a2@brief-")
-	jev.Do(t, brief...).Exit(0).Out("asked=0 existing=2 failed=0", "p_converges=0.3 minutes=10-20 failed=- recorded=existing")
+	jev.Do(t, brief...).Exit(0).Out("asked=0 existing=2 failed=0", "p_converges=0.3 minutes=10-20 failed=- uncalibrated=true recorded=existing")
 	assert.Equal(t, int32(2), calls.Load(), "a recorded card asks nothing")
 
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "a3.md"), []byte("the backend is down for this one\n"), 0o600))
@@ -291,5 +293,30 @@ func TestBriefAsksEveryCardOfADirectoryOnce(t *testing.T) {
 		{Args: []string{"brief", "--card", td + "nope", "--backend", "jev", "--record", rec}, Code: 2, Says: "nope: no such file"},
 		{Args: []string{"brief", "--card", dir, "--backend", "jev", "--record", rec, "--width", "0"}, Code: 2, Says: "--width must be at least 1"},
 		{Args: []string{"brief", "--card", t.TempDir(), "--backend", "jev", "--record", rec, "--dry-run"}, Code: 2, Says: "holds no *.md card file"},
+	})
+}
+
+// brief's whole batch has one deadline (the world's, decide.BriefDeadline, as nova-sprint
+// add's), not only --timeout per card: a backend that never answers holds the verb that
+// long and no longer, every card unanswered is named on its line, nothing is recorded,
+// and the verb fails at exit 2. The bubble's clock is synctest's: no real time.
+func TestBriefEndsAtTheBatchDeadline(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		w := testWorld("k-test", new(atomic.Int32), nil)
+		w.send = func(string) decide.Send {
+			return func(ctx context.Context, _ []byte) ([]byte, error) { <-ctx.Done(); return nil, ctx.Err() }
+		}
+		jev := testkit.Main(decideTool(w).Run)
+		dir, rec := t.TempDir(), filepath.Join(t.TempDir(), "decisions.jsonl")
+		for _, id := range []string{"a1", "a2", "a3"} {
+			require.NoError(t, os.WriteFile(filepath.Join(dir, id+".md"), []byte("STEP 1. Fix "+id+".\n"), 0o600))
+		}
+		start := time.Now()
+		r := jev.Do(t, "brief", "--card", dir, "--backend", "jev", "--record", rec, "--width", "1", "--timeout", "10m")
+		assert.Equal(t, w.deadline, time.Since(start), "one deadline for the whole batch, under a longer --timeout")
+		r.Exit(2)
+		assert.Equal(t, 3, strings.Count(r.Stdout+r.Stderr, "context deadline exceeded"), "each card unanswered is named")
+		assert.NoFileExists(t, rec, "nothing was recorded")
 	})
 }

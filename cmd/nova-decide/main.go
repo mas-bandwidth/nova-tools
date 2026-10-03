@@ -28,17 +28,18 @@ import (
 var version string
 
 // world is what the tool reaches outside itself: the clock every record stamp
-// reads, the environment the backend's key comes from, and the Jev transport.
-// main passes the real one; a test passes its own, so no test opens a socket,
-// reads the real clock or needs a key.
+// reads, the environment the backend's key comes from, the Jev transport, and
+// the deadline of a brief batch. main passes the real one; a test passes its
+// own, so no test opens a socket, reads the real clock or needs a key.
 type world struct {
-	now    func() time.Time
-	getenv func(string) string
-	send   func(key string) decide.Send
+	now      func() time.Time
+	getenv   func(string) string
+	send     func(key string) decide.Send
+	deadline time.Duration // brief's whole batch (decide.BriefDeadline, as nova-sprint add's)
 }
 
 func realWorld() world {
-	return world{now: time.Now, getenv: os.Getenv,
+	return world{now: time.Now, getenv: os.Getenv, deadline: decide.BriefDeadline,
 		send: func(key string) decide.Send { return decide.HTTPSend(http.DefaultClient, decide.JevURL, key) }}
 }
 
@@ -101,7 +102,8 @@ or UNSURE). The state is the card, the rule when --rule names one, and the diff,
 				Detail: `The brief decision: a card's text alone, as a flash child with no memory reads it, before
 the card is added. Six nouls (repo_branch, files_named, gate_stated, commit_stated,
 report_stated, one_thing), ambiguous_step (none, step-<n> or unnumbered), minutes, and
-converges, p that the child lands it on its first attempt: a rank, uncalibrated. A directory is
+converges, p that the child lands it on its first attempt: a rank, uncalibrated. The batch has
+one deadline, a minute, as nova-sprint add's; --timeout bounds each card. A directory is
 its *.md files as nova-sprint add --brief-dir reads them (none below it), each card's id its
 file's name without .md; each decision's id is <card>@brief-<hex>. One BRIEF CARD item per card,
 in id order; a card the backend failed is named, the rest are recorded.`,
@@ -253,7 +255,9 @@ func (w world) brief(c *tool.Call) *tool.Out {
 		return tool.Done().Fact("decision", decide.BriefName).Fact("backend", b.Name()).Fact("cards", len(cards)).
 			Fact("recorded", held).Fact("to_ask", len(cards)-held)
 	}
-	made, err := decide.Briefs(context.Background(), b, cards, record, w.now(), c.Int("width"), c.Dur("timeout"))
+	ctx, cancel := context.WithTimeout(context.Background(), w.deadline) // one deadline for the batch, as add's
+	defer cancel()
+	made, err := decide.Briefs(ctx, b, cards, record, w.now(), c.Int("width"), c.Dur("timeout"))
 	if err != nil {
 		return tool.Refuse(err.Error())
 	}
@@ -270,7 +274,7 @@ func (w world) brief(c *tool.Call) *tool.Out {
 		}
 		br := decide.BriefOf(m.Decision)
 		o.Item("card", "id", id, "op", m.ID, "p_converges", round(br.Converges), "minutes", br.Minutes,
-			"failed", strings.Join(br.Failed, ","), "recorded", map[bool]string{true: "existing", false: "new"}[m.Existing])
+			"failed", strings.Join(br.Failed, ","), "uncalibrated", true, "recorded", map[bool]string{true: "existing", false: "new"}[m.Existing])
 	}
 	if failed > 0 {
 		o.Status, o.Exit, o.Why = tool.Failed, 2, []string{fmt.Sprintf("the backend answered %d of %d cards; each one it failed is named on its BRIEF CARD line, and nothing was recorded for it", len(made)-failed, len(made))}

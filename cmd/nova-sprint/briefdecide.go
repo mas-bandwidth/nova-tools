@@ -3,6 +3,7 @@ package main
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"maps"
@@ -10,13 +11,13 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 )
 
 // THE BRIEF DECISION BEFORE ADD (docs/SPEC-NOVA-DECIDE.md section 9; the owner,
@@ -25,20 +26,18 @@ import (
 // brief, after its own checks (the arguments, the files, the card lint) and before it
 // writes: is the repository and branch named, where the work is, the gate, the commit
 // message, what to report, is the task one thing, which step is ambiguous, how many
-// minutes, and p(converges). The whole batch has one deadline (briefDeadline). It runs
+// minutes, and p(converges). The whole batch has one deadline (decide.BriefDeadline). It runs
 // where add is typed: with a server, add runs its checks here first (gateOnly), asks,
 // and sends the server the op ids (--brief-op), because the briefs are this machine's
 // files and the key is this caller's, and the server's one line of control holds no
-// backend call. One BRIEF line per card, marked uncalibrated=true; with the sprint
-// row's decide_brief_bar set, a card under it is refused, exit 2, nothing written. A
-// decision that cannot be made is one NOTE line and the add goes on. The card stores
+// backend call. One BRIEF line per card, marked uncalibrated=true (under --json, the
+// add's brief field); with the sprint
+// row's decide_brief_bar set, a card under it is refused, exit 2, nothing written. No
+// key asks and says nothing; a decision that cannot be made is one NOTE line and the
+// add goes on. The card stores
 // the op and the record (sprint.FieldBriefOp, FieldBriefRecord), and land and drop
 // attach the card's end to that exact decision: landed at attempt 1, reworked later,
 // dropped.
-
-// briefDeadline bounds the whole batch of an add's brief decisions: past it, what is
-// unanswered is a NOTE each and the add goes on.
-const briefDeadline = time.Minute
 
 // defaultBriefRecord is the coordinator's record of brief decisions,
 // <root>/decide/brief.jsonl with the root ~/nova-sprint: a durable directory, never a
@@ -65,23 +64,32 @@ func (a *app) readBriefBar(ctx context.Context) (string, error) {
 }
 
 // briefAsked is what an add's brief decisions give its cards: each card's op id and
-// the record that holds them (sprint.AddReq's BriefOps and BriefRecord).
+// the record that holds them (sprint.AddReq's BriefOps and BriefRecord), and under
+// --json the BRIEF and NOTE brief lines, which go into the add's one JSON object.
 type briefAsked struct {
 	ops    map[string]string
 	record string
+	lines  []string
 }
+
+// briefOpWord is the one refusal of a --brief-op that is no op this add asked: typed
+// on an add not run by a server, or on the wire naming another card's decision.
+const briefOpWord = "--brief-op is the served add's wire word, an op add asked where it was typed: <id>=<id>@brief-<hex>; add asks its own cards' brief decisions and sends its server the ops itself; nothing was written; drop --brief-op"
 
 // briefGate asks the brief decision of the cards (id -> brief) as one batch under one
 // deadline, after add's own checks; code is non-zero when a card is under the bar and
 // the add is refused, nothing written. Inside the server it asks nothing: the caller
-// asked before sending and the op ids are its --brief-op words.
+// asked before sending and the op ids are its --brief-op words, each the op of a card
+// of this add. With no key it asks and says nothing: the key is the opt-in.
 func (a *app) briefGate(cards map[string]string, recordFlag string, sent []string, c *common, stdout, stderr io.Writer) (briefAsked, int) {
 	if a.serveAddr != "" {
 		asked := briefAsked{ops: map[string]string{}, record: recordFlag}
 		for _, w := range sent {
-			if id, op, ok := strings.Cut(w, "="); ok && cards[id] != "" {
-				asked.ops[id] = op
+			id, op, ok := strings.Cut(w, "=")
+			if !ok || cards[id] == "" || !strings.HasPrefix(op, id+"@brief-") {
+				return briefAsked{}, refuse(stderr, "add", fmt.Sprintf("%s names no brief decision of a card of this add (%s)", oneline.Field(w), briefOpWord))
 			}
+			asked.ops[id] = op
 		}
 		return asked, 0
 	}
@@ -89,26 +97,38 @@ func (a *app) briefGate(cards map[string]string, recordFlag string, sent []strin
 	if key == "" || len(cards) == 0 {
 		return briefAsked{}, 0
 	}
+	var lines []string // under --json: the add's object stays alone on stdout and holds them
+	say := func(line string) {
+		if c.json {
+			lines = append(lines, line)
+		} else {
+			fmt.Fprintln(stdout, line)
+		}
+	}
+	note := func(what string) { say("NOTE brief: " + oneline.Escape(what)) }
+	done := func(asked briefAsked) (briefAsked, int) {
+		asked.lines, c.brief = lines, lines
+		if a.gateOnly != nil {
+			*a.gateOnly = asked
+		}
+		return asked, 0
+	}
 	record := recordFlag
 	if record == "" && a.briefRecord != nil {
 		var err error
 		if record, err = a.briefRecord(); err != nil {
-			record = ""
+			note("no brief decision: the record: " + err.Error()) // a home directory that cannot be found is a fault, said
+			return done(briefAsked{})
 		}
 	}
-	out := stdout
-	if c.json {
-		out = stderr // the add's one JSON object stays alone on stdout
-	}
-	note := func(what string) { fmt.Fprintf(out, "NOTE brief: %s\n", oneline.Escape(what)) }
 	if record == "" {
 		return briefAsked{}, 0 // a test's app names no record: no brief decision
 	}
 	if err := os.MkdirAll(filepath.Dir(record), 0o755); err != nil {
 		note("no brief decision: the record: " + err.Error())
-		return briefAsked{}, 0
+		return done(briefAsked{})
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), briefDeadline)
+	ctx, cancel := context.WithTimeout(context.Background(), decide.BriefDeadline)
 	defer cancel()
 	var bar decide.BriefBar
 	raw, err := a.briefBar(ctx)
@@ -121,7 +141,7 @@ func (a *app) briefGate(cards map[string]string, recordFlag string, sent []strin
 	made, err := decide.Briefs(ctx, a.decideBackend(key), cards, record, a.now(), decide.BriefWidth, 0)
 	if err != nil {
 		note("no brief decision: " + err.Error())
-		return briefAsked{}, 0
+		return done(briefAsked{})
 	}
 	asked := briefAsked{ops: map[string]string{}, record: record}
 	var refused []string
@@ -134,43 +154,62 @@ func (a *app) briefGate(cards map[string]string, recordFlag string, sent []strin
 		asked.ops[id] = m.ID
 		b := decide.BriefOf(m.Decision)
 		recorded := map[bool]string{true: "existing", false: "new"}[m.Existing]
-		fmt.Fprintf(out, "BRIEF card=%s op=%s %s recorded=%s\n", oneline.Field(id), oneline.Field(m.ID), oneline.Escape(b.Line()), oneline.Field(recorded))
+		say(fmt.Sprintf("BRIEF card=%s op=%s %s recorded=%s", oneline.Field(id), oneline.Field(m.ID), oneline.Escape(b.Line()), oneline.Field(recorded)))
 		if bar.Refuses(b) {
 			refused = append(refused, fmt.Sprintf("%s ranks p(converges)=%.2f, under %s %.2f, failing %s", id, b.Converges,
 				config.FieldDecideBriefBar, bar.At, cmp.Or(strings.Join(b.Failed, ", "), "no named question")))
 		}
 	}
 	if len(refused) > 0 {
+		for _, l := range lines { // a refused add prints no JSON object: its lines go before the refusal
+			fmt.Fprintln(stderr, l)
+		}
 		return briefAsked{}, refuse(stderr, "add", fmt.Sprintf("the brief of %s; the brief decision is uncalibrated (docs/SPEC-NOVA-DECIDE.md section 9), so this bar is the sprint row's choice, not a measured one; nothing was written; run: nova-config sprint set --decide_brief_bar '' --as <you> to report only, or rewrite the brief and add it again",
 			strings.Join(refused, "; ")))
 	}
-	if a.gateOnly != nil {
-		*a.gateOnly = asked
-	}
-	return asked, 0
+	return done(asked)
 }
 
 // gateForward runs add's checks and its brief decisions here before the add is sent to
 // the server (briefGate, in gateOnly: add returns before the store): a refusal here is
-// the add's and nothing is sent; else the words that carry the op ids to the server. A
-// caller with no key asks nothing and sends the add as it is.
-func (a *app) gateForward(args []string, stdout, stderr io.Writer) (extra []string, code int) {
-	if a.getenv(decide.JevSecret) == "" {
-		return nil, 0
+// the add's and nothing is sent; else the words that carry the op ids to the server, and
+// under --json the lines that go into the server's JSON object (withBrief). A caller with
+// no key asks nothing and sends the add as it is, unless it typed --brief-op, which add
+// refuses here.
+func (a *app) gateForward(v verbArgs, args []string, stdout, stderr io.Writer) (extra, lines []string, code int) {
+	if a.getenv(decide.JevSecret) == "" && !v.given("brief-op") {
+		return nil, nil, 0
 	}
 	asked := briefAsked{}
 	a.gateOnly = &asked
 	defer func() { a.gateOnly = nil }()
 	if code := a.cmdAdd(args[1:], stdout, stderr); code != 0 {
-		return nil, code
+		return nil, nil, code
 	}
 	for _, id := range slices.Sorted(maps.Keys(asked.ops)) {
 		extra = append(extra, "--brief-op", id+"="+asked.ops[id])
 	}
-	if len(extra) > 0 && !slices.ContainsFunc(args, func(w string) bool { return w == "--decide-record" || strings.HasPrefix(w, "--decide-record=") }) {
+	if len(extra) > 0 && !v.given("decide-record") {
 		extra = append(extra, "--decide-record", asked.record)
 	}
-	return extra, 0
+	return extra, asked.lines, 0
+}
+
+// withBrief puts the brief lines a served add's caller asked into the server's JSON
+// object (output.Brief); a run that printed none (a refusal) has them on stderr first.
+func withBrief(res sprintwire.Result, lines []string) sprintwire.Result {
+	if len(lines) == 0 {
+		return res
+	}
+	var o output
+	if err := json.Unmarshal([]byte(res.Stdout), &o); err != nil {
+		res.Stderr = strings.Join(lines, "\n") + "\n" + res.Stderr
+		return res
+	}
+	o.Brief = lines
+	b, _ := json.Marshal(o) // ignored: output marshals, as report's
+	res.Stdout = string(b) + "\n"
+	return res
 }
 
 // attachBriefs attaches each card's end to the brief decision the card names (its op in

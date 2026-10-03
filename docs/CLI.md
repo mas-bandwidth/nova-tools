@@ -742,7 +742,7 @@ usage:
                        (--fleet lints a launcher script against the coordinator's /bin/bash 3.2: shebang, bash-4 builtins, unquoted expansions)
                        (--child-rules holds the card to the rules the coordinator gives a child: one rule-<name> per required sentence, one step-<what> per forbidden command; the sentences are the built-in general rules, or the lines of --child-rules-file, one required sentence per line; template --name card prints a card that passes the general ones)
                        (--member-injects lints the card as the member stages it, rules by reference: the rules are appended at stage time from the held file of the card's REPO: (fleet/child-rules.txt for nova-tools, fleet/child-rules.<repo>.txt for another), or --child-rules-file; a card need not carry them, and a line that contradicts them is still a finding)
-                       (--decide asks the brief decision nova-sprint add asks (nova-decide's brief: p(converges), the minutes, the questions the card leaves open) through Jev with JEV_API_KEY, or from --decide-answers, and prints one LINT DECIDE line after the lint's own; it never changes the verdict)
+                       (--decide asks the brief decision nova-sprint add asks (nova-decide's brief: p(converges), the minutes, the questions the card leaves open) through Jev with JEV_API_KEY, or from --decide-answers, and prints one LINT DECIDE line after the lint's own; it never changes the verdict, and a failing backend prints the verdict, then why, exit 2)
                        (--base-check adds the four checks of a coding card: its PATHS exist at the base sha in --repo (default the working directory), no STEP pushes or calls gh, its LEG is a line of --legs, its deadline is at least --p95's figure for its kind; evidence not given is reported missing, never passed)
                        (nova-sprint add holds a brief to the --child-rules tokens only, and to its model lines: rule-<name> for each rule of its set (the six general rules, or the file add --rules or init --rules names), the step-<what> scans (step-go-clean and step-go-test-timeout only when the file carries those rules), and rule-libraries-considered when the file carries [libraries-considered]; every other token --rules lists is this lint's alone)
   nova-swarm step      --card <file> --dir <checkout> [--work <dir>] [--result <file>] [--sandbox <wall> | --no-wall] | --card <file> --remainder <id> --from <step> --land <sha>
@@ -2167,7 +2167,7 @@ p=` line per question: a noul's `p=yes:<p>`, a choice's `p=<option>:<p>,...`.
 `brief` reads cards as a flash child with no memory would, before they are added
 (a file, or a directory's `*.md` files as `nova-sprint add --brief-dir` reads them,
 as one batch), an uncalibrated rank: one `BRIEF CARD id=
-op=<card>@brief-<hex> p_converges= minutes= failed= recorded=` line per card,
+op=<card>@brief-<hex> p_converges= minutes= failed= uncalibrated=true recorded=` line per card,
 `failed` naming each question the card leaves open (`commit_stated(0.20)`,
 `ambiguous_step:step-2(0.70)`, or `-`). `nova-sprint add` asks the same of every
 card under `JEV_API_KEY` (no bar is set while the decision is uncalibrated);

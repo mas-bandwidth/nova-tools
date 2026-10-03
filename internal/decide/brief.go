@@ -47,6 +47,10 @@ const briefSteps = 12
 // nova-decide brief's --width default.
 const BriefWidth = 8
 
+// BriefDeadline bounds a whole brief batch, in nova-sprint add and nova-decide brief:
+// past it what is unanswered is each card's error and the rest are recorded.
+const BriefDeadline = time.Minute
+
 // BriefSchema is the brief's nine questions.
 func BriefSchema() Schema {
 	steps := map[string]string{

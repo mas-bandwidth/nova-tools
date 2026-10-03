@@ -18,30 +18,35 @@ import (
 // open. It is asked through Jev with JEV_API_KEY from the environment, or answered from
 // --decide-answers (the fixed backend, no network, no key), and recorded in
 // --decide-record when one is named. It prints one LINT DECIDE line after the lint's own
-// and never changes the lint's verdict: a bar is add's, read from the sprint row.
+// and never changes the lint's verdict: a bar is add's, read from the sprint row. When
+// the backend fails, the lint's verdict is printed all the same and then why the
+// decision was not made, exit 2.
 
 // lintDecideWait bounds the backend's answer, as nova-decide's own --timeout default.
 const lintDecideWait = time.Minute
 
-// lintDecide is the card's LINT DECIDE line.
-func lintDecide(name string, raw []byte, answers, record string, getenv func(string) string, now time.Time) (string, error) {
-	var b decide.Backend
+// lintBackend is the backend --decide asks: the fixed one from --decide-answers, else
+// Jev with the key; no key and no answers file is refused before anything is linted.
+func lintBackend(answers string, getenv func(string) string) (decide.Backend, error) {
 	switch key := getenv(decide.JevSecret); {
 	case answers != "":
 		text, err := os.ReadFile(answers)
 		if err != nil {
-			return "", fmt.Errorf("--decide-answers: %w", err)
+			return nil, fmt.Errorf("--decide-answers: %w", err)
 		}
 		f, err := decide.ParseFixed(text)
 		if err != nil {
-			return "", fmt.Errorf("--decide-answers: %w", err)
+			return nil, fmt.Errorf("--decide-answers: %w", err)
 		}
-		b = f
+		return f, nil
 	case key != "":
-		b = decide.JevHTTP(key)
-	default:
-		return "", fmt.Errorf("Jev is asked with %s, which this environment does not hold", decide.JevSecret)
+		return decide.JevHTTP(key), nil
 	}
+	return nil, fmt.Errorf("Jev is asked with %s, which this environment does not hold", decide.JevSecret)
+}
+
+// lintDecide is the card's LINT DECIDE line, asked of b.
+func lintDecide(name string, raw []byte, b decide.Backend, record string, now time.Time) (string, error) {
 	id, brief := strings.TrimSuffix(name, ".md"), strings.TrimSuffix(string(raw), "\n")
 	if record != "" {
 		if err := os.MkdirAll(filepath.Dir(record), 0o755); err != nil {

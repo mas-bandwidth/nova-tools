@@ -152,18 +152,19 @@ func (a *app) forwarded(args []string, stdout, stderr io.Writer) (code int, sent
 		return 0, false // no server, not served, a wait, its help, or flags it refuses: runs here
 	}
 	rest := args[v.words:]
+	var brief []string
 	if v.name == "add" { // add's checks and its brief decisions run here first (briefdecide.go)
-		extra, code := a.gateForward(args, stdout, stderr)
+		extra, lines, code := a.gateForward(v, args, stdout, stderr)
 		if code != 0 {
 			return code, true
 		}
-		rest = append(append([]string(nil), rest...), extra...)
+		rest, brief = append(append([]string(nil), rest...), extra...), lines
 	}
 	res, err := a.ask(context.Background(), addr, args[:v.words], rest)
 	if err != nil {
 		return a.unanswered(v.name, addr, err, stderr), true
 	}
-	a.answer(res, stdout, stderr)
+	a.answer(withBrief(res, brief), stdout, stderr)
 	return res.Code, true
 }
 

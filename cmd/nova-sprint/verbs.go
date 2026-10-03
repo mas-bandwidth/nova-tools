@@ -662,6 +662,8 @@ type output struct {
 	Packets []sprint.Packet `json:"packets,omitempty"`
 	// Says is the verb's NOTE lines: what it did that the moves do not say.
 	Says []string `json:"says,omitempty"`
+	// Brief is add's BRIEF and NOTE brief lines, as the text form prints them.
+	Brief []string `json:"brief,omitempty"`
 }
 
 // groupReport is what a verb given --group says about the group.
@@ -712,7 +714,7 @@ func (a *app) report(ctx context.Context, verbName string, c common, st *store.S
 	var synced *store.SyncError
 	line := sprintLine(ctx, st)
 	if c.json {
-		o := output{Result: res, Sprint: line, Unknown: errors.Is(err, store.ErrUnknown), Group: c.group.ID, ActedOn: c.group.ActedOn, Expected: c.group.Expected, Packets: c.handed, Says: c.says}
+		o := output{Result: res, Sprint: line, Unknown: errors.Is(err, store.ErrUnknown), Group: c.group.ID, ActedOn: c.group.ActedOn, Expected: c.group.Expected, Packets: c.handed, Says: c.says, Brief: c.brief}
 		if o.Moved == nil {
 			o.Moved = []string{}
 		}
@@ -978,10 +980,13 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	held := fs.Bool("held", false, "admit the cards held: waiting, a sentinel never reached and no card dealt, nothing raised, until nova-sprint release <id> --reason <text>; a wave loads behind a held sentinel with nothing before it")
 	decideRecord := fs.String("decide-record", "", "the record `file` of the cards' brief decisions under JEV_API_KEY (default ~/nova-sprint/decide/brief.jsonl, the coordinator's root); each card stores it and its op, and land and drop attach the card's end there")
 	var briefOps stringList
-	fs.Var(&briefOps, "brief-op", "`id=op`: a card's brief decision op id, which add sends its server itself when it asked the decision where it was typed; repeated, one per card")
+	fs.Var(&briefOps, "brief-op", "`id=op`: a card's brief decision op id (<id>@brief-<hex>), which add sends its server itself when it asked the decision where it was typed; refused when typed on an add no server runs; repeated, one per card")
 	ids, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "add", err.Error())
+	}
+	if len(briefOps) > 0 && a.serveAddr == "" {
+		return refuse(stderr, "add", briefOpWord)
 	}
 	if *count < 0 {
 		// a negative count admitted no card and opened the stream with an OK
@@ -1155,6 +1160,14 @@ func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, se
 	for i := range cards {
 		cards[i].Rules = cardRules(cards[i].Brief, rs).held // each card names the rules the member injects into it
 	}
+	var at *float64
+	if score != "" { // every argument is checked before the brief decision asks (briefdecide.go)
+		f, err := strconv.ParseFloat(score, 64)
+		if err != nil {
+			return refuse(stderr, "add", "--score wants a number")
+		}
+		at = &f
+	}
 	briefs := map[string]string{}
 	for _, cd := range cards {
 		briefs[cd.ID] = cd.Brief
@@ -1175,14 +1188,7 @@ func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, se
 		}
 		st = s
 	}
-	r := sprint.AddReq{Stream: stream, Cards: cards, Who: c.actor, Before: before, After: after, Held: held, BriefOps: asked.ops, BriefRecord: asked.record}
-	if score != "" {
-		f, err := strconv.ParseFloat(score, 64)
-		if err != nil {
-			return refuse(stderr, "add", "--score wants a number")
-		}
-		r.Score = &f
-	}
+	r := sprint.AddReq{Stream: stream, Cards: cards, Who: c.actor, Before: before, After: after, Held: held, Score: at, BriefOps: asked.ops, BriefRecord: asked.record}
 	c.says = append(c.says, fmt.Sprintf("each card's id is its brief file's name without .md (%s is %s)", files[0], cards[0].ID))
 	for _, cd := range cards {
 		c.says = append(c.says, unfilledSays("the brief of "+cd.ID, cd.Brief)...)

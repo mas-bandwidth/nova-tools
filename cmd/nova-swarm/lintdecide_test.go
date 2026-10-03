@@ -61,3 +61,20 @@ func TestLintDecideRefusals(t *testing.T) {
 	assert.Equal(t, 2, exit)
 	assert.Contains(t, errs, "--typed, --trust, --lineup and --decide are card checks")
 }
+
+// A backend that fails leaves the lint's verdict as it was, printed in full, and then
+// says why the decision was not made, exit 2: a failed decision is never a silent pass,
+// and never a lint with no verdict.
+func TestLintDecidePrintsTheVerdictWhenTheBackendFails(t *testing.T) {
+	t.Parallel()
+	card := filepath.Join("..", "nova-decide", "testdata", "greet.md")
+	empty := filepath.Join(t.TempDir(), "empty.json")
+	require.NoError(t, os.WriteFile(empty, []byte("{}"), 0o600))
+	_, plainOut, _ := runSwarm(t, "lint", "--card", card)
+	require.True(t, strings.HasPrefix(plainOut, "LINT "), plainOut)
+	exit, stdout, stderr := runSwarm(t, "lint", "--card", card, "--decide", "--decide-answers", empty)
+	assert.Equal(t, 2, exit)
+	assert.Equal(t, plainOut, stdout, "the lint's verdict, as without --decide")
+	assert.Contains(t, stderr, "nova-swarm lint: --decide: the brief decision (backend fixed): ")
+	assert.Contains(t, stderr, "the answers file has no answer to ")
+}

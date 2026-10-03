@@ -253,6 +253,9 @@ type common struct {
 	// (stream=<s> cards=<n> before=<sentinel>).
 	addStream string
 	addBefore string
+	// brief is add's BRIEF and NOTE brief lines under --json (briefdecide.go), which its
+	// one JSON object holds.
+	brief []string
 }
 
 func (c *common) register(fs flagSet, getenv func(string) string) {

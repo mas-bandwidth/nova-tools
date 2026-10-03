@@ -19,6 +19,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 )
 
@@ -111,7 +112,7 @@ func opOf(t *testing.T, ta *testApp, id string) (op, record string) {
 // checks: one BRIEF line per card with p(converges), the minutes and the questions it
 // failed, marked uncalibrated, recorded under <card>@brief-<hex>, and the card stores
 // that op and the record. With no bar every card is added; the key is in no line and
-// no record; with --json the add's object is alone on stdout.
+// no record; with --json the add's object is alone on stdout and holds the lines.
 func TestAddAsksTheBriefDecisionOfEveryCard(t *testing.T) {
 	t.Parallel()
 	ta, b, record := briefTestApp(t, "")
@@ -139,27 +140,58 @@ func TestAddAsksTheBriefDecisionOfEveryCard(t *testing.T) {
 	code, stdout, stderr := ta.do("add --stream s3 c1 --brief-file " + one + " --json")
 	require.Equal(t, 0, code, stderr)
 	require.NoError(t, json.Unmarshal([]byte(stdout), &res), "with --json the add's object is alone on stdout")
-	assert.Contains(t, stderr, "BRIEF card=c1 ")
+	require.Len(t, res.Brief, 1, "with --json the BRIEF line is the object's brief field")
+	assert.Contains(t, res.Brief[0], "BRIEF card=c1 op=c1@brief-")
+	assert.NotContains(t, stderr, "BRIEF")
 	raw, err := os.ReadFile(record)
 	require.NoError(t, err)
 	assert.NotContains(t, string(raw)+out+stdout+stderr, "k-test", "the key is in no line and no record")
 }
 
-// The brief decision comes after add's own checks: an add its arguments refuse, or
-// whose brief the card lint refuses, asks nothing.
+// The brief decision comes after every check of add's own, in both forms: an add its
+// arguments refuse (--score included), whose brief the card lint refuses, whose cards
+// share a file in PATHS, or whose brief is over the size, asks nothing; nor does a
+// --brief-op typed on an add no server runs. A counting backend: zero calls.
 func TestAddAsksNothingOfACardItRefuses(t *testing.T) {
 	t.Parallel()
 	ta, b, _ := briefTestApp(t, "")
 	dir := t.TempDir()
 	writeNeedsBrief(t, dir, "a1", "Fix a1. converges=0.8", "")
-	code, _, _ := ta.do("add --brief-dir " + dir)
-	assert.Equal(t, 2, code, "no --stream")
+	one := filepath.Join(dir, "a1.md")
 	bad := filepath.Join(t.TempDir(), "bad.md")
 	require.NoError(t, os.WriteFile(bad, []byte("Fix it, with no rules at all. converges=0.9\n"), 0o600))
-	code, _, stderr := ta.do("add --stream s1 --brief-file " + bad)
-	assert.Equal(t, 2, code)
-	assert.Contains(t, stderr, "LINT DRIFT brief")
-	assert.Zero(t, b.asks, "a refused card costs no call")
+	shared := t.TempDir()
+	writeHeaderBrief(t, shared, "q1", "-", "internal/x.go")
+	writeHeaderBrief(t, shared, "q2", "-", "internal/x.go")
+	big := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(big, "z1.md"), []byte(needsBrief("Fix z1. "+strings.Repeat("x", store.MaxBriefBytes), "")), 0o600))
+	for _, c := range []struct{ args, says string }{
+		{"add --brief-dir " + dir, "wants --stream"},
+		{"add --stream s1 --brief-dir " + dir + " --score abc", "--score wants a number"},
+		{"add --stream s1 a1 --brief-file " + one + " --score abc", "--score wants a number"},
+		{"add --stream s1 --brief-file " + bad, "LINT DRIFT brief"},
+		{"add --stream s1 b1 b2 --brief-file " + bad, "LINT DRIFT brief"},
+		{"add --stream s1 --brief-dir " + shared, "internal/x.go is named in PATHS by q1 and q2"},
+		{"add --stream s1 --brief-dir " + big, "over the"},
+		{"add --stream s1 a1 --brief-file " + one + " --brief-op a1=a1@brief-deadbeef", "--brief-op is the served add's wire word"},
+	} {
+		code, _, stderr := ta.do(c.args)
+		assert.Equal(t, 2, code, c.args)
+		assert.Contains(t, stderr, c.says, c.args)
+		assert.Zero(t, b.asks, "a refused add costs no call: %s", c.args)
+	}
+}
+
+// A home directory that cannot be found leaves add no record to keep the decisions in:
+// that is a fault, said on one NOTE line, nothing asked, and the add goes on.
+func TestAddSaysWhenTheRecordCannotBeNamed(t *testing.T) {
+	t.Parallel()
+	ta, b, _ := briefTestApp(t, "")
+	ta.a.briefRecord = func() (string, error) { return "", errors.New("$HOME is not defined") }
+	out := ta.ok("add --stream s1 a1 --brief-file " + writeNeedsBrief(t, t.TempDir(), "a", "Fix a. converges=0.8", ""))
+	assert.Contains(t, out, "NOTE brief: no brief decision: the record: $HOME is not defined\n")
+	assert.Contains(t, out, "MOVED a1 -> ready")
+	assert.Zero(t, b.asks)
 }
 
 // With the sprint row's decide_brief_bar set, a card whose p(converges) is under it
@@ -188,9 +220,10 @@ func TestAddRefusesABriefUnderTheBar(t *testing.T) {
 	assert.Equal(t, 3, b.asks, "a1 answered from the record; a2's rewritten brief asked anew")
 }
 
-// A brief decision that cannot be made is one NOTE line and the add goes on: no key
-// asks nothing and says nothing; a bar that cannot be read reports only; a backend
-// failure names the card.
+// No key asks nothing and says nothing (the key is the opt-in: a keyless add is the add
+// it was before the brief decision); a brief decision that cannot be made is one NOTE
+// line and the add goes on: a bar that cannot be read reports only; a backend failure
+// names the card.
 func TestAddGoesOnWhenTheBriefDecisionCannotBeMade(t *testing.T) {
 	t.Parallel()
 	plain := newTestApp(t)
@@ -240,7 +273,7 @@ func TestAHangingBackendHoldsAddForOneDeadline(t *testing.T) {
 		}
 		start := time.Now()
 		out := ta.ok("add --stream s1 --brief-dir " + dir)
-		assert.Equal(t, briefDeadline, time.Since(start), "one deadline for the whole batch")
+		assert.Equal(t, decide.BriefDeadline, time.Since(start), "one deadline for the whole batch")
 		assert.Equal(t, 10, strings.Count(out, "context deadline exceeded"))
 		assert.Equal(t, 10-decide.BriefWidth, strings.Count(out, "not asked: context deadline exceeded"), "past the width in flight, never asked")
 		assert.Equal(t, 10, strings.Count(out, "NOTE brief: no brief decision of c"))
@@ -284,6 +317,34 @@ func TestAServedAddAsksWhereItIsTyped(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(r.boss("nova-sprint card a1 --json")), &v))
 	assert.Equal(t, op, v.Primary.F(sprint.FieldBriefOp))
 	assert.Equal(t, record, v.Primary.F(sprint.FieldBriefRecord))
+
+	// --json: the object is the server's, and the brief lines asked here are its brief field.
+	writeNeedsBrief(t, dir, "a2", "Fix a2. converges=0.7", "")
+	out.Reset()
+	errb.Reset()
+	require.Equal(t, 0, c.run([]string{"add", "--stream", "s2", "--brief-file", filepath.Join(dir, "a2.md"), "x2", "--decide-record", record, "--json"}, &out, &errb), errb.String())
+	var res output
+	require.NoError(t, json.Unmarshal(out.Bytes(), &res), out.String())
+	require.Len(t, res.Moved, 1)
+	assert.Contains(t, res.Moved[0], "x2 -> ready")
+	require.Len(t, res.Brief, 1)
+	assert.Contains(t, res.Brief[0], "BRIEF card=x2 op=x2@brief-")
+	assert.NotContains(t, errb.String(), "BRIEF")
+
+	// A --brief-op typed on the caller is refused here, with or without the key, and
+	// nothing is sent; the server takes an op only as <id>@brief-..., the card's own.
+	sent = nil
+	for _, key := range []string{"k-test", ""} {
+		env[decide.JevSecret] = key
+		errb.Reset()
+		assert.Equal(t, 2, c.run([]string{"add", "--stream", "s3", "y1", "--brief-file", filepath.Join(dir, "a2.md"), "--brief-op", "y1=y1@brief-deadbeef"}, &out, &errb))
+		assert.Contains(t, errb.String(), "--brief-op is the served add's wire word")
+	}
+	assert.Empty(t, sent, "nothing is sent")
+	res2 := r.a.serveFrom(sprintwire.Request{Verbs: [][]string{{"add", "--actor", "boss", "--stream", "s3", "y1", "--brief-file", filepath.Join(dir, "a2.md"), "--brief-op", "y1=a1@brief-" + strings.TrimPrefix(op, "a1@brief-")}}}, true).Results[0]
+	assert.Equal(t, 2, res2.Code, res2.Stdout+res2.Stderr)
+	assert.Contains(t, res2.Stderr, "names no brief decision of a card of this add")
+	assert.NotEqual(t, 0, r.a.run([]string{"card", "y1"}, &out, &errb), "nothing was written")
 }
 
 // A card's end attaches to the brief decision it stores: a drop attaches dropped with
@@ -318,10 +379,4 @@ func TestACardsEndAttachesToItsBrief(t *testing.T) {
 	require.Equal(t, 0, code, out+errs)
 	assert.NotContains(t, out, "brief decision")
 	assert.Equal(t, map[string]string{"a1": "dropped: obsolete", "s2-1": "landed: landed at attempt 1", "s2-2": "landed: landed at attempt 1"}, endsOf(t, record))
-
-	elsewhere := newTestApp(t)
-	elsewhere.ok("init --readers reader-a,reader-b --members m1")
-	elsewhere.ok("add --stream s1 a1 --brief-file " + writeNeedsBrief(t, t.TempDir(), "y", "Fix a1. converges=0.8", "") + " --brief-op a1=a1@brief-deadbeef")
-	op, _ := opOf(t, elsewhere, "a1")
-	assert.Empty(t, op, "an op typed by hand is no decision this add asked: only a server takes --brief-op, from the add that asked")
 }
