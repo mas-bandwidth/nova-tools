@@ -244,8 +244,8 @@ preflight:
 # measured at and where, `<seconds>s@run<id>` or `@<bench>` (internal/ci:
 # TestSlowAllowlistRowsNameTheirMeasurement).
 #
-# A BUDGET VERDICT IS THE SAME ON ANY MACHINE (Rowan's ruling on nova-tools#4413,
-# 2026-09-26). What is ENFORCED on every leg is static: no unit test waits on
+# A BUDGET VERDICT IS THE SAME ON ANY MACHINE.
+# What is ENFORCED on every leg is static: no unit test waits on
 # the wall clock (internal/ci: TestNoUnitTestWaitsOnTheWallClock), and a test
 # skipped with the SLEEPS marker that internal/ci/sleeps-skips_allowlist.txt does
 # not name is a CI-SLEEPS line (slowtests exits 1) and fails the target here,
@@ -273,15 +273,14 @@ GOTEST_TIMEOUT ?= 110s
 # GOTEST_COUNT_FLAG=) so Go's test cache serves a package whose inputs did not
 # change: a landing runs the suite three times (pull request, merge group,
 # push to dev) on trees that differ by nothing, and -count=1 made every run
-# recompile and re-execute every shard (Glenn 2026-09-26 9:42 AM ET, the
-# Studio at 100% on its own PR: "We aren't doing anything that should be this
-# heavy in CPU use"). A cached pass is a real earlier pass on identical
+# recompile and re-execute every shard (the coordinator's machine at 100% CPU
+# on its own PR). A cached pass is a real earlier pass on identical
 # inputs; Go keys the cache on the package, its files, the env it reads and
 # the files it opens.
 GOTEST_COUNT_FLAG ?= -count=1
 # GOTEST_LDFLAGS: empty by hand; CI passes -ldflags=-w so test binaries link
 # without DWARF: on darwin every test binary otherwise runs dsymutil (seen at
-# 51% CPU on the Studio, 2026-09-26 9:47 AM ET) and a debug-info-free binary
+# 51% CPU on the coordinator's machine) and a debug-info-free binary
 # is smaller for the malware scan that follows every fresh executable.
 GOTEST_LDFLAGS ?=
 # GOTEST_TAGS: empty in every CI leg of the unit tier (ci.yml never sets it;
@@ -293,9 +292,7 @@ test: PKGS = $(CL_PKGS)
 test:
 	@bash -o pipefail -c 'GOFLAGS=-json $(GO) test $(GOTEST_COUNT_FLAG) $(PKGS) -p $(GOTEST_P) -parallel $(GOTEST_P) -tags=$(GOTEST_TAGS) $(GOTEST_LDFLAGS) -timeout $(GOTEST_TIMEOUT) | tee "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json"; status=$${PIPESTATUS[0]}; $(GO) run ./cmd/nova-ci slowtests $(SLOWTESTS_FLAGS) $(if $(filter 1,$(SLOWTESTS_ENFORCE)),--enforce,) < "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json" || { [ "$$status" -ne 0 ] || status=2; }; exit $$status'
 
-# THE FUNCTIONAL TIER (nova-tools#4328; Glenn 2026-09-26 11:20 AM ET: "we should
-# run functional tests, not on every small PR being merged or worked on, but
-# only as we merge whole work streams"). A functional test is one in a _test.go
+# This target is the functional tier. A functional test is one in a _test.go
 # built only under `//go:build functional`: it starts a real redis-server, a
 # real binary, a real process. ci.yml's `functional` job runs this target on
 # merge_group, schedule and workflow_dispatch only, never on a pull request.
@@ -346,8 +343,8 @@ test-short:
 test-slow:
 	$(GO) test -count=1 -tags slow ./...
 
-# `test-pr` LIVED HERE, the sharded hosted PR leg's entry, and it went with
-# test-windows-pr on 2026-09-18: it had exactly one caller, and the caller is
+# `test-pr` lived here, the sharded hosted PR leg's entry: it had exactly
+# one caller, and the caller is
 # gone. The hosted PR leg that remains — test-hosted-pr's Linux sandbox entry —
 # runs `make test-short`, which it always did.
 
@@ -375,10 +372,10 @@ test-prewarm-done:
 	$(GO) run ./tools/testmanifest --go "$(GO)" --package ./internal/swarm -- TestASDFMappingReusesCompiledOutputAcrossFreshJobClone TestPrewarmFailedRerunInvalidatesPriorReceipt TestPrewarmGitChildrenDropSecrets
 
 # The Lisp tier. The old nova-work's Lisp kernel, the one Lisp system, lives in
-# the repository nova-work-old, for reference only (the deprecated/
-# folder that parked it was removed on 2026-10-01), so lisp/ holds no system: test-lisp runs CI's
-# verb (tools/ci lisp-test), which prints "nothing to test" and exits 0, and
-# compile-lisp (the swarm prewarm's lisp phase) prints "nothing to compile".
+# the repository nova-work-old, for reference only, so lisp/ holds no system:
+# test-lisp runs CI's verb (tools/ci lisp-test), which prints "nothing to test"
+# and exits 0, and compile-lisp (the swarm prewarm's lisp phase) prints
+# "nothing to compile".
 # verify-roadmap and measure-roadmap ran cmd/nova-work's verification verb and went with it.
 test-lisp:
 	$(GO) run ./tools/ci lisp-test
@@ -391,7 +388,7 @@ compile-lisp:
 # job, the friend sequences and the lisp tier (test-lisp; nothing to test while
 # nova-work is parked).
 # The stream lander's batch test lands a whole stream, so it runs the
-# functional tier too (#4328). Over the whole tree the times are printed
+# functional tier too. Over the whole tree the times are printed
 # against the old 60 s package budget and a SLEEPS skip off the ledger is red;
 # the target variables ride into `test` as its prerequisite.
 check: SLOWTESTS_FLAGS := --budget 60 --sleeps internal/ci/sleeps-skips_allowlist.txt

@@ -12,7 +12,4 @@ CHANGELOG.md:stella 6
 CHANGELOG.md:studio 2
 CHANGELOG.md:superman 3
 CHANGELOG.md:vision 24
-Makefile:glenn 2
-Makefile:rowan 1
 Makefile:space 1
-Makefile:studio 2
