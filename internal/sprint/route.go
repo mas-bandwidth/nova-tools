@@ -513,6 +513,12 @@ type RouteStat struct {
 	// RestedUntil is when the route's rest ends while it rests (rule 3, route_rest.go):
 	// RFC3339, "" when it does not rest; `routes` fills it at its clock.
 	RestedUntil string `json:"rested_until,omitempty"`
+	// RestedFor is why it rests (RouteRest.Cause and its words), and Balance and
+	// BalanceAt its provider's balance as the balance poll last read it (balance.go):
+	// dollars and cents rounded up, or "unknown"; "" before any read.
+	RestedFor string `json:"rested_for,omitempty"`
+	Balance   string `json:"balance,omitempty"`
+	BalanceAt string `json:"balance_at,omitempty"`
 }
 
 // RouteStats is every route's record over the fleet table's work cards, the

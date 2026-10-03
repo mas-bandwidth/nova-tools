@@ -275,6 +275,8 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 	if land {
 		go a.landLoop(context.Background(), c.redis, stdout)
 	}
+	// the providers' balances, read outside every tick (balance.go)
+	go a.balanceLoop(context.Background(), st, stdout)
 	fmt.Fprintf(stdout, "RUN ticking on every line of the log (at most every %s) and every %s while it is quiet; %s\n", store.TickFloor, store.TickEvery, st.MachineLine(context.Background()))
 	if a.runLoop(context.Background(), st, c.max, 0, stdout, stderr) {
 		return exitReplaced

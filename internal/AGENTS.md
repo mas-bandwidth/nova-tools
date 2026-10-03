@@ -44,6 +44,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `onboarding/` | onboarding banner and doc verifier | `go test ./internal/onboarding` | `go test ./internal/onboarding` |
 | `oneline/` | single-line log and output grammar | `go test ./internal/oneline` | `go test ./internal/oneline` |
 | `pkgselect/` | package selection, the shard deal and the test fan-out that CI and nova-ci local share | `go test ./internal/pkgselect` | `go test ./internal/pkgselect` |
+| `provbalance/` | a model provider's balance read through the seat's key | `go test ./internal/provbalance` | `go test ./internal/provbalance` |
 | `record/` | decision and execution records | `go test ./internal/record` | `go test ./internal/record` |
 | `redisacl/` | the fleet store's ACL users rendered from the function library and the key families, and compared with a store's live ACL | `go test ./internal/redisacl` | `go test ./internal/redisacl` |
 | `redisconn/` | the one way a nova tool opens its Redis connection: options from the environment, one bounded dial, trips counted, errors classified, no secret shown | `go test ./internal/redisconn` | `go test ./internal/redisconn` |

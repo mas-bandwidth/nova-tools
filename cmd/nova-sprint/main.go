@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strings"
 	"sync"
@@ -129,6 +130,9 @@ type app struct {
 	// home is the directory a seat's inbox is under (inbox --wait --push seat:
 	// ~/<holder>-working/inbox): os.UserHomeDir unless a test sets it.
 	home func() (string, error)
+	// transport carries the balance poll's requests to the providers (balance.go):
+	// nil is http.DefaultTransport, a test gives a fake.
+	transport http.RoundTripper
 }
 
 func newApp(getenv func(string) string) *app {

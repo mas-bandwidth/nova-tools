@@ -152,23 +152,30 @@ func PropProviderBalance(provider string) string { return "provider_balance_" + 
 
 // ProviderBalance is a provider's balance as the poll last read it: the dollars left
 // (Known false when the provider has no balance the poll can read, Note saying why), when it
-// was read, and the provider's measured spend in dollars an hour then.
+// was read, the provider's own count of dollars used (HasUsed false when it keeps none), and
+// the spend in dollars an hour measured from that count (or the balance) between two reads.
 type ProviderBalance struct {
 	Provider  string
 	Known     bool
 	Balance   float64
 	At        time.Time
 	SpendHour float64
+	HasUsed   bool
+	Used      float64
 	Note      string
 }
 
-// value is the balance as the property holds it: `<balance|unknown> <at> <spend/hour> <note>`.
+// value is the balance as the property holds it:
+// `<balance|unknown> <at> <spend/hour> <used|-> <note>`.
 func (b ProviderBalance) value() string {
-	bal := "unknown"
+	bal, used := "unknown", "-"
 	if b.Known {
 		bal = strconv.FormatFloat(b.Balance, 'f', -1, 64)
 	}
-	return strings.TrimSpace(bal + " " + stamp(b.At) + " " + strconv.FormatFloat(b.SpendHour, 'f', -1, 64) + " " + oneLine(b.Note))
+	if b.HasUsed {
+		used = strconv.FormatFloat(b.Used, 'f', -1, 64)
+	}
+	return strings.TrimSpace(bal + " " + stamp(b.At) + " " + strconv.FormatFloat(b.SpendHour, 'f', -1, 64) + " " + used + " " + oneLine(b.Note))
 }
 
 // Said is the balance as a line says it: dollars and cents, rounded up, and when it was
@@ -204,17 +211,20 @@ func ProviderBalances(fleet *Table) map[string]ProviderBalance {
 			continue
 		}
 		f := strings.Fields(v)
-		if len(f) < 3 {
+		if len(f) < 4 {
 			continue
 		}
 		at, err := time.Parse(time.RFC3339, f[1])
 		if err != nil {
 			continue
 		}
-		b := ProviderBalance{Provider: p, At: at, Note: strings.Join(f[3:], " ")}
+		b := ProviderBalance{Provider: p, At: at, Note: strings.Join(f[4:], " ")}
 		b.SpendHour, _ = strconv.ParseFloat(f[2], 64)
 		if x, err := strconv.ParseFloat(f[0], 64); err == nil {
 			b.Known, b.Balance = true, x
+		}
+		if x, err := strconv.ParseFloat(f[3], 64); err == nil {
+			b.HasUsed, b.Used = true, x
 		}
 		out[p] = b
 	}

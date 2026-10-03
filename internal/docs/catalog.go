@@ -85,6 +85,7 @@ var DefaultCatalog = []Entry{
 	E("internal/onboarding", "onboarding banner and doc verifier", "go test ./internal/onboarding", "go test ./internal/onboarding"),
 	E("internal/oneline", "single-line log and output grammar", "go test ./internal/oneline", "go test ./internal/oneline"),
 	E("internal/pkgselect", "package selection, the shard deal and the test fan-out that CI and nova-ci local share", "go test ./internal/pkgselect", "go test ./internal/pkgselect"),
+	E("internal/provbalance", "a model provider's balance read through the seat's key", "go test ./internal/provbalance", "go test ./internal/provbalance"),
 	E("internal/record", "decision and execution records", "go test ./internal/record", "go test ./internal/record"),
 	E("internal/redisconn", "the one way a nova tool opens its Redis connection: options from the environment, one bounded dial, trips counted, errors classified, no secret shown", "go test ./internal/redisconn", "go test ./internal/redisconn"),
 	E("internal/redisacl", "the fleet store's ACL users rendered from the function library and the key families, and compared with a store's live ACL", "go test ./internal/redisacl", "go test ./internal/redisacl"),

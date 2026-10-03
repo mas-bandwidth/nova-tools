@@ -438,6 +438,10 @@ type whereView struct {
 	// Seat is the seat's last change (coordinator <name>): who gave or took
 	// it, when and why; absent while the seat has not moved since init.
 	Seat *sprint.SeatChange `json:"seat,omitempty"`
+	// Providers is the providers table (nova-tools#5199): each provider the routes name,
+	// its balance as the run loop's poll last read it, the spend an hour measured, and
+	// whether its routes serve; absent with no route. The text frame does not draw it.
+	Providers []sprint.ProviderRow `json:"providers,omitempty"`
 }
 
 // whereRun is what one where was asked, its flags read.
@@ -677,12 +681,29 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 	}
 	b.WriteString(strings.Join(shown, "\n"))
 	a.goalsView(ctx, st, &v)
+	if v.Providers, err = providersView(ctx, st, shapes, now); err != nil {
+		return whereView{}, "", err
+	}
 	for _, c := range clocks {
 		if c.Stalled(now, stale) {
 			v.Stalled = append(v.Stalled, c.Stream)
 		}
 	}
 	return v, b.String(), nil
+}
+
+// providersView is the providers table from the routes and the fleet table's properties as
+// the view's shapes read them (no card is read).
+func providersView(ctx context.Context, st *store.Store, shapes []ntable.Table, now time.Time) ([]sprint.ProviderRow, error) {
+	routes, _, err := st.Routes(ctx)
+	if err != nil || len(routes) == 0 {
+		return nil, err
+	}
+	fleet := sprint.NewTable(sprint.Fleet)
+	if i := slices.Index(sprint.ViewOrder, sprint.Fleet); i >= 0 && i < len(shapes) {
+		fleet.SetProps(shapes[i].Props)
+	}
+	return sprint.ProviderRows(routes, fleet, now), nil
 }
 
 // friendsTable is the friends table (sprint.FriendsDef) with a row per friend
@@ -1384,10 +1405,17 @@ func (a *app) cmdRoutes(args []string, stdout, stderr io.Writer) int {
 		return a.readFailed("routes", err, stderr)
 	}
 	stats := sprint.RouteStats(rs, s.Fleet)
-	rests := sprint.RouteRests(rs, s.Fleet)
+	rests, balances := sprint.RouteRests(rs, s.Fleet), sprint.ProviderBalances(s.Fleet)
 	for i := range stats {
 		if r, ok := rests[stats[i].Route.Name]; ok && r.Resting(s.Now) {
 			stats[i].RestedUntil = r.Until.UTC().Format(time.RFC3339)
+			stats[i].RestedFor = r.Cause + ": " + r.Said()
+		}
+		if b, ok := balances[stats[i].Route.Provider]; ok {
+			stats[i].Balance, stats[i].BalanceAt = "unknown", b.At.UTC().Format(time.RFC3339)
+			if b.Known {
+				stats[i].Balance = sprint.Dollars(b.Balance)
+			}
 		}
 	}
 	if c.json {
@@ -1410,8 +1438,8 @@ func (a *app) cmdRoutes(args []string, stdout, stderr io.Writer) int {
 		} else if r.Tier == "" {
 			how = "gone" // a route the cards name that the store no longer holds
 		}
-		fmt.Fprintf(stdout, "ROUTE %s model=%s %s attempts=%d ok=%d failed=%d provider_failures=%d mean_wall=%s rested_until=%s\n",
-			oneline.Field(r.Name), oneline.Field(model), how, x.Attempts, x.OK, x.Failed, x.Provider, x.MeanWall, orDashStr(x.RestedUntil, "-"))
+		fmt.Fprintf(stdout, "ROUTE %s model=%s %s attempts=%d ok=%d failed=%d provider_failures=%d mean_wall=%s rested_until=%s balance=%s\n",
+			oneline.Field(r.Name), oneline.Field(model), how, x.Attempts, x.OK, x.Failed, x.Provider, x.MeanWall, orDashStr(x.RestedUntil, "-"), oneline.Field(orDashStr(x.Balance, "-")))
 	}
 	fmt.Fprintf(stdout, "ROUTES OK routes=%d\n", len(stats))
 	return 0
