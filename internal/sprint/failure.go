@@ -2,7 +2,9 @@ package sprint
 
 import (
 	"fmt"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 )
@@ -95,32 +97,182 @@ func parseTake(v string) ProviderTake {
 	return ProviderTake{Route: f[0], Model: f[1], Member: f[2], Finished: f[3], Usage: f[4], Error: f[5], Taken: f[6]}
 }
 
-// The primary's record of its failed work, written by the failed finish (Finish): the
-// class of the last failed attempt (FailureClass of its report) and that attempt, and the
+// The primary's record of its failed work, written by the failed finish (Finish) and by the
+// rework of an attempt at its redeal bound (Rework: its takes ended with no work to judge,
+// BoundClass): the class of the last failed attempt, that attempt and the tier the card was on
+// (CardTiers: a new tier counts its own failures), whether it ended at its bound, and the
 // attempt whose failure was the same as the attempt before's (rule 2): the tick holds the
-// bound's judgment on the primary while it stays in review at that attempt
-// (AtIdenticalFailure).
+// bound's judgment on the primary while it stays in review at that attempt (AtIdenticalFailure).
+// FieldFailureBack is the tiers on which the provider's return has lifted a held bound
+// (providerBack), comma separated: once per tier per card, and nothing clears it.
 const (
-	FieldFailure     = "failure"
-	FieldFailureAt   = "failure_at"
-	FieldIdenticalAt = "identical_at"
+	FieldFailure      = "failure"
+	FieldFailureAt    = "failure_at"
+	FieldFailureTier  = "failure_tier"
+	FieldFailureBound = "failure_bound"
+	FieldFailureBack  = "failure_back"
+	FieldIdenticalAt  = "identical_at"
 )
 
-// failureSet is what a failed finish at attempt writes on its primary pr (FieldFailure,
-// FieldFailureAt) and whether it is the second identical failure: the attempt before
-// failed with the same class. The class is the report's (FailureClass), or decided, the
+// failureSet is what a failed finish at attempt on tier writes on its primary pr (the record,
+// not at a bound) and whether it is the second identical failure: the attempt before failed
+// the same way on the same tier. The class is the report's (FailureClass), or decided, the
 // take's attempt decision as `decided <class>`, when that decision routed the finish.
-func failureSet(pr *Card, attempt int, report, decided string, set map[string]string) (identical bool) {
+func failureSet(pr *Card, attempt int, report, decided, tier string, set map[string]string) (identical bool) {
 	class := FailureClass(report)
 	if decided != "" {
 		class = decided // the attempt decision's class, when it routed the finish (decide.go)
 	}
-	identical = class != "" && attempt > 1 && pr.Int(FieldFailureAt) == attempt-1 && pr.F(FieldFailure) == class
-	set[FieldFailure], set[FieldFailureAt] = class, itoa(attempt)
+	identical = class != "" && attempt > 1 && pr.Int(FieldFailureAt) == attempt-1 && pr.F(FieldFailure) == class && pr.F(FieldFailureTier) == tier
+	set[FieldFailure], set[FieldFailureAt], set[FieldFailureTier], set[FieldFailureBound] = class, itoa(attempt), tier, ""
 	if identical {
 		set[FieldIdenticalAt] = itoa(attempt)
 	}
 	return identical
+}
+
+// BoundClass is the class of the attempt whose withdrawn work card wc reached its redeal bound,
+// the record's class (failureSet): the class of its last two takes when they ended the same
+// way (identicalEnds), else the class of the take that ended last. A take the provider failed
+// has no class inside an attempt (it is the provider's, and is redealt); across attempts it
+// is `provider failure` with the provider's class word when its line has one (`provider
+// failure: class=out-of-credit`), so an attempt the provider ended counts toward rule 2 as a
+// take that left no result does, and is what lets the provider's return lift the bound
+// (providerBack). "" when the last take kept no record (its member went down).
+func BoundClass(wc *Card) string {
+	if class := identicalEnds(wc); class != "" {
+		return class
+	}
+	v := wc.F(FieldProviderTake + itoa(wc.Int("redeals")+1))
+	if v == "" {
+		return ""
+	}
+	line := takeEndLine(parseTake(v))
+	if !IsProviderFailure(line) {
+		return FailureClass(line)
+	}
+	rest := strings.TrimSpace(strings.TrimPrefix(line, cardhdr.EndProvider+":"))
+	word, _, _ := strings.Cut(strings.TrimSpace(strings.TrimPrefix(rest, "provider:")), " ")
+	if strings.HasPrefix(word, "class=") {
+		return cardhdr.EndProvider + ": " + word
+	}
+	return cardhdr.EndProvider
+}
+
+// reworkLadder is the tiers a rework at the bound climbs, lowest first: a card's attempts that
+// end at a bound are bounded by it (reworkAtTheSameBound).
+var reworkLadder = []string{cardhdr.RouteFlash, cardhdr.RoutePro, cardhdr.RouteFrontier}
+
+// providerOf is the provider of a take or a work card: the part of its model id before the
+// "/", which a deal on a route writes as the route's provider (route.go, FieldModel).
+func providerOf(model string) string {
+	p, _, _ := strings.Cut(model, "/")
+	return p
+}
+
+// providerBack says the provider is back for the attempt whose bound wc is: its bound was a
+// provider failure (BoundClass), and a take on one of the providers its failed takes ran on, of
+// any card, finished ok after the attempt's last take ended. The provider counts, never the tier
+// or another provider's take: a fleet at width finishes ok takes on every tier every minute.
+func providerBack(s *Snapshot, wc *Card) bool {
+	if !strings.HasPrefix(BoundClass(wc), cardhdr.EndProvider) {
+		return false
+	}
+	since, err := time.Parse(time.RFC3339, parseTake(wc.F(FieldProviderTake+itoa(wc.Int("redeals")+1))).Finished)
+	if err != nil {
+		return false
+	}
+	failed := map[string]bool{}
+	takes, _ := ProviderTakes(wc)
+	for _, t := range takes {
+		if IsProviderFailure(takeEndLine(t)) && t.Model != "" {
+			failed[providerOf(t.Model)] = true
+		}
+	}
+	for _, c := range s.Fleet.Column(DoneOK) {
+		if failed[providerOf(c.F(FieldModel))] && stampAt(c, "finished").After(since) {
+			return true
+		}
+	}
+	return false
+}
+
+// liftSpent says the provider's return has lifted a held bound of the primary pr on tier
+// already (FieldFailureBack): it lifts one once per tier per card.
+func liftSpent(pr *Card, tier string) bool {
+	return slices.Contains(Split(pr.F(FieldFailureBack)), tier)
+}
+
+// waitLifts says a wait can lead somewhere for the primary pr at its redeal bound wc: the bound
+// was a provider failure, and when the rework is held, the provider's return has not yet lifted
+// a bound on its tier. A take that left no result, or a member down, is no cause a wait changes.
+func waitLifts(pr, wc *Card, held bool) bool {
+	return strings.HasPrefix(BoundClass(wc), cardhdr.EndProvider) && (!held || !liftSpent(pr, cardTierOf(pr)))
+}
+
+// reworkAtTheSameBound is the refusal of a rework of the primary pr at its redeal bound (wc, its
+// withdrawn work card), tier its --tier, "" when the rework is its next attempt; lift says the
+// rework is accepted by the provider's return, which Rework records (FieldFailureBack). The bound
+// holds across attempts (the coordinator's finding of 2026-10-03: an answer loop reworked one card
+// at its bound 231 times, each rework a fresh bound; docs/SPEC-SPRINT.md section 5): a rework at
+// the bound never lowers the tier the card is on, and when the attempt before also ended at its
+// bound on that tier, it is accepted only with --tier naming a tier above (reworkLadder), or once
+// per tier per card when the provider is back (providerBack). So whoever answers, and however
+// often other cards succeed, a card makes at most three attempts per tier of the ladder that end
+// at a bound.
+func reworkAtTheSameBound(s *Snapshot, pr, wc *Card, tier string) (why string, lift bool) {
+	on := cardTierOf(pr)
+	at, rank := pr.Int("attempt"), slices.Index(reworkLadder, on)
+	above := reworkLadder[rank+1:]
+	drop := fmt.Sprintf("drop it (nova-sprint drop %s --reason <why>)", pr.ID)
+	if tier != "" && slices.Index(reworkLadder, tier) < rank {
+		return fmt.Sprintf("--tier %s is below the tier it is on (%s): a rework at its bound never lowers its tier (the ladder: %s); rework it with a fix and no --tier or a tier above %s, or %s",
+			tier, on, strings.Join(reworkLadder, ", "), on, drop), false
+	}
+	repeated := pr.F(FieldFailureBound) != "" && pr.Int(FieldFailureAt) == at-1 && pr.F(FieldFailureTier) == on
+	if !repeated || slices.Contains(above, tier) {
+		return "", false
+	}
+	if !liftSpent(pr, on) && providerBack(s, wc) {
+		return "", true
+	}
+	offers := []string{drop}
+	if dealt := dealtAbove(on); len(dealt) > 0 {
+		offers = append([]string{"rework it with a fix and --tier " + strings.Join(dealt, " or ") + " (a tier above " + on + "; the ladder: " + strings.Join(reworkLadder, ", ") + ", and frontier is never dealt)"}, offers...)
+	}
+	if waitLifts(pr, wc, true) {
+		offers = append(offers, "wait: a take on a provider its takes failed on that finishes ok (the provider back) lets one rework on "+on+", once")
+	} else if liftSpent(pr, on) {
+		offers[len(offers)-1] += " (the provider's return has lifted a bound on " + on + " once already)"
+	}
+	return fmt.Sprintf("attempt %d reached its bound on tier %s as attempt %d did (%s), and is not reworked on %s again: %s",
+		at, on, at-1, orDash(BoundClass(wc)), on, strings.Join(offers, ", or ")), false
+}
+
+// dealtAbove is the tiers of the ladder above tier that a deal draws from: frontier is the
+// coordinator's and never dealt, so a rework onto it is refused and never offered.
+func dealtAbove(tier string) []string {
+	above := reworkLadder[slices.Index(reworkLadder, tier)+1:]
+	return slices.DeleteFunc(slices.Clone(above), func(t string) bool { return t == cardhdr.RouteFrontier })
+}
+
+// boundDecisions is the decisions of the bound's judgment on the primary pr at its redeal bound
+// wc, held when reworkAtTheSameBound refuses a plain rework: a rework with a fix, or when held a
+// rework on a tier above where the ladder deals one; drop; and wait only where it can lead
+// somewhere (waitLifts).
+func boundDecisions(pr, wc *Card, held bool) []string {
+	d := []string{"rework with a fix"}
+	if held {
+		d = nil
+		if len(dealtAbove(cardTierOf(pr))) > 0 {
+			d = append(d, ReworkOnAHigherTier)
+		}
+	}
+	d = append(d, "drop")
+	if waitLifts(pr, wc, held) {
+		d = append(d, "wait")
+	}
+	return d
 }
 
 // AtIdenticalFailure is the primary's failed work card when its attempt failed the way the

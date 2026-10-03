@@ -275,7 +275,8 @@ func TestDealStopsAtTheRedealBound(t *testing.T) {
 		got := refmodel.DealMoves(w.snapshot(nil), later(0))
 		expect(t, got, tc.want)
 		if tc.ended && tc.redeals == "3" {
-			assert.Equal(t, []string{"rework with a fix", "drop", "wait"}, got[0].Decisions, "the decisions offered at the bound: %q", got[0].Decisions)
+			// a take that ended with no record (its member down) is no cause a wait changes
+			assert.Equal(t, []string{"rework with a fix", "drop"}, got[0].Decisions, "the decisions offered at the bound: %q", got[0].Decisions)
 		}
 	}
 }

@@ -932,6 +932,17 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 				continue
 			}
 		}
+		bound, lift := AtRedealBound(s, c), false
+		if bound != nil {
+			// the bound holds across attempts: never a lower tier, and a second bound on one
+			// tier only with --tier above it, or the provider back once per tier (failure.go)
+			var why string
+			if why, lift = reworkAtTheSameBound(s, c, bound, r.Tier); why != "" {
+				p.refuse(c.ID, why)
+				stays()
+				continue
+			}
+		}
 		fix := r.Fix
 		if fix == "" {
 			if fix = cutText(ownFix(s, c), MaxCardTextBytes); fix == "" {
@@ -942,8 +953,8 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		}
 		broken := 0
 		var retire []Change
-		if wc := AtRedealBound(s, c); wc != nil {
-			retire = append(retire, change(Fleet, removeEntry(wc, map[string]string{"retired": stamp(s.Now), "retired_by": "rework"})))
+		if bound != nil {
+			retire = append(retire, change(Fleet, removeEntry(bound, map[string]string{"retired": stamp(s.Now), "retired_by": "rework"})))
 		}
 		for _, rc := range s.Readers.Of(c.ID) {
 			if rc.Col == Broken {
@@ -956,6 +967,15 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		given := reworkGiven(s, c)
 		set := map[string]string{"fix": fix, "finding": given["finding"], "why": given["why"],
 			"reworks": itoa(c.Int("reworks") + 1), "broken_reads": itoa(c.Int("broken_reads") + broken)}
+		if bound != nil {
+			// the attempt ended at its bound: its end is the primary's record of its failed
+			// work, as a failed finish writes it (failureSet), read by the next rework at a bound
+			set[FieldFailure], set[FieldFailureAt], set[FieldFailureTier], set[FieldFailureBound] = BoundClass(bound), c.F("attempt"), cardTierOf(c), "yes"
+		}
+		if lift {
+			// the provider's return lifted the held bound: spent on this tier for good
+			set[FieldFailureBack] = strings.Join(append(Split(c.F(FieldFailureBack)), cardTierOf(c)), ",")
+		}
 		if r.Tier != "" {
 			// the card records its tier and this attempt's deal draws from it already
 			set[FieldTier] = r.Tier
