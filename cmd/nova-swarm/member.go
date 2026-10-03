@@ -495,8 +495,12 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	if err := os.MkdirAll(slot, 0o755); err != nil {
 		return nil, err
 	}
+	card, err := childCard(p)
+	if err != nil {
+		return nil, err
+	}
 	cardPath := filepath.Join(r.slots, name+".card.md")
-	if err := os.WriteFile(cardPath, []byte(member.CardText(p)), 0o644); err != nil {
+	if err := os.WriteFile(cardPath, []byte(card), 0o644); err != nil {
 		return nil, err
 	}
 	model, tokens, deadline, err := r.route(p)
@@ -555,6 +559,23 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	}()
 	r.started(name)
 	return c, nil
+}
+
+// childCard is the card file a child is handed: the packet's brief with the rules file the
+// card names injected at stage time (rules by reference, nova-tools#5174 rule 6:
+// swarm.StagedBrief), then what the sprint adds (member.CardText). A card that names none
+// gets nothing injected: it carries its own rules. A brief that already carries the rules is
+// handed as it is; a card naming a rules file this build does not hold is refused, and it is
+// not started.
+func childCard(p member.Packet) (string, error) {
+	if p.Rules != "" {
+		rules, err := swarm.HeldRules(p.Rules)
+		if err != nil {
+			return "", fmt.Errorf("card %s: the rules by reference: %w", p.Card, err)
+		}
+		p.Brief = swarm.StagedBrief(p.Brief, rules)
+	}
+	return member.CardText(p), nil
 }
 
 // route is what one launch runs on: the packet's route (the card's model, budget and

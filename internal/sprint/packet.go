@@ -23,7 +23,11 @@ type Packet struct {
 	Gen     int    `json:"gen,omitempty"`
 	Epoch   uint64 `json:"epoch"`
 	Brief   string `json:"brief,omitempty"`
-	Fix     string `json:"fix,omitempty"`
+	// Rules is the held rules file the primary names (FieldRules, nova-tools#5174 rule 6):
+	// the member appends its RULES paragraph to the brief at stage time
+	// (swarm.StagedBrief); "" when the brief carries its own.
+	Rules string `json:"rules,omitempty"`
+	Fix   string `json:"fix,omitempty"`
 	// A rework's: the words of the readers that found the attempt before broken, and how
 	// that attempt ended (steps_review.go reworkGiven); the member's frame writes both
 	// into JOB.md, so the child learns why its attempt exists.
@@ -57,6 +61,12 @@ type Packet struct {
 	WorkBase   string `json:"work_base,omitempty"`
 	Report     string `json:"report,omitempty"`
 }
+
+// FieldRules is a primary's rules by reference (nova-tools#5174 rule 6): the base name of the
+// held rules file (fleet/child-rules*.txt) the member injects into its brief at stage time,
+// written by add (and brief) with the brief it was held to, absent when the brief carries its
+// own rules. It is the card's, so no later add changes what an earlier card's child reads.
+const FieldRules = "rules"
 
 // BranchOf is the branch one launch of a work card's attempt is worked on: one per launch,
 // named by the sprint (its prefix, the card), the launch's generation and its epoch, as the
@@ -117,6 +127,7 @@ func PacketOf(prefix string, epoch uint64, c, primary *Card, earlier []*Card, wo
 		Gen: c.Int("gen"), Epoch: epoch, Notes: []string{}}
 	if primary != nil {
 		p.Brief = primary.F("brief")
+		p.Rules = primary.F(FieldRules)
 		if primary.Int("attempt") == p.Attempt {
 			p.Fix = primary.F("fix")
 		}

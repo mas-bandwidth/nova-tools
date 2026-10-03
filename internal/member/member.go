@@ -213,6 +213,7 @@ type Packet struct {
 	Gen        int      `json:"gen,omitempty"`
 	Epoch      uint64   `json:"epoch"`
 	Brief      string   `json:"brief,omitempty"`
+	Rules      string   `json:"rules,omitempty"` // the held rules file the card names, "" when it carries its own (sprint.Packet)
 	Fix        string   `json:"fix,omitempty"`
 	Finding    string   `json:"finding,omitempty"` // a rework's: the readers' words that found the attempt before broken
 	Why        string   `json:"why,omitempty"`     // a rework's: how the attempt before ended

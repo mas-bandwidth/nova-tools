@@ -25,6 +25,9 @@ func stamp(t time.Time) string { return t.UTC().Format(time.RFC3339) }
 type CardAdd struct {
 	ID    string
 	Brief string
+	// Rules is the held rules file the member injects into this card at stage time
+	// (FieldRules), "" when the brief carries its own.
+	Rules string
 	Needs []string
 	File  string
 	// Sentinel marks this card a sentinel (a stop), not a primary: the
@@ -39,6 +42,7 @@ type AddReq struct {
 	Count  int // generate this many ids, <stream>-<n>
 	Needs  []string
 	Brief  string
+	Rules  string // the held rules file of every card the add admits with Brief (FieldRules)
 	// Cards, when set, is the many-brief form: one card per entry, in order,
 	// each with its own brief and needs (a need names a primary already on
 	// the table or one of this add). IDs, Count, Brief and Needs are then
@@ -178,6 +182,12 @@ func Add(s *Snapshot, r AddReq) Plan {
 		}
 		return r.Brief
 	}
+	rulesOf := func(i int) string {
+		if len(r.Cards) > 0 {
+			return r.Cards[i].Rules
+		}
+		return r.Rules
+	}
 	// isSent says the i'th card admitted is a sentinel: the one --sentinel form,
 	// or a card of the many-brief form marked one (its --sentinel <id>).
 	isSent := func(i int) bool {
@@ -192,6 +202,7 @@ func Add(s *Snapshot, r AddReq) Plan {
 		score  float64
 		needs  []string
 		brief  string
+		rules  string // FieldRules
 		behind string // the sentinel it waits behind by position
 		gate   bool   // a stop of --sentinel-every
 		sent   bool   // a stop: --sentinel or a many-brief card marked one
@@ -228,7 +239,7 @@ func Add(s *Snapshot, r AddReq) Plan {
 			continue
 		}
 		seen[id] = true
-		a := admit{id: id, score: scores[i], needs: needs, brief: briefOf(i), gate: r.IsGate(id), sent: isSent(i)}
+		a := admit{id: id, score: scores[i], needs: needs, brief: briefOf(i), rules: rulesOf(i), gate: r.IsGate(id), sent: isSent(i)}
 		if st := sentinelBefore(s, r.Stream, a.score); st != nil && !a.sent {
 			a.behind = st.ID // it waits behind the stop by its place; nothing is written of it
 		}
@@ -339,6 +350,9 @@ func Add(s *Snapshot, r AddReq) Plan {
 		}
 		if a.brief != "" && !a.gate {
 			fields["brief"] = a.brief
+			if a.rules != "" {
+				fields[FieldRules] = a.rules
+			}
 		}
 		if len(a.needs) > 0 {
 			fields["needs"] = strings.Join(a.needs, ",")

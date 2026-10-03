@@ -133,7 +133,11 @@ never answers a sentinel or composes a command the inbox did not print, and stop
   `add` holds each brief to the card lint and refuses, writing nothing, one that fails.
   `nova-swarm template --name card` prints a card that passes once its `<...>` lines are filled;
   `nova-swarm lint --card <file> --child-rules` checks a file first; `nova-sprint init --rules <file>` records
-  the rule set `add` uses by default. A card with no brief is admitted with a NOTE and given one before it is
+  the rule set `add` uses by default. Under `fleet/child-rules.txt`, a file the members hold, a card on
+  nova-tools (or on a repository with its own `fleet/child-rules.<repo>.txt`) does not carry the rules: the
+  member injects them at stage time (rules by reference, docs/SPEC-SPRINT.md section 2), and the lint refuses
+  only a line that contradicts them; a card on another repository carries its own. Release the members
+  before the coordinator's `nova-sprint`. A card with no brief is admitted with a NOTE and given one before it is
   dealt: `nova-sprint stop`, `nova-sprint brief <card> --brief-file <path>`, `nova-sprint start`; a card that
   has started refuses a new brief.
 - Sentinels hold waves. `nova-sprint add --stream <s> --sentinel <s>-wave2` puts a stop in the line; what
