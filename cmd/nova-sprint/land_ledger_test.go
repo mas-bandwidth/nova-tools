@@ -31,7 +31,9 @@ exit 1`
 func ledgerRig(t *testing.T, run string) *landRig {
 	t.Helper()
 	r := newLandRig(t)
-	r.a.ledgers = []landLedger{{owns: generalityLedger, tests: "TestFakeLedger", run: []string{"sh", "-c", run}}}
+	fake := landLedgers[0]
+	fake.tests, fake.run = "TestFakeLedger", []string{"sh", "-c", run}
+	r.a.ledgers = []landLedger{fake}
 	r.git(r.worker, "switch", "-q", "--detach", "origin/main")
 	r.files("the debt", map[string]string{"debt/a": "a\n", "debt/b": "b\n", fakeLedger: "# ceiling: 2\na\nb\n", "notes.tsv": "one\n",
 		"internal/ci/testdata/generality/x.go": "package x\n"})
@@ -151,118 +153,60 @@ func TestLandResolvesAConflictOnlyInGeneratedLedgers(t *testing.T) {
 	}
 }
 
-// resumedRig is two cards queued, s1-2 recording its branch, the stream stopped on a
-// conflict on s1-2 and resumed after the coordinator worked on s1-2's branch (resolve:
-// on the worker, with origin's main moved by one commit, ending on the branch): the
-// rig, the heads and the tip pushed.
-func resumedRig(t *testing.T, resolve func(r *landRig) string) (*landRig, map[string]string, string) {
-	t.Helper()
-	r := ledgerRig(t, fakeLedgerRun)
-	r.branch = func(id string) string { return "sprint/" + id }
-	r.ok("add --stream s1 --count 2")
-	heads := map[string]string{"s1-1": r.card("s1-1", map[string]string{"one.txt": "one\n"}), "s1-2": r.card("s1-2", map[string]string{"notes.tsv": "second\n"})}
-	r.queued(heads, "s1-1", "s1-2")
-	r.ok("merge --stream s1 --conflict s1-2")
-	r.moveBase("main", "moved.txt")
-	tip := resolve(r)
-	r.git(r.worker, "push", "-q", "origin", ":refs/heads/sprint/s1-2")
-	r.git(r.worker, "push", "-q", "origin", "sprint/s1-2")
-	r.ok("resume --stream s1 --did 'merged the base into the branch of s1-2'")
-	return r, heads, tip
-}
-
-// baseMerged merges origin's main into s1-2's branch on the worker: its sha.
-func baseMerged(r *landRig) string {
-	r.git(r.worker, "switch", "-q", "sprint/s1-2")
-	r.git(r.worker, "merge", "-q", "--no-edit", "origin/main")
-	return r.git(r.worker, "rev-parse", "HEAD")
-}
-
-// A card a resume put back after a conflict lands its branch's tip only when the tip is
-// exactly the base merged into the head its readers read: then the tip lands, recorded
-// beside the head, and its timeline says so. A tip carrying one more line, or one that
-// does not descend from the head, is refused in one line naming both commits, and the
-// stream stops again: no change a reader has not read lands.
-func TestLandResumedAfterAConflictLandsOnlyTheBaseMerge(t *testing.T) {
+// An update rewrites its whole family in place, so before any update run every path it
+// writes, and every directory on the way, is held to be no symlink, in the tree and on
+// disk, whichever paths conflicted: a family directory linked outside the clone, with
+// the conflict only in another, is refused, and the update never writes through it. Each
+// row is held by one of the two checks alone: a tracked link checked out as a plain file
+// (core.symlinks off) only the tree shows, an untracked link only the disk.
+func TestLandRefusesAResolutionThroughASymlink(t *testing.T) {
 	t.Parallel()
+	const linked = "internal/ci/testdata/generality-text"
 	for _, tc := range []struct {
-		name    string
-		resolve func(r *landRig) string
-		why     string // "" lands the tip
+		name            string
+		tracked, asFile bool
 	}{
-		{"the exact base merge lands", baseMerged, ""},
-		{"a tip with one more line is refused", func(r *landRig) string {
-			baseMerged(r)
-			return r.files("and one more", map[string]string{"notes.tsv": "second\nunread\n"})
-		}, "carries changes beyond the base merge and the ledgers of its head"},
-		{"a base merge with one more line in it is refused", func(r *landRig) string {
-			r.git(r.worker, "switch", "-q", "sprint/s1-2")
-			r.git(r.worker, "merge", "-q", "--no-commit", "--no-ff", "origin/main")
-			return r.files("the base merged, and a line", map[string]string{"notes.tsv": "second\nunread\n"})
-		}, "carries changes beyond the base merge and the ledgers of its head"},
-		{"a tip that does not descend is refused", func(r *landRig) string {
-			r.git(r.worker, "switch", "-q", "--no-track", "-C", "sprint/s1-2", "origin/main")
-			return r.files("again", map[string]string{"notes.tsv": "second\n"})
-		}, "does not descend from its recorded head"},
+		{"a tracked link to a family directory no conflict lies under", true, false},
+		{"a tracked link the checkout writes as a plain file", true, true},
+		{"an untracked link on disk", false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			r, heads, tip := resumedRig(t, tc.resolve)
-			code, out, errs := r.do("land --repo-dir " + r.clone + " --base main")
-			if tc.why != "" {
-				assert.Equal(t, 1, code, out+errs)
-				assert.Contains(t, errs, "LAND REFUSED stream=s1 cards=1 base=- tip=- ids=s1-2 fact=conflict reason=the tip "+tip+" of the branch sprint/s1-2 of s1-2 ")
-				assert.Contains(t, errs, tc.why+" "+heads["s1-2"])
-				assert.Equal(t, "stopped conflict", r.streamState("s1"))
-				assert.Equal(t, map[string]string{"s1-1": "landed/merged", "s1-2": "merging/stuck"}, r.places("s1-1", "s1-2"))
-				assert.Equal(t, 1, strings.Count(r.git(r.clone, "worktree", "list"), "\n")+1, "the scratch worktree is removed")
-				r.clean()
-				return
+			outside := t.TempDir()
+			r := ledgerRig(t, "[ -d "+linked+" ] && echo leak > "+linked+"/leak.txt\n"+fakeLedgerRun)
+			if tc.tracked {
+				require.NoError(t, os.Symlink(outside, filepath.Join(r.worker, linked)))
+				r.git(r.worker, "add", "--", linked)
+				r.git(r.worker, "commit", "-q", "-m", "a linked ledger directory")
+				r.git(r.worker, "push", "-q", "origin", "HEAD:refs/heads/main")
+				r.git(r.worker, "fetch", "-q", "origin")
 			}
-			assert.Equal(t, 0, code, out+errs)
-			assert.Contains(t, out, "LAND OK stream=s1 cards=2 base=main")
-			assert.Equal(t, "second", r.git(r.remote, "show", "main:notes.tsv"))
-			assert.Equal(t, tip, r.git(r.remote, "rev-parse", "main^2"), "the tip is what merged")
-			var v cardView
-			r.json("card s1-2", &v)
-			assert.Equal(t, "landed", v.Primary.Col)
-			assert.Equal(t, tip, v.Primary.F("landed_head"), "the tip it landed is recorded")
-			assert.Equal(t, heads["s1-2"], v.Primary.F("head"), "its head stays the one its readers read")
-			assert.Contains(t, r.ok("card s1-2"), "; resumed after a conflict: landed the tip "+tip+" of the branch sprint/s1-2, the base merged into the head "+heads["s1-2"]+" it stopped on and nothing else")
-			assert.Equal(t, 1, strings.Count(r.git(r.clone, "worktree", "list"), "\n")+1, "the scratch worktree is removed")
+			if tc.asFile {
+				r.git(r.clone, "config", "core.symlinks", "false")
+			}
+			r.ok("add --stream s1 --count 2")
+			heads := map[string]string{"s1-1": r.card("s1-1", map[string]string{"debt/a": "", fakeLedger: "# ceiling: 1\nb\n"}),
+				"s1-2": r.card("s1-2", map[string]string{"debt/b": "", fakeLedger: "# ceiling: 1\na\n"})}
+			r.queued(heads, "s1-1", "s1-2")
+			if !tc.tracked {
+				require.NoError(t, os.MkdirAll(filepath.Join(r.clone, filepath.Dir(linked)), 0o755))
+				require.NoError(t, os.Symlink(outside, filepath.Join(r.clone, linked)))
+			}
+			code, out, errs := r.do("land --repo-dir " + r.clone + " --base main")
+			assert.Equal(t, 1, code, out+errs)
+			assert.Contains(t, errs, "ids=s1-2 fact=conflict reason=the head "+heads["s1-2"]+" of s1-2 does not merge")
+			assert.Contains(t, errs, "its generated ledgers conflict and "+linked+" is a symlink, which an update would write through")
+			assert.NoFileExists(t, filepath.Join(outside, "leak.txt"), "no update ran through the link")
+			assert.Equal(t, map[string]string{"s1-1": "landed/merged", "s1-2": "merging/stuck"}, r.places("s1-1", "s1-2"))
 			r.clean()
 		})
 	}
 }
 
-// The tip a resumed card lands is pinned the first time land verifies it: a land whose
-// push was not reported, run again, lands that tip and pushes nothing new, though the
-// branch moved on in between (tla/Land.tla, Recovers: its merges and push are no-ops).
-func TestLandPinsAResumedTipAcrossAnUnreportedPush(t *testing.T) {
-	t.Parallel()
-	r, _, tip := resumedRig(t, baseMerged)
-	r.a.beforePush = func(int) {
-		r.ok("return s1-1 --reason 'taken back under the push'")
-		r.files("after the pin", map[string]string{"notes.tsv": "second\nlater\n"})
-		r.git(r.worker, "push", "-q", "origin", "sprint/s1-2")
-	}
-	code, _, errs := r.do("land --repo-dir " + r.clone + " --base main")
-	require.Equal(t, 2, code, errs)
-	pushed := r.git(r.remote, "rev-parse", "main")
-	r.a.beforePush = nil
-	out := r.ok("land --repo-dir " + r.clone + " --base main")
-	assert.Contains(t, out, "LAND OK stream=s1 cards=1 base=main tip="+pushed+" ids=s1-2")
-	assert.Equal(t, pushed, r.git(r.remote, "rev-parse", "main"), "the recovery pushed nothing new")
-	assert.Equal(t, "second", r.git(r.remote, "show", "main:notes.tsv"), "the line pushed after the pin never lands")
-	var v cardView
-	r.json("card s1-2", &v)
-	assert.Equal(t, tip, v.Primary.F("landed_head"))
-	r.clean()
-}
-
 // The decisions behind a resolution, apart from git: which files are generality ledgers,
 // which ledgers own the conflicted paths, the paths git ls-files --unmerged names and the
-// tip's side among them, a symlink an update could write through, what an update wrote,
+// tip's side among them, a tracked symlink an update could write through and the paths
+// the disk check walks, what an update wrote,
 // and when an update run is done.
 func TestLandLedgerDecisions(t *testing.T) {
 	t.Parallel()
@@ -312,10 +256,17 @@ func TestLandLedgerDecisions(t *testing.T) {
 	})
 	t.Run("links", func(t *testing.T) {
 		t.Parallel()
-		files := "100644 a 0\tother/plain.txt\n120000 b 0\tother/link.txt\n120000 c 0\tdir\n120000 d 0\telsewhere"
-		assert.Equal(t, "other/link.txt", linkedLedger(files, nil, ledgers), "a ledger that is a link")
-		assert.Equal(t, "dir", linkedLedger("120000 c 0\tdir", []string{"dir/x.txt"}, ledgers), "a directory a conflicted path lies under")
-		assert.Empty(t, linkedLedger("120000 d 0\telsewhere\n100644 a 0\tother/plain.txt", []string{"other/plain.txt"}, ledgers))
+		family := []landLedger{{owns: func(p string) bool { return strings.HasPrefix(p, "led/") && strings.HasSuffix(p, ".txt") }, roots: []string{"led/a", "led/b"}}}
+		for _, tc := range []struct{ name, files, want string }{
+			{"a ledger that is a link", "120000 x 0\tled/a/r.txt", "led/a/r.txt"},
+			{"a root that is a link, nothing under it conflicted", "100644 x 0\tled/a/r.txt\n120000 y 0\tled/b", "led/b"},
+			{"a directory above a root", "120000 y 0\tled", "led"},
+			{"a link under a root", "120000 y 0\tled/a/sub", "led/a/sub"},
+			{"a link elsewhere", "120000 y 0\tother\n100644 x 0\tled/a/r.txt", ""},
+		} {
+			assert.Equal(t, tc.want, familyLink(tc.files, family), tc.name)
+		}
+		assert.Equal(t, []string{"led/a", "led/b", "led/a/r.txt"}, familyPaths("100644 x 0\tled/a/r.txt\n100644 x 0\tnotes.md", family))
 	})
 	t.Run("wrote", func(t *testing.T) {
 		t.Parallel()

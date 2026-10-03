@@ -26,15 +26,10 @@ type MergeReq struct {
 	Rejected bool     // the merge queue rejected the batch
 	Note     string
 	Who      string
-	// Resolved is, by card, what its landing did beyond merging its recorded head
-	// (docs/SPEC-SPRINT.md section 7: the generated ledgers regenerated at the merge, a
-	// resumed card's branch tip landed); written on its merge card as it lands, its note
-	// on the card's timeline.
+	// Resolved is, by card, what its landing did beyond merging its head (docs/SPEC-SPRINT.md
+	// section 7: the generated ledgers regenerated at the merge); written on its merge card
+	// as it lands, its note on the card's timeline.
 	Resolved map[string]string
-	// Heads is, by card, the commit it landed at when that is not its head (a resumed
-	// card's branch tip, exactly the base merged into its head): written on the card as it lands
-	// (FieldLandedHead); its head stays the one its readers read.
-	Heads map[string]string
 }
 
 // streamDone says every primary of the stream on the table has landed, given
@@ -309,9 +304,6 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 			}
 			u.Changes = append(u.Changes, change(Merge, moveEntry(c, r.Stream, Merged, merged)))
 			set := map[string]string{"ci": "green", "landed": now}
-			if v := r.Heads[c.ID]; v != "" {
-				set[FieldLandedHead] = v
-			}
 			if v := costs[c.ID]; v != "" {
 				set[FieldCost] = v
 			}
@@ -339,48 +331,6 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 	return p
 }
 
-// FieldResumedHead is the head a card's merge card names when a resume after a
-// conflict put it back in the queue: while the card is still at that head, the lander
-// lands the card's branch tip in its place when the tip is exactly the base merged into
-// it (the generated ledgers regenerated), so no change a reader has not read lands.
-const FieldResumedHead = "resumed_head"
-
-// FieldResumedTip is the branch tip land pinned for a card a resume put back after a
-// conflict: the first land that verifies the tip records it, and every build after,
-// a rerun after a push that was not reported among them, merges that commit and no
-// later one the branch may hold.
-const FieldResumedTip = "resumed_tip"
-
-// PinTipReq pins the branch tip a resumed card lands (FieldResumedTip).
-type PinTipReq struct {
-	Stream, Card, Head, Tip, Who string
-}
-
-// PinTip records the branch tip land verified for a card a resume put back after a
-// conflict, while the card is queued in the stream at the head it was resumed at; a tip
-// pinned already stays, and another is refused.
-func PinTip(s *Snapshot, r PinTipReq) Plan {
-	var p Plan
-	m, pr := s.Merge.Placed(r.Card), s.Work.Placed(r.Card)
-	switch {
-	case m == nil || m.Row != r.Stream || m.Col != Queued:
-		p.refuse(r.Card, "not queued in stream "+r.Stream+"; nothing was pinned")
-	case pr == nil || pr.F("head") != r.Head || m.F(FieldResumedHead) != r.Head:
-		p.refuse(r.Card, "not at the head "+r.Head+" it was resumed at; nothing was pinned")
-	case m.F(FieldResumedTip) == r.Tip:
-	case m.F(FieldResumedTip) != "":
-		p.refuse(r.Card, "its tip is pinned at "+m.F(FieldResumedTip)+" already, not "+r.Tip)
-	default:
-		p.Units = append(p.Units, Unit{Key: r.Card, Stream: r.Stream, Changes: []Change{change(Merge, setEntry(m, map[string]string{FieldResumedTip: r.Tip}))},
-			Moved: r.Card + " lands its branch tip " + r.Tip})
-	}
-	return p
-}
-
-// FieldLandedHead is the commit a card landed at when that is not its head: the branch
-// tip a resumed card landed, the base merged into the head its readers read.
-const FieldLandedHead = "landed_head"
-
 // ResumeReq moves a stopped stream again.
 type ResumeReq struct {
 	Stream  string
@@ -396,11 +346,7 @@ type ResumeReq struct {
 // landed (ranking it is not landing it). The other causes (a conflict, a red
 // branch, a rejected batch) are resolved by the coordinator, who says what
 // was done; after a red branch saying it is required. It answers every
-// judgment open on the stream. After a conflict each card goes back marked with
-// the head it stopped on (resumed_head), and with any tip an earlier land pinned
-// (resumed_tip) cleared, so the lander lands the card's branch tip when the coordinator
-// merged the base in there and the tip is exactly that merge (docs/SPEC-SPRINT.md
-// section 7).
+// judgment open on the stream.
 func Resume(s *Snapshot, r ResumeReq) Plan {
 	var p Plan
 	ctl := s.StreamCtl(r.Stream)
@@ -452,11 +398,7 @@ func Resume(s *Snapshot, r ResumeReq) Plan {
 		}
 	}
 	for _, c := range stuck {
-		var set map[string]string
-		if pr := s.Work.Placed(c.ID); pr != nil && pr.F("head") != "" && ctl.F("cause") == "conflict" {
-			set = map[string]string{FieldResumedHead: pr.F("head")}
-		}
-		u.Changes = append(u.Changes, change(Merge, moveEntry(c, r.Stream, Queued, set, "need_card", "need_stream", FieldResumedTip)))
+		u.Changes = append(u.Changes, change(Merge, moveEntry(c, r.Stream, Queued, nil, "need_card", "need_stream")))
 	}
 	p.Units = append(p.Units, u)
 	answered(&p, s, r.Answers, r.Who)

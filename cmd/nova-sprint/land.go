@@ -74,10 +74,8 @@ Landing, the coordinator's: an external delivery (git pushes the base) and a sto
     PATHS, or leaves a stranded sentence fragment or an unmatched backquote in
     prose, ends the batch as a head in conflict does. A conflict only in the
     generated ledgers lands: the tip's side, then their tests' update run
-    (NOVA_CI_UPDATE=1) to a fixed point, one commit. A card resumed after a
-    conflict lands its branch tip only when the tip is exactly the base merged
-    into the head it stopped on (the ledgers regenerated), pinned once verified;
-    any other tip is refused naming both. The clone is --repo-dir,
+    (NOVA_CI_UPDATE=1) to a fixed point, one commit; any other conflict stops
+    the stream, and after resume land merges the head again. The clone is --repo-dir,
     else the dir= each line names; git uses the caller's environment. After
     the whole pass each landed merge diff is scored (nova-decide's score
     decision, with the key JEV_API_KEY holds, a minute for the pass; recorded in
@@ -222,41 +220,15 @@ type landCard struct {
 	id, head, attempt, repo, base string
 	paths                         []string // the brief's PATHS globs, nil when it names none (checkCard)
 	brief                         string   // the brief, the card a landed diff is scored against (landscore.go)
-	// branch is the branch the card's attempt recorded, read only for a card a resume put
-	// back after a conflict at the head it is at (sprint.FieldResumedHead): its tip may
-	// land in the head's place (landledger.go, resumeTip)
-	branch string
-	// pinned is the branch tip an earlier land verified and pinned for it
-	// (sprint.FieldResumedTip): it lands that commit and no later one
-	pinned string
-	// tip is the commit the build merged in place of head (a resumed card's branch tip,
-	// exactly the base merged into the head), and resolved the card's note when its
-	// landing did more than merge its head; both set by each build and reported with the
+	// resolved is the card's note when its landing did more than merge its head (the
+	// generated ledgers regenerated, landledger.go): set by each build, reported with the
 	// batch
-	tip, resolved string
+	resolved string
 }
 
 // pin is the card as the report's guard and the operation's arguments name
 // it: <id>@<attempt>:<head>.
 func (c landCard) pin() string { return c.id + "@" + c.attempt + ":" + c.head }
-
-// landHead is the commit the card's merge takes: the tip in place of the recorded head,
-// else the head.
-func (c landCard) landHead() string {
-	if c.tip != "" {
-		return c.tip
-	}
-	return c.head
-}
-
-// landWhat names the commit the card's merge takes, as a refusal says it: the tip or the
-// head, and its id.
-func (c landCard) landWhat() string {
-	if c.tip != "" {
-		return "the tip " + c.tip
-	}
-	return "the head " + c.head
-}
 
 // lander is one run of land.
 type lander struct {
@@ -489,9 +461,6 @@ func (l *lander) stream(ctx context.Context, s *sprint.Snapshot, stream string) 
 			if cb.Ref != "" {
 				lc.base = cb.Ref
 			}
-			if m := s.Merge.Placed(c.ID); m != nil && lc.head != "" && m.F(sprint.FieldResumedHead) == lc.head {
-				lc.branch, lc.pinned = l.branchOf(ctx, lc), m.F(sprint.FieldResumedTip)
-			}
 		}
 		cards = append(cards, lc)
 	}
@@ -510,22 +479,6 @@ func (l *lander) stream(ctx context.Context, s *sprint.Snapshot, stream string) 
 		cards = cards[n:]
 	}
 	return true
-}
-
-// branchOf is the branch the card's current attempt recorded, "" when it recorded none
-// or its record cannot be read (the recorded head lands, as for any card).
-func (l *lander) branchOf(ctx context.Context, c landCard) string {
-	n, err := strconv.Atoi(c.attempt)
-	if err != nil || n < 1 {
-		return ""
-	}
-	l.a.serial.Lock()
-	works, err := l.st.Records(ctx, sprint.Fleet, []string{sprint.WorkCardID(c.id, n)})
-	l.a.serial.Unlock()
-	if err != nil || len(works) != 1 || strings.HasPrefix(works[0].F("branch"), "-") {
-		return ""
-	}
-	return works[0].F("branch")
 }
 
 // cardPaths is a brief's PATHS globs; nil for none (no line, or `PATHS: none`).
@@ -818,10 +771,10 @@ func (l *lander) step(r sprint.MergeReq, pins []landCard) (store.Result, error) 
 	for i, c := range pins {
 		r.Cards[i] = c.id
 		if c.resolved != "" {
-			r.Resolved = setKey(r.Resolved, c.id, c.resolved)
-		}
-		if c.tip != "" {
-			r.Heads = setKey(r.Heads, c.id, c.tip)
+			if r.Resolved == nil {
+				r.Resolved = map[string]string{}
+			}
+			r.Resolved[c.id] = c.resolved
 		}
 	}
 	step := store.MergeStep(r)
@@ -848,15 +801,6 @@ func (l *lander) step(r sprint.MergeReq, pins []landCard) (store.Result, error) 
 	l.a.serial.Lock()
 	defer l.a.serial.Unlock()
 	return l.st.Run(context.Background(), step)
-}
-
-// setKey is m with k set to v, made when nil.
-func setKey(m map[string]string, k, v string) map[string]string {
-	if m == nil {
-		m = map[string]string{}
-	}
-	m[k] = v
-	return m
 }
 
 // stepWhy is why a step did not move what it was given.
@@ -956,23 +900,12 @@ func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard
 	}
 	for i := range cards {
 		c := &cards[i]
-		c.tip, c.resolved = "", ""
 		before, err := l.git(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}")
 		if err != nil {
 			return nil, failed, "the batch branch has no tip before the merge of " + c.id + ": " + firstLine("", err) + "; no card is blamed and nothing was pushed or reported"
 		}
 		var card, env string
-		if (c.branch != "" || c.pinned != "") && headNotCommit(stream, *c) == "" {
-			if c.tip, card, env = l.resumeTip(ctx, dir, stream, *c); c.tip != "" {
-				c.pinned, c.resolved = c.tip, tipNote(*c, c.tip)
-			}
-		}
-		if card == "" && env == "" {
-			var note string
-			if card, env, note = l.mergeHead(ctx, dir, stream, *c); note != "" {
-				c.resolved = strings.TrimPrefix(c.resolved+"; "+note, "; ")
-			}
-		}
+		card, env, c.resolved = l.mergeHead(ctx, dir, stream, *c)
 		if card == "" && env == "" {
 			card, env = l.checkCard(ctx, dir, *c, before)
 		}
@@ -990,41 +923,41 @@ func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard
 // notOnOrigin is how a remote says it holds no object of that id.
 var notOnOrigin = []string{"not our ref", "couldn't find remote ref", "no such remote ref", "unadvertised object"}
 
-// mergeHead merges one card's head (its landHead) onto the batch branch. card is why
-// the card itself does not merge (its head is not a commit id, origin holds no such
-// commit, or the merge stopped on unmerged paths, aborted); env is why git failed for
-// any other reason, which is not the card's (an identity, a hook, the disk, the
-// network), with any merge in progress aborted; both "" when it merged. A head the
-// clone lacks is fetched from origin by its id once. A merge stopped only on generated
-// ledgers is resolved (resolveLedgers), and note is what the card's timeline says of it.
+// mergeHead merges one card's head onto the batch branch. card is why the
+// card itself does not merge (its head is not a commit id, origin holds no
+// such commit, or the merge stopped on unmerged paths, aborted); env is why
+// git failed for any other reason, which is not the card's (an identity, a
+// hook, the disk, the network), with any merge in progress aborted; both ""
+// when it merged. A head the clone lacks is fetched from origin by its id once.
+// A merge stopped only on generated ledgers is resolved (landledger.go,
+// resolveLedgers), and note is what the card's timeline says of it.
 func (l *lander) mergeHead(ctx context.Context, dir, stream string, c landCard) (card, env, note string) {
 	if why := headNotCommit(stream, c); why != "" {
 		return why, "", ""
 	}
-	head := c.landHead()
 	merge := func() error {
-		_, err := l.git(ctx, dir, "merge", "--no-ff", "--no-edit", "-m", "land "+c.id+" (sprint stream "+stream+")", head)
+		_, err := l.git(ctx, dir, "merge", "--no-ff", "--no-edit", "-m", "land "+c.id+" (sprint stream "+stream+")", c.head)
 		return err
 	}
 	err := merge()
 	if err == nil {
 		return "", "", ""
 	}
-	if _, missing := l.git(ctx, dir, "cat-file", "-e", head+"^{commit}"); missing != nil {
-		_, ferr := l.git(ctx, dir, "fetch", "--no-tags", "origin", head)
+	if _, missing := l.git(ctx, dir, "cat-file", "-e", c.head+"^{commit}"); missing != nil {
+		_, ferr := l.git(ctx, dir, "fetch", "--no-tags", "origin", c.head)
 		switch {
 		case ferr != nil && containsAny(ferr.Error(), notOnOrigin):
 			// before the card is blamed, every branch is fetched once: a head given
 			// short (a fetch by id wants the whole id) or one behind its branch's tip on
 			// a remote that serves only advertised refs is on origin all the same
 			if _, all := l.git(ctx, dir, "fetch", "--no-tags", "origin", "+refs/heads/*:refs/remotes/origin/*"); all != nil {
-				return "", "the fetch of origin's branches for the head " + head + " of " + c.id + " failed: " + firstLine("", all), ""
+				return "", "the fetch of origin's branches for the head " + c.head + " of " + c.id + " failed: " + firstLine("", all), ""
 			}
-			if _, still := l.git(ctx, dir, "cat-file", "-e", head+"^{commit}"); still != nil {
-				return c.landWhat() + " of " + c.id + " is missing: origin holds no such commit (" + firstLine("", ferr) + ")", "", ""
+			if _, still := l.git(ctx, dir, "cat-file", "-e", c.head+"^{commit}"); still != nil {
+				return "the head " + c.head + " of " + c.id + " is missing: origin holds no such commit (" + firstLine("", ferr) + ")", "", ""
 			}
 		case ferr != nil:
-			return "", "the fetch of the head " + head + " of " + c.id + " failed: " + firstLine("", ferr), ""
+			return "", "the fetch of the head " + c.head + " of " + c.id + " failed: " + firstLine("", ferr), ""
 		}
 		if err = merge(); err == nil {
 			return "", "", ""
@@ -1041,7 +974,8 @@ func (l *lander) mergeHead(ctx context.Context, dir, stream string, c landCard) 
 			if note, why, renv = l.resolveLedgers(ctx, dir, stream, c, paths, ours, owners); note != "" {
 				return "", "", note
 			}
-			env, why, inMerge = renv, "; "+why, errors.New("the failed resolution ended the merge")
+			// the failed resolution ended the merge and restored the clone
+			env, why, inMerge = renv, "; "+why, errors.New("no merge in progress")
 		}
 	}
 	if inMerge == nil {
@@ -1053,7 +987,7 @@ func (l *lander) mergeHead(ctx context.Context, dir, stream string, c landCard) 
 	case env != "":
 		return "", env, ""
 	case conflict:
-		return c.landWhat() + " of " + c.id + " does not merge: " + firstLine("", err) + why, "", ""
+		return "the head " + c.head + " of " + c.id + " does not merge: " + firstLine("", err) + why, "", ""
 	}
 	return "", "the merge of " + c.id + " failed in git, not on its changes: " + firstLine("", err), ""
 }
@@ -1096,7 +1030,7 @@ func (l *lander) checkCard(ctx context.Context, dir string, c landCard, before s
 	if _, err := l.git(ctx, dir, "reset", "-q", "--hard", before); err != nil {
 		return "", "the batch branch could not be reset after " + c.id + " failed the lander's checks: " + firstLine("", err)
 	}
-	return c.landWhat() + " of " + c.id + " fails the lander's checks: " + strings.Join(why, "; "), ""
+	return "the head " + c.head + " of " + c.id + " fails the lander's checks: " + strings.Join(why, "; "), ""
 }
 
 // containsAny says s holds one of words.

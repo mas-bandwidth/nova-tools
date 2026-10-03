@@ -118,7 +118,7 @@ func tell(run []sprint.Line) []storyLine {
 				words = fmt.Sprintf("merged into %s and landed %s%s", stream, byOf(l), batchWords(*batch, l.Card))
 			}
 			// what the landing did past a merge of the head (land: the generated ledgers
-			// regenerated, a resumed card's branch tip landed)
+			// regenerated)
 			if n := strings.TrimSpace(l.Text["note"]); n != "" {
 				words += "; " + n
 			}

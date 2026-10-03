@@ -1,22 +1,19 @@
 package main
 
 // landledger.go is what land does past a plain merge of a card's recorded head
-// (docs/SPEC-SPRINT.md section 7, the generated ledgers and the resumed tip):
+// (docs/SPEC-SPRINT.md section 7, the generated ledgers). A merge whose every unmerged
+// path is a generated ledger (landLedgers: the class ledgers diffcheck.Ledger names,
+// narrowed to a family owned by named tests) is resolved, not refused: the tip's side of
+// each conflicted file is taken, the owning tests' update mode (NOVA_CI_UPDATE=1) runs on
+// the merged tree until it changes nothing, and the merge is committed with a message
+// naming the card and the ledgers. A shrink-only ledger is a function of the tree, so two
+// cards that both delete rows and both move the ceiling line conflict line by line and
+// regenerate to one answer. A conflict in any other file is refused as before.
 //
-//   - a merge whose every unmerged path is a generated ledger (landLedgers: the class
-//     ledgers diffcheck.Ledger names, narrowed to a family owned by named tests) is
-//     resolved, not refused: the tip's side of each conflicted file is taken, the owning
-//     tests' update mode (NOVA_CI_UPDATE=1) runs on the merged tree until it changes
-//     nothing, and the merge is committed with a message naming the card and the
-//     ledgers. A shrink-only ledger is a function of the tree, so two cards that both
-//     delete rows and both move the ceiling line conflict line by line and regenerate to
-//     one answer. A conflict in any other file is refused as before.
-//   - a card a resume put back after a conflict (sprint.FieldResumedHead) lands its
-//     branch's tip in place of its recorded head only when the tip is exactly what land
-//     itself makes of that head: the base merged into it, the ledgers regenerated. No
-//     change a reader has not read lands. The tip is pinned on the card the first time it
-//     is verified (sprint.FieldResumedTip), so a land run again merges that commit and no
-//     later one.
+// After a conflict a resume puts the card back at its head, and the next land merges that
+// head again: a merge of a shrink-only ledger is the same whoever makes it, so a
+// resolution on the card's branch would land nothing a merge here does not, and one
+// outside the ledgers is unread work, answered by rework or drop.
 //
 // The decisions (which ledgers own the paths, which changes an update made, when a
 // regeneration is done, the words) are functions of their inputs, apart from the git and
@@ -25,9 +22,7 @@ package main
 import (
 	"cmp"
 	"context"
-	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -38,7 +33,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/diffcheck"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
@@ -46,6 +40,7 @@ import (
 // update run regenerates them at the tree it runs in.
 type landLedger struct {
 	owns  func(p string) bool // the family's files
+	roots []string            // the directories and files the family lives in: what the update rewrites
 	tests string              // the owning tests, as the commit and the card's note name them
 	run   []string            // the update run, in the clone, with NOVA_CI_UPDATE=1
 }
@@ -56,6 +51,7 @@ type landLedger struct {
 // regenerates them together.
 var landLedgers = []landLedger{{
 	owns:  generalityLedger,
+	roots: []string{diffcheck.LedgerDir + "generality", diffcheck.LedgerDir + "generality-text", diffcheck.LedgerDir + "generality_text_fixtures_allowlist.txt"},
 	tests: "TestGeneralityGuardrail, TestGeneralityText",
 	run:   []string{"go", "test", "-count=1", "-timeout", "600s", "-run", "^(TestGeneralityGuardrail|TestGeneralityText)$", "./internal/ci"},
 }}
@@ -122,21 +118,41 @@ func unmergedPaths(out string) (paths []string, ours map[string]bool) {
 	return paths, ours
 }
 
-// linkedLedger is a symlink an update could write through, from git ls-files -s: a
-// tracked link that a ledger names, or a directory a conflicted path lies under; "" for
-// none. An update writes the ledgers in place, and a link would take that write outside
-// the clone, unseen by the check of what it changed.
-func linkedLedger(lsFiles string, paths []string, ledgers []landLedger) string {
+// familyLink is a tracked symlink an update could write through, from git ls-files -s:
+// one a ledger names, or one that is a family root, lies above one or lies under one;
+// "" for none. An update rewrites its whole family in place, whichever paths conflicted,
+// and a link would take a write outside the clone, where git status cannot see it.
+func familyLink(lsFiles string, ledgers []landLedger) string {
 	for _, line := range strings.Split(lsFiles, "\n") {
 		meta, p, ok := strings.Cut(line, "\t")
 		if !ok || !strings.HasPrefix(meta, "120000 ") {
 			continue
 		}
-		if owned(p, ledgers) || slices.ContainsFunc(paths, func(q string) bool { return strings.HasPrefix(q, p+"/") }) {
-			return p
+		for _, l := range ledgers {
+			if l.owns(p) || slices.ContainsFunc(l.roots, func(r string) bool {
+				return p == r || strings.HasPrefix(r, p+"/") || strings.HasPrefix(p, r+"/")
+			}) {
+				return p
+			}
 		}
 	}
 	return ""
+}
+
+// familyPaths is what an update of the ledgers writes, from git ls-files -s: each
+// family's roots and every tracked file it owns; the disk check (onDiskLink) walks each
+// and the directories on the way to it.
+func familyPaths(lsFiles string, ledgers []landLedger) []string {
+	var out []string
+	for _, l := range ledgers {
+		out = append(out, l.roots...)
+	}
+	for _, line := range strings.Split(lsFiles, "\n") {
+		if _, p, ok := strings.Cut(line, "\t"); ok && owned(p, ledgers) {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // updateWrote is what an update run changed, from git status --porcelain=v1 -z
@@ -189,25 +205,6 @@ func ledgerMessage(id, stream string, paths []string, tests string) []string {
 	return []string{"land " + id + " (sprint stream " + stream + ")",
 		"The generated ledgers " + strings.Join(paths, ", ") + " conflicted. The tip's side was taken and " + tests +
 			" regenerated them at the merged tree (" + allowlist.UpdateEnv + "=1)."}
-}
-
-// tipNote is the card's note when it landed its branch tip, on its timeline.
-func tipNote(c landCard, tip string) string {
-	return "resumed after a conflict: landed the tip " + tip + " of the branch " + c.branch + ", the base merged into the head " + c.head + " it stopped on and nothing else"
-}
-
-// tipNotDescending is the one line a resumed tip that does not descend from the head is
-// refused with.
-func tipNotDescending(c landCard, tip string) string {
-	return "the tip " + tip + " of the branch " + c.branch + " of " + c.id + " does not descend from its recorded head " + c.head +
-		"; merge the base into the branch and push it (never a rebase), or rework the card; run: nova-sprint card " + c.id
-}
-
-// tipBeyond is the one line a resumed tip that is more than the base merged into the head
-// (and the ledgers regenerated) is refused with: what is more is unread.
-func tipBeyond(c landCard, tip string) string {
-	return "the tip " + tip + " of the branch " + c.branch + " of " + c.id + " carries changes beyond the base merge and the ledgers of its head " + c.head +
-		"; rework it so a reader sees them: nova-sprint return " + c.id + " --reason 'resolved by hand', then nova-sprint rework " + c.id + " --fix '<the resolution>'"
 }
 
 // resolveLedgers resolves a merge stopped on unmerged paths that are all generated
@@ -272,7 +269,8 @@ func (l *lander) resolve(ctx context.Context, dir, stream string, c landCard, pa
 	if err != nil {
 		return "", "", "the clone's files could not be listed: " + firstLine("", err)
 	}
-	if p := cmp.Or(linkedLedger(files, paths, owners), onDiskLink(dir, paths)); p != "" {
+	// before any update run: no link in the tree or on disk anywhere the update writes
+	if p := cmp.Or(familyLink(files, owners), onDiskLink(dir, familyPaths(files, owners))); p != "" {
 		return "", "its generated ledgers conflict and " + p + " is a symlink, which an update would write through", ""
 	}
 	if _, err := l.git(ctx, dir, append([]string{"add", "-A", "--"}, paths...)...); err != nil {
@@ -320,8 +318,8 @@ func (l *lander) resolve(ctx context.Context, dir, stream string, c landCard, pa
 	return ledgerNote(paths, tests), "", ""
 }
 
-// onDiskLink is a conflicted path, or a directory it lies under, that is a symlink on
-// disk (os.Lstat); "" for none.
+// onDiskLink is a path, or a directory on the way to it, that is a symlink on disk
+// (os.Lstat), tracked or not; "" for none.
 func onDiskLink(dir string, paths []string) string {
 	for _, p := range paths {
 		for q := p; q != "." && q != "/" && q != ""; q = filepath.Dir(q) {
@@ -345,137 +343,4 @@ func (l *lander) regen(ctx context.Context, dir string, run []string) (string, e
 	b.Cmd.Dir, b.Cmd.Env = dir, append(slices.Clone(env), allowlist.UpdateEnv+"=1")
 	out, err := b.Cmd.CombinedOutput()
 	return string(out), b.Wrap(strings.Join(run, " "), err)
-}
-
-// resumeTip is the commit a card a resume put back after a conflict lands in place of
-// its recorded head, "" (the head lands) when its branch is gone from origin or still at
-// the head: the tip pinned on the card, else its branch's tip on origin when that
-// descends from the head and its tree is exactly the base merged into the head with the
-// ledgers regenerated (baseMerge), then pinned. card is why the card is refused; env a
-// failure that is not the card's.
-func (l *lander) resumeTip(ctx context.Context, dir, stream string, c landCard) (tip, card, env string) {
-	if c.pinned != "" {
-		return c.pinned, "", ""
-	}
-	if _, err := l.git(ctx, dir, "fetch", "--no-tags", "origin", "refs/heads/"+c.branch); err != nil {
-		if containsAny(err.Error(), notOnOrigin) {
-			return "", "", ""
-		}
-		return "", "", "the fetch of the branch " + c.branch + " of " + c.id + " failed: " + firstLine("", err)
-	}
-	tip, err := l.git(ctx, dir, "rev-parse", "--verify", "FETCH_HEAD^{commit}")
-	if err != nil {
-		return "", "", "the tip of the branch " + c.branch + " of " + c.id + " could not be read: " + firstLine("", err)
-	}
-	if strings.HasPrefix(tip, c.head) {
-		return "", "", ""
-	}
-	// every ancestor of the tip came with it: a head the clone lacks is none of them
-	if _, missing := l.git(ctx, dir, "cat-file", "-e", c.head+"^{commit}"); missing != nil {
-		return "", tipNotDescending(c, tip), ""
-	}
-	if ok, why := l.ancestor(ctx, dir, c.head, tip); why != "" || !ok {
-		return "", tipNotDescending(c, tip), why
-	}
-	same, card, env := l.baseMerge(ctx, dir, stream, c, tip)
-	switch {
-	case env != "" || card != "":
-		return "", card, env
-	case !same:
-		return "", tipBeyond(c, tip), ""
-	}
-	if why := l.pinTip(ctx, stream, c, tip); why != "" {
-		return "", "", "the tip " + tip + " of " + c.id + " could not be pinned (" + why + "); run land again"
-	}
-	return tip, "", ""
-}
-
-// ancestor says a is an ancestor of b; why is git's failure, not an answer.
-func (l *lander) ancestor(ctx context.Context, dir, a, b string) (bool, string) {
-	_, err := l.git(ctx, dir, "merge-base", "--is-ancestor", a, b)
-	if x := (*exec.ExitError)(nil); err != nil && errors.As(err, &x) && x.ExitCode() == 1 {
-		return false, ""
-	}
-	if err != nil {
-		return false, "git could not say whether " + b + " descends from " + a + ": " + firstLine("", err)
-	}
-	return true, ""
-}
-
-// baseMerge says the tip's tree is exactly what land makes of the card's head and the
-// base commit the tip merged (the tip's parent on the base that the head does not reach):
-// that base merged into the head in a scratch worktree, the ledgers regenerated where
-// they conflict. A tip with no such parent, or whose base merge conflicts outside the
-// ledgers, is more than a base merge, and card says so.
-func (l *lander) baseMerge(ctx context.Context, dir, stream string, c landCard, tip string) (same bool, card, env string) {
-	parents, err := l.git(ctx, dir, "rev-list", "--parents", "-n", "1", tip)
-	if err != nil {
-		return false, "", "the parents of the tip " + tip + " could not be read: " + firstLine("", err)
-	}
-	base := ""
-	for _, p := range strings.Fields(parents)[1:] {
-		onBase, why := l.ancestor(ctx, dir, p, "refs/remotes/origin/"+c.base)
-		fromHead, why2 := l.ancestor(ctx, dir, c.head, p)
-		if why+why2 != "" {
-			return false, "", why + why2
-		}
-		if onBase && !fromHead {
-			base = p
-			break
-		}
-	}
-	if base == "" {
-		return false, tipBeyond(c, tip), ""
-	}
-	gitDir, err := l.git(ctx, dir, "rev-parse", "--absolute-git-dir")
-	if err != nil {
-		return false, "", "the clone's git directory could not be read: " + firstLine("", err)
-	}
-	// the scratch worktree lives in the clone's own git directory, git's to make and remove
-	wt := filepath.Join(gitDir, "nova-land-resume")
-	// ignored: this removes a worktree a crash left, if any; the add below says if one stands
-	_, _ = l.git(ctx, dir, "worktree", "remove", "--force", wt)
-	if _, err := l.git(ctx, dir, "worktree", "add", "-q", "--detach", wt, c.head); err != nil {
-		return false, "", "a scratch worktree for the base merge of " + c.id + " could not be made: " + firstLine("", err)
-	}
-	defer func() {
-		// ignored: a worktree left here is removed by the next base merge before its add
-		_, _ = l.git(ctx, dir, "worktree", "remove", "--force", wt)
-	}()
-	if _, err := l.git(ctx, wt, "merge", "--no-ff", "--no-edit", "-m", "base merge of "+c.id, base); err != nil {
-		unmerged, uerr := l.git(ctx, wt, "ls-files", "--unmerged")
-		paths, ours := unmergedPaths(unmerged)
-		owners, outside := ledgerOwners(paths, l.ledgers())
-		if uerr != nil || unmerged == "" || len(outside) > 0 {
-			return false, tipBeyond(c, tip), ""
-		}
-		if note, card, env := l.resolveLedgers(ctx, wt, stream, c, paths, ours, owners); note == "" {
-			return false, card, env
-		}
-	}
-	_, err = l.git(ctx, wt, "diff", "--quiet", "HEAD", tip)
-	if x := (*exec.ExitError)(nil); err != nil && errors.As(err, &x) && x.ExitCode() == 1 {
-		return false, "", ""
-	}
-	if err != nil {
-		return false, "", "the tip " + tip + " could not be compared with the base merge of " + c.id + ": " + firstLine("", err)
-	}
-	return true, "", ""
-}
-
-// pinTip records the verified tip on the card's merge card (sprint.PinTip), fenced to the
-// epoch land read; why is why it was not recorded.
-func (l *lander) pinTip(ctx context.Context, stream string, c landCard, tip string) string {
-	r := sprint.PinTipReq{Stream: stream, Card: c.id, Head: c.head, Tip: tip, Who: l.c.actor}
-	step := store.Step{Args: store.ArgsOf(r), Verb: "land", Load: []string{sprint.Merge, sprint.Work},
-		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.PinTip(s, r) }}
-	epoch := l.epoch
-	step.Epoch = &epoch
-	l.a.serial.Lock()
-	defer l.a.serial.Unlock()
-	res, err := l.st.Run(ctx, step)
-	if stepExit(res, err) != 0 {
-		return stepWhy(res, err)
-	}
-	return ""
 }
