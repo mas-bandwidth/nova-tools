@@ -90,6 +90,9 @@ type Field struct {
 	Default string
 	// Nullable leaves an omitted field unset, represented as SQL NULL.
 	Nullable bool
+	// Clear, on a Nullable field, is the word a set takes to clear the field
+	// back to unset ("default" for a machine's width).
+	Clear string
 	// Cut is a free-text field the list verbs print cut to ListNoteRunes
 	// characters (ListLine), so one row stays one short line; show, --json and
 	// the history keep it whole.
@@ -239,7 +242,7 @@ var Kinds = []*Kind{
 			{Name: "seat", Type: TypeText, Required: true, Help: "its nova-secrets seat: the identity it opens secrets as, one <seat>.yaml in the store"},
 			{Name: "slots", Type: TypeInt, Required: true, Help: "the machine ceiling apply writes to machine:<m>:ceiling, which the friends' desired slots must fit under; not the sprint's width"},
 			{Name: "runners", Type: TypeInt, Help: "how many CI runners it hosts; 0 (the default) hosts none"},
-			{Name: "width", Type: TypeInt, Help: "the most work cards the sprint's member on it runs at once, what nova-sprint fleet sync sets; set apart from --slots, never derived from it; 0 (the default) is no member, dealt no work"},
+			{Name: "width", Type: TypeInt, Nullable: true, Clear: "default", Help: "the most work cards the sprint's member on it runs at once, what nova-sprint fleet sync sets; set apart from --slots, never derived from it; unset (the default, or --width default) is half the machine's cores as its beat reports them, which fleet sync resolves; 0 is no member, dealt no work"},
 			{Name: "tla", Type: TypeBool, Help: "a TLC record machine: the tools play installs the pinned TLC jar on it and tlacheck run --bench any picks among them; false (the default) is none"},
 			noteField("why the machine is as it is: a hold, a rest, the load that was measured"),
 		},
@@ -325,6 +328,7 @@ var Kinds = []*Kind{
 			{Name: "provider", Type: TypeText, Required: true, Help: "the provider word of the model id <provider>/<model> the harness is launched with: one word, no slash"},
 			{Name: "model", Type: TypeText, Required: true, Help: "the model name after the provider, which may hold slashes (x-ai/grok-4); no blank"},
 			{Name: "tokens", Type: TypeInt, Help: "the token budget per card; 0 (the default) is unmetered and the deadline is the only stop"},
+			{Name: "usd", Type: TypeDecimal, Help: "the dollar budget per card, a decimal like 0.50: the harness's reported cost at which the card is stopped, beside the token budget; empty (the default) is none"},
 			{Name: "deadline", Type: TypeInt, Required: true, Help: "the seconds a card on this route may run, above 0"},
 			{Name: "enabled", Type: TypeBool, Default: "true", Help: "false takes it out of the deal and needs --note, the measured reason (a disabled route carries its reason); true (the default) keeps it in and needs none"},
 			// The price sheet: optional, so a card's predicted cost can be worked
@@ -438,6 +442,13 @@ func checkRoute(r Row) error {
 	}
 	if _, ok := r.Fields["deadline"]; ok && r.Int("deadline") <= 0 {
 		problems = append(problems, fmt.Sprintf("route %s has --deadline 0; want the seconds a card on it may run, above 0", r.Name))
+	}
+	// a dollar budget is above 0: empty is no cap, and a 0 would be dealt onto every card
+	// and refused by native at every launch (nova-tools #5094)
+	if v := r.Fields["usd"]; v != "" {
+		if d, err := cardcost.Decimal(v); err != nil || d.Sign() <= 0 {
+			problems = append(problems, fmt.Sprintf("route %s has --usd %s; want a dollar budget above 0, or --usd \"\" (empty) for no cap", r.Name, v))
+		}
 	}
 	// a disabled route carries its reason (a field absent from the row is skipped as above)
 	if e, ok := r.Fields["enabled"]; ok && e == "false" {
@@ -668,6 +679,9 @@ func (f Field) Canonical(raw string) (string, error) {
 		}
 		return raw, nil
 	case TypeInt:
+		if f.Nullable && f.Clear != "" && raw == f.Clear {
+			return "", nil // unset
+		}
 		if raw == "" {
 			return "", fmt.Errorf("--%s: want a non-negative integer", f.Name)
 		}

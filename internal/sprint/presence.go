@@ -32,10 +32,29 @@ const (
 	MissedBeatsDown = 3
 	// LoadWindow is the span of beats whose highest load the load cell shows.
 	LoadWindow = 10 * time.Second
+	// FriendBeatEvery is how often a friend's machinery beats (friend beat in
+	// a loop beside her harness). The owner, 2026-10-02 9:46 PM ET: "heartbeat
+	// should ping once every 10sec", then "or every 1sec if you really want,
+	// then after 15 sec. asleep. better."
+	FriendBeatEvery = time.Second
+	// FriendAsleepAfter is how long a friend goes without a beat before she is
+	// asleep (docs/SPEC-SPRINT.md section 1, the friends table): fifteen beats
+	// missed in a row. The owner, 2026-10-02 9:44 PM ET, on a friend shown up
+	// while she was gone: "two minutes is too long. 1m", "maybe even 30 secs.";
+	// and at 9:46 PM: "then after 15 sec. asleep. better." A friend holds no
+	// card of the sprint, so nothing is taken back when she sleeps, and the
+	// fleet's MissedBeatsDown windows (kept long so a working machine is not
+	// taken down by one slow store call) do not apply to her.
+	FriendAsleepAfter = 15 * time.Second
 )
 
 // Held is the status of a member the coordinator holds down.
 const Held = "held"
+
+// Asleep is the status of a friend with no beat for FriendAsleepAfter, or
+// none ever; a fleet member in that case is Down. The owner, 2026-10-02
+// 9:46 PM ET: "then after 15 sec. asleep. better."
+const Asleep = "asleep"
 
 // HowGiven is a load given on the command line rather than measured.
 const HowGiven = "given"
@@ -48,11 +67,13 @@ type LoadSample struct {
 
 // Beat is a member's presence record: its last beat, to the second, the
 // highest load of its beats within LoadWindow of it, how the last one was
-// measured, those beats' loads, and the measuring state the next beat starts
-// from.
+// measured, those beats' loads, the measuring state the next beat starts
+// from, and the machine's logical cores, which a member with the default width
+// takes half of (WidthOfCores; fleet sync).
 type Beat struct {
 	At      time.Time      `json:"at"`
 	Load    float64        `json:"load"`
+	Cores   int            `json:"cores,omitempty"`
 	How     string         `json:"how,omitempty"`
 	Samples []LoadSample   `json:"samples,omitempty"`
 	Meter   hostload.State `json:"meter"`
@@ -108,10 +129,10 @@ func MemberStatus(ctl *Card, b Beat, now time.Time) string {
 	return PresenceStatus(ctl.F("held") != "", b, now)
 }
 
-// PresenceStatus is the one rule of a fleet member's and a friend's status at
-// now: held while the coordinator holds it (fleet down, friend down), else up
-// while it has missed fewer than MissedBeatsDown beat windows of BeatDeadline,
-// else down (never beaten, or lapsed).
+// PresenceStatus is the one rule of a fleet member's status at now: held while
+// the coordinator holds it (fleet down), else up while it has missed fewer
+// than MissedBeatsDown beat windows of BeatDeadline, else down (never beaten,
+// or lapsed).
 func PresenceStatus(held bool, b Beat, now time.Time) string {
 	switch {
 	case held:
@@ -120,6 +141,27 @@ func PresenceStatus(held bool, b Beat, now time.Time) string {
 		return Up
 	}
 	return Down
+}
+
+// FriendAwake says the friend has beaten within FriendAsleepAfter of now: a
+// beat wakes her at once, and FriendAsleepAfter without one puts her asleep.
+func FriendAwake(b Beat, now time.Time) bool {
+	return now.Sub(b.At) < FriendAsleepAfter // never beaten: At is zero, long ago
+}
+
+// FriendStatus is the one rule of a friend's status at now: held while the
+// coordinator holds her (friend down), else up while her last beat is within
+// FriendAsleepAfter, else asleep (never beaten, or silent that long).
+// Releasing a hold (friend up) is not a beat: a friend released with no
+// recent beat is asleep until she beats.
+func FriendStatus(held bool, b Beat, now time.Time) string {
+	switch {
+	case held:
+		return Held
+	case FriendAwake(b, now):
+		return Up
+	}
+	return Asleep
 }
 
 // LoadText is the load cell: the highest load of the last LoadWindow with

@@ -101,7 +101,7 @@ Notes on the rows:
   is the member's queue, not the card's fault: `wait` while the member works through its width, or
   `fleet level` to move cards a member cannot start to one with free lanes. `fleet down <m>` is for the member
   that has held the card its whole deadline.
-- Cannot ask. A read needs two different readers up (`where` shows the readers table). A drop on this ground
+- Cannot ask. A flash card needs one reader up and a pro card two different readers up (`where` shows the readers table). A drop on this ground
   goes on the re-add list (section 3); fixes for the machinery are never made through the sprint.
 - Sentinel reached. The other printed decisions are `add --stream <s> --before <sentinel> '<new id>' --brief
   '<brief>'` and `drop`. A judgment held for a wave not yet agreed stays open, never released to clear the
@@ -133,7 +133,11 @@ never answers a sentinel or composes a command the inbox did not print, and stop
   `add` holds each brief to the card lint and refuses, writing nothing, one that fails.
   `nova-swarm template --name card` prints a card that passes once its `<...>` lines are filled;
   `nova-swarm lint --card <file> --child-rules` checks a file first; `nova-sprint init --rules <file>` records
-  the rule set `add` uses by default. A card with no brief is admitted with a NOTE and given one before it is
+  the rule set `add` uses by default. Under `fleet/child-rules.txt`, a file the members hold, a card on
+  nova-tools (or on a repository with its own `fleet/child-rules.<repo>.txt`) does not carry the rules: the
+  member injects them at stage time (rules by reference, docs/SPEC-SPRINT.md section 2), and the lint refuses
+  only a line that contradicts them; a card on another repository carries its own. Release the members
+  before the coordinator's `nova-sprint`. A card with no brief is admitted with a NOTE and given one before it is
   dealt: `nova-sprint stop`, `nova-sprint brief <card> --brief-file <path>`, `nova-sprint start`; a card that
   has started refuses a new brief.
 - Sentinels hold waves. `nova-sprint add --stream <s> --sentinel <s>-wave2` puts a stop in the line; what
@@ -204,6 +208,10 @@ never answers a sentinel or composes a command the inbox did not print, and stop
 - A provider's failure is not a verdict on a route: a run the provider failed is redealt, never failed work,
   leaving out the routes already drawn for the card. A limit or an empty balance never takes a route out of
   the deal; it clears by itself, and a route taken out for it stays out.
+- The machine rests a route by itself when three of its last ten ended takes left no result (rule 3 of
+  nova-tools#5174): no work card is drawn on it for 30 minutes, the inbox says so with the cards, and
+  `nova-sprint routes` prints `rested_until`. That rest is the sprint's and ends by itself; the row change
+  below is yours, for work that comes back bad.
 - A route rests when measured work on it is bad: its ok and failed counts from `nova-sprint routes` against
   the other routes of the tier, over the whole sprint. Resting is a reversible row change (`--dry-run` first on
   each command); bringing the route back is `--enabled true` and the same apply:
@@ -220,7 +228,7 @@ never answers a sentinel or composes a command the inbox did not print, and stop
 
 ## 6. Landing
 
-The server's `--land` merges each card whose two reads passed into the sprint branch, the branch the cards'
+The server's `--land` merges each card whose reads passed (one for a flash card, two for a pro card) into the sprint branch, the branch the cards'
 `BASE:` line names. The sprint branch reaches the integration branch (`dev`) as a batch.
 
 - Before it: every repair card has landed, and a reader that did not write it has read the whole diff of the
@@ -266,7 +274,7 @@ The server's `--land` merges each card whose two reads passed into the sprint br
   bench, never the coordinator's machine: `go run ./tools/tlacheck groups --stale` names the groups to run,
   and `go run ./tools/tlacheck merge --out tla/RUNS.tsv --keep tla/RUNS.tsv <runs>...` joins the records.
 - `git push origin lander/<date>`, then `gh pr create --base dev --title 'Batch: <heads>' --body-file <file>`,
-  the body listing each head's sha, its two reads, and the last line of each gate; `gh pr checks <number>
+  the body listing each head's sha, its reads, and the last line of each gate; `gh pr checks <number>
   --watch` follows CI. Every job has a 2-minute cap: a darwin leg canceled under load with every test passing
   is rerun when the machine is quieter, `gh run rerun <run id> --failed`.
 - Land with `gh pr merge <number> --merge`. `dev` has a merge queue that runs the functional tier the pull

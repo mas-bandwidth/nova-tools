@@ -50,6 +50,17 @@ func (c *Card) Int(name string) int {
 	return n
 }
 
+// withField is a copy of c with one field set: the card as the step's own write
+// leaves it, for the planning that follows in the same step (a rework's tier, read
+// by the deal of the attempt it cuts).
+func withField(c *Card, name, value string) *Card {
+	cp := *c
+	cp.Fields = make(map[string]string, len(c.Fields)+1)
+	maps.Copy(cp.Fields, c.Fields)
+	cp.Fields[name] = value
+	return &cp
+}
+
 // Table is one table as observed: its revision, its rows in order, its text
 // cells, and its cards (placed, and any unplaced records the step asked for),
 // which are read by Card and Cards.
@@ -305,9 +316,15 @@ type Snapshot struct {
 	// 6); nil is none read, and every reader is held up.
 	ReaderStates map[string]string
 	// Running says the machine was RUNNING as the step read the sprint: its
-	// pump accepts a primary with two ok reads, so no step opens a "ready to
+	// pump accepts a primary with the ok reads it needs, so no step opens a "ready to
 	// accept" judgment for it ("accept is mechanical").
 	Running bool
+	// rests is the routes resting at Now, settled once by a step that deals
+	// (withRests, route_rest.go); nil is not yet settled.
+	rests map[string]RouteRest
+	// restScans, when set, counts withRests' scans of the fleet table: the tick's
+	// cost gate (TestTheTicksCheckSettlesTheRestsOnceAtScale) holds them to one a part.
+	restScans *int
 }
 
 // T is the loaded table by logical name.

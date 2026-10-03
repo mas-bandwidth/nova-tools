@@ -21,7 +21,7 @@ func TestAskInsteadTakesOneReadOffOneReaderStoppedAndRunning(t *testing.T) {
 	ta := newTestApp(t)
 	readers := []string{"reader-a", "reader-b", "reader-c", "reader-d"}
 	ta.ok("init --readers " + strings.Join(readers, ",") + " --members m1")
-	ta.ok("add --stream s1 --count 2")
+	ta.ok("add --stream s1 --count 2 --brief-file " + proBriefFile(t))
 	ta.deal(2)
 	ta.ok("take --as m1 s1-1.w1@1")
 	ta.ok("finish --as m1 s1-1.w1@1")

@@ -139,7 +139,7 @@ func TestStampsOnEveryPath(t *testing.T) {
 		require.Failf(t, "", "re-deal after withdrawal: %s dealt=%q withdrawn=%q", wc4.Col, wc4.F("dealt"), wc4.F("withdrawn"))
 	}
 	// level: more cards on m1, m2 comes up, the newest moves with dealt new
-	h.nDo(AddStep(sprint.AddReq{Stream: "s1", Count: 3}))
+	h.nDo(AddStep(sprint.AddReq{Brief: proBrief, Stream: "s1", Count: 3}))
 	h.nDo(DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-2", "s1-3", "s1-4"}}}))
 	before := h.snap()
 	h.nDo(FleetStep(sprint.FleetReq{Op: "up", Member: "m2"}))

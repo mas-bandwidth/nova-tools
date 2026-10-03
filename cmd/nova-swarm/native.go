@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"net"
 	"net/url"
 	"os"
@@ -83,6 +84,9 @@ type nativeRunConfig struct {
 	// loop record), the name and email every commit carries; nil reads the pool's
 	// <root>/identity.tsv (swarm.LoadPoolIdentity).
 	identity *swarm.StagingIdentity
+	// usd is the dollar budget (--usd, a route's usd): the harness's reported cost at which
+	// the card is stopped, beside the token budget; nil for none (nova-tools #5094).
+	usd *big.Rat
 	// netAllow is the provider's loopback host:port, passed to the wall as --net-allow
 	// (issue #591).
 	netAllow string
@@ -522,16 +526,9 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// GOCACHE. GOTOOLCHAIN=local keeps a card from fetching a toolchain behind the bench's
 	// back. The sharing is safe because Go's caches are concurrency-safe by design and the
 	// module cache is read-mostly. --no-shared-caches keeps today's behaviour exactly: no
-	// names set, the caches under HOME.
+	// names set, the caches under HOME. swarm.EnsureCacheDirs (issue #1048, above) made both
+	// (swarm.GoModCacheDir, swarm.GoBuildCacheDir), under the same condition.
 	cacheDir := nativeCacheDir(cfg)
-	if cacheDir != "" {
-		for _, d := range []string{filepath.Join(cacheDir, "go-mod"), filepath.Join(cacheDir, "go-build")} {
-			if err := os.MkdirAll(d, 0o755); err != nil {
-				refuseNative(errOut, fmt.Sprintf("the shared go cache %s could not be made: %s", oneline.Field(d), oneline.Escape(err.Error())))
-				return nativeRunResult{}, 2
-			}
-		}
-	}
 
 	// (3c) THE SHELL SHIM (issue #1814). The harness spawns its bash tool's shell by NAME,
 	// resolving it through the child's PATH and SHELL, and hands it the harness's own
@@ -545,6 +542,16 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		refuseNative(errOut, fmt.Sprintf("%s the card's shell cannot be scrubbed of the provider key: %s",
 			oneline.Field(cfg.label), oneline.Err(shimErr)))
 		return nativeRunResult{}, 2
+	}
+	// (3d) THE GO SHIM (nova-tools#5174, cost rule 5): with the shared caches on, the go the
+	// child runs by name adds -trimpath, so the machine's warm GOCACHE serves this checkout
+	// and the card's gate does not compile the repository again (shellshim.go).
+	goBin := swarm.BenchGoBin(benchHome(cfg), os.Getenv("PATH"))
+	if cacheDir != "" {
+		if err := writeNativeGoShim(shimDir, goBin); err != nil {
+			refuseNative(errOut, fmt.Sprintf("%s %s", oneline.Field(cfg.label), oneline.Err(err)))
+			return nativeRunResult{}, 2
+		}
 	}
 
 	// (4) THE AUTH COPY. One entry, the model's provider's, moved to the data home so
@@ -829,6 +836,15 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		runPath, runArgv = stepArgv[0], append(append([]string{}, stepArgv[1:]...), stepWallFlags...)
 		wall = ""
 	}
+	// THE CHILD'S PRIORITY, where the wall forbids the child to lower its own (the darwin
+	// wall denies setpriority): native lowers the group after the start, and the card's own
+	// `nice -n 19` resolves to the shim's, which runs the command without the wall's warning.
+	niced := nativeNicesChild(runtime.GOOS, wall != "")
+	if niced && shimDir != "" {
+		if err := writeNativeNiceShim(shimDir); err != nil {
+			fmt.Fprintf(errOut, "NATIVE NOTE: %s; a card's nice inside the wall warns setpriority and runs its command anyway\n", oneline.Err(err))
+		}
+	}
 
 	// THE CHILD. The deadline is a context, so the process (and any it started in its
 	// own group) is killed when the wall runs out, not merely handed a suggestion.
@@ -845,8 +861,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			}
 		}
 	}
-	childEnv := nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell,
-		swarm.BenchGoBin(benchHome(cfg), os.Getenv("PATH")))
+	childEnv := nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell, goBin)
 	if cfg.root != "" {
 		var id swarm.StagingIdentity
 		if cfg.identity != nil {
@@ -1011,7 +1026,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// card at their own instants whatever a read is doing (nativesample.go says why at
 	// length).
 	sampler := startLiveSampler("", 0, cfg, outLog)
-	if !cfg.unmetered && cfg.tokens > 0 || (cfg.worker != nil && cfg.worker.HasCardBudget()) {
+	if !cfg.unmetered && cfg.tokens > 0 || cfg.usd != nil || (cfg.worker != nil && cfg.worker.HasCardBudget()) {
 		sampler = startLiveSampler(dataHome, cfg.usageInterval, cfg, outLog)
 	}
 	defer sampler.Stop()
@@ -1052,6 +1067,11 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			return nativeRunResult{}, 2
 		}
 		pgid := cmd.Process.Pid
+		if niced {
+			if err := lowerChildPriority(pgid); err != nil {
+				fmt.Fprintf(errOut, "NATIVE NOTE: the child's priority could not be lowered: %s\n", oneline.Err(err))
+			}
+		}
 		started := swarm.StartStamp(pgid)
 		done := make(chan error, 1)
 		go func() { done <- cmd.Wait() }()
@@ -1226,7 +1246,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		_, published := swarm.FindCardResult(jobDir)
 		if cause, failed := harnessStartFailed(tail, elapsed, launchTokens, published); failed {
 			if startRetries < len(harnessStartWaits) {
-				if word := sampler.StopWordAtFinal(jobSpent, jobObserved); word != "" {
+				if word := sampler.StopWordAtFinal(jobSpent, jobObserved, spendCost(launchSpends)); word != "" {
 					res.stopped = word
 					break
 				}
@@ -1263,7 +1283,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			// AND THE FINAL READS COUNT (review finding 6 on #1635): the job's spend just
 			// folded from this launch's final read is tested too, so a launch that died
 			// before its first sample cannot buy a relaunch past the budget.
-			if word := sampler.StopWordAtFinal(jobSpent, jobObserved); word != "" {
+			if word := sampler.StopWordAtFinal(jobSpent, jobObserved, spendCost(launchSpends)); word != "" {
 				res.stopped = word
 				break
 			}
@@ -1876,8 +1896,8 @@ func nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shim
 	)
 	if cacheDir != "" {
 		out = append(out,
-			"GOMODCACHE="+filepath.Join(cacheDir, "go-mod"),
-			"GOCACHE="+filepath.Join(cacheDir, "go-build"),
+			"GOMODCACHE="+swarm.GoModCacheDir(filepath.Dir(cacheDir)),
+			"GOCACHE="+swarm.GoBuildCacheDir(filepath.Dir(cacheDir)),
 			"GOTOOLCHAIN=local",
 			"ASDF_OUTPUT_TRANSLATIONS="+swarm.JobASDFOutputTranslations(filepath.Join(jobDir, swarm.JobRepo)),
 		)
@@ -2168,6 +2188,12 @@ func launchSpend(v map[string]string) cardcost.Usage {
 	return u
 }
 
+// spendCost is the harness's cost of the launches so far, "" unless every launch that
+// reported tokens reported one (the cost spendWord carries).
+func spendCost(launches []cardcost.Usage) string {
+	return cardcost.ParseSpend(spendWord(launches)).Actual
+}
+
 // spendWord is the job's spend= word over its launches' records: their sum, the model the
 // last one reported, and the harness's cost only when every launch that reported tokens
 // reported one (a cost for part of the job is not the job's).
@@ -2372,8 +2398,8 @@ func installFrame(cfg nativeRunConfig, jobDir, head string) error {
 		return err
 	}
 	st := cardcontract.Staged{Job: jobDir, Repo: filepath.Join(jobDir, swarm.JobRepo), Head: head, Git: git}
-	if d := nativeCacheDir(cfg); d != "" {
-		st.GoCache = filepath.Join(d, "go-build") // the GOCACHE nativeChildEnv hands the child
+	if nativeCacheDir(cfg) != "" {
+		st.GoCache = swarm.GoBuildCacheDir(cfg.root) // the GOCACHE nativeChildEnv hands the child
 	}
 	if cfg.frame.Kind == "read" {
 		// first, so a read whose start cannot be known leaves nothing of its frame behind

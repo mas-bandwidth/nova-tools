@@ -36,7 +36,7 @@ func scenarios() []sample {
 func (k *walk) addTo(stream string, needs ...string) string {
 	id := fmt.Sprintf("p%d", k.next)
 	k.next++
-	if !k.try(sprint.Add(k.s, sprint.AddReq{Stream: stream, IDs: []string{id}, Needs: needs, Who: coordinator})) {
+	if !k.try(sprint.Add(k.s, sprint.AddReq{Brief: proBrief, Stream: stream, IDs: []string{id}, Needs: needs, Who: coordinator})) {
 		return ""
 	}
 	return id
@@ -127,7 +127,7 @@ func aLateCardRedealt(k *walk) []sample {
 		k.addTo(k.streams[0])
 	}
 	k.wholeTick()
-	k.now = k.now.Add(sprint.DeadlineUntaken + time.Duration(1+k.pick(20))*time.Minute)
+	k.now = k.now.Add(sprint.DealtMaxDefault + time.Duration(1+k.pick(20))*time.Minute)
 	k.beatAll()
 	if !k.runPart("deadlines") {
 		return nil

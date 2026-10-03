@@ -75,7 +75,7 @@ func TestAGroupsHelpIsHelpAndABareGroupNamesItsVerbs(t *testing.T) {
 		})
 	}
 	_, _, errs := ta.do("stream bogus")
-	assert.Contains(t, errs, "unknown verb stream bogus; its verbs are stream remove; run: nova-sprint help stream")
+	assert.Contains(t, errs, "unknown verb stream bogus; its verbs are stream remove, stream set; run: nova-sprint help stream")
 }
 
 func TestAVerbsHelpCarriesItsOwnExitCodes(t *testing.T) {

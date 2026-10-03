@@ -253,6 +253,7 @@ func TestTheAskGoesRoundTheReaders(t *testing.T) {
 	t.Parallel()
 	readers := []string{"reader-a", "reader-b", "reader-c", "reader-d"}
 	w := eightIdle(t, readers...)
+	proCards(w)
 	for i := 1; i <= 20; i++ {
 		id := fmt.Sprintf("s1-%d", i)
 		w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{id}}}))
@@ -367,7 +368,7 @@ func TestTheAskGoesRoundTheReadersAcrossStreams(t *testing.T) {
 		ids = append(ids, fmt.Sprintf("%s-%d", streams[i%3], i/3+1))
 	}
 	for _, st := range streams {
-		w.must(Add(w.s, AddReq{Stream: st, Count: 6}))
+		w.must(Add(w.s, AddReq{Brief: proBrief, Stream: st, Count: 6}))
 	}
 	for _, id := range ids {
 		w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{id}}}))

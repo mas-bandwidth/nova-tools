@@ -206,6 +206,9 @@ var swarmAudit = audit.Config{
 		// as one word (SpendWord) or one record line (Usage.String); it holds no writer and
 		// prints nothing. The spend word reaches the NATIVE line only through oneline.Field.
 		`"github.com/mas-bandwidth/nova-tools/internal/cardcost"`,
+		// math/big (main.go, native.go, nativesample.go) holds the dollar budget and compares
+		// a cost with it (#5094): exact arithmetic on values, no writer, no stream.
+		`"math/big"`,
 		// typedrec (the one-typed-parser rule, #2506) reads a card's RESULT.md into a value
 		// and says whether a string is a commit id; it holds no writer and prints nothing.
 		`"github.com/mas-bandwidth/nova-tools/internal/typedrec"`,

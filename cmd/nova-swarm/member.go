@@ -495,8 +495,12 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	if err := os.MkdirAll(slot, 0o755); err != nil {
 		return nil, err
 	}
+	card, err := childCard(p)
+	if err != nil {
+		return nil, err
+	}
 	cardPath := filepath.Join(r.slots, name+".card.md")
-	if err := os.WriteFile(cardPath, []byte(member.CardText(p)), 0o644); err != nil {
+	if err := os.WriteFile(cardPath, []byte(card), 0o644); err != nil {
 		return nil, err
 	}
 	model, tokens, deadline, err := r.route(p)
@@ -510,6 +514,11 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	args := []string{"native", "--harness", r.harness, "--model", model, "--card", cardPath, "--frame", framePath, "--slot", slot,
 		"--root", r.root, "--deadline", deadline.String(), "--tokens", tokens, "--label", p.Card, "--results-root", results,
 		"--stage-timeout", r.stageTimeout().String()}
+	if p.USD != "" {
+		// the route's dollar budget, beside its token budget (#5094); a reader's override
+		// names tokens, not dollars, so an overridden read keeps the route's
+		args = append(args, "--usd", p.USD)
+	}
 	if r.auth != "" {
 		args = append(args, "--auth", r.auth)
 	}
@@ -555,6 +564,23 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	}()
 	r.started(name)
 	return c, nil
+}
+
+// childCard is the card file a child is handed: the packet's brief with the rules file the
+// card names injected at stage time (rules by reference, nova-tools#5174 rule 6:
+// swarm.StagedBrief), then what the sprint adds (member.CardText). A card that names none
+// gets nothing injected: it carries its own rules. A brief that already carries the rules is
+// handed as it is; a card naming a rules file this build does not hold is refused, and it is
+// not started.
+func childCard(p member.Packet) (string, error) {
+	if p.Rules != "" {
+		rules, err := swarm.HeldRules(p.Rules)
+		if err != nil {
+			return "", fmt.Errorf("card %s: the rules by reference: %w", p.Card, err)
+		}
+		p.Brief = swarm.StagedBrief(p.Brief, rules)
+	}
+	return member.CardText(p), nil
 }
 
 // route is what one launch runs on: the packet's route (the card's model, budget and
@@ -712,8 +738,11 @@ var nativeYieldRefused = regexp.MustCompile(`(?m)^NATIVE REFUSED: (yield to CI: 
 var (
 	nativeProvider = regexp.MustCompile(`\bNATIVE PROVIDER-`)
 	nativeStopped  = regexp.MustCompile(`\bNATIVE \S+ .*\bstopped=`)
-	nativeKilled   = regexp.MustCompile(`\bNATIVE \S+ .*\brc=-1\b`)
-	nativeTermed   = regexp.MustCompile(`\breason=terminated\b`)
+	// nativeBudgetWhy is the NATIVE BUDGET line's words: which budget ended the run and at
+	// what count (nativeBudgetWords)
+	nativeBudgetWhy = regexp.MustCompile(`(?m)^NATIVE BUDGET \S+ budget: (.+)$`)
+	nativeKilled    = regexp.MustCompile(`\bNATIVE \S+ .*\brc=-1\b`)
+	nativeTermed    = regexp.MustCompile(`\breason=terminated\b`)
 )
 
 // Result reads how the child ended: the NATIVE line's rc and harness word, and
@@ -726,7 +755,7 @@ var (
 func (c *nativeChild) Result() member.Result {
 	c.once.Do(func() {
 		ran := false
-		var end, usage, provider, refused string
+		var end, usage, provider, refused, budget string
 		if b, err := os.ReadFile(c.logPath); err == nil {
 			if m := nativeRefusedWhy.FindSubmatch(b); m != nil {
 				refused = strings.TrimSpace(string(m[1]))
@@ -759,6 +788,9 @@ func (c *nativeChild) Result() member.Result {
 			}
 			end = nativeEnd(b)
 			provider = providerReason(b)
+			if m := nativeBudgetWhy.FindSubmatch(b); m != nil && end == member.EndBudget {
+				budget = strings.TrimSpace(string(m[1]))
+			}
 		}
 		path := newestResult(c.results)
 		var raw []byte
@@ -799,7 +831,7 @@ func (c *nativeChild) Result() member.Result {
 				report = "the child ended without a result (see " + c.logPath + ")"
 			}
 		}
-		c.result = member.Result{Ran: ran, OK: ran, Shaped: cr.Shaped, Verdict: verdict, Head: head, Report: report, Title: cr.Title, Body: cr.Body, End: end, Usage: usage, Provider: provider}
+		c.result = member.Result{Ran: ran, OK: ran, Shaped: cr.Shaped, Verdict: verdict, Head: head, Report: report, Title: cr.Title, Body: cr.Body, End: end, Usage: usage, Provider: provider, Budget: budget}
 	})
 	return c.result
 }
@@ -818,6 +850,9 @@ func frameOf(p member.Packet, model, root string) cardcontract.Frame {
 	}
 	mh, _ := cardhdr.ReadModel(first) // line 1's tier, by the one parser the deal reads it with
 	f.Tier = mh.Tier
+	if p.Tier != "" { // the sprint's: a read's read tier, a rework's --tier
+		f.Tier = p.Tier
+	}
 	if p.Kind == "read" {
 		f.Branch, f.ReviewBase = p.WorkBranch, cb.Ref
 		if p.WorkBase != "" {

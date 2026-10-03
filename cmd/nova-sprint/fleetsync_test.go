@@ -45,6 +45,14 @@ func (i *inventory) set(name string, width int) {
 	require.NoError(i.t, err)
 }
 
+// setDefault makes a machine row with no width: the default width.
+func (i *inventory) setDefault(name string) {
+	i.t.Helper()
+	row := config.Row{Name: name, Fields: map[string]string{"user": "u", "seat": "s", "slots": "160", "runners": "0", "width": ""}}
+	_, err := i.m.Insert(context.Background(), config.KindMachine, row, "t")
+	require.NoError(i.t, err)
+}
+
 func (i *inventory) remove(name string) {
 	i.t.Helper()
 	_, err := i.m.Delete(context.Background(), config.KindMachine, name, "t")
@@ -189,8 +197,9 @@ func TestFleetSyncSetsAChangedWidthAndNothingElse(t *testing.T) {
 }
 
 // TestFleetSyncHoldsAMemberTheInventoryDropsAndRedealsItsCards: a machine
-// gone from the inventory (its row removed, or its width 0) is held, never
-// deleted, and its unfinished cards go to the members that stay.
+// whose width is 0 is held, and its unfinished cards go to the members that
+// stay; its machine row then removed, no card on it, it leaves the fleet
+// (TestFleetSyncRemovesAMemberWithNoMachineRow).
 func TestFleetSyncHoldsAMemberTheInventoryDropsAndRedealsItsCards(t *testing.T) {
 	t.Parallel()
 	ta, inv := syncApp(t)
@@ -203,7 +212,7 @@ func TestFleetSyncHoldsAMemberTheInventoryDropsAndRedealsItsCards(t *testing.T) 
 	ta.ok("tick") // the pump deals to them
 	rows := ta.fleetRows()
 	require.False(t, rows["m2"]["ready"] == "0" && rows["m2"]["working"] == "0", "the test wants cards on m2: %v", rows)
-	inv.remove("m2")
+	inv.set("m2", 0)
 	out := ta.ok("fleet sync")
 	require.Contains(t, out, "m2 held down", "m2 is not held")
 	require.Contains(t, out, "FLEET-SYNC OK", "m2 is not held")
@@ -212,9 +221,10 @@ func TestFleetSyncHoldsAMemberTheInventoryDropsAndRedealsItsCards(t *testing.T) 
 	require.Equal(t, "0", rows["m2"]["ready"], "m2 still holds cards: %v", rows["m2"])
 	require.Equal(t, "0", rows["m2"]["working"], "m2 still holds cards: %v", rows["m2"])
 	require.Equal(t, sprint.Up, rows["m1"]["status"], "m1 is not up: %v", rows["m1"])
-	// its width at 0 is the same as gone: a machine that returns at 0 stays held
-	inv.set("m2", 0)
 	require.Contains(t, ta.ok("fleet sync"), "nothing to do", "a row with width 0 is already held")
+	inv.remove("m2")
+	require.Contains(t, ta.ok("fleet sync"), "m2 removed", "its machine row gone and no card on it")
+	require.Nil(t, ta.fleetRows()["m2"])
 	ta.clean()
 }
 

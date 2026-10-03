@@ -46,13 +46,13 @@ func TestDriftSaysWhatASyncWouldWrite(t *testing.T) {
 }
 
 // syncHeld is a world with members m1 and m2 up, and m2 held by a sync that
-// names m1 alone.
+// names m1 alone a member and m2 a machine of width 0.
 func syncHeld(t *testing.T) *world {
 	t.Helper()
 	w := newWorld(t, "reader-a")
 	w.must(FleetStep(w.s, FleetReq{Op: "up", Member: "m1"}))
 	w.must(FleetStep(w.s, FleetReq{Op: "up", Member: "m2"}))
-	w.must(FleetStep(w.s, FleetReq{Op: "sync", Who: "sync", Sync: []SyncMember{{"m1", DefaultWidth}}}))
+	w.must(FleetStep(w.s, FleetReq{Op: "sync", Who: "sync", Sync: []SyncMember{{"m1", DefaultWidth}}, Machines: []string{"m1", "m2"}}))
 	ctl := w.s.MemberCtl("m2")
 	require.NotEmpty(t, ctl.F("held"), "m2 is not held by the sync: %v", ctl.Fields)
 	require.Equal(t, HeldBySync, ctl.F(FieldHeldBy), "m2 is not held by the sync: %v", ctl.Fields)
@@ -69,7 +69,7 @@ func TestACoordinatorsHoldOnAMemberTheSyncHoldsClearsTheMark(t *testing.T) {
 	ctl := w.s.MemberCtl("m2")
 	require.NotEmpty(t, ctl.F("held"), "m2 after the coordinator's hold: %v", ctl.Fields)
 	require.Empty(t, ctl.F(FieldHeldBy), "m2 after the coordinator's hold: %v", ctl.Fields)
-	for _, d := range FleetDrift(w.s, []SyncMember{{"m1", DefaultWidth}, {"m2", DefaultWidth}}) {
+	for _, d := range FleetDrift(w.s, []SyncMember{{"m1", DefaultWidth}, {"m2", DefaultWidth}}, []string{"m1", "m2"}) {
 		require.NotEqual(t, DriftRelease, d.Kind, "the sync would release the coordinator's hold: %+v", d)
 	}
 }
@@ -110,4 +110,34 @@ func TestAHoldClearsAStaleMark(t *testing.T) {
 	ctl = w.s.MemberCtl("m1")
 	require.NotEmpty(t, ctl.F("held"), "m1 after the coordinator's hold: %v", ctl.Fields)
 	require.Empty(t, ctl.F(FieldHeldBy), "m1 after the coordinator's hold: %v", ctl.Fields)
+}
+
+// TestALiveFinishedCardKeepsAMemberWithNoMachineRow: the finished work card of a
+// primary still open (its reads and its merge read it) stays on the member, so a
+// member with no machine row that holds one is held, never removed (memberKeeps);
+// once the primary moves to another attempt the card is history, and the sync
+// removes the member, its control card off the table, held by the sync.
+func TestALiveFinishedCardKeepsAMemberWithNoMachineRow(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t, "reader-a", "reader-b")
+	w.must(FleetStep(w.s, FleetReq{Op: "up", Member: "m1"}))
+	w.must(Add(w.s, AddReq{Stream: "s1", Count: 1}))
+	w.must(Deal(w.s, DealReq{}))
+	w.must(Take(w.s, TakeReq{As: "m1", Sel: Sel{IDs: []string{"s1-1.w1"}}, Gens: gensOf(w.s, "s1-1.w1")}))
+	w.must(Finish(w.s, FinishReq{As: "m1", Sel: Sel{IDs: []string{"s1-1.w1"}}, Gens: gensOf(w.s, "s1-1.w1"), Failed: true, Report: "tests red"}))
+	w.must(FleetStep(w.s, FleetReq{Op: "up", Member: "m2"}))
+	sync := FleetReq{Op: "sync", Who: "sync", Sync: []SyncMember{{"m2", DefaultWidth}}, Machines: []string{"m2"}}
+	require.Equal(t, []Drift{{Member: "m1", Kind: DriftHold}}, FleetDrift(w.s, sync.Sync, sync.Machines), "s1-1, in review, reads its failed card on m1")
+	w.must(FleetStep(w.s, sync))
+	require.NotNil(t, w.s.MemberCtl("m1"), "m1 is held, not removed")
+	assert.Len(t, GoneHolding(w.s, sync.Sync, sync.Machines), 1)
+	assert.Empty(t, FleetDrift(w.s, sync.Sync, sync.Machines), "held: a second sync writes nothing")
+	w.must(Rework(w.s, ReworkReq{Sel: Sel{IDs: []string{"s1-1"}}, Fix: "again"}))
+	require.Equal(t, []Drift{{Member: "m1", Kind: DriftRemove}}, FleetDrift(w.s, sync.Sync, sync.Machines), "attempt 2 is on m2: s1-1.w1 is history")
+	w.must(FleetStep(w.s, sync))
+	assert.Nil(t, w.s.MemberCtl("m1"), "m1's control card is off the table")
+	ctl := w.s.Fleet.Card(CtlID("m1"))
+	require.NotNil(t, ctl, "its record is kept")
+	assert.Equal(t, HeldBySync, ctl.F(FieldHeldBy), "held by the sync, so a return releases it")
+	assert.Equal(t, []Drift{{Member: "m1", Kind: DriftRemove}}, FleetDrift(w.s, sync.Sync, sync.Machines), "its row is the verb's to delete")
 }

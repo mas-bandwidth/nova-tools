@@ -25,6 +25,9 @@ func stamp(t time.Time) string { return t.UTC().Format(time.RFC3339) }
 type CardAdd struct {
 	ID    string
 	Brief string
+	// Rules is the held rules file the member injects into this card at stage time
+	// (FieldRules), "" when the brief carries its own.
+	Rules string
 	Needs []string
 	File  string
 	// Sentinel marks this card a sentinel (a stop), not a primary: the
@@ -39,6 +42,7 @@ type AddReq struct {
 	Count  int // generate this many ids, <stream>-<n>
 	Needs  []string
 	Brief  string
+	Rules  string // the held rules file of every card the add admits with Brief (FieldRules)
 	// Cards, when set, is the many-brief form: one card per entry, in order,
 	// each with its own brief and needs (a need names a primary already on
 	// the table or one of this add). IDs, Count, Brief and Needs are then
@@ -178,6 +182,12 @@ func Add(s *Snapshot, r AddReq) Plan {
 		}
 		return r.Brief
 	}
+	rulesOf := func(i int) string {
+		if len(r.Cards) > 0 {
+			return r.Cards[i].Rules
+		}
+		return r.Rules
+	}
 	// isSent says the i'th card admitted is a sentinel: the one --sentinel form,
 	// or a card of the many-brief form marked one (its --sentinel <id>).
 	isSent := func(i int) bool {
@@ -192,6 +202,7 @@ func Add(s *Snapshot, r AddReq) Plan {
 		score  float64
 		needs  []string
 		brief  string
+		rules  string // FieldRules
 		behind string // the sentinel it waits behind by position
 		gate   bool   // a stop of --sentinel-every
 		sent   bool   // a stop: --sentinel or a many-brief card marked one
@@ -228,7 +239,7 @@ func Add(s *Snapshot, r AddReq) Plan {
 			continue
 		}
 		seen[id] = true
-		a := admit{id: id, score: scores[i], needs: needs, brief: briefOf(i), gate: r.IsGate(id), sent: isSent(i)}
+		a := admit{id: id, score: scores[i], needs: needs, brief: briefOf(i), rules: rulesOf(i), gate: r.IsGate(id), sent: isSent(i)}
 		if st := sentinelBefore(s, r.Stream, a.score); st != nil && !a.sent {
 			a.behind = st.ID // it waits behind the stop by its place; nothing is written of it
 		}
@@ -339,6 +350,9 @@ func Add(s *Snapshot, r AddReq) Plan {
 		}
 		if a.brief != "" && !a.gate {
 			fields["brief"] = a.brief
+			if a.rules != "" {
+				fields[FieldRules] = a.rules
+			}
 		}
 		if len(a.needs) > 0 {
 			fields["needs"] = strings.Join(a.needs, ",")
@@ -710,6 +724,7 @@ type DealReq struct {
 // same card dealt again at a new generation, its attempt unchanged; otherwise
 // the next attempt's card is cut.
 func Deal(s *Snapshot, r DealReq) Plan {
+	s, _ = s.withRests() // the resting routes, read once (rule 3, route_rest.go)
 	rr, ri := dealRound(s), routeIndexesOf(s)
 	p, moves := dealPlan(s, r, rr, ri)
 	p = Lawful(p)
@@ -743,7 +758,7 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 	for _, c := range chosen {
 		if wc := s.Fleet.Placed(WorkCardID(c.ID, c.Int("attempt"))); wc != nil && wc.Col == Withdrawn {
 			if redealBound(wc) {
-				p.refuse(c.ID, fmt.Sprintf("%s was redealt %d times, its bound: rework it with a fix, or drop it", wc.ID, wc.Int("redeals")))
+				p.refuse(c.ID, boundWhat(wc, c.ID)+": rework it with a fix, or drop it")
 				continue
 			}
 			if _, why := s.noRoute(c); why != "" {
@@ -1096,7 +1111,7 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		}
 		// A rework whose child found nothing to do, or committed nothing, at the head an
 		// earlier attempt pushed and a reader passed is no failed work: the card was right.
-		// It goes back to review at that head, where the machine's ask asks two readers
+		// It goes back to review at that head, where the machine's ask asks its readers
 		// (docs/SPEC-SPRINT.md section 6; Rework sets FieldPassedHead).
 		passed := r.Failed && r.Head == "" && IsNothingNew(r.Report) && pr.F(FieldPassedHead) != ""
 		if passed {
@@ -1120,8 +1135,11 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 			cardSet[FieldUsage] = rec
 		}
 		set := map[string]string{"head": head, "result": result}
+		identical := false
 		if r.Failed && !passed {
 			set["failed"] = itoa(pr.Int("failed") + 1)
+			// rule 2: the attempt before failed the same way, so this is the bound's (failure.go)
+			identical = failureSet(pr, pr.Int("attempt"), r.Report, set)
 		}
 		addConsumer(pr, set, workConsumer(s, c, 0, result, rec))
 		u := Unit{Key: c.ID, Stream: pr.Row, Changes: []Change{change(Fleet, moveEntry(c, c.Row, into, cardSet))},
@@ -1147,6 +1165,13 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 				// a card is a tree of steps)
 				n.What = r.Report
 			}
+			u.Notes = append(u.Notes, n)
+		} else if identical {
+			// the second identical failure (rule 2): the bound's judgment at once, in the words
+			// the tick holds it by (AtIdenticalFailure), never a third try on the same tier
+			n := Note{Kind: Judgment, Type: NBound, Stream: pr.Row, Primaries: []string{pr.ID}, Count: 1, At: s.Now, Who: who, Marked: true,
+				Card: c.ID, Attempt: attempt, What: identicalWorkWhat(c.ID, attempt, set[FieldFailure], pr.ID),
+				Decisions: append([]string(nil), TickDecisions[NBound]...)}
 			u.Notes = append(u.Notes, n)
 		} else {
 			n := judgment(NWorkFailed, pr.Row, s.Now, pr.Int("failed"), pr.ID)
@@ -1295,6 +1320,14 @@ type FleetReq struct {
 	// HeldBy, with hold, marks the hold as made by that mechanism (the sync's,
 	// fleet_sync.go) and not the coordinator's: the control card's held_by.
 	HeldBy string `json:",omitempty"`
+	// Machines, with Op sync, is every machine row of the inventory, a member
+	// or not (width 0): a fleet row it does not name has no machine row and
+	// leaves the fleet once no card stays on it (fleet_sync.go).
+	Machines []string `json:",omitempty"`
+	// Remove, with hold, takes the member's control card off the fleet when no
+	// card stays on it after the hold's redeal (memberKeeps): the sync's
+	// removal of a member with no machine row.
+	Remove bool `json:",omitempty"`
 }
 
 // Fleet brings a member up (and levels the ready queues), takes one down
@@ -1499,6 +1532,7 @@ func downPlan(s *Snapshot, r FleetReq, up []string, rr *round, moves roundMoves,
 	}
 	cards := append(append([]*Card{}, s.Fleet.Cell(r.Member, Ready)...), s.Fleet.Cell(r.Member, Working)...)
 	SortCards(cards)
+	withdrew := 0
 	for _, c := range cards {
 		taken := c.Col == Working
 		if len(up) > 0 && !(taken && c.Int("redeals") >= MaxRedeals) {
@@ -1519,6 +1553,7 @@ func downPlan(s *Snapshot, r FleetReq, up []string, rr *round, moves roundMoves,
 				continue
 			}
 		}
+		withdrew++
 		set := nextGen(c, "", s.Now)
 		set["withdrawn"] = stamp(s.Now)
 		if taken {
@@ -1534,6 +1569,13 @@ func downPlan(s *Snapshot, r FleetReq, up []string, rr *round, moves roundMoves,
 			u.Notes = append(u.Notes, w)
 		}
 		p.Units = append(p.Units, u)
+	}
+	if r.Remove && withdrew == 0 && memberKeeps(s, r.Member) == 0 {
+		// no card stays on it: its control card leaves the fleet, held by the
+		// sync so a return to the inventory releases it (fleet_sync.go)
+		head = []Change{change(Fleet, removeEntry(ctl, map[string]string{"status": Down, "since": stamp(s.Now), "held": stamp(s.Now), FieldHeldBy: r.HeldBy}))}
+		n = statusNote(s, r, NMemberDown, "removed")
+		line = r.Member + " removed: " + r.Why + ", and no card stays on it; its row and its width leave the fleet"
 	}
 	// where the member's cards went, and which stayed (nova-tools#5096 item 21)
 	to, stayed := map[string]int{}, []string{}

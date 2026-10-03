@@ -54,7 +54,7 @@ var Moves = []Move{
 	{Ready, Working, "deal", Mechanical, "a work card is cut and dealt"},
 	{Working, Review, "finish", Mechanical, "its work card finished, ok or failed"},
 	{Working, Ready, "fleet down", Mechanical, "its work card was withdrawn because no fleet member is up"},
-	{Review, Merging, "accept", Coordinator, "two different readers said ok at this head"},
+	{Review, Merging, "accept", Coordinator, "the readers it needs said ok at this head (one for a flash card, two different for a pro card)"},
 	{Review, Working, "rework", Coordinator, "rework with a fix: the next attempt is delegated at once to an up member"},
 	{Review, Ready, "rework", Coordinator, "rework with a fix when no fleet member is up: start delegates it later"},
 	{Merging, Review, "return", Coordinator, "the stream's CI went red and the coordinator sent it back, or return"},

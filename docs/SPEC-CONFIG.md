@@ -137,7 +137,7 @@ nothing invented.
 | `seat` | text | yes | nova-secrets: the seat on that machine (studio, swarm-hulk, ...) | `machine:<m>` |
 | `slots` | int | yes | apply: the machine ceiling the friends' desired slots must fit under (`ns_capacity_machine`, `ns_capacity_desired`); not the sprint's width | `machine:<m>:ceiling` (`ns_capacity_machine`) and `machine:<m>` |
 | `runners` | int | (0) | the CI play: how many runners it hosts; 0 hosts none | `machine:<m>` |
-| `width` | int | (0) | `nova-sprint fleet sync`: the most work cards the sprint's member on it runs at once; 0 is no member | `machine:<m>` |
+| `width` | int | (unset) | `nova-sprint fleet sync`: the most work cards the sprint's member on it runs at once; unset is the default, half the machine's cores as its beat reports them; 0 is no member | `machine:<m>` |
 | `tla` | bool | (false) | the inventory's `tla` group and `nova_tla`, so the tools play's tla play holds the pinned TLC jar there; `tlacheck run --bench any` picks among these (tla/README.md, "The record machines") | `machine:<m>` |
 | `note` | text | (empty) | a reader: why the machine is as it is, a hold, a rest, the load that was measured (see "The note") | `machine:<m>` |
 
@@ -157,8 +157,17 @@ width, set directly (`nova-config machine set <m> --width <n>`; the owner,
 2026-10-01: "we should just be able to set width specifically in nova-config
 and it just works"). Nothing else takes part: not the machine's `slots`, not
 any friend row, not any beat, and no Redis is read. A machine with a width of
-1 or more is a member of the sprint's fleet; a machine with width 0 (the
-default) is not. It is a static share, the same on every read of the same row:
+1 or more is a member of the sprint's fleet; a machine with width 0 is not.
+The width is optional: a row with none (unset on add, or cleared with
+`nova-config machine set <m> --width default`; -1 is refused) has the default
+width, half the machine's logical cores as its `nova-sprint fleet beat`
+reports them, which `nova-sprint fleet sync` resolves and writes to the fleet
+table as a number (the owner, 2026-10-02: "width=-1 in config means default and
+default is CPUs/2"; the shape: unset means default, never a literal in the
+config); until a beat reports the cores, the machine is not a member and the
+sync says so. `machine width` prints `width=default` for it (`--json`:
+`"default":true`). Migration 0019 makes the column nullable; every width a row
+held stays. It is a static share, the same on every read of the same row:
 the CI legs running on the machine and every other child are taken off at the
 take, by a lease from the machine's one slot store, never in the width.
 `nova-config machine width <name>` prints it (`Widths`,
@@ -252,7 +261,7 @@ The log path is derived from the name, `~/nova-bench/loops/<name>.log`
 the machine's loops (`loops=<a,b>`, `-` for none).
 
 **`route`** (`config.routes`): one way to run a model tier, the provider
-and model a card of that tier runs on, its token budget and deadline. A
+and model a card of that tier runs on, its token and dollar budgets and deadline. A
 tier has several routes so the deal spreads its cards across providers and
 models, in the order of the tier's array (the `tier` kind below); a card's
 `model:` header pins it instead. Frontier cards are never dealt from
@@ -265,6 +274,7 @@ row: the code names no provider or model.
 | `provider` | text | yes | the deal: the provider word of the model id `<provider>/<model>` the harness is launched with; one word, no slash | `route:<r>` |
 | `model` | text | yes | the deal: the model name after the provider; it may hold slashes (`x-ai/grok-4`) | `route:<r>` |
 | `tokens` | int | (0) | the deal: the token budget per card; 0 is unmetered and the deadline is the only stop | `route:<r>` |
+| `usd` | decimal | (empty) | the deal: the dollar budget per card, the harness's reported cost at which native stops the card (`stopped=usd`), beside the token budget; above 0 when set (a 0 is refused at `add` and `set`), empty is no cap | `route:<r>` |
 | `deadline` | int | yes | the deal: the seconds a card on this route may run, above 0 | `route:<r>` |
 | `enabled` | bool | (true) | the deal: false takes it out of the deal, and needs a `note` | `route:<r>` |
 | `price_input` | decimal | (empty) | a card's cost: USD per million uncached input tokens | `route:<r>` |
@@ -291,7 +301,7 @@ no exponent, kept as text in its one spelling (`internal/cardcost`,
 The kind's `Check`: `provider` is one word with no slash or blank, `model`
 is not empty and has no blank, and `deadline` is above 0; `long_context`
 above 0 comes with both long prices, and a long price with a threshold;
-`price_as_of` is a date; a route that is disabled has a note. A route names no row of another kind.
+`price_as_of` is a date; `usd`, when set, is above 0; a route that is disabled has a note. A route names no row of another kind.
 
 ### The note
 
@@ -381,7 +391,8 @@ config.machines          (name PK, "user", seat, slots, runners,
                           filled with slots less the friends' slots on the
                           coordinator machine, slots elsewhere; note added
                           by 0015, text NOT NULL DEFAULT ''; tla added by
-                          0016, false)
+                          0016, false; width nullable by 0019, NULL the
+                          default)
 config.fleet             (name PK = 'fleet', store -> machines.name,
                           coordinator -> machines.name, redis_port, pg_dsn,
                           created_at, updated_at;

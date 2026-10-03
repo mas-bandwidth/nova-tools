@@ -40,7 +40,10 @@ func (ta *testApp) quackCards(line string) ([]string, map[string]string) {
 // quack cuts n cards per stream into a running store: ids that carry the run's
 // stamp and so never repeat across passes, the tiers taken in turn down each
 // stream, and a brief that names the card's own file, the repository and the
-// base, and passes the card lint of the repository's own rules file.
+// base, and passes the card lint of the repository's own rules file. A quack
+// card on a repository the members hold no rules file for carries the rules itself
+// and names none; one on this repository is by reference: the stored brief does not
+// carry the rules, and the card names the file (nova-tools#5174 rule 6).
 func TestQuackCutsStampedCardsThatAlternateTiersAndPassTheLint(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
@@ -64,8 +67,14 @@ func TestQuackCutsStampedCardsThatAlternateTiersAndPassTheLint(t *testing.T) {
 				assert.Contains(t, brief, want, id)
 			}
 			assert.Empty(t, swarm.LintCardChildWith([]byte(brief), rs), "%s passes the repository's card lint", id)
+			assert.Empty(t, ta.cardRulesOf(id), "%s: a repository with no held rules file: the card carries its own", id)
 		}
 	}
+	home, homeBriefs := ta.quackCards("quack --streams h --count 1 --repo https://example.com/mas-bandwidth/nova-tools.git")
+	require.Len(t, home, 1)
+	assert.NotContains(t, homeBriefs[home[0]], "RULES.", "a card on this repository does not carry the rules the member injects")
+	assert.Empty(t, swarm.LintCardChildByReference([]byte(homeBriefs[home[0]]), rs))
+	assert.Equal(t, swarm.DefaultRulesName, ta.cardRulesOf(home[0]))
 	second, _ := ta.quackCards("quack --streams a --count 2 --tiers pro --base main --repo " + repo)
 	require.Len(t, second, 2)
 	for _, id := range second {

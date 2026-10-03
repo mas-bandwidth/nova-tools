@@ -67,7 +67,7 @@ const (
 	NSeat      = "seat"
 	NSeatTaken = "seat TAKEN"
 
-	NReadyToAccept   = "ready to accept"    // two different readers said ok at its head
+	NReadyToAccept   = "ready to accept"    // the readers it needs said ok at its head (ReadsNeeded)
 	NReturned        = "returned to review" // sent back from merging: the coordinator decides again
 	NWorkFailed      = "work came back failed"
 	NReadBroken      = "a reader found it broken"

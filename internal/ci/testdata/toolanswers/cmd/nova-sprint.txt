@@ -1,3 +1,3 @@
 # tool-answers: the mistakes this tool does not yet answer with the way forward; each row's count only falls
 # ceiling: 1
-cmd/nova-sprint:dry-run 56 verbs whose -h states no effect, or that write with no --dry-run (tool ledger X12; 52 before PR 5100 added friend sync, beat, down and up with no effect line, landed with the functional tier unrun)
+cmd/nova-sprint:dry-run 58 verbs whose -h states no effect, or that write with no --dry-run (tool ledger X12; 52 before PR 5100 added friend sync, beat, down and up with no effect line, landed with the functional tier unrun; 56 before PR 5137 added set and stream set, the same way)

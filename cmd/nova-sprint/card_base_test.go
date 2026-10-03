@@ -16,7 +16,7 @@ func TestCardShowsTheHeadTheNextAttemptStartsFrom(t *testing.T) {
 	const sha = "0123456789abcdef0123456789abcdef01234567"
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
-	ta.ok("add --stream s1 --count 1 --brief-file " + writeBrief(t, "handle the empty case"))
+	ta.ok("add --stream s1 --count 1 --brief-file " + writeBrief(t, "handle the empty case, tier: pro")) // pro: two readers
 	ta.deal(1)
 	ta.ok("take --as m1 s1-1.w1@1")
 	ta.ok("finish --as m1 s1-1.w1@1 --head " + sha + " --report 'pushed'")

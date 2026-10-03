@@ -100,9 +100,9 @@ func TestCRDeadlinesThatNeverFire(t *testing.T) {
 	h.setup(2)
 	h.startMachine()
 	h.machine() // dealt: s1-1 to m1, s1-2 to m2
-	h.tick(3 * time.Hour)
+	h.tick(sprint.DealtMaxDefault + time.Hour)
 	h.crTicks(2, "untaken")
-	assert.NotEqual(t, 0, h.written(sprint.NWorkLate), "MISSING: a work card dealt 3h ago and never taken raised nothing")
+	assert.NotEqual(t, 0, h.written(sprint.NWorkLate), "MISSING: a work card dealt 7h ago and never taken raised nothing")
 	// readers: finish both, the tick asks, nobody begins
 	h.work("m1")
 	h.work("m2")
@@ -285,7 +285,7 @@ func TestCROneReaderThenTwo(t *testing.T) {
 	require.NoError(t, h.st.Init(h.ctx))
 	h.beat()
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
-	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 3}))
+	h.must(AddStep(sprint.AddReq{Brief: proBrief, Stream: "s1", Count: 3}))
 	h.startMachine()
 	h.machine()
 	h.work("m1")

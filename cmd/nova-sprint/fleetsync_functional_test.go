@@ -22,7 +22,7 @@ import (
 // rows' width fields, read by config.Widths) becomes the fleet table at each
 // machine's width, whatever friend rows and friends' beats the store holds; a
 // change of the inventory is followed (a width, a machine with width 0, a
-// machine gone); a sync after a sync writes nothing; and the tick's deal
+// machine gone and back); a sync after a sync writes nothing; and the tick's deal
 // never takes a machine past DealAhead times the width the sync set.
 func TestFleetSyncFollowsTheInventoryOnTheStore(t *testing.T) {
 	t.Parallel()
@@ -87,7 +87,7 @@ func TestFleetSyncFollowsTheInventoryOnTheStore(t *testing.T) {
 	require.Contains(t, run(0, "fleet", "sync"), "nothing to do", "the second sync")
 	run(0, "fleet", "sync", "--check")
 
-	// the inventory changes: m1 is wider, m3 has width 0, m2 is gone
+	// the inventory changes: m1 is wider, m3 has width 0, m2 is gone: m3 is held and m2 removed
 	machine("m1", 6)
 	machine("m3", 0)
 	// m2 is the fleet's coordinator machine and cannot be removed while it is: move that
@@ -97,13 +97,23 @@ func TestFleetSyncFollowsTheInventoryOnTheStore(t *testing.T) {
 	require.NoError(t, err)
 	run(2, "fleet", "sync", "--check")
 	out = run(0, "fleet", "sync")
-	require.Contains(t, out, "m3 held down", "the holds")
-	require.Contains(t, out, "m2 held down", "the holds")
+	require.Contains(t, out, "m3 held down", "the hold")
+	require.Contains(t, out, "m2 removed", "the removal: no machine row and no card on it")
 	got = rows()
 	require.Equal(t, "6", got["m1"]["width"], "after the inventory changed: %v", got)
-	require.Equal(t, "held", got["m2"]["status"], "after the inventory changed: %v", got)
+	require.Nil(t, got["m2"], "m2's row is deleted: %v", got)
 	require.Equal(t, "held", got["m3"]["status"], "after the inventory changed: %v", got)
 	require.Contains(t, run(0, "fleet", "sync"), "nothing to do", "the sync after it")
+
+	// m2's machine row comes back: its control card is placed again by the table
+	// layer's cell add, and the sync releases it at its width
+	machine("m2", 3)
+	out = run(0, "fleet", "sync")
+	require.Contains(t, out, "NOTE m2 rejoins the fleet", "the rejoin")
+	require.Contains(t, out, "MOVED m2 released, down until it beats", "the rejoin")
+	got = rows()
+	require.Equal(t, "3", got["m2"]["width"], "after m2 rejoined: %v", got)
+	require.Contains(t, run(0, "fleet", "sync"), "nothing to do", "the sync after the rejoin")
 
 	// the deal fills the synced member to its dealt-ahead room and no further
 	run(0, "add", "--stream", "s1", "--count", "20")

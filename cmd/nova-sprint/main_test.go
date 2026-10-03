@@ -232,7 +232,7 @@ func TestJudgmentsReachTheInboxAndTheCoordinatorAnswers(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
-	ta.ok("add --stream s1 --count 3")
+	ta.ok("add --stream s1 --count 3 --brief-file " + proBriefFile(t))
 	ta.ok("start")
 	ta.ok("tick")
 	ta.ok("take --as m1 --limit 3")

@@ -107,7 +107,7 @@ func TestApplyLeavesTheKeysCapacityFriendWould(t *testing.T) {
 			if !assert.NotEqual(t, "", got["at"], assertionMsg81...) {
 				return
 			}
-			if !assert.Equal(t, "0", got["width"], assertionMsg81...) {
+			if !assert.Equal(t, "", got["width"], assertionMsg81...) { // no width: the default
 				return
 			}
 			if !assert.Equal(t, "false", got["tla"], assertionMsg81...) {
