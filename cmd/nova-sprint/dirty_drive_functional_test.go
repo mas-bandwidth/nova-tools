@@ -367,7 +367,9 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 	// let the loop's last tick say the sprint is done, then stop it
 	select {
 	case <-loopDone:
-	case <-time.After(30 * time.Second):
+	case <-ctx.Done():
+		cancel()
+		t.Fatalf("the sprint did not land in 12 minutes")
 	}
 	cancel()
 	<-loopDone
