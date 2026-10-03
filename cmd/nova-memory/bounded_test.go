@@ -153,5 +153,5 @@ func TestEvalListsMissesOnlyAndCapsThem(t *testing.T) {
 		assert.Equalf(t, bounded.Default+1, got, "stdout is %d lines, want %d misses + one MORE line:\n%s", got, bounded.Default, firstLines(stdout, 3))
 	}
 	assert.Containsf(t, stdout, "EVAL MORE kind=miss shown=20 total=500", "no MORE line naming the total:\n%s", firstLines(stdout, 25))
-	assert.Containsf(t, stderr, "misses=500 shown=20", "the failure summary line does not carry the miss count: %q", stderr)
+	assert.Containsf(t, stderr, "misses=500 shown=20", "the FAIL line does not carry the miss count: %q", stderr)
 }
