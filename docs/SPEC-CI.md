@@ -1380,6 +1380,27 @@ person looking for the one place to change.
 `###` inside one tool's section is that section's business, and a tool's own
 test is what holds a second subsection to what the tool prints.
 
+### `platforms` — every `## nova-*` section of docs/TESTS.md is read for its Platform line
+
+**The rule.** The reader behind the Platform-line check,
+`PlatformLinesFromTESTSmd` (`internal/ci/issue2218.go`), reads every
+`## nova-*` section of `docs/TESTS.md`, adjacent sections included, and a
+Platform line that names no GOOS is an error naming its line.
+**The mistake it prevents.** The old section walker cut the NEXT heading off
+as the separator, so of two adjacent tool sections the second was never read:
+its Platform line, wrong or right, was never compared with the CI legs, and
+`docs/TESTS.md`'s darwin went unseen.
+**The test.** `TestEveryToolSectionIsRead`
+(`internal/ci/ci_documentation_contracts_test.go`), over three adjacent
+sections whose middle one carries a bad Platform line: the error names its
+line 7 and the platforms of the first and third are both returned. The check it
+guards is `TestPlatformsMatchCILegsAndUnexecutedExamplesOnlyShrink`.
+**Its allowlist.** None.
+**Its remedy line.** The error names the line of the Platform line that names
+no recognised GOOS; write the GOOS as a whole word.
+**Its narrowings.** Only `## nova-*` sections and only `Platform:` lines; a
+platform named in prose elsewhere in a section is not read.
+
 ### `transcripts` — every documented transcript is EXECUTED, line for line
 
 **The rule.** For every `## <tool>` section of `docs/TESTS.md`, a test in
