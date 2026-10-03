@@ -621,7 +621,7 @@ func (l *lander) placeWhy(stream string, cards []landCard) (string, []string) {
 		if !shaRE.MatchString(c.head) {
 			// before any git nothing was recorded and no stream stopped: the one next
 			// command is the return; its judgment offers the rework
-			also = append(also, "the head "+dashed(c.head)+" of "+c.id+" is not a commit id (a finish without --head records the card's id); run: nova-sprint return "+c.id+" --reason 'its head is not a commit'")
+			also = append(also, "the head "+dashed(c.head)+" of "+c.id+" is not a commit id (a finish without --head of a card that names no repository records the card's id); run: nova-sprint return "+c.id+" --reason 'its head is not a commit'")
 		}
 	}
 	if l.twin {
@@ -655,7 +655,7 @@ func (l *lander) dryBatch(b landBatch, cards []landCard) (landed, ok bool) {
 }
 
 // headNotCommit is why a card's head cannot be merged whatever origin holds:
-// it is not a commit id (a finish without --head records the card's id); ""
+// it is not a commit id (a finish without --head of a card that names no repository records the card's id); ""
 // when it is one. land meets it at the card's merge (mergeHead) and its dry
 // run before any git (dryBatch), in these words.
 //
@@ -666,7 +666,7 @@ func headNotCommit(stream string, c landCard) string {
 	if shaRE.MatchString(c.head) {
 		return ""
 	}
-	return "the head " + dashed(c.head) + " of " + c.id + " is not a commit id (a finish without --head records the card's id); run: nova-sprint return " + c.id +
+	return "the head " + dashed(c.head) + " of " + c.id + " is not a commit id (a finish without --head of a card that names no repository records the card's id); run: nova-sprint return " + c.id +
 		" --reason 'its head is not a commit', then nova-sprint rework " + c.id + " --fix 'finish with --head <commit>', then (a land that met it stopped the stream) nova-sprint resume --stream " +
 		stream + " --did 'returned " + c.id + " for rework'"
 }

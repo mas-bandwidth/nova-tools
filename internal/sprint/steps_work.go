@@ -1103,6 +1103,12 @@ type FinishReq struct {
 	Gens   map[string]int // the generation held, per named card
 	Failed bool
 	Head   string
+	// Heads is the head of each named card the verb found for it when the finish names
+	// none (finish's default: origin's tip of the work's branch); Head, when given, is
+	// every card's. A card in neither records its id, a run with no git. Found, not
+	// given, it is not of the step's arguments (store.ArgsOf): a retry of the same words
+	// replays the finish whatever origin holds by then.
+	Heads  map[string]string `json:"-"`
 	Report string
 	// Branch and Base are the branch the work is on and the one it started
 	// from, as the worker reports them.
@@ -1209,6 +1215,9 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 			continue
 		}
 		head := r.Head
+		if head == "" {
+			head = r.Heads[c.ID]
+		}
 		if head == "" {
 			head = c.ID
 		}

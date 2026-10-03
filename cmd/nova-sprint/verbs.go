@@ -1844,7 +1844,7 @@ func (a *app) cmdFinish(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("finish")
 	as := fs.String("as", "", "the fleet member finishing its cards; several, comma separated, each finishing its own named cards in one step")
 	failed := fs.Bool("failed", false, "the work failed (default: ok)")
-	head := fs.String("head", "", "the commit the work finished at, the head land merges (default: the card's id, for a run with no git: land refuses a head that is not a commit id)")
+	head := fs.String("head", "", finishHeadWords)
 	report := fs.String("report", "", "the worker's report")
 	branch := fs.String("branch", "", "the branch the work is on (its packet names the one to use)")
 	baseBranch := fs.String("base", "", "the branch the work started from")
@@ -1878,6 +1878,13 @@ func (a *app) cmdFinish(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, "finish", err.Error())
 	}
+	// an ok finish naming no head records what land merges: origin's tip (finishhead.go)
+	var heads map[string]string
+	if *head == "" && !*failed {
+		if heads, err = a.finishHeads(context.Background(), st, sprint.Split(*as), ids, *branch); err != nil {
+			return refuse(stderr, "finish", err.Error())
+		}
+	}
 	if decided != "" && a.decide != nil {
 		// the decide lane records it (decidelane.go) when the finish moved its card: a finish
 		// refused (one naming another take's decision among them) records nothing
@@ -1889,7 +1896,7 @@ func (a *app) cmdFinish(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	return a.runStep("finish", *c, st, store.FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: ids}, As: *as, Gens: gens, Failed: *failed,
-		Head: *head, Report: *report, Branch: *branch, Base: *baseBranch, Usage: *usage, Decided: decided, Who: *as}), stdout, stderr)
+		Head: *head, Heads: heads, Report: *report, Branch: *branch, Base: *baseBranch, Usage: *usage, Decided: decided, Who: *as}), stdout, stderr)
 }
 
 func (a *app) cmdAsk(args []string, stdout, stderr io.Writer) int {
