@@ -390,3 +390,32 @@ func TestFleetPlaysRuleReadsTheShapes(t *testing.T) {
 		})
 	}
 }
+
+// TestFleetPlaysDarwinPlistTemplatePathAndRetireUnits verifies that group_vars/all.yml
+// includes /usr/sbin in nova_loop_path and disk-guard-studio in nova_retire_units (#5198).
+func TestFleetPlaysDarwinPlistTemplatePathAndRetireUnits(t *testing.T) {
+	t.Parallel()
+	root := repoRoot(t)
+	b, err := os.ReadFile(filepath.Join(root, "fleet", "group_vars", "all.yml"))
+	require.NoError(t, err)
+	var vars map[string]any
+	require.NoError(t, yaml.Unmarshal(b, &vars))
+
+	loopPath, ok := vars["nova_loop_path"].(string)
+	require.True(t, ok, "nova_loop_path is a string")
+	assert.Contains(t, loopPath, "/usr/sbin", "the loop template's PATH includes /usr/sbin")
+	assert.Contains(t, loopPath, "/sbin")
+
+	retireUnits, ok := vars["nova_retire_units"].([]any)
+	require.True(t, ok, "nova_retire_units is a list")
+	var names []string
+	for _, u := range retireUnits {
+		names = append(names, fmt.Sprint(u))
+	}
+	assert.Contains(t, names, "disk-guard-studio", "disk-guard-studio is in nova_retire_units")
+
+	tmpl, err := os.ReadFile(filepath.Join(root, "fleet", "templates", "nova-loop.plist.j2"))
+	require.NoError(t, err)
+	assert.Contains(t, string(tmpl), "{{ nova_loop_path | e }}", "darwin plist template renders nova_loop_path")
+}
+
