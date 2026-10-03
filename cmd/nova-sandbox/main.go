@@ -50,13 +50,14 @@ first run: follow example: to check the backend, make a directory, probe it, and
 usage:
   nova-sandbox --read <dir>... [--read-noexec <dir>...] --write <dir>... [--net-deny]
                [--net-listen] [--net-allow <host:port>] [--cwd <dir>]
-               [--tmp <dir>] [--name <container>] [--acl tool|caller] -- <command> <args...>
+               [--tmp <dir>] [--gpu <none|metal>] [--name <container>]
+               [--acl tool|caller] -- <command> <args...>
   nova-sandbox probe --write <dir>... [--read <dir>...] [--secret <path>] [--net-deny]
   nova-sandbox policy --read <dir>... --write <dir>... [--net-deny] [--net-listen]
                [-- <command> <args...>]
   nova-sandbox check
   nova-sandbox run --name <n> --size <8g> [--timeout <30m>] [--go] [--read <dir>]...
-               [--container <disk>] -- <command> <args...>          (darwin)
+               [--container <disk>] [--out <dir>] -- <command> <args...> (darwin)
   nova-sandbox run --help
   nova-sandbox reap [--dry-run]                                   (darwin)
   nova-sandbox worktree --repo <dir> --scratch <dir> --pr <id> [--base <branch>]
@@ -74,7 +75,8 @@ usage:
                   Name shared inputs here once for all workers.
   --read-noexec <dir>
                   readable without execution or writing, recursively. Repeatable.
-                  Use for caches and data trees. A path in both read lists is refused.
+                  Use for caches and data trees: --read lets the job run programs
+                  placed in them. A path in both read lists is refused.
   --write <dir>   readable and writable, recursively. Repeatable; at least one is required.
                   The first --write supplies the default working and temp directories.
   --cwd <dir>     the working directory, inside a --write. Default: the first --write.

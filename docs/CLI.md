@@ -1085,8 +1085,9 @@ writing. The backend also grants system roots and device access. Use
 `policy` to inspect the generated policy. No `quickstart` creates a job for
 you: its input directories and command are yours to choose.
 
-Use `--read-noexec` for caches and data trees, and `--read` for programs the job
-runs. A path in both read lists is refused. The `SANDBOX OK` and `POLICY OK`
+Use `--read-noexec` for caches and data trees: `--read` lets the job run
+programs placed in them. Keep `--read` for programs the job runs. A path in
+both read lists is refused. The `SANDBOX OK` and `POLICY OK`
 lines count them separately as `read=<n> read-noexec=<n>`.
 
 Caller paths must exist and be absolute. The first `--write` supplies the
@@ -1157,8 +1158,8 @@ nothing to commit (create/copy files and use "git add" to track)
 
 `SANDBOX OK` says the wall is up and the command is starting; `SANDBOX DONE` is
 the last line, after the command has ended, and its `exit=` is the command's own
-status, which is the status the tool exits with. A refusal prints `SANDBOX
-REFUSED` and no `DONE`. stdout is the command's alone.
+status, which is the status the tool exits with. A refusal prints
+`SANDBOX REFUSED` and no `DONE`. stdout is the command's alone.
 
 What a first run gets wrong, and what each one wants:
 
