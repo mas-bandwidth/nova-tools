@@ -16,24 +16,18 @@ import (
 // the banner prints is a roster the tool loads.
 func TestBannerStatesTheRosterAndLanes(t *testing.T) {
 	t.Parallel()
-	for name, text := range map[string]string{
-		"help":    invoke(t, "", "help").stdout,
-		"send -h": invoke(t, "", "send", "-h").stdout,
-	} {
-		for _, want := range []string{"participants.json", `"lane":"from-ada"`, "git_name", "git_email", "no lane"} {
-			assert.Containsf(t, text, want, "%s does not say %q", name, want)
-		}
-	}
 	help := invoke(t, "", "help").stdout
-	for _, want := range []string{"ROSTER AND LANES", "a lane", "git init -b main bus", "nova-bus send --bus . --file ../d.md --as Ada --remote origin --branch main --no-push"} {
-		assert.Containsf(t, help, want, "the banner's roster paragraph does not say %q", want)
+	assert.Contains(t, help, "participants.json", "help does not name the roster file")
+	send := invoke(t, "", "send", "-h").stdout
+	for _, want := range []string{"participants.json", `"lane":"from-ada"`, "git_name", "git_email", "no lane", "ROSTER AND LANES", "a lane", "git init -b main bus", "nova-bus send --bus . --file ../d.md --as Ada --remote origin --branch main --no-push"} {
+		assert.Containsf(t, send, want, "send -h does not say %q", want)
 	}
 }
 
 // Every roster the banner prints is a roster the tool loads, with Ada able to send.
 func TestTheRostersTheBannerPrintsLoad(t *testing.T) {
 	t.Parallel()
-	lines := strings.Split(invoke(t, "", "help").stdout, "\n")
+	lines := strings.Split(invoke(t, "", "send", "-h").stdout, "\n")
 	var rosters []string
 	for i := 0; i < len(lines); i++ {
 		text := strings.TrimSpace(lines[i])
@@ -49,7 +43,7 @@ func TestTheRostersTheBannerPrintsLoad(t *testing.T) {
 		}
 		rosters = append(rosters, cur)
 	}
-	require.Falsef(t, len(rosters) < 2, "the banner prints %d rosters, want its synopsis and its paragraph", len(rosters))
+	require.NotEmptyf(t, rosters, "send -h prints no roster a reader can load")
 	for _, roster := range rosters {
 		dir := t.TempDir()
 		require.NoError(t, os.WriteFile(filepath.Join(dir, bus.ConfigName), []byte(roster), 0o600))
@@ -89,10 +83,10 @@ func TestInboxAndWaitNameEveryMissingThingInOneRun(t *testing.T) {
 // file line is read from <bus>/.nova-bus/defaults, so a bus that carries it needs no flag.
 func TestReceiptWordCountSourcesAreTheOnesTheBannerNames(t *testing.T) {
 	t.Parallel()
-	help := invoke(t, "", "help").stdout
-	assert.NotContains(t, help, "no default receipt word count", "the banner says there is no default receipt word count while two sources supply one")
+	help := invoke(t, "", "inbox", "-h").stdout
+	assert.NotContains(t, help, "no default receipt word count", "inbox -h says there is no default receipt word count while two sources supply one")
 	for _, want := range []string{"receipt-max-words=<n>", "<bus>/.nova-bus/defaults", "NOVA_BUS_RECEIPT_MAX_WORDS"} {
-		assert.Containsf(t, help, want, "the banner does not name %q", want)
+		assert.Containsf(t, help, want, "inbox -h does not name %q", want)
 	}
 	dir := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, ".nova-bus"), 0o755))

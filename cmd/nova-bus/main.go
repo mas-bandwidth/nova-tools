@@ -331,61 +331,8 @@ it a repository of its own. Every line above is run against it by the tests, and
 docs/TESTS.md carries the whole first sitting: read, receipt, advance, send.
 `
 
-// busVerbs is the dispatch list, in the order run switches on them, help aside.
-// docs/STANDARD.md section 2: a bare command and an unknown verb name the verbs.
-const busVerbs = "draft, prepare, send, reply, inbox, receipt, close, wait, check, names, version"
-
-// refuseDispatch is the bare command and the unknown verb (docs/STANDARD.md section 2):
-// BUS REFUSED: <reason>; the verbs are ...; run: nova-bus help, on stderr, exit 2.
-func refuseDispatch(stderr io.Writer, reason string) int {
-	fmt.Fprintf(stderr, "BUS REFUSED: %s; the verbs are %s; run: nova-bus help\n", oneline.Escape(reason), busVerbs)
-	return 2
-}
-
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, time.Now().UTC()))
-}
-
-// run is the whole tool, with its streams and clock injected so the tests can drive it.
-func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time) (code int) {
-	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
-	// before anything is read, dialed or written: help is never a refusal.
-	defer verbflag.Recover(stdout, "nova-bus", usage, &code)
-	if len(args) == 0 {
-		return refuseDispatch(stderr, "no verb given")
-	}
-	cmd, rest := args[0], args[1:]
-	switch cmd {
-	case "help", "-h", "--help":
-		if cmd == "help" && len(rest) > 0 && rest[0] != "help" && !verbflag.IsHelp(rest[0]) {
-			return run(append(rest, "--help"), stdin, stdout, stderr, now)
-		}
-		fmt.Fprintf(stdout, "%s", usage)
-		return 0
-	case "draft":
-		return cmdDraft(rest, stdout, stderr, now)
-	case "prepare":
-		return cmdPrepare(rest, stdin, stdout, stderr, now)
-	case "send":
-		return cmdSend(rest, stdin, stdout, stderr, now)
-	case "reply":
-		return cmdReply(rest, stdout, stderr, now)
-	case "inbox":
-		return cmdInbox(rest, stdout, stderr, now)
-	case "receipt":
-		return cmdReceipt(rest, stdout, stderr, now)
-	case "close":
-		return cmdClose(rest, stdout, stderr, now)
-	case "wait":
-		return cmdWait(rest, stdout, stderr, now)
-	case "check":
-		return cmdCheck(rest, stdout, stderr, now)
-	case "names":
-		return cmdNames(rest, stdout, stderr)
-	case "version", "--version":
-		return cmdVersion(rest, stdout, stderr)
-	}
-	return refuseDispatch(stderr, fmt.Sprintf("unknown verb %q", cmd))
 }
 
 // ------------------------------------------------------------------------------- flags
