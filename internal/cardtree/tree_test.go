@@ -243,8 +243,20 @@ func TestTheStepWallDeniesTheNetworkAndCarriesNoCredential(t *testing.T) {
 		"REDIS_URL=redis://:pw@10.0.0.1:6379", "MIRROR=https://user:pw@example.com/r.git", "PLAIN_URL=https://example.com/r.git",
 		"GOCACHE=/shared/go-build", "GOFLAGS=-toolexec=/x", "GOPROXY=https://example.com/proxy", "GOMODCACHE=/shared/mod"})
 	assert.Equal(t, []string{"PATH=/bin", "GIT_AUTHOR_NAME=n", "PLAIN_URL=https://example.com/r.git", "GOMODCACHE=/shared/mod",
-		"HOME=/t/home", "GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_CONFIG_NOSYSTEM=1", "GOCACHE=/t/go-build", "GOFLAGS=-mod=readonly", "GOPROXY=off"}, env,
+		"HOME=/t/home", "GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_CONFIG_NOSYSTEM=1", "GOCACHE=/t/go-build", "GOFLAGS=-mod=readonly", "GOPROXY=off", "GOTMPDIR=/t", "TMPDIR=/t"}, env,
 		"no credential by name or in a URL's user:password@, and Go's build cache a private one")
+}
+
+// A temp directory the caller names outside the wall is not the step's: the CI runners set
+// GOTMPDIR to a directory of their own, and go vet in the step's wall failed "go: creating
+// work dir: mkdir <runner>/_cache/go-tmp/...: permission denied" (merge queue run 37094279566).
+// The step's temps are its private one.
+func TestTheStepWallKeepsGoAndTheShellInItsPrivateTemp(t *testing.T) {
+	t.Parallel()
+	w := Wall{Bin: "/w/nova-sandbox", Tmp: "/t"}
+	env := w.Env([]string{"PATH=/bin", "GOTMPDIR=/runner/_cache/go-tmp", "TMPDIR=/runner/tmp"})
+	assert.Equal(t, []string{"PATH=/bin", "HOME=/t/home", "GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_CONFIG_NOSYSTEM=1",
+		"GOCACHE=/t/go-build", "GOFLAGS=-mod=readonly", "GOPROXY=off", "GOTMPDIR=/t", "TMPDIR=/t"}, env)
 }
 
 func TestAFailedStepTwoOfThreeLandsStepOneAndWritesTheRemainder(t *testing.T) {

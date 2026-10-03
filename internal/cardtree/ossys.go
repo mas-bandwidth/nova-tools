@@ -42,20 +42,22 @@ func (w Wall) Argv(dir string, argv []string) []string {
 
 // Env is the environment of a command in the step's wall: the caller's, scrubbed of every
 // credential (ScrubEnv), HOME the private one, git kept off any configuration but the
-// checkout's own, and Go's build cache a private one in the temp (the bench's shared cache is
+// checkout's own, Go's and the shell's temps the private one (a caller's GOTMPDIR or TMPDIR,
+// a CI runner's own directory, is outside the wall's write set), Go's build cache a private
+// one in the temp (the bench's shared cache is
 // neither read nor written by a step, so no card's program can poison it), modules read
 // from the module cache the wall reads and never fetched.
 func (w Wall) Env(env []string) []string {
 	var kept []string
 	for _, kv := range ScrubEnv(env) {
 		switch name, _, _ := strings.Cut(kv, "="); name {
-		case "GOCACHE", "GOFLAGS", "GOPROXY":
+		case "GOCACHE", "GOFLAGS", "GOPROXY", "GOTMPDIR", "TMPDIR":
 		default:
 			kept = append(kept, kv)
 		}
 	}
 	return append(kept, "HOME="+filepath.Join(w.Tmp, "home"), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1",
-		"GOCACHE="+filepath.Join(w.Tmp, "go-build"), "GOFLAGS=-mod=readonly", "GOPROXY=off")
+		"GOCACHE="+filepath.Join(w.Tmp, "go-build"), "GOFLAGS=-mod=readonly", "GOPROXY=off", "GOTMPDIR="+w.Tmp, "TMPDIR="+w.Tmp)
 }
 
 // userinfoRE is a URL carrying a password: `redis://:pw@host`, `https://user:pw@host`.
