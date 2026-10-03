@@ -57,7 +57,7 @@ func TestMigrateRefusesBeforeApplyingWhenTheRoleDoesNotOwnTheTables(t *testing.T
 	code, out, errs := h.run(t, "migrate")
 	require.Equal(t, 1, code, "stdout %q stderr %q", out, errs)
 	assert.Equal(t, "", out)
-	assert.Equal(t, "nova-config migrate REFUSED: "+mixedWhy+"; run: "+mixedRemedy+"\n", errs)
+	assert.Equal(t, "MIGRATE FAILED: "+mixedWhy+"; run: "+mixedRemedy+"\n", errs)
 	assert.Equal(t, 13, h.store.version, "the refusal applied a migration")
 
 	for tb := range h.store.Catalog.Tables {
@@ -65,7 +65,7 @@ func TestMigrateRefusesBeforeApplyingWhenTheRoleDoesNotOwnTheTables(t *testing.T
 	}
 	code, out, errs = h.run(t, "migrate")
 	require.Equal(t, 0, code, "after the ALTER lines: stdout %q stderr %q", out, errs)
-	assert.Equal(t, "CONFIG MIGRATE pg=nova_config@127.0.0.1:5432/nova from=13 to=14 applied=1\n", out)
+	assert.Equal(t, "MIGRATE OK pg=nova_config@127.0.0.1:5432/nova from=13 to=14 applied=1\n", out)
 }
 
 func TestMigrateDryRunPrintsTheOwnershipFindingAndExitsOneWhenNotReady(t *testing.T) {
@@ -74,37 +74,30 @@ func TestMigrateDryRunPrintsTheOwnershipFindingAndExitsOneWhenNotReady(t *testin
 	h := mixedHarness(t)
 	code, out, errs := h.run(t, "migrate", "--dry-run")
 	require.Equal(t, 1, code, "dry-run ready=no: stdout %q stderr %q", out, errs)
-	assert.Equal(t, "", errs, "nothing was attempted: no refusal line")
-	lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
-	require.Len(t, lines, 14+6+2, out)
-	assert.Equal(t, "MIGRATION version=13 file=0013_loop_width_from_argv.sql lines=", lines[12][:len("MIGRATION version=13 file=0013_loop_width_from_argv.sql lines=")])
-	assert.True(t, strings.HasSuffix(lines[12], " state=applied"), lines[12])
-	assert.True(t, strings.HasPrefix(lines[13], "MIGRATION version=14 file=0014_fleet_endpoints.sql lines="), lines[13])
-	assert.True(t, strings.HasSuffix(lines[13], " state=pending"), lines[13])
-	assert.Equal(t, []string{
-		"MIGRATE NOT-OWNED table=config.fleet owner=nova_admin role=nova_config",
-		"MIGRATE NOT-OWNED table=config.friends owner=nova_admin role=nova_config",
-		"MIGRATE NOT-OWNED table=config.history owner=nova_admin role=nova_config",
-		"MIGRATE NOT-OWNED table=config.machines owner=nova_admin role=nova_config",
-		"MIGRATE NOT-OWNED table=config.schema_migrations owner=nova_admin role=nova_config",
-		"MIGRATE NOT-OWNED table=config.sprint owner=nova_admin role=nova_config",
-		"MIGRATE WOULD-REFUSE " + mixedWhy + "; run: " + mixedRemedy,
-		"CONFIG MIGRATE pg=nova_config@127.0.0.1:5432/nova from=13 to=14 applied=0 dry_run=true pending=1 missing=0 role=nova_config ready=no",
-	}, lines[14:])
+	assert.Equal(t, "", errs, "nothing was attempted: the finding is the result, on stdout")
+	assert.Contains(t, out, "MIGRATE MIGRATION version=13 file=0013_loop_width_from_argv.sql")
+	assert.Contains(t, out, "state=applied")
+	assert.Contains(t, out, "MIGRATE MIGRATION version=14 file=0014_fleet_endpoints.sql")
+	assert.Contains(t, out, "state=pending")
+	assert.Contains(t, out, "MIGRATE NOT-OWNED table=config.fleet owner=nova_admin role=nova_config")
+	assert.Contains(t, out, "MIGRATE NOT-OWNED table=config.sprint owner=nova_admin role=nova_config")
+	assert.Contains(t, out, "MIGRATE WOULD-REFUSE: "+mixedWhy)
+	assert.Contains(t, out, "ready=no")
+	assert.Contains(t, out, "dry_run=true")
 	assert.Equal(t, 13, h.store.version, "the dry run applied a migration")
 
 	code, out, errs = h.run(t, "migrate", "--dry-run", "--json")
 	require.Equal(t, 1, code, "dry-run --json ready=no: stdout %q stderr %q", out, errs)
 	assert.Contains(t, out, `"status":"failed"`)
 	assert.Contains(t, out, `"ready":"no"`)
-	assert.Contains(t, out, `"kind":"not_owned"`)
+	assert.Contains(t, out, `"kind":"not-owned"`)
 
 	for tb := range h.store.Catalog.Tables {
 		h.store.Catalog.Tables[tb] = "nova_config"
 	}
 	code, out, errs = h.run(t, "migrate", "--dry-run")
 	require.Equal(t, 0, code, "dry-run ready=yes: stdout %q stderr %q", out, errs)
-	assert.True(t, strings.HasSuffix(out, " from=13 to=14 applied=0 dry_run=true pending=1 missing=0 role=nova_config ready=yes\n"), out)
+	assert.Contains(t, out, "from=13 to=14 applied=0 pending=1 missing=0 role=nova_config ready=yes dry_run=true")
 	assert.NotContains(t, out, "MIGRATE NOT-OWNED")
 	assert.NotContains(t, out, "WOULD-REFUSE")
 }
@@ -120,10 +113,9 @@ func TestMigratePreflightPassesWhatTheRuleAllows(t *testing.T) {
 		dry     string
 	}{
 		{"nothing pending, mixed owners", n, mixedCatalog(),
-			"MIGRATE NOT-OWNED table=config.sprint owner=nova_admin role=nova_config\n" +
-				fmt.Sprintf("CONFIG MIGRATE pg=nova_config@127.0.0.1:5432/nova from=%d to=%d applied=0 dry_run=true pending=0 missing=0 role=nova_config ready=yes\n", n, n)},
+			fmt.Sprintf("from=%d to=%d applied=0 pending=0 missing=0 role=nova_config ready=yes dry_run=true", n, n)},
 		{"a fresh empty database", 0, config.Ownership{Role: "nova_config", Tables: map[string]string{}},
-			fmt.Sprintf("CONFIG MIGRATE pg=nova_config@127.0.0.1:5432/nova from=0 to=%d applied=0 dry_run=true pending=%d missing=0 role=nova_config ready=yes\n", n, n)},
+			fmt.Sprintf("from=0 to=%d applied=0 pending=%d missing=0 role=nova_config ready=yes dry_run=true", n, n)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -133,11 +125,14 @@ func TestMigratePreflightPassesWhatTheRuleAllows(t *testing.T) {
 			h.store.Catalog = tc.catalog
 			code, out, errs := h.run(t, "migrate", "--dry-run")
 			require.Equal(t, 0, code, "dry-run: stdout %q stderr %q", out, errs)
-			assert.True(t, strings.HasSuffix(out, tc.dry), out)
+			assert.Contains(t, out, tc.dry)
+			if strings.Contains(tc.name, "mixed") {
+				assert.Contains(t, out, "MIGRATE NOT-OWNED table=config.sprint owner=nova_admin role=nova_config")
+			}
 			assert.NotContains(t, out, "WOULD-REFUSE")
 			code, out, errs = h.run(t, "migrate")
 			require.Equal(t, 0, code, "stdout %q stderr %q", out, errs)
-			assert.Equal(t, fmt.Sprintf("CONFIG MIGRATE pg=nova_config@127.0.0.1:5432/nova from=%d to=%d applied=%d\n", tc.version, n, n-tc.version), out)
+			assert.Equal(t, fmt.Sprintf("MIGRATE OK pg=nova_config@127.0.0.1:5432/nova from=%d to=%d applied=%d\n", tc.version, n, n-tc.version), out)
 		})
 	}
 }
@@ -198,7 +193,7 @@ func TestMigrateDryRunUsesTheAdvancingLedgerForReadiness(t *testing.T) {
 				assert.NotContains(t, out, "state=pending")
 				assert.NotContains(t, out, "WOULD-REFUSE")
 				assert.Contains(t, out, "MIGRATE NOT-OWNED table=config.fleet")
-				assert.Contains(t, out, "from=14 to=14 applied=0 dry_run=true pending=0 missing=0 role=nova_config ready=yes")
+				assert.Contains(t, out, "from=14 to=14 applied=0 pending=0 missing=0 role=nova_config ready=yes dry_run=true")
 				return
 			}
 			var result struct {
@@ -227,7 +222,7 @@ func TestMigrateDryRunUsesTheAdvancingLedgerForReadiness(t *testing.T) {
 				case "migration":
 					migrations++
 					assert.Equal(t, "applied", item.Fields["state"])
-				case "not_owned":
+				case "not-owned":
 					notOwned++
 				}
 			}

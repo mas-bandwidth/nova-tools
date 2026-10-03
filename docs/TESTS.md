@@ -696,28 +696,29 @@ Postgres and a throwaway Redis.
 
 ```text
 $ nova-config migrate --file try.json
-CONFIG MIGRATE file=try.json from=0 to=14 applied=14
+MIGRATE OK file=try.json from=0 to=14 applied=14
 
 $ nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --as a1 --file try.json
-CONFIG ADD kind=machine name=m1 rev=1
+MACHINE-ADD OK op=add kind=machine name=m1 rev=1
 
 $ nova-config machine set m1 --width 6 --as a1 --file try.json
-CONFIG SET kind=machine name=m1 rev=2 changed=width
+MACHINE-SET OK op=set kind=machine name=m1 rev=2 changed=width
 
 $ nova-config machine list --file try.json
-MACHINE name=m1 user=nova seat=s1 slots=8 runners=0 width=6
-CONFIG LIST kind=machine rows=1
+MACHINE-LIST OK kind=machine rows=1
+MACHINE-LIST MACHINE name=m1 user=nova seat=s1 slots=8 runners=0 width=6
 
 $ nova-config machine history m1 --file try.json
-HISTORY id=<n> kind=<kind> name=<name> op=<op> actor=<actor> at=<timestamp> runners=<n> seat=<seat> slots=<n> user=<user> width=<n>
-HISTORY id=<n> kind=<kind> name=<name> op=<op> actor=<actor> at=<timestamp> width=<before>><after>
-CONFIG HISTORY kind=machine name=m1 changes=2
+MACHINE-HISTORY OK kind=machine name=m1 changes=2
+MACHINE-HISTORY CHANGE id=1 kind=machine name=m1 op=add actor=a1 at=2023-11-14T22:13:20Z runners=0 seat=s1 slots=8 user=nova width=4
+MACHINE-HISTORY CHANGE id=2 kind=machine name=m1 op=set actor=a1 at=2023-11-14T22:13:20Z width=4>6
 ```
 
 `migrate --file` makes the file at this binary's schema; each write prints
 its history id (`rev=`); `list` is one typed line per row and a count;
 `history` is every change, who made it and when, a set as
-`<field>=<before>><after>`.
+`<field>=<before>><after>`. The status word and the verb token are the
+skeleton's (`MACHINE-ADD OK`, `MACHINE-LIST MACHINE`).
 
 `kinds` (no store) is one line per kind: its table under schema `config`, its fields in
 the order every line prints them, the fields `add` requires, and whether the

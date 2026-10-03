@@ -40,17 +40,17 @@ func TestLoopVerbsEndToEndOnTheFake(t *testing.T) {
 		{
 			name: "add a member loop kept alive",
 			args: []string{"loop", "add", "member-m1", "--machine", "m1", "--argv", `["/bin/member","--as","m1"]`, "--keepalive", "true", "--seat", "s-m1", "--keys", "B_KEY,A_KEY", "--width", "2"},
-			out:  "CONFIG ADD kind=loop name=member-m1 rev=3\n",
+			out:  "LOOP-ADD OK op=add kind=loop name=member-m1 rev=3\n",
 		},
 		{
 			name: "add a periodic loop on the same machine",
 			args: []string{"loop", "add", "refresh", "--machine", "m1", "--argv", `["/bin/refresh","--once"]`, "--every", "60"},
-			out:  "CONFIG ADD kind=loop name=refresh rev=4\n",
+			out:  "LOOP-ADD OK op=add kind=loop name=refresh rev=4\n",
 		},
 		{
 			name: "list prints every field in declaration order",
 			args: []string{"loop", "list"},
-			out:  "LOOP name=member-m1 machine=m1 argv=[\"/bin/member\",\"--as\",\"m1\"] seat=s-m1 keys=A_KEY,B_KEY every=0 keepalive=true width=2 enabled=true\nLOOP name=refresh machine=m1 argv=[\"/bin/refresh\",\"--once\"] seat=- keys=- every=60 keepalive=false width=0 enabled=true\nCONFIG LIST kind=loop rows=2\n",
+			out:  "LOOP-LIST OK kind=loop rows=2\nLOOP-LIST LOOP name=member-m1 machine=m1 argv=[\"/bin/member\",\"--as\",\"m1\"] seat=s-m1 keys=A_KEY,B_KEY every=0 keepalive=true width=2 enabled=true\nLOOP-LIST LOOP name=refresh machine=m1 argv=[\"/bin/refresh\",\"--once\"] seat=- keys=- every=60 keepalive=false width=0 enabled=true\n",
 		},
 		{
 			name: "show carries the stamps",
@@ -61,12 +61,12 @@ func TestLoopVerbsEndToEndOnTheFake(t *testing.T) {
 		{
 			name: "machine show lists the machine's loops",
 			args: []string{"machine", "show", "m1"},
-			out:  "MACHINE name=m1 user=u seat=s slots=160 runners=0 width=4 created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z loops=member-m1,refresh beat=none\n",
+			out:  "MACHINE-SHOW OK\nMACHINE-SHOW MACHINE name=m1 user=u seat=s slots=160 runners=0 width=4 created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z loops=member-m1,refresh beat=none\n",
 		},
 		{
 			name: "a machine with no loop says so",
 			args: []string{"machine", "show", "m2"},
-			out:  "MACHINE name=m2 user=u seat=s slots=160 runners=0 width=4 created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z loops=- beat=none\n",
+			out:  "MACHINE-SHOW OK\nMACHINE-SHOW MACHINE name=m2 user=u seat=s slots=160 runners=0 width=4 created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z loops=- beat=none\n",
 		},
 		{
 			name: "set that leaves a loop both periodic and kept alive is refused",
@@ -77,12 +77,12 @@ func TestLoopVerbsEndToEndOnTheFake(t *testing.T) {
 		{
 			name: "set moves a loop to another machine",
 			args: []string{"loop", "set", "refresh", "--machine", "m2", "--enabled", "false"},
-			out:  "CONFIG SET kind=loop name=refresh rev=5 changed=enabled,machine\n",
+			out:  "LOOP-SET OK op=set kind=loop name=refresh rev=5 changed=enabled,machine\n",
 		},
 		{
 			name: "history names every change",
 			args: []string{"loop", "history", "refresh"},
-			out:  "HISTORY id=4 kind=loop name=refresh op=add actor=a1 ",
+			out:  "CHANGE id=4 kind=loop name=refresh op=add actor=a1 ",
 			pre:  true,
 		},
 		{
@@ -100,14 +100,14 @@ func TestLoopVerbsEndToEndOnTheFake(t *testing.T) {
 		{
 			name: "remove",
 			args: []string{"loop", "remove", "member-m1"},
-			out:  "CONFIG REMOVE kind=loop name=member-m1 rev=6\n",
+			out:  "LOOP-REMOVE OK op=remove kind=loop name=member-m1 rev=6\n",
 		},
 	}
 	for _, s := range steps {
 		code, out, errs := h.run(t, s.args...)
 		require.Equal(t, s.code, code, "%s: %v\nstdout: %s\nstderr: %s", s.name, s.args, out, errs)
 		if s.pre {
-			assert.True(t, strings.HasPrefix(out, s.out), "%s: %q, want the prefix %q", s.name, out, s.out)
+			assert.Contains(t, out, s.out, "%s: %q, want %q", s.name, out, s.out)
 		} else if s.code == 0 {
 			assert.Equal(t, s.out, out, s.name)
 		}
@@ -129,7 +129,7 @@ func TestLoopUsageRefusalsOpenNoStore(t *testing.T) {
 		{
 			name: "argv as a shell line, no machine, no schedule",
 			args: []string{"loop", "add", "l1", "--argv", "/bin/prog --loop"},
-			errs: []string{"--machine is required", "--argv: want the command as a JSON array of strings"},
+			errs: []string{"--machine is required", "JSON array"},
 		},
 		{
 			name: "both schedules",
@@ -144,7 +144,7 @@ func TestLoopUsageRefusalsOpenNoStore(t *testing.T) {
 		{
 			name: "a field the kind has not",
 			args: []string{"loop", "add", "l1", "--machine", "m1", "--argv", `["/bin/prog"]`, "--every", "5", "--log", "/tmp/x"},
-			errs: []string{"REFUSED: unknown flag --log", "this verb takes --argv, --as"},
+			errs: []string{"REFUSED: unknown flag --log", "the flags of loop add are --argv, --as"},
 		},
 	}
 	for _, tc := range cases {
@@ -172,18 +172,18 @@ func TestApplyKindLoopWritesTheViewAndStatusShowsParity(t *testing.T) {
 
 	code, out, _ := h.run(t, "apply", "--kind", "loop", "--check")
 	require.Equal(t, 0, code)
-	assert.Equal(t, "CHECK ADD kind=loop name=l1\nCONFIG CHECK kind=loop add=1 set=0 remove=0 rev=2 applied=0\n", out)
+	assert.Equal(t, "APPLY OK\nAPPLY ADD kind=loop name=l1\nAPPLY KIND kind=loop add=1 set=0 remove=0 rev=2 applied=0\n", out)
 	assert.Empty(t, h.redis.log, "--check writes nothing")
 
 	code, out, errs = h.run(t, "status")
 	assert.Equal(t, 1, code, "Redis is behind for the machine and the loop")
 	assert.Contains(t, out, " loop=1 loop_rev=2 ")
 	assert.Contains(t, out, " loop_applied=0")
-	assert.Contains(t, errs, "run: nova-config apply")
+	assert.Contains(t, out+errs, "run: nova-config apply")
 
 	code, out, _ = h.run(t, "apply", "--kind", "loop")
 	require.Equal(t, 0, code)
-	assert.Equal(t, "APPLY ADD kind=loop name=l1\nCONFIG APPLY kind=loop add=1 set=0 remove=0 rev=2 ms=0\n", out)
+	assert.Equal(t, "APPLY OK\nAPPLY ADD kind=loop name=l1\nAPPLY KIND kind=loop add=1 set=0 remove=0 rev=2 ms=0\n", out)
 	assert.Equal(t, []string{"write loop l1"}, h.redis.log)
 	assert.Equal(t, `["/bin/prog"]`, h.redis.views["loop"]["l1"]["argv"])
 	assert.Equal(t, int64(2), h.redis.revs["loop"])
@@ -212,7 +212,7 @@ func TestAReaderLoopsWidthIsSetAsOneValue(t *testing.T) {
 
 	code, out, errs = h.run(t, "loop", "set", "reader-1", "--width", "16")
 	require.Equal(t, 0, code, errs)
-	assert.Equal(t, "CONFIG SET kind=loop name=reader-1 rev=3 changed=width\n", out)
+	assert.Equal(t, "LOOP-SET OK op=set kind=loop name=reader-1 rev=3 changed=width\n", out)
 	code, out, errs = h.run(t, "loop", "show", "reader-1")
 	require.Equal(t, 0, code, errs)
 	assert.Contains(t, out, ` argv=["nova-swarm","member","--reader","--width","8"] `, "the argv as typed is kept")

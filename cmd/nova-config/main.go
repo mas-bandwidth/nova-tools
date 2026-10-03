@@ -2,45 +2,36 @@
 // non-ephemeral configuration: it owns Postgres (schema `config`, its
 // migrations, its history) and every registry of the fleet, and it applies
 // that configuration into Redis so Redis is always a rebuildable copy. The
-// runtime tools (nova-friend, nova-sprint) read configuration and never
-// write it. The contract is docs/SPEC-CONFIG.md; the guide is
-// docs/nova-config/README.md.
+// runtime tools read configuration and never write it. The contract is
+// docs/SPEC-CONFIG.md; the guide is docs/nova-config/README.md.
 //
-// Every kind (machine, fleet, friend, sprint, loop, route) has the same six verbs -- add, remove,
-// set, list, show, history -- generated from its descriptor in
-// internal/config, so every kind has identical flags, help and refusals; a
-// singleton kind (fleet: one row the migration creates) has set, show and
-// history without a name. apply diffs Postgres
-// against Redis per kind and writes the difference through the runtime's own
-// Redis Functions, compare-and-set on a revision stamped in config:decl.
-// --file keeps the rows in a local JSON file in Postgres's place
-// (config.FileStore), so every verb but apply's write runs with no database.
+// Every kind has the same verbs, built from its descriptor in internal/config.
+// The dispatch, the banner, the help, the version verb, the refusals and the
+// output envelope are internal/tool's (docs/STANDARD.md, "When building a tool").
+// A row name is still given as a positional (`machine add m1`); the skeleton
+// takes flags only, so main lifts that one word to --name before Tool.Main.
+// inventory and machine self keep their own printers: one writes the Ansible
+// document a program reads, the other the bare machine name.
 //
-// Exit 0 done, 1 refused (the store or Redis said no: a duplicate, a missing
-// row, a ceiling, a conflict), 2 usage (could not run: a flag, a store that
-// did not answer), plus two for machine self: 2 when --check finds the name is
-// no machine row, and 3 when the name or the rows could not be read. A refusal
-// is one stderr line, `nova-config <verb> REFUSED: <what>; run: <next>`.
+// Exit 0 done, 1 the verb ran and the store or Redis said no, 2 usage (could
+// not run: a flag, a store that did not answer), plus two for machine self:
+// 2 when --check finds the name is no machine row, and 3 when the name or the
+// rows could not be read.
 package main
 
 import (
 	"context"
 	"errors"
-	stdflag "flag"
 	"fmt"
 	"io"
 	"maps"
 	"os"
 	"slices"
-	"sort"
-	"strconv"
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
@@ -50,7 +41,6 @@ var version string
 
 const toolName = "nova-config"
 
-// The environment every verb reads (docs/nova-config/README.md, "Connecting").
 const (
 	envPG          = config.EnvPG
 	envPGPassEnv   = config.EnvPGPassEnv
@@ -61,133 +51,317 @@ const (
 	envMachine     = "NOVA_MACHINE"
 )
 
-// usageTop is the banner (docs/STANDARD.md, section 3, point 6): what it
-// does, how it works in five lines, the first run, then the usage. Each
-// verb's flags, effect and worked example are in its own -h (verbExtra).
-const usageTop = `nova-config: a fleet's machines and AI friends as rows in PostgreSQL, applied into Redis
+const filePrefix = "file:"
 
-how it works: each kind (machine, fleet, friend, sprint, loop, route, tier) is a
-table of rows in PostgreSQL's schema config, which migrate makes; every write
-adds a history row naming who made it. apply copies the rows into Redis, the
-view the fleet reads; inventory prints that view for Ansible. --file <path>
-keeps the rows in a local JSON file instead, to try every verb with no database.
-first run: the example: lines need no database and write only ./try.json; the fleet's store is export NOVA_PG_DSN=postgres://user@host:5432/db, then migrate.
+func main() {
+	os.Args = append([]string{os.Args[0]}, liftName(os.Args[1:])...)
+	os.Exit(configTool(realDeps()).Main())
+}
 
-usage:
-  nova-config help [<verb>]
-  nova-config version
-  nova-config kinds [--json]
-  nova-config migrate [--pg <dsn> | --file <path>] [--print] [--dry-run] [--json]
-  nova-config status [--pg <dsn> | --file <path>] [--redis <addr>] [--json]
-  nova-config apply [--pg <dsn> | --file <path>] [--redis <addr>] [--as <name>] [--kind <kind>] [--dry-run] [--json]
-  nova-config inventory [--redis <addr> | --fixture <file>] [--list | --host <name>] [--timeout <duration>]
-  nova-config <kind> add <name> --<field> <value> ... --as <name> [--dry-run] [--json]
-  nova-config <kind> set <name> --<field> <value> ... --as <name> [--dry-run] [--json]
-  nova-config <kind> remove <name> --as <name> [--dry-run] [--json]
-  nova-config <kind> list [--json]
-  nova-config <kind> show <name> [--json]
-  nova-config <kind> history <name> [--json]
-  nova-config machine width <name> [--json]
-  nova-config machine self [--check] [--json]
-  nova-config fleet set|show|history        one row each, no name: fleet and sprint have no add, remove or list
-  nova-config sprint set|show|history
-  nova-config <kind> <verb> -h              the verb's flags (required ones marked), its effect and a worked example
+func run(args []string, stdout, stderr io.Writer, d deps) int {
+	return configTool(d).Run(liftName(args), strings.NewReader(""), stdout, stderr)
+}
 
-The store is --pg <dsn> (or NOVA_PG_DSN; never a password on the line: it is
-read from the variable NOVA_PG_PASSWORD_ENV names, NOVA_PG_PASSWORD when
-unset), or --file <path>. --redis is host:port (NOVA_SPRINT_REDIS, then
-NOVA_REDIS_ADDR, then the seat's address). --as is the name a write is
-recorded under (NOVA_FRIEND). Lose Redis: run nova-config apply.
+// configTool is the command (docs/STANDARD.md section 2: one Tool, its verbs,
+// one result rendered as lines or as JSON of the same value).
+func configTool(d deps) *tool.Tool {
+	return &tool.Tool{
+		Name:  toolName,
+		What:  "a fleet's machines and AI friends as rows in PostgreSQL, applied into Redis",
+		Stamp: version,
+		How: `each kind (machine, fleet, friend, sprint, loop, route, tier) is a table
+of rows in PostgreSQL's schema config; migrate makes it, and every write
+adds a history row naming who made it. apply copies the rows into Redis,
+the view the fleet reads. inventory prints that view for Ansible. --file
+keeps the rows in a local JSON file, so the examples need no database.`,
+		ExitTable: "0 done, 1 refused (the verb ran and the store said no; migrate --dry-run: ready=no, nothing attempted), 2 could not run (usage, or a store that did not answer); machine self: 2 not a row, 3 unreadable",
+		Verbs:     configVerbs(d),
+	}
+}
 
-Fleet apply and inventory require explicit redis_port and pg_dsn; set both
-with nova-config fleet set --redis_port <port> --pg_dsn <dsn> --as <actor>.
+var bannerExample = map[string]string{
+	"migrate":         "migrate --file try.json",
+	"machine add":     "machine add m1 --user nova --seat s1 --slots 8 --width 4 --as a1 --file try.json",
+	"machine set":     "machine set m1 --width 6 --as a1 --file try.json",
+	"machine list":    "machine list --file try.json",
+	"machine history": "machine history m1 --file try.json",
+}
 
-exit codes: 0 done, 1 refused (the verb ran and the store said no; migrate --dry-run: ready=no, nothing attempted), 2 could not run (usage, or a store that did not answer); machine self: 2 not a row, 3 unreadable
-
-`
-
-// usageExamples ends the banner: a first run a stranger pastes, needing no
-// database (docs/STANDARD.md, section 3, point 1). The heading's leading
-// newline is what onboarding.ExampleHeading and the pasted-examples rule read.
-const usageExamples = `
-example:
-  nova-config migrate --file try.json
-  nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --as a1 --file try.json
-  nova-config machine set m1 --width 6 --as a1 --file try.json
-  nova-config machine list --file try.json
-  nova-config machine history m1 --file try.json
-`
-
-// kindsUsage is the per-kind part of the banner, from the descriptors: what
-// the kind is and its fields' names, the required ones first.
-func kindsUsage() string {
-	var b strings.Builder
-	b.WriteString("kinds (nova-config <kind> add -h describes each field):\n")
+func configVerbs(d deps) []tool.Verb {
+	vs := []tool.Verb{
+		{Name: "kinds", Usage: "kinds", Effect: effectBinary, Detail: detailFrom("kinds"), Flags: func(f *tool.Flags) { f.Max() }, Run: func(c *tool.Call) *tool.Out { return runKinds(c) }},
+		{Name: "migrate", Usage: "migrate [--pg <dsn> | --file <path>] [--print] [--dry-run]", Example: bannerExample["migrate"], Effect: effectMigrate, Detail: detailFrom("migrate"), DryRun: true, Flags: func(f *tool.Flags) {
+			storeFlags(f)
+			f.Bool("print", false, "list the migrations this binary carries and connect to nothing")
+		}, Run: func(c *tool.Call) *tool.Out { return runMigrate(c, d) }},
+		{Name: "status", Usage: "status [--pg <dsn> | --file <path>] [--redis <addr>]", Effect: effectStatus, Detail: detailFrom("status"), Flags: func(f *tool.Flags) {
+			storeFlags(f)
+			f.String("redis", "", "the Redis host:port apply writes (env NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's address); without one, status reads the store alone")
+			f.Check(func(c *tool.Call) { wantStore(c, d) })
+		}, Run: func(c *tool.Call) *tool.Out { return runStatus(c, d) }},
+		{Name: "apply", Usage: "apply [--pg <dsn> | --file <path>] [--redis <addr>] [--as <name>] [--kind <kind>] [--dry-run]", Effect: effectApply, Detail: detailFrom("apply"), DryRun: true, Flags: func(f *tool.Flags) {
+			storeFlags(f)
+			f.String("redis", "", "the Redis host:port to write (env NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's address)")
+			f.String("as", "", "the name a write is recorded under (env NOVA_FRIEND)")
+			f.String("kind", "", "one kind to apply ("+strings.Join(config.KindNames(), ", ")+"); every kind, in order, when unset")
+			f.Bool("check", false, "the same as --dry-run")
+			f.Check(func(c *tool.Call) { wantApply(c, d) })
+		}, Run: func(c *tool.Call) *tool.Out { return runApply(c, d) }},
+		{Name: "inventory", Usage: "inventory [--redis <addr> | --fixture <file>] [--list | --host <name>] [--timeout <duration>]", Effect: effectInventory, Detail: detailFrom("inventory"), Flags: func(f *tool.Flags) {
+			f.Prints()
+			f.String("redis", "", "the Redis host:port of the applied state (env NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's address); exclusive with --fixture")
+			f.String("fixture", "", "a YAML or JSON file of machines, the fleet row, loops and each machine's os and arch, read in place of the store; opens no store")
+			f.Bool("list", false, "print the whole inventory (hosts, groups and every host's variables under _meta.hostvars, so ansible never calls --host); the default when neither --list nor --host is given; exclusive with --host")
+			f.String("host", "", "print the variables of one machine, by name, as a JSON object")
+			f.Duration("timeout", inventoryTimeout, "a Go duration, above 0: how long to wait for the store before refusing")
+			f.Check(func(c *tool.Call) { wantInventory(c, d) })
+		}, Run: func(c *tool.Call) *tool.Out { return runInventory(c, d) }},
+	}
 	for _, k := range config.Kinds {
-		fmt.Fprintf(&b, "  %-8s %s\n", k.Name, k.Doc)
-		var req, opt []string
+		vs = append(vs, kindVerbs(k, d)...)
+	}
+	return vs
+}
+
+func kindVerbs(k *config.Kind, d deps) []tool.Verb {
+	var vs []tool.Verb
+	for _, verb := range []string{"add", "set", "remove", "list", "show", "history"} {
+		if k.Singleton && (verb == "add" || verb == "remove" || verb == "list") {
+			continue
+		}
+		vs = append(vs, kindVerb(k, verb, d))
+	}
+	if k.Name == config.KindMachine {
+		vs = append(vs,
+			tool.Verb{Name: "machine width", Usage: "machine width <name> [--pg <dsn> | --file <path>]", Effect: effectInspect, Detail: detailFrom("machine width"), Flags: func(f *tool.Flags) {
+				storeFlags(f)
+				f.Required("name", "the machine row's name")
+				f.Check(func(c *tool.Call) { wantStore(c, d) })
+			}, Run: func(c *tool.Call) *tool.Out { return runMachineWidth(c, d) }},
+			tool.Verb{Name: "machine self", Usage: "machine self [--check]", Effect: "inspection: prints this machine's name and opens no store; --check reads the machine rows", Detail: detailFrom("machine self"), Flags: func(f *tool.Flags) {
+				f.Prints()
+				storeFlags(f)
+				f.Bool("check", false, "read the machine rows and exit 2 when this machine's name is none of them (exit 3 when the rows cannot be read); without it no store is opened")
+				f.Bool("json", false, "print one JSON object instead of the name")
+			}, Run: func(c *tool.Call) *tool.Out { return runMachineSelf(c, d) }},
+		)
+	}
+	return vs
+}
+
+func kindVerb(k *config.Kind, verb string, d deps) tool.Verb {
+	name := k.Name + " " + verb
+	write := verb == "add" || verb == "set" || verb == "remove"
+	effect := tool.Effect(effectInspect)
+	if write {
+		effect = effectStoreRow
+	}
+	return tool.Verb{
+		Name: name, Usage: kindUsage(k, verb), Example: bannerExample[name], Effect: effect, Detail: detailFrom(name), DryRun: write,
+		Flags: func(f *tool.Flags) { kindFlags(f, k, verb, d) },
+		Run:   func(c *tool.Call) *tool.Out { return runKind(c, k, verb, d) },
+	}
+}
+
+func kindUsage(k *config.Kind, verb string) string {
+	var b strings.Builder
+	b.WriteString(k.Name + " " + verb)
+	if !k.Singleton && verb != "list" {
+		b.WriteString(" <name>")
+	}
+	if verb == "add" || verb == "set" {
 		for _, f := range k.Fields {
-			if f.Required {
-				req = append(req, "--"+f.Name)
-			} else {
-				opt = append(opt, "--"+f.Name)
-			}
+			b.WriteString(" --" + f.Name)
 		}
-		line := ""
-		if k.Singleton || len(k.Seed) > 0 {
-			// rows migrate makes are set, never added
-			line = "set takes "
-		}
-		if len(req) > 0 {
-			line = "add needs " + strings.Join(req, " ")
-			if len(opt) > 0 {
-				line += "; also "
-			}
-		}
-		if len(opt) > 0 {
-			line += strings.Join(opt, " ")
-		}
-		fmt.Fprintf(&b, "  %-8s %s\n", "", line)
+		b.WriteString(" --as <name>")
+	} else if verb == "remove" {
+		b.WriteString(" --as <name>")
 	}
 	return b.String()
 }
 
-// banner is what help prints.
-func banner() string { return usageTop + kindsUsage() + usageExamples }
+func kindFlags(f *tool.Flags, k *config.Kind, verb string, d deps) {
+	storeFlags(f)
+	write := verb == "add" || verb == "set" || verb == "remove"
+	if write {
+		f.String("as", "", "the name a write is recorded under in the history (env NOVA_FRIEND)")
+	}
+	if k.Singleton {
+		f.String("name", "", "not taken: "+k.Name+" is one row")
+	} else if verb != "list" {
+		f.Required("name", "the row's name")
+	}
+	if verb == "add" || verb == "set" {
+		for _, field := range k.Fields {
+			if verb == "add" && field.Required {
+				f.Required(field.Name, fieldWants(field))
+				continue
+			}
+			f.String(field.Name, "", fieldUsage(field, false))
+		}
+	}
+	if verb == "list" || verb == "show" || verb == "history" {
+		f.Max()
+	}
+	if (verb == "list" || verb == "show") && live(k) {
+		f.String("redis", "", "the Redis host:port (env NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR); when given, each line carries the machine's live measured facts from its beat")
+	}
+	f.Check(func(c *tool.Call) { wantKind(c, k, verb, d) })
+}
 
-func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, realDeps())) }
+func wantKind(c *tool.Call, k *config.Kind, verb string, d deps) {
+	var problems []string
+	if k.Singleton && c.Given("name") {
+		problems = append(problems, k.Name+" takes no name: it is one row; want "+k.Name+" "+verb)
+	}
+	if verb == "set" {
+		any := false
+		for _, field := range k.Fields {
+			if c.Given(field.Name) {
+				any = true
+			}
+		}
+		if !any {
+			problems = append(problems, "set names no field")
+		}
+	}
+	if verb == "add" {
+		if _, err := k.NewRow(rowName(c, k), givenFields(c, k)); err != nil {
+			problems = append(problems, err.Error())
+		}
+	}
+	if verb == "add" || verb == "set" || verb == "remove" {
+		if _, err := actorName(c.Str("as"), d.getenv); err != nil {
+			problems = append(problems, err.Error())
+		}
+	}
+	if _, err := (conn{c.Str("pg"), c.Str("file")}).dsn(d.getenv); err != nil {
+		problems = append(problems, err.Error())
+	}
+	if len(problems) > 0 {
+		c.Problem(strings.Join(problems, "; "))
+	}
+}
 
-// pgStore is the store a verb opens: config.Store plus the schema verbs.
+func wantStore(c *tool.Call, d deps) {
+	if _, err := (conn{c.Str("pg"), c.Str("file")}).dsn(d.getenv); err != nil {
+		c.Problem(err.Error())
+	}
+}
+
+func wantApply(c *tool.Call, d deps) {
+	var problems []string
+	if c.Str("kind") != "" {
+		if _, ok := config.Lookup(c.Str("kind")); !ok {
+			problems = append(problems, fmt.Sprintf("--kind %s: want one of %s", c.Str("kind"), strings.Join(config.KindNames(), ", ")))
+		}
+	}
+	dry := c.Bool("check") || (c.Given("dry-run") && c.Bool("dry-run"))
+	if !dry {
+		if _, err := actorName(c.Str("as"), d.getenv); err != nil {
+			problems = append(problems, err.Error())
+		}
+	}
+	if _, err := (conn{c.Str("pg"), c.Str("file")}).dsn(d.getenv); err != nil {
+		problems = append(problems, err.Error())
+	}
+	if _, err := redisAddress(c.Str("redis"), d.getenv); err != nil {
+		problems = append(problems, err.Error())
+	}
+	if len(problems) > 0 {
+		c.Problem(strings.Join(problems, "; "))
+	}
+}
+
+func detailFrom(verb string) string {
+	var b strings.Builder
+	for _, l := range strings.Split(strings.TrimRight(verbExtra(verb), "\n"), "\n") {
+		if strings.HasPrefix(l, "effect: ") {
+			continue
+		}
+		b.WriteString(l)
+		b.WriteByte('\n')
+	}
+	return strings.Trim(b.String(), "\n")
+}
+
+// liftName moves a verb's row name, given as a positional, to --name. The
+// skeleton refuses a positional on every verb but the default, and this
+// grammar's name is a positional (docs/SPEC-CONFIG.md, the six verbs).
+func liftName(args []string) []string {
+	if len(args) < 2 || strings.HasPrefix(args[0], "-") || args[0] == "help" {
+		return args
+	}
+	k, ok := config.Lookup(args[0])
+	if !ok || strings.HasPrefix(args[1], "-") || !nameVerb(k, args[1]) {
+		return args
+	}
+	pos, flags := splitArgs(args[2:])
+	if len(pos) != 1 {
+		return args
+	}
+	return append([]string{args[0], args[1], "--name", pos[0]}, flags...)
+}
+
+func nameVerb(k *config.Kind, verb string) bool {
+	switch verb {
+	case "set", "show", "history":
+		return true
+	case "add", "remove":
+		return !k.Singleton
+	case "width":
+		return k.Name == config.KindMachine
+	}
+	return false
+}
+
+func splitArgs(args []string) (pos, flags []string) {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			pos = append(pos, args[i+1:]...)
+			return pos, flags
+		}
+		if !strings.HasPrefix(a, "-") || a == "-" {
+			pos = append(pos, a)
+			continue
+		}
+		flags = append(flags, a)
+		name, _, inline := strings.Cut(strings.TrimLeft(a, "-"), "=")
+		if inline || boolFlag[name] {
+			continue
+		}
+		if i+1 < len(args) {
+			i++
+			flags = append(flags, args[i])
+		}
+	}
+	return pos, flags
+}
+
+var boolFlag = map[string]bool{"json": true, "dry-run": true, "print": true, "check": true, "list": true, "h": true, "help": true}
+
 type pgStore interface {
 	config.Store
 	Migrate(ctx context.Context) (from, to int, applied []int, err error)
 	Version(ctx context.Context) (int, error)
-	// Applied is the migration ledger, every version recorded, in order.
 	Applied(ctx context.Context) ([]int, error)
 	Close() error
 }
 
-// redisSide is the Redis a verb opens: apply's side and the beats machine
-// list and show read live.
 type redisSide interface {
 	config.Applier
 	config.BeatReader
-	// Snapshot is the applied state inventory prints.
 	Snapshot(ctx context.Context) (*config.Snapshot, error)
 	Close() error
 }
 
-// deps are the seams: the environment, the two stores and the clock. The
-// unit tests hand in config.Mem and a fake Applier; main hands in Postgres
-// (or the --file) and the fleet Redis.
 type deps struct {
 	getenv    func(string) string
 	openStore func(ctx context.Context, dsn string) (pgStore, error)
 	openRedis func(ctx context.Context, addr string) (redisSide, error)
 	now       func() time.Time
 	hostname  func() (string, error)
-	// tailscale is `tailscale status --json --peers=false`, config.ErrNoTailnet
-	// when no tailnet is installed: machine self reads its name from it.
 	tailscale func(ctx context.Context) ([]byte, error)
 }
 
@@ -214,203 +388,39 @@ func realDeps() deps {
 			}
 			return redisApplier{RedisApplier: &config.RedisApplier{Client: st.Client()}, st: st}, nil
 		},
-		now:       time.Now,
-		hostname:  os.Hostname,
-		tailscale: config.TailscaleStatus,
+		now: time.Now, hostname: os.Hostname, tailscale: config.TailscaleStatus,
 	}
 }
 
-func run(args []string, stdout, stderr io.Writer, d deps) (code int) {
-	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
-	// before anything is dialed or written (the CLI style's rule (b)),
-	// with the verb's effect and worked example (verbExtra).
-	defer verbflag.RecoverWith(stdout, toolName, banner(), &code, verbExtra)
-	ctx := context.Background()
-	if len(args) == 0 {
-		return refuse(stderr, "", "no verb; want kinds, migrate, status, apply, inventory, or a kind ("+strings.Join(config.KindNames(), ", ")+") then add|set|remove|list|show|history")
-	}
-	switch args[0] {
-	case "help", "-h", "--help":
-		if args[0] == "help" && len(args) > 1 && args[1] != "help" && !verbflag.IsHelp(args[1]) {
-			return run(append(args[1:], "--help"), stdout, stderr, d)
-		}
-		fmt.Fprint(stdout, banner())
-		return 0
-	case "version", "--version":
-		fs := verbflag.New("version")
-		asJSON := jsonFlag(fs)
-		if code, ok := parse(fs, args[1:], stderr, "version"); !ok {
-			return code
-		}
-		if fs.NArg() > 0 {
-			return refuse(stderr, "version", "version takes no arguments")
-		}
-		if *asJSON {
-			o := tool.Payload(buildinfo.Line(toolName, version))
-			o.Verb = "version"
-			return emit(stdout, o)
-		}
-		fmt.Fprintln(stdout, buildinfo.Line(toolName, version))
-		return 0
-	case "kinds":
-		return runKinds(args[1:], stdout, stderr)
-	case "migrate":
-		return runMigrate(ctx, args[1:], stdout, stderr, d)
-	case "status":
-		return runStatus(ctx, args[1:], stdout, stderr, d)
-	case "apply":
-		return runApply(ctx, args[1:], stdout, stderr, d)
-	case "inventory":
-		return runInventory(ctx, args[1:], stdout, stderr, d)
-	}
-	if k, ok := config.Lookup(args[0]); ok {
-		return runKind(ctx, k, args[1:], stdout, stderr, d)
-	}
-	return refuse(stderr, "", fmt.Sprintf("unknown verb %s; want kinds, migrate, status, apply, inventory, or a kind (%s) then add|set|remove|list|show|history", oneline.Quote(args[0]), strings.Join(config.KindNames(), ", ")))
+type conn struct{ pg, file string }
+
+func storeFlags(f *tool.Flags) {
+	f.String("pg", "", "the PostgreSQL dsn, postgres://user@host:port/db with no password (env NOVA_PG_DSN); the password comes from the variable NOVA_PG_PASSWORD_ENV names; exclusive with --file")
+	f.String("file", "", "a local JSON file standing in for PostgreSQL (migrate --file <path> makes it); never the fleet's store")
 }
 
-// refuse is the exit 2 line: the invocation could not run (a flag, an input,
-// a store that did not answer). It is one line in the one grammar,
-// `nova-config[ <verb>] REFUSED: <what>; run: <the verb's help>`
-// (docs/STANDARD.md, section 3, point 1).
-func refuse(stderr io.Writer, verb, what string) int {
-	next := "; run: " + helpFor(verb)
-	if strings.Contains(what, "; run: ") {
-		next = "" // the reason names its own next command (a --file migrate has not made)
-	}
-	fmt.Fprintf(stderr, "%s REFUSED: %s%s\n", strings.TrimSpace(toolName+" "+verb), plain(what), next)
-	return 2
-}
-
-// refused is the exit 1 line: the verb ran and the store or Redis said no.
-// next names the command that resolves it.
-func refused(stderr io.Writer, verb, what, next string) int {
-	fmt.Fprintf(stderr, "%s %s REFUSED: %s; run: %s\n", toolName, verb, plain(what), next)
-	return 1
-}
-
-// helpFor is the door a usage refusal names: the verb's own help, else the
-// tool's.
-func helpFor(verb string) string {
-	if verb == "" || verb == "help" {
-		return toolName + " help"
-	}
-	return toolName + " " + verb + " -h"
-}
-
-// plain is free text on one line as a reader reads it: every run of blanks,
-// tabs and newlines (a library's among them) one blank, and any other control
-// character escaped (oneline.Escape), never a hex escape for a blank.
-func plain(s string) string { return oneline.Escape(strings.Join(strings.Fields(s), " ")) }
-
-// parse parses a verb's flags, and is the refusal when they do not parse: an
-// unknown flag names the flags the verb takes and the nearest one, never the
-// flag package's stock line.
-func parse(fs *stdflag.FlagSet, args []string, stderr io.Writer, verb string) (int, bool) {
-	err := fs.Parse(args)
-	if err == nil {
-		return 0, true
-	}
-	return refuse(stderr, verb, parseErr(fs, err)), false
-}
-
-// parseErr is what a refusal says of a flag the parser refused.
-func parseErr(fs *stdflag.FlagSet, err error) string {
-	msg := err.Error()
-	if name, ok := strings.CutPrefix(msg, "flag needs an argument: "); ok {
-		return "--" + strings.TrimLeft(name, "-") + " wants a value"
-	}
-	name, unknown := strings.CutPrefix(msg, "flag provided but not defined: ")
-	if !unknown {
-		return msg
-	}
-	name = strings.TrimLeft(name, "-")
-	var names []string
-	fs.VisitAll(func(f *stdflag.Flag) { names = append(names, f.Name) })
-	sort.Strings(names)
-	near, best := "", 0
-	for _, n := range names {
-		if s := commonPrefix(n, name); s > best {
-			near, best = n, s
-		}
-	}
-	text := "unknown flag --" + name
-	if near != "" {
-		text += " (nearest: --" + near + ")"
-	}
-	return text + "; this verb takes --" + strings.Join(names, ", --")
-}
-
-// commonPrefix is how many leading bytes a and b share.
-func commonPrefix(a, b string) int {
-	n := 0
-	for n < len(a) && n < len(b) && a[n] == b[n] {
-		n++
-	}
-	return n
-}
-
-// storeErr turns a store error into the right line: a refusal (exit 1) with
-// its remedy, or a store that did not answer (exit 2).
-func storeErr(stderr io.Writer, verb string, err error, next string) int {
-	if config.Refused(err) {
-		return refused(stderr, verb, err.Error(), next)
-	}
-	return refuse(stderr, verb, err.Error())
-}
-
-// emit writes a verb's --json result: one object, internal/tool's shape
-// ({"result":{"verb","status","exit"},"facts":{},"items":[...],"notes":[]}).
-func emit(stdout io.Writer, o *tool.Out) int {
-	o.Render(stdout, true)
-	return o.Exit
-}
-
-// --- connection flags -------------------------------------------------------
-
-// filePrefix marks the store a --file names, in the one string openStore
-// takes.
-const filePrefix = "file:"
-
-// conn is the store a verb opens, from its flags: --pg (or NOVA_PG_DSN) for
-// PostgreSQL, --file for a local JSON file in its place.
-type conn struct{ pg, file *string }
-
-// storeFlags adds --pg and --file to a verb's flag set.
-func storeFlags(fs *stdflag.FlagSet) conn {
-	return conn{
-		pg:   fs.String("pg", "", "the PostgreSQL `dsn`, postgres://user@host:port/db with no password (env NOVA_PG_DSN); the password comes from the variable NOVA_PG_PASSWORD_ENV names; exclusive with --file"),
-		file: fs.String("file", "", "a local JSON file standing in for PostgreSQL, at `path` (migrate --file <path> makes it): the same rows, refusals and history, to try the tool with no database; never the fleet's store"),
-	}
-}
-
-// dsn is the store to open: the file when --file is given, else the DSN by
-// the rules every reader of nova-config shares (config.ResolveDSN).
 func (c conn) dsn(getenv func(string) string) (string, error) {
 	switch {
-	case *c.file != "" && *c.pg != "":
+	case c.file != "" && c.pg != "":
 		return "", errors.New("--pg and --file are exclusive: --file keeps the rows in a local file in PostgreSQL's place")
-	case *c.file != "":
-		return filePrefix + *c.file, nil
-	case *c.pg == "" && getenv(envPG) == "":
+	case c.file != "":
+		return filePrefix + c.file, nil
+	case c.pg == "" && getenv(envPG) == "":
 		return "", fmt.Errorf("--pg is required: postgres://user@host:5432/db (or %s), or --file <path> for a local file with no database", envPG)
 	}
-	return config.ResolveDSN(*c.pg, getenv)
+	return config.ResolveDSN(c.pg, getenv)
 }
 
-// again is the store flag a printed command repeats.
-func (c conn) again() string {
+func again(c *tool.Call) string {
 	switch {
-	case *c.file != "":
-		return " --file " + shq(*c.file)
-	case *c.pg != "":
-		return " --pg " + shq(*c.pg)
+	case c.Str("file") != "":
+		return " --file " + shq(c.Str("file"))
+	case c.Str("pg") != "":
+		return " --pg " + shq(c.Str("pg"))
 	}
 	return ""
 }
 
-// where names the store on a result line: file=<path>, or pg=<the dsn
-// without its password>.
 func where(dsn string) (key, value string) {
 	if p, ok := strings.CutPrefix(dsn, filePrefix); ok {
 		return "file", p
@@ -418,18 +428,6 @@ func where(dsn string) (key, value string) {
 	return "pg", config.Redact(dsn)
 }
 
-// actorFlag adds --as.
-func actorFlag(fs *stdflag.FlagSet) *string {
-	return fs.String("as", "", "the `name` a write is recorded under in the history (env NOVA_FRIEND)")
-}
-
-// jsonFlag adds --json.
-func jsonFlag(fs *stdflag.FlagSet) *bool {
-	return fs.Bool("json", false, "print one JSON object (internal/tool's result shape) instead of the lines")
-}
-
-// redisAddress resolves --redis: the flag, else NOVA_SPRINT_REDIS, else
-// NOVA_REDIS_ADDR, else the selected seat's address.
 func redisAddress(flagValue string, getenv func(string) string) (string, error) {
 	for _, v := range []string{flagValue, getenv(envSprintRedis), getenv(envRedisAddr), seatcred.Process().Addr()} {
 		if v != "" {
@@ -439,10 +437,6 @@ func redisAddress(flagValue string, getenv func(string) string) (string, error) 
 	return "", fmt.Errorf("--redis is required: host:port (or %s, %s, or a seat)", envSprintRedis, envRedisAddr)
 }
 
-// liveRedisAddress is the Redis machine list and show read beats from when
-// one is given: the flag, else NOVA_SPRINT_REDIS, else NOVA_REDIS_ADDR; ""
-// (no live facts, no store opened) when none is. The seat is not consulted:
-// a list that dials Redis nobody named would be a surprise.
 func liveRedisAddress(flagValue string, getenv func(string) string) string {
 	for _, v := range []string{flagValue, getenv(envSprintRedis), getenv(envRedisAddr)} {
 		if v != "" {
@@ -452,7 +446,6 @@ func liveRedisAddress(flagValue string, getenv func(string) string) string {
 	return ""
 }
 
-// actorName resolves --as: the flag, else NOVA_FRIEND.
 func actorName(flagValue string, getenv func(string) string) (string, error) {
 	if flagValue != "" {
 		return flagValue, nil
@@ -463,123 +456,78 @@ func actorName(flagValue string, getenv func(string) string) (string, error) {
 	return "", fmt.Errorf("--as is required: the name the write is recorded under (or %s)", envActor)
 }
 
-// --- kinds ------------------------------------------------------------------
+func plain(s string) string { return oneline.Escape(strings.Join(strings.Fields(s), " ")) }
 
-func runKinds(args []string, stdout, stderr io.Writer) int {
-	const verb = "kinds"
-	fs := verbflag.New(verb)
-	asJSON := jsonFlag(fs)
-	if code, ok := parse(fs, args, stderr, verb); !ok {
-		return code
+func shq(s string) string {
+	if s != "" && strings.Trim(s, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@%+=:,./-_") == "" {
+		return s
 	}
-	if fs.NArg() > 0 {
-		return refuse(stderr, verb, "kinds takes no arguments")
-	}
-	if *asJSON {
-		o := tool.Done().Fact("count", len(config.Kinds))
-		o.Verb = verb
-		for _, k := range config.Kinds {
-			var req []string
-			for _, f := range k.Fields {
-				if f.Required {
-					req = append(req, f.Name)
-				}
-			}
-			rows := "many"
-			if k.Singleton {
-				rows = "one"
-			}
-			o.Item("kind", "name", k.Name, "table", "config."+k.Table, "fields", k.FieldNames(), "required", req, "rows", rows, "doc", k.Doc)
-		}
-		return emit(stdout, o)
-	}
-	for _, k := range config.Kinds {
-		fmt.Fprintln(stdout, config.KindLine(k))
-	}
-	fmt.Fprintf(stdout, "CONFIG KINDS count=%d\n", len(config.Kinds))
-	return 0
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
-// --- the kind verbs ---------------------------------------------------------
-
-func runKind(ctx context.Context, k *config.Kind, args []string, stdout, stderr io.Writer, d deps) int {
-	if len(args) > 0 {
-		verbflag.HelpIfAsked(args[:1], k.Name)
+func openStore(ctx context.Context, c *tool.Call, d deps) (pgStore, string, *tool.Out) {
+	dsn, err := (conn{c.Str("pg"), c.Str("file")}).dsn(d.getenv)
+	if err != nil {
+		return nil, "", tool.Refuse(err.Error())
 	}
-	want := "add, set, remove, list, show or history"
-	switch {
-	case k.Singleton:
-		want = "set, show or history"
-	case k.Name == config.KindMachine:
-		want = "add, set, remove, list, show, history, width or self"
+	st, err := d.openStore(ctx, dsn)
+	if err != nil {
+		return nil, "", tool.Refuse(err.Error())
 	}
-	if len(args) == 0 {
-		return refuse(stderr, k.Name, "want "+want)
-	}
-	if k.Name == config.KindMachine {
-		switch args[0] {
-		case "self":
-			return runMachineSelf(ctx, args[1:], stdout, stderr, d)
-		case "width":
-			return runMachineWidth(ctx, args[1:], stdout, stderr, d)
-		}
-	}
-	if k.Singleton {
-		switch args[0] {
-		case "add", "remove", "list":
-			return refuse(stderr, k.Name, k.Name+" is one row, created by migrate; want set, show or history")
-		}
-	}
-	switch args[0] {
-	case "add", "set":
-		return runKindWrite(ctx, k, args[0] == "add", args[1:], stdout, stderr, d)
-	case "remove":
-		return runKindRemove(ctx, k, args[1:], stdout, stderr, d)
-	case "list":
-		return runKindList(ctx, k, args[1:], stdout, stderr, d)
-	case "show", "history":
-		return runKindRead(ctx, k, args[0], args[1:], stdout, stderr, d)
-	}
-	return refuse(stderr, k.Name, fmt.Sprintf("unknown verb %s; want %s", oneline.Quote(args[0]), want))
+	return st, dsn, nil
 }
 
-// nameAndRest takes the row name: the first argument when it is not a flag,
-// else the one positional left after the flags. A singleton's name is the
-// kind's own and the line carries none.
-func nameAndRest(k *config.Kind, args []string) (string, []string) {
-	if k.Singleton {
-		return k.Name, args
+func storeNo(err error, next string) *tool.Out {
+	if config.Refused(err) {
+		o := tool.Fail(plain(err.Error()))
+		o.Remedy = next
+		return o
 	}
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		return args[0], args[1:]
-	}
-	return "", args
+	return tool.Refuse(plain(err.Error()))
 }
 
-// positional resolves the one positional a verb allows: the name when
-// nameAndRest found none. A singleton allows none at all.
-func positional(k *config.Kind, fs *stdflag.FlagSet, name, verb string) (string, error) {
-	switch {
-	case k.Singleton && fs.NArg() > 0:
-		return "", fmt.Errorf("%s takes no name: it is one row; want %s --<field> <value> ...", k.Name, verb)
-	case name == "" && fs.NArg() == 1:
-		return fs.Arg(0), nil
-	case fs.NArg() > 0:
-		return "", fmt.Errorf("want %s <name> --<field> <value> ...; flags follow the name", verb)
+func versionBehind(have int, c *tool.Call) *tool.Out {
+	all, err := config.Migrations()
+	if err != nil || have >= len(all) {
+		return nil
 	}
-	return name, nil
+	o := tool.Fail(fmt.Sprintf("schema config is at version %d and this binary carries %d", have, len(all)))
+	o.Remedy = toolName + " migrate" + again(c)
+	return o
 }
 
-// typeWords is the value a field's flag wants, by its type, as its help
-// names it (`--width <number>`).
+func schemaBehind(ctx context.Context, st pgStore, c *tool.Call) *tool.Out {
+	have, err := st.Version(ctx)
+	if err != nil {
+		return tool.Refuse(err.Error())
+	}
+	return versionBehind(have, c)
+}
+
+func laterKind(k *config.Kind) bool {
+	return k.Name == config.KindLoop || k.Name == config.KindRoute || k.Name == config.KindTier || k.Name == config.KindFleet
+}
+
 var typeWords = map[config.Type]string{
 	config.TypeText: "text", config.TypeInt: "number", config.TypeEnum: "word", config.TypeList: "list",
 	config.TypeNames: "list", config.TypeRef: "name", config.TypeBool: "true|false", config.TypeKeys: "NAME,...",
 	config.TypeArgv: "json", config.TypeSeq: "list", config.TypeDecimal: "decimal",
 }
 
-// fieldUsage is a field's flag help: what it wants (the backquoted word the
-// help prints as the flag's value), whether add requires it, and its help.
+func fieldWants(f config.Field) string {
+	word := typeWords[f.Type]
+	if f.Type == config.TypeEnum {
+		word = strings.Join(f.Enum, "|")
+	}
+	if word == "" {
+		word = "value"
+	}
+	if f.Type == config.TypeRef {
+		return "the name of a " + f.Ref + " row: " + f.Help
+	}
+	return word + ": " + f.Help
+}
+
 func fieldUsage(f config.Field, add bool) string {
 	word := typeWords[f.Type]
 	if f.Type == config.TypeEnum {
@@ -598,45 +546,69 @@ func fieldUsage(f config.Field, add bool) string {
 	return head + ": " + f.Help
 }
 
-func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, stdout, stderr io.Writer, d deps) int {
-	verb, op := k.Name+" set", config.OpSet
-	if add {
-		verb, op = k.Name+" add", config.OpAdd
-	}
-	fs := verbflag.New(verb)
-	c := storeFlags(fs)
-	as := actorFlag(fs)
-	dry := fs.Bool("dry-run", false, "print the change the write would record (CONFIG DRY-RUN, from the same checks) and write nothing; it still reads the store")
-	asJSON := jsonFlag(fs)
-	values := map[string]*string{}
-	for _, f := range k.Fields {
-		values[f.Name] = fs.String(f.Name, "", fieldUsage(f, add))
-	}
-	name, rest := nameAndRest(k, args)
-	if code, ok := parse(fs, rest, stderr, verb); !ok {
-		return code
-	}
-	name, err := positional(k, fs, name, verb)
-	if err != nil {
-		return refuse(stderr, verb, err.Error())
-	}
-	given := map[string]string{}
-	fs.Visit(func(f *stdflag.Flag) {
-		if v, ok := values[f.Name]; ok {
-			given[f.Name] = *v
+func runKinds(c *tool.Call) *tool.Out {
+	o := tool.Done().Fact("count", len(config.Kinds))
+	for _, k := range config.Kinds {
+		var req []string
+		for _, f := range k.Fields {
+			if f.Required {
+				req = append(req, f.Name)
+			}
 		}
-	})
+		rows := "many"
+		if k.Singleton {
+			rows = "one"
+		}
+		o.Item("kind", "name", k.Name, "table", "config."+k.Table, "fields", strings.Join(k.FieldNames(), ","), "required", strings.Join(req, ","), "rows", rows, "doc", k.Doc)
+	}
+	return o
+}
+
+func runKind(c *tool.Call, k *config.Kind, verb string, d deps) *tool.Out {
+	ctx := context.Background()
+	switch verb {
+	case "add", "set":
+		return runKindWrite(ctx, c, k, verb == "add", d)
+	case "remove":
+		return runKindRemove(ctx, c, k, d)
+	case "list":
+		return runKindList(ctx, c, k, d)
+	case "show", "history":
+		return runKindRead(ctx, c, k, verb, d)
+	}
+	return tool.Refuse("unknown verb " + verb)
+}
+
+func givenFields(c *tool.Call, k *config.Kind) map[string]string {
+	given := map[string]string{}
+	for _, f := range k.Fields {
+		if c.Given(f.Name) {
+			given[f.Name] = c.Str(f.Name)
+		}
+	}
+	return given
+}
+
+func rowName(c *tool.Call, k *config.Kind) string {
+	if k.Singleton {
+		return k.Name
+	}
+	return c.Str("name")
+}
+
+func runKindWrite(ctx context.Context, c *tool.Call, k *config.Kind, add bool, d deps) *tool.Out {
+	dry := c.DryRun()
+	op := config.OpSet
+	if add {
+		op = config.OpAdd
+	}
+	name := rowName(c, k)
+	actor, _ := actorName(c.Str("as"), d.getenv)
+	given := givenFields(c, k)
 	var problems []string
-	actor, err := actorName(*as, d.getenv)
-	if err != nil {
-		problems = append(problems, err.Error())
-	}
-	dsn, err := c.dsn(d.getenv)
-	if err != nil {
-		problems = append(problems, err.Error())
-	}
 	var row config.Row
 	var changes map[string]string
+	var err error
 	if add {
 		row, err = k.NewRow(name, given)
 	} else {
@@ -645,8 +617,6 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 		}
 		row = config.Row{Name: name}
 	}
-	// Fleet endpoint checks need only the named fields, so malformed or
-	// password-bearing DSNs refuse before a connection (docs/SPEC-CONFIG.md, "fleet").
 	if err == nil && k.Name == config.KindFleet {
 		err = k.Check(config.Row{Name: name, Fields: changes})
 	}
@@ -654,20 +624,20 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 		problems = append(problems, err.Error())
 	}
 	if len(problems) > 0 {
-		return refuse(stderr, verb, strings.Join(problems, "; "))
+		o := tool.Refuse(problems...)
+		o.Remedy = toolName + " " + k.Name + " " + map[bool]string{true: "add", false: "set"}[add] + " -h"
+		return o
 	}
-	st, err := d.openStore(ctx, dsn)
-	if err != nil {
-		return refuse(stderr, verb, err.Error())
+	st, dsn, no := openStore(ctx, c, d)
+	if no != nil {
+		return no
 	}
 	defer st.Close()
 	if laterKind(k) {
-		if code, stale := behindSchema(ctx, st, stderr, verb, c); stale {
-			return code
+		if behind := schemaBehind(ctx, st, c); behind != nil {
+			return behind
 		}
 	}
-	// next is the command a refusal names: a row that is not there is added;
-	// one there is shown, the start of a set it refused.
 	next := toolName + " " + k.Name + " set " + name + " --<field> <value>"
 	if !add {
 		next = toolName + " " + k.Name + " add " + name + " --<field> <value> ..."
@@ -676,66 +646,62 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 		}
 	}
 	var notes []string
-	width := row.Int("width")
-	if add && k.Name == config.KindMachine && width == 0 {
-		// width is set apart from slots and defaults to no member: say so where a newcomer meets it
-		notes = append(notes, fmt.Sprintf("machine=%s width=0: no sprint member, so it is dealt no work; its width is set apart from its slots; run: %s machine set %s --width <n> --as %s%s", config.Value(name), toolName, name, actor, c.again()))
+	if add && k.Name == config.KindMachine && row.Int("width") == 0 {
+		notes = append(notes, fmt.Sprintf("machine=%s width=0: no sprint member, so it is dealt no work; its width is set apart from its slots; run: %s machine set %s --width <n> --as %s%s", config.Value(name), toolName, name, actor, again(c)))
+	}
+	if dry {
+		plan, err := config.PlanWrite(ctx, st, op, k.Name, row, changes)
+		if err != nil {
+			return storeNo(err, writeRemedy(k, add, name, err, next)+again(c))
+		}
+		plan.Actor = actor
+		o := tool.Done().Fact("op", plan.Op).Fact("kind", k.Name).Fact("name", name).Fact("actor", actor).Fact("wrote", "nothing")
+		o.Facts = append(o.Facts, changeFacts(plan)...)
+		o.Notes = notes
+		return o
 	}
 	var id int64
 	var changed []string
-	if *dry {
-		plan, err := config.PlanWrite(ctx, st, op, k.Name, row, changes)
-		if err != nil {
-			return storeErr(stderr, verb, err, writeRemedy(k, add, name, err, next)+c.again())
-		}
-		plan.Actor = actor
-		if *asJSON {
-			o := tool.Done().Fact("dry_run", true).Fact("op", plan.Op).Fact("kind", k.Name).Fact("name", name).Fact("before", plan.Before).Fact("after", plan.After)
-			o.Verb, o.Notes = verb, notes
-			return emit(stdout, o)
-		}
-		fmt.Fprintln(stdout, config.PlanLine(plan))
-		printNotes(stdout, notes)
-		return 0
-	}
 	if add {
 		if id, err = st.Insert(ctx, k.Name, row, actor); err != nil {
-			return storeErr(stderr, verb, err, writeRemedy(k, add, name, err, next)+c.again())
+			return storeNo(err, writeRemedy(k, add, name, err, next)+again(c))
 		}
 	} else {
 		if _, id, err = st.Update(ctx, k.Name, name, changes, actor); err != nil {
-			return storeErr(stderr, verb, err, writeRemedy(k, add, name, err, next)+c.again())
+			return storeNo(err, writeRemedy(k, add, name, err, next)+again(c))
 		}
 		changed = slices.Sorted(maps.Keys(changes))
 	}
-	if *asJSON {
-		o := tool.Done().Fact("op", op).Fact("kind", k.Name).Fact("name", name).Fact("rev", id)
-		if !add {
-			o.Fact("changed", changed)
+	o := tool.Done().Fact("op", op).Fact("kind", k.Name).Fact("name", name).Fact("rev", id)
+	if !add {
+		o.Fact("changed", strings.Join(changed, ","))
+	}
+	o.Notes = notes
+	_ = dsn
+	return o
+}
+
+func changeFacts(ch config.Change) []tool.Field {
+	var fs []tool.Field
+	switch ch.Op {
+	case config.OpAdd:
+		for _, f := range slices.Sorted(maps.Keys(ch.After)) {
+			fs = append(fs, tool.Field{K: f, V: ch.After[f]})
 		}
-		o.Verb, o.Notes = verb, notes
-		return emit(stdout, o)
+	case config.OpRemove:
+		for _, f := range slices.Sorted(maps.Keys(ch.Before)) {
+			fs = append(fs, tool.Field{K: f, V: ch.Before[f]})
+		}
+	default:
+		for _, f := range slices.Sorted(maps.Keys(ch.After)) {
+			if ch.Before[f] != ch.After[f] {
+				fs = append(fs, tool.Field{K: f, V: config.Value(ch.Before[f]) + ">" + config.Value(ch.After[f])})
+			}
+		}
 	}
-	if add {
-		fmt.Fprintf(stdout, "CONFIG ADD kind=%s name=%s rev=%d\n", k.Name, config.Value(name), id)
-	} else {
-		fmt.Fprintf(stdout, "CONFIG SET kind=%s name=%s rev=%d changed=%s\n", k.Name, config.Value(name), id, config.Value(strings.Join(changed, ",")))
-	}
-	printNotes(stdout, notes)
-	return 0
+	return fs
 }
 
-// printNotes writes a result's notes, one NOTE line each.
-func printNotes(stdout io.Writer, notes []string) {
-	for _, n := range notes {
-		fmt.Fprintln(stdout, "NOTE "+n)
-	}
-}
-
-// writeRemedy is the command an add or set refusal names: for a ref naming
-// no row, that kind's list; for a set the store refused because the row is
-// there but its fields broke a rule, the row's show; else next (the set of a
-// name taken, the add of a name missing, a singleton's show).
 func writeRemedy(k *config.Kind, add bool, name string, err error, next string) string {
 	if errors.Is(err, config.ErrNoRef) {
 		if remedy := refRemedy(k); remedy != "" {
@@ -749,10 +715,6 @@ func writeRemedy(k *config.Kind, add bool, name string, err error, next string) 
 	return toolName + " " + k.Name + " show " + name
 }
 
-// refRemedy uses the descriptor, not the store's human error text. A kind
-// whose ref fields all point to one kind can safely direct an ErrNoRef
-// refusal to that kind's list, even when an unchanged field failed. A kind
-// with mixed ref kinds keeps its generic remedy.
 func refRemedy(k *config.Kind) string {
 	ref := ""
 	for _, f := range k.Fields {
@@ -770,87 +732,42 @@ func refRemedy(k *config.Kind) string {
 	return toolName + " " + ref + " list"
 }
 
-func runKindRemove(ctx context.Context, k *config.Kind, args []string, stdout, stderr io.Writer, d deps) int {
-	verb := k.Name + " remove"
-	fs := verbflag.New(verb)
-	c := storeFlags(fs)
-	as := actorFlag(fs)
-	dry := fs.Bool("dry-run", false, "print the change the remove would record (CONFIG DRY-RUN, from the same checks) and write nothing; it still reads the store")
-	asJSON := jsonFlag(fs)
-	name, rest := nameAndRest(k, args)
-	if code, ok := parse(fs, rest, stderr, verb); !ok {
-		return code
-	}
-	if name == "" && fs.NArg() == 1 {
-		name = fs.Arg(0)
-	} else if fs.NArg() > 0 {
-		return refuse(stderr, verb, "want "+verb+" <name>")
-	}
-	var problems []string
+func runKindRemove(ctx context.Context, c *tool.Call, k *config.Kind, d deps) *tool.Out {
+	dry := c.DryRun()
+	name := c.Str("name")
+	actor, _ := actorName(c.Str("as"), d.getenv)
 	if err := config.ValidateName(name); err != nil {
-		problems = append(problems, err.Error())
+		return tool.Refuse(err.Error())
 	}
-	actor, err := actorName(*as, d.getenv)
-	if err != nil {
-		problems = append(problems, err.Error())
-	}
-	dsn, err := c.dsn(d.getenv)
-	if err != nil {
-		problems = append(problems, err.Error())
-	}
-	if len(problems) > 0 {
-		return refuse(stderr, verb, strings.Join(problems, "; "))
-	}
-	st, err := d.openStore(ctx, dsn)
-	if err != nil {
-		return refuse(stderr, verb, err.Error())
+	st, _, no := openStore(ctx, c, d)
+	if no != nil {
+		return no
 	}
 	defer st.Close()
 	if laterKind(k) {
-		if code, stale := behindSchema(ctx, st, stderr, verb, c); stale {
-			return code
+		if behind := schemaBehind(ctx, st, c); behind != nil {
+			return behind
 		}
 	}
-	if *dry {
+	if dry {
 		plan, err := config.PlanWrite(ctx, st, config.OpRemove, k.Name, config.Row{Name: name}, nil)
 		if err != nil {
-			return storeErr(stderr, verb, err, toolName+" "+k.Name+" list"+c.again())
+			return storeNo(err, toolName+" "+k.Name+" list"+again(c))
 		}
 		plan.Actor = actor
-		if *asJSON {
-			o := tool.Done().Fact("dry_run", true).Fact("op", plan.Op).Fact("kind", k.Name).Fact("name", name).Fact("before", plan.Before)
-			o.Verb = verb
-			return emit(stdout, o)
-		}
-		fmt.Fprintln(stdout, config.PlanLine(plan))
-		return 0
+		o := tool.Done().Fact("op", plan.Op).Fact("kind", k.Name).Fact("name", name).Fact("actor", actor).Fact("wrote", "nothing")
+		o.Facts = append(o.Facts, changeFacts(plan)...)
+		return o
 	}
 	id, err := st.Delete(ctx, k.Name, name, actor)
 	if err != nil {
-		return storeErr(stderr, verb, err, toolName+" "+k.Name+" list"+c.again())
+		return storeNo(err, toolName+" "+k.Name+" list"+again(c))
 	}
-	if *asJSON {
-		o := tool.Done().Fact("op", config.OpRemove).Fact("kind", k.Name).Fact("name", name).Fact("rev", id)
-		o.Verb = verb
-		return emit(stdout, o)
-	}
-	fmt.Fprintf(stdout, "CONFIG REMOVE kind=%s name=%s rev=%d\n", k.Name, config.Value(name), id)
-	return 0
+	return tool.Done().Fact("op", config.OpRemove).Fact("kind", k.Name).Fact("name", name).Fact("rev", id)
 }
 
-// live is true for the kind whose rows have a beat to read: a machine.
 func live(k *config.Kind) bool { return k.Name == config.KindMachine }
 
-// liveFlag adds --redis to a machine's list and show.
-func liveFlag(fs *stdflag.FlagSet, k *config.Kind) *string {
-	if !live(k) {
-		return new(string)
-	}
-	return fs.String("redis", "", "the Redis `host:port` (env NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR); when given, each line ends in the machine's live measured facts from its beat")
-}
-
-// beats reads the named machines' beats when a Redis is named, else nil
-// (no live facts on the lines).
 func beats(ctx context.Context, addr string, names []string, d deps) (map[string]*config.Beat, error) {
 	if addr == "" {
 		return nil, nil
@@ -863,17 +780,7 @@ func beats(ctx context.Context, addr string, names []string, d deps) (map[string
 	return rs.Beats(ctx, names)
 }
 
-// liveSuffix is the line's live part: nothing when no Redis was named.
-func liveSuffix(bs map[string]*config.Beat, name string) string {
-	if bs == nil {
-		return ""
-	}
-	return config.LiveLine(bs[name])
-}
-
-// rowFields is a row as a JSON item's fields: its name, every field of the
-// kind in declaration order, then any extra key=value pairs.
-func rowFields(k *config.Kind, row config.Row, extra ...any) []any {
+func rowKV(k *config.Kind, row config.Row, extra ...any) []any {
 	kv := []any{"name", row.Name}
 	for _, f := range k.Fields {
 		kv = append(kv, f.Name, row.Fields[f.Name])
@@ -881,9 +788,7 @@ func rowFields(k *config.Kind, row config.Row, extra ...any) []any {
 	return append(kv, extra...)
 }
 
-// liveFields is a machine's beat as JSON item fields (none when no Redis was
-// named; beat "none" for a machine with no beat).
-func liveFields(bs map[string]*config.Beat, name string) []any {
+func liveKV(bs map[string]*config.Beat, name string) []any {
 	if bs == nil {
 		return nil
 	}
@@ -894,35 +799,20 @@ func liveFields(bs map[string]*config.Beat, name string) []any {
 	return []any{"os", b.OS, "arch", b.Arch, "cores", b.Cores, "memory_gb", b.MemoryGB, "beat", b.At}
 }
 
-func runKindList(ctx context.Context, k *config.Kind, args []string, stdout, stderr io.Writer, d deps) int {
-	verb := k.Name + " list"
-	fs := verbflag.New(verb)
-	c := storeFlags(fs)
-	redisFlag := liveFlag(fs, k)
-	asJSON := jsonFlag(fs)
-	if code, ok := parse(fs, args, stderr, verb); !ok {
-		return code
-	}
-	if fs.NArg() > 0 {
-		return refuse(stderr, verb, "list takes no name; want "+verb)
-	}
-	dsn, err := c.dsn(d.getenv)
-	if err != nil {
-		return refuse(stderr, verb, err.Error())
-	}
-	st, err := d.openStore(ctx, dsn)
-	if err != nil {
-		return refuse(stderr, verb, err.Error())
+func runKindList(ctx context.Context, c *tool.Call, k *config.Kind, d deps) *tool.Out {
+	st, _, no := openStore(ctx, c, d)
+	if no != nil {
+		return no
 	}
 	defer st.Close()
 	if laterKind(k) {
-		if code, stale := behindSchema(ctx, st, stderr, verb, c); stale {
-			return code
+		if behind := schemaBehind(ctx, st, c); behind != nil {
+			return behind
 		}
 	}
 	rows, err := st.List(ctx, k.Name)
 	if err != nil {
-		return refuse(stderr, verb, err.Error())
+		return tool.Refuse(err.Error())
 	}
 	var bs map[string]*config.Beat
 	if live(k) {
@@ -930,228 +820,140 @@ func runKindList(ctx context.Context, k *config.Kind, args []string, stdout, std
 		for _, row := range rows {
 			names = append(names, row.Name)
 		}
-		if bs, err = beats(ctx, liveRedisAddress(*redisFlag, d.getenv), names, d); err != nil {
-			return refuse(stderr, verb, err.Error())
+		if bs, err = beats(ctx, liveRedisAddress(c.Str("redis"), d.getenv), names, d); err != nil {
+			return tool.Refuse(err.Error())
 		}
 	}
-	if *asJSON {
-		o := tool.Done().Fact("kind", k.Name).Fact("rows", len(rows))
-		o.Verb = verb
-		for _, row := range rows {
-			o.Item(k.Name, rowFields(k, row, liveFields(bs, row.Name)...)...)
-		}
-		return emit(stdout, o)
-	}
+	o := tool.Done().Fact("kind", k.Name).Fact("rows", len(rows))
 	for _, row := range rows {
-		fmt.Fprintln(stdout, config.RowLine(k, row)+liveSuffix(bs, row.Name))
+		o.Item(k.Name, rowKV(k, row, liveKV(bs, row.Name)...)...)
 	}
-	fmt.Fprintf(stdout, "CONFIG LIST kind=%s rows=%d\n", k.Name, len(rows))
-	return 0
+	return o
 }
 
-func runKindRead(ctx context.Context, k *config.Kind, which string, args []string, stdout, stderr io.Writer, d deps) int {
-	verb := k.Name + " " + which
-	fs := verbflag.New(verb)
-	c := storeFlags(fs)
-	var redisFlag *string
-	if which == "show" {
-		redisFlag = liveFlag(fs, k)
-	}
-	asJSON := jsonFlag(fs)
-	name, rest := nameAndRest(k, args)
-	if code, ok := parse(fs, rest, stderr, verb); !ok {
-		return code
-	}
-	switch {
-	case k.Singleton && fs.NArg() > 0:
-		return refuse(stderr, verb, k.Name+" takes no name: it is one row; want "+verb)
-	case name == "" && fs.NArg() == 1:
-		name = fs.Arg(0)
-	case fs.NArg() > 0:
-		return refuse(stderr, verb, "want "+verb+" <name>")
-	}
-	var problems []string
+func runKindRead(ctx context.Context, c *tool.Call, k *config.Kind, which string, d deps) *tool.Out {
+	name := rowName(c, k)
 	if err := config.ValidateName(name); err != nil {
-		problems = append(problems, err.Error())
+		return tool.Refuse(err.Error())
 	}
-	dsn, err := c.dsn(d.getenv)
-	if err != nil {
-		problems = append(problems, err.Error())
-	}
-	if len(problems) > 0 {
-		return refuse(stderr, verb, strings.Join(problems, "; "))
-	}
-	st, err := d.openStore(ctx, dsn)
-	if err != nil {
-		return refuse(stderr, verb, err.Error())
+	st, _, no := openStore(ctx, c, d)
+	if no != nil {
+		return no
 	}
 	defer st.Close()
-	// machine show reads the loops table beside the machine row.
 	if laterKind(k) || (k.Name == config.KindMachine && which == "show") {
-		if code, stale := behindSchema(ctx, st, stderr, verb, c); stale {
-			return code
+		if behind := schemaBehind(ctx, st, c); behind != nil {
+			return behind
 		}
 	}
 	if which == "show" {
-		return showRow(ctx, k, name, st, stdout, stderr, d, verb, *redisFlag, *asJSON, c.again())
+		return showRow(ctx, c, k, name, st, d)
 	}
 	changes, err := st.History(ctx, k.Name, name)
 	if err != nil {
-		return refuse(stderr, verb, err.Error())
+		return tool.Refuse(err.Error())
 	}
 	if len(changes) == 0 && !k.Singleton {
-		return refused(stderr, verb, k.Name+" "+name+" has no history: it was never added", toolName+" "+k.Name+" list"+c.again())
+		o := tool.Fail(k.Name + " " + name + " has no history: it was never added")
+		o.Remedy = toolName + " " + k.Name + " list" + again(c)
+		return o
 	}
-	if *asJSON {
-		o := tool.Done().Fact("kind", k.Name).Fact("name", name).Fact("changes", len(changes))
-		o.Verb = verb
-		for _, ch := range changes {
-			o.Item("change", "id", ch.ID, "op", ch.Op, "actor", ch.Actor, "at", ch.At, "before", ch.Before, "after", ch.After)
-		}
-		return emit(stdout, o)
-	}
+	o := tool.Done().Fact("kind", k.Name).Fact("name", name).Fact("changes", len(changes))
 	for _, ch := range changes {
-		fmt.Fprintln(stdout, config.HistoryLine(ch))
+		kv := []any{"id", ch.ID, "kind", ch.Kind, "name", ch.Name, "op", ch.Op, "actor", ch.Actor, "at", ch.At}
+		for _, f := range changeFacts(ch) {
+			kv = append(kv, f.K, f.V)
+		}
+		o.Item("change", kv...)
 	}
-	fmt.Fprintf(stdout, "CONFIG HISTORY kind=%s name=%s changes=%d\n", k.Name, config.Value(name), len(changes))
-	return 0
+	return o
 }
 
-// showRow is <kind> show: the row with its stamps; a machine's line names its
-// loops (and its beat with a Redis), a loop's the command its unit runs.
-func showRow(ctx context.Context, k *config.Kind, name string, st pgStore, stdout, stderr io.Writer, d deps, verb, redisAddr string, asJSON bool, again string) int {
+func showRow(ctx context.Context, c *tool.Call, k *config.Kind, name string, st pgStore, d deps) *tool.Out {
 	row, found, err := st.Get(ctx, k.Name, name)
 	if err != nil {
-		return refuse(stderr, verb, err.Error())
+		return tool.Refuse(err.Error())
 	}
 	if !found {
-		return refused(stderr, verb, k.Name+" "+name+" not found", toolName+" "+k.Name+" list"+again)
+		o := tool.Fail(k.Name + " " + name + " not found")
+		o.Remedy = toolName + " " + k.Name + " list" + again(c)
+		return o
 	}
-	suffix := ""
 	extra := []any{"created", row.CreatedAt, "updated", row.UpdatedAt}
 	if k.Name == config.KindMachine {
 		loops, err := machineLoops(ctx, st, name)
 		if err != nil {
-			return refuse(stderr, verb, err.Error())
+			return tool.Refuse(err.Error())
 		}
-		suffix = " loops=" + config.Value(strings.Join(loops, ","))
-		extra = append(extra, "loops", loops)
+		extra = append(extra, "loops", strings.Join(loops, ","))
 	}
 	if k.Name == config.KindLoop {
-		// the words the unit runs: the argv with the width field as its --width
 		command, err := config.LoopCommandText(row)
 		if err != nil {
-			return refuse(stderr, verb, err.Error())
+			return tool.Refuse(err.Error())
 		}
-		suffix = " command=" + config.Value(command)
-		extra = append(extra, "command", config.LoopCommand(config.Argv(row.Fields["argv"]), row.Int("width")))
+		extra = append(extra, "command", command)
 	}
-	var bs map[string]*config.Beat
 	if live(k) {
-		if bs, err = beats(ctx, liveRedisAddress(redisAddr, d.getenv), []string{name}, d); err != nil {
-			return refuse(stderr, verb, err.Error())
+		bs, err := beats(ctx, liveRedisAddress(c.Str("redis"), d.getenv), []string{name}, d)
+		if err != nil {
+			return tool.Refuse(err.Error())
 		}
-		suffix += liveSuffix(bs, name)
-		extra = append(extra, liveFields(bs, name)...)
+		extra = append(extra, liveKV(bs, name)...)
 	}
-	if asJSON {
-		o := tool.Done()
-		o.Verb = verb
-		o.Item(k.Name, rowFields(k, row, extra...)...)
-		return emit(stdout, o)
-	}
-	fmt.Fprintln(stdout, config.ShowLine(k, row)+suffix)
-	return 0
+	return tool.Done().Item(k.Name, rowKV(k, row, extra...)...)
 }
 
-// --- migrate, status, apply -------------------------------------------------
-
-func runMigrate(ctx context.Context, args []string, stdout, stderr io.Writer, d deps) int {
-	const verb = "migrate"
-	fs := verbflag.New(verb)
-	c := storeFlags(fs)
-	print := fs.Bool("print", false, "list the migrations this binary carries and connect to nothing")
-	dry := fs.Bool("dry-run", false, "read the ledger (config.schema_migrations) and print every migration applied, pending (migrate applies it) or missing (below the greatest recorded, which migrate will not apply), and every table of schema config the role does not own, applying none; exit 0 when migrate would apply (ready=yes), 1 when it would refuse (ready=no)")
-	asJSON := jsonFlag(fs)
-	if code, ok := parse(fs, args, stderr, verb); !ok {
-		return code
-	}
-	if fs.NArg() > 0 {
-		return refuse(stderr, verb, "migrate takes no arguments")
-	}
+func runMigrate(c *tool.Call, d deps) *tool.Out {
+	dry := c.DryRun()
 	all, err := config.Migrations()
 	if err != nil {
-		return refuse(stderr, verb, err.Error())
+		return tool.Refuse(err.Error())
 	}
-	if *print {
-		if *asJSON {
-			o := tool.Done().Fact("print", len(all))
-			o.Verb = verb
-			for _, m := range all {
-				o.Item("migration", "version", m.Version, "file", m.Name, "lines", strings.Count(m.SQL, "\n"))
-			}
-			return emit(stdout, o)
-		}
+	if c.Bool("print") {
+		o := tool.Done().Fact("print", len(all)).Fact("pg", "")
 		for _, m := range all {
-			fmt.Fprintf(stdout, "MIGRATION version=%d file=%s lines=%d\n", m.Version, config.Value(m.Name), strings.Count(m.SQL, "\n"))
+			o.Item("migration", "version", m.Version, "file", m.Name, "lines", strings.Count(m.SQL, "\n"))
 		}
-		fmt.Fprintf(stdout, "CONFIG MIGRATE print=%d pg=-\n", len(all))
-		return 0
+		return o
 	}
-	dsn, err := c.dsn(d.getenv)
-	if err != nil {
-		return refuse(stderr, verb, err.Error())
-	}
-	st, err := d.openStore(ctx, dsn)
-	if err != nil {
-		return refuse(stderr, verb, err.Error())
+	ctx := context.Background()
+	st, dsn, no := openStore(ctx, c, d)
+	if no != nil {
+		return no
 	}
 	defer st.Close()
 	key, value := where(dsn)
+	// Version then Ownership, then the ledger: a dry run's readiness uses the
+	// same Applied read the lines render (docs/SPEC-CONFIG.md, "The schema").
 	have, err := st.Version(ctx)
 	if err != nil {
-		return refuse(stderr, verb, err.Error())
+		return tool.Refuse(err.Error())
 	}
 	owners, err := st.Ownership(ctx)
 	if err != nil {
-		return refuse(stderr, verb, err.Error())
+		return tool.Refuse(err.Error())
 	}
-	if *dry {
-		return migrateDryRun(ctx, st, all, owners, stdout, stderr, key, value, *asJSON)
+	if dry {
+		return migrateDryRun(ctx, st, all, owners, key, value)
 	}
 	gaps := config.MigrateGaps(owners, config.Pending(all, have))
 	if len(gaps) > 0 {
-		return refused(stderr, verb, ownershipWhy(owners.Role, config.Pending(all, have), gaps), ownershipRemedy(owners.Role, gaps))
+		o := tool.Fail(ownershipWhy(owners.Role, config.Pending(all, have), gaps))
+		o.Remedy = ownershipRemedy(owners.Role, gaps)
+		return o
 	}
 	from, to, applied, err := st.Migrate(ctx)
 	if err != nil {
-		return refuse(stderr, verb, err.Error())
+		return tool.Refuse(err.Error())
 	}
-	if *asJSON {
-		o := tool.Done().Fact(key, value).Fact("from", from).Fact("to", to).Fact("applied", len(applied)).Fact("versions", applied)
-		o.Verb = verb
-		return emit(stdout, o)
-	}
-	fmt.Fprintf(stdout, "CONFIG MIGRATE %s=%s from=%d to=%d applied=%d\n", key, config.Value(value), from, to, len(applied))
-	return 0
+	return tool.Done().Fact(key, value).Fact("from", from).Fact("to", to).Fact("applied", len(applied))
 }
 
-// migrateDryRun is migrate --dry-run: the ledger read, every migration this
-// binary carries with its state, and nothing applied. A migration is applied
-// (its version is in the ledger), pending (above the greatest recorded:
-// migrate applies it), or missing (not in the ledger and below the greatest:
-// migrate, which applies only versions above the greatest, will not apply
-// it, and a NOTE says so). Then the ownership finding: a MIGRATE NOT-OWNED
-// line per gap the role has on schema config (config.Gaps) and, when migrate
-// would refuse (config.MigrateGaps), a MIGRATE WOULD-REFUSE line with the
-// refusal it would print. It exits 0 when migrate would apply (ready=yes)
-// and 1 when it would refuse (ready=no), so a play or script gating on the
-// dry run stops on it; nothing was attempted, so it prints no refusal line.
-func migrateDryRun(ctx context.Context, st pgStore, all []config.Migration, owners config.Ownership, stdout, stderr io.Writer, key, value string, asJSON bool) int {
-	const verb = "migrate"
+func migrateDryRun(ctx context.Context, st pgStore, all []config.Migration, owners config.Ownership, key, value string) *tool.Out {
 	ledger, err := st.Applied(ctx)
 	if err != nil {
-		return refuse(stderr, verb, err.Error())
+		return tool.Refuse(err.Error())
 	}
 	have := 0
 	recorded := map[int]bool{}
@@ -1160,8 +962,6 @@ func migrateDryRun(ctx context.Context, st pgStore, all []config.Migration, owne
 		have = max(have, v)
 	}
 	o := tool.Done()
-	o.Verb = verb
-	var lines []string
 	var missing []string
 	var pending []config.Migration
 	for _, m := range all {
@@ -1173,41 +973,34 @@ func migrateDryRun(ctx context.Context, st pgStore, all []config.Migration, owne
 			pending = append(pending, m)
 		default:
 			state = "missing"
-			missing = append(missing, strconv.Itoa(m.Version))
+			missing = append(missing, fmt.Sprint(m.Version))
 		}
 		o.Item("migration", "version", m.Version, "file", m.Name, "lines", strings.Count(m.SQL, "\n"), "state", state)
-		lines = append(lines, fmt.Sprintf("MIGRATION version=%d file=%s lines=%d state=%s", m.Version, config.Value(m.Name), strings.Count(m.SQL, "\n"), state))
 	}
 	for _, g := range config.Gaps(owners) {
-		o.Item("not_owned", "table", gapName(g), "owner", g.Owner, "role", owners.Role)
-		lines = append(lines, fmt.Sprintf("MIGRATE NOT-OWNED table=%s owner=%s role=%s", config.Value(gapName(g)), config.Value(g.Owner), config.Value(owners.Role)))
+		o.Item("not-owned", "table", gapName(g), "owner", g.Owner, "role", owners.Role)
 	}
-	// Readiness uses the same ledger as the rendered pending rows: another
-	// migrate may advance it after Version (docs/SPEC-CONFIG.md, "The schema").
 	gaps := config.MigrateGaps(owners, pending)
 	ready := "yes"
 	if len(gaps) > 0 {
 		ready = "no"
 		why, remedy := ownershipWhy(owners.Role, pending, gaps), ownershipRemedy(owners.Role, gaps)
 		o.Status, o.Exit, o.Why, o.Remedy = tool.Failed, 1, []string{why}, remedy
-		lines = append(lines, "MIGRATE WOULD-REFUSE "+plain(why)+"; run: "+remedy)
+		o.ItemText("would-refuse", why+"; run: "+remedy)
+		// A finding kind keeps a Failed result on stdout: nothing was attempted,
+		// so the lines are the result, not a refusal on stderr (docs/SPEC-CONFIG.md, migrate --dry-run).
+		o.Findings("kept-on-stdout")
 	}
-	o.Fact(key, value).Fact("from", have).Fact("to", len(all)).Fact("applied", 0).Fact("dry_run", true).Fact("pending", len(pending)).Fact("missing", len(missing)).Fact("role", owners.Role).Fact("ready", ready)
+	o.Fact(key, value).Fact("from", have).Fact("to", len(all)).Fact("applied", 0).Fact("pending", len(pending)).Fact("missing", len(missing)).Fact("role", owners.Role).Fact("ready", ready)
+	if ready == "no" {
+		o.Fact("dry_run", true) // an OK result gets dry_run from the skeleton; a failed dry run does not
+	}
 	if len(missing) > 0 {
 		o.Note(fmt.Sprintf("version(s) %s are not in the ledger and are below %d, the greatest recorded: migrate applies only versions above it, so it will not apply them", strings.Join(missing, ","), have))
 	}
-	if asJSON {
-		return emit(stdout, o)
-	}
-	for _, l := range lines {
-		fmt.Fprintln(stdout, l)
-	}
-	fmt.Fprintf(stdout, "CONFIG MIGRATE %s=%s from=%d to=%d applied=0 dry_run=true pending=%d missing=%d role=%s ready=%s\n", key, config.Value(value), have, len(all), len(pending), len(missing), config.Value(owners.Role), ready)
-	printNotes(stdout, o.Notes)
-	return o.Exit
+	return o
 }
 
-// gapName is the gap's object as the lines name it.
 func gapName(g config.Gap) string {
 	if g.Table == "" {
 		return "schema config"
@@ -1215,8 +1008,6 @@ func gapName(g config.Gap) string {
 	return "config." + g.Table
 }
 
-// ownershipWhy is why migrate refuses: the role, the migrations it cannot
-// apply, the rule, and each owner with what it holds.
 func ownershipWhy(role string, pending []config.Migration, gaps []config.Gap) string {
 	byOwner := map[string][]string{}
 	var owners []string
@@ -1238,264 +1029,266 @@ func ownershipWhy(role string, pending []config.Migration, gaps []config.Gap) st
 		role, which, strings.Join(held, ", and "))
 }
 
-// ownershipRemedy is the statements that close every gap, on one line:
-// printed for a person to run, never run by migrate.
 func ownershipRemedy(role string, gaps []config.Gap) string {
 	lines := make([]string, len(gaps))
 	for i, g := range gaps {
 		lines[i] = g.Remedy(role)
 	}
-	return oneline.Escape(strings.Join(lines, " "))
+	return strings.Join(lines, " ")
 }
 
-// laterKind is a kind whose table a later migration made (loops since
-// version 6, routes since 7, tiers since 8, fleet endpoints since 14): each
-// of its verbs refuses on a store older
-// than this binary's migrations (behindSchema), which does not have it.
-func laterKind(k *config.Kind) bool {
-	return k.Name == config.KindLoop || k.Name == config.KindRoute || k.Name == config.KindTier || k.Name == config.KindFleet
-}
-
-// behindSchema is the refusal for a store whose schema is older than this
-// binary's migrations: a table a newer kind reads (laterKind) is
-// not there, and the store's own "relation does not exist" says nothing about
-// the cause. It returns the exit code and true when it refused, and writes
-// nothing and returns false when the store is at (or past) this binary's
-// version.
-func behindSchema(ctx context.Context, st pgStore, stderr io.Writer, verb string, c conn) (int, bool) {
-	have, err := st.Version(ctx)
-	if err != nil {
-		return refuse(stderr, verb, err.Error()), true
-	}
-	return behindVersion(have, stderr, verb, c)
-}
-
-// behindVersion is behindSchema for a version already read.
-func behindVersion(have int, stderr io.Writer, verb string, c conn) (int, bool) {
-	all, err := config.Migrations()
-	if err != nil || have >= len(all) {
-		return 0, false
-	}
-	return refused(stderr, verb, fmt.Sprintf("schema config is at version %d and this binary carries %d", have, len(all)), toolName+" migrate"+c.again()), true
-}
-
-func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer, d deps) int {
-	const verb = "status"
-	fs := verbflag.New(verb)
-	c := storeFlags(fs)
-	redisFlag := fs.String("redis", "", "the Redis `host:port` apply writes (env NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's address); without one, status reads the store alone")
-	asJSON := jsonFlag(fs)
-	if code, ok := parse(fs, args, stderr, verb); !ok {
-		return code
-	}
-	if fs.NArg() > 0 {
-		return refuse(stderr, verb, "status takes no arguments")
-	}
-	dsn, err := c.dsn(d.getenv)
-	if err != nil {
-		return refuse(stderr, verb, err.Error())
-	}
-	st, err := d.openStore(ctx, dsn)
-	if err != nil {
-		return refuse(stderr, verb, err.Error())
+func runStatus(c *tool.Call, d deps) *tool.Out {
+	ctx := context.Background()
+	st, dsn, no := openStore(ctx, c, d)
+	if no != nil {
+		return no
 	}
 	defer st.Close()
 	schema, err := st.Version(ctx)
 	if err != nil {
-		return refuse(stderr, verb, err.Error())
+		return tool.Refuse(err.Error())
 	}
 	key, value := where(dsn)
 	o := tool.Done().Fact(key, value).Fact("schema", schema)
-	o.Verb = verb
-	line := "CONFIG STATUS " + key + "=" + config.Value(value) + " schema=" + strconv.Itoa(schema)
-	// finish prints the result (lines or JSON) and, for a refusal, its line.
-	finish := func(code int, why, next string) int {
-		if *asJSON {
-			if code != 0 {
-				o.Status, o.Exit, o.Why, o.Remedy = tool.Failed, code, []string{why}, next
-			}
-			emit(stdout, o)
-		} else {
-			fmt.Fprintln(stdout, line)
-		}
-		if code != 0 {
-			return refused(stderr, verb, why, next)
-		}
-		return 0
-	}
 	if schema == 0 {
 		o.Fact("redis", "")
-		line += " redis=-"
-		return finish(1, "schema config is not there yet", toolName+" migrate"+c.again())
+		o.Status, o.Exit = tool.Failed, 1
+		o.Why = []string{"schema config is not there yet"}
+		o.Remedy = toolName + " migrate" + again(c)
+		o.Findings("kept-on-stdout")
+		return o
 	}
-	if code, stale := behindVersion(schema, stderr, verb, c); stale {
-		return code
+	if behind := versionBehind(schema, c); behind != nil {
+		return behind
 	}
 	counts, err := st.Counts(ctx)
 	if err != nil {
-		return refuse(stderr, verb, err.Error())
+		return tool.Refuse(err.Error())
 	}
 	revs := map[string]int64{}
 	for _, k := range config.Kinds {
 		rev, err := st.Rev(ctx, k.Name)
 		if err != nil {
-			return refuse(stderr, verb, err.Error())
+			return tool.Refuse(err.Error())
 		}
 		revs[k.Name] = rev
 		if k.Singleton {
-			line += fmt.Sprintf(" %s_rev=%d", k.Name, rev)
 			o.Fact(k.Name+"_rev", rev)
 			continue
 		}
-		line += fmt.Sprintf(" %s=%d %s_rev=%d", k.Name, counts[k.Name], k.Name, rev)
 		o.Fact(k.Name, counts[k.Name]).Fact(k.Name+"_rev", rev)
 	}
-	addr, addrErr := redisAddress(*redisFlag, d.getenv)
+	addr, addrErr := redisAddress(c.Str("redis"), d.getenv)
 	if addrErr != nil {
-		line += " redis=-"
 		o.Fact("redis", "")
-		return finish(0, "", "")
+		return o
 	}
 	rs, err := d.openRedis(ctx, addr)
 	if err != nil {
-		return refuse(stderr, verb, err.Error())
+		return tool.Refuse(err.Error())
 	}
 	defer rs.Close()
-	line += " redis=" + config.Value(addr)
 	o.Fact("redis", addr)
 	behind := 0
 	for _, k := range config.Kinds {
 		_, applied, err := rs.Read(ctx, k.Name)
 		if err != nil {
-			return refuse(stderr, verb, err.Error())
+			return tool.Refuse(err.Error())
 		}
-		line += fmt.Sprintf(" %s_applied=%d", k.Name, applied)
 		o.Fact(k.Name+"_applied", applied)
 		if applied != revs[k.Name] {
 			behind++
 		}
 	}
 	if behind > 0 {
-		return finish(1, fmt.Sprintf("Redis is not at the store's revision for %d kind(s)", behind), toolName+" apply"+c.again())
+		o.Status, o.Exit = tool.Failed, 1
+		o.Why = []string{fmt.Sprintf("Redis is not at the store's revision for %d kind(s)", behind)}
+		o.Remedy = toolName + " apply" + again(c)
+		o.Findings("kept-on-stdout")
 	}
-	return finish(0, "", "")
+	return o
 }
 
-func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d deps) int {
-	const verb = "apply"
-	fs := verbflag.New(verb)
-	c := storeFlags(fs)
-	redisFlag := fs.String("redis", "", "the Redis `host:port` to write (env NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's address)")
-	as := actorFlag(fs)
-	kind := fs.String("kind", "", "one `kind` to apply ("+strings.Join(config.KindNames(), ", ")+"); every kind, in order, when unset")
-	check := fs.Bool("check", false, "the same as --dry-run")
-	dry := fs.Bool("dry-run", false, "print the ADD, SET and REMOVE lines (CHECK ...) and write nothing; it still reads the store and Redis")
-	asJSON := jsonFlag(fs)
-	if code, ok := parse(fs, args, stderr, verb); !ok {
-		return code
-	}
-	*check = *check || *dry
-	if fs.NArg() > 0 {
-		return refuse(stderr, verb, "apply takes no arguments; flags only")
-	}
-	var problems []string
+func runApply(c *tool.Call, d deps) *tool.Out {
+	dry := c.DryRun() || c.Bool("check")
+	ctx := context.Background()
 	kinds := config.KindNames()
-	if *kind != "" {
-		if _, ok := config.Lookup(*kind); !ok {
-			problems = append(problems, fmt.Sprintf("--kind %s: want one of %s", *kind, strings.Join(config.KindNames(), ", ")))
-		}
-		kinds = []string{*kind}
+	if c.Str("kind") != "" {
+		kinds = []string{c.Str("kind")}
 	}
-	var actor string
-	if !*check {
-		var err error
-		actor, err = actorName(*as, d.getenv)
-		if err != nil {
-			problems = append(problems, err.Error())
-		}
-	} else if *as != "" {
-		actor = *as
-	} else if v := d.getenv(envActor); v != "" {
-		actor = v
-	}
-	dsn, err := c.dsn(d.getenv)
-	if err != nil {
-		problems = append(problems, err.Error())
-	}
-	addr, err := redisAddress(*redisFlag, d.getenv)
-	if err != nil {
-		problems = append(problems, err.Error())
-	}
-	if len(problems) > 0 {
-		return refuse(stderr, verb, strings.Join(problems, "; "))
-	}
-	st, err := d.openStore(ctx, dsn)
-	if err != nil {
-		return refuse(stderr, verb, err.Error())
+	actor, _ := actorName(c.Str("as"), d.getenv)
+	st, _, no := openStore(ctx, c, d)
+	if no != nil {
+		return no
 	}
 	defer st.Close()
-	if code, stale := behindSchema(ctx, st, stderr, verb, c); stale {
-		return code
+	if behind := schemaBehind(ctx, st, c); behind != nil {
+		return behind
 	}
-	// The fleet lives in the authoritative store. Check its endpoints before
-	// connecting to Redis or applying any kind (docs/SPEC-CONFIG.md, "Apply").
-	if *kind == "" || *kind == config.KindFleet {
+	if c.Str("kind") == "" || c.Str("kind") == config.KindFleet {
 		fleet, _, err := st.Get(ctx, config.KindFleet, config.KindFleet)
 		if err != nil {
-			return storeErr(stderr, verb, err, toolName+" apply --check")
+			return storeNo(err, toolName+" apply --check")
 		}
 		if err := config.ValidateFleetEndpoints(config.View(fleet.Fields)); err != nil {
 			what, next, _ := strings.Cut(err.Error(), "; run: ")
-			return refused(stderr, verb, what, next)
+			o := tool.Fail(what)
+			o.Remedy = next
+			return o
 		}
+	}
+	addr, err := redisAddress(c.Str("redis"), d.getenv)
+	if err != nil {
+		return tool.Refuse(err.Error())
 	}
 	rs, err := d.openRedis(ctx, addr)
 	if err != nil {
-		return refuse(stderr, verb, err.Error())
+		return tool.Refuse(err.Error())
 	}
 	defer rs.Close()
-	word := "APPLY"
-	if *check {
-		word = "CHECK"
-	}
-	o := tool.Done().Fact("dry_run", *check)
-	o.Verb = verb
+	o := tool.Done()
 	for _, kn := range kinds {
 		start := d.now()
-		res, err := config.Apply(ctx, st, rs, kn, actor, *check, func(op config.Op) {
-			if *asJSON {
-				o.Item("op", "kind", kn, "op", op.Op, "name", op.Name, "changed", op.Changed)
-				return
+		res, err := config.Apply(ctx, st, rs, kn, actor, dry, func(op config.Op) {
+			kv := []any{"kind", kn, "name", op.Name}
+			if op.Op == config.OpSet {
+				kv = append(kv, "changed", strings.Join(op.Changed, ","))
 			}
-			fmt.Fprintln(stdout, config.OpLine(word, kn, op))
+			o.Item(op.Op, kv...)
 		})
 		if err != nil {
 			if config.IsConflict(err) {
-				return refused(stderr, verb, err.Error(), toolName+" status (then apply from the store that is ahead)")
+				f := tool.Fail(err.Error())
+				f.Remedy = toolName + " status (then apply from the store that is ahead)"
+				f.Items = o.Items
+				return f
 			}
-			return storeErr(stderr, verb, err, toolName+" apply --dry-run")
+			return storeNo(err, toolName+" apply --dry-run")
 		}
-		if *asJSON {
+		if dry {
 			o.Item("kind", "kind", kn, "add", res.Add, "set", res.Set, "remove", res.Remove, "rev", res.Rev, "applied", res.RedisRev)
 			continue
 		}
-		if *check {
-			fmt.Fprintf(stdout, "CONFIG CHECK kind=%s add=%d set=%d remove=%d rev=%d applied=%d\n", kn, res.Add, res.Set, res.Remove, res.Rev, res.RedisRev)
-			continue
-		}
-		fmt.Fprintf(stdout, "CONFIG APPLY kind=%s add=%d set=%d remove=%d rev=%d ms=%d\n", kn, res.Add, res.Set, res.Remove, res.Rev, d.now().Sub(start).Milliseconds())
+		o.Item("kind", "kind", kn, "add", res.Add, "set", res.Set, "remove", res.Remove, "rev", res.Rev, "ms", d.now().Sub(start).Milliseconds())
 	}
-	if *asJSON {
-		return emit(stdout, o)
-	}
-	return 0
+	return o
 }
 
-// localHost is the machine row this process runs on, which inventory marks
-// ansible_connection=local. explicit is true when the env NOVA_MACHINE named
-// it (matched by exact machine name, refused when no row has it); otherwise
-// it is the lower-cased first label of the hostname (machine names are lower-case), matched the same way, and nothing is
-// marked when no row has it.
+const inventoryTimeout = 10 * time.Second
+
+const maxKnownNames = 20
+
+func wantInventory(c *tool.Call, d deps) {
+	var problems []string
+	if c.Given("host") && c.Str("host") == "" {
+		problems = append(problems, "--host wants a machine name and got an empty value")
+	}
+	if c.Bool("list") && c.Given("host") {
+		problems = append(problems, "--list and --host are exclusive: --list prints every host, --host prints one")
+	}
+	if c.Dur("timeout") <= 0 {
+		problems = append(problems, "--timeout wants a Go duration above 0, like 10s")
+	}
+	if c.Given("fixture") && c.Str("fixture") == "" {
+		problems = append(problems, "--fixture wants a file and got an empty value")
+	}
+	if c.Str("fixture") != "" && c.Str("redis") != "" {
+		problems = append(problems, "--fixture and --redis are exclusive: the fixture stands in for the store")
+	}
+	if c.Str("fixture") == "" {
+		if _, err := redisAddress(c.Str("redis"), d.getenv); err != nil {
+			problems = append(problems, err.Error())
+		}
+	}
+	if len(problems) > 0 {
+		c.Problem(strings.Join(problems, "; "))
+	}
+}
+
+func runInventory(c *tool.Call, d deps) *tool.Out {
+	const verb = "inventory"
+	ctx := context.Background()
+	again := func(extra ...string) string {
+		parts := []string{toolName, verb}
+		if c.Str("redis") != "" {
+			parts = append(parts, "--redis", shq(c.Str("redis")))
+		}
+		if c.Str("fixture") != "" {
+			parts = append(parts, "--fixture", shq(c.Str("fixture")))
+		}
+		if c.Bool("list") {
+			parts = append(parts, "--list")
+		}
+		if c.Given("host") {
+			parts = append(parts, "--host", shq(c.Str("host")))
+		}
+		return strings.Join(append(parts, extra...), " ")
+	}
+	fail := func(what, next string, code int) *tool.Out {
+		fmt.Fprintf(c.Stderr, "%s %s REFUSED: %s; run: %s\n", toolName, verb, plain(what), next)
+		return tool.Exit(code)
+	}
+	var snap *config.Snapshot
+	if c.Str("fixture") != "" {
+		var err error
+		if snap, err = config.LoadFixture(c.Str("fixture")); err != nil {
+			return fail(err.Error(), toolName+" "+verb+" -h", 2)
+		}
+	} else {
+		addr, err := redisAddress(c.Str("redis"), d.getenv)
+		if err != nil {
+			return fail(err.Error(), toolName+" "+verb+" -h", 2)
+		}
+		tctx, cancel := context.WithTimeout(ctx, c.Dur("timeout"))
+		defer cancel()
+		stage := "connecting"
+		storeFail := func(err error) *tool.Out {
+			if tctx.Err() != nil {
+				return fail(fmt.Sprintf("timed out after %s waiting for the store at %s while %s; check that Redis answers there", c.Dur("timeout"), addr, stage), again("--timeout", (c.Dur("timeout")*3).String()), 2)
+			}
+			return fail(err.Error(), toolName+" "+verb+" -h", 2)
+		}
+		rs, err := d.openRedis(tctx, addr)
+		if err != nil {
+			return storeFail(err)
+		}
+		defer rs.Close()
+		stage = "reading the applied state"
+		if snap, err = rs.Snapshot(tctx); err != nil {
+			return storeFail(err)
+		}
+	}
+	self, explicit := localHost(d.getenv, d.hostname)
+	inv, err := config.BuildInventory(snap, self)
+	if err != nil {
+		if what, next, has := strings.Cut(err.Error(), "; run: "); has && strings.HasPrefix(what, "fleet:") {
+			return fail(what, next, 1)
+		}
+		return fail(err.Error(), again(), 1)
+	}
+	if explicit && !inv.Has(self) {
+		return fail(fmt.Sprintf("%s=%q names no machine row (the name is matched exactly); known machines: %s", envMachine, self, boundedNames(inv.All.Hosts, maxKnownNames)), toolName+" machine list", 1)
+	}
+	if c.Given("host") {
+		data, err := inv.HostJSON(c.Str("host"))
+		var unknown *config.UnknownHostError
+		if errors.As(err, &unknown) {
+			return fail(fmt.Sprintf("--host %q names no machine row; known machines: %s", unknown.Name, boundedNames(unknown.Known, maxKnownNames)), toolName+" machine list", 1)
+		}
+		if err != nil {
+			return fail(err.Error(), toolName+" "+verb+" -h", 2)
+		}
+		fmt.Fprintln(c.Stdout, string(data))
+		return tool.Exit(0)
+	}
+	data, err := inv.JSON()
+	if err != nil {
+		return fail(err.Error(), toolName+" "+verb+" -h", 2)
+	}
+	fmt.Fprintln(c.Stdout, string(data))
+	return tool.Exit(0)
+}
+
 func localHost(getenv func(string) string, hostname func() (string, error)) (name string, explicit bool) {
 	if s := getenv(envMachine); s != "" {
 		return s, true
@@ -1506,136 +1299,6 @@ func localHost(getenv func(string) string, hostname func() (string, error)) (nam
 	return "", false
 }
 
-// inventoryTimeout is --timeout's default, 10 s: how long inventory waits
-// for the store in all, the connection and the two reads.
-const inventoryTimeout = 10 * time.Second
-
-// runInventory prints the Ansible inventory of the applied state: the
-// Redis view apply wrote (machines, the fleet row, loops, the machines'
-// beats), never Postgres, or a fixture file in its place (docs/FLEET.md).
-func runInventory(ctx context.Context, args []string, stdout, stderr io.Writer, d deps) int {
-	const verb = "inventory"
-	fs := verbflag.New(verb)
-	redisFlag := fs.String("redis", "", "the Redis `host:port` of the applied state (env NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's address); exclusive with --fixture")
-	fixture := fs.String("fixture", "", "a YAML or JSON `file` of machines, the fleet row, loops and each machine's os and arch, read in place of the store (docs/FLEET.md, \"A fixture inventory\"); opens no store")
-	list := fs.Bool("list", false, "print the whole inventory (hosts, groups and every host's variables under _meta.hostvars, so ansible never calls --host); the default when neither --list nor --host is given; exclusive with --host")
-	host := fs.String("host", "", "print the variables of one machine, by `name`, as a JSON object; exits 1 when no machine row has that name")
-	timeout := fs.Duration("timeout", inventoryTimeout, "a Go `duration`, above 0: how long to wait for the store before refusing; ansible runs the verb unattended, so it never waits forever")
-	if code, ok := parse(fs, args, stderr, verb); !ok {
-		return code
-	}
-	given := map[string]bool{}
-	fs.Visit(func(f *stdflag.Flag) { given[f.Name] = true })
-	var problems []string
-	if fs.NArg() > 0 {
-		problems = append(problems, "inventory takes no arguments; flags only")
-	}
-	if given["host"] && *host == "" {
-		problems = append(problems, "--host wants a machine name and got an empty value")
-	}
-	if *list && given["host"] {
-		problems = append(problems, "--list and --host are exclusive: --list prints every host, --host prints one")
-	}
-	if *timeout <= 0 {
-		problems = append(problems, "--timeout wants a Go duration above 0, like 10s")
-	}
-	if given["fixture"] && *fixture == "" {
-		problems = append(problems, "--fixture wants a file and got an empty value")
-	}
-	if *fixture != "" && *redisFlag != "" {
-		problems = append(problems, "--fixture and --redis are exclusive: the fixture stands in for the store")
-	}
-	var addr string
-	if *fixture == "" {
-		var err error
-		if addr, err = redisAddress(*redisFlag, d.getenv); err != nil {
-			problems = append(problems, err.Error())
-		}
-	}
-	if len(problems) > 0 {
-		return refuse(stderr, verb, strings.Join(problems, "; "))
-	}
-	// again is the command that repeats this run with every input kept.
-	again := func(extra ...string) string {
-		parts := []string{toolName, verb}
-		if *redisFlag != "" {
-			parts = append(parts, "--redis", shq(*redisFlag))
-		}
-		if *fixture != "" {
-			parts = append(parts, "--fixture", shq(*fixture))
-		}
-		if *list {
-			parts = append(parts, "--list")
-		}
-		if given["host"] {
-			parts = append(parts, "--host", shq(*host))
-		}
-		return strings.Join(append(parts, extra...), " ")
-	}
-	var snap *config.Snapshot
-	if *fixture != "" {
-		var err error
-		if snap, err = config.LoadFixture(*fixture); err != nil {
-			return refuse(stderr, verb, err.Error())
-		}
-	} else {
-		ctx, cancel := context.WithTimeout(ctx, *timeout)
-		defer cancel()
-		stage := "connecting"
-		// fail is a store failure: the deadline, or the store's own words.
-		fail := func(err error) int {
-			if ctx.Err() != nil {
-				fmt.Fprintf(stderr, "%s %s REFUSED: timed out after %s waiting for the store at %s while %s; check that Redis answers there; run: %s\n", toolName, verb, *timeout, addr, stage, again("--timeout", (*timeout*3).String()))
-				return 2
-			}
-			return refuse(stderr, verb, err.Error())
-		}
-		rs, err := d.openRedis(ctx, addr)
-		if err != nil {
-			return fail(err)
-		}
-		defer rs.Close()
-		stage = "reading the applied state"
-		if snap, err = rs.Snapshot(ctx); err != nil {
-			return fail(err)
-		}
-	}
-	self, explicit := localHost(d.getenv, d.hostname)
-	inv, err := config.BuildInventory(snap, self)
-	if err != nil {
-		if what, next, has := strings.Cut(err.Error(), "; run: "); has && strings.HasPrefix(what, "fleet:") {
-			return refused(stderr, verb, what, next)
-		}
-		return refused(stderr, verb, err.Error(), again())
-	}
-	if explicit && !inv.Has(self) {
-		return refused(stderr, verb, fmt.Sprintf("%s=%q names no machine row (the name is matched exactly); known machines: %s", envMachine, self, boundedNames(inv.All.Hosts, maxKnownNames)), toolName+" machine list")
-	}
-	if given["host"] {
-		data, err := inv.HostJSON(*host)
-		var unknown *config.UnknownHostError
-		if errors.As(err, &unknown) {
-			return refused(stderr, verb, fmt.Sprintf("--host %q names no machine row; known machines: %s", unknown.Name, boundedNames(unknown.Known, maxKnownNames)), toolName+" machine list")
-		}
-		if err != nil {
-			return refuse(stderr, verb, err.Error())
-		}
-		fmt.Fprintln(stdout, string(data))
-		return 0
-	}
-	data, err := inv.JSON()
-	if err != nil {
-		return refuse(stderr, verb, err.Error())
-	}
-	fmt.Fprintln(stdout, string(data))
-	return 0
-}
-
-// maxKnownNames bounds the machine names a refusal lists.
-const maxKnownNames = 20
-
-// boundedNames lists at most max names, then how many more there are, and
-// "none" for an empty list.
 func boundedNames(names []string, max int) string {
 	if len(names) == 0 {
 		return "none"
@@ -1644,12 +1307,4 @@ func boundedNames(names []string, max int) string {
 		return strings.Join(names, ", ")
 	}
 	return fmt.Sprintf("%s and %d more", strings.Join(names[:max], ", "), len(names)-max)
-}
-
-// shq single-quotes a word so a printed remedy pastes.
-func shq(s string) string {
-	if s != "" && strings.Trim(s, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@%+=:,./-_") == "" {
-		return s
-	}
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

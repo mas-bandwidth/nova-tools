@@ -22,18 +22,18 @@ func TestRouteThroughTheGrammarOnARealStore(t *testing.T) {
 	r := newReal(t, true)
 	r.run(t, 0, "migrate")
 	out, _ := r.run(t, 0, "route", "add", "pro-grok-openrouter", "--tier", "pro", "--provider", "openrouter", "--model", "x-ai/grok-4", "--tokens", "300000", "--deadline", "1800")
-	require.Equal(t, "CONFIG ADD kind=route name=pro-grok-openrouter rev=1\n", out)
+	require.Equal(t, "ROUTE-ADD OK op=add kind=route name=pro-grok-openrouter rev=1\n", out)
 	_, errs := r.run(t, 1, "route", "set", "pro-grok-openrouter", "--deadline", "0")
-	assert.Equal(t, "nova-config route set REFUSED: route pro-grok-openrouter has --deadline 0; want the seconds a card on it may run, above 0; run: nova-config route show pro-grok-openrouter\n", errs)
+	assert.Equal(t, "ROUTE-SET FAILED: route pro-grok-openrouter has --deadline 0; want the seconds a card on it may run, above 0; run: nova-config route show pro-grok-openrouter\n", errs)
 	out, _ = r.run(t, 0, "route", "show", "pro-grok-openrouter")
 	assert.True(t, strings.HasPrefix(out, "ROUTE name=pro-grok-openrouter tier=pro provider=openrouter model=x-ai/grok-4 tokens=300000 deadline=1800 enabled=true"+noPrices+" created="), out)
 	// the price sheet through Postgres's columns (0009): each decimal kept exactly, as text
 	out, _ = r.run(t, 0, "route", "set", "pro-grok-openrouter", "--price_input", "3.000", "--price_output", "0.10000000000000000000000000001",
 		"--long_context", "128000", "--price_input_long", "6", "--price_output_long", "30", "--billing", "plan", "--price_as_of", "2026-10-01")
-	require.Equal(t, "CONFIG SET kind=route name=pro-grok-openrouter rev=2 changed=billing,long_context,price_as_of,price_input,price_input_long,price_output,price_output_long\n", out)
+	require.Equal(t, "ROUTE-SET OK op=set kind=route name=pro-grok-openrouter rev=2 changed=billing,long_context,price_as_of,price_input,price_input_long,price_output,price_output_long\n", out)
 
 	out, _ = r.run(t, 0, "apply", "--kind", "route")
-	require.True(t, strings.HasPrefix(out, "APPLY ADD kind=route name=pro-grok-openrouter\nCONFIG APPLY kind=route add=1 set=0 remove=0 rev=2 ms="), out)
+	require.True(t, strings.HasPrefix(out, "APPLY OK\nAPPLY ADD kind=route name=pro-grok-openrouter\nAPPLY KIND kind=route add=1 set=0 remove=0 rev=2 ms="), out)
 	h := r.client.HGetAll(ctx, config.RouteKey("pro-grok-openrouter")).Val()
 	assert.Equal(t, "openrouter", h["provider"])
 	assert.Equal(t, "x-ai/grok-4", h["model"])
@@ -51,6 +51,6 @@ func TestRouteThroughTheGrammarOnARealStore(t *testing.T) {
 
 	r.run(t, 0, "route", "remove", "pro-grok-openrouter")
 	out, _ = r.run(t, 0, "apply", "--kind", "route")
-	assert.True(t, strings.HasPrefix(out, "APPLY REMOVE kind=route name=pro-grok-openrouter\n"), out)
+	assert.True(t, strings.HasPrefix(out, "APPLY OK\nAPPLY REMOVE kind=route name=pro-grok-openrouter\n"), out)
 	assert.Zero(t, r.client.Exists(ctx, config.RouteKey("pro-grok-openrouter")).Val())
 }

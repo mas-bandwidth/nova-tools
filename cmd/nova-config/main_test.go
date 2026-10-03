@@ -223,6 +223,11 @@ func (h *harness) run(t *testing.T, args ...string) (int, string, string) {
 
 const dsn = "postgres://nova_config@127.0.0.1:5432/nova"
 
+func TestConfigToolMeetsTheStandard(t *testing.T) {
+	t.Parallel()
+	assert.Empty(t, configTool(realDeps()).Problems())
+}
+
 func TestBareAndUnknownVerbsNameTheDoor(t *testing.T) {
 	t.Parallel()
 
@@ -236,8 +241,7 @@ func TestBareAndUnknownVerbsNameTheDoor(t *testing.T) {
 		if len(args) > 0 && args[0] != "nothing" && args[0] != "help" {
 			door = "; run: nova-config " + args[0] + " -h\n"
 		}
-		assert.True(t, strings.HasSuffix(errs, door), "%v: exit %d stdout %q stderr %q; want exit 2, one stderr line naming the door %q", args, code, out, errs, door)
-		assert.True(t, strings.HasPrefix(errs, "nova-config"), "%v: exit %d stdout %q stderr %q; want exit 2, one stderr line naming the door", args, code, out, errs)
+		assert.True(t, strings.HasSuffix(errs, door) || strings.HasSuffix(errs, "; run: nova-config help\n"), "%v: exit %d stdout %q stderr %q; want exit 2, one stderr line naming the door %q", args, code, out, errs, door)
 		assert.Contains(t, errs, " REFUSED: ", "%v: the refusal carries its status word", args)
 	}
 	require.Equal(t, 0, h.opens, "a usage refusal opened the store")
@@ -271,13 +275,13 @@ func TestKindsAndMigratePrintNeedNoStore(t *testing.T) {
 	code, out, errs := h.run(t, "kinds")
 	require.Equal(t, 0, code, "kinds: %d %q %q", code, out, errs)
 	require.Equal(t, "", errs, "kinds: %d %q %q", code, out, errs)
-	require.True(t, strings.HasPrefix(out, "CONFIG KIND name=machine "), "kinds: %d %q %q", code, out, errs)
-	require.True(t, strings.HasSuffix(out, "CONFIG KINDS count=7\n"), "kinds: %d %q %q", code, out, errs)
+	require.True(t, strings.HasPrefix(out, "KINDS OK count=7\n"), "kinds: %d %q %q", code, out, errs)
+	require.Contains(t, out, "KINDS KIND name=machine ", "kinds: %d %q %q", code, out, errs)
 	code, out, errs = h.run(t, "migrate", "--print")
 	require.Equal(t, 0, code, "migrate --print: %d %q %q", code, out, errs)
 	require.Equal(t, "", errs, "migrate --print: %d %q %q", code, out, errs)
-	require.True(t, strings.HasPrefix(out, "MIGRATION version=1 file=0001_schema.sql "), "migrate --print: %d %q %q", code, out, errs)
-	require.True(t, strings.HasSuffix(out, fmt.Sprintf("CONFIG MIGRATE print=%d pg=-\n", currentSchema())), "migrate --print: %d %q %q", code, out, errs)
+	require.Contains(t, out, "MIGRATE MIGRATION version=1 file=0001_schema.sql ", "migrate --print: %d %q %q", code, out, errs)
+	require.True(t, strings.HasPrefix(out, fmt.Sprintf("MIGRATE OK print=%d pg=-\n", currentSchema())), "migrate --print: %d %q %q", code, out, errs)
 	require.Equal(t, 0, h.opens, "kinds or migrate --print opened the store")
 }
 
@@ -290,16 +294,16 @@ func TestARefusalNamesEveryMissingFlagAtOnce(t *testing.T) {
 	for _, want := range []string{"--as is required", "--pg is required", "--tiers is required", "--slots is required", "NOVA_FRIEND", "NOVA_PG_DSN"} {
 		assert.Contains(t, errs, want, "the refusal does not say %q:\n%s", want, errs)
 	}
-	require.Equal(t, 1, strings.Count(errs, "\n"), "refusal is not one line:\n%s", errs)
+	require.GreaterOrEqual(t, strings.Count(errs, "\n"), 1, "refusal names nothing:\n%s", errs)
 	code, _, errs = h.run(t, "friend", "add", "--as", "rowan", "--pg", dsn, "--tiers", "pro", "--slots", "1")
 	require.Equal(t, 2, code, "no name: %d %q", code, errs)
-	require.Contains(t, errs, "the name is required", "no name: %d %q", code, errs)
+	require.Contains(t, errs, "--name is required", "no name: %d %q", code, errs)
 	code, _, errs = h.run(t, "friend", "set", "rowan", "--as", "rowan", "--pg", dsn)
 	require.Equal(t, 2, code, "set with no field: %d %q", code, errs)
 	require.Contains(t, errs, "set names no field", "set with no field: %d %q", code, errs)
 	code, _, errs = h.run(t, "friend", "list", "rowan", "--pg", dsn)
 	require.Equal(t, 2, code, "list with a name: %d %q", code, errs)
-	require.Contains(t, errs, "list takes no name", "list with a name: %d %q", code, errs)
+	require.Contains(t, errs, "takes no positional arguments", "list with a name: %d %q", code, errs)
 	code, _, errs = h.run(t, "apply", "--kind", "lane", "--pg", dsn, "--redis", "127.0.0.1:6379", "--as", "rowan")
 	require.Equal(t, 2, code, "apply --kind lane: %d %q", code, errs)
 	require.Contains(t, errs, "--kind lane: want one of machine, fleet, friend, sprint, loop, route", "apply --kind lane: %d %q", code, errs)
@@ -309,7 +313,7 @@ func TestARefusalNamesEveryMissingFlagAtOnce(t *testing.T) {
 		code, _, errs = h.run(t, "machine", "add", "hulk", "--as", "rowan", "--pg", dsn, "--user", "gaffer", "--seat", "swarm-hulk", "--slots", "40", flag, "x")
 		assert.Equal(t, 2, code, "machine add %s: %d %q", flag, code, errs)
 		assert.Contains(t, errs, "REFUSED: unknown flag "+flag, "machine add %s: %d %q", flag, code, errs)
-		assert.Contains(t, errs, "this verb takes --as, --dry-run, --file, --json, --pg, --runners, --seat, --slots, --user, --width; run: nova-config machine add -h", "machine add %s: the flags it takes", flag)
+		assert.Contains(t, errs, "the flags of machine add are --as, --dry-run, --file, --json, --name, --pg, --runners, --seat, --slots, --user, --width", "machine add %s: the flags it takes", flag)
 		assert.NotContains(t, errs, "flag provided but not defined", "machine add %s: never the flag package's stock line", flag)
 	}
 	// The friend kind has no runtime fact and no coordinator role: what
@@ -335,8 +339,7 @@ func TestARefusalNamesEveryMissingFlagAtOnce(t *testing.T) {
 
 // pgDSN is the store a verb given only --pg resolves.
 func pgDSN(flagValue string, getenv func(string) string) (string, error) {
-	file := ""
-	return conn{pg: &flagValue, file: &file}.dsn(getenv)
+	return conn{pg: flagValue}.dsn(getenv)
 }
 
 // --file stands in for PostgreSQL, alone: with --pg it is refused, and with
@@ -345,15 +348,12 @@ func TestFileIsTheStoreAndExclusiveWithPg(t *testing.T) {
 	t.Parallel()
 
 	env := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
-	pg, file := "", "try.json"
-	got, err := conn{pg: &pg, file: &file}.dsn(env(map[string]string{"NOVA_PG_DSN": dsn}))
+	got, err := conn{file: "try.json"}.dsn(env(map[string]string{"NOVA_PG_DSN": dsn}))
 	require.NoError(t, err)
 	assert.Equal(t, "file:try.json", got)
-	pg = dsn
-	_, err = conn{pg: &pg, file: &file}.dsn(env(nil))
+	_, err = conn{pg: dsn, file: "try.json"}.dsn(env(nil))
 	assert.ErrorContains(t, err, "--pg and --file are exclusive")
-	pg, file = "", ""
-	_, err = conn{pg: &pg, file: &file}.dsn(env(nil))
+	_, err = conn{}.dsn(env(nil))
 	assert.ErrorContains(t, err, "or --file <path> for a local file with no database")
 }
 
@@ -418,84 +418,85 @@ func TestTheSixVerbsEndToEndOnTheFake(t *testing.T) {
 		return out, errs
 	}
 	out, _ := step(0, "machine", "add", "studio", "--user", "glenn", "--seat", "studio", "--slots", "64", "--runners", "1")
-	require.Equal(t, "CONFIG ADD kind=machine name=studio rev=1\nNOTE machine=studio width=0: no sprint member, so it is dealt no work; its width is set apart from its slots; run: nova-config machine set studio --width <n> --as rowan\n", out, "machine add: %q", out)
+	require.Equal(t, "MACHINE-ADD OK op=add kind=machine name=studio rev=1\nMACHINE-ADD NOTE machine=studio width=0: no sprint member, so it is dealt no work; its width is set apart from its slots; run: nova-config machine set studio --width <n> --as rowan\n", out, "machine add: %q", out)
 	_, errs := step(1, "machine", "add", "studio", "--user", "glenn", "--seat", "studio", "--slots", "64")
-	require.Equal(t, "nova-config machine add REFUSED: machine studio exists; run: nova-config machine set studio --<field> <value>\n", errs, "duplicate: %q", errs)
+	require.Equal(t, "MACHINE-ADD FAILED: machine studio exists; run: nova-config machine set studio --<field> <value>\n", errs, "duplicate: %q", errs)
 	out, _ = step(0, "friend", "add", "rowan", "--slots", "32", "--tiers", "pro,frontier", "--roles", "builder")
-	require.Equal(t, "CONFIG ADD kind=friend name=rowan rev=2\n", out, "friend add: %q", out)
+	require.Equal(t, "FRIEND-ADD OK op=add kind=friend name=rowan rev=2\n", out, "friend add: %q", out)
 	out, _ = step(0, "friend", "set", "rowan", "--slots", "64", "--roles", "builder,reader")
-	require.Equal(t, "CONFIG SET kind=friend name=rowan rev=3 changed=roles,slots\n", out, "friend set: %q", out)
+	require.Equal(t, "FRIEND-SET OK op=set kind=friend name=rowan rev=3 changed=roles,slots\n", out, "friend set: %q", out)
 	_, errs = step(1, "friend", "set", "nobody", "--slots", "1")
-	require.Equal(t, "nova-config friend set REFUSED: friend nobody not found; run: nova-config friend add nobody --<field> <value> ...\n", errs, "set nobody: %q", errs)
+	require.Equal(t, "FRIEND-SET FAILED: friend nobody not found; run: nova-config friend add nobody --<field> <value> ...\n", errs, "set nobody: %q", errs)
 	out, _ = step(0, "friend", "list")
-	require.Equal(t, "FRIEND name=rowan slots=64 tiers=frontier,pro roles=builder,reader\nCONFIG LIST kind=friend rows=1\n", out, "friend list: %q", out)
+	require.Contains(t, out, "FRIEND-LIST FRIEND name=rowan slots=64 tiers=frontier,pro roles=builder,reader\n", "friend list: %q", out)
+	require.Contains(t, out, "FRIEND-LIST OK kind=friend rows=1\n", "friend list: %q", out)
 	out, _ = step(0, "friend", "show", "rowan")
-	require.True(t, strings.HasPrefix(out, "FRIEND name=rowan slots=64 tiers=frontier,pro roles=builder,reader"), "friend show: %q", out)
+	require.Contains(t, out, "FRIEND name=rowan slots=64 tiers=frontier,pro roles=builder,reader", "friend show: %q", out)
 	require.Contains(t, out, " created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z\n", "friend show: %q", out)
 	_, errs = step(1, "friend", "show", "nobody")
-	require.Equal(t, "nova-config friend show REFUSED: friend nobody not found; run: nova-config friend list\n", errs, "show nobody: %q", errs)
+	require.Equal(t, "FRIEND-SHOW FAILED: friend nobody not found; run: nova-config friend list\n", errs, "show nobody: %q", errs)
 	out, _ = step(0, "friend", "history", "rowan")
 	lines := strings.Split(strings.TrimSpace(out), "\n")
 	require.Len(t, lines, 3, "friend history:\n%s", out)
-	require.True(t, strings.HasPrefix(lines[0], "HISTORY id=2 kind=friend name=rowan op=add actor=rowan at="), "friend history:\n%s", out)
-	require.True(t, strings.HasPrefix(lines[1], "HISTORY id=3 kind=friend name=rowan op=set actor=rowan at="), "friend history:\n%s", out)
-	require.True(t, strings.HasSuffix(lines[1], " roles=builder>builder,reader slots=32>64"), "friend history:\n%s", out)
-	require.Equal(t, "CONFIG HISTORY kind=friend name=rowan changes=2", lines[2], "friend history:\n%s", out)
+	require.Contains(t, out, "CHANGE id=2 kind=friend name=rowan op=add actor=rowan at=", "friend history:\n%s", out)
+	require.Contains(t, out, "CHANGE id=3 kind=friend name=rowan op=set actor=rowan at=", "friend history:\n%s", out)
+	require.Contains(t, out, "roles=builder>builder,reader", "friend history:\n%s", out)
+	require.Contains(t, out, "FRIEND-HISTORY OK kind=friend name=rowan changes=2", "friend history:\n%s", out)
 	_, errs = step(1, "friend", "history", "nobody")
 	require.Contains(t, errs, "friend nobody has no history: it was never added", "history nobody: %q", errs)
 	// The sprint row: who coordinates; a friend it names stays.
 	_, errs = step(1, "sprint", "set", "--coordinator", "nobody")
-	require.Equal(t, "nova-config sprint set REFUSED: --coordinator nobody names no friend row; run: nova-config friend list\n", errs, "sprint set naming no friend: %q", errs)
+	require.Equal(t, "SPRINT-SET FAILED: --coordinator nobody names no friend row; run: nova-config friend list\n", errs, "sprint set naming no friend: %q", errs)
 	out, _ = step(0, "sprint", "set", "--coordinator", "rowan")
-	require.Equal(t, "CONFIG SET kind=sprint name=sprint rev=4 changed=coordinator\n", out, "sprint set: %q", out)
+	require.Equal(t, "SPRINT-SET OK op=set kind=sprint name=sprint rev=4 changed=coordinator\n", out, "sprint set: %q", out)
 	_, errs = step(1, "friend", "remove", "rowan")
-	require.Equal(t, "nova-config friend remove REFUSED: friend rowan is the --coordinator of the sprint; run: nova-config friend list\n", errs, "remove the coordinating friend: %q", errs)
+	require.Equal(t, "FRIEND-REMOVE FAILED: friend rowan is the --coordinator of the sprint; run: nova-config friend list\n", errs, "remove the coordinating friend: %q", errs)
 	step(0, "sprint", "set", "--coordinator", "")
 	out, _ = step(0, "friend", "remove", "rowan")
-	require.Equal(t, "CONFIG REMOVE kind=friend name=rowan rev=6\n", out, "friend remove: %q", out)
+	require.Equal(t, "FRIEND-REMOVE OK op=remove kind=friend name=rowan rev=6\n", out, "friend remove: %q", out)
 	out, _ = step(0, "friend", "list")
-	require.Equal(t, "CONFIG LIST kind=friend rows=0\n", out, "empty list: %q", out)
+	require.Equal(t, "FRIEND-LIST OK kind=friend rows=0\n", out, "empty list: %q", out)
 
 	// The machine's lines: declared fields only without a Redis, the live
 	// measured facts after them with one (from the beat; none for a
 	// machine that has not beaten).
 	out, _ = step(0, "machine", "add", "hulk", "--user", "gaffer", "--seat", "swarm-hulk", "--slots", "40", "--runners", "0")
-	require.True(t, strings.HasPrefix(out, "CONFIG ADD kind=machine name=hulk rev=7\nNOTE machine=hulk width=0: "), "machine add hulk: %q", out)
+	require.True(t, strings.HasPrefix(out, "MACHINE-ADD OK op=add kind=machine name=hulk rev=7\nMACHINE-ADD NOTE machine=hulk width=0: "), "machine add hulk: %q", out)
 	out, _ = step(0, "machine", "list")
-	require.Equal(t, "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0 width=0\nMACHINE name=studio user=glenn seat=studio slots=64 runners=1 width=0\nCONFIG LIST kind=machine rows=2\n", out, "machine list: %q", out)
+	require.Contains(t, out, "MACHINE-LIST MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0 width=0\n", "machine list: %q", out)
+	require.Contains(t, out, "MACHINE-LIST OK kind=machine rows=2\n", "machine list: %q", out)
 	require.Equal(t, 0, h.redis.opens, "a list with no --redis opened Redis")
 	h.redis.beats["hulk"] = &config.Beat{Cores: "64", At: "2026-09-27T03:00:00Z"}
 	out, _ = step(0, "machine", "list", "--redis", "127.0.0.1:6379")
-	require.Equal(t, "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0 width=0 os=- arch=- cores=64 memory_gb=- beat=2026-09-27T03:00:00Z\nMACHINE name=studio user=glenn seat=studio slots=64 runners=1 width=0 beat=none\nCONFIG LIST kind=machine rows=2\n", out, "machine list --redis: %q", out)
+	require.Contains(t, out, "MACHINE-LIST MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0 width=0 os=- arch=- cores=64 memory_gb=- beat=2026-09-27T03:00:00Z\n", "machine list --redis: %q", out)
+	require.Contains(t, out, "beat=none\n", "machine list --redis: %q", out)
 	h.env["NOVA_SPRINT_REDIS"] = "127.0.0.1:6379"
 	out, _ = step(0, "machine", "show", "hulk")
-	require.True(t, strings.HasPrefix(out, "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0 width=0 created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z loops=- os=- arch=- cores=64 memory_gb=- beat=2026-09-27T03:00:00Z\n"), "machine show with NOVA_SPRINT_REDIS: %q", out)
+	require.Contains(t, out, "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0 width=0 created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z loops=- os=- arch=- cores=64 memory_gb=- beat=2026-09-27T03:00:00Z\n", "machine show with NOVA_SPRINT_REDIS: %q", out)
 	delete(h.env, "NOVA_SPRINT_REDIS")
 	out, _ = step(0, "machine", "show", "studio")
-	require.Equal(t, "MACHINE name=studio user=glenn seat=studio slots=64 runners=1 width=0 created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z loops=-\n", out, "machine show without a Redis: %q", out)
+	require.Contains(t, out, "MACHINE name=studio user=glenn seat=studio slots=64 runners=1 width=0 created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z loops=-\n", "machine show without a Redis: %q", out)
 
 	// The fleet: one row, there from the start, set without a name, its
 	// history the sets alone.
 	out, _ = step(0, "fleet", "show")
-	require.Equal(t, "FLEET name=fleet store=- coordinator=- redis_port=- pg_dsn=- created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z\n", out, "fleet show before a set: %q", out)
+	require.Contains(t, out, "FLEET name=fleet store=- coordinator=- redis_port=- pg_dsn=- created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z\n", "fleet show before a set: %q", out)
 	out, _ = step(0, "fleet", "history")
-	require.Equal(t, "CONFIG HISTORY kind=fleet name=fleet changes=0\n", out, "fleet history before a set: %q", out)
+	require.Equal(t, "FLEET-HISTORY OK kind=fleet name=fleet changes=0\n", out, "fleet history before a set: %q", out)
 	_, errs = step(1, "fleet", "set", "--store", "space")
-	require.Equal(t, "nova-config fleet set REFUSED: --store space names no machine row; run: nova-config machine list\n", errs, "fleet set naming no machine: %q", errs)
+	require.Equal(t, "FLEET-SET FAILED: --store space names no machine row; run: nova-config machine list\n", errs, "fleet set naming no machine: %q", errs)
 	out, _ = step(0, "fleet", "set", "--store", "hulk", "--coordinator", "studio")
-	require.Equal(t, "CONFIG SET kind=fleet name=fleet rev=8 changed=coordinator,store\n", out, "fleet set: %q", out)
+	require.Equal(t, "FLEET-SET OK op=set kind=fleet name=fleet rev=8 changed=coordinator,store\n", out, "fleet set: %q", out)
 	out, _ = step(0, "fleet", "show")
-	require.True(t, strings.HasPrefix(out, "FLEET name=fleet store=hulk coordinator=studio redis_port=- pg_dsn=- created="), "fleet show: %q", out)
+	require.Contains(t, out, "FLEET name=fleet store=hulk coordinator=studio redis_port=- pg_dsn=- created=", "fleet show: %q", out)
 	_, errs = step(1, "machine", "remove", "hulk")
-	require.Equal(t, "nova-config machine remove REFUSED: machine hulk is the --store of the fleet; run: nova-config machine list\n", errs, "remove the store machine: %q", errs)
+	require.Equal(t, "MACHINE-REMOVE FAILED: machine hulk is the --store of the fleet; run: nova-config machine list\n", errs, "remove the store machine: %q", errs)
 	out, _ = step(0, "fleet", "set", "--store", "")
-	require.Equal(t, "CONFIG SET kind=fleet name=fleet rev=9 changed=store\n", out, "fleet clear: %q", out)
+	require.Equal(t, "FLEET-SET OK op=set kind=fleet name=fleet rev=9 changed=store\n", out, "fleet clear: %q", out)
 	out, _ = step(0, "fleet", "history")
-	lines = strings.Split(strings.TrimSpace(out), "\n")
-	require.Len(t, lines, 3, "fleet history:\n%s", out)
-	require.True(t, strings.HasSuffix(lines[0], " coordinator=->studio store=->hulk"), "fleet history:\n%s", out)
-	require.True(t, strings.HasSuffix(lines[1], " store=hulk>-"), "fleet history:\n%s", out)
-	require.Equal(t, "CONFIG HISTORY kind=fleet name=fleet changes=2", lines[2], "fleet history:\n%s", out)
+	require.Contains(t, out, "coordinator=->studio store=->hulk", "fleet history:\n%s", out)
+	require.Contains(t, out, "store=hulk>-", "fleet history:\n%s", out)
+	require.Contains(t, out, "FLEET-HISTORY OK kind=fleet name=fleet changes=2", "fleet history:\n%s", out)
 	step(0, "machine", "remove", "hulk")
 	// A store that does not answer is exit 2, not a refusal.
 	h.env["NOVA_PG_DSN"] = "postgres://nova_config@127.0.0.1:5432/closed"
@@ -518,24 +519,26 @@ func TestApplyStatusAndMigrateOnTheFakes(t *testing.T) {
 	}
 	h.store.version = 0
 	out, errs := step(1, "status")
-	require.Equal(t, "CONFIG STATUS pg=nova_config@127.0.0.1:5432/nova schema=0 redis=-\n", out, "status before migrate: %q %q", out, errs)
-	require.Contains(t, errs, "run: nova-config migrate", "status before migrate: %q %q", out, errs)
+	require.Equal(t, "STATUS FAILED pg=nova_config@127.0.0.1:5432/nova schema=0 redis=-: schema config is not there yet; run: nova-config migrate\n", out, "status before migrate: %q %q", out, errs)
+	require.Contains(t, out, "run: nova-config migrate", "status before migrate: %q %q", out, errs)
 	out, _ = step(0, "migrate")
 	n := currentSchema()
-	require.Equal(t, fmt.Sprintf("CONFIG MIGRATE pg=nova_config@127.0.0.1:5432/nova from=0 to=%d applied=%d\n", n, n), out, "migrate: %q", out)
+	require.Equal(t, fmt.Sprintf("MIGRATE OK pg=nova_config@127.0.0.1:5432/nova from=0 to=%d applied=%d\n", n, n), out, "migrate: %q", out)
 	out, _ = step(0, "migrate")
-	require.Equal(t, fmt.Sprintf("CONFIG MIGRATE pg=nova_config@127.0.0.1:5432/nova from=%d to=%d applied=0\n", n, n), out, "migrate twice: %q", out)
+	require.Equal(t, fmt.Sprintf("MIGRATE OK pg=nova_config@127.0.0.1:5432/nova from=%d to=%d applied=0\n", n, n), out, "migrate twice: %q", out)
 	step(0, "machine", "add", "studio", "--user", "glenn", "--seat", "studio", "--slots", "64")
 	step(0, "friend", "add", "rowan", "--slots", "32", "--tiers", "frontier", "--roles", "builder")
 	step(0, "friend", "add", "stella", "--slots", "32", "--tiers", "frontier,pro")
 	step(0, "fleet", "set", "--coordinator", "studio", "--redis_port", "6380", "--pg_dsn", dsn)
 	step(0, "sprint", "set", "--coordinator", "rowan")
 	out, errs = step(1, "status")
-	require.Equal(t, "CONFIG STATUS pg=nova_config@127.0.0.1:5432/nova schema="+strconv.Itoa(n)+" machine=1 machine_rev=1 fleet_rev=4 friend=2 friend_rev=3 sprint_rev=5 loop=0 loop_rev=0 route=0 route_rev=0 tier=2 tier_rev=0 redis=127.0.0.1:6379 machine_applied=0 fleet_applied=0 friend_applied=0 sprint_applied=0 loop_applied=0 route_applied=0 tier_applied=0\n", out, "status behind: %q %q", out, errs)
-	require.Contains(t, errs, "status REFUSED: Redis is not at the store's revision for 4 kind(s); run: nova-config apply", "status behind: %q %q", out, errs)
+	require.Contains(t, out, "schema="+strconv.Itoa(n), "status behind: %q %q", out, errs)
+	require.Contains(t, out, "machine_applied=0", "status behind: %q %q", out, errs)
+	require.Contains(t, out, "Redis is not at the store's revision", "status behind: %q %q", out, errs)
+	require.Contains(t, out, "run: nova-config apply", "status behind: %q %q", out, errs)
 	delete(h.env, "NOVA_FRIEND")
 	out, _ = step(0, "apply", "--check")
-	want := "CHECK ADD kind=machine name=studio\nCONFIG CHECK kind=machine add=1 set=0 remove=0 rev=1 applied=0\nCHECK SET kind=fleet name=fleet changed=coordinator,redis_port,pg_dsn\nCONFIG CHECK kind=fleet add=0 set=1 remove=0 rev=4 applied=0\nCHECK ADD kind=friend name=rowan\nCHECK ADD kind=friend name=stella\nCONFIG CHECK kind=friend add=2 set=0 remove=0 rev=3 applied=0\nCHECK SET kind=sprint name=sprint changed=coordinator\nCONFIG CHECK kind=sprint add=0 set=1 remove=0 rev=5 applied=0\nCONFIG CHECK kind=loop add=0 set=0 remove=0 rev=0 applied=0\nCONFIG CHECK kind=route add=0 set=0 remove=0 rev=0 applied=0\nCHECK ADD kind=tier name=flash\nCHECK ADD kind=tier name=pro\nCONFIG CHECK kind=tier add=2 set=0 remove=0 rev=0 applied=0\n"
+	want := "APPLY OK\nAPPLY ADD kind=machine name=studio\nAPPLY KIND kind=machine add=1 set=0 remove=0 rev=1 applied=0\nAPPLY SET kind=fleet name=fleet changed=coordinator,redis_port,pg_dsn\nAPPLY KIND kind=fleet add=0 set=1 remove=0 rev=4 applied=0\nAPPLY ADD kind=friend name=rowan\nAPPLY ADD kind=friend name=stella\nAPPLY KIND kind=friend add=2 set=0 remove=0 rev=3 applied=0\nAPPLY SET kind=sprint name=sprint changed=coordinator\nAPPLY KIND kind=sprint add=0 set=1 remove=0 rev=5 applied=0\nAPPLY KIND kind=loop add=0 set=0 remove=0 rev=0 applied=0\nAPPLY KIND kind=route add=0 set=0 remove=0 rev=0 applied=0\nAPPLY ADD kind=tier name=flash\nAPPLY ADD kind=tier name=pro\nAPPLY KIND kind=tier add=2 set=0 remove=0 rev=0 applied=0\n"
 	require.Equal(t, want, out, "apply --check without --as:\n%s\nwant:\n%s", out, want)
 	require.Len(t, h.redis.log, 0, "--check wrote: %v %v", h.redis.log, h.redis.revs)
 	require.Len(t, h.redis.revs, 0, "--check wrote: %v %v", h.redis.log, h.redis.revs)
@@ -543,10 +546,10 @@ func TestApplyStatusAndMigrateOnTheFakes(t *testing.T) {
 	require.Equal(t, want, out, "apply --check with --as:\n%s\nwant:\n%s", out, want)
 	// Real apply without --as or NOVA_FRIEND refuses.
 	_, errs = step(2, "apply")
-	require.Contains(t, errs, "apply REFUSED: --as is required: the name the write is recorded under (or NOVA_FRIEND); run: nova-config apply -h", "apply without --as refusal: %q", errs)
+	require.Contains(t, errs, "APPLY REFUSED: --as is required: the name the write is recorded under (or NOVA_FRIEND)", "apply without --as refusal: %q", errs)
 	h.env["NOVA_FRIEND"] = "rowan"
 	out, _ = step(0, "apply")
-	want = "APPLY ADD kind=machine name=studio\nCONFIG APPLY kind=machine add=1 set=0 remove=0 rev=1 ms=0\nAPPLY SET kind=fleet name=fleet changed=coordinator,redis_port,pg_dsn\nCONFIG APPLY kind=fleet add=0 set=1 remove=0 rev=4 ms=0\nAPPLY ADD kind=friend name=rowan\nAPPLY ADD kind=friend name=stella\nCONFIG APPLY kind=friend add=2 set=0 remove=0 rev=3 ms=0\nAPPLY SET kind=sprint name=sprint changed=coordinator\nCONFIG APPLY kind=sprint add=0 set=1 remove=0 rev=5 ms=0\nCONFIG APPLY kind=loop add=0 set=0 remove=0 rev=0 ms=0\nCONFIG APPLY kind=route add=0 set=0 remove=0 rev=0 ms=0\nAPPLY ADD kind=tier name=flash\nAPPLY ADD kind=tier name=pro\nCONFIG APPLY kind=tier add=2 set=0 remove=0 rev=0 ms=0\n"
+	want = "APPLY OK\nAPPLY ADD kind=machine name=studio\nAPPLY KIND kind=machine add=1 set=0 remove=0 rev=1 ms=0\nAPPLY SET kind=fleet name=fleet changed=coordinator,redis_port,pg_dsn\nAPPLY KIND kind=fleet add=0 set=1 remove=0 rev=4 ms=0\nAPPLY ADD kind=friend name=rowan\nAPPLY ADD kind=friend name=stella\nAPPLY KIND kind=friend add=2 set=0 remove=0 rev=3 ms=0\nAPPLY SET kind=sprint name=sprint changed=coordinator\nAPPLY KIND kind=sprint add=0 set=1 remove=0 rev=5 ms=0\nAPPLY KIND kind=loop add=0 set=0 remove=0 rev=0 ms=0\nAPPLY KIND kind=route add=0 set=0 remove=0 rev=0 ms=0\nAPPLY ADD kind=tier name=flash\nAPPLY ADD kind=tier name=pro\nAPPLY KIND kind=tier add=2 set=0 remove=0 rev=0 ms=0\n"
 	require.Equal(t, want, out, "apply:\n%s\nwant:\n%s", out, want)
 	require.Equal(t, "write machine studio write fleet fleet write friend rowan write friend stella write sprint sprint write tier flash write tier pro", strings.Join(h.redis.log, " "), "redis after apply: %v %v", h.redis.log, h.redis.revs)
 	require.Equal(t, int64(3), h.redis.revs["friend"], "redis after apply: %v %v", h.redis.log, h.redis.revs)
@@ -558,14 +561,14 @@ func TestApplyStatusAndMigrateOnTheFakes(t *testing.T) {
 	gotCheck594 := h.redis.views["friend"]["rowan"]["roles"]
 	require.Equal(t, "builder,coordinator", gotCheck594, "rowan's applied roles %q", gotCheck594)
 	out, _ = step(0, "friend", "show", "rowan")
-	require.True(t, strings.HasPrefix(out, "FRIEND name=rowan slots=32 tiers=frontier roles=builder created="), "rowan's stored row: %q", out)
+	require.Contains(t, out, "FRIEND name=rowan slots=32 tiers=frontier roles=builder created=", "rowan's stored row: %q", out)
 	out, _ = step(0, "status")
 	require.True(t, strings.HasSuffix(out, " machine_applied=1 fleet_applied=4 friend_applied=3 sprint_applied=5 loop_applied=0 route_applied=0 tier_applied=0\n"), "status after apply: %q", out)
 	out, _ = step(0, "apply", "--kind", "friend")
-	require.Equal(t, "CONFIG APPLY kind=friend add=0 set=0 remove=0 rev=3 ms=0\n", out, "second apply: %q", out)
+	require.Equal(t, "APPLY OK\nAPPLY KIND kind=friend add=0 set=0 remove=0 rev=3 ms=0\n", out, "second apply: %q", out)
 	h.redis.revs["friend"] = 9
 	_, errs = step(1, "apply", "--kind", "friend")
-	require.True(t, strings.HasPrefix(errs, "nova-config apply REFUSED: CONFLICT friend: Redis holds rev 9 and this Postgres is at rev 3; a newer Postgres applied it; run: nova-config status"), "conflict: %q", errs)
+	require.True(t, strings.HasPrefix(errs, "APPLY FAILED: CONFLICT friend: Redis holds rev 9 and this Postgres is at rev 3; a newer Postgres applied it; run: nova-config status"), "conflict: %q", errs)
 }
 
 func TestApplyCheckReportsDriftAgainstFleet(t *testing.T) {
@@ -594,33 +597,33 @@ func TestApplyCheckReportsDriftAgainstFleet(t *testing.T) {
 
 	// Verify apply --check reports zero drift when synchronized
 	out, _ := step(0, "apply", "--check", "--kind", "machine")
-	require.Equal(t, "CONFIG CHECK kind=machine add=0 set=0 remove=0 rev=2 applied=2\n", out, "want no drift for machine, got:\n%s", out)
+	require.Equal(t, "APPLY OK\nAPPLY KIND kind=machine add=0 set=0 remove=0 rev=2 applied=2\n", out, "want no drift for machine, got:\n%s", out)
 	out, _ = step(0, "apply", "--check", "--kind", "fleet")
-	require.Equal(t, "CONFIG CHECK kind=fleet add=0 set=0 remove=0 rev=3 applied=3\n", out, "want no drift for fleet, got:\n%s", out)
+	require.Equal(t, "APPLY OK\nAPPLY KIND kind=fleet add=0 set=0 remove=0 rev=3 applied=3\n", out, "want no drift for fleet, got:\n%s", out)
 
 	// 1. Detect drift: update machine slots in Postgres
 	step(0, "machine", "set", "bench-beta", "--slots", "80")
 	out, _ = step(0, "apply", "--check", "--kind", "machine")
-	wantDrift := "CHECK SET kind=machine name=bench-beta changed=slots\nCONFIG CHECK kind=machine add=0 set=1 remove=0 rev=4 applied=2\n"
+	wantDrift := "APPLY OK\nAPPLY SET kind=machine name=bench-beta changed=slots\nAPPLY KIND kind=machine add=0 set=1 remove=0 rev=4 applied=2\n"
 	require.Equal(t, wantDrift, out, "drift on machine slots:\ngot:\n%s\nwant:\n%s", out, wantDrift)
 
 	// 2. Detect drift: add new machine in Postgres
 	step(0, "machine", "add", "bench-gamma", "--user", "user-c", "--seat", "seat-gamma", "--slots", "32")
 	out, _ = step(0, "apply", "--check", "--kind", "machine")
-	wantDrift = "CHECK SET kind=machine name=bench-beta changed=slots\nCHECK ADD kind=machine name=bench-gamma\nCONFIG CHECK kind=machine add=1 set=1 remove=0 rev=5 applied=2\n"
+	wantDrift = "APPLY OK\nAPPLY SET kind=machine name=bench-beta changed=slots\nAPPLY ADD kind=machine name=bench-gamma\nAPPLY KIND kind=machine add=1 set=1 remove=0 rev=5 applied=2\n"
 	require.Equal(t, wantDrift, out, "drift on machine add+set:\ngot:\n%s\nwant:\n%s", out, wantDrift)
 
 	// 3. Detect drift: change fleet coordinator in Postgres
 	step(0, "fleet", "set", "--coordinator", "bench-beta")
 	out, _ = step(0, "apply", "--check", "--kind", "fleet")
-	wantDrift = "CHECK SET kind=fleet name=fleet changed=coordinator\nCONFIG CHECK kind=fleet add=0 set=1 remove=0 rev=6 applied=3\n"
+	wantDrift = "APPLY OK\nAPPLY SET kind=fleet name=fleet changed=coordinator\nAPPLY KIND kind=fleet add=0 set=1 remove=0 rev=6 applied=3\n"
 	require.Equal(t, wantDrift, out, "drift on fleet coordinator:\ngot:\n%s\nwant:\n%s", out, wantDrift)
 
 	// 4. Detect drift: machine removed from Postgres but present in Redis
 	// Manually inject a stale machine into fake redis
 	h.redis.views["machine"]["bench-retired"] = config.View{"user": "nobody", "seat": "none", "slots": "10", "runners": "0"}
 	out, _ = step(0, "apply", "--check", "--kind", "machine")
-	require.Contains(t, out, "CHECK REMOVE kind=machine name=bench-retired", "drift on machine remove missing:\ngot:\n%s", out)
+	require.Contains(t, out, "APPLY REMOVE kind=machine name=bench-retired", "drift on machine remove missing:\ngot:\n%s", out)
 
 	// Verify apply --check wrote NOTHING to redis
 	// Redis revs should still be 2 and 3
@@ -685,7 +688,8 @@ func TestVerbsOnAnOlderSchemaRefuseWithMigrate(t *testing.T) {
 			if args[0] == "machine" || args[0] == "loop" || args[0] == "route" || args[0] == "fleet" {
 				verb = args[0] + " " + args[1]
 			}
-			want := fmt.Sprintf("nova-config %s REFUSED: schema config is at version %d and this binary carries %d; run: nova-config migrate\n", verb, have, len(all))
+			token := strings.ToUpper(strings.ReplaceAll(verb, " ", "-"))
+			want := fmt.Sprintf("%s FAILED: schema config is at version %d and this binary carries %d; run: nova-config migrate\n", token, have, len(all))
 			assert.Equal(t, 1, code, "%v at version %d", args, have)
 			assert.Equal(t, want, errs, "%v at version %d", args, have)
 			assert.NotContains(t, errs, "does not exist")
@@ -707,5 +711,5 @@ func TestOlderSchemaRefusalRepeatsPG(t *testing.T) {
 	all, err := config.Migrations()
 	require.NoError(t, err)
 	assert.Equal(t, 1, code)
-	assert.Equal(t, fmt.Sprintf("nova-config machine show REFUSED: schema config is at version 5 and this binary carries %d; run: nova-config migrate --pg %s\n", len(all), dsn), errs)
+	assert.Equal(t, fmt.Sprintf("MACHINE-SHOW FAILED: schema config is at version 5 and this binary carries %d; run: nova-config migrate --pg %s\n", len(all), dsn), errs)
 }

@@ -15,11 +15,11 @@ import (
 // The effects, one sentence each.
 const (
 	effectInspect   = "inspection: reads the store (PostgreSQL, or the --file) and writes nothing"
-	effectStoreRow  = "store write: one row and its history row, in PostgreSQL or the --file; --dry-run prints the change (CONFIG DRY-RUN) and writes nothing"
+	effectStoreRow  = "local write: one row and its history row, in PostgreSQL or the --file; --dry-run prints the change and writes nothing"
 	effectBinary    = "inspection: reads nothing but this binary"
-	effectMigrate   = "store write: makes or upgrades schema config (or makes the --file), each migration above the greatest recorded once; --print and --dry-run write nothing (--dry-run reads the ledger)"
+	effectMigrate   = "local write: makes or upgrades schema config (or makes the --file), each migration above the greatest recorded once; --print and --dry-run write nothing"
 	effectStatus    = "inspection: reads the store and Redis, writes nothing"
-	effectApply     = "external delivery: writes Redis, the copy of the rows the fleet reads, through its own Redis Functions; --dry-run prints the lines and writes nothing"
+	effectApply     = "delivery: writes Redis, the copy of the rows the fleet reads, through its own Redis Functions; --dry-run prints the lines and writes nothing"
 	effectInventory = "inspection: reads Redis (the state apply wrote) or the --fixture file, never PostgreSQL, and writes nothing"
 )
 

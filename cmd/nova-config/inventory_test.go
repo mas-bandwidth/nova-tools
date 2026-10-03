@@ -129,7 +129,7 @@ func TestInventoryBadFlagsAreRefusedBeforeTheStoreIsOpened(t *testing.T) {
 		{[]string{"--list", "--host", "bench-01"}, []string{"--list", "--host", "exclusive"}},
 		{[]string{"--host="}, []string{"--host", "empty"}},
 		{[]string{"--host"}, []string{"host"}},
-		{[]string{"bench-01"}, []string{"no arguments"}},
+		{[]string{"bench-01"}, []string{"positional"}},
 		{[]string{"--fixture", "f.yml", "--redis", storeAddr}, []string{"--fixture and --redis are exclusive"}},
 		{[]string{"--fixture="}, []string{"--fixture wants a file"}},
 		{[]string{"--timeout", "0s"}, []string{"--timeout wants a Go duration above 0"}},

@@ -107,7 +107,7 @@ func TestMigrateRefusesMixedOwnershipUntilTheAlterLinesAreRun(t *testing.T) {
 	for _, tb := range []string{"loops", "routes", "tiers"} {
 		require.NotContains(t, errs, "config."+tb, "refusal: %q", errs)
 	}
-	require.Contains(t, errs, "nova-config migrate REFUSED: role "+cfg+" cannot apply migration 14 and applied none", "refusal: %q", errs)
+	require.Contains(t, errs, "MIGRATE FAILED: role "+cfg+" cannot apply migration 14 and applied none", "refusal: %q", errs)
 	require.Contains(t, errs, admin+" owns ", "refusal: %q", errs)
 	require.Equal(t, 13, ledger(t, super), "the refusal applied a migration")
 
