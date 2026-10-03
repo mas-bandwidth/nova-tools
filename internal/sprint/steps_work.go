@@ -1262,7 +1262,8 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 			delete(set, "result")
 			delete(set, FieldFailure)
 			delete(set, FieldFailureAt)
-			u.Changes = append(u.Changes, change(Work, moveEntry(pr, pr.Row, Ready, set, "result", FieldFailure, FieldFailureAt)))
+			delete(set, FieldIdenticalAt)
+			u.Changes = append(u.Changes, change(Work, moveEntry(pr, pr.Row, Ready, set, "result", FieldFailure, FieldFailureAt, FieldIdenticalAt)))
 			u.Moved = fmt.Sprintf("%s working -> done %s; %s working -> ready (%s)", c.ID, result, pr.ID, why)
 			p.Units = append(p.Units, u)
 			continue

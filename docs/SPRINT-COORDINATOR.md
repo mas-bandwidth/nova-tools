@@ -147,7 +147,7 @@ applies nothing twice; one ask that takes past `--timeout` (60s) is that card's 
 - A stream is one line of cards: `nova-sprint add --stream <s> ...` opens it. Cards that touch one file or
   ledger belong to one stream, in order or chained with `--needs a,b` (primaries that must land first; a
   dropped or missing need raises its own judgment); `add` does not see two open cards naming one file.
-- A card is a brief, a child's whole brief (at most 16 KiB; `REPO:` and `BASE:` lines; a a `tier: pro|frontier`
+- A card is a brief, a child's whole brief (at most 16 KiB; `REPO:` and `BASE:` lines; a `tier: pro|frontier`
   line 1 is its ceiling, none is flash: every card is dealt on flash first and the machine escalates it a tier
   at its bound below the ceiling). From files, the card's id being the file's name without `.md`:
 
