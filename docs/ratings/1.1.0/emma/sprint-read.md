@@ -11,16 +11,16 @@ The tool establishes an ambitious and rigorous coordination engine for distribut
 A score of 10 would require decomposing the monolithic verb registry and oversized app struct, removing colloquial chat transcripts and historical quotations from comments and contracts, harmonizing CLI flag naming across documentation and code, and modularizing internal step handlers.
 
 The first place of confusion was docs/SPEC-SPRINT.md:32, where the contract specification introduces billing and display details filled with conversational chat quotes before defining the primary card lifecycle.
-The first place of boredom was cmd/nova-sprint/verbs.go:39, where 61 verb definitions are enumerated in a single flat registry file spanning over 2500 lines.
-The first place of doubting a claim was docs/CLI.md:988, where the reference manual specifies --limit for several query commands while the CLI implementation only accepts --max.
+The first place of boredom was cmd/nova-sprint/verbs.go:39, where 61 verb definitions are enumerated in a single flat registry file spanning 2551 lines.
+The first place of doubting a claim was cmd/nova-sprint/verbs.go:44, where the reference's syntax lines name --limit while the verb's own syntax and help name --max.
 
 ## Findings
 | # | where | finding | fix | size |
 |---|---|---|---|---|
-| 1 | cmd/nova-sprint/verbs.go:39 | 61 verbs declared in a 2552-line monolithic file making discovery and navigation overwhelming | group verbs into subsystem modules for fleet friend reader and workflow | L |
+| 1 | cmd/nova-sprint/verbs.go:39 | 61 verbs declared in a 2551-line monolithic file making discovery and navigation overwhelming | group verbs into subsystem modules for fleet friend reader and workflow | L |
 | 2 | cmd/nova-sprint/main.go:52 | app struct contains 34 disparate fields mixing connection pooling simulation state and git environments | partition app state into focused context structs for store runner and git | M |
 | 3 | docs/SPEC-SPRINT.md:32 | contract buries core lifecycle semantics under ASCII table layouts and verbatim conversation transcripts | restructure specification to lead with the card lifecycle state machine before display layouts | M |
-| 4 | docs/CLI.md:988 | documentation advertises --limit flag across multiple verbs while implementation requires --max | update command reference flags to match actual --max flag implementation | S |
+| 4 | cmd/nova-sprint/verbs.go:44 | the reference's syntax lines name --limit while the verb's own syntax and help name --max | harmonize syntax lines between documentation and command definitions | S |
 | 5 | cmd/nova-sprint/every_row_test.go:73 | source code and tests embed dated chat transcript citations as explanatory comments | replace historical chat quotations with present-tense design rationale | S |
 | 6 | cmd/nova-sprint/friendclean.go:51 | retention rules retain historical incident ticket references rather than documenting policy | replace issue tracker references with clear documentation of retention invariant | S |
 
