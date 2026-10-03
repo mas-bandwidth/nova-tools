@@ -35,8 +35,9 @@ func coldRun(t *testing.T, args ...string) (int, string, string) {
 	return code, out.String(), errb.String()
 }
 
-// refusalLine is the one grammar of an invocation refusal (STANDARD §3.1).
-var refusalLine = regexp.MustCompile(`^nova-redis( [a-z]+){0,2} REFUSED: .+; run: nova-redis help( [a-z]+){0,2}$`)
+// refusalLine is the one grammar of an invocation refusal (STANDARD §3.1): the
+// skeleton's VERB REFUSED: <what>; run: <next>.
+var refusalLine = regexp.MustCompile(`^[A-Z][A-Z-]* REFUSED: .+; run: nova-redis .+$`)
 
 func TestARefusalNamesEveryProblemInTheOneGrammar(t *testing.T) {
 	t.Parallel()
@@ -46,7 +47,7 @@ func TestARefusalNamesEveryProblemInTheOneGrammar(t *testing.T) {
 		want []string // one line each, in any order
 	}{
 		{"a bad address does not hide a zero ttl", []string{"spill", "--addr", "nohost", "--ttl", "0s", "--owner", "a", "--name", "b", "--value", "c"},
-			[]string{`nova-redis spill REFUSED: --addr "nohost" is not <host:port>`, "nova-redis spill REFUSED: --ttl is required and must be above zero"}},
+			[]string{`SPILL REFUSED: --addr "nohost" is not <host:port>`, "SPILL REFUSED: --ttl is required and must be above zero"}},
 		{"a bad owner, name and ttl at once", []string{"spill", "--addr", "127.0.0.1:1", "--owner", "a:b", "--name", "x y", "--ttl", "banana", "--value", "c"},
 			[]string{`--ttl "banana" is not a duration`, "--owner is required and may not", "--name is required and may not"}},
 		{"every missing flag says what it wants", []string{"spill"},
@@ -56,13 +57,13 @@ func TestARefusalNamesEveryProblemInTheOneGrammar(t *testing.T) {
 		{"serve's bad bind and bad port at once", []string{"serve", "--bind", "0.0.0.0", "--port", "0", "--dir", "relative"},
 			[]string{`--bind "0.0.0.0" binds every interface`, `--port "0" needs a port`, `--dir "relative" is not absolute`}},
 		{"a misspelled flag lists the verb's flags", []string{"spill", "--zzz"},
-			[]string{"nova-redis spill REFUSED: unknown flag --zzz; the flags of spill are --addr, --dry-run, --json, --name, --owner, --password-env, --ttl, --user, --value; run: nova-redis help spill"}},
+			[]string{"SPILL REFUSED: unknown flag --zzz; the flags of spill are --addr, --dry-run, --json, --name, --owner, --password-env, --ttl, --user, --value; run: nova-redis spill -h"}},
 		{"an unknown verb lists the verbs", []string{"zzz"},
-			[]string{`nova-redis REFUSED: unknown verb "zzz"; the verbs are serve, spill, recall, fn load, fn check, acl render, acl check, acl apply, version, help; run: nova-redis help`}},
+			[]string{`REDIS REFUSED: unknown verb "zzz"; the verbs are serve, spill, recall, fn load, fn check, acl render, acl check, acl apply, version; run: nova-redis help`}},
 		{"an unknown fn subverb points at the group's help", []string{"fn", "deploy"},
-			[]string{`nova-redis fn REFUSED: unknown subverb "deploy"; want load or check; run: nova-redis help fn`}},
+			[]string{`REDIS REFUSED: unknown verb "fn deploy" in fn; the verbs are fn load, fn check; run: nova-redis fn -h`}},
 		{"the bare command names its door", nil,
-			[]string{"nova-redis REFUSED: no verb given;"}},
+			[]string{"REDIS REFUSED: no verb given;"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -88,13 +89,20 @@ func TestEveryVerbsHelpStatesItsEffectAndDescribesEveryFlag(t *testing.T) {
 	t.Parallel()
 	flagLine := regexp.MustCompile(`^  --([a-z-]+)(?: <[a-z]+>)?(?:  (.*))?$`)
 	for _, verb := range []string{"serve", "spill", "recall", "fn", "fn load", "fn check", "acl", "acl render", "acl check", "acl apply", "version"} {
+		group := verb == "fn" || verb == "acl"
 		for _, form := range [][]string{append(strings.Fields(verb), "-h"), append([]string{"help"}, strings.Fields(verb)...)} {
 			t.Run(strings.Join(form, " "), func(t *testing.T) {
 				t.Parallel()
 				code, out, errs := coldRun(t, form...)
 				require.Equal(t, 0, code, errs)
 				assert.Empty(t, errs)
-				assert.Regexp(t, `(?m)^(effect|subverbs): \S`, out)
+				if group {
+					// A group's help lists its verbs; each subverb states its own
+					// effect (internal/tool's group banner).
+					assert.Contains(t, out, "usage: nova-redis "+verb)
+				} else {
+					assert.Regexp(t, `(?m)^effect: \S`, out)
+				}
 				for _, l := range strings.Split(out, "\n") {
 					m := flagLine.FindStringSubmatch(l)
 					if m == nil {
@@ -118,7 +126,7 @@ func TestSpillDryRunNeedsNoStore(t *testing.T) {
 	h := newHarness(t)
 	code, out, errs := h.run("spill", "--dry-run", "--owner", "ada", "--name", "note", "--ttl", "10m", "--value", "hi")
 	require.Equal(t, 0, code, errs)
-	assert.Equal(t, "SPILL OK dry-run=true key=ada:note ttl=10m0s expires=2026-09-23T12:10:00Z bytes=2 store="+h.mr.Addr()+" written=0\n", out)
+	assert.Equal(t, "SPILL OK key=ada:note ttl=10m0s expires=2026-09-23T12:10:00Z bytes=2 store="+h.mr.Addr()+" written=0 dry_run=true\n", out)
 	assert.Empty(t, errs)
 	assert.Zero(t, h.mr.TotalConnectionCount(), "a dry run dials nothing")
 	assert.Empty(t, h.mr.Keys())
@@ -131,10 +139,11 @@ func TestSpillDryRunNeedsNoStore(t *testing.T) {
 // jsonOut is the one JSON object --json prints (internal/tool's Out).
 type jsonOut struct {
 	Result struct {
-		Verb, Status, Remedy string
-		Exit                 int
-		Why                  []string
+		Verb, Status, Remedy, Word string
+		Exit                       int
+		Why                        []string
 	}
+	Facts map[string]any
 	Items []struct {
 		Kind   string
 		Fields map[string]any
@@ -151,8 +160,11 @@ func decodeOne(t *testing.T, out string) jsonOut {
 	return v
 }
 
-// Every verb but serve takes --json and prints one object of the same value
-// its lines print, on stdout, whatever the outcome: done, said no, refused.
+// Every verb on the skeleton that takes --json prints one object of the same
+// value its lines print, on stdout, whatever the outcome: done, said no,
+// refused. serve, fn load, fn check, acl render, acl check and acl apply are
+// Prints verbs (a stream, or a bare head the skeleton cannot render), so they
+// take no --json, and the banner says so.
 func TestEveryVerbPrintsOneJSONObjectWithJSON(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
@@ -165,17 +177,16 @@ func TestEveryVerbPrintsOneJSONObjectWithJSON(t *testing.T) {
 		args     []string
 		code     int
 		status   string
-		kind     string
-		field    string
+		word     string
+		fact     string
 		want     any
 		whyCount int
 	}{
-		{"recall carries the value exactly", []string{"recall", "--addr", h.mr.Addr(), "--owner", "ada", "--name", "note", "--json"}, 0, "ok", "RECALL OK", "value", stored, 0},
-		{"recall of a missing key says no", []string{"recall", "--json", "--addr", h.mr.Addr(), "--owner", "ada", "--name", "gone"}, 1, "failed", "RECALL MISSING", "key", "ada:gone", 0},
-		{"a dry run", []string{"spill", "--dry-run", "--json", "--addr", h.mr.Addr(), "--owner", "ada", "--name", "n", "--ttl", "1m", "--value", "v"}, 0, "ok", "SPILL OK", "written", float64(0), 0},
+		{"recall carries the value exactly", []string{"recall", "--addr", h.mr.Addr(), "--owner", "ada", "--name", "note", "--json"}, 0, "ok", "", "value", stored, 0},
+		{"recall of a missing key says no", []string{"recall", "--json", "--addr", h.mr.Addr(), "--owner", "ada", "--name", "gone"}, 1, "failed", "MISSING", "key", "ada:gone", 0},
+		{"a dry run", []string{"spill", "--dry-run", "--json", "--addr", h.mr.Addr(), "--owner", "ada", "--name", "n", "--ttl", "1m", "--value", "v"}, 0, "ok", "", "written", float64(0), 0},
 		{"a refusal names every problem", []string{"spill", "--json", "--addr", "nohost", "--ttl", "0s"}, 2, "refused", "", "", nil, 5},
-		{"a store that does not answer", []string{"spill", "--json", "--addr", "127.0.0.1:1", "--owner", "a", "--name", "b", "--ttl", "1m", "--value", "c"}, 2, "refused", "SPILL FAILED", "class", "unreachable", 0},
-		{"acl render", []string{"acl", "render", "--json"}, 0, "ok", "ACL RENDER OK", "users", float64(4), 0},
+		{"a store that does not answer", []string{"spill", "--json", "--addr", "127.0.0.1:1", "--owner", "a", "--name", "b", "--ttl", "1m", "--value", "c"}, 2, "refused", "", "class", "unreachable", 0},
 		{"version", []string{"version", "--json"}, 0, "ok", "", "", nil, 0},
 	}
 	for _, c := range cases {
@@ -188,23 +199,18 @@ func TestEveryVerbPrintsOneJSONObjectWithJSON(t *testing.T) {
 			assert.Equal(t, c.status, v.Result.Status)
 			assert.Equal(t, c.code, v.Result.Exit)
 			assert.Len(t, v.Result.Why, c.whyCount)
-			if c.kind == "" {
-				return
+			if c.word != "" {
+				assert.Equal(t, c.word, v.Result.Word)
 			}
-			found := false
-			for _, it := range v.Items {
-				if it.Kind == c.kind {
-					found = true
-					assert.Equal(t, c.want, it.Fields[c.field])
-				}
+			if c.fact != "" {
+				assert.Equal(t, c.want, v.Facts[c.fact])
 			}
-			assert.True(t, found, "no item of kind %q in %s", c.kind, out)
 		})
 	}
 	_, out, _ := h.runBare("version", "--json")
 	assert.True(t, strings.HasPrefix(decodeOne(t, out).Payload, "nova-redis "))
 	_, out, _ = h.runBare("spill", "--json")
-	assert.Equal(t, "nova-redis help spill", decodeOne(t, out).Result.Remedy)
+	assert.Equal(t, "nova-redis help", decodeOne(t, out).Result.Remedy)
 }
 
 // A serve that could not start says what to do next: with no redis-server on

@@ -770,19 +770,20 @@ redis-server, in `cmd/nova-redis/fn_functional_test.go`.
 
 ```text
 $ nova-redis spill --addr 127.0.0.1:6379 --name note --ttl 10m --value hi
-nova-redis spill REFUSED: --owner is required and may not be empty or hold ':' or whitespace; every key carries an owner prefix; run: nova-redis help spill
+SPILL REFUSED: --owner is required and may not be empty or hold ':' or whitespace; every key carries an owner prefix; run: nova-redis help
 
 $ nova-redis spill --addr 127.0.0.1:6379 --owner ada --name note --ttl 0s --value hi
-nova-redis spill REFUSED: --ttl is required and must be above zero; an unbounded key is a bug; run: nova-redis help spill
+SPILL REFUSED: --ttl is required and must be above zero; an unbounded key is a bug; run: nova-redis help
 
 $ nova-redis fn load
-nova-redis fn load REFUSED: --addr is required: the store's address as <host:port>, such as 127.0.0.1:6379 (no default); refusing to guess; run: nova-redis help fn load
+FN-LOAD REFUSED: --addr is required: the store's address as <host:port>, such as 127.0.0.1:6379 (no default); refusing to guess; run: nova-redis help
 ```
 
 Each refusal names every problem with the line, one line each, and the
-help to read next. `spill --dry-run` with a good line needs no store either: it
-prints `SPILL OK dry-run=true ... written=0` and dials nothing (the banner's
-`example:` block runs it, `cmd/nova-redis/examples_test.go`).
+help to read next. `spill --dry-run` with a good line needs no store either:
+it prints `SPILL OK key=<k> ttl=<d> expires=<t> bytes=<n> store=<a>
+written=0 dry_run=true` and dials nothing (the banner's `example:` block
+runs it, `cmd/nova-redis/examples_test.go`).
 
 ## nova-ci
 
