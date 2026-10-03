@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // A LAUNCH THAT DIES FAST ON A PROVIDER 5XX IS RETRIED (issue #900). These tests hold the
@@ -154,4 +156,65 @@ func TestNativeLostResponseLineSaysUnknownAcceptance(t *testing.T) {
 	require.Contains(t, out, "why=unknown-acceptance", "the verdict did not keep unknown-acceptance:\n%s", out)
 	require.NotContains(t, out, "why=no-result", "a lost response was filed as an ordinary incomplete:\n%s", out)
 	require.NotContains(t, out, "why=rc", "a lost response was filed as an ordinary incomplete:\n%s", out)
+}
+
+// A transient wrapper does not make a current credit/key refusal retryable
+// (SPEC-SPRINT section 5: the provider rests until its funds or key return).
+func TestNativeDoesNotRetryARefusalInsideAServerError(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name, card, class string
+	}{
+		{"credit", "FAKE-SAY Unexpected server error: ref=err_credit\nFAKE-CREDIT-REFUSAL\n", "out-of-credit"},
+		{"auth", "FAKE-SAY level=ERROR message=server_error statusCode=401 error=Unauthorized Unexpected server error\nFAKE-NORESULT\n", "auth"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			bin := nativeHarness(t)
+			root, slot := aSlot(t)
+			var errOut bytes.Buffer
+			_, code := nativeRun(nativeRunConfig{
+				binary: bin, model: "fake/fake-model", label: tc.name,
+				card:    []byte("FAKE-LAUNCHES\n" + tc.card),
+				slotDir: slot, root: root, deadline: 30 * time.Second, noWall: true,
+			}, &errOut)
+			require.Equal(t, 0, code, errOut.String())
+			launches, err := os.ReadFile(filepath.Join(slot, "jobs", tc.name, "launches"))
+			require.NoError(t, err)
+			assert.Equal(t, 1, strings.Count(string(launches), "launch"), errOut.String())
+			assert.Contains(t, errOut.String(), "reason=provider: class="+tc.class)
+		})
+	}
+}
+
+// An earlier job's credit refusal is not this launch's refusal. A later
+// transient failure still earns its retry (SPEC-SPRINT section 5).
+func TestNativeRetriesA5xxAfterAnOlderCreditRefusal(t *testing.T) {
+	t.Parallel()
+	needsSQLite(t)
+	bin := nativeHarness(t)
+	root, slot := aSlot(t)
+	var errOut bytes.Buffer
+	_, code := nativeRun(nativeRunConfig{
+		binary: bin, model: "fake/fake-model", label: "older-credit",
+		card:    []byte("FAKE-CREDIT-REFUSAL\n"),
+		slotDir: slot, root: root, deadline: 30 * time.Second, noWall: true,
+	}, &errOut)
+	require.Equal(t, 0, code, errOut.String())
+	require.Contains(t, errOut.String(), "class=out-of-credit")
+	// Make the old session deterministically older than the next launch.
+	output, err := exec.Command(swarm.SQLiteBinary, filepath.Join(slot, "data", "opencode", "opencode.db"), "UPDATE message SET time_created=0").CombinedOutput()
+	require.NoError(t, err, string(output))
+	errOut.Reset()
+	res, code := nativeRun(nativeRunConfig{
+		binary: bin, model: "fake/fake-model", label: "later-5xx",
+		card:    []byte("FAKE-LAUNCHES\nFAKE-5XX-FIRST\n"),
+		slotDir: slot, root: root, deadline: 30 * time.Second, noWall: true,
+	}, &errOut)
+	require.Equal(t, 0, code, errOut.String())
+	assert.Equal(t, 0, res.rc, errOut.String())
+	launches, err := os.ReadFile(filepath.Join(slot, "jobs", "later-5xx", "launches"))
+	require.NoError(t, err)
+	assert.Equal(t, 2, strings.Count(string(launches), "launch"), errOut.String())
 }
