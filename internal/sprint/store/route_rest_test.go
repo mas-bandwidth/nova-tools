@@ -3,6 +3,7 @@ package store
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -61,6 +62,7 @@ func TestARouteWhoseChildrenEndWithNoResultThreeTimesRests(t *testing.T) {
 	open := h.openOf(sprint.NNoRoute)
 	require.Len(t, open, 1, "the tier waits, once")
 	assert.Contains(t, open[0].Note.What, "rests")
+	assert.Contains(t, open[0].Note.What, "pro-a until "+rest.Until.UTC().Format(time.RFC3339), "it names when the rest ends")
 
 	h.machine()
 	assert.Len(t, h.noteWhats(sprint.NRouteRested), 1, "a rest is written once")

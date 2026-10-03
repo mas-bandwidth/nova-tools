@@ -285,11 +285,13 @@ its bound" is raised at once, and its answer is a rework with a fix (on the next
 or a drop. Identical is one function, `sprint.SameFailure` over `sprint.FailureClass`
 (`TestSameFailureIsTheOneDefinitionOfAnIdenticalFailure`): a take whose child left no
 result is the class `no result` whatever its line; any other end is its reason, the
-first line of the report up to the member's `; ` (`verdict not-done`, `budget: no
-RESULT.md shape`, `push refused: <git's line>`, `nothing to do: <why>`), cut to 200
-bytes; a take the provider failed, a launch refused at staging and an end with no line
-(a member down) are never the card's, have no class, and are never identical. Two
-places count tries:
+first line of the report up to the member's `; ` (`budget: no RESULT.md shape`,
+`push refused: <git's line>`, `nothing to do: <why>`), cut to 200 bytes; a verdict's
+reason is broad, so its class keeps the first three words of the child's line too
+(`verdict not-done; tests red in`, after the member's `pushed=<sha> to <branch>: `); a
+take the provider failed, a launch refused at staging or at launch (`launch refused:
+<why>`, the member's) and an end with no line (a member down) are never the card's,
+have no class, and are never identical. Two places count tries:
 
 - the takes of one attempt's work card that ended with no work to judge: when the
   last two ended takes' records (provider_take_<n>) are the same failure, the card is
@@ -504,8 +506,13 @@ and it is the coordinator's decision, receipted.
   disabled one; when every route of a tier rests, the tier's judgment `no route
   serves the tier` says so and names when each rest ends. The rest ends by itself at
   its time, and the window begins again after it, so the ends that rested it never
-  rest it twice. Reads are drawn as before. The rest is the sprint's, in the store,
-  never nova-config's: enabled stays the coordinator's (docs/SPRINT-COORDINATOR.md).
+  rest it twice. Reads are drawn as before. The rests are settled once per tick part
+  or verb that draws work routes or asks why a card is not dealt (the tick's deal,
+  `deal`, `rework`, and the held rule of the tick's check), from one scan of the fleet
+  table, and each draw reads a map: at 984 ready primaries and 3,000 work cards each
+  such part scans once (`TestTheTicksCheckSettlesTheRestsOnceAtScale`, its
+  `TICK-COST` lines; a scan per card was 1,969 scans and 3.82 s a check). The rest is
+  the sprint's, in the store, never nova-config's: enabled stays the coordinator's (docs/SPRINT-COORDINATOR.md).
   `routes` prints `rested_until=<RFC3339>` while a route rests (`-` when not)
   (`sprint.RestsDue`, `TestRestsDueCountsNoResultEndsInTheRoutesWindow`,
   `TestARouteWhoseChildrenEndWithNoResultThreeTimesRests`,

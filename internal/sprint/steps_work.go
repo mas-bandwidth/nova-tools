@@ -744,11 +744,7 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 	for _, c := range chosen {
 		if wc := s.Fleet.Placed(WorkCardID(c.ID, c.Int("attempt"))); wc != nil && wc.Col == Withdrawn {
 			if redealBound(wc) {
-				why := fmt.Sprintf("%s was redealt %d times, its bound: rework it with a fix, or drop it", wc.ID, wc.Int("redeals"))
-				if class := identicalEnds(wc); class != "" {
-					why = fmt.Sprintf("%s: its last two takes ended the same way (%s), the second identical failure: rework it with a fix on the next tier, or drop it", wc.ID, class)
-				}
-				p.refuse(c.ID, why)
+				p.refuse(c.ID, boundWhat(wc, c.ID)+": rework it with a fix, or drop it")
 				continue
 			}
 			if _, why := s.noRoute(c); why != "" {

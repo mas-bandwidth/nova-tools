@@ -14,19 +14,23 @@ import (
 // staging refusal and an end with no line are never the card's and never identical.
 func TestSameFailureIsTheOneDefinitionOfAnIdenticalFailure(t *testing.T) {
 	t.Parallel()
-	long := "verdict " + strings.Repeat("x", 300)
+	long := "push refused: " + strings.Repeat("x", 300)
 	for _, tc := range []struct {
 		name, a, b string
 		class      string // FailureClass(a)
 		same       bool
 	}{
 		{"no result twice, whatever the lines", "no result: no RESULT.md shape; quack", "no result: no RESULT.md shape; other", "no result", true},
-		{"the same reason, another child's line", "verdict not-done; tests red in x", "verdict not-done; ran out of ideas", "verdict not-done", true},
+		{"a verdict and the child's first words", "verdict not-done; tests red in x", "verdict not-done; tests red in y", "verdict not-done; tests red in", true},
+		{"a verdict, another child's reason", "verdict not-done; tests red in x", "verdict not-done; ran out of ideas", "verdict not-done; tests red in", false},
+		{"a verdict after the member's push", "verdict not-done; pushed=abc to b: tests red in x", "verdict not-done; pushed=def to c pr=4: tests red in y", "verdict not-done; tests red in", true},
+		{"a verdict with no child's line", "verdict not-done", "verdict not-done; ", "verdict not-done", true},
+		{"a launch refused is the member's", "launch refused: no model", "launch refused: no model", "", false},
 		{"the same gate end", "budget: no RESULT.md shape; r1", "budget: no RESULT.md shape; r2", "budget: no RESULT.md shape", true},
 		{"the same push refusal", "push refused: rejected (non-fast-forward); r", "push refused: rejected (non-fast-forward); s", "push refused: rejected (non-fast-forward)", true},
 		{"the first line only", "no commit: nothing staged\nmore", "no commit: nothing staged\nother", "no commit: nothing staged", true},
-		{"spaces around are not a difference", "  verdict not-done ; r", "verdict not-done; s", "verdict not-done", true},
-		{"another reason", "verdict not-done; r", "budget: no RESULT.md shape; r", "verdict not-done", false},
+		{"spaces around are not a difference", "  push refused: rejected ; r", "push refused: rejected; s", "push refused: rejected", true},
+		{"another reason", "verdict not-done; r", "budget: no RESULT.md shape; r", "verdict not-done; r", false},
 		{"no result against a failure", "no result: no RESULT.md shape", "no RESULT.md shape; r", "no result", false},
 		{"another why", "nothing to do: done in #12; r", "nothing to do: the file is gone; r", "nothing to do: done in #12", false},
 		{"a provider failure is never the card's", "provider failure: provider: class=5xx status=502 msg=bad gateway", "provider failure: provider: class=5xx status=502 msg=bad gateway", "", false},

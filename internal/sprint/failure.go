@@ -19,22 +19,36 @@ import (
 // the class `no result` whatever its line says; any other end is its reason, the first
 // line up to the member's "; " (member.Judge puts its reason first and the child's report
 // after it: `verdict not-done; <the child's line>`), trimmed and cut to
-// MaxProviderErrorBytes. A take the provider failed and a launch refused at staging are
-// never the card's (docs/SPEC-SPRINT.md section 2), so they have no class, and an empty
-// line (a take that ended with its member down) has none: an end with no class is never
-// the same as another.
+// MaxProviderErrorBytes. A verdict's reason is broad, so its class takes the first
+// VerdictWords words of the child's line too (after the member's `pushed=<sha> to
+// <branch>: `). A take the provider failed, a launch refused at staging or at launch are
+// the member's or the provider's, never the card's (docs/SPEC-SPRINT.md section 2), so
+// they have no class, and an empty line (a take that ended with its member down) has
+// none: an end with no class is never the same as another.
 func FailureClass(line string) string {
 	line = strings.TrimSpace(line)
 	switch {
-	case line == "", IsProviderFailure(line), IsStagingRefusal(line):
+	case line == "", IsProviderFailure(line), IsStagingRefusal(line), strings.HasPrefix(line, cardhdr.EndLaunch):
 		return ""
 	case IsNoResult(line):
 		return cardhdr.EndNoResult
 	}
 	line, _, _ = strings.Cut(line, "\n")
-	line, _, _ = strings.Cut(line, "; ")
-	return cutText(strings.TrimSpace(line), MaxProviderErrorBytes)
+	reason, child, _ := strings.Cut(line, "; ")
+	reason = strings.TrimSpace(strings.TrimSuffix(reason, ";")) // a "; " with nothing after it, trimmed
+	if strings.HasPrefix(reason, "verdict ") {
+		if strings.HasPrefix(child, "pushed=") {
+			_, child, _ = strings.Cut(child, ": ")
+		}
+		if words := strings.Fields(child); len(words) > 0 {
+			reason += "; " + strings.Join(words[:min(len(words), VerdictWords)], " ")
+		}
+	}
+	return cutText(reason, MaxProviderErrorBytes)
 }
+
+// VerdictWords is how many words of the child's line a verdict's class keeps (FailureClass).
+const VerdictWords = 3
 
 // SameFailure says two failed ends are the same failure: each has a class and it is the
 // same one (FailureClass).

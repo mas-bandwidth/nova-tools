@@ -311,6 +311,9 @@ type Snapshot struct {
 	// rests is the routes resting at Now, settled once by a step that deals
 	// (withRests, route_rest.go); nil is not yet settled.
 	rests map[string]RouteRest
+	// restScans, when set, counts withRests' scans of the fleet table: the tick's
+	// cost gate (TestTheTicksCheckSettlesTheRestsOnceAtScale) holds them to one a part.
+	restScans *int
 }
 
 // T is the loaded table by logical name.

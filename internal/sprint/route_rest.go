@@ -31,10 +31,9 @@ const NRouteRested = "a route rested: its children ended with no result"
 // RouteRest is a route's last rest: when it began, when it ends, and the cards whose
 // takes on it left no result.
 type RouteRest struct {
-	Route string    `json:"route"`
-	At    time.Time `json:"at"`
-	Until time.Time `json:"until"`
-	Cards []string  `json:"cards"`
+	Route     string
+	At, Until time.Time
+	Cards     []string
 }
 
 // Resting says the rest holds at now.
@@ -157,6 +156,9 @@ func (s *Snapshot) withRests() (*Snapshot, []RouteRest) {
 	if s.rests != nil {
 		return s, nil
 	}
+	if s.restScans != nil {
+		*s.restScans++
+	}
 	n := *s
 	n.rests = map[string]RouteRest{}
 	for name, r := range RouteRests(s.Routes, s.Fleet) {
@@ -171,14 +173,11 @@ func (s *Snapshot) withRests() (*Snapshot, []RouteRest) {
 	return &n, due
 }
 
-// resting is the rest that holds a route at s.Now (withRests), and whether one does.
+// resting is the rest that holds a route at s.Now, and whether one does: the rests a step
+// that deals settled once (withRests: TickDeal, Deal, Rework and the held rule's newHeld),
+// never computed here, so no draw scans the fleet table per card.
 func (s *Snapshot) resting(route string) (RouteRest, bool) {
-	rests := s.rests
-	if rests == nil {
-		t, _ := s.withRests()
-		rests = t.rests
-	}
-	r, ok := rests[route]
+	r, ok := s.rests[route]
 	return r, ok
 }
 

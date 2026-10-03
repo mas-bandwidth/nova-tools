@@ -1198,7 +1198,7 @@ func (m *Member) refuseStaging(p Packet, why string) bool {
 // started again every tick, the refusal only in this log, until judged late.
 func (m *Member) failLaunch(p Packet, why error) {
 	args := []string{"finish", "--as", m.cfg.As, p.Card + "@" + strconv.Itoa(p.Gen), "--failed",
-		"--report", cut("launch refused: " + oneLine(why.Error())), "--epoch", strconv.FormatUint(p.Epoch, 10)}
+		"--report", cut(cardhdr.EndLaunch + ": " + oneLine(why.Error())), "--epoch", strconv.FormatUint(p.Epoch, 10)}
 	code, out := m.run(args...)
 	fmt.Fprintf(m.out, "finish %s ok=false exit=%d launch refused%s\n", p.Card, code, routeWords(p))
 	if code != 0 {
@@ -1213,7 +1213,7 @@ func (m *Member) failLaunch(p Packet, why error) {
 // the refusal only in this log, for the read's whole deadline (fleet pass 7, 2026-10-01:
 // two reads with no route held a card twelve minutes of a two-hour deadline).
 func (m *Member) returnUnstarted(p Packet, why error) {
-	reason := cut("launch refused: " + oneLine(why.Error()))
+	reason := cut(cardhdr.EndLaunch + ": " + oneLine(why.Error()))
 	code, out := m.run("read", "--as", m.cfg.As, "--return", p.Card, "--reason", reason, "--epoch", strconv.FormatUint(p.Epoch, 10))
 	fmt.Fprintf(m.out, "read %s: returned exit=%d: %s\n", p.Card, code, reason)
 	if code != 0 {
