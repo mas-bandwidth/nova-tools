@@ -144,7 +144,7 @@ func PresenceStatus(held bool, b Beat, now time.Time) string {
 // FriendAwake says the friend has beaten within FriendAsleepAfter of now: a
 // beat wakes her at once, and FriendAsleepAfter without one puts her asleep.
 func FriendAwake(b Beat, now time.Time) bool {
-	return b.Beaten() && now.Sub(b.At) < FriendAsleepAfter
+	return now.Sub(b.At) < FriendAsleepAfter // never beaten: At is zero, long ago
 }
 
 // FriendStatus is the one rule of a friend's status at now: held while the
