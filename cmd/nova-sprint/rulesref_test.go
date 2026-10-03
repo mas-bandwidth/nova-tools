@@ -120,3 +120,18 @@ func TestALaterAddLeavesAnEarlierCardsRules(t *testing.T) {
 	assert.Empty(t, tb.cardRulesOf("s2-x"), "a nova-tools card's add names no Go rules on the schema card")
 	assert.Equal(t, swarm.DefaultRulesName, tb.cardRulesOf("s2-h"))
 }
+
+// A card moved to another stream keeps the rules file it names: move admits it again from its
+// own record (sprint.MoveCards), so a moved card's child is handed the same rules.
+func TestMoveKeepsACardsRules(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a --members m1 --rules " + ourRulesFile)
+	ta.ok("add --stream s1 s1-h --brief-file " + briefFile(t, t.TempDir(), "home.md", homeBrief))
+	require.Equal(t, swarm.DefaultRulesName, ta.cardRulesOf("s1-h"))
+	ta.ok("move s1-h --stream s2")
+	row, _, _, _, ok := ta.m.Record(sprint.Work, "s1-h")
+	require.True(t, ok)
+	assert.Equal(t, "s2", row, "the card moved")
+	assert.Equal(t, swarm.DefaultRulesName, ta.cardRulesOf("s1-h"), "a moved card keeps its rules")
+}

@@ -163,7 +163,7 @@ func MoveCards(s *Snapshot, r MoveReq) Plan {
 		}
 		moving[id] = c
 		view.Work.Drop(id)
-		cards = append(cards, CardAdd{ID: id, Brief: c.F("brief"), Rules: c.F(FieldRules), Needs: without(Split(c.F("needs")), Split(c.F("waived"))), File: id})
+		cards = append(cards, CardAdd{ID: id, Brief: c.F("brief"), Needs: without(Split(c.F("needs")), Split(c.F("waived"))), File: id})
 	}
 	if len(cards) == 0 {
 		return p
