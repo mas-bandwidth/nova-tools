@@ -8,7 +8,7 @@ docs/CLI.md:mini 2
 docs/CLI.md:rowan 16
 docs/CLI.md:space 2
 docs/CLI.md:stella 6
-docs/CLI.md:studio 3
+docs/CLI.md:studio 2
 docs/MODELS.md:mini 1
 docs/MODELS.md:space 2
 docs/SPEC-BUS-REPLY.md:space 1

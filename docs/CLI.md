@@ -1070,58 +1070,47 @@ a proof of it.
 
 ## nova-sandbox
 
-Runs one command under OS-enforced containment using `sandbox-exec` on macOS
-or Landlock on supported Linux kernels. Windows has no implemented backend and
-refuses to wrap a command. Run `nova-sandbox check` to inspect backend availability
-on your machine before use.
-The contract is [docs/SPEC-SANDBOX.md](SPEC-SANDBOX.md).
-
-Three lists and no defaults. `--read <dir>` is readable and **not** writable, so
-N workers share one copy of an input named once; `--read-noexec <dir>` is the
-same grant **without execute**; `--write <dir>` is readable and writable and is
-**required**, because a command with no writable directory is a misconfiguration
-and not a tighter sandbox. Everything else on disk is denied, the credential file
-included — which is the whole point: the key stays with the person who owns it,
-and the wall is what says so.
-
-**`--read` carries execute; `--read-noexec` is how you say it must not.**
-Landlock's read subset is `EXECUTE|READ_FILE|READ_DIR` and the darwin profile
-grants `process-exec*` globally, so under `--read` a program anywhere in the tree
-RUNS. For a cache or a data tree this user can write to — a module cache, a
-`node_modules`, a downloads directory — that is a way in, and `--read-noexec`
-grants the reading and takes the execute back (on darwin as a last-wins
-`deny process-exec*` after the global grant, on linux by dropping `fsExecute`
-from the rule). A path named in both lists is a **refusal**, not a merge: one
-asks for execute and the other takes it away. The `SANDBOX OK` and `POLICY OK`
-lines count the two separately, `read=<n> read-noexec=<n>`.
-
-**Every path is yours and none is guessed.** A `--read`, a `--read-noexec`, a
-`--write`, a `--cwd` or a `--tmp` that does not exist is a refusal and is never
-created, and `HOME`
-must resolve **inside a `--write`** — the caller sets it — because almost every
-tool derives a path from it and an inherited `HOME` is denied by the wall. That
-is one flag on every line below, and leaving it off is the first thing a first
-run gets wrong.
-
 ### First run
+
+Run one command with filesystem access restricted by `sandbox-exec` on macOS
+or Landlock on supported Linux kernels. Other platforms refuse to wrap it.
+`check` reports backend availability and limits; it exits 0 when the report
+prints, including when no backend is available. The contract is
+[SPEC-SANDBOX.md](SPEC-SANDBOX.md).
+
+Name at least one existing, absolute directory with `--write`, and set `HOME`
+to an existing directory inside it. `--read` grants reading and execution;
+`--read-noexec` grants reading without execution; `--write` grants reading and
+writing. The backend also grants system roots and device access. Use
+`policy` to inspect the generated policy. No `quickstart` creates a job for
+you: its input directories and command are yours to choose.
+
+Use `--read-noexec` for caches and data trees, and `--read` for programs the job
+runs. A path in both read lists is refused. The `SANDBOX OK` and `POLICY OK`
+lines count them separately as `read=<n> read-noexec=<n>`.
+
+Caller paths must exist and be absolute. The first `--write` supplies the
+working directory and the default temp directory, `<first --write>/.nova-sandbox-tmp`.
+Only that default temp directory is created. An explicit `--cwd` or `--tmp`
+must already exist inside a `--write`.
 
 The `probe` and wrapped-command blocks below are multi-line shell commands; paste each whole block, not one line of it.
 
-Ask the machine what it can enforce, then prove the wall before the first job:
+Check the backend before the first job:
 
 ```
 $ nova-sandbox check
-CHECK OK backend=sandbox-exec abi=- net=enforceable note=sandbox-exec is deprecated by Apple and works on macOS 26; the wall is the profile it applies; backend at /usr/bin/sandbox-exec
+CHECK OK backend=sandbox-exec abi=- net=enforceable hosts=none note=sandbox-exec is deprecated by Apple and works on macOS 26; the wall is the profile it applies; backend at /usr/bin/sandbox-exec
 ```
 
-Invalid flags or unexpected arguments refuse with exit 2 naming the flag as typed:
+An unknown flag is refused with exit 2 and named as typed:
 
 ```
 $ nova-sandbox check --bogus
 CHECK REFUSED reason=bad_flag: unknown flag --bogus; run: nova-sandbox help check
 ```
 
-Unknown verbs refuse explicitly with exit 2 rather than falling into the bare wrap:
+An unknown verb is refused with exit 2 and the available verbs:
 
 ```
 $ nova-sandbox bogus
@@ -1143,14 +1132,12 @@ PROBE STEP name=read_root expect=allow got=allow path=/path/to/.local/bin/nova-s
 PROBE OK backend=sandbox-exec abi=- steps=5 passed=5 net=nopromise gpu=none
 ```
 
-`probe` runs **five** checks under the real policy for this platform, not two: a
-wall that denies the work as well as the secret is broken, and a two-check probe
-would call it a pass. `--secret <path>` names the file the probe proves it
-cannot read — the path is not the secret, and its contents are never read — and
-it must be **outside** both lists, since a secret inside a named directory is a
-misconfiguration rather than a failed check. The `HOME=` prefix is not
-decoration: rule 9's check runs before the policy is built, so a probe run with
-the dispatcher's own `HOME` is refused before it starts.
+`probe` checks that an outside write succeeds without the wall and fails inside
+it, an inside write succeeds, and the probe's own executable remains readable.
+`--secret <path>` adds a fifth check: opening that existing file must fail.
+The path is not a secret, and the file's contents are never read. Keep it outside
+all granted roots. Omit `--secret` when there is no credential file to test;
+the four other checks still run. Set `HOME` inside a `--write` before probing.
 
 Then wrap the command. This example uses an empty repository initialized on
 branch `main` at `/path/to/pool/jobs/j1/repo`; `! ` marks standard error:
@@ -1180,19 +1167,19 @@ What a first run gets wrong, and what each one wants:
   `HOME=<jobdir>/home`; the refusal ends with that command, `run: mkdir -p …
   && HOME=… nova-sandbox <the same arguments>`. A `--read` is not enough — the
   first config write dies there.
-- **No `--write`, or no `--secret` on a probe.** Both are required and neither
-  has a default. They are named **together**, in one refusal, so a first run is
-  not sequenced into one run per mistake (nova-tools #104).
-- **A toolchain outside the wall.** A command that runs outside the wall and
-  dies inside it is missing a `--read`: a toolchain in a user directory is
-  exactly a caller-supplied read-only root, so name it. Name a cache or a data
+- **No `--write`.** At least one existing, absolute writable directory is required.
+  `--secret` on a probe is optional; when supplied it names an existing file.
+- **A toolchain outside the wall.** If a toolchain outside the system roots
+  fails inside the wall, name its directory with `--read`. Name a cache or data
   tree with `--read-noexec` instead, and keep `--read` for what the job runs.
-- **A `--cwd` outside every named path.** It denies `getcwd(3)`, and every git
-  command dies there before it reads anything.
+- **A `--cwd` outside every `--write`.** It is refused; name an existing
+  directory inside a writable root.
 - **Expecting a network promise without asking for one.** Without `--net-deny`
   the tool makes no promise about the network and the line says
-  `net=nopromise`; `--net-deny` is an **enforced** denial or a refusal, never a
-  hope.
+  `net=nopromise`. `--net-deny` enforces the backend's restrictions or refuses:
+  macOS denies IP traffic except explicit `--net-allow` endpoints; Unix sockets
+  under writable roots remain accessible. Linux denies TCP bind/connect and
+  leaves UDP unrestricted.
 
 `nova-sandbox policy` prints what would be generated without running anything,
 which is the fastest way to see the wall a set of flags actually makes.
@@ -1218,8 +1205,8 @@ An APFS volume of its own in the boot container, quota'd by `--size`, is the
 command's only writable directory — `TMPDIR`, `HOME` and the working directory
 are all on it — and on exit, whether that exit is clean, an error, a signal or
 `--timeout`, the whole process group is killed and the volume is unmounted and
-deleted. **There is no cleanup step**, because nothing of the run is left on the
-boot volume to clean. It needs no `sudo`. A delete that fails prints
+deleted. Successful cleanup leaves no run volume. `SIGKILL` can prevent cleanup;
+use `reap` for volumes left behind. It needs no `sudo`. A delete that fails prints
 `SANDBOX LEAK` with the one `diskutil` command that removes it and exits 3,
 never silently.
 
@@ -1253,65 +1240,29 @@ On linux `run` refuses with one remedy line: a card is already disposable there
 — it runs inside its image — so name the image root as `--write` on the bare
 form instead.
 
-### The same place, on windows
+### Windows availability
 
-`run` on windows is **the same verb**: the same five steps, the same receipt, the
-same `SANDBOX LEAK` and the same exit codes. What differs is the place and a
-handful of flags ([SPEC-SANDBOX.md](SPEC-SANDBOX.md), rules W1–W12):
-
-```
-$ nova-sandbox run --name j1 --scratch C:\nova --timeout 30m --memory 4g --cpu 50 -- cmd.exe /c "go build ./..."
-```
-
-- **The place is a Job Object plus `<scratch>\nova-<n>`, and the two are one
-  unit.** The job is what the darwin side gets from a process group: closing the
-  tool's last handle terminates the whole tree, including a grandchild a harness
-  abandoned, because the job carries `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` and
-  never permits breakaway. The child is put in the job **at creation**, with
-  `PROC_THREAD_ATTRIBUTE_JOB_LIST` on the same attribute list as the wall, so
-  there is no window in which it is alive and outside one.
-- **`--scratch` is required** and must be an existing absolute path. There is no
-  default: not the TEMP variable, not the user profile.
-- **`--size` is refused**, with `reason=size_unenforceable`. NTFS quotas are per
-  user per volume, a directory quota is a server role and a per-run quota is a
-  VHDX needing administrator rights. A ceiling the tool only measures is not a
-  ceiling, so this is a refusal and not a note — the same rule `--net-deny`
-  already follows. Both remedies are on the line.
-- **`--memory` and `--cpu` are the job's caps**, and they are the one place this
-  tool limits memory or CPU at all. Both are accepted and ignored on darwin and
-  linux, so one caller writes one argv for three platforms.
-- **`--place wsb`** is Windows Sandbox: full disposability, because the guest's
-  disk is discarded when the window closes. It is Pro and Enterprise only, it is
-  **one instance per machine** — so it is the review place and never the swarm's
-  — and it requires `--timeout`, because the guest's status comes back through a
-  file in the mapped folder or not at all.
-- **WSL is never the answer**, not as the wall, not as the place and not as a
-  fallback: containment that only holds inside WSL is containment on a machine
-  the card was not sent to.
-
-**This is not measured on a Windows machine.** The estate has none as of
-2026-09-18. The verb's sequence is proven against a fake on every host, the
-binary cross-compiles and vets for `GOOS=windows`, and until the **wall**
-(AppContainer) is built the verb refuses there with `reason=no_sandbox` naming
-the half that is missing — a place without a wall is hygiene, not containment.
+The Windows `run` interface accepts `--scratch`, `--memory` and `--cpu` for a
+Job Object and a disposable directory; `--size` is refused because no per-run
+directory quota is enforceable. The AppContainer backend is not implemented,
+so the ordinary Windows run refuses with `reason=no_sandbox` before starting
+the command. The sequence is tested with a fake; it is not proof of containment
+on Windows. `--place wsb` uses Windows Sandbox instead, where the VM supplies
+the boundary; it requires `--timeout` and a Windows edition that supports
+Windows Sandbox. [SPEC-SANDBOX.md](SPEC-SANDBOX.md), rules W1–W12, describes the design.
 
 **A card that builds Go wants `--go`**, which adds the toolchain's own two roots
 to the read set — `GOROOT` and `GOMODCACHE`, as `go env` reports them — so that
 neither has to be named by hand in every argv. `nova-sandbox run --help` prints
 the verb's own usage.
 
-**Two runs at once are safe, and the tool is what makes them so.** Creating the
-volume is the one step that cannot be shared: two `diskutil apfs addVolume`
-running at the same time leave the new volume's root owned by `root:wheel`
-instead of you, it never settles, and the run dies at `mkdir` with `permission
-denied` before its card starts — measured in a 20-run soak on the Studio,
-2026-09-18, three of four concurrent runs and then four of four. `run`
-serializes creation across processes with a lock file under your own cache
-directory, and checks the new root is yours and writable before it hands it to
-anything. Nothing else is serialized: the runs themselves overlap freely.
+APFS volume creation is serialized across processes with a lock under the
+caller's cache directory. `run` checks that the new volume root is owned by the
+caller and writable before starting the command. The commands themselves run
+concurrently.
 
-**A `--timeout` that passes prints `SANDBOX TIMEOUT after=<d>`** and asks the
-operating system nothing. A deadline is not a path the wall refused, so the
+**An expired `--timeout` prints `SANDBOX TIMEOUT after=<d>`**. It does not query
+the operating system for denied paths. A deadline is not a path the wall refused, so the
 `SANDBOX DENIED` query below is skipped for it.
 
 ### Clearing up after a `SIGKILL`

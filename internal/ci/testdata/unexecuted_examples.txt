@@ -40,7 +40,6 @@ $ nova-memory stats --root ./corpus
 $ nova-sandbox check
 $ nova-sandbox reap
 $ nova-sandbox reap --dry-run
-$ nova-sandbox run --name j1 --scratch C:\nova --timeout 30m --memory 4g --cpu 50 -- cmd.exe /c "go build ./..."
 $ nova-sandbox run --name j1 --size 8g --out ./handoff \
 $ nova-sandbox run --name j1 --size 8g --timeout 30m --read /opt/homebrew -- /bin/sh -c 'echo hi > out'
 $ nova-self-talk --rule-doc RULES.md ./pages/RULES.md ./pages/journal.md

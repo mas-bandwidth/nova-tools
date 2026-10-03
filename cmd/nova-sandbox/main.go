@@ -1,15 +1,13 @@
-// nova-sandbox runs ONE command with its filesystem reach cut down by the operating
-// system: the OS and toolchain roots and every --read directory are readable, every
-// --write directory is readable and writable, and everything else on disk is denied to
-// it by the kernel. docs/SPEC-SANDBOX.md is normative and this binary is the darwin half
-// of it; on every other platform the wrap REFUSES, because a sandbox that silently does
-// nothing is the failure the tool exists to close.
+// nova-sandbox runs one command with filesystem access restricted by the operating
+// system. Named read roots are readable, named write roots are readable and writable,
+// and the backend supplies its system roots and device access. sandbox-exec enforces
+// the policy on macOS; Landlock enforces it on supported Linux kernels. Other
+// platforms refuse to wrap a command. docs/SPEC-SANDBOX.md is the contract.
 //
-// Exit codes are env(1)'s, not SPEC.md's 0/1/2, and the reason is in the spec: the exec
-// path's status belongs to the wrapped command. 0-124 the command's own, 125 the tool
-// said NO before it ran, 126 it could not be executed, 127 it was on no PATH entry,
-// 128+N killed by signal N. The probe, check and version verbs are not wrappers and use
-// SPEC.md's grammar unchanged.
+// The bare wrapper returns the command's status, with env(1)'s 125-127 for tool
+// refusals and execution failures. The run verb also uses 124 for its timeout and
+// 3 for a cleanup leak. Inspection verbs use the 0/1/2 grammar of docs/SPEC.md;
+// each verb's help states its exit codes.
 package main
 
 import (
@@ -34,23 +32,20 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
-// readRemedy is the one sentence that must live in the banner rather than in a NOTE: on
-// linux the tool has exec'd itself away by the time the command dies, so a remedy printed
-// after the fact is a promise one platform can keep and the others cannot.
-const readRemedy = "A command that runs OUTSIDE the wall and dies inside it is missing a --read"
+// readRemedy keeps the toolchain remedy in the help a caller reads before running.
+const readRemedy = "If a toolchain outside the system roots fails inside the wall, name its directory with --read"
 
 const usage = usageHead + usageExits + usageExamples
 
 // usageHead is the banner down to its exit paragraph.
 const usageHead = `nova-sandbox: run one command inside an OS-enforced wall around the directories you name
 
-how it works: the wall is built for one run from your flags and kept nowhere:
---read directories are readable, --write directories writable, and the kernel
-denies the rest (sandbox-exec on macOS, Landlock on Linux; check says which).
-Paths must exist and be absolute, and HOME must sit inside a --write. The
-command's own exit status comes back; 125 means the wall refused to start it.
-first run: the lines under example:, in order: check the backend, make a scratch
-directory, prove the wall with probe, then run a command that writes inside it.
+how it works: each run builds a policy from your flags; no policy is saved.
+--read grants reading and execution; --read-noexec grants reading without execution;
+--write grants reading and writing. The backend also grants its system roots and
+device access. sandbox-exec on macOS or Landlock on Linux enforces the policy.
+HOME must be inside a --write; check reports backend availability and limits.
+first run: follow example: to check the backend, make a directory, probe it, and run a command.
 
 usage:
   nova-sandbox --read <dir>... [--read-noexec <dir>...] --write <dir>... [--net-deny]
@@ -75,54 +70,38 @@ usage:
   nova-sandbox version
   nova-sandbox help
 
-  --read <dir>    readable, recursively, and NOT writable. Repeatable, no default.
-                  Shared inputs go here, named once, so N workers read one copy.
-                  It CARRIES EXECUTE: a program under a --read runs.
+  --read <dir>    readable and executable, recursively; no write grant. Repeatable.
+                  Name shared inputs here once for all workers.
   --read-noexec <dir>
-                  readable, recursively, and NOT EXECUTABLE and not writable.
-                  Repeatable, no default. This is the flag for a cache or a data
-                  tree -- a module cache, a node_modules, a downloads directory --
-                  that this user can write to: under --read the job could RUN
-                  whatever lands there, and under this flag it can only read it.
-                  A path in both lists is a refusal, not a merge.
-  --write <dir>   readable AND writable, recursively. Repeatable, no default, and
-                  REQUIRED: a command with no writable directory is a
-                  misconfiguration, not a tighter sandbox. The FIRST --write is
-                  where the working directory and the temp directory default to.
-  --cwd <dir>     the command's working directory; must be inside a --write.
-                  Default: the first --write. A cwd outside the wall denies
-                  getcwd(3) and every git command dies before it reads anything.
-  --tmp <dir>     TMPDIR/TMP/TEMP and zsh TMPPREFIX for the child; must be inside a --write.
-                  Default: <first --write>/.nova-sandbox-tmp, the one directory
-                  this tool creates.
-  --net-deny      an ENFORCED network denial, or a refusal. Without it the tool
-                  makes no promise about the network and the line says
-                  net=nopromise.
-  --net-listen    grant INBOUND ip as well; without it a job that does not
-                  listen cannot be listened to. Never with --net-deny.
-  --net-allow <host:port>  open the loopback host:port named, back up, by name;
-                  the keyless local provider (ollama) that (remote ip) does not
-                  reach. Repeatable.
-  --gpu <n|m>     the explicit local GPU capability: none (default) or metal.
-                  Opt-in only; metal records intent and never widens
-                  mach-lookup or grants blanket device access (#230).
-  --name <c>      the windows container name. Accepted and ignored on darwin, so
-                  one caller builds one argv for three platforms.
-  --acl <t|c>     who adds the windows ACEs. Accepted and ignored on darwin,
-                  with one NOTE line, for the same reason as --name.
-  --secret <path> probe only: the file a probe proves it cannot read. A path is
-                  not a secret; the file's contents are never read. A probe may run
-                  WITHOUT one -- a caller whose key is delivered by nova-secrets
-                  exec into the environment has no key file, and the probe then
-                  proves the wall's other checks (issue #881).
+                  readable without execution or writing, recursively. Repeatable.
+                  Use for caches and data trees. A path in both read lists is refused.
+  --write <dir>   readable and writable, recursively. Repeatable; at least one is required.
+                  The first --write supplies the default working and temp directories.
+  --cwd <dir>     the working directory, inside a --write. Default: the first --write.
+  --tmp <dir>     TMPDIR/TMP/TEMP and zsh TMPPREFIX, inside a --write.
+                  Default: <first --write>/.nova-sandbox-tmp, created by the tool.
+  --net-deny      enforce the backend's network restrictions or refuse.
+                  macOS denies IP traffic except --net-allow endpoints; Unix
+                  sockets under writable roots remain accessible. Linux denies
+                  TCP bind/connect but leaves UDP unrestricted. Without this
+                  flag the line says net=nopromise.
+  --net-listen    grant inbound IP on macOS; incompatible with --net-deny.
+  --net-allow <host:port>
+                  grant access to a named loopback endpoint on macOS. Repeatable.
+  --gpu <n|m>     local GPU capability: none (default) or metal. Metal records intent;
+                  it does not widen mach-lookup or grant blanket device access.
+  --name <c>      Windows container name; accepted and ignored on macOS and Linux.
+  --acl <t|c>     who adds Windows ACEs: tool or caller; accepted and ignored elsewhere
+                  with a NOTE line.
+  --secret <path> probe only: an existing file outside the granted roots whose open
+                  must be denied. Optional; no contents are read. With it probe runs
+                  five checks; without it probe runs four.
 
-run gives one command a DISPOSABLE place to work and then takes it away: on darwin
-an APFS volume of its own in the boot container, quota'd by --size and mounted at
-/Volumes/nova-<n>. That volume is the only --write, the command runs in a process
-group of its own, and on exit -- normal, error, signal or --timeout -- the group is
-killed and the volume is unmounted and DELETED. Nothing of the run survives on the
-boot volume, so there is no cleanup step. A delete that fails prints SANDBOX LEAK
-with the one command that removes it and exits 3.
+run creates a disposable, quota-limited APFS volume on macOS. It is the only
+writable directory, and the command runs in its own process group. On return,
+error, signal or timeout, the group is killed and the volume is deleted. Named
+artifacts can leave through --out before deletion; run --help lists those flags.
+A failed deletion prints SANDBOX LEAK with a cleanup command and exits 3.
 
   --name <n>      run only: the volume is nova-<n>. Letters, digits, - _ and .
   --size <s>      run only: the volume's quota, e.g. 8g or 64m. REQUIRED: a
@@ -136,20 +115,16 @@ with the one command that removes it and exits 3.
                   the container the boot volume is in.
   --dry-run       reap only: print what a reap would take and touch NOTHING.
 
-reap clears what a SIGKILL left: a run killed outright has no path out to delete
-its volume on, so the volume stays mounted and the command's own children are
-reparented to PID 1 still holding it open. reap lists every nova-* volume, kills
-what holds each one (SIGTERM, then SIGKILL) and deletes it -- except a volume a
-LIVE run owns, which it reports and leaves alone. Exit 0 clean, 3 when anything
-remained, so nova-sandbox reap --dry-run is a gate a card can end on.
+reap lists nova-* APFS volumes, terminates processes holding them open, and
+deletes them. It leaves volumes owned by live runs alone. SIGKILL can leave a
+volume behind because the killed tool cannot clean up. Exit 0 means clean;
+3 means something remains. --dry-run prints the plan without changing anything.
 
-egress is the card's OUTBOUND wall, and it lives on the BENCH rather than in the
-card, because the worker is the adversary: plan resolves the names in the reviewed
-allowlist (infra/image/egress.txt) ONCE, pins the addresses and writes an nftables
-ruleset that denies everything the card did not name — TCP 443 to the pinned
-addresses, UDP 53 to the resolver, and the metadata address, loopback and the other
-benches denied outright. apply hands that ruleset to nft, check reads one back and
-asserts its invariants, and drop takes the run's table away.
+egress builds an outbound policy for a run on a Linux host. plan resolves the
+reviewed allowlist once and writes an nftables ruleset: TCP 443 to pinned
+addresses and UDP 53 to the resolver, with metadata, loopback and other benches
+denied. apply installs it, check reads a ruleset and tests its invariants, and
+drop removes the run's table.
 
   --run <id>      egress: the run this wall belongs to; the table is nova_egress_<id>
   --policy <f>    egress plan: the allowlist in git. A name reaches a card only by a
@@ -164,13 +139,12 @@ asserts its invariants, and drop takes the run's table away.
   --out <file>    egress plan: where the ruleset is written.
   --plan <file>   egress apply and check: the ruleset to apply or to read back.
 
-Every path is yours and none is guessed: a --read, a --read-noexec, a --write, a
---cwd or a --tmp that does not exist is a refusal and is NOT created. HOME must
-resolve inside a --write (the caller sets it), because almost every tool derives
-a path from it and an inherited HOME is denied by the wall.
+Caller paths must exist and be absolute: --read, --read-noexec, --write, --cwd
+and an explicit --tmp are never created. Only the default temp directory is
+created. Set HOME to an existing directory inside a --write.
 
-` + readRemedy + `:
-a toolchain in a user directory is exactly a caller-supplied read-only root.
+` + readRemedy + `.
+Use --read-noexec for a cache or data tree the command only reads.
 
 `
 

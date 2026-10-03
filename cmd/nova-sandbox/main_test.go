@@ -587,8 +587,7 @@ func TestCheckAndVersion(t *testing.T) {
 	require.Equal(t, runtime.GOOS, p, "version does not carry platform=%s: %q", runtime.GOOS, out)
 }
 
-// The usage banner carries the --read remedy, which is where it has to live: on linux
-// the tool is gone by the time the command dies, so it cannot say so after the fact.
+// The usage banner carries the toolchain --read remedy before a caller runs a job.
 func TestUsageCarriesTheReadRemedy(t *testing.T) {
 	t.Parallel()
 
