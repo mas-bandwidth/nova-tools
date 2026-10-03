@@ -140,7 +140,10 @@ of running time (the clock's time less the STOPPED spans; the window of the
 dashboard's throughput tile, so the two agree while the machine runs), read
 from the landed cards' `landed` stamps as the where record keeps them; with fewer than five landed in that
 window it is the whole sprint's average, the cards landed over the running
-time since the first start; with no rate the ETA is a dash, never a number:
+time since the first start; a read of the stamps that fails leaves that
+average, never a failed view. The ETA is a dash, never a number, with fewer
+than five landed in all (whatever the rate) and with no rate (no first start
+known):
 `3/10 30.0% held=4 -> ETA 12m`. From a day on it reads in days and hours, the
 hours rounded up, one word as the shorter forms are: `347/2846 12.2%
 held=2443 -> ETA 2d15h`. A reading process

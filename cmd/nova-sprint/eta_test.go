@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"testing"
@@ -107,6 +108,7 @@ func TestTheETAIsToEveryCardLandedHeldCardsIncluded(t *testing.T) {
 			append(opened, sprint.Span{From: now.Add(-90 * time.Minute), To: now.Add(-30 * time.Minute)}),
 			10, "347/2846 12.2% held=2443 -> ETA 10d10h"},
 		{"no stamp and no start: no rate, a dash", nil, nil, 0, "347/2846 12.2% held=2443 -> ETA -"},
+		{"stamps but no start: no rate, a dash", landings(347, first, now), nil, 0, "347/2846 12.2% held=2443 -> ETA -"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -245,4 +247,49 @@ func TestTheETAIsRecomputedOnTheTickAfterAnAddADropOrARelease(t *testing.T) {
 	require.Zero(t, released.Held)
 	require.Contains(t, released.Summary, want, "6 released cards are in the estimate")
 	require.NotEqual(t, heldBack.Summary, released.Summary)
+}
+
+// A read of the landed stamps that fails (the landed column busy with landings) leaves
+// the whole sprint's average: where and where --json still answer, with an estimate,
+// never a failed view. Nothing waits here, so the landed column is the only work
+// table records where reads.
+func TestWhereKeepsTheWholeSprintAverageWhenTheLandedStampsFailToRead(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b,reader-c --members m1,m2")
+	ta.ok("add --stream s1 --count 30")
+	ta.ok("start")
+	var w whereView
+	for round := 1; ; round++ {
+		require.Less(t, round, 200, "five never landed: %s", ta.ok("where"))
+		ta.ok("tick")
+		if ta.json("where", &w); w.Landed >= 5 {
+			break
+		}
+		ta.ok(fmt.Sprintf("play --seed %d --ticks 1 --every 1s --fail 0 --broken 0 --stuck 0 --cross 0 --batch 10 --take 20 --reads 20", round))
+		ta.coordinate()
+	}
+	require.Zero(t, w.Held)
+	ta.mu.Lock()
+	ta.now = ta.now.Add(2 * time.Hour) // every landing is over an hour old: the average either way
+	ta.mu.Unlock()
+	ta.json("where", &w)
+	healthy := w.Summary
+	require.Contains(t, healthy, "-> ETA ", "an estimate: %s", healthy)
+	require.NotContains(t, healthy, "-> ETA -")
+
+	busy := errors.New("the tables are busy")
+	ta.m.Fail = func(point string) error {
+		if point == "readset "+sprint.Work {
+			return busy
+		}
+		return nil
+	}
+	st := &store.Store{B: ta.m, Names: sprint.Names{}, Now: ta.a.now}
+	_, err := st.LandedAt(context.Background())
+	require.ErrorIs(t, err, busy, "the stamps do not read")
+	var failed whereView
+	ta.json("where", &failed)
+	assert.Equal(t, healthy, failed.Summary, "the same estimate, from the whole sprint's average")
+	ta.ok("where") // the frame answers too (its header is STOPPED: nothing has ticked for 2 h)
 }

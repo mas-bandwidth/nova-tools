@@ -51,6 +51,10 @@
 # ETA is over the rest. No table's shape changes and this lock does not cover that line;
 # it is recorded here because it is output Glenn sees, which he asked for in words:
 # "I'd like to really really load up the sprint in waiting, and stick sentinels in".
+# Note, 2026-10-02 (9:57 PM ET, nova-tools#5183): the ETA on that line now counts every
+# card left, the held ones included; held=N still shows them apart. Glenn, in words:
+# "it's the ETA to all cards being done, not the cards that are in flight or not
+# blocked". No table's shape changes; this lock does not cover that line.
 #
 # Note, 2026-10-02 (10:13 PM ET): where reads the table, not every card. held=N and the
 # ETA's landings of the hour come from the where record the tick counts (docs/SPEC-SPRINT.md
