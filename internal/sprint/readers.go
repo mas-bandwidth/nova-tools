@@ -147,14 +147,14 @@ const FieldLeveled = "leveled"
 
 // ReadsNeeded is how many different readers' ok reads at its head make the
 // primary acceptable, and so how many readers the ask asks at an attempt: one
-// when the card's tier, the tier the deal draws its work from (cardTier), is
-// flash, and two at any stronger tier (pro, or frontier, read on pro); each
-// read is drawn on a route of the card's read tier (readTierOf) (the owner,
+// when the tier the card is on (cardTier) is flash, and two at any stronger tier
+// (pro, or frontier, read on pro); each read is drawn on a route of the card's
+// read tier (readTierOf) (the owner,
 // 2026-10-02, cost rule 4, nova-tools#5174: "Reads: one cold read per flash
 // card on a flash route; two per pro card; readers still equal workers per
-// machine"). The tier is the card's own (its brief's line 1, or the tier a
-// rework recorded), never a setting, so a card in merging or landed is held
-// to the count it was accepted on.
+// machine"). The tier is the card's own, the tier it is on (cardTier: flash first,
+// then the tier it escalated to, or the tier a rework recorded), never a setting, so
+// a card in merging or landed is held to the count it was accepted on.
 func ReadsNeeded(pr *Card) int {
 	m, _ := cardhdr.ReadModel(pr.F("brief"))
 	if cardTier(pr, m) == cardhdr.RouteFlash {

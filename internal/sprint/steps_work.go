@@ -758,7 +758,31 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 	for _, c := range chosen {
 		if wc := s.Fleet.Placed(WorkCardID(c.ID, c.Int("attempt"))); wc != nil && wc.Col == Withdrawn {
 			if redealBound(wc) {
-				p.refuse(c.ID, boundWhat(wc, c.ID)+": rework it with a fix, or drop it")
+				tier := s.NextTier(c)
+				if tier == "" {
+					p.refuse(c.ID, boundWhat(wc, c.ID)+": rework it with a fix, or drop it")
+					continue
+				}
+				// below its ceiling: the machine escalates it, a new attempt on the next tier
+				m := next()
+				if m == "" {
+					p.refuse(c.ID, noRoomWhy)
+					continue
+				}
+				on, _ := CardTiers(c)
+				why := fmt.Sprintf("attempt %s reached its bound on %s (redealt %d times)%s", wc.F("attempt"), on, wc.Int("redeals"), providerWhy(wc))
+				if class := identicalEnds(wc); class != "" {
+					// rule 2 inside one attempt: its last two takes ended the same way (failure.go)
+					why = fmt.Sprintf("attempt %s reached its bound on %s (its last two takes ended the same way: %s)", wc.F("attempt"), on, class)
+				}
+				u, refused := escalate(s, c, wc, tier, why, m, q, ri)
+				if refused != "" {
+					p.refuse(c.ID, refused)
+					continue
+				}
+				rr.moved(m)
+				moves[c.ID] = m
+				p.Units = append(p.Units, u)
 				continue
 			}
 			if _, why := s.noRoute(c); why != "" {
@@ -851,6 +875,27 @@ func deal(s *Snapshot, c *Card, fix, m string, q map[string]int, ri routeIndexes
 		change(Fleet, createEntry(card, m, Ready, c.Score, fields)),
 		change(Work, moveEntry(c, c.Row, Working, set, append(unset, "result")...)),
 	}, Moved: fmt.Sprintf("%s work %s -> working card=%s member=%s (fleet ready)", c.ID, c.Col, card, m)}, ""
+}
+
+// escalate deals the primary c a new attempt on the next tier, tier (NextTier), into the
+// ready queue of the up member m, when its attempt reached its bound below its ceiling:
+// the machine's step, raising no judgment (route.go, tierLadder; the owner, 2026-10-02,
+// cost rule 1 of nova-tools#5174: "Flash first on every card; pro only on escalation").
+// The primary records the tier (FieldTierNow) and every later deal draws from it; the
+// attempt that reached its bound, prev, is retired as a rework at the bound retires it;
+// the new attempt's work card is told why (the bound and the tiers), the brief and the
+// fix are the card's own.
+func escalate(s *Snapshot, c, prev *Card, tier, why, m string, q map[string]int, ri routeIndexes) (Unit, string) {
+	from, _ := CardTiers(c)
+	set := map[string]string{FieldTierNow: tier}
+	given := map[string]string{"finding": c.F("finding"), "why": fmt.Sprintf("escalated from %s to %s: %s", from, tier, why)}
+	u, refused := deal(s, withField(c, FieldTierNow, tier), c.F("fix"), m, q, ri, set, given)
+	if refused != "" {
+		return Unit{}, refused
+	}
+	u.Changes = append([]Change{change(Fleet, removeEntry(prev, map[string]string{"retired": stamp(s.Now), "retired_by": "escalation"}))}, u.Changes...)
+	u.Moved += fmt.Sprintf("; escalated %s -> %s: %s", from, tier, why)
+	return u, ""
 }
 
 // redeal deals a withdrawn work card again, into the ready queue of the up
@@ -1145,6 +1190,23 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		u := Unit{Key: c.ID, Stream: pr.Row, Changes: []Change{change(Fleet, moveEntry(c, c.Row, into, cardSet))},
 			Moved: fmt.Sprintf("%s working -> done %s; %s working -> review", c.ID, result, pr.ID)}
 		attempt := pr.Int("attempt")
+		if next := s.NextTier(pr); identical && next != "" {
+			// the second identical failure below its ceiling (rules 1 and 2, nova-tools#5174:
+			// "Flash first on every card; pro only on escalation"): no judgment; the primary
+			// takes the next tier and its why and goes back to ready, as a rework with no
+			// member up leaves it, and the tick's deal cuts its next attempt there. The new
+			// tier counts its own failures: the record of this one is not carried up.
+			from, _ := CardTiers(pr)
+			why := fmt.Sprintf("escalated from %s to %s: attempts %d and %d failed the same way (%s) on %s", from, next, attempt-1, attempt, set[FieldFailure], from)
+			set[FieldTierNow], set["why"] = next, why
+			delete(set, "result")
+			delete(set, FieldFailure)
+			delete(set, FieldFailureAt)
+			u.Changes = append(u.Changes, change(Work, moveEntry(pr, pr.Row, Ready, set, "result", FieldFailure, FieldFailureAt)))
+			u.Moved = fmt.Sprintf("%s working -> done %s; %s working -> ready (%s)", c.ID, result, pr.ID, why)
+			p.Units = append(p.Units, u)
+			continue
+		}
 		// ONE PATH ASKS: the finish asks no reader. The machine's ask does, in the tick the
 		// finish wakes, the earlier pair first (Ask, the primary's asked field), each read
 		// with the route it draws. A read the finish created itself carried no route (a
@@ -1159,6 +1221,12 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		} else if !r.Failed {
 			n := happened(NWorkOK, pr.Row, s.Now, pr.ID)
 			n.Who, n.Attempt = who, attempt
+			if strings.Contains(r.Report, cardhdr.RemainderKey) {
+				// a tree card that finished at the step before its failed step: the note
+				// names the remainder card for the coordinator to add (docs/SPEC-SPRINT.md,
+				// a card is a tree of steps)
+				n.What = r.Report
+			}
 			u.Notes = append(u.Notes, n)
 		} else if identical {
 			// the second identical failure (rule 2): the bound's judgment at once, in the words

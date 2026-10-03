@@ -55,13 +55,13 @@ func (h *harness) workCards() map[string]*sprint.Card {
 
 func TestTheDealDrawsARouteOfTheCardsTierAndThePacketCarriesIt(t *testing.T) {
 	t.Parallel()
-	h := routeHarness(t, route("pro-a", "pro"), route("pro-b", "pro"), route("flash-a", "flash"))
-	h.addReady("s1", 1, briefOf("pro", ""))
+	h := routeHarness(t, route("flash-a", "flash"), route("flash-b", "flash"), route("pro-a", "pro"))
+	h.addReady("s1", 1, briefOf("flash", ""))
 	h.must(DealStep(sprint.DealReq{}))
 	wc := h.workCards()["s1-1.w1"]
 	require.NotNil(t, wc)
 	r := wc.F(sprint.FieldRoute)
-	require.Contains(t, []string{"pro-a", "pro-b"}, r, "a pro card draws a pro route")
+	require.Contains(t, []string{"flash-a", "flash-b"}, r, "a flash card draws a flash route (a pro card too: flash first, flash_first_test.go)")
 	assert.Equal(t, "prov-"+r+"/model-"+r, wc.F(sprint.FieldModel))
 	assert.Equal(t, "1000", wc.F(sprint.FieldTokens))
 	assert.Equal(t, "600", wc.F(sprint.FieldDeadline))
@@ -83,6 +83,7 @@ func TestARoutesDollarBudgetRidesTheCardAndThePacket(t *testing.T) {
 	priced.USD = "0.5"
 	h := routeHarness(t, priced, route("flash-a", "flash"))
 	h.addReady("s1", 1, briefOf("pro", ""))
+	h.setPrimary("s1-1", map[string]string{sprint.FieldTierNow: "pro"}) // a pro card on pro (flash first: escalated)
 	h.addReady("s2", 1, briefOf("flash", ""))
 	h.must(DealStep(sprint.DealReq{}))
 	wc := h.workCards()
@@ -133,12 +134,16 @@ func TestAStoreWithNoRouteDealsAsBefore(t *testing.T) {
 // A card whose tier no enabled route serves is not dealt: the deal verb refuses it
 // naming the tier, and the tick writes one judgment for the tier however many cards
 // of it wait, never one per card and never again while it is open; a route added
-// for the tier deals them, and the judgment closes. A frontier card with no pin is
+// for the tier deals them, and the judgment closes. The pro cards are on pro (escalated:
+// flash first, flash_first_test.go). A frontier card with no pin is
 // the coordinator's, judged the same way, and a pinned one is dealt.
 func TestACardWithNoRouteIsNotDealtAndJudgedOncePerTier(t *testing.T) {
 	t.Parallel()
 	h := routeHarness(t, route("flash-a", "flash"), func() sprint.Route { r := route("pro-off", "pro"); r.Enabled = false; return r }())
 	h.addReady("s1", 3, briefOf("pro", ""))
+	for _, id := range []string{"s1-1", "s1-2", "s1-3"} {
+		h.setPrimary(id, map[string]string{sprint.FieldTierNow: "pro"})
+	}
 	h.addReady("s2", 1, briefOf("flash", ""))
 	h.addReady("s3", 1, briefOf("frontier", ""))
 	h.addReady("s4", 1, briefOf("frontier", "model: anthropic/claude-frontier\ntokens: unmetered\ndeadline: 3600"))
@@ -183,14 +188,14 @@ func TestACardWithNoRouteIsNotDealtAndJudgedOncePerTier(t *testing.T) {
 func TestARedealLeavesOutTheRouteItWasDealtOn(t *testing.T) {
 	t.Parallel()
 	for _, two := range []bool{true, false} {
-		rs := []sprint.Route{route("pro-a", "pro")}
+		rs := []sprint.Route{route("flash-a", "flash")}
 		if two {
-			rs = append(rs, route("pro-b", "pro"))
+			rs = append(rs, route("flash-b", "flash"))
 		}
 		h := newHarness(t)
 		h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
 		h.m.SetRoutes(rs)
-		h.addReady("s1", 1, briefOf("pro", ""))
+		h.addReady("s1", 1, briefOf("flash", ""))
 		h.must(DealStep(sprint.DealReq{}))
 		w1 := h.workCards()["s1-1.w1"]
 		require.NotNil(t, w1)
@@ -215,8 +220,8 @@ func TestARedealLeavesOutTheRouteItWasDealtOn(t *testing.T) {
 // every route drawn before, so the three attempts run on the three routes.
 func TestTheExclusionCoversEveryAttempt(t *testing.T) {
 	t.Parallel()
-	h := routeHarness(t, route("pro-a", "pro"), route("pro-b", "pro"), route("pro-c", "pro"))
-	h.addReady("s1", 1, briefOf("pro", ""))
+	h := routeHarness(t, route("flash-a", "flash"), route("flash-b", "flash"), route("flash-c", "flash"))
+	h.addReady("s1", 1, briefOf("flash", ""))
 	h.must(DealStep(sprint.DealReq{}))
 	var seen []string
 	for a := 1; a <= 3; a++ {
@@ -232,7 +237,7 @@ func TestTheExclusionCoversEveryAttempt(t *testing.T) {
 			Report: "the model gave up", Who: wc.Row}))
 		h.must(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: "again", Who: "tester"}))
 	}
-	assert.ElementsMatch(t, []string{"pro-a", "pro-b", "pro-c"}, seen)
+	assert.ElementsMatch(t, []string{"flash-a", "flash-b", "flash-c"}, seen)
 }
 
 // A card admitted before the lint whose model lines the deal cannot read (a pin
@@ -261,17 +266,17 @@ func TestACardWhoseModelLinesCannotBeReadIsJudgedUnderItsTier(t *testing.T) {
 // A route disabled by an apply is out of the draw from the next tick.
 func TestADisabledRouteIsOutOfTheNextTicksDraw(t *testing.T) {
 	t.Parallel()
-	h := routeHarness(t, route("pro-a", "pro"), route("pro-b", "pro"))
+	h := routeHarness(t, route("flash-a", "flash"), route("flash-b", "flash"))
 	h.startMachine()
-	off := route("pro-a", "pro")
+	off := route("flash-a", "flash")
 	off.Enabled = false
-	h.m.SetRoutes([]sprint.Route{off, route("pro-b", "pro")})
-	h.addReady("s1", 40, briefOf("pro", ""))
+	h.m.SetRoutes([]sprint.Route{off, route("flash-b", "flash")})
+	h.addReady("s1", 40, briefOf("flash", ""))
 	h.machine()
 	cards := h.workCards()
 	require.NotEmpty(t, cards)
 	for _, wc := range cards {
-		assert.Equal(t, "pro-b", wc.F(sprint.FieldRoute), wc.ID)
+		assert.Equal(t, "flash-b", wc.F(sprint.FieldRoute), wc.ID)
 	}
 }
 
@@ -300,11 +305,11 @@ func TestATickReadsTheRoutesOnce(t *testing.T) {
 func TestALaterAttemptLeavesOutTheRoutesAlreadyDrawn(t *testing.T) {
 	t.Parallel()
 	for _, routes := range [][]sprint.Route{
-		{route("pro-a", "pro"), route("pro-b", "pro")},
-		{route("pro-a", "pro")},
+		{route("flash-a", "flash"), route("flash-b", "flash")},
+		{route("flash-a", "flash")},
 	} {
 		h := routeHarness(t, routes...)
-		h.addReady("s1", 1, briefOf("pro", ""))
+		h.addReady("s1", 1, briefOf("flash", ""))
 		h.must(DealStep(sprint.DealReq{}))
 		w1 := h.workCards()["s1-1.w1"]
 		first := w1.F(sprint.FieldRoute)
@@ -428,11 +433,11 @@ func TestAPinnedCardLeavesTheRouteIndex(t *testing.T) {
 // A tier of one route always takes it, and the index still moves by one a card.
 func TestATierOfOneRouteTakesItAndTheIndexMoves(t *testing.T) {
 	t.Parallel()
-	h := tierHarness(t, map[string][]string{"flash": {"a"}, "pro": {"p"}})
-	h.addReady("s1", 3, briefOf("pro", ""))
+	h := tierHarness(t, map[string][]string{"flash": {"a"}, "pro": {"p", "q"}})
+	h.addReady("s1", 3, briefOf("pro", "")) // flash first: dealt on flash's one route
 	h.must(DealStep(sprint.DealReq{}))
-	assert.Equal(t, []string{"p", "p", "p"}, h.dealtRoutes("s1", 3))
-	assert.Equal(t, "3", h.routeIndexOf("pro"))
+	assert.Equal(t, []string{"a", "a", "a"}, h.dealtRoutes("s1", 3))
+	assert.Equal(t, "3", h.routeIndexOf("flash"))
 }
 
 // An entry that names no enabled route of the tier (disabled since the array was
@@ -496,6 +501,7 @@ func TestAReadRunsOnItsCardsTierAtThatTiersIndex(t *testing.T) {
 	h := routeHarness(t, route("pro-a", "pro"), route("pro-b", "pro"), route("flash-a", "flash"), route("flash-b", "flash"))
 	require.NoError(t, h.st.BeatReaders(h.ctx))
 	h.addReady("s1", 1, briefOf("pro", ""))
+	h.setPrimary("s1-1", map[string]string{sprint.FieldTierNow: "pro"}) // as the machine's escalation leaves it
 	h.addReady("s2", 1, briefOf("flash", ""))
 	h.startMachine()
 	h.machine()
@@ -575,6 +581,7 @@ func TestAReadOfReworkedWorkCarriesARoute(t *testing.T) {
 	h := routeHarness(t, route("pro-a", "pro"), route("pro-b", "pro"), route("flash-a", "flash"), route("flash-b", "flash"))
 	require.NoError(t, h.st.BeatReaders(h.ctx))
 	h.addReady("s1", 1, briefOf("pro", ""))
+	h.setPrimary("s1-1", map[string]string{sprint.FieldTierNow: "pro"}) // a pro card on pro (flash first: escalated)
 	h.startMachine()
 	h.machine()
 	h.finishAttempt("s1-1", false, pushedA)

@@ -33,7 +33,7 @@ func proCards(w *world) {
 
 // tierWorld is three readers, two members up, two routes of each tier, and two
 // primaries worked to review: s1-1 a flash card (its brief names no tier) and
-// s1-2 a pro card.
+// s1-2 a pro card on pro.
 func tierWorld(t *testing.T) *world {
 	t.Helper()
 	w := newWorld(t, "reader-a", "reader-b", "reader-c")
@@ -47,6 +47,9 @@ func tierWorld(t *testing.T) *world {
 	}
 	w.must(Add(w.s, AddReq{Stream: "s1", IDs: []string{"s1-1"}}))
 	w.must(Add(w.s, AddReq{Stream: "s1", IDs: []string{"s1-2"}, Brief: proBrief}))
+	// on pro, as the machine's escalation leaves it: every card's first deal is on flash
+	// (flash first, route.go tierLadder)
+	w.s.Work.Card("s1-2").Fields[FieldTierNow] = "pro"
 	toReview(w, "s1-1", "s1-2")
 	return w
 }

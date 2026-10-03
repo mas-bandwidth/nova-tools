@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -65,11 +66,16 @@ const (
 	FieldRoutes   = "routes"
 	FieldUsage    = "usage"
 	RoutePin      = "pin"
-	// FieldTier is the primary's tier when the coordinator gave it one (rework --tier):
-	// every later deal and read of the card draws from it, over its brief's line 1
-	// (cardTier); on a read card, the tier its route was drawn from (readTierOf),
-	// which its packet hands the reader and its JOB.md names.
+	// FieldTier is the primary's tier when the coordinator pinned it to one (rework
+	// --tier): every later deal and read of the card draws from it, over its brief's
+	// line 1, and the machine never escalates it (cardTier, NextTier); on a work or read
+	// card, the tier its route was drawn from, which its packet hands the child or reader,
+	// its JOB.md names and its cost record keeps.
 	FieldTier = "tier"
+	// FieldTierNow is the tier the primary is on, written by every deal on a route:
+	// flash first on every card, then the tier the machine escalated it to (NextTier);
+	// the tier its brief's line 1 names is its ceiling.
+	FieldTierNow = "tier_now"
 )
 
 // PropRouteIndex is the fleet table's property that holds the tier's route index
@@ -123,7 +129,7 @@ type routeIndexes map[string]*routeIndex
 // routeIndexesOf is the route indexes at the counters the fleet table's properties hold.
 func routeIndexesOf(s *Snapshot) routeIndexes {
 	out := routeIndexes{}
-	for _, t := range []string{cardhdr.RouteFlash, cardhdr.RoutePro} {
+	for _, t := range tierLadder {
 		r := tableRound(s.Fleet, PropRouteIndex(t), nil)
 		r.steps = true
 		out[t] = &routeIndex{r: r, moves: roundMoves{}}
@@ -134,7 +140,7 @@ func routeIndexesOf(s *Snapshot) routeIndexes {
 // write writes where the plan's kept units left each tier's index, in its batch
 // (roundWrites; tla/RouteIndex.tla, Deal and Redeal).
 func (ri routeIndexes) write(p *Plan) {
-	for _, t := range []string{cardhdr.RouteFlash, cardhdr.RoutePro} {
+	for _, t := range tierLadder {
 		roundWrites(p, ri[t].r, ri[t].moves)
 	}
 }
@@ -147,8 +153,9 @@ func (ri routeIndexes) write(p *Plan) {
 // the array was set) is skipped as an excluded one is.
 func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string, tier, why string) {
 	m, bad := cardhdr.ReadModel(c.F("brief"))
-	tier = cardTier(c, m)
+	tier = drawTier(c, m)
 	if bad != "" {
+		tier = ceilingTier(c, m)
 		// a card admitted before the lint read its lines: judged under the tier it
 		// names (an unknown word too), else flash's
 		return nil, tier, "its brief's model lines: " + bad
@@ -203,8 +210,12 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 			ri[tier].r.count += i + 1
 			ri[tier].moves[c.ID] = strconv.FormatUint(i+1, 10)
 		}
-		return map[string]string{FieldRoute: r.Name, FieldModel: r.Provider + "/" + r.Model, FieldTokens: tokensWord(r.Tokens), FieldUSD: r.USD,
-			FieldDeadline: strconv.Itoa(r.Deadline), FieldRoutes: strings.Join(append(Split(c.F(FieldRoutes)), r.Name), ",")}, tier, ""
+		set := map[string]string{FieldRoute: r.Name, FieldModel: r.Provider + "/" + r.Model, FieldTokens: tokensWord(r.Tokens), FieldUSD: r.USD,
+			FieldDeadline: strconv.Itoa(r.Deadline), FieldTier: tier, FieldRoutes: strings.Join(append(Split(c.F(FieldRoutes)), r.Name), ",")}
+		if !pinnedTier(c, m) {
+			set[FieldTierNow] = tier // the primary is on the tier drawn (cardTier)
+		}
+		return set, tier, ""
 	}
 	if len(rested) > 0 {
 		return nil, tier, "every enabled route of tier " + tier + " in its array rests, its children having ended with no result (" + strings.Join(rested, ", ") + "): the deal draws one when its rest ends; or run nova-config route add <name> --tier " + tier + " ..., or pin the card with a model: <provider>/<model> line"
@@ -212,10 +223,52 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 	return nil, tier, "no enabled route serves tier " + tier + ": run nova-config route add <name> --tier " + tier + " ..., name it in nova-config tier set " + tier + " --routes <name,...>, then nova-config apply; or pin the card with a model: <provider>/<model> line"
 }
 
-// cardTier is the tier the deal draws the primary c's route from: the tier the card
-// records (FieldTier, a rework's --tier: the card is the persistent store), else the
-// tier its brief's line 1 names, flash when it names none.
+// Flash first on every card (the owner, 2026-10-02, cost rule 1 of nova-tools#5174,
+// agreed after "The cost of the sprint at $5,400 seems excessive.": "Flash first on
+// every card; pro only on escalation"). The tier a brief's line 1 names is the card's
+// ceiling, what it likely needs, never its first deal: every card is dealt on flash, and
+// one that reaches its bound below its ceiling is escalated by the machine to the next
+// tier of the ladder and dealt a new attempt there, no judgment raised; at its ceiling
+// the bound is the coordinator's judgment as before. A frontier card is the
+// coordinator's and is never dealt (it climbs no ladder); a pinned model runs on its pin;
+// a tier the coordinator pinned (rework --tier, FieldTier) is the card's tier and its
+// ceiling both.
+var tierLadder = []string{cardhdr.RouteFlash, cardhdr.RoutePro}
+
+// cardTier is the tier the primary c is on, what its reads, its read count and its
+// escalation go by: the tier its last deal on a route drew (FieldTierNow, which every
+// such deal writes: flash first, then the tier the machine escalated it to); before
+// any (a card not dealt yet, or a store with no route, where its member runs its own
+// model and no deal draws a tier) and for a pinned tier or model or a frontier card,
+// its ceiling.
 func cardTier(c *Card, m cardhdr.Model) string {
+	if t := c.F(FieldTierNow); t != "" && !pinnedTier(c, m) {
+		return t
+	}
+	return ceilingTier(c, m)
+}
+
+// drawTier is the tier the deal draws the primary c's route from: its ceiling when its
+// tier is pinned (pinnedTier), else the tier the machine escalated it to, else flash.
+func drawTier(c *Card, m cardhdr.Model) string {
+	if pinnedTier(c, m) {
+		return ceilingTier(c, m)
+	}
+	if t := c.F(FieldTierNow); t != "" {
+		return t
+	}
+	return cardhdr.RouteFlash
+}
+
+// pinnedTier says the primary c climbs no ladder: the coordinator pinned its tier
+// (FieldTier, rework --tier), its brief pins a model, or it is a frontier card.
+func pinnedTier(c *Card, m cardhdr.Model) bool {
+	return m.Tier == cardhdr.RouteFrontier || m.Pin != "" || c.F(FieldTier) != ""
+}
+
+// ceilingTier is the highest tier the machine escalates the primary c to: the tier the
+// coordinator pinned, else the tier its brief's line 1 names, flash when it names none.
+func ceilingTier(c *Card, m cardhdr.Model) string {
 	if t := c.F(FieldTier); t != "" {
 		return t
 	}
@@ -223,6 +276,31 @@ func cardTier(c *Card, m cardhdr.Model) string {
 		return cardhdr.RouteFlash
 	}
 	return m.Tier
+}
+
+// CardTiers is the tier the primary is on (cardTier) and its ceiling, as `card` prints
+// them.
+func CardTiers(c *Card) (now, ceiling string) {
+	m, _ := cardhdr.ReadModel(c.F("brief"))
+	return cardTier(c, m), ceilingTier(c, m)
+}
+
+// NextTier is the tier the primary c escalates to when it reaches its bound: the next tier
+// of the ladder above the one it is on, up to its ceiling; "" at its ceiling (a pinned
+// model or tier is on its ceiling, cardTier), for brief lines that cannot be read, and in
+// a store with no route (a twin: its member runs its own model whatever the tier). One
+// function decides it for every bound that escalates: the redeal bound (Deal) and the
+// failure bounds.
+func (s *Snapshot) NextTier(c *Card) string {
+	m, bad := cardhdr.ReadModel(c.F("brief"))
+	if bad != "" || len(s.Routes) == 0 {
+		return ""
+	}
+	i, top := slices.Index(tierLadder, cardTier(c, m)), slices.Index(tierLadder, ceilingTier(c, m))
+	if i < 0 || i >= top {
+		return ""
+	}
+	return tierLadder[i+1]
 }
 
 // readTierOf is the tier a primary's reads are drawn from: the tier of the work
@@ -320,7 +398,7 @@ func tokensWord(n int) string {
 func splitRoute(route map[string]string) (work, primary map[string]string) {
 	work, primary = map[string]string{}, map[string]string{}
 	for k, v := range route {
-		if k == FieldRoutes {
+		if k == FieldRoutes || k == FieldTierNow {
 			primary[k] = v
 			continue
 		}
@@ -349,7 +427,7 @@ func TierRoutes(routes []Route) string {
 }
 
 // AttemptLine is one attempt's record as `card <id>` prints it: the work card's
-// route and model, its member, when it was dealt, taken and finished, how it
+// route, model and tier, its member, when it was dealt, taken and finished, how it
 // ended, the head it pushed (head=, "-" when none) and what it spent.
 func AttemptLine(wc *Card) string {
 	end := "in flight (" + wc.Col + ")"
@@ -366,8 +444,8 @@ func AttemptLine(wc *Card) string {
 	case !wc.Placed():
 		end = "retired"
 	}
-	return fmt.Sprintf("ATTEMPT %s card=%s gen=%s route=%s model=%s member=%s dealt=%s taken=%s finished=%s head=%s usage=%s end=%s",
-		orDash(wc.F("attempt")), wc.ID, orDash(wc.F("gen")), orDash(wc.F(FieldRoute)), orDash(wc.F(FieldModel)), orDash(wc.F("member")),
+	return fmt.Sprintf("ATTEMPT %s card=%s gen=%s route=%s model=%s tier=%s member=%s dealt=%s taken=%s finished=%s head=%s usage=%s end=%s",
+		orDash(wc.F("attempt")), wc.ID, orDash(wc.F("gen")), orDash(wc.F(FieldRoute)), orDash(wc.F(FieldModel)), orDash(wc.F(FieldTier)), orDash(wc.F("member")),
 		orDash(wc.F("dealt")), orDash(wc.F("taken")), orDash(wc.F("finished")), orDash(PushedHead(wc)), orDash(wc.F(FieldUsage)), end)
 }
 
