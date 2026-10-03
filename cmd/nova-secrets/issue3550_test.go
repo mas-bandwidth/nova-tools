@@ -26,10 +26,8 @@ func TestCheckAndExecHelpNameTheUpstreamPrerequisite(t *testing.T) {
 	for _, args := range [][]string{
 		{"check", "--help"},
 		{"check", "-h"},
-		{"check", "help"},
 		{"exec", "--help"},
 		{"exec", "-h"},
-		{"exec", "help"},
 	} {
 		out, errOut, code := runNovaSecrets(bin, args...)
 		if !assert.Equal(t, 0, code, "%v: exit %d, want 0; stderr=%q", args, code, errOut) {
@@ -52,10 +50,10 @@ func TestCheckAndExecHelpNameTheUpstreamPrerequisite(t *testing.T) {
 			assert.Contains(t, out, want, "%v help lacks %q:\n%s", args, want, out)
 		}
 	}
-	// The root help's --store line points at the prerequisite too.
+	// The root help's how-it-works text names the prerequisite too.
 	out, _, code := runNovaSecrets(bin, "help")
-	assert.Equal(t, 0, code, "root help --store line does not name the upstream tracking ref (exit %d):\n%s", code, out)
-	assert.Contains(t, out, "upstream tracking ref", "root help --store line does not name the upstream tracking ref (exit %d):\n%s", code, out)
+	assert.Equal(t, 0, code, "root help how-it-works text does not name the upstream tracking ref (exit %d):\n%s", code, out)
+	assert.Contains(t, out, "upstream tracking ref", "root help how-it-works text does not name the upstream tracking ref (exit %d):\n%s", code, out)
 }
 
 // TestNoUpstreamRefusalNamesTheSafeNextAction: the issue's own transcript, a

@@ -3,6 +3,8 @@ package main
 import (
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+
 	"github.com/mas-bandwidth/nova-tools/internal/oneline/audit"
 )
 
@@ -16,12 +18,16 @@ func TestNoOtherWriterOrShadowCanBypassTheEscape(t *testing.T) {
 	audit.Bypasses(t, secretsAudit)
 }
 
+// TestSecretsToolMeetsTheStandard holds the tool definition to internal/tool's
+// Problems: a what line, an exit table, a how text of at most HowLines lines,
+// and every verb's effect one of inspection, local write or delivery.
+func TestSecretsToolMeetsTheStandard(t *testing.T) {
+	t.Parallel()
+	assert.Empty(t, secretsTool().Problems(), "nova-secrets falls short of the standard")
+}
+
 var secretsAudit = audit.Config{
 	Exempt: map[string]string{
-		"main.go|cmdVersion|buildinfo.Line(\"nova-secrets\", version)": "shared buildinfo.Line renders the complete four-field version line through oneline.Field",
-		"main.go|runNamesCLI|n":           "formatted event line from internal/secrets.RunNames",
-		"main.go|runNamesCLI|more":        "formatted MORE line from internal/secrets.RunNames",
-		"main.go|runNamesCLI|okLine":      "formatted OK line from internal/secrets.RunNames",
 		"main.go|runCheckCLI|okLine":      "formatted OK line from internal/secrets.RunCheck",
 		"main.go|runCheckCLI|l":           "formatted FAIL line from internal/secrets.RunCheck",
 		"main.go|runCheckCLI|m":           "formatted MORE line from internal/secrets.RunCheck",
@@ -36,10 +42,8 @@ var secretsAudit = audit.Config{
 		"main.go|runSeatInjectCLI|line":   "formatted SEAT INJECT OK line from internal/secrets.RunSeatInject, which never renders a value",
 		// A caller's word in a refusal is free text, printed plain in quotes (oneline.Quote is
 		// strconv.Quote: one line, every control, separator and bidi rune escaped, injective).
-		"main.go|secretsMain|oneline.Quote(verb)":        "the unknown verb, quoted on one line",
 		"main.go|runExecCLI|oneline.Quote(fs.Args()[0])": "the stray argument before '--', quoted on one line",
 		"main.go|runGateCLI|oneline.Quote(fs.Args()[0])": "the stray argument, quoted on one line",
-		"main.go|runSeatCLI|oneline.Quote(args[0])":      "the unknown seat subverb, quoted on one line",
 	},
 	Imports: []string{
 		// the verb-help seam (the CLI style's rule (b), #4505): on -h it prints only flag names,
@@ -52,7 +56,6 @@ var secretsAudit = audit.Config{
 		// names --json: tool.Out renders one JSON object through encoding/json, which
 		// escapes every control character, so nothing it writes can break the line.
 		`"github.com/mas-bandwidth/nova-tools/internal/tool"`,
-		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/oneline"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/secrets"`,
 	},

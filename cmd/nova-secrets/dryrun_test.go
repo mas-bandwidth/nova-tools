@@ -112,7 +112,7 @@ func TestDryRunIsInTheHelpOfEveryVerbThatTakesIt(t *testing.T) {
 			require.Equal(t, 0, code, "%s -h exit=%d stderr=%q", verb, code, stderr)
 			require.Empty(t, stderr, "%s -h exit=%d stderr=%q", verb, code, stderr)
 			flat := spaces.ReplaceAllString(out, " ")
-			assert.Contains(t, flat, "--dry-run prints the plan and writes nothing", "%s -h does not say what --dry-run does:\n%s", verb, out)
+			assert.Contains(t, flat, "--dry-run print what the verb would write and write nothing", "%s -h does not say what --dry-run does:\n%s", verb, out)
 			example := false
 			for _, l := range strings.Split(out, "\n") {
 				l = strings.TrimSpace(l)
@@ -125,6 +125,6 @@ func TestDryRunIsInTheHelpOfEveryVerbThatTakesIt(t *testing.T) {
 	}
 
 	out, _, code := runNovaSecrets(bin, "help")
-	assert.Equal(t, 0, code, "help does not say what --dry-run does (exit %d):\n%s", code, out)
-	assert.Contains(t, spaces.ReplaceAllString(out, " "), "--dry-run prints the plan and writes nothing", "help does not say what --dry-run does (exit %d):\n%s", code, out)
+	assert.Equal(t, 0, code, "help does not show the dry-run flag (exit %d):\n%s", code, out)
+	assert.Contains(t, spaces.ReplaceAllString(out, " "), "[--dry-run]", "help does not show the dry-run flag (exit %d):\n%s", code, out)
 }

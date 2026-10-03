@@ -26,20 +26,20 @@ func TestEveryRefusalNamesItsWholeFix(t *testing.T) {
 		not  []string
 	}{
 		{"unknown verb lists the verbs", []string{"bogus"}, 2,
-			[]string{`unknown verb "bogus"`, "the verbs are exec, names, check, gate, keygen, place, placed, seal, seat add, seat inject, version", "run: nova-secrets help"}, nil},
-		{"a verb with a space is quoted plain", []string{"no such"}, 2, []string{`unknown verb "no such"`}, []string{`\x20`}},
+			[]string{`"bogus" is no verb and no file`, "the verbs are exec, names, check, gate, keygen, place, placed, seal, seat add, seat inject, version", "run: nova-secrets help"}, nil},
+		{"a verb with a space is quoted plain", []string{"no such"}, 2, []string{`"no such" is no verb and no file`}, []string{`\x20`}},
 		{"unknown flag lists the verb's flags", []string{"names", "--stoer", "x"}, 2,
-			[]string{"unknown flag --stoer", "names takes --as, --json, --max, --store", "run: nova-secrets names -h"}, []string{"flag provided but not defined"}},
+			[]string{"unknown flag --stoer", "the flags of names are --as, --json, --max, --store", "run: nova-secrets names -h"}, []string{"flag provided but not defined"}},
 		{"a bad value says what the flag wants", []string{"names", "--max", "lots"}, 2,
-			[]string{"--max wants <n>", "the value given is not one"}, []string{"lots", "parse error"}},
-		{"a stray argument is named", []string{"check", "extra"}, 2, []string{`unexpected argument "extra"`, "check takes flags only", "run: nova-secrets check -h"}, nil},
+			[]string{"invalid value for --max", "it wants a whole number"}, []string{"lots", "parse error"}},
+		{"a stray argument is named", []string{"check", "extra"}, 2, []string{`takes no positional arguments, got "extra"`, "run: nova-secrets help"}, nil},
 		{"exec with nothing names the flags and the command at once", []string{"exec"}, 125,
 			[]string{"--store <dir>", "--as <name>", "--key <path>", "--sops <path>", "--only <names|all>", "the command after '--'", "example: nova-secrets exec"},
 			[]string{"delimiter", "rowan"}},
 		{"exec's command before -- is told where it goes", []string{"exec", "--only", "all", "gh", "api"}, 125,
 			[]string{`unexpected argument "gh" before '--'`, "the command goes after '--'"}, nil},
-		{"the seat group names its subverbs", []string{"seat"}, 2, []string{"add", "inject", "run: nova-secrets seat add -h"}, nil},
-		{"version refuses with the status word", []string{"version", "x"}, 2, []string{"SECRETS REFUSED: version takes no flags"}, nil},
+		{"the seat group names its subverbs", []string{"seat"}, 2, []string{"add", "inject", "run: nova-secrets seat -h"}, nil},
+		{"version refuses with the status word", []string{"version", "x"}, 2, []string{"VERSION REFUSED: takes no positional arguments"}, nil},
 	} {
 		c := c
 		t.Run(c.name, func(t *testing.T) {
