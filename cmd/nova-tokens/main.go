@@ -71,6 +71,7 @@ usage:
   nova-tokens sources --repos <file> (--day <YYYY-MM-DD> | --all) [<source flags>] [--unattributed] [--max <n>]
   nova-tokens profiles --swarm-root <dir>
   nova-tokens session --claude-session <jsonl> [--out <dir>] [--day <YYYY-MM-DD>]
+                      [--role <name>] [--weights <in,cw,cr,out>]
   nova-tokens version
 
 exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- an unreadable
@@ -146,14 +147,14 @@ example:
   nova-tokens sources --repos ./repos.tsv --all --claude bench=./transcripts --unattributed --max 20
   nova-tokens report --who ada --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts
 
-session is the coordinator's own window: it sums one Claude Code session jsonl per
+session is the caller's own window: it sums one Claude Code session jsonl per
 turn -- input, cache write, cache read, output, deduplicated on the message id so a
 streamed message counts once -- prints one SESSION line with the weighted
-fresh-input equivalent (input + 1.25 x cache write + 0.1 x cache read + 5 x output)
-and the average context per turn, and with --out folds it into the day file as the
-model the transcript names, as <model>/coordinator (a transcript that names no
-model is refused, never booked under a guess). The coordinator is a friend, and its spend is a
-line in the ledger like everybody else's.
+fresh-input equivalent (in x input + cw x cache write + cr x cache read + out x output,
+the four --weights sets) and the average context per turn, and with --out folds
+it into the day file as the model the transcript names, as <model> or, when --role
+names one, <model>/<role> (a transcript that names no model is refused, never
+booked under a guess). Its spend is a line in the ledger like every other row's.
 
 example:
   nova-tokens session --claude-session ./session.jsonl --out ./out

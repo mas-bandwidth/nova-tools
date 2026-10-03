@@ -1,5 +1,4 @@
 # Migrated counted package ledger; original row keys preserved.
-# ceiling: 3
-internal/tokens/bus.go:emma 2
+# ceiling: 2
 internal/tokens/bus.go:space 1
 internal/tokens/provider.go:space 1
