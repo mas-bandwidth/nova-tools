@@ -816,7 +816,10 @@ and it is the coordinator's decision, receipted.
   back failed the same way) the failed finish writes `tier_now` and the why
   (`escalated from flash to pro: attempts <n-1> and <n> failed the same way
   (<class>)`) on the primary and returns it to ready, as a rework with no
-  member up does, and the tick's deal cuts the new attempt on the next tier. A
+  member up does, and the tick's deal cuts the new attempt on the next tier. The
+  failed finish reads the routes whether or not it reports usage (a native run
+  that printed no final line sends no `--usage`), so the escalation never waits
+  on a usage line (`TestASecondIdenticalFailureWithNoUsageStillEscalates`). A
   tier no route serves is the tick's judgment of that tier, the card held by it. At its ceiling the bound is the judgment "a card
   reached its bound" as before. The ladder has flash and pro: a frontier card
   is the coordinator's and is never dealt, a pinned model runs on its pin (read
