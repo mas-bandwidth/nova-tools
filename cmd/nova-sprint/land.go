@@ -1211,13 +1211,17 @@ func rejected(err error) bool {
 }
 
 // git runs one git in dir (none: the current directory, for a clone into a
-// path it names), in the caller's environment, and returns its trimmed
-// stdout; an error carries git's own words.
+// path it names), in the caller's environment, and returns its trimmed stdout,
+// except -z output whose status columns and paths are byte-exact; an error
+// carries git's own words.
 func (l *lander) git(ctx context.Context, dir string, args ...string) (string, error) {
 	res, err := gitrun.Run(ctx, gitrun.Options{C: dir, Env: l.a.gitEnv, OwnRepo: dir != ""}, args...)
 	if err != nil {
 		words := strings.TrimSpace(string(res.Stderr) + "\n" + string(res.Stdout))
 		return "", fmt.Errorf("git %s: %w: %s", args[0], err, words)
+	}
+	if slices.Contains(args, "-z") {
+		return string(res.Stdout), nil
 	}
 	return strings.TrimSpace(string(res.Stdout)), nil
 }
