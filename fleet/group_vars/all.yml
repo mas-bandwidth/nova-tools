@@ -14,7 +14,7 @@ nova_release_dir: "{{ nova_home }}/nova-bench/release"
 nova_build_file: "{{ nova_home }}/.config/nova/build"
 
 # The PATH a loop unit runs with.
-nova_loop_path: "{{ nova_bin_dir }}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+nova_loop_path: "{{ nova_bin_dir }}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 # A darwin machine's loops are LaunchAgents in the login's GUI domain (gui) or
 # LaunchDaemons dropped to the login (system, which needs sudo); auto asks
 # launchd whether the login has a GUI domain (a login that is never the
@@ -26,7 +26,7 @@ nova_systemd_scope: user
 # Units of another tool's (com.nova.loop.<name>.plist, nova-loop-<name>.service
 # not written by loops.yml) to retire by name; every other such unit is left
 # alone and listed.
-nova_retire_units: []
+nova_retire_units: ['disk-guard-studio']
 
 # The disk guard loops.yml adds to every machine (nova-swarm disk-guard): on
 # when true, run every nova_disk_guard_every seconds, with these arguments

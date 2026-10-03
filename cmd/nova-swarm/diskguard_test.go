@@ -589,3 +589,14 @@ func TestDiskGuardProcPathsReadsCwdAndOpenFiles(t *testing.T) {
 	_, err = procPaths(filepath.Join(proc, "missing"), 42)
 	assert.Error(t, err, "an unreadable /proc is no empty list")
 }
+
+// diskguard resolves lsof when /usr/sbin/lsof exists, falling back to /usr/sbin/lsof
+// when PATH lacks it (#5198).
+func TestDiskGuardResolvesLsofWhenUsrSbinLsofExists(t *testing.T) {
+	if _, err := os.Stat("/usr/sbin/lsof"); err != nil {
+		t.Skip("/usr/sbin/lsof does not exist on this machine")
+	}
+	t.Setenv("PATH", "")
+	assert.Equal(t, "/usr/sbin/lsof", resolveLsof())
+}
+

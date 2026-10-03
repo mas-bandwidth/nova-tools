@@ -6,6 +6,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -923,13 +924,24 @@ func heldPaths() ([]string, error) {
 	if runtime.GOOS == "linux" {
 		return procPaths("/proc", os.Getpid())
 	}
-	cmd, cancel := subproc.CommandFor(context.Background(), time.Minute, "lsof", "-n", "-P", "-w", "-F", "pn")
+	cmd, cancel := subproc.CommandFor(context.Background(), time.Minute, resolveLsof(), "-n", "-P", "-w", "-F", "pn")
 	defer cancel()
 	b, err := cmd.Output()
 	if err != nil {
 		return nil, err
 	}
 	return lsofPaths(b, os.Getpid()), nil
+}
+
+// resolveLsof finds the lsof binary to execute: lsof on PATH, or /usr/sbin/lsof when it exists.
+func resolveLsof() string {
+	if p, err := exec.LookPath("lsof"); err == nil {
+		return p
+	}
+	if _, err := os.Stat("/usr/sbin/lsof"); err == nil {
+		return "/usr/sbin/lsof"
+	}
+	return "lsof"
 }
 
 // lsofPaths is lsof's -F pn listing (a p<pid> line, then an f<fd> and an n<name> line per

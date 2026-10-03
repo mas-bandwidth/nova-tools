@@ -161,6 +161,9 @@ func TestFleetPlaysPassSyntaxAndCheckOnTheFixture(t *testing.T) {
 	assert.Equal(t, 1, strings.Count(loops, "+KillMode=mixed"), "the member's unit alone")
 	assert.Equal(t, 1, strings.Count(loops, "+TimeoutStopSec=7260"))
 	assert.NotContains(t, loops, `\u0001`)
+	darwinAgents := filepath.Join(home, "Library", "LaunchAgents")
+	require.NoError(t, os.MkdirAll(darwinAgents, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(darwinAgents, "com.nova.loop.disk-guard-studio.plist"), []byte("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\"><dict></dict></plist>\n"), 0o644))
 	plist := play("loops.yml", append(check, "-e", "ansible_system=Darwin", "-e", "nova_launchd_domain=gui")...)
 	for _, w := range []string{
 		"<string>com.nova.loop.member-local</string>",
@@ -175,6 +178,9 @@ func TestFleetPlaysPassSyntaxAndCheckOnTheFixture(t *testing.T) {
 		"<key>Disabled</key>",
 		"<string>com.nova.loop.disk-guard</string>",
 		"<integer>900</integer>",
+		"<key>PATH</key>",
+		"<string>" + home + "/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>",
+		"WOULD-RETIRE disk-guard-studio on localhost (" + filepath.Join(darwinAgents, "com.nova.loop.disk-guard-studio.plist") + ")",
 	} {
 		assert.Contains(t, plist, w)
 	}
