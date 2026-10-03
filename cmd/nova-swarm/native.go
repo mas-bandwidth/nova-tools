@@ -1078,6 +1078,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	for attempt := 1; ; attempt++ {
 		lastAttempt = attempt
 		before := fileSize(outLog)
+		providerBefore := fileSize(filepath.Join(dataHome, filepath.FromSlash(harnessLogFile)))
 		cmd := subproc.Long(runCtx, runPath, runArgv...)
 		ownChildGroup(cmd)
 		cmd.Env = childEnv
@@ -1270,7 +1271,17 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			launchTokens = sum
 		}
 		_, published := swarm.FindCardResult(jobDir)
-		if cause, failed := harnessStartFailed(tail, elapsed, launchTokens, published); failed {
+		cause, failed := harnessStartFailed(tail, elapsed, launchTokens, published)
+		_, launchFailure := swarm.ProviderLaunchFailure(tail)
+		// SPEC-SPRINT section 5: a credit/key refusal rests its provider. A
+		// transient wrapper cannot buy another launch; read only this launch.
+		if !published && (failed || launchFailure) {
+			if refusal, ok := providerEnd(dataHome, providerBefore, attemptStart, res.rc, tail); ok &&
+				(refusal.Class == swarm.CauseCredit || refusal.Class == swarm.CauseAuth) {
+				break
+			}
+		}
+		if failed {
 			if startRetries < len(harnessStartWaits) {
 				if word := sampler.StopWordAtFinal(jobSpent, jobObserved, spendCost(launchSpends)); word != "" {
 					res.stopped = word
@@ -1292,7 +1303,6 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		// Inherited grace retry. The tail and the elapsed time do not prove the
 		// provider never accepted the request. A lost response does not take
 		// this path.
-		_, launchFailure := swarm.ProviderLaunchFailure(tail)
 		if launchFailure && elapsed < grace && attempt < swarm.MaxProviderAttempts {
 			// ONCE MORE BEFORE ANY RELAUNCH (rule 13d): "The stop is rule 13's
 			// `spent >= n`, tested at every sample and once more before any relaunch."
