@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -48,7 +49,7 @@ func lintCardFile(t *testing.T, name string) (string, int) {
 	_, err := os.Stat(path)
 	require.NoError(t, err, "the fixture card is missing")
 	var stdout, stderr bytes.Buffer
-	code := cmdLint([]string{"--card", path, "--max", "0"}, &stdout, &stderr)
+	code := cmdLint([]string{"--card", path, "--max", "0"}, &stdout, &stderr, func(string) string { return "" }, time.Time{})
 	require.Zero(t, stderr.Len(), "lint --card %s wrote to stderr: %s", name, stderr.String())
 	return stdout.String(), code
 }

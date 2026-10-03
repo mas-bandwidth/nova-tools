@@ -66,8 +66,10 @@ func TakeStep(r sprint.TakeReq) Step {
 // FinishStep is a worker finishing work cards.
 func FinishStep(r sprint.FinishReq) Step {
 	// a finish that reports what the run spent prices it with the routes alone, the keys
-	// a member may read (sprint's cost.go; Step.Prices)
-	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "finish", Load: tables(sprint.Fleet, sprint.Readers, sprint.Work), Mirrors: true, Prices: r.Usage != "",
+	// a member may read (sprint's cost.go; Step.Prices); a failed finish reads them too,
+	// with or without its usage: the second identical failure below its ceiling escalates
+	// the card in the finish, by the tiers its routes serve (sprint.NextTier)
+	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "finish", Load: tables(sprint.Fleet, sprint.Readers, sprint.Work), Mirrors: true, Prices: r.Usage != "" || r.Failed,
 		Extras: sprint.NamedExtras(sprint.Fleet, r.IDs),
 		Plan:   func(s *sprint.Snapshot) sprint.Plan { return sprint.Finish(s, r) }}
 }
@@ -163,6 +165,20 @@ func SetStep(r sprint.SetReq) Step {
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Set(s, r) }}
 }
 
+// BalanceStep writes the providers' balances the run loop's poll read, and the rests they
+// call for (sprint.Balance; nova-tools#5199).
+func BalanceStep(r sprint.BalanceReq) Step {
+	return Step{Args: ArgsOf(r), Verb: "balance", Load: tables(sprint.Fleet), Routes: true,
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Balance(s, r) }}
+}
+
+// FundedStep is the coordinator's word that a provider was paid: every rest of its funds
+// ends (sprint.Funded; nova-tools#5199).
+func FundedStep(r sprint.FundedReq) Step {
+	return Step{Named: true, Args: ArgsOf(r), Verb: "funded", Load: tables(sprint.Fleet), Routes: true,
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Funded(s, r) }}
+}
+
 // ResumeStep moves a stopped stream again.
 func ResumeStep(r sprint.ResumeReq) Step {
 	return Step{Args: ArgsOf(r), Verb: "resume", Load: tables(sprint.Merge, sprint.Work), Mirrors: true,
@@ -218,4 +234,15 @@ func WaitStep(r sprint.WaitReq) Step {
 	}
 	return Step{Args: ArgsOf(r), Verb: "wait",
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Wait(s, r) }}
+}
+
+// GradeStep is the server's decide lane writing the grade decisions it made on the cards
+// still ungraded and never dealt (sprint.Grade): the machine's, as a tick's part is.
+func GradeStep(r sprint.GradeReq) Step {
+	ids := make([]string, 0, len(r.Grades))
+	for id := range r.Grades {
+		ids = append(ids, id)
+	}
+	return Step{Named: true, Args: ArgsOf(r), Verb: "grade", Actor: sprint.MachineActor, Load: tables(sprint.Work), Extras: sprint.NamedExtras(sprint.Work, ids),
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Grade(s, r) }}
 }

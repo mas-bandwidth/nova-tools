@@ -21,14 +21,16 @@ import (
 // after it: `verdict not-done; <the child's line>`), trimmed and cut to
 // MaxProviderErrorBytes. A verdict's reason is broad, so its class takes the first
 // VerdictWords words of the child's line too (after the member's `pushed=<sha> to
-// <branch>: `). A take the provider failed, a launch refused at staging or at launch are
-// the member's or the provider's, never the card's (docs/SPEC-SPRINT.md section 2), so
-// they have no class, and an empty line (a take that ended with its member down) has
+// <branch>: `). A take the provider failed, a launch refused at staging or at launch, and a
+// gate red only on failures the gate decision classed pre-existing (`pre-existing: <test>`)
+// are the member's, the base's or the provider's, never the card's (docs/SPEC-SPRINT.md
+// section 2), so they have no class, and an empty line (a take that ended with its member down) has
 // none: an end with no class is never the same as another.
 func FailureClass(line string) string {
 	line = strings.TrimSpace(line)
 	switch {
-	case line == "", IsProviderFailure(line), IsStagingRefusal(line), strings.HasPrefix(line, cardhdr.EndLaunch):
+	case line == "", IsProviderFailure(line), IsStagingRefusal(line), strings.HasPrefix(line, cardhdr.EndLaunch),
+		strings.HasPrefix(line, cardhdr.EndPreExisting+": "):
 		return ""
 	case IsNoResult(line):
 		return cardhdr.EndNoResult
@@ -89,8 +91,8 @@ func identicalEnds(wc *Card) string {
 
 // parseTake is one ended take's record (ProviderTake.String).
 func parseTake(v string) ProviderTake {
-	f := append(strings.SplitN(v, "\t", 6), "", "", "", "", "", "")
-	return ProviderTake{Route: f[0], Model: f[1], Member: f[2], Finished: f[3], Usage: f[4], Error: f[5]}
+	f := append(strings.SplitN(v, "\t", 7), "", "", "", "", "", "", "")
+	return ProviderTake{Route: f[0], Model: f[1], Member: f[2], Finished: f[3], Usage: f[4], Error: f[5], Taken: f[6]}
 }
 
 // The primary's record of its failed work, written by the failed finish (Finish): the
@@ -106,9 +108,13 @@ const (
 
 // failureSet is what a failed finish at attempt writes on its primary pr (FieldFailure,
 // FieldFailureAt) and whether it is the second identical failure: the attempt before
-// failed with the same class.
-func failureSet(pr *Card, attempt int, report string, set map[string]string) (identical bool) {
+// failed with the same class. The class is the report's (FailureClass), or decided, the
+// take's attempt decision as `decided <class>`, when that decision routed the finish.
+func failureSet(pr *Card, attempt int, report, decided string, set map[string]string) (identical bool) {
 	class := FailureClass(report)
+	if decided != "" {
+		class = decided // the attempt decision's class, when it routed the finish (decide.go)
+	}
 	identical = class != "" && attempt > 1 && pr.Int(FieldFailureAt) == attempt-1 && pr.F(FieldFailure) == class
 	set[FieldFailure], set[FieldFailureAt] = class, itoa(attempt)
 	if identical {

@@ -1,7 +1,7 @@
 // Package decide is a decision system that is trained from its own record
 // (docs/SPEC-NOVA-DECIDE.md). It has two halves over one record:
 //
-//   - the decide half (this file, backend.go, jev.go, read.go): a decision is a
+//   - the decide half (this file, backend.go, jev.go, read.go, attempt.go, grade.go): a decision is a
 //     named schema (a set of typed questions) asked over one state text through a
 //     backend; every answer carries its probabilities.
 //   - the train half (record.go, calibrate.go): every decision made is appended

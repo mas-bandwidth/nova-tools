@@ -34,7 +34,7 @@ const ServerEnv = "NOVA_SPRINT_SERVER"
 
 // fileFlags are the flags of the coordinator's verbs whose value is a file or a
 // directory: the server runs in another directory, so a path sent to it is absolute.
-var fileFlags = []string{"rules", "brief-file", "brief-dir", "file"}
+var fileFlags = []string{"rules", "brief-file", "brief-dir", "file", "decide-record"}
 
 // waits are the flags that make a read wait for the sprint to move (where --watch,
 // inbox --wait). The server moves the sprint on the one line of control a verb it runs
@@ -151,11 +151,20 @@ func (a *app) forwarded(args []string, stdout, stderr io.Writer) (code int, sent
 	if addr == "" || v.unserved() != "" || v.help || v.err != nil {
 		return 0, false // no server, not served, a wait, its help, or flags it refuses: runs here
 	}
-	res, err := a.ask(context.Background(), addr, args[:v.words], args[v.words:])
+	rest := args[v.words:]
+	var brief []string
+	if v.name == "add" { // add's checks and its brief decisions run here first (briefdecide.go)
+		extra, lines, code := a.gateForward(v, args, stdout, stderr)
+		if code != 0 {
+			return code, true
+		}
+		rest, brief = append(append([]string(nil), rest...), extra...), lines
+	}
+	res, err := a.ask(context.Background(), addr, args[:v.words], rest)
 	if err != nil {
 		return a.unanswered(v.name, addr, err, stderr), true
 	}
-	a.answer(res, stdout, stderr)
+	a.answer(withBrief(res, brief), stdout, stderr)
 	return res.Code, true
 }
 

@@ -42,7 +42,8 @@ const (
 	NMemberUp       = "fleet member up"
 	NMemberDown     = "fleet member down"
 	NUnknownMachine = "an unknown machine is beating"
-	NStagingRefused = "a member refused a card at staging" // dealt to another member
+	NStagingRefused = "a member refused a card at staging"    // dealt to another member
+	NRestWithdrawn  = "a card withdrawn from a resting route" // dealt again on one that serves
 
 	// The tick's own failure, noted once for each distinct error text it
 	// keeps failing with, and its recovery, noted once with the count of

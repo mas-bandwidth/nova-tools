@@ -13,8 +13,9 @@ import (
 )
 
 // The record (SPEC-NOVA-DECIDE section 4) is one JSON-lines file the caller
-// names: a {"decision": ...} line per decision made, and an {"outcome": ...}
-// line per outcome attached. Lines are only appended, by a writer holding the
+// names: a {"decision": ...} line per decision made, an {"outcome": ...}
+// line per outcome attached, and an {"act": ...} line per step of applying a
+// decision (a caller that acts on its decisions, as nova-sprint answer does). Lines are only appended, by a writer holding the
 // record file's own exclusive lock (go-internal/lockedfile); a reader takes the
 // shared lock, so it never meets half a line and two writers never both take
 // one id. Loading folds each outcome into its decision.
@@ -32,6 +33,7 @@ type Decision struct {
 	Answers  map[string]Answer `json:"answers"`
 	Usage    Usage             `json:"usage"`
 	Outcome  *Outcome          `json:"outcome,omitempty"` // folded in on load; never written on this line
+	Acts     []Act             `json:"acts,omitempty"`    // folded in on load, in order; never written on this line
 }
 
 // Outcome is what turned out to be true about a decision: a review's label, a
@@ -43,9 +45,21 @@ type Outcome struct {
 	At    string `json:"at"`
 }
 
+// Act is one step of applying a decision, recorded around the verbs it runs: "applying"
+// with the operation id those verbs carry, before them, then "applied" or "refused"
+// after. A decision's acts are appended, never rewritten; its last says where applying
+// it stands, so a writer stopped between the two finds "applying" and its op.
+type Act struct {
+	ID  string `json:"id"`
+	Act string `json:"act"`
+	Op  string `json:"op,omitempty"`
+	At  string `json:"at"`
+}
+
 type line struct {
 	Decision *Decision `json:"decision,omitempty"`
 	Outcome  *Outcome  `json:"outcome,omitempty"`
+	Act      *Act      `json:"act,omitempty"`
 }
 
 // ErrUnknown is an outcome for an id the record holds no decision for.
@@ -100,8 +114,14 @@ func parse(r io.Reader, path string) ([]Decision, error) {
 			}
 			o := *l.Outcome
 			out[i].Outcome = &o
+		case l.Act != nil:
+			i, ok := at[l.Act.ID]
+			if !ok {
+				return nil, fmt.Errorf("%s:%d: an act for %s: %w", path, n, l.Act.ID, ErrUnknown)
+			}
+			out[i].Acts = append(out[i].Acts, *l.Act)
 		default:
-			return nil, fmt.Errorf("%s:%d is neither a decision nor an outcome", path, n)
+			return nil, fmt.Errorf("%s:%d is neither a decision, an outcome nor an act", path, n)
 		}
 	}
 	return out, sc.Err()
@@ -121,13 +141,13 @@ func Find(ds []Decision, id string) *Decision {
 // state returns the recorded decision (an op retried), over another state it
 // is a ConflictError.
 func Append(path string, d Decision) (recorded *Decision, err error) {
-	err = locked(path, func(ds []Decision) (*line, error) {
+	err = locked(path, func(ds []Decision) ([]line, error) {
 		if have := Find(ds, d.ID); have != nil {
 			recorded = have
 			return nil, replays(*have, d.Decision, d.Schema, d.State)
 		}
-		d.Outcome = nil
-		return &line{Decision: &d}, nil
+		d.Outcome, d.Acts = nil, nil
+		return []line{{Decision: &d}}, nil
 	})
 	return recorded, err
 }
@@ -136,7 +156,7 @@ func Append(path string, d Decision) (recorded *Decision, err error) {
 // same label again changes nothing (changed is false); another label is a
 // ConflictError naming both.
 func Attach(path string, o Outcome) (d Decision, changed bool, err error) {
-	err = locked(path, func(ds []Decision) (*line, error) {
+	err = locked(path, func(ds []Decision) ([]line, error) {
 		have := Find(ds, o.ID)
 		switch {
 		case have == nil:
@@ -150,14 +170,26 @@ func Attach(path string, o Outcome) (d Decision, changed bool, err error) {
 		}
 		d, changed = *have, true
 		d.Outcome = &o
-		return &line{Outcome: &o}, nil
+		return []line{{Outcome: &o}}, nil
 	})
 	return d, changed, err
 }
 
+// RecordAct appends a's line against its decision: a step of applying it. A decision
+// the record does not hold is ErrUnknown, and nothing is written.
+func RecordAct(path string, a Act) error {
+	return locked(path, func(ds []Decision) ([]line, error) {
+		if Find(ds, a.ID) == nil {
+			return nil, fmt.Errorf("%s: %w", a.ID, ErrUnknown)
+		}
+		return []line{{Act: &a}}, nil
+	})
+}
+
 // locked runs plan over the record under the record file's exclusive lock
-// and appends the line it returns, if any, before the lock is released.
-func locked(path string, plan func([]Decision) (*line, error)) (err error) {
+// and appends the lines it returns, if any, in one write before the lock is
+// released.
+func locked(path string, plan func([]Decision) ([]line, error)) (err error) {
 	f, err := lockedfile.OpenFile(path, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0o600)
 	if err != nil {
 		return err
@@ -172,13 +204,17 @@ func locked(path string, plan func([]Decision) (*line, error)) (err error) {
 		return err
 	}
 	add, err := plan(ds)
-	if err != nil || add == nil {
+	if err != nil || len(add) == 0 {
 		return err
 	}
-	raw, err := json.Marshal(add)
-	if err != nil {
-		return err
+	var out []byte
+	for _, l := range add {
+		raw, err := json.Marshal(l)
+		if err != nil {
+			return err
+		}
+		out = append(append(out, raw...), '\n')
 	}
-	_, err = f.Write(append(raw, '\n'))
+	_, err = f.Write(out)
 	return err
 }

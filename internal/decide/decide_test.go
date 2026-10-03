@@ -223,13 +223,33 @@ func TestTheRecordAppendsOnceAndFoldsOutcomes(t *testing.T) {
 	assert.Equal(t, 2, bytes.Count(raw, []byte("\n")), "one decision line and one outcome line")
 }
 
+// The steps of applying a decision are act lines, appended in order and folded into the
+// decision on load; an act for a decision the record does not hold writes nothing.
+func TestTheRecordFoldsActsInOrder(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "decisions.jsonl")
+	_, err := Append(path, decisionFor("a", "one"))
+	require.NoError(t, err)
+	require.NoError(t, RecordAct(path, Act{ID: "a", Act: "applying", Op: "decide.a", At: "t1"}))
+	require.NoError(t, RecordAct(path, Act{ID: "a", Act: "applied", Op: "decide.a", At: "t2"}))
+	assert.ErrorIs(t, RecordAct(path, Act{ID: "nobody", Act: "applying"}), ErrUnknown)
+	ds, err := Load(path)
+	require.NoError(t, err)
+	require.Len(t, ds, 1)
+	assert.Equal(t, []Act{{ID: "a", Act: "applying", Op: "decide.a", At: "t1"}, {ID: "a", Act: "applied", Op: "decide.a", At: "t2"}}, ds[0].Acts)
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, 3, bytes.Count(raw, []byte("\n")), "one decision line and two act lines")
+}
+
 // A record that is not one is named by its file and line.
 func TestLoadNamesTheBadLine(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	for _, tc := range []struct{ name, body, says string }{
 		{"not json", "{\"decision\":{\"id\":\"a\"}}\nnope\n", ":2 is not a record line"},
-		{"neither", "{}\n", ":1 is neither a decision nor an outcome"},
+		{"neither", "{}\n", ":1 is neither a decision, an outcome nor an act"},
+		{"orphan act", "{\"act\":{\"id\":\"a\",\"act\":\"applying\"}}\n", "an act for a"},
 		{"twice", "{\"decision\":{\"id\":\"a\"}}\n{\"decision\":{\"id\":\"a\"}}\n", ":2 records decision a a second time"},
 		{"orphan outcome", "{\"outcome\":{\"id\":\"a\",\"label\":\"ok\"}}\n", "an outcome for a"},
 		{"second outcome", "{\"decision\":{\"id\":\"a\"}}\n{\"outcome\":{\"id\":\"a\",\"label\":\"ok\"}}\n{\"outcome\":{\"id\":\"a\",\"label\":\"wrong\"}}\n",

@@ -746,11 +746,12 @@ usage:
   nova-swarm version    print this build identity (--version also accepted)
   nova-swarm doctor    [--path <file>] [--local <file>]   refuse a launch under a shadowed nova-swarm (PATH vs ~/.local/bin build stamp)
   nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
-  nova-swarm lint      --card <file> [--typed] [--child-rules | --child-rules-file <file>] [--member-injects] [--base-check [--repo <dir>] [--legs <file>] [--p95 <file>]] [--trust <file>] [--lineup <file>] [--max <n>] | --fleet <file> [--max <n>] | --rules
+  nova-swarm lint      --card <file> [--typed] [--child-rules | --child-rules-file <file>] [--member-injects] [--base-check [--repo <dir>] [--legs <file>] [--p95 <file>]] [--trust <file>] [--lineup <file>] [--decide [--decide-answers <file>] [--decide-record <file>]] [--max <n>] | --fleet <file> [--max <n>] | --rules
                        (a bare --card holds the card to nova-swarm's own card contract, the shape native runs, the same for every adopter: the RESULT line first and written last, numbered STEPs entering the repository, a test and its command, a deadline, the files named, scratch under a named root; --rules lists every check; an adopter's own rules go in --child-rules-file)
                        (--fleet lints a launcher script against the coordinator's /bin/bash 3.2: shebang, bash-4 builtins, unquoted expansions)
                        (--child-rules holds the card to the rules the coordinator gives a child: one rule-<name> per required sentence, one step-<what> per forbidden command; the sentences are the built-in general rules, or the lines of --child-rules-file, one required sentence per line; template --name card prints a card that passes the general ones)
                        (--member-injects lints the card as the member stages it, rules by reference: the rules are appended at stage time from the held file of the card's REPO: (fleet/child-rules.txt for nova-tools, fleet/child-rules.<repo>.txt for another), or --child-rules-file; a card need not carry them, and a line that contradicts them is still a finding)
+                       (--decide asks the brief decision nova-sprint add asks (nova-decide's brief: p(converges), the minutes, the questions the card leaves open) through Jev with JEV_API_KEY, or from --decide-answers, and prints one LINT DECIDE line after the lint's own; it never changes the verdict, and a failing backend prints the verdict, then why, exit 2)
                        (--base-check adds the four checks of a coding card: its PATHS exist at the base sha in --repo (default the working directory), no STEP pushes or calls gh, its LEG is a line of --legs, its deadline is at least --p95's figure for its kind; evidence not given is reported missing, never passed)
                        (nova-sprint add holds a brief to the --child-rules tokens only, and to its model lines: rule-<name> for each rule of its set (the six general rules, or the file add --rules or init --rules names), the step-<what> scans (step-go-clean and step-go-test-timeout only when the file carries those rules), and rule-libraries-considered when the file carries [libraries-considered]; every other token --rules lists is this lint's alone)
   nova-swarm step      --card <file> --dir <checkout> [--work <dir>] [--result <file>] [--sandbox <wall> | --no-wall] | --card <file> --remainder <id> --from <step> --land <sha>
@@ -759,7 +760,7 @@ usage:
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
   nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--frame <file>] [--identity <owner>,<name>,<email>]
   nova-swarm member    --as <name> --server <host:port> --harness <path> --root <dir> [--slots <dir>] [--results-root <dir>] [--width <n>] [--model <provider/model>] [--deadline <duration>] [--tokens <n>|unmetered] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--no-wall] [--gh <path>] [--pass <NAME,...>] [--disk-floor <GiB>] [--identity <owner>,<name>,<email>]
-                       (this machine as one member of a sprint's fleet, every sprint verb sent to the sprint's server --server, the run loop nova-sprint run --listen started, so this machine opens no store: beat, queue, push and finish what ended (the child's commit to origin's sprint branch, from outside the wall, never forced; the pull request the child's gh pr create asked for, opened with --gh), each finish judged ok, failed or reaped (docs/SPEC-CARD-CONTRACT.md), take to the width its fleet row names (read with its queue every tick: a member's own row, a reader's its machine's, reader-<m> running at m's width; --width is a twin's override), each card one native child with its frame and an allowlist environment, on the model, budget and deadline its packet's route names (the card decides: the deal draws a route of its tier, or its model: pin; --model, --tokens and --deadline are the override a card with no route runs on); --pass names the secrets a child is handed, the loop record's nova-secrets keys: a loop whose harness reads its provider key from the environment carries --pass <KEY>, else its children start without it and fail at the provider; --reader runs the readers-table loop, each read on the route the ask drew from the reader tier unless --model, --tokens or --deadline is given, and a flash card's first read a decide read, asked by native with JEV_API_KEY from the reader's environment, which no child is handed (docs/SPEC-SPRINT.md section 6); --identity names the pool identity every child commits under, from the loop's nova-config argv, else the pool's identity.tsv; a launch it is done with leaves no checkout behind (a failed one keeps its directory, the newest 5 of the pool), and it starts no card while the slots' volume has less free than --disk-floor GiB, default 10; a card it will not start is finished staging refused: <why>, so the sprint deals it to another member and says why)
+                       (this machine as one member of a sprint's fleet, every sprint verb sent to the sprint's server --server, the run loop nova-sprint run --listen started, so this machine opens no store: beat, queue, push and finish what ended (the child's commit to origin's sprint branch, from outside the wall, never forced; the pull request the child's gh pr create asked for, opened with --gh), each finish judged ok, failed or reaped (docs/SPEC-CARD-CONTRACT.md), take to the width its fleet row names (read with its queue every tick: a member's own row, a reader's its machine's, reader-<m> running at m's width; --width is a twin's override), each card one native child with its frame and an allowlist environment, on the model, budget and deadline its packet's route names (the card decides: the deal draws a route of its tier, or its model: pin; --model, --tokens and --deadline are the override a card with no route runs on); --pass names the secrets a child is handed, the loop record's nova-secrets keys: a loop whose harness reads its provider key from the environment carries --pass <KEY>, else its children start without it and fail at the provider; --reader runs the readers-table loop, each read on the route the ask drew from the reader tier unless --model, --tokens or --deadline is given, and a flash card's first read a decide read, asked by native with JEV_API_KEY from the reader's environment, which no child is handed (docs/SPEC-SPRINT.md section 6); a work member whose environment holds JEV_API_KEY asks the attempt decision when any take ends, in its own process, and the finish carries it (docs/SPEC-SPRINT.md section 2); --identity names the pool identity every child commits under, from the loop's nova-config argv, else the pool's identity.tsv; a launch it is done with leaves no checkout behind (a failed one keeps its directory, the newest 5 of the pool), and it starts no card while the slots' volume has less free than --disk-floor GiB, default 10; a card it will not start is finished staging refused: <why>, so the sprint deals it to another member and says why)
   nova-swarm disk-guard [--root <dir>]... [--scan <dir>]... [--cache <dir|glob>]... [--cache-max-gb <GiB>] [--modcache-max-gb <GiB>] [--logs <dir>] [--log-max-mb <MiB>] [--log-keep <n>] [--pool-idle <duration>] [--land <dir>] [--clone-age <duration>] [--mirrors <dir>] [--disk-floor <GiB>] [--dry-run]
                        (one pass over this machine, run every few minutes by the disk-guard loop row fleet/loops.yml adds to every machine: every Go build cache (the login's, each root's cache/go-build, each --cache) held under --cache-max-gb, default 10, by the member's trim, oldest entries first and never one used in the last two hours; a module cache over --modcache-max-gb, default 50, emptied while no go command runs; every loop log over --log-max-mb, default 50, copied to <log>.1 and emptied in place, --log-keep copies, default 3; the pool of a loop that stopped (no process names its root, nothing moved for --pool-idle, default 30m) swept as the member sweeps its own, a work launch whose checkout holds commits past its staged one kept; land clones unused for --clone-age, default 24h, removed; a mirror's temporary packs older than an hour removed while nothing fetches into it, never git prune; never anything with uncommitted work or a live process; one REMOVED, TRIMMED, CLEANED, ROTATED or KEPT line per action with freed=<bytes>, a DISK-GUARD WARN line under --disk-floor, default 10, and DISK-GUARD OK freed=<bytes> free=<bytes> at the end; --dry-run judges the same and removes nothing, each action said WOULD-REMOVE, WOULD-TRIM, WOULD-CLEAN or WOULD-ROTATE)
   nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
@@ -1031,6 +1032,7 @@ nova-sprint stream remove <stream>...
 nova-sprint ci <id>... (--red | --green) --epoch <n> [--head <h>] [--run <id>] [--source <s>] [--note <text>]
 nova-sprint wait <note> (--for <duration> | --until <RFC3339>)
 nova-sprint ack <note>... --reason <text>
+nova-sprint answer [--dry-run] [--bar <p>] [--every <duration>] [--timeout <duration>] [--backend jev|fixed] [--answers <file>] [--record <file>]
 nova-sprint inbox [--open <group>] [--read] [--wait [--timeout <duration>]] [--deadline <duration>] [--stale <duration>]
 nova-sprint card <id>
 nova-sprint log [--card <id>] [--stream <s>] [--member <m>] [--since <10m|RFC3339>] [--at-epoch <n>]
@@ -1038,6 +1040,7 @@ nova-sprint check
 nova-sprint repair
 nova-sprint where [--watch] [--every <duration>]
 nova-sprint routes
+nova-sprint funded <provider> --reason <text>
 nova-sprint stats
 nova-sprint play [--simulation] [--seed <n>] [--every <duration>] [--broken <p>] [--fail <p>] [--stuck <p>] [--cross <p>] [--down <p>] [--up <p>] [--red <p>] [--flap <p>] [--batch <n>] [--hold] [--silent <member>@<from>+<for>]... [--ticks <n>]
 nova-sprint clear --confirm sprint
@@ -1058,12 +1061,63 @@ that has changed. `nova-sprint help <verb>` (or `<verb> -h`) prints one verb's
 usage, flags and exit codes; `nova-sprint help <group>` (fleet, friend, reader,
 goal, stream) one group's.
 
+### A provider out of funds
+
+The owner, 2026-10-03: "provider out of funds should never be a mystery failure." `run` reads
+each provider's balance every 10 minutes through the seat's key in its environment
+(`OPENROUTER_API_KEY` for openrouter; opencode publishes no balance and reads `unknown`) and
+prints a `BALANCE` line. A provider out of credit by a take it refused is rested until a
+payment is seen (a balance read higher than the read before it, or than the balance at the
+refusal) or `funded`: a balance over zero that is not higher never ends it. One out of credit by
+a balance at zero is rested until a balance over zero; one low on funds, a balance not over an
+hour of its spend, until the balance is over it. One judgment of the provider says which (`a
+payment is the owner's`). `where --json` carries the `providers` table (balance, spend an hour,
+state) and `routes` each route's `balance=`. When every provider is out of credit, the tick
+stops the machine (`machine: STOPPED (every provider is out of credit)`) and `start` is refused
+until one is paid; a provider low on funds never stops it. `funded <provider> --reason <text>`
+says one was paid. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md), "A provider out of funds".
+
+### Answering the routine judgments
+
+`nova-sprint answer` answers the routine judgments (a reader found it
+broken, work came back failed, blocked on something dropped, stalled, a conflict,
+past its deadline, cannot ask, ready to accept, a card at its bound) by
+nova-decide's judgment decision, card by card: it applies the verb chosen when
+its probability is at or above `decide_judgment_bar` (nova-config's sprint row,
+empty by default: with no bar it applies nothing, records every decision and lists
+what a bar would apply; `--bar` gives one for a run; 0.8 is a starting point measured on 100 of the coordinator's own judgments,
+not an independent calibration), by the line the inbox prints for that card,
+and lists the rest for you: every drop, everything under the bar, and a provider
+refusal for want of payment, which it never asks about. It prints one table, a
+row a card, and records every decision (`--record`, default
+`~/nova-sprint/decide/judgment.jsonl`, its directory made 0700) with its outcome once the card lands, is dropped
+or comes back. Each verb it applies carries the decision's op id (`--op
+decide.<decision id>`), recorded as `applying` before the verb runs and `applied`
+or `refused` after, so a pass stopped between the two is finished by the next
+through the same op and nothing is applied twice. One ask may take `--timeout`
+(60s by default); an ask past it, or one that fails, is that card's `failed` row,
+nothing is applied for it, and the pass exits 1. `--dry-run` applies and records
+nothing; `--every 60s` runs it as the seat's loop until the machine is STOPPED. Jev's key comes from `JEV_API_KEY`:
+`nova-secrets exec --only JEV_API_KEY -- nova-sprint answer`. The
+contract is [SPEC-SPRINT.md section 8](SPEC-SPRINT.md#answered-by-nova-decide)
+and [SPEC-NOVA-DECIDE.md section 13](SPEC-NOVA-DECIDE.md#13-the-judgment-decision).
+
+`add` under `JEV_API_KEY` (`nova-secrets exec --only JEV_API_KEY -- nova-sprint add
+...`) asks nova-decide's brief decision of every card it names with a brief after its
+own checks and before it writes, one deadline for the batch: one `BRIEF card=<id>
+op=<card>@brief-<hex> p_converges= minutes= failed= uncalibrated=true recorded=` line
+per card, recorded in `~/nova-sprint/decide/brief.jsonl` (or `--decide-record <file>`),
+the op stored on the card for land and drop to attach its end. The decision is
+uncalibrated: nova-config's `sprint` row `decide_brief_bar` stays empty, which reports
+only, until the brief record's own outcomes support a bar
+([SPEC-NOVA-DECIDE.md](SPEC-NOVA-DECIDE.md) section 14).
+
 ### Exit codes
 
 | exit | meaning |
 |---|---|
 | 0 | done |
-| 1 | failed or incomplete (including refused) |
+| 1 | failed or incomplete (including refused; `start` while every provider is out of credit) |
 | 2 | usage, or a store that did not answer (`fleet sync --check`: there is drift) |
 | 3 | `fleet sync` or `friend sync` could not read the config, or `run`: its binary was replaced (its supervisor starts the new one) |
 
@@ -2170,6 +2224,10 @@ network and no key (the transcript is in [TESTS.md](TESTS.md#nova-decide)):
 nova-decide ask --schema ./cmd/nova-decide/testdata/schema.json --state ./cmd/nova-decide/testdata/state.txt --backend fixed --answers ./cmd/nova-decide/testdata/answers.json --record ./decisions.jsonl --op first
 nova-decide read --card ./cmd/nova-decide/testdata/card.md --diff ./cmd/nova-decide/testdata/card.diff --backend fixed --answers ./cmd/nova-decide/testdata/read-answers.json --record ./decisions.jsonl --op card-1
 nova-decide score --card ./cmd/nova-decide/testdata/card.md --diff ./cmd/nova-decide/testdata/card.diff --backend fixed --answers ./cmd/nova-decide/testdata/score-answers.json --record ./decisions.jsonl --op card-1@landed@0123456789ab
+nova-decide attempt --brief ./cmd/nova-decide/testdata/card.md --result ./cmd/nova-decide/testdata/result.md --reason "verdict not-done: tests red in internal/decide" --backend fixed --answers ./cmd/nova-decide/testdata/attempt-answers.json --record ./decisions.jsonl --op c1@1
+nova-decide grade --brief ./cmd/nova-decide/testdata/card.md --backend fixed --answers ./cmd/nova-decide/testdata/grade-answers.json --record ./decisions.jsonl --op c1@grade
+nova-decide gate --output ./cmd/nova-decide/testdata/gate-output.txt --card ./cmd/nova-decide/testdata/card.md --diff ./cmd/nova-decide/testdata/card.diff --base-red TestPortInUse --backend fixed --answers ./cmd/nova-decide/testdata/gate-answers.json --record ./decisions.jsonl --op c1@1@gate
+nova-decide brief --card ./cmd/nova-decide/testdata/greet.md --backend fixed --answers ./cmd/nova-decide/testdata/brief-answers.json --record ./decisions.jsonl
 nova-decide outcome --record ./decisions.jsonl --id card-1 --label ok --note "the review found nothing"
 nova-decide calibrate --record ./cmd/nova-decide/testdata/record.jsonl --decision read --question defect --positive wrong --negative ok
 nova-decide findings --record ./cmd/nova-decide/testdata/record.jsonl --since 2026-10-01
@@ -2184,9 +2242,29 @@ landed work (`stranded_fragment`, `cut_citation`, `renamed_file_assumed`,
 `record_made_claim`, `invented_reason`, `fenced_block_edit`,
 `asserted_data_cut`, `load_bearing_word_cut`; `outside_paths` is
 1 - `inside_paths`); its line names the `top=` class and its `p=`. `nova-sprint
-land` asks it of every landed head as `<card>@landed@<head>`. `calibrate` prints
-the AUC, one `BAR` line per `--bars` value (positives caught, negatives bounced)
-and the `CATCH-ALL` bar, the highest that flags every positive; a label of
+land` asks it of every landed head as `<card>@landed@<head>`.
+`attempt` (how a work take ended: `class=` done, nothing-to-do, wrong-scope,
+no-result, needs-pro or provider-failure, over the brief, the child's RESULT.md and
+the member's reason line) and `grade` (a card's convergence before its first deal:
+`grade=` script, flash or pro, over the brief alone) print `ATTEMPT OK` and `GRADE
+OK` lines the same way, the chosen option and its `p=` first; the sprint asks both
+through the library (docs/SPEC-SPRINT.md sections 2 and 5).
+`gate` prints `GATE OK op= decision=gate backend= failures= route=caused|flaky|pre-existing`
+and one `GATE FAILURE key=<pkg>.<Test> id=<op>/<key> class= p= route= recorded=` line
+per failing test of the go test output, each one decision; a build failure is
+`route=caused recorded=unasked`. `gate --dry-run` asks nothing and writes nothing:
+each `GATE FAILURE` says `recorded=existing` (with its `class=`) for a decision the
+record holds already, `no` for one the run would ask, `unasked` for a build failure.
+`brief` reads cards as a flash child with no memory would, before they are added
+(a file, or a directory's `*.md` files as `nova-sprint add --brief-dir` reads them,
+as one batch), an uncalibrated rank: one `BRIEF CARD id=
+op=<card>@brief-<hex> p_converges= minutes= failed= uncalibrated=true recorded=` line per card,
+`failed` naming each question the card leaves open (`commit_stated(0.20)`,
+`ambiguous_step:step-2(0.70)`, or `-`). `nova-sprint add` asks the same of every
+card under `JEV_API_KEY` (no bar is set while the decision is uncalibrated);
+`nova-swarm lint --card <file> --decide` prints it for one file.
+`calibrate` prints the AUC, one `BAR` line per `--bars` value (positives caught,
+negatives bounced) and the `CATCH-ALL` bar, the highest that flags every positive; a label of
 classes joined by `+` (`stranded_fragment+invented_reason`) counts for each of
 them. `findings` prints one `FINDING class= count= cards=` line per class the
 score decisions since `--since` give a p at or above `--bar`, most cards first;
@@ -2200,6 +2278,11 @@ wrong:
 - `calibrate` over a record with no positive or no negative outcome refuses:
   a bar is read from both; so does an option no decision names
   (`--question verdict=BOUNCEE`).
+- `gate` over output with no `--- FAIL:` or `FAIL <pkg>` line refuses: it reads a
+  red go test run; `--bars` is `<flaky>,<pre-existing>`, each a probability or empty,
+  two set ones summing above 1. With no `--bars` (as the sprint row's defaults) every
+  failure is recorded with its class and routed `caused`; `--bars 0.8,0.8` is the
+  starting point.
 - The same `--op` over another card, diff or schema refuses; over the same inputs it
   returns the recorded decision and asks nothing, so a long run resumes.
 

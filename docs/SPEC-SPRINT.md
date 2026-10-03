@@ -378,7 +378,9 @@ line, never FAIL: the table holds what the step wrote.
 **Primary.** One unit of work, between an issue and a pull request. One stream
 for life. Fields: stream, score, brief, rules (the held rules file the member injects, section 2's rules by reference), who (the friend its brief's WHO line names, section 1, a friend's card), needs, head, attempt, fix, finding and why (a rework's, kept
 for the attempt a rework with no member up deals later), work (its live
-work card), asked (its readers), readers (the two whose ok it was accepted on),
+work card), grade (nova-decide's convergence grade before its first deal: section 5,
+the grade), decided:<op> (each attempt decision of its takes: the attempt decision,
+below), asked (its readers), readers (the two whose ok it was accepted on),
 tier (the tier the coordinator pinned it to, `rework --tier`: its tier and its
 ceiling both) and tier_now (the tier it is on: flash at its first deal on a route,
 then the tier the machine escalated it to: section 5, flash first),
@@ -417,7 +419,9 @@ rules, and a member older than it injects none, so its children would read no ru
 the place to work, and on a later attempt the fix, the finding of the broken read that
 caused it and why the attempt before ended. Identity `<primary>.w<attempt>`.
 Fields: primary, stream, kind=work, attempt, fix, finding, why, member, tier (the tier
-its route was drawn from: section 5, flash first), gen (its assignment
+its route was drawn from: section 5, flash first), decide_attempt_no_result,
+decide_attempt_nothing_to_do, decided and decided_used (the attempt decision's two bars
+and the decision its last finish carried: the attempt decision, below), gen (its assignment
 generation), dealt and taken (the clock times it was dealt and taken),
 first_dealt and first_taken (the attempt's first deal and first take, kept
 through every redeal and withdrawal), untaken_since (the first deal since its last take: a take unsets it, and
@@ -496,6 +500,56 @@ have no class, and are never identical. Two places count tries:
   identical failure`) in place of "work came back failed"; the tick holds it while the
   primary stays in review at that attempt (`AtIdenticalFailure`), and a rework or a
   drop closes it (`TestASecondIdenticalFailureRaisesTheBoundAtOnce`).
+
+**The attempt decision** (nova-decide's layer 2; the owner, 2026-10-02, the agreed
+plan: "result classification after each attempt (done / nothing to do / wrong scope /
+no result / needs pro)"; 2026-10-03: "Please push Jev wide."; docs/SPEC-NOVA-DECIDE.md
+section 10). The deal writes the sprint row's two attempt bars (nova-config) on every work
+card it cuts or deals again, each by its own field: `decide_attempt_no_result` and
+`decide_attempt_nothing_to_do` (a redeal writes the bars the row holds then, and unsets
+one it no longer holds). Both are empty by default (the coordinator, 2026-10-03: nothing
+routes on a decision until a review round labels cards independently, as for layers 4
+and 6): every take is decided, recorded and shown, and no decision routes a finish; 0.7
+is the starting point, with the calibration beside it in docs/SPEC-NOVA-DECIDE.md section
+9 (class=no-result AUC 0.883; class=nothing-to-do 0.618). When
+any take ends, a member whose environment holds the key, in the end's long work beside the push and never in its pass, asks
+the attempt decision over the card's brief, the child's RESULT.md as the member read
+it (`member.ResultText`) and the finish's own report, through Jev with the key
+`JEV_API_KEY` its loop's nova-secrets keys hold (the member's own: native and the child
+are never handed it), and the finish carries the decision, one JSON record line
+(`finish --decision`; one card a finish): its class (done, nothing-to-do, wrong-scope,
+no-result, needs-pro, provider-failure), its p, and its op id `<card>@<attempt>.<12 hex
+of its state>`, per attempt and state: two takes of one attempt that ended with identical
+states (the same report and RESULT.md) share one decision. A decision that cannot be made (no key, a backend that fails) is one
+`NOTE attempt <card> not decided` line, and the finish goes by its report alone. The
+server holds the decision to the attempt schema (`decide.ParseAttempt`, else the finish
+is refused) and to the take: its op must name the work card's primary and attempt, else
+the finish is refused in one line naming both (`the attempt decision names <card>@<n>
+(op=<op>), not this take's <primary>@<attempt> (<work card>)`; `sprint.decidedFor`,
+`TestAFinishCarryingAnotherTakesDecisionIsRefused`), so a finish is only ever routed by
+a decision of its own take. It writes it on the work card (`decided`: `<class> p=<p> op=<op>`; `card`
+prints `decided=<class>:<p>` on the ATTEMPT line, `decided_used=yes` when it routed the
+finish) and on the primary (`decided:<op>`: `<class> p=<p> used=<yes|no>`, set once,
+the outcome's key), and hands it to the decide lane, which records it in
+`<dir>/attempt.jsonl`. Two classes route a failed finish, each when its p is at or above
+its own bar on the card, where the report's prefix routed it (`sprint.finishKind`;
+`TestAFailedFinishGoesByItsAttemptDecisionAtItsClassBar`):
+
+| class, at or above its bar | the failed finish |
+| --- | --- |
+| no-result (`decide_attempt_no_result`) | an ended take with no result, as a `no result:` report is: redealt on another route, counted against the bound and by the route's rest, its record's line `no result: <report>` |
+| nothing-to-do (`decide_attempt_nothing_to_do`) | failed work, its class `decided nothing-to-do`, so two attempts the decision classes so are the second identical failure whatever their reports say |
+
+No other class has a bar in this layer (docs/SPEC-NOVA-DECIDE.md section 10: needs-pro had
+four positives in the calibration): a decided needs-pro, wrong-scope, provider-failure or
+done is recorded and shown, and never routes. A report native ended as a provider failure
+is never overridden by a decision, into failed work or into a take with no result: it is
+the provider's ended take as before. Under its bar, with its bar empty, and for a launch
+refused at staging or at launch (no take ran, and no decision is asked) the report's
+prefix routes the finish as before; an ok finish is recorded and never routed. The decide lane attaches each decision's outcome
+when its card lands or is dropped (`sprint.DecideDue`): `landed` for an attempt decided
+at the attempt that landed, `later-<tier>` for one decided earlier (the tier that landed
+it), `dropped`; a grade's outcome is that tier, or `dropped`.
 
 **Read card.** One reader's read of one primary at one attempt. Identity
 `<primary>.r<attempt>.<reader>`. Fields: primary, stream, kind=read, reader,
@@ -646,7 +700,7 @@ outcome and reason are kept.
 | waiting -> ready | everything it needs has landed or was waived | mechanical |
 | ready -> working | deal: the machine's tick cuts and deals a work card | mechanical |
 | working -> review | its work card finished, ok or failed | mechanical; failed notifies for judgment |
-| working -> ready | its work card was withdrawn because no fleet member is up | mechanical, notifies |
+| working -> ready | its work card was withdrawn because no fleet member is up, or, still ready, because its route rests (its note names the route and the reason) | mechanical, notifies |
 | review -> merging | accept: the readers it needs said ok at this head (one for a flash card, two different readers for a pro card; section 6) | mechanical (the tick), unless its CI is red at its head or it was returned to review at its attempt; the coordinator's verb takes those; refused without them |
 | review -> working | rework with a fix: the next attempt is delegated at once | the coordinator's verb |
 | review -> ready | rework with a fix when no fleet member is up or none is below its width; the tick deals it when one has room | the coordinator's verb |
@@ -762,7 +816,10 @@ and it is the coordinator's decision, receipted.
   back failed the same way) the failed finish writes `tier_now` and the why
   (`escalated from flash to pro: attempts <n-1> and <n> failed the same way
   (<class>)`) on the primary and returns it to ready, as a rework with no
-  member up does, and the tick's deal cuts the new attempt on the next tier. A
+  member up does, and the tick's deal cuts the new attempt on the next tier. The
+  failed finish reads the routes whether or not it reports usage (a native run
+  that printed no final line sends no `--usage`), so the escalation never waits
+  on a usage line (`TestASecondIdenticalFailureWithNoUsageStillEscalates`). A
   tier no route serves is the tick's judgment of that tier, the card held by it. At its ceiling the bound is the judgment "a card
   reached its bound" as before. The ladder has flash and pro: a frontier card
   is the coordinator's and is never dealt, a pinned model runs on its pin (read
@@ -775,6 +832,76 @@ and it is the coordinator's decision, receipted.
   (`tier=<t> ceiling=<t>`; `--json` `tier`, `ceiling`). One function decides
   the next tier for every bound that escalates (`Snapshot.NextTier`,
   `internal/sprint/route.go`): the take bound and the attempt bound.
+  **The grade** (nova-decide's layer 2; the owner, 2026-10-02, the agreed plan:
+  "convergence grade and route choice before the deal"; docs/SPEC-NOVA-DECIDE.md
+  section 11). Before a card's first deal the server's decide lane (`run
+  --decide`, section 12) grades its convergence from its brief alone, script,
+  flash or pro with a p each, records the decision in `<dir>/grade.jsonl`
+  under `<card>@grade.<12 hex>` and writes it on the primary, `grade` (`<grade>
+  p=<p> op=<op>`; `sprint.Grade`, written only on a card never dealt and still
+  ungraded, waiting or ready, never a sentinel; a brief replaced clears it).
+  `card` prints it on its CARD OK line (`grade=<g>:<p>`; `--json` `grade`).
+  The grade is a hint while the sprint row's `decide_grade` is empty (its
+  default, nova-config: nothing routes on a decision until a review round labels
+  cards independently; 0.7 is the starting point, the calibration beside it in
+  docs/SPEC-NOVA-DECIDE.md section 11: grade=pro AUC 0.930 over the store's
+  landed cards, 0.547 over the mechanical set, part of it the brief's own `tier:`
+  word); with a bar set, a card graded pro at or above it whose
+  ceiling is pro starts on pro instead of flash (`Snapshot.startTier`): the
+  deal draws its first route from pro and writes `tier_now` pro, and flash
+  first is overridden for that card alone. A grade never raises a card above
+  its ceiling, and a card dealt before its grade came starts on flash.
+- The gate verdict (docs/SPEC-NOVA-DECIDE.md section 12; the owner, 2026-10-02,
+  layer 3 of the nova-decide plan: "gate verdict: flaky vs caused vs
+  pre-existing"). Every deal of a work card (a first deal, a redeal, a rework's)
+  writes the sprint row's gate bars that are set on it, `decide_gate_flaky` and
+  `decide_gate_preexisting` (nova-config, `sprint set`), read with the routes in
+  the same round trip (a store with no route reads none). **Both are empty by
+  default** (the coordinator's rule for every nova-decide layer, 2026-10-03):
+  every gate decision is made, recorded and shown, and nothing is rerun or
+  reclassified until the owner sets a bar; 0.8 each is the starting point
+  (docs/SPEC-NOVA-DECIDE.md section 12: with the base run, p(flaky) AUC 0.716,
+  p(caused) 0.914, p(pre-existing) 0.907; without it, p(pre-existing) 0.522), and it is not routed
+  yet because at 0.8 24 of the calibration's 39 flaky failures would have been
+  reported pre-existing. The packet hands the bars to the member, and
+  the member hands native the key `JEV_API_KEY` its loop's nova-secrets keys
+  hold (native's own: no child is handed it). When the child ends `verdict:
+  not-done` and the gate output it names (its result's `output:` file, inside the
+  job or the child's temp, else its body) holds go test failures, native, before
+  the member reports the take: runs the failing tests once at the work's start, in
+  a worktree, in the child's own wall and environment, bounded by `gateRunWait`
+  (three minutes; are they red at the base? a run past it is asked `not run`);
+  asks the gate decision of each failure over its lines, the base's result, the
+  gate's other failures, the card's PATHS and the diff's summary, recorded in the
+  machine's `<root>/decide/gate.jsonl` under `<primary>@<attempt>@gate/<pkg>.<Test>`;
+  reruns at the head, once and bounded the same, every failure flaky at or above
+  the flaky bar when it is set, and attaches each rerun's result as its decision's
+  outcome; and prints one line, `NATIVE GATE label=<l> op=<op>
+  route=<green|pre-existing|caused> tests=<names> classes=<Test>:<class>:<p>,...`,
+  every decision shown whatever the route:
+  - `green` (every failure flaky, and the rerun passed): the member reads the
+    child's verdict as ok, its report beginning `gate: <tests> flaky, green on the
+    rerun; `, and the take is judged as any ok take (its push), so the readers
+    read it;
+  - `pre-existing` (every failure that stayed red was classed pre-existing at or
+    above its bar): the take is failed `pre-existing: <tests>` (`member.Judge`,
+    `cardhdr.EndPreExisting`), the base's or the member's and never the card's:
+    `FailureClass` gives it no class, so it is never the second identical failure
+    and spends no bound (section 2), and its judgment is the failed work's as
+    before;
+  - `caused` (one failure caused, a rerun red again, or the bars unset): the take
+    as the child reported it.
+
+  A gate decision that cannot be made (no key, bars it cannot read, a backend that
+  fails) is one `NATIVE NOTE` line and the take is the child's; a base that cannot
+  be run is asked `not run`; a rerun that cannot run is red again. A script card's
+  steps are their own gate and are never decided. `tla/CardContract.tla`'s
+  `JudgeOf` is unchanged: the decision changes the verdict Judge reads (green) or
+  the reason of a failed finish (pre-existing), never the finish kinds. The
+  calibration of 2026-10-03 (60 failing tests of the coordinator bench's CI runs,
+  labelled by git and the other runs): with the base run, p(caused) AUC 0.914,
+  p(pre-existing) 0.907, p(flaky) 0.716, and at the starting bars no caused failure
+  was routed flaky or pre-existing (internal/decide, `TestTheGateCalibrationRecordsSupportTheBars`).
 - A route whose children end without a result rests (the owner, 2026-10-02,
   nova-tools#5174: "A route whose children end without a result three times is
   rested by the machine, never redealt on."). The tick's deal counts each route's
@@ -804,6 +931,111 @@ and it is the coordinator's decision, receipted.
   (`sprint.RestsDue`, `TestRestsDueCountsNoResultEndsInTheRoutesWindow`,
   `TestARouteWhoseChildrenEndWithNoResultThreeTimesRests`,
   `TestARestingRouteServesNoDealWhileAnotherServes`).
+- A provider out of funds is never a mystery failure (nova-tools#5199). The owner, 2026-10-03,
+  8:03 AM ET: "provider out of funds should never be a mystery failure." And at 8:18 AM ET:
+  "you'll need to detect when a provider runs out of credits, and exclude that provider moving
+  forward, and let me know. then if all providers are out, then you stop the sprint." On
+  2026-10-03 two providers ran dry overnight and nothing landed: the store's redeal bound held,
+  and ci-03's repeated attempts were reworks from the coordinator's own answer loop.
+  - A provider rests as one: its rest is ONE fleet table property, `provider_rest_<provider>`
+    (`<began> <ends|open> <card|-> <cause> [balance=<x>] <words>`), never a copy on each
+    route, so a rest is one write and the table's properties (64, `ntable.LimitTableProps`)
+    grow with the providers and never with the routes (`TestTheFleetPropertiesAtAHundredRoutesStayUnderTheBound`). A
+    route rests while its own rule 3 rest or its provider's holds, the one that ends later
+    deciding (`sprint.RouteRests`); `routes` prints each route's `rested_until=`.
+  - A provider has two rests of its funds, and only one stops the sprint. Each holds with no
+    time (`open`, said `until paid`) and ends on what is listed with it, or on `funded`:
+    - OUT OF CREDIT (cause `out-of-credit`): a take the provider refused for want of credit
+      (its line `provider: class=out-of-credit ...`, docs/SPEC-SWARM.md), or a balance the poll
+      reads at or under zero. The provider has no money. It counts toward stopping the sprint.
+      - Begun by a refused take, it ends ONLY on `funded` or on a payment the poll sees: a
+        balance read strictly higher than the read before it, or than the balance at the
+        refusal (the rest keeps it, `balance=<x>`). That read then decides as any other: over
+        the hour of spend the rest ends, over zero but not over it the provider is low on
+        funds, at or under zero it stays out of credit. A balance over zero that is not higher
+        never ends it: OpenRouter refuses with 402 a request whose estimated cost the balance
+        cannot cover, so a provider that refuses can still read a small balance over zero. It
+        stays out of credit, with its balance beside it on the providers table, and counts
+        toward the stop (`TestARefusedProviderReadingASmallBalanceRestsOnceBesideAServingOne`,
+        `TestARefusedProviderAloneStopsTheMachineOnceUntilAPayment`,
+        `TestAReadHigherThanTheReadBeforeItEndsARefusedTakesRest`).
+      - Begun by a balance at or under zero, it ends on a balance read over zero, after an
+        unknown read too (the rest names no card, so it is no refused take's): over the hour of
+        spend the rest ends, not over it the provider is low on funds from then
+        (`TestABalanceAtZerosRestEndsOnAReadOverZeroAfterAnUnknownOne`).
+    - LOW ON FUNDS (cause `balance`): a balance the poll reads over zero but not over one hour
+      of the provider's spend. The provider is excluded before it runs dry, and still has
+      money: it NEVER counts toward stopping the sprint. It ends on a balance read over the
+      hour of spend measured before the rest began; at or under zero it is out of credit.
+    A take refused for the provider's key (`class=auth`) rests it for RouteRestFor, ends at
+    that time, and stops nothing.
+  - A refused take rests the provider in the tick that sees it, over rule 3's rest of its
+    routes; the rest's note and the tier's `no route serves the tier` name the cause and the
+    provider's words. A refusal is attributed to the rest window its child launched in (the
+    take's record keeps when it was taken): a take launched before the provider's last rest
+    ended (in flight when the rest began, or launched while it held) starts no new rest
+    however late its refusal arrives, so a rest ended by `funded` or by a balance is not undone
+    by it; a take launched after the end and refused rests the provider again
+    (`sprint.RestsDue`, `providerRestsDue`; `TestAnOutOfCreditTakeRestsEveryRouteOfItsProvider`,
+    `TestProviderRestsDueRestEveryRouteOfTheRefusedProvider`).
+  - A card dealt on a route before its rest began is never taken there. `take` reads the
+    rest itself (its provider's property, for a rest the balance poll wrote between two ticks;
+    a route's own rest is written only by the tick, which withdraws its cards in the same
+    step): a take by id of a ready card on a resting route is refused, naming the rest, and a
+    take by count passes over it. The tick withdraws every ready card on a route resting then,
+    by the one path a member going down takes (`withdrawCard`): no take ended, so no redeal is
+    spent, its primary goes back to ready for the deal to place on a route that serves, and
+    the primary's timeline notes why (`a card withdrawn from a resting route: taken back: its
+    route <route> rests (<reason>)`) (`sprint.restWithdrawals`, `cardRest`; `TestACardReadyOnARestingProvidersRouteIsWithdrawnNeverTakenAndRefused`,
+    `TestATakeOfACardOnARestingRouteIsRefused`).
+  - The balance poll. `run` reads each provider's balance when it begins and every 10 minutes
+    after (`sprint.BalancePollEvery`), outside every tick, through the seat's key in its own
+    environment (`nova-secrets exec --only OPENROUTER_API_KEY -- nova-sprint run ...`;
+    `internal/provbalance`): openrouter's `GET /api/v1/credits`, the balance `total_credits`
+    less `total_usage`; opencode publishes none (Zen has no balance endpoint,
+    anomalyco/opencode#44189, and its CLI reads none), so its balance is recorded `unknown` and
+    why, as any provider's with no endpoint or no key. One step writes each read to the fleet
+    table's property `provider_balance_<provider>` (`<balance|unknown> <at> <spend/hour>
+    <used|-> <note>`), the spend an hour measured from the provider's count used between two
+    reads. While the provider rests for its funds the step keeps the spend measured before the
+    rest began (a resting provider spends next to nothing), so a rest never lifts because its
+    own spend fell. The step writes, changes or ends the provider's rest as above; a read that
+    ends a rest of its funds writes a happened note, "a provider's routes serve again: its
+    balance is back". An unknown balance
+    writes and ends no rest. Each poll prints one `BALANCE` line naming the balances, never a
+    key (`sprint.Balance`; `TestTheBalancePollRestsAProviderUnderAnHourOfItsSpend`,
+    `TestLowOnFundsNeverStopsTheSprintAndOutOfCreditDoes`, `TestAnUnknownBalanceChangesNoRest`,
+    `TestAPolledBalanceAtZeroExcludesTheProviderUntilABalanceReturns`).
+  - `funded <provider> --reason <text>` is the coordinator's word that a provider was paid: it
+    ends the provider's rest of its funds now, for a provider whose balance no poll can read
+    (opencode) as for any; it is refused when the provider does not rest for its funds.
+  - One judgment of the provider, never one per card, while it rests: `a provider is out of
+    funds` (`provider <p> is out of funds (balance $x): a payment is the owner's; it is
+    excluded: its routes ... rest until paid (...)`), `a provider is low on funds`
+    (its words say it is not out of credit and the sprint does not stop for it), or `a provider
+    refuses its key`. Its subject is `stream:provider:<p>`; the funds judgments' decisions are
+    `funded <p>`, ack and wait, never a rework (a payment is not the card's to fix, and is the
+    owner's, never the machine's). It closes when the rest ends.
+  - Every provider out stops the sprint. When every enabled route of every tier rests because
+    its provider is out of credit, the tick's deal plans the stop and the binding STOPS the
+    machine as the step commits: its record's cause `every provider is out of credit`, the
+    machine line `machine: STOPPED (every provider is out of credit)`, and one judgment, `every
+    provider is out of credit`, naming the providers. A provider low on funds keeps the machine
+    running: its tier's `no route serves the tier` says why nothing deals. The line says what
+    counts as paid: `the sprint is STOPPED until a provider is paid: a balance over zero the
+    poll reads higher than the one before or than the balance at the refusal, or nova-sprint
+    funded <provider>`. `start` is refused
+    with the same line (exit 1) while every provider stays out; once one is paid (a read that
+    ends its rest, or `funded`), the coordinator starts it and the judgment closes
+    (`TestEveryProviderOutOfCreditStopsTheMachine`, `TestEveryProviderOutOfCreditStopsTheSprint`).
+  - `where --json` carries `providers`, the providers table: a row for each provider the
+    routes name, `name`, `balance` (dollars and cents rounded up, a negative one `-$0.51`, or
+    `unknown`), `balance_at`, `spend_hour`, `state` (`serving`; `resting until <end> (<cause>:
+    <words>)`; `serving; resting <routes> ...` when some rest) and `note` (why a balance is
+    unknown), read from the routes and the fleet table's properties, no card. The text frame
+    draws no new table (the sprint tables are locked); the dashboard's view of it is its own
+    change. `routes` prints each route's provider balance (`balance=`; `--json` `balance`,
+    `balance_at`, `rested_for`) (`TestTheRunLoopPollsBalancesAndWhereShowsTheProvidersTable`).
 - The twin (`mem:<file>`) holds no routes: routes are config, nova-config's
   rows applied to a store's Redis, and a twin has no config store to apply
   from. A twin deals as a store with no route does (the member's override);
@@ -1283,6 +1515,23 @@ names every card not scored and why. The batch's line carries `scored=<n>`, and
 `judged=yes` when the judgment was raised. `nova-decide findings` over the record
 clusters the classes into the material for new finder rules.
 
+**The lander's gate.** A batch whose `--check` is red on go test failures has each
+failure classified by the gate decision (docs/SPEC-NOVA-DECIDE.md section 12; section 5,
+the gate verdict) at the sprint row's bars, read once a land run, over its lines, the
+batch's PATHS and its diff from the base; the base is not run. Each decision is recorded
+and shown in a red batch's reason, `(the gate decision, <op>: <Test>:<class>:<p>,...;
+recorded; the flaky bar is unset, so nothing is rerun)` while the bar is empty, its
+default. When the flaky bar is set, no failure is caused and one is flaky at or above it,
+the check runs once more: green, the batch
+lands as any green batch; red, it is red as before, the reason ending `(run once more:
+the gate decision classed <tests> flaky, op <op>)`. The rerun's result is each flaky
+decision's outcome (`flaky`, or `red-again`). Every decision is in
+`<land root>/decide/gate.jsonl` under `land/<stream>@<tip 12>@gate/<pkg>.<Test>`. A gate
+red otherwise is red as before, its reason naming the decision's route; no key, or bars it
+cannot read, is red as before with why no decision was made. Asked with the base not run,
+the calibration of 2026-10-03 gave p(caused) AUC 0.8 and p(pre-existing) 0.522, so the
+lander acts on flaky alone.
+
 A cross-stream need is recorded as data on the stuck card (the needed card and
 its stream); it is resolved when that card has landed, and ranking the needed
 card is not landing it. The notification names both streams and both cards.
@@ -1382,7 +1631,13 @@ when there is one, is pushed it. add with a need on a
 dropped primary writes the blocked judgment in the same step. The blocked
 judgment names the dropped needs; acknowledging it waives those only (a need
 dropped later is its own judgment), and `card <id>` shows each waived need, by
-whom and when. An add counts only valid candidate IDs as proposed dependencies;
+whom and when. The ack is how a chain behind a dropped card is mended: the
+waiver is written on the card (`waived`, `waived_by`, `waived_at`), and the card
+moves to ready in the ack's own step when nothing else holds it (on a RUNNING
+machine, at the next tick, which applies the step), so nothing down the chain is
+dropped and added again; a sentinel is reached, and a held card or held sentinel
+keeps its hold. The coordinator who acks owns the risk that the dependent runs
+without the dropped card's change. An add counts only valid candidate IDs as proposed dependencies;
 a missing prerequisite refuses the dependent too. An add naming its ids is
 all or nothing, as every verb that names its cards is: one refused id refuses
 them all. A stored waiting primary
@@ -1489,6 +1744,97 @@ a need) is held by what it waits on, which the table shows, and is never stale.
 `wait stale:<stream>~<epoch> --for <duration>` writes the time on the stream's
 control card (`stale_review`), and the stream is not shown stale before it.
 This is pull visibility; nothing claims to detect a dead process.
+
+### Answered by nova-decide
+
+`answer` answers the routine judgments by the judgment decision
+(docs/SPEC-NOVA-DECIDE.md section 13; the owner, 2026-10-03: "Please push Jev
+wide"). The routine kinds are the ones a coordinator's own loop answered by the
+printed lines: a reader found it broken, work came back failed, a primary is
+blocked on something dropped, stalled, stream stopped: conflict on a card, a
+work card is past its deadline, cannot ask, ready to accept, and a card reached
+its bound. Every other judgment, a sentinel reached among them, is left, and
+listed `left`, its kind `other` and its type in the why. A judgment the coordinator set a wait on is the coordinator's
+until it comes due, and is not read.
+
+Each card of a judgment is decided by itself: a grouped judgment (several cards
+in one note, or several notes in one group) is several decisions, each over its
+own card's state, recorded under the note's id (`<note id>:<card>` for a note of
+several cards). The verbs allowed are the decisions the judgment prints; the
+lines applied are the lines the inbox prints for that card (a judgment of one card:
+its group's lines; one card of several: the lines `inbox` prints for a group of
+that card alone, the card named where a group's form would name `--group <note>
+--expect 1`), with the placeholders filled from the decision: `'<fix>'` the fix's
+text, `'<why nothing is to be done>'` the ack's reason. A note's own verb (`wait`,
+`ack`) runs once a pass, and an ack is applied only to a note of one card.
+
+The verb is applied when its probability is at or above the bar: `--bar`, else
+nova-config's sprint row `decide_judgment_bar` (applied to `sprint:decide_judgment_bar`
+and read with the routes; `routes --json` carries it). The row ships it empty (the
+owner, 2026-10-03: "same rule as the other layers"): with no bar, nothing is applied;
+each decision is asked and recorded (`act` listed) and its row says what a bar would
+apply, so the record trains before anything acts; once a bar is set or given, a
+recorded decision is applied from the record without asking again. 0.8 is a starting point measured on 100 of the coordinator's own judgments
+(docs/SPEC-NOVA-DECIDE.md section 13), not an independent calibration. A drop is never
+applied, whatever its probability: it is listed with the reason chosen. A card
+whose judgment text or last ten log lines carry a provider's refusal for want of
+payment (HTTP 402, out of credit) is never asked: it is listed, "a payment is the
+owner's". A card decided before is answered from the record and asked nothing; one
+applied before whose judgment is still open is listed, never applied twice; and a
+card the decision reworked, or began to, within the last hour (the record's applied
+and applying lines say when, a decision applied from the record among them) is
+listed, not reworked again, so no loop reworks a card round and round under a dead
+provider.
+
+The record is the guard against applying a decision twice. Before the first verb of
+a decision runs, the record says `applying` with the decision's op id,
+`decide.<decision id>` (a `~` written `_`; `<op>.<n>` for the n-th of several lines),
+on the decision's own line when it is new and as an act line when it was recorded
+before; every verb carries that id as its `--op`; after them the record says
+`applied` or `refused`. A pass stopped between the two leaves `applying`: the next pass
+that finds the judgment open finishes the decision through the same ids, past the
+bar and the hour guard it passed when it began, and a verb that ran replays its
+recorded result and changes nothing. The verb's own check is not skipped: a drop, a
+release, or a verb the judgment does not print is never applied, so a decision that
+says `applying` on one (a record answer did not write) is that card's `refused` row
+with the reason, and the record says `refused` after it. A judgment the verb answered is closed, so its decision stays
+`applying`, which the hour guard counts.
+
+One ask of the backend may take `--timeout` (60s by default; the Jev client is bounded
+by it too): an ask past it, a backend error, an answer out of shape, or no key is
+that card's one `failed` row, escaped to one line; nothing is applied or recorded for
+it, the pass goes on to the next card, and it exits 1. A failure goes to stdout only:
+the record holds decisions, and an ask that failed made none.
+
+At the start of each pass the outcome of earlier decisions is attached from the
+card's state (at most 25 a pass, newest first): landed, dropped (off the table),
+or came back (another judgment open on it). Each pass prints one table, a row a
+card (`judgment`, `card`, `kind`, `verb`, `p`, `act`: applied, would-apply,
+listed, refused, failed or left, and `why`: the lines applied, or why it is
+listed), an `OUTCOME <decision> card=<c> label=<l>` line per outcome attached, and
+`ANSWER OK rows=<n> applied=<n> would_apply=<n> listed=<n> refused=<n> failed=<n>
+left=<n> outcomes=<n> bar=<p, or - for none> record=<file>; run: nova-sprint inbox`; `--json` is the same as one object.
+answer takes none of the shared `--op`, `--epoch` or `--max`: each verb it applies
+carries its decision's own op, and a pass lists every row; given one, it is refused
+as a flag answer does not define.
+`--dry-run` asks the decision and prints `would-apply`, and writes neither the
+sprint nor the record (`ANSWER DRY-RUN`). `--every <d>` is the coordinator seat's
+loop: a pass every `<d>` until a pass finds the machine STOPPED (or DONE), then
+`ANSWER STOPPED <state>: the loop ends`, exit 0. Exit 1 is a pass with an applied
+line refused or a decision whose backend failed; exit 2 a usage, an actor other
+than the coordinator, or a sprint that did not answer.
+
+answer is a client of the sprint as the coordinator's shell is: every read and
+every answer is a verb, sent to the server when `NOVA_SPRINT_SERVER` names one
+(the server never runs answer itself), else run on the store `--redis` names.
+The backend is Jev (`--backend jev`, the key from `JEV_API_KEY`, which
+`nova-secrets exec --only JEV_API_KEY` sets; with no key every ask fails, naming
+that command) or a fixed file (`--backend fixed --answers <file>`). The record is
+`--record`, default `~/nova-sprint/decide/judgment.jsonl`: the decide layers keep their
+records under one `decide/` directory (a member's reads in `<root>/decide/read.jsonl`,
+the brief's in `~/nova-sprint/decide/brief.jsonl`), and answer makes that directory
+0700, or tightens it to 0700 when it was made before, as the records hold the sprint's
+state.
 
 ## 9. What is always true
 
@@ -1632,7 +1978,7 @@ refused), `--json` and `--max`. `--actor` has no default: it is `--actor`, else
 NOVA_SPRINT_ACTOR, and a verb that writes with neither is refused. Every verb
 has one class of who may run it. The coordinator's verbs (init, add, quack, release,
 resolve, start, stop, ask, accept, rework, return, drop, rank, brief, move, resume, land, fleet
-up, fleet down, fleet level, fleet sync, friend sync, friend down, friend up, reader add, reader away, reader up, reader remove, stream remove, wait, ack, clear, teardown, repair,
+up, fleet down, fleet level, fleet sync, friend sync, friend down, friend up, reader add, reader away, reader up, reader remove, stream remove, wait, ack, answer, clear, teardown, repair,
 goal set, goal drop, play) are the sprint's coordinator's alone: the first
 init names the coordinator (`--coordinator`, else the actor), a later init is
 refused unless its actor is that coordinator and never changes it (the seat
@@ -1662,15 +2008,15 @@ command that loads it.
 | verb | does |
 |---|---|
 | init | creates the four tables and the view; `--readers`, `--members`, `--coordinator` (the one actor who releases sentinels; default the actor; the seat then moves by `coordinator`), `--owner` (who may give the seat and whose name a take carries; set once, kept by a clear, removed by teardown), `--rules <file>` (the child rules file every brief is held to, one required sentence per line; its absolute path is recorded as the key `sprint:rules`, kept by a clear and removed by teardown; refused at once when the file cannot be read or holds no rule; this repository's is `fleet/child-rules.txt`); its line names every reader of the sprint (`readers=`), and on a twin a NOTE says a member it adds is up after the next tick |
-| add | admits primaries into a stream: waiting if they need something, else ready; `--count n` generates ids; `--sentinel <id>`, `--before`/`--after <id>` (section 16); `--brief <text>` or `--brief-file <path>` gives the brief (the file's bytes as they are, its one trailing newline cut, the whole file read so the lint and the size refusal see all of it, a file over 1 MiB refused naming that cap and its true size; both together, or a file that cannot be read, is refused with exit 2), and every packet carries it whole; a brief is a child's whole brief, so `add` holds every brief to the card lint's child rules (`swarm.LintCardChildWith`, in process, the rules of `nova-swarm lint --card --child-rules`) and refuses one that fails with the lint's own `LINT DRIFT brief <check>: <line>: <excerpt> remedy=...` lines on stderr, exit 2, nothing written; a `--count` card and a sentinel with no brief are not linted, and an add of cards with no brief says so on a NOTE line naming `brief`, the verb that gives one, and `--rules <file>` names the rule file, read at add time, for this add (over the one `init --rules` recorded, over the built-in general rules; a file the members hold, `fleet/child-rules*.txt` of the build, is rules by reference, section 2: a brief on a repository with a held file need not carry it, and its card names that file; a file of a held name whose text is not the build's copy is refused, since the members inject theirs; a `--rules` with no brief is refused, and a file that cannot be read is refused naming its absolute path); `nova-swarm template --name card` prints a card that passes the general rules; `--brief-dir <dir>` adds one card per `*.md` file in the directory in byte order of file name, and `--brief-file <path>` given alone (no ids, `--count` or `--sentinel`) or again adds one card per named file in the order given (with either form no positional id; the card id is the file's base name without `.md`, which add says on a NOTE line under its ADD line, refused naming the file when not one; one `--brief-file` with no ids, `--count` or `--sentinel` is that form too, one card named by its file, nova-tools#5096 item 19, and with ids, `--count` or `--sentinel` it is the brief of the cards they name); each brief's `Needs:` line (the first `Needs:` header line, else the `DEPENDS-ON:` line of its typed header block; ids comma separated, text after an opening parenthesis cut, so `none` or `-` is no needs, and an `owner/repo#n` reference is no need) becomes that card's needs, a need naming no primary on the table or in this add refused naming the file and the id, `--needs <a,b>` on the line adds to every card's (a need named by both is stored once), and `--sentinel <id>` with either form admits one stop after the cards, `--before`/`--after`/`--score` applying to every card; one failing brief refuses the whole call, every failing file named with its findings, exit 2, nothing written; two cards of one many-brief add that name one file in their `PATHS:` header lines (commas or blanks between the files), neither needing the other through the add's needs, are refused, exit 2, nothing written, naming the file and the two cards, unless `--allow-shared-paths` (nova-tools#5096 item 17); the one-brief form reads the brief's `Needs:` or `DEPENDS-ON:` line as the cards' needs when `--needs` is not given; `--held` admits every card of the add held (section 16) |
+| add | admits primaries into a stream: waiting if they need something, else ready; `--count n` generates ids; `--sentinel <id>`, `--before`/`--after <id>` (section 16); `--brief <text>` or `--brief-file <path>` gives the brief (the file's bytes as they are, its one trailing newline cut, the whole file read so the lint and the size refusal see all of it, a file over 1 MiB refused naming that cap and its true size; both together, or a file that cannot be read, is refused with exit 2), and every packet carries it whole; a brief is a child's whole brief, so `add` holds every brief to the card lint's child rules (`swarm.LintCardChildWith`, in process, the rules of `nova-swarm lint --card --child-rules`) and refuses one that fails with the lint's own `LINT DRIFT brief <check>: <line>: <excerpt> remedy=...` lines on stderr, exit 2, nothing written; a `--count` card and a sentinel with no brief are not linted, and an add of cards with no brief says so on a NOTE line naming `brief`, the verb that gives one, and `--rules <file>` names the rule file, read at add time, for this add (over the one `init --rules` recorded, over the built-in general rules; a file the members hold, `fleet/child-rules*.txt` of the build, is rules by reference, section 2: a brief on a repository with a held file need not carry it, and its card names that file; a file of a held name whose text is not the build's copy is refused, since the members inject theirs; a `--rules` with no brief is refused, and a file that cannot be read is refused naming its absolute path); `nova-swarm template --name card` prints a card that passes the general rules; `--brief-dir <dir>` adds one card per `*.md` file in the directory in byte order of file name, and `--brief-file <path>` given alone (no ids, `--count` or `--sentinel`) or again adds one card per named file in the order given (with either form no positional id; the card id is the file's base name without `.md`, which add says on a NOTE line under its ADD line, refused naming the file when not one; one `--brief-file` with no ids, `--count` or `--sentinel` is that form too, one card named by its file, nova-tools#5096 item 19, and with ids, `--count` or `--sentinel` it is the brief of the cards they name); each brief's `Needs:` line (the first `Needs:` header line, else the `DEPENDS-ON:` line of its typed header block; ids comma separated, text after an opening parenthesis cut, so `none` or `-` is no needs, and an `owner/repo#n` reference is no need) becomes that card's needs, a need naming no primary on the table or in this add refused naming the file and the id, `--needs <a,b>` on the line adds to every card's (a need named by both is stored once), and `--sentinel <id>` with either form admits one stop after the cards, `--before`/`--after`/`--score` applying to every card; one failing brief refuses the whole call, every failing file named with its findings, exit 2, nothing written; two cards of one many-brief add that name one file in their `PATHS:` header lines (commas or blanks between the files), neither needing the other through the add's needs, are refused, exit 2, nothing written, naming the file and the two cards, unless `--allow-shared-paths` (nova-tools#5096 item 17); the one-brief form reads the brief's `Needs:` or `DEPENDS-ON:` line as the cards' needs when `--needs` is not given; `--held` admits every card of the add held (section 16); under `JEV_API_KEY` add asks nova-decide's brief decision of every card it names with a brief, after its own checks and before it writes, one deadline (a minute) for the whole batch, and with a server where it is typed, sending the server each card's op (`--brief-op`, refused when typed on an add no server runs; the server takes only `<id>@brief-...`) (docs/SPEC-NOVA-DECIDE.md section 14): one `BRIEF card=<id> op=<card>@brief-<hex> p_converges= minutes= failed= uncalibrated=true recorded=` line per card (under `--json` the object's `brief` field), recorded in the coordinator's `<root>/decide/brief.jsonl` (root `~/nova-sprint`) or `--decide-record <file>`, and each card stores its op and record (`brief_op`, `brief_record`); with nova-config's sprint row `decide_brief_bar` set a card under it refuses the whole add, exit 2, nothing written (empty, the default, reports only, and stays empty while the decision is uncalibrated; a decision that cannot be made is a `NOTE brief:` line and the add goes on); land attaches `landed` (attempt 1) or `reworked` and drop attaches `dropped` to the decision the card stores, by its exact op |
 | quack | cuts quack cards, the sprint's end-to-end test cards, into a running store: `quack --streams <a,b,...> --count <n> --repo <clone url> [--tiers <t,...>] [--base <branch>]` adds n cards to each stream (a stream new to the sprint is made), the tiers (default `flash,pro`) taken in turn down each stream, the base default `dev`; each card's id is `quack-<stamp>-<stream>-<nnn>` and its brief asks for the one file `quacks/<id>.txt` holding the line `quack`, the stamp twelve hex digits drawn once per call (two passes share one with a chance of about one in 2^48, so a pass's files are new to the repository's history, which a clear does not empty), every call drawing its own; under `--op` the call is held to the caller's arguments (streams, count, tiers, repository, base), never to the cards its stamp makes, so the same call retried, or two of it overlapping, replays the store's recorded result while other arguments under that op are refused, and an op this store has no record of (after a teardown, or in another store) adds new cards under a fresh stamp; each brief is a child's whole brief (line 1 its tier, `BASE:`, `REPO:`, what to do, the known answer, the finish and the read) closing with the RULES paragraph of the rule set `add` would hold it to, and is held to the card lint as `add` holds a brief; every card of every stream is checked before anything is written (a stream long enough to make an id over 128 characters is refused, naming the stream and the length), one step adds every stream's cards or none (several streams' named cards are all or none, as one stream's are), and a refusal names every missing or bad input at once, exit 2, nothing written |
 | release | lands reached sentinels, and held ones (`add --held`) that wait for nothing; clears the hold of a held card, which goes to ready when it waits for nothing else; the coordinator's alone, with `--reason` |
 | resolve | waiting -> ready where needs have landed (the tick does it; by hand for a stuck case) |
 | start, stop | set the machine RUNNING or STOPPED (section 14) |
 | run | ticks on every line of the log (at most every 100 ms) and once a second while the log is quiet; before each tick it reads its own binary's file, and when a new build was installed under it since it began it stops (`RUN STOP the binary this loop runs was replaced ...`, exit 3) so its supervisor starts the new one: a loop never ticks the store with older code than the verbs run |
 | tick | one tick by hand |
-| take | a worker moves work cards fleet ready -> working; `--as <member>`, `<card>@<gen>`. The width is hard: a member's working cards never pass its fleet row's width, held here whatever is asked; a take by count is cut to the room, a take by id past it is refused; a take by count that took fewer than asked says why on a NOTE line (the member at its width, its ready queue empty, or not up) |
-| finish | work cards done ok or failed; primaries to review; `--as <member>`, `<card>@<gen>`; `--usage <text>` (what the run spent) is kept on the attempt's record, timed and priced (section 2, What a card cost) |
+| take | a worker moves work cards fleet ready -> working; `--as <member>`, `<card>@<gen>`. The width is hard: a member's working cards never pass its fleet row's width, held here whatever is asked; a take by count is cut to the room, a take by id past it is refused; a take by count that took fewer than asked says why on a NOTE line (the member at its width, its ready queue empty, or not up); a card on a route that rests is never taken: refused by id, naming the rest, and passed over by count (the tick withdraws it) |
+| finish | work cards done ok or failed; primaries to review; `--as <member>`, `<card>@<gen>`; `--usage <text>` (what the run spent) is kept on the attempt's record, timed and priced (section 2, What a card cost); `--decision <json>` (the take's attempt decision, one card a finish, its op naming that take's card and attempt, else refused) is kept on the card, recorded by the server's decide lane, and routes a failed finish when its class is no-result or nothing-to-do at or above that class's bar on the card (section 2, the attempt decision) |
 | ask | deals primaries in review to the readers each needs (one for a flash card, two different readers for a pro card; section 6); `--another`; `ask <primary> --instead <reader>` takes that reader's read, asked or reading, of the primary at its attempt back (`retired_by: coordinator`, a later report of it refused naming that) and asks one other reader in the same step, chosen and routed as `--another` (the owner, 2026-10-01: "get the verbs in man."); refused, nothing changed, when the primary is not in review, the reader holds no live read of it, no other reader is free, or with `--another`, `--group` or more than one primary |
 | queue | a reader's read cards or a member's work cards, oldest first (`--as`; `--json` carries the worker's `width`: a member's fleet row's, a reader's its machine's, `reader-<m>`), or a stream's merge queue (`--stream`) |
 | routes | each route of the store (nova-config's `route` kind) with what its attempts did: attempts, ok, failed, provider failures, mean wall from take to finish, and `rested_until`, when its rest ends while the machine rests it for children that ended with no result (section 5; `-` when it does not rest); `TIERS flash=<n> pro=<n>` first, the enabled routes per tier; `--json` (`rested_until` only while it rests) |
@@ -1706,6 +2052,7 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | ci | records a CI observation for primaries in any state |
 | wait | sets a judgment's next review time |
 | ack | closes a judgment the coordinator looked at, with the reason |
+| answer | each card of each routine judgment answered by the judgment decision, the verb chosen applied at or above `decide_judgment_bar` and the rest listed, every decision recorded with its outcome ("Answered by nova-decide", section 8); `--dry-run`, `--bar <p>`, `--every <d>` (until STOPPED), `--backend jev\|fixed`, `--answers <file>`, `--record <file>`, `--timeout <d>` (one ask, 60s); each verb applied carries the decision's `--op`, recorded applying before and applied after; run where typed, its verbs sent to the server |
 | inbox | every open judgment and the notifications since the cursor, grouped, judgment first; `--open <id>`, `--read`; `--json` carries `judgments` (each with `id`, `kind`, `type`, `what`, `stream`, `size`, `cards` whole, `notes`, and `answers`: every decision with the exact command lines that make it, in order), `happened` (the notifications since the cursor, grouped), `done` (the machine has stopped because the sprint is done) and `groups`, every group in the order the text prints; `--wait --timeout <d>` blocks until the inbox holds a judgment, or a note addressed to the coordinator, that was not in it when the wait began (by note id: a held or waited judgment is open already and never wakes it; the owner, 2026-10-02: "push notifications for inbox from nova-sprint so she doesn't have to poll"), or the machine stops having run, or `<d>` passes; it sleeps on the tick-end notes and looks at the inbox at each one and every 15 s while nothing ticks; then it says how it ended on one line (`inbox --wait: new=<group id,...>`, `inbox --wait: the machine stopped`, `inbox --wait: nothing new in <d>`) and shows the inbox; `--json` carries `woke` and `new` (the new groups' ids), the line only for a wait that found nothing, on stderr (stdout stays one JSON object); `--wait --push <dir>` keeps running until it is interrupted: each new judgment and note to the coordinator is written once as `<dir>/<note id>.md` (the group as `inbox --open` prints it, then `clock: <RFC3339>`; a `:` in a read-time group's id becomes `-`), said as `INBOX OK pushed=<id> file=<path>` (`--json`: one object a file), and the files there are its cursor: a note with a file is never written again, so a restart pushes nothing twice and misses nothing; a timeout is quiet and the loop goes on, the machine stopping is its line and the loop goes on; a local write, into the coordinator's own inbox directory; `--push seat` is the holder's inbox, and follows the seat ("Handing over the seat"); `--push` takes no `--read`, `--open` or `--at-epoch`; `--json` carries `coordinator`, the seat's holder |
 | card | one primary's story, told from the log: for a card in flight, first what holds it now (each open judgment with the commands that answer it, or the actor and its deadline); its place in its stream's line; its brief, and the fix its attempt was given; its timeline in local time, an attempt at a time ("attempt 2, because attempt 1 failed"), one line per event a person would name (two readers asked, a merge and its batch, a step and its answer are one line each), a finish and a read with the first line of their words; the reports, findings and fixes whole as paragraphs; a card that has ended says so in one line; a COST line per consumer that ended and the COST TOTAL (section 2, What a card cost); the CARD OK line ends with the tier it is on and its ceiling (`tier=<t> ceiling=<t>`, section 5, flash first); `--fields` prints every field of the primary and its cards instead; `--json` carries both, the timeline's events with the log lines each tells, and the cost |
 | queue --as, take | a member's or a reader's cards (a reader's `queue --as` is its beat), each with its packet: what it is handed so that it needs no other read to learn its task (the card, its epoch and generation, the brief, this attempt's fix, the notes on it, for a rework the finding of the read that found the attempt before broken and why that attempt ended (the work card's own words: the primary's are written at the next tick's drain, after a member may have taken the card), and for a work card the branch to work on, `sprint/<card>.g<gen>.e<epoch>` (the epoch makes it one per epoch, a card id coming back after a clear, and the generation one per launch, a card dealt again within an epoch, withdrawn from a member or redealt after a staging or provider failure, being another launch whose push must not meet the first's), and the one to start from, the attempt before's branch for a rework, with `base_head`, the head that attempt finished ok at, which a rework is staged from (docs/SPEC-CARD-CONTRACT.md: never a branch name alone, which may never have reached origin); for a read card the work it reads: the worker, its head, branch and base, and the worker's report), and the command that reports it (a work card's names `--head <commit>`: a finish without `--head` records the card's id as its head, which `land` refuses as not a commit id); `queue --as <w> --packets <n> [--have <id,...>]` hands only the packets the worker asks for: the first n cards it may start (asked, ready) and every card in flight (reading, working), each not named in `--have`; every other card is listed with its id, column, attempt and gen, and the answer's epoch, which are its claim, and no packet (a reader of width 8 holding 150 asked reads with 2.5 KB briefs: 445,525 bytes without the flag, 51,623 asking for 8; the fleet load test of 2026-10-01 measured 579,181 bytes a pass); without `--packets` every card carries its packet, as before; take prints the packets of the cards it took, `--json` as `packets`; finish takes `--branch` and `--base`, which the work card keeps and the reader's packet and card show; a fleet member (`nova-swarm member`) pushes the child's commit to origin's `sprint/<card>.g<gen>.e<epoch>` before its finish, so the finish's `--head` is the pushed sha the merge queue carries and the merge reads the work from origin; a finish is ok only with the result's shape, its verdict ok and a pushed commit, and every other is a `--failed` finish naming no head and no branch, its report starting with the reason (`no RESULT.md shape`, `nothing to do: <why>`, `verdict <word>`, `no commit: <why>`, `push refused: <git's line>`), so it opens the failed-work judgment and never goes to review with nothing to read (docs/SPEC-CARD-CONTRACT.md section 4) |
@@ -2034,6 +2381,29 @@ what landed and everything land said was wrong (a refused or failed batch, a ref
 batch, its remedy); a round that could not read the merge queue prints `LAND FAILED` with why,
 since an unreadable queue is not an empty one, and the next round tries again. A failure is
 printed once, when it begins: the same failure again prints nothing until it changes or clears.
+
+With `run --decide <dir>` the server keeps the record of nova-decide's layer 2 (section 2,
+the attempt decision; section 5, the grade): `<dir>/attempt.jsonl` and `<dir>/grade.jsonl`,
+of which it is the one writer. Its decide lane runs a round every five seconds
+(`DecideEvery`), apart from the line of control but for a read of the work table and a
+grade's write: it records the attempt decisions the finishes carried, grades every card
+never dealt and ungraded through Jev (with `JEV_API_KEY` from the run loop's own
+environment, its loop row's nova-secrets keys; with no key it grades nothing and says so
+when it starts), eight at a time, each ask bounded by the lane's wait (`GradeWait`, one
+minute, given to the lane when it is made, so a backend that never answers ends the
+round at the wait; `TestTheDecideLaneCannotStallTheTickOnAHangingBackend`: the line of
+control stays free and a tick and a worker's finish run while the asks hang), each
+recorded and its grade written on the card
+(`store.GradeStep`, the machine's step), and attaches the outcome of each decision of a
+card that landed or was dropped, once (a primary with a decision is read unplaced after
+its drop). A round prints one `DECIDE recorded= graded= written= attached=` line when it
+did something and nothing when it did not; a failure is `DECIDE FAILED <why>`, once until
+it changes. A card graded is not asked again by the server process; a grade whose ask
+failed (the backend's error, the wait run out) is asked again on the next round, at most
+once a round per card, until it is answered or the card is dealt. The record is loaded
+whole on each write, as every record of nova-decide is, and its rotation is owed with the
+read's. A member's decision that reaches a server with no `--decide` is kept on the card
+(and routes the finish when its class's bar on the card is set), and recorded nowhere.
 
 The address is one address of the coordinator's machine on the fleet's private network; an
 address every network can reach is refused. The server checks no credential (the owner: "I am OK

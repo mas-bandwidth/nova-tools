@@ -60,6 +60,11 @@ type Packet struct {
 	// read by them (docs/SPEC-SPRINT.md section 6); empty for a strings read.
 	DecideBounce string `json:"decide_bounce,omitempty"`
 	DecideReview string `json:"decide_review,omitempty"`
+	// A work card's gate decision bars, the deal's (steps_review.go, gateFields): its
+	// member's native classifies a red gate's failures by them before the take is
+	// reported (docs/SPEC-SPRINT.md section 5, the gate verdict); empty for none.
+	DecideGateFlaky       string `json:"decide_gate_flaky,omitempty"`
+	DecideGatePreexisting string `json:"decide_gate_preexisting,omitempty"`
 	// A read's: the work it reads.
 	Worker     string `json:"worker,omitempty"`
 	Head       string `json:"head,omitempty"`
@@ -73,6 +78,15 @@ type Packet struct {
 // written by add (and brief) with the brief it was held to, absent when the brief carries its
 // own rules. It is the card's, so no later add changes what an earlier card's child reads.
 const FieldRules = "rules"
+
+// FieldBriefOp and FieldBriefRecord are the card's brief decision (internal/decide,
+// docs/SPEC-NOVA-DECIDE.md section 14): the op id add asked it under and the record
+// that holds it, written when add asked one, so land and drop attach the card's end
+// to that decision by its exact id; both absent when none was asked.
+const (
+	FieldBriefOp     = "brief_op"
+	FieldBriefRecord = "brief_record"
+)
 
 // BranchOf is the branch one launch of a work card's attempt is worked on: one per launch,
 // named by the sprint (its prefix, the card), the launch's generation and its epoch, as the
@@ -146,6 +160,7 @@ func PacketOf(prefix string, epoch uint64, c, primary *Card, earlier []*Card, wo
 	}
 	if p.Kind == "work" {
 		p.Branch = BranchOf(prefix, epoch, c.ID, c.Int("gen"))
+		p.DecideGateFlaky, p.DecideGatePreexisting = c.F(FieldDecideGateFlaky), c.F(FieldDecideGatePreexisting)
 		p.Finding, p.Why = c.F("finding"), c.F("why")
 		// the attempt's own words, written with its card: the primary's are queued for the next
 		// tick's drain, so a take before it sees the primary at the attempt before

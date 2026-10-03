@@ -1,0 +1,11 @@
+{
+  "repo_branch": {"noul": 0.98},
+  "files_named": {"noul": 0.96},
+  "gate_stated": {"noul": 0.8},
+  "commit_stated": {"noul": 0.96},
+  "report_stated": {"noul": 0.91},
+  "one_thing": {"noul": 0.94},
+  "ambiguous_step": {"choice": "none", "p": {"none": 0.81, "step-1": 0.16, "step-2": 0.02, "step-4": 0.01}},
+  "minutes": {"choice": "under-10", "p": {"under-10": 0.96, "10-20": 0.03, "20-45": 0.01}},
+  "converges": {"noul": 0.72}
+}

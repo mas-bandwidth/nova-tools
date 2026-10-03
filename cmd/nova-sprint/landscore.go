@@ -52,7 +52,7 @@ func (a *app) scorer() (decide.Backend, string) {
 	if key == "" {
 		return nil, decide.JevSecret + " is absent, so no landed diff was scored; run land under nova-secrets exec --only " + decide.JevSecret + ",<its other keys>"
 	}
-	return decide.JevHTTP(key), ""
+	return decide.JevHTTP(key, decide.JevTimeout), ""
 }
 
 // scoreAll scores the run's landed batches, after every stream has landed, under ctx (the

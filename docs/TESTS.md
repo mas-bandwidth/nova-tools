@@ -697,7 +697,7 @@ Postgres and a throwaway Redis.
 
 ```text
 $ nova-config migrate --file try.json
-CONFIG MIGRATE file=try.json from=0 to=22 applied=22
+CONFIG MIGRATE file=try.json from=0 to=26 applied=26
 
 $ nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --as a1 --file try.json
 CONFIG ADD kind=machine name=m1 rev=1
@@ -758,12 +758,14 @@ RECEIPT OK session=s1 entry=e1 stamp=2026-09-17T12:05:00Z bytes=17 source=bench-
 ## nova-decide
 
 Fixture: `cmd/nova-decide/testdata/`: a schema and a state, a card and its
-diff, the fixed backend's answers for each (the read's and the score's), and a
-record of eight labelled read decisions and five score decisions of landed
-diffs. Every line below uses the fixed backend, so it needs no network and no
-key; `cmd/nova-decide/firstrun_test.go` runs each `$` line from a checkout root
-in one sitting, with `./decisions.jsonl` a file in the test's own directory.
-The ids come from `--op`, so every line reads the same twice.
+diff, a child's RESULT.md, a red gate's go test output, a card to add
+(`greet.md`), the fixed backend's answers for each decision (ask, read, score,
+attempt, grade, gate, brief), and a record of eight labelled read decisions and
+five score decisions of landed diffs. Every line below uses the fixed backend,
+so it needs no network and no key; `cmd/nova-decide/firstrun_test.go` runs each
+`$` line from a checkout root in one sitting, with `./decisions.jsonl` a file in
+the test's own directory. The ids come from `--op`, so every line reads the same
+twice.
 
 ### First run
 
@@ -800,6 +802,23 @@ SCORE ANSWER question=stranded_fragment type=noul value=no p=yes:0.04
 SCORE ANSWER question=test_weakened type=noul value=no p=yes:0.02
 SCORE ANSWER question=verdict type=choice value=LAND p=BOUNCE:0.05,LAND:0.92,UNSURE:0.03
 
+$ nova-decide attempt --brief ./cmd/nova-decide/testdata/card.md --result ./cmd/nova-decide/testdata/result.md --reason "verdict not-done: tests red in internal/decide" --backend fixed --answers ./cmd/nova-decide/testdata/attempt-answers.json --record ./decisions.jsonl --op c1@1
+ATTEMPT OK id=c1@1 decision=attempt backend=fixed class=needs-pro p=0.78 tokens_in=0 tokens_out=0 recorded=new
+ATTEMPT ANSWER question=class type=choice value=needs-pro p=done:0.04,needs-pro:0.78,no-result:0.08,nothing-to-do:0.02,provider-failure:0.02,wrong-scope:0.06
+
+$ nova-decide grade --brief ./cmd/nova-decide/testdata/card.md --backend fixed --answers ./cmd/nova-decide/testdata/grade-answers.json --record ./decisions.jsonl --op c1@grade
+GRADE OK id=c1@grade decision=grade backend=fixed grade=flash p=0.71 tokens_in=0 tokens_out=0 recorded=new
+GRADE ANSWER question=grade type=choice value=flash p=flash:0.71,pro:0.08,script:0.21
+
+$ nova-decide gate --output ./cmd/nova-decide/testdata/gate-output.txt --card ./cmd/nova-decide/testdata/card.md --diff ./cmd/nova-decide/testdata/card.diff --base-red TestPortInUse --backend fixed --answers ./cmd/nova-decide/testdata/gate-answers.json --record ./decisions.jsonl --op c1@1@gate
+GATE OK op=c1@1@gate decision=gate backend=fixed failures=2 route=caused
+GATE FAILURE key=example/tools/internal/serve.TestPortInUse id=c1@1@gate/example/tools/internal/serve.TestPortInUse class=flaky p=caused:0.06,flaky:0.86,pre-existing:0.08 route=caused recorded=new
+GATE FAILURE key=example/tools/internal/greet.TestGreetNamesTheReader id=c1@1@gate/example/tools/internal/greet.TestGreetNamesTheReader class=flaky p=caused:0.06,flaky:0.86,pre-existing:0.08 route=caused recorded=new
+
+$ nova-decide brief --card ./cmd/nova-decide/testdata/greet.md --backend fixed --answers ./cmd/nova-decide/testdata/brief-answers.json --record ./decisions.jsonl
+BRIEF OK decision=brief backend=fixed cards=1 asked=1 existing=0 failed=0
+BRIEF CARD id=greet op=greet@brief-825042ac p_converges=0.72 minutes=under-10 failed=- uncalibrated=true recorded=new
+
 $ nova-decide outcome --record ./decisions.jsonl --id card-1 --label ok --note "the review found nothing"
 OUTCOME OK id=card-1 decision=read label=ok changed=true
 
@@ -818,11 +837,19 @@ FINDINGS FINDING class=invented_reason count=1 cards=s1-2
 FINDINGS FINDING class=unnamed count=1 cards=s1-4
 ```
 
-The ask, read, score and outcome lines write `./decisions.jsonl`; calibrate and
-findings read the fixture record, because a calibration wants positives and
-negatives both and findings wants scores to cluster. With `--backend jev` the
-same `ask`, `read` and `score` lines ask the model instead, under
-`nova-secrets exec --only JEV_API_KEY`, and their lines carry the tokens spent.
+The ask, read, score, attempt, grade, gate, brief and outcome lines write
+`./decisions.jsonl`; calibrate and findings read the fixture record, because a
+calibration wants positives and negatives both and findings wants scores to
+cluster. The fixed backend answers every failure of the gate alike, and with no
+`--bars` (the sprint row's default) every failure is recorded with its class and
+routed caused, the take as reported; `--bars 0.8,0.8` routes both flaky. With
+`--backend jev` the same `ask`, `read`, `score`, `attempt`, `grade`, `gate` and
+`brief` lines ask the model instead, under `nova-secrets exec --only
+JEV_API_KEY`, and all but the brief's lines carry the tokens spent, each failure
+of a gate on its own. The gate decision's calibration records (base run, and
+base not run) are `internal/decide/testdata/gate-calibration-*.jsonl`. The
+brief's op id ends in the hex of the schema and the card, so a reworded schema
+or card changes it and this transcript names the change.
 
 ## nova-redis
 
@@ -1023,6 +1050,101 @@ $ nova-sprint merge --stream s1 --batch 1
 MOVED s1-1 merging -> landed
 MERGE OK moved=1 refused=0 notes=2 op=merge-t32-1
 0/1 0.0% -> ETA -  machine: running
+```
+
+### Answered by nova-decide
+
+The routine judgments answered by the judgment decision
+([SPEC-SPRINT.md section 8](SPEC-SPRINT.md#answered-by-nova-decide)): two cards
+come back failed in one note, and `answer` asks the decision for each
+card. With no `decide_judgment_bar` set (the sprint row ships it empty) and no
+`--bar`, it applies nothing: it records each decision and lists what a bar would
+apply. Given `--bar 0.8` it applies the recorded decisions, asking nothing again,
+and reworks each card by the line the inbox prints for it alone, each line carrying
+the decision's op id (`--op decide.<decision id>`), recorded as `applying` before it
+runs and `applied` after, so a pass stopped between the two is finished by the next
+through the same op and nothing is applied twice. The backend is
+the fixed one (`--backend fixed`), answering from
+`cmd/nova-sprint/testdata/judgment-answers.json` whatever the state, so no key or
+network is needed; with Jev it is `nova-secrets exec --only JEV_API_KEY --
+nova-sprint answer`. Run from a checkout root over a fresh twin, with
+the first run's environment, by `cmd/nova-sprint/answer_transcript_test.go`,
+which keeps the record in a temporary directory and prints it as
+`./judgment.jsonl`; nothing else is normalised.
+
+```text
+$ nova-sprint init --readers reader-a,reader-b --members m1
+INIT OK tables=work,readers,merge,fleet view=sprint readers=reader-a,reader-b
+MOVED m1 added, down until it beats
+FLEET-UP OK moved=1 refused=0 notes=0 op=fleet-release-t1-1
+STOPPED
+NOTE a twin beats every member at every verb: each member added is up after the next nova-sprint tick
+
+$ nova-sprint add --stream s1 --count 2
+MOVED s1-1 -> ready stream=s1 score=1
+MOVED s1-2 -> ready stream=s1 score=2
+ADD OK stream=s1 cards=2 before=- moved=2 refused=0 notes=0 op=add-t2-1
+NOTE the cards have no brief, so a worker is handed no task with them; give each one before it is dealt, on a STOPPED machine: nova-sprint brief <id> --brief-file <path>
+STOPPED  0/2 0.0%
+
+$ nova-sprint start
+START OK before=STOPPED after=RUNNING changed
+nothing is ticking between commands in a twin: tick by hand: nova-sprint tick
+0/2 0.0% -> ETA -  machine: running
+
+$ nova-sprint tick
+MOVED presence: m1 up
+TABLES rows changed: work=0 readers=0 merge=0 fleet=1
+TICK OK state=RUNNING idle=no moved=1 notes=2
+0/2 0.0% -> ETA -  machine: running
+
+$ nova-sprint tick
+MOVED deal: s1-1 work ready -> working card=s1-1.w1 member=m1 (fleet ready)
+MOVED deal: s1-2 work ready -> working card=s1-2.w1 member=m1 (fleet ready)
+TABLES rows changed: work=1 readers=0 merge=0 fleet=1
+TICK OK state=RUNNING idle=no moved=2 notes=1
+0/2 0.0% -> ETA -  machine: running
+
+$ nova-sprint take --as m1 --limit 2 --epoch 0
+MOVED s1-1.w1 fleet ready -> working member=m1 gen=1
+MOVED s1-2.w1 fleet ready -> working member=m1 gen=1
+PACKET s1-1.w1 attempt=1 gen=1 epoch=0
+  branch: sprint/s1-1.w1.g1.e0
+  base: the stream's base
+  notes: none
+  report it: nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --branch sprint/s1-1.w1.g1.e0 --head <commit> --report '<what you did>' [--failed]
+PACKET s1-2.w1 attempt=1 gen=1 epoch=0
+  branch: sprint/s1-2.w1.g1.e0
+  base: the stream's base
+  notes: none
+  report it: nova-sprint finish --as m1 s1-2.w1@1 --epoch 0 --branch sprint/s1-2.w1.g1.e0 --head <commit> --report '<what you did>' [--failed]
+TAKE OK moved=2 refused=0 notes=0 op=take-t23-1
+0/2 0.0% -> ETA -  machine: running
+
+$ nova-sprint finish --as m1 s1-1.w1@1 s1-2.w1@1 --epoch 0 --failed --report 'the tests went red'
+MOVED s1-1.w1 working -> done failed; s1-1 working -> review
+MOVED s1-2.w1 working -> done failed; s1-2 working -> review
+FINISH OK moved=2 refused=0 notes=1 op=finish-t24-1
+0/2 0.0% -> ETA -  machine: running
+
+$ nova-sprint tick
+MOVED drain: s1-1.w1 working -> done failed; s1-1 working -> review (finish by m1)
+MOVED drain: s1-2.w1 working -> done failed; s1-2 working -> review (finish by m1)
+TABLES rows changed: work=1 readers=0 merge=0 fleet=0
+TICK OK state=RUNNING idle=no moved=2 notes=0
+0/2 0.0% -> ETA -  machine: running
+
+$ nova-sprint answer --backend fixed --answers ./cmd/nova-sprint/testdata/judgment-answers.json --record ./judgment.jsonl
+judgment        card  kind    verb    p     act     why
+finish-t24-1.1  s1-1  failed  rework  0.91  listed  no decide_judgment_bar is set, so nothing is applied; at a bar at or under 0.91 it would apply: nova-sprint rework s1-1
+finish-t24-1.1  s1-2  failed  rework  0.91  listed  no decide_judgment_bar is set, so nothing is applied; at a bar at or under 0.91 it would apply: nova-sprint rework s1-2
+ANSWER OK rows=2 applied=0 would_apply=0 listed=2 refused=0 failed=0 left=0 outcomes=0 bar=- record=./judgment.jsonl; run: nova-sprint inbox
+
+$ nova-sprint answer --bar 0.8 --backend fixed --answers ./cmd/nova-sprint/testdata/judgment-answers.json --record ./judgment.jsonl
+judgment        card  kind    verb    p     act      why
+finish-t24-1.1  s1-1  failed  rework  0.91  applied  nova-sprint rework s1-1 --op decide.finish-t24-1.1:s1-1
+finish-t24-1.1  s1-2  failed  rework  0.91  applied  nova-sprint rework s1-2 --op decide.finish-t24-1.1:s1-2
+ANSWER OK rows=2 applied=2 would_apply=0 listed=0 refused=0 failed=0 left=0 outcomes=0 bar=0.80 record=./judgment.jsonl; run: nova-sprint inbox
 ```
 
 ## nova-work
