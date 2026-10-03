@@ -85,7 +85,7 @@ func TestIssue2043_SendRefusesUntouchedTemplatePlaceholder(t *testing.T) {
 
 	invoke(t, "", "send", "--bus", checkout, "--file", draft, "--remote", remote, "--branch", "main").
 		mustCode(t, 1).
-		mustContain(t, "stderr", "SEND FAIL").
+		mustContain(t, "stderr", "SEND FAILED").
 		mustContain(t, "stderr", "the body is the unedited template placeholder (<the note goes here>)")
 }
 
@@ -99,7 +99,7 @@ func TestIssue2043_PrepareRefusesUntouchedTemplatePlaceholder(t *testing.T) {
 
 	invoke(t, "", "prepare", "--bus", checkout, "--as", "Ada", "--file", draft).
 		mustCode(t, 1).
-		mustContain(t, "stderr", "PREPARE FAIL").
+		mustContain(t, "stderr", "PREPARE FAILED").
 		mustContain(t, "stderr", "the body is the unedited template placeholder (<the note goes here>)")
 }
 
@@ -113,7 +113,7 @@ func TestIssue2043_ReplyRefusesUntouchedTemplatePlaceholder(t *testing.T) {
 
 	invoke(t, "", "reply", "--bus", checkout, "--as", "Ada", "--re", "bo-abcdef012345", "--file", bodyFile, "--remote", remote, "--branch", "main").
 		mustCode(t, 1).
-		mustContain(t, "stderr", "REPLY FAIL").
+		mustContain(t, "stderr", "REPLY FAILED").
 		mustContain(t, "stderr", "the body is the unedited template placeholder (<the note goes here>)")
 }
 

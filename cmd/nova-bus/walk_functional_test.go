@@ -90,7 +90,7 @@ func fastImport(t *testing.T, dir, from string, n int) {
 // THE FAILURE, in one line of output:
 //
 //	INBOX WALK bounded commits=500 remedy="raise --max-commits or close --before <instant>"
-//	INBOX FAIL /CURSOR: git -C <bus> ls-files -- /OPEN: exit status 128: fatal: '/OPEN' is outside repository
+//	INBOX FAILED /CURSOR: git -C <bus> ls-files -- /OPEN: exit status 128: fatal: '/OPEN' is outside repository
 //
 // The bounded since-walk stops the listing and returns exit 0 with a ZERO inboxReading --
 // the reader has not been resolved onto it yet, because that happens at the end of a

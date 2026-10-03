@@ -460,10 +460,10 @@ func TestCheckFullAgainstTheIndex(t *testing.T) {
 	// warning is a finding a passing run reported. On stderr it made every forgiving run
 	// look like a failing one to anything reading the two streams apart.
 	r := invoke(t, "", "check", "--bus", checkout, "--full").mustCode(t, 0).
-		mustContain(t, "stdout", "BUS WARN from-bo/2026-09-08T0300Z-by-hand-333333333333.md").
+		mustContain(t, "stdout", "BUS NOTE from-bo/2026-09-08T0300Z-by-hand-333333333333.md").
 		mustContain(t, "stdout", "--rebuild-index").
 		mustContain(t, "stdout", "warn=1")
-	require.NotContainsf(t, r.stderr, "BUS WARN", "a warning reached stderr, where only failures and refusals go:\n%s", r.stderr)
+	require.NotContainsf(t, r.stderr, "BUS NOTE", "a warning reached stderr, where only failures and refusals go:\n%s", r.stderr)
 
 	// --rebuild-index writes it, and the warning goes.
 	invoke(t, "", "check", "--bus", checkout, "--full", "--rebuild-index").mustCode(t, 0).
@@ -476,7 +476,7 @@ func TestCheckFullAgainstTheIndex(t *testing.T) {
 	appendFile(t, checkout, "from-bo/INDEX",
 		"bo-444444444444\tfrom-bo/never-written.md\t2026-09-08T04:00:00Z\tAda\t-\n")
 	invoke(t, "", "check", "--bus", checkout, "--full").mustCode(t, 1).
-		mustContain(t, "stderr", "BUS FAIL from-bo/INDEX:4").
+		mustContain(t, "stderr", "BUS FAILED from-bo/INDEX:4").
 		mustContain(t, "stderr", "which is not a note on this bus")
 
 	// And --rebuild-index is refused without --full, because it writes every lane's
@@ -504,10 +504,10 @@ func TestCheckSinceChecksOnlyWhatChanged(t *testing.T) {
 		mustContain(t, "stdout", "BUS SCOPE mode=since").
 		mustContain(t, "stdout", "changed=0")
 	invoke(t, "", "check", "--bus", checkout, "--since", base).mustCode(t, 1).
-		mustContain(t, "stderr", "BUS FAIL from-bo/older-stranger.md").
+		mustContain(t, "stderr", "BUS FAILED from-bo/older-stranger.md").
 		mustContain(t, "stderr", `"Boe"`)
 	invoke(t, "", "check", "--bus", checkout, "--full").mustCode(t, 1).
-		mustContain(t, "stderr", "BUS FAIL from-bo/older-stranger.md")
+		mustContain(t, "stderr", "BUS FAILED from-bo/older-stranger.md")
 	// A revision this checkout does not hold is a bad invocation, not a bus that failed.
 	invoke(t, "", "check", "--bus", checkout, "--since", "nosuchref").
 		mustCode(t, 2).mustContain(t, "stderr", "names no commit")
@@ -587,14 +587,14 @@ func TestLaneStateFilesAreNotStrays(t *testing.T) {
 	// A file that is none of them still is one.
 	writeFile(t, checkout, "from-ada/notes.txt", "a scratch file\n")
 	invoke(t, "", "check", "--bus", checkout, "--full").mustCode(t, 1).
-		mustContain(t, "stderr", "BUS FAIL from-ada/notes.txt").
+		mustContain(t, "stderr", "BUS FAILED from-ada/notes.txt").
 		mustContain(t, "stderr", "RECEIPTS, CURSOR, OPEN, INDEX")
 	// A malformed state file is a finding, not a crash: a reader would otherwise refuse on
 	// their next run with nothing on the bus saying why.
 	require.NoError(t, os.Remove(filepath.Join(checkout, "from-ada", "notes.txt")))
 	writeFile(t, checkout, "from-ada/OPEN", bus.OpenHeader+"\nno-path-here\n")
 	invoke(t, "", "check", "--bus", checkout, "--full").mustCode(t, 1).
-		mustContain(t, "stderr", "BUS FAIL from-ada/OPEN").
+		mustContain(t, "stderr", "BUS FAILED from-ada/OPEN").
 		mustContain(t, "stderr", "an open entry is 9 tab-separated fields")
 }
 
@@ -629,7 +629,7 @@ func TestALanesReadmeIsNotANote(t *testing.T) {
 	// hold both spellings in one directory.)
 	writeFile(t, checkout, "from-bo/NOTES.md", "# not the one allowed name\n\nprose where a header goes.\n")
 	invoke(t, "", "check", "--bus", checkout, "--full").mustCode(t, 1).
-		mustContain(t, "stderr", "BUS FAIL from-bo/NOTES.md")
+		mustContain(t, "stderr", "BUS FAILED from-bo/NOTES.md")
 }
 
 // AN OPEN LIST WRITTEN BEFORE v2 IS REFUSED, and the refusal names the read that repairs
@@ -659,7 +659,7 @@ func TestAnOpenListFromBeforeV2IsRefusedAndFullAdvanceRepairsIt(t *testing.T) {
 	// check says the same thing about the same file, so a bus carrying one is not a
 	// silence that only its own reader ever meets.
 	invoke(t, "", "check", "--bus", checkout, "--full").mustCode(t, 1).
-		mustContain(t, "stderr", "BUS FAIL from-ada/OPEN")
+		mustContain(t, "stderr", "BUS FAILED from-ada/OPEN")
 
 	// And the way through is the one it names: nothing is lost, and the list comes back in
 	// the new shape with both notes on it.

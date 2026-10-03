@@ -54,8 +54,8 @@ func TestBusCheckFullIsCapped(t *testing.T) {
 		strangers(t, checkout, 30)
 		r := invoke(t, "", "check", "--bus", checkout, "--full").mustCode(t, 1)
 		{
-			n := strings.Count(r.stderr, "BUS FAIL ")
-			require.Equalf(t, 20, n, "the default cap printed %d BUS FAIL lines, want 20:\n%s", n, r.stderr)
+			n := strings.Count(r.stderr, "BUS FAILED ")
+			require.Equalf(t, 20, n, "the default cap printed %d BUS FAILED lines, want 20:\n%s", n, r.stderr)
 		}
 		findings, fail, classSum := checkCounts(t, r.stderr)
 		require.Falsef(t, findings < 30 || fail != findings || classSum != findings, "BUS CHECK findings=%d fail=%d classes sum to %d over 30 broken notes; want findings>=30 and all three equal:\n%s",
@@ -74,8 +74,8 @@ func TestBusCheckFullIsCapped(t *testing.T) {
 		strangers(t, checkout, 10)
 		r := invoke(t, "", "check", "--bus", checkout, "--full", "--max", "3").mustCode(t, 1)
 		{
-			n := strings.Count(r.stderr, "BUS FAIL ")
-			require.Equalf(t, 3, n, "--max 3 printed %d BUS FAIL lines:\n%s", n, r.stderr)
+			n := strings.Count(r.stderr, "BUS FAILED ")
+			require.Equalf(t, 3, n, "--max 3 printed %d BUS FAILED lines:\n%s", n, r.stderr)
 		}
 		findings, _, _ := checkCounts(t, r.stderr)
 		r.mustContain(t, "stderr", fmt.Sprintf("BUS MORE shown=3 total=%d ", findings))
@@ -88,7 +88,7 @@ func TestBusCheckFullIsCapped(t *testing.T) {
 		r := invoke(t, "", "check", "--bus", checkout, "--full", "--max", "0").mustCode(t, 1)
 		findings, _, _ := checkCounts(t, r.stderr)
 		{
-			n := strings.Count(r.stderr, "BUS FAIL ")
+			n := strings.Count(r.stderr, "BUS FAILED ")
 			require.Equalf(t, findings, n, "--max 0 printed %d of %d findings:\n%s", n, findings, r.stderr)
 		}
 		require.NotContainsf(t, r.stderr, "BUS MORE", "an uncapped run printed a BUS MORE line:\n%s", r.stderr)
@@ -101,7 +101,7 @@ func TestBusCheckFullIsCapped(t *testing.T) {
 		r := invoke(t, "", "check", "--bus", checkout, "--full", "--max", "100").mustCode(t, 1)
 		findings, _, _ := checkCounts(t, r.stderr)
 		{
-			n := strings.Count(r.stderr, "BUS FAIL ")
+			n := strings.Count(r.stderr, "BUS FAILED ")
 			require.Falsef(t, n != findings || strings.Contains(r.stderr, "BUS MORE"), "a run under its cap printed %d of %d findings or a MORE line:\n%s", n, findings, r.stderr)
 		}
 	})
@@ -138,7 +138,7 @@ func TestBusCheckFullIsCapped(t *testing.T) {
 		// the change set holds the broken note and the check fails on it.
 		invoke(t, "", "check", "--bus", checkout, "--since", "2099-01-01").mustCode(t, 1).
 			mustContain(t, "stdout", "BUS SCOPE mode=since").
-			mustContain(t, "stderr", "BUS FAIL from-bo/dated-stranger.md")
+			mustContain(t, "stderr", "BUS FAILED from-bo/dated-stranger.md")
 		// Since the day after it: nothing changed.
 		invoke(t, "", "check", "--bus", checkout, "--since", "2099-01-03").mustCode(t, 0).
 			mustContain(t, "stdout", "changed=0")
