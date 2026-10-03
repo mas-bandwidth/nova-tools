@@ -1413,6 +1413,22 @@ func (st *Store) SinceFirstStart(ctx context.Context) (time.Duration, bool) {
 	return now.Sub(first), true
 }
 
+// LandingRate is sprint.LandingRate at the clock's reading: landed is the
+// landed cards' stamps (LandedAt; nil for the whole-sprint average alone) and
+// total the landed count; 0 when the machine has not started in this epoch,
+// or the records are not read.
+func (st *Store) LandingRate(ctx context.Context, landed []time.Time, total int64) float64 {
+	m, _, err := st.Machine(ctx)
+	if err != nil {
+		return 0
+	}
+	es, err := st.EpochNow(ctx)
+	if err != nil {
+		return 0
+	}
+	return sprint.LandingRate(landed, total, m.Spans, m.FirstStart(es.Cleared), st.now())
+}
+
 // undone takes the cause off a machine STOPPED because the sprint was done
 // once work is added to the sprint: it stays STOPPED, and the view says
 // STOPPED, until the coordinator starts it (errata 3 amendment 6).

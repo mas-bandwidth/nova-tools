@@ -169,10 +169,12 @@ ids, a stream, a column, --limit n, or an inbox group: --group <id>, the id
 inbox prints, which does not move, with --expect <n>, the size it printed,
 which refuses a group that has changed. Each verb prints what moved (MOVED),
 what did not and why (REFUSED, on stderr), its summary line, and the sprint's
-line: landed/all percent -> ETA <estimate> (the cards left, each at the average
-time a card has taken to land, in minutes rounded up; where shows the largest
+line: landed/all percent -> ETA <estimate> (every card left, held ones too, at
+the cards landed an hour: where's over the last hour of running time, the
+whole sprint's average with fewer than five there and on this line; in minutes
+rounded up, days and hours from a day; where shows the largest
 of the last 10 s, and held=N, the cards behind a sentinel not released or
-admitted held, which its ETA leaves out; the word alone until one has landed; a stopped
+admitted held; the word alone until one has landed; a stopped
 machine has no ETA: STOPPED, then
 landed/all and the percent when there are cards; every card landed, no ETA:
 done in <time from the first start> while it runs, and STOPPED ... done once
@@ -820,8 +822,8 @@ func sprintLine(ctx context.Context, st *store.Store) string {
 	case full:
 		return strings.TrimSpace(progress(shapes[0]) + " done" + tookSince(ctx, st) + "  " + machine)
 	}
-	since, started := st.SinceFirstStart(ctx)
-	return strings.TrimSpace(summary(shapes[0], 0, etaMinutes(shapes[0], 0, since, started)) + "  " + machine)
+	// reads no cards: the rate is the whole sprint's average
+	return strings.TrimSpace(summary(shapes[0], 0, etaMinutes(shapes[0], st.LandingRate(ctx, nil, landed))) + "  " + machine)
 }
 
 // tookSince is " in <duration>": the wall time from the machine's first start

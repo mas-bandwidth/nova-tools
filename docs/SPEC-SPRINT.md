@@ -137,10 +137,29 @@ The summary line shows `held=N` after the percent when cards are held back:
 waiting behind a sentinel not released, admitted held (`add --held`), or
 waiting on one of those through a need (`sprint.HeldBack`, read from the work
 table's waiting cells alone; `where --json` carries it as `held`). The ETA is
-over the dealable cards, the ones neither landed nor held, so loading a wave in
-waiting behind sentinels leaves the estimate where it was (nova-tools#5096
-item 16; the owner: "I'd like to really really load up the sprint in waiting,
-and stick sentinels in"): `3/10 30.0% held=4 -> ETA 12m`. A reading process
+the time until every card on the work table has landed (the owner, 2026-10-02,
+at a dashboard reading 347 of 2,846 landed, ETA 1h 36m, 2 cards an hour:
+"Please update the ETA on the sprint. It's OBVIOUSLY wrong." and "it's the ETA
+to all cards being done, not the cards that are in flight or not blocked"):
+the cards left are every primary neither landed nor dropped (waiting, held
+behind a sentinel or admitted held, ready, working, review, merging), at the
+landing rate. The held cards are shown apart as `held=N` and counted, so
+loading a wave in waiting behind sentinels (the owner: "I'd like to really
+really load up the sprint in waiting, and stick sentinels in") lengthens the
+estimate by the wave; until 2026-10-02 they were left out (nova-tools#5096
+item 16), and 56 cards left of 2,499 read 1h36m. The rate
+(`sprint.LandingRate`) is the cards landed per hour over the last 60 minutes
+of running time (the clock's time less the STOPPED spans; the window of the
+dashboard's throughput tile, so the two agree while the machine runs), read
+from the landed cards' `landed` stamps; with fewer than five landed in that
+window it is the whole sprint's average, the cards landed over the running
+time since the first start; a read of the stamps that fails leaves that
+average, never a failed view. The ETA is a dash, never a number, with fewer
+than five landed in all (whatever the rate) and with no rate (no first start
+known):
+`3/10 30.0% held=4 -> ETA 12m`. From a day on it reads in days and hours, the
+hours rounded up, one word as the shorter forms are: `347/2846 12.2%
+held=2443 -> ETA 2d15h`. A reading process
 shows the largest estimate of the last 10 s (the owner, 2026-10-01: "take
 largest ETA in last 10 secs, so it is a stable value"), held over the same
 cards to land: an add, a drop or a release changes the primaries on the table
@@ -149,8 +168,8 @@ dirty (the owner, 2026-10-02: "When you add new cards, the ETA needs to be
 made dirty and recalculated."; nova-tools#5171), so the first read of `where`,
 `where --json` and the dashboard after the tick that drains the change shows
 the estimate recomputed over the new count at the rate measured. The verbs' sprint
-line, printed after every step, reads no cards and keeps the ETA over every
-card left.
+line, printed after every step, reads no cards, so it has no stamps: its ETA is
+over every card left at the whole sprint's average.
 
 The stored view `sprint` (`nova-table watch --view sprint`) says the same:
 its summary line is `STOPPED`, and nothing more (no counts, no percent, no
