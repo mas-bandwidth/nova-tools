@@ -232,7 +232,7 @@ var dayLines = []string{
 }
 
 // inboxExample is the worked example of reading the inbox and answering it,
-// in nova-sprint help and nova-sprint help inbox.
+// in nova-sprint help, nova-sprint help inbox, and inbox -h.
 const inboxExample = `reading the inbox and answering a judgment:
 
   $ nova-sprint inbox
@@ -371,9 +371,6 @@ func helpCommand(path []string, stdout, stderr io.Writer) int {
 				defer recoverHelp(stdout, &code)
 				return v.run(newApp(func(string) string { return "" }), []string{"--help"}, stdout, stderr)
 			}()
-			if name == "inbox" && code == 0 {
-				fmt.Fprint(stdout, "\n"+inboxExample)
-			}
 			return code
 		}
 	}

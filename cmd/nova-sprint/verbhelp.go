@@ -1,11 +1,20 @@
 package main
 
 import (
+	"flag"
 	"io"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 )
+
+// releaseHoldWords tells release apart from the holds on a member, a reader,
+// and a friend (docs/SPEC-SPRINT.md: release is the sentinel and held-card step).
+const releaseHoldWords = `release acts on a sentinel or a held card. It does not release a held member, reader, or friend:
+  fleet up <member> releases a held member
+  reader up <reader> releases a held reader
+  friend up <friend> releases a held friend
+`
 
 // exitLine is the banner's exit-code paragraph, every verb's codes at once:
 // `nova-sprint help` prints it whole, and a verb's -h prints that verb's own
@@ -61,12 +70,68 @@ func recoverHelp(out io.Writer, code *int) {
 	var b strings.Builder
 	verbflag.Print(&b, prog, strings.Replace(banner(), exitLine, verbExits(name), 1), h.FS)
 	*code = 0
-	text := verbflag.Insert(b.String(), verbExample(name))
+	text := verbflag.Insert(concreteUsage(b.String(), name, h.FS), verbExample(name))
 	if e, ok := verbEffect[name]; ok {
 		text += "effect: " + e + "\n"
+	}
+	if extra := verbProse(name); extra != "" {
+		if !strings.HasSuffix(text, "\n") {
+			text += "\n"
+		}
+		text += "\n" + extra
+		if !strings.HasSuffix(text, "\n") {
+			text += "\n"
+		}
 	}
 	if _, err := io.WriteString(out, text); err != nil {
 		// the help did not reach its reader (a closed stdout): the exit code says so
 		*code = 1
+	}
+}
+
+// concreteUsage replaces Print's placeholder usage line with the verb table's
+// synopsis, or with the flags the set registers when that synopsis is empty.
+func concreteUsage(help, name string, fs *flag.FlagSet) string {
+	line, ok := sprintUsageLine(name, fs)
+	if !ok {
+		return help
+	}
+	_, rest, found := strings.Cut(help, "\n")
+	if !found {
+		return line + "\n"
+	}
+	return line + "\n" + rest
+}
+
+// sprintUsageLine is the verb's usage line. The second result is false when
+// name is none of the verb table.
+func sprintUsageLine(name string, fs *flag.FlagSet) (string, bool) {
+	for _, v := range verbs {
+		if v.name != name {
+			continue
+		}
+		if syn := strings.TrimSpace(v.syntax); syn != "" {
+			return verbflag.UsageLineSynopsis(prog, name, nil, syn), true
+		}
+		if syn := verbflag.FlagSynopsis(fs); syn != "" {
+			return verbflag.UsageLineSynopsis(prog, name, nil, syn), true
+		}
+		return "usage: " + strings.TrimSpace(prog+" "+name), true
+	}
+	return "", false
+}
+
+// verbProse is the explanation a verb's -h carries past its flags. The banner
+// still carries the inbox walkthrough and the friends section on their own.
+func verbProse(name string) string {
+	switch name {
+	case "inbox":
+		return inboxExample
+	case "release":
+		return releaseHoldWords
+	case "friend beat", "friend down", "friend up":
+		return friendVerbWords(name)
+	default:
+		return ""
 	}
 }

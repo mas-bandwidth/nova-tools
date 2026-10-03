@@ -487,6 +487,29 @@ func TestNamesInARefusal(t *testing.T) {
 	assert.Equal(t, "a, b", List([]string{"a", "b"}))
 }
 
+// A synopsis replaces the placeholder. No synopsis, and a group, keep [flags],
+// which is the line the other tools' help already prints.
+func TestUsageLineSynopsisNamesTheRealLine(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, "usage: nova-demo put [flags]", UsageLine("nova-demo", "put", nil))
+	assert.Equal(t, "usage: nova-demo row <add|del> [flags]", UsageLineSynopsis("nova-demo", "row", []string{"add", "del"}, "<ignored>"))
+	got := UsageLineSynopsis("nova-demo", "inbox", nil, "[--open <group>] [--wait]")
+	assert.Equal(t, "usage: nova-demo inbox [--open <group>] [--wait]", got)
+	assert.NotContains(t, got, "[flags]")
+
+	fs := New("run")
+	fs.Bool("land", false, "land what passed")
+	fs.String("listen", "", "on this `address:port`")
+	syn := FlagSynopsis(fs)
+	assert.Equal(t, "[--land] [--listen <address:port>]", syn)
+	assert.NotContains(t, syn, "[flags]")
+	line := UsageLineSynopsis("nova-demo", "run", nil, syn)
+	assert.Equal(t, "usage: nova-demo run [--land] [--listen <address:port>]", line)
+	assert.NotContains(t, line, "[flags]")
+	assert.Empty(t, FlagSynopsis(nil))
+	assert.Empty(t, FlagSynopsis(New("bare")))
+}
+
 // TestAGroupsHelpNamesItsVerbs pins the group form: a verb with no flags whose
 // every usage line goes on with a verb word is a group, and its help's usage
 // line names its verbs; a verb with flags, or a line going on with an
