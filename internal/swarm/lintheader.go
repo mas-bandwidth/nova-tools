@@ -58,12 +58,12 @@ import (
 // restating one. When `cardheader.go` lands, the shape rules above should go the same
 // way, with the class test that the two agree in the lane that owns `internal/pulse`.
 //
-// KIND: IS THE NAME SET, NOT A SECOND TABLE (#1853). `hygiene.KindDeclared` reads
-// internal/hygiene/kinds.txt, which is the names `cut` and `nova-check hygiene`
-// already refuse. The gate TABLE -- steps, control, reject tokens -- is still
-// internal/pulse/kinds.go (SPEC-TOOLWORK.md §5 rule 3) and is not on `dev`; refusing
-// `TEST: none` on a gated kind needs that table, so that half still waits. Writing
-// a second name list here would be the same mistake `validGlobs` just undid.
+// KIND: IS THE NAME SET, NOT A SECOND LIST (#1853). `hygiene.KindDeclared` reads
+// internal/hygiene/kinds.txt, the same names `cut` and `nova-check hygiene` refuse.
+// The third field of that file is the classification `hygiene.KindUngated` reads
+// (docs/SPEC-TOOLWORK.md hygiene rule 6). `TEST: none <why>` is a declaration only
+// when that field is ungated. This file keeps no second name list, and a kind
+// selects no command.
 
 // CardHeaderFinding is one typed-header defect: the check's token, the 1-based line it
 // sits on and the line's own text. It is the shape `cmd/nova-swarm/lint.go` prints on a
@@ -204,11 +204,6 @@ func CardHeaderValue(raw []byte, key string) (value string, ok bool) {
 // cardTypedKeys is the five lines SPEC-TOOLWORK.md §5 rule 1 names, as a set.
 var cardTypedKeys = map[string]bool{"KIND": true, "PATHS": true, "TEST": true, "LEGS": true, "SOURCE": true}
 
-// ungatedKinds is the set of kinds that may carry TEST: none. It matches the third
-// column of internal/hygiene/kinds.txt (SPEC-TOOLWORK.md §5 rule 2: read, probe, text,
-// tone, report) until internal/pulse/kinds.go lands with the gate table.
-var ungatedKinds = map[string]bool{"read": true, "probe": true, "text": true, "tone": true, "report": true}
-
 // cardKeyCheck is the token that answers for each typed key. LEGS: and SOURCE: have no
 // token of their own, so a stranded or repeated one answers under `kind-declared`, which
 // is the token for "the typed header is not the header the gate will read".
@@ -346,9 +341,12 @@ func LintCardHeader(raw []byte, trust TrustState, required bool) []CardHeaderFin
 	case testWhy != "":
 		add("test-named", test.line, testWhy)
 	case tl.None:
-		// TEST: none is only a declaration for ungated kinds; gated kinds strictly
-		// require a reproducing test (SPEC-TOOLWORK.md §5 rule 1, rule 2).
-		if kind.value != "" && !ungatedKinds[kind.value] {
+		// TEST: none is a declaration only when the kind's third field is ungated
+		// (docs/SPEC-TOOLWORK.md hygiene rule 6). A gated kind, a bad third field,
+		// and a name the file does not hold all refuse it. A bare none is already
+		// refused above, for every kind. An empty kind is kind-declared, not a
+		// second refusal here.
+		if kind.value != "" && !hygiene.KindUngated(kind.value) {
 			add("test-named", test.line, fmt.Sprintf("TEST: none is not allowed for kind %q; gated kinds require `TEST: <package> <TestName>`", kind.value))
 		}
 	default:
