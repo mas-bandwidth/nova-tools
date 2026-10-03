@@ -827,6 +827,7 @@ var ReworkResolves = []string{NWorkFailed, NReadBroken, NCIRed, NRepairSkipped, 
 // A primary that takes no rework is refused with what to run instead, by its
 // state (reworkWhy), as brief is (briefStarted).
 func Rework(s *Snapshot, r ReworkReq) Plan {
+	s, _ = s.withRests() // the resting routes, read once (rule 3, route_rest.go)
 	var p Plan
 	// a primary in review, or one at its redeal bound (ready, its work card
 	// withdrawn and dealt no more): rework is its next attempt
