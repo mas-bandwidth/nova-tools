@@ -50,16 +50,21 @@ func TestDashboardServesThePageOnEveryListener(t *testing.T) {
 	var out, errb syncBuffer
 	done := make(chan int, 1)
 	go func() {
-		done <- ta.a.run([]string{"dashboard", "--listen", "127.0.0.1:0,localhost:0", "--every", "100ms"}, &out, &errb)
+		done <- ta.a.run([]string{"dashboard", "--listen", "127.0.0.1:0,localhost:0", "--pull", "127.0.0.1:0", "--every", "100ms"}, &out, &errb)
 	}()
 	re := regexp.MustCompile(`DASHBOARD listening on (http://\S+/)`)
+	pullRe := regexp.MustCompile(`DASHBOARD pull routes on (http://\S+/)`)
 	var addrs []string
+	var pull string
 	require.Eventually(t, func() bool {
 		addrs = nil
 		for _, m := range re.FindAllStringSubmatch(out.String(), -1) {
 			addrs = append(addrs, m[1])
 		}
-		return len(addrs) == 2
+		if m := pullRe.FindStringSubmatch(out.String()); m != nil {
+			pull = m[1]
+		}
+		return len(addrs) == 2 && pull != ""
 	}, 10*time.Second, 10*time.Millisecond, "the listening lines: %s%s", out.String(), errb.String())
 
 	get := func(url string) (*http.Response, []byte) {
@@ -97,6 +102,28 @@ func TestDashboardServesThePageOnEveryListener(t *testing.T) {
 		assert.Equal(t, "ok\n", string(ok))
 	}
 	assert.Equal(t, builds[0], builds[1], "one server behind every listener")
+
+	// the pull routes on their own listener, the page on its: neither serves the other's
+	resp, body := get(pull + "machine/m1")
+	assert.Equal(t, http.StatusOK, resp.StatusCode, string(body))
+	assert.Equal(t, "no-store, max-age=0", resp.Header.Get("Cache-Control"))
+	assert.NotEmpty(t, resp.Header.Get("Sprint-At"))
+	assert.Regexp(t, `^sprint 0/3 landed held 0 eta - machine \S+ at .*\nmachine m1 `, string(body))
+	resp, body = get(pull + "friend/nobody")
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, "no friend named \"nobody\" on the friends table\n", string(body))
+	resp, _ = get(pull)
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode, "no page on the pull listener")
+	resp, _ = get(addrs[0] + "machine/m1")
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode, "no pull route on the page's listener")
+	stream, err := http.Get(addrs[0] + "events")
+	require.NoError(t, err)
+	assert.Equal(t, "text/event-stream", stream.Header.Get("Content-Type"))
+	first := make([]byte, len("event: sprint\ndata: {"))
+	_, err = io.ReadFull(stream.Body, first)
+	require.NoError(t, err)
+	assert.Equal(t, "event: sprint\ndata: {", string(first), "the first event at once")
+	_ = stream.Body.Close()
 
 	cancel()
 	select {

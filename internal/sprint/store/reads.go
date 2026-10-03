@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
@@ -267,4 +268,87 @@ func card(m ntable.ReadSetMember) *sprint.Card {
 		c.Row, c.Col = m.Row, m.Col
 	}
 	return c
+}
+
+// Dealt is what `where --json --cards` adds to the view: every work card dealt to a fleet
+// row and not finished (in the ready or working cell of a machine's row or a friend's), the
+// work table as its properties read (the dealt bound a deadline counts), and the open
+// judgments naming one of those cards' primaries.
+type Dealt struct {
+	Cards []*sprint.Card
+	Work  *sprint.Table
+	Open  []sprint.Open
+}
+
+// Dealt reads the cards dealt and not finished: one read of the work and fleet shapes, one of
+// the ready and working cells' ids, one read set of their records (never a done card, so the
+// read is bounded by the fleet's width, not by the sprint's cards), and the open judgments.
+func (st *Store) Dealt(ctx context.Context) (Dealt, error) {
+	var d Dealt
+	st, err := st.pin(ctx)
+	if err != nil {
+		return d, err
+	}
+	shapes, err := st.B.Shapes(ctx, []string{st.Names.Table(sprint.Work), st.Names.Table(sprint.Fleet)})
+	if err != nil {
+		return d, err
+	}
+	d.Work = sprint.NewTable(sprint.Work)
+	d.Work.SetProps(shapes[0].Props)
+	inFlight := []string{string(sprint.Ready), string(sprint.Working)}
+	ids, err := st.B.CellIDs(ctx, []ntable.Table{cellsOf(shapes[1], inFlight)})
+	if err != nil {
+		return d, err
+	}
+	cards, err := st.records(ctx, sprint.Fleet, ids[shapes[1].Name])
+	if err != nil {
+		return d, err
+	}
+	primaries := map[string]bool{}
+	for _, c := range cards {
+		if slices.Contains(inFlight, c.Col) {
+			d.Cards = append(d.Cards, c)
+			primaries[c.F(sprint.PrimaryField)] = true
+		}
+	}
+	if len(d.Cards) == 0 {
+		return d, nil
+	}
+	open, err := st.B.OpenNotes(ctx)
+	if err != nil {
+		return d, err
+	}
+	open, _ = sprint.SplitOpen(open)
+	for _, o := range open {
+		if primaries[o.Subject()] || slices.ContainsFunc(o.Note.Primaries, func(p string) bool { return primaries[p] }) {
+			d.Open = append(d.Open, o)
+		}
+	}
+	return d, nil
+}
+
+// cellsOf is a shape with only the named columns, each row's cells cut to match: a cell
+// read of it reads those columns' sets and no other.
+func cellsOf(t ntable.Table, cols []string) ntable.Table {
+	v := t
+	v.Columns = nil
+	var keep []int
+	for j, c := range t.Columns {
+		if slices.Contains(cols, c.Name) {
+			keep = append(keep, j)
+			v.Columns = append(v.Columns, c)
+		}
+	}
+	v.Rows = make([]ntable.Row, len(t.Rows))
+	for i, r := range t.Rows {
+		cells := make([]ntable.Cell, 0, len(keep))
+		for _, j := range keep {
+			if j < len(r.Cells) {
+				cells = append(cells, r.Cells[j])
+			}
+		}
+		r.Cells = cells
+		v.Rows[i] = r
+	}
+	return v
 }
