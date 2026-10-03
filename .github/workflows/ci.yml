@@ -1422,12 +1422,12 @@ jobs:
         continue-on-error: true
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
+          fetch-depth: 0  # the path filter traverses merge ancestry across retained refs
       - name: checkout retry
         if: steps.checkout.outcome == 'failure'
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
+          fetch-depth: 0  # the path filter traverses merge ancestry across retained refs
 
       - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
         id: filter
@@ -1713,7 +1713,7 @@ jobs:
     # reference and the run was never created. test-hosted is skipped on a pull
     # request and ci-ok's `always()` still runs; the per-event steps below check
     # exactly the jobs that event actually ran.
-    needs: [lint, test, functional, e2e, lisp, test-hosted, test-hosted-pr]
+    needs: [lint, test, functional, e2e, lisp-changes, lisp, test-hosted, test-hosted-pr]
     # PRs are self-hosted only; hosted runners are reserved for push to main and
     # the nightly schedule. ci-ok aggregates on the Linux space runner either way.
     runs-on: [self-hosted, linux, x64, space]
@@ -1857,7 +1857,7 @@ jobs:
           "$RUNNER_TEMP/ci" aggregate --event "${{ github.event_name }}" \
             --skip-ok lisp,test-hosted-pr --skip-ok-on pull_request=functional \
             lint=${{ needs.lint.result }} test=${{ needs.test.result }} functional=${{ needs.functional.result }} \
-            lisp=${{ needs.lisp.result }} e2e=${{ needs.e2e.result }} test-hosted-pr=${{ needs.test-hosted-pr.result }}
+            lisp-changes=${{ needs.lisp-changes.result }} lisp=${{ needs.lisp.result }} e2e=${{ needs.e2e.result }} test-hosted-pr=${{ needs.test-hosted-pr.result }}
       - name: a fork's pull request is red here
         if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
         shell: bash
@@ -1870,7 +1870,7 @@ jobs:
         run: |
           "$RUNNER_TEMP/ci" aggregate --event "${{ github.event_name }}" --skip-ok lisp \
             lint=${{ needs.lint.result }} test=${{ needs.test.result }} e2e=${{ needs.e2e.result }} \
-            lisp=${{ needs.lisp.result }} test-hosted=${{ needs.test-hosted.result }}
+            lisp-changes=${{ needs.lisp-changes.result }} lisp=${{ needs.lisp.result }} test-hosted=${{ needs.test-hosted.result }}
 
       # THE RUNNER IS THE EVENT SOURCE. The signed webhook receiver sits behind
       # a tailscale funnel kept off by design, so this job, on our own runner
