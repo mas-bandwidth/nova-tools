@@ -62,6 +62,8 @@ usage:
                        (--member-injects lints the card as the member stages it, rules by reference: the rules are appended at stage time from the held file of the card's REPO: (fleet/child-rules.txt for nova-tools, fleet/child-rules.<repo>.txt for another), or --child-rules-file; a card need not carry them, and a line that contradicts them is still a finding)
                        (--base-check adds the four checks of a coding card: its PATHS exist at the base sha in --repo (default the working directory), no STEP pushes or calls gh, its LEG is a line of --legs, its deadline is at least --p95's figure for its kind; evidence not given is reported missing, never passed)
                        (nova-sprint add holds a brief to the --child-rules tokens only, and to its model lines: rule-<name> for each rule of its set (the six general rules, or the file add --rules or init --rules names), the step-<what> scans (step-go-clean and step-go-test-timeout only when the file carries those rules), and rule-libraries-considered when the file carries [libraries-considered]; every other token --rules lists is this lint's alone)
+  nova-swarm step      --card <file> --dir <checkout> [--work <dir>] [--result <file>] [--sandbox <wall> | --no-wall] | --card <file> --remainder <id> --from <step> --land <sha>
+                       (runs the card's own programs: a card whose every work step is a script step, walked in the checkout with no model, each program, POST command and git in its own wall (network denied, no credential, the checkout and a private temp the only writes); one STEP OK|FAILED line per step, stopping at the first failed; refused with no wall unless --no-wall, which runs them unconfined; --remainder prints the card a failed step leaves)
   nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|card|read|fix|text|replay|drift|tone|models.tsv
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
   nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--frame <file>] [--identity <owner>,<name>,<email>]
@@ -127,6 +129,7 @@ example:
 // lint quote theirs from the banner's example block.
 var verbExamples = map[string]string{
 	"native":     "nova-swarm native --harness ./harness --model provider/model --card card.md --slot slots/1 --root jobs --deadline 30m --tokens unmetered",
+	"step":       "nova-swarm step --card card.md --dir repo",
 	"member":     "nova-swarm member --as m1 --server sprint.example:6390 --harness ./harness --root jobs --once",
 	"disk-guard": "nova-swarm disk-guard --root ~/nova-bench/run/member --scan ~/nova-bench/run --cache-max-gb 10",
 }
@@ -152,6 +155,9 @@ func verbHelpLines(verb string) string {
 	if verb == "template" {
 		add = cardLines
 	}
+	if verb == "step" {
+		add = "effect: local write: commits in the checkout --dir names, and runs the card's programs in their own wall; --dry-run writes nothing\n"
+	}
 	if verb == "disk-guard" {
 		add = "effect: local write: removes and rotates files on this machine; --dry-run writes nothing\n"
 	}
@@ -163,14 +169,14 @@ func verbHelpLines(verb string) string {
 
 // verbNames are the verbs, in the usage's order: what a bare command and an unknown verb
 // are answered with (the tool-answers rule).
-var verbNames = []string{"template", "lint", "member", "native", "disk-guard", "worker", "verify", "doctor", "profile", "slots", "version"}
+var verbNames = []string{"template", "lint", "member", "native", "step", "disk-guard", "worker", "verify", "doctor", "profile", "slots", "version"}
 
 // helpVerbs are the verbs `help <verb>` answers with that verb's help, the same text
 // `<verb> -h` prints.
 var helpVerbs = map[string]bool{
 	"version": true, "doctor": true, "verify": true, "lint": true,
 	"template": true, "profile": true, "native": true, "member": true, "slots": true, "worker": true,
-	"disk-guard": true,
+	"step": true, "disk-guard": true,
 }
 
 // refuse is what an unusable invocation costs: ONE line, `nova-swarm[ <verb>] REFUSED:
@@ -238,6 +244,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 		return cmdTemplate(rest, stdout, stderr)
 	case "native":
 		return cmdNative(rest, stdout, stderr)
+	case "step":
+		return cmdStep(rest, stdout, stderr)
 	case "member":
 		return cmdMember(rest, stdout, stderr, nil)
 	case "slots":

@@ -25,6 +25,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
+	"github.com/mas-bandwidth/nova-tools/internal/cardtree"
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -791,6 +792,24 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		}
 	}
 
+	// (4g) A SCRIPT CARD (docs/SPEC-SPRINT.md, a card is a tree of steps). A work card whose
+	// every work step is a script step runs the executor in place of the harness, and no model
+	// is launched at all. The executor is not the child: it runs outside the child's wall (a
+	// wall does not nest) with no credential in its environment, and puts each program, POST
+	// command and git in the step's own wall, tighter than a child's (below, at the wall).
+	var stepArgv []string
+	if cfg.frame != nil && stageRes.Staged && cfg.frame.Kind == "work" {
+		all, err := installTreeSteps(cfg.card, cfg.slotDir, jobDir)
+		if err != nil {
+			refuseNative(errOut, fmt.Sprintf("%s the card's script steps could not be installed: %s", oneline.Field(cfg.label), oneline.Err(err)))
+			return nativeRunResult{}, 2
+		}
+		if all != nil {
+			stepArgv = all
+			fmt.Fprintf(os.Stdout, "NATIVE NOTE label=%s every work step is a script step: the executor runs in place of the harness, no model, each step in its own wall\n", oneline.Field(cfg.label))
+		}
+	}
+
 	// (5) THE WALL (slice 11). Every native run is walled unless the caller typed --no-wall:
 	// the wall is never implied away (SPEC-SANDBOX rule 1). A --sandbox name is used as typed;
 	// otherwise the tool's own name is resolved on PATH. A wall that cannot express a repo
@@ -824,6 +843,14 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// wall denies setpriority): native lowers the group after the start, and the card's own
 	// `nice -n 19` resolves to the shim's, which runs the command without the wall's warning.
 	niced := nativeNicesChild(runtime.GOOS, wall != "")
+	if stepArgv != nil {
+		var err error
+		if runPath, runArgv, niced, err = nativeStepLaunch(runtime.GOOS, stepArgv, wall); err != nil {
+			refuseNative(errOut, fmt.Sprintf("%s the wall %s could not be made absolute: %s", oneline.Field(cfg.label), oneline.Field(wall), oneline.Err(err)))
+			return nativeRunResult{}, 2
+		}
+		wall = ""
+	}
 	if niced && shimDir != "" {
 		if err := writeNativeNiceShim(shimDir); err != nil {
 			fmt.Fprintf(errOut, "NATIVE NOTE: %s; a card's nice inside the wall warns setpriority and runs its command anyway\n", oneline.Err(err))
@@ -1025,6 +1052,9 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// previousLaunchEnd is the floor under the NEXT launch's usage window. The zero time is
 	// no floor, which is what the first launch has.
 	var previousLaunchEnd time.Time
+	if stepArgv != nil {
+		childEnv = append(cardtree.ScrubEnv(childEnv), "HOME="+dataHome) // the step needs no model and no credential
+	}
 	// The harness is a long-lived child: it runs under this run's cancellable context and
 	// no deadline (the run's own deadline and idle rules end it), and the context ends
 	// with the run, so no launch outlives the function that started it.

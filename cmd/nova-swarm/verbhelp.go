@@ -20,6 +20,7 @@ takes no new card and stops when the last is reported).`
 
 // verbExit is each verb's own exit codes.
 var verbExit = map[string]string{
+	"step":          "exit codes: 0 every step run is ok, each on its STEP OK line (--remainder: the card printed); 1 a step failed, on its STEP FAILED line, and the steps after it were not run; 2 could not run: a missing flag, a card that cannot be read, whose tree has a finding or that is not script steps only, no wall and no --no-wall",
 	"lint":          "exit codes: 0 the card is clean (a NOTE line is advice and changes nothing); 1 a drift, each on its LINT DRIFT line; 2 could not run: a missing flag, a file that cannot be read, a bad invocation",
 	"verify":        "exit codes: 0 the result holds its contract; 1 it does not (the line says why); 2 could not run: a missing flag, a file that cannot be read, a receipt that cannot be written",
 	"worker":        "exit codes: 0 WORKER OK; 1 the description was read and drifts, each on its WORKER DRIFT line; 2 it cannot be read, or a bad invocation",

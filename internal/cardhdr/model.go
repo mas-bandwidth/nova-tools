@@ -132,3 +132,9 @@ const (
 	EndNothing  = "nothing to do"
 	EndNoCommit = "no commit"
 )
+
+// RemainderKey begins the report of a tree card that finished ok at the step before its
+// failed step: `remainder=<id>-r<n> step <n> <verdict>: <why>`, the card the coordinator adds
+// for the rest (docs/SPEC-SPRINT.md, a card is a tree of steps). The sprint carries such a
+// report on its "work came back ok" note.
+const RemainderKey = "remainder="

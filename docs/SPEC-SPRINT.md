@@ -493,6 +493,62 @@ or reader, route, model, end, the tokens, wait, run, predicted, actual and
 card retired and no consumer record cleaned up can lose cost: the record is
 already in the card. A figure not known prints `-`, never 0.
 
+**A card is a tree of steps** (`internal/cardtree`; nova-tools#5174 rule 7). The owner,
+2026-10-02: "any card can be a tree"; "a batch card is just nomenclature"; a script step is "a
+script card, when it is anything that is not an LLM", "preference: lisp, or golang obv.", a
+regex at simplest. The failed-step rule is the coordinator's, 2026-10-02: a failed step n lands
+steps 1..n-1, and steps n.. become a new card. The machine sees one card: one id, one slot, one
+deal, one finish, one push, one pull request, its reads; dependencies stay at the card level
+(`Needs:`), and inside a card the tree is the order.
+
+- *The grammar.* A step's number may be dotted: `STEP 3.1.` is the first child of `STEP 3.`, the
+  children of one parent numbered 1, 2, 3 with no gap (`steps-nested`). A step carrying `COMMIT:`
+  is a work step and carries its own `PATHS:` and `VERDICT:`; each glob is a relative path inside
+  the checkout (no `..`, not absolute) and one of the card's `PATHS:` or `NEW:` (`tree-step`). A
+  step field is upper case as written; an indented `verdict:` is prose. A work step with `SCRIPT:
+  regex|go|lisp`, its program in one fenced block under it and at least one `POST: sha256 <path>
+  <64 hex>` (a path inside the checkout) or `POST: exit0 <command>` line, is a script step; bash,
+  sh and python are refused as a language, and an exit0 command whose first word is bash, sh,
+  zsh, python, python3, perl or env is refused (`script-step`). A card with a script step is
+  script steps only: a model step beside one is refused (`script-step`), and the model steps go
+  in a card of their own with `Needs:` between the two. A card with no dotted step and no step
+  field is flat, and nothing here applies to it. `nova-swarm lint` and `nova-sprint add` hold a
+  tree to the three rules.
+- *The walk.* Depth first in card order, one commit per work step with its COMMIT: line as the
+  message, from the header's `From: STEP <n>` when the card names one. A model card's child
+  walks it. A script card is walked by the executor, `nova-swarm step`, with no model: native
+  runs it in place of the harness, outside the child's wall (a wall does not nest), with no
+  credential in its environment. Each command of a step runs in the step's own wall, tighter
+  than a child's: `--net-deny` (refused where the wall cannot enforce it), no variable whose name
+  carries KEY, TOKEN, SECRET, AUTH, PASSWORD, PASSWD or CREDENTIAL and none whose value holds
+  a URL's `user:password@` (a denylist: under native the executor's environment is already the
+  child's allowlist), HOME a private one, Go's build cache a private one in the temp
+  (`GOCACHE=<temp>/go-build`, `GOFLAGS=-mod=readonly`, `GOPROXY=off`: no step reads or writes
+  the bench's shared cache), and the checkout and a private temp the only writes; reads are the
+  system, the built programs, the bench toolchain, the module cache GOMODCACHE names and the
+  checkout's borrowed objects, the last two never executable (no data home, no auth copy). The
+  wall binary is named by an absolute path, since each command runs from the checkout. `regex` runs
+  in process over the step's PATHS through the checkout's `os.Root`, so a link out of it is
+  never followed; `go` is built by the toolchain from its one file (no cgo, no module fetched)
+  and the binary runs in the wall; `lisp` runs under `sbcl --script` in the wall; each POST
+  command and git's add and commit run in the wall too. Every path holds this: the executor
+  with no wall binary refuses unless `--no-wall` is given, and then says the programs run
+  unconfined. The walk stops at the first step that is not ok.
+- *The verdict per step.* The result's body carries one line per work step, `step <n>: <ok|
+  broken|not-done|skipped> <commit sha|-> <one line>`, the commit a full sha or its first twelve;
+  a line whose commit is any other word is a defect, read as not-done. The first work step that is
+  not ok (a step with no line is not-done) is the failed step; a body with no step line at all
+  keeps the result's own verdict. A failed first step is a failed finish whose reason is `step <n>
+  <verdict>: <why>`. A later failed step n: the member pushes the commit of the last ok step
+  before it and finishes ok there, so steps 1..n-1 are read and land on the unchanged path, with
+  the report `remainder=<id>-r<n> step <n> <verdict>: <why>`, which the "work came back ok" note
+  carries beside its `pushed=<land>`. The remainder card `<id>-r<n>` (a dotted step's dots as
+  dashes, `c1-r3-2`, an id the sprint takes) is the brief staged at the land commit: line 1's
+  `sha=`, `BASE: <ref>@<sha>` and `base-sha:` rewritten to it (one added when the card names no
+  base), with `From: STEP <n>` and `Needs: <id>` added after line 1. `nova-swarm step --card
+  <brief> --remainder <id> --from <n> --land <pushed sha>` prints it; the coordinator adds it and
+  the deal deals it as any card. A member adds no card: `add` is the coordinator's.
+
 ## 3. The lifecycle of a primary
 
 Six states, fixed, in one Go file (`internal/sprint/lifecycle.go`) mirrored by

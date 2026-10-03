@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/cardtree"
 )
 
 // THE CHILD RULES: EVERY RULE THE COORDINATOR GIVES A CHILD IS A RULE OF THE CARD LINT.
@@ -286,6 +288,9 @@ func ruleRemedy(r ChildRule) string {
 // for a `step-` token, the rule's sentence for a `rule-` token of the set, and "" for a
 // token that is neither.
 func ChildRemedy(rules []ChildRule, check string) string {
+	if r, ok := cardtree.Remedies[check]; ok {
+		return r
+	}
 	if r, ok := CardChildRemedies[check]; ok && strings.HasPrefix(check, "step-") {
 		return r
 	}

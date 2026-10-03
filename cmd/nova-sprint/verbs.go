@@ -20,6 +20,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/cardlimits"
+	"github.com/mas-bandwidth/nova-tools/internal/cardtree"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -1305,9 +1306,16 @@ func lintBriefReads(brief string, rs ruleSet) (modelWhy string, findings []swarm
 	if rs = cardRules(brief, rs); rs.held != "" {
 		// rules by reference: the member injects the held file at stage time, so the brief
 		// is linted as the child is handed it (nova-tools#5174 rule 6)
-		return "", swarm.LintCardChildByReference([]byte(brief), rs.rules)
+		findings = swarm.LintCardChildByReference([]byte(brief), rs.rules)
+	} else {
+		findings = swarm.LintCardChildWith([]byte(brief), rs.rules)
 	}
-	return "", swarm.LintCardChildWith([]byte(brief), rs.rules)
+	// a tree card's steps are held too (internal/cardtree; docs/SPEC-SPRINT.md, a card is
+	// a tree of steps): a flat brief has no such finding
+	for _, f := range cardtree.Lint(brief) {
+		findings = append(findings, swarm.CardHeaderFinding{Check: f.Check, Line: f.Line, Excerpt: f.Excerpt})
+	}
+	return "", findings
 }
 
 // cardRules is the rule set one brief is held to under the add's set rs (nova-tools#5174

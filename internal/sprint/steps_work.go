@@ -1159,6 +1159,12 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		} else if !r.Failed {
 			n := happened(NWorkOK, pr.Row, s.Now, pr.ID)
 			n.Who, n.Attempt = who, attempt
+			if strings.Contains(r.Report, cardhdr.RemainderKey) {
+				// a tree card that finished at the step before its failed step: the note
+				// names the remainder card for the coordinator to add (docs/SPEC-SPRINT.md,
+				// a card is a tree of steps)
+				n.What = r.Report
+			}
 			u.Notes = append(u.Notes, n)
 		} else if identical {
 			// the second identical failure (rule 2): the bound's judgment at once, in the words

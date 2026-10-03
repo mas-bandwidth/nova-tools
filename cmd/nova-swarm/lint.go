@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardlimits"
+	"github.com/mas-bandwidth/nova-tools/internal/cardtree"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
@@ -72,7 +73,10 @@ var cardLintAdvisory = map[string]bool{"size": true, swarm.PlaceholderCheck: tru
 // checked under `--child-rules`, and always by `nova-sprint add` over every brief.
 //
 // And `placeholder`: a line of the card template left with its <...> fill-ins.
-var cardLintChecks = 23 + len(swarm.CardChildRemedies)
+//
+// And the three rules of a tree card (internal/cardtree): steps-nested, tree-step and
+// script-step, which fire only on a card with a dotted step or a work step.
+var cardLintChecks = 23 + len(swarm.CardChildRemedies) + len(cardtree.Remedies)
 
 // EVERY DRIFT NAMES ITS REMEDY, AND THE BINARY CAN PRINT THE WHOLE TABLE (issue #1464).
 //
@@ -101,7 +105,7 @@ var cardLintRemedies = map[string]string{
 	// spec section, practice number or issue; tool ledger W5): the rule's token is its name.
 	"result-first":     "line 1 IS the contract: " + swarm.CardContractWanted + ". A title, a heading or a `#` comment on line 1 is this drift, however right the words are",
 	"clone-step":       "STEP 1 enters the repository from the working directory: the whole step, its line and the lines under it, holds a `git clone -q <url> repo && cd repo`, or a `cd ` into a checkout that may already be there. The wording of the STEP line itself is yours; the command is the rule",
-	"steps-numbered":   "each step is its own line beginning `STEP <n>.`, numbered 1, 2, 3 with no gap and no repeat; a card with no STEP lines at all is this drift",
+	"steps-numbered":   "each step is its own line beginning `STEP <n>.`, numbered 1, 2, 3 with no gap and no repeat; a card with no STEP lines at all is this drift; a dotted child step (`STEP 3.1.`) is numbered under its parent instead (steps-nested)",
 	"red-test":         "name the reproducing test by its own name -- `TestSomething` -- or, for a card that only reads, say `probe` or `read` in so many words",
 	"test-command":     "write the gate verbatim, exactly as the card is to run it -- the accepted set is `make`/`gmake <target>`, `go test`, `go vet`, `pytest`, `cargo test`, `npm test`, `dotnet test`, `ctest`, `mvn test`, `gradle test`, `bash <script>` or a bare `./<script>`, or say in words that there are no tests",
 	"deadline":         "give the card its own bound: a `deadline` line, or `finish within <n> minutes`",
@@ -132,7 +136,7 @@ func cardPlaceholders(raw []byte) []cardFinding {
 // one listing and cardLintChecks counts one set. A token defined in both places is a
 // collision this init refuses to paper over.
 func init() {
-	for _, table := range []map[string]string{swarm.CardHeaderRemedies, swarm.CardBaseRemedies, swarm.CardChildRemedies} {
+	for _, table := range []map[string]string{swarm.CardHeaderRemedies, swarm.CardBaseRemedies, swarm.CardChildRemedies, cardtree.Remedies} {
 		for name, remedy := range table {
 			if _, clash := cardLintRemedies[name]; clash {
 				panic("nova-swarm lint: two remedies for the rule " + name)
@@ -202,9 +206,14 @@ type cardStep struct {
 	text string
 }
 
+// cardSteps is the top-level STEP lines: a dotted child (`STEP 3.1.`) of a tree card is
+// numbered under its parent, which cardtree.Lint holds (steps-nested).
 func cardSteps(lines []string) []cardStep {
 	var steps []cardStep
 	for i, l := range lines {
+		if m := cardtree.StepRE.FindStringSubmatch(l); m != nil && strings.Contains(m[1], ".") {
+			continue
+		}
 		if m := cardStepRE.FindStringSubmatch(l); m != nil {
 			n, _ := strconv.Atoi(m[1])
 			steps = append(steps, cardStep{line: i + 1, num: n, text: l})
@@ -341,6 +350,14 @@ func lintCard(raw []byte) []cardFinding {
 	// 12. the card is under the advisory ceiling. Over it is said and never refused.
 	if len(raw) >= cardMaxBytes {
 		add("size", 1, fmt.Sprintf("card is %d bytes, over the %d-byte advisory ceiling; it is not refused and not truncated here, and nova-sprint add refuses a brief over %d bytes", len(raw), cardMaxBytes, cardRefusedBytes))
+	}
+
+	// 13. a tree card's steps: dotted numbers under their parents, each work step's own
+	// PATHS, COMMIT and VERDICT lines, each script step's program and post-condition
+	// (internal/cardtree; docs/SPEC-SPRINT.md, a card is a tree of steps). A flat card has
+	// none of these findings.
+	for _, f := range cardtree.Lint(text) {
+		add(f.Check, f.Line, f.Excerpt)
 	}
 
 	return out
