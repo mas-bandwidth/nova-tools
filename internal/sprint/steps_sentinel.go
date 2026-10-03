@@ -28,9 +28,10 @@ const FieldHeld = "held"
 // HeldBack is how many primaries no tick moves on its own: every sentinel not
 // released, every card admitted held, and every waiting card that waits,
 // through a need or its place in line, on one of those. where shows them as
-// held=N and its ETA is over the rest, the dealable cards (nova-tools#5096
-// item 16). Everything it counts is waiting, so a snapshot of the work
-// table's waiting column is enough.
+// held=N (nova-tools#5096 item 16), and its ETA counts every card not landed,
+// held ones included (docs/SPEC-SPRINT.md section 1, 2026-10-02). Everything
+// it counts is waiting, so a snapshot of the work table's waiting column is
+// enough.
 func HeldBack(s *Snapshot) int {
 	memo := map[string]bool{}
 	var back func(c *Card) bool

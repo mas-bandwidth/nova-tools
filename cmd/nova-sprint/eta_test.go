@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"testing"
@@ -25,24 +26,26 @@ func etaWork(ready, landed int64) ntable.Table {
 
 // The sprint line's ETA is an estimate while the sprint runs (Glenn, 2026-10-01 9:17 PM
 // ET: "an estimate, based on the number of cards remaining, and the average time per-card
-// to land"): the cards left, each at the time from the first start over the cards landed,
-// in whole minutes rounded up, never seconds ("i don't need seconds. round up to minute").
-// With fewer than five landed, or no start known, there is no rate and the ETA reads a
-// dash; with every card landed there is no ETA.
-func TestTheSprintLineEstimatesItsETAFromTheCardsLeftAndTheAverageTimeToLand(t *testing.T) {
+// to land"): the cards left at the cards landed an hour, in whole minutes rounded up, never
+// seconds ("i don't need seconds. round up to minute"). With fewer than five landed, or no
+// rate, the ETA reads a dash; with every card landed there is no ETA.
+func TestTheSprintLineEstimatesItsETAFromTheCardsLeftAndTheLandingRate(t *testing.T) {
 	t.Parallel()
-	line := func(ready, landed int64, since time.Duration, started bool) string {
+	line := func(ready, landed int64, in time.Duration) string {
 		w := etaWork(ready, landed)
-		return summary(w, 0, etaMinutes(w, 0, since, started))
+		rate := 0.0
+		if in > 0 {
+			rate = float64(landed) / in.Hours()
+		}
+		return summary(w, 0, etaMinutes(w, rate))
 	}
-	// 250 of 1000 landed in 5 minutes is 1.2 s a card: the 750 left take 15 minutes
-	assert.Equal(t, "250/1000 25.0% -> ETA 15m", line(750, 250, 5*time.Minute, true))
-	assert.Equal(t, "1/3 33.3% -> ETA -", line(2, 1, 10*time.Second, true), "one landed is under the five-card threshold: no estimate")
-	assert.Equal(t, "1/3 33.3% -> ETA -", line(2, 1, 31*time.Second, true), "one landed is under the five-card threshold: no estimate")
-	assert.Equal(t, "100/1000 10.0% -> ETA 1h12m", line(900, 100, 8*time.Minute, true))
-	assert.Equal(t, "0/3 0.0% -> ETA -", line(3, 0, time.Minute, true), "nothing landed: no rate to estimate from")
-	assert.Equal(t, "1/3 33.3% -> ETA -", line(2, 1, 0, false), "no first start known: no estimate")
-	assert.Equal(t, "3/3 100.0% done", line(0, 3, time.Minute, true), "every card landed: done, no ETA")
+	// 250 of 1000 landed in 5 minutes is 3,000 an hour: the 750 left take 15 minutes
+	assert.Equal(t, "250/1000 25.0% -> ETA 15m", line(750, 250, 5*time.Minute))
+	assert.Equal(t, "1/3 33.3% -> ETA -", line(2, 1, 10*time.Second), "one landed is under the five-card threshold: no estimate")
+	assert.Equal(t, "100/1000 10.0% -> ETA 1h12m", line(900, 100, 8*time.Minute))
+	assert.Equal(t, "0/3 0.0% -> ETA -", line(3, 0, time.Minute), "nothing landed: no rate to estimate from")
+	assert.Equal(t, "10/30 33.3% -> ETA -", line(20, 10, 0), "no rate: no estimate, never a number")
+	assert.Equal(t, "3/3 100.0% done", line(0, 3, time.Minute), "every card landed: done, no ETA")
 }
 
 // The ETA reads a dash until five cards have landed in the epoch: four landed
@@ -51,28 +54,77 @@ func TestTheETAReadsDashUntilFiveCardsHaveLanded(t *testing.T) {
 	t.Parallel()
 	line := func(ready, landed int64) string {
 		w := etaWork(ready, landed)
-		return summary(w, 0, etaMinutes(w, 0, time.Minute, true))
+		return summary(w, 0, etaMinutes(w, float64(landed)*60))
 	}
 	assert.Equal(t, "4/10 40.0% -> ETA -", line(6, 4))
 	assert.Equal(t, "5/10 50.0% -> ETA 1m", line(5, 5))
 }
 
-// The ETA is over the dealable cards (nova-tools#5096 item 16, the wave-2 card builder:
-// "where's ETA counts held cards as dealable (2h38m to 3h30m on adding held work)"; the
-// coordinator, quoting Glenn: "I'd like to really really load up the sprint in waiting,
-// and stick sentinels in"): the cards behind a sentinel not released, or admitted held,
-// show apart as held=N, and the cards left that the estimate counts are the rest.
-func TestTheETAIsOverDealableCardsAndHeldCardsShowApart(t *testing.T) {
+// The ETA is the time until every card on the work table has landed (Glenn, 2026-10-02
+// 9:57 PM ET, at a dashboard showing 347 of 2,846 landed, ETA 1h 36m, throughput 2 cards
+// an hour: "Please update the ETA on the sprint. It's OBVIOUSLY wrong." and "it's the ETA to
+// all cards being done, not the cards that are in flight or not blocked"): every card not
+// landed, the 2,443 held behind sentinels too, at the landings of the last hour of running
+// time, or the whole sprint's average when fewer than five landed in it; no rate, a dash.
+// From a day on it reads in days and hours, the hours rounded up.
+func TestTheETAIsToEveryCardLandedHeldCardsIncluded(t *testing.T) {
 	t.Parallel()
-	line := func(ready, landed, held int64, since time.Duration) string {
-		w := etaWork(ready, landed)
-		return summary(w, held, etaMinutes(w, held, since, true))
+	// the live sprint: 2,846 cards, 347 landed, 2,443 held, 56 ready or in flight
+	w := ntable.Table{
+		Columns: []ntable.Column{{Name: sprint.Waiting, Projection: ntable.Count}, {Name: sprint.Ready, Projection: ntable.Count}, {Name: sprint.Landed, Projection: ntable.Count}},
+		Rows:    []ntable.Row{{Key: "s1", Cells: []ntable.Cell{{Count: 2443}, {Count: 56}, {Count: 347}}}},
 	}
-	// 250 landed in 5 minutes is 1.2 s a card: of the 750 left, 500 are held, and the
-	// 250 dealable take 5 minutes
-	assert.Equal(t, "250/1000 25.0% held=500 -> ETA 5m", line(750, 250, 500, 5*time.Minute))
-	assert.Equal(t, "1/3 33.3% held=2 -> ETA -", line(2, 1, 2, time.Minute), "every card left is held: nothing to estimate")
-	assert.Equal(t, "250/1000 25.0% -> ETA 15m", line(750, 250, 0, 5*time.Minute), "none held: the line as before")
+	const held = 2443
+	first := time.Date(2026, 10, 2, 12, 57, 0, 0, time.UTC)
+	now := first.Add(9 * time.Hour)
+	opened := []sprint.Span{{From: first.Add(-time.Hour), To: first}} // every epoch begins STOPPED
+	// landings is n stamps evenly over [from, to)
+	landings := func(n int, from, to time.Time) []time.Time {
+		out := make([]time.Time, n)
+		for i := range out {
+			out[i] = from.Add(to.Sub(from) * time.Duration(i) / time.Duration(n))
+		}
+		return out
+	}
+	lastHour := now.Add(-59 * time.Minute)
+	cases := []struct {
+		name    string
+		landed  []time.Time
+		spans   []sprint.Span
+		rate    float64
+		summary string
+	}{
+		{"40 in the last hour: 2,499 left at 40 an hour, 62h29m",
+			append(landings(307, first, now.Add(-time.Hour)), landings(40, lastHour, now)...), opened,
+			40, "347/2846 12.2% held=2443 -> ETA 2d15h"},
+		{"2 in the last hour, under five: the whole sprint's 347 over 9 h",
+			append(landings(345, first, now.Add(-time.Hour)), landings(2, lastHour, now)...), opened,
+			347.0 / 9, "347/2846 12.2% held=2443 -> ETA 2d17h"},
+		{"0 in the last hour: the whole sprint's 347 over 9 h, 38.6 an hour",
+			landings(347, first, now.Add(-time.Hour)), opened,
+			347.0 / 9, "347/2846 12.2% held=2443 -> ETA 2d17h"},
+		{"a stop is not running time: the hour reaches back over it",
+			append(landings(337, first, now.Add(-3*time.Hour)), landings(10, now.Add(-115*time.Minute), now.Add(-90*time.Minute))...),
+			append(opened, sprint.Span{From: now.Add(-90 * time.Minute), To: now.Add(-30 * time.Minute)}),
+			10, "347/2846 12.2% held=2443 -> ETA 10d10h"},
+		{"no stamp and no start: no rate, a dash", nil, nil, 0, "347/2846 12.2% held=2443 -> ETA -"},
+		{"stamps but no start: no rate, a dash", landings(347, first, now), nil, 0, "347/2846 12.2% held=2443 -> ETA -"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			start := first
+			if c.spans == nil {
+				start = time.Time{}
+			}
+			rate := sprint.LandingRate(c.landed, 347, c.spans, start, now)
+			assert.InDelta(t, c.rate, rate, 1e-9)
+			assert.Equal(t, c.summary, summary(w, held, etaMinutes(w, rate)))
+		})
+	}
+	// at the 2 an hour the dashboard's tile showed, every card is 1,249.5 hours away
+	assert.Equal(t, int64(74970), etaMinutes(w, 2))
+	assert.Equal(t, "347/2846 12.2% held=2443 -> ETA 52d2h", summary(w, held, etaMinutes(w, 2)))
 }
 
 // where shows the held cards of the table on its header line and in --json, and the
@@ -123,7 +175,7 @@ func TestTheViewHoldsTheLargestETAOfTheLastTenSeconds(t *testing.T) {
 // "When you add new cards, the ETA needs to be made dirty and recalculated.";
 // nova-tools#5171): the tick that drains the change puts it on the work table, and the next
 // read of where and where --json shows the estimate recomputed over the new count of cards to
-// land at the rate measured, the time from the first start over the cards landed, with no
+// land, held ones too, at the rate measured (the landings over the running time, all in the last hour here), with no
 // 10 s hold of the estimate made over the count before. No real time: the clock is the test's.
 func TestTheETAIsRecomputedOnTheTickAfterAnAddADropOrARelease(t *testing.T) {
 	t.Parallel()
@@ -152,8 +204,10 @@ func TestTheETAIsRecomputedOnTheTickAfterAnAddADropOrARelease(t *testing.T) {
 		ta.json("where", &v)
 		since, started := st.SinceFirstStart(context.Background())
 		require.True(t, started)
-		left := v.All - v.Landed - v.Held
-		want := int64(math.Ceil(float64(since) * float64(left) / float64(v.Landed) / float64(time.Minute)))
+		require.Less(t, since, time.Hour, "every landing is in the last hour of running time")
+		left := v.All - v.Landed // held cards too
+		want := int64(math.Ceil(float64(left) * 60 / (float64(v.Landed) / since.Hours())))
+		require.Less(t, want, int64(24*60))
 		if want < 60 {
 			return v, fmt.Sprintf("-> ETA %dm", want)
 		}
@@ -161,6 +215,9 @@ func TestTheETAIsRecomputedOnTheTickAfterAnAddADropOrARelease(t *testing.T) {
 	}
 	before, want := read()
 	require.Contains(t, before.Summary, want, "the estimate before the add")
+	stamps, err := st.LandedAt(context.Background())
+	require.NoError(t, err)
+	require.Len(t, stamps, int(before.Landed), "every landed card carries its landed stamp")
 	landed := before.Landed
 
 	ta.ok("add --stream s2 --count 20")
@@ -182,7 +239,7 @@ func TestTheETAIsRecomputedOnTheTickAfterAnAddADropOrARelease(t *testing.T) {
 	ta.ok("tick")
 	heldBack, want := read()
 	require.Equal(t, int64(6), heldBack.Held)
-	require.Contains(t, heldBack.Summary, "held=6 "+want, "held cards are not in the estimate")
+	require.Contains(t, heldBack.Summary, "held=6 "+want, "held cards are in the estimate")
 	ta.ok("release h1 h2 h3 h4 h5 h6 --reason 'the wave is loaded'")
 	ta.ok("tick")
 	released, want := read()
@@ -190,4 +247,49 @@ func TestTheETAIsRecomputedOnTheTickAfterAnAddADropOrARelease(t *testing.T) {
 	require.Zero(t, released.Held)
 	require.Contains(t, released.Summary, want, "6 released cards are in the estimate")
 	require.NotEqual(t, heldBack.Summary, released.Summary)
+}
+
+// A read of the landed stamps that fails (the landed column busy with landings) leaves
+// the whole sprint's average: where and where --json still answer, with an estimate,
+// never a failed view. Nothing waits here, so the landed column is the only work
+// table records where reads.
+func TestWhereKeepsTheWholeSprintAverageWhenTheLandedStampsFailToRead(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b,reader-c --members m1,m2")
+	ta.ok("add --stream s1 --count 30")
+	ta.ok("start")
+	var w whereView
+	for round := 1; ; round++ {
+		require.Less(t, round, 200, "five never landed: %s", ta.ok("where"))
+		ta.ok("tick")
+		if ta.json("where", &w); w.Landed >= 5 {
+			break
+		}
+		ta.ok(fmt.Sprintf("play --seed %d --ticks 1 --every 1s --fail 0 --broken 0 --stuck 0 --cross 0 --batch 10 --take 20 --reads 20", round))
+		ta.coordinate()
+	}
+	require.Zero(t, w.Held)
+	ta.mu.Lock()
+	ta.now = ta.now.Add(2 * time.Hour) // every landing is over an hour old: the average either way
+	ta.mu.Unlock()
+	ta.json("where", &w)
+	healthy := w.Summary
+	require.Contains(t, healthy, "-> ETA ", "an estimate: %s", healthy)
+	require.NotContains(t, healthy, "-> ETA -")
+
+	busy := errors.New("the tables are busy")
+	ta.m.Fail = func(point string) error {
+		if point == "readset "+sprint.Work {
+			return busy
+		}
+		return nil
+	}
+	st := &store.Store{B: ta.m, Names: sprint.Names{}, Now: ta.a.now}
+	_, err := st.LandedAt(context.Background())
+	require.ErrorIs(t, err, busy, "the stamps do not read")
+	var failed whereView
+	ta.json("where", &failed)
+	assert.Equal(t, healthy, failed.Summary, "the same estimate, from the whole sprint's average")
+	ta.ok("where") // the frame answers too (its header is STOPPED: nothing has ticked for 2 h)
 }
