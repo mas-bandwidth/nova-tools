@@ -48,7 +48,7 @@ func recoverHelp(out io.Writer, code *int) {
 	}
 	name := verbflag.Verb(prog, h.FS)
 	var b strings.Builder
-	verbflag.Print(&b, prog, strings.Replace(banner(), exitLine, verbExits(name), 1), h.FS)
+	verbflag.PrintSynopsis(&b, prog, strings.Replace(banner(), exitLine, verbExits(name), 1), h.FS, verbSynopsis(name))
 	*code = 0
 	if _, err := io.WriteString(out, verbflag.Insert(b.String(), verbExample(name))); err != nil {
 		// the help did not reach its reader (a closed stdout): the exit code says so

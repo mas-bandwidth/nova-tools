@@ -280,6 +280,17 @@ var verbExamples = map[string][]string{
 	},
 }
 
+// verbSynopsis is the verb's synopsis from the verb table, the words its usage
+// line shows after the verb's name ("" for a verb the table does not name).
+func verbSynopsis(name string) string {
+	for _, v := range verbs {
+		if v.name == name {
+			return v.syntax
+		}
+	}
+	return ""
+}
+
 // verbExample is the lines a verb's -h shows above its flags: its examples,
 // one runnable line per form from the verb table, for verbflag.RecoverWith.
 func verbExample(name string) string {
@@ -1562,7 +1573,7 @@ func (a *app) cmdFinish(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("finish")
 	as := fs.String("as", "", "the fleet member finishing its cards; several, comma separated, each finishing its own named cards in one step")
 	failed := fs.Bool("failed", false, "the work failed (default: ok)")
-	head := fs.String("head", "", "the commit the work finished at, the head land merges (default: the card's id, for a run with no git: land refuses a head that is not a commit id)")
+	head := fs.String("head", "", "the commit the work finished at, the head land merges: land accepts only a commit id, so the default (the card's id, for a run with no git) cannot land")
 	report := fs.String("report", "", "the worker's report")
 	branch := fs.String("branch", "", "the branch the work is on (its packet names the one to use)")
 	baseBranch := fs.String("base", "", "the branch the work started from")

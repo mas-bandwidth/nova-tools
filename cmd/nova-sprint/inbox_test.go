@@ -380,6 +380,6 @@ func TestHelpShowsTheWorkedExample(t *testing.T) {
 		require.Contains(t, out, "  HAPPENED tick-done-0317a1b2-1.1   the sprint is done  x1  for=coordinator", "%s does not show the sprint done", line)
 	}
 	out := ta.ok("help inbox")
-	require.True(t, strings.HasPrefix(out, "usage: nova-sprint inbox [flags]"), "help inbox: %s", out)
+	require.True(t, strings.HasPrefix(out, "usage: nova-sprint inbox [--open <group>]"), "help inbox: %s", out)
 	require.Contains(t, out, "--open <string>", "help inbox")
 }

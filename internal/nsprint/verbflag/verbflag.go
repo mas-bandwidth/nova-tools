@@ -318,13 +318,28 @@ func Verb(prog string, fs *flag.FlagSet) string {
 // secret), and the exit codes: exit, the verb's own lines, when given, else
 // the tool's paragraph from its help text.
 func Print(out io.Writer, prog, banner string, fs *flag.FlagSet, exit ...string) {
+	print(out, prog, banner, fs, "", false, exit...)
+}
+
+// PrintSynopsis is Print whose usage line quotes the verb's synopsis, given as
+// its words after the verb's name ("" for a verb with none), in place of the
+// generic `[flags]`: a tool whose verb table is the one source of a verb's
+// usage names the same words in `help <verb>` and `<verb> -h`.
+func PrintSynopsis(out io.Writer, prog, banner string, fs *flag.FlagSet, synopsis string, exit ...string) {
+	print(out, prog, banner, fs, synopsis, true, exit...)
+}
+
+func print(out io.Writer, prog, banner string, fs *flag.FlagSet, synopsis string, withSynopsis bool, exit ...string) {
 	var b strings.Builder
 	verb := Verb(prog, fs)
-	var subs []string
-	if !hasFlags(fs) {
-		subs = Subverbs(banner, prog, verb)
+	line := UsageLine(prog, verb, nil)
+	switch {
+	case withSynopsis:
+		line = UsageSynopsis(prog, verb, synopsis)
+	case !hasFlags(fs):
+		line = UsageLine(prog, verb, Subverbs(banner, prog, verb))
 	}
-	b.WriteString(UsageLine(prog, verb, subs) + "\n")
+	b.WriteString(line + "\n")
 	if lines := Excerpt(banner, prog, verb); len(lines) > 0 {
 		fmt.Fprintf(&b, "from `%s help`:\n", prog)
 		for _, l := range lines {
@@ -373,6 +388,18 @@ func UsageLine(prog, verb string, subs []string) string {
 		name += " <" + strings.Join(subs, "|") + ">"
 	}
 	return "usage: " + name + " [flags]"
+}
+
+// UsageSynopsis is the usage line of a verb whose own words the tool names
+// after it: `usage: <prog> <verb> <synopsis>`, the synopsis trimmed, so a verb
+// that takes no words reads `usage: <prog> <verb>` alone. It is UsageLine with
+// the verb's synopsis in place of the generic `[flags]`.
+func UsageSynopsis(prog, verb, synopsis string) string {
+	name := strings.TrimSpace(prog + " " + verb)
+	if synopsis = strings.TrimSpace(synopsis); synopsis != "" {
+		name += " " + synopsis
+	}
+	return "usage: " + name
 }
 
 // subverbRe is one word that names a verb, or several joined by | (list|show).
