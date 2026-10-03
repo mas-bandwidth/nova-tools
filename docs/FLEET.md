@@ -178,7 +178,8 @@ layout: the command is the record's `argv`, which the inventory renders with
 the loop row's width as its `--width` when the width is above 0 (a bare program is the installed
 tool, `~/` the login's home) behind `nova-secrets exec --as <seat> --only
 <keys> --require=<key>...` when the record names keys; its output goes to the
-record's log under `~/nova-bench/loops/`, which the play creates. Every unit
+record's log under the fleet row's `loops_dir` (migration 0015 seeds
+`~/nova-bench/loops`), which the play creates. Every unit
 gets `NOVA_SPRINT_REDIS=<store>:<redis_port>` from the applied fleet row. For
 a `nova-swarm member`, inventory removes an older endpoint assignment from the
 rendered `/usr/bin/env` prefix while preserving its Redis user, password

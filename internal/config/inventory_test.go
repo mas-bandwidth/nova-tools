@@ -32,7 +32,7 @@ func snapshot(loops map[string]View) *Snapshot {
 			"bench-alpha": {"user": "user-a", "seat": "seat-a", "slots": "64", "runners": "1"},
 			"bench-beta":  {"user": "user-b", "seat": "seat-b", "slots": "40", "runners": "0"},
 		},
-		Fleet: View{"store": "bench-beta", "coordinator": "bench-alpha", "redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova"},
+		Fleet: View{"store": "bench-beta", "coordinator": "bench-alpha", "redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova", "loops_dir": seededLoopsDir},
 		Loops: loops,
 		Beats: map[string]*Beat{"bench-beta": {OS: "linux", Arch: "amd64"}},
 		Revs:  map[string]int64{KindMachine: 3, KindFleet: 2},
@@ -209,7 +209,7 @@ func TestBuildInventoryOmitsEmptyValues(t *testing.T) {
 // A fleet with declared endpoints and no machines has every group present.
 func TestBuildInventoryOfAnEmptyStore(t *testing.T) {
 	t.Parallel()
-	inv, err := BuildInventory(&Snapshot{Fleet: View{"redis_port": "6380", "pg_dsn": "postgres://user@localhost:5432/nova"}}, "")
+	inv, err := BuildInventory(&Snapshot{Fleet: View{"redis_port": "6380", "pg_dsn": "postgres://user@localhost:5432/nova", "loops_dir": seededLoopsDir}}, "")
 	require.NoError(t, err)
 	raw, err := inv.JSON()
 	require.NoError(t, err)
@@ -252,7 +252,7 @@ loops:
 	assert.Equal(t, View{"user": "user-a", "seat": "seat-a", "slots": "4", "runners": "1"}, snap.Machines["bench-alpha"])
 	assert.Equal(t, &Beat{OS: "darwin", Arch: "arm64"}, snap.Beats["bench-alpha"])
 	assert.NotContains(t, snap.Beats, "bench-beta")
-	assert.Equal(t, View{"store": "bench-beta", "coordinator": "bench-alpha", "redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova"}, snap.Fleet)
+	assert.Equal(t, View{"store": "bench-beta", "coordinator": "bench-alpha", "redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova", "loops_dir": seededLoopsDir}, snap.Fleet)
 	assert.Equal(t, View{
 		"name": "member-beta", "machine": "bench-beta", "argv": `["nova-swarm","member"]`, "seat": "seat-b",
 		"keys": "A_KEY,Z_KEY", "every": "0", "keepalive": "true", "width": "2", "enabled": "true",

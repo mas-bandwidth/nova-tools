@@ -72,8 +72,8 @@ type AnsibleInventory struct {
 
 // InventoryLoop is one loop record as a host variable: the loop kind's
 // fields, typed (docs/FLEET.md, "Loops"). Log is the view's log, which the
-// loop kind derives from the name (~/nova-bench/loops/<name>.log) and never
-// takes typed.
+// loop kind derives from the fleet row's loops_dir and the loop's name, and
+// never takes typed.
 type InventoryLoop struct {
 	Name      string   `json:"name"`
 	Argv      []string `json:"argv"`
@@ -371,6 +371,7 @@ type fixture struct {
 		Coordinator string `yaml:"coordinator"`
 		RedisPort   *int   `yaml:"redis_port"`
 		PGDSN       string `yaml:"pg_dsn"`
+		LoopsDir    string `yaml:"loops_dir"`
 	} `yaml:"fleet"`
 	// Loops is a pointer so a fixture without the key is a fleet whose
 	// loops were never applied, and `loops: {}` one that runs none.
@@ -424,7 +425,13 @@ func LoadFixture(path string) (*Snapshot, error) {
 	if f.Fleet.RedisPort != nil {
 		redisPort = strconv.Itoa(*f.Fleet.RedisPort)
 	}
-	snap.Fleet = View{"store": f.Fleet.Store, "coordinator": f.Fleet.Coordinator, "redis_port": redisPort, "pg_dsn": f.Fleet.PGDSN}
+	// A fixture that omits loops_dir is a fleet the migration seeded, so its
+	// logs stay the paths apply writes for that row (docs/SPEC-CONFIG.md, "fleet").
+	dir := f.Fleet.LoopsDir
+	if dir == "" {
+		dir = seededLoopsDir
+	}
+	snap.Fleet = View{"store": f.Fleet.Store, "coordinator": f.Fleet.Coordinator, "redis_port": redisPort, "pg_dsn": f.Fleet.PGDSN, "loops_dir": dir}
 	snap.Revs[KindMachine], snap.Revs[KindFleet] = 1, 1
 	if f.Loops != nil {
 		snap.Loops = map[string]View{}
@@ -441,7 +448,7 @@ func LoadFixture(path string) (*Snapshot, error) {
 				"name": n, "machine": l.Machine, "argv": string(argv), "seat": l.Seat,
 				"keys": strings.Join(keys, ","), "every": strconv.Itoa(l.Every),
 				"keepalive": strconv.FormatBool(l.Keepalive), "width": strconv.Itoa(l.Width),
-				"enabled": strconv.FormatBool(enabled), "log": LoopLog(n),
+				"enabled": strconv.FormatBool(enabled), "log": LoopLog(dir, n),
 			}
 		}
 	}

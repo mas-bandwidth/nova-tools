@@ -223,6 +223,10 @@ func storeTests(t *testing.T, open func(t *testing.T) Store) {
 		require.NoError(t, err, assertionMsg169...)
 		require.Len(t, rows, 1, assertionMsg169...)
 		require.Equal(t, KindFleet, rows[0].Name, assertionMsg169...)
+		// The migration seeds loops_dir; Mem and a file have no SQL seed, so
+		// the test writes it before a set whose refusal is about another field.
+		_, _, err = st.Update(ctx, KindFleet, KindFleet, map[string]string{"loops_dir": seededLoopsDir}, "rowan")
+		require.NoError(t, err)
 		// A store or coordinator must be a machine row.
 		_, _, err = st.Update(ctx, KindFleet, KindFleet, map[string]string{"store": "space"}, "rowan")
 		assertionMsg172 := []any{"store naming no machine: %v", err}
@@ -246,15 +250,15 @@ func storeTests(t *testing.T, open func(t *testing.T) Store) {
 		}
 		rev, err := st.Rev(ctx, KindFleet)
 		require.NoError(t, err)
-		require.Zero(t, rev, "a refused endpoint update wrote history")
+		require.Equal(t, int64(1), rev, "a refused endpoint update wrote history")
 		after, id, err := st.Update(ctx, KindFleet, KindFleet, map[string]string{"store": "space", "coordinator": "studio"}, "rowan")
 		assertionMsg182 := []any{"set the fleet: %+v id %d err %v", after.Fields, id, err}
 		require.NoError(t, err, assertionMsg182...)
-		require.Equal(t, int64(3), id, assertionMsg182...)
+		require.Equal(t, int64(4), id, assertionMsg182...)
 		require.Equal(t, "space", after.Fields["store"], assertionMsg182...)
 		require.Equal(t, "studio", after.Fields["coordinator"], assertionMsg182...)
 		scopedRev279, _ := st.Rev(ctx, KindFleet)
-		require.Equal(t, int64(3), scopedRev279, "fleet rev %d, want 3", scopedRev279)
+		require.Equal(t, int64(4), scopedRev279, "fleet rev %d, want 4", scopedRev279)
 		// A machine the fleet names cannot be removed (a foreign key; the
 		// tool names it).
 		_, err = st.Delete(ctx, KindMachine, "space", "rowan")
@@ -273,11 +277,11 @@ func storeTests(t *testing.T, open func(t *testing.T) Store) {
 		hist, err := st.History(ctx, KindFleet, KindFleet)
 		assertionMsg199 := []any{"fleet history %+v %v", hist, err}
 		require.NoError(t, err, assertionMsg199...)
-		require.Len(t, hist, 2, assertionMsg199...)
-		require.Equal(t, OpSet, hist[0].Op, assertionMsg199...)
-		require.Equal(t, "", hist[0].Before["store"], assertionMsg199...)
-		require.Equal(t, "space", hist[0].After["store"], assertionMsg199...)
-		require.Equal(t, "", hist[1].After["store"], assertionMsg199...)
+		require.Len(t, hist, 3, assertionMsg199...)
+		require.Equal(t, OpSet, hist[1].Op, assertionMsg199...)
+		require.Equal(t, "", hist[1].Before["store"], assertionMsg199...)
+		require.Equal(t, "space", hist[1].After["store"], assertionMsg199...)
+		require.Equal(t, "", hist[2].After["store"], assertionMsg199...)
 	})
 }
 

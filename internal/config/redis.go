@@ -23,13 +23,13 @@ import (
 // writes them, apply never touches friends:login or friend:<f>:wakepath. A
 // machine's ceiling goes through ns_capacity_machine; its registry row has
 // no writer in the library, so it is the hash machine:<m> and the set
-// `machines`, both nova-config's own. The fleet row is two plain keys of
-// nova-config's own, fleet:store and fleet:coordinator, each a machine's
-// name; the sprint row is sprint:coordinator, a friend's name (each absent
-// when the row names none).
+// `machines`, both nova-config's own. The fleet row is one plain key per
+// field (fleet:<field>, including fleet:loops_dir); the sprint row is
+// sprint:coordinator, a friend's name (each absent when the row names none).
 //
-// A loop's row is the hash loop:<name> with every field, the derived log
-// path, rev and at, and its name in the set `loops`: nova-config's own keys,
+// A loop's row is the hash loop:<name> with every field, the log path
+// derived from the fleet row's loops_dir, rev and at, and its name in the
+// set `loops`: nova-config's own keys,
 // which the plays read to render one unit per row. A route's row is the hash
 // route:<name> with every field, rev and at, and its name in the set
 // `routes`, which the deal reads (hashKinds); a tier's row is the hash
@@ -60,8 +60,7 @@ func RouteKey(name string) string { return "route:" + name }
 // reads its routes field with the routes (internal/sprint/store, the routes read).
 func TierKey(name string) string { return "tier:" + name }
 
-// FleetKey is the plain key one fleet field is written to: fleet:store,
-// fleet:coordinator.
+// FleetKey is the plain key one fleet field is written to: fleet:<field>.
 func FleetKey(field string) string { return "fleet:" + field }
 
 // SprintKey is the plain key one sprint field is written to:
@@ -95,6 +94,8 @@ type RedisApplier struct {
 
 	coordinator     string
 	coordinatorRead bool
+	loopsDir        string
+	loopsDirRead    bool
 	friendHosts     map[string]string // friend name -> beat host
 }
 
@@ -661,11 +662,11 @@ type hashKind struct {
 	kind  string
 	set   string
 	key   func(string) string
-	extra func(name string) []any // derived fields beside the row's; nil for none
+	extra func(dir, name string) []any // derived fields beside the row's; nil for none
 }
 
 var hashKinds = map[string]hashKind{
-	KindLoop:  {kind: KindLoop, set: LoopsKey, key: LoopKey, extra: func(n string) []any { return []any{"log", LoopLog(n)} }},
+	KindLoop:  {kind: KindLoop, set: LoopsKey, key: LoopKey, extra: func(dir, n string) []any { return []any{"log", LoopLog(dir, n)} }},
 	KindRoute: {kind: KindRoute, set: RoutesKey, key: RouteKey},
 	KindTier:  {kind: KindTier, set: TiersKey, key: TierKey},
 }
@@ -728,7 +729,11 @@ func (a *RedisApplier) writeHash(ctx context.Context, h hashKind, row Row, idem 
 	rev, _ := strings.CutPrefix(idem, "config:"+h.kind+":")
 	fields := []any{"name", row.Name, "rev", rev, "at", strconv.FormatInt(a.now(), 10)}
 	if h.extra != nil {
-		fields = append(fields, h.extra(row.Name)...)
+		dir, err := a.loopLogDir(ctx)
+		if err != nil {
+			return err
+		}
+		fields = append(fields, h.extra(dir, row.Name)...)
 	}
 	for _, f := range k.Fields {
 		fields = append(fields, f.Name, row.Fields[f.Name])
@@ -795,7 +800,24 @@ func (a *RedisApplier) writeSingleton(ctx context.Context, kind string, key func
 	if _, err := pipe.Exec(ctx); err != nil {
 		return fmt.Errorf("redis: write %s: %w", kind, err)
 	}
+	if kind == KindFleet {
+		a.loopsDirRead = false
+	}
 	return nil
+}
+
+// loopLogDir is the fleet row's loops_dir, read once per apply of loops
+// (docs/SPEC-CONFIG.md, "fleet"). A fleet write clears the cache.
+func (a *RedisApplier) loopLogDir(ctx context.Context) (string, error) {
+	if a.loopsDirRead {
+		return a.loopsDir, nil
+	}
+	dir, err := a.Client.Get(ctx, FleetKey("loops_dir")).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return "", fmt.Errorf("redis: read %s: %w", FleetKey("loops_dir"), err)
+	}
+	a.loopsDir, a.loopsDirRead = dir, true
+	return dir, nil
 }
 
 // --- the live, measured facts ------------------------------------------------
