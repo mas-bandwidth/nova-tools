@@ -102,7 +102,7 @@ func TestAskAnotherIsForItsAttemptOnly(t *testing.T) {
 	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
 	pair := h.snap().Work.Card("s1-1").F("asked")
 	rc := h.snap().Readers.Of("s1-1")
-	h.must(ReadStep(sprint.ReadReq{As: rc[0].Row, Verdict: "broken", Finding: "f", Sel: sprint.Sel{IDs: []string{rc[0].ID}}}))
+	h.must(ReadStep(sprint.ReadReq{As: rc[0].Row, Verdict: "broken", Finding: "f:1", Sel: sprint.Sel{IDs: []string{rc[0].ID}}}))
 	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Another: true}))
 	got := h.snap().Work.Card("s1-1").F("asked")
 	require.Equal(t, pair, got, "ask --another changed the primary's asked field: %s, was %s", got, pair)

@@ -256,6 +256,9 @@ jobs:
         # must be sprint/foundation's and its history excuses what it deleted. A shallow
         # ancestry is a red run naming this fetch (internal/ci foundationHistoryFetch).
         # A one-parent commit on a dev run has no promotion to read, so nothing is fetched.
+        # Nor is anything when origin has no sprint/foundation: dev is the integration branch and
+        # that branch lives only while a promotion is in flight; the step says so and the dev run
+        # excuses nothing (the merge is compared as everywhere), as a one-parent commit's is.
         if: (github.event_name == 'push' && github.ref_name == 'dev')
         shell: bash
         run: |

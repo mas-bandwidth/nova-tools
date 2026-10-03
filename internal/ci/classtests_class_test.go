@@ -155,10 +155,18 @@ func readCommitDeletions(root, commit, event, ref, branch string) (*mergeDeletio
 	devRef := lg.ref
 	devTip, devErr := gitOut(root, "rev-parse", "--verify", "-q", devRef+"^{commit}")
 	devTip = strings.TrimSpace(devTip)
-	if devErr != nil {
+	// A dev run whose promotion branch is absent: dev is the integration
+	// branch and sprint/foundation exists only while a promotion is in
+	// flight (`ci fetch-ancestry --promotion` says "origin has no branch" and
+	// leaves no ref). That is not a promotion: nothing is excused, so every
+	// deletion in the merge is a finding as on any ordinary merge, and the
+	// merge's own change is still checked against the second parent. A
+	// strict (main) run keeps the missing side branch a finding of its own.
+	absent := devErr != nil && !lg.strict
+	if devErr != nil && !absent {
 		m.Incomplete = fmt.Sprintf("%s (%s): %s is a %s at a merge commit, but %s is not in this checkout, so the second parent %s cannot be confirmed as %s's history and nothing is excused: fetch %s for a %s, `%s`", head, subject, where, lg.kind, devRef, second[:9], lg.from, lg.from, lg.kind, lg.fetch)
 	}
-	if m.Incomplete == "" {
+	if m.Incomplete == "" && !absent {
 		graft, err := shallowCut(root, second)
 		if err != nil {
 			return nil, "", err
@@ -167,7 +175,7 @@ func readCommitDeletions(root, commit, event, ref, branch string) (*mergeDeletio
 			m.Incomplete = fmt.Sprintf("%s (%s): %s is a %s at a merge commit, but the second parent %s's ancestry is cut by a shallow graft at %s in this checkout, so what %s's history deleted cannot be excused: fetch %s's full ancestry for a %s, `%s`", head, subject, where, lg.kind, second[:9], graft[:9], lg.from, lg.from, lg.kind, lg.fetch)
 		}
 	}
-	if m.Incomplete == "" {
+	if m.Incomplete == "" && !absent {
 		graft, err := shallowCut(root, devRef)
 		if err != nil {
 			return nil, "", err
@@ -176,7 +184,7 @@ func readCommitDeletions(root, commit, event, ref, branch string) (*mergeDeletio
 			m.Incomplete = fmt.Sprintf("%s (%s): %s is a %s at a merge commit, but %s (%s)'s ancestry is cut by a shallow graft at %s in this checkout, so it cannot vouch for the second parent %s and nothing is excused: fetch %s's full ancestry for a %s, `%s`", head, subject, where, lg.kind, devRef, devTip[:9], graft[:9], second[:9], lg.from, lg.kind, lg.fetch)
 		}
 	}
-	if m.Incomplete == "" {
+	if m.Incomplete == "" && !absent {
 		if _, err := gitOut(root, "merge-base", "--is-ancestor", second, devRef); err != nil {
 			if !lg.strict {
 				// A merge commit on dev whose second parent is not
@@ -190,7 +198,7 @@ func readCommitDeletions(root, commit, event, ref, branch string) (*mergeDeletio
 	var history, tree map[string]bool
 	var excused, excusedRows int
 	var since string
-	if m.Incomplete == "" {
+	if m.Incomplete == "" && !absent {
 		if mb, err := gitOut(root, "merge-base", parents[0], second); err != nil {
 			m.Incomplete = fmt.Sprintf("%s (%s): %s is a %s at a merge commit, but the parents %s and %s have no merge base in this checkout, so %s's history since the last promotion cannot be read and nothing is excused: `%s`", head, subject, where, lg.kind, parents[0][:9], second[:9], lg.from, lg.fetch)
 		} else {
@@ -227,6 +235,9 @@ func readCommitDeletions(root, commit, event, ref, branch string) (*mergeDeletio
 	}
 	beyond.Deleted = rest
 	m.Beyond = beyond.findings()
+	if absent {
+		return m, fmt.Sprintf("NOTE: %s is a %s at a merge commit and %s is not in this checkout (origin has no %s while no promotion is in flight; if it does, the fetch was not run: `%s`): not a promotion, so nothing is excused and HEAD is compared with its first parent as everywhere (%d findings beyond the second parent)", where, lg.kind, lg.ref, lg.from, lg.fetch, len(m.Beyond)), nil
+	}
 	if m.Incomplete != "" {
 		return m, fmt.Sprintf("NOTE: %s is a %s at a merge commit whose history could not be read here: nothing excused, the first-parent comparison and the second parent's tree comparison ran (%d findings beyond the second parent), and the unreadable history is a finding", where, lg.kind, len(m.Beyond)), nil
 	}
@@ -1259,11 +1270,47 @@ func TestDevLandingExcusesOnlyFoundationsHistory(t *testing.T) {
 	assert.Contains(t, note, "not a promotion of sprint/foundation", "note = %q; want it named as not a promotion", note)
 }
 
+// TestDevLandingWithNoPromotionBranchIsOrdinary is the world where dev is the
+// integration branch and sprint/foundation does not exist (`ci fetch-ancestry
+// --promotion sprint/foundation` said "origin has no branch" and left no
+// ref): a merge commit on dev is compared as everywhere. The red witness is
+// the promotion-shaped merge, red for gone_test.go (nothing to excuse it,
+// and no finding of the missing ref itself); the green witness is a plain
+// merge that deletes nothing, which passes where the missing ref was a
+// finding before (a push to dev was red for every merge commit).
+func TestDevLandingWithNoPromotionBranchIsOrdinary(t *testing.T) {
+	t.Parallel()
+	r := buildFoundationRepo(t)
+	r.git("update-ref", "-d", "refs/remotes/origin/sprint/foundation")
+	merge := r.land("promotion-shaped merge, no promotion branch", true, nil)
+	got, note := r.run(merge, "push", "refs/heads/dev", "")
+	exactlyOne(t, "the promotion-shaped merge with no origin/sprint/foundation", got, "gone_test.go")
+	assert.Contains(t, note, "origin has no sprint/foundation", "note = %q; want the absence named", note)
+
+	r.git("read-tree", r.base)
+	r.write("added_test.go", "package a\n")
+	r.git("update-index", "--add", "added_test.go")
+	feature := r.git("commit-tree", r.git("write-tree"), "-p", r.base, "-m", "feature adds added_test.go")
+	r.git("read-tree", feature)
+	r.git("update-index", "--add", "--cacheinfo", "100644,"+r.git("rev-parse", r.devTip+":dev_only_test.go")+",dev_only_test.go")
+	plain := r.git("commit-tree", r.git("write-tree"), "-p", r.devTip, "-p", feature, "-m", "plain merge into dev")
+	for _, tc := range devLandingEvents {
+		branch := ""
+		if tc.event == "" {
+			branch = "dev"
+		}
+		got, note := r.run(plain, tc.event, tc.ref, branch)
+		assert.Empty(t, got, "%s: a plain merge with no origin/sprint/foundation: findings = %q, note = %q; want none", tc.name, got, note)
+	}
+}
+
 // TestDevLandingFailsClosedOnAnUnreadableHistory is control 3 on dev: the
 // landed merge in a depth-2 clone, where foundation's ancestry is cut, excuses
 // nothing and reports the shallow history as a finding naming the fetch; with
-// no origin/sprint/foundation at all the same; after the fetch the landed
-// merge passes.
+// no origin/sprint/foundation at all (no promotion in flight) nothing is
+// excused either, the deletion is an ordinary finding and the note names the
+// fetch, but the missing ref is no finding of its own; after the fetch the
+// landed merge passes.
 func TestDevLandingFailsClosedOnAnUnreadableHistory(t *testing.T) {
 	t.Parallel()
 	r := buildFoundationRepo(t)
@@ -1279,7 +1326,7 @@ func TestDevLandingFailsClosedOnAnUnreadableHistory(t *testing.T) {
 	m, note, err := readMergeDeletionsFor(shallow, "merge_group", ref)
 	require.NoError(t, err)
 	all := strings.Join(m.findings(), "\n")
-	assert.True(t, strings.Contains(all, "deletes gone_test.go,") && strings.Contains(all, "refs/remotes/origin/sprint/foundation is not in this checkout") && strings.Contains(all, foundationHistoryFetch) && strings.Contains(note, "could not be read"), "no origin/sprint/foundation: findings = %q, note = %q; want gone_test.go unexcused and the missing ref naming the fetch", all, note)
+	assert.True(t, strings.Contains(all, "deletes gone_test.go,") && m.Incomplete == "" && !strings.Contains(all, "is not in this checkout") && strings.Contains(note, "origin has no sprint/foundation") && strings.Contains(note, foundationHistoryFetch) && strings.Contains(note, "nothing is excused"), "no origin/sprint/foundation: findings = %q, note = %q; want gone_test.go unexcused as an ordinary finding, no finding of the missing ref, the note naming the fetch", all, note)
 
 	c.git("update-ref", "refs/remotes/origin/sprint/foundation", r.foundationTip)
 	m, note, err = readMergeDeletionsFor(shallow, "merge_group", ref)

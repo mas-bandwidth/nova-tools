@@ -696,7 +696,7 @@ Postgres and a throwaway Redis.
 
 ```text
 $ nova-config migrate --file try.json
-CONFIG MIGRATE file=try.json from=0 to=14 applied=14
+CONFIG MIGRATE file=try.json from=0 to=19 applied=19
 
 $ nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --as a1 --file try.json
 CONFIG ADD kind=machine name=m1 rev=1
@@ -705,11 +705,11 @@ $ nova-config machine set m1 --width 6 --as a1 --file try.json
 CONFIG SET kind=machine name=m1 rev=2 changed=width
 
 $ nova-config machine list --file try.json
-MACHINE name=m1 user=nova seat=s1 slots=8 runners=0 width=6
+MACHINE name=m1 user=nova seat=s1 slots=8 runners=0 width=6 tla=false note=-
 CONFIG LIST kind=machine rows=1
 
 $ nova-config machine history m1 --file try.json
-HISTORY id=<n> kind=<kind> name=<name> op=<op> actor=<actor> at=<timestamp> runners=<n> seat=<seat> slots=<n> user=<user> width=<n>
+HISTORY id=<n> kind=<kind> name=<name> op=<op> actor=<actor> at=<timestamp> note=- runners=<n> seat=<seat> slots=<n> tla=<bool> user=<user> width=<n>
 HISTORY id=<n> kind=<kind> name=<name> op=<op> actor=<actor> at=<timestamp> width=<before>><after>
 CONFIG HISTORY kind=machine name=m1 changes=2
 ```
@@ -889,26 +889,26 @@ NOTE a twin beats every member at every verb: each member added is up after the 
 
 $ nova-sprint add --stream s1 --count 1
 MOVED s1-1 -> ready stream=s1 score=1
-ADD OK moved=1 refused=0 notes=0 op=add-t2-1
+ADD OK stream=s1 cards=1 before=- moved=1 refused=0 notes=0 op=add-t2-1
 NOTE the cards have no brief, so a worker is handed no task with them; give each one before it is dealt, on a STOPPED machine: nova-sprint brief <id> --brief-file <path>
 STOPPED  0/1 0.0%
 
 $ nova-sprint start
 START OK before=STOPPED after=RUNNING changed
 nothing is ticking between commands in a twin: tick by hand: nova-sprint tick
-0/1 0.0% -> ETA  machine: running
+0/1 0.0% -> ETA -  machine: running
 
 $ nova-sprint tick
 MOVED presence: m1 up
 TABLES rows changed: work=0 readers=0 merge=0 fleet=1
 TICK OK state=RUNNING idle=no moved=1 notes=2
-0/1 0.0% -> ETA  machine: running
+0/1 0.0% -> ETA -  machine: running
 
 $ nova-sprint tick
 MOVED deal: s1-1 work ready -> working card=s1-1.w1 member=m1 (fleet ready)
 TABLES rows changed: work=1 readers=0 merge=0 fleet=1
 TICK OK state=RUNNING idle=no moved=1 notes=1
-0/1 0.0% -> ETA  machine: running
+0/1 0.0% -> ETA -  machine: running
 
 $ nova-sprint take --as m1 --epoch 0
 MOVED s1-1.w1 fleet ready -> working member=m1 gen=1
@@ -918,51 +918,51 @@ PACKET s1-1.w1 attempt=1 gen=1 epoch=0
   notes: none
   report it: nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --branch sprint/s1-1.w1.g1.e0 --head <commit> --report '<what you did>' [--failed]
 TAKE OK moved=1 refused=0 notes=0 op=take-t23-1
-0/1 0.0% -> ETA  machine: running
+0/1 0.0% -> ETA -  machine: running
 
 $ nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --report done
 MOVED s1-1.w1 working -> done ok; s1-1 working -> review
 FINISH OK moved=1 refused=0 notes=1 op=finish-t24-1
-0/1 0.0% -> ETA  machine: running
+0/1 0.0% -> ETA -  machine: running
 
 $ nova-sprint tick
 MOVED drain: s1-1.w1 working -> done ok; s1-1 working -> review (finish by m1)
 MOVED ask: s1-1 asked of reader-a, reader-b
 TABLES rows changed: work=1 readers=2 merge=0 fleet=0
 TICK OK state=RUNNING idle=no moved=2 notes=0
-0/1 0.0% -> ETA  machine: running
+0/1 0.0% -> ETA -  machine: running
 
 $ nova-sprint read --as reader-a --begin --epoch 0
 MOVED s1-1.r1.reader-a asked -> reading
 READ OK moved=1 refused=0 notes=0 op=read-t27-1
-0/1 0.0% -> ETA  machine: running
+0/1 0.0% -> ETA -  machine: running
 
 $ nova-sprint read --as reader-b --begin --epoch 0
 MOVED s1-1.r1.reader-b asked -> reading
 READ OK moved=1 refused=0 notes=0 op=read-t28-1
-0/1 0.0% -> ETA  machine: running
+0/1 0.0% -> ETA -  machine: running
 
 $ nova-sprint read --as reader-a --ok --epoch 0
 MOVED s1-1.r1.reader-a reading -> ok
 READ OK moved=1 refused=0 notes=0 op=read-t29-1
-0/1 0.0% -> ETA  machine: running
+0/1 0.0% -> ETA -  machine: running
 
 $ nova-sprint read --as reader-b --ok --epoch 0
 MOVED s1-1.r1.reader-b reading -> ok
 READ OK moved=1 refused=0 notes=0 op=read-t30-1
-0/1 0.0% -> ETA  machine: running
+0/1 0.0% -> ETA -  machine: running
 
 $ nova-sprint tick
 MOVED drain: s1-1 asked of reader-a, reader-b (tick ask by machine); s1-1.r1.reader-a reading -> ok (read by reader-a); s1-1.r1.reader-b reading -> ok (read by reader-b)
 MOVED accept: s1-1 review -> merging queued (ok from reader-a, reader-b)
 TABLES rows changed: work=1 readers=0 merge=1 fleet=0
 TICK OK state=RUNNING idle=no moved=2 notes=2
-0/1 0.0% -> ETA  machine: running
+0/1 0.0% -> ETA -  machine: running
 
 $ nova-sprint merge --stream s1 --batch 1
 MOVED s1-1 merging -> landed
 MERGE OK moved=1 refused=0 notes=2 op=merge-t34-1
-0/1 0.0% -> ETA  machine: running
+0/1 0.0% -> ETA -  machine: running
 ```
 
 ## nova-work

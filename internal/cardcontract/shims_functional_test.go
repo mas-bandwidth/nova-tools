@@ -251,6 +251,7 @@ func TestGhPrReviewIsTheRead(t *testing.T) {
 		{`gh pr review --approve --body "gate green, diff matches"`, "ok", "gate green, diff matches"},
 		{`gh pr review -a`, "ok", "ok"},
 		{`gh pr review --request-changes --body "f:1 wrong word"`, "broken", "f:1 wrong word"},
+		{`gh pr review --request-changes --body "a.go drops the error; return it"`, "broken", "a.go drops the error; return it"},
 	} {
 		code, _, errb := r.sh(r.job, tc.line)
 		require.Equal(t, 0, code, "%s: %s", tc.line, errb)
@@ -261,11 +262,15 @@ func TestGhPrReviewIsTheRead(t *testing.T) {
 		assert.Equal(t, tc.verdict, res.Verdict, tc.line)
 		assert.Equal(t, tc.report, res.Report, tc.line)
 	}
-	for _, line := range []string{`gh pr review --comment --body x`, `gh pr review --request-changes`} {
+	for _, line := range []string{`gh pr review --comment --body x`, `gh pr review --request-changes`, `gh pr review --request-changes --body "Request changes."`} {
 		code, _, errb := r.sh(r.job, line)
 		assert.Equal(t, 1, code, line)
 		assert.Contains(t, errb, "REFUSED", line)
 	}
+	// a broken review that names no file, line or rule is refused at the review, so the
+	// reader names its defect there (docs/SPEC-CARD-CONTRACT.md section 3)
+	_, _, errb = r.sh(r.job, `gh pr review --request-changes --body "Request changes."`)
+	assert.Contains(t, errb, "names no file, no line and no rule the work breaks; tell them what to do")
 }
 
 // A read that hands its own RESULT.md to gh pr review as the body (it begins head: <sha>)
@@ -316,9 +321,10 @@ func TestEveryProfileKeepsTheContract(t *testing.T) {
 		assert.Equal(t, head, got, family)
 		job, err := os.ReadFile(filepath.Join(r.job, JobName))
 		require.NoError(t, err)
-		for _, want := range []string{r.repo, "sprint/c1", r.base, "RESULT.md", "verdict: ok | not-done | nothing", "-count=1", "-timeout 600s", "GOCACHE=" + r.job + "/gocache"} {
+		for _, want := range []string{r.repo, "sprint/c1", r.base, "RESULT.md", "verdict: ok | not-done | nothing", "-count=1", "-timeout 600s"} {
 			assert.Contains(t, string(job), want, family)
 		}
+		assert.NotContains(t, string(job), r.job+"/gocache", "%s: no job has a build cache of its own", family)
 	}
 }
 

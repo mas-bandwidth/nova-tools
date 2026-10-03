@@ -123,3 +123,15 @@ func widthRoom(s *Snapshot, up []string) int {
 	}
 	return room
 }
+
+// WidthOfCores is the default width of a machine with these logical cores, half
+// of them (the owner, 2026-10-02: "default is CPUs/2"), at least 1 and at most
+// MaxWidth; 0 when the cores are not known (no beat has reported them). It is
+// what fleet sync writes for a machine row with no width (config.MachineWidth,
+// Default).
+func WidthOfCores(cores int) int {
+	if cores <= 0 {
+		return 0
+	}
+	return min(MaxWidth, max(1, cores/2))
+}

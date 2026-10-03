@@ -59,7 +59,7 @@ var Moves = []Move{
 	{Review, Ready, "rework", Coordinator, "rework with a fix when no fleet member is up: start delegates it later"},
 	{Merging, Review, "return", Coordinator, "the stream's CI went red and the coordinator sent it back, or return"},
 	{Merging, Landed, "merge", Mechanical, "its batch, green on the stream branch, merged to the development branch"},
-	{Waiting, Landed, "release", Coordinator, "a sentinel reached, released by the coordinator (kind sentinel only)"},
+	{Waiting, Landed, "release", Coordinator, "a sentinel reached, or with nothing before it, released by the coordinator (kind sentinel only)"},
 	{Ready, Waiting, "add", Mechanical, "a sentinel inserted in front of it (only as the effect of inserting a sentinel)"},
 }
 

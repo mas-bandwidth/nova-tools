@@ -21,18 +21,24 @@ import (
 //
 // A machine with width 1 or more is a member of the sprint's fleet; width 0
 // is no member: the sprint's width is a whole number from 1
-// (internal/sprint/width.go).
+// (internal/sprint/width.go). A row with no width (unset, the default, or
+// cleared with --width default) is a member at the default width, half the
+// machine's cores as its beat reports them, which nova-sprint fleet sync
+// resolves (the owner, 2026-10-02: "default is CPUs/2"; sprint.WidthOfCores):
+// the config holds no number for it.
 
 // MachineWidth is one machine row's width.
 type MachineWidth struct {
 	Machine string
-	// Width is the row's width field.
+	// Width is the row's width field; 0 when Default.
 	Width int
+	// Default says the row has no width: the default, resolved from the cores.
+	Default bool
 }
 
 // Member says whether the machine is a member of the sprint's fleet: its
-// width is above 0.
-func (w MachineWidth) Member() bool { return w.Width > 0 }
+// width is above 0, or it has the default width.
+func (w MachineWidth) Member() bool { return w.Width > 0 || w.Default }
 
 // Widths is every machine row's width, in name order, read from the machine
 // rows alone.
@@ -43,7 +49,7 @@ func Widths(ctx context.Context, st Store) ([]MachineWidth, error) {
 	}
 	out := make([]MachineWidth, 0, len(machines))
 	for _, m := range machines {
-		out = append(out, MachineWidth{Machine: m.Name, Width: m.Int("width")})
+		out = append(out, MachineWidth{Machine: m.Name, Width: m.Int("width"), Default: m.Fields["width"] == ""})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Machine < out[j].Machine })
 	return out, nil
@@ -62,5 +68,9 @@ func WidthOf(ws []MachineWidth, name string) (w MachineWidth, found bool) {
 
 // Line is the width's one printed line.
 func (w MachineWidth) Line() string {
-	return "CONFIG WIDTH machine=" + Value(w.Machine) + " width=" + strconv.Itoa(w.Width) + " member=" + strconv.FormatBool(w.Member())
+	width := strconv.Itoa(w.Width)
+	if w.Default {
+		width = "default"
+	}
+	return "CONFIG WIDTH machine=" + Value(w.Machine) + " width=" + width + " member=" + strconv.FormatBool(w.Member())
 }

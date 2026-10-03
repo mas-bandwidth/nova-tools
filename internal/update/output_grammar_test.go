@@ -107,8 +107,8 @@ func TestEveryUpdateRefusalEndsInACommandToRun(t *testing.T) {
 		{"watch names every missing bus flag", []string{"watch", "--adopt", adopt, "--bus", "b"}, []string{"missing --remote, --branch, --as, --to"}},
 		{"watch with an argument", []string{"watch", "--adopt", adopt, "x"}, []string{"; run: nova-update watch -h"}},
 		{"adoption with no file", []string{"adoption"}, []string{"missing --file", "; run: nova-update adoption -h"}},
-		{"release with no verb", []string{"release"}, []string{"RELEASE REFUSED: a release verb is required; the release verbs are cut, build, install, adopt, pull; run: nova-update help release"}},
-		{"unknown release verb", []string{"release", "bogus"}, []string{`RELEASE REFUSED: unknown release verb "bogus"; the release verbs are cut, build, install, adopt, pull; run: nova-update help release`}},
+		{"release with no verb", []string{"release"}, []string{"RELEASE REFUSED: a release verb is required; the release verbs are cut, build, install, adopt, pull, cycle; run: nova-update help release"}},
+		{"unknown release verb", []string{"release", "bogus"}, []string{`RELEASE REFUSED: unknown release verb "bogus"; the release verbs are cut, build, install, adopt, pull, cycle; run: nova-update help release`}},
 		{"release flag misspelled", []string{"release", "cut", "--rpeo", "x"}, []string{"CUT REFUSED:", "--rpeo", "; run: nova-update release cut -h"}},
 		{"release missing flags", []string{"release", "build"}, []string{"missing --version, --out, --source", "; run: nova-update release build -h"}},
 	} {
@@ -250,8 +250,8 @@ func TestHelpKeepsTheReleasePipelineApartAndStatesEffects(t *testing.T) {
 	assert.Contains(t, watch, "its sha= the first twelve hex")
 	code, rel, _ := runTool(t, "nova-update", "help", "release")
 	require.Equal(t, 0, code)
-	assert.Len(t, linesOf(rel, "nova-update release "), 5, rel)
-	for _, verb := range []string{"cut", "build", "install", "adopt", "pull"} {
+	assert.Len(t, linesOf(rel, "nova-update release "), 6, rel)
+	for _, verb := range []string{"cut", "build", "install", "adopt", "pull", "cycle"} {
 		t.Run("release "+verb, func(t *testing.T) {
 			code, h, _ := runTool(t, "nova-update", "release", verb, "-h")
 			assert.Equal(t, 0, code)

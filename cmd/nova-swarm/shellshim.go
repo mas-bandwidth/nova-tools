@@ -162,11 +162,12 @@ func writeNativeShellShims(slotDir string) (dir, shell string, err error) {
 	return dir, shell, nil
 }
 
-// pathWithShimFirst is one environment with shimDir prepended to its PATH -- the child
-// resolves `bash` and `sh` through the wrapper before it reaches the bench's own. An
-// environment carrying no PATH gains one naming the shim alone, because a child that
-// resolves no shell at all is better than one that resolves an unscrubbed shell.
-func pathWithShimFirst(env []string, shimDir string) []string {
+// pathWithDirFirst is one environment with shimDir prepended to its PATH -- the child
+// resolves `bash` and `sh` through the wrapper before it reaches the bench's own, and
+// `go` and `gofmt` through the bench's GOROOT/bin (nativeChildEnv). An environment
+// carrying no PATH gains one naming the directory alone, because a child that resolves no
+// shell at all is better than one that resolves an unscrubbed shell.
+func pathWithDirFirst(env []string, shimDir string) []string {
 	if shimDir == "" {
 		return env
 	}

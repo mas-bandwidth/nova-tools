@@ -95,7 +95,7 @@ func Abstract(o Observed) State {
 			continue
 		}
 		w := WorkCard{Primary: c.F("primary"), Attempt: c.Int("attempt"), Member: c.F("member"), Place: Gone, Gen: c.Int("gen"),
-			Redeals: c.Int("redeals"), TakeEnded: c.F(sprint.FieldTakeEnded) != ""}
+			Redeals: c.Int("redeals"), TakeEnded: c.F(sprint.FieldTakeEnded) != "", Refusers: sprint.StagingRefusers(c)}
 		if c.Placed() {
 			w.Place, w.Member = c.Col, c.Row
 			if c.Col == sprint.DoneOK || c.Col == sprint.DoneFailed {

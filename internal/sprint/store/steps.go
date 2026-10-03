@@ -156,6 +156,13 @@ func MergeStep(r sprint.MergeReq) Step {
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.MergeStep(s, r) }}
 }
 
+// SetStep is the coordinator's settings: the sprint's dealt bound and read tier, or
+// a stream's read tier (sprint.Set).
+func SetStep(r sprint.SetReq) Step {
+	return Step{Args: ArgsOf(r), Verb: "set", Load: tables(sprint.Work, sprint.Merge),
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Set(s, r) }}
+}
+
 // ResumeStep moves a stopped stream again.
 func ResumeStep(r sprint.ResumeReq) Step {
 	return Step{Args: ArgsOf(r), Verb: "resume", Load: tables(sprint.Merge, sprint.Work), Mirrors: true,
@@ -197,6 +204,11 @@ func AckStep(r sprint.AckReq) Step {
 
 // WaitStep holds a condition the tick keeps until a time (sprint.Wait).
 func WaitStep(r sprint.WaitReq) Step {
+	if _, ok := sprint.StaleStream(r.Note); ok {
+		// a stream's stale judgment: the stream's control card, on the merge table
+		return Step{Args: ArgsOf(r), Verb: "wait", Load: []string{sprint.Merge},
+			Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Wait(s, r) }}
+	}
 	return Step{Args: ArgsOf(r), Verb: "wait",
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Wait(s, r) }}
 }

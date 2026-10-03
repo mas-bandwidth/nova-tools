@@ -127,7 +127,7 @@ func aLateCardRedealt(k *walk) []sample {
 		k.addTo(k.streams[0])
 	}
 	k.wholeTick()
-	k.now = k.now.Add(sprint.DeadlineUntaken + time.Duration(1+k.pick(20))*time.Minute)
+	k.now = k.now.Add(sprint.DealtMaxDefault + time.Duration(1+k.pick(20))*time.Minute)
 	k.beatAll()
 	if !k.runPart("deadlines") {
 		return nil

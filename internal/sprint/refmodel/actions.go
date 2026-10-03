@@ -112,7 +112,7 @@ func Add(s State, a AddArgs, scores map[string]float64) (State, error) {
 		// Section 16: a sentinel whose needs have all landed or been
 		// waived is marked reached by the step in which that becomes
 		// true: for one admitted with nothing to wait for, the add.
-		if n.Primaries[id].Kind == KindSentinel && n.NeedsMet(id) {
+		if n.Primaries[id].Kind == KindSentinel && n.NeedsMet(id) && n.Reachable(id) {
 			n.setPrimary(id, func(p *Primary) { p.Reached = true })
 			n.open(JReached, id)
 		}
@@ -834,7 +834,7 @@ func (n *State) resolveAll() {
 			continue
 		}
 		if pr.Kind == KindSentinel {
-			if !pr.Reached {
+			if !pr.Reached && n.Reachable(p) {
 				pr.Reached = true
 				n.Primaries[p] = pr
 				n.open(JReached, p)
@@ -1032,24 +1032,6 @@ func (s State) level(moves map[string]string) (State, error) {
 			return s, badChoice("level moves %v, not round the fleet: the round (past %q) moves %v", moves, s.DealLast, want)
 		}
 	}
-	// after levelling no two backlogs differ by more than one, of a member
-	// with a ready card and a member below its Room at or below the mean
-	lo, hi, total, any := 0, 0, 0, false
-	loSet := false
-	up := n.Up()
-	for _, x := range up {
-		b := n.Backlog(x)
-		total += b
-		if n.Held(x) < Room && (!loSet || b < lo) {
-			lo, loSet = b, true
-		}
-		if n.RL(x) > 0 && (!any || b > hi) {
-			hi, any = b, true
-		}
-	}
-	if len(up) > 1 && loSet && any && lo <= floorDiv(total, len(up)) && hi-lo > 1 {
-		return s, badChoice("the backlogs differ by %d after levelling", hi-lo)
-	}
 	return n, nil
 }
 
@@ -1067,39 +1049,73 @@ func floorDiv(a, b int) int {
 	return q
 }
 
-// levelRound levels, once at the start of every tick, rebalancing each
-// table before the tick plans its rows (spec section 14; the levelling
-// goes round the fleet and moves the rolling deal index): while the
-// largest backlog of an up member with a ready card and the
-// smallest of the up members below their Room differ by more than one, the
-// newest ready card of the largest goes to the next member round the fleet
-// past DealLast below its Room whose backlog is below the up members' mean
-// rounded down, or, when none such is below, at it, at a new generation, and
-// DealLast moves past it. It returns the member each card it moved ended on.
+// levelRound levels, once at the start of every tick (the owner, 2026-10-01:
+// "just once before tick, rebalance each table"; spec section 14, T4, with
+// errata 3 amendment 5: the levelling goes round the fleet and moves the
+// index): while the largest backlog of an up member with a ready card the
+// level has not moved and the smallest of the up members below their Room
+// differ by more than one, the newest such card of the largest that has a
+// target goes to it, at a new generation, and DealLast moves past it. A card's
+// target is the next member round the fleet past DealLast below its Room, no
+// refuser of the card (Refusers), at least two below the largest, whose
+// backlog is below the up members' mean rounded down, or, when none such is
+// below, at it (sprint's level and round.levelTo; tla/Level.tla). A card moved
+// is not moved again, so the level ends within the ready cards, and each move
+// lowers the sum of squared backlogs by at least two. It returns the member
+// each card it moved ended on.
 func (n *State) levelRound() map[string]string {
 	out := map[string]string{}
 	for {
-		up := n.Up()
-		if len(up) < 2 {
+		id, to := n.levelMove(out)
+		if id == "" {
 			return out
 		}
-		lo, hi, total := "", "", 0
-		for _, x := range up {
-			total += n.Backlog(x)
-			if n.Held(x) < Room && (lo == "" || n.Backlog(x) < n.Backlog(lo)) {
-				lo = x
-			}
-			if n.RL(x) > 0 && (hi == "" || n.Backlog(x) > n.Backlog(hi)) {
-				hi = x
+		w := n.Work[id]
+		w.Member, w.Gen = to, w.Gen+1
+		n.Work[id] = w
+		n.DealLast = roundPast(sorted(n.Order), n.DealLast, to)
+		out[id] = to
+	}
+}
+
+// levelMove is the level's next move, given the cards it moved: the card and
+// its target; "" when the level is done.
+func (n State) levelMove(moved map[string]string) (string, string) {
+	up := n.Up()
+	if len(up) < 2 {
+		return "", ""
+	}
+	queue := func(m string) []string {
+		var ids []string
+		for _, id := range Keys(n.Work) {
+			if w := n.Work[id]; w.Member == m && w.Place == FReady && moved[id] == "" {
+				ids = append(ids, id)
 			}
 		}
-		if lo == "" || hi == "" || n.Backlog(hi)-n.Backlog(lo) <= 1 {
-			return out
+		// newest first: by the primary's score, the first id of equals first
+		sort.SliceStable(ids, func(i, j int) bool {
+			return n.Primaries[n.Work[ids[i]].Primary].Score > n.Primaries[n.Work[ids[j]].Primary].Score
+		})
+		return ids
+	}
+	lo, hi, total := "", "", 0
+	for _, x := range up {
+		total += n.Backlog(x)
+		if n.Held(x) < Room && (lo == "" || n.Backlog(x) < n.Backlog(lo)) {
+			lo = x
 		}
-		mean := floorDiv(total, len(up))
+		if len(queue(x)) > 0 && (hi == "" || n.Backlog(x) > n.Backlog(hi)) {
+			hi = x
+		}
+	}
+	if lo == "" || hi == "" || n.Backlog(hi)-n.Backlog(lo) <= 1 {
+		return "", ""
+	}
+	mean := floorDiv(total, len(up))
+	for _, id := range queue(hi) {
 		var below, at []string
 		for _, x := range up {
-			if n.Held(x) >= Room || x == hi {
+			if n.Held(x) >= Room || slices.Contains(n.Work[id].Refusers, x) || n.Backlog(hi)-n.Backlog(x) < 2 {
 				continue
 			}
 			if n.Backlog(x) < mean {
@@ -1113,22 +1129,11 @@ func (n *State) levelRound() map[string]string {
 		if to == "" {
 			to = n.NextMember(at)
 		}
-		if to == "" {
-			return out
+		if to != "" {
+			return id, to
 		}
-		newest := ""
-		for _, id := range Keys(n.Work) {
-			w := n.Work[id]
-			if w.Member == hi && w.Place == FReady && (newest == "" || n.Primaries[w.Primary].Score > n.Primaries[n.Work[newest].Primary].Score) {
-				newest = id
-			}
-		}
-		w := n.Work[newest]
-		w.Member, w.Gen = to, w.Gen+1
-		n.Work[newest] = w
-		n.DealLast = roundPast(sorted(n.Order), n.DealLast, to)
-		out[newest] = to
 	}
+	return "", ""
 }
 
 // ReaderLoad is a reader's reads asked and reading.

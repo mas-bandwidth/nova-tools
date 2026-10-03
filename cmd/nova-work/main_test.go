@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/testkit"
+	"github.com/mas-bandwidth/nova-tools/internal/workfile"
 	"github.com/mas-bandwidth/nova-tools/internal/workgh"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -21,9 +22,9 @@ func replay(t *testing.T) workgh.Query {
 	return q
 }
 
-func workTool(q workgh.Query) testkit.Main {
+func workCLI(q workgh.Query) testkit.Main {
 	return func(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-		return run(args, stdout, stderr, q)
+		return workTool(q).Run(args, stdin, stdout, stderr)
 	}
 }
 
@@ -34,7 +35,7 @@ func TestImportThenVerifyIsZeroDifferences(t *testing.T) {
 	t.Parallel()
 	tree := filepath.Join(t.TempDir(), "tree.lisp")
 	repo := []string{"--repo", "mas-bandwidth/reliable", "--page-size", "15"}
-	res := workTool(replay(t)).Run(append([]string{"import", "--org", "mas-bandwidth", "--out", tree}, repo...)...)
+	res := workCLI(replay(t)).Run(append([]string{"import", "--org", "mas-bandwidth", "--out", tree}, repo...)...)
 	require.Equal(t, 0, res.Code, "import exit %d\n%s%s", res.Code, res.Stdout, res.Stderr)
 	require.Contains(t, res.Stdout, "IMPORT OK", "import exit %d\n%s%s", res.Code, res.Stdout, res.Stderr)
 	require.Contains(t, res.Stdout, " issues=20 ", "import exit %d\n%s%s", res.Code, res.Stdout, res.Stderr)
@@ -47,7 +48,7 @@ func TestImportThenVerifyIsZeroDifferences(t *testing.T) {
 	require.NotNil(t, got, "the import's sha256 does not name the file written:\n%s", res.Stdout)
 	require.Equal(t, sum([]byte(data)), got[1], "the import's sha256 does not name the file written:\n%s", res.Stdout)
 
-	res = workTool(replay(t)).Run(append([]string{"verify", "--tree", tree}, repo...)...)
+	res = workCLI(replay(t)).Run(append([]string{"verify", "--tree", tree}, repo...)...)
 	require.Equal(t, 0, res.Code, "verify exit %d\n%s%s", res.Code, res.Stdout, res.Stderr)
 	require.Contains(t, res.Stdout, "VERIFY OK", "verify exit %d\n%s%s", res.Code, res.Stdout, res.Stderr)
 	require.Contains(t, res.Stdout, "differences=0", "verify exit %d\n%s%s", res.Code, res.Stdout, res.Stderr)
@@ -55,13 +56,13 @@ func TestImportThenVerifyIsZeroDifferences(t *testing.T) {
 	changed := strings.Replace(data, `:title "`, `:title "changed `, 1)
 	testkit.WriteFile(t, tree, changed)
 
-	res = workTool(replay(t)).Run(append([]string{"verify", "--tree", tree}, repo...)...)
+	res = workCLI(replay(t)).Run(append([]string{"verify", "--tree", tree}, repo...)...)
 	require.Equal(t, 1, res.Code, "verify after a change: exit %d\n%s%s", res.Code, res.Stdout, res.Stderr)
 	require.Regexp(t, `(?m)^DRIFT path=repos/mas-bandwidth/reliable/issues/\d+ field=title want=\S+ got=changed\\x20`, res.Stdout, "verify after a change: exit %d\n%s%s", res.Code, res.Stdout, res.Stderr)
 	require.Contains(t, res.Stderr, "VERIFY FAILED", "verify after a change: exit %d\n%s%s", res.Code, res.Stdout, res.Stderr)
 	require.Contains(t, res.Stderr, "differences=1 missing=0 extra=0 drift=1", "verify after a change: exit %d\n%s%s", res.Code, res.Stdout, res.Stderr)
 
-	res = workTool(replay(t)).Run(append([]string{"import", "--org", "mas-bandwidth", "--dry-run"}, repo...)...)
+	res = workCLI(replay(t)).Run(append([]string{"import", "--org", "mas-bandwidth", "--dry-run"}, repo...)...)
 	require.Equal(t, 0, res.Code, "dry run exit %d\n%s%s", res.Code, res.Stdout, res.Stderr)
 	require.Contains(t, res.Stdout, "dry_run=true", "dry run exit %d\n%s%s", res.Code, res.Stdout, res.Stderr)
 	require.Contains(t, res.Stdout, "out=-", "dry run exit %d\n%s%s", res.Code, res.Stdout, res.Stderr)
@@ -71,7 +72,7 @@ func TestImportThenVerifyIsZeroDifferences(t *testing.T) {
 // refused at exit 2 after the listing, before any issue is read.
 func TestTheBudgetIsCheckedBeforeTheIssuesAreRead(t *testing.T) {
 	t.Parallel()
-	res := workTool(replay(t)).Run("import", "--org", "mas-bandwidth", "--repo", "mas-bandwidth/reliable", "--page-size", "15", "--max-calls", "2", "--dry-run")
+	res := workCLI(replay(t)).Run("import", "--org", "mas-bandwidth", "--repo", "mas-bandwidth/reliable", "--page-size", "15", "--max-calls", "2", "--dry-run")
 	require.Equal(t, 2, res.Code, "exit %d\n%s%s", res.Code, res.Stdout, res.Stderr)
 	require.Contains(t, res.Stderr, "IMPORT FAILED", "exit %d\n%s%s", res.Code, res.Stdout, res.Stderr)
 	require.Contains(t, res.Stderr, "calls=1 ", "exit %d\n%s%s", res.Code, res.Stdout, res.Stderr)
@@ -82,28 +83,35 @@ func TestTheBudgetIsCheckedBeforeTheIssuesAreRead(t *testing.T) {
 // problem at once and pointing at the verb's help; help exits 0.
 func TestRefusalsNameTheFlag(t *testing.T) {
 	t.Parallel()
+	treeData, err := workfile.Encode(&workfile.Tree{Source: "github", Org: "o", Fetched: "2026-01-01T00:00:00Z"})
+	require.NoError(t, err)
+	tree := filepath.Join(t.TempDir(), "tree.lisp")
+	testkit.WriteFile(t, tree, string(treeData))
 	cases := []struct {
 		name string
 		args []string
 		code int
 		want []string
 	}{
-		{"bare import", []string{"import"}, 2, []string{"--org is required", "--out is required unless --dry-run", "run: nova-work import -h"}},
+		{"bare import", []string{"import"}, 2, []string{"--org is required", "--out is required unless --dry-run", "run: nova-work help"}},
 		{"bad calls and page size", []string{"import", "--org", "o", "--dry-run", "--page-size", "0", "--max-calls", "0"}, 2, []string{"--max-calls must be positive", "--page-size must be 1 to 100"}},
 		{"missing out dir", []string{"import", "--org", "o", "--out", "/nonexistent-dir/t.lisp"}, 2, []string{"does not exist"}},
 		{"repo not in org", []string{"import", "--org", "o", "--dry-run", "--repo", "p/r"}, 2, []string{"--repo p/r is not in --org o"}},
 		{"bad repo name", []string{"import", "--org", "o", "--dry-run", "--repo", "bad"}, 2, []string{"is not owner/name"}},
 		{"nonexistent gh", []string{"import", "--org", "o", "--dry-run", "--gh", "/nonexistent/gh-cli"}, 2, []string{"is not found", "--gh"}},
 		{"bogus flag", []string{"import", "--bogus"}, 2, []string{"bogus", "run: nova-work import -h"}},
-		{"bare verify", []string{"verify"}, 2, []string{"--tree is required", "run: nova-work verify -h"}},
+		{"json on import", []string{"import", "--org", "o", "--dry-run", "--json"}, 2, []string{"unknown flag --json", "run: nova-work import -h"}},
+		{"json on verify", []string{"verify", "--tree", "t.lisp", "--json"}, 2, []string{"unknown flag --json", "run: nova-work verify -h"}},
+		{"bare verify", []string{"verify"}, 2, []string{"--tree is required", "run: nova-work help"}},
 		{"nonexistent tree", []string{"verify", "--tree", "/nonexistent/t.lisp"}, 2, []string{"VERIFY FAILED"}},
-		{"unknown verb", []string{"frob"}, 2, []string{"unknown verb", "import verify"}},
+		{"two repos outside the tree org", []string{"verify", "--tree", tree, "--repo", "p/one", "--repo", "q/two"}, 2, []string{"--repo p/one is not in the tree's organization o", "--repo q/two is not in the tree's organization o"}},
+		{"unknown verb", []string{"frob"}, 2, []string{"unknown verb", "import, verify"}},
 		{"no verb", []string{}, 2, []string{"no verb", "run: nova-work help"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			res := workTool(nil).Run(tc.args...)
+			res := workCLI(nil).Run(tc.args...)
 			assert.Equal(t, tc.code, res.Code, "%v: exit %d, want %d\n%s%s", tc.args, res.Code, tc.code, res.Stdout, res.Stderr)
 			for _, w := range tc.want {
 				assert.Contains(t, res.Stderr, w, "%v: stderr lacks %q:\n%s", tc.args, w, res.Stderr)
@@ -124,7 +132,7 @@ func TestRefusalsNameTheFlag(t *testing.T) {
 	for _, tc := range helpCases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			res := workTool(nil).Run(tc.args...)
+			res := workCLI(nil).Run(tc.args...)
 			assert.Equal(t, 0, res.Code, "%v: exit %d\n%s", tc.args, res.Code, res.Stdout)
 			assert.Contains(t, res.Stdout, "nova-work", "%v: exit %d\n%s", tc.args, res.Code, res.Stdout)
 		})
@@ -145,7 +153,7 @@ func TestVersionAndItsAliasPrintTheBuildIdentity(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			res := workTool(nil).Run(tc.arg)
+			res := workCLI(nil).Run(tc.arg)
 			diag := fmt.Sprintf("%s: exit %d, stdout %q, stderr %q; want the identity line at exit 0", tc.arg, res.Code, res.Stdout, res.Stderr)
 			assert.Equal(t, 0, res.Code, diag)
 			assert.True(t, strings.HasPrefix(res.Stdout, "nova-work "), diag)
@@ -158,10 +166,10 @@ func TestVersionAndItsAliasPrintTheBuildIdentity(t *testing.T) {
 // and one stderr line naming the verbs and the door, never the whole banner.
 func TestABareCommandRefusesInOneLine(t *testing.T) {
 	t.Parallel()
-	res := workTool(nil).Run()
+	res := workCLI(nil).Run()
 	require.Equal(t, 2, res.Code, "bare nova-work: exit %d, stdout %q, stderr %q", res.Code, res.Stdout, res.Stderr)
 	require.Empty(t, res.Stdout, "bare nova-work: exit %d, stdout %q, stderr %q", res.Code, res.Stdout, res.Stderr)
-	require.Equal(t, "nova-work: no verb; verbs: import verify help version; run: nova-work help\n", res.Stderr, "bare nova-work: exit %d, stdout %q, stderr %q", res.Code, res.Stdout, res.Stderr)
+	require.Equal(t, "WORK REFUSED: no verb given; the verbs are import, verify, version; run: nova-work help\n", res.Stderr, "bare nova-work: exit %d, stdout %q, stderr %q", res.Code, res.Stdout, res.Stderr)
 }
 
 // TestStatusGrammar pins the standard's three words after the verb (OK, REFUSED,
@@ -185,7 +193,7 @@ func TestStatusGrammar(t *testing.T) {
 			name: "import OK",
 			verb: "import",
 			run: func(t *testing.T) (testkit.Result, string) {
-				res := workTool(replay(t)).Run("import", "--org", "mas-bandwidth", "--repo", "mas-bandwidth/reliable", "--page-size", "15", "--dry-run")
+				res := workCLI(replay(t)).Run("import", "--org", "mas-bandwidth", "--repo", "mas-bandwidth/reliable", "--page-size", "15", "--dry-run")
 				return res, res.Stdout
 			},
 			wantWord: "OK",
@@ -195,7 +203,7 @@ func TestStatusGrammar(t *testing.T) {
 			name: "import REFUSED",
 			verb: "import",
 			run: func(t *testing.T) (testkit.Result, string) {
-				res := workTool(nil).Run("import")
+				res := workCLI(nil).Run("import")
 				return res, res.Stderr
 			},
 			wantWord: "REFUSED",
@@ -205,7 +213,7 @@ func TestStatusGrammar(t *testing.T) {
 			name: "import FAILED",
 			verb: "import",
 			run: func(t *testing.T) (testkit.Result, string) {
-				res := workTool(replay(t)).Run("import", "--org", "mas-bandwidth", "--repo", "mas-bandwidth/reliable", "--page-size", "15", "--max-calls", "2", "--dry-run")
+				res := workCLI(replay(t)).Run("import", "--org", "mas-bandwidth", "--repo", "mas-bandwidth/reliable", "--page-size", "15", "--max-calls", "2", "--dry-run")
 				return res, res.Stderr
 			},
 			wantWord: "FAILED",
@@ -217,9 +225,9 @@ func TestStatusGrammar(t *testing.T) {
 			run: func(t *testing.T) (testkit.Result, string) {
 				tree := filepath.Join(t.TempDir(), "tree.lisp")
 				repo := []string{"--repo", "mas-bandwidth/reliable", "--page-size", "15"}
-				res := workTool(replay(t)).Run(append([]string{"import", "--org", "mas-bandwidth", "--out", tree}, repo...)...)
+				res := workCLI(replay(t)).Run(append([]string{"import", "--org", "mas-bandwidth", "--out", tree}, repo...)...)
 				require.Equal(t, 0, res.Code)
-				verRes := workTool(replay(t)).Run(append([]string{"verify", "--tree", tree}, repo...)...)
+				verRes := workCLI(replay(t)).Run(append([]string{"verify", "--tree", tree}, repo...)...)
 				return verRes, verRes.Stdout
 			},
 			wantWord: "OK",
@@ -229,7 +237,7 @@ func TestStatusGrammar(t *testing.T) {
 			name: "verify REFUSED",
 			verb: "verify",
 			run: func(t *testing.T) (testkit.Result, string) {
-				res := workTool(nil).Run("verify")
+				res := workCLI(nil).Run("verify")
 				return res, res.Stderr
 			},
 			wantWord: "REFUSED",
@@ -241,12 +249,12 @@ func TestStatusGrammar(t *testing.T) {
 			run: func(t *testing.T) (testkit.Result, string) {
 				tree := filepath.Join(t.TempDir(), "tree.lisp")
 				repo := []string{"--repo", "mas-bandwidth/reliable", "--page-size", "15"}
-				res := workTool(replay(t)).Run(append([]string{"import", "--org", "mas-bandwidth", "--out", tree}, repo...)...)
+				res := workCLI(replay(t)).Run(append([]string{"import", "--org", "mas-bandwidth", "--out", tree}, repo...)...)
 				require.Equal(t, 0, res.Code)
 				data := testkit.ReadFile(t, tree)
 				changed := strings.Replace(data, `:title "`, `:title "changed `, 1)
 				testkit.WriteFile(t, tree, changed)
-				verRes := workTool(replay(t)).Run(append([]string{"verify", "--tree", tree}, repo...)...)
+				verRes := workCLI(replay(t)).Run(append([]string{"verify", "--tree", tree}, repo...)...)
 				return verRes, verRes.Stderr
 			},
 			wantWord: "FAILED",
@@ -272,4 +280,25 @@ func TestStatusGrammar(t *testing.T) {
 				tc.name, tc.wantWord, tc.wantCode, gotWord, res.Code, res.Stdout, res.Stderr)
 		})
 	}
+}
+
+// TestTheVerbsThatPrintTheirOwnLinesSaySo pins Flags.Prints on import and
+// verify: each writes its own lines and answers tool.Exit, so the skeleton
+// renders nothing for them, offers neither --json, and the banner names both as
+// the verbs that do not take it (internal/tool, Banner).
+func TestTheVerbsThatPrintTheirOwnLinesSaySo(t *testing.T) {
+	t.Parallel()
+	cli := workCLI(nil)
+	assert.Contains(t, cli.OK(t, "help").Stdout, "Every verb but import, verify takes --json",
+		"the banner offers --json on a verb that prints its own lines")
+	for _, verb := range []string{"import", "verify"} {
+		assert.NotContains(t, cli.OK(t, verb, "-h").Stdout, "--json", "%s -h lists a flag the verb does not take", verb)
+	}
+}
+
+// nova-work's definition meets the standard its banner and help cannot hold
+// by construction: every verb's effect, and a how text of five short lines.
+func TestWorkToolMeetsTheStandard(t *testing.T) {
+	t.Parallel()
+	assert.Empty(t, workTool(nil).Problems())
 }
