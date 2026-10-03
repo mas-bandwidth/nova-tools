@@ -305,3 +305,7 @@ MCLevelBrokenNoGap.cfg	MCLevel.tla	temporal	Terminates	ignore-terminal	level	req
 MCLevelBrokenRequeue.cfg	MCLevel.tla	invariant	MovesBounded	ignore-terminal	level	required	-
 MCLevelBrokenNaive.cfg	MCLevel.tla	invariant	SelectionComplete	ignore-terminal	level	required	-
 MCLevelBrokenNoSkip.cfg	MCLevel.tla	invariant	NeverOnARefuser	ignore-terminal	level	required	-
+MCUpdateApply.cfg	MCUpdateApply.tla	pass	-	ignore-terminal	updateapply	required	-
+MCUpdateApplyBrokenInstallOnVerdict.cfg	MCUpdateApply.tla	invariant	ApplyOnlyWhatIsNamed	ignore-terminal	updateapply	required	-
+MCUpdateApplyBrokenDryRunInstalls.cfg	MCUpdateApply.tla	invariant	DryRunInstallsNothing	ignore-terminal	updateapply	required	-
+MCUpdateApplyBrokenSentOnRefusal.cfg	MCUpdateApply.tla	invariant	SentOnlyOnOK	ignore-terminal	updateapply	required	-
