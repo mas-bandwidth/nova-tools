@@ -777,7 +777,11 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 			if redealBound(wc) {
 				tier := s.NextTier(c)
 				if tier == "" {
-					p.refuse(c.ID, boundWhat(wc, c.ID)+": rework it with a fix, or drop it")
+					why := ": rework it with a fix, or drop it"
+					if held, _ := reworkAtTheSameBound(s, c, wc, ""); held != "" {
+						why = "; " + held // the attempt before ended at its bound on its tier (failure.go)
+					}
+					p.refuse(c.ID, boundWhat(wc, c.ID)+why)
 					continue
 				}
 				// below its ceiling: the machine escalates it, a new attempt on the next tier
@@ -1244,7 +1248,7 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 			set["failed"] = itoa(pr.Int("failed") + 1)
 			// rule 2: the attempt before failed the same way, so this is the bound's (failure.go);
 			// a decided class is the class when the decision routed the finish
-			identical = failureSet(pr, pr.Int("attempt"), r.Report, class, set)
+			identical = failureSet(pr, pr.Int("attempt"), r.Report, class, cardTierOf(pr), set)
 		}
 		addConsumer(pr, set, workConsumer(s, c, 0, result, rec))
 		u := Unit{Key: c.ID, Stream: pr.Row, Changes: []Change{change(Fleet, moveEntry(c, c.Row, into, cardSet))},
@@ -1262,7 +1266,9 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 			delete(set, "result")
 			delete(set, FieldFailure)
 			delete(set, FieldFailureAt)
-			u.Changes = append(u.Changes, change(Work, moveEntry(pr, pr.Row, Ready, set, "result", FieldFailure, FieldFailureAt)))
+			delete(set, FieldFailureTier)
+			delete(set, FieldFailureBound)
+			u.Changes = append(u.Changes, change(Work, moveEntry(pr, pr.Row, Ready, set, "result", FieldFailure, FieldFailureAt, FieldFailureTier, FieldFailureBound)))
 			u.Moved = fmt.Sprintf("%s working -> done %s; %s working -> ready (%s)", c.ID, result, pr.ID, why)
 			p.Units = append(p.Units, u)
 			continue

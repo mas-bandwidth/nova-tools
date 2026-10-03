@@ -471,6 +471,8 @@ func commands(g Group, first Note, prefix string) []Command {
 			}
 		case d == "rework with the finding" || d == "rework with a fix" && g.Type == NWorkFailed:
 			add(d, cmd+"rework"+subj+subjAns) // each takes its own finding or report
+		case d == ReworkOnAHigherTier:
+			add(d, cmd+"rework"+subj+" --fix "+fixText+" --tier '<a higher tier>'"+subjAns)
 		case d == "rework with a fix" || d == "rework":
 			add(d, cmd+"rework"+subj+" --fix "+fixText+subjAns)
 		case d == "ask":
