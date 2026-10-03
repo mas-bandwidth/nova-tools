@@ -14,8 +14,9 @@ machine, with NOVA_SPRINT_REDIS naming the store:
   nova-sprint run --listen <address>:<port> --land
     ticks; serves the workers' verbs (take, finish, read, queue, fleet beat) on
     <address>:<port>, this machine's address on the fleet's private network (it
-    checks no credential, so an every-network address such as 0.0.0.0 is
-    refused); serves the coordinator's verbs on 127.0.0.1:<port>; with --land
+    checks no credential, so a name, a public address, a link-local address
+    and an every-network address such as 0.0.0.0 are refused); serves the
+    coordinator's verbs on 127.0.0.1:<port>; with --land
     lands what the readers passed, so land is not run by hand beside it.
 The coordinator's shell then sets NOVA_SPRINT_SERVER=127.0.0.1:<port> and
 NOVA_SPRINT_ACTOR, and needs no store address or credential: every verb is sent
