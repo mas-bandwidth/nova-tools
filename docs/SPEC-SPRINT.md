@@ -166,7 +166,14 @@ a friend.
 a friend's card across the inbox/outbox standard
 (docs/FRIENDS.md, a sprint card): for each card working on a friend's row it
 writes `inbox/<job>/BRIEF.md` when that is not there (written whole by
-`internal/atomicfile`, never over a file there), `<job>` the card's id as the table layer holds it at its
+`internal/atomicfile`, never over a file there; a later attempt's says it starts from the current
+tip of the card's base branch on origin, never an older base, carrying the work of the last
+attempt that pushed onto it herself (`git diff origin/<base>...<head>` shows it, redone where it
+does not apply), and that the Head she reports must be on that tip: the rule a member's rework is
+staged by, docs/SPEC-CARD-CONTRACT.md, where a rework starts; `TestAFriendsReworkStartsFromTheTipOfItsBase`.
+A friend has no staged commit, so nothing checks that her Head descends from that tip: the
+`ls-remote` tip check below, Head is origin's tip of her branch, is the only guard on her finish),
+`<job>` the card's id as the table layer holds it at its
 epoch (`sprint.StoredID`: the card id at epoch 0, `<card>~<epoch>` after a
 clear, so a card id a clear brings back is another job), and only the
 coordinator reaches out; once `outbox/<job>/REPORT.md` is there it finishes

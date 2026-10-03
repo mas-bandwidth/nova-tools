@@ -124,7 +124,8 @@ is staged, and `base_head`'s work is carried onto its tip as one commit, a squas
 a head that already descends from the tip is staged as it is, work the tip already holds adds
 nothing, and work that does not apply cleanly leaves the bare tip, which JOB.md says. The finish's
 staged commit is that commit, so a child that starts again from the tip is accepted and a head on
-the old base is refused (`TestAReworkStagedAtTheTipFinishesFromItAndNotFromTheOldHead`), and the
+the old base is refused (`TestAReworkStagedAtTheTipFinishesFromItAndNotFromTheOldHead`; end to end, the base moved after
+attempt one, `TestAReworkAfterTheBaseMovedIsStagedAtANewCarryOnItsTip`), and the
 finish's report begins, after the push, with the stage's words (`stage: staged=<sha> tip=<sha> of
 <base> carry=<carried|held|conflict|none>`), so the card's timeline says it. A base that is a full sha
 or a tag never moves, and its rework is staged at `base_head` itself. A rework staged at the old

@@ -422,7 +422,9 @@ those words in the finish's report (`stage: ...`), so the card's timeline says
 where each rework was staged and whether the work before it came. A base that
 is a full sha or a tag never moves, and its rework is staged at the frame's
 commit as before; a fetch of the branch that fails is a staging refusal, never
-a stage at a stale tip. A rework staged at the old head kept a base hours old
+a stage at a stale tip, and so is a carry whose merge fails with no conflict
+(no unmerged path: an index lock, histories with no merge base after a
+rewritten base), with git's words, never reported as `conflict`. A rework staged at the old head kept a base hours old
 (2026-10-03: diaryd-67's 16 commits on a base 698 commits behind conflicted
 again at the merge), and a child told to start again from the tip was refused
 (nongo-11 attempt 262: "does not descend from the staged commit";
@@ -442,7 +444,7 @@ is trusted.
 
 - a per-job clone built with `--shared` borrows the bench mirror's object graph and still has its own working tree, and the mirror keeps every object (`gc.auto=0`; `TestStageCardBorrowsTheMirror`, `TestAStageBorrowsTheMirrorsObjects`);
 - the worker prompt carries the named template's conditions from the tool, with no shell script in the path;
-- a rework is staged at its base branch's tip, the work before it carried where it applies and the bare tip where it does not (`TestAReworkIsStagedAtTheTipOfItsBase`, `TestAReworkCarriesThePreviousWorkThatApplies`, `TestAReworkWhoseWorkDoesNotApplyIsTheBareTip`), and its finish is counted from that commit (`TestAReworkStagedAtTheTipFinishesFromItAndNotFromTheOldHead`).
+- a rework is staged at its base branch's tip, the work before it carried where it applies and the bare tip where it does not (`TestAReworkIsStagedAtTheTipOfItsBase`, `TestAReworkCarriesThePreviousWorkThatApplies`, `TestAReworkWhoseWorkDoesNotApplyIsTheBareTip`), a base it cannot fetch or a merge that fails with no conflict is refused at staging (`TestAReworkThatCannotFetchOrMergeItsBaseIsRefused`), and its finish is counted from that commit, end to end from the member's frame to its push, with a read at attempt two left on its head (`TestAReworkStagedAtTheTipFinishesFromItAndNotFromTheOldHead`, `TestAReworkAfterTheBaseMovedIsStagedAtANewCarryOnItsTip`).
 
 ## Efficiency: lessons absorbed
 

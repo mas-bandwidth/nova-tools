@@ -167,3 +167,32 @@ func TestAReworkWhoseWorkDoesNotApplyIsTheBareTip(t *testing.T) {
 	assert.Contains(t, cardcontract.For("claude").JobText(cardcontract.Frame{Kind: "work", Attempt: 2, PrevHead: o.prev, PrevFrom: 1, BaseRef: "main", Branch: "sprint/c1.g1.e2"},
 		cardcontract.Staged{Job: "/j", Repo: target, Head: tip, Carry: res.Carry}), "The previous work: the work of attempt 1 must be redone from this tip")
 }
+
+// A rework whose base branch cannot be fetched from origin is refused at staging, never staged
+// at a stale tip; a carry whose merge fails with no conflict (here histories with no merge base,
+// as after a rewritten base) is the stage's failure with git's words, never a "conflict".
+func TestAReworkThatCannotFetchOrMergeItsBaseIsRefused(t *testing.T) {
+	t.Parallel()
+	o := newReworkOrigin(t)
+	_, err := StageCard(StageOptions{
+		Card: []byte("c1: the card\n"), TargetDir: filepath.Join(t.TempDir(), "repo"), BenchHome: filepath.Join(o.root, "home"),
+		Timeout: 30 * time.Second, Base: &CardBase{Repo: o.origin, Sha: o.prev, Ref: "no-such-branch", Named: o.origin},
+		Branch: "sprint/c1.g1.e2", Rework: &Rework{Prev: o.prev, From: 1},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "git fetch of the base branch no-such-branch, whose tip a rework is staged at, failed")
+
+	execCmd(t, o.src, "git", "switch", "-q", "--orphan", "rewritten")
+	o.write(t, "a", "a rewritten\n")
+	execCmd(t, o.src, "git", "add", "a")
+	execCmd(t, o.src, "git", "commit", "-q", "-m", "a rewritten history")
+	execCmd(t, o.src, "git", "push", "-q", "--force", o.origin, "rewritten:main")
+	_, err = StageCard(StageOptions{
+		Card: []byte("c1: the card\n"), TargetDir: filepath.Join(t.TempDir(), "repo"), BenchHome: filepath.Join(o.root, "home"),
+		Timeout: 30 * time.Second, Base: &CardBase{Repo: o.origin, Sha: o.prev, Ref: "main", Named: o.origin},
+		Branch: "sprint/c1.g1.e2", Rework: &Rework{Prev: o.prev, From: 1},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "git merge of the previous head onto the tip, which is no conflict, failed")
+	assert.Contains(t, err.Error(), "unrelated histories", "git's own words, not a carry state")
+}

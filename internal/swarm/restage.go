@@ -70,8 +70,13 @@ func restageAtTip(ctx context.Context, git func(context.Context, ...string) *exe
 	}
 	merged, err := stageTimedOutput(git(ctx, in("-c", "merge.ff=true", "merge", "-q", "--squash", "--end-of-options", rw.Prev)...), checkoutTime)
 	if err != nil {
-		if stageTimedOut(ctx, err) {
-			return nil, "merge of the previous head onto the tip", merged, err
+		// a conflict leaves unmerged paths in the index; a merge that failed with none (an
+		// index lock, histories with no merge base after a rewritten base, the deadline) is
+		// not a conflict, and is the stage's failure with git's own words, never a
+		// "conflict" whose redo hint would name a diff with no merge base
+		unmerged, uerr := git(ctx, in("ls-files", "--unmerged")...).Output()
+		if stageTimedOut(ctx, err) || uerr != nil || len(strings.TrimSpace(string(unmerged))) == 0 {
+			return nil, "merge of the previous head onto the tip, which is no conflict,", merged, err
 		}
 		// it does not apply cleanly: the checkout goes back to the bare tip
 		if out, err := stageTimedOutput(git(ctx, in("reset", "-q", "--hard", "--end-of-options", tip)...), checkoutTime); err != nil {
