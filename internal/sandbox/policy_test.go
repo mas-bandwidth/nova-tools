@@ -200,6 +200,40 @@ func TestCwdAndTmpAreInsideTheWall(t *testing.T) {
 	require.Equal(t, "bad_cwd", bad[0].Reason, "a --cwd outside the write set was accepted: %v", bad)
 }
 
+// Rule 8: the default temp name is created inside the first --write. A symlink
+// planted at that name, aimed at a directory outside the write set, is the case
+// an explicit --tmp already refuses. This goes red if Build accepts that name
+// and the resolved temp directory points outside every --write.
+func TestDefaultTmpSymlinkCannotPointOutsideTheWriteSet(t *testing.T) {
+	t.Parallel()
+
+	write, read, home, _ := scratch(t)
+	outside := filepath.Join(filepath.Dir(write), "outside")
+	require.NoError(t, os.MkdirAll(outside, 0o700))
+	if got, err := filepath.EvalSymlinks(outside); err == nil {
+		outside = got
+	}
+	require.False(t, Inside(outside, write), "the fixture's outside directory %q sits inside the write set %q", outside, write)
+	link := filepath.Join(write, tmpDirName)
+	err := os.Symlink(outside, link)
+	if err != nil && runtime.GOOS == "windows" {
+		t.Skipf("skipped: cannot plant a symlink here (%v)", err)
+	}
+	require.NoError(t, err)
+	p, bad := Build(in(t, write, read, home, anExecutable(t)))
+	tmp := ""
+	writes := []string(nil)
+	if p != nil {
+		tmp = p.Tmp
+		writes = p.Writes
+	}
+	require.True(t, p == nil || insideAny(tmp, writes), "default temp %q points outside the write set %v", tmp, writes)
+	require.Nil(t, p, "a default temp name that is a symlink was accepted, tmp=%q", tmp)
+	require.NotEmpty(t, bad, "a default temp symlink produced no refusal")
+	require.Equal(t, "bad_write", bad[0].Reason, "refusal = %v", bad)
+	require.Contains(t, bad[0].Text, "symlink", "the refusal did not name the symlink: %v", bad)
+}
+
 // The exit-codes section: the pre-flight stats the resolved command OUTSIDE the wall.
 func TestCommandPreflight(t *testing.T) {
 	t.Parallel()

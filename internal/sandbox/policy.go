@@ -719,16 +719,37 @@ func build(in Input, homesFn func() []string) (*Policy, []Refusal) {
 	// by addRules (rule 3): a harness that cannot resolve a name inside the sandbox is a
 	// sandbox bug, not a network one.
 	// rule 8, and the one directory this tool creates: everything above passed.
+	// An explicit --tmp was resolved and checked above. The default name is not
+	// a caller path, so that check never saw it. MkdirAll follows a symlink, and
+	// the path it resolves to is what the child is given. Lstat refuses a symlink
+	// before that follow. The resolved path then has to sit inside a --write, the
+	// same insideAny check an explicit --tmp already passed. A path that does not
+	// resolve is a refusal: assigning the unresolved name would keep a symlink
+	// that only looks like it is inside the first --write.
 	if makeTmp {
 		tmp := filepath.Join(first, tmpDirName)
+		fi, lerr := os.Lstat(tmp)
+		switch {
+		case lerr != nil && !os.IsNotExist(lerr):
+			return nil, []Refusal{refuse("bad_write", "could not read %s, the one directory this tool makes: %v", tmp, lerr)}
+		case lerr == nil && fi.Mode()&os.ModeSymlink != 0:
+			return nil, []Refusal{refuse("bad_write", "%s is a symlink; the default temp directory is a real directory inside the first --write (%s), and a symlink is not followed", tmp, first)}
+		}
 		if err := os.MkdirAll(tmp, 0o700); err != nil {
 			return nil, []Refusal{refuse("bad_write", "could not create %s, the one directory this tool makes: %v", tmp, err)}
 		}
-		if got, err := filepath.EvalSymlinks(tmp); err == nil {
-			p.Tmp = got
-		} else {
-			p.Tmp = tmp
+		got, err := filepath.EvalSymlinks(tmp)
+		if err != nil {
+			return nil, []Refusal{refuse("bad_write", "%s could not be resolved: %v; the temp directory is inside the wall", tmp, err)}
 		}
+		got, err = filepath.Abs(got)
+		if err != nil {
+			return nil, []Refusal{refuse("bad_write", "%s could not be made absolute: %v", tmp, err)}
+		}
+		if !insideAny(got, p.Writes) {
+			return nil, []Refusal{refuse("bad_write", "%s resolves to %s, which is outside every --write; the temp directory is inside the wall", tmp, got)}
+		}
+		p.Tmp = got
 	}
 	p.OptRoots = OptionalRoots(p.Command)
 	lookIn := in.LookAt
