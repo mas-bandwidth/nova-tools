@@ -113,7 +113,7 @@ const Sentinel = "sentinel"
 
 // ReworkOnAHigherTier is the bound's rework when the attempt before also ended at its bound on
 // the card's tier (failure.go, reworkAtTheSameBound): Rework takes it only with --tier naming a
-// tier above (boundAgainDecisions).
+// tier above (boundDecisions).
 const ReworkOnAHigherTier = "rework with a fix on a higher tier"
 
 // TickDecisions are the decisions open to the tick's judgments.

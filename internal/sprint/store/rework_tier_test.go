@@ -231,6 +231,11 @@ func sharedFlash(t *testing.T) *harness {
 	return routeHarness(t, r("flash-a", "flash"), r("flash-b", "flash"), r("pro-a", "pro"), r("pro-b", "pro"))
 }
 
+// outageLine is a take the provider failed with its own server error: no rest of the
+// provider's funds or key follows (provider_funds.go rests only out-of-credit and auth), so a
+// reworked attempt is dealt on the provider again and can reach its second bound.
+const outageLine = cardhdr.EndProvider + ": provider: class=provider-5xx status=503 msg=Service Unavailable"
+
 // A withdrawn take's end counts as the attempt's failure, not only a failed finish (the
 // coordinator's finding of 2026-10-03: 240 bounds in a row were never the second identical
 // failure, because only a failed finish wrote the primary's record). An attempt bounded by
@@ -240,20 +245,21 @@ func sharedFlash(t *testing.T) *harness {
 // last take ended lets one rework on the same tier, once per tier per card (failure_back), and
 // every later bound on it is refused, however often the provider comes back. A take of another
 // provider is not the provider back. A bound that ended another way is still a second bound on
-// the tier.
+// the tier. The provider fails these takes with an outage (outageLine), which rests nothing,
+// so each reworked attempt is dealt and reaches its bound; a refusal for credit rests the
+// provider first (TestAnOutOfCreditBoundRestsThenLiftsOnce).
 func TestAWithdrawnTakeCountsTowardTheIdenticalFailure(t *testing.T) {
 	t.Parallel()
-	credit := cardhdr.EndProvider + ": provider: class=out-of-credit status=402 msg=Insufficient credits"
 	start := func(t *testing.T) *harness {
 		h := sharedFlash(t)
 		h.addReady("s1", 1, briefOf("flash", ""))
 		h.startMachine()
 		h.machine()
-		h.boundBy("s1-1", credit)
+		h.boundBy("s1-1", outageLine)
 		assert.Equal(t, []string{"rework with a fix", "drop", "wait"}, h.openOf(sprint.NBound)[0].Note.Decisions, "a provider failure's first bound offers wait")
 		require.Empty(t, h.reworkOf("again", ""))
 		pr := h.snap().Work.Card("s1-1")
-		assert.Equal(t, []string{"provider failure: class=out-of-credit", "1", "flash"},
+		assert.Equal(t, []string{"provider failure: class=provider-5xx", "1", "flash"},
 			[]string{pr.F(sprint.FieldFailure), pr.F(sprint.FieldFailureAt), pr.F(sprint.FieldFailureTier)}, "the provider's class is the attempt's end")
 		return h
 	}
@@ -268,14 +274,14 @@ func TestAWithdrawnTakeCountsTowardTheIdenticalFailure(t *testing.T) {
 	t.Run("the same provider failure offers wait", func(t *testing.T) {
 		t.Parallel()
 		h := start(t)
-		h.boundBy("s1-1", credit)
+		h.boundBy("s1-1", outageLine)
 		refused := h.reworkOf("again", "")
 		require.Len(t, refused, 1)
-		assert.Contains(t, refused[0].Why, "attempt 2 reached its bound on tier flash as attempt 1 did (provider failure: class=out-of-credit)")
+		assert.Contains(t, refused[0].Why, "attempt 2 reached its bound on tier flash as attempt 1 did (provider failure: class=provider-5xx)")
 		assert.Contains(t, refused[0].Why, "or wait: a take on a provider its takes failed on that finishes ok (the provider back) lets one rework on flash, once")
 		assert.Equal(t, []string{sprint.ReworkOnAHigherTier, "drop", "wait"}, h.openOf(sprint.NBound)[0].Note.Decisions)
 	})
-	// The second cold read's probe A: every take of s1-1 ends out of credit, another flash card
+	// The second cold read's probe A: every take of s1-1 ends in an outage, another flash card
 	// finishes ok on the same provider between bounds, and the coordinator answers the same
 	// plain rework every turn. Before the cap, 12 of 12 were accepted.
 	t.Run("the provider back lifts a held bound once per tier, however often", func(t *testing.T) {
@@ -286,7 +292,7 @@ func TestAWithdrawnTakeCountsTowardTheIdenticalFailure(t *testing.T) {
 		h.machine()
 		var accepted []int
 		for turn := 1; turn <= 6; turn++ {
-			h.boundBy("s1-1", credit)
+			h.boundBy("s1-1", outageLine)
 			okOn(h, turn, briefOf("flash", ""))
 			at := h.snap().Work.Card("s1-1").Int("attempt")
 			if refused := h.reworkOf("again", ""); len(refused) == 0 {
@@ -309,7 +315,7 @@ func TestAWithdrawnTakeCountsTowardTheIdenticalFailure(t *testing.T) {
 	t.Run("a take of another provider is not the provider back", func(t *testing.T) {
 		t.Parallel()
 		h := start(t)
-		h.boundBy("s1-1", credit)
+		h.boundBy("s1-1", outageLine)
 		okOn(h, 1, briefOf("flash", "model: x/y\ntokens: 100\ndeadline: 60"))
 		require.Equal(t, "x/y", h.snap().Fleet.Card("s2-1.w1").F(sprint.FieldModel), "a take on provider x finished ok")
 		require.Len(t, h.reworkOf("again", ""), 1, "provider x is not the provider s1-1's takes failed on")
@@ -337,10 +343,10 @@ func TestAWithdrawnTakeCountsTowardTheIdenticalFailure(t *testing.T) {
 		class   string
 	}{
 		{"two takes with no result", 1, map[int]string{1: noResultLine, 2: noResultLine}, "no result"},
-		{"the provider's class word", 3, map[int]string{4: credit}, "provider failure: class=out-of-credit"},
+		{"the provider's class word", 3, map[int]string{4: creditLine}, "provider failure: class=out-of-credit"},
 		{"a provider line with no class word", 3, map[int]string{4: providerLine}, "provider failure"},
-		{"the last take, not the one before", 3, map[int]string{3: credit, 4: noResultLine}, "no result"},
-		{"a last take with no record", 3, map[int]string{3: credit}, ""},
+		{"the last take, not the one before", 3, map[int]string{3: creditLine, 4: noResultLine}, "no result"},
+		{"a last take with no record", 3, map[int]string{3: creditLine}, ""},
 	} {
 		t.Run("the class of "+tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -355,4 +361,102 @@ func TestAWithdrawnTakeCountsTowardTheIdenticalFailure(t *testing.T) {
 			assert.Equal(t, tc.class, sprint.BoundClass(&sprint.Card{ID: "s1-1.w1", Fields: f}))
 		})
 	}
+}
+
+// paid is `nova-sprint funded <provider>` when the provider rests for its funds, a minute on:
+// a rework onto a tier whose every route rests is refused, and the deal waits for the end.
+func (h *harness) paid(provider string) {
+	h.t.Helper()
+	if s := h.snap(); sprint.ProviderRests(s.Fleet)[provider].Resting(s.Now) {
+		h.must(FundedStep(sprint.FundedReq{Provider: provider, Reason: "paid", Who: "coordinator"}))
+		h.tick(time.Minute)
+		h.machine()
+	}
+}
+
+// creditBoundBy ends the takes of the primary's live work card refused for want of credit
+// until the attempt reaches its redeal bound. Each refusal rests the provider until it is
+// paid (provider_funds.go), so the card waits ready under the rest and is dealt again only
+// after `funded` (paid).
+func (h *harness) creditBoundBy(id, provider string) {
+	h.t.Helper()
+	for range 2 * (sprint.MaxRedeals + 2) {
+		if len(h.openOf(sprint.NBound)) > 0 {
+			return
+		}
+		if pr := h.snap().Work.Card(id); pr.Col == sprint.Working {
+			h.failTake(pr.F("work"), creditLine)
+			h.machine()
+			continue
+		}
+		h.paid(provider)
+	}
+	require.Len(h.t, h.openOf(sprint.NBound), 1, "the attempt is at its bound")
+}
+
+// The rule composed with a provider out of funds (nova-tools#5205): a take refused for credit
+// rests its provider until it is paid, so a card's attempt reaches its bound only across
+// `funded`, and a rework at that bound is accepted once the provider is funded (a rework onto
+// a tier whose every route rests is refused), its attempt dealt again. The bound
+// still holds across attempts: the second bound on flash, both for credit, is refused, offering
+// a tier above, drop and wait; the provider back (`funded`, then another card's take on it
+// finishing ok) lifts it once, and the next bound for credit on flash is refused with no wait,
+// the lift spent. The rest is outside tla/DirtyTick.tla: a card that waits under it takes no
+// attempt, so the model's rework count does not move.
+func TestAnOutOfCreditBoundRestsThenLiftsOnce(t *testing.T) {
+	t.Parallel()
+	h := sharedFlash(t)
+	h.addReady("s1", 1, briefOf("flash", ""))
+	h.startMachine()
+	h.machine()
+	h.failTake("s1-1.w1", creditLine)
+	h.machine()
+	s := h.snap()
+	require.True(t, sprint.ProviderRests(s.Fleet)["prov-flash"].Resting(s.Now), "the refusal rests the provider")
+	assert.Equal(t, sprint.Ready, s.Work.Card("s1-1").Col, "the card waits under the rest")
+	assert.Empty(t, h.openOf(sprint.NBound), "one refusal is no bound")
+	assert.Len(t, h.openOf(sprint.NProviderFunds), 1, "the provider's one judgment")
+
+	h.creditBoundBy("s1-1", "prov-flash")
+	assert.Equal(t, []string{"rework with a fix", "drop", "wait"}, h.openOf(sprint.NBound)[0].Note.Decisions, "the first bound")
+	require.Len(t, h.reworkOf("again", ""), 1, "the provider rests: no route serves flash")
+	h.paid("prov-flash")
+	require.Empty(t, h.reworkOf("again", ""), "funded: the first rework at the bound")
+	pr := h.snap().Work.Card("s1-1")
+	assert.Equal(t, []string{"provider failure: class=out-of-credit", "1", "flash", "yes"},
+		[]string{pr.F(sprint.FieldFailure), pr.F(sprint.FieldFailureAt), pr.F(sprint.FieldFailureTier), pr.F(sprint.FieldFailureBound)})
+	assert.Equal(t, sprint.Working, pr.Col, "attempt 2 is dealt again")
+
+	h.creditBoundBy("s1-1", "prov-flash")
+	require.Equal(t, 2, h.snap().Work.Card("s1-1").Int("attempt"), "attempt 2 was dealt after funded and reached its bound")
+	h.paid("prov-flash")
+	held := h.reworkOf("again", "")
+	require.Len(t, held, 1, "the second bound on flash, for credit: held, funded or not")
+	assert.Contains(t, held[0].Why, "attempt 2 reached its bound on tier flash as attempt 1 did (provider failure: class=out-of-credit)")
+	assert.Contains(t, held[0].Why, "nova-sprint drop s1-1")
+	assert.Contains(t, held[0].Why, "or wait: a take on a provider its takes failed on that finishes ok (the provider back) lets one rework on flash, once")
+	assert.Equal(t, []string{sprint.ReworkOnAHigherTier, "drop", "wait"}, h.openOf(sprint.NBound)[0].Note.Decisions)
+
+	// the provider back: paid (above), and another card's take on it finishes ok
+	h.tick(time.Minute)
+	h.addReady("s2", 1, briefOf("flash", ""))
+	h.machine()
+	h.finishAttempt("s2-1", false, "abc123")
+	h.machine()
+	require.Empty(t, h.reworkOf("again", ""), "the lift fires once")
+	pr = h.snap().Work.Card("s1-1")
+	assert.Equal(t, 3, pr.Int("attempt"))
+	assert.Equal(t, "flash", pr.F(sprint.FieldFailureBack), "the lift is spent on flash")
+
+	h.creditBoundBy("s1-1", "prov-flash")
+	require.Equal(t, 3, h.snap().Work.Card("s1-1").Int("attempt"))
+	h.paid("prov-flash")
+	refused := h.reworkOf("again", "")
+	require.Len(t, refused, 1, "a second bound for credit after the lift: refused")
+	assert.Contains(t, refused[0].Why, "attempt 3 reached its bound on tier flash as attempt 2 did (provider failure: class=out-of-credit)")
+	assert.Contains(t, refused[0].Why, "nova-sprint drop s1-1 --reason <why>) (the provider's return has lifted a bound on flash once already)")
+	assert.NotContains(t, refused[0].Why, "wait", "the lift is spent: a wait leads nowhere")
+	assert.Equal(t, []string{sprint.ReworkOnAHigherTier, "drop"}, h.openOf(sprint.NBound)[0].Note.Decisions)
+	assert.Equal(t, 3, h.snap().Work.Card("s1-1").Int("attempt"), "no fourth attempt")
+	h.clean("the bound held across the provider's rest")
 }

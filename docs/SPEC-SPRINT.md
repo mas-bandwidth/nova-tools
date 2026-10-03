@@ -945,7 +945,13 @@ and it is the coordinator's decision, receipted.
     with a fix and drop. When the provider is back, the held judgment closes and the
     bound's plain one opens, so the wait ends in a judgment. A rested route is not
     the provider back: rule 3 never rests a route for a provider failure (it counts
-    takes with no result), so that test would lift the bound at once.
+    takes with no result), so that test would lift the bound at once. Nor is
+    `funded`: a take refused for credit or for its key rests its provider first
+    (nova-tools#5199, below), the card waits ready under the rest, a rework onto a
+    tier whose every route rests is refused, and after `funded` the attempt is dealt
+    again; so an out-of-credit attempt reaches its bound across `funded`, the rule
+    is unchanged, and the lift still needs a take on the provider finishing ok
+    (`TestAnOutOfCreditBoundRestsThenLiftsOnce`).
   So a bound-to-rework loop is stopped by the store, whoever answers and however often
   other cards succeed: an answer with no `--tier` or the same tier is refused at the
   tier's second bound (third, once, when the provider came back between), one
@@ -964,11 +970,10 @@ and it is the coordinator's decision, receipted.
   - an outage on its first pro attempt, then one real no-result on its second: the
     second bound on pro is refused with drop alone, though the card had one real try
     there. That is accepted: the class does not gate a repeated bound (bounds
-    alternating a 402 and no result must not loop), and until PR 5205 lands a 402 at
-    launch reads as `no result`, so the store cannot tell the outage from a real try
-    and the two bounds read the same anyway. Once 5205 classes the 402 as a provider
-    failure, leaving a provider-failure bound out of the tier's count is an option the
-    capped lift makes safe; it is not taken here.
+    alternating a 402 and no result must not loop). Since PR 5205 a 402 at launch is a
+    provider failure, never `no result`, so the store can tell the outage from a real
+    try; leaving a provider-failure bound out of the tier's count is an option the
+    capped lift makes safe, and it is not taken here.
 - A route whose children end without a result rests (the owner, 2026-10-02,
   nova-tools#5174: "A route whose children end without a result three times is
   rested by the machine, never redealt on."). The tick's deal counts each route's
