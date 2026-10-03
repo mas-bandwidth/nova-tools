@@ -47,6 +47,11 @@ func (r result) mustContain(t *testing.T, stream, want string) result {
 	return r
 }
 
+func TestBusToolMeetsTheStandard(t *testing.T) {
+	t.Parallel()
+	require.Empty(t, busTool().Problems())
+}
+
 func TestUsageAndUnknownVerb(t *testing.T) {
 	t.Parallel()
 	invoke(t, "").mustCode(t, 2).mustContain(t, "stderr", "BUS REFUSED: no verb given; the verbs are")
@@ -59,7 +64,7 @@ func TestUsageAndUnknownVerb(t *testing.T) {
 // show --advance, which is what makes the second wait a real one. (#328)
 func TestWaitUsageStatesUnadvancedCursorReturnsAtOnce(t *testing.T) {
 	t.Parallel()
-	banner := invoke(t, "", "help").mustCode(t, 0).stdout
+	banner := invoke(t, "", "wait", "-h").mustCode(t, 0).stdout
 	require.Containsf(t, banner, "unadvanced cursor makes wait return AT ONCE", "the usage text does not say plainly that an unadvanced cursor makes wait return at once:\n%s", banner)
 	require.Containsf(t, banner, "--advance --remote origin --branch main", "the wait example loop does not show --advance:\n%s", banner)
 }
