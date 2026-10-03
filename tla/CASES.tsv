@@ -301,3 +301,6 @@ MCLevelBrokenNoGap.cfg	MCLevel.tla	temporal	Terminates	ignore-terminal	level	req
 MCLevelBrokenRequeue.cfg	MCLevel.tla	invariant	MovesBounded	ignore-terminal	level	required	-
 MCLevelBrokenNaive.cfg	MCLevel.tla	invariant	SelectionComplete	ignore-terminal	level	required	-
 MCLevelBrokenNoSkip.cfg	MCLevel.tla	invariant	NeverOnARefuser	ignore-terminal	level	required	-
+MCDirtyTickFriend.cfg	MCDirtyTick.tla	pass	-	ignore-terminal	dirtytick-friend	required	-
+MCDirtyTickFriendW1.cfg	MCDirtyTick.tla	invariant	FriendCardNeverRedealtToMachine	ignore-terminal	dirtytick-friend	required	-
+MCDirtyTickFriendW2.cfg	MCDirtyTick.tla	action	FriendDownLosesNoCard	ignore-terminal	dirtytick-friend	required	-

@@ -30,7 +30,9 @@ NoReads == [c \in Cards |-> NoR]
 Empty == [m \in Machines |-> {}]
 Base == [col |-> [c \in Cards |-> "none"], rd |-> NoReads, mq |-> {}, up |-> Machines \cup Readers,
          live |-> Machines \cup Readers, away |-> FALSE, misses |-> FALSE, hand |-> FALSE, lapse |-> TRUE,
-         mc |-> Empty, mr |-> Empty, q |-> Queues(Adds, <<>>, <<>>, <<>>), served |-> Cards]
+         mc |-> Empty, mr |-> Empty, q |-> Queues(Adds, <<>>, <<>>, <<>>), served |-> Cards,
+         friends |-> {}, fcard |-> {}, fup |-> {}, fwidth |-> [f \in {} |-> 1],
+         forder |-> <<>>]
 
 \* Every card added (its add queued), every machine up: the whole life.
 ScnBase == Base
@@ -78,6 +80,12 @@ ScnAccept == [Base EXCEPT !.col = [c \in Cards |-> "review"], !.rd = [c \in Card
 \* Every card added, every machine up; no route serves c2's tier and it pins
 \* no model (THE ROUTE): c1 lives its life, c2 stays ready.
 ScnRoute == [Base EXCEPT !.served = Cards \ {"c2"}]
+
+\* A friend's card c1, friend f1 up with width 2: c1 is dealt to f1's row, and
+\* f1 may go down (keeping it), up, finish it (LAND, HOLD, FAIL), and the
+\* deadline may judge it (wait or drop).
+ScnFriend == [Base EXCEPT !.friends = {"f1"}, !.fcard = {"c1"}, !.fup = {"f1"},
+                          !.fwidth = [f \in {"f1"} |-> 2], !.forder = <<"f1">>]
 
 \* THE READERS' PRESENCE. c1 in review waiting for a read, r1 away: the read is
 \* asked of r2, and r1 may come back or go away again.

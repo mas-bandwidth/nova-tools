@@ -168,6 +168,16 @@ CONSTANTS
 Tables == {"work", "readers", "merge", "fleet"}
 \* The cards a route serves, or that pin a model: the scenario's (THE ROUTE).
 Served == Scn.served
+\* THE FRIEND ROWS (2026-10-03): a card whose brief names WHO: friend (FSet)
+\* is dealt to a friend's own fleet row (Friends), never to a machine; the row
+\* is a member kind no presence lapse withdraws from (a friend down keeps her
+\* cards) and it takes no read. Members() (the machines) leaves friend rows
+\* out: the machine-scoped state (stat, mc, mr, live, miss, Width) and the
+\* friend-scoped state (fstat, fmc) name no row of the other kind.
+Friends == Scn.friends
+FSet == Scn.fcard
+FWidth == Scn.fwidth
+FOrder == Scn.forder
 Three == {"readers", "merge", "fleet"}
 Cols == {"none", "waiting", "ready", "working", "review", "merging", "landed"}
 NoR == "none"
@@ -183,7 +193,8 @@ VARIABLES col, att, bnd, rd, askw, mq, stat, mc, mr, noUp, Q,
           mctr, rctr, sctr, live, miss, acts, ext,
           phase, pumps, sub, addr, notes, wake, act, plc,
           brk, dealt, always,
-          okd, ci, ret, tk, rdl, ended, ends, hred, seen, hb, rea, cna
+          okd, ci, ret, tk, rdl, ended, ends, hred, seen, hb, rea, cna,
+          fstat, fmc, fj
 
 \* seen, hb       the readers table: the readers c is not asked of at its
 \*                attempt; the reader that returned c's read while it waits
@@ -203,8 +214,9 @@ vars == <<col, att, bnd, rd, askw, mq, stat, mc, mr, noUp, Q,
           mctr, rctr, sctr, live, miss, acts, ext,
           phase, pumps, sub, addr, notes, wake, act, plc,
           brk, dealt, always,
-          okd, ci, ret, tk, rdl, ended, ends, hred, seen, hb, rea, cna>>
-CardVars == <<okd, ci, ret, tk, rdl, ended, ends, hred, seen, hb, rea, cna>>
+          okd, ci, ret, tk, rdl, ended, ends, hred, seen, hb, rea, cna,
+          fstat, fmc, fj>>
+CardVars == <<okd, ci, ret, tk, rdl, ended, ends, hred, seen, hb, rea, cna, fj>>
 
 -----------------------------------------------------------------------------
 \* Entries. k is the kind, c the card (or "-"), x the machine, the reader
@@ -235,7 +247,8 @@ Cur == [col |-> col, att |-> att, bnd |-> bnd, rd |-> rd, askw |-> askw,
         brk |-> brk, dealt |-> dealt, plc |-> <<>>, notes |-> notes,
         f0 |-> Len(Q["fleet"]),
         okd |-> okd, ci |-> ci, ret |-> ret, tk |-> tk, rdl |-> rdl, ended |-> ended, ends |-> ends,
-        hred |-> hred, seen |-> seen, hb |-> hb, rea |-> rea, cna |-> cna]
+        hred |-> hred, seen |-> seen, hb |-> hb, rea |-> rea, cna |-> cna,
+        fstat |-> fstat, fmc |-> fmc, fj |-> fj]
 
 Put(S, t, e) == [S EXCEPT !.q[t] = Append(@, e)]
 
@@ -314,6 +327,14 @@ ApplyW(S, e) ==
          IF S.col[c] = "merging" THEN [S EXCEPT !.col[c] = "review", !.ret[c] = TRUE, !.okd[c] = TRUE] ELSE S
     [] e.k = "accept" ->    \* the coordinator's accept, held or not
          IF S.col[c] = "review" /\ S.okd[c] THEN AcceptOne(S, c) ELSE S
+    [] e.k = "fbroken" ->    \* a friend's failed finish (HOLD/FAIL): working -> ready, next
+         \* attempt; at the bound, retired in review (as a member's broken read is)
+         IF S.col[c] # "working" THEN S
+         ELSE IF S.att[c] < MaxAttempts
+         THEN NewAttempt([S EXCEPT !.col[c] = "ready", !.att[c] = @ + 1], c)
+         ELSE Address([S EXCEPT !.col[c] = "review", !.bnd[c] = TRUE])
+    [] e.k = "fdropped" ->   \* the deadline's drop: off her row, its work life over
+         IF S.col[c] = "working" THEN [S EXCEPT !.col[c] = "landed"] ELSE S
     [] OTHER -> S    \* room: a reason to tick, nothing to apply
 
 \* A sentinel lands when every card before it in its stream has landed; a
@@ -338,7 +359,8 @@ Release(S, C) ==
 \* The deal: the streams take turns by the stream counter over the streams
 \* with a dealable card; within a stream the lowest position; the machine by
 \* the machine counter over the up machines with room.
-Dealable(S, cand) == {c \in cand : S.col[c] = "ready" /\ ~AtRB(S, c) /\ (c \in Served \/ Broken = "noroute")}
+Dealable(S, cand) == {c \in cand : S.col[c] = "ready" /\ ~AtRB(S, c) /\
+                      (c \notin FSet \/ Broken = "friendmachine") /\ (c \in Served \/ Broken = "noroute")}
 UpRoom(S) == {m \in Machines : S.stat[m] = "up" /\
                 (Broken = "nowidth" \/ Room(S, m) > 0)}
 DealOne(S, cand) ==
@@ -362,6 +384,22 @@ Deal(S, cand) ==
   IF Dealable(S, cand) = {} \/ UpRoom(S) = {} THEN S
   ELSE IF Broken = "perrow" THEN DealOne(S, cand)
   ELSE Deal(DealOne(S, cand), cand)
+
+\* THE FRIEND DEAL: a friend's card is dealt to a friend up with room, straight
+\* into working (nothing takes it: friend sync delivers it to her inbox); the
+\* friend is the first in FOrder among those up with room. The witness
+\* "friendmachine" leaves the friend's card to the machines' deal instead.
+FriendDealable(S) == {c \in Cards : S.col[c] = "ready" /\ c \in FSet /\ Broken # "friendmachine"}
+FriendUpRoom(S) == {f \in Friends : S.fstat[f] = "up" /\ FWidth[f] - Cardinality(S.fmc[f]) > 0}
+FriendDealTarget(S) == CHOOSE f \in FriendUpRoom(S) : \A g \in FriendUpRoom(S) : Idx(FOrder, f) <= Idx(FOrder, g)
+FriendDealOne(S) ==
+  LET c == Lowest(FriendDealable(S))
+      f == FriendDealTarget(S)
+  IN Put([S EXCEPT !.col[c] = "working"], "fleet", E("fdealt", c, f))
+RECURSIVE FriendDeal(_)
+FriendDeal(S) ==
+  IF FriendDealable(S) = {} \/ FriendUpRoom(S) = {} THEN S
+  ELSE FriendDeal(FriendDealOne(S))
 
 NoUpJudge(S, cand) ==
   IF Dealable(S, cand) # {} /\ ~\E m \in Machines : S.stat[m] = "up" /\ ~S.noUp
@@ -528,6 +566,35 @@ ApplyF(S, e) ==
          ELSE Put(S, "readers", E("unread", c, "-"))
     [] e.k = "readoff" ->
          IF c \in S.mr[m] THEN RoomNews([S EXCEPT !.mr[m] = @ \ {c}], m) ELSE S
+    [] e.k = "fdown" ->    \* a friend goes down: she keeps her cards (the witness "friendlapse" clears them)
+         IF S.fstat[e.x] = "down" THEN S
+         ELSE IF Broken = "friendlapse"
+         THEN [S EXCEPT !.fstat[e.x] = "down", !.fmc[e.x] = {}]
+         ELSE [S EXCEPT !.fstat[e.x] = "down"]
+    [] e.k = "fup" ->
+         IF S.fstat[e.x] = "up" THEN S
+         ELSE [S EXCEPT !.fstat[e.x] = "up"]
+    [] e.k = "fdealt" ->
+         IF S.fstat[e.x] = "up" THEN [S EXCEPT !.fmc[e.x] = @ \cup {e.c}]
+         ELSE Put(S, "work", E("returned", e.c, "-"))
+    [] e.k = "ffin" ->    \* a friend's finish: LAND (tip matched) -> review; HOLD/FAIL -> rework
+         IF e.c \notin S.fmc[e.x[1]] THEN S
+         ELSE LET S1 == [S EXCEPT !.fmc[e.x[1]] = @ \ {e.c},
+                                   !.fj = [d \in Cards |-> IF d = e.c THEN FALSE ELSE @[d]]]
+              IN IF e.x[2] = "land"
+                 THEN Put(S1, "work", E("finished", e.c, "-"))
+                 ELSE Put([S1 EXCEPT !.brk[e.c] = Min(@ + 1, MaxAttempts)], "work", E("fbroken", e.c, "-"))
+    [] e.k = "fjudge" ->   \* the deadline passes on a friend's card: the judgment opens
+         IF \E f \in Friends : e.c \in S.fmc[f] /\ ~S.fj[e.c]
+         THEN Address([S EXCEPT !.fj = [d \in Cards |-> S.fj[d] \/ d = e.c]])
+         ELSE S
+    [] e.k = "fwait" ->    \* the coordinator waits: the deadline extends, the card stays
+         [S EXCEPT !.fj = [d \in Cards |-> IF d = e.c THEN FALSE ELSE @[d]]]
+    [] e.k = "fdrop" ->    \* the coordinator drops: off her row, its work life over
+         IF ~\E f \in Friends : e.c \in S.fmc[f] THEN S
+         ELSE LET f == CHOOSE g \in Friends : e.c \in S.fmc[g]
+              IN Put([S EXCEPT !.fj = [d \in Cards |-> IF d = e.c THEN FALSE ELSE @[d]],
+                                 !.fmc[f] = @ \ {e.c}], "work", E("fdropped", e.c, "-"))
     [] OTHER -> S    \* landed, echo
 
 -----------------------------------------------------------------------------
@@ -549,7 +616,8 @@ Pump(S0) ==
       S3 == Release(S2, C2)
       cand == IF Broken = "onread" THEN {c \in Cards : S0.col[c] = "ready"} ELSE Cards
       S4 == Deal(S3, cand)
-  IN AcceptAll(NoUpJudge(S4, cand))
+      S5 == FriendDeal(S4)
+  IN AcceptAll(NoUpJudge(S5, cand))
 
 -----------------------------------------------------------------------------
 \* An update of one of the three: drain the whole queue in one plan.
@@ -566,9 +634,10 @@ Update(t) ==
 Commit(S) ==
   /\ okd' = S.okd /\ ci' = S.ci /\ ret' = S.ret /\ tk' = S.tk /\ rdl' = S.rdl
   /\ ended' = S.ended /\ ends' = S.ends /\ hred' = S.hred /\ seen' = S.seen /\ hb' = S.hb
-  /\ rea' = S.rea /\ cna' = S.cna
+  /\ rea' = S.rea /\ cna' = S.cna /\ fj' = S.fj
   /\ col' = S.col /\ att' = S.att /\ bnd' = S.bnd /\ rd' = S.rd /\ askw' = S.askw
   /\ mq' = S.mq /\ stat' = S.stat /\ mc' = S.mc /\ mr' = S.mr /\ noUp' = S.noUp
+  /\ fstat' = S.fstat /\ fmc' = S.fmc
   /\ Q' = S.q /\ mctr' = S.mctr /\ rctr' = S.rctr /\ sctr' = S.sctr
   /\ addr' = S.addr /\ brk' = S.brk /\ dealt' = S.dealt /\ plc' = S.plc
   /\ notes' = S.notes
@@ -585,7 +654,7 @@ TickStart ==
   /\ ext' = FALSE /\ act' = "TickStart" /\ plc' = <<>>
   /\ IF Broken = "reset" THEN mctr' = 0 /\ rctr' = 0 /\ sctr' = 0
      ELSE UNCHANGED <<mctr, rctr, sctr>>
-  /\ UNCHANGED <<col, att, bnd, rd, askw, mq, stat, mc, mr, noUp, Q,
+  /\ UNCHANGED <<col, att, bnd, rd, askw, mq, stat, mc, mr, noUp, Q, fstat, fmc,
                  live, miss, acts, wake, brk, dealt, always, CardVars>>
 
 \* The first pass's first update: the one pump of the tick.
@@ -593,7 +662,7 @@ PumpWork ==
   /\ phase = "work"
   /\ LET S == Pump(Cur) IN
        /\ Commit(S)
-       /\ always' = [s \in Streams |-> always[s] /\ \E c \in Dealable(S, Cards) : StreamOf[c] = s]
+       /\ always' = [s \in Streams |-> always[s] /\ \E c \in (Dealable(S, Cards) \cup FriendDealable(S)) : StreamOf[c] = s]
   /\ phase' = "readers" /\ pumps' = pumps + 1 /\ act' = "PumpWork" /\ Step
   /\ UNCHANGED <<live, miss, acts, ext, wake>>
 
@@ -630,7 +699,7 @@ TickEnd ==
      THEN notes' = Min(notes + 1, 2) /\ wake' = addr
      ELSE UNCHANGED <<notes, wake>>
   /\ phase' = "idle" /\ act' = "TickEnd" /\ plc' = <<>>
-  /\ UNCHANGED <<col, att, bnd, rd, askw, mq, stat, mc, mr, noUp, Q,
+  /\ UNCHANGED <<col, att, bnd, rd, askw, mq, stat, mc, mr, noUp, Q, fstat, fmc,
                  mctr, rctr, sctr, live, miss, acts, ext, pumps, sub, addr,
                  brk, dealt, always, CardVars>>
 
@@ -640,7 +709,7 @@ Outside(t, e) ==
   /\ phase = "idle"
   /\ Q' = [Q EXCEPT ![t] = Append(@, e)]
   /\ ext' = TRUE /\ act' = "Outside" /\ plc' = <<>>
-  /\ UNCHANGED <<col, att, bnd, rd, askw, mq, stat, mc, mr, noUp,
+  /\ UNCHANGED <<col, att, bnd, rd, askw, mq, stat, mc, mr, noUp, fstat, fmc,
                  mctr, rctr, sctr, phase, pumps, sub, addr, notes, wake,
                  brk, dealt, always, CardVars>>
 
@@ -688,7 +757,7 @@ Miss(m) ==
   /\ Scn.misses /\ phase = "idle" /\ live[m] /\ miss[m] < Misses /\ acts < MaxActs
   /\ miss' = [miss EXCEPT ![m] = miss[m] + 1]
   /\ act' = "Miss" /\ plc' = <<>>
-  /\ UNCHANGED <<col, att, bnd, rd, askw, mq, stat, mc, mr, noUp, Q,
+  /\ UNCHANGED <<col, att, bnd, rd, askw, mq, stat, mc, mr, noUp, Q, fstat, fmc,
                  mctr, rctr, sctr, live, acts, ext, phase, pumps, sub, addr,
                  notes, wake, brk, dealt, always, CardVars>>
 \* A beat between misses resets the count; the machine was up and stays up, so
@@ -697,7 +766,7 @@ BeatReset(m) ==
   /\ Scn.misses /\ phase = "idle" /\ live[m] /\ miss[m] > 0 /\ acts < MaxActs
   /\ miss' = [miss EXCEPT ![m] = 0]
   /\ act' = "BeatReset" /\ plc' = <<>>
-  /\ UNCHANGED <<col, att, bnd, rd, askw, mq, stat, mc, mr, noUp, Q,
+  /\ UNCHANGED <<col, att, bnd, rd, askw, mq, stat, mc, mr, noUp, Q, fstat, fmc,
                  mctr, rctr, sctr, live, acts, ext, phase, pumps, sub, addr,
                  notes, wake, brk, dealt, always, CardVars>>
 \* The worker takes a card dealt to its machine.
@@ -723,6 +792,28 @@ Return(c) ==
 CoordAccept(c) ==
   /\ Coord /\ col[c] = "review" /\ okd[c] /\ (ci[c] = "red" \/ ret[c]) /\ Pend("work", "accept", c) = 0
   /\ Outside("work", E("accept", c, "-")) /\ UNCHANGED <<live, miss, acts>>
+\* A friend goes down (stops beating, or is held down): she keeps her cards
+\* (nothing is taken back; the deadline judges them). The witness "friendlapse"
+\* takes them back as a machine's lapse does. Friend up, the finish and the
+\* deadline judgment (wait or drop) are friend sync's and the coordinator's.
+FriendDown(f) ==
+  /\ f \in Friends /\ fstat[f] = "up" /\ acts < MaxActs
+  /\ acts' = acts + 1 /\ Outside("fleet", E("fdown", "-", f)) /\ UNCHANGED <<live, miss>>
+FriendUp(f) ==
+  /\ f \in Friends /\ fstat[f] = "down" /\ acts < MaxActs
+  /\ acts' = acts + 1 /\ Outside("fleet", E("fup", "-", f)) /\ UNCHANGED <<live, miss>>
+FriendFinish(c, f, v) ==
+  /\ f \in Friends /\ c \in fmc[f] /\ v \in {"land", "hold", "fail"} /\ acts < MaxActs
+  /\ acts' = acts + 1 /\ Outside("fleet", E("ffin", c, <<f, v>>)) /\ UNCHANGED <<live, miss>>
+Deadline(c) ==
+  /\ c \in FSet /\ \E f \in Friends : c \in fmc[f] /\ ~fj[c] /\ acts < MaxActs
+  /\ acts' = acts + 1 /\ Outside("fleet", E("fjudge", c, "-")) /\ UNCHANGED <<live, miss>>
+Wait(c) ==
+  /\ Coord /\ fj[c] /\ acts < MaxActs
+  /\ acts' = acts + 1 /\ Outside("fleet", E("fwait", c, "-")) /\ UNCHANGED <<live, miss>>
+Drop(c) ==
+  /\ Coord /\ fj[c] /\ acts < MaxActs
+  /\ acts' = acts + 1 /\ Outside("fleet", E("fdrop", c, "-")) /\ UNCHANGED <<live, miss>>
 
 -----------------------------------------------------------------------------
 Init ==
@@ -742,15 +833,19 @@ Init ==
   /\ ends = [c \in Cards |-> 0] /\ hred = [c \in Cards |-> FALSE]
   /\ seen = [c \in Cards |-> {}] /\ hb = [c \in Cards |-> NoR]
   /\ rea = [c \in Cards |-> 0] /\ cna = [c \in Cards |-> FALSE]
+  /\ fstat = [f \in Friends |-> IF f \in Scn.fup THEN "up" ELSE "down"]
+  /\ fmc = [f \in Friends |-> {}] /\ fj = [c \in Cards |-> FALSE]
 
 TickNext == TickStart \/ PumpWork \/ DrainWork \/ TickEnd \/
             \E t \in Three : Pass(t) \/ Drain(t)
 OutsideNext ==
   \/ \E c \in Cards : Add(c) \/ Merge(c) \/ \E v \in {"ok", "broken"} : Report(c, v)
   \/ \E c \in Cards, m \in Machines : Finish(c, m) \/ Take(c, m)
-  \/ \E c \in Cards : CIRed(c) \/ CIGreen(c) \/ CIOld(c) \/ Return(c) \/ CoordAccept(c) \/ ReadReturn(c)
+  \/ \E c \in Cards : CIRed(c) \/ CIGreen(c) \/ CIOld(c) \/ Return(c) \/ CoordAccept(c) \/ ReadReturn(c) \/ Deadline(c) \/ Wait(c) \/ Drop(c)
   \/ \E m \in Machines : Beat(m) \/ Lapse(m) \/ Miss(m) \/ BeatReset(m)
   \/ \E r \in Readers : ReaderAway(r) \/ ReaderBack(r)
+  \/ \E f \in Friends : FriendDown(f) \/ FriendUp(f)
+  \/ \E c \in Cards, f \in Friends : \E v \in {"land", "hold", "fail"} : FriendFinish(c, f, v)
 Next == TickNext \/ OutsideNext
 Spec == Init /\ [][Next]_vars /\ WF_vars(TickNext)
 
@@ -769,6 +864,8 @@ TypeOK ==
   /\ ended \in [Cards -> BOOLEAN] /\ ends \in [Cards -> 0..(MaxRedeals + 1)] /\ hred \in [Cards -> BOOLEAN]
   /\ seen \in [Cards -> SUBSET Readers] /\ hb \in [Cards -> Readers \cup {NoR}]
   /\ rea \in [Cards -> 0..(MaxReasks + 1)] /\ cna \in [Cards -> BOOLEAN]
+  /\ fstat \in [Friends -> {"up", "down"}] /\ fmc \in [Friends -> SUBSET Cards]
+  /\ fj \in [Cards -> BOOLEAN]
 
 \* THE CENTRAL PROPERTY (the owner: "nothing advances the work stream table
 \* EXCEPT on the next tick"). Only the tick's one pump writes the work table.
@@ -792,8 +889,10 @@ ThreeQueuesEmptyAtTickEnd == [][act' = "TickEnd" => \A t \in Three : Q'[t] = <<>
 \* NOTHING LOST: every entry is applied exactly once. Stated as conservation:
 \* each card's token is in exactly one place, a table row or an entry on
 \* its way, and the attempts equal the broken reports applied.
-Holds(c) == Cardinality({m \in Machines : c \in mc[m]}) + Pend("fleet", "dealt", c)
+Holds(c) == Cardinality({m \in Machines : c \in mc[m]}) + Cardinality({f \in Friends : c \in fmc[f]})
+            + Pend("fleet", "dealt", c) + Pend("fleet", "fdealt", c)
             + Pend("work", "finished", c) + Pend("work", "returned", c)
+            + Pend("work", "fbroken", c) + Pend("work", "fdropped", c)
 ReadTok(c) == Pend("readers", "ask", c) + (IF askw[c] THEN 1 ELSE 0) + (IF rd[c] # NoR THEN 1 ELSE 0)
               + Pend("work", "readok", c) + Pend("work", "broken", c) + (IF okd[c] THEN 1 ELSE 0)
 MergeTok(c) == Pend("merge", "queue", c) + (IF c \in mq THEN 1 ELSE 0) + Pend("work", "landed", c)
@@ -812,7 +911,7 @@ NothingLost ==
     /\ ReadTok(c) = IF col[c] = "review" /\ ~bnd[c] THEN 1 ELSE 0
     /\ MergeTok(c) = IF col[c] = "merging" THEN 1 ELSE 0
     /\ ReadHome(c)
-    /\ att[c] + Pend("work", "broken", c) + (IF bnd[c] THEN 1 ELSE 0) = 1 + brk[c]
+    /\ att[c] + Pend("work", "broken", c) + Pend("work", "fbroken", c) + (IF bnd[c] THEN 1 ELSE 0) = 1 + brk[c]
 
 \* EVERY ROW WITH WORK MOVES. After the pump nothing it could move is left
 \* (the queue applied, sentinels landed, cards released, ready cards dealt
@@ -823,8 +922,10 @@ RoomNow(m) == Width[m] - Cardinality(mc[m]) - Cardinality(mr[m])
 PumpDone ==
   /\ Q["work"] = <<>>
   /\ Landable(col) = {} /\ Releasable(col) = {}
-  /\ ~(/\ \E c \in Served : col[c] = "ready" /\ ~(ended[c] /\ rdl[c] >= MaxRedeals)
+  /\ ~(/\ \E c \in Served : col[c] = "ready" /\ ~(ended[c] /\ rdl[c] >= MaxRedeals) /\ c \notin FSet
        /\ \E m \in Machines : stat[m] = "up" /\ RoomNow(m) > 0)
+  /\ ~(/\ \E c \in Served : col[c] = "ready" /\ c \in FSet
+       /\ \E f \in Friends : fstat[f] = "up" /\ FWidth[f] - Cardinality(fmc[f]) > 0)
   /\ ~\E c \in Cards : col[c] = "review" /\ okd[c] /\ ci[c] # "red" /\ ~ret[c]
 ReadersDone ==
   ~\E c \in Cards :
@@ -925,6 +1026,30 @@ CIIsItsHeads == \A c \in Cards : (ci[c] = "red") = hred[c]
 \* dealt again.
 RedealBoundHolds ==
   [][\A c \in Cards : col[c] = "ready" /\ ended[c] /\ rdl[c] >= MaxRedeals => col'[c] # "working"]_vars
+
+\* A FRIEND'S CARD IS NEVER REDEALT TO A MACHINE: a friend's card lives on a
+\* friend's row (fmc) or on its way there, never on a machine's row. The
+\* witness "friendmachine" deals it to a machine (mc).
+FriendCardNeverRedealtToMachine == \A c \in FSet, m \in Machines : c \notin mc[m]
+\* A FRIEND DOWN LOSES NO CARD: a card leaves a friend's row only by a finish
+\* (ffin) or the deadline's drop (fdrop), never by the friend going down. The
+\* witness "friendlapse" clears her row on the down, as a machine's lapse does.
+FriendDownLosesNoCard ==
+  [][\A f \in Friends : fmc[f] \ fmc'[f] \subseteq
+       {c \in Cards : Pend("fleet", "ffin", c) + Pend("fleet", "fdrop", c) > 0}]_vars
+\* A FRIEND'S ROW TAKES NO READ: a card on a friend's row holds no read and
+\* asks none (reads stand on readers hosted by machines; a friend's card is
+\* read only once it leaves her row, by a member's ok finish).
+FriendRowTakesNoRead ==
+  \A c \in Cards : (\E f \in Friends : c \in fmc[f]) => (rd[c] = NoR /\ ~askw[c])
+\* MEMBERS() EXCLUDES FRIEND ROWS: the machines (the fleet's members, what
+\* presence, rebalance, level, fleet sync, deal order and clear range over) and
+\* the friends are disjoint member kinds, and no machine-scoped function names
+\* a friend. friend_deal.go's Members() skips FriendRow, as the model's
+\* Machines vs Friends does.
+MembersExcludesFriendRows ==
+  /\ Machines \cap Friends = {}
+  /\ \A f \in Friends : f \notin DOMAIN Width /\ f \notin DOMAIN stat /\ f \notin DOMAIN mc /\ f \notin DOMAIN mr
 
 \* TERMINATION: a tick's steps are bounded (safety form, MaxSub) and every
 \* tick ends (liveness form).
