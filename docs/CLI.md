@@ -847,7 +847,7 @@ Mark only checks actually performed as pass; no tests run does not mean no comma
 BOUND THE REPORT: findings only. No narration of the clone, no restated
 task, no praise, no summary. One line per finding: `file:line`, the rule
 quoted verbatim in at most twelve words (a longer rule by the twelve of its
-own words the finding rests on, never a paraphrase), the
+own words the finding rests on, never a paraphrase: rule 2 holds), the
 severity, and the fix in one clause. Keep RESULT.md under 40 lines and
 every line under 300 characters, and no pipe inside backticks: a `|` in a
 quote breaks the report's table grammar, so quote the rule without it. Put
