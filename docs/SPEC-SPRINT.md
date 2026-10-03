@@ -982,9 +982,11 @@ and it is the coordinator's decision, receipted.
   failed or that left no result (the work card's provider_take_<n> records) and each
   work card's own finish; a take that ended with its member down keeps no record and
   is not counted. When RouteRestAfter (3) of the window left no result, the tick
-  rests the route for RouteRestFor (30 minutes, the clock's): it writes the fleet
-  table's property `route_rest_<route>` (`<began> <ends> <card,card,card>`, RFC3339,
-  guarded on the value read) in the deal's batch, and a happened note to the
+  rests the route for RouteRestFor (30 minutes, the clock's): it writes that route's
+  line into the fleet table's one property per provider, `rule3_rest_<provider>`
+  (one line per route, `<route> <began> <ends> <card,card,card> no-result`, RFC3339,
+  the lines in route-name order, the whole value guarded on the value read), in the
+  deal's batch, and a happened note to the
   coordinator, "a route rested: its children ended with no result", naming the
   route, when the rest ends and the cards. While it rests the deal draws no work
   card on it, a first deal, a redeal (even when it is the tier's only route, where
@@ -1003,6 +1005,15 @@ and it is the coordinator's decision, receipted.
   (`sprint.RestsDue`, `TestRestsDueCountsNoResultEndsInTheRoutesWindow`,
   `TestARouteWhoseChildrenEndWithNoResultThreeTimesRests`,
   `TestARestingRouteServesNoDealWhileAnotherServes`).
+  The property is one per provider, never one per route, so the table's properties
+  (64, `ntable.LimitTableProps`) grow with the providers. At 100 routes over two
+  providers, every route rested, the fleet table holds 4 properties
+  (`TestTwoRoutesOfOneProviderAreOneProperty`,
+  `TestAHundredRoutesRestedByRule3StayUnderThePropertyCap`). A property
+  `route_rest_<route>` is ignored (`TestAnOldPerRouteRestPropertyIsIgnored`): a
+  property stays until the epoch ends, so reading one into `rule3_rest_<provider>`
+  cannot free its slot, and the route's rest is only its line in
+  `rule3_rest_<provider>`.
 - A provider out of funds is never a mystery failure (nova-tools#5199). The owner, 2026-10-03,
   8:03 AM ET: "provider out of funds should never be a mystery failure." And at 8:18 AM ET:
   "you'll need to detect when a provider runs out of credits, and exclude that provider moving
@@ -1013,7 +1024,7 @@ and it is the coordinator's decision, receipted.
     (`<began> <ends|open> <card|-> <cause> [balance=<x>] <words>`), never a copy on each
     route, so a rest is one write and the table's properties (64, `ntable.LimitTableProps`)
     grow with the providers and never with the routes (`TestTheFleetPropertiesAtAHundredRoutesStayUnderTheBound`). A
-    route rests while its own rule 3 rest or its provider's holds, the one that ends later
+    route rests while its rule-3 line or its provider's rest holds, the one that ends later
     deciding (`sprint.RouteRests`); `routes` prints each route's `rested_until=`.
   - A provider has two rests of its funds, and only one stops the sprint. Each holds with no
     time (`open`, said `until paid`) and ends on what is listed with it, or on `funded`:

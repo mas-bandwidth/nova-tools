@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -8,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
@@ -109,4 +111,56 @@ func TestARestingRouteServesNoDealWhileAnotherServes(t *testing.T) {
 		assert.Equal(t, sprint.Ready, h.snap().Fleet.Card(id).Col, "%s is redealt, on the other route", id)
 	}
 	h.clean("one route resting of two")
+}
+
+// Rule 3 rests are one fleet property per provider (nova-tools#5210). At 100 routes
+// over two providers, every route rested, the fleet table stays under the 64-property
+// cap with the count named here, and no route_rest_<route> property is written.
+func TestAHundredRoutesRestedByRule3StayUnderThePropertyCap(t *testing.T) {
+	t.Parallel()
+	var routes []sprint.Route
+	for i := range 100 {
+		provider := "openrouter"
+		if i%2 == 1 {
+			provider = "opencode"
+		}
+		routes = append(routes, providerRoute(fmt.Sprintf("r%03d", i), "flash", provider))
+	}
+	h := routeHarness(t, routes...)
+	h.addReady("s1", 300, briefOf("flash", ""))
+	h.startMachine()
+	h.machine()
+	byRoute := map[string][]string{}
+	for _, c := range h.snap().Fleet.Column(sprint.Ready) {
+		byRoute[c.F(sprint.FieldRoute)] = append(byRoute[c.F(sprint.FieldRoute)], c.ID)
+	}
+	require.Len(t, byRoute, 100, "every route was dealt")
+	for name, ids := range byRoute {
+		require.Len(t, ids, 3, "%s: three takes, so the one tick rests it", name)
+		for _, id := range ids {
+			h.failTake(id, noResultLine)
+		}
+	}
+	h.machine()
+	props := h.snap().Fleet.Props()
+	names := make([]string, 0, len(props))
+	rule3 := 0
+	for name, v := range props {
+		names = append(names, name)
+		assert.False(t, strings.HasPrefix(name, "route_rest_"), "%s: a rule-3 rest is never its own property", name)
+		if strings.HasPrefix(name, sprint.PropRule3Rest("")) {
+			rule3++
+			assert.Less(t, len(v), ntable.LimitFieldValueBytes, name)
+		}
+	}
+	assert.Equal(t, 2, rule3, "one property per provider: %v", names)
+	// Four: the deal's index, the tier's route index, and one rule-3 property per
+	// provider. 4 under the cap of 64 is the headroom.
+	assert.Equal(t, 4, len(props), "100 routes rested use %d properties, headroom under %d: %v", len(props), ntable.LimitTableProps, names)
+	assert.Less(t, len(props), ntable.LimitTableProps)
+	now := h.snap().Now
+	rests := sprint.RouteRests(routes, h.snap().Fleet)
+	for _, r := range routes {
+		assert.True(t, rests[r.Name].Resting(now), "%s rests from the provider's one property", r.Name)
+	}
 }
