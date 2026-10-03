@@ -135,8 +135,8 @@ running; a RUNNING machine that has not ticked for 5 s shows
 `STOPPED`, with no count of seconds. Every count cell is an ordered set.
 The summary line shows `held=N` after the percent when cards are held back:
 waiting behind a sentinel not released, admitted held (`add --held`), or
-waiting on one of those through a need (`sprint.HeldBack`, read from the work
-table's waiting cells alone; `where --json` carries it as `held`). The ETA is
+waiting on one of those through a need (`sprint.HeldBack`, counted by the
+tick into the where record below; `where --json` carries it as `held`). The ETA is
 the time until every card on the work table has landed (the owner, 2026-10-02,
 at a dashboard reading 347 of 2,846 landed, ETA 1h 36m, 2 cards an hour:
 "Please update the ETA on the sprint. It's OBVIOUSLY wrong." and "it's the ETA
@@ -151,7 +151,7 @@ item 16), and 56 cards left of 2,499 read 1h36m. The rate
 (`sprint.LandingRate`) is the cards landed per hour over the last 60 minutes
 of running time (the clock's time less the STOPPED spans; the window of the
 dashboard's throughput tile, so the two agree while the machine runs), read
-from the landed cards' `landed` stamps; with fewer than five landed in that
+from the landed cards' `landed` stamps as the where record keeps them; with fewer than five landed in that
 window it is the whole sprint's average, the cards landed over the running
 time since the first start; a read of the stamps that fails leaves that
 average, never a failed view. The ETA is a dash, never a number, with fewer
@@ -170,6 +170,50 @@ made dirty and recalculated."; nova-tools#5171), so the first read of `where`,
 the estimate recomputed over the new count at the rate measured. The verbs' sprint
 line, printed after every step, reads no cards, so it has no stamps: its ETA is
 over every card left at the whole sprint's average.
+
+`where` reads the tables' cells and one record, never every card: under 1 s
+at 3,000 cards is the requirement (2026-10-02 10:13 PM ET, at 2,843 cards with
+2,443 held and 347 landed, `where --json` took 5.2 to 7.0 s on the live store,
+reading every waiting and every landed card's record each second the dashboard
+polled; the owner's rules: one read per tick, and a view is never recomputed
+from every row when the table carries the answer). The counts are the work
+table's count cells; the whole sprint's average is the landed count over the
+running time since the first start. What the cells do not carry is the where
+record, one key beside the machine's (`sprint:where`, removed by `teardown`):
+the epoch and the work table's revision it was counted at, the held cards
+there, and the landing stamps the rate can still count (those from the start
+of the last 60 minutes of running time on, oldest first, at most 10,000: the
+window only moves forward). Held is not a count a step can keep by adding
+one, since one release or one need frees or holds a whole chain, so the tick
+counts it whole: at the end of every tick, RUNNING or STOPPED (a verb moves
+cards while the machine is stopped), when the work table's revision is not the
+record's, the tick brings its twin up to date (it holds every card) and writes
+the record; an idle tick reads the work table's shape and the record, two
+exchanges, and writes nothing. `where` takes the record when it is of the
+epoch it reads and either counted at the work table's revision it read or
+kept by the RUNNING machine's loop: its last tick within 15 s and not failed,
+and the record counted at or after the work table's revision that tick saw
+(the heartbeat's), so a loop that ticks and does not keep the record (a binary
+from before it) is never taken at its word, and the record is at most the tick
+in flight behind. Between a verb and the tick that drains it, `held=N` may show
+the count from before the verb; the ETA's cards left do not lag, as they are
+the table's count cells. Otherwise (no record yet, as on a store from before the
+record, until its first tick counts it; a clear, until the new epoch's first
+tick; a STOPPED machine whose table a verb moved since its last tick; no loop
+keeping it) it reads the waiting and landed cards as it did before the record,
+and answers the same; a read of the stamps that fails there leaves the whole
+sprint's average. The invariant, held
+after every tick (`TestTheWhereRecordIsTheCardsAfterEveryTick`, with reversed
+witnesses): the record's held count is `sprint.HeldBack` over the cards, and
+its landings are the landed cards' stamps in the window, in order. The gate
+(`TestWhereReadsTheTableNotEveryCardAtThreeThousandCards`): at 3,000 cards,
+2,500 held and 350 landed, `where --json` reads no card's record but the
+streams' control cards, in at most 9 round trips (22 on the code before the
+record, 7 of them reads of card records; 19 on this code's own read of the
+cards when it cannot take the record), and `-tags perf`, which gates a release,
+holds it under 200 ms of wall time on the in-memory store. A tick's count costs
+2 round trips when idle, with no write, and 8 when the table moved
+(`TestTheWhereCountsTripsArePinned`).
 
 The stored view `sprint` (`nova-table watch --view sprint`) says the same:
 its summary line is `STOPPED`, and nothing more (no counts, no percent, no
@@ -930,6 +974,42 @@ id (`--op`) returns the original result, with no second counter or notification.
   before
   the first ask of its attempt it is refused, naming `ask` and the tick as
   what asks first.
+- **The decide read.** The first read of a flash card is a decide read (the
+  owner, 2026-10-02: "i'd really like to start using jev to do cheap
+  reads/evals/scoring of work"; "the nova-decide is both sides"). The ask writes
+  the sprint row's two bars, `decide_bounce` and `decide_review` (nova-config,
+  `sprint set --decide_bounce <p> --decide_review <p>`; 0.5 and 0.3 by default,
+  the calibration of 2026-10-02 over 234 reviewed cards, AUC 0.869), on the first
+  read card it places at a flash card's attempt (`steps_review.go`, decideFields:
+  drawn on flash, not `ask --another` or `--instead`, and no read that stays at
+  the attempt is one); the packet hands them to the reader, and a read the level
+  moves keeps them. Every other read is a strings read: a read drawn on pro
+  always is, and both bars empty in the sprint row turns the decide read off. Its reader's native, once the checkout is staged
+  and before any child, asks nova-decide's read decision (docs/SPEC-NOVA-DECIDE.md
+  section 8) over the work card's brief alone (the sprint's mechanics and the
+  worker's report cut off, the state the bars were calibrated on; the E1 rule the
+  calibration added for docs and diary cards is not sent yet) and the work's
+  diff, start..HEAD, through the Jev
+  backend with the key `JEV_API_KEY` the reader loop's nova-secrets keys hold
+  (native's own: no child is handed it), and routes the read by p(defect) alone,
+  never by the decision's verdict or its inside_paths answer:
+  - at or above `decide_bounce`: a broken read, its finding
+    `decide: p(defect)=0.xx at or above the bounce bar ...` with the files the
+    diff changes and the five answers; no child runs;
+  - below `decide_review`: an ok read, its report the same line; no child runs,
+    and the card goes on to accept as any ok read takes it;
+  - between the two: the strings read runs as before, and its verdict (ok is
+    LAND, broken is BOUNCE) is attached to the decision as its outcome.
+
+  Every decision is appended to the reader machine's record,
+  `<root>/decide/read.jsonl`, under the read card's id at the head it read
+  (`<card>@<head 12>`), so a read returned and asked again replays it with no
+  call; a review round's label is attached later with `nova-decide outcome`, and
+  `nova-decide calibrate` reads the bars the record supports. The record is
+  loaded whole on every read and not yet rotated: a cap or a rotation is owed
+  before it grows past the spec's thousand reads. A decide read that
+  cannot be made (no key, a backend that fails, bars it cannot read) is said on
+  one `NATIVE NOTE` line and the strings read runs.
 - A reader moves its own read cards: asked -> reading -> ok | broken, with the finding.
   A report on a card still asked is accepted: it is the begin and the report in
   one step, and `begun` is stamped with it.
@@ -1033,6 +1113,29 @@ card needs a card of another stream first; the merge queue rejected.
 merges each batch's heads in work order onto a branch cut from the base, checks
 and pushes it, and reports it through this merge step, with the facts above
 when it cannot; it adds no state of its own.
+
+**The lander's checks.** Each head `land` merges is checked by script, no model,
+before the batch's check runs (`internal/diffcheck`), the two checks the decide
+read's calibration of 2026-10-02 found a model read does not make: the merge's
+own diff changes no file outside the brief's `PATHS` globs (E12: p(inside_paths)
+was 0.98 on the card that left its PATHS), the class ledgers excepted (under
+`internal/ci/testdata/`, a list file as internal/ci spells its lists or a `.txt`
+shard of a counted ledger, never the class tests' fixtures beside them); a rename
+holds both sides: it moves from a file the card names, to one it names or within
+the directory the file was in (a name card's rename in place); and it leaves no
+stranded fragment in prose, a Go comment or a Markdown or text line (E4): a
+change that takes away backquotes of one parity and puts back the other, or a
+line that ends mid-sentence (on a letter, a digit or a comma, and not on a word
+that opens a sentence) whose old text went on with a word that opens no sentence
+and whose new text goes on with one that does (a capital and lower case after
+it). Over the 234 reviewed cards the fragment rule found four cards, each one the
+review called wrong for a fragment, and no other; over the land merges of 215 of
+them it finds those four and one more, diaryr-37, a lead-in left without its end
+the review passed. On those land merges the PATHS rule flags negd-42 and three
+cards of its shape (negd-17, -32, -41: a file the card edited after a name card
+renamed it from the name its PATHS gives), which the review passed. A head that fails is taken off
+the batch branch and ends the batch as a head in conflict does: the conflict fact
+on it names every failure, `<file>:<line>` and the rule.
 
 A cross-stream need is recorded as data on the stuck card (the needed card and
 its stream); it is resolved when that card has landed, and ranking the needed

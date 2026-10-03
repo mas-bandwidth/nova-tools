@@ -276,6 +276,11 @@ func (st *Store) MachineLine(ctx context.Context) string {
 	if err != nil {
 		return ""
 	}
+	return st.MachineLineOf(m, hb)
+}
+
+// MachineLineOf is MachineLine of the records read.
+func (st *Store) MachineLineOf(m Machine, hb Heartbeat) string {
 	if st.ByHand && m.Running() {
 		return "machine: running"
 	}
@@ -613,6 +618,11 @@ func (st *Store) Tick(ctx context.Context) (res TickResult, err error) {
 		if err != nil {
 			return res, fmt.Errorf("fleet: %w", err)
 		}
+		// a verb moves cards while the machine is STOPPED: where's record
+		// follows them
+		if err := st.keepWhere(ctx, m); err != nil {
+			return res, fmt.Errorf("where: %w", err)
+		}
 		now := st.now()
 		if now.Sub(hb.Alive()) < HeartbeatIdleEvery && !hb.Looked.IsZero() {
 			return res, nil
@@ -638,6 +648,14 @@ func (st *Store) Tick(ctx context.Context) (res TickResult, err error) {
 		if nerr := st.tellTick(ctx, "tick recovered", sprint.NTickRecovered, fmt.Sprintf("failed=%d; the last error: %s", hb.Failures, hb.Error), ""); nerr != nil {
 			err = fmt.Errorf("tick recovered: %w", nerr)
 		}
+	}
+	if err == nil && res.Stale == "" {
+		// where's record counted from what the tick left (where.go)
+		mt := st.meter()
+		if werr := st.keepWhere(ctx, m); werr != nil {
+			err = fmt.Errorf("where: %w", werr)
+		}
+		res.Times = append(res.Times, mt.part("", "where"))
 	}
 	if err == nil && res.Stale == "" {
 		// the coordinator's one wake of the tick, last (tickend.go); a tick the

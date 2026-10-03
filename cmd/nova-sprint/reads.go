@@ -604,24 +604,22 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 		v.Cleared = es.Cleared
 	}
 	v.Landed, v.All = counts(shapes[0])
-	held, err := st.HeldBack(ctx)
+	// the held cards and the landings of the hour from the tick's where
+	// record: no card is read (store.WhereFacts)
+	facts, err := st.WhereFacts(ctx, shapes[0].Revision)
 	if err != nil {
 		return whereView{}, "", err
 	}
-	v.Held = int64(held)
-	// the landed stamps for the last hour's rate; a read of them that fails (the
-	// landed column busy with landings) leaves the whole sprint's average, never a
-	// failed view
-	landedAt, err := st.LandedAt(ctx)
-	if err != nil {
-		landedAt = nil
-	}
-	v.Summary = summary(shapes[0], v.Held, a.heldETA(now, etaKey{v.All, v.Held}, etaMinutes(shapes[0], st.LandingRate(ctx, landedAt, v.Landed))))
+	v.Held = int64(facts.Held)
+	rate := sprint.LandingRate(facts.Landed, v.Landed, facts.Machine.Spans, facts.Machine.FirstStart(es.Cleared), now)
+	v.Summary = summary(shapes[0], v.Held, a.heldETA(now, etaKey{v.All, v.Held}, etaMinutes(shapes[0], rate)))
 
 	if f.Pending != nil {
 		v.Pending = f.Pending.ID
 	}
-	v.Machine = st.MachineLine(ctx)
+	if facts.Records {
+		v.Machine = st.MachineLineOf(facts.Machine, facts.Heartbeat)
+	}
 	var b strings.Builder
 	b.WriteString(a.seatTitle(v.Coordinator, v.Seat, now) + "\n\n" + whereHeader(v.Summary, v.Machine) + "\n\n")
 	parts := map[string]string{}
