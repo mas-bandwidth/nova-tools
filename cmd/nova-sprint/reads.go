@@ -364,6 +364,21 @@ func (a *app) readFailed(verbName string, err error, stderr io.Writer) int {
 	return 2
 }
 
+// attention is where --json's "attention" object: coordinator attention units
+// (open judgment subjects plus stopped-merge cards) versus takeable units
+// (ready work plus asked reads). It is a heuristic comparison, not a unique-card
+// count — a stream-level judgment subject is not one card, and no identity
+// deduplication is done.
+type attention struct {
+	OpenJudgmentSubjects int  `json:"open_judgment_subjects"`
+	StoppedMergeCards    int  `json:"stopped_merge_cards"`
+	Ready                int  `json:"ready"`
+	Asked                int  `json:"asked"`
+	WaitingOnCoordinator int  `json:"waiting_on_coordinator"`
+	Takeable             int  `json:"takeable"`
+	OnePersonBound       bool `json:"one_person_bound"`
+}
+
 // whereView is the view, for a program.
 type whereView struct {
 	At          time.Time                               `json:"at"`
@@ -374,6 +389,7 @@ type whereView struct {
 	Streams     []sprint.StreamClock                    `json:"streams"`
 	Stalled     []string                                `json:"stalled,omitempty"`
 	Coordinator string                                  `json:"coordinator,omitempty"`
+	Attention   attention                               `json:"attention"`
 	Pending     string                                  `json:"pending,omitempty"`
 	Epoch       uint64                                  `json:"epoch"`
 	Cleared     time.Time                               `json:"cleared,omitempty"` // when the epoch began
@@ -575,6 +591,35 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 		v.Tables[sprint.Friends][f.Name] = map[string]string{sprint.Status: f.Status}
 	}
 	parts[sprint.Friends] = friendsText(friends)
+	open, err := st.B.OpenNotes(ctx)
+	if err != nil {
+		return whereView{}, "", err
+	}
+	var stoppedMerge, readyWork, askedReaders int
+	for _, row := range v.Tables[sprint.Merge] {
+		if row[sprint.StateCol] == sprint.StreamStopped {
+			stoppedMerge++
+		}
+	}
+	for _, row := range v.Tables[sprint.Work] {
+		if n, err := strconv.Atoi(row[sprint.Ready]); err == nil {
+			readyWork += n
+		}
+	}
+	for _, row := range v.Tables[sprint.Readers] {
+		if n, err := strconv.Atoi(row[sprint.Asked]); err == nil {
+			askedReaders += n
+		}
+	}
+	v.Attention = attention{
+		OpenJudgmentSubjects: len(open),
+		StoppedMergeCards:    stoppedMerge,
+		Ready:                readyWork,
+		Asked:                askedReaders,
+		WaitingOnCoordinator: len(open) + stoppedMerge,
+		Takeable:             readyWork + askedReaders,
+		OnePersonBound:       len(open)+stoppedMerge > readyWork+askedReaders,
+	}
 	var shown []string
 	for _, t := range sprint.ShownOrder {
 		shown = append(shown, parts[t])
