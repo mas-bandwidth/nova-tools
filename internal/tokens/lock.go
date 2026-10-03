@@ -8,8 +8,8 @@ import (
 
 // One fold per output directory.
 //
-// The day file is written atomically via internal/atomicfile (rule 8). A fold
-// takes a kernel lock on <out>/fold.lock and holds it to the end; the second waits
+// The day file is written atomically via internal/atomicfile. Each fold takes a
+// kernel lock on <out>/fold.lock and holds it to the end; a second fold waits
 // a bounded, jittered time and then refuses, naming the holder's pid so a person
 // can see what to wait for or kill.
 //
