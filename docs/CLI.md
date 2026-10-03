@@ -1028,6 +1028,7 @@ nova-sprint check
 nova-sprint repair
 nova-sprint where [--watch] [--every <duration>]
 nova-sprint routes
+nova-sprint funded <provider> --reason <text>
 nova-sprint stats
 nova-sprint play [--simulation] [--seed <n>] [--every <duration>] [--broken <p>] [--fail <p>] [--stuck <p>] [--cross <p>] [--down <p>] [--up <p>] [--red <p>] [--flap <p>] [--batch <n>] [--hold] [--silent <member>@<from>+<for>]... [--ticks <n>]
 nova-sprint clear --confirm sprint
@@ -1048,12 +1049,25 @@ that has changed. `nova-sprint help <verb>` (or `<verb> -h`) prints one verb's
 usage, flags and exit codes; `nova-sprint help <group>` (fleet, friend, reader,
 goal, stream) one group's.
 
+### A provider out of funds
+
+The owner, 2026-10-03: "provider out of funds should never be a mystery failure." `run` reads
+each provider's balance every 10 minutes through the seat's key in its environment
+(`OPENROUTER_API_KEY` for openrouter; opencode publishes no balance and reads `unknown`) and
+prints a `BALANCE` line. A provider out of credit, by a take it refused or a balance at zero,
+has every route rested until a balance returns, and one judgment says so (`a payment is the
+owner's`); `where --json` carries the `providers` table (balance, spend an hour, state) and
+`routes` each route's `balance=`. When every provider is out, the tick stops the machine
+(`machine: STOPPED (every provider is out of credit)`) and `start` is refused until one has
+a balance; `funded <provider> --reason <text>` says one was paid. The contract is
+[SPEC-SPRINT.md](SPEC-SPRINT.md), "A provider out of funds".
+
 ### Exit codes
 
 | exit | meaning |
 |---|---|
 | 0 | done |
-| 1 | failed or incomplete (including refused) |
+| 1 | failed or incomplete (including refused; `start` while every provider is out of credit) |
 | 2 | usage, or a store that did not answer (`fleet sync --check`: there is drift) |
 | 3 | `fleet sync` or `friend sync` could not read the config, or `run`: its binary was replaced (its supervisor starts the new one) |
 

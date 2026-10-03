@@ -726,6 +726,65 @@ and it is the coordinator's decision, receipted.
   (`sprint.RestsDue`, `TestRestsDueCountsNoResultEndsInTheRoutesWindow`,
   `TestARouteWhoseChildrenEndWithNoResultThreeTimesRests`,
   `TestARestingRouteServesNoDealWhileAnotherServes`).
+- A provider out of funds is never a mystery failure (nova-tools#5199). The owner, 2026-10-03,
+  8:03 AM ET: "provider out of funds should never be a mystery failure." And at 8:18 AM ET:
+  "you'll need to detect when a provider runs out of credits, and exclude that provider moving
+  forward, and let me know. then if all providers are out, then you stop the sprint."
+  Overnight 2026-10-02/03 opencode answered 402 and openrouter's credits were spent ($1,250.51
+  of $1,250.00); each take on them ended at launch, rule 3 counted none of them (they were not
+  `no result`), each was dealt again on the next route of the same provider, ci-03 247 times
+  and docsd-03 273 times, nothing landed, and the coordinator learned it in the morning.
+  - A take the provider refused for want of credit (its line `provider: class=out-of-credit
+    ...`, docs/SPEC-SWARM.md) rests EVERY route of that provider in the tick that sees it, over
+    rule 3's rest of the same route, "out of credit", until a balance returns: the rest has no
+    time (`route_rest_<route>` holds `<began> open <card> out-of-credit <the provider's
+    words>`; `routes` prints `rested_until=open`). A take refused for its key (`class=auth`)
+    rests them for RouteRestFor. The rest's note and the tier's `no route serves the tier`
+    name the cause and the words (`sprint.RestsDue`, `providerRestsDue`;
+    `TestAnOutOfCreditTakeRestsEveryRouteOfItsProvider`,
+    `TestProviderRestsDueRestEveryRouteOfTheRefusedProvider`).
+  - The balance poll. `run` reads each provider's balance when it begins and every 10 minutes
+    after (`sprint.BalancePollEvery`), outside every tick, through the seat's key in its own
+    environment (`nova-secrets exec --only OPENROUTER_API_KEY -- nova-sprint run ...`;
+    `internal/provbalance`): openrouter's `GET /api/v1/credits`, the balance `total_credits`
+    less `total_usage`; opencode publishes none (Zen has no balance endpoint,
+    anomalyco/opencode#44189, and its CLI reads none), so its balance is recorded `unknown` and
+    why, as any provider's with no endpoint or no key. One step writes each read to the fleet
+    table's property `provider_balance_<provider>` (`<balance|unknown> <at> <spend/hour>
+    <used|-> <note>`), the spend an hour measured from the provider's count used between two
+    reads; a balance at or under zero rests every route of the provider "out of credit", one
+    under one hour of that spend rests them too (cause `balance`), each until a balance
+    returns; a read over zero and over an hour of the spend ends every rest of the provider's
+    funds at once, a refused take's included, with a happened note a route, "a provider's
+    routes serve again: its balance is back". Each poll prints one `BALANCE` line naming the
+    balances, never a key (`sprint.Balance`;
+    `TestTheBalancePollRestsAProviderUnderAnHourOfItsSpend`,
+    `TestAPolledBalanceAtZeroExcludesTheProviderUntilABalanceReturns`).
+  - `funded <provider> --reason <text>` is the coordinator's word that a provider was paid: it
+    ends every rest of the provider's funds now, for a provider whose balance no poll can read
+    (opencode) as for any; it is refused when none rests for its funds.
+  - One judgment of the provider, never one per card, while any route of it rests for its
+    funds: `a provider is out of funds`, its words `provider <p> is out of funds (balance $x):
+    a payment is the owner's; it is excluded: its routes ... rest until a balance returns
+    (...)`, its subject `stream:provider:<p>`, its decisions `funded <p>`, ack and wait, never
+    a rework (a payment is not the card's to fix, and the owner's, never the machine's). It
+    closes when the rests end. A key refused is `a provider refuses its key`, the same way.
+  - Every provider out stops the sprint. When every enabled route of every tier rests for its
+    provider's funds, the tick's deal plans the stop and the binding STOPS the machine as the
+    step commits: its record's cause `every provider is out of credit`, the machine line
+    `machine: STOPPED (every provider is out of credit)`, and one judgment, `every provider is
+    out of credit`, naming the providers. `start` is refused with the same line (exit 1) while
+    they stay out; once a poll reads a balance (or `funded`), the coordinator starts it and the
+    judgment closes (`TestEveryProviderOutOfCreditStopsTheMachine`,
+    `TestEveryProviderOutOfCreditStopsTheSprint`).
+  - `where --json` carries `providers`, the providers table: a row for each provider the
+    routes name, `name`, `balance` (dollars and cents rounded up, or `unknown`), `balance_at`,
+    `spend_hour`, `state` (`serving`; `resting until <end> (<cause>: <words>)`; `serving;
+    resting <routes> ...` when some rest) and `note` (why a balance is unknown), read from the
+    routes and the fleet table's properties, no card. The text frame draws no new table (the
+    sprint tables are locked); the dashboard's view of it is its own change. `routes` prints
+    each route's provider balance (`balance=`; `--json` `balance`, `balance_at`,
+    `rested_for`) (`TestTheRunLoopPollsBalancesAndWhereShowsTheProvidersTable`).
 - The twin (`mem:<file>`) holds no routes: routes are config, nova-config's
   rows applied to a store's Redis, and a twin has no config store to apply
   from. A twin deals as a store with no route does (the member's override);

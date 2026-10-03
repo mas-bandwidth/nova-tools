@@ -84,6 +84,28 @@ usage:
 10. **`worker`**: Validates worker description JSON structure, environment variables, and readable roots.
 11. **`disk-guard`**: One pass over this machine, run every 900 s by the `disk-guard` row `fleet/loops.yml` adds to every machine (docs/FLEET.md, "The disk guard, on every machine", which tables every artifact and what removes it). It holds every Go build cache it knows (the login's, each `--root`'s `cache/go-build`, each `--cache` glob such as the CI runners' `_cache/go-build`) under `--cache-max-gb` (10) with the member's own trim (`cacheTrim`: entries used longest ago first, never one used in the last two hours, down to the cap less a fifth; never `go clean -cache`, which removes what a running build reads); empties a module cache over `--modcache-max-gb` (50) only while no `go` command runs and no process holds a file in it; rotates every `~/nova-bench/loops/*.log` over `--log-max-mb` (50) by copy and truncate in place, keeping `--log-keep` (3) copies; sweeps the pool of a loop that stopped (no process line names its root or slots, no process works in it, nothing in its slots moved for `--pool-idle`, 30m) by the member's start-up rule, keeping a work launch whose checkout's HEAD (read from its files; no git runs in a child's checkout) is past `<slot>/staged`; removes a land clone unused for `--clone-age` (24h) with no uncommitted work and no process naming it or working in it; removes a mirror's `tmp_pack_*` and `.tmp-*` older than an hour when nothing may be fetching into it and no process works in it (never `git prune`). A process works in a path when its working directory or a file it holds open lies under it (lsof's `-F pn` listing on darwin, `/proc/<pid>/cwd` and `/proc/<pid>/fd` on Linux), whatever its argument line names: a `git push` run inside a land clone keeps it. It removes nothing through a link, nothing under `/tmp`, and nothing that needs the process list or the open files when either cannot be read. Output: one `REMOVED`, `TRIMMED`, `CLEANED`, `ROTATED` or `KEPT` line per action with `freed=<bytes>`, `DISK-GUARD WARN free=<bytes> floor=<bytes> on the volume of <path>` under `--disk-floor` (10), then `DISK-GUARD OK freed=<bytes> free=<bytes>` (exit 0) or `DISK-GUARD INCOMPLETE freed=<bytes> free=<bytes> failed=<n>` (exit 1).
 
+### A provider out of funds is never a mystery failure
+
+The owner, 2026-10-03, 8:03 AM ET: "provider out of funds should never be a mystery failure." And
+at 8:18 AM ET: "you'll need to detect when a provider runs out of credits, and exclude that
+provider moving forward, and let me know. then if all providers are out, then you stop the
+sprint." (nova-tools#5199.) Overnight 2026-10-02/03 two providers ran out of credit, every
+child on them ended at launch within two seconds, `native` reported each `INCOMPLETE
+why=no-result`, the member finished each take `no result: no RESULT.md shape`, and one card was
+dealt 247 times. `native` now reads a run that ended with no result for the provider's own
+words before it calls it the card's: the session's record of the failed message (the 402 is
+`statusCode 402` there), the run's printed output in `<job>/harness-output.log` (the harness's
+`ERROR` lines, `Insufficient credits`, `Upstream request failed: Insufficient account funds`),
+then the harness's log; a provider error in any is reported on stderr as
+
+    NATIVE PROVIDER-FAIL label=<l> wall=<s>s route=<model> reason=provider: class=<out-of-credit|rate-limited|provider-5xx|auth|...> status=<n|-> msg=<the provider's first line>
+
+which the member finishes `provider failure: provider: class=...`, never `no result`
+(docs/SPEC-CARD-CONTRACT.md section 4, the provider failure; the classes are
+`internal/swarm` providercause.go's). What the sprint does with it, the provider's routes
+excluded until a balance returns and the sprint stopped when every provider is out, is
+docs/SPEC-SPRINT.md, "A provider out of funds".
+
 ## Exit codes
 
 | code | meaning |
