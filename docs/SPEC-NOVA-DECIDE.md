@@ -74,8 +74,9 @@ A JSON-lines file. Each decision is one line,
 each outcome is one line, `{"outcome": {id, label, note, at}}`. `inputs` names
 each input file and its SHA-256; `state` is the exact text the backend was
 asked over, kept because it is the training input. Lines are only appended,
-under an exclusive lock on the sibling `<record>.lock` (internal/filelock);
-loading folds each outcome into its decision.
+by a writer holding the record file's own exclusive lock (go-internal/lockedfile,
+an adopted module); a reader takes the shared lock, so it never meets half a
+line. Loading folds each outcome into its decision.
 
 - An id is the caller's `--op`, or `<decision>-<12 hex>` of the schema, the
   stamp and the state. The same `--op` over the same decision, schema (by hash)

@@ -5,18 +5,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
-	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/filelock"
+	"github.com/rogpeppe/go-internal/lockedfile"
 )
 
 // The record (SPEC-NOVA-DECIDE section 4) is one JSON-lines file the caller
 // names: a {"decision": ...} line per decision made, and an {"outcome": ...}
-// line per outcome attached. Lines are only appended, under a lock on the
-// sibling <record>.lock, so a reader never meets half a line and two writers
-// never both take one id. Loading folds each outcome into its decision.
+// line per outcome attached. Lines are only appended, by a writer holding the
+// record file's own exclusive lock (go-internal/lockedfile); a reader takes the
+// shared lock, so it never meets half a line and two writers never both take
+// one id. Loading folds each outcome into its decision.
 
 // Decision is one decision made: what was asked, over what, by which backend,
 // and what it answered.
@@ -56,14 +57,11 @@ type ConflictError struct{ What string }
 
 func (e *ConflictError) Error() string { return e.What }
 
-// lockWait bounds the wait for another writer of the same record.
-const lockWait = 30 * time.Second
-
 // Load reads the record; a record that does not exist yet is empty. A line
 // that does not parse, a decision id seen twice, or an outcome for an id with
 // no decision before it is an error naming the line.
 func Load(path string) ([]Decision, error) {
-	f, err := os.Open(path)
+	f, err := lockedfile.Open(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}
@@ -71,9 +69,14 @@ func Load(path string) ([]Decision, error) {
 		return nil, err
 	}
 	defer f.Close()
+	return parse(f, path)
+}
+
+// parse reads record lines from r; path names them in an error.
+func parse(r io.Reader, path string) ([]Decision, error) {
 	var out []Decision
 	at := map[string]int{}
-	sc := bufio.NewScanner(f)
+	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 1<<16), 64<<20)
 	for n := 1; sc.Scan(); n++ {
 		var l line
@@ -155,19 +158,19 @@ func Attach(path string, o Outcome) (d Decision, changed bool, err error) {
 	return d, changed, err
 }
 
-// locked runs plan over the record under its lock and appends the line it
-// returns, if any.
+// locked runs plan over the record under the record file's exclusive lock
+// and appends the line it returns, if any, before the lock is released.
 func locked(path string, plan func([]Decision) (*line, error)) (err error) {
-	l, err := filelock.Lock(path+".lock", "nova-decide", lockWait)
+	f, err := lockedfile.OpenFile(path, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0o600)
 	if err != nil {
 		return err
 	}
 	defer func() {
-		if uerr := l.Unlock(); err == nil {
-			err = uerr
+		if cerr := f.Close(); err == nil {
+			err = cerr
 		}
 	}()
-	ds, err := Load(path)
+	ds, err := parse(f, path)
 	if err != nil {
 		return err
 	}
@@ -179,13 +182,6 @@ func locked(path string, plan func([]Decision) (*line, error)) (err error) {
 	if err != nil {
 		return err
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
-	if err != nil {
-		return err
-	}
 	_, err = f.Write(append(raw, '\n'))
-	if cerr := f.Close(); err == nil {
-		err = cerr
-	}
 	return err
 }

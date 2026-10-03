@@ -44,11 +44,6 @@ func realWorld() world {
 
 func main() { os.Exit(decideTool(realWorld()).Main()) }
 
-// runIn is the tool in w, as the tests call it.
-func runIn(w world) func(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	return decideTool(w).Run
-}
-
 const fixture = "./cmd/nova-decide/testdata/"
 
 func decideTool(w world) *tool.Tool {

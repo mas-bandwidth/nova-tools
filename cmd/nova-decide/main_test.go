@@ -36,9 +36,9 @@ func testWorld(key string, calls *atomic.Int32, reply func(body []byte) ([]byte,
 }
 
 // cli is the tool with no key and a transport that is never reached.
-var cli = testkit.Main(runIn(testWorld("", new(atomic.Int32), func([]byte) ([]byte, error) {
+var cli = testkit.Main(decideTool(testWorld("", new(atomic.Int32), func([]byte) ([]byte, error) {
 	return nil, errors.New("no test without a key reaches the backend")
-})))
+})).Run)
 
 // jevReply is a read answered by the model: defect p, verdict BOUNCE.
 func jevReply(defect float64) func([]byte) ([]byte, error) {
@@ -114,7 +114,7 @@ func TestRefusalsNameEveryProblemAtOnce(t *testing.T) {
 func TestReadThroughJevIsRecordedOnceAndCalibrated(t *testing.T) {
 	t.Parallel()
 	calls := new(atomic.Int32)
-	jev := testkit.Main(runIn(testWorld("k-test", calls, jevReply(0.8))))
+	jev := testkit.Main(decideTool(testWorld("k-test", calls, jevReply(0.8))).Run)
 	rec := filepath.Join(t.TempDir(), "decisions.jsonl")
 	read := []string{"read", "--card", td + "card.md", "--diff", td + "card.diff", "--backend", "jev", "--record", rec}
 
@@ -185,7 +185,7 @@ func TestABackendFailureRecordsNothing(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := filepath.Join(t.TempDir(), "decisions.jsonl")
-			m := testkit.Main(runIn(testWorld("k", new(atomic.Int32), tc.reply)))
+			m := testkit.Main(decideTool(testWorld("k", new(atomic.Int32), tc.reply)).Run)
 			r := m.Do(t, "read", "--card", td+"card.md", "--diff", td+"card.diff", "--backend", "jev", "--record", rec)
 			r.Exit(2)
 			assert.Contains(t, r.Stderr, "READ FAIL")

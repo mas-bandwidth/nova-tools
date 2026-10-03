@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"maps"
 	"net/http"
@@ -348,4 +349,28 @@ func TestHTTPSendPostsWithTheKeyAndNamesAFailure(t *testing.T) {
 	_, err := HTTPSend(client, "https://decide.example.invalid/v1", key)(context.Background(), nil)
 	assert.ErrorIs(t, err, down)
 	assert.NotContains(t, err.Error(), key)
+}
+
+// Writers of one record serialize on its lock: writers racing to record the
+// same ids leave each id recorded once, every line whole, whatever the
+// interleaving (without the lock two writers both read "absent" and both append).
+func TestConcurrentWritersRecordEachIDOnce(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "decisions.jsonl")
+	const writers, ids = 8, 10
+	errs := make(chan error, writers*ids)
+	for range writers {
+		go func() {
+			for i := range ids {
+				_, err := Append(path, decisionFor(fmt.Sprintf("d%d", i), strings.Repeat("s", 70000)))
+				errs <- err
+			}
+		}()
+	}
+	for range writers * ids {
+		require.NoError(t, <-errs)
+	}
+	ds, err := Load(path)
+	require.NoError(t, err)
+	assert.Len(t, ds, ids)
 }
