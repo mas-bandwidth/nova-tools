@@ -902,6 +902,30 @@ and it is the coordinator's decision, receipted.
   labelled by git and the other runs): with the base run, p(caused) AUC 0.914,
   p(pre-existing) 0.907, p(flaky) 0.716, and at the starting bars no caused failure
   was routed flaky or pre-existing (internal/decide, `TestTheGateCalibrationRecordsSupportTheBars`).
+- The bound holds across attempts (the coordinator's finding, 2026-10-03, not the
+  owner's words: "So the bound is per attempt, and a rework resets it."; an answer
+  loop reworked ci-03 231 times and docsd-03 244 times in one night, every rework a
+  new attempt whose redeals began again at 0). An attempt retired by a rework at its
+  redeal bound writes the primary's record of its failed work as a failed finish
+  does (`failure`, `failure_at`, and `failure_tier`, the tier its work card was drawn
+  from; a failed finish writes the tier too, and a new tier counts its own failures):
+  the class its bound ended with (`sprint.BoundClass`), which is its last two takes'
+  class when they ended the same way, else its last take's. A take the provider
+  failed has no class inside an attempt (it is redealt), and across attempts is
+  `provider failure`, with the provider's class word when its line has one
+  (`provider failure: class=out-of-credit`), so a withdrawn take's end counts toward
+  rule 2's identical failure as a failed finish does. `rework` of a primary at its
+  redeal bound is refused when the attempt before it ended the same way on the same
+  tier and `--tier` names no other tier, one line: `attempt <n> reached its bound the
+  way attempt <n-1> ended (<class>) on tier <t>, and is not reworked there a third
+  time: rework it with a fix and --tier <another tier>, drop it (nova-sprint drop
+  <id> --reason <why>), or wait`; nothing is written, and `deal` of it says the same.
+  The judgment "a card reached its bound" on such a card lists `rework with a fix on
+  another tier`, drop, wait, its answer line carrying `--tier`. A bound-to-rework
+  loop is then stopped by the store at its second turn, whoever answers
+  (`TestASecondReworkAtTheSameBoundIsRefused`,
+  `TestAWithdrawnTakeCountsTowardTheIdenticalFailure`; `tla/DirtyTick.tla`,
+  `ReworksBounded`, reversed by W29).
 - A route whose children end without a result rests (the owner, 2026-10-02,
   nova-tools#5174: "A route whose children end without a result three times is
   rested by the machine, never redealt on."). The tick's deal counts each route's
@@ -1592,7 +1616,7 @@ the tick would make, no other open judgment on it).
 | cannot ask (enough readers are up, and a primary has fewer free readers than its tier needs: one for a flash card, two for a pro card) | reader add, rework, drop, wait | no |
 | fewer than two readers up | reader up, reader add, wait | no |
 | no fleet member is up (when every member that beats is held, it says so and offers only fleet up and wait) | fleet beat (on a machine), fleet up (releases a hold), wait | no |
-| a card reached its bound (at its ceiling tier, flash first, section 5: an attempt's work card redealt MaxRedeals, 3, times after takes that ended, the provider's failures among them, and a take of it ended again; the judgment names the provider and the last error line when the provider failed that take; or the second identical failure, section 2: two takes of the card, or two attempts of its primary, failed the same way, and the judgment names the class) | rework with a fix (a new attempt, on the next tier), drop, wait | no |
+| a card reached its bound (at its ceiling tier, flash first, section 5: an attempt's work card redealt MaxRedeals, 3, times after takes that ended, the provider's failures among them, and a take of it ended again; the judgment names the provider and the last error line when the provider failed that take; or the second identical failure, section 2: two takes of the card, or two attempts of its primary, failed the same way, and the judgment names the class) | rework with a fix (a new attempt, on the next tier), drop, wait; when the attempt before ended at its bound the same way on the same tier (section 5, the bound holds across attempts): rework with a fix on another tier (`--tier`), drop, wait | no |
 | a work card is past its deadline | fleet down (the member, only when it has held the card its own whole deadline: never the member a late card was just redealt to, nor one it was withdrawn from), wait, drop | no |
 | a read card is past its deadline | ask --another, wait, drop | no |
 | a stream has had no merge step past its deadline | merge --stream, card (look), wait | no |
@@ -2023,7 +2047,7 @@ command that loads it.
 | stats | the epoch's pass in seconds, each as median, max and count, from one read of the work, fleet and readers tables (every primary's work and read cards of every attempt, retired ones too, in read sets; `sprint.Stats`, pure): the stages (deal wait: admitted to the first work card's `first_dealt`; finish to two reads: the last ok take's `finished` to `accepted`; accept to land; total: admitted to landed), each member's work cards (cards, failed, take wait `dealt` to `taken`, run wall the usage's `wall`, report lag `finished` - `taken` - wall), each reader's read cards (cards asked, begin wait `asked` to `begun`, run wall, report lag `read` - `begun` - wall), and each route's takes from the primaries' cost records (takes; ok: a work take finished ok or a read with its verdict; provider: provider failure or no result; failed: every other end; a launch refused at staging is no take; a read whose record names no route counts on its card's route; run wall); members, readers and routes in name order; changes nothing; `--json` |
 | read | a reader records ok or broken with the finding; `--as <reader>`, `--begin`; `--usage <text>` (what the read spent) is kept on the read card, timed and priced (section 2, What a card cost) |
 | accept | review -> merging and into merge queued; refused without the ok reads it needs (one reader for a flash card, two different readers for a pro card); named ids all or nothing, a selection moves the eligible |
-| rework | delegates the next attempt at once with a fix, and writes on that attempt's work card `fix`, `finding` (its broken reads' findings, each once) and `why` (how the attempt before ended: failed with its report, finished and found broken, or sent back), each cut to MaxCardTextBytes with a trailing `...` and never refused for its size, and kept on the primary too for a rework that deals later; its packet carries them to the child's JOB.md and `card` prints per attempt; ready when no member is up; a primary at its redeal bound (ready, its work card withdrawn) is reworked too, with `--fix`, its withdrawn card taken off; without `--fix` each primary's fix is the finding of its broken read, else the report of its failed work, and a primary with neither is refused by name; `--tier <flash|pro|frontier>` writes the tier on the primary (`tier`), and this attempt's deal and every later deal and read of the card draw from it over its brief's line 1, so a flash card that failed twice is reworked on pro, the same card and brief; it pins the card: the tier is its ceiling too and the machine never escalates it (section 5, flash first); a word that names no tier is usage (exit 2), and a card whose brief pins a model is refused by name, since it runs on its pin whatever its tier |
+| rework | delegates the next attempt at once with a fix, and writes on that attempt's work card `fix`, `finding` (its broken reads' findings, each once) and `why` (how the attempt before ended: failed with its report, finished and found broken, or sent back), each cut to MaxCardTextBytes with a trailing `...` and never refused for its size, and kept on the primary too for a rework that deals later; its packet carries them to the child's JOB.md and `card` prints per attempt; ready when no member is up; a primary at its redeal bound (ready, its work card withdrawn) is reworked too, with `--fix`, its withdrawn card taken off and its bound's class written as the primary's record of its failed work, except when the attempt before it ended at its bound the same way on the same tier and `--tier` names no other, which is refused in one line naming that attempt and the class and offering `--tier`, drop or wait (section 5, the bound holds across attempts); without `--fix` each primary's fix is the finding of its broken read, else the report of its failed work, and a primary with neither is refused by name; `--tier <flash|pro|frontier>` writes the tier on the primary (`tier`), and this attempt's deal and every later deal and read of the card draw from it over its brief's line 1, so a flash card that failed twice is reworked on pro, the same card and brief; it pins the card: the tier is its ceiling too and the machine never escalates it (section 5, flash first); a word that names no tier is usage (exit 2), and a card whose brief pins a model is refused by name, since it runs on its pin whatever its tier |
 | return | merging -> review, off the merge queue |
 | drop | off the table with the reason |
 | rank | changes a score and every copy |

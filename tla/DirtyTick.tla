@@ -148,8 +148,29 @@
 \*   judgment are reached. A card judged is placed when a reader it may be
 \*   asked of is up again, and the placement closes the judgment.
 \*
+\* THE BOUND ACROSS ATTEMPTS (2026-10-03, the coordinator's finding, not the
+\*   owner's words: an answer loop reworked ci-03 231 times and docsd-03 244
+\*   times overnight, each rework a fresh attempt whose redeal bound started
+\*   again at 0, so the bound held per attempt and never per card;
+\*   internal/sprint failure.go, reworkAtTheSameBound). The coordinator's
+\*   ReworkAtBound(c, cl, t) answers a card at its redeal bound: an entry to
+\*   the work queue carrying the class its bound ended with (cl: the store's
+\*   reading of the withdrawn work card, BoundClass; which class the takes
+\*   leave is not modelled, so the entry carries it) and the tier it names
+\*   ("same" for none). The pump applies it: refused when the attempt before
+\*   ended at its bound with the same class on the same tier (fcl, fat, ftr,
+\*   the primary's record of its failed work) and the tier named is no other;
+\*   else the next attempt (NewAttempt), the record written and the tier
+\*   taken. Properties: ReworksBounded (a card's attempts are at most its
+\*   reworks plus one, and the reworks in a row at the same bound, class and
+\*   tier are at most one). Witness: "reworkagain" accepts every rework at a
+\*   bound, as the code did before (W29); the probe ProbeNoBoundAgain shows a
+\*   card reaches a bound with the attempt before it ended at one. The
+\*   scenario turns the verb on (Scn.rework, ScnReworkBound).
+\*
 \* WHAT IS NOT MODELLED. Clear and epochs (the counters' reset); two reads
-\* per attempt (one read each); rework but by a broken read; take is
+\* per attempt (one read each); rework but by a broken read and at the
+\* redeal bound; take is
 \* modelled only for the redeals (a finish needs no take); verbs other than
 \* add, take, finish, report, merge, ci, return, accept, beat and lapse (and a
 \* reader's away and back, and a read returned);
@@ -175,6 +196,13 @@ Min(a, b) == IF a < b THEN a ELSE b
 \* The beat windows a machine misses in a row before it is down
 \* (internal/sprint/presence.go MissedBeatsDown).
 Misses == 3
+\* The classes a bound's takes end with, and the tiers (THE BOUND ACROSS
+\* ATTEMPTS): two of each are enough to tell the same from another.
+BoundClasses == {"noresult", "provider"}
+Tiers == {"flash", "pro"}
+\* The scenario turns the coordinator's rework at the bound on (Scn.rework);
+\* a scenario that names no rework has none.
+ReworkOn == "rework" \in DOMAIN Scn /\ Scn.rework
 \* The in-place re-asks of a returned read at its attempt (internal/sprint
 \* MaxReadReasks).
 MaxReasks == 2
@@ -183,8 +211,17 @@ VARIABLES col, att, bnd, rd, askw, mq, stat, mc, mr, noUp, Q,
           mctr, rctr, sctr, live, miss, acts, ext,
           phase, pumps, sub, addr, notes, wake, act, plc,
           brk, dealt, always,
-          okd, ci, ret, tk, rdl, ended, ends, hred, seen, hb, rea, cna
+          okd, ci, ret, tk, rdl, ended, ends, hred, seen, hb, rea, cna,
+          fcl, fat, ftr, tier, rwk, srw
 
+\* fcl, fat, ftr  the work table: the primary's record of its failed work,
+\*                written by a rework at the bound: the class the attempt's
+\*                bound ended with, that attempt, its tier ("none", 0, "none"
+\*                before any)
+\* tier           the work table: the tier the card's next attempt runs on
+\* rwk, srw       ghosts: reworks at the bound accepted; reworks accepted in a
+\*                row whose attempt ended as the one before did, at its bound,
+\*                with the same class on the same tier, the tier kept
 \* seen, hb       the readers table: the readers c is not asked of at its
 \*                attempt; the reader that returned c's read while it waits
 \* rea, cna       the readers table: c's in-place re-asks at its attempt (the
@@ -203,8 +240,10 @@ vars == <<col, att, bnd, rd, askw, mq, stat, mc, mr, noUp, Q,
           mctr, rctr, sctr, live, miss, acts, ext,
           phase, pumps, sub, addr, notes, wake, act, plc,
           brk, dealt, always,
-          okd, ci, ret, tk, rdl, ended, ends, hred, seen, hb, rea, cna>>
-CardVars == <<okd, ci, ret, tk, rdl, ended, ends, hred, seen, hb, rea, cna>>
+          okd, ci, ret, tk, rdl, ended, ends, hred, seen, hb, rea, cna,
+          fcl, fat, ftr, tier, rwk, srw>>
+CardVars == <<okd, ci, ret, tk, rdl, ended, ends, hred, seen, hb, rea, cna,
+              fcl, fat, ftr, tier, rwk, srw>>
 
 -----------------------------------------------------------------------------
 \* Entries. k is the kind, c the card (or "-"), x the machine, the reader
@@ -235,7 +274,8 @@ Cur == [col |-> col, att |-> att, bnd |-> bnd, rd |-> rd, askw |-> askw,
         brk |-> brk, dealt |-> dealt, plc |-> <<>>, notes |-> notes,
         f0 |-> Len(Q["fleet"]),
         okd |-> okd, ci |-> ci, ret |-> ret, tk |-> tk, rdl |-> rdl, ended |-> ended, ends |-> ends,
-        hred |-> hred, seen |-> seen, hb |-> hb, rea |-> rea, cna |-> cna]
+        hred |-> hred, seen |-> seen, hb |-> hb, rea |-> rea, cna |-> cna,
+        fcl |-> fcl, fat |-> fat, ftr |-> ftr, tier |-> tier, rwk |-> rwk, srw |-> srw]
 
 Put(S, t, e) == [S EXCEPT !.q[t] = Append(@, e)]
 
@@ -314,6 +354,17 @@ ApplyW(S, e) ==
          IF S.col[c] = "merging" THEN [S EXCEPT !.col[c] = "review", !.ret[c] = TRUE, !.okd[c] = TRUE] ELSE S
     [] e.k = "accept" ->    \* the coordinator's accept, held or not
          IF S.col[c] = "review" /\ S.okd[c] THEN AcceptOne(S, c) ELSE S
+    [] e.k = "rework" ->    \* the coordinator's rework at the bound: x is <<class, tier>>
+         IF ~(S.col[c] = "ready" /\ AtRB(S, c)) \/ S.att[c] >= MaxAttempts THEN S
+         ELSE LET cl == e.x[1]
+                  on == S.tier[c]
+                  nt == IF e.x[2] = "same" THEN on ELSE e.x[2]
+                  \* the attempt before ended at its bound the same way on this tier
+                  same == S.fat[c] = S.att[c] - 1 /\ S.fcl[c] = cl /\ S.ftr[c] = on
+              IN IF same /\ nt = on /\ Broken # "reworkagain" THEN S    \* refused: drop, wait or --tier
+                 ELSE NewAttempt([S EXCEPT !.att[c] = @ + 1, !.fcl[c] = cl, !.fat[c] = S.att[c], !.ftr[c] = on,
+                                           !.tier[c] = nt, !.rwk[c] = Min(@ + 1, MaxAttempts),
+                                           !.srw[c] = IF same /\ nt = on THEN Min(@ + 1, 2) ELSE 1], c)
     [] OTHER -> S    \* room: a reason to tick, nothing to apply
 
 \* A sentinel lands when every card before it in its stream has landed; a
@@ -567,6 +618,7 @@ Commit(S) ==
   /\ okd' = S.okd /\ ci' = S.ci /\ ret' = S.ret /\ tk' = S.tk /\ rdl' = S.rdl
   /\ ended' = S.ended /\ ends' = S.ends /\ hred' = S.hred /\ seen' = S.seen /\ hb' = S.hb
   /\ rea' = S.rea /\ cna' = S.cna
+  /\ fcl' = S.fcl /\ fat' = S.fat /\ ftr' = S.ftr /\ tier' = S.tier /\ rwk' = S.rwk /\ srw' = S.srw
   /\ col' = S.col /\ att' = S.att /\ bnd' = S.bnd /\ rd' = S.rd /\ askw' = S.askw
   /\ mq' = S.mq /\ stat' = S.stat /\ mc' = S.mc /\ mr' = S.mr /\ noUp' = S.noUp
   /\ Q' = S.q /\ mctr' = S.mctr /\ rctr' = S.rctr /\ sctr' = S.sctr
@@ -723,6 +775,12 @@ Return(c) ==
 CoordAccept(c) ==
   /\ Coord /\ col[c] = "review" /\ okd[c] /\ (ci[c] = "red" \/ ret[c]) /\ Pend("work", "accept", c) = 0
   /\ Outside("work", E("accept", c, "-")) /\ UNCHANGED <<live, miss, acts>>
+\* The coordinator's rework of a card at its redeal bound (THE BOUND ACROSS
+\* ATTEMPTS): cl the class its bound ended with, t the tier it names.
+ReworkAtBound(c, cl, t) ==
+  /\ ReworkOn /\ col[c] = "ready" /\ AtRB(Cur, c) /\ att[c] < MaxAttempts
+  /\ Pend("work", "rework", c) = 0 /\ acts < MaxActs
+  /\ acts' = acts + 1 /\ Outside("work", E("rework", c, <<cl, t>>)) /\ UNCHANGED <<live, miss>>
 
 -----------------------------------------------------------------------------
 Init ==
@@ -742,6 +800,8 @@ Init ==
   /\ ends = [c \in Cards |-> 0] /\ hred = [c \in Cards |-> FALSE]
   /\ seen = [c \in Cards |-> {}] /\ hb = [c \in Cards |-> NoR]
   /\ rea = [c \in Cards |-> 0] /\ cna = [c \in Cards |-> FALSE]
+  /\ fcl = [c \in Cards |-> "none"] /\ fat = [c \in Cards |-> 0] /\ ftr = [c \in Cards |-> "none"]
+  /\ tier = [c \in Cards |-> "flash"] /\ rwk = [c \in Cards |-> 0] /\ srw = [c \in Cards |-> 0]
 
 TickNext == TickStart \/ PumpWork \/ DrainWork \/ TickEnd \/
             \E t \in Three : Pass(t) \/ Drain(t)
@@ -749,6 +809,7 @@ OutsideNext ==
   \/ \E c \in Cards : Add(c) \/ Merge(c) \/ \E v \in {"ok", "broken"} : Report(c, v)
   \/ \E c \in Cards, m \in Machines : Finish(c, m) \/ Take(c, m)
   \/ \E c \in Cards : CIRed(c) \/ CIGreen(c) \/ CIOld(c) \/ Return(c) \/ CoordAccept(c) \/ ReadReturn(c)
+  \/ \E c \in Cards, cl \in BoundClasses, t \in Tiers \cup {"same"} : ReworkAtBound(c, cl, t)
   \/ \E m \in Machines : Beat(m) \/ Lapse(m) \/ Miss(m) \/ BeatReset(m)
   \/ \E r \in Readers : ReaderAway(r) \/ ReaderBack(r)
 Next == TickNext \/ OutsideNext
@@ -769,6 +830,9 @@ TypeOK ==
   /\ ended \in [Cards -> BOOLEAN] /\ ends \in [Cards -> 0..(MaxRedeals + 1)] /\ hred \in [Cards -> BOOLEAN]
   /\ seen \in [Cards -> SUBSET Readers] /\ hb \in [Cards -> Readers \cup {NoR}]
   /\ rea \in [Cards -> 0..(MaxReasks + 1)] /\ cna \in [Cards -> BOOLEAN]
+  /\ fcl \in [Cards -> BoundClasses \cup {"none"}] /\ fat \in [Cards -> 0..MaxAttempts]
+  /\ ftr \in [Cards -> Tiers \cup {"none"}] /\ tier \in [Cards -> Tiers]
+  /\ rwk \in [Cards -> 0..MaxAttempts] /\ srw \in [Cards -> 0..2]
 
 \* THE CENTRAL PROPERTY (the owner: "nothing advances the work stream table
 \* EXCEPT on the next tick"). Only the tick's one pump writes the work table.
@@ -791,7 +855,7 @@ ThreeQueuesEmptyAtTickEnd == [][act' = "TickEnd" => \A t \in Three : Q'[t] = <<>
 
 \* NOTHING LOST: every entry is applied exactly once. Stated as conservation:
 \* each card's token is in exactly one place, a table row or an entry on
-\* its way, and the attempts equal the broken reports applied.
+\* its way, and the attempts equal the broken reports and the reworks applied.
 Holds(c) == Cardinality({m \in Machines : c \in mc[m]}) + Pend("fleet", "dealt", c)
             + Pend("work", "finished", c) + Pend("work", "returned", c)
 ReadTok(c) == Pend("readers", "ask", c) + (IF askw[c] THEN 1 ELSE 0) + (IF rd[c] # NoR THEN 1 ELSE 0)
@@ -812,7 +876,7 @@ NothingLost ==
     /\ ReadTok(c) = IF col[c] = "review" /\ ~bnd[c] THEN 1 ELSE 0
     /\ MergeTok(c) = IF col[c] = "merging" THEN 1 ELSE 0
     /\ ReadHome(c)
-    /\ att[c] + Pend("work", "broken", c) + (IF bnd[c] THEN 1 ELSE 0) = 1 + brk[c]
+    /\ att[c] + Pend("work", "broken", c) + (IF bnd[c] THEN 1 ELSE 0) = 1 + brk[c] + rwk[c]
 
 \* EVERY ROW WITH WORK MOVES. After the pump nothing it could move is left
 \* (the queue applied, sentinels landed, cards released, ready cards dealt
@@ -922,9 +986,17 @@ RedealsBounded == \A c \in Cards : rdl[c] <= MaxRedeals
 \* reported for the card's current head is red.
 CIIsItsHeads == \A c \in Cards : (ci[c] = "red") = hred[c]
 \* THE REDEAL BOUND HOLDS: a card whose take ended at the bound is never
-\* dealt again.
+\* dealt again at that attempt (a rework at the bound deals the next one).
 RedealBoundHolds ==
-  [][\A c \in Cards : col[c] = "ready" /\ ended[c] /\ rdl[c] >= MaxRedeals => col'[c] # "working"]_vars
+  [][\A c \in Cards : col[c] = "ready" /\ ended[c] /\ rdl[c] >= MaxRedeals => col'[c] # "working" \/ att'[c] # att[c]]_vars
+
+\* THE BOUND ACROSS ATTEMPTS HOLDS: no card's attempts exceed its reworks
+\* (by a broken read, or at its bound) plus one, and the reworks accepted in a
+\* row at the same bound, with the same class on the same tier and no tier
+\* named, are at most one: the second is refused (W29: "reworkagain").
+ReworksBounded ==
+  \A c \in Cards : /\ att[c] <= 1 + brk[c] + rwk[c]
+                   /\ srw[c] <= 1
 
 \* TERMINATION: a tick's steps are bounded (safety form, MaxSub) and every
 \* tick ends (liveness form).

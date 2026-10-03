@@ -95,32 +95,85 @@ func parseTake(v string) ProviderTake {
 	return ProviderTake{Route: f[0], Model: f[1], Member: f[2], Finished: f[3], Usage: f[4], Error: f[5], Taken: f[6]}
 }
 
-// The primary's record of its failed work, written by the failed finish (Finish): the
-// class of the last failed attempt (FailureClass of its report) and that attempt, and the
-// attempt whose failure was the same as the attempt before's (rule 2): the tick holds the
-// bound's judgment on the primary while it stays in review at that attempt
-// (AtIdenticalFailure).
+// The primary's record of its failed work, written by the failed finish (Finish) and by the
+// rework of an attempt at its redeal bound (Rework: its takes ended with no work to judge,
+// BoundClass): the class of the last failed attempt, that attempt and the tier it ran on (its
+// work card's tier: a new tier counts its own failures), and the attempt whose failure was
+// the same as the attempt before's (rule 2): the tick holds the bound's judgment on the
+// primary while it stays in review at that attempt (AtIdenticalFailure).
 const (
 	FieldFailure     = "failure"
 	FieldFailureAt   = "failure_at"
+	FieldFailureTier = "failure_tier"
 	FieldIdenticalAt = "identical_at"
 )
 
-// failureSet is what a failed finish at attempt writes on its primary pr (FieldFailure,
-// FieldFailureAt) and whether it is the second identical failure: the attempt before
-// failed with the same class. The class is the report's (FailureClass), or decided, the
-// take's attempt decision as `decided <class>`, when that decision routed the finish.
-func failureSet(pr *Card, attempt int, report, decided string, set map[string]string) (identical bool) {
+// failureSet is what a failed finish at attempt on tier writes on its primary pr
+// (FieldFailure, FieldFailureAt, FieldFailureTier) and whether it is the second identical
+// failure: the attempt before failed the same way on the same tier (sameAsBefore). The
+// class is the report's (FailureClass), or decided, the take's attempt decision as
+// `decided <class>`, when that decision routed the finish.
+func failureSet(pr *Card, attempt int, report, decided, tier string, set map[string]string) (identical bool) {
 	class := FailureClass(report)
 	if decided != "" {
 		class = decided // the attempt decision's class, when it routed the finish (decide.go)
 	}
-	identical = class != "" && attempt > 1 && pr.Int(FieldFailureAt) == attempt-1 && pr.F(FieldFailure) == class
-	set[FieldFailure], set[FieldFailureAt] = class, itoa(attempt)
+	identical = sameAsBefore(pr, attempt, class, tier)
+	set[FieldFailure], set[FieldFailureAt], set[FieldFailureTier] = class, itoa(attempt), tier
 	if identical {
 		set[FieldIdenticalAt] = itoa(attempt)
 	}
 	return identical
+}
+
+// sameAsBefore says the primary pr's attempt, ended with class on tier, failed the way the
+// attempt before it did (the record failureSet and Rework write): rule 2 across attempts.
+func sameAsBefore(pr *Card, attempt int, class, tier string) bool {
+	return class != "" && attempt > 1 && pr.Int(FieldFailureAt) == attempt-1 && pr.F(FieldFailure) == class && pr.F(FieldFailureTier) == tier
+}
+
+// BoundClass is the class of the attempt whose withdrawn work card wc reached its redeal bound,
+// as rule 2 across attempts compares it (sameAsBefore): the class of its last two takes when
+// they ended the same way (identicalEnds), else the class of the take that ended last. A take
+// the provider failed has no class inside an attempt (it is the provider's, and is redealt);
+// across attempts it is `provider failure` with the provider's class word when its line has
+// one (`provider failure: class=out-of-credit`), so an attempt the provider ended counts toward
+// the next attempt's identical failure as a take that left no result does (the coordinator's
+// finding of 2026-10-03, docs/SPEC-SPRINT.md section 5). "" when the last take kept no record
+// (its member went down): never the same as another.
+func BoundClass(wc *Card) string {
+	if class := identicalEnds(wc); class != "" {
+		return class
+	}
+	v := wc.F(FieldProviderTake + itoa(wc.Int("redeals")+1))
+	if v == "" {
+		return ""
+	}
+	line := takeEndLine(parseTake(v))
+	if !IsProviderFailure(line) {
+		return FailureClass(line)
+	}
+	rest := strings.TrimSpace(strings.TrimPrefix(line, cardhdr.EndProvider+":"))
+	word, _, _ := strings.Cut(strings.TrimSpace(strings.TrimPrefix(rest, "provider:")), " ")
+	if strings.HasPrefix(word, "class=") {
+		return cardhdr.EndProvider + ": " + word
+	}
+	return cardhdr.EndProvider
+}
+
+// reworkAtTheSameBound is the refusal of a rework of the primary pr at its redeal bound (wc,
+// its withdrawn work card) when the attempt before it ended the same way on the same tier
+// (sameAsBefore over BoundClass and the work card's tier) and tier, the rework's --tier, names
+// no other tier: a rework there would be its third try at one failure. "" when the rework is
+// its next attempt. The coordinator's finding of 2026-10-03: an answer loop reworked one card
+// at its bound 231 times, each rework a fresh bound (docs/SPEC-SPRINT.md section 5).
+func reworkAtTheSameBound(pr, wc *Card, tier string) string {
+	attempt, class, on := pr.Int("attempt"), BoundClass(wc), wc.F(FieldTier)
+	if !sameAsBefore(pr, attempt, class, on) || tier != "" && tier != on {
+		return ""
+	}
+	return fmt.Sprintf("attempt %d reached its bound the way attempt %d ended (%s) on tier %s, and is not reworked there a third time: rework it with a fix and --tier <another tier>, drop it (nova-sprint drop %s --reason <why>), or wait",
+		attempt, attempt-1, class, orDash(on), pr.ID)
 }
 
 // AtIdenticalFailure is the primary's failed work card when its attempt failed the way the

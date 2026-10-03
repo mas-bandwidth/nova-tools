@@ -111,6 +111,13 @@ const (
 // never moves it from waiting or ready.
 const Sentinel = "sentinel"
 
+// ReworkOnAnotherTier is the bound's rework when the attempt before ended at its bound the
+// same way on the same tier (failure.go, reworkAtTheSameBound): Rework takes it only with
+// --tier naming another tier; BoundAgainDecisions are that judgment's decisions.
+const ReworkOnAnotherTier = "rework with a fix on another tier"
+
+var BoundAgainDecisions = []string{ReworkOnAnotherTier, "drop", "wait"}
+
 // TickDecisions are the decisions open to the tick's judgments.
 var TickDecisions = map[string][]string{
 	NBound:      {"rework with a fix", "drop", "wait"},
@@ -529,7 +536,11 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 			continue
 		}
 		if wc := AtRedealBound(s, c); wc != nil {
-			conds = append(conds, cond{typ: NBound, stream: c.Row, card: wc.ID, primaries: []string{c.ID}, what: boundWhat(wc, c.ID)})
+			cd := cond{typ: NBound, stream: c.Row, card: wc.ID, primaries: []string{c.ID}, what: boundWhat(wc, c.ID)}
+			if reworkAtTheSameBound(c, wc, "") != "" {
+				cd.decisions = BoundAgainDecisions // the attempt before ended the same way on its tier
+			}
+			conds = append(conds, cd)
 			continue
 		}
 		if wc, takes := AtStagingBound(s, c, up); wc != nil {

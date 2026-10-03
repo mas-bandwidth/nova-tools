@@ -102,6 +102,11 @@ ScnHandBack == [Base EXCEPT !.col = [c \in Cards |-> "review"], !.hand = TRUE, !
 \* returns the read, leaving the card no reader up (STRANDED).
 ScnHandBackLapse == [ScnHandBack EXCEPT !.lapse = TRUE]
 
+\* THE BOUND ACROSS ATTEMPTS. c1 dealt to m1 and not taken; its worker may take
+\* it and its machine lapse and beat again, so an attempt reaches its redeal
+\* bound, and the coordinator may rework it there, naming a class and a tier.
+ScnReworkBound == [rework |-> TRUE] @@ ScnTake
+
 \* Reachability probes, expected to fail: every card lands; a card reaches
 \* its bound; a tick drains a queue after the first pass; a take ends at the
 \* redeal bound; the pump holds a card the coordinator then accepts.
@@ -114,4 +119,7 @@ ProbeNoHeldAccept == ~\E c \in Cards : col[c] = "merging" /\ ret[c]
 \* the reader that returned it; a stranded card judged.
 ProbeNoReask == \A c \in Cards : rea[c] = 0
 ProbeNoJudged == \A c \in Cards : ~cna[c]
+\* Reachability of a second bound: a card at its redeal bound whose attempt
+\* before ended at one (where a rework the same way on its tier is refused).
+ProbeNoBoundAgain == ~\E c \in Cards : col[c] = "ready" /\ AtRB(Cur, c) /\ fat[c] >= 1 /\ fat[c] = att[c] - 1
 =============================================================================
