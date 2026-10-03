@@ -426,13 +426,16 @@ func connect(ctx context.Context, store login, d deps) (*redisconn.Conn, error) 
 	return redisconn.Open(ctx, store.options(d), d.getenv)
 }
 
-// failed is a verb's one FAILED line for err, which is redisconn's (an
-// Open failure, or a command's error through Conn.Explain), so it names the
+// failed is a verb's one line for err, which is redisconn's (an Open
+// failure, or a command's error through Conn.Explain), so it names the
 // store, the login, what came back and the next step. A store that could not
-// be reached and a login it refused exit 2: the fix is the caller's. The
-// store may still have taken the write: redisconn classes a connection that
-// dropped, or a reply that never came, as unreachable too, and by then a
-// spill's EXEC may have landed. Anything else the store answered exits 1.
+// be reached and a login it refused could not run at all: the line leads
+// with REFUSED at exit 2, the pairing internal/tool's Status states for a
+// verb that could not run (STANDARD §2's exit table), and the fix is the
+// caller's. The store may still have taken the write: redisconn classes a
+// connection that dropped, or a reply that never came, as unreachable too,
+// and by then a spill's EXEC may have landed. Anything else the store
+// answered ran and said no: the line leads with FAILED and exits 1.
 //
 // A refused login with the password's variable unset gets one more field,
 // the variable this verb read: redisconn's next step names no variable when
@@ -444,7 +447,7 @@ func failed(verb, key string, err error, store login, d deps) *tool.Out {
 		o.Fact("remedy", tool.Text("nova-redis reads the store's password from "+*store.passwordEnv+", which is not set: export it, holding the password of the default user"))
 	}
 	if class == redisconn.Unreachable || class == redisconn.AuthRefused {
-		o.Exit = 2
+		o.Status, o.Exit = tool.Refused, 2
 	}
 	return o
 }

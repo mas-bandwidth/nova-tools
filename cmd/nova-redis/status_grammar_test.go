@@ -83,9 +83,9 @@ func TestStatusGrammar(t *testing.T) {
 			token: "SPILL", word: "REFUSED", marker: "run: nova-redis help", exit: 2,
 		},
 		{
-			name:  "spill failed when the store does not answer",
+			name:  "spill refused when the store does not answer",
 			args:  []string{"spill", "--addr", unreachable, "--owner", "ada", "--name", "note", "--ttl", "10m", "--value", "hi"},
-			token: "SPILL", word: "FAILED", exit: 2,
+			token: "SPILL", word: "REFUSED", marker: "run: nova-redis help", exit: 2,
 		},
 		{
 			name: "recall ok",
@@ -104,9 +104,9 @@ func TestStatusGrammar(t *testing.T) {
 			token: "RECALL", word: "REFUSED", marker: "run: nova-redis help", exit: 2,
 		},
 		{
-			name:  "recall failed when the store does not answer",
+			name:  "recall refused when the store does not answer",
 			args:  []string{"recall", "--addr", unreachable, "--owner", "ada", "--name", "note"},
-			token: "RECALL", word: "FAILED", exit: 2,
+			token: "RECALL", word: "REFUSED", marker: "run: nova-redis help", exit: 2,
 		},
 		{
 			name:  "fn load refused without an address",

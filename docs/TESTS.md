@@ -780,9 +780,10 @@ FN-LOAD REFUSED: --addr is required: the store's address as <host:port>, such as
 ```
 
 Each refusal names every problem with the line, one line each, and the
-help to read next. `spill --dry-run` with a good line needs no store either: it
-prints `SPILL OK dry-run=true ... written=0` and dials nothing (the banner's
-`example:` block runs it, `cmd/nova-redis/examples_test.go`).
+help to read next. `spill --dry-run` with a good line needs no store either:
+it prints `SPILL OK key=<k> ttl=<d> expires=<t> bytes=<n> store=<a>
+written=0 dry_run=true` and dials nothing (the banner's `example:` block
+runs it, `cmd/nova-redis/examples_test.go`).
 
 ## nova-ci
 
