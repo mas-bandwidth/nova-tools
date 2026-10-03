@@ -574,8 +574,8 @@ do
   function T.rowkey(d, row) return d.prefix .. ':row:' .. row end
   function T.cellkey(d, row, col) return d.prefix .. ':cell:' .. row .. ':' .. col end
   function T.rowskey(d) return d.prefix .. ':rows' end
-  -- T.propskey(d): the table's properties at the epoch (a hash of name ->
-  -- value): L1-CONTRACT-AMENDMENT-PROPERTY-2026-09-30 section 4.
+  -- T.propskey(d) is the table's properties at the epoch (a hash of name ->
+  -- value).
   function T.propskey(d) return d.prefix .. ':props' end
   function T.col(d, name)
     for _, col in ipairs(d.cols) do if col.name == name then return col end end
@@ -744,8 +744,7 @@ do
   -- holds, read in one pass over the cells (one ZMSCORE of every id per
   -- cell), for T.index_drift to answer T.check_placement and T.unindexed
   -- from. A read set or a batch checks each of its members against every cell
-  -- of the table: one pass for all of them, not one per member (the owner's
-  -- rule of 2026-09-30, "there is NO REASON to ever do a row at a time"). The
+  -- of the table: one pass for all of them, not one per member. The
   -- cells, the order they are looked at and the refusals are the ones the
   -- per-member checks give: a cell of the wrong type is named when a member's
   -- check reaches it, as T.check_placement names it.
@@ -908,8 +907,7 @@ do
     T.stage(d, 'DEL', T.rowkey(d, row))
     T.stage(d, 'ZREM', T.rowskey(d), row)
   end
-  -- Order is state (Glenn 2026-09-27: "take column y and put it after column
-  -- z", "friends on top, machines on bottom"). T.reorder is the one move: the
+  -- Order is state. T.reorder is the one move: the
   -- item leaves the list and enters at first, last, before or after a
   -- reference; a permutation, nothing added, nothing lost (tla/TableOrder.tla).
   function T.split(s)
