@@ -25,11 +25,6 @@ const (
 	RouteRestFor    = 30 * time.Minute
 )
 
-// PropRouteRest is the fleet property a route's rest used to occupy, one per route.
-// A value under it is ignored: a property stays until the epoch ends, so copying it
-// into PropRule3Rest cannot free its slot (docs/SPEC-SPRINT.md, the rests).
-func PropRouteRest(route string) string { return "route_rest_" + route }
-
 // PropRule3Rest is the fleet table's property that holds one provider's rule-3 rests:
 // one property per provider, one line per route that has rested, so the table's
 // properties (ntable.LimitTableProps) grow with the providers and never with the routes.

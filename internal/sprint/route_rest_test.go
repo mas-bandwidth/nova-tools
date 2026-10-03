@@ -83,7 +83,7 @@ func TestAnOldPerRouteRestPropertyIsIgnored(t *testing.T) {
 	routes := []Route{{Name: "a", Tier: "pro", Provider: "p", Enabled: true}}
 	f := NewTable(Fleet)
 	old := stamp(t0) + " " + stamp(t0.Add(time.Hour)) + " c1,c2,c3"
-	f.SetProps(map[string]string{PropRouteRest("a"): old})
+	f.SetProps(map[string]string{"route_rest_a": old})
 	assert.Empty(t, RouteRests(routes, f), "the old per-route property rests nothing")
 	f.SetProp(PropRule3Rest("p"), "a "+old)
 	got := RouteRests(routes, f)["a"]

@@ -104,7 +104,7 @@ func TestAnOutOfCreditTakeRestsEveryRouteOfItsProvider(t *testing.T) {
 	props := s.Fleet.Props()
 	assert.Contains(t, props, sprint.PropProviderRest("openrouter"), "one property of the provider")
 	for _, name := range []string{"or-a", "or-b", "oc-a"} {
-		assert.NotContains(t, props, sprint.PropRouteRest(name), "no copy on the route")
+		assert.NotContains(t, props, "route_rest_"+name, "no copy on the route")
 	}
 	_, ocRests := rests["oc-a"]
 	assert.False(t, ocRests, "another provider's route serves on")
