@@ -50,7 +50,7 @@ A resource limit keeps its unit or scope in its name; these spellings stand: nov
 - It names every missing required flag at once, never in rounds.
 - An unknown flag is named. An unknown verb is named, lists the verbs, and points at the root `<tool> help`, since it has no verb help.
 - A RUNTIME failure (an unreachable store, a refused login, a missing input file, a lost reply) keeps the one-line shape, and its remedy is the concrete next command for that failure, not `-h`.
-- nova-check's hints stand: each missing required flag gets its own refusal line and one hint line from a fixed set the binary ships, saying what the flag is and what a first run puts there. Its refusals point at the root `nova-check help`; they move to `nova-check <verb> -h` with the rest.
+- nova-check's hints stand: each missing required flag gets its own refusal line and one hint line from a fixed set the binary ships, saying what the flag is and what a first run puts there. Its refusals point at the root `nova-check help`; they move to `nova-check <verb> -h` with the rest. nova-dev's hints stand the same way, and its refusals point at `nova-dev help`.
 
 **(g) No silent success.** Three cases:
 - A missing INPUT (a required path, root, store, session, machine, friend or seat that must exist and be readable) is a refusal, exit 2, never `count=0 OK`.
