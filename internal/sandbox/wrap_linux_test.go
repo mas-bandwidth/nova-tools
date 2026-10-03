@@ -102,6 +102,32 @@ func TestLandlockABIBelowTheTableRefusesOnLinux(t *testing.T) {
 	assert.Empty(t, out, "the command produced output; it must not have run: %q", out)
 }
 
+// Rule 8 on this platform: the temp directory is a write grant only when it sits
+// inside a --write. A path outside that set is not appended. A temp directory that
+// is inside still is, and the cwd is unchanged.
+func TestWritePathsOmitsATempDirectoryOutsideTheWriteSet(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	write := filepath.Join(root, "write")
+	outside := filepath.Join(root, "outside")
+	require.NoError(t, os.MkdirAll(write, 0o755))
+	require.NoError(t, os.MkdirAll(outside, 0o755))
+	if got, err := filepath.EvalSymlinks(write); err == nil {
+		write = got
+	}
+	if got, err := filepath.EvalSymlinks(outside); err == nil {
+		outside = got
+	}
+	inside := filepath.Join(write, tmpDirName)
+	got := writePaths(&Policy{Writes: []string{write}, Tmp: outside, Cwd: write})
+	assert.NotContains(t, got, outside, "a temp directory outside the write set is a write grant: %v", got)
+	assert.Equal(t, []string{write}, got, "write paths = %v", got)
+	got = writePaths(&Policy{Writes: []string{write}, Tmp: inside, Cwd: inside})
+	assert.Contains(t, got, write, "the write set was dropped: %v", got)
+	assert.Contains(t, got, inside, "a temp directory inside the write set was dropped: %v", got)
+}
+
 // Rule 1 on this platform: no landlock is no run. It had no linux test of its own while
 // the ABI refusal above stood in for it; the clamp took that stand-in away, so it gets one.
 func TestNoLandlockRefusesOnLinux(t *testing.T) {

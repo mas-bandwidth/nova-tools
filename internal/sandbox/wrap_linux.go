@@ -361,15 +361,16 @@ func addRules(rulesetFd int, p *Policy, abi int) error {
 // temp directory and the cwd. Those two are normally inside the first --write and the
 // duplicate rule is harmless, but --tmp and --cwd can name a directory of their own and
 // a wall that denies the job's own temp directory is a wall that denies the work.
+// The temp directory is appended only when it sits inside a --write (rule 8). Build
+// refuses a default name that resolves outside; a temp path that failed that check is
+// not a write grant here either. The cwd keeps its own check in Build.
 func writePaths(p *Policy) []string {
 	out := append([]string{}, p.Writes...)
-	for _, extra := range []string{p.Tmp, p.Cwd} {
-		if extra == "" {
-			continue
-		}
-		if !slices.Contains(out, extra) {
-			out = append(out, extra)
-		}
+	if p.Tmp != "" && !slices.Contains(out, p.Tmp) && insideAny(p.Tmp, p.Writes) {
+		out = append(out, p.Tmp)
+	}
+	if p.Cwd != "" && !slices.Contains(out, p.Cwd) {
+		out = append(out, p.Cwd)
 	}
 	return out
 }
