@@ -468,7 +468,7 @@ func (l *lander) stream(ctx context.Context, s *sprint.Snapshot, stream string) 
 		if pr := s.Work.Placed(c.ID); pr != nil {
 			lc.head, lc.attempt, lc.primary = pr.F("head"), pr.F("attempt"), pr
 			cb := swarm.ReadCardBase([]byte(pr.F("brief")))
-			lc.repo, lc.paths, lc.brief = cb.Repo, cardPaths(pr.F("brief")), pr.F("brief")
+			lc.repo, lc.paths, lc.brief = cb.Repo, swarm.CardPaths([]byte(pr.F("brief"))), pr.F("brief")
 			if cb.Ref != "" {
 				lc.base = cb.Ref
 			}
@@ -490,18 +490,6 @@ func (l *lander) stream(ctx context.Context, s *sprint.Snapshot, stream string) 
 		cards = cards[n:]
 	}
 	return true
-}
-
-// cardPaths is a brief's PATHS globs; nil for none (no line, or `PATHS: none`).
-func cardPaths(brief string) []string {
-	var out []string
-	value, _ := swarm.CardHeaderValue([]byte(brief), "PATHS")
-	for _, g := range strings.Split(value, ",") {
-		if g = strings.TrimSpace(g); g != "" && g != "none" {
-			out = append(out, g)
-		}
-	}
-	return out
 }
 
 // shaRE is a commit id as a head names it: hex, abbreviated or whole.
@@ -1211,13 +1199,17 @@ func rejected(err error) bool {
 }
 
 // git runs one git in dir (none: the current directory, for a clone into a
-// path it names), in the caller's environment, and returns its trimmed
-// stdout; an error carries git's own words.
+// path it names), in the caller's environment, and returns its trimmed stdout,
+// except -z output whose status columns and paths are byte-exact; an error
+// carries git's own words.
 func (l *lander) git(ctx context.Context, dir string, args ...string) (string, error) {
 	res, err := gitrun.Run(ctx, gitrun.Options{C: dir, Env: l.a.gitEnv, OwnRepo: dir != ""}, args...)
 	if err != nil {
 		words := strings.TrimSpace(string(res.Stderr) + "\n" + string(res.Stdout))
 		return "", fmt.Errorf("git %s: %w: %s", args[0], err, words)
+	}
+	if slices.Contains(args, "-z") {
+		return string(res.Stdout), nil
 	}
 	return strings.TrimSpace(string(res.Stdout)), nil
 }

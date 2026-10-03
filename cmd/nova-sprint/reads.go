@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -443,6 +444,73 @@ type whereView struct {
 	// its balance as the run loop's poll last read it, the spend an hour measured, and
 	// whether its routes serve; absent with no route. The text frame does not draw it.
 	Providers []sprint.ProviderRow `json:"providers,omitempty"`
+	// Cards and Judgments are where --json --cards's, read for the dashboard's pull routes
+	// (store.Dealt): every work card dealt to a fleet row and not finished, and the open
+	// judgments naming one of their primaries; absent without --cards.
+	Cards     []dealtCard   `json:"cards,omitempty"`
+	Judgments []judgmentRef `json:"judgments,omitempty"`
+}
+
+// dealtCard is a work card dealt to a fleet row and not finished: the row (a machine, or a
+// friend's, friend.<name>), its state there, since its deal (ready) or its take (working),
+// when its deadline falls by the clock (sprint.WorkDeadline; the tick counts running time,
+// so a stop moves it later), and the branch its work is pushed to.
+type dealtCard struct {
+	ID       string    `json:"id"`
+	Primary  string    `json:"primary"`
+	Stream   string    `json:"stream"`
+	Member   string    `json:"member"`
+	State    string    `json:"state"`
+	Since    time.Time `json:"since,omitzero"`
+	Deadline time.Time `json:"deadline,omitzero"`
+	Branch   string    `json:"branch"`
+}
+
+// judgmentRef is an open judgment naming a dealt card's primary: its note and its kind.
+type judgmentRef struct {
+	ID   string `json:"id"`
+	Kind string `json:"kind"`
+	Card string `json:"card"`
+}
+
+// dealtView is the view's cards and judgments (where --json --cards), from the store's
+// read of the cards dealt and not finished.
+func dealtView(d store.Dealt, prefix string, epoch uint64) ([]dealtCard, []judgmentRef) {
+	snap := &sprint.Snapshot{Work: d.Work}
+	at := func(c *sprint.Card, field string) time.Time {
+		t, _ := time.Parse(time.RFC3339, c.F(field)) // unreadable or absent: zero, left out
+		return t
+	}
+	cards := make([]dealtCard, 0, len(d.Cards))
+	for _, c := range d.Cards {
+		v := dealtCard{ID: c.ID, Primary: c.F(sprint.PrimaryField), Stream: c.F("stream"), Member: c.Row, State: c.Col,
+			Branch: cmp.Or(c.F("branch"), sprint.BranchOf(prefix, epoch, c.ID, c.Int("gen")))}
+		own := "dealt"
+		if c.Col == string(sprint.Working) {
+			own = "taken"
+		}
+		v.Since = at(c, own)
+		if field, limit, _, _ := sprint.WorkDeadline(snap, c); !at(c, field).IsZero() {
+			v.Deadline = at(c, field).Add(limit)
+		}
+		cards = append(cards, v)
+	}
+	slices.SortFunc(cards, func(a, b dealtCard) int {
+		return cmp.Or(cmp.Compare(a.Member, b.Member), cmp.Compare(a.ID, b.ID))
+	})
+	var judgments []judgmentRef
+	seen := map[judgmentRef]bool{}
+	for _, o := range d.Open {
+		for _, p := range append([]string{o.Subject()}, o.Note.Primaries...) {
+			j := judgmentRef{ID: o.Note.ID, Kind: o.Note.Type, Card: p}
+			if !seen[j] && slices.ContainsFunc(cards, func(c dealtCard) bool { return c.Primary == p }) {
+				seen[j] = true
+				judgments = append(judgments, j)
+			}
+		}
+	}
+	slices.SortFunc(judgments, func(a, b judgmentRef) int { return cmp.Or(cmp.Compare(a.ID, b.ID), cmp.Compare(a.Card, b.Card)) })
+	return cards, judgments
 }
 
 // whereRun is what one where was asked, its flags read.
@@ -450,6 +518,7 @@ type whereRun struct {
 	c       common
 	watch   bool
 	all     bool
+	cards   bool
 	every   time.Duration
 	stale   time.Duration
 	atEpoch int64
@@ -460,6 +529,7 @@ func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 	watch := fs.Bool("watch", false, "redraw in place every --every until interrupted")
 	every := fs.Duration("every", time.Second, "the redraw interval with --watch, above 0")
 	all := fs.Bool("all", false, "draw the readers and merge tables too, hidden from the default frame (--json always carries them)")
+	cards := fs.Bool("cards", false, "with --json: also every work card dealt to a fleet row and not finished (its row, state, since, deadline and branch) and the open judgments on them, as the dashboard's pull routes serve them")
 	stale := fs.Duration("stale", defaultStale, "a stream with no progress for longer is shown stalled (--json)")
 	atEpoch := fs.Int64("at-epoch", -1, "the sprint as it was at an earlier epoch (before a clear)")
 	pos, err := parse(fs, args)
@@ -482,7 +552,10 @@ func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 		ctx, stop = a.notify(ctx)
 		defer stop()
 	}
-	r := whereRun{c: *c, watch: *watch, all: *all, every: *every, stale: *stale, atEpoch: *atEpoch}
+	if *cards && !c.json {
+		return refuse(stderr, "where", "--cards is a field of the JSON view: give --json with it")
+	}
+	r := whereRun{c: *c, watch: *watch, all: *all, cards: *cards, every: *every, stale: *stale, atEpoch: *atEpoch}
 	if addr := a.server(fs); addr != "" {
 		// the sprint's server draws each frame: one plain where a frame, so the watch
 		// never holds the server between frames
@@ -525,6 +598,13 @@ func (a *app) whereLoop(ctx context.Context, r whereRun, stdout, stderr io.Write
 				return "", 0, false // an interrupt cut the read short: the watch is over, not failed
 			}
 			return "", a.readFailed("where", err, stderr), false
+		}
+		if r.c.json && r.cards {
+			d, err := st.Dealt(ctx)
+			if err != nil {
+				return "", a.readFailed("where", err, stderr), false
+			}
+			v.Cards, v.Judgments = dealtView(d, st.Names.Prefix, v.Epoch)
 		}
 		if r.c.json {
 			b, _ := json.Marshal(v)
@@ -667,12 +747,16 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 		return whereView{}, "", err
 	}
 	for i, f := range friends {
+		// the counts are the friend's sprint cards on her fleet row, and nothing
+		// else: ready, working, done ok and failed, all from the fleet table
+		// (splitFriendRows), with width and status from the roster (store.FriendRows)
 		c := friendCards[f.Name]
-		friends[i].Ready += c.Ready
-		friends[i].OK += c.OK
-		friends[i].Failed += c.Failed
-		if f.Status != sprint.Down {
-			friends[i].Working += c.Working // down, she shows working 0 (store.FriendRows)
+		friends[i].Ready = c.Ready
+		friends[i].Working = c.Working
+		friends[i].OK = c.OK
+		friends[i].Failed = c.Failed
+		if f.Status == sprint.Down {
+			friends[i].Working = 0 // down, she works nothing
 		}
 	}
 	ft := friendsTable(friends)
@@ -751,8 +835,8 @@ func providersView(ctx context.Context, st *store.Store, shapes []ntable.Table, 
 }
 
 // friendsTable is the friends table (sprint.FriendsDef) with a row per friend
-// in the order given: her job cards' counts in ready, working and the hidden
-// ok and failed, her width and her status as text; done and ok% are the
+// in the order given: her sprint cards' counts in ready, working and the
+// hidden ok and failed, her width and her status as text; done and ok% are the
 // table's own formulas over the counts (ntable.CellText), as the fleet
 // table's are.
 func friendsTable(friends []store.FriendRow) ntable.Table {

@@ -13,31 +13,22 @@ import (
 )
 
 // The friends (sprint.Friends; docs/SPEC-SPRINT.md section 1, the friends
-// table): three kinds of record under the deployment's prefix, outside the
+// table): two kinds of record under the deployment's prefix, outside the
 // tables, the fence and the epochs, as a reader's beat and hold are. friends
 // is the roster, every friend of nova-config's friend rows (friend sync) with
 // the coordinator's hold of each (friend down; friend up releases it) and her
-// width; friend-jobs:<f> is the friend's job cards, what friend sync last read
-// of her working directory (each job of her inbox, ready, working or done, and
-// done ok or not); friend-beat:<f> is the friend's last beat (friend beat),
-// written by the friend's own machinery. A friend's status is derived when it
-// is shown, never stored, by the friends' rule (sprint.FriendStatus): held,
-// else up while her last beat is within sprint.FriendDownAfter (15 s), else
-// down. Her counts are her job cards'
+// width; friend-beat:<f> is the friend's last beat (friend beat), written by
+// the friend's own machinery. A friend's status is derived when it is shown,
+// never stored, by the friends' rule (sprint.FriendStatus): held, else up
+// while her last beat is within sprint.FriendDownAfter (15 s), else down. Her
+// counts are her sprint cards' (the cards dealt to her fleet row friend.<name>,
+// read from the fleet table by where, never stored as a record here):
 // (the owner, 2026-10-02: "give friends in the friends table the same ready,
 // working, width, done, ok%, status that we have for machines, but no load").
 
 const keyFriends = "friends"
 
 func friendBeatKey(friend string) string { return "friend-beat:" + friend }
-func friendJobsKey(friend string) string { return "friend-jobs:" + friend }
-
-// Job states, the friends table's columns a job is counted in.
-const (
-	JobReady   = "ready"
-	JobWorking = "working"
-	JobDone    = "done"
-)
 
 // friendEntry is a friend's entry in the roster: the coordinator's hold,
 // empty while released, and her width, how many jobs she works at once.
@@ -48,24 +39,16 @@ type friendEntry struct {
 	Width int       `json:"width,omitempty"`
 }
 
-// FriendJob is one job card: a job of the friend's inbox by its directory's
-// name, ready, working or done, and when done whether it came back ok.
-type FriendJob struct {
-	ID    string `json:"id"`
-	State string `json:"state"`
-	OK    bool   `json:"ok,omitempty"`
-}
-
 // FriendSpec is what friend sync knows of one friend: her name (a friend row
-// of nova-config), her width, and her jobs as her working directory has them.
+// of nova-config) and her width.
 type FriendSpec struct {
 	Name  string
 	Width int
-	Jobs  []FriendJob
 }
 
 // FriendRow is one row of the friends table as where draws it: the counts of
-// her job cards, her width and her status.
+// her sprint cards (filled by where from her fleet row), her width and her
+// status (filled by FriendRows from the roster and her beat).
 type FriendRow struct {
 	Name    string `json:"name"`
 	Ready   int    `json:"ready"`
@@ -110,27 +93,12 @@ func noFriend(r map[string]friendEntry, friend string) error {
 	return fmt.Errorf("no friend %s on the friends table (friends: %s): its row is nova-config's friend row; run: nova-sprint friend sync", friend, strings.Join(names, ","))
 }
 
-// jobsJSON is a friend's job cards as the record holds them: in id order, so
-// the same jobs read twice are the same bytes and a sync after a sync writes
-// nothing; "" for none.
-func jobsJSON(jobs []FriendJob) string {
-	if len(jobs) == 0 {
-		return ""
-	}
-	sorted := slices.Clone(jobs)
-	slices.SortFunc(sorted, func(a, b FriendJob) int { return strings.Compare(a.ID, b.ID) })
-	b, _ := json.Marshal(sorted) // a slice of three plain fields marshals
-	return string(b)
-}
-
 // SyncFriends makes the roster the friends given (nova-config's friend rows,
-// each with her width and the jobs of her working directory): a friend it
-// lacks is added, released, at her width with her jobs; a friend it has that
-// the specs lack is taken off with her beat and her jobs; a friend that stays
-// keeps her hold, and her width and jobs are set from the spec. The job
-// records are set from the specs, never added to. It writes nothing when
-// there is nothing to change, and says who was added, who taken off and who
-// stayed with a width or jobs that changed, each in name order.
+// each with her width): a friend it lacks is added, released, at her width; a
+// friend it has that the specs lack is taken off with her beat; a friend that
+// stays keeps her hold, and her width is set from the spec. It writes nothing
+// when there is nothing to change, and says who was added, who taken off and
+// who stayed with a width that changed, each in name order.
 func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, removed, updated []string, err error) {
 	r, kv, err := st.roster(ctx)
 	if err != nil {
@@ -159,56 +127,19 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 			rosterChanged = true
 		}
 	}
-	// the jobs that differ: one read of every friend's record
-	names := slices.Sorted(maps.Keys(want))
-	keys := make([]string, len(names))
-	for i, n := range names {
-		keys[i] = friendJobsKey(n)
-	}
-	vals, oks, err := getKeys(ctx, kv, keys)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	type write struct{ key, val string }
-	var writes []write
-	for i, n := range names {
-		have := ""
-		if i < len(oks) && oks[i] {
-			have = vals[i]
-		}
-		if j := jobsJSON(want[n].Jobs); j != have {
-			writes = append(writes, write{friendJobsKey(n), j})
-			if !slices.Contains(added, n) && !slices.Contains(updated, n) {
-				updated = append(updated, n)
-			}
-		}
-	}
 	slices.Sort(added)
 	slices.Sort(removed)
 	slices.Sort(updated)
-	if !rosterChanged && len(writes) == 0 {
+	if !rosterChanged {
 		return nil, nil, nil, nil
 	}
-	if rosterChanged {
-		if err := putRoster(ctx, kv, r); err != nil {
-			return nil, nil, nil, err
-		}
-	}
-	for _, w := range writes {
-		if w.val == "" {
-			if _, err := st.B.DeleteKeys(ctx, []string{st.Names.Key(w.key)}); err != nil {
-				return added, removed, updated, err
-			}
-			continue
-		}
-		if err := kv.SetKey(ctx, w.key, w.val); err != nil {
-			return added, removed, updated, err
-		}
+	if err := putRoster(ctx, kv, r); err != nil {
+		return nil, nil, nil, err
 	}
 	if len(removed) > 0 {
-		keys := make([]string, 0, 2*len(removed))
+		keys := make([]string, 0, len(removed))
 		for _, n := range removed {
-			keys = append(keys, st.Names.Key(friendBeatKey(n)), st.Names.Key(friendJobsKey(n)))
+			keys = append(keys, st.Names.Key(friendBeatKey(n)))
 		}
 		if _, err := st.B.DeleteKeys(ctx, keys); err != nil {
 			return added, removed, updated, err
@@ -254,11 +185,13 @@ func (st *Store) SetFriendHeld(ctx context.Context, friend string, held bool, wh
 	return putRoster(ctx, kv, r)
 }
 
-// FriendRows is the friends table at now: every friend of the roster with the
-// counts of her job cards (working 0 while she is down), her width and her
-// status (sprint.FriendStatus), in the fleet table's order (FleetOrder: up,
-// then held, then down, each by name). Two reads: the roster, then every friend's beat and jobs in one
-// exchange. A store that keeps no records has no friends.
+// FriendRows is the friends table at now: every friend of the roster with her
+// width and her status (sprint.FriendStatus), in the fleet table's order
+// (FleetOrder: up, then held, then down, each by name). The counts (ready,
+// working, ok, failed) are her sprint cards', filled by where from her fleet
+// row (friend.<name>), never read or counted here: the store holds no job
+// record. Two reads: the roster, then every friend's beat in one exchange. A
+// store that keeps no records has no friends.
 func (st *Store) FriendRows(ctx context.Context, now time.Time) ([]FriendRow, error) {
 	r, kv, err := st.roster(ctx)
 	if kv == nil {
@@ -268,9 +201,9 @@ func (st *Store) FriendRows(ctx context.Context, now time.Time) ([]FriendRow, er
 		return nil, err
 	}
 	names := slices.Sorted(maps.Keys(r))
-	keys := make([]string, 0, 2*len(names))
+	keys := make([]string, 0, len(names))
 	for _, n := range names {
-		keys = append(keys, friendBeatKey(n), friendJobsKey(n))
+		keys = append(keys, friendBeatKey(n))
 	}
 	vals, oks, err := getKeys(ctx, kv, keys)
 	if err != nil {
@@ -280,34 +213,11 @@ func (st *Store) FriendRows(ctx context.Context, now time.Time) ([]FriendRow, er
 	status := map[string]string{}
 	for i, n := range names {
 		var b sprint.Beat
-		var jobs []FriendJob
-		if k := 2 * i; k < len(oks) && oks[k] {
+		if i < len(oks) && oks[i] {
 			// ignored: an unreadable record is no beat, which the next beat replaces
-			_ = json.Unmarshal([]byte(vals[k]), &b)
-		}
-		if k := 2*i + 1; k < len(oks) && oks[k] {
-			// ignored: an unreadable record is no jobs, which the next friend sync replaces
-			_ = json.Unmarshal([]byte(vals[k]), &jobs)
+			_ = json.Unmarshal([]byte(vals[i]), &b)
 		}
 		row := FriendRow{Name: n, Width: r[n].Width, Status: sprint.FriendStatus(r[n].Held, b, now)}
-		for _, j := range jobs {
-			switch {
-			case j.State == JobReady:
-				row.Ready++
-			case j.State == JobWorking:
-				row.Working++
-			case j.State == JobDone && j.OK:
-				row.OK++
-			case j.State == JobDone:
-				row.Failed++
-			}
-		}
-		if row.Status == sprint.Down {
-			// down, she works nothing: her jobs stay in her outbox and count
-			// again when she beats (the owner, 2026-10-02 9:48 PM ET: "[a
-			// friend] being down, she automatically is 0/8 working OK?")
-			row.Working = 0
-		}
 		rows[n] = row
 		status[n] = row.Status
 	}

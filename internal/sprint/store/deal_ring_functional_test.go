@@ -33,3 +33,11 @@ func TestRedisMemberDownRedealsAndLevelGoRoundTheFleet(t *testing.T) {
 	h, _ := liveHarness(t)
 	dealRingMemberDownAndLevel(t, h)
 }
+
+// Dealt on the real table layer: the ready and working cells' ids through the cell reader
+// cut to those columns, never a done card (dealt_test.go has the driver).
+func TestRedisDealtReadsTheCardsInFlightAlone(t *testing.T) {
+	t.Parallel()
+	h, _ := liveHarness(t)
+	dealtLife(t, h)
+}

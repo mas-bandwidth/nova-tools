@@ -77,11 +77,6 @@ func IsOpen(s State) bool {
 	return false
 }
 
-// IsState says s is one of the six states.
-func IsState(s string) bool {
-	return slices.Contains(States, s)
-}
-
 // Lawful holds a plan to the lifecycle: a primary is admitted waiting or
 // ready, every unit that moves a primary in the work table moves it by a row
 // of Moves, and a primary leaves the table only from an open state. A primary

@@ -23,12 +23,17 @@ tune the same way.
 
 ## Serving and publishing
 
-`nova-sprint dashboard [--listen <address:port>[,<address:port>...]] [--logo <file>] [--every 1s]`
+`nova-sprint dashboard [--listen <address:port>[,<address:port>...] | none] [--pull <address:port>[,<address:port>...] | none] [--logo <file>] [--every 1s]`
 serves the page on each `--listen` address (default `127.0.0.1:7390`), one listener
 each, sharing one cached copy of the sprint. It reads the sprint in-process the way
-`where --json` does (through the sprint's server when `NOVA_SPRINT_SERVER` names one,
-else on the store `--redis` names), at most once per `--every` and only while a page
-asks: `/api/sprint` is that copy, with the build number and the throughput. Every answer
+`where --json --cards` does (through the sprint's server when `NOVA_SPRINT_SERVER` names
+one, else on the store `--redis` names), at most once per `--every` and only while a page
+or a puller asks or an event stream is open: `/api/sprint` is that copy, with the build
+number and the throughput, and `/events` pushes each new copy as it is read (server-sent
+events). The pull routes a worker reads its own view from (`/friend/<name>`,
+`/machine/<name>`, their `/api/` and `/events/` forms) are served on the `--pull`
+listeners (default `127.0.0.1:7395`), never on the page's, from the same copy:
+[SPEC-SPRINT.md](SPEC-SPRINT.md), the dashboard. Every answer
 is no-store; the page reloads itself when the build number changes (a new binary, or a
 new `--logo` file). A read that fails holds the last good copy, the page says nothing,
 and the dashboard's output takes one line per new failure, and once a minute a line of
@@ -66,7 +71,8 @@ from the owner edits one line here and nothing else moves.
   Friends, footer. No readers or merge panel (available at ?all=1 only). No two-column layout at any width.
 - Base type 28 px (doubled). Labels and headers: system proportional face. All numbers: monospace (ui-monospace,
   Menlo), right-aligned. Headers over numeric columns right-aligned too.
-- Refresh: the page polls the server's cached copy every 1 s and patches in place; the server reads the sprint at
+- Refresh: the page keeps `/events` open and patches in place as each copy arrives; while the stream is not open it
+  polls the server's cached copy every 1 s on a fixed timer (never after an answer); the server reads the sprint at
   most once a second. A failed read: hold the previous data, change nothing, say nothing on the page (log only).
 - Caching: no-store on everything; versioned asset links; the page reloads itself when the build number changes.
 
@@ -134,3 +140,6 @@ This specification is locked. No line changes without his words, quoted here wit
 "Can we horizontally ALIGN the status columns across the three tables pls: work, fleet, friends" / "so they scan nicely as the eye goes top to bottom scrolling down." / "aligned on the right align (column right side)". The status column of Work, Fleet and Friends shares one right edge (one grid template or one fixed column width and offset for all three tables, so the pills line up as the page scrolls). Nothing else changes.
 
 ## LOCK 2 (the owner, 7:40 PM): "ok this is perfect. lock this in." The page as checked at this time (landed header centred, one status right edge across the three tables, the Fleet width column at 8rem) is the page. No change without a quoted line from him.
+- 2026-10-03 11:30 AM, the owner, a quoted change after the lock: "nova sprint website is not updating once
+  per-second. something is chug." The page's refresh is the event stream, the timer's poll its fallback (the
+  Refresh line above); nothing else moves.
