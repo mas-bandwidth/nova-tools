@@ -172,7 +172,7 @@ func (a *app) cmdFriendSync(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "%s %s: friend %s has width %d, and a friend's width is at least 1; run: nova-config friend set %s --width <n>; nothing was changed\n", prog, name, n, width, n)
 			return 1
 		}
-		specs = append(specs, store.FriendSpec{Name: n, Width: width})
+		specs = append(specs, store.FriendSpec{Name: n, Width: width, Tiers: sprint.Split(r.Fields["tiers"])})
 	}
 	added, removed, updated, err := st.SyncFriends(ctx, specs)
 	if err != nil {

@@ -1028,6 +1028,9 @@ func Take(s *Snapshot, r TakeReq) Plan {
 }
 
 func takeOne(s *Snapshot, r TakeReq) Plan {
+	if name, ok := FriendOfRow(r.As); ok {
+		return friendTake(s, r, name) // a friend's take (friend_deal.go)
+	}
 	var p Plan
 	sel := r.Sel
 	if !named(sel) && sel.Limit == 0 {
@@ -1622,6 +1625,9 @@ func fleetStepPlan(s *Snapshot, r FleetReq, rr *round, moves roundMoves) Plan {
 		}
 		headOf(&p, r.Member, head, n, line)
 	case "down", "hold":
+		if name, ok := FriendOfRow(r.Member); ok {
+			return FriendHold(s, name, r.Who)
+		}
 		// the room of each receiver is its width (width.go, errata 3 amendment
 		// 9): its work cards held, ready and working, under it
 		up := liveFor(s, r)

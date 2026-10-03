@@ -72,7 +72,7 @@ func TestADealToANamedFriendWritesTheBriefIntoHerInbox(t *testing.T) {
 	ta.json("card s1-1", &c)
 	require.Len(t, c.Work, 1)
 	assert.Equal(t, sprint.FriendRow("amy"), c.Work[0].Row, "the card is dealt to amy's row")
-	assert.Equal(t, sprint.Working, c.Work[0].Col)
+	assert.Equal(t, sprint.Ready, c.Work[0].Col)
 	assert.Equal(t, "friend.amy", c.Who)
 	assert.Contains(t, ta.ok("card s1-1"), "who=friend.amy", "card shows who")
 
@@ -82,7 +82,7 @@ func TestADealToANamedFriendWritesTheBriefIntoHerInbox(t *testing.T) {
 	text, err := os.ReadFile(filepath.Join(root, "amy-working", "inbox", "s1-1.w1", "BRIEF.md"))
 	require.NoError(t, err)
 	lines := strings.Split(string(text), "\n")
-	assert.Equal(t, "STATUS: nova-sprint card s1-1.w1, epoch 0, attempt 1; push your work to the branch sprint/s1-1.w1.g1.e0; when done, write outbox/s1-1.w1/REPORT.md with Verdict: LAND|HOLD|FAIL and Head: <sha>", lines[0])
+	assert.Equal(t, "STATUS: nova-sprint card s1-1.w1, epoch 0, attempt 1; push your work to the branch sprint/s1-1.w1.g1.e0; first take it: nova-sprint friend take s1-1.w1; when done, write outbox/s1-1.w1/REPORT.md with Verdict: LAND|HOLD|FAIL and Head: <sha>", lines[0])
 	assert.Contains(t, lines[1], "Work in ~/amy-working/jobs/s1-1.w1/")
 	assert.Contains(t, string(text), "\n\ns1-1: a friend's card\nREPO: mas-bandwidth/nova-tools\nWHO: friend amy\n", "the brief follows")
 	_, err = os.Stat(filepath.Join(root, "bob-working", "inbox", "s1-1.w1"))
@@ -90,6 +90,7 @@ func TestADealToANamedFriendWritesTheBriefIntoHerInbox(t *testing.T) {
 
 	// a sync after a sync delivers nothing again, and the card is no job of hers
 	assert.Contains(t, ta.ok("friend sync --root "+root), "nothing to do")
+	ta.ok("take --as friend.amy s1-1.w1@1")
 	// the friends table counts it under working; the fleet table names no friend
 	frame := ta.frame()
 	assert.Contains(t, tableOf(frame, sprint.Friends), "amy     |     0 |       1 |     8 |    0 | 0.0% | up")
@@ -106,6 +107,7 @@ func TestFriendSyncFinishesALandReportAndTheCardReachesReview(t *testing.T) {
 	ta, root := friendCardApp(t, "friend", "amy")
 	ta.ok("tick")
 	ta.ok("friend sync --root " + root)
+	ta.ok("take --as friend.amy s1-1.w1@1")
 	outboxReport(t, root, "amy", "s1-1.w1", "# s1-1\n\n**Verdict:** LAND\nHead: "+landHead+"\n\nThe change is pushed and the gate is green.\nTwo files.\n\nMore detail.\n")
 	out := ta.ok("friend sync --root " + root)
 	assert.Contains(t, out, "FRIEND-CARD FINISHED friend=amy card=s1-1.w1 result=ok head="+landHead+": friend amy LAND: The change is pushed and the gate is green. Two files.")
@@ -127,6 +129,7 @@ func TestAHoldReportRaisesTheWorkCameBackFailedJudgment(t *testing.T) {
 	ta, root := friendCardApp(t, "friend amy", "amy")
 	ta.ok("tick")
 	ta.ok("friend sync --root " + root)
+	ta.ok("take --as friend.amy s1-1.w1@1")
 	outboxReport(t, root, "amy", "s1-1.w1", "Verdict: HOLD\n\nThe gate is red: TestX fails at the base too.\n\nDetail.\n")
 	assert.Contains(t, ta.ok("friend sync --root "+root), "result=failed")
 	ta.ok("tick")
@@ -193,6 +196,7 @@ func TestALandWhoseHeadIsNotOriginsTipIsRefused(t *testing.T) {
 		}
 		ta.ok("tick")
 		ta.ok("friend sync --root " + root)
+		ta.ok("take --as friend.amy s1-1.w1@1")
 		outboxReport(t, root, "amy", "s1-1.w1", "Verdict: LAND\nHead: "+landHead+"\n\nPushed.\n")
 		out := ta.ok("friend sync --root " + root)
 		assert.Contains(t, out, "FRIEND-CARD REFUSED friend=amy card=s1-1.w1: "+c.say+"; the card is not finished, and the next sync reads the report again", c.name)
@@ -278,7 +282,7 @@ func TestFleetSyncLeavesAFriendsRowAndCard(t *testing.T) {
 	ta.json("card s1-1", &c)
 	require.Len(t, c.Work, 1)
 	assert.Equal(t, sprint.FriendRow("amy"), c.Work[0].Row, "her card stays on her row")
-	assert.Equal(t, sprint.Working, c.Work[0].Col)
+	assert.Equal(t, sprint.Ready, c.Work[0].Col)
 	assert.Contains(t, ta.ok("friend sync --root "+root), "FRIEND-CARD DELIVERED friend=amy card=s1-1.w1")
 }
 

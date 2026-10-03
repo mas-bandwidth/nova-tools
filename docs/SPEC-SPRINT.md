@@ -127,24 +127,33 @@ no row of the friends table, and `WHO: friend` while the table has no row
 `CARD OK` line (`--json` `who`). A card with no WHO line is a machine's, dealt
 as before. The tick's deal deals a friend's card ready, in the deal's stream
 turns, to a friend up (the friends' rule: not held, a beat within 15 s) below
-her width (her friends row's `width`; the cards on her row, ready and working,
-count against it): the friend it names, or for `WHO: friend` the friend up
-with the most free width, the first by name among equals, as the machines'
-rule fills the member with room; with none it waits ready, held by the
-no-stall rule as waiting for a friend (`sprint.FriendDeal`). The tick reads the
-friends' records (the roster, then the beats: two round trips) only when a
-friend's card is ready. Its work card, `<primary>.w<attempt>`, is placed on
+her ready reserve width (her friends row's `width`; cards ready on her row count
+against her ready reserve, up to width active plus width ready-to-pull reserve;
+Glenn 2026-10-03 ~13:30: "The server should keep each eligible friend up to width
+active PLUS width ready-to-pull reserve, refill on claim/completion without a
+coordinator nudge"): the friend it names, or for `WHO: friend` the friend up with
+the most free ready reserve room whose tiers include its tier (FriendTakers;
+a friend with empty tiers stages nothing until sync writes them), the first by
+name among equals, as the machines' rule fills the member with room; with none it
+waits ready, held by the no-stall rule as waiting for a friend (`sprint.FriendDeal`).
+The tick reads the friends' records (the roster, then the beats: two round trips)
+only when a friend's card is ready. Its work card, `<primary>.w<attempt>`, is placed on
 the friend's own fleet row, `friend.<name>` (a dot, which no member's name
-holds, so it is no machine's and no fleet verb names it), straight into
-`working` at generation 1, dealt and taken at once (nothing takes it), member
-`friend.<name>`, with the primary's fix, finding and why as a machine's deal
-carries them; its primary moves ready -> working. The fleet's members are its
+holds, so it is no machine's and no fleet verb names it), into `ready` at
+generation 1 (staged ready in reserve; dealt now, its deadline is the dealt bound
+until taken), carrying the primary's fix, finding, why and friend_width as a machine's
+deal carries them; its primary moves ready -> working. Her child agent takes it
+as its first act (`nova-sprint friend take <card>`: ready -> working on her row),
+refused when her active working cards are already at her width, when she is held
+or down, or when she lacks the card's tier; taking immediately triggers automatic
+reserve replenishment without a coordinator nudge. The fleet's members are its
 rows but the friends' (`Snapshot.Members`): presence, the rebalance, the
 level, `fleet sync`, the machines' deal and the shape a clear keeps never
-touch a friend's row, so a friend who goes quiet or is held keeps her card
-(no take-back), the no-stall rule holds it as hers whatever her status, and
-the deadline rule (not finished 2 hours from its deal) judges it as it judges
-any work card. The machines' `deal` verb refuses a friend's card, and
+touch a friend's row. A friend who goes quiet keeps her card while her deadline
+holds it, while an explicit coordinator hold (`friend down <name>`) atomically
+returns the held friend's working and ready reserve cards back to the ready pool
+without penalty (`FriendHold`), advancing the work card generation to fence any
+old assignment reports. The machines' `deal` verb refuses a friend's card, and
 `rework` of one sends its primary ready with the fix, for the tick to deal to
 a friend.
 

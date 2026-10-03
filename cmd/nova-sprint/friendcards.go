@@ -49,7 +49,7 @@ func friendJobOf(p sprint.Packet) string { return sprint.StoredID(p.Card, p.Epoc
 func friendBrief(name string, p sprint.Packet) string {
 	job := friendJobOf(p)
 	var b strings.Builder
-	fmt.Fprintf(&b, "STATUS: nova-sprint card %s, epoch %d, attempt %d; push your work to the branch %s; when done, write outbox/%s/REPORT.md with Verdict: LAND|HOLD|FAIL and Head: <sha>\n", p.Card, p.Epoch, p.Attempt, p.Branch, job)
+	fmt.Fprintf(&b, "STATUS: nova-sprint card %s, epoch %d, attempt %d; push your work to the branch %s; first take it: nova-sprint friend take %s; when done, write outbox/%s/REPORT.md with Verdict: LAND|HOLD|FAIL and Head: <sha>\n", p.Card, p.Epoch, p.Attempt, p.Branch, job, job)
 	fmt.Fprintf(&b, "Work in ~/%[1]s-working/jobs/%[2]s/: every clone, worktree and build output goes inside it, GOCACHE=~/%[1]s-working/.cache/go-build, and the report goes to ~/%[1]s-working/outbox/%[2]s/REPORT.md.\n", name, job)
 	if p.Attempt > 1 {
 		b.WriteString(friendStart(p))
@@ -221,9 +221,13 @@ func friendInbox(dir string, p sprint.Packet) (in, why string, err error) {
 // outside her working directory. It says what it did, a line each, and how many it
 // delivered and finished.
 func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir string, say func(string)) (delivered, finished int, err error) {
-	cards, err := st.ReadCells(ctx, sprint.Fleet, sprint.FriendRow(name), sprint.Working)
+	cards, err := st.ReadCells(ctx, sprint.Fleet, sprint.FriendRow(name), sprint.Ready, sprint.Working)
 	if err != nil || len(cards) == 0 {
 		return 0, 0, err
+	}
+	taken := map[string]bool{}
+	for _, c := range cards {
+		taken[c.ID] = c.Col == sprint.Working
 	}
 	packets, err := st.Packets(ctx, cards)
 	if err != nil {
@@ -260,6 +264,11 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 		}
 		if err != nil {
 			return delivered, finished, err
+		}
+		if !taken[p.Card] {
+			// dealt and never taken: a report finishes only a card she took (friend take)
+			say(fmt.Sprintf("FRIEND-CARD REFUSED friend=%s card=%s: reported, and never taken; the card is not finished; run: nova-sprint friend take %s", name, p.Card, oneline.Field(job)))
+			continue
 		}
 		r, err := friendFinish(ctx, name, p, string(report), a.tip)
 		if err != nil {

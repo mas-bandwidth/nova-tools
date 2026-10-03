@@ -111,7 +111,10 @@ func TestTheFriendsTableCountsTheFriendsSprintCards(t *testing.T) {
 		ta.json("where", &w)
 		return w.Tables[sprint.Friends]["amy"]
 	}
-	assert.Equal(t, map[string]string{"ready": "0", "working": "2", "width": "8", "done": "0", "okpct": "0.0%", "status": "up", "ok": "0", "failed": "0"}, amy(), "two cards dealt, both working; the hand job is nowhere")
+	assert.Equal(t, map[string]string{"ready": "2", "working": "0", "width": "8", "done": "0", "okpct": "0.0%", "status": "up", "ok": "0", "failed": "0"}, amy(), "two cards dealt in ready reserve; the hand job is nowhere")
+	ta.ok("take --as friend.amy s1-1.w1@1")
+	ta.ok("take --as friend.amy s1-2.w1@1")
+	assert.Equal(t, map[string]string{"ready": "0", "working": "2", "width": "8", "done": "0", "okpct": "0.0%", "status": "up", "ok": "0", "failed": "0"}, amy(), "both cards taken, now working")
 
 	// amy finishes s1-1 with a LAND: done ok
 	outboxReport(t, root, "amy", "s1-1.w1", "# s1-1\n\n**Verdict:** LAND\nHead: "+landHead+"\n\nThe change is pushed.\n")
@@ -190,9 +193,13 @@ func TestFriendSyncWritesOnlyACardsBriefAndReadsItsReport(t *testing.T) {
 	assert.Equal(t, handText, gotHand, "the hand job's brief is untouched")
 	var w whereView
 	ta.json("where", &w)
-	assert.Equal(t, "1", w.Tables[sprint.Friends]["amy"]["working"], "the card counts; the hand job is nowhere")
-	assert.Equal(t, "0", w.Tables[sprint.Friends]["amy"]["ready"])
+	assert.Equal(t, "0", w.Tables[sprint.Friends]["amy"]["working"], "the card counts in ready; the hand job is nowhere")
+	assert.Equal(t, "1", w.Tables[sprint.Friends]["amy"]["ready"])
 	assert.Equal(t, "0", w.Tables[sprint.Friends]["amy"]["done"])
+	ta.ok("take --as friend.amy s1-1.w1@1")
+	ta.json("where", &w)
+	assert.Equal(t, "1", w.Tables[sprint.Friends]["amy"]["working"], "taken, now working")
+	assert.Equal(t, "0", w.Tables[sprint.Friends]["amy"]["ready"])
 }
 
 // friendRows is a friendsFn over friend rows of the names given, each with
@@ -325,6 +332,7 @@ func TestADownFriendShowsNoneWorking(t *testing.T) {
 	ta, root := friendCardApp(t, "friend amy", "amy")
 	ta.ok("tick")
 	ta.ok("friend sync --root " + root)
+	ta.ok("take --as friend.amy s1-1.w1@1")
 	cells := func() map[string]string {
 		var w whereView
 		ta.json("where", &w)

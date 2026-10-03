@@ -30,12 +30,15 @@ A card of the sprint whose brief says `WHO: friend` or `WHO: friend <name>` is
 dealt to a friend (docs/SPEC-SPRINT.md section 1, a friend's card; the owner,
 2026-10-03: "Could we try expressing the work left for nova-tools-1.1.0 into
 cards, and doing it via the sprint, but doing parts on friends where we would
-normally do friend work."). It arrives as a job like any other:
+normally do friend work."). The server keeps each eligible friend up to width
+active child agents working PLUS up to width ready-to-pull reserve staged in her
+inbox/queue, refilled on claim or completion without a coordinator nudge (Glenn,
+2026-10-03 ~13:30). It arrives as a job like any other:
 `inbox/<card>/BRIEF.md` (after a clear, `<card>~<epoch>`), written by
 `nova-sprint friend sync`. Its first line is the STATUS line:
 
 ```
-STATUS: nova-sprint card <card>, epoch <e>, attempt <n>; push your work to the branch sprint/<card>.g<gen>.e<e>; when done, write outbox/<card>/REPORT.md with Verdict: LAND|HOLD|FAIL and Head: <sha>
+STATUS: nova-sprint card <card>, epoch <e>, attempt <n>; push your work to the branch sprint/<card>.g<gen>.e<e>; first take it: nova-sprint friend take <card>; when done, write outbox/<card>/REPORT.md with Verdict: LAND|HOLD|FAIL and Head: <sha>
 ```
 
 then the working-directory line below, a later attempt's start (the current tip
@@ -46,10 +49,13 @@ the sprint's only check of her finish is that Head is origin's tip of her
 branch) and why it exists (`This attempt exists because:`, `A reader found:`, `The coordinator
 asks:`), a blank line, and the card's brief. What a friend does with it:
 
-1. Work in `jobs/<card>/` as for any job; commit, and push the commit to the
+1. First take it: `nova-sprint friend take <card>`. This moves the card from ready
+   reserve to working on her row. A friend works up to her width at once; taking when
+   already at width is refused until an active card completes.
+2. Work in `jobs/<card>/` as for any job; commit, and push the commit to the
    branch the STATUS line names (never another: the sprint reads and lands
    origin's tip of that branch, and nothing else).
-2. Write `outbox/<card>/REPORT.md` in this form, exactly:
+3. Write `outbox/<card>/REPORT.md` in this form, exactly:
 
    ```
    Verdict: LAND

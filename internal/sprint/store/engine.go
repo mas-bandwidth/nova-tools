@@ -160,6 +160,13 @@ type Step struct {
 	// within a tick).
 	Readers      bool
 	ReaderStates map[string]string
+	// Friends says the step takes or deals on a friend's row: it plans with
+	// the friend seats (store.FriendSeats), read in the same atomic snapshot
+	// before its plan runs.
+	Friends bool
+	// After, when set, is called after the step's write has committed to the
+	// store (st.after), before returning.
+	After func(ctx context.Context, res Result) error
 	// DrainMax, above zero, is the most entries of the queue's head a drain
 	// takes: the pump's second drain takes only what its first requeued.
 	DrainMax int
@@ -515,6 +522,13 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 				return res, err
 			}
 		}
+		if step.Friends {
+			seats, err := st.FriendSeats(ctx, snap.Now)
+			if err != nil {
+				return res, err
+			}
+			snap.Friends = seats
+		}
 		// Every plan is held to the lifecycle here, whatever step built it.
 		plan := sprint.Applied(snap, step.Plan(snap))
 		if len(held) > 0 {
@@ -840,6 +854,11 @@ func (st *Store) after(ctx context.Context, step Step, res Result) (Result, erro
 				return res, &ClearedError{Held: st.epoch, Now: es.N, At: es.Cleared, Finished: true}
 			}
 			return res, &SyncError{Cause: err}
+		}
+	}
+	if step.After != nil {
+		if err := step.After(ctx, res); err != nil {
+			return res, err
 		}
 	}
 	return res, nil
