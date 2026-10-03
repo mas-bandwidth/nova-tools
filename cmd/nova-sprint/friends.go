@@ -33,7 +33,10 @@ import (
 // write, and the view reads the store, never the directories. A friend's
 // machinery beats with friend beat; the coordinator holds one with friend down
 // and releases it with friend up. The status is derived where it is shown
-// (store.FriendRows), by the fleet's rule and in the fleet's order.
+// (store.FriendRows), by sprint.FriendStatus (up, held, or asleep after
+// sprint.FriendAsleepAfter without a beat; the owner, 2026-10-02 9:46 PM ET:
+// "or every 1sec if you really want, then after 15 sec. asleep. better.") and
+// in the fleet's order.
 
 // friendWords is how a friend's row comes about, in nova-sprint help and
 // nova-sprint help friend.
@@ -56,14 +59,18 @@ the jobs she works at once: her friend row's width (nova-config friend set
 below 1 is refused with nothing changed. where counts the cards: ready, working,
 width, done (ok and failed), ok% (ok over done, pooled in the footer) and
 status. A friend says she is there with
-nova-sprint friend beat <friend>, which her own machinery runs every few seconds
+nova-sprint friend beat <friend>, which her own machinery runs every `+sprint.FriendBeatEvery.String()+`
 beside the friend's harness, for example in the wrapper that starts it
-  while :; do nova-sprint friend beat <friend> >/dev/null 2>&1; sleep 5; done &
+  while :; do nova-sprint friend beat <friend> >/dev/null 2>&1; sleep 1; done &
   trap 'kill $!' EXIT
-and her status is the fleet's rule: up until she has missed `+fmt.Sprint(sprint.MissedBeatsDown)+` beat windows of
-`+sprint.BeatDeadline.String()+` in a row, down past that or when she has never beaten, held while friend
-down holds her whatever she beats (friend up releases the hold). where shows the
-friends after merge and before fleet, up first, then held, then down, each by
+and her status is up while her last beat is under `+sprint.FriendAsleepAfter.String()+` old, asleep once
+she has gone `+sprint.FriendAsleepAfter.String()+` without a beat or when she has never beaten (a beat
+wakes her at once), held while friend down holds her whatever she beats.
+friend up releases the hold and is not a beat: a friend released with no beat
+in the last `+sprint.FriendAsleepAfter.String()+` is asleep until she beats. A friend asleep shows
+working 0: her jobs stay in her outbox and count again when she beats; ready
+and done are as they were. where shows the
+friends after merge and before fleet, up first, then held, then asleep, each by
 name, with no load column.`) + "\n"
 }
 
