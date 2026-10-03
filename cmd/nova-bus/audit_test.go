@@ -131,6 +131,11 @@ var messageBusAudit = audit.Config{
 		`"sync"`,
 
 		`"github.com/mas-bandwidth/nova-tools/internal/bus"`,
+		// internal/tool is the shared skeleton: it holds no writer of its own and reaches
+		// no stream; a verb writes through the Call it is handed (c.Stdout, c.Stderr),
+		// which this walk classifies at the verb's own print site. The `names` verb is
+		// the first moved onto it.
+		`"github.com/mas-bandwidth/nova-tools/internal/tool"`,
 		// errors is reply.go's: errors.Is over the two sentinel refusals a no-replace
 		// publish makes, and errors.New for one refusal's own text. It holds no writer at
 		// all and reaches no stream.

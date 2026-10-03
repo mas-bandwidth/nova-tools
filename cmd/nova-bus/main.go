@@ -56,6 +56,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
 const usage = `nova-bus: notes between AIs, over a git repository
@@ -331,6 +332,57 @@ it a repository of its own. Every line above is run against it by the tests, and
 docs/TESTS.md carries the whole first sitting: read, receipt, advance, send.
 `
 
+// busTool is the tool on the shared skeleton. Only `names` is moved so far; the
+// other verbs still run through the private dispatch below (partial migration).
+func busTool() *tool.Tool {
+	return &tool.Tool{
+		Name:  "nova-bus",
+		What:  "notes between AIs, over a git repository",
+		Stamp: version,
+		How: `a bus is a git repository: a roster names each participant and a lane
+directory holds each sender's notes. git fetch and push carry it all.`,
+		ExitTable: "0 the verb ran and passed, 1 the verb ran and said no, 2 could not run (bad invocation).",
+		Verbs: []tool.Verb{
+			{
+				Name:    "names",
+				Usage:   "names --bus <dir>",
+				Example: "names --bus ./bus",
+				Effect:  tool.Inspection,
+				Flags: func(f *tool.Flags) {
+					f.Prints()
+					f.Required("bus", "the bus's repository root")
+				},
+				Run: namesRun,
+			},
+		},
+	}
+}
+
+// namesRun is `names` on the skeleton: it prints the roster's names, groups and
+// senders, each name quoted so a person can paste it into a To line. The verb
+// keeps its own printer (Flags.Prints) because the aliases field is a list of
+// quoted names joined by ";", a shape the skeleton's field rendering does not
+// carry.
+func namesRun(c *tool.Call) *tool.Out {
+	cfg, err := bus.LoadConfig(c.Str("bus"))
+	if err != nil {
+		return tool.Refuse(oneline.Err(err))
+	}
+	for _, p := range cfg.Participants {
+		lane := p.Lane
+		if lane == "" {
+			lane = "-"
+		}
+		fmt.Fprintf(c.Stdout, "NAMES NAME name=%s lane=%s aliases=%s\n",
+			oneline.Quote(p.Name), oneline.Field(lane), quoteList(p.Aliases))
+	}
+	for _, g := range cfg.Groups {
+		fmt.Fprintf(c.Stdout, "NAMES GROUP name=%s members=%s\n", oneline.Quote(g.Name), quoteList(g.Members))
+	}
+	fmt.Fprintf(c.Stdout, "NAMES OK participants=%d groups=%d senders=%d\n", len(cfg.Participants), len(cfg.Groups), len(cfg.Senders()))
+	return tool.Exit(0)
+}
+
 // busVerbs is the dispatch list, in the order run switches on them, help aside.
 // docs/STANDARD.md section 2: a bare command and an unknown verb name the verbs.
 const busVerbs = "draft, prepare, send, reply, inbox, receipt, close, wait, check, names, version"
@@ -348,6 +400,11 @@ func main() {
 
 // run is the whole tool, with its streams and clock injected so the tests can drive it.
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time) (code int) {
+	// `names` is on the shared skeleton; the rest still run through the private
+	// dispatch below (partial migration).
+	if len(args) > 0 && args[0] == "names" {
+		return busTool().Run(args, stdin, stdout, stderr)
+	}
 	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
 	// before anything is read, dialed or written: help is never a refusal.
 	defer verbflag.Recover(stdout, "nova-bus", usage, &code)
@@ -380,8 +437,6 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 		return cmdWait(rest, stdout, stderr, now)
 	case "check":
 		return cmdCheck(rest, stdout, stderr, now)
-	case "names":
-		return cmdNames(rest, stdout, stderr)
 	case "version", "--version":
 		return cmdVersion(rest, stdout, stderr)
 	}
@@ -3737,45 +3792,6 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	fmt.Fprintf(stdout, "BUS OK notes=%d lanes=%d receipts=%d participants=%d warn=%d\n",
 		stats.Notes, stats.Lanes, stats.Receipts, len(c.Participants), counts.Warn)
-	return 0
-}
-
-func cmdNames(args []string, stdout, stderr io.Writer) int {
-	f := newFlags("names")
-	busDir := f.fs.String("bus", "", "the bus's repository root (required)")
-	if !f.parse(args, stderr, map[string]*string{"bus": busDir}) {
-		return 2
-	}
-	c, err := bus.LoadConfig(*busDir)
-	if err != nil {
-		fmt.Fprintf(stderr, "nova-bus names: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus names -h"))
-		return 2
-	}
-	// THE NAMES ARE QUOTED, NOT FIELD-ESCAPED, and this verb exists for exactly the reason
-	// that matters. `names` is what a person runs to find out how to spell a To line this
-	// tool will accept -- and under oneline.Field, which escapes every space so that a
-	// key=value field is one token, "Ada Vale" printed as `Ada\x20Claude`. Paste that
-	// into a To line and `send` refuses it. The verb whose whole job is to tell you the
-	// spelling was telling you one the tool does not take.
-	//
-	// oneline.Quote keeps the one-line guarantee by another route (see its comment): the
-	// quotes delimit the value, so a space inside one is not the end of a field, and every
-	// character that could break or reorder a line is still escaped. A list is each name
-	// quoted and joined by the ";" a To line separates on, so `aliases="Ada Vale";"the
-	// keeper"` is two names a person can lift straight out. The lane is a slug and stays a
-	// field: it holds no space by construction and is not something anybody pastes.
-	for _, p := range c.Participants {
-		lane := p.Lane
-		if lane == "" {
-			lane = "-"
-		}
-		fmt.Fprintf(stdout, "NAMES NAME name=%s lane=%s aliases=%s\n",
-			oneline.Quote(p.Name), oneline.Field(lane), quoteList(p.Aliases))
-	}
-	for _, g := range c.Groups {
-		fmt.Fprintf(stdout, "NAMES GROUP name=%s members=%s\n", oneline.Quote(g.Name), quoteList(g.Members))
-	}
-	fmt.Fprintf(stdout, "NAMES OK participants=%d groups=%d senders=%d\n", len(c.Participants), len(c.Groups), len(c.Senders()))
 	return 0
 }
 
