@@ -356,6 +356,59 @@ func TestMigrationSeventeenMovesTheLoopWidthToTheMachine(t *testing.T) {
 	assert.False(t, column, "config.loops still has a width column")
 }
 
+// 0018 gives every friend a width (the owner, 2026-10-02: "please update
+// friends in nova-config so each friend has a width of 8"): each friend row
+// there before it is set to 8, a row added after takes 8 by default, a width
+// below 1 is refused by the column's CHECK, and the file run again keeps a
+// width set since.
+func TestMigrationEighteenGivesEveryFriendAWidthOfEight(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st, err := OpenPG(ctx, server.Database(t))
+	require.NoError(t, err)
+	defer st.Close()
+	all, err := Migrations()
+	require.NoError(t, err)
+	var eighteen Migration
+	for _, m := range all {
+		if m.Version == 18 {
+			eighteen = m
+			break
+		}
+		require.NoError(t, st.applyOne(ctx, m), "migration %s", m.Name)
+	}
+	require.Equal(t, "0018_friend_width.sql", eighteen.Name)
+	six := []string{"f1", "f2", "f3", "f4", "f5", "f6"}
+	for _, f := range six {
+		_, err = st.db.ExecContext(ctx, `INSERT INTO config.friends (name, slots, tiers, roles) VALUES ($1, 2, 'flash', '')`, f)
+		require.NoError(t, err, f)
+	}
+	require.NoError(t, st.applyOne(ctx, eighteen))
+	widths := func() map[string]string {
+		rows, err := st.List(ctx, KindFriend)
+		require.NoError(t, err)
+		out := map[string]string{}
+		for _, r := range rows {
+			out[r.Name] = r.Fields["width"]
+		}
+		return out
+	}
+	assert.Equal(t, map[string]string{"f1": "8", "f2": "8", "f3": "8", "f4": "8", "f5": "8", "f6": "8"}, widths(), "every friend there before 0018 has width 8")
+
+	_, err = st.db.ExecContext(ctx, `INSERT INTO config.friends (name, slots, tiers, roles) VALUES ('f7', 2, 'flash', '')`)
+	require.NoError(t, err)
+	_, err = st.db.ExecContext(ctx, `UPDATE config.friends SET width = 3 WHERE name = 'f6'`)
+	require.NoError(t, err)
+	_, err = st.db.ExecContext(ctx, `UPDATE config.friends SET width = 0 WHERE name = 'f2'`)
+	require.Error(t, err, "a width below 1 is refused by the CHECK")
+	_, err = st.db.ExecContext(ctx, eighteen.SQL)
+	require.NoError(t, err, "the file runs again")
+	got := widths()
+	assert.Equal(t, "8", got["f7"], "a row added later takes the default")
+	assert.Equal(t, "3", got["f6"], "a width set since is kept when the file runs again")
+	assert.Equal(t, "8", got["f2"])
+}
+
 // TestPostgresStoreKeepsTheContract runs the one store contract the Mem
 // fake is held to (store_test.go) against Postgres.
 func TestPostgresStoreKeepsTheContract(t *testing.T) {

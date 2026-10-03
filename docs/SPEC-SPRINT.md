@@ -85,9 +85,12 @@ nothing written. The sync reads the directories and never writes them, and
 runs where they are (the coordinator's machine), by the coordinator's loop or
 by hand after a job is delivered or collected; the view reads the store, never
 a directory (the card is the persistent store). `ready` and `working` count
-her job cards in those states; `width` is her width, `1` (a person-like agent
-works one job at a time; the friend row of nova-config has no width), summed in
-the footer; `ok` and `failed` count her jobs done; `done` is `sum(ok+failed)`
+her job cards in those states; `width` is her width, the jobs she works at
+once: her nova-config friend row's `width` (`nova-config friend set <friend>
+--width <n>`, at least 1, 8 by default; the owner, 2026-10-02: "6/1 seems a bit
+wrong -- need to setup width for friends? Start at 8 for each?"), which friend
+sync writes to her row each pass (a row whose width is below 1 is refused, exit
+1, nothing written), summed in the footer; `ok` and `failed` count her jobs done; `done` is `sum(ok+failed)`
 and `ok%` is `pct(ok/ok+failed)`, pooled over the friends in the footer, the
 fleet table's own formulas.
 

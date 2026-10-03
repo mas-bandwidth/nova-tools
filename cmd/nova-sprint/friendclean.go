@@ -119,14 +119,18 @@ func (a *app) cmdFriendClean(args []string, stdout, stderr io.Writer) int {
 	if *file != "" {
 		read = fileFriends(*file)
 	}
-	names, err := read(context.Background(), *pg)
+	rows, err := read(context.Background(), *pg)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s %s: the config cannot be read: %s; nothing was removed\n", prog, name, oneline.WithRemedy(err.Error(), "nova-config friend list"))
 		return exitCannotRead
 	}
-	if len(names) == 0 {
+	if len(rows) == 0 {
 		fmt.Fprintf(stderr, "%s %s: the config holds no friend row; is this the fleet's config? run: nova-config friend list; nothing was removed\n", prog, name)
 		return exitCannotRead
+	}
+	names := make([]string, len(rows))
+	for i, r := range rows {
+		names[i] = r.Name
 	}
 	for _, n := range names {
 		if !sprint.ValidID(n) || !safepath.NameOK(n) {
@@ -142,19 +146,14 @@ func (a *app) cmdFriendClean(args []string, stdout, stderr io.Writer) int {
 	return cl.report(stdout, c.json)
 }
 
-// fileFriends reads the friend rows' names from a nova-config store file (--file).
+// fileFriends reads the friend rows from a nova-config store file (--file).
 func fileFriends(path string) friendsFn {
-	return func(ctx context.Context, _ string) ([]string, error) {
+	return func(ctx context.Context, _ string) ([]config.Row, error) {
 		st, err := config.OpenFile(path)
 		if err != nil {
 			return nil, err
 		}
-		rows, err := st.List(ctx, config.KindFriend)
-		var names []string
-		for _, r := range rows {
-			names = append(names, r.Name)
-		}
-		return names, err
+		return st.List(ctx, config.KindFriend)
 	}
 }
 

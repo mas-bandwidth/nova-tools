@@ -13,7 +13,7 @@ func TestRowLineNamesEveryFieldAndEscapesValues(t *testing.T) {
 
 	friend, _ := Lookup(KindFriend)
 	row := Row{Name: "rowan", Fields: map[string]string{"slots": "64", "roles": "builder,reader"}, CreatedAt: "2026-09-27T01:00:00Z", UpdatedAt: "2026-09-27T02:00:00Z"}
-	want := `FRIEND name=rowan slots=64 tiers=- roles=builder,reader`
+	want := `FRIEND name=rowan slots=64 tiers=- roles=builder,reader width=-`
 	scopedGot17 := RowLine(friend, row)
 	require.Equal(t, want, scopedGot17, "row line\n got %s\nwant %s", scopedGot17, want)
 	scopedGot21 := ShowLine(friend, row)
@@ -50,7 +50,7 @@ func TestOpAndKindLines(t *testing.T) {
 	scopedGot66, scopedWant66 := OpLine("CHECK", "machine", Op{Op: OpRemove, Name: "mini"}), "CHECK REMOVE kind=machine name=mini"
 	assert.Equal(t, scopedWant66, scopedGot66, "remove\n got %s\nwant %s", scopedGot66, scopedWant66)
 	friend, _ := Lookup(KindFriend)
-	scopedGot71, scopedWant71 := KindLine(friend), "CONFIG KIND name=friend table=config.friends fields=slots,tiers,roles required=slots,tiers rows=many"
+	scopedGot71, scopedWant71 := KindLine(friend), "CONFIG KIND name=friend table=config.friends fields=slots,tiers,roles,width required=slots,tiers rows=many"
 	assert.Equal(t, scopedWant71, scopedGot71, "kind\n got %s\nwant %s", scopedGot71, scopedWant71)
 	fleet, _ := Lookup(KindFleet)
 	scopedGot76, scopedWant76 := KindLine(fleet), "CONFIG KIND name=fleet table=config.fleet fields=store,coordinator,redis_port,pg_dsn required=- rows=one"
@@ -96,14 +96,24 @@ func TestEveryKindHasAMigrationDeclaringItsColumns(t *testing.T) {
 		if k.Singleton {
 			assert.Contains(t, joined, "INSERT INTO config."+k.Table+" (name) VALUES ('"+k.Name+"') ON CONFLICT (name) DO NOTHING", "kind %s is a singleton and no migration creates its row", k.Name)
 		}
+		// the kind's own statements: its CREATE TABLE and every ALTER TABLE
+		// of it, so a column of the same name on another table never counts
+		own := ""
+		for _, stmt := range strings.Split(joined, ";") {
+			if strings.Contains(stmt, "CREATE TABLE IF NOT EXISTS config."+k.Table+" (") ||
+				strings.Contains(stmt, "ALTER TABLE config."+k.Table+" ") || strings.Contains(stmt, "ALTER TABLE config."+k.Table+"\n") {
+				own += stmt + "\n"
+			}
+		}
 		for _, f := range k.Fields {
 			col := f.Name
 			if f.Name == "user" {
 				col = `"user"`
 			}
 			// a column of the CREATE TABLE, or one a later migration adds to it
-			assert.True(t, strings.Contains(joined, "\n    "+col+" ") || strings.Contains(joined, "\n    "+col+"\t") ||
-				strings.Contains(joined, "\n    ADD COLUMN IF NOT EXISTS "+col+" "), "kind %s: field %s has no column in any migration", k.Name, f.Name)
+			assert.True(t, strings.Contains(own, "\n    "+col+" ") || strings.Contains(own, "\n    "+col+"\t") ||
+				strings.Contains(own, "ADD COLUMN "+col+" ") || strings.Contains(own, "ADD COLUMN IF NOT EXISTS "+col+" "),
+				"kind %s: field %s has no column of config.%s in any migration", k.Name, f.Name, k.Table)
 		}
 	}
 }
