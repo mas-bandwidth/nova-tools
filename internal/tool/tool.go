@@ -83,7 +83,11 @@ type Verb struct {
 	ExitTable string         // this verb's exit codes, quoted by its -h; "" quotes the tool's
 	DryRun    bool           // the verb takes --dry-run and honours it (Call.DryRun): it plans and writes nothing
 	Flags     func(f *Flags) // declares the verb's flags; nil declares none
-	Run       func(c *Call) *Out
+	// Args declares the verb takes positional arguments (the words after its
+	// flags), read through Call.Args; a verb without it is refused any. The
+	// default verb (Tool.Default) takes them by construction.
+	Args bool
+	Run  func(c *Call) *Out
 }
 
 // Effect is what running a verb does beyond printing: one of the three below,
@@ -425,7 +429,7 @@ func (t *Tool) call(v Verb, args []string, stdin io.Reader, stdout, stderr io.Wr
 	if f.max && c.Int("max") < 0 {
 		c.Problem(fmt.Sprintf("--max must be zero or more (got %d); 0 lists all", c.Int("max")))
 	}
-	if v.Name != t.Default && f.NArg() > 0 {
+	if !v.Args && v.Name != t.Default && f.NArg() > 0 {
 		c.Problem(fmt.Sprintf("takes no positional arguments, got %q (flags come before arguments)", f.Arg(0)))
 	}
 	if o := c.Refused(); o != nil {
@@ -607,6 +611,10 @@ func (c *Call) Dur(name string) time.Duration { return c.Get(name).(time.Duratio
 
 // Given reports whether the flag was on the command line.
 func (c *Call) Given(name string) bool { return c.given[name] }
+
+// Args are the positional arguments (the words after the flags), in order,
+// for a verb that declares them (Verb.Args) or the default verb.
+func (c *Call) Args() []string { return c.flags.Args() }
 
 // Want reads a required string flag, recording a problem that says what it
 // wants when it is empty. Every Want is read before Refused, so one run names

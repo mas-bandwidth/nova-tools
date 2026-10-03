@@ -588,6 +588,41 @@ func TestADefaultVerb(t *testing.T) {
 	assert.Equal(t, []string{`nova-talk: the default verb "sacn" is none of its verbs`}, broken.Problems())
 }
 
+// TestAVerbDeclaresItsArguments pins Verb.Args: a verb that declares it reads
+// its positional arguments through Call.Args, and one that does not is refused
+// them, the default verb apart.
+func TestAVerbDeclaresItsArguments(t *testing.T) {
+	t.Parallel()
+	tool := &Tool{Name: "nova-demo", What: "a tool that exists to be tested",
+		ExitTable: "0 done, 2 could not run.",
+		Verbs: []Verb{
+			{Name: "write", Usage: "write <dir>", Effect: LocalWrite, Args: true,
+				Run: func(c *Call) *Out { return Done().Fact("dir", c.Args()[0]) }},
+			{Name: "list", Usage: "list", Effect: Inspection,
+				Run: func(*Call) *Out { return Done() }},
+		}}
+	for _, tc := range []struct {
+		name   string
+		args   []string
+		code   int
+		stdout string
+		stderr string
+	}{
+		{"a verb that declares arguments reads them", []string{"write", "d"}, 0, "WRITE OK dir=d\n", ""},
+		{"a verb that does not is refused them", []string{"list", "d"}, 2, "",
+			`LIST REFUSED: takes no positional arguments, got "d" (flags come before arguments); run: nova-demo help` + "\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var out, errs bytes.Buffer
+			code := tool.Run(tc.args, strings.NewReader(""), &out, &errs)
+			assert.Equal(t, tc.code, code)
+			assert.Equal(t, tc.stdout, out.String())
+			assert.Equal(t, tc.stderr, errs.String())
+		})
+	}
+}
+
 // TestProblems holds a definition to the standard the banner cannot enforce by
 // construction: every verb's effect, and the how text's size.
 func TestProblems(t *testing.T) {
