@@ -107,7 +107,7 @@ func seed(t *testing.T) *Mem {
 	}
 	// rev 5: the fleet's coordinator machine; rev 6: the sprint's
 	// coordinator friend.
-	_, _, err := st.Update(ctx, KindFleet, KindFleet, map[string]string{"coordinator": "studio", "redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova"}, "rowan")
+	_, _, err := st.Update(ctx, KindFleet, KindFleet, map[string]string{"coordinator": "studio", "redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova", "loops_dir": seededLoopsDir}, "rowan")
 	require.NoError(t, err)
 	_, _, err = st.Update(ctx, KindSprint, KindSprint, map[string]string{"coordinator": "rowan"}, "rowan")
 	require.NoError(t, err)
@@ -271,7 +271,7 @@ func TestApplyOfASingletonIsASetNeverAnAdd(t *testing.T) {
 	require.Equal(t, 0, res.Add, assertionMsg267...)
 	require.Equal(t, int64(8), res.Rev, assertionMsg267...)
 	assertionMsg268 := []any{"fleet set reported %v wrote %v", reported, ap.log}
-	require.Equal(t, "set:fleet:store,coordinator,redis_port,pg_dsn", strings.Join(reported, " "), assertionMsg268...)
+	require.Equal(t, "set:fleet:store,coordinator,redis_port,pg_dsn,loops_dir", strings.Join(reported, " "), assertionMsg268...)
 	require.Equal(t, "set fleet fleet as=rowan idem=config:fleet:8 stamp fleet 8", strings.Join(ap.log, " "), assertionMsg268...)
 	require.Equal(t, "hulk", ap.views[KindFleet][KindFleet]["store"], "fleet view %v", ap.views[KindFleet])
 	require.Equal(t, "6380", ap.views[KindFleet][KindFleet]["redis_port"], "fleet view %v", ap.views[KindFleet])
@@ -283,7 +283,7 @@ func TestApplyRefusesMissingFleetEndpointsWithoutRewritingALegacyMember(t *testi
 		t.Run(fmt.Sprintf("check=%t", check), func(t *testing.T) {
 			t.Parallel()
 			st, ap := NewMem(), newFake()
-			_, _, err := st.Update(context.Background(), KindFleet, KindFleet, map[string]string{"pg_dsn": "postgres://user@localhost:5432/nova"}, "operator")
+			_, _, err := st.Update(context.Background(), KindFleet, KindFleet, map[string]string{"pg_dsn": "postgres://user@localhost:5432/nova", "loops_dir": seededLoopsDir}, "operator")
 			require.NoError(t, err)
 			const argv = `["/usr/bin/env","NOVA_SPRINT_REDIS=bench-beta:6380","nova-swarm","member"]`
 			legacy := loopView("member-beta", "bench-beta", map[string]string{"argv": argv})

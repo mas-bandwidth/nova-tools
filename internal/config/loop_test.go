@@ -67,9 +67,37 @@ func TestTheLoopRowIsTheRecordThePlaysRead(t *testing.T) {
 		_, has := k.Field(invented)
 		assert.False(t, has, "loop has a field %s: the log is derived, the user is the machine's, the width is the machine row's, the rest is not a fact anything reads", invented)
 	}
-	assert.Equal(t, "~/nova-bench/loops/l1.log", LoopLog("l1"))
+	assert.Equal(t, "~/nova-bench/loops/l1.log", LoopLog(seededLoopsDir, "l1"))
 	names := strings.Join(KindNames(), ",")
 	assert.Less(t, strings.Index(names, KindMachine), strings.Index(names, KindLoop), "loops apply after machines: each names one")
+}
+
+// TestLoopLogIsTheFleetRowsDirectory: the migration's seed reproduces today's
+// log path, another directory changes it, and an empty directory is refused
+// by the fleet kind's Check (docs/SPEC-CONFIG.md, "fleet").
+func TestLoopLogIsTheFleetRowsDirectory(t *testing.T) {
+	t.Parallel()
+
+	all, err := Migrations()
+	require.NoError(t, err)
+	var sql string
+	for _, m := range all {
+		if strings.Contains(m.SQL, "loops_dir") {
+			sql += m.SQL
+		}
+	}
+	require.Contains(t, sql, seededLoopsDir, "migration 0020 seeds the fleet row")
+	assert.Equal(t, "~/nova-bench/loops/l1.log", LoopLog(seededLoopsDir, "l1"))
+	assert.Equal(t, "/var/log/loops/l1.log", LoopLog("/var/log/loops", "l1"))
+	fleet, ok := Lookup(KindFleet)
+	require.True(t, ok)
+	f, ok := fleet.Field("loops_dir")
+	require.True(t, ok)
+	assert.Equal(t, TypePath, f.Type)
+	assert.Empty(t, f.Default, "default none in code")
+	err = fleet.Check(Row{Fields: map[string]string{"loops_dir": ""}})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "fleet set --loops_dir")
 }
 
 func TestLoopNewRowCanonicalisesAndRefusesEveryProblemAtOnce(t *testing.T) {

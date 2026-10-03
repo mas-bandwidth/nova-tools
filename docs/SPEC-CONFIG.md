@@ -46,7 +46,7 @@ Where each field of this cut sits:
 | side | fields |
 | --- | --- |
 | machine (varies per machine) | `user`, `seat`, `slots`, `runners`, `width`, `tla`, `note` |
-| fleet (one value for the whole fleet) | `store`, `coordinator` (both machines), `redis_port`, `pg_dsn` |
+| fleet (one value for the whole fleet) | `store`, `coordinator` (both machines), `redis_port`, `pg_dsn`, `loops_dir` |
 | friend (decided for her) | `slots`, `tiers`, `roles`, `width` |
 | sprint (one value for the whole sprint) | `coordinator` (a friend) |
 | loop (decided per supervised process) | `machine`, `argv`, `seat`, `keys`, `every`, `keepalive`, `width`, `enabled` |
@@ -99,6 +99,7 @@ never an `ADD` or a `REMOVE`.
 | type | value | column |
 | --- | --- | --- |
 | `text` | one line of free text | `text` |
+| `path` | one line, a directory path; the descriptor declares no default, and the kind's Check refuses an empty one | `text` |
 | `int` | a non-negative integer | `integer` |
 | `enum` | one word of the field's list | `text` |
 | `list` | a comma list of words from the field's list, deduplicated and sorted | `text` |
@@ -198,9 +199,11 @@ row's.
 | `coordinator` | ref machine | | the plays: where the coordinator's loops run; apply: the machine a friend with no beat is charged to | `fleet:coordinator` |
 | `redis_port` | nullable int (no default) | | the inventory and plays: explicit Redis TCP port, 1 through 65535; unset until declared | `fleet:redis_port` |
 | `pg_dsn` | text | | the inventory and tools play: the explicit password-free Postgres URI; empty until set, never derived from `store` | `fleet:pg_dsn` |
+| `loops_dir` | path | | apply and the inventory: the directory a loop's log is written under; empty is refused; migration 0020 seeds `~/nova-bench/loops` | `fleet:loops_dir` |
 
-The kind's `Check` bounds `redis_port` and accepts only a password-free
-`postgres://user@host[:port]/database` URI for a nonempty `pg_dsn`. A refusal
+The kind's `Check` bounds `redis_port`, accepts only a password-free
+`postgres://user@host[:port]/database` URI for a nonempty `pg_dsn`, and
+refuses an empty `loops_dir` (`nova-config fleet set --loops_dir <path>`). A refusal
 never reproduces a password from the input.
 Fleet apply and inventory refuse either endpoint unset, naming one
 `nova-config fleet set --redis_port <port> --pg_dsn <dsn>` command. Migration 0014 (`0014_fleet_endpoints.sql`)
@@ -255,7 +258,7 @@ Migration 0013 had made a loop's width a field its command ran with;
 migration 0017 removed the field, took `--width` out of every member argv that
 carried one and removed the second reader rows (`reader-<m>-2`), one reader
 per machine.
-The log path is derived from the name, `~/nova-bench/loops/<name>.log`
+The log path is derived from the fleet row's `loops_dir` and the loop's name
 (`LoopLog`), and is never typed. A machine a loop names cannot be removed
 (`machine m1 is the --machine of loop member-m1`); `machine show <m>` names
 the machine's loops (`loops=<a,b>`, `-` for none).
@@ -395,6 +398,8 @@ config.machines          (name PK, "user", seat, slots, runners,
 config.fleet             (name PK = 'fleet', store -> machines.name,
                           coordinator -> machines.name, redis_port, pg_dsn,
                           created_at, updated_at;
+                          loops_dir added by 0020, text NOT NULL DEFAULT '',
+                          seeded '~/nova-bench/loops';
                           the one row inserted by the migration)
 config.friends           (name PK, slots, tiers, roles, created_at, updated_at;
                           width added by 0018, integer NOT NULL DEFAULT 8, which fills every row there

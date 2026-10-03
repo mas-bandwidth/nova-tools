@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"maps"
 	"net/url"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -36,6 +37,10 @@ type Type string
 const (
 	// TypeText is free text, stored as text, escaped on the typed line.
 	TypeText Type = "text"
+	// TypePath is one line of a directory path, stored as text. The
+	// descriptor declares no default; a kind's Check refuses an empty one
+	// (docs/SPEC-CONFIG.md, "fleet").
+	TypePath Type = "path"
 	// TypeInt is a non-negative integer, stored as integer.
 	TypeInt Type = "int"
 	// TypeEnum is one word from Field.Enum, stored as text.
@@ -248,12 +253,13 @@ var Kinds = []*Kind{
 		Name:      KindFleet,
 		Table:     "fleet",
 		Singleton: true,
-		Doc:       "the one row of fleet-wide facts: the store and coordinator machines, Redis port and explicit password-free Postgres URI",
+		Doc:       "the one row of fleet-wide facts: the store and coordinator machines, Redis port, explicit password-free Postgres URI, and the directory loops write logs under",
 		Fields: []Field{
 			{Name: "store", Type: TypeRef, Ref: KindMachine, Help: "the machine that runs Redis (a machine row), or empty"},
 			{Name: "coordinator", Type: TypeRef, Ref: KindMachine, Help: "the machine the coordinator's loops run on (a machine row), or empty"},
 			{Name: "redis_port", Type: TypeInt, Nullable: true, Help: "the explicit TCP port Redis listens on, from 1 through 65535; unset until declared"},
 			{Name: "pg_dsn", Type: TypeText, Help: "the explicit password-free postgres:// URI the configuration store uses; empty until set"},
+			{Name: "loops_dir", Type: TypePath, Help: "the directory on each machine a loop's log is written under, as <path>/<loop>.log; empty is refused"},
 		},
 		Check: checkFleet,
 	},
@@ -296,7 +302,7 @@ var Kinds = []*Kind{
 		// value is data in the row; the code names no machine, seat or
 		// secret (docs/SPEC-CONFIG.md, "loop"). The plays render one unit
 		// per row from the Redis view apply writes; the log path is derived
-		// from the name (LoopLog), never typed.
+		// from the fleet row's loops_dir and the loop's name (LoopLog), never typed.
 		Name:  KindLoop,
 		Table: "loops",
 		Doc:   "a supervised loop on one machine: its command, the seat and secret names it opens, and how it runs (every n seconds or kept alive); a nova-swarm member's width, a reader's too, is its machine row's, never the argv's",
@@ -374,7 +380,8 @@ func noteField(what string) Field {
 	return Field{Name: "note", Type: TypeText, Cut: true, Help: what + "; one line, empty (the default) when none; --note '' clears it"}
 }
 
-// checkFleet keeps both store endpoints explicit and safe to print. The
+// checkFleet keeps both store endpoints explicit and safe to print, and
+// refuses an empty loops directory (docs/SPEC-CONFIG.md, "fleet"). The
 // endpoints may be unset so an older fleet can migrate before an operator
 // declares them; apply and inventory refuse incomplete endpoints.
 func checkFleet(r Row) error {
@@ -384,8 +391,19 @@ func checkFleet(r Row) error {
 			return fmt.Errorf("--redis_port wants an integer from 1 through 65535")
 		}
 	}
-	dsn, ok := r.Fields["pg_dsn"]
-	if !ok || dsn == "" {
+	if err := checkFleetDSN(r.Fields["pg_dsn"]); err != nil {
+		return err
+	}
+	if r.Fields["loops_dir"] == "" {
+		return fmt.Errorf("--loops_dir is empty; run: nova-config fleet set --loops_dir <path>")
+	}
+	return nil
+}
+
+// checkFleetDSN accepts an empty DSN and refuses one that is not a
+// password-free postgres URI (docs/SPEC-CONFIG.md, "fleet").
+func checkFleetDSN(dsn string) error {
+	if dsn == "" {
 		return nil
 	}
 	u, err := url.Parse(dsn)
@@ -476,10 +494,16 @@ func checkRouteChanges(changes map[string]string) error {
 	return nil
 }
 
+// seededLoopsDir is the directory the fleet migration writes on the existing
+// fleet row so an apply of that row keeps today's log paths. The field's
+// default is none (docs/SPEC-CONFIG.md, "fleet").
+const seededLoopsDir = "~/nova-bench/loops"
+
 // LoopLog is where a loop's unit writes its output on its machine, derived
-// from the name and never typed: ~/nova-bench/loops/<name>.log. apply writes
-// it into the loop's Redis hash beside the row's fields.
-func LoopLog(name string) string { return "~/nova-bench/loops/" + name + ".log" }
+// from the fleet row's loops_dir and the loop's name, and never typed:
+// <dir>/<name>.log (docs/SPEC-CONFIG.md, "fleet"). apply writes it into the
+// loop's Redis hash beside the row's fields.
+func LoopLog(dir, name string) string { return path.Join(dir, name+".log") }
 
 // checkLoop is the loop kind's Check: exactly one of every and keepalive
 // says how it runs, secret names need a seat to open them from, and a
@@ -659,7 +683,7 @@ func ValidateName(name string) error {
 func (f Field) Canonical(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	switch f.Type {
-	case TypeText:
+	case TypeText, TypePath:
 		if strings.ContainsAny(raw, "\n\r") {
 			return "", fmt.Errorf("--%s: want one line", f.Name)
 		}
