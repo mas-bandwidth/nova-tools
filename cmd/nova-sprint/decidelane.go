@@ -234,7 +234,7 @@ func (l *decideLane) attach(outcomes []sprint.DecideOutcome) (int, []string) {
 		var conflict *decide.ConflictError
 		switch {
 		case errors.Is(err, decide.ErrUnknown), errors.As(err, &conflict), errors.Is(err, os.ErrNotExist):
-			l.attached[o.Op] = true
+			// a decision the record does not hold: nothing attached, and never asked again
 		case err != nil:
 			problems = append(problems, fmt.Sprintf("the outcome of %s: %v", o.Op, err))
 			continue

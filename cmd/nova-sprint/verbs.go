@@ -1783,9 +1783,14 @@ func (a *app) cmdFinish(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "finish", err.Error())
 	}
 	if decided != "" && a.decide != nil {
-		// the decide lane records it (decidelane.go); a finish refused records it all the same,
-		// since the take it decided ended
-		defer a.decide.put(d)
+		// the decide lane records it (decidelane.go) when the finish moved its card: a finish
+		// refused (one naming another take's decision among them) records nothing
+		c.after = func(_ context.Context, _ *store.Store, res store.Result) []string {
+			if len(res.Moved) > 0 {
+				a.decide.put(d)
+			}
+			return nil
+		}
 	}
 	return a.runStep("finish", *c, st, store.FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: ids}, As: *as, Gens: gens, Failed: *failed,
 		Head: *head, Report: *report, Branch: *branch, Base: *baseBranch, Usage: *usage, Decided: decided, Who: *as}), stdout, stderr)

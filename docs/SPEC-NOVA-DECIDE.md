@@ -189,9 +189,9 @@ the strings route; a review round attaches its own label with `outcome`.
 ## 9. The attempt decision
 
 `attempt --brief <file> [--result <file>] --reason <line>` is how a work take ended,
-asked after it ends (the owner, 2026-10-02, the agreed plan's layer 2: "result
-classification after each attempt (done / nothing to do / wrong scope / no result /
-needs pro)"). The state is the card's brief, the child's RESULT.md (cut to 16 KB;
+asked after it ends (the agreed plan of 2026-10-02, layer 2: result classification
+after each attempt, done, nothing to do, wrong scope, no result or needs pro; the owner
+agreed to the plan: "OK let's do this too", 2026-10-02 ~9:40 PM ET). The state is the card's brief, the child's RESULT.md (cut to 16 KB;
 `(none: the child wrote no RESULT.md)` when there is none) and the member's reason
 line for the take's end, each under its own heading. One question, `class`, a choice;
 each option's criterion, word for word (`TestAttemptAndGradeSchemasAreThePinnedOnes`
@@ -253,10 +253,10 @@ class was not measured.)
 
 ## 10. The grade decision
 
-`grade --brief <file>` is a card's convergence before its first deal (the owner,
-2026-10-02, the agreed plan's layer 2: "convergence grade and route choice before the
-deal"; and the same evening, of what the grade measures: "work we are confident is
-going to converge"). The state
+`grade --brief <file>` is a card's convergence before its first deal (the agreed plan
+of 2026-10-02, layer 2: a convergence grade and route choice before the deal; and the
+owner the same evening, of what the grade measures: "work we are confident is going to
+converge"). The state
 is the brief alone. One question, `grade`, a choice:
 
 | option | criterion |

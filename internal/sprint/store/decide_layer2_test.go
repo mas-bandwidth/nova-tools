@@ -70,7 +70,7 @@ func TestTheDealWritesTheAttemptBarsOnTheWorkCard(t *testing.T) {
 // nothing-to-do`. Every other class (needs-pro, wrong-scope, provider-failure, done) is
 // recorded and shown and never routes; a decision under its bar, or whose class's bar is
 // empty, leaves the prefix rule standing; and a report the provider failed, or a staging
-// refusal, is never overridden by a decision. The work card keeps the decision and whether
+// refusal or a launch refused, is never overridden by a decision. The work card keeps the decision and whether
 // it routed the finish; the primary keeps its record of the decision for the outcome.
 func TestAFailedFinishGoesByItsAttemptDecisionAtItsClassBar(t *testing.T) {
 	t.Parallel()
@@ -99,6 +99,7 @@ func TestAFailedFinishGoesByItsAttemptDecisionAtItsClassBar(t *testing.T) {
 		{"a provider failure is never made failed work", both, providerLine, decide.ClassNothingToDo, 0.99, sprint.Withdrawn, "", false},
 		{"a provider failure is never made no result", both, providerLine, decide.ClassNoResult, 0.99, sprint.Withdrawn, "", false},
 		{"a staging refusal is the member's", both, cardhdr.EndStaging + ": no bench mirror", decide.ClassNoResult, 0.99, sprint.Withdrawn, "", false},
+		{"a launch refused is the member's", both, cardhdr.EndLaunch + ": no worktree", decide.ClassNoResult, 0.99, sprint.DoneFailed, "", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -152,6 +153,28 @@ func TestAFailedFinishGoesByItsAttemptDecisionAtItsClassBar(t *testing.T) {
 	res := h.run(FinishStep(sprint.FinishReq{As: as, Sel: sprint.Sel{IDs: []string{"s1-1.w1", "s1-2.w1"}}, Gens: gens, Failed: true, Report: "r", Decided: decidedLine(decide.ClassNoResult, 0.9, "s1-1", 1), Who: as}))
 	require.Len(t, res.Refused, 2)
 	assert.Contains(t, res.Refused[0].Why, "names one card")
+}
+
+// The primary's record of a decision (decided:<op>) is set once: a later take of the same
+// attempt whose decision has the same op (an identical state) leaves the first record,
+// though its class differs and it routes its own finish.
+func TestTheRecordOfADecisionIsSetOnce(t *testing.T) {
+	t.Parallel()
+	h := routeHarness(t, route("flash-a", "flash"), route("flash-b", "flash"))
+	h.addReady("s1", 1, briefOf("flash", ""))
+	h.m.SetDecideBars(Bars{AttemptNoResult: "0.7"})
+	h.must(DealStep(sprint.DealReq{}))
+	first := decidedLine(decide.ClassNothingToDo, 0.99, "s1-1", 1)
+	h.decideTake("s1-1.w1", providerLine, first)
+	d, _ := decide.ParseDecided(first)
+	assert.Equal(t, "nothing-to-do p=0.990 used=no", h.snap().Work.Card("s1-1").F(sprint.PrefixDecided+d.Op))
+
+	h.must(DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
+	h.decideTake("s1-1.w1", "verdict not-done; tests red in x", decidedLine(decide.ClassNoResult, 0.93, "s1-1", 1))
+	s := h.snap()
+	assert.Equal(t, "yes", s.Fleet.Card("s1-1.w1").F(sprint.FieldDecidedUsed), "the second decision routes its own finish")
+	assert.Equal(t, "nothing-to-do p=0.990 used=no", s.Work.Card("s1-1").F(sprint.PrefixDecided+d.Op), "the first record stands")
+	h.clean("set once")
 }
 
 // A finish is routed only by a decision of its own take: one whose op names another card,

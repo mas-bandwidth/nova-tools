@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -103,6 +104,53 @@ func TestTheDecideLaneGradesRecordsAndAttachesOutcomes(t *testing.T) {
 	cal, err := decide.Calibrate(grades, decide.GradeName, "grade=pro", []string{"pro"}, []string{decide.LabelDropped})
 	require.NoError(t, err)
 	assert.Equal(t, 2, len(cal.Positives))
+	ta.clean()
+}
+
+// A finish the server refuses records no decision: one carrying another attempt's decision
+// is refused, and the lane's next round records nothing; the take's own decision then
+// finishes it and is recorded.
+func TestARefusedFinishRecordsNoDecision(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a --members m1")
+	ta.ok("add --stream s1 --count 1 --brief-file " + proBriefFile(t))
+	dir := t.TempDir()
+	ta.a.decide = newDecideLane(dir, fixedGrade(), ta.a.now, GradeWait)
+	ctx := context.Background()
+	var out bytes.Buffer
+	ta.a.decideRound(ctx, "mem:0", &out)
+	ta.deal(1)
+	ta.ok("take --as m1 --limit 1")
+	var q struct{ Cards []queueCard }
+	ta.json("queue --as m1", &q)
+	require.Len(t, q.Cards, 1)
+	gen := strconv.Itoa(q.Cards[0].Gen)
+	attempt := decide.Fixed{Table: map[string]decide.FixedAnswer{decide.AttemptQuestion: {Choice: decide.ClassNoResult, P: map[string]float64{decide.ClassNoResult: 0.9, decide.ClassNeedsPro: 0.1}}}}
+	finish := func(at int) (int, string) {
+		d, err := decide.AttemptDecision(ctx, attempt, "s1-1", at, ta.primary("s1-1").F("brief"), "(none: the child wrote no RESULT.md)", "verdict not-done; x", ta.a.now())
+		require.NoError(t, err)
+		raw, err := json.Marshal(d)
+		require.NoError(t, err)
+		var o, e bytes.Buffer
+		ta.beat()
+		code := ta.a.run(ta.withEpoch([]string{"finish", "--as", "m1", "s1-1.w1@" + gen, "--failed", "--report", "verdict not-done; x", "--decision", string(raw)}), &o, &e)
+		return code, o.String() + e.String()
+	}
+	code, said := finish(2)
+	assert.NotEqual(t, 0, code, said)
+	assert.Contains(t, said, "not this take's s1-1@1")
+	out.Reset()
+	ta.a.decideRound(ctx, "mem:0", &out)
+	assert.NotContains(t, out.String(), "recorded=1", "the refused finish's decision is not recorded")
+	_, err := os.Stat(filepath.Join(dir, "attempt.jsonl"))
+	assert.ErrorIs(t, err, os.ErrNotExist)
+
+	code, said = finish(1)
+	require.Equal(t, 0, code, said)
+	out.Reset()
+	ta.a.decideRound(ctx, "mem:0", &out)
+	assert.Contains(t, out.String(), "DECIDE recorded=1")
 	ta.clean()
 }
 
