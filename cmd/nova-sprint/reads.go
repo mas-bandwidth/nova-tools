@@ -609,9 +609,12 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 		return whereView{}, "", err
 	}
 	v.Held = int64(held)
+	// the landed stamps for the last hour's rate; a read of them that fails (the
+	// landed column busy with landings) leaves the whole sprint's average, never a
+	// failed view
 	landedAt, err := st.LandedAt(ctx)
 	if err != nil {
-		return whereView{}, "", err
+		landedAt = nil
 	}
 	v.Summary = summary(shapes[0], v.Held, a.heldETA(now, etaKey{v.All, v.Held}, etaMinutes(shapes[0], st.LandingRate(ctx, landedAt, v.Landed))))
 
