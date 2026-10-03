@@ -36,6 +36,7 @@ func cmdStep(args []string, stdout, stderr io.Writer) int {
 	remainder := f.fs.String("remainder", "", "print the remainder card of this card `id` from --from, staged at --land, and run nothing")
 	from := f.fs.String("from", "", "with --remainder: the failed `step` the remainder starts at")
 	land := f.fs.String("land", "", "with --remainder: the full `sha` steps 1..n-1 landed at (the finish's pushed=)")
+	dryRun := f.fs.Bool("dry-run", false, "print each step the walk would run (its language, paths and POST lines) and the wall its commands would run in, and run and write nothing")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -74,6 +75,16 @@ func cmdStep(args []string, stdout, stderr io.Writer) int {
 	wall, why := stepWall(*sandbox, *noWall)
 	if why != "" {
 		return refuse(stderr, "step", why)
+	}
+	if *dryRun {
+		bin := wall.Bin
+		if bin == "" {
+			bin = "none"
+		}
+		for _, s := range t.Work() {
+			fmt.Fprintf(stdout, "STEP PLAN step=%s lang=%s paths=%s posts=%d wall=%s\n", oneline.Field(s.Num), oneline.Field(s.Lang), oneline.Field(strings.Join(s.Paths, ",")), len(s.Post), oneline.Field(bin))
+		}
+		return 0
 	}
 	if *work == "" {
 		if *work, err = os.MkdirTemp("", "nova-step-"); err != nil {

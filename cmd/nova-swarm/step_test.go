@@ -156,3 +156,17 @@ func TestAScriptCardIsNicedOnDarwin(t *testing.T) {
 	}
 	assert.Equal(t, []string{"/bin/nova-swarm", "step", "--card", "c.md"}, step, "the argv handed in is not written through")
 }
+
+// --dry-run prints each step the walk would run and the wall, and writes nothing.
+func TestTheStepVerbsDryRunWritesNothing(t *testing.T) {
+	t.Parallel()
+	repo := stepRepo(t)
+	card := writeLintCard(t, "d.md", "RESULT: d sha=0123456789ab\nPATHS: a.txt\n\nSTEP 1. Enter.\n"+regexStep("2", "s|Foo|Bar|", "Bar and Bar\n")+"STEP 3. End.\n")
+	exit, stdout, stderr := runSwarm(t, "step", "--card", card, "--dir", repo, "--no-wall", "--dry-run")
+	require.Equal(t, 0, exit, stderr)
+	assert.Equal(t, "STEP PLAN step=2 lang=regex paths=a.txt posts=1 wall=none\n", stdout)
+	assert.Equal(t, "base\n", runGit(t, repo, "log", "-1", "--format=%s"), "nothing committed")
+	b, err := os.ReadFile(filepath.Join(repo, "a.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, "Foo and Foo\n", string(b), "nothing run")
+}

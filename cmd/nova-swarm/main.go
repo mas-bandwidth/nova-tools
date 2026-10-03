@@ -155,6 +155,9 @@ func verbHelpLines(verb string) string {
 	if verb == "template" {
 		add = cardLines
 	}
+	if verb == "step" {
+		add = "effect: local write: commits in the checkout --dir names, and runs the card's programs in their own wall; --dry-run writes nothing\n"
+	}
 	if verb == "disk-guard" {
 		add = "effect: local write: removes and rotates files on this machine; --dry-run writes nothing\n"
 	}

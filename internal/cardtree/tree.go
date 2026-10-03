@@ -127,7 +127,7 @@ func Parse(card string) Tree {
 				continue
 			}
 			switch key {
-			case "PATHS", "NEW":
+			case cardhdr.KeyPaths, "NEW":
 				t.Paths = append(t.Paths, globs(v)...)
 			case "FROM":
 				if t.FromLine == 0 {
@@ -145,7 +145,7 @@ func Parse(card string) Tree {
 			continue
 		}
 		switch key {
-		case "PATHS":
+		case cardhdr.KeyPaths:
 			cur.Paths = globs(v)
 		case "COMMIT":
 			cur.Commit = v
@@ -332,7 +332,7 @@ func lintStep(t Tree, s Step) []Finding {
 		out = append(out, Finding{Check: check, Line: line, Excerpt: fmt.Sprintf(format, a...)})
 	}
 	if !s.Work() {
-		for _, k := range []string{"PATHS", "VERDICT", "SCRIPT"} {
+		for _, k := range []string{cardhdr.KeyPaths, "VERDICT", "SCRIPT"} {
 			if l, ok := s.fields[k]; ok {
 				add(CheckStep, l, "STEP %s carries %s: and no COMMIT:", s.Num, k)
 			}
@@ -350,13 +350,13 @@ func lintStep(t Tree, s Step) []Finding {
 	}
 	for _, g := range s.Paths {
 		if !filepath.IsLocal(g) {
-			add(CheckStep, s.fields["PATHS"], "STEP %s's glob %s is not a relative path inside the checkout", s.Num, g)
+			add(CheckStep, s.fields[cardhdr.KeyPaths], "STEP %s's glob %s is not a relative path inside the checkout", s.Num, g)
 		}
 	}
 	if len(t.Paths) > 0 {
 		for _, g := range s.Paths {
 			if filepath.IsLocal(g) && !slices.Contains(t.Paths, g) {
-				add(CheckStep, s.fields["PATHS"], "STEP %s's glob %s is not in the card's PATHS: or NEW:", s.Num, g)
+				add(CheckStep, s.fields[cardhdr.KeyPaths], "STEP %s's glob %s is not in the card's PATHS: or NEW:", s.Num, g)
 			}
 		}
 	}
