@@ -17,10 +17,11 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 		{Verb: "read", Flags: append([]string{"--backend", "jev"}, record...)},
 		{Verb: "score", Flags: append([]string{"--backend", "jev"}, record...)},
 		{Verb: "gate", Flags: append([]string{"--backend", "jev"}, record...)},
+		{Verb: "brief", Flags: append([]string{"--backend", "jev", "--card", "{dir}"}, record...)},
 		{Verb: "outcome", Flags: record},
 		{Verb: "calibrate", Flags: record},
 		{Verb: "findings", Flags: record},
 		{Verb: "version"},
 	})
-	testverbhelp.HelpVerb(t, cli.NoStdin(), "nova-decide", "ask", "read", "score", "gate", "outcome", "calibrate", "findings", "version")
+	testverbhelp.HelpVerb(t, cli.NoStdin(), "nova-decide", "ask", "read", "score", "gate", "brief", "outcome", "calibrate", "findings", "version")
 }

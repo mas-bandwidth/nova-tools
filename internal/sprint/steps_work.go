@@ -63,8 +63,13 @@ type AddReq struct {
 	// Held admits every card held (IsHeld): waiting, a sentinel never
 	// reached, nothing dealt, until the coordinator's release.
 	Held bool
-	Only []string
-	Who  string
+	// BriefOps is each card's brief decision op id (FieldBriefOp), by card id, and
+	// BriefRecord the record that holds them (FieldBriefRecord): empty when add asked
+	// none.
+	BriefOps    map[string]string
+	BriefRecord string
+	Only        []string
+	Who         string
 }
 
 // gatePrefix is the prefix of the sentinels add --sentinel-every names.
@@ -356,6 +361,9 @@ func Add(s *Snapshot, r AddReq) Plan {
 			}
 			if who := WhoOfBrief(a.brief); who != "" {
 				fields[FieldWho] = who // a friend's card: the tick deals it to a friend (friend_deal.go)
+			}
+			if op := r.BriefOps[a.id]; op != "" {
+				fields[FieldBriefOp], fields[FieldBriefRecord] = op, r.BriefRecord
 			}
 		}
 		if len(a.needs) > 0 {

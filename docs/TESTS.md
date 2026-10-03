@@ -697,7 +697,7 @@ Postgres and a throwaway Redis.
 
 ```text
 $ nova-config migrate --file try.json
-CONFIG MIGRATE file=try.json from=0 to=25 applied=25
+CONFIG MIGRATE file=try.json from=0 to=26 applied=26
 
 $ nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --as a1 --file try.json
 CONFIG ADD kind=machine name=m1 rev=1
@@ -758,13 +758,14 @@ RECEIPT OK session=s1 entry=e1 stamp=2026-09-17T12:05:00Z bytes=17 source=bench-
 ## nova-decide
 
 Fixture: `cmd/nova-decide/testdata/`: a schema and a state, a card and its
-diff, a child's RESULT.md, a red gate's go test output, the fixed backend's
-answers for each decision (ask, read, score, attempt, grade, gate), and a record
-of eight labelled read decisions and five score decisions of landed diffs. Every
-line below uses the fixed backend, so it needs no network and no key;
-`cmd/nova-decide/firstrun_test.go` runs each `$` line from a checkout root in
-one sitting, with `./decisions.jsonl` a file in the test's own directory. The
-ids come from `--op`, so every line reads the same twice.
+diff, a child's RESULT.md, a red gate's go test output, a card to add
+(`greet.md`), the fixed backend's answers for each decision (ask, read, score,
+attempt, grade, gate, brief), and a record of eight labelled read decisions and
+five score decisions of landed diffs. Every line below uses the fixed backend,
+so it needs no network and no key; `cmd/nova-decide/firstrun_test.go` runs each
+`$` line from a checkout root in one sitting, with `./decisions.jsonl` a file in
+the test's own directory. The ids come from `--op`, so every line reads the same
+twice.
 
 ### First run
 
@@ -814,6 +815,10 @@ GATE OK op=c1@1@gate decision=gate backend=fixed failures=2 route=caused
 GATE FAILURE key=example/tools/internal/serve.TestPortInUse id=c1@1@gate/example/tools/internal/serve.TestPortInUse class=flaky p=caused:0.06,flaky:0.86,pre-existing:0.08 route=caused recorded=new
 GATE FAILURE key=example/tools/internal/greet.TestGreetNamesTheReader id=c1@1@gate/example/tools/internal/greet.TestGreetNamesTheReader class=flaky p=caused:0.06,flaky:0.86,pre-existing:0.08 route=caused recorded=new
 
+$ nova-decide brief --card ./cmd/nova-decide/testdata/greet.md --backend fixed --answers ./cmd/nova-decide/testdata/brief-answers.json --record ./decisions.jsonl
+BRIEF OK decision=brief backend=fixed cards=1 asked=1 existing=0 failed=0
+BRIEF CARD id=greet op=greet@brief-825042ac p_converges=0.72 minutes=under-10 failed=- uncalibrated=true recorded=new
+
 $ nova-decide outcome --record ./decisions.jsonl --id card-1 --label ok --note "the review found nothing"
 OUTCOME OK id=card-1 decision=read label=ok changed=true
 
@@ -832,17 +837,19 @@ FINDINGS FINDING class=invented_reason count=1 cards=s1-2
 FINDINGS FINDING class=unnamed count=1 cards=s1-4
 ```
 
-The ask, read, score, attempt, grade, gate and outcome lines write
+The ask, read, score, attempt, grade, gate, brief and outcome lines write
 `./decisions.jsonl`; calibrate and findings read the fixture record, because a
 calibration wants positives and negatives both and findings wants scores to
 cluster. The fixed backend answers every failure of the gate alike, and with no
 `--bars` (the sprint row's default) every failure is recorded with its class and
 routed caused, the take as reported; `--bars 0.8,0.8` routes both flaky. With
-`--backend jev` the same `ask`, `read`, `score`, `attempt`, `grade` and `gate`
-lines ask the model instead, under `nova-secrets exec --only JEV_API_KEY`, and
-their lines carry the tokens spent, each failure of a gate on its own. The gate
-decision's calibration records (base run, and base not run) are
-`internal/decide/testdata/gate-calibration-*.jsonl`.
+`--backend jev` the same `ask`, `read`, `score`, `attempt`, `grade`, `gate` and
+`brief` lines ask the model instead, under `nova-secrets exec --only
+JEV_API_KEY`, and all but the brief's lines carry the tokens spent, each failure
+of a gate on its own. The gate decision's calibration records (base run, and
+base not run) are `internal/decide/testdata/gate-calibration-*.jsonl`. The
+brief's op id ends in the hex of the schema and the card, so a reworded schema
+or card changes it and this transcript names the change.
 
 ## nova-redis
 

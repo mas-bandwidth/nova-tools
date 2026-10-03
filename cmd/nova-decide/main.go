@@ -27,18 +27,19 @@ import (
 var version string
 
 // world is what the tool reaches outside itself: the clock every record stamp
-// reads, the environment the backend's key comes from, and the Jev transport
-// (its client bounded by --timeout, as the ask's context is).
-// main passes the real one; a test passes its own, so no test opens a socket,
-// reads the real clock or needs a key.
+// reads, the environment the backend's key comes from, the Jev transport (its
+// client bounded by --timeout, as the ask's context is), and the deadline of a
+// brief batch. main passes the real one; a test passes its own, so no test opens
+// a socket, reads the real clock or needs a key.
 type world struct {
-	now    func() time.Time
-	getenv func(string) string
-	send   func(key string, timeout time.Duration) decide.Send
+	now      func() time.Time
+	getenv   func(string) string
+	send     func(key string, timeout time.Duration) decide.Send
+	deadline time.Duration // brief's whole batch (decide.BriefDeadline, as nova-sprint add's)
 }
 
 func realWorld() world {
-	return world{now: time.Now, getenv: os.Getenv,
+	return world{now: time.Now, getenv: os.Getenv, deadline: decide.BriefDeadline,
 		send: func(key string, timeout time.Duration) decide.Send { return decide.JevHTTP(key, timeout).Send }}
 }
 
@@ -71,6 +72,7 @@ Each answer prints as one ANSWER line: a choice's value and every option's p, a 
 					f.Required("schema", "the decision's schema, a JSON file")
 					f.Required("state", "the text the decision is made over, a file, or - for stdin")
 					w.asking(f)
+					f.Op()
 				},
 				Run: w.ask,
 			},
@@ -88,6 +90,7 @@ or UNSURE). The state is the card, the rule when --rule names one, and the diff,
 					f.Required("diff", "the worker's unified diff, a file")
 					f.String("rule", "", "a rule text the read holds the diff to as well, a file")
 					w.asking(f)
+					f.Op()
 				},
 				Run: w.read,
 			},
@@ -106,6 +109,7 @@ The line names the top class and its p; nova-sprint land asks it as <card>@lande
 					f.Required("card", "the card the worker was given, a file")
 					f.Required("diff", "the landed unified diff, a file")
 					w.asking(f)
+					f.Op()
 				},
 				Run: w.score,
 			},
@@ -123,6 +127,7 @@ the child's RESULT.md (none when --result is not given) and the member's reason 
 					f.String("result", "", "the child's RESULT.md, a file; absent when the child wrote none")
 					f.Required("reason", "the member's reason line for the take's end, as text")
 					w.asking(f)
+					f.Op()
 				},
 				Run: w.attempt,
 			},
@@ -137,6 +142,7 @@ the child's RESULT.md (none when --result is not given) and the member's reason 
 				Flags: func(f *tool.Flags) {
 					f.Required("brief", "the card's brief, a file")
 					w.asking(f)
+					f.Op()
 				},
 				Run: w.grade,
 			},
@@ -161,6 +167,7 @@ is, else pre-existing.`,
 					f.String("base-red", "", "the failing tests red at the card's base, comma-separated (<Test> or <pkg>.<Test>); given empty, none is")
 					f.String("bars", "", "the flaky and the pre-existing bars, <flaky>,<pre-existing>: each a probability or empty (that route taken by no failure), two set ones summing above 1; empty (the default) routes none, as the sprint row's defaults do; 0.8,0.8 is the starting point")
 					w.asking(f)
+					f.Op()
 					f.Check(func(c *tool.Call) {
 						if _, err := gateBars(c.Str("bars")); err != nil {
 							c.Problem(err.Error())
@@ -168,6 +175,33 @@ is, else pre-existing.`,
 					})
 				},
 				Run: w.gate,
+			},
+			{
+				Name:    "brief",
+				Usage:   "brief --card <file|dir> --backend <jev|fixed> [--answers <file>] --record <file> [--width <n>] [--timeout <d>] [--max <n>] [--dry-run]",
+				Example: "brief --card " + fixture + "greet.md --backend fixed --answers " + fixture + "brief-answers.json --record ./decisions.jsonl",
+				Effect:  tool.Delivery + "; with --backend jev it sends each card to the backend, and it appends to --record",
+				Detail: `The brief decision: a card's text alone, as a flash child with no memory reads it, before
+the card is added. Six nouls (repo_branch, files_named, gate_stated, commit_stated,
+report_stated, one_thing), ambiguous_step (none, step-<n> or unnumbered), minutes, and
+converges, p that the child lands it on its first attempt: a rank, uncalibrated. The batch has
+one deadline, a minute, as nova-sprint add's; --timeout bounds each card. A directory is
+its *.md files as nova-sprint add --brief-dir reads them (none below it), each card's id its
+file's name without .md; each decision's id is <card>@brief-<hex>. One BRIEF CARD item per card,
+in id order; a card the backend failed is named, the rest are recorded.`,
+				DryRun: true,
+				Flags: func(f *tool.Flags) {
+					f.Required("card", "a card file, or a directory of *.md card files (as add --brief-dir reads it)")
+					w.asking(f)
+					f.Max()
+					f.Int("width", decide.BriefWidth, "how many cards are asked at once")
+					f.Check(func(c *tool.Call) {
+						if c.Int("width") < 1 {
+							c.Problem("--width must be at least 1")
+						}
+					})
+				},
+				Run: w.brief,
 			},
 			{
 				Name:    "outcome",
@@ -234,13 +268,13 @@ above the bar with no class there. A class that keeps coming back is a finder ru
 	}
 }
 
-// asking declares what ask and read share: the backend, the record, the op id
-// and the deadline, with the rules between them.
+// asking declares what the deciding verbs (ask, read, score, attempt, grade, gate
+// and brief) share: the backend, the record and the deadline, with the rules
+// between them; each but brief declares its --op itself.
 func (w world) asking(f *tool.Flags) {
 	f.Required("backend", "the backend that answers: jev or fixed")
 	f.String("answers", "", "the fixed backend's answers, a JSON file (--backend fixed only)")
 	f.Required("record", "the record file every decision is appended to (JSON lines; created if absent)")
-	f.Op()
 	f.Duration("timeout", decide.JevTimeout, "how long the backend may take to answer")
 	f.Check(func(c *tool.Call) {
 		switch b := c.Str("backend"); {
@@ -480,6 +514,61 @@ func gateBars(s string) (decide.GateBars, error) {
 		return decide.GateBars{}, fmt.Errorf("--bars %q: %v", s, err)
 	}
 	return b, nil
+}
+
+// brief makes the brief decision of every card --card names, as one batch.
+func (w world) brief(c *tool.Call) *tool.Out {
+	dry := c.DryRun() // read first: a refusal under --dry-run is still a refusal
+	cards, err := decide.CardFiles(c.Str("card"))
+	if err != nil {
+		return tool.Refuse(err.Error())
+	}
+	b, err := w.backend(c)
+	if err != nil {
+		return tool.Refuse(err.Error())
+	}
+	record := c.Str("record")
+	if dry {
+		ds, err := decide.Load(record)
+		if err != nil {
+			return tool.Refuse(err.Error())
+		}
+		held := 0
+		for id, text := range cards {
+			if decide.Find(ds, decide.BriefOp(id, text)) != nil {
+				held++
+			}
+		}
+		return tool.Done().Fact("decision", decide.BriefName).Fact("backend", b.Name()).Fact("cards", len(cards)).
+			Fact("recorded", held).Fact("to_ask", len(cards)-held)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), w.deadline) // one deadline for the batch, as add's
+	defer cancel()
+	made, err := decide.Briefs(ctx, b, cards, record, w.now(), c.Int("width"), c.Dur("timeout"))
+	if err != nil {
+		return tool.Refuse(err.Error())
+	}
+	o, failed, asked := tool.Done(), 0, 0
+	for _, m := range made {
+		id := m.Inputs["card"]
+		switch {
+		case m.Err != nil:
+			failed++
+			o.Item("card", "id", id, "op", m.ID, "recorded", "no", "error", tool.Text(m.Err.Error()))
+			continue
+		case !m.Existing:
+			asked++
+		}
+		br := decide.BriefOf(m.Decision)
+		o.Item("card", "id", id, "op", m.ID, "p_converges", round(br.Converges), "minutes", br.Minutes,
+			"failed", strings.Join(br.Failed, ","), "uncalibrated", true, "recorded", map[bool]string{true: "existing", false: "new"}[m.Existing])
+	}
+	if failed > 0 {
+		o.Status, o.Exit, o.Why = tool.Failed, 2, []string{fmt.Sprintf("the backend answered %d of %d cards; each one it failed is named on its BRIEF CARD line, and nothing was recorded for it", len(made)-failed, len(made))}
+		o.Remedy = "run the same line again: a recorded card is answered from the record and asks nothing"
+	}
+	return o.Fact("decision", decide.BriefName).Fact("backend", b.Name()).Fact("cards", len(made)).Fact("asked", asked).
+		Fact("existing", len(made)-asked-failed).Fact("failed", failed)
 }
 
 // decision makes one decision and records it (decide.Make): an op id already

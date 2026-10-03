@@ -79,6 +79,15 @@ type Packet struct {
 // own rules. It is the card's, so no later add changes what an earlier card's child reads.
 const FieldRules = "rules"
 
+// FieldBriefOp and FieldBriefRecord are the card's brief decision (internal/decide,
+// docs/SPEC-NOVA-DECIDE.md section 14): the op id add asked it under and the record
+// that holds it, written when add asked one, so land and drop attach the card's end
+// to that decision by its exact id; both absent when none was asked.
+const (
+	FieldBriefOp     = "brief_op"
+	FieldBriefRecord = "brief_record"
+)
+
 // BranchOf is the branch one launch of a work card's attempt is worked on: one per launch,
 // named by the sprint (its prefix, the card), the launch's generation and its epoch, as the
 // slot and job names are: sprint/<prefix><card>.g<gen>.e<epoch>. A card id comes back after a

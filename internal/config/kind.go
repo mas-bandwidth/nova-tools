@@ -259,13 +259,22 @@ const (
 // it to SprintKey(FieldDecideJudgment), which the sprint's routes read takes.
 const FieldDecideJudgment = "decide_judgment_bar"
 
+// FieldDecideBriefBar is the sprint row's bar on a brief decision's p(converges)
+// (internal/decide, BriefBar; docs/SPEC-NOVA-DECIDE.md section 14): nova-sprint add
+// refuses a card under it, and empty asks and reports only.
+const FieldDecideBriefBar = "decide_brief_bar"
+
 // checkSprint holds the decide read's bars together: both set, as probabilities with the
 // review bar at most the bounce bar (decide.ParseBars), or both empty (no decide read);
 // the landed score's bar a probability, or empty (no judgment); the gate's each a
 // probability or empty (that route not taken), two set ones summing above 1
 // (decide.ParseGateBars); and layer 2's three bars each a probability or empty
-// (decide.ParseBar). Every problem is named.
+// (decide.ParseBar); and the brief bar empty or a probability
+// (decide.ParseBriefBar). Every problem is named.
 func checkSprint(r Row) error {
+	if _, err := decide.ParseBriefBar(r.Fields[FieldDecideBriefBar]); err != nil {
+		return fmt.Errorf("sprint: %v", err)
+	}
 	bounce, hasB := r.Fields[FieldDecideBounce]
 	review, hasR := r.Fields[FieldDecideReview]
 	if bar := r.Fields[FieldDecideScoreBar]; bar != "" {
@@ -376,7 +385,7 @@ var Kinds = []*Kind{
 		Name:      KindSprint,
 		Table:     "sprint",
 		Singleton: true,
-		Doc:       "the one row of sprint-global facts: which friend coordinates, the two bars a flash card's decide read is routed by, the bar a landed diff's score is judged at, the attempt decision's no-result and nothing-to-do bars, the grade decision's bar, the two a failed gate's decisions are, and the bar a judgment decision is applied at",
+		Doc:       "the one row of sprint-global facts: which friend coordinates, the two bars a flash card's decide read is routed by, the bar a landed diff's score is judged at, the attempt decision's no-result and nothing-to-do bars, the grade decision's bar, the two a failed gate's decisions are, the bar a judgment decision is applied at, and the bar a card's brief is added at",
 		Fields: []Field{
 			{Name: "coordinator", Type: TypeRef, Ref: KindFriend, Help: "the friend who holds the coordinator role (a friend row), or empty; set it to hand over"},
 			{Name: FieldDecideBounce, Type: TypeDecimal, Default: "0.5", Help: "the decide read's bounce bar: a flash card whose first read gives p(defect) at or above it is bounced with the read's finding; a probability, at least --decide_review; 0.5 (the default); empty, with --decide_review empty, turns the decide read off"},
@@ -388,6 +397,7 @@ var Kinds = []*Kind{
 			{Name: FieldDecideGateFlaky, Type: TypeDecimal, Default: "", Help: "the gate decision's flaky bar: a failing test of a red gate (a work card's, the lander's batch) whose p(flaky) is at or above it is rerun once before the take or the batch is reported red; a probability, summing above 1 with --decide_gate_preexisting when both are set; empty (the default) reruns nothing, and every gate decision is still recorded and shown; 0.8 is the starting point the calibration of 2026-10-03 reads (docs/SPEC-NOVA-DECIDE.md section 12)"},
 			{Name: FieldDecideGatePreexisting, Type: TypeDecimal, Default: "", Help: "the gate decision's pre-existing bar: a work card's failing test whose p(pre-existing) is at or above it is reported `pre-existing: <test>`, the base's or the member's and never the card's; a probability; empty (the default) reclassifies nothing; 0.8 is the starting point, though at 0.8 24 of the calibration's 39 flaky failures would have been reported pre-existing"},
 			{Name: FieldDecideJudgment, Type: TypeDecimal, Help: "the judgment bar: nova-sprint answer applies the verb the judgment decision chose when its probability is at or above it, and lists it for the coordinator below it; a probability; empty (the default) applies nothing: every decision is recorded and what a bar would apply is listed; 0.8 is a starting point measured on 100 of the coordinator's own judgments (docs/SPEC-NOVA-DECIDE.md section 13), not an independent calibration"},
+			{Name: FieldDecideBriefBar, Type: TypeDecimal, Help: "the brief bar: nova-sprint add asks the brief decision of each card and refuses a card whose p(converges) is under it, naming the questions it failed; a probability; empty (the default) asks and reports only. The decision is uncalibrated (AUC 0.600 on 234 review labels, docs/SPEC-NOVA-DECIDE.md section 14): leave it empty until calibrate on the brief record's own outcomes supports a bar"},
 		},
 		Check: checkSprint,
 	},

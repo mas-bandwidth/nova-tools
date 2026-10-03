@@ -41,6 +41,7 @@ var version string
 
 func main() {
 	a := newApp(os.Getenv)
+	a.briefRecord = a.defaultBriefRecord // a test's app has none: no brief record, no brief decision
 	defer a.close()
 	os.Exit(a.run(os.Args[1:], os.Stdout, os.Stderr))
 }
@@ -153,6 +154,16 @@ type app struct {
 	// transport carries the balance poll's requests to the providers (balance.go):
 	// nil is http.DefaultTransport, a test gives a fake.
 	transport http.RoundTripper
+	// The brief decision before add (briefdecide.go): decideBackend is the backend over
+	// the key (Jev over its real transport unless a test sets it), briefRecord the record
+	// of brief decisions when add names none (nil, as in a test's app: none), and
+	// briefBar the sprint row's decide_brief_bar (nova-config's unless a test sets it).
+	// gateOnly, while set, runs add's checks and its brief decisions and stops before the
+	// store, keeping what was asked: the half of a served add that runs here.
+	decideBackend func(key string) decide.Backend
+	briefRecord   func() (string, error)
+	briefBar      func(ctx context.Context) (string, error)
+	gateOnly      *briefAsked
 }
 
 func newApp(getenv func(string) string) *app {
@@ -163,6 +174,8 @@ func newApp(getenv func(string) string) *app {
 	a.tip = a.branchTip
 	a.landRoot = defaultLandRoot
 	a.home = os.UserHomeDir
+	a.decideBackend = func(key string) decide.Backend { return decide.JevHTTP(key, decide.JevTimeout) }
+	a.briefBar = a.readBriefBar
 	return a
 }
 
@@ -264,6 +277,9 @@ type common struct {
 	// (stream=<s> cards=<n> before=<sentinel>).
 	addStream string
 	addBefore string
+	// brief is add's BRIEF and NOTE brief lines under --json (briefdecide.go), which its
+	// one JSON object holds.
+	brief []string
 }
 
 func (c *common) register(fs flagSet, getenv func(string) string) {

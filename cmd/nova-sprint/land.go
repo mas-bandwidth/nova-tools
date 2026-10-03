@@ -44,6 +44,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/diffcheck"
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -214,8 +215,9 @@ func idSpan(ids []string) string {
 // keeps the id and the epoch), and the repository and base its brief names.
 type landCard struct {
 	id, head, attempt, repo, base string
-	paths                         []string // the brief's PATHS globs, nil when it names none (checkCard)
-	brief                         string   // the brief, the card a landed diff is scored against (landscore.go)
+	paths                         []string     // the brief's PATHS globs, nil when it names none (checkCard)
+	brief                         string       // the brief, the card a landed diff is scored against (landscore.go)
+	primary                       *sprint.Card // the primary, whose brief decision its landing attaches to (briefdecide.go)
 }
 
 // pin is the card as the report's guard and the operation's arguments name
@@ -456,7 +458,7 @@ func (l *lander) stream(ctx context.Context, s *sprint.Snapshot, stream string) 
 	for _, c := range queue {
 		lc := landCard{id: c.ID, base: l.base}
 		if pr := s.Work.Placed(c.ID); pr != nil {
-			lc.head, lc.attempt = pr.F("head"), pr.F("attempt")
+			lc.head, lc.attempt, lc.primary = pr.F("head"), pr.F("attempt"), pr
 			cb := swarm.ReadCardBase([]byte(pr.F("brief")))
 			lc.repo, lc.paths, lc.brief = cb.Repo, cardPaths(pr.F("brief")), pr.F("brief")
 			if cb.Ref != "" {
@@ -729,6 +731,12 @@ func (l *lander) landed(b landBatch, stream string, pins []landCard) bool {
 	// pushed AND reported: only now are its cards' branches tagged for the cleanup (a
 	// batch pushed and not reported keeps them: land is run again and may need the heads)
 	l.tag(context.Background(), &b, pins)
+	var ends []briefEnd // each card's end, attached to the brief decision it names (briefdecide.go)
+	for _, c := range pins {
+		label, note := decide.LandLabel(c.attempt)
+		ends = append(ends, briefEndOf(c.id, c.primary, decide.End{Label: label, Note: note}))
+	}
+	b.Also = append(b.Also, l.a.attachBriefs(ends)...)
 	l.out = append(l.out, b)
 	// its diffs are scored after the whole pass (landscore.go): a score never holds a landing
 	l.toScore = append(l.toScore, scoreJob{at: len(l.out) - 1, stream: stream, pins: pins})
