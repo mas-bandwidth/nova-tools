@@ -201,6 +201,22 @@ func CardHeaderValue(raw []byte, key string) (value string, ok bool) {
 	return f.value, f.found
 }
 
+// CardPaths is the typed header's PATHS and NEW globs (docs/SPEC-SPRINT.md,
+// "A card is a tree of steps"). Both name files the card may change; a key
+// in the body or a step grants no scope. PATHS: none names no files.
+func CardPaths(raw []byte) []string {
+	var out []string
+	for _, key := range []string{"PATHS", "NEW"} {
+		value, _ := CardHeaderValue(raw, key)
+		for _, g := range strings.Split(value, ",") {
+			if g = strings.TrimSpace(g); g != "" && g != "none" {
+				out = append(out, g)
+			}
+		}
+	}
+	return out
+}
+
 // cardTypedKeys is the five lines SPEC-TOOLWORK.md §5 rule 1 names, as a set.
 var cardTypedKeys = map[string]bool{"KIND": true, "PATHS": true, "TEST": true, "LEGS": true, "SOURCE": true}
 

@@ -621,6 +621,43 @@ func TestLandHoldsEveryPushURLToTheRepository(t *testing.T) {
 	}
 }
 
+// NEW authorizes a file only in the card's typed header. The lander still
+// refuses a file named only in prose or a step, and any unrelated file (E12).
+func TestLandChecksNewFilesAgainstTheTypedHeader(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, scope, file string
+		landed            bool
+	}{
+		{"header NEW", "NEW: added.txt", "added.txt", true},
+		{"body NEW", "The task starts here.\nNEW: added.txt", "added.txt", false},
+		{"step NEW", "STEP 1. Work.\n  NEW: added.txt", "added.txt", false},
+		{"unrelated file", "NEW: added.txt", "other.txt", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := newLandRig(t)
+			brief := writeNeedsBrief(t, t.TempDir(), "a", "RESULT: a\nPATHS: a.txt\n"+tc.scope, "")
+			r.ok("add --stream s1 a --brief-file " + brief)
+			head := r.head("a", "main", tc.file, "added\n")
+			r.queued(map[string]string{"a": head}, "a")
+			before := r.git(r.remote, "rev-parse", "main")
+			code, out, errs := r.do("land --repo-dir " + r.clone + " --base main")
+			if tc.landed {
+				assert.Equal(t, 0, code, out+errs)
+				assert.Equal(t, map[string]string{"a": "landed/merged"}, r.places("a"))
+				assert.Equal(t, "added", r.git(r.remote, "show", "main:"+tc.file))
+			} else {
+				assert.Equal(t, 1, code, out+errs)
+				assert.Contains(t, errs, "it changes files outside its PATHS (E12): "+tc.file)
+				assert.Equal(t, map[string]string{"a": "merging/stuck"}, r.places("a"))
+				assert.Equal(t, before, r.git(r.remote, "rev-parse", "main"))
+			}
+			r.clean()
+		})
+	}
+}
+
 // The lander's mechanical checks (internal/diffcheck; docs/SPEC-SPRINT.md section 7) end
 // the batch at a card whose merged diff changes a file outside its PATHS (E12) or leaves
 // a stranded sentence fragment (E4), as a head that does not merge ends it: the cards
