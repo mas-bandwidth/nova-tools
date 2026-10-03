@@ -28,12 +28,12 @@ func TestLintDecidePrintsTheBriefDecisionAfterTheLint(t *testing.T) {
 	raw, err := os.ReadFile(card)
 	require.NoError(t, err)
 	want := "LINT DECIDE card=greet.md op=" + decide.BriefOp("greet", strings.TrimSuffix(string(raw), "\n")) +
-		" p_converges=0.72 minutes=under-10 failed=- recorded=new\n"
+		" p_converges=0.72 minutes=under-10 failed=- uncalibrated=true recorded=new\n"
 	assert.Equal(t, plainOut+want, stdout, "the lint's own lines, then the decision's")
 	_, stdout, _ = runSwarm(t, "lint", "--card", card, "--decide", "--decide-answers", answers, "--decide-record", record)
 	assert.True(t, strings.HasSuffix(stdout, "recorded=existing\n"), stdout)
 	_, stdout, _ = runSwarm(t, "lint", "--card", card, "--decide", "--decide-answers", answers)
-	assert.True(t, strings.HasSuffix(stdout, "failed=- recorded=no\n"), "with no record nothing is recorded: %s", stdout)
+	assert.True(t, strings.HasSuffix(stdout, "failed=- uncalibrated=true recorded=no\n"), "with no record nothing is recorded: %s", stdout)
 }
 
 // --decide with no key and no answers file is refused naming nova-secrets exec, and

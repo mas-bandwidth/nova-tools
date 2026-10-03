@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"context"
 	"fmt"
-	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
@@ -44,6 +43,10 @@ const noAmbiguity = "none"
 // briefSteps is how many numbered steps ambiguous_step names one by one.
 const briefSteps = 12
 
+// BriefWidth is how many cards a brief batch asks at once, in nova-sprint add and as
+// nova-decide brief's --width default.
+const BriefWidth = 8
+
 // BriefSchema is the brief's nine questions.
 func BriefSchema() Schema {
 	steps := map[string]string{
@@ -56,8 +59,9 @@ func BriefSchema() Schema {
 	return Schema{Name: BriefName, Questions: map[string]Question{
 		"repo_branch": {Type: Noul, Instructions: "The CARD names the repository the work is in and the branch or base it starts from " +
 			"(a REPO: and a BASE: line, or the same in words)."},
-		"files_named": {Type: Noul, Instructions: "The CARD names the exact files the work changes and, inside them, the lines, " +
-			"functions, tests or sections to change, so the child does not have to search for where the work is."},
+		"files_named": {Type: Noul, Instructions: "The CARD names where the work is: the files it changes, or a PATHS glob " +
+			"of them, and inside them the functions, tests, sections or lines to change, so the child does not have to " +
+			"search for where the work is. A glob in PATHS names files as well as a list does."},
 		"gate_stated": {Type: Noul, Instructions: "The CARD states the gate: the exact commands the child runs to check its work " +
 			"(go test, go vet, gofmt, make, a script), written out to run as given."},
 		"commit_stated": {Type: Noul, Instructions: "The CARD states the commit message the child commits with " +
@@ -133,10 +137,12 @@ func BriefOf(d Decision) Brief {
 }
 
 // Line is the brief as one line of fields: p_converges, minutes and the failed
-// questions ("-" when none), as add and lint --decide print it.
+// questions ("-" when none), as add and lint --decide print it, marked
+// uncalibrated=true: p(converges) is a rank no outcome of the brief record has
+// yet supported a bar on (SPEC-NOVA-DECIDE section 9).
 func (b Brief) Line() string {
 	failed := strings.Join(b.Failed, ",")
-	return fmt.Sprintf("p_converges=%.2f minutes=%s failed=%s", b.Converges, cmp.Or(b.Minutes, "-"), cmp.Or(failed, "-"))
+	return fmt.Sprintf("p_converges=%.2f minutes=%s failed=%s uncalibrated=true", b.Converges, cmp.Or(b.Minutes, "-"), cmp.Or(failed, "-"))
 }
 
 // BriefBar is the bar on p(converges) a card is added at: Set is false when the
@@ -173,11 +179,26 @@ func Briefs(ctx context.Context, b Backend, cards map[string]string, record stri
 	return MakeAll(ctx, b, BriefSchema(), items, record, at, width, wait)
 }
 
+// CardPaths is the card files of a directory as nova-sprint add --brief-dir reads
+// them: every *.md entry that is not a directory, in byte order of name, none below.
+func CardPaths(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
+			out = append(out, filepath.Join(dir, e.Name()))
+		}
+	}
+	return out, nil
+}
+
 // CardFiles is the cards a path names, id -> brief: a file is one card, a
-// directory every *.md file under it; a card's id is its file's name without
-// .md, and its brief the file's text with one trailing newline cut, as
-// nova-sprint add stores it. Two files of one name under a directory are
-// refused, naming both: their ids would be one.
+// directory its CardPaths (add --brief-dir's cards); a card's id is its file's
+// name without .md, and its brief the file's text with one trailing newline cut,
+// as nova-sprint add stores it.
 func CardFiles(path string) (map[string]string, error) {
 	fi, err := os.Stat(path)
 	if err != nil {
@@ -185,31 +206,20 @@ func CardFiles(path string) (map[string]string, error) {
 	}
 	files := []string{path}
 	if fi.IsDir() {
-		files = nil
-		err = filepath.WalkDir(path, func(p string, e fs.DirEntry, err error) error {
-			if err == nil && !e.IsDir() && strings.HasSuffix(p, ".md") {
-				files = append(files, p)
-			}
-			return err
-		})
-		if err != nil {
+		if files, err = CardPaths(path); err != nil {
 			return nil, err
 		}
 	}
-	cards, from := map[string]string{}, map[string]string{}
+	cards := map[string]string{}
 	for _, f := range files {
 		raw, err := os.ReadFile(f)
 		if err != nil {
 			return nil, err
 		}
-		id := strings.TrimSuffix(filepath.Base(f), ".md")
-		if was, dup := from[id]; dup {
-			return nil, fmt.Errorf("%s and %s are both card %s; a card's id is its file's name, so rename one", was, f, id)
-		}
-		cards[id], from[id] = strings.TrimSuffix(string(raw), "\n"), f
+		cards[strings.TrimSuffix(filepath.Base(f), ".md")] = strings.TrimSuffix(string(raw), "\n")
 	}
 	if len(cards) == 0 {
-		return nil, fmt.Errorf("%s holds no *.md card file", path)
+		return nil, fmt.Errorf("%s holds no *.md card file (a directory's cards are its *.md entries, none below it)", path)
 	}
 	return cards, nil
 }
@@ -227,38 +237,40 @@ func LandLabel(attempt string) (label, note string) {
 // (BriefLanded, BriefReworked, BriefDropped) and a note.
 type End struct{ Label, Note string }
 
-// AttachBriefs attaches each card's end (card -> End) to the card's newest brief
-// decision (the newest decision named brief whose id is <card>@brief-...), in one
-// write under the record's lock. A record that does not exist, or a card with no
-// brief decision, attaches nothing and is no error: a card added with no brief
-// decision has none to train. The same label again changes nothing; another label
-// is that card's *ConflictError in failed, and the other cards are attached.
+// AttachBriefs attaches each card's end to its brief decision by the decision's
+// exact id, the op add stored on the card (op -> End), in one write under the
+// record's lock. An op the record does not hold, or a record that does not exist,
+// is that op's error in failed and no record is made; the same label again
+// changes nothing; another label is that op's *ConflictError; the other ops are
+// attached.
 func AttachBriefs(record string, ends map[string]End, at time.Time) (attached int, failed map[string]error, err error) {
-	if ds, err := Load(record); err != nil || !slices.ContainsFunc(ds, func(d Decision) bool { return d.Decision == BriefName }) {
-		return 0, nil, err // read without the write lock first: no record is made where there is none
-	}
 	failed = map[string]error{}
+	ds, err := Load(record) // read under the shared lock first: no record is made where there is none
+	if err != nil {
+		return 0, nil, err
+	}
+	missing := func(op string) error {
+		return fmt.Errorf("the record %s holds no decision %s: %w", record, op, ErrUnknown)
+	}
+	if len(ds) == 0 {
+		for op := range ends {
+			failed[op] = missing(op)
+		}
+		return 0, failed, nil
+	}
 	stamp := at.UTC().Format(time.RFC3339)
 	err = locked(record, func(ds []Decision) ([]line, error) {
-		newest := map[string]int{}
-		for i, d := range ds {
-			if card, _, ok := strings.Cut(d.ID, "@brief-"); ok && d.Decision == BriefName {
-				newest[card] = i
-			}
-		}
 		var add []line
-		for _, card := range slices.Sorted(maps.Keys(ends)) {
-			i, ok := newest[card]
-			if !ok {
-				continue
-			}
-			d, e := ds[i], ends[card]
+		for _, op := range slices.Sorted(maps.Keys(ends)) {
+			d, e := Find(ds, op), ends[op]
 			switch {
+			case d == nil:
+				failed[op] = missing(op)
 			case d.Outcome != nil && d.Outcome.Label == e.Label:
 			case d.Outcome != nil:
-				failed[card] = &ConflictError{fmt.Sprintf("decision %s is labelled %s already (at %s), not %s; an outcome is attached once", d.ID, d.Outcome.Label, d.Outcome.At, e.Label)}
+				failed[op] = &ConflictError{fmt.Sprintf("decision %s is labelled %s already (at %s), not %s; an outcome is attached once", op, d.Outcome.Label, d.Outcome.At, e.Label)}
 			default:
-				add = append(add, line{Outcome: &Outcome{ID: d.ID, Label: e.Label, Note: e.Note, At: stamp}})
+				add = append(add, line{Outcome: &Outcome{ID: op, Label: e.Label, Note: e.Note, At: stamp}})
 			}
 		}
 		attached = len(add)

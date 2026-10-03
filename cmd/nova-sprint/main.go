@@ -40,7 +40,7 @@ var version string
 
 func main() {
 	a := newApp(os.Getenv)
-	a.briefRecord = defaultBriefRecord // a test's app has none: no brief record, no brief decision
+	a.briefRecord = a.defaultBriefRecord // a test's app has none: no brief record, no brief decision
 	defer a.close()
 	os.Exit(a.run(os.Args[1:], os.Stdout, os.Stderr))
 }
@@ -133,11 +133,14 @@ type app struct {
 	home func() (string, error)
 	// The brief decision before add (briefdecide.go): decideBackend is the backend over
 	// the key (Jev over its real transport unless a test sets it), briefRecord the record
-	// of brief decisions (nil, as in a test's app, asks none and attaches none), and
+	// of brief decisions when add names none (nil, as in a test's app: none), and
 	// briefBar the sprint row's decide_brief_bar (nova-config's unless a test sets it).
+	// gateOnly, while set, runs add's checks and its brief decisions and stops before the
+	// store, keeping what was asked: the half of a served add that runs here.
 	decideBackend func(key string) decide.Backend
 	briefRecord   func() (string, error)
 	briefBar      func(ctx context.Context) (string, error)
+	gateOnly      *briefAsked
 }
 
 func newApp(getenv func(string) string) *app {
@@ -348,9 +351,6 @@ func (a *app) run(args []string, stdout, stderr io.Writer) (code int) {
 	if args[0] == "--version" || args[0] == "version" {
 		fmt.Fprintln(stdout, versionLine())
 		return 0
-	}
-	if code, stop := a.briefGate(args, stdout, stderr); stop {
-		return code
 	}
 	if code, sent := a.forwarded(args, stdout, stderr); sent {
 		return code

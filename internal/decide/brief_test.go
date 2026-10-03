@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -79,10 +81,10 @@ func TestBriefOfNamesTheFailedQuestions(t *testing.T) {
 	require.NoError(t, err)
 	b := BriefOf(Decision{Answers: answers})
 	assert.Equal(t, Brief{Converges: 0.35, Minutes: "20-45", Ambiguous: "step-2", Failed: []string{"commit_stated(0.20)", "ambiguous_step:step-2(0.70)"}}, b)
-	assert.Equal(t, "p_converges=0.35 minutes=20-45 failed=commit_stated(0.20),ambiguous_step:step-2(0.70)", b.Line())
+	assert.Equal(t, "p_converges=0.35 minutes=20-45 failed=commit_stated(0.20),ambiguous_step:step-2(0.70) uncalibrated=true", b.Line())
 	answers, _, err = Ask(context.Background(), &briefer{}, BriefSchema(), "a full card")
 	require.NoError(t, err)
-	assert.Equal(t, "p_converges=0.90 minutes=20-45 failed=-", BriefOf(Decision{Answers: answers}).Line())
+	assert.Equal(t, "p_converges=0.90 minutes=20-45 failed=- uncalibrated=true", BriefOf(Decision{Answers: answers}).Line())
 }
 
 // The bar is empty (report only) or a probability; it refuses a card under it.
@@ -134,18 +136,19 @@ func TestBriefsAsksOnceAndReplaysFromTheRecord(t *testing.T) {
 	assert.Equal(t, "b", ds[2].Inputs["card"])
 }
 
-// A card's end attaches to its newest brief: landed at attempt 1, reworked after,
-// dropped; a card with no brief, or no record at all, attaches nothing and makes no
-// file; a card already labelled otherwise is that card's conflict and the rest are
-// attached. The calibration of converges reads the attached ends.
-func TestAttachBriefsAttachesEachCardsEnd(t *testing.T) {
+// A card's end attaches to its brief decision by the exact op add stored on the
+// card: landed at attempt 1, reworked after, dropped. An op the record does not
+// hold is that op's error, never another decision's label; no record at all makes
+// none; a decision labelled otherwise is that op's conflict and the rest attach.
+// The calibration of converges reads the attached ends.
+func TestAttachBriefsAttachesByTheExactOp(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	none := filepath.Join(dir, "none.jsonl")
-	n, failed, err := AttachBriefs(none, map[string]End{"a": {BriefLanded, ""}}, at)
+	n, failed, err := AttachBriefs(none, map[string]End{"a@brief-00000000": {BriefLanded, ""}}, at)
 	require.NoError(t, err)
 	assert.Zero(t, n)
-	assert.Empty(t, failed)
+	assert.ErrorIs(t, failed["a@brief-00000000"], ErrUnknown)
 	assert.NoFileExists(t, none, "attaching to no record makes none")
 
 	record := filepath.Join(dir, "brief.jsonl")
@@ -154,29 +157,79 @@ func TestAttachBriefsAttachesEachCardsEnd(t *testing.T) {
 	require.NoError(t, err)
 	_, err = Briefs(context.Background(), &briefer{}, map[string]string{"c": "c rewritten converges=0.3"}, record, at, 4, 0)
 	require.NoError(t, err)
-	ends := map[string]End{"c": {BriefDropped, "obsolete"}, "zz": {BriefDropped, ""}}
+	op := func(card string) string { return BriefOp(card, cards[card]) }
+	ends := map[string]End{op("c"): {BriefDropped, "obsolete"}, BriefOp("zz", "x"): {BriefDropped, ""}}
 	for card, attempt := range map[string]string{"a": "1", "b": "3"} {
 		label, note := LandLabel(attempt)
-		ends[card] = End{label, note}
+		ends[op(card)] = End{label, note}
 	}
 	n, failed, err = AttachBriefs(record, ends, at)
 	require.NoError(t, err)
-	assert.Equal(t, 3, n, "a, b and c; zz has no brief decision")
-	assert.Empty(t, failed)
-	n, failed, err = AttachBriefs(record, map[string]End{"a": {BriefDropped, ""}, "b": {BriefReworked, "landed at attempt 3"}}, at)
+	assert.Equal(t, 3, n, "a, b and c's first brief, the one its op names")
+	assert.ErrorIs(t, failed[BriefOp("zz", "x")], ErrUnknown, "an op the record does not hold is named, never matched to another")
+	n, failed, err = AttachBriefs(record, map[string]End{op("a"): {BriefDropped, ""}, op("b"): {BriefReworked, "landed at attempt 3"}}, at)
 	require.NoError(t, err)
 	assert.Zero(t, n, "the same label again changes nothing")
 	var conflict *ConflictError
-	assert.ErrorAs(t, failed["a"], &conflict, "a card's end is attached once")
+	assert.ErrorAs(t, failed[op("a")], &conflict, "a card's end is attached once")
 
 	ds, err := Load(record)
 	require.NoError(t, err)
 	require.Len(t, ds, 4)
 	assert.Equal(t, "landed at attempt 3", ds[1].Outcome.Note)
-	assert.Nil(t, ds[2].Outcome, "c's first brief is not its newest")
-	assert.Equal(t, BriefDropped, ds[3].Outcome.Label)
+	assert.Equal(t, BriefDropped, ds[2].Outcome.Label, "the op names c's first brief")
+	assert.Nil(t, ds[3].Outcome, "c's rewritten brief is another decision")
 	cal, err := Calibrate(ds, BriefName, "converges", []string{BriefLanded}, []string{BriefReworked, BriefDropped})
 	require.NoError(t, err)
 	assert.InDelta(t, 1.0, cal.AUC(), 1e-9)
 	assert.Equal(t, Bar{At: 0.9, Caught: 1, Bounced: 0}, cal.CatchAll())
+}
+
+// hanging is a backend that answers nothing until its context is done.
+type hanging struct{}
+
+func (hanging) Name() string { return "hanging" }
+
+func (hanging) Ask(ctx context.Context, _ Schema, _ string) (map[string]Answer, Usage, error) {
+	<-ctx.Done()
+	return nil, Usage{}, ctx.Err()
+}
+
+// A batch under a deadline ends at it whatever the backend does: the asks in
+// flight fail with the deadline, the items not yet asked are not asked, each is
+// its item's error, and nothing is recorded. With no record a batch reads and
+// writes none. The bubble's clock is synctest's: no real time passes.
+func TestABatchEndsAtItsDeadline(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		record := filepath.Join(t.TempDir(), "brief.jsonl")
+		cards := map[string]string{}
+		for i := range 20 {
+			cards["c"+strconv.Itoa(i)] = "card " + strconv.Itoa(i)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		start := time.Now()
+		made, err := Briefs(ctx, hanging{}, cards, record, at, 4, 0)
+		require.NoError(t, err)
+		assert.Equal(t, time.Minute, time.Since(start), "the batch ends at its deadline")
+		require.Len(t, made, 20)
+		asked, unasked := 0, 0
+		for _, m := range made {
+			require.Error(t, m.Err)
+			assert.Equal(t, BriefOp(m.Inputs["card"], cards[m.Inputs["card"]]), m.ID)
+			if strings.Contains(m.Err.Error(), "not asked") {
+				unasked++
+			} else {
+				asked++
+			}
+		}
+		assert.Equal(t, 4, asked, "the width in flight when the deadline passed")
+		assert.Equal(t, 16, unasked)
+		assert.NoFileExists(t, record, "nothing was recorded")
+	})
+	made, err := Briefs(context.Background(), &briefer{}, map[string]string{"a": "converges=0.6"}, "", at, 1, 0)
+	require.NoError(t, err)
+	assert.InDelta(t, 0.6, BriefOf(made[0].Decision).Converges, 1e-9)
+	assert.False(t, made[0].Existing)
 }

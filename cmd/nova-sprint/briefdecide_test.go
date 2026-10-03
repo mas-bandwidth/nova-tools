@@ -1,19 +1,25 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 )
 
 // briefBackend is a fake brief backend: p(converges) is the number after
@@ -92,10 +98,20 @@ func endsOf(t *testing.T, record string) map[string]string {
 	return out
 }
 
-// Under JEV_API_KEY, add asks the brief decision of every card it names before it
-// writes: one BRIEF line per card with p(converges), the minutes and the questions it
-// failed, recorded under <card>@brief-<hex>. With no bar every card is added; the same
-// brief asked again is answered from the record.
+// opOf is the brief decision op a card stores, and the record it names.
+func opOf(t *testing.T, ta *testApp, id string) (op, record string) {
+	t.Helper()
+	var v cardView
+	ta.json("card "+id, &v)
+	require.NotNil(t, v.Primary)
+	return v.Primary.F(sprint.FieldBriefOp), v.Primary.F(sprint.FieldBriefRecord)
+}
+
+// Under JEV_API_KEY, add asks the brief decision of every card it names after its own
+// checks: one BRIEF line per card with p(converges), the minutes and the questions it
+// failed, marked uncalibrated, recorded under <card>@brief-<hex>, and the card stores
+// that op and the record. With no bar every card is added; the key is in no line and
+// no record; with --json the add's object is alone on stdout.
 func TestAddAsksTheBriefDecisionOfEveryCard(t *testing.T) {
 	t.Parallel()
 	ta, b, record := briefTestApp(t, "")
@@ -104,14 +120,17 @@ func TestAddAsksTheBriefDecisionOfEveryCard(t *testing.T) {
 	writeNeedsBrief(t, dir, "a2", "Fix a2, vague. converges=0.3", "")
 	out := ta.ok("add --stream s1 --brief-dir " + dir)
 	assert.Contains(t, out, "BRIEF card=a1 op=a1@brief-")
-	assert.Contains(t, out, " p_converges=0.80 minutes=20-45 failed=- recorded=new\n")
-	assert.Contains(t, out, " p_converges=0.30 minutes=20-45 failed=commit_stated(0.20),ambiguous_step:step-2(0.70) recorded=new\n")
+	assert.Contains(t, out, " p_converges=0.80 minutes=20-45 failed=- uncalibrated=true recorded=new\n")
+	assert.Contains(t, out, " p_converges=0.30 minutes=20-45 failed=commit_stated(0.20),ambiguous_step:step-2(0.70) uncalibrated=true recorded=new\n")
 	assert.Contains(t, out, "MOVED a2 -> ready", "with no bar a low brief is reported, never refused")
 	assert.Equal(t, 2, b.asks)
 	ds, err := decide.Load(record)
 	require.NoError(t, err)
 	require.Len(t, ds, 2)
-	assert.Equal(t, decide.BriefOp("a1", needsBrief("Fix a1. converges=0.8", "")), ds[0].ID)
+	op, rec := opOf(t, ta, "a1")
+	assert.Equal(t, decide.BriefOp("a1", needsBrief("Fix a1. converges=0.8", "")), op)
+	assert.Equal(t, ds[0].ID, op, "the card stores the op add printed")
+	assert.Equal(t, record, rec)
 
 	one := writeNeedsBrief(t, t.TempDir(), "x", "Fix it. converges=0.8", "")
 	assert.Contains(t, ta.ok("add --stream s2 b1 b2 --brief-file "+one), "BRIEF card=b2 op=b2@brief-")
@@ -121,27 +140,47 @@ func TestAddAsksTheBriefDecisionOfEveryCard(t *testing.T) {
 	require.Equal(t, 0, code, stderr)
 	require.NoError(t, json.Unmarshal([]byte(stdout), &res), "with --json the add's object is alone on stdout")
 	assert.Contains(t, stderr, "BRIEF card=c1 ")
+	raw, err := os.ReadFile(record)
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw)+out+stdout+stderr, "k-test", "the key is in no line and no record")
+}
+
+// The brief decision comes after add's own checks: an add its arguments refuse, or
+// whose brief the card lint refuses, asks nothing.
+func TestAddAsksNothingOfACardItRefuses(t *testing.T) {
+	t.Parallel()
+	ta, b, _ := briefTestApp(t, "")
+	dir := t.TempDir()
+	writeNeedsBrief(t, dir, "a1", "Fix a1. converges=0.8", "")
+	code, _, _ := ta.do("add --brief-dir " + dir)
+	assert.Equal(t, 2, code, "no --stream")
+	bad := filepath.Join(t.TempDir(), "bad.md")
+	require.NoError(t, os.WriteFile(bad, []byte("Fix it, with no rules at all. converges=0.9\n"), 0o600))
+	code, _, stderr := ta.do("add --stream s1 --brief-file " + bad)
+	assert.Equal(t, 2, code)
+	assert.Contains(t, stderr, "LINT DRIFT brief")
+	assert.Zero(t, b.asks, "a refused card costs no call")
 }
 
 // With the sprint row's decide_brief_bar set, a card whose p(converges) is under it
 // refuses the whole add, exit 2, nothing written, naming the card, its p and the
-// questions it failed; the decisions are recorded all the same, so a rewritten brief
-// is asked anew and the others are answered from the record.
+// questions it failed, and saying the decision is uncalibrated; the decisions are
+// recorded all the same, so a rewritten brief is asked anew and the others are
+// answered from the record.
 func TestAddRefusesABriefUnderTheBar(t *testing.T) {
 	t.Parallel()
 	ta, b, _ := briefTestApp(t, "0.5")
 	dir := t.TempDir()
 	writeNeedsBrief(t, dir, "a1", "Fix a1. converges=0.8", "")
-	low := writeNeedsBrief(t, dir, "a2", "Fix a2, vague. converges=0.3", "")
+	writeNeedsBrief(t, dir, "a2", "Fix a2, vague. converges=0.3", "")
 	code, _, stderr := ta.do("add --stream s1 --brief-dir " + dir)
 	assert.Equal(t, 2, code)
-	assert.Contains(t, stderr, "nova-sprint add REFUSED: the brief of a2 converges at p=0.30, under decide_brief_bar 0.50, failing commit_stated(0.20), ambiguous_step:step-2(0.70); a card is a flash child's whole brief")
+	assert.Contains(t, stderr, "nova-sprint add REFUSED: the brief of a2 ranks p(converges)=0.30, under decide_brief_bar 0.50, failing commit_stated(0.20), ambiguous_step:step-2(0.70); the brief decision is uncalibrated")
 	assert.NotContains(t, stderr, "the brief of a1")
 	code, _, _ = ta.do("card a1")
 	assert.NotEqual(t, 0, code, "nothing was written: a1 is not on the table")
 
 	writeNeedsBrief(t, dir, "a2", "Fix a2: change x.go line 4. converges=0.7", "")
-	require.FileExists(t, low)
 	out := ta.ok("add --stream s1 --brief-dir " + dir)
 	assert.Contains(t, out, "BRIEF card=a1 ")
 	assert.Contains(t, out, "recorded=existing")
@@ -173,11 +212,84 @@ func TestAddGoesOnWhenTheBriefDecisionCannotBeMade(t *testing.T) {
 	assert.Contains(t, out, "NOTE brief: no brief decision of a2: the backend answered HTTP 503\n")
 	assert.Contains(t, out, "BRIEF card=a1 ")
 	assert.Contains(t, out, "MOVED a2 -> ready")
+	op, _ := opOf(t, ta, "a2")
+	assert.Empty(t, op, "a card with no decision stores no op")
 }
 
-// A card's end attaches to its brief decision: a drop attaches dropped with its
-// reason, and a landing attaches landed at its attempt. A card with no brief
-// decision attaches nothing and the verb says nothing of it.
+// hangingBackend answers nothing until its context is done.
+type hangingBackend struct{}
+
+func (hangingBackend) Name() string { return "hanging" }
+
+func (hangingBackend) Ask(ctx context.Context, _ decide.Schema, _ string) (map[string]decide.Answer, decide.Usage, error) {
+	<-ctx.Done()
+	return nil, decide.Usage{}, ctx.Err()
+}
+
+// A backend that never answers holds the add for the one batch deadline and no
+// longer: the add then writes its cards, with one NOTE per card unanswered (in flight
+// at the deadline, or never asked). The bubble's clock is synctest's: no real time.
+func TestAHangingBackendHoldsAddForOneDeadline(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		ta, _, record := briefTestApp(t, "")
+		ta.a.decideBackend = func(string) decide.Backend { return hangingBackend{} }
+		dir := t.TempDir()
+		for i := range 10 {
+			writeNeedsBrief(t, dir, "c"+strconv.Itoa(i), "Fix it.", "")
+		}
+		start := time.Now()
+		out := ta.ok("add --stream s1 --brief-dir " + dir)
+		assert.Equal(t, briefDeadline, time.Since(start), "one deadline for the whole batch")
+		assert.Equal(t, 10, strings.Count(out, "context deadline exceeded"))
+		assert.Equal(t, 10-decide.BriefWidth, strings.Count(out, "not asked: context deadline exceeded"), "past the width in flight, never asked")
+		assert.Equal(t, 10, strings.Count(out, "NOTE brief: no brief decision of c"))
+		assert.Equal(t, 10, strings.Count(out, "MOVED c"), "the add writes its cards")
+		assert.NoFileExists(t, record, "nothing was recorded")
+	})
+}
+
+// With a server, add's checks and its brief decisions run where add is typed (the
+// caller's key and files), and the server is sent the op ids and the record with the
+// add: the server asks nothing and the cards it writes store them.
+func TestAServedAddAsksWhereItIsTyped(t *testing.T) {
+	t.Parallel()
+	r := newServerRig(t, "nova-sprint init --readers reader-a,reader-b --members m1")
+	serverAsked := false
+	r.a.decideBackend = func(string) decide.Backend { serverAsked = true; return &briefBackend{} }
+	record := filepath.Join(t.TempDir(), "brief.jsonl")
+	env := map[string]string{ServerEnv: "127.0.0.1:6390", "NOVA_SPRINT_ACTOR": "boss", decide.JevSecret: "k-test"}
+	c := newApp(func(k string) string { return env[k] })
+	t.Cleanup(c.close)
+	b := &briefBackend{}
+	c.decideBackend = func(string) decide.Backend { return b }
+	c.briefBar = func(context.Context) (string, error) { return "", nil }
+	var sent [][]string
+	c.forward = func(_ context.Context, _ string, verbs ...[]string) ([]sprintwire.Result, error) {
+		sent = append(sent, verbs...)
+		return r.a.serveFrom(sprintwire.Request{Verbs: verbs}, true).Results, nil
+	}
+	dir := t.TempDir()
+	writeNeedsBrief(t, dir, "a1", "Fix a1. converges=0.8", "")
+	var out, errb bytes.Buffer
+	require.Equal(t, 0, c.run([]string{"add", "--stream", "s1", "--brief-dir", dir, "--decide-record", record}, &out, &errb), errb.String())
+	assert.Contains(t, out.String(), "BRIEF card=a1 op=a1@brief-")
+	assert.Contains(t, out.String(), "MOVED a1 -> ready")
+	assert.Equal(t, 1, b.asks)
+	assert.False(t, serverAsked, "the server asks nothing")
+	op := decide.BriefOp("a1", needsBrief("Fix a1. converges=0.8", ""))
+	require.Len(t, sent, 1)
+	assert.Contains(t, sent[0], "a1="+op, "the op ids go with the add")
+	var v cardView
+	require.NoError(t, json.Unmarshal([]byte(r.boss("nova-sprint card a1 --json")), &v))
+	assert.Equal(t, op, v.Primary.F(sprint.FieldBriefOp))
+	assert.Equal(t, record, v.Primary.F(sprint.FieldBriefRecord))
+}
+
+// A card's end attaches to the brief decision it stores: a drop attaches dropped with
+// its reason, a landing attaches landed at its attempt; a card that stores no decision
+// attaches nothing (decide's TestAttachBriefsAttachesByTheExactOp: an op the record
+// lacks is named, never matched to another decision).
 func TestACardsEndAttachesToItsBrief(t *testing.T) {
 	t.Parallel()
 	ta, _, record := briefTestApp(t, "")
@@ -190,13 +302,26 @@ func TestACardsEndAttachesToItsBrief(t *testing.T) {
 	assert.Equal(t, map[string]string{"a1": "dropped: obsolete"}, endsOf(t, record))
 
 	r := newLandRig(t)
-	r.a.briefRecord = ta.a.briefRecord
-	r.ok("add --stream s2 --count 2")
-	_, err := decide.Briefs(context.Background(), &briefBackend{}, map[string]string{"s2-1": "brief of s2-1"}, record, t0, 1, 0)
-	require.NoError(t, err)
+	env := r.a.getenv
+	r.a.getenv = func(k string) string {
+		if k == decide.JevSecret {
+			return "k-test"
+		}
+		return env(k)
+	}
+	r.a.decideBackend = func(string) decide.Backend { return &briefBackend{} }
+	r.a.briefBar = func(context.Context) (string, error) { return "", nil }
+	r.a.briefRecord = func() (string, error) { return record, nil }
+	r.ok("add --stream s2 s2-1 s2-2 --brief-file " + writeNeedsBrief(t, t.TempDir(), "x", "Do it. converges=0.6", ""))
 	r.queued(map[string]string{"s2-1": r.head("s2-1", "main", "one.txt", "one\n"), "s2-2": r.head("s2-2", "main", "two.txt", "two\n")}, "s2-1", "s2-2")
 	code, out, errs := r.do("land --repo-dir " + r.clone + " --base main")
 	require.Equal(t, 0, code, out+errs)
 	assert.NotContains(t, out, "brief decision")
-	assert.Equal(t, map[string]string{"a1": "dropped: obsolete", "s2-1": "landed: landed at attempt 1"}, endsOf(t, record))
+	assert.Equal(t, map[string]string{"a1": "dropped: obsolete", "s2-1": "landed: landed at attempt 1", "s2-2": "landed: landed at attempt 1"}, endsOf(t, record))
+
+	elsewhere := newTestApp(t)
+	elsewhere.ok("init --readers reader-a,reader-b --members m1")
+	elsewhere.ok("add --stream s1 a1 --brief-file " + writeNeedsBrief(t, t.TempDir(), "y", "Fix a1. converges=0.8", "") + " --brief-op a1=a1@brief-deadbeef")
+	op, _ := opOf(t, elsewhere, "a1")
+	assert.Empty(t, op, "an op typed by hand is no decision this add asked: only a server takes --brief-op, from the add that asked")
 }

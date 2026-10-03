@@ -2,6 +2,7 @@ package decide
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"sync"
 	"time"
@@ -33,13 +34,18 @@ type Made struct {
 }
 
 // MakeAll makes the decision of s over each item, in the items' order, each ask
-// within wait (0 is ctx's own bound). The error
+// within wait (0 is ctx's own bound); once ctx is done no further item is asked
+// and each is that item's Err. An empty record keeps nothing: no decision is read
+// from it or written to it. The error
 // is the record's (it cannot be read or written); a decision that could not be
 // made is its item's Err, and the others are made and recorded.
 func MakeAll(ctx context.Context, b Backend, s Schema, items []Item, record string, at time.Time, width int, wait time.Duration) ([]Made, error) {
-	ds, err := Load(record)
-	if err != nil {
-		return nil, err
+	var ds []Decision
+	if record != "" {
+		var err error
+		if ds, err = Load(record); err != nil {
+			return nil, err
+		}
 	}
 	out := make([]Made, len(items))
 	var ask []int
@@ -54,8 +60,14 @@ func MakeAll(ctx context.Context, b Backend, s Schema, items []Item, record stri
 	sem := make(chan struct{}, max(width, 1))
 	var wg sync.WaitGroup
 	for _, i := range ask {
-		wg.Add(1)
 		sem <- struct{}{}
+		if ctx.Err() != nil { // the batch's deadline passed: what is left is not asked
+			<-sem
+			out[i] = Made{Decision: Decision{ID: items[i].ID, Inputs: items[i].Inputs},
+				Err: &BackendError{Backend: b.Name(), Err: fmt.Errorf("not asked: %w", ctx.Err())}}
+			continue
+		}
+		wg.Add(1)
 		go func() {
 			defer func() { <-sem; wg.Done() }()
 			it, actx, cancel := items[i], ctx, context.CancelFunc(func() {})
@@ -73,10 +85,10 @@ func MakeAll(ctx context.Context, b Backend, s Schema, items []Item, record stri
 		}()
 	}
 	wg.Wait()
-	if !slices.ContainsFunc(ask, func(i int) bool { return out[i].Err == nil }) {
+	if record == "" || !slices.ContainsFunc(ask, func(i int) bool { return out[i].Err == nil }) {
 		return out, nil // nothing new to record: the record is not opened for writing
 	}
-	err = locked(record, func(ds []Decision) ([]line, error) {
+	err := locked(record, func(ds []Decision) ([]line, error) {
 		var add []line
 		for _, i := range ask {
 			if out[i].Err != nil {

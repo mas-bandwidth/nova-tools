@@ -187,6 +187,13 @@ the strings route; a review round attaches its own label with `outcome`.
 
 ## 9. The brief decision: card quality before add
 
+**Uncalibrated.** p(converges) is a rank, not a probability, and on the only labels
+there are (234 reviewed cards) its AUC is 0.600, about two standard errors above chance.
+No bar may be set (nova-config's sprint row `decide_brief_bar` stays empty, which
+reports only) until `calibrate` over the brief record's own `landed`, `reworked` and
+`dropped` outcomes supports one. Every line that prints the reading says
+`uncalibrated=true`.
+
 `brief --card <file|dir>` reads a card as a flash child with no memory reads it,
 before the card is added (the owner, 2026-09-30: "give it all the details it
 needs, like a real child agent"). The state is the card, under its heading, and
@@ -197,7 +204,7 @@ appended), so a card is not asked to say what the frame says. Nine questions:
 | name | type | asks |
 | --- | --- | --- |
 | `repo_branch` | noul | the card names the repository and the branch or base it starts from |
-| `files_named` | noul | the card names the exact files and, in them, the lines, functions, tests or sections to change |
+| `files_named` | noul | the card names where the work is: the files, or a PATHS glob of them, and in them the functions, tests, sections or lines to change |
 | `gate_stated` | noul | the card states the gate, the exact commands, written to run as given |
 | `commit_stated` | noul | the card states the commit message |
 | `report_stated` | noul | the card states what the child reports at its end |
@@ -208,52 +215,68 @@ appended), so a card is not asked to say what the frame says. Nine questions:
 
 A card fails a need (the six nouls before `ambiguous_step`) when its p of yes is
 under 0.5, and fails `ambiguous_step` when it names a step; the reading is one
-line, `p_converges=<p> minutes=<option> failed=<need(p),...,ambiguous_step:step-<n>(p)>`
+line, `p_converges=<p> minutes=<option> failed=<need(p),...,ambiguous_step:step-<n>(p)> uncalibrated=true`
 (`failed=-` for none), the same wherever it prints. A card's decision id is
 `<card>@brief-<8 hex>`, the hex of the schema and the state: a brief rewritten
 after a refusal, or asked under a reworded schema, is a decision of its own, and
-the same brief asked again is answered from the record. A directory is every
-`*.md` file under it, each card's id its file's name without `.md`.
+the same brief asked again is answered from the record. A directory's cards are
+its `*.md` files that are not directories, none below it, as `nova-sprint add
+--brief-dir` reads them (`CardPaths`), each card's id its file's name without `.md`.
 
 **A batch.** Every card of one call is one batch (`MakeAll`): the record is read
 once, a card it holds is answered from it, the rest are asked through the backend
-at most `--width` at a time, each within `--timeout`, and every new decision is
-appended in one write under the record's lock. A card the backend fails is named
-on its line and nothing is recorded for it; the rest are recorded, and the verb
-fails at exit 2 so a script runs it again (a recorded card costs nothing).
+at most `BriefWidth` (8, add's width and `--width`'s default) at a time, and every
+new decision is appended in one write under the record's lock. Once the batch's
+context is done no further card is asked; each card unanswered is its own error,
+nothing is recorded for it, and the rest are. With no record a batch keeps
+nothing. `nova-decide brief` fails at exit 2 when a card went unanswered, so a
+script runs it again (a recorded card costs nothing).
 
 **Where it is asked.** `nova-sprint add`, under `JEV_API_KEY`, asks it of every
 card it names with a brief (a card per brief file, or the one brief of each id;
 a `--count` add names no id before the store numbers it, and a sentinel carries
-no brief), where add is typed and before anything is sent to the server or
-written: one `BRIEF card=<id> op=<op> <reading> recorded=<new|existing>` line per
-card (on stderr under `--json`), recorded in the user's cache directory,
-`nova-decide/brief.jsonl`. With nova-config's sprint row `decide_brief_bar` set
-(docs/SPEC-CONFIG.md), a card whose p(converges) is under it refuses the whole
+no brief) after its own checks (the arguments, the files, the card lint), so a
+card add refuses costs no call, and before it writes. The whole batch has one
+deadline, a minute: past it each unanswered card is a `NOTE brief:` line and the
+add goes on. With a server named, add runs its checks and asks where it is typed
+(the caller's key and files; the server's one line of control holds no backend
+call) and sends the server the add with each card's op (`--brief-op <id>=<op>`)
+and the record; in that half the card lint runs only under `--rules`, since the
+sprint's recorded rules file is the server's to read, so a brief the server's
+lint refuses may have cost a call. One `BRIEF card=<id> op=<op> <reading>
+recorded=<new|existing>` line per card (on stderr under `--json`). The record is
+the coordinator's, `<root>/decide/brief.jsonl` with the root `~/nova-sprint`
+(never a cache directory), or the file `add --decide-record` names. A card stores
+its op and its record (`brief_op`, `brief_record`); a brief replaced by `nova-sprint
+brief` drops both. With `decide_brief_bar` set, a card under it refuses the whole
 add, exit 2, nothing written, naming each such card, its p and the questions it
-failed; empty (the default) asks and reports only. A decision that cannot be made
-(no key, the bar or the record unreadable, the backend failing a card) is one
-`NOTE brief:` line and the add goes on, as the decide read's failure runs the
-strings read. `nova-swarm lint --card <file> --decide` prints the same reading on
-one `LINT DECIDE` line after the lint's own and never changes its verdict
-(`--decide-answers` answers from a file, `--decide-record` records).
+failed, and saying the decision is uncalibrated. A decision that cannot be made (no
+key, the bar or the record unreadable, the backend failing a card) is one `NOTE
+brief:` line and the add goes on. `nova-swarm lint --card <file> --decide` prints
+the same reading on one `LINT DECIDE` line after the lint's own and never changes
+its verdict (`--decide-answers` answers from a file, `--decide-record` records).
 
-**The outcome** is the card's end in the sprint, attached to its newest brief
-decision: `landed` when land lands it at attempt 1, `reworked` at a later attempt
-(the note names it), `dropped` when the coordinator drops it (the note is the
-reason). A card with no brief decision attaches nothing. `calibrate --decision
+**The outcome** is the card's end in the sprint, attached by the exact op the card
+stores, in the record it names: `landed` when land lands it at attempt 1,
+`reworked` at a later attempt (the note names it), `dropped` when the coordinator
+drops it (the note is the reason). A card that stores no op attaches nothing; an
+op its record does not hold (a record on another machine, a record removed) is a
+`NOTE` line of land or drop, never another decision's label. `calibrate --decision
 brief --question converges --positive landed --negative reworked,dropped` reads
 the bar from the sprint's own record.
 
-**The first calibration (2026-10-03).** Jev over 847 cards in 21 seconds: the 234
-cards of the two review rounds of 2026-10-02, scored against their review labels
-(ok as positive; wrong, ugly and outside as negative), and the 613 tree cards held
-for the next waves. On the reviewed cards p(converges) separates the labels
-barely (AUC 0.566); `one_thing` best (0.702), `gate_stated` 0.610, `files_named`
-inverted (0.289: the cards that named their lines were the docs and diary cards
-the reviews found wrong). p(converges) is read as a rank, not a probability: a
-card written to every question scores 0.72, the reviewed cards 0.34 to 0.48, the
-schema wave's tree cards 0.07 to 0.20. `ambiguous_step` named `step-1` on 612 of
-the 613 tree cards whatever STEP 1 said (a probe rewrote it three ways). So no bar
-is set: the default reports only, and a bar waits for the brief record's own
-landed, reworked and dropped outcomes.
+**The calibration of 2026-10-03.** Jev over 847 cards: the 234 cards of the two
+review rounds of 2026-10-02, scored against their review labels (ok as positive;
+wrong, ugly and outside as negative), and the 613 tree cards held for the next
+waves. The shipped schema and state, asked in 45 seconds: `converges` AUC 0.600,
+`one_thing` 0.680, `gate_stated` 0.610, `report_stated` 0.561, `commit_stated`
+0.551, `files_named` 0.547, `repo_branch` 0.447, `ambiguous_step=none` 0.509. Two
+earlier asks measured the questions before they were settled: over the card alone,
+`files_named` asking for "the exact files" was inverted (0.252) and failed 511 tree
+cards whose PATHS are globs; with the frame added it was still inverted (0.289);
+reworded to accept a glob it fails none and scores 0.547. `ambiguous_step` named
+`step-1` on 612 of 613 tree cards over the card alone, and on 611 with the frame:
+it does not discriminate (0.509) and is to be reframed or dropped before any bar.
+A card written to every question scores 0.72; the reviewed cards 0.33 to 0.48; the
+schema wave's tree cards 0.08 to 0.21. The review label is a diff's quality, not a
+card's convergence: the brief record's own outcomes are the measure that counts.

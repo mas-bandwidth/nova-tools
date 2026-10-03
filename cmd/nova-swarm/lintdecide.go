@@ -43,27 +43,23 @@ func lintDecide(name string, raw []byte, answers, record string, getenv func(str
 		return "", fmt.Errorf("Jev is asked with %s, which this environment does not hold", decide.JevSecret)
 	}
 	id, brief := strings.TrimSuffix(name, ".md"), strings.TrimSuffix(string(raw), "\n")
-	ctx, cancel := context.WithTimeout(context.Background(), lintDecideWait)
-	defer cancel()
-	d, recorded := decide.Decision{ID: decide.BriefOp(id, brief)}, "no"
-	if record == "" {
-		answers, _, err := decide.Ask(ctx, b, decide.BriefSchema(), decide.BriefState(brief))
-		if err != nil {
-			return "", fmt.Errorf("the brief decision (backend %s): %w", b.Name(), err)
-		}
-		d.Answers = answers
-	} else {
+	if record != "" {
 		if err := os.MkdirAll(filepath.Dir(record), 0o755); err != nil {
 			return "", err
 		}
-		made, err := decide.Briefs(ctx, b, map[string]string{id: brief}, record, now, 1, 0)
-		if err != nil {
-			return "", err
-		}
-		if made[0].Err != nil {
-			return "", fmt.Errorf("the brief decision (backend %s): %w", b.Name(), made[0].Err)
-		}
-		d, recorded = made[0].Decision, map[bool]string{true: "existing", false: "new"}[made[0].Existing]
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), lintDecideWait)
+	defer cancel()
+	made, err := decide.Briefs(ctx, b, map[string]string{id: brief}, record, now, 1, 0) // an empty record keeps nothing
+	if err != nil {
+		return "", err
+	}
+	if made[0].Err != nil {
+		return "", fmt.Errorf("the brief decision (backend %s): %w", b.Name(), made[0].Err)
+	}
+	d, recorded := made[0].Decision, map[bool]string{true: "existing", false: "new"}[made[0].Existing]
+	if record == "" {
+		recorded = "no"
 	}
 	return fmt.Sprintf("LINT DECIDE card=%s op=%s %s recorded=%s", oneline.Field(name), oneline.Field(d.ID), oneline.Escape(decide.BriefOf(d).Line()), oneline.Field(recorded)), nil
 }

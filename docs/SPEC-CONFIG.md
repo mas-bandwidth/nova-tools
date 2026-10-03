@@ -228,7 +228,7 @@ facts.
 | `coordinator` | ref friend | | the deal and the routing: who holds the coordinator role; `sprint set --coordinator <friend>` is the handover | `sprint:coordinator`, and the `coordinator` word in that friend's `friend:<f>:roles` |
 | `decide_bounce` | decimal, default 0.5 | | the ask: a flash card's first read is a decide read (docs/SPEC-SPRINT.md section 6), and p(defect) at or above this bar bounces the work; a probability, at least `decide_review`; both bars empty turns the decide read off | `sprint:decide_bounce` |
 | `decide_review` | decimal, default 0.3 | | the ask: below this bar the decide read lands the work with no model read; from it up to `decide_bounce` the card goes to a strings read | `sprint:decide_review` |
-| `decide_brief_bar` | decimal, default empty | | `nova-sprint add`: it asks the brief decision of each card (docs/SPEC-NOVA-DECIDE.md section 9) and refuses a card whose p(converges) is under this bar, naming the questions it failed; empty asks and reports only | `sprint:decide_brief_bar` |
+| `decide_brief_bar` | decimal, default empty | | `nova-sprint add`: it asks the brief decision of each card (docs/SPEC-NOVA-DECIDE.md section 9) and refuses a card whose p(converges) is under this bar, naming the questions it failed; empty asks and reports only. The decision is uncalibrated (AUC 0.600 on 234 review labels): it stays empty until `calibrate` on the brief record's own outcomes supports a bar | `sprint:decide_brief_bar` |
 
 **`loop`** (`config.loops`): a supervised process on one machine. Every
 value is data in the row: the code names no machine, seat, secret or

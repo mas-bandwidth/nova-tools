@@ -201,7 +201,8 @@ func idSpan(ids []string) string {
 // keeps the id and the epoch), and the repository and base its brief names.
 type landCard struct {
 	id, head, attempt, repo, base string
-	paths                         []string // the brief's PATHS globs, nil when it names none (checkCard)
+	brief                         *sprint.Card // the primary, whose brief decision its landing attaches to (briefdecide.go)
+	paths                         []string     // the brief's PATHS globs, nil when it names none (checkCard)
 }
 
 // pin is the card as the report's guard and the operation's arguments name
@@ -420,7 +421,7 @@ func (l *lander) stream(ctx context.Context, s *sprint.Snapshot, stream string) 
 	for _, c := range queue {
 		lc := landCard{id: c.ID, base: l.base}
 		if pr := s.Work.Placed(c.ID); pr != nil {
-			lc.head, lc.attempt = pr.F("head"), pr.F("attempt")
+			lc.head, lc.attempt, lc.brief = pr.F("head"), pr.F("attempt"), pr
 			cb := swarm.ReadCardBase([]byte(pr.F("brief")))
 			lc.repo, lc.paths = cb.Repo, cardPaths(pr.F("brief"))
 			if cb.Ref != "" {
@@ -690,10 +691,10 @@ func (l *lander) landed(b landBatch, stream string, pins []landCard) bool {
 	// pushed AND reported: only now are its cards' branches tagged for the cleanup (a
 	// batch pushed and not reported keeps them: land is run again and may need the heads)
 	l.tag(context.Background(), &b, pins)
-	ends := map[string]decide.End{} // each card's end, attached to its brief decision (briefdecide.go)
+	var ends []briefEnd // each card's end, attached to the brief decision it names (briefdecide.go)
 	for _, c := range pins {
 		label, note := decide.LandLabel(c.attempt)
-		ends[c.id] = decide.End{Label: label, Note: note}
+		ends = append(ends, briefEndOf(c.id, c.brief, decide.End{Label: label, Note: note}))
 	}
 	b.Also = append(b.Also, l.a.attachBriefs(ends)...)
 	l.out = append(l.out, b)

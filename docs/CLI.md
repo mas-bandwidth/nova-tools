@@ -1050,11 +1050,13 @@ usage, flags and exit codes; `nova-sprint help <group>` (fleet, friend, reader,
 goal, stream) one group's.
 
 `add` under `JEV_API_KEY` (`nova-secrets exec --only JEV_API_KEY -- nova-sprint add
-...`) asks nova-decide's brief decision of every card it names with a brief before
-anything is written: one `BRIEF card=<id> op=<card>@brief-<hex> p_converges=
-minutes= failed= recorded=` line per card, and a card whose p(converges) is under
-nova-config's `sprint` row `decide_brief_bar` refuses the add, exit 2, naming the
-questions it failed; the bar is empty by default, which reports only
+...`) asks nova-decide's brief decision of every card it names with a brief after its
+own checks and before it writes, one deadline for the batch: one `BRIEF card=<id>
+op=<card>@brief-<hex> p_converges= minutes= failed= uncalibrated=true recorded=` line
+per card, recorded in `~/nova-sprint/decide/brief.jsonl` (or `--decide-record <file>`),
+the op stored on the card for land and drop to attach its end. The decision is
+uncalibrated: nova-config's `sprint` row `decide_brief_bar` stays empty, which reports
+only, until the brief record's own outcomes support a bar
 ([SPEC-NOVA-DECIDE.md](SPEC-NOVA-DECIDE.md) section 9).
 
 ### Exit codes
@@ -2163,11 +2165,12 @@ nova-decide calibrate --record ./cmd/nova-decide/testdata/record.jsonl --decisio
 tokens_out= recorded=new|existing` and one `READ ANSWER question= type= value=
 p=` line per question: a noul's `p=yes:<p>`, a choice's `p=<option>:<p>,...`.
 `brief` reads cards as a flash child with no memory would, before they are added
-(a file, or every `*.md` under a directory, as one batch): one `BRIEF CARD id=
+(a file, or a directory's `*.md` files as `nova-sprint add --brief-dir` reads them,
+as one batch), an uncalibrated rank: one `BRIEF CARD id=
 op=<card>@brief-<hex> p_converges= minutes= failed= recorded=` line per card,
 `failed` naming each question the card leaves open (`commit_stated(0.20)`,
 `ambiguous_step:step-2(0.70)`, or `-`). `nova-sprint add` asks the same of every
-card under `JEV_API_KEY` and refuses one under the sprint row's `decide_brief_bar`;
+card under `JEV_API_KEY` (no bar is set while the decision is uncalibrated);
 `nova-swarm lint --card <file> --decide` prints it for one file.
 `calibrate` prints the AUC, one `BAR` line per `--bars` value (positives caught,
 negatives bounced) and the `CATCH-ALL` bar, the highest that flags every

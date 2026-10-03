@@ -246,8 +246,9 @@ func jevBrief(body []byte) ([]byte, error) {
 	return json.Marshal(map[string]any{"answers": answers, "usage": map[string]int{"input_tokens": 700, "output_tokens": 20}})
 }
 
-// brief asks every card of a directory as one batch: one BRIEF CARD line per card in
-// id order, each recorded under <card>@brief-<hex>; asked again it asks nothing; a card
+// brief asks every card of a directory as one batch (its *.md files as add --brief-dir
+// reads them: a directory named *.md, and what is below, are no cards): one BRIEF CARD
+// line per card in id order, each recorded under <card>@brief-<hex>; asked again it asks nothing; a card
 // the backend failed is named on its line, nothing is recorded for it, the rest are,
 // and the verb fails at exit 2 so a script stops and runs it again.
 func TestBriefAsksEveryCardOfADirectoryOnce(t *testing.T) {
@@ -257,9 +258,10 @@ func TestBriefAsksEveryCardOfADirectoryOnce(t *testing.T) {
 	dir, rec := t.TempDir(), filepath.Join(t.TempDir(), "decisions.jsonl")
 	greet, err := os.ReadFile(td + "greet.md")
 	require.NoError(t, err)
-	require.NoError(t, os.MkdirAll(filepath.Join(dir, "sub"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "sub.md"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "sub.md", "below.md"), greet, 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "a1.md"), greet, 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "sub", "a2.md"), []byte("STEP 1. Make it better, somehow (vague).\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "a2.md"), []byte("STEP 1. Make it better, somehow (vague).\n"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("not a card"), 0o600))
 	brief := []string{"brief", "--card", dir, "--backend", "jev", "--record", rec}
 
@@ -288,12 +290,6 @@ func TestBriefAsksEveryCardOfADirectoryOnce(t *testing.T) {
 	testkit.Refusals(t, jev, []testkit.Refusal{
 		{Args: []string{"brief", "--card", td + "nope", "--backend", "jev", "--record", rec}, Code: 2, Says: "nope: no such file"},
 		{Args: []string{"brief", "--card", dir, "--backend", "jev", "--record", rec, "--width", "0"}, Code: 2, Says: "--width must be at least 1"},
-		{Args: []string{"brief", "--card", filepath.Join(dir, "sub", "empty"), "--backend", "jev", "--record", rec}, Code: 2, Says: "no such file"},
+		{Args: []string{"brief", "--card", t.TempDir(), "--backend", "jev", "--record", rec, "--dry-run"}, Code: 2, Says: "holds no *.md card file"},
 	})
-	same := t.TempDir()
-	for _, sub := range []string{"x", "y"} {
-		require.NoError(t, os.MkdirAll(filepath.Join(same, sub), 0o755))
-		require.NoError(t, os.WriteFile(filepath.Join(same, sub, "c.md"), greet, 0o600))
-	}
-	jev.Do(t, "brief", "--card", same, "--backend", "jev", "--record", rec).Refused("are both card c; a card's id is its file's name, so rename one")
 }

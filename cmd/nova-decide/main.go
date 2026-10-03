@@ -101,15 +101,16 @@ or UNSURE). The state is the card, the rule when --rule names one, and the diff,
 				Detail: `The brief decision: a card's text alone, as a flash child with no memory reads it, before
 the card is added. Six nouls (repo_branch, files_named, gate_stated, commit_stated,
 report_stated, one_thing), ambiguous_step (none, step-<n> or unnumbered), minutes, and
-converges, p that the child lands it on its first attempt. A directory is every *.md under it,
-each card's id its file's name without .md; each decision's id is <card>@brief-<hex>. One BRIEF
-CARD item per card, in id order; a card the backend failed is named, the rest are recorded.`,
+converges, p that the child lands it on its first attempt: a rank, uncalibrated. A directory is
+its *.md files as nova-sprint add --brief-dir reads them (none below it), each card's id its
+file's name without .md; each decision's id is <card>@brief-<hex>. One BRIEF CARD item per card,
+in id order; a card the backend failed is named, the rest are recorded.`,
 				DryRun: true,
 				Flags: func(f *tool.Flags) {
-					f.Required("card", "a card file, or a directory of *.md card files")
+					f.Required("card", "a card file, or a directory of *.md card files (as add --brief-dir reads it)")
 					w.asking(f)
 					f.Max()
-					f.Int("width", 8, "how many cards are asked at once")
+					f.Int("width", decide.BriefWidth, "how many cards are asked at once")
 					f.Check(func(c *tool.Call) {
 						if c.Int("width") < 1 {
 							c.Problem("--width must be at least 1")
@@ -228,6 +229,7 @@ func (w world) read(c *tool.Call) *tool.Out {
 
 // brief makes the brief decision of every card --card names, as one batch.
 func (w world) brief(c *tool.Call) *tool.Out {
+	dry := c.DryRun() // read first: a refusal under --dry-run is still a refusal
 	cards, err := decide.CardFiles(c.Str("card"))
 	if err != nil {
 		return tool.Refuse(err.Error())
@@ -237,7 +239,7 @@ func (w world) brief(c *tool.Call) *tool.Out {
 		return tool.Refuse(err.Error())
 	}
 	record := c.Str("record")
-	if c.DryRun() {
+	if dry {
 		ds, err := decide.Load(record)
 		if err != nil {
 			return tool.Refuse(err.Error())
