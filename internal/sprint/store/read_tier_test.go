@@ -48,12 +48,13 @@ func TestAReadTierSettingRaisesTheReadsAndNeverLowersThem(t *testing.T) {
 		h.must(SetStep(r))
 	}
 	// read runs the cards of three streams to review and asks their readers:
-	// s1 and s2 flash cards, s3 a pro card
+	// s1 and s2 flash cards, s3 a pro card working on pro
 	read := func(h *harness) {
 		h.t.Helper()
 		h.addReady("s1", 1, briefOf("flash", ""))
 		h.addReady("s2", 1, briefOf("flash", ""))
 		h.addReady("s3", 1, briefOf("pro", ""))
+		h.setPrimary("s3-1", map[string]string{sprint.FieldTierNow: "pro"}) // a pro card on pro: escalated (flash first)
 		h.startMachine()
 		h.machine()
 		h.work("m1")
@@ -66,6 +67,7 @@ func TestAReadTierSettingRaisesTheReadsAndNeverLowersThem(t *testing.T) {
 		h := routeHarness(t, routes...)
 		h.addReady("s1", 1, briefOf("flash", ""))
 		h.addReady("s3", 1, briefOf("pro", ""))
+		h.setPrimary("s3-1", map[string]string{sprint.FieldTierNow: "pro"}) // a pro card on pro: escalated (flash first)
 		set(h, sprint.SetReq{Streams: []string{"s1"}, ReadTier: "pro"})
 		set(h, sprint.SetReq{Streams: []string{"s3"}, ReadTier: "flash"})
 		h.addReady("s2", 1, briefOf("flash", ""))

@@ -38,8 +38,8 @@ func (h *harness) failTake(card, report string) *sprint.Card {
 // take; the route's stats count it.
 func TestAProviderFailureRedealsTheCardAndIsNeverAFailedWorkJudgment(t *testing.T) {
 	t.Parallel()
-	h := routeHarness(t, route("pro-a", "pro"), route("pro-b", "pro"))
-	h.addReady("s1", 1, briefOf("pro", ""))
+	h := routeHarness(t, route("flash-a", "flash"), route("flash-b", "flash"))
+	h.addReady("s1", 1, briefOf("flash", ""))
 	h.startMachine()
 	h.machine()
 	w := h.snap().Fleet.Card("s1-1.w1")
@@ -67,7 +67,7 @@ func TestAProviderFailureRedealsTheCardAndIsNeverAFailedWorkJudgment(t *testing.
 	assert.Equal(t, 1, w.Int("redeals"), "the ended take counts toward the bound")
 	assert.NotEqual(t, first, w.F(sprint.FieldRoute), "another route remains: the redeal leaves the failed one out")
 	assert.Empty(t, h.openOf(sprint.NWorkFailed))
-	for _, x := range sprint.RouteStats([]sprint.Route{route("pro-a", "pro"), route("pro-b", "pro")}, h.snap().Fleet) {
+	for _, x := range sprint.RouteStats([]sprint.Route{route("flash-a", "flash"), route("flash-b", "flash")}, h.snap().Fleet) {
 		if x.Route.Name == first {
 			assert.Equal(t, [3]int{1, 1, 1}, [3]int{x.Attempts, x.Failed, x.Provider}, "the route's provider failures count apart")
 		}
@@ -88,15 +88,15 @@ func TestAProviderFailureRedealsTheCardAndIsNeverAFailedWorkJudgment(t *testing.
 // run on.
 func TestAProviderFailureWithOneRouteIsRedealtToThatRoute(t *testing.T) {
 	t.Parallel()
-	h := routeHarness(t, route("pro-a", "pro"))
-	h.addReady("s1", 1, briefOf("pro", ""))
+	h := routeHarness(t, route("flash-a", "flash"))
+	h.addReady("s1", 1, briefOf("flash", ""))
 	h.startMachine()
 	h.machine()
 	h.failTake("s1-1.w1", providerLine)
 	h.machine()
 	w := h.snap().Fleet.Card("s1-1.w1")
 	assert.Equal(t, sprint.Ready, w.Col)
-	assert.Equal(t, "pro-a", w.F(sprint.FieldRoute), "no other route remains")
+	assert.Equal(t, "flash-a", w.F(sprint.FieldRoute), "no other route remains")
 	assert.Equal(t, 1, w.Int("redeals"))
 }
 
@@ -105,8 +105,8 @@ func TestAProviderFailureWithOneRouteIsRedealtToThatRoute(t *testing.T) {
 // the last error line, never a failed-work judgment.
 func TestAFourthProviderFailureRetiresTheCardWithOneJudgmentNamingTheProvider(t *testing.T) {
 	t.Parallel()
-	h := routeHarness(t, route("pro-a", "pro"))
-	h.addReady("s1", 1, briefOf("pro", ""))
+	h := routeHarness(t, route("flash-a", "flash"))
+	h.addReady("s1", 1, briefOf("flash", ""))
 	h.startMachine()
 	h.machine()
 	for i := 1; i <= sprint.MaxRedeals; i++ {
@@ -125,7 +125,7 @@ func TestAFourthProviderFailureRetiresTheCardWithOneJudgmentNamingTheProvider(t 
 	open := h.openOf(sprint.NBound)
 	require.Len(t, open, 1, "one judgment")
 	what := open[0].Note.What
-	assert.Contains(t, what, "prov-pro-a", "it names the provider")
+	assert.Contains(t, what, "prov-flash-a", "it names the provider")
 	assert.Contains(t, what, "stream error: the last one", "and the last error line")
 	assert.Empty(t, h.openOf(sprint.NWorkFailed), "never a failed-work judgment")
 	assert.Zero(t, h.notesOf(sprint.NWorkFailed))
@@ -139,8 +139,8 @@ func TestAFourthProviderFailureRetiresTheCardWithOneJudgmentNamingTheProvider(t 
 func TestAFailedFinishWithoutTheProviderKindStaysFailedWork(t *testing.T) {
 	t.Parallel()
 	for _, report := range []string{"no RESULT.md shape; " + strings.ToUpper(cardhdr.EndProvider), "push refused: rejected; r", "nothing to do: done already; r", "verdict not-done; r"} {
-		h := routeHarness(t, route("pro-a", "pro"))
-		h.addReady("s1", 1, briefOf("pro", ""))
+		h := routeHarness(t, route("flash-a", "flash"))
+		h.addReady("s1", 1, briefOf("flash", ""))
 		h.must(DealStep(sprint.DealReq{}))
 		h.failTake("s1-1.w1", report)
 		assert.Equal(t, sprint.DoneFailed, h.snap().Fleet.Card("s1-1.w1").Col, report)
@@ -158,8 +158,8 @@ const noResultLine = cardhdr.EndNoResult + ": no RESULT.md shape; quack"
 // another route, counting the take; its record says which kind of end it was.
 func TestATakeThatLeftNoResultIsRedealtAndNeverAFailedWorkJudgment(t *testing.T) {
 	t.Parallel()
-	h := routeHarness(t, route("pro-a", "pro"), route("pro-b", "pro"))
-	h.addReady("s1", 1, briefOf("pro", ""))
+	h := routeHarness(t, route("flash-a", "flash"), route("flash-b", "flash"))
+	h.addReady("s1", 1, briefOf("flash", ""))
 	h.startMachine()
 	h.machine()
 	first := h.snap().Fleet.Card("s1-1.w1").F(sprint.FieldRoute)
@@ -189,8 +189,8 @@ func TestATakeThatLeftNoResultIsRedealtAndNeverAFailedWorkJudgment(t *testing.T)
 // the fourth retires the card with one judgment, the bound's, never a failed-work one.
 func TestAFourthTakeWithNoResultRetiresTheCardWithTheBoundsJudgment(t *testing.T) {
 	t.Parallel()
-	h := routeHarness(t, route("pro-a", "pro"))
-	h.addReady("s1", 1, briefOf("pro", ""))
+	h := routeHarness(t, route("flash-a", "flash"))
+	h.addReady("s1", 1, briefOf("flash", ""))
 	h.startMachine()
 	h.machine()
 	for i := 1; i <= sprint.MaxRedeals; i++ {
@@ -213,8 +213,8 @@ func TestAFourthTakeWithNoResultRetiresTheCardWithTheBoundsJudgment(t *testing.T
 func TestARunItsBudgetEndedWithNoResultStaysFailedWork(t *testing.T) {
 	t.Parallel()
 	for _, report := range []string{"budget: no RESULT.md shape; r", "deadline: no RESULT.md shape; r", "no RESULT.md shape; r"} {
-		h := routeHarness(t, route("pro-a", "pro"))
-		h.addReady("s1", 1, briefOf("pro", ""))
+		h := routeHarness(t, route("flash-a", "flash"))
+		h.addReady("s1", 1, briefOf("flash", ""))
 		h.must(DealStep(sprint.DealReq{}))
 		h.failTake("s1-1.w1", report)
 		assert.Equal(t, sprint.DoneFailed, h.snap().Fleet.Card("s1-1.w1").Col, report)

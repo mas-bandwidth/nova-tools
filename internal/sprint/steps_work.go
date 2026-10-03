@@ -743,7 +743,27 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 	for _, c := range chosen {
 		if wc := s.Fleet.Placed(WorkCardID(c.ID, c.Int("attempt"))); wc != nil && wc.Col == Withdrawn {
 			if redealBound(wc) {
-				p.refuse(c.ID, fmt.Sprintf("%s was redealt %d times, its bound: rework it with a fix, or drop it", wc.ID, wc.Int("redeals")))
+				tier := s.NextTier(c)
+				if tier == "" {
+					p.refuse(c.ID, fmt.Sprintf("%s was redealt %d times, its bound: rework it with a fix, or drop it", wc.ID, wc.Int("redeals")))
+					continue
+				}
+				// below its ceiling: the machine escalates it, a new attempt on the next tier
+				m := next()
+				if m == "" {
+					p.refuse(c.ID, noRoomWhy)
+					continue
+				}
+				on, _ := CardTiers(c)
+				why := fmt.Sprintf("attempt %s reached its bound on %s (redealt %d times)%s", wc.F("attempt"), on, wc.Int("redeals"), providerWhy(wc))
+				u, refused := escalate(s, c, wc, tier, why, m, q, ri)
+				if refused != "" {
+					p.refuse(c.ID, refused)
+					continue
+				}
+				rr.moved(m)
+				moves[c.ID] = m
+				p.Units = append(p.Units, u)
 				continue
 			}
 			if _, why := s.noRoute(c); why != "" {
@@ -836,6 +856,30 @@ func deal(s *Snapshot, c *Card, fix, m string, q map[string]int, ri routeIndexes
 		change(Fleet, createEntry(card, m, Ready, c.Score, fields)),
 		change(Work, moveEntry(c, c.Row, Working, set, append(unset, "result")...)),
 	}, Moved: fmt.Sprintf("%s work %s -> working card=%s member=%s (fleet ready)", c.ID, c.Col, card, m)}, ""
+}
+
+// escalate deals the primary c a new attempt on the next tier, tier (NextTier), into the
+// ready queue of the up member m, when its attempt reached its bound below its ceiling:
+// the machine's step, raising no judgment (route.go, tierLadder; the owner, 2026-10-02,
+// cost rule 1 of nova-tools#5174: "Flash first on every card; pro only on escalation").
+// The primary records the tier (FieldTierNow) and every later deal draws from it; the
+// attempt that reached its bound, prev, is retired as a rework at the bound retires it;
+// the new attempt's work card is told why (the bound and the tiers), the brief and the
+// fix are the card's own. A failure bound that escalates (rule 2's) calls it with the
+// attempt it retires and its own why.
+func escalate(s *Snapshot, c, prev *Card, tier, why, m string, q map[string]int, ri routeIndexes) (Unit, string) {
+	from, _ := CardTiers(c)
+	set := map[string]string{FieldTierNow: tier}
+	given := map[string]string{"finding": c.F("finding"), "why": fmt.Sprintf("escalated from %s to %s: %s", from, tier, why)}
+	u, refused := deal(s, withField(c, FieldTierNow, tier), c.F("fix"), m, q, ri, set, given)
+	if refused != "" {
+		return Unit{}, refused
+	}
+	if prev != nil {
+		u.Changes = append([]Change{change(Fleet, removeEntry(prev, map[string]string{"retired": stamp(s.Now), "retired_by": "escalation"}))}, u.Changes...)
+	}
+	u.Moved += fmt.Sprintf("; escalated %s -> %s: %s", from, tier, why)
+	return u, ""
 }
 
 // redeal deals a withdrawn work card again, into the ready queue of the up

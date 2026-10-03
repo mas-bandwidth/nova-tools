@@ -82,13 +82,13 @@ func TestTheProducerCardCarriesWhatEachConsumerCostAndTheTotal(t *testing.T) {
 	}
 	want := []string{
 		// predicted: 1000*0.14 + 2000*0.028 + (300+200)*0.28, over a million
-		"COST kind=work card=s1-1.w1 attempt=1 who=m1 route=flash-a model=opencode/deepseek-v4-flash end=failed input=1000 cache_read=2000 cache_write=- output=300 reasoning=200 requests=3 wait=2s run=10s predicted_usd=0.000336 actual_usd=0.0005 actual_by=harness cost=both",
+		"COST kind=work card=s1-1.w1 attempt=1 who=m1 route=flash-a model=opencode/deepseek-v4-flash tier=flash end=failed input=1000 cache_read=2000 cache_write=- output=300 reasoning=200 requests=3 wait=2s run=10s predicted_usd=0.000336 actual_usd=0.0005 actual_by=harness cost=both",
 		// 4000*0.14 + 6000*0.028 + 500*0.28
-		"COST kind=work card=s1-1.w2 attempt=2 who=m1 route=flash-a model=opencode/deepseek-v4-flash end=ok input=4000 cache_read=6000 cache_write=- output=500 reasoning=0 requests=5 wait=4s run=30s predicted_usd=0.000868 actual_usd=0.0009 actual_by=harness cost=both",
+		"COST kind=work card=s1-1.w2 attempt=2 who=m1 route=flash-a model=opencode/deepseek-v4-flash tier=flash end=ok input=4000 cache_read=6000 cache_write=- output=500 reasoning=0 requests=5 wait=4s run=30s predicted_usd=0.000868 actual_usd=0.0009 actual_by=harness cost=both",
 		// a read is priced by the enabled route of the model its harness reported: 2000*0.5 + 1000*0.1 + (100+50)*2
-		"COST kind=read card=s1-1.r2.reader-a attempt=2 who=reader-a route=pro-a model=opencode/deepseek-v4-pro end=ok input=2000 cache_read=1000 cache_write=- output=100 reasoning=50 requests=2 wait=3s run=20s predicted_usd=0.0014 actual_usd=0.0015 actual_by=harness cost=both",
+		"COST kind=read card=s1-1.r2.reader-a attempt=2 who=reader-a route=pro-a model=opencode/deepseek-v4-pro tier=flash end=ok input=2000 cache_read=1000 cache_write=- output=100 reasoning=50 requests=2 wait=3s run=20s predicted_usd=0.0014 actual_usd=0.0015 actual_by=harness cost=both",
 		// no route runs its model: no prediction, never a zero; the harness's cost stands
-		"COST kind=read card=s1-1.r2.reader-b attempt=2 who=reader-b route=- model=other/unrouted end=ok input=100 cache_read=- cache_write=- output=10 reasoning=- requests=- wait=30s run=0s predicted_usd=- actual_usd=0.002 actual_by=harness cost=actual",
+		"COST kind=read card=s1-1.r2.reader-b attempt=2 who=reader-b route=- model=other/unrouted tier=flash end=ok input=100 cache_read=- cache_write=- output=10 reasoning=- requests=- wait=30s run=0s predicted_usd=- actual_usd=0.002 actual_by=harness cost=actual",
 		"COST TOTAL consumers=4 input=7100 cache_read=9000 cache_write=- output=910 reasoning=250 requests=10 wait=39s run=60s predicted_usd=0.002604 predicted_of=3/4 actual_usd=0.0049 actual_by=harness actual_of=4/4 charged_usd=0.0049",
 	}
 	assert.Equal(t, want, lines, out)
@@ -178,8 +178,8 @@ func TestAProviderFailedTakeCountsOnceAfterARedeal(t *testing.T) {
 	out := ta.ok("card s1-1")
 	lines := costLines(out)
 	require.Len(t, lines, 3, out)
-	assert.Contains(t, lines[0], "COST kind=work card=s1-1.w1 attempt=1 take=1 who=m1 route=flash-a model=opencode/deepseek-v4-flash end=provider-failure input=1000 ")
-	assert.Contains(t, lines[1], "COST kind=work card=s1-1.w1 attempt=1 who=m1 route=flash-a model=opencode/deepseek-v4-flash end=failed input=- cache_read=- ", "the second take spent nothing it reported")
+	assert.Contains(t, lines[0], "COST kind=work card=s1-1.w1 attempt=1 take=1 who=m1 route=flash-a model=opencode/deepseek-v4-flash tier=flash end=provider-failure input=1000 ")
+	assert.Contains(t, lines[1], "COST kind=work card=s1-1.w1 attempt=1 who=m1 route=flash-a model=opencode/deepseek-v4-flash tier=flash end=failed input=- cache_read=- ", "the second take spent nothing it reported")
 	assert.Contains(t, lines[2], "COST TOTAL consumers=2 input=1000 cache_read=2000 cache_write=- output=300 reasoning=200 requests=3 ")
 	assert.Contains(t, lines[2], "predicted_usd=0.000336 predicted_of=1/2 actual_usd=0.0005 actual_by=harness actual_of=1/2", "the first take counted once")
 }
@@ -203,7 +203,7 @@ func TestAReturnedReadKeepsItsRunInTheTotal(t *testing.T) {
 	out := ta.ok("card s1-1")
 	lines := costLines(out)
 	require.Len(t, lines, 4, out) // the work card's take (it reported nothing), two reads, the total
-	assert.Contains(t, lines[1], "COST kind=read card=s1-1.r1.reader-a attempt=1 take=1 who=reader-a route=pro-a model=opencode/deepseek-v4-pro end=returned input=2000 ")
+	assert.Contains(t, lines[1], "COST kind=read card=s1-1.r1.reader-a attempt=1 take=1 who=reader-a route=pro-a model=opencode/deepseek-v4-pro tier=flash end=returned input=2000 ")
 	assert.Contains(t, lines[1], "wait=0s run=9s predicted_usd=0.0014 actual_usd=0.0015 actual_by=harness cost=both")
 	assert.Contains(t, lines[2], "COST kind=read card=s1-1.r1.reader-b attempt=1 who=reader-b ")
 	assert.Contains(t, lines[3], "COST TOTAL consumers=3 input=2100 ")
