@@ -124,29 +124,41 @@ func TestLandWithoutAKeyOrABarLandsAndJudgesNothing(t *testing.T) {
 }
 
 // stalling is a score backend that fails: at its first ask it records whether every
-// stream of the run had landed by then, then either fails at once or, like a hung
-// backend, waits until its context ends (the land loop's, cancelled here as a shutdown or
-// the pass's deadline would end it).
+// stream of the run had landed by then and whether its context carries a deadline (the
+// pass's, the one bound on a land under Background, as Jev's client has none), then
+// either fails at once or, as a hung backend is ended, cancels the land loop's context
+// (a shutdown) and fails with the context's error, which must be done already: a pass
+// that ignored the loop's context fails with errIgnoredLoop at once, never waiting.
 type stalling struct {
-	hang    bool
-	stop    context.CancelFunc
-	landed  func() bool
-	asks    atomic.Int32
-	allDone atomic.Bool
+	hang     bool
+	stop     context.CancelFunc
+	landed   func() bool
+	asks     atomic.Int32
+	allDone  atomic.Bool
+	deadline atomic.Bool
 }
+
+// errIgnoredLoop is a hanging ask whose context the land loop's cancel did not end.
+var errIgnoredLoop = errors.New("the scoring pass ignored the land loop's context")
 
 func (f *stalling) Name() string { return "fake" }
 
 func (f *stalling) Ask(ctx context.Context, _ decide.Schema, _ string) (map[string]decide.Answer, decide.Usage, error) {
 	if f.asks.Add(1) == 1 {
 		f.allDone.Store(f.landed())
+		_, ok := ctx.Deadline()
+		f.deadline.Store(ok)
 	}
 	if !f.hang {
 		return nil, decide.Usage{}, errors.New("the backend answered HTTP 402")
 	}
 	f.stop()
-	<-ctx.Done()
-	return nil, decide.Usage{}, ctx.Err()
+	select {
+	case <-ctx.Done():
+		return nil, decide.Usage{}, ctx.Err()
+	default:
+		return nil, decide.Usage{}, errIgnoredLoop
+	}
 }
 
 // The scoring runs after the whole land pass, never between streams: a backend that
@@ -178,6 +190,8 @@ func TestLandScoresAfterThePassAndStopsAtTheFirstFailure(t *testing.T) {
 			assert.Contains(t, out, "LAND OK stream=s1 cards=2")
 			assert.Contains(t, out, "LAND OK stream=s2 cards=1")
 			assert.True(t, f.allDone.Load(), "the first score is asked after every stream landed")
+			assert.True(t, f.deadline.Load(), "the pass's context carries its deadline")
+			assert.NotContains(t, errs, errIgnoredLoop.Error(), "the land loop's cancel ends the pass")
 			assert.Equal(t, int32(1), f.asks.Load(), "the pass stops at the first failure: no ask after it")
 			assert.Contains(t, errs, "NOTE s1-1 was not scored: ")
 			assert.Contains(t, errs, "the scoring pass stopped at the first failure; not scored: s1-2")
