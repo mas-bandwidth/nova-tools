@@ -1057,12 +1057,12 @@ past its deadline, cannot ask, ready to accept, a card at its bound) by
 nova-decide's judgment decision, card by card: it applies the verb chosen when
 its probability is at or above `decide_judgment_bar` (nova-config's sprint row,
 empty by default: with no bar it applies nothing, records every decision and lists
-what a bar would apply; `--bar` gives one for a run; 0.8 is the bar the calibration
-of 2026-10-03 documents), by the line the inbox prints for that card,
+what a bar would apply; `--bar` gives one for a run; 0.8 is a starting point measured on 100 of the coordinator's own judgments,
+not an independent calibration), by the line the inbox prints for that card,
 and lists the rest for you: every drop, everything under the bar, and a provider
 refusal for want of payment, which it never asks about. It prints one table, a
 row a card, and records every decision (`--record`, default
-`~/.nova/decide/judgment.jsonl`) with its outcome once the card lands, is dropped
+`~/nova-sprint/decide/judgment.jsonl`, its directory made 0700) with its outcome once the card lands, is dropped
 or comes back. Each verb it applies carries the decision's op id (`--op
 decide.<decision id>`), recorded as `applying` before the verb runs and `applied`
 or `refused` after, so a pass stopped between the two is finished by the next

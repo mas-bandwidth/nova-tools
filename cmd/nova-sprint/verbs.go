@@ -291,8 +291,9 @@ the routine judgments answered by nova-decide (broken, failed, blocked, stalled,
 deadline, cannot ask, ready to accept, a card at its bound), card by card:
   nova-secrets exec --only JEV_API_KEY -- nova-sprint answer [--dry-run] [--bar <p>] [--every 60s] [--timeout 60s]
 the verb the judgment decision chose is applied at or above decide_judgment_bar (nova-config's
-sprint row; empty by default, so nothing is applied and what a bar would apply is listed, until
-it is set or --bar is given; 0.8 is the calibrated bar) by the line the inbox prints for that card; every drop, everything
+sprint row; the bar ships empty, so nothing is applied and what a bar would apply is listed, until
+it is set or --bar is given; 0.8 is a starting point measured on 100 of the coordinator's own judgments, not an independent calibration)
+by the line the inbox prints for that card; every drop, everything
 under the bar and a provider's refusal for want of payment (never asked: a payment is the
 owner's) are listed for you; every decision is recorded with its outcome (--record), and
 each verb applied carries the decision's --op, recorded as applying before it runs and

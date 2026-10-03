@@ -1395,7 +1395,7 @@ printed lines: a reader found it broken, work came back failed, a primary is
 blocked on something dropped, stalled, stream stopped: conflict on a card, a
 work card is past its deadline, cannot ask, ready to accept, and a card reached
 its bound. Every other judgment, a sentinel reached among them, is left, and
-listed `left`. A judgment the coordinator set a wait on is the coordinator's
+listed `left`, its kind `other` and its type in the why. A judgment the coordinator set a wait on is the coordinator's
 until it comes due, and is not read.
 
 Each card of a judgment is decided by itself: a grouped judgment (several cards
@@ -1415,8 +1415,8 @@ and read with the routes; `routes --json` carries it). The row ships it empty (t
 owner, 2026-10-03: "same rule as the other layers"): with no bar, nothing is applied;
 each decision is asked and recorded (`act` listed) and its row says what a bar would
 apply, so the record trains before anything acts; once a bar is set or given, a
-recorded decision is applied from the record without asking again. 0.8 is the bar
-the calibration documents (docs/SPEC-NOVA-DECIDE.md section 9). A drop is never
+recorded decision is applied from the record without asking again. 0.8 is a starting point measured on 100 of the coordinator's own judgments
+(docs/SPEC-NOVA-DECIDE.md section 9), not an independent calibration. A drop is never
 applied, whatever its probability: it is listed with the reason chosen. A card
 whose judgment text or last ten log lines carry a provider's refusal for want of
 payment (HTTP 402, out of credit) is never asked: it is listed, "a payment is the
@@ -1452,6 +1452,9 @@ listed, refused, failed or left, and `why`: the lines applied, or why it is
 listed), an `OUTCOME <decision> card=<c> label=<l>` line per outcome attached, and
 `ANSWER OK rows=<n> applied=<n> would_apply=<n> listed=<n> refused=<n> failed=<n>
 left=<n> outcomes=<n> bar=<p, or - for none> record=<file>; run: nova-sprint inbox`; `--json` is the same as one object.
+answer takes none of the shared `--op`, `--epoch` or `--max`: each verb it applies
+carries its decision's own op, and a pass lists every row; given one, it is refused
+as a flag answer does not define.
 `--dry-run` asks the decision and prints `would-apply`, and writes neither the
 sprint nor the record (`ANSWER DRY-RUN`). `--every <d>` is the coordinator seat's
 loop: a pass every `<d>` until a pass finds the machine STOPPED (or DONE), then
@@ -1465,7 +1468,10 @@ every answer is a verb, sent to the server when `NOVA_SPRINT_SERVER` names one
 The backend is Jev (`--backend jev`, the key from `JEV_API_KEY`, which
 `nova-secrets exec --only JEV_API_KEY` sets; with no key every ask fails, naming
 that command) or a fixed file (`--backend fixed --answers <file>`). The record is
-`--record`, default `~/.nova/decide/judgment.jsonl`.
+`--record`, default `~/nova-sprint/decide/judgment.jsonl`: the decide layers keep their
+records under one `decide/` directory (a member's reads in `<root>/decide/read.jsonl`,
+the brief's in `~/nova-sprint/decide/brief.jsonl`), and answer makes that directory
+0700, as the records hold the sprint's state.
 
 ## 9. What is always true
 

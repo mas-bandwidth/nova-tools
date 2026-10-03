@@ -242,8 +242,9 @@ characters. Three choices:
 nova-config's sprint row; `--bar` overrides it). Anything else is listed for the
 coordinator with why. The row ships the bar empty: with none, answer applies
 nothing, records every decision and lists what a bar would apply, until the coordinator
-sets one. 0.8 is the bar the calibration below documents: at it the decision applies 40
-of the 100 and 39 of those are the coordinator's own verb. An applied `ack` gives the reason `nova-decide (p=<p>):
+sets one. 0.8 is a starting point measured on 100 of the coordinator's own judgments, below, not an
+independent calibration: at it the decision applies 40 of the 100 and 39 of those are the
+coordinator's own verb. An applied `ack` gives the reason `nova-decide (p=<p>):
 the card can run without the dropped need; a conflict is handled at merge`.
 
 A card whose judgment text or last ten log lines carry a provider's refusal for want of
@@ -309,4 +310,7 @@ state does not carry), 10 of the 13 bound cards the coordinator reworked (nine o
 which came back and one was still open: the night's runaway), 4 deadline cards the
 coordinator waited on, and 2 failed cards. A drop is never applied, so each of those
 is listed for the coordinator, which is what the bar is for. Deadline, stalled,
-blocked and cannot-ask judgments all stay under the bar.
+blocked and cannot-ask judgments all stay under the bar. The measure is in-sample: 0.8
+was chosen on these same 100 judgments, against the coordinator's own verbs (the night's
+runaway reworks among them), so it is a starting point and not an independent
+calibration; the bar ships empty until independent labels calibrate it.

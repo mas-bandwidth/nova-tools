@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
@@ -66,6 +67,9 @@ const (
 	actLeft       = "left"
 )
 
+// kindOther is the kind column of a judgment left alone: not a routine kind, its type in the why.
+const kindOther = "other"
+
 // answerOutcome is an outcome attached to an earlier decision in this pass.
 type answerOutcome struct {
 	Decision string `json:"decision"`
@@ -114,14 +118,17 @@ func (p answerPass) stopped() bool {
 }
 
 func (a *app) cmdAnswer(args []string, stdout, stderr io.Writer) int {
-	fs, c := a.verbSetup("answer")
+	// no --op, --epoch or --max: each verb a pass applies carries its decision's own op
+	// (decide.<decision id>), and a pass lists every row
+	fs, c := verbflag.New("answer"), &common{verb: "answer"}
+	c.registerStore(fs, a.getenv)
 	dry := fs.Bool("dry-run", false, "ask the decision and print what would be applied; apply nothing and write no record")
 	bar := fs.String("bar", "", "apply a verb whose probability is at or above this bar (else the sprint row's decide_judgment_bar; with neither, nothing is applied: every decision is recorded and what a bar would apply is listed)")
 	every := fs.Duration("every", 0, "run a pass every duration until the machine is STOPPED (or DONE): the coordinator seat's loop; 0 is one pass")
 	backend := fs.String("backend", "jev", "the decision's backend: jev (its key from JEV_API_KEY, which nova-secrets exec sets) or fixed (--answers)")
 	answers := fs.String("answers", "", "the fixed backend's answers, a JSON file (--backend fixed)")
 	timeout := fs.Duration("timeout", decide.JevTimeout, "how long one ask of the backend may take; an ask past it is that card's failed row, and nothing is applied for it")
-	record := fs.String("record", "", "the judgment decisions' record, JSON lines (default ~/.nova/decide/judgment.jsonl)")
+	record := fs.String("record", "", "the judgment decisions' record, JSON lines (default ~/nova-sprint/decide/judgment.jsonl, its directory made 0700)")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
 		return refuse(stderr, "answer", argErr("takes no words ", err, pos...))
@@ -156,7 +163,7 @@ func (a *app) cmdAnswer(args []string, stdout, stderr io.Writer) int {
 		if err != nil {
 			return refuse(stderr, "answer", "no home directory for the default record ("+err.Error()+"); give --record <file>")
 		}
-		w.record = filepath.Join(home, ".nova", "decide", "judgment.jsonl")
+		w.record = filepath.Join(home, "nova-sprint", "decide", "judgment.jsonl")
 	}
 	if w.backend, err = a.judgmentBackend(*backend, *answers, *timeout); err != nil {
 		return refuse(stderr, "answer", err.Error())
@@ -327,7 +334,7 @@ func (w *answerer) pass(ctx context.Context) (answerPass, error) {
 		}
 		kind, routine := decide.Kinds[g.Type]
 		if !routine {
-			p.Rows = append(p.Rows, answerRow{Judgment: g.ID, Kind: g.Type, Act: actLeft, Why: "not a routine kind: the coordinator's"})
+			p.Rows = append(p.Rows, answerRow{Judgment: g.ID, Kind: kindOther, Act: actLeft, Why: "not a routine kind (" + g.Type + "): the coordinator's"})
 			continue
 		}
 		rows, err := w.group(ctx, g, kind, bar)

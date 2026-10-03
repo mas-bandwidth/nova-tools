@@ -261,12 +261,34 @@ func TestAnswerDecideRefusals(t *testing.T) {
 		"answer --timeout 0s --record " + record:     "--timeout wants a duration above zero",
 		"answer --bar 1.5 --record " + record:        "--bar: decide_judgment_bar \"1.5\" is not a probability",
 		"answer --backend fixed --record " + record:  "--answers <file> goes with --backend fixed",
+		// each verb a pass applies carries its decision's own op, and a pass lists every row
+		"answer --op x --record " + record:    "unknown flag --op; the flags of answer are",
+		"answer --epoch 1 --record " + record: "unknown flag --epoch",
+		"answer --max 5 --record " + record:   "unknown flag --max",
 	} {
 		code, out, errs := ta.do(line)
 		assert.Equal(t, 2, code, line)
 		assert.Empty(t, out, line)
 		assert.Contains(t, errs, want, line)
 	}
+}
+
+// A judgment of no routine kind is left and asks nothing: its kind is the plain word other,
+// and its type is in the why.
+func TestAJudgmentLeftAloneIsOfKindOther(t *testing.T) {
+	t.Parallel()
+	ta, j, record := answering(t, always(decide.VerbRework, 0.9, "own", "cannot-be-done"))
+	ta.ok("add --stream s1 --count 1")
+	ta.ok("add --stream docs --sentinel docs-round2")
+	ta.ok("start")
+	ta.ok("tick")
+	ta.ok("drop s1-1 --reason 'done elsewhere'")
+	ta.ok("tick")
+	require.True(t, hasGroup(ta.inboxGroups(), sprint.NSentinelReached))
+	out := ta.ok("answer --bar 0.8 --record " + record)
+	assert.Regexp(t, `(?m)^\S+\s+-\s+other\s+-\s+-\s+left\s+not a routine kind \(sentinel reached\): the coordinator's$`, out)
+	assert.Contains(t, out, " left=1 ")
+	assert.Zero(t, j.asks())
 }
 
 // The bar is the sprint row's when --bar is not given, as nova-config applied it.

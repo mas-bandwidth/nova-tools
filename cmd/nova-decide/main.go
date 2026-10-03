@@ -14,7 +14,6 @@ import (
 	"fmt"
 	"io"
 	"maps"
-	"net/http"
 	"os"
 	"slices"
 	"strconv"
@@ -28,18 +27,19 @@ import (
 var version string
 
 // world is what the tool reaches outside itself: the clock every record stamp
-// reads, the environment the backend's key comes from, and the Jev transport.
+// reads, the environment the backend's key comes from, and the Jev transport
+// (its client bounded by --timeout, as the ask's context is).
 // main passes the real one; a test passes its own, so no test opens a socket,
 // reads the real clock or needs a key.
 type world struct {
 	now    func() time.Time
 	getenv func(string) string
-	send   func(key string) decide.Send
+	send   func(key string, timeout time.Duration) decide.Send
 }
 
 func realWorld() world {
 	return world{now: time.Now, getenv: os.Getenv,
-		send: func(key string) decide.Send { return decide.HTTPSend(http.DefaultClient, decide.JevURL, key) }}
+		send: func(key string, timeout time.Duration) decide.Send { return decide.JevHTTP(key, timeout).Send }}
 }
 
 func main() { os.Exit(decideTool(realWorld()).Main()) }
@@ -140,7 +140,7 @@ func (w world) asking(f *tool.Flags) {
 	f.String("answers", "", "the fixed backend's answers, a JSON file (--backend fixed only)")
 	f.Required("record", "the record file every decision is appended to (JSON lines; created if absent)")
 	f.Op()
-	f.Duration("timeout", time.Minute, "how long the backend may take to answer")
+	f.Duration("timeout", decide.JevTimeout, "how long the backend may take to answer")
 	f.Check(func(c *tool.Call) {
 		switch b := c.Str("backend"); {
 		case b == "fixed" && !c.Given("answers"):
@@ -270,7 +270,7 @@ func (w world) backend(c *tool.Call) (decide.Backend, error) {
 		}
 		return decide.ParseFixed(raw)
 	}
-	return decide.Jev{Model: decide.JevModel, Send: w.send(w.getenv(decide.JevSecret))}, nil
+	return decide.Jev{Model: decide.JevModel, Send: w.send(w.getenv(decide.JevSecret), c.Dur("timeout"))}, nil
 }
 
 func (w world) outcome(c *tool.Call) *tool.Out {
