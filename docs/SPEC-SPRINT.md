@@ -1278,7 +1278,13 @@ when there is one, is pushed it. add with a need on a
 dropped primary writes the blocked judgment in the same step. The blocked
 judgment names the dropped needs; acknowledging it waives those only (a need
 dropped later is its own judgment), and `card <id>` shows each waived need, by
-whom and when. An add counts only valid candidate IDs as proposed dependencies;
+whom and when. The ack is how a chain behind a dropped card is mended: the
+waiver is written on the card (`waived`, `waived_by`, `waived_at`), and the card
+moves to ready in the ack's own step when nothing else holds it (on a RUNNING
+machine, at the next tick, which applies the step), so nothing down the chain is
+dropped and added again; a sentinel is reached, and a held card or held sentinel
+keeps its hold. The coordinator who acks owns the risk that the dependent runs
+without the dropped card's change. An add counts only valid candidate IDs as proposed dependencies;
 a missing prerequisite refuses the dependent too. An add naming its ids is
 all or nothing, as every verb that names its cards is: one refused id refuses
 them all. A stored waiting primary
