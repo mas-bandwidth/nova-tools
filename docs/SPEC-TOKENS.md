@@ -994,7 +994,7 @@ debugging convenience and not the retained-accounting route. A cursor or a
 per-file cache that lets a second run read only the delta is the tool's, and it
 does not change the day file's shape.
 
-### The coordinator read is bounded (`COORDINATOR READ`)
+### The ledger read is bounded (`COORDINATOR READ`)
 
 `fold --day` prints 5 lines and 984 B; `fold --all` prints 14 lines and 2,297 B
 for 10 days. One `TOKENS SOURCE` per source, one `TOKENS DAY` per day, one
