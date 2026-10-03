@@ -765,10 +765,22 @@ jobs:
           command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
           go version
 
+      - name: cache Go on a hosted tick runner
+        if: runner.environment == 'github-hosted'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ${{ runner.os == 'macOS' && '~/Library/Caches/go-build' || '~/.cache/go-build' }}
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-${{ runner.arch }}-tick-go-${{ hashFiles('go.mod') }}
+
+      - name: build the ci runner
+        run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
+
       - name: install redis-server
         # #3113: the drive spawns a throwaway redis-server on loopback; it does not dial the
         # fleet store.
-        run: bash .github/scripts/install-redis-server.sh
+        run: '"$RUNNER_TEMP/ci" install-redis-server'
 
       - name: the tick gate, against the bench's store
         env:
