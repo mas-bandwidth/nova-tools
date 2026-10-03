@@ -28,5 +28,5 @@ Complete and structured JSON output across all verbs mirroring the line-oriented
 ## Compared with earlier ratings
 | earlier | now | evidence |
 |---|---|---|
-| index cannot list sessions | STILL THERE | nova-cairn index lists entry items only with no flag to list session names |
-| a re-open looks like a first open | STILL THERE | nova-cairn open re-run prints OPEN OK with new stamp and no duplicate indicator |
+| index cannot list sessions | STILL THERE | `nova-cairn index --store ./cairns` -> lists entries only, no session listing |
+| a re-open looks like a first open | STILL THERE | `nova-cairn open --store ./cairns --session test` -> `OPEN OK` without duplicate indicator |
