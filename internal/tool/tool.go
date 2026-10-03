@@ -190,6 +190,13 @@ func (t *Tool) group(word string) []string {
 func (t *Tool) inGroup(args, members []string, asJSON bool, stdout, stderr io.Writer) int {
 	g := args[0]
 	if len(args) > 1 && verbflag.IsHelp(args[1]) {
+		if t.HelpRefused {
+			// exit 0 would read as CLEAR, so a group's -h is refused like a
+			// named verb's (Tool.HelpRefused).
+			o := Refuse("-h is not an answer this tool gives, its exit 0 means CLEAR")
+			o.Remedy = t.Name + " help"
+			return t.emit(nil, o, asJSON, stdout, stderr)
+		}
 		var subs []string
 		for _, m := range members {
 			subs = append(subs, strings.TrimPrefix(m, g+" "))
@@ -425,7 +432,7 @@ func (t *Tool) call(v Verb, args []string, stdin io.Reader, stdout, stderr io.Wr
 	if f.max && c.Int("max") < 0 {
 		c.Problem(fmt.Sprintf("--max must be zero or more (got %d); 0 lists all", c.Int("max")))
 	}
-	if v.Name != t.Default && f.NArg() > 0 {
+	if v.Name != t.Default && !f.args && f.NArg() > 0 {
 		c.Problem(fmt.Sprintf("takes no positional arguments, got %q (flags come before arguments)", f.Arg(0)))
 	}
 	if o := c.Refused(); o != nil {
@@ -510,9 +517,9 @@ func (t *Tool) emit(v *Verb, o *Out, asJSON bool, stdout, stderr io.Writer) int 
 // closed (verbflag.New), and the standard flags a verb opts into.
 type Flags struct {
 	*flag.FlagSet
-	max, prints bool
-	required    [][2]string
-	checks      []func(c *Call)
+	max, args, prints bool
+	required          [][2]string
+	checks            []func(c *Call)
 }
 
 // Required declares a string flag the verb cannot run without: empty, it is a
@@ -546,6 +553,10 @@ func (f *Flags) Op() {
 func (f *Flags) Redis(seatFirst string) {
 	f.String("redis", seatFirst, "the Redis address, host:port (default: the seat's)")
 }
+
+// Positional lets the verb take positional arguments after its flags; a verb
+// without it refuses them, the default verb apart (Call.Args).
+func (f *Flags) Positional() { f.args = true }
 
 // Prints marks a verb that writes its own output (a payload a program reads,
 // a child's stream, or a body shared with a tool not yet on this package): it
@@ -607,6 +618,10 @@ func (c *Call) Dur(name string) time.Duration { return c.Get(name).(time.Duratio
 
 // Given reports whether the flag was on the command line.
 func (c *Call) Given(name string) bool { return c.given[name] }
+
+// Args is the positional arguments a verb that declared Positional takes, in
+// order; every other verb refuses them before it runs.
+func (c *Call) Args() []string { return c.flags.FlagSet.Args() }
 
 // Want reads a required string flag, recording a problem that says what it
 // wants when it is empty. Every Want is read before Refused, so one run names

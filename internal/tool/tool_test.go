@@ -843,3 +843,82 @@ func TestHelpRefusedAnswersDashH(t *testing.T) {
 		})
 	}
 }
+
+// TestPositionalArguments pins a verb that declares Positional: it reads its
+// arguments through Call.Args, a verb that does not declare it refuses them,
+// and the default verb reads them named or given as a bare path.
+func TestPositionalArguments(t *testing.T) {
+	t.Parallel()
+	tool := &Tool{Name: "nova-demo", What: "a tool that exists to be tested",
+		How:       "It keeps nothing.",
+		ExitTable: "0 done, 1 said no, 2 could not run.", Default: "scan",
+		Verbs: []Verb{
+			{Name: "check", Usage: "check [surface]", Effect: Inspection,
+				Flags: func(f *Flags) { f.Positional() },
+				Run:   func(c *Call) *Out { return Done().Fact("args", strings.Join(c.Args(), ",")) }},
+			{Name: "scan", Usage: "[scan] <file>...", Effect: Inspection,
+				Flags: func(f *Flags) { f.Positional() },
+				Run:   func(c *Call) *Out { return Done().Fact("args", strings.Join(c.Args(), ",")) }},
+			{Name: "shapes", Usage: "shapes", Effect: Inspection,
+				Run: func(*Call) *Out { return Done() }},
+		}}
+	for _, tc := range []struct {
+		name   string
+		args   []string
+		code   int
+		stdout string
+		stderr string
+	}{
+		{"a declaring verb reads its arguments", []string{"check", "a", "b"}, 0, "CHECK OK args=a,b\n", ""},
+		{"a non-declaring verb refuses them", []string{"shapes", "a"}, 2, "",
+			`SHAPES REFUSED: takes no positional arguments, got "a" (flags come before arguments); run: nova-demo help` + "\n"},
+		{"the default verb reads them", []string{"scan", "a", "b"}, 0, "SCAN OK args=a,b\n", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var out, errs bytes.Buffer
+			code := tool.Run(tc.args, strings.NewReader(""), &out, &errs)
+			assert.Equal(t, tc.code, code, "stdout %q stderr %q", out.String(), errs.String())
+			assert.Equal(t, tc.stdout, out.String())
+			assert.Equal(t, tc.stderr, errs.String())
+		})
+	}
+}
+
+// TestHelpRefusedReachesAGroup pins the group form of the refused help: a
+// group's -h is answered at exit 0 by default, and refused at exit 2 naming
+// help when the tool sets HelpRefused, since exit 0 would read as CLEAR.
+func TestHelpRefusedReachesAGroup(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name        string
+		helpRefused bool
+		code        int
+	}{
+		{"a group's -h is refused with HelpRefused", true, 2},
+		{"a group's -h answers at exit 0 by default", false, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tool := &Tool{Name: "nova-demo", What: "a tool that exists to be tested",
+				How:       "It keeps nothing.",
+				ExitTable: "0 done, 1 said no, 2 could not run.", HelpRefused: tc.helpRefused,
+				Verbs: []Verb{
+					{Name: "lift quarantine", Usage: "lift quarantine <surface>", Effect: LocalWrite,
+						Run: func(*Call) *Out { return Done() }},
+					{Name: "lift lockdown", Usage: "lift lockdown", Effect: Inspection,
+						Run: func(*Call) *Out { return Done() }},
+				}}
+			var out, errs bytes.Buffer
+			code := tool.Run([]string{"lift", "-h"}, strings.NewReader(""), &out, &errs)
+			assert.Equal(t, tc.code, code, "stdout %q stderr %q", out.String(), errs.String())
+			if tc.helpRefused {
+				assert.Equal(t, "DEMO REFUSED: -h is not an answer this tool gives, its exit 0 means CLEAR; run: nova-demo help\n", errs.String())
+				assert.Empty(t, out.String())
+			} else {
+				assert.Contains(t, out.String(), "usage: nova-demo lift <quarantine|lockdown>")
+				assert.Empty(t, errs.String())
+			}
+		})
+	}
+}
