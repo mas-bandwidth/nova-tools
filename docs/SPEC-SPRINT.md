@@ -486,6 +486,30 @@ and it is the coordinator's decision, receipted.
   the tick's later parts. A member that cannot launch a taken card (no model,
   budget or deadline from its packet or its override) reports it at once as a
   `--failed` finish, `launch refused: <why>`, never leaving it working.
+- A route whose children end without a result rests (the owner, 2026-10-02,
+  nova-tools#5174: "A route whose children end without a result three times is
+  rested by the machine, never redealt on."). The tick's deal counts each route's
+  ended takes over a sliding window, the last RouteRestWindow (10) takes on it that
+  ended after its last rest began, in the order they ended: each take the provider
+  failed or that left no result (the work card's provider_take_<n> records) and each
+  work card's own finish; a take that ended with its member down keeps no record and
+  is not counted. When RouteRestAfter (3) of the window left no result, the tick
+  rests the route for RouteRestFor (30 minutes, the clock's): it writes the fleet
+  table's property `route_rest_<route>` (`<began> <ends> <card,card,card>`, RFC3339,
+  guarded on the value read) in the deal's batch, and a happened note to the
+  coordinator, "a route rested: its children ended with no result", naming the
+  route, when the rest ends and the cards. While it rests the deal draws no work
+  card on it, a first deal, a redeal (even when it is the tier's only route, where
+  the exclusion of the routes drawn lapses) or a rework's, as it draws none on a
+  disabled one; when every route of a tier rests, the tier's judgment `no route
+  serves the tier` says so and names when each rest ends. The rest ends by itself at
+  its time, and the window begins again after it, so the ends that rested it never
+  rest it twice. Reads are drawn as before. The rest is the sprint's, in the store,
+  never nova-config's: enabled stays the coordinator's (docs/SPRINT-COORDINATOR.md).
+  `routes` prints `rested_until=<RFC3339>` while a route rests (`-` when not)
+  (`sprint.RestsDue`, `TestRestsDueCountsNoResultEndsInTheRoutesWindow`,
+  `TestARouteWhoseChildrenEndWithNoResultThreeTimesRests`,
+  `TestARestingRouteServesNoDealWhileAnotherServes`).
 - The twin (`mem:<file>`) holds no routes: routes are config, nova-config's
   rows applied to a store's Redis, and a twin has no config store to apply
   from. A twin deals as a store with no route does (the member's override);
@@ -855,7 +879,8 @@ from the coordinator's cursor. Two kinds.
 work came back ok; fleet member up or down; cards returned to ready because no
 member is up; ci green on a primary; an operation was abandoned; a sentinel
 landed, released by the coordinator; the machine started or stopped; a stream
-resumed because the card it needed landed.
+resumed because the card it needed landed; a route rested because its children
+ended with no result (section 5).
 
 **judgment**: needs the coordinator. Each names the decisions open to it.
 
@@ -1219,7 +1244,7 @@ command that loads it.
 | finish | work cards done ok or failed; primaries to review; `--as <member>`, `<card>@<gen>`; `--usage <text>` (what the run spent) is kept on the attempt's record, timed and priced (section 2, What a card cost) |
 | ask | deals primaries in review to two different readers; `--another`; `ask <primary> --instead <reader>` takes that reader's read, asked or reading, of the primary at its attempt back (`retired_by: coordinator`, a later report of it refused naming that) and asks one other reader in the same step, chosen and routed as `--another` (the owner, 2026-10-01: "get the verbs in man."); refused, nothing changed, when the primary is not in review, the reader holds no live read of it, no other reader is free, or with `--another`, `--group` or more than one primary |
 | queue | a reader's read cards or a member's work cards, oldest first (`--as`; `--json` carries the worker's `width`: a member's fleet row's, a reader's its machine's, `reader-<m>`), or a stream's merge queue (`--stream`) |
-| routes | each route of the store (nova-config's `route` kind) with what its attempts did: attempts, ok, failed, provider failures, mean wall from take to finish; `TIERS flash=<n> pro=<n>` first, the enabled routes per tier; `--json` |
+| routes | each route of the store (nova-config's `route` kind) with what its attempts did: attempts, ok, failed, provider failures, mean wall from take to finish, and `rested_until`, when its rest ends while the machine rests it for children that ended with no result (section 5; `-` when it does not rest); `TIERS flash=<n> pro=<n>` first, the enabled routes per tier; `--json` (`rested_until` only while it rests) |
 | stats | the epoch's pass in seconds, each as median, max and count, from one read of the work, fleet and readers tables (every primary's work and read cards of every attempt, retired ones too, in read sets; `sprint.Stats`, pure): the stages (deal wait: admitted to the first work card's `first_dealt`; finish to two reads: the last ok take's `finished` to `accepted`; accept to land; total: admitted to landed), each member's work cards (cards, failed, take wait `dealt` to `taken`, run wall the usage's `wall`, report lag `finished` - `taken` - wall), each reader's read cards (cards asked, begin wait `asked` to `begun`, run wall, report lag `read` - `begun` - wall), and each route's takes from the primaries' cost records (takes; ok: a work take finished ok or a read with its verdict; provider: provider failure or no result; failed: every other end; a launch refused at staging is no take; a read whose record names no route counts on its card's route; run wall); members, readers and routes in name order; changes nothing; `--json` |
 | read | a reader records ok or broken with the finding; `--as <reader>`, `--begin`; `--usage <text>` (what the read spent) is kept on the read card, timed and priced (section 2, What a card cost) |
 | accept | review -> merging and into merge queued; refused without two readers; named ids all or nothing, a selection moves the eligible |

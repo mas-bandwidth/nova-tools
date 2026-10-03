@@ -503,6 +503,10 @@ func TickResume(s *Snapshot, r TickReq) (Plan, int) {
 // a withdrawn card is dealt again at a new generation. With no member up and primaries waiting to be dealt, the
 // coordinator is told once (N3), and the judgment closes when a member is up.
 func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
+	// the routes resting now, and those the no-result rule rests in this tick (rule 3,
+	// route_rest.go): no card of this tick is drawn on one, and the new rests are written
+	// in its plan
+	s, rests := s.withRests()
 	var p Plan
 	due := 0
 	var ready []*Card
@@ -588,6 +592,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 			p = Deal(s, DealReq{Sel: Sel{Only: ids}, Who: r.who()})
 		}
 	}
+	restWrites(&p, s, rests, r.who())
 	due += notify(&p, s, conds, []string{NNoMember, NBound, NNoRoute}, r)
 	return p, due
 }
