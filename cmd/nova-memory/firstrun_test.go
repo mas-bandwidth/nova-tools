@@ -625,24 +625,25 @@ func TestTheEchoedStepPastesBackIntoThatPlatformsShell(t *testing.T) {
 	}
 }
 
-// Every flag defined by any subcommand must have a flag entry in the usage banner (F5-7).
+// Every flag a verb declares is named by that verb's -h. The skeleton lists
+// flags there, not in the banner (docs/STANDARD.md section 2).
 func TestEveryDefinedFlagAppearsInTheUsageBanner(t *testing.T) {
 	t.Parallel()
 
-	exit, stdout, _ := runCLI(t, "", "help")
-	require.Equalf(t, 0, exit, "help failed: %d", exit)
-	// All flags supported by nova-memory subcommands.
+	var help strings.Builder
+	for _, verb := range []string{"quickstart", "stats", "search", "check", "verify", "eval", "boot"} {
+		exit, stdout, stderr := runCLI(t, "", verb, "-h")
+		require.Equalf(t, 0, exit, "%s -h failed: %s", verb, stderr)
+		help.WriteString(stdout)
+	}
 	flags := []string{
 		"root", "channels", "k", "exclude", "floor", "links",
 		"coverage", "frontmatter", "exempt", "fail-max", "words", "draft", "pin", "json",
 	}
 	for _, f := range flags {
 		target := "  --" + f + " "
-		assert.Containsf(t, stdout, target, "flag --%s has no entry in the usage banner flags list:\n%s", f, stdout)
+		assert.Containsf(t, help.String(), target, "flag --%s has no entry in any verb's -h:\n%s", f, help.String())
 	}
-	// Assert --fail-max default is not welded onto words.
-	welded := "cannot bury the one frontmatter finding. the words the demonstration search runs."
-	assert.NotContainsf(t, stdout, welded, "the --fail-max and --words help text are still welded together:\n%s", stdout)
 }
 
 func TestQuickstartRunsWithDashLeadingWords(t *testing.T) {

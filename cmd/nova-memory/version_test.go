@@ -25,7 +25,7 @@ func TestVersionLineShape(t *testing.T) {
 	t.Parallel()
 	var out, errOut bytes.Buffer
 	{
-		code := cmdVersion(nil, &out, &errOut)
+		code := run([]string{"version"}, strings.NewReader(""), &out, &errOut)
 		require.Equalf(t, 0, code, "exit %d, want 0\nstderr: %s", code, errOut.String())
 	}
 	assert.Equalf(t, 0, errOut.Len(), "wrote to stderr: %q", errOut.String())
@@ -53,7 +53,7 @@ func TestVersionLineHoldsWhateverTheStampContains(t *testing.T) {
 
 	var out, errOut bytes.Buffer
 	{
-		code := cmdVersion(nil, &out, &errOut)
+		code := run([]string{"version"}, strings.NewReader(""), &out, &errOut)
 		require.Equalf(t, 0, code, "exit %d, want 0\nstderr: %s", code, errOut.String())
 	}
 	line := out.String()
@@ -73,7 +73,7 @@ func TestVersionIdentityIsTheStampWhenThereIsOne(t *testing.T) {
 	version = "v9.9.9"
 	var out, errOut bytes.Buffer
 	{
-		code := cmdVersion(nil, &out, &errOut)
+		code := run([]string{"version"}, strings.NewReader(""), &out, &errOut)
 		require.Equalf(t, 0, code, "exit %d, want 0\nstderr: %s", code, errOut.String())
 	}
 	{
@@ -84,14 +84,21 @@ func TestVersionIdentityIsTheStampWhenThereIsOne(t *testing.T) {
 
 func TestVersionRefusesFlagsAndArguments(t *testing.T) {
 	t.Parallel()
-	for _, args := range [][]string{{"--short"}, {"extra"}, {"--root", "."}} {
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--short"}, "unknown flag"},
+		{[]string{"extra"}, "takes no positional arguments"},
+		{[]string{"--root", "."}, "unknown flag"},
+	} {
 		var out, errOut bytes.Buffer
 		{
-			code := cmdVersion(args, &out, &errOut)
-			assert.Equalf(t, 2, code, "%v: exit %d, want 2", args, code)
+			code := run(append([]string{"version"}, tc.args...), strings.NewReader(""), &out, &errOut)
+			assert.Equalf(t, 2, code, "%v: exit %d, want 2", tc.args, code)
 		}
-		assert.Equalf(t, 0, out.Len(), "%v: a refusal printed a version line anyway: %q", args, out.String())
-		assert.Containsf(t, errOut.String(), "takes no flags and no arguments", "%v: refusal does not say why: %q", args, errOut.String())
+		assert.Equalf(t, 0, out.Len(), "%v: a refusal printed a version line anyway: %q", tc.args, out.String())
+		assert.Containsf(t, errOut.String(), tc.want, "%v: refusal does not say why: %q", tc.args, errOut.String())
 	}
 }
 

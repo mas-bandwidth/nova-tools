@@ -40,9 +40,9 @@ func TestIssue1451EveryRefusalNamesTheDoor(t *testing.T) {
 	require.NotEmpty(t, verbs, "no verbs enumerated from the help banner; the test would check nothing")
 
 	for _, verb := range verbs {
-		if verb == "version" {
-			// `nova-memory version` takes no flags and exits 0: a usage row, not
-			// a bare verb that refuses.
+		if verb == "version" || verb == "help" {
+			// version takes no flags and exits 0. help is the skeleton's usage
+			// row, not a verb that refuses.
 			continue
 		}
 		t.Run(verb, func(t *testing.T) {

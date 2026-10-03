@@ -22,6 +22,11 @@ const corpus = "testdata/corpus"
 
 const exampleGold = "testdata/example-gold.tsv"
 
+func TestMemoryToolMeetsTheStandard(t *testing.T) {
+	t.Parallel()
+	assert.Empty(t, memoryTool().Problems())
+}
+
 func runCLI(t *testing.T, stdin string, args ...string) (exit int, stdout, stderr string) {
 	t.Helper()
 	var out, errb bytes.Buffer
@@ -41,11 +46,11 @@ func TestRefusesToGuess(t *testing.T) {
 		wantStderr string
 	}{
 		{"no subcommand", nil, "run: nova-memory help"},
-		{"unknown subcommand", []string{"frobnicate"}, "unknown subcommand"},
+		{"unknown subcommand", []string{"frobnicate"}, "unknown verb"},
 
 		{"stats without root", []string{"stats"}, "--root is required"},
-		{"stats stray argument", []string{"stats", "--root", corpus, "extra"}, "unexpected argument"},
-		{"quickstart stray argument", []string{"quickstart", "--root", corpus, "extra"}, "unexpected argument"},
+		{"stats stray argument", []string{"stats", "--root", corpus, "extra"}, "takes no positional arguments"},
+		{"quickstart stray argument", []string{"quickstart", "--root", corpus, "extra"}, "takes no positional arguments"},
 
 		{"search without root", []string{"search", "--channels", "bm25", "--k", "3", "x"}, "--root is required"},
 		{"search without channels", []string{"search", "--root", corpus, "--k", "3", "x"}, "--channels is required"},
@@ -69,7 +74,7 @@ func TestRefusesToGuess(t *testing.T) {
 		{"verify with no gating check", []string{"verify", "--root", corpus, "--links", "info"}, "a run that cannot fail is not a verification"},
 		{"verify exempt without frontmatter", []string{"verify", "--root", corpus, "--links", "gate", "--exempt", "index-"}, "--exempt only applies"},
 		{"verify with a malformed coverage pair", []string{"verify", "--root", corpus, "--links", "info", "--coverage", "notes"}, "--coverage wants A:B"},
-		{"verify stray argument", []string{"verify", "--root", corpus, "--links", "gate", "extra"}, "unexpected argument"},
+		{"verify stray argument", []string{"verify", "--root", corpus, "--links", "gate", "extra"}, "takes no positional arguments"},
 
 		{"eval without root", []string{"eval", "--channels", "bm25", "--k", "3", "--floor", "0.8", exampleGold}, "--root is required"},
 		{"eval without channels", []string{"eval", "--root", corpus, "--k", "3", "--floor", "0.8", exampleGold}, "--channels is required"},
@@ -874,7 +879,8 @@ func TestNoCorpusOrCallerTextCanForgeALine(t *testing.T) {
 		exit, stdout, stderr := runCLI(t, "", "stats", "--root", corpus, "--bogus\n"+forged)
 		require.Equalf(t, 2, exit, "exit = %d, want 2; stderr: %s", exit, stderr)
 		noForgedLine(t, forged, stdout, stderr)
-		assert.Containsf(t, stderr, `nova-memory stats: flag provided but not defined: -bogus\x0aSTATS OK schema`, "stderr = %q, want this tool's own refusal with the flag escaped", stderr)
+		assert.Containsf(t, stderr, "REFUSED", "stderr = %q, want a refusal", stderr)
+		assert.Containsf(t, stderr, `bogus\x0aSTATS OK schema`, "stderr = %q, want the flag escaped onto one refusal line", stderr)
 	})
 }
 

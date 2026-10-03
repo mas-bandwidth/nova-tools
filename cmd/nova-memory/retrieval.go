@@ -10,6 +10,8 @@ import (
 )
 
 // retrievalResult holds the evidence once for both renderings (SPEC §2-json).
+// render is kept behind Prints: the skeleton cannot render the query prose
+// tail, the MEMORY token, or the file:line receipt (docs/STANDARD.md section 2).
 type retrievalResult struct {
 	Verb, Query, Source, Channels string
 	K, Files, Chunks              int
