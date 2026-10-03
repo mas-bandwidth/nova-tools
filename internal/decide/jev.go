@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
+	"slices"
 	"strings"
 )
 
@@ -47,16 +49,19 @@ func (j Jev) Ask(ctx context.Context, s Schema, state string) (map[string]Answer
 }
 
 // jevAnswers decodes a Jev response. A choice with no probabilities carries
-// its confidence as the chosen option's probability; an unknown answer type is
-// an error naming it.
+// its confidence as the chosen option's probability. An answer with no
+// probability at all (a noul with no noul, a choice with neither) is an error
+// naming the question: a missing number is never read as 0, which would be a
+// confident "no" (STANDARD.md section 2, nothing hidden). An unknown answer
+// type is an error naming it.
 func jevAnswers(raw []byte) (map[string]Answer, Usage, error) {
 	var wire struct {
 		Answers map[string]struct {
 			Type          string             `json:"type"`
 			Choice        string             `json:"choice"`
 			Probabilities map[string]float64 `json:"probabilities"`
-			Confidence    float64            `json:"confidence"`
-			Noul          float64            `json:"noul"`
+			Confidence    *float64           `json:"confidence"`
+			Noul          *float64           `json:"noul"`
 		} `json:"answers"`
 		Usage Usage `json:"usage"`
 	}
@@ -64,24 +69,30 @@ func jevAnswers(raw []byte) (map[string]Answer, Usage, error) {
 		return nil, Usage{}, fmt.Errorf("the backend's response is not the answers shape: %w (it began %q)", err, head(raw))
 	}
 	out := map[string]Answer{}
-	for name, a := range wire.Answers {
-		switch a.Type {
-		case Noul:
-			out[name] = noulAnswer(a.Noul)
-		case Choice:
-			p := a.Probabilities
-			if len(p) == 0 {
-				p = map[string]float64{a.Choice: a.Confidence}
-			}
-			out[name] = Answer{Type: Choice, Value: a.Choice, P: p}
+	var missing []string
+	for _, name := range slices.Sorted(maps.Keys(wire.Answers)) {
+		a := wire.Answers[name]
+		switch {
+		case a.Type == Noul && a.Noul != nil:
+			out[name] = noulAnswer(*a.Noul)
+		case a.Type == Choice && len(a.Probabilities) > 0:
+			out[name] = Answer{Type: Choice, Value: a.Choice, P: a.Probabilities}
+		case a.Type == Choice && a.Confidence != nil:
+			out[name] = Answer{Type: Choice, Value: a.Choice, P: map[string]float64{a.Choice: *a.Confidence}}
+		case a.Type == Noul || a.Type == Choice:
+			missing = append(missing, name)
 		default:
 			return nil, wire.Usage, fmt.Errorf("the backend answered %s with type %q; it wants choice or noul", name, a.Type)
 		}
 	}
+	if len(missing) > 0 {
+		return nil, wire.Usage, fmt.Errorf("the backend answered %s with no probability; a missing number is never read as 0", strings.Join(missing, ", "))
+	}
 	return out, wire.Usage, nil
 }
 
-// HTTPSend is the real transport: one POST to url with the key as a bearer
+// HTTPSend is the real transport, and the one function of this package that
+// opens a socket (through client): one POST to url with the key as a bearer
 // token. The key travels on the wire only; an error names the status and the
 // head of the body, never the key.
 func HTTPSend(client *http.Client, url, key string) Send {

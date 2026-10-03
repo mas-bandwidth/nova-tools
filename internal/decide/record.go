@@ -92,6 +92,9 @@ func Load(path string) ([]Decision, error) {
 			if !ok {
 				return nil, fmt.Errorf("%s:%d: an outcome for %s: %w", path, n, l.Outcome.ID, ErrUnknown)
 			}
+			if out[i].Outcome != nil {
+				return nil, fmt.Errorf("%s:%d records an outcome for %s a second time; an outcome is attached once", path, n, l.Outcome.ID)
+			}
 			o := *l.Outcome
 			out[i].Outcome = &o
 		default:
@@ -117,8 +120,8 @@ func Find(ds []Decision, id string) *Decision {
 func Append(path string, d Decision) (recorded *Decision, err error) {
 	err = locked(path, func(ds []Decision) (*line, error) {
 		if have := Find(ds, d.ID); have != nil {
-			if Sum([]byte(have.State)) != Sum([]byte(d.State)) || have.Decision != d.Decision {
-				return nil, &ConflictError{fmt.Sprintf("the id %s is recorded for another decision or state; an op id names one operation", d.ID)}
+			if have.State != d.State || have.Decision != d.Decision || have.Schema != d.Schema {
+				return nil, &ConflictError{fmt.Sprintf("the id %s is recorded for another decision, schema or state; an op id names one operation", d.ID)}
 			}
 			recorded = have
 			return nil, nil

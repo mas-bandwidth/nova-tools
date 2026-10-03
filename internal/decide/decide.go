@@ -12,8 +12,9 @@
 //
 // A backend is a transport behind an interface: Jev (TypeSafe's System One
 // model) is the first, and Fixed (answers from a file) is the one that needs no
-// network. Nothing here opens a socket: Jev's HTTP client is a Send function the
-// caller injects.
+// network. A decision never dials: the Jev backend sends through a Send function
+// the caller injects, and HTTPSend (jev.go), the real one, is the only code here
+// that opens a socket.
 package decide
 
 import (
@@ -135,6 +136,17 @@ func (s Schema) Check(answers map[string]Answer) error {
 		}
 		if _, known := q.Criteria[a.Value]; q.Type == Choice && !known {
 			p = append(p, fmt.Sprintf("%s chose %q, not one of its options", name, a.Value))
+		}
+		if _, given := a.P[a.Value]; q.Type == Choice && !given {
+			p = append(p, fmt.Sprintf("%s gives its choice %q no probability", name, a.Value))
+		}
+		if _, given := a.P["yes"]; q.Type == Noul && (!given || len(a.P) != 1) {
+			p = append(p, fmt.Sprintf("%s is a noul and gives no probability of yes alone", name))
+		}
+		for opt := range a.P {
+			if _, known := q.Criteria[opt]; q.Type == Choice && !known {
+				p = append(p, fmt.Sprintf("%s gives a probability to %q, not one of its options", name, opt))
+			}
 		}
 		for opt, v := range a.P {
 			if v < 0 || v > 1 {

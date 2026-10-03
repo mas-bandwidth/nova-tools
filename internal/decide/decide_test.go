@@ -5,8 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"maps"
+	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -39,11 +44,27 @@ func TestParseSchemaNamesEveryProblem(t *testing.T) {
 	assert.NotEqual(t, ReadSchema().Hash(), s.Hash(), "two schemas asking different questions have different hashes")
 }
 
-// The read schema is a schema like any other: it passes its own rules.
+// The read schema is a schema like any other, and its verdict rule is pinned
+// three ways: the three options, each option's rule as SPEC-NOVA-DECIDE section
+// 6 states it word for word, and the schema hash the fixture record carries, so
+// a reworded or deleted rule turns this red and a stale fixture is named.
 func TestReadSchemaIsValid(t *testing.T) {
 	t.Parallel()
-	assert.Empty(t, ReadSchema().Problems())
-	assert.Len(t, ReadSchema().Questions, 5)
+	s := ReadSchema()
+	assert.Empty(t, s.Problems())
+	assert.Len(t, s.Questions, 5)
+	verdict := s.Questions["verdict"]
+	require.Equal(t, []string{Bounce, Land, Unsure}, slices.Sorted(maps.Keys(verdict.Criteria)))
+	spec, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-NOVA-DECIDE.md"))
+	require.NoError(t, err)
+	for option, rule := range verdict.Criteria {
+		row := "| `" + option + "` | " + rule + " |"
+		assert.True(t, strings.Contains(string(spec), row), "SPEC-NOVA-DECIDE section 6 does not state the %s rule as the schema asks it; want the row %q", option, row)
+	}
+	fixture, err := Load(filepath.Join("..", "..", "cmd", "nova-decide", "testdata", "record.jsonl"))
+	require.NoError(t, err)
+	require.NotEmpty(t, fixture)
+	assert.Equal(t, fixture[0].Schema, s.Hash(), "the read schema changed and cmd/nova-decide/testdata/record.jsonl (and its docs/TESTS.md transcript) still carry the old hash: regenerate the fixture with the new schema")
 }
 
 // A backend's answers are held to the schema; nothing is repaired.
@@ -65,6 +86,11 @@ func TestCheckRefusesAnswersThatDoNotFit(t *testing.T) {
 		{"unknown option", func(a map[string]Answer) { a["verdict"] = Answer{Type: Choice, Value: "MAYBE"} }, `verdict chose "MAYBE"`},
 		{"probability out of range", func(a map[string]Answer) { a["defect"] = noulAnswer(1.5) }, "outside [0, 1]"},
 		{"not asked", func(a map[string]Answer) { a["extra"] = noulAnswer(0.5) }, "an answer to extra, which was not asked"},
+		{"choice without its p", func(a map[string]Answer) { a["verdict"] = Answer{Type: Choice, Value: Land} }, `gives its choice "LAND" no probability`},
+		{"p of an unknown option", func(a map[string]Answer) {
+			a["verdict"] = Answer{Type: Choice, Value: Land, P: map[string]float64{Land: 0.6, "MAYBE": 0.4}}
+		}, `a probability to "MAYBE"`},
+		{"noul without yes", func(a map[string]Answer) { a["defect"] = Answer{Type: Noul, Value: "no"} }, "defect is a noul and gives no probability of yes alone"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a := map[string]Answer{}
@@ -108,6 +134,8 @@ func TestJevErrorsAreErrors(t *testing.T) {
 		{"not json", `<html>`, "not the answers shape"},
 		{"unknown type", `{"answers":{"defect":{"type":"score"}}}`, `type "score"`},
 		{"short", `{"answers":{"defect":{"type":"noul","noul":0.1}}}`, "no answer to does_task"},
+		{"no probability", `{"answers":{"defect":{"type":"noul"},"verdict":{"type":"choice","choice":"LAND"}}}`,
+			"the backend answered defect, verdict with no probability; a missing number is never read as 0"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			send := func(context.Context, []byte) ([]byte, error) { return []byte(tc.reply), nil }
@@ -167,6 +195,10 @@ func TestTheRecordAppendsOnceAndFoldsOutcomes(t *testing.T) {
 	_, err = Append(path, decisionFor("a", "two"))
 	var conflict *ConflictError
 	assert.ErrorAs(t, err, &conflict)
+	other := decisionFor("a", "one")
+	other.Schema = "another"
+	_, err = Append(path, other)
+	assert.ErrorAs(t, err, &conflict, "the same id and state under another schema is not a replay")
 
 	d, changed, err := Attach(path, Outcome{ID: "a", Label: "ok", At: "t1"})
 	require.NoError(t, err)
@@ -199,6 +231,8 @@ func TestLoadNamesTheBadLine(t *testing.T) {
 		{"neither", "{}\n", ":1 is neither a decision nor an outcome"},
 		{"twice", "{\"decision\":{\"id\":\"a\"}}\n{\"decision\":{\"id\":\"a\"}}\n", ":2 records decision a a second time"},
 		{"orphan outcome", "{\"outcome\":{\"id\":\"a\",\"label\":\"ok\"}}\n", "an outcome for a"},
+		{"second outcome", "{\"decision\":{\"id\":\"a\"}}\n{\"outcome\":{\"id\":\"a\",\"label\":\"ok\"}}\n{\"outcome\":{\"id\":\"a\",\"label\":\"wrong\"}}\n",
+			":3 records an outcome for a a second time"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join(dir, tc.name+".jsonl")
@@ -249,6 +283,7 @@ func TestCalibrateReadsTheBarFromTheRecord(t *testing.T) {
 		{"noul as choice", "defect=yes", "score a noul as <name>"},
 		{"choice as noul", "verdict", "score a noul as <name>"},
 		{"not asked", "lines_changed", "asked no question lines_changed"},
+		{"unknown option", "verdict=BOUNCEE", "chose verdict=BOUNCEE or gave it a probability"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := Calibrate(ds, ReadName, tc.question, []string{"wrong"}, []string{"ok"})
@@ -259,4 +294,58 @@ func TestCalibrateReadsTheBarFromTheRecord(t *testing.T) {
 	assert.ErrorContains(t, err, "no decision named triage")
 	_, err = Calibrate(ds, ReadName, "defect", []string{"lost"}, []string{"ok"})
 	assert.ErrorContains(t, err, "0 positive and 2 negative")
+}
+
+// roundTrip is an http.RoundTripper in a function: the request is answered in
+// process and no socket is opened.
+type roundTrip func(*http.Request) (*http.Response, error)
+
+func (f roundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// HTTPSend posts the body with the key as a bearer token and JSON as its type;
+// a status other than 200 is an error naming the status and the body's head,
+// and never the key.
+func TestHTTPSendPostsWithTheKeyAndNamesAFailure(t *testing.T) {
+	t.Parallel()
+	const key = "k-secret-test"
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+		says   string
+	}{
+		{"ok", http.StatusOK, `{"answers":{}}`, ""},
+		{"payment", http.StatusPaymentRequired, `{"detail":{"error_type":"billing_error"}}`, `HTTP 402: "{\"detail\":{\"error_type\":\"billing_error\"}}"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var got *http.Request
+			var sent []byte
+			client := &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+				got = r
+				var err error
+				sent, err = io.ReadAll(r.Body)
+				require.NoError(t, err)
+				return &http.Response{StatusCode: tc.status, Body: io.NopCloser(strings.NewReader(tc.body)), Header: http.Header{}}, nil
+			})}
+			raw, err := HTTPSend(client, "https://decide.example.invalid/v1", key)(context.Background(), []byte(`{"state":"s"}`))
+			require.NotNil(t, got)
+			assert.Equal(t, http.MethodPost, got.Method)
+			assert.Equal(t, "Bearer "+key, got.Header.Get("Authorization"))
+			assert.Equal(t, "application/json", got.Header.Get("Content-Type"))
+			assert.Equal(t, `{"state":"s"}`, string(sent))
+			if tc.says == "" {
+				require.NoError(t, err)
+				assert.Equal(t, tc.body, string(raw))
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.says)
+			assert.NotContains(t, err.Error(), key, "the key is never in an error")
+		})
+	}
+	down := errors.New("connection refused")
+	client := &http.Client{Transport: roundTrip(func(*http.Request) (*http.Response, error) { return nil, down })}
+	_, err := HTTPSend(client, "https://decide.example.invalid/v1", key)(context.Background(), nil)
+	assert.ErrorIs(t, err, down)
+	assert.NotContains(t, err.Error(), key)
 }

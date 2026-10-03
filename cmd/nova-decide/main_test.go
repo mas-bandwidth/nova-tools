@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -93,6 +94,12 @@ func TestRefusalsNameEveryProblemAtOnce(t *testing.T) {
 			Says: `holds "2"; it wants probabilities from 0 to 1`},
 		{Args: []string{"calibrate", "--record", td + "record.jsonl", "--decision", "read", "--question", "defect", "--positive", "lost", "--negative", "ok"}, Code: 2,
 			Says: "a calibration wants at least one of each"},
+		{Args: []string{"calibrate", "--record", td + "record.jsonl", "--decision", "read", "--question", "verdict=BOUNCEE", "--positive", "wrong", "--negative", "ok"}, Code: 2,
+			Says: "chose verdict=BOUNCEE or gave it a probability"},
+		{Args: []string{"ask", "--schema", td + "nope.json", "--state", td + "nope.txt", "--backend", "fixed", "--answers", td + "answers.json", "--record", rec}, Code: 2,
+			Says: "nope.json"},
+		{Args: []string{"ask", "--schema", td + "nope.json", "--state", td + "nope.txt", "--backend", "fixed", "--answers", td + "answers.json", "--record", rec}, Code: 2,
+			Says: "nope.txt"},
 	})
 	r := cli.Do(t, "ask", "--schema", td+"schema.json", "--state", td+"state.txt", "--backend", "fixed", "--answers", td+"read-answers.json", "--record", rec)
 	r.Exit(2)
@@ -121,7 +128,7 @@ func TestReadThroughJevIsRecordedOnceAndCalibrated(t *testing.T) {
 		"READ ANSWER question=verdict type=choice value=BOUNCE p=BOUNCE:0.7,LAND:0.2,UNSURE:0.1")
 	jev.Do(t, append(read, "--op", "c1")...).Exit(0).Out("recorded=existing")
 	assert.Equal(t, int32(1), calls.Load(), "the op id retried asked nothing")
-	jev.Do(t, append(read, "--op", "c1", "--rule", td+"state.txt")...).Refused("the op id c1 is recorded for another decision or state")
+	jev.Do(t, append(read, "--op", "c1", "--rule", td+"state.txt")...).Refused("the op id c1 is recorded for another decision, schema or state")
 
 	jev.Do(t, append(read, "--op", "c2")...).Exit(0)
 	jev.Do(t, "outcome", "--record", rec, "--id", "c1", "--label", "wrong", "--note", "a fragment").Exit(0).Out("OUTCOME OK id=c1 decision=read label=wrong changed=true")
@@ -141,6 +148,27 @@ func TestReadThroughJevIsRecordedOnceAndCalibrated(t *testing.T) {
 	assert.Contains(t, ds[0].State, "CARD (the whole task the worker was given):\nREPO: example/tools")
 	assert.Equal(t, "a fragment", ds[0].Outcome.Note)
 	assert.Len(t, ds[0].Inputs["diff_sha256"], 64)
+	raw, err := os.ReadFile(rec)
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), "k-test", "the key is never in the record")
+}
+
+// An op id replayed under another schema of the same name, over the same
+// state, is refused: the recorded answers are to other questions.
+func TestAnOpIDUnderAnotherSchemaIsRefused(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	rec := filepath.Join(dir, "decisions.jsonl")
+	other := filepath.Join(dir, "schema.json")
+	require.NoError(t, os.WriteFile(other, []byte(`{"name":"reply","questions":{
+		"asks_something":{"type":"noul","instructions":"The message asks for something."},
+		"kind":{"type":"choice","instructions":"What it is.","criteria":{"question":"q","report":"r","request":"a"}}}}`), 0o600))
+	ask := func(schema string) testkit.Ran {
+		return cli.Do(t, "ask", "--schema", schema, "--state", td+"state.txt", "--backend", "fixed", "--answers", td+"answers.json", "--record", rec, "--op", "x")
+	}
+	ask(td + "schema.json").Exit(0).Out("recorded=new")
+	ask(td + "schema.json").Exit(0).Out("recorded=existing")
+	ask(other).Refused("the op id x is recorded for another decision, schema or state")
 }
 
 // A backend that fails is FAIL at exit 2 with nothing recorded; a backend

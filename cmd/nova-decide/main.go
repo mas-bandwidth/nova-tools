@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"slices"
@@ -59,7 +60,7 @@ func decideTool(w world) *tool.Tool {
 A backend answers it: jev (TypeSafe's System One model, key from JEV_API_KEY) or fixed (a file).
 Every decision is appended to the record (--record, JSON lines), with its state and answers.
 outcome attaches what turned out true; calibrate reads the record and prints the bar it supports.
-first run: needs only the binary, run from a checkout; the examples use the fixed backend.`,
+first run: from a checkout root (the examples read its testdata); fixed backend, no network or key.`,
 		ExitTable: "0 done, 1 an outcome conflicts with the one recorded, 2 could not run (a flag, an input, the backend, the record).",
 		Verbs: []tool.Verb{
 			{
@@ -162,18 +163,23 @@ func (w world) asking(f *tool.Flags) {
 	})
 }
 
+// ask names every input it cannot read or parse in one refusal (ONBOARDING point 2).
 func (w world) ask(c *tool.Call) *tool.Out {
+	var problems []string
 	raw, err := os.ReadFile(c.Str("schema"))
-	if err != nil {
-		return tool.Refuse(err.Error())
+	var s decide.Schema
+	if err == nil {
+		s, err = decide.ParseSchema(raw)
 	}
-	s, err := decide.ParseSchema(raw)
 	if err != nil {
-		return tool.Refuse(err.Error())
+		problems = append(problems, err.Error())
 	}
 	state, err := readInput(c.Str("state"), c.Stdin)
 	if err != nil {
-		return tool.Refuse(err.Error())
+		problems = append(problems, err.Error())
+	}
+	if len(problems) > 0 {
+		return tool.Refuse(problems...)
 	}
 	return w.decision(c, s, string(state), map[string]string{"state": c.Str("state"), "state_sha256": decide.Sum(state)})
 }
@@ -213,8 +219,8 @@ func (w world) decision(c *tool.Call, s decide.Schema, state string, inputs map[
 		id = s.Name + "-" + decide.Sum([]byte(s.Hash() + "\n" + at + "\n" + state))[:12]
 	}
 	if have := decide.Find(ds, id); have != nil {
-		if have.State != state || have.Decision != s.Name {
-			return tool.Refuse(fmt.Sprintf("the op id %s is recorded for another decision or state; an op id names one operation, so choose another", id))
+		if have.State != state || have.Decision != s.Name || have.Schema != s.Hash() {
+			return tool.Refuse(fmt.Sprintf("the op id %s is recorded for another decision, schema or state; an op id names one operation, so choose another", id))
 		}
 		return answered(*have, "existing")
 	}
@@ -233,7 +239,7 @@ func (w world) decision(c *tool.Call, s decide.Schema, state string, inputs map[
 		o := tool.Fail(err.Error()).Fact("id", id).Fact("backend", b.Name())
 		o.Exit, o.Remedy = 2, "make --answers answer every question of the schema"
 		if _, isJev := b.(decide.Jev); isJev {
-			o.Remedy = "check the backend's account and the key nova-secrets delivers; --dry-run shows what would be sent"
+			o.Remedy = "check the backend's account and the key nova-secrets delivers, then run the same line again"
 		}
 		return o
 	}
@@ -257,12 +263,7 @@ func answered(d decide.Decision, recorded string) *tool.Out {
 		o.Fact("verdict", v.Value).Fact("p", round(v.Prob(v.Value)))
 	}
 	o.Fact("tokens_in", d.Usage.InputTokens).Fact("tokens_out", d.Usage.OutputTokens).Fact("recorded", recorded)
-	names := make([]string, 0, len(d.Answers))
-	for name := range d.Answers {
-		names = append(names, name)
-	}
-	slices.Sort(names)
-	for _, name := range names {
+	for _, name := range slices.Sorted(maps.Keys(d.Answers)) {
 		a := d.Answers[name]
 		o.Item("answer", "question", name, "type", a.Type, "value", a.Value, "p", probs(a.P))
 	}
@@ -360,13 +361,8 @@ func list(s string) []string {
 
 // probs is an answer's probabilities as one field: option:p,... in option order.
 func probs(p map[string]float64) string {
-	keys := make([]string, 0, len(p))
-	for k := range p {
-		keys = append(keys, k)
-	}
-	slices.Sort(keys)
-	parts := make([]string, 0, len(keys))
-	for _, k := range keys {
+	parts := make([]string, 0, len(p))
+	for _, k := range slices.Sorted(maps.Keys(p)) {
 		parts = append(parts, k+":"+strconv.FormatFloat(round(p[k]), 'f', -1, 64))
 	}
 	return strings.Join(parts, ",")

@@ -39,9 +39,10 @@ identity in the record: decisions are calibrated together only when they asked
 the same questions.
 
 A backend's answers are held to the schema (`Schema.Check`): one answer per
-question, of its type, a choice's value one of its options, every probability
-in [0, 1], and nothing that was not asked. An answer that does not fit is a
-failure, never repaired.
+question, of its type, a choice's value one of its options and given a
+probability, a choice's probabilities only for its options, a noul's
+probability of yes and nothing else, every probability in [0, 1], and nothing
+that was not asked. An answer that does not fit is a failure, never repaired.
 
 ## 3. Backends
 
@@ -52,9 +53,14 @@ A backend is `Name()` and `Ask(ctx, schema, state) (answers, usage, error)`.
   with the key as a bearer token; the response is
   `{"answers": {<name>: {"type": "choice", "choice", "probabilities", "confidence"} | {"type": "noul", "noul"}},
   "usage": {"input_tokens", "output_tokens"}}`. A choice with no probabilities
-  carries its confidence as the chosen option's probability. The HTTP client is
+  carries its confidence as the chosen option's probability. An answer with no
+  probability at all (a noul with no `noul`, a choice with neither
+  `probabilities` nor `confidence`) is a failure naming the question: a missing
+  number is never read as 0, which would be a confident "no". The HTTP client is
   a `Send` function injected into the backend, so the decision is made apart
-  from its transport and every test runs on a fake. The key is read from the
+  from its transport and every test runs on a fake; `HTTPSend`, the real one, is
+  the only code in `internal/decide` that opens a socket, and its test answers
+  through an `http.RoundTripper` in process. The key is read from the
   environment variable `JEV_API_KEY`, which `nova-secrets exec --only
   JEV_API_KEY -- nova-decide ...` sets; it is never a flag, a file, or printed.
 - `fixed`: answers from a JSON file, `{<question>: {"choice", "p"} | {"noul"}}`,
@@ -72,17 +78,22 @@ under an exclusive lock on the sibling `<record>.lock` (internal/filelock);
 loading folds each outcome into its decision.
 
 - An id is the caller's `--op`, or `<decision>-<12 hex>` of the schema, the
-  stamp and the state. The same `--op` over the same decision and state returns
-  the recorded decision and asks nothing (`recorded=existing`), so a long run
-  resumes where it stopped; over another state it is refused.
+  stamp and the state. The same `--op` over the same decision, schema (by hash)
+  and state returns the recorded decision and asks nothing (`recorded=existing`),
+  so a long run resumes where it stopped; over another decision, schema or state
+  it is refused.
 - An outcome is attached once. The same label again changes nothing
-  (`changed=false`); another label is exit 1, naming both.
+  (`changed=false`) and writes no line; another label is exit 1, naming both.
 - Loading refuses, by file and line, a line that does not parse, a decision id
-  recorded twice, and an outcome for an id with no decision before it.
+  recorded twice, an outcome for an id with no decision before it, and a second
+  outcome line for one id (a hand-edited record never has its last line win).
 
 The record's states are few and plain (a decision recorded, then labelled once)
-and the one writer is the lock's holder; a TLA+ module for the record is owed
-with the export verb, which is the first reader beside calibrate.
+and the one writer is the lock's holder. Its model is owed: `tla/DecideRecord.tla`,
+with actions Ask, Replay and Attach and the invariants above (one decision per
+id, at most one outcome per decision, an outcome only after its decision), checked
+by TLC on a bench and recorded in the TLC records; it lands with the export verb,
+the first reader of the record beside calibrate.
 
 ## 5. Calibration
 
@@ -100,7 +111,9 @@ by its p of yes) or `<choice>=<option>` (scored by that option's p). It prints:
   negatives it bounces there. That is the bar the record supports when no
   positive may pass.
 
-A record with no positive or no negative outcome is refused: a bar is read from both.
+A record with no positive or no negative outcome is refused: a bar is read from
+both. An option no scored decision chose or gave a probability (a misspelling,
+`verdict=BOUNCEE`) is refused too, rather than scoring every decision 0.
 
 ## 6. The read decision
 
@@ -115,7 +128,22 @@ nothing else. Five questions:
 | `lines_changed` | noul | every line the card lists is changed, or the card's words allow it to stay |
 | `inside_paths` | noul | every file the diff changes is in the card's PATHS, or one the card names to update |
 | `defect` | noul | the diff introduces a defect: an unasked behaviour change, broken text, or a lost reference |
-| `verdict` | choice | LAND, BOUNCE or UNSURE |
+| `verdict` | choice | LAND, BOUNCE or UNSURE, by the rule below |
+
+The verdict rule, as the schema asks it (each option's criterion, word for word;
+`TestReadSchemaIsValid` holds this table to the code):
+
+| option | rule |
+| --- | --- |
+| `LAND` | the diff does the card's task, inside its paths, and introduces no defect |
+| `BOUNCE` | the diff misses the task, leaves a listed line, changes a file outside its paths, or introduces a defect |
+| `UNSURE` | the card and the diff alone cannot settle it; a stronger reader is needed |
+
+The read schema's hash is pinned to the fixture record
+(`cmd/nova-decide/testdata/record.jsonl`, and the docs/TESTS.md transcript that
+prints it): a reworded question or rule changes the hash, the test names the
+stale fixture, and the fixture is regenerated in the same change. Old records
+keep their old hash, and calibrate never pools the two.
 
 The read line carries the verdict and its probability; a gate decides on
 `defect` or `verdict` at the bar `calibrate` reads from the read's record.

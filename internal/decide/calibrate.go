@@ -41,11 +41,15 @@ func Calibrate(ds []Decision, decision, question string, positive, negative []st
 	if c.Schema == "" {
 		return c, fmt.Errorf("the record holds no decision named %s", decision)
 	}
+	seen := false // some scored decision chose the option or gave it a probability
 	for _, d := range ds {
 		if d.Decision != decision {
 			continue
 		}
 		a, asked := d.Answers[name]
+		if _, given := a.P[c.Option]; asked && d.Schema == c.Schema && d.Outcome != nil && (given || a.Value == c.Option) {
+			seen = true
+		}
 		switch {
 		case d.Schema != c.Schema || d.Outcome == nil:
 			c.Skipped++
@@ -60,6 +64,9 @@ func Calibrate(ds []Decision, decision, question string, positive, negative []st
 		default:
 			c.Skipped++
 		}
+	}
+	if !seen && len(c.Positives)+len(c.Negatives) > 0 {
+		return c, fmt.Errorf("no labelled decision of %s chose %s=%s or gave it a probability; the option is not one the answers name (a misspelling scores every decision 0)", decision, name, c.Option)
 	}
 	if len(c.Positives) == 0 || len(c.Negatives) == 0 {
 		return c, fmt.Errorf("%d positive and %d negative outcomes of %s; a calibration wants at least one of each", len(c.Positives), len(c.Negatives), decision)
