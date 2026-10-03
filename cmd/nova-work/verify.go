@@ -62,10 +62,16 @@ func runVerify(c *tool.Call, q workgh.Query) *tool.Out {
 	if tree.Source != "github" {
 		return fail("the tree's source is %q; this verb reads github trees", tree.Source)
 	}
+	// Every --repo whose owner is not the tree's organization is refused together,
+	// one line per reason (docs/STANDARD.md section 3).
+	var bad []string
 	for _, r := range named {
 		if o, _, _ := cut(r); o != tree.Org {
-			return tool.Refuse(fmt.Sprintf("--repo %s is not in the tree's organization %s", r, tree.Org))
+			bad = append(bad, fmt.Sprintf("--repo %s is not in the tree's organization %s", r, tree.Org))
 		}
+	}
+	if len(bad) > 0 {
+		return tool.Refuse(bad...)
 	}
 	q, err = resolveGH(c, q)
 	if err != nil {

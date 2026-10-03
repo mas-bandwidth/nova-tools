@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/testkit"
+	"github.com/mas-bandwidth/nova-tools/internal/workfile"
 	"github.com/mas-bandwidth/nova-tools/internal/workgh"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -82,6 +83,10 @@ func TestTheBudgetIsCheckedBeforeTheIssuesAreRead(t *testing.T) {
 // problem at once and pointing at the verb's help; help exits 0.
 func TestRefusalsNameTheFlag(t *testing.T) {
 	t.Parallel()
+	treeData, err := workfile.Encode(&workfile.Tree{Source: "github", Org: "o", Fetched: "2026-01-01T00:00:00Z"})
+	require.NoError(t, err)
+	tree := filepath.Join(t.TempDir(), "tree.lisp")
+	testkit.WriteFile(t, tree, string(treeData))
 	cases := []struct {
 		name string
 		args []string
@@ -99,6 +104,7 @@ func TestRefusalsNameTheFlag(t *testing.T) {
 		{"json on verify", []string{"verify", "--tree", "t.lisp", "--json"}, 2, []string{"unknown flag --json", "run: nova-work verify -h"}},
 		{"bare verify", []string{"verify"}, 2, []string{"--tree is required", "run: nova-work help"}},
 		{"nonexistent tree", []string{"verify", "--tree", "/nonexistent/t.lisp"}, 2, []string{"VERIFY FAILED"}},
+		{"two repos outside the tree org", []string{"verify", "--tree", tree, "--repo", "p/one", "--repo", "q/two"}, 2, []string{"--repo p/one is not in the tree's organization o", "--repo q/two is not in the tree's organization o"}},
 		{"unknown verb", []string{"frob"}, 2, []string{"unknown verb", "import, verify"}},
 		{"no verb", []string{}, 2, []string{"no verb", "run: nova-work help"}},
 	}
