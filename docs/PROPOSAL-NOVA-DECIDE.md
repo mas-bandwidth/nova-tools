@@ -99,14 +99,17 @@ not permission to weaken the bar to match the implementation.
 | Layer | Implemented surface | Routing controls and acceptance status |
 | --- | --- | --- |
 | 0. Questions and record | `ask`, `outcome`, `calibrate`; shared [decide library](https://github.com/mas-bandwidth/nova-tools/tree/2ced4eeae1b5fe760074b32d4dcc3b66a39a755d/internal/decide) | Typed validation and replay exist; complete distributions, resolved model identity, failed-call records and record-model evidence remain required. |
-| 1. First read | `read`, sprint `FirstRead`; PR #5188 | `decide_bounce` routes at or above its bar; `decide_review` routes below its bar to an okay read without a strings read. The interval between them uses strings. This implemented route has no accepted replacement threshold in this proposal. |
+| 1. First read | `read`, sprint `FirstRead`; PR #5188 | Source defaults ship as `decide_bounce=0.5` and `decide_review=0.3`: at or above 0.5 bounces; below 0.3 a flash card lands with no model read; the interval between them uses strings. Three wrong cards occupy that low band in the table below. This implemented route has no accepted replacement threshold in this proposal. |
 | 2. Grade and attempt | `grade`, `attempt`; PR #5204 | `decide_grade`, `decide_attempt_no_result` and `decide_attempt_nothing_to_do` ship empty. The reported 0.7 candidates do not authorize activation. Only the latter two attempt classes can change finish routing. |
 | 3. Gate cause | `gate`, member and lander integration; PR #5206 | `decide_gate_flaky` and `decide_gate_preexisting` ship empty. Both must be probabilities and, when both are set, sum above 1. Reported 0.8 candidates remain unaccepted; a model answer cannot turn a red gate green. |
 | 4. Score and findings | `score`, `findings`, post-land scoring; PR #5201 | `decide_score_bar` ships empty: scores are retained without raising its judgment. `findings --bar` defaults to 0.5 for clustering only. The reported 0.7 score candidate does not establish a finder rule or an independent calibration. |
 | 5. Routine judgment | `nova-sprint answer`; PR #5207 | `decide_judgment_bar` ships empty; `--bar` can override it. No bar means no action, including an interrupted action's resume. The 0.8 result is in-sample agreement with coordinator verbs, not an accepted action policy. |
 | 6. Card quality | `brief`, sprint add and lint integration; PR #5203 | `decide_brief_bar` ships empty, report only. The 0.5 need-question display cutoff is diagnostic, not a convergence bar. The implementation labels readings `uncalibrated=true`; no adoption bar is established. |
 
-These are source defaults, not a reading of a running sprint's configuration.
+These are source defaults at the pinned revision, not a reading of a running
+sprint's configuration. The coordinator reports a live override on 2026-10-03:
+`decide_review=0`, with `decide_bounce=0.5`, so nothing lands without a model
+read today. This review does not independently verify that runtime setting.
 A nonempty setting or an installed provider key does not supply the missing
 adoption evidence. Each routing policy needs a versioned eligible population,
 independent labels, a frozen threshold, error and coverage limits, and a rollback
@@ -408,7 +411,8 @@ references), `r2-diaryd-08` (0.28, fragments and an invented reason), and
 mechanical backstops have no supplied execution receipts proving that they
 reject these exact defects. The low band also contains the outside-PATHS card
 `r2-negd-42` (0.29); deterministic path enforcement remains mandatory. Do not
-enable unread landing from this experiment. Preserve repository-aware review
+restore the shipped unread-landing route from this experiment. The coordinator
+reports it disabled by the live `decide_review=0` override. Preserve repository-aware review
 for context, truth of comments, citations and cross-file references while
 measuring the combined policy in shadow mode.
 
@@ -429,7 +433,9 @@ A balanced twenty-card regression fixture cannot estimate deployment prevalence
 or establish a safe threshold on its own.
 
 **Current disposition: retain the first strings read; no replacement threshold
-established.** The completed run supersedes the earlier HTTP 402 attempt. Its
+established.** The coordinator reports live bars of bounce 0.5 and review 0,
+requiring a model read before any landing; the pinned source defaults remain
+0.5 and 0.3. The completed run supersedes the earlier HTTP 402 attempt. Its
 low-band errors rule out the proposed unread-LAND policy without demonstrated
 backstops and independent evaluation. The next decision
 answers whether a first flash-card read is replaceable, the exact question and
