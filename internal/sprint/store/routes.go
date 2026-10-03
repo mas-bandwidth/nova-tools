@@ -88,7 +88,7 @@ type RouteSet struct {
 	Tiers  map[string][]string
 	Bars   [2]string
 	// JudgmentBar is the sprint row's bar on a judgment decision's probability
-	// (sprint:decide_judgment_bar), read with the bars: nova-sprint answer --decide
+	// (sprint:decide_judgment_bar), read with the bars: nova-sprint answer
 	// reads it from routes --json. "" when nova-config has not applied one.
 	JudgmentBar string
 }
@@ -249,7 +249,7 @@ func (st *Store) Routes(ctx context.Context) ([]sprint.Route, map[string][]strin
 }
 
 // JudgmentBar is the judgment decision's bar as nova-config applied it, read with the
-// routes: for routes --json, which answer --decide reads. "" when none is applied.
+// routes: for routes --json, which answer reads. "" when none is applied.
 func (st *Store) JudgmentBar(ctx context.Context) (string, error) {
 	set, err := st.routes(ctx)
 	return set.JudgmentBar, err

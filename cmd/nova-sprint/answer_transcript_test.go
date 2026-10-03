@@ -44,5 +44,5 @@ func TestTheAnswerTranscriptRunsOverATwin(t *testing.T) {
 	}
 	ds, err := os.ReadFile(record)
 	require.NoError(t, err)
-	require.Equal(t, 2, strings.Count(string(ds), "\n"), "the first pass recorded two decisions, the second applied them from the record")
+	require.Equal(t, 6, strings.Count(string(ds), "\n"), "the first pass recorded two decisions; the second applied them from the record, an applying and an applied line each")
 }

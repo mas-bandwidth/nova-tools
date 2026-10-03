@@ -13,7 +13,7 @@ import (
 // The state is the judgment's kind and text, the card, its log, and the verbs allowed;
 // the answers are the verb with a probability per verb, the fix a rework carries and the
 // reason a drop gives, each one of a few canned texts (a decision chooses, it does not
-// write). Choose turns the answers into what nova-sprint answer --decide does: apply the
+// write). Choose turns the answers into what nova-sprint answer does: apply the
 // verb at or above the bar, or list it for the coordinator. A drop is always listed, and
 // a judgment whose card a provider refused for want of payment is never asked at all.
 
@@ -86,7 +86,7 @@ func JudgmentSchema() Schema {
 }
 
 // Kinds maps each routine judgment type, as the inbox names it, to its short name: the
-// kinds nova-sprint answer --decide asks the decision for. Every other type is left.
+// kinds nova-sprint answer asks the decision for. Every other type is left.
 var Kinds = map[string]string{
 	"a reader found it broken":                  "broken",
 	"work came back failed":                     "failed",

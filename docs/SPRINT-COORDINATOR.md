@@ -113,14 +113,14 @@ Notes on the rows:
   stranded in review, fewer than two readers up (`reader up`), no member up, an operation stuck (`check`).
 - Before PR 5129 the printed `ack` line with several notes is refused: ack one note at a time.
 
-The routine kinds are answered by `nova-sprint answer --decide` (SPEC-SPRINT.md section 8, "Answered by
+The routine kinds are answered by `nova-sprint answer` (SPEC-SPRINT.md section 8, "Answered by
 nova-decide"), never by a shell loop of the coordinator's own: the night of 2026-10-02 one such loop read one card
 of a grouped judgment and every stream waited under it until morning. Run it as the seat's loop, a row of its own
 beside the server, with the key from the seat's secrets and never on a command line:
 
 ```
-nova-secrets exec --only JEV_API_KEY -- nova-sprint answer --decide --dry-run
-nova-secrets exec --only JEV_API_KEY -- nova-sprint answer --decide --every 60s
+nova-secrets exec --only JEV_API_KEY -- nova-sprint answer --dry-run
+nova-secrets exec --only JEV_API_KEY -- nova-sprint answer --every 60s
 ```
 
 It answers each card of a broken, failed, blocked, stalled, conflict, deadline, cannot-ask, ready-to-accept or
@@ -138,7 +138,9 @@ card is decided once (the record, `~/.nova/decide/judgment.jsonl`, answers it ag
 card round and round; each decision's outcome (landed, dropped, came back) is attached as the card's state says
 it, and `nova-decide calibrate --record ~/.nova/decide/judgment.jsonl --decision judgment --question
 verb=rework --positive landed --negative came-back` reads the bar the record supports. The loop ends when the
-machine is STOPPED; it never composes a command the inbox did not print.
+machine is STOPPED; it never composes a command the inbox did not print. Each line it applies carries the
+decision's `--op`, recorded as applying before it runs and applied after, so a loop stopped between the two
+applies nothing twice; one ask that takes past `--timeout` (60s) is that card's failed row, and the loop goes on.
 
 ## 3. Loading work
 

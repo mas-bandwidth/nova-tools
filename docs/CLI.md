@@ -1021,7 +1021,7 @@ nova-sprint stream remove <stream>...
 nova-sprint ci <id>... (--red | --green) --epoch <n> [--head <h>] [--run <id>] [--source <s>] [--note <text>]
 nova-sprint wait <note> (--for <duration> | --until <RFC3339>)
 nova-sprint ack <note>... --reason <text>
-nova-sprint answer --decide [--dry-run] [--bar <p>] [--every <duration>] [--backend jev|fixed] [--answers <file>] [--record <file>]
+nova-sprint answer [--dry-run] [--bar <p>] [--every <duration>] [--timeout <duration>] [--backend jev|fixed] [--answers <file>] [--record <file>]
 nova-sprint inbox [--open <group>] [--read] [--wait [--timeout <duration>]] [--deadline <duration>] [--stale <duration>]
 nova-sprint card <id>
 nova-sprint log [--card <id>] [--stream <s>] [--member <m>] [--since <10m|RFC3339>] [--at-epoch <n>]
@@ -1051,7 +1051,7 @@ goal, stream) one group's.
 
 ### Answering the routine judgments
 
-`nova-sprint answer --decide` answers the routine judgments (a reader found it
+`nova-sprint answer` answers the routine judgments (a reader found it
 broken, work came back failed, blocked on something dropped, stalled, a conflict,
 past its deadline, cannot ask, ready to accept, a card at its bound) by
 nova-decide's judgment decision, card by card: it applies the verb chosen when
@@ -1063,9 +1063,14 @@ and lists the rest for you: every drop, everything under the bar, and a provider
 refusal for want of payment, which it never asks about. It prints one table, a
 row a card, and records every decision (`--record`, default
 `~/.nova/decide/judgment.jsonl`) with its outcome once the card lands, is dropped
-or comes back. `--dry-run` applies and records nothing; `--every 60s` runs it as
-the seat's loop until the machine is STOPPED. Jev's key comes from `JEV_API_KEY`:
-`nova-secrets exec --only JEV_API_KEY -- nova-sprint answer --decide`. The
+or comes back. Each verb it applies carries the decision's op id (`--op
+decide.<decision id>`), recorded as `applying` before the verb runs and `applied`
+or `refused` after, so a pass stopped between the two is finished by the next
+through the same op and nothing is applied twice. One ask may take `--timeout`
+(60s by default); an ask past it, or one that fails, is that card's `failed` row,
+nothing is applied for it, and the pass exits 1. `--dry-run` applies and records
+nothing; `--every 60s` runs it as the seat's loop until the machine is STOPPED. Jev's key comes from `JEV_API_KEY`:
+`nova-secrets exec --only JEV_API_KEY -- nova-sprint answer`. The
 contract is [SPEC-SPRINT.md section 8](SPEC-SPRINT.md#answered-by-nova-decide)
 and [SPEC-NOVA-DECIDE.md section 9](SPEC-NOVA-DECIDE.md#9-the-judgment-decision).
 

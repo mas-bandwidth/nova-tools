@@ -32,7 +32,7 @@ func TestRedisTheDealReadsTheRoutesApplyWrites(t *testing.T) {
 	set, trips, err := st.B.(RouteReader).Routes(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), trips, "the arrays ride in the routes' second trip")
-	assert.Equal(t, "0.85", set.JudgmentBar, "the judgment bar rides with them too (answer --decide reads it from routes --json)")
+	assert.Equal(t, "0.85", set.JudgmentBar, "the judgment bar rides with them too (answer reads it from routes --json)")
 	assert.Equal(t, map[string][]string{"flash": {"flash-a", "flash-a"}}, set.Tiers, "pro has no array: it takes its routes in name order")
 	rs, _, err := st.Routes(ctx)
 	require.NoError(t, err)

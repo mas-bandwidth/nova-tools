@@ -21,7 +21,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 )
 
-// answer --decide (docs/SPEC-SPRINT.md section 8, answered by nova-decide; docs/SPEC-NOVA-DECIDE.md
+// answer (docs/SPEC-SPRINT.md section 8, answered by nova-decide; docs/SPEC-NOVA-DECIDE.md
 // section 9): the routine judgments of the inbox answered by the judgment decision. For each
 // card of each routine judgment it asks the decision (the judgment's kind and text, the card's
 // log, the verbs the judgment prints), applies the verb chosen at or above the bar by the
@@ -29,6 +29,12 @@ import (
 // everything under the bar, and a card a provider refused for want of payment, which is never
 // asked (a payment is the owner's). Every decision goes to the record under its judgment's id,
 // and the outcome (landed, dropped, came back) is attached to it once the card's state says.
+//
+// The record is the guard against applying a decision twice: "applying" and the decision's
+// operation id are recorded before its first verb runs, every verb carries that id as its
+// --op, and "applied" or "refused" is recorded after. A pass stopped between the two leaves
+// "applying", which the next pass finishes through the same ids: a verb that ran replays its
+// recorded result and changes nothing.
 //
 // It is a client of the sprint like the coordinator's shell: it reads and writes through the
 // verbs (inbox, card, log, routes and the answer verbs), sent to the server when
@@ -49,8 +55,9 @@ type answerRow struct {
 	Recorded string  `json:"recorded,omitempty"` // new, existing
 }
 
-// The acts a row reports.
+// The acts a row reports; actApplying is the record's alone, a decision whose verbs began.
 const (
+	actApplying   = "applying"
 	actApplied    = "applied"
 	actWouldApply = "would-apply"
 	actListed     = "listed"
@@ -66,11 +73,13 @@ type answerOutcome struct {
 	Label    string `json:"label"`
 }
 
-// answerer is one answer --decide: how it reaches the sprint (call), the backend and the
-// record of the judgment decision, its bar, and the clock its record is stamped by.
+// answerer is one answer: how it reaches the sprint (call), the backend and the record of
+// the judgment decision, how long one ask may take, its bar, and the clock its record is
+// stamped by.
 type answerer struct {
 	call    func(ctx context.Context, argv []string) (sprintwire.Result, error)
 	backend decide.Backend
+	timeout time.Duration
 	record  string
 	bar     string // --bar as given; "" reads the sprint row's
 	barSet  bool   // this pass has a bar: with none, nothing is applied
@@ -106,21 +115,18 @@ func (p answerPass) stopped() bool {
 
 func (a *app) cmdAnswer(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("answer")
-	useDecide := fs.Bool("decide", false, "answer the routine judgments by the judgment decision (nova-decide): the one way answer runs")
 	dry := fs.Bool("dry-run", false, "ask the decision and print what would be applied; apply nothing and write no record")
 	bar := fs.String("bar", "", "apply a verb whose probability is at or above this bar (else the sprint row's decide_judgment_bar; with neither, nothing is applied: every decision is recorded and what a bar would apply is listed)")
 	every := fs.Duration("every", 0, "run a pass every duration until the machine is STOPPED (or DONE): the coordinator seat's loop; 0 is one pass")
 	backend := fs.String("backend", "jev", "the decision's backend: jev (its key from JEV_API_KEY, which nova-secrets exec sets) or fixed (--answers)")
 	answers := fs.String("answers", "", "the fixed backend's answers, a JSON file (--backend fixed)")
+	timeout := fs.Duration("timeout", decide.JevTimeout, "how long one ask of the backend may take; an ask past it is that card's failed row, and nothing is applied for it")
 	record := fs.String("record", "", "the judgment decisions' record, JSON lines (default ~/.nova/decide/judgment.jsonl)")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
 		return refuse(stderr, "answer", argErr("takes no words ", err, pos...))
 	}
 	var problems []string
-	if !*useDecide {
-		problems = append(problems, "answer wants --decide, the judgment decision that chooses each verb")
-	}
 	if *bar != "" {
 		if _, err := decide.ParseBar(*bar); err != nil {
 			problems = append(problems, "--bar: "+err.Error())
@@ -128,6 +134,9 @@ func (a *app) cmdAnswer(args []string, stdout, stderr io.Writer) int {
 	}
 	if *every < 0 {
 		problems = append(problems, "--every wants a duration above zero, or 0 for one pass")
+	}
+	if *timeout <= 0 {
+		problems = append(problems, "--timeout wants a duration above zero")
 	}
 	if *backend != "jev" && *backend != "fixed" {
 		problems = append(problems, "--backend "+*backend+" is not jev or fixed")
@@ -141,7 +150,7 @@ func (a *app) cmdAnswer(args []string, stdout, stderr io.Writer) int {
 	if len(problems) > 0 {
 		return refuse(stderr, "answer", strings.Join(problems, "; "))
 	}
-	w := &answerer{bar: *bar, dry: *dry, now: a.now, record: *record}
+	w := &answerer{bar: *bar, dry: *dry, now: a.now, record: *record, timeout: *timeout}
 	if w.record == "" {
 		home, err := a.home()
 		if err != nil {
@@ -149,7 +158,7 @@ func (a *app) cmdAnswer(args []string, stdout, stderr io.Writer) int {
 		}
 		w.record = filepath.Join(home, ".nova", "decide", "judgment.jsonl")
 	}
-	if w.backend, err = a.judgmentBackend(*backend, *answers); err != nil {
+	if w.backend, err = a.judgmentBackend(*backend, *answers, *timeout); err != nil {
 		return refuse(stderr, "answer", err.Error())
 	}
 	server := a.server(fs)
@@ -210,8 +219,9 @@ func (a *app) runHere(argv []string, c common) sprintwire.Result {
 }
 
 // judgmentBackend is the judgment decision's backend: the test's, a fixed file, or Jev with
-// the key from the environment (a missing key fails each ask, naming nova-secrets exec).
-func (a *app) judgmentBackend(kind, answers string) (decide.Backend, error) {
+// the key from the environment (a missing key fails each ask, naming nova-secrets exec), its
+// client bounded by timeout.
+func (a *app) judgmentBackend(kind, answers string, timeout time.Duration) (decide.Backend, error) {
 	if a.decider != nil {
 		return a.decider, nil
 	}
@@ -226,7 +236,7 @@ func (a *app) judgmentBackend(kind, answers string) (decide.Backend, error) {
 	if key == "" {
 		return noKey{}, nil
 	}
-	return decide.JevHTTP(key), nil
+	return decide.JevHTTP(key, timeout), nil
 }
 
 // noKey is the Jev backend with no key in the environment: every ask fails, saying how to
@@ -235,7 +245,7 @@ type noKey struct{}
 
 func (noKey) Name() string { return "jev:" + decide.JevModel }
 func (noKey) Ask(context.Context, decide.Schema, string) (map[string]decide.Answer, decide.Usage, error) {
-	return nil, decide.Usage{}, errors.New(decide.JevSecret + " is absent from this environment; run under nova-secrets exec --only " + decide.JevSecret + " -- nova-sprint answer --decide")
+	return nil, decide.Usage{}, errors.New(decide.JevSecret + " is absent from this environment; run under nova-secrets exec --only " + decide.JevSecret + " -- nova-sprint answer")
 }
 
 // get runs a read and decodes its JSON.
@@ -399,15 +409,25 @@ func (w *answerer) card(ctx context.Context, g sprint.Group, kind, card string, 
 	row.Recorded = map[bool]string{true: "existing", false: "new"}[existing]
 	ch := decide.Choose(d.Answers, allowed, bar) // with no bar set, bar is 0: what any bar would allow
 	row.Verb, row.P = ch.Verb, ch.P
-	if existing && d.Inputs["act"] == actApplied {
-		row.Act, row.Why = actListed, "applied at "+d.At+" and the judgment is still open: the coordinator's"
+	if !existing {
+		d.Inputs = map[string]string{"judgment": g.ID, "note": note.ID, "kind": kind, "card": card, "verb": ch.Verb}
+	}
+	act, op, at := applyState(d)
+	if act == actApplied {
+		row.Act, row.Why = actListed, "applied at "+at+" and the judgment is still open: the coordinator's"
 		return row, nil
 	}
-	lines, why := fill(commandOf(cmds, ch.Verb), ch)
-	if why == "" && ch.Verb == decide.VerbAck && len(note.Primaries) > 1 {
-		why = "the ack names a note of several cards: the coordinator's"
+	// a decision whose verbs began and whose end is not recorded (a pass stopped between
+	// them) is finished through the same op, past the guards it passed when it began
+	resume := act == actApplying
+	if op == "" {
+		op = opOf(row.Decision)
 	}
-	if why == "" && ch.Verb == decide.VerbRework && !existing {
+	lines, why := fill(commandOf(cmds, ch.Verb), ch)
+	if why == "" {
+		why = ackOfSeveral(ch.Verb, note)
+	}
+	if why == "" && ch.Verb == decide.VerbRework && !resume {
 		if at, err := w.reworkedWithin(card, ReworkWindow); err != nil {
 			return row, err
 		} else if at != "" {
@@ -415,24 +435,91 @@ func (w *answerer) card(ctx context.Context, g sprint.Group, kind, card string, 
 		}
 	}
 	switch {
-	case ch.Act != decide.ActApply:
+	case !resume && ch.Act != decide.ActApply:
 		row.Act, row.Why = actListed, ch.Why
 	case why != "":
 		row.Act, row.Why = actListed, why
+	case !w.barSet && resume:
+		row.Act, row.Why = actListed, "no decide_judgment_bar is set, so nothing is applied; applying it began at "+at+" and its end is not recorded: a pass with a bar finishes it through --op "+op
 	case !w.barSet:
 		row.Act, row.Why = actListed, "no decide_judgment_bar is set, so nothing is applied; at a bar at or under "+strconv.FormatFloat(ch.P, 'f', 2, 64)+" it would apply: "+shown(lines)
 	case w.dry:
-		row.Act, row.Why = actWouldApply, shown(lines)
+		row.Act, row.Why = actWouldApply, shown(withOp(lines, op))
 	default:
-		row.Act, row.Why = w.apply(ctx, lines)
+		var err error
+		row.Act, row.Why, err = w.applyRecorded(ctx, d, existing, resume, op, lines)
+		return row, err
 	}
 	if !existing && !w.dry {
-		d.Inputs = map[string]string{"judgment": g.ID, "note": note.ID, "kind": kind, "card": card, "act": row.Act, "verb": ch.Verb}
+		d.Inputs["act"] = row.Act
 		if _, err := decide.Append(w.record, d); err != nil {
 			return row, fmt.Errorf("the record %s: %w", w.record, err)
 		}
 	}
 	return row, nil
+}
+
+// ackOfSeveral is why an ack chosen for one card is not applied: it names a note of
+// several cards, and would answer the others too; "" for any other.
+func ackOfSeveral(verb string, n sprint.Note) string {
+	if verb == decide.VerbAck && len(n.Primaries) > 1 {
+		return "the ack names a note of several cards: the coordinator's"
+	}
+	return ""
+}
+
+// applyState is where applying d stands: its last act line, else the act it was recorded
+// with; the op its verbs carry; and when that was.
+func applyState(d decide.Decision) (act, op, at string) {
+	if n := len(d.Acts); n > 0 {
+		a := d.Acts[n-1]
+		return a.Act, a.Op, a.At
+	}
+	return d.Inputs["act"], d.Inputs["op"], d.At
+}
+
+// opOf is the operation id a decision's verbs carry: its record id, less the '~' the
+// sprint keeps for its epochs.
+func opOf(id string) string {
+	return "decide." + strings.ReplaceAll(id, "~", "_")
+}
+
+// withOp is a decision's lines each carrying its op: the decision's own for one line,
+// <op>.<n> for the n-th of several.
+func withOp(lines [][]string, op string) [][]string {
+	out := make([][]string, len(lines))
+	for i, l := range lines {
+		id := op
+		if len(lines) > 1 {
+			id = op + "." + strconv.Itoa(i+1)
+		}
+		out[i] = slices.Concat(l, []string{"--op", id})
+	}
+	return out
+}
+
+// applyRecorded applies a decision with the record as its guard: "applying" and the op
+// are recorded before the first verb runs (on the decision's own line when it is new),
+// every verb carries the op, and the end (applied, refused) is recorded after. A
+// resumed decision has its "applying" already.
+func (w *answerer) applyRecorded(ctx context.Context, d decide.Decision, existing, resume bool, op string, lines [][]string) (string, string, error) {
+	stamp := func() string { return w.now().UTC().Format(time.RFC3339) }
+	var err error
+	switch {
+	case !existing:
+		d.Inputs["act"], d.Inputs["op"] = actApplying, op
+		_, err = decide.Append(w.record, d)
+	case !resume:
+		err = decide.RecordAct(w.record, decide.Act{ID: d.ID, Act: actApplying, Op: op, At: stamp()})
+	}
+	if err != nil {
+		return actFailed, "", fmt.Errorf("the record %s: %w", w.record, err)
+	}
+	act, why := w.apply(ctx, lines, op)
+	if err := decide.RecordAct(w.record, decide.Act{ID: d.ID, Act: act, Op: op, At: stamp()}); err != nil {
+		return act, why, fmt.Errorf("the record %s: %w", w.record, err)
+	}
+	return act, why, nil
 }
 
 // decide is the recorded decision under id, or a new one asked through the backend (not
@@ -446,8 +533,13 @@ func (w *answerer) decide(ctx context.Context, id string, in decide.JudgmentInpu
 		return *have, true, nil // a judgment's card is decided once
 	}
 	s, state := decide.JudgmentSchema(), decide.JudgmentState(in)
-	answers, usage, err := decide.Ask(ctx, w.backend, s, state)
+	actx, cancel := context.WithTimeout(ctx, w.timeout)
+	defer cancel()
+	answers, usage, err := decide.Ask(actx, w.backend, s, state)
 	if err != nil {
+		if errors.Is(actx.Err(), context.DeadlineExceeded) {
+			return decide.Decision{}, false, fmt.Errorf("backend %s did not answer within %s (--timeout): %w", w.backend.Name(), w.timeout, err)
+		}
 		return decide.Decision{}, false, fmt.Errorf("backend %s: %w", w.backend.Name(), err)
 	}
 	return decide.Decision{ID: id, Decision: s.Name, Schema: s.Hash(), Backend: w.backend.Name(), At: w.now().UTC().Format(time.RFC3339),
@@ -460,7 +552,7 @@ func (w *answerer) decide(ctx context.Context, id string, in decide.JudgmentInpu
 const ReworkWindow = time.Hour
 
 // reworkedWithin is when the record says the decision last applied a rework to the card,
-// within window of now; "" when it did not.
+// or began to (applying, its end not recorded), within window of now; "" when it did not.
 func (w *answerer) reworkedWithin(card string, window time.Duration) (string, error) {
 	ds, err := decide.Load(w.record)
 	if err != nil {
@@ -468,20 +560,26 @@ func (w *answerer) reworkedWithin(card string, window time.Duration) (string, er
 	}
 	for i := len(ds) - 1; i >= 0; i-- {
 		d := ds[i]
-		if d.Decision != decide.JudgmentName || d.Inputs["card"] != card || d.Inputs["act"] != actApplied || d.Inputs["verb"] != decide.VerbRework {
+		if d.Decision != decide.JudgmentName || d.Inputs["card"] != card || d.Inputs["verb"] != decide.VerbRework {
 			continue
 		}
-		if at, err := time.Parse(time.RFC3339, d.At); err == nil && w.now().Sub(at) < window {
-			return d.At, nil
+		act, _, at := applyState(d)
+		if act != actApplied && act != actApplying {
+			continue
+		}
+		if t, err := time.Parse(time.RFC3339, at); err == nil && w.now().Sub(t) < window {
+			return at, nil
 		}
 	}
 	return "", nil
 }
 
-// apply runs a decision's commands in order, each once a pass; the first refused stops it.
-func (w *answerer) apply(ctx context.Context, lines [][]string) (string, string) {
-	for _, argv := range lines {
-		key := strings.Join(argv, "\x00")
+// apply runs a decision's commands in order, each carrying its op and each once a pass
+// (a note's line two of its cards chose); the first refused stops it.
+func (w *answerer) apply(ctx context.Context, lines [][]string, op string) (string, string) {
+	run := withOp(lines, op)
+	for i, argv := range run {
+		key := strings.Join(lines[i], "\x00")
 		if w.done[key] {
 			continue
 		}
@@ -494,7 +592,7 @@ func (w *answerer) apply(ctx context.Context, lines [][]string) (string, string)
 			return actRefused, leadLine(res.Stderr + res.Stdout)
 		}
 	}
-	return actApplied, shown(lines)
+	return actApplied, shown(run)
 }
 
 // shown is commands as the coordinator would type them, one after another.
@@ -674,7 +772,8 @@ func (w *answerer) outcomes(ctx context.Context) ([]answerOutcome, error) {
 		if label == "" {
 			continue
 		}
-		o := decide.Outcome{ID: d.ID, Label: label, Note: "the card is " + orDashStr(col, "off the table") + "; act=" + d.Inputs["act"], At: w.now().UTC().Format(time.RFC3339)}
+		act, _, _ := applyState(d)
+		o := decide.Outcome{ID: d.ID, Label: label, Note: "the card is " + orDashStr(col, "off the table") + "; act=" + act, At: w.now().UTC().Format(time.RFC3339)}
 		if _, _, err := decide.Attach(w.record, o); err != nil {
 			return out, fmt.Errorf("the record %s: %w", w.record, err)
 		}

@@ -127,7 +127,7 @@ type app struct {
 	tickDeadline time.Duration
 	after        func(time.Duration) <-chan time.Time
 	exit         func(code int)
-	// decider, when set (a test), is answer --decide's backend for the judgment decision:
+	// decider, when set (a test), is answer's backend for the judgment decision:
 	// nil is the one --backend names (decide.Jev with JEV_API_KEY, or a fixed file).
 	decider decide.Backend
 	// home is the directory a seat's inbox is under (inbox --wait --push seat:

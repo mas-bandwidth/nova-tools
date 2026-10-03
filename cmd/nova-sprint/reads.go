@@ -1391,7 +1391,7 @@ func (a *app) cmdRoutes(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	if c.json {
-		// the judgment bar rides here for answer --decide, which reads it through the server
+		// the judgment bar rides here for answer, which reads it through the server
 		bar, err := st.JudgmentBar(ctx)
 		if err != nil {
 			return a.readFailed("routes", err, stderr)

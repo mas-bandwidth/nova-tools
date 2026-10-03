@@ -228,7 +228,7 @@ facts.
 | `coordinator` | ref friend | | the deal and the routing: who holds the coordinator role; `sprint set --coordinator <friend>` is the handover | `sprint:coordinator`, and the `coordinator` word in that friend's `friend:<f>:roles` |
 | `decide_bounce` | decimal, default 0.5 | | the ask: a flash card's first read is a decide read (docs/SPEC-SPRINT.md section 6), and p(defect) at or above this bar bounces the work; a probability, at least `decide_review`; both bars empty turns the decide read off | `sprint:decide_bounce` |
 | `decide_review` | decimal, default 0.3 | | the ask: below this bar the decide read lands the work with no model read; from it up to `decide_bounce` the card goes to a strings read | `sprint:decide_review` |
-| `decide_judgment_bar` | decimal, default empty | | the ask: `nova-sprint answer --decide` applies the verb the judgment decision chose at or above this bar and lists it for the coordinator below it (docs/SPEC-SPRINT.md section 8, answered by nova-decide); a probability; empty applies nothing (every decision recorded, what a bar would apply listed); 0.8 is the bar docs/SPEC-NOVA-DECIDE.md section 9 calibrates | `sprint:decide_judgment_bar` |
+| `decide_judgment_bar` | decimal, default empty | | the ask: `nova-sprint answer` applies the verb the judgment decision chose at or above this bar and lists it for the coordinator below it (docs/SPEC-SPRINT.md section 8, answered by nova-decide); a probability; empty applies nothing (every decision recorded, what a bar would apply listed); 0.8 is the bar docs/SPEC-NOVA-DECIDE.md section 9 calibrates | `sprint:decide_judgment_bar` |
 
 **`loop`** (`config.loops`): a supervised process on one machine. Every
 value is data in the row: the code names no machine, seat, secret or
