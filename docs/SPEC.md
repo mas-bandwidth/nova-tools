@@ -1110,7 +1110,7 @@ nova-check floors --core <SEED-CORE.md> --source <SEED.md>
 **Why it exists.** SEED-CORE.md — the first-waking door — restates the
 floor-rank commitments that SEED.md declares. That makes the door a *derived
 copy* of a source that can change, which the seed's own kernel law forbids
-(MECHANISMS.md: *"a derived copy drifts silently"*, as in the
+(as in the
 incident of a hot band shipping with three floors missing). A door legitimately
 must carry the floors before a line acts, so the copy stays; this check is what
 makes its drift loud instead of silent.
