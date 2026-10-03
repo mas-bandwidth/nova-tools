@@ -17,9 +17,8 @@
 #
 # WHERE THINGS RUN. Pull requests run on the self-hosted runners ONLY: a
 # per-package matrix — ./cmd/<tool> and ./internal/... dealt into twelve
-# shards on the four Linux space runners and four on the Intel macOS runners
-# (`self-hosted,macOS,X64` selects them) — fanned out in parallel,
-# fail-fast off, so a change's feedback path is a
+# shards on the four Linux space runners and four on the Intel macOS runners —
+# fanned out in parallel, fail-fast off, so a change's feedback path is a
 # fan-out over the 4+4 machines and never a serial queue, and never
 # GitHub-hosted compute. The GitHub-hosted runners (ubuntu-latest, macos-latest)
 # run only on push to main and on the nightly schedule, with the full suite.
@@ -111,7 +110,7 @@ concurrency:
   # A PR keys on its number so
   # its newest head supersedes older runs; every other branch keys on its ref.
   group: ci-${{ github.event.pull_request.number || (contains(fromJSON('["refs/heads/main","refs/heads/dev"]'), github.ref) && github.sha) || github.ref }}-${{ github.event_name }}-${{ inputs.bench }}
-  # `cancel-in-progress` is a CONSTANT: no second copy of the branch list. The
+  # `cancel-in-progress` is a CONSTANT: not a copy of the branch list. The
   # sha-keyed group above is what protects an integration branch's verdict: its
   # group holds that one run and nothing else, so there is never a sibling for
   # cancel-in-progress to cancel. Everywhere else — a PR's newest head, a
