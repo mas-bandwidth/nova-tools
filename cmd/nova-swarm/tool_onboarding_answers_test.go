@@ -136,7 +136,7 @@ func TestTheHelpNamesTheLiveVerbsAndTheCardsRepoAndBase(t *testing.T) {
 	t.Parallel()
 	help := swarmHelp(t, "help")
 	assert.NotContains(t, help, "batch runs", "batch is no verb")
-	assert.Contains(t, help, "member runs a sprint's cards on this machine")
+	assert.Contains(t, help, "member runs a sprint's cards\nas native children and sends every sprint verb to the sprint server.")
 	assert.Contains(t, help, "nova-swarm help <verb>")
 	tmpl := swarmHelp(t, "template", "-h")
 	assert.Contains(t, tmpl, "  REPO:      <owner>/<name>")
