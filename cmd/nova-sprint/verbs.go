@@ -88,6 +88,7 @@ func init() {
 		{"check", "", "check", (*app).cmdCheck},
 		{"repair", "", "repair", (*app).cmdRepair},
 		{"where", "[--watch] [--every <duration>] [--all]", "where", (*app).cmdWhere},
+		{"dashboard", "[--listen <address:port>[,<address:port>...]] [--logo <file>] [--every <duration>]", "dashboard --listen 127.0.0.1:7390", (*app).cmdDashboard},
 		{"handover", "", "handover", (*app).cmdHandover},
 		{"routes", "", "routes", (*app).cmdRoutes},
 		{"stats", "", "stats", (*app).cmdStats},

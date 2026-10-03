@@ -70,7 +70,7 @@ type friendTrees struct {
 func newFriendTrees(t *testing.T) friendTrees {
 	t.Helper()
 	ta := newTestApp(t)
-	ta.a.friends = func(context.Context, string) ([]string, error) { return []string{"ada", "bo", "cy"}, nil }
+	ta.a.friends = friendRows("ada", "bo", "cy")
 	now, day := ta.a.now(), 24*time.Hour
 	root := t.TempDir()
 	ada, bo := filepath.Join(root, "ada-working"), filepath.Join(root, "bo-working")
@@ -282,7 +282,7 @@ func TestFriendCleanReadsTheRosterFromAStoreFile(t *testing.T) {
 func TestFriendCleanRefusals(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
-	ta.a.friends = func(context.Context, string) ([]string, error) { return nil, nil }
+	ta.a.friends = friendRows()
 	dir := t.TempDir()
 	for _, tc := range []struct {
 		line string

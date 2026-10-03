@@ -1678,16 +1678,12 @@ func nativeSandboxArgv(launch []string, cfg nativeRunConfig, dataHome, jobDir, t
 		"--write", dataHome,
 		"--write", tmpDir,
 	}
-	// The bench-shared Go caches are a write for the same reason the data home is: a card
-	// extracts a module it downloads, and the wall denies a write it was not handed (card
-	// 8963). It is one directory for the whole bench, so the write is shared, not per-card.
+	// The shared per-bench cache root is a write for the same reason the data home is: a
+	// card extracts a module it downloads, and the wall denies a write it was not handed
+	// (card 8963, issue #1048, docs/SPEC-SANDBOX.md). It is one directory for the whole
+	// bench, so the write is shared, not per-card, and it is named once.
 	if cacheDir := nativeCacheDir(cfg); cacheDir != "" {
 		argv = append(argv, "--write", cacheDir)
-	}
-	if !cfg.noSharedCaches && cfg.root != "" {
-		// The shared per-bench cache root is a permitted write root beside the job directory
-		// and the data home (issue #1048, docs/SPEC-SANDBOX.md).
-		argv = append(argv, "--write", swarm.CacheRoot(cfg.root))
 	}
 	argv = append(argv, "--cwd", jobDir)
 	// The keyless provider's loopback address is opened back up by name, never by widening
@@ -1872,7 +1868,7 @@ func nativeCacheDir(cfg nativeRunConfig) string {
 	if cfg.noSharedCaches || cfg.root == "" {
 		return ""
 	}
-	return filepath.Join(cfg.root, "cache")
+	return swarm.CacheRoot(cfg.root)
 }
 
 // nativeReadRoots is what the worker description declared every job of this worker may READ

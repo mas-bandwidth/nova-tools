@@ -263,8 +263,8 @@ func TestApplySetsAndRemovesAFriend(t *testing.T) {
 	st := seed(t)
 	applyKinds(t, st, ap, "rowan")
 
-	// A set in Postgres: slots, tiers and a role.
-	_, _, setupErr9031 := st.Update(ctx, KindFriend, "stella", map[string]string{"slots": "30", "tiers": "flash", "roles": "reader"}, "rowan")
+	// A set in Postgres: slots, tiers, a role and her width.
+	_, _, setupErr9031 := st.Update(ctx, KindFriend, "stella", map[string]string{"slots": "30", "tiers": "flash", "roles": "reader", "width": "4"}, "rowan")
 	require.NoError(t, setupErr9031)
 	res, err := Apply(ctx, st, ap, KindFriend, "rowan", false, func(Op) {})
 	assertionMsg173 := []any{"apply after set: %+v %v", res, err}
@@ -278,6 +278,7 @@ func TestApplySetsAndRemovesAFriend(t *testing.T) {
 				return
 			}
 			assert.Equal(t, "flash", got["tiers"], assertionMsg187...)
+			assert.Equal(t, "4", got["width"], assertionMsg187...)
 		}()
 	}
 	scopedGot286 := c.HGet(ctx, "friend:stella:roles", "roles").Val()
