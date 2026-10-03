@@ -521,16 +521,9 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// GOCACHE. GOTOOLCHAIN=local keeps a card from fetching a toolchain behind the bench's
 	// back. The sharing is safe because Go's caches are concurrency-safe by design and the
 	// module cache is read-mostly. --no-shared-caches keeps today's behaviour exactly: no
-	// names set, the caches under HOME.
+	// names set, the caches under HOME. swarm.EnsureCacheDirs (issue #1048, above) made both
+	// (swarm.GoModCacheDir, swarm.GoBuildCacheDir), under the same condition.
 	cacheDir := nativeCacheDir(cfg)
-	if cacheDir != "" {
-		for _, d := range []string{filepath.Join(cacheDir, "go-mod"), filepath.Join(cacheDir, "go-build")} {
-			if err := os.MkdirAll(d, 0o755); err != nil {
-				refuseNative(errOut, fmt.Sprintf("the shared go cache %s could not be made: %s", oneline.Field(d), oneline.Escape(err.Error())))
-				return nativeRunResult{}, 2
-			}
-		}
-	}
 
 	// (3c) THE SHELL SHIM (issue #1814). The harness spawns its bash tool's shell by NAME,
 	// resolving it through the child's PATH and SHELL, and hands it the harness's own
@@ -544,6 +537,16 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		refuseNative(errOut, fmt.Sprintf("%s the card's shell cannot be scrubbed of the provider key: %s",
 			oneline.Field(cfg.label), oneline.Err(shimErr)))
 		return nativeRunResult{}, 2
+	}
+	// (3d) THE GO SHIM (nova-tools#5174, cost rule 5): with the shared caches on, the go the
+	// child runs by name adds -trimpath, so the machine's warm GOCACHE serves this checkout
+	// and the card's gate does not compile the repository again (shellshim.go).
+	goBin := swarm.BenchGoBin(benchHome(cfg), os.Getenv("PATH"))
+	if cacheDir != "" {
+		if err := writeNativeGoShim(shimDir, goBin); err != nil {
+			refuseNative(errOut, fmt.Sprintf("%s %s", oneline.Field(cfg.label), oneline.Err(err)))
+			return nativeRunResult{}, 2
+		}
 	}
 
 	// (4) THE AUTH COPY. One entry, the model's provider's, moved to the data home so
@@ -811,8 +814,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			}
 		}
 	}
-	childEnv := nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell,
-		swarm.BenchGoBin(benchHome(cfg), os.Getenv("PATH")))
+	childEnv := nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell, goBin)
 	if cfg.root != "" {
 		var id swarm.StagingIdentity
 		if cfg.identity != nil {
@@ -1839,8 +1841,8 @@ func nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shim
 	)
 	if cacheDir != "" {
 		out = append(out,
-			"GOMODCACHE="+filepath.Join(cacheDir, "go-mod"),
-			"GOCACHE="+filepath.Join(cacheDir, "go-build"),
+			"GOMODCACHE="+swarm.GoModCacheDir(filepath.Dir(cacheDir)),
+			"GOCACHE="+swarm.GoBuildCacheDir(filepath.Dir(cacheDir)),
 			"GOTOOLCHAIN=local",
 			"ASDF_OUTPUT_TRANSLATIONS="+swarm.JobASDFOutputTranslations(filepath.Join(jobDir, swarm.JobRepo)),
 		)
@@ -2335,8 +2337,8 @@ func installFrame(cfg nativeRunConfig, jobDir, head string) error {
 		return err
 	}
 	st := cardcontract.Staged{Job: jobDir, Repo: filepath.Join(jobDir, swarm.JobRepo), Head: head, Git: git}
-	if d := nativeCacheDir(cfg); d != "" {
-		st.GoCache = filepath.Join(d, "go-build") // the GOCACHE nativeChildEnv hands the child
+	if nativeCacheDir(cfg) != "" {
+		st.GoCache = swarm.GoBuildCacheDir(cfg.root) // the GOCACHE nativeChildEnv hands the child
 	}
 	if cfg.frame.Kind == "read" {
 		// first, so a read whose start cannot be known leaves nothing of its frame behind
