@@ -35,7 +35,7 @@ func TestAGroupIDIsItsOldestNoteAndDoesNotMove(t *testing.T) {
 		Streams: []StreamClock{{Stream: "s4", State: StreamMerging, Progress: t0}}, Stale: time.Minute})
 	require.Equal(t, "n4", g[0].ID, "a stopped stream and a stale one: %+v", g)
 	require.Equal(t, 3, g[0].Size, "a stopped stream and a stale one: %+v", g)
-	require.Equal(t, StaleGroupID("s4"), g[1].ID, "a stopped stream and a stale one: %+v", g)
+	require.Equal(t, StaleGroupID("s4", 0), g[1].ID, "a stopped stream and a stale one: %+v", g)
 }
 
 // TestAGroupsMembersAreCardsAndNeverAStreamOrTheSprint pins Members: the

@@ -210,6 +210,20 @@ func exists(path string) bool {
 // either an ordinary refusal or errDogfood for the one whose line is already
 // written.
 func dogfoodCheck(token string, o options, deps Deps, checkout string, out, errs io.Writer) (string, error) {
+	// --gate report is build's alone (cut has no such flag): the gate still
+	// runs and its open edges are still printed, and the build goes on under
+	// a reason that is said on the line and kept in the build record. It is
+	// for a machinery install during a sprint; a tag is never cut past an
+	// open edge without the CHANGELOG waiver.
+	report := o.gate == "report"
+	switch {
+	case o.gate != "" && o.gate != "refuse" && !report:
+		return "", refuse("pass --gate refuse or --gate report", "--gate %q is neither", o.gate)
+	case report && o.noDogfood:
+		return "", refuse("pass one", "%s skips the gate and --gate report runs it", DogfoodWaiveFlag)
+	case report && strings.TrimSpace(o.reason) == "":
+		return "", refuse("say why: --gate report "+DogfoodReasonFlag+" <why>", "--gate report builds past open edges and no reason was given")
+	}
 	if o.noDogfood {
 		// A WAIVER WITHOUT A REASON IS NOT A WAIVER. It is the gate turned
 		// off, which is the state this whole file exists to make impossible to
@@ -261,6 +275,10 @@ func dogfoodCheck(token string, o options, deps Deps, checkout string, out, errs
 	if len(shown) < len(v.Findings) {
 		fmt.Fprintf(errs, "DOGFOOD GATE MORE open=%d shown=%d remedy=%q\n", v.Open, len(shown),
 			fmt.Sprintf("read them all: nova-check dogfood ledger --cli %s --receipts %s", cli, receipts))
+	}
+	if report {
+		fmt.Fprintf(out, "RELEASE %s DOGFOOD REPORTED open=%d reason=%s\n", token, v.Open, field(o.reason))
+		return "report", nil
 	}
 	fmt.Fprintf(errs, "RELEASE %s REFUSED reason=dogfood-gate open=%d remedy=%q\n", token, v.Open, DogfoodRemedy)
 	return "", errDogfood

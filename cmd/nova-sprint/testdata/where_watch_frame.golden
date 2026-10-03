@@ -1,6 +1,6 @@
-[HSPRINT TABLE[K
+[HSPRINT TABLE  coordinator coordinator[K
 [K
-0/3 0.0% -> ETA[K
+0/3 0.0% -> ETA -[K
 [K
 work | waiting | ready | working | review | merging | landed | cost[K
 -----+---------+-------+---------+--------+---------+--------+-----[K
@@ -8,14 +8,6 @@ s1   |       0 |     0 |       2 |      0 |       1 |      0 |    -[K
 s2   |       0 |     0 |       0 |      0 |       0 |      0 |    -[K
 -----+---------+-------+---------+--------+---------+--------+-----[K
      |       0 |     0 |       2 |      0 |       1 |      0 |    -[K
-[K
-readers | asked | reading | ok | broken[K
---------+-------+---------+----+-------[K
-        |     0 |       0 |  2 |      0[K
-[K
-merge | queued | merged | stuck | ci | state[K
-------+--------+--------+-------+----+--------[K
-      |      1 |      0 |     0 | -  | merging[K
 [K
 friends | ready | working | width | done | ok%  | status[K
 --------+-------+---------+-------+------+------+-------[K

@@ -1,6 +1,7 @@
 package sprint
 
 import (
+	"cmp"
 	"fmt"
 	"sort"
 	"strings"
@@ -243,6 +244,37 @@ func whyOf(l Line) string {
 		return byWhom(l.Actor)
 	}
 	return byWhom(l.Actor) + ": " + l.Cause
+}
+
+// SplitCost takes a change line's cost records out (FieldCostRecord, FieldCostTotal,
+// FieldCostCut): the line without them, and one short line for each record, which the
+// log's timeline prints in their place; `log --card <id>` and `log --json` keep the
+// records whole (docs/SPEC-SPRINT.md section 17). A line with none is returned as it is.
+func SplitCost(l Line) (Line, []string) {
+	if l.Note != nil || len(l.Set) == 0 {
+		return l, nil
+	}
+	var words []string
+	rest := map[string]string{}
+	for k, v := range l.Set {
+		key, ok := strings.CutPrefix(k, FieldCostRecord)
+		switch {
+		case ok:
+			c := parseConsumer(key, v)
+			cost := "cost " + MoneyText(cmp.Or(c.Usage.Actual, c.Usage.Predicted))
+			words = append(words, fmt.Sprintf("%s cost: %s %s by %s, %s, ran %s, %s", l.Card, c.Kind, c.Card, orDash(c.Who), orDash(c.End), seconds(c.Usage.Run), cost))
+		case k == FieldCostTotal || k == FieldCostCut:
+		default:
+			rest[k] = v
+		}
+	}
+	if len(words) == 0 {
+		return l, nil
+	}
+	sort.Strings(words)
+	out := l
+	out.Set = rest
+	return out, words
 }
 
 // setWords is the fields a change set, as name=value, sorted, stamps aside.

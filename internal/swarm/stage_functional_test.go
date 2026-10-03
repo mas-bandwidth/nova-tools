@@ -22,7 +22,11 @@ import (
 // frugal with the machine's cores). The rest of the file's tests stay in the
 // unit tier.
 
-func TestStageCardUsesMirrorAndDissociates(t *testing.T) {
+// A stage from the bench mirror borrows its objects (the clone's alternates name the
+// mirror's object directory) and first makes the mirror keep every object (gc.auto=0), so
+// no gc of the mirror drops one under a live checkout; a repository the card names on disk
+// is not a mirror this bench keeps, and is copied in (docs/SPEC-SWARM.md, the clone).
+func TestStageCardBorrowsTheMirror(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
@@ -56,17 +60,38 @@ func TestStageCardUsesMirrorAndDissociates(t *testing.T) {
 	require.NoError(t, err, "StageCard failed: %v", err)
 	require.True(t, res.Staged, "expected Staged=true")
 	require.Equal(t, mirror, res.Mirror, "expected mirror %s, got %s", mirror, res.Mirror)
+	require.True(t, res.Shared, "a stage from the bench mirror borrows its objects")
 
-	// Verify alternates does not exist because --dissociate was used
-	alternates := filepath.Join(target, ".git", "objects", "info", "alternates")
-	_, err = os.Stat(alternates)
-	require.True(t, os.IsNotExist(err), "alternates file exists: staging was not dissociated: %v", err)
+	alternates, err := os.ReadFile(filepath.Join(target, ".git", "objects", "info", "alternates"))
+	require.NoError(t, err, "the clone borrows the mirror's objects")
+	assert.Equal(t, filepath.Join(evalSymlinks(t, mirror), "objects"), evalSymlinks(t, strings.TrimSpace(string(alternates))))
+	assert.Equal(t, "0", strings.TrimSpace(execCmd(t, mirror, "git", "config", "--get", "gc.auto")), "the mirror keeps every object a clone borrows")
 
 	head := strings.TrimSpace(execCmd(t, target, "git", "rev-parse", "HEAD"))
 	require.Equal(t, sha1, head, "expected HEAD=%s, got %s", sha1, head)
 
 	origin := strings.TrimSpace(execCmd(t, target, "git", "remote", "get-url", "origin"))
 	require.Equal(t, "https://example.com/mas-bandwidth/repo.git", origin, "expected origin URL https://example.com/mas-bandwidth/repo.git, got %s", origin)
+
+	// a repository the card names on disk is copied in, and its config is not touched
+	local := filepath.Join(root, "jobs", "card-2", "repo")
+	res, err = StageCard(StageOptions{Card: []byte("base-repo: " + src + "\nbase-sha: " + sha1 + "\n"), TargetDir: local,
+		JobDir: filepath.Dir(local), BenchHome: filepath.Join(root, "home"), BenchName: "testhost", Timeout: 30 * time.Second})
+	require.NoError(t, err)
+	require.False(t, res.Shared, "a repository the card names is not a bench mirror")
+	_, err = os.Stat(filepath.Join(local, ".git", "objects", "info", "alternates"))
+	require.True(t, os.IsNotExist(err), "the card's own repository is copied in, never borrowed: %v", err)
+	cmd := exec.Command("git", "config", "--get", "gc.auto")
+	cmd.Dir = src
+	_, err = cmd.Output()
+	require.Error(t, err, "the card's own repository's config is not touched")
+}
+
+func evalSymlinks(t *testing.T, p string) string {
+	t.Helper()
+	r, err := filepath.EvalSymlinks(p)
+	require.NoError(t, err)
+	return r
 }
 
 func TestStageCardTimesOutAndWritesResult(t *testing.T) {
@@ -116,7 +141,7 @@ func TestStageCardTimesOutAndWritesResult(t *testing.T) {
 // TestStageUsesTheBenchMirrorAndTimesOut tests that staging uses the bench mirror,
 // fails on a clone that would go to GitHub without a mirror, and times out when exceeding deadline.
 func TestStageUsesTheBenchMirrorAndTimesOut(t *testing.T) {
-	t.Run("uses bench mirror and dissociates", TestStageCardUsesMirrorAndDissociates)
+	t.Run("borrows the bench mirror", TestStageCardBorrowsTheMirror)
 	t.Run("fails without bench mirror", TestStageCardFailsWithoutMirror)
 	t.Run("times out and writes result", TestStageCardTimesOutAndWritesResult)
 	t.Run("a clone that hangs past the timeout ends within it", testStageHungCloneEndsAtTheTimeout)

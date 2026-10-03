@@ -35,10 +35,6 @@ import (
 // and releases it with friend up. The status is derived where it is shown
 // (store.FriendRows), by the fleet's rule and in the fleet's order.
 
-// friendWidth is every friend's width, the jobs she works at once: one, a
-// person-like agent on one job (the friend row of nova-config has no width).
-const friendWidth = 1
-
 // friendWords is how a friend's row comes about, in nova-sprint help and
 // nova-sprint help friend.
 func friendWords() string {
@@ -54,9 +50,12 @@ when she starts), working until outbox/<job>/REPORT.md exists, then done; done
 failed when the report's first Verdict: or Status: line says HOLD, FAIL, FAILED
 or BROKEN, else done ok. The sync reads the directories and never writes them;
 run it on the machine that holds them, by the coordinator's loop or by hand
-after a job is delivered or collected. where counts the cards: ready, working,
-width (`+fmt.Sprint(friendWidth)+`, one job at a time), done (ok and failed), ok% (ok over done, pooled in
-the footer) and status. A friend says she is there with
+after a job is delivered or collected. The sync also writes each friend's width,
+the jobs she works at once: her friend row's width (nova-config friend set
+<friend> --width <n>, at least 1), `+fmt.Sprint(config.DefaultFriendWidth)+` when the row names none; a row whose width is
+below 1 is refused with nothing changed. where counts the cards: ready, working,
+width, done (ok and failed), ok% (ok over done, pooled in the footer) and
+status. A friend says she is there with
 nova-sprint friend beat <friend>, which her own machinery runs every few seconds
 beside the friend's harness, for example in the wrapper that starts it
   while :; do nova-sprint friend beat <friend> >/dev/null 2>&1; sleep 5; done &
@@ -68,22 +67,20 @@ friends after merge and before fleet, up first, then held, then down, each by
 name, with no load column.`) + "\n"
 }
 
-// friendsFn reads nova-config's friend rows' names (friend sync), given the
-// address of the config store (its --pg, else NOVA_PG_DSN).
-type friendsFn func(ctx context.Context, pg string) ([]string, error)
+// friendsFn reads nova-config's friend rows (friend sync, friends clean), given
+// the address of the config store (its --pg, else NOVA_PG_DSN).
+type friendsFn func(ctx context.Context, pg string) ([]config.Row, error)
 
 // readFriends is the real friendsFn: the friend rows of Postgres, by
 // config.ResolveDSN, bounded.
-func (a *app) readFriends(ctx context.Context, pg string) ([]string, error) {
-	var names []string
+func (a *app) readFriends(ctx context.Context, pg string) ([]config.Row, error) {
+	var rows []config.Row
 	err := a.withConfig(ctx, pg, func(ctx context.Context, st config.Store) error {
-		rows, err := st.List(ctx, config.KindFriend)
-		for _, r := range rows {
-			names = append(names, r.Name)
-		}
+		var err error
+		rows, err = st.List(ctx, config.KindFriend)
 		return err
 	})
-	return names, err
+	return rows, err
 }
 
 // friendJobs is the job cards of one friend's working directory, the
@@ -167,12 +164,12 @@ func (a *app) cmdFriendSync(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, name, err.Error())
 	}
 	ctx := context.Background()
-	names, err := a.friends(ctx, *pg)
+	rows, err := a.friends(ctx, *pg)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s %s: the config cannot be read: %s; nothing was changed\n", prog, name, oneline.WithRemedy(err.Error(), "nova-config friend list"))
 		return exitCannotRead
 	}
-	if len(names) == 0 {
+	if len(rows) == 0 {
 		fmt.Fprintf(stderr, "%s %s: the config holds no friend row, and syncing to none would take every friend off; is this the fleet's config? run: nova-config friend list; nothing was changed\n", prog, name)
 		return exitCannotRead
 	}
@@ -182,11 +179,16 @@ func (a *app) cmdFriendSync(args []string, stdout, stderr io.Writer) int {
 	if *root == "" {
 		return refuse(stderr, name, "wants --root <dir>, the directory the friends' working directories are under (HOME is not set)")
 	}
-	specs := make([]store.FriendSpec, 0, len(names))
+	specs := make([]store.FriendSpec, 0, len(rows))
 	jobs := 0
-	for _, n := range names {
+	for _, r := range rows {
+		n, width := r.Name, config.FriendWidth(r)
 		if !sprint.ValidID(n) {
 			fmt.Fprintf(stderr, "%s %s: a friend name wants letters, digits, _ and -: %s; fix the friend row in nova-config; nothing was changed\n", prog, name, oneline.Escape(n))
+			return 1
+		}
+		if width < 1 {
+			fmt.Fprintf(stderr, "%s %s: friend %s has width %d, and a friend's width is at least 1; run: nova-config friend set %s --width <n>; nothing was changed\n", prog, name, n, width, n)
 			return 1
 		}
 		dir := filepath.Join(*root, n+"-working")
@@ -196,17 +198,17 @@ func (a *app) cmdFriendSync(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		jobs += len(js)
-		specs = append(specs, store.FriendSpec{Name: n, Width: friendWidth, Jobs: js})
+		specs = append(specs, store.FriendSpec{Name: n, Width: width, Jobs: js})
 	}
 	added, removed, updated, err := st.SyncFriends(ctx, specs)
 	if err != nil {
 		return a.readFailed(name, err, stderr)
 	}
-	line := fmt.Sprintf("FRIEND-SYNC OK added=%s removed=%s updated=%s friends=%d jobs=%d", orDashStr(strings.Join(added, ","), "-"), orDashStr(strings.Join(removed, ","), "-"), orDashStr(strings.Join(updated, ","), "-"), len(names), jobs)
+	line := fmt.Sprintf("FRIEND-SYNC OK added=%s removed=%s updated=%s friends=%d jobs=%d", orDashStr(strings.Join(added, ","), "-"), orDashStr(strings.Join(removed, ","), "-"), orDashStr(strings.Join(updated, ","), "-"), len(rows), jobs)
 	if len(added)+len(removed)+len(updated) == 0 {
 		line += ": nothing to do, the friends table already matches the config and the directories"
 	}
-	sayOK(stdout, c.json, name, line, map[string]any{"added": orEmpty(added), "removed": orEmpty(removed), "updated": orEmpty(updated), "friends": len(names), "jobs": jobs})
+	sayOK(stdout, c.json, name, line, map[string]any{"added": orEmpty(added), "removed": orEmpty(removed), "updated": orEmpty(updated), "friends": len(rows), "jobs": jobs})
 	return 0
 }
 

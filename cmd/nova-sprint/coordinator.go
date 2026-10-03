@@ -16,6 +16,9 @@ import (
 //   - report: an outside actor's report (merge, ci), anyone's who names it.
 //   - machine: the run loop's (tick, run), recorded as the machine.
 //   - read: changes nothing and needs no actor.
+//   - seat: coordinator <name>, the seat moved: given by its holder or the
+//     sprint's owner, or taken by the one taking it with the owner's name
+//     (sprint.NotSeat); the verb judges who may, and the step again.
 //
 // Every class but read, machine and worker wants an actor: --actor or
 // NOVA_SPRINT_ACTOR; there is no default.
@@ -25,6 +28,7 @@ const (
 	classReport      = "report"
 	classMachine     = "machine"
 	classRead        = "read"
+	classSeat        = "seat"
 )
 
 var verbClasses = map[string]string{
@@ -40,10 +44,12 @@ var verbClasses = map[string]string{
 
 	"merge": classReport, "ci": classReport,
 
-	"tick": classMachine, "run": classMachine,
+	"tick": classMachine, "run": classMachine, "friend clean": classMachine,
 
-	"queue": classRead, "inbox": classRead, "card": classRead, "log": classRead, "check": classRead, "where": classRead, "routes": classRead, "stats": classRead,
-	"goal show": classRead,
+	"queue": classRead, "inbox": classRead, "card": classRead, "log": classRead, "check": classRead, "where": classRead, "dashboard": classRead, "routes": classRead, "stats": classRead,
+	"goal show": classRead, "handover": classRead,
+
+	"coordinator": classSeat,
 }
 
 // orActor is a worker's actor: the member or reader it names, whatever

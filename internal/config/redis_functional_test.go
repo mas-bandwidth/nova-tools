@@ -87,7 +87,7 @@ func TestApplyLeavesTheKeysCapacityFriendWould(t *testing.T) {
 	assert.Equal(t, int64(0), c.Exists(ctx, "machine:studio:budget").Val(), "a budget was derived from cores nobody declared")
 	{
 		got := c.HGetAll(ctx, "machine:studio").Val()
-		assertionMsg81 := []any{"machine:studio %v: want user, seat, slots, runners, width, rev, at and nothing else", got}
+		assertionMsg81 := []any{"machine:studio %v: want user, seat, slots, runners, width, tla, note, rev, at and nothing else", got}
 		func() {
 			if !assert.Equal(t, "glenn", got["user"], assertionMsg81...) {
 				return
@@ -110,7 +110,13 @@ func TestApplyLeavesTheKeysCapacityFriendWould(t *testing.T) {
 			if !assert.Equal(t, "0", got["width"], assertionMsg81...) {
 				return
 			}
-			assert.Len(t, got, 7, assertionMsg81...)
+			if !assert.Equal(t, "false", got["tla"], assertionMsg81...) {
+				return
+			}
+			if !assert.Equal(t, "", got["note"], assertionMsg81...) {
+				return
+			}
+			assert.Len(t, got, 9, assertionMsg81...)
 		}()
 	}
 	{
@@ -257,8 +263,8 @@ func TestApplySetsAndRemovesAFriend(t *testing.T) {
 	st := seed(t)
 	applyKinds(t, st, ap, "rowan")
 
-	// A set in Postgres: slots, tiers and a role.
-	_, _, setupErr9031 := st.Update(ctx, KindFriend, "stella", map[string]string{"slots": "30", "tiers": "flash", "roles": "reader"}, "rowan")
+	// A set in Postgres: slots, tiers, a role and her width.
+	_, _, setupErr9031 := st.Update(ctx, KindFriend, "stella", map[string]string{"slots": "30", "tiers": "flash", "roles": "reader", "width": "4"}, "rowan")
 	require.NoError(t, setupErr9031)
 	res, err := Apply(ctx, st, ap, KindFriend, "rowan", false, func(Op) {})
 	assertionMsg173 := []any{"apply after set: %+v %v", res, err}
@@ -272,6 +278,7 @@ func TestApplySetsAndRemovesAFriend(t *testing.T) {
 				return
 			}
 			assert.Equal(t, "flash", got["tiers"], assertionMsg187...)
+			assert.Equal(t, "4", got["width"], assertionMsg187...)
 		}()
 	}
 	scopedGot286 := c.HGet(ctx, "friend:stella:roles", "roles").Val()

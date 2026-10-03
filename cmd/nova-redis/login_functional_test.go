@@ -47,7 +47,7 @@ func TestSpillAndRecallLogInAsTheUserItIsGiven(t *testing.T) {
 			switch {
 			case c.refusal != "":
 				{
-					want := "nova-redis " + verb[0] + ": " + c.refusal
+					want := "nova-redis " + verb[0] + " REFUSED: " + c.refusal + "; run: nova-redis help " + verb[0] + "\n"
 					if assert.Equal(t, 2, code, "%s, %q: exit %d stderr %q connections %d; want exit 2, %q and none", c.name, args, code, errb.String(), mr.TotalConnectionCount(), want) {
 						if assert.Equal(t, want, errb.String(), "%s, %q: exit %d stderr %q connections %d; want exit 2, %q and none", c.name, args, code, errb.String(), mr.TotalConnectionCount(), want) {
 							assert.Zero(t, mr.TotalConnectionCount(), "%s, %q: exit %d stderr %q connections %d; want exit 2, %q and none", c.name, args, code, errb.String(), mr.TotalConnectionCount(), want)

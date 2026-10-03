@@ -20,6 +20,15 @@ var verbExit = map[string]string{
 	"friend sync": "exit codes: 0 done, 1 refused (a friend row's name, or a working directory that cannot be read), 2 usage or a store that did not answer, 3 the config could not be read or holds no friend row",
 	"land":        "exit codes: 0 every batch landed (--dry-run: would land), 1 a batch was refused (its line names the next step), 2 usage, a store that did not answer, or a push that landed and was not reported (run land again)",
 	"check":       "exit codes: 0 no violation, 1 a violation (each on its line), 2 usage or a store that did not answer",
+	"dashboard":   "exit codes: 0 stopped (an interrupt), 2 usage or an address it cannot listen on, 3 its binary was replaced on disk (its supervisor starts the new one)",
+}
+
+// verbEffect is a verb's effect line, the last line of its -h, where the verb
+// states one (docs/STANDARD.md: `effect: inspection|local write|delivery`).
+var verbEffect = map[string]string{
+	"handover":    "inspection: reads the store, writes nothing",
+	"dashboard":   "inspection: serves the page and reads the sprint as where --json does, writes nothing",
+	"coordinator": "delivery: moves the seat in the sprint's store, a note to the old holder on a take; --dry-run writes nothing",
 }
 
 // commonExit is the codes of every other verb.
@@ -50,7 +59,11 @@ func recoverHelp(out io.Writer, code *int) {
 	var b strings.Builder
 	verbflag.Print(&b, prog, strings.Replace(banner(), exitLine, verbExits(name), 1), h.FS)
 	*code = 0
-	if _, err := io.WriteString(out, verbflag.Insert(b.String(), verbExample(name))); err != nil {
+	text := verbflag.Insert(b.String(), verbExample(name))
+	if e, ok := verbEffect[name]; ok {
+		text += "effect: " + e + "\n"
+	}
+	if _, err := io.WriteString(out, text); err != nil {
 		// the help did not reach its reader (a closed stdout): the exit code says so
 		*code = 1
 	}

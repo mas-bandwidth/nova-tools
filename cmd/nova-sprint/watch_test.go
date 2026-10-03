@@ -150,10 +150,12 @@ func TestWhereFrameIsTheGolden(t *testing.T) {
 	golden(t, "where_watch_frame.golden", screen.writes[1])
 }
 
-// A frame holds the time, the words SPRINT TABLE, the machine's state line
-// and the tables, and nothing else: no pending line, no stalled line, no line
-// about the people, no coordinator; the merge table has no since column; and a
-// row's first cell is its identity. What the frame leaves out is in --json.
+// A frame (here where --all, every table drawn) holds the time, the words SPRINT TABLE and the seat's holder beside
+// them (the title line), the machine's state line and the tables, and nothing
+// else: no pending line, no stalled line, no line about the people, the
+// coordinator named on the title line alone; the merge table has no since
+// column; and a row's first cell is its identity. What the frame leaves out is
+// in --json.
 func TestWhereFrameHoldsOnlyTheHeaderAndTheTables(t *testing.T) {
 	t.Parallel()
 	ta := whereFixture(t)
@@ -172,15 +174,16 @@ func TestWhereFrameHoldsOnlyTheHeaderAndTheTables(t *testing.T) {
 	ta.now = ta.now.Add(3 * time.Hour)
 	ta.mu.Unlock()
 
-	frame := ta.ok("where")
+	frame := ta.ok("where --all")
 	lines := strings.Split(frame, "\n")
-	require.Equal(t, []string{"SPRINT TABLE", "", "STOPPED", ""}, lines[:4], "the head of the frame")
+	require.Equal(t, []string{"SPRINT TABLE  coordinator coordinator", "", "STOPPED", ""}, lines[:4], "the head of the frame")
 	for _, l := range lines[4:] {
 		// a table's line holds a cell divider or a rule's joint
 		assert.False(t, l != "" && !strings.Contains(l, " | ") && !strings.Contains(l, "-+-"), "a line that is not a table's: %q\n%s", l, frame)
 	}
+	_, below, _ := strings.Cut(frame, "\n")
 	for _, gone := range []string{"pending", "stalled", "REMINDERS", "friend-a", "coordinator", "since", "op-left"} {
-		assert.NotContains(t, frame, gone, "the frame shows %q", gone)
+		assert.NotContains(t, below, gone, "the frame shows %q below its title", gone)
 	}
 	// the identity of a row is its first cell; the readers and merge tables are
 	// one row, the sum of all (the owner, 2026-10-01)
@@ -201,7 +204,7 @@ func TestWhereFrameHoldsOnlyTheHeaderAndTheTables(t *testing.T) {
 	assert.ElementsMatch(t, []string{"s1", "s2"}, slices.Collect(maps.Keys(w.Tables[sprint.Merge])), "where --json keeps each stream's merge row")
 }
 
-// Every table is in the frame, with no rows when it has none, and a stream with
+// Every table is in the frame of where --all, with no rows when it has none, and a stream with
 // no cards in any column is in the work and merge tables, at zero; the rows of
 // a table come when it has them.
 func TestWhereShowsEveryTableAndEveryStream(t *testing.T) {
@@ -211,14 +214,14 @@ func TestWhereShowsEveryTableAndEveryStream(t *testing.T) {
 	// a table with no row is its header, one rule and the summary row (the owner,
 	// 2026-10-02: "when the work stream table is empty, please just show the summary row")
 	for _, name := range []string{"work", "readers", "merge"} {
-		lines := strings.Split(strings.TrimRight(tableOf(ta.ok("where"), name), "\n"), "\n")
+		lines := strings.Split(strings.TrimRight(tableOf(ta.ok("where --all"), name), "\n"), "\n")
 		require.Len(t, lines, 3, "table %s, empty: header, rule, summary row", name)
 		assert.Equal(t, "", strings.TrimSpace(strings.Split(lines[2], " | ")[0]), "table %s: the summary row is unlabelled: %q", name, lines[2])
 	}
 	ta.ok("add --stream s1 --count 2")
 	ta.ok("add --stream s2 --count 1")
 	ta.ok("drop s2-1 --reason obsolete")
-	frame := ta.ok("where")
+	frame := ta.ok("where --all")
 	for _, name := range []string{"work", "readers", "merge", "fleet"} {
 		assert.Contains(t, frame, "\n"+name+" ", "table %s is not in the frame", name)
 	}
@@ -232,7 +235,7 @@ func TestWhereShowsEveryTableAndEveryStream(t *testing.T) {
 	// the readers come, and a card comes to s2
 	ta.ok("reader add reader-a reader-b")
 	ta.ok("add --stream s2 s2-2")
-	frame = ta.ok("where")
+	frame = ta.ok("where --all")
 	assert.Equal(t, allRow, strings.Join(rowsOf(tableOf(frame, "readers")), ","), "readers rows, %s alone:\n%s", allRow, frame)
 	assert.ElementsMatch(t, []string{"reader-a", "reader-b"}, ta.readerRows(), "where --json keeps each reader's row")
 	assert.Equal(t, "s1,s2", strings.Join(rowsOf(tableOf(frame, "work")), ","), "work rows:\n%s", frame)
@@ -252,7 +255,7 @@ func TestWhereShowsEveryTableAndEveryStream(t *testing.T) {
 	ta.ok("read --as reader-a --ok --limit 10")
 	ta.ok("read --as reader-b --ok --limit 10")
 	ta.ok("accept --read-ok")
-	frame = ta.ok("where")
+	frame = ta.ok("where --all")
 	assert.Equal(t, []string{allRow}, rowsOf(tableOf(frame, "merge")), frame)
 	assert.ElementsMatch(t, []string{"s1", "s2"}, ta.mergeRows(), "where --json keeps both streams' merge rows")
 }
@@ -790,4 +793,38 @@ func TestAnInterruptThatCutsAReadShortEndsTheWatchWithExitZero(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The default frame hides the readers and merge tables (the owner, 2026-10-02:
+// "I feel like reading and merging is something you can handle now. it seems
+// to work, so please hide the reader and merge tables."): it draws work,
+// friends and fleet, in that order. where --all draws all five, readers and
+// merge after work as before; --json carries every table and every row of it
+// either way, and says the same with the flag as without.
+func TestWhereHidesTheReadersAndMergeTables(t *testing.T) {
+	t.Parallel()
+	ta := whereFixture(t)
+	inOrder := func(frame string, names ...string) {
+		t.Helper()
+		last := -1
+		for _, name := range names {
+			i := strings.Index(frame, "\n"+name+" |")
+			require.Greater(t, i, last, "the %s table is missing or out of order:\n%s", name, frame)
+			last = i
+		}
+	}
+	frame := ta.ok("where")
+	for _, name := range []string{sprint.Readers, sprint.Merge} {
+		assert.Empty(t, tableOf(frame, name), "the default frame draws the %s table:\n%s", name, frame)
+	}
+	inOrder(frame, sprint.Work, sprint.Friends, sprint.Fleet)
+	all := ta.ok("where --all")
+	inOrder(all, sprint.Work, sprint.Readers, sprint.Merge, sprint.Friends, sprint.Fleet)
+	golden(t, "where_all_frame.golden", all)
+	plain, withAll := ta.ok("where --json"), ta.ok("where --all --json")
+	assert.Equal(t, plain, withAll, "where --json differs with --all")
+	var w whereView
+	ta.json("where", &w)
+	assert.ElementsMatch(t, []string{"reader-a", "reader-b"}, slices.Collect(maps.Keys(w.Tables[sprint.Readers])), "where --json keeps each reader's row")
+	assert.ElementsMatch(t, []string{"s1", "s2"}, slices.Collect(maps.Keys(w.Tables[sprint.Merge])), "where --json keeps each stream's merge row")
 }

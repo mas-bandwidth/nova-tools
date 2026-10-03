@@ -25,12 +25,12 @@ func TestTheRouteRowIsWhatTheDealReads(t *testing.T) {
 	assert.Equal(t, "routes", k.Table)
 	assert.False(t, k.Singleton)
 	assert.Equal(t, "tier,provider,model,tokens,usd,deadline,enabled,"+
-		"price_input,price_cache_read,price_cache_write,price_output,reasoning_as_output,long_context,price_input_long,price_output_long,price_request,billing,gateway_percent,price_source,price_as_of",
-		strings.Join(k.FieldNames(), ","), "the deal reads exactly these names, and the card's cost the price sheet after them")
+		"price_input,price_cache_read,price_cache_write,price_output,reasoning_as_output,long_context,price_input_long,price_output_long,price_request,billing,gateway_percent,price_source,price_as_of,note",
+		strings.Join(k.FieldNames(), ","), "the deal reads exactly these names, the card's cost the price sheet after them, and the note last")
 	types := map[string]Type{"tier": TypeEnum, "provider": TypeText, "model": TypeText, "tokens": TypeInt, "usd": TypeDecimal, "deadline": TypeInt, "enabled": TypeBool,
 		"price_input": TypeDecimal, "price_cache_read": TypeDecimal, "price_cache_write": TypeDecimal, "price_output": TypeDecimal, "reasoning_as_output": TypeBool,
 		"long_context": TypeInt, "price_input_long": TypeDecimal, "price_output_long": TypeDecimal, "price_request": TypeDecimal, "billing": TypeEnum,
-		"gateway_percent": TypeDecimal, "price_source": TypeText, "price_as_of": TypeText}
+		"gateway_percent": TypeDecimal, "price_source": TypeText, "price_as_of": TypeText, "note": TypeText}
 	required := map[string]bool{"tier": true, "provider": true, "model": true, "deadline": true}
 	for _, f := range k.Fields {
 		assert.Equal(t, types[f.Name], f.Type, "--%s", f.Name)
@@ -72,8 +72,8 @@ func TestRouteNewRowCanonicalisesAndRefusesEveryProblemAtOnce(t *testing.T) {
 		},
 		{
 			name: "a model holding slashes",
-			raw:  map[string]string{"tier": "pro", "provider": "openrouter", "model": "x-ai/grok-4", "deadline": "1800", "enabled": "false"},
-			want: map[string]string{"model": "x-ai/grok-4", "enabled": "false"},
+			raw:  map[string]string{"tier": "pro", "provider": "openrouter", "model": "x-ai/grok-4", "deadline": "1800", "enabled": "false", "note": "held while the price is read"},
+			want: map[string]string{"model": "x-ai/grok-4", "enabled": "false", "note": "held while the price is read"},
 		},
 		{
 			name: "frontier is no route's tier",
@@ -191,7 +191,7 @@ func TestRouteSetIsCheckedOnTheRowItWouldLeave(t *testing.T) {
 		{name: "deadline 0", changes: map[string]string{"deadline": "0"}, refuse: "--deadline 0"},
 		{name: "a slashed provider", changes: map[string]string{"provider": "x-ai/grok"}, refuse: "no slash"},
 		{name: "an empty model", changes: map[string]string{"model": ""}, refuse: `--model ""`},
-		{name: "out of the deal", changes: map[string]string{"enabled": "false"}},
+		{name: "out of the deal with its reason", changes: map[string]string{"enabled": "false", "note": "4 of 52 ok"}},
 		{name: "another provider and model", changes: map[string]string{"provider": "openrouter", "model": "x-ai/grok-4"}},
 		{name: "a price sheet", changes: map[string]string{"price_input": "0.27", "price_output": "1.10", "price_as_of": "2026-10-01"}},
 		{name: "a threshold with no long prices", changes: map[string]string{"long_context": "128000"}, refuse: "no --price_input_long"},

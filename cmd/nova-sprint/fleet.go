@@ -26,7 +26,10 @@ that or when it has never beaten; the tick applies each change
 (a member down has its unfinished work cards dealt to the members up; a
 member up levels the ready queues). fleet down holds a member down whatever
 it beats (status held); fleet up releases the hold, adding a member the
-sprint does not know. The load cell is the machine's CPU busy percent of all
+sprint does not know. Each says where the cards went on its MOVED line: down
+"moved=N to <member>(n),...; stayed=K withdrawn: <ids>" (a card no member up
+has room for is withdrawn and dealt again where there is room), up
+"moved=N to <member>(n) from <member>(n),..." (the level). The load cell is the machine's CPU busy percent of all
 its cores (the one-minute load average over the cores where that cannot be
 measured), the highest of the last `+sprint.LoadWindow.String()+`.
 
@@ -44,8 +47,11 @@ be read.`) + "\n"
 // nova-sprint help reader.
 func readerWords() string {
 	return strings.TrimSpace(`
-The readers: a reader says it is there by asking for its own queue (queue --as
-<reader> is its beat). A reader is up while its last beat is under `+sprint.ReaderBeatBound.String()+` old, away
+The readers: a reader is a row of the readers table, which the coordinator
+declares (init --readers, reader add); no beat and no loop record makes one. A
+reader with its row says it is there by asking for its own queue (queue --as
+<reader> is its beat); the queue of a name with no row writes none and answers
+reader false, and the reader loop says MEMBER NOT A READER. A reader is up while its last beat is under `+sprint.ReaderBeatBound.String()+` old, away
 when it beat and has lapsed, down when it has never beaten; reader away holds
 one away whatever it beats and reader up releases the hold. The ask deals a
 read to a reader up only: a read asked of a reader that is not up is asked of

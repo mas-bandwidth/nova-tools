@@ -1,4 +1,6 @@
 config	module	expected	property	deadlock	group	gate	debt
+MCBenchStage.cfg	MCBenchStage.tla	pass	-	ignore-terminal	benchstage	required	-
+MCBenchStageBrokenLines.cfg	MCBenchStage.tla	invariant	ReusedByteIdentical	ignore-terminal	benchstage	required	-
 MCCardMachine.cfg	MCCardMachine.tla	pass	-	ignore-terminal	cardmachine	bench	layer-2-original-instance-over-budget
 MCEpochMemberBroken.cfg	MCEpochMemberTable.tla	invariant	NoEpochLeak	ignore-terminal	epochmembertable	required	-
 MCEpochMemberBrokenStale.cfg	MCEpochMemberTable.tla	action	StaleWritesRefuse	ignore-terminal	epochmembertable	required	-
@@ -287,3 +289,13 @@ MCLandReachStranded.cfg	MCLand.tla	invariant	ReachStranded	ignore-terminal	land	
 MCLandBrokenIdGuard.cfg	MCLand.tla	invariant	LandedInBase	ignore-terminal	land	required	-
 MCLandReachStalePush.cfg	MCLand.tla	invariant	ReachStalePush	ignore-terminal	land	required	-
 MCLandBrokenNoEpoch.cfg	MCLand.tla	invariant	ReportHoldsTheEpoch	ignore-terminal	land	required	-
+MCSprintEventsC30.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents-controls-b	required	-
+MCSprintEventsW30.cfg	MCSprintEvents.tla	action	NextNotReached	ignore-terminal	sprintevents-witnesses-b	required	-
+MCLevel.cfg	MCLevel.tla	pass	-	ignore-terminal	level	required	-
+MCLevelFour.cfg	MCLevel.tla	pass	-	ignore-terminal	level	required	-
+MCLevelOldRuleNoRequeue.cfg	MCLevel.tla	pass	-	ignore-terminal	level	required	-
+MCLevelBrokenOld.cfg	MCLevel.tla	temporal	Terminates	ignore-terminal	level	required	-
+MCLevelBrokenNoGap.cfg	MCLevel.tla	temporal	Terminates	ignore-terminal	level	required	-
+MCLevelBrokenRequeue.cfg	MCLevel.tla	invariant	MovesBounded	ignore-terminal	level	required	-
+MCLevelBrokenNaive.cfg	MCLevel.tla	invariant	SelectionComplete	ignore-terminal	level	required	-
+MCLevelBrokenNoSkip.cfg	MCLevel.tla	invariant	NeverOnARefuser	ignore-terminal	level	required	-

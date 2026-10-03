@@ -18,6 +18,12 @@ RestartSec=10
 {% else %}
 Type=oneshot
 {% endif %}
+{# A member (nova-swarm member) drains on SIGTERM: KillMode=mixed signals it alone,
+   never its cards' children, and the stop waits for it, nova_member_stop_timeout. #}
+{% if loop_member %}
+KillMode=mixed
+TimeoutStopSec={{ nova_member_stop_timeout }}
+{% endif %}
 {% if loop_system %}
 User={{ ansible_user_id }}
 {% endif %}

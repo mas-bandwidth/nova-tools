@@ -197,6 +197,11 @@ func AckStep(r sprint.AckReq) Step {
 
 // WaitStep holds a condition the tick keeps until a time (sprint.Wait).
 func WaitStep(r sprint.WaitReq) Step {
+	if _, ok := sprint.StaleStream(r.Note); ok {
+		// a stream's stale judgment: the stream's control card, on the merge table
+		return Step{Args: ArgsOf(r), Verb: "wait", Load: []string{sprint.Merge},
+			Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Wait(s, r) }}
+	}
 	return Step{Args: ArgsOf(r), Verb: "wait",
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Wait(s, r) }}
 }

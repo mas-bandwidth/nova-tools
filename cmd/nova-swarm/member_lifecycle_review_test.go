@@ -156,7 +156,7 @@ func TestReviewABoundedMemberLoopDoesNotReturnWithAStartInFlight(t *testing.T) {
 	}
 	done := make(chan result)
 	go func() {
-		n, replaced := memberLoop(m, time.Hour, 1, func() string { return "" }, &out, &errb)
+		n, replaced := memberLoop(m, loopRun{every: time.Hour, limit: 1, stamp: func() string { return "" }}, &out, &errb)
 		done <- result{n, replaced}
 	}()
 	<-rn.entered

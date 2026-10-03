@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"maps"
 	"os"
-	"path/filepath"
 	"slices"
 	"sort"
 	"strconv"
@@ -59,7 +58,9 @@ type AnsibleMeta struct {
 // AnsibleInventory is the standard Ansible dynamic inventory JSON
 // representation. store_deployer is the coordinator machine: it holds the
 // seat that loads the function library and the ACL onto the store
-// (fleet/tools.yml, fleet/redis.yml).
+// (fleet/tools.yml, fleet/redis.yml). tla is the machines whose row says
+// tla=true, the TLC record machines the tools play's tla play installs the
+// pinned jar on.
 type AnsibleInventory struct {
 	Meta          AnsibleMeta  `json:"_meta"`
 	All           AnsibleGroup `json:"all"`
@@ -68,6 +69,7 @@ type AnsibleInventory struct {
 	Store         AnsibleGroup `json:"store"`
 	StoreDeployer AnsibleGroup `json:"store_deployer"`
 	Runners       AnsibleGroup `json:"runners"`
+	TLA           AnsibleGroup `json:"tla"`
 }
 
 // InventoryLoop is one loop record as a host variable: the loop kind's
@@ -81,7 +83,6 @@ type InventoryLoop struct {
 	Keys      []string `json:"keys"`
 	Every     int      `json:"every"`
 	Keepalive bool     `json:"keepalive"`
-	Width     int      `json:"width"`
 	Enabled   bool     `json:"enabled"`
 	Log       string   `json:"log"`
 }
@@ -105,7 +106,7 @@ func BuildInventory(snap *Snapshot, localHost string) (*AnsibleInventory, error)
 	}
 
 	hostvars := make(map[string]map[string]any, len(names))
-	var runnerHosts []string
+	runnerHosts, tlaHosts := []string{}, []string{}
 	for _, m := range names {
 		v := snap.Machines[m]
 		slots, _ := strconv.Atoi(v["slots"])
@@ -119,6 +120,8 @@ func BuildInventory(snap *Snapshot, localHost string) (*AnsibleInventory, error)
 			"slots":        slots,
 			"runners":      runners,
 			"kind":         KindMachine,
+			// a view written before the field existed has no tla: none
+			"nova_tla": v["tla"] == "true",
 		}
 		if u := v["user"]; u != "" {
 			hv["ansible_user"] = u
@@ -146,6 +149,9 @@ func BuildInventory(snap *Snapshot, localHost string) (*AnsibleInventory, error)
 		if runners > 0 {
 			runnerHosts = append(runnerHosts, m)
 		}
+		if v["tla"] == "true" {
+			tlaHosts = append(tlaHosts, m)
+		}
 	}
 
 	one := func(name string) []string {
@@ -161,9 +167,6 @@ func BuildInventory(snap *Snapshot, localHost string) (*AnsibleInventory, error)
 	revs := map[string]int64{}
 	maps.Copy(revs, snap.Revs)
 	vars["nova_config_rev"] = revs
-	if runnerHosts == nil {
-		runnerHosts = []string{}
-	}
 	return &AnsibleInventory{
 		Meta:          AnsibleMeta{Hostvars: hostvars},
 		All:           AnsibleGroup{Hosts: append([]string{}, names...), Vars: vars},
@@ -172,6 +175,7 @@ func BuildInventory(snap *Snapshot, localHost string) (*AnsibleInventory, error)
 		Store:         AnsibleGroup{Hosts: one(snap.Fleet["store"])},
 		StoreDeployer: AnsibleGroup{Hosts: one(snap.Fleet["coordinator"])},
 		Runners:       AnsibleGroup{Hosts: runnerHosts},
+		TLA:           AnsibleGroup{Hosts: tlaHosts},
 	}, nil
 }
 
@@ -228,7 +232,7 @@ func hostLoops(snap *Snapshot) (map[string][]InventoryLoop, error) {
 }
 
 // parseLoop reads one loop view: argv the JSON text of a list of strings,
-// keys a comma list, every and width decimal text, keepalive and enabled
+// keys a comma list, every decimal text, keepalive and enabled
 // "true" or "false", exactly one of every above 0 and keepalive.
 func parseLoop(name string, v View) (InventoryLoop, error) {
 	bad := func(field, why string) (InventoryLoop, error) {
@@ -258,11 +262,6 @@ func parseLoop(name string, v View) (InventoryLoop, error) {
 	if l.Every, err = strconv.Atoi(orZero(v["every"])); err != nil || l.Every < 0 {
 		return bad("every", "is not a count of seconds")
 	}
-	if l.Width, err = strconv.Atoi(orZero(v["width"])); err != nil || l.Width < 0 {
-		return bad("width", "is not a count")
-	}
-	// the unit runs the command with the row's width (LoopCommand)
-	l.Argv = LoopCommand(l.Argv, l.Width)
 	if l.Keepalive, err = strconv.ParseBool(orFalse(v["keepalive"])); err != nil {
 		return bad("keepalive", "is not true or false")
 	}
@@ -284,14 +283,8 @@ func parseLoop(name string, v View) (InventoryLoop, error) {
 // rendered unit environment, while every other assignment and argv word stays
 // byte-for-byte the row's. A non-member loop is untouched.
 func memberArgv(argv []string) []string {
-	if len(argv) < 3 || filepath.Base(argv[0]) != "env" {
-		return argv
-	}
-	program := 1
-	for program < len(argv) && strings.Contains(argv[program], "=") {
-		program++
-	}
-	if program+1 >= len(argv) || filepath.Base(argv[program]) != "nova-swarm" || argv[program+1] != "member" {
+	program, ok := memberAt(argv)
+	if !ok || program == 0 {
 		return argv
 	}
 	out := make([]string, 0, len(argv))
@@ -362,6 +355,7 @@ type fixture struct {
 		Seat    string `yaml:"seat"`
 		Slots   int    `yaml:"slots"`
 		Runners int    `yaml:"runners"`
+		TLA     bool   `yaml:"tla"`
 		// OS and Arch stand in for the machine's beat.
 		OS   string `yaml:"os"`
 		Arch string `yaml:"arch"`
@@ -381,7 +375,6 @@ type fixture struct {
 		Keys      []string `yaml:"keys"`
 		Every     int      `yaml:"every"`
 		Keepalive bool     `yaml:"keepalive"`
-		Width     int      `yaml:"width"`
 		Enabled   *bool    `yaml:"enabled"`
 	} `yaml:"loops"`
 }
@@ -408,14 +401,14 @@ func LoadFixture(path string) (*Snapshot, error) {
 	dec := yaml.NewDecoder(strings.NewReader(string(raw)))
 	dec.KnownFields(true)
 	if err := dec.Decode(&f); err != nil {
-		return nil, fmt.Errorf("--fixture %s is not the fixture's shape: %s; want a mapping with machines (each user, seat, slots, runners, os, arch), fleet (store, coordinator) and loops (docs/FLEET.md, \"A fixture inventory\"; fleet/testdata/inventory-fixture.yml is one)", path, oneline.Quote(strings.Join(strings.Fields(err.Error()), " ")))
+		return nil, fmt.Errorf("--fixture %s is not the fixture's shape: %s; want a mapping with machines (each user, seat, slots, runners, tla, os, arch), fleet (store, coordinator) and loops (docs/FLEET.md, \"A fixture inventory\"; fleet/testdata/inventory-fixture.yml is one)", path, oneline.Quote(strings.Join(strings.Fields(err.Error()), " ")))
 	}
 	snap := &Snapshot{Machines: map[string]View{}, Beats: map[string]*Beat{}, Revs: map[string]int64{}}
 	for m, r := range f.Machines {
 		if !NamePattern.MatchString(m) {
 			return nil, fmt.Errorf("--fixture %s: machine %q is not a row name (lower-case letters, digits and dashes)", path, m)
 		}
-		snap.Machines[m] = View{"user": r.User, "seat": r.Seat, "slots": strconv.Itoa(r.Slots), "runners": strconv.Itoa(r.Runners)}
+		snap.Machines[m] = View{"user": r.User, "seat": r.Seat, "slots": strconv.Itoa(r.Slots), "runners": strconv.Itoa(r.Runners), "tla": strconv.FormatBool(r.TLA)}
 		if r.OS != "" || r.Arch != "" {
 			snap.Beats[m] = &Beat{OS: r.OS, Arch: r.Arch}
 		}
@@ -440,8 +433,8 @@ func LoadFixture(path string) (*Snapshot, error) {
 			snap.Loops[n] = View{
 				"name": n, "machine": l.Machine, "argv": string(argv), "seat": l.Seat,
 				"keys": strings.Join(keys, ","), "every": strconv.Itoa(l.Every),
-				"keepalive": strconv.FormatBool(l.Keepalive), "width": strconv.Itoa(l.Width),
-				"enabled": strconv.FormatBool(enabled), "log": LoopLog(n),
+				"keepalive": strconv.FormatBool(l.Keepalive),
+				"enabled":   strconv.FormatBool(enabled), "log": LoopLog(n),
 			}
 		}
 	}

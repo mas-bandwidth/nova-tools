@@ -69,32 +69,34 @@ func RequiredGroups(cases []Case) []string {
 }
 
 // Select returns the cases one run covers: a group, or shard number shard of
-// shards (every shards'th case from shard), never both.
+// shards (every shards'th case from shard) of the whole plan or, with a group,
+// of that group's cases. A group's shards of its own size are its cases one
+// at a time: run --bench measures a group so, a load trough before each case.
 func Select(cases []Case, group string, shards, shard int) ([]Case, error) {
 	if shards < 1 || shard < 0 || shard >= shards {
 		return nil, errors.New("use a positive shard count and a zero-based shard below it")
 	}
-	if shards > len(cases) {
-		return nil, errors.New("shard count exceeds the number of declared cases")
-	}
+	pool := cases
 	if group != "" {
-		if shards != 1 || shard != 0 {
-			return nil, errors.New("--group and shard selection cannot be combined")
-		}
-		var chosen []Case
+		pool = nil
 		for _, c := range cases {
 			if c.Group == group {
-				chosen = append(chosen, c)
+				pool = append(pool, c)
 			}
 		}
-		if len(chosen) == 0 {
+		if len(pool) == 0 {
 			return nil, fmt.Errorf("unknown group: %s", group)
 		}
-		return chosen, nil
+		if shards > len(pool) {
+			return nil, fmt.Errorf("shard count exceeds the %d cases of group %s", len(pool), group)
+		}
+	}
+	if shards > len(pool) {
+		return nil, errors.New("shard count exceeds the number of declared cases")
 	}
 	var chosen []Case
-	for i := shard; i < len(cases); i += shards {
-		chosen = append(chosen, cases[i])
+	for i := shard; i < len(pool); i += shards {
+		chosen = append(chosen, pool[i])
 	}
 	return chosen, nil
 }

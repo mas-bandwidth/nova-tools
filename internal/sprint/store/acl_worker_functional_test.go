@@ -85,7 +85,7 @@ func TestRedisAWorkersStepsRunUnderTheRenderedMemberACL(t *testing.T) {
 	reads := h.snap().Readers.Of("s1-1")
 	require.Len(t, reads, 2)
 	w.must(ReadStep(sprint.ReadReq{Sel: sprint.Sel{IDs: []string{reads[0].ID}}, As: reads[0].Row, Verdict: "ok", Finding: "good", Usage: usage, Who: reads[0].Row}))
-	w.must(ReadStep(sprint.ReadReq{Sel: sprint.Sel{IDs: []string{reads[1].ID}}, As: reads[1].Row, Verdict: "broken", Finding: "bad", Usage: usage, Who: reads[1].Row}))
+	w.must(ReadStep(sprint.ReadReq{Sel: sprint.Sel{IDs: []string{reads[1].ID}}, As: reads[1].Row, Verdict: "broken", Finding: "bad:1", Usage: usage, Who: reads[1].Row}))
 	ret := h.snap().Readers.Of("s1-2")
 	require.NotEmpty(t, ret)
 	w.must(ReadStep(sprint.ReadReq{Sel: sprint.Sel{IDs: []string{ret[0].ID}}, As: ret[0].Row, Return: true, Reason: "no verdict", Usage: usage, Who: ret[0].Row}))

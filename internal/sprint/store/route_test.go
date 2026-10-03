@@ -570,7 +570,7 @@ func TestAReadOfReworkedWorkCarriesARoute(t *testing.T) {
 	first := h.snap().Readers.Of("s1-1")
 	require.Len(t, first, 2, "attempt 1 asked of two readers")
 	h.must(ReadStep(sprint.ReadReq{As: first[0].Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{first[0].ID}}}))
-	h.must(ReadStep(sprint.ReadReq{As: first[1].Row, Verdict: "broken", Finding: "f", Sel: sprint.Sel{IDs: []string{first[1].ID}}}))
+	h.must(ReadStep(sprint.ReadReq{As: first[1].Row, Verdict: "broken", Finding: "f:1", Sel: sprint.Sel{IDs: []string{first[1].ID}}}))
 	h.must(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: "fix"}))
 	h.finishAttempt("s1-1", false, pushedB)
 	pr := h.snap().Work.Card("s1-1")

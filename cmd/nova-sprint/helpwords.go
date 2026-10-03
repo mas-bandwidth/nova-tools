@@ -48,7 +48,12 @@ words:
   DECIDED      an inbox note recording a judgment's answer: what was decided, by whom
   group        one inbox line: the notes of one type, stream and cause, named by its oldest note's id
   cursor       the coordinator's place in the notes; inbox --read moves it; it bounds HAPPENED and
-               DECIDED lines, never the open judgments
+               DECIDED lines, never the open judgments; inbox --wait wakes for a judgment or a note
+               to the coordinator that was not there when it began, and --push <dir> writes each
+               once as <dir>/<note id>.md, the files there being its cursor; --push seat writes to
+               the holder's inbox, ~/<holder>-working/inbox/sprint-judgments, and follows the seat
+  seat         the coordinator's place: coordinator <name> gives it (the holder or the owner) or
+               takes it (--take --approved-by <owner>); handover prints what the next seat needs
   deal         the tick placing a ready primary's work card on an up member below twice its width
   level        moving cards dealt and not taken from a member that cannot start them to one with
                free lanes; asked reads are levelled across the readers up the same way
