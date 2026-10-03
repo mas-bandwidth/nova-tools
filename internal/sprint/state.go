@@ -283,6 +283,11 @@ type Snapshot struct {
 	Now     time.Time
 	Epoch   uint64    // the sprint's epoch the tables were read at
 	Cleared time.Time // when that epoch began (the last clear); zero for the first
+	// Start is when this server process's machine first started (the machine's
+	// first start of the epoch): a refusal recorded before it is stale, and a
+	// cold start judges no provider out of funds from it. Zero is no start
+	// known (treat refusals as fresh, as before).
+	Start time.Time
 	// Coordinator is the sprint's coordinator: judgments are theirs to
 	// answer. Actor is who runs the step (a request's Who, when it names
 	// none).

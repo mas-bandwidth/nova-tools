@@ -154,6 +154,11 @@ type Twin struct {
 	// coordinator, the machine's state): what peek answers with beside the
 	// tables.
 	last *sprint.Snapshot
+	// start is the process start (the machine's first start of the epoch) as
+	// the twin last read it, and startRead says it has been read: the machine
+	// is read once a twin, not once a part.
+	start     time.Time
+	startRead bool
 }
 
 // NewTwin is an empty twin: its first read reads the store whole.
@@ -172,6 +177,7 @@ func (tw *Twin) reset(epoch uint64) {
 	tw.epoch = epoch
 	tw.tables = map[string]*sprint.Table{}
 	tw.kept, tw.shown, tw.absent = map[string]map[string]*sprint.Card{}, map[string]map[string]*sprint.Card{}, map[string]map[string]bool{}
+	tw.start, tw.startRead = time.Time{}, false
 	for _, name := range All {
 		tw.kept[name], tw.shown[name], tw.absent[name] = map[string]*sprint.Card{}, map[string]*sprint.Card{}, map[string]bool{}
 	}
@@ -307,6 +313,15 @@ func (st *Store) checkTwin(ctx context.Context, snap *sprint.Snapshot, gen uint6
 func (st *Store) twinView(ctx context.Context, tw *Twin, load []string, v View, extras func(*sprint.Snapshot) map[string][]string) (*sprint.Snapshot, error) {
 	shapes := v.Shapes
 	s := &sprint.Snapshot{Now: st.now(), Epoch: st.epoch, Cleared: st.cleared, Actor: st.Actor}
+	if !tw.startRead {
+		tw.startRead = true
+		if since, ok := st.SinceFirstStart(ctx); ok {
+			tw.start = s.Now.Add(-since)
+		} else {
+			tw.start = time.Time{}
+		}
+	}
+	s.Start = tw.start
 	for _, shape := range shapes {
 		if shape.Epoch != st.epoch {
 			return nil, errCleared

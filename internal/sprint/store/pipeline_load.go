@@ -62,6 +62,9 @@ func (st *Store) pipelinedLoadOnceWithFence(ctx context.Context, tables []string
 
 	// Stage 1: Member Discovery
 	s := &sprint.Snapshot{Now: st.now(), Epoch: st.epoch, Cleared: st.cleared}
+	if since, ok := st.SinceFirstStart(ctx); ok {
+		s.Start = s.Now.Add(-since)
+	}
 	stored := make([]string, len(tables))
 	for i, t := range tables {
 		stored[i] = st.Names.Table(t)

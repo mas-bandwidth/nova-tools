@@ -376,3 +376,139 @@ func TestATakeOfACardOnARestingRouteIsRefused(t *testing.T) {
 	assert.Zero(t, h.refusedTakes())
 	h.clean("a take on a resting route")
 }
+
+// setProp writes a fleet table property directly, as a previous process's write would have
+// left it in the store: a cold start reads it.
+func (h *harness) setProp(name, value string) {
+	h.t.Helper()
+	table := h.st.Names.Table(sprint.Fleet)
+	_, err := h.m.Apply(h.ctx, ntable.BatchManifest{Schema: 1, Table: table, Epoch: "0",
+		ExpectedTableRevision: fmt.Sprint(h.m.Revision(table)), OperationID: fmt.Sprintf("prop-%d", pokes.Add(1)),
+		Props: map[string]string{name: value}})
+	require.NoError(h.t, err)
+}
+
+// A stored 402 whose take launched before this process started rests nothing on a cold
+// start (the owner, 2026-10-03: a cold start judges no provider out of funds from a stored
+// refusal): the first tick rests nothing and stops nothing, and one note names the stale
+// refusal, so the coordinator is told why a provider with a stored 402 serves on.
+func TestAStoredRefusalFromBeforeTheStartRestsNothing(t *testing.T) {
+	t.Parallel()
+	routes := []sprint.Route{providerRoute("or-a", "flash", "openrouter"), providerRoute("oc-a", "flash", "opencode")}
+	h := routeHarness(t, routes...)
+	h.addReady("s1", 2, briefOf("flash", ""))
+	h.must(DealStep(sprint.DealReq{})) // dealt before the machine starts
+	onOR := h.onProvider(routes, "openrouter")
+	require.NotEmpty(t, onOR)
+	h.failTake(onOR[0], creditLine) // the refusal, recorded before the process start
+	h.tick(time.Hour)
+	h.startMachine()
+	h.machine() // the first tick
+	s := h.snap()
+	assert.Empty(t, sprint.ProviderRests(s.Fleet), "a stored refusal from before the start rests nothing")
+	assert.Empty(t, h.noteWhats(sprint.NProviderRested))
+	assert.True(t, h.machineRecord().Running(), "no provider is out: the sprint runs")
+	assert.Empty(t, h.openOf(sprint.NAllOutOfCredit))
+	notes := h.noteWhats(sprint.NProviderStale)
+	require.Len(t, notes, 1, "one note names the stale refusal")
+	assert.Contains(t, notes[0], "openrouter")
+	assert.Contains(t, notes[0], onOR[0])
+	assert.Contains(t, notes[0], "before this start")
+	h.clean("a stored refusal from before the start")
+}
+
+// A stored 402 from before the process start rests nothing, and a fresh 402 this process
+// rests its provider: the provider with only the stored refusal serves on, so the sprint
+// does not stop while one provider serves.
+func TestAStoredRefusalRestsNothingAndAFreshOneRests(t *testing.T) {
+	t.Parallel()
+	routes := []sprint.Route{providerRoute("or-a", "flash", "openrouter"), providerRoute("oc-a", "flash", "opencode")}
+	h := routeHarness(t, routes...)
+	h.addReady("s1", 4, briefOf("flash", ""))
+	h.must(DealStep(sprint.DealReq{}))
+	onOR := h.onProvider(routes, "openrouter")
+	require.NotEmpty(t, onOR)
+	h.failTake(onOR[0], creditLine) // stored: taken before the process start
+	h.tick(time.Hour)
+	h.startMachine()
+	h.machine() // the first tick: the stored refusal rests nothing
+	assert.NotContains(t, sprint.ProviderRests(h.snap().Fleet), "openrouter", "a stored refusal rests nothing")
+	require.Len(t, h.noteWhats(sprint.NProviderStale), 1)
+
+	onOC := h.onProvider(routes, "opencode")
+	require.NotEmpty(t, onOC)
+	h.tick(30 * time.Second)
+	h.failTake(onOC[0], creditLine) // fresh: taken this process
+	h.machine()
+	s := h.snap()
+	rests := sprint.ProviderRests(s.Fleet)
+	require.Contains(t, rests, "opencode", "a fresh refusal rests its provider")
+	assert.True(t, rests["opencode"].Resting(s.Now))
+	assert.NotContains(t, rests, "openrouter", "the provider with only a stored refusal serves on")
+	assert.True(t, h.machineRecord().Running(), "one provider serves: no stop")
+	assert.Empty(t, h.openOf(sprint.NAllOutOfCredit))
+	h.clean("a fresh refusal beside a stored one")
+}
+
+// Both providers refusing fresh this process stop the machine, as a cold start with stored
+// refusals would not (the owner, 2026-10-03: "if all providers are out, then you stop the
+// sprint.").
+func TestBothProvidersRefusingFreshStopTheMachine(t *testing.T) {
+	t.Parallel()
+	routes := []sprint.Route{providerRoute("or-a", "flash", "openrouter"), providerRoute("oc-a", "flash", "opencode")}
+	h := routeHarness(t, routes...)
+	h.addReady("s1", 2, briefOf("flash", ""))
+	h.startMachine()
+	h.machine()
+	onOR := h.onProvider(routes, "openrouter")
+	onOC := h.onProvider(routes, "opencode")
+	require.NotEmpty(t, onOR)
+	require.NotEmpty(t, onOC)
+	h.tick(30 * time.Second)
+	h.failTake(onOR[0], creditLine)
+	h.failTake(onOC[0], creditLine)
+	h.machine()
+	m := h.machineRecord()
+	assert.False(t, m.Running(), "every provider is out: the tick stopped the machine")
+	assert.Equal(t, sprint.FundsCause, m.Cause)
+	all := h.openOf(sprint.NAllOutOfCredit)
+	require.Len(t, all, 1, "one judgment")
+	assert.Contains(t, all[0].Note.What, "every provider is out of credit (opencode, openrouter)")
+	assert.Empty(t, h.noteWhats(sprint.NProviderStale), "both refusals are fresh: nothing is stale")
+	h.clean("both providers out this process")
+}
+
+// A provider with no balance endpoint (opencode) rests only on a fresh refusal and lifts
+// only on the coordinator's funded: an unknown read never lifts it and never rests it
+// (rules 1 and 3 fall out of the balance step's unknown reads, which write and end no rest).
+func TestOpencodeRestsOnAFreshRefusalAndLiftsOnlyOnFunded(t *testing.T) {
+	t.Parallel()
+	routes := []sprint.Route{providerRoute("oc-a", "flash", "opencode")}
+	h := routeHarness(t, routes...)
+	h.addReady("s1", 2, briefOf("flash", ""))
+	h.startMachine()
+	h.machine()
+	onOC := h.onProvider(routes, "opencode")
+	require.NotEmpty(t, onOC)
+	h.tick(30 * time.Second)
+	h.failTake(onOC[0], creditLine) // fresh: the refusal rests it
+	h.machine()
+	require.True(t, sprint.ProviderRests(h.snap().Fleet)["opencode"].Resting(h.snap().Now))
+
+	unknown := sprint.ProviderRead{Provider: "opencode", Note: "opencode Zen publishes no balance endpoint"}
+	for range 3 {
+		h.tick(sprint.BalancePollEvery)
+		h.poll(unknown)
+	}
+	s := h.snap()
+	rest := sprint.ProviderRests(s.Fleet)["opencode"]
+	assert.True(t, rest.Resting(s.Now), "an unknown read ends no rest")
+	assert.Equal(t, sprint.RestCredit, rest.Cause)
+	assert.Empty(t, h.noteWhats(sprint.NProviderFunded), "nothing but funded lifts it")
+
+	h.must(FundedStep(sprint.FundedReq{Provider: "opencode", Reason: "paid", Who: "coordinator"}))
+	s = h.snap()
+	assert.False(t, sprint.ProviderRests(s.Fleet)["opencode"].Resting(s.Now), "funded lifts it")
+	assert.Len(t, h.noteWhats(sprint.NProviderFunded), 1)
+	h.clean("opencode funded")
+}
