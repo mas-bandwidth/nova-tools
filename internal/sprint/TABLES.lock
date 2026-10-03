@@ -73,13 +73,18 @@
 # Change, 2026-10-02, a cell's word, not a column: Glenn, 9:44 PM ET, on the friends
 # table, of a friend: "[she] is down." / "two minutes is too long. 1m" / "maybe even 30 secs."; and
 # 9:46 PM ET: "heartbeat should ping once every 10sec", then "or every 1sec if you really
-# want, then after 15 sec. asleep. better." friends.status is up, held or asleep: asleep
-# after 15 s with no beat (sprint.FriendAsleepAfter, sprint.FriendStatus), or never
-# beaten; down stays the fleet's word. 9:48 PM ET: "[a friend] being down, she
-# automatically is 0/8 working OK?": an asleep friend's working cell is 0. No column
-# changed, so the lines below are unchanged. Held by
+# want, then after 15 sec. asleep. better." friends.status is up, held or down: down
+# after 15 s with no beat (sprint.FriendDownAfter, sprint.FriendStatus), or never
+# beaten. 9:48 PM ET: "[a friend] being down, she automatically is 0/8 working OK?": a
+# down friend's working cell is 0.
+#
+# Change, 2026-10-03, a cell's word again, not a column: Glenn, 8:04 AM ET, looking at the
+# friends table: "Please change 'asleep' to 'down' so we have consistency across all
+# tables". The word of a friend with no beat for 15 s, or never, was asleep (the change
+# above); it is down, the fleet table's word. The 15 s rule, the 1 s beat and working 0
+# are as they were. No column changed, so the lines below are unchanged. Held by
 # TestAFriendsStatusIsTheFriendsRuleOverItsBeatsAndItsHold and
-# TestAnAsleepFriendShowsNoneWorking.
+# TestADownFriendShowsNoneWorking.
 work.waiting count sum shown
 work.ready count sum shown
 work.working count sum shown

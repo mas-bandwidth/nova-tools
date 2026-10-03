@@ -22,8 +22,8 @@ import (
 // done ok or not); friend-beat:<f> is the friend's last beat (friend beat),
 // written by the friend's own machinery. A friend's status is derived when it
 // is shown, never stored, by the friends' rule (sprint.FriendStatus): held,
-// else up while her last beat is within sprint.FriendAsleepAfter (15 s), else
-// asleep. Her counts are her job cards'
+// else up while her last beat is within sprint.FriendDownAfter (15 s), else
+// down. Her counts are her job cards'
 // (the owner, 2026-10-02: "give friends in the friends table the same ready,
 // working, width, done, ok%, status that we have for machines, but no load").
 
@@ -255,9 +255,9 @@ func (st *Store) SetFriendHeld(ctx context.Context, friend string, held bool, wh
 }
 
 // FriendRows is the friends table at now: every friend of the roster with the
-// counts of her job cards (working 0 while she is asleep), her width and her
+// counts of her job cards (working 0 while she is down), her width and her
 // status (sprint.FriendStatus), in the fleet table's order (FleetOrder: up,
-// then held, then asleep, each by name). Two reads: the roster, then every friend's beat and jobs in one
+// then held, then down, each by name). Two reads: the roster, then every friend's beat and jobs in one
 // exchange. A store that keeps no records has no friends.
 func (st *Store) FriendRows(ctx context.Context, now time.Time) ([]FriendRow, error) {
 	r, kv, err := st.roster(ctx)
@@ -302,8 +302,8 @@ func (st *Store) FriendRows(ctx context.Context, now time.Time) ([]FriendRow, er
 				row.Failed++
 			}
 		}
-		if row.Status == sprint.Asleep {
-			// asleep, she works nothing: her jobs stay in her outbox and count
+		if row.Status == sprint.Down {
+			// down, she works nothing: her jobs stay in her outbox and count
 			// again when she beats (the owner, 2026-10-02 9:48 PM ET: "[a
 			// friend] being down, she automatically is 0/8 working OK?")
 			row.Working = 0
