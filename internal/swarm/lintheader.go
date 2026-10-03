@@ -13,6 +13,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
 // THE TYPED CARD HEADER, CHECKED BEFORE ANY SPEND (SPEC-TOOLWORK.md §5 rule 1, #1651).
@@ -205,16 +206,11 @@ func CardHeaderValue(raw []byte, key string) (value string, ok bool) {
 // "A card is a tree of steps"). Both name files the card may change; a key
 // in the body or a step grants no scope. PATHS: none names no files.
 func CardPaths(raw []byte) []string {
-	var out []string
-	for _, key := range []string{"PATHS", "NEW"} {
-		value, _ := CardHeaderValue(raw, key)
-		for _, g := range strings.Split(value, ",") {
-			if g = strings.TrimSpace(g); g != "" && g != "none" {
-				out = append(out, g)
-			}
-		}
-	}
-	return out
+	block, _ := cardHeaderBlock(raw)
+	return typedrec.CardPaths(func(key string) (string, bool) {
+		f := block[key]
+		return f.value, f.found
+	})
 }
 
 // cardTypedKeys is the five lines SPEC-TOOLWORK.md §5 rule 1 names, as a set.
