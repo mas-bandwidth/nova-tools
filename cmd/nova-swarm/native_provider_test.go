@@ -66,8 +66,7 @@ func TestAProviderErrorInTheHarnessLogIsAProviderFailure(t *testing.T) {
 
 // A non-retryable provider refusal at launch is a provider failure (nova-tools#5199), in
 // the shape of slot ci-03.w246.g4 of 2026-10-03: rc=1 within two seconds, the data-home log
-// empty, the error only in the printed output, the 402 in the session. It was reported
-// `no-result` and the card was dealt again 247 times on a provider with no credit.
+// empty, the error only in the printed output, the 402 in the session.
 func TestANonRetryableProviderRefusalAtLaunchIsAProviderFailure(t *testing.T) {
 	t.Parallel()
 	out, errb := providerRun(t, "pf7", "FAKE-CREDIT-REFUSAL\n", nil)
@@ -79,6 +78,17 @@ func TestANonRetryableProviderRefusalAtLaunchIsAProviderFailure(t *testing.T) {
 	assert.Contains(t, errb, " reason=provider: class=out-of-credit status="+status+" msg=Insufficient credits. Add more using https://openrouter.test/settings/credits\n")
 	assert.Contains(t, out, "NATIVE INCOMPLETE ")
 	assert.Equal(t, member.EndProvider, nativeEnd([]byte(errb)), "the member finishes the take as the provider's, never no result")
+}
+
+// Only the provider's refusal for credit in the session makes a run a provider failure by
+// itself: a session error of another class (MessageOutputLengthError), on a run that exited
+// 1 with nothing printed and nothing in the log, is not the provider's.
+func TestASessionErrorThatIsNotARefusalForCreditIsNotAProviderFailureByItself(t *testing.T) {
+	t.Parallel()
+	needsSQLite(t)
+	out, errb := providerRun(t, "pf8", "FAKE-SESSION-ERROR-EXIT\n", nil)
+	assert.NotContains(t, errb, "PROVIDER-FAIL", "the session's error keeps its class: not the provider's")
+	assert.Contains(t, out, "NATIVE INCOMPLETE ")
 }
 
 // The second trigger: a clean exit after a tool result, with no error line anywhere.

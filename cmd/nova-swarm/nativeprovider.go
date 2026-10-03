@@ -68,8 +68,7 @@ const (
 // providerErrorRE is a provider error on an ERROR line of the harness's log or its printed
 // output: a stream error, a server_error, a rate limit, an overload, an account out of
 // credit or quota (`Insufficient credits`, `Insufficient account funds`, `out of credit`,
-// a quota, a payment required), or an HTTP 402, 429 or 5xx status (nova-tools#5199: a 402
-// at launch was read as a card that chose to publish nothing, 247 times for one card).
+// a quota, a payment required), or an HTTP 402, 429 or 5xx status (nova-tools#5199).
 var providerErrorRE = regexp.MustCompile(`(?i)message="?stream error|server_error|rate.?limit|overloaded|insufficient|out of credit|quota|payment required|\b(?:http|status|statuscode)\W{0,3}(?:402|429|5\d\d)\b`)
 
 // providerLogError is the first provider error line in what the run appended to the
@@ -172,36 +171,45 @@ func sessionQuery(dataHome, query string) (string, bool) {
 
 // providerEnd is the cause when the provider failed a run that ended without a result, ok
 // false when it did not. The provider failed it when the harness's own record names a
-// provider error, read in this order: the session's record of the failed message (it keeps
-// the provider's status: a 402 is `statusCode 402` there), the harness's printed output
-// (capture: what the run appended to `<job>/harness-output.log`, where OPENCODE_PRINT_LOGS
-// puts its ERROR lines), then its log in the data home; else when the run exited clean
-// ending on a tool result (`ended without a final message`, class other).
+// provider error: the harness's printed output (capture: what the run appended to
+// `<job>/harness-output.log`, where OPENCODE_PRINT_LOGS puts its ERROR lines), then its log
+// in the data home; else when the run exited clean ending on a tool result (`ended without
+// a final message`, class other). The session's record of the failed message, when it has
+// one, then names the cause (it keeps the provider's status: a 402 is `statusCode 402`
+// there).
 //
-// THE SESSION AND THE PRINTED OUTPUT COME FIRST (nova-tools#5199). A non-retryable 402 at
+// THE PROVIDER'S REFUSAL FOR CREDIT IS READ FIRST (nova-tools#5199). A non-retryable 402 at
 // launch makes the harness exit 1 within two seconds, before its data-home log holds a
-// line; the 402 is in the printed output and in the session alone. Reading the log first
-// and giving up on an rc that was not 0 reported `no-result`, and the card was dealt again
-// 247 times overnight on a provider with no credit.
+// line; the 402 is in the printed output and in the session alone. So a session error
+// whose class is out-of-credit (a 402, insufficient credit or funds, a payment required:
+// swarm.ClassifyProvider) makes the run a provider failure by itself, whatever its exit
+// and its wall. Any other session error (a MessageOutputLengthError, an abort, a 5xx) is
+// a provider failure only when the printed output, the log or a clean exit on a tool
+// result says so, as for a run with no session record.
 //
 // offset is the harness log's size when the run began, since is when it began.
 func providerEnd(dataHome string, offset int64, since time.Time, rc int, capture []byte) (swarm.ProviderCause, bool) {
 	if rc < 0 {
 		return swarm.ProviderCause{}, false // killed: the deadline's end, whatever the log says
 	}
-	if c, ok := sessionProviderError(dataHome, since); ok {
-		return c, true
+	session, recorded := sessionProviderError(dataHome, since)
+	if recorded && session.Class == swarm.CauseCredit {
+		return session, true
 	}
+	var found swarm.ProviderCause
 	if line := printedHarnessError(capture); line != "" {
-		return swarm.CauseFromText(line), true
+		found = swarm.CauseFromText(line)
+	} else if line := providerLogError(dataHome, offset); line != "" {
+		found = swarm.CauseFromText(line)
+	} else if rc == 0 && endedOnATool(dataHome, since) {
+		found = swarm.ProviderCause{Class: swarm.CauseOther, Message: providerEndedNoMessage}
+	} else {
+		return swarm.ProviderCause{}, false
 	}
-	if line := providerLogError(dataHome, offset); line != "" {
-		return swarm.CauseFromText(line), true
+	if recorded {
+		return session, true
 	}
-	if rc == 0 && endedOnATool(dataHome, since) {
-		return swarm.ProviderCause{Class: swarm.CauseOther, Message: providerEndedNoMessage}, true
-	}
-	return swarm.ProviderCause{}, false
+	return found, true
 }
 
 // providerLine is the NATIVE line of a provider failure:

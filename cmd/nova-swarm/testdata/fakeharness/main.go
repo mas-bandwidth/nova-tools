@@ -539,6 +539,13 @@ func main() {
 	if _, ok := directive(prompt, "FAKE-SESSION-ERROR"); ok {
 		writeSessionError(data)
 	}
+	// FAKE-SESSION-ERROR-EXIT writes a session whose last assistant message carries an error
+	// that is not the provider's refusal for credit (the harness's MessageOutputLengthError)
+	// and exits 1 with nothing printed and nothing in its log, publishing nothing.
+	if _, ok := directive(prompt, "FAKE-SESSION-ERROR-EXIT"); ok {
+		writeSessionErrorOf(data, `{"role":"assistant","error":{"name":"MessageOutputLengthError","data":{}}}`)
+		os.Exit(1)
+	}
 	// FAKE-CREDIT-REFUSAL is the launch the provider refused for want of credit, in the shape
 	// of slot ci-03.w246.g4 of 2026-10-03 (nova-tools#5199): the harness's data-home log is
 	// created and left empty, its ERROR lines are printed (OPENCODE_PRINT_LOGS) on stderr, the
@@ -837,10 +844,14 @@ func writeSession(data, finish string) {
 // writeSessionError writes a session whose last assistant message carries an API error and
 // no finish, as the harness records a provider that refused the request.
 func writeSessionError(data string) {
+	writeSessionErrorOf(data, `{"role":"assistant","error":{"name":"APIError","data":{"message":"Insufficient credits. key sk-or-v1-abcdefghijklmnopqrstuvwxyz0123 has none left","statusCode":402,"isRetryable":false,"responseBody":"{\"error\":{\"code\":402,\"message\":\"Insufficient credits\"}}"}}}`)
+}
+
+// writeSessionErrorOf writes a session whose last message is envelope, after the user's.
+func writeSessionErrorOf(data, envelope string) {
 	path := openCodeDB(data)
 	_ = os.MkdirAll(filepath.Dir(path), 0o755)
 	now := time.Now().UnixMilli()
-	envelope := `{"role":"assistant","error":{"name":"APIError","data":{"message":"Insufficient credits. key sk-or-v1-abcdefghijklmnopqrstuvwxyz0123 has none left","statusCode":402,"isRetryable":false,"responseBody":"{\"error\":{\"code\":402,\"message\":\"Insufficient credits\"}}"}}}`
 	sql := "CREATE TABLE IF NOT EXISTS message (id INTEGER PRIMARY KEY, data TEXT NOT NULL, time_created INTEGER NOT NULL);\n" +
 		fmt.Sprintf("INSERT INTO message (data, time_created) VALUES ('{\"role\":\"user\"}', %d);\n", now) +
 		fmt.Sprintf("INSERT INTO message (data, time_created) VALUES ('%s', %d);\n", envelope, now+1)
