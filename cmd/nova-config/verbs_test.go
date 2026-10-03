@@ -122,7 +122,7 @@ func TestDryRunWritesNothing(t *testing.T) {
 	require.Equal(t, 0, code, errs)
 	code, out, errs := run("machine", "add", "m1", "--user", "u", "--seat", "s", "--slots", "8", "--dry-run")
 	require.Equal(t, 0, code, errs)
-	assert.Equal(t, "CONFIG DRY-RUN op=add kind=machine name=m1 actor=a1 wrote=nothing note=- runners=0 seat=s slots=8 user=u width=-\nNOTE machine=m1 width=default: a sprint member at half its cores, as nova-sprint fleet sync reads them from its beat; its width is set apart from its slots; run: nova-config machine set m1 --width <n> (0: no member) --as a1 --file try.json\n", out)
+	assert.Equal(t, "CONFIG DRY-RUN op=add kind=machine name=m1 actor=a1 wrote=nothing note=- runners=0 seat=s slots=8 tla=false user=u width=-\nNOTE machine=m1 width=default: a sprint member at half its cores, as nova-sprint fleet sync reads them from its beat; its width is set apart from its slots; run: nova-config machine set m1 --width <n> (0: no member) --as a1 --file try.json\n", out)
 	code, out, _ = h.run(t, "machine", "list", "--file", "try.json")
 	require.Equal(t, 0, code)
 	assert.Equal(t, "CONFIG LIST kind=machine rows=0\n", out, "the dry run added nothing")

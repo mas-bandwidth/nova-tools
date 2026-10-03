@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -277,6 +278,79 @@ func TestToolsPlayNamesTheDogfoodReceipts(t *testing.T) {
 	assert.Contains(t, out, "WOULD-BUILD version=v0.0.0-check")
 }
 
+// tlaRig is the tla play on the machine running the test: the tla fixture
+// (localhost a record machine), a jar directory, a java and the facts saying
+// Linux, all under the test's own temp dir.
+type tlaRig struct {
+	*fleetPlayRig
+	jarDir, jar, java string
+}
+
+func newTLARig(t *testing.T) *tlaRig {
+	t.Helper()
+	r := &tlaRig{fleetPlayRig: newFleetPlayRig(t, "tla-fixture.yml")}
+	r.jarDir = filepath.Join(r.dir, "opt-tla")
+	require.NoError(t, os.MkdirAll(r.jarDir, 0o755))
+	r.jar = filepath.Join(r.jarDir, "tla2tools.jar")
+	r.java = filepath.Join(r.dir, "java")
+	require.NoError(t, os.WriteFile(r.java, []byte("#!/bin/sh\necho 'openjdk version \"21.0.12.1\" 2026-08-18 LTS' >&2\n"), 0o755))
+	return r
+}
+
+// vars are the play's -e for this rig, the sum file the repository's unless
+// one is given.
+func (r *tlaRig) vars(sum string, extra ...string) []string {
+	java, err := json.Marshal(map[string][]string{"nova_tla_java_candidates": {filepath.Join(r.dir, "no-java"), r.java}})
+	if err != nil {
+		panic(err) // a map of strings always marshals
+	}
+	v := []string{"--tags", "tla", "-e", "ansible_system=Linux", "-e", "nova_home=" + r.home, "-e", "nova_tla_dir=" + r.jarDir, "-e", string(java)}
+	if sum != "" {
+		v = append(v, "-e", "nova_tla_sha256_file="+sum)
+	}
+	return append(v, extra...)
+}
+
+// repoSum is the SHA-256 the repository pins the TLC jar to.
+func repoSum(t *testing.T, root string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(root, "tla", "tla2tools.sha256"))
+	require.NoError(t, err)
+	f := strings.Fields(string(b))
+	require.NotEmpty(t, f)
+	require.Regexp(t, `^[0-9a-f]{64}$`, f[0])
+	return f[0]
+}
+
+// TestTLAPlayHoldsTheJarToTheRepositorysSum runs the tools play's tla play on
+// a record machine: its --check rendering names the repository's sum
+// (tla/tla2tools.sha256); a missing jar and a jar whose SHA-256 differs are
+// refused, naming the path, both sums and how to place the jar; the pinned
+// jar (here a jar the test pins with a sum file of its own) passes, owned by
+// the login, with the java found echoed.
+func TestTLAPlayHoldsTheJarToTheRepositorysSum(t *testing.T) {
+	t.Parallel()
+	r := newTLARig(t)
+	want := repoSum(t, r.root)
+
+	check, err := r.playResult(t, "tools.yml", r.vars("", "--check")...)
+	require.Error(t, err, "--check with no jar passed:\n%s", check)
+	assert.Contains(t, check, "TLA REFUSED host=localhost jar="+r.jar+" want="+want+" got=none")
+	assert.Contains(t, check, "scp a tla2tools.jar whose sha256sum is "+want+" to localhost:"+r.jar)
+
+	require.NoError(t, os.WriteFile(r.jar, []byte("not the pinned jar\n"), 0o644))
+	got := sha256.Sum256([]byte("not the pinned jar\n"))
+	out, err := r.playResult(t, "tools.yml", r.vars("")...)
+	require.Error(t, err, "a jar whose sum differs passed:\n%s", out)
+	assert.Contains(t, out, "TLA REFUSED host=localhost jar="+r.jar+" want="+want+" got="+hex.EncodeToString(got[:]))
+
+	sum := filepath.Join(r.dir, "tla2tools.sha256")
+	require.NoError(t, os.WriteFile(sum, []byte(hex.EncodeToString(got[:])+"  tla2tools.jar\n"), 0o644))
+	out = r.play(t, "tools.yml", r.vars(sum)...)
+	assert.Contains(t, out, "TLA OK host=localhost jar="+r.jar+" sha256="+hex.EncodeToString(got[:])+" java="+r.java+" version=21.0.12.1")
+	assert.Regexp(t, `localhost\s+: ok=\d+\s+changed=0 `, out, "a converged record machine changes nothing")
+}
+
 // TestLoopsPlayRecordFilter: nova_loop_only names the records a run renders and
 // restarts (nova-tools#5096 item 24, the readers-only pass of 2026-10-02); every
 // other unit on the machine is left as it is, and none is retired, not even a
@@ -310,6 +384,53 @@ func TestLoopsPlayRecordFilter(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, out, "nova_loop_only names member-locl, which no loop record of this run's machines is")
 	assert.NotContains(t, out, "LOOPS host=")
+}
+
+// TestLoopsPlayLeavesAnUnchangedUnitAlone: a record whose unit file is already
+// what the play renders is not restarted, and the run does not fail. The
+// restart line's condition was a list where it was empty (no changed unit), and
+// ansible-core 2.19 on refuses a condition that is not a boolean, so the play
+// failed on every machine with one unchanged unit (the Studio, 2026-10-02).
+func TestLoopsPlayLeavesAnUnchangedUnitAlone(t *testing.T) {
+	t.Parallel()
+	r := newFleetPlayRig(t, "check-fixture.yml")
+	units := filepath.Join(r.home, ".config", "systemd", "user")
+	require.NoError(t, os.MkdirAll(units, 0o755))
+	check := []string{"--check", "--diff", "-e", "ansible_system=Linux", "-e", "nova_home=" + r.home, "-e", "nova_sops=/usr/bin/sops-of-the-fixture", "-e", "nova_loop_only=member-local"}
+	unit := filepath.Join(units, "nova-loop-member-local.service")
+
+	first := r.play(t, "loops.yml", check...)
+	require.Contains(t, first, "WOULD-RESTART member-local on localhost", "a new unit is a changed one")
+	require.NoError(t, os.WriteFile(unit, renderedByDiff(t, first, unit), 0o644))
+
+	again := r.play(t, "loops.yml", check...)
+	assert.NotContains(t, again, "FAILED!", "a task failed on an unchanged unit")
+	assert.NotContains(t, again, "WOULD-RESTART member-local", "an unchanged unit is not restarted")
+	assert.Contains(t, again, "LOOPS host=localhost place="+units+" records=1 enabled=1 written=0 retired=0 only=member-local (check: nothing changed)", "the unit is written by no one")
+}
+
+// renderedByDiff is the content --diff shows a new unit at path getting: the
+// "+" lines of the hunk whose first line is the unit's mark naming path (the
+// diff's header names the template, not the unit).
+func renderedByDiff(t *testing.T, out, path string) []byte {
+	t.Helper()
+	for _, hunk := range strings.Split(out, "@@ -0,0 ")[1:] {
+		_, body, _ := strings.Cut(hunk, "\n")
+		if !strings.HasPrefix(body, "+# "+path+": ") {
+			continue
+		}
+		var b strings.Builder
+		for _, line := range strings.Split(body, "\n") {
+			after, ok := strings.CutPrefix(line, "+")
+			if !ok {
+				break
+			}
+			b.WriteString(after + "\n")
+		}
+		return []byte(b.String())
+	}
+	require.Fail(t, "no diff renders "+path, out)
+	return nil
 }
 
 // TestToolsPlaySendsOnlyTheFilesTheInstalledBuildLacks runs tools.yml for

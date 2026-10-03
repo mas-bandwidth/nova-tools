@@ -108,6 +108,25 @@ func returnedRead(rc *Card) bool { return rc.Col == Asked && rc.F(FieldReturned)
 // the ask asks it again.
 const FieldReturned = "returned"
 
+// ReaderPrefix names a reader for its machine: reader-<m> is the one reader on
+// the fleet machine m, and it runs at m's width, the fleet row's, read with its
+// queue every tick as the member on m reads its own (the owner, 2026-10-02:
+// "The reader widths seem to be very ad-hoc, unlike the machine widths"; "why
+// not just have as many readers as workers per-machine"). The sprint holds no
+// reader's width of its own: `queue --as reader-<m>` carries m's fleet row's
+// width, and a reader named for no row carries none and begins nothing.
+const ReaderPrefix = "reader-"
+
+// ReaderMachine is the machine a reader is named for: reader-<m> names m; a
+// name of another shape names no machine.
+func ReaderMachine(reader string) (machine string, ok bool) {
+	m, found := strings.CutPrefix(reader, ReaderPrefix)
+	if !found || !ValidID(m) {
+		return "", false
+	}
+	return m, true
+}
+
 // FieldReasked is how many times a read card's reader returned it and it went
 // back to asked on the reader's row, counted by Read itself at each return, so
 // the bound holds whatever the tick does and however many readers are up (the
@@ -209,9 +228,10 @@ func TickLevelReads(s *Snapshot, _ TickReq) (Plan, int) {
 // reader that is not up is neither a source nor a target: sweepReads takes
 // its reads back first.
 //
-// The sprint knows no reader's width: a reader loop's --width is the loop's
-// own, and the readers table has no width column, so every reader up counts
-// alike and nothing here bounds a reader at DealAhead times a width.
+// The sprint knows no reader's width: a reader runs at its machine's width,
+// not a loop's own --width (there is none), and the readers table has no width
+// column, so every reader up counts alike and nothing here bounds a reader at
+// DealAhead times a width.
 func levelReads(s *Snapshot, p *Plan) {
 	sweepReads(s, p)
 	up := s.UpReaders()

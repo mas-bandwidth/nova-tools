@@ -87,7 +87,7 @@ func TestApplyLeavesTheKeysCapacityFriendWould(t *testing.T) {
 	assert.Equal(t, int64(0), c.Exists(ctx, "machine:studio:budget").Val(), "a budget was derived from cores nobody declared")
 	{
 		got := c.HGetAll(ctx, "machine:studio").Val()
-		assertionMsg81 := []any{"machine:studio %v: want user, seat, slots, runners, width, rev, at and nothing else", got}
+		assertionMsg81 := []any{"machine:studio %v: want user, seat, slots, runners, width, tla, note, rev, at and nothing else", got}
 		func() {
 			if !assert.Equal(t, "glenn", got["user"], assertionMsg81...) {
 				return
@@ -110,7 +110,13 @@ func TestApplyLeavesTheKeysCapacityFriendWould(t *testing.T) {
 			if !assert.Equal(t, "", got["width"], assertionMsg81...) { // no width: the default
 				return
 			}
-			assert.Len(t, got, 8, assertionMsg81...)
+			if !assert.Equal(t, "false", got["tla"], assertionMsg81...) {
+				return
+			}
+			if !assert.Equal(t, "", got["note"], assertionMsg81...) {
+				return
+			}
+			assert.Len(t, got, 9, assertionMsg81...)
 		}()
 	}
 	{

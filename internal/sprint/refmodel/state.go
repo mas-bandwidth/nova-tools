@@ -188,6 +188,9 @@ type WorkCard struct {
 	// deal that places it again counts it (sprint.FieldTakeEnded).
 	Redeals   int
 	TakeEnded bool
+	// Refusers is the members that refused the card at staging
+	// (sprint.StagingRefusers): the level never moves it onto one.
+	Refusers []string
 }
 
 // ReadCard is one read card: <primary>.r<attempt>.<reader>.
