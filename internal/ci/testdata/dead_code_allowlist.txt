@@ -39,7 +39,7 @@ internal/subproc 1
 internal/swarm 42
 internal/testguard 5
 internal/tokens 2
-internal/tool 5
+internal/tool 1
 internal/typedrec 11
 internal/workfile 2
 internal/workgh 1
