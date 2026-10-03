@@ -251,8 +251,10 @@ func TestTheETAIsRecomputedOnTheTickAfterAnAddADropOrARelease(t *testing.T) {
 
 // A read of the landed stamps that fails (the landed column busy with landings) leaves
 // the whole sprint's average: where and where --json still answer, with an estimate,
-// never a failed view. Nothing waits here, so the landed column is the only work
-// table records where reads.
+// never a failed view. where reads the stamps only when it cannot take the tick's
+// where record, so the table is moved under a STOPPED machine that has not ticked since:
+// where reads the cards, and the read of the stamps fails. Nothing waits here, so the
+// landed column is the only work table records where reads.
 func TestWhereKeepsTheWholeSprintAverageWhenTheLandedStampsFailToRead(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
@@ -273,14 +275,19 @@ func TestWhereKeepsTheWholeSprintAverageWhenTheLandedStampsFailToRead(t *testing
 	ta.mu.Lock()
 	ta.now = ta.now.Add(2 * time.Hour) // every landing is over an hour old: the average either way
 	ta.mu.Unlock()
+	ta.ok("stop")
+	ta.ok("add --stream s2 --count 1") // the table moves; no tick counts it
 	ta.json("where", &w)
+	require.Zero(t, w.Held, "nothing waits: %s", w.Summary)
 	healthy := w.Summary
 	require.Contains(t, healthy, "-> ETA ", "an estimate: %s", healthy)
 	require.NotContains(t, healthy, "-> ETA -")
 
 	busy := errors.New("the tables are busy")
+	failed := 0
 	ta.m.Fail = func(point string) error {
 		if point == "readset "+sprint.Work {
+			failed++
 			return busy
 		}
 		return nil
@@ -288,8 +295,10 @@ func TestWhereKeepsTheWholeSprintAverageWhenTheLandedStampsFailToRead(t *testing
 	st := &store.Store{B: ta.m, Names: sprint.Names{}, Now: ta.a.now}
 	_, err := st.LandedAt(context.Background())
 	require.ErrorIs(t, err, busy, "the stamps do not read")
-	var failed whereView
-	ta.json("where", &failed)
-	assert.Equal(t, healthy, failed.Summary, "the same estimate, from the whole sprint's average")
-	ta.ok("where") // the frame answers too (its header is STOPPED: nothing has ticked for 2 h)
+	failed = 0
+	var degraded whereView
+	ta.json("where", &degraded)
+	require.Positive(t, failed, "where read the stamps, and the read failed")
+	assert.Equal(t, healthy, degraded.Summary, "the same estimate, from the whole sprint's average")
+	ta.ok("where") // the frame answers too (its header is STOPPED)
 }

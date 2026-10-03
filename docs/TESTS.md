@@ -697,7 +697,7 @@ Postgres and a throwaway Redis.
 
 ```text
 $ nova-config migrate --file try.json
-CONFIG MIGRATE file=try.json from=0 to=20 applied=20
+CONFIG MIGRATE file=try.json from=0 to=21 applied=21
 
 $ nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --as a1 --file try.json
 CONFIG ADD kind=machine name=m1 rev=1
@@ -754,6 +754,47 @@ INDEX ENTRY session=s1 entry=e1 stamp=2026-09-17T12:05:00Z bytes=17 source=bench
 $ nova-cairn receipt --store ./cairns --session s1 --entry e1
 RECEIPT OK session=s1 entry=e1 stamp=2026-09-17T12:05:00Z bytes=17 source=bench-a/session-7#L3 persisted=true published=false publish=manual
 ```
+
+## nova-decide
+
+Fixture: `cmd/nova-decide/testdata/`: a schema and a state, a card and its
+diff, the fixed backend's answers for each, and a record of eight labelled read
+decisions. Every line below uses the fixed backend, so it needs no network and
+no key; `cmd/nova-decide/firstrun_test.go` runs each `$` line from a checkout
+root in one sitting, with `./decisions.jsonl` a file in the test's own
+directory. The ids come from `--op`, so every line reads the same twice.
+
+### First run
+
+```text
+$ nova-decide ask --schema ./cmd/nova-decide/testdata/schema.json --state ./cmd/nova-decide/testdata/state.txt --backend fixed --answers ./cmd/nova-decide/testdata/answers.json --record ./decisions.jsonl --op first
+ASK OK id=first decision=reply backend=fixed tokens_in=0 tokens_out=0 recorded=new
+ASK ANSWER question=asks_something type=noul value=yes p=yes:0.94
+ASK ANSWER question=kind type=choice value=request p=question:0.08,report:0.05,request:0.87
+
+$ nova-decide read --card ./cmd/nova-decide/testdata/card.md --diff ./cmd/nova-decide/testdata/card.diff --backend fixed --answers ./cmd/nova-decide/testdata/read-answers.json --record ./decisions.jsonl --op card-1
+READ OK id=card-1 decision=read backend=fixed verdict=LAND p=0.92 tokens_in=0 tokens_out=0 recorded=new
+READ ANSWER question=defect type=noul value=no p=yes:0.04
+READ ANSWER question=does_task type=noul value=yes p=yes:0.96
+READ ANSWER question=inside_paths type=noul value=yes p=yes:0.99
+READ ANSWER question=lines_changed type=noul value=yes p=yes:0.97
+READ ANSWER question=verdict type=choice value=LAND p=BOUNCE:0.05,LAND:0.92,UNSURE:0.03
+
+$ nova-decide outcome --record ./decisions.jsonl --id card-1 --label ok --note "the review found nothing"
+OUTCOME OK id=card-1 decision=read label=ok changed=true
+
+$ nova-decide calibrate --record ./cmd/nova-decide/testdata/record.jsonl --decision read --question defect --positive wrong --negative ok
+CALIBRATE OK decision=read schema=505bd379c3753631 question=defect option=yes positives=3 negatives=5 skipped=0 auc=0.933
+CALIBRATE BAR at=0.5 caught=2 of=3 bounced=1 of_negatives=5
+CALIBRATE BAR at=0.7 caught=2 of=3 bounced=0 of_negatives=5
+CALIBRATE BAR at=0.9 caught=0 of=3 bounced=0 of_negatives=5
+CALIBRATE CATCH-ALL at=0.45 caught=3 of=3 bounced=1 of_negatives=5
+```
+
+The first three lines write `./decisions.jsonl`; the fourth reads the fixture
+record, because a calibration wants positives and negatives both. With
+`--backend jev` the same `ask` and `read` lines ask the model instead, under
+`nova-secrets exec --only JEV_API_KEY`, and their lines carry the tokens spent.
 
 ## nova-redis
 

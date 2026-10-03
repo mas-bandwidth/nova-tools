@@ -234,6 +234,10 @@ var swarmAudit = audit.Config{
 		// no writer and prints nothing. Its reason reaches a stream only through the CLEAN
 		// line, which escapes it.
 		`"github.com/mas-bandwidth/nova-tools/internal/gocache"`,
+		// diffcheck (nativedecide.go) parses the work's diff to name the files it changes; it
+		// holds no writer and prints nothing, and those names reach a stream only inside the
+		// decide read's finding, which is escaped.
+		`"github.com/mas-bandwidth/nova-tools/internal/diffcheck"`,
 		// decide (pull --decide, SPEC-JOBS section 5) makes one typed HTTP
 		// request and returns typed answers; it holds no writer of this
 		// package's stream, and the one value this binary takes from it -- the

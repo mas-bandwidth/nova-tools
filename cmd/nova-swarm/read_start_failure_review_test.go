@@ -22,7 +22,7 @@ func TestReviewAMissingImmutableBaseRefusesTheReadBeforeWritingItsFrame(t *testi
 	job := f.stage(t, slot)
 	const missing = "0000000000000000000000000000000000000000"
 
-	err := installFrame(nativeRunConfig{slotDir: slot, model: "fake/fake-model", frame: f.frame(missing)}, job, f.head)
+	_, err := installFrame(nativeRunConfig{slotDir: slot, model: "fake/fake-model", frame: f.frame(missing)}, job, f.head)
 
 	assert.ErrorIs(t, err, errReadStart, "an unresolved immutable base is a staging refusal")
 	assert.NoFileExists(t, filepath.Join(job, cardcontract.JobName), "no reader is told to diff against a nonexistent commit")
@@ -41,7 +41,7 @@ func TestReviewUnrelatedHistoriesKeepTheUnknownStartPolicy(t *testing.T) {
 	// No parent: the immutable base is a valid commit of an unrelated history.
 	base := gitAs(t, repo, "commit-tree", tree, "-m", "unrelated base")
 
-	err := installFrame(nativeRunConfig{slotDir: slot, model: "fake/fake-model", frame: f.frame(base)}, job, f.head)
+	_, err := installFrame(nativeRunConfig{slotDir: slot, model: "fake/fake-model", frame: f.frame(base)}, job, f.head)
 
 	require.NoError(t, err)
 	text, err := os.ReadFile(filepath.Join(job, cardcontract.JobName))

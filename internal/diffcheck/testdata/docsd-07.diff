@@ -1,0 +1,28 @@
+diff --git a/docs/SPEC-CAIRN.md b/docs/SPEC-CAIRN.md
+index 630d94f46..cf4884c2e 100644
+--- a/docs/SPEC-CAIRN.md
++++ b/docs/SPEC-CAIRN.md
+@@ -1,4 +1,4 @@
+-# nova-cairn — specification (bounded slice for #248)
++# nova-cairn — specification
+ 
+ `nova-cairn` is one binary at the **record layer**. It carries a session
+ across its end mechanically: it opens a session record, appends the friend's
+@@ -10,7 +10,7 @@ rule, `internal/oneline` and `internal/bounded` — applies here unchanged
+ and is not restated. Where this tool needs something the Conventions do not
+ cover, it is below and it says so.
+ 
+-This slice is a bounded contribution to draft #245, not its ratification.
++This slice is a bounded contribution, not a ratification.
+ The differences are stated here first, before any approval of that draft:
+ this tool imposes no memory lifecycle. There is deliberately no seal, no
+ consume, no delete, no grading, no consolidation, no liveness inference, no
+@@ -51,7 +51,7 @@ and `publish=unknown`. Ordinary prose without machine-form entry headings
+ is not an indexed entry. Invalid stamps, invalid entry identifiers and duplicate
+ entry headings refuse rather than produce an ambiguous receipt. The nested
+ record wins when a store holds both shapes for a session, which counts once. The hurt this is written from
+-(2026-09-18): an append into a bench store refused `no such session
++An append into a bench store refuses `no such session`
+ "b9395d11"; open first` with `cairns/b9395d11.md` in place, and running the
+ named remedy would have written a second record and split one session in
+ two. **A refusal names the remedy verb whole** — `open first: nova-cairn
