@@ -26,7 +26,7 @@ import (
 func TestVersionLineShape(t *testing.T) {
 	t.Parallel()
 	var out, errOut bytes.Buffer
-	code := cmdVersion(nil, &out, &errOut)
+	code := run([]string{"version"}, &out, &errOut)
 	require.Equal(t, 0, code, "exit %d, want 0\nstderr: %s", code, errOut.String())
 	assert.Zero(t, errOut.Len(), "wrote to stderr: %q", errOut.String())
 	line := out.String()
@@ -50,7 +50,7 @@ func TestVersionLineHoldsWhateverTheStampContains(t *testing.T) {
 	version = "v1.2.3\nnova-self-talk v9.9.9 linux/amd64 go1.0 extra"
 
 	var out, errOut bytes.Buffer
-	code := cmdVersion(nil, &out, &errOut)
+	code := run([]string{"version"}, &out, &errOut)
 	require.Equal(t, 0, code, "exit %d, want 0\nstderr: %s", code, errOut.String())
 	line := out.String()
 	require.Equal(t, 1, strings.Count(line, "\n"), "a stamped newline broke the line in two: %q", line)
@@ -66,7 +66,7 @@ func TestVersionIdentityIsTheStampWhenThereIsOne(t *testing.T) {
 	t.Cleanup(func() { version = saved })
 	version = "v9.9.9"
 	var out, errOut bytes.Buffer
-	code := cmdVersion(nil, &out, &errOut)
+	code := run([]string{"version"}, &out, &errOut)
 	require.Equal(t, 0, code, "exit %d, want 0\nstderr: %s", code, errOut.String())
 	got := strings.Fields(out.String())[1]
 	assert.Equal(t, "v9.9.9", got, "field 2 is the stamp: got %q", got)
@@ -76,10 +76,11 @@ func TestVersionRefusesFlagsAndArguments(t *testing.T) {
 	t.Parallel()
 	for _, args := range [][]string{{"--short"}, {"extra"}, {"--max", "0"}} {
 		var out, errOut bytes.Buffer
-		code := cmdVersion(args, &out, &errOut)
+		code := run(append([]string{"version"}, args...), &out, &errOut)
 		assert.Equal(t, 2, code, "%v: exit %d, want 2", args, code)
 		assert.Zero(t, out.Len(), "%v: a refusal printed a version line anyway: %q", args, out.String())
-		assert.Contains(t, errOut.String(), "takes no flags and no arguments", "%v: refusal does not say why: %q", args, errOut.String())
+		assert.Contains(t, errOut.String(), "REFUSED", "%v: refusal does not say why: %q", args, errOut.String())
+		assert.Contains(t, errOut.String(), "run: nova-self-talk", "%v: refusal names no door: %q", args, errOut.String())
 	}
 }
 

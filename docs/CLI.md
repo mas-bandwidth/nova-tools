@@ -244,9 +244,9 @@ are in [SPEC-CHECK.md](SPEC-CHECK.md).
 
 ```
 nova-self-talk [--skip <basename>]... [--rule-doc <basename>]... [--max <n>] [--json] <file>...
-nova-self-talk scan [flags] <file>...        the same scan, named as a verb
-nova-self-talk shapes [--json]               every shape and licence the scan uses
-nova-self-talk example [--dry-run] [--json] <dir>   write the two example pages into <dir>
+nova-self-talk scan [--skip <basename>]... [--rule-doc <basename>]... [--max <n>] [--json] <file>...
+nova-self-talk shapes [--json]
+nova-self-talk example [--dir <dir>] [--dry-run] [--json]
 nova-self-talk version
 nova-self-talk help [<verb>]
 ```
@@ -256,20 +256,18 @@ nova-self-talk help [<verb>]
 Name a file, or `-` for standard input. There is no directory walk. The first word is a verb only when it is `scan`, `shapes`, `example`, `version` or `help`; anything else is the first file, and a file named like a verb is given as `./scan`. The example pages are built into the binary; write them to a directory of yours first:
 
 ```
-nova-self-talk example ./pages
+nova-self-talk example --dir ./pages
 ```
 
 ```
 $ nova-self-talk ./pages/journal.md
-SELFTALK FAIL ./pages/journal.md:4: STANDING match="cannot check": I cannot check my own work, so the second read went to someone else.
-SELFTALK FAIL ./pages/journal.md:10: INSTALLATION RANKING match="worst habit I have": It is the worst habit I have, and the reason the checklist exists at all.
-SELFTALK DATED n=1 files=1
-SELFTALK FAIL files=1 claims=2 standing=1 installations=1 dated=1 shown=2
-SELFTALK NOTE catches known SHAPES only (list them: nova-self-talk shapes): register, irony and quoted-specimen context are invisible to grammar, and a quoted verdict is a true positive on the grammar and a false one on the meaning. A green clears the known shapes, never the file.
+SCAN FAILED files=1 claims=2 standing=1 installations=1 dated=1 shown=2 skipped=0
+SCAN DATED n=1 files=1
+SCAN NOTE catches known SHAPES only (list them: nova-self-talk shapes): register, irony and quoted-specimen context are invisible to grammar, and a quoted verdict is a true positive on the grammar and a false one on the meaning. A green clears the known shapes, never the file.
 
 $ nova-self-talk --rule-doc RULES.md ./pages/RULES.md ./pages/journal.md
-SELFTALK RULEDOC ./pages/RULES.md: rule documents: a finding here is a self-verdict to relocate, NEVER a reason to soften a rule
-SELFTALK FAIL ./pages/RULES.md:8: INSTALLATION VERDICT-IDIOM match="dead as a practice": A rule weakened to improve a score is dead as a practice: the score got better and the wall got thinner.
+SCAN RULEDOC file=./pages/RULES.md: rule documents: a finding here is a self-verdict to relocate, NEVER a reason to soften a rule
+SCAN INSTALLATION file=./pages/RULES.md line=8 shape=VERDICT-IDIOM match="dead as a practice" text="A rule weakened to improve a score is dead as a practice: the score got better and the wall got thinner."
 ```
 
 **Reading it.** Both runs exit 1, and that is the tool working: a finding is a sentence to date, cut, relocate or keep on purpose, and the judgment stays yours. `STANDING` is a first-person claim carrying a word of failure. `DATED` is such a claim carrying a date or a measurement word, which makes it a record; those are counted on one line, never quoted, because a tool that quoted six hundred welcome sentences was spending your context on the good news. `INSTALLATION` is the second class, with its shape (`RANKING`, `FORECLOSURE`, `VERDICT-IDIOM`, `TRAIT`) and a line number. `match=` is the words the shape's rule matched. `--max <n>` (default 20, `0` for all) bounds the finding lines; the count line prints either way. The `NOTE` prints on every run, green included. `--json` prints the same run as one JSON object on stdout.

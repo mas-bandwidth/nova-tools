@@ -3,62 +3,49 @@ package main
 import (
 	"bytes"
 	"embed"
-	"fmt"
-	"io"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/selftalk"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
+// shapeCatalogue is what `shapes -h` prints above its flags: every shape the
+// scan names, in the words a reader meets, so the help and the scan cannot
+// disagree about what a sentence is.
+const shapeCatalogue = `STANDING is a first-person claim with a word of failure: cannot check, bad at, worst, terrible at, cannot ever, fallible.
+RANKING, an INSTALLATION, is a self-superlative: I am the best, or my weakest instrument.
+FORECLOSURE, an INSTALLATION, is a door stated shut: I will never be a good planner, or I have no recall.
+VERDICT-IDIOM, an INSTALLATION, is a verdict on a practice: dead as a practice.
+TRAIT, an INSTALLATION, is a habit: I always overpromise, or I tend to rush.
+A dated claim, an instrument, an aspiration, an imperative and a quotation are licensed.`
+
 // cmdShapes prints the detector table the scan uses, row for row (selftalk.Rules): what each
 // row finds, how, one sentence it reports and one near miss it passes. It is the same table the
 // scan walks and the one its tests run, so the listing cannot claim a shape the scan misses.
-func cmdShapes(args []string, stdout, stderr io.Writer) int {
-	asJSON := verbflag.BoolAsked(args, "json")
-	fset := verbflag.New("shapes")
-	fset.Bool("json", false, "print the table as one JSON object on stdout instead of lines")
-	if err := verbflag.Parse(fset, args); err != nil {
-		return refuse(stdout, stderr, asJSON, "shapes", "", oneline.Cap(err.Error(), oneline.TailBytes)+"; the one flag is --json")
-	}
-	if fset.NArg() > 0 {
-		return refuse(stdout, stderr, asJSON, "shapes", "", fmt.Sprintf("takes no arguments, got %q", fset.Arg(0)))
-	}
+func cmdShapes(c *tool.Call) *tool.Out {
 	rules := selftalk.Rules()
 	count := map[string]int{}
 	for _, r := range rules {
 		count[r.Class]++
 	}
-	if asJSON {
-		o := tool.Done()
-		o.Verb = "shapes"
-		o.Fact("rows", len(rules)).Fact("standing", count["standing"]).
-			Fact("installation", count["installation"]).Fact("licensed", count["licensed"])
-		for _, r := range rules {
-			o.Item(r.Class, "shape", r.Name, "says", r.Says, "finds", r.Finds, "passes", r.Passes, "pattern", r.Pattern)
-		}
-		o.Render(stdout, true)
-		return 0
-	}
-	fmt.Fprintf(stdout, "SHAPES OK rows=%d standing=%d installation=%d licensed=%d\n",
-		len(rules), count["standing"], count["installation"], count["licensed"])
+	o := tool.Done().Fact("rows", len(rules)).Fact("standing", count["standing"]).
+		Fact("installation", count["installation"]).Fact("licensed", count["licensed"])
 	for _, r := range rules {
-		fmt.Fprintf(stdout, "SHAPES ROW class=%s shape=%s says=%q finds=%q passes=%q pattern=%q\n",
-			oneline.Field(r.Class), oneline.Field(r.Name), r.Says, r.Finds, r.Passes, r.Pattern)
+		o.Item("row", "class", r.Class, "shape", r.Name,
+			"says", tool.Text(r.Says), "finds", tool.Text(r.Finds),
+			"passes", tool.Text(r.Passes), "pattern", tool.Text(r.Pattern))
 	}
-	fmt.Fprintf(stdout, "SHAPES NOTE %s\n", shapesNote)
-	return 0
+	return o.Note(shapesNote)
 }
 
 // shapesNote says how to read a row, and where to try one.
 const shapesNote = "a standing or installation row reports its finds= sentence and not its passes= one; " +
 	"a licensed row's finds= is reported and its passes= is not, because of the licence. " +
-	"Try them: nova-self-talk example ./pages, then nova-self-talk ./pages/journal.md"
+	"Try them: nova-self-talk example --dir ./pages, then nova-self-talk ./pages/journal.md"
 
 // pages are the two example pages, inside the binary, so a first run needs nothing but it.
 //
@@ -68,35 +55,22 @@ var pages embed.FS
 // cmdExample writes the example pages into a directory of the caller's: a local write and the
 // only write this tool makes. A page already there with the same bytes is kept; one with other
 // bytes is never replaced, and the run refuses before writing anything.
-func cmdExample(args []string, stdout, stderr io.Writer) int {
-	asJSON := verbflag.BoolAsked(args, "json")
-	fset := verbflag.New("example")
-	dry := fset.Bool("dry-run", false, "print what would be written and write nothing")
-	fset.Bool("json", false, "print the result as one JSON object on stdout instead of a line")
-	if err := verbflag.Parse(fset, args); err != nil {
-		return refuse(stdout, stderr, asJSON, "example", "", oneline.Cap(err.Error(), oneline.TailBytes)+"; the flags are --dry-run, --json")
-	}
-	if fset.NArg() != 1 {
-		return refuse(stdout, stderr, asJSON, "example", "",
-			fmt.Sprintf("takes one directory to write the pages into, got %d arguments: nova-self-talk example ./pages", fset.NArg()))
-	}
-	dir := fset.Arg(0)
+func cmdExample(c *tool.Call) *tool.Out {
+	dry := c.DryRun()
+	dir := c.Str("dir")
 	if oneline.Escape(dir) != dir {
-		return refuse(stdout, stderr, asJSON, "example", "",
-			"directory path contains characters the one-line output must escape, so its follow-up command would not name the same path")
+		return tool.Refuse("directory path contains characters the one-line output must escape, so its follow-up command would not name the same path")
 	}
 	entries, err := pages.ReadDir("testdata/example-pages")
 	if err != nil {
-		return refuse(stdout, stderr, asJSON, "example", "", "the pages built into this binary cannot be read: "+err.Error())
+		return tool.Refuse("the pages built into this binary cannot be read: " + err.Error())
 	}
-	// Every problem is found before anything is written; the strings are concatenated, and
-	// refuse escapes each one where it prints it.
 	var write, kept, problems []string
 	bodies := map[string][]byte{}
 	for _, e := range entries {
 		body, err := pages.ReadFile(path.Join("testdata/example-pages", e.Name()))
 		if err != nil {
-			return refuse(stdout, stderr, asJSON, "example", "", "the pages built into this binary cannot be read: "+err.Error())
+			return tool.Refuse("the pages built into this binary cannot be read: " + err.Error())
 		}
 		target := filepath.Join(dir, e.Name())
 		switch have, err := os.ReadFile(target); {
@@ -111,37 +85,34 @@ func cmdExample(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	if len(problems) > 0 {
-		return refuse(stdout, stderr, asJSON, "example", "", problems...)
+		return tool.Refuse(problems...)
 	}
-	if !*dry {
+	if !dry {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return refuse(stdout, stderr, asJSON, "example", "", "cannot make "+oneline.Quote(dir)+": "+reason(err))
+			return tool.Refuse("cannot make " + oneline.Quote(dir) + ": " + reason(err))
 		}
 		for _, name := range write {
 			if err := os.WriteFile(filepath.Join(dir, name), bodies[name], 0o644); err != nil {
-				return refuse(stdout, stderr, asJSON, "example", "", "cannot write "+oneline.Quote(filepath.Join(dir, name))+": "+reason(err))
+				return tool.Refuse("cannot write " + oneline.Quote(filepath.Join(dir, name)) + ": " + reason(err))
 			}
 		}
 	}
 	wrote, next := "wrote", exampleNext("", filepath.Join(dir, "journal.md"))
-	if *dry {
+	if dry {
 		wrote, next = "would-write", exampleNext("example", dir)
 	}
-	if asJSON {
-		o := tool.Done()
-		o.Verb, o.Remedy = "example", next
-		o.Fact("dir", dir).Fact(wrote, strings.Join(write, ",")).Fact("kept", strings.Join(kept, ","))
-		o.Render(stdout, true)
-		return 0
-	}
-	fmt.Fprintf(stdout, "EXAMPLE OK dir=%s %s=%s kept=%s; run: %s\n", oneline.Field(dir), oneline.Field(wrote),
-		oneline.Field(dash(strings.Join(write, ","))), oneline.Field(dash(strings.Join(kept, ","))), oneline.Escape(next))
-	return 0
+	o := tool.Done().Fact("dir", dir).Fact(wrote, strings.Join(write, ",")).Fact("kept", strings.Join(kept, ","))
+	o.Remedy = next
+	return o
 }
 
 // exampleNext implements SPEC.md §2's runnable next-command rule: it keeps the path one
-// POSIX-shell argument, and ends flags when the path begins with a dash.
+// POSIX-shell argument, and ends flags when the path begins with a dash. The example
+// verb's directory is --dir, because a verb that is not the default takes no positionals.
 func exampleNext(verb, file string) string {
+	if verb == "example" {
+		return "nova-self-talk example --dir=" + shellQuote(file)
+	}
 	command := "nova-self-talk"
 	if verb != "" {
 		command += " " + verb
@@ -169,12 +140,4 @@ func shellQuote(s string) string {
 		}
 	}
 	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
-}
-
-// dash is a field's empty value as the typed line spells it.
-func dash(s string) string {
-	if s == "" {
-		return "-"
-	}
-	return s
 }

@@ -28,22 +28,23 @@ func TestEveryShapeTheHelpNamesIsFound(t *testing.T) {
 		{"terrible at", "I am terrible at estimates.", "STANDING"},
 		{"cannot ever", "I cannot ever get this right.", "STANDING"},
 		{"fallible", "I am fallible.", "STANDING"},
-		{"RANKING: I am the best", "I am the best reviewer here.", "INSTALLATION RANKING"},
-		{"my\n                     weakest instrument", "Recall, my weakest instrument, failed again.", "INSTALLATION RANKING"},
-		{"FORECLOSURE: I will never be\n                     a good planner", "I will never be a good planner.", "INSTALLATION FORECLOSURE"},
-		{"I have no recall", "I have no recall of yesterday.", "INSTALLATION FORECLOSURE"},
-		{"(VERDICT-IDIOM: dead as a practice)", "Known as a proposition, dead as a practice.", "INSTALLATION VERDICT-IDIOM"},
-		{"TRAIT: I always\n                     overpromise", "I always overpromise.", "INSTALLATION TRAIT"},
-		{"I tend to rush", "I tend to rush.", "INSTALLATION TRAIT"},
+		{"I am the best", "I am the best reviewer here.", "RANKING"},
+		{"weakest instrument", "Recall, my weakest instrument, failed again.", "RANKING"},
+		{"I will never be a good planner", "I will never be a good planner.", "FORECLOSURE"},
+		{"I have no recall", "I have no recall of yesterday.", "FORECLOSURE"},
+		{"dead as a practice", "Known as a proposition, dead as a practice.", "VERDICT-IDIOM"},
+		{"I always overpromise", "I always overpromise.", "TRAIT"},
+		{"I tend to rush", "I tend to rush.", "TRAIT"},
 	} {
 		t.Run(tc.sentence, func(t *testing.T) {
 			t.Parallel()
-			assert.Contains(t, usage, tc.named, "the banner no longer names this shape; drop the row or restore the words")
+			assert.Contains(t, shapeCatalogue, tc.named, "the banner no longer names this shape; drop the row or restore the words")
 			f := write(t, t.TempDir(), "page.md", tc.sentence+"\n")
 			exit, _, stderr := runSelfTalk(t, f)
 			assert.Equal(t, 1, exit)
-			assert.Equal(t, 1, strings.Count(stderr, "SELFTALK FAIL "), "one finding, not two: %s", stderr)
-			assert.Contains(t, stderr, ":1: "+tc.want+" match=")
+			assert.Equal(t, 1, strings.Count(stderr, " match="), "one finding, not two: %s", stderr)
+			assert.Contains(t, stderr, "line=1")
+			assert.Contains(t, stderr, "shape="+tc.want)
 		})
 	}
 }
@@ -65,7 +66,7 @@ func TestWhatTheHelpLicensesIsNotFound(t *testing.T) {
 			f := write(t, t.TempDir(), "page.md", in+"\n")
 			exit, stdout, stderr := runSelfTalk(t, f)
 			assert.Equal(t, 0, exit, "stderr: %s", stderr)
-			assert.Contains(t, stdout, "SELFTALK OK files=1")
+			assert.Contains(t, stdout, "SCAN OK files=1")
 		})
 	}
 }
@@ -84,7 +85,7 @@ func TestRuleDocBannerCoversEveryClass(t *testing.T) {
 			f := write(t, t.TempDir(), "POLICY.md", tc.body)
 			exit, stdout, _ := runSelfTalk(t, "--rule-doc", "POLICY.md", f)
 			assert.Equal(t, 1, exit)
-			assert.Contains(t, stdout, "SELFTALK RULEDOC "+f+": "+selftalk.RuleDocumentBanner)
+			assert.Contains(t, stdout, "SCAN RULEDOC file="+f+": "+selftalk.RuleDocumentBanner)
 
 			exit, stdout, _ = runSelfTalk(t, "--json", "--rule-doc", "POLICY.md", f)
 			assert.Equal(t, 1, exit)
@@ -108,8 +109,9 @@ func TestRuleDocBannerCoversEveryClass(t *testing.T) {
 func TestEveryVerbsUsageLineNamesItsFlags(t *testing.T) {
 	t.Parallel()
 
+	_, banner, _ := runSelfTalk(t, "help")
 	usageLine := func(prefix string) string {
-		for _, l := range strings.Split(usage, "\n") {
+		for _, l := range strings.Split(banner, "\n") {
 			if l = strings.TrimSpace(l); strings.HasPrefix(l, prefix) {
 				return l
 			}
@@ -120,7 +122,7 @@ func TestEveryVerbsUsageLineNamesItsFlags(t *testing.T) {
 		"scan":    "nova-self-talk [--", // the scan's flags stand on the plain usage line
 		"shapes":  "nova-self-talk shapes ",
 		"example": "nova-self-talk example ",
-		"version": "nova-self-talk version ",
+		"version": "nova-self-talk version",
 	} {
 		t.Run(verb, func(t *testing.T) {
 			t.Parallel()
@@ -132,6 +134,9 @@ func TestEveryVerbsUsageLineNamesItsFlags(t *testing.T) {
 			for _, l := range strings.Split(flags, "\n") {
 				if name, ok := strings.CutPrefix(l, "  --"); ok {
 					name, _, _ = strings.Cut(name, " ")
+					if verb == "version" && name == "json" {
+						continue // the skeleton owns version's usage line and names --json in the banner sentence
+					}
 					assert.Contains(t, line, "[--"+name, "%s registers --%s and its usage line does not name it: %s", verb, name, line)
 				}
 			}
@@ -175,7 +180,8 @@ func TestAFindingNamesTheWordsThatMatched(t *testing.T) {
 
 	f := write(t, t.TempDir(), "page.md", "I am bad at estimating time.\n")
 	_, _, stderr := runSelfTalk(t, f)
-	assert.Contains(t, stderr, `:1: STANDING match="bad at": I am bad at estimating time.`)
+	assert.Contains(t, stderr, `line=1 shape=STANDING match="bad at"`)
+	assert.Contains(t, stderr, `I am bad at estimating time.`)
 }
 
 // --json is the same run as one JSON object on stdout (ledger T7): the facts are the closing
@@ -204,15 +210,16 @@ func TestJSONIsTheSameRunAsTheLines(t *testing.T) {
 	assert.Equal(t, "failed", got.Result.Status)
 	assert.Equal(t, 1, got.Result.Exit)
 	assert.Equal(t, map[string]int{"files": 1, "skipped": 0, "claims": 2, "standing": 1, "installations": 1, "dated": 1, "shown": 2}, got.Facts)
-	require.Len(t, got.Items, 2)
+	require.Len(t, got.Items, 3) // two findings and the dated count, one value
 	assert.Equal(t, "standing", got.Items[0].Kind)
 	assert.Equal(t, "cannot check", got.Items[0].Fields["match"])
 	assert.Equal(t, "RANKING", got.Items[1].Fields["shape"])
 	assert.EqualValues(t, 5, got.Items[1].Fields["line"])
+	assert.Equal(t, "dated", got.Items[2].Kind)
 	assert.Len(t, got.Notes, 1)
 
 	_, lines, _ := runSelfTalk(t, f)
-	assert.Contains(t, lines, "SELFTALK FAIL files=1 claims=2 standing=1 installations=1 dated=1 shown=2")
+	assert.Contains(t, lines, "SCAN FAILED files=1 claims=2 standing=1 installations=1 dated=1 shown=2")
 
 	exit, stdout, stderr = runSelfTalk(t, "--json")
 	assert.Equal(t, 2, exit)
@@ -228,11 +235,13 @@ func TestDashReadsStandardInput(t *testing.T) {
 	var out, errb bytes.Buffer
 	exit := runStdin([]string{"-"}, strings.NewReader("# Journal\nI am bad at estimating time.\n"), &out, &errb)
 	assert.Equal(t, 1, exit)
-	assert.Contains(t, errb.String(), `SELFTALK FAIL -:2: STANDING match="bad at": I am bad at estimating time.`)
+	assert.Contains(t, errb.String(), `file=- line=2 shape=STANDING match="bad at"`)
+	assert.Contains(t, errb.String(), `I am bad at estimating time.`)
 }
 
-// The first word is a verb only when it is one; `help <anything>` is help, `scan` is the scan,
-// and a bare word that is no file names the verbs (ledger T6, X3).
+// The first word is a verb only when it is one. `help` is the banner, `help <verb>` is
+// that verb's help, and `help <unknown>` is the skeleton's refusal of a word that is
+// no verb and no file. A bare word that is no file names the verbs (ledger T6, X3).
 func TestAWordThatLooksLikeAVerb(t *testing.T) {
 	t.Parallel()
 
@@ -241,13 +250,15 @@ func TestAWordThatLooksLikeAVerb(t *testing.T) {
 	assert.Equal(t, 1, exit)
 	assert.Contains(t, stderr, "STANDING")
 
-	for _, args := range [][]string{{"help", "foo"}, {"help", "foo", "bar"}, {"help"}} {
-		exit, stdout, _ := runSelfTalk(t, args...)
-		assert.Equal(t, 0, exit, args)
-		assert.True(t, strings.HasPrefix(stdout, "nova-self-talk: flags sentences"), args)
-	}
+	exit, stdout, _ := runSelfTalk(t, "help")
+	assert.Equal(t, 0, exit)
+	assert.True(t, strings.HasPrefix(stdout, "nova-self-talk: flags sentences"))
+	// help <unknown> is that word's -h, and an unknown word is no verb: the skeleton refuses it.
+	exit, _, stderr = runSelfTalk(t, "help", "foo")
+	assert.Equal(t, 2, exit)
+	assert.Contains(t, stderr, "no verb and no file")
 
-	exit, stdout, _ := runSelfTalk(t, "help", "example")
+	exit, stdout, _ = runSelfTalk(t, "help", "example")
 	assert.Equal(t, 0, exit)
 	assert.Contains(t, stdout, "--dry-run")
 	assert.Contains(t, stdout, "effect: local write")
@@ -260,8 +271,10 @@ func TestAWordThatLooksLikeAVerb(t *testing.T) {
 
 	exit, _, stderr = runSelfTalk(t, "scna", f)
 	assert.Equal(t, 2, exit)
-	assert.Contains(t, stderr, `nova-self-talk REFUSED: cannot read "scna": `)
-	assert.Contains(t, stderr, "it is not a verb either (the verbs are scan, shapes, example, version, help; a file of that name is ./scna); run: nova-self-talk help")
+	assert.Contains(t, stderr, `"scna" is no verb and no file`)
+	assert.Contains(t, stderr, "did you mean scan?")
+	assert.Contains(t, stderr, "a file is given by its path (./scna)")
+	assert.Contains(t, stderr, "run: nova-self-talk help")
 }
 
 // One run names every problem it can find, each on a REFUSED line with the door (X4), and an
@@ -272,11 +285,15 @@ func TestEveryProblemIsNamedAtOnceInTheRefusalGrammar(t *testing.T) {
 	exit, stdout, stderr := runSelfTalk(t, "--max", "-1")
 	assert.Equal(t, 2, exit)
 	assert.Empty(t, stdout)
-	assert.Contains(t, stderr, "nova-self-talk REFUSED: --max must be a line ceiling of zero or more (got -1)")
-	assert.Contains(t, stderr, "nova-self-talk REFUSED: no files named; refusing to guess; run: nova-self-talk help")
+	assert.Contains(t, stderr, "--max must be zero or more (got -1)")
+	assert.Contains(t, stderr, "no files named; refusing to guess")
+	assert.Contains(t, stderr, "run: nova-self-talk help")
 
 	_, _, stderr = runSelfTalk(t, "--zzz", "a.md")
-	assert.Equal(t, "nova-self-talk REFUSED: unknown flag -zzz; the flags are --skip, --rule-doc, --max, --json; run: nova-self-talk help\n", stderr)
+	assert.Contains(t, stderr, "unknown flag --zzz")
+	assert.Contains(t, stderr, "--skip")
+	assert.Contains(t, stderr, "--json")
+	assert.Contains(t, stderr, "run: nova-self-talk scan -h")
 }
 
 // `example` writes the pages built into the binary (X6): a first run needs no checkout. A page
@@ -285,12 +302,12 @@ func TestExampleWritesThePagesFromTheBinary(t *testing.T) {
 	t.Parallel()
 
 	dir := filepath.Join(t.TempDir(), "pages")
-	exit, stdout, stderr := runSelfTalk(t, "example", "--dry-run", dir)
+	exit, stdout, stderr := runSelfTalk(t, "example", "--dry-run", "--dir", dir)
 	require.Equal(t, 0, exit, stderr)
 	assert.Contains(t, stdout, "would-write=RULES.md,journal.md")
 	assert.NoDirExists(t, dir)
 
-	exit, stdout, stderr = runSelfTalk(t, "example", dir)
+	exit, stdout, stderr = runSelfTalk(t, "example", "--dir", dir)
 	require.Equal(t, 0, exit, stderr)
 	assert.Contains(t, stdout, "EXAMPLE OK dir=")
 	assert.Contains(t, stdout, "wrote=RULES.md,journal.md kept=-; run: nova-self-talk "+filepath.Join(dir, "journal.md"))
@@ -300,22 +317,24 @@ func TestExampleWritesThePagesFromTheBinary(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, want, got)
 
-	exit, stdout, _ = runSelfTalk(t, "example", dir)
+	exit, stdout, _ = runSelfTalk(t, "example", "--dir", dir)
 	assert.Equal(t, 0, exit)
 	assert.Contains(t, stdout, "wrote=- kept=RULES.md,journal.md")
 
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "RULES.md"), []byte("mine\n"), 0o644))
-	exit, _, stderr = runSelfTalk(t, "example", dir)
+	exit, _, stderr = runSelfTalk(t, "example", "--dir", dir)
 	assert.Equal(t, 2, exit)
-	assert.Contains(t, stderr, "nova-self-talk example REFUSED: ")
-	assert.Contains(t, stderr, "exists with other content and is never replaced; name an empty directory; run: nova-self-talk help example")
+	assert.Contains(t, stderr, "EXAMPLE REFUSED: ")
+	assert.Contains(t, stderr, "exists with other content and is never replaced; name an empty directory")
+	assert.Contains(t, stderr, "run: nova-self-talk help")
 	mine, err := os.ReadFile(filepath.Join(dir, "RULES.md"))
 	require.NoError(t, err)
 	assert.Equal(t, "mine\n", string(mine))
 
 	exit, _, stderr = runSelfTalk(t, "example")
 	assert.Equal(t, 2, exit)
-	assert.Contains(t, stderr, "takes one directory to write the pages into, got 0 arguments: nova-self-talk example ./pages")
+	assert.Contains(t, stderr, "--dir is required")
+	assert.Contains(t, stderr, "nova-self-talk example --dir ./pages")
 }
 
 // The command example points to must survive shell parsing as one literal path, including a
@@ -330,9 +349,9 @@ func TestExampleNextQuotesPathAsOneShellArgument(t *testing.T) {
 		{"ordinary path", "", "pages/journal.md", []string{"nova-self-talk", "pages/journal.md"}},
 		{"spaces", "", "pages/my journal.md", []string{"nova-self-talk", "pages/my journal.md"}},
 		{"apostrophe", "", "pages/O'Brien.md", []string{"nova-self-talk", "pages/O'Brien.md"}},
-		{"literal shell syntax", "example", "pages/$HOME;$(touch marker).md", []string{"nova-self-talk", "example", "pages/$HOME;$(touch marker).md"}},
+		{"literal shell syntax", "example", "pages/$HOME;$(touch marker).md", []string{"nova-self-talk", "example", "--dir=pages/$HOME;$(touch marker).md"}},
 		{"leading dash", "", "-pages/journal.md", []string{"nova-self-talk", "--", "-pages/journal.md"}},
-		{"leading dash directory", "example", "-pages", []string{"nova-self-talk", "example", "--", "-pages"}},
+		{"leading dash directory", "example", "-pages", []string{"nova-self-talk", "example", "--dir=-pages"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -348,7 +367,7 @@ func TestExampleEmitsRunnableNextCommandInBothFormats(t *testing.T) {
 	t.Parallel()
 
 	dir := filepath.Join(t.TempDir(), "O'Brien $HOME;$(touch marker) pages")
-	exit, text, stderr := runSelfTalk(t, "example", dir)
+	exit, text, stderr := runSelfTalk(t, "example", "--dir", dir)
 	require.Equal(t, 0, exit, stderr)
 	_, next, found := strings.Cut(strings.TrimSpace(text), "; run: ")
 	require.True(t, found, text)
@@ -357,7 +376,7 @@ func TestExampleEmitsRunnableNextCommandInBothFormats(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, want, got)
 
-	exit, raw, stderr := runSelfTalk(t, "example", "--json", dir)
+	exit, raw, stderr := runSelfTalk(t, "example", "--json", "--dir", dir)
 	require.Equal(t, 0, exit, stderr)
 	var result struct {
 		Result struct {
@@ -397,7 +416,7 @@ func TestExampleRefusesControlCharactersBeforeWriting(t *testing.T) {
 					if asJSON {
 						args = append(args, "--json")
 					}
-					args = append(args, dir)
+					args = append(args, "--dir", dir)
 					exit, stdout, stderr := runSelfTalk(t, args...)
 					assert.Equal(t, 2, exit)
 					if asJSON {

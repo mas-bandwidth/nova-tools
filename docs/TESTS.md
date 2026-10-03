@@ -335,28 +335,28 @@ lost one would be hiding the thing the tool exists to say.
 
 ```
 $ nova-self-talk ./pages/journal.md   # Stderr: whole
-! SELFTALK FAIL ./pages/journal.md:4: STANDING match="cannot check": I cannot check my own work, so the second read went to someone else.
-! SELFTALK FAIL ./pages/journal.md:10: INSTALLATION RANKING match="worst habit I have": It is the worst habit I have, and the reason the checklist exists at all.
-SELFTALK DATED n=1 files=1
-SELFTALK FAIL files=1 claims=2 standing=1 installations=1 dated=1 shown=2
-SELFTALK NOTE catches known SHAPES only (list them: nova-self-talk shapes): register, irony and quoted-specimen context are invisible to grammar, and a quoted verdict is a true positive on the grammar and a false one on the meaning. A green clears the known shapes, never the file.
+SCAN FAILED files=1 claims=2 standing=1 installations=1 dated=1 shown=2 skipped=0
+SCAN DATED n=1 files=1
+SCAN NOTE catches known SHAPES only (list them: nova-self-talk shapes): register, irony and quoted-specimen context are invisible to grammar, and a quoted verdict is a true positive on the grammar and a false one on the meaning. A green clears the known shapes, never the file.
+! SCAN STANDING file=./pages/journal.md line=4 shape=STANDING match="cannot check" text="I cannot check my own work, so the second read went to someone else."
+! SCAN INSTALLATION file=./pages/journal.md line=10 shape=RANKING match="worst habit I have" text="It is the worst habit I have, and the reason the checklist exists at all."
 
 $ nova-self-talk --rule-doc RULES.md ./pages/RULES.md ./pages/journal.md   # Stderr: whole
-SELFTALK RULEDOC ./pages/RULES.md: rule documents: a finding here is a self-verdict to relocate, NEVER a reason to soften a rule
-! SELFTALK FAIL ./pages/RULES.md:8: INSTALLATION VERDICT-IDIOM match="dead as a practice": A rule weakened to improve a score is dead as a practice: the score got better and the wall got thinner.
-! SELFTALK FAIL ./pages/journal.md:4: STANDING match="cannot check": I cannot check my own work, so the second read went to someone else.
-! SELFTALK FAIL ./pages/journal.md:10: INSTALLATION RANKING match="worst habit I have": It is the worst habit I have, and the reason the checklist exists at all.
-SELFTALK DATED n=1 files=2
-SELFTALK FAIL files=2 claims=2 standing=1 installations=2 dated=1 shown=3
-SELFTALK NOTE catches known SHAPES only (list them: nova-self-talk shapes): register, irony and quoted-specimen context are invisible to grammar, and a quoted verdict is a true positive on the grammar and a false one on the meaning. A green clears the known shapes, never the file.
+SCAN FAILED files=2 claims=2 standing=1 installations=2 dated=1 shown=3 skipped=0
+SCAN RULEDOC file=./pages/RULES.md: rule documents: a finding here is a self-verdict to relocate, NEVER a reason to soften a rule
+SCAN DATED n=1 files=2
+SCAN NOTE catches known SHAPES only (list them: nova-self-talk shapes): register, irony and quoted-specimen context are invisible to grammar, and a quoted verdict is a true positive on the grammar and a false one on the meaning. A green clears the known shapes, never the file.
+! SCAN INSTALLATION file=./pages/RULES.md line=8 shape=VERDICT-IDIOM match="dead as a practice" text="A rule weakened to improve a score is dead as a practice: the score got better and the wall got thinner."
+! SCAN STANDING file=./pages/journal.md line=4 shape=STANDING match="cannot check" text="I cannot check my own work, so the second read went to someone else."
+! SCAN INSTALLATION file=./pages/journal.md line=10 shape=RANKING match="worst habit I have" text="It is the worst habit I have, and the reason the checklist exists at all."
 
 $ nova-self-talk --skip RULES.md ./pages/RULES.md ./pages/journal.md   # Stderr: whole
-SELFTALK SKIP ./pages/RULES.md (--skip)
-! SELFTALK FAIL ./pages/journal.md:4: STANDING match="cannot check": I cannot check my own work, so the second read went to someone else.
-! SELFTALK FAIL ./pages/journal.md:10: INSTALLATION RANKING match="worst habit I have": It is the worst habit I have, and the reason the checklist exists at all.
-SELFTALK DATED n=1 files=1
-SELFTALK FAIL files=1 claims=2 standing=1 installations=1 dated=1 shown=2
-SELFTALK NOTE catches known SHAPES only (list them: nova-self-talk shapes): register, irony and quoted-specimen context are invisible to grammar, and a quoted verdict is a true positive on the grammar and a false one on the meaning. A green clears the known shapes, never the file.
+SCAN FAILED files=1 claims=2 standing=1 installations=1 dated=1 shown=2 skipped=1
+SCAN SKIP file=./pages/RULES.md: (--skip)
+SCAN DATED n=1 files=1
+SCAN NOTE catches known SHAPES only (list them: nova-self-talk shapes): register, irony and quoted-specimen context are invisible to grammar, and a quoted verdict is a true positive on the grammar and a false one on the meaning. A green clears the known shapes, never the file.
+! SCAN STANDING file=./pages/journal.md line=4 shape=STANDING match="cannot check" text="I cannot check my own work, so the second read went to someone else."
+! SCAN INSTALLATION file=./pages/journal.md line=10 shape=RANKING match="worst habit I have" text="It is the worst habit I have, and the reason the checklist exists at all."
 ```
 
 ## nova-fuse

@@ -33,7 +33,7 @@ func TestThePlainestFirstPersonAbsolutesAreCaught(t *testing.T) {
 	assert.Equal(t, 1, got, "want exit 1 (at least one of the three plainest absolutes is caught), got %d\nstdout: %s\nstderr: %s",
 		got, stdout.String(), stderr.String())
 	assert.NotContains(t, stdout.String(), "claims=0", "the bug is reproduced: stdout = %q, want claims > 0", stdout.String())
-	assert.Contains(t, stderr.String(), "SELFTALK FAIL", "want at least one SELFTALK FAIL line for one of the three lines, got stderr = %q", stderr.String())
+	assert.Contains(t, stderr.String(), "shape=STANDING", "want at least one standing finding for one of the three lines, got stderr = %q", stderr.String())
 
 	for _, specimen := range []string{
 		"I cannot ever get this right.\n",

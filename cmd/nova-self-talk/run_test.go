@@ -10,3 +10,8 @@ import (
 func run(args []string, stdout, stderr io.Writer) int {
 	return runStdin(args, strings.NewReader(""), stdout, stderr)
 }
+
+// runStdin is one invocation of the tool, the arguments and the streams named by the caller.
+func runStdin(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	return selfTalk(args).Run(args, stdin, stdout, stderr)
+}

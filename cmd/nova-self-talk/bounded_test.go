@@ -44,15 +44,15 @@ func TestScanCapsFindingsAndCountsTheDated(t *testing.T) {
 	exit, stdout, stderr := runSelfTalk(t, page)
 	require.Equal(t, 1, exit, "exit = %d, want 1; stderr: %s", exit, stderr)
 	got := countLines(stderr)
-	assert.Equal(t, bounded.Default+1, got, "stderr is %d lines, want %d findings + one MORE line", got, bounded.Default)
-	assert.Contains(t, stderr, "SELFTALK MORE kind=standing shown=20 total=600", "no MORE line naming the total:\n%s", stderr)
+	assert.Equal(t, bounded.Default, got, "stderr is %d lines, want %d findings; MORE is on stdout", got, bounded.Default)
+	assert.Contains(t, stdout, "SCAN MORE kind=standing shown=20 total=600", "no MORE line naming the total:\n%s", stdout)
 	// THE WELCOME CASE IS A COUNT. Six hundred dated claims are one line.
-	assert.Contains(t, stdout, "SELFTALK DATED n=600 files=1", "the dated claims are not counted: %s", stdout)
-	assert.NotContains(t, stdout, "SELFTALK DATED "+page, "a dated claim is still quoted")
+	assert.Contains(t, stdout, "SCAN DATED n=600 files=1", "the dated claims are not counted: %s", stdout)
+	assert.NotContains(t, stdout, "SCAN DATED file="+page, "a dated claim is still quoted")
 	assert.Contains(t, stdout, "standing=600", "no count line on failure: %s", stdout)
-	// stdout: the DATED count, the FAIL count, the NOTE.
+	// stdout: the summary, the DATED count, the MORE line, the NOTE.
 	got = countLines(stdout)
-	assert.Equal(t, 3, got, "stdout is %d lines, want 3 (dated count, count line, NOTE):\n%s", got, stdout)
+	assert.Equal(t, 4, got, "stdout is %d lines, want 4 (summary, dated count, MORE, NOTE):\n%s", got, stdout)
 }
 
 // The two classes are capped separately, for the same reason the classes exist: the
@@ -68,23 +68,24 @@ func TestScanCapsEachClassSeparately(t *testing.T) {
 	b.WriteString("It is the worst habit I have, and the reason the checklist exists at all.\n")
 	path := filepath.Join(t.TempDir(), "journal.md")
 	require.NoError(t, os.WriteFile(path, []byte(b.String()), 0o644))
-	_, _, stderr := runSelfTalk(t, path)
+	_, stdout, stderr := runSelfTalk(t, path)
 	require.Contains(t, stderr, "INSTALLATION", "the buried class never printed:\n%s", stderr)
-	assert.Contains(t, stderr, "SELFTALK MORE kind=standing", "the loud class was not capped:\n%s", stderr)
-	assert.NotContains(t, stderr, "SELFTALK MORE kind=installation", "the quiet class was capped though it had one finding:\n%s", stderr)
+	assert.Contains(t, stdout, "SCAN MORE kind=standing", "the loud class was not capped:\n%s", stdout)
+	assert.NotContains(t, stdout, "SCAN MORE kind=installation", "the quiet class was capped though it had one finding:\n%s", stdout)
 }
 
 func TestMaxWidensAndZeroPrintsAll(t *testing.T) {
 	t.Parallel()
 
 	page := largePage(t, 600, 0)
-	_, _, stderr := runSelfTalk(t, "--max", "5", page)
+	_, stdout, stderr := runSelfTalk(t, "--max", "5", page)
 	got := countLines(stderr)
-	assert.Equal(t, 6, got, "--max 5 gave %d lines, want 5 + MORE", got)
-	_, _, stderr = runSelfTalk(t, "--max", "0", page)
+	assert.Equal(t, 5, got, "--max 5 gave %d finding lines, want 5; MORE is on stdout", got)
+	assert.Contains(t, stdout, "SCAN MORE kind=standing shown=5 total=600", "stdout = %s", stdout)
+	_, stdout, stderr = runSelfTalk(t, "--max", "0", page)
 	got = countLines(stderr)
 	assert.Equal(t, 600, got, "--max 0 gave %d lines, want all 600", got)
-	assert.NotContains(t, stderr, "SELFTALK MORE", "--max 0 elided nothing and must print no MORE line")
+	assert.NotContains(t, stdout, "SCAN MORE", "--max 0 elided nothing and must print no MORE line")
 }
 
 func TestRefusesANegativeCeiling(t *testing.T) {
@@ -93,7 +94,7 @@ func TestRefusesANegativeCeiling(t *testing.T) {
 	page := largePage(t, 2, 0)
 	exit, _, stderr := runSelfTalk(t, "--max", "-1", page)
 	assert.Equal(t, 2, exit, "exit = %d, stderr = %q", exit, stderr)
-	assert.Contains(t, stderr, "--max must be a line ceiling", "exit = %d, stderr = %q", exit, stderr)
+	assert.Contains(t, stderr, "--max must be zero or more", "exit = %d, stderr = %q", exit, stderr)
 }
 
 // A flag typo used to cost the whole 40-line banner. It costs one line, plus the one
@@ -109,7 +110,7 @@ func TestARefusalIsAtMostTwoLinesAndNamesTheDoor(t *testing.T) {
 		assert.Equal(t, 2, exit, "%v: exit = %d, want 2", args, exit)
 		got := countLines(stderr)
 		assert.LessOrEqual(t, got, 2, "%v: the refusal is %d lines, want at most 2:\n%s", args, got, stderr)
-		assert.Contains(t, stderr, "run: nova-self-talk help", "%v: the refusal names no door: %q", args, stderr)
+		assert.Contains(t, stderr, "run: nova-self-talk", "%v: the refusal names no door: %q", args, stderr)
 		assert.Empty(t, stdout, "%v: a refusal wrote to stdout: %q", args, stdout)
 	}
 	exit, stdout, _ := runSelfTalk(t, "help")

@@ -71,7 +71,7 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 			continue
 		}
 		assert.Equal(t, 1, exit, "the usage example %q exits %d; the fixture pages carry findings, so an example that stopped flagging them has drifted", ex, exit)
-		assert.Contains(t, stdout, "SELFTALK NOTE", "the usage example %q printed no NOTE; every completed run carries it\nstdout: %s", ex, stdout)
+		assert.Contains(t, stdout, "SCAN NOTE", "the usage example %q printed no NOTE; every completed run carries it\nstdout: %s", ex, stdout)
 	}
 }
 
@@ -84,7 +84,7 @@ func TestARefusalSaysWhatTheInputWants(t *testing.T) {
 		args []string
 		want string
 	}{
-		{"no files named", nil, filesHint},
+		{"no files named", []string{"scan"}, filesHint},
 		{"a path where a basename belongs", []string{"--skip", "memory/RULES.md", "x.md"}, "the match is on the file's name wherever it sits"},
 		{"an empty basename", []string{"--rule-doc", "", "x.md"}, baseHint},
 	}
@@ -114,8 +114,9 @@ func TestEveryUnreadableFileIsNamedInOneRun(t *testing.T) {
 	}
 	// And nothing was scanned: a run that printed findings and then refused
 	// would be reporting findings from a run that did not happen.
-	assert.NotContains(t, stderr, "SELFTALK FAIL", "a refused run must scan nothing:\nstdout: %s\nstderr: %s", stdout, stderr)
-	assert.NotContains(t, stdout, "SELFTALK", "a refused run must scan nothing:\nstdout: %s\nstderr: %s", stdout, stderr)
+	assert.NotContains(t, stderr, "shape=STANDING", "a refused run must scan nothing:\nstdout: %s\nstderr: %s", stdout, stderr)
+	assert.NotContains(t, stdout, "SCAN OK", "a refused run must scan nothing:\nstdout: %s\nstderr: %s", stdout, stderr)
+	assert.NotContains(t, stdout, "SCAN FAILED", "a refused run must scan nothing:\nstdout: %s\nstderr: %s", stdout, stderr)
 	assert.Contains(t, stderr, "NOTHING was scanned", "the refusal must say that nothing was scanned:\n%s", stderr)
 }
 
@@ -244,25 +245,28 @@ func copyDir(t *testing.T, from, to string) {
 	}
 }
 
-// TestHelpExampleLinesRunAsPrinted: every line of this tool's `example:` block runs, as printed,
-// in an empty directory with only the binary, after the setup line the banner carries above it
-// (`nova-self-talk example ./pages`, which writes the pages built into the binary). nova-tools #1455
-// measured 28 of 61 pasted example lines exiting 2 because the line names an input the reader has
-// not made; an example exiting 2 is a broken example (ONBOARDING point 1). This is the #1920 shape
-// (cmd/nova-tokens), and unlike TestUsageBannerExamplesRun it does NOT localize(): the lines run
-// verbatim through `sh -c` in an empty temp root, so dropping the setup line turns this test red.
+// TestHelpExampleLinesRunAsPrinted runs every line of this tool's example block, as printed,
+// in an empty directory with only the binary, after the setup line the banner carries
+// (nova-self-talk example --dir ./pages, which writes the pages built into the binary).
+// nova-tools #1455 measured 28 of 61 pasted example lines exiting 2 because the line names
+// an input the reader has not made; an example exiting 2 is a broken example (ONBOARDING point 1).
+// This is the #1920 shape (cmd/nova-tokens), and unlike TestUsageBannerExamplesRun it does not
+// localize: the lines run verbatim through sh -c in an empty temp root, so dropping the setup
+// line turns this test red.
 //
-// The banner is read AS SOURCE (the usage constant), the binary is built so the lines can be RUN
-// with it first on PATH and stdin closed, exactly as a stranger would. "Runs" is this repo's exit
-// law: 1 is an answer (both fixture pages carry findings), 2 is "could not run". No line here
-// pushes, publishes, contacts a forge, acts on a machine or needs a key, so none is skipped.
+// The banner is what help prints, and the binary is built so the lines can be run with it
+// first on PATH and stdin closed, exactly as a stranger would. Runs means this repo's exit
+// law: 1 is an answer, because both fixture pages carry findings, and 2 means the line could
+// not run. No line here pushes, publishes, contacts a forge, acts on a machine or needs a key,
+// so none is skipped.
 func TestHelpExampleLinesRunAsPrinted(t *testing.T) {
 	t.Parallel()
 
-	lines := exampleBlockLines(usage)
+	_, banner, _ := runSelfTalk(t, "help")
+	lines := exampleBlockLines(banner)
 	require.NotEmpty(t, lines, "the usage banner's `example:` block holds no line; this test would pass by running nothing")
 
-	setup := fixtureSetupLine(usage)
+	setup := fixtureSetupLine(banner)
 	require.NotEmpty(t, setup, "the usage banner has no fixture setup line above the block, so a stranger pasting it names\n"+
 		"inputs they have not made (nova-tools #1455: an example exiting 2 is a broken example).\n"+
 		"The missing line is:\n  %s", wantFixtureSetup)
@@ -290,7 +294,7 @@ func TestHelpExampleLinesRunAsPrinted(t *testing.T) {
 
 // wantFixtureSetup is the line the class fix added above the block, named so a test that finds it
 // missing says which line a reader lost.
-const wantFixtureSetup = "nova-self-talk example ./pages"
+const wantFixtureSetup = "nova-self-talk example --dir ./pages"
 
 // exampleBlockLines returns every command under an `example:` heading in a usage banner, in
 // banner order. A line beginning with the tool's name under the heading is an example; a blank
@@ -320,11 +324,9 @@ func exampleBlockLines(usage string) []string {
 
 // fixtureSetupLine returns the setup line the block reads, or "" when the banner loses it. It
 // matches the line's shape rather than its exact text, so the printed line is what is run.
-func fixtureSetupLine(usage string) string {
-	for _, line := range strings.Split(usage, "\n") {
-		if trimmed := strings.TrimSpace(line); trimmed == wantFixtureSetup {
-			return trimmed
-		}
+func fixtureSetupLine(banner string) string {
+	if strings.Contains(banner, wantFixtureSetup) {
+		return wantFixtureSetup
 	}
 	return ""
 }

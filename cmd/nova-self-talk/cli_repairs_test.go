@@ -36,8 +36,8 @@ func TestStandingFindingsNameOriginalLines(t *testing.T) {
 	var out, errOut bytes.Buffer
 	code := run([]string{f}, &out, &errOut)
 	require.Equal(t, 1, code, "exit %d err=%s", code, errOut.String())
-	for _, line := range []string{":3: STANDING match=", ":6: STANDING match=", ":8: STANDING match="} {
-		assert.Contains(t, errOut.String(), f+line, "missing %s: %s", line, errOut.String())
+	for _, line := range []string{"line=3 shape=STANDING", "line=6 shape=STANDING", "line=8 shape=STANDING"} {
+		assert.Contains(t, errOut.String(), "file="+f+" "+line, "missing %s: %s", line, errOut.String())
 	}
 }
 
@@ -48,9 +48,11 @@ func TestAllSkippedReportsNoScan(t *testing.T) {
 	code := run([]string{"--skip", "skip.md", missing}, &out, &errOut)
 	require.Equal(t, 0, code, "all skipped: exit %d out=%q err=%q", code, out.String(), errOut.String())
 	require.Zero(t, errOut.Len(), "all skipped: exit %d out=%q err=%q", code, out.String(), errOut.String())
-	require.Contains(t, out.String(), "SELFTALK SKIP files=0 skipped=1 reason=all-skipped", "all skipped: exit %d out=%q err=%q", code, out.String(), errOut.String())
-	require.NotContains(t, out.String(), "SELFTALK OK", "all skipped: exit %d out=%q err=%q", code, out.String(), errOut.String())
-	require.Contains(t, out.String(), "SELFTALK NOTE", "all skipped: exit %d out=%q err=%q", code, out.String(), errOut.String())
+	require.Contains(t, out.String(), "files=0", "all skipped: exit %d out=%q err=%q", code, out.String(), errOut.String())
+	require.Contains(t, out.String(), "skipped=1", "all skipped: exit %d out=%q err=%q", code, out.String(), errOut.String())
+	require.Contains(t, out.String(), "reason=all-skipped", "all skipped: exit %d out=%q err=%q", code, out.String(), errOut.String())
+	require.NotContains(t, out.String(), "SCAN OK", "all skipped: exit %d out=%q err=%q", code, out.String(), errOut.String())
+	require.Contains(t, out.String(), "SCAN NOTE", "all skipped: exit %d out=%q err=%q", code, out.String(), errOut.String())
 }
 
 func TestSeparatorProtectsLiteralFilesNotFlagValues(t *testing.T) {
