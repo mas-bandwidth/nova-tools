@@ -539,6 +539,15 @@ func main() {
 	if _, ok := directive(prompt, "FAKE-SESSION-ERROR"); ok {
 		writeSessionError(data)
 	}
+	// FAKE-CREDIT-REFUSAL is the launch the provider refused for want of credit, in the shape
+	// of slot ci-03.w246.g4 of 2026-10-03 (nova-tools#5199): the harness's data-home log is
+	// created and left empty, its ERROR lines are printed (OPENCODE_PRINT_LOGS) on stderr, the
+	// session records the 402 on the assistant message, and it exits 1 within two seconds,
+	// publishing nothing.
+	if _, ok := directive(prompt, "FAKE-CREDIT-REFUSAL"); ok {
+		writeCreditRefusal(data)
+		os.Exit(1)
+	}
 	if _, ok := directive(prompt, "FAKE-NORESULT"); ok {
 		os.Exit(0)
 	}
@@ -836,6 +845,29 @@ func writeSessionError(data string) {
 		fmt.Sprintf("INSERT INTO message (data, time_created) VALUES ('{\"role\":\"user\"}', %d);\n", now) +
 		fmt.Sprintf("INSERT INTO message (data, time_created) VALUES ('%s', %d);\n", envelope, now+1)
 	runSQLite(path, sql)
+}
+
+// writeCreditRefusal is FAKE-CREDIT-REFUSAL's record: the empty data-home log, the
+// printed lines (the real ones, the session ids shortened) and the session's 402.
+func writeCreditRefusal(data string) {
+	logPath := filepath.Join(data, "opencode", "log", "opencode.log")
+	_ = os.MkdirAll(filepath.Dir(logPath), 0o755)
+	_ = os.WriteFile(logPath, nil, 0o644)
+	const words = "Insufficient credits. Add more using https://openrouter.test/settings/credits"
+	fmt.Fprintln(os.Stderr, "\x1b[0m\n> build · google/gemini-3.8-flash\n\x1b[0m")
+	fmt.Fprintf(os.Stderr, "timestamp=2026-10-03T11:49:46.176Z level=ERROR run=4363eb08 message=\"stream error\" providerID=openrouter modelID=google/gemini-3.8-flash session.id=ses_x small=false agent=build mode=primary error.error=\"AI_APICallError: %s\"\n", words)
+	fmt.Fprintf(os.Stderr, "timestamp=2026-10-03T11:49:46.178Z level=ERROR run=4363eb08 message=process session.id=ses_x messageID=msg_x error=\"%s\" stack=\"AI_APICallError: %s\\n    at <anonymous> (/$bunfs/root/chunk-rr8xgn86.js:12:13862)\"\n", words, words)
+	fmt.Fprintf(os.Stderr, "\x1b[91m\x1b[1mError: \x1b[0m%s\n", words)
+	path := openCodeDB(data)
+	_ = os.MkdirAll(filepath.Dir(path), 0o755)
+	now := time.Now().UnixMilli()
+	envelope := `{"role":"assistant","error":{"name":"APIError","data":{"message":"` + words + `","statusCode":402,"isRetryable":false,"responseBody":"{\"error\":{\"message\":\"` + words + `\",\"code\":402,\"metadata\":{\"limit_source\":\"openrouter_credits\"}}}"}}}`
+	sql := "CREATE TABLE IF NOT EXISTS message (id INTEGER PRIMARY KEY, data TEXT NOT NULL, time_created INTEGER NOT NULL);\n" +
+		fmt.Sprintf("INSERT INTO message (data, time_created) VALUES ('{\"role\":\"user\"}', %d);\n", now) +
+		fmt.Sprintf("INSERT INTO message (data, time_created) VALUES ('%s', %d);\n", envelope, now+1)
+	if _, err := exec.LookPath("sqlite3"); err == nil {
+		runSQLite(path, sql)
+	}
 }
 
 func runSQLite(path, sql string) {

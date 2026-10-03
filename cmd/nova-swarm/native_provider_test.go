@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/member"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // A provider failure is not the card's (nativeprovider.go; tla/CardContract.tla,
@@ -61,6 +62,23 @@ func TestAProviderErrorInTheHarnessLogIsAProviderFailure(t *testing.T) {
 	assert.Contains(t, out, "NATIVE INCOMPLETE ")
 	assert.NotContains(t, out, "NATIVE OK", "the verdict line is unchanged: the run delivered nothing")
 	assert.Equal(t, 1, strings.Count(errb, "NATIVE PROVIDER-FAIL"), "one line, the first error")
+}
+
+// A non-retryable provider refusal at launch is a provider failure (nova-tools#5199), in
+// the shape of slot ci-03.w246.g4 of 2026-10-03: rc=1 within two seconds, the data-home log
+// empty, the error only in the printed output, the 402 in the session. It was reported
+// `no-result` and the card was dealt again 247 times on a provider with no credit.
+func TestANonRetryableProviderRefusalAtLaunchIsAProviderFailure(t *testing.T) {
+	t.Parallel()
+	out, errb := providerRun(t, "pf7", "FAKE-CREDIT-REFUSAL\n", nil)
+	assert.Equal(t, 1, strings.Count(errb, "NATIVE PROVIDER-FAIL label=pf7 "), errb)
+	status := "-" // the printed output names no status
+	if swarm.SQLiteOnPath() {
+		status = "402" // the session's record keeps the provider's
+	}
+	assert.Contains(t, errb, " reason=provider: class=out-of-credit status="+status+" msg=Insufficient credits. Add more using https://openrouter.test/settings/credits\n")
+	assert.Contains(t, out, "NATIVE INCOMPLETE ")
+	assert.Equal(t, member.EndProvider, nativeEnd([]byte(errb)), "the member finishes the take as the provider's, never no result")
 }
 
 // The second trigger: a clean exit after a tool result, with no error line anywhere.
@@ -139,15 +157,21 @@ func TestTheHarnessLogIsReadFromItsTailAndFromTheRunsOffset(t *testing.T) {
 func TestTheProviderErrorPatterns(t *testing.T) {
 	t.Parallel()
 	for line, want := range map[string]bool{
-		`level=ERROR message="stream error" error.error="x"`:              true,
-		`level=ERROR error.error.type=server_error`:                       true,
-		`level=ERROR error.error="AI_APICallError: Rate limit reached"`:   true,
-		`level=ERROR message=failed statusCode=503`:                       true,
-		`level=ERROR message=failed status 502 bad gateway`:               true,
-		`level=ERROR message=failed error="HTTP 529 overloaded"`:          true,
-		`level=ERROR message=failed error="file not found"`:               false,
-		`level=INFO message="stream error" error.error.type=server_error`: false,
-		`level=ERROR message=failed path=/tmp/x500/y`:                     false,
+		`level=ERROR message="stream error" error.error="x"`:                            true,
+		`level=ERROR error.error.type=server_error`:                                     true,
+		`level=ERROR error.error="AI_APICallError: Rate limit reached"`:                 true,
+		`level=ERROR message=failed statusCode=503`:                                     true,
+		`level=ERROR message=failed status 502 bad gateway`:                             true,
+		`level=ERROR message=failed error="HTTP 529 overloaded"`:                        true,
+		`level=ERROR message=failed error="file not found"`:                             false,
+		`level=INFO message="stream error" error.error.type=server_error`:               false,
+		`level=ERROR message=failed path=/tmp/x500/y`:                                   false,
+		`level=ERROR error="Insufficient credits. Add more"`:                            true,
+		`level=ERROR error.error="Upstream request failed: Insufficient account funds"`: true,
+		`level=ERROR error="You exceeded your current quota"`:                           true,
+		`level=ERROR message=failed statusCode=402`:                                     true,
+		`level=ERROR message=failed statusCode=429`:                                     true,
+		`level=ERROR message=failed status 404`:                                         false,
 	} {
 		data := t.TempDir()
 		path := filepath.Join(data, "opencode", "log", "opencode.log")

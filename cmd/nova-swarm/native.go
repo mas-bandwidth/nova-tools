@@ -937,6 +937,9 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// where the harness's own log stands before this run: what it appends after is this
 	// run's (nativeprovider.go), the slot keeping one log for every run it hosts
 	providerMark := fileSize(filepath.Join(dataHome, filepath.FromSlash(harnessLogFile)))
+	// and where the run's own capture stands: what the harness prints after it is this
+	// run's (a harness that refused at launch printed its error there alone, #5199)
+	captureMark := fileSize(outLog)
 	runStart := time.Now()
 	harnessOut, err := os.OpenFile(outLog, os.O_WRONLY|os.O_CREATE|os.O_APPEND|swarm.ONoFollow, 0o644)
 	if err != nil {
@@ -1480,7 +1483,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	if !res.lost && !res.idled && !res.terminated && !handedBack && res.stopped == "" && res.wallReport == "" &&
 		(res.wallRefusal == swarm.WallRefusal{}) && (res.shellDenial == swarm.ShellDenial{}) {
 		if _, published := swarm.FindCardResult(jobDir); !published {
-			if cause, ok := providerEnd(dataHome, providerMark, runStart, res.rc); ok {
+			if cause, ok := providerEnd(dataHome, providerMark, runStart, res.rc, tailSince(outLog, captureMark)); ok {
 				fmt.Fprintln(errOut, oneline.Escape(providerLine(cfg.label, res.wallSeconds, cfg.model, cause)))
 			}
 		}
