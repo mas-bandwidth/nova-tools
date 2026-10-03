@@ -60,6 +60,11 @@ type Packet struct {
 	// read by them (docs/SPEC-SPRINT.md section 6); empty for a strings read.
 	DecideBounce string `json:"decide_bounce,omitempty"`
 	DecideReview string `json:"decide_review,omitempty"`
+	// A work card's gate decision bars, the deal's (steps_review.go, gateFields): its
+	// member's native classifies a red gate's failures by them before the take is
+	// reported (docs/SPEC-SPRINT.md section 5, the gate verdict); empty for none.
+	DecideGateFlaky       string `json:"decide_gate_flaky,omitempty"`
+	DecideGatePreexisting string `json:"decide_gate_preexisting,omitempty"`
 	// A read's: the work it reads.
 	Worker     string `json:"worker,omitempty"`
 	Head       string `json:"head,omitempty"`
@@ -146,6 +151,7 @@ func PacketOf(prefix string, epoch uint64, c, primary *Card, earlier []*Card, wo
 	}
 	if p.Kind == "work" {
 		p.Branch = BranchOf(prefix, epoch, c.ID, c.Int("gen"))
+		p.DecideGateFlaky, p.DecideGatePreexisting = c.F(FieldDecideGateFlaky), c.F(FieldDecideGatePreexisting)
 		p.Finding, p.Why = c.F("finding"), c.F("why")
 		// the attempt's own words, written with its card: the primary's are queued for the next
 		// tick's drain, so a take before it sees the primary at the attempt before

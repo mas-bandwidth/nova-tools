@@ -881,6 +881,7 @@ func deal(s *Snapshot, c *Card, fix, m string, q map[string]int, ri routeIndexes
 			fields[k] = v
 		}
 	}
+	maps.Copy(fields, s.gateFields())
 	maps.Copy(set, primary)
 	set["attempt"], set["work"] = itoa(attempt), card
 	return Unit{Key: c.ID, Stream: c.Row, Changes: []Change{
@@ -940,6 +941,14 @@ func redeal(s *Snapshot, c, wc *Card, m string, q map[string]int, ri routeIndexe
 			continue
 		}
 		set[k] = v
+	}
+	g := s.gateFields()
+	for _, k := range []string{FieldDecideGateFlaky, FieldDecideGatePreexisting} {
+		if v, ok := g[k]; ok {
+			set[k] = v
+		} else {
+			unset = append(unset, k)
+		}
 	}
 	primary["work"] = wc.ID
 	return Unit{Key: c.ID, Stream: c.Row, Changes: []Change{

@@ -31,13 +31,13 @@ func sitting(t *testing.T) func(args []string) onboarding.Result {
 	}
 }
 
-// The usage banner's examples are the six verbs in the order a first run
+// The usage banner's examples are the nine verbs in the order a first run
 // types them, and each one runs and exits 0.
 func TestUsageBannerExamplesRun(t *testing.T) {
 	t.Parallel()
 	examples, err := onboarding.ExampleLines(cli.OK(t, "help").Stdout, "nova-decide")
 	require.NoError(t, err)
-	verbs := []string{"ask", "read", "score", "attempt", "grade", "outcome", "calibrate", "findings"}
+	verbs := []string{"ask", "read", "score", "attempt", "grade", "gate", "outcome", "calibrate", "findings"}
 	require.Len(t, examples, len(verbs), "want one example of each of %v under `example:`, got %q", verbs, examples)
 	run := sitting(t)
 	for i, verb := range verbs {
@@ -64,6 +64,7 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 		"nova-decide score --card ./cmd/nova-decide/testdata/card.md --diff ./cmd/nova-decide/testdata/card.diff --backend fixed --answers ./cmd/nova-decide/testdata/score-answers.json --record ./decisions.jsonl --op card-1@landed@0123456789ab",
 		`nova-decide attempt --brief ./cmd/nova-decide/testdata/card.md --result ./cmd/nova-decide/testdata/result.md --reason "verdict not-done: tests red in internal/decide" --backend fixed --answers ./cmd/nova-decide/testdata/attempt-answers.json --record ./decisions.jsonl --op c1@1`,
 		"nova-decide grade --brief ./cmd/nova-decide/testdata/card.md --backend fixed --answers ./cmd/nova-decide/testdata/grade-answers.json --record ./decisions.jsonl --op c1@grade",
+		"nova-decide gate --output ./cmd/nova-decide/testdata/gate-output.txt --card ./cmd/nova-decide/testdata/card.md --diff ./cmd/nova-decide/testdata/card.diff --base-red TestPortInUse --backend fixed --answers ./cmd/nova-decide/testdata/gate-answers.json --record ./decisions.jsonl --op c1@1@gate",
 		`nova-decide outcome --record ./decisions.jsonl --id card-1 --label ok --note "the review found nothing"`,
 		"nova-decide calibrate --record ./cmd/nova-decide/testdata/record.jsonl --decision read --question defect --positive wrong --negative ok",
 		"nova-decide findings --record ./cmd/nova-decide/testdata/record.jsonl --since 2026-10-01",

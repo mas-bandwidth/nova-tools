@@ -328,6 +328,11 @@ type Snapshot struct {
 	// card graded pro at or above the grade bar on pro; "" is no bar (docs/SPEC-SPRINT.md
 	// sections 2 and 5).
 	DecideAttemptNoResult, DecideAttemptNothingToDo, DecideGrade string
+	// DecideGateFlaky and DecideGatePreexisting are the sprint row's bars on a failed
+	// gate's decisions (sprint:decide_gate_flaky, sprint:decide_gate_preexisting), read
+	// with the routes; the deal writes them on every work card (gateFields), and both ""
+	// is no gate decision (docs/SPEC-SPRINT.md section 5, the gate verdict).
+	DecideGateFlaky, DecideGatePreexisting string
 	// ReaderStates is each reader's state as the store derives it (ReaderState:
 	// up, away or down), read by a step that asks (docs/SPEC-SPRINT.md section
 	// 6); nil is none read, and every reader is held up.

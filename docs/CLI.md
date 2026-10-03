@@ -2189,6 +2189,7 @@ nova-decide read --card ./cmd/nova-decide/testdata/card.md --diff ./cmd/nova-dec
 nova-decide score --card ./cmd/nova-decide/testdata/card.md --diff ./cmd/nova-decide/testdata/card.diff --backend fixed --answers ./cmd/nova-decide/testdata/score-answers.json --record ./decisions.jsonl --op card-1@landed@0123456789ab
 nova-decide attempt --brief ./cmd/nova-decide/testdata/card.md --result ./cmd/nova-decide/testdata/result.md --reason "verdict not-done: tests red in internal/decide" --backend fixed --answers ./cmd/nova-decide/testdata/attempt-answers.json --record ./decisions.jsonl --op c1@1
 nova-decide grade --brief ./cmd/nova-decide/testdata/card.md --backend fixed --answers ./cmd/nova-decide/testdata/grade-answers.json --record ./decisions.jsonl --op c1@grade
+nova-decide gate --output ./cmd/nova-decide/testdata/gate-output.txt --card ./cmd/nova-decide/testdata/card.md --diff ./cmd/nova-decide/testdata/card.diff --base-red TestPortInUse --backend fixed --answers ./cmd/nova-decide/testdata/gate-answers.json --record ./decisions.jsonl --op c1@1@gate
 nova-decide outcome --record ./decisions.jsonl --id card-1 --label ok --note "the review found nothing"
 nova-decide calibrate --record ./cmd/nova-decide/testdata/record.jsonl --decision read --question defect --positive wrong --negative ok
 nova-decide findings --record ./cmd/nova-decide/testdata/record.jsonl --since 2026-10-01
@@ -2210,6 +2211,12 @@ the member's reason line) and `grade` (a card's convergence before its first dea
 `grade=` script, flash or pro, over the brief alone) print `ATTEMPT OK` and `GRADE
 OK` lines the same way, the chosen option and its `p=` first; the sprint asks both
 through the library (docs/SPEC-SPRINT.md sections 2 and 5).
+`gate` prints `GATE OK op= decision=gate backend= failures= route=caused|flaky|pre-existing`
+and one `GATE FAILURE key=<pkg>.<Test> id=<op>/<key> class= p= route= recorded=` line
+per failing test of the go test output, each one decision; a build failure is
+`route=caused recorded=unasked`. `gate --dry-run` asks nothing and writes nothing:
+each `GATE FAILURE` says `recorded=existing` (with its `class=`) for a decision the
+record holds already, `no` for one the run would ask, `unasked` for a build failure.
 `calibrate` prints the AUC, one `BAR` line per `--bars` value (positives caught,
 negatives bounced) and the `CATCH-ALL` bar, the highest that flags every positive; a label of
 classes joined by `+` (`stranded_fragment+invented_reason`) counts for each of
@@ -2225,6 +2232,11 @@ wrong:
 - `calibrate` over a record with no positive or no negative outcome refuses:
   a bar is read from both; so does an option no decision names
   (`--question verdict=BOUNCEE`).
+- `gate` over output with no `--- FAIL:` or `FAIL <pkg>` line refuses: it reads a
+  red go test run; `--bars` is `<flaky>,<pre-existing>`, each a probability or empty,
+  two set ones summing above 1. With no `--bars` (as the sprint row's defaults) every
+  failure is recorded with its class and routed `caused`; `--bars 0.8,0.8` is the
+  starting point.
 - The same `--op` over another card, diff or schema refuses; over the same inputs it
   returns the recorded decision and asks nothing, so a long run resumes.
 

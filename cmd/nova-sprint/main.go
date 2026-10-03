@@ -106,6 +106,10 @@ type app struct {
 	// beforePush, when set (a test), runs before each push land makes, with
 	// the attempt (1, then 2 after the base moved).
 	beforePush func(attempt int)
+	// gateBackend, when set (a test), is the gate decision's backend and clock for land's
+	// red batch gate (landgate.go); nil asks Jev with the key JEV_API_KEY holds, on the
+	// wall clock.
+	gateBackend func() (decide.Backend, func() time.Time)
 	// serial is the server's one line of control (serve.go): a worker's batch
 	// and a tick of the run loop each hold it, so neither runs during the other.
 	// serveAddr is the store the server runs the workers' verbs on.

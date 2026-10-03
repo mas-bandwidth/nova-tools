@@ -9,7 +9,7 @@ above it: decisions, backends, and the record.
 
 | side | verbs | what it does |
 | --- | --- | --- |
-| decide | `ask`, `read`, `score`, `attempt`, `grade` | asks a schema over a state through a backend; prints every answer with its probabilities; appends the decision to the record |
+| decide | `ask`, `read`, `score`, `attempt`, `grade`, `gate` | asks a schema over a state through a backend; prints every answer with its probabilities; appends the decision to the record |
 | train | `outcome`, `calibrate`, `findings` | attaches what turned out true to a recorded decision; reads the bar a decision's answer supports from the decisions whose outcome is known; clusters the classes the score decisions find |
 
 Both sides read and write one file, the record (`--record`). The truth lives
@@ -163,8 +163,9 @@ with `--json`, the same value as one JSON object. A refusal is one line,
 exit 2, and writes nothing. A backend that fails (no answer, an HTTP status, an
 answer outside the schema) is `<VERB> FAIL id=... backend=...: <why>; run:
 <remedy>` at exit 2, and records nothing. Exit 1 is an outcome that conflicts
-with the one recorded. `ask`, `read`, `attempt`, `grade` and `outcome` take
-`--dry-run`: the plan, with no backend call and no write.
+with the one recorded. `ask`, `read`, `attempt`, `grade`, `gate` and `outcome`
+take `--dry-run`: the plan, with no backend call and no write; an op the record
+holds already is reported as `recorded=existing` (for `gate`, per failure).
 
 ## 8. The first read of a flash card
 
@@ -359,3 +360,75 @@ holds no measure of `pro`. Over the store's landed cards the brief's own `tier:`
 word carries part of the separation (the third row); the sprint asks over the brief
 as it is, and a grade raises no card above its ceiling. The sprint row's `decide_grade`
 is empty by default, the grade a hint; 0.7 is the starting point.
+
+## 12. The gate decision
+
+`gate --output <file> --card <file> [--diff <file>] [--base-red <test,...>]` reads a red
+gate: go test's output (plain or `-v`), the card that asked for the work, and its diff.
+`ParseGateOutput` reads each failing test: a top-level test with a `--- FAIL:` line (a
+subtest's failure is its test's, the subtest's line among its lines), its package from
+the `FAIL <pkg>` line after it, and its first ten lines (the indented lines after it,
+else, under `-v`, what it printed after its `=== RUN`), each cut to 300 bytes; a package
+that did not build, or that failed with no test named (a timeout names its test under
+`running tests:`), is one failure with no test. Output with no failure is refused.
+
+Each failing test is one decision, `<op>/<pkg>.<Test>` (`GateOp`), asked over its own
+state (`GateState`): the failure and its lines, whether the same test is red at the
+card's base (`--base-red` names those, `<Test>` or `<pkg>.<Test>`; without it the base
+is `not run`), the gate's other failures by name, the card's PATHS, and a summary of the
+diff (`DiffSummary`: each file with the lines it adds and removes, a rename as
+`old -> new`), each under its own heading, and nothing else. One question, a choice
+with a probability per class:
+
+| option | criterion |
+| --- | --- |
+| `flaky` | it fails by chance and not by the change: a timing bound, a race, a port or file in use, the machine's load; the same test at the same commit passes when run again |
+| `caused` | the card's change broke it: the test asserts what the diff altered, or reads a file the diff changed |
+| `pre-existing` | it fails without the card's change: it is red at the base, or fails on this machine (an operation denied, a tool or service absent) whatever the diff |
+
+(`TestGateSchemaIsValid` holds this table to the code, word for word.) A build failure,
+and a failure past the eighth (`MaxGateFailures`), is `caused` and not asked.
+
+Two bars (`GateBars`, the sprint row's `decide_gate_flaky` and `decide_gate_preexisting`;
+`gate --bars <flaky>,<pre-existing>`) route each failure: p(flaky) at or above the flaky
+bar is `flaky`, rerun once; p(pre-existing) at or above the pre-existing bar is
+`pre-existing`; every other is `caused`. `ParseGateBars` reads each as a probability or
+empty; an empty bar is `Unset`, reached by no probability, so its route is never taken;
+two set bars sum above 1, so no failure meets both. **Both are empty by default** (the
+sprint row's, and `--bars`'): every gate decision is recorded and shown, and nothing is
+rerun or reclassified until the owner sets a bar. 0.8 each is the starting point the
+calibration below reads; it is not routed yet because at 0.8, with the base run, 24 of the
+39 flaky failures would have been reported pre-existing. The gate's route (`Gate`) is `caused` when one
+failure is, else `flaky` when one is (the flaky ones are rerun), else `pre-existing`; a
+gate with no failure decides nothing and has no route (never `pre-existing`).
+
+The rerun's result is each flaky decision's outcome (`SettleGate`): green is `flaky`;
+red again is `pre-existing` when the test is red at the base, `caused` when it is green
+there, and `red-again` when the base was not run. The gate after the rerun is `caused`
+when a rerun failure is red again, else `pre-existing` when a failure was routed so, else
+`green`. A review that learns a failure's class later attaches it with `outcome`, in the
+same three words, and `calibrate --decision gate --question class=<class>` reads the bars
+the record supports.
+
+The calibration of 2026-10-03: 60 failing tests of the coordinator bench's CI runs of
+this repository (real go test output; account and machine names replaced by generic ones
+before they were asked), each labelled by git and the other runs: flaky (39) when the same
+code of its package passed in another run, pre-existing (8) when it was red at the nearest
+ancestor run, caused (13) when it was green there and the change touches its package.
+With the base run (the ancestor run's result, as the member runs the base), p(caused) AUC
+0.914, p(pre-existing) 0.907, p(flaky) 0.716; at the starting bars, 0.8 each, every caused
+failure stays caused and every pre-existing one is reported so, and of the 39 flaky ones 4
+would be rerun, 24 reported pre-existing and 11 left caused. Those 24 are failures of the
+machine's environment (a store absent for that run), not the card's under either label,
+but a label the record cannot yet tell from pre-existing is the reason the bars ship
+empty. With the base not run,
+p(caused) 0.8, p(pre-existing) 0.522 (no separation), p(flaky) 0.72. Both records are
+`internal/decide/testdata/gate-calibration-base-run.jsonl` and `...-base-not-run.jsonl`,
+pinned by `TestTheGateCalibrationRecordsSupportTheBars`.
+
+The sprint asks it through the library (docs/SPEC-SPRINT.md section 5, the gate verdict,
+and section 7, the lander's gate): a worker's native, before the member reports a take
+whose child ended not-done on a red gate, with the base run in the child's own wall;
+the lander on a red batch check, with the base not run. The member's base run is one run of
+the failing tests, in the child's wall, bounded (`gateRunWait`, three minutes, and the
+rerun the same), so a red gate's report is delayed by no more than those and the asks.

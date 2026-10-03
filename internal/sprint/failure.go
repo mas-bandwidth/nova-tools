@@ -21,14 +21,16 @@ import (
 // after it: `verdict not-done; <the child's line>`), trimmed and cut to
 // MaxProviderErrorBytes. A verdict's reason is broad, so its class takes the first
 // VerdictWords words of the child's line too (after the member's `pushed=<sha> to
-// <branch>: `). A take the provider failed, a launch refused at staging or at launch are
-// the member's or the provider's, never the card's (docs/SPEC-SPRINT.md section 2), so
-// they have no class, and an empty line (a take that ended with its member down) has
+// <branch>: `). A take the provider failed, a launch refused at staging or at launch, and a
+// gate red only on failures the gate decision classed pre-existing (`pre-existing: <test>`)
+// are the member's, the base's or the provider's, never the card's (docs/SPEC-SPRINT.md
+// section 2), so they have no class, and an empty line (a take that ended with its member down) has
 // none: an end with no class is never the same as another.
 func FailureClass(line string) string {
 	line = strings.TrimSpace(line)
 	switch {
-	case line == "", IsProviderFailure(line), IsStagingRefusal(line), strings.HasPrefix(line, cardhdr.EndLaunch):
+	case line == "", IsProviderFailure(line), IsStagingRefusal(line), strings.HasPrefix(line, cardhdr.EndLaunch),
+		strings.HasPrefix(line, cardhdr.EndPreExisting+": "):
 		return ""
 	case IsNoResult(line):
 		return cardhdr.EndNoResult

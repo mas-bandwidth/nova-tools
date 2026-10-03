@@ -90,12 +90,13 @@ type RouteSet struct {
 
 // Bars is the sprint row's nova-decide bars, each by the name of its field, so no bar is
 // ever read as another: the decide read's bounce and review bars, the attempt decision's
-// no-result and nothing-to-do bars, the grade's, and the landed score's. "" is no bar.
+// no-result and nothing-to-do bars, the grade's, the landed score's, and the gate decision's flaky and pre-existing bars. "" is no bar.
 type Bars struct {
 	Bounce, Review                      string // decide_bounce, decide_review
 	AttemptNoResult, AttemptNothingToDo string // decide_attempt_no_result, decide_attempt_nothing_to_do
 	Grade                               string // decide_grade
 	Score                               string // decide_score_bar
+	GateFlaky, GatePreexisting          string // decide_gate_flaky, decide_gate_preexisting
 }
 
 // fields is each bar by its sprint row field (config.SprintKey(field) holds it).
@@ -107,6 +108,8 @@ func (b *Bars) fields() map[string]*string {
 		config.FieldDecideAttemptNothingToDo: &b.AttemptNothingToDo,
 		config.FieldDecideGrade:              &b.Grade,
 		config.FieldDecideScoreBar:           &b.Score,
+		config.FieldDecideGateFlaky:          &b.GateFlaky,
+		config.FieldDecideGatePreexisting:    &b.GatePreexisting,
 	}
 }
 
@@ -116,6 +119,7 @@ func (rs RouteSet) into(s *sprint.Snapshot) {
 	s.DecideBounce, s.DecideReview, s.DecideGrade = rs.Bars.Bounce, rs.Bars.Review, rs.Bars.Grade
 	s.DecideAttemptNoResult, s.DecideAttemptNothingToDo = rs.Bars.AttemptNoResult, rs.Bars.AttemptNothingToDo
 	s.DecideScoreBar = rs.Bars.Score
+	s.DecideGateFlaky, s.DecideGatePreexisting = rs.Bars.GateFlaky, rs.Bars.GatePreexisting
 }
 
 // routes is the routes a dealing step plans with, by name, and the tiers'
@@ -234,6 +238,21 @@ func (m *Mem) Routes(context.Context) (RouteSet, int64, error) {
 		tiers[t] = append([]string(nil), a...)
 	}
 	return RouteSet{Routes: append([]sprint.Route(nil), m.routes...), Tiers: tiers, Bars: m.bars}, 0, nil
+}
+
+// SetGateBars gives the store the gate decision's flaky and pre-existing bars, as
+// nova-config's apply does a live one (sprint:decide_gate_flaky, sprint:decide_gate_preexisting).
+func (m *Mem) SetGateBars(flaky, preExisting string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.bars.GateFlaky, m.bars.GatePreexisting = flaky, preExisting
+}
+
+// GateBars is the gate decision's flaky and pre-existing bars as the routes read takes
+// them: the lander's, for its red batch gate (docs/SPEC-SPRINT.md section 7).
+func (st *Store) GateBars(ctx context.Context) ([2]string, error) {
+	set, err := st.routes(ctx)
+	return [2]string{set.Bars.GateFlaky, set.Bars.GatePreexisting}, err
 }
 
 // SetDecideBars gives the store the sprint row's nova-decide bars, as nova-config's apply

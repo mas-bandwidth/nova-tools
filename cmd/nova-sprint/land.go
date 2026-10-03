@@ -233,6 +233,10 @@ type lander struct {
 	epoch                      uint64            // the epoch land read: every report is fenced to it
 	diffs                      map[string]string // each card's merge diff, as checkCard read it, for its score
 	toScore                    []scoreJob        // the landed batches, scored after the whole pass (landscore.go)
+	// gate is the gate decision's backend, clock, bars and record for a red batch gate
+	// (landgate.go), nil when none is made; gateNote says why none is, once.
+	gate     *landGate
+	gateNote string
 }
 
 func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
@@ -279,6 +283,11 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	l := &lander{a: a, c: *c, st: st, repoDir: *repoDir, base: *base, check: *check, dry: *dry, twin: a.twinOpen(c.redis), epoch: st.PinnedEpoch(), diffs: map[string]string{}}
+	if *check != "" && !*dry {
+		a.serial.Lock()
+		l.gate, l.gateNote = a.landGate(context.Background(), st)
+		a.serial.Unlock()
+	}
 	if *repoDir != "" {
 		if abs, err := filepath.Abs(*repoDir); err == nil {
 			l.repoDir = abs
@@ -532,7 +541,10 @@ func (l *lander) batch(ctx context.Context, stream string, cards []landCard) (la
 			return refuse("the batch branch has no tip: " + firstLine("", err))
 		}
 		start := time.Now()
-		why := l.runCheck(ctx, dir)
+		why, out := l.runCheck(ctx, dir)
+		if why != "" {
+			why = l.gateRerun(ctx, dir, stream, b.Base, tip, cards[:len(merged)], why, out)
+		}
 		since(&b.Times.Check, start)
 		if why != "" {
 			b.Cards, b.IDs = len(merged), ids[:len(merged)]
@@ -995,19 +1007,20 @@ func containsAny(s string, words []string) bool {
 	return slices.ContainsFunc(words, func(w string) bool { return strings.Contains(s, w) })
 }
 
-// runCheck runs --check in the clone: "" when it passed or there is none.
-func (l *lander) runCheck(ctx context.Context, dir string) string {
+// runCheck runs --check in the clone: why "" when it passed or there is none, and its
+// output.
+func (l *lander) runCheck(ctx context.Context, dir string) (why, out string) {
 	if l.check == "" {
-		return ""
+		return "", ""
 	}
 	b := subproc.Prepare(ctx, landCheckBudget, "sh", "-c", l.check)
 	defer b.Cancel()
 	b.Cmd.Dir, b.Cmd.Env = dir, l.a.gitEnv
-	out, err := b.Cmd.CombinedOutput()
+	raw, err := b.Cmd.CombinedOutput()
 	if err = b.Wrap("check "+l.check, err); err != nil {
-		return "the check " + l.check + " failed: " + oneline.Err(err) + checkTail(string(out))
+		return "the check " + l.check + " failed: " + oneline.Err(err) + checkTail(string(raw)), string(raw)
 	}
-	return ""
+	return "", string(raw)
 }
 
 // checkTail is ": <the output's last line>", "" for no output.

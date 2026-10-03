@@ -178,13 +178,11 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 		send = sprintwire.Client{Addr: *server}.Do
 	}
 	sp := &sprintwire.Worker{Send: send, Failed: sprintFailureOutput}
-	// a reader hands native the decide read's key when its environment holds it (the loop
-	// row's nova-secrets keys): native asks the decide read with it and never hands it to
-	// the child (nativedecide.go, nativeChildEnv)
-	nativePass := pass
-	if *reader {
-		nativePass = append(append([]string{}, pass...), decide.JevSecret)
-	}
+	// a member hands native the decide key when its environment holds it (the loop row's
+	// nova-secrets keys): a reader's native asks the decide read with it, a worker's the
+	// gate decision of a red gate, and neither hands it to the child (nativedecide.go,
+	// nativegate.go, nativeChildEnv)
+	nativePass := append(append([]string{}, pass...), decide.JevSecret)
 	rn := &nativeRunner{
 		self: self, harness: *harness, model: *model, root: *root, slots: *slots,
 		resultsRoot: *resultsRoot, deadline: deadline.d, stageWall: stageWall.d, tokens: *tokensWord, auth: *auth, config: *config,
@@ -732,6 +730,10 @@ func providerReason(log []byte) string {
 	return ""
 }
 
+// nativeGateLine is native's NATIVE GATE line (nativegate.go): where the gate decision sent
+// a not-done child's red gate, and the tests it names.
+var nativeGateLine = regexp.MustCompile(`(?m)^NATIVE GATE \S.*? route=(\S+) tests=(\S*)`)
+
 // nativeStageFail is native's STAGE FAIL line's reason: the launch refused at staging,
 // before any child ran (native.go; tla/CardContract.tla, StageRefused).
 var nativeStageFail = regexp.MustCompile(`(?m)^STAGE FAIL .*\breason=(.+)$`)
@@ -767,8 +769,11 @@ var (
 func (c *nativeChild) Result() member.Result {
 	c.once.Do(func() {
 		ran := false
-		var end, usage, provider, refused, budget string
+		var end, usage, provider, refused, budget, gate, gateTests string
 		if b, err := os.ReadFile(c.logPath); err == nil {
+			if m := nativeGateLine.FindSubmatch(b); m != nil {
+				gate, gateTests = string(m[1]), strings.ReplaceAll(strings.TrimSpace(string(m[2])), ",", ", ")
+			}
 			if m := nativeRefusedWhy.FindSubmatch(b); m != nil {
 				refused = strings.TrimSpace(string(m[1]))
 			}
@@ -843,7 +848,12 @@ func (c *nativeChild) Result() member.Result {
 				report = "the child ended without a result (see " + c.logPath + ")"
 			}
 		}
-		c.result = member.Result{Ran: ran, OK: ran, Shaped: cr.Shaped, Verdict: verdict, Head: head, Report: report, Title: cr.Title, Body: cr.Body, End: end, Usage: usage, Provider: provider, Budget: budget}
+		if verdict == "not-done" && gate == member.GateGreen {
+			// the child's gate was red only on failures the gate decision classed flaky, and
+			// their rerun passed: the work is done as far as its gate says; the readers read it
+			verdict, report = "ok", "gate: "+gateTests+" flaky, green on the rerun; "+report
+		}
+		c.result = member.Result{Ran: ran, OK: ran, Shaped: cr.Shaped, Verdict: verdict, Head: head, Report: report, Title: cr.Title, Body: cr.Body, End: end, Usage: usage, Provider: provider, Budget: budget, Gate: gate, GateTests: gateTests}
 	})
 	return c.result
 }
@@ -876,6 +886,7 @@ func frameOf(p member.Packet, model, root string) cardcontract.Frame {
 		}
 		return f
 	}
+	f.DecideGateFlaky, f.DecideGatePreexisting = p.DecideGateFlaky, p.DecideGatePreexisting
 	if p.BaseHead != "" {
 		f.StageSha, f.PrevHead, f.PrevFrom = p.BaseHead, p.BaseHead, p.BaseFrom
 	}

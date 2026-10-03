@@ -141,6 +141,35 @@ the child's RESULT.md (none when --result is not given) and the member's reason 
 				Run: w.grade,
 			},
 			{
+				Name:    "gate",
+				Usage:   "gate --output <file> --card <file> [--diff <file>] [--base-red <test,...>] [--bars <flaky,pre-existing>] --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
+				Example: "gate --output " + fixture + "gate-output.txt --card " + fixture + "card.md --diff " + fixture + "card.diff --base-red TestPortInUse --backend fixed --answers " + fixture + "gate-answers.json --record ./decisions.jsonl --op c1@1@gate",
+				Effect:  tool.Delivery + "; with --backend jev it sends each failure, the card's PATHS and the diff's summary to the backend, and it appends to --record",
+				Detail: `The gate decision: a red gate's go test output, read failure by failure; each failing test
+is classed flaky, caused or pre-existing (one choice, class, with a p per class) over its first
+lines, whether it is red at the base (--base-red names those; without it the base is "not run"),
+the gate's other failures, the card's PATHS and the diff's files. Each failure is a decision,
+<op>/<pkg>.<Test>; a build failure is caused, unasked. A failure goes flaky at or above the first
+--bars value (rerun it once), pre-existing at or above the second, else caused; an unset bar (the
+default) routes no failure. The gate's route is caused when one failure is, else flaky when one
+is, else pre-existing.`,
+				DryRun: true,
+				Flags: func(f *tool.Flags) {
+					f.Required("output", "the gate's output, a file of go test's output (plain or -v)")
+					f.Required("card", "the card the worker was given, a file: its PATHS line is read")
+					f.String("diff", "", "the card's unified diff, a file: its files and line counts are summarised")
+					f.String("base-red", "", "the failing tests red at the card's base, comma-separated (<Test> or <pkg>.<Test>); given empty, none is")
+					f.String("bars", "", "the flaky and the pre-existing bars, <flaky>,<pre-existing>: each a probability or empty (that route taken by no failure), two set ones summing above 1; empty (the default) routes none, as the sprint row's defaults do; 0.8,0.8 is the starting point")
+					w.asking(f)
+					f.Check(func(c *tool.Call) {
+						if _, err := gateBars(c.Str("bars")); err != nil {
+							c.Problem(err.Error())
+						}
+					})
+				},
+				Run: w.gate,
+			},
+			{
 				Name:    "outcome",
 				Usage:   "outcome --record <file> --id <decision-id> --label <word> [--note <text>] [--dry-run]",
 				Example: "outcome --record ./decisions.jsonl --id card-1 --label ok --note \"the review found nothing\"",
@@ -326,6 +355,133 @@ func (w world) findings(c *tool.Call) *tool.Out {
 	return o
 }
 
+// gate reads the gate's output, the card and the diff, names every input it cannot read in
+// one refusal, and asks the gate decision of each failure (decide.Gate).
+func (w world) gate(c *tool.Call) *tool.Out {
+	texts := map[string]string{}
+	var problems []string
+	for _, name := range []string{"output", "card", "diff"} {
+		if !c.Given(name) {
+			continue
+		}
+		raw, err := os.ReadFile(c.Str(name))
+		if err != nil {
+			problems = append(problems, err.Error())
+			continue
+		}
+		texts[name] = string(raw)
+	}
+	failures := decide.ParseGateOutput(texts["output"])
+	if len(problems) == 0 && len(failures) == 0 {
+		problems = append(problems, "--output "+c.Str("output")+" holds no go test failure (no `--- FAIL:` or `FAIL <pkg>` line); the gate decision reads a red go test run")
+	}
+	if len(problems) > 0 {
+		return tool.Refuse(problems...)
+	}
+	in := decide.GateInput{Failures: failures, Paths: decide.CardPaths(texts["card"]), Diff: decide.DiffSummary(texts["diff"])}
+	if c.Given("base-red") {
+		in.BaseRed = map[string]bool{}
+		named := list(c.Str("base-red"))
+		for _, f := range failures {
+			in.BaseRed[f.Key()] = slices.Contains(named, f.Key()) || f.Test != "" && slices.Contains(named, f.Test)
+		}
+	}
+	bars, _ := gateBars(c.Str("bars")) // checked by the verb's flag rule
+	op := c.Str("op")
+	if op == "" {
+		op = decide.GateName + "-" + decide.Sum([]byte(texts["output"] + "\n" + texts["card"] + "\n" + texts["diff"]))[:12]
+	}
+	dry := c.DryRun() // read before any refusal below, so a refused dry run says so
+	b, err := w.backend(c)
+	if err != nil {
+		return tool.Refuse(err.Error())
+	}
+	if dry {
+		return gateDryRun(c.Str("record"), op, b, in)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), c.Dur("timeout"))
+	defer cancel()
+	res, err := decide.Gate(ctx, b, bars, in, c.Str("record"), op, w.now())
+	var failed *decide.BackendError
+	switch {
+	case errors.As(err, &failed):
+		return backendFailed(err, "op", op, b, "make --answers answer the class question")
+	case err != nil:
+		return tool.Refuse(err.Error())
+	}
+	o := tool.Done().Fact("op", op).Fact("decision", decide.GateName).Fact("backend", b.Name()).Fact("failures", len(res.Calls)).Fact("route", res.Route)
+	for _, call := range res.Calls {
+		id, class, p, recorded := "-", "-", "-", "unasked"
+		if d := call.Decision; d != nil {
+			a := d.Answers["class"]
+			id, class, p, recorded = d.ID, a.Value, probs(a.P), "new"
+			if call.Existing {
+				recorded = "existing"
+			}
+		}
+		o.Item("failure", "key", call.Failure.Key(), "id", id, "class", class, "p", p, "route", call.Route, "recorded", recorded)
+	}
+	return o
+}
+
+// gateDryRun is the gate verb's dry run: each failure's id and state size, and whether the
+// record holds its decision already (recorded=existing, with its class: the run would ask
+// nothing for it), asks nothing (a build failure, one past decide.MaxGateFailures: unasked),
+// or would ask (no). An id the record holds over another state is refused, as the run would
+// refuse it. The top-level recorded is existing when every failure asked is in the record.
+func gateDryRun(record, op string, b decide.Backend, in decide.GateInput) *tool.Out {
+	ds, err := decide.Load(record)
+	if err != nil {
+		return tool.Refuse(err.Error())
+	}
+	o := tool.Done().Fact("op", op).Fact("decision", decide.GateName).Fact("backend", b.Name()).Fact("failures", len(in.Failures))
+	all := "existing"
+	for i, f := range in.Failures {
+		id, state, class, recorded := decide.GateOp(op, f), decide.GateState(in, i), "-", "no"
+		switch have := decide.Find(ds, id); {
+		case f.Test == "" || i >= decide.MaxGateFailures:
+			recorded = "unasked"
+		case have != nil:
+			if err := decide.Replays(*have, decide.GateSchema(), state); err != nil {
+				return tool.Refuse(err.Error())
+			}
+			class, recorded = have.Answers["class"].Value, "existing"
+		default:
+			all = "no"
+		}
+		o.Item("failure", "key", f.Key(), "id", id, "state_bytes", len(state), "class", class, "recorded", recorded)
+	}
+	return o.Fact("recorded", all)
+}
+
+// backendFailed is a decision the backend gave no answer to: exit 2, the id it was asked
+// under (named key), and the remedy: fixed's (what --answers must answer), or Jev's.
+func backendFailed(err error, key, id string, b decide.Backend, fixed string) *tool.Out {
+	o := tool.Fail(err.Error()).Fact(key, id).Fact("backend", b.Name())
+	o.Exit, o.Remedy = 2, fixed
+	if _, isJev := b.(decide.Jev); isJev {
+		o.Remedy = "check the backend's account and the key nova-secrets delivers, then run the same line again"
+	}
+	return o
+}
+
+// gateBars parses --bars: the flaky and the pre-existing bar (decide.ParseGateBars), either
+// empty for unset; all of it empty is both unset.
+func gateBars(s string) (decide.GateBars, error) {
+	if strings.TrimSpace(s) == "" {
+		return decide.ParseGateBars("", "")
+	}
+	f := strings.Split(s, ",")
+	if len(f) != 2 {
+		return decide.GateBars{}, fmt.Errorf("--bars %q wants two probabilities, the flaky and the pre-existing bar: 0.8,0.8", s)
+	}
+	b, err := decide.ParseGateBars(f[0], f[1])
+	if err != nil {
+		return decide.GateBars{}, fmt.Errorf("--bars %q: %v", s, err)
+	}
+	return b, nil
+}
+
 // decision makes one decision and records it (decide.Make): an op id already
 // recorded over the same state returns the recorded decision and asks nothing.
 func (w world) decision(c *tool.Call, s decide.Schema, state string, inputs map[string]string) *tool.Out {
@@ -334,11 +490,12 @@ func (w world) decision(c *tool.Call, s decide.Schema, state string, inputs map[
 	if id == "" {
 		id = s.Name + "-" + decide.Sum([]byte(s.Hash() + "\n" + now.UTC().Format(time.RFC3339) + "\n" + state))[:12]
 	}
+	dry := c.DryRun() // read before any refusal below, so a refused dry run says so
 	b, err := w.backend(c)
 	if err != nil {
 		return tool.Refuse(err.Error())
 	}
-	if c.DryRun() {
+	if dry {
 		ds, err := decide.Load(record)
 		if err != nil {
 			return tool.Refuse(err.Error())
@@ -358,12 +515,7 @@ func (w world) decision(c *tool.Call, s decide.Schema, state string, inputs map[
 	var failed *decide.BackendError
 	switch {
 	case errors.As(err, &failed):
-		o := tool.Fail(err.Error()).Fact("id", id).Fact("backend", b.Name())
-		o.Exit, o.Remedy = 2, "make --answers answer every question of the schema"
-		if _, isJev := b.(decide.Jev); isJev {
-			o.Remedy = "check the backend's account and the key nova-secrets delivers, then run the same line again"
-		}
-		return o
+		return backendFailed(err, "id", id, b, "make --answers answer every question of the schema")
 	case err != nil:
 		return tool.Refuse(err.Error())
 	case existing:

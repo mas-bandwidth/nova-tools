@@ -242,10 +242,23 @@ const (
 	FieldDecideGrade              = "decide_grade"
 )
 
+// The sprint row's two bars on a failed gate's decisions (internal/decide, GateBars;
+// docs/SPEC-SPRINT.md section 5, the gate verdict): a failure flaky at or above the first is
+// rerun once, one pre-existing at or above the second is reported pre-existing. Both are
+// empty by default: every gate decision is recorded and shown, and nothing is rerun or
+// reclassified until the owner sets a bar. Apply writes them to SprintKey(field), which the
+// sprint's routes read takes.
+const (
+	FieldDecideGateFlaky       = "decide_gate_flaky"
+	FieldDecideGatePreexisting = "decide_gate_preexisting"
+)
+
 // checkSprint holds the decide read's bars together: both set, as probabilities with the
 // review bar at most the bounce bar (decide.ParseBars), or both empty (no decide read);
-// the landed score's bar a probability, or empty (no judgment); and layer 2's three bars
-// each a probability or empty (decide.ParseBar).
+// the landed score's bar a probability, or empty (no judgment); the gate's each a
+// probability or empty (that route not taken), two set ones summing above 1
+// (decide.ParseGateBars); and layer 2's three bars each a probability or empty
+// (decide.ParseBar). Every problem is named.
 func checkSprint(r Row) error {
 	bounce, hasB := r.Fields[FieldDecideBounce]
 	review, hasR := r.Fields[FieldDecideReview]
@@ -254,19 +267,26 @@ func checkSprint(r Row) error {
 			return fmt.Errorf("sprint: decide_score_bar %q is not a probability in [0, 1]; set it to one, or empty to raise no landed-score judgment", bar)
 		}
 	}
+	var p []string
 	if hasB && hasR && (bounce != "" || review != "") {
 		if _, err := decide.ParseBars(bounce, review); err != nil {
-			return fmt.Errorf("sprint: %v; set both bars (--decide_bounce and --decide_review), or both empty to turn the decide read off", err)
+			p = append(p, fmt.Sprintf("%v; set both bars (--decide_bounce and --decide_review), or both empty to turn the decide read off", err))
 		}
 	}
-	var p []string
+	if _, err := decide.ParseGateBars(r.Fields[FieldDecideGateFlaky], r.Fields[FieldDecideGatePreexisting]); err != nil {
+		p = append(p, fmt.Sprintf("%v; set each gate bar (--decide_gate_flaky, --decide_gate_preexisting) to a probability, or empty to record the decisions and route none", err))
+	}
+	var bad []string
 	for _, f := range []string{FieldDecideAttemptNoResult, FieldDecideAttemptNothingToDo, FieldDecideGrade} {
 		if _, _, err := decide.ParseBar(f, r.Fields[f]); err != nil {
-			p = append(p, err.Error())
+			bad = append(bad, err.Error())
 		}
 	}
+	if len(bad) > 0 {
+		p = append(p, strings.Join(bad, "; ")+"; a bar is a probability, or empty for none")
+	}
 	if len(p) > 0 {
-		return fmt.Errorf("sprint: %s; a bar is a probability, or empty for none", strings.Join(p, "; "))
+		return fmt.Errorf("sprint: %s", strings.Join(p, "; "))
 	}
 	return nil
 }
@@ -345,7 +365,7 @@ var Kinds = []*Kind{
 		Name:      KindSprint,
 		Table:     "sprint",
 		Singleton: true,
-		Doc:       "the one row of sprint-global facts: which friend coordinates, the two bars a flash card's decide read is routed by, the bar a landed diff's score is judged at, the attempt decision's no-result and nothing-to-do bars, and the grade decision's bar",
+		Doc:       "the one row of sprint-global facts: which friend coordinates, the two bars a flash card's decide read is routed by, the bar a landed diff's score is judged at, the attempt decision's no-result and nothing-to-do bars, the grade decision's bar, and the two a failed gate's decisions are",
 		Fields: []Field{
 			{Name: "coordinator", Type: TypeRef, Ref: KindFriend, Help: "the friend who holds the coordinator role (a friend row), or empty; set it to hand over"},
 			{Name: FieldDecideBounce, Type: TypeDecimal, Default: "0.5", Help: "the decide read's bounce bar: a flash card whose first read gives p(defect) at or above it is bounced with the read's finding; a probability, at least --decide_review; 0.5 (the default); empty, with --decide_review empty, turns the decide read off"},
@@ -354,6 +374,8 @@ var Kinds = []*Kind{
 			{Name: FieldDecideAttemptNoResult, Type: TypeDecimal, Help: "the attempt decision's no-result bar: a failed take nova-decide classes no-result at or above it ends as a take with no result (redealt, never failed work), whatever its reason line's prefix, but never a provider failure, a staging refusal or a launch refused; a probability; empty (the default) routes nothing on the decision, which is still asked, recorded and shown; 0.7 is the starting point the calibration of 2026-10-03 supports (class=no-result AUC 0.883; docs/SPEC-NOVA-DECIDE.md section 10)"},
 			{Name: FieldDecideAttemptNothingToDo, Type: TypeDecimal, Help: "the attempt decision's nothing-to-do bar: a failed take nova-decide classes nothing-to-do at or above it is failed work of the class `decided nothing-to-do`, whatever its reason line says, but never a provider failure, a staging refusal or a launch refused; a probability; empty (the default) routes nothing on the decision, which is still asked, recorded and shown (class=nothing-to-do AUC 0.618 in the calibration of 2026-10-03; docs/SPEC-NOVA-DECIDE.md section 10)"},
 			{Name: FieldDecideGrade, Type: TypeDecimal, Help: "the grade decision's bar: a card graded pro at or above it starts on pro instead of flash; a probability; empty (the default) keeps the grade a hint on the card; 0.7 is the starting point the calibration of 2026-10-03 supports (docs/SPEC-NOVA-DECIDE.md section 11)"},
+			{Name: FieldDecideGateFlaky, Type: TypeDecimal, Default: "", Help: "the gate decision's flaky bar: a failing test of a red gate (a work card's, the lander's batch) whose p(flaky) is at or above it is rerun once before the take or the batch is reported red; a probability, summing above 1 with --decide_gate_preexisting when both are set; empty (the default) reruns nothing, and every gate decision is still recorded and shown; 0.8 is the starting point the calibration of 2026-10-03 reads (docs/SPEC-NOVA-DECIDE.md section 12)"},
+			{Name: FieldDecideGatePreexisting, Type: TypeDecimal, Default: "", Help: "the gate decision's pre-existing bar: a work card's failing test whose p(pre-existing) is at or above it is reported `pre-existing: <test>`, the base's or the member's and never the card's; a probability; empty (the default) reclassifies nothing; 0.8 is the starting point, though at 0.8 24 of the calibration's 39 flaky failures would have been reported pre-existing"},
 		},
 		Check: checkSprint,
 	},
