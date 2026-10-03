@@ -51,7 +51,7 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 		"nova-work import --org $ORG --repo $ORG/$REPO --page-size 15 --out ./tree.lisp",
 		"nova-work verify --tree ./tree.lisp --repo $ORG/$REPO --page-size 15",
 	}
-	examples, err := onboarding.ExampleLines(banner, "nova-work")
+	examples, err := onboarding.ExampleLines(workCLI(nil).OK(t, "help").Stdout, "nova-work")
 	require.NoError(t, err)
 	require.Equal(t, strings.Join(documentedExamples, "\n"), strings.Join(examples, "\n"), "the banner's examples are %q, this test names %q", examples, documentedExamples)
 
@@ -71,7 +71,7 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	gh, asked := fakeGh(t, dir, "../../internal/workgh/testdata/reliable")
 	stand := strings.NewReplacer("$ORG", org, "$REPO", repo, "./", dir+"/")
 	got := make([]onboarding.Result, 0, len(steps))
-	tool := workTool(nil)
+	tool := workCLI(nil)
 	for _, s := range steps {
 		// The reader's gh is on PATH; here a stand-in named with --gh answers
 		// each call from the recording, in order, from the first call of each line.
