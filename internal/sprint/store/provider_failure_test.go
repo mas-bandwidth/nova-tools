@@ -185,27 +185,74 @@ func TestATakeThatLeftNoResultIsRedealtAndNeverAFailedWorkJudgment(t *testing.T)
 	h.clean("redealt after a take that left no result")
 }
 
-// The redeal bound holds for takes that left no result as for takes the provider failed:
-// the fourth retires the card with one judgment, the bound's, never a failed-work one.
-func TestAFourthTakeWithNoResultRetiresTheCardWithTheBoundsJudgment(t *testing.T) {
+// Rule 2 (nova-tools#5174, the owner, 2026-10-02: "Escalate on the second identical failure,
+// not the third."): a second take that left no result ends the card's tries on its tier at
+// once. The card is not dealt a third time; the bound's judgment names how both ended, never
+// a failed-work one; a rework with a fix is its next attempt.
+func TestASecondIdenticalFailureRaisesTheBoundAtOnce(t *testing.T) {
 	t.Parallel()
-	h := routeHarness(t, route("pro-a", "pro"))
+	h := routeHarness(t, route("pro-a", "pro"), route("pro-b", "pro"))
 	h.addReady("s1", 1, briefOf("pro", ""))
 	h.startMachine()
 	h.machine()
-	for i := 1; i <= sprint.MaxRedeals; i++ {
-		h.failTake("s1-1.w1", noResultLine)
-		h.machine()
-		require.Equal(t, i, h.snap().Fleet.Card("s1-1.w1").Int("redeals"))
-	}
 	h.failTake("s1-1.w1", noResultLine)
 	h.machine()
+	require.Equal(t, sprint.Ready, h.snap().Fleet.Card("s1-1.w1").Col, "the first is dealt again")
+	assert.Empty(t, h.openOf(sprint.NBound), "no bound judgment after the first")
+	h.failTake("s1-1.w1", cardhdr.EndNoResult+": no RESULT.md shape; another line")
 	h.machine()
-	assert.Equal(t, sprint.Withdrawn, h.snap().Fleet.Card("s1-1.w1").Col, "retired: not dealt again")
+	h.machine()
+	w := h.snap().Fleet.Card("s1-1.w1")
+	assert.Equal(t, sprint.Withdrawn, w.Col, "not dealt a third time")
+	assert.Equal(t, 1, w.Int("redeals"), "one redeal, below MaxRedeals: the identical ends are the bound")
 	open := h.openOf(sprint.NBound)
 	require.Len(t, open, 1, "one judgment")
-	assert.Contains(t, open[0].Note.What, "no result", "it says how the takes ended")
+	assert.Contains(t, open[0].Note.What, "its last two takes ended the same way (no result)")
+	assert.Contains(t, open[0].Note.What, "the second identical failure")
 	assert.Zero(t, h.notesOf(sprint.NWorkFailed), "never a failed-work judgment")
+	res := h.run(DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
+	require.Len(t, res.Refused, 1, "the deal verb refuses it too")
+	assert.Contains(t, res.Refused[0].Why, "its last two takes ended the same way (no result)")
+	h.clean("bound at the second identical end")
+
+	// a rework is its next attempt, and closes the judgment
+	h.must(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: "on pro now", Who: "tester"}))
+	h.machine()
+	assert.Empty(t, h.openOf(sprint.NBound))
+	assert.Equal(t, 2, h.snap().Work.Card("s1-1").Int("attempt"))
+
+	// failed work: the second attempt failing the way the first did is the bound's judgment
+	// in place of the failed-work one, held by the tick while the primary stays in review;
+	// a different failure after it is failed work again
+	h2 := routeHarness(t, route("pro-a", "pro"))
+	h2.addReady("s1", 1, briefOf("pro", ""))
+	h2.startMachine()
+	h2.machine()
+	h2.failTake("s1-1.w1", "verdict not-done; tests red")
+	assert.Equal(t, 1, h2.notesOf(sprint.NWorkFailed), "the first is failed work")
+	h2.must(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: "make them pass", Who: "tester"}))
+	h2.machine()
+	h2.failTake("s1-1.w2", "verdict not-done; still red")
+	assert.Equal(t, 1, h2.notesOf(sprint.NWorkFailed), "the second identical one is not failed work")
+	for range 2 {
+		h2.machine()
+		open := h2.openOf(sprint.NBound)
+		require.Len(t, open, 1, "the bound's judgment, held by the tick")
+		assert.Contains(t, open[0].Note.What, "attempts 1 and 2 failed the same way (verdict not-done)")
+		assert.Equal(t, "s1-1.w2", open[0].Note.Card)
+	}
+	assert.Empty(t, h2.openOf(sprint.NStranded), "never stranded: the bound holds it")
+	pr := h2.snap().Work.Card("s1-1")
+	assert.Equal(t, sprint.Review, pr.Col)
+	assert.Equal(t, "2", pr.F(sprint.FieldIdenticalAt))
+	h2.clean("bound at the second identical failed attempt")
+	h2.must(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: "on the next tier", Who: "tester"}))
+	h2.machine()
+	assert.Empty(t, h2.openOf(sprint.NBound), "the rework closed it")
+	h2.failTake("s1-1.w3", "push refused: rejected; r")
+	assert.Equal(t, 2, h2.notesOf(sprint.NWorkFailed), "another failure is failed work")
+	h2.machine()
+	assert.Empty(t, h2.openOf(sprint.NBound))
 }
 
 // A run its budget or its deadline ended with no result is still the card's to be judged:

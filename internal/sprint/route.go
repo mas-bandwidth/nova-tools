@@ -362,8 +362,7 @@ func ProviderTakes(wc *Card) (takes []ProviderTake, numbers []int) {
 		if v == "" {
 			continue
 		}
-		f := append(strings.SplitN(v, "\t", 6), "", "", "", "", "", "")
-		takes, numbers = append(takes, ProviderTake{Route: f[0], Model: f[1], Member: f[2], Finished: f[3], Usage: f[4], Error: f[5]}), append(numbers, n)
+		takes, numbers = append(takes, parseTake(v)), append(numbers, n)
 	}
 	return takes, numbers
 }

@@ -511,8 +511,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	up := s.UpMembers()
 	for _, c := range s.Work.Column(Ready) {
 		if wc := AtRedealBound(s, c); wc != nil {
-			conds = append(conds, cond{typ: NBound, stream: c.Row, card: wc.ID, primaries: []string{c.ID},
-				what: fmt.Sprintf("%s: attempt %s was redealt %d times, its bound, and is not dealt again%s; its history: nova-sprint log --card %s", wc.ID, wc.F("attempt"), wc.Int("redeals"), providerWhy(wc), c.ID)})
+			conds = append(conds, cond{typ: NBound, stream: c.Row, card: wc.ID, primaries: []string{c.ID}, what: boundWhat(wc, c.ID)})
 			continue
 		}
 		if wc, takes := AtStagingBound(s, c, up); wc != nil {
@@ -536,6 +535,14 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 			continue
 		}
 		ready = append(ready, c)
+	}
+	// a primary whose attempt failed the way the attempt before did (rule 2): the bound's
+	// judgment the finish wrote is held while it stays in review at that attempt
+	for _, c := range s.Work.Column(Review) {
+		if wc := AtIdenticalFailure(s, c); wc != nil {
+			conds = append(conds, cond{typ: NBound, stream: c.Row, card: wc.ID, primaries: []string{c.ID},
+				what: identicalWorkWhat(wc.ID, c.Int("attempt"), c.F(FieldFailure), c.ID)})
+		}
 	}
 	// the reads too: a primary in review waiting for reads while no enabled route
 	// serves its tier is held by the same judgment of that tier, the deal's,
@@ -639,8 +646,7 @@ func AtRedealBound(s *Snapshot, pr *Card) *Card {
 func StagingTakes(wc *Card) (takes []ProviderTake, gens []int) {
 	for g := 1; g <= wc.Int("gen"); g++ {
 		if v := wc.F(FieldStagingTake + itoa(g)); v != "" {
-			f := append(strings.SplitN(v, "\t", 6), "", "", "", "", "", "")
-			takes, gens = append(takes, ProviderTake{Route: f[0], Model: f[1], Member: f[2], Finished: f[3], Usage: f[4], Error: f[5]}), append(gens, g)
+			takes, gens = append(takes, parseTake(v)), append(gens, g)
 		}
 	}
 	return takes, gens
@@ -688,9 +694,10 @@ func providerWhy(wc *Card) string {
 }
 
 // redealBound says the withdrawn work card's next deal would count a take
-// past MaxRedeals.
+// past MaxRedeals, or would be its third try after two takes that ended the same
+// way (rule 2, identicalEnds).
 func redealBound(wc *Card) bool {
-	return wc.F(FieldTakeEnded) != "" && wc.Int("redeals") >= MaxRedeals
+	return wc.F(FieldTakeEnded) != "" && (wc.Int("redeals") >= MaxRedeals || identicalEnds(wc) != "")
 }
 
 // T4. TickLevel is the fleet's rebalance, once at the start of every tick

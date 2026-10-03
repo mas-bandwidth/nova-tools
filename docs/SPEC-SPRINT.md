@@ -217,7 +217,9 @@ line, never FAIL: the table holds what the step wrote.
 for life. Fields: stream, score, brief, needs, head, attempt, fix, finding and why (a rework's, kept
 for the attempt a rework with no member up deals later), work (its live
 work card), asked (its readers), readers (the two whose ok it was accepted on),
-counters (failed, reworks, broken_reads, stuck, returns), returned_attempt (its
+counters (failed, reworks, broken_reads, stuck, returns), failure, failure_at and
+identical_at (its last failed work's class and attempt, and the attempt that failed the
+way the one before did: section 2, the second identical failure), returned_attempt (its
 attempt when it was last returned to review, by any return, an orphan merge
 card's included), and the last CI observation for its current head (ci,
 ci_head) and of any head (ci_run, ci_run_status, ci_source).
@@ -275,6 +277,32 @@ not refused it is up, a rework or a drop; tla/CardContract.tla, StageRefused
 and Restage), ok (set
 only when finished), head, report. It takes its primary's score. The primary
 names its live work card.
+
+**The second identical failure** (the owner, 2026-10-02, nova-tools#5174: "Escalate
+on the second identical failure, not the third."). A card whose second try fails the
+way its first did is not tried a third time on its tier: the judgment "a card reached
+its bound" is raised at once, and its answer is a rework with a fix (on the next tier)
+or a drop. Identical is one function, `sprint.SameFailure` over `sprint.FailureClass`
+(`TestSameFailureIsTheOneDefinitionOfAnIdenticalFailure`): a take whose child left no
+result is the class `no result` whatever its line; any other end is its reason, the
+first line of the report up to the member's `; ` (`verdict not-done`, `budget: no
+RESULT.md shape`, `push refused: <git's line>`, `nothing to do: <why>`), cut to 200
+bytes; a take the provider failed, a launch refused at staging and an end with no line
+(a member down) are never the card's, have no class, and are never identical. Two
+places count tries:
+
+- the takes of one attempt's work card that ended with no work to judge: when the
+  last two ended takes' records (provider_take_<n>) are the same failure, the card is
+  at its bound whatever its redeals count (`redealBound`): it stays withdrawn, the deal
+  refuses it, and the judgment says `its last two takes ended the same way (<class>),
+  the second identical failure: not dealt a third time on its tier`;
+- the attempts of a primary whose work came back failed: the failed finish writes on
+  the primary `failure` (its class) and `failure_at` (its attempt), and when the
+  attempt before failed with the same class, `identical_at` (this attempt) and the
+  bound's judgment (`attempts <n-1> and <n> failed the same way (<class>), the second
+  identical failure`) in place of "work came back failed"; the tick holds it while the
+  primary stays in review at that attempt (`AtIdenticalFailure`), and a rework or a
+  drop closes it (`TestASecondIdenticalFailureRaisesTheBoundAtOnce`).
 
 **Read card.** One reader's read of one primary at one attempt. Identity
 `<primary>.r<attempt>.<reader>`. Fields: primary, stream, kind=read, reader,
@@ -861,7 +889,7 @@ the tick would make, no other open judgment on it).
 | cannot ask (two readers are up, and a primary has no two to be asked of) | reader add, rework, drop, wait | no |
 | fewer than two readers up | reader up, reader add, wait | no |
 | no fleet member is up (when every member that beats is held, it says so and offers only fleet up and wait) | fleet beat (on a machine), fleet up (releases a hold), wait | no |
-| a card reached its bound (an attempt's work card redealt MaxRedeals, 3, times after takes that ended, the provider's failures among them, and a take of it ended again; the judgment names the provider and the last error line when the provider failed that take) | rework with a fix (a new attempt), drop, wait | no |
+| a card reached its bound (an attempt's work card redealt MaxRedeals, 3, times after takes that ended, the provider's failures among them, and a take of it ended again; the judgment names the provider and the last error line when the provider failed that take; or the second identical failure, section 2: two takes of the card, or two attempts of its primary, failed the same way, and the judgment names the class) | rework with a fix (a new attempt, on the next tier), drop, wait | no |
 | a work card is past its deadline | fleet down (the member, only when it has held the card its own whole deadline: never the member a late card was just redealt to, nor one it was withdrawn from), wait, drop | no |
 | a read card is past its deadline | ask --another, wait, drop | no |
 | a stream has had no merge step past its deadline | merge --stream, card (look), wait | no |
