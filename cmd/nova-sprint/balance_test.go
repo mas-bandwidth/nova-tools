@@ -76,11 +76,11 @@ func TestAPolledBalanceAtZeroExcludesTheProviderUntilABalanceReturns(t *testing.
 	for _, r := range []string{"flash-or", "pro-or"} {
 		assert.Contains(t, routes, "ROUTE "+r+" ")
 	}
-	assert.Equal(t, 2, strings.Count(routes, " rested_until=open balance=$-0.51\n"), "every route of the provider, until a balance returns:\n%s", routes)
+	assert.Equal(t, 2, strings.Count(routes, " rested_until=open balance=-$0.51\n"), "every route of the provider, until a balance returns:\n%s", routes)
 	assert.Contains(t, routes, " rested_until=- balance=unknown\n", "the other provider serves")
 	ta.ok("tick")
 	inbox := ta.ok("inbox")
-	assert.Contains(t, inbox, "provider openrouter is out of funds (balance $-0.51 at ")
+	assert.Contains(t, inbox, "provider openrouter is out of funds (balance -$0.51 at ")
 	assert.Contains(t, inbox, "a payment is the owner's")
 	assert.Contains(t, inbox, "nova-sprint funded openrouter --reason")
 	assert.Equal(t, 1, strings.Count(inbox, "a provider is out of funds"), "one judgment of the provider:\n%s", inbox)
@@ -134,7 +134,7 @@ func TestEveryProviderOutOfCreditStopsTheSprint(t *testing.T) {
 // The run loop's balance poll (nova-tools#5199) reads each provider through the seat's key in
 // its own environment and writes the reads: where --json carries the providers table (name,
 // balance, spend an hour, state), routes carries each route's provider balance, the poll's
-// line names the balances and never the key, and a provider at $-0.51 rests.
+// line names the balances and never the key, and a provider at -$0.51 rests.
 func TestTheRunLoopPollsBalancesAndWhereShowsTheProvidersTable(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
@@ -158,7 +158,7 @@ func TestTheRunLoopPollsBalancesAndWhereShowsTheProvidersTable(t *testing.T) {
 	var out bytes.Buffer
 	ta.a.pollBalances(context.Background(), st, &out)
 	assert.Equal(t, []string{"Bearer " + key}, fake.keys, "one read, openrouter's, with the seat's key")
-	assert.Contains(t, out.String(), " BALANCE opencode=unknown openrouter=$-0.51 notes=1\n")
+	assert.Contains(t, out.String(), " BALANCE opencode=unknown openrouter=-$0.51 notes=1\n")
 	assert.NotContains(t, out.String(), key)
 
 	var v whereView
@@ -169,13 +169,13 @@ func TestTheRunLoopPollsBalancesAndWhereShowsTheProvidersTable(t *testing.T) {
 	assert.Contains(t, v.Providers[0].Note, "anomalyco/opencode#44189")
 	assert.Equal(t, "serving", v.Providers[0].State)
 	assert.Equal(t, "openrouter", v.Providers[1].Name)
-	assert.Equal(t, "$-0.51", v.Providers[1].Balance)
+	assert.Equal(t, "-$0.51", v.Providers[1].Balance)
 	assert.NotEmpty(t, v.Providers[1].BalanceAt)
 	assert.Contains(t, v.Providers[1].State, "resting until ")
 	assert.NotContains(t, ta.ok("where"), "openrouter", "the text frame draws no providers table")
 
 	routes := ta.ok("routes")
 	assert.Contains(t, routes, "ROUTE flash-or ")
-	assert.Contains(t, routes, " balance=$-0.51\n")
+	assert.Contains(t, routes, " balance=-$0.51\n")
 	assert.Contains(t, routes, " balance=unknown\n")
 }

@@ -89,21 +89,23 @@ usage:
 The owner, 2026-10-03, 8:03 AM ET: "provider out of funds should never be a mystery failure." And
 at 8:18 AM ET: "you'll need to detect when a provider runs out of credits, and exclude that
 provider moving forward, and let me know. then if all providers are out, then you stop the
-sprint." (nova-tools#5199.) Overnight 2026-10-02/03 two providers ran out of credit, every
-child on them ended at launch within two seconds, `native` reported each `INCOMPLETE
-why=no-result`, the member finished each take `no result: no RESULT.md shape`, and one card was
-dealt 247 times. `native` now reads a run that ended with no result for the provider's own
-words before it calls it the card's: the session's record of the failed message (the 402 is
-`statusCode 402` there), the run's printed output in `<job>/harness-output.log` (the harness's
+sprint." (nova-tools#5199.) A provider that refuses a launch for want of credit makes the harness
+exit 1 within two seconds, before its log in the data home holds a line. `native` reads a run
+that ended with no result for the provider's own words before it calls it the card's: a session
+error naming the provider's refusal for credit (a 402, insufficient credit or funds, a payment
+required: `statusCode 402` in the session's record of the failed message) is a provider failure
+by itself; otherwise the run's printed output in `<job>/harness-output.log` (the harness's
 `ERROR` lines, `Insufficient credits`, `Upstream request failed: Insufficient account funds`),
-then the harness's log; a provider error in any is reported on stderr as
+then the harness's log, or a clean exit on a tool result, says the provider failed it, and the
+session's error, of whatever class, then names the cause. A provider failure is reported on
+stderr as
 
     NATIVE PROVIDER-FAIL label=<l> wall=<s>s route=<model> reason=provider: class=<out-of-credit|rate-limited|provider-5xx|auth|...> status=<n|-> msg=<the provider's first line>
 
 which the member finishes `provider failure: provider: class=...`, never `no result`
 (docs/SPEC-CARD-CONTRACT.md section 4, the provider failure; the classes are
-`internal/swarm` providercause.go's). What the sprint does with it, the provider's routes
-excluded until a balance returns and the sprint stopped when every provider is out, is
+`internal/swarm` providercause.go's). What the sprint does with it, the provider excluded until a
+balance returns and the sprint stopped when every provider is out of credit, is
 docs/SPEC-SPRINT.md, "A provider out of funds".
 
 ## Exit codes

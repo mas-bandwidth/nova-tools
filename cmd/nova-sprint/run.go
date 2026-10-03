@@ -504,10 +504,12 @@ When nothing is left open (every card landed or dropped) the tick says "the
 sprint is done" to the coordinator and stops the machine itself: DONE, in
 where and the view; work added after leaves it STOPPED until nova-sprint
 start. run reads each provider's balance every 10 minutes through the seat's
-key (OPENROUTER_API_KEY; a BALANCE line): a provider out of credit is rested
-until a balance returns, and when every provider is out the tick stops the
-machine (STOPPED, every provider is out of credit) and start is refused until
-one has a balance or nova-sprint funded <provider> says it was paid. Every
+key (OPENROUTER_API_KEY; a BALANCE line): a provider out of credit (a refused
+take, or a balance at zero) is rested until a balance returns, one low on funds
+(a balance not over an hour of its spend) until the balance is over it; when
+every provider is OUT the tick stops the machine (STOPPED, every provider is
+out of credit) and start is refused until one has a balance or nova-sprint
+funded <provider> says it was paid. Low on funds never stops it. Every
 verb works in both states. run stops (exit 3) when its own binary is replaced
 on disk, so its supervisor starts the new build.`) + "\n"
 }

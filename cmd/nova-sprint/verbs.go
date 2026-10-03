@@ -2310,9 +2310,9 @@ func (a *app) cmdSet(args []string, stdout, stderr io.Writer) int {
 	return a.runStep("set", *c, st, store.SetStep(sprint.SetReq{ReadTier: *tier, DealtMax: *dealt, Who: c.actor}), stdout, stderr)
 }
 
-// cmdFunded is the coordinator's word that a provider was paid: every rest of its funds ends
+// cmdFunded is the coordinator's word that a provider was paid: its rest of its funds ends
 // now (sprint.Funded; nova-tools#5199), for a provider whose balance no poll can read as for
-// any; the balance poll ends them by itself when it reads a balance again.
+// any; the balance poll ends it by itself when it reads enough again.
 func (a *app) cmdFunded(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("funded")
 	reason := fs.String("reason", "", "the payment made, in a few words (required)")
