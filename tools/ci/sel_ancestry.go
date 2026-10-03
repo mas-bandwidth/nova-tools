@@ -56,12 +56,14 @@ func fetchAncestryVerb(e env, args []string, h selHost) int {
 	branch := fs.Arg(0)
 	root := selRoot(e)
 	if *promotion && e.getenv("GITHUB_EVENT_NAME") != "pull_request" {
-		res, err := h.run(root, nil, "git", "rev-list", "--parents", "-n", "1", "HEAD")
+		res, err := h.run(root, nil, "git", "cat-file", "-p", "HEAD")
 		if err != nil || res.Code != 0 {
-			fmt.Fprintf(e.stderr, "fetch-ancestry: git rev-list --parents failed: %s\n", selWhy(res.Stderr, res.Code, err))
+			fmt.Fprintf(e.stderr, "fetch-ancestry: git cat-file HEAD failed: %s\n", selWhy(res.Stderr, res.Code, err))
 			return 1
 		}
-		if len(strings.Fields(res.Stdout)) < 3 {
+		// Read stored parent headers: rev-list hides them at a shallow boundary.
+		headers := strings.SplitN(res.Stdout, "\n\n", 2)[0]
+		if strings.Count("\n"+headers, "\nparent ") < 2 {
 			fmt.Fprintln(e.stdout, "a one-parent commit: no promotion to read")
 			return 0
 		}

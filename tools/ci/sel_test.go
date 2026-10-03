@@ -726,7 +726,7 @@ func TestUnitTestNeedsPackages(t *testing.T) {
 
 const (
 	ancestryShallow   = "git rev-parse --is-shallow-repository"
-	ancestryParents   = "git rev-list --parents -n 1 HEAD"
+	ancestryParents   = "git cat-file -p HEAD"
 	ancestryFetchDev  = "git fetch --no-tags --filter=blob:none --unshallow origin +dev:refs/remotes/origin/dev"
 	ancestryFetchPlan = "git fetch --no-tags --filter=blob:none origin +sprint/foundation:refs/remotes/origin/sprint/foundation"
 	ancestryFetchUnsh = "git fetch --no-tags --filter=blob:none --unshallow origin +sprint/foundation:refs/remotes/origin/sprint/foundation"
@@ -756,18 +756,46 @@ func TestFetchAncestryUnshallowsOnlyAShallowCheckout(t *testing.T) {
 // read, so nothing is fetched; a pull request always fetches.
 func TestFetchAncestryPromotionSkipsAOneParentCommit(t *testing.T) {
 	t.Parallel()
-	f := newSelFake(map[string]selReply{ancestryParents: {out: "abc123 def456\n"}})
+	f := newSelFake(map[string]selReply{ancestryParents: {out: "tree abc123\nparent def456\n\nsubject\n"}})
 	code, out, _ := selRun(func(e env, a []string) int { return fetchAncestryVerb(e, a, f.host()) }, "", map[string]string{"GITHUB_EVENT_NAME": "push"}, "--promotion", "sprint/foundation")
 	if code != 0 || out != "a one-parent commit: no promotion to read\n" || f.called("git fetch") {
 		t.Errorf("one parent on a push: exit %d, stdout %q, calls %v", code, out, f.calls)
 	}
-	f = newSelFake(map[string]selReply{ancestryParents: {out: "abc123 def456 fed789\n"}, ancestryLsRemote: {out: "abc123\trefs/heads/sprint/foundation\n"}, ancestryShallow: {out: "false\n"}, ancestryFetchPlan: {}})
+	f = newSelFake(map[string]selReply{ancestryParents: {out: "tree abc123\nparent def456\nparent fed789\n\nsubject\n"}, ancestryLsRemote: {out: "abc123\trefs/heads/sprint/foundation\n"}, ancestryShallow: {out: "false\n"}, ancestryFetchPlan: {}})
 	if code, out, _ := selRun(func(e env, a []string) int { return fetchAncestryVerb(e, a, f.host()) }, "", map[string]string{"GITHUB_EVENT_NAME": "merge_group"}, "--promotion", "sprint/foundation"); code != 0 || out != "" || !f.called("git fetch") {
 		t.Errorf("a merge commit: exit %d, stdout %q, calls %v", code, out, f.calls)
 	}
 	f = newSelFake(map[string]selReply{ancestryLsRemote: {out: "abc123\trefs/heads/sprint/foundation\n"}, ancestryShallow: {out: "false\n"}, ancestryFetchPlan: {}})
-	if code, _, _ := selRun(func(e env, a []string) int { return fetchAncestryVerb(e, a, f.host()) }, "", map[string]string{"GITHUB_EVENT_NAME": "pull_request"}, "--promotion", "sprint/foundation"); code != 0 || f.called("git rev-list") || !f.called("git fetch") {
+	if code, _, _ := selRun(func(e env, a []string) int { return fetchAncestryVerb(e, a, f.host()) }, "", map[string]string{"GITHUB_EVENT_NAME": "pull_request"}, "--promotion", "sprint/foundation"); code != 0 || f.called("git cat-file") || !f.called("git fetch") {
 		t.Errorf("a pull request: exit %d, calls %v; want a fetch and no parent count", code, f.calls)
+	}
+}
+
+// Stored headers preserve a shallow merge's parents and exclude its message.
+func TestFetchAncestryReadsStoredParentHeaders(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		commit string
+		fetch  bool
+	}{
+		{"root", "tree abc123\n\nsubject\n", false},
+		{"one parent", "tree abc123\nparent def456\n\nsubject\n", false},
+		{"shallow merge", "tree abc123\nparent def456\nparent fed789\n\nsubject\n", true},
+		{"parent in message", "tree abc123\nparent def456\n\nparent fed789\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newSelFake(map[string]selReply{
+				ancestryParents:   {out: tc.commit},
+				ancestryLsRemote:  {out: "abc123\trefs/heads/sprint/foundation\n"},
+				ancestryShallow:   {out: "true\n"},
+				ancestryFetchUnsh: {},
+			})
+			code, _, errb := selRun(func(e env, a []string) int { return fetchAncestryVerb(e, a, f.host()) }, "", map[string]string{"GITHUB_EVENT_NAME": "push"}, "--promotion", "sprint/foundation")
+			require.Zero(t, code, errb)
+			assert.Equal(t, tc.fetch, f.called("git fetch"))
+		})
 	}
 }
 
@@ -780,7 +808,7 @@ func TestFetchAncestryPromotionSkipsAOneParentCommit(t *testing.T) {
 func TestFetchAncestryPromotionSaysSoWhenTheBranchIsAbsent(t *testing.T) {
 	t.Parallel()
 	f := newSelFake(map[string]selReply{
-		ancestryParents:   {out: "abc123 def456 fed789\n"},
+		ancestryParents:   {out: "tree abc123\nparent def456\nparent fed789\n\nsubject\n"},
 		ancestryLsRemote:  {code: 2},
 		ancestryShallow:   {out: "true\n"},
 		ancestryFetchUnsh: {err: ancestryAbsentErr, code: 128},
@@ -790,7 +818,7 @@ func TestFetchAncestryPromotionSaysSoWhenTheBranchIsAbsent(t *testing.T) {
 		t.Errorf("absent branch: exit %d, stdout %q, stderr %q, calls %v; want 0, the saying, and no fetch", code, out, errb, f.calls)
 	}
 	// ls-remote failing for another reason (the network) is not "absent".
-	f = newSelFake(map[string]selReply{ancestryParents: {out: "abc123 def456 fed789\n"}, ancestryLsRemote: {err: "fatal: unable to access\n", code: 128}})
+	f = newSelFake(map[string]selReply{ancestryParents: {out: "tree abc123\nparent def456\nparent fed789\n\nsubject\n"}, ancestryLsRemote: {err: "fatal: unable to access\n", code: 128}})
 	if code, _, errb := selRun(func(e env, a []string) int { return fetchAncestryVerb(e, a, f.host()) }, "", map[string]string{"GITHUB_EVENT_NAME": "push"}, "--promotion", "sprint/foundation"); code != 1 || !strings.Contains(errb, "unable to access") {
 		t.Errorf("ls-remote failure: exit %d, stderr %q; want 1", code, errb)
 	}
