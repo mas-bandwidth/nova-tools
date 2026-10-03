@@ -226,7 +226,7 @@ func TestBoundToLocalhostAndTailnetOnly(t *testing.T) {
 		if assert.Equal(t, 2, code, "%s (--bind %q): exit %d launches %d, want 2 and 0 (a public bind is refused, never launched)", tc.name, tc.bind, code, len(h.launches)) {
 			assert.Len(t, h.launches, 0, "%s (--bind %q): exit %d launches %d, want 2 and 0 (a public bind is refused, never launched)", tc.name, tc.bind, code, len(h.launches))
 		}
-		assert.True(t, strings.HasPrefix(errb, "nova-redis serve REFUSED: "), "%s: stderr %q is not a serve refusal", tc.name, errb)
+		assert.True(t, strings.HasPrefix(errb, "SERVE REFUSED: "), "%s: stderr %q is not a serve refusal", tc.name, errb)
 	}
 
 	h := newServeHarness(t, "pw-from-nova-secrets")

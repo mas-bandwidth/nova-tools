@@ -15,11 +15,13 @@ package main
 //     eviction, so a restart on the same --dir replays every key and a full
 //     instance refuses a write rather than drop a card. Nothing sets a TTL
 //     policy: store keys do not expire.
+//
+// serve's output is redis-server's own stream plus its START and STOP lines,
+// so it is a Prints verb.
 
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"io/fs"
@@ -33,6 +35,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
 // redisServerProgram is the instance program, found on PATH.
@@ -76,42 +79,57 @@ func launchRedis(ctx context.Context, spec launchSpec, stdout, stderr io.Writer)
 	return err
 }
 
-func cmdServe(args []string, stdout, stderr io.Writer, d deps) int {
-	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
-	bindText := fs.String("bind", "", "comma-separated IP addresses to listen on, loopback (127.0.0.1, ::1) or tailnet (100.64.0.0/10, fd7a:115c:a1e0::/48) only")
-	portText := fs.String("port", "", "the TCP port to listen on, 1 to 65535 (6379 is Redis's own)")
-	dirText := fs.String("dir", "", "the absolute path of the store directory (AOF and RDB files), created 0700 when missing")
-	problems, ok := parse(fs, args, "bind", "port", "dir")
-	if !ok {
-		return refuse(stderr, "serve", problems...)
+// serveVerb is the serve verb: runs redis-server in the foreground.
+func serveVerb(d deps) tool.Verb {
+	return tool.Verb{
+		Name:    "serve",
+		Usage:   "serve --bind <addr>[,<addr>...] --port <port> --dir <store-dir>",
+		Example: "version",
+		Effect:  tool.LocalWrite,
+		Flags: func(f *tool.Flags) {
+			f.Prints()
+			f.String("bind", "", "comma-separated IP addresses to listen on, loopback (127.0.0.1, ::1) or tailnet (100.64.0.0/10, fd7a:115c:a1e0::/48) only")
+			f.String("port", "", "the TCP port to listen on, 1 to 65535 (6379 is Redis's own)")
+			f.String("dir", "", "the absolute path of the store directory (AOF and RDB files), created 0700 when missing")
+			f.Check(func(c *tool.Call) {
+				if !c.Given("bind") {
+					c.Problem("--bind is required: comma-separated IP addresses to listen on, loopback (127.0.0.1, ::1) or tailnet (100.64.0.0/10, fd7a:115c:a1e0::/48) only; refusing to guess")
+				} else if _, err := validBinds(c.Str("bind")); err != nil {
+					c.Problem(err.Error())
+				}
+				if !c.Given("port") {
+					c.Problem("--port is required: the TCP port to listen on, 1 to 65535 (6379 is Redis's own); refusing to guess")
+				} else if port, err := strconv.Atoi(c.Str("port")); err != nil || port < 1 || port > 65535 {
+					c.Problem(fmt.Sprintf("--port %q needs a port from 1 to 65535", c.Str("port")))
+				}
+				if !c.Given("dir") {
+					c.Problem("--dir is required: the absolute path of the store directory (AOF and RDB files), created 0700 when missing; refusing to guess")
+				} else if !filepath.IsAbs(c.Str("dir")) {
+					c.Problem(fmt.Sprintf("--dir %q is not absolute; name the store directory in full", c.Str("dir")))
+				}
+			})
+		},
+		Run: func(c *tool.Call) *tool.Out { return serveRun(c, d) },
 	}
-	binds, err := validBinds(*bindText)
-	if err != nil && given(fs, "bind") {
-		problems = append(problems, err.Error())
-	}
-	port, err := strconv.Atoi(*portText)
-	if (err != nil || port < 1 || port > 65535) && given(fs, "port") {
-		problems = append(problems, fmt.Sprintf("--port %q needs a port from 1 to 65535", *portText))
-	}
-	if given(fs, "dir") && !filepath.IsAbs(*dirText) {
-		problems = append(problems, fmt.Sprintf("--dir %q is not absolute; name the store directory in full", *dirText))
-	}
-	if len(problems) > 0 {
-		return refuse(stderr, "serve", problems...)
-	}
-	dir, err := storeDir(*dirText)
+}
+
+// serveRun is serve's body: launches redis-server in the foreground.
+func serveRun(c *tool.Call, d deps) *tool.Out {
+	binds, _ := validBinds(c.Str("bind"))
+	port, _ := strconv.Atoi(c.Str("port"))
+	dir, err := storeDir(c.Str("dir"))
 	if err != nil {
-		return refuse(stderr, "serve", err.Error())
+		return tool.Refuse(err.Error())
 	}
 	password := d.getenv(PasswordEnv)
 	if password == "" {
-		return refuse(stderr, "serve", fmt.Sprintf("%s is empty; run under `nova-secrets exec --only %s -- nova-redis serve ...` so auth comes from nova-secrets at run time, never an argument", PasswordEnv, PasswordEnv))
+		return tool.Refuse(fmt.Sprintf("%s is empty; run under `nova-secrets exec --only %s -- nova-redis serve ...` so auth comes from nova-secrets at run time, never an argument", PasswordEnv, PasswordEnv))
 	}
 	program, err := d.lookPath(redisServerProgram)
 	if err != nil {
-		fmt.Fprintf(stderr, "SERVE FAILED err=%s remedy=%q\n", oneline.Err(fmt.Errorf("%s not found on PATH: %w", redisServerProgram, err)),
+		fmt.Fprintf(c.Stderr, "SERVE FAILED err=%s remedy=%q\n", oneline.Err(fmt.Errorf("%s not found on PATH: %w", redisServerProgram, err)),
 			"install redis-server (Redis 7 or later) so it is on PATH, then run nova-redis serve again")
-		return 1
+		return tool.Exit(1)
 	}
 	spec := launchSpec{
 		Program: program,
@@ -120,16 +138,16 @@ func cmdServe(args []string, stdout, stderr io.Writer, d deps) int {
 		Config:  redisConfig(binds, port, password, dir),
 		Dir:     dir,
 	}
-	fmt.Fprintf(stdout, "SERVE START bind=%s port=%d auth=on persistence=aof eviction=none dir=%s program=%s\n",
+	fmt.Fprintf(c.Stdout, "SERVE START bind=%s port=%d auth=on persistence=aof eviction=none dir=%s program=%s\n",
 		oneline.Field(strings.Join(binds, ",")), port, oneline.Field(dir), oneline.Field(program))
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := d.launch(ctx, spec, stdout, stderr); err != nil {
-		fmt.Fprintf(stderr, "SERVE FAILED err=%s remedy=%q\n", oneline.Err(err), "run: ls -ld -- "+shellWord(dir)+"; compare directory access and the explicit --bind/--port with the launch error and any redis-server output")
-		return 1
+	if err := d.launch(ctx, spec, c.Stdout, c.Stderr); err != nil {
+		fmt.Fprintf(c.Stderr, "SERVE FAILED err=%s remedy=%q\n", oneline.Err(err), "run: ls -ld -- "+shellWord(dir)+"; compare directory access and the explicit --bind/--port with the launch error and any redis-server output")
+		return tool.Exit(1)
 	}
-	fmt.Fprintf(stdout, "SERVE STOP bind=%s port=%d\n", oneline.Field(strings.Join(binds, ",")), port)
-	return 0
+	fmt.Fprintf(c.Stdout, "SERVE STOP bind=%s port=%d\n", oneline.Field(strings.Join(binds, ",")), port)
+	return tool.Exit(0)
 }
 
 // validBinds parses --bind and refuses every address that is not loopback or

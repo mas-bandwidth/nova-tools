@@ -60,7 +60,7 @@ func TestStatusGrammar(t *testing.T) {
 				h := newServeHarness(t, "")
 				return []string{"serve"}, h.run
 			},
-			token: "nova-redis serve", word: "REFUSED", marker: "run: nova-redis help", exit: 2,
+			token: "SERVE", word: "REFUSED", marker: "run: nova-redis help", exit: 2,
 		},
 		{
 			name: "serve failed when redis-server is not on PATH",
@@ -80,7 +80,7 @@ func TestStatusGrammar(t *testing.T) {
 		{
 			name:  "spill refused without an owner",
 			args:  []string{"spill", "--addr", "127.0.0.1:6379", "--name", "note", "--ttl", "10m", "--value", "hi"},
-			token: "nova-redis spill", word: "REFUSED", marker: "run: nova-redis help", exit: 2,
+			token: "SPILL", word: "REFUSED", marker: "run: nova-redis help", exit: 2,
 		},
 		{
 			name:  "spill failed when the store does not answer",
@@ -101,7 +101,7 @@ func TestStatusGrammar(t *testing.T) {
 		{
 			name:  "recall refused without an owner",
 			args:  []string{"recall", "--addr", "127.0.0.1:6379", "--name", "note"},
-			token: "nova-redis recall", word: "REFUSED", marker: "run: nova-redis help", exit: 2,
+			token: "RECALL", word: "REFUSED", marker: "run: nova-redis help", exit: 2,
 		},
 		{
 			name:  "recall failed when the store does not answer",
@@ -111,7 +111,7 @@ func TestStatusGrammar(t *testing.T) {
 		{
 			name:  "fn load refused without an address",
 			args:  []string{"fn", "load"},
-			token: "nova-redis fn load", word: "REFUSED", marker: "run: nova-redis help", exit: 2,
+			token: "FN-LOAD", word: "REFUSED", marker: "run: nova-redis help", exit: 2,
 		},
 		{
 			name:  "fn load failed when the store does not answer",
@@ -121,7 +121,7 @@ func TestStatusGrammar(t *testing.T) {
 		{
 			name:  "fn check refused without an address",
 			args:  []string{"fn", "check"},
-			token: "nova-redis fn check", word: "REFUSED", marker: "run: nova-redis help", exit: 2,
+			token: "FN-CHECK", word: "REFUSED", marker: "run: nova-redis help", exit: 2,
 		},
 		{
 			name:  "fn check failed when the store does not answer",
@@ -136,12 +136,12 @@ func TestStatusGrammar(t *testing.T) {
 		{
 			name:  "acl render refused on an unknown flag",
 			args:  []string{"acl", "render", "--zzz"},
-			token: "nova-redis acl render", word: "REFUSED", marker: "run: nova-redis help", exit: 2,
+			token: "ACL-RENDER", word: "REFUSED", marker: "run: nova-redis acl render -h", exit: 2,
 		},
 		{
 			name:  "acl check refused without an address",
 			args:  []string{"acl", "check"},
-			token: "nova-redis acl check", word: "REFUSED", marker: "run: nova-redis help", exit: 2,
+			token: "ACL-CHECK", word: "REFUSED", marker: "run: nova-redis help", exit: 2,
 		},
 		{
 			name:  "acl check failed when the store does not answer",
@@ -151,7 +151,7 @@ func TestStatusGrammar(t *testing.T) {
 		{
 			name:  "acl apply refused without an address",
 			args:  []string{"acl", "apply"},
-			token: "nova-redis acl apply", word: "REFUSED", marker: "run: nova-redis help", exit: 2,
+			token: "ACL-APPLY", word: "REFUSED", marker: "run: nova-redis help", exit: 2,
 		},
 		{
 			name:  "acl apply failed when the store does not answer",
@@ -161,12 +161,12 @@ func TestStatusGrammar(t *testing.T) {
 		{
 			name:  "version refused on an unknown flag",
 			args:  []string{"version", "--zzz"},
-			token: "nova-redis version", word: "REFUSED", marker: "run: nova-redis help", exit: 2,
+			token: "VERSION", word: "REFUSED", marker: "run: nova-redis version -h", exit: 2,
 		},
 		{
 			name:  "help refused on an unknown verb",
 			args:  []string{"help", "--zzz"},
-			token: "nova-redis", word: "REFUSED", marker: "run: nova-redis help", exit: 2,
+			token: "REDIS", word: "REFUSED", marker: "run: nova-redis help", exit: 2,
 		},
 	}
 

@@ -19,21 +19,23 @@ package main
 //
 // check and apply log in as --user with the password in --password-env, the
 // admin user that may run ACL, through connect as every nova-redis verb does.
+//
+// The acl verbs print their own lines (a multi-word head, ACL FAMILY, is a
+// line the skeleton cannot render), so they are Prints verbs.
 
 import (
 	"context"
 	"flag"
 	"fmt"
-	"io"
 	"sort"
 	"strings"
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/redisacl"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
+	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
 // aclServer is the store the acl verbs read and write; aclStore is the one
@@ -143,21 +145,17 @@ func (s aclStore) Save(ctx context.Context) (bool, error) {
 	return err == nil, err
 }
 
-func cmdACL(args []string, stdout, stderr io.Writer, d deps) int {
-	return aclVerb(args, stdout, stderr, d, func(ctx context.Context, store login) (aclServer, func() error, error) {
-		conn, err := connect(ctx, store, d)
-		if err != nil {
-			return nil, nil, err
-		}
-		return aclStore{conn.Client()}, conn.Close, nil
-	})
-}
-
 // passwordSources is --password-env-for: user -> the variable holding the
 // password apply gives a user it creates.
 type passwordSources map[string]string
 
 func (p passwordSources) String() string { return fmt.Sprint(map[string]string(p)) }
+
+// Get is the flag.Getter half, so Call.Get reads the sources back as
+// passwordSources (tool.Call).
+func (p passwordSources) Get() any { return p }
+
+var _ flag.Getter = passwordSources(nil)
 
 func (p passwordSources) Set(v string) error {
 	user, env, ok := strings.Cut(v, "=")
@@ -168,75 +166,106 @@ func (p passwordSources) Set(v string) error {
 	return nil
 }
 
+// aclRenderVerb is acl render: prints this build's users, opens no store.
+func aclRenderVerb(d deps) tool.Verb {
+	return tool.Verb{
+		Name:    "acl render",
+		Usage:   "acl render",
+		Example: "",
+		Effect:  tool.Inspection,
+		Flags: func(f *tool.Flags) {
+			f.Prints()
+		},
+		Run: func(c *tool.Call) *tool.Out { return aclVerbRun(c, d, "render") },
+	}
+}
+
+// aclCheckVerb is acl check: an inspection of the store's users.
+func aclCheckVerb(d deps) tool.Verb {
+	return tool.Verb{
+		Name:    "acl check",
+		Usage:   "acl check --addr <host:port> [--user <name>] [--password-env <NAME>]",
+		Example: "",
+		Effect:  tool.Inspection,
+		Flags: func(f *tool.Flags) {
+			f.Prints()
+			loginFlags(f)
+		},
+		Run: func(c *tool.Call) *tool.Out { return aclVerbRun(c, d, "check") },
+	}
+}
+
+// aclApplyVerb is acl apply: a store write of the users that differ.
+func aclApplyVerb(d deps) tool.Verb {
+	return tool.Verb{
+		Name:    "acl apply",
+		Usage:   "acl apply --addr <host:port> [--user <name>] [--password-env <NAME>] [--password-env-for <user>=<VARIABLE>]... [--dry-run]",
+		Example: "",
+		Effect:  tool.LocalWrite,
+		DryRun:  true,
+		Flags: func(f *tool.Flags) {
+			f.Prints()
+			loginFlags(f)
+			f.Var(passwordSources{}, "password-env-for", "<user>=<VARIABLE>, repeatable: the variable holding the password a user apply creates gets; a user the store lacks is created only with one")
+		},
+		Run: func(c *tool.Call) *tool.Out { return aclVerbRun(c, d, "apply") },
+	}
+}
+
 // aclOpener opens the store for a login check accepted.
 type aclOpener func(ctx context.Context, store login) (aclServer, func() error, error)
 
-func aclVerb(args []string, stdout, stderr io.Writer, d deps, open aclOpener) int {
-	if len(args) == 0 {
-		return refuse(stderr, "acl", "no subverb given; render prints this build's users, check compares the store's with them, apply writes the ones that differ")
-	}
-	sub := args[0]
-	if verbflag.IsHelp(sub) {
-		// Help for the group is never a refusal: its subverbs and their effects.
-		panic(verbflag.Help{FS: flag.NewFlagSet("acl", flag.ContinueOnError)})
-	}
-	if sub != "render" && sub != "check" && sub != "apply" {
-		return refuse(stderr, "acl", fmt.Sprintf("unknown subverb %q; want render, check or apply", sub))
-	}
-	fs := flag.NewFlagSet("acl "+sub, flag.ContinueOnError)
-	r := newReport("acl "+sub, fs, args[1:], stdout, stderr)
-	var store login
-	var dryRun *bool
-	required := []string{}
-	if sub != "render" {
-		store = loginFlags(fs)
-		required = append(required, "addr")
-	}
-	sources := passwordSources{}
-	if sub == "apply" {
-		dryRun = fs.Bool("dry-run", false, "print the users apply would set (ACL WOULD-SET) and write nothing")
-		fs.Var(&sources, "password-env-for", "<user>=<VARIABLE>, repeatable: the variable holding the password a user apply creates gets; a user the store lacks is created only with one")
-	}
-	if problems, _ := parse(fs, args[1:], required...); len(problems) > 0 {
-		return r.refuse(problems...)
-	}
+// aclVerbRun is acl render, check and apply over the store d.aclOpen (or connect)
+// opens.
+func aclVerbRun(c *tool.Call, d deps, sub string) *tool.Out {
 	lib := library()
 	digest, err := lib.Digest()
 	if err != nil {
-		return r.refuse(fmt.Sprintf("this binary's library does not build: %s; fix the Lua and rebuild", err))
+		return tool.Refuse(fmt.Sprintf("this binary's library does not build: %s; fix the Lua and rebuild", err))
 	}
 	users, err := redisacl.Render(lib)
 	if err != nil {
-		return r.refuse(fmt.Sprintf("this build's roles do not render: %s; fix internal/redisacl and rebuild", err))
+		return tool.Refuse(fmt.Sprintf("this build's roles do not render: %s; fix internal/redisacl and rebuild", err))
 	}
 	if sub == "render" {
 		// A family is what an operator reads: its name and its key patterns.
 		for _, f := range redisacl.Families {
-			r.line(false, "ACL FAMILY", "name", f.Name, "keys", free(strings.Join(f.Patterns, ",")))
+			line(c.Stdout, "ACL FAMILY", "name", f.Name, "keys", free(strings.Join(f.Patterns, ",")))
 		}
 		fns := 0
 		for _, u := range users {
 			// The user's pasteable command (redisacl.User.Line): its rules follow its name.
-			r.line(false, "ACL SETUSER", "user", bare{u.Name, u.Name}, "rules", bare{strings.TrimPrefix(u.Line(), "ACL SETUSER "+u.Name+" "), u.Rules})
+			line(c.Stdout, "ACL SETUSER", "user", bare{u.Name, u.Name}, "rules", bare{strings.TrimPrefix(u.Line(), "ACL SETUSER "+u.Name+" "), u.Rules})
 			fns = max(fns, u.Functions)
 		}
-		r.line(false, "ACL RENDER OK", "users", len(users), "functions", fns, "library", digest)
-		return r.done(0)
+		line(c.Stdout, "ACL RENDER OK", "users", len(users), "functions", fns, "library", digest)
+		return tool.Exit(0)
 	}
+	store := loginFrom(c)
 	if err := store.check(d); err != nil {
-		return r.refuse(err.Error())
+		return tool.Refuse(err.Error())
 	}
 	at := *store.addr
-	failed := func(err error) int {
+	failed := func(err error) *tool.Out {
 		cause, _, _ := strings.Cut(oneline.Err(err), "; next: ")
-		r.line(true, "ACL "+strings.ToUpper(sub)+" FAILED", "store", at, "err", free(cause), "remedy",
+		line(c.Stderr, "ACL "+strings.ToUpper(sub)+" FAILED", "store", at, "err", free(cause), "remedy",
 			quoted("log in as a user that may run ACL GETUSER, ACL CAT and ACL SETUSER: check --user ("+UserEnv+") and the password in "+*store.passwordEnv+", then nova-redis acl "+sub+" "+store.flags()))
 		if answered(err) {
-			return r.done(1)
+			return tool.Exit(1)
 		}
-		return r.done(2)
+		return tool.Exit(2)
 	}
 	ctx := context.Background()
+	open := d.aclOpen
+	if open == nil {
+		open = func(ctx context.Context, store login) (aclServer, func() error, error) {
+			conn, err := connect(ctx, store, d)
+			if err != nil {
+				return nil, nil, err
+			}
+			return aclStore{conn.Client()}, conn.Close, nil
+		}
+	}
 	srv, closeStore, err := open(ctx, store)
 	if err != nil {
 		return failed(err)
@@ -260,13 +289,13 @@ func aclVerb(args []string, stdout, stderr io.Writer, d deps, open aclOpener) in
 		dr := redisacl.Compare(u, live[u.Name], cat)
 		switch {
 		case dr.None():
-			r.line(false, "ACL OK", "user", u.Name, "role", u.Role)
+			line(c.Stdout, "ACL OK", "user", u.Name, "role", u.Role)
 		case dr.Missing:
-			r.line(false, "ACL MISSING", "user", u.Name, "role", u.Role)
+			line(c.Stdout, "ACL MISSING", "user", u.Name, "role", u.Role)
 			differ = append(differ, u)
 		default:
 			// Fields is the drift as the line spells it; --json carries every name.
-			r.line(false, "ACL DRIFT", "user", u.Name, "role", u.Role, "drift", bare{strings.TrimPrefix(dr.Fields(), " "), dr})
+			line(c.Stdout, "ACL DRIFT", "user", u.Name, "role", u.Role, "drift", bare{strings.TrimPrefix(dr.Fields(), " "), dr})
 			differ = append(differ, u)
 		}
 	}
@@ -274,23 +303,24 @@ func aclVerb(args []string, stdout, stderr io.Writer, d deps, open aclOpener) in
 	sort.Strings(everyone)
 	for _, n := range everyone {
 		if !rendered[n] {
-			r.note(fmt.Sprintf("ACL EXTRA user=%s: no role renders it; acl apply leaves it as it is", oneline.Field(n)))
+			note(c.Stdout, fmt.Sprintf("ACL EXTRA user=%s: no role renders it; acl apply leaves it as it is", oneline.Field(n)))
 		}
 	}
 	if def := live["default"]; def.Exists {
-		r.note(fmt.Sprintf("ACL DEFAULT on=%t nopass=%t", def.On, def.NoPass))
+		note(c.Stdout, fmt.Sprintf("ACL DEFAULT on=%t nopass=%t", def.On, def.NoPass))
 	}
 	if sub == "check" {
 		if len(differ) == 0 {
-			r.line(false, "ACL CHECK OK", "users", len(users), "library", digest, "store", at)
-			return r.done(0)
+			line(c.Stdout, "ACL CHECK OK", "users", len(users), "library", digest, "store", at)
+			return tool.Exit(0)
 		}
-		r.line(false, "ACL CHECK DRIFT", "users", len(users), "differ", len(differ), "library", digest, "store", at,
+		line(c.Stdout, "ACL CHECK DRIFT", "users", len(users), "differ", len(differ), "library", digest, "store", at,
 			"remedy", quoted("nova-redis acl apply "+store.flags()+" sets the users that differ"))
-		return r.done(1)
+		return tool.Exit(1)
 	}
 	// A user the store lacks is created only with a password from the
 	// variable --password-env-for names: never on with none.
+	sources := c.Get("password-env-for").(passwordSources)
 	var unsourced []string
 	for _, u := range differ {
 		if live[u.Name].Exists {
@@ -301,17 +331,17 @@ func aclVerb(args []string, stdout, stderr io.Writer, d deps, open aclOpener) in
 		}
 	}
 	if len(unsourced) > 0 {
-		r.line(false, "ACL APPLY REFUSED", "users", len(users), "missing", free(strings.Join(unsourced, ",")),
+		line(c.Stdout, "ACL APPLY REFUSED", "users", len(users), "missing", free(strings.Join(unsourced, ",")),
 			"", why("a user the store lacks is created only with a password"),
 			"", next("nova-redis acl apply "+store.flags()+" --password-env-for "+unsourced[0]+"=<VARIABLE> (the variable set, under nova-secrets exec --only <VARIABLE>)"))
-		return r.done(1)
+		return tool.Exit(1)
 	}
-	if *dryRun {
+	if c.DryRun() {
 		for _, u := range differ {
-			r.line(false, "ACL WOULD-SET", "user", u.Name, "role", u.Role)
+			line(c.Stdout, "ACL WOULD-SET", "user", u.Name, "role", u.Role)
 		}
-		r.line(false, "ACL APPLY OK", "dry-run", true, "users", len(users), "set", 0, "would", len(differ), "library", digest, "store", at)
-		return r.done(0)
+		line(c.Stdout, "ACL APPLY OK", "dry-run", true, "users", len(users), "set", 0, "would", len(differ), "library", digest, "store", at)
+		return tool.Exit(0)
 	}
 	for i, u := range differ {
 		rules := u.Rules
@@ -320,10 +350,10 @@ func aclVerb(args []string, stdout, stderr io.Writer, d deps, open aclOpener) in
 			rules = append([]string{">" + d.getenv(sources[u.Name])}, rules...)
 		}
 		if err := srv.SetUser(ctx, u.Name, rules); err != nil {
-			r.line(false, "ACL APPLY FAILED", "users", len(users), "set", i, "user", u.Name)
+			line(c.Stdout, "ACL APPLY FAILED", "users", len(users), "set", i, "user", u.Name)
 			return failed(err)
 		}
-		r.line(false, "ACL SET", "user", u.Name, "role", u.Role)
+		line(c.Stdout, "ACL SET", "user", u.Name, "role", u.Role)
 	}
 	saved := "none"
 	if len(differ) > 0 {
@@ -336,6 +366,6 @@ func aclVerb(args []string, stdout, stderr io.Writer, d deps, open aclOpener) in
 			saved = "acl-file"
 		}
 	}
-	r.line(false, "ACL APPLY OK", "users", len(users), "set", len(differ), "saved", saved, "library", digest, "store", at)
-	return r.done(0)
+	line(c.Stdout, "ACL APPLY OK", "users", len(users), "set", len(differ), "saved", saved, "library", digest, "store", at)
+	return tool.Exit(0)
 }
