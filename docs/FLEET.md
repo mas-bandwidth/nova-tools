@@ -112,7 +112,7 @@ nova-config's friend rows: `nova-sprint friend sync --actor ada`
 copies their names into the sprint's friends table, and each friend says it is
 there by beating from its own machinery, beside its harness, every second
 (`sprint.FriendBeatEvery`; `where` shows it `up` while its last beat is under
-15 s old, `asleep` after 15 s without one, with working 0, and `held` while
+15 s old, `down` after 15 s without one, with working 0, and `held` while
 `nova-sprint friend down <friend>` holds it; not a member's window and misses). The same sync
 reads each friend's working directory, `<root>/<friend>-working` (`--root
 <dir>`, else `HOME`, so it runs on the machine that holds them), and writes her
@@ -133,8 +133,8 @@ while :; do nova-sprint friend beat friend-a >/dev/null 2>&1; sleep 1; done &
 trap 'kill $!' EXIT
 ```
 
-so the beat stops when the friend's harness does, and the friend is asleep 15 s
-later (`sprint.FriendAsleepAfter`; docs/SPEC-SPRINT.md section 1).
+so the beat stops when the friend's harness does, and the friend is down 15 s
+later (`sprint.FriendDownAfter`; docs/SPEC-SPRINT.md section 1).
 
 The inventory reads the store `NOVA_SPRINT_REDIS` names (or `--redis`); export
 it, and `NOVA_MACHINE` when the machine running the play is a row, before the
