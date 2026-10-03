@@ -391,9 +391,42 @@ func TestFleetPlaysRuleReadsTheShapes(t *testing.T) {
 	}
 }
 
-// TestFleetPlaysDarwinPlistTemplatePathAndRetireUnits verifies that group_vars/all.yml
-// includes /usr/sbin in nova_loop_path and disk-guard-studio in nova_retire_units (#5198).
-func TestFleetPlaysDarwinPlistTemplatePathAndRetireUnits(t *testing.T) {
+// diskLoopRefuseGiB and diskLoopStopGiB are the loop this play does not render:
+// under 200 GiB it refuses; under 100 GiB it stops every other loop unit and leaves
+// diskLoopKeptUnit up. The sweeper only warns at 10 GiB.
+const (
+	diskLoopRefuseGiB = 200
+	diskLoopStopGiB   = 100
+	diskLoopKeptUnit  = "com.nova.loop.disk-guard"
+)
+
+// diskLoopStop is that loop's decision. freeGiB is compared with <, so the line itself
+// does not trip. The kept unit is never stopped.
+func diskLoopStop(freeGiB int, units []string) (refuse bool, stop []string) {
+	if freeGiB >= diskLoopRefuseGiB {
+		return false, nil
+	}
+	if freeGiB >= diskLoopStopGiB {
+		return true, nil
+	}
+	for _, u := range units {
+		if u != diskLoopKeptUnit {
+			stop = append(stop, u)
+		}
+	}
+	return true, stop
+}
+
+// fleetRetireUnit is loops.yml's retire rule: a marked unit with no record on this
+// host, or a name in nova_retire_units that is not a record here.
+func fleetRetireUnit(marked, here, record, named bool) bool {
+	return (marked && (!here || !record)) || (named && !(here && record))
+}
+
+// TestFleetPlaysKeepsTheDiskStop is the safety witness: the stop still refuses under
+// 200 GiB and stops the other units under 100 GiB, the sweeper only warns at 10 GiB,
+// and the play's retire list is empty so it does not drop that loop.
+func TestFleetPlaysKeepsTheDiskStop(t *testing.T) {
 	t.Parallel()
 	root := repoRoot(t)
 	b, err := os.ReadFile(filepath.Join(root, "fleet", "group_vars", "all.yml"))
@@ -408,14 +441,54 @@ func TestFleetPlaysDarwinPlistTemplatePathAndRetireUnits(t *testing.T) {
 
 	retireUnits, ok := vars["nova_retire_units"].([]any)
 	require.True(t, ok, "nova_retire_units is a list")
-	var names []string
-	for _, u := range retireUnits {
-		names = append(names, fmt.Sprint(u))
-	}
-	assert.Contains(t, names, "disk-guard-studio", "disk-guard-studio is in nova_retire_units")
+	assert.Empty(t, retireUnits, "a name here retires the loop that stops the other units")
 
 	tmpl, err := os.ReadFile(filepath.Join(root, "fleet", "templates", "nova-loop.plist.j2"))
 	require.NoError(t, err)
 	assert.Contains(t, string(tmpl), "{{ nova_loop_path | e }}", "darwin plist template renders nova_loop_path")
-}
 
+	guard, err := os.ReadFile(filepath.Join(root, "cmd", "nova-swarm", "diskguard.go"))
+	require.NoError(t, err)
+	assert.Regexp(t, regexp.MustCompile(`guardFloorGiB\s*=\s*10\b`), string(guard), "the sweeper warns at 10 GiB")
+	assert.Contains(t, string(guard), "DISK-GUARD WARN")
+	assert.NotContains(t, string(guard), "launchctl")
+	assert.NotContains(t, string(guard), "bootout")
+
+	play, err := os.ReadFile(filepath.Join(root, "fleet", "loops.yml"))
+	require.NoError(t, err)
+	assert.Contains(t, string(play), "f.path in ours and (not here or name not in loop_names)")
+	assert.Contains(t, string(play), "name in nova_retire_units and not (here and name in loop_names)")
+
+	doc, err := os.ReadFile(filepath.Join(root, "docs", "FLEET.md"))
+	require.NoError(t, err)
+	assert.Contains(t, string(doc), "| `nova_retire_units` | `[]` |")
+
+	units := []string{"com.nova.loop.member-a", diskLoopKeptUnit, "com.nova.loop.member-b"}
+	cases := []struct {
+		name    string
+		free    int
+		refuse  bool
+		stop    []string
+		marked  bool
+		here    bool
+		record  bool
+		retired bool
+	}{
+		{"at 200 GiB the loop stays up and a live record is kept", 200, false, nil, true, true, true, false},
+		{"under 200 GiB it refuses and does not stop", 199, true, nil, true, true, true, false},
+		{"at 100 GiB it refuses and does not stop", 100, true, nil, true, true, true, false},
+		{"under 100 GiB it stops the other units and leaves its own up", 99, true, []string{"com.nova.loop.member-a", "com.nova.loop.member-b"}, true, true, true, false},
+		{"an unmarked unit the list does not name is left", 50, true, []string{"com.nova.loop.member-a", "com.nova.loop.member-b"}, false, true, false, false},
+		{"a marked unit whose record is gone is retired without a name", 50, true, []string{"com.nova.loop.member-a", "com.nova.loop.member-b"}, true, true, false, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			refuse, stop := diskLoopStop(tc.free, units)
+			assert.Equal(t, tc.refuse, refuse)
+			assert.Equal(t, tc.stop, stop)
+			assert.NotContains(t, stop, diskLoopKeptUnit)
+			assert.Equal(t, tc.retired, fleetRetireUnit(tc.marked, tc.here, tc.record, len(retireUnits) > 0))
+		})
+	}
+}

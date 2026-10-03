@@ -935,11 +935,18 @@ func heldPaths() ([]string, error) {
 
 // resolveLsof finds the lsof binary to execute: lsof on PATH, or /usr/sbin/lsof when it exists.
 func resolveLsof() string {
-	if p, err := exec.LookPath("lsof"); err == nil {
+	return resolveLsofFrom(exec.LookPath, os.Stat)
+}
+
+// resolveLsofFrom is resolveLsof with its lookups injected (docs/FLEET.md, the loop PATH).
+// look is the PATH search; stat is the absolute fallback. A miss of both returns the bare name.
+func resolveLsofFrom(look func(string) (string, error), stat func(string) (os.FileInfo, error)) string {
+	if p, err := look("lsof"); err == nil {
 		return p
 	}
-	if _, err := os.Stat("/usr/sbin/lsof"); err == nil {
-		return "/usr/sbin/lsof"
+	const fallback = "/usr/sbin/lsof"
+	if _, err := stat(fallback); err == nil {
+		return fallback
 	}
 	return "lsof"
 }

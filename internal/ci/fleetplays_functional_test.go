@@ -163,7 +163,8 @@ func TestFleetPlaysPassSyntaxAndCheckOnTheFixture(t *testing.T) {
 	assert.NotContains(t, loops, `\u0001`)
 	darwinAgents := filepath.Join(home, "Library", "LaunchAgents")
 	require.NoError(t, os.MkdirAll(darwinAgents, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(darwinAgents, "com.nova.loop.disk-guard-studio.plist"), []byte("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\"><dict></dict></plist>\n"), 0o644))
+	floorStop := filepath.Join(darwinAgents, "com.nova.loop.floor-stop.plist")
+	require.NoError(t, os.WriteFile(floorStop, []byte("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\"><dict></dict></plist>\n"), 0o644))
 	plist := play("loops.yml", append(check, "-e", "ansible_system=Darwin", "-e", "nova_launchd_domain=gui")...)
 	for _, w := range []string{
 		"<string>com.nova.loop.member-local</string>",
@@ -180,10 +181,11 @@ func TestFleetPlaysPassSyntaxAndCheckOnTheFixture(t *testing.T) {
 		"<integer>900</integer>",
 		"<key>PATH</key>",
 		"<string>" + home + "/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>",
-		"WOULD-RETIRE disk-guard-studio on localhost (" + filepath.Join(darwinAgents, "com.nova.loop.disk-guard-studio.plist") + ")",
+		"NOTE localhost " + floorStop + ": not written by this play, named by no record and no nova_retire_units; left as it is",
 	} {
 		assert.Contains(t, plist, w)
 	}
+	assert.NotContains(t, plist, "WOULD-RETIRE floor-stop")
 	assert.Equal(t, 1, strings.Count(plist, "+<key>ExitTimeOut</key>"), "the member's plist alone")
 	assert.Contains(t, plist, "+<integer>7260</integer>")
 	assert.NotContains(t, loops+plist, "NOVA_SPRINT_REDIS=old-store:6379")
