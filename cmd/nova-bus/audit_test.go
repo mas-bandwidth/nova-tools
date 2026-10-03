@@ -105,6 +105,12 @@ var messageBusAudit = audit.Config{
 		// writer of its own, and returns a string this package renders through
 		// oneline.Field at the print site below.
 		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
+		// internal/tool owns the dispatch, the banner, the help and the refusal
+		// lines for the verbs moved onto it: this package hands it the parsed call
+		// and the streams and prints nothing through it, so nothing it writes can
+		// carry an argument past the escape -- its lines are built inside that
+		// package through oneline like every other line here.
+		`"github.com/mas-bandwidth/nova-tools/internal/tool"`,
 		// bytes is `wait`'s buffer and holds no writer of its own: a bytes.Buffer is
 		// written by the same fmt calls this walk classifies -- inboxListing prints INTO
 		// one -- and read back as a string that is printed at the single exempted site

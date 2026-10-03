@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -67,4 +68,13 @@ func TestWaitUsageStatesUnadvancedCursorReturnsAtOnce(t *testing.T) {
 func TestCheckRefusesABusWithNoRoster(t *testing.T) {
 	t.Parallel()
 	invoke(t, "", "check", "--bus", t.TempDir(), "--full").mustCode(t, 2).mustContain(t, "stderr", "participants.json")
+}
+
+// Check and names run on the shared skeleton, which meets its banner's standard by
+// construction except for what only this definition can say: every verb's effect and a
+// how text of at most five lines of at most 100 characters. This fails on each of the
+// tool's Problems (internal/ci holds every package that builds a tool.Tool to this).
+func TestBusToolMeetsTheStandard(t *testing.T) {
+	t.Parallel()
+	assert.Empty(t, busTool(now()).Problems())
 }

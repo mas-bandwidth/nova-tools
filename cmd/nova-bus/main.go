@@ -56,6 +56,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
 const usage = `nova-bus: notes between AIs, over a git repository
@@ -348,6 +349,13 @@ func main() {
 
 // run is the whole tool, with its streams and clock injected so the tests can drive it.
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time) (code int) {
+	// Two dispatchers while the move is half-done (docs/STANDARD.md section 2): check
+	// and names run on the shared skeleton, every other verb still on the switch below.
+	// The verbs still on the old path are draft, prepare, send, reply, inbox, receipt,
+	// close, wait and version.
+	if len(args) > 0 && (args[0] == "check" || args[0] == "names") {
+		return busTool(now).Run(args, stdin, stdout, stderr)
+	}
 	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
 	// before anything is read, dialed or written: help is never a refusal.
 	defer verbflag.Recover(stdout, "nova-bus", usage, &code)
@@ -378,15 +386,84 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 		return cmdClose(rest, stdout, stderr, now)
 	case "wait":
 		return cmdWait(rest, stdout, stderr, now)
-	case "check":
-		return cmdCheck(rest, stdout, stderr, now)
-	case "names":
-		return cmdNames(rest, stdout, stderr)
 	case "version", "--version":
 		return cmdVersion(rest, stdout, stderr)
 	}
 	return refuseDispatch(stderr, fmt.Sprintf("unknown verb %q", cmd))
 }
+
+// ------------------------------------------------------------------------------- skeleton
+
+// busTool is nova-bus on internal/tool, mid-move: check and names are declared here,
+// every other verb still dispatches on the switch in run. The two verbs keep their
+// bodies and their own printers behind Prints verbs -- the BUS and NAMES lines the
+// skeleton has no shape for stay byte-identical -- and what moved is dispatch, the flag
+// assembly, the required-flag refusals and the unknown-flag answer. The clock is the
+// caller's, carried by run, so the tests that drive run with a fixed instant keep it.
+func busTool(now time.Time) *tool.Tool {
+	return &tool.Tool{
+		Name: "nova-bus",
+		What: "notes between AIs, over a git repository",
+		How: `a bus is a git repository: participants.json names every participant, with a
+lane directory per sender and one markdown note per file, receipts and cursors
+kept in lanes and carried by git fetch and push; nothing lives elsewhere.
+check validates the bus: headers, ids, threads, receipts, lanes and indexes.
+names echoes the roster, so a person spells a To line the tool accepts.`,
+		ExitTable: "0 the verb ran and passed; 1 the verb ran and said NO -- a bus that failed check, another run holding this checkout; 2 could not run: missing flag, unreadable bus, bad invocation.",
+		Verbs:     []tool.Verb{checkVerb(now), namesVerb()},
+	}
+}
+
+// checkVerb is check on the skeleton: an inspection that becomes a local write only
+// under --rebuild-index, which rewrites each lane's INDEX from the notes on disk.
+func checkVerb(now time.Time) tool.Verb {
+	return tool.Verb{
+		Name:    "check",
+		Usage:   "check --bus <dir> (--full | --as <name> | --since <commit-or-date>) [--max <n>] [--legacy-before <date-or-instant>] [--rebuild-index]",
+		Example: "check --bus ./bus --full",
+		Effect:  tool.LocalWrite + " (--rebuild-index writes each lane's INDEX; otherwise inspection: reads, writes nothing)",
+		Detail: `a check with no baseline is not a check of anything: give one of --full, --as <name> or --since <commit>.
+--rebuild-index needs --full: it rewrites each lane's INDEX from every note in it.
+--fail-max is --max, accepted for one release.`,
+		Flags: func(f *tool.Flags) {
+			// Prints: check keeps its own BUS lines (the scope, findings, MORE and
+			// CHECK lines the skeleton has no shape for), so it takes no --json.
+			f.Prints()
+			f.Required("bus", "the bus's repository root")
+			f.Bool("full", false, "walk the whole bus: what CI on main and a first adoption run want")
+			f.String("as", "", "check what changed since this participant's cursor")
+			f.String("since", "", "check what changed since this commit: a revision, a UTC date (YYYY-MM-DD, so the last commit written before that day), or an RFC 3339 UTC instant")
+			f.String("legacy-before", "", "a finding about the header of a note dated before this UTC date (YYYY-MM-DD, midnight at its start) or UTC instant (RFC 3339, e.g. 2026-09-09T18:07:00Z) warns instead of failing")
+			f.Bool("rebuild-index", false, "with --full, rewrite each lane's INDEX from the notes on disk")
+			f.Int("max", defaultCheckMax, "findings to print before one BUS MORE line naming the rest (default 20, 0 = all)")
+			f.Int("fail-max", defaultCheckMax, "alias of --max, accepted for one release")
+			f.Int("git-timeout", defaultGitTimeoutSeconds, "how long one git subprocess may take before this run gives up on it")
+		},
+		Run: func(call *tool.Call) *tool.Out { return tool.Exit(cmdCheck(call, now)) },
+	}
+}
+
+// namesVerb is names on the skeleton: an inspection that echoes the roster.
+func namesVerb() tool.Verb {
+	return tool.Verb{
+		Name:    "names",
+		Usage:   "names --bus <dir>",
+		Example: "names --bus ./bus",
+		Effect:  tool.Inspection,
+		Flags: func(f *tool.Flags) {
+			// Prints: names keeps its own NAMES lines (quoted names a To line takes),
+			// so it takes no --json.
+			f.Prints()
+			f.Required("bus", "the bus's repository root")
+		},
+		Run: func(call *tool.Call) *tool.Out { return tool.Exit(cmdNames(call)) },
+	}
+}
+
+// ptr binds one parsed flag value to the local the verb's body reads. The bodies moved
+// onto the skeleton keep their names and their pointer locals; only the flag assembly
+// moved, so this is the one line between the skeleton's call and each local.
+func ptr[T any](v T) *T { return &v }
 
 // ------------------------------------------------------------------------------- flags
 
@@ -3531,27 +3608,29 @@ func legacyLine(verb, value string, stderr io.Writer) (bus.LegacyLine, bool) {
 	return line, true
 }
 
-func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
-	f := newFlags("check")
-	busDir := f.fs.String("bus", "", "the bus's repository root (required)")
-	full := f.fs.Bool("full", false, "walk the whole bus: what CI on main and a first adoption run want")
-	as := f.fs.String("as", "", "check what changed since this participant's cursor")
-	since := f.fs.String("since", "", "check what changed since this commit: a revision, a UTC date (YYYY-MM-DD, so the last commit written before that day), or an RFC 3339 UTC instant")
-	legacyBefore := f.fs.String("legacy-before", "", "a finding about the header of a note dated before this UTC date (YYYY-MM-DD, midnight at its start) or UTC instant (RFC 3339, e.g. 2026-09-09T18:07:00Z) warns instead of failing")
-	rebuildIndex := f.fs.Bool("rebuild-index", false, "with --full, rewrite each lane's INDEX from the notes on disk")
+func cmdCheck(call *tool.Call, now time.Time) int {
+	stdout, stderr := call.Stdout, call.Stderr
+	// The skeleton parsed the flags and refused the bad invocations; bind the values to
+	// the locals the body reads, so the body below is untouched. f carries only the verb
+	// name the two threshold checks print; the flag set is the skeleton's.
+	busDir := ptr(call.Str("bus"))
+	full := ptr(call.Bool("full"))
+	as := ptr(call.Str("as"))
+	since := ptr(call.Str("since"))
+	legacyBefore := ptr(call.Str("legacy-before"))
+	rebuildIndex := ptr(call.Bool("rebuild-index"))
+	gitSeconds := ptr(call.Int("git-timeout"))
 	var maxFindings int
-	f.fs.IntVar(&maxFindings, "max", defaultCheckMax, "findings to print before one BUS MORE line naming the rest (default 20, 0 = all)")
-	// --fail-max is --max for one release (docs/STANDARD.md section 2). It sets the same value.
-	f.fs.IntVar(&maxFindings, "fail-max", defaultCheckMax, "alias of --max, accepted for one release")
-	gitSeconds := f.fs.Int("git-timeout", defaultGitTimeoutSeconds, "how long one git subprocess may take before this run gives up on it")
-	if !f.parse(args, stderr, map[string]*string{"bus": busDir}) {
-		return 2
-	}
+	f := &flags{verb: "check"}
 	if !f.gitTimeoutFlag(*gitSeconds, stderr) {
 		return 2
 	}
-	if f.set("fail-max") {
+	// --fail-max is --max for one release (docs/STANDARD.md section 2). It sets the same value.
+	if call.Given("fail-max") {
 		fmt.Fprintln(stderr, "NOTE --fail-max is --max")
+		maxFindings = call.Int("fail-max")
+	} else {
+		maxFindings = call.Int("max")
 	}
 	if !f.atLeastZero("max", maxFindings, stderr) {
 		return 2
@@ -3740,12 +3819,10 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	return 0
 }
 
-func cmdNames(args []string, stdout, stderr io.Writer) int {
-	f := newFlags("names")
-	busDir := f.fs.String("bus", "", "the bus's repository root (required)")
-	if !f.parse(args, stderr, map[string]*string{"bus": busDir}) {
-		return 2
-	}
+func cmdNames(call *tool.Call) int {
+	stdout, stderr := call.Stdout, call.Stderr
+	// The skeleton parsed the flags and required --bus; bind it for the body below.
+	busDir := ptr(call.Str("bus"))
 	c, err := bus.LoadConfig(*busDir)
 	if err != nil {
 		fmt.Fprintf(stderr, "nova-bus names: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus names -h"))
