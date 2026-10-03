@@ -19,6 +19,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/cardlimits"
+	"github.com/mas-bandwidth/nova-tools/internal/cardtree"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -1291,7 +1292,13 @@ func lintBriefReads(brief string, rules []swarm.ChildRule) (modelWhy string, fin
 	if _, why := cardhdr.ReadModel(brief); why != "" {
 		return why, nil
 	}
-	return "", swarm.LintCardChildWith([]byte(brief), rules)
+	findings = swarm.LintCardChildWith([]byte(brief), rules)
+	// a tree card's steps are held too (internal/cardtree; docs/SPEC-SPRINT.md, a card is
+	// a tree of steps): a flat brief has no such finding
+	for _, f := range cardtree.Lint(brief) {
+		findings = append(findings, swarm.CardHeaderFinding{Check: f.Check, Line: f.Line, Excerpt: f.Excerpt})
+	}
+	return "", findings
 }
 
 // lintBriefFiles holds every brief of a many-brief add to the card lint's

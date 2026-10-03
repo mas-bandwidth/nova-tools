@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/internal/cardtree"
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
@@ -128,6 +129,10 @@ type Result struct {
 	// Staging is why End is EndStaging: the reason of native's STAGE FAIL line, the launch
 	// refused before any child ran (tla/CardContract.tla, StageRefused).
 	Staging string
+	// Step is why a tree card failed at its first work step: `step <n> <verdict>: <words>`
+	// (treeFinish; docs/SPEC-SPRINT.md, a card is a tree of steps). Judge names it as the
+	// failed finish's reason; "" for every other card.
+	Step string
 }
 
 // The ends Judge names first in a failed finish.
@@ -187,6 +192,8 @@ func Judge(r Result, pu Push) (fin Finish, why string) {
 		return FinishFailed, EndNoResult + ": no RESULT.md shape"
 	case !r.Shaped:
 		return FinishFailed, "no RESULT.md shape"
+	case r.Step != "":
+		return FinishFailed, r.Step
 	case r.Verdict == "nothing":
 		why := strings.TrimSpace(r.Report)
 		if len(why) >= len("nothing:") && strings.EqualFold(why[:len("nothing:")], "nothing:") {
@@ -1342,6 +1349,7 @@ func (m *Member) endEnded(ids []string, byID map[string]queueCard) {
 				m.post(id, post{res: &r})
 				return
 			}
+			r = treeFinish(p, r)
 			var pu Push
 			switch {
 			case r.Head == "":
@@ -1453,6 +1461,7 @@ func CardText(p Packet) string {
 			fmt.Fprintf(&b, " The checkout is on branch %s; JOB.md, which the prompt names first, says where it is and how this card ends. When you end, the member pushes your commit to origin's branch %s from outside the wall.", p.Branch, p.Branch)
 		}
 		b.WriteString("\n\n")
+		b.WriteString(cardtree.Guide(cardtree.Parse(p.Brief)))
 	}
 	if strings.TrimSpace(p.Fix) != "" {
 		fmt.Fprintf(&b, "Fix, this attempt:\n\n%s\n\n", strings.TrimSpace(p.Fix))

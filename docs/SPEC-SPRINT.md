@@ -355,6 +355,40 @@ or reader, route, model, end, the tokens, wait, run, predicted, actual and
 card retired and no consumer record cleaned up can lose cost: the record is
 already in the card. A figure not known prints `-`, never 0.
 
+**A card is a tree of steps** (`internal/cardtree`; nova-tools#5174 rule 7). The owner,
+2026-10-02: "any card can be a tree"; "a batch card is just nomenclature"; a script step is "a
+script card, when it is anything that is not an LLM", "preference: lisp, or golang obv.", a
+regex at simplest; a failed step n lands 1..n-1 and redeals n.. as a new card. The machine sees
+one card: one id, one slot, one deal, one finish, one push, one pull request, its reads;
+dependencies stay at the card level (`Needs:`), and inside a card the tree is the order.
+
+- *The grammar.* A step's number may be dotted: `STEP 3.1.` is the first child of `STEP 3.`, the
+  children of one parent numbered 1, 2, 3 with no gap (`steps-nested`). A step carrying `COMMIT:`
+  is a work step and carries its own `PATHS:` (each glob one of the card's `PATHS:` or `NEW:`)
+  and `VERDICT:` (`tree-step`). A work step with `SCRIPT: regex|go|lisp`, its program in one
+  fenced block under it and at least one `POST: sha256 <path> <64 hex>` or `POST: exit0
+  <command>` line, is a script step; bash, sh and python are refused (`script-step`). A card
+  with no dotted step and no step field is flat, and nothing here applies to it. `nova-swarm
+  lint` and `nova-sprint add` hold a tree to the three rules.
+- *The walk.* Depth first in card order, one commit per work step with its COMMIT: line as the
+  message, from the header's `From: STEP <n>` when the card names one. A script step is run by
+  the machine and no model: `nova-swarm step` runs the program in the staged checkout inside the
+  wall (`regex` in process over the step's PATHS, `go` built from its one file and run, `lisp`
+  under `sbcl --script`), checks every POST line, and commits. A card whose every work step is a
+  script step runs the executor in place of the harness, and no model is launched; a mixed
+  card's child runs each script step with `nova-step <n>`.
+- *The verdict per step.* The result carries one line per work step, `step <n>: <ok|broken|
+  not-done|skipped> <commit sha|-> <one line>`. The first work step that is not ok (a step with no
+  line is not-done) is the failed step; a result with no step line at all keeps its own verdict.
+  A failed first step is a failed finish whose reason is `step <n> <verdict>: <why>`. A later
+  failed step n: the member pushes the commit of the last ok step before it and finishes ok
+  there, so steps 1..n-1 are read and land on the unchanged path, with the report
+  `remainder=<id>-r<n> step <n> <verdict>: <why>`, which the "work came back ok" note carries.
+  The remainder card `<id>-r<n>` is the brief with `From: STEP <n>` and `Needs: <id>` added
+  after line 1 (`nova-swarm step --card <brief> --remainder <id> --from <n>` prints it); the
+  coordinator adds it and the deal deals it as any card. A member adds no card: `add` is the
+  coordinator's.
+
 ## 3. The lifecycle of a primary
 
 Six states, fixed, in one Go file (`internal/sprint/lifecycle.go`) mirrored by

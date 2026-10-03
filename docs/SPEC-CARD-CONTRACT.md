@@ -160,6 +160,13 @@ template asked) overwrites nothing: it rides at the end of the pull request body
 writes `<job>/RESULT.md` itself. The finish record wins over RESULT.md. A result without the six
 keys is no result.
 
+**The verdict per step.** A tree card's result (docs/SPEC-SPRINT.md, a card is a tree of steps)
+also carries one line per work step, in the header block or the body, in walk order:
+`step <n>: <ok|broken|not-done|skipped> <commit sha|-> <one line>`. The six-key reader skips them
+(a key with a blank is no key); `cardtree.ParseVerdicts` reads them, and the member's finish of a
+tree card is judged from them (`member.treeFinish`, `TestAFailedStepTwoOfThreeLandsStepOneAndWritesTheRemainder`).
+A script step's line is the one `nova-swarm step` prints after `STEP OK ` or `STEP FAILED `.
+
 The rulings of 2026-09-30 on the shape:
 
 - **Every work card ends with a commit.** A child with nothing to do says `verdict: nothing`

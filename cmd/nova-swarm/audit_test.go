@@ -26,6 +26,7 @@ var swarmAudit = audit.Config{
 	// text in the same function share an entry. Each is a claim a reader can check.
 	Exempt: map[string]string{
 		"member.go|cmdMember|note": "passNote's one line, a literal with no argument interpolated",
+		"step.go|cmdStep|cardtree.Remainder(string(raw), *remainder, *from)": "the second named verbatim site: the remainder is a CARD, a document the coordinator redirects into a brief file for nova-sprint add, the bytes of the card it was handed with two header lines added (cardtree.Remainder); escaping it would fold the card into one unusable line. TestTheStepVerbRunsAScriptCardAndPrintsTheRemainder asserts its lines.",
 		"main.go|want|name":        "a required flag's name, a literal at every call site in this file",
 		"main.go|want|wants":       "the guidance that flag wants, a literal at every call site in this file",
 		"main.go|wantCount|name":   "a required count flag's name, a literal at every call site in this file",
@@ -193,6 +194,11 @@ var swarmAudit = audit.Config{
 		// pushed.tsv into values. It prints nothing to any stream of this binary; the lines
 		// the shims print are their own, in the card's shell, never nova-swarm's.
 		`"github.com/mas-bandwidth/nova-tools/internal/cardcontract"`,
+		// cardtree (internal/cardtree) reads a card into a tree of steps, lints it into
+		// findings and runs a script step into a Result value; it holds no writer of this
+		// binary's and prints nothing: its programs' output is captured into an error's
+		// words, which this package prints through oneline.
+		`"github.com/mas-bandwidth/nova-tools/internal/cardtree"`,
 		// cardhdr reads a card's header lines (its tier, a model: pin) into a value: the
 		// one parser the frame and the deal share. It holds no writer and prints nothing.
 		`"github.com/mas-bandwidth/nova-tools/internal/cardhdr"`,

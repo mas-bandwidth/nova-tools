@@ -139,6 +139,9 @@ type nativeRunConfig struct {
 	// borrowed is the object directory the staged checkout borrows (the bench mirror's,
 	// swarm.MirrorCloneArgs), a read of the wall; "" when its objects are its own.
 	borrowed string
+	// stepBin is the script-step executor a tree card with script steps runs (installTreeSteps):
+	// the wall reads its directory so the child's `nova-step` can run it; "" for any other card.
+	stepBin string
 	// frame, when set, is the member's frame of this launch (docs/SPEC-CARD-CONTRACT.md):
 	// staging stages its commit on its branch, and its profile writes JOB.md and the shims.
 	frame *cardcontract.Frame
@@ -763,6 +766,24 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			}
 			refuseNative(errOut, fmt.Sprintf("%s the card's frame could not be installed: %s", oneline.Field(cfg.label), oneline.Err(err)))
 			return nativeRunResult{}, 2
+		}
+	}
+
+	// (4g) A TREE CARD'S SCRIPT STEPS (docs/SPEC-SPRINT.md, a card is a tree of steps). A work
+	// card with script steps gets the `nova-step` shim, so its child runs each script step
+	// through the machine and no model writes it; a card whose every work step is a script
+	// step runs the executor in place of the harness, inside the same wall, and no model is
+	// launched at all.
+	if cfg.frame != nil && stageRes.Staged && cfg.frame.Kind == "work" {
+		self, all, err := installTreeSteps(cfg.card, cfg.slotDir, jobDir, nativeShellShimDir(cfg.slotDir))
+		if err != nil {
+			refuseNative(errOut, fmt.Sprintf("%s the card's script steps could not be installed: %s", oneline.Field(cfg.label), oneline.Err(err)))
+			return nativeRunResult{}, 2
+		}
+		cfg.stepBin = self
+		if all != nil {
+			launch = all
+			fmt.Fprintf(os.Stdout, "NATIVE NOTE label=%s every work step is a script step: the executor runs in place of the harness, no model\n", oneline.Field(cfg.label))
 		}
 	}
 
@@ -1696,6 +1717,9 @@ func nativeSandboxArgv(launch []string, cfg nativeRunConfig, dataHome, jobDir, t
 	// Without the harness directory the wall denies even the resolver's own files, and
 	// without /opt/homebrew the common toolchain roots are invisible.
 	argv = append(argv, "--read", filepath.Dir(bin))
+	if cfg.stepBin != "" && filepath.Dir(cfg.stepBin) != filepath.Dir(bin) {
+		argv = append(argv, "--read", filepath.Dir(cfg.stepBin)) // the `nova-step` shim runs it
+	}
 	if fi, err := os.Stat("/opt/homebrew"); err == nil && fi.IsDir() {
 		argv = append(argv, "--read", "/opt/homebrew")
 	}
