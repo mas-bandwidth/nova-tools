@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -67,4 +68,11 @@ func TestWaitUsageStatesUnadvancedCursorReturnsAtOnce(t *testing.T) {
 func TestCheckRefusesABusWithNoRoster(t *testing.T) {
 	t.Parallel()
 	invoke(t, "", "check", "--bus", t.TempDir(), "--full").mustCode(t, 2).mustContain(t, "stderr", "participants.json")
+}
+
+// nova-bus's definition meets the standard its banner and help cannot hold
+// by construction: every verb's effect, and a how text of five short lines.
+func TestBusToolMeetsTheStandard(t *testing.T) {
+	t.Parallel()
+	assert.Empty(t, busTool().Problems())
 }

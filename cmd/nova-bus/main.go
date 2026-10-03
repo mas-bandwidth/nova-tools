@@ -56,6 +56,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
 const usage = `nova-bus: notes between AIs, over a git repository
@@ -343,7 +344,22 @@ func refuseDispatch(stderr io.Writer, reason string) int {
 }
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, time.Now().UTC()))
+	args := os.Args[1:]
+	if len(args) > 0 && (args[0] == "version" || args[0] == "--version") {
+		os.Exit(busTool().Run(args, os.Stdin, os.Stdout, os.Stderr))
+	}
+	os.Exit(run(args, os.Stdin, os.Stdout, os.Stderr, time.Now().UTC()))
+}
+
+// busTool is the tool on the shared skeleton. Only the version verb is moved so far;
+// the other verbs still run through run below.
+func busTool() *tool.Tool {
+	return &tool.Tool{
+		Name:      "nova-bus",
+		What:      "notes between AIs, over a git repository",
+		ExitTable: "0 the verb ran and passed; 1 the verb ran and said NO; 2 could not run",
+		Stamp:     version,
+	}
 }
 
 // run is the whole tool, with its streams and clock injected so the tests can drive it.
@@ -383,7 +399,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 	case "names":
 		return cmdNames(rest, stdout, stderr)
 	case "version", "--version":
-		return cmdVersion(rest, stdout, stderr)
+		return busTool().Run(args, stdin, stdout, stderr)
 	}
 	return refuseDispatch(stderr, fmt.Sprintf("unknown verb %q", cmd))
 }

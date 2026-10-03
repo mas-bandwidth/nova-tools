@@ -100,6 +100,10 @@ var messageBusAudit = audit.Config{
 		// usage literals and lines of this package's own usage const, to the stdout run hands
 		// it, on -h; it never prints an argument, so nothing it writes can carry a newline in.
 		`"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"`,
+		// internal/tool is the shared skeleton: its Out.Render writes the one result
+		// value through internal/oneline, the same escape this package's own lines use,
+		// so nothing it writes can carry a newline in past the escape.
+		`"github.com/mas-bandwidth/nova-tools/internal/tool"`,
 		// version.go's resolution order, which now lives once in internal/buildinfo
 		// rather than in a copy per binary: it reads debug.ReadBuildInfo, holds no
 		// writer of its own, and returns a string this package renders through

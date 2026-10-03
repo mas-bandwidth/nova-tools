@@ -30,25 +30,15 @@
 package main
 
 import (
-	"fmt"
-	"io"
-	"runtime"
 	"runtime/debug"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // version is empty in every ordinary build and is the one override: a release stamps it
 // with -ldflags "-X main.version=<tag>". It is a var rather than a const because -X can
 // only write a string var, and it is package-level and unexported for the same reason.
 var version string
-
-func buildVersionWith(stamped string) string {
-	info, ok := debug.ReadBuildInfo()
-	return resolveVersion(stamped, info, ok)
-}
 
 // resolveVersion is internal/buildinfo's Resolve, which is where the order above now
 // lives: five binaries held five copies of it, and a copied answer drifts -- one copy had
@@ -58,25 +48,4 @@ func buildVersionWith(stamped string) string {
 // this package's own tests drive, and they now drive the shared one through it.
 func resolveVersion(stamped string, info *debug.BuildInfo, ok bool) string {
 	return buildinfo.Resolve(stamped, info, ok)
-}
-
-// cmdVersion prints the one line. It takes no flags and no arguments: there is no --short,
-// no --json and no --long, because a second output shape is a second thing to agree about
-// and this verb exists to end an argument rather than to start one.
-func cmdVersion(args []string, stdout, stderr io.Writer) int {
-	return cmdVersionWith(args, stdout, stderr, version)
-}
-
-func cmdVersionWith(args []string, stdout, stderr io.Writer, ver string) int {
-	verbflag.HelpIfAsked(args, "version")
-	if len(args) > 0 {
-		fmt.Fprintf(stderr, "nova-bus version: takes no flags and no arguments, got %d; run: nova-bus version -h\n", len(args))
-		return 2
-	}
-	fmt.Fprintf(stdout, "nova-bus %s %s/%s %s\n",
-		oneline.Field(buildVersionWith(ver)),
-		oneline.Field(runtime.GOOS),
-		oneline.Field(runtime.GOARCH),
-		oneline.Field(runtime.Version()))
-	return 0
 }

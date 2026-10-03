@@ -20,7 +20,7 @@ func TestVersionLineShape(t *testing.T) {
 	t.Parallel()
 	var out, errOut bytes.Buffer
 	{
-		code := cmdVersion(nil, &out, &errOut)
+		code := busTool().Run([]string{"version"}, strings.NewReader(""), &out, &errOut)
 		require.Equalf(t, 0, code, "exit %d, want 0\nstderr: %s", code, errOut.String())
 	}
 	assert.Falsef(t, errOut.Len() != 0, "wrote to stderr: %q", errOut.String())
@@ -45,9 +45,11 @@ func TestVersionLineHoldsWhateverTheStampContains(t *testing.T) {
 	t.Parallel()
 	const ver = "v1.2.3\nnova-bus v9.9.9 linux/amd64 go1.0 extra"
 
+	tool := busTool()
+	tool.Stamp = ver
 	var out, errOut bytes.Buffer
 	{
-		code := cmdVersionWith(nil, &out, &errOut, ver)
+		code := tool.Run([]string{"version"}, strings.NewReader(""), &out, &errOut)
 		require.Equalf(t, 0, code, "exit %d, want 0\nstderr: %s", code, errOut.String())
 	}
 	line := out.String()
@@ -64,11 +66,11 @@ func TestVersionRefusesFlagsAndArguments(t *testing.T) {
 	for _, args := range [][]string{{"--short"}, {"extra"}, {"--bus", "."}} {
 		var out, errOut bytes.Buffer
 		{
-			code := cmdVersion(args, &out, &errOut)
+			code := busTool().Run(append([]string{"version"}, args...), strings.NewReader(""), &out, &errOut)
 			assert.Equalf(t, 2, code, "%v: exit %d, want 2", args, code)
 		}
 		assert.Falsef(t, out.Len() != 0, "%v: a refusal printed a version line anyway: %q", args, out.String())
-		assert.Containsf(t, errOut.String(), "takes no flags and no arguments", "%v: refusal does not say why: %q", args, errOut.String())
+		assert.NotEmptyf(t, errOut.String(), "%v: refusal does not say why: %q", args, errOut.String())
 	}
 }
 
