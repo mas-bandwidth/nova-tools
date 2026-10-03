@@ -2810,7 +2810,7 @@ the original failed measurement.
 ### `drain-wait-exit` — a wait for a command's non-zero exit does not fail on that exit
 
 **The rule.** A task under `fleet/` that retries a command until it exits non-zero (`until: <reg>.rc != 0`, the darwin drain wait in `loops.yml`) says how it fails (`failed_when`), because ansible fails a command task on any non-zero rc: the drain wait fails only when the member is still held after every retry.
-**The mistake it prevents.** The loops play of 2026-10-02 7:35 PM: the drain wait's own answer (`launchctl print` exiting 113 once the member had stopped) failed the Studio, batman and superman, so their booted-out member, reader, mirror and sprint-server units were never loaded again.
+**The mistake it prevents.** The loops play of 2026-10-02 7:35 PM: the drain wait's own answer (`launchctl print` exiting 113 once the member had stopped) failed every darwin machine in the run, so their booted-out member, reader, mirror and sprint-server units were never loaded again.
 **The test.** `TestAWaitForANonZeroExitIsNotAFailure` (`internal/ci/fleetplays_drain_class_test.go`): reads every play under `fleet/`, finds each task whose `until` waits for `.rc != 0`, and asserts it has `failed_when`; it also asserts the drain wait is found.
 **Its allowlist.** None.
 **Its remedy line.** the assertion names the play, the task and its `until`.
