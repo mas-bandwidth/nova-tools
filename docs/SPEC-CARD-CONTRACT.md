@@ -98,8 +98,8 @@ the RULES paragraph is in the card the child is handed, once. Rules by reference
 2026-10-02: "Rules by reference: the member injects fleet/child-rules.txt once; the card does not
 carry it; a per-repo rules file for second repos."; nova-tools#5174 rule 6): the stored brief is
 the card's text alone, and the member, when it writes the card file at the start of a launch,
-appends the RULES paragraph of the held rules file the card's stream records (none when it
-records none: such a card carries its own; docs/SPEC-SPRINT.md section 2), so what the child
+appends the RULES paragraph of the held rules file the card names (none when it names none:
+such a card carries its own; docs/SPEC-SPRINT.md section 2), so what the child
 reads is the shape it read when the card carried them
 (`TestTheChildsCardIsUnchangedByRulesByReference`).
 

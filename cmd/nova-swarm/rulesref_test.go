@@ -21,9 +21,9 @@ const refBrief = "RESULT: c1 sha=0123456789ab\nREPO: mas-bandwidth/nova-tools\nB
 
 // The staged card a child is handed is byte for byte the same before rules by reference (the
 // card carries fleet/child-rules.txt's paragraph at its end) and after (the stored card is
-// its text alone, the member injects the paragraph the stream records): for a work card and a
-// read. A stream that records nothing injects nothing: a card of another repository carrying
-// its own rules is handed as it is, with one RULES paragraph. A stream naming a file this
+// its text alone, the member injects the paragraph the card names): for a work card and a
+// read. A card that names nothing gets nothing injected: a card of another repository carrying
+// its own rules is handed as it is, with one RULES paragraph. A card naming a file this
 // build does not hold is refused.
 func TestTheChildsCardIsUnchangedByRulesByReference(t *testing.T) {
 	t.Parallel()

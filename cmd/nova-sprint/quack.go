@@ -104,7 +104,7 @@ func (a *app) cmdQuack(args []string, stdout, stderr io.Writer) int {
 				// the members hold no rules file for the repository: the card carries its own
 				brief = quackBrief(id, s, ts[(i-1)%len(ts)], *repo, *base, cs.rules)
 			}
-			card := sprint.CardAdd{ID: id, File: id, Brief: brief}
+			card := sprint.CardAdd{ID: id, File: id, Brief: brief, Rules: cardRules(brief, rs).held}
 			r.Cards = append(r.Cards, card)
 			all = append(all, card)
 		}
@@ -134,16 +134,12 @@ func (a *app) cmdQuack(args []string, stdout, stderr io.Writer) int {
 	if code := lintBriefFiles(all, rs, c.max, stderr); code != 0 {
 		return code
 	}
-	record, code := streamRecord("quack", all, rs, stderr)
-	if code != 0 {
-		return code
-	}
 	step := store.AddEachStep(reqs)
 	if len(reqs) == 1 {
 		step = store.AddStep(reqs[0])
 	}
 	step.Args = store.ArgsOf(quackArgs{Verb: "quack", Streams: ss, Count: *count, Tiers: ts, Repo: *repo, Base: *base})
-	return a.recordStreamRules("quack", a.runStep("quack", *c, st, step, stdout, stderr), st, ss, record, stderr)
+	return a.runStep("quack", *c, st, step, stdout, stderr)
 }
 
 // quackStampBytes is the stamp's length: six bytes, twelve hex digits. A

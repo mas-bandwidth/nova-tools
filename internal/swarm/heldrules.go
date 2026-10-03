@@ -18,11 +18,11 @@ import (
 // runs, package fleet), so the child reads card text + rules, the shape it read when the card
 // carried them (docs/SPEC-SPRINT.md, rules by reference; docs/SPEC-CARD-CONTRACT.md).
 //
-// Which file: the one the card's stream records (the packet's rules), and none when it records
-// none: such a card carries its own rules, as every card did before. `nova-sprint add` records
-// the file of the card's repository (OwnRulesName): fleet/child-rules.txt for this repository,
-// fleet/child-rules.<repo>.txt for another that has one, and nothing for a repository with
-// none, whose cards carry their own.
+// Which file: the one the card names (its primary's rules field, the packet's rules), and none
+// when it names none: such a card carries its own rules, as every card did before. `nova-sprint
+// add` names on each card the file of its repository (OwnRulesName): fleet/child-rules.txt for
+// this repository, fleet/child-rules.<repo>.txt for another that has one, and nothing for a
+// repository with none, whose cards carry their own.
 
 // DefaultRulesName is this repository's own rules file, fleet/child-rules.txt.
 const DefaultRulesName = "child-rules.txt"

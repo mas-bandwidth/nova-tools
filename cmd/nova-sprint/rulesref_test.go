@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -15,17 +14,15 @@ import (
 
 // RULES BY REFERENCE (nova-tools#5174 rule 6): under a rules file the members hold
 // (fleet/child-rules*.txt of the build), add stores the card's text alone, holds it to the
-// rules as the member stages it (swarm.LintCardChildByReference) and records the file as the
-// stream's; the member injects it at stage time.
+// rules as the member stages it (swarm.LintCardChildByReference), and names the file on the
+// card (sprint.FieldRules); the member injects it at stage time.
 
-// streamRules is the sprint's record of each stream's rules by reference.
-func (ta *testApp) streamRules() map[string]string {
+// cardRulesOf is the rules file the primary names, "" when it names none.
+func (ta *testApp) cardRulesOf(id string) string {
 	ta.t.Helper()
-	st, err := ta.a.store(common{redis: "mem:0", actor: "coordinator"})
-	require.NoError(ta.t, err)
-	got, err := st.StreamRules(context.Background())
-	require.NoError(ta.t, err)
-	return got
+	_, _, _, f, ok := ta.m.Record(sprint.Work, id)
+	require.True(ta.t, ok, "%s is on the work table", id)
+	return f[sprint.FieldRules]
 }
 
 // briefFile writes text as a brief file named name under dir and returns its path.
@@ -36,12 +33,19 @@ func briefFile(t *testing.T, dir, name, text string) string {
 	return path
 }
 
-// A brief that does not carry the held rules is admitted and stored as given, and its stream
-// records the file; one that contradicts them is refused naming the line, and records
-// nothing; one that still carries them is admitted as before; the many-brief form and the
-// brief verb hold the same; and a file named as a held one whose text is not this build's
-// copy is refused, since the members would inject their copy.
-func TestAddStoresTheCardTextAloneAndRecordsTheStreamsRules(t *testing.T) {
+// The briefs of the tests below: one on this repository, one on a repository the members
+// hold no rules file for.
+const (
+	homeBrief   = "RESULT: h sha=0123456789ab\nREPO: mas-bandwidth/nova-tools\nBASE: dev\n\nhandle the empty case"
+	schemaBrief = "RESULT: x sha=0123456789ab\nREPO: mas-bandwidth/schema\nBASE: main\n\nhandle the empty case"
+)
+
+// A brief that does not carry the held rules is admitted, stored as given, and names the
+// file; one that contradicts them is refused naming the line, nothing written; one that still
+// carries them is admitted as before; the many-brief form and the brief verb hold the same,
+// and a replacement brief rewrites its card's name; and a file named as a held one whose text
+// is not this build's copy is refused, since the members would inject their copy.
+func TestAddStoresTheCardTextAloneAndNamesItsRules(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a --members m1 --rules " + ourRulesFile)
@@ -53,7 +57,7 @@ func TestAddStoresTheCardTextAloneAndRecordsTheStreamsRules(t *testing.T) {
 	_, _, _, f, ok := ta.m.Record(sprint.Work, "s1-a")
 	require.True(t, ok)
 	assert.Equal(t, text, f["brief"], "the stored brief is the card's text alone")
-	assert.Equal(t, map[string]string{"s1": swarm.DefaultRulesName}, ta.streamRules())
+	assert.Equal(t, swarm.DefaultRulesName, ta.cardRulesOf("s1-a"))
 
 	bad := text + "\nSTEP 1. Run go test ./internal/x/ and then go clean -cache."
 	code, out, errs := ta.do("add --stream s2 s2-a --max 0 --brief-file " + briefFile(t, dir, "bad.md", bad))
@@ -61,16 +65,19 @@ func TestAddStoresTheCardTextAloneAndRecordsTheStreamsRules(t *testing.T) {
 	assert.Contains(t, errs, "LINT DRIFT brief step-go-test-timeout: 4: ")
 	assert.Contains(t, errs, "LINT DRIFT brief step-go-clean: 4: ")
 	assert.NotContains(t, errs, "missing:", "no rule the member injects is missing")
-	assert.NotContains(t, ta.streamRules(), "s2", "a refused add records nothing")
 
 	carried := swarm.StagedBrief(text, ours) // the card as it carried its rules: the shape the member stages
 	ta.ok("add --stream s3 s3-a --brief-file " + briefFile(t, dir, "carried.md", carried))
 	many := t.TempDir()
 	briefFile(t, many, "m-1.md", text)
-	briefFile(t, many, "m-2.md", carried)
+	briefFile(t, many, "m-2.md", schemaBrief+"\n\n"+swarm.RulesParagraph(ours))
 	ta.ok("add --stream s4 --brief-dir " + many)
-	assert.Equal(t, map[string]string{"s1": swarm.DefaultRulesName, "s3": swarm.DefaultRulesName, "s4": swarm.DefaultRulesName}, ta.streamRules())
-	ta.ok("brief s1-a --brief-file " + briefFile(t, dir, "again.md", text+"\nAnd say what was not done."))
+	assert.Equal(t, swarm.DefaultRulesName, ta.cardRulesOf("m-1"))
+	assert.Empty(t, ta.cardRulesOf("m-2"), "each card of one add names its own: a schema card carries its own rules")
+	ta.ok("brief s1-a --brief-file " + briefFile(t, dir, "again.md", schemaBrief+"\n\n"+swarm.RulesParagraph(ours)))
+	assert.Empty(t, ta.cardRulesOf("s1-a"), "a replacement brief that carries its own rules names none")
+	ta.ok("brief s1-a --brief-file " + briefFile(t, dir, "home.md", homeBrief))
+	assert.Equal(t, swarm.DefaultRulesName, ta.cardRulesOf("s1-a"))
 
 	other := filepath.Join(t.TempDir(), swarm.DefaultRulesName)
 	require.NoError(t, os.WriteFile(other, []byte("[ticket] Quote the ticket number.\n"), 0o600))
@@ -85,35 +92,31 @@ func TestAddStoresTheCardTextAloneAndRecordsTheStreamsRules(t *testing.T) {
 }
 
 // A card on a repository the members hold no rules file for carries its own rules, as before
-// rules by reference: under this repository's file it is held to carry it, and its stream
-// records nothing, so the member injects nothing. A later add replaces a stream's record,
-// removing it when the add's cards carry their own; and one add of cards held to two files
-// is refused, since a stream holds one.
-func TestACardOnAnotherRepositoryCarriesItsOwnRules(t *testing.T) {
+// rules by reference, and names none. What a card names is its own, so a later add on the same
+// stream never changes it, in either order: a nova-tools card keeps its file after a schema
+// card's add, and a schema card names none after a nova-tools card's add under the file.
+func TestALaterAddLeavesAnEarlierCardsRules(t *testing.T) {
 	t.Parallel()
-	ta := newTestApp(t)
-	ta.ok("init --readers reader-a --members m1 --rules " + ourRulesFile)
 	ours, err := swarm.ReadChildRules(ourRulesFile)
 	require.NoError(t, err)
-	dir := t.TempDir()
-	home := "RESULT: h sha=0123456789ab\nREPO: mas-bandwidth/nova-tools\nBASE: dev\n\nhandle the empty case"
-	schema := "RESULT: x sha=0123456789ab\nREPO: mas-bandwidth/schema\nBASE: main\n\nhandle the empty case"
+	carriedSchema := schemaBrief + "\n\n" + swarm.RulesParagraph(ours)
 
-	code, _, errs := ta.do("add --stream s1 s1-x --max 0 --brief-file " + briefFile(t, dir, "bare.md", schema))
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a --members m1 --rules " + ourRulesFile)
+	dir := t.TempDir()
+	code, _, errs := ta.do("add --stream s1 s1-x --max 0 --brief-file " + briefFile(t, dir, "bare.md", schemaBrief))
 	require.Equal(t, 2, code, "a schema card without the rules: exit %d\n%s", code, errs)
 	assert.Contains(t, errs, "LINT DRIFT brief rule-no-redis-server: 1: missing:", "it carries its own rules, as before")
-	ta.ok("add --stream s1 s1-h --brief-file " + briefFile(t, dir, "home.md", home))
-	assert.Equal(t, map[string]string{"s1": swarm.DefaultRulesName}, ta.streamRules())
-	ta.ok("add --stream s1 s1-x --brief-file " + briefFile(t, dir, "carried.md", schema+"\n\n"+swarm.RulesParagraph(ours)))
-	assert.Empty(t, ta.streamRules(), "an add whose card carries its own rules removes the stream's record")
-	ta.ok("add --stream s1 s1-h2 --brief-file " + briefFile(t, dir, "home2.md", home))
-	assert.Equal(t, map[string]string{"s1": swarm.DefaultRulesName}, ta.streamRules(), "a later held add records again")
+	ta.ok("add --stream s1 s1-h --brief-file " + briefFile(t, dir, "home.md", homeBrief))
+	ta.ok("add --stream s1 s1-x --brief-file " + briefFile(t, dir, "carried.md", carriedSchema))
+	assert.Equal(t, swarm.DefaultRulesName, ta.cardRulesOf("s1-h"), "a schema card's add leaves the nova-tools card its rules")
+	assert.Empty(t, ta.cardRulesOf("s1-x"))
 
-	mixed := t.TempDir()
-	briefFile(t, mixed, "m-1.md", home)
-	briefFile(t, mixed, "m-2.md", schema+"\n\n"+swarm.RulesParagraph(ours))
-	code, _, errs = ta.do("add --stream s2 --brief-dir " + mixed)
-	require.Equal(t, 2, code, "one add of cards held to two rule files: exit %d\n%s", code, errs)
-	assert.Contains(t, errs, "a stream holds one rules file")
-	assert.NotContains(t, ta.streamRules(), "s2")
+	tb := newTestApp(t)
+	tb.ok("init --readers reader-a --members m1")
+	general := schemaBrief + "\n\n" + swarm.ChildRulesParagraph()
+	tb.ok("add --stream s2 s2-x --brief-file " + briefFile(t, dir, "general.md", general))
+	tb.ok("add --stream s2 s2-h --rules " + ourRulesFile + " --brief-file " + briefFile(t, dir, "home2.md", homeBrief))
+	assert.Empty(t, tb.cardRulesOf("s2-x"), "a nova-tools card's add names no Go rules on the schema card")
+	assert.Equal(t, swarm.DefaultRulesName, tb.cardRulesOf("s2-h"))
 }

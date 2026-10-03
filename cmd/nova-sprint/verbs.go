@@ -961,7 +961,7 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	var briefFiles stringList
 	fs.Var(&briefFiles, "brief-file", "the brief, read from this file: its bytes as they are, its one trailing newline cut (a brief of many paragraphs), then held to the card lint like --brief; given once with ids, --count or --sentinel, the brief of the cards they name; given alone or again, one card per file in the order given, each card's id its file's name without .md (a1.md is a1); not with --brief or --brief-dir")
 	briefDir := fs.String("brief-dir", "", "one card per *.md file in this directory, in byte order of file name, each card's id its file's name without .md (a1.md is a1); not with --brief-file")
-	rules := fs.String("rules", "", "the child rules `file`, read at add time: one required sentence per line, [name] sentence names its token (default: the file init --rules recorded, else the built-in general rules); e.g. --rules rules/card.txt. A file the members hold (fleet/child-rules*.txt of this build) is by reference: the member injects it into each card at stage time, the brief need not carry it, and its name is recorded as the stream's rules")
+	rules := fs.String("rules", "", "the child rules `file`, read at add time: one required sentence per line, [name] sentence names its token (default: the file init --rules recorded, else the built-in general rules); e.g. --rules rules/card.txt. A file the members hold (fleet/child-rules*.txt of this build) is by reference: a card on a repository with a held file (fleet/child-rules.txt for nova-tools, fleet/child-rules.<repo>.txt) need not carry it, the card names the file, and the member injects it at stage time")
 	score := fs.String("score", "", "the first primary's score; the rest follow it (default: after every primary)")
 	sentinel := fs.String("sentinel", "", "admit a sentinel with this id: a stop the coordinator releases; what sorts after it waits for it")
 	before := fs.String("before", "", "place the cards in line in front of this primary of the stream")
@@ -1049,7 +1049,7 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	}
 	var rs []sprint.AddReq
 	for _, sn := range streams {
-		r := sprint.AddReq{Stream: sn, IDs: ids, Count: *count, Needs: cardNeeds, Brief: *brief, Who: c.actor,
+		r := sprint.AddReq{Stream: sn, IDs: ids, Count: *count, Needs: cardNeeds, Brief: *brief, Rules: cardRules(*brief, rs0).held, Who: c.actor,
 			Sentinel: *sentinel != "", Before: *before, After: *after, Every: *every, Last: *last, Held: *held}
 		if *score != "" {
 			f, err := strconv.ParseFloat(*score, 64)
@@ -1075,28 +1075,7 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	if len(rs) == 1 {
 		step = store.AddStep(rs[0])
 	}
-	code := a.runStep("add", *c, st, step, stdout, stderr)
-	if *sentinel != "" || *brief == "" {
-		return code // no brief: the stream's record stands
-	}
-	return a.recordStreamRules("add", code, st, streams, cardRules(*brief, rs0).held, stderr)
-}
-
-// recordStreamRules records, once an add's step is applied (code 0), the held rules file its
-// briefs were held to by reference as each stream's (store.SetStreamRules), over an older
-// record: the member injects that file into the stream's cards at stage time (nova-tools#5174
-// rule 6). An add whose briefs carry their own rules (name "") removes the record, so the
-// member injects nothing into the stream. A refused add writes nothing.
-func (a *app) recordStreamRules(verbName string, code int, st *store.Store, streams []string, name string, stderr io.Writer) int {
-	if code != 0 {
-		return code
-	}
-	if err := st.SetStreamRules(context.Background(), streams, name); err != nil {
-		fmt.Fprintf(stderr, "%s %s: the cards are added, and the record of their rules by reference (%s) failed: %s; the member injects the record as it was until it is written; run the add again\n",
-			prog, verbName, orDashStr(name, "none"), oneline.Escape(err.Error()))
-		return 1
-	}
-	return 0
+	return a.runStep("add", *c, st, step, stdout, stderr)
 }
 
 // cmdAddMany is add --brief-dir <dir>, or add with --brief-file given again:
@@ -1148,9 +1127,8 @@ func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, se
 	if code := lintBriefFiles(cards, rs, c.max, stderr); code != 0 {
 		return code
 	}
-	record, code := streamRecord("add", cards, rs, stderr)
-	if code != 0 {
-		return code
+	for i := range cards {
+		cards[i].Rules = cardRules(cards[i].Brief, rs).held // each card names the rules the member injects into it
 	}
 	// --sentinel <id> admits a stop after every card of the call: the sentinel
 	// sorts after the cards, and what sorts after it waits for it.
@@ -1178,7 +1156,7 @@ func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, se
 	}
 	c.addStream = stream
 	c.addBefore = before
-	return a.recordStreamRules("add", a.runStep("add", *c, st, store.AddStep(r), stdout, stderr), st, []string{stream}, record, stderr)
+	return a.runStep("add", *c, st, store.AddStep(r), stdout, stderr)
 }
 
 // briefFiles is the brief files of a many-brief add, in order: the *.md files
@@ -1333,7 +1311,7 @@ func lintBriefReads(brief string, rs ruleSet) (modelWhy string, findings []swarm
 // (swarm.OwnRulesName: fleet/child-rules.txt for this repository, fleet/child-rules.<repo>.txt
 // for another that has one; rs itself for a brief naming no repository), and rs carried, as
 // before rules by reference, for a repository the members hold no file for; rs carried when
-// the members do not hold it.
+// the members do not hold it. Its held name is the one the card names (sprint.FieldRules).
 func cardRules(brief string, rs ruleSet) ruleSet {
 	if rs.held == "" {
 		return rs
@@ -1350,24 +1328,6 @@ func cardRules(brief string, rs ruleSet) ruleSet {
 		}
 		return ruleSet{rules: rules, held: own}
 	}
-}
-
-// streamRecord is the rules file by reference an add's briefs record for their stream: the
-// held name each brief is held to (cardRules), "" when they carry their own. A stream holds
-// one rules file, so briefs of one add held to two are refused naming both, nothing written.
-func streamRecord(verbName string, cards []sprint.CardAdd, rs ruleSet, stderr io.Writer) (string, int) {
-	first, name := "", ""
-	for i, c := range cards {
-		got := cardRules(c.Brief, rs).held
-		if i == 0 {
-			first, name = c.File, got
-			continue
-		}
-		if got != name {
-			return "", refuse(stderr, verbName, fmt.Sprintf("a stream holds one rules file, and %s is held to %s while %s is held to %s; add them to two streams", first, orDashStr(name, "its own rules"), c.File, orDashStr(got, "its own rules")))
-		}
-	}
-	return name, 0
 }
 
 // lintBriefFiles holds every brief of a many-brief add to the card lint's
@@ -1479,7 +1439,7 @@ func heldSet(verbName, path string, rules []swarm.ChildRule, stderr io.Writer) (
 // holdBrief holds one brief to the card lint under the rule set briefRules
 // finds (rules, else the sprint's, else the general ones): add's one brief and
 // brief's replacement, so a brief is held the same however it comes. It returns
-// the rule set, whose held name add records for the stream.
+// the rule set, whose held file (cardRules) the card names.
 func (a *app) holdBrief(verbName, brief, rules string, c *common, st **store.Store, stderr io.Writer) (ruleSet, int) {
 	rs, code := a.briefRules(verbName, rules, c, st, stderr)
 	if code != 0 {
@@ -1986,7 +1946,8 @@ func (a *app) cmdBrief(args []string, stdout, stderr io.Writer) int {
 		*brief = text
 	}
 	var st *store.Store
-	if _, code := a.holdBrief("brief", *brief, *rules, c, &st, stderr); code != 0 {
+	rs, code := a.holdBrief("brief", *brief, *rules, c, &st, stderr)
+	if code != 0 {
 		return code
 	}
 	if st == nil { // --rules named the rule set: briefRules opened no store
@@ -1996,7 +1957,7 @@ func (a *app) cmdBrief(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	c.says = append(c.says, unfilledSays("the brief of "+ids[0], *brief)...)
-	return a.runStep("brief", *c, st, store.BriefStep(sprint.BriefReq{ID: ids[0], Brief: *brief, Who: c.actor}), stdout, stderr)
+	return a.runStep("brief", *c, st, store.BriefStep(sprint.BriefReq{ID: ids[0], Brief: *brief, Rules: cardRules(*brief, rs).held, Who: c.actor}), stdout, stderr)
 }
 
 // cmdMove moves unstarted primaries to another stream (the owner,

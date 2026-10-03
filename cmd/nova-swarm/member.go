@@ -561,12 +561,12 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	return c, nil
 }
 
-// childCard is the card file a child is handed: the packet's brief with the rules its stream
-// records injected at stage time (rules by reference, nova-tools#5174 rule 6:
-// swarm.StagedBrief), then what the sprint adds (member.CardText). A stream that records
-// none injects nothing: its cards carry their own rules. A brief that already carries the
-// rules is handed as it is; a stream naming a rules file this build does not hold is
-// refused, and the card is not started.
+// childCard is the card file a child is handed: the packet's brief with the rules file the
+// card names injected at stage time (rules by reference, nova-tools#5174 rule 6:
+// swarm.StagedBrief), then what the sprint adds (member.CardText). A card that names none
+// gets nothing injected: it carries its own rules. A brief that already carries the rules is
+// handed as it is; a card naming a rules file this build does not hold is refused, and it is
+// not started.
 func childCard(p member.Packet) (string, error) {
 	if p.Rules != "" {
 		rules, err := swarm.HeldRules(p.Rules)
