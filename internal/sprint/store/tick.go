@@ -599,7 +599,8 @@ func (st *Store) Tick(ctx context.Context) (res TickResult, err error) {
 	began := time.Now()
 	defer func() { res.Said = append(res.Said, st.stats().takeNotes()...) }()
 	st.stats()
-	st.twin() // made on the store the run loop keeps: its ticks share it
+	st.NoteStaleSet() // the process's named stale refusals, shared with the tick's clones
+	st.twin()         // made on the store the run loop keeps: its ticks share it
 	defer func() { res.Took = time.Since(began) }()
 	st, err = st.repin(ctx)
 	if err != nil {
@@ -1161,6 +1162,11 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 		if err != nil {
 			t.err = fmt.Errorf("tick %s: %w", part.Name, err)
 			return tickFailed
+		}
+		if !r.Lost {
+			// a stale refusal's note is named once a process: mark the ones this
+			// part committed, so the next tick's deal skips them
+			t.st.MarkNotedStale(planned.Notes)
 		}
 		if !r.Lost && len(r.Moved) > 0 {
 			t.res.addRows(sprint.PlanRows(planned))

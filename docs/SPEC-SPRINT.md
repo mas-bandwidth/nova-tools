@@ -979,11 +979,13 @@ and it is the coordinator's decision, receipted.
     (`sprint.RestsDue`, `providerRestsDue`; `TestAnOutOfCreditTakeRestsEveryRouteOfItsProvider`,
     `TestProviderRestsDueRestEveryRouteOfTheRefusedProvider`). A cold start judges no provider
     out of funds from a stored refusal: a refusal whose take launched before this process
-    started (the machine's first start of the epoch) rests nothing, and the tick names it in
-    one note to the coordinator; a stored rest of it, whose balance and the read before it are
-    both unknown, lifts on a balance read over zero — a payment seen against nothing
-    (`TestAStoredRefusalFromBeforeTheStartRestsNothing`,
+    started rests nothing, and the tick names it in one happened note, `a provider's stored
+    refusal is from before this start`, once a process, never once a tick; a stored rest of
+    it, whose balance and the read before it are both unknown, lifts on a balance read over
+    zero — a payment seen against nothing
+    (`TestAStoredRefusalFromBeforeThisProcessRestsNothingAndStopsNothing`,
     `TestAStoredRefusalRestsNothingAndAFreshOneRests`,
+    `TestAnUnknownBalanceNeverCountsAsOut`,
     `TestAPreStartRefusalsRestLiftsOnAReadOverZeroAfterAnUnknownRead`).
   - A card dealt on a route before its rest began is never taken there. `take` reads the
     rest itself (its provider's property, for a rest the balance poll wrote between two ticks;
@@ -1027,13 +1029,15 @@ and it is the coordinator's decision, receipted.
     its provider is out of credit, the tick's deal plans the stop and the binding STOPS the
     machine as the step commits: its record's cause `every provider is out of credit`, the
     machine line `machine: STOPPED (every provider is out of credit)`, and one judgment, `every
-    provider is out of credit`, naming the providers. An unknown balance never counts as out:
-    an out-of-credit rest that keeps no balance counts toward the stop only when it began in
-    this process, so a stored refusal from before the start never stops the machine. A provider
+    provider is out of credit`, naming each provider's refusal and whether it is from before
+    this start. An unknown balance never counts as out: an out-of-credit rest that keeps no
+    balance counts toward the stop only when it began in this process, so a stored refusal
+    from before this start never stops the machine. A provider
     low on funds keeps the machine
     running: its tier's `no route serves the tier` says why nothing deals. The line says what
     counts as paid: `the sprint is STOPPED until a provider is paid: a balance over zero the
-    poll reads higher than the one before or than the balance at the refusal, or nova-sprint
+    poll reads higher than the one before or than the balance at the refusal, a balance over
+    zero that ends a refusal from before this start, or nova-sprint
     funded <provider>`. `start` is refused
     with the same line (exit 1) while every provider stays out; once one is paid (a read that
     ends its rest, or `funded`), the coordinator starts it and the judgment closes

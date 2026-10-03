@@ -619,12 +619,17 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	p.Units = append(p.Units, restWithdrawals(s, r.who())...)
 	restWrites(&p, s, rests, r.who())
 	// a provider's refusal from before this process started rests nothing, and the
-	// coordinator is told which one, once a tick it names it
-	for _, st := range stale {
-		n := happened(NProviderStale, ProviderSubject(st.provider), s.Now)
+	// coordinator is told which one, once a process, never once a tick: the store
+	// marks a note as written after the plan commits, and this skips one already
+	// named in this process.
+	for _, ref := range stale {
+		n := happened(NProviderStale, ProviderSubject(ref.provider), s.Now)
 		n.To, n.Who = s.Coordinator, r.who()
 		n.What = fmt.Sprintf("provider %s: a stored refusal of card %s on route %s, taken %s, is from before this start and rests nothing: a cold start judges no provider out of funds from a stored refusal",
-			st.provider, st.card, st.route, stamp(st.taken))
+			ref.provider, ref.card, ref.route, stamp(ref.taken))
+		if s.NotedStale[n.What] {
+			continue
+		}
 		p.Notes = append(p.Notes, n)
 	}
 	due += notify(&p, s, conds, []string{NNoMember, NBound, NNoRoute, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit}, r)

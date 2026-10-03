@@ -49,10 +49,7 @@ func (st *Store) Load(ctx context.Context, tables []string, extras func(*sprint.
 }
 
 func (st *Store) loadOnce(ctx context.Context, tables []string, extras func(*sprint.Snapshot) map[string][]string) (*sprint.Snapshot, error) {
-	s := &sprint.Snapshot{Now: st.now(), Epoch: st.epoch, Cleared: st.cleared}
-	if since, ok := st.SinceFirstStart(ctx); ok {
-		s.Start = s.Now.Add(-since)
-	}
+	s := &sprint.Snapshot{Now: st.now(), Epoch: st.epoch, Cleared: st.cleared, Start: st.Started, NotedStale: st.NoteStaleSet()}
 	stored := make([]string, len(tables))
 	for i, t := range tables {
 		stored[i] = st.Names.Table(t)

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
-	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 	"github.com/mas-bandwidth/nova-tools/internal/config"
@@ -321,11 +320,7 @@ func (st *Store) OutOfCredit(ctx context.Context) (string, error) {
 	}
 	fleet := sprint.NewTable(sprint.Fleet)
 	fleet.SetProps(shapes[0].Props)
-	var start time.Time
-	if since, ok := st.SinceFirstStart(ctx); ok {
-		start = st.now().Add(-since)
-	}
-	return sprint.AllOutOfCredit(routes, sprint.RouteRests(routes, fleet), start, st.now()), nil
+	return sprint.AllOutOfCredit(routes, sprint.RouteRests(routes, fleet), st.Started, st.now()), nil
 }
 
 // JudgmentBar is the judgment decision's bar as nova-config applied it, read with the

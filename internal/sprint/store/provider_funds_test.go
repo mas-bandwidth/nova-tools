@@ -245,10 +245,10 @@ func TestEveryProviderOutOfCreditStopsTheMachine(t *testing.T) {
 	assert.False(t, m.Running(), "the tick stopped the machine")
 	assert.Equal(t, sprint.FundsCause, m.Cause)
 	assert.Equal(t, "machine: STOPPED (every provider is out of credit)", MachineLine(h.now, m, Heartbeat{}))
-	assert.Contains(t, res.Halted, "every provider is out of credit (openrouter): a payment is the owner's")
+	assert.Contains(t, res.Halted, "every provider is out of credit (openrouter: card s1-1.w1 refused in this process)")
 	all := h.openOf(sprint.NAllOutOfCredit)
 	require.Len(t, all, 1, "one judgment")
-	assert.Contains(t, all[0].Note.What, "every provider is out of credit (openrouter)")
+	assert.Contains(t, all[0].Note.What, "every provider is out of credit (openrouter: card s1-1.w1 refused in this process)")
 	assert.Len(t, h.openOf(sprint.NProviderFunds), 1)
 	open := h.openOf(sprint.NNoRoute)
 	require.Len(t, open, 1, "the tier waits, once")
@@ -388,36 +388,57 @@ func (h *harness) setProp(name, value string) {
 	require.NoError(h.t, err)
 }
 
-// A stored 402 whose take launched before this process started rests nothing on a cold
-// start (the owner, 2026-10-03: a cold start judges no provider out of funds from a stored
-// refusal): the first tick rests nothing and stops nothing, and one note names the stale
-// refusal, so the coordinator is told why a provider with a stored 402 serves on.
-func TestAStoredRefusalFromBeforeTheStartRestsNothing(t *testing.T) {
+// The 10:44 defect, replayed: a machine runs, both providers refuse (their 402s recorded in
+// the fleet table's work cards), nothing ticks, and then a NEW process on the same backend
+// begins and ticks. The refusals' takes launched before the new process's Started, so its
+// first tick rests nothing, stops nothing, and names each refusal in one note; a later read
+// of $942.68 leaves the machine running (it never stopped). The note is one per refusal per
+// process: several more ticks add none.
+func TestAStoredRefusalFromBeforeThisProcessRestsNothingAndStopsNothing(t *testing.T) {
 	t.Parallel()
 	routes := []sprint.Route{providerRoute("or-a", "flash", "openrouter"), providerRoute("oc-a", "flash", "opencode")}
 	h := routeHarness(t, routes...)
 	h.addReady("s1", 2, briefOf("flash", ""))
-	h.must(DealStep(sprint.DealReq{})) // dealt before the machine starts
-	onOR := h.onProvider(routes, "openrouter")
-	require.NotEmpty(t, onOR)
-	h.failTake(onOR[0], creditLine) // the refusal, recorded before the process start
-	h.tick(time.Hour)
 	h.startMachine()
-	h.machine() // the first tick
-	s := h.snap()
-	assert.Empty(t, sprint.ProviderRests(s.Fleet), "a stored refusal from before the start rests nothing")
-	assert.Empty(t, h.noteWhats(sprint.NProviderRested))
-	assert.True(t, h.machineRecord().Running(), "no provider is out: the sprint runs")
-	assert.Empty(t, h.openOf(sprint.NAllOutOfCredit))
-	notes := h.noteWhats(sprint.NProviderStale)
-	require.Len(t, notes, 1, "one note names the stale refusal")
-	assert.Contains(t, notes[0], "openrouter")
-	assert.Contains(t, notes[0], onOR[0])
-	assert.Contains(t, notes[0], "before this start")
-	h.clean("a stored refusal from before the start")
+	h.machine()
+	onOR := h.onProvider(routes, "openrouter")
+	onOC := h.onProvider(routes, "opencode")
+	require.NotEmpty(t, onOR)
+	require.NotEmpty(t, onOC)
+	h.tick(30 * time.Second)
+	h.failTake(onOR[0], creditLine) // both providers 402 while the machine runs
+	h.failTake(onOC[0], creditLine)
+	h.tick(10 * time.Hour) // the night passes; the loop is down, nothing ticks
+
+	h2 := h.restart() // a new process on the same backend begins at the clock now
+	h2.machine()      // the new process's first tick
+	s := h2.snap()
+	assert.Empty(t, sprint.ProviderRests(s.Fleet), "a stored refusal from before this start rests nothing")
+	assert.Empty(t, h2.noteWhats(sprint.NProviderRested))
+	assert.True(t, h2.machineRecord().Running(), "no provider is out from a stored refusal: the sprint runs")
+	assert.Empty(t, h2.openOf(sprint.NAllOutOfCredit))
+	notes := h2.noteWhats(sprint.NProviderStale)
+	require.Len(t, notes, 2, "one note per stale refusal")
+	joined := strings.Join(notes, "\n")
+	assert.Contains(t, joined, "openrouter")
+	assert.Contains(t, joined, "opencode")
+	assert.Contains(t, joined, "before this start")
+
+	for range 3 { // several more ticks: no new stale note, and nothing stops
+		h2.tick(30 * time.Second)
+		h2.machine()
+	}
+	assert.Len(t, h2.noteWhats(sprint.NProviderStale), 2, "named once a process, never once a tick")
+	assert.True(t, h2.machineRecord().Running())
+
+	// a read of $942.68: the machine never stopped, and still runs
+	h2.tick(sprint.BalancePollEvery)
+	h2.poll(openrouter(942.68, 0))
+	assert.True(t, h2.machineRecord().Running(), "a read over zero: the machine never stopped")
+	h.clean("a cold start from stored refusals")
 }
 
-// A stored 402 from before the process start rests nothing, and a fresh 402 this process
+// A stored 402 from before this process started rests nothing, and a fresh 402 this process
 // rests its provider: the provider with only the stored refusal serves on, so the sprint
 // does not stop while one provider serves.
 func TestAStoredRefusalRestsNothingAndAFreshOneRests(t *testing.T) {
@@ -425,28 +446,31 @@ func TestAStoredRefusalRestsNothingAndAFreshOneRests(t *testing.T) {
 	routes := []sprint.Route{providerRoute("or-a", "flash", "openrouter"), providerRoute("oc-a", "flash", "opencode")}
 	h := routeHarness(t, routes...)
 	h.addReady("s1", 4, briefOf("flash", ""))
-	h.must(DealStep(sprint.DealReq{}))
+	h.startMachine()
+	h.machine()
 	onOR := h.onProvider(routes, "openrouter")
 	require.NotEmpty(t, onOR)
-	h.failTake(onOR[0], creditLine) // stored: taken before the process start
-	h.tick(time.Hour)
-	h.startMachine()
-	h.machine() // the first tick: the stored refusal rests nothing
-	assert.NotContains(t, sprint.ProviderRests(h.snap().Fleet), "openrouter", "a stored refusal rests nothing")
-	require.Len(t, h.noteWhats(sprint.NProviderStale), 1)
-
-	onOC := h.onProvider(routes, "opencode")
-	require.NotEmpty(t, onOC)
 	h.tick(30 * time.Second)
-	h.failTake(onOC[0], creditLine) // fresh: taken this process
-	h.machine()
-	s := h.snap()
+	h.failTake(onOR[0], creditLine) // recorded in the process before the restart
+	h.tick(10 * time.Hour)
+
+	h2 := h.restart() // a new process on the same backend
+	h2.machine()      // the first tick: the stored refusal rests nothing
+	assert.NotContains(t, sprint.ProviderRests(h2.snap().Fleet), "openrouter", "a stored refusal rests nothing")
+	require.Len(t, h2.noteWhats(sprint.NProviderStale), 1)
+
+	onOC := h2.onProvider(routes, "opencode")
+	require.NotEmpty(t, onOC)
+	h2.tick(30 * time.Second)
+	h2.failTake(onOC[0], creditLine) // fresh: taken this process
+	h2.machine()
+	s := h2.snap()
 	rests := sprint.ProviderRests(s.Fleet)
 	require.Contains(t, rests, "opencode", "a fresh refusal rests its provider")
 	assert.True(t, rests["opencode"].Resting(s.Now))
 	assert.NotContains(t, rests, "openrouter", "the provider with only a stored refusal serves on")
-	assert.True(t, h.machineRecord().Running(), "one provider serves: no stop")
-	assert.Empty(t, h.openOf(sprint.NAllOutOfCredit))
+	assert.True(t, h2.machineRecord().Running(), "one provider serves: no stop")
+	assert.Empty(t, h2.openOf(sprint.NAllOutOfCredit))
 	h.clean("a fresh refusal beside a stored one")
 }
 
@@ -473,7 +497,9 @@ func TestBothProvidersRefusingFreshStopTheMachine(t *testing.T) {
 	assert.Equal(t, sprint.FundsCause, m.Cause)
 	all := h.openOf(sprint.NAllOutOfCredit)
 	require.Len(t, all, 1, "one judgment")
-	assert.Contains(t, all[0].Note.What, "every provider is out of credit (opencode, openrouter)")
+	assert.Contains(t, all[0].Note.What, "every provider is out of credit (opencode: card ")
+	assert.Contains(t, all[0].Note.What, "openrouter: card ")
+	assert.Contains(t, all[0].Note.What, "refused in this process")
 	assert.Empty(t, h.noteWhats(sprint.NProviderStale), "both refusals are fresh: nothing is stale")
 	h.clean("both providers out this process")
 }
@@ -511,4 +537,49 @@ func TestOpencodeRestsOnAFreshRefusalAndLiftsOnlyOnFunded(t *testing.T) {
 	assert.False(t, sprint.ProviderRests(s.Fleet)["opencode"].Resting(s.Now), "funded lifts it")
 	assert.Len(t, h.noteWhats(sprint.NProviderFunded), 1)
 	h.clean("opencode funded")
+}
+
+// An unknown balance never counts as out (rule 2): a stored rest of a refusal from before
+// this start that keeps no balance counts nothing toward the stop, so a new process's first
+// tick runs the machine, not stops it. (Disabling AllOutOfCredit's guard turns this red.)
+func TestAnUnknownBalanceNeverCountsAsOut(t *testing.T) {
+	t.Parallel()
+	routes := []sprint.Route{providerRoute("or-a", "flash", "openrouter")}
+	h := routeHarness(t, routes...)
+	h.addReady("s1", 1, briefOf("flash", ""))
+	h.startMachine()
+	h.machine()
+	// a rest written by a previous process: begun before this start, no balance kept
+	h.setProp(sprint.PropProviderRest("openrouter"), restValue(t0.Add(-time.Hour), "docsd-29.w26", sprint.RestCredit,
+		"out of credit: provider openrouter refused card docsd-29.w26 on route or-a: class=out-of-credit status=402 msg=Insufficient credits."))
+	h.tick(10 * time.Hour)
+
+	h2 := h.restart() // a new process on the same backend
+	h2.machine()
+	assert.True(t, h2.machineRecord().Running(), "an unknown-balance rest from a stored refusal never stops the machine")
+	assert.Empty(t, h2.openOf(sprint.NAllOutOfCredit))
+	h.clean("an unknown balance is never out")
+}
+
+// A manual stop and start is not a new process: the store keeps its Started, so a refusal
+// taken in this process before the stop stays fresh after the start, not stale.
+func TestAManualStopAndStartIsNotANewProcess(t *testing.T) {
+	t.Parallel()
+	routes := []sprint.Route{providerRoute("or-a", "flash", "openrouter")}
+	h := routeHarness(t, routes...)
+	h.addReady("s1", 1, briefOf("flash", ""))
+	h.startMachine()
+	h.machine()
+	onOR := h.onProvider(routes, "openrouter")
+	require.NotEmpty(t, onOR)
+	h.tick(30 * time.Second)
+	h.failTake(onOR[0], creditLine) // fresh: taken this process, before the stop
+	h.stopMachine()
+	h.tick(10 * time.Second) // time passes while STOPPED
+	h.startMachine()         // not a new process: the same Started
+	h.machine()
+	assert.True(t, sprint.ProviderRests(h.snap().Fleet)["openrouter"].Resting(h.snap().Now),
+		"a refusal taken before the stop stays fresh: a start is not a new process")
+	assert.Empty(t, h.noteWhats(sprint.NProviderStale), "not stale: the same process")
+	h.clean("a manual stop and start keeps the same Started")
 }

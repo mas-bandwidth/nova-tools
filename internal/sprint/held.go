@@ -214,6 +214,7 @@ var heldParts = []TickPartFn{TickLevel, TickLevelReads, TickResolve, TickResume,
 func newHeld(h HeldState, now time.Time) *held {
 	s := *h.Snap
 	s.Now, s.rests = now, nil
+	s.NotedStale = nil // the rule asks what the next tick does: it names no note
 	// the resting routes, settled once at this clock: the rule asks noRoute of every
 	// ready primary (judgment), each a map read (route_rest.go)
 	sp, _, _ := s.withRests()
