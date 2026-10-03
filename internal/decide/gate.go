@@ -349,7 +349,8 @@ type GateCall struct {
 }
 
 // GateResult is a gate's decisions and the route the gate takes: Caused when any failure
-// is, else Flaky when any is (those are rerun), else PreExisting.
+// is, else Flaky when any is (those are rerun), else PreExisting; "" when the gate had no
+// failure, so nothing was decided (never PreExisting).
 type GateResult struct {
 	Calls []GateCall
 	Route string
@@ -376,9 +377,13 @@ func GateOp(op string, f Failure) string { return op + "/" + f.Key() }
 
 // Gate asks the gate decision of each failure of in (up to MaxGateFailures; a build
 // failure is caused, unasked), records each under GateOp(op, failure), and routes the gate
-// at the bars. A backend that fails is an error and the gate is the card's, as before.
+// at the bars. A backend that fails is an error and the gate is the card's, as before. No
+// failure is no decision and no route: nothing is asked or recorded.
 func Gate(ctx context.Context, b Backend, bars GateBars, in GateInput, record, op string, at time.Time) (GateResult, error) {
 	var r GateResult
+	if len(in.Failures) == 0 {
+		return r, nil
+	}
 	for i, f := range in.Failures {
 		call := GateCall{Failure: f, Route: Caused}
 		if f.Test != "" && i < MaxGateFailures {

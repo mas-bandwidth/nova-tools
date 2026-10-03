@@ -2156,7 +2156,9 @@ p=` line per question: a noul's `p=yes:<p>`, a choice's `p=<option>:<p>,...`.
 `gate` prints `GATE OK op= decision=gate backend= failures= route=caused|flaky|pre-existing`
 and one `GATE FAILURE key=<pkg>.<Test> id=<op>/<key> class= p= route= recorded=` line
 per failing test of the go test output, each one decision; a build failure is
-`route=caused recorded=unasked`.
+`route=caused recorded=unasked`. `gate --dry-run` asks nothing and writes nothing:
+each `GATE FAILURE` says `recorded=existing` (with its `class=`) for a decision the
+record holds already, `no` for one the run would ask, `unasked` for a build failure.
 `calibrate` prints the AUC, one `BAR` line per `--bars` value (positives caught,
 negatives bounced) and the `CATCH-ALL` bar, the highest that flags every
 positive. What a first run gets wrong:

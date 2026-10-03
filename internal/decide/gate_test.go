@@ -112,7 +112,7 @@ func (c *classed) Ask(ctx context.Context, s Schema, state string) (map[string]A
 // flaky at or above the flaky bar, pre-existing at or above the pre-existing bar, else
 // caused; a build failure is caused, unasked. The gate is caused when one failure is, else
 // flaky when one is (those are rerun), else pre-existing. Asked again under the same op it
-// is answered from the record.
+// is answered from the record. A gate with no failure decides nothing and has no route.
 func TestGateRoutesEachFailureAtTheBars(t *testing.T) {
 	t.Parallel()
 	bars := GateBars{Flaky: 0.8, PreExisting: 0.8}
@@ -161,7 +161,10 @@ func TestGateRoutesEachFailureAtTheBars(t *testing.T) {
 		})
 	}
 	record := filepath.Join(t.TempDir(), "gate.jsonl")
-	_, err := Gate(context.Background(), fake, bars, GateInput{Failures: []Failure{f("TestFlaky")}}, record, "c9@1@gate", at)
+	none, err := Gate(context.Background(), fake, bars, GateInput{}, record, "c8@1@gate", at)
+	require.NoError(t, err)
+	assert.Equal(t, GateResult{}, none, "no failure: no decision and no route, never pre-existing")
+	_, err = Gate(context.Background(), fake, bars, GateInput{Failures: []Failure{f("TestFlaky")}}, record, "c9@1@gate", at)
 	require.NoError(t, err)
 	ds, err := Load(record)
 	require.NoError(t, err)

@@ -158,8 +158,9 @@ with `--json`, the same value as one JSON object. A refusal is one line,
 exit 2, and writes nothing. A backend that fails (no answer, an HTTP status, an
 answer outside the schema) is `<VERB> FAIL id=... backend=...: <why>; run:
 <remedy>` at exit 2, and records nothing. Exit 1 is an outcome that conflicts
-with the one recorded. `ask`, `read` and `outcome` take `--dry-run`: the plan,
-with no backend call and no write.
+with the one recorded. `ask`, `read`, `gate` and `outcome` take `--dry-run`: the
+plan, with no backend call and no write; an op the record holds already is reported
+as `recorded=existing` (for `gate`, per failure).
 
 ## 8. The first read of a flash card
 
@@ -223,7 +224,8 @@ sprint row's, and `--bars`'): every gate decision is recorded and shown, and not
 rerun or reclassified until the owner sets a bar. 0.8 each is the starting point the
 calibration below reads; it is not routed yet because at 0.8, with the base run, 24 of the
 39 flaky failures would have been reported pre-existing. The gate's route (`Gate`) is `caused` when one
-failure is, else `flaky` when one is (the flaky ones are rerun), else `pre-existing`.
+failure is, else `flaky` when one is (the flaky ones are rerun), else `pre-existing`; a
+gate with no failure decides nothing and has no route (never `pre-existing`).
 
 The rerun's result is each flaky decision's outcome (`SettleGate`): green is `flaky`;
 red again is `pre-existing` when the test is red at the base, `caused` when it is green

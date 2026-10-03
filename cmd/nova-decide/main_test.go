@@ -255,7 +255,8 @@ func gateReply(body []byte) ([]byte, error) {
 // <op>/<pkg>.<Test>, and prints each failure's class, p and route and the gate's route: with
 // no --bars (unset, the sprint row's default) every failure routes caused, and --bars routes
 // it; the same op again asks nothing; --base-red names the tests red at the base in each
-// state, and the record keeps no key. With no --op its id is the decision's name and a hash.
+// state, and the record keeps no key. A dry run asks nothing and says which failures the
+// record holds already. With no --op its id is the decision's name and a hash.
 func TestGateAsksEachFailureOnceAndRoutesTheGate(t *testing.T) {
 	t.Parallel()
 	calls := new(atomic.Int32)
@@ -270,6 +271,12 @@ func TestGateAsksEachFailureOnceAndRoutesTheGate(t *testing.T) {
 		"GATE FAILURE key=example/tools/internal/serve.TestPortInUse id=c1@1@gate/example/tools/internal/serve.TestPortInUse class=caused p=caused:0.05,flaky:0.85,pre-existing:0.1 route=caused recorded=new",
 		"GATE FAILURE key=example/tools/internal/greet.TestGreetNamesTheReader id=c1@1@gate/example/tools/internal/greet.TestGreetNamesTheReader class=caused p=caused:0.9,flaky:0.05,pre-existing:0.05 route=caused recorded=new")
 	assert.Equal(t, int32(2), calls.Load())
+	jev.Do(t, append(gate, "--op", "c1@1@gate", "--dry-run")...).Exit(0).Out("GATE OK op=c1@1@gate decision=gate backend=jev:jev-latest failures=2 recorded=existing dry_run=true",
+		"GATE FAILURE key=example/tools/internal/serve.TestPortInUse id=c1@1@gate/example/tools/internal/serve.TestPortInUse state_bytes=", "class=caused recorded=existing")
+	r := jev.Do(t, "gate", "--output", td+"gate-output.txt", "--card", td+"card.md", "--diff", td+"card.diff", "--backend", "jev", "--record", rec, "--op", "c1@1@gate", "--dry-run")
+	assert.Equal(t, 2, r.Code, "the record holds the op over another state (no --base-red): the dry run refuses it, as the run would")
+	assert.Contains(t, r.Stderr, "the op id c1@1@gate/example/tools/internal/serve.TestPortInUse is recorded for another decision, schema or state")
+	assert.Equal(t, int32(2), calls.Load(), "a dry run asks nothing")
 	jev.Do(t, append(gate, "--op", "c1@1@gate", "--bars", "0.8,0.8")...).Exit(0).Out("route=flaky recorded=existing")
 	jev.Do(t, append(gate, "--op", "c1@1@gate", "--bars", "0.8,")...).Exit(0).Out("route=flaky recorded=existing")
 	assert.Equal(t, int32(2), calls.Load(), "the same op asks nothing")
@@ -283,7 +290,7 @@ func TestGateAsksEachFailureOnceAndRoutesTheGate(t *testing.T) {
 	raw, err := os.ReadFile(rec)
 	require.NoError(t, err)
 	assert.NotContains(t, string(raw), "k-test")
-	r := jev.Do(t, "gate", "--output", td+"gate-output.txt", "--card", td+"card.md", "--backend", "jev", "--record", rec, "--json")
+	r = jev.Do(t, "gate", "--output", td+"gate-output.txt", "--card", td+"card.md", "--backend", "jev", "--record", rec, "--json")
 	r.Exit(0)
 	var got struct {
 		Facts map[string]any `json:"facts"`

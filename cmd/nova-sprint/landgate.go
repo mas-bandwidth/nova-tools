@@ -45,7 +45,7 @@ func (a *app) landGate(ctx context.Context, st *store.Store) (*landGate, string)
 	g := &landGate{bars: bars, now: time.Now}
 	if a.gateBackend != nil {
 		g.backend, g.now = a.gateBackend()
-	} else if key := os.Getenv(decide.JevSecret); key != "" {
+	} else if key := a.getenv(decide.JevSecret); key != "" {
 		g.backend = decide.JevHTTP(key)
 	} else {
 		return nil, decide.JevSecret + " is absent from land's environment"

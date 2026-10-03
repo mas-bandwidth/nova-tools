@@ -271,11 +271,7 @@ func (w world) gate(c *tool.Call) *tool.Out {
 		return tool.Refuse(err.Error())
 	}
 	if dry {
-		o := tool.Done().Fact("op", op).Fact("decision", decide.GateName).Fact("backend", b.Name()).Fact("failures", len(failures)).Fact("recorded", "no")
-		for i, f := range failures {
-			o.Item("failure", "key", f.Key(), "id", decide.GateOp(op, f), "state_bytes", len(decide.GateState(in, i)))
-		}
-		return o
+		return gateDryRun(c.Str("record"), op, b, in)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), c.Dur("timeout"))
 	defer cancel()
@@ -283,12 +279,7 @@ func (w world) gate(c *tool.Call) *tool.Out {
 	var failed *decide.BackendError
 	switch {
 	case errors.As(err, &failed):
-		o := tool.Fail(err.Error()).Fact("op", op).Fact("backend", b.Name())
-		o.Exit, o.Remedy = 2, "make --answers answer the class question"
-		if _, isJev := b.(decide.Jev); isJev {
-			o.Remedy = "check the backend's account and the key nova-secrets delivers, then run the same line again"
-		}
-		return o
+		return backendFailed(err, "op", op, b, "make --answers answer the class question")
 	case err != nil:
 		return tool.Refuse(err.Error())
 	}
@@ -303,6 +294,47 @@ func (w world) gate(c *tool.Call) *tool.Out {
 			}
 		}
 		o.Item("failure", "key", call.Failure.Key(), "id", id, "class", class, "p", p, "route", call.Route, "recorded", recorded)
+	}
+	return o
+}
+
+// gateDryRun is the gate verb's dry run: each failure's id and state size, and whether the
+// record holds its decision already (recorded=existing, with its class: the run would ask
+// nothing for it), asks nothing (a build failure, one past decide.MaxGateFailures: unasked),
+// or would ask (no). An id the record holds over another state is refused, as the run would
+// refuse it. The top-level recorded is existing when every failure asked is in the record.
+func gateDryRun(record, op string, b decide.Backend, in decide.GateInput) *tool.Out {
+	ds, err := decide.Load(record)
+	if err != nil {
+		return tool.Refuse(err.Error())
+	}
+	o := tool.Done().Fact("op", op).Fact("decision", decide.GateName).Fact("backend", b.Name()).Fact("failures", len(in.Failures))
+	all := "existing"
+	for i, f := range in.Failures {
+		id, state, class, recorded := decide.GateOp(op, f), decide.GateState(in, i), "-", "no"
+		switch have := decide.Find(ds, id); {
+		case f.Test == "" || i >= decide.MaxGateFailures:
+			recorded = "unasked"
+		case have != nil:
+			if err := decide.Replays(*have, decide.GateSchema(), state); err != nil {
+				return tool.Refuse(err.Error())
+			}
+			class, recorded = have.Answers["class"].Value, "existing"
+		default:
+			all = "no"
+		}
+		o.Item("failure", "key", f.Key(), "id", id, "state_bytes", len(state), "class", class, "recorded", recorded)
+	}
+	return o.Fact("recorded", all)
+}
+
+// backendFailed is a decision the backend gave no answer to: exit 2, the id it was asked
+// under (named key), and the remedy: fixed's (what --answers must answer), or Jev's.
+func backendFailed(err error, key, id string, b decide.Backend, fixed string) *tool.Out {
+	o := tool.Fail(err.Error()).Fact(key, id).Fact("backend", b.Name())
+	o.Exit, o.Remedy = 2, fixed
+	if _, isJev := b.(decide.Jev); isJev {
+		o.Remedy = "check the backend's account and the key nova-secrets delivers, then run the same line again"
 	}
 	return o
 }
@@ -357,12 +389,7 @@ func (w world) decision(c *tool.Call, s decide.Schema, state string, inputs map[
 	var failed *decide.BackendError
 	switch {
 	case errors.As(err, &failed):
-		o := tool.Fail(err.Error()).Fact("id", id).Fact("backend", b.Name())
-		o.Exit, o.Remedy = 2, "make --answers answer every question of the schema"
-		if _, isJev := b.(decide.Jev); isJev {
-			o.Remedy = "check the backend's account and the key nova-secrets delivers, then run the same line again"
-		}
-		return o
+		return backendFailed(err, "id", id, b, "make --answers answer every question of the schema")
 	case err != nil:
 		return tool.Refuse(err.Error())
 	case existing:

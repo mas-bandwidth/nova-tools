@@ -228,7 +228,7 @@ var testNameRE = regexp.MustCompile(`^Test[A-Za-z0-9_]*$`)
 // <pkgs>` in the child's wall (wrap: nativeSandboxArgv's) with the child's environment, so
 // the rerun meets what the child's gate met, the build cache warm. A test its output names
 // failing is red; a package that failed with no test named has all its tests red; a run that
-// failed with no go test output at all is an error.
+// failed with no go test output at all, or one its deadline killed, is an error.
 func nativeGateRunner(wall string, wrap func([]string) []string, env []string, cwd, goBin string) gateRunner {
 	return func(ctx context.Context, dir string, fs []decide.Failure) (map[string]bool, error) {
 		var names, pkgs []string
@@ -266,11 +266,16 @@ func nativeGateRunner(wall string, wrap func([]string) []string, env []string, c
 	}
 }
 
-// gateRed is which of fs a rerun's output and exit say are red.
+// gateRed is which of fs a rerun's output and exit say are red. A run its deadline killed
+// is an error whatever its partial output names: a test that never finished is not run,
+// never green.
 func gateRed(fs []decide.Failure, out string, runErr error) (map[string]bool, error) {
 	red := map[string]bool{}
 	if runErr == nil {
 		return red, nil
+	}
+	if timeout := (*subproc.TimeoutError)(nil); errors.As(runErr, &timeout) {
+		return nil, runErr
 	}
 	got := decide.ParseGateOutput(out)
 	if len(got) == 0 {

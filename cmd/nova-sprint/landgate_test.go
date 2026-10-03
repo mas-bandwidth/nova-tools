@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,9 +14,11 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
 )
 
-// oneClass answers every failure of the gate decision with one class's probabilities.
+// oneClass answers every failure of the gate decision with one class's probabilities; err,
+// when set, is every answer.
 type oneClass struct {
 	p    map[string]float64
+	err  error
 	asks int
 }
 
@@ -23,6 +26,9 @@ func (o *oneClass) Name() string { return "fake" }
 
 func (o *oneClass) Ask(context.Context, decide.Schema, string) (map[string]decide.Answer, decide.Usage, error) {
 	o.asks++
+	if o.err != nil {
+		return nil, decide.Usage{}, o.err
+	}
 	best := decide.Caused
 	for k, v := range o.p {
 		if v > o.p[best] {
@@ -101,6 +107,41 @@ func TestLandRerunsARedCheckOnceWhenItsFailuresAreFlaky(t *testing.T) {
 				label = ds[0].Outcome.Label
 			}
 			assert.Equal(t, tc.outcome, label)
+		})
+	}
+}
+
+// A red batch check whose gate decision cannot be made (no key in land's environment, a
+// backend that fails) is red as before, with why no decision was made, and records nothing;
+// the check is not run again, whatever the bars say.
+func TestLandKeepsARedBatchRedWithNoGateDecision(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		backend decide.Backend // nil: none, and land's environment holds no key
+		says    string
+	}{
+		{"no key", nil, "(no gate decision: JEV_API_KEY is absent from land's environment)"},
+		{"a backend that fails", &oneClass{err: errors.New("HTTP 402: no credits")}, "(no gate decision: HTTP 402: no credits)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := newLandRig(t)
+			r.m.SetGateBars("0.8", "0.8")
+			if tc.backend != nil {
+				r.a.gateBackend = func() (decide.Backend, func() time.Time) {
+					return tc.backend, func() time.Time { return time.Date(2026, 10, 3, 8, 0, 0, 0, time.UTC) }
+				}
+			}
+			r.ok("add --stream s1 --count 1")
+			r.queued(map[string]string{"s1-1": r.head("s1-1", "main", "a.txt", "a\n")}, "s1-1")
+			code, out, errs := r.do("land --repo-dir " + r.clone + " --base main --check " + redCheck(t, r.dir, false))
+			assert.Equal(t, 1, code, out+errs)
+			assert.Contains(t, out+errs, tc.says)
+			assert.NotContains(t, out+errs, "LAND OK")
+			ds, err := decide.Load(filepath.Join(r.dir, "land", "decide", "gate.jsonl"))
+			require.NoError(t, err)
+			assert.Empty(t, ds)
 		})
 	}
 }

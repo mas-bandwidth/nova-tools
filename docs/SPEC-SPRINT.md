@@ -703,11 +703,11 @@ and it is the coordinator's decision, receipted.
   writes the sprint row's gate bars that are set on it, `decide_gate_flaky` and
   `decide_gate_preexisting` (nova-config, `sprint set`), read with the routes in
   the same round trip (a store with no route reads none). **Both are empty by
-  default** (the coordinator's rule for every nova-decide layer): every gate
-  decision is made, recorded and shown, and nothing is rerun or reclassified until
-  the owner sets a bar; 0.8 each is the starting point (docs/SPEC-NOVA-DECIDE.md
-  section 9: with the base run, p(flaky) AUC 0.716, p(caused) 0.914,
-  p(pre-existing) 0.907; without it, p(pre-existing) 0.522), and it is not routed
+  default** (the coordinator's rule for every nova-decide layer, 2026-10-03):
+  every gate decision is made, recorded and shown, and nothing is rerun or
+  reclassified until the owner sets a bar; 0.8 each is the starting point
+  (docs/SPEC-NOVA-DECIDE.md section 9: with the base run, p(flaky) AUC 0.716,
+  p(caused) 0.914, p(pre-existing) 0.907; without it, p(pre-existing) 0.522), and it is not routed
   yet because at 0.8 24 of the calibration's 39 flaky failures would have been
   reported pre-existing. The packet hands the bars to the member, and
   the member hands native the key `JEV_API_KEY` its loop's nova-secrets keys

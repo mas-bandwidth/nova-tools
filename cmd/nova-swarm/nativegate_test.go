@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -18,6 +19,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/member"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
@@ -54,10 +56,13 @@ func (g *gateClasses) Ask(_ context.Context, _ decide.Schema, state string) (map
 }
 
 // fakeRun is a gateRunner: the tests red in the base worktree (a dir ending .gate-base) and
-// at the head, and the runs it was asked for.
+// at the head, and the runs it was asked for. A run that holds the test hang never ends on
+// its own: it waits out its context's deadline (on synctest's clock) and is read as the real
+// runner reads a run its deadline killed, its output partial.
 type fakeRun struct {
 	baseRed, headRed map[string]bool
 	err              error
+	hang, partial    string
 	mu               sync.Mutex
 	runs             []string // "base TestA,TestB" or "head TestA"
 	unbounded        int      // runs handed a context with no deadline, or one past gateRunWait
@@ -81,6 +86,12 @@ func (f *fakeRun) run(ctx context.Context, dir string, fs []decide.Failure) (map
 	f.mu.Unlock()
 	if f.err != nil {
 		return nil, f.err
+	}
+	for _, x := range fs {
+		if x.Test == f.hang && f.hang != "" {
+			<-ctx.Done()
+			return gateRed(fs, f.partial, subproc.Bounded{Ctx: ctx, Budget: gateRunWait}.Wrap("the gate's rerun", errors.New("signal: killed")))
+		}
 	}
 	out := map[string]bool{}
 	for _, x := range fs {
@@ -241,6 +252,30 @@ func TestNativeGateMakesNoDecisionItCannot(t *testing.T) {
 	assert.Equal(t, decide.RedAgain, ds[0].Outcome.Label)
 }
 
+// A base run its deadline killed is not run, though its partial output names a failure:
+// every failure is asked as not run at the base, the one that never finished never as green
+// there. The deadline is gateRunWait on synctest's clock: no real time passes.
+func TestNativeGateAsksAHungBaseRunAsNotRun(t *testing.T) {
+	t.Parallel()
+	cfg, job, start := gateJob(t, "not-done", twoRed, true)
+	cfg.decider = &decider{backend: &gateClasses{}, now: func() time.Time { return time.Date(2026, 10, 3, 8, 0, 0, 0, time.UTC) }}
+	run := &fakeRun{hang: "TestB", partial: "--- FAIL: TestA (0.01s)\n    a_test.go:3: boom\nFAIL\nFAIL\tm/p\t1.1s\n"}
+	var out, errOut bytes.Buffer
+	synctest.Test(t, func(t *testing.T) {
+		nativeGate(cfg, job, "", start, run.run, &out, &errOut)
+	})
+	assert.Equal(t, "NATIVE GATE label=c1.w2.g1.e1 op=c1@2@gate route=caused tests=TestA,TestB classes=TestA:caused:0.90,TestB:caused:0.90\n", out.String())
+	assert.Contains(t, errOut.String(), "the gate's failures were not run at the base "+start+": the gate's rerun did not finish within 3m0s and was killed; asked as not run")
+	assert.Equal(t, []string{"base TestA,TestB"}, run.runs)
+	assert.Zero(t, run.unbounded)
+	ds, err := decide.Load(gateRecord(cfg.root))
+	require.NoError(t, err)
+	require.Len(t, ds, 2)
+	for _, d := range ds {
+		assert.Contains(t, d.State, "AT THE BASE (the same test on the commit the card started from): not run\n", d.ID)
+	}
+}
+
 // The gate output is the file the result's output: names inside the job (or the child's
 // temp), else the result's body; a path outside both is never read.
 func TestGateTextReadsTheOutputInsideTheJobOnly(t *testing.T) {
@@ -291,7 +326,8 @@ func TestTheMemberReadsTheGateLine(t *testing.T) {
 
 // The real runner's reading of a rerun: exit 0 is every test green; a test the output names
 // failing is red, a package that failed naming none has all its tests red; a run that
-// failed with no go test output is an error, never a green.
+// failed with no go test output is an error, never a green; a run its deadline killed is an
+// error whatever its partial output names (the deadline gateRunWait on synctest's clock).
 func TestGateRedReadsARerun(t *testing.T) {
 	t.Parallel()
 	fs := []decide.Failure{{Pkg: "m/p", Test: "TestA"}, {Pkg: "m/p", Test: "TestB"}, {Pkg: "m/q", Test: "TestC"}}
@@ -304,4 +340,14 @@ func TestGateRedReadsARerun(t *testing.T) {
 	assert.Equal(t, map[string]bool{"m/p.TestB": true, "m/q.TestC": true}, red)
 	_, err = gateRed(fs, "sandbox: denied\n", exit)
 	assert.ErrorContains(t, err, "go test failed with no test output: sandbox: denied")
+	synctest.Test(t, func(t *testing.T) {
+		b := subproc.Prepare(context.Background(), gateRunWait, "go", "test")
+		defer b.Cancel()
+		<-b.Ctx.Done()
+		red, err := gateRed(fs, "--- FAIL: TestA (0s)\nFAIL\nFAIL\tm/p\t0.1s\n", b.Wrap("the gate's rerun", exit))
+		var timeout *subproc.TimeoutError
+		require.ErrorAs(t, err, &timeout, "m/q's TestC never finished; it is not green")
+		assert.Nil(t, red)
+		assert.EqualError(t, err, "the gate's rerun did not finish within 3m0s and was killed")
+	})
 }
