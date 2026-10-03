@@ -495,6 +495,45 @@ func TestAPassStoppedWhileApplyingIsFinishedThroughTheSameOp(t *testing.T) {
 	})
 }
 
+// A pass that finishes an interrupted apply skips the bar alone, never the verb's check:
+// a drop recorded as listed, whose record then says "applying" (a line answer never
+// writes; a hand edit or a second writer), is not applied by a pass with a bar. Its row
+// is refused with the reason, the record says refused, and the pass after lists it.
+func TestAResumeNeverAppliesADrop(t *testing.T) {
+	t.Parallel()
+	ta, _, record := answering(t, always(decide.VerbDrop, 0.99, "own", "cannot-be-done"))
+	ta.ok("add --stream s1 --count 1")
+	ta.deal(1)
+	ta.failOnce("m1", "s1-1.w1@1", "red")
+	note := ta.group(sprint.NWorkFailed, "s1").Notes[0]
+	assert.Contains(t, ta.ok("answer --record "+record), "s1-1  failed  drop  0.99  listed  a drop is the coordinator's")
+	require.NoError(t, decide.RecordAct(record, decide.Act{ID: note, Act: actApplying, Op: opOf(note), At: ta.a.now().UTC().Format(time.RFC3339)}))
+	before := ta.applies()
+	code, out, _ := ta.do("answer --bar 0.5 --record " + record)
+	assert.Equal(t, 1, code, "a refused row exits 1")
+	assert.Contains(t, out, "s1-1  failed  drop  0.99  refused  a drop is the coordinator's")
+	assert.Contains(t, out, "the record says applying it began at ")
+	assert.Equal(t, before, ta.applies(), "nothing is applied")
+	assert.NotContains(t, ta.ok("log --card s1-1"), "taken off the table")
+	act, op, _ := applyState(recorded(t, record)[note])
+	assert.Equal(t, []string{actRefused, opOf(note)}, []string{act, op})
+	assert.Contains(t, ta.ok("answer --bar 0.5 --record "+record), "s1-1  failed  drop  0.99  listed  a drop is the coordinator's")
+	assert.Equal(t, before, ta.applies())
+}
+
+// The record's directory is 0700 even when it was made before, wider, by another writer.
+func TestTheRecordsDirectoryIsTightened(t *testing.T) {
+	t.Parallel()
+	ta, _, _ := answering(t, always(decide.VerbRework, 0.95, "retry", "cannot-be-done"))
+	dir := filepath.Join(t.TempDir(), "decide")
+	require.NoError(t, os.Mkdir(dir, 0o755))
+	require.NoError(t, os.Chmod(dir, 0o755)) // past the umask
+	ta.ok("answer --record " + filepath.Join(dir, "judgment.jsonl"))
+	fi, err := os.Stat(dir)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o700), fi.Mode().Perm())
+}
+
 // Every applied verb carries the decision's op, through the server as here: the same line
 // again is a replay of the recorded result.
 func TestEveryAppliedVerbCarriesTheDecisionsOp(t *testing.T) {

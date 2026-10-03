@@ -35,7 +35,8 @@ import (
 // operation id are recorded before its first verb runs, every verb carries that id as its
 // --op, and "applied" or "refused" is recorded after. A pass stopped between the two leaves
 // "applying", which the next pass finishes through the same ids: a verb that ran replays its
-// recorded result and changes nothing.
+// recorded result and changes nothing. That pass skips the bar alone, never the verb's
+// check: a drop or a release that says "applying" is refused, and recorded so.
 //
 // It is a client of the sprint like the coordinator's shell: it reads and writes through the
 // verbs (inbox, card, log, routes and the answer verbs), sent to the server when
@@ -187,7 +188,11 @@ func (a *app) cmdAnswer(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "answer", why)
 	}
 	if !w.dry {
-		if err := os.MkdirAll(filepath.Dir(w.record), 0o700); err != nil {
+		dir := filepath.Dir(w.record)
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return refuse(stderr, "answer", "the record's directory: "+err.Error())
+		}
+		if err := os.Chmod(dir, 0o700); err != nil { // MkdirAll leaves one made before as it was
 			return refuse(stderr, "answer", "the record's directory: "+err.Error())
 		}
 	}
@@ -441,9 +446,24 @@ func (w *answerer) card(ctx context.Context, g sprint.Group, kind, card string, 
 			why = "nova-decide reworked it at " + at + ", within the hour: the coordinator's"
 		}
 	}
+	// a resume skips the bar alone: what the bar passed when applying began is not asked
+	// again, but a verb that is never applied (drop, release, one the judgment does not
+	// print) is refused here however the record came to say "applying"
+	gate := ch
+	if resume {
+		gate = decide.Choose(d.Answers, allowed, 0)
+	}
 	switch {
-	case !resume && ch.Act != decide.ActApply:
-		row.Act, row.Why = actListed, ch.Why
+	case resume && gate.Act != decide.ActApply:
+		row.Act, row.Why = actRefused, gate.Why+"; the record says applying it began at "+at+", and it is never finished"
+		if !w.dry {
+			if err := decide.RecordAct(w.record, decide.Act{ID: d.ID, Act: actRefused, Op: op, At: w.now().UTC().Format(time.RFC3339)}); err != nil {
+				return row, fmt.Errorf("the record %s: %w", w.record, err)
+			}
+		}
+		return row, nil
+	case gate.Act != decide.ActApply:
+		row.Act, row.Why = actListed, gate.Why
 	case why != "":
 		row.Act, row.Why = actListed, why
 	case !w.barSet && resume:

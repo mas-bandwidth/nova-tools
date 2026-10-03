@@ -15,9 +15,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// calItem is one judgment of the calibration fixture: what the coordinator answered and
+// sampleItem is one judgment of the in-sample fixture: what the coordinator answered and
 // what became of the card.
-type calItem struct {
+type sampleItem struct {
 	ID      string   `json:"id"`
 	Card    string   `json:"card"`
 	Kind    string   `json:"kind"`
@@ -28,15 +28,15 @@ type calItem struct {
 	Outcome string   `json:"outcome"` // landed, dropped, came-back, open
 }
 
-func readCal(t *testing.T) []calItem {
+func readInSample(t *testing.T) []sampleItem {
 	t.Helper()
-	f, err := os.Open(filepath.Join("testdata", "judgment-calibration.jsonl"))
+	f, err := os.Open(filepath.Join("testdata", "judgment-insample.jsonl"))
 	require.NoError(t, err)
 	defer f.Close()
-	var out []calItem
+	var out []sampleItem
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
-		var it calItem
+		var it sampleItem
 		dec := json.NewDecoder(strings.NewReader(sc.Text()))
 		dec.DisallowUnknownFields()
 		require.NoError(t, dec.Decode(&it), sc.Text())
@@ -46,10 +46,10 @@ func readCal(t *testing.T) []calItem {
 	return out
 }
 
-// agreementTables is the calibration's two tables as SPEC-NOVA-DECIDE section 9 prints
+// agreementTables is the in-sample measure's two tables as SPEC-NOVA-DECIDE section 9 prints
 // them: by kind, how often the judgment decision chose the coordinator's verb and what it
 // applies at the bar; by the card's outcome, how often it agreed.
-func agreementTables(items []calItem, ds []Decision, bar float64) string {
+func agreementTables(items []sampleItem, ds []Decision, bar float64) string {
 	type row struct{ n, agree, applied, appliedAgree int }
 	byKind, byOutcome := map[string]*row{}, map[string]*row{}
 	total := &row{}
@@ -97,14 +97,14 @@ func agreementTables(items []calItem, ds []Decision, bar float64) string {
 	return b.String()
 }
 
-// The calibration fixture is the coordinator's own answers to 100 judgments, and the
+// The in-sample fixture is the coordinator's own answers to 100 judgments, and the
 // record is Jev's answers to the same states, under this schema, each labelled with the
 // card's outcome; the agreement SPEC-NOVA-DECIDE section 9 states is recomputed here from
 // the two, so a changed schema, fixture or record turns this red until the spec says the
 // new numbers.
-func TestJudgmentCalibrationAgreement(t *testing.T) {
+func TestJudgmentInSampleAgreement(t *testing.T) {
 	t.Parallel()
-	items := readCal(t)
+	items := readInSample(t)
 	require.Len(t, items, 100)
 	ds, err := Load(filepath.Join("testdata", "judgment-record.jsonl"))
 	require.NoError(t, err)
@@ -123,5 +123,5 @@ func TestJudgmentCalibrationAgreement(t *testing.T) {
 	spec, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-NOVA-DECIDE.md"))
 	require.NoError(t, err)
 	tables := agreementTables(items, ds, 0.8)
-	assert.True(t, strings.Contains(string(spec), tables), "SPEC-NOVA-DECIDE section 9 states the calibration as the record computes it:\n%s", tables)
+	assert.True(t, strings.Contains(string(spec), tables), "SPEC-NOVA-DECIDE section 9 states the in-sample measure as the record computes it:\n%s", tables)
 }

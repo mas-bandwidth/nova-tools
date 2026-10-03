@@ -1434,8 +1434,11 @@ on the decision's own line when it is new and as an act line when it was recorde
 before; every verb carries that id as its `--op`; after them the record says
 `applied` or `refused`. A pass stopped between the two leaves `applying`: the next pass
 that finds the judgment open finishes the decision through the same ids, past the
-guards it passed when it began, and a verb that ran replays its recorded result and
-changes nothing. A judgment the verb answered is closed, so its decision stays
+bar and the hour guard it passed when it began, and a verb that ran replays its
+recorded result and changes nothing. The verb's own check is not skipped: a drop, a
+release, or a verb the judgment does not print is never applied, so a decision that
+says `applying` on one (a record answer did not write) is that card's `refused` row
+with the reason, and the record says `refused` after it. A judgment the verb answered is closed, so its decision stays
 `applying`, which the hour guard counts.
 
 One ask of the backend may take `--timeout` (60s by default; the Jev client is bounded
@@ -1471,7 +1474,8 @@ that command) or a fixed file (`--backend fixed --answers <file>`). The record i
 `--record`, default `~/nova-sprint/decide/judgment.jsonl`: the decide layers keep their
 records under one `decide/` directory (a member's reads in `<root>/decide/read.jsonl`,
 the brief's in `~/nova-sprint/decide/brief.jsonl`), and answer makes that directory
-0700, as the records hold the sprint's state.
+0700, or tightens it to 0700 when it was made before, as the records hold the sprint's
+state.
 
 ## 9. What is always true
 

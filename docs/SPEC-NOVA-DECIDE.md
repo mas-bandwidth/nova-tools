@@ -259,17 +259,18 @@ decision recorded earlier run, `applied` or `refused` after any decision's verbs
 The decision's last act says where it stands. A card of a judgment is decided once:
 the same id again is answered from the record and asks nothing, and one applied
 before whose judgment is still open is listed, never applied twice; one left
-`applying` (a pass stopped between its lines) is finished through the same op; a
+`applying` (a pass stopped between its lines) is finished through the same op, the
+bar alone skipped (a drop, a release, or a verb not printed is refused, never applied); a
 card the decision reworked, or began to, within the last hour is listed, not
 reworked again. One ask may take `--timeout` (60s by default, `JevTimeout`); an ask
 past it is that card's `failed` row and records nothing. Its outcome is attached once the card's state says it (`JudgmentOutcome`):
 `landed`, `dropped` (off the table), or `came-back` (another judgment open on it).
 
-The calibration fixture (`internal/decide/testdata/judgment-calibration.jsonl`) is 100
+The in-sample fixture (`internal/decide/testdata/judgment-insample.jsonl`) is 100
 judgments the coordinator answered on 2026-10-02 and 03, read from the sprint's log,
 each with the coordinator's verb and the card's outcome; the record of Jev's answers to
 them is `internal/decide/testdata/judgment-record.jsonl`, and
-`TestJudgmentCalibrationAgreement` recomputes the agreement it states. Each state is
+`TestJudgmentInSampleAgreement` recomputes the agreement it states. Each state is
 built by `JudgmentState` from the card's log up to the second the coordinator answered,
 as answer builds it live (one card a judgment), with the fleet's machine,
 person and home-directory names replaced by placeholders (m1, coordinator, owner,
