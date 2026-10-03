@@ -15,9 +15,10 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 	testverbhelp.Check(t, cli.NoStdin(), []testverbhelp.Case{
 		{Verb: "ask", Flags: append([]string{"--backend", "jev"}, record...)},
 		{Verb: "read", Flags: append([]string{"--backend", "jev"}, record...)},
+		{Verb: "brief", Flags: append([]string{"--backend", "jev", "--card", "{dir}"}, record...)},
 		{Verb: "outcome", Flags: record},
 		{Verb: "calibrate", Flags: record},
 		{Verb: "version"},
 	})
-	testverbhelp.HelpVerb(t, cli.NoStdin(), "nova-decide", "ask", "read", "outcome", "calibrate", "version")
+	testverbhelp.HelpVerb(t, cli.NoStdin(), "nova-decide", "ask", "read", "brief", "outcome", "calibrate", "version")
 }

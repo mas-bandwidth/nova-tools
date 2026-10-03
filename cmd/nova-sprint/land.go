@@ -44,6 +44,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/diffcheck"
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -689,6 +690,12 @@ func (l *lander) landed(b landBatch, stream string, pins []landCard) bool {
 	// pushed AND reported: only now are its cards' branches tagged for the cleanup (a
 	// batch pushed and not reported keeps them: land is run again and may need the heads)
 	l.tag(context.Background(), &b, pins)
+	ends := map[string]decide.End{} // each card's end, attached to its brief decision (briefdecide.go)
+	for _, c := range pins {
+		label, note := decide.LandLabel(c.attempt)
+		ends[c.id] = decide.End{Label: label, Note: note}
+	}
+	b.Also = append(b.Also, l.a.attachBriefs(ends)...)
 	l.out = append(l.out, b)
 	return true
 }

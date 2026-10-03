@@ -9,7 +9,7 @@ above it: decisions, backends, and the record.
 
 | side | verbs | what it does |
 | --- | --- | --- |
-| decide | `ask`, `read` | asks a schema over a state through a backend; prints every answer with its probabilities; appends the decision to the record |
+| decide | `ask`, `read`, `brief` | asks a schema over a state through a backend; prints every answer with its probabilities; appends the decision to the record |
 | train | `outcome`, `calibrate` | attaches what turned out true to a recorded decision; reads the bar a decision's answer supports from the decisions whose outcome is known |
 
 Both sides read and write one file, the record (`--record`). The truth lives
@@ -158,7 +158,7 @@ with `--json`, the same value as one JSON object. A refusal is one line,
 exit 2, and writes nothing. A backend that fails (no answer, an HTTP status, an
 answer outside the schema) is `<VERB> FAIL id=... backend=...: <why>; run:
 <remedy>` at exit 2, and records nothing. Exit 1 is an outcome that conflicts
-with the one recorded. `ask`, `read` and `outcome` take `--dry-run`: the plan,
+with the one recorded. `ask`, `read`, `brief` and `outcome` take `--dry-run`: the plan,
 with no backend call and no write.
 
 ## 8. The first read of a flash card
@@ -184,3 +184,76 @@ calibration of 2026-10-02: p(defect) AUC 0.869, the verdict 0.711, inside_paths
 0.612). `Settle` attaches a strings read's verdict as the decision's outcome, ok
 as `LAND` and broken as `BOUNCE`, so the record trains on every read that took
 the strings route; a review round attaches its own label with `outcome`.
+
+## 9. The brief decision: card quality before add
+
+`brief --card <file|dir>` reads a card as a flash child with no memory reads it,
+before the card is added (the owner, 2026-09-30: "give it all the details it
+needs, like a real child agent"). The state is the card, under its heading, and
+the frame the sprint hands every child beside it (JOB.md names the staged
+checkout, its start and how the commit leaves; the rules file the card names is
+appended), so a card is not asked to say what the frame says. Nine questions:
+
+| name | type | asks |
+| --- | --- | --- |
+| `repo_branch` | noul | the card names the repository and the branch or base it starts from |
+| `files_named` | noul | the card names the exact files and, in them, the lines, functions, tests or sections to change |
+| `gate_stated` | noul | the card states the gate, the exact commands, written to run as given |
+| `commit_stated` | noul | the card states the commit message |
+| `report_stated` | noul | the card states what the child reports at its end |
+| `one_thing` | noul | the task is one thing: one change toward one end (a tree's steps toward one end are one thing) |
+| `ambiguous_step` | choice | the first step a child could read two ways or not know when it is done: `none`, `step-1` to `step-12`, or `unnumbered` |
+| `minutes` | choice | how long a capable flash child takes, the gate included: `under-10`, `10-20`, `20-45`, `45-90`, `90-180`, `over-180` |
+| `converges` | noul | the child ends with a commit that does the task and passes the gate on its first attempt, asking nothing |
+
+A card fails a need (the six nouls before `ambiguous_step`) when its p of yes is
+under 0.5, and fails `ambiguous_step` when it names a step; the reading is one
+line, `p_converges=<p> minutes=<option> failed=<need(p),...,ambiguous_step:step-<n>(p)>`
+(`failed=-` for none), the same wherever it prints. A card's decision id is
+`<card>@brief-<8 hex>`, the hex of the schema and the state: a brief rewritten
+after a refusal, or asked under a reworded schema, is a decision of its own, and
+the same brief asked again is answered from the record. A directory is every
+`*.md` file under it, each card's id its file's name without `.md`.
+
+**A batch.** Every card of one call is one batch (`MakeAll`): the record is read
+once, a card it holds is answered from it, the rest are asked through the backend
+at most `--width` at a time, each within `--timeout`, and every new decision is
+appended in one write under the record's lock. A card the backend fails is named
+on its line and nothing is recorded for it; the rest are recorded, and the verb
+fails at exit 2 so a script runs it again (a recorded card costs nothing).
+
+**Where it is asked.** `nova-sprint add`, under `JEV_API_KEY`, asks it of every
+card it names with a brief (a card per brief file, or the one brief of each id;
+a `--count` add names no id before the store numbers it, and a sentinel carries
+no brief), where add is typed and before anything is sent to the server or
+written: one `BRIEF card=<id> op=<op> <reading> recorded=<new|existing>` line per
+card (on stderr under `--json`), recorded in the user's cache directory,
+`nova-decide/brief.jsonl`. With nova-config's sprint row `decide_brief_bar` set
+(docs/SPEC-CONFIG.md), a card whose p(converges) is under it refuses the whole
+add, exit 2, nothing written, naming each such card, its p and the questions it
+failed; empty (the default) asks and reports only. A decision that cannot be made
+(no key, the bar or the record unreadable, the backend failing a card) is one
+`NOTE brief:` line and the add goes on, as the decide read's failure runs the
+strings read. `nova-swarm lint --card <file> --decide` prints the same reading on
+one `LINT DECIDE` line after the lint's own and never changes its verdict
+(`--decide-answers` answers from a file, `--decide-record` records).
+
+**The outcome** is the card's end in the sprint, attached to its newest brief
+decision: `landed` when land lands it at attempt 1, `reworked` at a later attempt
+(the note names it), `dropped` when the coordinator drops it (the note is the
+reason). A card with no brief decision attaches nothing. `calibrate --decision
+brief --question converges --positive landed --negative reworked,dropped` reads
+the bar from the sprint's own record.
+
+**The first calibration (2026-10-03).** Jev over 847 cards in 21 seconds: the 234
+cards of the two review rounds of 2026-10-02, scored against their review labels
+(ok as positive; wrong, ugly and outside as negative), and the 613 tree cards held
+for the next waves. On the reviewed cards p(converges) separates the labels
+barely (AUC 0.566); `one_thing` best (0.702), `gate_stated` 0.610, `files_named`
+inverted (0.289: the cards that named their lines were the docs and diary cards
+the reviews found wrong). p(converges) is read as a rank, not a probability: a
+card written to every question scores 0.72, the reviewed cards 0.34 to 0.48, the
+schema wave's tree cards 0.07 to 0.20. `ambiguous_step` named `step-1` on 612 of
+the 613 tree cards whatever STEP 1 said (a probe rewrote it three ways). So no bar
+is set: the default reports only, and a bar waits for the brief record's own
+landed, reworked and dropped outcomes.

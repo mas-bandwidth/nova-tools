@@ -71,6 +71,7 @@ Each answer prints as one ANSWER line: a choice's value and every option's p, a 
 					f.Required("schema", "the decision's schema, a JSON file")
 					f.Required("state", "the text the decision is made over, a file, or - for stdin")
 					w.asking(f)
+					f.Op()
 				},
 				Run: w.ask,
 			},
@@ -88,8 +89,34 @@ or UNSURE). The state is the card, the rule when --rule names one, and the diff,
 					f.Required("diff", "the worker's unified diff, a file")
 					f.String("rule", "", "a rule text the read holds the diff to as well, a file")
 					w.asking(f)
+					f.Op()
 				},
 				Run: w.read,
+			},
+			{
+				Name:    "brief",
+				Usage:   "brief --card <file|dir> --backend <jev|fixed> [--answers <file>] --record <file> [--width <n>] [--timeout <d>] [--max <n>] [--dry-run]",
+				Example: "brief --card " + fixture + "greet.md --backend fixed --answers " + fixture + "brief-answers.json --record ./decisions.jsonl",
+				Effect:  tool.Delivery + "; with --backend jev it sends each card to the backend, and it appends to --record",
+				Detail: `The brief decision: a card's text alone, as a flash child with no memory reads it, before
+the card is added. Six nouls (repo_branch, files_named, gate_stated, commit_stated,
+report_stated, one_thing), ambiguous_step (none, step-<n> or unnumbered), minutes, and
+converges, p that the child lands it on its first attempt. A directory is every *.md under it,
+each card's id its file's name without .md; each decision's id is <card>@brief-<hex>. One BRIEF
+CARD item per card, in id order; a card the backend failed is named, the rest are recorded.`,
+				DryRun: true,
+				Flags: func(f *tool.Flags) {
+					f.Required("card", "a card file, or a directory of *.md card files")
+					w.asking(f)
+					f.Max()
+					f.Int("width", 8, "how many cards are asked at once")
+					f.Check(func(c *tool.Call) {
+						if c.Int("width") < 1 {
+							c.Problem("--width must be at least 1")
+						}
+					})
+				},
+				Run: w.brief,
 			},
 			{
 				Name:    "outcome",
@@ -133,13 +160,12 @@ caught, negatives bounced), and the CATCH-ALL bar: the highest that still flags 
 	}
 }
 
-// asking declares what ask and read share: the backend, the record, the op id
-// and the deadline, with the rules between them.
+// asking declares what ask, read and brief share: the backend, the record and
+// the deadline, with the rules between them.
 func (w world) asking(f *tool.Flags) {
 	f.Required("backend", "the backend that answers: jev or fixed")
 	f.String("answers", "", "the fixed backend's answers, a JSON file (--backend fixed only)")
 	f.Required("record", "the record file every decision is appended to (JSON lines; created if absent)")
-	f.Op()
 	f.Duration("timeout", time.Minute, "how long the backend may take to answer")
 	f.Check(func(c *tool.Call) {
 		switch b := c.Str("backend"); {
@@ -198,6 +224,58 @@ func (w world) read(c *tool.Call) *tool.Out {
 		return tool.Refuse(problems...)
 	}
 	return w.decision(c, decide.ReadSchema(), decide.ReadState(texts["card"], texts["diff"], texts["rule"]), inputs)
+}
+
+// brief makes the brief decision of every card --card names, as one batch.
+func (w world) brief(c *tool.Call) *tool.Out {
+	cards, err := decide.CardFiles(c.Str("card"))
+	if err != nil {
+		return tool.Refuse(err.Error())
+	}
+	b, err := w.backend(c)
+	if err != nil {
+		return tool.Refuse(err.Error())
+	}
+	record := c.Str("record")
+	if c.DryRun() {
+		ds, err := decide.Load(record)
+		if err != nil {
+			return tool.Refuse(err.Error())
+		}
+		held := 0
+		for id, text := range cards {
+			if decide.Find(ds, decide.BriefOp(id, text)) != nil {
+				held++
+			}
+		}
+		return tool.Done().Fact("decision", decide.BriefName).Fact("backend", b.Name()).Fact("cards", len(cards)).
+			Fact("recorded", held).Fact("to_ask", len(cards)-held)
+	}
+	made, err := decide.Briefs(context.Background(), b, cards, record, w.now(), c.Int("width"), c.Dur("timeout"))
+	if err != nil {
+		return tool.Refuse(err.Error())
+	}
+	o, failed, asked := tool.Done(), 0, 0
+	for _, m := range made {
+		id := m.Inputs["card"]
+		switch {
+		case m.Err != nil:
+			failed++
+			o.Item("card", "id", id, "op", m.ID, "recorded", "no", "error", tool.Text(m.Err.Error()))
+			continue
+		case !m.Existing:
+			asked++
+		}
+		br := decide.BriefOf(m.Decision)
+		o.Item("card", "id", id, "op", m.ID, "p_converges", round(br.Converges), "minutes", br.Minutes,
+			"failed", strings.Join(br.Failed, ","), "recorded", map[bool]string{true: "existing", false: "new"}[m.Existing])
+	}
+	if failed > 0 {
+		o.Status, o.Exit, o.Why = tool.Failed, 2, []string{fmt.Sprintf("the backend answered %d of %d cards; each one it failed is named on its BRIEF CARD line, and nothing was recorded for it", len(made)-failed, len(made))}
+		o.Remedy = "run the same line again: a recorded card is answered from the record and asks nothing"
+	}
+	return o.Fact("decision", decide.BriefName).Fact("backend", b.Name()).Fact("cards", len(made)).Fact("asked", asked).
+		Fact("existing", len(made)-asked-failed).Fact("failed", failed)
 }
 
 // decision makes one decision and records it (decide.Make): an op id already

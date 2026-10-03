@@ -738,10 +738,11 @@ usage:
   nova-swarm version    print this build identity (--version also accepted)
   nova-swarm doctor    [--path <file>] [--local <file>]   refuse a launch under a shadowed nova-swarm (PATH vs ~/.local/bin build stamp)
   nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
-  nova-swarm lint      --card <file> [--typed] [--child-rules | --child-rules-file <file>] [--member-injects] [--base-check [--repo <dir>] [--legs <file>] [--p95 <file>]] [--trust <file>] [--lineup <file>] [--max <n>] | --fleet <file> [--max <n>] | --rules
+  nova-swarm lint      --card <file> [--typed] [--child-rules | --child-rules-file <file>] [--member-injects] [--base-check [--repo <dir>] [--legs <file>] [--p95 <file>]] [--trust <file>] [--lineup <file>] [--decide [--decide-answers <file>] [--decide-record <file>]] [--max <n>] | --fleet <file> [--max <n>] | --rules
                        (--fleet lints a launcher script against the coordinator's /bin/bash 3.2: shebang, bash-4 builtins, unquoted expansions)
                        (--child-rules holds the card to the rules the coordinator gives a child: one rule-<name> per required sentence, one step-<what> per forbidden command; the sentences are the built-in general rules, or the lines of --child-rules-file, one required sentence per line; template --name card prints a card that passes the general ones)
                        (--member-injects lints the card as the member stages it, rules by reference: the rules are appended at stage time from the held file of the card's REPO: (fleet/child-rules.txt for nova-tools, fleet/child-rules.<repo>.txt for another), or --child-rules-file; a card need not carry them, and a line that contradicts them is still a finding)
+                       (--decide asks the brief decision nova-sprint add asks (nova-decide's brief: p(converges), the minutes, the questions the card leaves open) through Jev with JEV_API_KEY, or from --decide-answers, and prints one LINT DECIDE line after the lint's own; it never changes the verdict)
                        (--base-check adds the four checks of a coding card: its PATHS exist at the base sha in --repo (default the working directory), no STEP pushes or calls gh, its LEG is a line of --legs, its deadline is at least --p95's figure for its kind; evidence not given is reported missing, never passed)
                        (nova-sprint add holds a brief to the --child-rules tokens only, and to its model lines: rule-<name> for each rule of its set (the six general rules, or the file add --rules or init --rules names), the step-<what> scans (step-go-clean and step-go-test-timeout only when the file carries those rules), and rule-libraries-considered when the file carries [libraries-considered]; every other token --rules lists is this lint's alone)
   nova-swarm step      --card <file> --dir <checkout> [--work <dir>] [--result <file>] [--sandbox <wall> | --no-wall] | --card <file> --remainder <id> --from <step> --land <sha>
@@ -1047,6 +1048,14 @@ id `inbox` prints, with `--expect <n>` the size it printed, which refuses a grou
 that has changed. `nova-sprint help <verb>` (or `<verb> -h`) prints one verb's
 usage, flags and exit codes; `nova-sprint help <group>` (fleet, friend, reader,
 goal, stream) one group's.
+
+`add` under `JEV_API_KEY` (`nova-secrets exec --only JEV_API_KEY -- nova-sprint add
+...`) asks nova-decide's brief decision of every card it names with a brief before
+anything is written: one `BRIEF card=<id> op=<card>@brief-<hex> p_converges=
+minutes= failed= recorded=` line per card, and a card whose p(converges) is under
+nova-config's `sprint` row `decide_brief_bar` refuses the add, exit 2, naming the
+questions it failed; the bar is empty by default, which reports only
+([SPEC-NOVA-DECIDE.md](SPEC-NOVA-DECIDE.md) section 9).
 
 ### Exit codes
 
@@ -2145,6 +2154,7 @@ network and no key (the transcript is in [TESTS.md](TESTS.md#nova-decide)):
 ```sh
 nova-decide ask --schema ./cmd/nova-decide/testdata/schema.json --state ./cmd/nova-decide/testdata/state.txt --backend fixed --answers ./cmd/nova-decide/testdata/answers.json --record ./decisions.jsonl --op first
 nova-decide read --card ./cmd/nova-decide/testdata/card.md --diff ./cmd/nova-decide/testdata/card.diff --backend fixed --answers ./cmd/nova-decide/testdata/read-answers.json --record ./decisions.jsonl --op card-1
+nova-decide brief --card ./cmd/nova-decide/testdata/greet.md --backend fixed --answers ./cmd/nova-decide/testdata/brief-answers.json --record ./decisions.jsonl
 nova-decide outcome --record ./decisions.jsonl --id card-1 --label ok --note "the review found nothing"
 nova-decide calibrate --record ./cmd/nova-decide/testdata/record.jsonl --decision read --question defect --positive wrong --negative ok
 ```
@@ -2152,6 +2162,13 @@ nova-decide calibrate --record ./cmd/nova-decide/testdata/record.jsonl --decisio
 `read` prints `READ OK id= decision=read backend= verdict= p= tokens_in=
 tokens_out= recorded=new|existing` and one `READ ANSWER question= type= value=
 p=` line per question: a noul's `p=yes:<p>`, a choice's `p=<option>:<p>,...`.
+`brief` reads cards as a flash child with no memory would, before they are added
+(a file, or every `*.md` under a directory, as one batch): one `BRIEF CARD id=
+op=<card>@brief-<hex> p_converges= minutes= failed= recorded=` line per card,
+`failed` naming each question the card leaves open (`commit_stated(0.20)`,
+`ambiguous_step:step-2(0.70)`, or `-`). `nova-sprint add` asks the same of every
+card under `JEV_API_KEY` and refuses one under the sprint row's `decide_brief_bar`;
+`nova-swarm lint --card <file> --decide` prints it for one file.
 `calibrate` prints the AUC, one `BAR` line per `--bars` value (positives caught,
 negatives bounced) and the `CATCH-ALL` bar, the highest that flags every
 positive. What a first run gets wrong:

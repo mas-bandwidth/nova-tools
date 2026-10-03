@@ -110,9 +110,9 @@ func TestTheFriendRowIsWhatSomeoneDecidesForHer(t *testing.T) {
 		assert.Equal(t, "flash,frontier,pro", strings.Join(Tiers, ","), assertionMsg98...)
 	}()
 	sprint, _ := Lookup(KindSprint)
-	assertionMsg100 := []any{"sprint %+v: one row, one optional ref to a friend and the decide read's two bars", sprint}
+	assertionMsg100 := []any{"sprint %+v: one row, one optional ref to a friend, the decide read's two bars and the brief bar", sprint}
 	require.True(t, sprint.Singleton, assertionMsg100...)
-	require.Len(t, sprint.Fields, 3, assertionMsg100...)
+	require.Len(t, sprint.Fields, 4, assertionMsg100...)
 	require.Equal(t, "coordinator", sprint.Fields[0].Name, assertionMsg100...)
 	require.Equal(t, TypeRef, sprint.Fields[0].Type, assertionMsg100...)
 	require.Equal(t, KindFriend, sprint.Fields[0].Ref, assertionMsg100...)
@@ -145,6 +145,26 @@ func TestTheSprintRowHoldsTheDecideBarsTogether(t *testing.T) {
 			assert.NoError(t, err, "%+v", tc)
 		} else {
 			assert.ErrorContains(t, err, tc.says, "%+v", tc)
+		}
+	}
+}
+
+// The sprint row holds the bar a card's brief is added at (docs/SPEC-NOVA-DECIDE.md
+// section 9): empty by default, which asks the brief decision and reports only, else a
+// probability nova-sprint add refuses a card under.
+func TestTheSprintRowHoldsTheBriefBar(t *testing.T) {
+	t.Parallel()
+	sprint, _ := Lookup(KindSprint)
+	bar, ok := sprint.Field(FieldDecideBriefBar)
+	require.True(t, ok)
+	assert.Equal(t, "", bar.Default)
+	assert.Equal(t, TypeDecimal, bar.Type)
+	for raw, says := range map[string]string{"": "", "0.6": "", "1.5": "decide_brief_bar \"1.5\" is not a probability in [0, 1]"} {
+		err := sprint.Check(Row{Name: KindSprint, Fields: map[string]string{FieldDecideBriefBar: raw}})
+		if says == "" {
+			assert.NoError(t, err, raw)
+		} else {
+			assert.ErrorContains(t, err, says, raw)
 		}
 	}
 }

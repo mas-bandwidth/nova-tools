@@ -223,9 +223,18 @@ const (
 	FieldDecideReview = "decide_review"
 )
 
+// FieldDecideBriefBar is the sprint row's bar on a brief decision's p(converges)
+// (internal/decide, BriefBar; docs/SPEC-NOVA-DECIDE.md section 9): nova-sprint add
+// refuses a card under it, and empty asks and reports only.
+const FieldDecideBriefBar = "decide_brief_bar"
+
 // checkSprint holds the decide read's bars together: both set, as probabilities with the
-// review bar at most the bounce bar (decide.ParseBars), or both empty (no decide read).
+// review bar at most the bounce bar (decide.ParseBars), or both empty (no decide read);
+// and the brief bar is empty or a probability (decide.ParseBriefBar).
 func checkSprint(r Row) error {
+	if _, err := decide.ParseBriefBar(r.Fields[FieldDecideBriefBar]); err != nil {
+		return fmt.Errorf("sprint: %v", err)
+	}
 	bounce, hasB := r.Fields[FieldDecideBounce]
 	review, hasR := r.Fields[FieldDecideReview]
 	if !hasB || !hasR || bounce == "" && review == "" {
@@ -311,11 +320,12 @@ var Kinds = []*Kind{
 		Name:      KindSprint,
 		Table:     "sprint",
 		Singleton: true,
-		Doc:       "the one row of sprint-global facts: which friend coordinates, and the two bars a flash card's decide read is routed by",
+		Doc:       "the one row of sprint-global facts: which friend coordinates, the two bars a flash card's decide read is routed by, and the bar a card's brief is added at",
 		Fields: []Field{
 			{Name: "coordinator", Type: TypeRef, Ref: KindFriend, Help: "the friend who holds the coordinator role (a friend row), or empty; set it to hand over"},
 			{Name: FieldDecideBounce, Type: TypeDecimal, Default: "0.5", Help: "the decide read's bounce bar: a flash card whose first read gives p(defect) at or above it is bounced with the read's finding; a probability, at least --decide_review; 0.5 (the default); empty, with --decide_review empty, turns the decide read off"},
 			{Name: FieldDecideReview, Type: TypeDecimal, Default: "0.3", Help: "the decide read's review bar: below it the card lands with no model read, and from it up to --decide_bounce it goes to a strings read; a probability; 0.3 (the default)"},
+			{Name: FieldDecideBriefBar, Type: TypeDecimal, Help: "the brief bar: nova-sprint add asks the brief decision of each card and refuses a card whose p(converges) is under it, naming the questions it failed; a probability; empty (the default) asks and reports only"},
 		},
 		Check: checkSprint,
 	},
