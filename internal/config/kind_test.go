@@ -160,7 +160,7 @@ func TestTheFleetIsOneRowOfEndpointsAndMachineRefs(t *testing.T) {
 	require.True(t, fleet.Singleton, assertionMsg144...)
 	require.Equal(t, "fleet", fleet.Table, assertionMsg144...)
 	scopedGot169 := strings.Join(fleet.FieldNames(), ",")
-	require.Equal(t, "store,coordinator,redis_port,pg_dsn", scopedGot169, "fleet fields %s", scopedGot169)
+	require.Equal(t, "store,coordinator,redis_port,pg_dsn,loops_dir", scopedGot169, "fleet fields %s", scopedGot169)
 	for _, name := range []string{"store", "coordinator"} {
 		f, ok := fleet.Field(name)
 		require.True(t, ok)
@@ -182,6 +182,7 @@ func TestTheFleetIsOneRowOfEndpointsAndMachineRefs(t *testing.T) {
 	require.Equal(t, "", row.Fields["coordinator"], assertionMsg153...)
 	require.Empty(t, row.Fields["redis_port"], assertionMsg153...)
 	require.Equal(t, "", row.Fields["pg_dsn"], assertionMsg153...)
+	require.Equal(t, "~/nova-bench/loops", row.Fields["loops_dir"], assertionMsg153...)
 	{
 		_, err := fleet.NewRow(KindFleet, map[string]string{"store": "Hulk"})
 		assertionMsg156 := []any{"a ref that is not a name: %v", err}
@@ -394,4 +395,33 @@ func TestAFriendsWidthDefaultsToEightAndIsAtLeastOne(t *testing.T) {
 	assert.Equal(t, "friend amy has width 0; a friend's width is the jobs she works at once, at least 1: want --width <n> with n >= 1", err.Error(), "one refusal")
 	assert.NoError(t, friend.Check(Row{Name: "amy", Fields: map[string]string{"width": "1"}}))
 	assert.Error(t, friend.Check(Row{Name: "amy", Fields: map[string]string{"width": "0"}}))
+}
+
+// TestLoopLogIsTheFleetRowsDirectory: the seeded loops_dir reproduces
+// today's literal; a different directory changes the log path; an empty
+// directory is refused by the fleet kind's Check with a remedy naming
+// fleet set --loops-dir.
+func TestLoopLogIsTheFleetRowsDirectory(t *testing.T) {
+	t.Parallel()
+
+	fleet, _ := Lookup(KindFleet)
+
+	// The seeded value reproduces today's string for a name.
+	seeded := LoopLog("~/nova-bench/loops", "member-bench-a")
+	assert.Equal(t, "~/nova-bench/loops/member-bench-a.log", seeded)
+
+	// Another directory changes it.
+	custom := LoopLog("/custom/loops", "tick")
+	assert.Equal(t, "/custom/loops/tick.log", custom)
+
+	// An empty directory is refused by the kind's Check with a remedy.
+	row := Row{Name: KindFleet, Fields: map[string]string{"loops_dir": "   "}}
+	err := fleet.Check(row)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--loops_dir wants a non-empty directory path")
+	assert.Contains(t, err.Error(), "nova-config fleet set --loops-dir")
+
+	// A valid non-empty directory passes Check.
+	row.Fields["loops_dir"] = "/valid/path"
+	assert.NoError(t, fleet.Check(row))
 }

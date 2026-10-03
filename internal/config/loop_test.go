@@ -67,7 +67,7 @@ func TestTheLoopRowIsTheRecordThePlaysRead(t *testing.T) {
 		_, has := k.Field(invented)
 		assert.False(t, has, "loop has a field %s: the log is derived, the user is the machine's, the width is the machine row's, the rest is not a fact anything reads", invented)
 	}
-	assert.Equal(t, "~/nova-bench/loops/l1.log", LoopLog("l1"))
+	assert.Equal(t, "~/nova-bench/loops/l1.log", LoopLog("~/nova-bench/loops", "l1"))
 	names := strings.Join(KindNames(), ",")
 	assert.Less(t, strings.Index(names, KindMachine), strings.Index(names, KindLoop), "loops apply after machines: each names one")
 }

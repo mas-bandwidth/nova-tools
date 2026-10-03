@@ -74,8 +74,8 @@ type AnsibleInventory struct {
 
 // InventoryLoop is one loop record as a host variable: the loop kind's
 // fields, typed (docs/FLEET.md, "Loops"). Log is the view's log, which the
-// loop kind derives from the name (~/nova-bench/loops/<name>.log) and never
-// takes typed.
+// loop kind derives from the fleet's loops_dir and the name
+// (<loops_dir>/<name>.log) and never takes typed.
 type InventoryLoop struct {
 	Name      string   `json:"name"`
 	Argv      []string `json:"argv"`
@@ -418,6 +418,10 @@ func LoadFixture(path string) (*Snapshot, error) {
 		redisPort = strconv.Itoa(*f.Fleet.RedisPort)
 	}
 	snap.Fleet = View{"store": f.Fleet.Store, "coordinator": f.Fleet.Coordinator, "redis_port": redisPort, "pg_dsn": f.Fleet.PGDSN}
+	loopsDir := snap.Fleet["loops_dir"]
+	if loopsDir == "" {
+		loopsDir = "~/nova-bench/loops"
+	}
 	snap.Revs[KindMachine], snap.Revs[KindFleet] = 1, 1
 	if f.Loops != nil {
 		snap.Loops = map[string]View{}
@@ -434,7 +438,7 @@ func LoadFixture(path string) (*Snapshot, error) {
 				"name": n, "machine": l.Machine, "argv": string(argv), "seat": l.Seat,
 				"keys": strings.Join(keys, ","), "every": strconv.Itoa(l.Every),
 				"keepalive": strconv.FormatBool(l.Keepalive),
-				"enabled":   strconv.FormatBool(enabled), "log": LoopLog(n),
+				"enabled":   strconv.FormatBool(enabled), "log": LoopLog(loopsDir, n),
 			}
 		}
 	}

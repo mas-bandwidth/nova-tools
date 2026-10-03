@@ -97,6 +97,8 @@ type RedisApplier struct {
 	coordinator     string
 	coordinatorRead bool
 	friendHosts     map[string]string // friend name -> beat host
+	loopsDir        string
+	loopsDirRead    bool
 }
 
 func (a *RedisApplier) now() int64 {
@@ -104,6 +106,25 @@ func (a *RedisApplier) now() int64 {
 		return a.Now().UnixMilli()
 	}
 	return time.Now().UnixMilli()
+}
+
+// getLoopsDir reads the fleet's loops_dir from Redis, caching it.
+func (a *RedisApplier) getLoopsDir() string {
+	if a.loopsDirRead {
+		return a.loopsDir
+	}
+	v, err := a.Client.Get(context.Background(), FleetKey("loops_dir")).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		// If we can't read it, fall back to the seeded default.
+		a.loopsDir = "~/nova-bench/loops"
+	} else {
+		a.loopsDir = v
+		if a.loopsDir == "" {
+			a.loopsDir = "~/nova-bench/loops"
+		}
+	}
+	a.loopsDirRead = true
+	return a.loopsDir
 }
 
 // Prepare installs the nova_sprint function library when the store has none
@@ -687,11 +708,11 @@ type hashKind struct {
 	kind  string
 	set   string
 	key   func(string) string
-	extra func(name string) []any // derived fields beside the row's; nil for none
+	extra func(*RedisApplier, string) []any // derived fields beside the row's; nil for none
 }
 
 var hashKinds = map[string]hashKind{
-	KindLoop:  {kind: KindLoop, set: LoopsKey, key: LoopKey, extra: func(n string) []any { return []any{"log", LoopLog(n)} }},
+	KindLoop:  {kind: KindLoop, set: LoopsKey, key: LoopKey, extra: func(a *RedisApplier, n string) []any { return []any{"log", LoopLog(a.getLoopsDir(), n)} }},
 	KindRoute: {kind: KindRoute, set: RoutesKey, key: RouteKey},
 	KindTier:  {kind: KindTier, set: TiersKey, key: TierKey},
 }
@@ -754,7 +775,7 @@ func (a *RedisApplier) writeHash(ctx context.Context, h hashKind, row Row, idem 
 	rev, _ := strings.CutPrefix(idem, "config:"+h.kind+":")
 	fields := []any{"name", row.Name, "rev", rev, "at", strconv.FormatInt(a.now(), 10)}
 	if h.extra != nil {
-		fields = append(fields, h.extra(row.Name)...)
+		fields = append(fields, h.extra(a, row.Name)...)
 	}
 	for _, f := range k.Fields {
 		fields = append(fields, f.Name, row.Fields[f.Name])

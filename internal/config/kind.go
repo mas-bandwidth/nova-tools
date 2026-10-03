@@ -248,12 +248,13 @@ var Kinds = []*Kind{
 		Name:      KindFleet,
 		Table:     "fleet",
 		Singleton: true,
-		Doc:       "the one row of fleet-wide facts: the store and coordinator machines, Redis port and explicit password-free Postgres URI",
+		Doc:       "the one row of fleet-wide facts: the store and coordinator machines, Redis port, explicit password-free Postgres URI, and the loops log directory",
 		Fields: []Field{
 			{Name: "store", Type: TypeRef, Ref: KindMachine, Help: "the machine that runs Redis (a machine row), or empty"},
 			{Name: "coordinator", Type: TypeRef, Ref: KindMachine, Help: "the machine the coordinator's loops run on (a machine row), or empty"},
 			{Name: "redis_port", Type: TypeInt, Nullable: true, Help: "the explicit TCP port Redis listens on, from 1 through 65535; unset until declared"},
 			{Name: "pg_dsn", Type: TypeText, Help: "the explicit password-free postgres:// URI the configuration store uses; empty until set"},
+			{Name: "loops_dir", Type: TypeText, Default: "~/nova-bench/loops", Help: "the directory where loop logs are written; non-empty, seeded to ~/nova-bench/loops"},
 		},
 		Check: checkFleet,
 	},
@@ -296,7 +297,7 @@ var Kinds = []*Kind{
 		// value is data in the row; the code names no machine, seat or
 		// secret (docs/SPEC-CONFIG.md, "loop"). The plays render one unit
 		// per row from the Redis view apply writes; the log path is derived
-		// from the name (LoopLog), never typed.
+		// from the fleet's loops_dir and the name (LoopLog), never typed.
 		Name:  KindLoop,
 		Table: "loops",
 		Doc:   "a supervised loop on one machine: its command, the seat and secret names it opens, and how it runs (every n seconds or kept alive); a nova-swarm member's width, a reader's too, is its machine row's, never the argv's",
@@ -376,13 +377,17 @@ func noteField(what string) Field {
 
 // checkFleet keeps both store endpoints explicit and safe to print. The
 // endpoints may be unset so an older fleet can migrate before an operator
-// declares them; apply and inventory refuse incomplete endpoints.
+// declares them; apply and inventory refuse incomplete endpoints. loops_dir
+// must be non-empty when set.
 func checkFleet(r Row) error {
 	if raw := r.Fields["redis_port"]; raw != "" {
 		port, err := strconv.Atoi(raw)
 		if err != nil || port < 1 || port > 65535 {
 			return fmt.Errorf("--redis_port wants an integer from 1 through 65535")
 		}
+	}
+	if loopsDir := r.Fields["loops_dir"]; loopsDir != "" && strings.TrimSpace(loopsDir) == "" {
+		return fmt.Errorf("--loops_dir wants a non-empty directory path; run: nova-config fleet set --loops-dir <path>")
 	}
 	dsn, ok := r.Fields["pg_dsn"]
 	if !ok || dsn == "" {
@@ -477,9 +482,10 @@ func checkRouteChanges(changes map[string]string) error {
 }
 
 // LoopLog is where a loop's unit writes its output on its machine, derived
-// from the name and never typed: ~/nova-bench/loops/<name>.log. apply writes
-// it into the loop's Redis hash beside the row's fields.
-func LoopLog(name string) string { return "~/nova-bench/loops/" + name + ".log" }
+// from the fleet's loops_dir and the loop's name, and never typed:
+// <loops_dir>/<name>.log. apply writes it into the loop's Redis hash beside
+// the row's fields.
+func LoopLog(loopsDir, name string) string { return loopsDir + "/" + name + ".log" }
 
 // checkLoop is the loop kind's Check: exactly one of every and keepalive
 // says how it runs, secret names need a seat to open them from, and a
