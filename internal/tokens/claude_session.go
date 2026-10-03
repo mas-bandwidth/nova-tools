@@ -2,10 +2,9 @@ package tokens
 
 // The coordinator's own session, folded (G5 of pit stop 3, #828).
 //
-// Glenn, 2026-09-16: "This seems like a lot. How can we make the coordinator more
-// efficient?" The honest answer needed a number, and there was none: every worker's spend
-// was on a swarm CARD line and in the ledger, and the coordinator's own window -- the
-// single most expensive line on the bench -- was measured by hand, once, and never again.
+// How the coordinator could be more efficient needs a number: every worker's spend is on a
+// swarm CARD line and in the ledger, and the coordinator's own window -- the single most
+// expensive line on a bench -- is otherwise measured by hand.
 //
 // This reader folds one Claude Code session jsonl into the four counts and one weighted
 // equivalent, so the coordinator is a model line in the daily ledger like everybody else

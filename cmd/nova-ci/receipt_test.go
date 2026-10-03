@@ -30,7 +30,7 @@ func TestReceiptRefusesBeforeTheStore(t *testing.T) {
 		{[]string{}, "the one verb is receipt; run: nova-ci github receipt -h"},
 		{[]string{"status"}, `unknown verb "status" after github; the one verb is receipt`},
 		{receiptArgs("extra"), "receipt takes flags only"},
-		{receiptArgs("--job", "lint=success"), "unknown flag --job; the flags are --at, --conclusion, --dry-run"},
+		{receiptArgs("--job", "lint=success"), "unknown flag --job; the flags of github receipt are --at, --conclusion, --dry-run"},
 		{receiptArgs("--event", "push"), "unknown flag --event"},
 		{receiptArgs("--from-runner=false"), "--from-runner is required"},
 		{receiptArgs("--sha", "abc"), "--sha wants the 40-hex head"},

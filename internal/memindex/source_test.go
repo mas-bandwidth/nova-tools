@@ -24,7 +24,7 @@ func TestRetrievalKeepsSourceLinesAndOriginalText(t *testing.T) {
 			require.Len(t, hits, 1)
 			assert.Equal(t, 9, hits[0].Line)
 			assert.Equal(t, "The **Rocket Engine** burns hot fuel daily.\nIts flame is Bright.", hits[0].Snippet)
-			assert.Greater(t, hits[0].Para, 0)
+			assert.Equal(t, 0, hits[0].Para, "the frontmatter is no paragraph and the heading is under MinTerms, so this is paragraph 0")
 			trigram := Retrieve(c, []Channel{NewTrigram(c)}, "rocket engine burns hot fuel daily", 1)
 			require.Len(t, trigram, 1)
 			assert.Equal(t, hits[0].Para, trigram[0].Para)

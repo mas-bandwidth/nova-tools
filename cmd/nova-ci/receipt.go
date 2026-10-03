@@ -61,7 +61,7 @@ func cmdReceipt(ctx context.Context, args []string, stdout, stderr io.Writer, ge
 	fs.StringVar(&r.Conclusion, "conclusion", "", "success, failure or cancelled (job.status)")
 	fs.StringVar(&r.At, "at", "", "when the run finished, RFC3339 (default now)")
 	if err := verbflag.Parse(fs, args); err != nil {
-		return refuse(stderr, where, flagProblem(fs, err))
+		return refuse(stderr, where, verbflag.Explain(fs, err))
 	}
 	var problems []string
 	if fs.NArg() > 0 {

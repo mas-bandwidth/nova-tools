@@ -22,7 +22,7 @@ import (
 // all -- which is the rule this whole file is written under: nova-bus is released, and a
 // slice that changed a working invocation would break a loop nobody here can see.
 //
-// The contract is docs/SPEC-BUS-REPLY.md (nova-tools#267). The READ half of that document
+// The contract is docs/SPEC-BUS-REPLY.md. The READ half of that document
 // -- `--bodies` and its frame -- is a separate contract and is not this file's business.
 
 // replyOnlyFlags are accepted ONLY in the reply form. Given without `--reply-to` they are
@@ -189,7 +189,7 @@ func cmdDraftReply(o replyOpts, f *flags, stdout, stderr io.Writer, now time.Tim
 	}
 	t, err := bus.ReadBus(o.busDir, c)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-bus draft: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus draft -h"))
+		fmt.Fprintf(stderr, "DRAFT REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus draft -h"))
 		return 2
 	}
 
@@ -317,7 +317,7 @@ func replyResolve(c *bus.Config, flagName, value string, given bool, problems *[
 		return nil
 	}
 	if strings.TrimSpace(value) == "" {
-		*problems = append(*problems, fmt.Errorf("nova-bus draft: %s is required; refusing to guess", flagName))
+		*problems = append(*problems, fmt.Errorf("%s is required; refusing to guess", flagName))
 		return nil
 	}
 	names, unknown := c.ResolveList(value)
@@ -459,7 +459,7 @@ func replyListing(busDir string, c *bus.Config, me bus.Participant, stderr io.Wr
 	// is a legal target. Zero is that question not being asked.
 	res, err := bus.InboxSince(busDir, c, me, changed, open, 0, legacy)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-bus draft: %s\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "DRAFT REFUSED: %s; run: nova-bus draft -h\n", oneline.Err(err))
 		return nil, legacy, false, 2
 	}
 	return res.Open, legacy, true, 0

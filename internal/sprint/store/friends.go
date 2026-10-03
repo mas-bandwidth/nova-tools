@@ -22,8 +22,8 @@ import (
 // done ok or not); friend-beat:<f> is the friend's last beat (friend beat),
 // written by the friend's own machinery. A friend's status is derived when it
 // is shown, never stored, by the friends' rule (sprint.FriendStatus): held,
-// else up while her last beat is within sprint.FriendAsleepAfter (15 s), else
-// asleep. Her counts are her job cards'
+// else up while her last beat is within sprint.FriendDownAfter (15 s), else
+// down. Her counts are her job cards'
 // (the owner, 2026-10-02: "give friends in the friends table the same ready,
 // working, width, done, ok%, status that we have for machines, but no load").
 
@@ -255,9 +255,9 @@ func (st *Store) SetFriendHeld(ctx context.Context, friend string, held bool, wh
 }
 
 // FriendRows is the friends table at now: every friend of the roster with the
-// counts of her job cards (working 0 while she is asleep), her width and her
+// counts of her job cards (working 0 while she is down), her width and her
 // status (sprint.FriendStatus), in the fleet table's order (FleetOrder: up,
-// then held, then asleep, each by name). Two reads: the roster, then every friend's beat and jobs in one
+// then held, then down, each by name). Two reads: the roster, then every friend's beat and jobs in one
 // exchange. A store that keeps no records has no friends.
 func (st *Store) FriendRows(ctx context.Context, now time.Time) ([]FriendRow, error) {
 	r, kv, err := st.roster(ctx)
@@ -302,8 +302,8 @@ func (st *Store) FriendRows(ctx context.Context, now time.Time) ([]FriendRow, er
 				row.Failed++
 			}
 		}
-		if row.Status == sprint.Asleep {
-			// asleep, she works nothing: her jobs stay in her outbox and count
+		if row.Status == sprint.Down {
+			// down, she works nothing: her jobs stay in her outbox and count
 			// again when she beats (the owner, 2026-10-02 9:48 PM ET: "[a
 			// friend] being down, she automatically is 0/8 working OK?")
 			row.Working = 0
@@ -326,4 +326,39 @@ func (st *Store) friendNames(ctx context.Context) []string {
 		return nil
 	}
 	return slices.Sorted(maps.Keys(r))
+}
+
+// friendSeats is every friend of the roster as the tick's deal gives her a friend's card
+// (sprint.FriendDeal): her name, width and status at now, read only when the snapshot
+// holds a friend's card ready; nil, and no read, when it holds none.
+func (st *Store) friendSeats(ctx context.Context, s *sprint.Snapshot, now time.Time) ([]sprint.FriendSeat, error) {
+	ready := false
+	for _, c := range s.Work.Column(sprint.Ready) {
+		if _, ok := sprint.FriendCard(c); ok {
+			ready = true
+			break
+		}
+	}
+	if !ready {
+		return nil, nil
+	}
+	rows, err := st.FriendRows(ctx, now)
+	if err != nil {
+		return nil, err
+	}
+	seats := make([]sprint.FriendSeat, len(rows))
+	for i, r := range rows {
+		seats[i] = sprint.FriendSeat{Name: r.Name, Width: r.Width, Status: r.Status}
+	}
+	return seats, nil
+}
+
+// FriendNames is every friend of the roster in name order (the friends table's rows), for
+// add's hold of a WHO line's name; none when the store keeps no records.
+func (st *Store) FriendNames(ctx context.Context) ([]string, error) {
+	r, kv, err := st.roster(ctx)
+	if kv == nil || err != nil {
+		return nil, err
+	}
+	return slices.Sorted(maps.Keys(r)), nil
 }

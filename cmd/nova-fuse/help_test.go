@@ -23,7 +23,7 @@ func TestVerbHelpNamesItsEffectsFlagsAndExitMeanings(t *testing.T) {
 		{"lockdown", "Every untrusted read", "--box <path>", "Every failure remains no permission"},
 		{"quarantine", "Requires a readable existing box", "--box <path>", "1 write or verification failed"},
 		{"lift quarantine", "Any lockdown still blocks", "--box <path>", "0 lifted and verified"},
-		{"lift lockdown", "live conversation with your person", "no reset or override", "2 always refused"},
+		{"lift lockdown", "live conversation with the person you work with", "no reset or override", "2 always refused"},
 		{"path", "without reading or writing", "--box <path>", "0 path printed"},
 		{"version", "Takes no flags or arguments", "no box", "0 build identity printed"},
 	} {
@@ -83,9 +83,12 @@ func TestMisspelledCommandsNameTheAvailableChoices(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"status", "--zzz"}, "flags: --box, --max; run: nova-fuse help status"},
-		{[]string{"check", "--zzz"}, "flags: --box; run: nova-fuse help check"},
-		{[]string{"defuse"}, "verbs: init, status, check, lockdown, quarantine, lift, path, version, help"},
+		{[]string{"status", "--zzz"}, "nova-fuse status REFUSED: unknown flag --zzz; the flags of status are --box, --max; run: nova-fuse help status"},
+		{[]string{"check", "--zzz"}, "nova-fuse check REFUSED: unknown flag --zzz; the flags of check are --box; run: nova-fuse help check"},
+		{[]string{"check", "--bx", "x"}, "did you mean --box?"},
+		{[]string{"lockdown", "--zzz"}, "the flags of lockdown are --box, --dry-run"},
+		{[]string{"defuse"}, "nova-fuse REFUSED: unknown verb \"defuse\"; the verbs are init, status, check, lockdown, quarantine, lift, path, version, help; run: nova-fuse help"},
+		{[]string{"stauts"}, "did you mean status?"},
 		{[]string{"help", "defuse"}, "unknown verb"},
 		{[]string{"version", "--unexpected"}, "run: nova-fuse help version"},
 	} {
@@ -106,4 +109,23 @@ func TestLiftGroupHelpIncludesTheNothingToLiftExit(t *testing.T) {
 	require.Zero(t, code, errs)
 	assert.Empty(t, errs)
 	assert.Contains(t, out, "usage: nova-fuse version")
+}
+
+// A verb's help (its only route: -h is refused) ends in the effect line every tool
+// prints, and every verb that writes the box lists --dry-run.
+func TestVerbHelpStatesItsEffectAndItsDryRun(t *testing.T) {
+	t.Parallel()
+	for verb, writes := range map[string]bool{
+		"init": true, "lockdown": true, "quarantine": true, "lift quarantine": true,
+		"status": false, "check": false, "path": false, "version": false, "lift lockdown": false,
+	} {
+		code, out, errs := runFuse(t, append([]string{"help"}, strings.Fields(verb)...)...)
+		require.Zero(t, code, errs)
+		want := "\neffect: inspection: "
+		if writes {
+			want = "\neffect: local write: "
+		}
+		assert.Contains(t, out, want, verb)
+		assert.Equal(t, writes, strings.Contains(out, "\n  --dry-run "), "%s: --dry-run listed", verb)
+	}
 }

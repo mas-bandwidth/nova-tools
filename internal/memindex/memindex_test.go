@@ -105,11 +105,10 @@ func TestBuildChunkingIsLineEndingAgnostic(t *testing.T) {
 		"the third paragraph names the glazing and the salt haze that etches it.\n"
 	lf, err := Build(fstest.MapFS{"twin.md": {Data: []byte(body)}}, nil)
 	require.NoError(t, err, "LF build")
-	// Four: the frontmatter block is itself a paragraph over MinTerms, then
-	// the three prose paragraphs. The number is pinned so a regression that
-	// stops splitting shows up as one chunk here rather than as a quiet
-	// ranking change.
-	require.Len(t, lf.Chunks, 4, "the fixture is meant to hold 4 indexable paragraphs, got %d", len(lf.Chunks))
+	// Three: the prose paragraphs. The frontmatter block is metadata, never a
+	// paragraph. The number is pinned so a regression that stops splitting
+	// shows up as one chunk here rather than as a quiet ranking change.
+	require.Len(t, lf.Chunks, 3, "the fixture is meant to hold 3 indexable paragraphs, got %d", len(lf.Chunks))
 	// The lone-CR twin is not a hypothetical: it is what classic-Mac-era
 	// tooling and a few exporters still emit, and it is what a CRLF fix that
 	// only replaces "\r\n" leaves behind untouched.
@@ -815,4 +814,58 @@ func TestBuildSkipsNestedGitDirectory(t *testing.T) {
 		}
 	}
 	assert.True(t, sawReal, "sub/real.md missing from Files %v: the skip must drop only .git, not its parent", c.Files)
+}
+
+// Frontmatter is receipt metadata, never body text: a query on a frontmatter key or value
+// matches no YAML, the snippet quotes none, the file still carries its name and type, and
+// the body keeps the line number it has in the file (the rater's case: frontmatter with
+// no blank line before the body, and the one with a blank line).
+func TestFrontmatterIsMetadataNeverBodyText(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name, src string
+		line      int
+	}{
+		{"no blank line after the fence", "---\nname: deploy-note\ntype: project\n---\nDeploy runs nightly on the bench machine.\n", 5},
+		{"a blank line after the fence", "---\nname: deploy-note\ntype: project\n---\n\nDeploy runs nightly on the bench machine.\n", 6},
+		{"CRLF line endings", "---\r\nname: deploy-note\r\ntype: project\r\n---\r\nDeploy runs nightly on the bench machine.\r\n", 5},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := Build(fstest.MapFS{
+				"b.md":     {Data: []byte(tc.src)},
+				"other.md": {Data: []byte("The relief boat runs late on a project of its own.\n")},
+			}, nil)
+			require.NoError(t, err)
+			for _, ch := range c.Chunks {
+				assert.NotContains(t, ch.Original, "---", "a chunk quotes the frontmatter fence: %q", ch.Original)
+				assert.NotContains(t, ch.Original, "name:", "a chunk quotes the frontmatter: %q", ch.Original)
+				if ch.File == "b.md" {
+					assert.Equal(t, tc.line, ch.Line)
+					assert.Equal(t, "deploy-note", ch.FMName)
+					assert.Equal(t, "project", ch.FMType)
+				}
+			}
+			for _, h := range Retrieve(c, []Channel{NewBM25(c)}, "type project", 3) {
+				assert.NotEqual(t, "b.md", h.File, "a query on the frontmatter's key and value matched b.md's YAML")
+			}
+		})
+	}
+}
+
+// A file that opens with a thematic break and has another rule further down holds prose
+// between them, not frontmatter: that prose stays in the index, at its own line.
+func TestAnOpeningThematicBreakIsNotFrontmatter(t *testing.T) {
+	t.Parallel()
+	src := "---\nThe relief boat leaves the harbour at dawn every day.\n\n---\nMore words after the rule.\n"
+	c, err := Build(fstest.MapFS{"b.md": {Data: []byte(src)}}, nil)
+	require.NoError(t, err)
+	found := false
+	for _, ch := range c.Chunks {
+		if strings.Contains(ch.Original, "relief boat") {
+			found = true
+			assert.Equal(t, 1, ch.Line)
+		}
+	}
+	assert.True(t, found, "the prose between an opening rule and the next was dropped from the index: %+v", c.Chunks)
 }

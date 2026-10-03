@@ -29,8 +29,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -41,6 +43,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/tokens"
+	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
 const usage = `nova-tokens: token spend per day, model and repository, read from AI session logs
@@ -56,27 +59,36 @@ example:, then run the lines under example: in order.
 usage:
   nova-tokens fold    --out <dir> (--day <YYYY-MM-DD> | --all) --repos <file>
                       [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--swarm <label>=<pool>]... [--bus <dir>]
-                      [--provider <kind>:<label>=<file>]... [--scratch <dir>] [--timeout <seconds>] [--allow-shrink] [--max <n>]
+                      [--provider <kind>:<label>=<file>]... [--scratch <dir>] [--timeout <seconds>] [--allow-shrink] [--max <n>] [--dry-run]
   nova-tokens report --who <name> --day <YYYY-MM-DD> --repos <file>
                       mode: local note body, printed as the tokens note artifact
                       [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--provider <kind>:<label>=<file>]...
-                      [--supersedes <note-id>]... [--note <path>] [--scratch <dir>] [--timeout <seconds>]
+                      [--supersedes <note-id>]... [--note <path>] [--scratch <dir>] [--timeout <seconds>] [--dry-run]
   nova-tokens report --redis <host:port> --month <YYYY-MM> [--by model|repo|day|tuple] [--max <n>]
                       mode: Redis month summary
                       [--user <name>] [--password-env <NAME>]
   nova-tokens ledger  --out <dir> (--day <YYYY-MM-DD> | --month <YYYY-MM>) --redis <host:port>
-                      [--user <name>] [--password-env <NAME>]
+                      [--user <name>] [--password-env <NAME>] [--dry-run]
   nova-tokens sum     --out <dir> --month <YYYY-MM> [--max <n>]
   nova-tokens check   --out <dir> [--strict | --no-spend <file>] [--through <YYYY-MM-DD>] [--max <n>]
   nova-tokens sources --repos <file> (--day <YYYY-MM-DD> | --all) [<source flags>] [--unattributed] [--max <n>]
   nova-tokens profiles --swarm-root <dir>
-  nova-tokens session --claude-session <jsonl> [--out <dir>] [--day <YYYY-MM-DD>]
+  nova-tokens session --claude-session <jsonl> [--out <dir>] [--day <YYYY-MM-DD>] [--dry-run]
   nova-tokens version
+
+Every verb but version takes --json: the same result as one JSON object on stdout, a
+refusal included. A verb that writes takes --dry-run: it is the real run's own plan --
+it reads what the real run reads and refuses what the real run refuses -- prints what it
+would write with dry_run=true on its last line, and writes nothing (ledger --dry-run dials
+no store). The one difference: a dry fold or session takes no fold.lock, so it neither waits for nor
+refuses on a fold holding one. --opencode under --dry-run (and under sources) still reads a
+copy of the database, made in a new directory of the run's own under --scratch
+(.nova-tokens-dry-run-*) and removed before it exits: --scratch is left as it was. ` + "`<verb> -h`" + ` lists a verb's flags and states its effect.
 
 exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- an unreadable
 source, an unparsed bus line or note, a row of two day bases, a lane-day with competing
 reports, a day that would shrink, a fold whose every message had no id and so folded nothing,
-a check finding, a report with nothing to show; 2 could
+a check finding (an --out holding no day file is one), a report with nothing to show; 2 could
 not run: a missing flag, a bad flag value, a duplicate label, sqlite3 absent when
 --opencode is given, a second fold holding the lock.
 
@@ -85,22 +97,30 @@ and exits 1: the exit code is about the claim -- a declared source is a claim th
 report covers it -- and written=true on the TOKENS DAY line is about the files.
 
 Every path is a flag. There is no default output directory, no default transcript
-directory, no default database, no default bus and no default rules file, and no
-environment variable is consulted: $HOME, $TMPDIR and $XDG_DATA_HOME are ignored, and a
-test sets them and proves it. --timeout is the one flag with a default, 120 seconds,
-because it is how long this tool waits before saying so rather than a fact about your
-data.
+directory, no default database, no default bus and no default rules file. fold, report
+(its local mode), sum, check, sources, profiles and session read no environment variable
+for a path or a setting: $HOME, $TMPDIR and $XDG_DATA_HOME are ignored, and a test sets
+them and proves it. Three things do read the environment: --opencode runs sqlite3 found
+on $PATH; and the two Redis verbs, ledger and report --redis, take the store's ACL user
+from --user, else NOVA_SPRINT_REDIS_USER, and its password from the variable
+--password-env names, else (with a user) the one NOVA_SPRINT_REDIS_PASSWORD_ENV names,
+else NOVA_REDIS_BENCH_PASSWORD. The password is never a flag. --timeout is the one flag
+with a default, 120 seconds, because it is how long this tool waits before saying so
+rather than a fact about your data.
 
 A source is declared by flag and every row names its sources, so every number in a day
 file is traceable to the flags of the run that wrote it. A label is [a-z0-9-]+, at most
 32 characters, and unique across the run. --scratch is required with --opencode and
 refused without it, because a scratch directory with nothing to put in it is a flag that
-does nothing.
+does nothing. A fold or a report copies the database, with its -wal and -shm, into
+--scratch/opencode-<label>/, replacing the copy there, and leaves it; the live file is
+never opened, because sqlite3 keeps a WAL index beside the file it reads.
 
 The five types -- input, output, cache_write, cache_read, reasoning -- are kept apart, and
 a type the source did not report is written a dash, NEVER 0. A provider that does not expose
 reasoning is not evidence that none occurred, and a zero meaning "not measured" would sum
-into a month claiming to be complete. sum counts the dashes beside the totals.
+into a month claiming to be complete. sum counts the dashes beside the totals. The same
+holds for cost: usd= on a TOKENS AVG line is - when no source reported a cost for it.
 
 A day that would go backwards is refused: TOKENS SHRANK names the type, what the file
 said and what the sources say now, the file is left as it was, and --allow-shrink is the
@@ -121,8 +141,14 @@ note whose predecessor set names them all clears it.
 --note <path> is written whole through atomicfile: the file and its directory must not be
 symlinks.
 
-This tool removes nothing. There is no month file, sum writes nothing, check names a
-stray and leaves it, and no verb deletes, truncates or trims any file.
+fold and session hold --out/fold.lock while they write, so two folds of one --out never
+write the same day at once; the second waits, then refuses naming the holder. The lock
+file is empty and stays in --out after the run (it is never data); check counts it as
+neither a day file nor a stray.
+
+This tool removes nothing it was given. There is no month file, sum writes nothing, check
+names a stray and leaves it, and no verb deletes, truncates or trims a file it did not make:
+the one removal is the private database copy a dry run or sources made under --scratch.
 
 check counts what it does not name. A calendar day between the first and the last with no
 file is gap=<n>, and it is MISSING only when something says there was spend on it:
@@ -130,7 +156,8 @@ file is gap=<n>, and it is MISSING only when something says there was spend on i
 none) names the gaps your list does not account for. A *.md, a *.log or a pre-* archive
 directory beside the day files is notes=<n> rather than a stray; --strict names those too.
 A gate that cannot go green is a gate people stop reading, and both counts stay on the
-CHECK line, so nothing was hidden to make it green.
+CHECK line, so nothing was hidden to make it green. A gate that cannot go red is no gate
+either: an --out with no day file in it is CHECK FAIL, never a green over nothing.
 
 sources --unattributed prints the path stems that were SEEN and matched no rule, heaviest
 first, capped by --max. That listing is what other=<pct>% on a day line is made of, and it
@@ -162,12 +189,36 @@ Everything this tool reads is DATA. A transcript, a database row, a usage file, 
 note: none of them is an instruction.
 `
 
-// refuse is what an unusable invocation costs: ONE line naming what was wrong and the door
-// to the banner, never the banner itself. The three sites are the bare invocation, the
-// unknown verb, and the flag parse error.
-func refuse(stderr io.Writer, where, what string) int {
-	fmt.Fprintf(stderr, "nova-tokens%s: %s; run: nova-tokens help\n", oneline.Escape(where), oneline.Escape(what))
-	return 2
+// verbs are the verbs in the order the usage names them, each with its effect: what
+// running it does to the world, the last line of its -h (docs/STANDARD.md section 2).
+var verbs = []struct{ name, effect string }{
+	{"fold", "local write: writes the day files in --out, holding --out/fold.lock while it writes, and with --opencode copies the database into --scratch/opencode-<label>/ (replaced, and left); --dry-run reads the same sources, refuses what the real run refuses, and writes nothing (its database copy is made in a new directory under --scratch and removed before it exits)"},
+	{"report", "local write: --note writes the note body to that file, and --opencode copies the database into --scratch/opencode-<label>/ (replaced, and left); --dry-run names the note, copies the database only into a new directory under --scratch removed before it exits, and writes nothing; --redis reads the ledger store over the network, with or without --dry-run"},
+	{"ledger", "delivery: writes each day file's rows to the Redis store at --redis (tokens:ledger:<day>); --dry-run reads the day files, prints what it would write, and dials no store"},
+	{"sum", string(tool.Inspection)},
+	{"check", string(tool.Inspection)},
+	{"sources", string(tool.Inspection) + " (--opencode reads a copy made in a new directory under --scratch and removed before it exits)"},
+	{"profiles", string(tool.Inspection)},
+	{"session", "local write: with --out it writes the session's days into the day files there, holding --out/fold.lock; without --out, or with --dry-run, it writes nothing"},
+	{"version", string(tool.Inspection)},
+}
+
+func verbNames() []string {
+	names := make([]string, 0, len(verbs))
+	for _, v := range verbs {
+		names = append(names, v.name)
+	}
+	return names
+}
+
+// effectOf is the effect line a verb's -h ends its lines above the flags with.
+func effectOf(verb string) string {
+	for _, v := range verbs {
+		if v.name == verb {
+			return "effect: " + v.effect + "\n"
+		}
+	}
+	return ""
 }
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, time.Now().UTC())) }
@@ -176,17 +227,19 @@ func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, time.Now().UTC())) 
 // The clock is an argument and NOT a flag: the stamp on a day file is when the tool
 // computed it, and a stamp a caller could set would be a stamp nobody could trust.
 func run(args []string, stdout, stderr io.Writer, now time.Time) (code int) {
-	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
-	// before anything is read or written (the CLI style's rule (b), #4505).
-	defer verbflag.Recover(stdout, "nova-tokens", usage, &code)
+	// `<verb> -h` and `help <verb>` print that verb's help, its effect included, on stdout
+	// at exit 0, before anything is read or written (the CLI style's rule (b)).
+	defer verbflag.RecoverWith(stdout, "nova-tokens", usage, &code, effectOf)
+	asJSON := verbflag.BoolAsked(args, "json")
 	if len(args) == 0 {
-		return refuse(stderr, "", "no verb given; `sources` is the one that only looks")
+		return refuse(stdout, stderr, asJSON, "no verb given; the verbs are "+verbflag.List(verbNames())+", and sources is the one that only looks")
 	}
 	verb, rest := args[0], args[1:]
 	switch verb {
 	case "help", "-h", "--help":
 		if verb == "help" && len(rest) > 0 && rest[0] != "help" && !verbflag.IsHelp(rest[0]) {
-			return run(append(rest, "--help"), stdout, stderr, now)
+			// --help goes right after the verb: after a word or a -- it would be one.
+			return run(append([]string{rest[0], "--help"}, rest[1:]...), stdout, stderr, now)
 		}
 		fmt.Fprintf(stdout, "%s", usage)
 		return 0
@@ -209,7 +262,11 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) (code int) {
 	case "version", "--version":
 		return cmdVersion(rest, stdout, stderr)
 	}
-	return refuse(stderr, "", fmt.Sprintf("unknown subcommand %q", verb))
+	near := ""
+	if n := verbflag.Nearest(verb, verbNames()); n != "" {
+		near = " did you mean " + n + "?"
+	}
+	return refuse(stdout, stderr, asJSON, "unknown verb "+strconv.Quote(verb)+";"+near+" the verbs are "+verbflag.List(verbNames()))
 }
 
 // ---------------------------------------------------------------------------- the flags
@@ -257,30 +314,6 @@ func validLabel(label string) bool {
 	return true
 }
 
-// refusals collects every independent problem so one run reports them all: sending a
-// first run back three times for three flags is three refusals the first one already
-// knew about.
-type refusals struct {
-	token string
-	list  []string
-}
-
-func (r *refusals) add(problem string) { r.list = append(r.list, problem) }
-
-func (r *refusals) required(name, value, wants string) {
-	if strings.TrimSpace(value) == "" {
-		r.add("--" + name + " is required; it wants " + wants + "; refusing to guess")
-	}
-}
-
-// print writes one line per problem, in the order they were found, and returns exit 2.
-func (r *refusals) print(stderr io.Writer) int {
-	for _, problem := range r.list {
-		fmt.Fprintf(stderr, "%s REFUSED: %s; run: nova-tokens help\n", oneline.Field(r.token), oneline.Escape(problem))
-	}
-	return 2
-}
-
 // wants is what each flag is FOR, in the words a refusal uses.
 const (
 	wantsOut     = "the directory the day files are written to"
@@ -314,7 +347,7 @@ func (s *sourceFlags) declare(fs *flag.FlagSet, withSwarmAndBus bool) {
 		fs.Var(&s.swarm, "swarm", "labeled swarm pool directory; repeatable")
 		fs.StringVar(&s.bus, "bus", "", "nova-bus directory with token notes")
 	}
-	fs.StringVar(&s.scratch, "scratch", "", "directory for the temporary OpenCode database copy")
+	fs.StringVar(&s.scratch, "scratch", "", "directory the OpenCode database is copied into: opencode-<label>/ in it, replaced and left by a run that writes; a new directory removed before exit by a dry run or sources")
 	fs.StringVar(&s.repos, "repos", "", "tab-separated repo names and path regular expressions")
 	fs.IntVar(&s.timeout, "timeout", int(tokens.DefaultTimeout/time.Second), "seconds to wait for the OpenCode sqlite3 reader")
 }
@@ -421,13 +454,44 @@ func (s *sourceFlags) check(r *refusals) {
 }
 
 // read reads every declared source, in declaration order, through the one reader per kind.
-func (s *sourceFlags) read(rules *tokens.Rules, now time.Time) []*tokens.Source {
-	var out []*tokens.Source
+//
+// An OpenCode database is read from a COPY, never in place: the live file is the one
+// OpenCode is writing, and sqlite3 even read-only keeps a WAL index (-shm) beside the file
+// it opens, while reading it as immutable would skip rows still in the WAL and count a
+// different day. A run that writes copies into --scratch/opencode-<label>/, replacing what
+// is there, and leaves the copy (rule 16). A run that writes nothing (private: sources, and
+// every --dry-run) copies into a directory of its own made under --scratch
+// (.nova-tokens-dry-run-*, new and private to the run, so no file there is ever truncated)
+// and removes it before returning, so --scratch is as it was. A copy it could not remove
+// is named in the returned notes.
+func (s *sourceFlags) read(rules *tokens.Rules, now time.Time, private bool) (out []*tokens.Source, notes []string) {
 	for _, it := range s.claude.items {
 		out = append(out, tokens.ReadClaude(it.label, it.value, rules))
 	}
+	scratch := s.scratch
+	if private && len(s.opencode.items) > 0 {
+		dir, err := os.MkdirTemp(s.scratch, ".nova-tokens-dry-run-")
+		if err != nil {
+			for _, it := range s.opencode.items {
+				src := &tokens.Source{Label: tokens.Label(tokens.KindOpenCode, it.label), Kind: tokens.KindOpenCode, Path: it.value, Basis: tokens.UTC}
+				src.Unreadables = append(src.Unreadables, tokens.Unreadable{Label: src.Label, Path: it.value, Why: "a private copy directory under --scratch: " + err.Error()})
+				out = append(out, src)
+			}
+			scratch = ""
+		} else {
+			scratch = dir
+			defer func() {
+				if err := removePrivateCopy(dir); err != nil {
+					notes = append(notes, "the private copy "+dir+" could not be removed: "+err.Error()+"; remove it by hand")
+				}
+			}()
+		}
+	}
 	for _, it := range s.opencode.items {
-		out = append(out, tokens.ReadOpenCode(it.label, it.value, s.scratch, time.Duration(s.timeout)*time.Second, rules))
+		if scratch == "" {
+			break
+		}
+		out = append(out, tokens.ReadOpenCode(it.label, it.value, scratch, time.Duration(s.timeout)*time.Second, rules))
 	}
 	for _, it := range s.swarm.items {
 		out = append(out, tokens.ReadSwarm(it.label, it.value, rules))
@@ -446,7 +510,7 @@ func (s *sourceFlags) read(rules *tokens.Rules, now time.Time) []*tokens.Source 
 		}
 		src.Stat.Rows = len(keys)
 	}
-	return out
+	return out, notes
 }
 
 // newFlagSet builds a flag set with package flag's two mouths closed: its error text
@@ -478,10 +542,10 @@ func stamp(now time.Time) string { return now.UTC().Format(time.RFC3339) }
 func maxRemedy(verb string) string { return "nova-tokens " + verb + " ... --max 0" }
 
 // avgRate is a model-day's dollars per million tokens (usdMicro / tokens), for sorting the
-// AVG listing highest first. A zero-token model has no average and sorts below every real
-// rate, which is never negative.
-func avgRate(usdMicro, tokens int64) float64 {
-	if tokens == 0 {
+// AVG listing highest first. A zero-token or unpriced model has no average and sorts below
+// every real rate, which is never negative.
+func avgRate(usdMicro, tokens int64, priced bool) float64 {
+	if tokens == 0 || !priced {
 		return -1
 	}
 	return float64(usdMicro) / float64(tokens)
@@ -490,67 +554,38 @@ func avgRate(usdMicro, tokens int64) float64 {
 // sourceLine is the line where a number becomes traceable: what each declared source
 // opened, refused, counted and fed. A field that is not a measurement for the kind prints
 // a dash, because a dash is an absence where a zero is a measurement.
-func sourceLine(token string, s *tokens.Source) string {
-	return fmt.Sprintf("%s SOURCE label=%s kind=%s path=%s reports=%s day_basis=%s files=%s unreadable=%s messages=%s dup=%s noid=%s nousage=%s unparsed=%s comments=%s redated=%s superseded=%s rows=%s",
-		oneline.Field(token), oneline.Field(s.Label), oneline.Field(s.Kind), oneline.Field(s.Path),
-		oneline.Field(s.ReportsList()), oneline.Field(s.Basis),
-		oneline.Field(s.StatField("files")), oneline.Field(s.StatField("unreadable")),
-		oneline.Field(s.StatField("messages")), oneline.Field(s.StatField("dup")),
-		oneline.Field(s.StatField("noid")), oneline.Field(s.StatField("nousage")),
-		oneline.Field(s.StatField("unparsed")), oneline.Field(s.StatField("comments")),
-		oneline.Field(s.StatField("redated")), oneline.Field(s.StatField("superseded")),
-		oneline.Field(s.StatField("rows")))
-}
-
-// sourceNamedDay reports whether the source fed any message for the day.
-func sourceNamedDay(s *tokens.Source, day string) bool {
-	for _, m := range s.Stream {
-		if m.Day == day {
-			return true
-		}
+func sourceLine(s *sink, token string, src *tokens.Source) string {
+	kv := []any{"label", src.Label, "kind", src.Kind, "path", src.Path, "reports", src.ReportsList(), "day_basis", src.Basis}
+	for _, f := range []string{"files", "unreadable", "messages", "dup", "noid", "nousage", "unparsed", "comments", "redated", "superseded", "rows"} {
+		kv = append(kv, f, src.StatField(f))
 	}
-	return false
+	return s.line(token, "SOURCE", "", kv...)
 }
 
-// dayNames reports whether the day file's sources= line names the label.
-func dayNames(sources []string, label string) bool {
-	for _, s := range sources {
-		if s == label {
-			return true
-		}
-	}
-	return false
+func unreadableLine(s *sink, token string, u tokens.Unreadable) string {
+	return s.line(token, "UNREADABLE", oneline.Cap(u.Why, oneline.TailBytes), "label", u.Label, "path", u.Path)
 }
 
-// noPositional refuses a verb invoked with a positional argument. Every verb's shape in
-// the usage block is flags only, and four of the five silently DROPPED the extra word:
-// `nova-tokens sum --out X --month Y extra` ran and answered about something the caller
-// did not ask about. One function, so a sixth verb cannot forget it.
-func noPositional(fs *flag.FlagSet, stderr io.Writer, verb string) (int, bool) {
-	n := fs.NArg()
-	if n == 0 {
-		return 0, false
-	}
-	return refuse(stderr, " "+verb, fmt.Sprintf("takes no positional arguments, got %d (%s); flags come before arguments",
-		n, oneline.Field(strings.Join(fs.Args(), " ")))), true
+func unparsedLine(s *sink, token string, u tokens.Unparsed) string {
+	return s.line(token, "UNPARSED", oneline.Cap(u.Text, oneline.TailBytes), "label", u.Label, "note", u.Note, "line", u.Line)
 }
 
-func unreadableLine(token string, u tokens.Unreadable) string {
-	return fmt.Sprintf("%s UNREADABLE label=%s path=%s: %s",
-		oneline.Field(token), oneline.Field(u.Label), oneline.Field(u.Path),
-		oneline.Escape(oneline.Cap(u.Why, oneline.TailBytes)))
-}
-
-func unparsedLine(token string, u tokens.Unparsed) string {
-	return fmt.Sprintf("%s UNPARSED label=%s note=%s line=%d: %s",
-		oneline.Field(token), oneline.Field(u.Label), oneline.Field(u.Note), u.Line,
-		oneline.Escape(oneline.Cap(u.Text, oneline.TailBytes)))
+// foldLists are fold's listings in the order their lines print, each capped by --max with
+// its own MORE line; true is a list whose lines are findings, on stderr.
+var foldLists = []struct {
+	kind  string
+	toErr bool
+}{
+	{"source", false}, {"unreadable", true}, {"unparsed", true}, {"superseded", false},
+	{"conflict", true}, {"touched", false}, {"mixed", true}, {"day", false},
+	{"shrank", true}, {"partial", true}, {"quiet", true},
 }
 
 // cmdFold is the wall: it reads every declared source whole and writes the days it could
 // compute. It says NO when a source could not be read, a bus line or note did not parse,
 // a row mixed two day bases, a lane-day had competing reports, or a day would have shrunk
-// -- and it still writes the rest, because the exit code is about the claim.
+// -- and it still writes the rest, because the exit code is about the claim. Under
+// --dry-run it reads and decides exactly the same and writes nothing, the lock included.
 func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 	fs := newFlagSet("fold")
 	out := fs.String("out", "", "directory for daily token files")
@@ -558,15 +593,14 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 	all := fs.Bool("all", false, "fold every day named by the sources")
 	allowShrink := fs.Bool("allow-shrink", false, "write a day even when its totals shrink")
 	max := fs.Int("max", bounded.Default, "maximum findings or rows to print; 0 prints all")
+	dryRun := fs.Bool("dry-run", false, "read the sources and print what would be written, and write nothing (no day file, no lock)")
 	var sf sourceFlags
 	sf.declare(fs, true)
-	if err := verbflag.Parse(fs, args); err != nil {
-		return refuse(stderr, " fold", oneline.Cap(err.Error(), oneline.TailBytes))
-	}
-	if code, refused := noPositional(fs, stderr, "fold"); refused {
+	s, code, ok := start(fs, args, "TOKENS", stdout, stderr)
+	if !ok {
 		return code
 	}
-	r := &refusals{token: "TOKENS"}
+	r := &refusals{token: "TOKENS", s: s}
 	r.required("out", *out, wantsOut)
 	checkDay(r, *day, *all)
 	sf.check(r)
@@ -590,85 +624,74 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 		r.add("--repos " + sf.repos + ": " + err.Error() + "; it wants " + wantsRepos)
 		return r.print(stderr)
 	}
-	release, err := tokens.TakeFoldLock(*out, tokens.LockWait)
-	if err != nil {
-		r.add(err.Error())
-		return r.print(stderr)
+	if !*dryRun {
+		release, err := tokens.TakeFoldLock(*out, tokens.LockWait)
+		if err != nil {
+			r.add(err.Error())
+			return r.print(stderr)
+		}
+		defer release()
 	}
-	defer release()
 
-	sources := sf.read(rules, now)
+	sources, copyNotes := sf.read(rules, now, *dryRun)
 	folder := tokens.NewFolder()
-	for _, s := range sources {
-		for _, m := range s.Stream {
-			folder.Add(s.Label, m)
+	for _, src := range sources {
+		for _, m := range src.Stream {
+			folder.Add(src.Label, m)
 		}
 	}
 
-	fmt.Fprintf(stdout, "TOKENS FOLD at=%s build=%s out=%s sources=%d days=%s repos=%s\n",
-		oneline.Field(stamp(now)), oneline.Field(buildVersion()), oneline.Field(*out),
-		len(sources), oneline.Field(daysAsked(*day, *all)), oneline.Field(sf.repos))
+	fmt.Fprintln(s.out(), s.line("TOKENS", "FOLD", "", "at", stamp(now), "build", buildVersion(), "out", *out,
+		"sources", len(sources), "days", daysAsked(*day, *all), "repos", sf.repos))
 
-	srcList := bounded.Capped(stdout, *max, "TOKENS", "source", maxRemedy("fold"))
-	unreadable := bounded.Capped(stderr, *max, "TOKENS", "unreadable", maxRemedy("fold"))
-	unparsed := bounded.Capped(stderr, *max, "TOKENS", "unparsed", maxRemedy("fold"))
-	superseded := bounded.Capped(stdout, *max, "TOKENS", "superseded", maxRemedy("fold"))
-	conflicts := bounded.Capped(stderr, *max, "TOKENS", "conflict", maxRemedy("fold"))
-	touched := bounded.Capped(stdout, *max, "TOKENS", "touched", maxRemedy("fold"))
-	mixedList := bounded.Capped(stderr, *max, "TOKENS", "mixed", maxRemedy("fold"))
-	dayList := bounded.Capped(stdout, *max, "TOKENS", "day", maxRemedy("fold"))
-	shrankList := bounded.Capped(stderr, *max, "TOKENS", "shrank", maxRemedy("fold"))
-	partialList := bounded.Capped(stderr, *max, "TOKENS", "partial", maxRemedy("fold"))
-	quietList := bounded.Capped(stderr, *max, "TOKENS", "quiet", maxRemedy("fold"))
-
+	lists := map[string]*bounded.List{}
+	for _, l := range foldLists {
+		lists[l.kind] = s.list(l.toErr, *max, "TOKENS", l.kind, maxRemedy("fold"))
+	}
 	conflictDays := map[string]bool{}
 	// The labels this run declared: exactly what lands in a row's sources column, and so
-	// exactly the rows this fold is entitled to recompute (rule 10, #268).
+	// exactly the rows this fold is entitled to recompute (rule 10).
 	declared := make([]string, 0, len(sources))
-	for _, s := range sources {
-		declared = append(declared, s.Label)
-		srcList.Line(sourceLine("TOKENS", s))
+	for _, src := range sources {
+		declared = append(declared, src.Label)
+		lists["source"].Line(sourceLine(s, "TOKENS", src))
 	}
-	srcList.More()
-	for _, s := range sources {
-		for _, u := range s.Unreadables {
-			unreadable.Line(unreadableLine("TOKENS", u))
+	lists["source"].More()
+	for _, src := range sources {
+		for _, u := range src.Unreadables {
+			lists["unreadable"].Line(unreadableLine(s, "TOKENS", u))
 		}
 	}
-	// unreadable.More() is NOT here: a day file this run could not WRITE is an unreadable
-	// too (below), and capping the listing before that loop printed a MORE line with a
-	// total that was still growing -- or, with no earlier unreadable, truncated the
-	// listing with no MORE line at all. The cap and the count are closed together, after
-	// the last line either can get.
-	for _, s := range sources {
-		for _, u := range s.Unparseds {
-			unparsed.Line(unparsedLine("TOKENS", u))
+	// The unreadable listing is NOT closed here: a day file this run could not WRITE is an
+	// unreadable too (below), and its MORE line and its count are closed after the last
+	// line either can get.
+	for _, src := range sources {
+		for _, u := range src.Unparseds {
+			lists["unparsed"].Line(unparsedLine(s, "TOKENS", u))
 		}
 	}
-	unparsed.More()
-	for _, s := range sources {
-		for _, sp := range s.Supersededs {
-			superseded.Line(fmt.Sprintf("TOKENS SUPERSEDED label=%s note=%s by=%s day=%s",
-				oneline.Field(sp.Label), oneline.Field(sp.Note), oneline.Field(sp.By), oneline.Field(sp.Day)))
+	lists["unparsed"].More()
+	for _, src := range sources {
+		for _, sp := range src.Supersededs {
+			lists["superseded"].Line(s.line("TOKENS", "SUPERSEDED", "", "label", sp.Label, "note", sp.Note, "by", sp.By, "day", sp.Day))
 		}
 	}
-	superseded.More()
-	for _, s := range sources {
-		for _, c := range s.Conflicts {
+	lists["superseded"].More()
+	for _, src := range sources {
+		for _, c := range src.Conflicts {
 			conflictDays[c.Day] = true
-			conflicts.Line(fmt.Sprintf("TOKENS CONFLICT label=%s day=%s notes=%s: competing reports; send a correction whose subject carries supersedes=%s",
-				oneline.Field(c.Label), oneline.Field(c.Day), oneline.Field(strings.Join(c.Notes, ",")),
-				oneline.Field(strings.Join(c.Notes, ","))))
+			notes := strings.Join(c.Notes, ",")
+			lists["conflict"].Line(s.line("TOKENS", "CONFLICT", "competing reports; send a correction whose subject carries supersedes="+oneline.Field(notes),
+				"label", c.Label, "day", c.Day, "notes", notes))
 		}
 	}
-	conflicts.More()
-	for _, s := range sources {
-		for _, t := range s.Toucheds {
-			touched.Line(fmt.Sprintf("TOKENS TOUCHED label=%s day=%s repos=%s",
-				oneline.Field(t.Label), oneline.Field(t.Day), oneline.Field(strings.Join(t.Repos, ","))))
+	lists["conflict"].More()
+	for _, src := range sources {
+		for _, t := range src.Toucheds {
+			lists["touched"].Line(s.line("TOKENS", "TOUCHED", "", "label", t.Label, "day", t.Day, "repos", strings.Join(t.Repos, ",")))
 		}
 	}
-	touched.More()
+	lists["touched"].More()
 
 	days := folder.Days()
 	if !*all {
@@ -676,15 +699,15 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	daysWritten, rowsWritten, quiet := 0, 0, 0
 	mixedLabels := "-"
-	firstPartial := ""
+	firstPartial, firstQuiet := "", ""
 	for _, d := range days {
 		rows, mixed := folder.DayRows(d)
 		for _, m := range mixed {
 			if mixedLabels == "-" && len(m.Labels) > 0 {
 				mixedLabels = strings.Join(m.Labels, " and ")
 			}
-			mixedList.Line(fmt.Sprintf("TOKENS MIXED date=%s model=%s repo=%s bases=%s: two day bases on one row; declare one export for that day",
-				oneline.Field(m.Day), oneline.Field(m.Model), oneline.Field(m.Repo), oneline.Field(strings.Join(m.Bases, ","))))
+			lists["mixed"].Line(s.line("TOKENS", "MIXED", "two day bases on one row; declare one export for that day",
+				"date", m.Day, "model", m.Model, "repo", m.Repo, "bases", strings.Join(m.Bases, ",")))
 		}
 		outPath := tokens.Path(*out, d)
 		old, findings, readErr := tokens.ReadDayFile(outPath)
@@ -692,35 +715,33 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 			continue
 		}
 		file := buildDayFile(d, rows, folder, now)
-		written := false
+		written, wouldWrite := false, false
 		shrank := false
 		partial := false
 		var dayShrinks []tokens.Shrink
 		if !conflictDays[d] {
 			switch {
 			case readErr != nil && !os.IsNotExist(readErr):
-				unreadable.Line(unreadableLine("TOKENS", tokens.Unreadable{Label: "out", Path: outPath, Why: readErr.Error()}))
+				lists["unreadable"].Line(unreadableLine(s, "TOKENS", tokens.Unreadable{Label: "out", Path: outPath, Why: readErr.Error()}))
 			case readErr == nil && len(findings) > 0:
 				for _, f := range findings {
 					why := oneline.Escape(f.Reason)
 					if f.Line > 0 {
 						why = fmt.Sprintf("line %d: %s", f.Line, oneline.Escape(f.Reason))
 					}
-					unreadable.Line(unreadableLine("TOKENS", tokens.Unreadable{Label: "out", Path: outPath, Why: why}))
+					lists["unreadable"].Line(unreadableLine(s, "TOKENS", tokens.Unreadable{Label: "out", Path: outPath, Why: why}))
 				}
 			case readErr == nil && len(findings) == 0:
-				// Merge by source BEFORE anything else touches the file: a row no
-				// declared source wrote is carried over, a row they all wrote is
-				// replaced, and a row this fold can neither keep nor recompute refuses
-				// the day. Rule 10 then compares the file with the MERGED file, which is
-				// like with like -- the old comparison hid an erased row whenever this
-				// run's own numbers were bigger. (#268)
+				// Merge by source BEFORE anything else touches the file: a row no declared
+				// source wrote is carried over, a row they all wrote is replaced, and a row
+				// this fold can neither keep nor recompute refuses the day. Rule 10 then
+				// compares the file with the MERGED file, which is like with like.
 				merged, retained, partials := tokens.MergeDay(old.Rows, file.Rows, declared)
 				for _, pt := range partials {
 					partial = true
-					partialList.Line(fmt.Sprintf("TOKENS PARTIAL date=%s model=%s repo=%s sources=%s folded=%s written=false: this fold declared only some of the sources that wrote the row; declare every source in the file's sources= line, or fold this day into its own --out",
-						oneline.Field(pt.Day), oneline.Field(pt.Model), oneline.Field(pt.Repo),
-						oneline.Field(strings.Join(pt.Sources, ",")), oneline.Field(strings.Join(pt.Folded, ","))))
+					lists["partial"].Line(s.line("TOKENS", "PARTIAL", "this fold declared only some of the sources that wrote the row; declare every source in the file's sources= line, or fold this day into its own --out",
+						"date", pt.Day, "model", pt.Model, "repo", pt.Repo, "sources", strings.Join(pt.Sources, ","),
+						"folded", strings.Join(pt.Folded, ","), "written", false))
 					if firstPartial == "" {
 						firstPartial = pt.Model + " on " + pt.Repo + " for " + pt.Day
 					}
@@ -729,37 +750,43 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 					file.Rows = merged
 					file.Sources = tokens.SourcesOf(merged)
 					if retained > 0 {
-						// turns= counts the messages THIS run read and cannot be split
-						// per source, so a file holding a row this run did not read is a
-						// file whose turns nobody can state.
+						// turns= counts the messages THIS run read and cannot be split per
+						// source, so a file holding a row this run did not read is a file
+						// whose turns nobody can state.
 						file.Turns = tokens.Dash
 					}
 					dayShrinks = tokens.Shrinks(old.Totals(), file.Totals(), d)
-					if len(dayShrinks) > 0 {
-						shrank = true
-					}
+					shrank = len(dayShrinks) > 0
 				}
 				// A declared source with zero samples for an explicitly selected existing
 				// day is quiet: the day file still names it, and the fold prints a bounded
 				// line naming it rather than letting the refusal speak only in day totals.
-				for _, s := range sources {
-					if sourceNamedDay(s, d) || !dayNames(old.Sources, s.Label) {
+				for _, src := range sources {
+					fedDay := slices.ContainsFunc(src.Stream, func(m tokens.Message) bool { return m.Day == d })
+					if fedDay || !slices.Contains(old.Sources, src.Label) {
 						continue
 					}
 					quiet++
-					quietList.Line(fmt.Sprintf("TOKENS QUIET label=%s day=%s: a declared source has zero samples for an explicitly selected existing day",
-						oneline.Field(s.Label), oneline.Field(d)))
+					if firstQuiet == "" {
+						firstQuiet = src.Label + " on " + d
+					}
+					lists["quiet"].Line(s.line("TOKENS", "QUIET", "a declared source has zero samples for an explicitly selected existing day",
+						"label", src.Label, "day", d))
 				}
 			}
 			// --allow-shrink is a person's word about a day going backwards. It is NOT a
 			// word about a row this fold cannot compute, so it does not override a partial,
-			// and not a word about replacing a malformed file.
-			if !partial && (!shrank || *allowShrink) && (readErr == nil && len(findings) == 0 || readErr != nil && os.IsNotExist(readErr)) {
-				if len(file.Rows) == 0 {
-					// Absent and empty are one state (rules 8, 9, §Absent and empty):
-					// a day with no rows has no file; a fold never writes an empty day file.
-				} else if err := file.Save(*out); err != nil {
-					unreadable.Line(unreadableLine("TOKENS", tokens.Unreadable{Label: "out", Path: outPath, Why: err.Error()}))
+			// and not a word about replacing a malformed file. Absent and empty are one
+			// state: a fold never writes a day file with no rows.
+			wouldWrite = !partial && (!shrank || *allowShrink) && len(file.Rows) > 0 &&
+				(readErr == nil && len(findings) == 0 || readErr != nil && os.IsNotExist(readErr))
+			switch {
+			case wouldWrite && *dryRun:
+				daysWritten++
+				rowsWritten += len(rows)
+			case wouldWrite:
+				if err := file.Save(*out); err != nil {
+					lists["unreadable"].Line(unreadableLine(s, "TOKENS", tokens.Unreadable{Label: "out", Path: outPath, Why: err.Error()}))
 				} else {
 					written = true
 					daysWritten++
@@ -767,44 +794,48 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 				}
 			}
 			for _, sh := range dayShrinks {
-				shrankList.Line(fmt.Sprintf("TOKENS SHRANK date=%s type=%s file=%s now=%s written=%t: a source went quiet; --allow-shrink writes it anyway",
-					oneline.Field(sh.Day), oneline.Field(tokens.TypeNames[sh.Type]),
-					oneline.Field(sh.File), oneline.Field(sh.Now), written))
+				lists["shrank"].Line(s.line("TOKENS", "SHRANK", "a source went quiet; --allow-shrink writes it anyway",
+					"date", sh.Day, "type", tokens.TypeNames[sh.Type], "file", sh.File, "now", sh.Now, "written", written))
 			}
 		}
-		dayList.Line(dayLine(d, file, written))
+		lists["day"].Line(dayLine(s, d, file, written, *dryRun, wouldWrite))
 	}
-	unreadable.More()
-	mixedList.More()
-	dayList.More()
-	shrankList.More()
-	partialList.More()
-	quietList.More()
+	for _, kind := range []string{"unreadable", "mixed", "day", "shrank", "partial", "quiet"} {
+		lists[kind].More()
+	}
 
-	counts := fmt.Sprintf("days=%d rows=%d sources=%d unreadable=%d unparsed=%d mixed=%d conflict=%d shrank=%d partial=%d quiet=%d",
-		daysWritten, rowsWritten, len(sources), unreadable.Total(), unparsed.Total(),
-		mixedList.Total(), conflicts.Total(), shrankList.Total(), partialList.Total(), quiet)
+	n := func(kind string) int { return lists[kind].Total() }
+	counts := []any{"days", daysWritten, "rows", rowsWritten, "sources", len(sources), "unreadable", n("unreadable"),
+		"unparsed", n("unparsed"), "mixed", n("mixed"), "conflict", n("conflict"), "shrank", n("shrank"),
+		"partial", n("partial"), "quiet", quiet}
+	if *dryRun {
+		counts = append(counts, "dry_run", true)
+	}
 	// A FOLD THAT DROPPED EVERY MESSAGE FOLDED NOTHING, AND A GATE READING THE EXIT CODE MUST
 	// SEE IT. Some messages dropped is a TOKENS NOTE (the day is short and the note says
 	// so); every message dropped, with none folded, is a fold that did not do its job:
-	// exit 1 with the counts (the third cold rating of the tools, 2026-09-30).
+	// exit 1 with the counts.
 	dropped, of, allDropped := allMessagesDropped(sources)
-	bad := unreadable.Total() > 0 || unparsed.Total() > 0 || mixedList.Total() > 0 ||
-		conflicts.Total() > 0 || (shrankList.Total() > 0 && !*allowShrink) || partialList.Total() > 0 || allDropped
+	bad := n("unreadable") > 0 || n("unparsed") > 0 || n("mixed") > 0 || n("conflict") > 0 ||
+		(n("shrank") > 0 && !*allowShrink) || n("partial") > 0 || allDropped
 	if allDropped {
-		fmt.Fprintf(stderr, "FOLD FAIL dropped=%d of %d: %s\n", dropped, of, allDroppedWhy)
+		fmt.Fprintf(s.err(), "FOLD FAIL dropped=%d of %d: %s\n", dropped, of, allDroppedWhy)
+		s.o.Why = append(s.o.Why, fmt.Sprintf("dropped=%d of %d: %s", dropped, of, allDroppedWhy))
 	}
 	if bad {
-		fmt.Fprintf(stderr, "TOKENS FAIL %s\n", counts)
+		fmt.Fprintf(s.err(), "TOKENS FAIL%s\n", s.factFields(counts...))
 	} else {
-		fmt.Fprintf(stdout, "TOKENS OK %s\n", counts)
+		fmt.Fprintf(s.out(), "TOKENS OK%s\n", s.factFields(counts...))
 	}
-	fmt.Fprintf(stdout, "TOKENS NOTE %s\n", oneline.Escape(remedy(sources, folder.Overlaps(), unreadable.Total(), unparsed.Total(),
-		mixedList.Total(), conflicts.Total(), shrankList.Total(), partialList.Total(), *allowShrink, *out, mixedLabels, firstPartial)))
+	note := remedy(sources, folder.Overlaps(), n("unreadable"), n("unparsed"), n("mixed"), n("conflict"), n("shrank"), n("partial"), quiet,
+		*allowShrink, *out, mixedLabels, firstPartial, firstQuiet)
+	fmt.Fprintf(s.out(), "TOKENS NOTE %s\n", oneline.Escape(note))
+	s.note(note)
+	copyNote(s, "TOKENS", copyNotes)
 	if bad {
-		return 1
+		return s.done(1, *max)
 	}
-	return 0
+	return s.done(0, *max)
 }
 
 // checkDay enforces the one-of rule on --day and --all.
@@ -842,16 +873,14 @@ func buildDayFile(day string, rows []*tokens.Row, folder *tokens.Folder, now tim
 			Rough: r.Rough, Basis: r.Basis(), Sources: r.Sources(),
 		})
 	}
-	for l := range labels {
-		f.Sources = append(f.Sources, l)
-	}
-	sort.Strings(f.Sources)
+	f.Sources = slices.Sorted(maps.Keys(labels))
 	return f
 }
 
 // dayLine is one line per day written or refused, and the two shares on it are how a
-// person sees whether the rules file is good enough.
-func dayLine(day string, file *tokens.DayFile, written bool) string {
+// person sees whether the rules file is good enough. Under --dry-run nothing is written,
+// and would_write says whether the real run would have written the day.
+func dayLine(s *sink, day string, file *tokens.DayFile, written, dryRun, wouldWrite bool) string {
 	models, repos := map[string]bool{}, map[string]bool{}
 	var whole, unknown, other int64
 	dashes, nonutc := 0, 0
@@ -873,15 +902,18 @@ func dayLine(day string, file *tokens.DayFile, written bool) string {
 			nonutc++
 		}
 	}
-	return fmt.Sprintf("TOKENS DAY date=%s rows=%d models=%d repos=%d turns=%s unknown=%s%% other=%s%% rough=%d dashes=%d nonutc=%d sources=%s written=%t",
-		oneline.Field(day), len(file.Rows), len(models), len(repos), oneline.Field(file.Turns),
-		oneline.Field(tokens.Percent(unknown, whole)), oneline.Field(tokens.Percent(other, whole)),
-		rough, dashes, nonutc, oneline.Field(strings.Join(file.Sources, ",")), written)
+	kv := []any{"date", day, "rows", len(file.Rows), "models", len(models), "repos", len(repos), "turns", file.Turns,
+		"unknown", tokens.Percent(unknown, whole) + "%", "other", tokens.Percent(other, whole) + "%",
+		"rough", rough, "dashes", dashes, "nonutc", nonutc, "sources", strings.Join(file.Sources, ","), "written", written}
+	if dryRun {
+		kv = append(kv, "would_write", wouldWrite)
+	}
+	return s.line("TOKENS", "DAY", "", kv...)
 }
 
 // remedy is the ONE line TOKENS NOTE carries. It names the label and the act, in the order
 // a reader would act on them, and when nothing was wrong it names the gate.
-func remedy(sources []*tokens.Source, overlaps []tokens.Overlap, unreadable, unparsed, mixed, conflict, shrank, partial int, allowShrink bool, out, mixedLabels, firstPartial string) string {
+func remedy(sources []*tokens.Source, overlaps []tokens.Overlap, unreadable, unparsed, mixed, conflict, shrank, partial, quiet int, allowShrink bool, out, mixedLabels, firstPartial, firstQuiet string) string {
 	switch {
 	case unreadable > 0:
 		return "a declared source could not be read whole (" + firstUnreadableLabel(sources) + "): open those files to this group, or drop the flag -- a declared source is a claim that the report covers it"
@@ -916,6 +948,10 @@ func remedy(sources []*tokens.Source, overlaps []tokens.Overlap, unreadable, unp
 		return "a day would have gone backwards and was left as it was: --allow-shrink writes it anyway, and it is a person's act"
 	case shrank > 0:
 		return "a day was written smaller at your word (--allow-shrink); nova-tokens check --out " + out + " is the gate"
+	case quiet > 0:
+		// A quiet source is not a failure, and it is not "nothing was wrong" either: the
+		// day file names a source this run declared and read nothing from for that day.
+		return "a declared source fed no message for a day its file names (" + firstQuiet + "): its rows there were recomputed from nothing; if it did spend that day, its files are not under the path you declared"
 	case noidAndDup(sources) != "":
 		return noidAndDup(sources) + "; those messages are NOT in any row"
 	case len(overlaps) > 0:
@@ -1005,13 +1041,11 @@ func cmdSources(args []string, stdout, stderr io.Writer, now time.Time) int {
 	unattributed := fs.Bool("unattributed", false, "list seen paths that matched no repo rule")
 	var sf sourceFlags
 	sf.declare(fs, true)
-	if err := verbflag.Parse(fs, args); err != nil {
-		return refuse(stderr, " sources", oneline.Cap(err.Error(), oneline.TailBytes))
-	}
-	if code, refused := noPositional(fs, stderr, "sources"); refused {
+	s, code, ok := start(fs, args, "SOURCES", stdout, stderr)
+	if !ok {
 		return code
 	}
-	r := &refusals{token: "SOURCES"}
+	r := &refusals{token: "SOURCES", s: s}
 	checkDay(r, *day, *all)
 	sf.check(r)
 	checkMax(r, *max)
@@ -1031,50 +1065,50 @@ func cmdSources(args []string, stdout, stderr io.Writer, now time.Time) int {
 			rules.FilterDay(*day)
 		}
 	}
-	sources := sf.read(rules, now)
+	sources, copyNotes := sf.read(rules, now, true)
 	if !*all {
 		// When --day is specified (without --all), message counts, row keys, and unattributed
 		// path tallies are scoped to the selected day. Source-wide inventory and error metadata
 		// (files, unreadable sources, and unparsed lines) remain source-wide because unreadable
 		// or unparsed files may lack valid dates and describe properties of the declared source.
-		for _, s := range sources {
+		for _, src := range sources {
 			var dayStream []tokens.Message
 			keys := map[tokens.Key]bool{}
-			for _, m := range s.Stream {
+			for _, m := range src.Stream {
 				if m.Day == *day {
 					dayStream = append(dayStream, m)
 					keys[tokens.Key{Day: m.Day, Model: m.Model, Repo: m.Repo}] = true
 				}
 			}
-			s.Stream = dayStream
-			if tokens.Applies(s.Kind, "messages") {
-				s.Stat.Messages = len(dayStream)
+			src.Stream = dayStream
+			if tokens.Applies(src.Kind, "messages") {
+				src.Stat.Messages = len(dayStream)
 			}
-			s.Stat.Rows = len(keys)
+			src.Stat.Rows = len(keys)
 		}
 	}
 
-	srcList := bounded.Capped(stdout, *max, "SOURCES", "source", maxRemedy("sources"))
-	unreadable := bounded.Capped(stderr, *max, "SOURCES", "unreadable", maxRemedy("sources"))
-	unparsed := bounded.Capped(stderr, *max, "SOURCES", "unparsed", maxRemedy("sources"))
-	stems := bounded.Capped(stdout, *max, "SOURCES", "unattributed", maxRemedy("sources"))
+	srcList := s.list(false, *max, "SOURCES", "source", maxRemedy("sources"))
+	unreadable := s.list(true, *max, "SOURCES", "unreadable", maxRemedy("sources"))
+	unparsed := s.list(true, *max, "SOURCES", "unparsed", maxRemedy("sources"))
+	stems := s.list(false, *max, "SOURCES", "unattributed", maxRemedy("sources"))
 	files, messages, rows := 0, 0, 0
-	for _, s := range sources {
-		srcList.Line(sourceLine("SOURCES", s))
-		files += s.Stat.Files
-		messages += s.Stat.Messages
-		rows += s.Stat.Rows
+	for _, src := range sources {
+		srcList.Line(sourceLine(s, "SOURCES", src))
+		files += src.Stat.Files
+		messages += src.Stat.Messages
+		rows += src.Stat.Rows
 	}
 	srcList.More()
-	for _, s := range sources {
-		for _, u := range s.Unreadables {
-			unreadable.Line(unreadableLine("SOURCES", u))
+	for _, src := range sources {
+		for _, u := range src.Unreadables {
+			unreadable.Line(unreadableLine(s, "SOURCES", u))
 		}
 	}
 	unreadable.More()
-	for _, s := range sources {
-		for _, u := range s.Unparseds {
-			unparsed.Line(unparsedLine("SOURCES", u))
+	for _, src := range sources {
+		for _, u := range src.Unparseds {
+			unparsed.Line(unparsedLine(s, "SOURCES", u))
 		}
 	}
 	unparsed.More()
@@ -1083,16 +1117,17 @@ func cmdSources(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// the rules the file is missing, written in the shape a rule matches.
 	unattributedField := tokens.Dash
 	if *unattributed {
-		for _, s := range rules.Unattributed() {
-			stems.Line(fmt.Sprintf("SOURCES UNATTRIBUTED stem=%s tokens=%d", oneline.Field(s.Stem), s.Count))
+		for _, u := range rules.Unattributed() {
+			stems.Line(s.line("SOURCES", "UNATTRIBUTED", "", "stem", u.Stem, "tokens", u.Count))
 		}
 		stems.More()
 		unattributedField = strconv.Itoa(rules.TotalUnattributed())
 	}
-	fmt.Fprintf(stdout, "SOURCES OK sources=%d files=%d messages=%d unreadable=%d unparsed=%d rows=%d unattributed=%s\n",
-		len(sources), files, messages, unreadable.Total(), unparsed.Total(), rows,
-		oneline.Field(unattributedField))
-	return 0
+	counts := []any{"sources", len(sources), "files", files, "messages", messages, "unreadable", unreadable.Total(),
+		"unparsed", unparsed.Total(), "rows", rows, "unattributed", unattributedField}
+	fmt.Fprintf(s.out(), "SOURCES OK%s\n", s.factFields(counts...))
+	copyNote(s, "SOURCES", copyNotes)
+	return s.done(0, *max)
 }
 
 // ---------------------------------------------------------------------------- report
@@ -1119,21 +1154,20 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	redisAddr := fs.String("redis", "", "Redis address for the store summary mode")
 	redisUser := fs.String("user", "", "Redis username for the store summary mode")
 	passwordEnv := fs.String("password-env", "", "environment variable holding the Redis password")
+	dryRun := fs.Bool("dry-run", false, "print the body and name the --note file, and write no file")
 	var sf sourceFlags
 	sf.declare(fs, true)
-	if err := verbflag.Parse(fs, args); err != nil {
-		return refuse(stderr, " report", oneline.Cap(err.Error(), oneline.TailBytes))
-	}
-	if code, refused := noPositional(fs, stderr, "report"); refused {
+	s, code, ok := start(fs, args, "REPORT", stdout, stderr)
+	if !ok {
 		return code
 	}
 	if *redisAddr != "" {
-		return cmdReportStore(*redisAddr, *redisUser, *passwordEnv, *monthFlag, *byFlag, *max, stdout, stderr)
+		return cmdReportStore(s, *redisAddr, *redisUser, *passwordEnv, *monthFlag, *byFlag, *max, stderr)
 	}
 	if *monthFlag != "" {
-		return (&refusals{token: "REPORT", list: []string{"--month is the store's month report; it wants --redis <host:port>"}}).print(stderr)
+		return (&refusals{token: "REPORT", s: s, list: []string{"--month is the store's month report; it wants --redis <host:port>"}}).print(stderr)
 	}
-	r := &refusals{token: "REPORT"}
+	r := &refusals{token: "REPORT", s: s}
 	r.required("who", *who, wantsWho)
 	switch {
 	case *day == "":
@@ -1161,32 +1195,29 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 		r.add("--repos " + sf.repos + ": " + err.Error() + "; it wants " + wantsRepos)
 		return r.print(stderr)
 	}
-	sorted := append([]string(nil), supersedes...)
-	sort.Strings(sorted)
+	sorted := slices.Sorted(slices.Values(supersedes))
 
-	sources := sf.read(rules, now)
+	sources, copyNotes := sf.read(rules, now, *dryRun)
 	folder := tokens.NewFolder()
-	for _, s := range sources {
-		for _, m := range s.Stream {
-			folder.Add(s.Label, m)
+	for _, src := range sources {
+		for _, m := range src.Stream {
+			folder.Add(src.Label, m)
 		}
 	}
 	// Rule 20: report "folds that machine's own sources for one day, the same sources and
-	// the same attribution as fold". That has to include what the fold SAYS about them.
-	// This verb counted only the unreadables, so a transcript line whose stamp does not
-	// parse and a message with no id -- both counted by the reader, both dropped before
-	// the body -- left no trace at all, and the friend pasted a short day onto the bus
-	// under REPORT OK (rule 3: counted and printed, never skipped silently).
+	// the same attribution as fold", and that includes what the fold SAYS about them: an
+	// unreadable file, a line that did not parse and a message with no id each leave a
+	// line here (rule 3: counted and printed, never skipped silently).
 	unreadable, unparsed := 0, 0
-	for _, s := range sources {
-		for _, u := range s.Unreadables {
-			fmt.Fprintln(stderr, unreadableLine("TOKENS", u))
+	for _, src := range sources {
+		for _, u := range src.Unreadables {
+			fmt.Fprintln(s.err(), unreadableLine(s, "TOKENS", u))
 			unreadable++
 		}
 	}
-	for _, s := range sources {
-		for _, u := range s.Unparseds {
-			fmt.Fprintln(stderr, unparsedLine("TOKENS", u))
+	for _, src := range sources {
+		for _, u := range src.Unparseds {
+			fmt.Fprintln(s.err(), unparsedLine(s, "TOKENS", u))
 			unparsed++
 		}
 	}
@@ -1194,12 +1225,14 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// refusal; it is spend that was read and then dropped, and fold names it on its one
 	// remedy line. So does this verb.
 	if dropped := noidAndDup(sources); dropped != "" {
-		fmt.Fprintf(stderr, "TOKENS NOTE %s\n", oneline.Escape(dropped))
+		fmt.Fprintf(s.err(), "TOKENS NOTE %s\n", oneline.Escape(dropped))
+		s.note(dropped)
 	}
+	copyNote(s, "TOKENS", copyNotes)
 	rows, mixed := folder.DayRows(*day)
 	for _, m := range mixed {
-		fmt.Fprintf(stderr, "TOKENS MIXED date=%s model=%s repo=%s bases=%s: two day bases on one row; declare one export for that day\n",
-			oneline.Field(m.Day), oneline.Field(m.Model), oneline.Field(m.Repo), oneline.Field(strings.Join(m.Bases, ",")))
+		fmt.Fprintln(s.err(), s.line("TOKENS", "MIXED", "two day bases on one row; declare one export for that day",
+			"date", m.Day, "model", m.Model, "repo", m.Repo, "bases", strings.Join(m.Bases, ",")))
 	}
 	// A mixed key is not in `rows` at all (Folder.DayRows keeps them apart), so the body
 	// below is exactly "no line for that key" and every other key's lines.
@@ -1218,39 +1251,49 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if lines > 0 {
 		body = strings.Join(rendered, "\n") + "\n"
 	}
+	s.o.Payload = body
+	s.fact("who", *who)
+	s.fact("day", *day)
+	s.fact("rows", lines)
 	if lines == 0 || len(mixed) > 0 {
 		// A friend with nothing to show says so, and never sends zeros. A REPORT FAIL
-		// writes nothing: an existing --note file is left byte-unchanged.
-		//
-		// A mixed key is a FAIL for the day, and the rest of the body is still printed:
-		// the spec's sentence is "no line for that key", not no line for any key, and a
-		// friend who has to choose an export wants to see what the other keys came to.
-		// It goes to stdout only -- nothing is pasted and --note is not touched -- and
-		// rows= is what it could compute rather than a flat 0, which is a change to the
-		// grammar's REPORT FAIL line and is proposed in the PR body.
+		// writes nothing: an existing --note file is left byte-unchanged. A mixed key is a
+		// FAIL for the day, and the rest of the body is still printed: the spec's sentence
+		// is "no line for that key", not no line for any key.
 		if lines > 0 {
-			fmt.Fprint(stdout, body)
+			fmt.Fprint(s.out(), body)
 		}
-		fmt.Fprintf(stderr, "REPORT FAIL who=%s day=%s rows=%d unreadable=%d\n",
+		fmt.Fprintf(s.err(), "REPORT FAIL who=%s day=%s rows=%d unreadable=%d\n",
 			oneline.Field(*who), oneline.Field(*day), lines, unreadable)
-		return 1
+		s.fact("unreadable", unreadable)
+		return s.done(1, *max)
 	}
-	fmt.Fprint(stdout, body)
+	fmt.Fprint(s.out(), body)
 	if *notePath != "" {
-		if err := atomicfile.Write(filepath.Clean(*notePath), []byte(body), 0o644); err != nil {
+		// A dry run checks the note's path exactly as the write would (atomicfile.Check)
+		// and refuses what it refuses; only the write itself is skipped.
+		write := func() error { return atomicfile.Write(filepath.Clean(*notePath), []byte(body), 0o644) }
+		if *dryRun {
+			write = func() error { return atomicfile.Check(filepath.Clean(*notePath), 0o644) }
+		}
+		if err := write(); err != nil {
 			r.add("--note " + *notePath + ": " + err.Error())
 			return r.print(stderr)
 		}
 	}
 	// One TOKENS AVG line per model, after the body lines: the daily blended cost per
 	// token, summed over every repo the model wrote that day. Four types count toward
-	// tokens (input, output, cache write, cache read); reasoning is its own column and
-	// is not in the denominator the blended-cost ratio is over. A zero-token model still
-	// prints one line, with usd_per_mtok=-: there is no average over nothing.
+	// tokens (input, output, cache write, cache read); reasoning is its own column and is
+	// not in the denominator. usd= is the cost the sources reported, usd_per_mtok= divides
+	// it by the tokens that cost covers and no others, and unpriced= counts the tokens no
+	// source priced. A model no source priced prints usd=- and usd_per_mtok=-: a cost
+	// nobody reported is no measurement, and never a zero.
 	type modelAvg struct {
-		name   string // provider/model, or model where no source named a provider
-		tokens int64
-		usd    int64
+		name         string // provider/model, or model where no source named a provider
+		tokens       int64  // every billed token the model's rows hold
+		pricedTokens int64  // the tokens the reported cost covers
+		usd          int64
+		priced       bool
 	}
 	avgs := map[string]*modelAvg{}
 	for _, row := range rows {
@@ -1263,52 +1306,72 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 			a = &modelAvg{name: name}
 			avgs[name] = a
 		}
-		for _, t := range []tokens.Type{tokens.Input, tokens.Output, tokens.CacheWrite, tokens.CacheRead} {
-			if v, has := row.Counts.Get(t); has {
-				a.tokens += v
-			}
-		}
+		a.tokens += row.Counts.Billed()
+		a.pricedTokens += row.PricedTokens
 		a.usd += row.Usd
+		a.priced = a.priced || row.Priced
 	}
-	sortedAvg := make([]*modelAvg, 0, len(avgs))
-	for _, a := range avgs {
-		sortedAvg = append(sortedAvg, a)
-	}
+	sortedAvg := slices.Collect(maps.Values(avgs))
 	sort.Slice(sortedAvg, func(i, j int) bool {
-		pi := avgRate(sortedAvg[i].usd, sortedAvg[i].tokens)
-		pj := avgRate(sortedAvg[j].usd, sortedAvg[j].tokens)
+		pi := avgRate(sortedAvg[i].usd, sortedAvg[i].pricedTokens, sortedAvg[i].priced)
+		pj := avgRate(sortedAvg[j].usd, sortedAvg[j].pricedTokens, sortedAvg[j].priced)
 		if pi != pj {
 			return pi > pj
 		}
 		return sortedAvg[i].name < sortedAvg[j].name
 	})
-	avgList := bounded.Capped(stderr, *max, "TOKENS", "avg", maxRemedy("report"))
-	var allTokens, allUsd int64
+	avgList := s.list(true, *max, "TOKENS", "avg", maxRemedy("report"))
+	var allTokens, allPricedTokens, allUsd int64
+	allPriced := false
 	for _, a := range sortedAvg {
 		allTokens += a.tokens
+		allPricedTokens += a.pricedTokens
 		allUsd += a.usd
-		avgList.Line(fmt.Sprintf("TOKENS AVG day=%s model=%s tokens=%d usd=%s usd_per_mtok=%s",
-			oneline.Field(*day), oneline.Field(a.name), a.tokens, oneline.Field(tokens.Usd(a.usd)), oneline.Field(tokens.UsdPerMtok(a.usd, a.tokens))))
+		allPriced = allPriced || a.priced
+		avgList.Line(s.line("TOKENS", "AVG", "", "day", *day, "model", a.name, "tokens", a.tokens,
+			"usd", usdCell(a.usd, a.priced), "usd_per_mtok", usdPerMtokCell(a.usd, a.pricedTokens, a.priced),
+			"unpriced", a.tokens-a.pricedTokens))
 	}
 	avgList.More()
-	fmt.Fprintf(stderr, "TOKENS AVG-ALL day=%s tokens=%d usd=%s usd_per_mtok=%s\n",
-		oneline.Field(*day), allTokens, oneline.Field(tokens.Usd(allUsd)), oneline.Field(tokens.UsdPerMtok(allUsd, allTokens)))
+	fmt.Fprintln(s.err(), s.line("TOKENS", "AVG-ALL", "", "day", *day, "tokens", allTokens,
+		"usd", usdCell(allUsd, allPriced), "usd_per_mtok", usdPerMtokCell(allUsd, allPricedTokens, allPriced),
+		"unpriced", allTokens-allPricedTokens))
 	// The OK line is the grammar's, field for field (SPEC-TOKENS' TOKENS SOURCE section):
-	// it carries no unreadable= and no unparsed=, so what says the day is short is the
-	// TOKENS UNREADABLE / TOKENS UNPARSED lines above it, the TOKENS NOTE, and exit 1.
-	// Giving this line those two counts is a grammar change, and the PR body proposes it.
-	fmt.Fprintf(stderr, "REPORT OK who=%s day=%s rows=%d at=%s build=%s subject=%s\n",
+	// what says the day is short is the TOKENS UNREADABLE / TOKENS UNPARSED lines above it,
+	// the TOKENS NOTE, and exit 1. Under --dry-run --note was not written, and the line
+	// says so.
+	subject := tokens.Subject(*day, stamp(now), buildVersion(), sorted)
+	fmt.Fprintf(s.err(), "REPORT OK who=%s day=%s rows=%d at=%s build=%s%s subject=%s\n",
 		oneline.Field(*who), oneline.Field(*day), lines, oneline.Field(stamp(now)),
-		oneline.Field(buildVersion()),
-		oneline.Escape(tokens.Subject(*day, stamp(now), buildVersion(), sorted)))
+		oneline.Field(buildVersion()), s.dryRunFields(*dryRun, "note", *notePath), oneline.Escape(subject))
+	s.fact("at", stamp(now))
+	s.fact("build", buildVersion())
+	s.fact("subject", tool.Text(subject))
 	// Rule 3, and the exit table: "a declared source with an unreadable file" is exit 1,
-	// and a line that did not parse is the same wall under fold (main.go's counts). The
-	// body still printed and --note still landed -- exit 1 still writes -- but a friend
-	// about to paste this onto the bus is told it does not cover what it claims.
+	// and a line that did not parse is the same wall under fold. The body still printed and
+	// --note still landed -- exit 1 still writes -- but a friend about to paste this onto
+	// the bus is told it does not cover what it claims.
 	if unreadable > 0 || unparsed > 0 {
-		return 1
+		return s.done(1, *max)
 	}
-	return 0
+	return s.done(0, *max)
+}
+
+// usdCell is a cost as a field: the dollars, or - when no source reported one.
+func usdCell(micro int64, priced bool) string {
+	if !priced {
+		return tokens.Dash
+	}
+	return tokens.Usd(micro)
+}
+
+// usdPerMtokCell is the blended rate as a field: - when no source reported a cost, or the
+// model had no tokens to divide by.
+func usdPerMtokCell(micro, n int64, priced bool) string {
+	if !priced {
+		return tokens.Dash
+	}
+	return tokens.UsdPerMtok(micro, n)
 }
 
 // ------------------------------------------------------------------------------- sum
@@ -1320,13 +1383,11 @@ func cmdSum(args []string, stdout, stderr io.Writer, now time.Time) int {
 	out := fs.String("out", "", "directory holding daily token files")
 	month := fs.String("month", "", "month to sum as YYYY-MM")
 	max := fs.Int("max", bounded.Default, "maximum rows to print; 0 prints all")
-	if err := verbflag.Parse(fs, args); err != nil {
-		return refuse(stderr, " sum", oneline.Cap(err.Error(), oneline.TailBytes))
-	}
-	if code, refused := noPositional(fs, stderr, "sum"); refused {
+	s, code, ok := start(fs, args, "SUM", stdout, stderr)
+	if !ok {
 		return code
 	}
-	r := &refusals{token: "SUM"}
+	r := &refusals{token: "SUM", s: s}
 	r.required("out", *out, wantsOut)
 	switch {
 	case *month == "":
@@ -1338,51 +1399,46 @@ func cmdSum(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if len(r.list) > 0 {
 		return r.print(stderr)
 	}
-	s, err := tokens.SumMonth(*out, *month)
+	sm, err := tokens.SumMonth(*out, *month)
 	if err != nil {
 		r.add(err.Error())
 		return r.print(stderr)
 	}
 	turns := tokens.Dash
-	if s.HaveTurn {
-		turns = strconv.Itoa(s.Turns)
+	if sm.HaveTurn {
+		turns = strconv.Itoa(sm.Turns)
 	}
 	first, last := tokens.Dash, tokens.Dash
-	if len(s.Days) > 0 {
-		first, last = s.Days[0], s.Days[len(s.Days)-1]
+	if len(sm.Days) > 0 {
+		first, last = sm.Days[0], sm.Days[len(sm.Days)-1]
 	}
-	fmt.Fprintf(stdout, "SUM MONTH month=%s at=%s build=%s days=%d first=%s last=%s missing=%d rows=%d turns=%s\n",
-		oneline.Field(*month), oneline.Field(stamp(now)), oneline.Field(buildVersion()),
-		len(s.Days), oneline.Field(first), oneline.Field(last), len(s.Missing), s.Rows, oneline.Field(turns))
+	fmt.Fprintln(s.out(), s.line("SUM", "MONTH", "", "month", *month, "at", stamp(now), "build", buildVersion(),
+		"days", len(sm.Days), "first", first, "last", last, "missing", len(sm.Missing), "rows", sm.Rows, "turns", turns))
 
 	widen := "nova-tokens sum --out " + *out + " --month " + *month + " --max 0"
-	pairs := bounded.Capped(stdout, *max, "SUM", "pair", widen)
-	for _, p := range s.Pairs {
-		pairs.Line(fmt.Sprintf("SUM PAIR model=%s repo=%s %s days=%d",
-			oneline.Field(p.Model), oneline.Field(p.Repo), aggFields(p.Agg), p.Agg.Days()))
+	pairs := s.list(false, *max, "SUM", "pair", widen)
+	for _, p := range sm.Pairs {
+		pairs.Line(s.line("SUM", "PAIR", "", append(append([]any{"model", p.Model, "repo", p.Repo}, aggFields(p.Agg)...), "days", p.Agg.Days())...))
 	}
 	pairs.More()
-	models := bounded.Capped(stdout, *max, "SUM", "model", widen)
-	for _, m := range s.Models {
-		models.Line(fmt.Sprintf("SUM MODEL model=%s %s repos=%d",
-			oneline.Field(m.Model), aggFields(m.Agg), m.Agg.Keys()))
+	models := s.list(false, *max, "SUM", "model", widen)
+	for _, m := range sm.Models {
+		models.Line(s.line("SUM", "MODEL", "", append(append([]any{"model", m.Model}, aggFields(m.Agg)...), "repos", m.Agg.Keys())...))
 	}
 	models.More()
-	fmt.Fprintf(stdout, "SUM TOTAL %s turns=%s pairs=%d models=%d\n",
-		aggFields(s.Total), oneline.Field(turns), len(s.Pairs), len(s.Models))
-	fmt.Fprintf(stdout, "SUM OK month=%s days=%d missing=%d pairs=%d models=%d nonutc=%d\n",
-		oneline.Field(*month), len(s.Days), len(s.Missing), len(s.Pairs), len(s.Models), s.Total.NonUTC)
-	return 0
+	fmt.Fprintln(s.out(), s.line("SUM", "TOTAL", "", append(aggFields(sm.Total), "turns", turns, "pairs", len(sm.Pairs), "models", len(sm.Models))...))
+	counts := []any{"month", *month, "days", len(sm.Days), "missing", len(sm.Missing), "pairs", len(sm.Pairs), "models", len(sm.Models), "nonutc", sm.Total.NonUTC}
+	fmt.Fprintf(s.out(), "SUM OK%s\n", s.factFields(counts...))
+	return s.done(0, *max)
 }
 
 // aggFields is the five totals, the rough count, the per-column dash counts and the
 // non-UTC count: everything a reader needs to know what a total does NOT cover.
-func aggFields(a *tokens.Agg) string {
-	return fmt.Sprintf("input=%s output=%s cache_write=%s cache_read=%s reasoning=%s rough=%d dashes=%d,%d,%d,%d,%d nonutc=%d",
-		oneline.Field(a.Cell(tokens.Input)), oneline.Field(a.Cell(tokens.Output)), oneline.Field(a.Cell(tokens.CacheWrite)),
-		oneline.Field(a.Cell(tokens.CacheRead)), oneline.Field(a.Cell(tokens.Reasoning)), a.Rough,
-		a.Dashes[tokens.Input], a.Dashes[tokens.Output], a.Dashes[tokens.CacheWrite],
-		a.Dashes[tokens.CacheRead], a.Dashes[tokens.Reasoning], a.NonUTC)
+func aggFields(a *tokens.Agg) []any {
+	return []any{"input", a.Cell(tokens.Input), "output", a.Cell(tokens.Output), "cache_write", a.Cell(tokens.CacheWrite),
+		"cache_read", a.Cell(tokens.CacheRead), "reasoning", a.Cell(tokens.Reasoning), "rough", a.Rough,
+		"dashes", fmt.Sprintf("%d,%d,%d,%d,%d", a.Dashes[tokens.Input], a.Dashes[tokens.Output], a.Dashes[tokens.CacheWrite],
+			a.Dashes[tokens.CacheRead], a.Dashes[tokens.Reasoning]), "nonutc", a.NonUTC}
 }
 
 func validMonth(m string) bool {
@@ -1407,13 +1463,11 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	strict := fs.Bool("strict", false, "treat every gap and note as a finding")
 	noSpend := fs.String("no-spend", "", "file listing UTC dates with no spend, one per line")
 	through := fs.String("through", "", "require coverage through this UTC day, YYYY-MM-DD")
-	if err := verbflag.Parse(fs, args); err != nil {
-		return refuse(stderr, " check", oneline.Cap(err.Error(), oneline.TailBytes))
-	}
-	if code, refused := noPositional(fs, stderr, "check"); refused {
+	s, code, ok := start(fs, args, "CHECK", stdout, stderr)
+	if !ok {
 		return code
 	}
-	r := &refusals{token: "CHECK"}
+	r := &refusals{token: "CHECK", s: s}
 	r.required("out", *out, wantsOut)
 	checkMax(r, *max)
 	if *strict && strings.TrimSpace(*noSpend) != "" {
@@ -1442,29 +1496,33 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return r.print(stderr)
 	}
 	remedyLine := "nova-tokens check --out " + *out + " --max 0"
-	files := bounded.Capped(stderr, *max, "CHECK", "file", remedyLine)
-	rowsList := bounded.Capped(stderr, *max, "CHECK", "row", remedyLine)
-	missing := bounded.Capped(stderr, *max, "CHECK", "missing", remedyLine)
-	strays := bounded.Capped(stderr, *max, "CHECK", "stray", remedyLine)
+	files := s.list(true, *max, "CHECK", "file", remedyLine)
+	rowsList := s.list(true, *max, "CHECK", "row", remedyLine)
+	missing := s.list(true, *max, "CHECK", "missing", remedyLine)
+	strays := s.list(true, *max, "CHECK", "stray", remedyLine)
 	for _, f := range res.Findings {
-		line := fmt.Sprintf("CHECK FAIL %s: %s", oneline.Escape(f.Path), oneline.Escape(oneline.Cap(f.Reason, oneline.TailBytes)))
+		reason := oneline.Cap(f.Reason, oneline.TailBytes)
+		line := fmt.Sprintf("CHECK FAIL %s: %s", oneline.Escape(f.Path), oneline.Escape(reason))
 		if f.Line > 0 {
-			line = fmt.Sprintf("CHECK FAIL %s:%d: %s", oneline.Escape(f.Path), f.Line, oneline.Escape(oneline.Cap(f.Reason, oneline.TailBytes)))
+			line = fmt.Sprintf("CHECK FAIL %s:%d: %s", oneline.Escape(f.Path), f.Line, oneline.Escape(reason))
 		}
+		kind, list := "file", files
 		if f.Line > 2 {
-			rowsList.Line(line)
-			continue
+			kind, list = "row", rowsList
 		}
-		files.Line(line)
+		list.Line(line)
+		s.item(kind, "path", f.Path, "line", f.Line, "why", tool.Text(reason))
 	}
 	files.More()
 	rowsList.More()
 	for _, d := range res.Missing {
 		missing.Line("CHECK MISSING date=" + oneline.Field(d))
+		s.item("missing", "date", d)
 	}
 	missing.More()
 	for _, p := range res.Strays {
 		strays.Line("CHECK STRAY " + oneline.Escape(p))
+		s.item("stray", "path", p)
 	}
 	strays.More()
 
@@ -1473,19 +1531,28 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 		first, last = res.First, res.Last
 	}
 	if res.Stale {
-		fmt.Fprintf(stderr, "CHECK FAIL stale last=%s through=%s\n", oneline.Field(last), oneline.Field(*through))
+		fmt.Fprintf(s.err(), "CHECK FAIL stale last=%s through=%s\n", oneline.Field(last), oneline.Field(*through))
+		s.item("stale", "last", last, "through", *through)
+	}
+	// A GATE THAT CANNOT GO RED IS NO GATE. An --out holding no day file has nothing in it
+	// to pass, and a green over nothing reads exactly like a green over a month: it is a
+	// finding, with the fold that makes the first file as its remedy.
+	empty := res.Files == 0
+	if empty {
+		why := "--out " + *out + " holds no day file, so there is nothing to check; fold one first: nova-tokens fold --out " + *out + " --day <YYYY-MM-DD> --repos <file> <source flags>"
+		fmt.Fprintf(s.err(), "CHECK FAIL %s\n", oneline.Escape(why))
+		s.o.Why = append(s.o.Why, why)
 	}
 	bad := files.Total() + rowsList.Total()
-	if bad > 0 || len(res.Missing) > 0 || len(res.Strays) > 0 || res.Stale {
-		fmt.Fprintf(stderr, "CHECK FAIL files=%d rows=%d first=%s last=%s bad=%d missing=%d stray=%d gap=%d notes=%d\n",
-			res.Files, res.Rows, oneline.Field(first), oneline.Field(last), bad,
-			len(res.Missing), len(res.Strays), len(res.Gaps), len(res.Notes))
-		return 1
+	counts := []any{"files", res.Files, "rows", res.Rows, "first", first, "last", last}
+	if bad > 0 || len(res.Missing) > 0 || len(res.Strays) > 0 || res.Stale || empty {
+		counts = append(counts, "bad", bad, "missing", len(res.Missing), "stray", len(res.Strays), "gap", len(res.Gaps), "notes", len(res.Notes))
+		fmt.Fprintf(s.err(), "CHECK FAIL%s\n", s.factFields(counts...))
+		return s.done(1, *max)
 	}
 	// gap= and notes= are on the OK line too, and that is the whole point: what the gate
 	// stopped naming it still counts, so nothing was hidden to make the line green.
-	fmt.Fprintf(stdout, "CHECK OK at=%s build=%s files=%d rows=%d first=%s last=%s missing=0 stray=0 gap=%d notes=%d\n",
-		oneline.Field(stamp(now)), oneline.Field(buildVersion()), res.Files, res.Rows,
-		oneline.Field(first), oneline.Field(last), len(res.Gaps), len(res.Notes))
-	return 0
+	counts = append([]any{"at", stamp(now), "build", buildVersion()}, append(counts, "missing", 0, "stray", 0, "gap", len(res.Gaps), "notes", len(res.Notes))...)
+	fmt.Fprintf(s.out(), "CHECK OK%s\n", s.factFields(counts...))
+	return s.done(0, *max)
 }

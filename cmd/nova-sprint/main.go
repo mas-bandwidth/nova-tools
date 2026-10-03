@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
@@ -65,7 +66,10 @@ type app struct {
 	// friends reads the names of nova-config's friend rows (friend sync):
 	// tests give it the config's in-memory store.
 	friends friendsFn
-	loc     *time.Location // the zone times print in: nil is the machine's local zone
+	// tip reads origin's tip of a branch (friend sync, a friend's LAND): tests give
+	// it a table of tips and open no socket.
+	tip tipFn
+	loc *time.Location // the zone times print in: nil is the machine's local zone
 	// notify is how an interrupt reaches a command that runs until it is
 	// interrupted (where --watch): the context it returns is done at one.
 	notify func(ctx context.Context) (context.Context, context.CancelFunc)
@@ -92,6 +96,9 @@ type app struct {
 	// landRoot is the directory land keeps its clones under when it is given
 	// no --repo-dir (land.go): os.UserCacheDir's nova-sprint/land.
 	landRoot func() (string, error)
+	// scoreBackend, when set (a test), is the backend land scores landed diffs through
+	// (landscore.go); nil is Jev with the key JEV_API_KEY holds.
+	scoreBackend decide.Backend
 	// gitEnv is the environment land's git and check run in: nil is the
 	// caller's, untouched (a test gives git an identity and no global config).
 	gitEnv []string
@@ -119,6 +126,9 @@ type app struct {
 	// rounds: land itself then leaves the queue as it is.
 	prune    pruneQueue
 	landLazy bool
+	// landCtx is the land loop's context while it runs a land (landOnce): the landed
+	// diffs' scoring runs under it, so the loop's shutdown ends the pass; nil is none.
+	landCtx context.Context
 	// tickDeadline is how long the run loop waits for one tick (run
 	// --tick-deadline; 0, a test's loop, waits for ever); after is the clock
 	// it waits on (time.After unless a test sets it), and exit how the loop
@@ -136,6 +146,7 @@ func newApp(getenv func(string) string) *app {
 	a.backend = a.redisBackend
 	a.inventory = a.readInventory
 	a.friends = a.readFriends
+	a.tip = a.branchTip
 	a.landRoot = defaultLandRoot
 	a.home = os.UserHomeDir
 	return a

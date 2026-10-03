@@ -53,8 +53,8 @@ func decideTool(w world) *tool.Tool {
 		Stamp: version,
 		How: `a decision is a named schema of typed questions (choice or noul) asked over a state.
 A backend answers it: jev (TypeSafe's System One model, key from JEV_API_KEY) or fixed (a file).
-Every decision is appended to the record (--record, JSON lines), with its state and answers.
-outcome attaches what turned out true; calibrate reads the record and prints the bar it supports.
+Every decision is appended to the record (--record, JSON lines); read and score judge a diff.
+outcome attaches what turned out true; calibrate prints the bar it supports; findings clusters.
 first run: from a checkout root (the examples read its testdata); fixed backend, no network or key.`,
 		ExitTable: "0 done, 1 an outcome conflicts with the one recorded, 2 could not run (a flag, an input, the backend, the record).",
 		Verbs: []tool.Verb{
@@ -90,6 +90,24 @@ or UNSURE). The state is the card, the rule when --rule names one, and the diff,
 					w.asking(f)
 				},
 				Run: w.read,
+			},
+			{
+				Name:    "score",
+				Usage:   "score --card <file> --diff <file> --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
+				Example: "score --card " + fixture + "card.md --diff " + fixture + "card.diff --backend fixed --answers " + fixture + "score-answers.json --record ./decisions.jsonl --op card-1@landed@0123456789ab",
+				Effect:  tool.Delivery + "; with --backend jev it sends the card and diff to the backend, and it appends to --record",
+				Detail: `The score decision: a landed diff against its card, the read's five questions and one noul
+per escalation class the reviews found (stranded_fragment, cut_citation, renamed_file_assumed,
+ledger_ceiling, comment_contradicts_code, test_weakened, record_made_claim, invented_reason,
+fenced_block_edit, asserted_data_cut, load_bearing_word_cut; outside_paths is 1 - inside_paths).
+The line names the top class and its p; nova-sprint land asks it as <card>@landed@<head>.`,
+				DryRun: true,
+				Flags: func(f *tool.Flags) {
+					f.Required("card", "the card the worker was given, a file")
+					f.Required("diff", "the landed unified diff, a file")
+					w.asking(f)
+				},
+				Run: w.score,
 			},
 			{
 				Name:    "outcome",
@@ -128,6 +146,29 @@ caught, negatives bounced), and the CATCH-ALL bar: the highest that still flags 
 					})
 				},
 				Run: calibrate,
+			},
+			{
+				Name:    "findings",
+				Usage:   "findings --record <file> [--since <time>] [--bar <p>]",
+				Example: "findings --record " + fixture + "record.jsonl --since 2026-10-01",
+				Effect:  tool.Inspection,
+				Detail: `Clusters the score decisions made since --since by every class each gives a p at or above
+--bar: one FINDING line per class (count, cards), most cards first; unnamed is p(defect) at or
+above the bar with no class there. A class that keeps coming back is a finder rule or class test owed.`,
+				Flags: func(f *tool.Flags) {
+					f.Required("record", "the record file")
+					f.String("since", "", "the window's start, RFC 3339 or a date (2006-01-02, UTC); default: seven days before now")
+					f.String("bar", "0.5", "the p at or above which a class counts, a probability")
+					f.Check(func(c *tool.Call) {
+						if _, err := since(c.Str("since"), time.Time{}); err != nil {
+							c.Problem(err.Error())
+						}
+						if _, err := bars(c.Str("bar")); err != nil || len(list(c.Str("bar"))) != 1 {
+							c.Problem(fmt.Sprintf("--bar %q wants one probability from 0 to 1", c.Str("bar")))
+						}
+					})
+				},
+				Run: w.findings,
 			},
 		},
 	}
@@ -180,9 +221,28 @@ func (w world) ask(c *tool.Call) *tool.Out {
 }
 
 func (w world) read(c *tool.Call) *tool.Out {
-	inputs, texts := map[string]string{}, map[string]string{}
+	texts, inputs, refused := readFiles(c, "card", "diff", "rule")
+	if refused != nil {
+		return refused
+	}
+	return w.decision(c, decide.ReadSchema(), decide.ReadState(texts["card"], texts["diff"], texts["rule"]), inputs)
+}
+
+// score reads the card and the landed diff and makes the score decision.
+func (w world) score(c *tool.Call) *tool.Out {
+	texts, inputs, refused := readFiles(c, "card", "diff")
+	if refused != nil {
+		return refused
+	}
+	return w.decision(c, decide.ScoreSchema(), decide.ReadState(texts["card"], texts["diff"], ""), inputs)
+}
+
+// readFiles reads each named file flag that is given: its text, and the record's inputs
+// (the path and its SHA-256); every file it cannot read is named in one refusal.
+func readFiles(c *tool.Call, names ...string) (texts, inputs map[string]string, refused *tool.Out) {
+	texts, inputs = map[string]string{}, map[string]string{}
 	var problems []string
-	for _, name := range []string{"card", "diff", "rule"} {
+	for _, name := range names {
 		if !c.Given(name) {
 			continue
 		}
@@ -195,9 +255,25 @@ func (w world) read(c *tool.Call) *tool.Out {
 		inputs[name], inputs[name+"_sha256"] = c.Str(name), decide.Sum(raw)
 	}
 	if len(problems) > 0 {
-		return tool.Refuse(problems...)
+		return nil, nil, tool.Refuse(problems...)
 	}
-	return w.decision(c, decide.ReadSchema(), decide.ReadState(texts["card"], texts["diff"], texts["rule"]), inputs)
+	return texts, inputs, nil
+}
+
+// findings prints the record's score decisions in the window clustered by class.
+func (w world) findings(c *tool.Call) *tool.Out {
+	ds, err := decide.Load(c.Str("record"))
+	if err != nil {
+		return tool.Refuse(err.Error())
+	}
+	bar, _ := strconv.ParseFloat(c.Str("bar"), 64) // checked by the verb's flag rule
+	from, _ := since(c.Str("since"), w.now())      // checked by the verb's flag rule
+	clusters, scored := decide.Findings(ds, from, bar)
+	o := tool.Done().Fact("scored", scored).Fact("classes", len(clusters)).Fact("bar", round(bar)).Fact("since", from.Format(time.RFC3339))
+	for _, cl := range clusters {
+		o.Item("finding", "class", cl.Class, "count", cl.Count, "cards", strings.Join(cl.Cards, ","))
+	}
+	return o
 }
 
 // decision makes one decision and records it (decide.Make): an op id already
@@ -250,7 +326,10 @@ func (w world) decision(c *tool.Call, s decide.Schema, state string, inputs map[
 // schema has one, and one ANSWER item per question in name order.
 func answered(d decide.Decision, recorded string) *tool.Out {
 	o := tool.Done().Fact("id", d.ID).Fact("decision", d.Decision).Fact("backend", d.Backend)
-	if v, ok := d.Answers["verdict"]; ok && v.Type == decide.Choice {
+	if d.Decision == decide.ScoreName {
+		top, p := decide.Top(d)
+		o.Fact("top", top).Fact("p", round(p))
+	} else if v, ok := d.Answers["verdict"]; ok && v.Type == decide.Choice {
 		o.Fact("verdict", v.Value).Fact("p", round(v.Prob(v.Value)))
 	}
 	o.Fact("tokens_in", d.Usage.InputTokens).Fact("tokens_out", d.Usage.OutputTokens).Fact("recorded", recorded)
@@ -360,6 +439,20 @@ func probs(p map[string]float64) string {
 }
 
 func round(p float64) float64 { return float64(int(p*1000+0.5)) / 1000 }
+
+// since parses --since: an RFC 3339 time or a date (UTC midnight); "" is seven days
+// before now.
+func since(s string, now time.Time) (time.Time, error) {
+	if s == "" {
+		return now.Add(-7 * 24 * time.Hour).UTC().Truncate(time.Second), nil
+	}
+	for _, layout := range []string{time.RFC3339, time.DateOnly} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t.UTC(), nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("--since %q is not an RFC 3339 time or a date (2006-01-02)", s)
+}
 
 // readInput reads a file, or stdin when the name is -.
 func readInput(name string, stdin io.Reader) ([]byte, error) {

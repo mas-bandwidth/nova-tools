@@ -10,6 +10,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/redis/go-redis/v9"
 )
 
 func (app *application) cmdMember(args []string, stdout, stderr io.Writer) int {
@@ -28,13 +29,17 @@ func (app *application) cmdMember(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, verb, "wants a table and a new member ID: member create <table> <id>")
 	}
 	ctx := context.Background()
+	call := func(c redis.Cmdable) error { return ntable.MemberCreate(ctx, c, pos[0], pos[1], *write) }
+	if code, done := app.preflight(stdout, stderr, fs, verb, *addr, pos, call); done {
+		return code
+	}
 	st, c, code := app.client(ctx, verb, *addr, stderr)
 	if code != 0 {
 		return code
 	}
 	defer st.Close()
 	trips := st.CountTrips()
-	if err := ntable.MemberCreate(ctx, c, pos[0], pos[1], *write); err != nil {
+	if err := call(c); err != nil {
 		return st.refusal(stderr, verb, err)
 	}
 	fmt.Fprintf(stdout, "TABLE MEMBER CREATE table=%s member=%s trips=%d\n", pos[0], field(pos[1]), trips.N())
@@ -124,7 +129,7 @@ func (app *application) cmdMemberRead(args []string, stdout, stderr io.Writer) i
 	var cells cellList
 	fs.Var(&cells, "cell", "read every member of the cell `row:col` (repeatable); the ids are then not given")
 	atEpoch := fs.String("at-epoch", "", "read a materialised epoch instead of the active one")
-	asJSON := fs.Bool("json", false, "print the reading as one JSON object instead of the lines")
+	asJSON := fs.Bool("json", false, "print the reading (or the refusal) as one JSON object instead of the lines")
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())

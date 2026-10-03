@@ -3,16 +3,15 @@ package bus
 import (
 	"errors"
 	"fmt"
-	"github.com/stretchr/testify/require"
-	"io"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // TestClearStaleIndexLockAgeBoundary pins the age rule and nothing else. The clock is
@@ -53,112 +52,6 @@ func TestClearStaleIndexLockAgeBoundary(t *testing.T) {
 	require.Equal(t, 1, scans, "a stale lock was removed after %d process scans, want exactly 1", scans)
 }
 
-func TestStaleIndexLockWithALiveGitIsLeftAlone(t *testing.T) {
-	t.Parallel()
-	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
-	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
-	// mocked-clock unit test or a functional program (nova-tools #4221).
-	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
-	hermetic(t)
-	dir := cloneBus(t, bareBus(t))
-	lock, err := indexLockPath(dir)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(lock, nil, 0o644))
-	old := time.Now().Add(-2 * time.Minute)
-	require.NoError(t, os.Chtimes(lock, old, old))
-	cmd := exec.Command("git", "-C", dir, "cat-file", "--batch")
-	stdin, err := cmd.StdinPipe()
-	require.NoError(t, err)
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
-	require.NoError(t, cmd.Start())
-	t.Cleanup(func() {
-		_ = stdin.Close()
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
-			_, _ = cmd.Process.Wait()
-		}
-	})
-	deadline := time.Now().Add(testWaitBound())
-	for {
-		owns, oerr := gitOwnsCheckout(dir)
-		require.False(t, oerr != nil && !scanUnknownElsewhere(t, oerr, lock), oerr)
-		if owns {
-			break
-		}
-		if time.Now().After(deadline) {
-			procs, _ := gitProcesses()
-			require.FailNowf(t, "assertion failed", "the live git never showed as owning %s; last err=%v procs=%+v", dir, oerr, procs)
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	rep, err := ClearStaleIndexLock(dir, time.Now())
-	require.NoError(t, err)
-	require.False(t, rep.Cleared, "removed a stale index.lock while a git process still owned the checkout")
-	if _, err := os.Lstat(lock); err != nil {
-		require.NoError(t, err, "the lock is gone while git is alive: %v", err)
-	}
-	_ = stdin.Close()
-	_ = cmd.Process.Kill()
-	_, _ = cmd.Process.Wait()
-	deadline = time.Now().Add(testWaitBound())
-	for {
-		owns, oerr := gitOwnsCheckout(dir)
-		require.False(t, oerr != nil && !scanUnknownElsewhere(t, oerr, lock), oerr)
-		if oerr == nil && !owns {
-			break
-		}
-		require.False(t, time.Now().After(deadline), "git still looked like it owned the checkout after it was killed: owns=%v err=%v", owns, oerr)
-		time.Sleep(20 * time.Millisecond)
-	}
-	// The first scan answers "cannot tell", as a stranger's exiting git makes the real one
-	// answer on a busy bench; later scans are the real host scan. The lock must survive the
-	// unknown answer and go on the next known one.
-	unknownOnce := true
-	scan := func() ([]gitProc, error) {
-		if unknownOnce {
-			unknownOnce = false
-			return nil, ownershipUnknownErr("cmdline empty")
-		}
-		return gitProcesses()
-	}
-	deadline = time.Now().Add(testWaitBound())
-	for {
-		cleared, err := clearStaleIndexLock(dir, time.Now(), scan)
-		require.False(t, err != nil && !scanUnknownElsewhere(t, err, lock), "stale lock with no git: cleared=%v err=%v", cleared, err)
-		if err == nil {
-			require.True(t, cleared, "stale lock with no git: cleared=%v err=%v", cleared, err)
-			break
-		}
-		if time.Now().After(deadline) {
-			require.False(t, time.Now().After(deadline), "stale lock with no git: the scan stayed unknown for %v: %v", testWaitBound(), err)
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	{
-		_, err := os.Lstat(lock)
-		require.False(t, !os.IsNotExist(err), "the lock is still there after the git exited")
-	}
-}
-
-// scanUnknownElsewhere reports whether err is the host-wide process scan answering
-// "cannot tell" (#2958). The scan reads every git on the machine; on a gate bench another
-// lane's git caught mid-exit (empty cmdline, not yet a zombie) makes it unknown for a
-// moment, and that is not this checkout's answer. An unknown scan must never remove the
-// lock, so it is asserted here, and the caller polls again until testWaitBound instead of
-// failing on a process it does not own. Any other error is the caller's to fail on.
-func scanUnknownElsewhere(t *testing.T, err error, lock string) bool {
-	t.Helper()
-	if err == nil || !strings.HasPrefix(err.Error(), ownershipUnknown) {
-		return false
-	}
-	{
-		_, lerr := os.Lstat(lock)
-		require.Equal(t, nil, lerr, "the lock is gone although the scan was unknown (%v): %v", err, lerr)
-	}
-	return true
-}
-
 // oldIndexLock is a checkout whose index.lock is already past the 60s bound.
 // Age alone must not be why a later assertion keeps or removes it.
 func oldIndexLock(t *testing.T) (dir, lock string) {
@@ -185,59 +78,6 @@ func assertLockKept(t *testing.T, lock string, cleared bool, err error) {
 	}
 	require.False(t, err == nil || !strings.HasPrefix(err.Error(), ownershipUnknown), "diagnostic = %v, want a %q reason", err, ownershipUnknown)
 	require.False(t, strings.Contains(err.Error(), "\n") || len(err.Error()) > ownershipDiagCap, "diagnostic is not bounded: %q", err)
-}
-
-// A git started inside the checkout, with no -C, is visible only by its cwd.
-// The old lock stays. A scan that claims to have looked and did not see it is a failure.
-func TestStaleLockStaysForCwdGitWithoutDashC(t *testing.T) {
-	t.Parallel()
-	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
-	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
-	// mocked-clock unit test or a functional program (nova-tools #4221).
-	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
-	hermetic(t)
-	dir, lock := oldIndexLock(t)
-	cmd := exec.Command("git", "cat-file", "--batch")
-	cmd.Dir = dir
-	if strings.Contains(strings.Join(cmd.Args, " "), "-C") {
-		require.NotContains(t, strings.Join(cmd.Args, " "), "-C", "the fixture git carries -C: %q", cmd.Args)
-	}
-	stdin, err := cmd.StdinPipe()
-	require.NoError(t, err)
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
-	require.NoError(t, cmd.Start())
-	t.Cleanup(func() {
-		_ = stdin.Close()
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
-			_, _ = cmd.Process.Wait()
-		}
-	})
-	deadline := time.Now().Add(testWaitBound())
-	saw := false
-	for {
-		owns, oerr := gitOwnsCheckout(dir)
-		require.Equal(t, nil, oerr, "a live cwd git with no -C was an incomplete scan, not an owner: %v", oerr)
-		if owns {
-			saw = true
-			break
-		}
-		if time.Now().After(deadline) {
-			procs, _ := gitProcesses()
-			require.FailNowf(t, "assertion failed", "cwd git with no -C was invisible; procs=%+v", procs)
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	require.True(t, saw, "cwd git with no -C was not recorded as an owner")
-	rep, err := ClearStaleIndexLock(dir, time.Now())
-	if err != nil || rep.Cleared {
-		require.False(t, err != nil || rep.Cleared, "cleared=%v err=%v, want the lock left because the cwd git owns the checkout", rep.Cleared, err)
-	}
-	{
-		_, statErr := os.Lstat(lock)
-		require.Equal(t, nil, statErr, "the old lock is gone: %v", statErr)
-	}
 }
 
 // The scan saw a live git with no -C and could not read its cwd. That is not "no owner".

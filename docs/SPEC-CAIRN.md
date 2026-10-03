@@ -29,7 +29,17 @@ files (`sessions/<id>.md`, `entries/<id>/<entry>.json`, one append-only
 `log.jsonl`); there is no default store, no environment variable and no
 discovery. The session identifier is stable: retries and recoveries address
 the same record by this name, and concurrent records coexist untouched by
-each other. Re-opening an open session is a no-op. The session file's
+each other. A session or entry id becomes a path component, so it must name
+exactly one file or directory of that name inside the store on every
+platform: nonempty, at most 128 bytes, no whitespace or control characters,
+none of `/ \ : * ? " < > |`, not only dots, no `..`, no trailing dot, and no
+Windows device name (`CON`, `PRN`, `AUX`, `NUL`, `COM1`-`COM9`, `LPT1`-`LPT9`,
+with or without an extension). Every verb refuses another id at exit 2 before
+anything is written: `.` as a session would put its entries in `entries/`
+itself, where no index looks. Re-opening an open session with the recorded policy (and the
+recorded source, when it names one) is a no-op; naming another policy or
+source is exit 1, a conflict, whose remedy is the `open` that matches the
+record. `--dry-run` makes every check and writes nothing. The session file's
 header is convention only and is never parsed, so alternate
 directory/header conventions survive: the entry files are the source of
 truth and the readable record links to them.
@@ -50,11 +60,9 @@ format stores no source or publication policy: receipts print `source=-`
 and `publish=unknown`. Ordinary prose without machine-form entry headings
 is not an indexed entry. Invalid stamps, invalid entry identifiers and duplicate
 entry headings refuse rather than produce an ambiguous receipt. The nested
-record wins when a store holds both shapes for a session, which counts once. The hurt this is written from
-(2026-09-18): an append into a bench store refused `no such session
-"b9395d11"; open first` with `cairns/b9395d11.md` in place, and running the
-named remedy would have written a second record and split one session in
-two. **A refusal names the remedy verb whole** — `open first: nova-cairn
+record wins when a store holds both shapes for a session, which counts once. An append that looked only under `sessions/` would refuse such a record
+while it is there, and its remedy, `open`, would write a second record and
+split one session in two. **A refusal names the remedy verb whole** — `open first: nova-cairn
 open --store <dir> --session <id> --publish <policy>` — rather than a verb
 the reader must reconstruct. The remedy quotes the caller's store and session
 for a POSIX shell. Control bytes use octal decoding inside a subshell with a
@@ -62,7 +70,7 @@ sentinel to preserve trailing newlines, so the printed command stays one line
 and opens exactly the named record.
 
 **`append --store <dir> --session <id> --entry <id> (--text <words> |
---file <path|->) [--source <ptr>] --publish <policy>` files the friend's
+--file <path|->) [--source <ptr>] [--publish <policy>]` files the caller's
 chosen words byte-for-byte** with a real clock stamp (UTC; `--now` names an
 RFC 3339 UTC replay for tests), the stable entry/session identifiers and
 the source pointers, which are recorded and never opened. An append with no
@@ -75,15 +83,20 @@ no pointer. Exactly one of
 `--text` or `--file` names the words, so the tool never picks between two
 candidates for what was chosen. A retry of the same request succeeds with
 `duplicate=true`, the original stored timestamp, and no second entry. The
-reported stamp uses the stored precision (whole seconds for a bench heading);
+reported stamp uses the stored precision (whole seconds for a flat heading);
 a malformed stored stamp refuses rather than inventing a time. The same entry
 id carrying different prose is exit 1, a conflict, never an overwrite. Each entry lands atomically through internal/atomicfile: a unique sibling temp file honors the process umask, the file is synced and renamed, and parent-directory sync is attempted on a best-effort basis. Stale random-sibling temp files from interrupted appends are never indexed or overwritten by a retry. The retry writes the complete entry and heals a missing pointer line without touching another writer's files. Success reports local persistence and remote publication
 separately — `persisted=true published=false` — because meaningful notes
 are fsync-durable before success is acknowledged, independently of Redis;
 local durability is real while remote publication is pending, and neither
 implies replicated durability. This slice implements no transport, so the
-caller-chosen `--publish` policy (`never|manual|deferred|immediate`,
-required) travels with the entry for a later explicit act to carry.
+caller-chosen `--publish` policy (`never|manual|deferred|immediate`, named
+at `open`) travels with the entry for a later explicit act to carry. An
+append with no `--publish` carries the policy the session's open record names;
+a nested session whose log names none refuses at exit 2 asking for the flag,
+and a flat record, which stores no policy, says `publish=unknown`. A conflict
+names the `receipt --text` that reads what the id holds. `--dry-run` makes
+every check and writes nothing; a new entry's line says `persisted=false`.
 
 **`index --store <dir> [--session <id>] [--max <n>]` builds the bounded
 section/entry index and coverage ledger mechanically.** Rows are derived
@@ -105,7 +118,9 @@ With `--text`, the result includes the stored words as a `text` fact. For a
 nested entry this is the exact stored text; for a flat record it is the
 whitespace-trimmed indexed section body, because the flat format does not retain
 the original append's trailing newlines. JSON carries the same text value.
-A missing store, session or entry refuses at exit 2, naming what is absent.
+A missing store, session or entry refuses at exit 2, naming what is absent
+and the `index` that lists what is there. `--text` prints the words quoted,
+spaces kept (`text="the words to keep"`), never hex-escaped.
 
 ## Tests this spec demands
 
@@ -149,3 +164,9 @@ New regression cases must demonstrate the defect before the repair.
 31. `TestReadCommandsRefuseMissingStoreAndSession` — absent inputs refuse, while existing empty stores and sessions succeed.
 32. `TestFlatReadersRefuseCorruptAndAmbiguousHeadings` — invalid stamps, invalid identifiers and duplicate entry headings refuse.
 33. `TestFlatReadersKeepUnstructuredProseAndMissingEntriesDistinct` — ordinary prose is preserved without inventing entries.
+34. `TestAnAppendCarriesTheSessionsPolicy` — an append with no `--publish` carries the session's recorded policy; a flat record says `publish=unknown`. `TestAnAppendWithNoPolicyToCarryIsRefused` covers a log naming none.
+35. `TestAReOpenNamingAnotherPolicyOrSourceIsAConflict` — a re-open naming the recorded policy and source changes nothing; another is exit 1 naming the matching open.
+36. `TestAConflictOrAMissingEntryNamesTheCommandToRunNext` — a conflict names `receipt --text`; a missing entry or session names `index`.
+37. `TestDryRunWritesNothing` — `open --dry-run` and `append --dry-run` check everything and write nothing.
+38. `TestEveryProblemIsNamedAtOnce` — missing flags, bad ids, a bad policy and a bad `--now` are named together in one run.
+39. `TestABadIDIsRefusedByEveryVerbAndWritesNothing` — every bad id, as a session or an entry, is refused by open, append, index and receipt at exit 2 with the store byte-identical; `TestAnAppendedEntryIsTheOneIndexAndReceiptFind` pins the round trip; `TestValidIDAdmitsOnlyAnIDThatIsOnePathComponent` the rule.

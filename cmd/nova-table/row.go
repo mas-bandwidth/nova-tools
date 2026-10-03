@@ -8,34 +8,10 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/redis/go-redis/v9"
 )
 
 // The row verbs: row add, set, hide, show, del here; move, order, sort in order.go.
-
-func (app *application) cmdRow(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 {
-		return refuse(stderr, "row", "wants add, set, hide, show, move, order, sort or del: row add <table> <row> ..., row set <table> <row> <col>=<value> ..., row hide|show <table> <row> ..., row move <table> <row> "+placeUsage+", row order <table> <row> ..., row sort <table> [--by name|label|<col>] [--desc] [--keep], row del <table> <row>")
-	}
-	switch args[0] {
-	case "add":
-		return app.cmdRowAdd(args[1:], stdout, stderr)
-	case "del":
-		return app.cmdRowDel(args[1:], stdout, stderr)
-	case "set":
-		return app.cmdRowSet(args[1:], stdout, stderr)
-	case "hide":
-		return app.cmdRowsHide(args[1:], stdout, stderr, true)
-	case "show":
-		return app.cmdRowsHide(args[1:], stdout, stderr, false)
-	case "move":
-		return app.cmdRowMove(args[1:], stdout, stderr)
-	case "order":
-		return app.cmdRowOrder(args[1:], stdout, stderr)
-	case "sort":
-		return app.cmdRowSort(args[1:], stdout, stderr)
-	}
-	return refuse(stderr, "row", "unknown subverb "+args[0]+"; wants add, set, hide, show, move, order, sort or del")
-}
 
 func (app *application) cmdRowAdd(args []string, stdout, stderr io.Writer) int {
 	const verb = "row add"
@@ -63,13 +39,19 @@ func (app *application) cmdRowAdd(args []string, stdout, stderr io.Writer) int {
 		}
 		if batch {
 			ctx := context.Background()
+			call := func(c redis.Cmdable) (int, error) {
+				return ntable.RowsAddWithSpec(ctx, c, pos[0], pos[1:], spec, *write)
+			}
+			if code, done := app.preflight(stdout, stderr, fs, verb, *addr, pos, sent(call)); done {
+				return code
+			}
 			st, c, code := app.client(ctx, verb, *addr, stderr)
 			if code != 0 {
 				return code
 			}
 			defer st.Close()
 			trips := st.CountTrips()
-			n, err := ntable.RowsAddWithSpec(ctx, c, pos[0], pos[1:], spec, *write)
+			n, err := call(c)
 			if err != nil {
 				return st.refusal(stderr, verb, err)
 			}
@@ -92,13 +74,17 @@ func (app *application) cmdRowAdd(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, verb, "a row that binds a set wants --owner <verb>, the verb that writes it, so a write here can name it")
 	}
 	ctx := context.Background()
+	call := func(c redis.Cmdable) (ntable.Row, error) { return ntable.RowAdd(ctx, c, pos[0], pos[1], spec, *write) }
+	if code, done := app.preflight(stdout, stderr, fs, verb, *addr, pos, sent(call)); done {
+		return code
+	}
 	st, c, code := app.client(ctx, verb, *addr, stderr)
 	if code != 0 {
 		return code
 	}
 	defer st.Close()
 	trips := st.CountTrips()
-	row, err := ntable.RowAdd(ctx, c, pos[0], pos[1], spec, *write)
+	row, err := call(c)
 	if err != nil {
 		return st.refusal(stderr, verb, err)
 	}
@@ -126,13 +112,17 @@ func (app *application) cmdRowDel(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, verb, "wants a table and a row: row del <table> <row>")
 	}
 	ctx := context.Background()
+	call := func(c redis.Cmdable) (bool, error) { return ntable.RowDel(ctx, c, pos[0], pos[1], *write) }
+	if code, done := app.preflight(stdout, stderr, fs, verb, *addr, pos, sent(call)); done {
+		return code
+	}
 	st, c, code := app.client(ctx, verb, *addr, stderr)
 	if code != 0 {
 		return code
 	}
 	defer st.Close()
 	trips := st.CountTrips()
-	existed, err := ntable.RowDel(ctx, c, pos[0], pos[1], *write)
+	existed, err := call(c)
 	if err != nil {
 		return st.refusal(stderr, verb, err)
 	}
@@ -168,13 +158,17 @@ func (app *application) cmdRowSet(args []string, stdout, stderr io.Writer) int {
 		texts[col] = v
 	}
 	ctx := context.Background()
+	call := func(c redis.Cmdable) (int, error) { return ntable.RowSet(ctx, c, pos[0], pos[1], texts, *write) }
+	if code, done := app.preflight(stdout, stderr, fs, verb, *addr, pos, sent(call)); done {
+		return code
+	}
 	st, c, code := app.client(ctx, verb, *addr, stderr)
 	if code != 0 {
 		return code
 	}
 	defer st.Close()
 	trips := st.CountTrips()
-	n, err := ntable.RowSet(ctx, c, pos[0], pos[1], texts, *write)
+	n, err := call(c)
 	if err != nil {
 		return st.refusal(stderr, verb, err)
 	}
@@ -201,13 +195,17 @@ func (app *application) cmdRowsHide(args []string, stdout, stderr io.Writer, hid
 		return refuse(stderr, verb, "wants a table and at least one row: "+verb+" <table> <row> ...")
 	}
 	ctx := context.Background()
+	call := func(c redis.Cmdable) (int, error) { return ntable.RowsHide(ctx, c, pos[0], hide, pos[1:], *write) }
+	if code, done := app.preflight(stdout, stderr, fs, verb, *addr, pos, sent(call)); done {
+		return code
+	}
 	st, c, code := app.client(ctx, verb, *addr, stderr)
 	if code != 0 {
 		return code
 	}
 	defer st.Close()
 	trips := st.CountTrips()
-	n, err := ntable.RowsHide(ctx, c, pos[0], hide, pos[1:], *write)
+	n, err := call(c)
 	if err != nil {
 		return st.refusal(stderr, verb, err)
 	}

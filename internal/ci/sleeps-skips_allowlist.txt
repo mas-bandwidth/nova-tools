@@ -29,25 +29,12 @@ cmd/nova-redis	TestRestartOnTheSameDirKeepsTheStore	#4221 calls time.Sleep
 cmd/nova-sandbox	TestTheCheckScriptPassesAgainstTheToolsProfile	#4221 measured over 5 s on the 2026-09-25 PR run
 cmd/nova-sandbox	TestAForkedChildIsReapedWithTheCallersGroup	#4221 calls time.Sleep
 cmd/nova-sandbox	TestWindowsHasNo128PlusN	#4221 calls time.Sleep
-cmd/nova-tokens	TestConcurrentWritersDoNotMutateTheBareRemote	#4221 calls time.Sleep
 cmd/nova-update	TestHelpExampleLinesRunAsPrinted	#4221 measured over 5 s on the 2026-09-25 PR run
 internal/bus	TestTwoConcurrentRunsSerialiseOnOneCheckout	#4221 calls time.Sleep
-internal/bus	TestSendPreparedProcessDeathRecovery	#4221 measured over 5 s on the 2026-09-25 PR run
-internal/bus	TestPreparedIndexRecoveryFromStagedPartialIndexRetainsEarlierEntries	#4221 calls time.Sleep
-internal/bus	TestStaleIndexLockWithALiveGitIsLeftAlone	#4221 calls time.Sleep
-internal/bus	TestStaleLockStaysForCwdGitWithoutDashC	#4221 calls time.Sleep
-internal/bus	TestStellaPreparedAttributePrefixesPublishExactBytes	#4221 measured over 5 s on the 2026-09-25 PR run
-internal/secrets	TestSealNoPRMakesNoGHCalls	#4221 measured over 5 s on the 2026-09-25 PR run
 internal/swarm	TestOSProcessTreeCPUAccrual	#4221 calls time.Sleep
 internal/swarm	TestPausePointThreadDirected	#4221 calls time.Sleep
-internal/swarm	TestJobLeaseHeartbeatsItsMtime	#4221 calls time.Sleep
-internal/swarm	TestBodyThatResumesInsideTheDeadlineIsNotUnknown	#4221 calls time.Sleep
-internal/swarm	TestDelayedHeadersInsideTheWaitPassThrough	#4221 calls time.Sleep
 internal/swarm	TestConcurrentTakesKeepEveryTake	#4221 measured over 5 s on the 2026-09-25 PR run
 cmd/nova-sandbox	TestTheAgentSocketIsUnreachable	seed #4413: time.After at main_test.go:332
-cmd/nova-tokens	fakeSqlite3Main	seed #4413: time.Sleep at helpers_test.go:236
-internal/bus	TestFriendSequencePlantedIndexIsRefused	seed #4413: time.After at planted_index_sequence_unix_test.go:58
-internal/bus	TestReadLaneIndexDoesNotBlockOnAPlantedFIFO	seed #4413: time.After at fifo_test.go:41
 internal/sandbox	TestAncestorsTerminatesOnAWindowsPath	seed #4413: time.After at winpath_test.go:77
 internal/swarm	TestFriendSequencePlantedResultIsRefused	seed #4413: time.After at planted_gather_test.go:81
 internal/swarm	TestReadFileSteadyDoesNotBlockOnAFIFO	seed #4413: time.After at symlink_fifo_test.go:145

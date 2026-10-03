@@ -1,37 +1,25 @@
 package main
 
 import (
-	"errors"
 	"io"
-	"os/exec"
+	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/testverbhelp"
 )
 
 // Every verb answers -h and --help with its own help on stdout at exit 0, and
-// none of them opens the store, the key or a helper program
-// (the CLI style's rule (b), #4505). main() exits the process, so this runs the
-// built binary, as the rest of this package's tests do.
+// none of them opens the store, the key or a helper program (the CLI style's
+// rule (b)). run is the whole tool on its arguments and streams, so this drives
+// it in process: no binary is built and no process started, and nothing here
+// waits on a clock.
 func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 	t.Parallel()
-	bin := buildNovaSecrets(t)
-	// The first exec of a fresh binary is the platform's assessment, not help:
-	// pay it once here, outside the budget.
-	runNovaSecrets(bin, "version")
-	run := func(args []string, stdout, stderr io.Writer) int {
-		cmd := exec.Command(bin, args...)
-		cmd.Stdout, cmd.Stderr = stdout, stderr
-		var exitErr *exec.ExitError
-		if err := cmd.Run(); errors.As(err, &exitErr) {
-			return exitErr.ExitCode()
-		} else if err != nil {
-			return -1
-		}
-		return 0
+	inProcess := func(args []string, stdout, stderr io.Writer) int {
+		return run(args, strings.NewReader(""), stdout, stderr)
 	}
 	store := []string{"--store", "{dir}/store", "--as", "seat"}
-	testverbhelp.Check(t, run, []testverbhelp.Case{
+	testverbhelp.Check(t, inProcess, []testverbhelp.Case{
 		{Verb: "exec", Flags: store},
 		{Verb: "names", Flags: store},
 		{Verb: "check", Flags: store},
@@ -44,5 +32,5 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 		{Verb: "seat inject", Flags: store},
 		{Verb: "version"},
 	})
-	testverbhelp.HelpVerb(t, run, "nova-secrets", "names", "seat add", "version")
+	testverbhelp.HelpVerb(t, inProcess, "nova-secrets", "names", "seat add", "version")
 }

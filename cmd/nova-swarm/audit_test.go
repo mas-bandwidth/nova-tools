@@ -312,6 +312,10 @@ var swarmAudit = audit.Config{
 		// POSTs the state and the four questions and returns typed answers, with
 		// the key travelling only on the Authorization header and never printed.
 		`"math"`, `"sort"`,
+		// slices and maps (the standard library's) only sort, search and collect values in
+		// memory -- the lint's rule names, the cache's hours, PATHEXT's suffixes -- and return
+		// them; neither holds a writer or writes a stream, so neither can write past the escape.
+		`"slices"`, `"maps"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/decide"`,
 		// testguard (bench.go) is the host guard: one atomic load on the way to an ssh
 		// child, and nothing at all when NOVA_TEST_NO_HOST is unset, which is every

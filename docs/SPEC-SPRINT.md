@@ -81,7 +81,8 @@ is a job done failed, and any other word, or no such line, is a job done ok. The
 records are set from the directories, never added to, so a sync after a sync
 writes nothing and says so; a friend with no directory, or no `inbox/`, has no
 jobs; a directory that cannot be read is refused (exit 1), naming it, with
-nothing written. The sync reads the directories and never writes them, and
+nothing written. The sync reads the directories and writes in them only a
+friend's card's brief (a friend's card, below), and
 runs where they are (the coordinator's machine), by the coordinator's loop or
 by hand after a job is delivered or collected; the view reads the store, never
 a directory (the card is the persistent store). `ready` and `working` count
@@ -100,21 +101,25 @@ runs every second (`FriendBeatEvery`) beside her harness (it writes
 refused, exit 1). Her status is the friends' rule (`sprint.FriendStatus`):
 `held` while the coordinator holds her (`friend down`; `friend up` releases the
 hold), whatever she beats; else `up` while her last beat is under
-`FriendAsleepAfter` (15 s) old; else `asleep`, and `asleep` when she has never
-beaten. A beat wakes her at once. `friend up` is not a beat: a friend released
-with no beat in the last 15 s is `asleep` until she beats. A friend's statuses
-are `up`, `held` and `asleep`; `down` is the fleet's word and never hers. A
-friend `asleep` shows `working` 0 in the table, its footer and `where --json`:
+`FriendDownAfter` (15 s) old; else `down`, and `down` when she has never
+beaten (`friend down` holds her and shows `held`, never `down`). A beat wakes her at once. `friend up` is not a beat: a friend released
+with no beat in the last 15 s is `down` until she beats. A friend's statuses
+are `up`, `held` and `down`, the same words as the fleet table's. A
+friend `down` shows `working` 0 in the table, its footer and `where --json`:
 her jobs stay in her outbox and count again when she beats, and `ready` and
 `done` are as they were (the owner, 2026-10-02 9:48 PM ET: "[a friend] being down,
 she automatically is 0/8 working OK?"). The
 owner, 2026-10-02 9:44 PM ET, on a friend shown up while she was gone: "two
 minutes is too long. 1m", "maybe even 30 secs."; and at 9:46 PM ET: "heartbeat
 should ping once every 10sec", then "or every 1sec if you really want, then
-after 15 sec. asleep. better." The fleet's rule (`MissedBeatsDown` windows of
+after 15 sec. asleep. better."; the word was `asleep` until the owner,
+2026-10-03 8:04 AM ET, looking at the friends table: "Please change 'asleep' to
+'down' so we have consistency across all tables". The fleet's rule (`MissedBeatsDown` windows of
 `BeatDeadline`, down past 45 s, section 5) is separate and stays longer: a
-machine down has its cards taken back, a friend holds none. The
-rows are in the fleet table's order (`FleetOrder`): up, then held, then asleep,
+machine down has its cards taken back; a friend holds the cards dealt to
+her row (a friend's card, below) and keeps them when she goes down, the
+deadline judging them. The
+rows are in the fleet table's order (`FleetOrder`): up, then held, then down,
 each by name. The table is drawn by `where` from those records when it draws
 the frame, never stored as a table: no tick, step, epoch or clear touches it,
 `teardown` deletes its records (the roster, each friend's beat and jobs), and
@@ -122,6 +127,79 @@ the stored view `sprint` has the four tables only. Its footer is the table
 layer's: the sums of `ready`, `working`, `width` and `done`, the pooled `ok%`,
 and a blank status cell, as the fleet table's; an empty friends table is its
 header, its one rule and that footer at zero, as every empty table is.
+
+**A friend's card** (the owner, 2026-10-03: "Could we try expressing the work
+left for nova-tools-1.1.0 into cards, and doing it via the sprint, but doing
+parts on friends where we would normally do friend work."). A card whose
+brief's header carries `WHO: friend` (any friend) or `WHO: friend <name>` is a
+friend's card (docs/SPEC-CARD-CONTRACT.md, the WHO line; `cardhdr.ReadWho` is
+the one parser). `add` and `brief` refuse any other WHO value, a name that is
+no row of the friends table, and `WHO: friend` while the table has no row
+(exit 2, nothing written); the primary's field `who` is `friend` or
+`friend.<name>`, written with its brief, and `card` prints `who=` on its
+`CARD OK` line (`--json` `who`). A card with no WHO line is a machine's, dealt
+as before. The tick's deal deals a friend's card ready, in the deal's stream
+turns, to a friend up (the friends' rule: not held, a beat within 15 s) below
+her width (her friends row's `width`; the cards on her row, ready and working,
+count against it): the friend it names, or for `WHO: friend` the friend up
+with the most free width, the first by name among equals, as the machines'
+rule fills the member with room; with none it waits ready, held by the
+no-stall rule as waiting for a friend (`sprint.FriendDeal`). The tick reads the
+friends' records (the roster, then the beats: two round trips) only when a
+friend's card is ready. Its work card, `<primary>.w<attempt>`, is placed on
+the friend's own fleet row, `friend.<name>` (a dot, which no member's name
+holds, so it is no machine's and no fleet verb names it), straight into
+`working` at generation 1, dealt and taken at once (nothing takes it), member
+`friend.<name>`, with the primary's fix, finding and why as a machine's deal
+carries them; its primary moves ready -> working. The fleet's members are its
+rows but the friends' (`Snapshot.Members`): presence, the rebalance, the
+level, `fleet sync`, the machines' deal and the shape a clear keeps never
+touch a friend's row, so a friend who goes quiet or is held keeps her card
+(no take-back), the no-stall rule holds it as hers whatever her status, and
+the deadline rule (not finished 2 hours from its deal) judges it as it judges
+any work card. The machines' `deal` verb refuses a friend's card, and
+`rework` of one sends its primary ready with the fix, for the tick to deal to
+a friend.
+
+`friend sync`, run by the coordinator's own loop where the directories are
+(each run once, at the loop's period: 15 s in the coordinator's loop), carries
+a friend's card across the inbox/outbox standard
+(docs/FRIENDS.md, a sprint card): for each card working on a friend's row it
+writes `inbox/<job>/BRIEF.md` when that is not there (written whole by
+`internal/atomicfile`, never over a file there), `<job>` the card's id as the table layer holds it at its
+epoch (`sprint.StoredID`: the card id at epoch 0, `<card>~<epoch>` after a
+clear, so a card id a clear brings back is another job), and only the
+coordinator reaches out; once `outbox/<job>/REPORT.md` is there it finishes
+the card as the friend (`finish` at the card's generation and epoch, as
+`friend.<name>`): `Verdict: LAND` with `Head: <full sha>` is a worker's ok
+finish at origin's tip of the branch BRIEF.md names, read once by one `git
+ls-remote` of that branch in the card's `REPO:` repository (bounded at 10 s),
+and only when the tip is that Head: what is read and landed is what origin
+holds, never the report's word; the card goes to review, its reads and its
+landing as any card's. A Head that is not the tip is refused, one line naming
+both shas (`FRIEND-CARD REFUSED friend= card=: Head <head> is not origin's tip
+of <branch>, <tip>; ...`), as are a branch origin does not hold, a card with no
+`REPO:` line and a tip that cannot be read: the card is not finished (the
+deadline still judges it), and the next sync reads the report again; `Verdict: HOLD` or `FAIL` (or
+`FAILED`, `BROKEN`) is a failed finish, the judgment "work came back failed"
+carrying `friend <name> <VERDICT>: <the report's first paragraph>`; a LAND with
+no full sha Head, or any other verdict or none, is failed too, its report
+saying what it lacks. It collects from a friend whatever her status. It prints
+`FRIEND-CARD DELIVERED friend= card= job= branch=`, `FRIEND-CARD FINISHED
+friend= card= result=ok|failed head=: <report>`, and `FRIEND-CARD REFUSED
+friend= card=: <why>` for a finish the sprint or the tip refused, and for a card whose
+id is not a card id or whose `inbox/<job>` is a symlink or a file (checked by
+`Lstat`; nothing is written outside her working directory), and its OK line adds
+`delivered=<n> finished=<n>` when either is above zero (`--json` `delivered`,
+`finished`, `cards`). A card's job (an inbox directory named as a work card
+whose primary, at that epoch, is on the work table) is none of her jobs; a
+directory named so for no card of the sprint is one of them: `where` counts her cards from her fleet row into her
+friends row (ready, working, done ok and failed; working 0 while she is
+down), and draws no friend's row in the fleet table or its `--json`.
+Her row is hidden in the stored fleet table (the table layer's row hide, when
+the deal first adds it), so the stored view `sprint` does not draw it either;
+as for any hidden row, its counts stay in that table's folded footer there,
+where `where` leaves them out.
 
 The frame of `where` and `where --watch` shows work, friends, fleet in that order: the
 readers and merge tables are hidden from it (the owner, 2026-10-02: "I feel like
@@ -298,7 +376,7 @@ line, never FAIL: the table holds what the step wrote.
 ## 2. The cards
 
 **Primary.** One unit of work, between an issue and a pull request. One stream
-for life. Fields: stream, score, brief, rules (the held rules file the member injects, section 2's rules by reference), needs, head, attempt, fix, finding and why (a rework's, kept
+for life. Fields: stream, score, brief, rules (the held rules file the member injects, section 2's rules by reference), who (the friend its brief's WHO line names, section 1, a friend's card), needs, head, attempt, fix, finding and why (a rework's, kept
 for the attempt a rework with no member up deals later), work (its live
 work card), asked (its readers), readers (the two whose ok it was accepted on),
 tier (the tier the coordinator pinned it to, `rework --tier`: its tier and its
@@ -1179,6 +1257,32 @@ renamed it from the name its PATHS gives), which the review passed. A head that 
 the batch branch and ends the batch as a head in conflict does: the conflict fact
 on it names every failure, `<file>:<line>` and the rule.
 
+**The landed score.** Once every stream of the run has landed what it could,
+`land` scores each landed card's merge diff (the diff its checks read) against
+the card's brief with nova-decide's score decision (docs/SPEC-NOVA-DECIDE.md
+section 9: the read's five questions and one per escalation class of landed
+work), recorded in `decide/score.jsonl` under the land root as
+`<card>@landed@<head>`, and reports each batch's scores in one store step
+(`score`, sprint.RecordScores): each landed card carries `landed_class`, its top
+class, `landed_p`, that class's p, and `landed_op`, the decision's id; the cards
+whose `landed_p` meets the sprint row's `decide_score_bar` (nova-config) are
+listed, the highest first, in one judgment for the batch, "landed work scored
+low", whose decisions are to add a repair card (`add`, then `ack` naming it) or to
+accept the landing as it is (`ack`). The step writes nothing for a card already
+carrying the same decision id, so a replay raises no second judgment. The bar is
+empty by default: the scores are recorded, written on the cards and clustered,
+and no judgment is raised, because the calibration of 2026-10-03 flagged 54 of
+157 clean cards at 0.5 (the top class's AUC against the clean cards of the same
+streams was 0.716); 0.7 is the starting point once a review round labels cards
+independently. The bars are read with the routes, so a store whose route set
+names no route reads no bar and raises no judgment. A score never holds a landing
+back: the scoring runs after the whole land pass, under one deadline for all of
+it (a minute) and the land loop's context, so the loop's shutdown ends it; the
+first backend failure, or the deadline, ends the pass, and each batch's `NOTE`
+names every card not scored and why. The batch's line carries `scored=<n>`, and
+`judged=yes` when the judgment was raised. `nova-decide findings` over the record
+clusters the classes into the material for new finder rules.
+
 A cross-stream need is recorded as data on the stuck card (the needed card and
 its stream); it is resolved when that card has landed, and ranking the needed
 card is not landing it. The notification names both streams and both cards.
@@ -1591,7 +1695,7 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | friend sync | the friends table's rows made nova-config's friend rows (section 1) |
 | friend clean | the retention rule of the friends' working directories (docs/FRIENDS.md; ideas#833), run nightly from a loop row on the machine that holds them, never by the server and never on the store: `friend clean [--pg <dsn>] [--root <dir>] [--days <n>] [--dry-run]`. For each friend row of nova-config (as `friend sync` reads them; the coordinator is one), `<root>/<friend>-working` (`--root`, else HOME); a friend with no directory there is said and skipped. A job is `inbox/<job>/` or `jobs/<job>/`, done when `outbox/<job>/REPORT.md` is a regular file, its age that file's. Inside a done job at least `--days` old (default 3) a clone (a directory holding `.git`) is removed when `git status --porcelain` is empty, it holds no stash and no commit of `HEAD` or a local branch is missing from every remote-tracking ref (`git log HEAD --branches --not --remotes`, no network); build output (`node_modules`, `target`, `gocache`, `gocache-*`, `.gocache`, `go-build`, `wt-*`) that is no clone is removed. A clone that fails the check, or whose git fails, is dirty: listed each run, `FRIENDS-CLEAN DIRTY friend= path= age=<d>d why=`, and removed once its job is 14 days old whatever its state, its line saying `dirty=<why>`. Nothing else is touched: the brief and any text of the job, `outbox/`, every file outside `inbox/` and `jobs/`; a link is never followed; a job under `jobs/` that is itself a clone is one target, one under `inbox/` is never removed (a NOTE). Every removal is `safepath.RemoveUnderRoots` under the job's directory. The friend's one build cache, `<friend>-working/.cache/go-build`, is held under 10 GiB by the member's trim (`internal/gocache`). `--dry-run` says `WOULD-REMOVE` in place of `REMOVED` with the bytes and removes nothing. Lines `FRIENDS-CLEAN REMOVED\|WOULD-REMOVE friend= path= bytes= age=<d>d kind=clone\|build[ dirty=<why>]`, `FRIENDS-CLEAN CACHE ...`, `FRIENDS-CLEAN FRIEND <f> dir= jobs= done= freed= listed=` (or `absent`), `FRIENDS-CLEAN FAILED friend= path=: <why>`, and last `FRIENDS-CLEAN OK freed=<bytes> listed=<n>` (a dry run adds `dry-run: nothing was removed`), or `FRIENDS-CLEAN INCOMPLETE ... failed=<n>`, exit 1; a config that cannot be read or holds no friend row, exit 3, nothing removed; `--json` one object with the lines |
 | friend beat | a friend's beat, `friend beat <friend>`, run by its own machinery every second; through the sprint's server it is `friend beat <friend>` and nothing more |
-| friend down, friend up | hold a friend (status `held`, whatever it beats) and release the hold (not a beat: `asleep` until she beats) |
+| friend down, friend up | hold a friend (status `held`, whatever it beats) and release the hold (not a beat: `down` until she beats) |
 | reader add | declares readers |
 | reader away | holds readers away whatever they beat: no read is asked of them, and a read asked and not begun is asked of another at the next tick |
 | reader up | releases the hold; the reader's state is then its beat's |

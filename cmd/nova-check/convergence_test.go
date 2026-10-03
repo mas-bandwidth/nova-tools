@@ -285,7 +285,7 @@ func TestConvergenceRefusesAForgeThatWillNotAnswer(t *testing.T) {
 	exit, stdout, stderr := f.run(t, "--gh", bad)
 	require.EqualValues(t, 2, exit, "a forge that refused exited %d, want 2", exit)
 	assert.NotContains(t, stdout, "CONVERGENCE", "a partial reading was printed:\n%s", stdout)
-	assert.False(t, !strings.Contains(stderr, "nova-check convergence:") || !strings.Contains(stderr, "gh pr list"), "the refusal does not name the child: %q", stderr)
+	assert.False(t, !strings.Contains(stderr, "nova-check convergence REFUSED:") || !strings.Contains(stderr, "gh pr list"), "the refusal does not name the child: %q", stderr)
 }
 
 // A --timeout of zero or less is a wait with no end.

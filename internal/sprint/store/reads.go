@@ -71,6 +71,29 @@ func (st *Store) readCellsOnce(ctx context.Context, logical, row string, cols ..
 	return out, nil
 }
 
+// CardIDs is the stored id of every card placed on a table (its logical name) at the
+// sprint's epoch: one read of the shape and one of the cells' ids, no record read.
+func (st *Store) CardIDs(ctx context.Context, logical string) (map[string]bool, error) {
+	st, err := st.pin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	name := st.Names.Table(logical)
+	shapes, err := st.B.Shapes(ctx, []string{name})
+	if err != nil {
+		return nil, err
+	}
+	ids, err := st.B.CellIDs(ctx, shapes)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]bool, len(ids[name]))
+	for _, id := range ids[name] {
+		out[id] = true
+	}
+	return out, nil
+}
+
 // Packets is the packet of each work or read card: its primary, and the work
 // cards before it or the one it reads, read by identity in one read set per
 // table.

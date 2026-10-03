@@ -31,7 +31,9 @@ var selfTalkAudit = audit.Config{
 	// TestLineShape and TestLineHoldsWhateverTheStampContains pin it -- including against
 	// a release stamp holding a newline, which is the one field of that line that comes
 	// from outside the toolchain.
-	Escapers: []string{"hintFor", "buildinfo.Line"},
+	// bounded.MoreLine is the MORE line every capped listing prints, its kind through
+	// oneline.Field and its remedy through oneline.Escape inside internal/bounded.
+	Escapers: []string{"hintFor", "buildinfo.Line", "bounded.MoreLine"},
 	// One entry per site, keyed by file, function and source text; sites with the same
 	// text in the same function share an entry. Each is a claim a reader can check.
 	Exempt: map[string]string{

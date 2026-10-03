@@ -316,6 +316,11 @@ type Snapshot struct {
 	// sprint:decide_review), read with the routes; both "" is no decide read
 	// (steps_review.go, decideFields; docs/SPEC-SPRINT.md section 6).
 	DecideBounce, DecideReview string
+	// DecideScoreBar is the sprint row's bar on a landed diff's score
+	// (sprint:decide_score_bar), read with the routes: a batch whose cards' top class
+	// meets it raises a scored-low judgment (steps_score.go; docs/SPEC-SPRINT.md section
+	// 7, the landed score); "" (the row's default) records the scores and raises none.
+	DecideScoreBar string
 	// ReaderStates is each reader's state as the store derives it (ReaderState:
 	// up, away or down), read by a step that asks (docs/SPEC-SPRINT.md section
 	// 6); nil is none read, and every reader is held up.
@@ -368,7 +373,7 @@ func (s *Snapshot) MemberCtl(member string) *Card { return s.Fleet.Placed(CtlID(
 // UpMembers is the fleet members whose status is up, in row order.
 func (s *Snapshot) UpMembers() []string {
 	var out []string
-	for _, m := range s.Fleet.Rows() {
+	for _, m := range s.Members() {
 		if s.MemberCtl(m).F("status") == Up {
 			out = append(out, m)
 		}

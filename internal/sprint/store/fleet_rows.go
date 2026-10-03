@@ -107,7 +107,7 @@ func (st *Store) DropMembers(ctx context.Context, keep []string) ([]string, erro
 	}
 	off := func(s *sprint.Snapshot) []string {
 		var out []string
-		for _, m := range s.Fleet.Rows() {
+		for _, m := range s.Members() {
 			if s.MemberCtl(m) == nil && !slices.Contains(keep, m) {
 				out = append(out, m)
 			}

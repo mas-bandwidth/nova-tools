@@ -134,7 +134,7 @@ func FleetDrift(s *Snapshot, want []SyncMember, machines []string) []Drift {
 			out = append(out, Drift{Member: name, Kind: DriftWidth, From: MemberWidth(ctl), To: w})
 		}
 	}
-	for _, name := range s.Fleet.Rows() {
+	for _, name := range s.Members() {
 		if _, ok := wanted[name]; ok {
 			continue
 		}
@@ -175,7 +175,7 @@ func memberKeeps(s *Snapshot, member string) int {
 // card stays on it.
 func GoneHolding(s *Snapshot, want []SyncMember, machines []string) []string {
 	var out []string
-	for _, name := range s.Fleet.Rows() {
+	for _, name := range s.Members() {
 		if slices.Contains(machines, name) || slices.ContainsFunc(want, func(m SyncMember) bool { return m.Name == name }) || s.MemberCtl(name) == nil {
 			continue
 		}

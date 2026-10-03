@@ -392,7 +392,7 @@ func TestHygieneIdentityIsDocumentedAsOneNameAndEmail(t *testing.T) {
 	// rerun cannot reproduce `at=0a19082d2973`, and the clean `HYGIENE OK`
 	// stanza and the four-finding stanzas are two states of that lab, not one
 	// sitting, so running them here would invent steps the document does not
-	// show. The refusal promises (`nova-check hygiene: ...`) fire before the
+	// show. The refusal promises (`nova-check hygiene REFUSED: ...`) fire before the
 	// repository is opened, so they run anywhere, and they are exactly the
 	// lines #1805 is about: what the flag wants, spelled where a reader reads.
 	//
@@ -435,7 +435,7 @@ func TestHygieneIdentityIsDocumentedAsOneNameAndEmail(t *testing.T) {
 		}
 		refused := true
 		for _, line := range s.Want {
-			if !strings.HasPrefix(line, "nova-check hygiene: ") {
+			if !strings.HasPrefix(line, "nova-check hygiene REFUSED: ") {
 				refused = false
 				break
 			}

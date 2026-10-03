@@ -256,13 +256,6 @@ func seatInjectTarget(storeDir, seatFile, recoveryKey string) (seatInjectHeld, e
 	if !hasSops || len(recipients) == 0 {
 		return held, fmt.Errorf("seat file %s carries no sops metadata naming its recipients, so there is nothing to encrypt to; a seat file is written only by sops (seal, seat add), never by hand", seatFile)
 	}
-	if len(recipients) != 2 {
-		return held, fmt.Errorf("seat file %s names %d recipients in its sops metadata; expected exactly two, the seat's own key and the key recovery.pub declares (SPEC-SECRETS invariant 1)", seatFile, len(recipients))
-	}
-	if !slices.Contains(recipients, recoveryKey) {
-		return held, fmt.Errorf("seat file %s does not name the key recovery.pub declares among its recipients; the recovery key is always kept, so this file is re-sealed by sops updatekeys in a reviewed pull request first", seatFile)
-	}
-	held.recipients = append([]string(nil), recipients...)
 	cfg, err := ParseSopsConfig(storeDir)
 	if err != nil {
 		return held, fmt.Errorf("store %s: %w", storeDir, err)
@@ -271,9 +264,16 @@ func seatInjectTarget(storeDir, seatFile, recoveryKey string) (seatInjectHeld, e
 	if err != nil {
 		return held, fmt.Errorf(".sops.yaml carries no rule matching %s, so sops has no recipients to encrypt to; the rule is added in a pull request the store's gate reviews", seatFile)
 	}
-	if !sameKeySet(rule.Recipients, recipients) {
-		return held, fmt.Errorf("the rule for %s names recipients its sops metadata does not; the rule is what sops encrypts to, so the file is brought to it first: sops updatekeys %s on a bench that opens it, in a pull request the gate reviews", seatFile, seatFile)
+	// The rule is what sops encrypts to: it and the file's own recipients are held to the
+	// one judgement check and the gate make, before anything is encrypted.
+	if problem := seatFileRecipientsProblem(recipients, rule.Recipients, recoveryKey); problem != "" {
+		next := "the file is brought to its rule first"
+		if ruleRecipientsProblem(rule.Recipients, recoveryKey) != "" {
+			next = "the rule is fixed first, in a pull request the gate reviews, and the file brought to it"
+		}
+		return held, fmt.Errorf("seat file %s: %s; %s: sops updatekeys %s on a bench that opens it", seatFile, problem, next, seatFile)
 	}
+	held.recipients = append([]string(nil), recipients...)
 	var unencRe *regexp.Regexp
 	if rule.UnencryptedRegex != "" {
 		if unencRe, err = regexp.Compile(rule.UnencryptedRegex); err != nil {
@@ -294,19 +294,6 @@ func seatInjectTarget(storeDir, seatFile, recoveryKey string) (seatInjectHeld, e
 		held.clear[k.Name] = k.Value
 	}
 	return held, nil
-}
-
-// sameKeySet answers whether two recipient lists name the same keys, in any order.
-func sameKeySet(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for _, k := range a {
-		if !slices.Contains(b, k) {
-			return false
-		}
-	}
-	return true
 }
 
 // seatInjectCompose renders the target's new document: every name the target held, in

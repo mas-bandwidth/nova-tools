@@ -126,7 +126,7 @@ func TestAppendWithNoRecordAnywhereNamesTheOpenVerb(t *testing.T) {
 	now := time.Date(2026, 9, 18, 14, 5, 0, 0, time.UTC)
 	_, err := Append(store, "nosuch", "e-1", "words", "src", now, "manual")
 	require.Error(t, err, "append into a store with no record must refuse")
-	for _, want := range []string{"nova-cairn open", "--store", "--session 'nosuch'", "--publish"} {
+	for _, want := range []string{"nova-cairn open", "--store", "--session nosuch", "--publish manual"} {
 		assert.ErrorContains(t, err, want, "the refusal must name the remedy verb whole")
 	}
 }

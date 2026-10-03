@@ -58,7 +58,7 @@ func absentBoxIn(t *testing.T) string {
 }
 
 // writeRaw puts arbitrary bytes in the fuse box. Hand-edited and half-written boxes are
-// the interesting inputs: your person editing this file by hand is the ONLY
+// the interesting inputs: a person editing this file by hand is the ONLY
 // lockdown-replacement mechanism there is.
 func writeRaw(t *testing.T, path, content string) {
 	t.Helper()
@@ -70,16 +70,17 @@ func readRaw(t *testing.T, path string) string {
 	return testkit.ReadFile(t, path)
 }
 
-// nowish is a wall-clock-relative instant; a frozen date is fresh the day it is written
-// and means something else a week later.
-func nowish() time.Time { return time.Now().UTC().Truncate(time.Second) }
+// nowish is the instant the tests pass in as the clock: fixed, because the tool reads
+// no clock of its own (run takes now) and nothing in a box expires, so no test depends
+// on how long ago it was.
+func nowish() time.Time { return time.Date(2026, 9, 9, 18, 27, 40, 0, time.UTC) }
 
 // ------------------------------------------------------------- 1. THE REFUSAL BRANCH
 
 // TestLiftLockdownIsRefusedForever pins the hard half. If this test is deleted, a later
 // "convenience" lift lands and the one fuse that stops EVERYTHING becomes advisory. The
 // refusal must also never document a mechanical way around itself: the remedy is a live
-// conversation with your person, not a file.
+// conversation with the person you work with, not a file.
 func TestLiftLockdownIsRefusedForever(t *testing.T) {
 	t.Parallel()
 
@@ -97,8 +98,8 @@ func TestLiftLockdownIsRefusedForever(t *testing.T) {
 		assert.Equal(t, 2, code, "%v: exit = %d, want 2 -- a lockdown lift is asking for something this tool does not have", args, code)
 		assert.Contains(t, errOut, "REFUSED", "%v: the refusal must say REFUSED, got %q", args, errOut)
 		assert.Contains(t, errOut, "REPLACED", "%v: the design: a blown fuse is not reset, it is replaced -- got %q", args, errOut)
-		assert.Contains(t, errOut, "conversation", "%v: the refusal must name the only path -- a live conversation with your person -- got %q", args, errOut)
-		assert.Contains(t, errOut, "your person", "%v: the refusal must name the only path -- a live conversation with your person -- got %q", args, errOut)
+		assert.Contains(t, errOut, "conversation", "%v: the refusal must name the only path -- a live conversation with the person you work with -- got %q", args, errOut)
+		assert.Contains(t, errOut, "the person you work with", "%v: the refusal must name the only path -- a live conversation with the person you work with -- got %q", args, errOut)
 		for _, leak := range []string{"fuses.json", "by hand", "edit", box, "--box"} {
 			assert.NotContains(t, out, leak, "%v: the refusal must not hint at a mechanical bypass, leaked %q", args, leak)
 			assert.NotContains(t, errOut, leak, "%v: the refusal must not hint at a mechanical bypass, leaked %q", args, leak)
@@ -182,7 +183,7 @@ func TestUsageErrorsExitTwo(t *testing.T) {
 		want string
 	}{
 		{"no command", nil, "run: nova-fuse help"},
-		{"unknown command", []string{"defuse"}, "unknown subcommand"},
+		{"unknown command", []string{"defuse"}, "unknown verb"},
 		{"lockdown with no reason", []string{"lockdown", "--box", box}, "needs a reason"},
 		{"lockdown with a blank reason", []string{"lockdown", "--box", box, "   "}, "needs a reason"},
 		{"quarantine with no reason", []string{"quarantine", "--box", box, "discord"}, "needs a surface and a reason"},
@@ -423,7 +424,7 @@ func TestLockdownIsWrittenVerifiedAndAnnounced(t *testing.T) {
 	require.Equal(t, 0, code, "exit = %d, want 0", code)
 	assert.Contains(t, out, "LOCKDOWN OK", "stdout = %q, want LOCKDOWN OK", out)
 	assert.Contains(t, out, "verified by re-reading", "exit 0 means verified, never attempted: %q", out)
-	assert.Contains(t, out, "your person", "the announcement must point at the conversation: %q", out)
+	assert.Contains(t, out, "the person you work with", "the announcement must point at the conversation: %q", out)
 
 	var got fuse.Box
 	require.NoError(t, json.Unmarshal([]byte(readRaw(t, box)), &got), "the box must be valid JSON")
@@ -1033,7 +1034,7 @@ func TestAFailFileErrorStaysOnOneLine(t *testing.T) {
 		{[]string{"lockdown", "--box", box, "suspected compromise"}, "LOCKDOWN FAIL", 1},
 		// No box there: quarantine refuses before it writes, and the refusal carries
 		// the same path.
-		{[]string{"quarantine", "--box", box, "discord", "many the same way"}, "nova-fuse quarantine:", 2},
+		{[]string{"quarantine", "--box", box, "discord", "many the same way"}, "nova-fuse quarantine REFUSED:", 2},
 	} {
 		code, out, errOut := capture(t, tc.args, nowish())
 		require.Equal(t, tc.code, code, "%v: exit = %d, want %d\nstdout: %q\nstderr: %q", tc.args, code, tc.code, out, errOut)
@@ -1076,11 +1077,11 @@ func TestNoRefusalOrNoteCanForgeAnOKLine(t *testing.T) {
 		prefix    string // every one of them must open with this
 		stream    string // "stderr" or "stdout"
 	}{
-		{"check on an unreadable box", []string{"check", "--box", bad, "discord"}, 2, 1, "nova-fuse check:", "stderr"},
-		{"status on an unreadable box", []string{"status", "--box", bad}, 2, 1, "nova-fuse status:", "stderr"},
-		{"lift quarantine on an unreadable box", []string{"lift", "quarantine", "--box", bad, "discord"}, 2, 1, "nova-fuse lift quarantine:", "stderr"},
-		{"quarantine refusing to narrow", []string{"quarantine", "--box", bad, "discord", "why"}, 2, 1, "nova-fuse quarantine:", "stderr"},
-		{"lockdown noting the preserved bytes", []string{"lockdown", "--box", bad, "why"}, 0, 1, "nova-fuse lockdown:", "stderr"},
+		{"check on an unreadable box", []string{"check", "--box", bad, "discord"}, 2, 1, "nova-fuse check REFUSED:", "stderr"},
+		{"status on an unreadable box", []string{"status", "--box", bad}, 2, 1, "nova-fuse status REFUSED:", "stderr"},
+		{"lift quarantine on an unreadable box", []string{"lift", "quarantine", "--box", bad, "discord"}, 2, 1, "nova-fuse lift quarantine REFUSED:", "stderr"},
+		{"quarantine refusing to narrow", []string{"quarantine", "--box", bad, "discord", "why"}, 2, 1, "nova-fuse quarantine REFUSED:", "stderr"},
+		{"lockdown noting the preserved bytes", []string{"lockdown", "--box", bad, "why"}, 0, 1, "LOCKDOWN NOTE ", "stderr"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			code, out, errOut := capture(t, tc.args, nowish())
@@ -1108,7 +1109,7 @@ func TestNoRefusalOrNoteCanForgeAnOKLine(t *testing.T) {
 		lines := strings.Split(strings.TrimRight(errOut, "\n"), "\n")
 		assert.Len(t, lines, 2, "stderr printed %d lines, want 2 (the note, then the FAIL): %q", len(lines), errOut)
 		for _, line := range lines {
-			assert.True(t, strings.HasPrefix(line, "nova-fuse lockdown:") || strings.HasPrefix(line, "LOCKDOWN FAIL"), "unexpected line: %q", line)
+			assert.True(t, strings.HasPrefix(line, "LOCKDOWN NOTE ") || strings.HasPrefix(line, "LOCKDOWN FAIL"), "unexpected line: %q", line)
 		}
 		noForgedOKLine(t, "FUSE OK", out, errOut)
 	})
@@ -1136,8 +1137,7 @@ func TestNoOtherWriterOrShadowCanBypassTheEscape(t *testing.T) {
 
 var fuseAudit = audit.Config{
 	// Rendered through one of these, a string cannot carry a line break, a terminal
-	// control sequence or a bidi control. why and since wrap oneline; fuse.OneLine is
-	// oneline.Escape under its old name.
+	// control sequence or a bidi control. why and since wrap oneline.
 	// hintFor is the fourth: it returns this package's own boxHint constant, or the empty
 	// string, and nothing else -- a check on a flag name, with no caller text in it. The
 	// classifier walks its body like the others, so the claim is checked rather than taken.
@@ -1146,7 +1146,7 @@ var fuseAudit = audit.Config{
 	// TestLineShape and TestLineHoldsWhateverTheStampContains pin it -- including against
 	// a release stamp holding a newline, which is the one field of that line that comes
 	// from outside the toolchain.
-	Escapers: []string{"fuse.OneLine", "why", "since", "hintFor", "buildinfo.Line"},
+	Escapers: []string{"why", "since", "hintFor", "buildinfo.Line"},
 	// One entry per site, keyed by file, function and source text. Each is a claim, and
 	// each claim is either checked by a test named here or stated as the reason a reader
 	// would accept. The usage constant needs no entry: a package constant is a literal.
@@ -1155,14 +1155,21 @@ var fuseAudit = audit.Config{
 		"main.go|liftQuarantine|listed": "built immediately above from oneline.Escape over every stored name; pinned by TestTheQuarantinedNowListingCannotForgeALine, because the classifier cannot see inside the loop",
 		"main.go|parseBoxWith|name":     "the verb's own name, chosen by this file at every call site",
 	},
-	Shadows: []string{"fuse", "OneLine", "Fold", "why", "since"},
+	Shadows: []string{"fuse", "Fold", "why", "since"},
 	Imports: []string{
 		// version.go, and the reason it cannot write past the escape: buildinfo reads
 		// debug.ReadBuildInfo and runtime's GOOS, GOARCH and Version, holds no writer of
 		// its own, and returns a STRING that this package prints -- rendered field by
 		// field through oneline.Field before it is returned.
 		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
-		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"sort"`, `"strings"`, `"time"`,
+		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"strings"`, `"time"`,
+		// maps and slices sort the lifted surfaces' names (slices.Sorted(maps.Keys)):
+		// they return values and hold no writer.
+		`"maps"`, `"slices"`,
+		// verbflag words a flag parse error (Explain) and finds the nearest verb
+		// (Nearest); both return strings this package escapes before printing, and
+		// nothing here hands it a stream or calls its Parse or Recover.
+		`"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"`,
 		// errors and io/fs classify an error (errors.Is against fuse.ErrNoBox and
 		// fs.ErrExist); neither holds a writer.
 		`"errors"`, `"io/fs"`,
@@ -1277,7 +1284,7 @@ func TestAFlagErrorCannotForgeALineEither(t *testing.T) {
 // TestTheQuarantinedNowListingCannotForgeALine covers the one exemption in the source
 // tripwire that is a CLAIM rather than a check: the `quarantined now:` listing is built by
 // a loop above its print site, so the classifier can only see a local variable. Removing
-// fuse.OneLine from that loop leaves the whole suite green without this test, while
+// oneline.Escape from that loop leaves the whole suite green without this test, while
 // LIFT FAIL forges a line out of a stored key.
 func TestTheQuarantinedNowListingCannotForgeALine(t *testing.T) {
 	t.Parallel()

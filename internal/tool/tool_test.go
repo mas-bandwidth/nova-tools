@@ -651,3 +651,43 @@ func TestProblems(t *testing.T) {
 		})
 	}
 }
+
+// TestAStageLineIsWhereEveryReaderMeetsTheTool: a tool's Stage is the
+// banner's line 2, the second line of every verb's -h, and an indented NOTE
+// line under a bare command's one-line refusal (STANDARD section 3 point 1); a tool without one prints none.
+func TestAStageLineIsWhereEveryReaderMeetsTheTool(t *testing.T) {
+	t.Parallel()
+	const stage = "nova-demo is pre-alpha: not ready for production use."
+	staged := demo()
+	staged.Stage = stage
+	for _, tc := range []struct {
+		name   string
+		tool   *Tool
+		args   []string
+		stream string // "out" or "err"
+		want   string // a prefix of that stream; "" when the stage must be absent
+	}{
+		{"banner line 2", staged, []string{"help"}, "out", "nova-demo: a tool that exists to be tested\n" + stage + "\n\nhow it works:"},
+		{"-h line 2", staged, []string{"put", "-h"}, "out", "usage: nova-demo put [flags]\n" + stage + "\n"},
+		{"help <verb> line 2", staged, []string{"help", "version"}, "out", "usage: nova-demo version [flags]\n" + stage + "\n"},
+		{"bare hint", staged, nil, "err", "DEMO REFUSED: no verb given;"},
+		{"no stage, no line", demo(), []string{"help"}, "out", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var out, errs bytes.Buffer
+			tc.tool.Run(tc.args, strings.NewReader(""), &out, &errs)
+			got := out.String()
+			if tc.stream == "err" {
+				got = errs.String()
+				assert.True(t, strings.HasSuffix(got, "\n  NOTE "+stage+"\n"), "the bare refusal has no indented NOTE stage hint:\n%s", got)
+			}
+			if tc.want == "" {
+				assert.NotContains(t, got, "pre-alpha", got)
+				return
+			}
+			assert.True(t, strings.HasPrefix(got, tc.want), "want the stream to open %q:\n%s", tc.want, got)
+			assert.Equal(t, 1, strings.Count(got, stage), "the stage appears more than once:\n%s", got)
+		})
+	}
+}

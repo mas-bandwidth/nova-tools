@@ -55,3 +55,22 @@ func WithRemedy(what, next string) string {
 	}
 	return Escape(what + "; run: " + next)
 }
+
+// ShellWord renders one caller-supplied value (a path, a name, a program) for
+// a command a reader is told to run, so a POSIX shell reads it back as that
+// one value: a value made only of characters no shell gives a meaning (letters,
+// digits and _ . / : @ % + = , -) is printed as it is, so simple remedies stay
+// simple; anything else, and the empty value, is single-quoted, an embedded
+// single quote written '"'"' (close, a double-quoted quote, reopen), so a
+// blank, a quote, $(...), a ; or a newline is the value's own character.
+// Every remedy that carries a value goes through it: the remedy is run, so
+// its words must be the words meant.
+func ShellWord(s string) string {
+	if s != "" && strings.Trim(s, shellSafe) == "" {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
+}
+
+// shellSafe are the characters a POSIX shell gives no meaning to in a word.
+const shellSafe = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_./:@%+=,-"

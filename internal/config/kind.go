@@ -223,11 +223,22 @@ const (
 	FieldDecideReview = "decide_review"
 )
 
+// FieldDecideScoreBar is the sprint row's bar on a landed diff's score (internal/decide,
+// Top; docs/SPEC-SPRINT.md section 7, the landed score): a batch whose cards' top class
+// meets it raises one "landed work scored low" judgment listing them.
+const FieldDecideScoreBar = "decide_score_bar"
+
 // checkSprint holds the decide read's bars together: both set, as probabilities with the
-// review bar at most the bounce bar (decide.ParseBars), or both empty (no decide read).
+// review bar at most the bounce bar (decide.ParseBars), or both empty (no decide read);
+// and the landed score's bar a probability, or empty (no judgment).
 func checkSprint(r Row) error {
 	bounce, hasB := r.Fields[FieldDecideBounce]
 	review, hasR := r.Fields[FieldDecideReview]
+	if bar := r.Fields[FieldDecideScoreBar]; bar != "" {
+		if p, err := strconv.ParseFloat(bar, 64); err != nil || p > 1 {
+			return fmt.Errorf("sprint: decide_score_bar %q is not a probability in [0, 1]; set it to one, or empty to raise no landed-score judgment", bar)
+		}
+	}
 	if !hasB || !hasR || bounce == "" && review == "" {
 		return nil
 	}
@@ -311,11 +322,12 @@ var Kinds = []*Kind{
 		Name:      KindSprint,
 		Table:     "sprint",
 		Singleton: true,
-		Doc:       "the one row of sprint-global facts: which friend coordinates, and the two bars a flash card's decide read is routed by",
+		Doc:       "the one row of sprint-global facts: which friend coordinates, the two bars a flash card's decide read is routed by, and the bar a landed diff's score is judged at",
 		Fields: []Field{
 			{Name: "coordinator", Type: TypeRef, Ref: KindFriend, Help: "the friend who holds the coordinator role (a friend row), or empty; set it to hand over"},
 			{Name: FieldDecideBounce, Type: TypeDecimal, Default: "0.5", Help: "the decide read's bounce bar: a flash card whose first read gives p(defect) at or above it is bounced with the read's finding; a probability, at least --decide_review; 0.5 (the default); empty, with --decide_review empty, turns the decide read off"},
 			{Name: FieldDecideReview, Type: TypeDecimal, Default: "0.3", Help: "the decide read's review bar: below it the card lands with no model read, and from it up to --decide_bounce it goes to a strings read; a probability; 0.3 (the default)"},
+			{Name: FieldDecideScoreBar, Type: TypeDecimal, Help: "the landed score's bar: land scores every landed diff (nova-decide's score decision), and a batch whose cards' top class has a p at or above it raises one landed work scored low judgment listing them; a probability; empty (the default) records the scores and raises none; 0.7 is the starting point once a review round labels cards independently"},
 		},
 		Check: checkSprint,
 	},

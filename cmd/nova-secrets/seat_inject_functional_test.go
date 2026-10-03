@@ -123,7 +123,7 @@ func TestSeatInjectRefusesASeatWithNoFile(t *testing.T) {
 		"--store", s.storeDir, "--as", "bench-a", "--from", "ada", "--only", "NOVA_REDIS_BENCH_PASSWORD",
 		"--key", s.ada.privPath, "--sops", sopsPath, "--no-pr")
 	require.Equal(t, 2, code, "seat inject exited %d, want 2: %s", code, errOut)
-	assert.True(t, strings.HasPrefix(errOut, "SECRETS SEAT INJECT FAIL "), "the refusal does not name the file and the seat add remedy: %s", errOut)
+	assert.True(t, strings.HasPrefix(errOut, "SECRETS SEAT INJECT REFUSED: "), "the refusal does not name the file and the seat add remedy: %s", errOut)
 	assert.Contains(t, errOut, "bench-a.yaml", "the refusal does not name the file and the seat add remedy: %s", errOut)
 	assert.Contains(t, errOut, "nova-secrets seat add", "the refusal does not name the file and the seat add remedy: %s", errOut)
 	st := strings.TrimSpace(runCmd(t, s.storeDir, "git", "status", "--porcelain"))

@@ -37,5 +37,6 @@ func TestWaitQuietBeatsSleepsThroughABeatCommit(t *testing.T) {
 	r := invoke(t, "", waitFlags(checkout, "Ada", "2s", "--quiet-beats")...).mustCode(t, 0)
 
 	r.mustContain(t, "stdout", "WAIT DONE reason=timeout")
+	r.mustContain(t, "stderr", "WAIT NOTE --beat, --beat-lease and --quiet-beats are retired and ignored")
 	require.Falsef(t, strings.Contains(r.stdout, "WAIT OK") || strings.Contains(r.stdout, "reason=new"), "a beat-only change woke the wait; a beat is not news:\n%s", r.stdout)
 }

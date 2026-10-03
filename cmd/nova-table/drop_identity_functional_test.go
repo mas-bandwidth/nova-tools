@@ -52,7 +52,7 @@ func TestShowNamesAnOrphanIdentityAndDropDefinitionRepairsIt(t *testing.T) {
 	code, stdout, stderr := runTable(at(addr, "show", "fleet")...)
 	assert.Equal(t, 1, code)
 	assert.Empty(t, stdout)
-	assert.Equal(t, "nova-table show: table \"fleet\": no such table, but table:fleet:identity is left behind by a dropped definition; run: nova-table drop 'fleet' --definition\n", stderr)
+	assert.Equal(t, "SHOW REFUSED: table \"fleet\": no such table, but table:fleet:identity is left behind by a dropped definition; run: nova-table drop 'fleet' --definition\n", stderr)
 
 	code, stdout, stderr = runTable(at(addr, "drop", "fleet", "--definition")...)
 	assert.Equal(t, 0, code, stderr)

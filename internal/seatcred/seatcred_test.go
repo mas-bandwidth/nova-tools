@@ -3,6 +3,8 @@ package seatcred_test
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -16,7 +18,7 @@ import (
 func TestFromArgsTakesTheSeatFlagOrTheEnvironment(t *testing.T) {
 	t.Parallel()
 
-	t.Cleanup(func() { seatcred.Select("") })
+	t.Cleanup(func() { seatcred.Process().Select("") })
 	env := func(v string) func(string) string {
 		return func(k string) string {
 			if k == seatcred.SeatEnv {
@@ -48,9 +50,9 @@ func TestFromArgsTakesTheSeatFlagOrTheEnvironment(t *testing.T) {
 			require.Contains(t, err.Error(), "--seat wants a seat name", "%v: err %v, want a refusal naming --seat", c.args, err)
 			continue
 		}
-		require.NoError(t, err, "%v env=%q: rest %v seat %q err %v; want %v %q", c.args, c.env, rest, seatcred.Selected(), err, c.rest, c.seat)
-		require.Equal(t, c.rest, rest, "%v env=%q: rest %v seat %q err %v; want %v %q", c.args, c.env, rest, seatcred.Selected(), err, c.rest, c.seat)
-		require.Equal(t, c.seat, seatcred.Selected(), "%v env=%q: rest %v seat %q err %v; want %v %q", c.args, c.env, rest, seatcred.Selected(), err, c.rest, c.seat)
+		require.NoError(t, err, "%v env=%q: rest %v seat %q err %v; want %v %q", c.args, c.env, rest, seatcred.Process().Selected(), err, c.rest, c.seat)
+		require.Equal(t, c.rest, rest, "%v env=%q: rest %v seat %q err %v; want %v %q", c.args, c.env, rest, seatcred.Process().Selected(), err, c.rest, c.seat)
+		require.Equal(t, c.seat, seatcred.Process().Selected(), "%v env=%q: rest %v seat %q err %v; want %v %q", c.args, c.env, rest, seatcred.Process().Selected(), err, c.rest, c.seat)
 	}
 }
 
@@ -133,23 +135,50 @@ func TestActiveResolvesOnceAndOnlyWhenSelected(t *testing.T) {
 	require.True(t, same(c, "air-bench-test-pw-11"), "Active = %v %v %v; want air as bench", c, ok, err)
 }
 
-func TestDefaultResolverGuardsRealEnvironment(t *testing.T) {
-	t.Parallel()
-
-	s := seatcred.Anonymous()
-	s.Select("nonexistent-seat-probe-4717")
-	_, ok, err := s.Active()
-	require.True(t, ok, "Active() with nonexistent seat reported ok=%v, err=%v; want ok=true with error", ok, err)
-	require.Error(t, err, "Active() with nonexistent seat reported ok=%v, err=%v; want ok=true with error", ok, err)
-	msg := err.Error()
-	require.Contains(t, msg, "is absent", "Active() error %q does not demonstrate real environment store lookup: want error stating store file is absent", msg)
-	require.NotContains(t, msg, "HOME is unset", "Active() error %q does not demonstrate real environment store lookup: want error stating store file is absent", msg)
+// inHermeticChild runs the calling test again in a child of this test binary whose
+// environment is only a fresh temp HOME and PATH, and says whether this is that child.
+// A test that resolves through the process's own environment (a Selection with no
+// lookup) does it in the child, so the store it looks for is under that temp HOME: no
+// test reads, lists or stats a real store. The parent fails with the child's output.
+func inHermeticChild(t *testing.T) bool {
+	t.Helper()
+	const marker = "SEATCRED_HERMETIC_CHILD"
+	if os.Getenv(marker) == t.Name() {
+		return true
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=^"+t.Name()+"$", "-test.count=1")
+	cmd.Env = []string{marker + "=" + t.Name(), "HOME=" + t.TempDir(), "PATH=" + os.Getenv("PATH")}
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "the hermetic child failed:\n%s", out)
+	return false
 }
 
+// A Selection given no resolver and no lookup resolves through the process's own
+// environment: the store it looks for is the one under the process's HOME.
+func TestDefaultResolverReadsTheProcessEnvironment(t *testing.T) {
+	t.Parallel()
+	if !inHermeticChild(t) {
+		return
+	}
+	s := new(seatcred.Selection)
+	s.Select("nonexistent-seat-probe-4717")
+	_, ok, err := s.Active()
+	require.True(t, ok)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "seat nonexistent-seat-probe-4717: store "+filepath.Join(os.Getenv("HOME"), seatcred.DefaultStore)+" is not a directory",
+		"the default resolver did not look for the store under the process's own HOME")
+	assert.NotContains(t, err.Error(), "HOME is unset")
+}
+
+// Select and SelectWith clear the lookup FromArgs recorded, so Active then resolves
+// through the process's own environment: in the hermetic child (inHermeticChild).
 func TestSelectClearsLookupFromArgs(t *testing.T) {
 	t.Parallel()
+	if !inHermeticChild(t) {
+		return
+	}
 
-	s := seatcred.Anonymous()
+	s := new(seatcred.Selection)
 	called := false
 	customLookup := func(k string) string {
 		called = true

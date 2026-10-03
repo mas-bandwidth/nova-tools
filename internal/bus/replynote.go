@@ -7,16 +7,6 @@ import (
 	"time"
 )
 
-// PrepareReply builds the note that answers an existing one, with every header the reply
-// verb fills taken from the original and NONE from the caller: From is the caller, To is
-// the original's From, Re names the original by id (or path, for a note older than ids),
-// and Subject is the original's subject with one `Re: ` in front, not stacked. It is the
-// step that makes a reply impossible to hand-shape: a caller supplies the body and nothing
-// else, so there is no header line to get wrong.
-func PrepareReply(t *Bus, me Participant, original *Note, body string, now time.Time) (Prepared, error) {
-	return PrepareReplyFrom(t, me, original, body, now, "")
-}
-
 // PrepareReplyFrom is PrepareReply with the machine the reply is posted from. An empty
 // host writes no Host line at all, which is the reply this tool has always written, byte
 // for byte; PrepareReply is that call and is kept so a caller with no host reads as one.

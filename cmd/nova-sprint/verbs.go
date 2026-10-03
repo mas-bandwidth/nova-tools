@@ -285,6 +285,7 @@ one answer to each judgment (every one prints its own, filled in):
   returned to review          rework, accept (its reads standing) or drop --group <id> --expect <n> --answers <notes>
   stranded in review          rework or drop (or ask, if never asked) --group <id> --expect <n> --answers <notes>
   stalled                     card <primary> (HELD says what holds it), then the decision it prints, or ack <note> --reason '<why>'
+  landed work scored low      add --stream <s> '<fix id>' --brief '<the finding>', then ack <note>; or ack <note> --reason '<why it stands>'
 `
 
 // verbExamples holds one more worked example per form a verb's -h shows,
@@ -1074,6 +1075,9 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	if *brief == "" && *sentinel == "" {
 		c.says = append(c.says, "the cards have no brief, so a worker is handed no task with them; give each one before it is dealt, on a STOPPED machine: nova-sprint brief <id> --brief-file <path>")
 	}
+	if code := a.holdWho("add", st, stderr, *brief); code != 0 {
+		return code
+	}
 	c.addStream = *stream
 	c.addBefore = *before
 	step := store.AddEachStep(rs)
@@ -1146,6 +1150,13 @@ func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, se
 			return refuse(stderr, "add", err.Error())
 		}
 		st = s
+	}
+	briefs := make([]string, len(cards))
+	for i, cd := range cards {
+		briefs[i] = cd.Brief
+	}
+	if code := a.holdWho("add", st, stderr, briefs...); code != 0 {
+		return code
 	}
 	r := sprint.AddReq{Stream: stream, Cards: cards, Who: c.actor, Before: before, After: after, Held: held}
 	if score != "" {
@@ -1285,6 +1296,40 @@ func uniquify(ids []string) []string {
 		}
 	}
 	return out
+}
+
+// holdWho holds each brief's WHO line (cardhdr.ReadWho; the owner, 2026-10-03: "doing
+// parts on friends where we would normally do friend work"): `WHO: friend` or
+// `WHO: friend <name>`, the name a row of the friends table (nova-config's friend rows,
+// copied by friend sync), and `WHO: friend` only while the table has a friend. A brief
+// whose line does not read, or names no friend of the table, refuses the whole call, exit
+// 2, nothing written. A brief with no WHO line is a machine's, as before.
+func (a *app) holdWho(verbName string, st *store.Store, stderr io.Writer, briefs ...string) int {
+	var names []string
+	read := false
+	for _, b := range briefs {
+		w, why := cardhdr.ReadWho(b)
+		if why != "" {
+			return refuse(stderr, verbName, "the brief's "+why)
+		}
+		if !w.Friend {
+			continue
+		}
+		if !read {
+			var err error
+			if names, err = st.FriendNames(context.Background()); err != nil {
+				return a.readFailed(verbName, err, stderr)
+			}
+			read = true
+		}
+		switch {
+		case len(names) == 0:
+			return refuse(stderr, verbName, "the brief says WHO: friend, and the friends table has no friend: its rows are nova-config's friend rows; run: nova-sprint friend sync")
+		case w.Name != "" && !slices.Contains(names, w.Name):
+			return refuse(stderr, verbName, fmt.Sprintf("the brief says WHO: friend %s, and %s is no row of the friends table (friends: %s): name one, or write WHO: friend for any; run: nova-sprint friend sync", w.Name, w.Name, strings.Join(names, ",")))
+		}
+	}
+	return 0
 }
 
 // modelLinesWhy is the refusal a brief's model lines get, the same whether the
@@ -1728,7 +1773,7 @@ func takeShort(ctx context.Context, st *store.Store, res store.Result, members [
 		head := fmt.Sprintf("%s took %d of the %d asked: ", m, n, asked)
 		if !s.Fleet.HasRow(m) {
 			// a name the fleet table lacks takes nothing, and says so rather than an OK alone
-			out = append(out, head+"it is no member of the fleet table (members: "+orDashStr(strings.Join(s.Fleet.Rows(), ","), "none")+"); run: nova-sprint fleet up "+m+" --width <n>")
+			out = append(out, head+"it is no member of the fleet table (members: "+orDashStr(strings.Join(s.Members(), ","), "none")+"); run: nova-sprint fleet up "+m+" --width <n>")
 			continue
 		}
 		switch status := s.MemberCtl(m).F("status"); {
@@ -1972,6 +2017,9 @@ func (a *app) cmdBrief(args []string, stdout, stderr io.Writer) int {
 		if st, err = a.store(*c); err != nil {
 			return refuse(stderr, "brief", err.Error())
 		}
+	}
+	if code := a.holdWho("brief", st, stderr, *brief); code != 0 {
+		return code
 	}
 	c.says = append(c.says, unfilledSays("the brief of "+ids[0], *brief)...)
 	return a.runStep("brief", *c, st, store.BriefStep(sprint.BriefReq{ID: ids[0], Brief: *brief, Rules: cardRules(*brief, rs).held, Who: c.actor}), stdout, stderr)

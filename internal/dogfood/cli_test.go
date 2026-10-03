@@ -228,3 +228,16 @@ func TestEveryToolSectionOfTheRealReferenceYieldsAVerb(t *testing.T) {
 		assert.True(t, withVerbs[tool], "docs/CLI.md gives %s a section and the ledger reads no verb out of it; that tool can never be dogfooded", tool)
 	}
 }
+
+// TestParseHelpReadsAStageLineAsProse: a skeleton banner's line 2 names the
+// tool and its stage; it is a sentence, not the verb "is", so the verb-help
+// walk and the dogfood ledger never ask `<tool> is -h`.
+func TestParseHelpReadsAStageLineAsProse(t *testing.T) {
+	t.Parallel()
+	help := "nova-work: every issue in one tree file\nnova-work is pre-alpha: not ready for production use.\n\nusage:\n  nova-work import --org <org>\n  nova-work verify --tree <tree.lisp>\n"
+	var keys []string
+	for _, v := range ParseHelp(help) {
+		keys = append(keys, v.Key())
+	}
+	assert.Equal(t, []string{"nova-work import", "nova-work verify"}, keys)
+}

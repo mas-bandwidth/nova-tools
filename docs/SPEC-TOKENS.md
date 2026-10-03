@@ -43,7 +43,8 @@ near the end, and the sections below say how each is met.
    the login variables their flags name (`NOVA_SPRINT_REDIS_USER`, the variable
    `--password-env` or `NOVA_SPRINT_REDIS_PASSWORD_ENV` names, else
    `NOVA_REDIS_BENCH_PASSWORD`; [SPEC-STATE.md](SPEC-STATE.md)). Every other
-   verb reads no environment and touches no network.
+   verb reads no environment and touches no network, but for one lookup:
+   `--opencode` runs `sqlite3` found on `$PATH`.
 2. **Sources are declared by flag, and every row names its sources.** A source
    is one of `--claude <label>=<dir>`, `--opencode <label>=<file>`,
    `--swarm <label>=<dir>` or `--bus <dir>`, each repeatable. The `sources`
@@ -206,7 +207,9 @@ near the end, and the sections below say how each is met.
     `utc` or a zone name with no whitespace, the version line carries
     `turns=` as an integer or `-`, the `date` column equals the
     file name, and rows are sorted and unique by `(model, repo)`. A missing day
-    is `CHECK MISSING date=<d>`, named, never filled. `check` exits 1 on any
+    is `CHECK MISSING date=<d>`, named, never filled. An `--out` holding no day
+    file at all is a finding too (a gate that cannot go red is no gate either),
+    with the fold that writes the first one as its remedy. `check` exits 1 on any
     finding and prints the count line either way. Never gate on `sum` or
     `sources`; `check` is the gate.
 
@@ -265,7 +268,11 @@ near the end, and the sections below say how each is met.
 16. **Sources are read-only.** No verb writes into a source. The OpenCode
     database is copied to `--scratch <dir>` with its `-wal` and `-shm`
     siblings and queried there with `sqlite3 -readonly` under `--timeout`;
-    the live file is never opened for writing. The bus checkout is read as
+    the live file is never opened for writing. A fold or a report copies
+    into `--scratch/opencode-<label>/`, replacing the copy there, and leaves
+    it; a run that writes nothing (`sources`, every `--dry-run`) copies into
+    a new directory of its own under `--scratch` (`.nova-tokens-dry-run-*`)
+    and removes it before it exits, so `--scratch` is left as it was. The bus checkout is read as
     files; the tool never runs `git`. A transcript is opened for reading.
 17. **A day is a UTC day, from the message's own stamp, and a row that is
     not says so.** A transcript line's `timestamp`, a database row's
@@ -351,14 +358,16 @@ near the end, and the sections below say how each is met.
     where none did; `tokens=` is input, output, cache write and cache read
     summed (reasoning is its own column and is not in the ratio's
     denominator); `usd=` is the model's cost, in dollars, from the usage
-    `usd` column or a cost tick the source reported, and is `0` where no
-    source reported one; `usd_per_mtok=` is that cost over those tokens,
-    dollars per million tokens to four decimals. The lines are sorted by
-    `usd_per_mtok` descending, capped at `--max` like every other listing,
-    and a model whose `tokens=` is zero still prints one line with
-    `usd_per_mtok=-`: there is no average over nothing, so the ratio is
-    never divided. The one `TOKENS AVG-ALL` line is the same four fields
-    summed over every model.
+    `usd` column or a cost tick the source reported, and is `-` where no
+    source reported one; `usd_per_mtok=` is that cost over the tokens it
+    covers (the tokens of the messages whose source reported a cost) and no
+    others, dollars per million tokens to four decimals; `unpriced=` counts
+    the tokens no source priced, so a rate never stands for tokens whose
+    cost is unknown. The lines are sorted by `usd_per_mtok` descending,
+    capped at `--max` like every other listing, and a model with no priced
+    token still prints one line with `usd_per_mtok=-`: there is no average
+    over nothing, so the ratio is never divided. The one `TOKENS AVG-ALL`
+    line is the same fields summed over every model.
 
 21. **A harness that shows nothing is counted from the provider's side, and
     never apportioned.** Emma's harness (Antigravity, Gemini) and Johnny's
@@ -531,8 +540,8 @@ TOKENS REFUSED: <reason>
 REPORT OK who=<name> day=<d> rows=<n> at=<stamp> build=<id> subject=<subject>
 REPORT FAIL who=<name> day=<d> rows=<n> unreadable=<n>
 REPORT REFUSED: <reason>
-TOKENS AVG day=<d> model=<provider/model> tokens=<n> usd=<n> usd_per_mtok=<n|->
-TOKENS AVG-ALL day=<d> tokens=<n> usd=<n> usd_per_mtok=<n|->
+TOKENS AVG day=<d> model=<provider/model> tokens=<n> usd=<n|-> usd_per_mtok=<n|-> unpriced=<n>
+TOKENS AVG-ALL day=<d> tokens=<n> usd=<n|-> usd_per_mtok=<n|-> unpriced=<n>
 SUM MONTH month=<m> at=<stamp> build=<id> days=<n> first=<d> last=<d> missing=<n> rows=<n> turns=<n|->
 SUM PAIR model=<model> repo=<repo> input=<n> output=<n> cache_write=<n> cache_read=<n> reasoning=<n> rough=<n> dashes=<in>,<out>,<cw>,<cr>,<r> nonutc=<n> days=<n>
 SUM MODEL model=<model> input=<n> output=<n> cache_write=<n> cache_read=<n> reasoning=<n> rough=<n> dashes=<in>,<out>,<cw>,<cr>,<r> nonutc=<n> repos=<n>
