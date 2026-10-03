@@ -16,7 +16,7 @@ func TestReadyToAcceptIsAJudgmentAcceptedByGroup(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
-	ta.ok("add --stream s1 --count 3")
+	ta.ok("add --stream s1 --count 3 --brief-file " + proBriefFile(t))
 	ta.deal(3)
 	ta.ok("take --as m1 --limit 3")
 	ta.ok("finish --as m1 s1-1.w1@1 s1-2.w1@1 s1-3.w1@1")

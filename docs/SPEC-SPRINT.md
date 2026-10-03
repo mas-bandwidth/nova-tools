@@ -369,7 +369,7 @@ outcome and reason are kept.
 | ready -> working | deal: the machine's tick cuts and deals a work card | mechanical |
 | working -> review | its work card finished, ok or failed | mechanical; failed notifies for judgment |
 | working -> ready | its work card was withdrawn because no fleet member is up | mechanical, notifies |
-| review -> merging | accept: two different readers said ok at this head | mechanical (the tick), unless its CI is red at its head or it was returned to review at its attempt; the coordinator's verb takes those; refused without the two |
+| review -> merging | accept: the readers it needs said ok at this head (one for a flash card, two different readers for a pro card; section 6) | mechanical (the tick), unless its CI is red at its head or it was returned to review at its attempt; the coordinator's verb takes those; refused without them |
 | review -> working | rework with a fix: the next attempt is delegated at once | the coordinator's verb |
 | review -> ready | rework with a fix when no fleet member is up or none is below its width; the tick deals it when one has room | the coordinator's verb |
 | merging -> review | the stream's CI went red and the coordinator sent it back, or return | the coordinator's verb |
@@ -664,8 +664,20 @@ id (`--op`) returns the original result, with no second counter or notification.
   reader named for no fleet row is handed no width and begins nothing. The
   sprint holds no reader's width of its own, so readers are levelled by count
   and none is bounded at DealAhead times a width.
-- ask deals every primary in review that lacks reads to TWO DIFFERENT readers
-  UP, in work order, each the next reader round the readers from the readers'
+- A card's reads are counted by its tier (the owner, 2026-10-02, cost rule 4,
+  nova-tools#5174: "Reads: one cold read per flash card on a flash route; two
+  per pro card; readers still equal workers per machine"): a flash card needs
+  ONE read, a pro card (or a frontier card, read on pro) TWO, from two
+  different readers (`sprint.ReadsNeeded`). The tier is the card's own, the tier
+  the deal draws its work from (line 1's tier, flash when it names none, or the
+  tier a rework recorded), never a setting, so a card in merging or landed is
+  held to the count it was accepted on; a read tier set for the stream or the
+  sprint (below) raises the route its reads are drawn on and never their
+  count. The reads per machine are unchanged: a reader still runs at its
+  machine's width.
+- ask deals every primary in review that lacks reads to as many different
+  readers UP as it needs (one for a flash card, TWO DIFFERENT readers for a pro
+  card), in work order, each the next reader round the readers from the readers'
   `ask_index` that has no read card at the attempt, placed or retired. One read
   card per reader. Reworked work is asked by the same rotation: a read is a
   fresh child on a freshly drawn route, so the readers of an earlier attempt
@@ -701,10 +713,12 @@ id (`--op`) returns the original result, with no second counter or notification.
   member does not begin a read it returned again before
   `member.ReadStageRetry`. A return of a read the caller does not hold is
   refused, and so is a second return of a read returned and not begun since:
-  a return is counted once. With fewer than two readers up the tick
-  asks none: it raises one judgment, `fewer than two readers up: <readers and
-  their states>`, for the sprint (not one for each primary), closed when two
-  are up or no primary waits; `reader up` and `reader add` answer it.
+  a return is counted once. A primary that needs more readers than are up
+  is not asked (with one reader up the tick asks the flash cards and the pro
+  cards wait): the tick raises one judgment, `fewer than two readers up:
+  <readers and their states>`, for the sprint (not one for each primary),
+  closed when enough are up or no such primary waits; `reader up` and
+  `reader add` answer it.
   The machine's tick asks for every such primary; `ask` is the coordinator's
   own. Each read card the ask creates carries a route as a work card does
   (`route`, `model`, `tokens`, `deadline`), and `tier`, the tier it is drawn
@@ -743,7 +757,8 @@ id (`--op`) returns the original result, with no second counter or notification.
   runs the read again once, after `member.ReadStageRetry`; a second stage failure is returned
   (`read --as <reader> --return <card> --reason <the stage's reason>`), and the next tick asks
   it again as above.
-- The read that completes two different readers' ok at a primary's head writes
+- The read that completes the ok reads a primary needs at its head (one
+  reader's for a flash card, two different readers' for a pro card) writes
   the judgment ready to accept; accept, rework and drop close it.
 - The machine's tick accepts every acceptable primary in review whose work did
   not fail, except one whose CI is red at its head ("ci red on a primary" is
@@ -753,9 +768,10 @@ id (`--op`) returns the original result, with no second counter or notification.
   attempt with its own two reads is the tick's to accept again). An
   acceptable primary the tick does not accept is told as ready to accept when
   no open judgment on it offers accept.
-- A primary is acceptable when two different readers have an ok read card at
-  its current attempt and head. One reader's ok alone is never enough, whoever
-  the reader. A reader counts once, and a read card counts only when the row it
+- A primary is acceptable when as many different readers as it needs have an
+  ok read card at its current attempt and head: one for a flash card, two for a
+  pro card. For a pro card one reader's ok alone is never enough, whoever the
+  reader. A reader counts once, and a read card counts only when the row it
   occupies, the reader its id names and its reader field are one reader; a card
   that disagrees counts for no one, and check reports it.
 - A primary in review with no read outstanding, not acceptable and no open
@@ -948,8 +964,8 @@ the same primary combines their named waivers in one guarded card change.
 When the named prerequisites exist again,
 resolve closes that missing-need judgment and still waits for them to land.
 
-A primary in review is never silent. With ok reads from two different readers
-at its head, some open judgment on it offers accept (ready to accept, or
+A primary in review is never silent. With the ok reads it needs at its head
+(one reader's for a flash card, two different readers' for a pro card), some open judgment on it offers accept (ready to accept, or
 returned to review). Otherwise, with nothing open on it and no read
 outstanding, it is stranded in review (failed work, or never asked after its
 last judgment closed) or its reads are exhausted. Acknowledging exactly that
@@ -1058,7 +1074,7 @@ exactly, member by member, never by their counts.
    card names a card it needs only while it is stuck in a stream stopped for a
    cross: a return, a conflict stop and a resume each clear the need.
 5. Primaries in merge merged = primaries in work landed.
-6. No primary enters merging without ok read cards from two different readers at its head.
+6. No primary enters merging without ok read cards from as many different readers at its head as its tier needs (one for a flash card, two for a pro card; section 6).
 7. A score never changes except by rank: every copy has its primary's score.
 8. No card lost or made twice: a card in flight names a primary on the table,
    and a primary has at most one live work card.
@@ -1225,12 +1241,12 @@ command that loads it.
 | tick | one tick by hand |
 | take | a worker moves work cards fleet ready -> working; `--as <member>`, `<card>@<gen>`. The width is hard: a member's working cards never pass its fleet row's width, held here whatever is asked; a take by count is cut to the room, a take by id past it is refused; a take by count that took fewer than asked says why on a NOTE line (the member at its width, its ready queue empty, or not up) |
 | finish | work cards done ok or failed; primaries to review; `--as <member>`, `<card>@<gen>`; `--usage <text>` (what the run spent) is kept on the attempt's record, timed and priced (section 2, What a card cost) |
-| ask | deals primaries in review to two different readers; `--another`; `ask <primary> --instead <reader>` takes that reader's read, asked or reading, of the primary at its attempt back (`retired_by: coordinator`, a later report of it refused naming that) and asks one other reader in the same step, chosen and routed as `--another` (the owner, 2026-10-01: "get the verbs in man."); refused, nothing changed, when the primary is not in review, the reader holds no live read of it, no other reader is free, or with `--another`, `--group` or more than one primary |
+| ask | deals primaries in review to the readers each needs (one for a flash card, two different readers for a pro card; section 6); `--another`; `ask <primary> --instead <reader>` takes that reader's read, asked or reading, of the primary at its attempt back (`retired_by: coordinator`, a later report of it refused naming that) and asks one other reader in the same step, chosen and routed as `--another` (the owner, 2026-10-01: "get the verbs in man."); refused, nothing changed, when the primary is not in review, the reader holds no live read of it, no other reader is free, or with `--another`, `--group` or more than one primary |
 | queue | a reader's read cards or a member's work cards, oldest first (`--as`; `--json` carries the worker's `width`: a member's fleet row's, a reader's its machine's, `reader-<m>`), or a stream's merge queue (`--stream`) |
 | routes | each route of the store (nova-config's `route` kind) with what its attempts did: attempts, ok, failed, provider failures, mean wall from take to finish; `TIERS flash=<n> pro=<n>` first, the enabled routes per tier; `--json` |
 | stats | the epoch's pass in seconds, each as median, max and count, from one read of the work, fleet and readers tables (every primary's work and read cards of every attempt, retired ones too, in read sets; `sprint.Stats`, pure): the stages (deal wait: admitted to the first work card's `first_dealt`; finish to two reads: the last ok take's `finished` to `accepted`; accept to land; total: admitted to landed), each member's work cards (cards, failed, take wait `dealt` to `taken`, run wall the usage's `wall`, report lag `finished` - `taken` - wall), each reader's read cards (cards asked, begin wait `asked` to `begun`, run wall, report lag `read` - `begun` - wall), and each route's takes from the primaries' cost records (takes; ok: a work take finished ok or a read with its verdict; provider: provider failure or no result; failed: every other end; a launch refused at staging is no take; a read whose record names no route counts on its card's route; run wall); members, readers and routes in name order; changes nothing; `--json` |
 | read | a reader records ok or broken with the finding; `--as <reader>`, `--begin`; `--usage <text>` (what the read spent) is kept on the read card, timed and priced (section 2, What a card cost) |
-| accept | review -> merging and into merge queued; refused without two readers; named ids all or nothing, a selection moves the eligible |
+| accept | review -> merging and into merge queued; refused without the ok reads it needs (one reader for a flash card, two different readers for a pro card); named ids all or nothing, a selection moves the eligible |
 | rework | delegates the next attempt at once with a fix, and writes on that attempt's work card `fix`, `finding` (its broken reads' findings, each once) and `why` (how the attempt before ended: failed with its report, finished and found broken, or sent back), each cut to MaxCardTextBytes with a trailing `...` and never refused for its size, and kept on the primary too for a rework that deals later; its packet carries them to the child's JOB.md and `card` prints per attempt; ready when no member is up; a primary at its redeal bound (ready, its work card withdrawn) is reworked too, with `--fix`, its withdrawn card taken off; without `--fix` each primary's fix is the finding of its broken read, else the report of its failed work, and a primary with neither is refused by name; `--tier <flash|pro|frontier>` writes the tier on the primary (`tier`), and this attempt's deal and every later deal and read of the card draw from it over its brief's line 1, so a flash card that failed twice is reworked on pro, the same card and brief; a word that names no tier is usage (exit 2), and a card whose brief pins a model is refused by name, since it runs on its pin whatever its tier |
 | return | merging -> review, off the merge queue |
 | drop | off the table with the reason |
@@ -1447,8 +1463,9 @@ stream stopped only on a cross need whose card has landed), deal (T3), accept
 moves to merging and into its stream's merge queue, and the coordinator is
 told once for each stream "ready to merge"; the merge is the coordinator's, and
 the note names `land --stream <s>`, which a `run --land` does itself),
-ask (T2: two different readers up for each primary in review with
-fewer than two read cards at its attempt and work not failed; a read asked of a
+ask (T2: as many different readers up as it needs, one for a flash card and
+two for a pro card, for each primary in review with fewer read cards than that
+at its attempt and work not failed; a read asked of a
 reader that is not up is taken back first, section 6), check (T6: section 9, and the
 no-stall rule 12), deadlines, overdue, done (the sprint done: the machine
 stops). Each part is
@@ -1463,7 +1480,8 @@ does): cannot ask (two readers are up and fewer than two different readers are
 free for a primary, who has not already read its attempt;
 one condition per primary whatever its count of free readers),
 fewer than two readers up (the sprint's, one whatever the primaries waiting:
-the ask asks none while it stands, section 6),
+the ask asks no primary that needs more readers than are up while it stands,
+section 6),
 no fleet member is up, a work card past its deadline, by its state (dealt,
 never taken, ready or withdrawn again before a take: the dealt bound from
 untaken_since, the first deal since its last take; a card's own deadline starts

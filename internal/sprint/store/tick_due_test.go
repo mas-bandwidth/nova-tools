@@ -244,7 +244,7 @@ func TestFewReadersIsWrittenOncePerSprint(t *testing.T) {
 	require.NoError(t, h.st.Init(h.ctx))
 	h.beat()
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
-	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 2}))
+	h.must(AddStep(sprint.AddReq{Brief: proBrief, Stream: "s1", Count: 2}))
 	h.startMachine()
 	h.machine()
 	h.work("m1")

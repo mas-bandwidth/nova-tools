@@ -316,7 +316,7 @@ type Snapshot struct {
 	// 6); nil is none read, and every reader is held up.
 	ReaderStates map[string]string
 	// Running says the machine was RUNNING as the step read the sprint: its
-	// pump accepts a primary with two ok reads, so no step opens a "ready to
+	// pump accepts a primary with the ok reads it needs, so no step opens a "ready to
 	// accept" judgment for it ("accept is mechanical").
 	Running bool
 }

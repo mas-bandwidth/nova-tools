@@ -101,7 +101,7 @@ Notes on the rows:
   is the member's queue, not the card's fault: `wait` while the member works through its width, or
   `fleet level` to move cards a member cannot start to one with free lanes. `fleet down <m>` is for the member
   that has held the card its whole deadline.
-- Cannot ask. A read needs two different readers up (`where` shows the readers table). A drop on this ground
+- Cannot ask. A flash card needs one reader up and a pro card two different readers up (`where` shows the readers table). A drop on this ground
   goes on the re-add list (section 3); fixes for the machinery are never made through the sprint.
 - Sentinel reached. The other printed decisions are `add --stream <s> --before <sentinel> '<new id>' --brief
   '<brief>'` and `drop`. A judgment held for a wave not yet agreed stays open, never released to clear the
@@ -220,7 +220,7 @@ never answers a sentinel or composes a command the inbox did not print, and stop
 
 ## 6. Landing
 
-The server's `--land` merges each card whose two reads passed into the sprint branch, the branch the cards'
+The server's `--land` merges each card whose reads passed (one for a flash card, two for a pro card) into the sprint branch, the branch the cards'
 `BASE:` line names. The sprint branch reaches the integration branch (`dev`) as a batch.
 
 - Before it: every repair card has landed, and a reader that did not write it has read the whole diff of the
@@ -266,7 +266,7 @@ The server's `--land` merges each card whose two reads passed into the sprint br
   bench, never the coordinator's machine: `go run ./tools/tlacheck groups --stale` names the groups to run,
   and `go run ./tools/tlacheck merge --out tla/RUNS.tsv --keep tla/RUNS.tsv <runs>...` joins the records.
 - `git push origin lander/<date>`, then `gh pr create --base dev --title 'Batch: <heads>' --body-file <file>`,
-  the body listing each head's sha, its two reads, and the last line of each gate; `gh pr checks <number>
+  the body listing each head's sha, its reads, and the last line of each gate; `gh pr checks <number>
   --watch` follows CI. Every job has a 2-minute cap: a darwin leg canceled under load with every test passing
   is rerun when the machine is quieter, `gh run rerun <run id> --failed`.
 - Land with `gh pr merge <number> --merge`. `dev` has a merge queue that runs the functional tier the pull

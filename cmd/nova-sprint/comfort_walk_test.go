@@ -30,7 +30,7 @@ func TestAVerbBeforeInitSaysRunInitFirst(t *testing.T) {
 func TestALandRefusalNamesEachCauseOnItsLineAndTheTwinsMerge(t *testing.T) {
 	t.Parallel()
 	file := filepath.Join(t.TempDir(), "sprint.twin")
-	for _, line := range []string{"init --readers reader-a,reader-b --members m1", "add --stream s1 --count 1", "start", "tick", "tick",
+	for _, line := range []string{"init --readers reader-a,reader-b --members m1", "add --stream s1 --count 1 --brief-file " + proBriefFile(t), "start", "tick", "tick",
 		"take --as m1 --epoch 0", "finish --as m1 s1-1.w1@1 --epoch 0 --report done", "tick",
 		"read --as reader-a --ok s1-1.r1.reader-a --epoch 0", "read --as reader-b --ok s1-1.r1.reader-b --epoch 0", "tick"} {
 		code, out, errs := twinProcess(t, file, line)

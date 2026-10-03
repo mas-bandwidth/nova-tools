@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 )
 
 // A reader's state (docs/SPEC-SPRINT.md section 6, the readers table; the
@@ -81,9 +83,9 @@ func readersText(s *Snapshot) string {
 	return strings.Join(out, ", ")
 }
 
-// NFewReaders is the tick's judgment that fewer than two readers are up while
-// a primary in review waits to be asked: the ask raises it once, and asks no
-// absent reader.
+// NFewReaders is the tick's judgment that fewer readers are up than a primary
+// in review waiting to be asked needs (two for a pro card, one for a flash
+// card; ReadsNeeded): the ask raises it once, and asks no absent reader.
 const NFewReaders = "fewer than two readers up"
 
 // fewReaders is the text of the judgment.
@@ -143,6 +145,35 @@ const (
 // card.").
 const FieldLeveled = "leveled"
 
+// ReadsNeeded is how many different readers' ok reads at its head make the
+// primary acceptable, and so how many readers the ask asks at an attempt: one
+// when the card's tier, the tier the deal draws its work from (cardTier), is
+// flash, and two at any stronger tier (pro, or frontier, read on pro); each
+// read is drawn on a route of the card's read tier (readTierOf) (the owner,
+// 2026-10-02, cost rule 4, nova-tools#5174: "Reads: one cold read per flash
+// card on a flash route; two per pro card; readers still equal workers per
+// machine"). The tier is the card's own (its brief's line 1, or the tier a
+// rework recorded), never a setting, so a card in merging or landed is held
+// to the count it was accepted on.
+func ReadsNeeded(pr *Card) int {
+	m, _ := cardhdr.ReadModel(pr.F("brief"))
+	if cardTier(pr, m) == cardhdr.RouteFlash {
+		return 1
+	}
+	return 2
+}
+
+// enoughReadersUp says as many readers are up as the primary needs
+// (ReadsNeeded), or the snapshot carries no reader states (every reader up):
+// the ask may ask it (TickAsk); else it waits, judged NFewReaders.
+func enoughReadersUp(s *Snapshot, pr *Card) bool {
+	return s.ReaderStates == nil || len(s.UpReaders()) >= ReadsNeeded(pr)
+}
+
+// acceptable says the primary has ok reads from ReadsNeeded different readers
+// at its current attempt and head (okReaders).
+func acceptable(s *Snapshot, pr *Card) bool { return len(okReaders(s, pr)) >= ReadsNeeded(pr) }
+
 // liveReadsAt is the primary's placed read cards at an attempt less the reads
 // the ask takes back or places again: the reads that stand.
 func liveReadsAt(s *Snapshot, pr *Card, attempt int) []*Card {
@@ -161,16 +192,20 @@ func liveReadsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 // back, retired as the ask takes back a read asked of a reader away
 // (retired_by away: that reader keeps its card at the attempt, so it is not
 // asked that attempt again), and the tick's ask asks it of the readers up. A
-// read stays where it is when the ask could not place it (fewer than two
-// readers up, or none up without a card at its attempt): it is judged while its
-// reader is away and read when the reader is back (read_return_test.go). A
-// snapshot with no reader states holds every reader up: nothing moves.
+// read stays where it is when the ask could not place it (fewer readers up
+// than its primary needs, ReadsNeeded, or none up without a card at its
+// attempt): it is judged while its reader is away and read when the reader is
+// back (read_return_test.go). A snapshot with no reader states holds every
+// reader up: nothing moves.
 func sweepReads(s *Snapshot, p *Plan) {
 	up := s.UpReaders()
-	if s.ReaderStates == nil || len(up) < 2 {
+	if s.ReaderStates == nil || len(up) == 0 {
 		return
 	}
 	taker := func(c *Card) bool {
+		if pr := s.Work.Card(c.F("primary")); pr == nil || !enoughReadersUp(s, pr) {
+			return false
+		}
 		for _, rd := range up {
 			if s.Readers.Card(ReadCardID(c.F("primary"), c.Int("attempt"), rd)) == nil {
 				return true

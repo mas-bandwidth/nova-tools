@@ -114,7 +114,7 @@ func TestTheTickAsksTwoReadersAndSaysWhenItCannot(t *testing.T) {
 	h2.beat()
 	h2.beat()
 	h2.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
-	h2.must(AddStep(sprint.AddReq{Stream: "s1", Count: 1}))
+	h2.must(AddStep(sprint.AddReq{Brief: proBrief, Stream: "s1", Count: 1}))
 	h2.startMachine()
 	h2.machine()
 	h2.work("m1")
@@ -351,9 +351,9 @@ func sprintOf(t *testing.T, n, stopAt int) *harness {
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m2"}))
 	for _, s := range []string{"s1", "s2", "s3"} {
-		h.must(AddStep(sprint.AddReq{Stream: s, Count: n / 3}))
+		h.must(AddStep(sprint.AddReq{Brief: proBrief, Stream: s, Count: n / 3}))
 	}
-	h.must(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"late"}, Needs: []string{"s1-3", "s3-2"}}))
+	h.must(AddStep(sprint.AddReq{Brief: proBrief, Stream: "s2", IDs: []string{"late"}, Needs: []string{"s1-3", "s3-2"}}))
 	h.startMachine()
 	failed := map[string]bool{}
 	for round := 1; round <= 400; round++ {

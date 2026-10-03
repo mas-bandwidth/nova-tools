@@ -197,7 +197,7 @@ const PartDrain = "drain"
 // streams, 2. readers, 3. merge, 4. fleet." The work table's update is the
 // pump, run once a tick: its queue drained, then its cards advanced (a
 // waiting card to ready, a ready card to working by the deal, a card in
-// review with two ok reads to merging); "no new work moves from waiting ->
+// review with the ok reads it needs to merging); "no new work moves from waiting ->
 // ready -> working except on the FIRST PASS on the work stream table, once
 // per-tick". The readers', the merge's and the fleet's updates each write
 // their own table, and queue their changes of the work table for the next
@@ -270,7 +270,7 @@ const NReadyToMerge = "ready to merge"
 
 // TickAccept is R9 as the machine's (the owner's ruling of 2026-09-30:
 // "accept is mechanical, but the merge step is not"): every primary in review
-// with ok reads from two different readers at its head moves to merging and
+// with the ok reads it needs at its head (ReadsNeeded) moves to merging and
 // into its stream's merge queue, in stream turns from the accept's index, in
 // the pump's one plan (Accept). The coordinator is told once for each stream
 // the tick queued cards in, "ready to merge" with the cards in order: the
@@ -278,14 +278,14 @@ const NReadyToMerge = "ready to merge"
 //
 // A primary a change queued after the drain names (s.Held) is not eligible: it
 // waits for the next tick's pump, where the change finds it where it expects
-// it (docs/SPEC-SPRINT.md's accept row: review -> merging only on two ok reads
-// at the head, and the work table advances only at a tick's pump). It is
+// it (docs/SPEC-SPRINT.md's accept row: review -> merging only on the ok reads
+// it needs at the head, and the work table advances only at a tick's pump). It is
 // dropped here, before the plan, so the stream's state change and both notes
 // are planned for the cards accepted and for no others.
 func TickAccept(s *Snapshot, r TickReq) (Plan, int) {
 	eligible := func(c *Card) string {
-		if c.F("result") == "failed" || len(okReaders(s, c)) < 2 {
-			return "not two ok reads"
+		if c.F("result") == "failed" || !acceptable(s, c) {
+			return "not the ok reads it needs"
 		}
 		if why := AcceptHeld(c); why != "" {
 			return why
@@ -332,15 +332,15 @@ func TickAccept(s *Snapshot, r TickReq) (Plan, int) {
 	return p, 0
 }
 
-// AcceptHeld is why the pump leaves a primary in review that has ok reads
-// from two different readers at its head for the coordinator, "" when it
+// AcceptHeld is why the pump leaves a primary in review that has the ok reads
+// it needs at its head for the coordinator, "" when it
 // accepts it (R9's two holds, docs/SPEC-SPRINT.md section 6):
 //   - its CI is red at its head (CIRedAtHead): "ci red on a primary" is the
 //     coordinator's to decide (rework, return, drop, ack); the coordinator's
 //     accept still takes it;
 //   - it was returned to review at its attempt (ReturnedAtAttempt): the
 //     coordinator sent it back, and "returned to review" decides it (rework,
-//     accept, drop); its reads stand, but only a new attempt's two reads are
+//     accept, drop); its reads stand, but only a new attempt's own reads are
 //     the pump's to accept.
 //
 // The holder of a primary in review (reviewAccepts) and reviewJudgment read
@@ -589,7 +589,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 // that tier's no-route judgment holds (TickDeal).
 func readsWithoutRoute(s *Snapshot, pr *Card) bool {
 	live := liveReadsAt(s, pr, pr.Int("attempt"))
-	if len(live) < 2 {
+	if len(live) < ReadsNeeded(pr) {
 		return true
 	}
 	for _, rc := range live {
@@ -701,14 +701,16 @@ func TickLevel(s *Snapshot, r TickReq) (Plan, int) {
 	return bound(FleetStep(s, FleetReq{Op: "level", Who: r.who()}))
 }
 
-// T2. TickAsk asks two different readers of every primary in review whose
-// work did not fail and that has fewer than two read cards at its attempt (the
-// readers named on the primary first), readers up only; a read asked of a
-// reader that is not up is taken back, and its primary is asked again, in the
-// same step. One that cannot be asked, for want of two different readers, is a
-// judgment once (N1), closed when it is asked; with fewer than two readers up
-// it asks none, and one judgment says so (NFewReaders, the sprint's, once per
-// tick-end). The
+// T2. TickAsk asks as many different readers as it needs (ReadsNeeded: one
+// for a flash card, two for a pro card; cost rule 4) of every primary in
+// review whose work did not fail and that has fewer read cards than that at
+// its attempt, readers up only; a read asked of a reader that is not up is
+// taken back, and its primary is asked again, in the same step. One that
+// cannot be asked, for want of different readers, is a judgment once (N1),
+// closed when it is asked; a primary that needs more readers than are up is
+// not asked, and one judgment says so (NFewReaders, the sprint's, once per
+// tick-end): with one reader up the flash cards are asked and the pro cards
+// wait. The
 // primaries go in stream turns from the ask's stream index on the work table
 // (streamTurns, as the deal's; Ask moves the index), so the readers
 // serve every stream alike and no stream's backlog waits behind another's
@@ -717,25 +719,29 @@ func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
 	var ids []string
 	due := 0
 	askable := func(c *Card) string {
-		if c.F("result") != "failed" && len(liveReadsAt(s, c, c.Int("attempt"))) < 2 {
+		if c.F("result") != "failed" && len(liveReadsAt(s, c, c.Int("attempt"))) < ReadsNeeded(c) {
 			return ""
 		}
 		return "asked, or its work failed"
 	}
+	few := false // a primary waits for more readers than are up
 	for _, c := range eligibleTurns(s.Work.Column(Review), askable, askStreamRound(s)) {
-		if len(ids) < TickMaxMoves {
+		switch {
+		case !enoughReadersUp(s, c):
+			// an absent reader is never asked: the sprint's one judgment says so
+			few = true
+		case len(ids) < TickMaxMoves:
 			ids = append(ids, c.ID)
-		} else {
+		default:
 			due++
 		}
 	}
 	var p Plan
 	var conds []cond
-	switch {
-	case len(ids) > 0 && s.ReaderStates != nil && len(s.UpReaders()) < 2:
-		// an absent reader is never asked: the sprint's one judgment says so
+	if few {
 		conds = append(conds, cond{typ: NFewReaders, streamLevel: true, what: fewReaders(s)})
-	case len(ids) > 0:
+	}
+	if len(ids) > 0 {
 		p = Ask(s, AskReq{Sel: Sel{Only: ids}, Who: r.who()})
 	}
 	for _, x := range p.Refused {
@@ -1151,7 +1157,7 @@ func notify(p *Plan, s *Snapshot, conds []cond, types []string, r TickReq) int {
 func MovesDue(s *Snapshot) int {
 	n := len(s.Fleet.Column(Withdrawn))
 	for _, c := range s.Work.Column(Review) {
-		if s.Readers != nil && c.F("result") != "failed" && len(liveReadsAt(s, c, c.Int("attempt"))) < 2 && (s.ReaderStates == nil || len(s.UpReaders()) >= 2) {
+		if s.Readers != nil && c.F("result") != "failed" && len(liveReadsAt(s, c, c.Int("attempt"))) < ReadsNeeded(c) && enoughReadersUp(s, c) {
 			n++
 		}
 	}
