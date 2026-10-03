@@ -23,6 +23,10 @@ import (
 //     balance) starts no new rest when it is refused after the end; one launched after does;
 //   - the balance poll rests the provider too (balance.go): out of credit at a balance at
 //     or under zero, low on funds at a balance over zero but not over one hour of its spend;
+//   - each rest of the provider's funds holds until the provider is paid: funded, or a
+//     payment the poll sees (balance.go says what each rest needs); a refused take's rest
+//     ends ONLY on funded or a balance read higher than the read before it, or than the
+//     balance at the refusal, since a provider that refuses can still read over zero;
 //   - while the provider rests for its funds or its key, ONE judgment of it is open, never
 //     one per card, decided by funded, ack or wait and never by a rework (a payment is not
 //     the card's to fix): `provider <p> is out of funds`, `provider <p> is low on funds`, or
@@ -62,9 +66,10 @@ func refusal(line string) string {
 // newest take refused for credit or its key whose child launched after its last rest ended
 // (Until, which ending a rest sets to the moment it ended): a take launched before that end
 // belongs to the rest window it launched in, however late its refusal arrives, and a record
-// that holds no launch time starts no second rest. Out of credit rests it until a balance
-// returns (OpenUntil), its key for RouteRestFor; the rest names the take's card, its route
-// and the provider's words.
+// that holds no launch time starts no second rest. Out of credit rests it until it is paid
+// (OpenUntil), its key for RouteRestFor; the rest names the take's card, its route and the
+// provider's words, and keeps the balance the poll last read (the mark a payment is seen
+// against, balance.go).
 func providerRestsDue(s *Snapshot, rests map[string]RouteRest, ends map[string][]routeEnd) []RouteRest {
 	newest := map[string]routeEnd{}
 	on := map[string]string{}
@@ -83,6 +88,7 @@ func providerRestsDue(s *Snapshot, rests map[string]RouteRest, ends map[string][
 		}
 	}
 	var out []RouteRest
+	balances := ProviderBalances(s.Fleet)
 	for _, p := range slices.Sorted(maps.Keys(newest)) {
 		e := newest[p]
 		m := causeRE.FindStringSubmatch(e.refused)
@@ -92,7 +98,8 @@ func providerRestsDue(s *Snapshot, rests map[string]RouteRest, ends map[string][
 			until = OpenUntil
 			words = fmt.Sprintf("out of credit: provider %s refused card %s on route %s: class=%s status=%s msg=%s", p, e.card, on[p], m[1], m[2], m[3])
 		}
-		out = append(out, RouteRest{Provider: p, At: s.Now, Until: until, Cards: []string{e.card}, Cause: cause, Why: oneLine(words)})
+		b := balances[p]
+		out = append(out, RouteRest{Provider: p, At: s.Now, Until: until, Cards: []string{e.card}, Cause: cause, Balance: b.Balance, HasBalance: b.Known, Why: oneLine(words)})
 	}
 	return out
 }
@@ -130,7 +137,7 @@ func AllOutOfCredit(routes []Route, rests map[string]RouteRest, now time.Time) s
 	if len(providers) == 0 {
 		return ""
 	}
-	return FundsCause + " (" + strings.Join(slices.Sorted(maps.Keys(providers)), ", ") + "): a payment is the owner's; the sprint is STOPPED until a balance returns"
+	return FundsCause + " (" + strings.Join(slices.Sorted(maps.Keys(providers)), ", ") + "): a payment is the owner's; the sprint is STOPPED until a provider is paid"
 }
 
 // OutOfCredit is AllOutOfCredit of the snapshot's routes and the fleet table's rests.
@@ -168,10 +175,14 @@ func providerConds(s *Snapshot) (conds []cond, stop string) {
 		b := balances[p]
 		switch h.rest.Cause {
 		case RestCredit:
+			ends := "it reads a balance over zero"
+			if h.rest.Refused() {
+				ends = "it sees a payment (a balance read higher than the read before it, or than the balance at the refusal)"
+			}
 			conds = append(conds, cond{typ: NProviderFunds, stream: ProviderSubject(p), streamLevel: true,
 				decisions: []string{"funded " + p, "ack", "wait"},
-				what: fmt.Sprintf("provider %s is out of funds (balance %s): a payment is the owner's; it is excluded: its routes %s rest until %s (%s); the balance poll ends the rest when it reads a balance again, or nova-sprint funded %s once it is paid; nova-sprint where --json shows the balance",
-					p, b.Said(), routes, h.rest.UntilSaid(), h.rest.Why, p)})
+				what: fmt.Sprintf("provider %s is out of funds (balance %s): a payment is the owner's; it is excluded: its routes %s rest until %s (%s); the balance poll ends the rest when %s, or nova-sprint funded %s once it is paid; nova-sprint where --json shows the balance",
+					p, b.Said(), routes, h.rest.UntilSaid(), h.rest.Why, ends, p)})
 		case RestBalance:
 			conds = append(conds, cond{typ: NProviderLow, stream: ProviderSubject(p), streamLevel: true,
 				decisions: []string{"funded " + p, "ack", "wait"},

@@ -20,11 +20,22 @@ import (
 // know."):
 //
 //   - OUT OF CREDIT (RestCredit) at a balance at or under zero: the provider has no money.
-//     It counts toward stopping the sprint (AllOutOfCredit);
+//     It counts toward stopping the sprint (AllOutOfCredit). It ends at a balance read over
+//     zero: over the hour of spend it ends, not over it the provider is low on funds from
+//     then, not out;
 //   - LOW ON FUNDS (RestBalance) at a balance over zero but not over one hour of the spend:
 //     the provider is excluded before it runs dry, but it still has money, so it never
-//     counts toward stopping the sprint. A provider out of credit whose balance is read
-//     over zero again is low on funds from then, not out.
+//     counts toward stopping the sprint. It ends at a balance read over that hour of spend.
+//
+// A provider's rest a refused take began (out of credit, RouteRest.Refused) ends ONLY on
+// funded or on a payment the poll sees: a balance read strictly higher than the read before
+// it, or than the balance at the refusal (RouteRest.Balance); the read then decides as any
+// other (it ends the rest, makes it low on funds, or leaves it out of credit). A balance
+// over zero that is not higher never ends it: OpenRouter refuses with 402 a request whose
+// estimated cost the balance cannot cover, so a provider that refuses can still read a
+// small balance over zero, and ending its rest on that read would rest it again at the next
+// refusal, a rest and a judgment every poll. It stays out of credit, its balance beside it
+// on the providers table, and it counts toward stopping the sprint.
 //
 // Both exclude the provider from the deal and open its one judgment (provider_funds.go).
 // The spend is measured before the rest began: while the provider rests for its funds it
@@ -59,6 +70,12 @@ type BalanceReq struct {
 
 // NProviderFunded is the happened note of a rest of a provider's funds the poll ended.
 const NProviderFunded = "a provider's routes serve again: its balance is back"
+
+// paid says the poll saw a payment to a provider resting since it refused a take: the read
+// b is strictly higher than the read before it (was) or than the balance at the refusal.
+func paid(rest RouteRest, was, b ProviderBalance) bool {
+	return was.Known && b.Balance > was.Balance || rest.HasBalance && b.Balance > rest.Balance
+}
 
 // Low says a balance calls for a rest of the provider's funds: at or under zero (out of
 // credit), or not over one hour of the spend (low on funds).
@@ -107,6 +124,9 @@ func Balance(s *Snapshot, r BalanceReq) Plan {
 		said = append(said, rd.Provider+" "+b.Said())
 		if !b.Known {
 			continue // an unknown balance writes and ends no rest
+		}
+		if resting && rest.Refused() && !paid(rest, was, b) {
+			continue // no payment seen: the refused take's rest holds, out of credit
 		}
 		cause := ""
 		switch {

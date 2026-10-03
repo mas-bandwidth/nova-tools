@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -42,14 +43,19 @@ const (
 // PropProviderRest; read through RouteRests it names each route of the provider too): when
 // it began, when it ends (for a rest that has ended, when it ended), the cards whose takes
 // rested it, and why: the cause (RestNoResult, rule 3's; RestCredit, RestAuth and
-// RestBalance, the provider's, provider_funds.go) and, for the provider's, its words.
+// RestBalance, the provider's, provider_funds.go) and, for the provider's, its words. A
+// provider's rest a refused take began keeps the balance the poll last read then (Balance,
+// HasBalance false when there was none known), the mark a payment is seen against
+// (balance.go).
 type RouteRest struct {
-	Route     string
-	Provider  string
-	At, Until time.Time
-	Cards     []string
-	Cause     string
-	Why       string
+	Route      string
+	Provider   string
+	At, Until  time.Time
+	Cards      []string
+	Cause      string
+	Balance    float64
+	HasBalance bool
+	Why        string
 }
 
 // The causes of a rest: rule 3's children that ended with no result; a provider out of
@@ -63,22 +69,22 @@ const (
 	RestBalance  = "balance"
 )
 
-// OpenUntil is the end of a rest that has no time: a provider out of credit rests until a
-// balance poll reads a balance again, or the coordinator says it was paid (funded), never
-// until a clock (the owner, 2026-10-03: "exclude that provider moving forward"). The
-// property holds it as `open`.
+// OpenUntil is the end of a rest that has no time: a provider resting for its funds rests
+// until it is paid, a payment the balance poll sees (balance.go) or the coordinator's word
+// that it was paid (funded), never until a clock (the owner, 2026-10-03: "exclude that
+// provider moving forward"). The property holds it as `open`.
 var OpenUntil = time.Date(9999, 12, 31, 0, 0, 0, 0, time.UTC)
 
 // restOpen is how the property and the lines say OpenUntil.
 const restOpen = "open"
 
-// Open says the rest has no time: it holds until a balance returns.
+// Open says the rest has no time: it holds until the provider is paid.
 func (r RouteRest) Open() bool { return r.Until.Equal(OpenUntil) }
 
-// UntilSaid is when the rest ends as a line says it: its time, or until a balance returns.
+// UntilSaid is when the rest ends as a line says it: its time, or until the provider is paid.
 func (r RouteRest) UntilSaid() string {
 	if r.Open() {
-		return "a balance returns"
+		return "paid"
 	}
 	return stamp(r.Until)
 }
@@ -94,9 +100,20 @@ func (r RouteRest) Funds() bool { return r.Cause == RestCredit || r.Cause == Res
 // sprint never stops while one does.
 func (r RouteRest) Out() bool { return r.Cause == RestCredit }
 
+// Refused says the provider is out of credit because it refused a take (the rest names the
+// take's card), not because a balance read at or under zero: OpenRouter refuses a request
+// whose estimated cost the balance cannot cover, so a provider that refuses can still read a
+// small balance over zero, and only a payment seen or funded ends this rest (balance.go).
+func (r RouteRest) Refused() bool { return r.Out() && len(r.Cards) > 0 }
+
+// restBalance is the token before a rest's words that holds the balance read when a refused
+// take began it (RouteRest.Balance).
+const restBalance = "balance="
+
 // value is the rest as the property holds it: its start, its end, the cards ("-" for
-// none), its cause and its words. A value of the first three alone (a rest written before
-// the cause) reads as rule 3's.
+// none), its cause, the balance read when a refused take began it (`balance=<x>`, when
+// known) and its words. A value of the first three alone (a rest written before the cause)
+// reads as rule 3's.
 func (r RouteRest) value() string {
 	cards := strings.Join(r.Cards, ",")
 	if cards == "" {
@@ -106,7 +123,11 @@ func (r RouteRest) value() string {
 	if r.Open() {
 		until = restOpen
 	}
-	return strings.TrimSpace(stamp(r.At) + " " + until + " " + cards + " " + cmp.Or(r.Cause, RestNoResult) + " " + r.Why)
+	bal := ""
+	if r.HasBalance {
+		bal = " " + restBalance + strconv.FormatFloat(r.Balance, 'f', -1, 64)
+	}
+	return strings.TrimSpace(stamp(r.At) + " " + until + " " + cards + " " + cmp.Or(r.Cause, RestNoResult) + bal + " " + r.Why)
 }
 
 // Said is the rest's reason as a line says it: the provider's words, else rule 3's.
@@ -137,7 +158,15 @@ func parseRest(v string) (RouteRest, bool) {
 		rest.Cards = Split(f[2])
 	}
 	if len(f) > 3 {
-		rest.Cause, rest.Why = f[3], strings.Join(f[4:], " ")
+		rest.Cause, f = f[3], f[4:]
+		if len(f) > 0 {
+			if v, ok := strings.CutPrefix(f[0], restBalance); ok {
+				if x, err := strconv.ParseFloat(v, 64); err == nil {
+					rest.Balance, rest.HasBalance, f = x, true, f[1:]
+				}
+			}
+		}
+		rest.Why = strings.Join(f, " ")
 	}
 	return rest, true
 }

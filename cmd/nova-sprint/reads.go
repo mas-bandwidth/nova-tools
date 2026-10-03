@@ -1410,7 +1410,7 @@ func (a *app) cmdRoutes(args []string, stdout, stderr io.Writer) int {
 		if r, ok := rests[stats[i].Route.Name]; ok && r.Resting(s.Now) {
 			stats[i].RestedUntil = r.Until.UTC().Format(time.RFC3339)
 			if r.Open() {
-				stats[i].RestedUntil = "open" // until a balance returns
+				stats[i].RestedUntil = "open" // until paid
 			}
 			stats[i].RestedFor = r.Cause + ": " + r.Said()
 		}

@@ -67,7 +67,7 @@ func (h *harness) onProvider(routes []sprint.Route, provider string) []string {
 // card is dealt again on another provider's route; ONE judgment of the provider is open
 // while it rests, never one per card, decided by funded, ack or wait and never by a rework.
 // A take in flight when the rest began, refused a minute after it, writes nothing more. The
-// provider is excluded until a balance returns (the owner, 2026-10-03, 8:18 AM ET: "exclude
+// provider is excluded until paid (the owner, 2026-10-03, 8:18 AM ET: "exclude
 // that provider moving forward"): no clock ends the rest; the coordinator's funded does (a
 // poll's balance is TestTheBalancePoll...), and the judgment closes with it. The refusal
 // that arrived after the rest began was launched before it ended, so funded is not undone
@@ -98,7 +98,7 @@ func TestAnOutOfCreditTakeRestsEveryRouteOfItsProvider(t *testing.T) {
 		assert.Equal(t, []string{onOR[0]}, rest.Cards)
 		assert.Contains(t, rest.Why, "out of credit: provider openrouter refused card "+onOR[0])
 		assert.Contains(t, rest.Why, "class=out-of-credit status=402 msg=Insufficient credits.")
-		assert.True(t, rest.Open(), "until a balance returns, never for a time")
+		assert.True(t, rest.Open(), "until paid, never for a time")
 	}
 	props := s.Fleet.Props()
 	assert.Contains(t, props, sprint.PropProviderRest("openrouter"), "one property of the provider")
@@ -115,12 +115,12 @@ func TestAnOutOfCreditTakeRestsEveryRouteOfItsProvider(t *testing.T) {
 	n := open[0].Note
 	assert.Equal(t, sprint.ProviderSubject("openrouter"), n.Stream)
 	assert.Contains(t, n.What, "provider openrouter is out of funds (balance unknown: not polled yet): a payment is the owner's")
-	assert.Contains(t, n.What, "it is excluded: its routes or-a, or-b rest until a balance returns")
+	assert.Contains(t, n.What, "it is excluded: its routes or-a, or-b rest until paid")
 	assert.Equal(t, []string{"funded openrouter", "ack", "wait"}, n.Decisions, "a payment is the owner's: no rework is offered")
 	assert.Empty(t, h.openOf(sprint.NBound), "no card's judgment")
 	rested := h.noteWhats(sprint.NProviderRested)
 	require.Len(t, rested, 1, "one note of the provider's rest")
-	assert.Contains(t, rested[0], "provider openrouter rested until a balance returns, its routes or-a, or-b: ")
+	assert.Contains(t, rested[0], "provider openrouter rested until paid, its routes or-a, or-b: ")
 	assert.Contains(t, rested[0], "class=out-of-credit status=402", "the rest's note names the reason")
 
 	// the card in flight when the rest began is refused a minute after it: nothing more

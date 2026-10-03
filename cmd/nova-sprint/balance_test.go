@@ -62,8 +62,8 @@ func balanceApp(t *testing.T, routes ...sprint.Route) (*testApp, *creditsAnswer,
 // owner, 2026-10-03, 8:18 AM ET: "you'll need to detect when a provider runs out of
 // credits, and exclude that provider moving forward, and let me know."): every route of it
 // rests "out of credit" with no time, hours do not end it, the coordinator is told in one
-// judgment naming it (a payment is the owner's), and the poll that reads a balance again
-// ends the rest.
+// judgment naming it (a payment is the owner's), and the poll that reads a balance over
+// zero ends the rest.
 func TestAPolledBalanceAtZeroExcludesTheProviderUntilABalanceReturns(t *testing.T) {
 	t.Parallel()
 	ta, fake, poll := balanceApp(t,
@@ -76,7 +76,7 @@ func TestAPolledBalanceAtZeroExcludesTheProviderUntilABalanceReturns(t *testing.
 	for _, r := range []string{"flash-or", "pro-or"} {
 		assert.Contains(t, routes, "ROUTE "+r+" ")
 	}
-	assert.Equal(t, 2, strings.Count(routes, " rested_until=open balance=-$0.51\n"), "every route of the provider, until a balance returns:\n%s", routes)
+	assert.Equal(t, 2, strings.Count(routes, " rested_until=open balance=-$0.51\n"), "every route of the provider, until paid:\n%s", routes)
 	assert.Contains(t, routes, " rested_until=- balance=unknown\n", "the other provider serves")
 	ta.ok("tick")
 	inbox := ta.ok("inbox")
@@ -120,7 +120,7 @@ func TestEveryProviderOutOfCreditStopsTheSprint(t *testing.T) {
 
 	code, _, errs := ta.do("start")
 	assert.Equal(t, 1, code, "start is refused while every provider is out")
-	assert.Contains(t, errs, "every provider is out of credit (openrouter): a payment is the owner's; the sprint is STOPPED until a balance returns")
+	assert.Contains(t, errs, "every provider is out of credit (openrouter): a payment is the owner's; the sprint is STOPPED until a provider is paid")
 
 	fake.body = `{"data":{"total_credits":2250,"total_usage":1251}}`
 	poll()

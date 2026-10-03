@@ -76,7 +76,7 @@ func TestRestsDueCountsNoResultEndsInTheRoutesWindow(t *testing.T) {
 }
 
 // A provider's refusal (nova-tools#5199): a take refused for want of credit rests its
-// provider, ONE rest of every route of it, until a balance returns; one refused for the key
+// provider, ONE rest of every route of it, until paid; one refused for the key
 // for RouteRestFor, naming the take; a rate limit, an outage and a no-result take do not. A
 // refusal is attributed to the rest window its child launched in: one launched before the
 // provider's last rest ended (in flight when it began, or launched while it held) does not
@@ -137,7 +137,7 @@ func TestProviderRestsDueRestEveryRouteOfTheRefusedProvider(t *testing.T) {
 			assert.Equal(t, []string{"c1"}, r.Cards)
 			words, until := "provider p refused its key: card c1 on route a: ", s.Now.Add(RouteRestFor)
 			if tc.cause == RestCredit {
-				// out of credit: excluded until a balance returns, never for a time
+				// out of credit: excluded until paid, never for a time
 				words, until = "out of credit: provider p refused card c1 on route a: ", OpenUntil
 			}
 			assert.Equal(t, words+strings.TrimPrefix(tc.err, "provider: "), r.Why)

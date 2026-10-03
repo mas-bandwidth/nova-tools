@@ -733,23 +733,34 @@ and it is the coordinator's decision, receipted.
   2026-10-03 two providers ran dry overnight and nothing landed: the store's redeal bound held,
   and ci-03's repeated attempts were reworks from the coordinator's own answer loop.
   - A provider rests as one: its rest is ONE fleet table property, `provider_rest_<provider>`
-    (`<began> <ends|open> <card|-> <cause> <words>`), never a copy on each route, so a rest is
-    one write and the table's properties (64, `ntable.LimitTableProps`) grow with the providers
-    and never with the routes (`TestTheFleetPropertiesAtAHundredRoutesStayUnderTheBound`). A
+    (`<began> <ends|open> <card|-> <cause> [balance=<x>] <words>`), never a copy on each
+    route, so a rest is one write and the table's properties (64, `ntable.LimitTableProps`)
+    grow with the providers and never with the routes (`TestTheFleetPropertiesAtAHundredRoutesStayUnderTheBound`). A
     route rests while its own rule 3 rest or its provider's holds, the one that ends later
     deciding (`sprint.RouteRests`); `routes` prints each route's `rested_until=`.
-  - A provider has two rests of its funds, and only one stops the sprint:
+  - A provider has two rests of its funds, and only one stops the sprint. Each holds with no
+    time (`open`, said `until paid`) and ends on what is listed with it, or on `funded`:
     - OUT OF CREDIT (cause `out-of-credit`): a take the provider refused for want of credit
       (its line `provider: class=out-of-credit ...`, docs/SPEC-SWARM.md), or a balance the poll
-      reads at or under zero. The provider has no money. It rests until a balance returns
-      (`open`). It counts toward stopping the sprint.
+      reads at or under zero. The provider has no money. It counts toward stopping the sprint.
+      - Begun by a refused take, it ends ONLY on `funded` or on a payment the poll sees: a
+        balance read strictly higher than the read before it, or than the balance at the
+        refusal (the rest keeps it, `balance=<x>`). That read then decides as any other: over
+        the hour of spend the rest ends, over zero but not over it the provider is low on
+        funds, at or under zero it stays out of credit. A balance over zero that is not higher
+        never ends it: OpenRouter refuses with 402 a request whose estimated cost the balance
+        cannot cover, so a provider that refuses can still read a small balance over zero. It
+        stays out of credit, with its balance beside it on the providers table, and counts
+        toward the stop (`TestARefusedProviderReadingASmallBalanceRestsOnceBesideAServingOne`,
+        `TestARefusedProviderAloneStopsTheMachineOnceUntilAPayment`).
+      - Begun by a balance at or under zero, it ends on a balance read over zero: over the
+        hour of spend the rest ends, not over it the provider is low on funds from then.
     - LOW ON FUNDS (cause `balance`): a balance the poll reads over zero but not over one hour
       of the provider's spend. The provider is excluded before it runs dry, and still has
-      money: it NEVER counts toward stopping the sprint. It rests until the poll reads a balance
-      over the hour of spend measured before the rest began. A provider out of credit whose
-      balance is read over zero but not over that hour is low on funds from then.
-    A take refused for the provider's key (`class=auth`) rests it for RouteRestFor, and stops
-    nothing.
+      money: it NEVER counts toward stopping the sprint. It ends on a balance read over the
+      hour of spend measured before the rest began; at or under zero it is out of credit.
+    A take refused for the provider's key (`class=auth`) rests it for RouteRestFor, ends at
+    that time, and stops nothing.
   - A refused take rests the provider in the tick that sees it, over rule 3's rest of its
     routes; the rest's note and the tier's `no route serves the tier` name the cause and the
     provider's words. A refusal is attributed to the rest window its child launched in (the
@@ -770,9 +781,9 @@ and it is the coordinator's decision, receipted.
     <used|-> <note>`), the spend an hour measured from the provider's count used between two
     reads. While the provider rests for its funds the step keeps the spend measured before the
     rest began (a resting provider spends next to nothing), so a rest never lifts because its
-    own spend fell. The step writes, changes or ends the provider's rest as above; a read over
-    zero and over the hour of spend ends a rest of its funds, a refused take's included, with a
-    happened note, "a provider's routes serve again: its balance is back". An unknown balance
+    own spend fell. The step writes, changes or ends the provider's rest as above; a read that
+    ends a rest of its funds writes a happened note, "a provider's routes serve again: its
+    balance is back". An unknown balance
     writes and ends no rest. Each poll prints one `BALANCE` line naming the balances, never a
     key (`sprint.Balance`; `TestTheBalancePollRestsAProviderUnderAnHourOfItsSpend`,
     `TestLowOnFundsNeverStopsTheSprintAndOutOfCreditDoes`, `TestAnUnknownBalanceChangesNoRest`,
@@ -782,7 +793,7 @@ and it is the coordinator's decision, receipted.
     (opencode) as for any; it is refused when the provider does not rest for its funds.
   - One judgment of the provider, never one per card, while it rests: `a provider is out of
     funds` (`provider <p> is out of funds (balance $x): a payment is the owner's; it is
-    excluded: its routes ... rest until a balance returns (...)`), `a provider is low on funds`
+    excluded: its routes ... rest until paid (...)`), `a provider is low on funds`
     (its words say it is not out of credit and the sprint does not stop for it), or `a provider
     refuses its key`. Its subject is `stream:provider:<p>`; the funds judgments' decisions are
     `funded <p>`, ack and wait, never a rework (a payment is not the card's to fix, and is the
@@ -793,8 +804,8 @@ and it is the coordinator's decision, receipted.
     machine line `machine: STOPPED (every provider is out of credit)`, and one judgment, `every
     provider is out of credit`, naming the providers. A provider low on funds keeps the machine
     running: its tier's `no route serves the tier` says why nothing deals. `start` is refused
-    with the same line (exit 1) while every provider stays out; once a poll reads a balance (or
-    `funded`), the coordinator starts it and the judgment closes
+    with the same line (exit 1) while every provider stays out; once one is paid (a read that
+    ends its rest, or `funded`), the coordinator starts it and the judgment closes
     (`TestEveryProviderOutOfCreditStopsTheMachine`, `TestEveryProviderOutOfCreditStopsTheSprint`).
   - `where --json` carries `providers`, the providers table: a row for each provider the
     routes name, `name`, `balance` (dollars and cents rounded up, a negative one `-$0.51`, or

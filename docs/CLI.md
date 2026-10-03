@@ -1054,15 +1054,16 @@ goal, stream) one group's.
 The owner, 2026-10-03: "provider out of funds should never be a mystery failure." `run` reads
 each provider's balance every 10 minutes through the seat's key in its environment
 (`OPENROUTER_API_KEY` for openrouter; opencode publishes no balance and reads `unknown`) and
-prints a `BALANCE` line. A provider out of credit, by a take it refused or a balance at zero,
-is rested until a balance returns; one low on funds, a balance not over an hour of its spend, is
-rested until the balance is over it; one judgment of the provider says which (`a payment is the
-owner's`). `where --json` carries the `providers` table (balance, spend an hour, state) and
-`routes` each route's `balance=`. When every provider is out of credit, the tick stops the
-machine (`machine: STOPPED (every provider is out of credit)`) and `start` is refused until one
-has a balance; a provider low on funds never stops it. `funded <provider> --reason <text>` says
-one was paid. The contract is
-[SPEC-SPRINT.md](SPEC-SPRINT.md), "A provider out of funds".
+prints a `BALANCE` line. A provider out of credit by a take it refused is rested until a
+payment is seen (a balance read higher than the read before it, or than the balance at the
+refusal) or `funded`: a balance over zero that is not higher never ends it. One out of credit by
+a balance at zero is rested until a balance over zero; one low on funds, a balance not over an
+hour of its spend, until the balance is over it. One judgment of the provider says which (`a
+payment is the owner's`). `where --json` carries the `providers` table (balance, spend an hour,
+state) and `routes` each route's `balance=`. When every provider is out of credit, the tick
+stops the machine (`machine: STOPPED (every provider is out of credit)`) and `start` is refused
+until one is paid; a provider low on funds never stops it. `funded <provider> --reason <text>`
+says one was paid. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md), "A provider out of funds".
 
 ### Exit codes
 

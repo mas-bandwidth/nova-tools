@@ -104,8 +104,8 @@ stderr as
 
 which the member finishes `provider failure: provider: class=...`, never `no result`
 (docs/SPEC-CARD-CONTRACT.md section 4, the provider failure; the classes are
-`internal/swarm` providercause.go's). What the sprint does with it, the provider excluded until a
-balance returns and the sprint stopped when every provider is out of credit, is
+`internal/swarm` providercause.go's). What the sprint does with it, the provider excluded until it
+is paid and the sprint stopped when every provider is out of credit, is
 docs/SPEC-SPRINT.md, "A provider out of funds".
 
 ## Exit codes
