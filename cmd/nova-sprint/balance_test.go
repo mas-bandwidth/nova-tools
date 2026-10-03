@@ -126,7 +126,7 @@ func TestEveryProviderOutOfCreditStopsTheSprint(t *testing.T) {
 
 	code, _, errs := ta.do("start")
 	assert.Equal(t, 1, code, "start is refused while every provider is out")
-	assert.Contains(t, errs, "every provider is out of credit (openrouter): a payment is the owner's; the sprint is STOPPED until a provider is paid: a balance the poll reads higher than the one before (over zero after a balance at zero), or nova-sprint funded <provider>")
+	assert.Contains(t, errs, "every provider is out of credit (openrouter): a payment is the owner's; the sprint is STOPPED until a provider is paid: a balance over zero the poll reads higher than the one before or than the balance at the refusal, or nova-sprint funded <provider>")
 
 	fake.body = `{"data":{"total_credits":2250,"total_usage":1251}}`
 	poll()

@@ -137,7 +137,7 @@ func AllOutOfCredit(routes []Route, rests map[string]RouteRest, now time.Time) s
 	if len(providers) == 0 {
 		return ""
 	}
-	return FundsCause + " (" + strings.Join(slices.Sorted(maps.Keys(providers)), ", ") + "): a payment is the owner's; the sprint is STOPPED until a provider is paid: a balance the poll reads higher than the one before (over zero after a balance at zero), or nova-sprint funded <provider>"
+	return FundsCause + " (" + strings.Join(slices.Sorted(maps.Keys(providers)), ", ") + "): a payment is the owner's; the sprint is STOPPED until a provider is paid: a balance over zero the poll reads higher than the one before or than the balance at the refusal, or nova-sprint funded <provider>"
 }
 
 // OutOfCredit is AllOutOfCredit of the snapshot's routes and the fleet table's rests.
@@ -177,7 +177,7 @@ func providerConds(s *Snapshot) (conds []cond, stop string) {
 		case RestCredit:
 			ends := "it reads a balance over zero"
 			if h.rest.Refused() {
-				ends = "it sees a payment (a balance read higher than the read before it, or than the balance at the refusal)"
+				ends = "it sees a payment (a balance over zero read higher than the read before it, or than the balance at the refusal)"
 			}
 			conds = append(conds, cond{typ: NProviderFunds, stream: ProviderSubject(p), streamLevel: true,
 				decisions: []string{"funded " + p, "ack", "wait"},

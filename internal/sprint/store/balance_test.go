@@ -247,7 +247,7 @@ func TestARefusedProviderReadingASmallBalanceRestsOnceBesideAServingOne(t *testi
 	assert.Empty(t, h.noteWhats(sprint.NProviderFunded), "never lifted")
 	assert.Equal(t, 1, h.written(sprint.NProviderFunds), "one judgment, written once")
 	assert.Len(t, h.openOf(sprint.NProviderFunds), 1)
-	assert.Contains(t, h.openOf(sprint.NProviderFunds)[0].Note.What, "the balance poll ends the rest when it sees a payment (a balance read higher than the read before it, or than the balance at the refusal)")
+	assert.Contains(t, h.openOf(sprint.NProviderFunds)[0].Note.What, "the balance poll ends the rest when it sees a payment (a balance over zero read higher than the read before it, or than the balance at the refusal)")
 	assert.True(t, h.machineRecord().Running(), "opencode serves: the sprint runs")
 	assert.Empty(t, h.openOf(sprint.NAllOutOfCredit))
 	assert.Empty(t, h.onProvider(routes, "openrouter"), "nothing dealt on the resting provider")

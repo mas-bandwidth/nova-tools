@@ -361,10 +361,12 @@ func (s *Snapshot) resting(route string) (RouteRest, bool) {
 }
 
 // cardRest is the rest that holds, at s.Now, the route a ready work card was dealt on: the
-// rests a dealing step settled (withRests) when it has them, else the fleet table's
-// properties, the route's own (rule 3's) and its provider's (the provider its model line
-// names), so a take, which loads no routes, reads two properties and no more. ok is false
-// for a pinned card and for a route that serves.
+// rests a dealing step settled (withRests) when it has them, else its provider's property
+// (the provider its model line names), so a take, which loads no routes, reads one property
+// and no more. ok is false for a pinned card and for a route that serves. The take reads no
+// route's own rest (rule 3's): only the tick writes one, and the same plan withdraws every
+// ready card on that route (restWithdrawals), so no ready card is ever on one; a provider's
+// rest is also written between ticks, by the balance poll.
 func cardRest(s *Snapshot, c *Card) (RouteRest, bool) {
 	route := c.F(FieldRoute)
 	if route == "" || route == RoutePin {
@@ -374,14 +376,9 @@ func cardRest(s *Snapshot, c *Card) (RouteRest, bool) {
 		return s.resting(route)
 	}
 	provider, _, _ := strings.Cut(c.F(FieldModel), "/")
-	for _, name := range []string{PropProviderRest(provider), PropRouteRest(route)} {
-		v, ok := s.Fleet.Prop(name)
-		if !ok {
-			continue
-		}
-		if rest, ok := parseRest(v); ok && rest.Resting(s.Now) {
-			return rest, true
-		}
+	v, _ := s.Fleet.Prop(PropProviderRest(provider))
+	if rest, ok := parseRest(v); ok && rest.Resting(s.Now) {
+		return rest, true
 	}
 	return RouteRest{}, false
 }
@@ -389,25 +386,15 @@ func cardRest(s *Snapshot, c *Card) (RouteRest, bool) {
 // restWithdrawals is the tick's units that withdraw each ready work card dealt on a route
 // resting at s.Now (nova-tools#5205, the third cold read): a card dealt before its
 // provider's rest began is never taken and refused there (takeOne refuses it), so it is
-// withdrawn while ready, as a member going down leaves one (FleetStep): no take ended, so
-// no redeal is spent (redeal), and its primary goes back to ready for the next deal to place
-// on a route that serves (routeOf).
-func restWithdrawals(s *Snapshot) []Unit {
+// withdrawn while ready by the path a member going down takes (withdrawCard): no take ended,
+// so no redeal is spent (redeal), and its primary goes back to ready for the next deal to
+// place on a route that serves (routeOf), its timeline noting why (NRestWithdrawn).
+func restWithdrawals(s *Snapshot, who string) []Unit {
 	var out []Unit
 	for _, c := range s.Fleet.Column(Ready) {
-		rest, ok := cardRest(s, c)
-		if !ok {
-			continue
+		if rest, ok := cardRest(s, c); ok {
+			out = append(out, withdrawCard(s, c, false, NRestWithdrawn, who, "taken back: its route "+c.F(FieldRoute)+" rests ("+rest.Said()+")"))
 		}
-		set := nextGen(c, "", s.Now)
-		set["withdrawn"] = stamp(s.Now)
-		u := Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, c.Row, Withdrawn, set, "taken", "dealt"))},
-			Moved: fmt.Sprintf("%s %s:ready -> withdrawn gen=%d, its route %s rests until %s", c.ID, c.Row, c.Int("gen")+1, c.F(FieldRoute), rest.UntilSaid())}
-		if pr := s.Work.Placed(c.F("primary")); pr != nil && pr.Col == Working && pr.F("work") == c.ID {
-			u.Changes = append(u.Changes, change(Work, moveEntry(pr, pr.Row, Ready, nil, "work")))
-			u.Moved += "; " + pr.ID + " working -> ready"
-		}
-		out = append(out, u)
 	}
 	return out
 }

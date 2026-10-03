@@ -568,7 +568,7 @@ outcome and reason are kept.
 | waiting -> ready | everything it needs has landed or was waived | mechanical |
 | ready -> working | deal: the machine's tick cuts and deals a work card | mechanical |
 | working -> review | its work card finished, ok or failed | mechanical; failed notifies for judgment |
-| working -> ready | its work card was withdrawn because no fleet member is up, or, still ready, because its route rests (the rest's note names it) | mechanical, notifies |
+| working -> ready | its work card was withdrawn because no fleet member is up, or, still ready, because its route rests (its note names the route and the reason) | mechanical, notifies |
 | review -> merging | accept: the readers it needs said ok at this head (one for a flash card, two different readers for a pro card; section 6) | mechanical (the tick), unless its CI is red at its head or it was returned to review at its attempt; the coordinator's verb takes those; refused without them |
 | review -> working | rework with a fix: the next attempt is delegated at once | the coordinator's verb |
 | review -> ready | rework with a fix when no fleet member is up or none is below its width; the tick deals it when one has room | the coordinator's verb |
@@ -774,12 +774,14 @@ and it is the coordinator's decision, receipted.
     (`sprint.RestsDue`, `providerRestsDue`; `TestAnOutOfCreditTakeRestsEveryRouteOfItsProvider`,
     `TestProviderRestsDueRestEveryRouteOfTheRefusedProvider`).
   - A card dealt on a route before its rest began is never taken there. `take` reads the
-    rests itself (the route's and its provider's properties, for a rest the balance poll
-    wrote between two ticks): a take by id of a ready card on a resting route is refused,
-    naming the rest, and a take by count passes over it. The tick withdraws every ready card on
-    a route resting then, as a member going down leaves one: no take ended, so no redeal is
-    spent, and its primary goes back to ready for the deal to place on a route that serves
-    (`sprint.restWithdrawals`, `cardRest`; `TestACardReadyOnARestingProvidersRouteIsWithdrawnNeverTakenAndRefused`,
+    rest itself (its provider's property, for a rest the balance poll wrote between two ticks;
+    a route's own rest is written only by the tick, which withdraws its cards in the same
+    step): a take by id of a ready card on a resting route is refused, naming the rest, and a
+    take by count passes over it. The tick withdraws every ready card on a route resting then,
+    by the one path a member going down takes (`withdrawCard`): no take ended, so no redeal is
+    spent, its primary goes back to ready for the deal to place on a route that serves, and
+    the primary's timeline notes why (`a card withdrawn from a resting route: taken back: its
+    route <route> rests (<reason>)`) (`sprint.restWithdrawals`, `cardRest`; `TestACardReadyOnARestingProvidersRouteIsWithdrawnNeverTakenAndRefused`,
     `TestATakeOfACardOnARestingRouteIsRefused`).
   - The balance poll. `run` reads each provider's balance when it begins and every 10 minutes
     after (`sprint.BalancePollEvery`), outside every tick, through the seat's key in its own
@@ -815,9 +817,9 @@ and it is the coordinator's decision, receipted.
     machine line `machine: STOPPED (every provider is out of credit)`, and one judgment, `every
     provider is out of credit`, naming the providers. A provider low on funds keeps the machine
     running: its tier's `no route serves the tier` says why nothing deals. The line says what
-    counts as paid: `the sprint is STOPPED until a provider is paid: a balance the poll reads
-    higher than the one before (over zero after a balance at zero), or nova-sprint funded
-    <provider>`. `start` is refused
+    counts as paid: `the sprint is STOPPED until a provider is paid: a balance over zero the
+    poll reads higher than the one before or than the balance at the refusal, or nova-sprint
+    funded <provider>`. `start` is refused
     with the same line (exit 1) while every provider stays out; once one is paid (a read that
     ends its rest, or `funded`), the coordinator starts it and the judgment closes
     (`TestEveryProviderOutOfCreditStopsTheMachine`, `TestEveryProviderOutOfCreditStopsTheSprint`).

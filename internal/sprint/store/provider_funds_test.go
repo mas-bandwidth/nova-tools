@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -305,9 +306,10 @@ func TestACardReadyOnARestingProvidersRouteIsWithdrawnNeverTakenAndRefused(t *te
 	h.failTake(onOR[0], creditLine)
 	waiting := onOR[1:]
 	require.Len(t, waiting, 4, "four cards ready on openrouter at the moment the rest begins")
-	primaries := map[string]string{}
+	primaries, onRoute := map[string]string{}, map[string]string{}
 	for _, id := range waiting {
 		primaries[id] = h.snap().Fleet.Card(id).F("primary")
+		onRoute[id] = h.snap().Fleet.Card(id).F(sprint.FieldRoute)
 	}
 
 	h.machine() // the tick rests the provider and withdraws its ready cards
@@ -320,6 +322,9 @@ func TestACardReadyOnARestingProvidersRouteIsWithdrawnNeverTakenAndRefused(t *te
 		assert.Equal(t, sprint.Withdrawn, wc.Col, "%s: withdrawn while ready", id)
 		assert.Empty(t, wc.F(sprint.FieldTakeEnded), "%s: no take ended", id)
 		assert.Equal(t, sprint.Ready, s.Work.Card(primaries[id]).Col, "%s: its primary is ready for the deal", id)
+		why := sprint.NRestWithdrawn + ": taken back: its route " + onRoute[id] + " rests (out of credit: provider openrouter refused card " + onOR[0] + " on route "
+		lines := h.linesOf(primaries[id])
+		assert.True(t, slices.ContainsFunc(lines, func(l string) bool { return strings.HasPrefix(l, why) }), "%s: its primary's timeline says why: %q", id, lines)
 	}
 
 	for range 3 {
