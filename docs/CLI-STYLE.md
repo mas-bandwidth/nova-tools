@@ -36,8 +36,8 @@ A resource limit keeps its unit or scope in its name; these spellings stand: nov
 - nova-bus wait `--idle-exit <n>`, a caller-selected code for an idle timeout.
 
 **(e) Output: events and payloads.**
-- EVENT output is one line per event, `<TOKEN> OK|FAIL key=value ...`; OK to stdout, FAIL and REFUSED to stderr. One exception, per SPEC.md: nova-self-talk's `SELFTALK FAIL files=...` summary count line goes to stdout beside its advisory note.
-- Item OK events may precede a later failure; the closing status is then FAIL, exit not 0.
+- EVENT output is one line per event, `<TOKEN> OK|FAILED key=value ...`; OK to stdout, FAILED and REFUSED to stderr. One exception, per SPEC.md: nova-self-talk's `SELFTALK FAIL files=...` summary count line goes to stdout beside its advisory note.
+- Item OK events may precede a later failure; the closing status is then FAILED, exit not 0.
 - PAYLOAD output: a verb documented to emit a payload names its format in help and emits exactly that payload on stdout and nothing else; its events go to stderr. The documented cases: nova-bus prepare (a JSON artifact), nova-bus draft (a drafted note) and nova-fuse path (a bare value). A payload is never capped like a listing.
 - A remedy is a command, printed shell-quoted so it pastes.
 
@@ -57,7 +57,7 @@ A resource limit keeps its unit or scope in its name; these spellings stand: nov
 - A CREATE target: a verb documented to create a destination may create exactly the explicitly selected path, never a parent tree and never a default.
 - A VALID EMPTY RESULT (an idle poll, an empty search, a clean checker, an idempotent retry) is OK with its count and, where it helps, `note=`; only when the input is resolved and read.
 
-An ignored flag is a refusal; a stale checker (`last=` past its bound) is FAIL.
+An ignored flag is a refusal; a stale checker (`last=` past its bound) is FAILED.
 
 ## Paths and helpers
 

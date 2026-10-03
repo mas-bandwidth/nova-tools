@@ -270,7 +270,7 @@ func clip(s string, max int) string {
 // path separator. It is what `nova-version snapshot` writes -- a reading taken at a
 // moment -- and it is unambiguous against every argv a manifest can hold: `go version` is
 // two tokens, `nova-bus` carries no dotted number, and a path to a binary carries a
-// separator (#571).
+// separator.
 func recordedVersion(installed []string) (string, bool) {
 	if len(installed) != 1 {
 		return "", false
@@ -297,9 +297,9 @@ func recordedVersion(installed []string) (string, bool) {
 // caller's sentence and is run exactly as written, once: appending to it would run a verb
 // the caller did not ask for.
 //
-// A `tool` row that names nothing but the executable is the other case, and it is the one
-// that cost us #1264. `nova-version snapshot` writes such rows, and so does every friend's
-// hand-written manifest: `nova-swarm  tool  ~/.local/bin/nova-swarm  ...`. Run bare, EVERY
+// A `tool` row that names nothing but the executable is the other case.
+// `nova-version snapshot` writes such rows, and so does every hand-written manifest:
+// `nova-swarm  tool  ~/.local/bin/nova-swarm  ...`. Run bare, EVERY
 // nova tool answers a usage refusal -- the banner is behind `help`, not in front of every
 // mistake -- so the adoption pass read UNKNOWN for every one of our own tools while each
 // of them was perfectly able to say which build it was. They are asked the verb they

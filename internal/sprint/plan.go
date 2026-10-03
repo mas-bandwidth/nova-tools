@@ -67,6 +67,9 @@ type Plan struct {
 	// Requeue is the queued changes a drain leaves for the next one (Drain):
 	// its commit puts them back at the queue's tail.
 	Requeue []QueuedChange
+	// Seat is the seat's change (MoveSeat): the step's commit writes the
+	// coordinator and the seat's record with its note.
+	Seat *SeatChange
 	// pre is the pre-state the plan was built on, set only by the steps of
 	// this package that may admit or move a primary into ready (on): the
 	// lifecycle judges a primary's needs against it, and a plan without one
@@ -436,8 +439,8 @@ func NotCoordinator(coordinator, who, verb string) string {
 // PlanRows is the rows of each table a plan changes: the row a card is moved
 // from and the row it goes to, the row a card is created in, and the row of a
 // card whose fields it sets, unsets or removes; a guard that changes nothing
-// names no row. The tick's log names them by table (errata 3 amendment 10:
-// every row of every table moves every tick).
+// names no row. The tick's log names them by table:
+// every row of every table moves every tick.
 func PlanRows(p Plan) map[string][]string {
 	out := map[string][]string{}
 	seen := map[string]bool{}

@@ -103,7 +103,7 @@ the lists now match the tree.
 |---|---|
 | `bench-runners.allow` | `TestCIOneBenchRunner` |
 | `cardtemplate_allowlist.txt` | `TestNoCardTemplateCarriesAnOSSpecificCommand` |
-| `compared_examples.txt`, `unexecuted_examples.txt` | `TestIssue2218` |
+| `compared_examples.txt`, `unexecuted_examples.txt` | `TestPlatformsMatchCILegsAndUnexecutedExamplesOnlyShrink` |
 | `fieldsindex_allowlist.txt` | `TestNoUncheckedFieldsIndex` |
 | `fixed-testbins-allowlist.txt` | `TestNoCopiedTestBinariesOnTheCIPath` |
 | `fixed-waits-allowlist.txt` | `TestNoFixedWaitsOnTheCIPath` |

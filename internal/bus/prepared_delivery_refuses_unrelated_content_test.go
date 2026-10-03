@@ -106,7 +106,7 @@ func TestStellaIndependentPreparedCannotConfirmCommitWithoutIndex(t *testing.T) 
 		return
 	}
 	index, e := git(bare, "show", "main:"+IndexPath(p.Sender.Lane))
-	require.False(t, r.Pushed && (e != nil || !strings.Contains(index, IndexLine(p.Index))), "claimed success after publishing note-only commit without INDEX entry")
+	require.True(t, (e == nil && strings.Contains(index, IndexLine(p.Index))) || !r.Pushed, "claimed success after publishing note-only commit without INDEX entry")
 }
 func TestStellaIndependentPreparedPreservesUnrelatedAttributeEdit(t *testing.T) {
 	t.Parallel()
@@ -123,7 +123,7 @@ func TestStellaIndependentPreparedPreservesUnrelatedAttributeEdit(t *testing.T) 
 		require.NotContains(t, remote, sentinel, "published unrelated dirty attribute content during prepared delivery")
 	}
 	now, _ := os.ReadFile(path)
-	require.False(t, string(now) != string(want), "refusal changed unrelated dirty attribute content")
+	require.Equal(t, string(want), string(now), "refusal changed unrelated dirty attribute content")
 }
 func TestStellaIndependentPreparedRefusesUnknownArtifactField(t *testing.T) {
 	t.Parallel()

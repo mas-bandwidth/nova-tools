@@ -23,14 +23,14 @@ import (
 // lives in the nova-work-old repository).
 
 // cardMaxBytes is the ADVISORY ceiling a card is written within: past it a model stops
-// reading the card in one window, so the lint says so before any spend -- and nothing is
-// refused and nothing is cut, so a card over it still ships (issues #1494, #1527).
+// reading the card in one window, so the lint says so before any spend -- nothing is
+// refused and nothing is cut, so a card over it still ships.
 //
-// IT WAS READ BOTH WAYS ON THE SAME DAY. On 2026-09-19 two managers trimmed cards to reach
-// it and two others shipped over it on purpose, because the line said `at or over the
+// The ceiling is a reading budget rather than an input limit, so callers may choose to exceed it
+// and some have shipped over it on purpose, because the line said `at or over the
 // 12000-byte ceiling` and the verb exited 2, which is the exit code a caller refuses on.
 // The ceiling is a reading budget, not an input limit: a 12422-byte card was measured
-// through the harness untruncated (#1494). So a card over it draws a `LINT NOTE`, never a
+// and the linter reports an overage as a `LINT NOTE`, never a
 // `LINT DRIFT`; the note never changes the verdict; and the size rides on every lint,
 // clean or not, with `advisory=true` said in the bytes so nobody has to ask again.
 const cardMaxBytes = cardlimits.BriefAdvisoryBytes
@@ -58,12 +58,12 @@ var cardLintAdvisory = map[string]bool{"size": true, swarm.PlaceholderCheck: tru
 // size of cardLintRemedies below: a check with no remedy is a red test, never a judgement.
 //
 // It counts the twelve shape rules of WORKER-CARDS.md:23-36, the four typed-header
-// tokens SPEC-TOOLWORK.md §5 rule 1 adds -- `kind-declared`, `paths-declared`, `test-named`
+// tokens add -- `kind-declared`, `paths-declared`, `test-named`
 // and `paused` -- whose rules live in internal/swarm/lintheader.go, beside a note on the
-// gate parser they have to agree with (internal/pulse/cardheader.go, #1721 at f927bccc),
-// and `depends-on` (#2636), which fires only under `--typed`, and the four base checks of
+// gate parser they have to agree with,
+// and `depends-on`, which fires only under `--typed`, and the base checks of
 // internal/swarm/lintbase.go -- `paths-at-base`, `no-push-steps`, `leg-in-fleet` and
-// `deadline-p95` (#2636) -- with `donewhen-test-name` (#3083), which fire only under
+// `deadline-p95` -- with `donewhen-test-name`, which fire only under
 // `--base-check`.
 //
 // The child rules of internal/swarm/lintchild.go -- one `rule-<name>` per sentence of the
@@ -74,10 +74,10 @@ var cardLintAdvisory = map[string]bool{"size": true, swarm.PlaceholderCheck: tru
 // And `placeholder`: a line of the card template left with its <...> fill-ins.
 var cardLintChecks = 23 + len(swarm.CardChildRemedies)
 
-// EVERY DRIFT NAMES ITS REMEDY, AND THE BINARY CAN PRINT THE WHOLE TABLE (issue #1464).
+// Every drift names its remedy, and the binary can print the whole table.
 //
-// A card written by hand on 2026-09-18 came back with five drifts, three of them pointing at
-// line 1 -- which is the contract line practice 1 says line 1 must be -- and the writer could
+// A card can produce several drifts pointing at
+// line 1, which is the contract line, and the writer can
 // not tell what any of them wanted:
 //
 //	LINT DRIFT result-first: 1: fixed: row 5 writer_bound_count on go
@@ -126,7 +126,7 @@ func cardPlaceholders(raw []byte) []cardFinding {
 	return out
 }
 
-// THE TYPED HEADER'S FOUR TOKENS JOIN THE SAME TABLE (SPEC-TOOLWORK.md §5 rule 1, #1651).
+// Typed-header tokens join the same table.
 // They are defined in internal/swarm beside the header rules themselves, because that is
 // where the grammar the gate parses is restated; they are merged here so `--rules` prints
 // one listing and cardLintChecks counts one set. A token defined in both places is a
@@ -174,11 +174,11 @@ var (
 	cardCloneRE = regexp.MustCompile(`(?i)(clone|(^|[ \t&|(])cd[ \t])`)
 	cardTestRE  = regexp.MustCompile(`\bTest[A-Z][A-Za-z0-9_]*`)
 	cardReadRE  = regexp.MustCompile(`(?i)\b(probe|read)\b`)
-	// THE TEST-COMMAND CHECK ACCEPTS MORE THAN ONE VOCABULARY (issue #1994).
+	// The test-command check accepts several command vocabularies.
 	//
 	// The four-line whitelist (`go test`/`go vet`/`pytest`/`cargo test`/`npm test`) was
 	// written when every gate in ci-fast.yml was `go test ./...`. Then ci-fast.yml moved
-	// to `make <leg>` (the Makefile is the one entry per AGENTS.md rule 6), and 155 of 176
+	// to `make <leg>` (the Makefile is the one entry), and many
 	// polyglot cards in one repository lane tripped on a verbatim `make`
 	// gate that the repository would actually run. The accepted set widens to the verbs a
 	// card writer might honestly name -- the four it already took, the rest of the common
@@ -229,7 +229,7 @@ func lintCard(raw []byte) []cardFinding {
 
 	// 1. line 1 is the contract, in either of the two forms the tools write today. The
 	// two are swarm.CardContractPrefixes, and the reason there are two -- `cut` writes
-	// one, WORKER-CARDS practice 1 the other -- is written out there, with the class test
+	// one, the other -- is written out there, with the class test
 	// beside it that holds this lint, `cut` and `gather` to one line.
 	if !swarm.IsCardContractLine(first) {
 		add("result-first", 1, first)
@@ -308,7 +308,7 @@ func lintCard(raw []byte) []cardFinding {
 	// 9. no path above the job: the wall refuses one, so the card may not walk there. The
 	// rule is what the card WALKS, not every `../` in its text; a `../` the card quotes --
 	// a fenced block, a backtick span, a markdown link target, a `go test` ellipsis -- is
-	// not a path the worker takes. The four shapes, measured on the 2026-09-19 shift's own
+	// not a path the worker takes. The exempted shapes, measured on representative
 	// cards, and what is given up by exempting them, are in internal/swarm/lintparent.go.
 	for _, n := range swarm.CardParentPaths(lines) {
 		add("no-parent-path", n, lines[n-1])
@@ -387,7 +387,7 @@ func matchingTemplate(raw []byte) string {
 	return ""
 }
 
-// THE FLEET'S SCRIPTS ARE LINTED TOO (issue #2012).
+// Fleet scripts are linted too.
 //
 // Two self-inflicted outages in one night, same class. A launcher used `mapfile`;
 // launchers execute on the coordinator -- a Mac whose /bin/bash is 3.2 -- so every
@@ -716,7 +716,7 @@ func fleetNameByte(c byte) bool {
 func cmdLint(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("lint")
 	card := f.fs.String("card", "", "the card file to lint before any spend")
-	// `--fleet <file>` IS THE LAUNCHER'S OWN LINT (issue #2012). A card is checked for
+	// `--fleet <file>` is the launcher's own lint. A card is checked for
 	// what it costs a bench to run; a fleet script is checked for what it costs the
 	// fleet to RUN AT ALL: the coordinator's /bin/bash is 3.2 and a script that leans
 	// on bash 4 or on zsh's word-splitting differences takes every launch down with it.
@@ -735,12 +735,12 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 	// stdout is what is handed here. With no --trust there is no state, and `paused` is not
 	// checked rather than guessed at.
 	trustPath := f.fs.String("trust", "", "a file of TRUST kind=<kind> state=<trial|trusted|paused> lines, for the paused check")
-	// `--lineup <file>` IS THE SPRINT LINEUP, AND ONLY FOR `--typed` (#2636). The lint has
+	// `--lineup <file>` is the sprint lineup, and only for `--typed`. The lint has
 	// no lineup of its own. The file is ORDER.tsv's shape — id in the first column, or the
 	// column named id/card/card-id/label, a header that names depends-on skipped — or one
 	// card id per line. With no file an id is not called unknown.
 	lineupPath := f.fs.String("lineup", "", "with --typed: the sprint lineup, one card id per line or a TSV with an id column, so an unknown depends-on id is named")
-	// `--base-check` IS THE ASK FOR THE FOUR BASE CHECKS OF A CODING CARD (#2636):
+	// `--base-check` requests the base checks of a coding card:
 	// PATHS resolve at base-sha in `--repo` (default the working directory), no STEP
 	// runs `git push` or `gh`, LEG is in the `--legs` fleet table, and DEADLINE is at
 	// or above the kind's p95 in the `--p95` table. Evidence not handed over is not a
@@ -760,7 +760,7 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 	if !f.parse(args, stderr) {
 		return 2
 	}
-	// `--rules` IS THE DOCUMENT A BENCH CAN READ (issue #1464). A card writer on a bench has
+	// `--rules` is the document a bench can read. A card writer on a bench has
 	// the binary and a clone months behind it, so the rules are asked of the binary. It takes
 	// no card, because the question is asked before there is one.
 	if *rules {
@@ -771,7 +771,7 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 	}
 	f.wantMax(*max)
 	// THE FLEET SCRIPT IS THE OTHER ONE-FILE INPUT, AND THE TWO NEVER SHARE A RUN
-	// (issue #2012). A card is read by shape rules a card writer meets on a bench; a
+	// A card is read by shape rules a card writer meets on a bench; a
 	// launcher script is read by shell rules a fleet meets on the coordinator. The card
 	// flags over a script are a guess about a different file, so they are refused, and
 	// the verdict lines say `script=` rather than `card=` so a caller cannot mistake
@@ -803,7 +803,7 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 			printed, more = findings[:*max], true
 		}
 		for _, fd := range printed {
-			// The remedy rides on the same line as the card lint's drifts (#1464): a
+			// The remedy rides on the same line as the card lint's drifts: a
 			// launcher writer holding this line reads what the rule wants without
 			// grepping any clone.
 			fmt.Fprintf(stdout, "LINT DRIFT script=%s %s: %d: %s remedy=%s\n",
@@ -834,8 +834,8 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	// A template is printed verbatim and is not itself a card: `nova-swarm template --name
-	// <t>` piped into `lint --card` used to report result-first drift on the template's first
-	// line (issue #1471). The card templates pass, and a template that is not a card answers
+	// <t>` piped into `lint --card` is read as the named template, not as a card: its first
+	// line would draw result-first drift. The card templates pass, and a template that is not a card answers
 	// by name rather than as a drift.
 	if tmpl := matchingTemplate(raw); tmpl != "" && tmpl != "card" {
 		if swarm.IsCardTemplate(tmpl) {
@@ -886,7 +886,7 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 	for _, hf := range swarm.LintCardHeader(raw, trust, *typed) {
 		findings = append(findings, cardFinding{check: hf.Check, line: hf.Line, excerpt: hf.Excerpt})
 	}
-	// DEPENDS-ON IS REQUIRED ONLY WHEN THE CARD WAS ASKED TO BE TYPED (#2636). A card
+	// DEPENDS-ON is required only when the card is asked to be typed. A card
 	// that already carries KIND: is still linted without this key, which is every card
 	// cut before the key existed. `--typed` is the ask.
 	if *typed {
@@ -930,7 +930,7 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 			findings = append(findings, cardFinding{check: hf.Check, line: hf.Line, excerpt: hf.Excerpt})
 		}
 	}
-	// ADVICE IS NOT A DEFECT, AND THE VERDICT SAYS WHICH (issues #1494, #1527). A drift is
+	// Advice is not a defect, and the verdict says which. A drift is
 	// a defect and exits 1 (the verb ran and said NO), which a caller refuses on; a note is advice and changes no
 	// verdict. The two are told apart here, once, so neither the writer nor the caller has
 	// to read the check's name to know what happened to the card.
@@ -964,7 +964,7 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 		printed, more = drifts[:*max], true
 	}
 	for _, fd := range printed {
-		// THE REMEDY RIDES ON THE SAME LINE (issue #1464). `nova-swarm help` promises one
+		// The remedy rides on the same line. `nova-swarm help` promises one
 		// more line naming the remedy of every listing; a rule token and a quoted line
 		// without it cost a card writer a guess per drift.
 		fmt.Fprintf(stdout, "LINT DRIFT card=%s %s: %d: %s remedy=%s\n",

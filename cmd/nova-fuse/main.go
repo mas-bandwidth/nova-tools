@@ -14,8 +14,7 @@
 //	            ceremony, but always announced.
 //
 // Blowing either is solo, instant, and needs no proof -- blowing is cheap,
-// hesitating is not. This design keeps the fuse controls together so their
-// boundaries stay explicit.
+// hesitating is not.
 package main
 
 import (
@@ -184,7 +183,8 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 // with boxOK=false means the --box refusal is already printed and the verb
 // should go on to judge its OWN arguments before returning 2, so that one run
 // names every problem it can find: `nova-fuse quarantine` with nothing at all
-// A missing --box does not stop validation: one run also reports a missing surface and reason.
+// names --box, the surface and the reason in one run, rather than naming --box,
+// stopping, and leaving the other two for a second run.
 func parseBox(name string, args []string, stderr io.Writer) (box string, positional []string, boxOK, parsed bool) {
 	return parseBoxWith(name, args, stderr, nil)
 }
@@ -371,13 +371,13 @@ func liftQuarantine(box, surface string, stdout, stderr io.Writer) int {
 			}
 			listed = strings.Join(shown, ", ")
 		}
-		fmt.Fprintf(stderr, "LIFT FAIL quarantine=%s: nothing to lift; not quarantined (quarantined now: %s)\n",
+		fmt.Fprintf(stderr, "LIFT FAILED quarantine=%s: nothing to lift; not quarantined (quarantined now: %s)\n",
 			oneline.Field(fuse.Surface(surface)), listed)
 		return 1
 	}
 
 	if err := fuse.WriteBox(box, b); err != nil {
-		fmt.Fprintf(stderr, "LIFT FAIL quarantine=%s: could not write box: %s (the box was not replaced, so the quarantine still stands)\n",
+		fmt.Fprintf(stderr, "LIFT FAILED quarantine=%s: could not write box: %s (the box was not replaced, so the quarantine still stands)\n",
 			oneline.Field(fuse.Surface(surface)), oneline.Err(err))
 		return 1
 	}
@@ -385,12 +385,12 @@ func liftQuarantine(box, surface string, stdout, stderr io.Writer) int {
 	// Re-ask. The exit code of a remedy is not evidence the remedy worked.
 	after, err := fuse.ReadBox(box)
 	if err != nil {
-		fmt.Fprintf(stderr, "LIFT FAIL quarantine=%s: written but unverifiable: %s (do not trust it; treat the surface as still quarantined and tell your person)\n",
+		fmt.Fprintf(stderr, "LIFT FAILED quarantine=%s: written but unverifiable: %s (do not trust it; treat the surface as still quarantined and tell your person)\n",
 			oneline.Field(fuse.Surface(surface)), oneline.Err(err))
 		return 1
 	}
 	if name, _, still := after.Quarantined(surface); still {
-		fmt.Fprintf(stderr, "LIFT FAIL quarantine=%s: lift did not take; %s is still quarantined on re-read (do not trust this run; tell your person)\n",
+		fmt.Fprintf(stderr, "LIFT FAILED quarantine=%s: lift did not take; %s is still quarantined on re-read (do not trust this run; tell your person)\n",
 			oneline.Field(fuse.Surface(surface)), oneline.Escape(name))
 		return 1
 	}
@@ -453,7 +453,8 @@ func cmdStatus(rest []string, stdout, stderr io.Writer) int {
 	}
 	// THE COUNT IS NEVER CAPPED and the listing always is. quarantines= above is the truth
 	// about the box; the lines below are a sample of it in the box's own order, and the
-	// The MORE line reports the sample size, so a large quarantine remains glanceable.
+	// MORE line says how big the sample is, so a box holding hundreds of surfaces is
+	// still a handful of lines on a verb whose whole job is to be glanced at.
 	list := bounded.Capped(stdout, max, "STATUS", "quarantine", maxRemedy)
 	for _, n := range names {
 		f := b.Quarantine[n]
@@ -495,13 +496,13 @@ func cmdCheck(rest []string, stdout, stderr io.Writer) int {
 	}
 
 	if b.Lockdown != nil {
-		fmt.Fprintf(stderr, "FUSE FAIL lockdown since=%s: %s (hard: all untrusted reads and surface-driven acts stop, authored outbound continues; replaced only in a live conversation with your person)\n",
+		fmt.Fprintf(stderr, "FUSE FAILED lockdown since=%s: %s (hard: all untrusted reads and surface-driven acts stop, authored outbound continues; replaced only in a live conversation with your person)\n",
 			since(*b.Lockdown), why(*b.Lockdown))
 		return 1
 	}
 
 	if name, f, ok := b.Quarantined(surface); ok {
-		fmt.Fprintf(stderr, "FUSE FAIL quarantine=%s since=%s: %s (soft: yours to lift when the surface is safe again: %s)\n",
+		fmt.Fprintf(stderr, "FUSE FAILED quarantine=%s since=%s: %s (soft: yours to lift when the surface is safe again: %s)\n",
 			oneline.Field(name), since(f), why(f), oneline.Escape(liftRemedy(box, fuse.Surface(name))))
 		return 1
 	}
@@ -565,7 +566,7 @@ func cmdLockdown(rest []string, stdout, stderr io.Writer, now time.Time) int {
 
 	b.Lockdown = &fuse.Fuse{At: stamp(now), Reason: reason}
 	if err := fuse.WriteBox(box, b); err != nil {
-		fmt.Fprintf(stderr, "LOCKDOWN FAIL could not write box: %s (the write is temp-file + rename, so a failure cannot leave it torn; stop by hand and tell your person now)\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "LOCKDOWN FAILED could not write box: %s (the write is temp-file + rename, so a failure cannot leave it torn; stop by hand and tell your person now)\n", oneline.Err(err))
 		return 1
 	}
 
@@ -573,7 +574,7 @@ func cmdLockdown(rest []string, stdout, stderr io.Writer, now time.Time) int {
 	// is. Re-ask, always.
 	after, err := fuse.ReadBox(box)
 	if err != nil || after.Lockdown == nil {
-		fmt.Fprintf(stderr, "LOCKDOWN FAIL written but unverifiable (%s): do not trust it; stop by hand and tell your person now\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "LOCKDOWN FAILED written but unverifiable (%s): do not trust it; stop by hand and tell your person now\n", oneline.Err(err))
 		return 1
 	}
 
@@ -621,7 +622,7 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time) int {
 
 	b.Quarantine[surface] = fuse.Fuse{At: stamp(now), Reason: reason}
 	if err := fuse.WriteBox(box, b); err != nil {
-		fmt.Fprintf(stderr, "QUARANTINE FAIL %s: could not write box: %s (the box was not replaced; stop reading that surface by hand and tell your person)\n", oneline.Field(surface), oneline.Err(err))
+		fmt.Fprintf(stderr, "QUARANTINE FAILED %s: could not write box: %s (the box was not replaced; stop reading that surface by hand and tell your person)\n", oneline.Field(surface), oneline.Err(err))
 		return 1
 	}
 
@@ -634,7 +635,7 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time) int {
 	after, err := fuse.ReadBox(box)
 	landed, ok2 := after.Quarantine[surface]
 	if err != nil || !ok2 {
-		fmt.Fprintf(stderr, "QUARANTINE FAIL %s: written but unverifiable (%s): do not trust it; stop reading that surface by hand and tell your person\n", oneline.Field(surface), oneline.Err(err))
+		fmt.Fprintf(stderr, "QUARANTINE FAILED %s: written but unverifiable (%s): do not trust it; stop reading that surface by hand and tell your person\n", oneline.Field(surface), oneline.Err(err))
 		return 1
 	}
 
@@ -667,16 +668,16 @@ func cmdInit(rest []string, stdout, stderr io.Writer) int {
 	}
 	if err := fuse.CreateBox(box); err != nil {
 		if errors.Is(err, fs.ErrExist) {
-			fmt.Fprintf(stderr, "INIT FAIL box=%s: something is already there, and init never replaces a box (a blown lockdown is replaced only in a live conversation with your person); read it with %s\n", oneline.Field(box), oneline.Escape(boxRemedy("status", box)))
+			fmt.Fprintf(stderr, "INIT FAILED box=%s: something is already there, and init never replaces a box (a blown lockdown is replaced only in a live conversation with your person); read it with %s\n", oneline.Field(box), oneline.Escape(boxRemedy("status", box)))
 			return 1
 		}
-		fmt.Fprintf(stderr, "INIT FAIL box=%s: could not make the box: %s\n", oneline.Field(box), oneline.Err(err))
+		fmt.Fprintf(stderr, "INIT FAILED box=%s: could not make the box: %s\n", oneline.Field(box), oneline.Err(err))
 		return 1
 	}
 	// Re-ask. The exit code of a remedy is not evidence the remedy worked.
 	after, err := fuse.ReadBox(box)
 	if err != nil || after.Lockdown != nil || len(after.Quarantine) != 0 {
-		fmt.Fprintf(stderr, "INIT FAIL box=%s: made but unverifiable (%s): do not trust it; tell your person\n", oneline.Field(box), oneline.Err(err))
+		fmt.Fprintf(stderr, "INIT FAILED box=%s: made but unverifiable (%s): do not trust it; tell your person\n", oneline.Field(box), oneline.Err(err))
 		return 1
 	}
 	fmt.Fprintf(stdout, "INIT OK box=%s: an empty box, no fuse blown (verified by re-reading the box)\n", oneline.Field(box))
@@ -714,7 +715,7 @@ func stamp(now time.Time) string { return now.UTC().Format(time.RFC3339) }
 // world-readable and hand-editable on purpose, so on a shared machine these two strings
 // are authored by whoever can write the file. Echoed raw, a newline in a reason forges a
 // SECOND line in the grammar SPEC.md tells callers to scan -- a FUSE OK beneath a real
-// FUSE FAIL -- and an ESC sequence does the same thing to an operator's terminal. The
+// FUSE FAILED -- and an ESC sequence does the same thing to an operator's terminal. The
 // reason is the free-text tail of its line and renders through Escape; the stamp is the
 // value of a since= field and renders through Field, which also escapes whitespace and
 // "=", so that a hand-written stamp cannot pose as a second field on the line.

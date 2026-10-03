@@ -423,7 +423,7 @@ func assertConfigRecord(t *testing.T, slot, wantMode, wantBody string) {
 		return
 	}
 	assert.True(t, strings.HasPrefix(rec, "mode="+wantMode+"\n"), "the harness saw %q, want mode %s", rec, wantMode)
-	assert.False(t, wantBody != "" && !strings.Contains(rec, wantBody), "the harness saw no %s in the config it read:\n%s", wantBody, rec)
+	assert.True(t, wantBody == "" || strings.Contains(rec, wantBody), "the harness saw no %s in the config it read:\n%s", wantBody, rec)
 }
 
 // TestNativeRefusesConfigProviderWithoutKey: a --config whose entry for THE MODEL'S OWN
@@ -1073,7 +1073,7 @@ func TestNativeEnvIsCleanAndInsideTheWall(t *testing.T) {
 	require.NoError(t, err, "the child did not write pwd into RESULT.md")
 	if got := strings.TrimPrefix(strings.TrimSpace(string(raw)), "pwd="); got != jobDir {
 		want, evalErr := filepath.EvalSymlinks(jobDir)
-		assert.False(t, evalErr == nil && got != want, "from cwd %s the child's cwd is %q, want the job directory %q", foreign, got, want)
+		assert.True(t, evalErr != nil || got == want, "from cwd %s the child's cwd is %q, want the job directory %q", foreign, got, want)
 	}
 
 	// The environment the run recorded is what the wall was handed.
@@ -1515,7 +1515,7 @@ func TestNativeSilentHarnessIsNotOK(t *testing.T) {
 				raw, err := os.ReadFile(filepath.Join(jobDir, "harness-output.log"))
 				require.NoError(t, err, "the capture is written even for a silent run")
 				for _, line := range strings.Split(string(raw), "\n") {
-					assert.False(t, strings.TrimSpace(line) != "" && !strings.HasPrefix(line, "SANDBOX "), "a silent run's capture carries a line the child wrote: %q", line)
+					assert.True(t, strings.TrimSpace(line) == "" || strings.HasPrefix(line, "SANDBOX "), "a silent run's capture carries a line the child wrote: %q", line)
 				}
 			}
 		})
@@ -2001,4 +2001,31 @@ func TestNativeRunTakesThePoolIdentityFromTheLoopsArgv(t *testing.T) {
 			assert.Equal(t, []string{tc.want}, nativeLoggedEnv(t, string(raw))["GIT_AUTHOR_NAME"])
 		})
 	}
+}
+
+// TestNativeSandboxArgvNamesEachDirectoryOnce: the shared cache root is ONE directory for the
+// whole bench, and the wall argv names it once. It used to go in twice -- as the Go caches'
+// write (card 8963) and again as the shared cache root (#1048), which are the same
+// <root>/cache -- so every card's darwin profile carried two identical WRITE grants and two
+// identical socket grants. Measured 2026-10-02 the profile's size is not the wall's cost on
+// any Mac bench; this is the duplicate, removed, not a speed-up.
+func TestNativeSandboxArgvNamesEachDirectoryOnce(t *testing.T) {
+	t.Parallel()
+	root, slot := aSlot(t)
+	jobDir := filepath.Join(slot, "jobs", "once")
+	cfg := nativeRunConfig{slotDir: slot, root: root, benchHome: t.TempDir(), benchOS: "linux"}
+	argv := nativeSandboxArgv([]string{"/bin/true"}, cfg, filepath.Join(slot, "data"), jobDir, filepath.Join(slot, "tmp", "once"))
+	seen := map[string]int{}
+	for i, a := range argv {
+		if a == "--" {
+			break
+		}
+		if strings.HasPrefix(a, "--") && i+1 < len(argv) && filepath.IsAbs(argv[i+1]) {
+			seen[a+" "+argv[i+1]]++
+		}
+	}
+	for pair, n := range seen {
+		assert.Equal(t, 1, n, "the wall argv names %q %d times:\n%s", pair, n, strings.Join(argv, " "))
+	}
+	assert.Equal(t, 1, seen["--write "+swarm.CacheRoot(root)], "the shared cache root is not a --write exactly once:\n%s", strings.Join(argv, " "))
 }

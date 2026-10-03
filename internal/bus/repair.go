@@ -48,7 +48,7 @@ type WaitRecovery struct {
 // Unknown is a process still present whose account or place could not be read (EPERM
 // or EACCES on its status, cmdline or cwd, or a root-owned /proc entry, the non-dumpable
 // shape, whose status cannot prove another account). A process that vanished or is dead
-// mid-read is gone: it holds no lock and is counted nowhere (#3029). The lock is unlinked
+// mid-read is gone: it holds no lock and is counted nowhere. The lock is unlinked
 // only from a scan with Owner and Unknown both zero.
 type LockScan struct {
 	Owner, Foreign, Unknown int
@@ -239,8 +239,8 @@ func clearStaleIndexLockReport(dir string, now time.Time, scan func() ([]gitProc
 	if found.Owner > 0 {
 		return rep, nil
 	}
-	// The scan took time, and the path may now hold a different lock: the old one finished
-	// and a new git took the path, or someone touched it. Only the lock that was inspected
+	// The scan takes time, and the path may now hold a different lock: the inspected lock released;
+	// a new git might take the path, or someone touched it. Only the lock that was inspected
 	// is removed: the same device and inode, the same owner, and no newer mtime.
 	if changed, err := indexLockChanged(lock, fi, owner, lockOwner); err != nil || changed {
 		if os.IsNotExist(err) {
@@ -660,7 +660,7 @@ func procReadFailed(err error) (vanished bool, unknown error) {
 // procGone reports whether a read of a process's metadata failed because the process
 // no longer exists. ENOENT is a pid whose /proc entry is already gone. ESRCH is the
 // same process one step earlier: Linux answers a read of /proc/<pid>/comm, cmdline,
-// stat or cwd with "no such process" while an exited task is being torn down (#3029).
+// stat or cwd with "no such process" while an exited task is being torn down.
 // On a host running a test package in parallel some process is always in that window,
 // and treating it as an unreadable live process refused every wait that met it.
 func procGone(err error) bool {

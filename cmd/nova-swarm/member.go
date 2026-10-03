@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -21,6 +22,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/internal/gocache"
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/log"
 	"github.com/mas-bandwidth/nova-tools/internal/member"
@@ -45,9 +47,9 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	fs := flag.NewFlagSet("member", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	f := &flags{verb: "member", fs: fs}
-	as := fs.String("as", "", "required: this machine's `name`, its row in the fleet table (with --reader, its row in the readers table)")
-	width := fs.Int("width", 0, "with --reader, required: the most reads it runs at once; a member runs its fleet row's width, and this overrides it")
-	reader := fs.Bool("reader", false, "run as a reader: take and run reads of finished work instead of work cards (needs --width)")
+	as := fs.String("as", "", "required: this machine's `name`, its row in the fleet table (with --reader, its row in the readers table, reader-<machine>)")
+	width := fs.Int("width", 0, "an override of the most cards it runs at once, a twin's; a worker runs its fleet row's width, read every tick: a member its own row's, a reader its machine's (reader-<m> runs at m's width)")
+	reader := fs.Bool("reader", false, "run as a reader: take and run reads of finished work instead of work cards, at its machine's width")
 	harness := fs.String("harness", "", "required: the harness binary `path` each card's child runs under (native --harness)")
 	model := fs.String("model", "", "the `provider/model` a card with no route runs on; a reader given it runs every read on it")
 	root := fs.String("root", "", "required: the `dir` the launches and results sit under")
@@ -65,6 +67,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	noWall := fs.Bool("no-wall", false, "run each child with no nova-sandbox wall (native --no-wall): the caller owns every read and write it makes")
 	ghBin := fs.String("gh", "gh", "the gh `path` the member opens a work card's pull request with, outside the wall (default gh)")
 	passFlag := fs.String("pass", "", "the `NAME,...` of secrets in this environment a child is handed (the loop record's nova-secrets keys); a harness that reads its provider key from the environment needs it")
+	stageWall := newSecondsFlag(fs, "stage-wall", swarm.DefaultStageTimeout, "the bound on staging each card's checkout, a `duration` or whole seconds, handed to native as --stage-timeout: a slow machine under load names a longer one in its loop row's argv (default 120s)")
 	diskFloor := fs.Int("disk-floor", 10, "the free `GiB` the slots' volume keeps: below it no card starts (default 10; 0 checks nothing)")
 	identity := fs.String("identity", "", "the pool identity every child commits under, `owner,name,email` (default: the pool's identity.tsv)")
 	server := fs.String("server", "", "required: the sprint server's `address:port`, which nova-sprint run --listen started on the coordinator's machine; every sprint verb goes there and this machine opens no store")
@@ -72,11 +75,10 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 		return 2
 	}
 	f.want(*as, "as", "the member's name in the fleet table (a reader's in the readers table with --reader)")
-	// a member runs the width its fleet row names (fleet up --width, fleet sync), read with
-	// its queue every tick; --width is a reader's, or a twin's override
-	if *reader {
-		f.wantCount(*width, "width", "the most reads this reader runs at once")
-	} else if *width < 0 {
+	// a worker runs the width its fleet row names (fleet up --width, fleet sync), read with
+	// its queue every tick: a member its own row's, a reader its machine's (reader-<m>,
+	// sprint.ReaderMachine); --width is a twin's override
+	if *width < 0 {
 		f.add("--width is an override of the fleet row's width and is at least 1; leave it out to run the row's")
 	}
 	f.want(*server, "server", "the sprint server's host:port, the run loop started with nova-sprint run --listen on the coordinator's machine: the member sends every sprint verb there and opens no store")
@@ -118,6 +120,9 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	if ticksGiven && *ticks <= 0 {
 		f.add("give --ticks 1 or more, or leave it out to run until stopped")
 	}
+	if stageWall.d <= 0 {
+		f.add("--stage-wall is the bound on staging a card's checkout, above 0 (default 120s)")
+	}
 	if *diskFloor < 0 {
 		f.add("--disk-floor is the free GiB the slots' volume must keep for the member to start a card: 0 or more (0 checks nothing; default 10)")
 	}
@@ -147,8 +152,8 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	// the beat writes from its own goroutine (memberLoop), so what this verb writes to stderr
 	// is one line at a time
 	stderr = &lockedWriter{w: stderr}
-	// CI over work (nova-tools#4293): native refuses every card on an OS with no
-	// setpriority, so a member there would take and fail every card it is dealt
+	// a member only takes a card it can run at CI's priority: native refuses every card on
+	// an OS with no setpriority, so a member there would take and fail every card it is dealt
 	if why := yieldRefusal(yield.Supported, runtime.GOOS); why != "" {
 		return refuse(stderr, " member", why)
 	}
@@ -174,7 +179,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	sp := &sprintwire.Worker{Send: send, Failed: sprintFailureOutput}
 	rn := &nativeRunner{
 		self: self, harness: *harness, model: *model, root: *root, slots: *slots,
-		resultsRoot: *resultsRoot, deadline: deadline.d, tokens: *tokensWord, auth: *auth, config: *config,
+		resultsRoot: *resultsRoot, deadline: deadline.d, stageWall: stageWall.d, tokens: *tokensWord, auth: *auth, config: *config,
 		worker: *workerFile, noWall: *noWall, stderr: stderr, pass: pass, identity: *identity,
 	}
 	// a work card's commit is pushed by the member, outside the wall, at its
@@ -214,7 +219,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	if *model != "" {
 		modelWord = "card,override:" + *model
 	}
-	fmt.Fprintf(stdout, "MEMBER %s as=%s width=%s every=%s server=%s harness=%s model=%s\n", oneline.Field(kind), oneline.Field(*as), oneline.Field(widthWord), oneline.Field(every.d.String()), oneline.Field(*server), oneline.Field(*harness), oneline.Field(modelWord))
+	fmt.Fprintf(stdout, "MEMBER %s as=%s width=%s every=%s server=%s harness=%s model=%s stage-wall=%s\n", oneline.Field(kind), oneline.Field(*as), oneline.Field(widthWord), oneline.Field(every.d.String()), oneline.Field(*server), oneline.Field(*harness), oneline.Field(modelWord), oneline.Field(stageWall.d.String()))
 	// the machine's one model catalog, refreshed once here and never per launch (catalog.go)
 	fmt.Fprintf(stdout, "CATALOG %s\n", oneline.Escape(refreshCatalog(*harness, *root)))
 	if note := passNote(*model, pass, *auth); note != "" {
@@ -224,7 +229,12 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 		fmt.Fprintf(stdout, "NOTE sweep: removed %d ended launch directories under %s, kept the newest %d\n", removed, oneline.Field(*slots), kept)
 	}
 	rn.cleaner() // from here a launch the member ends is tagged, and removed apart from its pass
-	n, replaced := memberLoop(m, every.d, loopTicks(*once, ticksGiven, *ticks), func() string { return binstamp.Of(self) }, stdout, stderr)
+	// a unit restart or stop drains the member (memberLoop): SIGTERM only, so a terminal's
+	// interrupt, which reaches every child of the process group too, still ends it at once
+	term := make(chan os.Signal, 1)
+	signal.Notify(term, syscall.SIGTERM)
+	defer signal.Stop(term)
+	n, replaced := memberLoop(m, loopRun{every: every.d, limit: loopTicks(*once, ticksGiven, *ticks), stamp: func() string { return binstamp.Of(self) }, term: term, deadline: deadline.d}, stdout, stderr)
 	if replaced {
 		return exitReplaced
 	}
@@ -249,16 +259,49 @@ func loopTicks(once, ticksGiven bool, ticks int) int {
 	return 0
 }
 
-// memberLoop ticks m every `every` (limit > 0: at most limit ticks) and returns the
-// ticks it ran. A loop runs the code it was started with for as long as it runs: a
-// release installed under it would leave the fleet worked by the code before it
-// (2026-10-01: six members kept the binaries they began with until restarted by
-// hand). So before each tick it reads its binary's stamp, and when that changed
-// since it began: with no child running it stops at once, saying so; with children
-// running it drains, taking no new card (said once) and reporting each child as it
-// ends, and stops when the last is reported. replaced is true when it stopped so.
-func memberLoop(m *member.Member, every time.Duration, limit int, stamp func() string, stdout, stderr io.Writer) (n int, replaced bool) {
-	began := stamp()
+// loopRun is how memberLoop runs: every pass's interval, the passes it stops at (limit > 0),
+// the stamp of the binary it runs, the supervisor's stop (term: SIGTERM), the member's own
+// --deadline (the deadline of a card whose packet names none), and its clock: now, and after,
+// the wait between passes (nil: the wall clock and time.After).
+type loopRun struct {
+	every    time.Duration
+	limit    int
+	stamp    func() string
+	term     <-chan os.Signal
+	deadline time.Duration
+	now      func() time.Time
+	after    func(time.Duration) <-chan time.Time
+}
+
+// memberLoop ticks m every lr.every (lr.limit > 0: at most limit ticks) and returns the
+// ticks it ran. It drains, taking no new card (said once) and reporting each child as it
+// ends, and stops when the last is reported, on two words:
+//
+//   - its binary was replaced. A loop runs the code it was started with for as long as it
+//     runs: a release installed under it would leave the fleet worked by the code before it
+//     (2026-10-01: six members kept the binaries they began with until restarted by hand).
+//     So before each tick it reads its binary's stamp, and when that changed since it began
+//     it drains; replaced is true when it stopped so (exit 3, its supervisor starts the new).
+//   - its supervisor stopped it (SIGTERM: a unit restart or stop, the loops play's restart
+//     of a changed unit; nova-tools#5096 item 26). A stop never kills a card: the drain is
+//     bounded by member.DrainBound of the longest deadline the running cards name, past which
+//     it stops with what is left running (its supervisor ends it; the sprint deals the
+//     cards again when the member goes down, and a member started again adopts a child
+//     still alive). It exits 0.
+//
+// With no child running either stops at once.
+func memberLoop(m *member.Member, lr loopRun, stdout, stderr io.Writer) (n int, replaced bool) {
+	now, after := lr.now, lr.after
+	if now == nil {
+		now = time.Now
+	}
+	if after == nil {
+		after = time.After
+	}
+	began := ""
+	if lr.stamp != nil {
+		began = lr.stamp()
+	}
 	// the beat goes on its own clock, apart from the work pass (internal/member BeatLoop): one
 	// now, so the member is up before its first pass, then one every interval while the pass
 	// goes on, ending with this loop
@@ -266,46 +309,78 @@ func memberLoop(m *member.Member, every time.Duration, limit int, stamp func() s
 		fmt.Fprintf(stderr, "nova-swarm member: %s\n", oneline.Escape(err.Error()))
 	}
 	beatCtx, stopBeats := context.WithCancel(context.Background())
-	beatTicker := time.NewTicker(every)
+	beatTicker := time.NewTicker(lr.every)
 	beatsEnded := make(chan struct{})
 	go func() { defer close(beatsEnded); m.BeatLoop(beatCtx, beatTicker.C, stderr) }()
 	// the beat ends before the loop does: nothing it writes comes after the member's last line
 	defer func() { stopBeats(); beatTicker.Stop(); <-beatsEnded }()
-	draining := false
+	draining := "" // why the member drains: "" while it takes
+	var termed bool
+	var bound time.Duration
+	var until time.Time // a SIGTERM's drain ends here at the latest
 	for {
-		if began != "" && stamp() != began {
+		select {
+		case <-lr.term:
+			termed = true
+		default:
+		}
+		if draining == "" && began != "" && lr.stamp() != began {
 			if m.Running() == 0 {
 				fmt.Fprintf(stdout, "MEMBER STOP the binary this member runs was replaced; its supervisor starts the new one\n")
 				return n, true
 			}
-			if !draining {
-				draining = true
-				m.Drain()
-				fmt.Fprintf(stdout, "MEMBER DRAIN the binary this member runs was replaced: taking no new card, %d running; it stops when the last child is reported\n", m.Running())
+			draining = "replaced"
+			m.Drain()
+			fmt.Fprintf(stdout, "MEMBER DRAIN the binary this member runs was replaced: taking no new card, %d running; it stops when the last child is reported\n", m.Running())
+		}
+		if termed && until.IsZero() {
+			if m.Running() == 0 {
+				fmt.Fprintf(stdout, "MEMBER STOP SIGTERM: nothing running\n")
+				return n, false
 			}
+			bound = member.DrainBound(m.LongestDeadline(lr.deadline))
+			until = now().Add(bound)
+			if draining == "" {
+				draining = "SIGTERM"
+				m.Drain()
+			}
+			fmt.Fprintf(stdout, "MEMBER DRAIN SIGTERM: taking no new card, %d running; it stops when the last child is reported, at most %s (by %s)\n", m.Running(), oneline.Field(bound.String()), oneline.Field(until.Format("15:04:05")))
+		}
+		if draining != "" && m.Running() == 0 {
+			if draining == "replaced" {
+				fmt.Fprintf(stdout, "MEMBER STOP the binary this member runs was replaced; its supervisor starts the new one\n")
+				return n, true
+			}
+			fmt.Fprintf(stdout, "MEMBER STOP SIGTERM: the last child is reported\n")
+			return n, false
+		}
+		if !until.IsZero() && !now().Before(until) {
+			fmt.Fprintf(stdout, "MEMBER STOP SIGTERM: the drain's bound %s passed with %d running; its supervisor ends them, and the sprint deals their cards again when this member is down\n", oneline.Field(bound.String()), m.Running())
+			return n, draining == "replaced"
 		}
 		n++
-		acted, err := m.Tick(time.Now())
+		acted, err := m.Tick(now())
 		if err != nil {
 			fmt.Fprintf(stderr, "nova-swarm member: tick %d: %s\n", n, oneline.Escape(err.Error()))
 		}
 		if acted > 0 || err != nil {
 			// where the pass's time went, by part: a lane freed during a pass waits for the rest of it
 			spent := m.LastPass()
-			fmt.Fprintf(stdout, "tick %d acted=%d running=%d %s queue=%.1fs push=%.1fs report=%.1fs fill=%.1fs\n", n, acted, m.Running(), oneline.Field(time.Now().Format("15:04:05")),
+			fmt.Fprintf(stdout, "tick %d acted=%d running=%d %s queue=%.1fs push=%.1fs report=%.1fs fill=%.1fs\n", n, acted, m.Running(), oneline.Field(now().Format("15:04:05")),
 				spent.Queue.Seconds(), spent.Push.Seconds(), spent.Report.Seconds(), spent.Fill.Seconds())
 		}
-		if limit > 0 && n >= limit {
+		if lr.limit > 0 && n >= lr.limit {
 			m.WaitLong() // no start half made, no push cut off, when the process exits
 			return n, false
 		}
 
-		// the next pass at the interval, or at once when a push ended or a child exited
-		wait := time.NewTimer(every)
+		// the next pass at the interval, or at once when a push ended, a child exited or the
+		// supervisor said stop
 		select {
-		case <-wait.C:
+		case <-after(lr.every):
 		case <-m.Wake():
-			wait.Stop()
+		case <-lr.term:
+			termed = true
 		}
 	}
 }
@@ -333,7 +408,7 @@ func sprintFailureOutput(stdout, stderr []byte) []byte {
 // slot directory, its results under <results-root>/<card>/.
 type nativeRunner struct {
 	self, harness, model, root, slots, resultsRoot string
-	deadline                                       time.Duration
+	deadline, stageWall                            time.Duration
 	tokens, auth, config, worker, identity         string
 	noWall                                         bool
 	stderr                                         io.Writer
@@ -354,7 +429,16 @@ type nativeRunner struct {
 	// cleaner's own, touched by no other goroutine
 	epoch     atomic.Uint64
 	oldFailed map[string]bool
-	cache     cacheTrim
+	cache     gocache.Trim
+}
+
+// stageTimeout is native's --stage-timeout for each launch: the member's --stage-wall, else
+// native's own default, said.
+func (r *nativeRunner) stageTimeout() time.Duration {
+	if r.stageWall > 0 {
+		return r.stageWall
+	}
+	return swarm.DefaultStageTimeout
 }
 
 // started marks a launch running, so no prune of the pool touches its directory until the
@@ -424,7 +508,8 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 		return nil, err
 	}
 	args := []string{"native", "--harness", r.harness, "--model", model, "--card", cardPath, "--frame", framePath, "--slot", slot,
-		"--root", r.root, "--deadline", deadline.String(), "--tokens", tokens, "--label", p.Card, "--results-root", results}
+		"--root", r.root, "--deadline", deadline.String(), "--tokens", tokens, "--label", p.Card, "--results-root", results,
+		"--stage-timeout", r.stageTimeout().String()}
 	if r.auth != "" {
 		args = append(args, "--auth", r.auth)
 	}
@@ -733,6 +818,9 @@ func frameOf(p member.Packet, model, root string) cardcontract.Frame {
 	}
 	mh, _ := cardhdr.ReadModel(first) // line 1's tier, by the one parser the deal reads it with
 	f.Tier = mh.Tier
+	if p.Tier != "" { // the sprint's: a read's read tier, a rework's --tier
+		f.Tier = p.Tier
+	}
 	if p.Kind == "read" {
 		f.Branch, f.ReviewBase = p.WorkBranch, cb.Ref
 		if p.WorkBase != "" {
@@ -770,7 +858,7 @@ func newestResult(dir string) string {
 // a card whose brief names no repository is never framed, so its child writes
 // what its brief says. A work card's finish never rests on it (member.Judge
 // wants the contract's shape); a read's verdict and report do, until the briefs
-// that say the old shape are gone.
+// that name that shape are gone.
 func readResult(path string) (head, verdict, report string) {
 	if path == "" {
 		return "", "", ""
@@ -882,9 +970,10 @@ func passNote(model string, pass []string, auth string) string {
 }
 
 // yieldRefusal is why a member will not start on an OS with no setpriority
-// (yield.Supported false): native refuses every card there rather than run it at the
-// priority of the CI legs beside it (nova-tools#4293, as nova-ci local refuses), so a
-// member would take and fail every card it is dealt. "" where a launch can step behind CI.
+// (yield.Supported false): native refuses every card there rather than run it at
+// the priority of the CI legs beside it (nova-ci local refuses the same way), so
+// a member would take and fail every card it is dealt. "" where a launch can
+// step behind CI.
 func yieldRefusal(supported bool, goos string) string {
 	if supported {
 		return ""

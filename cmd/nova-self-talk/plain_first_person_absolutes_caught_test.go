@@ -1,6 +1,6 @@
 package main
 
-// TestIssue1468 pins the fix for nova-tools #1468: the three plainest first-person
+// TestThePlainestFirstPersonAbsolutesAreCaught pins the fix for nova-tools #1468: the three plainest first-person
 // absolutes were filed as a corpus miss on 2026-09-19, and the 2026-09-19 ruling
 // was to record the miss rather than widen the grammar. The third attempt at a fix
 // (2026-09-22) overrides that ruling and adds a detector for the three shapes so
@@ -20,7 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestIssue1468(t *testing.T) {
+func TestThePlainestFirstPersonAbsolutesAreCaught(t *testing.T) {
 	t.Parallel()
 
 	const path = "testdata/corpus/1468-plain-absolutes.md"

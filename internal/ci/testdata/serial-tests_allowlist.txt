@@ -32,9 +32,9 @@ cmd/nova-bus/reply_functional_test.go:TestReplyRefreshesBeforeItResolves serial:
 cmd/nova-bus/robustness_functional_test.go:TestASecondInvocationOnOneCheckoutRefuses serial: swaps package var main.checkoutLockWait
 cmd/nova-cairn/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints serial: t.Chdir
 cmd/nova-check/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints serial: t.Chdir
-cmd/nova-check/issue2296_test.go:TestIssue2296 serial: os.Setenv
-cmd/nova-check/issue2296_test.go:TestNoCodeStagedRefusals serial: os.Setenv
-cmd/nova-check/issue2311_test.go:TestIssue2311 serial: swaps package var main.dogfoodClock, swaps package var main.dogfoodGitRunner, swaps package var main.dogfoodHelpRunner
+cmd/nova-check/nocode_staged_index_contract_test.go:TestIssue2296 serial: os.Setenv
+cmd/nova-check/nocode_staged_index_contract_test.go:TestNoCodeStagedRefusals serial: os.Setenv
+cmd/nova-check/record_and_optional_checks_test.go:TestIssue2311 serial: swaps package var main.dogfoodClock, swaps package var main.dogfoodGitRunner, swaps package var main.dogfoodHelpRunner
 cmd/nova-fuse/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints serial: t.Chdir
 cmd/nova-fuse/main_test.go:TestEnvironmentCannotRedirectOrLiftAnything serial: t.Setenv
 cmd/nova-fuse/main_test.go:TestNoDefaultBoxRefusesToGuess serial: t.Setenv
@@ -207,7 +207,7 @@ internal/update/update_test.go:TestReportLocalLocatorWithVersionStringInstalled 
 internal/update/update_test.go:TestReportNeverReadsLatestAndPartialIsVisible serial: t.Setenv
 internal/update/update_test.go:TestSnapshotObservationDoesNotSuppressDelivery serial: t.Setenv
 cmd/nova-tokens/token_ledger_test.go:TestLedgerAndReportDialAsTheAclUser serial: t.Setenv
-internal/nsprint/store/open_sends_no_command_test.go:TestOpenSendsNoCommand3277 serial: t.Setenv
+internal/nsprint/store/open_sends_no_command_test.go:TestOpenSendsNoCommandBeforeTheCallersFirstBatch serial: t.Setenv
 cmd/nova-swarm/boundary_identity_test.go:TestNativeDrainDeliversPoolIdentityToChild serial: os.Setenv, os.Unsetenv
 cmd/nova-swarm/boundary_identity_test.go:TestNativeRefusesMalformedPoolIdentityBeforeHarness serial: os.Setenv, os.Unsetenv
 cmd/nova-swarm/boundary_identity_test.go:TestNativeRefusesMissingPoolIdentityBeforeHarness serial: os.Setenv, os.Unsetenv
@@ -216,7 +216,7 @@ cmd/nova-swarm/firstrun_test.go:TestFirstRunTranscriptIsWhatTheToolPrintsLineFor
 cmd/nova-swarm/gate_hold_test.go:TestWalledRefusalOffersTheReadRootsAsOnePossibility serial: t.Setenv
 cmd/nova-swarm/gate_test.go:TestNativeGateThatCouldNotRunIsNeverOK serial: t.Setenv
 cmd/nova-swarm/gate_test.go:TestNativeWalledRunOpensTheWorkersReadRoots serial: t.Setenv
-cmd/nova-swarm/issue2328_test.go:TestIssue2328 serial: t.Setenv
+cmd/nova-swarm/experimental_filewatcher_env_test.go:TestIssue2328 serial: t.Setenv
 cmd/nova-swarm/native_budget_sample_test.go:TestLiveSamplerCountsAFailedReadAndAnAnswerResetsIt serial: t.Setenv
 cmd/nova-swarm/native_budget_sample_test.go:TestLiveSamplerNeverRunsTwoReadsAtOnce serial: t.Setenv
 cmd/nova-swarm/native_budget_source_test.go:TestNativeRefusesABudgetNothingCanObserve serial: t.Setenv

@@ -1,12 +1,12 @@
 // Command nova-redis is the Layer 2 binary of docs/SPEC-REDIS.md, the owner of
 // the local instance: `serve` launches it bound to loopback and the tailnet,
 // with auth from nova-secrets and the fleet store's rules: AOF on, no eviction,
-// no TTL policy, the store in --dir (serve.go, #2281, #3879). It also
+// no TTL policy, the store in --dir (serve.go). It also
 // carries the scratch verbs: `spill` writes a value under an owner
 // prefix with a required TTL, and `recall` reads it back and refuses a missing
 // or expired key. A write with no owner or no TTL is refused before the
-// instance is dialled, so an unbounded key never reaches Redis (rules 2 and
-// the spill/recall paragraph of the spec; nova-tools #2279). The fn verbs
+// instance is dialled, so an unbounded key never reaches Redis (the spill and
+// recall section of the spec). The fn verbs
 // load and check the store's function library (fn.go, over internal/redisfn).
 //
 // Scratch is scratch: nothing spilled is a record, and recall is allowed to
@@ -110,7 +110,7 @@ neither, the store's default user). A --password-env that is not a variable
 name (capital letters, digits and underscores), a user name with whitespace,
 and a user whose password variable is empty are refused (exit 2) before
 anything is dialled. A store that cannot be reached, or a login it refuses,
-is one FAIL line on stderr with the next step (exit 2). A spill whose reply
+is one FAILED line on stderr with the next step (exit 2). A spill whose reply
 is lost after the store took it is SPILL UNCONFIRMED (exit 1): the write may
 have committed, so read it back with recall before spilling again.
 fn load puts the nova_sprint function library this binary embeds on the store
@@ -204,7 +204,7 @@ var effects = map[string]string{
 func run(args []string, stdout, stderr io.Writer, d deps) (code int) {
 	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
 	// with its effect, before anything is dialed, launched or written (the CLI
-	// style's rule (b), #4505).
+	// style's help rule).
 	defer verbflag.RecoverWith(stdout, "nova-redis", usage, &code, func(verb string) string {
 		if e := effects[verb]; e != "" {
 			return e + "\n"
@@ -544,7 +544,7 @@ func connect(ctx context.Context, store login, d deps) (*redisconn.Conn, error) 
 	return redisconn.Open(ctx, store.options(d), d.getenv)
 }
 
-// failed prints a verb's one FAIL line for err, which is redisconn's (an
+// failed prints a verb's one FAILED line for err, which is redisconn's (an
 // Open failure, or a command's error through Conn.Explain), so it names the
 // store, the login, what came back and the next step. A store that could not
 // be reached and a login it refused exit 2: the fix is the caller's. The
@@ -561,7 +561,7 @@ func failed(r *report, verb, key string, err error, store login, d deps) int {
 	if class == redisconn.AuthRefused && d.getenv(*store.passwordEnv) == "" {
 		kv = append(kv, "remedy", quoted("nova-redis reads the store's password from "+*store.passwordEnv+", which is not set: export it, holding the password of the default user"))
 	}
-	r.line(true, verb+" FAIL", kv...)
+	r.line(true, verb+" FAILED", kv...)
 	if class == redisconn.Unreachable || class == redisconn.AuthRefused {
 		return r.done(2)
 	}

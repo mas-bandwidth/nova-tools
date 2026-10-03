@@ -80,7 +80,7 @@ func (w *world) ask(t *testing.T, id string) {
 func (w *world) report(t *testing.T, id, verdict string) {
 	t.Helper()
 	for _, rc := range w.s.Readers.Of(id) {
-		w.must(t, sprint.Read(w.s, sprint.ReadReq{As: rc.Row, Verdict: verdict, Finding: "f", Sel: sprint.Sel{IDs: []string{rc.ID}}, Who: rc.Row}))
+		w.must(t, sprint.Read(w.s, sprint.ReadReq{As: rc.Row, Verdict: verdict, Finding: "f:1", Sel: sprint.Sel{IDs: []string{rc.ID}}, Who: rc.Row}))
 	}
 }
 

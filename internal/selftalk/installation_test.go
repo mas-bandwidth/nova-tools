@@ -249,7 +249,7 @@ func TestAnyInstallationDrivesTheExitCode(t *testing.T) {
 	assert.True(t, AnyInstallation(ScanInstallation("I have no associative recall to drag anything back later.")), "an installation must trip the exit code")
 }
 
-// TestIssue2297 — nova-tools #2297: pin the three INSTALLATION behaviours the
+// TestInstallationScannerSegmentsSentencesAndSparesFirstPersonPromises — nova-tools #2297: pin the three INSTALLATION behaviours the
 // spec asserts but no test proved. They were implemented but green by accident,
 // not by pin; this is the pin.
 //
@@ -263,7 +263,7 @@ func TestAnyInstallationDrivesTheExitCode(t *testing.T) {
 //     *always* or *never* must escape both Scan and ScanInstallation, because
 //     those adverbs are deliberately absent from the habituality markers. A
 //     pin that outlives one sentence carries a second member of the class.
-func TestIssue2297(t *testing.T) {
+func TestInstallationScannerSegmentsSentencesAndSparesFirstPersonPromises(t *testing.T) {
 	t.Parallel()
 
 	// (1) LIST ITEMS ARE SEPARATE SEGMENTATION UNITS.

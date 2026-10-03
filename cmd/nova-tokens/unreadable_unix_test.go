@@ -21,7 +21,7 @@ func makeUnreadable(t *testing.T, path string) (release func()) {
 	}
 	{
 		err := os.Chmod(path, 0o000)
-		require.False(t, err != nil, err)
+		require.NoError(t, err, err)
 	}
 	done := false
 	release = func() {

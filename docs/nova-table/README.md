@@ -536,7 +536,8 @@ never a false 0, and so does the fold over it. A row hidden with `set --hide`
 stays in the fold.
 
 **The empty rule.** A table always renders: an empty table prints its title
-header and its footer, with no body line and no placeholder. A row with all
+header, its rule and its footer, with no body line, no placeholder and no second
+rule above the footer. A row with all
 zero counts prints like any other.
 
 ## Watching

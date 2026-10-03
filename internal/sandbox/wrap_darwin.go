@@ -55,8 +55,8 @@ func lookupSandboxExec() (string, bool) {
 	return "", false
 }
 
-// NetEnforceable reports that this platform can enforce network denial by omitting
-// generated profile, so an enforced denial is always available here.
+// NetEnforceable reports that this platform always enforces a network denial: the grant is
+// simply withheld from the generated profile.
 func NetEnforceable() bool { return true }
 
 // Note is the one clause the check verb prints about this backend.

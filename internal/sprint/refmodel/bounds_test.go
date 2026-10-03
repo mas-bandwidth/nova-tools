@@ -81,7 +81,7 @@ func TestDeadlinesWriteEveryJudgmentTheyFindInTheTick(t *testing.T) {
 		for i := 1; i <= late; i++ {
 			w.deal(t, fmt.Sprintf("s1-%d", i))
 		}
-		got := refmodel.DeadlineMoves(w.snapshot(nil), later(15*time.Minute+time.Second))
+		got := refmodel.DeadlineMoves(w.snapshot(nil), later(sprint.DealtMaxDefault+time.Second))
 		opened, due := countKinds(got, refmodel.KindOpen)
 		switch {
 		case opened != want.opened:
@@ -104,8 +104,9 @@ func TestDeadlinesCountOnlyTheTimeStoppedAfterTheCardWasDealt(t *testing.T) {
 	w.deal(t, "s1-1") // dealt at t0, by hand, while the machine was STOPPED
 	snap := w.snapshot(nil)
 	snap.Stopped = []sprint.Span{{From: t0.Add(-time.Hour), To: t0.Add(2 * time.Minute)}}
-	// two of the first 17 minutes were STOPPED: 15 have run, and one second more is past the deadline
-	expect(t, refmodel.DeadlineMoves(snap, later(17*time.Minute)))
-	expect(t, refmodel.DeadlineMoves(snap, later(17*time.Minute+time.Second)),
+	// two minutes after the deal were STOPPED: the dealt bound has run two minutes past
+	// it, and one second more is past the bound
+	expect(t, refmodel.DeadlineMoves(snap, later(sprint.DealtMaxDefault+2*time.Minute)))
+	expect(t, refmodel.DeadlineMoves(snap, later(sprint.DealtMaxDefault+2*time.Minute+time.Second)),
 		"open a work card is past its deadline [s1-1]")
 }

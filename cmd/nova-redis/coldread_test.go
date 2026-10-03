@@ -174,7 +174,7 @@ func TestEveryVerbPrintsOneJSONObjectWithJSON(t *testing.T) {
 		{"recall of a missing key says no", []string{"recall", "--json", "--addr", h.mr.Addr(), "--owner", "ada", "--name", "gone"}, 1, "failed", "RECALL MISSING", "key", "ada:gone", 0},
 		{"a dry run", []string{"spill", "--dry-run", "--json", "--addr", h.mr.Addr(), "--owner", "ada", "--name", "n", "--ttl", "1m", "--value", "v"}, 0, "ok", "SPILL OK", "written", float64(0), 0},
 		{"a refusal names every problem", []string{"spill", "--json", "--addr", "nohost", "--ttl", "0s"}, 2, "refused", "", "", nil, 5},
-		{"a store that does not answer", []string{"spill", "--json", "--addr", "127.0.0.1:1", "--owner", "a", "--name", "b", "--ttl", "1m", "--value", "c"}, 2, "refused", "SPILL FAIL", "class", "unreachable", 0},
+		{"a store that does not answer", []string{"spill", "--json", "--addr", "127.0.0.1:1", "--owner", "a", "--name", "b", "--ttl", "1m", "--value", "c"}, 2, "refused", "SPILL FAILED", "class", "unreachable", 0},
 		{"acl render", []string{"acl", "render", "--json"}, 0, "ok", "ACL RENDER OK", "users", float64(4), 0},
 		{"version", []string{"version", "--json"}, 0, "ok", "", "", nil, 0},
 	}

@@ -3,7 +3,7 @@
 # Run this ONCE, from an ELEVATED PowerShell, on the Windows box that is to join
 # the fleet as a Linux/WSL2 bench:
 #
-#     .\tools\bench-wsl2.ps1 -AuthKey <the Tailscale auth key Glenn minted>
+#     .\tools\bench-wsl2.ps1 -AuthKey <the Tailscale auth key minted in the admin console>
 #
 # The run IS the one approval: a UAC prompt to open it, and a Tailscale auth key
 # minted once in the admin console -- reusable, tagged, pre-approved. After that

@@ -292,7 +292,7 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 		return VersionTool(stamp, env).Run(args, nil, out, errs)
 	}
 	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
-	// before any manifest, bus or store is read (the CLI style's rule (b), #4505).
+	// before any manifest, bus or store is read (the CLI style's rule (b)).
 	defer verbflag.RecoverWith(out, name, helpText(name), &rc, func(verb string) string { return verbDetail(name, verb) })
 	door, asked := name+" help", verbflag.BoolAsked(args, "json")
 	if len(args) == 0 {
@@ -369,7 +369,7 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 	if err := verbflag.Parse(f, interspersed(f, args)); err != nil {
 		// `<tool> <verb> --help` never lands here: verbflag.Parse raises that
 		// verb's help, which Run prints on stdout at exit 0 (asking is not an
-		// error; darwin dogfood, 2026-09-18).
+		// error).
 		return emit(refused(verb, name+" "+verb+" -h", flagProblem(f, err).Error()), verbflag.BoolAsked(args, "json"), 0, out, errs)
 	}
 	if o.store != "" {
@@ -391,7 +391,7 @@ func reportDeliveryFlags(f *flag.FlagSet, o *options) {
 	f.StringVar(&o.branch, "branch", "", "the bus branch")
 }
 
-// storeReport is `report --store` (#3880): every bench's nova-sprint build from
+// storeReport is `report --store`: every bench's nova-sprint build from
 // its beat, so it takes no manifest, snapshot or note and never runs ssh.
 func storeReport(name string, o options, positional []string, env Environment) *tool.Out {
 	help := name + " report -h"
@@ -689,7 +689,7 @@ func applyDryRun(e Entry, before Read, target string, argv []string) *tool.Out {
 
 // movedChildTimeout is the default deadline one child of `moved` gets, and
 // `--timeout` is how a caller changes it. It is snapshot's thirty seconds, not
-// report's five, for the same measured reason (#890): every binary this verb
+// report's five, for the same measured reason: every binary this verb
 // reads is one it built a moment ago, so the platform's one-time assessment of
 // a never-seen executable is charged to the first exec of every tool at every
 // revision. A five-second bound here refused healthy builds and sent the reader
@@ -701,10 +701,10 @@ var movedChildTimeout = 30 * time.Second
 // `snapshot` already take.
 var movedBudget = 60 * time.Second
 
-// movedVerb is SPEC-VERSION's TOOLS MOVED note (#2288): it compares two
+// movedVerb is SPEC-VERSION's TOOLS MOVED note: it compares two
 // revisions by BUILDING both and reading what each build's own `help` prints,
 // never a hand-written list. The hurt it removes is the ADOPT EVERYTHING note,
-// which named four `--decide` flags that were still on open PRs (#1141): a list
+// which names flags no shipped binary answers: a list
 // a person wrote can announce a flag no binary ever answered, and a reader
 // cannot tell that from a reading. Here every announced verb and flag was
 // parsed off a `<tool> help` this run executed, so a flag on no binary's help
@@ -905,7 +905,7 @@ type movedInv map[string]map[string]map[string]bool
 // usage line (SPEC-VERSION's block names nova-update's in nova-version's help)
 // cannot add that tool to THIS revision's inventory, and a line that is not a
 // usage line -- the defaults, the notes, the examples -- contributes nothing.
-// This function is the whole of "never a hand-written list" (#2288): whatever
+// This function is the whole of "never a hand-written list": whatever
 // these lines do not print, the note cannot announce.
 func parseMovedHelp(tool, help string) map[string]map[string]bool {
 	verbs := map[string]map[string]bool{}
@@ -938,7 +938,7 @@ func parseMovedHelp(tool, help string) map[string]map[string]bool {
 // diffMoved compares the two inventories and returns the note's entry lines
 // and the counts the MOVED OK line prints. A tool that vanishes is deleted and
 // one that appears is added; a rename is counted only when it was stated (in a
-// commit message or a MOVED file) AND the inventories confirm it -- the old
+// commit message or a MOVED file) AND the inventories confirm it -- the original
 // name built only at --from, the new name only at --to -- so help text alone,
 // however identical, never makes a rename (SPEC-VERSION rule 2). A confirmed
 // rename consumes its pair: the statement, not a guess, is what moved the tool.

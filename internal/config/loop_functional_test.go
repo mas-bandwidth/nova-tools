@@ -40,7 +40,7 @@ func TestPostgresLoopRoundTripsAndHoldsItsRules(t *testing.T) {
 
 	ctx := context.Background()
 	st := loopPG(t, "m1", "m2")
-	member := newLoop(t, "member-m1", map[string]string{"machine": "m1", "argv": `["/bin/member","a b=c",""]`, "keepalive": "true", "seat": "s-m1", "keys": "B_KEY,A_KEY", "width": "2"})
+	member := newLoop(t, "member-m1", map[string]string{"machine": "m1", "argv": `["/bin/member","a b=c",""]`, "keepalive": "true", "seat": "s-m1", "keys": "B_KEY,A_KEY"})
 	periodic := newLoop(t, "refresh", map[string]string{"machine": "m1", "argv": `["/bin/refresh"]`, "every": "60", "enabled": "false"})
 	for _, row := range []Row{member, periodic} {
 		_, err := st.Insert(ctx, KindLoop, row, "t")
@@ -117,7 +117,7 @@ func TestApplyWritesTheLoopViewThePlaysRead(t *testing.T) {
 	ap, c := redisApplier(t)
 	st := loopPG(t, "m1")
 	for _, row := range []Row{
-		newLoop(t, "member-m1", map[string]string{"machine": "m1", "argv": `["/bin/member","--width","2"]`, "keepalive": "true", "seat": "s-m1", "keys": "A_KEY,B_KEY", "width": "2"}),
+		newLoop(t, "member-m1", map[string]string{"machine": "m1", "argv": `["/bin/member","--as","m1"]`, "keepalive": "true", "seat": "s-m1", "keys": "A_KEY,B_KEY"}),
 		newLoop(t, "refresh", map[string]string{"machine": "m1", "argv": `["/bin/refresh"]`, "every": "60"}),
 	} {
 		_, err := st.Insert(ctx, KindLoop, row, "t")
@@ -132,8 +132,8 @@ func TestApplyWritesTheLoopViewThePlaysRead(t *testing.T) {
 	assert.ElementsMatch(t, []string{"member-m1", "refresh"}, c.SMembers(ctx, LoopsKey).Val())
 	got := c.HGetAll(ctx, LoopKey("member-m1")).Val()
 	want := map[string]string{
-		"name": "member-m1", "machine": "m1", "argv": `["/bin/member","--width","2"]`, "seat": "s-m1", "keys": "A_KEY,B_KEY",
-		"every": "0", "keepalive": "true", "width": "2", "enabled": "true", "log": "~/nova-bench/loops/member-m1.log",
+		"name": "member-m1", "machine": "m1", "argv": `["/bin/member","--as","m1"]`, "seat": "s-m1", "keys": "A_KEY,B_KEY",
+		"every": "0", "keepalive": "true", "enabled": "true", "log": "~/nova-bench/loops/member-m1.log",
 	}
 	for f, v := range want {
 		assert.Equal(t, v, got[f], "loop:member-m1 %s", f)

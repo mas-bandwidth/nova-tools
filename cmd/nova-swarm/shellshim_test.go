@@ -8,8 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
@@ -20,7 +22,7 @@ const shimFixtureValue = "sk-" + "notarealkey" + "0123456789abcdef"
 // TestTheCardsShellNeverSeesASecret is the red team's probe, in Go: a shell started
 // through the wrapper reports a length of 0 for a secret-named variable and a count of 0
 // for every secret name, where the same shell started directly reports 35 and 1
-// (nova-tools #1814). The control is one edit: drop pathWithShimFirst/SHELL from
+// (nova-tools #1814). The control is one edit: drop pathWithDirFirst/SHELL from
 // nativeChildEnv, or exec the real shell instead of the wrapper, and this goes red.
 func TestTheCardsShellNeverSeesASecret(t *testing.T) {
 	t.Parallel()
@@ -100,7 +102,7 @@ func TestTheChildEnvPutsTheShimFirstAndPinsShell(t *testing.T) {
 
 	shim := filepath.Join("slot", "shim")
 	shell := filepath.Join(shim, "bash")
-	env := nativeChildEnv("data", "job", "tmp", "", "", shim, shell)
+	env := nativeChildEnv("data", "job", "tmp", "", "", shim, shell, "")
 	path, ok := lookup(env, "PATH")
 	require.True(t, ok, "the child was handed no PATH")
 	first := strings.Split(path, string(os.PathListSeparator))[0]
@@ -122,7 +124,7 @@ func TestTheChildEnvPutsTheShimFirstAndPinsShell(t *testing.T) {
 // tests exactly as they were: no shim, no PATH edit, no SHELL.
 func TestTheChildEnvIsUnchangedWithoutAShim(t *testing.T) {
 	t.Setenv("PATH", "/usr/bin")
-	env := nativeChildEnv("data", "job", "tmp", "", "", "", "")
+	env := nativeChildEnv("data", "job", "tmp", "", "", "", "", "")
 	path, _ := lookup(env, "PATH")
 	require.Equal(t, "/usr/bin", path, "PATH = %q, want the caller's own", path)
 	_, ok := lookup(env, "SHELL")
@@ -175,7 +177,7 @@ func TestTheCardsShellReachesNoGh(t *testing.T) {
 	dir, _, err := writeNativeShellShims(t.TempDir())
 	require.NoError(t, err, "the shims could not be written: %q, %v", dir, err)
 	require.NotEmpty(t, dir, "the shims could not be written: %q, %v", dir, err)
-	env := pathWithShimFirst([]string{"PATH=" + fake + string(os.PathListSeparator) + os.Getenv("PATH")}, dir)
+	env := pathWithDirFirst([]string{"PATH=" + fake + string(os.PathListSeparator) + os.Getenv("PATH")}, dir)
 	sh, err := exec.LookPath("sh")
 	if err != nil {
 		t.Skipf("no sh on PATH: %v", err)
@@ -189,4 +191,44 @@ func TestTheCardsShellReachesNoGh(t *testing.T) {
 	require.Contains(t, string(out), "REFUSED", "gh through the card's PATH: err=%v out=%q, want exit 2 naming REFUSED", err, out)
 	_, err = os.Stat(counter)
 	require.Error(t, err, "the fake gh was called: the card's shell reached a real gh")
+}
+
+// TestTheChildEnvResolvesTheBenchGo is the mechanical sprint's hurt of 2026-10-02: a card's
+// gate calls bare `go` and `gofmt`, the loop unit's PATH names no Go, and the child was
+// handed that PATH. The child's PATH now carries the bench's GOROOT/bin right after the
+// shim, so both names resolve to the bench's sdk Go whatever PATH the member started with.
+func TestTheChildEnvResolvesTheBenchGo(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("the bench layout is a link into the sdk tree")
+	}
+	home := t.TempDir()
+	sdkBin := filepath.Join(home, "sdk", "go1.26.6", "bin")
+	require.NoError(t, os.MkdirAll(sdkBin, 0o755))
+	for _, tool := range []string{"go", "gofmt"} {
+		require.NoError(t, testbin.WriteExecutable(filepath.Join(sdkBin, tool), []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	}
+	require.NoError(t, os.MkdirAll(filepath.Join(home, "go", "bin"), 0o755))
+	require.NoError(t, os.Symlink(filepath.Join(sdkBin, "go"), filepath.Join(home, "go", "bin", "go")))
+
+	shim := filepath.Join("slot", "shim")
+	env := nativeChildEnv("data", "job", "tmp", "", "", shim, filepath.Join(shim, "bash"),
+		swarm.BenchGoBin(home, "/usr/bin:/bin"))
+	path, ok := lookup(env, "PATH")
+	require.True(t, ok, "the child was handed no PATH")
+	dirs := filepath.SplitList(path)
+	require.GreaterOrEqual(t, len(dirs), 2, "PATH = %q", path)
+	require.Equal(t, shim, dirs[0], "the shim is not first on PATH %q", path)
+	want, err := filepath.EvalSymlinks(sdkBin)
+	require.NoError(t, err)
+	for _, tool := range []string{"go", "gofmt"} {
+		found := ""
+		for _, d := range dirs {
+			if fi, err := os.Stat(filepath.Join(d, tool)); err == nil && fi.Mode().IsRegular() && fi.Mode().Perm()&0o111 != 0 {
+				found = d
+				break
+			}
+		}
+		assert.Equal(t, want, found, "the child's %s resolves in %q, want the bench's sdk Go; PATH %q", tool, found, path)
+	}
 }

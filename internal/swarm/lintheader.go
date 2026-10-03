@@ -191,12 +191,21 @@ func cardHeaderBlock(raw []byte) (block map[string]headerField, stranded map[str
 	return block, stranded
 }
 
+// CardHeaderValue is the value of one key of a card's typed header block, read
+// as the lint and the gate read the block (the unbroken run of `KEY: value`
+// lines under the contract line); ok is false when the block has no such line.
+// nova-sprint add reads DEPENDS-ON: and PATHS: through it.
+func CardHeaderValue(raw []byte, key string) (value string, ok bool) {
+	block, _ := cardHeaderBlock(raw)
+	f := block[key]
+	return f.value, f.found
+}
+
 // cardTypedKeys is the five lines SPEC-TOOLWORK.md §5 rule 1 names, as a set.
 var cardTypedKeys = map[string]bool{"KIND": true, "PATHS": true, "TEST": true, "LEGS": true, "SOURCE": true}
 
 // ungatedKinds is the set of kinds that may carry TEST: none. It matches the third
-// column of internal/hygiene/kinds.txt (SPEC-TOOLWORK.md §5 rule 2: read, probe, text,
-// tone, report) until internal/pulse/kinds.go lands with the gate table.
+// column of internal/hygiene/kinds.txt (read, probe, text, tone, report).
 var ungatedKinds = map[string]bool{"read": true, "probe": true, "text": true, "tone": true, "report": true}
 
 // cardKeyCheck is the token that answers for each typed key. LEGS: and SOURCE: have no
@@ -211,17 +220,13 @@ var cardKeyCheck = map[string]string{
 }
 
 // validGlobs is the PATHS: rule, and it is `hygiene.ValidatePaths` ITSELF, not a
-// restatement of it (#1853, Emma's item-4 dogfood).
+// restatement of it.
 //
-// This function used to write the rule out a second time, because T02's validator was
-// not on `dev` when the checks were first written, and the comment above said in so many
-// words that it should become a call the day T02 landed. T02 landed, this did not, and
-// the copy drifted in BOTH directions within a day: it let a Windows drive letter
-// (`C:/Windows/system32/evil.go`) through as repo-relative, it had no cap at all where
-// the rule's cap is eight (SPEC-TOOLWORK.md:579-580), and it refused `*.go` and
-// `**/*.go`, which the validator clears. A card writer got a different answer from the
-// lint on the bench and from the gate at `accept`, which is the one thing these checks
-// exist to prevent.
+// A restated PATHS rule drifts from the validator: it lets a Windows drive letter
+// through as repo-relative, it has no cap where the rule caps the globs, and it refuses
+// `*.go` and `**/*.go` that the validator clears. Then the lint on the bench and the
+// gate at `accept` give a card writer different answers, which is the one thing these
+// checks exist to prevent.
 func validGlobs(globs []string) (string, bool) {
 	if err := hygiene.ValidatePaths(globs); err != nil {
 		return err.Error(), false
@@ -243,9 +248,9 @@ func LintCardHeader(raw []byte, trust TrustState, required bool) []CardHeaderFin
 			typed = true
 		}
 	}
-	// A CARD WITH A TYPED LINE THE GATE CANNOT REACH IS A TYPED CARD (#1854). Without
-	// this it was neither: no header line inside the block, so no typed checks ran, and
-	// the card was called clean all the way to `accept`.
+	// A CARD WITH A TYPED LINE THE GATE CANNOT REACH IS A TYPED CARD. Without
+	// this the card is neither: no header line sits inside the block, so no typed check
+	// runs, and the card reads clean all the way to `accept`.
 	if len(stranded) > 0 {
 		typed = true
 	}
@@ -280,10 +285,10 @@ func LintCardHeader(raw []byte, trust TrustState, required bool) []CardHeaderFin
 	case kind.value == "":
 		add("kind-declared", kind.line, "KIND: with no kind after it")
 	case !hygiene.KindDeclared(kind.value):
-		// AN UNKNOWN KIND IS NOT A KIND (#1853). The line used to need only a
-		// value, so `KIND: completely-unknown-kind` linted clean and died at
-		// accept. The names are hygiene.Kinds(), the same set `nova-check hygiene
-		// --kind` prints when it refuses.
+		// AN UNKNOWN KIND IS NOT A KIND. A KIND: line that names a kind the
+		// toolchain does not declare is a finding, so `KIND: completely-unknown-kind`
+		// is refused here instead of dying at accept. The names are hygiene.Kinds(),
+		// the same set `nova-check hygiene --kind` prints when it refuses.
 		add("kind-declared", kind.line, fmt.Sprintf("KIND: %q is not a kind this toolchain declares; one of: %s", kind.value, strings.Join(hygiene.Kinds(), ", ")))
 	}
 
@@ -296,10 +301,10 @@ func LintCardHeader(raw []byte, trust TrustState, required bool) []CardHeaderFin
 	case paths.value == "":
 		add("paths-declared", paths.line, "PATHS: with no globs after it; a card that changes nothing says `PATHS: none`")
 	case paths.value != "none":
-		// AN EMPTY ENTRY IS NOT A SKIPPABLE ONE. `PATHS: , , ` used to have each empty
-		// entry `continue`d past and the line called fine, which is the worst of the
-		// three answers a reader could get: the line declares no glob and it is not
-		// `none` (#1853, Emma's item-4 dogfood).
+		// AN EMPTY ENTRY IS NOT A SKIPPABLE ONE. In `PATHS: , , ` each empty
+		// entry is a finding, not a value skipped past: the line declares no glob and
+		// it is not `none`, so skipping it would answer a reader with neither a glob
+		// nor a refusal.
 		var globs []string
 		empty := false
 		for _, g := range strings.Split(paths.value, ",") {
@@ -337,7 +342,7 @@ func LintCardHeader(raw []byte, trust TrustState, required bool) []CardHeaderFin
 		add("test-named", test.line, testWhy)
 	case tl.None:
 		// TEST: none is only a declaration for ungated kinds; gated kinds strictly
-		// require a reproducing test (SPEC-TOOLWORK.md §5 rule 1, rule 2).
+		// require a reproducing test, per the toolwork spec's typed-header rule.
 		if kind.value != "" && !ungatedKinds[kind.value] {
 			add("test-named", test.line, fmt.Sprintf("TEST: none is not allowed for kind %q; gated kinds require `TEST: <package> <TestName>`", kind.value))
 		}
@@ -366,7 +371,7 @@ func LintCardHeader(raw []byte, trust TrustState, required bool) []CardHeaderFin
 }
 
 // ReadTrustFixture reads the coordinator's per-kind state from a file in the shape
-// `nova-pulse trust` prints (SPEC-TOOLWORK.md eligibility rule 1):
+// `nova-pulse trust` prints (the toolwork spec's eligibility rule):
 //
 //	TRUST kind=<kind> area=<area> state=<trial|trusted|paused> cards=<n>/<N> ...
 //	TRUST OK kinds=<n> trial=<n> trusted=<n> paused=<n>

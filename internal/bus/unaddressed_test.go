@@ -46,7 +46,7 @@ func TestUnaddressedReason(t *testing.T) {
 	require.Equal(t, strings.Join(want, ","), strings.Join(paths, ","), "unaddressed = %v, want %v", paths, want)
 	// The reason names the token that reached nobody, so the writer knows what to fix.
 	if !strings.Contains(got[0].Reason, `"Team"`) || !strings.Contains(got[0].Reason, "in nobody's inbox") {
-		require.False(t, !strings.Contains(got[0].Reason, `"Team"`) || !strings.Contains(got[0].Reason, "in nobody's inbox"), "the reason does not name the token or say what it costs: %q", got[0].Reason)
+		require.True(t, strings.Contains(got[0].Reason, `"Team"`) && strings.Contains(got[0].Reason, "in nobody's inbox"), "the reason does not name the token or say what it costs: %q", got[0].Reason)
 	}
 	if !strings.Contains(got[2].Reason, "no To line") {
 		require.Contains(t, got[2].Reason, "no To line", "a note with no To line is reported as %q", got[2].Reason)

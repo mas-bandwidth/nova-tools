@@ -50,6 +50,17 @@ func (c *Card) Int(name string) int {
 	return n
 }
 
+// withField is a copy of c with one field set: the card as the step's own write
+// leaves it, for the planning that follows in the same step (a rework's tier, read
+// by the deal of the attempt it cuts).
+func withField(c *Card, name, value string) *Card {
+	cp := *c
+	cp.Fields = make(map[string]string, len(c.Fields)+1)
+	maps.Copy(cp.Fields, c.Fields)
+	cp.Fields[name] = value
+	return &cp
+}
+
 // Table is one table as observed: its revision, its rows in order, its text
 // cells, and its cards (placed, and any unplaced records the step asked for),
 // which are read by Card and Cards.

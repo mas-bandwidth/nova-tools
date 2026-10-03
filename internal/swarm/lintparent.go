@@ -5,43 +5,12 @@ import (
 	"strings"
 )
 
-// THE RULE IS WHAT THE CARD WALKS, NOT WHAT THE CARD SAYS (issues #1494, #1527).
+// CardParentPaths enforces the boundary around the job directory: commands must not walk a
+// parent path that reaches the worktree, scratch files, or notes from outside the job.
 //
-// Practice 25 exists because the wall refuses a path above the job: a card that tells its
-// worker to put the worktree, the scratch or the notes outside the working directory buys
-// a job that dies on its first write. `no-parent-path` is that rule made mechanical.
-//
-// It was written as `strings.Contains(line, "../")` over every line of the card, and that
-// is a check on TEXT where the rule is about a PATH. Measured on the 2026-09-19 shift,
-// across tools10, tools11, tools12, tools13 and work-swarm, every `no-parent-path` finding
-// on every card was false, and all of them were one of four shapes:
-//
-//  1. A relative path a card QUOTES from the repository's own source, so the worker copies
-//     the convention: `in the form `"../../AGENTS.md"` (that file, line 34)`. The path is
-//     inside the repo and is never walked by the job.
-//  2. A markdown link TARGET, quoted out of the document the card repairs:
-//     `[pit-stop ledger item 20](../reports/pitstop-tests-2026-09-17.md)`. A link target is
-//     resolved by a reader against the document, never by a worker against the job root.
-//  3. Prose about the token itself: `a target ... gains a `../` prefix`, and
-//     `one `../` dropped again in 08-rate-and-convergence.md:41`. The card is teaching the
-//     two characters, not walking them.
-//  4. An ELLIPSIS. `ok .../internal/pulse 1.813s` is what `go test` prints and what a card
-//     pastes; its last two dots and the slash read as a parent path to a substring search.
-//
-// A lint that is wrong on every card is a lint a manager learns to launch past, and then
-// the true finding on the next card is read the same way. Five managers wrote exactly that
-// sentence in their PROGRESS file on one day.
-//
-// SO THE RULE READS TWO THINGS. First, whatever else is on the line, a parent path given to
-// a command that WALKS it -- enters, creates, copies, moves, removes, or writes at that path
-// -- is a finding, inside a fenced block as much as outside one, because a card's commands
-// live in fences and that is precisely where the hurt was written. Second, everything else
-// is a finding only where the card is instructing rather than quoting: not inside a fenced
-// block, not inside a backtick span, not a markdown link target, and never an ellipsis.
-//
-// What this gives up, said plainly: a card that spells a bare `../out` as an argument to a
-// command not in the list below, inside a fence, is not caught. That is the price of not
-// crying on every card, and it is the cheaper half.
+// The check reads card text, so it reports parent paths when they are command arguments or
+// destinations, including inside fenced commands. It ignores paths quoted as prose, inline
+// code, markdown link targets, or command-output ellipses because those paths are not walked.
 
 // cardWalkParentRE is a parent path handed to a command that walks it. The command word is
 // anchored so `cp` in `cpu` and `rm` in `confirm` are not commands.

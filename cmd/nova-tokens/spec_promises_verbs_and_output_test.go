@@ -19,9 +19,9 @@ import (
 func specTokensText(t *testing.T) string {
 	t.Helper()
 	root, err := filepath.Abs(filepath.Join("..", ".."))
-	require.NoError(t, err, err)
+	require.NoError(t, err)
 	raw, err := os.ReadFile(filepath.Join(root, "docs", "SPEC-TOKENS.md"))
-	require.NoError(t, err, err)
+	require.NoError(t, err)
 	return string(raw)
 }
 

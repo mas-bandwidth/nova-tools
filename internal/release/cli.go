@@ -14,20 +14,22 @@ import (
 
 // Verbs is the usage block `nova-update help` prints for this verb, and the same
 // five lines docs/SPEC-UPDATE.md carries. Every path is a flag and no flag has a
-// default path: SPEC-UPDATE rule 1 (no search of the cwd, no $HOME) is why a
-// release cut from a laptop and a release cut from a bench are the same release.
-// The one exception is --receipts, and internal/release/dogfoodgate.go says at
-// length why the gate in front of the definition of done is worth it.
+// default path: a path guessed from the cwd or from `$HOME` makes a release cut
+// from a laptop and a release cut from a bench mean different things, so the
+// same command is the same release on either host. The one exception is
+// --receipts, and internal/release/dogfoodgate.go says at length why the gate
+// in front of the definition of done is worth it.
 const Verbs = `nova-update release cut --repo <owner/name> --from <branch> --version <v> --changelog <path> [--sums <file>] [--security-read <id|url>] [--local-diff <checkout> [--paths-from <file>] | --paths-from <file>] [--cli <file>] [--receipts <dir>] [--no-dogfood-gate --reason <why>] [--dry-run] [--timeout <d>]
-nova-update release build --version <v> --out <dir> --source <dir> [--platform <goos-goarch>,...] [--cli <file>] [--receipts <dir>] [--no-dogfood-gate --reason <why>] [--timeout <d>]
+nova-update release build --version <v> --out <dir> --source <dir> [--platform <goos-goarch>,...] [--incremental] [--cli <file>] [--receipts <dir>] [--no-dogfood-gate --reason <why> | --gate report --reason <why>] [--timeout <d>]
 nova-update release install --from <dir> --version <v> --bin <dir> [--retire <dir>] [--platform <goos-goarch>] [--timeout <d>]
 nova-update release adopt [--version <v>] --machines <file> --ssh <path> --from <dir|host:dir> --bin <dir> --dest <dir> [--stage <dir> --repo <owner/name> | --stage <dir> --expect-sums <sha256> | --stage <dir> --expect-sums-from <file>] [--retire <dir>] [--platform <goos-goarch>] (--certify <machines.tsv> --certs <file> --standard <file> | --no-certify) [--dry-run] [--timeout <d>]
-nova-update release pull --version <v> --out <dir> --changelog <path> [--machines <file> --ssh <path> --dest <dir>] [--reason <text>] [--platform <goos-goarch>] [--dry-run] [--timeout <d>]`
+nova-update release pull --version <v> --out <dir> --changelog <path> [--machines <file> --ssh <path> --dest <dir>] [--reason <text>] [--platform <goos-goarch>] [--dry-run] [--timeout <d>]
+nova-update release cycle --version <v> --source <dir> --out <dir> --inventory <file> --benches <a,b,...> --reason <why> --ansible <path> [--receipts <dir>] [--dry-run] [--timeout <d>]`
 
-// CutNote is the gate in front of a tag, said where a person will meet it
-// (Johnny's decision 1 on SPEC-RELEASE, #1337). It is a var rather than a const
-// because it names the list, and the list has ONE home: composing this from
-// SensitivePaths is why the help cannot fall behind the gate.
+// CutNote is the gate in front of a tag, said where a person will meet it.
+// It is a var rather than a const because it names the list, and the list has
+// ONE home: composing this from SensitivePaths is why the help cannot fall
+// behind the gate.
 var CutNote = "cut classifies the range since the previous tag against the sensitive path list in internal/release/sensitive.go and docs/SPEC-RELEASE.md " +
 	"(" + SensitiveShape + "). A range that touches one of them REFUSES until --security-read names the security reader's read -- a note id or the url of the comment -- " +
 	"and the cut then prints `RELEASE CUT SENSITIVE paths=<n> read=<id>` above its receipt. " +
@@ -72,6 +74,12 @@ type Deps struct {
 	// seam because `install`'s skip decision is the one place this package
 	// runs a binary it is about to replace.
 	VersionOf func(ctx context.Context, path string) (string, error)
+	// Source is the checkout `build` records and `--incremental` diffs
+	// (incremental.go); nil is ExecSource.
+	Source Source
+	// Ansible runs the tools play for `cycle` (cycle.go); nil is
+	// ExecAnsible with --ansible.
+	Ansible Ansible
 }
 
 // options are every flag the five verbs take, in one struct, because they share
@@ -86,9 +94,15 @@ type options struct {
 	// out of the ordinary.
 	cli, receipts string
 	noDogfood     bool
-	platforms     platformList
-	dryRun        bool
-	timeout       time.Duration
+	// gate is build's --gate: "refuse" (the default, and the only way cut
+	// runs it) or "report", which prints the open edges and builds.
+	gate        string
+	incremental bool
+	// cycle's own: the inventory, the benches, the ansible-playbook binary.
+	inventory, benches, ansible string
+	platforms                   platformList
+	dryRun                      bool
+	timeout                     time.Duration
 	// The three that turn on certification after an adopt. They are named together or
 	// not at all: a certificates file with no registry names no machine's roles, and a
 	// registry with no standard has no hash to write.
@@ -153,16 +167,16 @@ func refusal(w io.Writer, token string, err error) int {
 }
 
 // verbNames are the release verbs, as a refusal lists them.
-const verbNames = "cut, build, install, adopt, pull"
+const verbNames = "cut, build, install, adopt, pull, cycle"
 
 // ExitCodes is the release verbs' exit-code line, which each verb's -h prints.
 const ExitCodes = "exit codes: 0 the verb did what its line says (a --dry-run printed its plan and changed nothing); " +
 	"1 it ran and a step failed partway, the FAIL or REFUSED line naming what was done and what to do next; " +
 	"2 it refused before acting, naming the command to run."
 
-// progress is the stderr voice. Glenn, 2026-09-17: a program says what it is
-// doing for any step over about a tenth of a second, and every step in this
-// package -- a forge read, a compile, a copy over ssh -- is well over that.
+// progress is the stderr voice. A program says what it is doing for any step
+// over about a tenth of a second, and every step in this package -- a forge
+// read, a compile, a copy over ssh -- is well over that.
 func progress(w io.Writer, format string, a ...any) {
 	fmt.Fprintf(w, "release: "+format+"\n", a...)
 }
@@ -171,7 +185,7 @@ func progress(w io.Writer, format string, a ...any) {
 // the one thing a seam cannot default to -- what THIS binary is stamped with,
 // which lives in main and is handed down. `adopt` is the reader: a coordinator
 // older than the release it is fanning out cannot run that release's install,
-// and the fourth dogfood met that as a Studio that could not adopt at all.
+// and a coordinator far enough behind cannot adopt at all.
 func Main(name string, args []string, stamp string, out, errs io.Writer) int {
 	return Run(name, args, out, errs, Deps{Self: func() string { return stamp }})
 }
@@ -189,14 +203,16 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 	verb := args[0]
 	args = args[1:]
 	switch verb {
-	case "cut", "build", "install", "adopt", "pull":
+	case "cut", "build", "install", "adopt", "pull", "cycle":
 	case "help", "--help", "-h":
 		fmt.Fprintln(out, Verbs)
 		fmt.Fprintln(out, ExitCodes+" `nova-update release <verb> -h` lists a verb's flags.")
 		fmt.Fprintln(out, CutNote)
 		fmt.Fprintln(out, DogfoodNote)
+		fmt.Fprintln(out, IncrementalNote)
 		fmt.Fprintln(out, AdoptNote)
 		fmt.Fprintln(out, PullNote)
+		fmt.Fprintln(out, CycleNote)
 		return 0
 	default:
 		return refusal(errs, "RELEASE", fmt.Errorf("unknown release verb %q; the release verbs are %s", verb, verbNames))
@@ -227,7 +243,21 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 		f.StringVar(&o.source, "source", "", "the checkout to build")
 		f.Var(&o.platforms, "platform", "goos-goarch, repeatable and comma-separated (default: this host)")
 		addDogfoodFlags(f, &o, "<--source>/docs/CLI.md")
+		f.StringVar(&o.gate, "gate", "refuse", "refuse: an open dogfood edge refuses the build; report: the edges are printed and the build goes on, --reason <why> required (a machinery install during a sprint; cut always refuses)")
+		f.BoolVar(&o.incremental, "incremental", false, "compile only the tools whose packages changed since the newest clean build recorded under --out, and copy the rest from it, verified")
 		required = []string{"version", "out", "source"}
+	case "cycle":
+		// A cycle is a build and two plays: ten minutes is a cold build alone.
+		o.timeout = 30 * time.Minute
+		f.StringVar(&o.source, "source", "", "the nova-tools checkout to build; its fleet/tools.yml is the play")
+		f.StringVar(&o.out, "out", "", "the artifact root the build writes under (the play's nova_release_out)")
+		f.StringVar(&o.inventory, "inventory", "", "the inventory the play reads, the nova-inventory script")
+		f.StringVar(&o.benches, "benches", "", "the machines to install on, comma-separated, as the inventory names them")
+		f.StringVar(&o.reason, "reason", "", "why this install is happening; the dogfood gate reports under it and the build record keeps it")
+		f.StringVar(&o.receipts, "receipts", "", "the dogfood receipts directory (default: ~/"+DefaultReceiptsDir+" when it exists)")
+		f.StringVar(&o.ansible, "ansible", "", "the ansible-playbook binary")
+		f.BoolVar(&o.dryRun, "dry-run", false, "run the play with --check only: build nothing, install nothing")
+		required = []string{"version", "source", "out", "inventory", "benches", "reason", "ansible"}
 	case "install":
 		f.StringVar(&o.from, "from", "", "the artifact root a release build wrote (its --out)")
 		f.StringVar(&o.bin, "bin", "", "the directory the binaries are installed into")
@@ -275,9 +305,9 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 		// `--help` on a verb is a REASONABLE QUESTION, not a parse failure.
 		// The flag package answers it with the sentinel flag.ErrHelp, and
 		// printing that gave a person who asked for help the words `flag: help
-		// requested` -- the package's own internals, leaked (darwin dogfood,
-		// 2026-09-18). It is answered here with that verb's usage, and exit 0,
-		// because asking is not an error.
+		// requested` -- the package's own internals, leaked. It is answered
+		// here with that verb's usage, and exit 0, because asking is not an
+		// error.
 		if errors.Is(err, flag.ErrHelp) {
 			fmt.Fprintln(out, VerbUsage(verb))
 			fmt.Fprintln(out, "flags:")
@@ -295,6 +325,9 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 				fmt.Fprintln(out, DogfoodNote)
 			case "build":
 				fmt.Fprintln(out, DogfoodNote)
+				fmt.Fprintln(out, IncrementalNote)
+			case "cycle":
+				fmt.Fprintln(out, CycleNote)
 			case "adopt":
 				fmt.Fprintln(out, AdoptNote)
 			case "pull":
@@ -330,14 +363,16 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 			return refusal(errs, token, err)
 		}
 	}
-	// CERTIFICATION AFTER AN ADOPT IS ON BY DEFAULT (Glenn, 2026-09-18: "we want this
-	// certification to be mechanized"). An adopt changes the build on every machine it
-	// touches and so invalidates every certificate those machines held; leaving the renewal
-	// to whoever remembers is how a fleet spends an afternoon uncertified.
+	// CERTIFICATION AFTER AN ADOPT IS ON BY DEFAULT. An adopt changes the build
+	// on every machine it touches and so invalidates every certificate those
+	// machines held; leaving the renewal to whoever remembers is how a fleet
+	// spends an afternoon uncertified.
 	//
-	// "On by default" cannot mean guessed paths -- SPEC-UPDATE rule 1 -- so it means this:
-	// an adopt that names none of the three and does not waive it is REFUSED, with both
-	// roads on the line. Waiving is `--no-certify`, and it is said out loud on the verdict.
+	// "On by default" cannot mean guessed paths (a guessed path makes two
+	// runs of one command mean different things), so it means this: an adopt
+	// that names none of the three and does not waive it is REFUSED, with both
+	// roads on the line. Waiving is `--no-certify`, and it is said out loud on
+	// the verdict.
 	if verb == "adopt" {
 		var half []string
 		for _, x := range []struct{ n, v string }{{"certify", o.certify}, {"certs", o.certs}, {"standard", o.standard}} {
@@ -370,6 +405,8 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 		return install(ctx, o, deps, out, errs)
 	case "pull":
 		return pull(ctx, o, deps, out, errs)
+	case "cycle":
+		return cycle(ctx, o, deps, out, errs)
 	default:
 		return adopt(ctx, o, deps, out, errs)
 	}

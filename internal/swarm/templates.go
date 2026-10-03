@@ -110,10 +110,10 @@ var templateCard = "RESULT: <label> sha=<sha12>\n" +
 	"\n" +
 	ChildRulesParagraph() +
 	"\n" +
-	"THE TASK. <What is wrong or wanted, in a paragraph a stranger can act on, and the file or package the work lives in: internal/<package>/<file>.go. Name the worktree path, the branch, the base branch, the private GOCACHE path, and every file you may touch.>\n" +
+	"THE TASK. <What is wrong or wanted, in a paragraph a stranger can act on, and the file or package the work lives in: internal/<package>/<file>.go. Name the worktree path, the branch, the base branch, and every file you may touch.>\n" +
 	"Libraries considered: <what the standard library and the adopted modules offer for this work, and why each is used or not; the search comes before any helper of more than about thirty lines is written>\n" +
 	"\n" +
-	"STEP 1. Enter your worktree with cd <worktree path> && git log --oneline -1; it is a NEW worktree on the branch this card names. Export GOCACHE=<private cache path> GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 before any go command.\n" +
+	"STEP 1. Enter your worktree with cd <worktree path> && git log --oneline -1; it is a NEW worktree on the branch this card names. Export GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 before any go command; GOCACHE is already set to the machine's shared build cache (JOB.md names it): keep it.\n" +
 	"STEP 2. Write the red test first, named TestSomething, in <file>_test.go, opening with t.Parallel(). Run go test -count=1 -timeout 600s ./internal/<package>/ -run TestSomething and keep the failing line.\n" +
 	"STEP 3. Make it pass in the files this card names, and only those. Cite the model or the design section from each function that implements a rule.\n" +
 	"STEP 4. Run the gate: go test -count=1 -timeout 600s ./internal/<package>/ ./internal/ci/ and read the last line of each.\n" +
@@ -154,9 +154,9 @@ important fact.>
 <one sentence a coordinator can paste into the board.>
 `
 
-// templateWorker is the ONE FILE A FIRST RUN CANNOT START WITHOUT, and it was the one with
-// no template: the audit guessed `"env"`, met a good refusal listing the fields, and had to
-// read a refusal to learn a schema (S1 and S2, 2026-09-11). Every value in angle brackets
+// templateWorker is the ONE FILE A FIRST RUN CANNOT START WITHOUT: a first run
+// without it learns the schema the hard way, guessing a field name and reading
+// the fields out of a refusal. Every value in angle brackets
 // is a thing only the caller knows; everything else is the shape this tool reads.
 const templateWorker = `{
   "name": "<what this worker is called on a RUN POOL line>",
@@ -174,7 +174,7 @@ const templateWorker = `{
 }
 `
 
-// templateSetup is the PER-FRIEND SAFETY-SETUP AGREEMENT (#184): one form per friend,
+// templateSetup is the PER-FRIEND SAFETY-SETUP AGREEMENT: one form per friend,
 // reviewed and agreed BEFORE any staged security implementation is built, because a
 // blanket restrictive setup prevents useful work and ignores each friend's chosen harness,
 // while a blanket permissive one hands every friend every other friend's secrets. It is
@@ -276,7 +276,7 @@ synthetic secrets and disposable repositories and record both runs:
 a denied destructive operation and successful permitted work.
 `
 
-// templateCapacity is the OFFERED-CAPACITY AND ROUTING-LOG FORM (#176): a manual
+// templateCapacity is the OFFERED-CAPACITY AND ROUTING-LOG FORM: a manual
 // census of one friend's bounded, expiring capacity offer, plus the coordinator's
 // manual routing log that matches dependency-ready work to compatible offers
 // without double-counting shared pools. It is the issue's near-term endpoint and
@@ -381,15 +381,14 @@ friend chooses offers, reserves, and rest, not a scheduler that maximises
 occupation beyond that offer.
 `
 
-// THE PULSE CARD TEMPLATES (docs/SPEC-PULSE.md rule 4). nova-pulse `cut` reads a templates
+// THE PULSE CARD TEMPLATES. nova-pulse `cut` reads a templates
 // directory holding read.md, fix.md, text.md, replay.md, drift.md, tone.md and models.tsv,
-// and renders one card per pool candidate from the template the candidate names. Until the
-// dogfood probe 2026-09-16 the directory was copied out of cmd/nova-pulse/testdata by hand;
-// now every card is a constant here and `template --name <kind>` prints it, so a templates
-// dir can be built from the tool. A text-only card (read, text, tone) carries rule 6's
-// no-build line, and a writing card (fix, replay, drift) carries the red-then-green row.
-// STEP 1 clones with the bench mirror as --reference (nova-tools#3600: GitHub is a git
-// remote only, and a brief never carries gh); internal/ci refuses a brief clone without it.
+// and renders one card per pool candidate from the template the candidate names. Every
+// card is a constant here and `template --name <kind>` prints it, so a templates dir can
+// be built from the tool. A text-only card (read, text, tone) carries the no-build line,
+// and a writing card (fix, replay, drift) carries the red-then-green row.
+// STEP 1 clones with the bench mirror as --reference: GitHub is a git
+// remote only, and a brief never carries gh; internal/ci refuses a brief clone without it.
 
 const pulseRead = `RESULT <label> sha=<sha12>
 You are a worker. The deadline is the machinery's.
@@ -448,14 +447,14 @@ STEP 2. Fix the tone of the named page and write notes.txt in the repo directory
 STEP last. Write RESULT.md with line 1 equal to this card's line 1.
 `
 
-// pulseModels is the cost table nova-pulse rule 7 reads beside the .md templates when no
+// pulseModels is the cost table nova-pulse reads beside the .md templates when no
 // benches.tsv or routes.tsv sits there: one line `flash <id>` and/or one line `pro <id>`.
 const pulseModels = `flash opencode/deepseek-v4-flash
 pro opencode/deepseek-v4-pro
 `
 
 // IsPulseTemplate reports whether name is one of the pulse card templates or the cost table
-// nova-pulse `cut` reads (SPEC-PULSE rule 4). They are cards cut renders, never task
+// nova-pulse `cut` reads. They are cards cut renders, never task
 // templates to wrap.
 func IsPulseTemplate(name string) bool {
 	switch name {
@@ -512,7 +511,7 @@ func TemplateNames() []string {
 
 // IsCardTemplate reports whether name is one of the task templates a card is built from
 // (read-pr, probe-row, fix-card). The other names Template answers to -- result, worker,
-// setup, capacity, and the pulse card templates of SPEC-PULSE rule 4 -- are not cards:
+// setup, capacity, and the pulse card templates -- are not cards:
 // result is the report's shape, worker is a JSON worker description, setup and capacity
 // are forms, and the pulse names are the cards nova-pulse `cut` renders, all printed
 // verbatim for their own purpose.

@@ -52,12 +52,12 @@ running. A path is added to the Go file and to this block in the same commit.
 
 The forge names at most **300 files** for one compare. A file list at that number is a list that **may be
 short**, and a gate that reads a truncated list is a gate that passes the one file it did not see. So a
-range whose forge file list reaches the ceiling is refused, and rule 4 says how. `cut` never classifies a
+range whose forge file list reaches the ceiling is refused, and the truncation is named first. `cut` never classifies a
 prefix of the truth and calls it clean.
 
 ### What `--security-read` may be
 
-A note id (`johnny-4b9200ddc994`) or the url of the comment carrying the read. It is held to the field law
+A note id or the url of the comment carrying the read. It is held to the field law
 before anything is tagged — no whitespace, no `=`, one token — because it travels into the one-line receipt
 above, and a read nobody could print is a read nobody could look up in six months.
 
@@ -104,7 +104,7 @@ them. The ways to give it one:
 - **`--expect-sums <sha256>`** names it outright, from the CHANGELOG entry. It serves a tag that carries no
   annotation, and it **wins** when more than one source is given: a digest a person typed deliberately is a
   decision, not a default.
-- **`--expect-sums-from <file>`** reads it from the digest file this host's build wrote (rule 7).
+- **`--expect-sums-from <file>`** reads it from the digest file this host's build wrote.
 
 A mismatch **refuses and names both** — the digest of what was fetched, the digest the expectation says the
 release was cut with, and which source the expectation came from. Which one is wrong is the whole question,
@@ -237,7 +237,7 @@ so symlinks and case aliases cannot cause newly installed binaries to be pruned.
 
 ## 7. No tag, still a digest: `SUMS.digest`
 
-Rule 2 gives `adopt` a digest that did not travel with the bits — off the annotated tag, or out of
+Section 2 gives `adopt` a digest that did not travel with the bits — off the annotated tag, or out of
 the CHANGELOG. Both belong to a **tagged** release. A dev build has no tag, and the only other place
 to get a digest would be the machine being adopted from, which is that machine vouching for its own
 bytes and is not evidence at all.
@@ -291,10 +291,10 @@ that stops the work it exists to protect.
 ## 9. No path is guessed
 
 `nova-version snapshot --bin <dir> --out <file.tsv>` requires both flags and defaults neither:
-SPEC-UPDATE rule 1 is that no path is guessed from the cwd or `$HOME`, because a guessed path makes
+The rule is that no path is guessed from the cwd or `$HOME`, because a guessed path makes
 two runs of one command mean different things. The command is written out in
 [CLI.md](CLI.md#nova-version). The one default in the release verbs, and why it is the exception, is
-in rule 12.
+in the spec.
 
 *Test: `TestSnapshotRefusesAMissingFlag`.*
 
@@ -354,11 +354,11 @@ a host can say about windows code.
 **And one thing the bench's own filesystem decides.** Windows will not replace a file that is open for
 execution, and the file being replaced is frequently `nova-update.exe` replacing itself — `adopt` runs
 the release's own `nova-update.exe` there and that process holds its own image open. It *will* let a
-running file be renamed aside, so `install` falls back to moving the old one out of the way and
+running file be renamed aside, so `install` falls back to moving the existing one out of the way and
 renaming the new one into place. The name it moves aside to is dot-prefixed, which keeps it out of
-`nova-version snapshot` and out of `--retire`, both of which take `nova-*` only; the old image may
+`nova-version snapshot` and out of `--retire`, both of which take `nova-*` only; the existing image may
 survive until the process ends, and has to be inert while it does. A rename that fails for a real
-reason still fails, with the old binary put back under its own name.
+reason still fails, with the existing binary put back under its own name.
 
 *Tests: `TestAdoptTakesWindowsDrivePathsForBinAndDest`, `TestAdoptComposesSlashPathsForAWindowsBench`,
 `TestAdoptRefusesAWindowsPathForALinuxTarget`, `TestAWindowsPathMayStillCarryNoShellSyntax`,
@@ -413,7 +413,7 @@ cannot be read refuses naming its path: an I/O error is not a tool outside the r
 **The two inputs, and the one default in this package.** `--cli` names the command reference and
 defaults to `docs/CLI.md` beside the checkout the verb was already given (`--changelog` for `cut`,
 `--source` for `build`). `--receipts` names the receipts directory and defaults to
-`~/rowan-working/dogfood` **when that directory exists** — the single exception to SPEC-UPDATE rule 1,
+`~/rowan-working/dogfood` **when that directory exists** — the single exception to no path being guessed,
 taken because the alternative fails in the direction that lets a tool ship. A run with neither is not a
 run that passed: it prints `RELEASE CUT NOTE dogfood-gate=skipped …` naming what was missing.
 
@@ -433,6 +433,74 @@ is a gate nobody has. The `RELEASE CUT` and `RELEASE BUILD OK` receipts carry
 `TestReadShippedRefusesAToolDirectoryItCannotRead`, `TestTheGateRefusesAToolDirectoryItCannotRead`,
 `TestDogfoodGateShippedJudgesOnlyTheToolsUnderCmd`.*
 
+## 13. A machinery install is incremental, reported, and one command
+
+The ask, 2026-10-02: fast iterations, fix and repeat. A fix merged to the foundation
+reached five benches in about 25 minutes (nova-tools#5096 item 12): a whole cross-platform build, a
+waiver composed by hand, then the tools play's check and apply typed one at a time. Every restamped
+binary differed from the bench's copy, so every binary was sent and every loop drained and restarted.
+
+**The build record.** Every `build` writes `<out>/<version>/<goos-goarch>.build` beside the platform
+directory, never in it (so it is in no `SHA256SUMS` and reaches no bench): the commit, the Go, the
+stamp shape, the base, what was rebuilt and reused, the gate and its reason. A dirty or non-git
+checkout records no commit.
+
+**`build --incremental`** finds the newest record under `--out` with a commit, the same Go and the same
+stamp shape, verifies that build's artifacts against its `SHA256SUMS`, and asks
+`git diff --name-only --no-renames <recorded> <head>` (a tree diff, so the branch does not matter
+and a rename is two paths) and one `go list -deps` per platform. A tool is compiled when a changed
+path that is not a `_test.go` lies under its own package directory or any package it imports, when
+`go.mod` or `go.sum` changed, when the base lacks it, or when `go list` did not answer for it; every
+other tool is the base's binary, byte for byte, and answers the version it was built at. Anything
+that stops the question being asked honestly — a dirty checkout, no usable record, a base that does
+not verify — is a whole build, never a refusal:
+
+```
+RELEASE BUILD INCREMENTAL version=<v> platform=<p> base=<v> changed=<n> rebuilt=<tool,...> reused=<n>
+RELEASE BUILD WHOLE version=<v> platform=<p> rebuilt=<n> reason=<why>
+```
+
+`install` skips a tool whose installed file already holds the artifact's bytes, as it skips one
+answering the version: renaming identical bytes over a running loop's binary would only make it drain.
+
+**`build --gate report --reason <why>`** runs the gate, prints its open edges, says
+`RELEASE BUILD DOGFOOD REPORTED open=<n> reason=<why>` and builds; the receipt carries
+`dogfood=report` and the build record keeps the reason. It is for a machinery install during a
+sprint, where the receipts still name tools nova-tools no longer ships. **`cut` has no `--gate` flag**:
+a tag is still refused on an open edge, and still waived only with the CHANGELOG line of rule 12.
+
+**`release cycle`** is the fix-land-install cycle from the coordinator in one command: the tools play
+(`<source>/fleet/tools.yml`) with `--check`, then the play, limited to `--benches` and `localhost`, the
+build `--incremental --gate report --reason <why>`. The play seeds a new version's directory on each
+machine from the installed build's, unverified, then measures the sha256 of every file in the stage in
+one listing and sends exactly the files whose bytes differ from the release's `SHA256SUMS` (absent,
+rebuilt, or corrupt on the machine). Every file in the stage holds the release's bytes before anything
+in it runs, a reused one included, and `release install` verifies the whole set again before its first
+rename. `tla/BenchStage.tla` is the model: `ReusedByteIdentical`, `NoWrongBinary`,
+`NoVerifiedWithWrong` and, with crashes anywhere, `Liveness` hold (`MCBenchStage`); the first cut's
+rule, sending the files whose `SHA256SUMS` line differs, breaks `ReusedByteIdentical`
+(`MCBenchStageBrokenLines`).
+One line per bench, then the cycle:
+
+```
+CYCLE BENCH host=<h> platform=<p> version=<v> was=<v> state=INSTALLED|UP-TO-DATE installed=<n> skipped=<n>
+CYCLE OK version=<v> benches=<n> changed=<n> check=<d> apply=<d> total=<d> logs=<out>/<version>
+```
+
+A failed check applies nothing (`CYCLE FAIL step=check`); a bench with no receipt fails the cycle;
+`--dry-run` is the check alone (`CYCLE WOULD …`, `CYCLE DRY-RUN …`).
+
+*Tests: `TestRebuildSetChoosesTheToolsWhoseImportsChanged`,
+`TestParsePackagesAnswersEachToolsDirectoriesInsideTheCheckout`,
+`TestIncrementalBuildRebuildsOnlyWhatChangedSinceTheRecordedCommit`,
+`TestIncrementalBuildIsWholeWhenItCannotTrustTheBase`,
+`TestABuildWithoutIncrementalBuildsEverythingAndStillRecords`,
+`TestBuildGateReportPrintsTheOpenEdgesAndBuilds`, `TestCutHasNoReportGate`,
+`TestInstallSkipsAToolThatAlreadyHoldsTheBytes`, `TestCycleDryRunChecksAndInstallsNothing`,
+`TestCycleChecksThenAppliesAndSaysWhatEachBenchRuns`, `TestCycleStopsOnAFailedBench`,
+`TestCycleRefusesBeforeAnyPlay`, `TestToolsPlaySendsOnlyTheFilesTheInstalledBuildLacks`,
+`TestATransitiveChangeRebuildsTheTool`, `TestToolsPlaySendsEveryStagedFileWhoseBytesDiffer`.*
+
 ## What this file does not cover
 
 The verbs themselves, the machines file, the retire rule, where `adopt` runs from and the security rules
@@ -443,10 +511,10 @@ network or a real machine.
 ## Tests this spec demands
 
 The release tests run entirely against fakes and temp dirs — a `fakeForge`, a `fakeSSH`, a `fakeToolchain`, a `fakeGit` — and never reach a network or a real machine; the sensitive-list, command-reference and windows-spec parity checks live in `internal/ci` and read the spec file directly.
-One numbered line per test; where one test holds several behaviours, they share its line, and lines 37 and 38 also name, in parentheses, a second test holding the other side of the same behaviour. The dogfood gate's tests are named under rule 12. The behaviours this spec demands that no test proves yet follow, unnumbered.
+One numbered line per test; where one test holds several behaviours, they share its line, and the tests for drive paths and backslash folding also name, in parentheses, a second test holding the other side of the same behaviour. The dogfood gate's tests are named in the gate section. The behaviours this spec demands that no test proves yet follow, unnumbered.
 
-1. `TestCutRefusesASensitiveRangeWithoutJohnnysRead` — a cut whose range touched a sensitive prefix is refused (exit 2) and names the paths, until `--security-read` is supplied.
-2. `TestCutWithJohnnysReadSaysSoOnItsOwnLine` — with `--security-read` the cut prints `RELEASE CUT SENSITIVE paths=<n> read=<id>` above its receipt.
+1. `TestCutRefusesASensitiveRangeWithoutASecurityRead` — a cut whose range touched a sensitive prefix is refused (exit 2) and names the paths, until `--security-read` is supplied.
+2. `TestCutWithASecurityReadSaysSoOnItsOwnLine` — with `--security-read` the cut prints `RELEASE CUT SENSITIVE paths=<n> read=<id>` above its receipt.
 3. `TestCutOfAnOrdinaryRangeSaysNothingAboutSensitivePaths` — an ordinary range prints no `RELEASE CUT SENSITIVE` line.
 4. `TestSensitiveClassifiesByPrefixAndNothingElse` — classification is by directory prefix (trailing slash load-bearing) and nothing else, never by filename or substring.
 5. `TestTheSensitivePathListIsTheSameInTheCodeAndInTheSpec` — the list in `internal/release/sensitive.go` and the spec block stay the same list in the same order.
@@ -490,8 +558,23 @@ One numbered line per test; where one test holds several behaviours, they share 
 43. `TestInstallOnAWindowsArtifactDirectoryUsesExeNamesThroughout` — `install` reads names out of `SHA256SUMS` rather than rebuilding them, using `.exe` throughout on windows.
 44. `TestAdoptDryRunProbesTheExeOnAWindowsBench` — `adopt` sends/runs `nova-update.exe` (and `pull` removes `.exe`, `snapshot` records the suffix).
 45. `TestAWindowsBuildDoesNotClaimToHaveRunItsOwnArtifacts` — a cross-built windows artifact is not self-verified; the build claims only the checksum round trip.
-46. `TestInstallMovesARunningFileAsideWhenTheRenameIsRefused` — `install` moves a running binary aside (dot-prefixed) when its rename is refused, and restores the old binary if the fallback also fails.
+46. `TestInstallMovesARunningFileAsideWhenTheRenameIsRefused` — `install` moves a running binary aside (dot-prefixed) when its rename is refused, and restores the existing binary if the fallback also fails.
 47. `TestTheWindowsBenchIsInTheReleaseSpec` — the windows bench is in the release spec.
+48. `TestRebuildSetChoosesTheToolsWhoseImportsChanged` — an incremental build compiles a tool when a changed non-test path lies under its package or an import's (an embedded file below one included), when `go.mod`/`go.sum` changed, when the base lacks it or `go list` did not list it; nothing else.
+49. `TestParsePackagesAnswersEachToolsDirectoriesInsideTheCheckout` — `go list -deps` is read as each tool's directories inside the checkout; standard and module-cache packages are left out.
+50. `TestIncrementalBuildRebuildsOnlyWhatChangedSinceTheRecordedCommit` — the diff runs from the newest record's commit to the head, only the changed tool compiles, every other is the base's bytes, the record names commit and base and sits outside the artifact directory.
+51. `TestIncrementalBuildIsWholeWhenItCannotTrustTheBase` — a dirty checkout, no record with a commit, or a base whose bytes no longer verify is a whole build with `RELEASE BUILD WHOLE … reason=`.
+52. `TestABuildWithoutIncrementalBuildsEverythingAndStillRecords` — without `--incremental` every tool compiles, and the record is still written.
+53. `TestBuildGateReportPrintsTheOpenEdgesAndBuilds` — `--gate report --reason` prints the open edges and `RELEASE BUILD DOGFOOD REPORTED` and builds (`dogfood=report`); without a reason, with `--no-dogfood-gate`, with another value, or by default it refuses before compiling.
+54. `TestCutHasNoReportGate` — `cut --gate report` is an unknown flag.
+55. `TestInstallSkipsAToolThatAlreadyHoldsTheBytes` — `install` leaves a binary that already holds the artifact's bytes in place (the same file), whatever version it answers.
+56. `TestCycleDryRunChecksAndInstallsNothing` — `cycle --dry-run` runs the play once, `--check`, limited to the benches and localhost, with the build `--incremental --gate report --reason`, and keeps its output.
+57. `TestCycleChecksThenAppliesAndSaysWhatEachBenchRuns` — `cycle` checks, then applies, echoes the build's lines and prints one `CYCLE BENCH` per bench and `CYCLE OK`.
+58. `TestCycleStopsOnAFailedBench` — a failed check applies nothing; a bench the apply has no receipt for fails the cycle.
+59. `TestCycleRefusesBeforeAnyPlay` — a `--benches` entry that is not a machine name, an empty list, or a `--source` without `fleet/tools.yml` refuses before any play.
+60. `TestToolsPlaySendsOnlyTheFilesTheInstalledBuildLacks` (functional) — the tools play seeds a new version's directory from the installed build's on the machine, sends only the differing files, and the install skips the identical binary.
+61. `TestATransitiveChangeRebuildsTheTool` (functional) — the real `go list` on a chain A -> B -> C (a tool, a package it imports, a package that one imports) puts C in A's set (`.Deps` is recursive), and a change under C, an embedded-style file included, rebuilds A and reuses a tool beside it.
+62. `TestToolsPlaySendsEveryStagedFileWhoseBytesDiffer` (functional) — a seeded file corrupt on the machine whose `SHA256SUMS` line matches the release's (the binary the play runs, or any other) is sent again in the same run and the install succeeds; an intact reused file is not sent (`tla/BenchStage.tla` `ReusedByteIdentical`).
 
 Demanded, and proven by no test yet (8):
 

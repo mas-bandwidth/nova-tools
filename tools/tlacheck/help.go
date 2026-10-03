@@ -12,8 +12,12 @@ var hostArch = runtime.GOARCH
 const helpRun = `tlacheck run: run the declared cases of tla/CASES.tsv under one budget and write the run records.
 
 usage: tlacheck run --dir <dir> [--root <checkout>] [--jar <tla2tools.jar>] [--java <java>]
-                    [--group <group> | --shards <n> --shard <i>] [--timeout <duration>]
+                    [--group <group>] [--shards <n> --shard <i>] [--timeout <duration>]
                     [--workers 1|2] [--manual]
+       tlacheck run --dir <dir> --bench <machine>|any [--root <checkout>] [--group <group>]
+                    [--jar <path on the bench>] [--java <java on the bench>] [--timeout <duration>]
+                    [--workers 1|2] [--load-below <load>] [--trough-wait <duration>]
+                    [--trough-poll <duration>]
 
   --dir      the working directory the run owns: one <config>.log per case, RUNS.tsv,
              and work/, the private copy of the models TLC runs in (required)
@@ -22,11 +26,22 @@ usage: tlacheck run --dir <dir> [--root <checkout>] [--jar <tla2tools.jar>] [--j
   --java     the java program; without it java on PATH; the path found is echoed
   --group    run one declared group (tlacheck groups lists the required ones)
   --shards   split the cases over this many runs, and --shard picks one (zero-based);
-             not with --group
+             with --group, the group's cases (its own size runs them one at a time)
   --timeout  the whole run's limit, a Go duration (default 110s; at most 110s, or 1h with --manual)
   --workers  TLC workers for a case expected to pass, 1 or 2 (default 2); a counterexample
              case always uses one
   --manual   an explicit bench experiment: mode=manual in the records; refused in CI
+  --bench    run on a TLC record machine from here, the record refresh in one command: the
+             machine named (ssh <machine>), or any: of the machine rows with tla=true
+             (nova-config machine list, with NOVA_PG_DSN), the one with the lowest load per
+             CPU. Without --group it runs every stale group. --jar is the path on the bench
+             (default /opt/tla/tla2tools.jar, where the tools play's tla play holds it), and
+             its SHA-256 must be the one tla/tla2tools.sha256 pins.
+  --load-below   with --bench, the 1-minute load each case waits to fall under (default
+             0: 0.8 x the bench's logical CPUs)
+  --trough-wait  with --bench, how long a case waits for that before the run gives up
+             (default 30m)
+  --trough-poll  with --bench, how often the load is read while waiting (default 15s)
 
 Each case runs with two JVM processors and final liveness checking, in its own temporary
 directory. It must reach the result CASES.tsv declares: a passing case exits 0 with TLC's
@@ -43,10 +58,23 @@ instantiates, the case's own row of CASES.tsv and the runner's result files (tla
 them). It is written only if every case's fingerprint is the same when the cases are done as
 when they started.
 
+With --bench, the command builds this checkout's tlacheck for the bench, stages it with
+the top of tla/ in ~/tla-runs/tlacheck-* there (ssh <machine>; removed when the run ends,
+and by the next run after a day if a run died), and runs each case of each group as its own
+bounded run, niced, after the load trough: so each record is under the cap, and a group's
+total is not one budget. The records and logs come back under --dir/<group>/<i>/, and when
+every case is as declared they are merged into the checkout's tla/RUNS.tsv (merge --keep);
+when one is not, nothing is merged. With --bench any the machine rows come from
+nova-config machine list, with this environment (NOVA_PG_DSN); a machine named is not
+looked up, its jar is the check.
+
 output: CASE OK|FAIL config= result= seconds= exit= generated= distinct=, then RUN OK|FAIL
-        cases= records=. It runs only on Linux. Exit 0 all cases as declared, 1 a case or the
-        budget failed, 2 could not run.
+        cases= records=. It runs only on Linux, or on a record machine with --bench, which
+        adds BENCH OK|FAIL bench= ..., STAGE OK, TROUGH OK bench= group= case= load= below=
+        waited= and MERGE OK. Exit 0 all cases as declared (and merged), 1 a case, the
+        budget, the trough or the merge failed, 2 could not run.
 first run: tlacheck run --root . --jar /path/to/tla2tools.jar --dir /tmp/tlc-out --group tablefirstcontact
+           tlacheck run --root . --dir /tmp/tlc-bench --bench any
 `
 
 const helpGroups = `tlacheck groups: print the case groups as a JSON array.

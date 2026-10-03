@@ -1,6 +1,4 @@
--- Seat-owned routing roles for #3103.  These helpers are intentionally in a
--- file that sorts before redistribute*.lua, so every routing function reads
--- the same roster from Redis inside its FCALL.
+-- These helpers read and write seat-owned routing roles.
 
 local function fr_csv(s)
   local out = {}
@@ -55,7 +53,7 @@ local function friend_roles(keys, args)
   local wanted, normalized = {}, {}
   for _, role in ipairs(fr_csv(roles_csv)) do
     -- reader: the friend reads (a primary entering review cuts its read
-    -- copy on a reader with open slots, #4094)
+    -- copy on a reader with open slots).
     if role ~= 'may-hold' and role ~= 'builder' and role ~= 'coordinator' and role ~= 'reader' then
       return { 'BADROLE', role }
     end

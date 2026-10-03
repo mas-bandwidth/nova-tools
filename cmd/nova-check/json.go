@@ -27,7 +27,7 @@ func (w *jsonOutput) Write(p []byte) (int, error) {
 	if !*w.enabled {
 		return fmt.Fprintf(w.writer, "%s", p)
 	}
-	// JSON gets the original typed check values; duplicate legacy hint text is omitted.
+	// JSON gets the original typed check values; duplicate hint text is omitted.
 	return len(p), nil
 }
 func (w *jsonOutput) refuse(where, why string) int {

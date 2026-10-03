@@ -16,7 +16,7 @@ import (
 //	$ nova-bus close --bus . --as rowan --before 2026-09-18T12:00:00Z --dry-run
 //	CLOSE OK closed=2964 kept=184 commit=-
 //	$ nova-bus close --bus . --as rowan --before 2026-09-18T12:00:00Z --remote origin --branch main
-//	CLOSE FAIL from-rowan/2026-09-19T0146Z-closed-unanswered-before-2026-09-18t12-00-00z-42cb99b820c2.md: open ...: file exists
+//	CLOSE FAILED from-rowan/2026-09-19T0146Z-closed-unanswered-before-2026-09-18t12-00-00z-42cb99b820c2.md: open ...: file exists
 //
 // No commit, the cursor untouched, thousands of receipts unwritten -- and the remedy the
 // tool's own `INBOX WALK bounded` line prescribes therefore unusable on the lane that
@@ -109,10 +109,10 @@ func TestCloseThatCannotFinishWritesNothing(t *testing.T) {
 	r := invoke(t, "", "close", "--bus", checkout, "--as", "Ada", "--before", "2026-09-08T00:00:00Z",
 		"--remote", "origin", "--branch", "main", "--no-push").
 		mustCode(t, 1)
-	// `CLOSE FAIL <path>:` and not a bare `CLOSE FAIL:` -- the path is how this asserts the
+	// `CLOSE FAILED <path>:` and not a bare `CLOSE FAILED:` -- the path is how this asserts the
 	// run reached the WRITE loop and stopped inside it, rather than being turned away
 	// earlier by checkoutReady over a dirty tree, which would prove nothing about rollback.
-	require.Falsef(t, !strings.Contains(r.stderr, "CLOSE FAIL from-ada/") || !strings.Contains(r.stderr, "INDEX"), "this close did not stop inside its write loop, so the rollback is untested:\n%s", r.stderr)
+	require.Falsef(t, !strings.Contains(r.stderr, "CLOSE FAILED from-ada/") || !strings.Contains(r.stderr, "INDEX"), "this close did not stop inside its write loop, so the rollback is untested:\n%s", r.stderr)
 	chmod(t, lane+"/INDEX", 0o644)
 	{
 		names := mdFiles(t, checkout, "from-ada")

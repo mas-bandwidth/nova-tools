@@ -677,3 +677,40 @@ func TestTLCRecordFreshnessAndCoverageWitnesses(t *testing.T) {
 		})
 	}
 }
+
+// pinnedJarProblem is what is wrong between the jar tla/tla2tools.sha256 pins
+// (the jar the tools play's tla play holds the record machines to, and
+// tlacheck run --bench checks) and the jars the records name, or "".
+func pinnedJarProblem(pinned string, jars []string) string {
+	f := strings.Fields(pinned)
+	if len(f) == 0 || !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(f[0]) {
+		return "tla/tla2tools.sha256 holds no SHA-256 first"
+	}
+	for _, j := range jars {
+		if j != f[0] {
+			return fmt.Sprintf("a record names jar %s and tla/tla2tools.sha256 pins %s: a record refresh on another jar changes the pin with it", j, f[0])
+		}
+	}
+	return ""
+}
+
+// TestTLCRecordsNameThePinnedJar: the record machines hold the jar the pin
+// names, so the records are measured on it; a pin that moves without the
+// records, or records without the pin, are refused.
+func TestTLCRecordsNameThePinnedJar(t *testing.T) {
+	t.Parallel()
+	root := repoRoot(t)
+	pinned, err := os.ReadFile(filepath.Join(root, "tla", "tla2tools.sha256"))
+	require.NoError(t, err)
+	records, err := tlc.ReadRecordsFile(filepath.Join(root, "tla", tlc.RunsFile))
+	require.NoError(t, err)
+	var jars []string
+	for _, r := range records {
+		jars = append(jars, r.JarSHA256)
+	}
+	require.NotEmpty(t, jars)
+	assert.Empty(t, pinnedJarProblem(string(pinned), jars))
+	other := strings.Repeat("b", 64)
+	assert.Contains(t, pinnedJarProblem(other+"  tla2tools.jar\n", jars), "pins "+other)
+	assert.Contains(t, pinnedJarProblem("", jars), "holds no SHA-256")
+}

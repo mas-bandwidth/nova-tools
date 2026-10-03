@@ -158,7 +158,7 @@ func TestTheOpenLineCarriesTheHostOnlyWhenThereIsOne(t *testing.T) {
 	{
 		got := strings.Count(OpenLine(plain), "\t")
 		if got != openFieldsV2-1 {
-			require.False(t, got != openFieldsV2-1, "an entry with no host writes %d tabs, want %d: %q", got, openFieldsV2-1, OpenLine(plain))
+			require.Equal(t, openFieldsV2-1, got, "an entry with no host writes %d tabs, want %d: %q", got, openFieldsV2-1, OpenLine(plain))
 		}
 	}
 	hosted := plain
@@ -166,9 +166,9 @@ func TestTheOpenLineCarriesTheHostOnlyWhenThereIsOne(t *testing.T) {
 	line := OpenLine(hosted)
 	{
 		got := strings.Count(line, "\t")
-		require.False(t, got != openFields-1, "an entry with a host writes %d tabs, want %d: %q", got, openFields-1, line)
+		require.Equal(t, openFields-1, got, "an entry with a host writes %d tabs, want %d: %q", got, openFields-1, line)
 	}
-	require.False(t, !strings.HasSuffix(line, "\tair"), "the host is not the last field: %q", line)
+	require.True(t, strings.HasSuffix(line, "\tair"), "the host is not the last field: %q", line)
 }
 
 func TestTheOpenListReadsBothWidths(t *testing.T) {
@@ -185,10 +185,10 @@ func TestTheOpenListReadsBothWidths(t *testing.T) {
 		require.Equal(t, 2, len(got), "read %d entries, want 2", len(got))
 	}
 	if got[0].Host != "" {
-		require.False(t, got[0].Host != "", "the eight-field row came back with host %q", got[0].Host)
+		require.Equal(t, "", got[0].Host, "the eight-field row came back with host %q", got[0].Host)
 	}
 	if got[1].Host != "air" {
-		require.False(t, got[1].Host != "air", "the nine-field row came back with host %q, want %q", got[1].Host, "air")
+		require.Equal(t, "air", got[1].Host, "the nine-field row came back with host %q, want %q", got[1].Host, "air")
 	}
 }
 

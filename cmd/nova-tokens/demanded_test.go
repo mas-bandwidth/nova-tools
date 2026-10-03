@@ -78,7 +78,7 @@ func TestFoldRefusesSymlinkedOutputBeforeWritingLock(t *testing.T) {
 			write(t, filepath.Join(target, "2026-09-11.tsv"), "original day\n")
 			{
 				err := os.Symlink(target, link)
-				require.NoError(t, err, err)
+				require.NoError(t, err)
 			}
 			result := invoke(t, "fold", "--out", link+suffix, "--day", "2026-09-11",
 				"--repos", reposFile(t, dir), "--claude", "fixture="+transcripts)
@@ -110,7 +110,7 @@ func TestFoldRefusesParentSymlinkedOutputBeforeWritingLock(t *testing.T) {
 			write(t, filepath.Join(child, "2026-09-11.tsv"), "original day\n")
 			{
 				err := os.Symlink(target, link)
-				require.NoError(t, err, err)
+				require.NoError(t, err)
 			}
 			outPath := filepath.Join(link, "child") + suffix
 			result := invoke(t, "fold", "--out", outPath, "--day", "2026-09-11",
@@ -141,7 +141,7 @@ func TestFoldRefusesParentSymlinkCreatesNoFiles(t *testing.T) {
 			transcripts := mkdir(t, filepath.Join(dir, "transcripts"))
 			{
 				err := os.Symlink(target, link)
-				require.NoError(t, err, err)
+				require.NoError(t, err)
 			}
 			outPath := filepath.Join(link, "child") + suffix
 			result := invoke(t, "fold", "--out", outPath, "--day", "2026-09-11",
@@ -157,7 +157,7 @@ func TestFoldRefusesParentSymlinkCreatesNoFiles(t *testing.T) {
 				assert.True(t, os.IsNotExist(err), "day file created in referent child: %v", err)
 			}
 			entries, err := os.ReadDir(child)
-			require.NoError(t, err, err)
+			require.NoError(t, err)
 			require.Equal(t, 0, len(entries), "referent child has %d entries, want 0: %v", len(entries), entries)
 		})
 	}
@@ -233,7 +233,7 @@ func TestRule3AnUnreadableSourceIsCountedAndPrintedAndExitsOne(t *testing.T) {
 	release() // windows holds the file open to make it unreadable, and an open file is undeletable
 	{
 		err := os.Remove(bad)
-		require.NoError(t, err, err)
+		require.NoError(t, err)
 	}
 	r = invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "glenn="+tr)
 	wantExit(t, r, 0)
@@ -658,7 +658,7 @@ func TestRule8RandomSiblingTempIsNotAStrayAndIsPreserved(t *testing.T) {
 	wantContains(t, cUnrelated.all(), ".unrelated.txt.tmp-12345678")
 	{
 		err := os.Remove(unrelated)
-		require.NoError(t, err, err)
+		require.NoError(t, err)
 	}
 
 	// The next fold writes the day file atomically via internal/atomicfile.
@@ -786,7 +786,7 @@ func foldPools(t *testing.T, aIn, aOut, bIn, bOut string) (out, repos, poolA, po
 // that row. Measured at tip before the fix: exit 0, written=true, no SHRANK, and the
 // claude-x row simply gone -- because the totals ROSE, so rule 10's day-total comparison
 // saw nothing.
-func TestIssue268AFoldKeepsARowNoDeclaredSourceWrote(t *testing.T) {
+func TestFoldKeepsARowNoDeclaredSourceWrote(t *testing.T) {
 	t.Parallel()
 
 	out, repos, poolA, poolB := foldPools(t, "410", "100", "2000", "420")
@@ -809,7 +809,7 @@ func TestIssue268AFoldKeepsARowNoDeclaredSourceWrote(t *testing.T) {
 
 // R2: full replacement -- every source in the file is declared -- is exactly what it was.
 // The one row is REPLACED by this run's arithmetic, never summed with the file's.
-func TestIssue268AFullReplacementIsUnchanged(t *testing.T) {
+func TestFullReplacementIsUnchanged(t *testing.T) {
 	t.Parallel()
 
 	out, repos, poolA, _ := foldPools(t, "410", "100", "2000", "420")
@@ -831,7 +831,7 @@ func TestIssue268AFullReplacementIsUnchanged(t *testing.T) {
 // R3: a BLENDED row -- one row whose sources cell names a label this run declared and one
 // it did not. Its cells are already a sum over both and nothing on disk takes them apart,
 // so the fold refuses the day rather than guessing.
-func TestIssue268ABlendedRowIsRefusedAndNothingIsWritten(t *testing.T) {
+func TestBlendedRowIsRefusedAndNothingIsWritten(t *testing.T) {
 	t.Parallel()
 
 	out, repos, poolA, poolB := foldPools(t, "410", "100", "2000", "420")
@@ -857,7 +857,7 @@ func TestIssue268ABlendedRowIsRefusedAndNothingIsWritten(t *testing.T) {
 
 // R4: rule 10 still fires on a real shrink, now compared against the MERGED file, and
 // --allow-shrink still writes it with the retained row still there.
-func TestIssue268Rule10StillFiresOnTheMergedTotalsAndKeepsRetainedRows(t *testing.T) {
+func TestRule10StillFiresOnTheMergedTotalsAndKeepsRetainedRows(t *testing.T) {
 	t.Parallel()
 
 	out, repos, poolA, poolB := foldPools(t, "410", "100", "2000", "420")
@@ -888,7 +888,7 @@ func TestIssue268Rule10StillFiresOnTheMergedTotalsAndKeepsRetainedRows(t *testin
 // A malformed existing day row fails closed before replacement: fold refuses the day,
 // reports TOKENS UNREADABLE label=out with the finding reason, and leaves the raw
 // malformed file on disk byte-identical.
-func TestIssue268MalformedExistingDayRowFailsClosedAndPreservesRawFile(t *testing.T) {
+func TestMalformedExistingDayRowFailsClosedAndPreservesRawFile(t *testing.T) {
 	t.Parallel()
 
 	out, repos, _, poolB := foldPools(t, "410", "100", "2000", "420")
@@ -912,7 +912,7 @@ func TestIssue268MalformedExistingDayRowFailsClosedAndPreservesRawFile(t *testin
 // TOKENS DAY summarizes the merged day file, so rows=, models=, repos=, dashes=, nonutc=,
 // sources= and turns= are coherent with the file on disk, while TOKENS OK rows= reflects
 // this run's folded rows.
-func TestIssue268CoherentDaySummaryScopeReflectsMergedFile(t *testing.T) {
+func TestCoherentDaySummaryScopeReflectsMergedFile(t *testing.T) {
 	t.Parallel()
 
 	out, repos, poolA, poolB := foldPools(t, "410", "100", "2000", "420")
@@ -937,7 +937,7 @@ func TestIssue268CoherentDaySummaryScopeReflectsMergedFile(t *testing.T) {
 // An explicitly selected day whose declared source becomes empty / goes quiet is detected
 // and refused under rule 10 rather than silently skipping with exit 0. Unrelated sources
 // are preserved.
-func TestIssue273ExplicitDayQuietSourceDetectedAndRefused(t *testing.T) {
+func TestExplicitDayQuietSourceDetectedAndRefused(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -956,7 +956,7 @@ func TestIssue273ExplicitDayQuietSourceDetectedAndRefused(t *testing.T) {
 	// Remove the source usage file so the declared source now has zero rows for that day.
 	{
 		err := os.Remove(jobPath)
-		require.NoError(t, err, err)
+		require.NoError(t, err)
 	}
 
 	// Refused under rule 10: input fell from 100 to unknown (now=-). File on disk is left untouched.
@@ -978,7 +978,7 @@ func TestIssue273ExplicitDayQuietSourceDetectedAndRefused(t *testing.T) {
 
 // When one source of a multi-source day goes quiet, shrinking under --allow-shrink preserves
 // the other source's rows.
-func TestIssue273ExplicitDayQuietSourcePreservesOtherSources(t *testing.T) {
+func TestExplicitDayQuietSourcePreservesOtherSources(t *testing.T) {
 	t.Parallel()
 
 	out, repos, poolA, poolB := foldPools(t, "410", "100", "2000", "420")
@@ -990,7 +990,7 @@ func TestIssue273ExplicitDayQuietSourcePreservesOtherSources(t *testing.T) {
 	// Remove poolA's usage file so glenn is quiet.
 	{
 		err := os.Remove(filepath.Join(poolA, "usage", "j1.tsv"))
-		require.False(t, err != nil, err)
+		require.NoError(t, err, err)
 	}
 
 	// Fold with both declared: glenn went quiet.
@@ -998,7 +998,7 @@ func TestIssue273ExplicitDayQuietSourcePreservesOtherSources(t *testing.T) {
 		"--swarm", "glenn="+poolA, "--swarm", "freddy="+poolB)
 	wantExit(t, r, 1)
 	wantContains(t, r.stderr, "TOKENS SHRANK date=2026-09-14 type=input file=2410 now=2000 written=false")
-	assert.False(t, read(t, day) != before, "refused shrink modified file")
+	assert.Equal(t, before, read(t, day), "refused shrink modified file")
 
 	// With --allow-shrink: writes freddy's rows (2000), glenn's row is removed.
 	// Both SHRANK and DAY agree that written=true.
@@ -1017,7 +1017,7 @@ func TestIssue273ExplicitDayQuietSourcePreservesOtherSources(t *testing.T) {
 // A bounded line names each quiet source on an explicitly selected existing day. The
 // fold already refuses the day under rule 10 (TOKENS SHRANK); #273's repair is that the
 // source itself is named rather than only the day totals.
-func TestIssue273QuietSourceNamedOnSelectedDay(t *testing.T) {
+func TestQuietSourceNamedOnSelectedDay(t *testing.T) {
 	t.Parallel()
 
 	out, repos, poolA, poolB := foldPools(t, "410", "100", "2000", "420")
@@ -1027,7 +1027,7 @@ func TestIssue273QuietSourceNamedOnSelectedDay(t *testing.T) {
 	// Remove poolA's usage file so glenn is quiet for the selected day.
 	{
 		err := os.Remove(filepath.Join(poolA, "usage", "j1.tsv"))
-		require.False(t, err != nil, err)
+		require.NoError(t, err, err)
 	}
 
 	r := invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos,
@@ -1053,7 +1053,7 @@ func TestRule12TheToolStampsAndNoFlagSetsIt(t *testing.T) {
 	wantExit(t, r, 0)
 	first := strings.Split(read(t, filepath.Join(out, "2026-09-11.tsv")), "\n")[0]
 	for _, want := range []string{"nova-tokens v1 ", "day=2026-09-11", "at=2026-09-11T23:55:02Z", "build=", "turns=2", "sources=claude:glenn"} {
-		assert.False(t, !strings.Contains(first, want), "the version line %q lacks %q", first, want)
+		assert.True(t, strings.Contains(first, want), "the version line %q lacks %q", first, want)
 	}
 	wantContains(t, lineWith(r.stdout, "TOKENS FOLD"), "at=2026-09-11T23:55:02Z")
 	wantContains(t, lineWith(r.stdout, "TOKENS DAY"), "turns=2")
@@ -1176,7 +1176,7 @@ func TestRule14TheSwarmUsageFilesAreASource(t *testing.T) {
 	// The reader's own sixteen names are SPEC-SWARM's, so a file the swarm writes reads.
 	{
 		got := strings.Join(tokens.SwarmColumns, ",")
-		require.False(t, got != strings.Join(swarmHeader, ","), "SwarmColumns is not SPEC-SWARM rule 12's sixteen names in order:\n got %s\nwant %s", got, strings.Join(swarmHeader, ","))
+		require.Equal(t, strings.Join(swarmHeader, ","), got, "SwarmColumns is not SPEC-SWARM rule 12's sixteen names in order:\n got %s\nwant %s", got, strings.Join(swarmHeader, ","))
 	}
 	swarmUsage(t, pool, "j1", swarmRow("j1", "1", "-", "deepseek-v3", "serialize", "2026-09-11T10:00:00Z", "1000", "20", "-", "5", "0"))
 	swarmUsage(t, pool, "j2", swarmRow("j2", "2", "j1", "deepseek-v3", "serialize", "2026-09-11T11:00:00Z", "7", "8", "9", "10", "11"))
@@ -1196,7 +1196,7 @@ func TestRule14TheSwarmUsageFilesAreASource(t *testing.T) {
 	wantContains(t, day, "deepseek-v3\tother\t1\t1\t1\t1\t1\t0\tutc\tswarm:deepseek")
 	row := lineWith(day, "deepseek-v3\tserialize")
 	cols := strings.Split(row, "\t")
-	assert.False(t, cols[3] != "1007" || cols[5] != "9" || cols[7] != "11", "the two attempts did not both fold: %q", row)
+	assert.True(t, cols[3] == "1007" && cols[5] == "9" && cols[7] == "11", "the two attempts did not both fold: %q", row)
 
 	// a fifteen-column header is refused by name
 	short := mkdir(t, filepath.Join(dir, "short"))
@@ -1281,19 +1281,19 @@ func TestRule16And19TheDatabaseIsCopiedAndQueriedReadOnlyUnderATimeout(t *testin
 			ocPart("msg1", "s1", "cat /x/schema/b.go\tand\nmore", "", "", "")))
 
 	before, err := os.Stat(db)
-	require.False(t, err != nil, err)
+	require.NoError(t, err, err)
 	r := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir),
 		"--opencode", "bench="+db, "--scratch", scratch)
 	wantExit(t, r, 0)
 	wantContains(t, read(t, filepath.Join(out, "2026-09-11.tsv")), "mercury-2.5\tschema\t10\t20\t30\t40\t50\t")
 
 	argv := read(t, logPath)
-	assert.False(t, !strings.Contains(argv, "-readonly"), "an invocation carried no -readonly:\n%s", argv)
+	assert.True(t, strings.Contains(argv, "-readonly"), "an invocation carried no -readonly:\n%s", argv)
 	// The spec's --opencode section names providerID, the five tokens.* counts, path.cwd
 	// and session.directory: JSON paths, because OpenCode keeps the row in a `data`
 	// column. A query that names bare columns is `no such column: providerID`.
 	for _, want := range []string{"-json", "$.providerID", "$.modelID", "$.tokens.input", "$.tokens.cache.write", "$.tokens.reasoning", "$.path.cwd", "directory FROM session"} {
-		assert.False(t, !strings.Contains(argv, want), "no invocation named %s; the real schema keeps it in the JSON data column:\n%s", want, argv)
+		assert.True(t, strings.Contains(argv, want), "no invocation named %s; the real schema keeps it in the JSON data column:\n%s", want, argv)
 	}
 	for _, line := range strings.Split(strings.TrimSpace(argv), "\n") {
 		for _, tok := range strings.Fields(line) {
@@ -1304,8 +1304,8 @@ func TestRule16And19TheDatabaseIsCopiedAndQueriedReadOnlyUnderATimeout(t *testin
 		}
 	}
 	after, err := os.Stat(db)
-	require.False(t, err != nil, err)
-	assert.False(t, after.ModTime() != before.ModTime() || after.Size() != before.Size(), "the live database changed")
+	require.NoError(t, err, err)
+	assert.True(t, after.ModTime() == before.ModTime() && after.Size() == before.Size(), "the live database changed")
 	// --scratch is required with --opencode and refused without it.
 	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--opencode", "bench="+db), 2)
 	tr := mkdir(t, filepath.Join(dir, "tr"))
@@ -1330,7 +1330,7 @@ func TestRule17TheDayComesFromTheMessageStamp(t *testing.T) {
 	for _, d := range []string{"2026-09-11", "2026-09-12"} {
 		{
 			_, err := os.Stat(filepath.Join(out, d+".tsv"))
-			assert.False(t, err != nil, "no file for %s", d)
+			assert.NoError(t, err, "no file for %s", d)
 		}
 	}
 }
@@ -1365,7 +1365,7 @@ func TestRule17AZonedStampFoldsOnItsUTCDayAndAnUnreadableStampIsCounted(t *testi
 	wantContains(t, lineWith(r.stdout, "TOKENS SOURCE"), "unparsed=-")
 	{
 		n := strings.Count(r.stderr, "TOKENS UNPARSED label=claude:g")
-		assert.False(t, n != 2, "%d TOKENS UNPARSED lines for the transcript, want 2", n)
+		assert.Equal(t, 2, n, "%d TOKENS UNPARSED lines for the transcript, want 2", n)
 	}
 	wantContains(t, r.stderr, "TOKENS UNPARSED label=claude:g")
 	wantContains(t, r.stderr, "the eleventh")
@@ -1426,9 +1426,9 @@ func TestRule18TwoFoldsDifferInNothingButTheStamp(t *testing.T) {
 	wantExit(t, invokeAt(t, later, "fold", "--out", out, "--all", "--repos", repos, "--claude", "g="+tr, "--bus", bus), 0)
 	second := read(t, filepath.Join(out, "2026-09-11.tsv"))
 	a, b := strings.SplitN(first, "\n", 2), strings.SplitN(second, "\n", 2)
-	assert.False(t, a[1] != b[1], "the rows differ between two folds:\n%s\n%s", a[1], b[1])
+	assert.Equal(t, b[1], a[1], "the rows differ between two folds:\n%s\n%s", a[1], b[1])
 	assert.False(t, a[0] == b[0], "the stamp line did not change with the clock")
-	assert.False(t, strings.ReplaceAll(a[0], "at=2026-09-11T23:55:02Z", "") != strings.ReplaceAll(b[0], "at=2026-09-12T00:55:02Z", ""), "the stamp lines differ in more than at=:\n%s\n%s", a[0], b[0])
+	assert.Equal(t, strings.ReplaceAll(b[0], "at=2026-09-12T00:55:02Z", ""), strings.ReplaceAll(a[0], "at=2026-09-11T23:55:02Z", ""), "the stamp lines differ in more than at=:\n%s\n%s", a[0], b[0])
 	// rows sorted by (model, repo)
 	rows := strings.Split(strings.TrimSpace(first), "\n")[2:]
 	assert.True(t, strings.HasPrefix(rows[0], "2026-09-11\ta\t"), "rows are not sorted by (model, repo): %q", rows[0])

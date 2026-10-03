@@ -22,6 +22,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/ci/functional"
 	"github.com/mas-bandwidth/nova-tools/internal/ci/slowtests"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
@@ -50,7 +51,7 @@ In your own module: go test -json <packages> | nova-ci slowtests --budget 60.
 usage:
   nova-ci help        print this banner and the verbs below (inspection)
   nova-ci version     which build this is: <version> <goos>/<goarch> <go version>
-  nova-ci slowtests --budget <seconds> [--example] [--json]
+  nova-ci slowtests --budget <seconds> [--example] [--json] [--max <n>]
                       (inspection) read newline-delimited ` + "`go test -json`" + `
                       TestEvents on stdin (or the built-in example stream with
                       --example) and print one CI-SLOW line per package whose
@@ -72,7 +73,7 @@ usage:
                       functional job as a stream merges. --dry-run prints the
                       packages and the make line, and runs nothing.
   nova-ci slowtests --package-budget <s> --test-budget <s> [--allowlist <file>]
-                    [--sleeps <file>] [--enforce] [--load <n> --cpus <n>]
+                    [--sleeps <file>] [--enforce] [--load <n> --cpus <n>] [--max <n>]
                       the unit tier's budgets: a package over --package-budget
                       and a top-level test over --test-budget are each a CI-SLOW
                       line, unless the allowlist (pkg<TAB>test<TAB>seconds<TAB>
@@ -84,7 +85,10 @@ usage:
                       read by the verdict. A CI-SLOW line fails the run only
                       with --enforce. A test skipped with the SLEEPS marker and
                       not on --sleeps (pkg<TAB>test<TAB>where) is a CI-SLEEPS
-                      line and fails the run on every leg.
+                      line and fails the run on every leg. A run with more
+                      finding lines than --max prints the first --max and one
+                      CI-SLOW MORE shown=<n> total=<n> line naming the flag
+                      that prints the rest; --max 0 prints every finding.
                       A package go test served from its test cache reports a
                       package elapsed near zero, so a cached run can never
                       trip --package-budget (or --budget); its tests replay
@@ -227,7 +231,7 @@ func main() {
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
 	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
-	// before anything is read, run or written (the CLI style's rule (b), #4505),
+	// before anything is read, run or written,
 	// with that verb's own exit codes (verbflag.Recover would quote the whole
 	// table).
 	defer func() {
@@ -291,6 +295,7 @@ func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 	cpusFlag := fs.Int("cpus", 0, "the host's logical CPUs, instead of runtime.NumCPU")
 	example := fs.Bool("example", false, "read the built-in six-event example stream instead of stdin: a first run with no Go module")
 	asJSON := fs.Bool("json", false, "print the verdict, or the refusal, as one JSON object {result, facts, items} on stdout instead of lines")
+	maxFlag := fs.Int("max", bounded.Default, "finding lines to print before one MORE line stands for the rest; 0 prints all")
 	if err := verbflag.Parse(fs, args); err != nil {
 		return slowtestsRefuse(stdout, stderr, verbflag.BoolAsked(args, "json"), []string{flagProblem(fs, err)}, "nova-ci slowtests -h")
 	}
@@ -307,6 +312,9 @@ func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 	}
 	if *cpusFlag < 0 {
 		problems = append(problems, "--cpus must not be negative")
+	}
+	if *maxFlag < 0 {
+		problems = append(problems, fmt.Sprintf("--max must be a line ceiling of zero or more (got %d); 0 means print them all", *maxFlag))
 	}
 	budgets := slowtests.Budgets{Package: float64(*budget), Test: *testBudget}
 	if *packageBudget > 0 {
@@ -349,21 +357,57 @@ func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 	}
 	lines, code := slowtests.Verdict(report, load, *enforce, ledger)
 	if *asJSON {
-		return renderJSON(stdout, stderr, verdictJSON(report, load, *enforce, code))
+		return renderJSON(stdout, stderr, verdictJSON(report, load, *enforce, code, *maxFlag))
 	}
-	for _, line := range lines {
+	for _, line := range capSlowLines(lines, *maxFlag) {
 		fmt.Fprintln(stdout, line)
 	}
 	return code
 }
 
+// maxRemedy is the second half of the MORE line slowtests prints under --max.
+// A cap with no remedy is censorship; a cap with one is an index
+// (internal/bounded).
+const maxRemedy = "--max <n> raises the ceiling, --max 0 prints every finding"
+
+// capSlowLines bounds the CI-SLOW finding lines Verdict returns: at most max
+// of them print, then one MORE line carrying the shown and total counts, so a
+// whole-tree run never buries a reader in findings (STANDARD §2: output is
+// bounded and keeps its totals). The cap is over the finding lines only: the
+// CI-SLEEPS lines, the OK line and the CI-LOAD line print either way, and the
+// exit code is Verdict's, from the uncapped report, so capping never flips a
+// verdict. max <= 0 prints everything with no MORE line.
+func capSlowLines(lines []string, max int) []string {
+	if max <= 0 {
+		return lines
+	}
+	capped := 0
+	for capped < len(lines) && isSlowFinding(lines[capped]) {
+		capped++
+	}
+	if capped <= max {
+		return lines
+	}
+	out := make([]string, 0, len(lines)+1)
+	out = append(out, lines[:max]...)
+	out = append(out, bounded.MoreLine("CI-SLOW", "finding", max, capped, maxRemedy))
+	return append(out, lines[capped:]...)
+}
+
+// isSlowFinding reports whether line is a CI-SLOW finding: a package or a test
+// over its budget. The OK, SLEEPS and LOAD lines are not findings and are
+// never capped.
+func isSlowFinding(line string) bool {
+	return strings.HasPrefix(line, "CI-SLOW package=") || strings.HasPrefix(line, "CI-SLOW test=")
+}
+
 // renderJSON prints o as one JSON object on stdout and returns its exit. A
 // value that cannot be marshalled is never an empty line at exit 0: it is a
-// FAIL line on stderr and exit 1.
+// FAILED line on stderr and exit 1.
 func renderJSON(stdout, stderr io.Writer, o *tool.Out) int {
 	raw, err := json.Marshal(o)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-ci %s FAIL: the verdict could not be rendered as JSON: %s; run: nova-ci %s -h\n", o.Verb, oneline.Err(err), o.Verb)
+		fmt.Fprintf(stderr, "nova-ci %s FAILED: the verdict could not be rendered as JSON: %s; run: nova-ci %s -h\n", o.Verb, oneline.Err(err), o.Verb)
 		return 1
 	}
 	fmt.Fprintf(stdout, "%s\n", raw)
@@ -423,8 +467,10 @@ func isTerminal(r io.Reader) bool {
 }
 
 // verdictJSON is the slowtests verdict as the one output value (STANDARD §2):
-// the same findings the lines print, typed. Exit is the verb's own.
-func verdictJSON(r slowtests.Report, load slowtests.Load, enforce bool, code int) *tool.Out {
+// the same findings the lines print, typed. Exit is the verb's own. max caps
+// the slow items the same way capSlowLines caps the slow lines, so the two
+// renderings cannot drift: the SLEEPS items print either way.
+func verdictJSON(r slowtests.Report, load slowtests.Load, enforce bool, code int, max int) *tool.Out {
 	o := &tool.Out{Verb: "slowtests", Status: tool.OK, Exit: code}
 	if code != 0 {
 		o.Status = tool.Failed
@@ -458,6 +504,20 @@ func verdictJSON(r slowtests.Report, load slowtests.Load, enforce bool, code int
 	}
 	for _, s := range r.Sleepers {
 		o.Item("sleeps", "test", s.Name, "package", s.Package)
+	}
+	if max > 0 {
+		tally := bounded.NewTally(max)
+		kept := o.Items[:0]
+		for _, it := range o.Items {
+			if (it.Kind == "slow-package" || it.Kind == "slow-test") && !tally.Add("finding") {
+				continue
+			}
+			kept = append(kept, it)
+		}
+		o.Items = kept
+		if tally.Shown("finding") < tally.Total("finding") {
+			o.More = append(o.More, tool.More{Kind: "finding", Shown: tally.Shown("finding"), Total: tally.Total("finding"), Remedy: maxRemedy})
+		}
 	}
 	return o
 }

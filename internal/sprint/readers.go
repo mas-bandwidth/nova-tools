@@ -12,8 +12,10 @@ import (
 // A reader's state (docs/SPEC-SPRINT.md section 6, the readers table; the
 // model is tla/DirtyTick.tla, the readers update: a read is placed only on a
 // reader up, and a read asked of a reader that goes away is taken back). A
-// reader says it is there by asking for its own queue (queue --as <reader>
-// writes its beat). Its state is derived, never typed: away while the
+// reader is a row of the readers table, which the coordinator declares (init
+// --readers, reader add); a reader with its row says it is there by asking for its
+// own queue (queue --as <reader> writes its beat; a name with no row writes none,
+// and its queue answers reader false). Its state is derived, never typed: away while the
 // coordinator holds it away (reader away; reader up releases the hold),
 // whatever it beats; else up while its last beat is within ReaderBeatBound;
 // else away when it beat once and has lapsed, down when it has never beaten.
@@ -106,6 +108,25 @@ func returnedRead(rc *Card) bool { return rc.Col == Asked && rc.F(FieldReturned)
 // the ask asks it again.
 const FieldReturned = "returned"
 
+// ReaderPrefix names a reader for its machine: reader-<m> is the one reader on
+// the fleet machine m, and it runs at m's width, the fleet row's, read with its
+// queue every tick as the member on m reads its own (the owner, 2026-10-02:
+// "The reader widths seem to be very ad-hoc, unlike the machine widths"; "why
+// not just have as many readers as workers per-machine"). The sprint holds no
+// reader's width of its own: `queue --as reader-<m>` carries m's fleet row's
+// width, and a reader named for no row carries none and begins nothing.
+const ReaderPrefix = "reader-"
+
+// ReaderMachine is the machine a reader is named for: reader-<m> names m; a
+// name of another shape names no machine.
+func ReaderMachine(reader string) (machine string, ok bool) {
+	m, found := strings.CutPrefix(reader, ReaderPrefix)
+	if !found || !ValidID(m) {
+		return "", false
+	}
+	return m, true
+}
+
 // FieldReasked is how many times a read card's reader returned it and it went
 // back to asked on the reader's row, counted by Read itself at each return, so
 // the bound holds whatever the tick does and however many readers are up (the
@@ -117,8 +138,8 @@ const (
 	MaxReadReasks = 2
 )
 
-// FieldLeveled marks a read card with the requested level so that a move
-// never repeats the same level, preventing the card from staying put.
+// FieldLeveled marks a read card the level moved: the level moves it no more, so a
+// read is never shuttled between readers tick after tick and the level never sticks on one card.
 const FieldLeveled = "leveled"
 
 // liveReadsAt is the primary's placed read cards at an attempt less the reads
@@ -176,8 +197,8 @@ func sweepReads(s *Snapshot, p *Plan) {
 // read, asked and not begun, to another reader (levelReads).
 const RetiredByLevel = "level"
 
-// TickLevelReads is the readers' rebalance, once at the start of every tick
-// before any other part levels reads across readers, in one plan.
+// TickLevelReads is the readers' rebalance, once at the start of every tick,
+// before any other part: levelReads, in one plan.
 func TickLevelReads(s *Snapshot, _ TickReq) (Plan, int) {
 	var p Plan
 	levelReads(s, &p)
@@ -202,9 +223,10 @@ func TickLevelReads(s *Snapshot, _ TickReq) (Plan, int) {
 // reader that is not up is neither a source nor a target: sweepReads takes
 // its reads back first.
 //
-// The sprint knows no reader's width: a reader loop's --width is the loop's
-// own, and the readers table has no width column, so every reader up counts
-// alike and nothing here bounds a reader at DealAhead times a width.
+// The sprint knows no reader's width: a reader runs at its machine's width,
+// not a loop's own --width (there is none), and the readers table has no width
+// column, so every reader up counts alike and nothing here bounds a reader at
+// DealAhead times a width.
 func levelReads(s *Snapshot, p *Plan) {
 	sweepReads(s, p)
 	up := s.UpReaders()
@@ -247,7 +269,7 @@ func levelReads(s *Snapshot, p *Plan) {
 					avoid = append(avoid, rd)
 				}
 			}
-			to = rr.levelTo(up, maps.Clone(held), held, room, avoid)
+			to = rr.levelTo(up, maps.Clone(held), held, room, long, avoid)
 		}
 		if to == "" {
 			break

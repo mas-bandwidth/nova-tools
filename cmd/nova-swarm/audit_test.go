@@ -226,6 +226,11 @@ var swarmAudit = audit.Config{
 		// nothing. What the push keeps from them reaches a stream only as a member.Push
 		// value the member loop folds onto one line.
 		`"github.com/mas-bandwidth/nova-tools/internal/gitrun"`,
+		// gocache (lazyclean.go, member.go) holds the pool's Go build cache under its
+		// limit and returns counts and a failure's path and reason to this package; it holds
+		// no writer and prints nothing. Its reason reaches a stream only through the CLEAN
+		// line, which escapes it.
+		`"github.com/mas-bandwidth/nova-tools/internal/gocache"`,
 		// decide (pull --decide, SPEC-JOBS section 5) makes one typed HTTP
 		// request and returns typed answers; it holds no writer of this
 		// package's stream, and the one value this binary takes from it -- the

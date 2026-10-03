@@ -59,39 +59,43 @@ func TestKindsApplyInDependencyOrder(t *testing.T) {
 
 // TestTheMachineRowIsTheDeclaredFactsSomethingReads: Glenn 2026-09-27, "I
 // only want the fleet to have actual defined useful things associated with
-// each machine, not invented rando stuff". Five declared fields, no address
-// (the name is the tailnet host), no measured fact, no note. width is the
+// each machine, not invented rando stuff". Six declared fields and the note
+// (Glenn 2026-10-02: "these should be saved somewhere permanent with notes
+// (ideally, nova-config)"), no address (the name is the tailnet host), no
+// measured fact. width is the
 // sprint member's width, set directly (the owner, 2026-10-01: "we should just
-// be able to set width specifically in nova-config and it just works").
+// be able to set width specifically in nova-config and it just works"). tla
+// marks a TLC record machine, read by the tools play and tlacheck run --bench.
 func TestTheMachineRowIsTheDeclaredFactsSomethingReads(t *testing.T) {
 	t.Parallel()
 
 	machine, _ := Lookup(KindMachine)
 	scopedGot70 := strings.Join(machine.FieldNames(), ",")
-	require.Equal(t, "user,seat,slots,runners,width", scopedGot70, "machine fields %s, want user,seat,slots,runners,width", scopedGot70)
+	require.Equal(t, "user,seat,slots,runners,width,tla,note", scopedGot70, "machine fields %s, want user,seat,slots,runners,width,tla,note", scopedGot70)
 	for _, f := range machine.Fields {
-		scopedWant75 := f.Name != "runners" && f.Name != "width"
-		assert.Equal(t, scopedWant75, f.Required, "--%s required=%v, want %v (runners and width default to 0; the rest are typed on add)", f.Name, f.Required, scopedWant75)
+		scopedWant75 := f.Name != "runners" && f.Name != "width" && f.Name != "tla" && f.Name != "note"
+		assert.Equal(t, scopedWant75, f.Required, "--%s required=%v, want %v (runners and width default to 0, tla to false and the note to empty; the rest are typed on add)", f.Name, f.Required, scopedWant75)
 	}
-	for _, invented := range []string{"ssh", "address", "os_arch", "os", "arch", "cores", "memory_gb", "roles", "note", "store", "coordinator", "machine", "harness", "logins", "wake"} {
+	for _, invented := range []string{"ssh", "address", "os_arch", "os", "arch", "cores", "memory_gb", "roles", "store", "coordinator", "machine", "harness", "logins", "wake"} {
 		_, scopedOk81 := machine.Field(invented)
-		assert.False(t, scopedOk81, "machine has a field %s: an address is the name, a measured fact comes live from the beat, a fleet fact is the fleet's, a note is history", invented)
+		assert.False(t, scopedOk81, "machine has a field %s: an address is the name, a measured fact comes live from the beat, a fleet fact is the fleet's", invented)
 	}
 	assert.False(t, machine.Singleton, "machine is many rows")
 }
 
 // TestTheFriendRowIsWhatSomeoneDecidesForHer: Glenn 2026-09-27, "anything
-// that a friend would just know, is runtime redis data". Three fields:
-// slots, tiers, roles; no machine, harness, logins, wake or note; and no
-// coordinator role, which is the sprint row's.
+// that a friend would just know, is runtime redis data". Four fields:
+// slots, tiers, roles and width (2026-10-02, the jobs she works at once); no
+// machine, harness, logins, wake or note; and no coordinator role, which is
+// the sprint row's.
 func TestTheFriendRowIsWhatSomeoneDecidesForHer(t *testing.T) {
 	t.Parallel()
 
 	friend, _ := Lookup(KindFriend)
 	scopedGot97 := strings.Join(friend.FieldNames(), ",")
-	require.Equal(t, "slots,tiers,roles", scopedGot97, "friend fields %s, want slots,tiers,roles", scopedGot97)
+	require.Equal(t, "slots,tiers,roles,width", scopedGot97, "friend fields %s, want slots,tiers,roles,width", scopedGot97)
 	for _, f := range friend.Fields {
-		scopedWant102 := f.Name != "roles"
+		scopedWant102 := f.Name == "slots" || f.Name == "tiers"
 		assert.Equal(t, scopedWant102, f.Required, "--%s required=%v, want %v", f.Name, f.Required, scopedWant102)
 	}
 	for _, invented := range []string{"machine", "harness", "logins", "wake", "note", "coordinator"} {
@@ -367,4 +371,27 @@ func TestSortedPutsTheCoordinatorFirst(t *testing.T) {
 	scopedWant344 := "rowan,emma,stella"
 	require.Equal(t, scopedWant344, strings.Join(got, ","), "apply order %v, want %s (coordinator first, then by name)", got, scopedWant344)
 	require.Equal(t, "stella", rows[0].Name, "Sorted reordered its input")
+}
+
+// A friend's width is the jobs she works at once (the owner, 2026-10-02: "6/1
+// seems a bit wrong -- need to setup width for friends? Start at 8 for
+// each?"): add stores DefaultFriendWidth when it is not given, FriendWidth
+// reads a row without the field as the default, and a width below 1 is
+// refused by the kind's Check in one line naming the flag.
+func TestAFriendsWidthDefaultsToEightAndIsAtLeastOne(t *testing.T) {
+	t.Parallel()
+
+	friend, _ := Lookup(KindFriend)
+	row, err := friend.NewRow("amy", map[string]string{"slots": "2", "tiers": "flash"})
+	require.NoError(t, err)
+	assert.Equal(t, "8", row.Fields["width"], "add stores the default width")
+	assert.Equal(t, DefaultFriendWidth, FriendWidth(row))
+	assert.Equal(t, 8, FriendWidth(Row{Name: "amy", Fields: map[string]string{"slots": "2"}}), "a row without the field reads as the default")
+	assert.Equal(t, 3, FriendWidth(Row{Name: "amy", Fields: map[string]string{"width": "3"}}))
+
+	_, err = friend.NewRow("amy", map[string]string{"slots": "2", "tiers": "flash", "width": "0"})
+	require.Error(t, err)
+	assert.Equal(t, "friend amy has width 0; a friend's width is the jobs she works at once, at least 1: want --width <n> with n >= 1", err.Error(), "one refusal")
+	assert.NoError(t, friend.Check(Row{Name: "amy", Fields: map[string]string{"width": "1"}}))
+	assert.Error(t, friend.Check(Row{Name: "amy", Fields: map[string]string{"width": "0"}}))
 }

@@ -6,7 +6,7 @@ package main
 // be opened, from the process itself: the test binary re-runs as nova-redis
 // (TestMain, asMainEnv), so what go-redis would write to the process's own
 // stderr is seen, which run() over a buffer cannot see. An unreachable
-// --addr and a wrong password are each one FAIL line on stderr, exit 2, with
+// --addr and a wrong password are each one FAILED line on stderr, exit 2, with
 // redisconn's next step and no go-redis pool log (pool.go); a spill whose
 // EXEC reply is lost after the store took it is exit 1, unconfirmed; with
 // NOVA_REDIS_PASSWORD unset, a refused login also names that variable.
@@ -119,7 +119,7 @@ func TestOpenFailureIsOneLineExitTwo(t *testing.T) {
 				}
 			}
 			assert.NotContains(t, stderr, "pool.go", "%s %s let go-redis's pool log through: %q", c.label, v[0], stderr)
-			want := strings.ToUpper(v[0]) + " FAIL "
+			want := strings.ToUpper(v[0]) + " FAILED "
 			for _, part := range []string{want, c.class, c.next, c.addr} {
 				assert.Contains(t, stderr, part, "%s %s stderr lacks %q: %q", c.label, v[0], part, stderr)
 			}

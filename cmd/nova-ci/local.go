@@ -1,13 +1,12 @@
 package main
 
-// local.go is `nova-ci local` (nova-tools#4336): the unit tier CI runs for this
+// local.go is `nova-ci local`: the unit tier CI runs for this
 // diff, run on this machine before a push, so a child's answer is CI's answer.
 //
-// The owner's ask, 2026-09-26: "look at bash scripts you have written, and
-// think, should some of these become nova tools/verbs?" Children each invented
-// their own way to test what they touched (a sharding script under `timeout
-// 95`, a six-pass loop for t.Parallel violations, hand timing scripts) and
-// several ran the whole tree, which is CPU the real work needed.
+// Children each invent their own way to test what they touch: a sharding
+// script under `timeout 95`, a six-pass loop for t.Parallel violations, hand
+// timing scripts. Several run the whole tree, which is CPU the real work
+// needs, so this verb gives every child one way to run the unit tier.
 //
 // ONE IMPLEMENTATION, NOT A COPY. The verb owns no selection rule, no go test
 // flag and no budget of its own:
@@ -61,7 +60,7 @@ const (
 	localDefaultBase = "origin/dev"
 	// localNice is the niceness of everything the verb starts: the tests share
 	// the bench with the work they test. It is yield.Nice, the copies' own
-	// (nova-tools#4293), and the verb steps itself down to it before it
+	// niceness, and the verb steps itself down to it before it
 	// starts anything (yield.ToCI), so the nice -n is belt and braces.
 	localNice = "15"
 	// localCores is the cores a CI unit leg may take, and so the most a local
@@ -162,7 +161,7 @@ func cmdLocal(args []string, stdout, stderr io.Writer, runner localRunner, selec
 	if strings.TrimSpace(*base) == "" {
 		return refuse(stderr, " local", "--base wants the ref the change lands on (origin/dev)")
 	}
-	// CI over work (nova-tools#4293): this process and everything it starts.
+	// CI over work: this process and everything it starts.
 	if err := yield.ToCI(); err != nil {
 		return refuse(stderr, " local", "yield to CI: "+oneline.Err(err))
 	}
@@ -398,7 +397,7 @@ func localResult(action string) string {
 	case "pass":
 		return "ok"
 	case "fail":
-		return "FAIL"
+		return "FAILED"
 	}
 	return action
 }

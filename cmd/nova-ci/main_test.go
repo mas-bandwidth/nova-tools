@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"os"
@@ -81,7 +82,7 @@ func TestAFlagMistakeNamesWhatTheVerbTakes(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"slowtests", "--budgt", "3"}, "nova-ci slowtests REFUSED: unknown flag --budgt; the flags are --allowlist, --budget, --cpus, --enforce, --example, --json, --load, --package-budget, --sleeps, --test-budget; run: nova-ci slowtests -h\n"},
+		{[]string{"slowtests", "--budgt", "3"}, "nova-ci slowtests REFUSED: unknown flag --budgt; the flags are --allowlist, --budget, --cpus, --enforce, --example, --json, --load, --max, --package-budget, --sleeps, --test-budget; run: nova-ci slowtests -h\n"},
 		{[]string{"slowtests", "--budget", "abc"}, `nova-ci slowtests REFUSED: --budget wants a whole number, got "abc"; run: nova-ci slowtests -h` + "\n"},
 		{[]string{"slowtests", "--load", "x"}, `nova-ci slowtests REFUSED: --load wants a number, got "x"; run: nova-ci slowtests -h` + "\n"},
 		{[]string{"slowtests", "--enforce=maybe"}, `nova-ci slowtests REFUSED: --enforce wants true or false, got "maybe"; run: nova-ci slowtests -h` + "\n"},
@@ -206,7 +207,7 @@ func TestSlowtestsRefusesANonFiniteFloat(t *testing.T) {
 	}
 }
 
-// A JSON rendering that fails is said, as a FAIL line at exit 1, never an
+// A JSON rendering that fails is said, as a FAILED line at exit 1, never an
 // empty line at exit 0.
 func TestSlowtestsJSONRenderFailureIsAFailLine(t *testing.T) {
 	t.Parallel()
@@ -217,7 +218,7 @@ func TestSlowtestsJSONRenderFailureIsAFailLine(t *testing.T) {
 	code := renderJSON(&stdout, &stderr, o)
 	assert.Equal(t, 1, code)
 	assert.Empty(t, stdout.String())
-	assert.Regexp(t, `^nova-ci slowtests FAIL: the verdict could not be rendered as JSON: .*unsupported value: NaN.*; run: nova-ci slowtests -h\n$`, stderr.String())
+	assert.Regexp(t, `^nova-ci slowtests FAILED: the verdict could not be rendered as JSON: .*unsupported value: NaN.*; run: nova-ci slowtests -h\n$`, stderr.String())
 }
 
 // --json is the same verdict as one object: the findings typed, the exit the
@@ -469,4 +470,75 @@ func TestFunctionalRefusesWhatItCannotRun(t *testing.T) {
 			assert.Contains(t, stderr, w, "%s: stderr %q lacks %q", tc.name, stderr, w)
 		}
 	}
+}
+
+// --max bounds the finding lines slowtests prints: at most --max CI-SLOW lines,
+// then one CI-SLOW MORE shown=<n> total=<n> line naming the flag that prints
+// the rest. --max 0 prints every finding with no MORE line, and a negative
+// --max is refused. The exit is Verdict's either way: capping a measurement
+// never flips it into a refusal (STANDARD §2: output is bounded and keeps its
+// totals).
+func TestSlowtestsMaxCapsFindings(t *testing.T) {
+	t.Parallel()
+
+	var stdin strings.Builder
+	for i := 1; i <= 5; i++ {
+		fmt.Fprintf(&stdin, "{\"Action\":\"pass\",\"Package\":\"example.com/pkg%d\",\"Elapsed\":%d}\n", i, 70+i)
+	}
+	base := []string{"slowtests", "--budget", "60", "--load", "1", "--cpus", "2"}
+	for _, tc := range []struct {
+		name  string
+		args  []string
+		shown int
+		more  bool
+		code  int
+	}{
+		{"caps with MORE", []string{"--max", "2"}, 2, true, 0},
+		{"zero lists all", []string{"--max", "0"}, 5, false, 0},
+		{"the default hides no small run", nil, 5, false, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			code, stdout, stderr := runCI(t, append(append([]string{}, base...), tc.args...), stdin.String())
+			assert.Equal(t, tc.code, code, "exit = %d, want %d\nstdout:\n%s\nstderr:\n%s", code, tc.code, stdout, stderr)
+			assert.Equal(t, tc.shown, strings.Count(stdout, "CI-SLOW package="), "stdout prints %d finding lines, want %d:\n%s", strings.Count(stdout, "CI-SLOW package="), tc.shown, stdout)
+			assert.Contains(t, stdout, "CI-LOAD load=1.00 cpus=2 per-cpu=0.50: measured, not a verdict\n", "the CI-LOAD line prints either way:\n%s", stdout)
+			if tc.more {
+				assert.Contains(t, stdout, "CI-SLOW MORE kind=finding shown=2 total=5", "no MORE line carrying the shown and total counts:\n%s", stdout)
+				assert.Contains(t, stdout, "--max 0 prints every finding", "the MORE line names no remedy:\n%s", stdout)
+			} else {
+				assert.NotContains(t, stdout, "MORE", "an uncapped run prints a MORE line:\n%s", stdout)
+			}
+		})
+	}
+
+	t.Run("negative is refused", func(t *testing.T) {
+		t.Parallel()
+		code, stdout, stderr := runCI(t, append(append([]string{}, base...), "--max", "-1"), stdin.String())
+		assert.Equal(t, 2, code, "exit = %d, want 2\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+		assert.Empty(t, stdout, "a refusal prints findings:\n%s", stdout)
+		assert.Contains(t, stderr, "--max must be a line ceiling of zero or more", "stderr = %q", stderr)
+	})
+
+	t.Run("json is capped the same way", func(t *testing.T) {
+		t.Parallel()
+		code, stdout, stderr := runCI(t, append(append([]string{}, base...), "--json", "--max", "2"), stdin.String())
+		require.Equal(t, 0, code, "exit = %d, want 0; stderr: %s", code, stderr)
+		var got struct {
+			Items []struct {
+				Kind string `json:"kind"`
+			} `json:"items"`
+			More []struct {
+				Kind  string `json:"kind"`
+				Shown int    `json:"shown"`
+				Total int    `json:"total"`
+			} `json:"more"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(stdout), &got), "stdout is not JSON:\n%s", stdout)
+		require.Len(t, got.Items, 2, "JSON carries %d items, want the capped 2", len(got.Items))
+		require.Len(t, got.More, 1, "JSON carries %d more entries, want 1", len(got.More))
+		assert.Equal(t, "finding", got.More[0].Kind)
+		assert.Equal(t, 2, got.More[0].Shown)
+		assert.Equal(t, 5, got.More[0].Total)
+	})
 }

@@ -10,8 +10,8 @@
 // this body, and the reason is `probe`: probeVerb runs FOUR walled steps in ONE process
 // and reads the status of each (cmd/nova-sandbox/main.go, walled()), so a Run that never
 // returns turns the probe into its own first step and the other three never happen. The
-// spec's own probe verb is the one with tests, so the proposal and the probe verb could
-// not both be kept.
+// spec's own probe verb requires those four, so the proposal and the probe could not both be
+// kept, and the probe is the one with tests.
 //
 // So: the tool restricts ITSELF, then starts the command as a child and waits, exactly
 // as the darwin body waits on sandbox-exec's child. The process count is the same as
@@ -66,7 +66,7 @@ var resolvConfPath = "/etc/resolv.conf"
 // path, not the property; this grants the property.
 //
 // The directory is granted rather than the file: WSL rewrites /mnt/wsl/resolv.conf, and a
-// rule on its inode would be left behind holding a file that is no longer read. It is
+// rule on the old inode would be left behind holding a file that is no longer read. It is
 // read-only and skip-if-absent, exactly like every other root -- a machine with no resolver
 // config is the machine's shape, not a caller's mistake.
 func linuxRoots() []string {
@@ -98,7 +98,7 @@ var linuxWriteFiles = []string{"/dev/null", "/dev/tty"}
 // the DISCOVERED ABI rather than a yes-or-no, because two of the three answers depend on
 // the number -- an ABI above maxKnownABI is CLAMPED to the table and said so
 // (TestNewerLandlockABIIsClampedToTheTableOnLinux), an ABI below minKnownABI is refused
-// , and no landlock at all is the
+// (TestLandlockABIBelowTheTableRefusesOnLinux), and no landlock at all is the
 // no_sandbox refusal (TestNoLandlockRefusesOnLinux). No kernel on the fleet reports any of
 // the three, so without the seam none of them has a test on the platform whose body is built.
 var available = landlockABI

@@ -391,7 +391,7 @@ func TestReviewSpellingLooseListContainers(t *testing.T) {
 	}
 }
 
-func TestStellaQuotedListTabFence(t *testing.T) {
+func TestQuotedListFencePreservesCodeAndCorrectsProse(t *testing.T) {
 	t.Parallel()
 	for _, prefix := range []string{"> - ", "> -\t"} {
 		t.Run(prefix, func(t *testing.T) {

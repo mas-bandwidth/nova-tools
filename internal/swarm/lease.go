@@ -1,12 +1,12 @@
 package swarm
 
-// THE JOB LEASE: the launcher's own word that a card is alive (issue #1499), and the job
-// directory's ownership (issue #1585).
+// THE JOB LEASE: the launcher's own word that a card is alive, and the job directory's
+// ownership.
 //
 // The bench's hygiene pass has to decide, hourly, which job directories are finished work
-// and which are a card still doing its job. It used to decide by SILENCE -- no new bytes in
-// harness-output.log for fifteen minutes -- and a card in one long model call or one long
-// compile is silent and working. On 2026-09-19 that heuristic deleted <slot>/data and
+// and which are a card still doing its job. Deciding by SILENCE -- no new bytes in
+// harness-output.log for fifteen minutes -- is wrong, because a card in one long model call
+// or one long compile is silent and working; that heuristic once deleted <slot>/data and
 // <slot>/tmp, a running card's HOME and TMPDIR, out from under two certify passes.
 //
 // A launcher knows what a heuristic can only guess, so it says so on disk: `nova-swarm
@@ -23,7 +23,7 @@ package swarm
 // could not put back. SPEC-SWARM is not ambiguous about whether that is lawful: under
 // **Slots**, a worker has "its own data home", "its own job directory", and "a slot is held
 // by exactly one worker"; under **the races, taken out**, two workers on one data home is
-// the 2026-09-10 `database is locked` failure, closed on purpose. So two live runs in one
+// the `database is locked` failure, closed on purpose. So two live runs in one
 // job directory is never a thing to make safe -- it is a thing to refuse.
 //
 // FOUR RULES HOLD IT, AND THE FIRST TWO ARE STELLA'S (her HOLD on the first repair, which
@@ -38,12 +38,12 @@ package swarm
 //  2. AN INCOMPLETE RECORD IS NEVER EVIDENCE OF A DEAD OWNER. A lease that cannot be parsed
 //     -- empty, truncated, half a line -- is HELD BY AN UNKNOWN OWNER, and stays held until
 //     its heartbeat is older than JobLeaseStale. Only then is it reclaimed.
-//  3. FAILING TO ESTABLISH OWNERSHIP IS A REFUSAL, NEVER A SILENT SUCCESS. This file used to
+//  3. FAILING TO ESTABLISH OWNERSHIP IS A REFUSAL, NEVER A SILENT SUCCESS. This file does not
 //     hand back a do-nothing release when it could not write, on the grounds that the
 //     reaper's other rules still protected the job. That was defensible while the lease was
 //     only advice to a reaper. It is not defensible now that the lease is what keeps two
 //     launchers out of one directory: `.lease` as a directory, an unwritable job directory
-//     or an unreadable record all used to end with BOTH runs proceeding. Every one of them
+//     or an unreadable record all ended with BOTH runs proceeding. Every one of them
 //     is now an error, and `native` exits 2 on it with a remedy. See SPEC-SWARM, "One live
 //     run per job directory".
 //  4. THE RELEASE IS FENCED AND JOINED. A release removes the lease only while the file is
@@ -238,7 +238,7 @@ func parseJobLease(path string, raw []byte, st os.FileInfo) JobLease {
 // StartJobLease takes the lease on jobDir for the running child and returns the release.
 //
 // It REFUSES rather than returning a release that protects nothing. A *JobLeaseHeldError
-// says another run holds the directory -- the same-path exclusion of issue #1585 -- and any
+// says another run holds the directory -- the same-path exclusion -- and any
 // other error says this run could not establish ownership at all, which under rule 3 is the
 // same refusal with a different reason. The caller exits on either, before it has written
 // anything the holder owns.
@@ -318,7 +318,7 @@ func startJobLeaseTicking(jobDir, label string, ticks <-chan time.Time, stopTick
 				// only when its mtime advances -- a hung socket means no advance.
 				// THE REPAIR ALWAYS RUNS: if Chtimes fails (file missing), the
 				// lease is re-published regardless of the beat, because a live job
-				// that lost its file must be protected again (#1585).
+				// that lost its file must be protected again.
 				var renew bool
 				renew, lastBeat = providerBeatRenews(beatPath, lastBeat)
 				if renew {
@@ -329,7 +329,7 @@ func startJobLeaseTicking(jobDir, label string, ticks <-chan time.Time, stopTick
 					continue // file is there, just not time to renew
 				}
 				// THE REPAIR. Chtimes on a path that is not there does nothing and says
-				// nothing, which is how a live job lost its protection in #1585. Publish
+				// nothing, which is how a live job lost its protection. Publish
 				// the same lease again: if somebody else now holds the path, this is
 				// refused and their lease is left exactly alone.
 				// ignored: a heartbeat repair retried every tick; a refusal means another owner holds the path, which is left alone by design
@@ -470,7 +470,7 @@ const (
 // takeJobLeaseRecord clears EXACTLY the record it was handed, and answers whether the path
 // is now free of it.
 //
-// NEVER AN UNLINK BY PATH AFTER A READ (Stella, #1585). A read, a compare and then
+// NEVER AN UNLINK BY PATH AFTER A READ. A read, a compare and then
 // `os.Remove(path)` leaves a window that atomic publication does not close: two reclaimers
 // can both judge one stale record, the first clears it and links its own live lease into
 // place, and the second's remove -- aimed at a PATH, decided from a record that is no
@@ -579,14 +579,14 @@ func newLeaseNonce() string {
 	return hex.EncodeToString(b[:])
 }
 
-// THE SLOT LEASE (issue #1901). The bench store's lease is a COUNT: it says an owner is
+// THE SLOT LEASE. The bench store's lease is a COUNT: it says an owner is
 // holding n seats, and it does not say WHICH slot directory a seat is. So two `native`
 // runs with the same --slot and DIFFERENT --label each took a seat, each took its own
-// job lease -- #1585's refusal is about one job directory, and these are two -- and both
+// job lease -- whose refusal is about one job directory, and these are two -- and both
 // started against one `<slot>/data`, which is one HOME, one cache and one opencode.db.
 // SPEC-SWARM under **Slots** says a worker has "its own data home" and "a slot is held by
 // exactly one worker"; under **the races, taken out**, two workers on one data home IS the
-// 2026-09-10 `database is locked` failure, closed on purpose.
+// `database is locked` failure, closed on purpose.
 //
 // The slot lease is the job lease pointed at the slot directory, and it is the same file
 // format, the same four rules and the same pid-and-nonce fence -- published whole, an
@@ -595,7 +595,7 @@ func newLeaseNonce() string {
 // second spelling of ownership on this bench.
 //
 // It is taken AFTER the job lease so that two runs sharing one job directory keep saying
-// exactly what #1585 made them say. The label it carries is this run's, so the refusal can
+// exactly what the job lease says. The label it carries is this run's, so the refusal can
 // name the card that is holding the slot.
 func StartSlotLease(slotDir, label string) (release func(), err error) {
 	return StartJobLease(slotDir, label)

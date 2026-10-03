@@ -48,11 +48,13 @@ type LoadSample struct {
 
 // Beat is a member's presence record: its last beat, to the second, the
 // highest load of its beats within LoadWindow of it, how the last one was
-// measured, those beats' loads, and the measuring state the next beat starts
-// from.
+// measured, those beats' loads, the measuring state the next beat starts
+// from, and the machine's logical cores, which a member with the default width
+// takes half of (WidthOfCores; fleet sync).
 type Beat struct {
 	At      time.Time      `json:"at"`
 	Load    float64        `json:"load"`
+	Cores   int            `json:"cores,omitempty"`
 	How     string         `json:"how,omitempty"`
 	Samples []LoadSample   `json:"samples,omitempty"`
 	Meter   hostload.State `json:"meter"`
@@ -105,8 +107,16 @@ func NextBeat(prev Beat, now time.Time, pct float64, how string, meter hostload.
 // coordinator holds it, else up while it has missed fewer than
 // MissedBeatsDown beat windows, else down.
 func MemberStatus(ctl *Card, b Beat, now time.Time) string {
+	return PresenceStatus(ctl.F("held") != "", b, now)
+}
+
+// PresenceStatus is the one rule of a fleet member's and a friend's status at
+// now: held while the coordinator holds it (fleet down, friend down), else up
+// while it has missed fewer than MissedBeatsDown beat windows of BeatDeadline,
+// else down (never beaten, or lapsed).
+func PresenceStatus(held bool, b Beat, now time.Time) string {
 	switch {
-	case ctl.F("held") != "":
+	case held:
 		return Held
 	case b.Alive(now):
 		return Up
@@ -126,7 +136,7 @@ func LoadText(b Beat, now time.Time) string {
 // TickPresence applies the changes of the members' derived status (T0), every
 // member whose status changes in the one plan (the design's R1 and R2, v2.1
 // section 2.3: each member seen or down is its own key, none waits behind
-// another's; the owner's rule, errata 3 amendment 10: every row of every table
+// another's; the owner's rule: every row of every table
 // moves every tick, never a row at a time). Every member that should be down
 // and is up goes down, its unfinished work cards dealt round the members up
 // after the plan (downPlan: the loads and the rolling index shared across
@@ -171,7 +181,7 @@ func presence(s *Snapshot, r TickReq) (Plan, int) {
 	// the members the first up levels over
 	all := append(append([]string(nil), live...), ups[:n]...)
 	// every placement goes round the fleet from the deal's index and moves it
-	// (round.go, errata 3 amendment 5), written with the plan
+	// (round.go), written with the plan
 	rr := dealRoundWith(s, all...)
 	moves := roundMoves{}
 	var p Plan
