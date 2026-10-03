@@ -155,7 +155,7 @@ Ada's first line above is the refusal worth meeting here rather than on a live b
 
 ## nova-sandbox
 
-Fixture: a job directory of yours. Every path below is one you name — this tool has no defaults and guesses nothing — so the transcript is a worked example with `/path/to/pool` standing in for yours, and the lines are what the platform prints with the paths shortened.
+Fixture: an existing job directory and a `home` directory inside it. The worked example uses `/path/to/pool` for the caller's paths and shortens the recorded paths. The working directory defaults to the first `--write`; the tool creates its default temp directory there.
 
 Platform: recorded on macOS (darwin) — the `backend=sandbox-exec` and `abi=-` fields and the `/path/to/pool` fixture below are that Mac's; a Linux bench prints `backend=landlock`, an `abi=` value, and, where the wall is built below the ABI the kernel reports, a `used=` field this transcript has no slot for.
 
@@ -191,7 +191,7 @@ The last run is the whole tool: the wall named, the job's own write landed, the 
 
 ### The disposable volume, and the one test that touches a disk
 
-`nova-sandbox run` makes an APFS volume per run and deletes it on every path out (SPEC-SANDBOX, "The run verb"). Its logic is unit-tested against a fake `diskutil`, so an ordinary `go test ./cmd/nova-sandbox/` creates no volumes. The one real end-to-end test is behind the `novadisk` build tag, because eight CI runners share the Mac this repository is built on and a suite that made and destroyed volumes on every run would be a hazard rather than a test. Run it by hand on a Mac when the disposable-volume body changes — it needs no `sudo`:
+`nova-sandbox run` creates an APFS volume per run and deletes it on return, error, signal or timeout ([SPEC-SANDBOX.md](SPEC-SANDBOX.md), "The run verb"). A failed deletion reports a leak; `SIGKILL` can prevent cleanup, so `reap` handles volumes left behind. Unit tests use a fake `diskutil` and create no volumes. The real end-to-end test uses the `novadisk` build tag. Run it on macOS when the disposable-volume implementation changes; it needs no `sudo`:
 
     go test -tags novadisk -run TestARealRunLeavesNothingBehind ./cmd/nova-sandbox/
 
