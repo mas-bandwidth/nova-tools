@@ -259,18 +259,18 @@ func TestPositiveTimeoutUnderJobCapWitnesses(t *testing.T) {
 // the verb that deals the legs.
 var macOSGroupFlagRe = regexp.MustCompile(`--macos-group (\S+)`)
 
-// TestDarwinTestShardsSelectSelfHostedARM64Group pins that the darwin test
-// shards select the self-hosted runner group on ARM64. The group is the label
-// the workflow passes (--macos-group); the arch and OS are what the fan-out
-// (pkgselect.Fanout) writes into every macOS leg. The merge group uses sharded
-// test legs on our own benches, not hosted runners.
-func TestDarwinTestShardsSelectSelfHostedARM64Group(t *testing.T) {
+// TestDarwinShardsSelectARM64GroupByLabelAndMergeUsesShardedLegs pins that
+// the darwin shards select one ARM64 group by the label the workflow passes.
+// The group is the label the workflow passes (--macos-group).
+// The fan-out (pkgselect.Fanout) writes the arch and OS into every macOS leg.
+// The merge group uses sharded test legs, and separate merge jobs stay empty.
+func TestDarwinShardsSelectARM64GroupByLabelAndMergeUsesShardedLegs(t *testing.T) {
 	t.Parallel()
 
 	src := readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
 	m := macOSGroupFlagRe.FindStringSubmatch(jobBody(src, "test-packages"))
 	require.NotNil(t, m, "test-packages hands no --macos-group to the verb that deals the legs")
-	assert.Equal(t, "studio", m[1], "the macOS test shards select group %q, want studio (2026-09-25, until the Mac minis)", m[1])
+	assert.Equal(t, "studio", m[1], "the macOS test shards select group %q, want the pinned group label.", m[1])
 	legs := pkgselect.Fanout("push", []string{"./cmd/a"}, pkgselect.DarwinSensitive{}, pkgselect.Groups{Linux: "linux-group", Mac: m[1]}, true)
 	found := 0
 	for _, leg := range legs {
@@ -278,12 +278,12 @@ func TestDarwinTestShardsSelectSelfHostedARM64Group(t *testing.T) {
 			continue
 		}
 		found++
-		assert.Equal(t, "ARM64", leg.Arch, "a macOS test shard selects arch %q group %q, want ARM64 on %s (2026-09-25, until the Mac minis): %+v", leg.Arch, leg.Group, m[1], leg)
-		assert.Equal(t, m[1], leg.Group, "a macOS test shard selects arch %q group %q, want ARM64 on %s (2026-09-25, until the Mac minis): %+v", leg.Arch, leg.Group, m[1], leg)
+		assert.Equal(t, "ARM64", leg.Arch, "a macOS test shard selects arch %q, want ARM64.", leg.Arch)
+		assert.Equal(t, m[1], leg.Group, "a macOS test shard selects group %q, want the workflow group label.", leg.Group)
 	}
 	assert.NotZero(t, found, "the fan-out emits no macOS shard entry this test can read")
-	assert.Equal(t, "", jobBody(src, "test-hosted-merge"), "the merge group carries a hosted leg again; since 2026-09-26 its gate is the sharded test legs on our own benches (Glenn: \"Less dependency on github is my bet\")")
-	assert.Equal(t, "", jobBody(src, "plan-merge"), "the merge group carries a hosted leg again; since 2026-09-26 its gate is the sharded test legs on our own benches (Glenn: \"Less dependency on github is my bet\")")
+	assert.Equal(t, "", jobBody(src, "test-hosted-merge"), "the merge group carries a separate merge leg; its gate is the sharded test legs.")
+	assert.Equal(t, "", jobBody(src, "plan-merge"), "the merge group carries a separate merge leg; its gate is the sharded test legs.")
 }
 
 func TestJobsThatLeftCIAreStillInCertification(t *testing.T) {
