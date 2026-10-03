@@ -586,7 +586,7 @@ func TestVerifyDoesNotFlagLinksThatResolve(t *testing.T) {
 		"[the tides](tides.md#the-sandbar) and [the lantern](lantern.md?raw=1) for the rest\n")
 	// --links gate, so a wikilink false positive would show up as a FAILED line.
 	// The fixture's own deliberate [[storm-glass]] still gates, so the exit is
-	// 1 either way; what is under test is which findings appear.
+	// 1 either way; what is under test is WHICH findings appear.
 	exit, _, stderr := runCLI(t, "", "verify", "--root", dir, "--links", "gate",
 		"--coverage", "notes/*.md:notes/index-*.md")
 	require.Equalf(t, 1, exit, "exit = %d, want 1 (the fixture's deliberate [[storm-glass]] gates); stderr: %s", exit, stderr)

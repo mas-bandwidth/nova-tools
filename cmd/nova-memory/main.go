@@ -108,8 +108,8 @@ flags:
                         and 0 means all. The count is never capped -- the
                         summary line carries the total whether the run passed
                         or failed -- because a reader who wanted the number
-                        should not have to pay for the list. Verify caps each
-                        kind separately, so ten thousand wikilink findings
+                        should not have to pay for the list. verify caps each
+                        KIND separately, so ten thousand wikilink findings
                         cannot bury the one frontmatter finding.
   --words <w>           quickstart only, repeatable: the words the
                         demonstration search runs. Default: the corpus's three
