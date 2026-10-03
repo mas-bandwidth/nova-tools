@@ -19,14 +19,8 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 		{Verb: "nocode"},
 		{Verb: "floors"},
 		{Verb: "corpus"},
-		{Verb: "hygiene", Flags: []string{"--repo", "{dir}/repo"}},
-		{Verb: "dogfood ledger", Flags: []string{"--receipts", "{dir}/receipts"}},
-		{Verb: "dogfood record", Flags: []string{"--receipts", "{dir}/receipts"}},
-		{Verb: "dogfood gate", Flags: []string{"--receipts", "{dir}/receipts"}},
-		{Verb: "dogfood"},
-		{Verb: "convergence", Flags: []string{"--state", "{dir}/state"}},
 		{Verb: "spelling", Flags: []string{"--dir", "{dir}/self"}},
 		{Verb: "version"},
 	})
-	testverbhelp.HelpVerb(t, run, "nova-check", "quickstart", "dogfood gate", "spelling", "version")
+	testverbhelp.HelpVerb(t, run, "nova-check", "quickstart", "spelling", "version")
 }

@@ -27,9 +27,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -152,6 +155,19 @@ func TestIssue2296(t *testing.T) {
 	t.Run("TestNoCodeStagedSaysNo", noCodeStagedSaysNo)
 	t.Run("TestNoCodeStagedRefusals", noCodeStagedRefusals)
 	t.Run("TestNoCodeStagedRootAndBase", noCodeStagedRootAndBase)
+}
+
+// fakeBin writes one executable fake and returns its path. Fakes are shell
+// scripts, so the tests that use one are skipped where there is no shell --
+// the verb's own machinery is covered by internal/converge either way.
+func fakeBin(t *testing.T, dir, name, body string) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the forge and git fakes are shell scripts; internal/converge covers the same paths with Go fakes")
+	}
+	path := filepath.Join(dir, name)
+	require.NoError(t, testbin.WriteExecutable(path, []byte("#!/bin/sh\n"+body), 0o755))
+	return path
 }
 
 func TestNoCodeStagedClassifiesTheIndex(t *testing.T) {

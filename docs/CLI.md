@@ -16,11 +16,6 @@ nova-check nocode --dir <dir>                      # no code, executables, scrip
 nova-check nocode --print-deny-list                # both floors actually in force: the extension list and the name list
 nova-check floors --core <SEED-CORE.md> --source <SEED.md>   # the door's floor set matches the seed's — a derived copy checked, never trusted
 nova-check corpus --ledger <file> --root <dir> --min-anchors <n>   # the material you have chosen never to lose silently is still where your ledger says (and the ledger has not shrunk)
-nova-check hygiene --repo <dir> --base <ref> --head <ref> --identity "<Name> <email>" [--paths <glob>,...] [--kind <kind>] [--max <n>] [--timeout <s>]   # the accept gate's four mechanical checks on a branch before you ask for a read: identity, out-of-path, stray-file, secret (exit 0 clean, 1 findings, 2 could not run)
-nova-check dogfood ledger (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>]   # one row per verb: who has run it, when, and whether it did what they needed
-nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] [--closes <id>] --receipts <dir> [--tools-timeout <s>] [--fail-max <n>]   # append one receipt, refusing a verb the list does not declare
-nova-check dogfood gate (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--shipped <cmd dir>] [--require-all] [--allow-empty]   # exit 1 with the verbs no non-author has run and the edges nobody has cleared: the line a release calls
-nova-check convergence --repo <owner/name> --ledger <md> --receipts <dir> --retired <file> --since <RFC3339|24h> [--bin <dir>] [--repo-dir <dir>] [--batch-logs <dir>] [--versions <tsv>] [--certs <tsv>] [--state <file>] [--by <name>] [--json] [--timeout <n>]   # are we converging: one line per stream, now against --since, with the ratio and the trend
 nova-check spelling (--dir <dir> | --file <path> | --path <pattern>) [--ignore <word|@file>] [--write] [--exclude <prefix>] [--fail-max <n>]   # check markdown or prose for misspellings; fenced code blocks and inline code spans are blanked so code is not prose; --write fixes misspellings in place
 ```
 
@@ -45,6 +40,33 @@ KERNEL OK bytes=771 budget=4000
 
 **`corpus` is the odd one out.** Every other check finds something present: a broken link names its target. A sentence that has been dropped names nothing, and a rewrite, a move or a restore can drop something that was given to you once, with nothing going red, because the record and the evidence about the record are the same files. So `corpus` reads a ledger you wrote in advance, the statements you intend never to lose without deciding to and where each lives, and asserts they are still there. Changing them is allowed; changing them silently is not, because the repair for a real change is to move the ledger row in the same commit.
 
+## nova-dev
+
+```
+nova-dev dogfood ledger (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>]   # one row per verb: who has run it, when, and whether it did what they needed
+nova-dev dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] [--closes <id>] --receipts <dir> [--tools-timeout <s>] [--fail-max <n>]   # append one receipt, refusing a verb the list does not declare
+nova-dev dogfood gate (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--shipped <cmd dir>] [--require-all] [--allow-empty]   # exit 1 with the verbs no non-author has run and the edges nobody has cleared: the line a release calls
+nova-dev convergence --repo <owner/name> --ledger <md> --receipts <dir> --retired <file> --since <RFC3339|24h> [--bin <dir>] [--repo-dir <dir>] [--batch-logs <dir>] [--versions <tsv>] [--certs <tsv>] [--state <file>] [--by <name>] [--json] [--timeout <n>]   # are we converging: one line per stream, now against --since, with the ratio and the trend
+nova-dev hygiene --repo <dir> --base <ref> --head <ref> --identity "<Name> <email>" [--paths <glob>,...] [--kind <kind>] [--max <n>] [--timeout <s>]   # the accept gate's four mechanical checks on a branch before you ask for a read: identity, out-of-path, stray-file, secret (exit 0 clean, 1 findings, 2 could not run)
+```
+
+### First run
+
+`dogfood ledger` needs nothing but a command reference and a directory of
+receipts. `cmd/nova-dev/testdata/example-dogfood` holds both, the size of a
+first run, and the tests run the example commands against them.
+
+```
+$ nova-dev dogfood ledger --cli ./docs/CLI.md --receipts ./dogfood-receipts
+DOGFOOD tool=nova-example verb=links by=Ada at=2026-09-18T09:00:00Z ok=yes issue=- open=0
+DOGFOOD OK verbs=7 dogfooded=2 by-nonauthor=1 open-edges=1 unfiled=0 unmatched=0
+```
+
+The verbs split by what they need: `dogfood` and `hygiene` run against any
+repository you name, and `convergence` reads a forge through `gh`. None of
+them reads this repository's own files unless you name them; the general
+record checks and the seed's charter checks are [nova-check](CLI.md#nova-check)'s.
+
 ### The dogfood ledger
 
 A tool is not finished until it is tested, dogfooded by a non-author on real
@@ -55,17 +77,17 @@ binaries or from this file, the runs come from receipts, and the gate is one
 exit code a release lane can call.
 
 ```
-$ nova-check dogfood record --tool nova-check --verb links --by Stella --ok \
+$ nova-dev dogfood record --tool nova-check --verb links --by Stella --ok \
     --notes "ran it over my own self repo before the merge; found nothing" \
     --receipts ./dogfood-receipts
 DOGFOOD RECORD OK tool=nova-check verb=links by=Stella at=2026-09-18T09:00:00Z ok=yes issue=- file=./dogfood-receipts/20260918T090000Z-nova-check-links-stella-8e9b64a4.json
 
-$ nova-check dogfood ledger --cli ./docs/CLI.md --receipts ./dogfood-receipts
+$ nova-dev dogfood ledger --cli ./docs/CLI.md --receipts ./dogfood-receipts
 DOGFOOD tool=nova-check verb=quickstart by=nobody at=- ok=- issue=- open=0
 DOGFOOD tool=nova-check verb=links by=Stella at=2026-09-18T09:00:00Z ok=yes issue=- open=0
 DOGFOOD OK verbs=105 dogfooded=1 by-nonauthor=1 open-edges=0 unfiled=0 unmatched=0
 
-$ nova-check dogfood gate --cli ./docs/CLI.md --receipts ./dogfood-receipts --require-all
+$ nova-dev dogfood gate --cli ./docs/CLI.md --receipts ./dogfood-receipts --require-all
 DOGFOOD GATE FAIL tool=nova-check verb=quickstart: not dogfooded by a non-author; a tool is done when somebody who did not write it has run it on real work
 DOGFOOD GATE FAIL verbs=105 findings=104 shown=20 unmatched=0
 ```
@@ -169,12 +191,12 @@ nothing else. A kind the tool does not hold is not answered with
 refused by name, listing the kinds there are:
 
 ```
-$ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --kind fix-with-red-test
-nova-check hygiene: --kind "fix-with-red-test" is not a kind this tool declares; one of: fix-red, transcript-test, rebase, sweep, mutation-kill, guard, read, probe, text, tone, report; run: nova-check help
+$ nova-dev hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --kind fix-with-red-test
+nova-dev hygiene: --kind "fix-with-red-test" is not a kind this tool declares; one of: fix-red, transcript-test, rebase, sweep, mutation-kill, guard, read, probe, text, tone, report; run: nova-dev help
 ```
 
 ```
-$ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**"
+$ nova-dev hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**"
 HYGIENE OK base=main head=card paths=sign/** findings=0
 ```
 
@@ -187,10 +209,10 @@ command that prints the rest — the same run with the cap lifted, quoted so it
 can be pasted:
 
 ```
-$ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**" --max 2
+$ nova-dev hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**" --max 2
 HYGIENE FINDING reason=identity at=0a19082d2973: author someone@elsewhere.example and committer someone@elsewhere.example are not the pool's identity
 HYGIENE FINDING reason=out-of-path at=elsewhere.go: this path matches none of the card's declared PATHS:
-HYGIENE MORE kind=finding shown=2 total=4 nova-check hygiene --repo "." --base "main" --head "card" --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**" --max 0
+HYGIENE MORE kind=finding shown=2 total=4 nova-dev hygiene --repo "." --base "main" --head "card" --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**" --max 0
 HYGIENE NO base=main head=card paths=sign/** findings=4
 ```
 
@@ -203,12 +225,12 @@ each read from a real source, each printed as a number now, the same number at
 travel.
 
 ```
-$ nova-check convergence --repo mas-bandwidth/nova-tools \
-    --ledger ~/rowan-new/reports/pitstop-tests-2026-09-17.md \
-    --receipts ~/rowan-working/dogfood \
-    --retired ~/rowan-working/bin/retired/README.md \
-    --bin ~/rowan-working/bin --repo-dir . \
-    --since 2026-09-18T00:00:00Z --state ~/rowan-working/convergence.json
+$ nova-dev convergence --repo mas-bandwidth/nova-tools \
+    --ledger ./receipts/pit-stop.md \
+    --receipts ./receipts \
+    --retired ./bin/RETIRED.md \
+    --bin ./bin --repo-dir example/project \
+    --since 2026-09-18T00:00:00Z --state ./state.json
 CONVERGENCE LANDING now=2 before=5 ratio=0.40 trend=contracting measure=rounds-per-batch batches=4 per-hour=0.25
 CONVERGENCE CLASSES now=29 before=27 ratio=1.07 trend=contracting measure=class-test-index-entries rev=04bb4e1c9f2a
 CONVERGENCE SCRIPTS now=42 before=66 ratio=0.64 trend=contracting measure=scripts-left-in-bin retired-in-window=24

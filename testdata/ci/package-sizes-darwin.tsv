@@ -94,6 +94,7 @@ github.com/mas-bandwidth/nova-tools/cmd/nova-version	-	3.1
 github.com/mas-bandwidth/nova-tools/cmd/nova-cairn	-	2.1
 github.com/mas-bandwidth/nova-tools/internal/release	-	2.0
 github.com/mas-bandwidth/nova-tools/cmd/nova-check	-	1.8
+github.com/mas-bandwidth/nova-tools/cmd/nova-dev	-	1.8
 github.com/mas-bandwidth/nova-tools/internal/cairn	-	1.5
 github.com/mas-bandwidth/nova-tools/cmd/nova-work	-	1.4
 github.com/mas-bandwidth/nova-tools/cmd/nova-self-talk	-	1.3

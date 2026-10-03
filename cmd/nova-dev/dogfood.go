@@ -37,7 +37,7 @@ const (
 	cliHint      = `--cli <file> is the command reference the verbs are read from, usually docs/CLI.md; it is the list this ledger is about, so it is never guessed from the working directory`
 	toolsHint    = `--tools <dir> is a directory of built nova-* binaries, each asked for its own help: the authoritative verb list, with --cli as the fallback for the tools it does not hold`
 	receiptsHint = `--receipts <dir> is the directory the receipts live in, one file per receipt: the same directory record appends to and ledger reads, kept in a repository so the record outlives the bench`
-	toolHint     = `--tool <t> is the binary you ran, spelled as the verb list spells it (nova-check)`
+	toolHint     = `--tool <t> is the binary you ran, spelled as the verb list spells it (nova-dev)`
 	verbHint     = `--verb <v> is the verb you ran, spelled as the verb list spells it (links, or "lift quarantine", or - for a tool that takes no verb)`
 	byHint       = `--by <name> is who ran it; the ledger's whole question is whether that is somebody other than the author, so a receipt with no name is not a receipt`
 	notesHint    = `--notes <text> is the real work you ran it on, in one line: what you were doing, what the verb did about it, and "Edges:" before anything you found`
@@ -379,7 +379,7 @@ func cmdDogfoodRecord(args []string, stdout, stderr io.Writer) int {
 	// here and matched against the real findings by the ledger: an id that names
 	// nothing closes nothing, and says so by leaving the edge open.
 	if id := strings.TrimSpace(*closes); id != "" && !dogfood.IsReceiptID(id) {
-		fmt.Fprintf(stderr, "nova-check dogfood record: --closes is a receipt id, the eight hex characters the gate prints as receipt=<id>, got %s; run: nova-check dogfood record -h\n", oneline.Field(id))
+		fmt.Fprintf(stderr, "nova-dev dogfood record: --closes is a receipt id, the eight hex characters the gate prints as receipt=<id>, got %s; run: nova-dev dogfood record -h\n", oneline.Field(id))
 		return 2
 	}
 	receipt := dogfood.Receipt{

@@ -7,7 +7,6 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/check"
-	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
@@ -128,26 +127,6 @@ func renderSpelling(w io.Writer, dir string, res check.SpellingResult, write boo
 		out.More = []tool.More{{Kind: "misspelling", Shown: shown, Total: len(res.Findings), Remedy: failMaxRemedy}}
 	}
 	if !write && len(res.Findings) > 0 {
-		out.Status = tool.Failed
-		out.Exit = 1
-	}
-	return renderResult(w, out)
-}
-
-func renderHygiene(w io.Writer, findings []hygiene.Finding, max int, remedy, repo, base, head, paths string) int {
-	out := &tool.Out{Verb: "hygiene", Status: tool.OK}
-	out.Fact("repo", repo).Fact("base", base).Fact("head", head).Fact("paths", paths).Fact("findings", len(findings))
-	shown := len(findings)
-	if max > 0 && shown > max {
-		shown = max
-	}
-	for _, f := range findings[:shown] {
-		out.Item("finding", "reason", f.Token, "at", f.At, "why", f.Why)
-	}
-	if shown < len(findings) {
-		out.More = []tool.More{{Kind: "finding", Shown: shown, Total: len(findings), Remedy: remedy}}
-	}
-	if len(findings) > 0 {
 		out.Status = tool.Failed
 		out.Exit = 1
 	}

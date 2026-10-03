@@ -1,6 +1,6 @@
 package main
 
-// `nova-check hygiene` is the hand's door to the same function the gate runs.
+// `nova-dev hygiene` is the hand's door to the same function the gate runs.
 //
 // One implementation serves three callers: `nova-pulse accept` at harvest,
 // `nova-merge batch` on every member, and this one, for a person who wants to
@@ -27,36 +27,50 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
+// hygFlags holds the hygiene verb's declared flags, so the skeleton's flag
+// set and the verb's own declare the same flags from one place.
+type hygFlags struct {
+	repo, base, head, pathsFlag, identity, kind *string
+	maxFlag, timeout                            *int
+	asJSON                                      *bool
+}
+
+// hygieneFlagValues declares hygiene's flags on fs.
+func hygieneFlagValues(fs *flag.FlagSet) *hygFlags {
+	var f hygFlags
+	f.asJSON = fs.Bool("json", false, "print typed findings and totals as one JSON object")
+	f.repo = fs.String("repo", "", "git checkout to inspect (required)")
+	f.base = fs.String("base", "", "base git ref of the comparison (required)")
+	f.head = fs.String("head", "", "head git ref of the comparison (required)")
+	f.pathsFlag = fs.String("paths", "", "comma-separated allowed path globs; empty skips out-of-path checking")
+	f.identity = fs.String("identity", "", "comma-separated allowed authors in Name <email> form")
+	f.kind = fs.String("kind", "", "card kind to validate; empty skips kind-specific checks")
+	f.maxFlag = fs.Int("max", bounded.Default, "finding lines to print; 0 prints all")
+	f.timeout = fs.Int("timeout", 120, "git inspection deadline in positive seconds")
+	return &f
+}
+
 func cmdHygiene(args []string, stdout, stderr io.Writer) int {
-	var asJSON bool
-	stdout, stderr = jsonWriters(stdout, stderr, &asJSON)
-	defer stderr.(*jsonOutput).finish()
 	fs := flag.NewFlagSet("hygiene", flag.ContinueOnError)
-	fs.BoolVar(&asJSON, "json", false, "print typed findings and totals as one JSON object")
+	f := hygieneFlagValues(fs)
+	stdout, stderr = jsonWriters(stdout, stderr, f.asJSON)
+	defer stderr.(*jsonOutput).finish()
 	fs.SetOutput(io.Discard)
-	repo := fs.String("repo", "", "git checkout to inspect (required)")
-	base := fs.String("base", "", "base git ref of the comparison (required)")
-	head := fs.String("head", "", "head git ref of the comparison (required)")
-	pathsFlag := fs.String("paths", "", "comma-separated allowed path globs; empty skips out-of-path checking")
-	identity := fs.String("identity", "", "comma-separated allowed authors in Name <email> form")
-	kind := fs.String("kind", "", "card kind to validate; empty skips kind-specific checks")
-	maxFlag := fs.Int("max", bounded.Default, "finding lines to print; 0 prints all")
-	timeout := fs.Int("timeout", 120, "git inspection deadline in positive seconds")
 	if verbflag.Parse(fs, args) != nil || fs.NArg() != 0 {
 		return refuse(stderr, " hygiene", "bad flags")
 	}
-	if *repo == "" || *base == "" || *head == "" {
+	if *f.repo == "" || *f.base == "" || *f.head == "" {
 		return refuse(stderr, " hygiene", "--repo, --base and --head are required")
 	}
-	if *maxFlag < 0 {
+	if *f.maxFlag < 0 {
 		return refuse(stderr, " hygiene", "--max must be non-negative")
 	}
-	if *timeout <= 0 {
+	if *f.timeout <= 0 {
 		return refuse(stderr, " hygiene", "--timeout must be positive")
 	}
 
 	var ids []hygiene.Identity
-	for _, one := range strings.Split(*identity, ",") {
+	for _, one := range strings.Split(*f.identity, ",") {
 		one = strings.TrimSpace(one)
 		if one == "" {
 			continue
@@ -100,13 +114,13 @@ func cmdHygiene(args []string, stdout, stderr io.Writer) int {
 	// of work that does not exist, and every card carrying an undeclared kind
 	// came back clean. Refusing the kind here, by name, is what makes that
 	// answer impossible.
-	if *kind != "" && !hygiene.KindDeclared(*kind) {
+	if *f.kind != "" && !hygiene.KindDeclared(*f.kind) {
 		return refuse(stderr, " hygiene", fmt.Sprintf("--kind %q is not a kind this tool declares; one of: %s",
-			*kind, strings.Join(hygiene.Kinds(), ", ")))
+			*f.kind, strings.Join(hygiene.Kinds(), ", ")))
 	}
 
 	var paths []string
-	for _, p := range strings.Split(*pathsFlag, ",") {
+	for _, p := range strings.Split(*f.pathsFlag, ",") {
 		if p = strings.TrimSpace(p); p != "" {
 			paths = append(paths, p)
 		}
@@ -122,10 +136,10 @@ func cmdHygiene(args []string, stdout, stderr io.Writer) int {
 		shown = strings.Join(paths, ",")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(*timeout)*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(*f.timeout)*time.Second)
 	defer cancel()
 	findings, err := hygiene.Check(ctx, hygiene.Options{
-		Repo: *repo, Base: *base, Head: *head, Paths: paths, Identities: ids, Kind: *kind,
+		Repo: *f.repo, Base: *f.base, Head: *f.head, Paths: paths, Identities: ids, Kind: *f.kind,
 	})
 	if err != nil {
 		return refuse(stderr, " hygiene", err.Error())
@@ -145,19 +159,19 @@ func cmdHygiene(args []string, stdout, stderr io.Writer) int {
 	// copy -- `Name <email>` remains readable instead of printing escaped spaces,
 	// and an unquoted `<` is a shell redirect besides. Quote is the form for a value
 	// that is meant to be pasted back.
-	remedy := fmt.Sprintf("nova-check hygiene --repo %s --base %s --head %s --identity %s",
-		oneline.Quote(*repo), oneline.Quote(*base), oneline.Quote(*head), oneline.Quote(identityList(ids)))
+	remedy := fmt.Sprintf("nova-dev hygiene --repo %s --base %s --head %s --identity %s",
+		oneline.Quote(*f.repo), oneline.Quote(*f.base), oneline.Quote(*f.head), oneline.Quote(identityList(ids)))
 	if len(paths) > 0 {
 		remedy += " --paths " + oneline.Quote(strings.Join(paths, ","))
 	}
-	if *kind != "" {
-		remedy += " --kind " + oneline.Quote(*kind)
+	if *f.kind != "" {
+		remedy += " --kind " + oneline.Quote(*f.kind)
 	}
 	remedy += " --max 0"
-	if asJSON {
-		return renderHygiene(stdout, findings, *maxFlag, remedy, *repo, *base, *head, shown)
+	if *f.asJSON {
+		return renderHygiene(stdout, findings, *f.maxFlag, remedy, *f.repo, *f.base, *f.head, shown)
 	}
-	list := bounded.Capped(stdout, *maxFlag, "HYGIENE", "finding", remedy)
+	list := bounded.Capped(stdout, *f.maxFlag, "HYGIENE", "finding", remedy)
 	for _, f := range findings {
 		list.Line(fmt.Sprintf("HYGIENE FINDING reason=%s at=%s: %s",
 			oneline.Field(f.Token), oneline.Field(f.At), oneline.Escape(f.Why)))
@@ -166,11 +180,11 @@ func cmdHygiene(args []string, stdout, stderr io.Writer) int {
 
 	if len(findings) == 0 {
 		fmt.Fprintf(stdout, "HYGIENE OK base=%s head=%s paths=%s findings=%d\n",
-			oneline.Field(*base), oneline.Field(*head), oneline.Field(shown), len(findings))
+			oneline.Field(*f.base), oneline.Field(*f.head), oneline.Field(shown), len(findings))
 		return 0
 	}
 	fmt.Fprintf(stderr, "HYGIENE NO base=%s head=%s paths=%s findings=%d\n",
-		oneline.Field(*base), oneline.Field(*head), oneline.Field(shown), len(findings))
+		oneline.Field(*f.base), oneline.Field(*f.head), oneline.Field(shown), len(findings))
 	return 1
 }
 

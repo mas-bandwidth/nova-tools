@@ -14,8 +14,8 @@
 internal/cairn/testdata/bench-b9395d11.md a captured cairn of one recorded session, including its transcript path
 internal/ci/testdata/generality-text/.github/workflows.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality-text/@root.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
-internal/ci/testdata/generality-text/cmd/nova-check/testdata/example-dogfood.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
-internal/ci/testdata/generality-text/cmd/nova-check/testdata/example-dogfood/receipts.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality-text/cmd/nova-dev/testdata/example-dogfood.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality-text/cmd/nova-dev/testdata/example-dogfood/receipts.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality-text/cmd/nova-swarm/testdata/cards.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality-text/cmd/nova-tokens/testdata/example-bench/bus.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality-text/cmd/nova-tokens/testdata/example-bench/bus/from-emma.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts

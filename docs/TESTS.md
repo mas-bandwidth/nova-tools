@@ -271,6 +271,29 @@ cannot demonstrate `floors` by itself. That check compares a derived core with
 the matching source seed it came from; name a core and source pair you own rather
 than borrowing an unrelated `SEED.md` merely to make the command pass.
 
+## nova-dev
+
+Fixture: `cmd/nova-dev/testdata/example-dogfood`, a command reference the
+size of a first run and the receipts two friends left against it.
+
+### First run
+
+```
+$ nova-dev dogfood ledger --cli ./cmd/nova-dev/testdata/example-dogfood/CLI.md --receipts ./cmd/nova-dev/testdata/example-dogfood/receipts
+DOGFOOD tool=nova-example verb=quickstart by=nobody at=- ok=- issue=- open=0
+DOGFOOD tool=nova-example verb=links by=Ada at=2026-09-18T09:00:00Z ok=yes issue=- open=0
+DOGFOOD tool=nova-example verb=nocode by=Lin at=2026-09-18T10:15:00Z ok=no issue=1301 open=1
+DOGFOOD tool=nova-dev verb=dogfood ledger by=nobody at=- ok=- issue=- open=0
+DOGFOOD tool=nova-dev verb=dogfood record by=nobody at=- ok=- issue=- open=0
+DOGFOOD tool=nova-dev verb=dogfood gate by=nobody at=- ok=- issue=- open=0
+DOGFOOD tool=nova-dev verb=hygiene by=nobody at=- ok=- issue=- open=0
+DOGFOOD OK verbs=7 dogfooded=2 by-nonauthor=1 open-edges=1 unfiled=0 unmatched=0
+```
+
+`record` appends one receipt and checks its spelling against the same list
+the ledger reads; `gate` is the same read with an exit code, for the release
+lane to call.
+
 ### hygiene, on a branch
 
 The four checks the accept gate runs, over a two-commit lab: `main` with one
@@ -278,13 +301,13 @@ file, `card` with the fix on it and then a commit by somebody outside the pool
 that also strays outside the card's paths.
 
 ```
-$ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --paths "sign/**"
+$ nova-dev hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --paths "sign/**"
 HYGIENE OK base=main head=card paths=sign/** findings=0
 
-$ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --paths "sign/**" --max 2
+$ nova-dev hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --paths "sign/**" --max 2
 HYGIENE FINDING reason=identity at=0a19082d2973: author someone@elsewhere.example and committer someone@elsewhere.example are not the pool's identity
 HYGIENE FINDING reason=out-of-path at=elsewhere.go: this path matches none of the card's declared PATHS:
-HYGIENE MORE kind=finding shown=2 total=4 nova-check hygiene --repo "." --base "main" --head "card" --identity "Ada <ada@example.com>" --paths "sign/**" --max 0
+HYGIENE MORE kind=finding shown=2 total=4 nova-dev hygiene --repo "." --base "main" --head "card" --identity "Ada <ada@example.com>" --paths "sign/**" --max 0
 HYGIENE NO base=main head=card paths=sign/** findings=4
 ```
 
@@ -293,7 +316,7 @@ back — it is the command that prints the rest, and it carries the
 `--identity`, `--paths` and `--kind` without which it would not run at all:
 
 ```
-$ nova-check hygiene --repo "." --base "main" --head "card" --identity "Ada <ada@example.com>" --paths "sign/**" --max 0
+$ nova-dev hygiene --repo "." --base "main" --head "card" --identity "Ada <ada@example.com>" --paths "sign/**" --max 0
 HYGIENE FINDING reason=identity at=0a19082d2973: author someone@elsewhere.example and committer someone@elsewhere.example are not the pool's identity
 HYGIENE FINDING reason=out-of-path at=elsewhere.go: this path matches none of the card's declared PATHS:
 HYGIENE FINDING reason=out-of-path at=elsewhere/x.go: this path matches none of the card's declared PATHS:
@@ -305,16 +328,16 @@ HYGIENE NO base=main head=card paths=sign/** findings=4
 than matched against nobody:
 
 ```
-$ nova-check hygiene --repo . --base main --head card --identity "Ada <<ada@example.com>>"
-nova-check hygiene: --identity "Ada <<ada@example.com>>": the email carries an angle bracket; want `Name <email>`, one pair; run: nova-check help
+$ nova-dev hygiene --repo . --base main --head card --identity "Ada <<ada@example.com>>"
+nova-dev hygiene: --identity "Ada <<ada@example.com>>": the email carries an angle bracket; want `Name <email>`, one pair; run: nova-dev help
 ```
 
 `--kind` is a card kind the toolchain declares, and there is no default one. One
 it does not hold is refused by name rather than left to unlock nothing:
 
 ```
-$ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --kind fix-with-red-test
-nova-check hygiene: --kind "fix-with-red-test" is not a kind this tool declares; one of: fix-red, transcript-test, rebase, sweep, mutation-kill, guard, read, probe, text, tone, report; run: nova-check help
+$ nova-dev hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --kind fix-with-red-test
+nova-dev hygiene: --kind "fix-with-red-test" is not a kind this tool declares; one of: fix-red, transcript-test, rebase, sweep, mutation-kill, guard, read, probe, text, tone, report; run: nova-dev help
 ```
 
 ## nova-self-talk

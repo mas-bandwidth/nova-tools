@@ -955,9 +955,6 @@ func TestMain(m *testing.M) {
 	if largeSelf500Dir != "" {
 		_ = os.RemoveAll(largeSelf500Dir)
 	}
-	if hygLabGoldenDir != "" {
-		_ = os.RemoveAll(hygLabGoldenDir)
-	}
 	if stLabGoldenDir != "" {
 		_ = os.RemoveAll(stLabGoldenDir)
 	}

@@ -6,7 +6,8 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | --- | --- | --- | --- |
 | `nova-bus/` | coordination bus inbox, send, and wait CLI | `go test ./cmd/nova-bus` | `go test ./cmd/nova-bus` |
 | `nova-cairn/` | dusk memory distillation CLI | `go test ./cmd/nova-cairn` | `go test ./cmd/nova-cairn` |
-| `nova-check/` | codebase hygiene and constraint check CLI | `go test ./cmd/nova-check` | `go test ./cmd/nova-check` |
+| `nova-check/` | record and repository check CLI | `go test ./cmd/nova-check` | `go test ./cmd/nova-check` |
+| `nova-dev/` | this repository's own development process: dogfood, convergence, hygiene CLI | `go test ./cmd/nova-dev` | `go test ./cmd/nova-dev` |
 | `nova-ci/` | CI slowtests budget and check CLI, and ci-ok's run receipt | `go test ./cmd/nova-ci` | `go test ./cmd/nova-ci` |
 | `nova-config/` | permanent configuration store (Postgres), friends and machines, applied into Redis | `go test ./cmd/nova-config` | `go test ./cmd/nova-config` |
 | `nova-fuse/` | workspace isolation and boundary CLI | `go test ./cmd/nova-fuse` | `go test ./cmd/nova-fuse` |

@@ -1,0 +1,4 @@
+# Migrated counted package ledger; original row keys preserved.
+# ceiling: 2
+cmd/nova-dev/testdata/example-dogfood/receipts/20260918T090000Z-nova-example-links-ada.json:ada 1
+cmd/nova-dev/testdata/example-dogfood/receipts/20260918T101500Z-nova-example-nocode-lin.json:lin 1
