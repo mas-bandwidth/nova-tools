@@ -1604,7 +1604,7 @@ func lintBrief(verbName, brief string, rs ruleSet, max int, stderr io.Writer) in
 
 func (a *app) cmdRelease(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("release")
-	reason := fs.String("reason", "", "what you looked at and found: recorded on the sentinel or held card, and in a sentinel's notification")
+	reason := fs.String("reason", "", "what you looked at and found: recorded on the sentinel or held card, and in a sentinel's notification; a sentinel not yet reached is released when each card it waits for has landed, was dropped, or is in flight (taken, in review or merging), and refused naming the first that has not started")
 	ans := fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
 	ids, err := parse(fs, args)
 	if err != nil {
