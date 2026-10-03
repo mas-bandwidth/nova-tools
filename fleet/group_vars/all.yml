@@ -25,8 +25,11 @@ nova_launchd_domain: auto
 nova_systemd_scope: user
 # Units of another tool's (com.nova.loop.<name>.plist, nova-loop-<name>.service
 # not written by loops.yml) to retire by name; every other such unit is left
-# alone and listed.
-nova_retire_units: ['disk-guard-studio']
+# alone and listed. Empty on purpose: a loop this play does not render refuses
+# under 200 GiB and, under 100 GiB, stops the other loop units and leaves
+# com.nova.loop.disk-guard up. The disk-guard row this play adds only warns at
+# 10 GiB. A name here would retire that loop and drop the stop.
+nova_retire_units: []
 
 # The disk guard loops.yml adds to every machine (nova-swarm disk-guard): on
 # when true, run every nova_disk_guard_every seconds, with these arguments

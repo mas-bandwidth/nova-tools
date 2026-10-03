@@ -590,13 +590,71 @@ func TestDiskGuardProcPathsReadsCwdAndOpenFiles(t *testing.T) {
 	assert.Error(t, err, "an unreadable /proc is no empty list")
 }
 
-// diskguard resolves lsof when /usr/sbin/lsof exists, falling back to /usr/sbin/lsof
-// when PATH lacks it (#5198).
+// resolveLsof uses lsof on PATH, else /usr/sbin/lsof when that file exists, else the bare name.
+// The lookups are injected, so the fallback is what this test fails on when it is removed.
 func TestDiskGuardResolvesLsofWhenUsrSbinLsofExists(t *testing.T) {
-	if _, err := os.Stat("/usr/sbin/lsof"); err != nil {
-		t.Skip("/usr/sbin/lsof does not exist on this machine")
+	t.Parallel()
+	miss := func(string) (string, error) { return "", errors.New("not found") }
+	hit := func(name string) (string, error) {
+		if name != "lsof" {
+			return "", errors.New("not found")
+		}
+		return "/opt/bin/lsof", nil
 	}
-	t.Setenv("PATH", "")
-	assert.Equal(t, "/usr/sbin/lsof", resolveLsof())
+	there := func(name string) (os.FileInfo, error) {
+		if name == "/usr/sbin/lsof" {
+			return nil, nil
+		}
+		return nil, os.ErrNotExist
+	}
+	gone := func(string) (os.FileInfo, error) { return nil, os.ErrNotExist }
+	cases := []struct {
+		name string
+		look func(string) (string, error)
+		stat func(string) (os.FileInfo, error)
+		want string
+	}{
+		{"PATH miss and the absolute file exists", miss, there, "/usr/sbin/lsof"},
+		{"PATH hit wins over the absolute file", hit, there, "/opt/bin/lsof"},
+		{"neither, the bare name", miss, gone, "lsof"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, resolveLsofFrom(tc.look, tc.stat))
+		})
+	}
 }
 
+// The sweeper warns at guardFloorGiB and does not stop loop units. A free reading under
+// 100 GiB or under 200 GiB is still only that warn, and only when it is also under the floor.
+func TestDiskGuardSweeperOnlyWarnsAtItsFloor(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		free uint64
+		warn bool
+	}{
+		{"under the warn", 5 * gib, true},
+		{"under 100 GiB and over the warn", 50 * gib, false},
+		{"under 200 GiB and over the warn", 150 * gib, false},
+		{"over 200 GiB", 250 * gib, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			g, out := dgGuard(t)
+			g.floor = int64(guardFloorGiB) * gib
+			g.free = func(string) (uint64, error) { return tc.free, nil }
+			assert.Equal(t, 0, g.run())
+			assert.Equal(t, 10, guardFloorGiB)
+			if tc.warn {
+				assert.Contains(t, out.String(), "DISK-GUARD WARN")
+			} else {
+				assert.NotContains(t, out.String(), "WARN")
+			}
+			assert.NotContains(t, out.String(), "STOP")
+			assert.Contains(t, out.String(), "DISK-GUARD OK")
+		})
+	}
+}
