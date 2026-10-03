@@ -29,17 +29,18 @@ import (
 // `lint --card` checks the tokens `kind-declared`, `paths-declared`,
 // `paused`, and `test-named`. That is what this file is.
 //
-// Three readers, one grammar. `cut` renders the lines, the gate reads them at
-// `accept`, and the lint checks them on the bench before a token is spent. A lint that
-// accepted a line the gate refuses would send a card out to die at `accept`; a lint
-// that refused a line the gate reads would stop a card that was fine. So the rules
-// below are the parser's rules:
+// Three readers, one grammar. `cut` renders the lines, `internal/pulse/cardheader.go`
+// reads them at the gate, and the lint checks them on the bench before a token is spent.
+// A lint that accepted a line the gate refuses would send a card out to die at `accept`;
+// a lint that refused a line the gate reads would stop a card that was fine. So the
+// rules below are the parser's rules, restated with the parser cited beside each one:
 //
 //   - the block starts at line 2 and ends at the first non-empty line that is not
-//     `KEY: value`, blank lines skipped, unknown keys read past;
+//     `KEY: value`, blank lines skipped, unknown keys read past (cardheader.go:63-76);
 //   - the key is one word and a colon at column 0 and nowhere else:
 //     `^[A-Za-z][A-Za-z0-9-]*:`.
-//   - `PATHS: none` declares no paths; otherwise the value is comma-separated;
+//   - `PATHS: none` declares no paths; otherwise the value is comma-separated
+//     (cardheader.go:82-88);
 //   - TEST is read by cardhdr.ParseTest, the one TEST grammar the gate runs:
 //     `none <why>` is a declaration where the kind allows it (a bare `none` is
 //     refused: the reader must see why); otherwise `[-tags <tags>] <package>
@@ -128,8 +129,8 @@ type headerField struct {
 // where they sit. The gate will never read them, so the card writer doesn't
 // discover it at the gate.
 //
-// A second line with the same key is recorded, not dropped. Silently taking the
-// first of two `KIND:` lines is the one answer a writer cannot act on.
+// A SECOND LINE WITH THE SAME KEY IS RECORDED, NOT DROPPED. Silently taking the first of
+// two `KIND:` lines is the one answer a writer cannot act on.
 func cardHeaderBlock(raw []byte) (block map[string]headerField, stranded map[string]int) {
 	block, stranded = map[string]headerField{}, map[string]int{}
 	sc := bufio.NewScanner(bytes.NewReader(raw))
@@ -191,9 +192,18 @@ var cardKeyCheck = map[string]string{
 	"SOURCE": "kind-declared",
 }
 
-// validGlobs is the PATHS: rule, implemented by `hygiene.ValidatePaths` itself
-// rather than by restating it. The function used to write the rule out a second
-// time, and a copy drifted in both directions within a day.
+// validGlobs is the PATHS: rule, and it is `hygiene.ValidatePaths` ITSELF, not a
+// restatement of it (#1853, Emma's item-4 dogfood).
+//
+// This function used to write the rule out a second time, because T02's validator was
+// not on `dev` when the checks were first written, and the comment above said in so many
+// words that it should become a call the day T02 landed. T02 landed, this did not, and
+// the copy drifted in BOTH directions within a day: it let a Windows drive letter
+// (`C:/Windows/system32/evil.go`) through as repo-relative, it had no cap at all where
+// the rule's cap is eight (SPEC-TOOLWORK.md:579-580), and it refused `*.go` and
+// `**/*.go`, which the validator clears. A card writer got a different answer from the
+// lint on the bench and from the gate at `accept`, which is the one thing these checks
+// exist to prevent.
 func validGlobs(globs []string) (string, bool) {
 	if err := hygiene.ValidatePaths(globs); err != nil {
 		return err.Error(), false
@@ -271,7 +281,7 @@ func LintCardHeader(raw []byte, trust TrustState, required bool) []CardHeaderFin
 		// AN EMPTY ENTRY IS NOT A SKIPPABLE ONE. `PATHS: , , ` used to have each empty
 		// entry `continue`d past and the line called fine, which is the worst of the
 		// three answers a reader could get: the line declares no glob and it is not
-		// `none`.
+		// `none` (#1853, Emma's item-4 dogfood).
 		var globs []string
 		empty := false
 		for _, g := range strings.Split(paths.value, ",") {
