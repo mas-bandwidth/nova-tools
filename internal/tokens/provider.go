@@ -39,7 +39,7 @@ func KnownParser(name string) bool {
 const zoneDeclaration = "# timezone:"
 
 // A shape is ONE provider's export, and the parser is chosen by the kind the caller
-// declared: `--provider google:<name>=<file>` says this file uses the Google parser, and the account that
+// declared: `--provider google:<name>=<file>` says which parser reads this file and which account
 // downloaded it. One union of every provider's column names would accept a Google export
 // declared as xAI and write `provider:xai` beside numbers that parser never read -- the
 // column that makes a number traceable would name the wrong source.

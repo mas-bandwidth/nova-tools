@@ -343,8 +343,8 @@ func ParseDayFile(name, text string) (DayFile, []Finding) {
 		}
 	}
 	// The version line carries `turns=` as an integer or `-`. An empty value is
-	// present but says nothing; it passes the check that only rejects `!= "" && != Dash`.
-	// A negative value is not a count of messages and is refused.
+	// present but says nothing, and a negative one is not a count of messages; the gate
+	// below skips only `-`, and the parse refuses an empty value, a non-number and a negative.
 	if _, ok := fields["turns"]; ok && d.Turns != Dash {
 		n, err := strconv.Atoi(d.Turns)
 		switch {
