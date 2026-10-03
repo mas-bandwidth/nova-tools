@@ -94,13 +94,18 @@ func TestSessionRefusesWithoutTheSessionAndOnABadDay(t *testing.T) {
 	wantContains(t, r.stderr, "cannot read")
 }
 
-// TestHelpNamesTheSessionVerb: a verb a reader cannot find is a verb behind the source.
+// TestHelpNamesTheSessionVerb: a verb a reader cannot find is a verb behind the source, and
+// the help books no fleet role: the row is the model the transcript names or the caller's
+// --role (docs/STANDARD.md section 4), so the banner's <model>/coordinator row is a
+// regression this pin refuses.
 func TestHelpNamesTheSessionVerb(t *testing.T) {
 	t.Parallel()
 
 	r := invoke(t, "help")
 	wantExit(t, r, 0)
 	wantContains(t, r.stdout, "nova-tokens session --claude-session <jsonl>")
+	wantContains(t, r.stdout, "[--role <name>] [--weights <in,cw,cr,out>]")
+	wantNotContains(t, r.stdout, "<model>/coordinator")
 
 	h := invoke(t, "session", "-h")
 	wantExit(t, h, 0)
