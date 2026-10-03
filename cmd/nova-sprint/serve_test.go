@@ -476,19 +476,56 @@ func TestTheShellCompressesItsAnswerForAClientThatTakesGzip(t *testing.T) {
 }
 
 // The server checks no credential, so it listens on one address of its machine
-// and never on every network.
+// and never on every network. A name, a public address and a link-local address
+// are refused with that wording before net.Listen (docs/SPEC-SPRINT.md section
+// 14). Loopback, a private address and the tailnet are not refused, and this
+// test does not bind them.
 
 func TestTheServerDoesNotListenOnEveryNetwork(t *testing.T) {
 	t.Parallel()
 	a := newApp(func(string) string { return "" })
 	t.Cleanup(a.close)
 	var out bytes.Buffer
-	every4, every6 := net.JoinHostPort(net.IPv4zero.String(), "6390"), net.JoinHostPort(net.IPv6unspecified.String(), "6390")
-	for _, addr := range []string{":6390", every4, every6, "6390", ""} {
+	every4 := net.JoinHostPort(net.IPv4zero.String(), "6390")
+	every6 := net.JoinHostPort(net.IPv6unspecified.String(), "6390")
+	public := net.JoinHostPort(net.IPv4(203, 0, 113, 7).String(), "9")
+	link4 := net.JoinHostPort(net.IPv4(169, 254, 1, 1).String(), "9")
+	link6 := net.JoinHostPort((net.IP{0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}).String(), "9")
+	name := net.JoinHostPort("not-an-address.invalid", "9")
+	local := net.JoinHostPort("localhost", "9")
+	for _, tc := range []struct{ name, addr string }{
+		{"empty host", ":6390"},
+		{"unspecified v4", every4},
+		{"unspecified v6", every6},
+		{"public", public},
+		{"name", name},
+		{"localhost", local},
+		{"link-local v4", link4},
+		{"link-local v6", link6},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := a.listen(tc.addr, "mem:x", &out)
+			if assert.Error(t, err, tc.addr) {
+				assert.Contains(t, err.Error(), "does not listen on every network", tc.addr)
+				assert.NotContains(t, err.Error(), "listen tcp", tc.addr)
+			}
+		})
+	}
+	for _, addr := range []string{"6390", ""} {
 		err := a.listen(addr, "mem:x", &out)
-		assert.Error(t, err, addr)
+		if assert.Error(t, err, addr) {
+			assert.Contains(t, err.Error(), "wants host:port", addr)
+			assert.NotContains(t, err.Error(), "listen tcp", addr)
+		}
 	}
 	assert.Empty(t, out.String(), "nothing was started")
+	for _, ip := range []net.IP{
+		net.IPv4(127, 0, 0, 1), net.IPv6loopback,
+		net.IPv4(10, 0, 0, 2), net.IPv4(192, 168, 1, 2), net.IPv4(172, 16, 0, 2),
+		net.IPv4(100, 64, 1, 2),
+	} {
+		assert.Empty(t, listenRefused(ip.String()), "%s", ip)
+	}
 }
 
 // brief --rules sent to the server's loopback listener (the coordinator's verbs) is

@@ -250,18 +250,34 @@ func takesGzip(accept string) bool {
 	return false
 }
 
+// listenRefused is why host is not an address the server binds, "" when it is.
+// The decision is listenable's, so the server and the dashboard refuse the same
+// addresses: a name, a public address, a link-local address and an unspecified
+// address. Loopback, a private address and the tailnet stay. docs/SPEC-SPRINT.md
+// section 14, The server. The caller returns this before net.Listen.
+func listenRefused(host string) string {
+	const refused = "--listen wants one address of this machine (its address on the fleet's private network, or 127.0.0.1): the server checks no credential, so it does not listen on every network"
+	if host == "" || listenable(net.ParseIP(host)) != "" {
+		return refused
+	}
+	return ""
+}
+
 // listen starts the server on the address for the store the run loop ticks,
 // and returns once it is listening. The address is the coordinator's machine's
 // on the fleet's private network, which is what keeps others out: the server
 // checks no credential (the owner, 2026-10-01: "I am OK with relying on tailnet
-// as secure"), so an address every network can reach is refused.
+// as secure"), so an address every network can reach is refused
+// (docs/SPEC-SPRINT.md section 14, The server). The refusal is returned before
+// a socket is opened. The coordinator's verbs stay on loopback; a private or
+// tailnet address is the workers' listener beside that loopback listener.
 func (a *app) listen(addr, store string, stdout io.Writer) error {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
 		return fmt.Errorf("--listen wants host:port, found %s", addr)
 	}
-	if ip := net.ParseIP(host); host == "" || ip != nil && ip.IsUnspecified() {
-		return errors.New("--listen wants one address of this machine (its address on the fleet's private network, or 127.0.0.1): the server checks no credential, so it does not listen on every network")
+	if why := listenRefused(host); why != "" {
+		return errors.New(why)
 	}
 	// the fleet's listener takes the workers' verbs; the loopback one, on the same port,
 	// takes the coordinator's (any verb the server runs). An address that is loopback

@@ -2581,7 +2581,10 @@ read's. A member's decision that reaches a server with no `--decide` is kept on 
 (and routes the finish when its class's bar on the card is set), and recorded nowhere.
 
 The address is one address of the coordinator's machine on the fleet's private network; an
-address every network can reach is refused. The server checks no credential (the owner: "I am OK
+address every network can reach is refused. A name, a public address, a link-local address and
+an unspecified address are refused before a socket is opened. Loopback, a private address and
+the tailnet address are the ones that listen, and the coordinator's verbs listen on loopback at
+the same port. The server checks no credential (the owner: "I am OK
 with relying on tailnet as secure"): what can reach the address can run a worker's verb as any
 worker, and nothing else.
 
