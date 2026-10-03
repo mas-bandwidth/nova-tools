@@ -19,6 +19,17 @@ const DefaultStageTimeout = 120 * time.Second
 // stageFetchRetryDelay is the pause before the one retry of the fetch of a head the stage lacks.
 const stageFetchRetryDelay = 2 * time.Second
 
+// defaultBranchPrefix, defaultCommitterName and defaultCommitterEmail are what a stage carries
+// while the callers that build StageOptions pass no BranchPrefix, CommitterName and
+// CommitterEmail: the strings the fleet stages under today, in one place, so the harness names
+// no person of its own the day those callers pass the card's actor or the sprint's --actor
+// (docs/STANDARD.md section 4).
+const (
+	defaultBranchPrefix   = "rowan"
+	defaultCommitterName  = "Rowan"
+	defaultCommitterEmail = "rowan@mas-bandwidth.com"
+)
+
 // ErrStageTimeout is returned when card staging exceeds the hard timeout.
 var ErrStageTimeout = errors.New("stage-timeout")
 
@@ -56,8 +67,8 @@ const defaultProbeBase = "https://github.com"
 
 // CardRepoURL is the clone URL a REPO: value names: a URL or a local path as written,
 // an owner/name as the forge's https URL ending .git (the shape base-repo: lines and the
-// URL fallback carry, so FindBenchMirror resolves all three to ~/nova-bench/mirror/<name>.git).
-// "" when the value is none of those.
+// URL fallback carry, so FindBenchMirror resolves all three to one mirror,
+// <mirrorRoot>/<name>.git). "" when the value is none of those.
 func CardRepoURL(value string) string {
 	v := strings.TrimSpace(value)
 	switch {
@@ -139,27 +150,37 @@ func CardNamesRepo(card []byte) bool {
 }
 
 // CardStageBranch is the branch the staged checkout is on, so the card commits on a named
-// branch rather than a detached HEAD: rowan/<label> from line 1 (RESULT: <label> sha=...),
-// rowan/card when line 1 names no label.
+// branch rather than a detached HEAD: <prefix>/<label> from line 1 (RESULT: <label> sha=...),
+// <prefix>/card when line 1 names no label. The prefix is defaultBranchPrefix, what a caller
+// that passes no StageOptions.BranchPrefix stages under.
 func CardStageBranch(card []byte) string {
-	first, _, _ := strings.Cut(string(card), "\n")
+	return cardStageBranch(string(card), defaultBranchPrefix)
+}
+
+// cardStageBranch is CardStageBranch under the caller's branch prefix: the actor the card or
+// the sprint names, never a person the harness names (docs/STANDARD.md section 4).
+func cardStageBranch(card, prefix string) string {
+	first, _, _ := strings.Cut(card, "\n")
 	first = strings.TrimSpace(first)
 	first = strings.TrimPrefix(first, "RESULT:")
 	first = strings.TrimPrefix(first, "RESULT")
 	if f := strings.Fields(first); len(f) > 0 && cardLabelRE.MatchString(f[0]) {
-		return "rowan/" + f[0]
+		return prefix + "/" + f[0]
 	}
-	return "rowan/card"
+	return prefix + "/card"
 }
 
 // FindBenchMirror finds the path to the bench's local mirror for baseRepo.
 // Candidate locations:
 // - baseRepo itself, if it is a directory on disk that exists
-// - $HOME/nova-bench/mirror/<repo>.git
-// - $HOME/nova-bench/mirror/<repo>
+// - <mirrorRoot>/<repo>.git
+// - <mirrorRoot>/<repo>
 // - /tmp/<repo>-mirror.git
 // - /tmp/<repo>.git
-func FindBenchMirror(benchHome, baseRepo string) string {
+// An empty mirrorRoot leaves its two candidates out, so a bench with no mirror directory finds
+// no mirror: the root is the caller's configuration (StageOptions.MirrorRoot), never a path the
+// harness joins (docs/STANDARD.md section 4).
+func FindBenchMirror(mirrorRoot, baseRepo string) string {
 	if baseRepo == "" {
 		return ""
 	}
@@ -168,21 +189,15 @@ func FindBenchMirror(benchHome, baseRepo string) string {
 			return baseRepo
 		}
 	}
-	if benchHome == "" {
-		benchHome = os.Getenv("HOME")
-		if benchHome == "" {
-			benchHome, _ = os.UserHomeDir()
-		}
-	}
 	repoName := filepath.Base(baseRepo)
 	repoName = strings.TrimSuffix(repoName, ".git")
 	repoName = strings.TrimSuffix(repoName, "-mirror")
 
 	var candidates []string
-	if benchHome != "" {
+	if mirrorRoot != "" {
 		candidates = append(candidates,
-			filepath.Join(benchHome, "nova-bench", "mirror", repoName+".git"),
-			filepath.Join(benchHome, "nova-bench", "mirror", repoName),
+			filepath.Join(mirrorRoot, repoName+".git"),
+			filepath.Join(mirrorRoot, repoName),
 		)
 	}
 	candidates = append(candidates,
@@ -292,9 +307,23 @@ type StageOptions struct {
 	Card      []byte
 	TargetDir string // e.g. <jobDir>/repo
 	JobDir    string // <jobDir>, where RESULT.md is written on timeout
-	BenchHome string
+	BenchHome string // the bench's home directory: the caller derives MirrorRoot from it
 	BenchName string
 	Timeout   time.Duration
+	// MirrorRoot is the directory the bench's mirrors live under, so a mirror is
+	// <MirrorRoot>/<repo>.git or <MirrorRoot>/<repo>. Empty is no mirror root, and a card
+	// whose repository is remote is then refused rather than cloned from the network
+	// (docs/STANDARD.md section 4: a fleet's mirror root is its own configuration).
+	MirrorRoot string
+	// BranchPrefix, CommitterName and CommitterEmail are the branch the staged checkout is on
+	// and the committer its commits carry: the card's actor or the sprint's --actor, all three
+	// of them or none. A caller that passes none stages under defaultBranchPrefix,
+	// defaultCommitterName and defaultCommitterEmail until it passes them; a caller that passes
+	// some and leaves one empty is refused with the remedy naming --actor, never defaulted to
+	// one person (stageIdentity).
+	BranchPrefix   string
+	CommitterName  string
+	CommitterEmail string
 	// Base and Branch, when set, are the frame's (internal/cardcontract): the repository,
 	// ref and sha the member's packet names and the branch it pushes, staged in place of
 	// what the card's header lines say (docs/SPEC-CARD-CONTRACT.md layer 2).
@@ -323,6 +352,33 @@ type StageResult struct {
 	// Clone, Fetch and Checkout sum their Git command times; Clone includes
 	// the initial checkout, and Fetch excludes probes and the retry wait.
 	Clone, Fetch, Checkout time.Duration
+}
+
+// stageIdentity is the branch prefix and the committer a stage carries (docs/STANDARD.md
+// section 4: the harness names no person, the caller's actor does). It reads all three of
+// StageOptions.BranchPrefix, .CommitterName and .CommitterEmail, or none of them: a caller that
+// passes none stages under the build-time defaults, which is what the callers that build
+// StageOptions do until they pass them, and a caller that passes some and leaves one empty is
+// refused naming every empty one and the flag the three come from, never defaulted to one
+// person.
+func stageIdentity(opts StageOptions) (prefix, committerName, committerEmail string, err error) {
+	if opts.BranchPrefix == "" && opts.CommitterName == "" && opts.CommitterEmail == "" {
+		return defaultBranchPrefix, defaultCommitterName, defaultCommitterEmail, nil
+	}
+	var missing []string
+	for _, f := range []struct{ name, value string }{
+		{"StageOptions.BranchPrefix", opts.BranchPrefix},
+		{"StageOptions.CommitterName", opts.CommitterName},
+		{"StageOptions.CommitterEmail", opts.CommitterEmail},
+	} {
+		if f.value == "" {
+			missing = append(missing, f.name)
+		}
+	}
+	if len(missing) > 0 {
+		return "", "", "", fmt.Errorf("staging refused: %s empty: the branch and the committer a card stages under are the actor's, never one person's; remedy: pass the card's actor or the sprint's --actor in all three of StageOptions.BranchPrefix, .CommitterName and .CommitterEmail", strings.Join(missing, ", "))
+	}
+	return opts.BranchPrefix, opts.CommitterName, opts.CommitterEmail, nil
 }
 
 // StageCard stages the repository for a card into TargetDir using the bench mirror.
@@ -360,6 +416,15 @@ func StageCard(opts StageOptions) (StageResult, error) {
 			return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Ref: cb.Ref}, err
 		}
 	}
+	prefix, committerName, committerEmail, err := stageIdentity(opts)
+	if err != nil {
+		return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Ref: cb.Ref}, err
+	}
+	// The branch is switched to with `git switch -C`, ahead of the separator, so a prefix
+	// that git would read as an option is refused by name here, as every other staged value is.
+	if err := refuseOptionLike("branch prefix", prefix); err != nil {
+		return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Ref: cb.Ref}, err
+	}
 
 	bench := opts.BenchName
 	if bench == "" {
@@ -383,7 +448,7 @@ func StageCard(opts StageOptions) (StageResult, error) {
 		secs = 1
 	}
 
-	mirror := FindBenchMirror(opts.BenchHome, baseRepo)
+	mirror := FindBenchMirror(opts.MirrorRoot, baseRepo)
 	if mirror == "" && isRemoteRepo(baseRepo) {
 		return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Ref: cb.Ref}, fmt.Errorf("staging refused: no bench mirror for %s: a card may not clone directly from github without a bench mirror", baseRepo)
 	}
@@ -438,7 +503,7 @@ func StageCard(opts StageOptions) (StageResult, error) {
 	}
 
 	// Fetch and checkout baseSha (else the BASE: ref) on the card's branch.
-	branch := CardStageBranch(opts.Card)
+	branch := cardStageBranch(string(opts.Card), prefix)
 	if opts.Branch != "" {
 		if err := refuseOptionLike("branch", opts.Branch); err != nil {
 			return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Ref: cb.Ref, Mirror: mirror, Wall: time.Since(start)}, err
@@ -506,8 +571,8 @@ func StageCard(opts StageOptions) (StageResult, error) {
 	}
 	head := strings.TrimSpace(string(headOut))
 
-	_ = stageCmd(ctx, "-C", opts.TargetDir, "config", "user.name", "Rowan").Run()
-	_ = stageCmd(ctx, "-C", opts.TargetDir, "config", "user.email", "rowan@mas-bandwidth.com").Run()
+	_ = stageCmd(ctx, "-C", opts.TargetDir, "config", "--", "user.name", committerName).Run()
+	_ = stageCmd(ctx, "-C", opts.TargetDir, "config", "--", "user.email", committerEmail).Run()
 
 	return StageResult{
 		BaseRepo: baseRepo,

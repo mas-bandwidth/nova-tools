@@ -38,7 +38,7 @@ type StagingIdentity struct {
 // so a bench refusing for it is an unconverged bench, never a hand-written
 // file. The card wrapper carries the refusal line, this remedy included, onto
 // the card record as its why.
-const PoolIdentityRemedy = "remedy: make -C fleet converge (rowan-tools) writes the pool identity.tsv"
+const PoolIdentityRemedy = "remedy: make -C fleet converge writes the pool identity.tsv"
 
 // LoadPoolIdentity reads the pool's identity.tsv: a header
 // `owner\tname\temail` plus the pool's identity row. A pool with no identity

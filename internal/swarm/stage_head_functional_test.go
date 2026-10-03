@@ -61,7 +61,7 @@ func (g *headRig) stage(t *testing.T, sha, commitOnly string, refAt bool) (Stage
 	target := filepath.Join(g.root, "jobs", "c", "repo")
 	return StageCard(StageOptions{
 		Card: []byte("c: the card\nbase-repo: " + headTestURL + "\nbase-sha: " + sha + "\n"), TargetDir: target,
-		JobDir: filepath.Dir(target), BenchHome: g.home, BenchName: "testhost", Timeout: 30 * time.Second,
+		JobDir: filepath.Dir(target), BenchHome: g.home, MirrorRoot: filepath.Dir(g.mirror), BenchName: "testhost", Timeout: 30 * time.Second,
 		fetchRetryDelay: time.Millisecond,
 		git: func(ctx context.Context, args ...string) *exec.Cmd {
 			if commitOnly != "" && args[0] == "clone" {

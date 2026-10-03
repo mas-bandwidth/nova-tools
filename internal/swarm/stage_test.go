@@ -2,7 +2,10 @@ package swarm
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -39,15 +42,22 @@ func TestFindBenchMirror(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
-	mirrorDir := filepath.Join(home, "nova-bench", "mirror", "nova-tools.git")
+	mirrorRoot := filepath.Join(home, "nova-bench", "mirror")
+	mirrorDir := filepath.Join(mirrorRoot, "nova-tools.git")
 	require.NoError(t, os.MkdirAll(mirrorDir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(mirrorDir, "HEAD"), []byte("ref: refs/heads/dev\n"), 0o644))
 
-	found := FindBenchMirror(home, "https://example.com/mas-bandwidth/nova-tools.git")
+	// The root the caller seeds is the root the bench's mirror lives under, so the option
+	// resolves the repository to the mirror staging has always cloned from.
+	found := FindBenchMirror(mirrorRoot, "https://example.com/mas-bandwidth/nova-tools.git")
 	require.Equal(t, mirrorDir, found, "expected %s, got %s", mirrorDir, found)
 
-	notFound := FindBenchMirror(home, "https://example.com/mas-bandwidth/nonexistent.git")
+	notFound := FindBenchMirror(mirrorRoot, "https://example.com/mas-bandwidth/nonexistent.git")
 	require.Empty(t, notFound, "expected empty string, got %s", notFound)
+
+	// No root is no mirror: an unset MirrorRoot leaves the root's candidates out.
+	require.Empty(t, FindBenchMirror("", "https://example.com/mas-bandwidth/nonexistent.git"),
+		"an unset mirror root finds a mirror")
 }
 
 func TestStageCardFailsWithoutMirror(t *testing.T) {
@@ -97,17 +107,103 @@ func TestStageCardRefusesACardValueGitWouldReadAsAnOption(t *testing.T) {
 			require.NoError(t, os.MkdirAll(mirror, 0o755))
 			target := filepath.Join(root, "jobs", "card-1", "repo")
 			res, err := StageCard(StageOptions{
-				Card:      []byte(c.card),
-				TargetDir: target,
-				JobDir:    filepath.Join(root, "jobs", "card-1"),
-				BenchHome: filepath.Join(root, "home"),
-				BenchName: "testhost",
-				Timeout:   30 * time.Second,
+				Card:       []byte(c.card),
+				TargetDir:  target,
+				JobDir:     filepath.Join(root, "jobs", "card-1"),
+				BenchHome:  filepath.Join(root, "home"),
+				MirrorRoot: filepath.Dir(mirror),
+				BenchName:  "testhost",
+				Timeout:    30 * time.Second,
 			})
 			require.Error(t, err)
 			assert.False(t, res.Staged)
 			assert.Contains(t, err.Error(), "staging refused: "+c.what+` "--bogus" starts with '-'`)
 			assert.NoDirExists(t, target, "a refused stage left a checkout behind")
+		})
+	}
+}
+
+// gitLine runs git in dir and returns its trimmed output: the read-back of what staging wrote
+// into the clone. The functional tier's execCmd (stage_functional_test.go) is behind its build
+// tag, so a unit test carries its own.
+func gitLine(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "git %s in %s: %v\n%s", strings.Join(args, " "), dir, err, out)
+	return strings.TrimSpace(string(out))
+}
+
+// TestStageBranchAndIdentityComeFromOptions holds docs/STANDARD.md section 4 over staging: the
+// branch the staged checkout is on and the committer its commits carry are the stage options'
+// (StageOptions.BranchPrefix, .CommitterName, .CommitterEmail), read back from the clone. A
+// caller that passes some of the three and leaves one empty is refused naming it and the flag
+// the three come from, and stages nothing; a caller that passes none stages under the declared
+// defaults, which is what the fleet's callers do until they pass them.
+func TestStageBranchAndIdentityComeFromOptions(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	require.NoError(t, os.MkdirAll(src, 0o755))
+	gitLine(t, src, "init", "-q", "-b", "main")
+	gitLine(t, src, "config", "user.name", "source")
+	gitLine(t, src, "config", "user.email", "source@example.com")
+	require.NoError(t, os.WriteFile(filepath.Join(src, "f"), []byte("one\n"), 0o644))
+	gitLine(t, src, "add", "f")
+	gitLine(t, src, "commit", "-q", "-m", "one")
+	sha := gitLine(t, src, "rev-parse", "HEAD")
+	card := []byte("RESULT: gen-card sha=" + sha[:12] + "\nbase-repo: " + src + "\nbase-sha: " + sha + "\n")
+
+	cases := []struct {
+		name                            string
+		prefix, committer, email        string // the three the caller passes
+		wantBranch, wantName, wantEmail string // what the clone carries
+		wantErr                         string
+	}{
+		{
+			name: "the options are the branch and the committer", prefix: "sprint-actor", committer: "Sprint Actor", email: "actor@example.com",
+			wantBranch: "sprint-actor/gen-card", wantName: "Sprint Actor", wantEmail: "actor@example.com",
+		},
+		{
+			name:       "a caller that passes none stages under the declared defaults",
+			wantBranch: defaultBranchPrefix + "/gen-card", wantName: defaultCommitterName, wantEmail: defaultCommitterEmail,
+		},
+		{name: "an empty branch prefix is refused", committer: "Sprint Actor", email: "actor@example.com", wantErr: "StageOptions.BranchPrefix"},
+		{name: "an empty committer name is refused", prefix: "sprint-actor", email: "actor@example.com", wantErr: "StageOptions.CommitterName"},
+		{name: "an empty committer email is refused", prefix: "sprint-actor", committer: "Sprint Actor", wantErr: "StageOptions.CommitterEmail"},
+	}
+	for i, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+
+			target := filepath.Join(root, "jobs", strconv.Itoa(i), "repo")
+			res, err := StageCard(StageOptions{
+				Card:      card,
+				TargetDir: target,
+				JobDir:    filepath.Dir(target),
+				BenchName: "testhost",
+				Timeout:   30 * time.Second,
+
+				BranchPrefix:   c.prefix,
+				CommitterName:  c.committer,
+				CommitterEmail: c.email,
+			})
+			if c.wantErr != "" {
+				require.ErrorContains(t, err, "staging refused: "+c.wantErr+" empty")
+				assert.Contains(t, err.Error(), "--actor", "the remedy names the flag the three come from: %v", err)
+				assert.False(t, res.Staged)
+				assert.NoDirExists(t, target, "a refused stage left a checkout behind")
+				return
+			}
+			require.NoError(t, err, "StageCard: %v", err)
+			assert.True(t, res.Staged)
+			assert.Equal(t, c.wantBranch, res.Branch)
+			assert.Equal(t, c.wantBranch, gitLine(t, target, "rev-parse", "--abbrev-ref", "HEAD"), "the checkout is on the branch the options name")
+			assert.Equal(t, c.wantName, gitLine(t, target, "config", "user.name"), "the clone's committer name is the option's")
+			assert.Equal(t, c.wantEmail, gitLine(t, target, "config", "user.email"), "the clone's committer email is the option's")
 		})
 	}
 }

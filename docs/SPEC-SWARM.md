@@ -365,7 +365,7 @@ re-deriving a tree that is byte-identical for every job on the same head.
 `--reference-if-able` off an on-disk checkout makes a large clone cheap, and
 `--dissociate` copies the objects in. So the rule is **one reference checkout
 per bench**, and every job's clone is built from it: a per-job clone under the
-job directory passes `--reference` off the bench's mirror (`~/nova-bench/mirror/<name>.git`) and then `--dissociate`, so the object graph
+job directory passes `--reference` off the bench's mirror (the mirror root the stage options name, `<mirrorRoot>/<name>.git`) and then `--dissociate`, so the object graph
 is read once and the per-job clone is small.
 
 ### The prompt text is the tool's

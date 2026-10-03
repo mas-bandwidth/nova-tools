@@ -46,12 +46,13 @@ func TestStageCardUsesMirrorAndDissociates(t *testing.T) {
 
 	card := []byte("base-repo: https://example.com/mas-bandwidth/repo.git\nbase-sha: " + sha1 + "\n")
 	res, err := StageCard(StageOptions{
-		Card:      card,
-		TargetDir: target,
-		JobDir:    jobDir,
-		BenchHome: filepath.Join(root, "home"),
-		BenchName: "testhost",
-		Timeout:   30 * time.Second,
+		Card:       card,
+		TargetDir:  target,
+		JobDir:     jobDir,
+		BenchHome:  filepath.Join(root, "home"),
+		MirrorRoot: filepath.Dir(mirror),
+		BenchName:  "testhost",
+		Timeout:    30 * time.Second,
 	})
 	require.NoError(t, err, "StageCard failed: %v", err)
 	require.True(t, res.Staged, "expected Staged=true")
@@ -94,12 +95,13 @@ func TestStageCardTimesOutAndWritesResult(t *testing.T) {
 	card := []byte("base-repo: https://example.com/mas-bandwidth/repo.git\nbase-sha: " + sha1 + "\n")
 	// 1ns timeout ensures immediate context deadline exceeded
 	res, err := StageCard(StageOptions{
-		Card:      card,
-		TargetDir: target,
-		JobDir:    jobDir,
-		BenchHome: filepath.Join(root, "home"),
-		BenchName: "hulk",
-		Timeout:   1 * time.Nanosecond,
+		Card:       card,
+		TargetDir:  target,
+		JobDir:     jobDir,
+		BenchHome:  filepath.Join(root, "home"),
+		MirrorRoot: filepath.Dir(mirror),
+		BenchName:  "hulk",
+		Timeout:    1 * time.Nanosecond,
 	})
 	require.Error(t, err, "expected timeout error")
 	require.ErrorIs(t, err, ErrStageTimeout, "expected ErrStageTimeout, got %v", err)
@@ -151,12 +153,13 @@ func testStageHungCloneEndsAtTheTimeout(t *testing.T) {
 	done := make(chan stageOutcome, 1)
 	go func() {
 		res, err := StageCard(StageOptions{
-			Card:      card,
-			TargetDir: filepath.Join(jobDir, "repo"),
-			JobDir:    jobDir,
-			BenchHome: filepath.Join(root, "home"),
-			BenchName: "hulk",
-			Timeout:   1 * time.Second,
+			Card:       card,
+			TargetDir:  filepath.Join(jobDir, "repo"),
+			JobDir:     jobDir,
+			BenchHome:  filepath.Join(root, "home"),
+			MirrorRoot: filepath.Dir(mirror),
+			BenchName:  "hulk",
+			Timeout:    1 * time.Second,
 		})
 		done <- stageOutcome{res: res, err: err}
 	}()
@@ -215,12 +218,13 @@ func TestStageCardRefusesWhenOriginCannotBeRepointed(t *testing.T) {
 	repointed := false
 	card := []byte("base-repo: https://example.com/owner/repo.git\nbase-sha: " + sha1 + "\n")
 	res, err := StageCard(StageOptions{
-		Card:      card,
-		TargetDir: target,
-		JobDir:    jobDir,
-		BenchHome: filepath.Join(root, "home"),
-		BenchName: "testhost",
-		Timeout:   30 * time.Second,
+		Card:       card,
+		TargetDir:  target,
+		JobDir:     jobDir,
+		BenchHome:  filepath.Join(root, "home"),
+		MirrorRoot: filepath.Dir(mirror),
+		BenchName:  "testhost",
+		Timeout:    30 * time.Second,
 		git: func(ctx context.Context, args ...string) *exec.Cmd {
 			for i, a := range args {
 				if a == "set-url" {
