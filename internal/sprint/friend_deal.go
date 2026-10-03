@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -76,11 +77,97 @@ func FriendCard(c *Card) (name string, ok bool) {
 const friendCardWhy = "a friend's card (its brief says WHO: friend): the tick deals it to a friend up with room, never to a machine"
 
 // FriendSeat is one friend as the tick deals to her: her name, her width (the jobs she
-// works at once, her friends row's) and her status (FriendStatus: up, held or down).
+// works at once, her friends row's), her status (FriendStatus: up, held or down) and her
+// tiers (her nova-config friend row's, copied by friend sync: the tiers she can do).
 type FriendSeat struct {
 	Name   string
 	Width  int
 	Status string
+	Tiers  []string
+}
+
+// A friend's card goes only to a friend who can do it (the owner, 2026-10-03 ~12:42 PM ET:
+// "Now remember that some friends have weaker models. Freddy in particular is more like
+// flash."; ~12:45 PM ET: "There is a responsibility to categorize cards for friends so they
+// match to the set of friends who can do them, default all."): the card's tier (FriendTier)
+// is its category, and the friends who can take it (FriendTakers) are every friend whose
+// tiers include it, or for a card naming one, she alone when hers do. A friend whose row
+// carries no tiers (a roster written before friend sync copied them) takes no card until
+// the next sync writes them.
+
+// FriendTier is the tier a friend's card needs: the tier the coordinator pinned (rework
+// --tier), else the tier its brief's line 1 names, flash when it names none (add refuses a
+// friend's card with none), never the flash-first ladder's (FieldTierNow): her own model
+// runs it.
+func FriendTier(c *Card) string {
+	m, _ := cardhdr.ReadModel(c.F("brief"))
+	return ceilingTier(c, m)
+}
+
+// FriendTakers is the names of the friends who can take the friend's card c, whatever
+// their status: those whose tiers include its tier (FriendTier), only the friend it names
+// when it names one, in name order; none means no friend can, and it waits under the
+// tick's judgment of that tier (TickDeal, FriendTierSubject).
+func FriendTakers(c *Card, seats []FriendSeat) []string {
+	return FriendTakersOf(c.F(FieldWho), FriendTier(c), seats)
+}
+
+// FriendTakersOf is FriendTakers of a card by its who (FieldWho) and tier, as the where
+// record carries them.
+func FriendTakersOf(who, tier string, seats []FriendSeat) []string {
+	name, one := FriendOfRow(who)
+	if !one {
+		name = "" // WhoFriend: any friend
+	}
+	var out []string
+	for _, f := range seats {
+		if (name == "" || f.Name == name) && slices.Contains(f.Tiers, tier) {
+			out = append(out, f.Name)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// FriendTierSubject is the subject the tick's judgment of a friend's tier is filed under:
+// a tier's subject (TierSubject), friend- before the tier, so it is never the routes'.
+func FriendTierSubject(tier string) string { return TierSubject(WhoFriend + "-" + tier) }
+
+// friendTierDecisions are the decisions of that judgment: no route serves a friend, so
+// none is offered; her tiers are nova-config's, and a card's tier is the coordinator's.
+var friendTierDecisions = []string{"look at the card", "drop", "wait"}
+
+// friendTierConds is the tick's judgment of the friends' cards ready that no friend can
+// take (FriendTakers), one per tier, of the kind NNoRoute (a tier nothing serves), closed
+// when a friend can take them or none waits; seats are the friends as the tick read them.
+func friendTierConds(cards []*Card, seats []FriendSeat) []cond {
+	unfilled := map[string][]string{}
+	for _, c := range cards {
+		if c.Col == Ready && !IsSentinel(c) && len(FriendTakers(c, seats)) == 0 {
+			unfilled[FriendTier(c)] = append(unfilled[FriendTier(c)], c.ID)
+		}
+	}
+	var friends []string
+	for _, f := range seats {
+		friends = append(friends, f.Name+" ("+strings.Join(noneIfEmpty(f.Tiers), ",")+")")
+	}
+	slices.Sort(friends)
+	var out []cond
+	for _, tier := range slices.Sorted(maps.Keys(unfilled)) {
+		ids := unfilled[tier]
+		out = append(out, cond{typ: NNoRoute, stream: FriendTierSubject(tier), streamLevel: true, primaries: ids, decisions: friendTierDecisions,
+			what: fmt.Sprintf("%d friend's cards of tier %s wait and no friend who may take them can do tier %s (%s); friends: %s; give a friend the tier (nova-config friend set <friend> --tiers ..., then nova-sprint friend sync), name a friend whose tiers include it, or rework --tier",
+				len(ids), tier, tier, Preview(ids, ", "), strings.Join(noneIfEmpty(friends), ", "))})
+	}
+	return out
+}
+
+// noneIfEmpty is the list, or the one word none when it is empty.
+func noneIfEmpty(l []string) []string {
+	if len(l) == 0 {
+		return []string{"none"}
+	}
+	return l
 }
 
 // Members is the fleet's machines: its rows but the friends' (FriendRow), in row order.
@@ -101,10 +188,11 @@ func friendLoad(s *Snapshot, name string) int {
 }
 
 // FriendDeal deals the friends' cards (in the order given, the deal's stream turns) to
-// the friends up, each within her width: a card naming a friend goes to her while she is
-// up and below her width, and waits ready otherwise; a card for any friend goes to the
-// friend up with the most free width, the first by name among equals, as the machines'
-// rule fills the member with room. Each is its next attempt's work card, created on the
+// the friends up who can take them (FriendTakers: her tiers include the card's tier), each
+// within her width: a card naming a friend goes to her while she is up, below her width
+// and able, and waits ready otherwise; a card for any friend goes to the friend up who can
+// take it with the most free width, the first by name among equals, as the machines' rule
+// fills the member with room. Each is its next attempt's work card, created on the
 // friend's row in working at generation 1 (dealt and taken now: its deadline is the
 // working one), carrying the primary's fix, finding and why as a machine's deal does; its
 // primary moves ready -> working. The friend's row is declared by the plan the first
@@ -112,29 +200,24 @@ func friendLoad(s *Snapshot, name string) int {
 func FriendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) Plan {
 	var p Plan
 	free := map[string]int{}
-	var up []string
 	for _, f := range seats {
 		if f.Status == Up {
 			free[f.Name] = f.Width - friendLoad(s, f.Name)
-			up = append(up, f.Name)
 		}
 	}
-	slices.Sort(up)
 	declared := map[string]bool{}
 	for _, c := range cards {
-		name, ok := FriendCard(c)
-		if !ok || c.Col != Ready || IsSentinel(c) {
+		if _, ok := FriendCard(c); !ok || c.Col != Ready || IsSentinel(c) {
 			continue
 		}
-		if name == "" {
-			for _, f := range up {
-				if free[f] > 0 && (name == "" || free[f] > free[name]) {
-					name = f
-				}
+		name := ""
+		for _, f := range FriendTakers(c, seats) { // in name order: the first among equals
+			if free[f] > 0 && (name == "" || free[f] > free[name]) {
+				name = f
 			}
 		}
-		if name == "" || free[name] <= 0 {
-			continue // no friend it may go to is up with room: it waits ready
+		if name == "" {
+			continue // no friend who can take it is up with room: it waits ready
 		}
 		card := WorkCardID(c.ID, c.Int("attempt")+1)
 		if s.Fleet.Card(card) != nil {

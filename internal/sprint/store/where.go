@@ -34,6 +34,33 @@ type WhereRecord struct {
 	Rev      uint64  `json:"rev"`
 	Held     int     `json:"held"`
 	Landings []int64 `json:"landings,omitempty"`
+	// Friends is the friends' cards not dealt yet (waiting or ready), each with its
+	// tier and who, so where says who can take each (sprint.FriendTakers) reading no card.
+	Friends []FriendWait `json:"friends,omitempty"`
+}
+
+// FriendWait is a friend's card not dealt yet, as where shows it: its id, the tier it
+// needs (sprint.FriendTier), who its brief names (sprint.FieldWho) and its column.
+type FriendWait struct {
+	Card string `json:"card"`
+	Tier string `json:"tier"`
+	Who  string `json:"who"`
+	Col  string `json:"col"`
+}
+
+// friendWaits is the friends' cards of the table's waiting and ready columns, in the
+// table's card order; a sentinel is no card a friend takes.
+func friendWaits(t *sprint.Table) []FriendWait {
+	var out []FriendWait
+	if t == nil {
+		return nil
+	}
+	for _, c := range t.Column(sprint.Waiting, sprint.Ready) {
+		if _, ok := sprint.FriendCard(c); ok && !sprint.IsSentinel(c) {
+			out = append(out, FriendWait{Card: c.ID, Tier: sprint.FriendTier(c), Who: c.F(sprint.FieldWho), Col: c.Col})
+		}
+	}
+	return out
 }
 
 // whereOf is the where record of a snapshot holding every card of the work
@@ -45,7 +72,7 @@ func whereOf(s *sprint.Snapshot, m Machine, now time.Time) WhereRecord {
 			landed = append(landed, at)
 		}
 	}
-	r := WhereRecord{Epoch: s.Epoch, Rev: s.Work.Revision, Held: sprint.HeldBack(s)}
+	r := WhereRecord{Epoch: s.Epoch, Rev: s.Work.Revision, Held: sprint.HeldBack(s), Friends: friendWaits(s.Work)}
 	for _, at := range sprint.RecentLandings(landed, m.Spans, m.FirstStart(s.Cleared), now) {
 		r.Landings = append(r.Landings, at.Unix())
 	}
@@ -111,6 +138,7 @@ type WhereFacts struct {
 	Heartbeat Heartbeat
 	Held      int
 	Landed    []time.Time
+	Friends   []FriendWait
 }
 
 // WhereFacts reads the machine's records and the where record in one exchange.
@@ -142,7 +170,7 @@ func (st *Store) WhereFacts(ctx context.Context, workRev uint64) (WhereFacts, er
 			}
 		}
 		if r, ok := readWhere(vals[2], oks[2]); ok && r.Epoch == st.epoch && (r.Rev == workRev || st.keptBy(r, f.Machine, f.Heartbeat)) {
-			f.Held = r.Held
+			f.Held, f.Friends = r.Held, r.Friends
 			for _, s := range r.Landings {
 				f.Landed = append(f.Landed, time.Unix(s, 0).UTC())
 			}
@@ -155,6 +183,9 @@ func (st *Store) WhereFacts(ctx context.Context, workRev uint64) (WhereFacts, er
 	}
 	if f.Landed, err = st.LandedAt(ctx); err != nil {
 		f.Landed = nil // the whole sprint's average (sprint.LandingRate)
+	}
+	if f.Friends, err = st.FriendWaits(ctx); err != nil {
+		return f, err
 	}
 	return f, nil
 }

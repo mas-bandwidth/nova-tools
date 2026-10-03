@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -1342,11 +1343,17 @@ func uniquify(ids []string) []string {
 // holdWho holds each brief's WHO line (cardhdr.ReadWho; the owner, 2026-10-03: "doing
 // parts on friends where we would normally do friend work"): `WHO: friend` or
 // `WHO: friend <name>`, the name a row of the friends table (nova-config's friend rows,
-// copied by friend sync), and `WHO: friend` only while the table has a friend. A brief
-// whose line does not read, or names no friend of the table, refuses the whole call, exit
-// 2, nothing written. A brief with no WHO line is a machine's, as before.
+// copied by friend sync), and `WHO: friend` only while the table has a friend. A friend's
+// card names its tier on line 1 (cardhdr.ReadModel), the tier the deal matches against the
+// friends' tiers (sprint.FriendTakers; the owner, 2026-10-03 ~12:45 PM ET: "categorize
+// cards for friends so they match to the set of friends who can do them"), and a card
+// naming a friend is of a tier her tiers include (one naming no tier is the card lint's
+// friend-tier, held before this). A brief whose line does not read, names no friend of
+// the table, or names a friend who cannot do its tier, refuses the whole call, exit 2,
+// nothing written. A brief with no WHO
+// line is a machine's, as before.
 func (a *app) holdWho(verbName string, st *store.Store, stderr io.Writer, briefs ...string) int {
-	var names []string
+	var tiers map[string][]string
 	read := false
 	for _, b := range briefs {
 		w, why := cardhdr.ReadWho(b)
@@ -1358,16 +1365,20 @@ func (a *app) holdWho(verbName string, st *store.Store, stderr io.Writer, briefs
 		}
 		if !read {
 			var err error
-			if names, err = st.FriendNames(context.Background()); err != nil {
+			if tiers, err = st.FriendTiers(context.Background()); err != nil {
 				return a.readFailed(verbName, err, stderr)
 			}
 			read = true
 		}
+		names := slices.Sorted(maps.Keys(tiers))
+		m, _ := cardhdr.ReadModel(b) // no tier, or one that does not read, is the lint's refusal (friend-tier)
 		switch {
 		case len(names) == 0:
 			return refuse(stderr, verbName, "the brief says WHO: friend, and the friends table has no friend: its rows are nova-config's friend rows; run: nova-sprint friend sync")
 		case w.Name != "" && !slices.Contains(names, w.Name):
 			return refuse(stderr, verbName, fmt.Sprintf("the brief says WHO: friend %s, and %s is no row of the friends table (friends: %s): name one, or write WHO: friend for any; run: nova-sprint friend sync", w.Name, w.Name, strings.Join(names, ",")))
+		case w.Name != "" && !slices.Contains(tiers[w.Name], m.Tier):
+			return refuse(stderr, verbName, fmt.Sprintf("the brief says WHO: friend %s and tier: %s, and %s's tiers are %s: name a friend whose tiers include %s, write WHO: friend for any friend who can, or change the card's tier", w.Name, m.Tier, w.Name, orDashStr(strings.Join(tiers[w.Name], ","), "none"), m.Tier))
 		}
 	}
 	return 0

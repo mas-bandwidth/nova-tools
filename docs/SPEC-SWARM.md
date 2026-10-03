@@ -570,6 +570,14 @@ Two kinds of check read the card's text:
   test` with no `-timeout` of a positive duration are a Go project's and run only where the
   rule set carries a rule named `no-go-clean` or `go-test-timeout`.
 
+A friend's card (its header says `WHO: friend` or `WHO: friend <name>`) names its tier on line 1:
+one that names none draws `friend-tier` at line 1, since the sprint deals a friend's card only to
+a friend whose tiers include its tier (docs/SPEC-SPRINT.md section 1, a friend's card).
+
+| token | what it wants |
+| --- | --- |
+| `friend-tier` | a friend's card (WHO: friend or WHO: friend <name>) names its tier on line 1, `tier: flash\|pro\|frontier`: the sprint deals it only to a friend whose tiers (her nova-config friend row's) include that tier, every such friend by default, so a weaker friend is never handed work she cannot do |
+
 A card holding nothing but blanks draws one finding, `empty`, and no other: every rule it fails
 is the one fact that there is nothing in it (`lint --card` says it the same way, before its
 other checks).

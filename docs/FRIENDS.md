@@ -30,7 +30,9 @@ A card of the sprint whose brief says `WHO: friend` or `WHO: friend <name>` is
 dealt to a friend (docs/SPEC-SPRINT.md section 1, a friend's card; the owner,
 2026-10-03: "Could we try expressing the work left for nova-tools-1.1.0 into
 cards, and doing it via the sprint, but doing parts on friends where we would
-normally do friend work."). It arrives as a job like any other:
+normally do friend work."), and only to a friend whose tiers (her nova-config
+friend row's `tiers`) include the tier its line 1 names, so a friend is handed
+only work of a tier she can do. It arrives as a job like any other:
 `inbox/<card>/BRIEF.md` (after a clear, `<card>~<epoch>`), written by
 `nova-sprint friend sync`. Its first line is the STATUS line:
 

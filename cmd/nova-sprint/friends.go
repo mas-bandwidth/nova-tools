@@ -58,7 +58,9 @@ a friend's card's brief (below); run it on the machine that holds them, by the
 coordinator's loop or by hand after a job is delivered or collected. The sync also writes each friend's width,
 the jobs she works at once: her friend row's width (nova-config friend set
 <friend> --width <n>, at least 1), `+fmt.Sprint(config.DefaultFriendWidth)+` when the row names none; a row whose width is
-below 1 is refused with nothing changed. where counts the cards: ready, working,
+below 1 is refused with nothing changed. And her tiers, the tiers she can do
+(nova-config friend set <friend> --tiers flash,pro,...): a friend's card goes
+only to a friend whose tiers include its tier. where counts the cards: ready, working,
 width, done (ok and failed), ok% (ok over done, pooled in the footer) and
 status. A friend says she is there with
 nova-sprint friend beat <friend>, which her own machinery runs every `+sprint.FriendBeatEvery.String()+`
@@ -77,9 +79,13 @@ name, with no load column.
 
 A friend's card: a card whose brief says WHO: friend (any friend) or
 WHO: friend <name> (a row of the friends table; add and brief refuse any other)
-is dealt by the tick to a friend up below her width, the one it names or the
-one with the most free width, on her own fleet row friend.<name>, straight into
-working; no machine is dealt it, and no presence or rebalance takes it back.
+and names its tier on line 1 (tier: flash|pro|frontier; add and the lint refuse
+a friend's card with none, and add refuses one naming a friend whose tiers lack
+it) is dealt by the tick to a friend up below her width whose tiers include
+its tier, the one it names or, of every friend who can, the one with the most
+free width, on her own fleet row friend.<name>, straight into working (one no
+friend can take raises the judgment "no route serves the tier" under
+tier:friend-<tier>; card shows takers=, where --json friend_cards); no machine is dealt it, and no presence or rebalance takes it back.
 friend sync writes it as <friend>-working/inbox/<card>/BRIEF.md (its STATUS line
 names the card, the branch to push and the report), and finishes it from
 outbox/<card>/REPORT.md: Verdict: LAND with Head: <full sha> goes to review at
@@ -230,7 +236,7 @@ func (a *app) cmdFriendSync(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		jobs += len(js)
-		specs = append(specs, store.FriendSpec{Name: n, Width: width, Jobs: js})
+		specs = append(specs, store.FriendSpec{Name: n, Width: width, Tiers: config.FriendTiers(r), Jobs: js})
 	}
 	added, removed, updated, err := st.SyncFriends(ctx, specs)
 	if err != nil {

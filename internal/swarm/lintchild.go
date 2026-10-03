@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/cardtree"
 )
 
@@ -27,7 +28,7 @@ import (
 // --child-rules-file <file>`), one sentence per line (ParseChildRules). With no file the
 // set is DefaultChildRules, the rules that hold for any project.
 //
-// THREE KINDS OF CHECK, ALL OVER THE CARD'S TEXT AND NOTHING ELSE.
+// FOUR KINDS OF CHECK, ALL OVER THE CARD'S TEXT AND NOTHING ELSE.
 //
 //  1. PRESENCE. Each rule is one ChildRule: a name, the sentence the card quotes verbatim
 //     (whitespace folded, so a wrapped line still matches), and where the rule came from. A
@@ -54,6 +55,10 @@ import (
 //     the line, or whose line is empty or still carries an angle-bracket placeholder, draws
 //     `rule-libraries-considered`. The check is that the line says something, never whether
 //     what it says is true: a reader names hand-rolled code that a library already does.
+//
+//  4. A FRIEND'S CARD IS OF A TIER. A card whose header says `WHO: friend` or `WHO: friend
+//     <name>` names its tier on line 1 (`tier: flash|pro|frontier`, cardhdr.ReadModel), the
+//     tier the sprint matches against the friends' tiers; one with none draws `friend-tier`.
 //
 // WHAT THE TEXT CANNOT SHOW IS NOT CLAIMED. A card that says `Never kill a process you did
 // not start` and then `kill $!` is read as the child's own process; whether the child
@@ -93,6 +98,16 @@ const LibrariesConsideredName = "libraries-considered"
 
 // LibrariesConsideredRule is the token of the line a card that builds code carries.
 const LibrariesConsideredRule = "rule-" + LibrariesConsideredName
+
+// FriendTierCheck is the finding of a friend's card (its header says `WHO: friend` or
+// `WHO: friend <name>`, cardhdr.ReadWho) whose line 1 names no tier: the sprint deals a
+// friend's card only to a friend whose tiers include its tier (the owner, 2026-10-03 ~12:45
+// PM ET: "There is a responsibility to categorize cards for friends so they match to the
+// set of friends who can do them, default all."), so a card with none is uncategorized.
+const FriendTierCheck = "friend-tier"
+
+// FriendTierRemedy is what that token wants, in the remedies' table shape.
+const FriendTierRemedy = "a friend's card (WHO: friend or WHO: friend <name>) names its tier on line 1, `tier: flash|pro|frontier`: the sprint deals it only to a friend whose tiers (her nova-config friend row's) include that tier, every such friend by default, so a weaker friend is never handed work she cannot do"
 
 // EmptyCardCheck is the one finding an empty card draws (only blanks in it): a card is a
 // child's whole brief, so an empty one is said once, never as every rule it does not quote.
@@ -274,6 +289,7 @@ func init() {
 	}
 	CardChildRemedies[LibrariesConsideredRule] = LibrariesConsideredRemedy
 	CardChildRemedies[EmptyCardCheck] = EmptyCardRemedy
+	CardChildRemedies[FriendTierCheck] = FriendTierRemedy
 }
 
 // ruleRemedy is what a missing rule wants: its sentence, verbatim, and where it came from.
@@ -304,6 +320,8 @@ func ChildRemedy(rules []ChildRule, check string) string {
 		return LibrariesConsideredRemedy
 	case EmptyCardCheck:
 		return EmptyCardRemedy
+	case FriendTierCheck:
+		return FriendTierRemedy
 	}
 	return ""
 }
@@ -452,6 +470,12 @@ func LintCardChildWith(raw []byte, rules []ChildRule) []CardHeaderFinding {
 			}
 		}
 	})
+	if w, why := cardhdr.ReadWho(string(raw)); why == "" && w.Friend {
+		if m, _ := cardhdr.ReadModel(string(raw)); m.Tier == "" {
+			first, _, _ := strings.Cut(string(raw), "\n")
+			out = append(out, CardHeaderFinding{Check: FriendTierCheck, Line: 1, Excerpt: strings.TrimSpace(first)})
+		}
+	}
 	if have[LibrariesConsideredName] && builds && !filled {
 		if unfilled != "" {
 			out = append(out, CardHeaderFinding{Check: LibrariesConsideredRule, Line: unfilledAt, Excerpt: "unfilled: " + strings.TrimSpace(unfilled)})

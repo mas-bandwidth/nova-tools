@@ -40,12 +40,15 @@ const (
 )
 
 // friendEntry is a friend's entry in the roster: the coordinator's hold,
-// empty while released, and her width, how many jobs she works at once.
+// empty while released, her width, how many jobs she works at once, and her
+// tiers, the tiers she can do (her nova-config friend row's, sorted), which a
+// friend's card must be of to be dealt to her (sprint.FriendTakers).
 type friendEntry struct {
 	Held  bool      `json:"held,omitempty"`
 	At    time.Time `json:"at,omitempty"`
 	By    string    `json:"by,omitempty"`
 	Width int       `json:"width,omitempty"`
+	Tiers []string  `json:"tiers,omitempty"`
 }
 
 // FriendJob is one job card: a job of the friend's inbox by its directory's
@@ -57,23 +60,27 @@ type FriendJob struct {
 }
 
 // FriendSpec is what friend sync knows of one friend: her name (a friend row
-// of nova-config), her width, and her jobs as her working directory has them.
+// of nova-config), her width, her tiers, and her jobs as her working
+// directory has them.
 type FriendSpec struct {
 	Name  string
 	Width int
+	Tiers []string
 	Jobs  []FriendJob
 }
 
 // FriendRow is one row of the friends table as where draws it: the counts of
-// her job cards, her width and her status.
+// her job cards, her width and her status; and her tiers, which the table
+// does not draw (where --json shows who can take each friend's card waiting).
 type FriendRow struct {
-	Name    string `json:"name"`
-	Ready   int    `json:"ready"`
-	Working int    `json:"working"`
-	Width   int    `json:"width"`
-	OK      int    `json:"ok"`
-	Failed  int    `json:"failed"`
-	Status  string `json:"status"`
+	Name    string   `json:"name"`
+	Ready   int      `json:"ready"`
+	Working int      `json:"working"`
+	Width   int      `json:"width"`
+	OK      int      `json:"ok"`
+	Failed  int      `json:"failed"`
+	Status  string   `json:"status"`
+	Tiers   []string `json:"tiers,omitempty"`
 }
 
 // roster is the friends record, by name; empty when there is none.
@@ -124,10 +131,11 @@ func jobsJSON(jobs []FriendJob) string {
 }
 
 // SyncFriends makes the roster the friends given (nova-config's friend rows,
-// each with her width and the jobs of her working directory): a friend it
-// lacks is added, released, at her width with her jobs; a friend it has that
-// the specs lack is taken off with her beat and her jobs; a friend that stays
-// keeps her hold, and her width and jobs are set from the spec. The job
+// each with her width, her tiers and the jobs of her working directory): a
+// friend it lacks is added, released, at her width and tiers with her jobs; a
+// friend it has that the specs lack is taken off with her beat and her jobs; a
+// friend that stays keeps her hold, and her width, tiers and jobs are set from
+// the spec. The job
 // records are set from the specs, never added to. It writes nothing when
 // there is nothing to change, and says who was added, who taken off and who
 // stayed with a width or jobs that changed, each in name order.
@@ -141,15 +149,16 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 	for _, s := range specs {
 		want[s.Name] = s
 		e, had := r[s.Name]
+		tiers := slices.Sorted(slices.Values(s.Tiers))
 		switch {
 		case !had:
 			added = append(added, s.Name)
 			rosterChanged = true
-		case e.Width != s.Width:
+		case e.Width != s.Width || !slices.Equal(e.Tiers, tiers):
 			updated = append(updated, s.Name)
 			rosterChanged = true
 		}
-		e.Width = s.Width
+		e.Width, e.Tiers = s.Width, tiers
 		r[s.Name] = e
 	}
 	for n := range r {
@@ -289,7 +298,7 @@ func (st *Store) FriendRows(ctx context.Context, now time.Time) ([]FriendRow, er
 			// ignored: an unreadable record is no jobs, which the next friend sync replaces
 			_ = json.Unmarshal([]byte(vals[k]), &jobs)
 		}
-		row := FriendRow{Name: n, Width: r[n].Width, Status: sprint.FriendStatus(r[n].Held, b, now)}
+		row := FriendRow{Name: n, Width: r[n].Width, Status: sprint.FriendStatus(r[n].Held, b, now), Tiers: r[n].Tiers}
 		for _, j := range jobs {
 			switch {
 			case j.State == JobReady:
@@ -329,7 +338,7 @@ func (st *Store) friendNames(ctx context.Context) []string {
 }
 
 // friendSeats is every friend of the roster as the tick's deal gives her a friend's card
-// (sprint.FriendDeal): her name, width and status at now, read only when the snapshot
+// (sprint.FriendDeal): her name, width, status at now and tiers, read only when the snapshot
 // holds a friend's card ready; nil, and no read, when it holds none.
 func (st *Store) friendSeats(ctx context.Context, s *sprint.Snapshot, now time.Time) ([]sprint.FriendSeat, error) {
 	ready := false
@@ -348,17 +357,32 @@ func (st *Store) friendSeats(ctx context.Context, s *sprint.Snapshot, now time.T
 	}
 	seats := make([]sprint.FriendSeat, len(rows))
 	for i, r := range rows {
-		seats[i] = sprint.FriendSeat{Name: r.Name, Width: r.Width, Status: r.Status}
+		seats[i] = sprint.FriendSeat{Name: r.Name, Width: r.Width, Status: r.Status, Tiers: r.Tiers}
 	}
 	return seats, nil
 }
 
-// FriendNames is every friend of the roster in name order (the friends table's rows), for
-// add's hold of a WHO line's name; none when the store keeps no records.
-func (st *Store) FriendNames(ctx context.Context) ([]string, error) {
+// FriendTiers is every friend of the roster with her tiers (friend sync copies them from
+// her nova-config friend row), for add's hold of a friend's card's tier and card's who
+// can take it; none when the store keeps no records.
+func (st *Store) FriendTiers(ctx context.Context) (map[string][]string, error) {
 	r, kv, err := st.roster(ctx)
 	if kv == nil || err != nil {
 		return nil, err
 	}
-	return slices.Sorted(maps.Keys(r)), nil
+	out := make(map[string][]string, len(r))
+	for n, e := range r {
+		out[n] = e.Tiers
+	}
+	return out, nil
+}
+
+// FriendSeats is every friend of the roster as a seat with her tiers (status and width
+// aside), the shape sprint.FriendTakers reads, in name order.
+func FriendSeats(tiers map[string][]string) []sprint.FriendSeat {
+	var out []sprint.FriendSeat
+	for _, n := range slices.Sorted(maps.Keys(tiers)) {
+		out = append(out, sprint.FriendSeat{Name: n, Tiers: tiers[n]})
+	}
+	return out
 }

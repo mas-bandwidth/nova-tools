@@ -627,6 +627,9 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	if len(friends) > 0 {
 		fp := FriendDeal(s, streamTurns(friends, streamRound(s, PropStreamIndex)), r.Friends)
 		p.Rows, p.Units, p.Refused = append(p.Rows, fp.Rows...), append(p.Units, fp.Units...), append(p.Refused, fp.Refused...)
+		// a friend's card no friend can take (her tiers lack its tier): one judgment per
+		// tier, of the kind a tier no route serves (friend_deal.go)
+		conds = append(conds, friendTierConds(friends, r.Friends)...)
 	}
 	// a ready card dealt on a route that rests now is withdrawn, never taken there
 	p.Units = append(p.Units, restWithdrawals(s, r.who())...)

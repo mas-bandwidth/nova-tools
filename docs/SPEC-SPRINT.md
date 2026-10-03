@@ -161,6 +161,40 @@ any work card. The machines' `deal` verb refuses a friend's card, and
 `rework` of one sends its primary ready with the fix, for the tick to deal to
 a friend.
 
+**A friend's card goes only to a friend who can do it** (the owner, 2026-10-03
+12:42 PM ET: "Now remember that some friends have weaker models. Freddy in
+particular is more like flash."; and at 12:45 PM ET: "There is a responsibility
+to categorize cards for friends so they match to the set of friends who can do
+them, default all."). A friend's card is categorized by its tier, the tier its
+brief's line 1 names (`tier: flash|pro|frontier`, `cardhdr.ReadModel`; the
+tier `rework --tier` pins wins), and a friend's tiers are her nova-config
+friend row's `tiers`, which `friend sync` copies into her entry of the
+`friends` record with her width (a change of them is an `updated` friend; an
+entry with no tiers, written before the sync copied them, takes no card until
+the next sync). The friends who can take a card (`sprint.FriendTakers`) are
+every friend whose tiers include its tier, whatever her status (the default:
+all who can), or for `WHO: friend <name>` that friend alone when hers do; the
+deal gives a card for any friend to the friend up below her width with the
+most free width among them, and a named card to its friend only while she is
+up, below her width and able. A friend's card is matched on that tier
+alone, never on the flash-first ladder's (`tier_now`): a friend runs her own
+model. `add` and `brief` refuse
+a friend's card whose line 1 names no tier (the card lint's `friend-tier`
+refuses it too, docs/SPEC-SWARM.md) and a `WHO: friend <name>` card whose
+friend's tiers lack its tier, one line naming her tiers (`the brief says WHO:
+friend freddy and tier: pro, and freddy's tiers are flash: ...`, exit 2,
+nothing written), so the generator fixes the card; neither is ever dealt
+silently. A ready friend's card no friend can take raises the tick's judgment
+"no route serves the tier" (the kind of a tier nothing serves, reused: one per
+tier, its subject `tier:friend-<tier>`, its decisions `look at the card`,
+`drop` and `wait`, no `route add`), naming the cards and every friend with her
+tiers, and closed when a friend can take them or none waits; the card's hold
+names it. `card <id>` prints `takers=<friends>` (`takers=-` when none can) on
+its `CARD OK` line for a friend's card waiting or ready (`--json` `takers`, `[]`
+when none), and `where --json` carries `friend_cards`, each friend's card not
+dealt yet with its tier, who, column and `takers`, counted by the tick into the
+where record (no card read by `where`).
+
 `friend sync`, run by the coordinator's own loop where the directories are
 (each run once, at the loop's period: 15 s in the coordinator's loop), carries
 a friend's card across the inbox/outbox standard

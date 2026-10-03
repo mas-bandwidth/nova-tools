@@ -197,6 +197,15 @@ func FriendWidth(r Row) int {
 	return r.Int("width")
 }
 
+// FriendTiers is a friend row's tiers, the tiers she can do: its tiers field's words
+// (canonical: sorted, comma joined); none when the row names none.
+func FriendTiers(r Row) []string {
+	if r.Fields["tiers"] == "" {
+		return nil
+	}
+	return strings.Split(r.Fields["tiers"], ",")
+}
+
 // checkFriend is the friend kind's Check: her width is at least 1, a friend
 // working no job at once being no friend of the sprint's (remove the row
 // instead). A width that failed its own validation is absent and skipped.

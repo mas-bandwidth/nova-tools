@@ -50,7 +50,7 @@ func friendCardApp(t *testing.T, who string, friends ...string) (*testApp, strin
 		ta.ok("friend beat " + f)
 	}
 	brief := filepath.Join(t.TempDir(), "s1-1.md")
-	require.NoError(t, os.WriteFile(brief, []byte(passingBrief("s1-1: a friend's card\nREPO: mas-bandwidth/nova-tools\nWHO: "+who)), 0o644))
+	require.NoError(t, os.WriteFile(brief, []byte(passingBrief("s1-1: a friend's card tier: flash\nREPO: mas-bandwidth/nova-tools\nWHO: "+who)), 0o644))
 	ta.ok("add --stream s1 --brief-dir " + filepath.Dir(brief))
 	ta.ok("start")
 	return ta, root
@@ -84,7 +84,7 @@ func TestADealToANamedFriendWritesTheBriefIntoHerInbox(t *testing.T) {
 	lines := strings.Split(string(text), "\n")
 	assert.Equal(t, "STATUS: nova-sprint card s1-1.w1, epoch 0, attempt 1; push your work to the branch sprint/s1-1.w1.g1.e0; when done, write outbox/s1-1.w1/REPORT.md with Verdict: LAND|HOLD|FAIL and Head: <sha>", lines[0])
 	assert.Contains(t, lines[1], "Work in ~/amy-working/jobs/s1-1.w1/")
-	assert.Contains(t, string(text), "\n\ns1-1: a friend's card\nREPO: mas-bandwidth/nova-tools\nWHO: friend amy\n", "the brief follows")
+	assert.Contains(t, string(text), "\n\ns1-1: a friend's card tier: flash\nREPO: mas-bandwidth/nova-tools\nWHO: friend amy\n", "the brief follows")
 	_, err = os.Stat(filepath.Join(root, "bob-working", "inbox", "s1-1.w1"))
 	assert.True(t, os.IsNotExist(err), "bob's inbox is not written")
 
@@ -279,7 +279,7 @@ func TestAddHoldsTheWhoLineToTheFriendsTable(t *testing.T) {
 	ta.ok("friend sync --root " + t.TempDir())
 	add := func(who string) (int, string) {
 		dir := t.TempDir()
-		require.NoError(t, os.WriteFile(filepath.Join(dir, "c1.md"), []byte(passingBrief("c1: a card\nWHO: "+who)), 0o644))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "c1.md"), []byte(passingBrief("c1: a card tier: flash\nWHO: "+who)), 0o644))
 		code, _, errs := ta.do("add --stream s1 --brief-dir " + dir)
 		return code, errs
 	}

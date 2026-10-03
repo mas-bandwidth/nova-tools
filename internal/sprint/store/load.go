@@ -129,6 +129,20 @@ func (st *Store) HeldBack(ctx context.Context) (int, error) {
 	return sprint.HeldBack(&sprint.Snapshot{Work: t}), nil
 }
 
+// FriendWaits is the friends' cards of the work table's waiting and ready columns, each
+// column read alone (workColumn), for where with no where record (WhereFacts).
+func (st *Store) FriendWaits(ctx context.Context) ([]FriendWait, error) {
+	var out []FriendWait
+	for _, col := range []string{sprint.Waiting, sprint.Ready} {
+		t, err := st.workColumn(ctx, col)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, friendWaits(t)...)
+	}
+	return out, nil
+}
+
 // LandedAt is the landed stamps of the work table's landed column, read alone
 // (workColumn), for the landing rate of the ETA (sprint.LandingRate); a card
 // with no stamp is left out.

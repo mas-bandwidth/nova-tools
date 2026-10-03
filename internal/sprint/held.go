@@ -433,7 +433,12 @@ func (c *held) judgment(pr *Card) string {
 			return "its stream " + pr.Row + " merging; open: " + strings.Join(j, ", ")
 		}
 	}
-	if pr.Col == Ready {
+	if _, ok := FriendCard(pr); ok && pr.Col == Ready {
+		// a friend's card no friend can take: the tick's judgment of its tier (friend_deal.go)
+		if sub := StreamSubject(FriendTierSubject(FriendTier(pr))); len(c.judged[sub]) > 0 {
+			return "no friend who may take it can do tier " + FriendTier(pr) + "; open: " + strings.Join(c.judged[sub], ", ")
+		}
+	} else if pr.Col == Ready {
 		if tier, why := c.s.noRoute(pr); why != "" && tier != "" && len(c.judged[StreamSubject(TierSubject(tier))]) > 0 {
 			return "no route serves tier " + tier + "; open: " + strings.Join(c.judged[StreamSubject(TierSubject(tier))], ", ")
 		}
@@ -519,7 +524,7 @@ func (c *held) waits(pr *Card) (why, root string, ok bool) {
 			if name == "" {
 				name = "any friend"
 			}
-			return "a friend's card, waiting for " + name + " to be up with room", "", true
+			return "a friend's card of tier " + FriendTier(pr) + ", waiting for " + name + " whose tiers include it to be up with room", "", true
 		}
 		up := s.UpMembers()
 		if len(up) == 0 {

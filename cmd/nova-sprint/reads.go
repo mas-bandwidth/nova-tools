@@ -443,6 +443,19 @@ type whereView struct {
 	// its balance as the run loop's poll last read it, the spend an hour measured, and
 	// whether its routes serve; absent with no route. The text frame does not draw it.
 	Providers []sprint.ProviderRow `json:"providers,omitempty"`
+	// FriendCards is every friend's card not dealt yet (waiting or ready) with the friends
+	// who can take it (sprint.FriendTakers: her tiers include its tier), so a card no
+	// friend can take shows with takers []. The text frame does not draw it.
+	FriendCards []friendCardView `json:"friend_cards,omitempty"`
+}
+
+// friendCardView is one friend's card not dealt yet, as where --json shows it.
+type friendCardView struct {
+	Card   string   `json:"card"`
+	Tier   string   `json:"tier"`
+	Who    string   `json:"who"`
+	Col    string   `json:"col"`
+	Takers []string `json:"takers"`
 }
 
 // whereRun is what one where was asked, its flags read.
@@ -674,6 +687,14 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 		if f.Status != sprint.Down {
 			friends[i].Working += c.Working // down, she shows working 0 (store.FriendRows)
 		}
+	}
+	tiers := map[string][]string{}
+	for _, f := range friends {
+		tiers[f.Name] = f.Tiers
+	}
+	seats := store.FriendSeats(tiers)
+	for _, w := range facts.Friends {
+		v.FriendCards = append(v.FriendCards, friendCardView{Card: w.Card, Tier: w.Tier, Who: w.Who, Col: w.Col, Takers: orEmpty(sprint.FriendTakersOf(w.Who, w.Tier, seats))})
 	}
 	ft := friendsTable(friends)
 	v.Tables[sprint.Friends] = map[string]map[string]string{}
@@ -1237,7 +1258,11 @@ type cardView struct {
 	Grade   string       `json:"grade,omitempty"` // nova-decide's grade, as the card holds it (sprint.FieldGrade)
 	// Who is the worker its brief's WHO line names (sprint.FieldWho): friend for any
 	// friend, friend.<name> for one; absent on a machine's card.
-	Who      string             `json:"who,omitempty"`
+	Who string `json:"who,omitempty"`
+	// Takers is, for a friend's card not dealt yet (waiting or ready), the friends who can
+	// take it (sprint.FriendTakers: her tiers include its tier), [] when none can; absent
+	// on any other card.
+	Takers   *[]string          `json:"takers,omitempty"`
 	Work     []*sprint.Card     `json:"work_cards"`
 	Reads    []*sprint.Card     `json:"read_cards"`
 	Merge    *sprint.Card       `json:"merge,omitempty"`
@@ -1284,6 +1309,10 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 			held = &hd
 		}
 	}
+	takers, err := friendTakers(ctx, st, v.Primary)
+	if err != nil {
+		return a.readFailed("card", err, stderr)
+	}
 	lines, err := st.Log(ctx)
 	if err != nil {
 		return a.readFailed("card", err, stderr)
@@ -1297,7 +1326,7 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 			texts = []storyText{}
 		}
 		tier, ceiling := sprint.CardTiers(v.Primary)
-		b, _ := json.Marshal(cardView{Primary: v.Primary, Tier: tier, Ceiling: ceiling, Grade: v.Primary.F(sprint.FieldGrade), Who: v.Primary.F(sprint.FieldWho), Work: v.Work, Reads: v.Reads, Merge: v.Merge, Open: v.Open, Needs: v.Needs, NeededBy: v.NeededBy, Held: held,
+		b, _ := json.Marshal(cardView{Primary: v.Primary, Tier: tier, Ceiling: ceiling, Grade: v.Primary.F(sprint.FieldGrade), Who: v.Primary.F(sprint.FieldWho), Takers: takers, Work: v.Work, Reads: v.Reads, Merge: v.Merge, Open: v.Open, Needs: v.Needs, NeededBy: v.NeededBy, Held: held,
 			Cost: sprint.CardCostOf(v.Primary), Timeline: events, Texts: texts})
 		fmt.Fprintln(stdout, string(b))
 		return 0
@@ -1331,7 +1360,7 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 		if g, ok := decide.ParseDecided(v.Primary.F(sprint.FieldGrade)); ok {
 			grade = " grade=" + g.Value + ":" + strconv.FormatFloat(g.P, 'f', 2, 64)
 		}
-		fmt.Fprintf(stdout, "CARD OK id=%s epoch=%d work_cards=%d read_cards=%d open=%d tier=%s ceiling=%s%s%s\n", oneline.Escape(id), epoch, len(v.Work), len(v.Reads), len(v.Open), tier, ceiling, grade, whoWord(v.Primary))
+		fmt.Fprintf(stdout, "CARD OK id=%s epoch=%d work_cards=%d read_cards=%d open=%d tier=%s ceiling=%s%s%s\n", oneline.Escape(id), epoch, len(v.Work), len(v.Reads), len(v.Open), tier, ceiling, grade, whoWord(v.Primary)+takersWord(takers))
 		return 0
 	}
 	printCard(stdout, "PRIMARY", v.Primary)
@@ -1370,7 +1399,7 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 	if pinned, err := st.Pinned(ctx); err == nil {
 		epoch = pinned.PinnedEpoch()
 	}
-	fmt.Fprintf(stdout, "CARD OK id=%s epoch=%d work_cards=%d read_cards=%d open=%d%s\n", oneline.Escape(id), epoch, len(v.Work), len(v.Reads), len(v.Open), whoWord(v.Primary))
+	fmt.Fprintf(stdout, "CARD OK id=%s epoch=%d work_cards=%d read_cards=%d open=%d%s\n", oneline.Escape(id), epoch, len(v.Work), len(v.Reads), len(v.Open), whoWord(v.Primary)+takersWord(takers))
 	return 0
 }
 
@@ -1381,6 +1410,33 @@ func whoWord(pr *sprint.Card) string {
 		return " who=" + oneline.Field(w)
 	}
 	return ""
+}
+
+// friendTakers is, for a friend's card not dealt yet (waiting or ready), the friends of
+// the friends table who can take it (sprint.FriendTakers, over the tiers friend sync
+// copied), an empty list when none can; nil for any other card, and no read.
+func friendTakers(ctx context.Context, st *store.Store, pr *sprint.Card) (*[]string, error) {
+	if _, ok := sprint.FriendCard(pr); !ok || (pr.Col != sprint.Waiting && pr.Col != sprint.Ready) || !pr.Placed() {
+		return nil, nil
+	}
+	tiers, err := st.FriendTiers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	t := sprint.FriendTakers(pr, store.FriendSeats(tiers))
+	if t == nil {
+		t = []string{}
+	}
+	return &t, nil
+}
+
+// takersWord is the CARD OK line's takers of a friend's card not dealt yet: takers=<the
+// friends who can take it, comma joined>, takers=- when none can; nothing otherwise.
+func takersWord(takers *[]string) string {
+	if takers == nil {
+		return ""
+	}
+	return " takers=" + orDashStr(strings.Join(*takers, ","), "-")
 }
 
 func printCard(w io.Writer, kind string, c *sprint.Card) {

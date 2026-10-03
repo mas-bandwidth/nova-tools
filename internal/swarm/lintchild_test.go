@@ -103,9 +103,10 @@ func TestChildRulesTableIsWellFormed(t *testing.T) {
 			assert.True(t, found, "scan %s needs the rule %q, which this repository's file does not carry", s.Check, s.Needs)
 		}
 	}
-	// one per default rule, one per scan, the libraries-considered line of the lint and the empty card
-	want := len(DefaultChildRules) + len(childScans) + 2
-	assert.Len(t, CardChildRemedies, want, "the remedy table holds %d tokens, want %d: one per default rule and one per scan, the libraries-considered line and the empty card", len(CardChildRemedies), want)
+	// one per default rule, one per scan, the libraries-considered line of the lint, the empty card and a friend's card's tier
+	want := len(DefaultChildRules) + len(childScans) + 3
+	assert.Len(t, CardChildRemedies, want, "the remedy table holds %d tokens, want %d: one per default rule and one per scan, the libraries-considered line, the empty card and the friend's tier", len(CardChildRemedies), want)
+	assert.Equal(t, FriendTierRemedy, ChildRemedy(nil, FriendTierCheck))
 	got := ChildRemedy(DefaultChildRules, "rule-nothing")
 	assert.Empty(t, got, "a token that is no rule has the remedy %q", got)
 	// the general set is only the general rules: nothing of one repository's
@@ -488,4 +489,33 @@ func TestChildLibrariesCheckIsOnlyWhereTheRuleSetCarriesIt(t *testing.T) {
 	ours := strings.Replace(card, ChildRulesParagraph(), RulesParagraph(ourRules(t)), 1)
 	assert.Contains(t, childChecks(LintCardChildWith([]byte(ours), ourRules(t))), LibrariesConsideredRule)
 	assert.Contains(t, ChildRemedy(ourRules(t), LibrariesConsideredRule), "Libraries considered:")
+}
+
+// A friend's card names its tier on line 1 (docs/SPEC-SWARM.md; the owner, 2026-10-03
+// ~12:45 PM ET: "There is a responsibility to categorize cards for friends so they match to
+// the set of friends who can do them, default all."): one with none draws friend-tier at
+// line 1; one with a tier, and a machine's card with none, draw nothing.
+func TestChildFriendsCardNamesItsTier(t *testing.T) {
+	t.Parallel()
+	rules := ChildRulesParagraph()
+	for _, tc := range []struct {
+		lead string
+		want bool
+	}{
+		{"c1: a card\nWHO: friend", true},
+		{"c1: a card\nWHO: friend freddy", true},
+		{"c1: a card tier: flash\nWHO: friend", false},
+		{"c1: a card tier: pro\nWHO: friend stella", false},
+		{"c1: a machine's card\nREPO: mas-bandwidth/nova-tools", false},
+		{"c1: a card\nWHO: machine", false}, // a WHO line that does not read is add's refusal
+	} {
+		fs := LintCardChild([]byte(tc.lead + "\n\n" + rules))
+		if tc.want {
+			require.Equal(t, []string{FriendTierCheck}, childChecks(fs), tc.lead)
+			assert.Equal(t, 1, fs[0].Line, tc.lead)
+			assert.Equal(t, "c1: a card", fs[0].Excerpt, tc.lead)
+		} else {
+			assert.Empty(t, fs, tc.lead)
+		}
+	}
 }
