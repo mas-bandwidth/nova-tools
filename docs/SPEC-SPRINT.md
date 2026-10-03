@@ -178,19 +178,29 @@ record's, the tick brings its twin up to date (it holds every card) and writes
 the record; an idle tick reads the work table's shape and the record, two
 exchanges, and writes nothing. `where` takes the record when it is of the
 epoch it reads and either counted at the work table's revision it read or
-kept by a run loop that ticks (the last tick within 15 s and not failed: at
-most a tick behind). Otherwise (no record yet, as on a store from before the
+kept by the RUNNING machine's loop: its last tick within 15 s and not failed,
+and the record counted at or after the work table's revision that tick saw
+(the heartbeat's), so a loop that ticks and does not keep the record (a binary
+from before it) is never taken at its word, and the record is at most the tick
+in flight behind. Between a verb and the tick that drains it, `held=N` may show
+the count from before the verb; the ETA's cards left do not lag, as they are
+the table's count cells. Otherwise (no record yet, as on a store from before the
 record, until its first tick counts it; a clear, until the new epoch's first
-tick; no loop ticking and the table moved) it reads the waiting and landed
-cards as it did before the record, and answers the same. The invariant, held
+tick; a STOPPED machine whose table a verb moved since its last tick; no loop
+keeping it) it reads the waiting and landed cards as it did before the record,
+and answers the same; a read of the stamps that fails there leaves the whole
+sprint's average. The invariant, held
 after every tick (`TestTheWhereRecordIsTheCardsAfterEveryTick`, with reversed
 witnesses): the record's held count is `sprint.HeldBack` over the cards, and
 its landings are the landed cards' stamps in the window, in order. The gate
 (`TestWhereReadsTheTableNotEveryCardAtThreeThousandCards`): at 3,000 cards,
 2,500 held and 350 landed, `where --json` reads no card's record but the
-streams' control cards, in at most 9 round trips (22 before, 7 of them reads
-of records), and the functional tier holds it under 200 ms of wall time on the
-in-memory store.
+streams' control cards, in at most 9 round trips (22 on the code before the
+record, 7 of them reads of card records; 19 on this code's own read of the
+cards when it cannot take the record), and `-tags perf`, which gates a release,
+holds it under 200 ms of wall time on the in-memory store. A tick's count costs
+2 round trips when idle, with no write, and 8 when the table moved
+(`TestTheWhereCountsTripsArePinned`).
 
 The stored view `sprint` (`nova-table watch --view sprint`) says the same:
 its summary line is `STOPPED`, and nothing more (no counts, no percent, no

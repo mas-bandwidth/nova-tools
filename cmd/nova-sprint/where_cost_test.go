@@ -19,7 +19,9 @@ import (
 // record but the streams' control cards (docs/SPEC-SPRINT.md section 1): the
 // shapes twice (the view's tables, the stream clocks'), the fence, the coordinator,
 // four records (the seat, the machine's with the where record, the friends, the
-// goals) and the streams' control cards. Before the record it was 19.
+// goals) and the streams' control cards. Measured on this fixture: 22 on the code
+// before the record (5183's head, 7 of them reads of card records), 19 on this
+// code's own read of the cards when it cannot take the record, 9 with it.
 const whereTripsMax = 9
 
 // bigSprint is the live sprint's shape at 3,000 cards (2026-10-02 10:13 PM ET,
@@ -98,7 +100,7 @@ func trips(calls map[string]int) int {
 // whereTripsMax round trips, and says what reading every card says. Before the
 // first tick (the live store, which has no record) it reads the cards, and
 // answers the same. No real time: the clock is the test's; the wall-clock bound
-// is the functional tier's (where_cost_functional_test.go).
+// is behind -tags perf (where_cost_perf_test.go).
 func TestWhereReadsTheTableNotEveryCardAtThreeThousandCards(t *testing.T) {
 	t.Parallel()
 	ta := bigSprint(t)

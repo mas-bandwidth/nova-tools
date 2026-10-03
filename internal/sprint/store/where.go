@@ -104,24 +104,28 @@ func (st *Store) keepWhere(ctx context.Context, m Machine) error {
 
 // WhereFacts is what where shows beside the tables' counts: the machine's
 // records (Records: the store keeps them), the held cards and the landing
-// stamps for the rate; Counted says they came from the where record, not from
-// the cards.
+// stamps for the rate.
 type WhereFacts struct {
 	Records   bool
 	Machine   Machine
 	Heartbeat Heartbeat
 	Held      int
 	Landed    []time.Time
-	Counted   bool
 }
 
 // WhereFacts reads the machine's records and the where record in one exchange.
 // The record is taken when it is of the pinned epoch and either counted at
-// workRev, the work table's revision the caller read, or kept by a run loop
-// that ticks (its last tick recent and not failed: the record is at most a
-// tick behind). Otherwise, with no record of this epoch (before the first
-// tick, or after a clear) or no loop keeping it, the held cards and the
-// stamps are read from the cards (HeldBack, LandedAt), as before the record.
+// workRev, the work table's revision the caller read, or kept by the RUNNING
+// machine's loop: its last tick recent (MachineSilence) and not failed, and the
+// record counted at or after the revision that tick saw (the heartbeat's), so
+// the record is at most the tick in flight behind. A loop that ticks and does
+// not keep the record (a binary from before it, a tick whose count was passed
+// over) has its heartbeat move past the record, and the record is not taken.
+// Otherwise (no record of this epoch: before the first tick, or after a clear;
+// a STOPPED machine whose table a verb moved since its last tick; no loop
+// keeping it) the held cards and the stamps are read from the cards (HeldBack,
+// LandedAt), as before the record; a read of the stamps that fails leaves none,
+// and the rate is the whole sprint's average, never a failed view.
 func (st *Store) WhereFacts(ctx context.Context, workRev uint64) (WhereFacts, error) {
 	var f WhereFacts
 	if kv, err := st.kv(); err == nil {
@@ -137,9 +141,8 @@ func (st *Store) WhereFacts(ctx context.Context, workRev uint64) (WhereFacts, er
 				}
 			}
 		}
-		ticking := !st.ByHand && f.Heartbeat.Error == "" && st.now().Sub(f.Heartbeat.Alive()) <= MachineSilence
-		if r, ok := readWhere(vals[2], oks[2]); ok && r.Epoch == st.epoch && (r.Rev == workRev || ticking) {
-			f.Held, f.Counted = r.Held, true
+		if r, ok := readWhere(vals[2], oks[2]); ok && r.Epoch == st.epoch && (r.Rev == workRev || st.keptBy(r, f.Machine, f.Heartbeat)) {
+			f.Held = r.Held
 			for _, s := range r.Landings {
 				f.Landed = append(f.Landed, time.Unix(s, 0).UTC())
 			}
@@ -150,6 +153,15 @@ func (st *Store) WhereFacts(ctx context.Context, workRev uint64) (WhereFacts, er
 	if f.Held, err = st.HeldBack(ctx); err != nil {
 		return f, err
 	}
-	f.Landed, err = st.LandedAt(ctx)
-	return f, err
+	if f.Landed, err = st.LandedAt(ctx); err != nil {
+		f.Landed = nil // the whole sprint's average (sprint.LandingRate)
+	}
+	return f, nil
+}
+
+// keptBy says the RUNNING machine's loop keeps the record: it ticks (its last
+// tick within MachineSilence, not failed) and the record is counted at or
+// after the work table's revision its last tick saw.
+func (st *Store) keptBy(r WhereRecord, m Machine, hb Heartbeat) bool {
+	return !st.ByHand && m.Running() && hb.Error == "" && st.now().Sub(hb.Alive()) <= MachineSilence && r.Rev >= hb.Revisions[0]
 }
