@@ -23,7 +23,7 @@ import (
 //	go: go.mod requires go >= 1.26 (running go 1.22.2; GOTOOLCHAIN=local)
 //
 // `GOTOOLCHAIN=local` is RIGHT and stays: a card must not fetch a toolchain behind the
-// bench's back (card 8963). What was wrong is that the bench's own toolchain was outside
+// bench's back. What was wrong is that the bench's own toolchain was outside
 // every named path. The wall's implicit worker description now names these roots the way an
 // explicit description names `read_roots` -- a toolchain in a user directory is exactly a
 // caller-supplied read-only root (SPEC-SANDBOX, "the two callers") -- and it names each root
@@ -197,6 +197,7 @@ func ToolchainRootOSes() []string {
 // ToolchainRoots is the wall's side: this machine's list, absolute, carrying each root's
 // kind, and SKIPPED IF ABSENT. Absent is the machine's shape and not the caller's mistake --
 // a Darwin bench may lack `~/sdk` or dotnet, while the wall refuses a
+// `--read` or `--read-noexec` that names a path that is not there
 // `--read` or a `--read-noexec` naming a path that is not there, so a root that does not
 // exist must never reach the argv. An empty home names no HOME-relative root, because a
 // relative root is a refusal and a root at the filesystem's top is not a toolchain; a system
