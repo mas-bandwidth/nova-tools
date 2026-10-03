@@ -770,13 +770,13 @@ redis-server, in `cmd/nova-redis/fn_functional_test.go`.
 
 ```text
 $ nova-redis spill --addr 127.0.0.1:6379 --name note --ttl 10m --value hi
-nova-redis spill REFUSED: --owner is required and may not be empty or hold ':' or whitespace; every key carries an owner prefix; run: nova-redis help spill
+SPILL REFUSED: --owner is required and may not be empty or hold ':' or whitespace; every key carries an owner prefix; run: nova-redis help
 
 $ nova-redis spill --addr 127.0.0.1:6379 --owner ada --name note --ttl 0s --value hi
-nova-redis spill REFUSED: --ttl is required and must be above zero; an unbounded key is a bug; run: nova-redis help spill
+SPILL REFUSED: --ttl is required and must be above zero; an unbounded key is a bug; run: nova-redis help
 
 $ nova-redis fn load
-nova-redis fn load REFUSED: --addr is required: the store's address as <host:port>, such as 127.0.0.1:6379 (no default); refusing to guess; run: nova-redis help fn load
+FN-LOAD REFUSED: --addr is required: the store's address as <host:port>, such as 127.0.0.1:6379 (no default); refusing to guess; run: nova-redis help
 ```
 
 Each refusal names every problem with the line, one line each, and the

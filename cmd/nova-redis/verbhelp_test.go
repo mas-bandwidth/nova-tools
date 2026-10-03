@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/stretchr/testify/assert"
 	"io"
 	"testing"
 
@@ -31,4 +32,11 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 
 func redisRun(args []string, stdout, stderr io.Writer) int {
 	return run(args, stdout, stderr, realDeps())
+}
+
+// nova-redis's definition meets the standard its banner and help cannot hold
+// by construction: every verb's effect, and a how text of five short lines.
+func TestRedisToolMeetsTheStandard(t *testing.T) {
+	t.Parallel()
+	assert.Empty(t, redisTool(deps{}).Problems())
 }

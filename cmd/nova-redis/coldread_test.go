@@ -46,7 +46,7 @@ func TestARefusalNamesEveryProblemInTheOneGrammar(t *testing.T) {
 		want []string // one line each, in any order
 	}{
 		{"a bad address does not hide a zero ttl", []string{"spill", "--addr", "nohost", "--ttl", "0s", "--owner", "a", "--name", "b", "--value", "c"},
-			[]string{`nova-redis spill REFUSED: --addr "nohost" is not <host:port>`, "nova-redis spill REFUSED: --ttl is required and must be above zero"}},
+			[]string{`SPILL REFUSED: --addr "nohost" is not <host:port>`, "SPILL REFUSED: --ttl is required and must be above zero"}},
 		{"a bad owner, name and ttl at once", []string{"spill", "--addr", "127.0.0.1:1", "--owner", "a:b", "--name", "x y", "--ttl", "banana", "--value", "c"},
 			[]string{`--ttl "banana" is not a duration`, "--owner is required and may not", "--name is required and may not"}},
 		{"every missing flag says what it wants", []string{"spill"},
@@ -56,13 +56,13 @@ func TestARefusalNamesEveryProblemInTheOneGrammar(t *testing.T) {
 		{"serve's bad bind and bad port at once", []string{"serve", "--bind", "0.0.0.0", "--port", "0", "--dir", "relative"},
 			[]string{`--bind "0.0.0.0" binds every interface`, `--port "0" needs a port`, `--dir "relative" is not absolute`}},
 		{"a misspelled flag lists the verb's flags", []string{"spill", "--zzz"},
-			[]string{"nova-redis spill REFUSED: unknown flag --zzz; the flags of spill are --addr, --dry-run, --json, --name, --owner, --password-env, --ttl, --user, --value; run: nova-redis help spill"}},
+			[]string{"SPILL REFUSED: unknown flag --zzz; the flags of spill are --addr, --dry-run, --json, --name, --owner, --password-env, --ttl, --user, --value; run: nova-redis help"}},
 		{"an unknown verb lists the verbs", []string{"zzz"},
-			[]string{`nova-redis REFUSED: unknown verb "zzz"; the verbs are serve, spill, recall, fn load, fn check, acl render, acl check, acl apply, version, help; run: nova-redis help`}},
+			[]string{`REDIS REFUSED: unknown verb "zzz"; the verbs are serve, spill, recall, fn load, fn check, acl render, acl check, acl apply, version, help; run: nova-redis help`}},
 		{"an unknown fn subverb points at the group's help", []string{"fn", "deploy"},
 			[]string{`nova-redis fn REFUSED: unknown subverb "deploy"; want load or check; run: nova-redis help fn`}},
 		{"the bare command names its door", nil,
-			[]string{"nova-redis REFUSED: no verb given;"}},
+			[]string{"REDIS REFUSED: no verb given;"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -118,7 +118,7 @@ func TestSpillDryRunNeedsNoStore(t *testing.T) {
 	h := newHarness(t)
 	code, out, errs := h.run("spill", "--dry-run", "--owner", "ada", "--name", "note", "--ttl", "10m", "--value", "hi")
 	require.Equal(t, 0, code, errs)
-	assert.Equal(t, "SPILL OK dry-run=true key=ada:note ttl=10m0s expires=2026-09-23T12:10:00Z bytes=2 store="+h.mr.Addr()+" written=0\n", out)
+	assert.Equal(t, "SPILL OK dry_run=true key=ada:note ttl=10m0s expires=2026-09-23T12:10:00Z bytes=2 store="+h.mr.Addr()+" written=0\n", out)
 	assert.Empty(t, errs)
 	assert.Zero(t, h.mr.TotalConnectionCount(), "a dry run dials nothing")
 	assert.Empty(t, h.mr.Keys())

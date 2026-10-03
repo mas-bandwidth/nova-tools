@@ -26,11 +26,14 @@ package main
 // A tool preparing for an FCALL uses redisfn.LoadMissing, which loads the
 // library only when it is absent so it does not overwrite a deployed library.
 // fn load is the explicit deployment operation.
+//
+// The fn verbs print their own lines (the receipt's bare head, LOADED
+// nova_sprint sha=..., is a line the skeleton cannot render), so they are
+// Prints verbs.
 
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"strings"
@@ -38,10 +41,10 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/redisfn"
+	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
 // library is the function library the fn verbs load and check.
@@ -51,52 +54,56 @@ func library() redisfn.Library {
 	return lib
 }
 
-func cmdFn(args []string, stdout, stderr io.Writer, d deps) int {
-	return fnVerb(args, stdout, stderr, d, func(ctx context.Context, store login) (redis.UniversalClient, func() error, error) {
-		conn, err := connect(ctx, store, d)
-		if err != nil {
-			return nil, nil, err
-		}
-		return conn.Client(), conn.Close, nil
-	})
+// fnLoadVerb is the fn load verb: a store write of this binary's library.
+func fnLoadVerb(d deps) tool.Verb {
+	return tool.Verb{
+		Name:    "fn load",
+		Usage:   "fn load --addr <host:port> [--user <name>] [--password-env <NAME>]",
+		Example: "",
+		Effect:  tool.LocalWrite,
+		Flags: func(f *tool.Flags) {
+			f.Prints()
+			loginFlags(f)
+		},
+		Run: func(c *tool.Call) *tool.Out { return fnRun(c, d, "load") },
+	}
 }
 
-// opener opens the store for a login check accepted. cmdFn's is connect;
-// the unit tests hand a store of their own that answers FUNCTION, which
-// miniredis does not.
+// fnCheckVerb is the fn check verb: an inspection of the store's library.
+func fnCheckVerb(d deps) tool.Verb {
+	return tool.Verb{
+		Name:    "fn check",
+		Usage:   "fn check --addr <host:port> [--user <name>] [--password-env <NAME>]",
+		Example: "",
+		Effect:  tool.Inspection,
+		Flags: func(f *tool.Flags) {
+			f.Prints()
+			loginFlags(f)
+		},
+		Run: func(c *tool.Call) *tool.Out { return fnRun(c, d, "check") },
+	}
+}
+
+// opener opens the store for a login check accepted. The production opener is
+// connect; the unit tests hand a store of their own that answers FUNCTION,
+// which miniredis does not.
 type opener func(ctx context.Context, store login) (redis.UniversalClient, func() error, error)
 
-// fnVerb is fn load and fn check over the store open opens.
-func fnVerb(args []string, stdout, stderr io.Writer, d deps, open opener) int {
-	if len(args) == 0 {
-		return refuse(stderr, "fn", "no subverb given; load puts this binary's function library on the store, check compares the store's with it")
-	}
-	sub := args[0]
-	if verbflag.IsHelp(sub) {
-		// Help for the group is never a refusal: its subverbs and their effects.
-		panic(verbflag.Help{FS: flag.NewFlagSet("fn", flag.ContinueOnError)})
-	}
-	if sub != "load" && sub != "check" {
-		return refuse(stderr, "fn", fmt.Sprintf("unknown subverb %q; want load or check", sub))
-	}
-	fs := flag.NewFlagSet("fn "+sub, flag.ContinueOnError)
-	rep := newReport("fn "+sub, fs, args[1:], stdout, stderr)
-	store := loginFlags(fs)
-	if problems, _ := parse(fs, args[1:], "addr"); len(problems) > 0 {
-		return rep.refuse(problems...)
-	}
+// fnRun is fn load and fn check over the store d.fnOpen (or connect) opens.
+func fnRun(c *tool.Call, d deps, sub string) *tool.Out {
+	store := loginFrom(c)
 	if err := store.check(d); err != nil {
-		return rep.refuse(err.Error())
+		return tool.Refuse(err.Error())
 	}
 	lib := library()
 	want, err := lib.Digest()
 	if err != nil {
-		return rep.refuse(fmt.Sprintf("this binary's library does not build, so nothing was sent to the store: %s; fix the Lua and rebuild", err))
+		return tool.Refuse(fmt.Sprintf("this binary's library does not build, so nothing was sent to the store: %s; fix the Lua and rebuild", err))
 	}
 	at := *store.addr
 	name := oneline.Field(lib.Name)
 	ctx := context.Background()
-	failed := func(err error) int {
+	failed := func(err error) *tool.Out {
 		cause := oneline.Err(err)
 		var collision *redisfn.CollisionError
 		if errors.As(err, &collision) {
@@ -107,11 +114,21 @@ func fnVerb(args []string, stdout, stderr io.Writer, d deps, open opener) int {
 		// redisconn's line ends in its next step; the line keeps one remedy,
 		// this verb's, which names the command to run again.
 		cause, _, _ = strings.Cut(cause, "; next: ")
-		rep.line(true, "FAILED "+name, "sha", want, "store", at, "err", free(cause), "remedy", quoted(remedy(sub, err, store)))
+		line(c.Stderr, "FAILED "+name, "sha", want, "store", at, "err", free(cause), "remedy", quoted(remedy(sub, err, store)))
 		if answered(err) {
-			return rep.done(1)
+			return tool.Exit(1)
 		}
-		return rep.done(2)
+		return tool.Exit(2)
+	}
+	open := d.fnOpen
+	if open == nil {
+		open = func(ctx context.Context, store login) (redis.UniversalClient, func() error, error) {
+			conn, err := connect(ctx, store, d)
+			if err != nil {
+				return nil, nil, err
+			}
+			return conn.Client(), conn.Close, nil
+		}
 	}
 	client, closeStore, err := open(ctx, store)
 	if err != nil {
@@ -127,8 +144,8 @@ func fnVerb(args []string, stdout, stderr io.Writer, d deps, open opener) int {
 		}
 		// The receipt's own line (redisfn.Receipt.String) after its outcome word.
 		word := r.Outcome.String()
-		rep.line(false, word, "library", bare{strings.TrimPrefix(r.String(), word+" "), map[string]string{"name": r.Library, "sha": r.Digest, "was": r.Was, "why": r.Why}}, "store", at)
-		return rep.done(0)
+		line(c.Stdout, word, "library", bare{strings.TrimPrefix(r.String(), word+" "), map[string]string{"name": r.Library, "sha": r.Digest, "was": r.Was, "why": r.Why}}, "store", at)
+		return tool.Exit(0)
 	}
 
 	state, err := lib.Check(ctx, client)
@@ -139,16 +156,16 @@ func fnVerb(args []string, stdout, stderr io.Writer, d deps, open opener) int {
 	}
 	switch state {
 	case redisfn.Same:
-		rep.line(false, "OK "+name, "sha", want, "loaded", want, "want", want, "store", at)
-		return rep.done(0)
+		line(c.Stdout, "OK "+name, "sha", want, "loaded", want, "want", want, "store", at)
+		return tool.Exit(0)
 	case redisfn.Different, redisfn.Absent:
 		word := "STALE"
 		if state == redisfn.Absent {
 			word = "MISSING"
 		}
-		rep.line(false, word+" "+name, "sha", want, "loaded", loaded, "want", want, "store", at,
+		line(c.Stdout, word+" "+name, "sha", want, "loaded", loaded, "want", want, "store", at,
 			"remedy", quoted("nova-redis fn load "+store.flags()+" puts this binary's library on the store"))
-		return rep.done(1)
+		return tool.Exit(1)
 	}
 	return failed(err)
 }
@@ -209,4 +226,39 @@ func remedy(sub string, err error, store login) string {
 		return "no answer, so the store may hold either library: check that the store at " + *store.addr + " is up and --addr is right, then nova-redis fn check " + store.flags()
 	}
 	return "no answer: check that the store at " + *store.addr + " is up and --addr is right, then nova-redis fn check " + store.flags()
+}
+
+// line prints one typed line to w: its leading words, then key, value pairs.
+// It is the Prints verbs' own printer, kept because the skeleton cannot render
+// a bare head (LOADED nova_sprint sha=...) or a multi-word kind.
+func line(w io.Writer, head string, kv ...any) {
+	var b strings.Builder
+	b.WriteString(head)
+	for i := 0; i+1 < len(kv); i += 2 {
+		k := kv[i].(string)
+		switch x := kv[i+1].(type) {
+		case quoted:
+			fmt.Fprintf(&b, " %s=%q", k, string(x))
+		case free:
+			fmt.Fprintf(&b, " %s=%s", k, string(x))
+		case bare:
+			if x.text != "" {
+				b.WriteString(" " + x.text)
+			}
+		case why:
+			b.WriteString(": " + string(x))
+		case next:
+			b.WriteString("; run: " + string(x))
+		case string:
+			fmt.Fprintf(&b, " %s=%s", k, oneline.Field(x))
+		default:
+			fmt.Fprintf(&b, " %s=%v", k, x)
+		}
+	}
+	fmt.Fprintln(w, b.String())
+}
+
+// note prints one NOTE line to w.
+func note(w io.Writer, text string) {
+	fmt.Fprintln(w, "NOTE "+text)
 }
