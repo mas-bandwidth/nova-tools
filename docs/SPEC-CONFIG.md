@@ -198,12 +198,15 @@ row's.
 | `coordinator` | ref machine | | the plays: where the coordinator's loops run; apply: the machine a friend with no beat is charged to | `fleet:coordinator` |
 | `redis_port` | nullable int (no default) | | the inventory and plays: explicit Redis TCP port, 1 through 65535; unset until declared | `fleet:redis_port` |
 | `pg_dsn` | text | | the inventory and tools play: the explicit password-free Postgres URI; empty until set, never derived from `store` | `fleet:pg_dsn` |
-| `loops_dir` | text | | the inventory and plays: the directory where loop logs are written; seeded to `~/nova-bench/loops` | `fleet:loops_dir` |
+| `loops_dir` | text | | the inventory and plays: the directory a loop's log is written under; seeded to `~/nova-bench/loops` by migration 0020, never a literal in code | `fleet:loops_dir` |
 
-The kind's `Check` bounds `redis_port`, accepts only a password-free
-`postgres://user@host[:port]/database` URI for a nonempty `pg_dsn`, and
-requires `loops_dir` to be non-empty when set. A refusal never reproduces a
-password from the input. Fleet apply and inventory refuse either endpoint
+The kind's `Check` bounds `redis_port` and accepts only a password-free
+`postgres://user@host[:port]/database` URI for a nonempty `pg_dsn`. A refusal
+never reproduces a password from the input. `loops_dir` must be non-empty and
+is refused where it is read, not in `Check`: a store's fleet row carries it
+empty until a migration or a set gives it one, so apply refuses an empty
+applied directory, naming `nova-config fleet set --loops_dir <path>`, and
+never substitutes a path of its own. Fleet apply and inventory refuse either endpoint
 unset, naming one `nova-config fleet set --redis_port <port> --pg_dsn <dsn>`
 command. Migration 0014 (`0014_fleet_endpoints.sql`) leaves the port NULL and
 the DSN empty. Full apply checks both before writing any kind; applying

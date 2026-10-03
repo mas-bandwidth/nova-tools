@@ -365,6 +365,7 @@ type fixture struct {
 		Coordinator string `yaml:"coordinator"`
 		RedisPort   *int   `yaml:"redis_port"`
 		PGDSN       string `yaml:"pg_dsn"`
+		LoopsDir    string `yaml:"loops_dir"`
 	} `yaml:"fleet"`
 	// Loops is a pointer so a fixture without the key is a fleet whose
 	// loops were never applied, and `loops: {}` one that runs none.
@@ -417,11 +418,7 @@ func LoadFixture(path string) (*Snapshot, error) {
 	if f.Fleet.RedisPort != nil {
 		redisPort = strconv.Itoa(*f.Fleet.RedisPort)
 	}
-	snap.Fleet = View{"store": f.Fleet.Store, "coordinator": f.Fleet.Coordinator, "redis_port": redisPort, "pg_dsn": f.Fleet.PGDSN}
-	loopsDir := snap.Fleet["loops_dir"]
-	if loopsDir == "" {
-		loopsDir = "~/nova-bench/loops"
-	}
+	snap.Fleet = View{"store": f.Fleet.Store, "coordinator": f.Fleet.Coordinator, "redis_port": redisPort, "pg_dsn": f.Fleet.PGDSN, "loops_dir": f.Fleet.LoopsDir}
 	snap.Revs[KindMachine], snap.Revs[KindFleet] = 1, 1
 	if f.Loops != nil {
 		snap.Loops = map[string]View{}
@@ -438,7 +435,7 @@ func LoadFixture(path string) (*Snapshot, error) {
 				"name": n, "machine": l.Machine, "argv": string(argv), "seat": l.Seat,
 				"keys": strings.Join(keys, ","), "every": strconv.Itoa(l.Every),
 				"keepalive": strconv.FormatBool(l.Keepalive),
-				"enabled":   strconv.FormatBool(enabled), "log": LoopLog(loopsDir, n),
+				"enabled":   strconv.FormatBool(enabled), "log": LoopLog(snap.Fleet["loops_dir"], n),
 			}
 		}
 	}

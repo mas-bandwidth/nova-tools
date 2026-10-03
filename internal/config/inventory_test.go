@@ -215,7 +215,7 @@ func TestLoadFixtureIsTheAppliedStateOfTheSameRows(t *testing.T) {
 machines:
   bench-alpha: {user: user-a, seat: seat-a, slots: 4, runners: 1, os: darwin, arch: arm64}
   bench-beta: {user: user-b, seat: seat-b, slots: 2}
-fleet: {store: bench-beta, coordinator: bench-alpha, redis_port: 6380, pg_dsn: postgres://nova_config@localhost:5432/nova}
+fleet: {store: bench-beta, coordinator: bench-alpha, redis_port: 6380, pg_dsn: postgres://nova_config@localhost:5432/nova, loops_dir: ~/nova-bench/loops}
 loops:
   member-beta: {machine: bench-beta, argv: [nova-swarm, member], seat: seat-b, keys: [Z_KEY, A_KEY], keepalive: true}
   tick: {machine: bench-alpha, argv: ["~/bin/tick", "--once"], every: 30, enabled: false}
@@ -225,7 +225,7 @@ loops:
 	assert.Equal(t, View{"user": "user-a", "seat": "seat-a", "slots": "4", "runners": "1", "tla": "false"}, snap.Machines["bench-alpha"])
 	assert.Equal(t, &Beat{OS: "darwin", Arch: "arm64"}, snap.Beats["bench-alpha"])
 	assert.NotContains(t, snap.Beats, "bench-beta")
-	assert.Equal(t, View{"store": "bench-beta", "coordinator": "bench-alpha", "redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova"}, snap.Fleet)
+	assert.Equal(t, View{"store": "bench-beta", "coordinator": "bench-alpha", "redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova", "loops_dir": "~/nova-bench/loops"}, snap.Fleet)
 	assert.Equal(t, View{
 		"name": "member-beta", "machine": "bench-beta", "argv": `["nova-swarm","member"]`, "seat": "seat-b",
 		"keys": "A_KEY,Z_KEY", "every": "0", "keepalive": "true", "enabled": "true",

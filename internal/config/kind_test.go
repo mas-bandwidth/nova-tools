@@ -2,6 +2,8 @@ package config
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -182,7 +184,7 @@ func TestTheFleetIsOneRowOfEndpointsAndMachineRefs(t *testing.T) {
 	require.Equal(t, "", row.Fields["coordinator"], assertionMsg153...)
 	require.Empty(t, row.Fields["redis_port"], assertionMsg153...)
 	require.Equal(t, "", row.Fields["pg_dsn"], assertionMsg153...)
-	require.Equal(t, "~/nova-bench/loops", row.Fields["loops_dir"], assertionMsg153...)
+	require.Equal(t, "", row.Fields["loops_dir"], assertionMsg153...)
 	{
 		_, err := fleet.NewRow(KindFleet, map[string]string{"store": "Hulk"})
 		assertionMsg156 := []any{"a ref that is not a name: %v", err}
@@ -397,33 +399,35 @@ func TestAFriendsWidthDefaultsToEightAndIsAtLeastOne(t *testing.T) {
 	assert.Error(t, friend.Check(Row{Name: "amy", Fields: map[string]string{"width": "0"}}))
 }
 
-// TestLoopLogIsTheFleetRowsDirectory: the seeded loops_dir reproduces
-// today's literal; a different directory changes the log path; an empty
-// directory is refused by the fleet kind's Check with a remedy naming
-// fleet set --loops-dir.
+// TestLoopLogIsTheFleetRowsDirectory: a loop's log path is the fleet row's
+// directory and its name, so the seeded directory reproduces the path the
+// literal gave and another directory changes it; the fleet kind carries no
+// default in code (the seed is the migration's), and an empty applied
+// directory refuses with a remedy naming the set that declares one.
 func TestLoopLogIsTheFleetRowsDirectory(t *testing.T) {
 	t.Parallel()
 
 	fleet, _ := Lookup(KindFleet)
+	f, ok := fleet.Field("loops_dir")
+	require.True(t, ok, "fleet %+v: the loops directory is a fleet field", fleet)
+	assertionMsg := []any{"--loops_dir %+v", f}
+	assert.Equal(t, TypeText, f.Type, assertionMsg...)
+	assert.Equal(t, "", f.Default, "the seed is the migration's, never a literal in code: %+v", f)
 
-	// The seeded value reproduces today's string for a name.
-	seeded := LoopLog("~/nova-bench/loops", "member-bench-a")
-	assert.Equal(t, "~/nova-bench/loops/member-bench-a.log", seeded)
+	// The migration's seed reproduces the string the literal gave.
+	seeded, err := os.ReadFile(filepath.Join("migrations", "0020_fleet_loops_dir.sql"))
+	require.NoError(t, err)
+	require.Contains(t, string(seeded), "'~/nova-bench/loops'", "the migration seeds the fleet row: %s", seeded)
+	assert.Equal(t, "~/nova-bench/loops/member-bench-a.log", LoopLog("~/nova-bench/loops", "member-bench-a"))
 
 	// Another directory changes it.
-	custom := LoopLog("/custom/loops", "tick")
-	assert.Equal(t, "/custom/loops/tick.log", custom)
+	assert.Equal(t, "/var/log/loops/tick.log", LoopLog("/var/log/loops", "tick"))
 
-	// An empty directory is refused by the kind's Check with a remedy.
-	for _, empty := range []string{"", "   "} {
-		row := Row{Name: KindFleet, Fields: map[string]string{"loops_dir": empty}}
-		err := fleet.Check(row)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "--loops_dir wants a non-empty directory path")
-		assert.Contains(t, err.Error(), "nova-config fleet set --loops-dir")
-	}
-
-	// A valid non-empty directory passes Check.
-	row := Row{Name: KindFleet, Fields: map[string]string{"loops_dir": "/valid/path"}}
-	assert.NoError(t, fleet.Check(row))
+	// An empty applied directory is refused where the log path is written,
+	// with the remedy that declares one; nothing is put in its place.
+	ap := &RedisApplier{loopsDirRead: true, loopsDirCache: ""}
+	_, err = ap.loopsDir(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "nova-config fleet set --loops_dir <path>")
+	assert.NotContains(t, err.Error(), "nova-bench", "the refusal names no fleet's path: %v", err)
 }

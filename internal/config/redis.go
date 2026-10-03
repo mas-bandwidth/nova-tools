@@ -97,7 +97,7 @@ type RedisApplier struct {
 	coordinator     string
 	coordinatorRead bool
 	friendHosts     map[string]string // friend name -> beat host
-	loopsDir        string
+	loopsDirCache   string
 	loopsDirRead    bool
 }
 
@@ -108,23 +108,24 @@ func (a *RedisApplier) now() int64 {
 	return time.Now().UnixMilli()
 }
 
-// getLoopsDir reads the fleet's loops_dir from Redis, caching it.
-func (a *RedisApplier) getLoopsDir() string {
-	if a.loopsDirRead {
-		return a.loopsDir
-	}
-	v, err := a.Client.Get(context.Background(), FleetKey("loops_dir")).Result()
-	if err != nil && !errors.Is(err, redis.Nil) {
-		// If we can't read it, fall back to the seeded default.
-		a.loopsDir = "~/nova-bench/loops"
-	} else {
-		a.loopsDir = v
-		if a.loopsDir == "" {
-			a.loopsDir = "~/nova-bench/loops"
+// loopsDir is the fleet row's applied loops_dir, read once per applier and
+// cached: the directory a loop's log is written under is the fleet's one
+// configuration, never a literal in this package (docs/STANDARD.md section
+// 4). An empty value refuses and nothing is put in its place: the fleet row
+// is the only place the directory lives, so a fleet that has not declared
+// one is told to declare it.
+func (a *RedisApplier) loopsDir(ctx context.Context) (string, error) {
+	if !a.loopsDirRead {
+		v, err := a.Client.Get(ctx, FleetKey("loops_dir")).Result()
+		if err != nil && !errors.Is(err, redis.Nil) {
+			return "", fmt.Errorf("redis: read %s: %w", FleetKey("loops_dir"), err)
 		}
+		a.loopsDirCache, a.loopsDirRead = v, true
 	}
-	a.loopsDirRead = true
-	return a.loopsDir
+	if a.loopsDirCache == "" {
+		return "", RedisRefusal("the fleet row's loops_dir is empty and a loop's log is <loops_dir>/<name>.log; run: nova-config fleet set --loops_dir <path>, then nova-config apply --kind fleet --as <actor>")
+	}
+	return a.loopsDirCache, nil
 }
 
 // Prepare installs the nova_sprint function library when the store has none
@@ -708,11 +709,11 @@ type hashKind struct {
 	kind  string
 	set   string
 	key   func(string) string
-	extra func(*RedisApplier, string) []any // derived fields beside the row's; nil for none
+	extra func(loopsDir, name string) []any // derived fields beside the row's; nil for none
 }
 
 var hashKinds = map[string]hashKind{
-	KindLoop:  {kind: KindLoop, set: LoopsKey, key: LoopKey, extra: func(a *RedisApplier, n string) []any { return []any{"log", LoopLog(a.getLoopsDir(), n)} }},
+	KindLoop:  {kind: KindLoop, set: LoopsKey, key: LoopKey, extra: func(dir, n string) []any { return []any{"log", LoopLog(dir, n)} }},
 	KindRoute: {kind: KindRoute, set: RoutesKey, key: RouteKey},
 	KindTier:  {kind: KindTier, set: TiersKey, key: TierKey},
 }
@@ -775,7 +776,11 @@ func (a *RedisApplier) writeHash(ctx context.Context, h hashKind, row Row, idem 
 	rev, _ := strings.CutPrefix(idem, "config:"+h.kind+":")
 	fields := []any{"name", row.Name, "rev", rev, "at", strconv.FormatInt(a.now(), 10)}
 	if h.extra != nil {
-		fields = append(fields, h.extra(a, row.Name)...)
+		dir, err := a.loopsDir(ctx)
+		if err != nil {
+			return err
+		}
+		fields = append(fields, h.extra(dir, row.Name)...)
 	}
 	for _, f := range k.Fields {
 		fields = append(fields, f.Name, row.Fields[f.Name])

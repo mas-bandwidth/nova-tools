@@ -271,7 +271,7 @@ func TestApplyOfASingletonIsASetNeverAnAdd(t *testing.T) {
 	require.Equal(t, 0, res.Add, assertionMsg267...)
 	require.Equal(t, int64(8), res.Rev, assertionMsg267...)
 	assertionMsg268 := []any{"fleet set reported %v wrote %v", reported, ap.log}
-	require.Equal(t, "set:fleet:store,coordinator,redis_port,pg_dsn,loops_dir", strings.Join(reported, " "), assertionMsg268...)
+	require.Equal(t, "set:fleet:store,coordinator,redis_port,pg_dsn", strings.Join(reported, " "), assertionMsg268...)
 	require.Equal(t, "set fleet fleet as=rowan idem=config:fleet:8 stamp fleet 8", strings.Join(ap.log, " "), assertionMsg268...)
 	require.Equal(t, "hulk", ap.views[KindFleet][KindFleet]["store"], "fleet view %v", ap.views[KindFleet])
 	require.Equal(t, "6380", ap.views[KindFleet][KindFleet]["redis_port"], "fleet view %v", ap.views[KindFleet])
