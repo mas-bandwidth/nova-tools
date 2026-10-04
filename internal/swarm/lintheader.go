@@ -30,6 +30,16 @@ import (
 // `paused` (the coordinator paused this kind; the remedy is the `trust --set trial`
 // command) and `test-named`"*. That is what this file is.
 //
+// The brief's header grammar adds two lines beside those five
+// (docs/SPEC-CARD-CONTRACT.md §2, the header grammar):
+//
+//	START: <files or packages to read first>
+//	STOP: <the condition that ends the task>
+//
+// A tier flash card missing either is refused with the token `start-named` or
+// `stop-named`; for tier pro, or no tier, the same finding is advice, the tokens held
+// by `cmd/nova-swarm/lint.go`'s cardLintAdvisory.
+//
 // THREE READERS, ONE GRAMMAR. `cut` renders the lines, `internal/pulse/cardheader.go`
 // reads them at the gate (T03, PR #1721 at f927bccc), and the lint checks them on the
 // bench before a token is spent. A lint that accepted a line the gate refuses would
@@ -231,6 +241,16 @@ var cardKeyCheck = map[string]string{
 	"SOURCE": "kind-declared",
 }
 
+// StartNamedCheck and StopNamedCheck are the tokens for the two reading lines of the
+// brief's header grammar: `START: <files or packages to read first>` and
+// `STOP: <the condition that ends the task>` (docs/SPEC-CARD-CONTRACT.md §2). A tier
+// flash brief missing either is refused; for tier pro, or no tier, the finding is
+// advice, held advisory by `cmd/nova-swarm/lint.go`'s cardLintAdvisory.
+const (
+	StartNamedCheck = "start-named"
+	StopNamedCheck  = "stop-named"
+)
+
 // validGlobs is the PATHS: rule, and it is `hygiene.ValidatePaths` ITSELF, not a
 // restatement of it.
 //
@@ -377,6 +397,22 @@ func LintCardHeader(raw []byte, trust TrustState, required bool) []CardHeaderFin
 	if kind.value != "" && trust != nil {
 		if trust[kind.value] == "paused" {
 			add("paused", kind.line, fmt.Sprintf("kind=%s is paused: the coordinator stopped cutting it", kind.value))
+		}
+	}
+
+	// 5. START: and STOP: name where the child reads first and where it ends
+	// (docs/SPEC-CARD-CONTRACT.md §2, the header grammar). The RESULT line carries the
+	// tier as the sprint writes it, read by cardhdr.ReadModel, the one parser of it;
+	// a tier flash card missing either line is refused, because a flash child with no
+	// stopping condition reads past its budget. For tier pro, or no tier, the same
+	// finding is advice: the tokens sit in `cmd/nova-swarm/lint.go`'s cardLintAdvisory
+	// and change no verdict.
+	if m, _ := cardhdr.ReadModel(string(raw)); m.Tier == cardhdr.RouteFlash {
+		if f := h["START"]; !f.found {
+			add(StartNamedCheck, 1, "no START: line under the contract line; a tier flash brief names the files or packages to read first")
+		}
+		if f := h["STOP"]; !f.found {
+			add(StopNamedCheck, 1, "no STOP: line under the contract line; a tier flash brief names the condition that ends the task")
 		}
 	}
 	return out
