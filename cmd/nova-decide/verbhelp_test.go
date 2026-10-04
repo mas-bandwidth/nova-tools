@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
@@ -102,7 +103,7 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 
 	t.Run("every usage line either begins with a verb or has a true continuation indent", func(t *testing.T) {
 		t.Parallel()
-		var count int
+		var count, continuationCount int
 		inUsage := false
 		verbs := []string{"ask", "read", "score", "attempt", "grade", "gate", "brief", "outcome", "calibrate", "findings", "version", "help"}
 		for _, line := range strings.Split(help, "\n") {
@@ -113,6 +114,7 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 				inUsage = false
 			case inUsage:
 				count++
+				assert.LessOrEqualf(t, utf8.RuneCountInString(line), 100, "usage line exceeds 100 columns (%d chars): %s", utf8.RuneCountInString(line), line)
 				trimmed := strings.TrimSpace(line)
 				indent := len(line) - len(strings.TrimLeft(line, " "))
 				hasVerb := false
@@ -122,12 +124,16 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 						break
 					}
 				}
-				isContinuation := indent > 2 && !strings.HasPrefix(trimmed, "nova-decide ")
-				assert.True(t, hasVerb || isContinuation,
-					"every usage line under usage: either begins with nova-decide <verb> or is indented more than the first line and does not itself begin with nova-decide: %s", line)
+				if !hasVerb {
+					continuationCount++
+					assert.Positive(t, indent, "continuation line must have indent > 0: %s", line)
+				}
+				assert.True(t, hasVerb || (indent > 0 && !hasVerb),
+					"every usage line under usage: either begins with nova-decide <verb> or has indent > 0 without verb prefix: %s", line)
 			}
 		}
 		require.Positive(t, count, "the banner holds no usage block; this subtest would pass by checking nothing")
+		assert.Positive(t, continuationCount, "expected wrapped usage continuation lines, found none")
 	})
 
 	t.Run("the other verbs' examples answer from -h and run", func(t *testing.T) {

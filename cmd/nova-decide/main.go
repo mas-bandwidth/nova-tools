@@ -69,7 +69,7 @@ setup:
 		Verbs: []tool.Verb{
 			{
 				Name:      "ask",
-				Usage:     "ask --schema <file> --state <file|-> --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
+				Usage:     "ask --schema <file> --state <file|-> --backend <jev|fixed>\n    [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
 				Example:   "ask --schema ./schema.json --state ./state.txt --backend fixed --answers ./answers.json --record ./decisions.jsonl --op card-1",
 				ExitTable: decideExit,
 				Effect:    tool.Delivery + "; with --backend jev it sends the state to the backend, and it appends to --record",
@@ -87,7 +87,7 @@ Each answer prints as one ANSWER line: a choice's value and every option's p, a 
 			},
 			{
 				Name:      "read",
-				Usage:     "read --card <file> --diff <file> [--rule <file>] --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
+				Usage:     "read --card <file> --diff <file> [--rule <file>] --backend <jev|fixed>\n    [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
 				ExitTable: decideExit,
 				Effect:    tool.Delivery + "; with --backend jev it sends the card and diff to the backend, and it appends to --record",
 				Detail: `The read decision: a worker's diff against the card that asked for it, five questions:
@@ -106,7 +106,7 @@ Example, from a checkout root: nova-decide read --card ` + fixture + `card.md --
 			},
 			{
 				Name:      "score",
-				Usage:     "score --card <file> --diff <file> --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
+				Usage:     "score --card <file> --diff <file> --backend <jev|fixed>\n    [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
 				ExitTable: decideExit,
 				Effect:    tool.Delivery + "; with --backend jev it sends the card and diff to the backend, and it appends to --record",
 				Detail: `The score decision: a landed diff against its card, the read's five questions and one noul
@@ -126,7 +126,7 @@ Example, from a checkout root: nova-decide score --card ` + fixture + `card.md -
 			},
 			{
 				Name:      "attempt",
-				Usage:     "attempt --brief <file> [--result <file>] --reason <line> --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
+				Usage:     "attempt --brief <file> [--result <file>] --reason <line> --backend <jev|fixed>\n    [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
 				ExitTable: decideExit,
 				Effect:    tool.Delivery + "; with --backend jev it sends the brief, result and reason to the backend, and it appends to --record",
 				Detail: `The attempt decision: how a work take ended, one choice, class: done, nothing-to-do,
@@ -145,7 +145,7 @@ Example, from a checkout root: nova-decide attempt --brief ` + fixture + `card.m
 			},
 			{
 				Name:      "grade",
-				Usage:     "grade --brief <file> --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
+				Usage:     "grade --brief <file> --backend <jev|fixed>\n    [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
 				ExitTable: decideExit,
 				Effect:    tool.Delivery + "; with --backend jev it sends the brief to the backend, and it appends to --record",
 				Detail: `The grade decision: a card's convergence before its first deal, one choice, grade: script
@@ -161,7 +161,7 @@ Example, from a checkout root: nova-decide grade --brief ` + fixture + `card.md 
 			},
 			{
 				Name:      "gate",
-				Usage:     "gate --output <file> --card <file> [--diff <file>] [--base-red <test,...>] [--bars <flaky,pre-existing>] --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
+				Usage:     "gate --output <file> --card <file> [--diff <file>] [--base-red <test,...>]\n    [--bars <flaky,pre-existing>] --backend <jev|fixed>\n    [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
 				ExitTable: decideExit,
 				Effect:    tool.Delivery + "; with --backend jev it sends each failure, the card's PATHS and the diff's summary to the backend, and it appends to --record",
 				Detail: `The gate decision: a red gate's go test output, read failure by failure; each failing test
@@ -192,7 +192,7 @@ Example, from a checkout root: nova-decide gate --output ` + fixture + `gate-out
 			},
 			{
 				Name:      "brief",
-				Usage:     "brief --card <file|dir> --backend <jev|fixed> [--answers <file>] --record <file> [--width <n>] [--timeout <d>] [--max <n>] [--dry-run]",
+				Usage:     "brief --card <file|dir> --backend <jev|fixed> [--answers <file>]\n    --record <file> [--width <n>] [--timeout <d>] [--max <n>] [--dry-run]",
 				ExitTable: decideExit,
 				Effect:    tool.Delivery + "; with --backend jev it sends each card to the backend, and it appends to --record",
 				Detail: `The brief decision: a card's text alone, as a flash child with no memory reads it, before
@@ -236,7 +236,7 @@ Example, from a checkout root: nova-decide brief --card ` + fixture + `greet.md 
 			},
 			{
 				Name:      "calibrate",
-				Usage:     "calibrate --record <file> --decision <name> --question <name[=option]> --positive <label,...> --negative <label,...> [--bars <p,...>]",
+				Usage:     "calibrate --record <file> --decision <name> --question <name[=option]>\n    --positive <label,...> --negative <label,...> [--bars <p,...>]",
 				ExitTable: plainExit,
 				Effect:    tool.Inspection,
 				Detail: `Scores each labelled decision by the p its answer gave (a noul's yes, or a choice's
