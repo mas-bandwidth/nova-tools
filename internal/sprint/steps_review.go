@@ -25,6 +25,10 @@ type AskReq struct {
 	// back (retired_by coordinator) and asked of one other reader in the same
 	// step, chosen and routed as Another's (ask --instead)
 	Instead string `json:",omitempty"`
+	// Friends is the seats a read may be dealt to, the same seats the deal uses.
+	// nil is no friend: a fleet reader is asked when the read's class is one a
+	// fleet reader may serve (docs/SPEC-SPRINT.md section 1).
+	Friends []FriendSeat `json:",omitempty"`
 }
 
 // RetiredByCoordinator is a read card's retired_by when the coordinator took
@@ -96,6 +100,9 @@ func readsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 // one more reader, the next round the readers.
 func Ask(s *Snapshot, r AskReq) Plan {
 	var p Plan
+	// a friend's row is up, held or down for this ask, when the snapshot already
+	// carries reader states (docs/SPEC-SPRINT.md section 1)
+	s.noteFriendReaderStates(r.Friends)
 	// in stream turns from the ask's stream index on the work table
 	// (streamTurns), so a limit asks of every stream alike, and the index moves
 	// past the stream of the last primary asked
@@ -129,6 +136,19 @@ func Ask(s *Snapshot, r AskReq) Plan {
 	chosen := pick(&p, r.Sel, eligibleTurns(s.Work.Column(Review), eligible, srr), rowOf, eligible, s.primaryCard)
 	rr := askRound(s)
 	moves := roundMoves{}
+	// room left for a friend's read this ask, her width less the cards she
+	// already holds, decremented as she is dealt (docs/SPEC-SPRINT.md section 1)
+	room := map[string]int{}
+	var friendUp []string
+	for _, f := range r.Friends {
+		if f.Status != Up {
+			continue
+		}
+		room[f.Name] = friendRoom(s, f)
+		friendUp = append(friendUp, f.Name)
+	}
+	slices.Sort(friendUp)
+	declared := map[string]bool{}
 	// a read card's route is drawn as a work card's is, from its primary's tier
 	// at that tier's rolling index on the fleet table (route.go, readRouteOf;
 	// tla/RouteIndex.tla, THE READS); a step that read no fleet table or no
@@ -153,6 +173,13 @@ func Ask(s *Snapshot, r AskReq) Plan {
 				continue
 			}
 			if awayRead(s, rc) {
+				if name, fr := FriendOfReaderRow(rc.Row); fr && !seatKnown(r.Friends, name) {
+					// her seat was not loaded this tick: the read stays
+					have[rc.F("reader")] = true
+					all = append(all, rc.F("reader"))
+					kept = append(kept, rc)
+					continue
+				}
 				// asked of a reader that is not up: taken back, and asked again below
 				takenBack = append(takenBack, change(Readers, removeEntry(rc, map[string]string{"retired": stamp(s.Now), "retired_by": "away"})))
 				away = append(away, rc.F("reader"))
@@ -169,8 +196,12 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		}
 		var free []string
 		for _, rd := range s.Readers.Rows() {
-			// a reader with a card at this attempt, even retired, has read it
-			// and a reader not up is not asked (reader away, reader up)
+			// a friend's row is dealt below, not by the fleet round. A reader
+			// with a card at this attempt, even retired, has read it, and a
+			// reader not up is not asked (reader away, reader up)
+			if IsFriendReader(rd) {
+				continue
+			}
 			if !have[rd] && s.Readers.Card(ReadCardID(c.ID, attempt, rd)) == nil && s.ReaderIsUp(rd) {
 				free = append(free, rd)
 			}
@@ -179,7 +210,27 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		if another {
 			want = 1
 		}
-		chosenReaders := rr.picks(want, nil, func(x string) bool { return contains(free, x) })
+		// friends first, the same dealer as a friend's work card; a fleet
+		// reader only for what is left, and only when that class may be served
+		// by one (docs/SPEC-SPRINT.md section 1)
+		blocked := maps.Clone(have)
+		var friendPicked []string
+		for len(friendPicked) < want {
+			name := pickReadFriend(s, c, friendUp, room, r.Friends, blocked, attempt)
+			if name == "" {
+				break
+			}
+			row := FriendReaderRow(name)
+			friendPicked = append(friendPicked, row)
+			blocked[row] = true
+			room[name]--
+		}
+		fleetWant := want - len(friendPicked)
+		var fleetPicked []string
+		if fleetWant > 0 && s.fleetCanServe(c) {
+			fleetPicked = rr.picks(fleetWant, nil, func(x string) bool { return contains(free, x) })
+		}
+		chosenReaders := append(append([]string{}, friendPicked...), fleetPicked...)
 		// A return is not a read (tla/DirtyTick.tla, PlaceReads and
 		// JudgedOnlyAfterTheBound): a read handed back goes to a free
 		// reader when there is one, its card retired; when none is free its
@@ -203,8 +254,20 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			retiredFrom = append(retiredFrom, rc.F("reader"))
 		}
 		if len(chosenReaders)+len(again) < want {
+			for _, rd := range friendPicked {
+				if name, ok := FriendOfReaderRow(rd); ok {
+					room[name]++
+				}
+			}
 			p.refuse(c.ID, fmt.Sprintf("needs %d different readers and %d is free who has not already read attempt %d of %s; a reader away or down is not asked (readers: %s); run: nova-sprint reader add <name>, or nova-sprint reader up <name>", want, len(chosenReaders)+len(again), attempt, c.ID, readersText(s)))
 			continue
+		}
+		for _, rd := range friendPicked {
+			if s.Readers.HasRow(rd) || declared[rd] {
+				continue
+			}
+			p.Rows = append(p.Rows, RowAdd{Readers, rd})
+			declared[rd] = true
 		}
 		// the first read of a flash card's attempt is a decide read (decideFields): one
 		// placed again keeps its bars, and a new one is it while no read that stays is
@@ -214,17 +277,27 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		}
 		for _, rc := range inPlace {
 			set := map[string]string{"asked": stamp(s.Now)}
-			maps.Copy(set, s.readRouteOf(ri, c, failed))
+			// a friend's read is not drawn a paid route (docs/SPEC-SPRINT.md section 1)
+			if !IsFriendReader(rc.Row) {
+				maps.Copy(set, s.readRouteOf(ri, c, failed))
+			}
 			takenBack = append(takenBack, change(Readers, setEntry(rc, set, FieldReturned)))
 		}
 		u := Unit{Key: c.ID, Stream: c.Row, Changes: takenBack}
 		for _, rd := range chosenReaders {
+			if IsFriendReader(rd) {
+				continue
+			}
 			rr.moved(rd)
 			moves[c.ID] = joinMoves(moves[c.ID], rd)
 		}
 		for i, rd := range chosenReaders {
 			fields := map[string]string{"kind": "read", "primary": c.ID, "stream": c.Row, "reader": rd, "attempt": itoa(attempt), "head": c.F("head"), "asked": stamp(s.Now)}
-			maps.Copy(fields, s.readRouteOf(ri, c, failed))
+			if name, ok := FriendOfReaderRow(rd); ok {
+				maps.Copy(fields, friendReadFields(s, c, name))
+			} else {
+				maps.Copy(fields, s.readRouteOf(ri, c, failed))
+			}
 			maps.Copy(fields, s.decideFields(c, !another && !decided && i == 0))
 			u.Changes = append(u.Changes, change(Readers, createEntry(ReadCardID(c.ID, attempt, rd), rd, Asked, c.Score, fields)))
 		}
@@ -625,6 +698,25 @@ func reviewJudgment(s *Snapshot, pr *Card, st reviewStep) (Note, bool) {
 			outstanding = true
 		case col == OK && c.F("head") == pr.F("head") && ReadCardAgrees(c):
 			oks[r] = true
+		}
+	}
+	// a read placed on a row this step declares (a friend's readers-table row)
+	// is not in Rows() yet. It is outstanding, so a flash card whose only read
+	// is that new row is not "never asked" (docs/SPEC-SPRINT.md section 1).
+	for id, col := range st.moved {
+		primary, att, reader, ok := ParseReadCard(id)
+		if !ok || primary != pr.ID || att != attempt || s.Readers.HasRow(reader) {
+			continue
+		}
+		if col == "" {
+			col = Asked
+		}
+		reads++
+		switch {
+		case col == Asked || col == Reading:
+			outstanding = true
+		case col == OK:
+			oks[reader] = true
 		}
 	}
 	open := map[string]bool{} // the judgment types open on it after the step

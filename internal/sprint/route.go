@@ -317,7 +317,8 @@ func (s *Snapshot) NextTier(c *Card) string {
 // fine?"), raised to the read tier set for its stream or the sprint when that is
 // stronger (settings.go; nova-tools#5096 item 27), never lowered. A card that pins
 // a model and names no tier is read on flash; a frontier card, a tier no route
-// serves, is read on pro.
+// serves, is read on pro. The class a unit must meet is readClassOf, which does
+// not collapse frontier; this return stays the tier a fleet route is drawn from.
 func (s *Snapshot) readTierOf(pr *Card) string {
 	m, _ := cardhdr.ReadModel(pr.F("brief"))
 	t := cardTier(pr, m)

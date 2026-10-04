@@ -199,14 +199,20 @@ func liveReadsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 // attempt): it is judged while its reader is away and read when the reader is
 // back (read_return_test.go). A snapshot with no reader states holds every
 // reader up: nothing moves.
-func sweepReads(s *Snapshot, p *Plan) {
-	up := s.UpReaders()
-	if s.ReaderStates == nil || len(up) == 0 {
+func sweepReads(s *Snapshot, p *Plan, seats []FriendSeat) {
+	if s.ReaderStates == nil {
 		return
 	}
+	// fleet readers only: a friend's read is not a load the level evens, and a
+	// frontier read is not taken onto a pro reader (docs/SPEC-SPRINT.md section 1)
+	up := machineReaderRows(s.UpReaders())
 	taker := func(c *Card) bool {
-		if pr := s.Work.Card(c.F("primary")); pr == nil || !enoughReadersUp(s, pr) {
+		pr := s.Work.Card(c.F("primary"))
+		if pr == nil || !s.enoughReadUnits(pr, seats) {
 			return false
+		}
+		if _, fromFriend := FriendOfReaderRow(c.Row); fromFriend && !s.fleetCanServe(pr) {
+			return s.freeFriends(pr, seats) > 0
 		}
 		for _, rd := range up {
 			if s.Readers.Card(ReadCardID(c.F("primary"), c.Int("attempt"), rd)) == nil {
@@ -216,7 +222,12 @@ func sweepReads(s *Snapshot, p *Plan) {
 		return false
 	}
 	for _, rd := range s.Readers.Rows() {
-		if s.ReaderIsUp(rd) {
+		if name, fr := FriendOfReaderRow(rd); fr {
+			// a seat this tick did not load: her read stays. Up: it stays.
+			if !seatKnown(seats, name) || s.ReaderIsUp(rd) {
+				continue
+			}
+		} else if s.ReaderIsUp(rd) {
 			continue
 		}
 		cards := append([]*Card{}, s.Readers.Cell(rd, Asked)...)
@@ -242,9 +253,10 @@ const RetiredByLevel = "level"
 
 // TickLevelReads is the readers' rebalance, once at the start of every tick,
 // before any other part: levelReads, in one plan.
-func TickLevelReads(s *Snapshot, _ TickReq) (Plan, int) {
+func TickLevelReads(s *Snapshot, r TickReq) (Plan, int) {
+	s.noteFriendReaderStates(r.Friends)
 	var p Plan
-	levelReads(s, &p)
+	levelReads(s, &p, r.Friends)
 	return bound(p)
 }
 
@@ -270,9 +282,10 @@ func TickLevelReads(s *Snapshot, _ TickReq) (Plan, int) {
 // not a loop's own --width (there is none), and the readers table has no width
 // column, so every reader up counts alike and nothing here bounds a reader at
 // DealAhead times a width.
-func levelReads(s *Snapshot, p *Plan) {
-	sweepReads(s, p)
-	up := s.UpReaders()
+func levelReads(s *Snapshot, p *Plan, seats []FriendSeat) {
+	sweepReads(s, p, seats)
+	// a friend's row is not a source or a target of the level
+	up := machineReaderRows(s.UpReaders())
 	if len(up) < 2 {
 		return
 	}

@@ -148,9 +148,10 @@ type TickReq struct {
 	// Started is the machine's first start of the sprint's epoch, the time
 	// the done part's note counts from; zero is not known.
 	Started time.Time
-	// Friends is each friend the deal may give a friend's card to, read by
-	// the binding with the tick when a friend's card is ready (FriendDeal);
-	// nil is none, and a friend's card waits ready.
+	// Friends is each friend a friend's card or a read may be dealt to. nil is
+	// none: a friend's card waits ready, and a read is asked of a fleet reader
+	// only when its class is one a fleet reader may serve (docs/SPEC-SPRINT.md
+	// section 1). The binding loads the seats.
 	Friends []FriendSeat
 }
 
@@ -769,6 +770,7 @@ func TickLevel(s *Snapshot, r TickReq) (Plan, int) {
 // (streamTurns, as the deal's; Ask moves the index), so the readers
 // serve every stream alike and no stream's backlog waits behind another's.
 func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
+	s.noteFriendReaderStates(r.Friends)
 	var ids []string
 	due := 0
 	askable := func(c *Card) string {
@@ -777,11 +779,12 @@ func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
 		}
 		return "asked, or its work failed"
 	}
-	few := false // a primary waits for more readers than are up
+	few := false // a primary waits for more units than are up
 	for _, c := range eligibleTurns(s.Work.Column(Review), askable, askStreamRound(s)) {
 		switch {
-		case !enoughReadersUp(s, c):
-			// an absent reader is never asked: the sprint's one judgment says so
+		case !s.enoughReadUnits(c, r.Friends):
+			// an absent unit is never asked: the sprint's one judgment says so.
+			// a frontier read is not asked of a pro reader
 			few = true
 		case len(ids) < TickMaxMoves:
 			ids = append(ids, c.ID)
@@ -795,7 +798,7 @@ func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
 		conds = append(conds, cond{typ: NFewReaders, streamLevel: true, what: fewReaders(s)})
 	}
 	if len(ids) > 0 {
-		p = Ask(s, AskReq{Sel: Sel{Only: ids}, Who: r.who()})
+		p = Ask(s, AskReq{Sel: Sel{Only: ids}, Who: r.who(), Friends: r.Friends})
 	}
 	for _, x := range p.Refused {
 		if pr := s.Work.Placed(x.Key); pr != nil {
@@ -1210,7 +1213,7 @@ func notify(p *Plan, s *Snapshot, conds []cond, types []string, r TickReq) int {
 func MovesDue(s *Snapshot) int {
 	n := len(s.Fleet.Column(Withdrawn))
 	for _, c := range s.Work.Column(Review) {
-		if s.Readers != nil && c.F("result") != "failed" && len(liveReadsAt(s, c, c.Int("attempt"))) < ReadsNeeded(c) && enoughReadersUp(s, c) {
+		if s.Readers != nil && c.F("result") != "failed" && len(liveReadsAt(s, c, c.Int("attempt"))) < ReadsNeeded(c) && s.enoughReadUnits(c, nil) {
 			n++
 		}
 	}

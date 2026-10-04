@@ -274,8 +274,18 @@ func friendReadReport(dir, job string) (report, why string, err error) {
 // delivered and finished.
 func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir string, say func(string)) (delivered, finished int, err error) {
 	cards, err := st.ReadCells(ctx, sprint.Fleet, sprint.FriendRow(name), sprint.Working)
-	if err != nil || len(cards) == 0 {
+	if err != nil {
 		return 0, 0, err
+	}
+	reads, err := st.ReadCells(ctx, sprint.Readers, sprint.FriendReaderRow(name), sprint.Asked, sprint.Reading)
+	if err != nil {
+		return 0, 0, err
+	}
+	if len(cards) == 0 && len(reads) == 0 {
+		return 0, 0, nil
+	}
+	if len(cards) == 0 {
+		return a.friendReadsOf(ctx, st, name, dir, reads, say)
 	}
 	packets, err := st.Packets(ctx, cards)
 	if err != nil {
@@ -338,5 +348,97 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 		}
 		say(fmt.Sprintf("FRIEND-CARD FINISHED friend=%s card=%s result=%s head=%s: %s", name, p.Card, result, cmp.Or(r.Head, "-"), oneline.Escape(oneline.Cap(r.Report, 200))))
 	}
+	d, f, err := a.friendReadsOf(ctx, st, name, dir, reads, say)
+	return delivered + d, finished + f, err
+}
+
+// friendReadsOf delivers and collects one friend's reads. A read asked or
+// reading on her readers-table row is inbox/<job>/BRIEF.md when that is not
+// there, and her report closes it through the reader verb: LAND is ok, HOLD
+// that names a defect is broken. It is not a work finish (docs/SPEC-SPRINT.md
+// section 1). A missing readers row is no cards and no wait.
+func (a *app) friendReadsOf(ctx context.Context, st *store.Store, name, dir string, cards []*sprint.Card, say func(string)) (delivered, finished int, err error) {
+	if len(cards) == 0 {
+		return 0, 0, nil
+	}
+	packets, err := st.Packets(ctx, cards)
+	if err != nil {
+		return 0, 0, err
+	}
+	byID := map[string]*sprint.Card{}
+	for _, c := range cards {
+		byID[c.ID] = c
+	}
+	for _, p := range packets {
+		c := byID[p.Card]
+		job := friendJobOf(p)
+		in, why, err := friendInbox(dir, p)
+		if err != nil {
+			return delivered, finished, err
+		}
+		if why != "" {
+			say(fmt.Sprintf("FRIEND-CARD REFUSED friend=%s card=%s: %s; nothing was written", name, oneline.Field(p.Card), oneline.Escape(why)))
+			continue
+		}
+		brief := filepath.Join(in, "BRIEF.md")
+		if _, err := os.Lstat(brief); errors.Is(err, fs.ErrNotExist) {
+			if err := os.MkdirAll(in, 0o755); err != nil {
+				return delivered, finished, err
+			}
+			body := sprint.FriendReadBrief(name, p.Primary, p.Brief, p.WorkBranch, p.WorkBase, p.Head, p.Attempt, friendReadDeadline(st, c))
+			switch err := atomicfile.WriteFile(brief, []byte(body), 0o644, atomicfile.NoReplace()); {
+			case err == nil:
+				delivered++
+				say(fmt.Sprintf("FRIEND-CARD DELIVERED friend=%s card=%s job=%s branch=%s", name, p.Card, oneline.Field(job), p.WorkBranch))
+			case !errors.Is(err, fs.ErrExist):
+				return delivered, finished, err
+			}
+		} else if err != nil {
+			return delivered, finished, err
+		}
+		report, why, err := friendReadReport(dir, job)
+		if err != nil {
+			return delivered, finished, err
+		}
+		if report == "" {
+			if why != "" {
+				say(fmt.Sprintf("FRIEND-CARD REFUSED friend=%s card=%s: %s; the read is left open, and the next sync reads it again", name, oneline.Field(p.Card), oneline.Escape(why)))
+			}
+			continue
+		}
+		verdict, finding, why := sprint.ParseReadVerdict(report)
+		if why != "" {
+			say(fmt.Sprintf("FRIEND-CARD REFUSED friend=%s card=%s: %s; the read is not closed, and the next sync reads the report again", name, p.Card, oneline.Escape(why)))
+			continue
+		}
+		req := sprint.ReadReq{Sel: sprint.Sel{IDs: []string{p.Card}}, As: sprint.FriendReaderRow(name), Verdict: verdict, Finding: finding, Who: name}
+		step := store.ReadStep(req)
+		step.Actor, step.Epoch = sprint.FriendReaderRow(name), &p.Epoch
+		res, err := st.Run(ctx, step)
+		if err != nil {
+			return delivered, finished, err
+		}
+		if len(res.Refused) > 0 {
+			say(fmt.Sprintf("FRIEND-CARD REFUSED friend=%s card=%s: %s", name, p.Card, oneline.Escape(res.Refused[0].Why)))
+			continue
+		}
+		finished++
+		say(fmt.Sprintf("FRIEND-CARD FINISHED friend=%s card=%s result=%s head=-: %s", name, p.Card, verdict, oneline.Escape(oneline.Cap(finding, 200))))
+	}
 	return delivered, finished, nil
+}
+
+// friendReadDeadline is the read's due on the sprint's clock. The card's due
+// field is that stamp; a card without one takes the store's clock plus thirty
+// minutes. Never the wall clock (docs/SPEC-SPRINT.md section 1).
+func friendReadDeadline(st *store.Store, c *sprint.Card) time.Time {
+	if c != nil {
+		if t, err := time.Parse(time.RFC3339, c.F(sprint.FieldDue)); err == nil {
+			return t
+		}
+	}
+	if st != nil && st.Now != nil {
+		return st.Now().Add(sprint.ReadFriendDeadline)
+	}
+	return time.Time{}
 }
