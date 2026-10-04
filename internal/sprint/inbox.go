@@ -520,7 +520,9 @@ func commands(g Group, first Note, prefix string) []Command {
 			add(d, cmd+d+" --epoch "+strconv.FormatUint(IDEpoch(g.ID), 10))
 		case strings.HasPrefix(d, "fleet down ") || strings.HasPrefix(d, "fleet up ") || strings.HasPrefix(d, "reader up ") || strings.HasPrefix(d, "goal "):
 			add(d, cmd+d)
-		case d == "wait 15m" || d == "wait 10m":
+		case d == "promoted":
+			add(d, cmd+"promoted --sha '<merge sha>'"+ans)
+		case d == "wait 15m" || d == "wait 10m" || d == "wait 30m":
 			add(d, cmd+"wait "+cmp.Or(first.ID, g.ID)+" --for "+strings.TrimPrefix(d, "wait "))
 		case strings.HasPrefix(d, "restart "):
 			// a reader whose width lags its machine: its loop unit is nova-config's record of

@@ -572,7 +572,7 @@ func (r *propRun) answer(pick, choice int, progress bool) {
 // at the end of a run chooses another when it has one.
 var idle = map[string]bool{"stop and look": true, "look at the card": true, "look at both": true, "check": true, "wait": true,
 	"act": true, "clear": true, "add": true, "do more before going on": true, "look": true, "rank that card first": true,
-	"wait 10m": true, "wait 15m": true}
+	"wait 10m": true, "wait 15m": true, "wait 30m": true}
 
 func (r *propRun) decide(v InboxView, g sprint.Group, choice int, progress bool) {
 	ds := append([]string(nil), g.Decisions...)
@@ -671,8 +671,10 @@ func (r *propRun) decide(v InboxView, g sprint.Group, choice int, progress bool)
 		} else {
 			ack()
 		}
-	case d == "wait", d == "wait 10m", d == "wait 15m":
+	case d == "wait", d == "wait 10m", d == "wait 15m", d == "wait 30m":
 		wait(g.ID)
+	case d == "promoted":
+		r.run("nova-sprint promoted --sha 0123abc", PromotedStep(sprint.PromotedReq{Sha: "0123abc", Who: "coord"}))
 	case d == "brief":
 		// the brief is wrong, not the worker (brief_bound.go): a dealt card's brief is
 		// changed by dropping it and adding it again; the random coordinator drops it

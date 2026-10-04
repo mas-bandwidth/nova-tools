@@ -97,6 +97,7 @@ func TestEveryCoordinatorVerbIsTheCoordinators(t *testing.T) {
 		"stream remove": "stream remove s1",
 		"stream set":    "stream set s1 --read-tier pro",
 		"set":           "set --read-tier pro",
+		"promoted":      "promoted --sha 0123abc",
 		"funded":        "funded openrouter --reason paid",
 		"wait":          "wait x --for 1m",
 		"ack":           "ack x --reason r",

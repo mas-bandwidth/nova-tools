@@ -84,6 +84,7 @@ func init() {
 		{"stream remove", "<stream>...", "stream remove a b c", (*app).cmdStreamRemove},
 		{"stream set", "<stream>... --read-tier <flash|pro|default>", "stream set skips --read-tier pro", (*app).cmdStreamSet},
 		{"set", "[--read-tier <flash|pro|default>] [--dealt-max <duration|default>]", "set --read-tier pro", (*app).cmdSet},
+		{"promoted", "--sha <merge sha> [--answers <note>]", "promoted --sha 0123abc", (*app).cmdPromoted},
 		{"funded", "<provider> --reason <text>", "funded opencode --reason 'paid $100 in the console'", (*app).cmdFunded},
 		{"ci", "<id>... (--red | --green) --epoch <n> [--head <h>] [--run <id>] [--source <s>] [--note <text>]", "ci s1-3 --red --run 812 --source ci --epoch 0", (*app).cmdCI},
 		{"wait", "<note> (--for <duration> | --until <RFC3339>)", "wait tick-ask-x-1.2 --for 30m", (*app).cmdWait},
@@ -2511,6 +2512,28 @@ func (a *app) cmdSet(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "set", err.Error())
 	}
 	return a.runStep("set", *c, st, store.SetStep(sprint.SetReq{ReadTier: *tier, DealtMax: *dealt, Who: c.actor}), stdout, stderr)
+}
+
+// cmdPromoted is the coordinator's word that the sprint branch was promoted into dev
+// (sprint.Promoted): the store counts landings from here, and the judgment "dev is behind"
+// closes.
+func (a *app) cmdPromoted(args []string, stdout, stderr io.Writer) int {
+	fs, c := a.verbSetup("promoted")
+	sha := fs.String("sha", "", "the merge commit's sha on dev, 7 to 40 hex digits (required)")
+	ans := fs.String("answers", "", "the judgment notifications this answers, comma separated")
+	pos, err := parse(fs, args)
+	if err != nil {
+		return refuse(stderr, "promoted", err.Error())
+	}
+	if len(pos) > 0 || *sha == "" {
+		return refuse(stderr, "promoted", "wants --sha <merge sha> and no positional words")
+	}
+	st, err := a.store(*c)
+	if err != nil {
+		return refuse(stderr, "promoted", err.Error())
+	}
+	_ = ans // the judgment closes with the record itself (sprint.Promoted)
+	return a.runStep("promoted", *c, st, store.PromotedStep(sprint.PromotedReq{Sha: *sha, Who: c.actor}), stdout, stderr)
 }
 
 // cmdFunded is the coordinator's word that a provider was paid: its rest of its funds ends

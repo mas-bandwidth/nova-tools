@@ -1641,6 +1641,21 @@ merges each batch's heads in work order onto a branch cut from the base, checks
 and pushes it, and reports it through this merge step, with the facts above
 when it cannot; it adds no state of its own.
 
+**Dev is behind** (the owner, 2026-10-04: "You should regularly, mechanically be reminded
+merges to dev are dirty, and should be done"; "We must merge into dev continually, at least
+in bursts"). The tick counts the primaries landed (sentinels aside, by their `landed` stamp)
+since the last promotion the store records (`promoted_at`, `promoted_sha`, the work table's
+properties, written by `nova-sprint promoted --sha <merge sha>`, the coordinator's; none
+recorded counts every landing), and raises the judgment "dev is behind" when the count
+reaches 25 (`sprint.PromoteCards`) or the oldest of them landed 30 minutes ago
+(`sprint.PromoteAge`), whichever comes first (`sprint.DevBehind`, internal/sprint/promotion.go,
+one pure decision): `dev is behind: <n> cards landed on <branch> since the last promotion at
+<time> (<sha>); promote: merge origin/dev into the sprint branch, open the PR to dev, run the
+functional tier, queue it; then: nova-sprint promoted --sha <merge sha>` (the branch is the
+base the most of them name; with no promotion recorded, `since no promotion recorded`),
+decisions promoted and wait 30m, updated in place while it holds and closed when `promoted`
+is recorded (`TestTheTickRaisesDevBehindAtTwentyFiveLandingsOrThirtyMinutes`).
+
 **The lander's checks.** Each head `land` merges is checked by script, no model,
 before the batch's check runs (`internal/diffcheck`), the two checks the decide
 read's calibration of 2026-10-02 found a model read does not make: the merge's
