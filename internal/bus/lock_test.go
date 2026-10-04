@@ -79,10 +79,6 @@ func TestASecondRunOnOneCheckoutWaitsThenRefuses(t *testing.T) {
 // working beside it, and both eventually run.
 func TestTwoConcurrentRunsSerialiseOnOneCheckout(t *testing.T) {
 	t.Parallel()
-	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
-	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
-	// mocked-clock unit test or a functional program (nova-tools #4221).
-	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 	hermetic(t)
 	bare := bareBus(t)
 	clone := cloneBus(t, bare)
@@ -92,11 +88,18 @@ func TestTwoConcurrentRunsSerialiseOnOneCheckout(t *testing.T) {
 	most := 0
 	var wg sync.WaitGroup
 	errs := make([]error, 2)
+	// Each run takes the lock through the package's clock seam with its own step
+	// clock, so the wait budget is spent in virtual time and costs no wall time: the
+	// fake's Sleep only advances its clock, so the polls burn the budget in instant
+	// steps. The budget is an hour so it outlasts the other run's hold, the critical
+	// section between acquire (internal/bus/lock.go:171) and release, while the
+	// deadline that bounds the wait is set at internal/bus/lock.go:156.
 	for i := range 2 {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			release, err := LockCheckout(clone, 5*time.Second)
+			clk := newLockStepClock()
+			release, err := lockCheckoutAt(clone, time.Hour, clk)
 			if err != nil {
 				errs[i] = err
 				return
@@ -108,7 +111,7 @@ func TestTwoConcurrentRunsSerialiseOnOneCheckout(t *testing.T) {
 				most = inside
 			}
 			mu.Unlock()
-			time.Sleep(50 * time.Millisecond)
+			clk.Sleep(50 * time.Millisecond)
 			mu.Lock()
 			inside--
 			mu.Unlock()
