@@ -154,35 +154,45 @@ func TestMainCoverLibraryMatchesAcceptsTheEmbeddedLibraryAndRefusesTheRest(t *te
 	t.Parallel()
 	source, err := fn.Source()
 	require.NoError(t, err)
+	other := "#!lua name=" + fn.Library + "\nredis.register_function('ns_ping', function() return 'PONG' end)\n"
 	ctx := context.Background()
-	t.Run("the store holds this build's library: accepted", func(t *testing.T) {
-		store := newFakeStore(map[string]string{
-			"HELLO":    helloAccepted,
-			"FUNCTION": functionListReply(fn.Library, source),
+	cases := []struct {
+		name    string
+		reply   string
+		refused bool
+		holds   []string
+	}{
+		{
+			name:  "the store holds this build's library: accepted",
+			reply: functionListReply(fn.Library, source),
+		},
+		{
+			name:    "the store holds none: refused, naming the load",
+			reply:   "*0\r\n",
+			refused: true,
+			holds:   []string{"holds no " + fn.Library + " function library", "nova-redis fn load --addr 127.0.0.1:6379"},
+		},
+		{
+			name:    "the store holds another build's: refused, naming both sums",
+			reply:   functionListReply(fn.Library, other),
+			refused: true,
+			holds:   []string{"holds " + fn.Library + " library " + fn.Sum(other), "this build is " + fn.Sum(source)},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newFakeStore(map[string]string{"HELLO": helloAccepted, "FUNCTION": tc.reply})
+			err := libraryMatches(ctx, fakeClient(t, store), "127.0.0.1:6379")
+			if !tc.refused {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			for _, want := range tc.holds {
+				assert.Contains(t, err.Error(), want, err.Error())
+			}
 		})
-		assert.NoError(t, libraryMatches(ctx, fakeClient(t, store), "127.0.0.1:6379"))
-	})
-	t.Run("the store holds none: refused, naming the load", func(t *testing.T) {
-		store := newFakeStore(map[string]string{
-			"HELLO":    helloAccepted,
-			"FUNCTION": "*0\r\n",
-		})
-		err := libraryMatches(ctx, fakeClient(t, store), "127.0.0.1:6379")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "holds no "+fn.Library+" function library", err.Error())
-		assert.Contains(t, err.Error(), "nova-redis fn load --addr 127.0.0.1:6379", err.Error())
-	})
-	t.Run("the store holds another build's: refused, naming both sums", func(t *testing.T) {
-		other := "#!lua name=" + fn.Library + "\nredis.register_function('ns_ping', function() return 'PONG' end)\n"
-		store := newFakeStore(map[string]string{
-			"HELLO":    helloAccepted,
-			"FUNCTION": functionListReply(fn.Library, other),
-		})
-		err := libraryMatches(ctx, fakeClient(t, store), "127.0.0.1:6379")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "holds "+fn.Library+" library "+fn.Sum(other), err.Error())
-		assert.Contains(t, err.Error(), "this build is "+fn.Sum(source), err.Error())
-	})
+	}
 }
 
 // fakeClient is a go-redis client over the fake's net.Pipe dialer, closed at
