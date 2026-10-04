@@ -31,7 +31,7 @@ func TestFriendAsleepWorkerVerbPreservesIdentityAndRefusesOtherWords(t *testing.
 	for _, c := range []struct {
 		name string
 		argv []string
-		ok bool
+		ok   bool
 	}{
 		{"ordinary", []string{"friend", "beat", "amy"}, true},
 		{"asleep", []string{"friend", "beat", "--asleep", "amy"}, true},

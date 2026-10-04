@@ -149,8 +149,9 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 }
 
 // FriendBeat writes one beat of the friend at the store's clock, to the
-// second; a friend the roster lacks is refused and nothing is written.
-func (st *Store) FriendBeat(ctx context.Context, friend string) (sprint.Beat, error) {
+// second, replacing the previous sleep state; a friend the roster lacks is
+// refused and nothing is written.
+func (st *Store) FriendBeat(ctx context.Context, friend string, asleep bool) (sprint.Beat, error) {
 	r, kv, err := st.roster(ctx)
 	if err != nil {
 		return sprint.Beat{}, err
@@ -158,7 +159,7 @@ func (st *Store) FriendBeat(ctx context.Context, friend string) (sprint.Beat, er
 	if _, ok := r[friend]; !ok {
 		return sprint.Beat{}, noFriend(r, friend)
 	}
-	b := sprint.Beat{At: st.now().UTC().Truncate(time.Second)}
+	b := sprint.Beat{At: st.now().UTC().Truncate(time.Second), Asleep: asleep}
 	out, err := json.Marshal(b)
 	if err != nil {
 		return b, err

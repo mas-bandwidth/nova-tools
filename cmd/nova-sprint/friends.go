@@ -58,6 +58,9 @@ beside the friend's harness, for example in the wrapper that starts it
 and her status is up while her last beat is under `+sprint.FriendDownAfter.String()+` old, down once
 she has gone `+sprint.FriendDownAfter.String()+` without a beat or when she has never beaten (a beat
 wakes her at once), held while friend down holds her whatever she beats.
+friend beat --asleep <friend> records a contactable sleeping session: a fresh
+beat shows asleep, and an ordinary beat clears sleep and shows up. A sleeping
+friend without a fresh beat is down; a hold still shows held.
 friend up releases the hold and is not a beat: a friend released with no beat
 in the last `+sprint.FriendDownAfter.String()+` is down until she beats. A friend down shows
 working 0: her cards stay on her row and count again when she beats; ready
@@ -93,7 +96,7 @@ func friendVerbWords(name string) string {
 	sync := "The name is one friend row of the friends table. friend sync copies those rows from nova-config; a name the table lacks is refused and the line names friend sync. friend sync exits 3 when the config cannot be read or holds no friend row. nova-sprint help friend says how the friends table is kept."
 	switch name {
 	case "friend beat":
-		return "friend beat records that this friend is present. The friend's own machinery runs it every " + every + ". The friend is up while the last beat is under " + down + " old, and down once that long has passed with no beat, or when the friend has never beaten. A beat wakes the friend at once. " + sync + "\n"
+		return "friend beat records that this friend is present. The friend's own machinery runs it every " + every + ". The friend is up while the last beat is under " + down + " old; --asleep before the friend name instead records a contactable sleeping session and shows asleep while the beat is fresh. An ordinary beat clears sleep. The friend is down once that long has passed with no beat, or when the friend has never beaten; a hold still shows held. " + sync + "\n"
 	case "friend down":
 		return "friend down holds the named friend. The friend stays held whatever beat arrives, and where counts working as 0 while the friend is held. friend up releases the hold. " + sync + "\n"
 	case "friend up":
@@ -217,6 +220,7 @@ func (a *app) cmdFriendSync(args []string, stdout, stderr io.Writer) int {
 func (a *app) cmdFriendBeat(args []string, stdout, stderr io.Writer) int {
 	const name = "friend beat"
 	fs, c := a.verbSetup(name)
+	asleep := fs.Bool("asleep", false, "record a contactable sleeping session; an ordinary beat clears sleep")
 	friend, code := oneFriend(name, fs, args, stderr)
 	if code != 0 {
 		return code
@@ -226,7 +230,7 @@ func (a *app) cmdFriendBeat(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, name, err.Error())
 	}
-	b, err := st.FriendBeat(context.Background(), friend)
+	b, err := st.FriendBeat(context.Background(), friend, *asleep)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s %s: %s\n", prog, name, oneline.Escape(err.Error()))
 		return 1

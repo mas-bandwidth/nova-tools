@@ -41,12 +41,12 @@ func TestAsleepFriendStillExpiresAndKeepsMachinePresenceSeparate(t *testing.T) {
 	b := Beat{At: p0, Asleep: true}
 	for _, c := range []struct {
 		name string
-		at time.Duration
+		at   time.Duration
 		held bool
 		want string
 	}{
 		{"fresh", 0, false, "asleep"},
-		{"before expiry", 14*time.Second, false, "asleep"},
+		{"before expiry", 14 * time.Second, false, "asleep"},
 		{"expired", FriendDownAfter, false, Down},
 		{"held fresh", 0, true, Held},
 		{"held expired", FriendDownAfter, true, Held},

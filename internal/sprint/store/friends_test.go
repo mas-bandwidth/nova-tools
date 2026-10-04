@@ -17,7 +17,7 @@ func TestFriendRowsReturnsNameWidthStatusOnly(t *testing.T) {
 	h := newHarness(t)
 	_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 3}, {Name: "bob", Width: 1}})
 	require.NoError(t, err)
-	_, err = h.st.FriendBeat(h.ctx, "amy")
+	_, err = h.st.FriendBeat(h.ctx, "amy", false)
 	require.NoError(t, err)
 	require.NoError(t, h.st.SetFriendHeld(h.ctx, "bob", true, "c"))
 	rows, err := h.st.FriendRows(h.ctx, h.now)

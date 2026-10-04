@@ -42,7 +42,8 @@ import (
 // workerVerb is the worker a verb of a batch acts as and how many words its
 // verb is, or why the server does not run it. A worker sends its own verbs only:
 // take, finish, read or queue, then --as and its name; or fleet beat, its name,
-// --load and a number, and nothing more; or friend beat and its name alone. The name is one worker, never a list.
+// --load and a number, and nothing more; or friend beat, optional --asleep,
+// and its name. The name is one worker, never a list.
 // No later word, wherever it stands, is a flag named as, redis or actor: the
 // server gives the store and the actor (serve puts them before the worker's
 // words, where nothing the worker sent can take them as a value or end the
@@ -66,10 +67,14 @@ func workerVerb(argv []string) (as string, words int, why string) {
 		return rest[0], 2, ""
 	}
 	if len(argv) >= 2 && argv[0] == "friend" && argv[1] == "beat" {
-		if len(argv) != 3 || !sprint.ValidID(argv[2]) {
-			return "", 0, "a friend's beat sent to the server is `friend beat <friend>` and nothing more"
+		rest := argv[2:]
+		if len(rest) == 2 && rest[0] == "--asleep" {
+			rest = rest[1:]
 		}
-		return argv[2], 2, ""
+		if len(rest) != 1 || !sprint.ValidID(rest[0]) {
+			return "", 0, "a friend's beat sent to the server is `friend beat [--asleep] <friend>` and nothing more"
+		}
+		return rest[0], 2, ""
 	}
 	if len(argv) == 0 || !slices.Contains([]string{"take", "finish", "read", "queue"}, argv[0]) {
 		return "", 0, "the server runs the workers' verbs only: take, finish, read, queue, fleet beat, friend beat"

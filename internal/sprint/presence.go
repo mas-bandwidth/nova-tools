@@ -71,6 +71,7 @@ type LoadSample struct {
 // takes half of (WidthOfCores; fleet sync).
 type Beat struct {
 	At      time.Time      `json:"at"`
+	Asleep  bool           `json:"asleep,omitempty"`
 	Load    float64        `json:"load"`
 	Cores   int            `json:"cores,omitempty"`
 	How     string         `json:"how,omitempty"`
@@ -148,19 +149,24 @@ func FriendBeating(b Beat, now time.Time) bool {
 	return now.Sub(b.At) < FriendDownAfter // never beaten: At is zero, long ago
 }
 
+// Asleep is a contactable friend whose session waits for the coordinator's wake.
+const Asleep = "asleep"
+
 // FriendStatus is the one rule of a friend's status at now: held while the
-// coordinator holds her (friend down), else up while her last beat is within
-// FriendDownAfter, else down (never beaten, or silent that long).
+// coordinator holds her (friend down), else down without a recent beat,
+// else asleep when that beat marks sleep, else up.
 // Releasing a hold (friend up) is not a beat: a friend released with no
 // recent beat is down until she beats.
 func FriendStatus(held bool, b Beat, now time.Time) string {
 	switch {
 	case held:
 		return Held
-	case FriendBeating(b, now):
-		return Up
+	case !FriendBeating(b, now):
+		return Down
+	case b.Asleep:
+		return Asleep
 	}
-	return Down
+	return Up
 }
 
 // LoadText is the load cell: the highest load of the last LoadWindow with
