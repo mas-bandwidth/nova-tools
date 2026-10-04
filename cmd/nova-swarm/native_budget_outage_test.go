@@ -116,13 +116,18 @@ func TestAnOutageEndsTheCardOnlyPastTheBoundWithTheExtrapolatedSpendAtTheCeiling
 			for i := 0; i < 3; i++ {
 				b.s.readOnce()
 			}
-			// seven failed samples inside the bound: 300 + 7*100 = 1000, at the ceiling,
-			// but the source has not been silent for UnverifiableAfter yet
-			for i := 0; i < 7; i++ {
+			// six failed samples inside the bound: 300 + 6*100 = 900, under the ceiling
+			for i := 0; i < 6; i++ {
 				b.now = b.now.Add(10 * time.Second)
 				b.s.readOnce()
 			}
-			require.Empty(t, b.fired(), "at the ceiling inside the bound: the source may answer yet")
+			require.Empty(t, b.fired(), "under the ceiling inside the bound: ends nothing")
+			// seventh failed sample: 300 + 7*100 = 1000, at the ceiling inside the bound
+			b.now = b.now.Add(10 * time.Second)
+			b.s.readOnce()
+			assert.Equal(t, stoppedUnverifiable, b.fired(), "at the ceiling inside the bound: fires on atCeiling alone")
+			assert.Equal(t, stoppedUnverifiable, b.s.StopWordAtFinal(300, true, ""), "the word is kept")
+			assert.Equal(t, "refused", b.s.Why())
 			// past the bound with the figure under the ceiling: an answer that lowers the
 			// rise... cannot happen; a fresh bench shows the bound alone ends nothing
 			c := newOutageBench(t, tc.cfg)

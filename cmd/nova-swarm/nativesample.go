@@ -53,8 +53,9 @@ const (
 // was charged to its card. Now the sampler keeps the last answer and, while reads fail,
 // enforces the ceiling against that answer plus a bounded extrapolation: the most the spend
 // rose between two answered reads, once for each failed sample since (fold). The card ends
-// unverifiable only once no read has answered for UnverifiableAfter AND that figure is at
-// the ceiling; a source that answers again resumes the budget on what it says. A read that
+// unverifiable once that figure is at the ceiling (atCeiling); the time bound applies only
+// when extrapolation never reaches the ceiling; a source that answers again resumes the budget
+// on what it says. A read that
 // fails is tried once more at once before it is counted (readOnce), and the limit a read is
 // given follows the slowest answered read (readLimit).
 const UnverifiableAfter = 5 * time.Minute
@@ -286,12 +287,12 @@ func (s *liveSampler) fold(usage swarm.ProviderUsage, err error, turns int) {
 		s.failures++
 		s.lastErr = err
 		// A NUMERIC BUDGET THE TOOL HAS STOPPED BEING ABLE TO SEE is enforced against the
-		// last answer plus the extrapolation (atCeiling), and ends the card only once the
-		// source has not answered for UnverifiableAfter and that figure is at the ceiling
-		// (the comment on UnverifiableAfter). An `unmetered` card with no card budget has
-		// nothing to verify, so a reader that fails costs it nothing -- there is no promise
-		// to break.
-		if s.watching() && s.reached == "" && s.clock().Sub(s.answered) >= UnverifiableAfter && s.atCeiling() {
+		// last answer plus the extrapolation (atCeiling), and ends the card once that
+		// figure is at the ceiling; the time bound applies only when extrapolation never
+		// reaches the ceiling (the comment on UnverifiableAfter). An `unmetered` card with
+		// no card budget has nothing to verify, so a reader that fails costs it nothing --
+		// there is no promise to break.
+		if s.watching() && s.reached == "" && s.atCeiling() {
 			s.reached = stoppedUnverifiable
 			s.fire(stoppedUnverifiable)
 		}
