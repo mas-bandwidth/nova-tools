@@ -920,9 +920,11 @@ func loadPin(root, pin string, stderr io.Writer) (int, int64, bool) {
 // production opens with os.Open, and a test that must inject a read failure
 // after metadata validation injects its own. The seam is a parameter and
 // nothing else — no global to flip, so a run's behavior is fixed by its
-// arguments. os.Lstat below is kept, not swapped for os.Stat, so the
-// final-component symlink rejection stays exactly what validation has always
-// been: entry checking, not a path-security contract.
+// arguments. Metadata is os.Root.Lstat on the slash path, not os.Stat and not
+// os.Lstat of a joined path: the final component is not followed, and an
+// intermediate directory symlink that leaves --root is a refusal
+// (docs/SPEC.md rule 245; security#76 finding 5, re-file of security#58
+// finding 3). os.Lstat on the joined path only checks the final component.
 func loadPinOpen(root, pin string, stderr io.Writer, open func(string) (io.ReadCloser, error)) (int, int64, bool) {
 	entries, err := readPin(pin)
 	if err != nil {
@@ -933,6 +935,14 @@ func loadPinOpen(root, pin string, stderr io.Writer, open func(string) (io.ReadC
 		refuse(stderr, " boot", fmt.Sprintf("--pin %s names no memories; a boot of nothing is not a boot", oneline.Escape(pin)))
 		return 0, 0, false
 	}
+	// Open once. Root.Lstat refuses a path that escapes through a symlink;
+	// close on every return, including a later refusal.
+	rf, err := os.OpenRoot(root)
+	if err != nil {
+		refuse(stderr, " boot", fmt.Sprintf("--root %s: %s", oneline.Escape(root), oneline.Err(err)))
+		return 0, 0, false
+	}
+	defer rf.Close() // ignored: a read-only root holds nothing to flush
 	var total int64
 	seen := make(map[string]bool, len(entries))
 	for _, e := range entries {
@@ -953,10 +963,17 @@ func loadPinOpen(root, pin string, stderr io.Writer, open func(string) (io.ReadC
 			return 0, 0, false
 		}
 		seen[e] = true
-		full := filepath.Join(root, filepath.FromSlash(e))
-		fi, err := os.Lstat(full)
+		fi, err := rf.Lstat(e)
 		if err != nil {
-			refuse(stderr, " boot", fmt.Sprintf("pin entry %q does not exist under --root", oneline.Escape(e)))
+			// errPathEscapes is unexported; its text is the signal that an
+			// intermediate symlink left the root. Any other error keeps the
+			// missing-entry refusal. Both reasons are format literals so the
+			// print audit sees no raw argument.
+			if strings.Contains(err.Error(), "path escapes from parent") {
+				refuse(stderr, " boot", fmt.Sprintf("pin entry %q escapes --root through a symlink", oneline.Escape(e)))
+			} else {
+				refuse(stderr, " boot", fmt.Sprintf("pin entry %q does not exist under --root", oneline.Escape(e)))
+			}
 			return 0, 0, false
 		}
 		if !fi.Mode().IsRegular() {
@@ -972,7 +989,10 @@ func loadPinOpen(root, pin string, stderr io.Writer, open func(string) (io.ReadC
 		// the pinned corpus never sits in memory however large it grows, and
 		// count what actually came back. A failed read or close is a refusal
 		// naming the offending entry, and each file is closed before the next
-		// one is opened.
+		// one is opened. The opener still receives the joined path: the seam
+		// tests name that path, and the Lstat above has already refused an
+		// escape.
+		full := filepath.Join(root, filepath.FromSlash(e))
 		f, err := open(full)
 		if err != nil {
 			refuse(stderr, " boot", fmt.Sprintf("pin entry %q could not be opened for reading: %s; check the file is readable and re-run, or correct the pin", oneline.Escape(e), oneline.Err(err)))
