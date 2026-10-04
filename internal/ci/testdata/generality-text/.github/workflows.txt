@@ -5,9 +5,9 @@
 .github/workflows/ci.yml:hulk 14
 .github/workflows/ci.yml:mini 1
 .github/workflows/ci.yml:rowan 1
-.github/workflows/ci.yml:space 32
-.github/workflows/ci.yml:studio 30
-.github/workflows/ci.yml:superman 13
-.github/workflows/ci.yml:vision 7
+.github/workflows/ci.yml:space 28
+.github/workflows/ci.yml:studio 20
+.github/workflows/ci.yml:superman 7
+.github/workflows/ci.yml:vision 6
 .github/workflows/nightly-slow.yml:glenn 1
 .github/workflows/revert-on-red.yml:glenn 1
