@@ -33,7 +33,7 @@ func TestTheViewsSummaryLineIsStoppedAloneWhileTheMachineIsStopped(t *testing.T)
 	require.Equal(t, "STOPPED", ta.viewLine(), "after add, stopped")
 	ta.ok("start")
 	require.Equal(t, "0/3 0.0% -> ETA", ta.viewLine(), "after start")
-	ta.ok("stop")
+	ta.ok("stop --reason r --until 9999h")
 	require.Equal(t, "STOPPED", ta.viewLine(), "after stop")
 	ta.ok("start")
 	ta.ok("clear --confirm sprint")
@@ -41,7 +41,7 @@ func TestTheViewsSummaryLineIsStoppedAloneWhileTheMachineIsStopped(t *testing.T)
 	// A view stored without a state (before it had one) while STOPPED: stop,
 	// which changes nothing else, writes the view's state again.
 	require.NoError(t, ta.m.ShowState(context.Background(), "sprint", ""))
-	ta.ok("stop")
+	ta.ok("stop --reason r --until 9999h")
 	require.Equal(t, "STOPPED", ta.viewLine(), "stop on a stopped machine, view without a state")
 	// init on a sprint that has a machine writes the view's state from it.
 	ta.ok("start")

@@ -36,6 +36,9 @@ type machineOut struct {
 	Refused []sprint.Refusal   `json:"refused,omitempty"`
 	Moved   []string           `json:"moved,omitempty"`
 	Parts   []store.PartResult `json:"parts,omitempty"`
+	// Reason and Until are a stop by hand's (docs/SPEC-SPRINT.md section 14).
+	Reason string `json:"reason,omitempty"`
+	Until  string `json:"until,omitempty"`
 }
 
 func (a *app) cmdMachineStart(args []string, stdout, stderr io.Writer) int {
@@ -48,15 +51,29 @@ func (a *app) cmdMachineStop(args []string, stdout, stderr io.Writer) int {
 
 // setMachine is start and stop: the state before and after, whether it
 // changed, and the sprint line. Setting the state the machine has changes
-// nothing and says so.
+// nothing and says so. A stop wants --reason and --until (docs/SPEC-SPRINT.md
+// section 14): the machine line says who stopped it, why and when it is back,
+// and at --until the tick starts it; a stop of a STOPPED machine replaces the
+// two.
 func (a *app) setMachine(name string, running bool, args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup(name)
+	var reason, untilArg string
+	if !running {
+		fs.StringVar(&reason, "reason", "", "why the machine stops, shown with it: the machine line of where, inbox and the dashboard says \"STOPPED by <actor>: <reason>, back by <time>\" (required)")
+		fs.StringVar(&untilArg, "until", "", "when the machine starts itself again: a `time or duration`, a duration from now (90m), a clock time (2:04 PM or 14:04, today's or tomorrow's) or an RFC 3339 time; the tick starts it then unless it is stopped again (required)")
+	}
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, name, err.Error())
 	}
 	if len(pos) > 0 {
 		return refuse(stderr, name, "takes no words, found "+pos[0])
+	}
+	var until time.Time
+	if !running {
+		if until, err = sprint.StopArgs(reason, untilArg, a.now()); err != nil {
+			return refuse(stderr, name, err.Error())
+		}
 	}
 	st, err := a.store(*c)
 	if err != nil {
@@ -76,11 +93,20 @@ func (a *app) setMachine(name string, running bool, args []string, stdout, stder
 			return 1
 		}
 	}
-	before, after, res, err := st.SetMachine(ctx, running)
+	var before, after store.Machine
+	var res store.Result
+	if running {
+		before, after, res, err = st.SetMachine(ctx, true)
+	} else {
+		before, after, res, err = st.StopUntil(ctx, reason, until)
+	}
 	changed := before.Running() != after.Running()
 	line := sprintLine(ctx, st)
 	if c.json {
-		o := machineOut{Before: before.StateWord(), After: after.StateWord(), Changed: changed, Notes: res.Notes, Sprint: line}
+		o := machineOut{Before: before.StateWord(), After: after.StateWord(), Changed: changed, Notes: res.Notes, Sprint: line, Reason: after.Reason}
+		if !after.Until.IsZero() {
+			o.Until = after.Until.UTC().Format(time.RFC3339)
+		}
 		if err != nil {
 			o.Error = err.Error()
 		}
@@ -96,7 +122,10 @@ func (a *app) setMachine(name string, running bool, args []string, stdout, stder
 		return 2
 	}
 	what := "changed"
-	if !changed {
+	switch {
+	case !changed && !running:
+		what = "unchanged: the machine is STOPPED already; its reason and back-by time are this stop's"
+	case !changed:
 		what = "unchanged: the machine is " + after.StateWord() + " already"
 	}
 	fmt.Fprintf(stdout, "%s OK before=%s after=%s %s\n", token(name), before.StateWord(), after.StateWord(), what)
@@ -505,8 +534,11 @@ func (a *app) pace(ctx context.Context, st *store.Store, epoch uint64, cursor st
 // machineWords is the machine's part of the help.
 func machineWords() string {
 	return strings.TrimSpace(`
-The machine: nova-sprint start sets it RUNNING, nova-sprint stop sets it
-STOPPED; nova-sprint run ticks as soon as a line comes on the log (a verb's
+The machine: nova-sprint start sets it RUNNING, nova-sprint stop --reason
+<text> --until <time or duration> sets it STOPPED: where, inbox and the
+dashboard say "STOPPED by <actor>: <reason>, back by 2:04 PM", and at --until
+the tick starts it again unless it was stopped again since (a clear takes the
+time off); nova-sprint run ticks as soon as a line comes on the log (a verb's
 step: a finish, a merge, a start), at most every 100ms, and once a second
 while the log is quiet; nova-sprint tick is one tick by hand. Each tick deals
 ready primaries, asks readers, resolves waiting primaries whose needs landed,

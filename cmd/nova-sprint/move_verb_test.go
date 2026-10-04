@@ -28,7 +28,7 @@ func TestMoveTakesUnstartedPrimariesToAnotherStreamOnAStoppedSprint(t *testing.T
 	assert.Contains(t, errs, "the machine is RUNNING")
 	assert.Contains(t, errs, "run: nova-sprint stop")
 	assert.Equal(t, "a", ta.primary("a-2").Row)
-	ta.ok("stop")
+	ta.ok("stop --reason r --until 9999h")
 
 	ta.deal(1)
 	require.Equal(t, sprint.Working, ta.primary("a-1").Col)

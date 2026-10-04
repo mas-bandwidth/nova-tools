@@ -21,9 +21,10 @@ func TestStartAndStopSayTheStateBeforeAndAfter(t *testing.T) {
 	out := ta.ok("where")
 	require.Contains(t, out, "SPRINT TABLE  coordinator coordinator\n\nSTOPPED\n\n", "where")
 	require.NotContains(t, out, "machine:", "where")
-	out = ta.ok("stop")
+	out = ta.ok("stop --reason r --until 9999h")
 	require.Contains(t, out, "STOP OK before=STOPPED after=STOPPED unchanged: the machine is STOPPED already", "stop when stopped")
-	require.Contains(t, out, "\nSTOPPED  0/3 0.0%", "stop when stopped")
+	require.Contains(t, out, "\nSTOPPED by coordinator: r, back by ", "stop when stopped")
+	require.Contains(t, out, "  0/3 0.0%", "stop when stopped")
 	require.NotContains(t, out, "-> ETA", "stop when stopped")
 	out = ta.ok("start")
 	require.Contains(t, out, "START OK before=STOPPED after=RUNNING changed", "start")
@@ -41,7 +42,7 @@ func TestStartAndStopSayTheStateBeforeAndAfter(t *testing.T) {
 	require.Contains(t, out, "STOPPED  ", "a verb's line with no tick")
 	require.NotContains(t, out, "(no tick", "a verb's line with no tick")
 	require.NotContains(t, out, "-> ETA", "a verb's line with no tick")
-	ta.ok("stop")
+	ta.ok("stop --reason r --until 9999h")
 	require.Contains(t, ta.ok("tick"), "TICK OK state=STOPPED nothing done", "a tick while stopped")
 }
 
