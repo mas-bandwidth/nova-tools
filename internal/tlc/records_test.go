@@ -114,18 +114,13 @@ func TestMergeOrdersByThePlanAndRefusesWhatIsWrong(t *testing.T) {
 		{"a record over another count of files", [][]Record{{a, b}, {fewer}}, "MCC.cfg (recorded "},
 	}
 	for _, tc := range refused {
-		{
+		t.Run(tc.name, func(t *testing.T) {
 			_, err := Merge(src, cases, tc.runs...)
-			if assert.Error(t, err, "%s: %v, want %q", tc.name, err, tc.why) {
-				assert.Contains(t, err.Error(), tc.why, "%s: %v, want %q", tc.name, err, tc.why)
-			}
-		}
+			assert.ErrorContains(t, err, tc.why, "%s: %v, want %q", tc.name, err, tc.why)
+		})
 	}
 }
 
-// A record measured by another runner than the one merging (the runner's files
-// are part of every fingerprint) is refused, and so is one measured on a model
-// edited since: the merge catches both by the fingerprint, per case.
 func TestMergeRefusesRecordsOfAnotherRunnerOrEditedModel(t *testing.T) {
 	t.Parallel()
 	src, cases, recs := mergeTree(t)
@@ -137,18 +132,13 @@ func TestMergeRefusesRecordsOfAnotherRunnerOrEditedModel(t *testing.T) {
 	_, err = Merge(otherRunner, cases, all)
 	assert.ErrorContains(t, err, "3 records were measured on other inputs", "records of another runner")
 	require.NoError(t, os.WriteFile(filepath.Join(src.TLADir, "Shared.tla"), []byte("edited\n"), 0o644))
-	{
-		_, err := Merge(src, cases, all)
-		if assert.Error(t, err, "records of a model edited since: %v", err) {
-			if assert.Contains(t, err.Error(), "2 records were measured on other inputs than these: MCA.cfg (", "records of a model edited since: %v", err) {
-				assert.NotContains(t, err.Error(), "MCC.cfg", "records of a model edited since: %v", err)
-			}
-		}
+	_, err = Merge(src, cases, all)
+	if assert.Error(t, err, "records of a model edited since: %v", err) {
+		assert.Contains(t, err.Error(), "2 records were measured on other inputs than these: MCA.cfg (", "records of a model edited since: %v", err)
+		assert.NotContains(t, err.Error(), "MCC.cfg", "records of a model edited since: %v", err)
 	}
 }
 
-// A merge of records that were not all measured with one jar is refused: the
-// kept records of an older jar beside the runs of a new one.
 func TestMergeRefusesRecordsOfMoreThanOneJar(t *testing.T) {
 	t.Parallel()
 	src, cases, recs := mergeTree(t)
@@ -169,8 +159,6 @@ func badRow(files, workers, exit string) string {
 	return strings.Join([]string{"MCA.cfg", "MCA.tla", "x", files, "j", "21.0.1", "linux-amd64", "8", "t", workers, "1", "1", "1", exit, "PASS", "pass", "-", "110", "bounded"}, "\t") + "\n"
 }
 
-// Records in another column layout are refused naming the layout found and the
-// one expected, whatever their field counts.
 func TestReadRecordsNamesTheLayoutItFoundAndTheOneItExpects(t *testing.T) {
 	t.Parallel()
 	old := "config\tmodule\tinput_sha256\tjar_sha256\thost\tstarted_utc\tgenerated\tdistinct\tseconds\texit\tresult\texpected\tproperty\tbudget\tmode\n" +
@@ -184,7 +172,6 @@ func TestReadRecordsNamesTheLayoutItFoundAndTheOneItExpects(t *testing.T) {
 	assert.ErrorContains(t, err, "line 2 has 2 fields, want 19", "a short row")
 }
 
-// A kept record is dropped for one of two reasons, and each is named.
 func TestCarryNamesEachRecordItDrops(t *testing.T) {
 	t.Parallel()
 	src, cases, recs := mergeTree(t)
@@ -208,18 +195,12 @@ func TestCarryNamesEachRecordItDrops(t *testing.T) {
 	require.Equal(t, []string{"MCB.cfg"}, missing.Cases, "merge error %v", err)
 }
 
-// The host column holds a platform label, never a machine name.
 func TestPlatformIsTheGoosGoarchLabelOfALinuxMachine(t *testing.T) {
 	t.Parallel()
-	for goos, archs := range map[string][]string{"linux": {"amd64", "arm64", "riscv64"}} {
-		for _, arch := range archs {
-			{
-				got, err := Platform(goos, arch)
-				if assert.NoError(t, err, "%s/%s: %q, %v", goos, arch, got, err) {
-					assert.Equal(t, goos+"-"+arch, got, "%s/%s: %q, %v", goos, arch, got, err)
-				}
-			}
-		}
+	for _, arch := range []string{"amd64", "arm64", "riscv64"} {
+		got, err := Platform("linux", arch)
+		assert.NoError(t, err, "linux/%s: %q, %v", arch, got, err)
+		assert.Equal(t, "linux-"+arch, got, "linux/%s: %q, %v", arch, got, err)
 	}
 	for _, bad := range [][2]string{{"darwin", "arm64"}, {"windows", "amd64"}, {"linux", "sparc"}, {"", ""}, {"linux", ""}} {
 		got, err := Platform(bad[0], bad[1])
@@ -231,10 +212,8 @@ func TestPlatformIsTheGoosGoarchLabelOfALinuxMachine(t *testing.T) {
 	assert.True(t, ValidPlatform("linux-amd64"), "linux-amd64 is not a platform label")
 }
 
-// A record's module, expected and property cells are copies of the case's
-// declaration that the fingerprint does not hash (it hashes the plan's row):
-// editing one leaves a valid fingerprint, and the record must still be refused
-// by a merge, counted stale by StaleGroups and dropped by Carry.
+// The fingerprint hashes the plan row, not the record's module, expected or
+// property cells, so an edit of one still has to be refused.
 func TestARecordThatNamesAnotherModuleExpectationOrPropertyIsNotCurrent(t *testing.T) {
 	t.Parallel()
 	src, cases, recs := mergeTree(t)
@@ -262,27 +241,23 @@ func TestARecordThatNamesAnotherModuleExpectationOrPropertyIsNotCurrent(t *testi
 		tc.edit(&tampered)
 		require.Equal(t, a.InputSHA256, tampered.InputSHA256, "%s: the probe changed the fingerprint columns", tc.name)
 		require.Equal(t, a.InputFiles, tampered.InputFiles, "%s: the probe changed the fingerprint columns", tc.name)
-		{
-			_, err := Merge(src, cases, []Record{tampered, b, c})
-			if assert.Error(t, err, "%s: merge accepted or misnamed the record: %v", tc.name, err) {
-				if assert.Contains(t, err.Error(), "record for MCA.cfg does not match the plan", "%s: merge accepted or misnamed the record: %v", tc.name, err) {
-					assert.Contains(t, err.Error(), tc.phrase, "%s: merge accepted or misnamed the record: %v", tc.name, err)
-				}
-			}
+		_, err := Merge(src, cases, []Record{tampered, b, c})
+		msg := "%s: merge accepted or misnamed the record: %v"
+		if assert.Error(t, err, msg, tc.name, err) {
+			assert.Contains(t, err.Error(), "record for MCA.cfg does not match the plan", msg, tc.name, err)
+			assert.Contains(t, err.Error(), tc.phrase, msg, tc.name, err)
 		}
-		{
-			got, err := StaleGroups(src, cases, []Record{tampered, b, c})
-			if assert.NoError(t, err, "%s: StaleGroups = %v, %v, want [alpha]", tc.name, got, err) {
-				assert.Equal(t, []string{"alpha"}, got, "%s: StaleGroups = %v, %v, want [alpha]", tc.name, got, err)
-			}
-		}
+		got, err := StaleGroups(src, cases, []Record{tampered, b, c})
+		stale := "%s: StaleGroups = %v, %v, want [alpha]"
+		assert.NoError(t, err, stale, tc.name, got, err)
+		assert.Equal(t, []string{"alpha"}, got, stale, tc.name, got, err)
 		kept, dropped, err := Carry(src, cases, []Record{tampered, b}, []Record{c})
-		if assert.NoError(t, err, "%s: Carry kept %+v dropped %+v, %v", tc.name, kept, dropped, err) {
-			if assert.Len(t, kept, 1, "%s: Carry kept %+v dropped %+v, %v", tc.name, kept, dropped, err) {
-				if assert.Equal(t, "MCB.cfg", kept[0].Config, "%s: Carry kept %+v dropped %+v, %v", tc.name, kept, dropped, err) {
-					assert.Equal(t, []Dropped{{Config: "MCA.cfg", Group: "alpha", Why: DroppedStale}}, dropped, "%s: Carry kept %+v dropped %+v, %v", tc.name, kept, dropped, err)
-				}
-			}
+		carried := "%s: Carry kept %+v dropped %+v, %v"
+		assert.NoError(t, err, carried, tc.name, kept, dropped, err)
+		assert.Len(t, kept, 1, carried, tc.name, kept, dropped, err)
+		if len(kept) == 1 {
+			assert.Equal(t, "MCB.cfg", kept[0].Config, carried, tc.name, kept, dropped, err)
 		}
+		assert.Equal(t, []Dropped{{Config: "MCA.cfg", Group: "alpha", Why: DroppedStale}}, dropped, carried, tc.name, kept, dropped, err)
 	}
 }

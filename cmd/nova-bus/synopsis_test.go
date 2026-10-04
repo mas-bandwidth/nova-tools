@@ -59,7 +59,7 @@ func readSynopsis(t *testing.T) []synopsisVerb {
 			break
 		}
 	}
-	require.False(t, start < 0, "the banner has no `usage:` line; this check reads the block under it")
+	require.GreaterOrEqual(t, start, 0, "the banner has no `usage:` line; this check reads the block under it")
 	var block []synopsisVerb
 	for _, line := range lines[start:] {
 		text := strings.TrimSpace(line)

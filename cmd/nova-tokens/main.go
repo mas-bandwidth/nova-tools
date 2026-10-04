@@ -92,7 +92,8 @@ exit codes: 0 the verb ran and passed; 1 the verb ran and said FAILED -- an unre
 source, an unparsed bus line or note, a row of two day bases, a lane-day with competing
 reports, a day that would shrink, a fold whose every message had no id and so folded nothing,
 a check finding (an --out holding no day file is one), a report with nothing to show; 2 could
-not run: a missing flag, a bad flag value, a duplicate label, sqlite3 absent when
+not run: a missing flag, a bad flag value, a duplicate label, two sources of one
+provider sharing message ids, sqlite3 absent when
 --opencode is given, a second fold holding the lock.
 
 EXIT 1 STILL WRITES. A fold with one unreadable file writes every day it could compute
@@ -128,6 +129,12 @@ holds for cost: usd= on a TOKENS AVG line is - when no source reported a cost fo
 A day that would go backwards is refused: TOKENS SHRANK names the type, what the file
 said and what the sources say now, the file is left as it was, and --allow-shrink is the
 person's act. A source that became unreadable must never quietly lower a day's spend.
+
+Two declared sources of one provider that feed the same message ids are refused
+before any day file is written. The refusal names both labels and the duplicate
+count, and the remedy is to drop one of the two flags. An id is comparable only
+within one provider, and a shared id is not dropped from the other source, so
+check and sum never see a doubled day.
 
 A fold merges into the day file by SOURCE: it recomputes the rows its own declared sources
 wrote and keeps every other row exactly as it is, so a run that declares one source does
@@ -479,7 +486,7 @@ func (s *sourceFlags) check(r *refusals) {
 // is named in the returned notes.
 func (s *sourceFlags) read(rules *tokens.Rules, now time.Time, private bool) (out []*tokens.Source, notes []string) {
 	for _, it := range s.claude.items {
-		out = append(out, tokens.ReadClaude(it.label, it.value, rules))
+		out = append(out, tokens.ReadClaude(it.label, it.value, os.DirFS(it.value), rules))
 	}
 	scratch := s.scratch
 	if private && len(s.opencode.items) > 0 {
@@ -507,14 +514,14 @@ func (s *sourceFlags) read(rules *tokens.Rules, now time.Time, private bool) (ou
 		out = append(out, tokens.ReadOpenCode(it.label, it.value, scratch, time.Duration(s.timeout)*time.Second, rules))
 	}
 	for _, it := range s.swarm.items {
-		out = append(out, tokens.ReadSwarm(it.label, it.value, rules))
+		out = append(out, tokens.ReadSwarm(it.label, it.value, os.DirFS(it.value), rules))
 	}
 	for _, it := range s.provider.items {
 		kind, name, _ := strings.Cut(it.label, ":")
 		out = append(out, tokens.ReadProvider(kind, name, it.value, rules))
 	}
 	if s.bus != "" {
-		out = append(out, tokens.ReadBus(s.bus, rules, now)...)
+		out = append(out, tokens.ReadBus(s.bus, os.DirFS(s.bus), rules, now)...)
 	}
 	for _, src := range out {
 		keys := map[tokens.Key]bool{}
@@ -637,6 +644,18 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 		r.add("--repos " + sf.repos + ": " + err.Error() + "; it wants " + wantsRepos)
 		return r.print(stderr)
 	}
+	sources, copyNotes := sf.read(rules, now, *dryRun)
+	folder := tokens.NewFolder()
+	for _, src := range sources {
+		for _, m := range src.Stream {
+			folder.Add(src.Label, m)
+		}
+	}
+	// TokenFold invariant OverlapRefusedBeforeWrite: refuse before the lock and
+	// before any day file. An unscoped id is not this check (UnscopedIDNotDeduped).
+	if folder.RefuseWrite() {
+		return refuseOverlap(s, folder.Overlaps())
+	}
 	if !*dryRun {
 		release, err := tokens.TakeFoldLock(*out, tokens.LockWait)
 		if err != nil {
@@ -644,14 +663,6 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 			return r.print(stderr)
 		}
 		defer release()
-	}
-
-	sources, copyNotes := sf.read(rules, now, *dryRun)
-	folder := tokens.NewFolder()
-	for _, src := range sources {
-		for _, m := range src.Stream {
-			folder.Add(src.Label, m)
-		}
 	}
 
 	fmt.Fprintln(s.out(), s.line("TOKENS", "FOLD", "", "at", stamp(now), "build", buildVersion(), "out", *out,
@@ -842,7 +853,7 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 	} else {
 		fmt.Fprintf(s.out(), "TOKENS OK%s\n", s.factFields(counts...))
 	}
-	note := remedy(sources, folder.Overlaps(), n("unreadable"), n("unparsed"), n("mixed"), n("conflict"), n("shrank"), n("partial"), quiet,
+	note := remedy(sources, n("unreadable"), n("unparsed"), n("mixed"), n("conflict"), n("shrank"), n("partial"), quiet,
 		*allowShrink, *out, mixedLabels, firstPartial, firstQuiet)
 	fmt.Fprintf(s.out(), "TOKENS NOTE %s\n", oneline.Escape(note))
 	s.note(note)
@@ -928,7 +939,7 @@ func dayLine(s *sink, day string, file *tokens.DayFile, written, dryRun, wouldWr
 
 // remedy is the ONE line TOKENS NOTE carries. It names the label and the act, in the order
 // a reader would act on them, and when nothing was wrong it names the gate.
-func remedy(sources []*tokens.Source, overlaps []tokens.Overlap, unreadable, unparsed, mixed, conflict, shrank, partial, quiet int, allowShrink bool, out, mixedLabels, firstPartial, firstQuiet string) string {
+func remedy(sources []*tokens.Source, unreadable, unparsed, mixed, conflict, shrank, partial, quiet int, allowShrink bool, out, mixedLabels, firstPartial, firstQuiet string) string {
 	switch {
 	case unreadable > 0:
 		return "a declared source could not be read whole (" + firstUnreadableLabel(sources) + "): open those files to this group, or drop the flag -- a declared source is a claim that the report covers it"
@@ -969,11 +980,39 @@ func remedy(sources []*tokens.Source, overlaps []tokens.Overlap, unreadable, unp
 		return "a declared source fed no message for a day its file names (" + firstQuiet + "): its rows there were recomputed from nothing; if it did spend that day, its files are not under the path you declared"
 	case noidAndDup(sources) != "":
 		return noidAndDup(sources) + "; those messages are NOT in any row"
-	case len(overlaps) > 0:
-		o := overlaps[0]
-		return "two declared sources fed the same " + strconv.Itoa(o.IDs) + " message ids (" + o.A + " and " + o.B + "): those messages are counted TWICE, because this fold does not de-duplicate across sources; one harness is one source flag, and a scratch tree under a declared directory holds the same transcripts again"
 	}
 	return "nothing was wrong; nova-tokens check --out " + out + " is the gate"
+}
+
+// refuseOverlap is the refusal a detected overlap prints before any day file is
+// written. TokenFold invariant OverlapRefusedBeforeWrite: the line names the two
+// source labels and the duplicate count, and the remedy drops one of the two flags.
+func refuseOverlap(s *sink, overlaps []tokens.Overlap) int {
+	if s.json {
+		whys := make([]string, len(overlaps))
+		for i, o := range overlaps {
+			whys[i] = overlapWhy(o)
+		}
+		out := tool.Refuse(whys...)
+		out.Verb, out.Remedy = s.o.Verb, overlapRemedy(overlaps[0])
+		return out.Render(s.stdout, true)
+	}
+	for _, o := range overlaps {
+		writeRefusal(s.stderr, "TOKENS", overlapWhy(o), overlapRemedy(o))
+	}
+	return 2
+}
+
+func overlapWhy(o tokens.Overlap) string {
+	return "two declared sources fed the same " + strconv.Itoa(o.IDs) + " message ids (" + o.A + " and " + o.B + ")"
+}
+
+func overlapRemedy(o tokens.Overlap) string {
+	kind, name, ok := strings.Cut(o.B, ":")
+	if !ok {
+		kind, name = "claude", o.B
+	}
+	return "nova-tokens fold ... without --" + kind + " " + name
 }
 
 func firstUnreadableLabel(sources []*tokens.Source) string {

@@ -43,7 +43,8 @@ func goEnvLineAt(t *testing.T, root, rel string, line int) string {
 	raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
 	require.NoError(t, err)
 	lines := strings.Split(string(raw), "\n")
-	require.False(t, line < 1 || line > len(lines), "%s:%d is outside the file (%d lines)", rel, line, len(lines))
+	require.GreaterOrEqual(t, line, 1, "%s:%d is outside the file (%d lines)", rel, line, len(lines))
+	require.False(t, line > len(lines), "%s:%d is outside the file (%d lines)", rel, line, len(lines))
 	return strings.TrimSpace(lines[line-1])
 }
 

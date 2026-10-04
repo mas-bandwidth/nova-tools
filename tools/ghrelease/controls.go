@@ -17,7 +17,7 @@ func init() {
 		help: `usage: go run ./tools/ghrelease controls [--victim <tool>] [--witness <tool>] [--stamp <tag>]
 
 The negative controls of the stamp assertion, run on this tree's real binaries.
-Exit 0 every control held; 1 one did not; 2 usage or no scratch space.
+Exit 0 every control held; 1 one did not; 2 usage or no scratch directory.
 
 A release job that asserts the stamp is worth nothing if the assertion itself
 has never been seen to fail, and a tag is the one thing that cannot be quietly

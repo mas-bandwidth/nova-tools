@@ -53,7 +53,7 @@ var Contract = ContractDef{
 		{Field: "CHECK", Type: "`pass` | `fail` | `not-run`", Fix: "R", Recut: "R", Port: "R", DocsGuard: "R", Report: "R", Read: "R"},
 		{Field: "REPO", Type: "`owner/name`, `^[a-z0-9-]+/[a-z0-9._-]+$`; must equal the card's repo", Fix: "R", Recut: "R", Port: "R", DocsGuard: "R", Report: "R", Read: "R"},
 		{Field: "BRANCH", Type: "git ref (check-ref-format), ≤200 B; must equal the card's branch when it has one", Fix: "D", Recut: "D", Port: "D", DocsGuard: "D", Report: "O", Read: "-"},
-		{Field: "PATHS", Type: "1-256 space-separated repo-relative paths; no `..`, no leading `/`, no duplicates", Fix: "D", Recut: "D", Port: "D", DocsGuard: "D", Report: "O", Read: "-"},
+		{Field: "PATHS", Type: "1-256 whitespace-separated repo-relative paths; no `..`, no leading `/`, no duplicates", Fix: "D", Recut: "D", Port: "D", DocsGuard: "D", Report: "O", Read: "-"},
 		{Field: "RED", Type: "text 1-4096 B", Fix: "D", Recut: "D", Port: "D", DocsGuard: "-", Report: "-", Read: "-"},
 		{Field: "GREEN", Type: "text 1-4096 B", Fix: "P", Recut: "P", Port: "P", DocsGuard: "-", Report: "-", Read: "-"},
 		{Field: "PRIOR", Type: "`#<int> @<hex12>`", Fix: "-", Recut: "D", Port: "-", DocsGuard: "-", Report: "-", Read: "-"},

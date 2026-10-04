@@ -155,7 +155,7 @@ func staticcheckSites(t *testing.T, ctx context.Context, bin, dir string) map[st
 // (docs/SPEC-CI.md, `staticcheck`).
 func TestStaticcheckFindings(t *testing.T) {
 	t.Parallel()
-	ctx, cancel := context.WithTimeout(context.Background(), lintDeadline)
+	ctx, cancel := context.WithTimeout(t.Context(), lintDeadline)
 	defer cancel()
 
 	root := repoRoot(t)
@@ -169,7 +169,7 @@ func TestStaticcheckFindings(t *testing.T) {
 // counted under its package, and a clean file adds nothing.
 func TestStaticcheckFindingsReadsItsChecks(t *testing.T) {
 	t.Parallel()
-	ctx, cancel := context.WithTimeout(context.Background(), lintDeadline)
+	ctx, cancel := context.WithTimeout(t.Context(), lintDeadline)
 	defer cancel()
 
 	dir := plantModule(t, map[string]string{

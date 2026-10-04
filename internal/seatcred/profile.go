@@ -122,7 +122,7 @@ func parseProfileRow(line, home string) (Profile, error) {
 		return Profile{}, fmt.Errorf("redis addr %q is not host:port", p.Addr)
 	}
 	if p.User == "" || strings.ContainsAny(p.User, " ") {
-		return Profile{}, fmt.Errorf("redis user %q is empty or has a space", p.User)
+		return Profile{}, fmt.Errorf("redis user %q is empty or has a blank", p.User)
 	}
 	if !secretEnvName.MatchString(p.SecretEnv) {
 		return Profile{}, fmt.Errorf("secret env %q must match [A-Z_][A-Z0-9_]*", p.SecretEnv)

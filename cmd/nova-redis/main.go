@@ -39,6 +39,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/redisacl"
@@ -355,8 +356,13 @@ func (l login) check(d deps) error {
 // password is a store that asks for none (redisconn refuses a password
 // variable that is named and empty, and check has refused a named user
 // without one). Env is left zero, so redisconn reads no variable of its own.
+// Addr is the dialled shape: redisconn keys a Unix socket off its leading
+// slash and takes a path as given, so the unix: prefix is stripped here.
 func (l login) options(d deps) redisconn.Options {
 	o := redisconn.Options{Addr: *l.addr, User: *l.user}
+	if socket, isSocket := unixSocketPath(*l.addr); isSocket {
+		o.Addr = socket
+	}
 	if d.getenv(*l.passwordEnv) != "" {
 		o.PasswordEnv = *l.passwordEnv
 	}
@@ -368,15 +374,15 @@ func (l login) options(d deps) redisconn.Options {
 // were given on the line, even empty or equal to the default (an explicit
 // flag overrides the environment, and a remedy that dropped it would log in
 // as the environment says), and when the environment set them to other than
-// the default. Every value is one POSIX shell word (shellWord). It is called
-// after check.
+// the default. Every value is one POSIX shell word (oneline.ShellWord). It is
+// called after check.
 func (l login) flags() string {
-	line := "--addr " + shellWord(*l.addr)
+	line := "--addr " + oneline.ShellWord(*l.addr)
 	if *l.user != "" || l.given("user") {
-		line += " --user " + shellWord(*l.user)
+		line += " --user " + oneline.ShellWord(*l.user)
 	}
 	if *l.passwordEnv != PasswordEnv || l.given("password-env") {
-		line += " --password-env " + shellWord(*l.passwordEnv)
+		line += " --password-env " + oneline.ShellWord(*l.passwordEnv)
 	}
 	return line
 }
@@ -384,10 +390,19 @@ func (l login) flags() string {
 // validAddr refuses an address the tool would have to guess at. The Redis
 // client fills an empty address in as localhost:6379 and an empty host as the
 // local machine, so an address that is empty, blank, or lacks a host or a
-// numeric port is refused before anything is dialled.
+// numeric port is refused before anything is dialled. A Unix socket names no
+// host and no port: the absolute path is the whole address, given bare or with
+// redis-cli's unix: prefix, and is accepted as the address (connect) dials —
+// it is the shape nova-table's first-run recipe makes.
 func validAddr(addr string) error {
 	if strings.TrimSpace(addr) == "" {
 		return errors.New("--addr is empty; give the instance as <host:port>, refusing to guess localhost")
+	}
+	if _, ok := unixSocketPath(addr); ok {
+		return nil
+	}
+	if _, prefixed := strings.CutPrefix(addr, "unix:"); prefixed {
+		return fmt.Errorf("--addr %q is not <host:port>; after unix: give the absolute path of a Unix socket, refusing to guess", addr)
 	}
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -400,6 +415,21 @@ func validAddr(addr string) error {
 		return fmt.Errorf("--addr %q needs a port from 1 to 65535; refusing to guess", addr)
 	}
 	return nil
+}
+
+// unixSocketPath is the socket path addr names: an absolute path with no
+// control character, given bare or after redis-cli's unix: prefix; ok is
+// false when addr names no Unix socket. The path may hold spaces, which a
+// file name may hold.
+func unixSocketPath(addr string) (path string, ok bool) {
+	path, _ = strings.CutPrefix(addr, "unix:")
+	if path == "" {
+		path = addr
+	}
+	if !strings.HasPrefix(path, "/") || strings.ContainsFunc(path, unicode.IsControl) {
+		return "", false
+	}
+	return path, true
 }
 
 // connect opens the store for the login check accepted through
@@ -455,28 +485,10 @@ func unconfirmed(conn *redisconn.Conn, store login, owner, name string, err erro
 	if inner := errors.Unwrap(err); inner != nil {
 		cause = inner
 	}
-	recall := "nova-redis recall " + store.flags() + " --owner " + shellWord(owner) + " --name " + shellWord(name)
+	recall := "nova-redis recall " + store.flags() + " --owner " + oneline.ShellWord(owner) + " --name " + oneline.ShellWord(name)
 	return tool.Fail().As("UNCONFIRMED").Fact("key", owner+":"+name).
 		Fact("err", oneline.Escape(conn.String()+": the transaction was sent and its reply was lost: "+cause.Error())).
 		Fact("remedy", tool.Text("confirmation was lost after the transaction was sent, so the write may have committed; read it back with the same login before spilling again: "+recall))
-}
-
-// shellWord is s as one POSIX shell word: as it is when it holds only
-// characters no shell treats specially, and otherwise in single quotes, each
-// single quote in it closing the quotes, written as a backslash and a quote,
-// and opening them again. The empty string is two single quotes.
-func shellWord(s string) string {
-	plain := s != ""
-	for _, r := range s {
-		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("_-.,:/@%+=", r)) {
-			plain = false
-			break
-		}
-	}
-	if plain {
-		return s
-	}
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // validKey is the one gate every write passes: an owner outside the store's
