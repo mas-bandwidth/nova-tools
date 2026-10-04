@@ -166,6 +166,11 @@ func SelftestLand(ctx context.Context, opts ...SelftestLandOption) error {
 			}
 			bin = exe
 		}
+		absBin, err := filepath.Abs(bin)
+		if err != nil {
+			return fmt.Errorf("selftest land: cannot make binary path absolute: %w", err)
+		}
+		bin = absBin
 
 		twinFile := filepath.Join(scratch, "selftest.twin")
 		redisAddr := "mem:" + twinFile
@@ -211,7 +216,10 @@ func SelftestLand(ctx context.Context, opts ...SelftestLandOption) error {
 
 	// Verify that the landing commit is on main in origin
 	logOut, err := gitRun(originDir, "log", "--format=%s", "main")
-	if err == nil && !strings.Contains(logOut, "land selftest-1") && cfg.lander == nil {
+	if err != nil {
+		return fmt.Errorf("selftest land: git log origin main failed: %s: %w", logOut, err)
+	}
+	if cfg.lander == nil && !strings.Contains(logOut, "land selftest-1") {
 		return fmt.Errorf("selftest land: landing commit not found in origin main: %s", logOut)
 	}
 

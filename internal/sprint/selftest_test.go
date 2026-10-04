@@ -21,7 +21,7 @@ func TestSelftestLandLandsACannedCardAndSwitchRollsBack(t *testing.T) {
 
 	ctx := context.Background()
 
-	t.Run("selftest land green on good lander", func(t *testing.T) {
+	t.Run("selftest land green on good lander stub", func(t *testing.T) {
 		t.Parallel()
 		scratch := t.TempDir()
 		var landedCard string
@@ -36,7 +36,7 @@ func TestSelftestLandLandsACannedCardAndSwitchRollsBack(t *testing.T) {
 		assert.Equal(t, "s1-1", landedCard, "canned card must land")
 	})
 
-	t.Run("selftest land red on broken lander", func(t *testing.T) {
+	t.Run("selftest land red on broken lander stub", func(t *testing.T) {
 		t.Parallel()
 		scratch := t.TempDir()
 		err := SelftestLand(ctx,
@@ -47,6 +47,79 @@ func TestSelftestLandLandsACannedCardAndSwitchRollsBack(t *testing.T) {
 		)
 		require.Error(t, err, "selftest land must fail on a broken lander")
 		assert.Contains(t, err.Error(), "lander broken")
+	})
+
+	t.Run("selftest land red on real path broken lander exiting non-zero", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		brokenBin := filepath.Join(dir, "broken-lander.sh")
+		require.NoError(t, os.WriteFile(brokenBin, []byte("#!/bin/sh\nexit 1\n"), 0o755))
+
+		err := SelftestLand(ctx,
+			WithSelftestScratch(filepath.Join(dir, "scratch")),
+			WithSelftestBinary(brokenBin),
+		)
+		require.Error(t, err, "selftest land must be red when binary exits non-zero")
+		assert.Contains(t, err.Error(), "failed")
+	})
+
+	t.Run("selftest land red on real path no-op lander exiting zero without landing commit", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		noopBin := filepath.Join(dir, "noop-lander.sh")
+		require.NoError(t, os.WriteFile(noopBin, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+
+		err := SelftestLand(ctx,
+			WithSelftestScratch(filepath.Join(dir, "scratch")),
+			WithSelftestBinary(noopBin),
+		)
+		require.Error(t, err, "selftest land must be red when binary exits 0 without landing canned card")
+		assert.Contains(t, err.Error(), "landing commit not found in origin main")
+	})
+
+	t.Run("selftest land green on real path good binary", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		goodBin := filepath.Join(dir, "good-lander.sh")
+		script := `#!/bin/sh
+if [ "$1" = "land" ]; then
+	git merge -q --no-ff sprint/selftest-canned-1 -m "land selftest-1"
+	git push -q origin main
+fi
+exit 0
+`
+		require.NoError(t, os.WriteFile(goodBin, []byte(script), 0o755))
+
+		err := SelftestLand(ctx,
+			WithSelftestScratch(filepath.Join(dir, "scratch")),
+			WithSelftestBinary(goodBin),
+		)
+		require.NoError(t, err, "selftest land must be green on a good binary that lands the canned card")
+	})
+
+	t.Run("selftest land green on real path good binary with relative path", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		goodBin := filepath.Join(dir, "good-lander.sh")
+		script := `#!/bin/sh
+if [ "$1" = "land" ]; then
+	git merge -q --no-ff sprint/selftest-canned-1 -m "land selftest-1"
+	git push -q origin main
+fi
+exit 0
+`
+		require.NoError(t, os.WriteFile(goodBin, []byte(script), 0o755))
+
+		cwd, err := os.Getwd()
+		require.NoError(t, err)
+		relBin, err := filepath.Rel(cwd, goodBin)
+		require.NoError(t, err)
+
+		err = SelftestLand(ctx,
+			WithSelftestScratch(filepath.Join(dir, "scratch")),
+			WithSelftestBinary(relBin),
+		)
+		require.NoError(t, err, "selftest land must work when binary is specified via relative path")
 	})
 
 	t.Run("server switch keeps old binary and rolls back on failed land in window", func(t *testing.T) {

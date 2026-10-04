@@ -45,3 +45,37 @@ func TestSelftestLandRunsAndFailsOnBrokenLander(t *testing.T) {
 	assert.Equal(t, 1, code)
 	assert.Contains(t, errs, "selftest land FAILED")
 }
+
+func TestSelftestLandRunsAndFailsOnNoopBinary(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+
+	dir := t.TempDir()
+	noopBin := filepath.Join(dir, "noop-lander.sh")
+	require.NoError(t, os.WriteFile(noopBin, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+
+	code, _, errs := ta.do("selftest land --binary " + noopBin)
+	assert.Equal(t, 1, code)
+	assert.Contains(t, errs, "selftest land FAILED")
+	assert.Contains(t, errs, "landing commit not found in origin main")
+}
+
+func TestSelftestLandRunsAndSucceedsOnGoodBinary(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+
+	dir := t.TempDir()
+	goodBin := filepath.Join(dir, "good-lander.sh")
+	script := `#!/bin/sh
+if [ "$1" = "land" ]; then
+	git merge -q --no-ff sprint/selftest-canned-1 -m "land selftest-1"
+	git push -q origin main
+fi
+exit 0
+`
+	require.NoError(t, os.WriteFile(goodBin, []byte(script), 0o755))
+
+	code, out, errs := ta.do("selftest land --binary " + goodBin)
+	assert.Equal(t, 0, code, errs)
+	assert.Contains(t, out, "SELFTEST LAND OK")
+}
