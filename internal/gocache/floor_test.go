@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The floor and the low-water mark (2026-10-04): a 24-slot member (space) wrote 13-14 GiB
+// The floor and the low-water mark (2026-10-04): a busy 24-slot member wrote 13-14 GiB
 // of build cache in three hours against a 10 GiB limit, and the trim removed, every round,
 // entries running builds still read; those builds failed. Each case runs on a fixed clock:
 // now is a value handed to each round, and nothing here waits.

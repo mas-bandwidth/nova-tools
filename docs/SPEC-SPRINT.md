@@ -2724,7 +2724,7 @@ The handover's first rule, printed above the lines it runs first (`RULE ...`; th
 ### Role views
 
 The owner, 2026-10-04: "i'd rather you hit this vs. hitting my dashboard which is for human
-eyes", and "it will save $$$ if the data is served to you better" (mas-bandwidth/ideas#852).
+eyes", and "it will save $$$ if the data is served to you better" (ideas#852).
 A role view is one document of what one role must act on now, for a model that reads it every
 few minutes. Both are reads (no actor, nothing written), `--json` one object on one line (`<`,
 `>` and `&` unescaped), else a short text whose first line is the summary. Each JSON document

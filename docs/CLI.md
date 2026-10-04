@@ -1018,7 +1018,7 @@ nova-sprint view coordinator                 # the summary and up to 19 items, t
 nova-sprint view coordinator --json --since <the cursor the last read printed>
 nova-sprint view worker --as m1 --json
 curl -s --compressed http://<tailnet address>:<port>/api/view/coordinator
-curl -s --compressed 'http://<tailnet address>:<port>/api/view/worker?as=stella'
+curl -s --compressed 'http://<tailnet address>:<port>/api/view/worker?as=<name>'
 ```
 
 The sprint's server (`run --listen`) serves them read-only at `/api/view/coordinator` and

@@ -26,7 +26,7 @@ const gib = 1 << 30
 // Limit is the size a cache is held under by default; once over it, a trim removes, oldest
 // first, down to the low-water mark Slack under it (a fifth: 80% of the limit), and then
 // removes nothing until the size passes the limit again. It was 10 GiB until 2026-10-04,
-// when a 24-slot member wrote 13-14 GiB in three hours: every entry was under three
+// when a busy 24-slot member wrote 13-14 GiB in three hours: every entry was under three
 // hours old and the trim removed entries running builds still read, every round, and those
 // builds failed (could not import ... go-build/...-d: no such file or directory). A busy
 // machine names its own (nova-swarm member --gocache-limit, disk-guard --cache-max-gb).

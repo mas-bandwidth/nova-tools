@@ -394,7 +394,7 @@ func (a *app) serveView(w http.ResponseWriter, r *http.Request) {
 	switch role {
 	case "coordinator":
 		if on, err := strconv.ParseBool(cmp.Or(q.Get("all"), "false")); err != nil {
-			http.Error(w, "all is 1 or 0, found "+oneline.Escape(q.Get("all")), http.StatusBadRequest)
+			http.Error(w, "all is 1 or 0: "+oneline.Err(err), http.StatusBadRequest)
 			return
 		} else if on {
 			argv = append(argv, "--all")

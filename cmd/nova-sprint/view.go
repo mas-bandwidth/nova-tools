@@ -23,7 +23,7 @@ import (
 
 // ROLE VIEWS (the owner, 2026-10-04: "i'd rather you hit this vs. hitting my dashboard which
 // is for human eyes", and "it will save $$$ if the data is served to you better";
-// mas-bandwidth/ideas#852; docs/SPEC-SPRINT.md section 11, "Role views"). A view is one
+// ideas#852; docs/SPEC-SPRINT.md section 11, "Role views"). A view is one
 // document of what one role needs to act on now, for a model to read every few minutes:
 //
 //   - view coordinator: everything that needs the seat, ranked by the cards behind it (open
