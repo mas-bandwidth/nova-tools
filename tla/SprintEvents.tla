@@ -699,11 +699,6 @@ RoundAssign(q0, c0, ms0, at0) ==
                                     ELSE << <<Head(q), m>> >> \o RoundAssign(Tail(q), [cnt EXCEPT ![m] = @ + 1], ms, Past(MemSeq, m)) :
                                     m \in {RoundOne(cnt, ms, fld[Head(q)].avoid, at)}} : TRUE :
                 q \in {q0}, cnt \in {c0}, ms \in {ms0}, at \in {at0}} : TRUE
-\* The ask's two readers: the first able from acur, then the first able past it
-\* (in place of any two, a free choice).
-RoundTwo(X, at) ==
-  LET a == FirstFrom(ReaderSeq, at, X) IN <<a, FirstFrom(ReaderSeq, Past(ReaderSeq, a), X \ {a})>>
-
 \* R3 resolve:s: release, reach, unreach (W26: release reads waiting, not elig).
 ResolvePlan(k, g, below, rel, ch) ==
   LET nb == IF g = None THEN 0 ELSE NBefore(S(g), score[g])
@@ -801,14 +796,18 @@ PlanMade(k) ==
   THEN PlanU(k, <<U("made", n, None, None)>>, FALSE) ELSE Plan0(k)
 
 \* R8 ask, R9 accept, R10 rework.
+\* #5300 asks reads one at a time and #5285 asks them by the reader's room,
+\* not round-robin: the plan offers every able reader as its own single-reader
+\* ask (a free choice), and the cannotask judgment (#5293, one judgment for
+\* the primaries no reader may be asked) fires only when none may.
 PlanAsk(k) ==
   LET p == k[2]
       able == {r \in Readers : rd[p][r].st = "none"}
   IN IF Frozen(p) THEN Held(k)
-     ELSE IF col[p] = "review" /\ fld[p].result = "ok" /\ ~fld[p].bound /\ able = Readers
-     THEN PlanU(k, <<IF Cardinality(able) >= 2
-                     THEN LET two == RoundTwo(able, acur) IN U("ask", p, two[2], {two[1], two[2]})
-                     ELSE U("cannotask", p, None, None)>>, FALSE)
+     ELSE IF col[p] = "review" /\ fld[p].result = "ok" /\ ~fld[p].bound
+     THEN CHOOSE one \in UNION {{IF able = {}
+                              THEN PlanU(k, <<U("cannotask", p, None, None)>>, FALSE)
+                              ELSE PlanU(k, <<U("ask", p, one, {one})>>, FALSE) : one \in {able}}} : TRUE
      ELSE Plan0(k)
 PlanAccept(k) ==
   LET p == k[2] IN
