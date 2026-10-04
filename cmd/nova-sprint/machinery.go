@@ -61,6 +61,11 @@ type outside struct {
 	// launchdLoaded says whether the launchd label is loaded in gui/<uid>;
 	// measured false where there is no launchd (not darwin).
 	launchdLoaded func(ctx context.Context, uid int, label string) (loaded, measured bool)
+	// devMergeQueue reads the dev merge queue: entries, open green PRs, and any
+	// PR thrown out of the queue since the previous check.
+	devMergeQueue func(ctx context.Context) (seatcheck.QueueM, error)
+	// machineVersions reads each machine's installed nova-tools version and dev's tip version.
+	machineVersions func(ctx context.Context, machines []string) (seatcheck.VersionsM, error)
 }
 
 // realOutside is the check as it runs on a machine.
@@ -138,6 +143,12 @@ func (a *app) realOutside() outside {
 			cmd, cancel := subproc.Command(ctx, subproc.Tool, "launchctl", "print", fmt.Sprintf("gui/%d/%s", uid, label))
 			defer cancel()
 			return cmd.Run() == nil, true
+		},
+		devMergeQueue: func(ctx context.Context) (seatcheck.QueueM, error) {
+			return seatcheck.QueueM{}, fmt.Errorf("dev merge queue probe not implemented: needs gh merge-queue read and store field for previous queue")
+		},
+		machineVersions: func(ctx context.Context, machines []string) (seatcheck.VersionsM, error) {
+			return seatcheck.VersionsM{}, fmt.Errorf("machine versions probe not implemented: needs nova-update version probe per machine and dev tip")
 		},
 	}
 }
@@ -280,6 +291,30 @@ func (a *app) machineryCheck(ctx context.Context, st *store.Store, redisAddr str
 		m.Inbox.Open++
 		if w := now.Sub(g.Oldest); w > m.Inbox.Oldest {
 			m.Inbox.Oldest = w
+		}
+	}
+
+	// 10. the dev merge queue
+	if !self && o.devMergeQueue != nil {
+		q, err := o.devMergeQueue(ctx)
+		if err != nil {
+			m.Errs[seatcheck.Queue] = err.Error()
+		} else {
+			m.Queue = q
+		}
+	}
+
+	// 11. each machine's installed version
+	if !self && o.machineVersions != nil {
+		var machines []string
+		for _, mm := range m.Fleet {
+			machines = append(machines, mm.Name)
+		}
+		vers, err := o.machineVersions(ctx, machines)
+		if err != nil {
+			m.Errs[seatcheck.Versions] = err.Error()
+		} else {
+			m.Versions = vers
 		}
 	}
 	return seatcheck.Judge(m, now)

@@ -30,12 +30,22 @@ func upOutside() outside {
 		hostname:      func() string { return "bench-a" },
 		uid:           func() int { return 501 },
 		launchdLoaded: func(context.Context, int, string) (bool, bool) { return false, true },
+		devMergeQueue: func(context.Context) (seatcheck.QueueM, error) {
+			return seatcheck.QueueM{Entries: []string{"5281"}}, nil
+		},
+		machineVersions: func(_ context.Context, machines []string) (seatcheck.VersionsM, error) {
+			var mvs []seatcheck.MachineVersionM
+			for _, m := range machines {
+				mvs = append(mvs, seatcheck.MachineVersionM{Machine: m, Version: "b1"})
+			}
+			return seatcheck.VersionsM{Dev: "b1", Machines: mvs}, nil
+		},
 	}
 }
 
 // machinery on a sprint whose loop ticked just now: every thing up, exit 0, the
-// summary counts nine lines in the order server, store, loop, fleet, friends,
-// readers, dashboard, bus, inbox.
+// summary counts eleven lines in the order server, store, loop, fleet, friends,
+// readers, dashboard, bus, inbox, queue, versions.
 func TestMachineryEverythingUp(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
@@ -47,7 +57,7 @@ func TestMachineryEverythingUp(t *testing.T) {
 	for _, l := range strings.Split(strings.TrimSpace(out), "\n") {
 		things = append(things, strings.Fields(l)[1])
 	}
-	assert.Equal(t, []string{"server", "store", "loop", "fleet", "friends", "readers", "dashboard", "bus", "inbox", "OK"}, things, out)
+	assert.Equal(t, []string{"server", "store", "loop", "fleet", "friends", "readers", "dashboard", "bus", "inbox", "queue", "versions", "OK"}, things, out)
 	assert.Contains(t, out, "MACHINERY server OK addr=127.0.0.1:6390 ms=12 pid=4242\n", out)
 	assert.Contains(t, out, "MACHINERY store OK redis=mem:0 dbsize=- machine=running epoch=", out)
 	assert.Contains(t, out, "MACHINERY loop OK tick_age=0s ticks=1\n", out)
@@ -55,12 +65,14 @@ func TestMachineryEverythingUp(t *testing.T) {
 	assert.Contains(t, out, "MACHINERY readers OK total=1 up=1 reading=0\n", out)
 	assert.Contains(t, out, "MACHINERY dashboard OK addr=127.0.0.1:7390 status=200 build=b1\n", out)
 	assert.Contains(t, out, `MACHINERY bus OK redis=none note="not configured: NOVA_BUS_REDIS is not set"`, out)
-	assert.Contains(t, out, "MACHINERY OK n=9\n", out)
+	assert.Contains(t, out, "MACHINERY queue OK entries=5281\n", out)
+	assert.Contains(t, out, "MACHINERY versions OK dev=b1 fresh=2\n", out)
+	assert.Contains(t, out, "MACHINERY OK n=11\n", out)
 
 	var r seatcheck.Report
 	ta.json("machinery", &r)
 	assert.Equal(t, 0, r.Down)
-	assert.Len(t, r.Lines, 9)
+	assert.Len(t, r.Lines, 11)
 }
 
 // The night of 2026-10-03: the friends' beat agents never came back after a
@@ -95,7 +107,7 @@ func TestMachineryDownLines(t *testing.T) {
 	assert.Contains(t, out, `MACHINERY friends DOWN friend=friend-a beat_age=never label=com.nova.loop.friend-beat-friend-a agent="not loaded" remedy="launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.nova.loop.friend-beat-friend-a.plist"`+"\n", out)
 	assert.Contains(t, out, `MACHINERY friends DOWN friend=friend-b beat_age=2m0s label=com.nova.loop.friend-beat-friend-b agent="loaded" remedy="launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.nova.loop.friend-beat-friend-b.plist"`+"\n", out)
 	assert.Contains(t, out, `MACHINERY friends DOWN up=0 held=0 down=2 remedy="nova-sprint where"`+"\n", out)
-	assert.Contains(t, out, "MACHINERY DOWN n=6 of=11\n", out)
+	assert.Contains(t, out, "MACHINERY DOWN n=6 of=13\n", out)
 }
 
 // handover starts with the check and coordinator prints it before the move;
@@ -106,7 +118,7 @@ func TestSeatVerbsStartWithTheCheck(t *testing.T) {
 	ta := seatSprint(t)
 	out := ta.ok("handover")
 	assert.True(t, strings.HasPrefix(out, "MACHINERY server OK "), out)
-	assert.Contains(t, out, "MACHINERY OK n=9\nHANDOVER seat=coordinator since=init\n", out)
+	assert.Contains(t, out, "MACHINERY OK n=11\nHANDOVER seat=coordinator since=init\n", out)
 
 	o := upOutside()
 	o.httpGet = func(context.Context, string) (int, []byte, error) { return 503, nil, nil }
@@ -114,7 +126,7 @@ func TestSeatVerbsStartWithTheCheck(t *testing.T) {
 	out = ta.ok("coordinator rowan --reason 'rowan is back'")
 	assert.True(t, strings.HasPrefix(out, "MACHINERY server OK "), out)
 	assert.Contains(t, out, `MACHINERY dashboard DOWN addr=127.0.0.1:7390 status=503 remedy="nova-sprint dashboard --listen 127.0.0.1:7390"`+"\n", out)
-	assert.Contains(t, out, "MACHINERY DOWN n=1 of=9\nCOORDINATOR OK holder=rowan from=coordinator by=coordinator given\nHANDOVER seat=rowan", out)
+	assert.Contains(t, out, "MACHINERY DOWN n=1 of=11\nCOORDINATOR OK holder=rowan from=coordinator by=coordinator given\nHANDOVER seat=rowan", out)
 	assert.Equal(t, 1, strings.Count(out, "MACHINERY dashboard DOWN"), "the check prints once:\n%s", out)
 	assert.Equal(t, "rowan", ta.holder())
 
@@ -158,7 +170,7 @@ func TestMachineryOverHTTP(t *testing.T) {
 	out := ta.ok("machinery")
 	assert.Contains(t, out, "MACHINERY server OK addr=127.0.0.1:1 ms=0\n", out)
 	assert.Contains(t, out, "MACHINERY dashboard OK addr=dash.test:7390 status=200 build=3f2a\n", out)
-	assert.Contains(t, out, "MACHINERY OK n=9\n", out)
+	assert.Contains(t, out, "MACHINERY OK n=11\n", out)
 }
 
 // The bus is dialed with the one fleet Redis seat every tool dials with
@@ -197,23 +209,43 @@ func TestServedCheckRunsNoOutsideProbe(t *testing.T) {
 		}
 		return env(k)
 	}
-	var gets, pings, launchds int
+	var gets, pings, launchds, queues, versions int
 	o := upOutside()
 	o.serverAddr = ta.a.realOutside().serverAddr
 	o.httpGet = func(context.Context, string) (int, []byte, error) { gets++; return 200, []byte(`{"build":"b1"}`), nil }
 	o.ping = func(context.Context, string) error { pings++; return nil }
 	o.launchdLoaded = func(context.Context, int, string) (bool, bool) { launchds++; return true, true }
+	o.devMergeQueue = func(context.Context) (seatcheck.QueueM, error) { queues++; return seatcheck.QueueM{}, nil }
+	o.machineVersions = func(context.Context, []string) (seatcheck.VersionsM, error) {
+		versions++
+		return seatcheck.VersionsM{}, nil
+	}
 	ta.a.outside = o
 	ta.a.serveAddr = "mem:0"
 	ta.ok("tick")
 	out := ta.ok("handover")
-	assert.Equal(t, [3]int{0, 0, 0}, [3]int{gets, pings, launchds}, "GETs, pings, launchctls:\n%s", out)
+	assert.Equal(t, [5]int{0, 0, 0, 0, 0}, [5]int{gets, pings, launchds, queues, versions}, "GETs, pings, launchctls, queues, versions:\n%s", out)
 	note := `"not measured: the check ran in the server; run nova-sprint machinery"`
 	assert.Contains(t, out, "MACHINERY server OK addr=mem:0 self=true pid=", out)
 	assert.Contains(t, out, `MACHINERY friends DOWN friend=friend-a beat_age=never label=com.nova.loop.friend-beat-friend-a agent=`+note+" remedy=", out)
 	assert.Contains(t, out, "MACHINERY dashboard OK addr=127.0.0.1:7390 note="+note+"\n", out)
 	assert.Contains(t, out, "MACHINERY bus OK redis=127.0.0.1:6381 note="+note+"\n", out)
-	assert.Contains(t, out, "MACHINERY DOWN n=2 of=10\n", out)
+	assert.Contains(t, out, "MACHINERY queue OK note="+note+"\n", out)
+	assert.Contains(t, out, "MACHINERY versions OK note="+note+"\n", out)
+	assert.Contains(t, out, "MACHINERY DOWN n=2 of=12\n", out)
+}
+
+// realOutside fails closed for unimplemented probes rather than silently returning green.
+func TestRealOutsideFailsClosedForUnimplementedProbes(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	real := ta.a.realOutside()
+	_, err := real.devMergeQueue(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not implemented")
+	_, err = real.machineVersions(context.Background(), nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not implemented")
 }
 
 // The help says what handover does now: the seat check first, then the brief;
@@ -246,5 +278,5 @@ func TestCoordinatorJSONCarriesTheCheckOnce(t *testing.T) {
 		Check seatcheck.Report `json:"check"`
 	}
 	require.NoError(t, json.Unmarshal(v.Handover, &h), string(v.Handover))
-	assert.Len(t, h.Check.Lines, 9)
+	assert.Len(t, h.Check.Lines, 11)
 }
