@@ -7,7 +7,7 @@ CHANGELOG.md:hetzner 5
 CHANGELOG.md:hulk 73
 CHANGELOG.md:johnny 8
 CHANGELOG.md:rowan 58
-CHANGELOG.md:space 10
+CHANGELOG.md:space 9
 CHANGELOG.md:stella 6
 CHANGELOG.md:studio 2
 CHANGELOG.md:superman 3

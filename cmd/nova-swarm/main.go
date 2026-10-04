@@ -47,7 +47,7 @@ usage:
   nova-swarm version    print this build identity (--version also accepted)
   nova-swarm doctor    [--path <file>] [--local <file>]   refuse a launch under a shadowed nova-swarm (PATH vs ~/.local/bin build stamp)
   nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
-  nova-swarm lint      --card <file> [--typed] [--child-rules | --child-rules-file <file>] [--member-injects] [--base-check [--repo <dir>] [--legs <file>] [--p95 <file>]] [--trust <file>] [--lineup <file>] [--decide [--decide-answers <file>] [--decide-record <file>]] [--max <n>] | --fleet <file> [--max <n>] | --rules
+  nova-swarm lint      --card <file> (or the bare <file>) [--typed] [--child-rules | --child-rules-file <file>] [--member-injects] [--base-check [--repo <dir>] [--legs <file>] [--p95 <file>]] [--trust <file>] [--lineup <file>] [--decide [--decide-answers <file>] [--decide-record <file>]] [--max <n>] | --fleet <file> [--max <n>] | --rules
                        (a bare --card holds the card to nova-swarm's own card contract, the shape native
                         runs; --rules lists every check; --fleet lints a launcher script against the
                         coordinator's /bin/bash 3.2. --base-check adds the four checks of a coding card;
@@ -278,6 +278,9 @@ type flags struct {
 	verb     string
 	fs       *flag.FlagSet
 	problems []string
+	// positional names the one flag a bare argument fills (`lint <file>` is `lint
+	// --card <file>`); "" takes none, and every input is a flag.
+	positional string
 }
 
 func newFlags(verb string) *flags {
@@ -335,9 +338,32 @@ func (f *flags) parse(args []string, stderr io.Writer) bool {
 		refuse(stderr, " "+f.verb, oneline.Cap(verbflag.Explain(f.fs, err), oneline.TailBytes))
 		return false
 	}
-	if n := f.fs.NArg(); n > 0 {
-		refuse(stderr, " "+f.verb, fmt.Sprintf("takes no positional arguments, got %d: %q (every input is a flag)", n, f.fs.Args()))
+	if f.fs.NArg() > 0 && f.positional == "" {
+		refuse(stderr, " "+f.verb, fmt.Sprintf("takes no positional arguments, got %d: %q (every input is a flag)", f.fs.NArg(), f.fs.Args()))
 		return false
+	}
+	// the one bare argument fills its flag, and the flags after it are parsed
+	// as the flags before it were (package flag stops at the first bare word)
+	taken := ""
+	for f.fs.NArg() > 0 {
+		arg := f.fs.Arg(0)
+		if given := f.fs.Lookup(f.positional).Value.String(); given != "" {
+			if taken == "" {
+				refuse(stderr, " "+f.verb, fmt.Sprintf("--%s %q and the positional %q name two files; give one", f.positional, given, arg))
+			} else {
+				refuse(stderr, " "+f.verb, fmt.Sprintf("takes one positional argument, the --%s file, got %q and %q", f.positional, taken, arg))
+			}
+			return false
+		}
+		if err := f.fs.Set(f.positional, arg); err != nil {
+			refuse(stderr, " "+f.verb, fmt.Sprintf("--%s %q: %s", f.positional, arg, oneline.Err(err)))
+			return false
+		}
+		taken = arg
+		if err := verbflag.Parse(f.fs, f.fs.Args()[1:]); err != nil {
+			refuse(stderr, " "+f.verb, oneline.Cap(verbflag.Explain(f.fs, err), oneline.TailBytes))
+			return false
+		}
 	}
 	return true
 }

@@ -114,7 +114,7 @@ var cardLintRemedies = map[string]string{
 	"files-named":      "name the file or the package the work lives in, so the change has a home to start from",
 	"scratch-absolute": "the LINE quoted is the one to fix: spell scratch against a named root -- `<job>/scratch`, `$PWD/scratch`, an absolute path -- and never as the bare word. An absolute path on another line does not answer for this one",
 	"no-parent-path":   swarm.CardParentPathWanted,
-	"no-sandbox":       "a card runs INSIDE the wall and never invokes it; drop the `nova-sandbox` line",
+	"no-sandbox":       "a card runs INSIDE the wall and never invokes it; drop the `nova-sandbox` command line (the name in a sentence, a path or a possessive is not an invocation)",
 	"result-last":      "the LAST step writes RESULT.md, and RESULT.md's own line 1 is the contract line from line 1 of this card",
 	"size":             "ADVICE, not a limit: a card over the ceiling is not refused, not truncated and still ships, so nothing here has to be cut. The ceiling is the budget that keeps a model reading the card in one window -- to come under it, point at a file instead of pasting it, and drop quoted source",
 	"depends-on":       swarm.CardDependsRemedy,
@@ -194,6 +194,12 @@ var (
 	cardDeadRE    = regexp.MustCompile(`(?i)(deadline|finish within)`)
 	cardFileRE    = regexp.MustCompile(`[A-Za-z0-9_][A-Za-z0-9_.-]*\.(go|py|rs|js|ts|md|lisp|sh|json|toml|txt)\b|\./[A-Za-z0-9_./-]+`)
 	cardScratchRE = regexp.MustCompile(`(/[A-Za-z0-9_./<>$-]*scratch\b)|(\$\{?[A-Za-z_]+\}?/scratch\b)|(<[^>]+>/scratch\b)`)
+	// cardSandboxRunRE is nova-sandbox at a command position: first on the line (after a
+	// `STEP n.` prefix, a `$ ` prompt, or both), after a shell separator (`&&`, `||`, `;`,
+	// `|`, `$(`, `(`), or after an imperative `run`, `exec` or `invoke`, with `sudo` or an
+	// `env` assignment and an opening quote allowed before it, and whitespace or the end
+	// of the line after it. The name in a sentence, a path and a possessive are prose.
+	cardSandboxRunRE = regexp.MustCompile(`(?i)(?:^\s*(?:STEP\s+\d+(?:\.\d+)*[.)]?\s*)?(?:\$\s*)?|(?:&&|\|\||;|\||\$\(|\()\s*|\b(?:run|exec|invoke):?\s+)(?:sudo\s+|env\s+\S+\s+)*[\x60"']?nova-sandbox(?:\s|$)`)
 )
 
 // cardStep is one `STEP <n>` line and the line number it sits on.
@@ -320,9 +326,13 @@ func lintCard(raw []byte) []cardFinding {
 		add("no-parent-path", n, lines[n-1])
 	}
 
-	// 10. no nova-sandbox invocation: the card runs inside the wall, never probes it.
+	// 10. no nova-sandbox invocation: the card runs inside the wall, never probes it. The
+	// rule is a COMMAND LINE, not the word: a card about the tool itself names it in a
+	// sentence, a path (cmd/nova-sandbox/run.go) or a possessive, and that is not a probe
+	// (cardSandboxRunRE; the night of 2026-10-03: a card about nova-sandbox's own help could
+	// never pass).
 	for i, l := range lines {
-		if strings.Contains(l, "nova-sandbox") {
+		if cardSandboxRunRE.MatchString(l) {
 			add("no-sandbox", i+1, l)
 		}
 	}
@@ -729,7 +739,8 @@ func fleetNameByte(c byte) bool {
 
 func cmdLint(args []string, stdout, stderr io.Writer, getenv func(string) string, now time.Time) (code int) {
 	f := newFlags("lint")
-	card := f.fs.String("card", "", "the card file to lint before any spend")
+	f.positional = "card" // `lint <file>` is `lint --card <file>`
+	card := f.fs.String("card", "", "the card file to lint before any spend (the bare `lint <file>` is the same)")
 	// `--fleet <file>` is the launcher's own lint. A card is checked for
 	// what it costs a bench to run; a fleet script is checked for what it costs the
 	// fleet to RUN AT ALL: the coordinator's /bin/bash is 3.2 and a script that leans

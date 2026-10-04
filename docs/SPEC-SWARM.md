@@ -52,7 +52,7 @@ usage:
   nova-swarm version    print this build identity (--version also accepted)
   nova-swarm doctor    [--path <file>] [--local <file>]   refuse a launch under a shadowed nova-swarm (PATH vs ~/.local/bin build stamp)
   nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
-  nova-swarm lint      --card <file> [--typed] [--child-rules] [--trust <file>] [--lineup <file>] [--max <n>] | --fleet <file> [--max <n>] | --rules
+  nova-swarm lint      --card <file> (or the bare <file>) [--typed] [--child-rules] [--trust <file>] [--lineup <file>] [--max <n>] | --fleet <file> [--max <n>] | --rules
                        (--fleet lints a launcher script against the coordinator's /bin/bash 3.2: shebang, bash-4 builtins, unquoted expansions)
                        (--child-rules holds the card to every rule the coordinator gives a child: one rule-<name> per required sentence, one step-<what> per forbidden command; template --name card prints a card that passes)
   nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|card|read|fix|text|replay|drift|tone|models.tsv
@@ -540,7 +540,10 @@ Every rule here is normative. Only living verbs are retained.
 
 ## Card lint
 
-`nova-swarm lint --card <file>` checks a card's shape before any spend. `--child-rules` also
+`nova-swarm lint --card <file>` (or `nova-swarm lint <file>`, the bare file being the card)
+checks a card's shape before any spend; its `no-sandbox` rule is a command line that
+invokes nova-sandbox (first on a step, after a shell separator, after an imperative run),
+never the name in a sentence, a path or a possessive. `--child-rules` also
 holds the card to the rules the coordinator gives a child, and `nova-sprint add` holds every
 brief (`--brief` and `--brief-file`) to them before it writes anything, exit 2; a card with
 no brief (a `--count` card, an id card) and a sentinel carry none to check. `nova-swarm
