@@ -84,8 +84,50 @@ func main() {
 	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, time.Now().UTC()))
 }
 
+// runEnv holds the capability and dependency seams for one invocation.
+// In production, the zero value delegates to production defaults.
+type runEnv struct {
+	getenv           func(string) string
+	workingDir       string
+	checkoutLockWait time.Duration
+	refreshCheckout  func(dir, remote, branch string) (bool, error)
+	publishDraft     func(dir, name string, content []byte) (string, error)
+}
+
+func (e runEnv) env(key string) string {
+	if e.getenv != nil {
+		return e.getenv(key)
+	}
+	return os.Getenv(key)
+}
+
+func (e runEnv) lockWait() time.Duration {
+	if e.checkoutLockWait > 0 {
+		return e.checkoutLockWait
+	}
+	return checkoutLockWait
+}
+
+func (e runEnv) refresh() func(string, string, string) (bool, error) {
+	if e.refreshCheckout != nil {
+		return e.refreshCheckout
+	}
+	return refreshCheckout
+}
+
+func (e runEnv) publish() func(string, string, []byte) (string, error) {
+	if e.publishDraft != nil {
+		return e.publishDraft
+	}
+	return publishDraft
+}
+
 // run is the whole tool, with its streams and clock injected so the tests can drive it.
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time) (code int) {
+	return runWith(runEnv{}, args, stdin, stdout, stderr, now)
+}
+
+func runWith(e runEnv, args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time) (code int) {
 	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
 	// before anything is read, dialed or written (the CLI style's rule (b)).
 	defer verbflag.RecoverWith(stdout, "nova-bus", usage, &code, verbDetail)
@@ -96,28 +138,28 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 	switch cmd {
 	case "help", "-h", "--help":
 		if cmd == "help" && len(rest) > 0 && rest[0] != "help" && !verbflag.IsHelp(rest[0]) {
-			return run(append(rest, "--help"), stdin, stdout, stderr, now)
+			return runWith(e, append(rest, "--help"), stdin, stdout, stderr, now)
 		}
 		fmt.Fprintf(stdout, "%s", usage)
 		return 0
 	case "draft":
-		return cmdDraft(rest, stdout, stderr, now)
+		return cmdDraft(rest, stdout, stderr, now, e)
 	case "prepare":
-		return cmdPrepare(rest, stdin, stdout, stderr, now)
+		return cmdPrepare(rest, stdin, stdout, stderr, now, e)
 	case "send":
-		return cmdSend(rest, stdin, stdout, stderr, now)
+		return cmdSend(rest, stdin, stdout, stderr, now, e)
 	case "reply":
-		return cmdReply(rest, stdout, stderr, now)
+		return cmdReply(rest, stdout, stderr, now, e)
 	case "inbox":
-		return cmdInbox(rest, stdout, stderr, now)
+		return cmdInbox(rest, stdout, stderr, now, e)
 	case "receipt":
-		return cmdReceipt(rest, stdout, stderr, now)
+		return cmdReceipt(rest, stdout, stderr, now, e)
 	case "close":
-		return cmdClose(rest, stdout, stderr, now)
+		return cmdClose(rest, stdout, stderr, now, e)
 	case "wait":
-		return cmdWait(rest, stdout, stderr, now)
+		return cmdWait(rest, stdout, stderr, now, e)
 	case "check":
-		return cmdCheck(rest, stdout, stderr, now)
+		return cmdCheck(rest, stdout, stderr, now, e)
 	case "names":
 		return cmdNames(rest, stdout, stderr)
 	case "version", "--version":
@@ -150,13 +192,17 @@ var checkoutLockWait = 10 * time.Second
 // listening -- which is the opposite of what a tool that makes waiting cheap is for. The
 // lock covers what it has always covered: one poll's fetch, listing and cursor, which is
 // exactly one `inbox` run's worth of work.
-func lockCheckout(token, busDir string, stderr io.Writer) (func(), int) {
-	release, err := bus.LockCheckout(busDir, checkoutLockWait)
+func (e runEnv) lockCheckout(token, busDir string, stderr io.Writer) (func(), int) {
+	release, err := bus.LockCheckout(busDir, e.lockWait())
 	if err != nil {
 		fmt.Fprintf(stderr, "%s REFUSED: %s\n", token, oneline.WithRemedy(oneline.Err(err), "nova-bus "+strings.ToLower(token)+" -h"))
 		return nil, 1
 	}
 	return release, 0
+}
+
+func lockCheckout(token, busDir string, stderr io.Writer) (func(), int) {
+	return runEnv{}.lockCheckout(token, busDir, stderr)
 }
 
 // quoteList renders names a person will PASTE -- into a To line -- each quoted and joined
