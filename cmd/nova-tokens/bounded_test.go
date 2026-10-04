@@ -166,7 +166,7 @@ func TestFoldIsBoundedAtTheLargestPlausibleState(t *testing.T) {
 		assert.False(t, n > 28*1024, "%d bytes at the largest plausible state, want under 28 KB", n)
 	}
 	// The counts are the truth about the STATE, never about the output.
-	fail := lineWith(r.stderr, "TOKENS FAIL")
+	fail := lineWith(r.stderr, "TOKENS FAILED")
 	for _, want := range []string{"unreadable=25", "conflict=25", "mixed=25"} {
 		wantContains(t, fail, want)
 	}
@@ -237,8 +237,8 @@ func TestCheckIsBoundedAtTheLargestPlausibleState(t *testing.T) {
 	wantExit(t, r, 1)
 	all := r.stdout + r.stderr
 	more, byToken := countKinds(all)
-	if byToken["CHECK FAIL"] != 21 { // twenty item lines and the count line
-		assert.Failf(t, "CHECK FAIL line count mismatch", "%d CHECK FAIL lines, want 20 findings and one count line", byToken["CHECK FAIL"])
+	if byToken["CHECK FAILED"] != 21 { // twenty item lines and the count line
+		assert.Failf(t, "CHECK FAILED line count mismatch", "%d CHECK FAILED lines, want 20 findings and one count line", byToken["CHECK FAILED"])
 	}
 	assert.Equal(t, 20, byToken["CHECK MISSING"], "check printed %v", byToken)
 	assert.Equal(t, 20, byToken["CHECK STRAY"], "check printed %v", byToken)
@@ -251,7 +251,7 @@ func TestCheckIsBoundedAtTheLargestPlausibleState(t *testing.T) {
 		n := ownBytes(all, dir)
 		assert.False(t, n > 8*1024, "%d bytes, want under 8 KB", n)
 	}
-	count := lineWith(r.stderr, "CHECK FAIL files=")
+	count := lineWith(r.stderr, "CHECK FAILED files=")
 	wantContains(t, count, "bad=25")
 	wantContains(t, count, "stray=25")
 	t.Logf("measured: %d lines, %d bytes", len(lines(all)), ownBytes(all, dir))

@@ -1120,7 +1120,7 @@ redis-server is functional-only (build tag functional)` and exits 86, so
 `testutil.Start` fails closed under `NOVA_CI=1`. The functional tier (the
 `functional` job, `make test-functional`) runs only the `//go:build functional`
 tests of the selected packages, on `merge_group`, `schedule` and
-`workflow_dispatch`, never on `pull_request`, four space shards under the
+`workflow_dispatch`, never on `pull_request`, six space shards under the
 two-minute cap; `ci-ok` requires it when it ran. The unit budgets are 2 s a
 package and 1 s a test, with an allowlist whose every row names its
 measurement, printed on every leg and enforced only on the nightly space legs;

@@ -23,6 +23,12 @@ func (c *fakeClock) Now() time.Time {
 	return t
 }
 
+// testClock is a fakeClock that starts at the wall and advances by step on each
+// Now: the shape every clock-driven case below takes.
+func testClock(step time.Duration) *fakeClock {
+	return &fakeClock{now: time.Now(), step: step}
+}
+
 // suiteTree is a checkout with three cases: one that passes, one whose
 // invariant is violated on purpose and one temporal counterexample.
 func suiteTree(t *testing.T) (string, []Case) {
@@ -156,8 +162,7 @@ func TestRunSuiteFailsACaseThatIsNotWhatItDeclares(t *testing.T) {
 		}
 		return code
 	}
-	clock := &fakeClock{now: time.Now(), step: time.Millisecond}
-	res, err := RunSuite(suiteOptions(root, cases, filepath.Join(t.TempDir(), "o"), wrong, clock))
+	res, err := RunSuite(suiteOptions(root, cases, filepath.Join(t.TempDir(), "o"), wrong, testClock(time.Millisecond)))
 	require.NoError(t, err, "suite = %+v, %v", res, err)
 	require.True(t, res.Failed, "suite = %+v, %v", res, err)
 	{
@@ -181,8 +186,7 @@ func TestRunSuiteWritesNothingWhenItsInputsMoveUnderIt(t *testing.T) {
 		}
 		return exec(ctx, r, log)
 	}
-	clock := &fakeClock{now: time.Now(), step: time.Millisecond}
-	res, err := RunSuite(suiteOptions(root, cases, out, meddle, clock))
+	res, err := RunSuite(suiteOptions(root, cases, out, meddle, testClock(time.Millisecond)))
 	require.NoError(t, err)
 	require.True(t, res.Failed, "suite = %+v", res)
 	require.Equal(t, "model inputs changed during execution", res.Refused, "suite = %+v", res)
@@ -197,8 +201,7 @@ func TestRunSuiteEndsWhenTheBudgetDoes(t *testing.T) {
 	var seen []Run
 	// Each reading of the clock is a minute later: the first case starts
 	// inside the budget and ends outside it.
-	clock := &fakeClock{now: time.Now(), step: time.Minute}
-	o := suiteOptions(root, cases, out, script(t, &seen), clock)
+	o := suiteOptions(root, cases, out, script(t, &seen), testClock(time.Minute))
 	o.Budget = 90 * time.Second
 	res, err := RunSuite(o)
 	require.NoError(t, err)
@@ -214,8 +217,7 @@ func TestRunSuiteNeverStartsACaseAfterTheBudget(t *testing.T) {
 	t.Parallel()
 	root, cases := suiteTree(t)
 	var seen []Run
-	clock := &fakeClock{now: time.Now(), step: time.Hour}
-	o := suiteOptions(root, cases, filepath.Join(t.TempDir(), "o"), script(t, &seen), clock)
+	o := suiteOptions(root, cases, filepath.Join(t.TempDir(), "o"), script(t, &seen), testClock(time.Hour))
 	o.Budget = time.Second
 	res, err := RunSuite(o)
 	require.NoError(t, err, "ran %d cases, failed=%v, err=%v", len(seen), res.Failed, err)
@@ -235,8 +237,7 @@ func TestRunSuiteRecordsAManualRun(t *testing.T) {
 	t.Parallel()
 	root, cases := suiteTree(t)
 	var seen []Run
-	clock := &fakeClock{now: time.Now(), step: time.Millisecond}
-	o := suiteOptions(root, cases[:1], filepath.Join(t.TempDir(), "o"), script(t, &seen), clock)
+	o := suiteOptions(root, cases[:1], filepath.Join(t.TempDir(), "o"), script(t, &seen), testClock(time.Millisecond))
 	o.Selection = Selection{Shards: 3, Shard: 0} // the first of three: MCA.cfg
 	o.Manual, o.Budget = true, 1500*time.Millisecond
 	res, err := RunSuite(o)
@@ -251,9 +252,8 @@ func TestRunSuiteRefusesModelsEditedBetweenTheDigestAndTheCopy(t *testing.T) {
 	root, cases := suiteTree(t)
 	out := filepath.Join(t.TempDir(), "o")
 	ran := 0
-	clock := &fakeClock{now: time.Now(), step: time.Millisecond}
 	exec := func(context.Context, Run, string) int { ran++; return 0 }
-	o := suiteOptions(root, cases, out, exec, clock)
+	o := suiteOptions(root, cases, out, exec, testClock(time.Millisecond))
 	// TLC would check the edited bytes while the records named the old digest.
 	o.beforeCopy = func() {
 		_ = os.WriteFile(filepath.Join(root, "tla", "MCA.tla"), []byte("edited before the copy\n"), 0o644)
@@ -302,8 +302,7 @@ func TestRunSuiteRefusesACasePlanEditedAfterItWasRead(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(root, "tla", CasesFile), []byte(edited), 0o644))
 	out := filepath.Join(t.TempDir(), "o")
 	ran := 0
-	clock := &fakeClock{now: time.Now(), step: time.Millisecond}
-	res, err := RunSuite(suiteOptions(root, cases, out, func(context.Context, Run, string) int { ran++; return 0 }, clock))
+	res, err := RunSuite(suiteOptions(root, cases, out, func(context.Context, Run, string) int { ran++; return 0 }, testClock(time.Millisecond)))
 	require.NoError(t, err)
 	want := "CASES.tsv changed after the cases were read (MCA.cfg is not as it was)"
 	require.True(t, res.Failed, "suite = %+v, ran %d cases", res, ran)
@@ -337,8 +336,7 @@ func TestRunSuiteRunsCasesTheEditedPlanStillHolds(t *testing.T) {
 	// An edit to a case outside the selection is not a change to the cases run.
 	write(planWith("Another"))
 	var seen []Run
-	clock := &fakeClock{now: time.Now(), step: time.Millisecond}
-	o := suiteOptions(root, selected, filepath.Join(t.TempDir(), "o"), script(t, &seen), clock)
+	o := suiteOptions(root, selected, filepath.Join(t.TempDir(), "o"), script(t, &seen), testClock(time.Millisecond))
 	o.Selection = Selection{Group: "alpha", Shards: 1}
 	res, err := RunSuite(o)
 	require.NoError(t, err, "suite = %+v, ran %d, %v", res, len(seen), err)
@@ -371,8 +369,7 @@ func TestRunSuiteNeverExecutesTheFieldsItWasHanded(t *testing.T) {
 	}
 	runIn := func(root string, alpha []Case) (Result, []Run, error) {
 		var seen []Run
-		clock := &fakeClock{now: time.Now(), step: time.Millisecond}
-		o := suiteOptions(root, alpha, filepath.Join(t.TempDir(), "o"), script(t, &seen), clock)
+		o := suiteOptions(root, alpha, filepath.Join(t.TempDir(), "o"), script(t, &seen), testClock(time.Millisecond))
 		o.Selection = Selection{Group: "alpha", Shards: 1}
 		res, err := RunSuite(o)
 		return res, seen, err
@@ -423,8 +420,7 @@ func TestRunSuiteRunsTheDigestedPlansCases(t *testing.T) {
 	t.Parallel()
 	root, cases := suiteTree(t)
 	var seen []Run
-	clock := &fakeClock{now: time.Now(), step: time.Millisecond}
-	o := suiteOptions(root, cases, filepath.Join(t.TempDir(), "o"), script(t, &seen), clock)
+	o := suiteOptions(root, cases, filepath.Join(t.TempDir(), "o"), script(t, &seen), testClock(time.Millisecond))
 	res, err := RunSuite(o)
 	require.NoError(t, err, "suite = %+v, ran %d, %v", res, len(seen), err)
 	require.False(t, res.Failed, "suite = %+v, ran %d, %v", res, len(seen), err)
@@ -470,8 +466,7 @@ func TestRunSuiteIgnoresAnEditToAModelNoChosenCaseReads(t *testing.T) {
 				_ = os.WriteFile(log, []byte(fixture(t, "pass.log")), 0o644)
 				return 0
 			}
-			clock := &fakeClock{now: time.Now(), step: time.Millisecond}
-			o := suiteOptions(root, chosen, filepath.Join(t.TempDir(), "o"), exec, clock)
+			o := suiteOptions(root, chosen, filepath.Join(t.TempDir(), "o"), exec, testClock(time.Millisecond))
 			o.Selection = Selection{Group: "alpha"}
 			res, err := RunSuite(o)
 			require.NoError(t, err)
@@ -488,7 +483,7 @@ func TestRunSuiteRecordsTheWorkersAndTheJavaVersion(t *testing.T) {
 	t.Parallel()
 	root, cases := suiteTree(t)
 	var seen []Run
-	clock := &fakeClock{now: time.Now(), step: time.Millisecond}
+	clock := testClock(time.Millisecond)
 	res, err := RunSuite(suiteOptions(root, cases, filepath.Join(t.TempDir(), "o"), script(t, &seen), clock))
 	require.NoError(t, err, "%+v, %v", res, err)
 	require.Len(t, res.Records, 3, "%+v, %v", res, err)

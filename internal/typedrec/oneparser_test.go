@@ -1,7 +1,7 @@
 // TestOneTypedParser is the one-typed-parser rule (#2506): internal/typedrec
 // is the home of every typed line a nova tool reads, the RESULT v2 record
-// and DISPOSITION line first, and the Lua replies (the PATHS gate's
-// refusal) and any other typed line with them. Outside typedrec no function
+// first, and the Lua replies (the PATHS gate's refusal) and any other typed
+// line with them. Outside typedrec no function
 // compares a line's token to a bare word, builds a table of the tokens, or
 // cuts a token's prefix; the tree walk below finds those shapes and skips
 // internal/typedrec because it is that home, not by accident. The allowlist
@@ -70,7 +70,8 @@ var specAllowlist = []allowlistEntry{
 	{file: "internal/secrets/seal.go", fn: "preflight", record: "git-HEAD"},
 
 	// part=B (merge/verdict.go ParseDispositionLine, dispositionWholeLine)
-	// moved into typedrec.ParseDisposition; their two entries are gone.
+	// retired with the DISPOSITION parser, which no live reader reached;
+	// their two entries are gone.
 }
 
 // driftAllowlist holds hits that dev gained after the spec's measurement at
@@ -95,8 +96,8 @@ type parserChecker struct {
 func newParserChecker(c typedrec.ContractDef) *parserChecker {
 	return &parserChecker{
 		keys:     c.FieldKeys(),
-		words:    c.StatusWords(),
-		sections: c.SectionNames(),
+		words:    []string{"DONE", "ABSTAIN", "BLOCKED", "DISPOSITION"},
+		sections: []string{"Gates", "Left owed", "Verification", "Probes", "Summary", "Findings"},
 	}
 }
 

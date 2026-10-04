@@ -88,7 +88,7 @@ refuses on a fold holding one. --opencode under --dry-run (and under sources) st
 copy of the database, made in a new directory of the run's own under --scratch
 (.nova-tokens-dry-run-*) and removed before it exits: --scratch is left as it was. ` + "`<verb> -h`" + ` lists a verb's flags and states its effect.
 
-exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- an unreadable
+exit codes: 0 the verb ran and passed; 1 the verb ran and said FAILED -- an unreadable
 source, an unparsed bus line or note, a row of two day bases, a lane-day with competing
 reports, a day that would shrink, a fold whose every message had no id and so folded nothing,
 a check finding (an --out holding no day file is one), a report with nothing to show; 2 could
@@ -160,7 +160,7 @@ none) names the gaps your list does not account for. A *.md, a *.log or a pre-* 
 directory beside the day files is notes=<n> rather than a stray; --strict names those too.
 A gate that cannot go green is a gate people stop reading, and both counts stay on the
 CHECK line, so nothing was hidden to make it green. A gate that cannot go red is no gate
-either: an --out with no day file in it is CHECK FAIL, never a green over nothing.
+either: an --out with no day file in it is CHECK FAILED, never a green over nothing.
 
 sources --unattributed prints the path stems that were SEEN and matched no rule, heaviest
 first, capped by --max. That listing is what other=<pct>% on a day line is made of, and it
@@ -595,7 +595,7 @@ var foldLists = []struct {
 }
 
 // cmdFold is the wall: it reads every declared source whole and writes the days it could
-// compute. It says NO when a source could not be read, a bus line or note did not parse,
+// compute. It says FAILED when a source could not be read, a bus line or note did not parse,
 // a row mixed two day bases, a lane-day had competing reports, or a day would have shrunk
 // -- and it still writes the rest, because the exit code is about the claim. Under
 // --dry-run it reads and decides exactly the same and writes nothing, the lock included.
@@ -834,11 +834,11 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 	bad := n("unreadable") > 0 || n("unparsed") > 0 || n("mixed") > 0 || n("conflict") > 0 ||
 		(n("shrank") > 0 && !*allowShrink) || n("partial") > 0 || allDropped
 	if allDropped {
-		fmt.Fprintf(s.err(), "FOLD FAIL dropped=%d of %d: %s\n", dropped, of, allDroppedWhy)
+		fmt.Fprintf(s.err(), "FOLD FAILED dropped=%d of %d: %s\n", dropped, of, allDroppedWhy)
 		s.o.Why = append(s.o.Why, fmt.Sprintf("dropped=%d of %d: %s", dropped, of, allDroppedWhy))
 	}
 	if bad {
-		fmt.Fprintf(s.err(), "TOKENS FAIL%s\n", s.factFields(counts...))
+		fmt.Fprintf(s.err(), "TOKENS FAILED%s\n", s.factFields(counts...))
 	} else {
 		fmt.Fprintf(s.out(), "TOKENS OK%s\n", s.factFields(counts...))
 	}
@@ -1008,7 +1008,7 @@ func noidAndDup(sources []*tokens.Source) string {
 	return "a source fed " + strconv.Itoa(noid) + " messages with no id (" + label + "): a message is counted by its id (rule 4), and one with none is noid= and is not folded"
 }
 
-// allDroppedWhy is the tail of the TOKENS FAIL line for a fold that dropped every message.
+// allDroppedWhy is the tail of the TOKENS FAILED line for a fold that dropped every message.
 const allDroppedWhy = "no message had an id, so none was folded (a message is counted by its id: a transcript's message.id, an opencode message id, a swarm row's job); run: nova-tokens sources <the same source flags> --day <d> to see noid= per source"
 
 // allMessagesDropped says whether the sources read at least one message and dropped every
@@ -1273,14 +1273,14 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	s.fact("day", *day)
 	s.fact("rows", lines)
 	if lines == 0 || len(mixed) > 0 {
-		// A friend with nothing to show says so, and never sends zeros. A REPORT FAIL
-		// writes nothing: an existing --note file is left byte-unchanged. A mixed key is a
-		// FAIL for the day, and the rest of the body is still printed: the spec's sentence
+		// A friend with nothing to show says so, and never sends zeros. A REPORT FAILED
+		// writes nothing: an existing --note file is left byte-unchanged. A mixed key fails
+		// the day, and the rest of the body is still printed: the spec's sentence
 		// is "no line for that key", not no line for any key.
 		if lines > 0 {
 			fmt.Fprint(s.out(), body)
 		}
-		fmt.Fprintf(s.err(), "REPORT FAIL who=%s day=%s rows=%d unreadable=%d\n",
+		fmt.Fprintf(s.err(), "REPORT FAILED who=%s day=%s rows=%d unreadable=%d\n",
 			oneline.Field(*who), oneline.Field(*day), lines, unreadable)
 		s.fact("unreadable", unreadable)
 		return s.done(1, *max)
@@ -1464,7 +1464,7 @@ func validMonth(m string) bool {
 
 // ----------------------------------------------------------------------------- check
 
-// cmdCheck is the GATE. It says NO on any malformed file, any malformed row, any missing
+// cmdCheck is the GATE. It says FAILED on any malformed file, any malformed row, any missing
 // day and any stray, and it prints the count line either way. A missing day is NAMED and
 // never filled: nobody folded it, and this tool does not invent what nobody measured.
 //
@@ -1519,9 +1519,9 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	strays := s.list(true, *max, "CHECK", "stray", remedyLine)
 	for _, f := range res.Findings {
 		reason := oneline.Cap(f.Reason, oneline.TailBytes)
-		line := fmt.Sprintf("CHECK FAIL %s: %s", oneline.Escape(f.Path), oneline.Escape(reason))
+		line := fmt.Sprintf("CHECK FAILED %s: %s", oneline.Escape(f.Path), oneline.Escape(reason))
 		if f.Line > 0 {
-			line = fmt.Sprintf("CHECK FAIL %s:%d: %s", oneline.Escape(f.Path), f.Line, oneline.Escape(reason))
+			line = fmt.Sprintf("CHECK FAILED %s:%d: %s", oneline.Escape(f.Path), f.Line, oneline.Escape(reason))
 		}
 		kind, list := "file", files
 		if f.Line > 2 {
@@ -1548,7 +1548,7 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 		first, last = res.First, res.Last
 	}
 	if res.Stale {
-		fmt.Fprintf(s.err(), "CHECK FAIL stale last=%s through=%s\n", oneline.Field(last), oneline.Field(*through))
+		fmt.Fprintf(s.err(), "CHECK FAILED stale last=%s through=%s\n", oneline.Field(last), oneline.Field(*through))
 		s.item("stale", "last", last, "through", *through)
 	}
 	// A GATE THAT CANNOT GO RED IS NO GATE. An --out holding no day file has nothing in it
@@ -1557,14 +1557,14 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	empty := res.Files == 0
 	if empty {
 		why := "--out " + *out + " holds no day file, so there is nothing to check; fold one first: nova-tokens fold --out " + *out + " --day <YYYY-MM-DD> --repos <file> <source flags>"
-		fmt.Fprintf(s.err(), "CHECK FAIL %s\n", oneline.Escape(why))
+		fmt.Fprintf(s.err(), "CHECK FAILED %s\n", oneline.Escape(why))
 		s.o.Why = append(s.o.Why, why)
 	}
 	bad := files.Total() + rowsList.Total()
 	counts := []any{"files", res.Files, "rows", res.Rows, "first", first, "last", last}
 	if bad > 0 || len(res.Missing) > 0 || len(res.Strays) > 0 || res.Stale || empty {
 		counts = append(counts, "bad", bad, "missing", len(res.Missing), "stray", len(res.Strays), "gap", len(res.Gaps), "notes", len(res.Notes))
-		fmt.Fprintf(s.err(), "CHECK FAIL%s\n", s.factFields(counts...))
+		fmt.Fprintf(s.err(), "CHECK FAILED%s\n", s.factFields(counts...))
 		return s.done(1, *max)
 	}
 	// gap= and notes= are on the OK line too, and that is the whole point: what the gate

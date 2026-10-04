@@ -14,7 +14,7 @@ import (
 )
 
 // TestWrittenGhRefuses: the written gh exits 2 with Refusal and is found
-// first through PathFirst, ahead of a gh later on PATH.
+// first on a PATH that names the shim dir ahead of a gh later on it.
 func TestWrittenGhRefuses(t *testing.T) {
 	t.Parallel()
 
@@ -35,7 +35,7 @@ func TestWrittenGhRefuses(t *testing.T) {
 		t.Skipf("no sh: %v", err)
 	}
 	cmd := exec.Command(sh, "-c", "gh api user")
-	cmd.Env = PathFirst([]string{"PATH=/usr/bin:/bin"}, dir)
+	cmd.Env = []string{"PATH=" + dir + string(os.PathListSeparator) + "/usr/bin:/bin"}
 	out, err := cmd.CombinedOutput()
 	var ee *exec.ExitError
 	require.ErrorAs(t, err, &ee, "gh: err=%v out=%q, want exit 2 and the refusal", err, out)

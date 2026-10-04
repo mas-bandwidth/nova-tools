@@ -46,6 +46,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/log"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"golang.org/x/mod/semver"
 )
 
 // DefaultGo is the toolchain a bench's Go workloads ask for. It tracks go.mod's `go` line;
@@ -162,37 +163,6 @@ func StandardWorkloads() ([]Workload, error) {
 			return nil, err
 		}
 		out = append(out, w)
-	}
-	sortWorkloads(out)
-	return out, nil
-}
-
-// ReadWorkloads reads an override directory: every `<class>.card` in it, whole and
-// validated. A directory holding one broken card is refused entire, for the registry's own
-// reason -- the half that reads is the half that lets a machine through.
-func ReadWorkloads(dir string) ([]Workload, error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, fmt.Errorf("cannot read the workloads directory %s: %w", dir, err)
-	}
-	var out []Workload
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".card") {
-			continue
-		}
-		p := filepath.Join(dir, e.Name())
-		raw, err := os.ReadFile(p)
-		if err != nil {
-			return nil, err
-		}
-		w, err := ParseWorkload(p, raw)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, w)
-	}
-	if len(out) == 0 {
-		return nil, fmt.Errorf("%s holds no <class>.card; refusing to guess (a workload is a file: roles, expect, then a blank line, then the body)", dir)
 	}
 	sortWorkloads(out)
 	return out, nil
@@ -727,15 +697,12 @@ func IsValidBuildVersion(tok string) bool {
 	if clean == "devel" {
 		return true
 	}
-	// Semver tag: v<digit>...
+	// Semver tag: the adopted golang.org/x/mod/semver (docs/STANDARD.md section 7)
+	// validates the whole tag after the surrounding-punctuation trim above. A token that
+	// merely starts `v<digit>` -- v1banana, v1..2, v1.2.3- -- is not a version and cannot
+	// become a certificate's build identity.
 	if len(clean) >= 2 && clean[0] == 'v' && clean[1] >= '0' && clean[1] <= '9' {
-		for i := 0; i < len(clean); i++ {
-			c := clean[i]
-			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '-' || c == '+') {
-				return false
-			}
-		}
-		return true
+		return semver.IsValid(clean)
 	}
 	// Timestamp-hash: 14 digits + '-' + 12 hex digits (optional -dirty)
 	withoutDirty := strings.TrimSuffix(clean, "-dirty")

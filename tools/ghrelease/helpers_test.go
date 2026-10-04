@@ -148,6 +148,30 @@ func (h *harness) wantRC(got, want int) {
 	}
 }
 
+// wantRun runs a verb, pins its exit code and one phrase it prints.
+func (h *harness) wantRun(want int, phrase string, args ...string) {
+	h.t.Helper()
+	h.wantRC(h.do(args...), want)
+	h.mustContain(phrase)
+}
+
+// wantNothingPast pins that neither the GitHub it asks nor a program it runs
+// was reached past the named refusal.
+func (h *harness) wantNothingPast(past string) {
+	h.t.Helper()
+	if len(h.gh.apis) != 0 || len(h.runner.called()) != 0 {
+		h.t.Fatalf("something ran past %s", past)
+	}
+}
+
+// remove deletes a file of the harness's tree by the path write takes.
+func (h *harness) remove(rel string) {
+	h.t.Helper()
+	if err := os.Remove(filepath.Join(h.dir, filepath.FromSlash(rel))); err != nil {
+		h.t.Fatal(err)
+	}
+}
+
 func fixture(t *testing.T, rel string) string {
 	t.Helper()
 	b, err := os.ReadFile(filepath.FromSlash(rel))
@@ -162,5 +186,3 @@ func fixture(t *testing.T, rel string) string {
 func httpAnswer(code, reason, body string) string {
 	return "HTTP/2 " + code + " " + reason + "\r\ndate: a-fake-gh-does-not-have-dates\r\n\r\n" + body
 }
-
-func removeFile(p string) error { return os.Remove(p) }

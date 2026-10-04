@@ -244,14 +244,17 @@ func (p Policy) refuseUnsafeRoot(root string) error {
 	if homeFn == nil {
 		homeFn = os.UserHomeDir
 	}
-	if home, err := homeFn(); err == nil && strings.TrimSpace(home) != "" {
-		isHome, err := p.sameDir(root, home)
-		if err != nil {
-			return fmt.Errorf("%w: the root %q could not be compared with the user's home: %v", ErrUnsafe, root, err)
-		}
-		if isHome {
-			return fmt.Errorf("%w: the root is the user's home %q", ErrUnsafe, root)
-		}
+	home, err := homeFn()
+	if err != nil {
+		return fmt.Errorf("%w: the user's home could not be identified: %v", ErrUnsafe, err)
+	}
+	if strings.TrimSpace(home) == "" {
+		return fmt.Errorf("%w: the user's home could not be identified: the answer is blank", ErrUnsafe)
+	}
+	if isHome, err := p.sameDir(root, home); err != nil {
+		return fmt.Errorf("%w: the root %q could not be compared with the user's home: %v", ErrUnsafe, root, err)
+	} else if isHome {
+		return fmt.Errorf("%w: the root is the user's home %q", ErrUnsafe, root)
 	}
 	return nil
 }
@@ -269,14 +272,17 @@ func (p Policy) refuseUnsafePath(path string) error {
 	if homeFn == nil {
 		homeFn = os.UserHomeDir
 	}
-	if home, err := homeFn(); err == nil && strings.TrimSpace(home) != "" {
-		isHome, err := p.sameDir(path, home)
-		if err != nil {
-			return fmt.Errorf("%w: the path %q could not be compared with the user's home: %v", ErrUnsafe, path, err)
-		}
-		if isHome {
-			return fmt.Errorf("%w: the path resolves to the user's home %q", ErrUnsafe, path)
-		}
+	home, err := homeFn()
+	if err != nil {
+		return fmt.Errorf("%w: the user's home could not be identified: %v", ErrUnsafe, err)
+	}
+	if strings.TrimSpace(home) == "" {
+		return fmt.Errorf("%w: the user's home could not be identified: the answer is blank", ErrUnsafe)
+	}
+	if isHome, err := p.sameDir(path, home); err != nil {
+		return fmt.Errorf("%w: the path %q could not be compared with the user's home: %v", ErrUnsafe, path, err)
+	} else if isHome {
+		return fmt.Errorf("%w: the path resolves to the user's home %q", ErrUnsafe, path)
 	}
 	return nil
 }

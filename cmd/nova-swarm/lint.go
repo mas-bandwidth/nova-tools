@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/cardlimits"
 	"github.com/mas-bandwidth/nova-tools/internal/cardtree"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -54,15 +55,20 @@ const cardRefusedBytes = cardlimits.MaxBriefBytes
 // `placeholder` is advice too, on purpose: the card template is pinned to lint clean as
 // printed (it is the shape every rule is checked against), so a line of it left unfilled
 // is named on a NOTE line under the OK, one per line, rather than changing the verdict.
+//
+// `start-named` and `stop-named` are NOT here: they are advice for tier pro or no tier and
+// a refusal for tier flash, decided by tier before this set is consulted (see the split in
+// cmdLint), so the same missing reading line cannot be downgraded to a note for a flash card.
 var cardLintAdvisory = map[string]bool{"size": true, swarm.PlaceholderCheck: true}
 
 // cardLintChecks is how many independent shapes lintCard looks for. It is printed on the
 // LINT OK line so a reader knows how much of the card was actually checked, and it is the
 // size of cardLintRemedies below: a check with no remedy is a red test, never a judgement.
 //
-// It counts the twelve shape rules of WORKER-CARDS.md:23-36, the four typed-header
+// It counts the twelve shape rules of WORKER-CARDS.md:23-36, the six typed-header
 // tokens add -- `kind-declared`, `paths-declared`, `test-named`
-// and `paused` -- whose rules live in internal/swarm/lintheader.go, beside a note on the
+// and `paused`, with the brief grammar's `start-named` and `stop-named` -- whose rules
+// live in internal/swarm/lintheader.go, beside a note on the
 // gate parser they have to agree with,
 // and `depends-on`, which fires only under `--typed`, and the base checks of
 // internal/swarm/lintbase.go -- `paths-at-base`, `no-push-steps`, `leg-in-fleet` and
@@ -78,7 +84,7 @@ var cardLintAdvisory = map[string]bool{"size": true, swarm.PlaceholderCheck: tru
 //
 // And the three rules of a tree card (internal/cardtree): steps-nested, tree-step and
 // script-step, which fire only on a card with a dotted step or a work step.
-var cardLintChecks = 23 + len(swarm.CardChildRemedies) + len(cardtree.Remedies)
+var cardLintChecks = 25 + len(swarm.CardChildRemedies) + len(cardtree.Remedies)
 
 // Every drift names its remedy, and the binary can print the whole table.
 //
@@ -119,6 +125,11 @@ var cardLintRemedies = map[string]string{
 	"size":             "ADVICE, not a limit: a card over the ceiling is not refused, not truncated and still ships, so nothing here has to be cut. The ceiling is the budget that keeps a model reading the card in one window -- to come under it, point at a file instead of pasting it, and drop quoted source",
 	"depends-on":       swarm.CardDependsRemedy,
 	"placeholder":      "fill it in before the card is handed out: the line is the card template's own, its <...> not filled in; replace each <...> with the card's value (the label, the sha, the repository, the base, the minutes, the task, the worktree, the package)",
+	// The brief grammar's two reading lines carry their remedies from internal/swarm,
+	// beside the tokens themselves; they are not in CardHeaderRemedies because that map
+	// is the four tokens of §5 rule 1 that CardHeaderChecks publishes.
+	swarm.StartNamedCheck: swarm.StartNamedRemedy,
+	swarm.StopNamedCheck:  swarm.StopNamedRemedy,
 }
 
 // cardPlaceholders is every line of a card that is a line of the card template still
@@ -160,6 +171,14 @@ func cardLintRemedy(check string) string {
 		return r
 	}
 	return "this rule carries no remedy line, which is itself a defect in nova-swarm; run `nova-swarm lint --rules` for the rules that do"
+}
+
+// isStartStop reports whether check is one of the brief grammar's two reading-line tokens,
+// `start-named` and `stop-named` (docs/SPEC-CARD-CONTRACT.md §2). A missing reading line
+// refuses a tier flash brief and is only advice for tier pro, or no tier, so the split in
+// cmdLint decides these by tier before it consults cardLintAdvisory.
+func isStartStop(check string) bool {
+	return check == swarm.StartNamedCheck || check == swarm.StopNamedCheck
 }
 
 // cardFinding is one mechanical defect: the check's name, the 1-based line it sits on, and
@@ -995,9 +1014,19 @@ func cmdLint(args []string, stdout, stderr io.Writer, getenv func(string) string
 	// a defect and exits 1 (the verb ran and said NO), which a caller refuses on; a note is advice and changes no
 	// verdict. The two are told apart here, once, so neither the writer nor the caller has
 	// to read the check's name to know what happened to the card.
+	//
+	// START: and STOP: are decided by tier BEFORE this set: a missing reading line refuses
+	// a tier flash brief and is only advice for tier pro, or no tier
+	// (docs/SPEC-CARD-CONTRACT.md §2). The tier is read from line 1, the same
+	// cardhdr.ReadModel the check itself reads, so the flash refusal cannot be downgraded
+	// to a note by adding the token to cardLintAdvisory.
+	flash := false
+	if m, _ := cardhdr.ReadModel(string(raw)); m.Tier == cardhdr.RouteFlash {
+		flash = true
+	}
 	var drifts, notes []cardFinding
 	for _, fd := range findings {
-		if cardLintAdvisory[fd.check] {
+		if cardLintAdvisory[fd.check] || (!flash && isStartStop(fd.check)) {
 			notes = append(notes, fd)
 			continue
 		}

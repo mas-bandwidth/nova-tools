@@ -1720,3 +1720,7 @@ internal/workgh/ghquery_functional_test.go nova-work moved into the nova-sprint 
 internal/workgh/workgh_test.go nova-work moved into the nova-sprint repository 2026-10-04 (ideas#850); the test moved with it
 internal/worklang/reader_test.go nova-work moved into the nova-sprint repository 2026-10-04 (ideas#850); the test moved with it
 tools/sprintsize/main_test.go nova-sprint moved to its own repository 2026-10-04 (ideas#850); the test moved with it
+internal/ntable/oset_cover_test.go tested Add, Remove, Move, Card, MembersOf and CountCmd.Val, deleted as dead by the sprint card fix-dead-ntable-oset (ec32ea87b3) before the coverage card cover-internal-ntable-oset landed on dev; its stand-in store served only them (promotion of sprint/mechanical-2026-10-02, 2026-10-04)
+cmd/nova-sprint/preflight_test.go nova-sprint moved to its own repository 2026-10-04 (ideas#850); the test moved with it
+cmd/nova-sprint/reads_buffer_test.go nova-sprint moved to its own repository 2026-10-04 (ideas#850); the test moved with it
+internal/sprint/store/readcost_bench_test.go nova-sprint moved to its own repository 2026-10-04 (ideas#850); the test moved with it
