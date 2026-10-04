@@ -546,7 +546,7 @@ func (st *Store) StreamClocks(ctx context.Context) ([]sprint.StreamClock, error)
 		if since.After(p) {
 			p = since
 		}
-		out = append(out, sprint.StreamClock{Stream: r.Key, State: sprint.StreamStateText(ctl.Fields), Since: since, Progress: p, Empty: onTable[r.Key] == 0,
+		out = append(out, sprint.StreamClock{Stream: r.Key, Release: ctl.Fields[sprint.FieldRelease], State: sprint.StreamStateText(ctl.Fields), Since: since, Progress: p, Empty: onTable[r.Key] == 0,
 			Held: waiting[r.Key] > 0 && moving[r.Key] == 0 || ctl.Fields[sprint.FieldHeld] != "", Reason: ctl.Fields[sprint.FieldHeldReason], Quiet: parseStamp(ctl.Fields[sprint.FieldStaleReview])})
 	}
 	return out, nil

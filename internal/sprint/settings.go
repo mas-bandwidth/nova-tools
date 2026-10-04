@@ -23,6 +23,9 @@ const (
 	// FieldReadTier is a stream's control card's field: the stream's read tier,
 	// over the sprint's.
 	FieldReadTier = "read_tier"
+	// FieldRelease is a stream's control card's field: the release the stream
+	// belongs to (e.g. "v1.2.0"), set by stream set --release (docs/SPEC-SPRINT.md section 11).
+	FieldRelease = "release"
 	// ReadTierDefault is the word that takes a read tier off: a stream's back to
 	// the sprint's, the sprint's back to each card's own tier.
 	ReadTierDefault = "default"
@@ -76,9 +79,9 @@ func stronger(a, b string) string {
 	return a
 }
 
-// SetReq is the coordinator's settings: with Streams, each stream's read tier and
-// protected-branch mark; without, the sprint's dealt bound and read tier. An empty
-// value leaves that setting as it is; ReadTierDefault takes one off.
+// SetReq is the coordinator's settings: with Streams, each stream's read tier,
+// release, or protected-branch mark; without, the sprint's dealt bound and read tier.
+// An empty value leaves that setting as it is; ReadTierDefault takes one off.
 type SetReq struct {
 	Streams  []string `json:",omitempty"`
 	ReadTier string   `json:",omitempty"`
@@ -86,13 +89,14 @@ type SetReq struct {
 	// LandProtected is the streams' mark: the repositories whose protected branches
 	// they land on (FieldLandProtected, docs/SPEC-SPRINT.md section 7).
 	LandProtected string `json:",omitempty"`
+	Release       string `json:",omitempty"`
 	Who           string
 }
 
 // Set writes the settings: refused whole, writing nothing, for an actor who is not
 // the coordinator, a read tier that is not flash, pro or default, a dealt bound that
 // is not a positive duration, a mark that names no repository or is not a stream's,
-// nothing to set, or a stream that is not a stream.
+// nothing to set, or a stream that is not a stream (docs/SPEC-SPRINT.md section 11).
 func Set(s *Snapshot, r SetReq) Plan {
 	var p Plan
 	var why []string
@@ -115,11 +119,14 @@ func Set(s *Snapshot, r SetReq) Plan {
 			why = append(why, "--land-protected is a stream's, not the sprint's: nova-sprint stream set <stream> --land-protected "+r.LandProtected)
 		}
 	}
-	if r.ReadTier == "" && r.DealtMax == "" && r.LandProtected == "" {
+	if r.ReadTier == "" && r.DealtMax == "" && r.LandProtected == "" && r.Release == "" {
 		why = append(why, "nothing to set: --read-tier or --dealt-max")
 	}
 	if len(r.Streams) > 0 && r.DealtMax != "" {
 		why = append(why, "--dealt-max is the sprint's, not a stream's: nova-sprint set --dealt-max "+r.DealtMax)
+	}
+	if len(r.Streams) == 0 && r.Release != "" {
+		why = append(why, "--release is a stream's, not the sprint's: nova-sprint stream set <s> --release "+r.Release)
 	}
 	for _, st := range r.Streams {
 		if s.StreamCtl(st) == nil {
@@ -138,10 +145,11 @@ func Set(s *Snapshot, r SetReq) Plan {
 			for _, f := range []struct{ field, v, word, off string }{
 				{FieldReadTier, r.ReadTier, "read-tier", "the sprint's"},
 				{FieldLandProtected, r.LandProtected, "land-protected", "none"},
+				{FieldRelease, r.Release, "release", "none"},
 			} {
 				switch f.v {
 				case "":
-				case ReadTierDefault:
+				case ReadTierDefault, "none":
 					unset, moved = append(unset, f.field), append(moved, f.word+" "+f.off)
 				default:
 					set[f.field], moved = f.v, append(moved, f.word+" "+f.v)

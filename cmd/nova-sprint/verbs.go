@@ -99,7 +99,7 @@ func init() {
 		{"reader remove", "<reader>...", "reader remove reader-d", (*app).cmdReaderRemove},
 		{"reader retire", "<reader>...", "reader retire reader-d", (*app).cmdReaderRetire},
 		{"stream remove", "<stream>...", "stream remove a b c", (*app).cmdStreamRemove},
-		{"stream set", "<stream>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>]", "stream set skips --read-tier pro", (*app).cmdStreamSet},
+		{"stream set", "<stream>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>] [--release <name>]", "stream set skips --read-tier pro", (*app).cmdStreamSet},
 		{"set", "[--read-tier <flash|pro|default>] [--dealt-max <duration|default>]", "set --read-tier pro", (*app).cmdSet},
 		{"promoted", "--sha <merge sha> [--answers <note>]", "promoted --sha 0123abc", (*app).cmdPromoted},
 		{"funded", "<provider> --reason <text>", "funded opencode --reason 'paid $100 in the console'", (*app).cmdFunded},
@@ -118,7 +118,7 @@ func init() {
 		{"watch", "--wake [--every <duration>] [--state <file>] [--check <duration>] [--judgment-every <duration>] [--merge-every <duration>] [--backlog-every <duration>] [--land-after <duration>] [--merge-over <n>] [--merging-over <n>] [--review-over <n>]", "watch --wake --state wake.json", (*app).cmdWatch},
 		{"seat check", "", "seat check", (*app).cmdSeatCheck},
 		{"machinery", "", "machinery", (*app).cmdMachinery},
-		{"where", "[--watch] [--every <duration>] [--all] [--json [--cards] [--rows]]", "where", (*app).cmdWhere},
+		{"where", "[--watch] [--every <duration>] [--all] [--json [--cards] [--rows]] [--release [<name>]]", "where", (*app).cmdWhere},
 		{"dashboard", "[--listen <address:port>[,<address:port>...] | none] [--pull <address:port>[,<address:port>...] | none] [--logo <file>] [--every <duration>]", "dashboard --listen 127.0.0.1:7390 --pull 127.0.0.1:7395", (*app).cmdDashboard},
 		{"handover", "", "handover", (*app).cmdHandover},
 		{"view coordinator", "[--all] [--since <cursor>] [--json]", "view coordinator --json", (*app).cmdViewCoordinator},
@@ -2755,25 +2755,26 @@ func (a *app) cmdFunded(args []string, stdout, stderr io.Writer) int {
 	return a.runStep("funded", *c, st, store.FundedStep(sprint.FundedReq{Provider: pos[0], Reason: *reason, Who: c.actor}), stdout, stderr)
 }
 
-// cmdStreamSet writes the read tier of the streams named (sprint.Set), over the
+// cmdStreamSet writes the read tier or release of the streams named (sprint.Set), over the
 // sprint's, and their protected-branch mark: the repositories whose protected
-// branches the lander lands their cards on (docs/SPEC-SPRINT.md section 7).
+// branches the lander lands their cards on (docs/SPEC-SPRINT.md section 7 and section 11).
 func (a *app) cmdStreamSet(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("stream set")
 	tier := fs.String("read-tier", "", "the tier the stream's reads draw their route from when it is stronger than the card's own (flash, pro or heavy; default takes it off: the sprint's)")
 	mark := fs.String("land-protected", "", "the repositories (owner/name, comma separated; any for every one) on whose protected branches, dev and main, the lander lands the stream's cards; default takes the mark off, and a card based on a protected branch is then refused at land")
+	release := fs.String("release", "", "the release this stream belongs to (default or none clears it)")
 	names, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "stream set", err.Error())
 	}
-	if len(names) == 0 || *tier == "" && *mark == "" {
-		return refuse(stderr, "stream set", "wants at least one stream and --read-tier <flash|pro|heavy|default> or --land-protected <owner/name,...|any|default>")
+	if len(names) == 0 || (*tier == "" && *mark == "" && *release == "") {
+		return refuse(stderr, "stream set", "wants at least one stream and --read-tier <flash|pro|heavy|default>, --land-protected <owner/name,...|any|default> or --release <name>")
 	}
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, "stream set", err.Error())
 	}
-	return a.runStep("stream set", *c, st, store.SetStep(sprint.SetReq{Streams: names, ReadTier: *tier, LandProtected: *mark, Who: c.actor}), stdout, stderr)
+	return a.runStep("stream set", *c, st, store.SetStep(sprint.SetReq{Streams: names, ReadTier: *tier, LandProtected: *mark, Release: *release, Who: c.actor}), stdout, stderr)
 }
 
 // cmdStreamRemove takes the named streams off the work and merge tables:
