@@ -590,6 +590,20 @@ func cmdLockdown(rest []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 	}
 
+	// A lockdown already standing is the state this verb seeks, and the first time
+	// and why of the blow are audit facts, unrecoverable once overwritten
+	// (security#74 finding 1): the box is kept as it stands, never rewritten,
+	// and the run says so. FuseBox.tla's Lockdown(b) over an already-blown box
+	// leaves lock TRUE and keeps the quarantines -- idempotent -- and this is
+	// that action at the box's finest grain, the stamp and the reason. The exit
+	// stays 0 because the state sought holds. A dry run prints the same line: by
+	// not writing it keeps the record too.
+	if standing := b.Lockdown; standing != nil {
+		fmt.Fprintf(stdout, "LOCKDOWN OK already=blown since=%s: %s (standing record kept; the new reason was not recorded: %s)\n",
+			since(*standing), why(*standing), oneline.Escape(reason))
+		return 0
+	}
+
 	b.Lockdown = &fuse.Fuse{At: stamp(now), Reason: reason}
 	if err := writeOrPlan(dry, box, b); err != nil {
 		fmt.Fprintf(stderr, "LOCKDOWN FAILED could not write box: %s (the write is temp-file + rename, so a failure cannot leave it torn; stop by hand and tell the person you work with now)\n", oneline.Err(err))
@@ -649,6 +663,21 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprintf(stderr, "nova-fuse quarantine REFUSED: %s -- refusing to narrow an unreadable box: while unreadable it already blocks EVERY surface, and a fresh box holding only this one quarantine would UNBLOCK the rest; blow lockdown instead (`lockdown --box %s \"<reason>\"`), or repair the box by hand with the person you work with; run: nova-fuse help\n", oneline.Err(readErr), oneline.Escape(box))
 		return 2
 	}
+	// The same rule as lockdown's, per surface: a quarantine already standing on
+	// this surface -- under any fold-equivalent spelling, the way Quarantined
+	// matches -- is the state sought, so the first time and why are kept and the
+	// run says so instead of rewriting them (security#74 finding 1). FuseBox.tla's
+	// Quarantine(b, s) unions {s} into a set that may already hold it -- idempotent
+	// -- and this is that action at the entry's finest grain, the stamp and the
+	// reason. The line names the STORED spelling, the one entry whose at and
+	// reason it quotes. The exit stays 0; the state sought holds. A dry run
+	// prints the same line: by not writing it keeps the record too.
+	if name, standing, ok := b.Quarantined(string(surface)); ok {
+		fmt.Fprintf(stdout, "QUARANTINE OK %s already=quarantined since=%s: %s (standing record kept; the new reason was not recorded: %s)\n",
+			oneline.Field(name), since(standing), why(standing), oneline.Escape(reason))
+		return 0
+	}
+
 	b.Quarantine[surface] = fuse.Fuse{At: stamp(now), Reason: reason}
 	if err := writeOrPlan(dry, box, b); err != nil {
 		fmt.Fprintf(stderr, "QUARANTINE FAILED %s: could not write box: %s (the box was not replaced; stop reading that surface by hand and tell the person you work with)\n", oneline.Field(surface), oneline.Err(err))
