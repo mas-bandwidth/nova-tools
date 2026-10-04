@@ -219,7 +219,7 @@ func (st *Store) twinRead(ctx context.Context, tw *Twin, load []string, extras f
 			f.Pending = nil // the step's own lock
 		}
 		if f.Pending != nil {
-			res, err := st.finish(ctx, *f.Pending)
+			res, err := st.finish(ctx, *f.Pending, tw)
 			if err != nil {
 				return nil, Fence{}, err
 			}
