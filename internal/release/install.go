@@ -362,7 +362,8 @@ func installFile(src, dst string, rename func(oldpath, newpath string) error) er
 		return err
 	}
 	if err := os.Chmod(tmp, 0o755); err != nil {
-		os.Remove(tmp)
+		// ignored: the temporary is removed on the failure path; the chmod error is the one returned
+		_ = os.Remove(tmp)
 		return err
 	}
 	renameErr := rename(tmp, dst)
@@ -370,29 +371,34 @@ func installFile(src, dst string, rename func(oldpath, newpath string) error) er
 		return nil
 	}
 	aside := filepath.Join(filepath.Dir(dst), "."+filepath.Base(dst)+".old")
-	os.Remove(aside) // an earlier install's, if that one could not clear it
+	// ignored: an earlier install's leftover, if that one could not clear it, may not exist
+	_ = os.Remove(aside)
 	if err := rename(dst, aside); err != nil {
 		// Nothing was moved, so there is nothing to put back. The error
 		// reported is the ORIGINAL one: "the file could not be replaced" is
 		// what happened, and "it could not be moved aside either" is only how
 		// the remedy failed.
-		os.Remove(tmp)
+		// ignored: the temporary is removed on the rollback path; the rename error is the one returned
+		_ = os.Remove(tmp)
 		return renameErr
 	}
 	if err := rename(tmp, dst); err != nil {
 		// Put the replaced binary back under its own name. A bench left with no
 		// nova-bus at all is worse than one left with the previous nova-bus.
 		if back := rename(aside, dst); back != nil {
-			os.Remove(tmp)
+			// ignored: the temporary is removed on the rollback path; the wrapped error is the one returned
+			_ = os.Remove(tmp)
 			return fmt.Errorf("%w; and %s could not be put back from %s: %v (move it back by hand)", err, filepath.Base(dst), filepath.Base(aside), back)
 		}
-		os.Remove(tmp)
+		// ignored: the temporary is removed on the rollback path; the rename error is the one returned
+		_ = os.Remove(tmp)
 		return err
 	}
 	// Best effort: on windows a still-running image cannot be removed, and that
 	// is the expected case rather than a failure. It is inert where it is, and
 	// the next install clears it.
-	os.Remove(aside)
+	// ignored: a still-running image cannot be removed on windows and is inert where it is
+	_ = os.Remove(aside)
 	return nil
 }
 
