@@ -37,19 +37,7 @@ type LinksResult struct {
 	Broken   []BrokenLink
 }
 
-// Links walks dir for .md files (skipping .git) and verifies that every
-// relative inline link target resolves to an existing file or directory
-// inside the tree. It returns the number of markdown files seen, the number
-// of relative links checked, and every broken link found.
-func Links(dir string) (mdFiles, checked int, broken []BrokenLink, err error) {
-	res, err := LinksExcluding(dir, nil)
-	if err != nil {
-		return 0, 0, nil, err
-	}
-	return res.MDFiles, res.Checked, res.Broken, nil
-}
-
-// LinksExcluding is Links with an explicit set of path prefixes to leave
+// LinksExcluding is the links walk with an explicit set of path prefixes to leave
 // unscanned: a file under an excluded prefix is not opened, and a link that
 // resolves into an excluded prefix is skipped rather than checked or reported.
 // The Excluded count is the number of .md files under those prefixes.

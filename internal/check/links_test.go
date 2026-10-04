@@ -12,6 +12,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Links is the tests' seam over the live walk: LinksExcluding with nothing
+// excluded, read as the three counts and the broken links the tests assert
+// against. The package's exported one went when no tool reached it.
+func Links(dir string) (mdFiles, checked int, broken []BrokenLink, err error) {
+	res, err := LinksExcluding(dir, nil)
+	if err != nil {
+		return 0, 0, nil, err
+	}
+	return res.MDFiles, res.Checked, res.Broken, nil
+}
+
 func TestLinks(t *testing.T) {
 	t.Parallel()
 
