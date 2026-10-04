@@ -1756,6 +1756,61 @@ func TestCutRecordsTheSumsDigestTheAdoptWillCheck(t *testing.T) {
 	}
 }
 
+// THE LIST IS PINNED BY ITS OWN DIGEST (docs/SPEC-RELEASE.md section 5,
+// security#72 finding 10). A --paths-from file is the sensitive gate's only
+// input, and an unpinned list is a hand-editable one: whoever edits it between
+// the --local-diff that wrote it and the cut that reads it could delete the
+// sensitive paths and pass the gate with no --security-read, silently.
+func TestCutRefusesAPathsFileWhoseListWasEditedAfterItWasWritten(t *testing.T) {
+	t.Parallel()
+
+	const rangeName = "v0.15.10...abc123abc123def"
+	dir := t.TempDir()
+	written := filepath.Join(dir, "paths.txt")
+	list := []string{"internal/secrets/seal.go", "README.md"}
+	require.NoError(t, WritePathsFile(written, rangeName, list), "the verb could not write its own list")
+
+	// UNTOUCHED, THE ROUND TRIP STANDS: the file this verb wrote reads back
+	// exactly the list it was given.
+	got, err := ReadPathsFile(written, rangeName)
+	require.NoError(t, err, "an untouched list this verb wrote was refused: %v", err)
+	assert.Equal(t, list, got, "the round trip lost or changed paths")
+
+	raw, err := os.ReadFile(written)
+	require.NoError(t, err, err)
+
+	for _, tc := range []struct {
+		name string
+		drop string
+	}{
+		{"list line dropped", list[0] + "\n"},
+		{"digest line dropped", "# sha256 "},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			body := string(raw)
+			if tc.name == "digest line dropped" {
+				lines := strings.SplitAfterN(body, "\n", 3)
+				require.GreaterOrEqual(t, len(lines), 3, "the written file has no second header line:\n%s", body)
+				require.True(t, strings.HasPrefix(lines[1], tc.drop), "the second header line is not a sha256 line: %q", lines[1])
+				body = lines[0] + lines[2]
+			} else {
+				body = strings.Replace(body, tc.drop, "", 1)
+			}
+			require.NotEqual(t, string(raw), body, "the edit changed nothing; the fixture is wrong")
+			paths := filepath.Join(dir, tc.name+".txt")
+			if err := os.WriteFile(paths, []byte(body), 0o644); err != nil {
+				require.NoError(t, err, err)
+			}
+			_, err := ReadPathsFile(paths, rangeName)
+			if assert.Error(t, err, "the cut read back a list edited after it was written") {
+				assert.Contains(t, err.Error(), "sha256", "the refusal does not name the digest mismatch: %v", err)
+				assert.Contains(t, err.Error(), "release cut --local-diff", "the refusal carries no remedy to regenerate the list: %v", err)
+			}
+		})
+	}
+}
+
 // NEVER install before the checksum. The order is asserted by watching what the
 // verb touched: a release whose bytes changed reaches neither the version probe
 // nor a rename.
