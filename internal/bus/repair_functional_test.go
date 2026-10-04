@@ -112,7 +112,7 @@ func TestStaleIndexLockWithALiveGitIsLeftAlone(t *testing.T) {
 	}
 	{
 		_, err := os.Lstat(lock)
-		require.False(t, !os.IsNotExist(err), "the lock is still there after the git exited")
+		require.True(t, os.IsNotExist(err), "the lock is still there after the git exited")
 	}
 }
 

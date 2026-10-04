@@ -234,6 +234,6 @@ func TestWriteLaneFileRefusesASymlinkedLaneDirectory(t *testing.T) {
 	}
 	{
 		_, statErr := os.Lstat(filepath.Join(outside, CursorName))
-		require.False(t, statErr == nil, "the rewrite landed outside the bus")
+		require.Error(t, statErr, "the rewrite landed outside the bus")
 	}
 }

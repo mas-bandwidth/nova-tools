@@ -105,7 +105,7 @@ func TestStaleLockStaysWhenProcessInspectionIsDenied(t *testing.T) {
 	require.True(t, verr == nil, "a vanished process: skip=%v err=%v, want skipped and no error", skip, verr)
 	require.True(t, skip, "a vanished process: skip=%v err=%v, want skipped and no error", skip, verr)
 	_, _, perr := gitProcFromView(procView{comm: "git\n", cmdErr: os.ErrPermission})
-	require.False(t, perr == nil, "permission denied on cmdline was treated as a vanished process")
+	require.Error(t, perr, "permission denied on cmdline was treated as a vanished process")
 	cleared, err := clearStaleIndexLock(dir, time.Now(), func() ([]gitProc, error) {
 		return nil, perr
 	})
@@ -286,7 +286,7 @@ func TestVanishingProcessESRCHDoesNotBlockLockCleanup(t *testing.T) {
 	require.True(t, cleared, "a stale lock with only a vanishing process in the scan: cleared=%v err=%v, want removed", cleared, err)
 	{
 		_, statErr := os.Lstat(lock)
-		require.False(t, !os.IsNotExist(statErr), "stale index.lock still present: %v", statErr)
+		require.True(t, os.IsNotExist(statErr), "stale index.lock still present: %v", statErr)
 	}
 
 	// ESRCH is not a licence for every errno: a live process that denies the read
@@ -400,9 +400,9 @@ func TestReadProcViewRecordsTheOwner(t *testing.T) {
 
 	v = readProcView("77", fake(501, true, nil, "git\x00status", nil))
 	require.True(t, v.ownerKnown, "our own entry: %+v, want owner and account 501 and cwd read", v)
-	require.True(t, v.owner == 501, "our own entry: %+v, want owner and account 501 and cwd read", v)
+	require.Equal(t, uint32(501), v.owner, "our own entry: %+v, want owner and account 501 and cwd read", v)
 	require.True(t, v.accountKnown, "our own entry: %+v, want owner and account 501 and cwd read", v)
-	require.True(t, v.account == 501, "our own entry: %+v, want owner and account 501 and cwd read", v)
+	require.Equal(t, uint32(501), v.account, "our own entry: %+v, want owner and account 501 and cwd read", v)
 	require.Equal(t, "/home/nova/bus", v.cwd, "our own entry: %+v, want owner and account 501 and cwd read", v)
 
 	gone := &fs.PathError{Op: "stat", Path: "/proc/19050", Err: syscall.ENOENT}
@@ -463,7 +463,7 @@ func TestForeignGitDirKeepsItsLock(t *testing.T) {
 	require.True(t, cleared, "unrelated processes of another account beside a private checkout: cleared=%v err=%v, want removed", cleared, cerr)
 	{
 		_, statErr := os.Lstat(privateLock)
-		require.False(t, !os.IsNotExist(statErr), "stale index.lock still present: %v", statErr)
+		require.True(t, os.IsNotExist(statErr), "stale index.lock still present: %v", statErr)
 	}
 }
 
@@ -639,6 +639,6 @@ func TestIndexLockRevalidatedBeforeRemove(t *testing.T) {
 	require.False(t, !cleared, "(5) unchanged: cleared=%v err=%v, want removed", cleared, err)
 	{
 		_, statErr := os.Lstat(lock)
-		require.False(t, !os.IsNotExist(statErr), "(5) lock still present: %v", statErr)
+		require.True(t, os.IsNotExist(statErr), "(5) lock still present: %v", statErr)
 	}
 }

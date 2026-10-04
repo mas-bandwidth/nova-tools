@@ -383,7 +383,7 @@ func TestPreparedRequiresCompleteRemoteIndex(t *testing.T) {
 	fields := strings.Split(expected, "\t")
 	fields[len(fields)-1] = "SYNTHETIC_WRONG_INDEX_SUBJECT"
 	changed := strings.Replace(string(b), expected, strings.Join(fields, "\t"), 1)
-	require.False(t, changed == string(b), "did not mutate index")
+	require.NotEqual(t, string(b), changed, "did not mutate index")
 	os.WriteFile(path, []byte(changed), 0644)
 	id := Identity{Name: p.Sender.GitName, Email: p.Sender.GitEmail}
 	{

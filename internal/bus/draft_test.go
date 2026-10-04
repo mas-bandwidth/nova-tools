@@ -121,7 +121,7 @@ func TestAToleratedNoteParsesStrictly(t *testing.T) {
 		require.Equal(t, "Ada", n.Header.From, "read back as From=%q To=%q Subject=%q", n.Header.From, n.Header.To, n.Header.Subject)
 		require.Equal(t, "Bo", n.Header.To, "read back as From=%q To=%q Subject=%q", n.Header.From, n.Header.To, n.Header.Subject)
 	}
-	require.False(t, n.Header.Date == "whenever", "the author's Date line survived; send writes the date")
+	require.NotEqual(t, "whenever", n.Header.Date, "the author's Date line survived; send writes the date")
 }
 
 // The refusals that stay, one per thing this tool cannot work out without guessing.
