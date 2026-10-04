@@ -1217,6 +1217,24 @@ and it is the coordinator's decision, receipted.
   (`tla/DirtyTick.tla`, `Room` and `WidthRespected`, which bound the room;
   `TestAReworkIsNotDealtToAMemberAtDealAheadTimesItsWidth`). A member takes
   its ready cards in stream turns, so it starts every stream alike.
+- A card's bench: a brief whose header carries `BENCH: <member>`, or a
+  comma-separated list of members, names the members that have what the card
+  needs (a tool one machine alone holds), and the card is dealt only to them.
+  `add` refuses a BENCH that does not read and a name that is no fleet member,
+  with the members there are (exit 2, nothing written); the primary's field
+  `bench` is the line's names, written with its brief by `add` and `brief`. A
+  card with no BENCH line is dealt round the fleet as every card before it was.
+  Every placement of its work cards honours the line: the deal, a redeal, an
+  escalation and a rework draw from the members of its bench that are up alone
+  (`round.next` over them, its room DealAhead times its width as any member's),
+  a member going down or held withdraws its bench's card instead of dealing it
+  to another member, and the level never moves it off the bench it was dealt to
+  (the members its line does not name are avoided as a member that refused it at
+  staging is). While no member of its bench is up (down, or held) the card waits
+  in `ready`: the tick's deal passes it by, no judgment is written, and the
+  no-stall rule holds it as waiting for its bench, the line `nova-sprint card
+  <id>` prints (`sprint.BenchOfBrief` and `sprint.Bench`, `bench_deal.go`;
+  `TestDealHonoursACardsBenchLine`).
 - Every rolling index (the fleet's `deal_index`, the readers' `ask_index`, the
   work table's `stream_index`, `stream_index_ask` and `stream_index_accept`) is
   a counter: a uint64 from 0 that goes up by one with every placement and by
