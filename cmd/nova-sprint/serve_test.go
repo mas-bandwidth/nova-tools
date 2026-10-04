@@ -47,6 +47,11 @@ func newServerRig(t *testing.T, lines ...string) *serverRig {
 	env := map[string]string{"NOVA_SPRINT_REDIS": "mem:" + file, "NOVA_SPRINT_ACTOR": "boss"}
 	a := newApp(func(k string) string { return env[k] })
 	t.Cleanup(a.close)
+	// the server's clock for a verb's bound (ServeWait, lanes.go) is the rig's own and
+	// never fires: a verb waits its turn on the line however slow the test's machine, so
+	// no rig test is answered busy on real time (verbs_answer_fast_test.go steps the bound
+	// on a clock of its own)
+	a.after = func(time.Duration) <-chan time.Time { return nil }
 	a.serveAddr = "mem:" + file
 	r := &serverRig{t: t, a: a}
 	for _, l := range lines {
@@ -265,7 +270,8 @@ func TestABatchIsAnsweredVerbByVerbInOrder(t *testing.T) {
 // Batches from many workers at once, with ticks between them, run one at a
 // time: every take gets its own card, none is refused as busy, and none sees
 // the sprint part way through another's step. Eight workers ask at once for one
-// card each of the eight lanes' worth dealt to one member.
+// card each of the eight lanes' worth dealt to one member. The bound on a
+// verb's wait (ServeWait) is not this test's: the rig's clock never fires it.
 func TestBatchesAndTicksRunOneAtATime(t *testing.T) {
 	t.Parallel()
 	r := newServerRig(t,
