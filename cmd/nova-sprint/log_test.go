@@ -166,3 +166,44 @@ func TestWhereHidesTheMergeTablesSince(t *testing.T) {
 	require.NotEmpty(t, block, "no merge table:\n%s", out)
 	require.NotContains(t, block, "since", "where shows since:\n%s", out)
 }
+
+// log --json --since with a window wider than about 22 h returns every entry
+// since that time, in a test over the twin store with an injected clock, no
+// real time.
+func TestLogJsonSinceWithAWindowWiderThan22HoursReturnsEveryEntry(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.a.loc = time.UTC
+	ta.ok("init --readers reader-a --members m1")
+
+	// Add some cards at the current time
+	ta.ok("add --stream s1 --count 1 --brief-file " + writeBrief(t, "early card"))
+	ta.deal(1)
+	ta.ok("take --as m1 s1-1.w1@1")
+	ta.ok("finish --as m1 s1-1.w1@1 --head h1 --report 'done'")
+
+	// Move clock forward 25 hours (beyond the 22-hour window)
+	ta.mu.Lock()
+	ta.now = ta.now.Add(25 * time.Hour)
+	ta.mu.Unlock()
+
+	// Add another card at the later time
+	ta.ok("add --stream s1 --count 1 --brief-file " + writeBrief(t, "later card"))
+	ta.deal(1)
+	ta.ok("take --as m1 s1-2.w1@1")
+	ta.ok("finish --as m1 s1-2.w1@1 --head h2 --report 'done'")
+
+	// Query for all entries since 24 hours ago (should get both cards since they were added 25 hours apart)
+	// The first card is at time T, the second is at T+25h
+	// Querying with --since 24h should return entries after T+25h-24h = T+1h
+	// which should include the second card (at T+25h)
+	// but NOT necessarily the first card (at T)
+	out := ta.ok("log --since 24h")
+	assert.Contains(t, out, "s1-2", "log --since 24h should show the later card")
+	assert.NotContains(t, out, "LOG OK lines=0", "log --since 24h should not return 0 results")
+
+	// Query with --since 26h (wider than 22h, should still return results)
+	out = ta.ok("log --since 26h")
+	assert.Contains(t, out, "s1-2", "log --since 26h should show results")
+	assert.NotContains(t, out, "LOG OK lines=0", "log --since 26h with window wider than 22h should not return 0 results")
+}
