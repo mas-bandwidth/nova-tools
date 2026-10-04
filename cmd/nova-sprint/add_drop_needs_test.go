@@ -12,9 +12,9 @@ import (
 // at all, naming the id; drop refuses to take a card off the table while a
 // waiting card still needs it, naming the dependants, unless --cascade takes
 // the dependants and their dependants in the same plan. The refusal holds of
-// the plan's end state: a selection that is not by id — a stream, a column
-// or a group — is refused whole when a card that stays needs one it would
-// take, agreeing with the all-or-none of the ids.
+// the plan's end state: a card whose dependant the same plan refuses is
+// refused too, so no card that stays is left needing one that goes, a
+// selection by stream, column or group like one by id.
 func TestAddRefusesAnUnknownNeedAndDropListsDependants(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
