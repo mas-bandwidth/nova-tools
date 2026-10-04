@@ -124,7 +124,7 @@ func medianOut(outs []int64) string {
 	if len(outs) == 0 {
 		return "-"
 	}
-	sort.Slice(outs, func(i, j int) bool { return outs[i] < outs[j] })
+	slices.Sort(outs)
 	n := len(outs)
 	if n%2 == 1 {
 		return strconv.FormatInt(outs[n/2], 10)
