@@ -162,8 +162,8 @@ func help(name string, w io.Writer) {
 	// and the help cannot drift apart. This is that string.
 	fmt.Fprintf(w, "%s\n\n", updateOpening)
 	fmt.Fprintln(w, updateVerbs)
-	// The notes are one short paragraph per subject (J05's cold rating named
-	// the wall of text): the defaults, the --json rendering, the verbs' shape,
+	// The notes are one short paragraph per subject (a cold rating named the
+	// wall of text): the defaults, the --json rendering, the verbs' shape,
 	// then report's send recovery, where pending and artifact are each named
 	// in one clause, and the snapshot's lock (SPEC-UPDATE rule 25).
 	fmt.Fprintf(w, "  %s version (or --version)\n", name)
