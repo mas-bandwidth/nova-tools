@@ -2102,6 +2102,23 @@ way. Any unmerged path outside the family is refused as any conflict is. The
 landing writes the resolution on the card's merge card (`note`), and the
 card's timeline tells it on the line of its merge.
 
+**land-e12-catalog-rows.** A card that adds a directory (a file under a
+directory that holds no tracked file before the merge) that its PATHS name
+owns the catalog row that directory costs and the maps `make map` writes.
+`internal/docs/catalog.go` is the card's when its change is added lines only,
+each a row naming one of those new directories; every `AGENTS.md` map
+`tools/agentsmap` writes is the card's. Any other change to `catalog.go`, or a
+map change from a card that adds no directory, stays outside PATHS (E12). The
+maps are a second generated-ledger family, owned by
+`TestCommittedMapMatchesTree`, its update run `go run ./tools/agentsmap` under
+`GOFLAGS=-mod=readonly`. A merge whose unmerged paths are only those maps, or
+only those maps plus `internal/docs/catalog.go` where both sides only add
+rows, resolves: the union of the rows, the tip's first, then the map family
+until a run writes nothing, committed as the generality family is. The
+resolution is told as a shrink-only union is: one land log line and the card's
+note. A conflicting `catalog.go` line that is not an added row is refused as
+any conflict is.
+
 **The shrink-only ledgers.** A merge that stops in a shrink-only ledger lands
 without a stop. The shrink-only ledgers are the lists whose class test in
 internal/ci says they only shrink, named in one place, `shrinkonly.ShrinkOnly`

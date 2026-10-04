@@ -73,8 +73,10 @@ Landing, the coordinator's: an external delivery (git pushes the base) and a sto
     second rejected push as --rejected. Each head merged is checked first, by
     script and no model: a head whose diff changes a file outside its brief's
     PATHS, or leaves a stranded sentence fragment or an unmatched backquote in
-    prose, ends the batch as a head in conflict does. A conflict only in the
-    generated ledgers lands: the tip's side, then their tests' update run
+    prose, ends the batch as a head in conflict does. A card that adds a directory
+    owns its catalog row and the AGENTS.md maps; a conflict only in those maps, or
+    those maps and added catalog rows, resolves as the ledgers do. A conflict only
+    in the generated ledgers lands: the tip's side, then their tests' update run
     (NOVA_CI_UPDATE=1) to a fixed point, one commit; any other conflict stops
     the stream, and after resume land merges the head again. The clone is --repo-dir,
     else the dir= each line names; git uses the caller's environment. After
@@ -987,7 +989,9 @@ var notOnOrigin = []string{"not our ref", "couldn't find remote ref", "no such r
 // when it merged. A head the clone lacks is fetched from origin by its id once.
 // A merge stopped only on generated ledgers is resolved (landledger.go,
 // resolveLedgers), a shrink-only ledger as the union of both sides' removals
-// (ledgerunion.go, unionLedgers), and note is what the card's timeline says of it.
+// (ledgerunion.go, unionLedgers), and the agents maps plus a catalog that both
+// sides only add rows to as the union of those rows then the map family
+// (landledger.go, stageCatalogUnion). note is what the card's timeline says of it.
 func (l *lander) mergeHead(ctx context.Context, dir, stream string, c landCard) (card, env, note string) {
 	if why := headNotCommit(stream, c); why != "" {
 		return why, "", ""
@@ -1052,17 +1056,30 @@ func (l *lander) mergeHead(ctx context.Context, dir, stream string, c landCard) 
 			l.ledgerLog = append(l.ledgerLog, lines...)
 			return "", "", unionNote(union)
 		default:
-			if owners, outside := ledgerOwners(rest, l.ledgers()); len(outside) == 0 {
-				var renv string
-				if note, why, renv = l.resolveLedgers(ctx, dir, stream, c, rest, ours, owners); note != "" {
-					l.ledgerLog = append(l.ledgerLog, lines...)
-					if len(union) > 0 {
-						note = unionNote(union) + "; " + note
+			var cline, cwhy, cenv string
+			rest, cline, cwhy, cenv = l.stageCatalogUnion(ctx, dir, rest)
+			switch {
+			case cenv != "":
+				env = cenv
+			case cwhy != "":
+				why = "; " + cwhy
+			default:
+				if owners, outside := ledgerOwners(rest, l.ledgers()); len(outside) == 0 && len(rest) > 0 {
+					var renv string
+					if note, why, renv = l.resolveLedgers(ctx, dir, stream, c, rest, ours, owners); note != "" {
+						if cline != "" {
+							lines = append(lines, cline)
+							note = catalogUnionNote() + "; " + note
+						}
+						l.ledgerLog = append(l.ledgerLog, lines...)
+						if len(union) > 0 {
+							note = unionNote(union) + "; " + note
+						}
+						return "", "", note
 					}
-					return "", "", note
+					// the failed resolution ended the merge and restored the clone
+					env, why, inMerge = renv, "; "+why, errors.New("no merge in progress")
 				}
-				// the failed resolution ended the merge and restored the clone
-				env, why, inMerge = renv, "; "+why, errors.New("no merge in progress")
 			}
 		}
 	}
@@ -1091,10 +1108,12 @@ func (l *lander) ledgers() []landLedger {
 // checkCard is the lander's mechanical checks of one card merged onto the batch branch
 // at before (internal/diffcheck; docs/SPEC-SPRINT.md section 7, the lander's checks): the
 // merge's own diff touches no file outside the card's PATHS (E12) and leaves no stranded
-// sentence fragment or unmatched backquote (E4). A card that fails is taken off the batch
-// branch (reset to before) and ends the batch as a head that does not merge does, with
-// what failed; card and env are mergeHead's. A merge that made no commit (the head is in
-// the base already) is not checked: it changes nothing the base does not hold.
+// sentence fragment or unmatched backquote (E4). A card that adds a directory owns its
+// catalog row and the AGENTS.md maps (diffcheck.Outside). A card that fails is taken
+// off the batch branch (reset to before) and ends the batch as a head that does not
+// merge does, with what failed; card and env are mergeHead's. A merge that made no
+// commit (the head is in the base already) is not checked: it changes nothing the base
+// does not hold.
 func (l *lander) checkCard(ctx context.Context, dir string, c landCard, before string) (card, env string) {
 	after, err := l.git(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}")
 	if err != nil || after == before {
@@ -1104,8 +1123,16 @@ func (l *lander) checkCard(ctx context.Context, dir string, c landCard, before s
 	if err != nil {
 		return "", "the diff of the merge of " + c.id + " could not be read: " + firstLine("", err)
 	}
+	tracked, err := l.git(ctx, dir, "ls-tree", "-r", "--name-only", before)
+	if err != nil {
+		return "", "the files tracked before the merge of " + c.id + " could not be listed: " + firstLine("", err)
+	}
+	beforePaths := []string{}
+	if tracked != "" {
+		beforePaths = strings.Split(tracked, "\n")
+	}
 	var why []string
-	if out := diffcheck.Outside(c.paths, diff); len(out) > 0 {
+	if out := diffcheck.Outside(c.paths, diff, beforePaths); len(out) > 0 {
 		why = append(why, "it changes files outside its PATHS (E12): "+strings.Join(out, ", "))
 	}
 	for _, f := range diffcheck.Fragments(diff) {
