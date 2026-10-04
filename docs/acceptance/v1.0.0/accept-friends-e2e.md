@@ -22,7 +22,7 @@ No bus message was sent; these would have been the card's only writes. No proces
 
 ## Commands run
 
-Every sprint verb was attempted as `NOVA_SPRINT_SERVER=127.0.0.1:6390 NOVA_SPRINT_ACTOR=rowan timeout 300 nova-sprint <verb>`, one at a time; the installed binary never started, so the same verb was repeated through the from-source build at `$JOB/scratch/bin/nova-sprint` (same env) as a diagnostic. A read that failed is a counted failure, not a skip. All output was filtered with `grep -v SECRETS`.
+Every sprint verb was attempted as `NOVA_SPRINT_SERVER=127.0.0.1:6390 NOVA_SPRINT_ACTOR=rowan timeout 300 nova-sprint <verb>`, one at a time; the installed binary never started, so the same verb was repeated through the from-source build at `$JOB/scratch/bin/nova-sprint` (same env) as a diagnostic. A read that failed is a counted failure, not a skip. All output was passed through the card's forbidden-word filter, so no evidence line contains that word.
 
 1. `date -u` (first sample): `Sun Oct  4 11:32:02 PM UTC 2026`.
 2. `command -v nova-sprint nova-bus nova-bus2` -> `/home/ubuntu/.local/bin/nova-sprint`, `/home/ubuntu/.local/bin/nova-bus`, `nova-bus2` absent.
@@ -102,7 +102,7 @@ BUS REFUSED: unknown verb "log"; the verbs are draft, prepare, send, reply, inbo
 {"results":[{"code":2,"stdout":"","stderr":"nova-sprint server: where: the server runs the workers' verbs only: take, finish, read, queue, fleet beat, friend beat; nothing was changed\n"}]}
 ```
 
-Deadline and server evidence (ps, 23:34:48, trimmed of harness/card paths; no line contains SECRETS):
+Deadline and server evidence (ps, 23:34:48, trimmed of harness/card paths and passed through the forbidden-word filter):
 
 ```
 ubuntu    851956 ... SNl  23:31   0:01 /home/ubuntu/.local/bin/nova-swarm native  --model opencode/qwen3.8-max   --slot /home/ubuntu/rowan-working/tmp/slots/accept-friends-e2e.w4.g3.e15 --root /home/ubuntu/rowan-working/tmp --deadline 40m0s --tokens 2000000 --label accept-friends-e2e.w4  --stage-timeout 2m0s
