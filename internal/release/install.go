@@ -46,6 +46,15 @@ func ReadSums(dir string) ([]Artifact, error) {
 			return nil, refuse("build the release again with `nova-update release build`",
 				"%s line %d names a path rather than a file: %q", SumsFile, i+1, name)
 		}
+		// The name is also written under --bin by install and interpolated into
+		// the remote `rm -f` adopt composes, which the far shell parses after ssh
+		// reassembles argv: held here to the narrowness pull already enforces
+		// (remoteArtifactName), so every caller sees only safe names
+		// (security#72 finding 1, artifact-name half).
+		if !remoteArtifactName.MatchString(name) {
+			return nil, refuse("build the release again with `nova-update release build`",
+				"%s line %d names %q, which is not a file name this tool will install or delete", SumsFile, i+1, name)
+		}
 		arts = append(arts, Artifact{Name: name, Sum: sum})
 	}
 	if len(arts) == 0 {
