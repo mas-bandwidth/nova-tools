@@ -598,6 +598,10 @@ func ParseMicro(s string) (int64, bool) {
 	if err != nil {
 		return 0, false
 	}
+	// security#75 finding 2: refuse whole parts that would overflow int64 when scaled.
+	if w > (math.MaxInt64-999999)/1_000_000 {
+		return 0, false
+	}
 	var f int64
 	if frac != "" {
 		if f, err = strconv.ParseInt(frac, 10, 64); err != nil {

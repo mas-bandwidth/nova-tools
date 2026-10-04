@@ -716,3 +716,18 @@ func TestCountsSetNeverWrapsPastInt64Max(t *testing.T) {
 	require.NoError(t, readErr)
 	assert.Empty(t, entries)
 }
+
+func TestParseMicroRefusesAWholePartThatWouldOverflow(t *testing.T) {
+	t.Parallel()
+
+	v, ok := ParseMicro("9223372036855.999999")
+	assert.False(t, ok, "overflowing whole part must be refused, got (%d, %v)", v, ok)
+
+	v, ok = ParseMicro("9223372036853.999999")
+	assert.True(t, ok)
+	assert.Equal(t, int64(9223372036853999999), v)
+
+	v, ok = ParseMicro("1.5")
+	assert.True(t, ok)
+	assert.Equal(t, int64(1500000), v)
+}
