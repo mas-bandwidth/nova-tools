@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 	"github.com/mas-bandwidth/nova-tools/internal/workfile"
@@ -225,7 +226,7 @@ func TestImportRefusesAnOrgWideDryRunAndAnExistingOut(t *testing.T) {
 		{
 			name: "existing out",
 			args: []string{"import", "--org", "mas-bandwidth", "--out", tree},
-			want: "nova-work import --org mas-bandwidth --out " + tree + " --replace",
+			want: "nova-work import --org mas-bandwidth --out " + oneline.ShellWord(tree) + " --replace",
 		},
 	}
 	for _, tc := range cases {
