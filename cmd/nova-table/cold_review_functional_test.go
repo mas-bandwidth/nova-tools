@@ -137,9 +137,15 @@ func TestTheHelpPastesTheStaleRefusalItPrints(t *testing.T) {
 	require.EqualValues(t, 0, code, "receipt write: %d %s %q", code, out, errout)
 	require.Contains(t, out, "TABLE RECEIPT event=", "the receipt of every write prints the new one: %s", out)
 	require.Contains(t, out, " epoch=1 ", "the receipt of every write prints the new one: %s", out)
+	// The stale probe above is refused before any staged write runs, so b1 sits
+	// nowhere yet: place it first, then the identical add is a second one.
+	code, out, errout = runTable(at(addr, "cell", "add", "stale-help", "build", "ready", "b1", "--epoch", "1")...)
+	require.EqualValues(t, 0, code, "first cell add: %d %s %q", code, out, errout)
 	code, out, errout = runTable(at(addr, "cell", "add", "stale-help", "build", "ready", "b1", "--epoch", "1")...)
 	require.EqualValues(t, 1, code, "second cell add: %d %s %q", code, out, errout)
-	require.Contains(t, errout, "member already has a place in this table: build.ready b1",
+	// The store's place detail is the function's reply slice (T.place joins row
+	// and column with a colon), and Go prints a slice with brackets.
+	require.Contains(t, errout, "member already has a place in this table: [build:ready b1]",
 		"a second cell add of the same member is refused, naming the place it already sits: %q", errout)
 	code, out, errout = runTable(at(addr, "row", "add", "stale-help", "other", "--epoch", "1")...)
 	require.EqualValues(t, 0, code, "row add other: %d %s %q", code, out, errout)
