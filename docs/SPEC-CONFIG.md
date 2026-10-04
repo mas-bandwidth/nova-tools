@@ -544,10 +544,14 @@ registry member, the desired and roles hashes are removed in one
 transaction, with a `config-remove` receipt in `cap:log`; her beat, logins
 and wake path stay, they are hers.
 
-**sprint:** a plain `SET sprint:<field>` for each field (`sprint:coordinator <friend>`), `DEL` when empty.
-Never removed. The handover is `nova-config sprint set --coordinator
-<friend> --as <friend>` then `apply`: the sprint kind's own revision moves and
-the friend kind's plan is two `SET ... changed=roles`, the new coordinator's first.
+**sprint:** a plain `SET sprint:<field>` for each field except the coordinator.
+The coordinator field is written only when absent from the live store or already
+equal to the row; when live differs, every other sprint field is written, the
+live `sprint:coordinator` is left as is, one `APPLY HELD kind=sprint field=coordinator live=<a> row=<b>: ...` line is emitted, and the call exits 0.
+`apply --move-seat` writes it anyway. Never removed. The seat moves only by the
+sprint seat verb; a publish must not move it. Handover: `nova-config sprint set
+--coordinator <friend> --as <friend>` then `apply --move-seat`, or use the seat
+verb.
 
 **loop:** the hash `loop:<l>` with every field of the row, `name`, `log`
 (the derived path), `rev` and `at`, written whole in one transaction with
