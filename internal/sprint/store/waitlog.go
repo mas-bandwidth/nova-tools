@@ -10,12 +10,11 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// The run loop wakes on the log, not the clock (the owner's finding of
-// 2026-09-30: "these gaps of 1sec are pernicious"; the design's clock, v2.1
-// section 1.4.2's TickEvery, is the quiet log's clock here). Every
-// step that changes the sprint commits its lines to the epoch's log; the loop
-// blocks on the log from the last line it has seen, and a line wakes it at
-// once, so a landing, a finish or a start is ticked on within TickFloor, not
+// The run loop wakes on the log, not the clock: a tick that lags a second
+// behind a change is harmful, and TickEvery is the quiet log's clock here.
+// Every step that changes the sprint commits its lines to the epoch's log;
+// the loop blocks on the log from the last line it has seen, and a line wakes
+// it at once, so a landing, a finish or a start is ticked on within TickFloor, not
 // within TickEvery. A quiet log wakes it at TickEvery: the sweep, the
 // presence and the lateness keep their clock.
 

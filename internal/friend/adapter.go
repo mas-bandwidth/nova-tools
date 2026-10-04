@@ -24,6 +24,15 @@ type Deliverer interface {
 	Deliver(ctx context.Context, text string) (exit int, err error)
 }
 
+// Deferred is a Deliverer's answer when the session cannot take a turn now
+// and nothing has failed (the Codex chat open in the app, holding the
+// thread's writer lock). The daemon keeps the message in hand, tries again
+// after RecheckEvery, counts nothing toward MaxDeliveries and acks nothing,
+// so a chat open all day loses no message.
+type Deferred struct{ Reason string }
+
+func (d Deferred) Error() string { return "deferred: " + d.Reason }
+
 // Exec runs one command for an adapter: the program, its arguments and its
 // working directory, with the text on stdin, answering what it printed and
 // its exit code. The daemon passes the real one (RealExec); a test its own.
@@ -57,7 +66,8 @@ func realExec(ctx context.Context, budget, killDelay time.Duration, dir, name st
 	var out strings.Builder
 	cmd.Stdout = &out
 	cmd.Stderr = io.Discard
-	ownGroup(cmd, killDelay)
+	ownGroup(cmd)
+	cmd.WaitDelay = killDelay // the pipes close this long after the group is signalled
 	err := cmd.Run()
 	if ctx.Err() != nil && cmd.Process != nil {
 		killGroup(cmd.Process.Pid) // the leader is dead by now; what it forked is not

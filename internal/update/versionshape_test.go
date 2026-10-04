@@ -140,7 +140,7 @@ func TestReportStillRefusesAToolThatAnswersNothing(t *testing.T) {
 	mute := specScript(t, bin, "nova-mute", `printf '%s\n' 'nova-mute: no verb given' >&2; exit 2`)
 	file := manifest(t, row("nova-mute", "tool", mute, "local:"+mute, "none"))
 	code, _, stderr := specRun(t, Environment{}, "report", "--file", file)
-	// A report that ran and failed prints on stderr, where a FAIL belongs.
+	// A report that ran and failed prints on stderr, where a FAILED belongs.
 	need(t, stderr, "REPORT UNKNOWN name=nova-mute", "unknown=1")
 	if code != 1 {
 		assert.EqualValuesf(t, 1, code, "exit %d, want 1 (the check ran and failed)", code)

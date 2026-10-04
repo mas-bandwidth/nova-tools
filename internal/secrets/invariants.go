@@ -192,7 +192,18 @@ func CheckInvariant3(storeDir string, sopsCfg *SopsConfig, files []string) (fail
 		var unencRe *regexp.Regexp
 		rule, _ := FindMatchingRule(sopsCfg, file)
 		if rule != nil && rule.UnencryptedRegex != "" {
-			unencRe, _ = regexp.Compile(rule.UnencryptedRegex)
+			var err error
+			if unencRe, err = regexp.Compile(rule.UnencryptedRegex); err != nil {
+				// The rule, not the file, is broken: name the regex and the rule it
+				// came from so the operator repairs .sops.yaml instead of resealing
+				// the key the broken regex refused to permit.
+				failures = append(failures, CheckFailure{
+					Kind:   "unsealed",
+					File:   file,
+					Reason: fmt.Sprintf(".sops.yaml rule for %s carries unencrypted_regex %q, which is not a valid regular expression", file, rule.UnencryptedRegex),
+				})
+				continue
+			}
 		}
 
 		fileUnsealed := false

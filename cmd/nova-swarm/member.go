@@ -153,8 +153,8 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	// the beat writes from its own goroutine (memberLoop), so what this verb writes to stderr
 	// is one line at a time
 	stderr = &lockedWriter{w: stderr}
-	// CI over work (nova-tools#4293): native refuses every card on an OS with no
-	// setpriority, so a member there would take and fail every card it is dealt
+	// a member only takes a card it can run at CI's priority: native refuses every card on
+	// an OS with no setpriority, so a member there would take and fail every card it is dealt
 	if why := yieldRefusal(yield.Supported, runtime.GOOS); why != "" {
 		return refuse(stderr, " member", why)
 	}
@@ -915,7 +915,7 @@ func newestResult(dir string) string {
 // a card whose brief names no repository is never framed, so its child writes
 // what its brief says. A work card's finish never rests on it (member.Judge
 // wants the contract's shape); a read's verdict and report do, until the briefs
-// that say the old shape are gone.
+// that name that shape are gone.
 func readResult(path string) (head, verdict, report string) {
 	if path == "" {
 		return "", "", ""
@@ -1027,14 +1027,15 @@ func passNote(model string, pass []string, auth string) string {
 }
 
 // yieldRefusal is why a member will not start on an OS with no setpriority
-// (yield.Supported false): native refuses every card there rather than run it at the
-// priority of the CI legs beside it (nova-tools#4293, as nova-ci local refuses), so a
-// member would take and fail every card it is dealt. "" where a launch can step behind CI.
+// (yield.Supported false): native refuses every card there rather than run it at
+// the priority of the CI legs beside it (nova-ci local refuses the same way), so
+// a member would take and fail every card it is dealt (nova-tools#4293). "" where
+// a launch can step behind CI.
 func yieldRefusal(supported bool, goos string) string {
 	if supported {
 		return ""
 	}
-	return "no setpriority on " + goos + ": native would refuse every card this member takes rather than run it at CI's priority (nova-tools#4293); run members on darwin or Linux"
+	return "no setpriority on " + goos + ": native would refuse every card this member takes rather than run it at CI's priority; run members on darwin or Linux"
 }
 
 // lockedWriter is a writer two goroutines share, one Write at a time: the member's loop and

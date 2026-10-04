@@ -12,7 +12,7 @@ import (
 )
 
 // CommandCounter listens on 127.0.0.1 and counts every command a Redis client
-// sends it, handshake included (#3277). It answers just enough RESP2 for a
+// sends it, handshake included. It answers just enough RESP2 for a
 // go-redis client to finish a command: HELLO is refused so the client falls
 // back to RESP2, PING is PONG and anything else is OK. A test calls a
 // package's Open or Dial against the address and asserts the count is still

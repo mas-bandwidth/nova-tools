@@ -161,7 +161,8 @@ func TestCardTemplateRefusesADarwinOnlyCommand(t *testing.T) {
 
 	root := cardTree(t, "templates", "mac.md", "STEP 1. sw_vers -productVersion && diskutil list\n")
 	res := checkTree(t, root, "templates")
-	require.False(t, len(res.Findings) != 1 || res.Findings[0].Spell != "mac_only", "findings = %v, want one mac_only", spells(res))
+	require.Equal(t, 1, len(res.Findings), "findings = %v, want one mac_only", spells(res))
+	require.Equal(t, "mac_only", res.Findings[0].Spell, "findings = %v, want one mac_only", spells(res))
 	assert.Equal(t, "darwin", res.Findings[0].Only, "only = %q, want darwin", res.Findings[0].Only)
 }
 
@@ -195,7 +196,8 @@ func TestCardTemplateAllowlistIsCheckedInBothDirections(t *testing.T) {
 	require.NoError(t, os.WriteFile(allow, []byte("# reason column is for a reader\ntemplates/one.md proc 2026-09-18 the linux bench's own load, read nowhere else\n"), 0o644))
 	res, err := CheckCardTemplates(root, []string{"templates"}, allow)
 	require.NoError(t, err)
-	require.False(t, res.Refused() != 0 || res.Allowlisted != 1, "refused=%d allowlisted=%d, want 0 and 1", res.Refused(), res.Allowlisted)
+	require.Equal(t, 0, res.Refused(), "refused=%d allowlisted=%d, want 0 and 1", res.Refused(), res.Allowlisted)
+	require.Equal(t, 1, res.Allowlisted, "refused=%d allowlisted=%d, want 0 and 1", res.Refused(), res.Allowlisted)
 
 	// The same row against a tree with nothing in it is stale, and stale is red.
 	empty := t.TempDir()
@@ -214,7 +216,8 @@ func TestCardTemplateSkipsADirectoryThatIsNotThere(t *testing.T) {
 
 	res, err := CheckCardTemplates(t.TempDir(), CardTemplateDirs, "")
 	require.NoError(t, err, "a tree with none of the directories is not an error: %v", err)
-	assert.False(t, res.Templates != 0 || res.Refused() != 0, "templates=%d refused=%d, want 0 and 0", res.Templates, res.Refused())
+	assert.Equal(t, 0, res.Templates, "templates=%d refused=%d, want 0 and 0", res.Templates, res.Refused())
+	assert.Equal(t, 0, res.Refused(), "templates=%d refused=%d, want 0 and 0", res.Templates, res.Refused())
 }
 
 // 7. The refusal line names the file, the line, the spelling and the remedy, so

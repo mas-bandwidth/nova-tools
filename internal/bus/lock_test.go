@@ -142,7 +142,7 @@ func TestLockFileNonBlockingAndHolderStamping(t *testing.T) {
 	clk := newLockStepClock()
 	_, err2 := lockFile(lockPath, 0, tryLockFile, clk)
 	require.False(t, err2 == nil, "second LockFile with wait=0 succeeded, want ErrLockHeld")
-	require.False(t, !errors.Is(err2, ErrLockHeld), "err = %v, want errors.Is(err, ErrLockHeld)", err2)
+	require.True(t, errors.Is(err2, ErrLockHeld), "err = %v, want errors.Is(err, ErrLockHeld)", err2)
 	{
 		waited := clk.waited()
 		require.Equal(t, time.Duration(0), waited, "LockFile with wait=0 waited %v, want near-immediate return", waited)

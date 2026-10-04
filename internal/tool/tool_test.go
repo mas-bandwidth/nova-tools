@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -47,8 +48,8 @@ func fromLines(t *testing.T, token, text string) parsed {
 			word, rest = w, ": "+rest
 		}
 		switch word {
-		case "OK", "FAIL", "REFUSED":
-			p.Status = map[string]string{"OK": "ok", "FAIL": "failed", "REFUSED": "refused"}[word]
+		case "OK", "FAILED", "REFUSED":
+			p.Status = map[string]string{"OK": "ok", "FAILED": "failed", "REFUSED": "refused"}[word]
 			if i := strings.LastIndex(rest, "; run: "); i >= 0 {
 				p.Remedy, rest = rest[i+len("; run: "):], rest[:i]
 			}
@@ -179,7 +180,7 @@ func TestRender(t *testing.T) {
 			"DEMO MORE kind=entry shown=2 total=3 " + MaxRemedy + "\nDEMO NOTE a note\\x0awith a newline\n"},
 		{"free text is quoted with its spaces, a typed value is one token", Done().Fact("reason", Text("the store is gone")).Fact("dir", "<dir>"),
 			"DEMO OK dir=<dir> reason=\"the store is gone\"\n"},
-		{"a tool's own word stands for FAIL, the status and exit kept", Fail("the library differs").As("STALE").Fact("lib", "nova"),
+		{"a tool's own word stands for FAILED, the status and exit kept", Fail("the library differs").As("STALE").Fact("lib", "nova"),
 			"DEMO STALE lib=nova: the library differs\n"},
 		{"refused names every problem with the remedy", func() *Out {
 			o := Refuse("--a is required", "--b is required")
@@ -187,7 +188,7 @@ func TestRender(t *testing.T) {
 			return o
 		}(), "DEMO REFUSED: --a is required; run: nova-demo help\nDEMO REFUSED: --b is required; run: nova-demo help\n"},
 		{"failed carries its facts and its reason", Fail("the words differ").Fact("entry", "e1"),
-			"DEMO FAIL entry=e1: the words differ\n"},
+			"DEMO FAILED entry=e1: the words differ\n"},
 		{"a payload is printed as it is", Payload("nova-demo v1 darwin/arm64 go1"),
 			"nova-demo v1 darwin/arm64 go1\n"},
 		{"a payload beside a fact prints both, the payload last", Payload("the document").Fact("path", "p"),
@@ -209,7 +210,7 @@ func TestRender(t *testing.T) {
 			lines := text.String()
 			if w := tc.out.Word; w != "" { // the text spells the status as the word; the JSON carries both
 				assert.Contains(t, js.String(), `"word":"`+w+`"`)
-				lines = strings.Replace(lines, "DEMO "+w+" ", "DEMO FAIL ", 1)
+				lines = strings.Replace(lines, "DEMO "+w+" ", "DEMO FAILED ", 1)
 			}
 			got, want := fromLines(t, "DEMO", lines), fromJSON(t, js.String())
 			got.Verb, got.Exit = want.Verb, tc.out.Exit
@@ -251,7 +252,7 @@ func TestTextIsTheProseTail(t *testing.T) {
 }
 
 // TestAResultThatIsNoJSONIsAFail pins the one value JSON cannot carry: a NaN
-// fact under --json is a FAIL line naming the verb on stderr at exit 1, never
+// fact under --json is a FAILED line naming the verb on stderr at exit 1, never
 // an empty line and a success; Render returns that exit to a tool that renders
 // for itself.
 func TestAResultThatIsNoJSONIsAFail(t *testing.T) {
@@ -259,17 +260,16 @@ func TestAResultThatIsNoJSONIsAFail(t *testing.T) {
 	nan := &Tool{Name: "nova-nan", What: "measures", ExitTable: "0 done, 2 could not run.", Verbs: []Verb{
 		{Name: "load", Usage: "load", Effect: Inspection, Run: func(*Call) *Out { return Done().Fact("load", math.NaN()) }},
 	}}
-	var out, errs bytes.Buffer
-	code := nan.Run([]string{"load", "--json"}, strings.NewReader(""), &out, &errs)
-	assert.Equal(t, 1, code)
-	assert.Empty(t, out.String())
-	assert.True(t, strings.HasPrefix(errs.String(), "LOAD FAIL: the result is no JSON, so it is not printed: json: unsupported value: NaN\n"), errs.String())
+	r := testkit.Main(nan.Run).Run("load", "--json")
+	assert.Equal(t, 1, r.Code)
+	assert.Empty(t, r.Stdout)
+	assert.True(t, strings.HasPrefix(r.Stderr, "LOAD FAILED: the result is no JSON, so it is not printed: json: unsupported value: NaN\n"), r.Stderr)
 
 	var w bytes.Buffer
 	o := Done().Fact("load", math.Inf(1))
 	o.Verb = "load"
 	assert.Equal(t, 1, o.Render(&w, true))
-	assert.Contains(t, w.String(), "LOAD FAIL: the result is no JSON")
+	assert.Contains(t, w.String(), "LOAD FAILED: the result is no JSON")
 }
 
 func demo() *Tool {
@@ -304,12 +304,16 @@ func demo() *Tool {
 				},
 			},
 			{Name: "who", Usage: "who --width <n> [--actor <a>] [--op <id>] [--redis <addr>]", Flags: func(f *Flags) {
-				f.Actor()
-				f.Op()
-				f.Redis("seat.example:6379")
+				f.String("actor", "", "who is acting")
+				f.String("op", "", "the caller's operation id")
+				f.String("redis", "seat.example:6379", "the Redis address")
 				f.Int("width", 0, "slots")
 			}, Run: func(c *Call) *Out {
-				width, redis := c.WantCount("width", "the slots"), c.Want("redis", "host:port")
+				width := c.Int("width")
+				if width < 1 {
+					c.Problem(fmt.Sprintf("--width is required and is at least 1, got %d", width))
+				}
+				redis := c.Want("redis", "host:port")
 				if o := c.Refused(); o != nil {
 					return o
 				}
@@ -431,7 +435,7 @@ func TestRun(t *testing.T) {
 		{name: "a verb's own exit table stands in its -h for the tool's", args: []string{"fn", "load", "-h"}, code: 0, emptyStderr: true,
 			absent: []string{"1 said no"}, stdout: []string{"--dry-run", "exit codes: 0 loaded, 2 could not run.\neffect: local write"}},
 		{name: "a dry run the verb never read is a failure, never an OK", args: []string{"careless", "--dry-run"}, code: 1, emptyStdout: true,
-			stderr: []string{"CARELESS FAIL: --dry-run was given and the verb never read it"}},
+			stderr: []string{"CARELESS FAILED: --dry-run was given and the verb never read it"}},
 		{name: "a verb that does not write takes no --dry-run", args: []string{"fn", "ls", "--dry-run"}, code: 2, emptyStdout: true,
 			stderr: []string{"FN-LS REFUSED: unknown flag --dry-run;"}},
 		{name: "ok goes to stdout", args: []string{"put", "--store", "s", "--key", "k"}, code: 0, emptyStderr: true,
@@ -450,7 +454,7 @@ func TestRun(t *testing.T) {
 			code: 0, emptyStderr: true, stdout: []string{"WHO OK actor=a op=o1 redis=seat.example:6379 width=2\n"}},
 		{name: "a count under one and an empty address are both refused", args: []string{"who", "--redis", ""}, code: 2, emptyStdout: true, stderrLines: 2,
 			stderr: []string{"WHO REFUSED: --width is required and is at least 1, got 0", "WHO REFUSED: --redis is required; it wants host:port"}},
-		{name: "a no is exit 1 on stderr", args: []string{"deny"}, code: 1, emptyStdout: true, stderr: []string{"DENY FAIL: no\n"}},
+		{name: "a no is exit 1 on stderr", args: []string{"deny"}, code: 1, emptyStdout: true, stderr: []string{"DENY FAILED: no\n"}},
 		{name: "a problem the verb forgot to return is still the refusal", args: []string{"forget"}, code: 2, emptyStdout: true,
 			stderr: []string{"FORGET REFUSED: recorded, not returned"}},
 		{name: "a verb that prints its own keeps its exit and takes no --json", args: []string{"raw"}, code: 1, emptyStderr: true,
@@ -461,41 +465,37 @@ func TestRun(t *testing.T) {
 			stderr: []string{"LIB-CHECK STALE: the library differs; run: nova-demo lib load\n"}},
 		{name: "a declared word on an OK keeps exit 0", args: []string{"lib", "load"}, code: 0, emptyStderr: true,
 			stdout: []string{"LIB-LOAD UNCHANGED\n"}},
-		{name: "an undeclared word is a FAIL naming the bug", args: []string{"lib", "bogus"}, code: 1, emptyStdout: true,
-			stderr: []string{"LIB-BOGUS FAIL: the verb answered ok GONE, a status word nova-demo does not declare"}},
+		{name: "an undeclared word is a FAILED naming the bug", args: []string{"lib", "bogus"}, code: 1, emptyStdout: true,
+			stderr: []string{"LIB-BOGUS FAILED: the verb answered ok GONE, a status word nova-demo does not declare"}},
 		{name: "findings to stderr, the rest of a no to stdout", args: []string{"scan"}, code: 1,
-			stdout: []string{"SCAN FAIL files=1\nSCAN DATED n=1\nSCAN NOTE a green clears the known shapes\n"},
+			stdout: []string{"SCAN FAILED files=1\nSCAN DATED n=1\nSCAN NOTE a green clears the known shapes\n"},
 			stderr: []string{"SCAN FINDING at=f:4\n"}, stderrLines: 1},
 		{name: "a group of a verbflag-shaped -h", args: []string{"lib", "-h"}, code: 0, emptyStderr: true,
 			stdout: []string{"usage: nova-demo lib <check|load|bogus> [flags]\n"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			var out, errs bytes.Buffer
-			code := demo().Run(tc.args, strings.NewReader(""), &out, &errs)
-			assert.Equal(t, tc.code, code, "exit %d, want %d\nstdout: %s\nstderr: %s", code, tc.code, out.String(), errs.String())
-			for _, w := range []struct {
-				name  string
-				got   string
-				want  []string
-				empty bool
-			}{{"stdout", out.String(), tc.stdout, tc.emptyStdout}, {"stderr", errs.String(), tc.stderr, tc.emptyStderr}} {
-				assert.False(t, w.empty && w.got != "", "%s is not empty: %q", w.name, w.got)
-				rest := w.got
-				for _, s := range w.want {
+			r := testkit.Main(demo().Run).Run(tc.args...)
+			assert.Equal(t, tc.code, r.Code, "exit %d, want %d\nstdout: %s\nstderr: %s", r.Code, tc.code, r.Stdout, r.Stderr)
+			check := func(name, got string, want []string, empty bool) {
+				assert.True(t, got == "" || !empty, "%s is not empty: %q", name, got)
+				rest := got
+				for _, s := range want {
 					i := strings.Index(rest, s)
-					if !assert.GreaterOrEqual(t, i, 0, "%s lacks %q (in order):\n%s", w.name, s, w.got) {
+					if !assert.GreaterOrEqual(t, i, 0, "%s lacks %q (in order):\n%s", name, s, got) {
 						break
 					}
 					rest = rest[i+len(s):]
 				}
 			}
+			check("stdout", r.Stdout, tc.stdout, tc.emptyStdout)
+			check("stderr", r.Stderr, tc.stderr, tc.emptyStderr)
 			for _, s := range tc.absent {
-				assert.NotContains(t, out.String()+errs.String(), s)
+				assert.NotContains(t, r.Stdout+r.Stderr, s)
 			}
 			if tc.stderrLines > 0 {
-				n := strings.Count(errs.String(), "\n")
-				assert.Equal(t, tc.stderrLines, n, "stderr has %d lines, want %d:\n%s", n, tc.stderrLines, errs.String())
+				n := strings.Count(r.Stderr, "\n")
+				assert.Equal(t, tc.stderrLines, n, "stderr has %d lines, want %d:\n%s", n, tc.stderrLines, r.Stderr)
 			}
 		})
 	}
@@ -512,10 +512,9 @@ func TestBannerMeetsTheOnboardingStandard(t *testing.T) {
 	for _, verb := range []string{"put", "who", "deny", "forget", "raw", "fn load", "fn ls", "careless", "version"} {
 		t.Run(verb, func(t *testing.T) {
 			t.Parallel()
-			var out, errs bytes.Buffer
-			code := demo().Run(append(strings.Fields(verb), "-h"), strings.NewReader(""), &out, &errs)
-			assert.True(t, code == 0 && errs.Len() == 0 && strings.HasPrefix(out.String(), "usage: nova-demo "+verb) && strings.Contains(out.String(), "\nexit codes: 0 "),
-				"%s -h: exit %d stderr %q stdout:\n%s", verb, code, errs.String(), out.String())
+			r := testkit.Main(demo().Run).Run(append(strings.Fields(verb), "-h")...)
+			assert.True(t, r.Code == 0 && r.Stderr == "" && strings.HasPrefix(r.Stdout, "usage: nova-demo "+verb) && strings.Contains(r.Stdout, "\nexit codes: 0 "),
+				"%s -h: exit %d stderr %q stdout:\n%s", verb, r.Code, r.Stderr, r.Stdout)
 		})
 	}
 }
@@ -574,11 +573,10 @@ func TestADefaultVerb(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			var out, errs bytes.Buffer
-			code := selfTalk().Run(tc.args, strings.NewReader(""), &out, &errs)
-			assert.Equal(t, tc.code, code)
-			assert.Equal(t, tc.stdout, out.String())
-			assert.Equal(t, tc.stderr, errs.String())
+			r := testkit.Main(selfTalk().Run).Run(tc.args...)
+			assert.Equal(t, tc.code, r.Code)
+			assert.Equal(t, tc.stdout, r.Stdout)
+			assert.Equal(t, tc.stderr, r.Stderr)
 		})
 	}
 	assert.Empty(t, selfTalk().Problems())
@@ -593,51 +591,38 @@ func TestProblems(t *testing.T) {
 	t.Parallel()
 	long := strings.Repeat("x", HowWidth+1)
 	for _, tc := range []struct {
-		name string
-		edit func(*Tool)
-		want []string
+		name       string
+		allEffects Effect // set on every verb before edit; "" leaves them unstated
+		edit       func(*Tool)
+		want       []string
 	}{
-		{"the demo's unstated effects", func(*Tool) {}, []string{
+		{"the demo's unstated effects", "", func(*Tool) {}, []string{
 			`nova-demo who: the effect ""`, `nova-demo deny: the effect ""`, `nova-demo forget: the effect ""`, `nova-demo raw: the effect ""`}},
-		{"a complete tool has none", func(d *Tool) {
-			for i := range d.Verbs {
-				d.Verbs[i].Effect = Inspection + "; a clause is fine"
-			}
-		}, nil},
-		{"six how lines and a long one", func(d *Tool) {
-			for i := range d.Verbs {
-				d.Verbs[i].Effect = Delivery
-			}
+		{"a complete tool has none", Inspection + "; a clause is fine", func(*Tool) {}, nil},
+		{"six how lines and a long one", Delivery, func(d *Tool) {
 			d.How = "1\n2\n3\n4\n5\n" + long
 		}, []string{"the how text is 6 lines, at most 5", "how line 6 is 101 characters, at most 100"}},
-		{"an effect that is none of the three", func(d *Tool) {
-			for i := range d.Verbs {
-				d.Verbs[i].Effect = LocalWrite
-			}
+		{"an effect that is none of the three", LocalWrite, func(d *Tool) {
 			d.Verbs[0].Effect = "writes a little"
 		}, []string{`nova-demo put: the effect "writes a little"`}},
-		{"a flag with no description", func(d *Tool) {
-			for i := range d.Verbs {
-				d.Verbs[i].Effect = Inspection
-			}
+		{"a flag with no description", Inspection, func(d *Tool) {
 			d.Verbs[1].Flags = func(f *Flags) { f.Int("width", 0, " ") }
 		}, []string{"nova-demo who: --width has no description; say what it wants"}},
-		{"status words: too many, one lower case, one every tool's", func(d *Tool) {
-			for i := range d.Verbs {
-				d.Verbs[i].Effect = Inspection
-			}
+		{"status words: too many, one lower case, one every tool's", Inspection, func(d *Tool) {
 			d.Words = []string{"A", "B", "C", "D", "E", "stale", "MORE"}
 		}, []string{"7 status words of its own, at most 6", `the status word "stale" is not`, `the status word "MORE" is not`}},
-		{"no what and no exit table", func(d *Tool) {
-			for i := range d.Verbs {
-				d.Verbs[i].Effect = LocalWrite
-			}
+		{"no what and no exit table", LocalWrite, func(d *Tool) {
 			d.What, d.ExitTable = "", ""
 		}, []string{"What and ExitTable are required"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			d := demo()
+			if tc.allEffects != "" {
+				for i := range d.Verbs {
+					d.Verbs[i].Effect = tc.allEffects
+				}
+			}
 			tc.edit(d)
 			got := strings.Join(d.Problems(), "\n")
 			if len(tc.want) == 0 {
@@ -648,6 +633,155 @@ func TestProblems(t *testing.T) {
 			}
 			n := len(d.Problems())
 			assert.Equal(t, len(tc.want), n, "%d problems, want %d:\n%s", n, len(tc.want), got)
+		})
+	}
+}
+
+// TestTheFailureWordIsFAILED pins the failure word across text and JSON:
+// Fail() renders as FAILED in text and failed in JSON with exit 1, and the three
+// status words and their exits do not drift (STANDARD §2).
+func TestTheFailureWordIsFAILED(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name         string
+		out          func() *Out
+		wantTextWord string
+		wantJSONWord string
+		wantExit     int
+	}{
+		{"Done", func() *Out { return Done() }, "OK", "ok", 0},
+		{"Fail", func() *Out { return Fail() }, "FAILED", "failed", 1},
+		{"Fail with reason", func() *Out { return Fail("it failed") }, "FAILED", "failed", 1},
+		{"Refuse", func() *Out { return Refuse() }, "REFUSED", "refused", 2},
+		{"Refuse with reason", func() *Out { return Refuse("cannot run") }, "REFUSED", "refused", 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			o := tc.out()
+			o.Verb = "test"
+
+			var text bytes.Buffer
+			textExit := o.Render(&text, false)
+			assert.Equal(t, tc.wantExit, textExit, "text exit code")
+			assert.Equal(t, tc.wantExit, o.Exit, "Out.Exit")
+
+			fields := strings.Fields(text.String())
+			require.GreaterOrEqual(t, len(fields), 2, "text output has verb and status word: %q", text.String())
+			assert.Equal(t, "TEST", fields[0])
+			statusWord := strings.TrimSuffix(fields[1], ":")
+			assert.Equal(t, tc.wantTextWord, statusWord)
+
+			var js bytes.Buffer
+			jsonExit := o.Render(&js, true)
+			assert.Equal(t, tc.wantExit, jsonExit, "JSON exit code")
+
+			var j struct {
+				Result struct {
+					Verb   string `json:"verb"`
+					Status string `json:"status"`
+					Exit   int    `json:"exit"`
+				} `json:"result"`
+			}
+			err := json.Unmarshal(js.Bytes(), &j)
+			require.NoError(t, err, "JSON is valid: %s", js.String())
+			assert.Equal(t, "test", j.Result.Verb)
+			assert.Equal(t, tc.wantJSONWord, j.Result.Status)
+			assert.Equal(t, tc.wantExit, j.Result.Exit)
+		})
+	}
+}
+
+// TestItemTextRendersPlainAndAsAField pins the prose tail: the text renders
+// plain after the row's typed fields in the line, and as the `text` field
+// beside them in the JSON, so the line and the object stay one value.
+func TestItemTextRendersPlainAndAsAField(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		kind     string
+		text     string
+		kv       []any
+		wantLine string
+		wantJSON string
+	}{
+		{"spaces stay spaces, never one escaped field", "entry", "no version line: it printed nothing",
+			[]any{"name", "nova-x"},
+			"DEMO OK\nDEMO ENTRY name=nova-x: no version line: it printed nothing\n",
+			`{"result":{"verb":"demo","status":"ok","exit":0},"facts":{},"items":[{"kind":"entry","fields":{"name":"nova-x"},"text":"no version line: it printed nothing"}]}`},
+		{"a newline in the tail is escaped, the spaces are not", "entry", "first\nsecond",
+			[]any{"name", "nova-x"},
+			"DEMO OK\nDEMO ENTRY name=nova-x: first\\x0asecond\n",
+			`{"result":{"verb":"demo","status":"ok","exit":0},"facts":{},"items":[{"kind":"entry","fields":{"name":"nova-x"},"text":"first\nsecond"}]}`},
+		{"an empty tail is no tail and no field", "entry", "",
+			[]any{"name", "nova-x"},
+			"DEMO OK\nDEMO ENTRY name=nova-x\n",
+			`{"result":{"verb":"demo","status":"ok","exit":0},"facts":{},"items":[{"kind":"entry","fields":{"name":"nova-x"}}]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			o := Done().ItemText(tc.kind, tc.text, tc.kv...)
+			o.Verb, o.token = "demo", "DEMO"
+			var text, js bytes.Buffer
+			require.Equal(t, 0, o.Render(&text, false))
+			assert.Equal(t, tc.wantLine, text.String())
+			require.Equal(t, 0, o.Render(&js, true))
+			assert.JSONEq(t, tc.wantJSON, js.String())
+			var j struct {
+				Items []struct {
+					Text string `json:"text"`
+				} `json:"items"`
+			}
+			require.NoError(t, json.Unmarshal(js.Bytes(), &j))
+			require.Len(t, j.Items, 1)
+			assert.Equal(t, tc.text, j.Items[0].Text, "the JSON text and the line tail are one value")
+		})
+	}
+}
+
+// TestHelpRefusedAnswersDashH pins the refused help: with HelpRefused a
+// verb's -h is a refusal at exit 2 naming help, never an answer at exit 0,
+// while `help <verb>` still answers and the switch off changes nothing.
+func TestHelpRefusedAnswersDashH(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name        string
+		helpRefused bool
+		args        []string
+		code        int
+		stdout      string
+		stderr      string
+	}{
+		{"-h is refused at exit 2", true, []string{"put", "-h"}, 2, "",
+			"PUT REFUSED: -h is not an answer this tool gives, its exit 0 means CLEAR; run: nova-demo help\n"},
+		{"--help is refused the same way", true, []string{"put", "--help"}, 2, "",
+			"PUT REFUSED: -h is not an answer this tool gives, its exit 0 means CLEAR; run: nova-demo help\n"},
+		{"help of the verb still answers at exit 0", true, []string{"help", "put"}, 0,
+			"usage: nova-demo put [flags]", ""},
+		{"with the switch off -h still answers at exit 0", false, []string{"put", "-h"}, 0,
+			"usage: nova-demo put [flags]", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tool := &Tool{Name: "nova-demo", What: "a tool that exists to be tested",
+				How:       "It keeps nothing.",
+				ExitTable: "0 done, 1 said no, 2 could not run.", HelpRefused: tc.helpRefused,
+				Verbs: []Verb{{Name: "put", Usage: "put --store <dir>", Effect: Inspection,
+					Flags: func(f *Flags) { f.String("store", "", "a directory") },
+					Run:   func(*Call) *Out { return Done() }}}}
+			r := testkit.Main(tool.Run).Run(tc.args...)
+			assert.Equal(t, tc.code, r.Code, "stdout %q stderr %q", r.Stdout, r.Stderr)
+			check := func(got, want string) {
+				switch {
+				case want == "":
+					assert.Empty(t, got)
+				case tc.code == 2:
+					assert.Equal(t, want, got)
+				default:
+					assert.Contains(t, got, want)
+				}
+			}
+			check(r.Stdout, tc.stdout)
+			check(r.Stderr, tc.stderr)
 		})
 	}
 }

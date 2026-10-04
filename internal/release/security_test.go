@@ -44,7 +44,7 @@ func sensitiveForge() *fakeForge {
 // paths is not cut on one person's judgement at the keyboard: it is cut after
 // Johnny has read it, and the read is NAMED on the command line so the receipt
 // carries who vouched for it.
-func TestCutRefusesASensitiveRangeWithoutJohnnysRead(t *testing.T) {
+func TestCutRefusesASensitiveRangeWithoutASecurityRead(t *testing.T) {
 	t.Parallel()
 
 	f := sensitiveForge()
@@ -77,7 +77,7 @@ func TestCutRefusesASensitiveRangeWithoutJohnnysRead(t *testing.T) {
 // With the read named, the cut goes through and SAYS SO on its own line: a
 // release that crossed the sensitive list is a fact somebody reads off the
 // terminal and out of a log months later.
-func TestCutWithJohnnysReadSaysSoOnItsOwnLine(t *testing.T) {
+func TestCutWithASecurityReadSaysSoOnItsOwnLine(t *testing.T) {
 	t.Parallel()
 
 	f := sensitiveForge()
@@ -639,7 +639,7 @@ func TestPullRefusesWhenItCannotNameTheFiles(t *testing.T) {
 // existing pull.go and pins the behaviour the spec describes.
 // ---------------------------------------------------------------------------
 
-func TestIssue2285(t *testing.T) {
+func TestPullHoldsItsEdgeFences(t *testing.T) {
 	t.Parallel()
 
 	// -- fence 1: Locally it goes through safepath.RemoveUnder, only for

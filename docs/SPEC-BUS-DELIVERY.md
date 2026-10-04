@@ -1,8 +1,8 @@
 # Prepared bus delivery — proposal for the version-report recovery gap
 
 Status: independently approved specification, not implemented. This is the bounded
-dependency of SPEC-UPDATE rules 24–25. Johnny approved the exact contract at
-5f73dc1 (johnny-2b82f17a9453), review only; the two requested clarifications follow. Existing ordinary send is
+dependency for version-report recovery. Its complete
+contract is stated here. Existing ordinary send is
 unchanged. No new timer, service, friend identity or update policy is introduced.
 
 ## Why
@@ -90,7 +90,7 @@ prepared artifact and the exact observed map it describes. Each later explicit
 `--send` resolves that pending artifact first, even when no installed version
 changed. Remote-confirmed success updates `delivered` and clears pending atomically.
 
-If today's observation differs while an older report is pending, finish the old
+If a new observation differs while a report is pending, finish the pending
 report first. If that cannot be confirmed within budget, retain it, report the
 pending gate and do not send a newer report. If confirmed, a newer observation can
 be prepared, atomically saved and sent using the remaining budget. Never discard
@@ -125,7 +125,7 @@ Use real disposable local bare Git remotes, not only fake SEND text:
 - A fully confirmed unchanged report makes zero bus invocations on the next run.
 
 Public fixtures are synthetic. Friends choose recipients; version statuses do not
-wake Johnny through To. New versions remain a choice, and working alternatives
+notify recipients through To. New versions remain a choice, and working alternatives
 remain welcome.
 
 ## Tests this spec demands
@@ -156,23 +156,23 @@ remain unproven by any test.
 16. `TestMakeAndValidatePreparedArtifact` — a changed roster/speaker that no longer resolves the prepared identity is a named refusal.
 17. `TestSendPreparedDecidingTests` — artifact content is data, not permission; bus/remote/branch/speaker are still named and there is no `--id` override.
 18. `TestSendPreparedArtifactAlreadyPublished` — locate the exact note by ID; if note bytes and its INDEX agree, return `SEND OK … attempts=0 state=already-published` with no new note, commit or push.
-19. `TestStellaPreparedRequiresCompleteRemoteIndex` — remote INDEX alone is insufficient proof of already-published.
+19. `TestPreparedRequiresCompleteRemoteIndex` — remote INDEX alone is insufficient proof of already-published.
 20. `TestSendPreparedArtifactRefusals` — same-ID different-content, unsafe path, inconsistent INDEX, or different note at the prepared path are refused; evidence is preserved, never overwritten.
 21. `TestSendPreparedArtifactInterruptedRecoveries` — absent remotely, reconcile the exact note + INDEX from an interrupted attempt; complete exact-matching partial writes, refuse conflicting bytes.
 22. `TestSendPreparedArtifactInterruptedRecoveries` — reuse an existing pending commit when possible.
-23. `TestStellaPreparedPreservesUnrelatedAttributeEdit` — the final contribution holds one note, one INDEX entry, only the standard merge-attributes change, and the normal send trailer.
+23. `TestPreparedPreservesUnrelatedAttributeEdit` — the final contribution holds one note, one INDEX entry, only the standard merge-attributes change, and the normal send trailer.
 24. `TestSendPreparedArtifactRefusals` — refuse unrelated dirty/staged work or unrelated local commits ahead of the named remote.
-25. `TestStellaPreparedPreservesUnrelatedAheadAttributeEdit` — another tool's valid trailer does not authorize publishing its pending contribution during this retry.
+25. `TestPreparedPreservesUnrelatedAheadAttributeEdit` — another tool's valid trailer does not authorize publishing its pending contribution during this retry.
 26. `TestSendPreparedArtifactRefusals` — refusal preserves the caller's index, files and commits; no stash, reset, clean, delete, remote-config change or credential use.
 27. `TestSendPreparedArtifactConcurrentRemoteLanding` — push without force through bounded race handling; reconcile the exact identity after an ambiguous push; a racing unrelated remote note is preserved.
 28. `TestSendPreparedArtifactConcurrentRemoteLanding` — success returns `SEND OK … pushed=true` plus `state=published`; only remote confirmation establishes success.
-29. `TestRowanProbeStaleIndexLock` — known failure or uncertainty returns 1 with the prepared ID and a bounded diagnostic; no raw source blob enters a diagnostic.
+29. `TestPreparedStaleIndexLockRefusesWithPreparedID` — known failure or uncertainty returns 1 with the prepared ID and a bounded diagnostic; no raw source blob enters a diagnostic.
 30. `TestTheBusIsHandedFiniteBoundsOutOfTheRemainingBudget` — retries use finite `--attempts`/`--git-timeout` inside the reporter's budget; exhaustion leaves the artifact; same-ID never stands in for full note equality.
 31. `TestNewObservationCannotReplaceUnresolvedPending` — with `--snapshot`, store `pending` (scope + artifact + observed map) before sending.
 32. `TestPendingBeforeDispatchAndQuietRetry` — each later `--send` resolves the pending artifact first, even when no installed version changed.
 33. `TestNewObservationCannotReplaceUnresolvedPending` — remote-confirmed success updates `delivered` and clears pending atomically.
-34. `TestNewObservationCannotReplaceUnresolvedPending` — if today's observation differs while an older report is pending, finish the old report first.
-35. `TestNewObservationCannotReplaceUnresolvedPending` — if the old report cannot be confirmed within budget, retain it, report the pending gate, and do not send a newer report.
+34. `TestNewObservationCannotReplaceUnresolvedPending` — if a new observation differs while a report is pending, finish the pending report first.
+35. `TestNewObservationCannotReplaceUnresolvedPending` — if the pending report cannot be confirmed within budget, retain it, report the pending gate, and do not send a newer report.
 36. `TestNewObservationCannotReplaceUnresolvedPending` — if confirmed, a newer observation is prepared, atomically saved and sent with the remaining budget; never discard an old report merely because a newer observation exists.
 37. `TestRule26NoClockOfItsOwnNoInstallNoSendNobodyAsked` — without `--snapshot` a plain report/draft writes nothing and each send is a new intention; the artifact is held in memory for bounded in-process retry only.
 38. `TestDeliveryScopeAndPreparedArtifactChecks` — recipient suppression compares confirmed delivery by scope; local observations and timestamps never suppress a first delivery.

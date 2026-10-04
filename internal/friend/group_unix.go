@@ -5,17 +5,16 @@ package friend
 import (
 	"os/exec"
 	"syscall"
-	"time"
 )
 
 // ownGroup makes cmd a session leader of its own, so a Cancel signals the
-// group (every process the harness forked) and WaitDelay then kills it.
-func ownGroup(cmd *exec.Cmd, killDelay time.Duration) {
+// group (every process the harness forked) and the caller's WaitDelay then
+// kills it.
+func ownGroup(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Cancel = func() error {
 		return syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
 	}
-	cmd.WaitDelay = killDelay
 }
 
 // killGroup ends every process left in the group led by pid.

@@ -5,11 +5,9 @@
 # these names. The metadata address (169.254.169.254), the bench's own loopback
 # and the other benches are denied outright.
 #
-# This file is the CONTRACT, not a default. Adding a name is a PR to this file
-# reviewed by the security lane (Johnny, 2026-09-18: "Update: a PR to
-# egress.txt, reviewed by this sitting. Not a runtime flag."), and
-# `nova-sandbox egress plan --model-host` may only name a host that is already
-# here.
+# This file is the CONTRACT, not a default. Adding a name requires a PR to this
+# file reviewed by the security lane, because `nova-sandbox egress plan --model-host`
+# may only name a host that is already listed here.
 #
 # The wall is nftables on the bench, applied to the card's own traffic — never
 # an environment variable the worker is trusted to respect, because the worker

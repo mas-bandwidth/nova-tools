@@ -147,7 +147,7 @@ func explain(l login, hide func(string) string, cause error, opening bool) *fail
 		f.next = "check that " + l.PasswordEnv + " holds the password of " + l.User + " and that the store has that user switched on"
 	case f.class == AuthRefused && l.PasswordEnv != "":
 		// A password and no user: the store's default user is off, or the
-		// password is another user's. The old store's #3520 hint, in the
+		// password is another user's. The store's hint helps identify the user, in the
 		// caller's own names.
 		f.next = "name the user" + inVar(l.Env.User) + ", or check that " + l.PasswordEnv + " holds the password of the default user"
 	case f.class == AuthRefused:

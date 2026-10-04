@@ -112,7 +112,7 @@ func TestSendStillRefusesWhatItCannotGuessAtTheBinary(t *testing.T) {
 			checkout, _ := busDir(t)
 			invoke(t, tc.draft, "send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").
 				mustCode(t, 1).
-				mustContain(t, "stderr", "SEND FAIL (stdin): ").
+				mustContain(t, "stderr", "SEND FAILED (stdin): ").
 				mustContain(t, "stderr", tc.want)
 			{
 				entries, err := os.ReadDir(filepath.Join(checkout, "from-ada"))
@@ -134,7 +134,7 @@ func TestARefusalNamesEveryProblemOnItsOwnLine(t *testing.T) {
 	lines := strings.Split(strings.TrimRight(r.stderr, "\n"), "\n")
 	require.Equalf(t, 4, len(lines), "the run printed %d lines, want one per problem:\n%s", len(lines), r.stderr)
 	for _, line := range lines {
-		require.Truef(t, strings.HasPrefix(line, "SEND FAIL (stdin): "), "a refusal line is off the grammar: %q", line)
+		require.Truef(t, strings.HasPrefix(line, "SEND FAILED (stdin): "), "a refusal line is off the grammar: %q", line)
 	}
 	for _, want := range []string{`"Boe" names no one`, "no Subject line", "the note has no body", "a slug is not a thread"} {
 		require.Containsf(t, r.stderr, want, "no line named %q:\n%s", want, r.stderr)

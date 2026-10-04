@@ -1,7 +1,6 @@
 // Package config is nova-config's library: the permanent, non-ephemeral
 // configuration of the fleet, kept in Postgres (schema `config`) and applied
-// into Redis so Redis is always a rebuildable copy (Glenn 2026-09-26: "redis
-// is good as a hot store of data that can be rebuilt"; docs/SPEC-CONFIG.md).
+// into Redis so Redis is always a rebuildable copy of the configuration.
 //
 // Every kind of configuration is one Kind descriptor: its name, its table,
 // its fields with their types and validators, and the two Redis functions
@@ -112,8 +111,8 @@ type Kind struct {
 	// Doc is the one sentence `nova-config kinds` prints about the kind.
 	Doc string
 	// Singleton is a kind of exactly one row, named as the kind is (the
-	// fleet: Glenn 2026-09-27, "in the fleet there is only one coordinator
-	// at a time"). Its migration creates the row, so the grammar has no add,
+	// fleet has exactly one coordinator at a time). Its migration
+	// creates the row, so the grammar has no add,
 	// remove or list and its set, show and history take no name
 	// (docs/SPEC-CONFIG.md, "Singleton kinds").
 	Singleton bool
@@ -322,9 +321,7 @@ const CoordinatorRole = "coordinator"
 // (each names no row), and tiers last (each names routes).
 //
 // A machine's record is exactly the declared facts something reads, one
-// reader each, and nothing invented (Glenn 2026-09-27: "I only want the
-// fleet to have actual defined useful things associated with each machine,
-// not invented rando stuff"). Its name is the tailnet host: `ssh <name>`
+// reader each, and nothing invented. Its name is the tailnet host: `ssh <name>`
 // reaches it, so there is no address field ("All fleet machines must be on
 // the tailnet. This is a hard requirement."). Measured facts (os, arch,
 // cores, memory) are never typed: they come live from the machine's own
@@ -358,11 +355,10 @@ var Kinds = []*Kind{
 		Check: checkFleet,
 	},
 	{
-		// A friend's row is what someone decides for her: how wide, which
-		// tiers, which roles. What she would just know (where she runs, her
-		// harness, her logins) is runtime data her own presence reports
-		// (Glenn 2026-09-27, docs/SPEC-CONFIG.md, "What a friend would just
-		// know").
+		// A friend's row is what someone decides for her: how wide, which tiers
+		// and which roles. Where she runs, her harness and her logins are
+		// runtime data a friend would just know, reported by her own presence
+		// rather than stored in configuration.
 		Name:  KindFriend,
 		Table: "friends",
 		Doc:   "an AI friend: her slots, which tiers she can do, her roles, and her width, the jobs she works at once",
@@ -385,7 +381,7 @@ var Kinds = []*Kind{
 		Name:      KindSprint,
 		Table:     "sprint",
 		Singleton: true,
-		Doc:       "the one row of sprint-global facts: which friend coordinates, the two bars a flash card's decide read is routed by, the bar a landed diff's score is judged at, the attempt decision's no-result and nothing-to-do bars, the grade decision's bar, the two a failed gate's decisions are, the bar a judgment decision is applied at, and the bar a card's brief is added at",
+		Doc:       "the one row of sprint-global facts: which friend coordinates and the decide_* bars, each a probability in [0,1]; nova-config sprint set -h says what each bar decides",
 		Fields: []Field{
 			{Name: "coordinator", Type: TypeRef, Ref: KindFriend, Help: "the friend who holds the coordinator role (a friend row), or empty; set it to hand over"},
 			{Name: FieldDecideBounce, Type: TypeDecimal, Default: "0.5", Help: "the decide read's bounce bar: a flash card whose first read gives p(defect) at or above it is bounced with the read's finding; a probability, at least --decide_review; 0.5 (the default); empty, with --decide_review empty, turns the decide read off"},
@@ -440,8 +436,8 @@ var Kinds = []*Kind{
 			{Name: "deadline", Type: TypeInt, Required: true, Help: "the seconds a card on this route may run, above 0"},
 			{Name: "enabled", Type: TypeBool, Default: "true", Help: "false takes it out of the deal and needs --note, the measured reason (a disabled route carries its reason); true (the default) keeps it in and needs none"},
 			// The price sheet: optional, so a card's predicted cost can be worked
-			// out from its tokens (the owner, 2026-10-01: "the pricing configuration
-			// saved per-tuple"; internal/cardcost). Prices are USD per million tokens.
+			// out from its tokens using the pricing configuration saved per route tuple.
+			// Prices are USD per million tokens.
 			{Name: cardcost.FieldInput, Type: TypeDecimal, Help: "USD per million uncached input tokens, a decimal like 0.30; empty (the default) when not known"},
 			{Name: cardcost.FieldCacheRead, Type: TypeDecimal, Help: "USD per million cached input tokens read"},
 			{Name: cardcost.FieldCacheWrite, Type: TypeDecimal, Help: "USD per million tokens written to the cache"},
@@ -463,9 +459,7 @@ var Kinds = []*Kind{
 	{
 		// A tier's route array: the deal takes routes[index mod len] for each
 		// card of the tier, the index a uint64 counter on the fleet table
-		// (the owner, 2026-10-01: "the per-tier provider/model array should
-		// be specified in nova-config"; internal/sprint/route.go,
-		// tla/RouteIndex.tla).
+		// (internal/sprint/route.go, tla/RouteIndex.tla).
 		Name:  KindTier,
 		Table: "tiers",
 		Doc:   "a model tier's route array: the deal takes routes[index mod len] for each card of the tier, a route named twice taking two turns; one row each for " + strings.Join(RouteTiers, " and ") + ", created by migrate",
@@ -683,7 +677,7 @@ func memberAt(argv []string) (int, bool) {
 // friend:<f>:roles in Redis (what ns_friend_roles guards and the deal
 // reads) carries exactly one coordinator, and a handover (sprint set
 // --coordinator) is two SET lines on the next apply: the new coordinator's
-// roles first (ApplyOrder), then the old one's without it.
+// roles first (ApplyOrder), then the former coordinator's without the coordinator role.
 func deriveCoordinator(ctx context.Context, st Store, rows []Row) ([]Row, error) {
 	sprint, _, err := st.Get(ctx, KindSprint, KindSprint)
 	if err != nil {

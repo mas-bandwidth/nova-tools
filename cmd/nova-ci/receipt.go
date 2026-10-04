@@ -31,8 +31,14 @@ func cmdGitHub(args []string, stdout, stderr io.Writer, getenv func(string) stri
 		}
 		return refuseRun(stderr, " github", what, "nova-ci github receipt -h")
 	}
-	return cmdReceipt(context.Background(), args[1:], stdout, stderr, getenv)
+	return cmdReceipt(context.Background(), args[1:], stdout, stderr, getenv, store.Open)
 }
+
+// receiptOpener opens the store the receipt is written to; cmdGitHub passes
+// store.Open, and the status grammar test hands a fake whose store answers
+// the one XADD with a refusal, so the verb's FAILED line is driven with no
+// store and no socket (STANDARD §8: unit tests own no sockets).
+type receiptOpener func(ctx context.Context, addr string) (*store.Store, error)
 
 // cmdReceipt is `nova-ci github receipt --from-runner`: the ci-ok job's run
 // receipt, one ev:github row (internal/cireceipt). The store is dialled as the
@@ -44,7 +50,7 @@ func cmdGitHub(args []string, stdout, stderr io.Writer, getenv func(string) stri
 // refusal. --dry-run checks the fields and prints the line with ev=-, and
 // dials nothing. Repeat receipts from retries or reruns are acceptable wake
 // hints for stream consumers.
-func cmdReceipt(ctx context.Context, args []string, stdout, stderr io.Writer, getenv func(string) string) int {
+func cmdReceipt(ctx context.Context, args []string, stdout, stderr io.Writer, getenv func(string) string, open receiptOpener) int {
 	const where = " github receipt"
 	fs := flag.NewFlagSet("github receipt", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -89,14 +95,14 @@ func cmdReceipt(ctx context.Context, args []string, stdout, stderr io.Writer, ge
 	}
 	ctx, cancel := context.WithTimeout(ctx, receiptTimeout)
 	defer cancel()
-	st, err := store.Open(ctx, *addr)
+	st, err := open(ctx, *addr)
 	if err != nil {
 		return refuse(stderr, where, oneline.Err(err))
 	}
 	defer st.Close()
 	id, err := cireceipt.Write(ctx, st.Client(), r)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-ci github receipt FAIL: %s; receipt write could not be confirmed: fix the store or the bench seat and rerun ci-ok\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "nova-ci github receipt FAILED: %s; receipt write could not be confirmed: fix the store or the bench seat and rerun ci-ok\n", oneline.Err(err))
 		return 1
 	}
 	fmt.Fprintln(stdout, cireceipt.Line(r, id))

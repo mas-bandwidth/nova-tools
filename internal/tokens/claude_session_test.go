@@ -79,20 +79,23 @@ func TestReadClaudeSessionMatchesTheHandCount(t *testing.T) {
 		{"cache_write", sum.CacheWrite, wantCacheWrite},
 		{"cache_read", sum.CacheRead, wantCacheRead},
 		{"output", sum.Output, wantOutput},
-		{"weighted", sum.Weighted(), wantWeighted},
+		{"weighted", sum.Weighted(DefaultWeights), wantWeighted},
 		{"avg_context", sum.AvgContext(), wantAvgContext},
 	} {
 		assert.EqualValuesf(t, c.want, c.got, "%s=%d, want %d (the hand count)", c.name, c.got, c.want)
 	}
 	want := fmt.Sprintf("SESSION turns=%d input=%d cache_write=%d cache_read=%d output=%d weighted=%d avg_context=%d",
 		wantTurns, wantInput, wantCacheWrite, wantCacheRead, wantOutput, wantWeighted, wantAvgContext)
-	assert.EqualValuesf(t, want, sum.Line(), "the line is\n  %s\nwant\n  %s", sum.Line(), want)
+	assert.EqualValuesf(t, want, sum.Line(DefaultWeights), "the line is\n  %s\nwant\n  %s", sum.Line(DefaultWeights), want)
 	assert.EqualValuesf(t, 0, sum.Unstamped, "unstamped=%d, want 0: every turn in the fixture carries a stamp", sum.Unstamped)
 }
 
-// TestSessionRowIsTheCoordinatorsOwnLine: the fold writes the coordinator as a model of its
+// TestSessionRowIsTheCoordinatorsOwnLine: the fold writes a session as a model line of its
 // own, per day, with the four counts and a reasoning cell that is a dash -- a transcript
 // carries no reasoning count, and a zero there would sum into a month claiming to be whole.
+// The role is the --role flag's, and the seeded word "coordinator" books the coordinator's
+// own line, <model>/coordinator with the role in the repo cell, cell for cell the row the
+// constants booked before the role became a flag.
 func TestSessionRowIsTheCoordinatorsOwnLine(t *testing.T) {
 	t.Parallel()
 
@@ -100,10 +103,10 @@ func TestSessionRowIsTheCoordinatorsOwnLine(t *testing.T) {
 	require.NoError(t, err)
 	days := sum.DayList()
 	require.Falsef(t, len(days) != 1 || days[0] != "2026-09-16", "days=%v, want one day 2026-09-16", days)
-	rows := sum.Rows(days[0])
+	rows := sum.Rows(days[0], "coordinator")
 	require.Lenf(t, rows, 1, "rows=%d, want one row for the one model the transcript names", len(rows))
 	row := rows[0]
-	assert.Falsef(t, row.Model != "claude-opus-5/coordinator" || row.Repo != CoordinatorRepo, "row is (%s, %s), want (claude-opus-5/coordinator, %s): the model the transcript names", row.Model, row.Repo, CoordinatorRepo)
+	assert.Falsef(t, row.Model != "claude-opus-5/coordinator" || row.Repo != "coordinator", "row is (%s, %s), want (claude-opus-5/coordinator, coordinator): the model the transcript names and the role the caller seeded", row.Model, row.Repo)
 	assert.EqualValuesf(t, Dash, row.Counts.Cell(Reasoning), "the reasoning cell is %q, want %q: a transcript reports none", row.Counts.Cell(Reasoning), Dash)
 	for _, c := range []struct {
 		t    Type
@@ -160,8 +163,8 @@ func TestSessionRowsAreBookedUnderTheModelTheTranscriptNames(t *testing.T) {
 		why := sum.UnbookableReason()
 		require.EqualValuesf(t, "", why, "a transcript naming a model on every turn is bookable, got %q", why)
 	}
-	rows := sum.Rows("2026-09-16")
-	require.Falsef(t, len(rows) != 2 || rows[0].Model != "claude-opus-5/coordinator" || rows[1].Model != "other-model-9/coordinator", "rows=%+v, want one row per model, sorted", rows)
+	rows := sum.Rows("2026-09-16", "")
+	require.Falsef(t, len(rows) != 2 || rows[0].Model != "claude-opus-5" || rows[1].Model != "other-model-9", "rows=%+v, want one row per model, sorted, with no role the bare model", rows)
 	assert.Falsef(t, rows[0].Counts.Cell(Input) != "4" || rows[1].Counts.Cell(Input) != "3", "each model's row carries its own turns: %s and %s, want 4 and 3", rows[0].Counts.Cell(Input), rows[1].Counts.Cell(Input))
 
 	none, err := ReadClaudeSession(write(`{"timestamp":"2026-09-16T09:00:00Z","message":{"id":"a","usage":{"input_tokens":3,"output_tokens":1}}}
@@ -172,7 +175,7 @@ func TestSessionRowsAreBookedUnderTheModelTheTranscriptNames(t *testing.T) {
 		assert.Truef(t, strings.Contains(why, "names no model on any of its 1 turns"), "a transcript that names no model is unbookable with a named reason, got %q", why)
 	}
 	{
-		got := none.Rows("2026-09-16")
+		got := none.Rows("2026-09-16", "")
 		assert.Lenf(t, got, 0, "a transcript that names no model has no rows, got %+v", got)
 	}
 

@@ -44,11 +44,11 @@ func TestNewRuleYieldsABuildingTestingSkeleton(t *testing.T) {
 
 	// TESTING: the fixture test passes
 	got := runIn(t, tree, "go", "test", "-v", "-count=1", "-run", "TestNoSampleViolations", "./internal/ci")
-	assert.False(t, !strings.Contains(got, "PASS") && !strings.Contains(got, "ok"), "go test of the class rule skeleton did not pass:\n%s", got)
+	assert.True(t, strings.Contains(got, "PASS") || strings.Contains(got, "ok"), "go test of the class rule skeleton did not pass:\n%s", got)
 
 	// Makefile integration: make test-rule-sample runs and passes
 	got = runIn(t, tree, "make", "-f", "Makefile", "test-rule-sample")
-	assert.False(t, !strings.Contains(got, "PASS") && !strings.Contains(got, "ok"), "make test-rule-sample did not pass:\n%s", got)
+	assert.True(t, strings.Contains(got, "PASS") || strings.Contains(got, "ok"), "make test-rule-sample did not pass:\n%s", got)
 
 	// Write discipline: second run refuses rather than overwrite
 	cmd := exec.Command(bin, "new-rule", "--root", tree, "sample")

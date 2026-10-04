@@ -16,7 +16,8 @@ expect: ^SERVICES OK
 #
 # The name must RESOLVE, by whatever the machine has: /etc/hosts carries the tailnet
 # addresses on the Linux benches, and a LAN address is as good an answer. No tailnet address
-# is required -- the Studio has none (tailscaled is not running there) and is not a bench.
+# is required -- the coordinator's machine has none (tailscaled is not running there) and
+# is not a bench.
 set -eu
 HOST="${NOVA_SERVICES_HOST:-space}"
 ADDR=$(getent hosts "$HOST" 2>/dev/null | awk 'NR==1{print $1}' || true)

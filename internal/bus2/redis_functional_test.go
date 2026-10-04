@@ -101,7 +101,7 @@ func TestRedisStoreRunsTheWholeLoop(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, m3.ID, e4.Message().ID, "a message its reader lost comes back after ClaimAfter (Bus2.tla PendingBeforeNew)")
 
-	got, err := b.Log(ctx)
+	got, err := b.Log(ctx, "-")
 	require.NoError(t, err)
 	require.Len(t, got, 3)
 	assert.Equal(t, m1.ID, got[0].Message().ID)

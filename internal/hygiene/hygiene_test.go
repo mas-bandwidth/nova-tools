@@ -53,6 +53,18 @@ func lab(t *testing.T) string {
 	return dir
 }
 
+// staged returns a lab on branch card with one change committed: body written at
+// rel and committed under msg. It is the shape most ranges below open with.
+func staged(t *testing.T, rel, body, msg string) string {
+	t.Helper()
+	dir := lab(t)
+	git(t, dir, "checkout", "-q", "-b", "card")
+	write(t, dir, rel, body)
+	git(t, dir, "add", "-A")
+	git(t, dir, "commit", "-q", "-m", msg)
+	return dir
+}
+
 func rowan() []Identity { return []Identity{{Name: "Rowan", Email: "rowan@example.com"}} }
 
 func check(t *testing.T, dir string, o Options) []Finding {
@@ -200,11 +212,7 @@ func TestHygieneCountsARenameOnBothSides(t *testing.T) {
 func TestHygieneAcceptsAChangeInsideTheDeclaredPaths(t *testing.T) {
 	t.Parallel()
 
-	dir := lab(t)
-	git(t, dir, "checkout", "-q", "-b", "card")
-	write(t, dir, "sign/sign.go", "package sign\n\nfunc Sign(n int) int { return 0 }\n")
-	git(t, dir, "add", "-A")
-	git(t, dir, "commit", "-q", "-m", "inside")
+	dir := staged(t, "sign/sign.go", "package sign\n\nfunc Sign(n int) int { return 0 }\n", "inside")
 	if f := has(check(t, dir, Options{}), "out-of-path"); f != nil {
 		require.FailNowf(t, "assertion failed", "a change inside the declared paths drew %v", *f)
 	}
@@ -216,11 +224,7 @@ func TestHygieneAcceptsAChangeInsideTheDeclaredPaths(t *testing.T) {
 func TestHygieneSkipsOutOfPathWhenNoPathsAreDeclared(t *testing.T) {
 	t.Parallel()
 
-	dir := lab(t)
-	git(t, dir, "checkout", "-q", "-b", "card")
-	write(t, dir, "other/other.go", "package other\n\nfunc F() {}\n")
-	git(t, dir, "add", "-A")
-	git(t, dir, "commit", "-q", "-m", "a friend's own branch")
+	dir := staged(t, "other/other.go", "package other\n\nfunc F() {}\n", "a friend's own branch")
 	if f := has(check(t, dir, Options{Paths: []string{}}), "out-of-path"); f != nil {
 		require.FailNowf(t, "assertion failed", "an unbounded member drew %v", *f)
 	}
@@ -231,11 +235,7 @@ func TestHygieneSkipsOutOfPathWhenNoPathsAreDeclared(t *testing.T) {
 func TestHygieneRejectsResultMDInTheDiff(t *testing.T) {
 	t.Parallel()
 
-	dir := lab(t)
-	git(t, dir, "checkout", "-q", "-b", "card")
-	write(t, dir, "sign/RESULT.md", "line 1\n")
-	git(t, dir, "add", "-A")
-	git(t, dir, "commit", "-q", "-m", "ship the report")
+	dir := staged(t, "sign/RESULT.md", "line 1\n", "ship the report")
 	f := has(check(t, dir, Options{}), "stray-file")
 	if f == nil {
 		require.FailNowf(t, "assertion failed", "RESULT.md drew no stray-file finding: %v", tokens(check(t, dir, Options{})))
@@ -248,11 +248,7 @@ func TestHygieneRejectsTheRestOfTheStrayList(t *testing.T) {
 
 	for _, rel := range []string{"sign/run.log", "sign/sign.go.orig", "sign/sign.go.rej", "sign/sign.test", "sign/out.out", "sign/.DS_Store", "sign/PROMPT.md", "sign/.sign.go.swp", "scratch/note.txt"} {
 		t.Run(rel, func(t *testing.T) {
-			dir := lab(t)
-			git(t, dir, "checkout", "-q", "-b", "card")
-			write(t, dir, rel, "x\n")
-			git(t, dir, "add", "-A")
-			git(t, dir, "commit", "-q", "-m", "stray")
+			dir := staged(t, rel, "x\n", "stray")
 			paths := []string{"sign/**", "scratch/**"}
 			require.NotNil(t, has(check(t, dir, Options{Paths: paths}), "stray-file"), "%s drew no stray-file finding", rel)
 		})
@@ -263,11 +259,7 @@ func TestHygieneRejectsTheRestOfTheStrayList(t *testing.T) {
 func TestHygieneRejectsAFileOverOneMebibyte(t *testing.T) {
 	t.Parallel()
 
-	dir := lab(t)
-	git(t, dir, "checkout", "-q", "-b", "card")
-	write(t, dir, "sign/big.bin", strings.Repeat("a", 1024*1024+1))
-	git(t, dir, "add", "-A")
-	git(t, dir, "commit", "-q", "-m", "big")
+	dir := staged(t, "sign/big.bin", strings.Repeat("a", 1024*1024+1), "big")
 	f := has(check(t, dir, Options{}), "stray-file")
 	require.NotNil(t, f, "a file over one mebibyte drew no stray-file finding")
 	require.True(t, strings.Contains(f.Why, "1 MiB") || strings.Contains(f.Why, "mebibyte"), "why=%q, want it to name the size rule", f.Why)
@@ -308,11 +300,7 @@ func TestHygieneRejectsASubmodule(t *testing.T) {
 func TestHygieneRejectsAConflictMarker(t *testing.T) {
 	t.Parallel()
 
-	dir := lab(t)
-	git(t, dir, "checkout", "-q", "-b", "card")
-	write(t, dir, "sign/sign.go", "package sign\n\n<<<<<<< HEAD\nfunc Sign(n int) int { return 1 }\n=======\nfunc Sign(n int) int { return 0 }\n>>>>>>> side\n")
-	git(t, dir, "add", "-A")
-	git(t, dir, "commit", "-q", "-m", "left a marker")
+	dir := staged(t, "sign/sign.go", "package sign\n\n<<<<<<< HEAD\nfunc Sign(n int) int { return 1 }\n=======\nfunc Sign(n int) int { return 0 }\n>>>>>>> side\n", "left a marker")
 	f := has(check(t, dir, Options{}), "stray-file")
 	if f == nil {
 		require.FailNowf(t, "assertion failed", "a conflict marker drew no stray-file finding: %v", tokens(check(t, dir, Options{})))
@@ -324,11 +312,7 @@ func TestHygieneRejectsAConflictMarker(t *testing.T) {
 func TestHygieneStrayExceptionHoldsForItsKindOnly(t *testing.T) {
 	t.Parallel()
 
-	dir := lab(t)
-	git(t, dir, "checkout", "-q", "-b", "card")
-	write(t, dir, "sign/golden.out", "expected\n")
-	git(t, dir, "add", "-A")
-	git(t, dir, "commit", "-q", "-m", "a golden file")
+	dir := staged(t, "sign/golden.out", "expected\n", "a golden file")
 	require.NotNil(t, has(check(t, dir, Options{}), "stray-file"), "*.out drew no stray-file finding with no kind")
 	require.Nil(t, has(check(t, dir, Options{Kind: "transcript-test"}), "stray-file"), "the transcript-test exception for *.out did not hold")
 	require.NotNil(t, has(check(t, dir, Options{Kind: "fix-red"}), "stray-file"), "the transcript-test exception leaked to fix-red")
@@ -345,12 +329,8 @@ func fixtureKey() string {
 func TestHygieneRejectsAKeyShapeAndNeverPrintsIt(t *testing.T) {
 	t.Parallel()
 
-	dir := lab(t)
-	git(t, dir, "checkout", "-q", "-b", "card")
 	key := fixtureKey()
-	write(t, dir, "sign/sign.go", "package sign\n\nconst token = \""+key+"\"\n\nfunc Sign(n int) int { return 1 }\n")
-	git(t, dir, "add", "-A")
-	git(t, dir, "commit", "-q", "-m", "oops")
+	dir := staged(t, "sign/sign.go", "package sign\n\nconst token = \""+key+"\"\n\nfunc Sign(n int) int { return 1 }\n", "oops")
 	fs := check(t, dir, Options{})
 	f := has(fs, "secret")
 	require.NotNil(t, f, "a key shape drew no secret finding: %v", tokens(fs))
@@ -365,11 +345,7 @@ func TestHygieneRejectsAKeyShapeAndNeverPrintsIt(t *testing.T) {
 func TestHygieneRejectsAPEMPrivateKeyHeader(t *testing.T) {
 	t.Parallel()
 
-	dir := lab(t)
-	git(t, dir, "checkout", "-q", "-b", "card")
-	write(t, dir, "sign/key.pem", "-----BEGIN"+" OPENSSH PRIVATE KEY-----\nnot-a-key\n")
-	git(t, dir, "add", "-A")
-	git(t, dir, "commit", "-q", "-m", "oops")
+	dir := staged(t, "sign/key.pem", "-----BEGIN"+" OPENSSH PRIVATE KEY-----\nnot-a-key\n", "oops")
 	require.NotNil(t, has(check(t, dir, Options{}), "secret"), "a PEM private-key header drew no secret finding")
 }
 
@@ -380,13 +356,9 @@ func TestHygieneRejectsAPEMPrivateKeyHeader(t *testing.T) {
 func TestHygieneRejectsAnXAIProviderKey(t *testing.T) {
 	t.Parallel()
 
-	dir := lab(t)
-	git(t, dir, "checkout", "-q", "-b", "card")
 	// Built by parts so no key-shaped string lands in the tree.
 	xai := "xa" + "i-" + strings.Repeat("B", 30)
-	write(t, dir, "sign/sign.go", "package sign\n\nconst token = \""+xai+"\"\n")
-	git(t, dir, "add", "-A")
-	git(t, dir, "commit", "-q", "-m", "oops")
+	dir := staged(t, "sign/sign.go", "package sign\n\nconst token = \""+xai+"\"\n", "oops")
 	fs := check(t, dir, Options{})
 	f := has(fs, "secret")
 	require.NotNil(t, f, "an xai- provider key drew no secret finding: %v", tokens(fs))
@@ -395,12 +367,8 @@ func TestHygieneRejectsAnXAIProviderKey(t *testing.T) {
 	require.NotContains(t, all, xai, "the matched text reached the finding: %q", all)
 	// A truncated sk- copy (below the old {32,} bound, at the seat key's measured
 	// length in #1814) is still a finding.
-	dir2 := lab(t)
-	git(t, dir2, "checkout", "-q", "-b", "card")
 	short := "sk-" + strings.Repeat("C", 20)
-	write(t, dir2, "sign/sign.go", "package sign\n\nconst token = \""+short+"\"\n")
-	git(t, dir2, "add", "-A")
-	git(t, dir2, "commit", "-q", "-m", "oops")
+	dir2 := staged(t, "sign/sign.go", "package sign\n\nconst token = \""+short+"\"\n", "oops")
 	fs2 := check(t, dir2, Options{})
 	require.NotNil(t, has(fs2, "secret"), "a truncated sk- provider key drew no secret finding: %v", tokens(fs2))
 }
@@ -561,13 +529,8 @@ func TestModeFindingRejectsAModeGitWillNotWrite(t *testing.T) {
 func TestHygieneIgnoresTheSubjectReposDiffConfig(t *testing.T) {
 	t.Parallel()
 
-	dir := lab(t)
+	dir := staged(t, "sign/sign.go", "package sign\n\nconst token = \""+fixtureKey()+"\"\n", "oops")
 	git(t, dir, "config", "diff.noprefix", "true")
-	git(t, dir, "checkout", "-q", "-b", "card")
-	key := fixtureKey()
-	write(t, dir, "sign/sign.go", "package sign\n\nconst token = \""+key+"\"\n")
-	git(t, dir, "add", "-A")
-	git(t, dir, "commit", "-q", "-m", "oops")
 	fs := check(t, dir, Options{})
 	f := has(fs, "secret")
 	require.NotNil(t, f, "the subject repo's diff.noprefix hid the key: %v", tokens(fs))
@@ -619,11 +582,7 @@ func TestHygieneReadsADiffTheSubjectRepoMarkedBinary(t *testing.T) {
 func TestHygieneReadsAPathGitWouldQuote(t *testing.T) {
 	t.Parallel()
 
-	dir := lab(t)
-	git(t, dir, "checkout", "-q", "-b", "card")
-	write(t, dir, "sign/kéy.go", "package sign\n\nconst token = \""+fixtureKey()+"\"\n")
-	git(t, dir, "add", "-A")
-	git(t, dir, "commit", "-q", "-m", "oops")
+	dir := staged(t, "sign/kéy.go", "package sign\n\nconst token = \""+fixtureKey()+"\"\n", "oops")
 	fs := check(t, dir, Options{})
 	f := has(fs, "secret")
 	require.NotNil(t, f, "a quoted path hid the key: %v", tokens(fs))
@@ -729,11 +688,7 @@ func TestKindDeclaredHoldsTheEmbeddedNameSet(t *testing.T) {
 func TestHygieneReadsFullBlobIds(t *testing.T) {
 	t.Parallel()
 
-	dir := lab(t)
-	git(t, dir, "checkout", "-q", "-b", "card")
-	write(t, dir, "sign/sign.go", "package sign\n\nfunc Sign(n int) int { return 0 }\n")
-	git(t, dir, "add", "-A")
-	git(t, dir, "commit", "-q", "-m", "one change")
+	dir := staged(t, "sign/sign.go", "package sign\n\nfunc Sign(n int) int { return 0 }\n", "one change")
 	base := git(t, dir, "rev-parse", "main")
 	head := git(t, dir, "rev-parse", "HEAD")
 	entries, err := rawDiff(context.Background(), dir, base, head)
@@ -788,11 +743,7 @@ func TestHygieneRefusesALogRowItCannotRead(t *testing.T) {
 func TestHygieneReadsAFileGitCallsBinary(t *testing.T) {
 	t.Parallel()
 
-	dir := lab(t)
-	git(t, dir, "checkout", "-q", "-b", "card")
-	write(t, dir, "sign/blob.go", "package sign\n\x00\nconst token = \""+fixtureKey()+"\"\n")
-	git(t, dir, "add", "-A")
-	git(t, dir, "commit", "-q", "-m", "oops")
+	dir := staged(t, "sign/blob.go", "package sign\n\x00\nconst token = \""+fixtureKey()+"\"\n", "oops")
 	fs := check(t, dir, Options{})
 	f := has(fs, "secret")
 	require.NotNil(t, f, "a NUL byte in the file hid the key: %v", tokens(fs))
@@ -885,11 +836,7 @@ func TestHygieneChecksMarkersWhateverTheAttributesSay(t *testing.T) {
 func TestHygieneReadsAMarkerAsGitSpellsIt(t *testing.T) {
 	t.Parallel()
 
-	dir := lab(t)
-	git(t, dir, "checkout", "-q", "-b", "card")
-	write(t, dir, "sign/sign.go", "package sign\n\n// <<<<<<<< eight is a rule in a comment, not a marker\nconst bar = \"<<<<<<<\"\nfunc Sign(n int) int { return 1 }\n")
-	git(t, dir, "add", "-A")
-	git(t, dir, "commit", "-q", "-m", "lines that only look like markers")
+	dir := staged(t, "sign/sign.go", "package sign\n\n// <<<<<<<< eight is a rule in a comment, not a marker\nconst bar = \"<<<<<<<\"\nfunc Sign(n int) int { return 1 }\n", "lines that only look like markers")
 	for _, f := range check(t, dir, Options{}) {
 		require.NotContains(t, f.Why, "conflict marker", "a line that is not a marker drew one: %v", f)
 	}

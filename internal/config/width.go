@@ -10,9 +10,8 @@ import (
 // A machine's width is the most work cards the sprint's member on the machine
 // runs at once: the machine row's width field, set directly (nova-config
 // machine set <m> --width <n>) and nothing else. No other row and no live
-// state takes part in it: no friend row, no beat, no Redis (the owner,
-// 2026-10-01: "we should just be able to set width specifically in
-// nova-config and it just works"; docs/SPEC-CONFIG.md, "The sprint's width").
+// state takes part in it: no friend row, no beat, no Redis
+// (docs/SPEC-CONFIG.md, "The sprint's width").
 // nova-sprint fleet sync moves it to the fleet table as it reads.
 //
 // It is the static share, the same on every read of the same row. It is not

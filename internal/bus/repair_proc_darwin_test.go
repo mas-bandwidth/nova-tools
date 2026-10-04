@@ -37,7 +37,8 @@ func TestDarwinVanishedGitIsNotAnUnreadableCwd(t *testing.T) {
 	procs, err := gitProcsFromPS("501 77 git status\n", "501", map[string]string{}, nil, func(string) (bool, error) {
 		return false, nil
 	})
-	require.False(t, err != nil || len(procs) != 0, "vanished git: procs=%+v err=%v, want none and no error", procs, err)
+	require.NoError(t, err, "vanished git: procs=%+v err=%v, want none and no error", procs, err)
+	require.Equal(t, 0, len(procs), "vanished git: procs=%+v err=%v, want none and no error", procs, err)
 	_, err = gitProcsFromPS("501 77 git status\n", "501", map[string]string{}, nil, func(string) (bool, error) {
 		return true, nil
 	})
@@ -55,17 +56,20 @@ func TestDarwinLsofNoMatchIsAnEmptyScan(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
 	cwds, err := lsofCwds("", "", 1, errors.New("exit status 1"))
-	require.False(t, err != nil || len(cwds) != 0, "lsof with no git to match: cwds=%v err=%v, want an empty map and no error", cwds, err)
+	require.NoError(t, err, "lsof with no git to match: cwds=%v err=%v, want an empty map and no error", cwds, err)
+	require.Equal(t, 0, len(cwds), "lsof with no git to match: cwds=%v err=%v, want an empty map and no error", cwds, err)
 	procs, err := gitProcsFromPS("501 77 git rev-list --objects --stdin --not --all\n", "501", cwds, err, func(string) (bool, error) {
 		return false, nil
 	})
-	require.False(t, err != nil || len(procs) != 0, "a git gone between ps and lsof: procs=%+v err=%v, want none and no error", procs, err)
+	require.NoError(t, err, "a git gone between ps and lsof: procs=%+v err=%v, want none and no error", procs, err)
+	require.Equal(t, 0, len(procs), "a git gone between ps and lsof: procs=%+v err=%v, want none and no error", procs, err)
 	dir, lock := oldIndexLock(t)
 	cleared, cerr := clearStaleIndexLock(dir, time.Now(), func() ([]gitProc, error) { return procs, err })
-	require.False(t, cerr != nil || !cleared, "stale lock with only a vanished git: cleared=%v err=%v, want removed", cleared, cerr)
+	require.NoError(t, cerr, "stale lock with only a vanished git: cleared=%v err=%v, want removed", cleared, cerr)
+	require.True(t, cleared, "stale lock with only a vanished git: cleared=%v err=%v, want removed", cleared, cerr)
 	{
 		_, statErr := os.Lstat(lock)
-		require.False(t, !os.IsNotExist(statErr), "stale index.lock still present: %v", statErr)
+		require.True(t, os.IsNotExist(statErr), "stale index.lock still present: %v", statErr)
 	}
 
 	for _, c := range []struct {
@@ -84,7 +88,9 @@ func TestDarwinLsofNoMatchIsAnEmptyScan(t *testing.T) {
 		}
 	}
 	got, err := lsofCwds("p77\nfcwd\nn/bus\np78\nfcwd\nn/other\n", "", 0, nil)
-	require.False(t, err != nil || got["77"] != "/bus" || got["78"] != "/other", "lsof parse: %v %v", got, err)
+	require.NoError(t, err, "lsof parse: %v %v", got, err)
+	require.Equal(t, "/bus", got["77"], "lsof parse: %v %v", got, err)
+	require.Equal(t, "/other", got["78"], "lsof parse: %v %v", got, err)
 }
 
 // #3029, the second darwin window: a git ps listed has exited by the time lsof looks, but
@@ -116,7 +122,8 @@ func TestDarwinZombieGitIsNotALiveGit(t *testing.T) {
 	procs, err := gitProcsFromPS("501 77 git index-pack --stdin --fix-thin\n", "501", map[string]string{}, nil, func(string) (bool, error) {
 		return darwinStatAlive("Z+\n"), nil
 	})
-	require.False(t, err != nil || len(procs) != 0, "a zombie git with no cwd: procs=%+v err=%v, want none and no error", procs, err)
+	require.NoError(t, err, "a zombie git with no cwd: procs=%+v err=%v, want none and no error", procs, err)
+	require.Equal(t, 0, len(procs), "a zombie git with no cwd: procs=%+v err=%v, want none and no error", procs, err)
 }
 
 // CI run 36268521205, darwin shard on studio-nova-2: the runner account `nova` listed the
@@ -133,10 +140,16 @@ func TestGitScanSkipsAnotherAccountsGit(t *testing.T) {
 	}
 	ps := "502 18772 git status\n501 77 git fetch -q origin\n"
 	procs, err := gitProcsFromPS(ps, "501", map[string]string{"77": "/Users/nova/bus"}, nil, alive)
-	require.False(t, err != nil || len(procs) != 2 || !procs[0].foreign || procs[0].command != "git status", "another account's git with no cwd beside our own: procs=%+v err=%v, want theirs flagged foreign, ours placed, and no error", procs, err)
+	require.NoError(t, err, "another account's git with no cwd beside our own: procs=%+v err=%v, want theirs flagged foreign, ours placed, and no error", procs, err)
+	require.Equal(t, 2, len(procs), "another account's git with no cwd beside our own: procs=%+v err=%v, want theirs flagged foreign, ours placed, and no error", procs, err)
+	require.True(t, procs[0].foreign, "another account's git with no cwd beside our own: procs=%+v err=%v, want theirs flagged foreign, ours placed, and no error", procs, err)
+	require.Equal(t, "git status", procs[0].command, "another account's git with no cwd beside our own: procs=%+v err=%v, want theirs flagged foreign, ours placed, and no error", procs, err)
 	{
 		own := placed(procs)
-		require.False(t, len(own) != 1 || !own[0].cwdKnown || own[0].cwd != "/Users/nova/bus" || own[0].command != "git fetch -q origin", "our own git was not placed by its cwd: %+v", procs)
+		require.Equal(t, 1, len(own), "our own git was not placed by its cwd: %+v", procs)
+		require.True(t, own[0].cwdKnown, "our own git was not placed by its cwd: %+v", procs)
+		require.Equal(t, "/Users/nova/bus", own[0].cwd, "our own git was not placed by its cwd: %+v", procs)
+		require.Equal(t, "git fetch -q origin", own[0].command, "our own git was not placed by its cwd: %+v", procs)
 	}
 	require.Equal(t, 0, len(asked), "another account's pid reached the liveness check: %v", asked)
 }
@@ -149,7 +162,8 @@ func TestGitScanStillRefusesOwnUnreadableCwd(t *testing.T) {
 		return true, nil
 	})
 	const want = "cannot tell whether a git process owns this checkout: cwd unreadable pid=19050"
-	require.False(t, err == nil || err.Error() != want, "our own live git with no cwd: err=%v, want %q", err, want)
+	require.Error(t, err, "our own live git with no cwd: err=%v, want %q", err, want)
+	require.Equal(t, want, err.Error(), "our own live git with no cwd: err=%v, want %q", err, want)
 }
 
 // The wait's own repair path with the scan the CI runner saw: a stale lock in a checkout
@@ -166,10 +180,13 @@ func TestStaleLockClearsBesideAnotherAccountsGit(t *testing.T) {
 	rep, err := clearStaleIndexLockReport(dir, time.Now(), func() ([]gitProc, error) {
 		return gitProcsFromPS(other+" 18772 git status\n", self, map[string]string{}, nil, alive)
 	}, indexLockOwner, effectiveUID())
-	require.False(t, err != nil || !rep.Cleared || !rep.Scanned || rep.Scan != (LockScan{Foreign: 1}), "stale lock beside another account's git: report=%+v err=%v, want removed with foreign=1", rep, err)
+	require.NoError(t, err, "stale lock beside another account's git: report=%+v err=%v, want removed with foreign=1", rep, err)
+	require.True(t, rep.Cleared, "stale lock beside another account's git: report=%+v err=%v, want removed with foreign=1", rep, err)
+	require.True(t, rep.Scanned, "stale lock beside another account's git: report=%+v err=%v, want removed with foreign=1", rep, err)
+	require.Equal(t, LockScan{Foreign: 1}, rep.Scan, "stale lock beside another account's git: report=%+v err=%v, want removed with foreign=1", rep, err)
 	{
 		_, statErr := os.Lstat(lock)
-		require.False(t, !os.IsNotExist(statErr), "stale index.lock still present: %v", statErr)
+		require.True(t, os.IsNotExist(statErr), "stale index.lock still present: %v", statErr)
 	}
 
 	ours, oursLock := oldIndexLock(t)
@@ -190,7 +207,8 @@ func TestDarwinForeignGitDirKeepsItsLock(t *testing.T) {
 	cleared, cerr := clearStaleIndexLock(dir, time.Now(), func() ([]gitProc, error) {
 		return gitProcsFromPS("502 77 git --git-dir="+gd+" fetch\n", "501", map[string]string{}, nil, func(string) (bool, error) { return true, nil })
 	})
-	require.False(t, cleared || cerr != nil, "--git-dir of another account: cleared=%v err=%v, want the lock kept as owned", cleared, cerr)
+	require.False(t, cleared, "--git-dir of another account: cleared=%v err=%v, want the lock kept as owned", cleared, cerr)
+	require.NoError(t, cerr, "--git-dir of another account: cleared=%v err=%v, want the lock kept as owned", cleared, cerr)
 	{
 		_, statErr := os.Lstat(lock)
 		require.Equal(t, nil, statErr, "lock lost: %v", statErr)

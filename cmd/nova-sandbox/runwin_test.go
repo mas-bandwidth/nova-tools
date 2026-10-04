@@ -608,10 +608,6 @@ func (p *hangingPlace) CloseJob(job winJob) error {
 // termination gave the child is what the receipt carries, and the receipt is what says how
 // the run ended.
 func TestWindowsHasNo128PlusN(t *testing.T) {
-	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
-	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
-	// mocked-clock unit test or a functional program (nova-tools #4221).
-	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 	b := newWinBench(t, 0)
 	old := runWinPlace
 	hang := &hangingPlace{fakeWinPlace: b.place}
@@ -625,16 +621,14 @@ func TestWindowsHasNo128PlusN(t *testing.T) {
 		code, errOut = b.exec(t, b.args(t)...)
 		close(done)
 	}()
-	// Let the run reach its wait, then ask the tool to stop.
-	for i := 0; i < 200 && !strings.Contains(b.order(), "start:"); i++ {
-		time.Sleep(5 * time.Millisecond)
-	}
+	// Asking the tool to stop is itself the wait for the run to reach its wait: b.sigs
+	// is unbuffered and superviseWindows' select is its only receiver, so the send
+	// completes only once the run is in flight past Start -- no sleep and no clock
+	// anywhere in the test. The run's answer is a channel, so the wait that follows is
+	// on the verb and not on a timer; a verb that never returns is caught by the
+	// package's -timeout.
 	b.sigs <- os.Interrupt
-	select {
-	case <-done:
-	case <-time.After(10 * time.Second):
-		t.Fatal("the verb did not return after the tool was asked to stop; a wait without an end is the thing this verb never does")
-	}
+	<-done
 	assert.LessOrEqual(t, code, 128, "the windows verb returned %d, which reads as 128+N; windows has no signals and there is no such status to give", code)
 	assert.Contains(t, errOut, "windows has none", "the note does not say that the status is TerminateProcess's and not a signal's:\n%s", errOut)
 	assert.True(t, strings.Contains(b.order(), "close:job-1") || strings.Contains(b.order(), "remove:nova-j1"), "an interrupted run left the place behind: %s", b.order())

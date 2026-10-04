@@ -5,7 +5,7 @@
 // It exists because we have an obligation to report token spend, and the first thing that
 // shape was built as — three scripts of Python under zsh — produced nine day files and
 // every way it could fail at once: five paths defaulted inside the script, so a run on
-// another bench folded the wrong bench; the old month files were REMOVED on every real
+// another bench folds the wrong bench; every path here is a flag, and the tool removes no month file on a real
 // run; nine unreadable files were one line at the bottom of a summary and the run exited
 // 0; a day could shrink silently the moment a source went quiet; two repo-attribution
 // tables in two scripts disagreed about three repos; five different caps, none a flag,
@@ -53,27 +53,30 @@ databases, swarm pools, bus notes) and writes one day file per day into --out,
 one row per (day, model, repo). The repo comes from the --repos file: lines of
 <name><TAB><regexp>, and the first match on a session's path wins. check, sum
 and report read the day files back; a count a source never gave prints as -.
-first run: create a tiny transcript and rules file with the setup line above
-example:, then run the lines under example: in order.
+first run: create a tiny transcript and rules file with the lines under setup:
+above example:, then run the lines under example: in order.
 
 usage:
   nova-tokens fold    --out <dir> (--day <YYYY-MM-DD> | --all) --repos <file>
                       [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--swarm <label>=<pool>]... [--bus <dir>]
                       [--provider <kind>:<label>=<file>]... [--scratch <dir>] [--timeout <seconds>] [--allow-shrink] [--max <n>] [--dry-run]
-  nova-tokens report --who <name> --day <YYYY-MM-DD> --repos <file>
+  nova-tokens report (local mode) --who <name> --day <YYYY-MM-DD> --repos <file>
                       mode: local note body, printed as the tokens note artifact
                       [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--provider <kind>:<label>=<file>]...
                       [--supersedes <note-id>]... [--note <path>] [--scratch <dir>] [--timeout <seconds>] [--dry-run]
-  nova-tokens report --redis <host:port> --month <YYYY-MM> [--by model|repo|day|tuple] [--max <n>]
+  nova-tokens report (store mode) --redis <host:port> --month <YYYY-MM> [--by model|repo|day|tuple] [--max <n>]
                       mode: Redis month summary
                       [--user <name>] [--password-env <NAME>]
+  the local mode is selected by --who and --day; the store mode by --redis and --month; giving both --who and --redis selects the store mode (--redis wins); a mix of --who and --redis prints the store summary
   nova-tokens ledger  --out <dir> (--day <YYYY-MM-DD> | --month <YYYY-MM>) --redis <host:port>
                       [--user <name>] [--password-env <NAME>] [--dry-run]
   nova-tokens sum     --out <dir> --month <YYYY-MM> [--max <n>]
   nova-tokens check   --out <dir> [--strict | --no-spend <file>] [--through <YYYY-MM-DD>] [--max <n>]
   nova-tokens sources --repos <file> (--day <YYYY-MM-DD> | --all) [<source flags>] [--unattributed] [--max <n>]
   nova-tokens profiles --swarm-root <dir>
+                      one PROFILES MODEL line per model (cards, median output, overshoot), then a PROFILES OK line with totals
   nova-tokens session --claude-session <jsonl> [--out <dir>] [--day <YYYY-MM-DD>] [--dry-run]
+                      [--role <name>] [--weights <in,cw,cr,out>]
   nova-tokens version
 
 Every verb but version takes --json: the same result as one JSON object on stdout, a
@@ -163,7 +166,17 @@ sources --unattributed prints the path stems that were SEEN and matched no rule,
 first, capped by --max. That listing is what other=<pct>% on a day line is made of, and it
 is the evidence for improving the --repos file.
 
-  mkdir -p ./transcripts ./out && printf '%s\n' '{"type":"assistant","timestamp":"2026-09-11T09:12:00Z","message":{"id":"example-1","model":"claude-fable-5-1","usage":{"input_tokens":812,"output_tokens":40,"cache_creation_input_tokens":1200,"cache_read_input_tokens":90000},"content":[{"type":"tool_use","input":{"file_path":"/work/schema/wire.md"}}]}}' > ./transcripts/window.jsonl && cp ./transcripts/window.jsonl ./session.jsonl && printf 'schema\t(^|/)schema($|/)\n' > ./repos.tsv
+setup:
+  mkdir -p ./transcripts ./out
+  printf '%s' '{"type":"assistant","timestamp":"2026-09-11T09:12:' > ./transcripts/window.jsonl
+  printf '%s' '00Z","message":{"id":"example-1","model":"claude-' >> ./transcripts/window.jsonl
+  printf '%s' 'fable-5-1","usage":{"input_tokens":812,' >> ./transcripts/window.jsonl
+  printf '%s' '"output_tokens":40,"cache_creation_input_tokens":' >> ./transcripts/window.jsonl
+  printf '%s' '1200,"cache_read_input_tokens":90000},' >> ./transcripts/window.jsonl
+  printf '%s' '"content":[{"type":"tool_use","input":{' >> ./transcripts/window.jsonl
+  printf '%s\n' '"file_path":"/work/schema/wire.md"}}]}}' >> ./transcripts/window.jsonl
+  cp ./transcripts/window.jsonl ./session.jsonl
+  printf 'schema\t(^|/)schema($|/)\n' > ./repos.tsv
 
 example:
   nova-tokens fold --out ./out --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts
@@ -173,14 +186,14 @@ example:
   nova-tokens sources --repos ./repos.tsv --all --claude bench=./transcripts --unattributed --max 20
   nova-tokens report --who ada --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts
 
-session is the coordinator's own window: it sums one Claude Code session jsonl per
+session is the caller's own window: it sums one Claude Code session jsonl per
 turn -- input, cache write, cache read, output, deduplicated on the message id so a
 streamed message counts once -- prints one SESSION line with the weighted
-fresh-input equivalent (input + 1.25 x cache write + 0.1 x cache read + 5 x output)
-and the average context per turn, and with --out folds it into the day file as the
-model the transcript names, as <model>/coordinator (a transcript that names no
-model is refused, never booked under a guess). The coordinator is a friend, and its spend is a
-line in the ledger like everybody else's.
+fresh-input equivalent (in x input + cw x cache write + cr x cache read + out x output,
+the four --weights sets) and the average context per turn, and with --out folds
+it into the day file as the model the transcript names, as <model> or, when --role
+names one, <model>/<role> (a transcript that names no model is refused, never
+booked under a guess). Its spend is a line in the ledger like every other row's.
 
 example:
   nova-tokens session --claude-session ./session.jsonl --out ./out
@@ -732,10 +745,12 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 					lists["unreadable"].Line(unreadableLine(s, "TOKENS", tokens.Unreadable{Label: "out", Path: outPath, Why: why}))
 				}
 			case readErr == nil && len(findings) == 0:
-				// Merge by source BEFORE anything else touches the file: a row no declared
-				// source wrote is carried over, a row they all wrote is replaced, and a row
-				// this fold can neither keep nor recompute refuses the day. Rule 10 then
-				// compares the file with the MERGED file, which is like with like.
+				// Merge by source BEFORE anything else touches the file: a row no
+				// declared source wrote is carried over, a row they all wrote is
+				// replaced, and a row this fold can neither keep nor recompute refuses
+				// the day. Rule 10 then compares the file with the merged file, so it
+				// compares like with like and cannot hide an erased row when this run's
+				// numbers are bigger.
 				merged, retained, partials := tokens.MergeDay(old.Rows, file.Rows, declared)
 				for _, pt := range partials {
 					partial = true
@@ -814,7 +829,7 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// A FOLD THAT DROPPED EVERY MESSAGE FOLDED NOTHING, AND A GATE READING THE EXIT CODE MUST
 	// SEE IT. Some messages dropped is a TOKENS NOTE (the day is short and the note says
 	// so); every message dropped, with none folded, is a fold that did not do its job:
-	// exit 1 with the counts.
+	// exit 1 with the counts so the caller sees that no work was done.
 	dropped, of, allDropped := allMessagesDropped(sources)
 	bad := n("unreadable") > 0 || n("unparsed") > 0 || n("mixed") > 0 || n("conflict") > 0 ||
 		(n("shrank") > 0 && !*allowShrink) || n("partial") > 0 || allDropped
@@ -975,7 +990,7 @@ func firstUnreadableLabel(sources []*tokens.Source) string {
 // noidAndDup is the sentence for spend that was read and then dropped: a message with no
 // id is not folded (rule 4) and a repeated id is counted once. Both are numbers on a green
 // TOKENS SOURCE line and nowhere else, and 100% of a file's usage can be a message with no
-// id (lesson 95: a number is not a sentence).
+// id (a number is not a sentence).
 func noidAndDup(sources []*tokens.Source) string {
 	noid, dup, label := 0, 0, "-"
 	for _, s := range sources {
@@ -1204,10 +1219,12 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 			folder.Add(src.Label, m)
 		}
 	}
-	// Rule 20: report "folds that machine's own sources for one day, the same sources and
-	// the same attribution as fold", and that includes what the fold SAYS about them: an
-	// unreadable file, a line that did not parse and a message with no id each leave a
-	// line here (rule 3: counted and printed, never skipped silently).
+	// Rule 20: report folds that the caller's own sources produce for one day, with the same
+	// sources and the same attribution as fold. That has to include what the fold SAYS about them.
+	// This verb counted only the unreadables, so a transcript line whose stamp does not
+	// parse and a message with no id -- both counted by the reader, both dropped before
+	// the body -- left no trace at all, and the friend pasted a short day onto the bus
+	// under REPORT OK (rule 3: counted and printed, never skipped silently).
 	unreadable, unparsed := 0, 0
 	for _, src := range sources {
 		for _, u := range src.Unreadables {

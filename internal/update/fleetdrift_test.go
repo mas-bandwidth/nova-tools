@@ -61,7 +61,7 @@ func TestReportStorePrintsOneDriftLineForTheStaleBench(t *testing.T) {
 	if !strings.Contains(drift[0], "bench=stale") || !strings.Contains(drift[0], "build=20260924090000-bbbbbbbbbbbb") || !strings.Contains(drift[0], "want=20260925120000-aaaaaaaaaaaa") {
 		require.Failf(t, "", "the DRIFT line does not name the stale bench and both stamps: %s", drift[0])
 	}
-	if !strings.Contains(errs.String(), "REPORT FAIL benches=3 beating=2 current=1 drift=1 unknown=0") {
+	if !strings.Contains(errs.String(), "REPORT FAILED benches=3 beating=2 current=1 drift=1 unknown=0") {
 		require.Failf(t, "", "receipt line missing or wrong:\n%s", all)
 	}
 	if strings.Contains(all, "From:") || strings.Contains(all, "NOTE") || strings.Contains(all, "sent=") {

@@ -29,7 +29,7 @@ func TestFoldRefusesLinkedLockBeforeWriting(t *testing.T) {
 			link := filepath.Join(out, tokens.LockName)
 			{
 				err := os.Symlink(target, link)
-				require.False(t, err != nil, err)
+				require.NoError(t, err, err)
 			}
 			result := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "fixture="+source)
 			wantExit(t, result, 2)
@@ -37,7 +37,7 @@ func TestFoldRefusesLinkedLockBeforeWriting(t *testing.T) {
 			wantContains(t, result.stderr, "fold.lock")
 			raw, err := os.ReadFile(target)
 			if missing {
-				assert.False(t, !os.IsNotExist(err), "target created: %q (%v)", raw, err)
+				assert.True(t, os.IsNotExist(err), "target created: %q (%v)", raw, err)
 			} else if err != nil || string(raw) != body {
 				assert.Failf(t, "symlink target changed", "target changed: %q (%v)", raw, err)
 			}

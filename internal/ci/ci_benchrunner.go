@@ -10,8 +10,8 @@ import (
 	"strings"
 )
 
-// ci_benchrunner.go is the machine behind TestCIOneBenchRunner (#2932, the
-// control for #3291): the fleet plays are the one way this tree runs a script
+// ci_benchrunner.go is the machine behind TestCIOneBenchRunner: the fleet plays
+// are the one way this tree runs a script
 // on a bench, and every ssh exec site left in Go is a row of
 // testdata/bench-runners.allow with its
 // shape and retiring issue. The list may only shrink.
