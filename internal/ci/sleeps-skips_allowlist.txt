@@ -1,5 +1,5 @@
 # The SLEEPS ledger: pkg<TAB>Func<TAB>where. One row per unit-test function allowed
-# to wait on the wall clock today, the debt the tree owes (Glenn 2026-09-25: "unit
+# to wait on the wall clock today, the debt the tree owes (a person 2026-09-25: "unit
 # tests must not have real sleeps or waits"; nova-tools #4221, #4413).
 #
 # TWO KINDS OF ROW, ONE KEY (package directory, top-level function):
