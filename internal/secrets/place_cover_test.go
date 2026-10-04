@@ -280,6 +280,15 @@ func TestPlaceCoverWriteReceiptReplacesAndKeepsSixFields(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "cannot create receipts directory")
 	})
+
+	t.Run("refuses-unreadable-receipt", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		require.NoError(t, os.MkdirAll(receiptPath(dir, "web-1"), 0o700))
+		err := writeReceipt(dir, "web-1", want)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "is a directory")
+	})
 }
 
 // TestPlaceCoverPlaceDryRunPlansWithoutWriting pins placeDryRun: the plan names
@@ -353,6 +362,7 @@ func TestPlaceCoverRunPlacedListsReceiptsAndNotesLegacy(t *testing.T) {
 		name      string
 		machine   string
 		content   string
+		isDir     bool
 		wantOK    string
 		wantItems []string
 		wantErr   string
@@ -387,11 +397,19 @@ func TestPlaceCoverRunPlacedListsReceiptsAndNotesLegacy(t *testing.T) {
 				"NOTE 1 receipt(s) for web-1 carry no sealed-file identity",
 			},
 		},
+		{
+			name:    "refuses-unreadable",
+			machine: "web-1",
+			isDir:   true,
+			wantErr: "is a directory",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
-			if tc.content != "" {
+			if tc.isDir {
+				require.NoError(t, os.MkdirAll(receiptPath(dir, "web-1"), 0o700))
+			} else if tc.content != "" {
 				require.NoError(t, os.WriteFile(receiptPath(dir, "web-1"), []byte(tc.content), 0o600))
 			}
 			okLine, items, err := RunPlaced(PlacedInput{Machine: tc.machine, Receipts: dir})
