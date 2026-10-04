@@ -60,6 +60,7 @@ const (
 type Daemon struct {
 	Friend, Harness, Dir  string
 	StateDir, Coordinator string
+	Keepalive             func(context.Context) error // started only after singleton and session validation
 	Width                 int
 	Store                 bus2.Store
 	Deliver               Deliverer
@@ -149,6 +150,20 @@ func (d *Daemon) Run(ctx context.Context) (runErr error) {
 	}
 	if state.Asleep && state.Coordinator == "" {
 		return errors.New("asleep friend needs a configured coordinator or local wake")
+	}
+	if d.Keepalive != nil {
+		child, cancel := context.WithCancel(ctx)
+		done := make(chan error, 1)
+		go func() {
+			err := d.Keepalive(child)
+			if err == nil && child.Err() == nil {
+				err = errors.New("keepalive loop stopped before daemon shutdown")
+			}
+			done <- err
+			cancel()
+		}()
+		defer func() { cancel(); runErr = errors.Join(runErr, <-done) }()
+		ctx = child
 	}
 	_, passive := d.Deliver.(interface{ Passive() })
 	d.m = Start(d.Now())
