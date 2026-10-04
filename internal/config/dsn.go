@@ -54,7 +54,7 @@ func ResolveDSN(flagValue string, getenv func(string) string) (string, error) {
 	cfg, err := pgconn.ParseConfig(dsn)
 	if err != nil {
 		if flagValue != "" {
-			return "", refuseFlagPassword()
+			return "", fmt.Errorf("--pg: cannot be read, so it is refused as a flag that carries a password; want postgres://user@host:5432/nova with no password, and export it as the variable %s names", EnvPGPassEnv)
 		}
 		return "", fmt.Errorf("%s could not be parsed; want postgres://user@host:5432/nova (%T)", EnvPG, err)
 	}

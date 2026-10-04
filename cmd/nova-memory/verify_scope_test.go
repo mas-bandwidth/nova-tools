@@ -64,6 +64,43 @@ func TestVerifyMissingLinksNamesItsChoices(t *testing.T) {
 	require.Containsf(t, errOut, "info", "missing links: exit %d err=%s", code, errOut)
 }
 
+// TestVerifyBacklinkThroughADirectorySymlinkOutOfRootIsAFinding pins
+// security#76 finding 6 (re-file of security#58 finding 4). notes/a.md and
+// notes/b.md name each other's stems, so the coverage direction itself
+// passes. notes/dir is a directory symlink to another tree. A relative link
+// notes/b.md -> dir/outside.md stays lexically inside --root; os.DirFS stats
+// the outside file and verify exits 0. The same link to dir/missing.md is a
+// finding either way.
+func TestVerifyBacklinkThroughADirectorySymlinkOutOfRootIsAFinding(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		target string
+		plant  bool
+	}{
+		{name: "target exists outside the root", target: "outside.md", plant: true},
+		{name: "target is missing outside the root", target: "missing.md", plant: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			outside := t.TempDir()
+			if tc.plant {
+				require.NoError(t, os.WriteFile(filepath.Join(outside, tc.target), []byte("kept outside the corpus\n"), 0600))
+			}
+			require.NoError(t, os.MkdirAll(filepath.Join(root, "notes"), 0700))
+			require.NoError(t, os.Symlink(outside, filepath.Join(root, "notes", "dir")))
+			verifyFile(t, root, "notes/a.md", "b")
+			verifyFile(t, root, "notes/b.md", "a\n["+tc.target+"](dir/"+tc.target+")")
+			code, out, errOut := runCLI(t, "", "verify", "--root", root, "--links", "gate", "--coverage", "notes/*.md:notes/*.md")
+			require.Equalf(t, 1, code, "symlink backlink: exit %d out=%s err=%s", code, out, errOut)
+			require.Containsf(t, errOut, "VERIFY FAIL backlink", "symlink backlink: exit %d out=%s err=%s", code, out, errOut)
+			require.Containsf(t, errOut, "notes/b.md", "symlink backlink: exit %d out=%s err=%s", code, out, errOut)
+			require.NotContainsf(t, out, "VERIFY OK", "a failing verify must not print an OK line, got %q", out)
+		})
+	}
+}
+
 func TestVerifyLinksToExcludedTargetsRemainFindings(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()

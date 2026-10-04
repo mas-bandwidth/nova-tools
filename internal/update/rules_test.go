@@ -173,7 +173,7 @@ func TestRule26NoClockOfItsOwnNoInstallNoSendNobodyAsked(t *testing.T) {
 	snapshot := filepath.Join(t.TempDir(), "s.json")
 	log := fakeBusPath(t)
 	p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
-	c, out, errs := run(t, env, "report", "--file", p, "--as", "fixture", "--to", "integrator", "--snapshot", snapshot)
+	c, out, errs := run(t, env, "report", "--file", p, "--as", "fixture", "--to", "integrator", "--state", snapshot)
 	if c != 0 {
 		require.EqualValuesf(t, 0, c, "%d %s %s", c, out, errs)
 	}
@@ -269,7 +269,7 @@ func TestHelpIsTheSpecsVerbsBlock(t *testing.T) {
 	}
 	// The spec says nova-version's lines are the report line's flags under that
 	// name, so every flag the report line offers a plain report must appear.
-	for _, flag := range []string{"--file <manifest: " + manifestShape + ">", "--host <label>", "--snapshot <path>", "--max <n>", "--timeout <d>", "--budget <d>", "--kind <k>"} {
+	for _, flag := range []string{"--file <manifest>", "--host <label>", "--state <path>", "--max <n>", "--timeout <d>", "--budget <d>", "--kind <k>"} {
 		if !strings.Contains(lines["report"], flag) {
 			assert.Failf(t, "", "nova-version's report line does not carry %s", flag)
 		}
@@ -283,7 +283,7 @@ func TestHelpIsTheSpecsVerbsBlock(t *testing.T) {
 
 // #592: the snapshot verb is callable, yet help never printed it. Its whole
 // usage line belongs beside report so a reader discovers the inventory verb,
-// distinguishable from report's unrelated --snapshot <path> option by the verb
+// distinguishable from report's unrelated --state <path> option by the verb
 // spelling and its --bin/--out flags (docs/SPEC-VERSION.md).
 func TestHelpNamesTheSnapshotVerb(t *testing.T) {
 	t.Parallel()

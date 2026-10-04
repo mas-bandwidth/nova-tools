@@ -7,7 +7,6 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/check"
-	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
@@ -74,7 +73,7 @@ func renderLinks(w io.Writer, dir string, res check.LinksResult, max int) int {
 		out.Item("broken", "file", b.File, "line", b.Line, "target", b.Target, "reason", b.Reason)
 	}
 	if shown < len(res.Broken) {
-		out.More = []tool.More{{Kind: "broken", Shown: shown, Total: len(res.Broken), Remedy: failMaxRemedy}}
+		out.More = []tool.More{{Kind: "broken", Shown: shown, Total: len(res.Broken), Remedy: maxRemedy}}
 	}
 	if len(res.Broken) > 0 {
 		out.Status = tool.Failed
@@ -98,7 +97,7 @@ func appendFailures(out *tool.Out, kind string, failures []check.Failure, max in
 		out.Item(kind, "subject", f.Subject, "reason", f.Reason)
 	}
 	if shown < len(failures) {
-		out.More = append(out.More, tool.More{Kind: kind, Shown: shown, Total: len(failures), Remedy: failMaxRemedy})
+		out.More = append(out.More, tool.More{Kind: kind, Shown: shown, Total: len(failures), Remedy: maxRemedy})
 	}
 }
 
@@ -133,32 +132,12 @@ func renderSpelling(w io.Writer, dir string, res check.SpellingResult, v spellin
 		out.Item(kind, "file", f.File, "line", f.Line, "column", f.Column, "original", f.Original, "replacement", f.Replacement)
 	}
 	if shown < len(res.Findings) {
-		out.More = []tool.More{{Kind: kind, Shown: shown, Total: len(res.Findings), Remedy: failMaxRemedy}}
+		out.More = []tool.More{{Kind: kind, Shown: shown, Total: len(res.Findings), Remedy: maxRemedy}}
 	}
 	if v.failed {
 		out.Status = tool.Failed
 	}
 	out.Exit = v.exit
-	return renderResult(w, out)
-}
-
-func renderHygiene(w io.Writer, findings []hygiene.Finding, max int, remedy, repo, base, head, paths string) int {
-	out := &tool.Out{Verb: "hygiene", Status: tool.OK}
-	out.Fact("repo", repo).Fact("base", base).Fact("head", head).Fact("paths", paths).Fact("findings", len(findings))
-	shown := len(findings)
-	if max > 0 && shown > max {
-		shown = max
-	}
-	for _, f := range findings[:shown] {
-		out.Item("finding", "reason", f.Token, "at", f.At, "why", f.Why)
-	}
-	if shown < len(findings) {
-		out.More = []tool.More{{Kind: "finding", Shown: shown, Total: len(findings), Remedy: remedy}}
-	}
-	if len(findings) > 0 {
-		out.Status = tool.Failed
-		out.Exit = 1
-	}
 	return renderResult(w, out)
 }
 

@@ -199,6 +199,7 @@ The seven rules:
    nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--kind <kind>]
    nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all) [--force]
    nova-swarm slots list --store <dir>
+   nova-swarm slots run --store <dir> --owner <o> [--n <k>] [--for <duration>] [--kind <kind>] [--label <text>] [--wait <duration>] -- <command> [args...]
    ```
 
    `init` makes a store: the directory, its `slots/` and one `shares.tsv` with the
@@ -210,6 +211,13 @@ The seven rules:
    Card kinds carry a weight charged at take, before any child starts: a schema or
    fix-red card weighs 4 because it spawns build chains; a read card weighs 1.
    A schema card is refused at take when the remaining share fits only a read.
+
+   `run` executes a command while holding a slot lease. It takes the requested
+   weighted lease from the slot store, waits only to a caller-supplied bounded deadline
+   when capacity is occupied, starts the command only after ownership is recorded,
+   propagates the command exit status, and releases only its exact lease IDs on normal exit,
+   command failure, cancellation, and handled signals. Refusals name the current holder and
+   concrete retry/remedy without deleting a live lease.
 4. `nova-swarm slots list --store <dir>` prints who holds what, one line per lease.
 5. Reaping: a lease past until= whose pid is gone is reaped by the next take;
    drift: a pid alive past until= is DRIFT, printed by name, never reaped and never regranted.
@@ -222,7 +230,8 @@ Red tests (each seen red before it is trusted):
 - an expired lease with a dead pid frees its slot;
 - an expired lease with a live pid is DRIFT and stays;
 - a schema card is refused at take when the remaining share fits only a read;
-- a live-until lease whose pid is gone is stranded with its label.
+- a live-until lease whose pid is gone is stranded with its label;
+- two concurrent runners have maximum critical-section occupancy one, and failure/cancellation leave the slot reusable.
 
 A bench holds slot leases: the store is `<store>/slots` with one directory per lease made by `os.Mkdir` (atomic), each holding a file `lease` with lines `owner=`, `pid=`, `label=`, `until=<RFC3339>`, beside `<store>/shares.tsv` rows `capacity\t<n>`, `reserve\t<n>`, `<owner>\t<n>`. `nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration>` first reaps every lease whose `until=` is past AND whose pid is not alive — a lease past `until=` with a live pid is `DRIFT`, stays, and counts as held — then grants `k` leases iff the owner's held+demand stays within its share and the total held+demand stays within `capacity` minus `reserve`.
 

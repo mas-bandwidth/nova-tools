@@ -337,7 +337,7 @@ read — and `convergence` is a reading of the work itself. Each is a ledger
 written in advance, read back, and held to.
 
 Verbs: `quickstart`, `attest`, `links`, `kernel`, `nocode`, `floors`,
-`corpus`, `hygiene`, `dogfood`, `convergence`, `spelling`, plus `version` and `help`.
+`corpus`, `spelling`, plus `version` and `help`; `hygiene`, `dogfood` and `convergence` moved to nova-dev (below).
 `nova-check version` is the Conventions' build line, exit 0, so a green from
 this tool names its build.
 
@@ -347,7 +347,7 @@ refusal or a note, renders through `internal/oneline`; `ledger=` on
 `CORPUS OK` is a field and prints as one token; `deny-list=` names one of
 three constants from the deny-list machinery, so it is not caller text — and
 it is a field, so it is one token whoever wrote it. Each label is spelled as
-one token, with no space and no `=`: `floor-list`, `--deny-ext` and
+one token, with no whitespace and no `=`: `floor-list`, `--deny-ext` and
 `floor-list+--deny-ext-add`. They go through `oneline.Field` like every other
 field, which leaves them unchanged, and a finding's reason spells them the same
 way, so a reader who has seen `floor-list` in a finding reads the same token on
@@ -1380,10 +1380,43 @@ four-column table indented after a blank line is not checked. Indented rows
 
 ---
 
+### spelling — known misspellings in prose, with code blocks blanked
+
+```
+nova-check spelling (--dir <dir> | --file <path> | --path <pattern>)
+                    [--ignore <word|@file>] [--write] [--exclude <prefix>]
+                    [--max <n>] [--dry-run]
+```
+
+**Why it exists.** Prose committed into a self repo or prepared for publishing
+deserves a mechanical spelling pass. Fenced code blocks and inline code spans
+are blanked with spaces so identifiers, code snippets, and technical symbols
+are not falsely flagged as misspellings. Compares against a pure-Go corpus
+(`github.com/client9/misspell`) in US locale.
+
+**The allowlist.** Known project terms and technical words are excluded via
+`--ignore <word|@file>` (repeatable, or comma-separated). An `@file` reference
+loads words one per line, with blank lines and `#` comments ignored.
+
+**Write mode.** In check mode (default), findings are reported and the check
+exits 1 if any misspellings are found. With `--write`, corrections are applied in
+place atomically, preserving surrounding formatting, code blocks, and line
+structures, exiting 0. With `--write --dry-run`, each correction it would make is
+one `SPELLING FIX` line and the verdict is `SPELLING OK ... written=0
+dry_run=true`, exit 0, with nothing written; `--dry-run` without `--write` is
+the check mode.
+
+**Deliberately does not check:** *code blocks or identifiers.* Code is not
+prose: identifiers and code snippets in fences and backticks are skipped.
+
+---
+
+## nova-dev — this repository's own development process
+
 ### hygiene — is this branch's range clean, before anybody reads it
 
 ```
-nova-check hygiene --repo <dir> --base <ref> --head <ref> --identity "<Name> <email>"[,...] [--paths <glob>[,<glob>...]] [--kind <card kind>] [--max <n>] [--timeout <seconds>]
+nova-dev hygiene --repo <dir> --base <ref> --head <ref> --identity "<Name> <email>"[,...] [--paths <glob>[,<glob>...]] [--kind <card kind>] [--max <n>] [--timeout <seconds>]
 ```
 
 **Why it exists.** Four mechanical questions decide whether a range is clean
@@ -1421,10 +1454,10 @@ able to give.
 
 ```
 HYGIENE FINDING reason=<identity|out-of-path|stray-file|secret> at=<sha12>|<path>|<path>:<line>: <why>
-HYGIENE MORE kind=finding shown=<n> total=<t> nova-check hygiene --repo <dir> … --max 0
+HYGIENE MORE kind=finding shown=<n> total=<t> nova-dev hygiene --repo <dir> … --max 0
 HYGIENE OK base=<ref> head=<ref> paths=<glob,…|-> findings=0
-HYGIENE NO base=<ref> head=<ref> paths=<glob,…|-> findings=<n>
-nova-check hygiene: <what was wrong>; run: nova-check help
+HYGIENE FAILED base=<ref> head=<ref> paths=<glob,…|-> findings=<n>
+nova-dev hygiene REFUSED: <what was wrong>; run: nova-dev help
 ```
 
 The listing is capped at `--max` (default 20, `0` for all) and counted, like
@@ -1467,9 +1500,9 @@ it is shown is not a check.
 ### dogfood — has anybody but the author run it
 
 ```
-nova-check dogfood ledger (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] [--git-timeout <s>] [--tools-timeout <s>] [--fail-max <n>]
-nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] [--closes <id>] --receipts <dir> [--tools-timeout <s>] [--fail-max <n>] [--dry-run]
-nova-check dogfood gate   (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--shipped <cmd dir>] [--authors <file>] [--repo <dir>] [--require-all] [--fail-max <n>]
+nova-dev dogfood ledger (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] [--git-timeout <s>] [--tools-timeout <s>] [--fail-max <n>]
+nova-dev dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] [--closes <id>] --receipts <dir> [--tools-timeout <s>] [--fail-max <n>]
+nova-dev dogfood gate   (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--shipped <cmd dir>] [--authors <file>] [--repo <dir>] [--require-all] [--fail-max <n>]
 ```
 
 **Why it exists.** *A tool is not finished until it is tested, dogfooded by
@@ -1646,7 +1679,7 @@ different lane.
 ### convergence — are we converging
 
 ```
-nova-check convergence --repo <owner/name> --ledger <md> --receipts <dir> --retired <file> --since <RFC3339|24h>
+nova-dev convergence --repo <owner/name> --ledger <md> --receipts <dir> --retired <file> --since <RFC3339|24h>
       [--bin <dir>] [--repo-dir <dir>] [--batch-logs <dir>] [--versions <tsv>] [--certs <tsv>]
       [--state <file>] [--by <name>] [--json] [--timeout <n>] [--dry-run]
 ```
@@ -1681,36 +1714,6 @@ writes is `--state`, and that holds one number per stream; `--dry-run` takes
 the same reading and writes no `--state`, saying so in one
 `CONVERGENCE NOTE dry_run=true` line (a `dry_run` field under `--json`).
 
-### spelling — known misspellings in prose, with code blocks blanked
-
-```
-nova-check spelling (--dir <dir> | --file <path> | --path <pattern>)
-                    [--ignore <word|@file>] [--write] [--exclude <prefix>]
-                    [--fail-max <n>] [--dry-run]
-```
-
-**Why it exists.** Prose committed into a self repo or prepared for publishing
-deserves a mechanical spelling pass. Fenced code blocks and inline code spans
-are blanked with spaces so identifiers, code snippets, and technical symbols
-are not falsely flagged as misspellings. Compares against a pure-Go corpus
-(`github.com/client9/misspell`) in US locale.
-
-**The allowlist.** Known project terms and technical words are excluded via
-`--ignore <word|@file>` (repeatable, or comma-separated). An `@file` reference
-loads words one per line, with blank lines and `#` comments ignored.
-
-**Write mode.** In check mode (default), findings are reported and the check
-exits 1 if any misspellings are found. With `--write`, corrections are applied in
-place atomically, preserving surrounding formatting, code blocks, and line
-structures, exiting 0. With `--write --dry-run`, each correction it would make is
-one `SPELLING FIX` line and the verdict is `SPELLING OK ... written=0
-dry_run=true`, exit 0, with nothing written; `--dry-run` without `--write` is
-the check mode.
-
-**Deliberately does not check:** *code blocks or identifiers.* Code is not
-prose: identifiers and code snippets in fences and backticks are skipped.
-
----
 
 ## nova-self-talk — the self-talk register, classified
 
@@ -1826,7 +1829,7 @@ filter of the first class is deliberately narrow: widening it to match bare
 "cannot" would flag every prohibition, which is the negation-count failure
 (below). The second class adds sentence segmentation, which the first does not
 have: paragraphs, headings, table rows and list items are separate units, a
-terminator only ends a sentence when a space or the end follows it (so
+terminator only ends a sentence when whitespace or the end follows it (so
 `RULES.md` is not two sentences), **each finding carries the source line it
 starts on**, and quotation state is tracked through a paragraph so that the
 second and later sentences of a quoted block — which carry no quote mark of
@@ -2096,7 +2099,7 @@ each: whitespace and `=` inside a stored key or a hand-written stamp print as
 `\x20` and `\x3d`. A stored key of `x lockdown=clear quarantines=0` therefore
 prints as `STATUS OK quarantine=x\x20lockdown\x3dclear\x20quarantines\x3d0
 since=t: r`, and a grep for `lockdown=clear` matches only the lockdown field.
-A surface name holding a space, which is legal, prints the same way. The
+A surface name holding whitespace, which is legal, prints the same way. The
 `<reason>` after `: ` is the free-text tail and keeps its spaces; so does the
 remedy inside a `FUSE FAIL quarantine=` parenthetical. That remedy is a
 POSIX-shell command: the box path and normalized surface are quoted, and `--` precedes
@@ -2117,12 +2120,12 @@ where it is reachable.)
 
 **This tool's own writes are folded first, and folding is never a refusal.**
 `lockdown` and `quarantine` turn every control character in a reason into a
-space, collapse runs of whitespace — Unicode spaces included, so a non-breaking
-space becomes an ordinary one — and trim the ends. Surface names are folded by
+blank, collapse runs of whitespace — Unicode spaces included, so a non-breaking
+blank becomes an ordinary one — and trim the ends. Surface names are folded by
 the same normalization that lower-cases them, which means `check` and `lift
 quarantine` fold too, on **both sides of every match**. Each control character
-becomes a SPACE rather than vanishing, so `dis\x01cord` is stored and matched as
-`dis cord`; they disappear only at the ends, where the trim takes the space with
+becomes a BLANK rather than vanishing, so `dis\x01cord` is stored and matched as
+`dis cord`; they disappear only at the ends, where the trim takes the blank with
 them, which is why `\x01real` stores as `real`. A reason made ENTIRELY of NON-WHITESPACE control
 characters is kept instead as its visible escapes, rather than refused, because a
 fuse you cannot blow is not a fuse. The whitespace half of that category is not
@@ -3230,7 +3233,7 @@ order:
 4. drop a leading `for `;
 5. drop trailing parentheticals, repeatedly;
 6. what remains must **equal** a known name, alias or group, case-insensitively,
-   or **begin with one followed by a space** — the instance qualifier, so `Ada
+   or **begin with one followed by whitespace** — the instance qualifier, so `Ada
    a1b2c3d4` and `Ada Vale` are both Ada. The longest known name wins,
    and the prefix rule **refuses** rather than resolves when what follows the
    known name is itself a known name;
@@ -3278,13 +3281,13 @@ was accepted has no thread. `Re` may repeat; nothing else may. `Kind` is
 `receipt` or `note` and is the only override of the receipt heuristic.
 
 **`Host` is which MACHINE posted, and it is optional.** One name can post from
-two places — the keeper on the Studio and the bud on the Air both post as
-`Rowan` — and without this line they would be told apart in the subject,
+two places — the keeper on a bench and the bud on a laptop both post as
+`worker` — and without this line they would be told apart in the subject,
 which spends the subject on routing. `send --host <name>` and
 `reply --host <name>` write it; `<bus>/.nova-bus/defaults` may carry a
 `host=<name>` line, read when the flag is absent, so a bench sets it once. A
 host is one word of lower-case letters, digits, `-`, `.` and `_`, at most 40
-characters, because it is printed as one space-separated `host=` field on an
+characters, because it is printed as one whitespace-separated `host=` field on an
 inbox line. A draft that carries its own `Host:` line keeps it; a `--host` that
 names a DIFFERENT machine is a refusal, the same shape as `--as` against a
 `From` line that names somebody else.
@@ -3334,7 +3337,7 @@ own repair:
 | a key nobody knows — `Branch: main` | unknown header key, **and the nine keys there are** |
 | a body sentence where the header goes, with a colon somewhere in it or none at all | the header ends at the first blank line; put a blank line after the last header |
 
-A key is taken for a sentence when it holds a space or runs past twenty
+A key is taken for a sentence when it holds whitespace or runs past twenty
 characters, which is not a guess about what the writer meant but about what they
 cannot have meant: the longest key here is `Subject`. These refusals decide
 nothing about which files fail; they carry the fix.
@@ -4114,7 +4117,7 @@ change.
 Every part of that git command line is load-bearing. `--diff-filter=AM` because a deleted note is not a new note.
 `--no-renames` because git's rename detection is on by default and reports a
 renamed note as `R`, which `AM` excludes — so a note that merely moved would go
-unread. `-z` because `--name-only` quotes a path holding a space, and a quoted
+unread. `-z` because `--name-only` quotes a path holding whitespace, and a quoted
 path matches no file. And `:(glob)` because without it git matches a pathspec
 with fnmatch, where `*` also matches `/`: a plain `from-*` catches a top-level
 `from-notes.txt`, and `from-*/` — the spelling that reads like a directory —
@@ -4363,7 +4366,7 @@ read.
 
 It is one line, like every other event this tool prints. The paths and names in
 the command it hands back are **quoted** rather than field-escaped, because that
-half of the sentence is meant to be PASTED: a bus directory holding a space is
+half of the sentence is meant to be PASTED: a bus directory holding whitespace is
 `--bus "/a bus/here"` and not `--bus /a\x20bus/here`. See **`NAMES` quotes rather
 than field-escapes** in the output grammar, which is the same reason.
 
@@ -5073,7 +5076,7 @@ the cursor and pays only for what changed:
 
 ```
 $ nova-bus check --bus . --full      342 lines  76,616 B  0.15 s  rc=1
-$ nova-bus check --bus . --as Rowan    2 lines     135 B  0.09 s  rc=0
+$ nova-bus check --bus . --as worker   2 lines     135 B  0.09 s  rc=0
 ```
 
 `check --full` is the whole-history walk and no cursor bounds it; `check --as
@@ -5084,8 +5087,8 @@ this card prices.
 
 ```
 $ nova-bus names --bus .                                          8 lines     693 B
-$ nova-bus inbox --bus . --as Rowan --receipt-max-words 20         5 lines     509 B   (carrying=986)
-$ nova-bus inbox --bus . --as Rowan --receipt-max-words 20 --full 63 lines  12,035 B
+$ nova-bus inbox --bus . --as worker --receipt-max-words 20        5 lines     509 B   (carrying=986)
+$ nova-bus inbox --bus . --as worker --receipt-max-words 20 --full 63 lines  12,035 B
 $ nova-bus check --bus . --full                                 342 lines  76,616 B
 ```
 
@@ -5164,7 +5167,7 @@ These are the umbrella **Conventions** (the Conventions section of docs/SPEC.md)
 37. `repo-a-37` `TestStatusReportsAndNeverGates` — `nova-fuse status` exits 0 even when a fuse is blown, because answering is `status`'s whole job and `check` is the gate.
 38. `repo-a-38` `TestSkipReportsAndDoesNotAffectExit` / `TestRuleDocIsScannedAndBannered` / `TestNotePrintedOnEveryRun` — `nova-self-talk`'s four informational second tokens (`DATED`, `SKIP`, `RULEDOC`, `NOTE`) all print on stdout.
 39. `repo-a-39` — the soft hyphen (U+00AD) and the byte order mark (U+FEFF) pass through unescaped, because they do not reorder what an operator sees.
-40. `TestNoCallerPathCanForgeALine` — every `<path>/<file>/<target>/<reason>` a line carries renders through `internal/oneline`; a field is one token even when it holds a space (`\x20`), and no caller path can forge a line.
+40. `TestNoCallerPathCanForgeALine` — every `<path>/<file>/<target>/<reason>` a line carries renders through `internal/oneline`; a field is one token even when it holds whitespace (`\x20`), and no caller path can forge a line.
 41. `TestFailMaxWidensAndZeroPrintsAll` — every listing takes `--fail-max` (default 20, `0` = all) and prints its count line on both success and failure.
 42. `TestAFlagTypoIsOneLine` — an unknown flag after a verb is the one-line refusal `nova-check <verb>: …; run: nova-check help`, exit 2.
 43. `TestVersionLineShape` — `nova-check version` prints the Conventions build line, exit 0.
@@ -5261,7 +5264,7 @@ These are the umbrella **Conventions** (the Conventions section of docs/SPEC.md)
 134. `TestInstallationCarriesTheSourceLine` — each finding carries the source line it starts on (line 1733).
 135. `TestInstallationCarriesTheSourceLine` / `TestInstallationSurvivesWrappingAndMarkup` — paragraphs, headings and table rows are separate sentence units (line 1731).
 136. — — list items (bulleted or numbered) are separate sentence units (line 1731).
-137. — — a terminator only ends a sentence when a space or the end follows it, so `RULES.md` is not two sentences (lines 1731-1733).
+137. — — a terminator only ends a sentence when whitespace or the end follows it, so `RULES.md` is not two sentences (lines 1731-1733).
 138. `TestQuotedSentencesAreNotTheWritersClaims` — quotation state is tracked through a paragraph, so later quoted sentences are not read as the writer's claims (line 1734).
 139. `TestSkipReportsAndDoesNotAffectExit` / `TestSkipRepeatableAndMatchesBasename` / `TestSkipRefusesPaths` — `--skip` is repeatable, takes a basename, refuses a path separator, and a skipped file is reported, not read, and contributes nothing to the exit code (line 1749).
 140. `TestNothingIsSkippedByDefault` — nothing is skipped by default; each named rule-document basename is pinned scanned (line 1749).
@@ -5283,7 +5286,7 @@ These are the umbrella **Conventions** (the Conventions section of docs/SPEC.md)
 156. `TestUnreadableBoxIsTreatedAsBlownNeverClear` / `TestAnUnreadableFileTypeIsNotClear` — an unreadable box (permissions, torn write, malformed JSON, wrong-shaped value) is CANNOT TELL, treated as BLOWN, exit 2.
 157. `TestWriteLeavesNoLitter` / `TestWriteLeavesNoTempLitter` — the write is temp-file + fsync + rename in the box's own directory; a crash leaves the old box or the new, never a fragment.
 158. `TestWrittenBoxIsWorldReadable` — the box is written world-readable (exactly 0644, independent of umask).
-159. `TestSurfaceMatchingIgnoresCaseAndSpace` — surface names are matched case- and whitespace-insensitively; equivalent spellings are ONE surface.
+159. `TestSurfaceMatchingIgnoresCaseAndWhitespace` — surface names are matched case- and whitespace-insensitively; equivalent spellings are ONE surface.
 160. `TestStatusSurvivesAHandEditedBox` — `at`/`reason` are read back defensively; a missing key prints `since=unrecorded` / `NO REASON RECORDED`, never a crash or an invented value.
 161. `TestExitCodes` — exit 0 = clear or done and verified; 1 = blown or could not do/verify; 2 = could not run.
 162. `TestEveryPrintedArgumentIsLiteralQuotedOrEscaped` / `TestNoOtherWriterOrShadowCanBypassTheEscape` — OK lines go to stdout, FAIL lines/refusals/notes to stderr; the tool is the only writer and the flag parser is given no stream.
@@ -5299,7 +5302,7 @@ These are the umbrella **Conventions** (the Conventions section of docs/SPEC.md)
 172. (A) `path` echoes its argument unescaped: `path --box "FUSE OK lockdown=clear"` prints exactly that at exit 0 (the exemption, pinned positively).
 173. `TestOneLineEscapesEveryControlCharacter` — a byte that is not valid UTF-8 is escaped in the same `\xNN` form.
 174. `TestFoldCollapsesControlCharactersToSpaces` / `TestLockdownTakesANewlineInItsReasonAndStoresItFolded` — this tool's own writes are folded first, and folding is never a refusal.
-175. (A) folding collapses Unicode whitespace so a non-breaking space becomes an ordinary one, and a reason of only newlines/tabs/CR/VT/FF/U+0085 trims to empty.
+175. (A) folding collapses Unicode whitespace so a non-breaking blank becomes an ordinary one, and a reason of only newlines/tabs/CR/VT/FF/U+0085 trims to empty.
 176. `TestAReasonOfNothingButControlCharactersStillBlowsTheFuse` — a reason made entirely of non-whitespace control characters is kept as its visible escapes, not refused.
 177. `TestAReasonOfNothingButControlCharactersStillBlowsTheFuse` — only a genuinely empty or all-whitespace reason is refused.
 178. `TestLiftRemovesEveryFoldEquivalentSpelling` / `TestLiftQuarantineRemovesEveryNormalizedMatch` — matching is widened in both directions; `lift quarantine` removes every spelling and prints one `LIFT OK` per removal under the stored spelling.

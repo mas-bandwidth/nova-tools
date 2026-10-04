@@ -13,7 +13,7 @@ import (
 )
 
 // statusWord is the first word after the token on a line of a verb's text form.
-var statusWord = regexp.MustCompile(`(?m)^(?:[A-Z][A-Z-]*|nova-check(?: [a-z]+)*) (OK|FAIL|NO|WARN|REFUSED)\b`)
+var statusWord = regexp.MustCompile(`(?m)^(?:[A-Z][A-Z-]*|nova-check(?: [a-z]+)*) (OK|FAILED|REFUSED)\b`)
 
 // Every verb with both a text and a --json form answers one run with one value:
 // the same exit code, the same status, and the same dry-run fact, on a passing
@@ -65,20 +65,6 @@ func TestTextAndJSONGiveTheSameVerdict(t *testing.T) {
 		{"refused", []string{"links", "--dir", filepath.Join(dir, "absent")}},
 		{"version", []string{"version"}},
 	}
-	lab := hygLab(t)
-	hygWrite(t, lab, "elsewhere/x.go", "package elsewhere\n")
-	hygGit(t, lab, "add", "-A")
-	hygGit(t, lab, "commit", "-q", "-m", "out of path")
-	cases = append(cases,
-		struct {
-			name string
-			args []string
-		}{"hygiene pass", []string{"hygiene", "--repo", lab, "--base", "main", "--head", "HEAD", "--identity", "Rowan <rowan@example.com>"}},
-		struct {
-			name string
-			args []string
-		}{"hygiene fail", []string{"hygiene", "--repo", lab, "--base", "main", "--head", "HEAD", "--identity", "Rowan <rowan@example.com>", "--paths", "sign/**"}},
-	)
 	for _, tc := range cases {
 		textExit, textOut, textErr := runCheck(t, tc.args...)
 		jsonExit, jsonOut, _ := runCheck(t, append(tc.args, "--json")...)
@@ -102,7 +88,7 @@ func TestTextAndJSONGiveTheSameVerdict(t *testing.T) {
 			case 0:
 				assert.Equal(t, "OK", last, "%s", tc.name)
 			case 1:
-				assert.Contains(t, []string{"FAIL", "NO"}, last, "%s", tc.name)
+				assert.Equal(t, "FAILED", last, "%s", tc.name)
 			default:
 				assert.Equal(t, "REFUSED", last, "%s", tc.name)
 			}
@@ -111,53 +97,14 @@ func TestTextAndJSONGiveTheSameVerdict(t *testing.T) {
 	}
 }
 
-// convergence's --json is its own reading object: it agrees with the lines on
-// the exit, the verdict word and the dry-run fact, on a quiet tick and a red one.
-func TestConvergenceTextAndJSONGiveTheSameVerdict(t *testing.T) {
-	t.Parallel()
-	for _, red := range []bool{false, true} {
-		{
-			f := newConvFixture(t)
-			state := filepath.Join(f.dir, "state.json")
-			_, _, _ = f.run(t, "--state", state)
-			owe := func(row string) {
-				fh, err := os.OpenFile(filepath.Join(f.dir, "ledger.md"), os.O_APPEND|os.O_WRONLY, 0o644)
-				require.NoError(t, err)
-				_, err = fh.WriteString(row)
-				require.NoError(t, err)
-				require.NoError(t, fh.Close())
-			}
-			if red {
-				owe("| c | three | TODO |\n")
-				_, _, _ = f.run(t, "--state", state, "--now", "2026-09-18T13:00:00Z")
-				owe("| d | four | TODO |\n")
-			}
-			args := []string{"--state", state, "--now", "2026-09-18T14:00:00Z", "--dry-run"}
-			textExit, textOut, textErr := f.run(t, args...)
-			jsonExit, jsonOut, _ := f.run(t, append(args, "--json")...)
-			assert.Equal(t, textExit, jsonExit, "red=%v", red)
-			var obj struct {
-				Verdict string `json:"verdict"`
-				DryRun  bool   `json:"dry_run"`
-			}
-			require.NoError(t, json.Unmarshal([]byte(jsonOut), &obj), jsonOut)
-			assert.Contains(t, textOut, "CONVERGENCE "+obj.Verdict, "red=%v", red)
-			assert.Equal(t, strings.Contains(textErr, "dry_run=true"), obj.DryRun, "red=%v", red)
-			if red {
-				assert.Equal(t, 1, textExit, "the red tick")
-			}
-		}
-	}
-}
-
-// A planned write lists its corrections under --fail-max like every listing, in
+// A planned write lists its corrections under --max like every listing, in
 // both renderings, and changes no byte.
 func TestAPlannedSpellingWriteIsBoundedAndWritesNothing(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	file := filepath.Join(dir, "a.md")
 	require.NoError(t, os.WriteFile(file, []byte("recieve\nseperate\n"), 0o644))
-	args := []string{"spelling", "--dir", dir, "--write", "--dry-run", "--fail-max", "1"}
+	args := []string{"spelling", "--dir", dir, "--write", "--dry-run", "--max", "1"}
 	exit, stdout, _ := runCheck(t, args...)
 	assert.Equal(t, 0, exit)
 	assert.Equal(t, 1, strings.Count(stdout, "SPELLING FIX "), stdout)

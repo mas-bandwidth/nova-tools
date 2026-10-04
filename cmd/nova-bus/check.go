@@ -21,8 +21,8 @@ import (
 // counts every finding by class, so the listing is capped and the counting never is.
 const defaultCheckMax = 20
 
-func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
-	f := newFlags("check")
+func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time, e runEnv) int {
+	f := newFlagsWith("check", e.getenv)
 	busDir := f.fs.String("bus", "", "the bus's repository root (required)")
 	full := f.fs.Bool("full", false, "walk the whole bus: what CI on main and a first adoption run want")
 	as := f.fs.String("as", "", "check what changed since this participant's cursor")
@@ -73,7 +73,7 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 	}
 	if *rebuildIndex && !*dryRun {
-		release, lockErr := bus.LockCheckout(*busDir, checkoutLockWait)
+		release, lockErr := bus.LockCheckout(*busDir, e.lockWait())
 		if lockErr != nil {
 			fmt.Fprintf(stderr, "BUS REFUSED: %s\n", oneline.WithRemedy(oneline.Err(lockErr), "nova-bus check -h"))
 			return 1

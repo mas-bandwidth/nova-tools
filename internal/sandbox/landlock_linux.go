@@ -107,14 +107,14 @@ const fsReadSubset = fsExecute | fsReadFile | fsReadDir
 // fsReadNoExecSubset is fsReadSubset WITHOUT fsExecute: what Policy.ReadsNoExec gets. A
 // --read root is EXECUTABLE by construction, so a data tree named with --read lets the job
 // run anything its own user can drop into it; this subset is the grant that says READ and
-// means it (Johnny's security read of #1364).
+// means it (a person's security read of #1364).
 const fsReadNoExecSubset = fsReadFile | fsReadDir
 
 // fsFileSubset is what a rule on a FILE may carry, and it is not an optimisation: the
 // kernel REJECTS a path_beneath rule whose descriptor is not a directory and whose
 // allowed_access holds a directory-only right (MAKE_*, REMOVE_*, READ_DIR, REFER), with
 // EINVAL. The roots table's two writable device files are files, so handing them the
-// directory mask adds NO rule at all -- measured on space: with the directory mask,
+// directory mask adds NO rule at all -- measured on a bench: with the directory mask,
 // `sh -c "cmd > /dev/null"` inside the wall is "cannot create /dev/null: Permission
 // denied", because the rule the tool thought it had added was never there.
 const fsFileSubset = fsExecute | fsReadFile | fsWriteFile | fsTruncate | fsIoctlDev

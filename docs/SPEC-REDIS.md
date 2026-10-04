@@ -20,6 +20,9 @@ nova-redis spill  --addr <host:port> [--user <name>] [--password-env <NAME>] --o
 nova-redis recall --addr <host:port> [--user <name>] [--password-env <NAME>] --owner <owner> --name <name>
 nova-redis fn load  --addr <host:port> [--user <name>] [--password-env <NAME>]
 nova-redis fn check --addr <host:port> [--user <name>] [--password-env <NAME>]
+nova-redis acl render
+nova-redis acl check --addr <host:port> [--user <name>] [--password-env <NAME>]
+nova-redis acl apply --addr <host:port> [--user <name>] [--password-env <NAME>] [--password-env-for <user>=<VARIABLE>]... [--dry-run]
 nova-redis version
 nova-redis help
 ```
@@ -57,6 +60,9 @@ nova-redis help
   whose reply is lost after the store took it is `SPILL UNCONFIRMED` (exit 1):
   the write may have committed, so the remedy is a `recall`, never a second
   spill. Each scratch verb is one round trip.
+- `acl render` prints the build's users and opens no store; `acl check` and
+  `acl apply` need `--addr`, and read or set the store's live users against
+  what this build renders.
 - `version` and `help`, the two every binary in this family carries.
 
 ## Bind, auth and persistence

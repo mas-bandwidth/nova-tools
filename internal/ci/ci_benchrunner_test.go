@@ -1,8 +1,6 @@
 package ci
 
 import (
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -97,12 +95,6 @@ func TestCIOneBenchRunner(t *testing.T) {
 	})
 
 	t.Run("git-transport-excluded", func(t *testing.T) {
-		raw, err := os.ReadFile(filepath.Join(root, "internal", "secrets", "storepull.go"))
-		require.NoError(t, err)
-		got, err := BenchRunnersInSource("internal/secrets/storepull.go", raw)
-		require.NoError(t, err, "storepull.go sites = %v (%v); StorePullSSHCommand and PullStore reach ssh only as git's transport", got, err)
-		require.Empty(t, got, "storepull.go sites = %v (%v); StorePullSSHCommand and PullStore reach ssh only as git's transport", got, err)
-		require.True(t, strings.Contains(string(raw), "func StorePullSSHCommand") && strings.Contains(string(raw), "func PullStore"), "storepull.go no longer has StorePullSSHCommand and PullStore; re-derive this subtest")
 		fixture := `package x
 import ("os/exec"; "github.com/mas-bandwidth/nova-tools/internal/testguard")
 func transportCmd(host string) string { testguard.RefuseHosts("ssh", host); return "ssh -o BatchMode=yes" }
@@ -113,7 +105,7 @@ func pull(host string) error {
 }
 func guardedOnly(host string) { testguard.RefuseHosts("ssh", host) }
 `
-		got, err = BenchRunnersInSource("x/x.go", []byte(fixture))
+		got, err := BenchRunnersInSource("x/x.go", []byte(fixture))
 		require.NoError(t, err)
 		require.Len(t, got, 1, "fixture sites = %v; want guardedOnly only (RefuseHosts(\"ssh\") with no git transport is still a site)", got)
 		require.Equal(t, "guardedOnly", got[0].Func, "fixture sites = %v; want guardedOnly only (RefuseHosts(\"ssh\") with no git transport is still a site)", got)

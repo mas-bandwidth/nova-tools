@@ -37,7 +37,7 @@ var selfTalkAudit = audit.Config{
 	// One entry per site, keyed by file, function and source text; sites with the same
 	// text in the same function share an entry. Each is a claim a reader can check.
 	Exempt: map[string]string{
-		"main.go|lines|selftalk.RuleDocumentBanner": "a constant in package selftalk",
+		"scan.go|lines|selftalk.RuleDocumentBanner": "a constant in package selftalk",
 	},
 	Imports: []string{
 		// the verb-help seam (the CLI style's rule (b), #4505): on -h it prints only flag names,

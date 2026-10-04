@@ -324,7 +324,8 @@ func TestContainerRuntimeDropInHasItsDirectory(t *testing.T) {
 			}
 		}
 	}
-	require.True(t, copyAt >= 0 && dirAt >= 0, "%s/tasks/main.yml: want a directory task and a copy of the drop-in; found directory at %d, copy at %d", containerRuntimeRole, dirAt+1, copyAt+1)
+	require.GreaterOrEqual(t, copyAt, 0, "%s/tasks/main.yml: want a directory task and a copy of the drop-in; found directory at %d, copy at %d", containerRuntimeRole, dirAt+1, copyAt+1)
+	require.GreaterOrEqual(t, dirAt, 0, "%s/tasks/main.yml: want a directory task and a copy of the drop-in; found directory at %d, copy at %d", containerRuntimeRole, dirAt+1, copyAt+1)
 	assert.LessOrEqual(t, dirAt, copyAt, "%s/tasks/main.yml: the drop-in directory task (%d) comes after the copy (%d)", containerRuntimeRole, dirAt+1, copyAt+1)
 	assert.Equal(t, dirPath, filepath.Dir(dest), "%s/tasks/main.yml: the drop-in is copied to %q but the directory task makes %q", containerRuntimeRole, dest, dirPath)
 	assert.True(t, !strings.Contains(dest, "user@.service.d") && strings.Contains(dest, "user@{{ container_runtime_uid }}.service.d"), "%s/tasks/main.yml: the drop-in %q is not for the runner's manager only (user@<uid>.service.d)", containerRuntimeRole, dest)

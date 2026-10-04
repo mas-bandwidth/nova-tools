@@ -361,8 +361,8 @@ GATE APPROVE files=<n> machines=<registry|->
 GATE REFUSE rule=<n> file=<f>: <why>
 ```
 
-**The store's own gate, as a verb.** What the store repo runs as
-`.github/seat-rule-gate.sh` is here in the tool, so the workflow calls this tool and the rule
+**The store's own gate, as a verb.** What the store repo ran as a shell gate lives here in
+the tool instead, so the workflow calls this tool and the rule
 text lives beside the rules it measures. It diffs `--base..--head` with **git, and asks GitHub
 nothing**: a store already cloned, two refs already present, no network socket. `--base` and
 `--head` are required; a missing one is a refusal at exit 2.

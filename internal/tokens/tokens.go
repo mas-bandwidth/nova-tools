@@ -19,6 +19,7 @@ package tokens
 import (
 	"fmt"
 	"io"
+	"io/fs"
 	"maps"
 	"os"
 	"slices"
@@ -172,10 +173,10 @@ type Row struct {
 // Bases is the day bases that fed this row, sorted. More than one is a row that is not
 // written: a row must carry one day basis, and a mixed row is named and left out of the
 // file and the counts.
-func (r *Row) Bases() []string { return sortedKeys(r.bases) }
+func (r *Row) Bases() []string { return slices.Sorted(maps.Keys(r.bases)) }
 
 // Sources is the sorted, comma-joinable labels that fed this row.
-func (r *Row) Sources() []string { return sortedKeys(r.sources) }
+func (r *Row) Sources() []string { return slices.Sorted(maps.Keys(r.sources)) }
 
 // Basis is the row's one basis, or the empty string when it has two.
 func (r *Row) Basis() string {
@@ -192,12 +193,11 @@ type Folder struct {
 	turns map[string]int
 	days  map[string]bool
 
-	// idLabel is which source first fed each message id, and overlaps counts the ids two
-	// sources both fed. The fold deliberately does not check whether two sources overlap,
-	// and the numbers still do not change: two declarations of one tree still double the
-	// day. What changes is that the run SAYS SO -- overlaps names every pair of sources
-	// that shared ids -- so a doubled day prints its doubling instead of passing as
-	// green.
+	// idLabel is which source first fed each message id, scoped to that source's
+	// provider, and overlaps counts the ids two sources of one provider both fed.
+	// TokenFold invariant OverlapRefusedBeforeWrite: a detected overlap refuses the
+	// write. TokenFold invariant UnscopedIDNotDeduped: an id that is not scoped to
+	// one provider is not a duplicate and is not dropped, so both messages stay.
 	idLabel  map[string]string
 	overlaps map[[2]string]int
 }
@@ -208,12 +208,17 @@ func NewFolder() *Folder {
 		idLabel: map[string]string{}, overlaps: map[[2]string]int{}}
 }
 
-// Overlap is two declared sources that fed the same message ids: not an error, and not a
-// change to any number, but the one thing a green day file cannot say for itself.
+// Overlap is two declared sources of one provider that fed the same message ids.
+// TokenFold invariant OverlapRefusedBeforeWrite: it is a refusal before any day
+// file is written, not a drop of either message.
 type Overlap struct {
 	A, B string
 	IDs  int
 }
+
+// RefuseWrite reports a detected overlap. TokenFold invariant
+// OverlapRefusedBeforeWrite: the fold is refused before any day file is written.
+func (f *Folder) RefuseWrite() bool { return len(f.overlaps) > 0 }
 
 // Overlaps is every pair of sources that shared an id, sorted, so the remedy can name one.
 func (f *Folder) Overlaps() []Overlap {
@@ -230,11 +235,26 @@ func (f *Folder) Overlaps() []Overlap {
 	return out
 }
 
-// Add folds one message from the source named by label.
+// providerScope is the source kind an id is comparable within. TokenFold
+// invariant UnscopedIDNotDeduped: an id that is not scoped to one provider is
+// not a duplicate and is not dropped.
+func providerScope(label string) string {
+	kind, _, ok := strings.Cut(label, ":")
+	if !ok {
+		return label
+	}
+	return kind
+}
+
+// Add folds one message from the source named by label. A repeated id from
+// another source of the same provider is recorded and kept: the write is refused
+// later, the message is not dropped (TokenFold, OverlapRefusedBeforeWrite and
+// UnscopedIDNotDeduped).
 func (f *Folder) Add(label string, m Message) {
 	if m.ID != "" {
-		if first, seen := f.idLabel[m.ID]; !seen {
-			f.idLabel[m.ID] = label
+		key := providerScope(label) + "\x00" + m.ID
+		if first, seen := f.idLabel[key]; !seen {
+			f.idLabel[key] = label
 		} else if first != label {
 			pair := [2]string{first, label}
 			if pair[0] > pair[1] {
@@ -268,7 +288,7 @@ func (f *Folder) Add(label string, m Message) {
 }
 
 // Days is every day the sources named, sorted.
-func (f *Folder) Days() []string { return sortedKeys(f.days) }
+func (f *Folder) Days() []string { return slices.Sorted(maps.Keys(f.days)) }
 
 // Turns is the message count for a day across the sources that count messages, and
 // whether any of them fed it. A day fed by a bus note alone has none, and its version
@@ -543,14 +563,6 @@ func ValidZone(s string) bool {
 	return strings.IndexFunc(s, func(r rune) bool { return r == ' ' || r == '\t' || r == '\n' || r == '\r' }) < 0
 }
 
-// sortedKeys is m's keys, sorted, and never nil: an empty map gives an empty slice, so a
-// row with no source and a day file with no rows encode and compare as before.
-func sortedKeys(m map[string]bool) []string {
-	out := slices.AppendSeq(make([]string, 0, len(m)), maps.Keys(m))
-	slices.Sort(out)
-	return out
-}
-
 // Label is how a source names itself in a row's sources column and on its own line:
 // the kind, a colon, and the flag's label — or, for a bus lane, the lane owner's name,
 // whatever the `who` field of a line inside it says.
@@ -655,12 +667,40 @@ func openSource(path string) (*os.File, error) {
 	return os.Open(path)
 }
 
+// openSourceFS is openSource for a filesystem the caller hands in: main passes
+// os.DirFS(dir) and a test passes fstest.MapFS, so the folding logic reads a tree without
+// a temporary directory and the open count stays honest either way.
+func openSourceFS(fsys fs.FS, name string) (fs.File, error) {
+	opens.Add(1)
+	return fsys.Open(name)
+}
+
 // maxSourceBytes bounds the ONE whole-file read. A ledger or a bus note is a record, not
 // an archive, and os.ReadFile of a runaway file took the process's memory before any
 // parser could name it. A file over this cap is refused by name rather than truncated:
 // neither caller tolerates a partial parse, so a half-read ledger would fold as a whole
 // one. 64 MiB is far past the largest real export and far short of a memory blowup.
 const maxSourceBytes = 64 << 20
+
+// cappedRead is readSource's ceiling over an already-open file, so the one cap holds for
+// os.Open and fs.FS alike.
+func cappedRead(f fs.File, name string) ([]byte, error) {
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if fi.Size() > maxSourceBytes {
+		return nil, fmt.Errorf("source %s is %d bytes, over the %d-byte cap", name, fi.Size(), maxSourceBytes)
+	}
+	raw, err := io.ReadAll(io.LimitReader(f, maxSourceBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(raw)) > maxSourceBytes {
+		return nil, fmt.Errorf("source %s grew over the %d-byte cap while being read", name, maxSourceBytes)
+	}
+	return raw, nil
+}
 
 // readSource is openSource for a whole file.
 func readSource(path string) ([]byte, error) {
@@ -670,21 +710,17 @@ func readSource(path string) ([]byte, error) {
 		return nil, err
 	}
 	defer f.Close()
-	fi, err := f.Stat()
+	return cappedRead(f, path)
+}
+
+// readSourceFS is openSourceFS for a whole file.
+func readSourceFS(fsys fs.FS, name string) ([]byte, error) {
+	f, err := openSourceFS(fsys, name)
 	if err != nil {
 		return nil, err
 	}
-	if fi.Size() > maxSourceBytes {
-		return nil, fmt.Errorf("source %s is %d bytes, over the %d-byte cap", path, fi.Size(), maxSourceBytes)
-	}
-	raw, err := io.ReadAll(io.LimitReader(f, maxSourceBytes+1))
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(raw)) > maxSourceBytes {
-		return nil, fmt.Errorf("source %s grew over the %d-byte cap while being read", path, maxSourceBytes)
-	}
-	return raw, nil
+	defer f.Close()
+	return cappedRead(f, name)
 }
 
 // keyLess orders two keys of one day by (model, repo), the order a day file's rows
