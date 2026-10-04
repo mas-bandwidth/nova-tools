@@ -1311,3 +1311,5 @@ deprecated/internal/workreconcile/sprint_test.go deprecated/ removed 2026-10-01;
 deprecated/internal/workreconcile/types_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
 internal/ci/sizetable_test.go dead: its only helper readSizeTable had no caller; the size tables it read are checked nowhere else (dead-code pass 2026-10-01)
 internal/ntable/oset_cover_test.go tested Add, Remove, Move, Card, MembersOf and CountCmd.Val, deleted as dead by the sprint card fix-dead-ntable-oset (ec32ea87b3) before the coverage card cover-internal-ntable-oset landed on dev; its stand-in store served only them (promotion of sprint/mechanical-2026-10-02, 2026-10-04)
+internal/secrets/storepull_test.go dead: its only subject is the store pull path (PullStore, StorePullSSHCommand, StorePullKey, privateKeyPublicBlob) deleted with the dead storepull.go (dead-pkg-secrets-t2b); nothing it pins remains
+internal/secrets/storepull_cover_test.go dead: its only subject is mpintBytes and wirePublicKey, deleted with the dead storepull.go (dead-pkg-secrets-t2b); nothing it pins remains
