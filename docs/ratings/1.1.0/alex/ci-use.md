@@ -14,7 +14,7 @@ rating read was no evidence here.
 (a) The first run works from the binary alone: `nova-ci slowtests --example
 --budget 60` prints its CI-SLOW and CI-LOAD lines at exit 0, the same sitting
 docs/TESTS.md documents. (b) Two real jobs, end to end, on a Go module made
-for the purpose: piping the module's own `go test -json -timeout 600s ./...`
+for the purpose: piping the module's own `go test -json -timeout 600s ./slow ./fast`
 stream into `nova-ci slowtests --budget 1` printed the slow package with its
 slowest test, the CI-SLEEPS line for an unledgered skip and the load line at
 exit 1; the same stream with the sleeps ledger was the OK line at exit 0, and
