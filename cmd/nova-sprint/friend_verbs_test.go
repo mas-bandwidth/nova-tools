@@ -1,7 +1,10 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -116,5 +119,32 @@ func TestFriendLevelMovesAQueuedCardAndTheQueueFilesFollow(t *testing.T) {
 	assert.Equal(t, "taken", queueStates(t, root, "amy")["s1-2.w1"], "not hers to start any more")
 	assert.Equal(t, "working", queueStates(t, root, "bob")["s1-2.w1"])
 	assert.Contains(t, ta.ok("friend level"), "FRIEND-LEVEL OK moved=0")
+	ta.clean()
+}
+
+// stats fills a friend's run wall and report lag from her finish records, where they were
+// dashes: her card reports no usage, so her run is her take to her report (REPORT.md's
+// time, kept on the card as reported) and her lag her report to the sync that finished it.
+func TestStatsTimesAFriendsRunFromHerReport(t *testing.T) {
+	t.Parallel()
+	ta, root := friendCardApp(t, "friend amy", "amy")
+	ta.ok("tick") // dealt and taken at t0
+	ta.ok("friend sync --root " + root)
+	taken := ta.a.now()
+	ta.a.sleep(10 * time.Minute)
+	outboxReport(t, root, "amy", "s1-1.w1", "Verdict: LAND\nHead: "+landHead+"\n\nDone.\n")
+	report := filepath.Join(root, "amy-working", "outbox", "s1-1.w1", "REPORT.md")
+	require.NoError(t, os.Chtimes(report, taken.Add(8*time.Minute), taken.Add(8*time.Minute)))
+	ta.ok("friend sync --root " + root)
+
+	var c cardView
+	ta.json("card s1-1", &c)
+	assert.Equal(t, taken.Add(8*time.Minute).UTC().Format(time.RFC3339), c.Work[0].F(sprint.FieldReported))
+	var ps sprint.PassStats
+	ta.json("stats", &ps)
+	require.Len(t, ps.Work, 1)
+	assert.Equal(t, sprint.FriendRow("amy"), ps.Work[0].Member)
+	assert.Equal(t, sprint.Measure{Median: 480, Max: 480, N: 1}, ps.Work[0].RunWall, "her take to her report")
+	assert.Equal(t, sprint.Measure{Median: 120, Max: 120, N: 1}, ps.Work[0].ReportLag, "her report to the finish")
 	ta.clean()
 }

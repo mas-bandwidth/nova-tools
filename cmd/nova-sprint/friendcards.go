@@ -246,35 +246,35 @@ func friendInbox(dir string, p sprint.Packet) (in, why string, err error) {
 // report is "no report yet, still working" (nothing is said), and a non-empty
 // why is "skip it, still working" — the caller says the why and continues so
 // the next sync reads it again.
-func friendReadReport(dir, job string) (report, why string, err error) {
+func friendReadReport(dir, job string) (report, why string, at time.Time, err error) {
 	outDir := filepath.Join(dir, "outbox", job)
 	outName := filepath.Join("outbox", job)
 	reportName := filepath.Join(outName, "REPORT.md")
 	fi, err := os.Lstat(outDir)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
-		return "", "", nil
+		return "", "", time.Time{}, nil
 	case err != nil:
-		return "", "", err
+		return "", "", time.Time{}, err
 	case !fi.IsDir():
-		return "", outName + " is a symlink or a file, not a directory", nil
+		return "", outName + " is a symlink or a file, not a directory", time.Time{}, nil
 	}
 	fi, err = os.Lstat(filepath.Join(outDir, "REPORT.md"))
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
-		return "", "", nil
+		return "", "", time.Time{}, nil
 	case err != nil:
-		return "", "", err
+		return "", "", time.Time{}, err
 	case !fi.Mode().IsRegular():
-		return "", reportName + " is a symlink or a non-regular file", nil
+		return "", reportName + " is a symlink or a non-regular file", time.Time{}, nil
 	case fi.Size() > friendReportReadCap:
-		return "", reportName + " is larger than " + strconv.Itoa(friendReportReadCap) + " bytes", nil
+		return "", reportName + " is larger than " + strconv.Itoa(friendReportReadCap) + " bytes", time.Time{}, nil
 	}
 	b, err := os.ReadFile(filepath.Join(outDir, "REPORT.md"))
 	if err != nil {
-		return "", "", err
+		return "", "", time.Time{}, err
 	}
-	return string(b), "", nil
+	return string(b), "", fi.ModTime(), nil
 }
 
 // friendCardsOf delivers and collects one friend's sprint cards in her working directory
@@ -355,7 +355,7 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 		} else if err != nil {
 			return delivered, finished, err
 		}
-		report, why, err := friendReadReport(dir, job)
+		report, why, at, err := friendReadReport(dir, job)
 		if err != nil {
 			return delivered, finished, err
 		}
@@ -370,6 +370,7 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 			say(fmt.Sprintf("FRIEND-CARD REFUSED friend=%s card=%s: %s; the card is not finished, and the next sync reads the report again", name, p.Card, oneline.Escape(err.Error())))
 			continue
 		}
+		r.Reported = at
 		step := store.FinishStep(r)
 		step.Actor, step.Epoch = r.Who, &p.Epoch
 		res, err := st.Run(ctx, step)

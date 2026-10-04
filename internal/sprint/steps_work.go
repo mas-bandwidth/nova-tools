@@ -1114,7 +1114,12 @@ type FinishReq struct {
 	// finish whose class is no-result or nothing-to-do at or above that class's bar on the
 	// card is routed by it (finishKind). A finish carrying one names one card.
 	Decided string
-	Who     string
+	// Reported is when the worker wrote its report, when the transport knows it (a
+	// friend's REPORT.md, friend sync): kept on the work card as FieldReported, no later
+	// than the finish, so the stats time a friend's run from her take to her report and
+	// her report lag from it to the finish (RunWall). Zero is unknown.
+	Reported time.Time `json:",omitzero"`
+	Who      string
 }
 
 // Finish moves work cards working -> done and their primaries working ->
@@ -1222,6 +1227,13 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 			head, result, okWord, into = pr.F(FieldPassedHead), "ok", "yes", DoneOK
 		}
 		cardSet := map[string]string{"ok": okWord, "head": head, "finished": stamp(s.Now)}
+		if !r.Reported.IsZero() {
+			at := r.Reported
+			if at.After(s.Now) {
+				at = s.Now // her clock ahead of the sprint's: never after the finish
+			}
+			cardSet[FieldReported] = stamp(at)
+		}
 		if r.Report != "" {
 			cardSet["report"] = r.Report
 		}

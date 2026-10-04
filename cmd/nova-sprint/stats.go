@@ -86,7 +86,7 @@ func statsText(ps sprint.PassStats) string {
 // count (sprint.Stats): a reader meets the tables cold.
 var statsLegend = map[string]string{
 	"stages": "stages: per primary, admitted to first dealt (deal wait), its last ok finish to accepted (finish to two reads), accepted to landed, admitted to landed (total); seconds as median, max, n primaries\n",
-	"work":   "work: per member, cards is its work cards (one per attempt, counted to the member it was last dealt to), failed those finished failed; take wait is dealt to taken, run wall the child's wall from its usage, report lag taken to finished less the run wall\n",
+	"work":   "work: per member, cards is its work cards (one per attempt, counted to the member it was last dealt to), failed those finished failed; take wait is dealt to taken, run wall the child's wall from its usage (a friend's card, which reports none: her take to her REPORT.md's time), report lag taken to finished less the run wall\n",
 	"reads":  "reads: per reader, cards is the read cards asked of it (retired ones too); begin wait is asked to begun, run wall the usage's wall, report lag begun to read less the run wall\n",
 	"routes": "routes: per route, takes is every take on it, work and read alike, each take of a card again counted (the cards' cost records); ok came back with its answer, provider ended by the provider or with no result, failed every other end; run wall the takes' usage walls\n",
 }
