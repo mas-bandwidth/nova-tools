@@ -1,12 +1,18 @@
+//go:build unix
+
 package main
 
 import (
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -231,4 +237,96 @@ func TestTheChildEnvResolvesTheBenchGo(t *testing.T) {
 		}
 		assert.Equal(t, want, found, "the child's %s resolves in %q, want the bench's sdk Go; PATH %q", tool, found, path)
 	}
+}
+
+// TestAToolTimeoutReapsOnlyTheWrapperGroup pins the shell shim's group-reaping wrapper:
+// when a tool timeout signals the wrapper pid, the wrapper must carry its own process
+// group -- the real shell and everything it started -- and not only the pid the timeout
+// hit, while leaving a bystander in a different session untouched (SPEC-SWARM.md rule 9,
+// "A job is one blocking process group, reported once"; nova-tools #1814, the shell
+// wrapper).
+func TestAToolTimeoutReapsOnlyTheWrapperGroup(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("the shim is a /bin/sh script; windows writes none")
+	}
+	dir, _, err := writeNativeShellShims(t.TempDir())
+	require.NoError(t, err)
+	shim := filepath.Join(dir, "sh")
+	marker := filepath.Join(t.TempDir(), "sleeper.pid")
+	// The sleeper ignores TERM. Only a group signal stops it. The shell stays
+	// the parent so today's exec of the real shell is the pid the timeout hits.
+	script := "trap '' TERM INT; sleep 30 & echo $! > " + shQuote(marker) + "; wait"
+	cmd := exec.Command(shim, "-c", script)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
+	require.NoError(t, cmd.Start())
+	t.Cleanup(func() {
+		signalGroup(cmd.Process.Pid)
+		_ = cmd.Wait()
+	})
+
+	bystander := exec.Command("/bin/sh", "-c", "sleep 30")
+	bystander.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	require.NoError(t, bystander.Start())
+	t.Cleanup(func() {
+		signalGroup(bystander.Process.Pid)
+		_ = bystander.Wait()
+	})
+
+	var sleeper int
+	require.Eventually(t, func() bool {
+		sleeper = readPID(marker)
+		return sleeper > 0 && alive(sleeper)
+	}, 5*time.Second, 20*time.Millisecond)
+
+	require.NoError(t, cmd.Process.Signal(syscall.SIGTERM))
+	require.Eventually(t, func() bool { return !alive(sleeper) }, 5*time.Second, 20*time.Millisecond)
+	require.True(t, alive(bystander.Process.Pid), "a group this launch did not start was signaled")
+}
+
+// shQuote single-quotes s for safe inclusion in a /bin/sh script.
+func shQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
+// readPID reads a pid from a file, returning 0 on error or parse failure.
+func readPID(path string) int {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	n, _ := strconv.Atoi(strings.TrimSpace(string(b)))
+	return n
+}
+
+// alive reports whether pid exists and is not a zombie. A bare kill(pid,0) succeeds
+// for a zombie, so the process state is read instead.
+func alive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "state=").Output()
+	if err != nil {
+		return false
+	}
+	state := strings.TrimSpace(string(out))
+	if len(state) == 0 {
+		return false
+	}
+	// Z = zombie: the process has exited and has not been reaped; it is not alive.
+	return state[0] != 'Z'
+}
+
+// signalGroup sends KILL to the process group of a pid this test started, ignoring
+// "no such process".
+func signalGroup(pid int) {
+	if pid <= 0 {
+		return
+	}
+	pgid, err := syscall.Getpgid(pid)
+	if err != nil {
+		return
+	}
+	_ = syscall.Kill(-pgid, syscall.SIGKILL)
 }

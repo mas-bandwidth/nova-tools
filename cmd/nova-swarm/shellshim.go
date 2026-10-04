@@ -34,8 +34,8 @@ import (
 // nativeChildEnv puts that directory FIRST on the child's PATH and pins SHELL at the
 // wrapper. Each wrapper unsets every environment name carrying KEY, TOKEN or SECRET --
 // keepNativeSecretName, the one predicate the argv log already redacts by -- and then
-// execs the real shell. The harness process keeps the key for its API calls; every shell
-// under it does not.
+// starts the real shell as a child, in the wrapper's process group, and waits. The harness process
+// keeps the key for its API calls; every shell under it does not.
 //
 // WHERE IT LIVES IS THE POINT. <slot>/shim is inside the wall's READ set and outside its
 // write set (nativeSandboxArgv: --read <slot>, --write <job>/<data>/<tmp>), so the card
@@ -74,15 +74,15 @@ func nativeShellShimDir(slotDir string) string {
 	return filepath.Join(slotDir, shellShimDirName)
 }
 
-// shellShimBody is the wrapper's whole text bar its last line. It reads the NAMES of the
-// environment through awk and unsets each one that carries a secret; no value is read,
-// printed or copied, and awk prints names only. A bench with no awk cannot list the names,
-// so the wrapper FAILS CLOSED -- exit 127, and it says why -- rather than handing the model
-// a shell that still carries the provider key.
+// shellShimBody is the wrapper's whole text up to the launch of the real shell. It reads
+// the NAMES of the environment through awk and unsets each one that carries a secret; no
+// value is read, printed or copied, and awk prints names only. A bench with no awk cannot
+// list the names, so the wrapper FAILS CLOSED -- exit 127, and it says why -- rather than
+// handing the model a shell that still carries the provider key.
 const shellShimBody = `#!/bin/sh
 # nova-swarm shell shim (nova-tools #1814): the harness keeps the provider key for its
 # API calls; the shell it hands the model does not. Every environment NAME carrying KEY,
-# TOKEN or SECRET is unset here before the real shell is exec'd. No value is ever read,
+# TOKEN or SECRET is unset here before the real shell is started. No value is ever read,
 # printed or copied: awk prints names, never values.
 if ! command -v awk >/dev/null 2>&1; then
 	echo 'nova-swarm shell shim: awk is on no PATH entry, so the environment cannot be listed by name; refusing to start a shell that would still carry the provider key' >&2
@@ -97,8 +97,31 @@ unset __nova_secret_name
 // shellShimScript is the wrapper for one real shell. It is built by concatenation rather
 // than by a formatter: the real shell's path goes into the script EXACTLY as the
 // filesystem spells it, and a path an escaper had rewritten would name nothing.
+//
+// The wrapper does not exec the real shell. It starts the shell as a child in its own
+// process group and waits (SPEC-SWARM.md rule 9, "A job is one blocking process group,
+// reported once"). A tool timeout delivers TERM, INT or HUP to the wrapper pid; the trap
+// sends TERM to -$ (the wrapper's group when it is the leader) so the shell and everything
+// it started goes too, not only the pid the timeout hit, then polls the child for one
+// second, sends KILL to the group, and exits. On a normal child exit the status is passed
+// through and no group signal is sent: a background job the command left behind is not a
+// timeout. The wrapper never calls setsid and never looks up its parent's group (that
+// group is the harness; reap-grp is the failure mode where a non-leader either fails the
+// signal or, aimed at the real pgid, hits the harness). One second, not TerminateGrace,
+// because the harness's own force stop follows at three seconds and must not arrive first
+// and kill only the leader. If the wrapper is not the leader, -$ fails and no other group
+// is reached: fail closed, never fall back to exec.
 func shellShimScript(real string) string {
-	return shellShimBody + "exec '" + real + "' \"$@\"\n"
+	return shellShimBody + "# The real shell is a child of the wrapper, in the wrapper's process group, " +
+		"so a tool timeout's TERM at the wrapper pid carries the wrapper's whole group -- the real " +
+		"shell and everything it started -- and not only the pid the timeout hit.\n" +
+		"# On a normal child exit, pass the child's status through and do not signal the group: " +
+		"a background job the command left behind is not a timeout.\n" +
+		"'" + real + "' \"$@\" &\n" +
+		"child=$!\n" +
+		"trap 'trap \"\" TERM INT HUP; kill -TERM -$$ 2>/dev/null; i=0; while [ \"$i\" -lt 10 ] && kill -0 \"$child\" 2>/dev/null; do i=$((i + 1)); sleep 0.1; done; kill -KILL -$$ 2>/dev/null; exit 128' TERM INT HUP\n" +
+		"wait \"$child\"\n" +
+		"exit $?\n"
 }
 
 // writeNativeShellShims writes one wrapper per shell name the bench actually has into
