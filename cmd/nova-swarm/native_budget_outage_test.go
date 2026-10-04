@@ -261,4 +261,39 @@ func TestAnOutageAfterTheFirstAnswerExtrapolatesFromRiseFloor(t *testing.T) {
 	assert.Equal(t, stoppedUnverifiable, b.s.StopWordAtFinal(100, true, ""), "the word is kept at final")
 }
 
+// The at-once retry is capped so one sample never exceeds the read limit: a failed read that
+// took part of the limit leaves only the remainder for the retry, and a read that exhausted
+// the limit is not retried.
+func TestTheRetryIsCappedSoOneSampleNeverExceedsTheReadLimit(t *testing.T) {
+	t.Parallel()
+	b := newOutageBench(t, nativeRunConfig{tokens: 1000})
+	b.s.slowest = 3 * time.Second // 4*slowest = 12s read limit
+
+	var limits []time.Duration
+	b.s.read = func(dataHome string, limit time.Duration) (swarm.ProviderUsage, error) {
+		limits = append(limits, limit)
+		b.reads++
+		b.now = b.now.Add(8 * time.Second) // read 1 takes 8s of the 12s limit
+		return swarm.ProviderUsage{}, errors.New("timeout")
+	}
+
+	b.s.readOnce()
+	require.Len(t, limits, 2, "a failed read with remaining time is retried once")
+	assert.Equal(t, 12*time.Second, limits[0], "first read gets the full limit")
+	assert.Equal(t, 4*time.Second, limits[1], "retry is capped to the remaining limit (12s - 8s)")
+
+	// When the first read exhausts the full limit, no retry is attempted.
+	limits = nil
+	b.s.read = func(dataHome string, limit time.Duration) (swarm.ProviderUsage, error) {
+		limits = append(limits, limit)
+		b.reads++
+		b.now = b.now.Add(12 * time.Second) // takes all 12s
+		return swarm.ProviderUsage{}, errors.New("timeout")
+	}
+
+	b.s.readOnce()
+	require.Len(t, limits, 1, "a read that exhausted the limit is not retried")
+	assert.Equal(t, 12*time.Second, limits[0])
+}
+
 

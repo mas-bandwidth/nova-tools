@@ -263,8 +263,11 @@ func (s *liveSampler) readOnce() {
 	usage, err := s.reader()(s.dataHome, limit)
 	if err != nil {
 		// a read that fails is tried once more at once before it is counted: one launch
-		// that stalled is not a source that stopped answering
-		usage, err = s.reader()(s.dataHome, limit)
+		// that stalled is not a source that stopped answering. The retry is capped to the
+		// time remaining on the sample's limit, so one sample never exceeds the read limit.
+		if rem := limit - s.clock().Sub(began); rem > 0 {
+			usage, err = s.reader()(s.dataHome, rem)
+		}
 	}
 	if took := s.clock().Sub(began); err == nil {
 		s.mu.Lock()
