@@ -659,8 +659,6 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 	}
 	// Fleet endpoint checks need only the named fields, so malformed or
 	// password-bearing DSNs refuse before a connection (docs/SPEC-CONFIG.md, "fleet").
-	// The row the write would leave, the stored one merged with these, is the
-	// store's own check (config.checkRefs).
 	if err == nil && k.Name == config.KindFleet {
 		err = k.Check(config.Row{Name: name, Fields: changes})
 	}
