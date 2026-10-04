@@ -1910,6 +1910,45 @@ id (`--op`) returns the original result, with no second counter or notification.
   asks the readers its tier needs at the new attempt (`TestNothingToDoAtAHeadAReaderPassedIsBackInReview`).
   With no pass at the head it is failed work for the coordinator, as before.
 
+### read-asked-again-after-takebackc.w1
+
+A read taken back with no verdict does not count as asked (the owner,
+2026-10-04, after a server restart took the reads back and every up reader had
+been asked: the cards sat in review with nobody left to ask, and the only
+escape was a fresh re-cut of each). This subsection replaces, for such a read,
+the rule that a reader is asked an attempt once, here and in the `cannot ask`
+condition of section 8. A read is taken back with no verdict when its card is
+retired by `away` (the ask's and the readers' safety's take-back of a read of a
+reader that is not up: a server restart, a reader marked away, a read's
+deadline) and carries no `verdict`. Its reader may be asked the same attempt
+again, after the readers never asked it: the ask fills a primary's reads from
+the readers up with no read card at the attempt first, by room as before, and
+then from the readers up whose read was taken back, by room. A reader that gave
+a verdict (ok or broken), or whose read was returned, levelled or taken back by
+the coordinator (`ask --instead`), is never asked that attempt again, as before.
+A re-ask is a new read card: its id is the first ask's id with the suffix
+`.t<n>` (`<primary>.r<attempt>.<reader>.t2`, `.t3`; `sprint.ReadCardIDAt`), so
+`<primary>.r<attempt>.<reader>` stays the first ask's id, old ids parse
+unchanged (`ParseReadCard` takes the suffix and returns the same primary,
+attempt and reader), and no store operation puts a retired card back. The
+taken-back count of a reader at an attempt is the number of its retired cards
+there taken back with no verdict; a reader whose read of one attempt was taken
+back three times (`sprint.MaxReadAsks`) is not asked it again. A primary with no
+reader left to ask, at least one of them out by three take-backs, has the
+`reads exhausted` judgment (`ask another reader`, `rework`, `drop`), not
+`cannot ask`: the read cards counted for it are its readers' newest. The model
+is `tla/DirtyTick.tla`: `tb[c][r]` counts the reads of `r` taken back at `c`'s
+attempt, `raway` increments it and leaves the reader out of `seen` until the
+third take-back, which counts as a read as a return past `MaxReasks` does, so
+the reader is not asked again and a primary with no reader left is judged
+(`StrandingIsJudged`); `tb` past `MaxTakeBacks` is a `TypeOK` violation. The
+model chooses among the readers able by the counter and does not order the
+readers never asked before the others, which the code does.
+`TestReadTakenBackMayBeAskedAgainOfTheSameReader`
+pins it on the snapshot: two readers whose reads a restart took back are asked
+again, a reader with a verdict never, the readers never asked first, and three
+take-backs end in `reads exhausted`.
+
 ## 7. Merging
 
 1. In work order, never random: the head of the stream's queued cell first.

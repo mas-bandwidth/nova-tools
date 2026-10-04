@@ -103,10 +103,11 @@ func fewReaders(s *Snapshot) string {
 // asked: it needs want different readers, free is the number up with room and
 // no read card at the attempt, full the number more that are at width. A reader
 // is asked an attempt once (its read card, placed or retired, is one read per
-// reader per attempt: a read taken back away, levelled or returned counts), so
-// the readers left are new ones (reader add), or the next attempt (rework).
+// reader per attempt: a read levelled, returned or given a verdict counts; a
+// read taken back with no verdict does not, until MaxReadAsks), so the readers
+// left are new ones (reader add), or the next attempt (rework).
 func cannotAskWhy(s *Snapshot, pr *Card, attempt, want, free, full int) string {
-	return fmt.Sprintf("needs %d different readers and %d is free with no read card at attempt %d of %s (%d free but at width); a reader is asked an attempt once, whether it read it or its read was taken back, and a reader away or down is not asked (readers: %s); run: nova-sprint reader add <name>, nova-sprint reader up <name>, or nova-sprint rework %s --fix <text> for a new attempt every reader may read", want, free, attempt, pr.ID, full, readersText(s), pr.ID)
+	return fmt.Sprintf("needs %d different readers and %d is free with no read card at attempt %d of %s (%d free but at width); a reader that gave a verdict on an attempt, or whose read of it was taken back %d times, is not asked it again, and a reader away or down is not asked (readers: %s); run: nova-sprint reader add <name>, nova-sprint reader up <name>, or nova-sprint rework %s --fix <text> for a new attempt every reader may read", want, free, attempt, pr.ID, full, MaxReadAsks, readersText(s), pr.ID)
 }
 
 // NoEligibleReader opens the tick's one judgment for every primary of a tick
@@ -221,18 +222,110 @@ func returnedReadsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 	return out
 }
 
-// freeReaders is the readers the ask may ask the primary's attempt of: up,
-// with no read card of it at the attempt, placed or retired. A reader is
-// asked an attempt once: one read card per reader per attempt (ReadCardID),
-// so a reader with a card at this attempt (read, or taken back away, levelled
-// or returned) is not asked it again; the next attempt is read on new cards,
-// by every reader.
-func (s *Snapshot) freeReaders(pr *Card, attempt int) []string {
-	var out []string
-	for _, rd := range s.Readers.Rows() {
-		if s.ReaderIsUp(rd) && s.Readers.Card(ReadCardID(pr.ID, attempt, rd)) == nil {
-			out = append(out, rd)
+// takenBackRead says a read card was taken back with no verdict: retired
+// because its reader was not up (retired_by away, set by the ask and by the
+// sweep alike: a server restart, a reader marked away, a read's deadline), and
+// no verdict on it. Such a read does not count as asked: its reader may be
+// asked the attempt again, on a new card (ReadCardIDAt), up to MaxReadAsks
+// asks (tla/DirtyTick.tla, TakeBacksBounded). A read that gave a verdict, was
+// returned, levelled or taken back by the coordinator is not one.
+func takenBackRead(rc *Card) bool {
+	return !rc.Placed() && rc.F("retired_by") == "away" && rc.F("verdict") == ""
+}
+
+// readSlot is where one reader stands at one attempt of a primary: cur is its
+// newest read card (placed or retired, nil when it has none), next the id of
+// the card an ask of it creates ("" when it is not asked again: it holds a
+// read, gave a verdict, or had its read taken back MaxReadAsks times), taken
+// the reads of it taken back with no verdict so far.
+type readSlot struct {
+	cur   *Card
+	next  string
+	taken int
+}
+
+// readSlotOf walks the ids a reader's read of the attempt can have
+// (ReadCardIDs): each taken-back read leaves the next id to ask it on.
+func (s *Snapshot) readSlotOf(primary string, attempt int, rd string) readSlot {
+	var sl readSlot
+	for n := 1; n <= MaxReadAsks; n++ {
+		id := ReadCardIDAt(primary, attempt, rd, n)
+		c := s.Readers.Card(id)
+		switch {
+		case c == nil:
+			sl.next = id
+			return sl
+		case !takenBackRead(c):
+			sl.cur = c
+			return sl
 		}
+		sl.cur, sl.taken = c, n
+	}
+	return sl
+}
+
+// placedRead is the reader's placed read card of the primary at the attempt, nil
+// when it holds none: the one card of its ids that is on the table.
+func placedRead(s *Snapshot, primary string, attempt int, rd string) *Card {
+	for _, id := range ReadCardIDs(primary, attempt, rd) {
+		if c := s.Readers.Placed(id); c != nil {
+			return c
+		}
+	}
+	return nil
+}
+
+// readsExhaustedBy says a reader's read of the attempt was taken back
+// MaxReadAsks times: it is not asked the attempt again.
+func (s *Snapshot) readsExhaustedBy(primary string, attempt int, rd string) bool {
+	return s.readSlotOf(primary, attempt, rd).taken >= MaxReadAsks
+}
+
+// readsExhaustedByTakeBacks says no reader, up or not, can be asked the
+// primary's attempt, and one of them had its read taken back MaxReadAsks times:
+// the reads are exhausted, and the card needs a judgment, not another ask.
+func (s *Snapshot) readsExhaustedByTakeBacks(pr *Card, attempt int) bool {
+	exhausted := false
+	for _, rd := range s.Readers.Rows() {
+		sl := s.readSlotOf(pr.ID, attempt, rd)
+		if sl.next != "" {
+			return false
+		}
+		exhausted = exhausted || sl.taken >= MaxReadAsks
+	}
+	return exhausted
+}
+
+// askableReaders is the readers up the ask may ask the primary's attempt of,
+// in two tiers: fresh, the readers never asked it (no read card of it, placed
+// or retired), and reask, the readers whose read of it was taken back with no
+// verdict and is not past MaxReadAsks (a server restart, a reader marked away):
+// they are asked it again, on a new card, after the fresh ones. A reader that
+// gave a verdict, was returned, levelled or taken back by the coordinator, holds
+// its card at the attempt and is in neither; the next attempt is read on new
+// cards, by every reader.
+func (s *Snapshot) askableReaders(pr *Card, attempt int) (fresh, reask []string) {
+	for _, rd := range s.Readers.Rows() {
+		if !s.ReaderIsUp(rd) {
+			continue
+		}
+		switch sl := s.readSlotOf(pr.ID, attempt, rd); {
+		case sl.next == "":
+		case sl.taken == 0:
+			fresh = append(fresh, rd)
+		default:
+			reask = append(reask, rd)
+		}
+	}
+	return fresh, reask
+}
+
+// pickAskable chooses want readers by room, the fresh ones first and then the
+// ones whose read was taken back (Snapshot.askableReaders).
+func (r *round) pickAskable(want int, fresh, reask []string, room map[string]readerRoom) []string {
+	out := r.pickByRoom(want, fresh, room)
+	if len(out) < want {
+		out = append(out, r.pickByRoom(want-len(out), reask, room)...)
 	}
 	return out
 }
@@ -257,7 +350,7 @@ func sweepReads(s *Snapshot, p *Plan) {
 			return false
 		}
 		for _, rd := range up {
-			if s.Readers.Card(ReadCardID(c.F("primary"), c.Int("attempt"), rd)) == nil {
+			if s.readSlotOf(c.F("primary"), c.Int("attempt"), rd).next != "" {
 				return true
 			}
 		}

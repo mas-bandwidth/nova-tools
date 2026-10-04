@@ -846,7 +846,7 @@ func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
 	for _, c := range eligibleTurns(s.Work.Column(Review), askable, askStreamRound(s)) {
 		attempt := c.Int("attempt")
 		want := ReadsNeeded(c) - len(liveReadsAt(s, c, attempt))
-		free := s.freeReaders(c, attempt)
+		fresh, reask := s.askableReaders(c, attempt)
 		returned := len(returnedReadsAt(s, c, attempt))
 		switch {
 		case !enoughReadersUp(s, c):
@@ -854,12 +854,12 @@ func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
 			few = true
 		case len(ids) >= TickMaxMoves:
 			due++
-		case len(free)+returned < want:
+		case len(fresh)+len(reask)+returned < want:
 			// no readers to ask it of, whatever their room: Ask refuses it,
 			// and the refusal is the judgment
 			ids = append(ids, c.ID)
 		default:
-			picked := rr.pickByRoom(want, free, room)
+			picked := rr.pickAskable(want, fresh, reask, room)
 			if len(picked)+returned < want {
 				for _, rd := range picked {
 					room[rd] = room[rd].after(-1)

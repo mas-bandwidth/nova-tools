@@ -3,6 +3,7 @@ package sprint
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -274,10 +275,11 @@ func ValidID(s string) bool { return len(s) <= MaxIDLen && idRE.MatchString(s) }
 const MaxIDLen = 128
 
 // ValidCardID says a card's id is its parts joined by dots, each a ValidID word: a
-// primary (p), a work card (p.w1), a read card (p.r1.reader).
+// primary (p), a work card (p.w1), a read card (p.r1.reader), a read card asked
+// again after a take-back (p.r1.reader.t2, ReadCardIDAt).
 func ValidCardID(s string) bool {
 	parts := strings.Split(s, ".")
-	if len(parts) > 3 {
+	if len(parts) > 4 || len(parts) == 4 && !isReadAskSuffix(parts[3]) {
 		return false
 	}
 	for _, p := range parts {
@@ -288,6 +290,12 @@ func ValidCardID(s string) bool {
 	return true
 }
 
+// isReadAskSuffix says s is the last part of a read card asked again after a
+// take-back: t2 .. t<MaxReadAsks> (ReadCardIDAt).
+func isReadAskSuffix(s string) bool {
+	return slices.Contains(ReadCardIDs("p", 1, "x")[1:], "p.r1.x."+s)
+}
+
 // WorkCardID is the identity of a primary's work card for one attempt.
 func WorkCardID(primary string, attempt int) string {
 	return primary + ".w" + strconv.Itoa(attempt)
@@ -296,6 +304,33 @@ func WorkCardID(primary string, attempt int) string {
 // ReadCardID is the identity of one reader's read of a primary at one attempt.
 func ReadCardID(primary string, attempt int, reader string) string {
 	return primary + ".r" + strconv.Itoa(attempt) + "." + reader
+}
+
+// MaxReadAsks is how many times one reader is asked one attempt of a primary
+// when each read is taken back with no verdict: a read taken back this many
+// times is not asked again (tla/DirtyTick.tla, TakeBacksBounded).
+const MaxReadAsks = 3
+
+// ReadCardIDAt is the identity of the n-th ask of one reader's read of a primary
+// at one attempt (n from 1): the first ask is ReadCardID, and an ask of a read
+// taken back with no verdict appends .t<n> (n = 2, 3), so every ask is a new
+// card and no retired card is put back in place.
+func ReadCardIDAt(primary string, attempt int, reader string, n int) string {
+	id := ReadCardID(primary, attempt, reader)
+	if n <= 1 {
+		return id
+	}
+	return id + ".t" + strconv.Itoa(n)
+}
+
+// ReadCardIDs is every identity one reader's read of a primary at one attempt
+// can have, the first ask's first (ReadCardIDAt for n = 1..MaxReadAsks).
+func ReadCardIDs(primary string, attempt int, reader string) []string {
+	ids := make([]string, 0, MaxReadAsks)
+	for n := 1; n <= MaxReadAsks; n++ {
+		ids = append(ids, ReadCardIDAt(primary, attempt, reader, n))
+	}
+	return ids
 }
 
 // CtlID is the identity of a stream's or a member's control card.
@@ -315,8 +350,15 @@ func ParseWorkCard(id string) (primary string, attempt int, ok bool) {
 }
 
 // ParseReadCard splits a read card identity into its primary, attempt and reader.
+// The ask of a read taken back (ReadCardIDAt) parses to the same three.
 func ParseReadCard(id string) (primary string, attempt int, reader string, ok bool) {
 	parts := strings.Split(id, ".")
+	if len(parts) == 4 {
+		if !isReadAskSuffix(parts[3]) {
+			return "", 0, "", false
+		}
+		parts = parts[:3]
+	}
 	if len(parts) != 3 || !strings.HasPrefix(parts[1], "r") {
 		return "", 0, "", false
 	}

@@ -9,9 +9,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// A reader is asked an attempt once (one read card per reader per attempt,
-// ReadCardID: placed or retired, read or taken back), and the next attempt is
-// read on new cards: the readers of an earlier attempt are eligible again
+// A reader is asked an attempt once when it read it, was returned or levelled
+// (one read card per reader per attempt, ReadCardID: placed or retired), and the
+// next attempt is read on new cards: the readers of an earlier attempt are
+// eligible again; a read taken back with no verdict is asked again
+// (read_takeback_ask_test.go)
 // (docs/SPEC-SPRINT.md section 6; tla/DirtyTick.tla, NewAttempt: "no reader
 // has read it"). The night of 2026-10-03: five cards at one attempt, each
 // read card taken back from five readers in turn as their beats lapsed, and
@@ -48,8 +50,8 @@ func TestTheReadersOfAnEarlierAttemptAreAskedTheNext(t *testing.T) {
 }
 
 // burnedWorld is n flash primaries in review at attempt 1 and five readers
-// up, each holding a read card at that attempt taken back from it (retired
-// by away): no reader may be asked any of them.
+// up, each holding a read card at that attempt it returned (retired by
+// returned): no reader may be asked any of them.
 func burnedWorld(t *testing.T, n int) *world {
 	t.Helper()
 	readers := []string{"reader-a", "reader-b", "reader-c", "reader-d", "reader-e"}
@@ -66,13 +68,13 @@ func burnedWorld(t *testing.T, n int) *world {
 }
 
 // burn adds the flash primary p in review at attempt 1 with a read card of
-// every reader at that attempt taken back from it.
+// every reader at that attempt returned.
 func burn(w *world, p string, readers []string) {
 	w.s.Work.Put(&Card{ID: p, Row: "s1", Col: Review, Score: float64(len(w.s.Work.Cards())), Rev: 1,
 		Fields: map[string]string{"kind": "primary", "attempt": "1", "stream": "s1", "head": "h1"}})
 	for _, rd := range readers {
 		w.s.Readers.Put(&Card{ID: ReadCardID(p, 1, rd), Rev: 1, Fields: map[string]string{"kind": "read", "primary": p, "stream": "s1",
-			"reader": rd, "attempt": "1", "head": "h1", "asked": stamp(t0), "retired": stamp(t0), "retired_by": "away"}})
+			"reader": rd, "attempt": "1", "head": "h1", "asked": stamp(t0), "retired": stamp(t0), "retired_by": "returned"}})
 	}
 }
 
@@ -87,7 +89,7 @@ func TestThePrimariesNoReaderMayBeAskedAreOneJudgment(t *testing.T) {
 	assert.ElementsMatch(t, ids, notes[0].Primaries, "every primary is a subject of it")
 	assert.Equal(t, 5, notes[0].Count)
 	assert.True(t, strings.HasPrefix(notes[0].What, NoEligibleReader+"p1, p2, p3, p4, p5: "), "it names them: %q", notes[0].What)
-	assert.Contains(t, notes[0].What, "a reader is asked an attempt once", "and says the rule: %q", notes[0].What)
+	assert.Contains(t, notes[0].What, "is not asked it again", "and says the rule: %q", notes[0].What)
 	assert.Contains(t, notes[0].What, "rework p1 --fix", "and the way out: %q", notes[0].What)
 	for _, id := range ids {
 		assert.Len(t, w.openOn(id), 1, "%s is held by it", id)

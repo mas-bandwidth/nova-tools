@@ -156,7 +156,11 @@ func TestSchemaCoverValidCardID(t *testing.T) {
 		{"a primary", "p", true},
 		{"a work card", "p.w1", true},
 		{"a read card", "p.r1.reader-a", true},
-		{"more than three parts", "a.b.c.d", false},
+		{"a read card asked again after a take-back", "p.r1.reader-a.t2", true},
+		{"the last ask of a read taken back", "p.r1.reader-a.t3", true},
+		{"a first ask has no suffix", "p.r1.reader-a.t1", false},
+		{"asks past the bound", "p.r1.reader-a.t4", false},
+		{"a fourth part that is no ask suffix", "a.b.c.d", false},
 		{"an empty part", "p..w1", false},
 		{"a part is not an id word", "p.w 1", false},
 		{"nothing", "", false},
@@ -183,7 +187,7 @@ func TestSchemaCoverParseCards(t *testing.T) {
 	})
 	t.Run("a read card's refusals", func(t *testing.T) {
 		t.Parallel()
-		for _, id := range []string{"p", "p.r1", "p.x1.reader", "p.r0.reader", "p.r1.reader.extra", "p.rx.reader"} {
+		for _, id := range []string{"p", "p.r1", "p.x1.reader", "p.r0.reader", "p.r1.reader.extra", "p.rx.reader", "p.r1.reader.t1", "p.r1.reader.t4", "p.r1.reader.t02", "p.r1.reader.t2.t3"} {
 			_, _, _, ok := ParseReadCard(id)
 			assert.False(t, ok, "ParseReadCard(%q)", id)
 		}
@@ -192,5 +196,18 @@ func TestSchemaCoverParseCards(t *testing.T) {
 		assert.Equal(t, "p", p)
 		assert.Equal(t, 3, n)
 		assert.Equal(t, "reader-a", r)
+	})
+	t.Run("a read card asked again parses to the same read", func(t *testing.T) {
+		t.Parallel()
+		for n := 1; n <= MaxReadAsks; n++ {
+			id := ReadCardIDAt("p", 3, "reader-a", n)
+			p, a, r, ok := ParseReadCard(id)
+			require.True(t, ok, id)
+			assert.Equal(t, []any{"p", 3, "reader-a"}, []any{p, a, r}, id)
+			assert.True(t, ValidCardID(id), id)
+		}
+		assert.Equal(t, ReadCardID("p", 3, "reader-a"), ReadCardIDAt("p", 3, "reader-a", 1), "the first ask keeps the first id")
+		assert.Equal(t, "p.r3.reader-a.t2", ReadCardIDAt("p", 3, "reader-a", 2))
+		assert.Equal(t, []string{"p.r3.reader-a", "p.r3.reader-a.t2", "p.r3.reader-a.t3"}, ReadCardIDs("p", 3, "reader-a"))
 	})
 }

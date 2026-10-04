@@ -91,7 +91,7 @@ func StatsRecords(s *Snapshot) map[string][]string {
 		for k := 1; k <= p.Int("attempt"); k++ {
 			work = append(work, WorkCardID(p.ID, k))
 			for _, r := range s.Readers.Rows() {
-				reads = append(reads, ReadCardID(p.ID, k, r))
+				reads = append(reads, ReadCardIDs(p.ID, k, r)...)
 			}
 		}
 	}
@@ -135,9 +135,11 @@ func Stats(s *Snapshot) PassStats {
 				}
 			}
 			for _, r := range s.Readers.Rows() {
-				if rc := s.Readers.Card(ReadCardID(p.ID, k, r)); rc != nil {
-					y := sampleOf(reads, cmp.Or(rc.F("reader"), rc.Row, r))
-					y.timed(stampAt(rc, "asked"), stampAt(rc, "begun"), stampAt(rc, "read"), cardcost.ParseUsage(rc.F(FieldUsage)).Wall)
+				for _, id := range ReadCardIDs(p.ID, k, r) {
+					if rc := s.Readers.Card(id); rc != nil {
+						y := sampleOf(reads, cmp.Or(rc.F("reader"), rc.Row, r))
+						y.timed(stampAt(rc, "asked"), stampAt(rc, "begun"), stampAt(rc, "read"), cardcost.ParseUsage(rc.F(FieldUsage)).Wall)
+					}
 				}
 			}
 		}

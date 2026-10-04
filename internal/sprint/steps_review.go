@@ -74,7 +74,7 @@ func (s *Snapshot) decideFields(pr *Card, first bool) map[string]string {
 func readsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 	var out []*Card
 	for _, r := range s.Readers.Rows() {
-		c := s.Readers.Placed(ReadCardID(pr.ID, attempt, r))
+		c := placedRead(s, pr.ID, attempt, r)
 		if c != nil {
 			out = append(out, c)
 		}
@@ -171,12 +171,12 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			all = append(all, rc.F("reader"))
 			kept = append(kept, rc)
 		}
-		free := s.freeReaders(c, attempt)
+		fresh, reask := s.askableReaders(c, attempt)
 		want := max(0, ReadsNeeded(c)-len(all)) // a read taken back from a reader away leaves one to ask
 		if another {
 			want = 1
 		}
-		chosenReaders := rr.pickByRoom(want, free, room)
+		chosenReaders := rr.pickAskable(want, fresh, reask, room)
 		// A return is not a read (tla/DirtyTick.tla, PlaceReads and
 		// JudgedOnlyAfterTheBound): a read handed back goes to a free
 		// reader when there is one, its card retired; when none is free its
@@ -199,9 +199,19 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			takenBack = append(takenBack, change(Readers, removeEntry(rc, map[string]string{"retired": stamp(s.Now), "retired_by": "returned"})))
 			retiredFrom = append(retiredFrom, rc.F("reader"))
 		}
+		if len(chosenReaders)+len(again) < want && s.readsExhaustedByTakeBacks(c, attempt) {
+			// no reader is left to ask the attempt of, and one has had its read
+			// taken back MaxReadAsks times: the reads are exhausted, a judgment, and
+			// no refusal (tla/DirtyTick.tla, TakeBacksBounded)
+			if j, ok := reviewJudgment(s, c, reviewStep{moved: map[string]string{}, who: r.Who}); ok {
+				p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.Row, Notes: []Note{j},
+					Moved: c.ID + ": its reads were taken back " + itoa(MaxReadAsks) + " times and no reader is left to ask"})
+			}
+			continue
+		}
 		if len(chosenReaders)+len(again) < want {
 			full := 0
-			for _, rd := range free {
+			for _, rd := range slices.Concat(fresh, reask) {
 				if room[rd].free <= 0 {
 					full++
 				}
@@ -229,7 +239,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			fields := map[string]string{"kind": "read", "primary": c.ID, "stream": c.Row, "reader": rd, "attempt": itoa(attempt), "head": c.F("head"), "asked": stamp(s.Now)}
 			maps.Copy(fields, s.readRouteOf(ri, c, failed))
 			maps.Copy(fields, s.decideFields(c, !another && !decided && i == 0))
-			u.Changes = append(u.Changes, change(Readers, createEntry(ReadCardID(c.ID, attempt, rd), rd, Asked, c.Score, fields)))
+			u.Changes = append(u.Changes, change(Readers, createEntry(s.readSlotOf(c.ID, attempt, rd).next, rd, Asked, c.Score, fields)))
 		}
 		all = append(append(all, chosenReaders...), again...)
 		if pair := strings.Join(all, ","); !another && pair != c.F("asked") {
@@ -257,8 +267,11 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			u.Closes = closesFor(s.Open, []string{NStranded, NStalled}, c.ID)
 		}
 		asked := map[string]string{}
-		for _, rd := range append(append([]string{}, chosenReaders...), again...) {
-			asked[ReadCardID(c.ID, attempt, rd)] = Asked
+		for _, rd := range chosenReaders {
+			asked[s.readSlotOf(c.ID, attempt, rd).next] = Asked
+		}
+		for _, rc := range inPlace {
+			asked[rc.ID] = Asked
 		}
 		if j, ok := reviewJudgment(s, c, reviewStep{moved: asked, closing: noteIDs(u.Closes), who: r.Who}); ok {
 			u.Notes = append(u.Notes, j)
@@ -284,7 +297,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 // taken back by ask --instead ("" when it is live: asked or reading).
 func insteadHeld(s *Snapshot, pr *Card, rd string) string {
 	attempt := pr.Int("attempt")
-	rc := s.Readers.Card(ReadCardID(pr.ID, attempt, rd))
+	rc := s.readSlotOf(pr.ID, attempt, rd).cur
 	at := " of " + pr.ID + " at attempt " + itoa(attempt)
 	switch {
 	case rc == nil:
@@ -618,10 +631,16 @@ func reviewJudgment(s *Snapshot, pr *Card, st reviewStep) (Note, bool) {
 	oks := map[string]bool{}
 	outstanding, reads := false, 0
 	for _, r := range s.Readers.Rows() {
-		id := ReadCardID(pr.ID, attempt, r)
-		c := s.Readers.Placed(id)
+		c := placedRead(s, pr.ID, attempt, r)
+		id := s.readSlotOf(pr.ID, attempt, r).next
+		if c != nil {
+			id = c.ID
+		}
 		col, moved := st.moved[id]
 		switch {
+		case c == nil && !moved && s.readsExhaustedBy(pr.ID, attempt, r):
+			reads++ // taken back MaxReadAsks times: a read done with no verdict
+			continue
 		case c == nil && !moved:
 			continue
 		case c == nil:
