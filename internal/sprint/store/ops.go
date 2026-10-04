@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
@@ -259,7 +258,7 @@ func (st *Store) SyncMirrors(ctx context.Context) error {
 			costs[row.Key] = ctl.Fields[sprint.FieldCost]
 			want := map[string]string{
 				sprint.CI:       dash(ctl.Fields["ci"]),
-				sprint.StateCol: dash(ctl.Fields["state"]),
+				sprint.StateCol: dash(sprint.StreamStateText(ctl.Fields)),
 				sprint.Since:    clock(ctl.Fields["since"]),
 			}
 			if d := rowDiff(row, want); len(d) > 0 {
@@ -303,14 +302,6 @@ func clock(stamp string) string {
 		return "-"
 	}
 	return t.Local().Format("15:04:05")
-}
-
-func count(t ntable.Table, row ntable.Row, col string) int64 {
-	j := t.Column(col)
-	if j < 0 || j >= len(row.Cells) {
-		return 0
-	}
-	return row.Cells[j].Count
 }
 
 // InboxView is the inbox as read: its groups, and the last stream id read.
@@ -535,8 +526,8 @@ func (st *Store) StreamClocks(ctx context.Context) ([]sprint.StreamClock, error)
 		if since.After(p) {
 			p = since
 		}
-		out = append(out, sprint.StreamClock{Stream: r.Key, State: ctl.Fields["state"], Since: since, Progress: p, Empty: onTable[r.Key] == 0,
-			Held: waiting[r.Key] > 0 && moving[r.Key] == 0, Quiet: parseStamp(ctl.Fields[sprint.FieldStaleReview])})
+		out = append(out, sprint.StreamClock{Stream: r.Key, State: sprint.StreamStateText(ctl.Fields), Since: since, Progress: p, Empty: onTable[r.Key] == 0,
+			Held: waiting[r.Key] > 0 && moving[r.Key] == 0 || ctl.Fields[sprint.FieldHeld] != "", Reason: ctl.Fields[sprint.FieldHeldReason], Quiet: parseStamp(ctl.Fields[sprint.FieldStaleReview])})
 	}
 	return out, nil
 }

@@ -7,18 +7,14 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// Every non-test Go file of the package says whether it decides how a result is
-// produced and read (ResultFiles: in every fingerprint) or not
-// (BookkeepingFiles: in none), in exactly one of the two lists, so a file added
-// later cannot be left out of the rule or counted twice.
 func TestEveryRunnerFileIsClassified(t *testing.T) {
 	t.Parallel()
 	entries, err := os.ReadDir(".")
@@ -30,17 +26,14 @@ func TestEveryRunnerFileIsClassified(t *testing.T) {
 		}
 	}
 	listed := map[string]int{}
-	for _, n := range ResultFiles {
-		listed[n]++
-	}
-	for _, n := range BookkeepingFiles {
+	for _, n := range append(slices.Clone(ResultFiles), BookkeepingFiles...) {
 		listed[n]++
 	}
 	for n, times := range listed {
 		assert.Equal(t, 1, times, "%s is in ResultFiles and BookkeepingFiles %d times, want exactly one list once", n, times)
 	}
 	for _, n := range dir {
-		assert.NotEqual(t, 0, listed[n], "%s is in neither ResultFiles nor BookkeepingFiles: say in fingerprint.go whether it decides how a result is produced and read", n)
+		assert.Contains(t, listed, n, "%s is in neither ResultFiles nor BookkeepingFiles: say in fingerprint.go whether it decides how a result is produced and read", n)
 		delete(listed, n)
 	}
 	for n := range listed {
@@ -48,74 +41,75 @@ func TestEveryRunnerFileIsClassified(t *testing.T) {
 	}
 }
 
-// The binary carries the bytes of the files CheckRunner holds to the checkout
-// (the result files and the input-list files), and no others; the fingerprint
-// takes only the result files of them.
 func TestEmbeddedSourcesAreTheCheckedFiles(t *testing.T) {
 	t.Parallel()
 	files, err := CheckedSources()
 	require.NoError(t, err)
-	{
-		runner, err := RunnerFiles()
-		require.NoError(t, err, "the fingerprint takes %d runner files, %d are result files (%v)", len(runner), len(ResultFiles), err)
-		require.Equal(t, len(ResultFiles), len(runner), "the fingerprint takes %d runner files, %d are result files (%v)", len(runner), len(ResultFiles), err)
-	}
+	runner, err := RunnerFiles()
+	require.NoError(t, err, "the fingerprint takes %d runner files, %d are result files (%v)", len(runner), len(ResultFiles), err)
+	require.Equal(t, len(ResultFiles), len(runner), "the fingerprint takes %d runner files, %d are result files (%v)", len(runner), len(ResultFiles), err)
 	for _, n := range InputListFiles {
-		if assert.True(t, slices.Contains(BookkeepingFiles, n), "%s is an input-list file: it is bookkeeping and no result file", n) {
-			assert.False(t, slices.Contains(ResultFiles, n), "%s is an input-list file: it is bookkeeping and no result file", n)
-		}
+		assert.True(t, slices.Contains(BookkeepingFiles, n), "%s is an input-list file: it is bookkeeping and no result file", n)
+		assert.False(t, slices.Contains(ResultFiles, n), "%s is an input-list file: it is bookkeeping and no result file", n)
 	}
 	var got, want []string
 	for name, raw := range files {
 		got = append(got, name)
-		disk, err := os.ReadFile(filepath.Join(".", filepath.Base(name)))
-		if assert.NoError(t, err, "%s: the embedded bytes are not the file's", name) {
-			assert.Equal(t, string(raw), string(disk), "%s: the embedded bytes are not the file's", name)
-		}
+		disk := testkit.ReadFile(t, filepath.Join(".", filepath.Base(name)))
+		assert.Equal(t, string(raw), disk, "%s: the embedded bytes are not the file's", name)
 	}
 	for _, n := range CheckedFiles() {
 		want = append(want, RunnerDir+"/"+n)
 	}
-	sort.Strings(got)
-	sort.Strings(want)
-	require.Equal(t, strings.Join(want, ","), strings.Join(got, ","), "embedded %v, CheckedFiles names %v: fix the go:embed line", got, want)
-	entries, _ := sources.ReadDir(".")
+	slices.Sort(got)
+	slices.Sort(want)
+	require.Equal(t, want, got, "embedded %v, CheckedFiles names %v: fix the go:embed line", got, want)
+	entries, err := sources.ReadDir(".")
+	require.NoError(t, err)
 	require.Len(t, entries, len(CheckedFiles()), "the embedded directory holds %d files, CheckedFiles %d", len(entries), len(CheckedFiles()))
 }
 
 func TestCheckRunnerComparesTheEmbeddedCheckedFilesWithTheRoot(t *testing.T) {
 	t.Parallel()
-	root := t.TempDir()
-	require.NoError(t, CheckRunner(root), "a root with no runner sources")
+	require.NoError(t, CheckRunner(t.TempDir()), "a root with no runner sources")
 	require.NoError(t, CheckRunner(filepath.Join("..", "..")), "this repository")
-	dir := filepath.Join(root, RunnerDir)
-	require.NoError(t, os.MkdirAll(dir, 0o755))
-	built, _ := CheckedSources()
-	for path, raw := range built {
-		require.NoError(t, os.WriteFile(filepath.Join(root, path), raw, 0o644))
+	built, err := CheckedSources()
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name, file, body, not string
+		want                  []string
+	}{
+		{"the same files", "", "", "", nil},
+		{"an edited result file", "suite.go", "other\n", "", []string{"internal/tlc/suite.go differ", "build tlacheck from this tree"}},
+		{"an edited input-list file", "inputs.go", "another input list\n", "suite.go", []string{"internal/tlc/inputs.go differ"}},
+		{"an edited bookkeeping file", "records.go", "another bookkeeping file\n", "", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			for path, raw := range built {
+				testkit.WriteFile(t, filepath.Join(root, path), string(raw))
+			}
+			if tc.file != "" {
+				testkit.WriteFile(t, filepath.Join(root, RunnerDir, tc.file), tc.body)
+			}
+			err := CheckRunner(root)
+			if tc.want == nil {
+				assert.NoError(t, err, tc.name)
+				return
+			}
+			for _, want := range tc.want {
+				assert.ErrorContains(t, err, want, "%s: %v", tc.name, err)
+			}
+			if tc.not != "" {
+				assert.NotContains(t, err.Error(), tc.not, "%s: %v", tc.name, err)
+			}
+		})
 	}
-	require.NoError(t, CheckRunner(root), "the same files")
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "suite.go"), []byte("other\n"), 0o644))
-	err := CheckRunner(root)
-	require.ErrorContains(t, err, "internal/tlc/suite.go differ", "an edited result file: %v", err)
-	require.ErrorContains(t, err, "build tlacheck from this tree", "an edited result file: %v", err)
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "suite.go"), built[RunnerDir+"/suite.go"], 0o644))
-	// inputs.go computes the list of files a case reads: a binary built from
-	// another one computes other inputs than the checkout does.
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "inputs.go"), []byte("another input list\n"), 0o644))
-	err = CheckRunner(root)
-	require.ErrorContains(t, err, "internal/tlc/inputs.go differ", "an edited input-list file: %v", err)
-	require.NotContains(t, err.Error(), "suite.go", "an edited input-list file: %v", err)
-	// Any other bookkeeping file decides nothing about the inputs.
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "inputs.go"), built[RunnerDir+"/inputs.go"], 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "records.go"), []byte("another bookkeeping file\n"), 0o644))
-	require.NoError(t, CheckRunner(root), "an edited bookkeeping file")
 }
 
-// The file that turns a row of CASES.tsv into a Case (its columns, its defaults,
-// what it refuses) decides what a run is judged by, so it is a result file: an
-// edit to it stales every record. The test finds the declarations by parsing the
-// package, so moving them to a bookkeeping file fails it.
+// ParseCases, Case and Case.check turn a plan row into the case a run is judged
+// by, so the file that declares them is a result file. Moving them fails this.
 func TestTheFileThatReadsAPlanRowIsAResultFile(t *testing.T) {
 	t.Parallel()
 	fset := token.NewFileSet()
@@ -124,8 +118,8 @@ func TestTheFileThatReadsAPlanRowIsAResultFile(t *testing.T) {
 	where := map[string]string{}
 	for _, pkg := range pkgs {
 		for name, file := range pkg.Files {
-			for _, decl := range file.Decls {
-				switch d := decl.(type) {
+			ast.Inspect(file, func(n ast.Node) bool {
+				switch d := n.(type) {
 				case *ast.FuncDecl:
 					if d.Recv == nil && d.Name.Name == "ParseCases" {
 						where["ParseCases"] = name
@@ -133,14 +127,13 @@ func TestTheFileThatReadsAPlanRowIsAResultFile(t *testing.T) {
 					if d.Recv != nil && d.Name.Name == "check" {
 						where["Case.check"] = name
 					}
-				case *ast.GenDecl:
-					for _, spec := range d.Specs {
-						if ts, ok := spec.(*ast.TypeSpec); ok && ts.Name.Name == "Case" {
-							where["Case"] = name
-						}
+				case *ast.TypeSpec:
+					if d.Name.Name == "Case" {
+						where["Case"] = name
 					}
 				}
-			}
+				return true
+			})
 		}
 	}
 	for _, what := range []string{"ParseCases", "Case", "Case.check"} {

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"golang.org/x/mod/semver"
 )
 
 // prNumber matches the `(#123)` a squash merge puts at the end of the subject.
@@ -96,19 +97,23 @@ func green(runs []CheckRun) error {
 // previousTag picks the highest version tag in the repository. It is a semantic
 // comparison, not a lexical one: v0.15.10 comes after v0.15.3, which a sort by
 // string puts the other way round and which would make the changelog for a
-// patch release list seven releases' worth of work.
+// patch release list seven releases' worth of work. (STANDARD §7: library first.)
 func previousTag(tags []string) string {
-	best, bestParts := "", []int{}
+	versions := make([]string, 0, len(tags))
 	for _, tag := range tags {
-		if ValidVersion(tag) != nil {
+		// semver.IsValid refuses a tag without a leading v (e.g. "0.16.0")
+		// and a tag with a fourth number (e.g. "v0.16.0.1"), the same
+		// shapes the previous hand-rolled filter rejected.
+		if !semver.IsValid(tag) {
 			continue
 		}
-		parts := versionParts(tag)
-		if best == "" || lessVersion(bestParts, parts) {
-			best, bestParts = tag, parts
-		}
+		versions = append(versions, tag)
 	}
-	return best
+	if len(versions) == 0 {
+		return ""
+	}
+	semver.Sort(versions)
+	return versions[len(versions)-1]
 }
 
 func versionParts(tag string) []int {
@@ -152,7 +157,7 @@ func Section(version, sha, previous, sumsDigest, dogfoodWaiver string, when time
 	// that came with it -- anybody who could change one could change the other
 	// -- so it is given this digest instead, which reached the adopting host
 	// through the repository rather than through the machine being read
-	// (Johnny, 2026-09-18). It is written in the form the check wants, so
+	// (a person, 2026-09-18). It is written in the form the check wants, so
 	// nobody has to transcribe it.
 	if sumsDigest != "" {
 		fmt.Fprintf(&b, "%s%s\n\nAdopt this release with `--expect-sums %s`.\n\n", SumsDigestPrefix, sumsDigest, sumsDigest)
@@ -207,7 +212,7 @@ var annotationSums = regexp.MustCompile(`(?m)^` + AnnotationSumsPrefix + `([0-9a
 
 // Annotation is the message the TAG OBJECT carries, composed in one place
 // because it is written by `cut` and read by `adopt` and the two have to agree
-// about where the digest is (Johnny's decision 2, #1337). A tag is the one
+// about where the digest is (the repository owner's decision 2, #1337). A tag is the one
 // thing in this repository that cannot be quietly amended, so what it says
 // about a release is the most durable record the release has.
 func Annotation(version, sha, sumsDigest string) string {
@@ -238,7 +243,7 @@ func SumsInAnnotation(message string) string {
 // reason a cut can refuse.
 var errTruncated = errors.New("compare-truncated")
 
-// classify is the gate Johnny's decision 1 puts in front of the tag: which of
+// classify is the gate the repository owner's decision 1 puts in front of the tag: which of
 // the paths this range touched are on SensitivePaths, and may this cut proceed.
 // It is its own function, and pure apart from the writers, because the decision
 // is the thing worth reading -- the cut around it is bookkeeping.
@@ -252,7 +257,7 @@ var errTruncated = errors.New("compare-truncated")
 // cut clean. So the truncation is decided FIRST and named FIRST, before
 // anything is said about what was found inside a list that may be short.
 //
-// And --security-read does not get past it. Johnny's read is a read OF A LIST,
+// And --security-read does not get past it. A person's read is a read OF A LIST,
 // and a read of a prefix of the truth vouches for a prefix of the truth. The
 // way past a truncated compare is a complete list, which is what --local-diff
 // and --paths-from are for.
@@ -275,7 +280,7 @@ func classify(files []string, complete bool, rangeName, securityRead string, out
 		return nil
 	}
 	if securityRead == "" {
-		return refuse("get Johnny's read of these paths and name it: --security-read <note id or the url of his comment>",
+		return refuse("get a person's read of these paths and name it: --security-read <note id or the url of his comment>",
 			"this range touches %s on the sensitive list: %s", plural(len(hits), "path"), namedPaths(hits, 10))
 	}
 	// ON STDOUT, above the cut line: it is a receipt, not progress. A release
@@ -478,7 +483,7 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	}
 	prs := PullRequests(commits)
 	// WHICH PATHS THE RANGE TOUCHED, and whether that needs a read before a
-	// tag exists (Johnny's decision 1, #1337). Asked BEFORE --dry-run branches
+	// tag exists (the repository owner's decision 1, #1337). Asked BEFORE --dry-run branches
 	// and before anything is written: a dry run exists to find out what would
 	// happen, and what would happen is this refusal.
 	files, complete, err := paths(ctx, o, deps, previous, sha, out, errs)

@@ -1,8 +1,12 @@
 package main
 
-// local.go is `nova-ci local`: the unit tier CI runs for this diff, run on this
-// machine before a push, so a worker's answer is CI's answer, from one verb
-// instead of a hand-made script that runs more of the tree than the change needs.
+// local.go is `nova-ci local`: the unit tier CI runs for this
+// diff, run on this machine before a push, so a child's answer is CI's answer.
+//
+// Children each invent their own way to test what they touch: a sharding
+// script under `timeout 95`, a six-pass loop for t.Parallel violations, hand
+// timing scripts. Several run the whole tree, which is CPU the real work
+// needs, so this verb gives every child one way to run the unit tier.
 //
 // ONE IMPLEMENTATION, NOT A COPY. The verb owns no selection rule, no go test
 // flag and no budget of its own:
@@ -48,24 +52,24 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/yield"
 )
 
-// localNice is yield.Nice: one number for the copies and the local runs.
-var _ = [1]struct{}{}[yield.Nice-15] // compile-time: localNice == yield.Nice
-
 const (
 	// localDefaultBase is the branch every card and stream lands on.
 	localDefaultBase = "origin/dev"
-	// localNice is the niceness of everything the verb starts: the tests share
-	// the bench with the work they test. It is yield.Nice, the copies' own,
-	// and the verb steps itself down to it before it starts anything
-	// (yield.ToCI), so the nice -n is belt and braces.
-	localNice = "15"
 	// localCores is the cores a CI unit leg may take, and so the most a local
 	// run takes: go test -p, GOMAXPROCS and the Makefile's GOTEST_P.
 	localCores = "2"
 	// localOutputKept is how many of a red test's own output lines are printed
 	// under it: enough for the assertion and its context, not the whole log.
 	localOutputKept = 40
+	// localNice is the niceness of everything the verb starts: the tests share
+	// the bench with the work they test. It is yield.Nice: one number for the
+	// copies and the local runs, the copies' own niceness, and the verb steps
+	// itself down to it before it starts anything (yield.ToCI), so the nice -n
+	// is belt and braces.
+	localNice = "15"
 )
+
+var _ = [1]struct{}{}[yield.Nice-15] // compile-time: localNice == yield.Nice
 
 // localCmd is one child process the verb starts. Env is added to the inherited
 // environment; Dir empty is the current directory.

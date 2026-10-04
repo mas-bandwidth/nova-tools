@@ -61,21 +61,27 @@ wakes her at once), held while friend down holds her whatever she beats.
 friend up releases the hold and is not a beat: a friend released with no beat
 in the last `+sprint.FriendDownAfter.String()+` is down until she beats. A friend down shows
 working 0: her cards stay on her row and count again when she beats; ready
-and done are as they were. where shows the
-friends after merge and before fleet, up first, then held, then down, each by
-name, with no load column.
+and done are as they were. where draws the
+friends between work and fleet in its default frame, which draws no merge
+table; the friends table is drawn after merge only under where --all, up
+first, then held, then down, each by name, with no load column.
 
 A friend's card: a card whose brief says WHO: friend (any friend) or
 WHO: friend <name> (a row of the friends table; add and brief refuse any other)
 is dealt by the tick to a friend up below her width, the one it names or the
 one with the most free width, on her own fleet row friend.<name>, straight into
 working; no machine is dealt it, and no presence or rebalance takes it back.
-friend sync writes it as <friend>-working/inbox/<card>/BRIEF.md (its STATUS line
+friend sync writes it as <friend>-working/inbox/<job>/BRIEF.md, the job
+directory <card> at epoch 0 and <card>~<epoch> after a clear (its STATUS line
 names the card, the branch to push and the report), and finishes it from
-outbox/<card>/REPORT.md: Verdict: LAND with Head: <full sha> goes to review at
+outbox/<job>/REPORT.md: Verdict: LAND with Head: <full sha> goes to review at
 origin's tip of that branch when the tip is that Head (one git ls-remote), and
-is refused naming both shas, the card left working, when it is not; Verdict: HOLD or FAIL is work that
-came back failed, with the report's first paragraph. card prints who=; where counts it on her friends row.`) + "\n"
+is refused, the card left working, when the tip is another sha (both named),
+when origin has no branch of that name, when the tip cannot be read, or when
+the card names no REPO: line; Verdict: HOLD, FAIL, FAILED or BROKEN is work
+that came back failed, and a LAND without a full sha, an empty report and any
+other verdict finish the card failed too, each with the report's first
+paragraph. card prints who=; where counts it on her friends row.`) + "\n"
 }
 
 // friendVerbWords is what friend beat, friend down, and friend up say on -h.
@@ -89,9 +95,9 @@ func friendVerbWords(name string) string {
 	case "friend beat":
 		return "friend beat records that this friend is present. The friend's own machinery runs it every " + every + ". The friend is up while the last beat is under " + down + " old, and down once that long has passed with no beat, or when the friend has never beaten. A beat wakes the friend at once. " + sync + "\n"
 	case "friend down":
-		return "friend down holds the named friend. The friend stays held whatever beat arrives, and where counts working as 0 while the friend is held. friend up releases the hold. " + sync + "\n"
+		return "friend down holds the named friend. The friend stays held whatever beat arrives, and where counts working as 0 while the friend is held. friend up releases the hold. friend down is hold <friend> in the old words, kept for one release: run nova-sprint hold <friend> --reason <text> (her cards finish; --return withdraws them), and unhold <friend>. " + sync + "\n"
 	case "friend up":
-		return "friend up releases a hold that friend down set. It is not a beat: a friend released with no beat in the last " + down + " is down until the friend beats. " + sync + "\n"
+		return "friend up releases a hold that friend down set. It is not a beat: a friend released with no beat in the last " + down + " is down until the friend beats. friend up is unhold <friend> in the old words, kept for one release. " + sync + "\n"
 	default:
 		return ""
 	}
@@ -241,12 +247,15 @@ func (a *app) cmdFriendHold(held bool, args []string, stdout, stderr io.Writer) 
 	if err != nil {
 		return refuse(stderr, name, err.Error())
 	}
-	if err := st.SetFriendHeld(context.Background(), friend, held, c.actor); err != nil {
+	if err := st.FriendNamed(context.Background(), friend); err != nil {
 		fmt.Fprintf(stderr, "%s %s: %s\n", prog, name, oneline.Escape(err.Error()))
 		return 1
 	}
-	sayOK(stdout, c.json, name, token(name)+" OK "+friend+" held="+fmt.Sprint(held), map[string]any{"friend": friend, "held": held})
-	return 0
+	// the old words of hold <friend> and unhold <friend> (one release): she keeps the cards
+	// she holds, as a friend held always has (docs/SPEC-SPRINT.md section 11)
+	return a.runHold(name, "", *c, st, sprint.HoldReq{Names: []string{friend}, Kind: sprint.HoldFriend, Release: !held, Who: c.actor}, func() (string, map[string]any) {
+		return token(name) + " OK " + friend + " held=" + fmt.Sprint(held), map[string]any{"friend": friend, "held": held}
+	}, stdout, stderr)
 }
 
 // oneFriend is the one friend a verb names, or its refusal.

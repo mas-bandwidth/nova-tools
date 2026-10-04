@@ -39,7 +39,6 @@ $ nova-sandbox run --name j1 --size 8g --out ./handoff \
 $ nova-sandbox run --name j1 --size 8g --timeout 30m --read /opt/homebrew -- /bin/sh -c 'echo hi > out'
 $ nova-self-talk --rule-doc RULES.md ./pages/RULES.md ./pages/journal.md
 $ nova-self-talk ./pages/journal.md
-example: go run cmd/nova-ci/timing.go --log internal/ci/timing/testdata/events.jsonl
 example: nova-bus check --bus ./bus --full
 example: nova-bus draft --bus ./bus --as Ada --to Bo --subject gate
 example: nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --full --open

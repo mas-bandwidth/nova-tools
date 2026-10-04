@@ -52,6 +52,38 @@ func TestAnAbsentBoxIsErrNoBoxNeverClear(t *testing.T) {
 	}
 }
 
+func TestReadBoxRefusesASymlinkAtTheBoxPath(t *testing.T) {
+	t.Parallel()
+
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: symlink creation requires special privileges")
+	}
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real.json")
+	write(t, real, `{"lockdown":null,"quarantine":{}}`)
+	_, err := ReadBox(real)
+	require.NoError(t, err, "regular box must remain readable")
+
+	link := filepath.Join(dir, "box.json")
+	require.NoError(t, os.Symlink(real, link))
+	_, err = ReadBox(link)
+	require.Error(t, err, "ReadBox followed a symlink at the box path")
+	assert.NotErrorIs(t, err, ErrNoBox, "a symlink is an unsafe box, not an absent box")
+	assert.Contains(t, err.Error(), "symlink")
+
+	dangling := filepath.Join(dir, "dangling.json")
+	require.NoError(t, os.Symlink(filepath.Join(dir, "missing.json"), dangling))
+	_, err = ReadBox(dangling)
+	require.Error(t, err, "ReadBox treated a dangling symlink as an absent box")
+	assert.NotErrorIs(t, err, ErrNoBox, "a dangling symlink is an unsafe box, not an absent box")
+	assert.Contains(t, err.Error(), "symlink")
+
+	_, err = ReadBox(dir)
+	require.Error(t, err, "ReadBox accepted a directory as a box")
+	assert.NotErrorIs(t, err, ErrNoBox, "a non-regular path is an unsafe box, not an absent box")
+	assert.Contains(t, err.Error(), "not a regular file")
+}
+
 // TestCreateBoxIsEmptyExclusiveAndNeverReplaces: CreateBox makes a readable empty box
 // once, and anything already at the path is left byte for byte with fs.ErrExist.
 func TestCreateBoxIsEmptyExclusiveAndNeverReplaces(t *testing.T) {
@@ -510,9 +542,11 @@ func TestOneLineEscapesEveryControlCharacter(t *testing.T) {
 			got := oneline.Escape(tc.in)
 			assert.Equal(t, tc.want, got, "oneline.Escape(%q) = %q, want %q", tc.in, got, tc.want)
 			assert.False(t, strings.ContainsFunc(got, unicode.IsControl), "oneline.Escape(%q) = %q still holds a control character", tc.in, got)
-			assert.True(t, tc.in == "" || got != "", "oneline.Escape(%q) emptied the text; a reason must never vanish", tc.in)
-			again := oneline.Escape(tc.in)
-			assert.Equal(t, got, again, "oneline.Escape(%q) is not deterministic: %q then %q", tc.in, got, again)
+			assert.False(t, tc.in != "" && got == "", "oneline.Escape(%q) emptied the text; a reason must never vanish", tc.in)
+			{
+				again := oneline.Escape(tc.in)
+				assert.Equal(t, got, again, "oneline.Escape(%q) is not deterministic: %q then %q", tc.in, got, again)
+			}
 		})
 	}
 }

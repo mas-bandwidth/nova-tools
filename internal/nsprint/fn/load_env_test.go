@@ -2,7 +2,6 @@ package fn
 
 import (
 	"slices"
-	"sort"
 	"strings"
 	"testing"
 
@@ -63,24 +62,14 @@ func loadEnv(t *testing.T) (*lua.LState, *[]string) {
 func TestLibraryLoadsInTheLoadTimeEnvironment(t *testing.T) {
 	t.Parallel()
 	src, err := Source()
-	if err != nil {
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, err)
 	_, body, _ := strings.Cut(src, "\n") // the shebang line is the store's, not Lua's
 	L, registered := loadEnv(t)
-	if err := L.DoString(body); err != nil {
-		require.NoError(t, err, "the library does not load: %v", err)
-	}
-	if len(*registered) == 0 {
-		require.NotEqual(t, 0, len(*registered), "the library registered no function")
-	}
+	require.NoError(t, L.DoString(body), "the library does not load")
+	require.NotEmpty(t, *registered, "the library registered no function")
 	want, err := Spec().Functions()
-	if err != nil {
-		require.NoError(t, err, err)
-	}
-	got := append([]string(nil), *registered...)
-	sort.Strings(got)
-	if !slices.Equal(got, want) {
-		require.Equal(t, want, got, "the library registers %v at load; its files name %v", got, want)
-	}
+	require.NoError(t, err)
+	got := slices.Clone(*registered)
+	slices.Sort(got)
+	require.Equal(t, want, got, "the library registers %v at load; its files name %v", got, want)
 }

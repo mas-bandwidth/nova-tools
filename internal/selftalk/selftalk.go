@@ -23,6 +23,7 @@ package selftalk
 import (
 	"path"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -90,7 +91,7 @@ var whitespace = regexp.MustCompile(`\s+`)
 // vocabulary. Widening the pattern to reach them flags half of any file.
 // A green from this means ONE CLASS IS CLEAR, never that the file is.
 func Scan(text string) []Claim {
-	flat, lines := flattenWithLines(text)
+	flat, starts := flattenLineStarts(text)
 	var out []Claim
 	for _, span := range claim.FindAllStringIndex(flat, -1) {
 		m := flat[span[0]:span[1]]
@@ -103,9 +104,21 @@ func Scan(text string) []Claim {
 		if dated.MatchString(s) {
 			v = Dated
 		}
-		out = append(out, Claim{Line: lines[span[0]+strings.Index(m, s)], Verdict: v, Text: s, Match: word})
+		out = append(out, Claim{Line: lineAt(1, starts, span[0]+strings.Index(m, s)), Verdict: v, Text: s, Match: word})
 	}
 	return out
+}
+
+// lineAt returns the source line of byte pos in a flattened buffer.
+// starts[i] is the offset at which source line base+i begins. starts is
+// sorted and non-decreasing. A source line that emits no byte shares its
+// offset with the next line, so the byte belongs to the later line.
+func lineAt(base int, starts []int, pos int) int {
+	i := sort.Search(len(starts), func(i int) bool { return starts[i] > pos })
+	if i == 0 {
+		return base
+	}
+	return base + i - 1
 }
 
 // Base returns the basename of a path using forward slashes, for --skip
@@ -125,10 +138,30 @@ func Base(p string) string {
 // boundary the writer drew: joining across it glued "# Journal" onto the claim
 // under it and reported the claim on the heading's line. A '.' is inserted at
 // that break, so the claim pattern, which stops at a terminator, starts after it.
+//
+// The line of a byte is answered from the per-line start offsets. The returned
+// slice is that answer expanded to one entry per output byte, which
+// TestLocationFlatteningKeepsTheExistingText pins by length. Scan uses
+// flattenLineStarts and does not build this slice.
 func flattenWithLines(text string) (string, []int) {
-	var flat []byte
-	var lines []int
-	emit := func(b byte, line int) {
+	flat, starts := flattenLineStarts(text)
+	if len(flat) == 0 {
+		return "", nil
+	}
+	lines := make([]int, len(flat))
+	for i := range lines {
+		lines[i] = lineAt(1, starts, i)
+	}
+	return flat, lines
+}
+
+// flattenLineStarts returns the flattened text and the offset at which each
+// source line begins in that text. starts is sorted. One int per source line,
+// not one int per input byte.
+func flattenLineStarts(text string) (string, []int) {
+	flat := make([]byte, 0, len(text))
+	var starts []int
+	emit := func(b byte) {
 		if strings.ContainsRune("*_`>#|", rune(b)) {
 			return
 		}
@@ -140,7 +173,6 @@ func flattenWithLines(text string) (string, []int) {
 			b = ' '
 		}
 		flat = append(flat, b)
-		lines = append(lines, line)
 	}
 	boundary := func(s string) bool {
 		s = strings.TrimSpace(s)
@@ -148,14 +180,15 @@ func flattenWithLines(text string) (string, []int) {
 	}
 	split := strings.Split(text, "\n")
 	for i, raw := range split {
+		starts = append(starts, len(flat))
 		for j := 0; j < len(raw); j++ {
-			emit(raw[j], i+1)
+			emit(raw[j])
 		}
 		if i+1 < len(split) {
 			if boundary(raw) || boundary(split[i+1]) {
-				emit('.', i+1)
+				emit('.')
 			}
-			emit('\n', i+1)
+			emit('\n')
 		}
 	}
 	if len(flat) == 0 {
@@ -163,6 +196,33 @@ func flattenWithLines(text string) (string, []int) {
 	}
 	raw := string(flat)
 	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", nil
+	}
 	start := strings.Index(raw, trimmed)
-	return trimmed, lines[start : start+len(trimmed)]
+	return trimmed, adjustStarts(starts, start, start+len(trimmed))
+}
+
+// adjustStarts rebases per-line offsets onto the trimmed flat string. A line
+// that owned only trimmed-away bytes shares offset 0 with the first kept line,
+// so the first kept byte still answers as the line that emitted it.
+func adjustStarts(starts []int, start, end int) []int {
+	owner := lineAt(1, starts, start)
+	out := make([]int, 0, len(starts))
+	for line := 1; line <= len(starts); line++ {
+		off := starts[line-1]
+		if line < owner {
+			out = append(out, 0)
+			continue
+		}
+		if off >= end {
+			break
+		}
+		if off < start {
+			out = append(out, 0)
+			continue
+		}
+		out = append(out, off-start)
+	}
+	return out
 }

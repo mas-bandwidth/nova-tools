@@ -99,7 +99,8 @@ func TestVerbsFromToolsNamesABinaryThatCannotAnswer(t *testing.T) {
 	}
 	verbs, failures, err := VerbsFromTools(context.Background(), dir, run, nil)
 	require.NoError(t, err, "one unreadable binary failed the whole run: %v", err)
-	require.True(t, len(failures) == 1 && strings.Contains(failures[0].Subject, "nova-broken"), "failures %+v, want the one binary named", failures)
+	require.Len(t, failures, 1, "failures %+v, want the one binary named", failures)
+	require.True(t, strings.Contains(failures[0].Subject, "nova-broken"), "failures %+v, want the one binary named", failures)
 	require.NotEmpty(t, verbs, "a half-built directory cost every tool in it, not just the broken one")
 }
 
@@ -211,7 +212,8 @@ func TestVerbsFromToolsReadsAWindowsShapedDirectory(t *testing.T) {
 		// Off Windows a `.exe` with no mode bit is not runnable, and the
 		// discovery says so rather than pretending: the name is accepted, the
 		// permission is not.
-		require.True(t, len(verbs) == 0 && len(failures) == 0, "a non-executable file was run: verbs=%d failures=%d", len(verbs), len(failures))
+		require.Empty(t, verbs, "a non-executable file was run: verbs=%d failures=%d", len(verbs), len(failures))
+		require.Empty(t, failures, "a non-executable file was run: verbs=%d failures=%d", len(verbs), len(failures))
 		return
 	}
 	require.Empty(t, failures, "failures %+v", failures)

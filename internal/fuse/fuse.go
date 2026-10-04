@@ -14,10 +14,11 @@ WHAT IS ACTUALLY DECIDED HERE, and why each one is not arbitrary:
     CLEAR -- a fail-open in a safety control. Both noes are errors, and every
     caller must treat an error as BLOWN; ErrNoBox tells them apart, so a refusal
     can name the right remedy (CreateBox for the first, a hand repair for the
-    second). os.ReadFile + errors.Is(err, fs.ErrNotExist) finds the absent case,
-    which is why the read is written with the stdlib primitive that distinguishes
-    absent from unreadable; it does not say which part of the path is missing, and
-    it does not need to, since both answers refuse. A box comes into being by
+    second). Lstat refuses a link or non-regular path before open; SameFile then
+    proves the opened descriptor is the file that was inspected. errors.Is with
+    fs.ErrNotExist distinguishes absent from unreadable; it does not say which
+    part of the path is missing, and it does not need to, since both answers
+    refuse. A box comes into being by
     CreateBox, which never replaces one, or by a write verb on a box that was read.
 
  2. MALFORMED IS UNREADABLE. A JSON array, a bare string, a truncated file, a
@@ -73,6 +74,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"maps"
 	"os"
@@ -112,10 +114,10 @@ type Box struct {
 // `lift quarantine` remove more of them, because they are one surface in both directions.
 func Surface(s string) string { return strings.ToLower(Fold(s)) }
 
-// Fold tidies text this tool is about to WRITE: every control character becomes a space,
-// then runs of whitespace collapse to a single ASCII space and the ends are trimmed. The
-// collapse is Unicode-aware, so a non-breaking space or a line separator inside the text
-// becomes an ordinary space too. It is not the defense (oneline.Escape at print time is), because a box
+// Fold tidies text this tool is about to WRITE: every control character becomes a blank,
+// then runs of whitespace collapse to a single ASCII blank and the ends are trimmed. The
+// collapse is Unicode-aware, so a non-breaking whitespace character or a line separator inside the text
+// becomes an ordinary blank too. It is not the defense (oneline.Escape at print time is), because a box
 // written by another hand still arrives holding anything at all (note 5). And it is never
 // a REFUSAL: a fuse you cannot blow is not a fuse, so a reason is accepted whatever it
 // contains and only its spelling in the file is tidied.
@@ -205,13 +207,35 @@ var ErrNoBox = errors.New("no box")
 // non-nil error -- ErrNoBox included -- means CANNOT TELL, and the only correct
 // treatment of that is BLOWN.
 func ReadBox(path string) (Box, error) {
-	data, err := os.ReadFile(path)
+	info, err := os.Lstat(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			// Nothing at the path, the box file or a directory above it: no box, so
 			// nothing can be proven clear.
 			return Box{}, fmt.Errorf("%w at %s", ErrNoBox, path)
 		}
+		return Box{}, fmt.Errorf("cannot read %s: %w", path, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return Box{}, fmt.Errorf("%s is a symlink; use the real fuse box file path", path)
+	}
+	if !info.Mode().IsRegular() {
+		return Box{}, fmt.Errorf("%s is not a regular file; use the real fuse box file path", path)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return Box{}, fmt.Errorf("cannot read %s: %w", path, err)
+	}
+	defer func() { _ = f.Close() }() // ignored: a read-only close cannot change the parsed bytes
+	opened, err := f.Stat()
+	if err != nil {
+		return Box{}, fmt.Errorf("cannot inspect open fuse box %s: %w", path, err)
+	}
+	if !os.SameFile(info, opened) {
+		return Box{}, fmt.Errorf("%s changed while it was opened; use the real fuse box file path", path)
+	}
+	data, err := io.ReadAll(f)
+	if err != nil {
 		return Box{}, fmt.Errorf("cannot read %s: %w", path, err)
 	}
 	var b *Box

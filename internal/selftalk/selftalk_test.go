@@ -9,6 +9,8 @@ package selftalk
 // moves to the caller and the default becomes empty).
 
 import (
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -171,6 +173,42 @@ func TestFlatten(t *testing.T) {
 
 	got, _ := flattenWithLines("**bold** and a line\nthat wraps\t twice")
 	assert.Equal(t, "bold and a line that wraps twice", got)
+}
+
+// A line index of one int per input byte is eight bytes per byte, and the
+// scan builds that index twice. Four mebibytes of plain text with no finding
+// must stay under eight times the input, counted as TotalAlloc after a GC,
+// not as the live heap. The bound is the whole scan, so a passing run is a
+// few copies of the text plus one int per source line.
+func TestScanAllocatesAFewTimesTheInputNotOneIntPerByte(t *testing.T) {
+	t.Parallel()
+
+	const size = 4 << 20
+	// Many source lines, one sentence, no markup and no first person. The
+	// line index is one int per line. A per-byte index is eight bytes per
+	// input byte, twice, which is over the bound before either copy.
+	line := strings.Repeat("x", 4095) + "\n"
+	var b strings.Builder
+	b.Grow(size)
+	for b.Len()+len(line) <= size {
+		b.WriteString(line)
+	}
+	text := b.String()
+
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	claims := Scan(text)
+	installations := ScanInstallation(text)
+	runtime.ReadMemStats(&after)
+
+	require.Empty(t, claims, "plain text must not be a claim: %#v", claims)
+	require.Empty(t, installations, "plain text must not be an installation: %#v", installations)
+	delta := after.TotalAlloc - before.TotalAlloc
+	limit := uint64(len(text) * 8)
+	assert.Less(t, delta, limit,
+		"scan allocated %d bytes for %d of input (%.1fx), want under 8x; one int per byte, twice, is about 16x before the copies",
+		delta, len(text), float64(delta)/float64(len(text)))
 }
 
 // Base is what --skip matching is decided on; it must see through both

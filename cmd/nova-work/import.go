@@ -16,7 +16,11 @@ import (
 )
 
 // checkImport is import's rules over its flags, run with every other rule so
-// one invocation names every problem.
+// one invocation names every problem. A dry run with no --repo, and an --out
+// that already exists, are refused here, before any GitHub call
+// (docs/SPEC-WORK-V1.md section 1.6; docs/STANDARD.md section 2, ONBOARDING
+// point 2): the dry run would spend the organization's whole call budget, and
+// --out would replace an existing tree without --replace.
 func checkImport(c *tool.Call) {
 	org, out, dry := c.Str("org"), c.Str("out"), c.Bool("dry-run")
 	switch {
@@ -26,6 +30,14 @@ func checkImport(c *tool.Call) {
 		c.Problem("--out and --dry-run exclude each other; a dry run writes nothing")
 	case !dirExists(out):
 		c.Problem(fmt.Sprintf("the directory of --out %q does not exist; make it first, or name a file in one that does", out))
+	}
+	if dry && len(repos(c)) == 0 {
+		c.Problem(fmt.Sprintf("--dry-run with no --repo reads every repository of --org %s, up to --max-calls %d calls; name one repository and run: nova-work import --org %s --repo %s/<name> --dry-run",
+			org, c.Int("max-calls"), oneline.ShellWord(org), oneline.ShellWord(org)))
+	}
+	if out != "" && !c.Bool("replace") && fileExists(out) {
+		c.Problem(fmt.Sprintf("--out %s exists; pass --replace to replace it: nova-work import --org %s --out %s --replace",
+			oneline.ShellWord(out), oneline.ShellWord(org), oneline.ShellWord(out)))
 	}
 	for _, r := range repos(c) {
 		if o, _, _ := strings.Cut(r, "/"); org != "" && o != org {
@@ -147,7 +159,7 @@ func (g github) importTree(c *tool.Call) *tool.Out {
 // importAgain is the import as it was asked, with --max-calls set to n: the
 // remedy of a run the budget stopped.
 func importAgain(c *tool.Call, n int) string {
-	return again(c, "import", []string{"org", "repo", "out", "dry-run", "page-size", "gh", "timeout", "max-calls"},
+	return again(c, "import", []string{"org", "repo", "out", "replace", "dry-run", "page-size", "gh", "timeout", "max-calls"},
 		map[string]string{"max-calls": fmt.Sprint(n)})
 }
 
@@ -164,9 +176,9 @@ func again(c *tool.Call, verb string, order []string, set map[string]string) str
 			for _, r := range repos(c) {
 				cmd = append(cmd, "--repo", oneline.ShellWord(r))
 			}
-		case name == "dry-run":
-			if c.Bool("dry-run") {
-				cmd = append(cmd, "--dry-run")
+		case name == "dry-run" || name == "replace":
+			if c.Bool(name) {
+				cmd = append(cmd, "--"+name)
 			}
 		case override:
 			cmd = append(cmd, "--"+name, oneline.ShellWord(v))

@@ -13,16 +13,10 @@ import "strings"
 //	`nova-bus wait` -- parse it line by line.
 //
 //	stderr carries refusals, failures and PROGRESS: what the program is doing
-//	while it is doing it. A consumer reads it so that an INBOX REFUSED is never
-//	lost, but nothing on it is protocol.
+//	while it is doing it. A consumer reads it so that an INBOX REFUSED is never lost, but nothing on it is protocol.
 //
-// The rule has two halves: a program that takes longer than 0.1 s says what it
-// is doing on stderr, AND a progress line never enters a protocol stream a
-// consumer parses. A consumer that reads the two streams together must drop
-// progress before it classifies anything: the since-walk's
-// `INBOX WALK commits=1/1 notes=0 elapsed=3ms` is on stderr, and a consumer
-// that relayed every line it could not classify would count it as news and
-// return before the note it was waiting for.
+// The protocol rule has two halves: a program that takes longer than 0.1 s says what it is doing on stderr,
+// AND a progress line never enters a protocol stream a consumer parses.
 //
 // The rule lives HERE, in one place both sides read: nova-bus's own test
 // asserts that no progress prefix ever reaches stdout, and a consumer drops
@@ -89,7 +83,7 @@ func IsProtocol(line string) bool {
 }
 
 // hasTokenPrefix matches a prefix on TOKEN boundaries: the line is the prefix,
-// or the prefix followed by a space. A substring match would make "INBOX OK" a
+// or the prefix followed by a blank. A substring match would make "INBOX OK" a
 // prefix of a line nobody wrote and "INBOX WALK" a prefix of "INBOX WALKER".
 func hasTokenPrefix(line string, prefixes []string) bool {
 	line = strings.TrimRight(line, "\r")

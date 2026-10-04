@@ -153,7 +153,7 @@ func TestSessionRefusesATranscriptThatNamesNoModel(t *testing.T) {
 	wantContains(t, r.stderr, "names no model")
 	{
 		_, err := os.Stat(out)
-		assert.False(t, err == nil, "a refused fold created %s", out)
+		assert.Error(t, err, "a refused fold created %s", out)
 	}
 
 	r = invoke(t, "session", "--claude-session", path)

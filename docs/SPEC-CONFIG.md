@@ -117,9 +117,9 @@ opened (exit 2), and every store runs it on the row a `set` would leave and
 refuses the set (exit 1, `ErrInvalid`), writing nothing. `add` refuses a row missing
 a required field, a value outside its type, or a flag the kind has not, and
 names every problem in one line. `set` changes the fields named and no
-other. A `ref` field naming no row is refused (`--store space names no
+other. A `ref` field naming no row is refused (`--store <machine> names no
 machine row`), and a row a `ref` field of another kind names cannot be
-removed (`machine studio is the --coordinator of the fleet`, `friend rowan
+removed (`machine <name> is the --coordinator of the fleet`, `friend <name>
 is the --coordinator of the sprint`): the structure enforces it (a foreign
 key), the tool names it.
 
@@ -134,7 +134,7 @@ nothing invented.
 | field | type | required | who reads it | Redis |
 | --- | --- | --- | --- | --- |
 | `user` | text | yes | the plays and the seals: `ssh <user>@<name>` | `machine:<m>` |
-| `seat` | text | yes | nova-secrets: the seat on that machine (studio, swarm-hulk, ...) | `machine:<m>` |
+| `seat` | text | yes | nova-secrets: the seat on that machine (a seat, another seat, ...) | `machine:<m>` |
 | `slots` | int | yes | apply: the machine ceiling the friends' desired slots must fit under (`ns_capacity_machine`, `ns_capacity_desired`); not the sprint's width | `machine:<m>:ceiling` (`ns_capacity_machine`) and `machine:<m>` |
 | `runners` | int | (0) | the CI play: how many runners it hosts; 0 hosts none | `machine:<m>` |
 | `width` | int | (unset) | `nova-sprint fleet sync`: the most work cards the sprint's member on it runs at once; unset is the default, half the machine's cores as its beat reports them; 0 is no member | `machine:<m>` |
@@ -198,10 +198,13 @@ row's.
 | `coordinator` | ref machine | | the plays: where the coordinator's loops run; apply: the machine a friend with no beat is charged to | `fleet:coordinator` |
 | `redis_port` | nullable int (no default) | | the inventory and plays: explicit Redis TCP port, 1 through 65535; unset until declared | `fleet:redis_port` |
 | `pg_dsn` | text | | the inventory and tools play: the explicit password-free Postgres URI; empty until set, never derived from `store` | `fleet:pg_dsn` |
+| `loops_dir` | text | | the inventory and plays: the directory where loop logs are written; seeded to `~/nova-bench/loops` | `fleet:loops_dir` |
 
 The kind's `Check` bounds `redis_port` and accepts only a password-free
 `postgres://user@host[:port]/database` URI for a nonempty `pg_dsn`. A refusal
-never reproduces a password from the input.
+never reproduces a password from the input. `loops_dir` must be non-empty: a
+store write checks the row it would leave, which carries every field, so a
+fleet that has declared no directory is refused until one is.
 Fleet apply and inventory refuse either endpoint unset, naming one
 `nova-config fleet set --redis_port <port> --pg_dsn <dsn>` command. Migration 0014 (`0014_fleet_endpoints.sql`)
 leaves the port NULL and the DSN empty. Full apply checks both before writing
@@ -265,8 +268,11 @@ Migration 0013 had made a loop's width a field its command ran with;
 migration 0017 removed the field, took `--width` out of every member argv that
 carried one and removed the second reader rows (`reader-<m>-2`), one reader
 per machine.
-The log path is derived from the name, `~/nova-bench/loops/<name>.log`
-(`LoopLog`), and is never typed. A machine a loop names cannot be removed
+The log path is derived from the fleet row's `loops_dir` and the name, `<loops_dir>/<name>.log`
+(`LoopLog`), and is never typed. Apply takes the directory from the store's
+fleet row, so a loop apply needs no fleet apply before it, and refuses a
+fleet row that carries none, naming `nova-config fleet set --loops_dir <path>`.
+A machine a loop names cannot be removed
 (`machine m1 is the --machine of loop member-m1`); `machine show <m>` names
 the machine's loops (`loops=<a,b>`, `-` for none).
 
@@ -405,8 +411,9 @@ config.machines          (name PK, "user", seat, slots, runners,
                           default)
 config.fleet             (name PK = 'fleet', store -> machines.name,
                           coordinator -> machines.name, redis_port, pg_dsn,
-                          created_at, updated_at;
-                          the one row inserted by the migration)
+                          loops_dir, created_at, updated_at;
+                          the one row inserted by the migration; loops_dir
+                          added by 0027, text NOT NULL DEFAULT '~/nova-bench/loops')
 config.friends           (name PK, slots, tiers, roles, created_at, updated_at;
                           width added by 0018, integer NOT NULL DEFAULT 8, which fills every row there
                           CHECK (width >= 1))
@@ -448,7 +455,7 @@ config.tiers             (name PK flash|pro, routes, created_at, updated_at;
 ```
 
 No database has applied `0002_machine.sql` or `0003_friend.sql` in their
-first shape (the fleet Postgres on space is not migrated yet), so this cut
+first shape (the fleet Postgres on the store machine is not migrated yet), so this cut
 rewrote both in place rather than adding an alter.
 
 ## History
@@ -546,8 +553,8 @@ and wake path stay, they are hers.
 
 **sprint:** a plain `SET sprint:<field>` for each field (`sprint:coordinator <friend>`), `DEL` when empty.
 Never removed. The handover is `nova-config sprint set --coordinator
-stella --as rowan` then `apply`: the sprint kind's own revision moves and
-the friend kind's plan is two `SET ... changed=roles`, stella's first.
+<friend> --as <friend>` then `apply`: the sprint kind's own revision moves and
+the friend kind's plan is two `SET ... changed=roles`, the new coordinator's first.
 
 **loop:** the hash `loop:<l>` with every field of the row, `name`, `log`
 (the derived path), `rev` and `at`, written whole in one transaction with

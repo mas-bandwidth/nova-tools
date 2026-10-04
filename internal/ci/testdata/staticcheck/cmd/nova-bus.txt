@@ -1,0 +1,4 @@
+# The staticcheck findings in this package when the rule landed, one row per check; shrink-only (docs/SPEC-CI.md, staticcheck).
+# ceiling: 2
+cmd/nova-bus:S1011 1 measured when the rule landed; a fixed finding lowers the count
+cmd/nova-bus:U1000 1 measured when the rule landed; a fixed finding lowers the count

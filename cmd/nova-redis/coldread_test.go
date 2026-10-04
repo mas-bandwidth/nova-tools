@@ -17,6 +17,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // coldRun is run() with no store behind any address and an empty environment
@@ -164,32 +166,41 @@ func decodeOne(t *testing.T, out string) jsonOut {
 // value its lines print, on stdout, whatever the outcome: done, said no,
 // refused. serve, fn load, fn check, acl render, acl check and acl apply are
 // Prints verbs (a stream, or a bare head the skeleton cannot render), so they
-// take no --json, and the banner says so.
+// take no --json, and the banner says so. The outcomes reached without a
+// store are here, over the trap harness; a recall that finds or misses a key
+// and a store that does not answer dial, and are the functional
+// TestEveryStoreVerbPrintsOneJSONObjectWithJSON.
 func TestEveryVerbPrintsOneJSONObjectWithJSON(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
-	stored := "a b=c\\x20 d" // a space, an '=' and a backslash: the line escapes them, JSON does not
-	code, _, errs := h.run("spill", "--owner", "ada", "--name", "note", "--ttl", "10m", "--value", stored)
-	require.Equal(t, 0, code, errs)
-
-	cases := []struct {
-		name     string
-		args     []string
-		code     int
-		status   string
-		word     string
-		fact     string
-		want     any
-		whyCount int
-	}{
-		{"recall carries the value exactly", []string{"recall", "--addr", h.mr.Addr(), "--owner", "ada", "--name", "note", "--json"}, 0, "ok", "", "value", stored, 0},
-		{"recall of a missing key says no", []string{"recall", "--json", "--addr", h.mr.Addr(), "--owner", "ada", "--name", "gone"}, 1, "failed", "MISSING", "key", "ada:gone", 0},
+	checkJSONRows(t, h, []jsonRow{
 		{"a dry run", []string{"spill", "--dry-run", "--json", "--addr", h.mr.Addr(), "--owner", "ada", "--name", "n", "--ttl", "1m", "--value", "v"}, 0, "ok", "", "written", float64(0), 0},
 		{"a refusal names every problem", []string{"spill", "--json", "--addr", "nohost", "--ttl", "0s"}, 2, "refused", "", "", nil, 5},
-		{"a store that does not answer", []string{"spill", "--json", "--addr", "127.0.0.1:1", "--owner", "a", "--name", "b", "--ttl", "1m", "--value", "c"}, 2, "refused", "", "class", "unreachable", 0},
 		{"version", []string{"version", "--json"}, 0, "ok", "", "", nil, 0},
-	}
-	for _, c := range cases {
+	})
+	_, out, _ := h.runBare("version", "--json")
+	assert.True(t, strings.HasPrefix(decodeOne(t, out).Payload, "nova-redis "))
+	_, out, _ = h.runBare("spill", "--json")
+	assert.Equal(t, "nova-redis help", decodeOne(t, out).Result.Remedy)
+}
+
+// jsonRow is one --json outcome: the line, its exit and status, the word, one
+// fact and its value, and how many problems the refusal names.
+type jsonRow struct {
+	name     string
+	args     []string
+	code     int
+	status   string
+	word     string
+	fact     string
+	want     any
+	whyCount int
+}
+
+// checkJSONRows runs each row through the harness and holds its one object.
+func checkJSONRows(t *testing.T, h *harness, rows []jsonRow) {
+	t.Helper()
+	for _, c := range rows {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			code, out, errs := h.runBare(c.args...)
@@ -207,10 +218,6 @@ func TestEveryVerbPrintsOneJSONObjectWithJSON(t *testing.T) {
 			}
 		})
 	}
-	_, out, _ := h.runBare("version", "--json")
-	assert.True(t, strings.HasPrefix(decodeOne(t, out).Payload, "nova-redis "))
-	_, out, _ = h.runBare("spill", "--json")
-	assert.Equal(t, "nova-redis help", decodeOne(t, out).Result.Remedy)
 }
 
 // A serve that could not start says what to do next: with no redis-server on
@@ -228,7 +235,7 @@ func TestServeFailureNamesTheNextStep(t *testing.T) {
 	code, _, errs = h.run("serve", "--bind", "127.0.0.1", "--port", "6379", "--dir", h.dir)
 	assert.Equal(t, 1, code)
 	assert.Contains(t, errs, "remedy=")
-	assert.Contains(t, errs, "run: ls -ld -- "+shellWord(h.dir))
+	assert.Contains(t, errs, "run: ls -ld -- "+oneline.ShellWord(h.dir))
 	assert.Contains(t, errs, "compare directory access and the explicit --bind/--port")
 	assert.Contains(t, errs, "with the launch error and any redis-server output")
 }

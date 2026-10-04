@@ -12,7 +12,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// The order verbs (Glenn 2026-09-27: "take column y and put it after column
+// The order verbs (the repository owner 2026-09-27: "take column y and put it after column
 // z", "friends on top, machines on bottom"): col add, col del, col move, row
 // move, row order, row sort. Each is one call to the staged set kernel, so
 // each is atomic and leaves one receipt (tla/TableOrder.tla).

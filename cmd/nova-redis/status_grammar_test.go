@@ -2,10 +2,13 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -29,21 +32,15 @@ import (
 // library that does not build is a refusal, and render opens no store.
 // version and help print no status line (the build line, the usage) and have
 // no FAILED: nothing after a parsed line fails.
+//
+// No row dials: fn's and acl's store that does not answer is their opener
+// seam refusing the dial in memory (unanswered). spill's and recall's open
+// the store through redisconn with no seam, so recall ok and their store that
+// does not answer are the functional TestStatusGrammarOnAStore.
 func TestStatusGrammar(t *testing.T) {
 	t.Parallel()
 
-	const unreachable = "127.0.0.1:1"
-
-	cases := []struct {
-		name   string
-		args   []string
-		setup  func(t *testing.T) (args []string, run func(args ...string) (int, string, string))
-		token  string
-		word   string
-		leads  bool
-		marker string
-		exit   int
-	}{
+	checkStatusRows(t, []statusRow{
 		{
 			name: "serve done",
 			setup: func(t *testing.T) ([]string, func(...string) (int, string, string)) {
@@ -83,29 +80,8 @@ func TestStatusGrammar(t *testing.T) {
 			token: "SPILL", word: "REFUSED", marker: "run: nova-redis help", exit: 2,
 		},
 		{
-			name:  "spill refused when the store does not answer",
-			args:  []string{"spill", "--addr", unreachable, "--owner", "ada", "--name", "note", "--ttl", "10m", "--value", "hi"},
-			token: "SPILL", word: "REFUSED", marker: "run: nova-redis help", exit: 2,
-		},
-		{
-			name: "recall ok",
-			setup: func(t *testing.T) ([]string, func(...string) (int, string, string)) {
-				t.Helper()
-				h := newHarness(t)
-				code, _, stderr := h.run("spill", "--owner", "ada", "--name", "note", "--ttl", "10m", "--value", "hi")
-				require.Equal(t, 0, code, "setup spill: exit %d stderr %s", code, stderr)
-				return []string{"recall", "--owner", "ada", "--name", "note"}, h.run
-			},
-			token: "RECALL", word: "OK", exit: 0,
-		},
-		{
 			name:  "recall refused without an owner",
 			args:  []string{"recall", "--addr", "127.0.0.1:6379", "--name", "note"},
-			token: "RECALL", word: "REFUSED", marker: "run: nova-redis help", exit: 2,
-		},
-		{
-			name:  "recall refused when the store does not answer",
-			args:  []string{"recall", "--addr", unreachable, "--owner", "ada", "--name", "note"},
 			token: "RECALL", word: "REFUSED", marker: "run: nova-redis help", exit: 2,
 		},
 		{
@@ -115,7 +91,7 @@ func TestStatusGrammar(t *testing.T) {
 		},
 		{
 			name:  "fn load failed when the store does not answer",
-			args:  []string{"fn", "load", "--addr", unreachable},
+			args:  []string{"fn", "load", "--addr", unanswered},
 			leads: true, word: "FAILED", exit: 2,
 		},
 		{
@@ -125,7 +101,7 @@ func TestStatusGrammar(t *testing.T) {
 		},
 		{
 			name:  "fn check failed when the store does not answer",
-			args:  []string{"fn", "check", "--addr", unreachable},
+			args:  []string{"fn", "check", "--addr", unanswered},
 			leads: true, word: "FAILED", exit: 2,
 		},
 		{
@@ -145,7 +121,7 @@ func TestStatusGrammar(t *testing.T) {
 		},
 		{
 			name:  "acl check failed when the store does not answer",
-			args:  []string{"acl", "check", "--addr", unreachable},
+			args:  []string{"acl", "check", "--addr", unanswered},
 			token: "ACL CHECK", word: "FAILED", exit: 2,
 		},
 		{
@@ -155,7 +131,7 @@ func TestStatusGrammar(t *testing.T) {
 		},
 		{
 			name:  "acl apply failed when the store does not answer",
-			args:  []string{"acl", "apply", "--addr", unreachable},
+			args:  []string{"acl", "apply", "--addr", unanswered},
 			token: "ACL APPLY", word: "FAILED", exit: 2,
 		},
 		{
@@ -168,9 +144,37 @@ func TestStatusGrammar(t *testing.T) {
 			args:  []string{"help", "--zzz"},
 			token: "REDIS", word: "REFUSED", marker: "run: nova-redis help", exit: 2,
 		},
-	}
+	})
+}
 
-	for _, tc := range cases {
+// unanswered is the address of a store that does not answer. In the unit
+// tier fn's and acl's opener seams answer for it in memory, as a dial to a
+// port nothing listens on is refused; the functional tier dials it.
+const unanswered = "127.0.0.1:1"
+
+// errUnanswered is what a dial to unanswered returns.
+var errUnanswered = errors.New("dial tcp " + unanswered + ": connect: connection refused")
+
+// statusRow is one outcome of one verb: its line (or a setup that builds the
+// line and the run), the verb token, the status word, whether the word leads
+// the line, the remedy a refusal carries, and the exit.
+type statusRow struct {
+	name   string
+	args   []string
+	setup  func(t *testing.T) (args []string, run func(args ...string) (int, string, string))
+	token  string
+	word   string
+	leads  bool
+	marker string
+	exit   int
+}
+
+// checkStatusRows drives each row through run() and holds its word and exit
+// together. A row with no setup runs with a fixed clock, an empty environment
+// and fn's and acl's openers refusing the dial in memory.
+func checkStatusRows(t *testing.T, rows []statusRow) {
+	t.Helper()
+	for _, tc := range rows {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -180,6 +184,12 @@ func TestStatusGrammar(t *testing.T) {
 				d := deps{
 					now:    func() time.Time { return time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC) },
 					getenv: func(string) string { return "" },
+					fnOpen: func(context.Context, login) (redis.UniversalClient, func() error, error) {
+						return nil, nil, errUnanswered
+					},
+					aclOpen: func(context.Context, login) (aclServer, func() error, error) {
+						return nil, nil, errUnanswered
+					},
 				}
 				return run(a, &out, &errb, d), out.String(), errb.String()
 			}
