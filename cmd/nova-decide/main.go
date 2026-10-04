@@ -242,6 +242,34 @@ caught, negatives bounced), and the CATCH-ALL bar: the highest that still flags 
 				Run: calibrate,
 			},
 			{
+				Name:   "import",
+				Usage:  "import --record <file> [--verdicts <glob>] [--judgments <dir> --log <file>] [--reports <glob>]",
+				Effect: tool.LocalWrite + "; it appends to --record one labelled decision per item read, and leaves an item recorded before",
+				Detail: `Loads finished decisions as labelled records, so they can be read, calibrated and trained on:
+--verdicts: heavy-read VERDICT.md files, the first word of the first line is the label (ACCEPT, REWORK, ...);
+--judgments with --log: a directory of judgment files (<judgment id>.md) labelled by the verb of the line a
+nova-sprint log --json export holds that answers it; one nothing answers is counted as unanswered, not recorded;
+--reports: REPORT.md files whose first line is "Verdict: HOLD", labelled HOLD.
+An id comes from the source path and content, so a second import adds nothing. Prints IMPORT OK with
+<kind>_new and <kind>_existing for verdict, judgment and report. The decisions are named import-<kind>.`,
+				Flags: func(f *tool.Flags) {
+					f.Required("record", "the record file the labelled decisions are appended to")
+					f.String("verdicts", "", "a glob of heavy-read VERDICT.md files")
+					f.String("judgments", "", "a directory of judgment files, <judgment id>.md; needs --log")
+					f.String("log", "", "a nova-sprint log --json export holding the answers to the judgments")
+					f.String("reports", "", "a glob of REPORT.md files; those beginning Verdict: HOLD are imported")
+					f.Check(func(c *tool.Call) {
+						if c.Str("verdicts") == "" && c.Str("judgments") == "" && c.Str("reports") == "" {
+							c.Problem("no source: give --verdicts, --judgments with --log, or --reports")
+						}
+						if (c.Str("judgments") == "") != (c.Str("log") == "") {
+							c.Problem("--judgments and --log go together: a judgment file holds no answer, the log export does")
+						}
+					})
+				},
+				Run: w.importRecords,
+			},
+			{
 				Name:    "findings",
 				Usage:   "findings --record <file> [--since <time>] [--bar <p>]",
 				Example: "findings --record " + fixture + "record.jsonl --since 2026-10-01",
@@ -692,6 +720,20 @@ func (w world) outcome(c *tool.Call) *tool.Out {
 		return tool.Refuse(err.Error())
 	}
 	return tool.Done().Fact("id", id).Fact("decision", d.Decision).Fact("label", d.Outcome.Label).Fact("changed", changed)
+}
+
+// importRecords is import: decide.Import over the sources named, counted per kind.
+func (w world) importRecords(c *tool.Call) *tool.Out {
+	res, err := decide.Import(c.Str("record"), decide.ImportSources{Verdicts: c.Str("verdicts"), Judgments: c.Str("judgments"),
+		Log: c.Str("log"), Reports: c.Str("reports")}, w.now())
+	if err != nil {
+		return tool.Refuse(err.Error())
+	}
+	o := tool.Done()
+	for _, k := range decide.ImportKinds {
+		o.Fact(k+"_new", res.Kinds[k].New).Fact(k+"_existing", res.Kinds[k].Existing)
+	}
+	return o.Fact("unanswered", res.Unanswered)
 }
 
 func calibrate(c *tool.Call) *tool.Out {
