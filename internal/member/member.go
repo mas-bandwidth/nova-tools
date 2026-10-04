@@ -349,6 +349,15 @@ type Config struct {
 	// finish. It is long (a backend's answer), so it runs in the end's long work, beside the
 	// push, never in the pass. nil asks none.
 	Attempt func(p Packet, result, reason string) (decided string, decision []byte, err error)
+	// ResolveStep resolves a step line's commit (7 to 40 hex) on the card's branch
+	// to one full sha (docs/SPEC-SPRINT.md, the verdict per step). nil resolves in
+	// the clone StepClone names, or, when that is nil too, in the launch checkout
+	// the member verb's --slots or --root names. A member with neither accepts a
+	// 40-hex sha as itself and refuses a shorter prefix as unknown.
+	ResolveStep func(branch, prefix string) (sha string, err error)
+	// StepClone is the checkout whose branch holds the card's step commits.
+	// nil discovers it from the process arguments (the member verb).
+	StepClone func(p Packet) string
 }
 
 // launch is one child and the claim it was started for: the card at the
@@ -1454,7 +1463,7 @@ func (m *Member) endEnded(ids []string, byID map[string]queueCard) {
 				m.post(id, post{res: &r})
 				return
 			}
-			r = treeFinish(p, r)
+			r = treeFinishWith(p, r, m.stepResolve(p))
 			var pu Push
 			switch {
 			case r.Head == "":
