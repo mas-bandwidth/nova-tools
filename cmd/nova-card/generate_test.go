@@ -148,3 +148,28 @@ func TestAPackageWithNoTestFileIsGeneratedWithItsNEWLine(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(brief), "\nPATHS: internal/none/x.go, internal/none/*_test.go\nNEW: internal/none/x_test.go\n")
 }
+
+// The banner names every verb on a usage line, and every generate line names the
+// flags every source takes (--max, --dry-run): a flag a usage line leaves out is a
+// flag a stranger cannot find.
+func TestTheBannerNamesEveryVerbAndTheGenerateFlags(t *testing.T) {
+	t.Parallel()
+	_, banner, _ := runCard("help")
+	for _, verb := range verbs {
+		assert.Contains(t, banner, "\n  nova-card "+verb, "no usage line for %s", verb)
+	}
+	// the usage block: the lines under "usage:" up to the next blank line
+	_, block, _ := strings.Cut(banner, "\nusage:\n")
+	block, _, _ = strings.Cut(block, "\n\n")
+	lines := 0
+	for _, line := range strings.Split(block, "\n") {
+		if !strings.HasPrefix(line, "  nova-card generate ") {
+			continue
+		}
+		lines++
+		for _, flag := range []string{"[--max <n>]", "[--dry-run]", "[--tier flash|pro]"} {
+			assert.Contains(t, line, flag, "a generate usage line without %s", flag)
+		}
+	}
+	assert.Equal(t, 3, lines, "one usage line per source")
+}

@@ -423,9 +423,11 @@ with no clock and no store). What it holds:
   its `RESULT:` line carrying the tier (`tier: flash|pro`), `REPO:` and `BASE:`
   from the checkout the source was read from, `KIND: fix-red`, `DEPENDS-ON:`,
   `PATHS:` (at most eight entries, files folded into their directory's glob
-  past that), `TEST:` and the `Deadline:` line; the six general rules quoted
-  verbatim from `nova-swarm template --name card`; the task from the source's
-  template with the rows substituted; and the template's steps.
+  past that), `NEW:` for a test file the card creates in a package that has
+  none, `TEST:` and the `Deadline:` line; the RULES paragraph of the general
+  child rules (`swarm.ChildRulesParagraph`, the paragraph the card template
+  carries); the task from the source's template with the rows substituted; and
+  the template's steps.
 - The PATHS of a ledger card are the row's file, its package's test files and
   the ledger. With a checkout, every entry is checked to exist in it.
 - Waves: cards of one ordinary ledger alternate (odd wave 1, even wave 2
