@@ -29,10 +29,13 @@ tool is `cmd/nova-bus2`, the rules are `internal/bus2`, the delivery machine is
 ## The semantics
 
 At-least-once delivery. A message delivered to a recipient is pending until
-that recipient acks it, and its reader keeps it for a minute (`ClaimAfter`, the
-budget one `--exec` delivery gets). `recv` first claims the recipient's pending
-entries that have been idle for at least that minute (`XAUTOCLAIM` with
-min-idle 60 s, from `0-0`): what a reader that died or stalled was holding, so
+that recipient acks it, and its reader keeps it for fifteen minutes (`ClaimAfter`,
+the budget one `--exec` delivery gets: longer than the longest delivery any
+reader makes, nova-friend's ten minute turn and the kill that ends it, so a
+live reader mid-turn is never handed its message twice). `recv` first claims
+the recipient's pending entries that have been idle for at least that long
+(`XAUTOCLAIM` with min-idle 900 s, from `0-0`): what a reader that died or
+stalled was holding, so
 a reader that crashed before acking is handed the message again, before any new
 one, while a live reader is never handed a message a second time. Then it reads
 new entries (`XREADGROUP ... >`; `--forever` waits with `BLOCK`, a plain `recv`

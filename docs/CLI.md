@@ -712,10 +712,10 @@ may repeat it or be left out, and another name is refused; on a store with no
 users (this first run) `--as` is your word and every write says `login=none`. `peek`
 prints `PEEK OK pending= new=` and one `PEEK MESSAGE state= id= from= at=
 subject=` line per message waiting, moving nothing. `recv` prints the oldest
-message a reader lost (delivered, not acked, idle a minute), else the oldest new
-one: a `RECV OK id= from= to= cc= re= at= subject=` line, a blank line, the
-body; `RECV NONE` at exit 1 when nothing waits; the reader keeps the message for
-a minute. With `--exec '<command>'` the command reads that same text on its
+message a reader lost (delivered, not acked, idle fifteen minutes), else the
+oldest new one: a `RECV OK id= from= to= cc= re= at= subject=` line, a blank
+line, the body; `RECV NONE` at exit 1 when nothing waits; the reader keeps the
+message for fifteen minutes. With `--exec '<command>'` the command reads that same text on its
 stdin and the message is acked when it exits 0 (`acked=true exec_exit=0`); a
 non-zero exit leaves it pending (`RECV FAILED ... exec_exit=<n>`, exit 1). `ack`
 answers `acked=false` for an id that is not pending, at exit 0. What a first run
@@ -753,6 +753,89 @@ Every store verb takes `--redis <host:port>` (else `NOVA_BUS_REDIS`) and logs
 in as `NOVA_SPRINT_REDIS_USER` with the password in the variable
 `NOVA_SPRINT_REDIS_PASSWORD_ENV` names, the fleet's convention. Exit codes: 0
 done; 1 the verb ran and said no; 2 could not run.
+
+## nova-friend
+
+What a friend runs to be part of the team: the wake loop, the beat and the
+proof of life, as one daemon. One launchd agent per friend parks on the
+friend's nova-bus2 stream and pushes each message into the running session as
+a turn through the harness's deliver command, beats to the sprint server while
+the loop runs, answers the coordinator's `PING` at once (`daemon-pong`) and
+pushes it in; the session's own `pong --nonce` alone makes the friend up. No
+ping for a window and the session is told the coordinator is silent, once. The
+spec is [SPEC-FRIEND.md](SPEC-FRIEND.md); the rules are `internal/friend`; the
+machine is `tla/Friend.tla`.
+
+### First run
+
+A Redis whose nova-config rows name ada and bob, its address in `--redis` or
+`NOVA_BUS_REDIS` (the transcript is in [TESTS.md](TESTS.md#nova-friend)):
+
+```sh
+nova-friend install --as bob --harness opencode --dir ./bob --dry-run
+nova-friend uninstall --as bob --dry-run
+nova-friend ping --as ada --to bob --nonce abc123
+nova-friend pong --as bob --nonce abc123 --to ada --queue 2 --working 1 --width 4
+nova-friend wait-pong --from bob --nonce abc123 --timeout 2s
+nova-friend status --as bob --dir ./bob
+```
+
+`install --dry-run` prints the agent's label, plist path and launchd log, and
+the plan (`INSTALL PLAN command=`): write the plist, boot out whatever runs
+under that label, bootstrap the new one; without `--dry-run` it does them
+(`INSTALL RAN`) and running it again replaces the agent. `ping` prints `PING OK
+nonce= id= to= at=` and the `wait-pong` line to run next. `pong` prints `PONG
+OK nonce= to= id= at=` and writes the pong file under `~/.nova-friend/<me>`
+(the state directory, `--state-dir` to move it; the daemon and the queue file
+keep `--dir`, the friend's working directory). `wait-pong` prints `WAIT-PONG
+OK nonce= from= at= took= queue= working= width= daemon=` (whether the daemon
+pong came too), or `WAIT-PONG NONE` at exit 1. `status` prints `STATUS OK
+daemon=<up|down> ... connection= seat= challenge=<quiet|challenged|deaf>
+last_pong= queue= working= width=`, or `STATUS NONE` at exit 1 where no
+daemon ever ran. What a first run gets wrong: a `--harness` that is not one
+of opencode, codex, claude, antigravity, dsh; a `pong --as` that is not the
+name the daemon whose state directory that is runs as (refused: the pong
+carries the daemon's name); no store named (`--redis` is required, or `NOVA_BUS_REDIS`); a `pong`
+with no `--to` before any ping has named a seat; a daemon whose record says
+"operation not permitted" running the harness on a removable volume, which is
+the system's privacy permission for background processes, granted to the
+binary by the person in the privacy settings and lost when the binary is
+rebuilt (the state files are under the home directory, out of its way).
+
+### The daemon
+
+```sh
+nova-friend install --as <me> --harness opencode --dir <my working directory> --width <n>
+nova-friend status --as <me> --dir <my working directory>
+```
+
+The first line is run once on the friend's machine, as the friend's login;
+launchd runs `nova-friend run` from then on, at every login, and restarts it
+when it dies; it is never started by the model. The session's one duty: when a
+message beginning `PING <nonce>` arrives, run the `nova-friend pong` line it
+carries, first. A harness with no deliver command yet (codex, claude,
+antigravity, dsh) has a passive daemon: it takes nothing off the stream (the
+session's own `nova-bus2 recv --as <me>` does), answers pings with the daemon
+pong, beats, and records what it could not push in; the beat and the daemon
+pong are real for it all the same.
+
+### Commands
+
+| Command | What it does |
+| --- | --- |
+| `run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--state-dir <d>]` | The daemon: the recv loop with the deliver adapter, the beat, the ping and pong machine; until a signal |
+| `install --as <me> --harness <h> --dir <d> [...] [--launchd-log <file>] [--dry-run]` | Writes and loads the launchd agent `com.nova.friend-<me>`; idempotent |
+| `uninstall --as <me> [--dry-run]` | Boots the agent out and removes its plist |
+| `ping --as <coordinator> --to <friend> [--nonce <n>] [--since <RFC3339>]` | One `PING <nonce>` on the friend's stream, with the seat line |
+| `pong --as <me> --nonce <n> [--to <coordinator>] [--queue <n>] [--working <n>] [--width <n>] [--state-dir <d>]` | The session's answer: one note to the coordinator, and the pong file |
+| `wait-pong --from <friend> --nonce <n> [--timeout <d>]` | Waits for the pong on the log, from the friend's own stream |
+| `status --as <me> --dir <d> [--state-dir <d>]` | The daemon's state, the last pong, the queue file's counts |
+| `version`, `help [<verb>]` | The version line; the banner, or a verb's help |
+
+Every store verb takes `--redis <host:port>` (else `NOVA_BUS_REDIS`), the
+daemon `--server <host:port>` (else `NOVA_SPRINT_SERVER`, else
+`127.0.0.1:6390`). Exit codes: 0 done; 1 the verb ran and said no; 2 could
+not run.
 
 ## Build
 

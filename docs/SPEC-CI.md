@@ -1368,7 +1368,9 @@ is the point: a skip that outlives the branch it names excuses a tool from the
 standard for good. The same lesson from the other side: a tool whose `CLI.md`
 section is prose-shaped contributes ZERO rows to `nova-check dogfood`.
 **The test.** `TestEveryCommandMeetsTheOnboardingStandard`
-(`internal/ci/onboarding_test.go`).
+(`internal/ci/onboarding_test.go`). `TestCommandReferenceStartsWithItsTitle`
+also requires the first line of `docs/CLI.md` to be `# Command reference`,
+so a misplaced command row cannot replace the document's title.
 **Its allowlist.** `notYetOnTheStandard` in the test file: empty, and an entry
 must name a genuinely open branch, so a skip is a dated pointer rather than a
 permanent exemption and it stops firing the moment that branch's section lands.
