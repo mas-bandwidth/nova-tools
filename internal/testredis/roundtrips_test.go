@@ -283,7 +283,8 @@ func TestRoundTripsRefusesToRunOutsideATestBinary(t *testing.T) {
 // pipeline: the hook's size-independence is shown with a fake processor, which
 // has no pipe.
 func servePipedStore(c net.Conn, gate func()) {
-	defer c.Close()
+	// ignored: a fake store's connection ends when the client hangs up; the test's own assertions are the report
+	defer func() { _ = c.Close() }()
 	r := bufio.NewReader(c)
 	queued, inTransaction := 0, false
 	for {
