@@ -720,7 +720,6 @@ func TestTwoProcessesRacingOneDraftPathLeaveOneWinner(t *testing.T) {
 	body := bodyFile(t, "Yes.\n")
 	bin := buildNovaBus(t)
 	for round := range 5 {
-		round := round
 		dir := filepath.Join(drafts, fmt.Sprintf("round%d", round))
 		require.NoError(t, os.MkdirAll(dir, 0o755))
 		// One channel, one value per run: a code and its own output travel together. Two

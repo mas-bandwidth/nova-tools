@@ -426,7 +426,7 @@ func TestNoExportedFieldOfATableGivesItsCardsOrRows(t *testing.T) {
 	typ := reflect.TypeFor[Table]()
 	var exported []string
 	for f := range typ.Fields() {
-		if f := f; f.IsExported() {
+		if f.IsExported() {
 			exported = append(exported, f.Name)
 		}
 	}
