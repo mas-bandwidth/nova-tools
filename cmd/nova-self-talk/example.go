@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
@@ -19,6 +20,7 @@ import (
 // cmdExample writes the example pages into a directory of the caller's: a local write and the
 // only write this tool makes. A page already there with the same bytes is kept; one with other
 // bytes is never replaced, and the run refuses before writing anything.
+// It implements SPEC.md's nova-self-talk example contract; NoReplace publishes whole pages.
 func cmdExample(args []string, stdout, stderr io.Writer) int {
 	asJSON := verbflag.BoolAsked(args, "json")
 	fset := verbflag.New("example")
@@ -69,7 +71,7 @@ func cmdExample(args []string, stdout, stderr io.Writer) int {
 			return refuse(stdout, stderr, asJSON, "example", "", "cannot make "+oneline.Quote(dir)+": "+reason(err))
 		}
 		for _, name := range write {
-			if err := os.WriteFile(filepath.Join(dir, name), bodies[name], 0o644); err != nil {
+			if err := atomicfile.WriteFile(filepath.Join(dir, name), bodies[name], 0o644, atomicfile.NoReplace()); err != nil {
 				return refuse(stdout, stderr, asJSON, "example", "", "cannot write "+oneline.Quote(filepath.Join(dir, name))+": "+reason(err))
 			}
 		}
