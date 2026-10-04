@@ -19,7 +19,6 @@ tools/templates SPEC-CI cardtemplates: one of CardTemplateDirs, skipped until a 
 # --- 2. An invented example: a name chosen to show the SHAPE of a path. ---
 
 .github/scripts/foo.sh SPEC-CI.md's invented script in `x=$(bash ...)`, shown as something that is not a producer
-.github/seat-rule-gate.sh SPEC-SECRETS.md names the workflow script that is deliberately NOT here: the rule lives in the tool instead
 docs/bus internal/bus/git.go's failure narrative: a bus directory pointed inside a larger repository
 docs/bus/from-bo/x.md the path that same narrative says git reports from the repository root
 docs/history SPEC.md's `--allow docs/history` example for subdirectory enumeration
