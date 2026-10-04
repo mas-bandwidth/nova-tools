@@ -414,8 +414,7 @@ func ReadOpen(store, session string) (OpenRecord, error) {
 		return OpenRecord{}, nil
 	}
 	if err != nil {
-		var pe *os.PathError
-		if errors.As(err, &pe) {
+		if pe, ok := errors.AsType[*os.PathError](err); ok {
 			err = pe.Err
 		}
 		return OpenRecord{}, fmt.Errorf("cannot read the session's open record from %s: %v", name, err)

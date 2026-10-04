@@ -351,8 +351,7 @@ func addWorktree(repo, path, head string) error {
 // fail with only an "invalid reference" and no word that the network was the cause.
 func fetchHead(run gitRunner, repo, head string) error {
 	_, err := run(repo, "fetch", "origin", "--", head)
-	var timedOut *subproc.TimeoutError
-	if errors.As(err, &timedOut) {
+	if _, ok := errors.AsType[*subproc.TimeoutError](err); ok {
 		return fmt.Errorf("fetching %s from origin: %w", head, err)
 	}
 	return nil

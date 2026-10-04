@@ -473,8 +473,7 @@ func cannotRead(name string, err error) string {
 
 // reason is an error without the path a *fs.PathError repeats, since the line names the path.
 func reason(err error) string {
-	var pe *fs.PathError
-	if errors.As(err, &pe) {
+	if pe, ok := errors.AsType[*fs.PathError](err); ok {
 		err = pe.Err
 	}
 	return err.Error()

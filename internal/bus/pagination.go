@@ -534,8 +534,7 @@ func BodyNewItemsAtSnapshot(root string, snapshot BodySnapshot, c *Config, me Pa
 		for _, p := range paths {
 			note, body, bodyBytes, err := snapshotNote(root, snapshot.Head, p)
 			if err != nil {
-				var sourceErr *snapshotSourceError
-				if errors.As(err, &sourceErr) {
+				if sourceErr, ok := errors.AsType[*snapshotSourceError](err); ok {
 					return nil, fmt.Errorf("snapshot %s cannot read %s: %w", commit, p, sourceErr)
 				}
 				continue
@@ -606,8 +605,7 @@ func snapshotNote(root, commit, p string) (Note, []byte, int64, error) {
 	}, "show", commit+":"+p)
 	if err != nil {
 		if parseErr != nil {
-			var headerErr *noteHeaderLimitError
-			if errors.As(parseErr, &headerErr) {
+			if _, ok := errors.AsType[*noteHeaderLimitError](parseErr); ok {
 				return Note{}, nil, 0, snapshotSource(parseErr)
 			}
 			return Note{}, nil, 0, parseErr

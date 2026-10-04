@@ -359,8 +359,7 @@ func paths(ctx context.Context, o options, deps Deps, previous, sha string, out,
 		progress(errs, "asking git in %s which paths %s touched", o.localDiff, rangeName)
 		files, err := git.DiffNames(ctx, o.localDiff, previous, sha)
 		if err != nil {
-			var limit *diffOutputLimitError
-			if errors.As(err, &limit) {
+			if limit, ok := errors.AsType[*diffOutputLimitError](err); ok {
 				remedy := "report this range and observed byte count to the release tool maintainer for review of the path-list limit; retry with the reviewed tool"
 				if limit.stream == "diagnostics" {
 					remedy = fmt.Sprintf("inspect Git's diagnostics for this range in %s, resolve their cause, and retry", o.localDiff)

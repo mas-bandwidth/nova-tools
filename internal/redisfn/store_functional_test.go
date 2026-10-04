@@ -407,8 +407,7 @@ func TestALoadTheStoreRefusesLeavesTheLibraryItHeld(t *testing.T) {
 				assert.Contains(t, line, want, "%s: the error does not say %q: %s", bad.name, want, line)
 			}
 		}
-		var reply redis.Error
-		if !errors.As(err, &reply) {
+		if reply, ok := errors.AsType[redis.Error](err); !ok {
 			assert.ErrorAs(t, err, &reply, "%s: the error does not wrap the store's reply: %v", bad.name, err)
 		}
 		if fa, fb := call(t, c, "fa"), call(t, c, "fb"); fa != "good" || fb != "good" {

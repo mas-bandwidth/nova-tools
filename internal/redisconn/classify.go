@@ -74,12 +74,10 @@ func Classify(err error) Class {
 	if err == nil {
 		return Other
 	}
-	var made *failure
-	if errors.As(err, &made) {
+	if made, ok := errors.AsType[*failure](err); ok {
 		return made.class
 	}
-	var answered redis.Error
-	if errors.As(err, &answered) {
+	if answered, ok := errors.AsType[redis.Error](err); ok {
 		if startsWithAny(answered.Error(), "NOAUTH", "WRONGPASS", "ERR invalid password", "ERR invalid username-password pair") {
 			return AuthRefused
 		}

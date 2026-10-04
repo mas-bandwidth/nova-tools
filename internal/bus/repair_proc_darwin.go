@@ -131,8 +131,7 @@ func darwinGitCwd() (map[string]string, error) {
 	cmd.Stderr = &stderr
 	err := cmd.Run()
 	code := 0
-	var exit *exec.ExitError
-	if errors.As(err, &exit) {
+	if exit, ok := errors.AsType[*exec.ExitError](err); ok {
 		code = exit.ExitCode()
 	}
 	return lsofCwds(stdout.String(), stderr.String(), code, err)

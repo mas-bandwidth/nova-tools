@@ -524,8 +524,7 @@ func validateBatchManifest(raw []byte) (*BatchManifest, error) {
 	dec.DisallowUnknownFields()
 	var manifest BatchManifest
 	if err := dec.Decode(&manifest); err != nil {
-		var typeErr *json.UnmarshalTypeError
-		if errors.As(err, &typeErr) {
+		if typeErr, ok := errors.AsType[*json.UnmarshalTypeError](err); ok {
 			return nil, &ManifestError{Where: typeErr.Field, Msg: fmt.Sprintf("a value of the wrong type (found %s)", typeErr.Value)}
 		}
 		return nil, err

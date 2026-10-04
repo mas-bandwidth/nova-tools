@@ -53,8 +53,7 @@ func processesUnder(mount string) ([]int, error) {
 	}
 	// Nothing found and a non-zero status is lsof's way of saying nothing found.
 	if len(pids) == 0 && err != nil {
-		var ee *exec.ExitError
-		if errors.As(err, &ee) {
+		if _, ok := errors.AsType[*exec.ExitError](err); ok {
 			return nil, nil
 		}
 		return nil, err

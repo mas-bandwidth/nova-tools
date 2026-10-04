@@ -23,8 +23,7 @@ import (
 // past the column bound is the store's kind of no, as `col add` past it is: exit
 // 1, the bound and the count, and how to get under it. Any other fault is usage.
 func refuseColumns(stderr io.Writer, verb string, err error) int {
-	var limit *ntable.LimitError
-	if errors.As(err, &limit) {
+	if limit, ok := errors.AsType[*ntable.LimitError](err); ok {
 		return refused(stderr, verb, "--columns: "+limit.Error()+"; "+limit.Advice())
 	}
 	return refuse(stderr, verb, "--columns: "+err.Error())

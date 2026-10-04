@@ -30,8 +30,7 @@ func realRun(dir string, env []string, argv ...string) (Result, error) {
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	err := cmd.Run()
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
+	if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
 		return Result{Stdout: out.String(), Stderr: errb.String(), Code: exitErr.ExitCode()}, nil
 	}
 	return Result{Stdout: out.String(), Stderr: errb.String()}, err

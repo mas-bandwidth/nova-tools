@@ -243,8 +243,7 @@ func addrFault(addr string) string {
 		// net says "address <addr>: <why>"; the address is already in the
 		// message, so only the why is kept.
 		why := err.Error()
-		var ae *net.AddrError
-		if errors.As(err, &ae) {
+		if ae, ok := errors.AsType[*net.AddrError](err); ok {
 			why = ae.Err
 		}
 		return why

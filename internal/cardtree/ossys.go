@@ -153,8 +153,7 @@ func osExec(dir string, env, argv []string) (string, int, error) {
 	err := cmd.Run()
 	if err != nil {
 		code := -1
-		var exit *exec.ExitError
-		if errors.As(err, &exit) {
+		if exit, ok := errors.AsType[*exec.ExitError](err); ok {
 			code = exit.ExitCode()
 		}
 		return out.String(), code, fmt.Errorf("%v: %s", err, oneline.Cap(lastLine(out.String()+"\n"+both.String()), 300))

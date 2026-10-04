@@ -94,8 +94,7 @@ func Transcript(err error) string {
 
 // transcriptOf is git's own output out of an error this package made.
 func transcriptOf(err error) string {
-	var ge *gitError
-	if errors.As(err, &ge) {
+	if ge, ok := errors.AsType[*gitError](err); ok {
 		return ge.output
 	}
 	if err == nil {

@@ -53,8 +53,7 @@ func finish(b subproc.Bounded, err error) (int, string) {
 	if err == nil {
 		return 0, ""
 	}
-	var te *subproc.TimeoutError
-	if errors.As(err, &te) {
+	if _, ok := errors.AsType[*subproc.TimeoutError](err); ok {
 		return 124, err.Error()
 	}
 	if rc := exitCode(err); rc != 127 {
@@ -67,8 +66,7 @@ func exitCode(err error) int {
 	if err == nil {
 		return 0
 	}
-	var ee *exec.ExitError
-	if errors.As(err, &ee) {
+	if ee, ok := errors.AsType[*exec.ExitError](err); ok {
 		return ee.ExitCode()
 	}
 	return 127

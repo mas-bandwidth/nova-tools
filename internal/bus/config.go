@@ -95,8 +95,7 @@ func LoadConfig(busDir string) (*Config, error) {
 	dec.DisallowUnknownFields()
 	var c Config
 	if err := dec.Decode(&c); err != nil {
-		var shape *json.UnmarshalTypeError
-		if errors.As(err, &shape) {
+		if shape, ok := errors.AsType[*json.UnmarshalTypeError](err); ok {
 			return nil, fmt.Errorf("%s: field %q has the wrong JSON value type%s", ConfigName, shape.Field, RosterShape)
 		}
 		return nil, fmt.Errorf("%s: %w%s", ConfigName, err, RosterShape)

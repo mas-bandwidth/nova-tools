@@ -257,8 +257,7 @@ func cmdMerge(e env, args []string) int {
 	}
 	merged, err := tlc.Merge(src, cases, runs...)
 	if err != nil {
-		var missing *tlc.MissingError
-		if errors.As(err, &missing) {
+		if missing, ok := errors.AsType[*tlc.MissingError](err); ok {
 			err = errors.New(explainMissing(missing, dropped, *root, *keep, *out))
 		}
 		eventWhy(e.stderr, "MERGE", "FAIL", err.Error(), "runs", fmt.Sprint(measured))

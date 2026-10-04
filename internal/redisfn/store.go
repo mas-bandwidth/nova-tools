@@ -523,8 +523,7 @@ func (b *built) failed(doing string, err error) error {
 	if errors.As(err, &mine) || errors.As(err, &collision) {
 		return err
 	}
-	var early *unsent
-	if errors.As(err, &early) {
+	if early, ok := errors.AsType[*unsent](err); ok {
 		return &failure{fmt.Sprintf("redisfn: %s %s: the caller's wait had ended before anything was sent: %s; nothing was sent, so the store holds what it held",
 			doing, b.name, oneline.Err(early.err)), err}
 	}

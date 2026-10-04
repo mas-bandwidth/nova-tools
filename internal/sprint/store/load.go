@@ -37,8 +37,7 @@ func (st *Store) Load(ctx context.Context, tables []string, extras func(*sprint.
 	r := st.retry(ctx)
 	for r.next(LoadTries) {
 		s, err := st.loadOnce(ctx, tables, extras)
-		var moved *movedError
-		if errors.As(err, &moved) {
+		if moved, ok := errors.AsType[*movedError](err); ok {
 			last = moved
 			continue
 		}

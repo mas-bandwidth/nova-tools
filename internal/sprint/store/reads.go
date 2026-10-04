@@ -27,8 +27,7 @@ func (st *Store) ReadCells(ctx context.Context, logical, row string, cols ...str
 	r := st.retry(ctx)
 	for r.next(LoadTries) {
 		out, err := st.readCellsOnce(ctx, logical, row, cols...)
-		var moved *movedError
-		if errors.As(err, &moved) {
+		if moved, ok := errors.AsType[*movedError](err); ok {
 			last = moved
 			continue
 		}

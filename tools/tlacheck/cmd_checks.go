@@ -140,8 +140,7 @@ func cmdReplay(e env, args []string) int {
 		},
 	})
 	if err != nil {
-		var cannot *tablemodel.CannotRun
-		if errors.As(err, &cannot) {
+		if cannot, ok := errors.AsType[*tablemodel.CannotRun](err); ok {
 			return refuse(e, "replay", cannot.Error()+"; nothing was checked", tool+" replay -h")
 		}
 		eventWhy(e.stderr, "REPLAY", "FAIL", err.Error(), "seconds", seconds(time.Since(start)))
@@ -185,8 +184,7 @@ func cmdWitnesses(e env, args []string) int {
 		fmt.Fprintf(e.stdout, "WITNESS OK result=%s name=%s: %s\n", f.Result, f.Name, oneLine(f.Text))
 	})
 	if err != nil {
-		var cannot *tablemodel.CannotRun
-		if errors.As(err, &cannot) {
+		if cannot, ok := errors.AsType[*tablemodel.CannotRun](err); ok {
 			return refuse(e, "witnesses", cannot.Error()+"; nothing was checked", tool+" witnesses -h")
 		}
 		eventWhy(e.stderr, "WITNESS", "FAIL", err.Error(), "findings", fmt.Sprint(findings))

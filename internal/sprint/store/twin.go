@@ -238,8 +238,7 @@ func (st *Store) twinRead(ctx context.Context, tw *Twin, load []string, extras f
 			tw.reset(st.epoch)
 		}
 		snap, err := st.twinView(ctx, tw, load, v, extras)
-		var moved *movedError
-		if errors.As(err, &moved) {
+		if _, ok := errors.AsType[*movedError](err); ok {
 			continue
 		}
 		if err != nil {
@@ -412,13 +411,11 @@ func (st *Store) catchUp(ctx context.Context, tw *Twin, name string, shape ntabl
 	if ok {
 		var err error
 		ids, ok, err = tc.TableChanges(ctx, shape.Name, t.Revision, shape.Revision)
-		var grant *GrantError
-		if errors.As(err, &grant) {
+		if grant, ok0 := errors.AsType[*GrantError](err); ok0 {
 			st.stats().note(grant.Error())
 			ok, err = false, nil
 		}
-		var gap *GapError
-		if errors.As(err, &gap) {
+		if gap, ok0 := errors.AsType[*GapError](err); ok0 {
 			st.stats().note(gap.Error())
 			ok, err = false, nil
 		}

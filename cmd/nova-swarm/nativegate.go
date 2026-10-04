@@ -279,8 +279,7 @@ func gateRed(fs []decide.Failure, out string, runErr error) (map[string]bool, er
 	}
 	got := decide.ParseGateOutput(out)
 	if len(got) == 0 {
-		var exit *exec.ExitError
-		if !errors.As(runErr, &exit) {
+		if _, ok := errors.AsType[*exec.ExitError](runErr); !ok {
 			return nil, runErr
 		}
 		return nil, fmt.Errorf("go test failed with no test output: %s", oneline.Cap(strings.TrimSpace(out), 300))

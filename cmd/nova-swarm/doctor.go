@@ -175,8 +175,7 @@ func readVersionLineUnder(parent context.Context, path string, deadline, grace t
 	case errors.Is(err, fs.ErrNotExist) || errors.Is(err, exec.ErrNotFound):
 		return "", errDoctorNotFound
 	default:
-		var exit *exec.ExitError
-		if errors.As(err, &exit) {
+		if exit, ok := errors.AsType[*exec.ExitError](err); ok {
 			if code := exit.ExitCode(); code >= 0 {
 				return line, fmt.Errorf("exited %d", code)
 			}

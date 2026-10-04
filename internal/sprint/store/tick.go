@@ -1142,8 +1142,7 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 		}
 		t.res.Times = append(t.res.Times, began.part(table, part.Name))
 		t.ran = true
-		var cleared *ClearedError
-		if errors.As(err, &cleared) {
+		if _, ok := errors.AsType[*ClearedError](err); ok {
 			t.res.Stale = fmt.Sprintf("the sprint was cleared during the tick (epoch %d) as the part %s finished: the tick stops here", t.at, part.Name)
 			return tickCleared
 		}

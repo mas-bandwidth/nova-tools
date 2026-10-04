@@ -37,8 +37,7 @@ func (st *Store) PipelinedLoadWithFence(ctx context.Context, tables []string, ex
 	r := st.retry(ctx)
 	for r.next(LoadTries) {
 		s, f2, err := st.pipelinedLoadOnceWithFence(ctx, tables, extras)
-		var moved *movedError
-		if errors.As(err, &moved) {
+		if moved, ok := errors.AsType[*movedError](err); ok {
 			last = moved
 			continue
 		}

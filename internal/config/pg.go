@@ -446,8 +446,7 @@ func nullJSON(b []byte) any {
 
 // sqlState is the SQLSTATE of a pgx error, "" for any other.
 func sqlState(err error) string {
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
+	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok {
 		return pgErr.Code
 	}
 	return ""

@@ -254,8 +254,7 @@ func wrapPathError(err error) error {
 	if err == nil {
 		return nil
 	}
-	var pe *os.PathError
-	if errors.As(err, &pe) {
+	if pe, ok := errors.AsType[*os.PathError](err); ok {
 		return &safePathError{err: pe}
 	}
 	return err

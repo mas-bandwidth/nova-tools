@@ -86,8 +86,7 @@ func testMatrixVerb(e env, args []string, h selHost) int {
 	// selects the whole tree (the landing must not stall on one runner's cache).
 	out, err := pkgselect.Select(h.run, pkgselect.Options{Root: selRoot(e), All: base == "", Base: base, WholeTreeOnError: *event != "pull_request"})
 	if err != nil {
-		var le *pkgselect.ListError
-		if errors.As(err, &le) {
+		if le, ok := errors.AsType[*pkgselect.ListError](err); ok {
 			fmt.Fprint(e.stderr, le.Text)
 		} else {
 			fmt.Fprintf(e.stderr, "select-packages: %v\n", err)

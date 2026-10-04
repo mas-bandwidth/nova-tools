@@ -1651,8 +1651,7 @@ func runInventory(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	}
 	if given["host"] {
 		data, err := inv.HostJSON(*host)
-		var unknown *config.UnknownHostError
-		if errors.As(err, &unknown) {
+		if unknown, ok := errors.AsType[*config.UnknownHostError](err); ok {
 			return refused(stderr, verb, fmt.Sprintf("--host %q names no machine row; known machines: %s", unknown.Name, boundedNames(unknown.Known, maxKnownNames)), toolName+" machine list")
 		}
 		if err != nil {

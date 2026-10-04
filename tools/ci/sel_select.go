@@ -63,8 +63,7 @@ func selectPackagesVerb(e env, args []string, h selHost) int {
 	}
 	out, err := pkgselect.Select(h.run, pkgselect.Options{Root: selRoot(e), All: *all, Base: fs.Arg(0), WholeTreeOnError: *mode == "whole-tree"})
 	if err != nil {
-		var le *pkgselect.ListError
-		if errors.As(err, &le) {
+		if le, ok := errors.AsType[*pkgselect.ListError](err); ok {
 			fmt.Fprint(e.stderr, le.Text)
 		} else {
 			fmt.Fprintf(e.stderr, "select-packages: %v\n", err)

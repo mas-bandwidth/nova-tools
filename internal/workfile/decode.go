@@ -24,8 +24,7 @@ func Decode(file string, data []byte, lim worklang.Limits) (*Tree, error) {
 	top, err := worklang.Read(file, data, lim)
 	if err != nil {
 		// The reader speaks of plans; the refusal here is of a tree.
-		var r *worklang.Refusal
-		if errors.As(err, &r) {
+		if r, ok := errors.AsType[*worklang.Refusal](err); ok {
 			return nil, fmt.Errorf("workfile: tree file=%s: %s", file, strings.ReplaceAll(r.Reason, "a plan is data", "a tree is data"))
 		}
 		return nil, err

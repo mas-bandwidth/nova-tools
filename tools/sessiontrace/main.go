@@ -343,8 +343,7 @@ func runTLC(ctx context.Context, root, jar, out string, traces []trace) (int, st
 		return 0, "", ctx.Err()
 	}
 	code := 0
-	var exitErr *exec.ExitError
-	if errors.As(runErr, &exitErr) {
+	if exitErr, ok := errors.AsType[*exec.ExitError](runErr); ok {
 		code = exitErr.ExitCode()
 	} else if runErr != nil {
 		return 0, "", runErr

@@ -574,8 +574,7 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			}
 		}
 		op, err := st.operation(step.Verb, actor, sprint.OpFamily(family, st.epoch)+"-"+strconv.Itoa(res.Attempts), plan, snap)
-		var twice *twiceError
-		if errors.As(err, &twice) {
+		if twice, ok := errors.AsType[*twiceError](err); ok {
 			return refuseWhole(res, plan, twice.Error())
 		}
 		if err != nil {
@@ -1543,8 +1542,7 @@ func (st *Store) send(ctx context.Context, man ntable.BatchManifest) (ntable.Rec
 }
 
 func refusalCode(err error) string {
-	var r *ntable.Refusal
-	if errors.As(err, &r) {
+	if r, ok := errors.AsType[*ntable.Refusal](err); ok {
 		return r.Code
 	}
 	return ""

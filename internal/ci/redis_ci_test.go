@@ -111,8 +111,7 @@ func redisCIChild(t *testing.T, mode string) (string, int) {
 	if err == nil {
 		return string(out), 0
 	}
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
+	if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
 		return string(out), exitErr.ExitCode()
 	}
 	require.Fail(t, fmt.Sprintf("re-exec %s: %v\n%s", mode, err, out))

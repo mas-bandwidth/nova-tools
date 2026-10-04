@@ -239,8 +239,7 @@ func checkFileLinks(root, mdPath string, exclude []string) (checked int, broken 
 // short clause: the file's path is already the line's subject and the full
 // *fs.PathError would repeat it.
 func readCause(err error) error {
-	var pe *fs.PathError
-	if errors.As(err, &pe) {
+	if pe, ok := errors.AsType[*fs.PathError](err); ok {
 		return pe.Err
 	}
 	return err

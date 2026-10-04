@@ -105,8 +105,7 @@ func fnRun(c *tool.Call, d deps, sub string) *tool.Out {
 	ctx := context.Background()
 	failed := func(err error) *tool.Out {
 		cause := oneline.Err(err)
-		var collision *redisfn.CollisionError
-		if errors.As(err, &collision) {
+		if _, ok := errors.AsType[*redisfn.CollisionError](err); ok {
 			// The collision's error ends in its own remedy; the line keeps one,
 			// remedy=, which names the holder and the command.
 			cause, _, _ = strings.Cut(cause, "; remedy: ")
@@ -178,8 +177,7 @@ func fnRun(c *tool.Call, d deps, sub string) *tool.Out {
 // redisconn's Unreachable and AuthRefused, which exit 2 in every nova-redis
 // verb. A refusal exits 1.
 func answered(err error) bool {
-	var collision *redisfn.CollisionError
-	if errors.As(err, &collision) {
+	if _, ok := errors.AsType[*redisfn.CollisionError](err); ok {
 		return true
 	}
 	if redisconn.Classify(err) != redisconn.Other {
@@ -191,8 +189,7 @@ func answered(err error) bool {
 
 // remedy is the one next step for a failure, by its cause.
 func remedy(sub string, err error, store login) string {
-	var collision *redisfn.CollisionError
-	if errors.As(err, &collision) {
+	if collision, ok := errors.AsType[*redisfn.CollisionError](err); ok {
 		var held []string
 		for _, h := range collision.Held {
 			if h.Holder != "" {
@@ -212,8 +209,7 @@ func remedy(sub string, err error, store login) string {
 	if redisconn.Classify(err) == redisconn.AuthRefused {
 		return login
 	}
-	var reply redis.Error
-	if errors.As(err, &reply) {
+	if reply, ok := errors.AsType[redis.Error](err); ok {
 		if strings.HasPrefix(reply.Error(), "NOPERM") {
 			return login
 		}

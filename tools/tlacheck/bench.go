@@ -153,8 +153,7 @@ func runOnBench(e env, o benchOpts) int {
 	}
 	machine, probe, err := pickBench(ctx, e, o, rows, want)
 	if err != nil {
-		var r *benchRefusal
-		if errors.As(err, &r) {
+		if r, ok := errors.AsType[*benchRefusal](err); ok {
 			return refuseB(r.cause, r.next)
 		}
 		return refuseB(err.Error(), again)

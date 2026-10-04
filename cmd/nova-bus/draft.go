@@ -228,8 +228,7 @@ func draftOpenReadFailure(busDir string, me bus.Participant, maxWords int, haveM
 	recovery := fmt.Sprintf("nova-bus inbox --bus %s --as %s --receipt-max-words %s --full --carry-history --advance --remote '<your-remote>' --branch '<your-branch>'", oneline.Escape(oneline.ShellWord(busDir)), oneline.Escape(oneline.ShellWord(me.Name)), oneline.Escape(wordLimit))
 	recoveryNote := "--carry-history preserves existing history, avoids first-advance refusal or discarding prior notes, and --advance moves and pushes the cursor"
 	placeholders := "replace the remote and branch placeholders; " + wordLimitNote
-	var pathErr *os.PathError
-	if errors.As(err, &pathErr) {
+	if _, ok := errors.AsType[*os.PathError](err); ok {
 		return fmt.Errorf("cannot read %s (%v); repair access to that OPEN path first, then rebuild it from the bus; %s; run: %s; %s", bus.OpenPath(me.Lane), err, recoveryNote, recovery, placeholders)
 	}
 	detail := strings.TrimSuffix(err.Error(), "; read once with --full --advance, which writes the list again from the whole bus")

@@ -340,8 +340,7 @@ func TestCheckSaysUnknownWhenTheStoreCannotBeRead(t *testing.T) {
 		if !errors.Is(err, c.cause) {
 			assert.ErrorIs(t, err, c.cause, "%s: the error does not wrap its cause", c.name)
 		}
-		var mismatch *MismatchError
-		if errors.As(err, &mismatch) {
+		if _, ok := errors.AsType[*MismatchError](err); ok {
 			assert.Failf(t, "", "%s: a store that was not read is said to hold another library: %v", c.name, err)
 		}
 	}

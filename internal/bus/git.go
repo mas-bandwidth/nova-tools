@@ -265,8 +265,7 @@ func git(dir string, args ...string) (string, error) {
 // budget names the call, the budget and the flag that widens it; any other failure is a
 // gitError carrying git's own words; nil stays nil.
 func gitFailure(dir string, args []string, budget time.Duration, out string, err error) error {
-	var timedOut *subproc.TimeoutError
-	if errors.As(err, &timedOut) {
+	if _, ok := errors.AsType[*subproc.TimeoutError](err); ok {
 		return fmt.Errorf("git %s did not finish within %s and was killed; nothing was left half-done by this tool, and a longer budget is --git-timeout <seconds>", strings.Join(args, " "), budget)
 	}
 	if err != nil {
@@ -975,8 +974,7 @@ func isAncestorOf(dir, ancestor, descendant string) (bool, error) {
 	}
 	budget := gitTimeout()
 	_, err := gitrun.Run(context.Background(), busGit(dir), "merge-base", "--is-ancestor", ancestor, descendant)
-	var timedOut *subproc.TimeoutError
-	if errors.As(err, &timedOut) {
+	if _, ok := errors.AsType[*subproc.TimeoutError](err); ok {
 		return false, fmt.Errorf("git merge-base --is-ancestor did not finish within %s and was killed; a longer budget is --git-timeout <seconds>", budget)
 	}
 	if err != nil {

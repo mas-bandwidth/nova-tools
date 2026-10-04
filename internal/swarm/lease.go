@@ -181,8 +181,7 @@ func (e *JobLeaseHeldError) Error() string {
 // HeldJobLease answers the holder a take was refused for, when that is why it was refused.
 // It is here rather than at the caller so a launcher needs no errors.As of its own.
 func HeldJobLease(err error) (JobLease, bool) {
-	var held *JobLeaseHeldError
-	if errors.As(err, &held) {
+	if held, ok := errors.AsType[*JobLeaseHeldError](err); ok {
 		return held.Holder, true
 	}
 	return JobLease{}, false

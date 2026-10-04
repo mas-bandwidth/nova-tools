@@ -302,8 +302,7 @@ func seenFresh(seen map[string]bool) func(inboxLook) ([]sprint.Group, error) {
 
 // waitFailed says why the wait failed and is its exit code.
 func (a *app) waitFailed(err error, stderr io.Writer) int {
-	var e *exitErr
-	if errors.As(err, &e) {
+	if e, ok := errors.AsType[*exitErr](err); ok {
 		return e.code // said by the source
 	}
 	return a.readFailed("inbox --wait", err, stderr)
