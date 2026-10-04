@@ -2767,6 +2767,7 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | stream remove | takes streams off the work and merge tables (the owner, 2026-10-01: "remove work streams a/b/c" / "you should have a verb to remove work streams" / "they should only succeed on a STOPPED sprint machine"): each stream's row of both tables, with the stream's control card, the one card `add` made for it, which the merge row's delete takes off the table (its record kept); refused (exit 1, nothing written) on a RUNNING machine (`nova-sprint stop` first), for a stream that is no row of either table, named, and for a stream that holds a card (a primary or a sentinel placed in any column of its work row, landed included, or a merge card in its merge row), naming how many of each and the remedy (`nova-sprint clear --confirm sprint`, or `drop`); all or none for the streams named. A clear keeps the streams and does not bring a removed one back. The table layer never places a removed member again within an epoch, so `add --stream <s>` of a stream removed in this epoch is refused, naming the clear, and adds it fresh after the next clear (`sprint.StreamRemove`, `sprint.RemovedStream`) |
 | ci | records a CI observation for primaries in any state |
 | wait | sets a judgment's next review time |
+| remind | writes one timer to the sprint's timer record, which the tick raises once as a judgment of kind "timer" addressed to its actor at its due time (section 18): `(--in <duration> \| --at <RFC3339 or local time>) --note <text> [--for <actor>]`, `--list`, `--cancel <id>`, each with `--dry-run` and `--json` |
 | ack | closes a judgment the coordinator looked at, with the reason |
 | answer | each card of each routine judgment answered by the judgment decision, the verb chosen applied at or above `decide_judgment_bar` and the rest listed, every decision recorded with its outcome ("Answered by nova-decide", section 8); `--dry-run`, `--bar <p>`, `--every <d>` (until STOPPED), `--backend jev\|fixed`, `--answers <file>`, `--record <file>`, `--timeout <d>` (one ask, 60s); each verb applied carries the decision's `--op`, recorded applying before and applied after; run where typed, its verbs sent to the server |
 | inbox | every open judgment and the notifications since the cursor, grouped, judgment first, each judgment with its alias (`alias=j<n>`, section 11); `--open <id>` (or the alias), `--read`; `--json` carries `judgments` (each with `id`, `kind`, `type`, `what`, `stream`, `size`, `cards` whole, `notes`, and `answers`: every decision with the exact command lines that make it, in order), `happened` (the notifications since the cursor, grouped), `done` (the machine has stopped because the sprint is done) and `groups`, every group in the order the text prints; `--wait --timeout <d>` blocks until the inbox holds a judgment, or a note addressed to the coordinator, that was not in it when the wait began (by note id: a held or waited judgment is open already and never wakes it; the owner, 2026-10-02: "push notifications for inbox from nova-sprint so she doesn't have to poll"), or the machine stops having run, or `<d>` passes; it sleeps on the tick-end notes and looks at the inbox at each one and every 15 s while nothing ticks; then it says how it ended on one line (`inbox --wait: new=<group id,...>`, `inbox --wait: the machine stopped`, `inbox --wait: nothing new in <d>`) and shows the inbox; `--json` carries `woke` and `new` (the new groups' ids), the line only for a wait that found nothing, on stderr (stdout stays one JSON object); `--wait --push <dir>` keeps running until it is interrupted: each new judgment and note to the coordinator is written once as `<dir>/<note id>.md` (the group as `inbox --open` prints it, then `clock: <RFC3339>`; a `:` in a read-time group's id becomes `-`), said as `INBOX OK pushed=<id> file=<path>` (`--json`: one object a file), and the files there are its cursor: a note with a file is never written again, so a restart pushes nothing twice and misses nothing; a timeout is quiet and the loop goes on, the machine stopping is its line and the loop goes on; a local write, into the coordinator's own inbox directory; `--push seat` is the holder's inbox, and follows the seat ("Handing over the seat"); `--push` takes no `--read`, `--open` or `--at-epoch`; `--json` carries `coordinator`, the seat's holder |
@@ -3489,3 +3490,47 @@ removes every epoch's log. The log is stored beside the notifications (a
 stream of its own in the same transaction), so the inbox's reads never page
 through it.
 
+## 18. Timers
+
+An actor sets a timer for itself or for another on the sprint machine, so it is
+woken at a time it chose (the owner, 2026-10-04: "What if you were able to set
+timers for yourself, mechanically on the nova-sprint machine, so you get woken
+up in future at that time"). One timer is one row of the sprint's timer record,
+a machine record beside the goals and carried across a clear: its id, the actor
+it wakes (`--for`, default the caller: `--actor` or `NOVA_SPRINT_ACTOR`), its
+due time (`--in <duration>` from now, or `--at` an RFC3339 time, a local date
+and time, a local date or a local time of day today, which is refused when it
+is not after now), the note it carries (at most 512 bytes) and who set it
+(`sprint.Timer`, `store.AddTimer`). `remind --list` prints the open timers
+(id, for, due, note), bounded by `--max` with its `MORE` line; `remind --cancel
+<id>` takes one off the record; every form takes `--dry-run`, which says what
+it would write and writes nothing, and `--json`, the same value.
+
+While the machine is RUNNING the tick reads the record and raises each timer
+whose due time the clock has reached as one judgment of kind `timer` addressed
+to its actor (`Note.To`), open on its own subject `timer:<id>`, carrying its
+note, with the decision `ack`; the same step leaves the record without it, so a
+timer is raised once and never before its due time (`sprint.TimerNotes`,
+`store.timers`, `tla/Timer.tla`). A timer the tick raised is off the record, so
+there is none to cancel.
+
+A timer counts running time, not wall time, as every deadline of this tree
+does: the time the machine was STOPPED between the timer's write and now is not
+counted, so a timer set before a stop is raised that much later, and a stopped
+machine raises nothing. The test is the tree's one clock comparison,
+`sprint.DueNow(now, due, set, stopped)`: the running time from `set` to `now`
+against the due time's own distance from `set`. The timer's tick
+(`sprint.DueTimers`) and the judgment review time `wait --until` sets
+(`sprint.TickOverdue`, `Note.Review` based at `Note.ReviewSet`) both call it,
+and a later external `wait` operand (`after <time>`) calls the same function:
+there is no second clock comparison in the tree.
+
+The judgment reaches its actor by the routes the tree has and adds none. A
+timer for the coordinator reaches the coordinator's wake with no new path: the
+seat push loop (`inbox --wait --push seat`) already pushes judgments to the
+seat's holder as files, and the tick-end note counts a judgment
+(`sprint.TickEndCounts`), so the tick that raised it wakes it. A timer for a
+friend reaches that friend's inbox by the route her judgments already take: the
+push loop writes a group addressed to someone to that actor's own inbox
+directory (`pushTarget.dirOf`, `~/<actor>-working/inbox/sprint-judgments`), the
+group carrying the note's addressee (`sprint.Group.To`).
