@@ -292,6 +292,7 @@ class, never a model name". Every value is data in the row: the code names no pr
 | `usd` | decimal | (empty) | the deal: the dollar budget per card, the harness's reported cost at which native stops the card (`stopped=usd`), beside the token budget; above 0 when set (a 0 is refused at `add` and `set`), empty is no cap | `route:<r>` |
 | `deadline` | int | yes | the deal: the seconds a card on this route may run, above 0 | `route:<r>` |
 | `enabled` | bool | (true) | the deal: false takes it out of the deal, and needs a `note` | `route:<r>` |
+| `first` | bool | (false) | the deal: true draws this route before the others of its tier; false leaves the walk as it is | `route:<r>` |
 | `price_input` | decimal | (empty) | a card's cost: USD per million uncached input tokens | `route:<r>` |
 | `price_cache_read` | decimal | (empty) | a card's cost: USD per million cached input tokens read | `route:<r>` |
 | `price_cache_write` | decimal | (empty) | a card's cost: USD per million tokens written to the cache | `route:<r>` |

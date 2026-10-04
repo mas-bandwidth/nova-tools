@@ -24,10 +24,10 @@ func TestTheRouteRowIsWhatTheDealReads(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "routes", k.Table)
 	assert.False(t, k.Singleton)
-	assert.Equal(t, "tier,provider,model,harness,tokens,usd,deadline,enabled,"+
+	assert.Equal(t, "tier,provider,model,harness,tokens,usd,deadline,enabled,first,"+
 		"price_input,price_cache_read,price_cache_write,price_output,reasoning_as_output,long_context,price_input_long,price_output_long,price_request,billing,gateway_percent,price_source,price_as_of,note",
 		strings.Join(k.FieldNames(), ","), "the deal reads exactly these names, the card's cost the price sheet after them, and the note last")
-	types := map[string]Type{"tier": TypeEnum, "provider": TypeText, "model": TypeText, "harness": TypeEnum, "tokens": TypeInt, "usd": TypeDecimal, "deadline": TypeInt, "enabled": TypeBool,
+	types := map[string]Type{"tier": TypeEnum, "provider": TypeText, "model": TypeText, "harness": TypeEnum, "tokens": TypeInt, "usd": TypeDecimal, "deadline": TypeInt, "enabled": TypeBool, "first": TypeBool,
 		"price_input": TypeDecimal, "price_cache_read": TypeDecimal, "price_cache_write": TypeDecimal, "price_output": TypeDecimal, "reasoning_as_output": TypeBool,
 		"long_context": TypeInt, "price_input_long": TypeDecimal, "price_output_long": TypeDecimal, "price_request": TypeDecimal, "billing": TypeEnum,
 		"gateway_percent": TypeDecimal, "price_source": TypeText, "price_as_of": TypeText, "note": TypeText}
@@ -66,9 +66,14 @@ func TestRouteNewRowCanonicalisesAndRefusesEveryProblemAtOnce(t *testing.T) {
 		not  []string          // phrases it must not say
 	}{
 		{
-			name: "defaults: unmetered, enabled",
+			name: "defaults: unmetered, enabled, not first",
 			raw:  map[string]string{"tier": "flash", "provider": "opencode", "model": "m1", "deadline": "600"},
-			want: map[string]string{"tokens": "0", "enabled": "true"},
+			want: map[string]string{"tokens": "0", "enabled": "true", "first": "false"},
+		},
+		{
+			name: "first set draws before the others of its tier",
+			raw:  map[string]string{"tier": "pro", "provider": "p", "model": "m", "deadline": "60", "first": "true"},
+			want: map[string]string{"first": "true"},
 		},
 		{
 			name: "a model holding slashes",

@@ -478,6 +478,7 @@ var Kinds = []*Kind{
 			{Name: "usd", Type: TypeDecimal, Help: "the dollar budget per card, a decimal like 0.50: the harness's reported cost at which the card is stopped, beside the token budget; empty (the default) is none"},
 			{Name: "deadline", Type: TypeInt, Required: true, Help: "the seconds a card on this route may run, above 0"},
 			{Name: "enabled", Type: TypeBool, Default: "true", Help: "false takes it out of the deal and needs --note, the measured reason (a disabled route carries its reason); true (the default) keeps it in and needs none"},
+			{Name: "first", Type: TypeBool, Default: "false", Help: "true deals this route before the others of its tier (the walk from the tier's index prefers it); false (the default) leaves the walk as it is"},
 			// The price sheet: optional, so a card's predicted cost can be worked
 			// out from its tokens using the pricing configuration saved per route tuple.
 			// Prices are USD per million tokens.

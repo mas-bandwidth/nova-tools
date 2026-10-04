@@ -34,7 +34,8 @@ import (
 //   - a frontier card with no pin is not dealt: it is the coordinator's, one
 //     judgment for the tier;
 //   - a card whose tier (flash when line 1 names none) has no enabled route in its
-//     array is not dealt, one judgment for the tier.
+//     array is not dealt, one judgment for the tier;
+//   - a route with first set is drawn before the others of its tier (preferFirst).
 
 // Route is one route of a model tier as the store holds it (config.RouteKey).
 type Route struct {
@@ -51,6 +52,9 @@ type Route struct {
 	USD      string `json:"usd,omitempty"`
 	Deadline int    `json:"deadline"` // seconds
 	Enabled  bool   `json:"enabled"`
+	// First is the route's first field. A route with it set is drawn before the
+	// others of its tier (preferFirst; docs/SPEC-SPRINT.md, the deal).
+	First bool `json:"first"`
 	// Prices is the route's price sheet (cardcost.PricesOf), what a card that ran on it
 	// is priced by (cost.go); every price "" when the route has none.
 	Prices cardcost.Prices `json:"prices"`
@@ -150,6 +154,35 @@ func (ri routeIndexes) write(p *Plan) {
 	}
 }
 
+// preferFirst is the entry a draw takes from the tier's array at counter at.
+// A route with first set is drawn before the others of its tier: the walk takes
+// the first served entry whose first is set, and an entry without it only when
+// none such remains drawable. steps is every entry walked to reach the one
+// taken, and the amount the index moves (docs/SPEC-SPRINT.md, the deal).
+// RouteFair (tla/RouteIndex.tla) is this walk when no route of the tier has
+// first set. hold leaves skip out while another entry remains drawable, as a
+// redeal leaves out routes already taken.
+func preferFirst(arr []string, served map[string]Route, skip []string, hold bool, at uint64) (r Route, steps uint64, ok bool) {
+	n := uint64(len(arr))
+	take := func(wantFirst bool) (Route, uint64, bool) {
+		for i := uint64(0); i < n; i++ {
+			cur, ok := served[arr[(at+i)%n]]
+			if !ok || hold && contains(skip, cur.Name) {
+				continue
+			}
+			if cur.First != wantFirst {
+				continue
+			}
+			return cur, i + 1, true
+		}
+		return Route{}, 0, false
+	}
+	if r, steps, ok = take(true); ok {
+		return r, steps, true
+	}
+	return take(false)
+}
+
 // routeOf is the route fields of one deal of the primary c; wc is the work card dealt
 // again (nil for a new attempt), whose own route is left out too. With ri the tier's
 // index moves past the entry taken and every entry skipped before it, recorded under
@@ -208,15 +241,11 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 		v, _ := s.Fleet.Prop(PropRouteIndex(tier))
 		at, _ = strconv.ParseUint(v, 10, 64)
 	}
-	n := uint64(len(arr))
-	for i := uint64(0); i < n; i++ {
-		r, ok := served[arr[(at+i)%n]]
-		if !ok || fresh && contains(drawn, r.Name) {
-			continue
-		}
+	r, steps, ok := preferFirst(arr, served, drawn, fresh, at)
+	if ok {
 		if ri != nil {
-			ri[tier].r.count += i + 1
-			ri[tier].moves[c.ID] = strconv.FormatUint(i+1, 10)
+			ri[tier].r.count += steps
+			ri[tier].moves[c.ID] = strconv.FormatUint(steps, 10)
 		}
 		set := map[string]string{FieldRoute: r.Name, FieldModel: r.Provider + "/" + r.Model, FieldTokens: tokensWord(r.Tokens), FieldUSD: r.USD, FieldHarness: r.Harness,
 			FieldDeadline: strconv.Itoa(r.Deadline), FieldTier: tier, FieldRoutes: strings.Join(append(Split(c.F(FieldRoutes)), r.Name), ",")}
@@ -369,20 +398,16 @@ func (s *Snapshot) readRouteOf(ri routeIndexes, pr *Card, avoid []string) map[st
 		_, ok := served[name]
 		other = other || ok && !contains(avoid, name)
 	}
-	n := uint64(len(arr))
 	at := ri[tier].r.count
-	for i := uint64(0); i < n; i++ {
-		r, ok := served[arr[(at+i)%n]]
-		if !ok || other && contains(avoid, r.Name) {
-			continue
-		}
-		ri[tier].r.count += i + 1
-		was, _ := strconv.ParseUint(ri[tier].moves[key], 10, 64)
-		ri[tier].moves[key] = strconv.FormatUint(was+i+1, 10)
-		return map[string]string{FieldRoute: r.Name, FieldModel: r.Provider + "/" + r.Model, FieldTokens: tokensWord(r.Tokens), FieldUSD: r.USD, FieldHarness: r.Harness,
-			FieldDeadline: strconv.Itoa(r.Deadline), FieldTier: tier}
+	r, steps, ok := preferFirst(arr, served, avoid, other, at)
+	if !ok {
+		return map[string]string{FieldTier: tier}
 	}
-	return map[string]string{FieldTier: tier}
+	ri[tier].r.count += steps
+	was, _ := strconv.ParseUint(ri[tier].moves[key], 10, 64)
+	ri[tier].moves[key] = strconv.FormatUint(was+steps, 10)
+	return map[string]string{FieldRoute: r.Name, FieldModel: r.Provider + "/" + r.Model, FieldTokens: tokensWord(r.Tokens), FieldUSD: r.USD, FieldHarness: r.Harness,
+		FieldDeadline: strconv.Itoa(r.Deadline), FieldTier: tier}
 }
 
 // readRouteMissing is the tier of the primary pr's reads (readTierOf), and why
