@@ -4,10 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -18,20 +24,723 @@ import (
 
 // The tests here reach redis.go without a live store: pure helpers run their
 // real code paths with no client at all, and the plain-command methods run
-// against the unit tier's in-process miniredis (the fake the tree already
-// uses there: internal/config's redis_cover_test.go), so no process, no
-// external connection and no live Redis. The table layer's Lua-backed calls
-// (Shapes, Apply and the row writes) have no function library on miniredis;
-// TestRedisCoverTableLayerNeedsLiveStore pins that refusal and the report
-// names the live store they need.
+// against a fake of Redis.C (redis.UniversalClient). The fake answers every
+// command in process, the way acl_steps_test.go's keyRecorder does, and never
+// dials. The table layer's Lua-backed calls (Shapes, Apply and the row writes)
+// have no function library on the fake; TestRedisCoverTableLayerNeedsLiveStore
+// pins that refusal and the report names the live store they need.
 
-// coverRedis is a Redis backend on the unit tier's in-process miniredis.
+// coverRedis is a Redis backend on an in-process fake of Redis.C. Close marks
+// the fake closed so a later command is refused, as a client that has gone
+// away is refused.
 func coverRedis(t *testing.T, epoch uint64) (*Redis, context.Context) {
 	t.Helper()
-	mr := miniredis.RunT(t)
-	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = c.Close() })
-	return &Redis{C: c, Names: sprint.Names{Prefix: "t-"}, Pinned: epoch}, context.Background()
+	db := &coverDB{keys: map[string]*coverVal{}}
+	c := redis.NewClient(&redis.Options{Addr: "store.invalid:1"})
+	c.AddHook(&coverHook{db: db})
+	wrapped := &coverRedisClient{Client: c, db: db}
+	t.Cleanup(func() { _ = wrapped.Close() })
+	return &Redis{C: wrapped, Names: sprint.Names{Prefix: "t-"}, Pinned: epoch}, context.Background()
+}
+
+// coverRedisClient is the seam Redis.C: the client's commands, answered by
+// coverHook, and a Close the tests can call to refuse what follows.
+type coverRedisClient struct {
+	*redis.Client
+	db *coverDB
+}
+
+func (c *coverRedisClient) Close() error {
+	c.db.closed.Store(true)
+	return c.Client.Close()
+}
+
+// coverHook answers every command from the fake and never dials.
+type coverHook struct{ db *coverDB }
+
+func (coverHook) DialHook(redis.DialHook) redis.DialHook {
+	return func(context.Context, string, string) (net.Conn, error) {
+		return nil, errors.New("cover redis does not dial")
+	}
+}
+
+func (h *coverHook) ProcessHook(redis.ProcessHook) redis.ProcessHook {
+	return func(_ context.Context, cmd redis.Cmder) error { return h.db.exec(cmd) }
+}
+
+func (h *coverHook) ProcessPipelineHook(redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(_ context.Context, cmds []redis.Cmder) error {
+		var first error
+		for _, cmd := range cmds {
+			if err := h.db.exec(cmd); err != nil && first == nil {
+				first = err
+			}
+		}
+		return first
+	}
+}
+
+type coverKind int
+
+const (
+	coverString coverKind = iota + 1
+	coverHash
+	coverList
+	coverZSet
+	coverStream
+)
+
+type coverVal struct {
+	kind   coverKind
+	s      string
+	h      map[string]string
+	list   []string
+	z      []redis.Z
+	stream []redis.XMessage
+	seq    int64
+}
+
+type coverDB struct {
+	mu     sync.Mutex
+	keys   map[string]*coverVal
+	closed atomic.Bool
+}
+
+var errCoverWrongType = coverRedisErr("WRONGTYPE Operation against a key holding the wrong kind of value")
+
+func (db *coverDB) exec(cmd redis.Cmder) error {
+	if db.closed.Load() {
+		return coverFail(cmd, errors.New("redis: client is closed"))
+	}
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	err := db.apply(cmd)
+	if err != nil {
+		cmd.SetErr(err)
+	}
+	return err
+}
+
+func (db *coverDB) apply(cmd redis.Cmder) error {
+	args := cmd.Args()
+	if len(args) == 0 {
+		return fmt.Errorf("cover redis: empty command")
+	}
+	name := strings.ToLower(fmt.Sprint(args[0]))
+	switch name {
+	case "watch", "unwatch", "multi":
+		return coverOK(cmd)
+	case "exec":
+		return coverFill(cmd, []any(nil))
+	case "get":
+		return db.cmdGet(cmd, coverStr(args, 1))
+	case "set":
+		return db.cmdSet(cmd, coverStr(args, 1), coverStr(args, 2))
+	case "getrange":
+		return db.cmdGetRange(cmd, coverStr(args, 1), coverInt(args, 2), coverInt(args, 3))
+	case "mget":
+		return db.cmdMGet(cmd, args[1:])
+	case "hget":
+		return db.cmdHGet(cmd, coverStr(args, 1), coverStr(args, 2))
+	case "hset":
+		return db.cmdHSet(cmd, coverStr(args, 1), args[2:])
+	case "hdel":
+		return db.cmdHDel(cmd, coverStr(args, 1), args[2:])
+	case "hexists":
+		return db.cmdHExists(cmd, coverStr(args, 1), coverStr(args, 2))
+	case "hmget":
+		return db.cmdHMGet(cmd, coverStr(args, 1), args[2:])
+	case "hgetall":
+		return db.cmdHGetAll(cmd, coverStr(args, 1))
+	case "del":
+		return db.cmdDel(cmd, args[1:])
+	case "exists":
+		return db.cmdExists(cmd, args[1:])
+	case "rpush":
+		return db.cmdRPush(cmd, coverStr(args, 1), args[2:])
+	case "lrange":
+		return db.cmdLRange(cmd, coverStr(args, 1), coverInt(args, 2), coverInt(args, 3))
+	case "llen":
+		return db.cmdLLen(cmd, coverStr(args, 1))
+	case "ltrim":
+		return db.cmdLTrim(cmd, coverStr(args, 1), coverInt(args, 2), coverInt(args, 3))
+	case "xadd":
+		return db.cmdXAdd(cmd, coverStr(args, 1), args[2:])
+	case "xrange":
+		return db.cmdXRange(cmd, coverStr(args, 1), coverStr(args, 2), coverStr(args, 3), coverCount(args), false)
+	case "xrevrange":
+		return db.cmdXRange(cmd, coverStr(args, 1), coverStr(args, 3), coverStr(args, 2), coverCount(args), true)
+	case "zadd":
+		return db.cmdZAdd(cmd, coverStr(args, 1), args[2:])
+	case "zcard":
+		return db.cmdZCard(cmd, coverStr(args, 1))
+	case "zrange":
+		return db.cmdZRange(cmd, coverStr(args, 1), coverInt(args, 2), coverInt(args, 3))
+	case "fcall", "fcall_ro":
+		return coverRedisErr("ERR Function not found")
+	default:
+		return fmt.Errorf("cover redis: %s is not faked", name)
+	}
+}
+
+func (db *coverDB) cmdGet(cmd redis.Cmder, key string) error {
+	v, err := db.need(key, coverString)
+	if err != nil {
+		return err
+	}
+	return coverFill(cmd, v.s)
+}
+
+func (db *coverDB) cmdSet(cmd redis.Cmder, key, val string) error {
+	db.keys[key] = &coverVal{kind: coverString, s: val}
+	return coverOK(cmd)
+}
+
+func (db *coverDB) cmdGetRange(cmd redis.Cmder, key string, start, end int64) error {
+	v := db.keys[key]
+	if v == nil {
+		return coverFill(cmd, "")
+	}
+	if v.kind != coverString {
+		return errCoverWrongType
+	}
+	return coverFill(cmd, coverSubstr(v.s, start, end))
+}
+
+func (db *coverDB) cmdMGet(cmd redis.Cmder, keys []any) error {
+	out := make([]any, len(keys))
+	for i := range keys {
+		v := db.keys[coverStr(keys, i)]
+		if v == nil {
+			continue
+		}
+		if v.kind != coverString {
+			return errCoverWrongType
+		}
+		out[i] = v.s
+	}
+	return coverFill(cmd, out)
+}
+
+func (db *coverDB) cmdHGet(cmd redis.Cmder, key, field string) error {
+	v, err := db.need(key, coverHash)
+	if err != nil {
+		return err
+	}
+	s, ok := v.h[field]
+	if !ok {
+		return redis.Nil
+	}
+	return coverFill(cmd, s)
+}
+
+func (db *coverDB) cmdHSet(cmd redis.Cmder, key string, pairs []any) error {
+	if len(pairs)%2 != 0 {
+		return fmt.Errorf("cover redis: hset wants field value pairs")
+	}
+	v, err := db.hash(key)
+	if err != nil {
+		return err
+	}
+	var added int64
+	for i := 0; i < len(pairs); i += 2 {
+		f, val := coverStr(pairs, i), coverStr(pairs, i+1)
+		if _, ok := v.h[f]; !ok {
+			added++
+		}
+		v.h[f] = val
+	}
+	return coverFill(cmd, added)
+}
+
+func (db *coverDB) cmdHDel(cmd redis.Cmder, key string, fields []any) error {
+	v := db.keys[key]
+	if v == nil {
+		return coverFill(cmd, int64(0))
+	}
+	if v.kind != coverHash {
+		return errCoverWrongType
+	}
+	var n int64
+	for _, f := range fields {
+		if _, ok := v.h[coverStr([]any{f}, 0)]; ok {
+			delete(v.h, coverStr([]any{f}, 0))
+			n++
+		}
+	}
+	return coverFill(cmd, n)
+}
+
+func (db *coverDB) cmdHExists(cmd redis.Cmder, key, field string) error {
+	v := db.keys[key]
+	if v == nil {
+		return coverFill(cmd, false)
+	}
+	if v.kind != coverHash {
+		return errCoverWrongType
+	}
+	_, ok := v.h[field]
+	return coverFill(cmd, ok)
+}
+
+func (db *coverDB) cmdHMGet(cmd redis.Cmder, key string, fields []any) error {
+	out := make([]any, len(fields))
+	v := db.keys[key]
+	if v != nil && v.kind != coverHash {
+		return errCoverWrongType
+	}
+	for i := range fields {
+		if v == nil {
+			continue
+		}
+		if s, ok := v.h[coverStr(fields, i)]; ok {
+			out[i] = s
+		}
+	}
+	return coverFill(cmd, out)
+}
+
+func (db *coverDB) cmdHGetAll(cmd redis.Cmder, key string) error {
+	out := map[string]string{}
+	v := db.keys[key]
+	if v == nil {
+		return coverFill(cmd, out)
+	}
+	if v.kind != coverHash {
+		return errCoverWrongType
+	}
+	for k, s := range v.h {
+		out[k] = s
+	}
+	return coverFill(cmd, out)
+}
+
+func (db *coverDB) cmdDel(cmd redis.Cmder, keys []any) error {
+	var n int64
+	for i := range keys {
+		k := coverStr(keys, i)
+		if _, ok := db.keys[k]; ok {
+			delete(db.keys, k)
+			n++
+		}
+	}
+	return coverFill(cmd, n)
+}
+
+func (db *coverDB) cmdExists(cmd redis.Cmder, keys []any) error {
+	var n int64
+	for i := range keys {
+		if _, ok := db.keys[coverStr(keys, i)]; ok {
+			n++
+		}
+	}
+	return coverFill(cmd, n)
+}
+
+func (db *coverDB) cmdRPush(cmd redis.Cmder, key string, vals []any) error {
+	v, err := db.list(key)
+	if err != nil {
+		return err
+	}
+	for i := range vals {
+		v.list = append(v.list, coverStr(vals, i))
+	}
+	return coverFill(cmd, int64(len(v.list)))
+}
+
+func (db *coverDB) cmdLRange(cmd redis.Cmder, key string, start, stop int64) error {
+	v := db.keys[key]
+	if v == nil {
+		return coverFill(cmd, []string{})
+	}
+	if v.kind != coverList {
+		return errCoverWrongType
+	}
+	a, b, ok := coverSpan(start, stop, int64(len(v.list)))
+	if !ok {
+		return coverFill(cmd, []string{})
+	}
+	return coverFill(cmd, append([]string{}, v.list[a:b+1]...))
+}
+
+func (db *coverDB) cmdLLen(cmd redis.Cmder, key string) error {
+	v := db.keys[key]
+	if v == nil {
+		return coverFill(cmd, int64(0))
+	}
+	if v.kind != coverList {
+		return errCoverWrongType
+	}
+	return coverFill(cmd, int64(len(v.list)))
+}
+
+func (db *coverDB) cmdLTrim(cmd redis.Cmder, key string, start, stop int64) error {
+	v := db.keys[key]
+	if v == nil {
+		return coverOK(cmd)
+	}
+	if v.kind != coverList {
+		return errCoverWrongType
+	}
+	a, b, ok := coverSpan(start, stop, int64(len(v.list)))
+	if !ok {
+		delete(db.keys, key)
+		return coverOK(cmd)
+	}
+	v.list = append([]string{}, v.list[a:b+1]...)
+	return coverOK(cmd)
+}
+
+func (db *coverDB) cmdXAdd(cmd redis.Cmder, key string, rest []any) error {
+	v, err := db.stream(key)
+	if err != nil {
+		return err
+	}
+	if len(rest) == 0 || (coverStr(rest, 0) != "*" && !strings.Contains(coverStr(rest, 0), "-")) {
+		return fmt.Errorf("cover redis: xadd id is not faked: %v", rest)
+	}
+	id := coverStr(rest, 0)
+	if id == "*" {
+		v.seq++
+		id = strconv.FormatInt(v.seq, 10) + "-0"
+	}
+	vals := map[string]any{}
+	for i := 1; i+1 < len(rest); i += 2 {
+		vals[coverStr(rest, i)] = coverStr(rest, i+1)
+	}
+	v.stream = append(v.stream, redis.XMessage{ID: id, Values: vals})
+	return coverFill(cmd, id)
+}
+
+func (db *coverDB) cmdXRange(cmd redis.Cmder, key, min, max string, count int64, rev bool) error {
+	v := db.keys[key]
+	if v == nil {
+		return coverFill(cmd, []redis.XMessage{})
+	}
+	if v.kind != coverStream {
+		return errCoverWrongType
+	}
+	var got []redis.XMessage
+	for _, m := range v.stream {
+		if coverStreamIn(m.ID, min, max) {
+			got = append(got, m)
+		}
+	}
+	if rev {
+		for i, j := 0, len(got)-1; i < j; i, j = i+1, j-1 {
+			got[i], got[j] = got[j], got[i]
+		}
+	}
+	if count >= 0 && int64(len(got)) > count {
+		got = got[:count]
+	}
+	return coverFill(cmd, got)
+}
+
+func (db *coverDB) cmdZAdd(cmd redis.Cmder, key string, rest []any) error {
+	if len(rest)%2 != 0 {
+		return fmt.Errorf("cover redis: zadd wants score member pairs")
+	}
+	v, err := db.zset(key)
+	if err != nil {
+		return err
+	}
+	var added int64
+	for i := 0; i < len(rest); i += 2 {
+		member := coverStr(rest, i+1)
+		score := coverFloat(rest[i])
+		found := false
+		for j := range v.z {
+			if fmt.Sprint(v.z[j].Member) == member {
+				v.z[j].Score = score
+				found = true
+				break
+			}
+		}
+		if !found {
+			v.z = append(v.z, redis.Z{Score: score, Member: member})
+			added++
+		}
+	}
+	sort.Slice(v.z, func(i, j int) bool {
+		if v.z[i].Score != v.z[j].Score {
+			return v.z[i].Score < v.z[j].Score
+		}
+		return fmt.Sprint(v.z[i].Member) < fmt.Sprint(v.z[j].Member)
+	})
+	return coverFill(cmd, added)
+}
+
+func (db *coverDB) cmdZCard(cmd redis.Cmder, key string) error {
+	v := db.keys[key]
+	if v == nil {
+		return coverFill(cmd, int64(0))
+	}
+	if v.kind != coverZSet {
+		return errCoverWrongType
+	}
+	return coverFill(cmd, int64(len(v.z)))
+}
+
+func (db *coverDB) cmdZRange(cmd redis.Cmder, key string, start, stop int64) error {
+	v := db.keys[key]
+	if v == nil {
+		return coverFill(cmd, []redis.Z{})
+	}
+	if v.kind != coverZSet {
+		return errCoverWrongType
+	}
+	a, b, ok := coverSpan(start, stop, int64(len(v.z)))
+	if !ok {
+		return coverFill(cmd, []redis.Z{})
+	}
+	return coverFill(cmd, append([]redis.Z{}, v.z[a:b+1]...))
+}
+
+func (db *coverDB) need(key string, kind coverKind) (*coverVal, error) {
+	v := db.keys[key]
+	if v == nil {
+		return nil, redis.Nil
+	}
+	if v.kind != kind {
+		return nil, errCoverWrongType
+	}
+	return v, nil
+}
+
+func (db *coverDB) hash(key string) (*coverVal, error) {
+	v := db.keys[key]
+	if v == nil {
+		v = &coverVal{kind: coverHash, h: map[string]string{}}
+		db.keys[key] = v
+		return v, nil
+	}
+	if v.kind != coverHash {
+		return nil, errCoverWrongType
+	}
+	return v, nil
+}
+
+func (db *coverDB) list(key string) (*coverVal, error) {
+	v := db.keys[key]
+	if v == nil {
+		v = &coverVal{kind: coverList}
+		db.keys[key] = v
+		return v, nil
+	}
+	if v.kind != coverList {
+		return nil, errCoverWrongType
+	}
+	return v, nil
+}
+
+func (db *coverDB) stream(key string) (*coverVal, error) {
+	v := db.keys[key]
+	if v == nil {
+		v = &coverVal{kind: coverStream}
+		db.keys[key] = v
+		return v, nil
+	}
+	if v.kind != coverStream {
+		return nil, errCoverWrongType
+	}
+	return v, nil
+}
+
+func (db *coverDB) zset(key string) (*coverVal, error) {
+	v := db.keys[key]
+	if v == nil {
+		v = &coverVal{kind: coverZSet}
+		db.keys[key] = v
+		return v, nil
+	}
+	if v.kind != coverZSet {
+		return nil, errCoverWrongType
+	}
+	return v, nil
+}
+
+func coverOK(cmd redis.Cmder) error { return coverFill(cmd, "OK") }
+
+func coverFail(cmd redis.Cmder, err error) error {
+	cmd.SetErr(err)
+	return err
+}
+
+func coverFill(cmd redis.Cmder, val any) error {
+	switch c := cmd.(type) {
+	case *redis.StatusCmd:
+		c.SetVal("OK")
+	case *redis.StringCmd:
+		c.SetVal(val.(string))
+	case *redis.IntCmd:
+		c.SetVal(val.(int64))
+	case *redis.BoolCmd:
+		c.SetVal(val.(bool))
+	case *redis.SliceCmd:
+		if val == nil {
+			c.SetVal(nil)
+			return nil
+		}
+		c.SetVal(val.([]any))
+	case *redis.StringSliceCmd:
+		c.SetVal(val.([]string))
+	case *redis.MapStringStringCmd:
+		c.SetVal(val.(map[string]string))
+	case *redis.XMessageSliceCmd:
+		c.SetVal(val.([]redis.XMessage))
+	case *redis.ZSliceCmd:
+		c.SetVal(val.([]redis.Z))
+	default:
+		return fmt.Errorf("cover redis: reply %T for %v", cmd, cmd.Args())
+	}
+	return nil
+}
+
+func coverStr(args []any, i int) string {
+	if i >= len(args) || args[i] == nil {
+		return ""
+	}
+	switch s := args[i].(type) {
+	case string:
+		return s
+	case []byte:
+		return string(s)
+	default:
+		return fmt.Sprint(s)
+	}
+}
+
+func coverInt(args []any, i int) int64 {
+	if i >= len(args) || args[i] == nil {
+		return 0
+	}
+	switch n := args[i].(type) {
+	case int64:
+		return n
+	case int:
+		return int64(n)
+	case int32:
+		return int64(n)
+	default:
+		v, _ := strconv.ParseInt(fmt.Sprint(n), 10, 64)
+		return v
+	}
+}
+
+func coverFloat(v any) float64 {
+	switch n := v.(type) {
+	case float64:
+		return n
+	case float32:
+		return float64(n)
+	case int64:
+		return float64(n)
+	case int:
+		return float64(n)
+	default:
+		f, _ := strconv.ParseFloat(fmt.Sprint(v), 64)
+		return f
+	}
+}
+
+func coverCount(args []any) int64 {
+	for i := 0; i+1 < len(args); i++ {
+		if strings.EqualFold(fmt.Sprint(args[i]), "count") {
+			return coverInt(args, i+1)
+		}
+	}
+	return -1
+}
+
+func coverSpan(start, stop, n int64) (int64, int64, bool) {
+	if n == 0 {
+		return 0, 0, false
+	}
+	if start < 0 {
+		start += n
+	}
+	if stop < 0 {
+		stop += n
+	}
+	if start < 0 {
+		start = 0
+	}
+	if stop >= n {
+		stop = n - 1
+	}
+	if start > stop || start >= n {
+		return 0, 0, false
+	}
+	return start, stop, true
+}
+
+func coverSubstr(s string, start, end int64) string {
+	a, b, ok := coverSpan(start, end, int64(len(s)))
+	if !ok {
+		return ""
+	}
+	return s[a : b+1]
+}
+
+func coverStreamIn(id, min, max string) bool {
+	if !coverStreamGE(id, min) {
+		return false
+	}
+	return coverStreamLE(id, max)
+}
+
+func coverStreamGE(id, bound string) bool {
+	if bound == "-" || bound == "" {
+		return true
+	}
+	ex := strings.HasPrefix(bound, "(")
+	if ex {
+		bound = bound[1:]
+	}
+	cmp := coverStreamCmp(id, bound)
+	return cmp > 0 || (cmp == 0 && !ex)
+}
+
+func coverStreamLE(id, bound string) bool {
+	if bound == "+" || bound == "" {
+		return true
+	}
+	ex := strings.HasPrefix(bound, "(")
+	if ex {
+		bound = bound[1:]
+	}
+	cmp := coverStreamCmp(id, bound)
+	return cmp < 0 || (cmp == 0 && !ex)
+}
+
+func coverStreamCmp(a, b string) int {
+	am, as := coverStreamParts(a)
+	bm, bs := coverStreamParts(b)
+	if am != bm {
+		if am < bm {
+			return -1
+		}
+		return 1
+	}
+	if as != bs {
+		if as < bs {
+			return -1
+		}
+		return 1
+	}
+	return 0
+}
+
+func coverStreamParts(id string) (int64, int64) {
+	ms, seq, ok := strings.Cut(id, "-")
+	if !ok {
+		n, _ := strconv.ParseInt(id, 10, 64)
+		return n, 0
+	}
+	m, _ := strconv.ParseInt(ms, 10, 64)
+	s, _ := strconv.ParseInt(seq, 10, 64)
+	return m, s
 }
 
 // coverRedisErr is a Redis error reply for isReply's table.
@@ -1049,7 +1758,7 @@ func TestRedisCoverReadViewRefusal(t *testing.T) {
 	t.Parallel()
 	r, ctx := coverRedis(t, 0)
 	_, err := r.ReadView(ctx, []string{"t-work"})
-	require.Error(t, err, "miniredis holds no table shapes: the twin's read is refused without a live store")
+	require.Error(t, err, "the fake holds no table shapes: the twin's read is refused without a live store")
 }
 
 // TestRedisCoverCellIDs pins CellIDs: a shape with no set cells reads no
