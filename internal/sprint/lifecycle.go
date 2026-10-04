@@ -216,7 +216,7 @@ func unlawful(u Unit, p *Plan) string {
 			to = e.Move.Col
 		}
 		switch {
-		case from == Waiting && to == Landed && !(p.releasing && sentinel):
+		case from == Waiting && to == Landed && (!p.releasing || !sentinel):
 			return "the lifecycle lands from waiting only a sentinel, and only by release"
 		case from == Ready && to == Waiting && !p.inserting:
 			return "the lifecycle moves ready -> waiting only as the effect of inserting a sentinel"

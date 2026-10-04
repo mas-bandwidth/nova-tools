@@ -1008,7 +1008,7 @@ func Take(s *Snapshot, r TakeReq) Plan {
 	}
 	var p Plan
 	if named(r.Sel) {
-		for _, id := range r.Sel.IDs {
+		for _, id := range r.IDs {
 			p.refuse(id, "a take by id names one member: --as <member>")
 		}
 		return p
@@ -1568,8 +1568,8 @@ func fleetStepPlan(s *Snapshot, r FleetReq, rr *round, moves roundMoves) Plan {
 		var head []Change
 		var n *Note
 		line := r.Member + " up"
-		switch {
-		case ctl == nil:
+		switch ctl {
+		case nil:
 			status := Down
 			if comeUp {
 				status = Up
@@ -1689,7 +1689,7 @@ func downPlan(s *Snapshot, r FleetReq, up []string, rr *round, moves roundMoves,
 	withdrew := 0
 	for _, c := range cards {
 		taken := c.Col == Working
-		if len(up) > 0 && !(taken && c.Int("redeals") >= MaxRedeals) {
+		if len(up) > 0 && (!taken || c.Int("redeals") < MaxRedeals) {
 			// the next member round the fleet below its width (round.go), the
 			// index moved past it; with none below its width the card is
 			// withdrawn, and the next deal places it where there is room: a
