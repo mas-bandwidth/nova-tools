@@ -291,7 +291,7 @@ func TestStatusReadsTheThreeFiles(t *testing.T) {
 	})
 	require.NoError(t, err)
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(1).
-		Err("STATUS NONE: no daemon has run as bob (no status file in " + state + "); run: nova-friend install --as bob --harness <h> --dir " + dir + " reported_asleep=unknown sleep_requested=true coordinator=ada")
+		Err("STATUS NONE reported_asleep=unknown sleep_requested=true coordinator=ada: no daemon has run as bob (no status file in " + state + "); run: nova-friend install --as bob --harness <h> --dir " + dir)
 	require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob", Harness: "opencode", At: start, Seat: "ada", LastPing: start.Add(-time.Minute), Connection: friend.Connected, Challenge: friend.Challenged, Nonce: "n1", Beats: 7, Width: 4, Delivered: 2, BeatError: "the sprint server at 127.0.0.1:6390 did not answer"}))
 	require.NoError(t, friend.WritePong(state, friend.Pong{Nonce: "n0", At: start.Add(-2 * time.Minute), Queue: 3, Working: 1, Width: 8}))
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "inbox"), 0o755))
