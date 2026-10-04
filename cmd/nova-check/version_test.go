@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"os"
 	"runtime"
 	"strings"
 	"testing"
@@ -10,28 +11,26 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// runVersion runs the version verb through a tool with the given stamp, so a
+// test can hold the line to a build identity of its own.
+func runVersion(stamp string, args ...string) (int, string, string) {
+	t := novaCheck()
+	t.Stamp = stamp
+	var out, errb bytes.Buffer
+	code := t.Run(append([]string{"version"}, args...), os.Stdin, &out, &errb)
+	return code, out.String(), errb.String()
+}
+
 // The SHAPE, asserted field by field. `nova-check <identity> <goos>/<goarch> <go version>` is
 // what a person is asked to paste when two lines disagree about what they are running, so
-// a run of it has to be one line and four tokens -- and asserting only that the output
-// "contains" a version would pass over a line broken in two, which is the failure the
-// escaping in internal/buildinfo exists to prevent.
-//
-// Before this verb existed the same invocation was:
-//
-//	nova-check: unknown subcommand "version"; run: nova-check help
-//
-// on stderr at exit 2.
+// a run of it has to be one line and four tokens.
 func TestVersionLineShape(t *testing.T) {
 	t.Parallel()
-	var out, errOut bytes.Buffer
-	{
-		code := cmdVersion(nil, &out, &errOut)
-		require.EqualValues(t, 0, code, "exit %d, want 0\nstderr: %s", code, errOut.String())
-	}
-	assert.EqualValues(t, 0, errOut.Len(), "wrote to stderr: %q", errOut.String())
-	line := out.String()
-	require.True(t, strings.HasSuffix(line, "\n"), "want exactly one terminated line, got %q", line)
-	require.True(t, strings.Count(line, "\n") == 1, "want exactly one terminated line, got %q", line)
+	code, out, errOut := runVersion("")
+	require.EqualValues(t, 0, code, "exit %d, want 0\nstderr: %s", code, errOut)
+	assert.EqualValues(t, 0, len(errOut), "wrote to stderr: %q", errOut)
+	line := out
+	require.True(t, strings.HasSuffix(line, "\n") && strings.Count(line, "\n") == 1, "want exactly one terminated line, got %q", line)
 	fields := strings.Fields(strings.TrimSuffix(line, "\n"))
 	require.EqualValues(t, 4, len(fields), "want 4 fields, got %d: %q", len(fields), line)
 	assert.EqualValues(t, "nova-check", fields[0], "field 1 is the binary's name: got %q", fields[0])
@@ -50,12 +49,8 @@ func TestVersionLineHoldsWhateverTheStampContains(t *testing.T) {
 	t.Parallel()
 	const ver = "v1.2.3\nnova-check v9.9.9 linux/amd64 go1.0 extra"
 
-	var out, errOut bytes.Buffer
-	{
-		code := cmdVersionWith(nil, &out, &errOut, ver)
-		require.EqualValues(t, 0, code, "exit %d, want 0\nstderr: %s", code, errOut.String())
-	}
-	line := out.String()
+	code, line, errOut := runVersion(ver)
+	require.EqualValues(t, 0, code, "exit %d, want 0\nstderr: %s", code, errOut)
 	require.EqualValues(t, 1, strings.Count(line, "\n"), "a stamped newline broke the line in two: %q", line)
 	{
 		fields := strings.Fields(strings.TrimSuffix(line, "\n"))
@@ -69,32 +64,32 @@ func TestVersionLineHoldsWhateverTheStampContains(t *testing.T) {
 func TestVersionIdentityIsTheStampWhenThereIsOne(t *testing.T) {
 	t.Parallel()
 	const ver = "v9.9.9"
-	var out, errOut bytes.Buffer
+	code, out, errOut := runVersion(ver)
+	require.EqualValues(t, 0, code, "exit %d, want 0\nstderr: %s", code, errOut)
 	{
-		code := cmdVersionWith(nil, &out, &errOut, ver)
-		require.EqualValues(t, 0, code, "exit %d, want 0\nstderr: %s", code, errOut.String())
-	}
-	{
-		got := strings.Fields(out.String())[1]
+		got := strings.Fields(out)[1]
 		assert.EqualValues(t, "v9.9.9", got, "field 2 is the stamp: got %q", got)
 	}
 }
 
 func TestVersionRefusesFlagsAndArguments(t *testing.T) {
 	t.Parallel()
-	for _, args := range [][]string{{"--short"}, {"extra"}, {"--dir", "."}} {
-		var out, errOut bytes.Buffer
-		{
-			code := cmdVersion(args, &out, &errOut)
-			assert.EqualValues(t, 2, code, "%v: exit %d, want 2", args, code)
-		}
-		assert.EqualValues(t, 0, out.Len(), "%v: a refusal printed a version line anyway: %q", args, out.String())
-		assert.Contains(t, errOut.String(), "takes no flags and no arguments", "%v: refusal does not say why: %q", args, errOut.String())
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--short"}, "unknown flag"},
+		{[]string{"extra"}, "takes no positional arguments"},
+		{[]string{"--dir", "."}, "unknown flag"},
+	} {
+		code, out, errOut := runVersion("", tc.args...)
+		assert.EqualValues(t, 2, code, "%v: exit %d, want 2", tc.args, code)
+		assert.EqualValues(t, 0, len(out), "%v: a refusal printed a version line anyway: %q", tc.args, out)
+		assert.Contains(t, errOut, tc.want, "%v: refusal does not say why: %q", tc.args, errOut)
 	}
 }
 
-// The wiring, which lives in main.go's dispatch and is one line there: this test is what
-// will catch it if that line is ever removed.
+// The wiring: version is the skeleton's verb, reachable from the dispatch.
 func TestVersionVerbIsReachableFromTheDispatch(t *testing.T) {
 	t.Parallel()
 	for _, verb := range []string{"version", "--version"} {

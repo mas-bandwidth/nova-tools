@@ -5,133 +5,85 @@ package main
 // One implementation serves three callers: `nova-pulse accept` at harvest,
 // `nova-merge batch` on every member, and this one, for a person who wants to
 // know before they ask a friend for a read. A single implementation keeps the
-// lane and the harvest from disagreeing about what clean means.
-// A second copy of these rules is a second definition of clean, and the day the two
-// drift is the day a branch passes one and fails the other with nobody able to say
-// which is right.
+// lane and the harvest from disagreeing about what clean means. A second copy
+// of these rules is a second definition of clean, and the day the two drift is
+// the day a branch passes one and fails the other with nobody able to say which
+// is right.
 //
-// It decides nothing. It prints what is wrong and exits: 0 clean, 1 findings, 2 could
-// not run.
+// It decides nothing. It prints what is wrong and exits: 0 clean, 1 findings, 2
+// could not run.
 
 import (
 	"context"
-	"flag"
 	"fmt"
-	"io"
 	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
-func cmdHygiene(args []string, stdout, stderr io.Writer) int {
-	var asJSON bool
-	stdout, stderr = jsonWriters(stdout, stderr, &asJSON)
-	defer stderr.(*jsonOutput).finish()
-	fs := flag.NewFlagSet("hygiene", flag.ContinueOnError)
-	fs.BoolVar(&asJSON, "json", false, "print typed findings and totals as one JSON object")
-	fs.SetOutput(io.Discard)
-	repo := fs.String("repo", "", "git checkout to inspect (required)")
-	base := fs.String("base", "", "base git ref of the comparison (required)")
-	head := fs.String("head", "", "head git ref of the comparison (required)")
-	pathsFlag := fs.String("paths", "", "comma-separated allowed path globs; empty skips out-of-path checking")
-	identity := fs.String("identity", "", "comma-separated allowed authors in Name <email> form")
-	kind := fs.String("kind", "", "card kind to validate; empty skips kind-specific checks")
-	maxFlag := fs.Int("max", bounded.Default, "finding lines to print; 0 prints all")
-	timeout := fs.Int("timeout", 120, "git inspection deadline in positive seconds")
-	if err := verbflag.Parse(fs, args); err != nil {
-		return refuse(stderr, " hygiene", oneline.Cap(verbflag.Explain(fs, err), oneline.TailBytes))
+func hygieneRun(c *tool.Call) *tool.Out {
+	repo, base, head := c.Str("repo"), c.Str("base"), c.Str("head")
+	pathsFlag := c.Str("paths")
+	identity := c.Str("identity")
+	kind := c.Str("kind")
+	maxFlag := c.Int("max")
+	timeout := c.Int("timeout")
+	if maxFlag < 0 {
+		return tool.Refuse("--max must be non-negative")
 	}
-	if fs.NArg() != 0 {
-		return refuse(stderr, " hygiene", fmt.Sprintf("unexpected argument %q (flags come before arguments, and hygiene takes none)", fs.Arg(0)))
-	}
-	if *repo == "" || *base == "" || *head == "" {
-		return refuse(stderr, " hygiene", "--repo, --base and --head are required; refusing to guess")
-	}
-	if *maxFlag < 0 {
-		return refuse(stderr, " hygiene", "--max must be non-negative")
-	}
-	if *timeout <= 0 {
-		return refuse(stderr, " hygiene", "--timeout must be positive")
+	if timeout <= 0 {
+		return tool.Refuse("--timeout must be positive")
 	}
 
 	var ids []hygiene.Identity
-	for _, one := range strings.Split(*identity, ",") {
+	for _, one := range strings.Split(identity, ",") {
 		one = strings.TrimSpace(one)
 		if one == "" {
 			continue
 		}
 		name, email, ok := strings.Cut(one, "<")
 		if !ok || !strings.HasSuffix(email, ">") {
-			return refuse(stderr, " hygiene", fmt.Sprintf("--identity %q: want `Name <email>`", one))
+			return tool.Refuse(fmt.Sprintf("--identity %q: want `Name <email>`", one))
 		}
 		email = strings.TrimSpace(strings.TrimSuffix(email, ">"))
-		// The help and the command reference spelled the form `"<Name> <<email>>"`:
-		// an extra pair of angle brackets around the email. Pasted as written,
-		// `Name <<email>>` parses --
-		// it holds a `<` and it ends in `>` -- and leaves the address as
-		// `<email>`, brackets included, which equals no git author alive. Every commit on a clean
-		// branch came back as an identity finding and nothing said why. An address is
-		// never spelled with an angle bracket in it, so this is the typo caught rather
-		// than guessed at: the refusal spells the form, and a wrong answer about who
-		// wrote the branch is never printed in its place.
 		if strings.ContainsAny(email, "<>") {
-			return refuse(stderr, " hygiene", fmt.Sprintf("--identity %q: the email carries an angle bracket; want `Name <email>`, one pair", one))
+			return tool.Refuse(fmt.Sprintf("--identity %q: the email carries an angle bracket; want `Name <email>`, one pair", one))
 		}
-		ids = append(ids, hygiene.Identity{
-			Name:  strings.TrimSpace(name),
-			Email: email,
-		})
+		ids = append(ids, hygiene.Identity{Name: strings.TrimSpace(name), Email: email})
 	}
 	if len(ids) == 0 {
-		// The no-guessing rule, and the one that matters most here: a range checked
-		// against nobody would admit anybody, so there is no default identity and no
-		// falling back to the repository's own config.
-		return refuse(stderr, " hygiene", "--identity is required: `Name <email>`, repeatable with commas")
+		return tool.Refuse("--identity is required: `Name <email>`, repeatable with commas")
 	}
-
-	// A kind is a shape of work the TOOL declares, and a card cannot widen.
-	// A kind the tool does not declare is refused,
-	// and there is no default kind.
-	//
-	// Here it was neither. `--kind` went straight through to hygiene.Check, where it
-	// unlocks an allowlisted stray exception and nothing else, so an undeclared kind
-	// unlocked nothing and the run printed HYGIENE OK -- a clean answer about a shape
-	// of work that does not exist, and every card carrying an undeclared kind
-	// came back clean. Refusing the kind here, by name, is what makes that
-	// answer impossible.
-	if *kind != "" && !hygiene.KindDeclared(*kind) {
-		return refuse(stderr, " hygiene", fmt.Sprintf("--kind %q is not a kind this tool declares; one of: %s",
-			*kind, strings.Join(hygiene.Kinds(), ", ")))
+	if kind != "" && !hygiene.KindDeclared(kind) {
+		return tool.Refuse(fmt.Sprintf("--kind %q is not a kind this tool declares; one of: %s",
+			kind, strings.Join(hygiene.Kinds(), ", ")))
 	}
 
 	var paths []string
-	for _, p := range strings.Split(*pathsFlag, ",") {
+	for _, p := range strings.Split(pathsFlag, ",") {
 		if p = strings.TrimSpace(p); p != "" {
 			paths = append(paths, p)
 		}
 	}
-	// `paths=-` is printed and not omitted: a member with no declared paths had
-	// out-of-path SKIPPED, and a line that simply left the field out would read as a
-	// bound that held.
 	shown := "-"
 	if len(paths) > 0 {
 		if err := hygiene.ValidatePaths(paths); err != nil {
-			return refuse(stderr, " hygiene", err.Error())
+			return tool.Refuse(err.Error())
 		}
 		shown = strings.Join(paths, ",")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(*timeout)*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
 	defer cancel()
 	findings, err := hygiene.Check(ctx, hygiene.Options{
-		Repo: *repo, Base: *base, Head: *head, Paths: paths, Identities: ids, Kind: *kind,
+		Repo: repo, Base: base, Head: head, Paths: paths, Identities: ids, Kind: kind,
 	})
 	if err != nil {
-		return refuse(stderr, " hygiene", err.Error())
+		return tool.Refuse(err.Error())
 	}
 
 	// The remedy is THE SAME RUN with the cap lifted, and it is built from the flags
@@ -149,18 +101,37 @@ func cmdHygiene(args []string, stdout, stderr io.Writer) int {
 	// and an unquoted `<` is a shell redirect besides. Quote is the form for a value
 	// that is meant to be pasted back.
 	remedy := fmt.Sprintf("nova-check hygiene --repo %s --base %s --head %s --identity %s",
-		oneline.Quote(*repo), oneline.Quote(*base), oneline.Quote(*head), oneline.Quote(identityList(ids)))
+		oneline.Quote(repo), oneline.Quote(base), oneline.Quote(head), oneline.Quote(identityList(ids)))
 	if len(paths) > 0 {
 		remedy += " --paths " + oneline.Quote(strings.Join(paths, ","))
 	}
-	if *kind != "" {
-		remedy += " --kind " + oneline.Quote(*kind)
+	if kind != "" {
+		remedy += " --kind " + oneline.Quote(kind)
 	}
 	remedy += " --max 0"
-	if asJSON {
-		return renderHygiene(stdout, findings, *maxFlag, remedy, *repo, *base, *head, shown)
+
+	if c.Bool("json") {
+		out := &tool.Out{Verb: "hygiene", Status: tool.OK}
+		out.Fact("repo", repo).Fact("base", base).Fact("head", head).Fact("paths", shown).Fact("findings", len(findings))
+		shownFindings := len(findings)
+		if maxFlag > 0 && shownFindings > maxFlag {
+			shownFindings = maxFlag
+		}
+		for _, f := range findings[:shownFindings] {
+			out.Item("finding", "reason", f.Token, "at", f.At, "why", f.Why)
+		}
+		if shownFindings < len(findings) {
+			out.More = []tool.More{{Kind: "finding", Shown: shownFindings, Total: len(findings), Remedy: remedy}}
+		}
+		if len(findings) > 0 {
+			out.Status = tool.Failed
+			out.Exit = 1
+		}
+		out.Render(c.Stdout, true)
+		return tool.Exit(out.Exit)
 	}
-	list := bounded.Capped(stdout, *maxFlag, "HYGIENE", "finding", remedy)
+
+	list := bounded.Capped(c.Stdout, maxFlag, "HYGIENE", "finding", remedy)
 	for _, f := range findings {
 		list.Line(fmt.Sprintf("HYGIENE FINDING reason=%s at=%s: %s",
 			oneline.Field(f.Token), oneline.Field(f.At), oneline.Escape(f.Why)))
@@ -168,18 +139,18 @@ func cmdHygiene(args []string, stdout, stderr io.Writer) int {
 	list.More()
 
 	if len(findings) == 0 {
-		fmt.Fprintf(stdout, "HYGIENE OK base=%s head=%s paths=%s findings=%d\n",
-			oneline.Field(*base), oneline.Field(*head), oneline.Field(shown), len(findings))
-		return 0
+		fmt.Fprintf(c.Stdout, "HYGIENE OK base=%s head=%s paths=%s findings=%d\n",
+			oneline.Field(base), oneline.Field(head), oneline.Field(shown), len(findings))
+		return tool.Exit(0)
 	}
-	fmt.Fprintf(stderr, "HYGIENE FAILED base=%s head=%s paths=%s findings=%d\n",
-		oneline.Field(*base), oneline.Field(*head), oneline.Field(shown), len(findings))
-	return 1
+	fmt.Fprintf(c.Stderr, "HYGIENE FAILED base=%s head=%s paths=%s findings=%d\n",
+		oneline.Field(base), oneline.Field(head), oneline.Field(shown), len(findings))
+	return tool.Exit(1)
 }
 
-// identityList spells the pool back in the form the flag takes, so the MORE line's
-// remedy is the run that printed it and not an approximation of it. The separator is
-// the flag's own: `Name <email>,Name <email>`.
+// identityList spells the pool back in the form the flag takes, so the MORE
+// line's remedy is the run that printed it and not an approximation of it. The
+// separator is the flag's own: `Name <email>,Name <email>`.
 func identityList(ids []hygiene.Identity) string {
 	out := make([]string, 0, len(ids))
 	for _, id := range ids {

@@ -134,7 +134,7 @@ func TestRefusesANegativeCeiling(t *testing.T) {
 	dir := largeSelf(t, 2)
 	for _, verb := range []string{"links", "nocode", "quickstart"} {
 		exit, _, stderr := runCheck(t, verb, "--dir", dir, "--max", "-1")
-		assert.True(t, exit == 2 && strings.Contains(stderr, "--max must be a line ceiling"), "%s: exit = %d, stderr = %q", verb, exit, stderr)
+		assert.True(t, exit == 2 && strings.Contains(stderr, "--max must be zero or more"), "%s: exit = %d, stderr = %q", verb, exit, stderr)
 	}
 }
 
@@ -142,20 +142,23 @@ func TestRefusesANegativeCeiling(t *testing.T) {
 func TestAFlagTypoIsOneLine(t *testing.T) {
 	t.Parallel()
 
-	for _, args := range [][]string{
-		{"links", "--diir", "x"},
-		{"nocode", "--diir", "x"},
-		{"frobnicate"},
-		nil,
+	for _, tc := range []struct {
+		args []string
+		door string
+	}{
+		{[]string{"links", "--diir", "x"}, "run: nova-check links -h"},
+		{[]string{"nocode", "--diir", "x"}, "run: nova-check nocode -h"},
+		{[]string{"frobnicate"}, "run: nova-check help"},
+		{nil, "run: nova-check help"},
 	} {
-		exit, stdout, stderr := runCheck(t, args...)
-		assert.EqualValues(t, 2, exit, "%v: exit = %d, want 2", args, exit)
+		exit, stdout, stderr := runCheck(t, tc.args...)
+		assert.EqualValues(t, 2, exit, "%v: exit = %d, want 2", tc.args, exit)
 		{
 			got := countLines(stderr)
-			assert.EqualValues(t, 1, got, "%v: the refusal is %d lines, want 1:\n%s", args, got, stderr)
+			assert.EqualValues(t, 1, got, "%v: the refusal is %d lines, want 1:\n%s", tc.args, got, stderr)
 		}
-		assert.Contains(t, stderr, "run: nova-check help", "%v: the refusal names no door: %q", args, stderr)
-		assert.EqualValues(t, "", stdout, "%v: a refusal wrote to stdout: %q", args, stdout)
+		assert.Contains(t, stderr, tc.door, "%v: the refusal names no door: %q", tc.args, stderr)
+		assert.EqualValues(t, "", stdout, "%v: a refusal wrote to stdout: %q", tc.args, stdout)
 	}
 	exit, stdout, _ := runCheck(t, "help")
 	assert.True(t, exit == 0 && strings.Contains(stdout, "usage:"), "`help` did not print the usage: exit %d", exit)

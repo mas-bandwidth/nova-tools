@@ -37,10 +37,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/check"
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
 // stagedSeams carries the process-wide resource the --staged verb reads: the
@@ -52,11 +52,11 @@ type stagedSeams struct {
 }
 
 // stagedRun drives one `nova-check nocode --staged --dir <repo>` advisory and
-// returns the exit code: 0 with a count of what was classified when the index
-// stages no machinery, 1 with one `NOCODE FAILED <path>: <reason>` line per
-// finding on stderr, 2 for every refusal. --dir is required at the verb, on
-// the no-guessing law, and this function never sees it empty.
-func stagedRun(seams stagedSeams, dir string, allow []string, deny []string, source string, maxFlag int, stdout, stderr io.Writer) int {
+// returns its Out: 0 with a count of what was classified when the index
+// stages no machinery, 1 with one finding per record on stderr, 2 for every
+// refusal. --dir is required at the verb, on the no-guessing law, and this
+// function never sees it empty.
+func stagedRun(seams stagedSeams, c *tool.Call, dir string, allow []string, deny []string, source string, maxFlag int) *tool.Out {
 	denySet := make(map[string]bool, len(deny))
 	for _, e := range deny {
 		denySet[strings.ToLower(e)] = true
@@ -67,7 +67,7 @@ func stagedRun(seams stagedSeams, dir string, allow []string, deny []string, sou
 	// belongs in a prose tree. --allow is the escape, and it is the caller's.
 	denyNames, denyPrefixes, err := check.FloorDenyNames()
 	if err != nil {
-		return refuse(stderr, " nocode", oneline.Err(err))
+		return tool.Refuse(oneline.Err(err))
 	}
 	allowPrefixes := normalizeStagedAllow(allow)
 
@@ -75,22 +75,19 @@ func stagedRun(seams stagedSeams, dir string, allow []string, deny []string, sou
 	// refusal below is exit 2, and none of them may be read as a clean tree.
 	root, rerr := stagedRoot(seams, dir)
 	if rerr != nil {
-		return refuse(stderr, " nocode", rerr.Error())
+		return tool.Refuse(rerr.Error())
 	}
 	base, berr := stagedBase(seams, root)
 	if berr != nil {
-		return refuse(stderr, " nocode", berr.Error())
+		return tool.Refuse(berr.Error())
 	}
 	raw, derr := stagedGit(seams, root, "diff-index", "-r", "--ignore-submodules=none", "--cached", "-z", base, "--")
 	if derr != nil {
-		// Every dynamic piece of a refusal reaches the stream through refuse,
-		// which escapes the whole line; oneline.Err escapes git's text here
-		// so the message is safe even before that.
-		return refuse(stderr, " nocode", "git diff-index failed against "+base+": "+oneline.Err(derr)+"; a failed diff-index is never a clean tree")
+		return tool.Refuse("git diff-index failed against " + base + ": " + oneline.Err(derr) + "; a failed diff-index is never a clean tree")
 	}
 	records, perr := parseDiffIndex(raw)
 	if perr != nil {
-		return refuse(stderr, " nocode", perr.Error())
+		return tool.Refuse(perr.Error())
 	}
 
 	var (
@@ -110,14 +107,9 @@ func stagedRun(seams stagedSeams, dir string, allow []string, deny []string, sou
 		case "A", "M", "T":
 			// Classified on the destination mode and OID below.
 		case "U":
-			// An unmerged entry has an all-zero destination and no staged
-			// content to classify; git refuses the commit in this state too.
-			return refuse(stderr, " nocode", "the index holds unmerged entries ("+rec.path+"); resolve the conflict and commit again")
+			return tool.Refuse("the index holds unmerged entries (" + rec.path + "); resolve the conflict and commit again")
 		default:
-			// A switch with no default has an unbounded skip list: a gate
-			// that skips what it does not recognise is a fail-open whose size
-			// nobody can state, so an unrecognised letter stops the check.
-			return refuse(stderr, " nocode", "unrecognised status letter "+strconv.Quote(rec.status)+" on record for "+rec.path+"; this mode classifies A, M and T, skips D, and refuses the rest")
+			return tool.Refuse("unrecognised status letter " + strconv.Quote(rec.status) + " on record for " + rec.path + "; this mode classifies A, M and T, skips D, and refuses the rest")
 		}
 		if isStagedAllowed(rec.path, allowPrefixes) {
 			continue
@@ -129,59 +121,34 @@ func stagedRun(seams stagedSeams, dir string, allow []string, deny []string, sou
 			// the one batch reader below, never a process per path.
 			blobs = append(blobs, rec)
 		case "120000":
-			// A symlink: the audit's disposition, unchanged. The name and the
-			// location are classified, and the target is not read and the
-			// mode is not consulted, so a gate cannot be walked out of the
-			// tree it guards. A clean-named link is clean.
 			reasons := stagedPathReasons(rec.path, denySet, source, denyNames, denyPrefixes)
 			if len(reasons) > 0 {
 				reasons = append(reasons, "symlink (target not followed)")
 				findings = append(findings, check.Failure{Subject: rec.path, Reason: strings.Join(reasons, "; ")})
 			}
 		case "160000":
-			// A gitlink -- the ONE matching rule this mode adds, because the
-			// index carries a type a filesystem walk never sees. Its
-			// destination OID is a commit in another repository and is not an
-			// object in this one: it is classified from its mode alone and
-			// its OID is never read, so it cannot collide with the
-			// unreadable-blob disposition. Machinery arriving by reference,
-			// suppressible by --allow like any other path.
 			reasons := stagedPathReasons(rec.path, denySet, source, denyNames, denyPrefixes)
 			reasons = append(reasons, "submodule gitlink (machinery arriving by reference)")
 			findings = append(findings, check.Failure{Subject: rec.path, Reason: strings.Join(reasons, "; ")})
 		default:
-			// Reachable: it is what a 040000 sparse-directory record trips if
-			// -r is ever dropped from the record source, which is the whole
-			// reason to write the branch rather than leave a four-way switch
-			// with no default.
-			return refuse(stderr, " nocode", "staged record for "+rec.path+" has destination mode "+rec.dstMode+", which this mode does not classify")
+			return tool.Refuse("staged record for " + rec.path + " has destination mode " + rec.dstMode + ", which this mode does not classify")
 		}
 	}
 
 	heads, herr := stagedBlobHeads(seams, root, blobs)
 	if herr != nil {
-		return refuse(stderr, " nocode", oneline.Err(herr))
+		return tool.Refuse(oneline.Err(herr))
 	}
 	for _, rec := range blobs {
 		reasons := stagedPathReasons(rec.path, denySet, source, denyNames, denyPrefixes)
 		if rec.dstMode == "100755" {
-			// ONE BIT where the audit reads three: git derives the index mode
-			// from the owner bit alone, and core.fileMode=false makes every
-			// newly added entry 100644. That is the sharpest reason this mode
-			// is an advisory, and it is named here rather than hidden.
 			reasons = append(reasons, "executable (index mode 100755)")
 		}
 		head := heads[rec.dstOID]
 		switch {
 		case head.unreadable != "":
-			// The audit's disposition for content it cannot rule on, over the
-			// object store instead of the filesystem: a FINDING, not a
-			// refusal, and never a pass.
 			reasons = append(reasons, "unreadable blob: "+head.unreadable+" (cannot rule out machinery)")
 		case len(head.head) == 2 && string(head.head) == "#!":
-			// The tell that survives renaming: a script with no extension and
-			// no executable bit is still a script. A blob shorter than two
-			// bytes genuinely holds no shebang and is not a read failure.
 			reasons = append(reasons, "executable script (shebang)")
 		}
 		if len(reasons) > 0 {
@@ -189,24 +156,26 @@ func stagedRun(seams stagedSeams, dir string, allow []string, deny []string, sou
 		}
 	}
 
-	if out, ok := stdout.(*jsonOutput); ok && *out.enabled {
-		return renderFailures(stdout, "nocode", findings, maxFlag, "dir", dir, "staged", classified, "deny-list", source)
-	}
 	if len(findings) > 0 {
-		list := bounded.Capped(stderr, maxFlag, "NOCODE", "path", maxRemedy)
-		for _, f := range findings {
-			list.Line(fmt.Sprintf("NOCODE FAILED %s: %s", oneline.Escape(f.Subject), oneline.Escape(oneline.Cap(f.Reason, oneline.TailBytes))))
+		o := tool.Fail()
+		kind := "file"
+		if isJSON(c) {
+			kind = "finding"
 		}
-		list.More()
-		fmt.Fprintf(stderr, "NOCODE FAILED staged=%d findings=%d shown=%d deny-list=%s\n", classified, list.Total(), list.Shown(), oneline.Field(source))
-		return 1
+		for _, f := range findings {
+			o.Item(kind, "subject", f.Subject, "reason", f.Reason)
+		}
+		if isJSON(c) {
+			o.Fact("dir", dir)
+		}
+		o.Fact("staged", classified).Fact("findings", len(findings)).Fact("shown", capN(len(findings), maxFlag)).Fact("deny-list", source)
+		return o
 	}
-	// A clean run prints the audit's OK line, with the count of the records
-	// classified: nothing staged, or deletions only, is a count of zero and
-	// exit 0 -- an empty change set is a fact about the commit, not a broken
-	// check.
-	fmt.Fprintf(stdout, "NOCODE OK staged=%d clean deny-list=%s\n", classified, oneline.Field(source))
-	return 0
+	o := tool.Done()
+	if isJSON(c) {
+		o.Fact("dir", dir)
+	}
+	return o.Fact("staged", classified).Fact("clean", true).Fact("deny-list", source)
 }
 
 // stagedRoot is the root test (SPEC.md:1021): `git -C <dir> rev-parse
