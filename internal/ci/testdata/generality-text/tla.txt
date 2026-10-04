@@ -1,8 +1,7 @@
 # Migrated counted package ledger; original row keys preserved.
-# ceiling: 6
+# ceiling: 5
 tla/CardMachine.tla:glenn 1
 tla/RedisFn.tla:glenn 1
-tla/TableEdit.tla:stella 4
 tla/TableOrder.tla:glenn 1
 tla/TableOrder.tla:stella 2
 tla/TableSession.tla:stella 4

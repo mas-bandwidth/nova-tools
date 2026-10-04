@@ -9,10 +9,9 @@
 \* and the command permissions included, comes before the first write.
 \* Staged = FALSE is table.lua at 109939a85, kept as the reversed witness:
 \* a batch writes item by item, set writes the footer before RENAME, and an
-\* unparsable stored definition empties the OCCUPIED check (Stella's read
-\* of #4456, stella-64cde7fb5261, six findings verified against the code).
+\* unparsable stored definition empties the OCCUPIED check.
 \*
-\* What the abstraction is, and is not (Stella's read, stella-9347ea015210):
+\* What the abstraction is, and is not:
 \* - denied is the one hazard of RENAME refused by the ACL. The kernel's
 \*   preflight covers every staged command, the key types, the revision and
 \*   the stream bounds; the functional tests hold those, not this model.
