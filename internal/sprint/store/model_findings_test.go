@@ -349,7 +349,5 @@ func TestTwoBlockedJudgmentsOnOneSentinelWaiveOnce(t *testing.T) {
 func (m *Mem) appendLine(l sprint.Line) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.seq++
-	lg := m.log()
-	lg.lines = append(lg.lines, memLine{fmt.Sprintf("%d-0", m.seq), l})
+	m.appendLocked(m.log(), l)
 }
