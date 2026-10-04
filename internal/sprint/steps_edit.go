@@ -2,7 +2,9 @@ package sprint
 
 import (
 	"fmt"
+	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 )
 
@@ -38,7 +40,8 @@ func unstarted(s *Snapshot, id, keeps string) string {
 // BriefReq replaces the brief of a primary that has not started.
 type BriefReq struct {
 	ID, Brief, Who string
-	Rules          string // the held rules file the new brief is held to by reference (FieldRules), "" when it carries its own
+	Rules          string   // the held rules file the new brief is held to by reference (FieldRules), "" when it carries its own
+	Needs          []string // the new brief's needs, as add reads its DEPENDS-ON: line (briefNeeds): a change to that line alone is taken in any state
 }
 
 // Brief replaces a primary's brief (nova-sprint brief): on a STOPPED machine
@@ -48,6 +51,9 @@ type BriefReq struct {
 func Brief(s *Snapshot, r BriefReq) Plan {
 	var p Plan
 	p.on(s)
+	if c := s.Work.Placed(r.ID); c != nil && !IsSentinel(c) && dependsOnly(c.F("brief"), r.Brief) {
+		return briefDepends(s, p, c, r)
+	}
 	// a card dealt is refused with what changes it instead, before the machine's
 	// state: stopping the machine would not let its brief be replaced
 	why := unstarted(s, r.ID, "its brief")
@@ -201,5 +207,61 @@ func MoveCards(s *Snapshot, r MoveReq) Plan {
 		}
 		p.Units = append(p.Units, u)
 	}
+	return p
+}
+
+// dependsOnly says two briefs differ in their DEPENDS-ON: line alone: the same
+// lines, in order, but for that line (cardhdr.KeyValue), which differs.
+func dependsOnly(old, brief string) bool {
+	a, b := strings.Split(old, "\n"), strings.Split(brief, "\n")
+	if len(a) != len(b) {
+		return false
+	}
+	differ := false
+	for i := range a {
+		if a[i] == b[i] {
+			continue
+		}
+		ka, _, oka := cardhdr.KeyValue(a[i])
+		kb, _, okb := cardhdr.KeyValue(b[i])
+		if !oka || !okb || ka != "DEPENDS-ON" || kb != "DEPENDS-ON" {
+			return false
+		}
+		differ = true
+	}
+	return differ
+}
+
+// briefDepends is a brief whose DEPENDS-ON: line alone changed: taken in any
+// state, on a RUNNING machine and for a card dealt (it applies to the next
+// attempt), since re-pointing a card's needs after a drop is not a change of
+// its task (the comfort list of 2026-10-03, item 2). The card's needs become
+// the line's: each a primary on the table, not the card itself; a ready card
+// takes no need that has not landed (the deal would run it first: ready ->
+// waiting is only a sentinel's effect, lifecycle.go). The brief decision and
+// the grade were over the same task and stay.
+func briefDepends(s *Snapshot, p Plan, c *Card, r BriefReq) Plan {
+	for _, n := range r.Needs {
+		nc := s.Work.Card(n)
+		switch {
+		case n == c.ID:
+			p.refuse(c.ID, "DEPENDS-ON names the card itself; nothing was changed")
+			return p
+		case nc == nil || !nc.Placed():
+			p.refuse(c.ID, "DEPENDS-ON names "+n+", which is no primary on the table; nothing was changed")
+			return p
+		case c.Col == string(Ready) && nc.Col != string(Landed):
+			p.refuse(c.ID, fmt.Sprintf("%s is ready and DEPENDS-ON names %s (%s), not landed: a ready card would be dealt before its need; nothing was changed; run: nova-sprint drop %s --reason '<why>', then nova-sprint add --stream %s %s --brief-file <path>", c.ID, n, nc.Col, c.ID, c.Row, c.ID))
+			return p
+		}
+	}
+	set, unset := map[string]string{"brief": r.Brief}, []string(nil)
+	if len(r.Needs) > 0 {
+		set["needs"] = strings.Join(r.Needs, ",")
+	} else {
+		unset = append(unset, "needs")
+	}
+	p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, setEntry(c, set, unset...))},
+		Moved: fmt.Sprintf("%s DEPENDS-ON replaced: needs %s (%d bytes) stream=%s %s", c.ID, orDash(set["needs"]), len(r.Brief), c.Row, c.Col)})
 	return p
 }

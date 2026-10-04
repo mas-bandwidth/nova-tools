@@ -27,6 +27,11 @@ const (
 	ReaderUp   = "up"
 	ReaderAway = "away"
 	ReaderDown = "down"
+	// ReaderRetired is a reader the coordinator retired (reader retire): held
+	// away for good, its beat writing none and its queue answering reader false,
+	// its row and read cards kept, the history (the comfort list of 2026-10-03,
+	// item 6); reader up brings it back.
+	ReaderRetired = "retired"
 
 	// ReaderBeatBound is how long a reader stays up after its last beat: the
 	// fleet's bound (BeatDeadline), named once so a reader's can be told apart.
@@ -73,6 +78,8 @@ func readersText(s *Snapshot) string {
 		switch {
 		case s.ReaderStates == nil:
 			st = ReaderUp
+		case st == ReaderRetired:
+			continue // off the table: no reader the judgment names
 		case st == "":
 			st = ReaderDown
 		}
