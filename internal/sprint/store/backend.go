@@ -116,6 +116,18 @@ type Backend interface {
 	// LogSince is the log's lines after the stream id (all when empty), at
 	// most max, with their stream ids: the epoch's append-only record.
 	LogSince(ctx context.Context, after string, max int) ([]sprint.Line, []string, error)
+	// LogCard is the log's lines about id, in order, when the epoch's card
+	// index holds every line of the log. indexed is false when it does not:
+	// the lines are not the card's, and LogIndex brings the index up.
+	LogCard(ctx context.Context, id string) (lines []sprint.Line, indexed bool, err error)
+	// LogIndex records every line of the log under the cards it is about and
+	// marks the index caught up with the log. A log line written with a
+	// release is already in the index; this is the catch-up for a log that
+	// was written before the index.
+	LogIndex(ctx context.Context) error
+	// LogCards is every card id the epoch's log index names, so teardown can
+	// delete those keys by name.
+	LogCards(ctx context.Context) ([]string, error)
 	// Tails is the last stream id of the log and of the inbox's stream ("" when
 	// empty), read in one round trip: what a read up to now covers.
 	Tails(ctx context.Context) (log, inbox string, err error)

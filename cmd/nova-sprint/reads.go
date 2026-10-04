@@ -1396,7 +1396,9 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "card", err.Error())
 	}
 	ctx := context.Background()
-	v, err := st.CardOf(ctx, id)
+	// One read of the work table, shared by the card, what holds it and its
+	// place, and the card's own log lines rather than the epoch's log.
+	v, held, work, err := st.CardHeld(ctx, id, *atEpoch < 0)
 	if err != nil {
 		return a.readFailed("card", err, stderr)
 	}
@@ -1404,15 +1406,7 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s card: no primary %s; run: nova-sprint where\n", prog, oneline.Escape(id))
 		return 1
 	}
-	// What holds it, so nothing stalls without a named reason: an outside actor, the
-	// next tick, an open judgment, what it waits on, or the machine STOPPED.
-	var held *sprint.Hold
-	if *atEpoch < 0 {
-		if hd, err := st.Held(ctx, id); err == nil {
-			held = &hd
-		}
-	}
-	lines, err := st.Log(ctx)
+	lines, err := st.LogAbout(ctx, id)
 	if err != nil {
 		return a.readFailed("card", err, stderr)
 	}
@@ -1432,8 +1426,8 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 	}
 	if !*fields {
 		place := ""
-		if ws, err := st.Load(ctx, []string{sprint.Work}, nil); err == nil && v.Primary.Placed() {
-			place = linePlace(v.Primary, ws.Work.Column(sprint.States...))
+		if work != nil && v.Primary.Placed() {
+			place = linePlace(v.Primary, work.Column(sprint.States...))
 		}
 		a.printStory(stdout, v, events, texts, held, place)
 		for _, w := range v.Work {
