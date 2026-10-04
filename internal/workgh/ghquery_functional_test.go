@@ -15,7 +15,7 @@ import (
 )
 
 // TestGhQueryRunsTheProgramWithTheBodyOnStdin is the transport's own test,
-// apart from the logic the unit tests drive through the in-memory fake: GhQuery runs
+// apart from the logic the unit tests drive through Replay: GhQuery runs
 // `<program> api graphql --input -` with the document and its variables as the
 // JSON body on stdin and returns what the program printed; a program that
 // fails is an error carrying its stderr. The program is a stand-in in the

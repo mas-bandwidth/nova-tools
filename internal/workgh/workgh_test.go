@@ -12,6 +12,45 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func fixture(t *testing.T) Query {
+	t.Helper()
+	q, err := Replay("testdata/reliable")
+	require.NoError(t, err)
+	return q
+}
+
+// TestFetchReadsTheRecordedRepository: the recorded public repository (two
+// pages of 15) reads into every issue with every connection whole, in three
+// calls (SPEC-WORK-V1 section 1.3).
+func TestFetchReadsTheRecordedRepository(t *testing.T) {
+	t.Parallel()
+	f := &Fetcher{Q: fixture(t), PageSize: 15, MaxCalls: 10}
+	m, err := f.Repo(context.Background(), "mas-bandwidth/reliable")
+	require.NoError(t, err)
+	r, err := f.Issues(context.Background(), m)
+	require.NoError(t, err)
+
+	require.Len(t, r.Issues, m.Issues, "read %d issues, the listing counts %d, the recording holds 20", len(r.Issues), m.Issues)
+	require.Equal(t, 20, m.Issues, "read %d issues, the listing counts %d, the recording holds 20", len(r.Issues), m.Issues)
+	require.Equal(t, 3, f.Calls, "calls=%d points=%d, want 3 calls and the points GitHub charged", f.Calls, f.Points)
+	require.Greater(t, f.Points, 0, "calls=%d points=%d, want 3 calls and the points GitHub charged", f.Calls, f.Points)
+
+	comments, refs := 0, 0
+	for i, is := range r.Issues {
+		if i > 0 {
+			require.Greater(t, is.Number, r.Issues[i-1].Number, "issues out of order at %d", is.Number)
+		}
+		require.Equal(t, workfile.IssueURL("mas-bandwidth/reliable", is.Number), is.URL, "issue %d lacks its identity: %+v", is.Number, is)
+		require.NotEmpty(t, is.NodeID, "issue %d lacks its identity: %+v", is.Number, is)
+		require.NotEmpty(t, is.Created, "issue %d lacks its identity: %+v", is.Number, is)
+		require.Contains(t, []string{"internal", "external"}, is.Origin, "issue %d origin %q", is.Number, is.Origin)
+		comments += len(is.Comments)
+		refs += len(is.References)
+	}
+	require.NotZero(t, comments, "comments=%d references=%d: the recording holds both", comments, refs)
+	require.NotZero(t, refs, "comments=%d references=%d: the recording holds both", comments, refs)
+}
+
 // fake answers by document: the issues page, then the follow-up pages.
 type fake struct {
 	issues   string
