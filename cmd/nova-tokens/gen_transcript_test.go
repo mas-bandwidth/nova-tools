@@ -23,7 +23,7 @@ func TestGenerateTranscript(t *testing.T) {
 		"sum --out ./out --month 2026-09",
 	} {
 		var out, errb bytes.Buffer
-		exit := run(strings.Fields(line), &out, &errb, firstRunStamp)
+		exit := runWith(strings.Fields(line), &out, &errb, firstRunStamp, testWorld)
 		fmt.Fprintf(&doc, "$ nova-tokens %s\n%s%s[exit %d]\n\n", line, out.String(), errb.String(), exit)
 	}
 	t.Log("\n" + doc.String())

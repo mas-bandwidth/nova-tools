@@ -1,18 +1,13 @@
 package main
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"fmt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go/ast"
 	"go/token"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -192,7 +187,7 @@ func TestNoPackageOfThisBinaryTalksToANetworkOrRunsGit(t *testing.T) {
 			checked++
 			for _, imp := range f.Imports {
 				ip := strings.Trim(imp.Path.Value, `"`)
-				assert.False(t, ip == "net" || strings.HasPrefix(ip, "net/"), "%s imports %q; this tool talks to no network, and a publisher is a separate spec gate (rule 16)", path, ip)
+				assert.False(t, (ip == "net" || strings.HasPrefix(ip, "net/")) && !redisDoor(path), "%s imports %q; this tool talks to no network but the Redis bus and ledger it is told to read, and a publisher is a separate spec gate (rule 16)", path, ip)
 				assert.True(t, ip != "os/exec" || path == theOneSubprocess, "%s imports os/exec; the one subprocess is sqlite3 and it lives in %s (rule 19)", path, theOneSubprocess)
 			}
 		}
@@ -258,43 +253,22 @@ func TestNamesGitKnowsAProgramNameFromASubstring(t *testing.T) {
 	}
 }
 
-// Rule 16 and demanded test 16's behavioural half, widened from one verb to every verb and
-// from a bare checkout to one with a REMOTE.
-//
-// The fixture is a real git repository holding the bus lane, with `origin` set to a bare
-// repository beside it -- everything a push would need and nothing it may use. A fake git
-// on PATH records any invocation. Then every verb runs, and afterwards: the fake was never
-// called, the bare repository is byte-identical, and the checkout's own .git is too.
+// (The name is the git bus's, kept because the serial ledger lists it: there is no checkout or remote
+// any more, and what it pins is that no verb runs git.)
+// Rule 16 and demanded test 16's behavioural half, over every verb: a fake git on PATH
+// must never run, whatever the verb reads. The bus is read over the Redis protocol
+// through the world's one door, so the tool has no checkout to touch and no remote to push.
 func TestNoVerbTouchesACheckoutOrItsRemote(t *testing.T) {
-	realGit, _ := exec.LookPath("git")
-	if realGit == "" || runtime.GOOS == "windows" {
-		t.Skip("the fixture wants a real git to build the checkout and a shell script for the fake")
-	}
 	dir := t.TempDir()
 	repos := reposFile(t, dir)
 	out := mkdir(t, filepath.Join(dir, "out"))
 	tr := mkdir(t, filepath.Join(dir, "tr"))
 	write(t, filepath.Join(tr, "a.jsonl"), msg("m1", "2026-09-11T10:00:00Z", "fable", map[string]int{"input_tokens": 100}, "/x/schema/a.go")+"\n")
 	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
-	busNote(t, bus, "emma", "n.md", "emma-00000000000a", "tokens 2026-09-11", busDate,
+	busNote(t, bus, "emma", "n.md", "01EMMA0000000000000000000A", "tokens 2026-09-11", busDate,
 		"2026-09-11\temma\tg\tschema\tinput\t250\n")
 
-	// A bare repository is the fake remote: a push has somewhere to go, and nothing here
-	// may go there. It is built with the real git, before the fake goes on PATH.
-	bare := filepath.Join(dir, "remote.git")
-	gitRun(t, realGit, dir, "init", "--bare", "-q", bare)
-	gitRun(t, realGit, bare, "config", "receive.autogc", "false")
-	gitRun(t, realGit, bare, "config", "gc.auto", "0")
-	gitRun(t, realGit, bare, "config", "maintenance.auto", "false")
-	gitRun(t, realGit, bus, "init", "-q")
-	gitRun(t, realGit, bus, "add", "-A")
-	gitRun(t, realGit, bus, "commit", "-q", "-m", "the lane")
-	gitRun(t, realGit, bus, "remote", "add", "origin", bare)
-	gitRun(t, realGit, bus, "push", "-q", "origin", "HEAD:refs/heads/main")
-
 	gitLog := fakeGit(t)
-	beforeBare := readTree(t, bare)
-	beforeGit := readTree(t, filepath.Join(bus, ".git"))
 
 	// Every verb, including the two that only look and the one that only says which build.
 	runs := [][]string{
@@ -310,142 +284,8 @@ func TestNoVerbTouchesACheckoutOrItsRemote(t *testing.T) {
 		r := invoke(t, args...)
 		assert.False(t, r.exit > 1, "%v exits %d; the fixture is meant to be a run the tool can complete\n%s", args, r.exit, r.all())
 	}
-
-	{
-		_, err := os.Stat(gitLog)
-		if err == nil {
-			assert.Failf(t, "git was invoked", "git was invoked: %s", read(t, gitLog))
-		}
-	}
-	{
-		after := readTree(t, bare)
-		assert.Equal(t, beforeBare.digest, after.digest, "the remote changed; this tool does not push, fetch or talk to a network (rule 16): diff: %s", diffTrees(beforeBare, after))
-	}
-	{
-		after := readTree(t, filepath.Join(bus, ".git"))
-		assert.Equal(t, beforeGit.digest, after.digest, "the checkout's .git changed; the bus is read as files and nothing else (rule 16): diff: %s", diffTrees(beforeGit, after))
-	}
-}
-
-// gitRunErr runs git the way the fixture does -- no global or system config, a fixed
-// clock, and background maintenance/auto-gc turned off -- and returns an error rather than
-// failing the test, so a test can run several of them in parallel goroutines.
-func gitRunErr(git, dir string, args ...string) error {
-	full := append([]string{
-		"-c", "user.name=Fixture", "-c", "user.email=fixture@example.com",
-		"-c", "commit.gpgsign=false", "-c", "init.defaultBranch=main",
-		"-c", "receive.autogc=false", "-c", "gc.auto=0", "-c", "gc.autoDetach=false",
-		"-c", "maintenance.auto=false", "-c", "maintenance.autoDetach=false",
-		"-C", dir,
-	}, args...)
-	cmd := exec.Command(git, full...)
-	cmd.Env = append(os.Environ(),
-		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
-		"GIT_CONFIG_NOSYSTEM=1",
-		"GIT_AUTHOR_DATE=2026-09-11T20:00:00Z", "GIT_COMMITTER_DATE=2026-09-11T20:00:00Z")
-	if outb, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("git %v: %v: %s", args, err, outb)
-	}
-	return nil
-}
-
-func gitRun(t *testing.T, git, dir string, args ...string) {
-	t.Helper()
-	{
-		err := gitRunErr(git, dir, args...)
-		require.NoError(t, err, err)
-	}
-}
-
-type treeSnapshot struct {
-	digest string
-	files  map[string]string
-}
-
-func readTree(t *testing.T, root string) treeSnapshot {
-	t.Helper()
-	sum := sha256.New()
-	var names []string
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			return nil
-		}
-		rel, rerr := filepath.Rel(root, path)
-		if rerr != nil {
-			return rerr
-		}
-		names = append(names, rel)
-		return nil
-	})
-	require.NoError(t, err, err)
-	sort.Strings(names)
-	files := make(map[string]string, len(names))
-	for _, rel := range names {
-		raw, err := os.ReadFile(filepath.Join(root, rel))
-		if err != nil {
-			// A file git holds open or replaces under us is named, not skipped.
-			require.FailNowf(t, "unreadable source file", "%s: %v", rel, err)
-		}
-		h := sha256.Sum256(raw)
-		files[rel] = hex.EncodeToString(h[:])
-		sum.Write([]byte(rel))
-		sum.Write([]byte{0})
-		sum.Write(raw)
-		sum.Write([]byte{0})
-	}
-	require.False(t, len(names) == 0, "nothing under %s; this comparison would hold whatever happened", root)
-	return treeSnapshot{
-		digest: hex.EncodeToString(sum.Sum(nil)),
-		files:  files,
-	}
-}
-
-func diffTrees(before, after treeSnapshot) string {
-	var diffs []string
-	for rel, hBefore := range before.files {
-		if hAfter, ok := after.files[rel]; !ok {
-			diffs = append(diffs, fmt.Sprintf("removed %s", rel))
-		} else if hBefore != hAfter {
-			diffs = append(diffs, fmt.Sprintf("modified %s (was %s..now %s)", rel, hBefore[:8], hAfter[:8]))
-		}
-	}
-	for rel := range after.files {
-		if _, ok := before.files[rel]; !ok {
-			diffs = append(diffs, fmt.Sprintf("added %s", rel))
-		}
-	}
-	sort.Strings(diffs)
-	if len(diffs) == 0 {
-		return "digest mismatch with identical file contents"
-	}
-	return strings.Join(diffs, ", ")
-}
-
-func TestDiffTreesReportsDifferences(t *testing.T) {
-	t.Parallel()
-
-	a := treeSnapshot{
-		digest: "1",
-		files: map[string]string{
-			"same": "aaa",
-			"mod":  "1111111111",
-			"del":  "333",
-		},
-	}
-	b := treeSnapshot{
-		digest: "2",
-		files: map[string]string{
-			"same":  "aaa",
-			"mod":   "2222222222",
-			"added": "444",
-		},
-	}
-	diff := diffTrees(a, b)
-	want := "added added, modified mod (was 11111111..now 22222222), removed del"
-	assert.Equal(t, want, diff, "diffTrees = %q; want %q", diff, want)
+	_, err := os.Stat(gitLog)
+	assert.Error(t, err, "git was invoked: %s", func() string { b, _ := os.ReadFile(gitLog); return string(b) }())
 }
 
 // The records namespace is not a verb. SPEC-TOKENS' verb list has none that writes
@@ -473,4 +313,12 @@ func TestTheRecordsNamespaceIsNotAVerbUntilItsGateIsDecided(t *testing.T) {
 	// And the banner does not advertise it: a usage block naming a verb the tool refuses
 	// is a first run that fails on its own instructions.
 	assert.False(t, strings.Contains(usage, "records"), "the usage banner names a records verb this tool refuses")
+}
+
+// redisDoor says whether a source file is the door to the Redis bus whose log --bus reads
+// (SPEC-TOKENS rule 6): this tool's own busopen.go, which checks the address, and the bus
+// and connection packages it reaches the store through. They read the log and write
+// nothing; every other file of the binary stays free of the network.
+func redisDoor(path string) bool {
+	return path == "cmd/nova-tokens/busopen.go" || strings.HasPrefix(path, "internal/bus/") || strings.HasPrefix(path, "internal/redisconn/")
 }

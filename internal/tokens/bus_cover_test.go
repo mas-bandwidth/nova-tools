@@ -1,30 +1,32 @@
 package tokens
 
 // Unit coverage for internal/tokens/bus.go's reader side: the note grammar's parser
-// (splitNote, readNote, parseBody), the fold (foldLane and its refusal helpers), and
-// ReadBus, which wires the roster, the lanes and the fold together. Every test is
+// (readNote, parseBody), the fold (foldLane and its refusal helpers), and FoldBus and
+// ReadBus, which wire the log's messages, the lanes and the fold together. Every test is
 // table-driven and fixed-clock: the fold's at= stamp is a moment the test names, never
-// the machine's clock, and nothing here opens a socket, a store or a subprocess.
+// the machine's clock, and the bus is internal/bus's Fake, so nothing here opens a socket,
+// a store or a subprocess.
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/bus"
 )
 
 // busCoverDay is the day every fixture note reports on, and busCoverAt is the fold's own
-// at= stamp the notes' Date: lines are validated against. Both are fixed: a test pins the
-// code against a moment it names, never against the clock the machine happens to run.
+// at= stamp the messages' at is validated against. Both are fixed: a test pins the code
+// against a moment it names, never against the clock the machine happens to run.
 const busCoverDay = "2026-09-11"
 
 var busCoverAt = time.Date(2026, 9, 11, 23, 55, 2, 0, time.UTC)
-
-func busCoverStamp() string { return busCoverAt.Format(BusDateLayout) }
 
 // busCoverSubject renders a note subject for the fixture day with an optional trailer
 // tail such as `supersedes=<id>`, in the one order ParseSubject accepts.
@@ -39,10 +41,15 @@ func busCoverSubjectDay(day, tail string) string {
 	return s
 }
 
-// busCoverNoteText renders one note file the way nova-bus writes it: a Subject:, a Date:,
-// an Id:, and the body after one blank line.
-func busCoverNoteText(subject, id, date, body string) string {
-	return "Subject: " + subject + "\nDate: " + date + "\nId: " + id + "\n\n" + body
+// busCoverMessage renders one message of the log: the sender, subject, id and instant the
+// bus wrote, and the body.
+func busCoverMessage(from, subject, id string, at time.Time, body string) bus.Message {
+	return bus.Message{ID: id, From: from, To: []string{"rowan"}, Subject: subject, At: at, Body: body}
+}
+
+// busCoverEntry is the message as the log holds it, under the stream id entry.
+func busCoverEntry(entry string, m bus.Message) bus.Entry {
+	return bus.Entry{Stream: bus.LogKey, Entry: entry, Fields: m.Fields()}
 }
 
 // busCoverRules loads a one-line rules file through the package's own attribution seam.
@@ -109,145 +116,72 @@ func TestBusCoverNoteClean(t *testing.T) {
 	}
 }
 
-func TestBusCoverLaneNames(t *testing.T) {
-	t.Parallel()
-
-	t.Run("the roster names the lanes sorted and skips what is not one", func(t *testing.T) {
-		t.Parallel()
-
-		dir := t.TempDir()
-		roster := `{"participants":[{"name":"Ada","lane":"from-ada"},` +
-			`{"name":"Zed","lane":"from-zed"},{"name":"NoLane","lane":"other-nobody"},` +
-			`{"name":"Empty","lane":"from-"}]}`
-		require.NoError(t, os.WriteFile(filepath.Join(dir, "participants.json"), []byte(roster), 0o644))
-		names, err := laneNames(dir)
-		require.NoError(t, err)
-		assert.Equal(t, []string{"ada", "zed"}, names, "the slugs are sorted, and only from-<slug> lanes are named")
-	})
-
-	t.Run("a directory with no roster is refused by name", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := laneNames(t.TempDir())
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "participants.json", "the refusal names the file it wanted")
-	})
-
-	t.Run("a malformed roster is refused", func(t *testing.T) {
-		t.Parallel()
-
-		dir := t.TempDir()
-		require.NoError(t, os.WriteFile(filepath.Join(dir, "participants.json"), []byte("{oops"), 0o644))
-		_, err := laneNames(dir)
-		require.Error(t, err)
-	})
-
-	t.Run("a roster that names no lane is refused with the shape it wants", func(t *testing.T) {
-		t.Parallel()
-
-		dir := t.TempDir()
-		roster := `{"participants":[{"name":"Ada","lane":"other-ada"}]}`
-		require.NoError(t, os.WriteFile(filepath.Join(dir, "participants.json"), []byte(roster), 0o644))
-		_, err := laneNames(dir)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "names no lane", "the refusal says what the roster wants")
-	})
-}
-
-func TestBusCoverSplitNote(t *testing.T) {
-	t.Parallel()
-
-	t.Run("the header tolerates a heading, a bullet and a duplicate, and finds the body", func(t *testing.T) {
-		t.Parallel()
-
-		text := "# heading\n\n- Subject: " + busCoverSubject("") + "\nSubject: other\nDate: " +
-			busCoverStamp() + "\nnot a header\n\nbody line"
-		header, body, lines, bodyStart := splitNote(text)
-		assert.Equal(t, busCoverSubject(""), header["Subject"], "the first Subject: wins over a duplicate")
-		assert.Equal(t, busCoverStamp(), header["Date"])
-		assert.Equal(t, 3, lines["Subject"], "line= is the line in the FILE, heading included")
-		assert.Equal(t, 5, lines["Date"])
-		assert.Equal(t, []string{"body line"}, body)
-		assert.Equal(t, 7, bodyStart, "bodyStart is the 0-based index of the first body line")
-		assert.NotContains(t, header, "not a header", "a header line without a colon is skipped")
-	})
-
-	t.Run("a note with no body has none", func(t *testing.T) {
-		t.Parallel()
-
-		_, body, _, bodyStart := splitNote("Subject: " + busCoverSubject("") + "\nDate: " + busCoverStamp())
-		assert.Empty(t, body)
-		assert.Equal(t, 3, bodyStart)
-	})
-}
-
 func TestBusCoverReadNote(t *testing.T) {
 	t.Parallel()
 
+	const id = "01ADA000000000000000000001"
 	t.Run("a clean note parses whole", func(t *testing.T) {
 		t.Parallel()
 
-		text := busCoverNoteText(busCoverSubject(""), "ada-000000000001", busCoverStamp(),
-			busCoverGoodLine(Input, 1234, busCoverDay)+"\n# repos: schema\n")
-		n := readNote("ada", filepath.Join(t.TempDir(), "ada-000000000001.md"), text, busCoverRules(t), busCoverAt)
+		m := busCoverMessage("ada", busCoverSubject(""), id, busCoverAt, busCoverGoodLine(Input, 1234, busCoverDay)+"\n# repos: schema\n")
+		n := readNote("ada", "1-0", m, busCoverRules(t), busCoverAt)
 		require.NotNil(t, n)
 		assert.True(t, n.clean(), "a good note is clean")
 		assert.Equal(t, "ada", n.lane)
-		assert.Equal(t, "ada-000000000001", n.id)
+		assert.Equal(t, id, n.id)
 		assert.Equal(t, busCoverDay, n.subject.day)
 		assert.Equal(t, "2026-09-11T23:55:02Z", n.subject.at)
 		assert.Equal(t, "b1", n.subject.build)
-		assert.Equal(t, 1, n.subjectLine, "Subject: is the first line of the file")
-		assert.Equal(t, 2, n.dateLine)
 		require.Len(t, n.msgs, 1)
 		assert.True(t, n.zones[UTC], "a six-field line's basis is utc")
 		assert.Equal(t, 1, n.comments)
 		assert.Equal(t, []string{"schema"}, n.touched)
 	})
 
-	t.Run("a note with no Id: header takes the file's name", func(t *testing.T) {
+	t.Run("a body line's number is its line in the body, from 1", func(t *testing.T) {
 		t.Parallel()
 
-		text := "Subject: " + busCoverSubject("") + "\nDate: " + busCoverStamp() + "\nId: \n\n" +
-			busCoverGoodLine(Input, 1, busCoverDay) + "\n"
-		n := readNote("ada", filepath.Join(t.TempDir(), "ada-000000000001.md"), text, busCoverRules(t), busCoverAt)
+		m := busCoverMessage("ada", busCoverSubject(""), id, busCoverAt, busCoverGoodLine(Input, 1, busCoverDay)+"\nnot a line\n")
+		n := readNote("ada", "1-0", m, busCoverRules(t), busCoverAt)
 		require.NotNil(t, n)
-		assert.Equal(t, "ada-000000000001.md", n.id, "an id-less note is named by the file it is in")
-		assert.True(t, n.clean(), "a missing Id: does not refuse a note")
+		require.Len(t, n.lineErrs, 1)
+		assert.Equal(t, 2, n.lineErrs[0].Line)
+	})
+
+	t.Run("a message with no id field is named by its stream entry", func(t *testing.T) {
+		t.Parallel()
+
+		m := busCoverMessage("ada", busCoverSubject(""), "", busCoverAt, busCoverGoodLine(Input, 1, busCoverDay)+"\n")
+		n := readNote("ada", "1760000000000-0", m, busCoverRules(t), busCoverAt)
+		require.NotNil(t, n)
+		assert.Equal(t, "1760000000000-0", n.id)
+		assert.True(t, n.clean())
 	})
 
 	for _, tc := range []struct {
 		name       string
 		subject    string
-		date       string
-		noDate     bool
+		at         time.Time
 		want       string
 		wantNil    bool
 		wantRemedy bool // only the near miss carries its own remedy
 	}{
-		{name: "a file that is not a note at all is not a note", subject: "chore: bump the deps",
-			date: busCoverStamp(), wantNil: true},
+		{name: "a message that is not a note at all is not a note", subject: "chore: bump the deps",
+			at: busCoverAt, wantNil: true},
 		{name: "a near miss is a dead note with its own remedy", subject: "Tokens 2026-09-11 (rough)",
-			date: busCoverStamp(), want: "names tokens and a day", wantRemedy: true},
-		{name: "a note with no Date: header refuses the note", subject: busCoverSubject(""), noDate: true,
-			want: "no Date: header"},
-		{name: "an unreadable Date refuses the note", subject: busCoverSubject(""), date: "the day after the fold",
-			want: BusDateLayout},
-		{name: "a Date after the fold's own at= refuses the note", subject: busCoverSubject(""),
-			date: busCoverAt.Add(24 * time.Hour).Format(BusDateLayout), want: "later than this fold's own at="},
+			at: busCoverAt, want: "names tokens and a day", wantRemedy: true},
+		{name: "a message with no at stamp refuses the note", subject: busCoverSubject(""),
+			want: "no at stamp"},
+		{name: "an at after the fold's own at= refuses the note", subject: busCoverSubject(""),
+			at: busCoverAt.Add(24 * time.Hour), want: "later than this fold's own at="},
 		{name: "a bad predecessor set refuses the note", subject: busCoverSubject("supersedes=not-an-id"),
-			date: busCoverStamp(), want: "is not <sender>-<12 hex>"},
+			at: busCoverAt, want: "is not a bus id (a 26-character ULID)"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			text := "Subject: " + tc.subject + "\n"
-			if !tc.noDate {
-				text += "Date: " + tc.date + "\n"
-			}
-			text += "Id: ada-000000000001\n\n" + busCoverGoodLine(Input, 1, busCoverDay) + "\n"
-			n := readNote("ada", filepath.Join(t.TempDir(), "ada-000000000001.md"), text,
-				busCoverRules(t), busCoverAt)
+			m := busCoverMessage("ada", tc.subject, id, tc.at, busCoverGoodLine(Input, 1, busCoverDay)+"\n")
+			n := readNote("ada", "1-0", m, busCoverRules(t), busCoverAt)
 			if tc.wantNil {
 				assert.Nil(t, n, tc.name)
 				return
@@ -339,7 +273,7 @@ func TestBusCoverParseBody(t *testing.T) {
 				t.Helper()
 				require.Len(t, n.lineErrs, 1)
 				assert.Equal(t, 3, n.lineErrs[0].Line, "line= is the line in the FILE, offset included")
-				assert.Equal(t, "ada-000000000001", n.lineErrs[0].Note)
+				assert.Equal(t, "01ADA000000000000000000001", n.lineErrs[0].Note)
 				assert.Equal(t, Label(KindBus, "ada"), n.lineErrs[0].Label)
 				assert.False(t, n.clean(), "a note with an unparsed line is not clean")
 			},
@@ -381,7 +315,7 @@ func TestBusCoverParseBody(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			n := &note{lane: "ada", id: "ada-000000000001", subject: parsedSubject{day: busCoverDay},
+			n := &note{lane: "ada", id: "01ADA000000000000000000001", subject: parsedSubject{day: busCoverDay},
 				zones: map[string]bool{}}
 			parseBody(n, Label(KindBus, "ada"), tc.body, 2, busCoverRules(t))
 			tc.check(t, n)
@@ -393,12 +327,12 @@ func TestBusCoverBadPredecessors(t *testing.T) {
 	t.Parallel()
 
 	cleanPred := func(lane, day string) *note {
-		return &note{lane: lane, id: "ada-000000000001", subject: parsedSubject{day: day}}
+		return &note{lane: lane, id: "01ADA000000000000000000001", subject: parsedSubject{day: day}}
 	}
-	unclean := &note{lane: "ada", id: "ada-000000000001", subject: parsedSubject{day: busCoverDay},
+	unclean := &note{lane: "ada", id: "01ADA000000000000000000001", subject: parsedSubject{day: busCoverDay},
 		lineErrs: []Unparsed{{Text: "line"}}}
 	succ := func(ids ...string) *note {
-		return &note{lane: "ada", id: "ada-000000000002", subject: parsedSubject{day: busCoverDay, supersedes: ids}}
+		return &note{lane: "ada", id: "01ADA000000000000000000002", subject: parsedSubject{day: busCoverDay, supersedes: ids}}
 	}
 	for _, tc := range []struct {
 		name string
@@ -407,15 +341,15 @@ func TestBusCoverBadPredecessors(t *testing.T) {
 		want string
 	}{
 		{name: "a clean predecessor of the same lane and day is accepted", pred: cleanPred("ada", busCoverDay),
-			ids: []string{"ada-000000000001"}, want: ""},
+			ids: []string{"01ADA000000000000000000001"}, want: ""},
 		{name: "a predecessor the bus has never seen is refused", pred: nil,
-			ids: []string{"ada-000000000009"}, want: "no such note in this lane for this day: ada-000000000009"},
+			ids: []string{"01ADA000000000000000000009"}, want: "no such note in this lane for this day: 01ADA000000000000000000009"},
 		{name: "a predecessor of another lane is refused", pred: cleanPred("zed", busCoverDay),
-			ids: []string{"ada-000000000001"}, want: "another lane (from-zed)"},
+			ids: []string{"01ADA000000000000000000001"}, want: "another lane (from-zed)"},
 		{name: "a predecessor for another day is refused", pred: cleanPred("ada", "2026-09-12"),
-			ids: []string{"ada-000000000001"}, want: "another day (2026-09-12)"},
+			ids: []string{"01ADA000000000000000000001"}, want: "another day (2026-09-12)"},
 		{name: "a predecessor that did not parse is refused", pred: unclean,
-			ids: []string{"ada-000000000001"}, want: "did not parse"},
+			ids: []string{"01ADA000000000000000000001"}, want: "did not parse"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -493,8 +427,7 @@ func TestBusCoverFoldLane(t *testing.T) {
 
 	laneNote := func(t *testing.T, subject, id, body string) *note {
 		t.Helper()
-		n := readNote("ada", filepath.Join(t.TempDir(), id+".md"),
-			busCoverNoteText(subject, id, busCoverStamp(), body), busCoverRules(t), busCoverAt)
+		n := readNote("ada", "1-0", busCoverMessage("ada", subject, id, busCoverAt, body), busCoverRules(t), busCoverAt)
 		require.NotNil(t, n)
 		return n
 	}
@@ -502,9 +435,9 @@ func TestBusCoverFoldLane(t *testing.T) {
 	t.Run("two clean notes on two days fold in day order", func(t *testing.T) {
 		t.Parallel()
 
-		a := laneNote(t, busCoverSubject(""), "ada-000000000001",
+		a := laneNote(t, busCoverSubject(""), "01ADA000000000000000000001",
 			busCoverGoodLine(Input, 1234, busCoverDay)+"\n# repos: schema\n")
-		b := laneNote(t, busCoverSubjectDay("2026-09-12", ""), "ada-000000000002",
+		b := laneNote(t, busCoverSubjectDay("2026-09-12", ""), "01ADA000000000000000000002",
 			busCoverGoodLine(Input, 5, "2026-09-12"))
 		s := &Source{Label: Label(KindBus, "ada"), Kind: KindBus}
 		all := map[string]*note{a.id: a, b.id: b}
@@ -523,15 +456,15 @@ func TestBusCoverFoldLane(t *testing.T) {
 	t.Run("a correction supersedes its predecessor and folds alone", func(t *testing.T) {
 		t.Parallel()
 
-		pred := laneNote(t, busCoverSubject(""), "ada-000000000001", busCoverGoodLine(Input, 1234, busCoverDay))
-		succ := laneNote(t, busCoverSubject("supersedes=ada-000000000001"), "ada-000000000002",
+		pred := laneNote(t, busCoverSubject(""), "01ADA000000000000000000001", busCoverGoodLine(Input, 1234, busCoverDay))
+		succ := laneNote(t, busCoverSubject("supersedes=01ADA000000000000000000001"), "01ADA000000000000000000002",
 			busCoverGoodLine(Output, 5, busCoverDay))
 		s := &Source{Label: Label(KindBus, "ada"), Kind: KindBus}
 		all := map[string]*note{pred.id: pred, succ.id: succ}
 		foldLane(s, "ada", []*note{pred, succ}, all)
 		require.Len(t, s.Supersededs, 1)
-		assert.Equal(t, "ada-000000000001", s.Supersededs[0].Note)
-		assert.Equal(t, "ada-000000000002", s.Supersededs[0].By)
+		assert.Equal(t, "01ADA000000000000000000001", s.Supersededs[0].Note)
+		assert.Equal(t, "01ADA000000000000000000002", s.Supersededs[0].By)
 		assert.Equal(t, busCoverDay, s.Supersededs[0].Day)
 		assert.Equal(t, 1, s.Stat.Superseded)
 		require.Len(t, s.Stream, 1)
@@ -544,12 +477,12 @@ func TestBusCoverFoldLane(t *testing.T) {
 	t.Run("a successor naming an absent predecessor is refused whole", func(t *testing.T) {
 		t.Parallel()
 
-		orph := laneNote(t, busCoverSubject("supersedes=ada-000000000009"), "ada-000000000001",
+		orph := laneNote(t, busCoverSubject("supersedes=01ADA000000000000000000009"), "01ADA000000000000000000001",
 			busCoverGoodLine(Input, 1, busCoverDay))
 		s := &Source{Label: Label(KindBus, "ada"), Kind: KindBus}
 		foldLane(s, "ada", []*note{orph}, map[string]*note{})
 		require.Len(t, s.Unparseds, 1)
-		assert.Contains(t, s.Unparseds[0].Text, "no such note in this lane for this day: ada-000000000009")
+		assert.Contains(t, s.Unparseds[0].Text, "no such note in this lane for this day: 01ADA000000000000000000009")
 		assert.Contains(t, s.Unparseds[0].Text, "; send a correction whose subject carries supersedes=<id>")
 		assert.Equal(t, 1, s.Stat.Unparsed)
 		assert.Empty(t, s.Stream)
@@ -558,14 +491,14 @@ func TestBusCoverFoldLane(t *testing.T) {
 	t.Run("two tips on one day conflict and fold nothing", func(t *testing.T) {
 		t.Parallel()
 
-		a := laneNote(t, busCoverSubject(""), "ada-000000000001", busCoverGoodLine(Input, 1, busCoverDay))
-		b := laneNote(t, busCoverSubject(""), "ada-000000000002", busCoverGoodLine(Input, 2, busCoverDay))
+		a := laneNote(t, busCoverSubject(""), "01ADA000000000000000000001", busCoverGoodLine(Input, 1, busCoverDay))
+		b := laneNote(t, busCoverSubject(""), "01ADA000000000000000000002", busCoverGoodLine(Input, 2, busCoverDay))
 		s := &Source{Label: Label(KindBus, "ada"), Kind: KindBus}
 		all := map[string]*note{a.id: a, b.id: b}
 		foldLane(s, "ada", []*note{a, b}, all)
 		require.Len(t, s.Conflicts, 1)
 		assert.Equal(t, busCoverDay, s.Conflicts[0].Day)
-		assert.Equal(t, []string{"ada-000000000001", "ada-000000000002"}, s.Conflicts[0].Notes)
+		assert.Equal(t, []string{"01ADA000000000000000000001", "01ADA000000000000000000002"}, s.Conflicts[0].Notes)
 		assert.Empty(t, s.Stream)
 		assert.Empty(t, s.Supersededs)
 	})
@@ -573,9 +506,9 @@ func TestBusCoverFoldLane(t *testing.T) {
 	t.Run("a cycle refuses every note on it", func(t *testing.T) {
 		t.Parallel()
 
-		a := laneNote(t, busCoverSubject("supersedes=ada-000000000002"), "ada-000000000001",
+		a := laneNote(t, busCoverSubject("supersedes=01ADA000000000000000000002"), "01ADA000000000000000000001",
 			busCoverGoodLine(Input, 1, busCoverDay))
-		b := laneNote(t, busCoverSubject("supersedes=ada-000000000001"), "ada-000000000002",
+		b := laneNote(t, busCoverSubject("supersedes=01ADA000000000000000000001"), "01ADA000000000000000000002",
 			busCoverGoodLine(Input, 2, busCoverDay))
 		s := &Source{Label: Label(KindBus, "ada"), Kind: KindBus}
 		all := map[string]*note{a.id: a, b.id: b}
@@ -586,118 +519,133 @@ func TestBusCoverFoldLane(t *testing.T) {
 		assert.Empty(t, s.Stream)
 	})
 }
-
-func TestBusCoverReadBus(t *testing.T) {
+func TestBusCoverFoldBus(t *testing.T) {
 	t.Parallel()
 
-	roster := `{"participants":[{"name":"Ada","lane":"from-ada"},` +
-		`{"name":"Gone","lane":"from-gone"},{"name":"Zed","lane":"from-zed"}]}`
-
-	t.Run("every lane the roster names folds, in roster order", func(t *testing.T) {
+	const path = "127.0.0.1:6381"
+	t.Run("every lane the roster names and every sender folds, sorted", func(t *testing.T) {
 		t.Parallel()
 
-		dir := t.TempDir()
-		require.NoError(t, os.WriteFile(filepath.Join(dir, "participants.json"), []byte(roster), 0o644))
-		adaDir := filepath.Join(dir, "from-ada")
-		require.NoError(t, os.MkdirAll(adaDir, 0o755))
-		require.NoError(t, os.WriteFile(filepath.Join(adaDir, "ada-000000000001.md"), []byte(
-			busCoverNoteText(busCoverSubject(""), "ada-000000000001", busCoverStamp(),
-				busCoverGoodLine(Input, 1234, busCoverDay)+"\n# repos: schema\n")), 0o644))
-		// from-gone has no directory: the lane is quiet, not unreadable.
-		zedDir := filepath.Join(dir, "from-zed")
-		require.NoError(t, os.MkdirAll(zedDir, 0o755))
-		require.NoError(t, os.WriteFile(filepath.Join(zedDir, "zed-000000000001.md"), []byte(
-			"Subject: Tokens 2026-09-11 (rough)\n\n"+busCoverGoodLine(Input, 1, busCoverDay)+"\n"), 0o644))
-		require.NoError(t, os.WriteFile(filepath.Join(zedDir, "zed-000000000002.md"), []byte(
-			"Subject: chore: bump the deps\n\nnothing here\n"), 0o644))
+		ada := busCoverMessage("ada", busCoverSubject(""), "01ADA000000000000000000001", busCoverAt,
+			busCoverGoodLine(Input, 1234, busCoverDay)+"\n# repos: schema\n")
+		zedNear := busCoverMessage("zed", "Tokens 2026-09-11 (rough)", "01ZED000000000000000000001", busCoverAt, busCoverGoodLine(Input, 1, busCoverDay)+"\n")
+		zedChat := busCoverMessage("zed", "chore: bump the deps", "01ZED000000000000000000002", busCoverAt, "nothing here\n")
+		// A sender the roster no longer holds is still a lane: its messages are in the log.
+		old := busCoverMessage("old", busCoverSubject(""), "01OLD000000000000000000001", busCoverAt, busCoverGoodLine(Input, 2, busCoverDay)+"\n")
+		entries := []bus.Entry{busCoverEntry("1-0", ada), busCoverEntry("2-0", zedNear), busCoverEntry("3-0", zedChat), busCoverEntry("4-0", old)}
 
-		got := ReadBus(dir, busCoverRules(t), busCoverAt)
-		require.Len(t, got, 3)
-		ada, gone, zed := got[0], got[1], got[2]
-		assert.Equal(t, "bus:ada", ada.Label)
-		assert.Equal(t, KindBus, ada.Kind)
-		assert.Equal(t, adaDir, ada.Path)
-		assert.Equal(t, UTC, ada.Basis)
-		assert.Equal(t, []Type{Input}, ada.Reports)
-		require.Len(t, ada.Stream, 1)
-		v, ok := ada.Stream[0].Counts.Get(Input)
+		got := FoldBus(path, []string{"zed", "gone", "ada"}, entries, busCoverRules(t), busCoverAt)
+		require.Len(t, got, 4)
+		adaS, gone, oldS, zed := got[0], got[1], got[2], got[3]
+		assert.Equal(t, "bus:ada", adaS.Label)
+		assert.Equal(t, KindBus, adaS.Kind)
+		assert.Equal(t, "127.0.0.1:6381/from-ada", adaS.Path)
+		assert.Equal(t, UTC, adaS.Basis)
+		assert.Equal(t, []Type{Input}, adaS.Reports)
+		require.Len(t, adaS.Stream, 1)
+		v, ok := adaS.Stream[0].Counts.Get(Input)
 		assert.True(t, ok, "ada's note folds its input line")
 		assert.EqualValues(t, 1234, v)
-		assert.Equal(t, "schema", ada.Stream[0].Repo, "the source is the lane owner, whatever the who field says")
-		assert.Equal(t, 1, ada.Stat.Files)
-		assert.Equal(t, 1, ada.Stat.Comments)
-		assert.Empty(t, ada.Unreadables)
+		assert.Equal(t, "schema", adaS.Stream[0].Repo, "the source is the sender, whatever the who field says")
+		assert.Equal(t, 1, adaS.Stat.Files)
+		assert.Equal(t, 1, adaS.Stat.Comments)
+		assert.Empty(t, adaS.Unreadables)
 		assert.Equal(t, "bus:gone", gone.Label)
-		assert.Equal(t, 0, gone.Stat.Files, "a lane with no directory opened no files")
+		assert.Equal(t, 0, gone.Stat.Files, "a lane that sent nothing opened no messages")
 		assert.Empty(t, gone.Unreadables)
 		assert.Empty(t, gone.Stream)
+		assert.Equal(t, "bus:old", oldS.Label)
+		require.Len(t, oldS.Stream, 1)
 		assert.Equal(t, "bus:zed", zed.Label)
 		assert.Equal(t, 2, zed.Stat.Files, "files= is what the lane OPENED, tokens note or not")
-		assert.Equal(t, 1, zed.Stat.Unparsed, "the near miss is counted; the other file is only traffic")
+		assert.Equal(t, 1, zed.Stat.Unparsed, "the near miss is counted; the other message is only traffic")
 		require.Len(t, zed.Unparseds, 1)
-		assert.Equal(t, "zed-000000000001.md", zed.Unparseds[0].Note,
-			"a near miss with no Id: header is named by the file it is in")
-		assert.Equal(t, 1, zed.Unparseds[0].Line, "a refusal of the whole note is a refusal of the Subject: line")
+		assert.Equal(t, "01ZED000000000000000000001", zed.Unparseds[0].Note)
+		assert.Equal(t, 0, zed.Unparseds[0].Line, "a refusal of the whole note is line 0")
 		assert.NotEmpty(t, zed.Unparseds[0].Remedy)
 		assert.Empty(t, zed.Stream)
 	})
 
-	t.Run("a lane that cannot be read is counted unreadable, never skipped", func(t *testing.T) {
+	t.Run("the order of the log does not change the fold", func(t *testing.T) {
 		t.Parallel()
 
-		dir := t.TempDir()
-		roster := `{"participants":[{"name":"Busy","lane":"from-busy"},{"name":"Link","lane":"from-link"}]}`
-		require.NoError(t, os.WriteFile(filepath.Join(dir, "participants.json"), []byte(roster), 0o644))
-		// from-busy is a file where a lane's directory should be: ReadDir refuses it with
-		// an error that is not a missing directory, so the lane is unreadable, not quiet.
-		require.NoError(t, os.WriteFile(filepath.Join(dir, "from-busy"), []byte("not a directory"), 0o644))
-		require.NoError(t, os.MkdirAll(filepath.Join(dir, "from-link"), 0o755))
-		// A note file that cannot be opened is one unreadable, never a silent skip.
-		require.NoError(t, os.Symlink("nowhere", filepath.Join(dir, "from-link", "link-000000000001.md")))
+		a := busCoverEntry("1-0", busCoverMessage("ada", busCoverSubject(""), "01ADA000000000000000000001", busCoverAt, busCoverGoodLine(Input, 1, busCoverDay)+"\n"))
+		b := busCoverEntry("2-0", busCoverMessage("ada", busCoverSubject("supersedes=01ADA000000000000000000001"), "01ADA000000000000000000002", busCoverAt, busCoverGoodLine(Input, 7, busCoverDay)+"\n"))
+		fwd := FoldBus("x", nil, []bus.Entry{a, b}, busCoverRules(t), busCoverAt)
+		rev := FoldBus("x", nil, []bus.Entry{b, a}, busCoverRules(t), busCoverAt)
+		require.Len(t, fwd, 1)
+		require.Len(t, rev, 1)
+		assert.Equal(t, fwd[0].Stream, rev[0].Stream)
+		assert.Equal(t, fwd[0].Supersededs, rev[0].Supersededs)
+	})
+}
 
-		got := ReadBus(dir, busCoverRules(t), busCoverAt)
-		require.Len(t, got, 2)
-		busy := got[0]
-		assert.Equal(t, 1, busy.Stat.Unreadable)
-		require.Len(t, busy.Unreadables, 1)
-		assert.Equal(t, filepath.Join(dir, "from-busy"), busy.Unreadables[0].Path)
-		assert.Equal(t, 0, busy.Stat.Files)
-		link := got[1]
-		assert.Equal(t, 1, link.Stat.Unreadable)
-		require.Len(t, link.Unreadables, 1)
-		assert.Equal(t, filepath.Join(dir, "from-link", "link-000000000001.md"), link.Unreadables[0].Path)
-		assert.Equal(t, 0, link.Stat.Files, "a file the lane could not read is not counted in files=")
-		assert.Empty(t, link.Stream)
+// pagedStore answers a Range with at most page entries, as a long log does.
+type pagedStore struct {
+	*bus.Fake
+	page int
+}
+
+func (p *pagedStore) Range(ctx context.Context, stream, from, to string, count int) ([]bus.Entry, error) {
+	return p.Fake.Range(ctx, stream, from, to, min(count, p.page))
+}
+
+func TestBusCoverReadBus(t *testing.T) {
+	t.Parallel()
+
+	send := func(t *testing.T, b *bus.Bus, from, subject, body string) {
+		t.Helper()
+		_, err := b.Send(context.Background(), bus.Message{From: from, To: []string{"rowan"}, Subject: subject, Body: body})
+		require.NoError(t, err)
+	}
+
+	t.Run("the whole log is read, page after page, however long it is", func(t *testing.T) {
+		t.Parallel()
+
+		// The fake's clock is the fold's: the store takes each message a second after the last.
+		fb := bus.NewFake(busCoverAt.Add(-time.Hour), "ada", "rowan")
+		b := &bus.Bus{Store: &pagedStore{Fake: fb, page: 2}}
+		for i := 0; i < 5; i++ {
+			send(t, b, "ada", "chat", "x")
+		}
+		got := ReadBus(context.Background(), b, "x", busCoverRules(t), busCoverAt)
+		var ada *Source
+		for _, s := range got {
+			if s.Label == "bus:ada" {
+				ada = s
+			}
+		}
+		require.NotNil(t, ada)
+		assert.Equal(t, 5, ada.Stat.Files, "no message is dropped for the log being longer than a page")
 	})
 
-	t.Run("a directory with no roster is one unreadable source", func(t *testing.T) {
+	t.Run("a note on the log folds through ReadBus", func(t *testing.T) {
 		t.Parallel()
 
-		dir := t.TempDir()
-		got := ReadBus(dir, busCoverRules(t), busCoverAt)
+		fb := bus.NewFake(busCoverAt.Add(-time.Hour), "ada", "rowan")
+		b := &bus.Bus{Store: fb}
+		send(t, b, "ada", busCoverSubject(""), busCoverGoodLine(Input, 1234, busCoverDay)+"\n")
+		got := ReadBus(context.Background(), b, "x", busCoverRules(t), busCoverAt)
+		require.Len(t, got, 2)
+		assert.Equal(t, "bus:ada", got[0].Label)
+		require.Len(t, got[0].Stream, 1)
+		assert.Empty(t, got[0].Unreadables)
+	})
+
+	t.Run("a store that does not answer is one unreadable source, never a short log", func(t *testing.T) {
+		t.Parallel()
+
+		fb := bus.NewFake(busCoverAt, "ada")
+		fb.Fail = errors.New("connection refused")
+		got := ReadBus(context.Background(), &bus.Bus{Store: fb}, "127.0.0.1:6381", busCoverRules(t), busCoverAt)
 		require.Len(t, got, 1)
 		s := got[0]
 		assert.Equal(t, KindBus, s.Label)
-		assert.Equal(t, KindBus, s.Kind)
-		assert.Equal(t, dir, s.Path)
 		assert.Equal(t, 1, s.Stat.Unreadable)
 		assert.Equal(t, 0, s.Stat.Files)
 		require.Len(t, s.Unreadables, 1)
-		assert.Equal(t, filepath.Join(dir, "participants.json"), s.Unreadables[0].Path)
+		assert.Equal(t, "127.0.0.1:6381/"+bus.LogKey, s.Unreadables[0].Path)
+		assert.Contains(t, s.Unreadables[0].Why, "connection refused")
 		assert.Empty(t, s.Stream)
-	})
-
-	t.Run("a roster that names no lane is refused with the shape it wants", func(t *testing.T) {
-		t.Parallel()
-
-		dir := t.TempDir()
-		bad := `{"participants":[{"name":"Ada","lane":"other-ada"}]}`
-		require.NoError(t, os.WriteFile(filepath.Join(dir, "participants.json"), []byte(bad), 0o644))
-		got := ReadBus(dir, busCoverRules(t), busCoverAt)
-		require.Len(t, got, 1)
-		require.Len(t, got[0].Unreadables, 1)
-		assert.Contains(t, got[0].Unreadables[0].Why, "names no lane")
-		assert.True(t, strings.Contains(got[0].Unreadables[0].Why, "participants.json"),
-			"the refusal tells the reader where the roster was")
 	})
 }

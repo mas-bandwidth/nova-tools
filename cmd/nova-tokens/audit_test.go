@@ -66,6 +66,14 @@ var tokensAudit = audit.Config{
 		// atomicfile writes one FILE whole (the report note and the ledger): it takes a path
 		// and the bytes of the file and puts no byte on any stream of this binary.
 		`"github.com/mas-bandwidth/nova-tools/internal/atomicfile"`,
+		// busopen.go, the one door to the Redis bus whose log --bus reads (SPEC-TOKENS rule 6):
+		// errors, net, net/netip and sync build the address check (bus.CheckAddr: loopback or the
+		// tailnet only) and silence go-redis's logger once; go-redis and internal/bus open the
+		// store and read its log. None holds a writer: what comes back is rows this package
+		// renders through oneline at the print site, and a dial error printed through oneline.Err.
+		`"errors"`, `"net"`, `"net/netip"`, `"sync"`,
+		`"github.com/redis/go-redis/v9"`,
+		`"github.com/mas-bandwidth/nova-tools/internal/bus"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/oneline"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/tokens"`,
 		// the --json rendering and the refusal under --json: tool.Out renders the one

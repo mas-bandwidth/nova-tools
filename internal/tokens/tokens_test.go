@@ -429,7 +429,7 @@ func TestTheBusGrammarIsOneGrammar(t *testing.T) {
 	}
 	zoned := BodyLine("2026-09-11", "emma", "gemini", "unattributed", Output, 7, "America/Los_Angeles")
 	assert.Truef(t, strings.HasSuffix(zoned, "\tday_basis=America/Los_Angeles"), "a zoned line does not carry its basis: %q", zoned)
-	subject := Subject("2026-09-11", "2026-09-11T23:55:02Z", "b", []string{"emma-000000000001", "emma-000000000002"})
+	subject := Subject("2026-09-11", "2026-09-11T23:55:02Z", "b", []string{"01EMMA00000000000000000001", "01EMMA00000000000000000002"})
 	p, ok := ParseSubject(subject)
 	assert.Falsef(t, !ok || p.day != "2026-09-11" || len(p.supersedes) != 2 || p.badSet != "", "the subject %q does not parse back: %+v ok=%v", subject, p, ok)
 	// `at=` is an RFC 3339 UTC stamp: `at=garbage build=b` was taken for a tokens note,
@@ -441,9 +441,9 @@ func TestTheBusGrammarIsOneGrammar(t *testing.T) {
 	for _, bad := range []string{"Tokens 2026-09-11", "tokens 2026-09-11 (rough)", "tokens 2026-09-11 at=x",
 		"tokens 11-09-2026", "tokens 2026-09-11 at=garbage build=b", "tokens 2026-09-11 at=2026-09-11T23:55:02-07:00 build=b",
 		"tokens 2026-09-11 build=b at=2026-09-11T23:55:02Z",
-		"tokens 2026-09-11 supersedes=emma-000000000001 at=2026-09-11T23:55:02Z build=b",
-		"tokens 2026-09-11 at=2026-09-11T23:55:02Z supersedes=emma-000000000001 build=b",
-		"tokens 2026-09-11 at=2026-09-11T23:55:02Z build=b supersedes=emma-000000000001 at=2026-09-11T23:55:02Z",
+		"tokens 2026-09-11 supersedes=01EMMA00000000000000000001 at=2026-09-11T23:55:02Z build=b",
+		"tokens 2026-09-11 at=2026-09-11T23:55:02Z supersedes=01EMMA00000000000000000001 build=b",
+		"tokens 2026-09-11 at=2026-09-11T23:55:02Z build=b supersedes=01EMMA00000000000000000001 at=2026-09-11T23:55:02Z",
 		"tokens 2026-02-30", "tokens 2026-13-40"} {
 		{
 			_, ok := ParseSubject(bad)
@@ -451,7 +451,7 @@ func TestTheBusGrammarIsOneGrammar(t *testing.T) {
 		}
 	}
 	{
-		p, _ := ParseSubject("tokens 2026-09-11 at=2026-09-11T23:55:02Z build=b supersedes=emma-000000000002,emma-000000000001")
+		p, _ := ParseSubject("tokens 2026-09-11 at=2026-09-11T23:55:02Z build=b supersedes=01EMMA00000000000000000002,01EMMA00000000000000000001")
 		assert.False(t, p.badSet == "", "an unsorted predecessor set was accepted")
 	}
 }

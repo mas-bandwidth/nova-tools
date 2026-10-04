@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -11,9 +12,11 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
@@ -38,7 +41,7 @@ func invoke(t *testing.T, args ...string) result {
 func invokeAt(t *testing.T, now time.Time, args ...string) result {
 	t.Helper()
 	var out, errb bytes.Buffer
-	exit := run(args, &out, &errb, now)
+	exit := runWith(args, &out, &errb, now, testWorld)
 	return result{exit: exit, stdout: out.String(), stderr: errb.String()}
 }
 
@@ -342,22 +345,56 @@ func swarmUsage(t *testing.T, pool, job string, row string) {
 }
 
 // busLane writes a roster and returns the bus directory.
+// testBuses are the fake Redis buses of the running tests, by the address a test passes
+// to --bus: busDir makes one under the directory the test owns, which is unique to it.
+var testBuses sync.Map // string -> *bus.Fake
+
+// testWorld is the tool's world in a test: a --bus address names a fake in testBuses and
+// nothing opens a socket.
+var testWorld = world{openBus: func(_ context.Context, addr string) (bus.Store, func(), error) {
+	f, ok := testBuses.Load(addr)
+	if !ok {
+		return nil, nil, fmt.Errorf("dial tcp %s: connect: connection refused", addr)
+	}
+	return f.(*bus.Fake), func() {}, nil
+}}
+
+// busDir makes a fake Redis bus whose roster is names and returns its address (the dir).
 func busDir(t *testing.T, dir string, names ...string) string {
 	t.Helper()
-	var ps []string
-	for _, n := range names {
-		ps = append(ps, fmt.Sprintf(`{"name":%q,"lane":"from-%s","git_email":"%s@example.com"}`, strings.Title(n), n, n))
-	}
-	write(t, filepath.Join(dir, "participants.json"), "{\"participants\":["+strings.Join(ps, ",")+"]}\n")
+	testBuses.Store(dir, bus.NewFake(time.Date(2026, 9, 11, 21, 0, 0, 0, time.UTC), names...))
+	testBusNames.Store(dir, names)
 	return dir
 }
 
-// busNote writes one note into a lane and returns its id.
-func busNote(t *testing.T, bus, lane, file, id, subject, date, body string) string {
+// busDateLayout is how busNote's date argument is written.
+const busDateLayout = "Mon Jan  2 15:04:05 UTC 2006"
+
+// busNote puts one message from lane on the bus's log and returns its id. A date that is
+// no instant is stored as it is, which the reader reads as no stamp at all.
+func busNote(t *testing.T, addr, lane, file, id, subject, date, body string) string {
 	t.Helper()
-	header := fmt.Sprintf("From: %s\nTo: Rowan\nDate: %s\nId: %s\nSubject: %s\n\n", strings.Title(lane), date, id, subject)
-	write(t, filepath.Join(bus, "from-"+lane, file), header+body)
+	f, ok := testBuses.Load(addr)
+	require.True(t, ok, "no fake bus at %s", addr)
+	at := date
+	if tm, err := time.Parse(busDateLayout, date); err == nil {
+		at = tm.UTC().Format(time.RFC3339)
+	}
+	fields := map[string]string{"id": id, "from": lane, "to": "rowan", "cc": "", "subject": subject, "re": "", "at": at, "body": body}
+	require.NoError(t, f.(*bus.Fake).AddAll(context.Background(), []string{bus.StreamOf("rowan"), bus.LogKey}, fields))
 	return id
 }
 
 const busDate = "Fri Sep 11 20:00:00 UTC 2026"
+
+// testBusNames are the roster each fake bus was made with, so busClear can start it over.
+var testBusNames sync.Map // string -> []string
+
+// busClear empties the bus's log: the next busNote starts a log of its own, which is what a
+// test that rewrites a note between two folds means.
+func busClear(t *testing.T, addr string) {
+	t.Helper()
+	names, ok := testBusNames.Load(addr)
+	require.True(t, ok, "no fake bus at %s", addr)
+	testBuses.Store(addr, bus.NewFake(time.Date(2026, 9, 11, 21, 0, 0, 0, time.UTC), names.([]string)...))
+}
