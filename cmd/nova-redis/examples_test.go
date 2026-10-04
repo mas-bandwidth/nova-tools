@@ -1,3 +1,5 @@
+//go:build functional
+
 package main
 
 import (
@@ -16,6 +18,8 @@ import (
 // a miniredis fake standing at the address the line names, under the fixed
 // clock of this package's harness, printing what is written here. The version
 // word and the machine are the build's and are compared by shape.
+// spill and recall dial the fake, so this file is the functional tier; the
+// dry run needs no store and is the unit TestSpillDryRunNeedsNoStore too.
 func TestHelpExamplesRunThroughTheComparator(t *testing.T) {
 	t.Parallel()
 
@@ -32,7 +36,7 @@ func TestHelpExamplesRunThroughTheComparator(t *testing.T) {
 		want = append(want, strings.TrimPrefix(s.Line, "$ "))
 	}
 	require.Equal(t, strings.Join(want, "\n"), strings.Join(examples, "\n"), "the banner's example block is not the sitting this test runs\nbanner:\n  %s\nwant:\n  %s", strings.Join(examples, "\n  "), strings.Join(want, "\n  "))
-	h := newHarness(t)
+	h := newStoreHarness(t)
 	norms := []onboarding.Norm{onboarding.Version(), onboarding.GoBuild()}
 	for _, s := range sitting {
 		args := strings.Fields(strings.ReplaceAll(strings.TrimPrefix(s.Line, "$ nova-redis "), "127.0.0.1:6379", h.mr.Addr()))

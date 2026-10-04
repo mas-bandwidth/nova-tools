@@ -25,7 +25,7 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 		{Verb: "check", Flags: file},
 		{Verb: "status", Flags: file},
 		{Verb: "apply", Flags: file},
-		{Verb: "report", Flags: append(file, "--snapshot", "{dir}/snap", "--store", "{addr}")},
+		{Verb: "report", Flags: append(file, "--state", "{dir}/snap", "--store", "{addr}")},
 		{Verb: "watch", Flags: []string{"--adopt", "{dir}/checks.tsv"}},
 		{Verb: "adoption", Flags: file},
 		{Verb: "release cut"},

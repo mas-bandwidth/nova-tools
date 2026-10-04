@@ -248,7 +248,18 @@ var gitEnv = []string{
 // block a tool a person is waiting on, and a pager must never open under a tool whose
 // output is a grammar -- and with killGrace as its WaitDelay.
 func busGit(dir string) gitrun.Options {
-	return gitrun.Options{C: dir, Env: append(os.Environ(), gitEnv...), Timeout: gitTimeout(), WaitDelay: killGrace}
+	// Drop any inherited GIT_AUTHOR_* / GIT_COMMITTER_* so the roster identity
+	// wins via -c on every commit path. The identity a note is committed under
+	// must come from the roster and from nowhere else.
+	e := os.Environ()
+	for i := 0; i < len(e); {
+		if strings.HasPrefix(e[i], "GIT_AUTHOR_") || strings.HasPrefix(e[i], "GIT_COMMITTER_") {
+			e = append(e[:i], e[i+1:]...)
+			continue
+		}
+		i++
+	}
+	return gitrun.Options{C: dir, Env: append(e, gitEnv...), Timeout: gitTimeout(), WaitDelay: killGrace}
 }
 
 // git runs one git for this tool through internal/gitrun: bounded by gitTimeout, under the
@@ -1015,7 +1026,7 @@ const LanePathspec = ":(glob)from-*/**"
 //   - --no-renames, because git's rename detection is on by default and would report a
 //     renamed note as R, which AM excludes -- so a note that moved would go unread. With
 //     renames off it is a D and an A, and the A is the one that matters;
-//   - -z, because --name-only QUOTES a path holding a space or a non-ASCII byte, and a
+//   - -z, because --name-only QUOTES a path holding a blank or a non-ASCII byte, and a
 //     quoted path does not match a file on disk;
 //   - the pathspec, because the bus's own machinery -- a README, a CI file, the roster --
 //     is not a note, and reading one as a note would be a parse failure reported to every

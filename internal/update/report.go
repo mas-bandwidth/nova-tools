@@ -20,19 +20,19 @@ func shaText(s string) string { sum := sha256.Sum256([]byte(s)); return hex.Enco
 
 // report is the report verb's one value: the run's facts on its first line, an
 // item per tool read (TOOL, or UNKNOWN with its reason), per tool changed since
-// --snapshot (CHANGED) and per delivery (SENT), and a note for what is true and
+// --state (CHANGED) and per delivery (SENT), and a note for what is true and
 // not a finding. Under --draft the value is the note itself, its payload: the
 // headers and this same value's lines, which is also what --send delivers.
 func report(ctx context.Context, verb string, all, entries []Entry, o options, kinds, help string, started time.Time, env Environment) *tool.Out {
 	state := emptySnapshot()
 	var err error
-	if o.snapshot != "" {
-		release, lockErr := lockSnapshot(ctx, o.snapshot)
+	if o.state != "" {
+		release, lockErr := lockSnapshot(ctx, o.state)
 		if lockErr != nil {
 			return refused(verb, help, lockErr.Error())
 		}
 		defer release()
-		state, err = readSnapshot(o.snapshot)
+		state, err = readSnapshot(o.state)
 		if err != nil {
 			return refused(verb, help, err.Error())
 		}
@@ -55,7 +55,7 @@ func report(ctx context.Context, verb string, all, entries []Entry, o options, k
 		seen[x.Entry.Name] = observed{r.Raw, status, at}
 	}
 	changed := "-"
-	if o.snapshot != "" {
+	if o.state != "" {
 		changed = "no"
 		if !sameObserved(state.Observed, seen) {
 			changed = "yes"
@@ -74,7 +74,7 @@ func report(ctx context.Context, verb string, all, entries []Entry, o options, k
 			}
 		}
 		state.Observed = seen
-		if err = writeSnapshot(o.snapshot, state); err != nil {
+		if err = writeSnapshot(o.state, state); err != nil {
 			return refused(verb, help, err.Error())
 		}
 	}
@@ -86,7 +86,7 @@ func report(ctx context.Context, verb string, all, entries []Entry, o options, k
 			{K: "changed", V: changed}, {K: "sent", V: sent}, {K: "took", V: env.Now().Sub(started).Round(time.Millisecond).String()},
 			{K: "file", V: o.file}, {K: "host", V: o.host}, {K: "as", V: o.as}, {K: "entries", V: len(all)}, {K: "kinds", V: kinds},
 			{K: "at", V: at}, {K: "timeout", V: o.timeout.String()}, {K: "budget", V: o.budget.String()}, {K: "max", V: o.max},
-			{K: "snapshot", V: o.snapshot}}
+			{K: "state", V: o.state}}
 	}
 	res.Facts = facts("-")
 	var body bytes.Buffer
@@ -184,15 +184,15 @@ func deliveryAllowance(ctx context.Context, now time.Time) time.Duration {
 func deliver(ctx context.Context, o options, s *snapshot, seen map[string]observed, body []byte, res *tool.Out, env Environment) (string, error) {
 	scope := snapshotScope(o)
 	save := func() error {
-		if o.snapshot != "" {
-			return writeSnapshot(o.snapshot, s)
+		if o.state != "" {
+			return writeSnapshot(o.state, s)
 		}
 		return nil
 	}
 	send := func(p pending) (string, error) {
 		allowance := deliveryAllowance(ctx, env.Now())
 		if allowance <= 0 {
-			return "uncertain", fmt.Errorf("pending %s not sent: the budget is spent (retry this --send with the same --snapshot; do not prepare again)", p.ID)
+			return "uncertain", fmt.Errorf("pending %s not sent: the budget is spent (retry this --send with the same --state; do not prepare again)", p.ID)
 		}
 		attempts, gitSeconds := busBounds(allowance)
 		args := []string{"nova-bus", "send", "--prepared-stdin", "--bus", o.bus, "--remote", o.remote, "--branch", o.branch, "--as", o.as,
@@ -208,7 +208,7 @@ func deliver(ctx context.Context, o options, s *snapshot, seen map[string]observ
 			}
 		}
 		if r.Reason != "" || line == "" {
-			return "uncertain", fmt.Errorf("pending %s not confirmed: %s; the bus said: %s (retry this --send with the same --snapshot; do not prepare again)", p.ID, dash(r.Reason), busSaid(r))
+			return "uncertain", fmt.Errorf("pending %s not confirmed: %s; the bus said: %s (retry this --send with the same --state; do not prepare again)", p.ID, dash(r.Reason), busSaid(r))
 		}
 		s.Delivered[scope] = delivery{cloneObserved(p.Observed), p.ID, env.Now().UTC().Format(time.RFC3339)}
 		delete(s.Pending, scope)
@@ -237,14 +237,14 @@ func deliver(ctx context.Context, o options, s *snapshot, seen map[string]observ
 		return sent, nil
 	}
 	if ctx.Err() != nil {
-		return sent, fmt.Errorf("delivery budget exhausted (retry --send with the same --snapshot)")
+		return sent, fmt.Errorf("delivery budget exhausted (retry --send with the same --state)")
 	}
 	// prepare runs no Git and touches no network, so it takes no attempt or
 	// git-timeout flag; what it must not take is the version probe's timeout,
 	// which is a bound on reading a tool's version and not on a delivery.
 	allowance := deliveryAllowance(ctx, env.Now())
 	if allowance <= 0 {
-		return sent, fmt.Errorf("delivery budget exhausted (retry --send with the same --snapshot)")
+		return sent, fmt.Errorf("delivery budget exhausted (retry --send with the same --state)")
 	}
 	child, cancel := context.WithTimeout(ctx, allowance)
 	prepared := captureRun(child, []string{"nova-bus", "prepare", "--bus", o.bus, "--as", o.as, "--stdin"}, body, ChildCap)

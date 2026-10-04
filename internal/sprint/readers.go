@@ -28,6 +28,10 @@ const (
 	ReaderUp   = "up"
 	ReaderAway = "away"
 	ReaderDown = "down"
+	// ReaderHeld is a reader the coordinator holds (hold <reader>, hold.go): asked
+	// nothing, its reads asked and not begun asked of another, its reads begun
+	// finishing unless the hold took them back (--return).
+	ReaderHeld = Held
 
 	// ReaderBeatBound is how long a reader stays up after its last beat: the
 	// fleet's bound (BeatDeadline), named once so a reader's can be told apart.
@@ -215,7 +219,11 @@ func sweepReads(s *Snapshot, p *Plan) {
 		if s.ReaderIsUp(rd) {
 			continue
 		}
-		cards := append(append([]*Card{}, s.Readers.Cell(rd, Asked)...), s.Readers.Cell(rd, Reading)...)
+		cards := append([]*Card{}, s.Readers.Cell(rd, Asked)...)
+		if s.ReaderStates[rd] != ReaderHeld {
+			// a held reader's reads begun finish (hold.go); an away or down one's go
+			cards = append(cards, s.Readers.Cell(rd, Reading)...)
+		}
 		SortCards(cards)
 		for _, c := range cards {
 			if !taker(c) {

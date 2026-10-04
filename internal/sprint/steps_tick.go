@@ -506,6 +506,9 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	up := s.UpMembers()
 	var friends []*Card
 	for _, c := range s.Work.Column(Ready) {
+		if StreamHeld(s, c.Row) {
+			continue // its stream is held (hold.go): dealt to no machine and no friend until unhold
+		}
 		if _, ok := FriendCard(c); ok && !IsSentinel(c) {
 			// a friend's card: dealt to a friend below, never to a machine (friend_deal.go)
 			friends = append(friends, c)
@@ -542,6 +545,11 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 			// lint): one judgment per tier either way
 			unserved[tier] = append(unserved[tier], c.ID)
 			whyOf[tier] = why
+			continue
+		}
+		if b := Bench(c); len(b) > 0 && len(onlyBench(up, b)) == 0 {
+			// its bench is down or held: it waits ready for a member of it, and is dealt to
+			// no other (bench_deal.go); the no-stall rule says why (held.go)
 			continue
 		}
 		ready = append(ready, c)

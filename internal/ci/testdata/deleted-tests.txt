@@ -1314,3 +1314,5 @@ internal/ntable/oset_cover_test.go tested Add, Remove, Move, Card, MembersOf and
 internal/cardhdr/invariant_test.go dead: the one-invariant lint it exercises (LintOneInvariant, LintTitleKind, ParseInvariant, lintWith, readCard and the Refusal family) is unreachable from cmd/... on linux, darwin and windows and is retired whole, so the test proves nothing that lives (dead-code pass 2026-10-04)
 internal/secrets/storepull_test.go dead: its only subject is the store pull path (PullStore, StorePullSSHCommand, StorePullKey, privateKeyPublicBlob) deleted with the dead storepull.go (dead-pkg-secrets-t2b); nothing it pins remains
 internal/secrets/storepull_cover_test.go dead: its only subject is mpintBytes and wirePublicKey, deleted with the dead storepull.go (dead-pkg-secrets-t2b); nothing it pins remains
+internal/dogfood/cli_cover_test.go dead: its only subject is Keys, deleted with the dead Keys in internal/dogfood/cli.go (dead-code pass 2026-10-04); nothing it pins remains
+cmd/nova-ci/timing_test.go moved to tools/citiming/main_test.go with the timing.go script it guards

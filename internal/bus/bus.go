@@ -16,7 +16,7 @@ import (
 const ReceiptsName = "RECEIPTS"
 
 // ReceiptStampLayout is how a receipt line writes its time: RFC 3339 in UTC, which holds
-// no spaces, so the rest of the line is the target and a target with a space in it still
+// no spaces, so the rest of the line is the target and a target with whitespace in it still
 // parses.
 const ReceiptStampLayout = "2006-01-02T15:04:05Z"
 

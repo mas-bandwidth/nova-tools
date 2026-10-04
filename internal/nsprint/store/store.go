@@ -19,7 +19,7 @@ type Store struct {
 	client *redis.Client
 }
 
-// Fleet authentication. The fleet Redis (bench:6380, users.acl) has its
+// Fleet authentication. The fleet Redis (users.acl) has its
 // default user off, so an unauthenticated verb fails NOAUTH. The password is
 // never a flag: `nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD` leaves it
 // in the environment, where a ps cannot read it (the nova-pulse convention).

@@ -75,7 +75,8 @@ func TestRequiredFlagErrorOrderDeterministic(t *testing.T) {
 		out := stderr.String()
 		homeIdx := strings.Index(out, "--home is required")
 		manifestIdx := strings.Index(out, "--manifest is required")
-		require.False(t, homeIdx < 0 || manifestIdx < 0, "stderr must name both missing flags, got %q", out)
+		require.False(t, homeIdx < 0, "stderr must name both missing flags, got %q", out)
+		require.False(t, manifestIdx < 0, "stderr must name both missing flags, got %q", out)
 		require.LessOrEqual(t, homeIdx, manifestIdx, "flag errors out of sorted order (run %d): %q", i, out)
 	}
 }
@@ -954,9 +955,6 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 	if largeSelf500Dir != "" {
 		_ = os.RemoveAll(largeSelf500Dir)
-	}
-	if hygLabGoldenDir != "" {
-		_ = os.RemoveAll(hygLabGoldenDir)
 	}
 	if stLabGoldenDir != "" {
 		_ = os.RemoveAll(stLabGoldenDir)

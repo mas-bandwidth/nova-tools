@@ -9,13 +9,11 @@ cmd/nova-sandbox 3
 cmd/nova-swarm 2
 internal/bus 16
 internal/ci/slowtests 2
-internal/dogfood 1
 internal/hygiene 1
 internal/nsprint/fn 5
 internal/nsprint/store 3
 internal/ntable 11
-internal/pkgselect 22
-internal/redisfn 9
+internal/pkgselect 16
 internal/secrets 6
 internal/sprint 2
 internal/sprint/store 2

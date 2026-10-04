@@ -55,6 +55,10 @@ func TestMain(m *testing.M) {
 		os.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(dir, "no-such-gitconfig"))
 		os.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 		os.Setenv("GIT_TERMINAL_PROMPT", "0")
+		os.Setenv("GIT_AUTHOR_NAME", "Other")
+		os.Setenv("GIT_AUTHOR_EMAIL", "other@example.com")
+		os.Setenv("GIT_COMMITTER_NAME", "Other")
+		os.Setenv("GIT_COMMITTER_EMAIL", "other@example.com")
 		// The seeded bare bus bareBus copies is made under this directory too, so it
 		// is removed with it.
 		barebusRoot = dir
@@ -69,11 +73,16 @@ func TestMain(m *testing.M) {
 // loudly here instead of silently reading the runner's ~/.gitconfig.
 func hermetic(t *testing.T) {
 	t.Helper()
-	// All four, not just the first: three of them are what keeps a machine's system
-	// config, its ~/.gitconfig and its credential prompt out of these tests, and an
-	// assertion on one of four would pass over a TestMain that set one of four.
-	for _, key := range []string{"GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM", "GIT_TERMINAL_PROMPT"} {
-		require.False(t, os.Getenv(key) == "", "%s is not set: the hermetic git environment is TestMain's, in this package, and it sets four", key)
+	// All eight, not just the first: three of them are what keeps a machine's system
+	// config, its ~/.gitconfig and its credential prompt out of these tests, and four
+	// are what keeps a foreign git identity in the calling environment from leaking
+	// into the commit identity, and an assertion on one of eight would pass over a
+	// TestMain that set one of eight.
+	for _, key := range []string{
+		"GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM", "GIT_TERMINAL_PROMPT",
+		"GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL",
+	} {
+		require.NotEmpty(t, os.Getenv(key), "%s is not set: the hermetic git environment is TestMain's, in this package, and it sets eight", key)
 	}
 }
 
@@ -170,7 +179,8 @@ func TestCommitAndPushLandsANote(t *testing.T) {
 	write(t, clone, "from-ada/a.md", noteText("Ada", "one", "body"))
 	res, err := CommitAndPush(clone, testIdentity["Ada"], []string{"from-ada/a.md"}, "ada: one", "origin", "main", 3)
 	require.NoError(t, err)
-	require.True(t, res.Pushed && res.Attempts == 1, "res = %+v, want pushed on the first attempt", res)
+	require.True(t, res.Pushed, "res = %+v, want pushed on the first attempt", res)
+	require.True(t, res.Attempts == 1, "res = %+v, want pushed on the first attempt", res)
 	out, err := git(bare, "show", "main:from-ada/a.md")
 	require.NoError(t, err, "the note is not on the remote: %v", err)
 	require.Contains(t, out, "Subject: one", "the remote holds %q", out)
@@ -180,6 +190,29 @@ func TestCommitAndPushLandsANote(t *testing.T) {
 	require.NoError(t, err)
 	if strings.TrimSpace(who) != "Ada <ada@example.com>" {
 		require.Equal(t, "Ada <ada@example.com>", strings.TrimSpace(who), "the commit is authored by %q", strings.TrimSpace(who))
+	}
+}
+
+// CommitAndPush carries only the sender's identity even when the calling
+// environment sets the four GIT_AUTHOR_* and GIT_COMMITTER_* variables to
+// another. The four are dropped from the environment passed to git so that
+// the roster identity (via -c) is the only source, per the rule that the
+// identity a note is committed under must come from the roster and from
+// nowhere else.
+func TestCommitUsesRosterIdentityEvenUnderOtherGitIdentityEnv(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	bare := bareBus(t)
+	clone := cloneBus(t, bare)
+	write(t, clone, "from-ada/a.md", noteText("Ada", "one", "body"))
+	res, err := CommitAndPush(clone, testIdentity["Ada"], []string{"from-ada/a.md"}, "ada: one", "origin", "main", 3)
+	require.NoError(t, err)
+	require.True(t, res.Pushed && res.Attempts == 1, "res = %+v, want pushed on the first attempt", res)
+	who, err := git(bare, "log", "-1", "--format=%an <%ae>|%cn <%ce>", "main")
+	require.NoError(t, err)
+	want := "Ada <ada@example.com>|Ada <ada@example.com>"
+	if strings.TrimSpace(who) != want {
+		require.Equal(t, want, strings.TrimSpace(who), "the commit is author|committer %q, want %q: the identity comes from the roster on every invocation that records one", strings.TrimSpace(who), want)
 	}
 }
 
@@ -409,8 +442,8 @@ func TestAConflictOnANoteIsRefusedAndTheAbortIsClean(t *testing.T) {
 	if strings.Contains(err.Error(), "\n") {
 		require.NotContains(t, err.Error(), "\n", "the refusal is more than one line: %q", err.Error())
 	}
-	require.False(t, Transcript(err) == "", "the refusal carries no transcript, so a person has git's own words nowhere")
-	require.False(t, res.Commit == "", "the refusal names no commit, so a person has nothing to look at")
+	require.NotEmpty(t, Transcript(err), "the refusal carries no transcript, so a person has git's own words nowhere")
+	require.NotEmpty(t, res.Commit, "the refusal names no commit, so a person has nothing to look at")
 	{
 		_, cerr := git(b, "cat-file", "-e", res.Commit+"^{commit}")
 		require.Equal(t, nil, cerr, "the commit named in the refusal is not on the branch: %v", cerr)
@@ -469,7 +502,8 @@ func TestCommitOnlyDoesNotPush(t *testing.T) {
 	write(t, clone, "from-ada/a.md", noteText("Ada", "one", "body"))
 	res, err := CommitOnly(clone, testIdentity["Ada"], []string{"from-ada/a.md"}, "ada: one")
 	require.NoError(t, err)
-	require.False(t, res.Pushed || res.Commit == "", "res = %+v, want a commit and pushed=false", res)
+	require.False(t, res.Pushed, "res = %+v, want a commit and pushed=false", res)
+	require.False(t, res.Commit == "", "res = %+v, want a commit and pushed=false", res)
 	{
 		_, err := git(bare, "cat-file", "-e", "main:from-ada/a.md")
 		require.Error(t, err, "--no-push pushed")
@@ -503,7 +537,8 @@ func TestIsRepoRootAndCurrentBranch(t *testing.T) {
 	require.NoError(t, IsRepoRoot(clone))
 	{
 		b, err := CurrentBranch(clone)
-		require.True(t, err == nil && b == "main", "CurrentBranch = %q %v", b, err)
+		require.True(t, err == nil, "CurrentBranch = %q %v", b, err)
+		require.True(t, b == "main", "CurrentBranch = %q %v", b, err)
 	}
 	{
 		err := IsRepoRoot(t.TempDir())
@@ -622,7 +657,7 @@ func TestSendRefusesABranchAheadOfTheRemoteWithSomebodyElsesWork(t *testing.T) {
 	}
 	{
 		out, perr := git(clone, "push", "origin", "HEAD:refs/heads/main")
-		require.False(t, perr == nil, "the fixture is not the state the advice is about: a bare push succeeded\n%s", out)
+		require.Error(t, perr, "the fixture is not the state the advice is about: a bare push succeeded\n%s", out)
 	}
 	{
 		out, rerr := git(clone, "-c", "user.name=Ada", "-c", "user.email=ada@example.com", "pull", "--rebase", "origin", "main")
@@ -661,7 +696,7 @@ func TestAnUnpushedCommitOfOurOwnIsCarriedRatherThanRefused(t *testing.T) {
 		WithTrailer("ada: mine", TrailerSend+" ada-aaaaaaaaaaaa"), "origin", "main", 1)
 	require.Error(t, err, "the fixture did not lose its push")
 	require.True(t, strings.Contains(err.Error(), "git pull --rebase && git push"), "the refusal offers no recovery that works: %v", err)
-	require.False(t, lost.Commit == "", "the lost push named no commit")
+	require.NotEmpty(t, lost.Commit, "the lost push named no commit")
 
 	// The next run. This is where the tool used to refuse to run at all.
 	{
@@ -848,14 +883,16 @@ func TestThePushRetryWaitsBetweenAttempts(t *testing.T) {
 	write(t, mine, "from-ada/a.md", noteText("Ada", "mine", "body"))
 	res, err := commitAndPushWithSleep(mine, testIdentity["Ada"], []string{"from-ada/a.md"}, "ada: mine", "origin", "main", 3, sleep)
 	require.NoError(t, err)
-	require.True(t, res.Pushed && res.Attempts == 2, "res = %+v, want pushed on the second attempt", res)
+	require.True(t, res.Pushed, "res = %+v, want pushed on the second attempt", res)
+	require.True(t, res.Attempts == 2, "res = %+v, want pushed on the second attempt", res)
 	// One rejected push, so one wait: before the fetch that takes what arrived, and never
 	// after the push that lands.
 	if len(slept) != 1 {
 		require.Equal(t, 1, len(slept), "the loop waited %d times for one rejected push, want 1: %v", len(slept), slept)
 	}
 	if slept[0] < backoffStep || slept[0] > backoffStep+backoffJitter {
-		require.False(t, slept[0] < backoffStep || slept[0] > backoffStep+backoffJitter, "waited %v after the first attempt, want between %v and %v", slept[0], backoffStep, backoffStep+backoffJitter)
+		require.False(t, slept[0] < backoffStep, "waited %v after the first attempt, want between %v and %v", slept[0], backoffStep, backoffStep+backoffJitter)
+		require.False(t, slept[0] > backoffStep+backoffJitter, "waited %v after the first attempt, want between %v and %v", slept[0], backoffStep, backoffStep+backoffJitter)
 	}
 }
 
@@ -868,7 +905,9 @@ func TestPushBackoffGrowsIsJitteredAndIsCapped(t *testing.T) {
 		lo := time.Duration(attempt) * backoffStep
 		for range 50 {
 			d := pushBackoff(attempt)
-			require.False(t, d < lo || d > lo+backoffJitter || d > backoffCap, "pushBackoff(%d) = %v, want between %v and %v and at most %v", attempt, d, lo, lo+backoffJitter, backoffCap)
+			require.False(t, d < lo, "pushBackoff(%d) = %v, want between %v and %v and at most %v", attempt, d, lo, lo+backoffJitter, backoffCap)
+			require.False(t, d > lo+backoffJitter, "pushBackoff(%d) = %v, want between %v and %v and at most %v", attempt, d, lo, lo+backoffJitter, backoffCap)
+			require.False(t, d > backoffCap, "pushBackoff(%d) = %v, want between %v and %v and at most %v", attempt, d, lo, lo+backoffJitter, backoffCap)
 		}
 	}
 	// The cap holds however many attempts a caller asks for.
@@ -885,7 +924,7 @@ func TestPushBackoffGrowsIsJitteredAndIsCapped(t *testing.T) {
 		seen[pushBackoff(1)] = true
 	}
 	if len(seen) < 2 {
-		require.False(t, len(seen) < 2, "fifty draws gave %d distinct waits; a fixed delay leaves two benches that collided colliding again", len(seen))
+		require.GreaterOrEqual(t, len(seen), 2, "fifty draws gave %d distinct waits; a fixed delay leaves two benches that collided colliding again", len(seen))
 	}
 }
 
@@ -905,7 +944,8 @@ func TestFetchAndFastForwardMovesTheCheckoutOnlyWhenItCan(t *testing.T) {
 
 	// Nothing has happened: the fetch runs and the checkout stays where it is.
 	moved, err := FetchAndFastForward(reader, "origin", "main")
-	require.True(t, err == nil && !moved, "a quiet bus: moved=%t err=%v, want false and no error", moved, err)
+	require.True(t, err == nil, "a quiet bus: moved=%t err=%v, want false and no error", moved, err)
+	require.True(t, !moved, "a quiet bus: moved=%t err=%v, want false and no error", moved, err)
 
 	// A note lands from somebody else: the reader is BEHIND and is fast-forwarded onto it.
 	write(t, writer, "from-bo/note.md", noteText("Bo", "the gate", "Is it on the queue?"))
@@ -913,7 +953,8 @@ func TestFetchAndFastForwardMovesTheCheckoutOnlyWhenItCan(t *testing.T) {
 		require.NoError(t, err, "the other bench could not send: %v", err)
 	}
 	moved, err = FetchAndFastForward(reader, "origin", "main")
-	require.True(t, err == nil && moved, "a note on the bus: moved=%t err=%v, want true and no error", moved, err)
+	require.True(t, err == nil, "a note on the bus: moved=%t err=%v, want true and no error", moved, err)
+	require.True(t, moved, "a note on the bus: moved=%t err=%v, want true and no error", moved, err)
 	if _, err := os.Stat(filepath.Join(reader, "from-bo", "note.md")); err != nil {
 		require.NoError(t, err, "the checkout was not moved onto the note: %v", err)
 	}
@@ -923,7 +964,8 @@ func TestFetchAndFastForwardMovesTheCheckoutOnlyWhenItCan(t *testing.T) {
 	write(t, reader, "from-ada/mine.md", noteText("Ada", "mine", "Not pushed yet."))
 	commitByHand(t, reader, "from-ada/mine.md", "ada: not pushed")
 	moved, err = FetchAndFastForward(reader, "origin", "main")
-	require.True(t, err == nil && !moved, "a checkout ahead: moved=%t err=%v, want false and no error", moved, err)
+	require.True(t, err == nil, "a checkout ahead: moved=%t err=%v, want false and no error", moved, err)
+	require.True(t, !moved, "a checkout ahead: moved=%t err=%v, want false and no error", moved, err)
 
 	// And when the two have both moved, a poll will not merge or rebase to reconcile them:
 	// it says so, and names the recovery.

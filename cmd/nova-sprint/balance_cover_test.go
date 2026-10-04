@@ -37,7 +37,7 @@ func TestBalanceCoverLoopPollsEachRestUntilItsContextIsDone(t *testing.T) {
 		sprint.Route{Name: "flash-or", Tier: "flash", Provider: "openrouter", Model: "m", Enabled: true})
 	st, err := ta.a.store(common{redis: "mem:0", actor: sprint.MachineActor})
 	require.NoError(t, err)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	waits := 0
 	ta.a.after = func(time.Duration) <-chan time.Time {
@@ -67,7 +67,7 @@ func TestBalanceCoverLoopPollsEachRestUntilItsContextIsDone(t *testing.T) {
 func TestBalanceCoverLoopDoneBeforeItsFirstPollPollsNothing(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	ta.a.after = func(time.Duration) <-chan time.Time {
 		t.Error("the loop rested though its context was done before the first poll")
@@ -86,7 +86,7 @@ func TestBalanceCoverLoopSaysWhyAPollWroteNothingWhenTheRoutesCannotBeRead(t *te
 	ta, fake, _ := balanceApp(t,
 		sprint.Route{Name: "flash-or", Tier: "flash", Provider: "openrouter", Model: "m", Enabled: true})
 	st := &store.Store{B: balanceCoverBrokenRoutes{Backend: ta.m, err: errors.New("the store did not answer")}, Now: ta.a.now}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	ta.a.after = func(time.Duration) <-chan time.Time {
 		cancel() // the poll is done; the loop ends at its rest

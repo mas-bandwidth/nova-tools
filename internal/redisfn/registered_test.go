@@ -41,16 +41,14 @@ func TestRegisteredReadsTheNoWritesFlagOfTheTableForm(t *testing.T) {
 	}
 }
 
-// Registered names the same functions Functions does, sorted by name, each
-// with the file that registers it.
-func TestRegisteredIsFunctionsWithTheirFiles(t *testing.T) {
+// Registered names every function the library's files register, sorted by
+// name, each with the file that registers it.
+func TestRegisteredNamesEveryRegistrationWithItsFile(t *testing.T) {
 	t.Parallel()
 	lib := Library{Name: "lib_one", Files: tree(map[string]string{
 		"b.lua": fn("zeta") + "redis.register_function{function_name = 'alpha', flags = {'no-writes'}, callback = function() end}\n",
 		"a.lua": fn("beta"),
 	}), Glob: "*.lua"}
-	names, err := lib.Functions()
-	require.NoError(t, err)
 	got, err := lib.Registered()
 	require.NoError(t, err)
 	assert.Equal(t, []Function{
@@ -58,9 +56,4 @@ func TestRegisteredIsFunctionsWithTheirFiles(t *testing.T) {
 		{Name: "beta", File: "a.lua"},
 		{Name: "zeta", File: "b.lua"},
 	}, got)
-	var gotNames []string
-	for _, f := range got {
-		gotNames = append(gotNames, f.Name)
-	}
-	assert.Equal(t, names, gotNames)
 }

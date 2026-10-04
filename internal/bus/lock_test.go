@@ -42,7 +42,7 @@ func TestASecondRunOnOneCheckoutWaitsThenRefuses(t *testing.T) {
 	// test's, so the 200ms budget is measured in virtual time and costs no wall time.
 	{
 		waited := clk.waited()
-		require.False(t, waited < 150*time.Millisecond, "the second run gave up after %s of virtual time of a 200ms budget", waited)
+		require.GreaterOrEqual(t, waited, 150*time.Millisecond, "the second run gave up after %s of virtual time of a 200ms budget", waited)
 	}
 
 	// The other way: once the first lets go, the second takes it.
@@ -149,7 +149,7 @@ func TestTheCheckoutLockStampsItsHolderAndAWaitZeroTakeNeverWaits(t *testing.T) 
 	// consult the clock at all: the fake records whether it slept.
 	clk := newLockStepClock()
 	_, err2 := lockFile(lockPath, 0, tryLockFile, clk)
-	require.False(t, err2 == nil, "a second take with wait=0 succeeded, want ErrLockHeld")
+	require.Error(t, err2, "a second take with wait=0 succeeded, want ErrLockHeld")
 	require.True(t, errors.Is(err2, ErrLockHeld), "err = %v, want errors.Is(err, ErrLockHeld)", err2)
 	{
 		waited := clk.waited()
