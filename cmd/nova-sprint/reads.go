@@ -1028,17 +1028,21 @@ func fleetText(t ntable.Table) string {
 	return strings.Join(all, "\n") + "\n"
 }
 
-// whereHeader is the one line under the title of the where view: STOPPED when
-// the machine is stopped (or a RUNNING machine has not ticked), DONE when it
-// stopped because the sprint is done, matching the view's state text, and the
-// progress line, with no machine text, when it is
-// running. Nothing follows any of them.
+// whereHeader is the one line under the title of the where view
+// (docs/SPEC-SPRINT.md section 1): STOPPED when the machine is stopped, DONE
+// when it stopped because the sprint is done, matching the view's state text,
+// and the progress line, with no machine text, when it is running; a RUNNING
+// machine whose last tick is late keeps the progress line, the machine's
+// "running (tick late 16s)" after it. Nothing else follows any of them.
 func whereHeader(summary, machine string) string {
 	state := strings.TrimPrefix(machine, "machine: ")
-	if strings.HasPrefix(state, "STOPPED") || state == store.DoneState {
+	switch {
+	case strings.HasPrefix(state, "STOPPED") || state == store.DoneState:
 		return state // DONE, as the view says, when the sprint is done
+	case state == "running" || state == "":
+		return strings.TrimSpace(summary)
 	}
-	return strings.TrimSpace(summary + strings.TrimPrefix(state, "running"))
+	return strings.TrimSpace(summary + "  " + state) // running (tick late 16s)
 }
 
 func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
@@ -1115,10 +1119,10 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 			return a.readFailed("inbox", err, stderr)
 		}
 		var after inboxLook
-		if fresh, after, err = a.waitNew(ctx, src, seenFresh(seenKeys(first.groups)), first.machine == machineRunning, *timeout); err != nil {
+		if fresh, after, err = a.waitNew(ctx, src, seenFresh(seenKeys(first.groups)), lineRunning(first.machine), *timeout); err != nil {
 			return a.waitFailed(err, stderr)
 		}
-		stopped := first.machine == machineRunning && after.machine != machineRunning
+		stopped := lineRunning(first.machine) && !lineRunning(after.machine)
 		woke = len(fresh) > 0 || stopped
 		sayWoke(fresh, stopped, *timeout, c.json, stdout, stderr)
 	}

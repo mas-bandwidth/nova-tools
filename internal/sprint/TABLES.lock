@@ -62,6 +62,17 @@
 # 7.0 s at 2,843 cards, and the requirement is under 1 s at 3,000. The progress line reads
 # as it did, every table and column is as it was; no shape below changes.
 #
+# Change, 2026-10-04, the line under where's title, not a table (nova-sprint card
+# fix-where-stopped-while-running): the coordinator's measurement, sampled every 2 to
+# 3 s at 2:23 PM on 2026-10-04: where said "machine: STOPPED" for about 7 s, then
+# running, over and over, while the server was RUNNING the whole time. A RUNNING
+# machine whose last tick is older than MachineSilence is running: where's header keeps
+# the progress line with "running (tick late <n>s)" after it, and the machine line (the
+# inbox's, where --json's, the dashboard's and every verb's sprint line) reads
+# "machine: running (tick late <n>s)", n the whole seconds since the tick. STOPPED is a
+# stop's alone. No column, fold or row changed, so the lines below are unchanged. Held
+# by TestWhereShowsRunningWithATickLateNoteNotStopped (cmd/nova-sprint).
+#
 # Change, 2026-10-02, the where view's title line, not a table: Glenn, 5:15 PM: "We need
 # to make handover MORE SMOOTH."; 5:20 PM: "you can be given coordinator status, or you
 # can take it (with my permission only)". The seat's holder shows beside the title,
