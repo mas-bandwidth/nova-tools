@@ -664,3 +664,32 @@ func TestLoopApplyAloneTakesTheStoresDirectory(t *testing.T) {
 	assert.ErrorContains(t, err, "run: nova-config fleet set --loops_dir <path>")
 	assert.Zero(t, c.Exists(ctx, LoopKey("member-m1")).Val(), "a refused apply writes no hash")
 }
+
+func TestCheckFleetRefusesASpacePaddedPasswordKey(t *testing.T) {
+	t.Parallel()
+
+	fleet, _ := Lookup(KindFleet)
+
+	// Space before "password" key
+	row := Row{Name: KindFleet, Fields: map[string]string{"pg_dsn": "postgres://cfgu@db.invalid:5432/nova? password=x"}}
+	err := fleet.Check(row)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "carries a password")
+
+	// Space after "password" key
+	row = Row{Name: KindFleet, Fields: map[string]string{"pg_dsn": "postgres://cfgu@db.invalid:5432/nova?password =x"}}
+	err = fleet.Check(row)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "carries a password")
+
+	// Un-padded password should also be refused
+	row = Row{Name: KindFleet, Fields: map[string]string{"pg_dsn": "postgres://cfgu@db.invalid:5432/nova?password=x"}}
+	err = fleet.Check(row)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "carries a password")
+
+	// No password should be accepted
+	row = Row{Name: KindFleet, Fields: map[string]string{"pg_dsn": "postgres://cfgu@db.invalid:5432/nova"}}
+	err = fleet.Check(row)
+	require.NoError(t, err)
+}
