@@ -23,6 +23,7 @@ package swarm
 // re-queue it (nova-tools#2033).
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -318,6 +319,36 @@ func TakeSlotLeases(store, owner string, k int, dur time.Duration, label string,
 	return takeSlotLeases(store, owner, k, 1, "", dur, label, now, pid)
 }
 
+// TakeSlotLeasesWaiting requests k weighted leases for owner, waiting up to wait
+// duration when capacity is occupied. When wait is 0, it makes a single attempt.
+// It checks ctx for cancellation during the wait (docs/SPEC-SWARM.md, "Bench slot leases").
+func TakeSlotLeasesWaiting(ctx context.Context, store, owner string, k int, kind string, dur, wait time.Duration, label string, pid int) (ids []string, held, share, free int, holders string, ok bool, err error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	deadline := time.Now().Add(wait)
+	const pollInterval = 25 * time.Millisecond
+	for {
+		now := time.Now().UTC()
+		ids, held, share, free, holders, ok, err = TakeSlotLeasesKind(store, owner, k, kind, dur, label, now, pid)
+		if err != nil || ok {
+			return ids, held, share, free, holders, ok, err
+		}
+		if wait <= 0 || !time.Now().Before(deadline) {
+			return nil, held, share, free, holders, false, nil
+		}
+		sleepDur := min(pollInterval, time.Until(deadline))
+		if sleepDur <= 0 {
+			return TakeSlotLeasesKind(store, owner, k, kind, dur, label, time.Now().UTC(), pid)
+		}
+		select {
+		case <-ctx.Done():
+			return nil, held, share, free, holders, false, ctx.Err()
+		case <-time.After(sleepDur):
+		}
+	}
+}
+
 // takeSlotLeases grants k leases to owner when both caps hold after reaping:
 // the owner's held+demand stays within its share, and the total held+demand
 // stays within capacity-reserve, where demand is k times weight (nova-tools#2033).
@@ -346,6 +377,13 @@ func takeSlotLeases(store, owner string, k, weight int, kind string, dur time.Du
 	}
 	if strings.ContainsAny(owner, "\r\n") || strings.ContainsAny(label, "\r\n") || strings.ContainsAny(kind, "\r\n") {
 		return nil, 0, 0, 0, "", false, fmt.Errorf("owner and label are one line")
+	}
+	// An owner is a name, not a path: returnCardForLease joins the raw owner into
+	// STORE/taken/<owner>-<label>, so a separator or ".." would let a reap move a
+	// file from outside the store into its queue (security#66 finding 2). Refuse it
+	// at take, the one-line check the label already pays at reap.
+	if strings.ContainsAny(owner, `/\`) || strings.Contains(owner, "..") {
+		return nil, 0, 0, 0, "", false, fmt.Errorf("owner has no path separators or ..")
 	}
 	// The store is read once here so that a store that was never `slots init`ed says so
 	// in its own sentence before this run makes a lock file inside it.

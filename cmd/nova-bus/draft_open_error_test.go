@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -95,7 +96,7 @@ func TestDraftSubjectResolutionRepairsMalformedOrUnreadableOpen(t *testing.T) {
 			for _, want := range []string{
 				tc.wantContext,
 				tc.wantRepair,
-				"nova-bus inbox --bus " + shellQuote(root) + " --as 'Ada Vale' --receipt-max-words 23 --full --carry-history --advance --remote '<your-remote>' --branch '<your-branch>'",
+				"nova-bus inbox --bus " + oneline.ShellWord(root) + " --as 'Ada Vale' --receipt-max-words 23 --full --carry-history --advance --remote '<your-remote>' --branch '<your-branch>'",
 				"replace the remote and branch placeholders",
 				"--receipt-max-words 23 is the resolved positive word-count threshold for classifying short receipts",
 				"--carry-history preserves existing history",

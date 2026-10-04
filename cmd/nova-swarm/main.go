@@ -48,22 +48,35 @@ usage:
   nova-swarm doctor    [--path <file>] [--local <file>]   refuse a launch under a shadowed nova-swarm (PATH vs ~/.local/bin build stamp)
   nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
   nova-swarm lint      --card <file> [--typed] [--child-rules | --child-rules-file <file>] [--member-injects] [--base-check [--repo <dir>] [--legs <file>] [--p95 <file>]] [--trust <file>] [--lineup <file>] [--decide [--decide-answers <file>] [--decide-record <file>]] [--max <n>] | --fleet <file> [--max <n>] | --rules
-                       (a bare --card holds the card to nova-swarm's own card contract, the shape native runs, the same for every adopter: the RESULT line first and written last, numbered STEPs entering the repository, a test and its command, a deadline, the files named, scratch under a named root; --rules lists every check; an adopter's own rules go in --child-rules-file)
-                       (--fleet lints a launcher script against the coordinator's /bin/bash 3.2: shebang, bash-4 builtins, unquoted expansions)
-                       (--child-rules holds the card to the rules the coordinator gives a child: one rule-<name> per required sentence, one step-<what> per forbidden command; the sentences are the built-in general rules, or the lines of --child-rules-file, one required sentence per line; template --name card prints a card that passes the general ones)
-                       (--member-injects lints the card as the member stages it, rules by reference: the rules are appended at stage time from the held file of the card's REPO: (fleet/child-rules.txt for nova-tools, fleet/child-rules.<repo>.txt for another), or --child-rules-file; a card need not carry them, and a line that contradicts them is still a finding)
-                       (--decide asks the brief decision nova-sprint add asks (nova-decide's brief: p(converges), the minutes, the questions the card leaves open) through Jev with JEV_API_KEY, or from --decide-answers, and prints one LINT DECIDE line after the lint's own; it never changes the verdict, and a failing backend prints the verdict, then why, exit 2)
-                       (--base-check adds the four checks of a coding card: its PATHS exist at the base sha in --repo (default the working directory), no STEP pushes or calls gh, its LEG is a line of --legs, its deadline is at least --p95's figure for its kind; evidence not given is reported missing, never passed)
-                       (nova-sprint add holds a brief to the --child-rules tokens only, and to its model lines: rule-<name> for each rule of its set (the six general rules, or the file add --rules or init --rules names), the step-<what> scans (step-go-clean and step-go-test-timeout only when the file carries those rules), and rule-libraries-considered when the file carries [libraries-considered]; every other token --rules lists is this lint's alone)
-  nova-swarm step      --card <file> --dir <checkout> [--work <dir>] [--result <file>] [--sandbox <wall> | --no-wall] | --card <file> --remainder <id> --from <step> --land <sha>
-                       (runs the card's own programs: a card whose every work step is a script step, walked in the checkout with no model, each program, POST command and git in its own wall (network denied, no credential, the checkout and a private temp the only writes); one STEP OK|FAILED line per step, stopping at the first failed; refused with no wall unless --no-wall, which runs them unconfined; --remainder prints the card a failed step leaves)
+                       (a bare --card holds the card to nova-swarm's own card contract, the shape native
+                        runs; --rules lists every check; --fleet lints a launcher script against the
+                        coordinator's /bin/bash 3.2. --base-check adds the four checks of a coding card;
+                        --decide asks the brief decision nova-sprint add asks; an adopter's own rules go
+                        in --child-rules-file. --member-injects lints the card as the member stages it.
+                        nova-swarm lint -h has the rest.)
+  nova-swarm step      --card <file> --dir <checkout> [--work <dir>] [--result <file>] [--sandbox <binary> | --no-wall] | --card <file> --remainder <id> --from <step> --land <sha>
+                       (runs the card's own programs: a card whose every work step is a script step,
+                        walked in the checkout with no model, each program, POST command and git in its
+                        own wall (network denied, no credential, the checkout and a private temp the only
+                        writes). --sandbox <binary> names the wall binary each program, POST command and
+                        git runs in, default nova-sandbox on PATH; --no-wall runs them unconfined. One STEP
+                        OK|FAILED line per step; --remainder prints the card a failed step leaves.)
   nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|card|read|fix|text|replay|drift|tone|models.tsv
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
   nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--frame <file>] [--identity <owner>,<name>,<email>]
   nova-swarm member    --as <name> --server <host:port> --harness <path> --root <dir> [--slots <dir>] [--results-root <dir>] [--width <n>] [--model <provider/model>] [--deadline <duration>] [--tokens <n>|unmetered] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--no-wall] [--gh <path>] [--pass <NAME,...>] [--disk-floor <GiB>] [--stage-wall <duration>] [--identity <owner>,<name>,<email>]
-                       (this machine as one member of a sprint's fleet, every sprint verb sent to the sprint's server --server, the run loop nova-sprint run --listen started, so this machine opens no store: beat, queue, push and finish what ended (the child's commit to origin's sprint branch, from outside the wall, never forced; the pull request the child's gh pr create asked for, opened with --gh), each finish judged ok, failed or reaped (docs/SPEC-CARD-CONTRACT.md), take to the width its fleet row names (read with its queue every tick: a member's own row, a reader's its machine's, reader-<m> running at m's width; --width is a twin's override), each card one native child with its frame and an allowlist environment, on the model, budget and deadline its packet's route names (the card decides: the deal draws a route of its tier, or its model: pin; --model, --tokens and --deadline are the override a card with no route runs on); --pass names the secrets a child is handed, the loop record's nova-secrets keys: a loop whose harness reads its provider key from the environment carries --pass <KEY>, else its children start without it and fail at the provider; --reader runs the readers-table loop, each read on the route the ask drew from the reader tier unless --model, --tokens or --deadline is given, and a flash card's first read a decide read, asked by native with JEV_API_KEY from the reader's environment, which no child is handed (docs/SPEC-SPRINT.md section 6); a work member whose environment holds JEV_API_KEY asks the attempt decision when any take ends, in its own process, and the finish carries it (docs/SPEC-SPRINT.md section 2); a work card's red gate, its child ended not-done, is classed by native's gate decision with the same key before the take is reported (the failing tests run once at the base, bounded), each decision recorded and shown, and routed only on the sprint row's gate bars, empty by default: flaky failures rerun once, pre-existing ones never the card's (docs/SPEC-SPRINT.md section 5, the gate verdict); --identity names the pool identity every child commits under, from the loop's nova-config argv, else the pool's identity.tsv; a launch it is done with leaves no checkout behind (a failed one keeps its directory, the newest 5 of the pool), and it starts no card while the slots' volume has less free than --disk-floor GiB, default 10; each card's checkout is staged within --stage-wall, default 120s, which a slow machine's loop row names longer; a card it will not start is finished staging refused: <why>, so the sprint deals it to another member and says why)
+                        (run this machine as a sprint member; --server is the address of nova-sprint run --listen.
+                         Each tick beats, reads the queue, reports ended children and takes cards to the
+                         fleet row's width; --width overrides it, and --pass names environment secrets to
+                         hand to children. A reader runs the reads of the readers table; this machine opens
+                         no store. --no-wall runs each child with no wall. nova-swarm member -h has the rest.)
   nova-swarm disk-guard [--root <dir>]... [--scan <dir>]... [--cache <dir|glob>]... [--cache-max-gb <GiB>] [--modcache-max-gb <GiB>] [--logs <dir>] [--log-max-mb <MiB>] [--log-keep <n>] [--pool-idle <duration>] [--land <dir>] [--clone-age <duration>] [--mirrors <dir>] [--disk-floor <GiB>] [--dry-run]
-                       (one pass over this machine, run every few minutes by the disk-guard loop row fleet/loops.yml adds to every machine: every Go build cache (the login's, each root's cache/go-build, each --cache) held under --cache-max-gb, default 10, by the member's trim, oldest entries first and never one used in the last two hours; a module cache over --modcache-max-gb, default 50, emptied while no go command runs; every loop log over --log-max-mb, default 50, copied to <log>.1 and emptied in place, --log-keep copies, default 3; the pool of a loop that stopped (no process names its root, nothing moved for --pool-idle, default 30m) swept as the member sweeps its own, a work launch whose checkout holds commits past its staged one kept; land clones unused for --clone-age, default 24h, removed; a mirror's temporary packs older than an hour removed while nothing fetches into it, never git prune; never anything with uncommitted work or a live process; one REMOVED, TRIMMED, CLEANED, ROTATED or KEPT line per action with freed=<bytes>, a DISK-GUARD WARN line under --disk-floor, default 10, and DISK-GUARD OK freed=<bytes> free=<bytes> at the end; --dry-run judges the same and removes nothing, each action said WOULD-REMOVE, WOULD-TRIM, WOULD-CLEAN or WOULD-ROTATE)
+                       (one pass over this machine, run every few minutes by the disk-guard loop row
+                        fleet/loops.yml adds to every machine: it trims every Go build cache over
+                        --cache-max-gb, empties a module cache over --modcache-max-gb, rotates loop logs
+                        over --log-max-mb and sweeps a stopped loop's pool and old land clones. It never
+                        removes anything with uncommitted work or a live process, and prints one REMOVED,
+                        TRIMMED, CLEANED, ROTATED or KEPT line per action. disk-guard -h has the rest.)
   nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
   nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>] [--kind <kind>]
   nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all) [--force]
@@ -71,13 +84,15 @@ usage:
                         --force frees it anyway and can oversubscribe the bench: an operator's act,
                         never a card's and never a manager's default)
   nova-swarm slots list --store <dir>
+  nova-swarm slots run --store <dir> --owner <o> [--n <k>] [--for <duration>] [--kind <kind>] [--label <text>] [--wait <duration>] -- <command> [args...]
   nova-swarm worker    check <description.json> [--env] [--max <n>]
 
-exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- a verification that failed, a lint that found a defect; 2 could not run:
-a missing flag, an unreadable worker description, a key file that is
-absent or empty, a bad invocation; 3 member: its binary was replaced on disk
-(MEMBER STOP: its supervisor starts the new one; with children running it first
-takes no new card and stops when the last is reported).
+exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- a verification that
+failed, a lint that found a defect; 2 could not run: a missing flag, an unreadable worker
+description, a key file that is absent or empty, a bad invocation; by verb:
+  member: 3 its binary was replaced on disk (MEMBER STOP: its supervisor starts the new
+    one; with children running it first takes no new card and stops when the last is
+    reported)
 
 Inputs: native requires a card, harness, model, slot, root, deadline and token budget.
 Use --tokens <n> for a positive budget, or --tokens unmetered to state that the
@@ -94,13 +109,13 @@ carries the variable's name, never its value. The legacy --auth option copies
 the provider's auth entry into the data home, mode 0600, and removes it when
 the run ends. A worker naming secret refuses --auth and writes no auth file.
 
-EVERY JOB RUNS INSIDE nova-sandbox (docs/SPEC-SANDBOX.md) unless the caller types
---no-wall (native and member), the one opt-out, which no card can ask for and
-which the NATIVE line names as sandbox=none-by-flag. Inside the wall the job
-directory and its data home are the only writable paths; the slot directory and
-whatever read_roots names in the worker description are readable; the key file,
-~/.ssh and the gh configuration are in neither list and the kernel denies them.
-A command that runs outside the wall and dies inside it is missing a read_roots entry.
+Sandbox: native and member use nova-sandbox unless --no-wall is explicit
+(docs/SPEC-SANDBOX.md); no card can opt out. The NATIVE line reports the opt-out
+as sandbox=none-by-flag. The job directory, data home, temporary directory and
+default shared cache are writable. The slot, harness and toolchain directories,
+worker read_roots and any borrowed Git objects are readable.
+The worker's key file is kept outside its readable roots. If a command runs
+outside the wall but fails inside it, check its dependencies and read_roots.
 
 Prepare a card: save nova-swarm template --name card to a file, fill its <...>
 lines, then run nova-swarm lint --card <file> --child-rules. REPO: names the
@@ -140,17 +155,21 @@ const cardLines = `a card's required lines (template --name card writes them; li
 `
 
 // verbHelpLines is what a verb's -h shows above its flags beyond the usage it
-// quotes: its example line, and for template the card's required lines.
+// quotes: the sentences cut from its banner parenthesis (verbDetail), its example
+// line, and for template the card's required lines.
 func verbHelpLines(verb string) string {
-	add := ""
+	add := verbDetail[verb]
+	if add != "" && !strings.HasSuffix(add, "\n") {
+		add += "\n"
+	}
 	if verb == "template" {
 		add = cardLines
 	}
 	if verb == "step" {
-		add = "effect: local write: commits in the checkout --dir names, and runs the card's programs in their own wall; --dry-run writes nothing\n"
+		add += "effect: local write: commits in the checkout --dir names, and runs the card's programs in their own wall; --dry-run writes nothing\n"
 	}
 	if verb == "disk-guard" {
-		add = "effect: local write: removes and rotates files on this machine; --dry-run writes nothing\n"
+		add += "effect: local write: removes and rotates files on this machine; --dry-run writes nothing\n"
 	}
 	if ex, ok := verbExamples[verb]; ok {
 		add = "example:\n  " + ex + "\n" + add
@@ -319,6 +338,16 @@ func (f *flags) parse(args []string, stderr io.Writer) bool {
 	}
 	if n := f.fs.NArg(); n > 0 {
 		refuse(stderr, " "+f.verb, fmt.Sprintf("takes no positional arguments, got %d: %q (every input is a flag)", n, f.fs.Args()))
+		return false
+	}
+	return true
+}
+
+// parseArgs parses flags without refusing positional arguments, for verbs that wrap a command
+// (docs/SPEC-SWARM.md, "Bench slot leases").
+func (f *flags) parseArgs(args []string, stderr io.Writer) bool {
+	if err := verbflag.Parse(f.fs, args); err != nil {
+		refuse(stderr, " "+f.verb, oneline.Cap(verbflag.Explain(f.fs, err), oneline.TailBytes))
 		return false
 	}
 	return true
@@ -880,7 +909,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	if res.defect != "" {
 		fmt.Fprintln(stdout, oneline.Escape(res.defect))
 	}
-	// WHICH BUDGET ENDED THE CARD, AND AT WHAT COUNT (nova-tools #5094): the member carries
+	// WHICH BUDGET ENDED THE CARD, AND AT WHAT COUNT: the member carries
 	// these words into the finish's reason, so the coordinator reads "budget: tokens 509,940
 	// of 400,000, $0.03" and not only "budget".
 	if res.stopped != "" {

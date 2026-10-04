@@ -1029,13 +1029,13 @@ func passNote(model string, pass []string, auth string) string {
 // yieldRefusal is why a member will not start on an OS with no setpriority
 // (yield.Supported false): native refuses every card there rather than run it at
 // the priority of the CI legs beside it (nova-ci local refuses the same way), so
-// a member would take and fail every card it is dealt. "" where a launch can
-// step behind CI.
+// a member would take and fail every card it is dealt (nova-tools#4293). "" where
+// a launch can step behind CI.
 func yieldRefusal(supported bool, goos string) string {
 	if supported {
 		return ""
 	}
-	return "no setpriority on " + goos + ": native would refuse every card this member takes rather than run it at CI's priority (nova-tools#4293); run members on darwin or Linux"
+	return "no setpriority on " + goos + ": native would refuse every card this member takes rather than run it at CI's priority; run members on darwin or Linux"
 }
 
 // lockedWriter is a writer two goroutines share, one Write at a time: the member's loop and

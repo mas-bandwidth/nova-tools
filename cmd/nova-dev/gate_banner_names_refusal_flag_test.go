@@ -1,0 +1,54 @@
+package main
+
+import (
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+// The rule this test holds: a flag the verb's own refusal tells a reader to
+// pass must be named on that verb's line in the banner the same refusal sends
+// them to. The refusal and the banner are two halves of one answer, and a
+// reader who is told "pass --allow-empty" and then opens the door they were
+// sent to must not be told the flag does not exist.
+//
+// Both halves run the binary; neither scrapes Go source. The first invocation
+// makes the verb refuse and collects the flags its remedy names; the second
+// asks for the banner the refusal points at and checks that line names them.
+func TestTheGateBannerNamesTheFlagItsOwnRefusalTellsYouToPass(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	cli := writeCLI(t, dir)
+	receipts := filepath.Join(dir, "receipts")
+	require.NoError(t, os.MkdirAll(receipts, 0o755))
+
+	code, _, refusal := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts)
+	require.EqualValues(t, 1, code, "the empty gate exit %d, want 1 (it should refuse an empty receipt set)\nstderr: %s", code, refusal)
+
+	token := regexp.MustCompile(`--[a-z][a-z0-9-]*`)
+	seen := map[string]bool{}
+	for _, tok := range token.FindAllString(refusal, -1) {
+		seen[tok] = true
+	}
+	require.NotEmpty(t, seen, "the refusal names no flag, so this test would check nothing:\n%s", refusal)
+
+	code, stdout, helpErr := dogfoodRun(t, "help")
+	require.EqualValues(t, 0, code, "`nova-dev help` exit %d, want 0\nstderr: %s", code, helpErr)
+	gateLines := []string{}
+	for _, l := range strings.Split(stdout, "\n") {
+		if strings.Contains(l, "nova-dev dogfood gate") {
+			gateLines = append(gateLines, l)
+		}
+	}
+	require.EqualValues(t, 1, len(gateLines), "the banner has %d lines naming `nova-dev dogfood gate`, want exactly 1:\n%s", len(gateLines), stdout)
+	banner := gateLines[0]
+
+	for flag := range seen {
+		require.Contains(t, banner, flag, "the gate's refusal tells the reader to pass %s, but the banner line it sends them to does not name it:\nrefusal: %s\nbanner:  %s\nmissing flag: %s", flag, strings.TrimRight(refusal, "\n"), strings.TrimRight(banner, "\n"), flag)
+	}
+}

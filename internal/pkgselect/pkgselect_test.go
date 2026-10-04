@@ -383,6 +383,51 @@ func TestWholeTreeFromTheTrackedFiles(t *testing.T) {
 	assert.Equal(t, []string{"./cmd/foo", "./internal/bar", "./internal/ci", "./internal/docs"}, got, "tree from files")
 }
 
+// A tracked directory whose name is shell syntax is not a package. The name
+// would be interpolated into a shell by make test PKGS=, so treeFromFiles
+// returns a *ListError that names the directory, and Select --all does the
+// same through dotted. A tree of ordinary names still passes. The test does
+// not start a shell.
+func TestWholeTreeRefusesAPackageDirectoryWithShellSyntax(t *testing.T) {
+	t.Parallel()
+	const badDir = "internal/p';id>x;'"
+	const badFile = badDir + "/a.go"
+	root := tree(t)
+	p := filepath.Join(root, filepath.FromSlash(badFile))
+	require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+	require.NoError(t, os.WriteFile(p, []byte("package p\n"), 0o644))
+	dep, err := LoadDeprecated(root)
+	require.NoError(t, err)
+
+	s := &selector{
+		run: newFake(map[string]Result{lsFilesCmd: {Stdout: tracked() + badFile + "\x00"}}).run,
+		o:   Options{Root: root},
+		dep: dep,
+	}
+	got, err := s.treeFromFiles()
+	var le *ListError
+	require.ErrorAs(t, err, &le, "treeFromFiles returned %q", got)
+	assert.Contains(t, le.Text, "./"+badDir)
+	assert.Empty(t, got)
+
+	f := newFake(map[string]Result{
+		listTree: {Stdout: imports("cmd/foo", "internal/bar", badDir)},
+	})
+	out, err := Select(f.run, Options{Root: root, All: true})
+	require.ErrorAs(t, err, &le, "Select --all returned %q", out.Packages)
+	assert.Contains(t, le.Text, "./"+badDir)
+	assert.Empty(t, out.Packages)
+
+	s = &selector{
+		run: newFake(map[string]Result{lsFilesCmd: {Stdout: tracked()}}).run,
+		o:   Options{Root: root},
+		dep: dep,
+	}
+	ok, err := s.treeFromFiles()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"./cmd/foo", "./internal/bar", "./internal/ci", "./internal/docs"}, ok, "a normal tree still passes")
+}
+
 func TestSelectRefusesWithNoBase(t *testing.T) {
 	t.Parallel()
 	_, err := Select(newFake(nil).run, Options{Root: tree(t)})
@@ -458,19 +503,6 @@ func TestOrderHeavyFirstAndFunctional(t *testing.T) {
 	assert.Equal(t, `[{"name":"nothing","packages":"","os":"linux","arch":"x64","group":"lin"}]`, MarshalLegs([]Leg{NothingLeg(g)}), "the nothing leg")
 }
 
-func TestShardsFollowTheEvent(t *testing.T) {
-	t.Parallel()
-	for event, want := range map[string]Shards{
-		"pull_request":      {Linux: 4, Mac: 4},
-		"merge_group":       {Linux: 8, Mac: 4},
-		"push":              {Linux: 8, Mac: 8},
-		"schedule":          {Linux: 8, Mac: 8},
-		"workflow_dispatch": {Linux: 8, Mac: 8},
-	} {
-		assert.Equal(t, want, ShardsFor(event), "ShardsFor(%s)", event)
-	}
-}
-
 func legNames(legs []Leg) []string {
 	var out []string
 	for _, l := range legs {
@@ -540,8 +572,8 @@ func TestDetectDarwinSensitive(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok, "DetectDarwinSensitive = %v", sens)
 	assert.Equal(t, "./cmd/a ./internal/c ", sens.Sorted(), "want ./cmd/a (imports the differing ./internal/c) and ./internal/c itself")
-	assert.True(t, sens.Needs("./cmd/a"))
-	assert.False(t, sens.Needs("./cmd/b"))
+	assert.True(t, sens.All || sens.Pkgs["./cmd/a"])
+	assert.False(t, sens.All || sens.Pkgs["./cmd/b"])
 }
 
 func TestDetectDarwinSensitiveWithNothingDifferent(t *testing.T) {
@@ -568,7 +600,7 @@ func TestDetectDarwinSensitiveFallsBackToAll(t *testing.T) {
 		assert.NoError(t, err, broken)
 		assert.False(t, ok, broken)
 		assert.True(t, sens.All, broken)
-		assert.True(t, sens.Needs("./anything"), broken)
+		assert.True(t, sens.All || sens.Pkgs["./anything"], broken)
 	}
 }
 

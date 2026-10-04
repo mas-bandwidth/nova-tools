@@ -192,7 +192,18 @@ func CheckInvariant3(storeDir string, sopsCfg *SopsConfig, files []string) (fail
 		var unencRe *regexp.Regexp
 		rule, _ := FindMatchingRule(sopsCfg, file)
 		if rule != nil && rule.UnencryptedRegex != "" {
-			unencRe, _ = regexp.Compile(rule.UnencryptedRegex)
+			var err error
+			if unencRe, err = regexp.Compile(rule.UnencryptedRegex); err != nil {
+				// The rule, not the file, is broken: name the regex and the rule it
+				// came from so the operator repairs .sops.yaml instead of resealing
+				// the key the broken regex refused to permit.
+				failures = append(failures, CheckFailure{
+					Kind:   "unsealed",
+					File:   file,
+					Reason: fmt.Sprintf(".sops.yaml rule for %s carries unencrypted_regex %q, which is not a valid regular expression", file, rule.UnencryptedRegex),
+				})
+				continue
+			}
 		}
 
 		fileUnsealed := false
@@ -227,7 +238,7 @@ func CheckInvariant4(storeDir, sopsPath, keyPath, seatPubKey string, files []str
 
 		if slices.Contains(fileRecipients, seatPubKey) {
 			mineCount++
-			_, decErr := DecryptFile(sopsPath, keyPath, filePath)
+			_, decErr := DecryptFile(nil, sopsPath, keyPath, filePath)
 			if decErr != nil {
 				failures = append(failures, CheckFailure{
 					Kind:   "decrypt-failed",
@@ -237,7 +248,7 @@ func CheckInvariant4(storeDir, sopsPath, keyPath, seatPubKey string, files []str
 			}
 		} else {
 			foreignCount++
-			_, decErr := DecryptFile(sopsPath, keyPath, filePath)
+			_, decErr := DecryptFile(nil, sopsPath, keyPath, filePath)
 			if decErr == nil {
 				failures = append(failures, CheckFailure{
 					Kind:   "foreign-openable",
@@ -460,7 +471,7 @@ func RunCheck(storeDir, asName, keyPath, sopsPath string, maxShown int) (okLine 
 		return "", nil, nil, "", 2, err
 	}
 
-	if _, err := CheckSopsVersion(sopsPath); err != nil {
+	if _, err := CheckSopsVersion(nil, sopsPath); err != nil {
 		return "", nil, nil, "", 2, err
 	}
 

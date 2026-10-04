@@ -30,11 +30,6 @@ func runCheck(t *testing.T, args ...string) (exit int, stdout, stderr string) {
 	return exit, out.String(), errb.String()
 }
 
-// exampleDogfood is the fixture the dogfood verb's banner example runs
-// against: a command reference the size of a first run, and the receipts two
-// friends left against it.
-const exampleDogfood = "testdata/example-dogfood"
-
 // localize points an example or transcript command at the fixture, so what is
 // under test is the command's SHAPE and not the reader's directory layout. The
 // banner shows a reader the paths they would type from the repository root
@@ -43,13 +38,9 @@ const exampleDogfood = "testdata/example-dogfood"
 func localize(args []string) []string {
 	out := append([]string(nil), args...)
 	for i, a := range out {
-		switch {
-		case a == "./self":
+		switch a {
+		case "./self":
 			out[i] = exampleSelf
-		case a == "./docs/CLI.md":
-			out[i] = filepath.Join(exampleDogfood, "CLI.md")
-		case a == "./dogfood-receipts":
-			out[i] = filepath.Join(exampleDogfood, "receipts")
 		default:
 			if rest, ok := strings.CutPrefix(a, "./self/"); ok {
 				out[i] = filepath.Join(exampleSelf, rest)
@@ -195,9 +186,9 @@ func TestQuickstartRunsBothChecksAndTakesTheWorstExit(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "build.py"), []byte("print('machinery')\n"), 0o644))
 	exit, stdout, stderr := runCheck(t, "quickstart", "--dir", dir)
 	require.EqualValues(t, 1, exit, "exit = %d, want 1 (both checks ran and said NO); stderr: %s", exit, stderr)
-	assert.Contains(t, stderr, "LINKS FAIL", "the broken link is not reported:\n%s", stderr)
-	assert.Contains(t, stderr, "NOCODE FAIL", "nocode did not run after links failed; a first run must get both:\n%s", stderr)
-	assert.Contains(t, stdout, "QUICKSTART FAIL checks=2 failed=links,nocode worst-exit=1", "the closing line must say FAIL, name both failed checks and report the worst exit:\n%s", stdout)
+	assert.Contains(t, stderr, "LINKS FAILED", "the broken link is not reported:\n%s", stderr)
+	assert.Contains(t, stderr, "NOCODE FAILED", "nocode did not run after links failed; a first run must get both:\n%s", stderr)
+	assert.Contains(t, stdout, "QUICKSTART FAILED checks=2 failed=links,nocode worst-exit=1", "the closing line must say FAILED, name both failed checks and report the worst exit:\n%s", stdout)
 }
 
 // The `### First run` block of docs/TESTS.md is EXECUTED: every documented
@@ -277,7 +268,7 @@ func copyTree(t *testing.T, from, to string) {
 
 // THE OK WORD IS A CLAIM THAT EVERY CHECK PASSED (a cold rating of the tools, 2026-09-30:
 // `QUICKSTART OK ... worst-exit=1` over two failed checks). With one failing check the run
-// prints no OK line at all, closes with FAIL naming exactly the failed check, and exits 1.
+// prints no OK line at all, closes with FAILED naming exactly the failed check, and exits 1.
 func TestQuickstartWithOneFailingCheckPrintsFailAndNoOK(t *testing.T) {
 	t.Parallel()
 
@@ -286,7 +277,7 @@ func TestQuickstartWithOneFailingCheckPrintsFailAndNoOK(t *testing.T) {
 	exit, stdout, stderr := runCheck(t, "quickstart", "--dir", dir)
 	require.EqualValues(t, 1, exit, "exit = %d, want 1; stderr: %s", exit, stderr)
 	assert.NotContains(t, stdout, "QUICKSTART OK", "an OK line over a failed check:\n%s", stdout)
-	assert.Contains(t, stdout, "QUICKSTART FAIL checks=2 failed=links worst-exit=1 ", "the closing line must be FAIL and name only the failed check:\n%s", stdout)
+	assert.Contains(t, stdout, "QUICKSTART FAILED checks=2 failed=links worst-exit=1 ", "the closing line must be FAILED and name only the failed check:\n%s", stdout)
 }
 
 // With both checks clean the run closes with OK, and only then.
@@ -297,5 +288,5 @@ func TestQuickstartWithEveryCheckPassingPrintsOK(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.md"), []byte("no links here\n"), 0o644))
 	exit, stdout, stderr := runCheck(t, "quickstart", "--dir", dir)
 	require.EqualValues(t, 0, exit, "exit = %d, want 0; stdout: %s\nstderr: %s", exit, stdout, stderr)
-	assert.True(t, strings.Contains(stdout, "QUICKSTART OK done=2 worst-exit=0 ") && !strings.Contains(stdout, "QUICKSTART FAIL"), "a clean run closes with OK:\n%s", stdout)
+	assert.True(t, strings.Contains(stdout, "QUICKSTART OK done=2 worst-exit=0 ") && !strings.Contains(stdout, "QUICKSTART FAILED"), "a clean run closes with OK:\n%s", stdout)
 }

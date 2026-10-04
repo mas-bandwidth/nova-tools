@@ -85,12 +85,12 @@ func OpenSeatFile(storeDir, asName, keyPath, sopsPath string) (SeatFile, error) 
 	}
 
 	// 5. Sops binary check
-	if _, err := CheckSopsVersion(sopsPath); err != nil {
+	if _, err := CheckSopsVersion(nil, sopsPath); err != nil {
 		return SeatFile{}, err
 	}
 
 	// 6. Decrypt target file
-	decData, err := DecryptFile(sopsPath, keyPath, targetFile)
+	decData, err := DecryptFile(nil, sopsPath, keyPath, targetFile)
 	if err != nil {
 		return SeatFile{}, err
 	}

@@ -30,7 +30,7 @@ func inventoryHarness(t *testing.T, n int) *harness {
 		h.redis.views[config.KindMachine][fmt.Sprintf("bench-%02d", i)] = config.View{"user": "user-a", "seat": "seat-a", "slots": "8", "runners": "0"}
 	}
 	h.redis.revs[config.KindMachine] = 1
-	h.redis.views[config.KindFleet] = map[string]config.View{config.KindFleet: {"redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova"}}
+	h.redis.views[config.KindFleet] = map[string]config.View{config.KindFleet: {"redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova", "loops_dir": "~/nova-bench/loops"}}
 	return h
 }
 
@@ -56,7 +56,7 @@ func TestInventoryPrintsTheAppliedState(t *testing.T) {
 	t.Parallel()
 	h := inventoryHarness(t, 2)
 	h.env["NOVA_MACHINE"] = "bench-01"
-	h.redis.views[config.KindFleet] = map[string]config.View{config.KindFleet: {"store": "bench-02", "coordinator": "bench-01", "redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova"}}
+	h.redis.views[config.KindFleet] = map[string]config.View{config.KindFleet: {"store": "bench-02", "coordinator": "bench-01", "redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova", "loops_dir": "~/nova-bench/loops"}}
 	h.redis.views["loop"] = map[string]config.View{"member-02": {
 		"name": "member-02", "machine": "bench-02", "argv": `["nova-swarm","member"]`, "seat": "seat-a", "keys": "API_KEY",
 		"every": "0", "keepalive": "true", "enabled": "true", "log": "~/nova-bench/loops/member-02.log",
@@ -294,10 +294,13 @@ func TestInventoryHelpAndDocsReachAWorkingRun(t *testing.T) {
 		"store_deployer", "nova_loops", "nova_os", "nova_redis_port", "nova_redis_addr", "nova_pg_dsn", "never Postgres",
 		"matched by exact machine name", "lower-cased first label", "nothing is marked local", "an empty value counts as unset",
 		"this verb exits 0 when it printed, 1 when the applied state or an unknown machine refused it, 2 when it could not run (usage, connection, timeout)",
-		"exit codes: 0 done, 1 refused (the verb ran and the store said no; migrate --dry-run: ready=no, nothing attempted), 2 could not run (usage, or a store that did not answer)",
+		"exit codes: 0 done, 1 refused (the verb ran and the store said no; migrate --dry-run: ready=no, nothing attempted), 2 could not run (usage, or a store that did not answer); machine self: 2 not a row, 3 unreadable",
 		"effect: inspection: reads Redis",
 	} {
-		assert.Contains(t, help, w)
+		// The exit-codes sentence wraps in the banner and so in this verb's
+		// help: join the fields first, as TestEveryVerbAnswersHelpAndTouchesNothing
+		// does, so the whole sentence stays pinned whatever the wrap does.
+		assert.Contains(t, strings.Join(strings.Fields(help), " "), w)
 	}
 	issue := regexp.MustCompile(`#[0-9]+|ideas#|\b20[0-9]{2}-[0-9]{2}-[0-9]{2}\b`)
 	assert.Empty(t, issue.FindString(help))

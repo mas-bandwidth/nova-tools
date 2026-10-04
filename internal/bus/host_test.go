@@ -31,7 +31,8 @@ func TestSendWritesTheHostLineWhenHostIsGiven(t *testing.T) {
 	// And send says what it did, because a tolerance nobody is told about is a tool
 	// quietly rewriting what a person wrote.
 	if len(p.Notices) == 0 || !strings.Contains(strings.Join(p.Notices, "\n"), "--host") {
-		require.False(t, len(p.Notices) == 0 || !strings.Contains(strings.Join(p.Notices, "\n"), "--host"), "no notice named --host: %v", p.Notices)
+		require.False(t, len(p.Notices) == 0, "no notice named --host: %v", p.Notices)
+		require.False(t, !strings.Contains(strings.Join(p.Notices, "\n"), "--host"), "no notice named --host: %v", p.Notices)
 	}
 }
 

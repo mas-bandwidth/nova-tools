@@ -401,7 +401,11 @@ like, a profile keeps the contract: a push leaves nothing but a line in `<job>/.
 (`branch`, `head`, `top`, tab separated); the child's end has the shape above, recorded by a
 command profile in `<job>/.sprint/finish.md` or written explicitly in `<job>/RESULT.md` as a
 fallback. Nothing reaches a forge from inside the wall. `cardcontract.ContractShim` is the push
-recorder every profile may reuse.
+recorder every profile may reuse. A push whose remote is a local path (an absolute path, a
+`./` or `../` path) or a `file://` URL is handed to the real git unchanged, as typed, and
+records nothing: it lands on the child's own machine and reaches no forge, and a test or tool
+inside a card that pushes to a bare repository it made under its own temp directory needs the
+push to land.
 
 A profile is done when it passes the harness every profile passes: `TestEveryProfileKeepsTheContract`
 (the shims answer every verb form the profile claims) and `TestTheScriptedChildEndToEnd`, the

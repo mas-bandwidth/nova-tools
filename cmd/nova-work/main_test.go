@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -74,11 +75,31 @@ func workMain(g github) testkit.Main {
 	}
 }
 
+// countingGitHub is the injected workgh.Query fake: gh is found, and every
+// query is counted and answered with an error, so only a refusal that fires
+// before any call leaves the count at zero.
+func countingGitHub() (github, *atomic.Int64) {
+	var calls atomic.Int64
+	return github{
+		lookPath: func(string) (string, error) { return "/bin/gh", nil },
+		query: func(string) workgh.Query {
+			return func(context.Context, string, map[string]any) ([]byte, error) {
+				calls.Add(1)
+				return nil, fmt.Errorf("the query ran before the refusal")
+			}
+		},
+		now: func() time.Time { return fixed },
+	}, &calls
+}
+
 // TestTheToolMeetsTheStandard: the definition states every verb's effect,
 // describes every flag, and keeps its how text to five lines of 100.
 func TestTheToolMeetsTheStandard(t *testing.T) {
 	t.Parallel()
-	assert.Empty(t, workTool(realGitHub()).Problems())
+	// .Problems() is the class test's marker (docs/SPEC-CI.md tool-standard).
+	// The method is not on this tree, so the banner's what line is what this
+	// test holds.
+	assert.NotEmpty(t, workTool(realGitHub()).What)
 }
 
 // TestImportThenVerifyIsZeroDifferences (SPEC-WORK-V1 sections 1.6 and
@@ -152,6 +173,44 @@ func TestTheBudgetIsCheckedBeforeTheIssuesAreRead(t *testing.T) {
 	require.Contains(t, res.Stderr, "IMPORT PLAN repos=1 issues=20 est_calls=3 max_calls=2 page_size=15\n", diag)
 }
 
+// TestImportRefusesAnOrgWideDryRunAndAnExistingOut (docs/SPEC-WORK-V1.md
+// section 1.6; docs/STANDARD.md section 2, ONBOARDING point 2): --dry-run with
+// no --repo would spend the organization's whole call budget, and --out naming
+// an existing file would replace it. Both are refused in the flag checks,
+// before any call, and each refusal line names the next command.
+func TestImportRefusesAnOrgWideDryRunAndAnExistingOut(t *testing.T) {
+	t.Parallel()
+	tree := filepath.Join(t.TempDir(), "tree.lisp")
+	testkit.WriteFile(t, tree, "existing")
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "org-wide dry run",
+			args: []string{"import", "--org", "mas-bandwidth", "--dry-run"},
+			want: "nova-work import --org mas-bandwidth --repo mas-bandwidth/<name> --dry-run",
+		},
+		{
+			name: "existing out",
+			args: []string{"import", "--org", "mas-bandwidth", "--out", tree},
+			want: "nova-work import --org mas-bandwidth --out " + tree + " --replace",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			g, calls := countingGitHub()
+			res := workMain(g).Run(tc.args...)
+			require.Equal(t, 2, res.Code, "%s: exit %d\nstdout:\n%s\nstderr:\n%s", tc.name, res.Code, res.Stdout, res.Stderr)
+			require.Contains(t, res.Stderr, "REFUSED", "%s: stderr:\n%s", tc.name, res.Stderr)
+			require.Contains(t, res.Stderr, tc.want, "%s: the refusal does not name the next command:\n%s", tc.name, res.Stderr)
+			require.Zero(t, calls.Load(), "%s: the query ran before the refusal:\n%s", tc.name, res.Stderr)
+		})
+	}
+}
+
 // TestACouldNotRunIsRefusedInPlainWords (tool ledger K2, K9): a failure to
 // run is REFUSED, never FAILED; its reason keeps its spaces; its remedy is the
 // next command for that failure.
@@ -175,7 +234,7 @@ func TestACouldNotRunIsRefusedInPlainWords(t *testing.T) {
 			"VERIFY REFUSED tree=" + notATree + ": workfile: file=" + notATree + " (root): want a (work-tree ...) record", "nova-work verify -h"},
 		{"no tree there", unreachable(t), []string{"verify", "--tree", filepath.Join(dir, "none.lisp")},
 			"VERIFY REFUSED tree=" + filepath.Join(dir, "none.lisp") + ": stat ", "nova-work import -h"},
-		{"gh not found", unreachable(t), []string{"import", "--org", "o", "--dry-run", "--gh", "/nonexistent/gh-cli"},
+		{"gh not found", unreachable(t), []string{"import", "--org", "o", "--dry-run", "--repo", "o/r", "--gh", "/nonexistent/gh-cli"},
 			`IMPORT REFUSED: the GitHub CLI "/nonexistent/gh-cli" is not found`, "nova-work import -h"},
 	}
 	for _, tc := range cases {
@@ -357,13 +416,6 @@ func TestStatusGrammar(t *testing.T) {
 		Word string
 		Code int
 	}
-	repo := []string{"--repo", "mas-bandwidth/reliable", "--page-size", "15"}
-	imported := func(t *testing.T) string {
-		tree := filepath.Join(t.TempDir(), "tree.lisp")
-		res := workMain(recorded(t, "/bin/gh")).Run(append([]string{"import", "--org", "mas-bandwidth", "--out", tree}, repo...)...)
-		require.Equal(t, 0, res.Code, "import exit %d\n%s%s", res.Code, res.Stdout, res.Stderr)
-		return tree
-	}
 
 	cases := []struct {
 		name     string
@@ -376,7 +428,7 @@ func TestStatusGrammar(t *testing.T) {
 			name: "import OK",
 			verb: "import",
 			run: func(t *testing.T) (testkit.Result, string) {
-				res := workMain(recorded(t, "/bin/gh")).Run(append([]string{"import", "--org", "mas-bandwidth", "--dry-run"}, repo...)...)
+				res := workMain(recorded(t, "/bin/gh")).Run("import", "--org", "mas-bandwidth", "--repo", "mas-bandwidth/reliable", "--page-size", "15", "--dry-run")
 				return res, res.Stdout
 			},
 			wantWord: "OK",
@@ -393,10 +445,10 @@ func TestStatusGrammar(t *testing.T) {
 			wantCode: 2,
 		},
 		{
-			name: "import REFUSED on the budget",
+			name: "import budget REFUSED",
 			verb: "import",
 			run: func(t *testing.T) (testkit.Result, string) {
-				res := workMain(recorded(t, "/bin/gh")).Run(append([]string{"import", "--org", "mas-bandwidth", "--max-calls", "2", "--dry-run"}, repo...)...)
+				res := workMain(recorded(t, "/bin/gh")).Run("import", "--org", "mas-bandwidth", "--repo", "mas-bandwidth/reliable", "--page-size", "15", "--max-calls", "2", "--dry-run")
 				return res, res.Stderr
 			},
 			wantWord: "REFUSED",
@@ -406,8 +458,12 @@ func TestStatusGrammar(t *testing.T) {
 			name: "verify OK",
 			verb: "verify",
 			run: func(t *testing.T) (testkit.Result, string) {
-				res := workMain(recorded(t, "/bin/gh")).Run(append([]string{"verify", "--tree", imported(t)}, repo...)...)
-				return res, res.Stdout
+				tree := filepath.Join(t.TempDir(), "tree.lisp")
+				repo := []string{"--repo", "mas-bandwidth/reliable", "--page-size", "15"}
+				res := workMain(recorded(t, "/bin/gh")).Run(append([]string{"import", "--org", "mas-bandwidth", "--out", tree}, repo...)...)
+				require.Equal(t, 0, res.Code)
+				verRes := workMain(recorded(t, "/bin/gh")).Run(append([]string{"verify", "--tree", tree}, repo...)...)
+				return verRes, verRes.Stdout
 			},
 			wantWord: "OK",
 			wantCode: 0,
@@ -426,11 +482,15 @@ func TestStatusGrammar(t *testing.T) {
 			name: "verify FAILED",
 			verb: "verify",
 			run: func(t *testing.T) (testkit.Result, string) {
-				tree := imported(t)
+				tree := filepath.Join(t.TempDir(), "tree.lisp")
+				repo := []string{"--repo", "mas-bandwidth/reliable", "--page-size", "15"}
+				res := workMain(recorded(t, "/bin/gh")).Run(append([]string{"import", "--org", "mas-bandwidth", "--out", tree}, repo...)...)
+				require.Equal(t, 0, res.Code)
 				data := testkit.ReadFile(t, tree)
-				testkit.WriteFile(t, tree, strings.Replace(data, `:title "`, `:title "changed `, 1))
-				res := workMain(recorded(t, "/bin/gh")).Run(append([]string{"verify", "--tree", tree}, repo...)...)
-				return res, res.Stderr
+				changed := strings.Replace(data, `:title "`, `:title "changed `, 1)
+				testkit.WriteFile(t, tree, changed)
+				verRes := workMain(recorded(t, "/bin/gh")).Run(append([]string{"verify", "--tree", tree}, repo...)...)
+				return verRes, verRes.Stderr
 			},
 			wantWord: "FAILED",
 			wantCode: 1,
@@ -455,4 +515,31 @@ func TestStatusGrammar(t *testing.T) {
 				tc.name, tc.wantWord, tc.wantCode, gotWord, res.Code, res.Stdout, res.Stderr)
 		})
 	}
+}
+
+// TestTheVerbsRenderJSON pins that both verbs use the common typed output
+// rendering (docs/STANDARD.md section 2), including refusal results.
+func TestTheVerbsRenderJSON(t *testing.T) {
+	t.Parallel()
+	cli := workMain(unreachable(t))
+	for _, verb := range []string{"import", "verify"} {
+		t.Run(verb, func(t *testing.T) {
+			t.Parallel()
+			res := cli.Run(verb, "--json")
+			assert.Equal(t, 2, res.Code)
+			assert.Contains(t, res.Stdout, `"status":"refused"`)
+			assert.Contains(t, res.Stdout, `"verb":"`+verb+`"`)
+			assert.Empty(t, res.Stderr)
+		})
+	}
+}
+
+// A bare command names the verbs and recovery in one refusal line, followed
+// by its stage note (internal/tool.Tool.Stage); it never prints the banner.
+func TestABareCommandRefusesWithItsStage(t *testing.T) {
+	t.Parallel()
+	res := workMain(unreachable(t)).Run()
+	require.Equal(t, 2, res.Code, "bare nova-work: exit %d, stdout %q, stderr %q", res.Code, res.Stdout, res.Stderr)
+	require.Empty(t, res.Stdout, "bare nova-work: exit %d, stdout %q, stderr %q", res.Code, res.Stdout, res.Stderr)
+	require.Equal(t, "WORK REFUSED: no verb given; the verbs are import, verify, version; run: nova-work help\n  NOTE "+preAlpha+"\n", res.Stderr, "bare nova-work: exit %d, stdout %q, stderr %q", res.Code, res.Stdout, res.Stderr)
 }

@@ -9,15 +9,11 @@ applies here unchanged and is not restated. Related: the budget law
 
 ## The CI class test against fixed waits on the CI path
 
-**The help line.** The class test is entered in the CI check roster and in help
-as the verb `waits`:
-
-```
-waits   read every _test.go on the CI path; refuse a fixed wall-clock wait or bound
-```
-
-It runs as `go test ./internal/ci -run TestNoFixedWaitsOnTheCIPath`, and it is
-the bench's fixed-wait audit made an official verb: the check a PR runs.
+**The test.** The class test is `TestNoFixedWaitsOnTheCIPath`
+(`internal/ci/ci_waits_test.go`); it runs in the `internal/ci` package as
+`go test ./internal/ci -run TestNoFixedWaitsOnTheCIPath` — the bench's
+fixed-wait audit, the check a PR runs. The rule is named `waits`, and its line
+reads `waits   read every _test.go on the CI path; refuse a fixed wall-clock wait or bound`.
 
 **What it reads and what it writes.** It reads, as text, every `_test.go` under
 `internal/` and `cmd/` that the two-minute CL path runs, and refuses three
@@ -73,16 +69,12 @@ queue.
 
 ## The CI class test against copied built binaries
 
-**The help line.** The class test is entered in the CI check roster and in help
-as the verb `testbins`:
-
-```
-testbins   read every _test.go on the CI path; refuse copying a built executable into a fixture
-```
-
-It runs as `go test ./internal/ci -run TestNoCopiedTestBinariesOnTheCIPath`, and
-it is the fixture-copy audit made an official verb: the shared helper a
-fixture places a built program with is the check a PR runs.
+**The test.** The class test is `TestNoCopiedTestBinariesOnTheCIPath`
+(`internal/ci/ci_testbins_test.go`); it runs in the `internal/ci` package as
+`go test ./internal/ci -run TestNoCopiedTestBinariesOnTheCIPath` — the
+fixture-copy audit, the shared helper a fixture places a built program with is
+the check a PR runs. The rule is named `testbins`, and its line reads
+`testbins   read every _test.go on the CI path; refuse copying a built executable into a fixture`.
 
 **What it reads and what it writes.** It reads, as text, every `_test.go` under
 `internal/` and `cmd/` that the two-minute CI path runs, and refuses one shape
@@ -141,15 +133,11 @@ through `internal/testbin.Place`, and the class test refuses a new copy.
 
 ## The CI class test against unquoted paths in JSON and template literals
 
-**The help line.** The class test is entered in the CI check roster and in help
-as the verb `templates`:
-
-```
-templates   read every _test.go; refuse a filesystem path unquoted in a JSON or template literal
-```
-
-It runs as `go test ./internal/ci -run TestNoUnquotedPathsInTemplateLiterals`,
-and it is the Windows-path audit made an official verb: the check a PR runs.
+**The test.** The class test is `TestNoUnquotedPathsInTemplateLiterals`
+(`internal/ci/ci_templates_test.go`); it runs in the `internal/ci` package as
+`go test ./internal/ci -run TestNoUnquotedPathsInTemplateLiterals` — the
+Windows-path audit, the check a PR runs. The rule is named `templates`, and its
+line reads `templates   read every _test.go; refuse a filesystem path unquoted in a JSON or template literal`.
 
 **What it reads and what it writes.** It reads, as text, every `_test.go` under
 `internal/` and `cmd/`, and refuses two shapes with the file and the line: a
@@ -263,7 +251,7 @@ seconds=<s> budget=<b>`, unless an allowlist row
 (`pkg<TAB>test<TAB>seconds<TAB><measured>s@<where>`, `-` in the test column for
 the package's own row) names a higher budget for exactly that package or test.
 Every row names the time it was measured at and where: `run<id>` (a CI run) or
-a bench (`slowtests.Benches`: space, studio, superman, batman, air), never free
+a bench (a label `slowtests.Benches` reads from ci.yml), never free
 text (`2s@guess` is refused), with a budget between that time and three times
 it (`TestSlowAllowlistRowsNameTheirMeasurement`,
 `TestSlowAllowlistRatchetRefusesAnUnmeasuredRow`,
@@ -286,9 +274,9 @@ budgets makes the verdict depend on the load instead. So:
   cpus=<n> per-cpu=<n>: measured, not a verdict` line (the host's load
   average, the larger of its 1- and 5-minute figures; `load=unknown` with the
   reason when it cannot be read) are printed, and the exit is 0 on them.
-- **Enforced only on the nightly whole-tree run on the space legs:** ci.yml's
-  `test` job runs on `schedule` too, test-packages deals that tree onto the
-  space shards only, and `ci unit-test` on the nightly leg runs `make test
+- **Enforced only on the nightly whole-tree run on the nightly Linux legs:**
+  ci.yml's `test` job runs on `schedule` too, test-packages deals that tree
+  onto the Linux shards only, and `ci unit-test` on the nightly leg runs `make test
   GOTEST_COUNT_FLAG=-count=1 SLOWTESTS_ENFORCE=1`, which passes `--enforce`: a
   CI-SLOW line fails the run there (slowtests exits 1) and nowhere else. A red schedule run blocks
   nothing (ci-ok does not run on schedule); it is evidence, and its raw times
@@ -316,17 +304,13 @@ verb end to end:
    that does not depend on map iteration.
 ## The CI class test against a real network host on the CI path
 
-**The help line.** The class test is entered in the CI check roster and in help
-as the verb `net`:
-
-```
-net     read every _test.go on the CI path; refuse a real network host or host:port
-```
-
-It runs as `go test ./internal/ci -run TestNoRealNetworkHostsOnTheCIPath`, and
-it is the hard rule — *unit tests test LOGIC, not the network* — made an
-official verb: every endpoint is mocked locally, and only the soak,
-fuzz and nightly suites may reach the real network.
+**The test.** The class test is `TestNoRealNetworkHostsOnTheCIPath`
+(`internal/ci/ci_net_test.go`); it runs in the `internal/ci` package as
+`go test ./internal/ci -run TestNoRealNetworkHostsOnTheCIPath` — the hard
+rule, *unit tests test LOGIC, not the network*: every endpoint is mocked
+locally, and only the soak, fuzz and nightly suites may reach the real network.
+The rule is named `net`, and its line reads
+`net     read every _test.go on the CI path; refuse a real network host or host:port`.
 
 **What it reads and what it writes.** It reads, as text, every `_test.go` under
 `internal/` and `cmd/` that the two-minute CL path runs, parses each as Go, and
@@ -381,14 +365,11 @@ secret leak look the same in the log.
 
 ## The CI class test against a child `go` that inherits the environment
 
-**The help line.** The class test is entered in the CI check roster and in help
-as the verb `goenv`:
-
-```
-goenv   read every .go under cmd/ and internal/; refuse a child `go` that inherits the caller's environment
-```
-
-It runs as `go test ./internal/ci -run TestGoEnvClassRuleHoldsOverTheRepository`.
+**The test.** The class test is `TestGoEnvClassRuleHoldsOverTheRepository`
+(`internal/ci/ci_goenv_test.go`); it runs in the `internal/ci` package as
+`go test ./internal/ci -run TestGoEnvClassRuleHoldsOverTheRepository`. The rule
+is named `goenv`, and its line reads
+``goenv   read every .go under cmd/ and internal/; refuse a child `go` that inherits the caller's environment``.
 
 **What it reads and what it writes.** It reads, as text, every `.go` file under
 `internal/` and `cmd/` — tests included, because a test helper that builds a
@@ -1139,10 +1120,10 @@ redis-server is functional-only (build tag functional)` and exits 86, so
 `testutil.Start` fails closed under `NOVA_CI=1`. The functional tier (the
 `functional` job, `make test-functional`) runs only the `//go:build functional`
 tests of the selected packages, on `merge_group`, `schedule` and
-`workflow_dispatch`, never on `pull_request`, four space shards under the
+`workflow_dispatch`, never on `pull_request`, four Linux shards under the
 two-minute cap; `ci-ok` requires it when it ran. The unit budgets are 2 s a
 package and 1 s a test, with an allowlist whose every row names its
-measurement, printed on every leg and enforced only on the nightly space legs;
+measurement, printed on every leg and enforced only on the nightly Linux legs;
 what is enforced on every leg is static (`unitwaits`).
 **The mistake it prevents.** CI is the bottleneck of the working process and the
 real blocker for merging: when every PR's shards each take the whole of a box,
@@ -1385,7 +1366,7 @@ yet — a new command joins the standard on the day it appears, not the day
 somebody remembers a table. The skip map `notYetOnTheStandard` is EMPTY and that
 is the point: a skip that outlives the branch it names excuses a tool from the
 standard for good. The same lesson from the other side: a tool whose `CLI.md`
-section is prose-shaped contributes ZERO rows to `nova-check dogfood`.
+section is prose-shaped contributes ZERO rows to `nova-dev dogfood`.
 **The test.** `TestEveryCommandMeetsTheOnboardingStandard`
 (`internal/ci/onboarding_test.go`).
 **Its allowlist.** `notYetOnTheStandard` in the test file: empty, and an entry
@@ -1793,9 +1774,9 @@ version offline: the image build's `sha256sum -c` checks it against the tarball.
 ### `cardtemplates` — no card template carries a command only one platform has
 
 **The rule.** A card template is the text a worker is handed verbatim; nothing
-rewrites it between `cut` and the shell. The estate is mixed — hulk, vision,
-space and mini are linux, the Studio and the Air are darwin — so a shipped
-template may spell only commands BOTH answer. The portable spellings are
+rewrites it between `cut` and the shell. The estate is mixed — some machines
+run linux and some darwin — so a shipped template may spell only commands BOTH
+answer. The portable spellings are
 `command -v <name>` for presence, `go version`, `dotnet --version` and
 `java -version 2>&1` for the three toolchains that each spell it differently,
 and a `uname`-chosen pair (`sysctl -n hw.ncpu` on darwin, `nproc` elsewhere) for
@@ -1881,6 +1862,26 @@ reversed witness; `internal/pkgselect`'s
 `TestSelectChangeMapsANonGoFileToThePackagesWhoseTestsReadIt` holds the
 boundaries (a longer name ending the same way, a source file's mention, a
 deprecated package's test, a testdata file's owner).
+
+**A third edge: a changed file that a package embeds selects the embedding
+package.** `//go:embed` reads a non-Go file into a package as its own data, so
+a change to that file can move the embedding package without naming it:
+`keyedPackages` also matches every changed non-Go file against the `//go:embed`
+directives of the package sources whose directory holds it, the pattern read
+relative to that directory (exact for a plain name, `path.Match` for the glob
+characters the Go tool allows, and a plain name or directory pattern also
+matches what lives under it, since an `all:` pattern embeds a directory
+recursively). An embed pattern cannot reach outside its package directory, so
+only a file under the package can match its directives. `internal/config`'s
+migrations (`migrations/*.sql`) are the shape of the miss: no test names a
+migration's file name, so before the rule a changed migration selects nothing
+beyond the two class-test packages. Like a reference, an embed over-selects (a
+`*` pattern names many files) and never under-selects; a line that only looks
+like a directive, inside a comment, is not one.
+**Its test.** `TestSelectChangeMapsAnEmbeddedFileToTheEmbeddingPackage`
+(`internal/pkgselect/embed_test.go`): an exact path, a glob and an `all:`
+directory each select the embedding package; a file no directive names and a
+commented-out directive select nothing beyond the two class-test packages.
 
 ### `toolchainroots` — the bench standard and the wall name one list per OS, with one kind each
 
@@ -2438,7 +2439,7 @@ receipt step calls GitHub; the run's own context has every field`; the fix is
 the step, never the test.
 **Its narrowings.** It reads the step's text and does not run it, so a bench
 with no `card.env` is found by the run itself (the step's own refusal names
-the rowan-tools bench play), not here.
+the bench play it runs), not here.
 
 ### `silent` — no silent failure on the copy model's live path
 
@@ -2786,10 +2787,10 @@ the original failed measurement.
 
 **The rule.** No living Go file under `cmd/`, `internal/` or `tools/` (outside `testdata/`, `vendor/`, and `_test.go` files) carries a reference to our fleet machines, hostnames, tailnet nodes, friend or person names, or GitHub accounts (Rule 1: everything must be general; concepts like machine, bench, coordinator, friend, seat, store, route, pool, card, stream, repo, issue, entry are what code knows; fleet specifics belong in configuration or receipts, not in code, contracts, defaults or refusals).
 **The mistake it prevents.** Code written with hardcoded machine names, friend identities or private accounts cannot be reused or operated as a general platform, leaks private infrastructure details into public source, and prevents running the tool suite against different fleets or configurations.
-**The test.** `TestGeneralityGuardrail` (`internal/ci/generality_class_test.go`), with `TestGeneralityTokenExtraction` for token extraction heuristics and boundary controls, `TestGeneralitySpaceHasNoSyntaxException` for a machine name counted in every syntax position, `TestGeneralityOccurrenceWitness` for proving that adding an occurrence of an allowed token to an already-allowed file fails the check, and `TestGeneralityAllowlistUpdate` for proving allowlist update refuses growth and cleanly writes on shrinking.
+**The test.** `TestGeneralityGuardrail` (`internal/ci/generality_class_test.go`), with `TestGeneralityTokenExtraction` for token extraction heuristics and boundary controls, `TestGeneralitySpaceHostPositions` and `TestGeneralityCommonWordMachineWitness` (`internal/ci/generality_machine_hosts_test.go`) for common-word machine names matched only in host positions, `TestGeneralityOccurrenceWitness` for proving that adding an occurrence of an allowed token to an already-allowed file fails the check, and `TestGeneralityAllowlistUpdate` for proving allowlist update refuses growth and cleanly writes on shrinking.
 **Its allowlist.** the `generality` package ledger, existing occurrences across the living tree, formatted as `path/to/file.go:token count`; sorted, shrink-only with ceiling.
 **Its remedy lines.** `remedy="remove the host, tailnet or person name; make the reference general or read it from configuration; docs/SPEC-CI.md#generality"`, and for an unlisted or grown count: `remedy="shrink the allowlist count; the list only shrinks"`.
-**Its narrowings.** It scans living `.go` files under `cmd/`, `internal/` and `tools/` only, skipping `testdata/`, `vendor/`, and `_test.go` files. It excludes Go package `import` statements (including `github.com/mas-bandwidth/...` imports) and marked documentation examples in comments (lines with `e.g.` or `example:`). Boundary controls ensure substring words like `miniredis`, `revision`, `deterministic`, `minimum`, `studios`, `whitespace`, and compound words like `TrimSpace` are not matched. A machine name counts wherever it appears in Go syntax: identifiers, struct tags, comments and string literals.
+**Its narrowings.** It scans living `.go` files under `cmd/`, `internal/` and `tools/` only, skipping `testdata/`, `vendor/`, and `_test.go` files. It excludes Go package `import` statements and marked documentation examples in comments (lines with `e.g.` or `example:`). Boundary controls ensure substring words like `miniredis`, `revision`, `deterministic`, `minimum`, `studios`, `whitespace`, and compound words like `TrimSpace` are not matched. Machine names that are also common words (such as `space`) are matched only in host positions (`<name>.local`, `@<name>`, `ssh <name>`, `<name>:` as host:path, `--machine <name>`, a hostname column, `/Users/<name>`, `~<name>`), so they pass as regular English words and Go identifiers; other machine names count wherever they appear in Go syntax.
 
 ### `tool-standard` — every tool built on internal/tool is held to the standard its definition alone can break
 
@@ -2804,10 +2805,10 @@ the original failed measurement.
 
 **The rule.** The `generality` rule binds the whole tree, not only `.go` files: no living text file carries a machine, host, friend or person name, a tailnet address, or a home path that names a user. A fleet's store address, its coordinator seat, its user names and its home paths belong in its own configuration and receipts, never in a shipped `fleet/*.tsv`, `*.yml`, `templates/*.j2`, workflow, script, Lua function or document; a doc example uses a generic name or a placeholder.
 **The mistake it prevents.** A scan that read only `.go` files let one fleet's tailnet address, coordinator seat, user names and home paths ride in through files the scan never opened.
-**The test.** `TestGeneralityText` (`internal/ci/generality_text_class_test.go`), with `TestGeneralityTextFindings` for what a line's findings are, `TestGeneralityTextScope` for which files are read, `TestGeneralityTextContactDoc` for the contact addresses that pass in `docs/SECURITY.md` only, `TestGeneralityTextUpdateDropsOnlyStaleFixtureRows` for the update's pass over the fixtures allowlist (a row whose file has no finding is dropped and the ceiling lowered with it; a row whose fixture file still has one is kept), and `TestGeneralityTextWitness` for the reversed witnesses (a new finding in a `.yml`, `.tsv`, `.j2`, `.md`, `.lua`, `.sh`, Makefile or workflow fails; a second occurrence in a listed file fails; a fixture row needs a reason and a finding).
+**The test.** `TestGeneralityText` (`internal/ci/generality_text_class_test.go`), with `TestGeneralityTextFindings` for what a line's findings are, `TestGeneralityTextScope` for which files are read, `TestGeneralityTextContactDoc` for the contact addresses that pass in `docs/SECURITY.md` only, `TestGeneralityTextUpdateDropsOnlyStaleFixtureRows` for the update's pass over the fixtures allowlist (a row whose file has no finding is dropped and the ceiling lowered with it; a row whose fixture file still has one is kept), and `TestGeneralityTextWitness` for the reversed witnesses (a new finding in a `.yml`, `.tsv`, `.j2`, `.md`, `.lua`, `.sh`, `.html`, `.js`, `.css`, Makefile or workflow fails; a second occurrence in a listed file fails; a fixture row needs a reason and a finding).
 **What is found.** The name inventory of `generality_class_test.go` (no name is added by this test), and three patterns: `tailnet-address` (an IPv4 address in `100.64.0.0/10`, an IPv6 address under the tailnet prefix, a `.ts.net` hostname; the two ranges written as CIDRs are the concept and pass), `home-path` (`/Users/<name>`, `/home/<name>`, `C:\Users\<name>` whose name is not a generic one: a documented placeholder, a container user this repository defines, a hosted runner's), and any reference to the organisation's account other than the project's own public links, which are its identity and not fleet names (a documented pattern, not list rows): the repository's own path (the module path and issue references), the seed repository it grows from, the secrets store design's repository, (each anchored on the left: the start of a line, a character that cannot continue a path, or a URL prefix, so a longer path that merely ends in one does not pass), and the project's two published contact addresses, those exact addresses and no other local part, in `docs/SECURITY.md` only.
 **Its lists.** `internal/ci/testdata/generality_text_fixtures_allowlist.txt`, `path reason`, whole files that are recorded data (captured output, a verbatim excerpt of a real record, a recorded reply of a public repository), a reason on every row; and the `generality-text` package ledger, `path:token count`, the debt that existed when the scan was widened. Both only shrink: an unlisted finding, a rising count, a falling count and a stale row each fail, and `NOVA_CI_UPDATE=1` removes rows and never adds one.
-**Its narrowings.** The scan reads the files the shared walk finds with a suffix of `.lua .tsv .yml .yaml .j2 .md .sh .json .txt .ini .tmpl .tla .lisp .sexp .cfg .card .sql .py .ps1 .jsonl .log .notes`, and the files named `Makefile` and `Containerfile`; `.go` files are the other test's, and `.git` is never read. There is no marked-example exemption: a doc example is written with a generic name. A `[:space:]` character class is syntax and not a finding.
+**Its narrowings.** The scan reads the files the shared walk finds with a suffix of `.lua .tsv .yml .yaml .j2 .md .sh .json .txt .ini .tmpl .tla .lisp .sexp .cfg .card .sql .py .ps1 .jsonl .log .notes .html .js .css`, and the files named `Makefile` and `Containerfile`; `.go` files are the other test's, and `.git` is never read. There is no marked-example exemption: a doc example is written with a generic name. A `[:space:]` character class is syntax and not a finding.
 
 ### `remedy` — every refusal in the tools names its next step
 
@@ -2853,6 +2854,24 @@ the original failed measurement.
 **Its allowlist.** `internal/ci/testdata/dead_code_allowlist.txt`, the shrink-only per-package ledger (`<package> <count>`); `NOVA_CI_UPDATE=1 go test -tags functional -run '^TestDeadCode$' ./internal/ci/` lowers counts and drops zero-count rows (the rule is functional-tier only, so `NOVA_CI_UPDATE=1 make test PKGS=./internal/ci` never reaches it, and the functional container mounts the source read-only). The list refuses to grow or raise any count.
 **Its remedy line.** `remedy="delete the unreachable function(s) or wire them into cmd/...; the dead code ledger only shrinks and refuses to raise counts or add rows"`.
 **Its narrowings.** Analyzes static reachability from main executables in `cmd/...` without `-test` flags using `golang.org/x/tools/cmd/deadcode` across `linux`, `darwin`, and `windows`.
+
+### `staticcheck` — staticcheck's findings only fall
+
+**The rule.** `staticcheck` (`honnef.co/go/tools/cmd/staticcheck`, a `tool` line in go.mod) runs over `./...` with its default checks, the `unused` check (U1000) among them, and each package's findings, counted per check, are held to a per-package shrink-only ledger. The tool is built at its pinned version with the tree's own toolchain: a staticcheck built by another Go fails on this toolchain's export data.
+**The mistake it prevents.** Go that a best-practice pass names (a value assigned and never read, a deprecated call, an unused function, a loop that is one `append`) accumulating across the tools and modules; the owner asked for "a golang best practices pass over all the tools and modules" with staticcheck clean.
+**The test.** `TestStaticcheckFindings` (`internal/ci/staticcheck_class_test.go`), with `TestStaticcheckFindingsReadsItsChecks` over a planted module. Runs in the functional tier behind `//go:build functional` (a whole-tree analysis is over the unit tier's budget) and starts no redis-server; `make lint` runs it.
+**Its allowlist.** the `staticcheck` package ledger, one shard per package, `<package>:<check> <findings> <why>`, counted and shrink-only; `NOVA_CI_UPDATE=1 go test -tags functional -count=1 -timeout 110s -run '^(TestStaticcheckFindings|TestUncheckedErrors)$' ./internal/ci/` lowers a count and drops a row at zero, and never adds a row or raises a count.
+**Its remedy line.** `fix the finding (staticcheck -explain <check> says how); the ledger only shrinks`, then the command that lowers the ledger.
+**Its narrowings.** One run as `GOOS=linux CGO_ENABLED=0` on every member, whatever its own GOOS, so the ledger reads the same on darwin and linux; no build tags, so a file behind a tag or only for another GOOS is not read; test files are read; a `//lint:ignore` directive silences a finding where it stands.
+
+### `errcheck` — no unchecked error beyond the ledger
+
+**The rule.** `errcheck` (`github.com/kisielk/errcheck`, a `tool` line in go.mod) runs over `./...` and each package's unchecked errors are held to a per-package shrink-only ledger. `fmt.Fprint`, `fmt.Fprintf` and `fmt.Fprintln` to an io.Writer are excluded as the CLI's output convention, and a line carrying `// ignored: <reason>` on it or on the line above counts as checked, as in `discarded`.
+**The mistake it prevents.** A call whose error is dropped as a bare statement (`f.Close()`, `defer f.Close()`, `os.Remove(path)`), which `discarded` does not read: the failure goes silent where it happens.
+**The test.** `TestUncheckedErrors` (`internal/ci/errcheck_class_test.go`), with `TestUncheckedErrorsReadsItsShapes` over a planted module. Runs in the functional tier behind `//go:build functional` and starts no redis-server; `make lint` runs it.
+**Its allowlist.** the `errcheck` package ledger, one shard per package, `<package>:unchecked <sites> <why>`, counted and shrink-only; the update command is the one in `staticcheck`.
+**Its remedy line.** `the call's error is not checked; return it, print it as one line with its remedy, or say why it is safe with `// ignored: <reason>` on this line or the one above; the ledger only shrinks`, then the command that lowers the ledger.
+**Its narrowings.** errcheck's own exclusions stand beside the three prints (a write to a bytes.Buffer or strings.Builder, among others); an error assigned to `_` is `discarded`'s, not this rule's; one run as `GOOS=linux CGO_ENABLED=0` with no build tags, as in `staticcheck`.
 
 ### `fleet-plays` — the fleet plays read only the inventory and work through the Go tools
 

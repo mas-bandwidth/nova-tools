@@ -55,14 +55,18 @@ usage:
                                                            stop reading one surface (soft)
   nova-fuse lift quarantine --box <path> [--dry-run] <surface>
                                                            rescind your own quarantine (soft, both directions)
-  nova-fuse lift lockdown                                  REFUSED by design: a blown fuse is REPLACED, only
-                                                           in a live conversation with the person you work with
+  nova-fuse lift lockdown                                  REFUSED by design: the box is replaced: nova-fuse
+                                                           init --box <a new path>, and the harness pointed at
+                                                           it, by the person, never by this tool
   nova-fuse path --box <path>                              echo the box path this invocation would use
 
-exit codes: 0 clear, or done and verified by re-reading the box; 1 blown
-(check), or could not do it / could not verify it; 2 could not run -- missing
-flag, no box at the path or an unreadable one (both treated as BLOWN, never as
-clear), bad invocation, or a lift this tool refuses by design.
+exit codes: 0 clear, or done and verified by re-reading the box; by verb:
+check: 1 blown (a lockdown, or a quarantine on the surface); init, lockdown,
+quarantine, lift quarantine: 1 the write was attempted and re-reading the box
+did not show it; status, path: 0 only; every verb: 2 could not run -- missing
+flag, bad invocation, or a lift this tool refuses by design; check, status,
+quarantine and lift quarantine also answer 2 at a path with no box or an
+unreadable box, never read as clear.
 
 -h or --help after a verb is refused at exit 2, never answered with help:
 exit 0 is this tool's CLEAR, so a surface or a reason spelled -h cannot reach
@@ -99,9 +103,10 @@ example:
 
 Those six are one sitting, in order: create, look, ask, blow the soft fuse,
 watch the answer change, rescind it. init never replaces an existing box.
-Every verb except init, lockdown, and path
-refuses a path with no box, never read as CLEAR; init makes an empty box
-there and refuses if anything is already there.
+Every verb except init, lockdown, and path refuses a path with no box, never
+read as CLEAR; init makes an empty box there and refuses if anything is
+already there, lockdown makes a blown box there in one write, and path reads
+no box at all.
 `
 
 // boxHint turns this binary's most-hit refusal into a next step. The

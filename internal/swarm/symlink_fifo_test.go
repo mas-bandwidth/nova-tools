@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -85,18 +84,9 @@ func TestReadFileSteadyDoesNotBlockOnAFIFO(t *testing.T) {
 	job := filepath.Join(dir, "job")
 	require.NoError(t, os.MkdirAll(job, 0o755))
 	plantFIFO(t, ResultPath(job))
-	done := make(chan error, 1)
-	go func() {
-		_, err := readFileSteady(ResultPath(job))
-		done <- err
-	}()
-	select {
-	case err := <-done:
-		require.Error(t, err, "a FIFO read as a published report")
-		require.False(t, missing(err), "a FIFO must not read as a record that is simply gone")
-	case <-time.After(30 * time.Second):
-		t.Fatal("STILL BLOCKED after 30s reading a FIFO at RESULT.md: the dispatcher is wedged")
-	}
+	_, err := readFileSteady(ResultPath(job))
+	require.Error(t, err, "a FIFO read as a published report")
+	require.False(t, missing(err), "a FIFO must not read as a record that is simply gone")
 }
 
 func TestReadJSONDoesNotBlockOnAFIFO(t *testing.T) {
@@ -106,15 +96,7 @@ func TestReadJSONDoesNotBlockOnAFIFO(t *testing.T) {
 	job := filepath.Join(dir, "job")
 	require.NoError(t, os.MkdirAll(job, 0o755))
 	plantFIFO(t, ExitPath(job))
-	done := make(chan error, 1)
-	go func() {
-		var ex ExitRecord
-		done <- ReadJSON(ExitPath(job), &ex)
-	}()
-	select {
-	case err := <-done:
-		require.Error(t, err, "a FIFO read as an exit record")
-	case <-time.After(30 * time.Second):
-		t.Fatal("STILL BLOCKED after 30s reading a FIFO at exit.json: the recovery pass is wedged")
-	}
+	var ex ExitRecord
+	err := ReadJSON(ExitPath(job), &ex)
+	require.Error(t, err, "a FIFO read as an exit record")
 }

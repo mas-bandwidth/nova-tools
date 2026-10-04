@@ -77,7 +77,9 @@ flags:
                        git write or push, no gh call, no sops encrypt, no value shown. It does
                        decrypt the seat file the real run reads first (place: --as's, to find
                        --secret; seal: the existing <as>.yaml, to say add or replace; seat inject:
-                       --from's, to find the names), so --key must open it; seal reads no new value
+                       --from's, to find the names), so --key must open it; seal reads no new value.
+                       seal and seat inject read the store at HEAD, so their store must be committed;
+                       a store with no commit yet is refused with the commit that starts it
   --gh <path>          path to the gh executable (seal, seat inject; default: gh)
   --git <path>         path to the git executable (seal, seat inject; default: git)
 
@@ -153,7 +155,7 @@ func verbHelp(verb string) string {
 const verbs = "exec, names, check, gate, keygen, place, placed, seal, seat add, seat inject, version, help"
 
 // dryRunHelp is the one sentence --dry-run carries on every verb that takes it.
-const dryRunHelp = "prints the plan and writes nothing"
+const dryRunHelp = "prints the plan and writes nothing; seal and seat inject read the store at HEAD, so their store must be committed"
 
 // The flags several verbs share, each saying what it wants (ONBOARDING point 2).
 const (

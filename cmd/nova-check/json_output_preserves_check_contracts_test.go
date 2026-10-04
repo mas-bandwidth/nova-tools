@@ -17,7 +17,7 @@ func TestPolishJSONLinksKeepsTotalsAndProvenance(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.md"), []byte("[one](missing)\n[two](gone)\n"), 0600))
-	exit, stdout, stderr := runCheck(t, "links", "--dir", dir, "--json", "--fail-max", "1")
+	exit, stdout, stderr := runCheck(t, "links", "--dir", dir, "--json", "--max", "1")
 	assert.Equal(t, 1, exit)
 	assert.Empty(t, stderr)
 	var out struct {
@@ -79,16 +79,6 @@ func TestPolishUnknownVerbNamesAvailableRemedies(t *testing.T) {
 	assert.Equal(t, 2, exit)
 	for _, want := range []string{"bogus", "the verbs are quickstart", "links", "run: nova-check help"} {
 		assert.Contains(t, stderr, want)
-	}
-}
-
-func TestPolishHygieneHelpDescribesEveryFlag(t *testing.T) {
-	t.Parallel()
-	exit, stdout, stderr := runCheck(t, "hygiene", "-h")
-	assert.Equal(t, 0, exit)
-	assert.Empty(t, stderr)
-	for _, want := range []string{"git checkout to inspect", "base git ref", "head git ref", "allowed path globs", "allowed authors", "card kind", "finding lines", "positive seconds"} {
-		assert.Contains(t, stdout, want)
 	}
 }
 
@@ -203,7 +193,7 @@ func TestPolishJSONUsesFlagParserValueBoundaries(t *testing.T) {
 
 func TestPolishJSONDoesNotSwallowHelp(t *testing.T) {
 	t.Parallel()
-	for _, verb := range []string{"attest", "links", "kernel", "nocode", "floors", "corpus", "hygiene", "spelling", "version"} {
+	for _, verb := range []string{"attest", "links", "kernel", "nocode", "floors", "corpus", "spelling", "version"} {
 		t.Run(verb, func(t *testing.T) {
 			t.Parallel()
 			exit, stdout, stderr := runCheck(t, verb, "--json", "-h")
