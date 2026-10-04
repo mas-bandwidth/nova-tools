@@ -1084,6 +1084,14 @@ jobs:
         run: |
           "$RUNNER_TEMP/ci" deal --shards ${{ matrix.shards }} --shard ${{ matrix.shard }} --heavy "cmd/nova-bus cmd/nova-swarm"
 
+      - name: fetch dev's ancestry for the hosted ratchet
+        # Main already fetched this ancestry above. Other refs need it only
+        # on the shard running internal/ci's shrink-only merge-base guard.
+        if: contains(format(' {0} ', env.HOSTED_PKGS), '/internal/ci ') && github.ref_name != github.event.repository.default_branch
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/ci" fetch-ancestry dev
+
       - name: vet this shard's packages
         # The shard's packages only: every shard vetting the whole tree would be a
         # fixed cost more shards cannot shrink. The union of the shards is the tree.
