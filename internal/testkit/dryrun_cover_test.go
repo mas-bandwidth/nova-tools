@@ -25,7 +25,9 @@ func TestDryrunCoverSnapshot(t *testing.T) {
 	assert.Equal(t, "-rw-r--r-- hello", got[filepath.Join(root, "a.txt")])
 	assert.Equal(t, "drwxr-xr-x", got[filepath.Join(root, "sub")])
 	assert.Equal(t, "-rw-r--r-- world", got[filepath.Join(root, "sub", "b.txt")])
-	assert.Equal(t, "Lrwxrwxrwx -> a.txt", got[filepath.Join(root, "link")])
+	link, err := os.Lstat(filepath.Join(root, "link"))
+	require.NoError(t, err)
+	assert.Equal(t, link.Mode().String()+" -> a.txt", got[filepath.Join(root, "link")])
 }
 
 // TestDryrunCoverSnapshotRefusesAnUnreadableDirectory pins the snapshot's

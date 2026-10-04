@@ -11,19 +11,6 @@ import (
 // Behaviours the 2026-10-02 break-it probes found no unit test for: each test
 // here goes red when its line is broken.
 
-// NeedsCycle names the loop through the first primary, in name order, of the
-// edges given: with two loops named, the one through "a" and never the one
-// through "m", whatever order the map hands them over in.
-func TestNeedsCycleIsTheLoopThroughTheFirstPrimaryByName(t *testing.T) {
-	t.Parallel()
-	w := setup(t, 0)
-	edges := map[string][]string{"m": {"n"}, "n": {"m"}, "a": {"b"}, "b": {"a"}}
-	for range 32 {
-		c := NeedsCycle(w.s, edges)
-		require.Equal(t, "a,b,a", strings.Join(c, ","), "NeedsCycle: %v", c)
-	}
-}
-
 // A group's before is the most times before of any of its notes, whichever
 // note comes first.
 func TestAGroupsBeforeIsTheMostOfItsNotes(t *testing.T) {

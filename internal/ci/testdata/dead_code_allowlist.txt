@@ -5,37 +5,24 @@
 # ceiling: 34
 
 
-cmd/nova-sandbox 5
-cmd/nova-swarm 3
-internal/bounded 1
-internal/buildinfo 1
-internal/bus 17
+cmd/nova-sandbox 3
+cmd/nova-swarm 2
+internal/bus 16
 internal/cardhdr 10
-internal/check 2
 internal/ci/slowtests 2
-internal/converge 1
 internal/dogfood 1
-internal/fleet 1
-internal/ghevent 4
 internal/hygiene 1
-internal/nogh 1
 internal/nsprint/fn 5
 internal/nsprint/store 3
-internal/ntable 17
+internal/ntable 11
 internal/pkgselect 22
-internal/redisconn 1
 internal/redisfn 9
-internal/release 1
-internal/sandbox 1
-internal/seatcred 1
 internal/secrets 22
-internal/sprint 5
-internal/sprint/store 4
+internal/sprint 2
+internal/sprint/store 2
 internal/subproc 1
 internal/swarm 42
 internal/testguard 5
 internal/tokens 2
 internal/tool 1
-internal/typedrec 11
-internal/workfile 2
 internal/workgh 1

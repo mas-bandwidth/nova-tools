@@ -74,29 +74,22 @@ func TestAttachRefusesATagThatIsNotVPrefixed(t *testing.T) {
 	t.Parallel()
 	h := attachWorld(t, "200", attachSHA)
 	h.vars["TAG"] = "0.14.0"
-	h.wantRC(h.do("attach"), 1)
-	h.mustContain("refusing: 0.14.0 is not a v-prefixed tag")
-	if len(h.gh.apis) != 0 || len(h.runner.called()) != 0 {
-		t.Fatal("something ran past a refused tag shape")
-	}
+	h.wantRun(1, "refusing: 0.14.0 is not a v-prefixed tag", "attach")
+	h.wantNothingPast("a refused tag shape")
 }
 
 func TestAttachRefusesWhenTheNotesFileIsMissingBeforeAnyAPICall(t *testing.T) {
 	t.Parallel()
 	h := attachWorld(t, "200", attachSHA)
 	h.vars["TAG"] = "v7.0.0"
-	h.wantRC(h.do("attach"), 1)
-	h.mustContain("refusing: docs/RELEASE-NOTES-7.0.0.md does not exist in the tagged tree; write it, land it, and tag the commit that carries it")
-	if len(h.gh.apis) != 0 || len(h.runner.called()) != 0 {
-		t.Fatal("something ran past a missing notes file")
-	}
+	h.wantRun(1, "refusing: docs/RELEASE-NOTES-7.0.0.md does not exist in the tagged tree; write it, land it, and tag the commit that carries it", "attach")
+	h.wantNothingPast("a missing notes file")
 }
 
 func TestAttachRefusesATagThatIsNotInTheRepository(t *testing.T) {
 	t.Parallel()
 	h := attachWorld(t, "404", attachSHA)
-	h.wantRC(h.do("attach"), 1)
-	h.mustContain("refusing: v0.14.0 is not a tag in this repository")
+	h.wantRun(1, "refusing: v0.14.0 is not a tag in this repository", "attach")
 	if len(h.runner.called()) != 0 {
 		t.Fatal("git ran after the tag was refused")
 	}
@@ -106,8 +99,7 @@ func TestAttachRefusesATagThatIsNotInTheRepository(t *testing.T) {
 func TestAttachRefusesANonAnswerAboutTheTag(t *testing.T) {
 	t.Parallel()
 	h := attachWorld(t, "403", attachSHA)
-	h.wantRC(h.do("attach"), 1)
-	h.mustContain("asking GitHub about repos/example/repo/git/ref/tags/v0.14.0 answered neither 200 nor 404 (gh exit 1):")
+	h.wantRun(1, "asking GitHub about repos/example/repo/git/ref/tags/v0.14.0 answered neither 200 nor 404 (gh exit 1):", "attach")
 	wantNoRelease(t, h)
 }
 
@@ -118,8 +110,7 @@ func TestAttachRefusesATagThatIsAnotherTreesBeforeSummingOrUploading(t *testing.
 	// file replaced by a build from an unrelated tree.
 	other := "fedcba9876543210fedcba9876543210fedcba98"
 	h := attachWorld(t, "200", other)
-	h.wantRC(h.do("attach"), 1)
-	h.mustContain("refusing: v0.14.0 is the tag for " + other + ", but this run built " + attachSHA)
+	h.wantRun(1, "refusing: v0.14.0 is the tag for "+other+", but this run built "+attachSHA, "attach")
 	h.mustContain("attaching here would replace v0.14.0's published artifacts with a build from another tree")
 	h.mustNotContain("SHA256SUMS over")
 	wantNoRelease(t, h)
@@ -129,8 +120,7 @@ func TestAttachPassesAFailedFetchOn(t *testing.T) {
 	t.Parallel()
 	h := attachWorld(t, "200", attachSHA)
 	h.runner.output = func(c command) (string, int) { return "fatal: could not read from remote\n", 128 }
-	h.wantRC(h.do("attach"), 128)
-	h.mustContain("fatal: could not read from remote")
+	h.wantRun(128, "fatal: could not read from remote", "attach")
 	wantNoRelease(t, h)
 }
 
@@ -141,8 +131,7 @@ func TestAttachPassesAFailedResolveOn(t *testing.T) {
 		io.WriteString(stderr, "fatal: ambiguous argument\n")
 		return 128
 	}
-	h.wantRC(h.do("attach"), 128)
-	h.mustContain("fatal: ambiguous argument")
+	h.wantRun(128, "fatal: ambiguous argument", "attach")
 	h.mustNotContain("SHA256SUMS over")
 	wantNoRelease(t, h)
 }
@@ -157,8 +146,7 @@ func TestAttachResolvesTheTagFromStdoutAlone(t *testing.T) {
 		io.WriteString(stdout, attachSHA+"\n")
 		return 0
 	}
-	h.wantRC(h.do("attach"), 0)
-	h.mustContain("SHA256SUMS over 1 artifacts:")
+	h.wantRun(0, "SHA256SUMS over 1 artifacts:", "attach")
 	h.mustNotContain("is the tag for")
 }
 
@@ -166,8 +154,7 @@ func TestAttachStopsAtSumsWhenDistIsNotTheShippedSet(t *testing.T) {
 	t.Parallel()
 	h := attachWorld(t, "200", attachSHA)
 	h.write("dist/stray", "x", 0o644)
-	h.wantRC(h.do("attach"), 1)
-	h.mustContain("is not the shipped set")
+	h.wantRun(1, "is not the shipped set", "attach")
 	wantNoRelease(t, h)
 }
 
@@ -181,7 +168,6 @@ func TestAttachAPublishedReleaseIsRefusedAfterTheSums(t *testing.T) {
 		}
 		return httpAnswer("200", "OK", `{"id": 55, "draft": false}`), 0
 	}
-	h.wantRC(h.do("attach"), 1)
-	h.mustContain("v0.14.0 already has a published release 55")
+	h.wantRun(1, "v0.14.0 already has a published release 55", "attach")
 	wantNoRelease(t, h)
 }

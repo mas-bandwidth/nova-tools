@@ -60,22 +60,22 @@ func (c *coverCmdable) FCallRO(ctx context.Context, fn string, keys []string, ar
 	return c.cmd(ctx, fn)
 }
 
-func (c *coverCmdable) Pipeline() redis.Pipeliner { return &coverPipe{store: c} }
+func (c *coverCmdable) Pipeline() redis.Pipeliner { return &coverStorePipe{store: c} }
 
-func (c *coverCmdable) TxPipeline() redis.Pipeliner { return &coverPipe{store: c} }
+func (c *coverCmdable) TxPipeline() redis.Pipeliner { return &coverStorePipe{store: c} }
 
-// coverPipe answers a queued FCall from its store immediately; Exec is a
+// coverStorePipe answers a queued FCall from its store immediately; Exec is a
 // no-op because every command already holds its reply.
-type coverPipe struct {
+type coverStorePipe struct {
 	redis.Pipeliner
 	store *coverCmdable
 }
 
-func (p *coverPipe) FCall(ctx context.Context, fn string, keys []string, args ...any) *redis.Cmd {
+func (p *coverStorePipe) FCall(ctx context.Context, fn string, keys []string, args ...any) *redis.Cmd {
 	return p.store.cmd(ctx, fn)
 }
 
-func (p *coverPipe) Exec(context.Context) ([]redis.Cmder, error) { return nil, nil }
+func (p *coverStorePipe) Exec(context.Context) ([]redis.Cmder, error) { return nil, nil }
 
 // coverPairs flattens a hash into the alternating key/value slice the wire uses.
 func coverPairs(m map[string]string) []any {
@@ -421,7 +421,7 @@ func TestStoreCoverViews(t *testing.T) {
 	_, err = ViewList(ctx, mis)
 	require.ErrorContains(t, err, "malformed names")
 
-	p := &coverPipe{store: newCoverCmdable()}
+	p := &coverStorePipe{store: newCoverCmdable()}
 	cmd := QueueViewState(ctx, p, "v", "RUN")
 	require.NotNil(t, cmd)
 	require.NoError(t, ViewStateResult("v", cmd))

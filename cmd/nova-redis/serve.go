@@ -83,9 +83,14 @@ func launchRedis(ctx context.Context, spec launchSpec, stdout, stderr io.Writer)
 func serveVerb(d deps) tool.Verb {
 	return tool.Verb{
 		Name:    "serve",
-		Usage:   "serve --bind <addr>[,<addr>...] --port <port> --dir <store-dir>",
+		Usage:   "serve --bind <addr>[,<addr>...] --port <port> --dir <store-dir> [--dry-run]",
 		Example: "version",
 		Effect:  tool.LocalWrite,
+		DryRun:  true,
+		Detail: `--dry-run validates --bind, --port and --dir's absolute shape and prints the binding,
+the port, the store directory and the persistence, auth and eviction rules it would use.
+It defers every effect: it creates no directory, reads no password or environment,
+looks up no redis-server and launches nothing.`,
 		Flags: func(f *tool.Flags) {
 			f.Prints()
 			f.String("bind", "", "comma-separated IP addresses to listen on, loopback (127.0.0.1, ::1) or tailnet (100.64.0.0/10, fd7a:115c:a1e0::/48) only")
@@ -113,11 +118,53 @@ func serveVerb(d deps) tool.Verb {
 	}
 }
 
+// serveOptions is the truth serve parses from the line: the binding, the port
+// and the store directory. It carries no password and no process: those are
+// effects the real run adds after the parse, so the preview reports the same
+// options without reading a secret or looking one up.
+type serveOptions struct {
+	binds []string
+	port  int
+	dir   string
+}
+
+// parseServe validates the line serve and its preview share: --bind parses to
+// loopback and tailnet addresses only, --port is 1 to 65535, and --dir is an
+// absolute path. It is pure: it creates no directory, reads no secret or
+// environment and looks up no process, so --dry-run can print the plan the
+// real run takes and the two cannot drift.
+func parseServe(c *tool.Call) (serveOptions, error) {
+	binds, err := validBinds(c.Str("bind"))
+	if err != nil {
+		return serveOptions{}, err
+	}
+	port, err := strconv.Atoi(c.Str("port"))
+	if err != nil || port < 1 || port > 65535 {
+		return serveOptions{}, fmt.Errorf("--port %q needs a port from 1 to 65535", c.Str("port"))
+	}
+	if !filepath.IsAbs(c.Str("dir")) {
+		return serveOptions{}, fmt.Errorf("--dir %q is not absolute; name the store directory in full", c.Str("dir"))
+	}
+	return serveOptions{binds: binds, port: port, dir: filepath.Clean(c.Str("dir"))}, nil
+}
+
 // serveRun is serve's body: launches redis-server in the foreground.
+// --dry-run prints the parsed launch options and the store's persistence and
+// auth rules and returns without effects: it creates no directory, reads no
+// secret or environment, looks up no process and launches nothing. The real
+// run uses the same options, then creates the store directory, checks
+// authentication and launches.
 func serveRun(c *tool.Call, d deps) *tool.Out {
-	binds, _ := validBinds(c.Str("bind"))
-	port, _ := strconv.Atoi(c.Str("port"))
-	dir, err := storeDir(c.Str("dir"))
+	opts, err := parseServe(c)
+	if err != nil {
+		return tool.Refuse(err.Error())
+	}
+	if c.DryRun() {
+		fmt.Fprintf(c.Stdout, "SERVE OK bind=%s port=%d auth=on persistence=aof eviction=none dir=%s dry_run=true created=0 launched=0\n",
+			oneline.Field(strings.Join(opts.binds, ",")), opts.port, oneline.Field(opts.dir))
+		return tool.Exit(0)
+	}
+	dir, err := storeDir(opts.dir)
 	if err != nil {
 		return tool.Refuse(err.Error())
 	}
@@ -135,18 +182,18 @@ func serveRun(c *tool.Call, d deps) *tool.Out {
 		Program: program,
 		Args:    []string{"-"},
 		Env:     withoutEnv(d.environ(), PasswordEnv),
-		Config:  redisConfig(binds, port, password, dir),
+		Config:  redisConfig(opts.binds, opts.port, password, dir),
 		Dir:     dir,
 	}
 	fmt.Fprintf(c.Stdout, "SERVE START bind=%s port=%d auth=on persistence=aof eviction=none dir=%s program=%s\n",
-		oneline.Field(strings.Join(binds, ",")), port, oneline.Field(dir), oneline.Field(program))
+		oneline.Field(strings.Join(opts.binds, ",")), opts.port, oneline.Field(dir), oneline.Field(program))
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := d.launch(ctx, spec, c.Stdout, c.Stderr); err != nil {
 		fmt.Fprintf(c.Stderr, "SERVE FAILED err=%s remedy=%q\n", oneline.Err(err), "run: ls -ld -- "+shellWord(dir)+"; compare directory access and the explicit --bind/--port with the launch error and any redis-server output")
 		return tool.Exit(1)
 	}
-	fmt.Fprintf(c.Stdout, "SERVE STOP bind=%s port=%d\n", oneline.Field(strings.Join(binds, ",")), port)
+	fmt.Fprintf(c.Stdout, "SERVE STOP bind=%s port=%d\n", oneline.Field(strings.Join(opts.binds, ",")), opts.port)
 	return tool.Exit(0)
 }
 

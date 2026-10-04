@@ -14,8 +14,7 @@ import (
 func TestLdflagsRefusesAnEmptyStamp(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
-	h.wantRC(h.do("ldflags", ""), 1)
-	h.mustContain("refusing: the release stamp is empty")
+	h.wantRun(1, "refusing: the release stamp is empty", "ldflags", "")
 	if h.out.Len() != 0 {
 		t.Fatalf("a refusal printed a flag on stdout: %q", h.out.String())
 	}
@@ -56,9 +55,7 @@ func TestLdflagsRefusesTheTagAlphabetEachByItsOwnReason(t *testing.T) {
 func TestLdflagsWrongArgumentCountIsAUsageError(t *testing.T) {
 	t.Parallel()
 	for _, args := range [][]string{{"ldflags"}, {"ldflags", "v1", "extra"}} {
-		h := newHarness(t)
-		h.wantRC(h.do(args...), 2)
-		h.mustContain("usage:")
+		newHarness(t).wantRun(2, "usage:", args...)
 	}
 }
 

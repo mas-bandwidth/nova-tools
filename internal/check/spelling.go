@@ -620,14 +620,6 @@ func (c *SpellingChecker) CheckText(filename, text string, isMarkdown bool) ([]S
 	return findings, updated
 }
 
-// CheckSpellingText checks in-memory text directly.
-func CheckSpellingText(filename, text string, opts SpellingOptions) ([]SpellingFinding, string, error) {
-	checker := NewSpellingChecker(opts.Ignore)
-	isMD := opts.Markdown || IsMarkdown(filename)
-	findings, updated := checker.CheckText(filename, text, isMD)
-	return findings, updated, nil
-}
-
 // CheckSpellingDir checks all markdown files in dir (and its subdirectories), skipping .git
 // and paths matching opts.Exclude.
 func CheckSpellingDir(dir string, opts SpellingOptions) (res SpellingResult, err error) {

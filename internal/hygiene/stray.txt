@@ -24,7 +24,7 @@ RESULT.md
 PROMPT.md
 OUTCOME
 
-# Working space. A card that needed scratch had somewhere to put it that was not here.
+# Working area. A card that needed scratch had somewhere to put it that was not here.
 scratch/**
 
 # What a tool left behind: a log, a failed patch's leavings, a compiled test binary, a
