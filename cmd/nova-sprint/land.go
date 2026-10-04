@@ -911,6 +911,9 @@ func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard
 	if _, err := l.git(ctx, dir, "switch", "--no-track", "--force-create", "land/"+stream, "refs/remotes/origin/"+base); err != nil {
 		return nil, failed, "the base " + base + " could not be cut from origin in " + dir + ": " + firstLine("", err)
 	}
+	if why := l.treeGate(ctx, dir, true); why != "" {
+		return nil, failed, "the base " + base + " fails the tree gate at its tip, so no head is merged onto it; fix the base, then run land again: " + why
+	}
 	for i := range cards {
 		c := &cards[i]
 		before, err := l.git(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}")
@@ -921,6 +924,9 @@ func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard
 		card, env, c.resolved = l.mergeHead(ctx, dir, stream, *c)
 		if card == "" && env == "" {
 			card, env = l.checkCard(ctx, dir, *c, before)
+		}
+		if card == "" && env == "" {
+			card, env = l.gateCard(ctx, dir, *c, before)
 		}
 		switch {
 		case env != "":
