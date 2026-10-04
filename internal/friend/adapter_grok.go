@@ -27,7 +27,10 @@ import (
 // one line, to the wake file the open session's monitor is tailing. It is
 // accepted (exit 0) once the line is in the file and the tail was running
 // under that session; the turn runs after Deliver returns, since nothing
-// hands its end back.
+// hands its end back. While no monitor runs (no window, or a window with
+// no tail) Deliver defers: nothing is written, the message stays pending,
+// and the reason carries the one line the session runs. A wake path that
+// is not absolute is a refusal and nothing is written.
 type Grok struct {
 	Dir  string    // the friend's directory: the session's cwd
 	Wake string    // the wake file, when named; else the one the session's monitor tails
@@ -48,34 +51,12 @@ func (g *Grok) home() (string, error) {
 }
 
 func (g *Grok) Deliver(ctx context.Context, text string) (int, error) {
-	home, err := g.home()
+	wake, deferred, err := g.classify(ctx)
 	if err != nil {
 		return 0, err
 	}
-	active, err := os.ReadFile(filepath.Join(home, "active_sessions.json"))
-	if err != nil {
-		return 0, fmt.Errorf("no grok session is open: %w", err)
-	}
-	listing, exit, err := g.Run(ctx, g.Dir, "ps", []string{"-axww", "-o", "pid=,ppid=,args="}, "")
-	if err != nil {
-		return 0, fmt.Errorf("ps: %w", err)
-	}
-	if exit != 0 {
-		return 0, fmt.Errorf("ps exited %d", exit)
-	}
-	// the harness records the window's cwd as it was given or resolved; either is this directory
-	dirs := []string{g.Dir}
-	if real, err := filepath.EvalSymlinks(g.Dir); err == nil && real != g.Dir {
-		dirs = append(dirs, real)
-	}
-	var wake string
-	for _, dir := range dirs {
-		if wake, err = WakeOf(string(active), listing, dir, g.Wake); !errors.Is(err, ErrNoSession) {
-			break // found, or refused by the window that is open
-		}
-	}
-	if err != nil {
-		return 0, err
+	if deferred != nil {
+		return 0, Deferred{Reason: deferred.Error()}
 	}
 	f, err := os.OpenFile(wake, os.O_WRONLY|os.O_APPEND, 0)
 	if err != nil {
@@ -161,11 +142,125 @@ func WakeOf(active, listing, dir, wake string) (string, error) {
 	if wake == "" {
 		wake = "<file>.wake"
 	}
-	return "", fmt.Errorf("the grok session in %s runs no monitor over %s; in that session: monitor `tail -n 0 -F %s`", dir, wake, wake)
+	return "", noMonitorError{fmt.Sprintf("the grok session in %s runs no monitor over %s; in that session: %s", dir, wake, GrokMonitorLine(wake))}
 }
 
 // ErrNoSession is WakeOf's refusal when no grok window is open in the directory.
 var ErrNoSession = errors.New("no grok session is open")
+
+// noMonitorError is WakeOf's refusal when a window is open and no tail of the
+// wake file runs under it. Deliver turns it into Deferred; the text stays the
+// sentence callers already match.
+type noMonitorError struct{ msg string }
+
+func (e noMonitorError) Error() string { return e.msg }
+
+// GrokMonitorLine is the one line the open session runs so a delivery is a
+// turn in that window. An empty wake is the placeholder the session replaces
+// with its own absolute path. It is a command run in the session, not a
+// flag or a wrapper at app start.
+func GrokMonitorLine(wake string) string {
+	if wake == "" {
+		wake = "<file>.wake"
+	}
+	return "monitor `tail -n 0 -F " + wake + "`"
+}
+
+// GrokInstallLine is the NOTE install prints for harness grok. Every other
+// harness gets none. session is --session, the wake file, empty when the
+// session chooses the path.
+func GrokInstallLine(harness, session string) string {
+	if harness != "grok" {
+		return ""
+	}
+	return GrokMonitorLine(session)
+}
+
+// Route is what status says. push: a tail of an absolute .wake file runs
+// under the open window's pid, so a delivery now is a turn in that window.
+// defer: no such tail; line is the monitor line the session runs. A listing
+// or session file that cannot be read is defer, never a silent push, and
+// err says why.
+func (g *Grok) Route(ctx context.Context) (route, line string, err error) {
+	line = GrokMonitorLine(g.Wake)
+	file, deferred, err := g.classify(ctx)
+	if err != nil {
+		return "defer", line, err
+	}
+	if deferred != nil {
+		return "defer", monitorLineFrom(deferred, g.Wake), nil
+	}
+	return "push", GrokMonitorLine(file), nil
+}
+
+// classify is the open window's monitor. wake is the file a tail under that
+// window is reading. deferred is set when no monitor runs (no window, or a
+// window with no tail): nothing has failed and nothing is written. err is a
+// real failure (the process listing, a session file that cannot be read, a
+// wake path the listing cannot be trusted on).
+func (g *Grok) classify(ctx context.Context) (string, error, error) {
+	home, err := g.home()
+	if err != nil {
+		return "", nil, err
+	}
+	active, err := os.ReadFile(filepath.Join(home, "active_sessions.json"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("no grok session is open: %s; in that session: %s", err.Error(), GrokMonitorLine(g.Wake)), nil
+		}
+		return "", nil, fmt.Errorf("no grok session is open: %w", err)
+	}
+	if g.Run == nil {
+		return "", nil, errors.New("ps: no process listing")
+	}
+	listing, exit, err := g.Run(ctx, g.Dir, "ps", []string{"-axww", "-o", "pid=,ppid=,args="}, "")
+	if err != nil {
+		return "", nil, fmt.Errorf("ps: %w", err)
+	}
+	if exit != 0 {
+		return "", nil, fmt.Errorf("ps exited %d", exit)
+	}
+	// the harness records the window's cwd as it was given or resolved; either is this directory
+	dirs := []string{g.Dir}
+	if real, e := filepath.EvalSymlinks(g.Dir); e == nil && real != g.Dir {
+		dirs = append(dirs, real)
+	}
+	var file string
+	var wakeErr error
+	for _, dir := range dirs {
+		file, wakeErr = WakeOf(string(active), listing, dir, g.Wake)
+		if wakeErr == nil || !errors.Is(wakeErr, ErrNoSession) {
+			break // found, or answered by the window that is open
+		}
+	}
+	if wakeErr == nil {
+		return file, nil, nil
+	}
+	var nm noMonitorError
+	if errors.Is(wakeErr, ErrNoSession) || errors.As(wakeErr, &nm) {
+		return "", monitorDeferred(wakeErr, g.Wake), nil
+	}
+	return "", nil, wakeErr
+}
+
+// monitorDeferred is a no-monitor answer that carries the line the session runs.
+func monitorDeferred(err error, wake string) error {
+	if strings.Contains(err.Error(), "monitor `tail -n 0 -F") {
+		return err
+	}
+	return fmt.Errorf("%s; in that session: %s", err.Error(), GrokMonitorLine(wake))
+}
+
+// monitorLineFrom is the monitor line at the end of a no-monitor answer.
+func monitorLineFrom(err error, wake string) string {
+	const mark = "monitor `tail -n 0 -F"
+	if err != nil {
+		if i := strings.LastIndex(err.Error(), mark); i >= 0 {
+			return err.Error()[i:]
+		}
+	}
+	return GrokMonitorLine(wake)
+}
 
 // WakeLine is text as the one line a monitor event is: the monitor makes an
 // event per line, and a flood of lines is how the harness stops a monitor
