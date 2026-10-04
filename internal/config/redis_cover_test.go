@@ -214,10 +214,9 @@ func TestRedisCoverWriteDispatch(t *testing.T) {
 	t.Run("a loop row is one hash and a set member", func(t *testing.T) {
 		t.Parallel()
 		a, c, _ := coverStore(t)
-		a.loopsDir = "~/nova-bench/loops"
 		row := Row{Name: "l1", Fields: map[string]string{
 			"machine": "m1", "argv": `["/bin/true"]`, "seat": "", "keys": "",
-			"every": "5", "keepalive": "false", "enabled": "true",
+			"every": "5", "keepalive": "false", "enabled": "true", "log": LoopLog("~/nova-bench/loops", "l1"),
 		}}
 		require.NoError(t, a.Write(ctx, KindLoop, row, nil, "ada", "config:loop:1"))
 		assert.True(t, c.SIsMember(ctx, LoopsKey, "l1").Val())
@@ -579,8 +578,9 @@ func TestRedisCoverHashes(t *testing.T) {
 	t.Run("writeHash writes every field and the derived log", func(t *testing.T) {
 		t.Parallel()
 		a, c, _ := coverStore(t)
-		a.loopsDir = "~/nova-bench/loops"
-		require.NoError(t, a.writeHash(ctx, h, row, "config:loop:1"))
+		logged := row.Clone()
+		logged.Fields["log"] = LoopLog("~/nova-bench/loops", "l1")
+		require.NoError(t, a.writeHash(ctx, h, logged, "config:loop:1"))
 		got := c.HGetAll(ctx, LoopKey("l1")).Val()
 		assert.Equal(t, "l1", got["name"])
 		assert.Equal(t, "1", got["rev"])

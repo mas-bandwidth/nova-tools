@@ -602,12 +602,51 @@ func TestLoopLogIsTheFleetRowsDirectory(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "~/nova-bench/loops/member-m1.log", c.HGet(ctx, LoopKey("member-m1"), "log").Val(), "the first apply writes the seeded path")
 
-	// A later run that applies the loop kind alone reads no fleet row, so
-	// the applied key answers: the rewritten hash keeps the same log.
+	// A later run that applies the loop kind alone takes the directory from
+	// the store's fleet row: the rewritten hash keeps the same log.
 	_, _, err = st.Update(ctx, KindLoop, "member-m1", map[string]string{"every": "60", "keepalive": "false"}, "t")
 	require.NoError(t, err)
 	_, err = Apply(ctx, st, noLibrary{&RedisApplier{Client: c}}, KindLoop, "t", false, func(Op) {})
 	require.NoError(t, err)
 	assert.Equal(t, "60", c.HGet(ctx, LoopKey("member-m1"), "every").Val(), "the loop kind alone wrote the row again")
-	assert.Equal(t, "~/nova-bench/loops/member-m1.log", c.HGet(ctx, LoopKey("member-m1"), "log").Val(), "the applied fleet row is the directory")
+	assert.Equal(t, "~/nova-bench/loops/member-m1.log", c.HGet(ctx, LoopKey("member-m1"), "log").Val(), "the store's fleet row is the directory")
+}
+
+// TestLoopApplyAloneTakesTheStoresDirectory: apply of the loop kind alone,
+// into a Redis that holds no applied fleet row, writes the log path the
+// store's fleet row decides, and a store whose fleet row carries no directory
+// is refused with the set that declares one, writing no hash.
+func TestLoopApplyAloneTakesTheStoresDirectory(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	machine, _ := Lookup(KindMachine)
+	loop, _ := Lookup(KindLoop)
+	store := func(loopsDir string) *Mem {
+		st := NewMem()
+		m1, err := machine.NewRow("m1", map[string]string{"user": "u", "seat": "s", "slots": "4"})
+		require.NoError(t, err)
+		_, err = st.Insert(ctx, KindMachine, m1, "t")
+		require.NoError(t, err)
+		if loopsDir != "" {
+			_, _, err = st.Update(ctx, KindFleet, KindFleet, map[string]string{"loops_dir": loopsDir}, "t")
+			require.NoError(t, err)
+		}
+		l1, err := loop.NewRow("member-m1", map[string]string{"machine": "m1", "argv": `["/bin/member"]`, "keepalive": "true"})
+		require.NoError(t, err)
+		_, err = st.Insert(ctx, KindLoop, l1, "t")
+		require.NoError(t, err)
+		return st
+	}
+
+	applier, c, _ := coverStore(t)
+	_, err := Apply(ctx, store("~/nova-bench/loops"), noLibrary{applier}, KindLoop, "t", false, func(Op) {})
+	require.NoError(t, err)
+	assert.Equal(t, "~/nova-bench/loops/member-m1.log", c.HGet(ctx, LoopKey("member-m1"), "log").Val(), "the store's fleet row is the directory when Redis holds no applied fleet row")
+
+	applier, c, _ = coverStore(t)
+	_, err = Apply(ctx, store(""), noLibrary{applier}, KindLoop, "t", false, func(Op) {})
+	require.ErrorIs(t, err, ErrInvalid)
+	assert.ErrorContains(t, err, "run: nova-config fleet set --loops_dir <path>")
+	assert.Zero(t, c.Exists(ctx, LoopKey("member-m1")).Val(), "a refused apply writes no hash")
 }

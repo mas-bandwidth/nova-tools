@@ -418,7 +418,8 @@ var Kinds = []*Kind{
 			{Name: "keepalive", Type: TypeBool, Help: "true for a long-running unit restarted when it exits; false (the default) when it runs --every n"},
 			{Name: "enabled", Type: TypeBool, Default: "true", Help: "false writes the unit and does not start it; true (the default) runs it"},
 		},
-		Check: checkLoop,
+		Check:  checkLoop,
+		Derive: deriveLoopLog,
 	},
 	{
 		// A route is one way to run a model tier: the provider and model a
@@ -700,6 +701,30 @@ func deriveCoordinator(ctx context.Context, st Store, rows []Row) ([]Row, error)
 			words, _ := splitList(r.Fields["roles"] + "," + CoordinatorRole)
 			r.Fields["roles"] = strings.Join(words, ",")
 		}
+		out = append(out, r)
+	}
+	return out, nil
+}
+
+// deriveLoopLog is the loop kind's Derive: each row apply writes carries its
+// log, LoopLog of the store's fleet row's loops_dir and the loop's name, so
+// the path is the stored row's even when Redis holds no applied fleet row (a
+// store that applies the loop kind first). A fleet row that carries no
+// directory is refused with the set that declares one (docs/SPEC-CONFIG.md,
+// "fleet").
+func deriveLoopLog(ctx context.Context, st Store, rows []Row) ([]Row, error) {
+	fleet, _, err := st.Get(ctx, KindFleet, KindFleet)
+	if err != nil {
+		return nil, err
+	}
+	dir := fleet.Fields["loops_dir"]
+	if len(rows) > 0 && strings.TrimSpace(dir) == "" {
+		return nil, &RefusedError{Err: ErrInvalid, Detail: "the fleet row carries no loops_dir, the directory every loop's log path is derived from; run: nova-config fleet set --loops_dir <path>, then apply --kind loop"}
+	}
+	out := make([]Row, 0, len(rows))
+	for _, r := range rows {
+		r = r.Clone()
+		r.Fields["log"] = LoopLog(dir, r.Name)
 		out = append(out, r)
 	}
 	return out, nil

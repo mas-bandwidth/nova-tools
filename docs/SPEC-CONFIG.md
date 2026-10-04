@@ -269,7 +269,10 @@ migration 0017 removed the field, took `--width` out of every member argv that
 carried one and removed the second reader rows (`reader-<m>-2`), one reader
 per machine.
 The log path is derived from the fleet row's `loops_dir` and the name, `<loops_dir>/<name>.log`
-(`LoopLog`), and is never typed. A machine a loop names cannot be removed
+(`LoopLog`), and is never typed. Apply takes the directory from the store's
+fleet row, so a loop apply needs no fleet apply before it, and refuses a
+fleet row that carries none, naming `nova-config fleet set --loops_dir <path>`.
+A machine a loop names cannot be removed
 (`machine m1 is the --machine of loop member-m1`); `machine show <m>` names
 the machine's loops (`loops=<a,b>`, `-` for none).
 

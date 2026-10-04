@@ -280,6 +280,10 @@ func TestApplyWritesLoopsAfterMachinesAndReachesParity(t *testing.T) {
 	r := newLoopRig(t, "m1")
 	r.add(t, "l1", keptAlive("m1"))
 	r.add(t, "l2", map[string]string{"machine": "m1", "argv": `["/bin/once"]`, "every": "300", "seat": "s1", "keys": "A_KEY"})
+	// A loop's log path is derived from the fleet row's loops_dir, which a
+	// migrated store carries as migration 0027 seeds it.
+	_, _, err := r.st.Update(r.ctx, KindFleet, KindFleet, map[string]string{"loops_dir": "~/nova-bench/loops"}, "t")
+	require.NoError(t, err)
 	ap := newFake()
 	var lines []string
 	report := func(op Op) { lines = append(lines, OpLine("APPLY", KindLoop, op)) }

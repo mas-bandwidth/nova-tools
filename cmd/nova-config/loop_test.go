@@ -169,6 +169,10 @@ func TestApplyKindLoopWritesTheViewAndStatusShowsParity(t *testing.T) {
 	h := loopHarness(t, "m1")
 	code, _, errs := h.run(t, "loop", "add", "l1", "--machine", "m1", "--argv", `["/bin/prog"]`, "--keepalive", "true")
 	require.Equal(t, 0, code, errs)
+	// A loop's log path is derived from the fleet row's loops_dir, which a
+	// migrated store carries as migration 0027 seeds it.
+	code, _, errs = h.run(t, "fleet", "set", "--redis_port", "6380", "--pg_dsn", dsn, "--loops_dir", "~/nova-bench/loops")
+	require.Equal(t, 0, code, errs)
 
 	code, out, _ := h.run(t, "apply", "--kind", "loop", "--check")
 	require.Equal(t, 0, code)
@@ -188,8 +192,10 @@ func TestApplyKindLoopWritesTheViewAndStatusShowsParity(t *testing.T) {
 	assert.Equal(t, `["/bin/prog"]`, h.redis.views["loop"]["l1"]["argv"])
 	assert.Equal(t, int64(2), h.redis.revs["loop"])
 
-	code, out, _ = h.run(t, "apply", "--kind", "machine")
-	require.Equal(t, 0, code, out)
+	for _, kind := range []string{"machine", "fleet"} {
+		code, out, _ = h.run(t, "apply", "--kind", kind)
+		require.Equal(t, 0, code, out)
+	}
 	code, out, errs = h.run(t, "status")
 	assert.Equal(t, 0, code, errs)
 	assert.Contains(t, out, " loop_applied=2 ")
