@@ -260,10 +260,10 @@ type lander struct {
 	deferred *ledgerDefer
 	// batchMax is the most cards a batch holds (--batch-max; 0: no cap; batchCut).
 	batchMax int
-	out           []landBatch
-	epoch         uint64            // the epoch land read: every report is fenced to it
-	diffs         map[string]string // each card's merge diff, as checkCard read it, for its score
-	toScore       []scoreJob        // the landed batches, scored after the whole pass (landscore.go)
+	out      []landBatch
+	epoch    uint64            // the epoch land read: every report is fenced to it
+	diffs    map[string]string // each card's merge diff, as checkCard read it, for its score
+	toScore  []scoreJob        // the landed batches, scored after the whole pass (landscore.go)
 	// ledgerLog is the land log's lines for the shrink-only ledgers the batch's merges
 	// resolved (ledgerunion.go), reported with the batch (NOTE) and then cleared.
 	ledgerLog []string
