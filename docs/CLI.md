@@ -1013,6 +1013,7 @@ nova-sprint start
 nova-sprint stop
 nova-sprint run
 nova-sprint tick
+nova-sprint selftest [--dir <d>] [--keep]
 nova-sprint goal set <name> [--file <path>] [--to file:<path>]
 nova-sprint goal show [<name>]
 nova-sprint goal drop <name>
