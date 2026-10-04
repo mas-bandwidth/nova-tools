@@ -48,51 +48,34 @@ In your own module: go test -json <packages> | nova-ci slowtests --budget 60.
 usage, in any Go module (no state, no store):
   nova-ci help        print this banner and the verbs below (inspection)
   nova-ci version     which build this is: <version> <goos>/<goarch> <go version>
-  nova-ci slowtests --budget <seconds> [--example] [--json] [--max <n>]
+  nova-ci slowtests [--budget <seconds> | --package-budget <s>] [--test-budget <s>]
+                    [--allowlist <file>] [--sleeps <file>] [--enforce]
+                    [--load <n> --cpus <n>] [--example] [--json] [--max <n>]
                       (inspection) read newline-delimited ` + "`go test -json`" + `
                       TestEvents on stdin (or the built-in example stream with
                       --example) and print one CI-SLOW line per package whose
-                      total elapsed time is over --budget (default 60) and a
-                      CI-LOAD line; the times are a measurement unless
-                      --enforce is given (the nightly reference leg only).
-                      --json prints the same verdict as one JSON object.
-  nova-ci local [--base origin/dev] [--functional] [--dry-run]
-                      (runs tests, writes only a temp dir; nova-tools
-                      checkout) the unit tier CI runs for this diff, on this
-                      machine: the packages CI's selection picks
-                      against the merge base of --base and HEAD, run through
-                      the Makefile's test target (its go test flags and its
-                      slowtests budgets) under nice -n 15 at -p 2, GOMAXPROCS=2
-                      and -count=1; one PKG line per package with its seconds,
-                      one RED line per failing test with its output.
-                      --functional adds the functional build tag
-                      (GOTEST_TAGS=functional); CI runs those tests in its
-                      functional job as a stream merges. --dry-run prints the
-                      packages and the make line, and runs nothing.
-  nova-ci slowtests --package-budget <s> --test-budget <s> [--allowlist <file>]
-                    [--sleeps <file>] [--enforce] [--load <n> --cpus <n>] [--max <n>]
-                      the unit tier's budgets: a package over --package-budget
-                      and a top-level test over --test-budget are each a CI-SLOW
-                      line, unless the allowlist (pkg<TAB>test<TAB>seconds<TAB>
+                      total elapsed time is over its budget (--budget, whole
+                      seconds, default 60; --package-budget replaces it) and
+                      per top-level test over --test-budget, then one CI-LOAD
+                      line. The allowlist (pkg<TAB>test<TAB>seconds<TAB>
                       <measured>s@<where>, where is run<id> or a bench, - in
-                      the test column for a package's own row) names a higher
-                      one. The host's load average (the larger of its 1- and
-                      5-minute figures, over its CPUs; --load and --cpus give
-                      them by hand) is printed as a CI-LOAD line and never
-                      read by the verdict. A CI-SLOW line fails the run only
-                      with --enforce. A test skipped with the SLEEPS marker and
-                      not on --sleeps (pkg<TAB>test<TAB>where) is a CI-SLEEPS
-                      line and fails the run on every leg. A run with more
-                      finding lines than --max prints the first --max and one
+                      the test column for a package's own row) raises one
+                      package's or test's budget. The host's load average (the
+                      larger of its 1- and 5-minute figures, over its CPUs;
+                      --load and --cpus give them by hand) is printed and never
+                      read by the verdict. The times are a measurement: a
+                      CI-SLOW line fails the run only with --enforce (the
+                      nightly reference leg). A test skipped with the SLEEPS
+                      marker and not on --sleeps (pkg<TAB>test<TAB>where) is a
+                      CI-SLEEPS line and fails the run on every leg. A package
+                      go test served from its test cache reports a package
+                      elapsed near zero, so a cached run never trips a package
+                      budget; its tests replay the cached times, which
+                      --test-budget still reads (measure with -count=1).
+                      --json prints the same verdict as one JSON object.
+                      --max prints at most that many finding lines, then one
                       CI-SLOW MORE shown=<n> total=<n> line naming the flag
                       that prints the rest; --max 0 prints every finding.
-                      A package go test served from its test cache reports a
-                      package elapsed near zero, so a cached run can never
-                      trip --package-budget (or --budget); its tests replay
-                      the times of the run that was cached, which
-                      --test-budget still reads. CI's unit legs run with the
-                      cache on (GOTEST_COUNT_FLAG=); its --enforce leg runs
-                      -count=1, and so does a measurement by hand.
   nova-ci functional <package-dir>...
                       (inspection) print the packages among these that hold
                       functional tests (a _test.go built only under the

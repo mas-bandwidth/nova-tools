@@ -5057,16 +5057,16 @@ This section is the part of the efficiency-card set that binds `nova-bus`.
 ### REPEATS: a git fetch per poll, and a whole-history walk on `check --full`
 
 `wait` polls on its own clock and **every poll is a git fetch** — the comment on
-`minWaitInterval` says so (`cmd/nova-bus/main.go:2423`), and the measured fetch
+`minWaitInterval` says so (`cmd/nova-bus/wait.go`, `minWaitInterval`), and the measured fetch
 was **0.98 s**:
 
 ```
 $ git -C <bus> fetch origin main     0.98 s
 ```
 
-At `defaultWaitInterval = 10 * time.Second` (`cmd/nova-bus/main.go:2404`) a
+At `defaultWaitInterval = 10 * time.Second` (`cmd/nova-bus/wait.go`, `defaultWaitInterval`) a
 60-minute wait is **360 fetches**, about **5m 53s** of the hour spent inside
-git. The same clock lives in `waitLoop` (`cmd/nova-bus/main.go:2443`).
+git. The same clock lives in `waitLoop` (`cmd/nova-bus/wait.go`, `waitLoop`).
 
 `check --full` re-walks everything every time it is run; `check --as` reads from
 the cursor and pays only for what changed:

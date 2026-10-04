@@ -30,6 +30,17 @@ func TestNovaBusEfficiencyCardNamesItsRules(t *testing.T) {
 	// The contract is prose, so its line wrapping is the spec's; collapse runs
 	// of whitespace so a phrase is checked for its words, not its column.
 	section = strings.Join(strings.Fields(section), " ")
+	// The spec names the split source and its symbols; pin the implementation
+	// behind those references so a stale filename or removed clock cannot pass.
+	waitSource, err := os.ReadFile("wait.go")
+	require.NoError(t, err)
+	for _, declaration := range []string{
+		"const defaultWaitInterval = 10 * time.Second",
+		"const minWaitInterval = 100 * time.Millisecond",
+		"func waitLoop(",
+	} {
+		assert.Contains(t, string(waitSource), declaration)
+	}
 	for _, want := range []string{
 		// the state the card measured against.
 		"3,401 notes",
@@ -44,9 +55,9 @@ func TestNovaBusEfficiencyCardNamesItsRules(t *testing.T) {
 		"360 fetches",
 		"5m 53s",
 		"defaultWaitInterval",
-		"cmd/nova-bus/main.go:2404",
-		"cmd/nova-bus/main.go:2423",
-		"cmd/nova-bus/main.go:2443",
+		"cmd/nova-bus/wait.go",
+		"minWaitInterval",
+		"waitLoop",
 		// REPEATS: the full walk against the cursor read.
 		"342 lines",
 		"76,616 B",
@@ -58,7 +69,7 @@ func TestNovaBusEfficiencyCardNamesItsRules(t *testing.T) {
 		"509 B",
 		"INBOX OPEN carrying=986 heard=1",
 		"12,035 B",
-		"BUS WARN",
+		"BUS NOTE",
 		"220-byte remedy",
 		// WAITS ON: the turn a wait costs.
 		"652M cache read",

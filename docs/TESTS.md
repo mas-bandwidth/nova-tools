@@ -1107,7 +1107,7 @@ TABLES rows changed: work=1 readers=0 merge=0 fleet=1
 TICK OK state=RUNNING idle=no moved=2 notes=1
 0/2 0.0% -> ETA -  machine: running
 
-$ nova-sprint take --as m1 --limit 2 --epoch 0
+$ nova-sprint take --as m1 --max 2 --epoch 0
 MOVED s1-1.w1 fleet ready -> working member=m1 gen=1
 MOVED s1-2.w1 fleet ready -> working member=m1 gen=1
 PACKET s1-1.w1 attempt=1 gen=1 epoch=0

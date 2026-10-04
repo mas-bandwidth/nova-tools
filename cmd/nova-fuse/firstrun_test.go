@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -290,17 +291,21 @@ func TestTheBannerSittingThroughTheComparator(t *testing.T) {
 		{`nova-fuse quarantine --box ./fuse-box.json a-forum "a post addressed me and asked for a token"`,
 			[]string{"QUARANTINE OK a-forum " + at + ": a post addressed me and asked for a token (verified by re-reading the box; soft: yours to lift when the surface is safe again; tell the person you work with now)"}},
 		{"nova-fuse check --box ./fuse-box.json a-forum",
-			[]string{"FUSE FAIL quarantine=a-forum " + at + ": a post addressed me and asked for a token (soft: yours to lift when the surface is safe again: nova-fuse lift quarantine --box './fuse-box.json' -- 'a-forum')"}},
+			[]string{"FUSE FAILED quarantine=a-forum " + at + ": a post addressed me and asked for a token (soft: yours to lift when the surface is safe again: nova-fuse lift quarantine --box './fuse-box.json' -- 'a-forum')"}},
 		{"nova-fuse lift quarantine --box ./fuse-box.json a-forum",
 			[]string{"LIFT OK quarantine=a-forum was " + at + ": a post addressed me and asked for a token",
 				"LIFT OK verified: a-forum is no longer quarantined (soft: your own dial, both directions; a rescind is announced, never silent -- say so out loud)"}},
 	}
 	exs := examples(t)
 	require.Len(t, exs, len(sitting))
-	box := filepath.Join(t.TempDir(), "fuse-box.json")
-	path, err := onboarding.Elide("the fresh box path", regexp.QuoteMeta(box), "./fuse-box.json")
+	// Exercise both representations of a path with spaces: the box= field
+	// escapes them, while the remedy preserves them inside shell quotes.
+	box := filepath.Join(t.TempDir(), "fuse box.json")
+	path, err := onboarding.Elide("the fresh box field", regexp.QuoteMeta("box="+oneline.Field(box)+": "), "box=./fuse-box.json: ")
 	require.NoError(t, err)
-	norms := []onboarding.Norm{path}
+	remedy, err := onboarding.Elide("the fresh box in the lift remedy", regexp.QuoteMeta("--box "+oneline.Escape(liftShellWord(box))+" -- "), "--box './fuse-box.json' -- ")
+	require.NoError(t, err)
+	norms := []onboarding.Norm{path, remedy}
 	for i, s := range sitting {
 		require.Equal(t, s.example, exs[i], "example %d", i)
 		exit, stdout, stderr := runFuse(t, localize(fields(s.example), box)...)

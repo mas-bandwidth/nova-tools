@@ -106,7 +106,7 @@ func TestStatusGrammar(t *testing.T) {
 		{
 			"reply ok",
 			func(t *testing.T) []string {
-				return []string{"reply", "--bus", grammarBus(t), "--as", "Ada", "--re", "bo-abcdef012345", "--file", grammarFile(t, "Yes.\n"), "--remote", "origin", "--branch", "main", "--dry-run"}
+				return []string{"reply", "--bus", grammarNoteBus(t), "--as", "Ada", "--re", "bo-abcdef012345", "--file", grammarFile(t, "Yes.\n"), "--remote", "origin", "--branch", "main", "--dry-run"}
 			}, "OK", "REPLY", 0, "stdout",
 		},
 		{
@@ -157,7 +157,7 @@ func TestStatusGrammar(t *testing.T) {
 		{
 			"close ok",
 			func(t *testing.T) []string {
-				return []string{"close", "--bus", grammarBus(t), "--as", "Ada", "--before", "2026-09-08T00:00:00Z", "--dry-run"}
+				return []string{"close", "--bus", grammarNoteBus(t), "--as", "Ada", "--before", "2026-09-08T00:00:00Z", "--dry-run"}
 			}, "OK", "CLOSE", 0, "stdout",
 		},
 		{
@@ -284,7 +284,7 @@ func grammarBus(t *testing.T) string {
 }
 
 // grammarNoteBus is a git repository with the roster and the one note committed, so the
-// two write verbs that commit (send --no-push and receipt --no-push) run over a clean
+// write verbs and their dry runs (send, receipt, reply and close) run over a clean
 // tree. commit.gpgsign is off in this fixture's own config, so the write verb's commit
 // cannot hang on a signing key the runner's global git config set.
 func grammarNoteBus(t *testing.T) string {
