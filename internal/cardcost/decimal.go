@@ -93,26 +93,62 @@ func Canonical(s string) (string, error) {
 	return Text(r), nil
 }
 
-// maxDigits bounds the digits after the point Text looks for. The longest amount
-// this package makes is a prediction: a price of MaxFraction digits over a million
+// maxDigits bounds the digits after the point Text writes for a rational whose
+// decimal does not terminate, the documented fallback. No amount this package makes
+// from a typed decimal is one: a price of MaxFraction digits over a million
 // (MaxFraction+6) times one plus a gateway percent of MaxFraction digits over a
 // hundred (MaxFraction+2 more), 68 digits; sums add none.
 const maxDigits = 100
 
 // Text is a rational whose decimal terminates, written exactly, with no trailing
-// zero after the point (a value that does not terminate within maxDigits is cut
-// there; no amount this package makes is one).
+// zero after the point. The package's exact decimal contract (package comment:
+// every amount is a decimal string end to end, never a float; docs/SPEC-SPRINT.md,
+// "What a card cost") has amount accept a stored decimal of any length and Sum add
+// exactly, so Text cuts no terminating digit: terminatingScale reads the exact
+// number of places off the denominator. A rational that does not terminate has no
+// exact spelling and is cut at maxDigits.
 func Text(r *big.Rat) string {
-	ten := big.NewInt(10)
-	scaled := new(big.Rat).Set(r)
-	digits := 0
-	for !scaled.IsInt() && digits < maxDigits {
-		scaled.Mul(scaled, new(big.Rat).SetInt(ten))
-		digits++
+	scale, terminates := terminatingScale(r.Denom())
+	if !terminates {
+		scale = maxDigits
 	}
-	s := r.FloatString(digits)
+	s := r.FloatString(scale)
 	if strings.Contains(s, ".") {
 		s = strings.TrimRight(strings.TrimRight(s, "0"), ".")
 	}
 	return s
+}
+
+// terminatingScale reports how many digits after the point a rational with the
+// denominator den writes exactly, and whether it terminates at all: a decimal
+// terminates only when its denominator in lowest terms (big.Rat keeps den there)
+// has no prime factor but 2 and 5, and then needs max(a, b) digits for den=2^a·5^b,
+// found by dividing the factors out.
+func terminatingScale(den *big.Int) (int, bool) {
+	d := new(big.Int).Set(den)
+	two, five, one := big.NewInt(2), big.NewInt(5), big.NewInt(1)
+	var q, rem big.Int
+	twos, fives := 0, 0
+	for {
+		q.Quo(d, two)
+		rem.Rem(d, two)
+		if rem.Sign() != 0 {
+			break
+		}
+		d.Set(&q)
+		twos++
+	}
+	for {
+		q.Quo(d, five)
+		rem.Rem(d, five)
+		if rem.Sign() != 0 {
+			break
+		}
+		d.Set(&q)
+		fives++
+	}
+	if d.Cmp(one) != 0 {
+		return 0, false
+	}
+	return max(twos, fives), true
 }
