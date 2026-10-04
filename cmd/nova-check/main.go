@@ -37,6 +37,7 @@ read the manifests, ledgers and receipts you name.
 first run: create the small markdown tree below, then run the example commands.
 
 usage:
+  nova-check <verb> -h, nova-check help <verb>   the verb's flags, its effect and exit codes
   nova-check version [--json] print this build identity (--version also accepted)
   nova-check quickstart --dir <dir> [--fail-max <n>] the two checks a first run can make
                                                      with nothing but a directory: links,
