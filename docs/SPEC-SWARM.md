@@ -187,7 +187,10 @@ name; the model stays on the route row) runs its cards through the subscription 
 of one machine: `claude`, `codex` and `grok`, each a one-shot child (`internal/harness`
 names them; `internal/swarm/headless.go` is the logic, every function pure). A route row
 names the harness (`nova-config route add ... --harness claude|codex|grok`; `opencode`,
-the default, launches through the providers table as before), the deal writes it on the
+the default, launches through the providers table as before), and its provider is `subscription-<harness>` (`subscription-claude`, `subscription-codex`,
+`subscription-grok`; `nova-config` refuses any other word, and migration 0027 holds it in the
+schema), because a rest is a provider's: one word shared by the three would rest all three for
+one login that expired, and one word each rests only its own. The deal writes the harness on the
 work card and its packet, and the member launches that program from its own PATH, so a
 member without it refuses the launch (`staging refused`) and the sprint deals the card to
 one that has it. `native` learns the harness from the binary's name.

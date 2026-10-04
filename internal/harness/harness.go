@@ -44,3 +44,17 @@ func KindOf(bin string) string {
 	}
 	return OpenCode
 }
+
+// ProviderPrefix begins the provider word of a headless harness's route.
+const ProviderPrefix = "subscription-"
+
+// ProviderOf is the provider word the routes of a headless harness carry:
+// `subscription-claude`, `subscription-codex`, `subscription-grok`, and "" for any other
+// kind. A rest is a provider's (internal/sprint route_rest.go), so one word per harness
+// keeps one harness's expired login from resting the other two.
+func ProviderOf(kind string) string {
+	if !IsHeadless(kind) {
+		return ""
+	}
+	return ProviderPrefix + kind
+}

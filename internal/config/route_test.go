@@ -76,6 +76,21 @@ func TestRouteNewRowCanonicalisesAndRefusesEveryProblemAtOnce(t *testing.T) {
 			want: map[string]string{"model": "x-ai/grok-4", "enabled": "false", "note": "held while the price is read"},
 		},
 		{
+			name: "a headless harness on its own provider word",
+			raw:  map[string]string{"tier": "heavy", "provider": "subscription-claude", "model": "m", "harness": "claude", "deadline": "900"},
+			want: map[string]string{"provider": "subscription-claude", "harness": "claude"},
+		},
+		{
+			name: "a headless harness on a provider word shared with the others",
+			raw:  map[string]string{"tier": "heavy", "provider": "subscription", "model": "m", "harness": "grok", "deadline": "900"},
+			errs: []string{`--harness grok and has --provider "subscription"`, "want --provider subscription-grok", "rests only its own routes"},
+		},
+		{
+			name: "a headless harness on another headless harness's provider word",
+			raw:  map[string]string{"tier": "heavy", "provider": "subscription-claude", "model": "m", "harness": "codex", "deadline": "900"},
+			errs: []string{"want --provider subscription-codex"},
+		},
+		{
 			name: "frontier is no route's tier",
 			raw:  map[string]string{"tier": "frontier", "provider": "p", "model": "m", "deadline": "60"},
 			errs: []string{`--tier "frontier": want one of flash, pro`},
@@ -192,6 +207,8 @@ func TestRouteSetIsCheckedOnTheRowItWouldLeave(t *testing.T) {
 		{name: "a slashed provider", changes: map[string]string{"provider": "x-ai/grok"}, refuse: "no slash"},
 		{name: "an empty model", changes: map[string]string{"model": ""}, refuse: `--model ""`},
 		{name: "out of the deal with its reason", changes: map[string]string{"enabled": "false", "note": "4 of 52 ok"}},
+		{name: "a headless harness left on the provider word of opencode", changes: map[string]string{"harness": "claude"}, refuse: "want --provider subscription-claude"},
+		{name: "a headless harness with its own provider word", changes: map[string]string{"harness": "claude", "provider": "subscription-claude"}},
 		{name: "another provider and model", changes: map[string]string{"provider": "openrouter", "model": "x-ai/grok-4"}},
 		{name: "a price sheet", changes: map[string]string{"price_input": "0.27", "price_output": "1.10", "price_as_of": "2026-10-01"}},
 		{name: "a threshold with no long prices", changes: map[string]string{"long_context": "128000"}, refuse: "no --price_input_long"},

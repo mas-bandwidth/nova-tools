@@ -26,3 +26,18 @@ func TestAHarnessIsKnownByItsProgramName(t *testing.T) {
 	}
 	assert.False(t, IsHeadless(OpenCode), "opencode is not headless")
 }
+
+// Each headless harness has a provider word of its own, so a provider's rest never spans
+// two harnesses; any other kind has none.
+func TestEachHeadlessHarnessHasAProviderOfItsOwn(t *testing.T) {
+	t.Parallel()
+	seen := map[string]string{}
+	for _, k := range Headless {
+		p := ProviderOf(k)
+		assert.Equal(t, "subscription-"+k, p)
+		assert.NotContains(t, seen, p, "%s shares a provider with %s", k, seen[p])
+		seen[p] = k
+	}
+	assert.Empty(t, ProviderOf(OpenCode))
+	assert.Empty(t, ProviderOf("nonesuch"))
+}

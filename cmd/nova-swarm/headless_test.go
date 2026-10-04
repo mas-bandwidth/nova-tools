@@ -21,15 +21,15 @@ import (
 func TestAHeadlessLaunchHasTheHarnesssOwnArgv(t *testing.T) {
 	t.Parallel()
 	card := "card: do the thing\n"
-	cfg := nativeRunConfig{binary: "/opt/bin/codex", model: "subscription/gpt-6-astra", label: "lbl", card: []byte(card)}
+	cfg := nativeRunConfig{binary: "/opt/bin/codex", model: "subscription-codex/gpt-6-astra", label: "lbl", card: []byte(card)}
 	assert.Equal(t, harness.Codex, cfg.headless())
-	argv, err := nativeLaunchArgv("/opt/bin/codex", cfg, "subscription")
+	argv, err := nativeLaunchArgv("/opt/bin/codex", cfg, "subscription-codex")
 	require.NoError(t, err)
 	want, _ := swarm.HeadlessArgv(harness.Codex, "/opt/bin/codex", "gpt-6-astra", card)
 	assert.Equal(t, want, argv)
 	cfg.binary = "/usr/local/bin/opencode"
 	assert.Equal(t, "", cfg.headless())
-	argv, err = nativeLaunchArgv("/usr/local/bin/opencode", cfg, "subscription")
+	argv, err = nativeLaunchArgv("/usr/local/bin/opencode", cfg, "subscription-codex")
 	require.NoError(t, err)
 	assert.Equal(t, "run", argv[1], "an opencode binary launches through the providers table's row")
 }
@@ -40,7 +40,7 @@ func TestAHeadlessChildIsPointedAtTheHarnesssHome(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(home, ".codex"), 0o755))
-	cfg := nativeRunConfig{binary: "codex", model: "subscription/m", slotDir: "/s", benchHome: home, benchOS: "linux", noSharedCaches: true}
+	cfg := nativeRunConfig{binary: "codex", model: "subscription-codex/m", slotDir: "/s", benchHome: home, benchOS: "linux", noSharedCaches: true}
 	argv := nativeSandboxArgv([]string{"codex"}, cfg, "/s/data", "/s/jobs/l", "/s/tmp/l")
 	assert.Contains(t, argv, filepath.Join(home, ".codex"))
 	cfg.binary = "claude" // no ~/.claude here: nothing to grant
