@@ -55,9 +55,3 @@ func TestTableCoverOptsRefusesBadWidths(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "--width: width")
 }
-
-//go:fix inline
-func intp(n int) *int { return new(n) }
-
-//go:fix inline
-func strp(s string) *string { return new(s) }

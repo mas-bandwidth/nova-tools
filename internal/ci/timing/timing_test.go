@@ -169,8 +169,3 @@ func TestTimingSelectAndRender(t *testing.T) {
 		require.Error(t, err, "Rows took an event that does not say whether it was green, want a refusal")
 	})
 }
-
-// greenPtr is the *bool a canned Event states its verdict with.
-//
-//go:fix inline
-func greenPtr(b bool) *bool { return new(b) }

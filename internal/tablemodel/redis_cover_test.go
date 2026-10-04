@@ -99,9 +99,6 @@ func TestRedisCoverLastLineReportsTheFinalNonEmptyLineOrNothing(t *testing.T) {
 	}
 }
 
-//go:fix inline
-func ptr(s string) *string { return new(s) }
-
 func TestRedisCoverKillTakesTheExitedStoreAndDeletesItsDirectory(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

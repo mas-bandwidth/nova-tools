@@ -19,11 +19,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// coverStr returns a pointer to a copy of s, for a login's flag fields.
-//
-//go:fix inline
-func coverStr(s string) *string { return new(s) }
-
 // TestMainCoverUnconfirmedNamesTheLostTransaction pins unconfirmed's one line
 // for a transaction whose confirmation was lost: the UNCONFIRMED word at exit
 // 1, the key, the store's own string with the cause, and a recall remedy that

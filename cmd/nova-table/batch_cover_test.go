@@ -9,12 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// sptr is the pointer a field side needs: a present value is *string, absence is
-// nil, so a test's literal carries the address of its own string.
-//
-//go:fix inline
-func sptr(s string) *string { return new(s) }
-
 // batchJSON renders the applied batch as one object: revisions, scores and the
 // epoch are decimal strings, an absent place or score is null, fields are
 // [before, after] pairs. The main path moves a member's place and score and drops

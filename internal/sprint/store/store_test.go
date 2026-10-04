@@ -488,9 +488,6 @@ func TestMemRefusesAsTheBatchDoes(t *testing.T) {
 	require.Equal(t, "LIMIT", refusalCode(err), "a read set over the bound: %v", err)
 }
 
-//go:fix inline
-func strp(s string) *string { return new(s) }
-
 func manyCreates(n int) []ntable.BatchMemberEntry {
 	out := make([]ntable.BatchMemberEntry, n)
 	for i := range out {
