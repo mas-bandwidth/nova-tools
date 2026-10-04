@@ -1,15 +1,15 @@
 // Package fleet holds the machines registry: the one file that says what each machine in
 // the fleet IS, and therefore what may be placed on it.
 //
-// THE LOCK (Glenn, 2026-09-18): runner hosts are CI-only. No card, no probe and no load may
+// THE LOCK (the coordinator, 2026-09-18): runner hosts are CI-only. No card, no probe and no load may
 // be placed on a machine that serves the merge group's shards. A card and a CI shard on one
 // host make the shard slow, the gate red and the queue stop -- this was measured all through
 // 2026-09-17, when the merge group's darwin legs starved behind the coordination bench's own
 // children and nothing landed for twenty minutes at a time.
 //
 // The registry exists because a bench name reached a machine as a bare string: `--bench
-// batman` was a hostname the fill loop would happily ssh to, and nothing in the tools knew
-// that batman is six CI runners and not a card bench. Now a machine name is RESOLVED: a verb
+// a-machine` was a hostname the fill loop would happily ssh to, and nothing in the tools knew
+// that a-machine is six CI runners and not a card bench. Now a machine name is RESOLVED: a verb
 // asks the registry for the row, and a name the registry does not carry is refused by name,
 // with the reason and the remedy on the line.
 //
@@ -66,7 +66,7 @@ const ReasonUnknown = "unknown-machine"
 
 // allowSharedPrefix is how a machine that is BOTH runner and bench says why. The exception
 // is dated because it is meant to end: when the pull worker runs cards in containers, the
-// runner role comes off hulk and vision and the note goes with it.
+// runner role comes off a bench and a friend and the note goes with it.
 const allowSharedPrefix = "allow-shared="
 
 // Machine is one line of the registry.
