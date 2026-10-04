@@ -17,7 +17,7 @@ type Agent struct {
 	StateDir                      string // the daemon's state files, when not the default under Home
 	Coordinator                   string // the bus sender that may automatically wake this session
 	Width                         int
-	Binary                        string // this tool, by absolute path
+	Binary                        string // this tool, by absolute path with symlinks resolved
 	Redis, Server                 string // the bus store and the sprint server
 	Home, Path                    string // the environment the agent runs in
 	LaunchdLog                    string // launchd's own stdout and stderr path, off the friend's volume
@@ -107,6 +107,20 @@ type Launchctl func(ctx context.Context, args ...string) (output string, err err
 // for a second or so after the bootout, measured 2026-10-04).
 const BootstrapTries = 5
 
+// CheckLaunchdBinary refuses a resolved executable on a removable volume.
+// Installation uses local disk for the executable as well as its log/state.
+func CheckLaunchdBinary(path string) error {
+	clean := filepath.Clean(path)
+	if !filepath.IsAbs(clean) {
+		return fmt.Errorf("the launch agent binary wants an absolute local disk path; install this binary on local disk and rerun nova-friend install")
+	}
+	root := strings.ToLower(clean)
+	if root == "/volumes" || strings.HasPrefix(root, "/volumes/") {
+		return fmt.Errorf("launchd cannot run binary %q on /Volumes reliably; install this binary on local disk and rerun nova-friend install", path)
+	}
+	return nil
+}
+
 // Install writes the plist and loads it: a bootout of whatever that label
 // runs now (nothing loaded is fine), then a bootstrap into the user's
 // domain, sent again after wait() while launchd answers EIO, so running it
@@ -114,6 +128,9 @@ const BootstrapTries = 5
 // path and the commands it ran.
 func Install(ctx context.Context, a Agent, uid int, run Launchctl, write func(path string, data []byte) error, wait func()) (path string, ran []string, err error) {
 	path = a.PlistPath()
+	if err := CheckLaunchdBinary(a.Binary); err != nil {
+		return path, nil, err
+	}
 	if err := os.MkdirAll(filepath.Dir(a.LaunchdLog), 0o755); err != nil {
 		return path, nil, err
 	}

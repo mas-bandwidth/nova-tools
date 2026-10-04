@@ -52,22 +52,23 @@ const OpenRetryMax = 30 * time.Second
 // a test its own over internal/bus2's Fake, a fake harness and its own
 // clock, so no test opens a socket or reads the real time.
 type world struct {
-	getenv    func(string) string
-	open      func(ctx context.Context, addr string) (bus2.Store, func(), error)
-	exec      friend.Exec
-	beat      func(ctx context.Context, server, friend string, asleep bool) error
-	launchctl friend.Launchctl
-	now       func() time.Time
-	sleep     func(ctx context.Context, d time.Duration)
-	signals   func(ctx context.Context) (context.Context, context.CancelFunc)
-	uid       int
-	home      string
-	binary    func() (string, error)
-	random    func() string
+	getenv        func(string) string
+	open          func(ctx context.Context, addr string) (bus2.Store, func(), error)
+	exec          friend.Exec
+	beat          func(ctx context.Context, server, friend string, asleep bool) error
+	launchctl     friend.Launchctl
+	now           func() time.Time
+	sleep         func(ctx context.Context, d time.Duration)
+	signals       func(ctx context.Context) (context.Context, context.CancelFunc)
+	uid           int
+	home          string
+	binary        func() (string, error)
+	resolveBinary func(string) (string, error)
+	random        func() string
 }
 
 func realWorld() world {
-	w := world{getenv: os.Getenv, exec: friend.RealExec, now: time.Now, uid: os.Getuid(), home: os.Getenv("HOME"),
+	w := world{getenv: os.Getenv, exec: friend.RealExec, now: time.Now, uid: os.Getuid(), home: os.Getenv("HOME"), resolveBinary: filepath.EvalSymlinks,
 		sleep: func(ctx context.Context, d time.Duration) {
 			select {
 			case <-ctx.Done():
@@ -608,6 +609,13 @@ func (w world) install(c *tool.Call) *tool.Out {
 	}
 	a, err := w.agent(c)
 	if err != nil {
+		return tool.Refuse(err.Error())
+	}
+	a.Binary, err = w.resolveBinary(a.Binary)
+	if err != nil {
+		return tool.Refuse("resolve the launch agent binary: " + err.Error() + "; install this binary on local disk and rerun nova-friend install")
+	}
+	if err := friend.CheckLaunchdBinary(a.Binary); err != nil {
 		return tool.Refuse(err.Error())
 	}
 	if dry {
