@@ -116,6 +116,31 @@ func previousTag(tags []string) string {
 	return versions[len(versions)-1]
 }
 
+func versionParts(tag string) []int {
+	out := make([]int, 3)
+	fields := strings.SplitN(strings.TrimPrefix(tag, "v"), ".", 3)
+	for i := range out {
+		if i >= len(fields) {
+			break
+		}
+		n := fields[i]
+		if c := strings.IndexAny(n, "-+"); c >= 0 {
+			n = n[:c]
+		}
+		out[i], _ = strconv.Atoi(n)
+	}
+	return out
+}
+
+func lessVersion(a, b []int) bool {
+	for i := range a {
+		if a[i] != b[i] {
+			return a[i] < b[i]
+		}
+	}
+	return false
+}
+
 // Section renders one changelog section. It is exported and pure so that the
 // shape of what a release says about itself is asserted by a test rather than
 // by reading a file somebody wrote by hand afterwards.
