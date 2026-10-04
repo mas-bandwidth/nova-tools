@@ -271,7 +271,7 @@ func TestTestMatrixPullRequestSelectsAgainstItsBase(t *testing.T) {
 	for _, want := range []string{
 		"pull_request: 3 package(s) touched: ./cmd/a ./internal/ci ./internal/docs\n",
 		"darwin-specific (own files or an import differ under GOOS=darwin): ./cmd/a \n",
-		`{"name":"1/4 darwin-arm64","packages":"./cmd/a","os":"macOS","arch":"ARM64","group":"mac"}`,
+		`{"name":"1/8 darwin-arm64","packages":"./cmd/a","os":"macOS","arch":"ARM64","group":"mac"}`,
 		`{"name":"1/4 lin","packages":"./cmd/a","os":"linux","arch":"x64","group":"lin"},{"name":"2/4 lin","packages":"./internal/ci","os":"linux","arch":"x64","group":"lin"},{"name":"3/4 lin","packages":"./internal/docs","os":"linux","arch":"x64","group":"lin"}`,
 	} {
 		if !strings.Contains(out, want) {

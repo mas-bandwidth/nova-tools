@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"context"
 	"net"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -113,6 +114,48 @@ func TestAddrRefusedWhenMissingOrEmpty(t *testing.T) {
 	{
 		keys := h.mr.Keys()
 		assert.Len(t, keys, 0, "a refused address stored %v; a refusal writes nothing", keys)
+	}
+}
+
+// TestAddrAcceptsAUnixSocketPath: --addr takes a Unix socket, the address
+// shape nova-table's first-run recipe makes (redis-server --port 0
+// --unixsocket "$d/redis.sock"): an absolute path, bare or with redis-cli's
+// unix: prefix. A socket names no host and no port, so there is nothing to
+// guess, and redisconn dials an absolute path as a Unix socket already. It is
+// accepted everywhere --addr is read: the flag and login checks (validAddr),
+// the dry run of spill that dials nothing, and the address handed to redisconn
+// (login.options). A host:port address goes through unchanged.
+func TestAddrAcceptsAUnixSocketPath(t *testing.T) {
+	t.Parallel()
+
+	sock := filepath.Join(t.TempDir(), "redis.sock")
+	cases := []struct {
+		name string
+		addr string
+		dial string
+	}{
+		{"absolute path", sock, sock},
+		{"unix: prefix", "unix:" + sock, sock},
+		{"host:port unchanged", "127.0.0.1:6379", "127.0.0.1:6379"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			require.NoError(t, validAddr(tc.addr), "--addr %q is refused before anything is dialled", tc.addr)
+
+			var out, errb bytes.Buffer
+			d := deps{
+				now:    func() time.Time { return time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC) },
+				getenv: func(string) string { return "" },
+			}
+			code := run([]string{"spill", "--dry-run", "--addr", tc.addr, "--owner", "ada", "--name", "note", "--ttl", "10m", "--value", "hi"}, &out, &errb, d)
+			assert.Zero(t, code, "stdout=%q stderr=%q; a socket address passes the checks and dials nothing", out.String(), errb.String())
+			assert.Contains(t, out.String(), "SPILL OK")
+			assert.Contains(t, out.String(), "store="+tc.addr)
+
+			l := login{addr: coverStr(tc.addr), user: coverStr(""), passwordEnv: coverStr(PasswordEnv), givenFn: func(string) bool { return true }}
+			assert.Equal(t, tc.dial, l.options(deps{getenv: func(string) string { return "" }}).Addr, "the address redisconn dials")
+		})
 	}
 }
 

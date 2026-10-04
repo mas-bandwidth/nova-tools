@@ -502,7 +502,9 @@ func TestModeFindingRejectsAModeGitWillNotWrite(t *testing.T) {
 
 	f, bad := modeFinding(entry{newMode: "100600", path: "sign/private.go", status: "A"})
 	require.True(t, bad, "mode 100600 was accepted")
-	require.True(t, f.Token == "stray-file" && f.At == "sign/private.go" && strings.Contains(f.Why, "100600"), "finding = %+v, want a stray-file naming the mode", f)
+	require.True(t, f.Token == "stray-file", "finding = %+v, want a stray-file naming the mode", f)
+	require.True(t, f.At == "sign/private.go", "finding = %+v, want a stray-file naming the mode", f)
+	require.True(t, strings.Contains(f.Why, "100600"), "finding = %+v, want a stray-file naming the mode", f)
 	for _, mode := range []string{"100644", "100755"} {
 		_, bad := modeFinding(entry{newMode: mode, path: "sign/sign.go", status: "A"})
 		require.False(t, bad, "mode %s was rejected", mode)

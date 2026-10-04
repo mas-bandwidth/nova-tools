@@ -60,7 +60,7 @@ func TestSnapshotRefusesABinEntryWhoseNameIsNotOneTSVField(t *testing.T) {
 	ordinary := filepath.Join(binOrdinary, "nova-good")
 	require.NoError(t, os.WriteFile(ordinary, []byte("#!/bin/sh\nprintf 'nova-good v1.0.0 linux/amd64 go1.0\\n'\n"), 0o755))
 	outOrdinary := filepath.Join(t.TempDir(), "ordinary.tsv")
-	code, stdout, stderr = runTool(t, "nova-version", "snapshot", "--bin", binOrdinary, "--out", outOrdinary)
+	code, _, stderr = runTool(t, "nova-version", "snapshot", "--bin", binOrdinary, "--out", outOrdinary)
 	assert.Equal(t, 0, code, stderr)
 	assert.FileExists(t, outOrdinary)
 }

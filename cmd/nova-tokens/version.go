@@ -24,7 +24,7 @@
 //
 // ONE LINE, FOUR TOKENS. Every field goes through oneline.Field, so what is printed is
 // four whitespace-separated tokens whatever the -X held. A version stamped with a newline
-// or a space in it would otherwise make the one line that says which build is running say
+// or a blank in it would otherwise make the one line that says which build is running say
 // two things, or say a build time as if it were an architecture -- and the -X value is the
 // one field here that comes from outside the toolchain.
 package main

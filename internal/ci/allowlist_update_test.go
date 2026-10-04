@@ -40,7 +40,7 @@ var listFilePatterns = []string{"*allowlist*.txt", "*.allow", "*_examples.txt"}
 // LoadPackages owns every .txt shard below one of these directories, including
 // future package shards and the @root shard.
 var countedShardDirectories = []string{
-	"discarded", "scripthide", "okonfailure", "remedy", "generality", "generality-text", "testify",
+	"discarded", "scripthide", "okonfailure", "remedy", "generality", "generality-text", "testify", "staticcheck", "errcheck",
 }
 
 // TestEveryAllowlistIsReadThroughTheOneHelper is the class test of #4339: every
@@ -538,4 +538,35 @@ func writeLedgerGuardFixture(t *testing.T, root, rel, contents string) {
 	file := filepath.Join(root, filepath.FromSlash(rel))
 	require.NoError(t, os.MkdirAll(filepath.Dir(file), 0o755))
 	require.NoError(t, os.WriteFile(file, []byte(contents), 0o644))
+}
+
+// lintClassTests are the class tests whose package ledgers sit in
+// countedShardDirectories as `staticcheck` and `errcheck` (docs/SPEC-CI.md,
+// both entries): functional-tier tests that `make lint` runs.
+var lintClassTests = []string{"TestStaticcheckFindings", "TestUncheckedErrors"}
+
+// TestTheLintJobRunsTheLinterClassTests: the staticcheck and errcheck ledgers
+// gate a change only when CI runs their class tests. They are functional-tier
+// and the functional job never runs on a pull request, so ci.yml's lint job,
+// which runs on every pull request, merge group and push, carries `make lint`,
+// and `make lint` reaches both tests. Without the step the two ledgers are
+// read on a developer's machine and nowhere else.
+func TestTheLintJobRunsTheLinterClassTests(t *testing.T) {
+	t.Parallel()
+
+	root := repoRoot(t)
+	job := jobBody(readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml")), "lint")
+	require.NotEmpty(t, job, "ci.yml has no lint job")
+	runsMakeLint := false
+	for _, c := range runCommands(job) {
+		if c.cmd == "make lint" {
+			runsMakeLint = true
+		}
+	}
+	assert.True(t, runsMakeLint, "ci.yml's lint job runs no `make lint` step, so the staticcheck and errcheck class tests gate no pull request; add a step `run: make lint`")
+
+	recipes := strings.Join(parseMakefile(t, filepath.Join(root, "Makefile")).recipesUnder("lint"), "\n")
+	for _, name := range lintClassTests {
+		assert.Contains(t, recipes, "-run '^"+name+"$'", "`make lint` does not run %s; the recipes it runs are:\n%s", name, recipes)
+	}
 }

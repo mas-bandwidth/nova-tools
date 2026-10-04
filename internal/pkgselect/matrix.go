@@ -26,6 +26,10 @@ const (
 	// would need, so the legs are few and each takes a wave.
 	PullRequestShards   = 4
 	MergeGroupMacShards = 4
+	// PullRequestMacShards is the macOS group's leg count on a pull request: a change that reaches
+	// many darwin-sensitive packages (a promotion) dealt four legs of four ran every leg past the
+	// two-minute cap (2026-10-04, all four cancelled twice); a small change fills few of the eight.
+	PullRequestMacShards = 8
 	// FunctionalShards is the leg count of the functional tier. Six: the sprint stream moved
 	// slow real-time tests into the tier and four legs ran past the two-minute cap
 	// (functional 1/4 and 3/4 were cancelled at it); the cap is permanent, the split is not.
@@ -81,31 +85,15 @@ func DarwinOn(event, target string) bool {
 func DropDarwinOnly(pkgs []string) []string {
 	kept := make([]string, 0, len(pkgs))
 	for _, p := range pkgs {
-		if !IsDarwinOnly(p) {
+		if !slices.Contains(DarwinOnly, p) {
 			kept = append(kept, p)
 		}
 	}
 	return kept
 }
 
-// IsDarwinOnly reports whether pkg has no Linux leg.
-func IsDarwinOnly(pkg string) bool {
-	return slices.Contains(DarwinOnly, pkg)
-}
-
 // Shards is how many legs each runner group deals over.
 type Shards struct{ Linux, Mac int }
-
-// ShardsFor is the fan-out's shape for a workflow event.
-func ShardsFor(event string) Shards {
-	switch event {
-	case "pull_request":
-		return Shards{Linux: PullRequestShards, Mac: PullRequestShards}
-	case "merge_group":
-		return Shards{Linux: LinuxShards, Mac: MergeGroupMacShards}
-	}
-	return Shards{Linux: LinuxShards, Mac: MacShards}
-}
 
 // OrderHeavyFirst puts the HeavyFirst packages before the rest, each part in
 // its own order.
@@ -175,7 +163,7 @@ func Functional(pkgs []string, g Groups) []FunctionalLeg {
 	groups := make([][]string, FunctionalShards)
 	f := 0
 	for _, p := range pkgs {
-		if IsDarwinOnly(p) {
+		if slices.Contains(DarwinOnly, p) {
 			continue
 		}
 		groups[f%FunctionalShards] = append(groups[f%FunctionalShards], p)
@@ -221,9 +209,6 @@ type DarwinSensitive struct {
 	All  bool
 	Pkgs map[string]bool
 }
-
-// Needs reports whether pkg gets a macOS leg.
-func (d DarwinSensitive) Needs(pkg string) bool { return d.All || d.Pkgs[pkg] }
 
 // Sorted is the set, sorted, as the line printed for it: each name followed by
 // one blank.
@@ -282,12 +267,16 @@ func DetectDarwinSensitive(run Runner, root string) (DarwinSensitive, bool, erro
 	differ := map[string]bool{}
 	for _, l := range linux {
 		if !inDarwin[l] {
-			differ[firstField(l)] = true
+			if f := strings.Fields(l); len(f) > 0 {
+				differ[f[0]] = true
+			}
 		}
 	}
 	for _, l := range darwin {
 		if !inLinux[l] {
-			differ[firstField(l)] = true
+			if f := strings.Fields(l); len(f) > 0 {
+				differ[f[0]] = true
+			}
 		}
 	}
 
@@ -310,14 +299,6 @@ func DetectDarwinSensitive(run Runner, root string) (DarwinSensitive, bool, erro
 	return sens, true, nil
 }
 
-func firstField(l string) string {
-	f := strings.Fields(l)
-	if len(f) == 0 {
-		return ""
-	}
-	return f[0]
-}
-
 // Fanout deals pkgs (already heavy-first) onto the runner groups for event.
 //
 // On schedule every package runs on the Linux shards, where the unit
@@ -330,27 +311,33 @@ func firstField(l string) string {
 // pull_request only. With darwin false (DarwinOn said no) every package rides
 // the Linux shards and the darwin-only packages have no leg, as on schedule.
 func Fanout(event string, pkgs []string, sens DarwinSensitive, g Groups, darwin bool) []Leg {
-	sh := ShardsFor(event)
+	sh := Shards{Linux: LinuxShards, Mac: MacShards}
+	switch event {
+	case "pull_request":
+		sh = Shards{Linux: PullRequestShards, Mac: PullRequestMacShards}
+	case "merge_group":
+		sh = Shards{Linux: LinuxShards, Mac: MergeGroupMacShards}
+	}
 	linux := make([][]string, sh.Linux)
 	mac := make([][]string, sh.Mac)
 	s, st := 0, 0
 	addLinux := func(p string) { linux[s%sh.Linux] = append(linux[s%sh.Linux], p); s++ }
 	for _, p := range pkgs {
 		if event == "schedule" || !darwin {
-			if IsDarwinOnly(p) {
+			if slices.Contains(DarwinOnly, p) {
 				continue
 			}
 			addLinux(p)
 			continue
 		}
-		linuxOnly := event == "merge_group" || (event == "pull_request" && (!sens.Needs(p) || slices.Contains(LinuxOnly, p)))
-		if linuxOnly && !IsDarwinOnly(p) {
+		linuxOnly := event == "merge_group" || (event == "pull_request" && (!(sens.All || sens.Pkgs[p]) || slices.Contains(LinuxOnly, p)))
+		if linuxOnly && !slices.Contains(DarwinOnly, p) {
 			addLinux(p)
 			continue
 		}
 		mac[st%sh.Mac] = append(mac[st%sh.Mac], p)
 		st++
-		if IsDarwinOnly(p) {
+		if slices.Contains(DarwinOnly, p) {
 			continue
 		}
 		addLinux(p)

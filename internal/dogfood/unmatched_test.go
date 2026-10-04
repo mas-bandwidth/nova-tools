@@ -105,7 +105,8 @@ func TestAStrandedNotOkReceiptIsAnsweredByAReceiptThatNamesIt(t *testing.T) {
 	typo := receipt("nova-check dogfood ledger", "Rowan", "2026-09-27T09:00:00Z", true, 0)
 	typo.Closes = "00000000"
 	findings, _ := Gate(list, []Receipt{lost, typo}, nil, false)
-	require.True(t, len(findings) == 1 && findings[0].Kind == "unmatched", "findings = %+v, want the stranded one still open under a --closes that names nothing", findings)
+	require.True(t, len(findings) == 1, "findings = %+v, want the stranded one still open under a --closes that names nothing", findings)
+	require.True(t, findings[0].Kind == "unmatched", "findings = %+v, want the stranded one still open under a --closes that names nothing", findings)
 	answer := receipt("nova-check dogfood ledger", "Rowan", "2026-09-27T09:01:00Z", true, 0)
 	answer.Closes = lost.ID()
 	findings, _ = Gate(list, []Receipt{lost, typo, answer}, nil, false)
