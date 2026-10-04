@@ -480,7 +480,7 @@ func TestFanoutByEvent(t *testing.T) {
 		// the merge group: every package on Linux but the darwin-only ones, which go to macOS
 		{"merge_group", []string{"1/8 lin=./cmd/a", "2/8 lin=./cmd/b", "3/8 lin=./cmd/c", "1/4 darwin-arm64=./cmd/nova-sandbox", "2/4 darwin-arm64=./internal/sandbox"}},
 		// a pull request: macOS only for what differs there, and the darwin-only packages
-		{"pull_request", []string{"1/4 lin=./cmd/a", "2/4 lin=./cmd/b", "3/4 lin=./cmd/c", "1/4 darwin-arm64=./cmd/b", "2/4 darwin-arm64=./cmd/nova-sandbox", "3/4 darwin-arm64=./internal/sandbox"}},
+		{"pull_request", []string{"1/4 lin=./cmd/a", "2/4 lin=./cmd/b", "3/4 lin=./cmd/c", "1/8 darwin-arm64=./cmd/b", "2/8 darwin-arm64=./cmd/nova-sandbox", "3/8 darwin-arm64=./internal/sandbox"}},
 		// a push to dev: every package on both OSes
 		{"push", []string{"1/8 lin=./cmd/a", "2/8 lin=./cmd/b", "3/8 lin=./cmd/c", "1/8 darwin-arm64=./cmd/a", "2/8 darwin-arm64=./cmd/b", "3/8 darwin-arm64=./cmd/nova-sandbox", "4/8 darwin-arm64=./cmd/c", "5/8 darwin-arm64=./internal/sandbox"}},
 	}

@@ -26,6 +26,10 @@ const (
 	// would need, so the legs are few and each takes a wave.
 	PullRequestShards   = 4
 	MergeGroupMacShards = 4
+	// PullRequestMacShards is the macOS group's leg count on a pull request: a change that reaches
+	// many darwin-sensitive packages (a promotion) dealt four legs of four ran every leg past the
+	// two-minute cap (2026-10-04, all four cancelled twice); a small change fills few of the eight.
+	PullRequestMacShards = 8
 	// FunctionalShards is the leg count of the functional tier. Six: the sprint stream moved
 	// slow real-time tests into the tier and four legs ran past the two-minute cap
 	// (functional 1/4 and 3/4 were cancelled at it); the cap is permanent, the split is not.
@@ -310,7 +314,7 @@ func Fanout(event string, pkgs []string, sens DarwinSensitive, g Groups, darwin 
 	sh := Shards{Linux: LinuxShards, Mac: MacShards}
 	switch event {
 	case "pull_request":
-		sh = Shards{Linux: PullRequestShards, Mac: PullRequestShards}
+		sh = Shards{Linux: PullRequestShards, Mac: PullRequestMacShards}
 	case "merge_group":
 		sh = Shards{Linux: LinuxShards, Mac: MergeGroupMacShards}
 	}
