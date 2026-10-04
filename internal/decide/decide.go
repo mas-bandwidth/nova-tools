@@ -51,14 +51,20 @@ type Schema struct {
 
 // Answer is one typed answer. P is the probability of each option for a
 // choice, and of "yes" for a noul; Value is the chosen option, or "yes" or "no"
-// at 0.5 for a noul.
+// at 0.5 for a noul. Confidence and Method are a choice the wire answered with
+// no probabilities: the confidence, and how it was read. Neither is a
+// probability of correctness, and both are omitted when empty
+// (SPEC-NOVA-DECIDE section 3).
 type Answer struct {
-	Type  string             `json:"type"`
-	Value string             `json:"value"`
-	P     map[string]float64 `json:"p"`
+	Type       string             `json:"type"`
+	Value      string             `json:"value"`
+	P          map[string]float64 `json:"p"`
+	Confidence float64            `json:"confidence,omitempty"`
+	Method     string             `json:"method,omitempty"`
 }
 
 // Prob is the probability the answer gives to option (for a noul, "yes").
+// It reads P only: a confidence is not a probability (SPEC-NOVA-DECIDE section 3).
 func (a Answer) Prob(option string) float64 { return a.P[option] }
 
 // Usage is what one ask spent, as the backend reported it; zero is unreported.
@@ -122,7 +128,9 @@ func (s Schema) Hash() string { return hashJSON(s) }
 
 // Check holds a backend's answers to the schema: one answer per question, of
 // its type, a choice's value one of its options, every probability in [0, 1].
-// A backend that answers something else is refused, never repaired.
+// A choice with only a confidence (empty P, confidence recorded apart) fits;
+// a confidence is not a probability (SPEC-NOVA-DECIDE section 3). A backend
+// that answers something else is refused, never repaired.
 func (s Schema) Check(answers map[string]Answer) error {
 	var p []string
 	for _, name := range slices.Sorted(maps.Keys(s.Questions)) {
@@ -137,7 +145,10 @@ func (s Schema) Check(answers map[string]Answer) error {
 		if _, known := q.Criteria[a.Value]; q.Type == Choice && !known {
 			p = append(p, fmt.Sprintf("%s chose %q, not one of its options", name, a.Value))
 		}
-		if _, given := a.P[a.Value]; q.Type == Choice && !given {
+		// A choice with only a confidence leaves P empty. That is not a missing
+		// number, and the confidence is not checked as a probability
+		// (SPEC-NOVA-DECIDE section 3). A choice with neither is still refused.
+		if _, given := a.P[a.Value]; q.Type == Choice && !given && a.Method == "" && a.Confidence == 0 {
 			p = append(p, fmt.Sprintf("%s gives its choice %q no probability", name, a.Value))
 		}
 		if _, given := a.P["yes"]; q.Type == Noul && (!given || len(a.P) != 1) {
