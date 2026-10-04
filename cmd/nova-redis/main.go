@@ -30,7 +30,6 @@ import (
 	"cmp"
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"net"
@@ -100,7 +99,7 @@ func realDeps() deps {
 	}
 }
 
-func main() { os.Exit(redisTool(realDeps()).Main()) }
+func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, realDeps())) }
 
 // usage is the banner, for the tests that read it directly.
 var usage = redisTool(deps{}).Banner()
@@ -302,21 +301,6 @@ func loginFrom(c *tool.Call) login {
 	user := c.Str("user")
 	passwordEnv := c.Str("password-env")
 	return login{addr: &addr, user: &user, passwordEnv: &passwordEnv, givenFn: c.Given}
-}
-
-// loginFromFlags reads the login flags from a flag set, for the unit tests
-// that hold the login logic directly.
-func loginFromFlags(fs *flag.FlagSet) login {
-	return login{
-		addr:        fs.String("addr", "", "the store's address as <host:port>, such as 127.0.0.1:6379 (no default)"),
-		user:        fs.String("user", "", "the ACL user to log in as (default $"+UserEnv+"; with neither, the store's default user)"),
-		passwordEnv: fs.String("password-env", "", "the NAME of the variable that holds the password, never the password itself (default: the variable $"+PasswordEnvEnv+" names, else "+PasswordEnv+")"),
-		givenFn: func(name string) bool {
-			on := false
-			fs.Visit(func(f *flag.Flag) { on = on || f.Name == name })
-			return on
-		},
-	}
 }
 
 // given reports whether the flag was on the line, even empty.
