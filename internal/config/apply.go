@@ -40,12 +40,17 @@ type Applier interface {
 
 // Op is one line of a plan.
 type Op struct {
-	Op      string // OpAdd, OpSet or OpRemove
-	Name    string
+	Op      string   // OpAdd, OpSet, OpRemove or OpHeld
+	Name    string   // the row's name, or the whole held line for OpHeld
 	Changed []string // the fields that differ, for OpSet
 	Row     Row      // the row to write, for OpAdd and OpSet
 	Prev    View     // Redis's row, for OpSet and OpRemove
 }
+
+// OpHeld is the held write a publish reports instead of moving the sprint
+// seat (docs/SPEC-CONFIG.md, "sprint"): its Name is the one line, said
+// whole, so the caller's line is the card's one line.
+const OpHeld = "held"
 
 // Plan diffs the kind's rows against Redis's views: an add for a row Redis
 // lacks, a set for one that differs in any field, a remove for a name in
@@ -127,16 +132,18 @@ func Idem(kind string, rev int64) string { return fmt.Sprintf("config:%s:%d", ki
 // CONFLICT when Redis is ahead, plan, and unless check is set write every op
 // in order and stamp the revision. Every op is reported to report before it
 // is written, so a refusal part way names what was written before it.
-// The sprint coordinator seat rule is implemented here (moveSeat path);
-// see AGENTS.md "When working in the tree".
+// A publish never moves the sprint seat (docs/SPEC-CONFIG.md, "sprint"): a
+// sprint:coordinator the live store disagrees with is held, every other
+// sprint field is written and one OpHeld line is said; the seat moves by the
+// sprint seat verb, or by the seat move the caller names (moveSeat).
 func Apply(ctx context.Context, st Store, ap Applier, kind, actor string, check bool, report func(Op)) (Result, error) {
-	return apply(ctx, st, ap, kind, actor, check, true, report)
+	return apply(ctx, st, ap, kind, actor, check, false, report)
 }
 
-// apply is the entry that receives moveSeat (true keeps historical behaviour
-// for Apply callers; false holds the coordinator). It implements the rule
-// that apply never writes a sprint:coordinator differing from live without
-// move-seat. Cites the working-in-the-tree rule in AGENTS.md.
+// apply is Apply with the seat move named: moveSeat (the --move-seat flag's
+// case, the owner's word) writes a sprint:coordinator the live store
+// disagrees with; without it the publish holds it, keeps the live value and
+// says the one OpHeld line (docs/SPEC-CONFIG.md, "sprint").
 func apply(ctx context.Context, st Store, ap Applier, kind, actor string, check, moveSeat bool, report func(Op)) (Result, error) {
 	k, ok := Lookup(kind)
 	if !ok {
@@ -213,23 +220,19 @@ func apply(ctx context.Context, st Store, ap Applier, kind, actor string, check,
 	for _, op := range res.Ops {
 		report(op)
 		var err error
-		rowToWrite := op.Row
-		if kind == KindSprint && !moveSeat {
-			liveC := ""
-			if v, ok := views[KindSprint]; ok {
-				liveC = v["coordinator"]
-			}
-			rowC := op.Row.Fields["coordinator"]
-			if rowC != liveC && liveC != "" {
-				held := fmt.Sprintf("APPLY HELD kind=sprint field=coordinator live=%s row=%s: the seat moves by nova-sprint's seat verb; run nova-config sprint set --coordinator %s to make the row agree, or apply --move-seat", liveC, rowC, liveC)
-				report(Op{Op: "HELD", Name: held})
-				rowToWrite = op.Row.Clone()
-				rowToWrite.Fields["coordinator"] = liveC
-			}
+		row := op.Row
+		// A publish never moves the sprint seat (docs/SPEC-CONFIG.md,
+		// "sprint"): a live coordinator the row disagrees with is held —
+		// every other field is written, the live value stands and the one
+		// OpHeld line is said — unless the caller names the seat move.
+		if live := op.Prev["coordinator"]; kind == KindSprint && !moveSeat && live != "" && live != row.Fields["coordinator"] {
+			report(Op{Op: OpHeld, Name: heldLine(live, row.Fields["coordinator"])})
+			row = op.Row.Clone()
+			row.Fields["coordinator"] = live
 		}
 		switch op.Op {
 		case OpAdd, OpSet:
-			err = ap.Write(ctx, kind, rowToWrite, op.Prev, actor, idem)
+			err = ap.Write(ctx, kind, row, op.Prev, actor, idem)
 		case OpRemove:
 			err = ap.Remove(ctx, kind, op.Name, actor, idem)
 		}
@@ -243,4 +246,11 @@ func apply(ctx context.Context, st Store, ap Applier, kind, actor string, check,
 		}
 	}
 	return res, nil
+}
+
+// heldLine is the one line a held seat says: the live coordinator and the
+// row's, and the two ways to make them agree (docs/SPEC-CONFIG.md,
+// "sprint") — the seat verb, or the seat move the owner names.
+func heldLine(live, row string) string {
+	return fmt.Sprintf("APPLY HELD kind=sprint field=coordinator live=%s row=%s: the seat moves by nova-sprint's seat verb; run nova-config sprint set --coordinator %s to make the row agree, or apply --move-seat", live, row, live)
 }

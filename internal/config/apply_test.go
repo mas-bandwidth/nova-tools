@@ -371,52 +371,53 @@ func TestApplyRefusesAnUnknownKind(t *testing.T) {
 	require.ErrorContains(t, err, "unknown kind \"lane\"; the kinds are machine, fleet, friend, sprint, loop, route", assertionMsg324...)
 }
 
-// TestApplyRefusesToMoveTheSeat: apply must never write a differing
-// sprint:coordinator without move-seat. See AGENTS.md "When working in the tree"
-// and the sprint seat rule (docs/SPRINT-COORDINATOR.md).
+// TestApplyRefusesToMoveTheSeat: a publish never moves the coordinator seat
+// (docs/SPEC-CONFIG.md, "sprint"): apply holds a sprint:coordinator the live
+// store disagrees with, writes every other sprint field, says the one
+// APPLY HELD line and exits 0. The seat moves by the sprint seat verb, or by
+// --move-seat (apply's moveSeat), the owner's word. A first apply, with no
+// live key, writes the row's coordinator.
 func TestApplyRefusesToMoveTheSeat(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	// live has a; row has b plus an unrelated field
+	friend, _ := Lookup(KindFriend)
+	// The live seat holds a; the row names b and an unrelated field.
 	st := NewMem()
-	friendK, _ := Lookup(KindFriend)
-	fr, _ := friendK.NewRow("b", map[string]string{"slots": "8", "tiers": "flash"})
-	_, err := st.Insert(ctx, KindFriend, fr, "rowan")
+	fb, err := friend.NewRow("b", map[string]string{"slots": "8", "tiers": "flash"})
 	require.NoError(t, err)
-	_, _, err = st.Update(ctx, KindSprint, KindSprint, map[string]string{"coordinator": "b", "decide_bounce": "0.9"}, "rowan")
+	_, err = st.Insert(ctx, KindFriend, fb, "rowan")
+	require.NoError(t, err)
+	_, _, err = st.Update(ctx, KindSprint, KindSprint, map[string]string{"coordinator": "b", FieldDecideBounce: "0.9"}, "rowan")
 	require.NoError(t, err)
 	ap := newFake()
-	ap.views[KindSprint] = map[string]View{KindSprint: {"coordinator": "a", "decide_bounce": ""}}
-	ap.revs[KindSprint] = 0
-	var reported []string
-	report := func(op Op) { reported = append(reported, op.Op+":"+op.Name+":"+strings.Join(op.Changed, ",")) }
+	ap.views[KindSprint] = map[string]View{KindSprint: {"coordinator": "a", FieldDecideBounce: ""}}
+	var said []string
+	report := func(op Op) { said = append(said, op.Name) }
 
-	// apply without move-seat (internal entry): must hold
-	_, err = apply(ctx, st, ap, KindSprint, "rowan", false, false, report)
+	// A publish holds the seat: every other sprint field is written, the
+	// one APPLY HELD line is said, and the call exits 0.
+	_, err = Apply(ctx, st, ap, KindSprint, "rowan", false, report)
 	require.NoError(t, err)
-	require.Equal(t, "a", ap.views[KindSprint][KindSprint]["coordinator"], "live coordinator must be unchanged")
-	require.Equal(t, "0.9", ap.views[KindSprint][KindSprint]["decide_bounce"], "other sprint field must be written")
-	held := "APPLY HELD kind=sprint field=coordinator live=a row=b: the seat moves by nova-sprint's seat verb; run nova-config sprint set --coordinator a to make the row agree, or apply --move-seat"
-	require.Contains(t, strings.Join(reported, " "), "HELD", "output must contain HELD line")
-	_ = held
+	require.Equal(t, "a", ap.views[KindSprint][KindSprint]["coordinator"], "the live coordinator is moved: %v", ap.views[KindSprint])
+	require.Equal(t, "0.9", ap.views[KindSprint][KindSprint][FieldDecideBounce], "the other sprint field is written: %v", ap.views[KindSprint])
+	require.Contains(t, said, "APPLY HELD kind=sprint field=coordinator live=a row=b: the seat moves by nova-sprint's seat verb; run nova-config sprint set --coordinator a to make the row agree, or apply --move-seat", "the one held line: %v", said)
 
-	// with move-seat, it writes b
+	// --move-seat (the owner's word) writes the differing coordinator.
 	_, err = apply(ctx, st, ap, KindSprint, "rowan", false, true, report)
 	require.NoError(t, err)
-	require.Equal(t, "b", ap.views[KindSprint][KindSprint]["coordinator"])
+	require.Equal(t, "b", ap.views[KindSprint][KindSprint]["coordinator"], "the seat move the owner names: %v", ap.views[KindSprint])
 
-	// second case: no live key, writes the row's coordinator
+	// A first apply, with no live key, writes the row's coordinator.
 	st2 := NewMem()
-	fr2, _ := friendK.NewRow("c", map[string]string{"slots": "8", "tiers": "flash"})
-	_, err = st2.Insert(ctx, KindFriend, fr2, "rowan")
+	fc, err := friend.NewRow("c", map[string]string{"slots": "8", "tiers": "flash"})
+	require.NoError(t, err)
+	_, err = st2.Insert(ctx, KindFriend, fc, "rowan")
 	require.NoError(t, err)
 	_, _, err = st2.Update(ctx, KindSprint, KindSprint, map[string]string{"coordinator": "c"}, "rowan")
 	require.NoError(t, err)
 	ap2 := newFake()
-	ap2.views[KindSprint] = map[string]View{KindSprint: View{}} // absent treated as ""
-	ap2.revs[KindSprint] = 0
-	_, err = apply(ctx, st2, ap2, KindSprint, "rowan", false, false, func(Op) {})
+	_, err = Apply(ctx, st2, ap2, KindSprint, "rowan", false, report)
 	require.NoError(t, err)
-	require.Equal(t, "c", ap2.views[KindSprint][KindSprint]["coordinator"], "first apply must write the coordinator")
+	require.Equal(t, "c", ap2.views[KindSprint][KindSprint]["coordinator"], "a first apply writes the row's coordinator: %v", ap2.views[KindSprint])
 }
