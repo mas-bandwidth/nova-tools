@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// shrinkLedger is a shrink-only ledger by its path (allowlist.ShrinkOnly), one no
+// shrinkLedger is a shrink-only ledger by its path (shrinkonly.ShrinkOnly), one no
 // generated-ledger family owns: land resolves a conflict in it as the union of both
 // sides' removals, with no update run. countedLedger is a shrink-only ledger whose rows
 // carry counts, lowered in place.

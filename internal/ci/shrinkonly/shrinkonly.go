@@ -1,4 +1,4 @@
-package allowlist
+package shrinkonly
 
 import (
 	"path"
@@ -27,19 +27,6 @@ var growingLists = []string{"deleted-tests.txt", "compared_examples.txt", "named
 // DeadCode is the dead code shrink-only allowlist (docs/SPEC-CI.md), the one counted
 // ledger in internal/ci today.
 const DeadCode = "internal/ci/testdata/dead_code_allowlist.txt"
-
-// CountedLedgers are the shrink-only ledgers whose rows carry counts lowered in place.
-var CountedLedgers = []string{DeadCode}
-
-// CountedLedger reports whether p (a path or file name) is a declared counted ledger.
-func CountedLedger(p string) bool {
-	for _, q := range CountedLedgers {
-		if p == q || path.Base(p) == path.Base(q) {
-			return true
-		}
-	}
-	return false
-}
 
 // ShrinkOnly says p (a path from the repository root, slash-separated) is a
 // shrink-only ledger: one whose class test says it only shrinks, so a change to it is a

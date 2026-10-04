@@ -1677,8 +1677,8 @@ card's timeline tells it on the line of its merge.
 
 **The shrink-only ledgers.** A merge that stops in a shrink-only ledger lands
 without a stop. The shrink-only ledgers are the lists whose class test in
-internal/ci says they only shrink, named in one place, `allowlist.ShrinkOnly`
-(`internal/ci/allowlist/shrinkonly.go`): every top-level list file under
+internal/ci says they only shrink, named in one place, `shrinkonly.ShrinkOnly`
+(`internal/ci/shrinkonly/shrinkonly.go`): every top-level list file under
 `internal/ci/testdata/` but the lists that grow (the deleted-tests log, which
 is appended to, and `compared_examples.txt` and `namedpaths_allowlist.txt`,
 which gain rows by hand), and the unit tier's two lists under `internal/ci/`

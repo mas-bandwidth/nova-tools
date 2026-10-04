@@ -1,7 +1,7 @@
 package main
 
 // ledgerunion.go is what land does with a merge that stops on a shrink-only ledger
-// (docs/SPEC-SPRINT.md section 7, the shrink-only ledgers; allowlist.ShrinkOnly says
+// (docs/SPEC-SPRINT.md section 7, the shrink-only ledgers; shrinkonly.ShrinkOnly says
 // which files those are). Two cards that each remove a row of the same ledger conflict
 // when the rows are adjacent, and the one right answer is the base with both sides'
 // removals taken out: unionRemovals is that three-way resolution as a pure function
@@ -20,12 +20,12 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
+	"github.com/mas-bandwidth/nova-tools/internal/ci/shrinkonly"
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 )
 
 // countedLedgers are the shrink-only ledgers whose rows carry counts lowered in place.
-var countedLedgers = []string{allowlist.DeadCode}
+var countedLedgers = []string{shrinkonly.DeadCode}
 
 // isCountedLedger reports whether p is a declared counted ledger whose rows carry counts.
 func isCountedLedger(p string) bool {
@@ -257,7 +257,7 @@ func subsetOfBase(base, out []string, bAt int, counted bool) bool {
 // anything else): a path a family owns is the family's.
 func unionPaths(paths []string, ledgers []landLedger) (union, rest []string) {
 	for _, p := range paths {
-		if allowlist.ShrinkOnly(p) && !owned(p, ledgers) {
+		if shrinkonly.ShrinkOnly(p) && !owned(p, ledgers) {
 			union = append(union, p)
 		} else {
 			rest = append(rest, p)
