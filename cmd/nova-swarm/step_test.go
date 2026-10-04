@@ -14,10 +14,11 @@ import (
 
 // TestStepReadsGrantsTheToolchainFromTheBenchHomeWhenProcessHomeIsTheSlot is the script
 // card's go vet exit 126: the step process's HOME is the slot, and the wall must still
-// grant the bench sdk the shim execs.
+// grant the bench sdk the shim execs. The home is injected (the verb passes
+// benchPasswdHome), so the test never sets HOME and runs in parallel.
 func TestStepReadsGrantsTheToolchainFromTheBenchHomeWhenProcessHomeIsTheSlot(t *testing.T) {
+	t.Parallel()
 	slot := t.TempDir()
-	t.Setenv("HOME", slot)
 	home := t.TempDir()
 	sdk := filepath.Join(home, "sdk")
 	require.NoError(t, os.MkdirAll(sdk, 0o755))
