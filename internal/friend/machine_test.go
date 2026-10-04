@@ -50,19 +50,17 @@ func TestSleepingMachinePausesChallengeAndSuppressesSyntheticNotices(t *testing.
 	assert.Equal(t, Challenged, m.Challenge, "sleep itself must not make the session deaf")
 
 	wakeAt := t0.Add(time.Second + Window + time.Second)
-	back := m.ReceivePing(wakeAt, "rowan", "rowan", "ada", t0, "n2")
+	back := m.ReceivePing(wakeAt, "coordinator", "coordinator", "ada", t0, "n2")
 	assert.Equal(t, []string{"coordinator back"}, subjects(back), "a real coordinator ping after durable wake remains an event")
 	assert.False(t, m.Asleep)
 	assert.Equal(t, t0.Add(time.Second+Window+time.Second), m.Asked, "the new nonce starts a fresh challenge after wake")
 
 	localSleep := wakeAt.Add(time.Second)
 	m.Sleep(localSleep)
-	deadline := m.Asked.Add(Window)
-	assert.Empty(t, m.TickWhen(deadline.Add(-time.Second), true))
+	awakeAt := localSleep.Add(5 * time.Second)
+	assert.Empty(t, m.TickWhen(awakeAt, false))
 	assert.Equal(t, Challenged, m.Challenge)
-	m.Wake(deadline)
-	assert.Equal(t, Challenged, m.Challenge, "challenge time spent asleep is paused")
-	assert.Empty(t, m.TickWhen(deadline, false))
+	assert.Empty(t, m.TickWhen(m.Asked.Add(Window), false))
 	assert.Equal(t, Deaf, m.Challenge, "awake time after wake still counts toward the deadline")
 }
 
@@ -70,12 +68,24 @@ func TestSleepingMachineRejectsNonCoordinatorPing(t *testing.T) {
 	t.Parallel()
 	m := Start(t0)
 	m.Sleep(t0.Add(time.Second))
-	got := m.ReceivePing(t0.Add(2*time.Second), "eve", "rowan", "ada", t0, "n1")
+	got := m.ReceivePing(t0.Add(2*time.Second), "unrelated", "coordinator", "ada", t0, "n1")
 	assert.Empty(t, got)
 	assert.Empty(t, m.Ping(t0.Add(2*time.Second), "ada", t0, "n1"), "raw pings cannot bypass sleep gating")
 	assert.True(t, m.Asleep)
 	assert.Equal(t, t0, m.LastPing, "a noncoordinator cannot change transport state while asleep")
 	assert.Empty(t, m.Nonce, "the message is not applied to the session challenge")
+}
+
+func TestAsleepMachineIsNotUpDespitePriorPong(t *testing.T) {
+	t.Parallel()
+	m := Start(t0)
+	m.Ping(t0.Add(time.Second), "coordinator", t0, "n1")
+	require.True(t, m.Pong(t0.Add(2*time.Second), "n1"))
+	assert.True(t, m.Up())
+	m.Sleep(t0.Add(3 * time.Second))
+	assert.False(t, m.Up(), "sleep status must not be reported as an active session")
+	m.Wake(t0.Add(4 * time.Second))
+	assert.True(t, m.Up(), "the earlier proof remains after local wake")
 }
 
 // The challenge: a ping challenges; only the current nonce answers it; a

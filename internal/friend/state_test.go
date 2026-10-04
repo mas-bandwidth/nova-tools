@@ -64,11 +64,11 @@ func TestSessionStateMissingAndDurableUpdates(t *testing.T) {
 	assert.ErrorIs(t, err, os.ErrNotExist, "a read must not invent a sleep request")
 
 	got, err = UpdateSessionState(dir, func(s *SessionState) error {
-		s.Coordinator, s.Asleep, s.WakeBarrier = "rowan", true, "123-4"
+		s.Coordinator, s.Asleep, s.WakeBarrier = "coordinator", true, "123-4"
 		return nil
 	})
 	require.NoError(t, err)
-	want := SessionState{Coordinator: "rowan", Asleep: true, WakeBarrier: "123-4"}
+	want := SessionState{Coordinator: "coordinator", Asleep: true, WakeBarrier: "123-4"}
 	assert.Equal(t, want, got)
 	got, err = ReadSessionState(dir)
 	require.NoError(t, err)
@@ -79,7 +79,7 @@ func TestSessionStateMissingAndDurableUpdates(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
-	assert.Equal(t, SessionState{Coordinator: "rowan", WakeBarrier: "123-4"}, got, "wake retains coordinator and barrier")
+	assert.Equal(t, SessionState{Coordinator: "coordinator", WakeBarrier: "123-4"}, got, "wake retains coordinator and barrier")
 }
 
 func TestSessionStateRefusesMalformedAndFailedWrites(t *testing.T) {
@@ -109,7 +109,7 @@ func TestSessionStateUpdatesAreSerializedAndDaemonIsSingleton(t *testing.T) {
 			for j := 0; j < increments; j++ {
 				_, err := UpdateSessionState(dir, func(s *SessionState) error {
 					if s.Coordinator == "" {
-						s.Coordinator = "rowan"
+						s.Coordinator = "coordinator"
 					}
 					s.Asleep = !s.Asleep
 					return nil
@@ -125,7 +125,7 @@ func TestSessionStateUpdatesAreSerializedAndDaemonIsSingleton(t *testing.T) {
 	}
 	got, err := ReadSessionState(dir)
 	require.NoError(t, err)
-	assert.Equal(t, "rowan", got.Coordinator)
+	assert.Equal(t, "coordinator", got.Coordinator)
 	assert.False(t, got.Asleep, "twenty serialized toggles must not lose a write")
 
 	lock, err := TakeDaemonLock(dir, "friend")

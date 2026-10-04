@@ -169,10 +169,10 @@ func (m *Machine) TickWhen(now time.Time, asleep bool) []Push {
 	return out
 }
 
-// Up says whether the session has proved itself: it answered the current
-// challenge, and has answered at least once (the daemon alone never makes
-// a friend up; tla/Friend.tla: UpOnlyAfterPong).
-func (m *Machine) Up() bool { return m.Challenge == Quiet && m.Pongs > 0 }
+// Up says whether the awake session has proved itself: it answered the
+// current challenge, and has answered at least once (the daemon alone never
+// makes a friend up; tla/Friend.tla: UpOnlyAfterPong).
+func (m *Machine) Up() bool { return !m.Asleep && m.Challenge == Quiet && m.Pongs > 0 }
 
 // pingText is the ping as the session reads it: the nonce, the seat, and
 // the one line to run, so a small model gets it right.
