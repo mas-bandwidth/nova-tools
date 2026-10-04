@@ -18,9 +18,8 @@ import (
 )
 
 // The tests of the proxy live on the rig (rig_test.go): the echo target, the
-// clocks, the listeners and the clients are its, and a test here is the
-// scenario it runs and what it pins. They wait on no clock, bar the one
-// real-clock test marked below, and the sockets are loopback ones the rig owns.
+// clocks, the listeners and the clients are its, and a test here is the scenario
+// it runs and what it pins. They wait on no clock, bar the real-clock one below.
 
 // Every write is held once, whatever it carries: three commands sent one after
 // the other pay the delay three times, a hundred sent in one write pay it once,
@@ -301,43 +300,32 @@ func TestATargetThatRefusesHangsUpTheClient(t *testing.T) {
 	}
 }
 
-// Serve validates every argument it takes: it accepts the delay range it
-// documents (zero and MaxDelay) and refuses bad targets, out-of-range delays
-// and bounds, starting nothing on a refusal.
-func TestServeAcceptsEveryDelayItDocuments(t *testing.T) {
+// Serve refuses what it cannot serve and starts nothing.
+func TestServeRefusesWhatItCannotServe(t *testing.T) {
 	t.Parallel()
 
-	for _, c := range []struct {
-		name    string
-		target  string
-		delay   time.Duration
-		max     int
-		wantErr string
+	for name, c := range map[string]struct {
+		target string
+		delay  time.Duration
+		max    int
 	}{
-		{"no delay is accepted", "127.0.0.1:7000", 0, 0, ""},
-		{"the longest delay, MaxDelay, is accepted", "127.0.0.1:7000", MaxDelay, 0, ""},
-		{"a target with no port is refused", "127.0.0.1", delay, 0, "target"},
-		{"a target with port zero is refused", "127.0.0.1:0", delay, 0, "target"},
-		{"a target with a huge port is refused", "127.0.0.1:65536", delay, 0, "target"},
-		{"a target with no host is refused", ":7000", delay, 0, "target"},
-		{"a target that is no address is refused", "not an address", delay, 0, "target"},
-		{"a negative delay is refused", "127.0.0.1:7000", -time.Nanosecond, 0, "delay"},
-		{"a delay past MaxDelay is refused", "127.0.0.1:7000", MaxDelay + time.Nanosecond, 0, "delay"},
-		{"a negative bound is refused", "127.0.0.1:7000", delay, -1, "MaxConns"},
+		"a target with no port":       {"127.0.0.1", delay, 0},
+		"a target with port zero":     {"127.0.0.1:0", delay, 0},
+		"a target with a huge port":   {"127.0.0.1:65536", delay, 0},
+		"a target with no host":       {":7000", delay, 0},
+		"a target that is no address": {"not an address", delay, 0},
+		"a negative delay":            {"127.0.0.1:7000", -time.Nanosecond, 0},
+		"a delay past MaxDelay":       {"127.0.0.1:7000", MaxDelay + time.Nanosecond, 0},
+		"a negative bound":            {"127.0.0.1:7000", delay, -1},
 	} {
-		t.Run(c.name, func(t *testing.T) {
-			t.Parallel()
-
-			ln := newPipeListener()
-			p, err := Serve(ln, c.target, c.delay, Options{MaxConns: c.max})
-			_ = ln.Close()
-			if c.wantErr != "" {
-				assert.Error(t, err, "Serve accepted %q (delay %v, max %d); want refused", c.target, c.delay, c.max)
-				return
-			}
-			require.NoError(t, err, "Serve refused %q (delay %v, max %d): %v", c.target, c.delay, c.max, err)
-			p.Stop()
-		})
+		ln := newPipeListener()
+		p, err := Serve(ln, c.target, c.delay, Options{MaxConns: c.max})
+		_ = ln.Close()
+		if assert.Error(t, err, "%s: Serve accepted it", name) {
+			assert.Nil(t, p, "%s: Serve returned a proxy with the error", name)
+			continue
+		}
+		p.Stop()
 	}
 }
 
@@ -380,10 +368,21 @@ func TestTheRealClockHoldsAWriteForAtLeastTheDelay(t *testing.T) {
 	require.GreaterOrEqual(t, p.Shortest(), realDelay, "after one write through the real clock: %d writes, shortest %v; want 1, at least %v", p.Writes(), p.Shortest(), realDelay)
 }
 
+// Serve takes every delay the help documents, both ends of the range.
+func TestServeAcceptsEveryDelayItDocuments(t *testing.T) {
+	t.Parallel()
+
+	for name, d := range map[string]time.Duration{"no delay": 0, "the longest delay, MaxDelay": MaxDelay} {
+		p, err := Serve(newPipeListener(), "127.0.0.1:7000", d, Options{})
+		if assert.NoError(t, err, "%s: Serve refused %v: %v", name, d, err) {
+			p.Stop()
+		}
+	}
+}
+
 // One client's hold does not delay another's: each connection waits for itself,
-// on no lock the proxy shares. The first write is held, and stays held; a second
-// client that comes after it is served meanwhile. Were the delay shared, the
-// second would wait behind the first and fail its read at the ceiling, by name.
+// on no lock the proxy shares. Were the delay shared, a second client would wait
+// behind the first's endless hold and fail its read at the ceiling, by name.
 func TestOneClientsHoldDoesNotDelayAnother(t *testing.T) {
 	t.Parallel()
 
@@ -412,10 +411,9 @@ func TestOneClientsHoldDoesNotDelayAnother(t *testing.T) {
 	require.Equal(t, "a", string(got), "the first client, once its hold was over, read %q, %v; want a", got, err)
 }
 
-// When the listener fails, the proxy closes it: a client is then refused at once,
-// and is not left in a backlog nothing reads until its own timeout. The listener
-// here fails every Accept, as one does with the process out of descriptors, and
-// tells the test when it is closed.
+// When the listener fails, the proxy closes it, so a client is refused at once and
+// is not left in a backlog nothing reads. The listener here fails every Accept, as
+// one does with the process out of descriptors, and tells the test when it is closed.
 func TestAListenerThatFailsIsClosedSoClientsAreRefused(t *testing.T) {
 	t.Parallel()
 
@@ -436,14 +434,12 @@ func TestAListenerThatFailsIsClosedSoClientsAreRefused(t *testing.T) {
 	}
 }
 
-// The window is three numbers the docs state in words. The window test that
+// The window is three numbers the docs state in words. The pipeline test that
 // follows drives the proxy through the constants symbolically, so it follows a
-// change of any of them and cannot see that one happened: a queue of half the
-// size is caught, but inFlight at 128 or at 512 passes every unit test. This test
-// makes a change to the window a visible edit: the words in delayproxy.go (the
-// package doc and Writes) and in far.go say 16 KiB, 256 reads and 4 MiB, and
-// change with the number, or it fails. The 4 MiB is also the figure fardelay's
-// help prints, read from WindowBytes, so the help follows on its own.
+// change of any of them and cannot see that one happened: a queue of half the size
+// is caught, but inFlight at 512 passes every unit test. This test makes a change
+// to the window a visible edit: the words in delayproxy.go and far.go name each
+// number and change with it, or it fails; fardelay's help reads WindowBytes.
 func TestTheWindowIsTheSizeTheDocsSay(t *testing.T) {
 	t.Parallel()
 
@@ -465,10 +461,9 @@ func TestTheWindowIsTheSizeTheDocsSay(t *testing.T) {
 // further window. The window is WindowBytes: inFlight reads of ChunkBytes that a
 // connection holds between the client and the target, and a client that writes
 // more is held back until they have gone, so what it writes then is stamped
-// later. The client writes whole windows of reads into a proxy that owns no
-// socket: its client and its target are pipes, each write is exactly one read,
-// and the clock is a stepped one that moves only when the test lets a wait end,
-// so what is counted is how many delays the clock was asked for.
+// later. The proxy owns no socket (its ends are pipes), each write is one read,
+// and the stepped clock moves only when the test lets a wait end, so what is
+// counted is how many delays the clock was asked for.
 func TestAPipelinePaysOncePerWindow(t *testing.T) {
 	t.Parallel()
 
@@ -513,12 +508,10 @@ func payForWindows(t *testing.T, windows int) {
 	}()
 
 	// Each time the proxy holds a read, the test waits until the reads that share
-	// the hold have all been stamped, and then ends it. They are the reads the
-	// proxy can take while the one it holds is not sent: what the connection
-	// holds is inFlight reads queued, the one the forwarding half has in hand and
-	// the one the reading half has stamped and cannot yet queue, on top of those
-	// already sent. A read stamped after the hold ends is stamped a delay later,
-	// and is held a delay of its own.
+	// the hold have all been stamped, and then ends it: the connection holds
+	// inFlight reads queued, the one the forwarding half has in hand and the one
+	// the reading half has stamped and cannot yet queue. A read stamped after the
+	// hold ends is stamped a delay later, and is held a delay of its own.
 	var got sunk
 	ended := written // nil once the client's writes are known to have ended well
 drive:
