@@ -289,6 +289,36 @@ func (st *Store) MachineLineOf(m Machine, hb Heartbeat) string {
 	return MachineLine(st.now(), m, hb)
 }
 
+// WhereMachineLine is the where view's machine line (docs/SPEC-SPRINT.md section 1):
+// MachineLine, except that a RUNNING machine whose last tick is older than MachineSilence
+// reads "machine: running (tick late <n>s)", n the whole seconds since that tick. The state
+// is RUNNING until a stop says otherwise, and a tick that runs long is not a stop: STOPPED
+// in the view is a stop (by hand, by the sprint done, or out of credit), never a late tick.
+// The inbox and the driver keep MachineLine, where silence reads STOPPED.
+func WhereMachineLine(now time.Time, m Machine, hb Heartbeat) string {
+	line := MachineLine(now, m, hb)
+	if !m.Running() || m.Done() {
+		return line
+	}
+	last := hb.At
+	if m.Since.After(last) {
+		last = m.Since
+	}
+	if late := now.Sub(last); late > MachineSilence {
+		return "machine: running (tick late " + strconv.Itoa(int(late/time.Second)) + "s)"
+	}
+	return line
+}
+
+// WhereMachineLineOf is WhereMachineLine at the store's clock; a store driven by hand
+// (ByHand) reads running while RUNNING, as MachineLineOf does.
+func (st *Store) WhereMachineLineOf(m Machine, hb Heartbeat) string {
+	if st.ByHand && m.Running() {
+		return "machine: running"
+	}
+	return WhereMachineLine(st.now(), m, hb)
+}
+
 // SetMachine sets the state RUNNING (start) or STOPPED (stop). Setting the
 // state it has changes nothing and writes nothing. A change is recorded as a
 // happened notification (who, when); a STOPPED span is opened by stop and

@@ -48,10 +48,10 @@ func TestWhereReadersTableIsOneRowTheSumOfAllReaders(t *testing.T) {
 		assert.Equal(t, "-", row[sprint.FieldWidth], "%s is named for no fleet row: no width", rd)
 		var line []string
 		for _, c := range cols {
-			n, err := strconv.Atoi(row[c])
+			n, err := strconv.Atoi(cellText(row[c]))
 			require.NoError(t, err, "%s %s", rd, c)
 			sums[c] += n
-			line = append(line, row[c])
+			line = append(line, cellText(row[c]))
 		}
 		seen[strings.Join(line, ",")] = true
 	}
@@ -136,12 +136,12 @@ func TestWhereMergeTableIsOneRowTheSumsAndTheWorstCIAndState(t *testing.T) {
 	for _, st := range []string{"s1", "s2", "s3"} {
 		row, ok := merge[st]
 		require.True(t, ok, "--json has %s's row: %v", st, merge)
-		line := []string{row[sprint.CI], row[sprint.StateCol]}
+		line := []string{cellText(row[sprint.CI]), cellText(row[sprint.StateCol])}
 		for _, c := range cols {
-			n, err := strconv.Atoi(row[c])
+			n, err := strconv.Atoi(cellText(row[c]))
 			require.NoError(t, err, "%s %s", st, c)
 			sums[c] += n
-			line = append(line, row[c])
+			line = append(line, cellText(row[c]))
 		}
 		seen[strings.Join(line, ",")] = true
 	}
