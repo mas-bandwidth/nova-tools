@@ -27,7 +27,7 @@ func TestPendingBeforeDispatchAndQuietRetry(t *testing.T) {
 			log := fakeBusPath(t)
 			p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
 			statePath := filepath.Join(t.TempDir(), "s.json")
-			args := []string{"report", "--file", p, "--send", "--snapshot", statePath, "--as", "fixture", "--to", "integrator", "--bus", t.TempDir(), "--remote", "origin", "--branch", "main", "--timeout", "5s"}
+			args := []string{"report", "--file", p, "--send", "--state", statePath, "--as", "fixture", "--to", "integrator", "--bus", t.TempDir(), "--remote", "origin", "--branch", "main", "--timeout", "5s"}
 			if mode == "hang" {
 				// A bus that never answers is now bounded by the BUDGET, not by
 				// the version probe's --timeout: that was the repair. So the
