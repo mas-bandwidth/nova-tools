@@ -34,7 +34,8 @@ func TestReadShippedIsEveryNovaDirectoryUnderCmd(t *testing.T) {
 	want := []string{"nova-bus", "nova-empty", "nova-left", "nova-table"}
 	require.Equal(t, want, s.Tools(), "shipped = %v, want %v", s.Tools(), want)
 	got, err := CmdTools(cmd)
-	require.True(t, err == nil && reflect.DeepEqual(got, want), "CmdTools = %v, %v, want %v: the gate and the builder read one list", got, err, want)
+	require.True(t, err == nil, "CmdTools = %v, %v, want %v: the gate and the builder read one list", got, err, want)
+	require.True(t, reflect.DeepEqual(got, want), "CmdTools = %v, %v, want %v: the gate and the builder read one list", got, err, want)
 }
 
 // AN I/O ERROR IS NOT A PARKED TOOL. A second tool directory that cannot be
@@ -99,7 +100,9 @@ func TestAParkedToolsOpenItemDoesNotBlockAndAShippedToolsDoes(t *testing.T) {
 	scopedVerbs, scoped, outside := shipped.Scope(list, got)
 	require.Len(t, outside, 2, "outside = %d, want the two parked receipts", len(outside))
 	findings, _ := Gate(scopedVerbs, scoped, nil, false)
-	require.True(t, len(findings) == 1 && findings[0].Tool == "nova-table" && findings[0].Kind == "open-edge", "findings = %+v, want exactly the shipped tool's open edge", findings)
+	require.True(t, len(findings) == 1, "findings = %+v, want exactly the shipped tool's open edge", findings)
+	require.True(t, findings[0].Tool == "nova-table", "findings = %+v, want exactly the shipped tool's open edge", findings)
+	require.True(t, findings[0].Kind == "open-edge", "findings = %+v, want exactly the shipped tool's open edge", findings)
 
 	// The shipped tool's edge answered: nothing blocks, the parked ones are
 	// still set aside rather than counted.
@@ -115,5 +118,7 @@ func TestAParkedToolsOpenItemDoesNotBlockAndAShippedToolsDoes(t *testing.T) {
 	misspelt := stranded("nova-table shwo", "Stella", "2026-09-18T11:00:00Z", false, "r/b.json:1")
 	scopedVerbs, scoped, _ = shipped.Scope(list, append(got, answer, misspelt))
 	findings, _ = Gate(scopedVerbs, scoped, nil, false)
-	require.True(t, len(findings) == 1 && findings[0].Kind == "unmatched" && findings[0].Tool == "nova-table", "findings = %+v, want the shipped tool's unmatched not-ok receipt", findings)
+	require.True(t, len(findings) == 1, "findings = %+v, want the shipped tool's unmatched not-ok receipt", findings)
+	require.True(t, findings[0].Kind == "unmatched", "findings = %+v, want the shipped tool's unmatched not-ok receipt", findings)
+	require.True(t, findings[0].Tool == "nova-table", "findings = %+v, want the shipped tool's unmatched not-ok receipt", findings)
 }
