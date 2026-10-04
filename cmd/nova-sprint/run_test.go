@@ -93,10 +93,11 @@ func TestWhereHeaderIsStoppedOrTheProgressLine(t *testing.T) {
 	require.True(t, strings.HasPrefix(got, "SPRINT TABLE  coordinator coordinator\n\n0/3 0.0% -> ETA -\n\n"), "running with cards:\n%q", out)
 	require.NotContains(t, out, "machine:", "running with cards:\n%q", out)
 	require.NotContains(t, out, "coordinator:", "running with cards:\n%q", out)
-	// running but silent: never hidden
+	// running but silent: never hidden, and never STOPPED, which is a stop: the progress
+	// line and the tick late (store.WhereMachineLine)
 	ta.a.sleep(store.MachineSilence + time.Second)
 	got = whereHead(t, ta.ok("where"))
-	require.True(t, strings.HasPrefix(got, "SPRINT TABLE  coordinator coordinator\n\nSTOPPED\n\n"), "running but silent:\n%q", got)
+	require.True(t, strings.HasPrefix(got, "SPRINT TABLE  coordinator coordinator\n\n0/3 0.0% -> ETA - (tick late 16s)\n\n"), "running but silent:\n%q", got)
 	require.NotContains(t, got, "(no tick", "running but silent:\n%q", got)
 }
 

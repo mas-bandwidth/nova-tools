@@ -455,20 +455,27 @@ func noSprintYet(err error) error {
 
 // whereView is the view, for a program.
 type whereView struct {
-	At          time.Time                               `json:"at"`
-	Landed      int64                                   `json:"landed"`
-	All         int64                                   `json:"all"`
-	Held        int64                                   `json:"held,omitempty"` // behind a sentinel not released, or admitted held: in the ETA
-	Summary     string                                  `json:"summary"`
-	Tables      map[string]map[string]map[string]string `json:"tables"` // table -> row -> column -> cell as printed
-	Streams     []sprint.StreamClock                    `json:"streams"`
-	Stalled     []string                                `json:"stalled,omitempty"`
-	Coordinator string                                  `json:"coordinator,omitempty"`
-	Pending     string                                  `json:"pending,omitempty"`
-	Epoch       uint64                                  `json:"epoch"`
-	Cleared     time.Time                               `json:"cleared,omitempty"` // when the epoch began
-	Machine     string                                  `json:"machine,omitempty"`
-	Goals       []goalView                              `json:"goals,omitempty"`
+	At      time.Time `json:"at"`
+	Landed  int64     `json:"landed"`
+	All     int64     `json:"all"`
+	Held    int64     `json:"held,omitempty"` // behind a sentinel not released, or admitted held: in the ETA
+	Summary string    `json:"summary"`
+	// Tables is table -> row -> column -> cell as printed (a string); with --costs a work
+	// row carries besides its cells `per_landed` (dollars per landed card), `tiers` (its
+	// cards by their briefs' tier, counts) and `cost_by_tier` (its spend by the tier each
+	// attempt and read ran on, money strings), from store.TierCosts (sprint/cost_view.go).
+	Tables map[string]map[string]map[string]any `json:"tables"`
+	// Tiers counts every card by its brief's tier (flash, pro, heavy, or whatever word the
+	// brief carries), with --costs; absent without it or when the cards could not be read.
+	Tiers       map[string]int       `json:"tiers,omitempty"`
+	Streams     []sprint.StreamClock `json:"streams"`
+	Stalled     []string             `json:"stalled,omitempty"`
+	Coordinator string               `json:"coordinator,omitempty"`
+	Pending     string               `json:"pending,omitempty"`
+	Epoch       uint64               `json:"epoch"`
+	Cleared     time.Time            `json:"cleared,omitempty"` // when the epoch began
+	Machine     string               `json:"machine,omitempty"`
+	Goals       []goalView           `json:"goals,omitempty"`
 	// Seat is the seat's last change (coordinator <name>): who gave or took
 	// it, when and why; absent while the seat has not moved since init.
 	Seat *sprint.SeatChange `json:"seat,omitempty"`
@@ -553,12 +560,32 @@ func dealtView(d store.Dealt, prefix string, epoch uint64) ([]dealtCard, []judgm
 	return cards, judgments
 }
 
+// withTierCosts puts the tier counts on the view and, on each work row with cards, the
+// stream's `tiers`, `cost_by_tier` and `per_landed` (sprint.TierCosts).
+func withTierCosts(v *whereView, tiers map[string]int, streams map[string]sprint.TierCosts) {
+	v.Tiers = tiers
+	for s, row := range v.Tables[sprint.Work] {
+		tc, ok := streams[s]
+		if !ok {
+			continue
+		}
+		row["per_landed"] = tc.PerLanded
+		if len(tc.Tiers) > 0 {
+			row["tiers"] = tc.Tiers
+		}
+		if len(tc.CostByTier) > 0 {
+			row["cost_by_tier"] = tc.CostByTier
+		}
+	}
+}
+
 // whereRun is what one where was asked, its flags read.
 type whereRun struct {
 	c       common
 	watch   bool
 	all     bool
 	cards   bool
+	costs   bool
 	every   time.Duration
 	stale   time.Duration
 	atEpoch int64
@@ -570,6 +597,7 @@ func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 	every := fs.Duration("every", time.Second, "the redraw interval with --watch, above 0")
 	all := fs.Bool("all", false, "draw the readers and merge tables too, hidden from the default frame (--json always carries them)")
 	cards := fs.Bool("cards", false, "with --json: also every work card dealt to a fleet row and not finished (its row, state, since, deadline and branch) and the open judgments on them, as the dashboard's pull routes serve them")
+	costs := fs.Bool("costs", false, "with --json: also the cards counted by their briefs' tier (tiers) and on each work row the stream's tiers, spend by the tier each attempt ran on (cost_by_tier) and dollars per landed card (per_landed), from every card's cost records: one read of the work table's cards, which the plain view never makes (the dashboard's read)")
 	stale := fs.Duration("stale", defaultStale, "a stream with no progress for longer is shown stalled (--json)")
 	atEpoch := fs.Int64("at-epoch", -1, "the sprint as it was at an earlier epoch (before a clear)")
 	pos, err := parse(fs, args)
@@ -595,7 +623,10 @@ func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 	if *cards && !c.json {
 		return refuse(stderr, "where", "--cards is a field of the JSON view: give --json with it")
 	}
-	r := whereRun{c: *c, watch: *watch, all: *all, cards: *cards, every: *every, stale: *stale, atEpoch: *atEpoch}
+	if *costs && !c.json {
+		return refuse(stderr, "where", "--costs is a field of the JSON view: give --json with it")
+	}
+	r := whereRun{c: *c, watch: *watch, all: *all, cards: *cards, costs: *costs, every: *every, stale: *stale, atEpoch: *atEpoch}
 	if addr := a.server(fs); addr != "" {
 		// the sprint's server draws each frame: one plain where a frame, so the watch
 		// never holds the server between frames
@@ -638,6 +669,15 @@ func (a *app) whereLoop(ctx context.Context, r whereRun, stdout, stderr io.Write
 				return "", 0, false // an interrupt cut the read short: the watch is over, not failed
 			}
 			return "", a.readFailed("where", err, stderr), false
+		}
+		if r.c.json && r.costs {
+			// the cost visibility of the JSON view (store.TierCosts): a read that fails leaves
+			// the fields absent, never a failed view
+			if tiers, streams, err := st.TierCosts(ctx); err == nil {
+				withTierCosts(&v, tiers, streams)
+			} else if ctx.Err() == nil {
+				fmt.Fprintf(stderr, "%s where: the tier costs were not read: %s\n", prog, oneline.Escape(err.Error()))
+			}
 		}
 		if r.c.json && r.cards {
 			d, err := st.Dealt(ctx)
@@ -721,7 +761,7 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 		return whereView{}, "", err
 	}
 	now := a.now()
-	v := whereView{At: now, Tables: map[string]map[string]map[string]string{}, Streams: clocks, Epoch: st.PinnedEpoch(), Coordinator: coordinator}
+	v := whereView{At: now, Tables: map[string]map[string]map[string]any{}, Streams: clocks, Epoch: st.PinnedEpoch(), Coordinator: coordinator}
 	if moved {
 		v.Seat = &seat
 	}
@@ -747,7 +787,8 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 		v.Pending = f.Pending.ID
 	}
 	if facts.Records {
-		v.Machine = st.MachineLineOf(facts.Machine, facts.Heartbeat)
+		// a late tick is not a stop (store.WhereMachineLine)
+		v.Machine = st.WhereMachineLineOf(facts.Machine, facts.Heartbeat)
 	}
 	var b strings.Builder
 	b.WriteString(a.seatTitle(v.Coordinator, v.Seat, now) + "\n\n" + whereHeader(v.Summary, v.Machine) + "\n\n")
@@ -764,9 +805,9 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 			// each reader's width beside reading, derived from its fleet row
 			t = readersWidths(t, shapes[slices.Index(sprint.ViewOrder, sprint.Fleet)])
 		}
-		rows := map[string]map[string]string{}
+		rows := map[string]map[string]any{}
 		for _, r := range t.Rows {
-			cells := map[string]string{}
+			cells := map[string]any{}
 			for j, col := range t.Columns {
 				cells[col.Name] = ntable.CellText(t.Columns, r, j)
 			}
@@ -808,9 +849,9 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 		}
 	}
 	ft := friendsTable(friends)
-	v.Tables[sprint.Friends] = map[string]map[string]string{}
+	v.Tables[sprint.Friends] = map[string]map[string]any{}
 	for _, r := range ft.Rows {
-		cells := map[string]string{}
+		cells := map[string]any{}
 		for j, col := range ft.Columns {
 			cells[col.Name] = ntable.CellText(ft.Columns, r, j)
 		}
@@ -1088,7 +1129,7 @@ func fleetText(t ntable.Table) string {
 }
 
 // whereHeader is the one line under the title of the where view: STOPPED when
-// the machine is stopped (or a RUNNING machine has not ticked), DONE when it
+// the machine is stopped (a late tick reads running, store.WhereMachineLine), DONE when it
 // stopped because the sprint is done, matching the view's state text, and the
 // progress line, with no machine text, when it is
 // running. Nothing follows any of them.

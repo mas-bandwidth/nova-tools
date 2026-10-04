@@ -17,15 +17,15 @@ import (
 
 // sprintCopy is the part of where --json --cards the pull routes read.
 type sprintCopy struct {
-	At        time.Time                               `json:"at"`
-	Landed    int64                                   `json:"landed"`
-	All       int64                                   `json:"all"`
-	Held      int64                                   `json:"held"`
-	Summary   string                                  `json:"summary"`
-	Machine   string                                  `json:"machine"`
-	Tables    map[string]map[string]map[string]string `json:"tables"`
-	Cards     []PullCard                              `json:"cards"`
-	Judgments []PullJudgment                          `json:"judgments"`
+	At        time.Time                            `json:"at"`
+	Landed    int64                                `json:"landed"`
+	All       int64                                `json:"all"`
+	Held      int64                                `json:"held"`
+	Summary   string                               `json:"summary"`
+	Machine   string                               `json:"machine"`
+	Tables    map[string]map[string]map[string]any `json:"tables"` // a cell is a string; a work row carries tiers, cost_by_tier (objects) and per_landed too
+	Cards     []PullCard                           `json:"cards"`
+	Judgments []PullJudgment                       `json:"judgments"`
 }
 
 // PullCard is a work card dealt to a row and not finished, as where --json --cards prints it.
@@ -102,8 +102,8 @@ func pullView(c *sprintCopy, kind, name string) (PullView, bool) {
 	}
 	v := PullView{At: c.At, Kind: kind, Name: name, Cards: []PullCard{}, Judgments: []PullJudgment{},
 		Sprint: SprintLine{Landed: c.Landed, All: c.All, Held: c.Held, ETA: etaOf(c.Summary), Machine: strings.TrimPrefix(c.Machine, "machine: ")},
-		Row: PullRow{Status: cells["status"], Ready: cells["ready"], Working: cells["working"], Width: cells["width"],
-			Done: cells["done"], OKPct: cells["okpct"], Load: cells["load"]}}
+		Row: PullRow{Status: cellText(cells["status"]), Ready: cellText(cells["ready"]), Working: cellText(cells["working"]), Width: cellText(cells["width"]),
+			Done: cellText(cells["done"]), OKPct: cellText(cells["okpct"]), Load: cellText(cells["load"])}}
 	mine := map[string]bool{}
 	for _, card := range c.Cards {
 		if card.Member == member {
@@ -337,4 +337,11 @@ func mustJSON(v any) []byte {
 		panic("dashboard: a pull view does not marshal: " + err.Error())
 	}
 	return body
+}
+
+// cellText is a where view's cell as the text it was printed as; "" for a row field
+// that is no cell (a work row's tiers, cost_by_tier).
+func cellText(cell any) string {
+	s, _ := cell.(string)
+	return s
 }

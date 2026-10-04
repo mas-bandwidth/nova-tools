@@ -217,8 +217,16 @@ merge, friends, fleet, and `where --json` carries every table and every row of i
 with the flag or without. The one line under
 the title is the word `STOPPED` when the machine is stopped, and the summary
 line (landed / all primaries, percent, ETA, with no machine text) when it is
-running; a RUNNING machine that has not ticked for 5 s shows
-`STOPPED`, with no count of seconds. Every count cell is an ordered set.
+running; a RUNNING machine whose last tick is older than MachineSilence (15 s) shows the
+summary line and `(tick late <n>s)`, n the whole seconds since that tick, and its `--json`
+`machine` reads `machine: running (tick late <n>s)` (store.WhereMachineLine; the owner,
+2026-10-04: a long tick is not a stop): `STOPPED` is a stop only. The inbox and the driver
+keep the machine line where silence reads `STOPPED`. `where --json --costs` adds the cost
+visibility, read from every card's cost records in one read of the work table's cards,
+which the plain view never makes: `tiers` at the top (every card by its brief's tier) and
+on each work row `tiers`, `cost_by_tier` (the stream's spend by the tier each attempt ran
+on, so a flash card escalated to pro shows both) and `per_landed` (dollars per landed
+card); a cell stays a string. Every count cell is an ordered set.
 The summary line shows `held=N` after the percent when cards are held back:
 waiting behind a sentinel not released, admitted held (`add --held`), or
 waiting on one of those through a need (`sprint.HeldBack`, counted by the
