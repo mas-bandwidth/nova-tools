@@ -34,7 +34,7 @@ func TestReceiptWrittenIsTheOneRowOnEvGithub(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, got, 1, "the stream holds %+v, want the one receipt", got)
 	require.Equal(t, id, got[0].ID, "the stream holds %+v, want the receipt %q", got, id)
-	want := map[string]interface{}{"repo": "mas-bandwidth/nova-tools", "number": "4493", "kind": "workflow_run",
+	want := map[string]any{"repo": "mas-bandwidth/nova-tools", "number": "4493", "kind": "workflow_run",
 		"action": "completed", "head": sha, "sender": "runner", "at": "2026-09-28T02:00:00Z"}
 	for k, v := range want {
 		require.Equal(t, v, got[0].Values[k], "field %s of %+v", k, got[0].Values)

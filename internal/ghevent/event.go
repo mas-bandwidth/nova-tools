@@ -80,8 +80,8 @@ func Publish(ctx context.Context, rdb *redis.Client, e Entry) (string, error) {
 
 // Fields is the stream entry's key set for e: the eight common fields, plus
 // the issues, workflow_run, check_run or pull_request fields for those kinds.
-func Fields(e Entry) (map[string]interface{}, error) {
-	v := map[string]interface{}{
+func Fields(e Entry) (map[string]any, error) {
+	v := map[string]any{
 		"repo":       e.Repo,
 		"kind":       e.Kind,
 		"number":     e.Number,

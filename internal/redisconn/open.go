@@ -153,7 +153,7 @@ func open(ctx context.Context, o Options, getenv func(string) string, dial dialF
 type quiet struct{}
 
 // Printf writes nothing.
-func (quiet) Printf(context.Context, string, ...interface{}) {}
+func (quiet) Printf(context.Context, string, ...any) {}
 
 var quietOnce sync.Once
 

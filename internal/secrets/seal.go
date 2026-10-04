@@ -42,7 +42,7 @@ func realExecCommand(stdin io.Reader, env []string, dir, name string, args ...st
 }
 
 // say writes one progress line; never a value, only step names and public facts.
-func (o SealOptions) say(format string, a ...interface{}) {
+func (o SealOptions) say(format string, a ...any) {
 	if o.Progress != nil {
 		fmt.Fprintf(o.Progress, "seal: "+format+"\n", a...)
 	}
@@ -217,7 +217,7 @@ type sealCarry struct {
 	title    string // the pull request title
 	body     string // the pull request body
 	noPR     bool
-	say      func(format string, a ...interface{})
+	say      func(format string, a ...any)
 	check    func() error // runs after the merge and the pull
 }
 
@@ -227,7 +227,7 @@ type sealCarry struct {
 func (c sealCarry) carry(ciphertext []byte) (prNum string, merged bool, err error) {
 	say := c.say
 	if say == nil {
-		say = func(string, ...interface{}) {}
+		say = func(string, ...any) {}
 	}
 	home, err := c.preflight()
 	if err != nil {

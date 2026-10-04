@@ -28,7 +28,7 @@ func TestReceiptFieldsAreTheRowTheReaderReads(t *testing.T) {
 	require.NoError(t, r.Validate())
 	got, err := ghevent.Fields(r.Entry())
 	require.NoError(t, err)
-	want := map[string]interface{}{
+	want := map[string]any{
 		"repo": "mas-bandwidth/nova-tools", "kind": "workflow_run", "number": "4493", "head": sha,
 		"action": "completed", "at": "2026-09-28T02:00:00Z", "sender": "runner", "comment_id": "",
 		"run_id": "123456789", "workflow": "CI-run", "status": "completed", "conclusion": "success",

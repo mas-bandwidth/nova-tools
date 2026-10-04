@@ -62,7 +62,7 @@ type SeatInjectOptions struct {
 	Exec execCommand
 }
 
-func (o SeatInjectOptions) say(format string, a ...interface{}) {
+func (o SeatInjectOptions) say(format string, a ...any) {
 	if o.Progress != nil {
 		fmt.Fprintf(o.Progress, "seat inject: "+format+"\n", a...)
 	}

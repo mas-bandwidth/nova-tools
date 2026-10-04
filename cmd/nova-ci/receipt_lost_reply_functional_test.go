@@ -83,7 +83,7 @@ func TestReceiptCommittedWriteWithLostReplyIsReportedUnconfirmed(t *testing.T) {
 						// Refuse optional client features, as a Redis without them would.
 						_, err = io.WriteString(c, "-ERR unknown subcommand\r\n")
 					case "xadd":
-						vals := make([]interface{}, len(args))
+						vals := make([]any, len(args))
 						for i, s := range args {
 							vals[i] = s
 						}

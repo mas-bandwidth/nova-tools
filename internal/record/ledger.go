@@ -210,7 +210,7 @@ func DialLedger(addr, user, password string) *RedisLedger {
 // quietRedis is the discard logger for go-redis.
 type quietRedis struct{}
 
-func (quietRedis) Printf(context.Context, string, ...interface{}) {}
+func (quietRedis) Printf(context.Context, string, ...any) {}
 
 // silenceRedisLoggerOnce makes the install once per process: redis.SetLogger writes a
 // package-level variable inside go-redis, and two dials in one process writing it again is

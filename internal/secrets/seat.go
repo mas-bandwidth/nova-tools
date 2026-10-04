@@ -55,7 +55,7 @@ type SeatAddOptions struct {
 	Exec execCommand
 }
 
-func (o SeatAddOptions) say(format string, a ...interface{}) {
+func (o SeatAddOptions) say(format string, a ...any) {
 	if o.Progress != nil {
 		fmt.Fprintf(o.Progress, "seat add: "+format+"\n", a...)
 	}

@@ -95,7 +95,7 @@ func TestOpenCoverNetDialRefusesBeforeItConnects(t *testing.T) {
 func TestOpenCoverTheQuietLoggerWritesNothing(t *testing.T) {
 	t.Parallel()
 	var _ interface {
-		Printf(context.Context, string, ...interface{})
+		Printf(context.Context, string, ...any)
 	} = quiet{}
 	var q quiet
 	assert.NotPanics(t, func() { q.Printf(context.Background(), "go-redis says %s %d", "ERR", 7) }, "quiet.Printf panicked")

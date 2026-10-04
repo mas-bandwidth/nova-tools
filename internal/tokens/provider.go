@@ -335,7 +335,7 @@ func readXaiJSON(kind, path, text string, s *Source) *Source {
 	s.Reports = reports
 	s.Basis = UTC
 
-	var root map[string]interface{}
+	var root map[string]any
 	dec := json.NewDecoder(strings.NewReader(text))
 	dec.UseNumber()
 	if err := dec.Decode(&root); err != nil {
@@ -347,13 +347,13 @@ func readXaiJSON(kind, path, text string, s *Source) *Source {
 		s.unreadable(path, providerJSONReason(kind))
 		return s
 	}
-	turns, ok := turnsRaw.([]interface{})
+	turns, ok := turnsRaw.([]any)
 	if !ok {
 		s.unreadable(path, providerJSONReason(kind))
 		return s
 	}
 	for i, e := range turns {
-		turn, ok := e.(map[string]interface{})
+		turn, ok := e.(map[string]any)
 		if !ok {
 			s.unparsed(path, i+1, "a turn that is not a JSON object")
 			continue
