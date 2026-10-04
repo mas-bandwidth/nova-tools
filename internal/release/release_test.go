@@ -1296,6 +1296,43 @@ func TestMachinesFileRefusesAShapeItCannotMean(t *testing.T) {
 	}
 }
 
+// A name that begins with a dash is an ssh flag once ExecSSH appends it after
+// the options, so the machines file refuses it before any dial. The names the
+// file is written to hold still parse.
+func TestMachinesFileRefusesANameBeginningWithADash(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct{ name, in, wants string }{
+		{"an ssh version flag", "-V\n", "machine name"},
+		{"an ssh login flag", "-lroot\n", "machine name"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Machines(strings.NewReader(tc.in))
+			if err == nil || !strings.Contains(err.Error(), tc.wants) {
+				require.FailNowf(t, "assertion failed", "got %v, want a refusal naming %q", err, tc.wants)
+			}
+		})
+	}
+
+	got, err := Machines(strings.NewReader("hulk\nbench-1\nuser@host\n"))
+	if err != nil {
+		require.NoError(t, err, err)
+	}
+	want := []Machine{
+		{Name: "hulk"},
+		{Name: "bench-1"},
+		{Name: "user@host"},
+	}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		require.FailNowf(t, "assertion failed", "got %v, want %v", got, want)
+	}
+
+	host, dir, remote := RemoteFrom("-V:/x")
+	if host != "" || dir != "-V:/x" || remote {
+		require.FailNowf(t, "assertion failed", "RemoteFrom(%q) = (%q, %q, %v), want a local path", "-V:/x", host, dir, remote)
+	}
+}
+
 func TestAdoptUsesEachMachinesOwnBinAndDest(t *testing.T) {
 	t.Parallel()
 
