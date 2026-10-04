@@ -44,7 +44,7 @@ func openPrimaries(s *Snapshot) []*Card {
 
 // Weights is each open primary's weight: how many cards on the table, not landed, wait on
 // it through their needs, transitively. A card off the table or landed weighs nothing and
-// counts for nothing.
+// counts for nothing, and a need the waiting card waived adds nothing to the need's weight.
 func Weights(s *Snapshot) map[string]int { return weightsOver(openPrimaries(s)) }
 
 // weightsOver is Weights over the cards given (their ids and needs).
@@ -55,8 +55,9 @@ func weightsOver(cards []*Card) map[string]int {
 		open[c.ID] = true
 	}
 	for _, c := range cards {
+		waived := Split(c.F("waived"))
 		for _, n := range Split(c.F("needs")) {
-			if open[n] && n != c.ID {
+			if open[n] && n != c.ID && !contains(waived, n) { // a waived need does not hold the card (unmet)
 				needers[n] = append(needers[n], c.ID)
 			}
 		}

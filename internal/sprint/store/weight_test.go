@@ -79,3 +79,19 @@ func TestACriticalCardStartsOnPro(t *testing.T) {
 	line := sprint.CriticalLine([]sprint.CriticalCard{{ID: "ftsync-t1-merge", Behind: 140, State: sprint.Working}})
 	assert.Equal(t, "critical: ftsync-t1-merge 140 behind, working", line)
 }
+
+// A need the card waived does not hold it (unmet skips it, so the card can land while the
+// need is open), so it adds nothing to that need's weight: a need dropped, waived and then
+// added again weighs 0 behind the card that no longer waits on it.
+func TestAWaivedNeedWeighsNothingBehindItsWaiter(t *testing.T) {
+	t.Parallel()
+	h := routeHarness(t, route("flash-a", "flash"))
+	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"need"}, Brief: briefOf("flash", "")}))
+	h.must(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"waiter"}, Needs: []string{"need"}, Brief: briefOf("flash", "")}))
+	require.Equal(t, map[string]int{"need": 1, "waiter": 0}, sprint.Weights(h.snap()))
+	h.setPrimary("waiter", map[string]string{"waived": "need"})
+	assert.Equal(t, map[string]int{"need": 0, "waiter": 0}, sprint.Weights(h.snap()), "the waived need weighs nothing")
+	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"other"}, Brief: briefOf("flash", "")}))
+	assert.Equal(t, "", h.snap().Work.Card("need").F(sprint.FieldBehind), "the next add rewrites the weight it changed: the field is unset")
+	h.clean("a waived need weighed")
+}
