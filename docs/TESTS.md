@@ -835,6 +835,10 @@ FINDINGS FINDING class=stranded_fragment count=2 cards=s1-1,s1-2
 FINDINGS FINDING class=cut_citation count=2 cards=s1-1,s1-3
 FINDINGS FINDING class=invented_reason count=1 cards=s1-2
 FINDINGS FINDING class=unnamed count=1 cards=s1-4
+
+$ nova-decide shadow --manifest ./cmd/nova-decide/testdata/shadow.json --backend fixed --answers ./cmd/nova-decide/testdata/read-answers.json --record ./decisions.jsonl --budget 100 --max 1
+SHADOW OK backend=fixed rows=1 authority=none asked=1 spent=9 remaining=91 pending=0 failed=0
+SHADOW DECISION task=example-read head=0123456789abcdef0123456789abcdef01234567 id=shadow-f19e5c34d08ed4e20512fa3bf2772763470a763b1f7d71cf9d97fdd32d78e28e recorded=new tokens_in=0 tokens_out=0
 ```
 
 The ask, read, score, attempt, grade, gate, brief and outcome lines write

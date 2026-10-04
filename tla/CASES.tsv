@@ -2,6 +2,7 @@ config	module	expected	property	deadlock	group	gate	debt
 MCBenchStage.cfg	MCBenchStage.tla	pass	-	ignore-terminal	benchstage	required	-
 MCBenchStageBrokenLines.cfg	MCBenchStage.tla	invariant	ReusedByteIdentical	ignore-terminal	benchstage	required	-
 MCCardMachine.cfg	MCCardMachine.tla	pass	-	ignore-terminal	cardmachine	bench	layer-2-original-instance-over-budget
+MCDecideShadow.cfg	MCDecideShadow.tla	pass	-	check	decideshadow	required	-
 MCEpochMemberBroken.cfg	MCEpochMemberTable.tla	invariant	NoEpochLeak	ignore-terminal	epochmembertable	required	-
 MCEpochMemberBrokenStale.cfg	MCEpochMemberTable.tla	action	StaleWritesRefuse	ignore-terminal	epochmembertable	required	-
 MCEpochMemberFixedPoint.cfg	MCEpochMemberTable.tla	pass	-	ignore-terminal	epoch-fixed-point	required	-
