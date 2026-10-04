@@ -399,8 +399,9 @@ func TestHygieneIdentityIsDocumentedAsOneNameAndEmail(t *testing.T) {
 	// The steps are cut here rather than with onboarding.Steps: every hygiene
 	// command carries `<email>` quoted in `--identity`, and the shared parser
 	// does not run a line holding `>` even quoted. Splitting, running and
-	// comparing stay the shared ones -- SplitShell, runDocumented, Compare --
-	// so this pins the same promise the harness keeps.
+	// comparing stay the shared ones -- SplitShell, runDocumented, and the one
+	// comparator CompareTranscript -- so this pins the same promise the harness
+	// keeps.
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	require.NoError(t, err)
 	lines, err := onboarding.Transcript(string(raw), "nova-dev", "hygiene, on a branch")

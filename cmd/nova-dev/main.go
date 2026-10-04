@@ -30,10 +30,10 @@ var version string
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
 
-// run is the entry point the tests drive. The three verbs print their own
-// lines (Flags.Prints) and parse their own flags, so each is handed the raw
-// arguments after its verb word; the skeleton's flag set declares the same
-// flags so a typo is refused and -h answered before a verb runs.
+// run is the entry point the tests drive. Each verb parses the invocation
+// after its verb word into the values it reads, and the skeleton's flag set
+// declares the same flags from the same functions, so -h lists every flag and
+// a typo the skeleton's own parse meets is refused with the names there are.
 func run(args []string, stdout, stderr io.Writer) int {
 	return devTool(args).Run(args, os.Stdin, stdout, stderr)
 }
@@ -54,21 +54,23 @@ func devTool(args []string) *tool.Tool {
 the receipts from a directory you name, and appends one receipt per real run.
 convergence reads the forge, a checkout, the receipts and the files you name.
 hygiene reads a git range you name and writes nothing.
-first run: the three examples are one sitting over the fixture under testdata/.`,
+first run: the three examples are one sitting over ./docs/CLI.md and ./dogfood-receipts.`,
 		ExitTable: "0 pass, 1 the verb ran and said no (a finding, a widening streak, an unproven verb), 2 could not run (bad invocation).",
 		Default:   "dogfood",
 		Verbs: []tool.Verb{
 			{
 				Name: "dogfood",
 				Usage: "dogfood ledger --cli <file> --receipts <dir> [--authors <file>] [--repo <dir>]\n" +
-					"dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok)\n" +
-					"dogfood record --notes <text> [--issue <n>] [--closes <id>] --receipts <dir> [--tools-timeout <s>] [--fail-max <n>]\n" +
+					"dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] [--closes <id>] --receipts <dir> [--tools-timeout <s>] [--fail-max <n>]\n" +
 					"dogfood gate --cli <file> --receipts <dir> [--shipped <cmd dir>] [--require-all] [--allow-empty]",
 				Example: "dogfood ledger --cli ./docs/CLI.md --receipts ./dogfood-receipts\n" +
 					"dogfood record --cli ./docs/CLI.md --tool nova-dev --verb hygiene --by Ada --ok --notes dogfooded-the-ledger-over-this-reference --receipts ./dogfood-receipts\n" +
 					"dogfood ledger --cli ./docs/CLI.md --receipts ./dogfood-receipts --repo .",
 				Effect: tool.Inspection,
-				Flags:  func(f *tool.Flags) { f.Prints() },
+				Flags: func(f *tool.Flags) {
+					f.Prints()
+					dogfoodFlagValues(f.FlagSet)
+				},
 				Run: func(c *tool.Call) *tool.Out {
 					return tool.Exit(cmdDogfood(rest, c.Stdout, c.Stderr))
 				},
@@ -151,34 +153,37 @@ func refuseRan(stderr io.Writer, where, what string) int {
 }
 
 // parse runs a subcommand flag set and enforces the no-guessing rule:
-// every listed flag must have been given a non-empty value.
+// every listed flag must have been given a non-empty value. where is the
+// invocation the refusal names, which for a dogfood sub-verb is that sub-verb
+// and not the flag set's name (the three share the name "dogfood", so
+// `dogfood ledger -h` prints the dogfood verb's effect).
 //
 // Package flag is given no stream: its error text quotes the argument it
 // could not parse, raw, and its usage dump follows -- so an argument holding
 // a newline authored a whole line of stderr before any code in this file ran.
 // The refusal is printed here instead, escaped. -h after a verb is not refused:
 // verbflag.Parse raises that verb's help, which the skeleton prints on stdout at exit 0.
-func parse(fs *flag.FlagSet, args []string, stderr io.Writer, required map[string]*string) bool {
-	if !parseFlags(fs, args, stderr) {
+func parse(where string, fs *flag.FlagSet, args []string, stderr io.Writer, required map[string]*string) bool {
+	if !parseFlags(where, fs, args, stderr) {
 		return false
 	}
-	return requireFlags(fs, stderr, required)
+	return requireFlags(where, fs, stderr, required)
 }
 
 // parseFlags is the half of parse that decides whether anything after it can be
 // trusted: once the flag set has failed to parse, the values and the
 // positional arguments are both meaningless, so no verb adds a second complaint on top.
-func parseFlags(fs *flag.FlagSet, args []string, stderr io.Writer) bool {
+func parseFlags(where string, fs *flag.FlagSet, args []string, stderr io.Writer) bool {
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
 	if err := verbflag.Parse(fs, args); err != nil {
-		refuse(stderr, " "+fs.Name(), oneline.Cap(err.Error(), oneline.TailBytes))
+		refuse(stderr, where, oneline.Cap(err.Error(), oneline.TailBytes))
 		return false
 	}
 	if fs.NArg() > 0 {
 		// Through refuse like every other unusable invocation: a stray word after a
 		// verb says what was wrong and where the usage lives.
-		refuse(stderr, " "+fs.Name(), fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
+		refuse(stderr, where, fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
 		return false
 	}
 	return true
@@ -188,7 +193,7 @@ func parseFlags(fs *flag.FlagSet, args []string, stderr io.Writer) bool {
 // independent of each other, so a caller who omitted two should learn about two
 // in one run rather than being sent back for a second refusal. Each one carries
 // the hint that says what the flag wants.
-func requireFlags(fs *flag.FlagSet, stderr io.Writer, required map[string]*string) bool {
+func requireFlags(where string, fs *flag.FlagSet, stderr io.Writer, required map[string]*string) bool {
 	names := make([]string, 0, len(required))
 	for name := range required {
 		names = append(names, name)
@@ -197,7 +202,7 @@ func requireFlags(fs *flag.FlagSet, stderr io.Writer, required map[string]*strin
 	ok := true
 	for _, name := range names {
 		if *required[name] == "" {
-			refuse(stderr, " "+fs.Name(), fmt.Sprintf("--%s is required; refusing to guess", name))
+			refuse(stderr, where, fmt.Sprintf("--%s is required; refusing to guess", name))
 			fmt.Fprint(stderr, hintFor(name))
 			ok = false
 		}
@@ -213,9 +218,9 @@ func addFailMax(fs *flag.FlagSet) *int {
 }
 
 // checkFailMax refuses a negative ceiling, naming the verb.
-func checkFailMax(fs *flag.FlagSet, max int, stderr io.Writer) bool {
+func checkFailMax(where string, fs *flag.FlagSet, max int, stderr io.Writer) bool {
 	if max < 0 {
-		refuse(stderr, " "+fs.Name(), fmt.Sprintf("--fail-max must be a line ceiling of zero or more (got %d); 0 means print them all", max))
+		refuse(stderr, where, fmt.Sprintf("--fail-max must be a line ceiling of zero or more (got %d); 0 means print them all", max))
 		return false
 	}
 	return true

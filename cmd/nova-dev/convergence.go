@@ -118,7 +118,7 @@ func cmdConvergence(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("convergence", flag.ContinueOnError)
 	f := convergenceFlagValues(fs)
 
-	if !parseFlags(fs, args, stderr) {
+	if !parseFlags(" convergence", fs, args, stderr) {
 		return 2
 	}
 	if !requireConvergenceFlags(stderr, map[string]*string{
