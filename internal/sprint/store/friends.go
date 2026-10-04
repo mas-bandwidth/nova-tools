@@ -175,8 +175,10 @@ func (st *Store) FriendBeatReport(ctx context.Context, friend string, rep sprint
 }
 
 // SetFriendHeld holds the friend (friend down) or releases the hold (friend
-// up), by the coordinator who; a friend the roster lacks is refused.
-func (st *Store) SetFriendHeld(ctx context.Context, friend string, held bool, who string) error {
+// up), by the coordinator who, and sets her width when width is above zero
+// (friend up --width; friend sync sets nova-config's again); a friend the
+// roster lacks is refused.
+func (st *Store) SetFriendHeld(ctx context.Context, friend string, held bool, who string, width int) error {
 	r, kv, err := st.roster(ctx)
 	if err != nil {
 		return err
@@ -188,6 +190,9 @@ func (st *Store) SetFriendHeld(ctx context.Context, friend string, held bool, wh
 	e.Held, e.At, e.By = false, time.Time{}, ""
 	if held {
 		e.Held, e.At, e.By = true, st.now().UTC().Truncate(time.Second), who
+	}
+	if width > 0 {
+		e.Width = width
 	}
 	r[friend] = e
 	return putRoster(ctx, kv, r)

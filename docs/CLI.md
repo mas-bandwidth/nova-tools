@@ -1039,7 +1039,7 @@ nova-sprint fleet level
 nova-sprint friend sync [--pg <dsn>]
 nova-sprint friend beat <friend> [--running <id>,...]
 nova-sprint friend down <friend>
-nova-sprint friend up <friend>
+nova-sprint friend up <friend> [--width <n>]
 nova-sprint friend take <friend> (<id>... | --all-unstarted) [--reason <text>]
 nova-sprint reader add <reader>...
 nova-sprint reader away <reader>...

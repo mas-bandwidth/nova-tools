@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"strconv"
 	"slices"
 	"strings"
 	"time"
@@ -98,7 +99,7 @@ func friendVerbWords(name string) string {
 	case "friend down":
 		return "friend down holds the named friend, as fleet down holds a machine. The friend stays held whatever beat arrives, the tick deals her nothing, and where counts working as 0 while the friend is held. Every card dealt to her that she has not started goes back to ready, as friend take --all-unstarted takes it, and the next tick deals it to a friend up with room (a card whose WHO line names her waits for her); a card she has started (a push on its branch, her beat naming it running) stays with her and finishes, each named on a NOTE line. friend up releases the hold. " + sync + "\n"
 	case "friend up":
-		return "friend up releases a hold that friend down set. It is not a beat: a friend released with no beat in the last " + down + " is down until the friend beats. " + sync + "\n"
+		return "friend up releases a hold that friend down set. --width sets her width, the jobs she works at once (the deal holds her at twice that), as fleet up --width sets a machine's, until friend sync sets her nova-config row's again. It is not a beat: a friend released with no beat in the last " + down + " is down until the friend beats. " + sync + "\n"
 	default:
 		return ""
 	}
@@ -237,20 +238,32 @@ func (a *app) cmdFriendBeat(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// cmdFriendHold is friend down (held) and friend up (the hold released).
+// cmdFriendHold is friend down (held) and friend up (the hold released, and her width set
+// by --width, as fleet up --width sets a member's).
 func (a *app) cmdFriendHold(held bool, args []string, stdout, stderr io.Writer) int {
 	name := map[bool]string{true: "friend down", false: "friend up"}[held]
 	fs, c := a.verbSetup(name)
+	var width *string
+	if !held {
+		width = fs.String("width", "", fmt.Sprintf("her width: the jobs she works at once; the deal holds her at %d times that, ready and working; 1 to %d (default: as it is; friend sync sets it to her nova-config row's again)", sprint.DealAhead, sprint.MaxWidth))
+	}
 	friend, code := oneFriend(name, fs, args, stderr)
 	if code != 0 {
 		return code
+	}
+	w := 0
+	if width != nil && *width != "" {
+		var err error
+		if w, err = sprint.ParseWidth(*width); err != nil {
+			return refuse(stderr, name, "--width: "+err.Error())
+		}
 	}
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, name, err.Error())
 	}
 	ctx := context.Background()
-	if err := st.SetFriendHeld(ctx, friend, held, c.actor); err != nil {
+	if err := st.SetFriendHeld(ctx, friend, held, c.actor, w); err != nil {
 		fmt.Fprintf(stderr, "%s %s: %s\n", prog, name, oneline.Escape(err.Error()))
 		return 1
 	}
@@ -264,7 +277,12 @@ func (a *app) cmdFriendHold(held bool, args []string, stdout, stderr io.Writer) 
 		c.says = append([]string{"friend " + friend + " held"}, keptSays(friend, started)...)
 		return a.runStep(name, *c, st, store.FriendTakeStep(sprint.FriendTakeReq{Friend: friend, All: true, Hold: true, Started: started, Who: c.actor}), stdout, stderr)
 	}
-	sayOK(stdout, c.json, name, token(name)+" OK "+friend+" held="+fmt.Sprint(held), map[string]any{"friend": friend, "held": held})
+	line, facts := token(name)+" OK "+friend+" held="+fmt.Sprint(held), map[string]any{"friend": friend, "held": held}
+	if w > 0 {
+		line += " width=" + strconv.Itoa(w)
+		facts["width"] = w
+	}
+	sayOK(stdout, c.json, name, line, facts)
 	return 0
 }
 
