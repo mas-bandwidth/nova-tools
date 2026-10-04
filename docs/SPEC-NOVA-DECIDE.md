@@ -98,6 +98,9 @@ its decision's `acts`.
 - Loading refuses, by file, line and question, an answer whose probability is
   below 0, above 1, or not a number. A hand-edited record does not calibrate
   until that line is fixed.
+- Replaying a recorded decision (`Make`, `MakeAll`, `Gate`) holds its answers to
+  the schema like a fresh ask (`Schema.Check`); answers that do not fit the schema
+  are refused naming the op id and the failing rule, and do not route.
 
 The record's states are few and plain (a decision recorded, then labelled once; its
 acts appended) and the one writer is the lock's holder. Its model is owed: `tla/DecideRecord.tla`,
