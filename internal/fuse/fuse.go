@@ -288,6 +288,15 @@ func writeBox(path string, b Box, opts ...atomicfile.Option) error {
 // went and reporting that they could not be saved are both better than silence.
 func PreserveUnreadable(path string) (string, error) {
 	dst := path + UnreadableSuffix
+	// Security finding 74.5: evidence preservation accepts a regular source
+	// only and refuses a source that is a symlink at inspection.
+	source, err := os.Lstat(path)
+	if err != nil {
+		return dst, err
+	}
+	if !source.Mode().IsRegular() {
+		return dst, fmt.Errorf("%s is not a regular file", path)
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return dst, err
@@ -296,14 +305,13 @@ func PreserveUnreadable(path string) (string, error) {
 	if cleanDst != "" {
 		cleanDst = filepath.Clean(cleanDst)
 	}
-	mode := os.FileMode(0o644)
-	var opts []atomicfile.Option
+	mode := source.Mode().Perm()
+	opts := []atomicfile.Option{atomicfile.ExactMode()}
 	if fi, err := os.Lstat(cleanDst); err == nil && fi.Mode().IsRegular() {
 		mode = fi.Mode().Perm()
-		opts = append(opts, atomicfile.ExactMode())
 	}
 	// Atomic write per internal/atomicfile model: writes dst atomically, preserving
-	// any existing destination permissions (or defaulting to 0o644 subject to umask)
+	// any existing destination permissions (or using the regular source's mode)
 	// via temporary file and rename so preserved unreadable box evidence is never
 	// left torn or mode-widened.
 	return dst, atomicfile.WriteFile(cleanDst, data, mode, opts...)
