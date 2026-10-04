@@ -29,6 +29,7 @@ import (
 	"math"
 	"os"
 	"path"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -243,9 +244,59 @@ func refuseWith(stderr io.Writer, where, what, remedy string) int {
 	return 2
 }
 
-func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
+// env is the process state one invocation reads. wd is the directory a
+// relative path resolves against; empty leaves the path as typed, so the OS
+// resolves it against the process directory and an open error still names the
+// path the caller wrote. Joining os.Getwd() would put that absolute path into
+// the error and change the line. getenv is the environment; main passes
+// os.Getenv. stamp is the build identity -ldflags writes into version; main
+// passes that var. A test passes its own and opens with t.Parallel()
+// (docs/STANDARD.md section 8: the environment and working directory are
+// injected through the code's config, never set with t.Setenv or a Chdir).
+type env struct {
+	wd     string
+	getenv func(string) string
+	stamp  string
+}
 
-func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
+// shellEnv is a run from a shell: the process environment and the stamped
+// identity. The working directory stays empty so a relative path reaches the
+// OS as typed (section 8).
+func shellEnv() env { return env{getenv: os.Getenv, stamp: version} }
+
+// path is a caller's path against this invocation's directory. An absolute
+// path, an empty one, stdin's "-" and an invocation naming no directory pass
+// through as typed; only the open uses the result, so a printed root stays
+// the spelling the caller wrote.
+func (e env) path(p string) string {
+	if e.wd == "" || p == "" || p == "-" || filepath.IsAbs(p) {
+		return p
+	}
+	return filepath.Join(e.wd, p)
+}
+
+// rootSupplied reports whether --root was given. A set NOVA_MEMORY_ROOT is
+// read and is not a root: the corpus is never inherited from the environment
+// (docs/STANDARD.md section 2: no silent fallback; section 8: getenv is the
+// invocation's).
+func (e env) rootSupplied(given bool) bool {
+	if given {
+		return true
+	}
+	// A set NOVA_MEMORY_ROOT is still not a root (docs/STANDARD.md section 2).
+	if e.getenv != nil && e.getenv("NOVA_MEMORY_ROOT") != "" {
+		return false
+	}
+	return false
+}
+
+func main() { os.Exit(runWith(shellEnv(), os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
+
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	return runWith(shellEnv(), args, stdin, stdout, stderr)
+}
+
+func runWith(e env, args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
 	// `<verb> -h` and `help <verb>` print that verb's help, its effect included, on stdout
 	// at exit 0, before anything is read or written (the CLI style's rule (b)).
 	defer verbflag.RecoverWith(stdout, "nova-memory", usage, &code, func(string) string {
@@ -258,18 +309,18 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
 	case "help", "-h", "--help":
 		if args[0] == "help" && len(args) > 1 && args[1] != "help" && !verbflag.IsHelp(args[1]) {
 			// --help goes right after the verb: after a word or a -- it would be one.
-			return run(append([]string{args[1], "--help"}, args[2:]...), stdin, stdout, stderr)
+			return runWith(e, append([]string{args[1], "--help"}, args[2:]...), stdin, stdout, stderr)
 		}
 		fmt.Fprint(stdout, usage)
 		return 0
 	}
 	if !verbflag.BoolAsked(args[1:], "json") {
-		return dispatch(args[0], args[1:], stdin, stdout, stderr)
+		return dispatch(e, args[0], args[1:], stdin, stdout, stderr)
 	}
 	// Under --json a verb prints its one result on stdout and no line on stderr, so what
 	// reaches stderr is a refusal: it becomes one refused result on stdout too.
 	var problems bytes.Buffer
-	code = dispatch(args[0], args[1:], stdin, stdout, &problems)
+	code = dispatch(e, args[0], args[1:], stdin, stdout, &problems)
 	if problems.Len() == 0 {
 		return code
 	}
@@ -283,24 +334,24 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
 }
 
 // dispatch runs one verb.
-func dispatch(verb string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+func dispatch(e env, verb string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	switch verb {
 	case "quickstart":
-		return cmdQuickstart(args, stdout, stderr)
+		return cmdQuickstart(e, args, stdout, stderr)
 	case "stats":
-		return cmdStats(args, stdout, stderr)
+		return cmdStats(e, args, stdout, stderr)
 	case "search":
-		return cmdSearch(args, stdout, stderr)
+		return cmdSearch(e, args, stdout, stderr)
 	case "check":
-		return cmdCheck(args, stdin, stdout, stderr)
+		return cmdCheck(e, args, stdin, stdout, stderr)
 	case "verify":
-		return cmdVerify(args, stdout, stderr)
+		return cmdVerify(e, args, stdout, stderr)
 	case "eval":
-		return cmdEval(args, stdout, stderr)
+		return cmdEval(e, args, stdout, stderr)
 	case "boot":
-		return cmdBoot(args, stdout, stderr)
+		return cmdBoot(e, args, stdout, stderr)
 	case "version", "--version":
-		return cmdVersion(args, stdout, stderr)
+		return cmdVersion(e, args, stdout, stderr)
 	}
 	near := ""
 	if n := verbflag.Nearest(verb, verbs); n != "" {
@@ -337,7 +388,7 @@ func (m *multiFlag) Set(s string) error { *m = append(*m, s); return nil }
 // refused naming the verb's flags and the nearest one (verbflag.Explain, the wording
 // internal/tool gives every tool), with the verb's help as the remedy. -h after a verb is
 // not refused: verbflag.Parse raises that verb's help, which run prints on stdout at exit 0.
-func parse(fs *flag.FlagSet, args []string, stderr io.Writer, required ...string) (given map[string]bool, pos []string, ok bool) {
+func parse(e env, fs *flag.FlagSet, args []string, stderr io.Writer, required ...string) (given map[string]bool, pos []string, ok bool) {
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
 	for {
@@ -356,7 +407,11 @@ func parse(fs *flag.FlagSet, args []string, stderr io.Writer, required ...string
 	fs.Visit(func(f *flag.Flag) { given[f.Name] = true })
 	ok = true
 	for _, name := range slices.Sorted(slices.Values(required)) { // deterministic order, not caller order
-		if !given[name] {
+		supplied := given[name]
+		if name == "root" {
+			supplied = e.rootSupplied(given[name])
+		}
+		if !supplied {
 			refuse(stderr, " "+fs.Name(), fmt.Sprintf("--%s is required; refusing to guess", name))
 			fmt.Fprint(stderr, hintFor(name))
 			ok = false
@@ -396,16 +451,18 @@ func (r *rootFlags) excluded(p string) bool {
 // is exit 2: the check could not run. With several roots each is built on its
 // own filesystem and the corpuses merged, so one ranking spans them and each
 // chunk remembers which root it came from.
-func (r *rootFlags) build(name string, stderr io.Writer) (*memindex.Corpus, time.Duration, bool) {
+func (r *rootFlags) build(e env, name string, stderr io.Writer) (*memindex.Corpus, time.Duration, bool) {
 	t0 := time.Now()
 	parts := make([]*memindex.Corpus, 0, len(r.root))
 	for _, root := range r.root {
-		fi, err := os.Stat(root)
+		// Open the resolved path; the receipt still names the root as typed.
+		opened := e.path(root)
+		fi, err := os.Stat(opened)
 		if err != nil || !fi.IsDir() {
 			refuse(stderr, " "+name, fmt.Sprintf("--root %s is not a readable directory", oneline.Escape(root)))
 			return nil, 0, false
 		}
-		c, err := memindex.Build(os.DirFS(root), r.excluded)
+		c, err := memindex.Build(os.DirFS(opened), r.excluded)
 		if err != nil {
 			refuse(stderr, " "+name, fmt.Sprintf("building the index over %s: %s", oneline.Escape(root), oneline.Err(err)))
 			return nil, 0, false
@@ -524,11 +581,11 @@ func hitLine(token, prefix string, rank int, h memindex.FileHit) string {
 // ---------------------------------------------------------------------------
 // stats — m, measured
 
-func cmdStats(args []string, stdout, stderr io.Writer) int {
+func cmdStats(e env, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("stats", flag.ContinueOnError)
 	rf := addRootFlags(fs)
 	asJSON := fs.Bool("json", false, "print the result as one JSON object instead of lines")
-	given, pos, ok := parse(fs, args, stderr, "root")
+	given, pos, ok := parse(e, fs, args, stderr, "root")
 	if given == nil {
 		return 2
 	}
@@ -540,7 +597,7 @@ func cmdStats(args []string, stdout, stderr io.Writer) int {
 	if bad {
 		return 2
 	}
-	c, buildTime, ok := rf.build("stats", stderr)
+	c, buildTime, ok := rf.build(e, "stats", stderr)
 	if !ok {
 		return 2
 	}

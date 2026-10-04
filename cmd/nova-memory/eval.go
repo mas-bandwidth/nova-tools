@@ -17,7 +17,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
-func cmdEval(args []string, stdout, stderr io.Writer) int {
+func cmdEval(e env, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("eval", flag.ContinueOnError)
 	rf := addRootFlags(fs)
 	channels := fs.String("channels", "", "comma-separated retrieval channels (required)")
@@ -25,7 +25,7 @@ func cmdEval(args []string, stdout, stderr io.Writer) int {
 	floor := fs.Float64("floor", 0, "minimum recall@k in (0,1] (required)")
 	failMax := fs.Int("fail-max", bounded.Default, "MISS lines to print before one MORE line stands for the rest; 0 prints all")
 	asJSON := fs.Bool("json", false, "print the result as one JSON object instead of lines")
-	given, pos, ok := parse(fs, args, stderr, "root", "channels", "k", "floor")
+	given, pos, ok := parse(e, fs, args, stderr, "root", "channels", "k", "floor")
 	if given == nil {
 		return 2
 	}
@@ -54,12 +54,12 @@ func cmdEval(args []string, stdout, stderr io.Writer) int {
 	if bad {
 		return 2
 	}
-	rows, err := readGold(pos[0])
+	rows, err := readGold(e.path(pos[0]))
 	if err != nil {
 		return refuse(stderr, " eval", oneline.Err(err))
 	}
 
-	c, _, ok := rf.build("eval", stderr)
+	c, _, ok := rf.build(e, "eval", stderr)
 	if !ok {
 		return 2
 	}

@@ -127,9 +127,9 @@ func needsQuoting(s string, windows bool) bool {
 // caller reaches from a shell. Echoing and running from one argv is the point:
 // a printed command that was not what executed teaches an invocation that does
 // not work, to exactly the reader who cannot tell.
-func step(argv []string, stdin io.Reader, stdout, stderr io.Writer) int {
+func step(e env, argv []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "$ nova-memory %s\n", commandLine(argv))
-	return run(argv, stdin, stdout, stderr)
+	return runWith(e, argv, stdin, stdout, stderr)
 }
 
 // stepArgs is one step's argv, built in the order the parser reads it: the verb, its
@@ -146,9 +146,9 @@ func stepArgs(verb string, flags []string, positionals ...string) []string {
 
 // jsonStep runs one step whose argv carries --json among its flags and records it as an
 // item of o: the command line, its exit, and its own result object.
-func jsonStep(o *tool.Out, argv []string, stdin io.Reader, stderr io.Writer) int {
+func jsonStep(e env, o *tool.Out, argv []string, stdin io.Reader, stderr io.Writer) int {
 	var out bytes.Buffer
-	code := run(argv, stdin, &out, stderr)
+	code := runWith(e, argv, stdin, &out, stderr)
 	o.Item("step", "command", tool.Text("nova-memory "+commandLine(argv)), "exit", code, "result", json.RawMessage(bytes.TrimSpace(out.Bytes())))
 	return code
 }
@@ -188,14 +188,14 @@ func topTerms(c *memindex.Corpus, n int) []string {
 	return terms
 }
 
-func cmdQuickstart(args []string, stdout, stderr io.Writer) int {
+func cmdQuickstart(e env, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("quickstart", flag.ContinueOnError)
 	rf := addRootFlags(fs)
 	var words multiFlag
 	fs.Var(&words, "words", "word for the demonstration search, repeatable (default: the corpus's three most frequent non-function words)")
 	draft := fs.String("draft", "", "candidate file for the demonstration check (default: this corpus's own first paragraph)")
 	asJSON := fs.Bool("json", false, "print the three steps' results as one JSON object instead of lines")
-	given, pos, ok := parse(fs, args, stderr, "root")
+	given, pos, ok := parse(e, fs, args, stderr, "root")
 	if given == nil {
 		return 2
 	}
@@ -216,7 +216,7 @@ func cmdQuickstart(args []string, stdout, stderr io.Writer) int {
 	// the query words and the demonstration candidate. Each step below builds
 	// its own index, because each step is a command the reader can run alone
 	// and must behave identically when they do.
-	c, _, ok := rf.build("quickstart", stderr)
+	c, _, ok := rf.build(e, "quickstart", stderr)
 	if !ok {
 		return 2
 	}
@@ -260,9 +260,9 @@ func cmdQuickstart(args []string, stdout, stderr io.Writer) int {
 		Fact("words", tool.Text(strings.Join(words, " ")))
 	runStep := func(argv []string, stdin io.Reader) int {
 		if *asJSON {
-			return jsonStep(o, argv, stdin, stderr)
+			return jsonStep(e, o, argv, stdin, stderr)
 		}
-		return step(argv, stdin, stdout, stderr)
+		return step(e, argv, stdin, stdout, stderr)
 	}
 	if !*asJSON {
 		fmt.Fprintf(stdout, "QUICKSTART RUN root=%s steps=3 channels=bm25 k=%s/%s words-source=%s candidate=%s words=%s\n",

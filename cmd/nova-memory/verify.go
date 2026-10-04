@@ -15,7 +15,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
-func cmdVerify(args []string, stdout, stderr io.Writer) int {
+func cmdVerify(e env, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("verify", flag.ContinueOnError)
 	rf := addRootFlags(fs)
 	links := fs.String("links", "", "gate|info: whether unresolved wikilinks drive the exit code (required)")
@@ -25,7 +25,7 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 	fs.Var(&exempt, "exempt", "basename prefix exempt from --frontmatter, repeatable (nothing is exempt by default)")
 	failMax := fs.Int("fail-max", bounded.Default, "finding lines to print per kind before one MORE line stands for the rest; 0 prints all")
 	asJSON := fs.Bool("json", false, "print the result as one JSON object instead of lines")
-	given, pos, ok := parse(fs, args, stderr, "root", "links")
+	given, pos, ok := parse(e, fs, args, stderr, "root", "links")
 	if given == nil {
 		return 2
 	}
@@ -72,7 +72,7 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, " verify", "--exempt only applies to --frontmatter, which was not given")
 	}
 
-	c, _, ok := rf.build("verify", stderr)
+	c, _, ok := rf.build(e, "verify", stderr)
 	if !ok {
 		return 2
 	}
@@ -81,7 +81,7 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 	// that stays lexically inside the root and stats a file outside it, so that
 	// link is not a finding. An os.Root refuses the escape, and Coverage already
 	// reports a failed Stat as "which does not exist".
-	opened, err := os.OpenRoot(rf.root[0])
+	opened, err := os.OpenRoot(e.path(rf.root[0]))
 	if err != nil {
 		return refuse(stderr, " verify", fmt.Sprintf("--root %s is not a readable directory: %s", oneline.Escape(rf.root[0]), oneline.Err(err)))
 	}

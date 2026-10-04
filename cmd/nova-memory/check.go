@@ -13,13 +13,13 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-func cmdCheck(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+func cmdCheck(e env, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("check", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "render the retrieval result as JSON")
 	rf := addRootFlags(fs)
 	channels := fs.String("channels", "", "comma-separated retrieval channels (required)")
 	k := fs.Int("k", 0, "receipts per candidate, positive (required)")
-	given, pos, ok := parse(fs, args, stderr, "root", "channels", "k")
+	given, pos, ok := parse(e, fs, args, stderr, "root", "channels", "k")
 	if given == nil {
 		return 2
 	}
@@ -44,7 +44,7 @@ func cmdCheck(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	src := stdin
 	name := "-"
 	if pos[0] != "-" {
-		f, err := os.Open(pos[0])
+		f, err := os.Open(e.path(pos[0]))
 		if err != nil {
 			return refuse(stderr, " check", oneline.Err(err))
 		}
@@ -72,7 +72,7 @@ func cmdCheck(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return refuse(stderr, " check", fmt.Sprintf("%s holds no candidate paragraph of at least %d terms; nothing to check", oneline.Escape(name), memindex.MinTerms))
 	}
 
-	c, _, ok := rf.build("check", stderr)
+	c, _, ok := rf.build(e, "check", stderr)
 	if !ok {
 		return 2
 	}

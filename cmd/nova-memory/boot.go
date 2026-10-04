@@ -15,12 +15,12 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-func cmdBoot(args []string, stdout, stderr io.Writer) int {
+func cmdBoot(e env, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("boot", flag.ContinueOnError)
 	root := fs.String("root", "", "memory root directory (required)")
 	pin := fs.String("pin", "", "pin file naming the memories to load (required)")
 	asJSON := fs.Bool("json", false, "print the result as one JSON object instead of lines")
-	given, pos, ok := parse(fs, args, stderr, "root", "pin")
+	given, pos, ok := parse(e, fs, args, stderr, "root", "pin")
 	if given == nil {
 		return 2
 	}
@@ -36,7 +36,7 @@ func cmdBoot(args []string, stdout, stderr io.Writer) int {
 	if bad {
 		return 2
 	}
-	n, bytes, ok := loadPin(*root, *pin, stderr)
+	n, bytes, ok := loadPin(e.path(*root), e.path(*pin), stderr)
 	if !ok {
 		return 2
 	}

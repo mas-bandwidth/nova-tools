@@ -118,8 +118,15 @@ func TestRequiredFlagErrorOrderDeterministic(t *testing.T) {
 // did not mean, and answering "you already know this" about someone else's
 // memory is the worst possible way to be wrong.
 func TestRootIsNeverTakenFromTheEnvironment(t *testing.T) {
-	t.Setenv("NOVA_MEMORY_ROOT", corpus)
-	exit, stdout, stderr := runCLI(t, "", "stats")
+	t.Parallel()
+	var out, errb bytes.Buffer
+	exit := runWith(env{getenv: func(k string) string {
+		if k == "NOVA_MEMORY_ROOT" {
+			return corpus
+		}
+		return ""
+	}}, []string{"stats"}, strings.NewReader(""), &out, &errb)
+	stdout, stderr := out.String(), errb.String()
 	require.Equalf(t, 2, exit, "exit = %d, want 2 — an environment variable must not supply the root; stdout: %s", exit, stdout)
 	assert.Containsf(t, stderr, "--root is required", "stderr = %q, want the refusal to name --root", stderr)
 }

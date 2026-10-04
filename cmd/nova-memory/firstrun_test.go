@@ -684,10 +684,11 @@ func TestQuickstartRunsWithDashLeadingWords(t *testing.T) {
 // the scores, the snippets, the ids -- reproduces and is compared as written.
 // The second block declares no norm at all.
 func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
-	// Resolve the document and the checkout root from the package directory,
-	// before the sitting moves this test somewhere else: the document is a
-	// fixed file, while the commands run where `./corpus` and `draft.md`
-	// resolve as written.
+	t.Parallel()
+	// The document is a fixed file under the package directory. The commands
+	// run in a sitting handed to the tool as its working directory, so
+	// `./corpus` and `draft.md` resolve as written without moving the process
+	// (docs/STANDARD.md section 8).
 	blocks := readmeFirstRun(t)
 	root := repoRoot(t)
 
@@ -736,8 +737,7 @@ func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
 	// the copy is also what makes the documented paths (`--root ./corpus`,
 	// `draft.md`) resolve as written, so no path norm is declared.
 	sit := firstRunSitting(t)
-	t.Chdir(sit)
-	run := runDocumented(t)
+	run := runDocumented(t, sit)
 	norms := []onboarding.Norm{buildTimeNorm(t)}
 
 	var problems []onboarding.Problem
@@ -804,12 +804,17 @@ func firstRunSitting(t *testing.T) string {
 	return sit
 }
 
-func runDocumented(t *testing.T) onboarding.Runner {
+func runDocumented(t *testing.T, sit string) onboarding.Runner {
 	t.Helper()
+	e := env{wd: sit}
 	return func(s onboarding.Step) (onboarding.Result, error) {
 		stdin := io.Reader(strings.NewReader(""))
 		if s.Stdin != "" {
-			f, err := os.Open(s.Stdin)
+			name := s.Stdin
+			if !filepath.IsAbs(name) {
+				name = filepath.Join(sit, name)
+			}
+			f, err := os.Open(name)
 			if err != nil {
 				return onboarding.Result{}, err
 			}
@@ -818,7 +823,7 @@ func runDocumented(t *testing.T) onboarding.Runner {
 			stdin = f
 		}
 		var out, errb bytes.Buffer
-		code := run(s.Args, stdin, &out, &errb)
+		code := runWith(e, s.Args, stdin, &out, &errb)
 		return onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}, nil
 	}
 }
