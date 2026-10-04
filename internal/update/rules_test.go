@@ -129,6 +129,8 @@ func TestRule16OutputIsBoundedAtTheLargestPlausibleState(t *testing.T) {
 // Rule 18: a refusal a person cannot act on is not a refusal. Every one of them
 // names a remedy, and the shape is the grammar's: REFUSED: <reason>; run: <command>.
 func TestRule18EveryRefusalNamesARemedy(t *testing.T) {
+	t.Parallel()
+
 	good := row("x", "tool", printer(t, "1.0.0"), "npm:unused", "none")
 	p := manifest(t, good)
 	bad := manifest(t, strings.Replace(good, "tool", "weights", 1))
