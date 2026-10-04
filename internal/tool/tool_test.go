@@ -1045,3 +1045,96 @@ func TestNoGreenOverNothing(t *testing.T) {
 		})
 	}
 }
+
+// topicsTool is a tool whose reference text lives in its help topics instead
+// of its banner (skeleton contract 2.7): the banner stays bounded and a
+// reader takes the reference text one topic at a time.
+func topicsTool() *Tool {
+	return &Tool{
+		Name:      "nova-demo",
+		What:      "a tool that exists to be tested",
+		How:       "It keeps nothing.",
+		ExitTable: "0 done, 1 said no, 2 could not run.",
+		Verbs: []Verb{
+			{Name: "put", Usage: "put --key <k>", Effect: LocalWrite, Example: "put --key k",
+				Flags: func(f *Flags) { f.Required("key", "a name") },
+				Run:   func(c *Call) *Out { return Done().Fact("key", c.Str("key")) }},
+		},
+		Topics: []Topic{
+			{Name: "keys", Text: "A key is one line.\nIt holds no spaces."},
+			{Name: "exit", Text: "0 done, 1 said no."},
+		},
+	}
+}
+
+// TestAHelpTopicPrintsItsText pins Tool.Topics (skeleton contract 2.7):
+// `help <topic>` prints the topic's text on stdout at exit 0, the banner
+// lists the topic names on one line that names the way to read one, and a
+// name that is no verb and no topic is refused with the verbs and the topics
+// there are (STANDARD §2: an unknown name is answered with the names there
+// are; §3, help is never a refusal).
+func TestAHelpTopicPrintsItsText(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		tool   func() *Tool
+		args   []string
+		code   int
+		stdout string // the whole stream, exact
+		stderr string // the whole stream, exact
+		absent string // in neither stream
+	}{
+		{name: "a topic prints its text at exit 0", tool: topicsTool, args: []string{"help", "keys"}, code: 0,
+			stdout: "A key is one line.\nIt holds no spaces.\n"},
+		{name: "another topic prints its own text", tool: topicsTool, args: []string{"help", "exit"}, code: 0,
+			stdout: "0 done, 1 said no.\n"},
+		{name: "the banner lists the topic names on one line", tool: topicsTool, args: []string{"help"}, code: 0,
+			stdout: "  nova-demo help [<verb>]\ntopics: keys, exit; run: nova-demo help <topic>\n\nEvery verb takes --json"},
+		{name: "a tool with no topics prints no topics line", tool: demo, args: []string{"help"}, code: 0,
+			absent: "topics:"},
+		{name: "an unknown name is refused with the verbs and the topics", tool: topicsTool, args: []string{"help", "keey"}, code: 2,
+			stderr: `DEMO REFUSED: unknown verb "keey"; the verbs are put, version, and the help topics are keys, exit; run: nova-demo help` + "\n"},
+		{name: "a verb's help is still the verb's help", tool: topicsTool, args: []string{"help", "put"}, code: 0,
+			stdout: "usage: nova-demo put [flags]"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := testkit.Main(tc.tool().Run).Run(tc.args...)
+			assert.Equal(t, tc.code, r.Code, "stdout %q stderr %q", r.Stdout, r.Stderr)
+			if tc.stdout != "" {
+				assert.Contains(t, r.Stdout, tc.stdout)
+				assert.Empty(t, r.Stderr)
+			}
+			if tc.stderr != "" {
+				assert.Equal(t, tc.stderr, r.Stderr)
+				assert.Empty(t, r.Stdout)
+			}
+			if tc.absent != "" {
+				assert.NotContains(t, r.Stdout+r.Stderr, tc.absent)
+			}
+		})
+	}
+}
+
+// TestATopicIsNoneOfTheVerbs pins Problems' refusal of a topic named as one
+// of the tool's verbs: `help <name>` is one door, so a name is a verb's or a
+// topic's and never both (skeleton contract 2.7).
+func TestATopicIsNoneOfTheVerbs(t *testing.T) {
+	t.Parallel()
+	assert.Empty(t, topicsTool().Problems())
+	for _, tc := range []struct {
+		name  string
+		topic string
+		want  string
+	}{
+		{"a verb's name", "put", `nova-demo: the help topic "put" is one of its verbs; a topic is a name of its own`},
+		{"the version verb every tool has", "version", `nova-demo: the help topic "version" is one of its verbs; a topic is a name of its own`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := topicsTool()
+			d.Topics = append(d.Topics, Topic{Name: tc.topic, Text: "x"})
+			assert.Equal(t, []string{tc.want}, d.Problems())
+		})
+	}
+}

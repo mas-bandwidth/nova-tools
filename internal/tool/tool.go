@@ -80,6 +80,21 @@ type Tool struct {
 	// read the usage lines, the shape of a value several of them name (the
 	// manifest of --file), so no usage line carries it. Empty prints none.
 	UsageNote string
+	// Topics are the tool's help topics: `help <topic>` prints the topic's
+	// text at exit 0, and the banner lists the topic names on one line
+	// (skeleton contract 2.7). A tool's reference text lives here, never in
+	// the banner, which a reader takes in at a glance (STANDARD §3 point 6).
+	// A topic's name is none of the tool's verbs, since `help <name>` is one
+	// door (Problems).
+	Topics []Topic
+}
+
+// Topic is one help topic: `<tool> help <name>` prints Text on stdout at exit
+// 0. It is where a tool's reference text lives, so the banner stays short
+// (skeleton contract 2.7, STANDARD §3 point 6).
+type Topic struct {
+	Name string
+	Text string
 }
 
 // MaxWords bounds a tool's own status words: a reader learns them all at once.
@@ -147,6 +162,10 @@ func (t *Tool) Run(args []string, stdin io.Reader, stdout, stderr io.Writer) (co
 	switch args[0] {
 	case "help", "-h", "--help":
 		if args[0] == "help" && len(args) > 1 && args[1] != "help" && !verbflag.IsHelp(args[1]) {
+			if text, ok := t.topic(args[1]); ok {
+				fmt.Fprint(stdout, strings.TrimSuffix(text, "\n")+"\n")
+				return 0
+			}
 			if t.HelpRefused {
 				// Naming help is still help: only the -h flag is refused.
 				var match *Verb
@@ -194,7 +213,32 @@ func (t *Tool) Run(args []string, stdin io.Reader, stdout, stderr io.Writer) (co
 		why = fmt.Sprintf("%q is no verb and no file;%s the verbs are %s, and a file is given by its path (./%s)",
 			args[0], didYouMean(args[0], t.names()), verbflag.List(t.names()), args[0])
 	}
+	if len(t.Topics) > 0 {
+		// A name that is no verb may be a topic: the refusal names both sets,
+		// so one turn answers it (STANDARD §2, the names there are).
+		why += ", and the help topics are " + verbflag.List(t.topicNames())
+	}
 	return t.emit(nil, Refuse(why), asJSON, stdout, stderr)
+}
+
+// topic is the text of the topic named, and whether the tool has one:
+// `help <topic>` prints it at exit 0 (skeleton contract 2.7).
+func (t *Tool) topic(name string) (string, bool) {
+	for _, tp := range t.Topics {
+		if tp.Name == name {
+			return tp.Text, true
+		}
+	}
+	return "", false
+}
+
+// topicNames are the tool's topic names, in the order the tool declares them.
+func (t *Tool) topicNames() []string {
+	var names []string
+	for _, tp := range t.Topics {
+		names = append(names, tp.Name)
+	}
+	return names
 }
 
 // exists reports whether a word names a file or directory that is there.
@@ -366,6 +410,11 @@ func (t *Tool) Problems() []string {
 			p = append(p, fmt.Sprintf("%s: the status word %q is not an upper-case word of its own (OK, FAILED, REFUSED, MORE and NOTE are every tool's)", t.Name, w))
 		}
 	}
+	for _, tp := range t.Topics {
+		if slices.Contains(t.names(), tp.Name) {
+			p = append(p, fmt.Sprintf("%s: the help topic %q is one of its verbs; a topic is a name of its own", t.Name, tp.Name))
+		}
+	}
 	for _, v := range t.verbs() {
 		e := string(v.Effect)
 		if !strings.HasPrefix(e, "inspection") && !strings.HasPrefix(e, "local write") && !strings.HasPrefix(e, "delivery") {
@@ -431,7 +480,13 @@ func (t *Tool) Banner() string {
 			fmt.Fprintf(&b, "  %s %s\n", t.Name, l)
 		}
 	}
-	fmt.Fprintf(&b, "  %s help [<verb>]\n\n", t.Name)
+	fmt.Fprintf(&b, "  %s help [<verb>]\n", t.Name)
+	if len(t.Topics) > 0 {
+		// One line names the topics and the way to read one: the reference
+		// text itself stays out of the banner (skeleton contract 2.7).
+		fmt.Fprintf(&b, "topics: %s; run: %s help <topic>\n", strings.Join(t.topicNames(), ", "), t.Name)
+	}
+	b.WriteString("\n")
 	if t.UsageNote != "" {
 		b.WriteString(t.UsageNote + "\n\n")
 	}
