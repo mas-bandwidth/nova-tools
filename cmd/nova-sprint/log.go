@@ -75,7 +75,11 @@ func (a *app) cmdLog(args []string, stdout, stderr io.Writer) int {
 			}
 			l = short
 		}
-		fmt.Fprintln(stdout, a.logLine(l, *card == ""))
+		set := ""
+		if *card != "" {
+			l, set = ownLine(l, *card)
+		}
+		fmt.Fprintln(stdout, a.logLine(l, *card == "")+set)
 		// a brief is a child's whole brief: the line says it was given and where
 		// it is shown, never the brief itself (--json carries it whole)
 		brief := l.Text["brief"]
@@ -139,4 +143,23 @@ func byMember(l sprint.Line, m string) bool {
 	fromRow, _, _ := strings.Cut(l.From, ":")
 	toRow, _, _ := strings.Cut(l.To, ":")
 	return fromRow == m || toRow == m
+}
+
+// ownLine is a set move's line as one card's: with --card, a line of a set the
+// card (or its work, read or merge card) is in is printed as that card's own
+// line, with the set's size after it, never as the first card's words and the
+// rest listed (the comfort list of 2026-10-03, item 9: a card's log holds its
+// lines, not the sets' other cards). Any other line is as it is.
+func ownLine(l sprint.Line, card string) (sprint.Line, string) {
+	if len(l.Cards) < 2 {
+		return l, ""
+	}
+	for _, c := range l.Cards {
+		if c == card || strings.HasPrefix(c, card+".") {
+			n := len(l.Cards)
+			l.Card, l.Cards = c, nil
+			return l, fmt.Sprintf(" (in a set of %d)", n)
+		}
+	}
+	return l, ""
 }

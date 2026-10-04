@@ -20,9 +20,10 @@ func readerAwayKey(reader string) string { return "reader-away:" + reader }
 
 // readerHold is the coordinator's hold of a reader away: empty while released.
 type readerHold struct {
-	Away bool      `json:"away,omitempty"`
-	At   time.Time `json:"at,omitempty"`
-	By   string    `json:"by,omitempty"`
+	Away    bool      `json:"away,omitempty"`
+	Retired bool      `json:"retired,omitempty"` // reader retire: held away for good, the row off the view
+	At      time.Time `json:"at,omitempty"`
+	By      string    `json:"by,omitempty"`
 }
 
 // ReaderRows is the readers table's rows, in table order.
@@ -51,6 +52,11 @@ func (st *Store) ReaderRows(ctx context.Context) ([]string, error) {
 func (st *Store) ReaderBeat(ctx context.Context, reader string) (bool, error) {
 	rows, err := st.ReaderRows(ctx)
 	if err != nil || !contains(rows, reader) {
+		return false, err
+	}
+	// a retired reader is no reader: its beat writes none, and its loop is told so
+	states, err := st.ReaderStates(ctx, []string{reader}, st.now())
+	if err != nil || states[reader] == sprint.ReaderRetired {
 		return false, err
 	}
 	return true, st.beatReaders(ctx, reader)
@@ -86,6 +92,18 @@ func (st *Store) beatReaders(ctx context.Context, readers ...string) error {
 // SetReaderAway holds reader away (reader away) or releases the hold (reader
 // up), by the coordinator who. The reader is a row of the readers table.
 func (st *Store) SetReaderAway(ctx context.Context, reader string, away bool, who string) error {
+	return st.setReaderHold(ctx, reader, readerHold{Away: away}, who)
+}
+
+// SetReaderRetired retires reader (reader retire): held away for good, its beat
+// writing none, its row and read cards kept; reader up brings it back. The reader is a row of the readers table.
+func (st *Store) SetReaderRetired(ctx context.Context, reader, who string) error {
+	return st.setReaderHold(ctx, reader, readerHold{Away: true, Retired: true}, who)
+}
+
+// setReaderHold writes the coordinator's hold of a reader, stamped and signed
+// when it holds anything, empty when it releases.
+func (st *Store) setReaderHold(ctx context.Context, reader string, hold readerHold, who string) error {
 	kv, err := st.rootKV()
 	if err != nil {
 		return err
@@ -97,9 +115,8 @@ func (st *Store) SetReaderAway(ctx context.Context, reader string, away bool, wh
 	if !contains(rows, reader) {
 		return fmt.Errorf("no reader %s on the readers table; run: nova-sprint reader add %s", reader, reader)
 	}
-	hold := readerHold{}
-	if away {
-		hold = readerHold{Away: true, At: st.now().UTC().Truncate(time.Second), By: who}
+	if hold.Away {
+		hold.At, hold.By = st.now().UTC().Truncate(time.Second), who
 	}
 	out, err := json.Marshal(hold)
 	if err != nil {
@@ -152,6 +169,9 @@ func (st *Store) ReaderStates(ctx context.Context, readers []string, now time.Ti
 			_ = json.Unmarshal([]byte(vals[2*i+1]), &hold)
 		}
 		out[r] = sprint.ReaderState(hold.Away, b, now)
+		if hold.Retired {
+			out[r] = sprint.ReaderRetired
+		}
 	}
 	return out, nil
 }

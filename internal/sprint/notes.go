@@ -141,7 +141,11 @@ func Preview(items []string, sep string) string {
 
 // Note is one notification.
 type Note struct {
-	ID        string    `json:"id"`
+	ID string `json:"id"`
+	// Alias is a judgment's or an acknowledgement's alias, j<n>, its place among
+	// the epoch's in the order written: the store's commit numbers it (inbox.go,
+	// Alias); "" on a happened or decided note.
+	Alias     string    `json:"alias,omitempty"`
 	Kind      string    `json:"kind"`
 	Type      string    `json:"type"`
 	Stream    string    `json:"stream,omitempty"`

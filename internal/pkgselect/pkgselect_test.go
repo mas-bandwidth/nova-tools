@@ -785,3 +785,25 @@ func TestFunctionalDealsTheHeavyPackagesOnePerLeg(t *testing.T) {
 	assert.Len(t, legOf, len(FunctionalHeavy), "each heavy package has a leg of its own: %v", home)
 	assert.Len(t, home, len(pkgs), "every package is dealt once")
 }
+
+// A pull request deals cmd/nova-sprint and cmd/nova-swarm to the Linux legs alone, even
+// when they differ under macOS: their unit tests do not fit a macOS leg's two-minute cap.
+// A push still deals them to both.
+func TestAPullRequestKeepsNovaSprintAndNovaSwarmOffTheMacLegs(t *testing.T) {
+	t.Parallel()
+	g := Groups{Linux: "lin", Mac: "mac"}
+	pkgs := []string{"./cmd/nova-sprint", "./cmd/nova-swarm", "./internal/other"}
+	sens := DarwinSensitive{All: true}
+	for _, leg := range Fanout("pull_request", pkgs, sens, g, true) {
+		if leg.OS == "macOS" {
+			assert.Equal(t, "./internal/other", leg.Packages, "only the package that fits runs on macOS")
+		}
+	}
+	pushed := 0
+	for _, leg := range Fanout("push", pkgs, sens, g, true) {
+		if leg.OS == "macOS" {
+			pushed += len(strings.Fields(leg.Packages))
+		}
+	}
+	assert.Equal(t, 3, pushed, "a push deals all three to macOS")
+}
