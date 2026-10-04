@@ -42,6 +42,12 @@
 // read. QueueCells remains available to callers already holding a shape,
 // so they can include cell reads in their own larger pipeline. Writes
 // validate bindings and permissions before changing any key.
+//
+// The test files here are held vet-clean by the sprint gate
+// TestNtableTestFilesVetClean (internal/sprint): go vet ./internal/ntable/
+// plain and with -tags functional (docs/SPEC-CI.md, `functional`, the
+// Makefile's vet and vet-functional recipes) must exit 0 with no finding
+// printed.
 package ntable
 
 import (
