@@ -1015,6 +1015,77 @@ func TestHelpRefusedAnswersDashH(t *testing.T) {
 	}
 }
 
+// hiddenTool is a tool with one shown verb and one hidden one (Verb.Hidden):
+// a probe step verb a user never types.
+func hiddenTool() *Tool {
+	return &Tool{
+		Name: "nova-hide", What: "a tool with a hidden verb", ExitTable: "0 done, 1 said no, 2 could not run.",
+		Verbs: []Verb{
+			{Name: "scan", Usage: "scan", Example: "scan", Effect: Inspection,
+				Run: func(*Call) *Out { return Done() }},
+			{Name: "probe-step", Usage: "probe-step <nonce>", Example: "probe-step <nonce>", Effect: Inspection, Hidden: true,
+				Run: func(*Call) *Out { return Done().Fact("probed", true) }},
+		},
+	}
+}
+
+// TestAHiddenVerbRunsAndNoListShowsIt pins Verb.Hidden: the hidden verb runs
+// and answers `-h` and `help <it>` at exit 0, while the banner, the usage
+// block and the verb list of every refusal leave it out (STANDARD §2: an
+// unknown name is answered with the names there are for the reader; §3: help
+// is never a refusal).
+func TestAHiddenVerbRunsAndNoListShowsIt(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name        string
+		args        []string
+		code        int
+		stdout      []string // substrings, in order
+		stderr      []string
+		absent      []string // in neither stream
+		emptyStderr bool
+	}{
+		{name: "the hidden verb runs", args: []string{"probe-step"}, code: 0, emptyStderr: true,
+			stdout: []string{"PROBE-STEP OK probed=true\n"}},
+		{name: "the banner's usage and example blocks do not show it", args: []string{"help"}, code: 0, emptyStderr: true,
+			stdout: []string{"usage:\n  nova-hide scan\n", "\nexample:\n  nova-hide scan\n"}, absent: []string{"probe-step"}},
+		{name: "a bare command's verb list does not name it", args: nil, code: 2,
+			stderr: []string{"HIDE REFUSED: no verb given; the verbs are scan, version; run: nova-hide help\n"},
+			absent: []string{"probe-step"}},
+		{name: "an unknown verb is not answered with it", args: []string{"probe"}, code: 2,
+			stderr: []string{`HIDE REFUSED: unknown verb "probe"; the verbs are scan, version; run: nova-hide help` + "\n"},
+			absent: []string{"probe-step", "did you mean"}},
+		{name: "help of it still prints its help", args: []string{"help", "probe-step"}, code: 0, emptyStderr: true,
+			stdout: []string{"usage: nova-hide probe-step [flags]", "exit codes: 0 done, 1 said no, 2 could not run.", "effect: inspection"}},
+		{name: "its -h still answers", args: []string{"probe-step", "-h"}, code: 0, emptyStderr: true,
+			stdout: []string{"usage: nova-hide probe-step [flags]"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := testkit.Main(hiddenTool().Run).Run(tc.args...)
+			assert.Equal(t, tc.code, r.Code, "stdout %q stderr %q", r.Stdout, r.Stderr)
+			check := func(name, got string, want []string) {
+				rest := got
+				for _, s := range want {
+					i := strings.Index(rest, s)
+					if !assert.GreaterOrEqual(t, i, 0, "%s lacks %q:\n%s", name, s, got) {
+						break
+					}
+					rest = rest[i+len(s):]
+				}
+			}
+			check("stdout", r.Stdout, tc.stdout)
+			check("stderr", r.Stderr, tc.stderr)
+			if tc.emptyStderr {
+				assert.Empty(t, r.Stderr)
+			}
+			for _, s := range tc.absent {
+				assert.NotContains(t, r.Stdout+r.Stderr, s)
+			}
+		})
+	}
+}
+
 // TestAStageLineIsWhereEveryReaderMeetsTheTool: a tool's Stage is the
 // banner's line 2, the second line of every verb's -h, and an indented NOTE
 // line under a bare command's one-line refusal (STANDARD section 3 point 1); a tool without one prints none.
