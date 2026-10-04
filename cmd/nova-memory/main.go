@@ -146,7 +146,7 @@ file or the query words; -- ends the flags, and a query word that starts
 with - goes after it. Every verb is an inspection: it reads the corpus and
 writes nothing (` + "`<verb> -h`" + ` says so, with the verb's flags).
 
-exit codes, by verb (each ran here): search, stats, boot: 0 ran; a search
+exit codes: by verb (each ran here), search, stats, boot: 0 ran; a search
 that finds nothing is still 0, and says so on its MISS line. check: 0 even
 when the draft repeats a note (the example's check does: it hands you
 receipts, and the verdict stays yours). verify: 0 clean, 1 a finding (a
