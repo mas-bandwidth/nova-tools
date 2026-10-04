@@ -88,7 +88,7 @@ func TestBusCheckFullIsCapped(t *testing.T) {
 		// one finding of another class, after every header finding in the walk's order
 		writeFile(t, checkout, "from-zed/2026-09-08T0000Z-x-cccccccccccc.md", "From: Ada\nTo: Bo\nSubject: s\n\nbody\n")
 		r := invoke(t, "", "check", "--bus", checkout, "--full", "--max", "3").mustCode(t, 1)
-		r.mustContain(t, "stderr", "BUS FAIL from-zed: no participant in participants.json owns this lane")
+		r.mustContain(t, "stderr", "BUS FAILED from-zed: no participant in participants.json owns this lane")
 		r.mustContain(t, "stderr", "BUS MORE kind=header shown=3 total=11 ")
 		require.Equal(t, 1, strings.Count(r.stderr, "BUS MORE "), "a class under the cap printed a MORE line:\n%s", r.stderr)
 	})
