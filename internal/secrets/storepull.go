@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
@@ -117,7 +118,7 @@ func StorePullSSHCommand(o StorePullOptions) (string, error) {
 	// The command is handed to git, which runs it against the store's host: this is a seam.
 	testguard.RefuseHosts(ssh, "-i", key)
 	return strings.Join([]string{
-		shellQuote(ssh), "-i", shellQuote(key),
+		oneline.ShellWord(ssh), "-i", oneline.ShellWord(key),
 		"-o", "IdentitiesOnly=yes", "-o", "IdentityAgent=none",
 	}, " "), nil
 }
@@ -414,9 +415,4 @@ func realPath(p string) string {
 		return filepath.Clean(p)
 	}
 	return filepath.Join(dir, filepath.Base(p))
-}
-
-// shellQuote single-quotes s for the shell git runs GIT_SSH_COMMAND under.
-func shellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
