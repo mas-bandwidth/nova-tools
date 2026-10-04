@@ -1219,7 +1219,17 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 	if !ok {
 		return 2
 	}
-	fsys := memindex.Excluding(os.DirFS(rf.root[0]), rf.excluded)
+	// Build's walk does not descend a directory symlink. os.DirFS does, so a
+	// glob would read a file outside --root and Coverage or FrontmatterPresent
+	// would treat it as corpus. Root.FS refuses a symlink that leaves the root:
+	// the glob matches nothing and the existing empty-glob refusal fires
+	// (security#76 finding 4).
+	opened, err := os.OpenRoot(rf.root[0])
+	if err != nil {
+		return refuse(stderr, " verify", fmt.Sprintf("--root %s: %s", oneline.Escape(rf.root[0]), oneline.Err(err)))
+	}
+	defer opened.Close() // ignored: a read-only root holds nothing to flush
+	fsys := memindex.Excluding(opened.FS(), rf.excluded)
 
 	var gating, info []memindex.Finding
 	coverageFindings, frontmatterFindings := 0, 0
