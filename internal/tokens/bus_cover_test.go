@@ -120,7 +120,7 @@ func TestBusCoverLaneNames(t *testing.T) {
 			`{"name":"Zed","lane":"from-zed"},{"name":"NoLane","lane":"other-nobody"},` +
 			`{"name":"Empty","lane":"from-"}]}`
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "participants.json"), []byte(roster), 0o644))
-		names, err := laneNames(dir)
+		names, err := laneNames(os.DirFS(dir))
 		require.NoError(t, err)
 		assert.Equal(t, []string{"ada", "zed"}, names, "the slugs are sorted, and only from-<slug> lanes are named")
 	})
@@ -128,7 +128,7 @@ func TestBusCoverLaneNames(t *testing.T) {
 	t.Run("a directory with no roster is refused by name", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := laneNames(t.TempDir())
+		_, err := laneNames(os.DirFS(t.TempDir()))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "participants.json", "the refusal names the file it wanted")
 	})
@@ -138,7 +138,7 @@ func TestBusCoverLaneNames(t *testing.T) {
 
 		dir := t.TempDir()
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "participants.json"), []byte("{oops"), 0o644))
-		_, err := laneNames(dir)
+		_, err := laneNames(os.DirFS(dir))
 		require.Error(t, err)
 	})
 
@@ -148,7 +148,7 @@ func TestBusCoverLaneNames(t *testing.T) {
 		dir := t.TempDir()
 		roster := `{"participants":[{"name":"Ada","lane":"other-ada"}]}`
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "participants.json"), []byte(roster), 0o644))
-		_, err := laneNames(dir)
+		_, err := laneNames(os.DirFS(dir))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "names no lane", "the refusal says what the roster wants")
 	})
@@ -611,7 +611,7 @@ func TestBusCoverReadBus(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(zedDir, "zed-000000000002.md"), []byte(
 			"Subject: chore: bump the deps\n\nnothing here\n"), 0o644))
 
-		got := ReadBus(dir, busCoverRules(t), busCoverAt)
+		got := ReadBus(dir, os.DirFS(dir), busCoverRules(t), busCoverAt)
 		require.Len(t, got, 3)
 		ada, gone, zed := got[0], got[1], got[2]
 		assert.Equal(t, "bus:ada", ada.Label)
@@ -655,7 +655,7 @@ func TestBusCoverReadBus(t *testing.T) {
 		// A note file that cannot be opened is one unreadable, never a silent skip.
 		require.NoError(t, os.Symlink("nowhere", filepath.Join(dir, "from-link", "link-000000000001.md")))
 
-		got := ReadBus(dir, busCoverRules(t), busCoverAt)
+		got := ReadBus(dir, os.DirFS(dir), busCoverRules(t), busCoverAt)
 		require.Len(t, got, 2)
 		busy := got[0]
 		assert.Equal(t, 1, busy.Stat.Unreadable)
@@ -674,7 +674,7 @@ func TestBusCoverReadBus(t *testing.T) {
 		t.Parallel()
 
 		dir := t.TempDir()
-		got := ReadBus(dir, busCoverRules(t), busCoverAt)
+		got := ReadBus(dir, os.DirFS(dir), busCoverRules(t), busCoverAt)
 		require.Len(t, got, 1)
 		s := got[0]
 		assert.Equal(t, KindBus, s.Label)
@@ -693,7 +693,7 @@ func TestBusCoverReadBus(t *testing.T) {
 		dir := t.TempDir()
 		bad := `{"participants":[{"name":"Ada","lane":"other-ada"}]}`
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "participants.json"), []byte(bad), 0o644))
-		got := ReadBus(dir, busCoverRules(t), busCoverAt)
+		got := ReadBus(dir, os.DirFS(dir), busCoverRules(t), busCoverAt)
 		require.Len(t, got, 1)
 		require.Len(t, got[0].Unreadables, 1)
 		assert.Contains(t, got[0].Unreadables[0].Why, "names no lane")
