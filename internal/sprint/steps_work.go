@@ -1486,8 +1486,10 @@ type FleetReq struct {
 	// Why is said in the happened notification of a change of status.
 	Why string
 	// Width, above zero, is the member's width set by up or release (the
-	// machine's child cap, width.go); zero leaves the width as it is.
-	Width int `json:",omitempty"`
+	// machine's child cap, width.go); zero leaves the width as it is, unless
+	// Drain says the member drains: its width is set to DrainWidth (0).
+	Width int  `json:",omitempty"`
+	Drain bool `json:",omitempty"`
 	// Sync, with Op sync, is every machine the inventory says is a member
 	// and its width (fleet_sync.go); Member is empty.
 	Sync []SyncMember `json:",omitempty"`
@@ -1598,8 +1600,8 @@ func fleetStepPlan(s *Snapshot, r FleetReq, rr *round, moves roundMoves) Plan {
 				line = r.Member + " added, down until it beats"
 			}
 			fields := map[string]string{"kind": "member", "status": status, "since": stamp(s.Now)}
-			if r.Width > 0 {
-				fields[FieldWidth] = itoa(r.Width)
+			if w, ok := r.width(); ok {
+				fields[FieldWidth] = w
 			}
 			head = append(head, change(Fleet, createEntry(CtlID(r.Member), r.Member, Ctl, 0, fields)))
 		default:
@@ -1609,8 +1611,8 @@ func fleetStepPlan(s *Snapshot, r FleetReq, rr *round, moves roundMoves) Plan {
 				set["status"], set["since"] = Up, stamp(s.Now)
 				n = statusNote(s, r, NMemberUp, "up")
 			}
-			if r.Width > 0 && ctl.F(FieldWidth) != itoa(r.Width) {
-				set[FieldWidth] = itoa(r.Width)
+			if w, ok := r.width(); ok && ctl.F(FieldWidth) != w {
+				set[FieldWidth] = w
 			}
 			if r.Op == "release" && ctl.F("held") != "" {
 				unset = append(unset, "held", FieldHeldBy)
@@ -1622,8 +1624,11 @@ func fleetStepPlan(s *Snapshot, r FleetReq, rr *round, moves roundMoves) Plan {
 				head = append(head, change(Fleet, setEntry(ctl, set, unset...)))
 			}
 		}
-		if r.Width > 0 && (ctl == nil || ctl.F(FieldWidth) != itoa(r.Width)) {
-			line += " width=" + itoa(r.Width)
+		if w, ok := r.width(); ok && (ctl == nil || ctl.F(FieldWidth) != w) {
+			line += " width=" + w
+			if r.Drain {
+				line += " (drains: no new deals, its working cards finish)"
+			}
 		}
 		if comeUp {
 			level(s, &p, orderLike(s.Members(), append(liveFor(s, r), r.Member), r.Member), rr, moves, nil)
@@ -1966,4 +1971,16 @@ func takeTurns(cards []*Card, offset int) []*Card {
 		}
 	}
 	return out
+}
+
+// width is the width cell up or release writes: the width given, DrainWidth
+// for a member that drains, or none (ok false) to leave it as it is.
+func (r FleetReq) width() (string, bool) {
+	switch {
+	case r.Drain:
+		return DrainWidth, true
+	case r.Width > 0:
+		return itoa(r.Width), true
+	}
+	return "", false
 }
