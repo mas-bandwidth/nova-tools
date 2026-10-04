@@ -29,6 +29,8 @@ const (
 	Dashboard = "dashboard"
 	Bus       = "bus"
 	Inbox     = "inbox"
+	Queue     = "queue"
+	Versions  = "versions"
 )
 
 // Token is the first word of every line.
@@ -121,6 +123,48 @@ type InboxM struct {
 	Oldest time.Duration `json:"oldest_ns"`
 }
 
+// QueueM is the merge queue of the branch the sprint lands into, as GitHub
+// answers it: the repository and the branch (NOVA_SPRINT_MERGE_QUEUE; a Repo
+// of "" is not configured, and neither the queue nor the versions line is
+// printed), the error of the read, the pull requests in the queue, the open
+// pull requests into the branch whose checks are green and that are not in
+// it, and each pull request thrown out of the queue since the previous check.
+type QueueM struct {
+	Repo   string    `json:"repo,omitempty"`
+	Branch string    `json:"branch,omitempty"`
+	Err    string    `json:"err,omitempty"`
+	Queued []int     `json:"queued"`
+	Green  []int     `json:"green"`
+	Thrown []ThrownM `json:"thrown"`
+}
+
+// ThrownM is one pull request removed from the queue since the previous
+// check: how long ago, and the reason GitHub gives ("" when it gives none).
+type ThrownM struct {
+	PR     int           `json:"pr"`
+	Age    time.Duration `json:"age_ns"`
+	Reason string        `json:"reason,omitempty"`
+}
+
+// VersionsM is nova-tools as installed on each machine against the branch
+// tip: the tip's version identity as a build of it states it
+// (internal/buildinfo: <utc commit time>-<12 hex>) and its full sha, the
+// error of reading the tip, and each fleet machine's answer.
+type VersionsM struct {
+	Dev      string            `json:"dev,omitempty"`
+	DevSHA   string            `json:"dev_sha,omitempty"`
+	Err      string            `json:"err,omitempty"`
+	Machines []MachineVersionM `json:"machines"`
+}
+
+// MachineVersionM is one machine's installed version: field two of the line
+// its nova-update version prints, or the error of asking.
+type MachineVersionM struct {
+	Name    string `json:"name"`
+	Version string `json:"version,omitempty"`
+	Err     string `json:"err,omitempty"`
+}
+
 // Measures is everything the probes measured, in one struct so a test can
 // hand Judge any state of the machinery.
 type Measures struct {
@@ -132,6 +176,8 @@ type Measures struct {
 	Dashboard DashM     `json:"dashboard"`
 	Bus       BusM      `json:"bus"`
 	Inbox     InboxM    `json:"inbox"`
+	Queue     QueueM    `json:"queue"`
+	Versions  VersionsM `json:"versions"`
 	// Host is the short host name the check ran on: the server's unit is
 	// named by it.
 	Host string `json:"host"`
@@ -197,9 +243,11 @@ func Bootstrap(friend string) string {
 func MemberLoop(member string) string { return "member-" + member }
 
 // Judge turns the measures into the report: one line per thing in the order
-// server, store, loop, fleet, friends, readers, dashboard, bus, inbox, and a
-// DOWN line per friend down before the friends line. A thing whose probe
-// failed is DOWN with the error.
+// server, store, loop, fleet, friends, readers, dashboard, bus, inbox, then,
+// where a repository is named, queue and versions; a DOWN line per friend down
+// before the friends line, per pull request thrown out of the merge queue
+// before the queue line, and per machine stale or unread before the versions
+// line. A thing whose probe failed is DOWN with the error.
 func Judge(m Measures, now time.Time) Report {
 	r := Report{At: now, Measures: m}
 	add := func(l Line) {
@@ -377,7 +425,121 @@ func Judge(m Measures, now time.Time) Report {
 		}
 		add(Line{Thing: Inbox, Up: true, Facts: f})
 	}
+
+	// 10. the merge queue, 11. the installed versions: only where a
+	// repository is named (QueueM.Repo); the tip the machines are judged
+	// against is that repository's branch tip.
+	if m.Queue.Repo != "" {
+		judgeQueue(m.Queue, m.Server.Self, add)
+		judgeVersions(m.Versions, m.Server.Self, add)
+	}
 	return r
+}
+
+// judgeQueue is the queue's lines (docs/SPEC-SPRINT.md, "The seat check", row
+// 10): a DOWN line per pull request thrown out of the queue since the
+// previous check, naming it, then the queue's line, DOWN when the queue is
+// empty while open green pull requests wait.
+func judgeQueue(qm QueueM, self bool, add func(Line)) {
+	at := []string{"repo=" + qm.Repo, "branch=" + qm.Branch}
+	switch {
+	case self:
+		add(Line{Thing: Queue, Up: true, Facts: append(at, "note="+q(NotMeasured))})
+		return
+	case qm.Err != "":
+		add(Line{Thing: Queue, Facts: append(at, "why="+q(qm.Err)), Remedy: "gh auth status"})
+		return
+	}
+	for _, t := range qm.Thrown {
+		f := []string{"pr=" + fmt.Sprint(t.PR), "thrown_age=" + age(t.Age)}
+		if t.Reason != "" {
+			f = append(f, "reason="+q(t.Reason))
+		}
+		add(Line{Thing: Queue, Facts: f, Remedy: fmt.Sprintf("gh pr checks %d --repo %s", t.PR, qm.Repo)})
+	}
+	f := append(at, "entries="+fmt.Sprint(len(qm.Queued)))
+	thrown := "thrown=" + fmt.Sprint(len(qm.Thrown))
+	if len(qm.Queued) == 0 && len(qm.Green) > 0 {
+		add(Line{Thing: Queue, Facts: append(f, "green="+prs(qm.Green), thrown, "why="+q("the queue is empty while green pull requests wait")),
+			Remedy: "gh pr list --repo " + qm.Repo + " --base " + qm.Branch + " --search 'status:success -is:draft'"})
+		return
+	}
+	add(Line{Thing: Queue, Up: true, Facts: append(f, "queued="+prs(qm.Queued), thrown)})
+}
+
+// judgeVersions is the versions' lines (docs/SPEC-SPRINT.md, "The seat
+// check", row 11): a DOWN line per machine whose installed nova-tools is not
+// the tip's build, naming the machine, its version and the tip's, or that did
+// not answer; then the count, DOWN only when the tip itself was not read.
+func judgeVersions(v VersionsM, self bool, add func(Line)) {
+	switch {
+	case self:
+		add(Line{Thing: Versions, Up: true, Facts: []string{"note=" + q(NotMeasured)}})
+		return
+	case v.Err != "":
+		add(Line{Thing: Versions, Facts: []string{"dev=unread", "why=" + q(v.Err)}, Remedy: "gh auth status"})
+		return
+	}
+	var fresh, stale, unread int
+	for _, mv := range v.Machines {
+		switch {
+		case mv.Err != "":
+			unread++
+			add(Line{Thing: Versions, Facts: []string{"machine=" + mv.Name, "why=" + q(mv.Err)}, Remedy: "ssh " + mv.Name + " " + InstalledVersionCommand})
+		case Fresh(mv.Version, v.Dev, v.DevSHA):
+			fresh++
+		default:
+			stale++
+			add(Line{Thing: Versions, Facts: []string{"machine=" + mv.Name, "installed=" + mv.Version, "dev=" + v.Dev}, Remedy: "nova-update release cycle -h"})
+		}
+	}
+	add(Line{Thing: Versions, Up: true, Facts: []string{"dev=" + v.Dev, "machines=" + fmt.Sprint(len(v.Machines)),
+		"fresh=" + fmt.Sprint(fresh), "stale=" + fmt.Sprint(stale), "unread=" + fmt.Sprint(unread)}})
+}
+
+// InstalledVersionCommand is the line a fleet machine answers its installed
+// nova-tools version with: nova-update's version verb from the fleet's bin
+// directory (docs/FLEET.md, nova_bin_dir).
+const InstalledVersionCommand = "~/.local/bin/nova-update version"
+
+// Fresh says an installed version is the tip's build: the same identity, or
+// an identity naming a revision the tip's sha begins with (a vcs stamp's 12
+// hex, a release's -dev.<hex>). A dirty build is not the commit it names, and
+// a bare tag or devel names no revision: neither is fresh.
+func Fresh(installed, dev, devSHA string) bool {
+	if installed == "" {
+		return false
+	}
+	if installed == dev {
+		return true
+	}
+	rev := revision(installed)
+	return rev != "" && devSHA != "" && strings.HasPrefix(devSHA, rev)
+}
+
+// revision is the hex revision a version identity ends with, "" when it ends
+// with none of at least 7 hex digits or is a dirty build.
+func revision(v string) string {
+	if strings.HasSuffix(v, "-dirty") {
+		return ""
+	}
+	h := v[strings.LastIndexAny(v, "-.")+1:]
+	if len(h) < 7 || strings.Trim(h, "0123456789abcdef") != "" {
+		return ""
+	}
+	return h
+}
+
+// prs is pull request numbers as one fact, "-" for none.
+func prs(ns []int) string {
+	if len(ns) == 0 {
+		return "-"
+	}
+	s := make([]string, len(ns))
+	for i, n := range ns {
+		s[i] = fmt.Sprint(n)
+	}
+	return strings.Join(s, ",")
 }
 
 // Text is the report as printed: one line per Line, then the summary,

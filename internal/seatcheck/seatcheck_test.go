@@ -148,3 +148,111 @@ func TestServedCheckSaysNotMeasured(t *testing.T) {
 	m.Bus = BusM{}
 	assert.Contains(t, lines(Judge(m, t0)), `MACHINERY bus OK redis=none note="not configured: NOVA_BUS_REDIS is not set"`+"\n")
 }
+
+// The dev merge queue and each machine's installed nova-tools version against
+// dev's tip (docs/SPEC-SPRINT.md, "The seat check", rows 10 and 11; the
+// owner, 2026-10-04: adopt and dogfood every tool we make). Each case fakes
+// the measures, and the rows' text and the summary line are read whole.
+func TestTheSeatCheckJudgesTheMergeQueueAndEachMachinesInstalledVersion(t *testing.T) {
+	t.Parallel()
+	const (
+		repo   = "mas-bandwidth/nova-tools"
+		devSHA = "2d720d219ff5c0ffee0123456789abcdef012345"
+		dev    = "20261004190000-2d720d219ff5"
+	)
+	fresh := func() Measures {
+		m := up()
+		m.Queue = QueueM{Repo: repo, Branch: "dev", Queued: []int{5281, 5299}, Green: []int{}, Thrown: []ThrownM{}}
+		m.Versions = VersionsM{Dev: dev, DevSHA: devSHA, Machines: []MachineVersionM{
+			{Name: "m1", Version: dev},
+			{Name: "m2", Version: "v1.2.0-dev.2d720d21"},
+		}}
+		return m
+	}
+	okQueue := "MACHINERY queue OK repo=mas-bandwidth/nova-tools branch=dev entries=2 queued=5281,5299 thrown=0"
+	okVersions := "MACHINERY versions OK dev=" + dev + " machines=2 fresh=2 stale=0 unread=0"
+	for _, tc := range []struct {
+		name    string
+		set     func(m *Measures)
+		rows    []string
+		summary string
+	}{
+		{"queue healthy, all fresh", func(*Measures) {}, []string{okQueue, okVersions}, "MACHINERY OK n=11"},
+		{"queue empty with open green pull requests", func(m *Measures) {
+			m.Queue.Queued, m.Queue.Green = []int{}, []int{5305, 5309}
+		}, []string{
+			`MACHINERY queue DOWN repo=mas-bandwidth/nova-tools branch=dev entries=0 green=5305,5309 thrown=0 why="the queue is empty while green pull requests wait" remedy="gh pr list --repo mas-bandwidth/nova-tools --base dev --search 'status:success -is:draft'"`,
+			okVersions,
+		}, "MACHINERY DOWN n=1 of=11"},
+		{"queue empty, nothing green waits", func(m *Measures) { m.Queue.Queued = []int{} },
+			[]string{"MACHINERY queue OK repo=mas-bandwidth/nova-tools branch=dev entries=0 queued=- thrown=0", okVersions}, "MACHINERY OK n=11"},
+		{"a pull request thrown out since the last check", func(m *Measures) {
+			m.Queue.Thrown = []ThrownM{{PR: 5299, Age: 12 * time.Minute, Reason: "FAILED_CHECKS"}}
+			m.Queue.Queued = []int{5281}
+		}, []string{
+			`MACHINERY queue DOWN pr=5299 thrown_age=12m0s reason="FAILED_CHECKS" remedy="gh pr checks 5299 --repo mas-bandwidth/nova-tools"`,
+			"MACHINERY queue OK repo=mas-bandwidth/nova-tools branch=dev entries=1 queued=5281 thrown=1",
+			okVersions,
+		}, "MACHINERY DOWN n=1 of=12"},
+		{"a stale machine", func(m *Measures) {
+			m.Versions.Machines = append(m.Versions.Machines, MachineVersionM{Name: "m3", Version: "20261003120000-aaaaaaaaaaaa"})
+		}, []string{
+			okQueue,
+			`MACHINERY versions DOWN machine=m3 installed=20261003120000-aaaaaaaaaaaa dev=` + dev + ` remedy="nova-update release cycle -h"`,
+			"MACHINERY versions OK dev=" + dev + " machines=3 fresh=2 stale=1 unread=0",
+		}, "MACHINERY DOWN n=1 of=12"},
+		{"a dirty build of dev's tip is not dev's tip", func(m *Measures) {
+			m.Versions.Machines = []MachineVersionM{{Name: "m1", Version: dev + "-dirty"}}
+		}, []string{
+			okQueue,
+			`MACHINERY versions DOWN machine=m1 installed=` + dev + `-dirty dev=` + dev + ` remedy="nova-update release cycle -h"`,
+			"MACHINERY versions OK dev=" + dev + " machines=1 fresh=0 stale=1 unread=0",
+		}, "MACHINERY DOWN n=1 of=12"},
+		{"a machine that did not answer", func(m *Measures) {
+			m.Versions.Machines = []MachineVersionM{{Name: "m1", Version: dev}, {Name: "m2", Err: "ssh: connect to host m2 port 22: Operation timed out"}}
+		}, []string{
+			okQueue,
+			`MACHINERY versions DOWN machine=m2 why="ssh: connect to host m2 port 22: Operation timed out" remedy="ssh m2 ~/.local/bin/nova-update version"`,
+			"MACHINERY versions OK dev=" + dev + " machines=2 fresh=1 stale=0 unread=1",
+		}, "MACHINERY DOWN n=1 of=12"},
+		{"GitHub did not answer", func(m *Measures) {
+			m.Queue = QueueM{Repo: repo, Branch: "dev", Err: "gh: HTTP 401"}
+			m.Versions = VersionsM{Err: "gh: HTTP 401"}
+		}, []string{
+			`MACHINERY queue DOWN repo=mas-bandwidth/nova-tools branch=dev why="gh: HTTP 401" remedy="gh auth status"`,
+			`MACHINERY versions DOWN dev=unread why="gh: HTTP 401" remedy="gh auth status"`,
+		}, "MACHINERY DOWN n=2 of=11"},
+		{"a served check measures neither", func(m *Measures) {
+			m.Server = ServerM{Addr: "127.0.0.1:6390", Self: true, PID: 77}
+			m.Queue = QueueM{Repo: repo, Branch: "dev"}
+			m.Versions = VersionsM{}
+		}, []string{
+			`MACHINERY queue OK repo=mas-bandwidth/nova-tools branch=dev note="not measured: the check ran in the server; run nova-sprint machinery"`,
+			`MACHINERY versions OK note="not measured: the check ran in the server; run nova-sprint machinery"`,
+		}, "MACHINERY OK n=11"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			m := fresh()
+			tc.set(&m)
+			r := Judge(m, t0)
+			text := lines(r)
+			all := strings.Split(strings.TrimSuffix(text, "\n"), "\n")
+			// the inbox line is the ninth thing; the queue's and the versions' rows follow it, then the summary
+			assert.Equal(t, append(tc.rows, tc.summary), all[len(all)-len(tc.rows)-1:], text)
+			assert.Equal(t, tc.summary, r.Summary())
+			for _, l := range r.Lines {
+				if !l.Up {
+					assert.NotEmpty(t, l.Remedy, l.String())
+				}
+			}
+		})
+	}
+
+	// Not configured (no repository named): neither row is printed, and the
+	// check is the nine lines it was.
+	r := Judge(up(), t0)
+	assert.NotContains(t, lines(r), "MACHINERY queue")
+	assert.NotContains(t, lines(r), "MACHINERY versions")
+	assert.Equal(t, "MACHINERY OK n=9", r.Summary())
+}
