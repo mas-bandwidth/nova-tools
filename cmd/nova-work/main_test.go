@@ -467,10 +467,12 @@ func TestTheVerbsRenderJSON(t *testing.T) {
 	}
 }
 
-func TestABareCommandRefusesInOneLine(t *testing.T) {
+// A bare command names the verbs and recovery in one refusal line, followed
+// by its stage note (internal/tool.Tool.Stage); it never prints the banner.
+func TestABareCommandRefusesWithItsStage(t *testing.T) {
 	t.Parallel()
 	res := workMain(unreachable(t)).Run()
 	require.Equal(t, 2, res.Code, "bare nova-work: exit %d, stdout %q, stderr %q", res.Code, res.Stdout, res.Stderr)
 	require.Empty(t, res.Stdout, "bare nova-work: exit %d, stdout %q, stderr %q", res.Code, res.Stdout, res.Stderr)
-	require.Equal(t, "WORK REFUSED: no verb given; the verbs are import, verify, version; run: nova-work help\n", res.Stderr, "bare nova-work: exit %d, stdout %q, stderr %q", res.Code, res.Stdout, res.Stderr)
+	require.Equal(t, "WORK REFUSED: no verb given; the verbs are import, verify, version; run: nova-work help\n  NOTE "+preAlpha+"\n", res.Stderr, "bare nova-work: exit %d, stdout %q, stderr %q", res.Code, res.Stdout, res.Stderr)
 }
