@@ -25,6 +25,8 @@
 \*   "samegen"     a handover keeps the generation: GenerationStepsWithTheSeat
 \*                 (at the first handover; past it OldSeatNeverUp breaks too:
 \*                 A->B->A, A's first seat's proof shows up under A's second)
+\*   "future"      a proof dated after the server's clock writes: ProofNeverAhead
+\*                 (a review of PR 5305: it held her up past its time)
 
 EXTENDS Naturals, FiniteSets
 
@@ -61,7 +63,7 @@ Observed == hstate # "none"
 \* else her raw beat, while fresh. The witnesses let the beat decide an
 \* observed friend, or let a proof never age.
 BeatFresh == beat # Never /\ now - beat < DownAfter
-ProofFresh == IF Broken = "noexpiry" THEN TRUE ELSE now - hseen < DownAfter
+ProofFresh == IF Broken = "noexpiry" THEN TRUE ELSE hseen <= now /\ now - hseen < DownAfter
 ObservedWord == IF hstate = "up" /\ hgen = gen /\ ProofFresh THEN "up" ELSE "down"
 Status ==
   IF held THEN "held"
@@ -90,26 +92,29 @@ Handover(h) ==
   /\ moves' = moves + 1
   /\ UNCHANGED <<now, hstate, hseen, hgen, hmoves, held, beat, inflight, sent, accepted>>
 
-\* A daemon sends an observation of a proof seen at some time up to now,
-\* under the seat as it reads it now (holder and generation).
+\* A daemon sends an observation of a proof seen at any time, after now too
+\* (a clock ahead of the server's, or a --seen written wrong), under the
+\* seat as it reads it now (holder and generation).
 Send(st) ==
   /\ sent < MaxObs
   /\ now >= 1
-  /\ \E t \in 1..now :
+  /\ \E t \in 1..MaxTime :
        inflight' = inflight \cup {[state |-> st, seen |-> t, gen |-> gen, moves |-> moves]}
   /\ sent' = sent + 1
   /\ UNCHANGED <<now, holder, gen, moves, hstate, hseen, hgen, hmoves, held, beat, accepted>>
 
 \* An observation arrives at the server (ObserveFriend under the fence):
-\* accepted only at the seat's generation now, with a proof newer than the
-\* row's; refused otherwise, nothing written. The witnesses take any
-\* generation, or any proof.
+\* accepted only at the seat's generation now, with a proof dated no later
+\* than the server's clock and newer than the row's; refused otherwise,
+\* nothing written. The witnesses take any generation, any older proof, or
+\* a proof from the future.
 Fenced(o) == o.gen = gen \/ Broken = "nofence"
 Newer(o) == o.seen > hseen \/ Broken = "olderproof"
+NotAhead(o) == o.seen <= now \/ Broken = "future"
 Deliver(o) ==
   /\ o \in inflight
   /\ inflight' = inflight \ {o}
-  /\ IF Fenced(o) /\ Newer(o)
+  /\ IF Fenced(o) /\ NotAhead(o) /\ Newer(o)
        THEN /\ hstate' = o.state /\ hseen' = o.seen /\ hgen' = o.gen /\ hmoves' = o.moves
             /\ accepted' = accepted + 1
        ELSE UNCHANGED <<hstate, hseen, hgen, hmoves, accepted>>
@@ -143,7 +148,7 @@ HeldIsTheHold == (Status = "held") <=> held
 \* A friend is up only on an up word under the current seat with a proof
 \* under DownAfter old, or, never observed, on a fresh beat.
 UpOnlyOnFreshProof ==
-  Status = "up" => \/ (Observed /\ hstate = "up" /\ hgen = gen /\ now - hseen < DownAfter)
+  Status = "up" => \/ (Observed /\ hstate = "up" /\ hgen = gen /\ hseen <= now /\ now - hseen < DownAfter)
                    \/ (~Observed /\ BeatFresh)
 
 \* An old seat's proof never looks up under a new seat: what the row holds
@@ -152,6 +157,10 @@ OldSeatNeverUp == Observed => (hmoves = moves \/ Status # "up")
 
 \* An accepted observation names the seat's generation now: the fence.
 AcceptedAtTheSeat == [][accepted' > accepted => hgen' = gen']_vars
+
+\* The row's proof is never dated after the server's clock: a proof from the
+\* future is refused, so it never holds a friend up past its time.
+ProofNeverAhead == hseen <= now
 
 \* The row's proof never goes back: a delayed or repeated proof writes nothing.
 ProofNeverGoesBack == [][hseen' >= hseen]_vars

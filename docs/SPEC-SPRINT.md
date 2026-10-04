@@ -169,10 +169,14 @@ The fence (`sprint.NotHealth`, applied by the health step `ObserveFriend` on
 its own read of the seat, so a seat that moved between the daemon's read and
 the write refuses it): the sender (`--actor`) is the seat's holder, the
 observation names the seat's generation now, the friend is on the table, and
-the proof is newer than the row's. Each refusal is one line, exit 1, nothing
+the proof is dated no later than the server's clock and newer than the row's.
+Each refusal is one line, exit 1, nothing
 written: `friend health is the seat's: <holder>, not <actor>`; `the seat is
 <holder>'s at generation <g>, and this observation names generation <g'>: read
-the seat again (nova-sprint seat)`; `the row holds a proof seen at <t>, and
+the seat again (nova-sprint seat)`; `the proof is dated <t>, after the server's clock,
+<now>: a proof from the future renews nothing` (a review of PR 5305: a
+`--seen` ahead held her up until it plus ten seconds, and the order then
+refused every real observation before it); `the row holds a proof seen at <t>, and
 this one's is not newer, <t'>: an older or repeated proof renews nothing`; `no
 friend <name> on the friends table`. The same observation again (the same word,
 proof and generation) is answered as recorded, `replayed=true`, and writes
@@ -187,7 +191,8 @@ width, status, replayed}`.
 
 The table's word from an observation (`sprint.ObservedStatus`): `up` only when
 the observation says `up`, under the seat's generation now, with its proof
-under `FriendObservedDownAfter` (10 s) old; `down` otherwise, at exactly ten
+under `FriendObservedDownAfter` (10 s) old and not dated after now (a negative
+age is no proof); `down` otherwise, at exactly ten
 seconds, under any other generation (an old seat's proof never looks up under
 a new seat, and no fallback to her beat once observed), and for every finer
 word the row keeps (`asleep` is the daemon's, shown as `down`). The first
@@ -195,7 +200,8 @@ valid observation makes her `up` at once. Her own `friend beat` stays what it
 is, the friend's own beat, and once she is observed it decides nothing: the
 observation wins the word. No observation holds a friend: `held` is `friend
 down` by the seat alone, lifted by `friend up`. The model is
-`tla/SeatHealth.tla` (five reversed witnesses); the tests
+`tla/SeatHealth.tla` (six reversed witnesses); the tests
+`TestAProofDatedAfterTheServersClockIsRefused`,
 `TestHealthIsFencedBySeatHolderAndGeneration`,
 `TestFirstProofIsUpAndTenSecondsWithoutOneIsDown`,
 `TestHealthReplayOrderBeatAndHold`, `TestSeatGenerationFromInitThroughHandovers`,
