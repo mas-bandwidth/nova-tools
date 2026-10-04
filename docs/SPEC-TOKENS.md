@@ -55,7 +55,7 @@ near the end, and the sections below say how each is met.
    usage file it cannot parse, a lane it cannot list: each is one
    `TOKENS UNREADABLE` line (capped, with a MORE line) and one in the
    `unreadable=<n>` count on the `TOKENS SOURCE` line and on `TOKENS OK` or
-   `TOKENS FAIL`. The fold continues over the rest and writes what it could
+   `TOKENS FAILED`. The fold continues over the rest and writes what it could
    compute, and the run **exits 1**, because a declared source is a claim
    that the report covers it (lesson 29: an unreadable input is a named
    failure, and the walk continues).
@@ -63,7 +63,7 @@ near the end, and the sections below say how each is met.
    message id on every streamed line; the last line for an id carries the
    message's final usage, and that is the one counted. Within one source, a
    second occurrence of an id is `dup=<n>` on the `TOKENS SOURCE` line, never a
-   second count. A message with no id is counted in `noid=<n>` and not folded: some dropped is a `TOKENS NOTE`, and a fold whose every message was dropped, with none folded, is `FOLD FAIL dropped=<n> of <n>: no message had an id; run: nova-tokens sources ...` and exit 1.
+   second count. A message with no id is counted in `noid=<n>` and not folded: some dropped is a `TOKENS NOTE`, and a fold whose every message was dropped, with none folded, is `FOLD FAILED dropped=<n> of <n>: no message had an id; run: nova-tokens sources ...` and exit 1.
 5. **Repo attribution is one written rule, and `unknown` is a named bucket
    with its share printed.** The rule is in **repo attribution** below. It is
    one function with one statement, parameterized by the source's way of
@@ -226,7 +226,7 @@ near the end, and the sections below say how each is met.
     **`--through <YYYY-MM-DD>` gates freshness.** When `--through` is given,
     `check` verifies that the last folded day under `--out` is at least the given
     day. If the directory has no folded days or its last day is older than the
-    requested day, `check` prints `CHECK FAIL stale last=<d> through=<d>` on
+    requested day, `check` prints `CHECK FAILED stale last=<d> through=<d>` on
     standard error, marks the check failed, and exits 1.
 14. **A swarm pool's usage files are a source.** A pool holds one usage file
     per job attempt, `<pool>/usage/<job>.tsv`, outside the job directories, so
@@ -316,7 +316,7 @@ near the end, and the sections below say how each is met.
     else: no heading, no stamp, no comment. A `report` over a day every
     source dates in UTC prints six-field lines only; a `report` whose
     sources give one `(model, repo)` two bases prints `TOKENS MIXED` on
-    stderr, no line for that key, `REPORT FAIL`, exit 1, the refusal `fold`
+    stderr, no line for that key, `REPORT FAILED`, exit 1, the refusal `fold`
     makes (rule 17): the basis is never dropped and never guessed. A type the sources did not report has no line, so it
     folds back as `-` (rule 15); a reported zero is a line with `0`. The
     stamp and build id go on the note's Subject as the trailer rule 6
@@ -328,7 +328,7 @@ near the end, and the sections below say how each is met.
     this sentence is the exception SPEC.md's Conventions allow when a spec
     says so. `--note <path>` writes exactly the stdout bytes to that file, through
     `internal/atomicfile` (a unique temporary beside it, fsync, one rename; the
-    file and its directory must not be symlinks), and only on `REPORT OK`: a `REPORT FAIL`
+    file and its directory must not be symlinks), and only on `REPORT OK`: a `REPORT FAILED`
     writes nothing and leaves an existing `--note` file byte-unchanged.
     `--supersedes <note-id>`, repeatable, puts `supersedes=<id>[,<id>…]` on
     the subject — the ids sorted ascending, a repeated id refused — which is
@@ -336,7 +336,7 @@ near the end, and the sections below say how each is met.
     source); the tool checks each id's shape and nothing else, because the
     lane is not on this machine.
     A `report` for a day whose sources were all unreadable prints
-    `TOKENS UNREADABLE` per source and no lines, `REPORT FAIL`, exit 1: a
+    `TOKENS UNREADABLE` per source and no lines, `REPORT FAILED`, exit 1: a
     friend with nothing to show says so, never sends zeros. A `report` line
     is what `fold --bus` parses, so the two are one grammar by construction
     (lesson 113), and a `report` never carries `~`: a rough number is a
@@ -425,7 +425,7 @@ run; two sources with one label would make the `sources` column a lie.
 Asserts: every declared source was read whole, every bus line and note
 parsed, no row mixed two day bases, no lane's day had two reports without a
 supersession between them, every day file computed was written. Says
-NO (exit 1) when any file was unreadable, any bus line or note unparsed, any
+FAILED (exit 1) when any file was unreadable, any bus line or note unparsed, any
 row was `TOKENS MIXED`, any lane-day was `TOKENS CONFLICT`, or any day would
 have shrunk without `--allow-shrink`; the rest is still written, and a day
 whose report in some lane is ambiguous is not written at all, its existing
@@ -451,9 +451,9 @@ and `missing=<n>` is the answer. `sum` is a **report**. Never gate on it.
 
 ### `check`
 
-Asserts the day-file validity rules. Says NO (exit 1) on any malformed file, any
+Asserts the day-file validity rules. Says FAILED (exit 1) on any malformed file, any
 malformed row, any missing day, any stray file, or when `--through <day>` is
-given and the last folded day is older than `<day>` (`CHECK FAIL stale`).
+given and the last folded day is older than `<day>` (`CHECK FAILED stale`).
 Deliberately does not check: whether a day's numbers are plausible, or whether a
 source was declared that day. `check` is a **wall**, and it is the gate.
 
@@ -491,7 +491,7 @@ token ledger's verbs, specified in [SPEC-STATE.md](SPEC-STATE.md).
 | code | meaning |
 |------|---------|
 | 0 | the verb ran and passed: every source read, every line parsed, every day written; a sum or a listing printed; a check with nothing to name |
-| 1 | the verb ran and said **NO**: a declared source with an unreadable file, an unparsed bus line or note, a row of two day bases, a lane-day with competing reports (`TOKENS CONFLICT`), a day that would shrink, a fold that dropped every message for having no id (`FOLD FAIL dropped=<n> of <n>`), a check finding, a `report` with nothing to show |
+| 1 | the verb ran and said **FAILED**: a declared source with an unreadable file, an unparsed bus line or note, a row of two day bases, a lane-day with competing reports (`TOKENS CONFLICT`), a day that would shrink, a fold that dropped every message for having no id (`FOLD FAILED dropped=<n> of <n>`), a check finding, a `report` with nothing to show |
 | 2 | could not run: missing flag, bad flag value, `--out` not a directory, `--repos` unreadable or malformed, a duplicate label, `sqlite3` absent when `--opencode` is given, a second fold holding the lock |
 
 **Exit 1 still writes.** A fold with one unreadable file writes every day it
@@ -504,12 +504,12 @@ not cover them.
 ## Output grammar
 
 One machine-scannable line per event; first token names the verb's event
-class, second is `OK`, `FAIL` or one of the informational tokens listed here.
-`OK` and informational lines go to stdout; `FAIL`, `UNREADABLE`, `UNPARSED`,
+class, second is `OK`, `FAILED` or one of the informational tokens listed here.
+`OK` and informational lines go to stdout; `FAILED`, `UNREADABLE`, `UNPARSED`,
 `MIXED`, `SHRANK`, `QUIET`, `MISSING` and refusals go to stderr.
 `report` is the one
 exception: its stdout is exactly the body's lines, and
-`REPORT OK`, `REPORT FAIL` and its `TOKENS UNREADABLE` lines go to stderr. Every path, label, model name,
+`REPORT OK`, `REPORT FAILED` and its `TOKENS UNREADABLE` lines go to stderr. Every path, label, model name,
 repo name, note id and reason renders through `internal/oneline`; every
 `key=value` carrying stored text is one token via `oneline.Field`; the tail
 after `: ` is capped at `oneline.TailBytes`.
@@ -529,12 +529,12 @@ TOKENS QUIET label=<label> day=<d>: a declared source has zero samples for an ex
 TOKENS PARTIAL date=<d> model=<model> repo=<repo> sources=<labels> folded=<labels> written=<true|false>: this fold declared only some of the sources that wrote the row; declare every source in the file's sources= line, or fold this day into its own --out
 TOKENS MORE kind=<source|unreadable|unparsed|superseded|conflict|touched|mixed|day|partial|quiet> shown=<n> total=<t> <remedy>
 TOKENS OK days=<n> rows=<n> sources=<n> unreadable=<n> unparsed=<n> mixed=<n> conflict=<n> shrank=<n> partial=<n> quiet=<n>
-TOKENS FAIL days=<n> rows=<n> sources=<n> unreadable=<n> unparsed=<n> mixed=<n> conflict=<n> shrank=<n> partial=<n> quiet=<n>
-FOLD FAIL dropped=<n> of <n>: no message had an id, so none was folded; run: nova-tokens sources <the same source flags> --day <d> to see noid= per source
+TOKENS FAILED days=<n> rows=<n> sources=<n> unreadable=<n> unparsed=<n> mixed=<n> conflict=<n> shrank=<n> partial=<n> quiet=<n>
+FOLD FAILED dropped=<n> of <n>: no message had an id, so none was folded; run: nova-tokens sources <the same source flags> --day <d> to see noid= per source
 TOKENS NOTE <the one remedy line>
 TOKENS REFUSED: <reason>
 REPORT OK who=<name> day=<d> rows=<n> at=<stamp> build=<id> subject=<subject>
-REPORT FAIL who=<name> day=<d> rows=<n> unreadable=<n>
+REPORT FAILED who=<name> day=<d> rows=<n> unreadable=<n>
 REPORT REFUSED: <reason>
 TOKENS AVG day=<d> model=<provider/model> tokens=<n> usd=<n> usd_per_mtok=<n|->
 TOKENS AVG-ALL day=<d> tokens=<n> usd=<n> usd_per_mtok=<n|->
@@ -545,14 +545,14 @@ SUM TOTAL input=<n> output=<n> cache_write=<n> cache_read=<n> reasoning=<n> roug
 SUM MORE kind=<pair|model> shown=<n> total=<t> nova-tokens sum --out <dir> --month <m> --max 0
 SUM OK month=<m> days=<n> missing=<n> pairs=<n> models=<n> nonutc=<n>
 SUM REFUSED: <reason>
-CHECK FAIL <path>: <reason>
-CHECK FAIL <path>:<line>: <reason>
-CHECK FAIL stale last=<d> through=<d>
+CHECK FAILED <path>: <reason>
+CHECK FAILED <path>:<line>: <reason>
+CHECK FAILED stale last=<d> through=<d>
 CHECK MISSING date=<d>
 CHECK STRAY <path>
 CHECK MORE kind=<file|row|missing|stray> shown=<n> total=<t> nova-tokens check --out <dir> --max 0
 CHECK OK at=<stamp> build=<id> files=<n> rows=<n> first=<d> last=<d> missing=0 stray=0 gap=<n> notes=<n>
-CHECK FAIL files=<n> rows=<n> first=<d> last=<d> bad=<n> missing=<n> stray=<n> gap=<n> notes=<n>
+CHECK FAILED files=<n> rows=<n> first=<d> last=<d> bad=<n> missing=<n> stray=<n> gap=<n> notes=<n>
 CHECK REFUSED: <reason>
 SOURCES SOURCE label=<label> kind=<claude|opencode|swarm|bus|provider> path=<path> reports=<types> day_basis=<utc|mixed|<zone>> files=<n> unreadable=<n> messages=<n> dup=<n> noid=<n> nousage=<n> unparsed=<n> comments=<n> redated=<n> superseded=<n> rows=<n>
 SOURCES UNREADABLE label=<label> path=<path>: <why>
@@ -607,7 +607,7 @@ it.
 
 `TOKENS DAY` is one line per day written or refused. It describes the day file
 (its rows, models, repos, and sources, including retained rows), while the
-counts on `TOKENS OK` and `TOKENS FAIL` are the truth about the fold itself (the
+counts on `TOKENS OK` and `TOKENS FAILED` are the truth about the fold itself (the
 rows folded in this run). `unknown=` and `other=` are each bucket's share of the
 day's five types summed, to one decimal, so a day that is 40% unknown says so on
 the line a person reads; a `-` cell adds nothing to either side of that share.
@@ -620,7 +620,7 @@ across the day's rows.
 `TOKENS MIXED` and `TOKENS DAY` are each capped at `--max` separately, per
 kind, because a month of `--all` is up to 90 day lines
 and one unreadable directory is 2,000 file lines, and the loud kind must not
-eat the quiet one. The counts on `TOKENS OK` and `TOKENS FAIL` are the truth
+eat the quiet one. The counts on `TOKENS OK` and `TOKENS FAILED` are the truth
 about the fold, never about the output.
 
 **`TOKENS NOTE` is exactly one remedy line.** If anything was unreadable it
@@ -837,7 +837,7 @@ folds to its last valid link, so two sequential corrections are one report.
 The lane-day's **tips** are its parsed notes that no valid successor names.
 When there is more than one tip — two roots, or two successors of one
 predecessor — that lane-day is `TOKENS CONFLICT label=bus:<name> day=<d>
-notes=<id,id>`, `conflict=<n>` on `TOKENS OK` or `TOKENS FAIL`, exit 1,
+notes=<id,id>`, `conflict=<n>` on `TOKENS OK` or `TOKENS FAILED`, exit 1,
 **no** row from that lane folds for that day, the day file is not written and
 an existing one is left untouched; a correction that names only one of the
 tips replaces that one and leaves the conflict, because the other tip still
@@ -1010,7 +1010,7 @@ There is no clock in this tool. `--timeout` (default **120 s**) is how long it
 waits on one source and not a deadline on the run. What a fold or a check
 actually waits on is a person running it, and on the measured bench it was not
 being run: `check` printed
-`CHECK FAIL files=9 rows=0 first=2026-07-29 last=2026-09-11 bad=9 missing=36 stray=2`,
+`CHECK FAILED files=9 rows=0 first=2026-07-29 last=2026-09-11 bad=9 missing=36 stray=2`,
 and `sum --month 2026-09` refused because the first line of a day file was not
 the version line, with `fold --day <d>` as the repair. Nine of nine day files
 were bad. A stale ledger is repaired by `fold --day <d>` before `check` is
@@ -1070,7 +1070,7 @@ seen red before it is trusted.
 3. A transcript directory with one readable file and one mode-000 file:
    `TOKENS UNREADABLE` names the file and the OS reason, `TOKENS SOURCE`
    says `files=2 unreadable=1`, the day file from the readable file is
-   written, `TOKENS FAIL unreadable=1` prints, exit 1; without the
+   written, `TOKENS FAILED unreadable=1` prints, exit 1; without the
    unreadable file the same run is `TOKENS OK` exit 0.
 4. A transcript with one message id on five streamed lines whose usage
    grows: the row carries the last line's usage exactly, `dup=4`; a line
@@ -1247,7 +1247,7 @@ seen red before it is trusted.
     (model, repo, type, count) rows as `fold --claude` over the same
     directory, `reasoning=-`, and `TOKENS TOUCHED … repos=schema` (one
     grammar, by construction); a `report` whose every source is unreadable
-    prints no lines, `REPORT FAIL`, exit 1; a `report` line never contains
+    prints no lines, `REPORT FAILED`, exit 1; a `report` line never contains
     `~` or `#`; `--note` writes exactly the stdout bytes and nothing else, through
     `.tmp` and rename, and a `report` that fails leaves a pre-existing
     `--note` file byte-identical with no `.tmp` beside it; `report

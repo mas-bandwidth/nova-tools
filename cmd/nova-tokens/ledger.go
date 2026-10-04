@@ -190,14 +190,14 @@ func cmdLedger(args []string, stdout, stderr io.Writer) int {
 	}
 	for _, res := range results {
 		if res.bad {
-			fmt.Fprintf(stdout, "LEDGER BAD day=%s why=%s\n", oneline.Field(res.day), oneline.Escape(res.why))
+			fmt.Fprintf(stdout, "LEDGER FAILED day=%s why=%s\n", oneline.Field(res.day), oneline.Escape(res.why))
 		} else {
 			fmt.Fprintf(stdout, "LEDGER day=%s rows=%d\n", oneline.Field(res.day), res.rows)
 		}
 	}
 	verdict, code := "OK", 0
 	if bad > 0 || days == 0 {
-		verdict, code = "NO", 1
+		verdict, code = "FAILED", 1
 	}
 	if *day != "" {
 		fmt.Fprintf(stdout, "LEDGER %s day=%s days=%d rows=%d bad=%d\n", oneline.Field(verdict), oneline.Field(*day), days, rows, bad)
@@ -267,7 +267,7 @@ func cmdReportStore(addr, user, passwordEnv, month, by string, max int, stdout, 
 		fmt.Fprintf(stdout, "REPORT MORE shown=%d of=%d; raise --max (0 = all)\n", max, len(totals))
 	}
 	if indexed == 0 {
-		fmt.Fprintf(stdout, "REPORT NO month=%s source=redis indexed=0\n", oneline.Field(month))
+		fmt.Fprintf(stdout, "REPORT FAILED month=%s source=redis indexed=0\n", oneline.Field(month))
 		return 1
 	}
 	fmt.Fprintf(stdout, "REPORT OK month=%s source=redis groups=%d rows=%d indexed=%d missing=%d\n", oneline.Field(month), len(totals), rows, indexed, missing)

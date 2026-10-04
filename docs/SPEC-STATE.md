@@ -42,9 +42,9 @@ ledger as indexing it once, and no reader sees half a day. It writes nothing bes
 files and never changes them.
 
 - `LEDGER day=<day> rows=<n>` for each day written.
-- `LEDGER BAD day=<day> why=<reason>` for a day file that does not read or has a finding; a
+- `LEDGER FAILED day=<day> why=<reason>` for a day file that does not read or has a finding; a
   missing day file is `why=no day file; fold --day <day> first`, and nothing is written for it.
-- `LEDGER OK|NO day=<day>|month=<month> days=<n> rows=<n> bad=<n>` last: `NO` (exit 1) when a
+- `LEDGER OK|FAILED day=<day>|month=<month> days=<n> rows=<n> bad=<n>` last: `FAILED` (exit 1) when a
   day was bad or no day was written.
 - `LEDGER FAILED store=redis err=<err>` (exit 1) when the connection cannot be opened —
   an empty password variable (before any dial), a login the store refuses, or a store that
@@ -69,7 +69,7 @@ did.
   all) with `REPORT MORE shown=<n> of=<n>; raise --max (0 = all)` when capped.
 - `REPORT OK month=<month> source=redis groups=<n> rows=<n> indexed=<n> missing=<n>` last:
   `indexed` is how many calendar-day keys existed, `missing` how many did not.
-- `REPORT NO month=<month> source=redis indexed=0` (exit 1) when no day of the month is indexed.
+- `REPORT FAILED month=<month> source=redis indexed=0` (exit 1) when no day of the month is indexed.
 - `REPORT FAILED store=redis err=<err>` (exit 1) when the connection cannot be opened (an
   empty password variable before any dial, a refused login, a store that does not answer), or a field or
   value does not decode; the error names the key, and a row is never quietly skipped.
@@ -102,10 +102,10 @@ monthly-report test as this spec's test 17.
 18. `TestReportRedisRefusesWithoutMonth` — the report refuses a missing `--month`, a `--by`
     outside the four, and `--redis` with `--ledger`.
 19. `TestLedgerRefusesWithoutRedisAndNamesAMissingDay` — `ledger` refuses without `--redis`,
-    and a day with no file is a `NO` naming the fold, with nothing written.
+    and a day with no file is a `FAILED` naming the fold, with nothing written.
 20. `TestLedgerReadsThePasswordFromTheVariableItIsToldToOnly` — with no user, no password
     variable is consulted unless `--password-env` names it.
-21. `TestReportRedisNoIndexedDaysExitsOne` — a month with no indexed day is `REPORT NO`, exit 1.
+21. `TestReportRedisNoIndexedDaysExitsOne` — a month with no indexed day is `REPORT FAILED`, exit 1.
 22. `TestReportRedisPartialMonthNamesIndexedMissing` — a partly indexed month names
     `indexed` and `missing` on the `OK` line.
 23. `TestLedgerAndReportDialAsTheAclUser` — both verbs connect as the ACL user from `--user`

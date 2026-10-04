@@ -74,7 +74,7 @@ usage:
                       [--role <name>] [--weights <in,cw,cr,out>]
   nova-tokens version
 
-exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- an unreadable
+exit codes: 0 the verb ran and passed; 1 the verb ran and said FAILED -- an unreadable
 source, an unparsed bus line or note, a row of two day bases, a lane-day with competing
 reports, a day that would shrink, a fold whose every message had no id and so folded nothing,
 a check finding, a report with nothing to show; 2 could
@@ -549,7 +549,7 @@ func unparsedLine(token string, u tokens.Unparsed) string {
 }
 
 // cmdFold is the wall: it reads every declared source whole and writes the days it could
-// compute. It says NO when a source could not be read, a bus line or note did not parse,
+// compute. It says FAILED when a source could not be read, a bus line or note did not parse,
 // a row mixed two day bases, a lane-day had competing reports, or a day would have shrunk
 // -- and it still writes the rest, because the exit code is about the claim.
 func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
@@ -793,10 +793,10 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 	bad := unreadable.Total() > 0 || unparsed.Total() > 0 || mixedList.Total() > 0 ||
 		conflicts.Total() > 0 || (shrankList.Total() > 0 && !*allowShrink) || partialList.Total() > 0 || allDropped
 	if allDropped {
-		fmt.Fprintf(stderr, "FOLD FAIL dropped=%d of %d: %s\n", dropped, of, allDroppedWhy)
+		fmt.Fprintf(stderr, "FOLD FAILED dropped=%d of %d: %s\n", dropped, of, allDroppedWhy)
 	}
 	if bad {
-		fmt.Fprintf(stderr, "TOKENS FAIL %s\n", counts)
+		fmt.Fprintf(stderr, "TOKENS FAILED %s\n", counts)
 	} else {
 		fmt.Fprintf(stdout, "TOKENS OK %s\n", counts)
 	}
@@ -958,7 +958,7 @@ func noidAndDup(sources []*tokens.Source) string {
 	return "a source fed " + strconv.Itoa(noid) + " messages with no id (" + label + "): a message is counted by its id (rule 4), and one with none is noid= and is not folded"
 }
 
-// allDroppedWhy is the tail of the TOKENS FAIL line for a fold that dropped every message.
+// allDroppedWhy is the tail of the TOKENS FAILED line for a fold that dropped every message.
 const allDroppedWhy = "no message had an id, so none was folded (a message is counted by its id: a transcript's message.id, an opencode message id, a swarm row's job); run: nova-tokens sources <the same source flags> --day <d> to see noid= per source"
 
 // allMessagesDropped says whether the sources read at least one message and dropped every
@@ -1220,19 +1220,19 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 		body = strings.Join(rendered, "\n") + "\n"
 	}
 	if lines == 0 || len(mixed) > 0 {
-		// A friend with nothing to show says so, and never sends zeros. A REPORT FAIL
+		// A friend with nothing to show says so, and never sends zeros. A REPORT FAILED
 		// writes nothing: an existing --note file is left byte-unchanged.
 		//
-		// A mixed key is a FAIL for the day, and the rest of the body is still printed:
+		// A mixed key is a FAILED day, and the rest of the body is still printed:
 		// the spec's sentence is "no line for that key", not no line for any key, and a
 		// friend who has to choose an export wants to see what the other keys came to.
 		// It goes to stdout only -- nothing is pasted and --note is not touched -- and
-		// rows= is what it could compute rather than a flat 0, which is a change to the
-		// grammar's REPORT FAIL line and is proposed in the PR body.
+		// rows= is what it could compute rather than a flat 0, which the grammar's
+		// REPORT FAILED line carries (docs/SPEC-TOKENS.md rule 20).
 		if lines > 0 {
 			fmt.Fprint(stdout, body)
 		}
-		fmt.Fprintf(stderr, "REPORT FAIL who=%s day=%s rows=%d unreadable=%d\n",
+		fmt.Fprintf(stderr, "REPORT FAILED who=%s day=%s rows=%d unreadable=%d\n",
 			oneline.Field(*who), oneline.Field(*day), lines, unreadable)
 		return 1
 	}
@@ -1392,7 +1392,7 @@ func validMonth(m string) bool {
 
 // ----------------------------------------------------------------------------- check
 
-// cmdCheck is the GATE. It says NO on any malformed file, any malformed row, any missing
+// cmdCheck is the GATE. It says FAILED on any malformed file, any malformed row, any missing
 // day and any stray, and it prints the count line either way. A missing day is NAMED and
 // never filled: nobody folded it, and this tool does not invent what nobody measured.
 //
@@ -1448,9 +1448,9 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	missing := bounded.Capped(stderr, *max, "CHECK", "missing", remedyLine)
 	strays := bounded.Capped(stderr, *max, "CHECK", "stray", remedyLine)
 	for _, f := range res.Findings {
-		line := fmt.Sprintf("CHECK FAIL %s: %s", oneline.Escape(f.Path), oneline.Escape(oneline.Cap(f.Reason, oneline.TailBytes)))
+		line := fmt.Sprintf("CHECK FAILED %s: %s", oneline.Escape(f.Path), oneline.Escape(oneline.Cap(f.Reason, oneline.TailBytes)))
 		if f.Line > 0 {
-			line = fmt.Sprintf("CHECK FAIL %s:%d: %s", oneline.Escape(f.Path), f.Line, oneline.Escape(oneline.Cap(f.Reason, oneline.TailBytes)))
+			line = fmt.Sprintf("CHECK FAILED %s:%d: %s", oneline.Escape(f.Path), f.Line, oneline.Escape(oneline.Cap(f.Reason, oneline.TailBytes)))
 		}
 		if f.Line > 2 {
 			rowsList.Line(line)
@@ -1474,11 +1474,11 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 		first, last = res.First, res.Last
 	}
 	if res.Stale {
-		fmt.Fprintf(stderr, "CHECK FAIL stale last=%s through=%s\n", oneline.Field(last), oneline.Field(*through))
+		fmt.Fprintf(stderr, "CHECK FAILED stale last=%s through=%s\n", oneline.Field(last), oneline.Field(*through))
 	}
 	bad := files.Total() + rowsList.Total()
 	if bad > 0 || len(res.Missing) > 0 || len(res.Strays) > 0 || res.Stale {
-		fmt.Fprintf(stderr, "CHECK FAIL files=%d rows=%d first=%s last=%s bad=%d missing=%d stray=%d gap=%d notes=%d\n",
+		fmt.Fprintf(stderr, "CHECK FAILED files=%d rows=%d first=%s last=%s bad=%d missing=%d stray=%d gap=%d notes=%d\n",
 			res.Files, res.Rows, oneline.Field(first), oneline.Field(last), bad,
 			len(res.Missing), len(res.Strays), len(res.Gaps), len(res.Notes))
 		return 1

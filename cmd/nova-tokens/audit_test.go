@@ -27,7 +27,7 @@ var tokensAudit = audit.Config{
 	// reader can check.
 	Exempt: map[string]string{
 		"ledger.go|cmdReportStore|line": "one REPORT line built in the loop above from literal key names, oneline.Field over each key value, a %d row count and strconv.FormatInt or the literal dash per type; nothing in it is unescaped text",
-		"main.go|cmdFold|counts":        "the count line, built two lines above by a Sprintf whose every verb is %d over an integer; the classifier walks that Sprintf like any other print site. Two sites: the OK line and the FAIL line",
+		"main.go|cmdFold|counts":        "the count line, built two lines above by a Sprintf whose every verb is %d over an integer; the classifier walks that Sprintf like any other print site. Two sites: the OK line and the FAILED line",
 		"main.go|cmdReport|body":        "the report's stdout IS the artifact: every line of it was rendered by tokens.BodyLine, which puts each of its stored fields through oneline.Field, and the lines are joined with \\n by this function. Escaping the join again would escape those newlines and destroy the note body this verb exists to print",
 	},
 	Imports: []string{

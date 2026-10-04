@@ -222,8 +222,8 @@ func TestRule3AnUnreadableSourceIsCountedAndPrintedAndExitsOne(t *testing.T) {
 	wantContains(t, r.stderr, "TOKENS UNREADABLE label=claude:glenn")
 	wantContains(t, r.stderr, "bad.jsonl")
 	wantContains(t, r.stdout, "files=2 unreadable=1")
-	wantContains(t, r.stderr, "TOKENS FAIL")
-	wantContains(t, lineWith(r.stderr, "TOKENS FAIL"), "unreadable=1")
+	wantContains(t, r.stderr, "TOKENS FAILED")
+	wantContains(t, lineWith(r.stderr, "TOKENS FAILED"), "unreadable=1")
 	{
 		_, err := os.Stat(filepath.Join(out, "2026-09-11.tsv"))
 		assert.NoError(t, err, "the day file from the readable file was not written: %v", err)
@@ -407,7 +407,7 @@ func TestANearMissSubjectIsNamedAndNeverVanishes(t *testing.T) {
 	wantContains(t, r.stderr, "tokens 2026-09-11 (rough)")
 	wantContains(t, lineWith(r.stdout, "TOKENS SOURCE"), "files=2")
 	wantContains(t, lineWith(r.stdout, "TOKENS SOURCE"), "unparsed=1")
-	wantContains(t, lineWith(r.stderr, "TOKENS FAIL"), "unparsed=1")
+	wantContains(t, lineWith(r.stderr, "TOKENS FAILED"), "unparsed=1")
 	note := lineWith(r.stdout, "TOKENS NOTE")
 	wantContains(t, note, "emma-00000000000a")
 	wantNotContains(t, note, "nothing was wrong")
@@ -1111,7 +1111,7 @@ func TestRule13CheckNamesEveryFindingAndFillsNoDay(t *testing.T) {
 	wantExit(t, r, 1)
 	wantContains(t, r.stderr, "2026-09-11.tsv")
 	wantContains(t, r.stderr, "2026-09-12.tsv")
-	line := lineWith(r.stderr, "CHECK FAIL files=")
+	line := lineWith(r.stderr, "CHECK FAILED files=")
 	wantContains(t, line, "bad=10")
 	// The gap at 09-09 is COUNTED by default and named only when something says there
 	// was spend on it. Nobody folded that day, and the day file nobody wrote is not
@@ -1123,7 +1123,7 @@ func TestRule13CheckNamesEveryFindingAndFillsNoDay(t *testing.T) {
 	strict := invoke(t, "check", "--out", out, "--max", "0", "--strict")
 	wantExit(t, strict, 1)
 	wantContains(t, strict.stderr, "CHECK MISSING date=2026-09-09")
-	wantContains(t, lineWith(strict.stderr, "CHECK FAIL files="), "missing=1")
+	wantContains(t, lineWith(strict.stderr, "CHECK FAILED files="), "missing=1")
 
 	// A --no-spend list is the other door, and it is the one a person keeps: the days it
 	// does not name are the days nobody folded.
@@ -1134,7 +1134,7 @@ func TestRule13CheckNamesEveryFindingAndFillsNoDay(t *testing.T) {
 	named := write(t, filepath.Join(dir, "no-spend.txt"), "# the day nobody worked\n2026-09-09\tnobody was at the bench\n")
 	accounted := invoke(t, "check", "--out", out, "--max", "0", "--no-spend", named)
 	wantExit(t, accounted, 1) // the ten bad files are still findings
-	wantContains(t, lineWith(accounted.stderr, "CHECK FAIL files="), "missing=0")
+	wantContains(t, lineWith(accounted.stderr, "CHECK FAILED files="), "missing=0")
 	wantNotContains(t, accounted.stderr, "CHECK MISSING")
 
 	// Two answers to one question is a refusal, not a silent precedence.
@@ -1360,7 +1360,7 @@ func TestRule17AZonedStampFoldsOnItsUTCDayAndAnUnreadableStampIsCounted(t *testi
 		assert.False(t, err == nil, "the zoned stamp folded on the local day, not on its UTC day")
 	}
 	// Two stamps this tool cannot read: counted, printed, and named. The count is on
-	// TOKENS FAIL and the lines name the label; the transcript's own unparsed= column is
+	// TOKENS FAILED and the lines name the label; the transcript's own unparsed= column is
 	// a dash, which is what the spec's TOKENS SOURCE paragraph says it is.
 	wantContains(t, lineWith(r.stdout, "TOKENS SOURCE"), "unparsed=-")
 	{
@@ -1369,7 +1369,7 @@ func TestRule17AZonedStampFoldsOnItsUTCDayAndAnUnreadableStampIsCounted(t *testi
 	}
 	wantContains(t, r.stderr, "TOKENS UNPARSED label=claude:g")
 	wantContains(t, r.stderr, "the eleventh")
-	wantContains(t, lineWith(r.stderr, "TOKENS FAIL"), "unparsed=2")
+	wantContains(t, lineWith(r.stderr, "TOKENS FAILED"), "unparsed=2")
 
 	// The same, for the OpenCode reader.
 	scratch := mkdir(t, filepath.Join(dir, "scratch"))
@@ -1385,7 +1385,7 @@ func TestRule17AZonedStampFoldsOnItsUTCDayAndAnUnreadableStampIsCounted(t *testi
 	wantExit(t, r, 1)
 	wantContains(t, read(t, filepath.Join(out2, "2026-09-12.tsv")), "m\tschema\t3\t")
 	wantContains(t, lineWith(r.stdout, "TOKENS SOURCE"), "unparsed=-")
-	wantContains(t, lineWith(r.stderr, "TOKENS FAIL"), "unparsed=1")
+	wantContains(t, lineWith(r.stderr, "TOKENS FAILED"), "unparsed=1")
 	wantContains(t, r.stderr, "TOKENS UNPARSED label=opencode:b")
 }
 
@@ -1501,7 +1501,7 @@ func TestRule20ReportRefusesAndSupersedes(t *testing.T) {
 		r := invoke(t, "report", "--who", "emma", "--day", "2026-09-11", "--repos", repos, "--claude", "g="+bad, "--note", note)
 		wantExit(t, r, 1)
 		assert.Equal(t, "", r.stdout, "a failed report wrote to stdout: %q", r.stdout)
-		wantContains(t, r.stderr, "REPORT FAIL")
+		wantContains(t, r.stderr, "REPORT FAILED")
 		wantContains(t, r.stderr, "TOKENS UNREADABLE")
 		assert.Equal(t, "what was there before\n", read(t, note), "a failed report replaced the --note file")
 		{
@@ -1720,7 +1720,7 @@ func TestRule20ABusNoteWithSixAndSevenFieldLinesForOneKeyIsMixed(t *testing.T) {
 	wantExit(t, r, 1)
 	wantContains(t, r.stderr, "TOKENS MIXED")
 	wantContains(t, r.stderr, "2026-09-11")
-	wantContains(t, lineWith(r.stderr, "TOKENS FAIL"), "mixed=1")
+	wantContains(t, lineWith(r.stderr, "TOKENS FAILED"), "mixed=1")
 	// A row fed by two bases is not written, and the one remedy line is about the bases.
 	if _, err := os.Stat(filepath.Join(out, "2026-09-11.tsv")); err == nil {
 		{
@@ -1952,12 +1952,12 @@ func TestAFailedDayWriteIsInsideTheUnreadableCap(t *testing.T) {
 		assert.Equal(t, 1, n, "%d TOKENS UNREADABLE lines under --max 1, want 1:\n%s", n, r.stderr)
 	}
 	wantContains(t, r.stdout+r.stderr, "TOKENS MORE kind=unreadable shown=1 total=2")
-	wantContains(t, lineWith(r.stderr, "TOKENS FAIL"), "unreadable=2")
+	wantContains(t, lineWith(r.stderr, "TOKENS FAILED"), "unreadable=2")
 }
 
 // TestReportKeepsTheLinesForEveryKeyThatIsNotMixed pins rule 20's own words: a report
 // whose sources give one (model, repo) two bases prints TOKENS MIXED, "no line for that
-// key", REPORT FAIL, exit 1. The verb threw away the whole body instead, so one mixed key
+// key", REPORT FAILED, exit 1. The verb threw away the whole body instead, so one mixed key
 // hid every other key the day had.
 func TestReportKeepsTheLinesForEveryKeyThatIsNotMixed(t *testing.T) {
 	t.Parallel()
@@ -1977,11 +1977,11 @@ func TestReportKeepsTheLinesForEveryKeyThatIsNotMixed(t *testing.T) {
 		"--provider", "google:emma="+g, "--provider", "xai:johnny="+x)
 	wantExit(t, r, 1)
 	wantContains(t, r.stderr, "TOKENS MIXED")
-	wantContains(t, r.stderr, "REPORT FAIL")
+	wantContains(t, r.stderr, "REPORT FAILED")
 	// The key that is not mixed keeps its line; the mixed key has none.
 	wantContains(t, r.stdout, "clean-model")
 	wantNotContains(t, r.stdout, "mixed-model")
-	// A FAIL still writes nothing: the note file is byte-unchanged.
+	// A FAILED report still writes nothing: the note file is byte-unchanged.
 	assert.Equal(t, "what was there before\n", read(t, note), "a failed report replaced the --note file")
 }
 

@@ -262,3 +262,121 @@ func TestTheOutputGrammarAdmitsTheLinesTheToolPrints(t *testing.T) {
 	require.True(t, sawPartial, "no TOKENS PARTIAL line was checked against the grammar")
 	require.False(t, n < 10, "%d printed lines checked against the grammar; the fixtures printed nothing and this test would have passed by checking nothing", n)
 }
+
+// TestStatusGrammar pins the allowed status words for every nova-tokens event class.
+// The second token of a status-bearing line is one of OK, FAILED or REFUSED; every
+// verb exercised here prints at least one such line and no other status word.
+func TestStatusGrammar(t *testing.T) {
+	t.Parallel()
+
+	allowed := map[string]bool{"OK": true, "FAILED": true, "REFUSED": true}
+	classes := map[string]bool{
+		"TOKENS":   true,
+		"SOURCES":  true,
+		"SUM":      true,
+		"CHECK":    true,
+		"REPORT":   true,
+		"LEDGER":   true,
+		"SESSION":  true,
+		"PROFILES": true,
+	}
+
+	// fixture writes one valid day file and returns the output directory.
+	fixture := func(t *testing.T) string {
+		t.Helper()
+		dir := t.TempDir()
+		out := mkdir(t, filepath.Join(dir, "out"))
+		tr := mkdir(t, filepath.Join(dir, "transcripts"))
+		write(t, filepath.Join(tr, "a.jsonl"), msg("a1", "2026-09-11T10:00:00Z", "fable",
+			map[string]int{"input_tokens": 100, "output_tokens": 40}, "/x/schema/a.go")+"\n")
+		repos := reposFile(t, dir)
+		r := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "bench="+tr)
+		require.Equal(t, 0, r.exit, "fixture fold failed\nstdout:\n%s\nstderr:\n%s", r.stdout, r.stderr)
+		return out
+	}
+
+	cases := []struct {
+		name string
+		prep func(t *testing.T) result
+		want []string
+	}{
+		{
+			name: "fold prints TOKENS OK",
+			prep: func(t *testing.T) result {
+				dir := t.TempDir()
+				out := mkdir(t, filepath.Join(dir, "out"))
+				tr := mkdir(t, filepath.Join(dir, "transcripts"))
+				write(t, filepath.Join(tr, "a.jsonl"), msg("a1", "2026-09-11T10:00:00Z", "fable",
+					map[string]int{"input_tokens": 100, "output_tokens": 40}, "/x/schema/a.go")+"\n")
+				return invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "bench="+tr)
+			},
+			want: []string{"OK"},
+		},
+		{
+			name: "check prints CHECK FAILED on stale directory",
+			prep: func(t *testing.T) result {
+				out := fixture(t)
+				return invoke(t, "check", "--out", out, "--through", "2026-09-20")
+			},
+			want: []string{"FAILED"},
+		},
+		{
+			name: "sources with no --repos prints SOURCES REFUSED",
+			prep: func(t *testing.T) result { return invoke(t, "sources") },
+			want: []string{"REFUSED"},
+		},
+		{
+			name: "ledger prints LEDGER OK after indexing a day",
+			prep: func(t *testing.T) result {
+				out := fixture(t)
+				dsn, _ := ledgerRedis(t)
+				return invoke(t, "ledger", "--out", out, "--day", "2026-09-11", "--redis", dsn)
+			},
+			want: []string{"OK"},
+		},
+		{
+			name: "ledger prints LEDGER FAILED for a missing day",
+			prep: func(t *testing.T) result {
+				dir := t.TempDir()
+				out := mkdir(t, filepath.Join(dir, "out"))
+				dsn, _ := ledgerRedis(t)
+				return invoke(t, "ledger", "--out", out, "--day", "2026-09-11", "--redis", dsn)
+			},
+			want: []string{"FAILED"},
+		},
+		{
+			name: "report --redis prints REPORT FAILED when no day is indexed",
+			prep: func(t *testing.T) result {
+				dsn, _ := ledgerRedis(t)
+				return invoke(t, "report", "--redis", dsn, "--month", "2026-09")
+			},
+			want: []string{"FAILED"},
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := tc.prep(t)
+			var seen []string
+			for _, s := range []string{r.stdout, r.stderr} {
+				for _, line := range strings.Split(s, "\n") {
+					f := strings.Fields(line)
+					if len(f) < 2 || !classes[f[0]] {
+						continue
+					}
+					status := strings.TrimSuffix(f[1], ":")
+					if !allowed[status] {
+						continue
+					}
+					seen = append(seen, status)
+				}
+			}
+			require.NotEmpty(t, seen, "no status-bearing lines were printed\nstdout:\n%s\nstderr:\n%s", r.stdout, r.stderr)
+			for _, w := range tc.want {
+				assert.Contains(t, seen, w, "expected status %q among %v", w, seen)
+			}
+		})
+	}
+}
