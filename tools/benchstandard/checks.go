@@ -490,7 +490,7 @@ func (w *witness) checkHarnessCanary(hbin string) {
 		w.drift("harness canary: cannot make a dir under %s/nova-bench: %v", w.home, err)
 		return
 	}
-	defer w.h.RemoveUnder(filepath.Join(w.home, "nova-bench"), cdir)
+	defer func() { _ = w.h.RemoveUnder(filepath.Join(w.home, "nova-bench"), cdir) }() // ignored: the canary's own scratch dir, best-effort cleanup after the check
 	if err := w.h.MkdirAll(filepath.Join(cdir, "home"), 0o755); err != nil {
 		w.drift("harness canary: cannot make the wall's HOME under %s: %v", cdir, err)
 		return
@@ -510,7 +510,7 @@ func (w *witness) checkSandboxNetwork() {
 		w.drift("sandbox-network: cannot make probe dir under %s/nova-bench: %v", w.home, err)
 		return
 	}
-	defer w.h.RemoveUnder(filepath.Join(w.home, "nova-bench"), dir)
+	defer func() { _ = w.h.RemoveUnder(filepath.Join(w.home, "nova-bench"), dir) }() // ignored: the probe's own scratch dir, best-effort cleanup after the check
 	if err := w.h.MkdirAll(filepath.Join(dir, "home"), 0o755); err != nil {
 		w.drift("sandbox-network: cannot make the wall's HOME under %s: %v", dir, err)
 		return
