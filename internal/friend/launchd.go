@@ -13,6 +13,7 @@ import (
 // never started by the model (SPEC-FRIEND.md, the daemon).
 type Agent struct {
 	Friend, Harness, Dir, Session string
+	Role                          string // "friend" (the default) or "coordinator"
 	StateDir                      string // the daemon's state files, when not the default under Home
 	Coordinator                   string // the bus sender that may automatically wake this session
 	Width                         int
@@ -23,7 +24,12 @@ type Agent struct {
 }
 
 // Label is the agent's launchd label.
-func (a Agent) Label() string { return "com.nova.friend-" + a.Friend }
+func (a Agent) Label() string {
+	if a.Role == "coordinator" {
+		return "com.nova.friend-coordinator-" + a.Friend
+	}
+	return "com.nova.friend-" + a.Friend
+}
 
 // PlistPath is where the agent's plist lives under home.
 func (a Agent) PlistPath() string {
@@ -32,6 +38,10 @@ func (a Agent) PlistPath() string {
 
 // Args is the daemon's command line.
 func (a Agent) Args() []string {
+	if a.Role == "coordinator" {
+		args := []string{a.Binary, "coordinate", "--as", a.Friend, "--redis", a.Redis, "--server", a.Server, "--state-dir", a.StateDir}
+		return args
+	}
 	args := []string{a.Binary, "run", "--as", a.Friend, "--harness", a.Harness, "--dir", a.Dir, "--redis", a.Redis, "--server", a.Server, "--width", fmt.Sprint(a.Width)}
 	if a.Session != "" {
 		args = append(args, "--session", a.Session)
