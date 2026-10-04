@@ -148,6 +148,41 @@ func TestAFileStoreReadsOnlyItsOwnShape(t *testing.T) {
 	})
 }
 
+// OpenFile holds only rows the tool itself could add: a row name the kind's
+// NamePattern refuses (ValidateName, kind.go), refused at add, is refused at
+// open too, so a hand-edited file names no row the kind refuses to add
+// (security#69 finding 2); the rows a migration makes (the fleet and sprint
+// singletons, the tiers), whose names match the pattern, still open.
+func TestOpenFileRefusesARowNameTheKindRefusesToAdd(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	path := migratedFile(t)
+	f, err := OpenFile(path)
+	require.NoError(t, err)
+	_, err = f.Insert(ctx, KindFriend, Row{Name: "ada", Fields: map[string]string{"slots": "8", "tiers": "flash", "width": "8"}}, "a1")
+	require.NoError(t, err)
+	ok, err := OpenFile(path)
+	require.NoError(t, err, "the singletons and tiers a migration makes, and a valid row name, still open")
+	_, found, err := ok.Get(ctx, KindFriend, "ada")
+	require.NoError(t, err)
+	assert.True(t, found, "a valid row name still opens")
+	// a hand edit renames the row to one the kind refuses to add
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var st fileState
+	require.NoError(t, json.Unmarshal(raw, &st))
+	renamed := st.Rows[KindFriend]["ada"]
+	renamed.Name = "../escape"
+	st.Rows[KindFriend]["../escape"] = renamed
+	delete(st.Rows[KindFriend], "ada")
+	edited, err := json.MarshalIndent(st, "", "  ")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, edited, 0o600))
+	_, err = OpenFile(path)
+	assert.ErrorContains(t, err, "../escape")
+	assert.ErrorContains(t, err, "which is not a row name")
+}
+
 // The final newline counts toward the read bound. A write crossing it
 // refuses before replacing the previous readable store.
 func TestAFileStoreWriteCannotOutgrowItsReadBound(t *testing.T) {
