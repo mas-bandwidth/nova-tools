@@ -44,6 +44,10 @@ const (
 // WaitPongEvery is how often wait-pong reads the log.
 const WaitPongEvery = time.Second
 
+// OpenRetryMax caps the wait between two tries of the daemon to open a store
+// that does not answer.
+const OpenRetryMax = 30 * time.Second
+
 // world is what the tool reaches outside itself; main passes the real one,
 // a test its own over internal/bus2's Fake, a fake harness and its own
 // clock, so no test opens a socket or reads the real time.
@@ -317,12 +321,34 @@ func answer(err error) *tool.Out {
 	return tool.Refuse("the store did not answer: " + err.Error())
 }
 
-func (w world) run(c *tool.Call) *tool.Out {
-	b, closeStore, refused := w.bus(c)
-	if refused != nil {
-		return refused
+// openUntil opens the store, trying again after a wait that doubles from a
+// second up to OpenRetryMax, until it answers or ctx ends (nil then): the loop
+// tolerates a store that goes down, so one that is down at the start is no
+// reason to exit; under launchd's KeepAlive that exit was a crash loop every
+// five seconds. Each wait is said on the record.
+func (w world) openUntil(ctx context.Context, addr string, record func(string)) (bus2.Store, func()) {
+	wait := time.Second
+	for {
+		open, cancel := context.WithTimeout(ctx, redisconn.OpenTimeout)
+		st, closeStore, err := w.open(open, addr)
+		cancel()
+		if err == nil {
+			return st, closeStore
+		}
+		record(w.now().UTC().Format(time.RFC3339) + " store: " + err.Error() + "; opening again in " + wait.String())
+		w.sleep(ctx, wait)
+		if ctx.Err() != nil {
+			return nil, nil
+		}
+		wait = min(2*wait, OpenRetryMax)
 	}
-	defer closeStore()
+}
+
+func (w world) run(c *tool.Call) *tool.Out {
+	addr := c.Want("redis", "the bus store's Redis address, host:port (or "+RedisEnv+")")
+	if o := c.Refused(); o != nil {
+		return o
+	}
 	name, dir, server := c.Str("as"), c.Str("dir"), c.Str("server")
 	deliver, err := friend.NewDeliverer(c.Str("harness"), dir, c.Str("session"), w.exec, c.Stdout)
 	if err != nil {
@@ -330,16 +356,22 @@ func (w world) run(c *tool.Call) *tool.Out {
 		o.Render(c.Stderr, c.Bool("json"))
 		return tool.Exit(2)
 	}
+	record := func(line string) {
+		fmt.Fprintln(c.Stdout, "RUN "+line)
+		_ = friend.Record(dir, line) // ignored: the line is on stdout (launchd's log) whatever the volume does
+	}
 	ctx, stop := w.signals(context.Background())
 	defer stop()
+	st, closeStore := w.openUntil(ctx, addr, record)
+	if st == nil {
+		return tool.Exit(0) // a signal while the store was down
+	}
+	defer closeStore()
 	d := &friend.Daemon{
 		Friend: name, Harness: c.Str("harness"), Dir: dir, Width: c.Int("width"),
-		Store: b.Store, Deliver: deliver, Now: w.now, Pause: w.sleep,
-		Beat: func(ctx context.Context) error { return w.beat(ctx, server, name) },
-		Record: func(line string) {
-			fmt.Fprintln(c.Stdout, "RUN "+line)
-			_ = friend.Record(dir, line) // ignored: the line is on stdout (launchd's log) whatever the volume does
-		},
+		Store: st, Deliver: deliver, Now: w.now, Pause: w.sleep,
+		Beat:   func(ctx context.Context) error { return w.beat(ctx, server, name) },
+		Record: record,
 		Pong:   func() (friend.Pong, bool, error) { return friend.ReadPong(dir) },
 		Status: func(s friend.Status) error { return friend.WriteStatus(dir, s) },
 		PongCommand: func(nonce string) string {

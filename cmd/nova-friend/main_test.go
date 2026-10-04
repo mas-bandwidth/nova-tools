@@ -225,10 +225,62 @@ func TestRunStopsOnASignalAndRefusesAStoreThatDoesNotAnswer(t *testing.T) {
 	assert.Equal(t, 3, beats)
 	assert.GreaterOrEqual(t, s.Beats, 1, "the count in the file lags up to StatusEvery")
 
-	r.store.Fail = io.ErrUnexpectedEOF
-	code = run([]string{"run", "--as", "bob", "--harness", "claude", "--dir", dir}, strings.NewReader(""), &out, &errb, w)
-	assert.Equal(t, 2, code)
-	assert.Contains(t, errb.String(), "RUN REFUSED")
+}
+
+// A store that is down when the daemon starts is no reason to exit: under launchd's
+// KeepAlive an exit 2 was a crash loop every five seconds (the finding of
+// 2026-10-04). The store is opened until it answers, waiting longer each time up
+// to OpenRetryMax, each wait said on stdout (launchd's log); a signal while it
+// is down ends the daemon cleanly.
+func TestRunWaitsForAStoreThatIsDownAtTheStart(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "ada", "bob")
+	w := r.world()
+	var cancel context.CancelFunc
+	w.signals = func(ctx context.Context) (context.Context, context.CancelFunc) {
+		ctx, cancel = context.WithCancel(ctx)
+		return ctx, cancel
+	}
+	opens, beats := 0, 0
+	w.open = func(context.Context, string) (bus2.Store, func(), error) {
+		opens++
+		if opens < 4 {
+			return nil, nil, io.ErrUnexpectedEOF
+		}
+		return r.store, func() {}, nil
+	}
+	var slept []time.Duration
+	w.sleep = func(_ context.Context, d time.Duration) { slept = append(slept, d) }
+	w.beat = func(context.Context, string, string) error {
+		beats++
+		if beats == 2 {
+			cancel()
+		}
+		return nil
+	}
+	var out, errb strings.Builder
+	code := run([]string{"run", "--as", "bob", "--harness", "claude", "--dir", t.TempDir()}, strings.NewReader(""), &out, &errb, w)
+	assert.Equal(t, 0, code, errb.String())
+	require.GreaterOrEqual(t, len(slept), 3)
+	assert.Equal(t, []time.Duration{time.Second, 2 * time.Second, 4 * time.Second}, slept[:3], "longer each time; the rest are the loop's own pauses")
+	assert.Equal(t, 4, opens)
+	assert.Equal(t, 2, beats, "the loop ran once the store answered")
+	assert.Contains(t, out.String(), "RUN 2026-10-04T03:00:01Z store: unexpected EOF; opening again in 1s")
+	assert.Contains(t, out.String(), "opening again in 4s")
+
+	// down for good: the signal ends it, exit 0, no crash loop
+	w.open = func(context.Context, string) (bus2.Store, func(), error) { return nil, nil, io.ErrUnexpectedEOF }
+	w.sleep = func(_ context.Context, d time.Duration) {
+		slept = append(slept, d)
+		if d == OpenRetryMax {
+			cancel()
+		}
+	}
+	out.Reset()
+	code = run([]string{"run", "--as", "bob", "--harness", "claude", "--dir", t.TempDir()}, strings.NewReader(""), &out, &errb, w)
+	assert.Equal(t, 0, code)
+	assert.Equal(t, OpenRetryMax, slept[len(slept)-1], "the wait is capped")
+	assert.Contains(t, out.String(), "opening again in "+OpenRetryMax.String())
 }
 
 // wait-pong reads the log from --timeout before the wait began, never from
