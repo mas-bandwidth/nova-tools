@@ -26,7 +26,10 @@ that or when it has never beaten; the tick applies each change
 (a member down has its unfinished work cards dealt to the members up; a
 member up levels the ready queues). fleet down holds a member down whatever
 it beats (status held); fleet up releases the hold, adding a member the
-sprint does not know. Each says where the cards went on its MOVED line: down
+sprint does not know; fleet up <m> --width 0 drains a member instead: no new
+deal reaches it, its untaken ready cards are levelled away and its working
+cards finish where they are (fleet down deals them again elsewhere); --width
+<n> ends the drain. Each says where the cards went on its MOVED line: down
 "moved=N to <member>(n),...; stayed=K withdrawn: <ids>" (a card no member up
 has room for is withdrawn and dealt again where there is room), up
 "moved=N to <member>(n) from <member>(n),..." (the level). The load cell is the machine's CPU busy percent of all
@@ -69,8 +72,8 @@ reader holds a read (asked, reading, ok or broken).`) + "\n"
 // counts as a beat of the member, and brings it up at once when it is alive, and sets its
 // width when width is above zero; down holds it down; level evens the ready
 // queues.
-func (a *app) fleetStep(st *store.Store, op, member, who string, width int) store.Step {
-	r := sprint.FleetReq{Op: op, Member: member, Who: who, Width: width}
+func (a *app) fleetStep(st *store.Store, op, member, who string, width int, drain bool) store.Step {
+	r := sprint.FleetReq{Op: op, Member: member, Who: who, Width: width, Drain: drain}
 	switch op {
 	case "up":
 		r.Op = "release"

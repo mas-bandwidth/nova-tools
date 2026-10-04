@@ -204,7 +204,7 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	var cards []queueCard
-	width := 0 // a fleet member's width, from its row (0: not a member, or none read)
+	width := -1 // a fleet member's width, from its row (-1: not a member, or none read; 0: it drains)
 	add := func(table string, cs []*sprint.Card) {
 		for _, x := range cs {
 			cards = append(cards, queueCard{ID: x.ID, Table: table, Row: x.Row, Col: x.Col, Primary: x.F("primary"), Stream: x.F("stream"),
@@ -281,7 +281,7 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 			cards = []queueCard{}
 		}
 		out := map[string]any{"as": *as, "stream": *stream, "epoch": epoch, "cards": cards}
-		if width > 0 {
+		if width >= 0 {
 			out["width"] = width // the worker runs this many: the fleet row is the truth
 		}
 		if *as != "" {

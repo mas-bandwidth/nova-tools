@@ -796,7 +796,12 @@ and it is the coordinator's decision, receipted.
 
 - A member is a fleet machine with a width: the most work cards it runs at
   once (its child cap; `init --members m1:64` or `fleet up m1 --width 64`;
-  default 64). It holds up to DealAhead (two) times its width, ready and
+  default 64; `fleet up m1 --width 0` drains it: its width cell is `0`, so no
+  deal, redeal or level places a card on it and a take by count takes none,
+  its untaken ready cards are levelled away and its working cards finish where
+  they are, unlike `fleet down`, which deals them again elsewhere; `fleet up
+  m1 --width <n>` ends the drain, and `fleet sync` writes the inventory's width
+  back; `init --members m1:0` stays refused). It holds up to DealAhead (two) times its width, ready and
   working together: its width working and as many again ready behind them, so
   a lane that frees takes its next card at once (the owner, 2026-10-01: "The
   WHOLE POINT of nova-sprint is to feed the fleet at width and keep it working
