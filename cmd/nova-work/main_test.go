@@ -476,3 +476,14 @@ func TestABareCommandRefusesWithItsStage(t *testing.T) {
 	require.Empty(t, res.Stdout, "bare nova-work: exit %d, stdout %q, stderr %q", res.Code, res.Stdout, res.Stderr)
 	require.Equal(t, "WORK REFUSED: no verb given; the verbs are import, verify, version; run: nova-work help\n  NOTE "+preAlpha+"\n", res.Stderr, "bare nova-work: exit %d, stdout %q, stderr %q", res.Code, res.Stdout, res.Stderr)
 }
+
+// TestVerifyDefaultMaxBytesIsAMemoryBoundNotJustAByteBound checks that the default
+// --max-bytes value is 128 MiB (not 1 GiB), and the help text states the number.
+func TestVerifyDefaultMaxBytesIsAMemoryBoundNotJustAByteBound(t *testing.T) {
+	t.Parallel()
+	res := workMain(unreachable(t)).Run("verify", "-h")
+	require.Equal(t, 0, res.Code, res.Stderr)
+	// The default is 128 MiB = 134217728 bytes
+	const wantDefault = 134217728
+	assert.Contains(t, res.Stdout, "134217728", "verify -h does not state the default max-bytes value")
+}

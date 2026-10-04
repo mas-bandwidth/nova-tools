@@ -94,7 +94,7 @@ import --org $ORG --repo $ORG/$REPO --page-size 15 --out ./tree.lisp`,
 					f.Required("tree", "the tree file to compare, as import wrote it")
 					f.String("against", "", "a second tree `file` to compare with in place of GitHub: no gh and no network")
 					f.Max()
-					f.Int("max-bytes", 1<<30, "the largest tree file read, in bytes (default 1073741824)")
+					f.Int("max-bytes", 134217728, "the largest tree file read, in bytes (default 134217728)")
 					sourceFlags(f)
 					f.Check(func(c *tool.Call) {
 						if c.Int("max-bytes") <= 0 {
