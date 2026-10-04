@@ -381,7 +381,7 @@ var Kinds = []*Kind{
 		Name:      KindSprint,
 		Table:     "sprint",
 		Singleton: true,
-		Doc:       "the one row of sprint-global facts: which friend coordinates, the two bars a flash card's decide read is routed by, the bar a landed diff's score is judged at, the attempt decision's no-result and nothing-to-do bars, the grade decision's bar, the two a failed gate's decisions are, the bar a judgment decision is applied at, and the bar a card's brief is added at",
+		Doc:       "the one row of sprint-global facts: which friend coordinates and the eleven decide_* bars, each a probability in [0,1]; nova-config sprint set -h says what each bar decides",
 		Fields: []Field{
 			{Name: "coordinator", Type: TypeRef, Ref: KindFriend, Help: "the friend who holds the coordinator role (a friend row), or empty; set it to hand over"},
 			{Name: FieldDecideBounce, Type: TypeDecimal, Default: "0.5", Help: "the decide read's bounce bar: a flash card whose first read gives p(defect) at or above it is bounced with the read's finding; a probability, at least --decide_review; 0.5 (the default); empty, with --decide_review empty, turns the decide read off"},
