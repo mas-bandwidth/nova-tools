@@ -53,13 +53,17 @@ measured performance claim.
 | Asset | Use | Treatment |
 | --- | --- | --- |
 | `../../assets/sprint/nova-sprint-track.png` | README and wide introductions | Show the whole race. Keep the runners moving along their lanes and the title visible. Do not treat it as a dashboard screenshot. |
-| `../../assets/sprint/nova-sprint-runner.png` | Compact identity panel, mascot, or avatar proposal | Preserve the robot's proportions, golden star, and clear margin. Use at 64 px or larger; below that size, prefer the text name. |
+| `../../assets/sprint/nova-sprint-runner.png` | Compact identity panel, mascot, or avatar proposal | Preserve the robot's proportions, antenna, sneakers, and clear margin. Use at 64 px or larger; below that size, prefer the text name. |
 
-<img src="../../assets/sprint/nova-sprint-runner.png" width="192" alt="The blue Nova Sprint runner with a golden star antenna.">
+<img src="../../assets/sprint/nova-sprint-runner.png" width="192" alt="The white and blue Nova Sprint robot running in orange sneakers.">
 
-The illustration inherits the Nova family style: rounded robot bodies,
-expressive screen faces, painted detail, warm sunlight, plants, navy lettering,
-bright blue, and a gold four-point star. Keep the mark on a quiet light or dark
+The illustration inherits the Nova family style: white robot shell panels,
+expressive screen faces, articulated blue joints, painted detail, navy lettering,
+bright blue, and a gold four-point star. Athletic limbs and proper laced running
+sneakers connect the cast to the existing Sprint robot design. Sprint's setting
+is an athletics venue: a blue rubber track, clear lane markings, grandstands,
+race flags, and stadium lighting. Keep the emphasis on racing rather than garden
+scenery. Keep the mark on a quiet light or dark
 surface. Do not stretch it, crop off a star or shoes, recolour a robot to imply
 live status, or bake a background box into the transparent runner.
 
