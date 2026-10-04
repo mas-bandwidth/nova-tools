@@ -98,7 +98,7 @@ func readTLCTSV(path string, header []string) ([][]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // ignored: a file opened only for reading
 	r := csv.NewReader(f)
 	r.Comma = '\t'
 	r.FieldsPerRecord = len(header)
