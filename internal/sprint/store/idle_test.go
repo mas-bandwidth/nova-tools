@@ -11,7 +11,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
-// The idle alarm (docs/SPEC-SPRINT.md section 14, "The fleet is idle"; Rowan, 2026-10-04
+// The idle alarm (docs/SPEC-SPRINT.md section 14, "The fleet is idle"; the coordinator, 2026-10-04
 // at 1:30 PM: the fleet ran 4 of 68 slots with 561 cards held, and nothing said why). When
 // the fleet works under half its width for 5 minutes while cards wait, the tick traces each
 // waiting card to the root of its chain and pushes one note to the coordinator naming the

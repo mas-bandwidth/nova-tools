@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// A card replaced by its twin (docs/SPEC-SPRINT.md section 2; Rowan, 2026-10-04, at 1:30 PM:
+// A card replaced by its twin (docs/SPEC-SPRINT.md section 2; the coordinator, 2026-10-04, at 1:30 PM:
 // the fleet ran 4 of 68 slots while 311 cards sat behind 21 judgments "a primary is blocked
 // on something dropped", each raised because a card was re-cut as a twin, its old id dropped
 // and a new id added, and every card that needed the old id stalled for a person's ack). A

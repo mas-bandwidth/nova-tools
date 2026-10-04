@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// The fleet is idle (docs/SPEC-SPRINT.md section 14; Rowan, 2026-10-04, measured at 1:30
+// The fleet is idle (docs/SPEC-SPRINT.md section 14; the coordinator, 2026-10-04, measured at 1:30
 // PM: the fleet ran 4 of 68 slots with 561 cards held, 311 of them behind 21 judgments
 // "a primary is blocked on something dropped", and nothing said so; the owner at 1:36 PM:
 // "I want this sort of oh no fleet is idle, do judgement, release more cards thing -- i

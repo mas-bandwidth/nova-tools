@@ -13,7 +13,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
-// The base-gate rule (Rowan, 2026-10-04, measured at 1:28 PM: five merge streams stopped on
+// The base-gate rule (the coordinator, 2026-10-04, measured at 1:28 PM: five merge streams stopped on
 // "go build ./...: package internal/runtime/gc/scan is not in std" from the toolchain, a
 // transient failure of the lander's tree gate on base dev; the same build passed at 1:44 PM
 // and the streams sat 16 minutes until a person resumed them). A base that fails its tree

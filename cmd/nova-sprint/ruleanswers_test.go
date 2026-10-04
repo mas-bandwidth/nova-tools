@@ -25,6 +25,7 @@ func TestRulesPrintsTheAnswersAndTickAppliesThem(t *testing.T) {
 	assert.Equal(t, before, ta.applies(), "rules writes nothing")
 	assert.Regexp(t, `RULE \S+ type=work\\x20came\\x20back\\x20failed subject=s1-1 card=s1-1 rule=failed act=rework `, out)
 	assert.Contains(t, out, "RULES OK judgments=1 acting=1 left=0 off=0 by=failed_rework=1")
+	assert.Contains(t, out, "IDLE fleet=")
 	ta.ok("tick")
 	require.Contains(t, ta.ok("inbox"), "work came back failed", "a tick by hand answers by rule only when asked")
 	out = ta.ok("tick --answer-rules")

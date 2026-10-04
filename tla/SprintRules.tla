@@ -1,5 +1,5 @@
 ----------------------------- MODULE SprintRules -----------------------------
-\* The machine feeds itself (Rowan, for the owner, 2026-10-04 at 1:36 PM: "I want this
+\* The machine feeds itself (the coordinator, for the owner, 2026-10-04 at 1:36 PM: "I want this
 \* sort of oh no fleet is idle, do judgement, release more cards thing -- i want this
 \* more automated."). Five small state machines of nova-sprint, each its own Part, each
 \* checked alone; docs/SPEC-SPRINT.md section 2 ("A card replaced by its twin") and

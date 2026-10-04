@@ -773,7 +773,7 @@ bound" on a card past the count says the same and offers the same. `answer` appl
 only a verb the judgment prints, so it cannot rework such a card
 (`TestTheAnswerPathCannotReworkACardAtTheBriefBound`), and the verb refuses it besides.
 
-**A card replaced by its twin** (Rowan, 2026-10-04, measured at 1:30 PM: the fleet ran 4
+**A card replaced by its twin** (the coordinator, 2026-10-04, measured at 1:30 PM: the fleet ran 4
 of 68 slots while 311 cards sat behind 21 judgments "a primary is blocked on something
 dropped", up to 1h50m old; each was raised because a card had been re-cut as a twin, its
 old id dropped and a new id added, `lint-pkg-cairn-tb` for `lint-pkg-cairn-t`, and every
@@ -2938,7 +2938,7 @@ the machine is STOPPED by the clear.
 
 ### The fleet is idle
 
-Rowan, 2026-10-04, measured at 1:30 PM: the fleet ran 4 of 68 slots with 561 cards held, 311
+The coordinator, 2026-10-04, measured at 1:30 PM: the fleet ran 4 of 68 slots with 561 cards held, 311
 of them behind 21 judgments "a primary is blocked on something dropped", and nothing said so
 until a person looked. The tick's idle alarm (`sprint.TickIdle`, internal/sprint/idle.go; run
 `--idle-alarm`, on by default; a tick by hand only with `--idle-alarm`) is its last part but

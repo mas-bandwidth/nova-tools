@@ -10,8 +10,8 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
-// Twins inherit (docs/SPEC-SPRINT.md section 2, "A card replaced by its twin"; Rowan,
-// 2026-10-04: 311 cards sat behind 21 judgments "a primary is blocked on something
+// Twins inherit (docs/SPEC-SPRINT.md section 2, "A card replaced by its twin"; the
+// coordinator, 2026-10-04: 311 cards sat behind 21 judgments "a primary is blocked on something
 // dropped" after cards were re-cut as twins, each a drop of the old id and an add of a new
 // one). add --replaces <old> is that pair as one step: the new card takes over every edge
 // where a waiting card needs the old id, the old id is dropped "replaced by <new>", and no
