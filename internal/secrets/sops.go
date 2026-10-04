@@ -104,7 +104,7 @@ func DecryptFile(sopsPath, keyPath, filePath string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temporary isolation directory: %w", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }() // ignored: the temporary directory may already be gone
 
 	cmd, cancel := subproc.Command(context.Background(), subproc.Tool, sopsPath, "-d", filePath)
 	defer cancel()
