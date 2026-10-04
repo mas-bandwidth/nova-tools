@@ -25,6 +25,7 @@ import (
 	"io/fs"
 	"maps"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -145,12 +146,30 @@ func refuse(stderr io.Writer, where, what string) int {
 // verbs is every first word run dispatches, for the unknown-verb answer.
 var verbs = []string{"init", "status", "check", "lockdown", "quarantine", "lift", "path", "version", "help"}
 
-func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, time.Now().UTC()))
+// invocation is the process state one run reads. main passes the process's
+// own; a test passes its own, so tests run in parallel (docs/STANDARD.md
+// section 8). stamp is the release -ldflags var, not an environment variable.
+type invocation struct {
+	getenv func(string) string
+	wd     string
+	stamp  string
 }
 
-// run is the whole tool, with its output and clock passed in so the tests can drive it.
-func run(args []string, stdout, stderr io.Writer, now time.Time) int {
+func main() {
+	wd, err := os.Getwd()
+	if err != nil {
+		wd = ""
+	}
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, time.Now().UTC(), invocation{
+		getenv: os.Getenv,
+		wd:     wd,
+		stamp:  version,
+	}))
+}
+
+// run is the whole tool, with its output, clock and process state passed in so
+// the tests can drive it.
+func run(args []string, stdout, stderr io.Writer, now time.Time, inv invocation) int {
 	if len(args) == 0 {
 		return refuse(stderr, "", "no verb given; `status --box <path>` is the one that only looks")
 	}
@@ -160,7 +179,7 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 	case "help", "-h", "--help":
 		return cmdHelp(rest, stdout, stderr)
 	case "version", "--version":
-		return cmdVersion(rest, stdout, stderr)
+		return cmdVersionWith(rest, stdout, stderr, inv.stamp)
 	}
 
 	// lift is dispatched before any flag is parsed, because its hard half must not depend
@@ -168,22 +187,22 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// every one of those is a lever. The soft half (lift quarantine) parses its own flags
 	// afterwards and fails closed on its own.
 	if cmd == "lift" {
-		return cmdLift(rest, stdout, stderr)
+		return cmdLift(rest, stdout, stderr, inv)
 	}
 
 	switch cmd {
 	case "status":
-		return cmdStatus(rest, stdout, stderr)
+		return cmdStatus(rest, stdout, stderr, inv)
 	case "check":
-		return cmdCheck(rest, stdout, stderr)
+		return cmdCheck(rest, stdout, stderr, inv)
 	case "lockdown":
-		return cmdLockdown(rest, stdout, stderr, now)
+		return cmdLockdown(rest, stdout, stderr, now, inv)
 	case "quarantine":
-		return cmdQuarantine(rest, stdout, stderr, now)
+		return cmdQuarantine(rest, stdout, stderr, now, inv)
 	case "path":
-		return cmdPath(rest, stdout, stderr)
+		return cmdPath(rest, stdout, stderr, inv)
 	case "init":
-		return cmdInit(rest, stdout, stderr)
+		return cmdInit(rest, stdout, stderr, inv)
 	}
 	near := ""
 	if n := verbflag.Nearest(cmd, verbs); n != "" {
@@ -201,13 +220,13 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 // and no verb adds a second complaint on top. parsed=true with boxOK=false means the
 // --box refusal is already printed and the verb goes on to judge its own arguments
 // before returning 2, so that one run names every problem it can find.
-func parseBox(name string, args []string, stderr io.Writer) (box string, positional []string, boxOK, parsed bool) {
-	return parseBoxWith(name, args, stderr, nil)
+func parseBox(name string, args []string, stderr io.Writer, getenv func(string) string) (box string, positional []string, boxOK, parsed bool) {
+	return parseBoxWith(name, args, stderr, getenv, nil)
 }
 
 // parseWrite is parseBox for a verb that writes the box: it takes --dry-run too.
-func parseWrite(name string, args []string, stderr io.Writer) (box string, positional []string, boxOK, parsed, dry bool) {
-	box, positional, boxOK, parsed = parseBoxWith(name, args, stderr, func(fs *flag.FlagSet) {
+func parseWrite(name string, args []string, stderr io.Writer, getenv func(string) string) (box string, positional []string, boxOK, parsed, dry bool) {
+	box, positional, boxOK, parsed = parseBoxWith(name, args, stderr, getenv, func(fs *flag.FlagSet) {
 		fs.BoolVar(&dry, "dry-run", false, "make every check the write would, print what it would do, write nothing")
 	})
 	return box, positional, boxOK, parsed, dry
@@ -216,7 +235,7 @@ func parseWrite(name string, args []string, stderr io.Writer) (box string, posit
 // parseBoxWith is parseBox with a hook for a verb that has a flag of its own, so that a
 // second flag never means a second parser, and so never a second place where package
 // flag could be handed a stream to print an argument through.
-func parseBoxWith(name string, args []string, stderr io.Writer, extra func(*flag.FlagSet)) (box string, positional []string, boxOK, parsed bool) {
+func parseBoxWith(name string, args []string, stderr io.Writer, getenv func(string) string, extra func(*flag.FlagSet)) (box string, positional []string, boxOK, parsed bool) {
 	var flagArgs, postArgs []string
 	hasDashDash := false
 	for i, a := range args {
@@ -279,11 +298,43 @@ func parseBoxWith(name string, args []string, stderr io.Writer, extra func(*flag
 		refuse(stderr, " "+name, fmt.Sprintf("--box %q begins with \"-\", the shape of a flag, not a path; name a file that begins with - as ./-name", *boxFlag))
 		return "", nil, false, false
 	}
-	if *boxFlag == "" {
+	// The path is the flag. NOVA_FUSE_BOX is read and never used: a missing
+	// flag stays a refusal, and a flag that was given is not replaced
+	// (docs/STANDARD.md section 8).
+	chosen := boxPath(*boxFlag, getenv)
+	if chosen == "" {
 		fmt.Fprintf(stderr, "nova-fuse %s REFUSED: --box is required; refusing to guess; run: nova-fuse help\n%s", name, hintFor("box"))
 		return "", positional, false, true
 	}
-	return *boxFlag, positional, true, true
+	return chosen, positional, true, true
+}
+
+// boxPath is the box this invocation uses. It is the --box flag. A set
+// NOVA_FUSE_BOX does not fill a missing flag and does not replace one that
+// was given (docs/STANDARD.md section 8).
+func boxPath(flagValue string, getenv func(string) string) string {
+	if flagValue != "" {
+		return flagValue
+	}
+	if getenv != nil && getenv("NOVA_FUSE_BOX") != "" {
+		return ""
+	}
+	return ""
+}
+
+// boxFile is the path fuse opens for a --box value. A relative value is opened
+// against wd. When wd is the process working directory, the caller's path is
+// kept so every printed line stays the words that were typed (docs/STANDARD.md
+// section 8).
+func boxFile(wd, box string) string {
+	if wd == "" || box == "" || filepath.IsAbs(box) {
+		return box
+	}
+	cwd, err := os.Getwd()
+	if err == nil && wd == cwd {
+		return box
+	}
+	return filepath.Join(wd, box)
 }
 
 // onceValue is a flag's value that refuses a second Set, and names the flag in
@@ -328,7 +379,7 @@ func remedy(err error, box string) string {
 // out loud, verified, never silently. Lockdown is hard: the refusal below is answered
 // before any flag is parsed, takes no argument into account, and names the only remedy
 // there is, a conversation.
-func cmdLift(rest []string, stdout, stderr io.Writer) int {
+func cmdLift(rest []string, stdout, stderr io.Writer, inv invocation) int {
 	if len(rest) == 0 {
 		return refuse(stderr, " lift", "takes a power first: `lift quarantine --box <path> <surface>` -- and `lift lockdown` is refused by design")
 	}
@@ -344,7 +395,7 @@ func cmdLift(rest []string, stdout, stderr io.Writer) int {
 			"Nothing this tool is told changes that. Stop, and go talk with them now.\n")
 		return 2
 	case "quarantine":
-		box, positional, ok, parsed, dry := parseWrite("lift quarantine", rest[1:], stderr)
+		box, positional, ok, parsed, dry := parseWrite("lift quarantine", rest[1:], stderr, inv.getenv)
 		if !parsed {
 			return 2
 		}
@@ -357,7 +408,7 @@ func cmdLift(rest []string, stdout, stderr io.Writer) int {
 		if !ok {
 			return 2
 		}
-		return liftQuarantine(box, positional[0], dry, stdout, stderr)
+		return liftQuarantine(box, positional[0], dry, stdout, stderr, inv.wd)
 	}
 	return refuse(stderr, " lift", fmt.Sprintf("does not know %q -- lift takes a power first: `lift quarantine --box <path> <surface>` (`lift lockdown` is refused by design)", rest[0]))
 }
@@ -366,8 +417,8 @@ func cmdLift(rest []string, stdout, stderr io.Writer) int {
 // discipline as blowing one: the write is verified by re-reading the box, and the
 // rescind is announced, because a quarantine that vanishes silently is a decision nobody
 // can audit. A dry run makes every check and writes nothing.
-func liftQuarantine(box, surface string, dry bool, stdout, stderr io.Writer) int {
-	b, readErr := fuse.ReadBox(box)
+func liftQuarantine(box, surface string, dry bool, stdout, stderr io.Writer, wd string) int {
+	b, readErr := fuse.ReadBox(boxFile(wd, box))
 	if readErr != nil {
 		// Refuse, the mirror of quarantine's refusal to narrow: while the box is
 		// unreadable every fuse is treated as blown, and nothing provable can be lifted
@@ -395,7 +446,7 @@ func liftQuarantine(box, surface string, dry bool, stdout, stderr io.Writer) int
 
 	// A dry run is this run's own plan: the same write, checked and not made, so it
 	// refuses exactly where the write would.
-	if err := writeOrPlan(dry, box, b); err != nil {
+	if err := writeOrPlan(dry, wd, box, b); err != nil {
 		fmt.Fprintf(stderr, "LIFT FAILED quarantine=%s: could not write box: %s (the box was not replaced, so the quarantine still stands)\n",
 			oneline.Field(fuse.Surface(surface)), oneline.Err(err))
 		return 1
@@ -408,7 +459,7 @@ func liftQuarantine(box, surface string, dry bool, stdout, stderr io.Writer) int
 	}
 
 	// Re-read. The exit code of a remedy is not evidence the remedy worked.
-	after, err := fuse.ReadBox(box)
+	after, err := fuse.ReadBox(boxFile(wd, box))
 	if err != nil {
 		fmt.Fprintf(stderr, "LIFT FAILED quarantine=%s: written but unverifiable: %s (do not trust it; treat the surface as still quarantined and tell the person you work with)\n",
 			oneline.Field(fuse.Surface(surface)), oneline.Err(err))
@@ -437,9 +488,9 @@ func liftQuarantine(box, surface string, dry bool, stdout, stderr io.Writer) int
 // cmdStatus reports. It exits 0 whenever the box was readable, blown or not, because
 // answering the question is the job, and 2 when it could not read, because then it did
 // not answer at all. Never gate on the exit code of status; check is the gate.
-func cmdStatus(rest []string, stdout, stderr io.Writer) int {
+func cmdStatus(rest []string, stdout, stderr io.Writer, inv invocation) int {
 	var max int
-	box, positional, ok, parsed := parseBoxWith("status", rest, stderr, func(fs *flag.FlagSet) {
+	box, positional, ok, parsed := parseBoxWith("status", rest, stderr, inv.getenv, func(fs *flag.FlagSet) {
 		fs.IntVar(&max, "max", bounded.Default, "quarantine lines to list before one MORE line stands for the rest; 0 lists all")
 	})
 	if !parsed {
@@ -458,7 +509,7 @@ func cmdStatus(rest []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	b, err := fuse.ReadBox(box)
+	b, err := fuse.ReadBox(boxFile(inv.wd, box))
 	if err != nil {
 		fmt.Fprintf(stderr, "nova-fuse status REFUSED: %s -- a box that cannot be read is treated as BLOWN, never as clear; %s; run: nova-fuse help\n", oneline.Err(err), oneline.Escape(remedy(err, box)))
 		return 2
@@ -485,8 +536,8 @@ func cmdStatus(rest []string, stdout, stderr io.Writer) int {
 
 // cmdCheck gates. Every ingestion path calls it, and only exit 0 is permission: 1 means
 // a fuse is positively blown, 2 means it could not be proven clear.
-func cmdCheck(rest []string, stdout, stderr io.Writer) int {
-	box, positional, ok, parsed := parseBox("check", rest, stderr)
+func cmdCheck(rest []string, stdout, stderr io.Writer, inv invocation) int {
+	box, positional, ok, parsed := parseBox("check", rest, stderr, inv.getenv)
 	if !parsed {
 		return 2
 	}
@@ -506,7 +557,7 @@ func cmdCheck(rest []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	b, err := fuse.ReadBox(box)
+	b, err := fuse.ReadBox(boxFile(inv.wd, box))
 	if err != nil {
 		// Fail closed, and say which fact this is: "could not be read" is not "a fuse is
 		// blown", and a claim must never outrun the measurement. Both refuse.
@@ -539,8 +590,8 @@ func cmdCheck(rest []string, stdout, stderr io.Writer) int {
 
 // cmdLockdown stops everything. It is the one command that must work even when the fuse
 // box is already broken: a fuse you cannot blow is not a fuse.
-func cmdLockdown(rest []string, stdout, stderr io.Writer, now time.Time) int {
-	box, positional, ok, parsed, dry := parseWrite("lockdown", rest, stderr)
+func cmdLockdown(rest []string, stdout, stderr io.Writer, now time.Time, inv invocation) int {
+	box, positional, ok, parsed, dry := parseWrite("lockdown", rest, stderr, inv.getenv)
 	if !parsed {
 		return 2
 	}
@@ -561,7 +612,7 @@ func cmdLockdown(rest []string, stdout, stderr io.Writer, now time.Time) int {
 		return 2
 	}
 
-	b, readErr := fuse.ReadBox(box)
+	b, readErr := fuse.ReadBox(boxFile(inv.wd, box))
 	what := "blow the lockdown in the box there"
 	switch {
 	case dry && errors.Is(readErr, fuse.ErrNoBox):
@@ -582,7 +633,7 @@ func cmdLockdown(rest []string, stdout, stderr io.Writer, now time.Time) int {
 		// again. The refusing direction is not symmetric: cmdQuarantine refuses for the
 		// mirror-image reason.
 		b = fuse.Box{Quarantine: map[string]fuse.Fuse{}}
-		dst, perr := fuse.PreserveUnreadable(box)
+		dst, perr := fuse.PreserveUnreadable(boxFile(inv.wd, box))
 		if perr != nil {
 			fmt.Fprintf(stderr, "LOCKDOWN NOTE box was unreadable (%s) and its bytes could NOT be preserved (%s); blowing lockdown anyway\n", oneline.Err(readErr), oneline.Err(perr))
 		} else {
@@ -591,7 +642,7 @@ func cmdLockdown(rest []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 
 	b.Lockdown = &fuse.Fuse{At: stamp(now), Reason: reason}
-	if err := writeOrPlan(dry, box, b); err != nil {
+	if err := writeOrPlan(dry, inv.wd, box, b); err != nil {
 		fmt.Fprintf(stderr, "LOCKDOWN FAILED could not write box: %s (the write is temp-file + rename, so a failure cannot leave it torn; stop by hand and tell the person you work with now)\n", oneline.Err(err))
 		return 1
 	}
@@ -602,7 +653,7 @@ func cmdLockdown(rest []string, stdout, stderr io.Writer, now time.Time) int {
 
 	// The exit code of a remedy is not evidence the remedy worked; the state afterwards
 	// is. Re-read, always.
-	after, err := fuse.ReadBox(box)
+	after, err := fuse.ReadBox(boxFile(inv.wd, box))
 	if err != nil || after.Lockdown == nil {
 		fmt.Fprintf(stderr, "LOCKDOWN FAILED written but unverifiable (%s): do not trust it; stop by hand and tell the person you work with now\n", oneline.Err(err))
 		return 1
@@ -614,8 +665,8 @@ func cmdLockdown(rest []string, stdout, stderr io.Writer, now time.Time) int {
 }
 
 // cmdQuarantine stops ONE surface.
-func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time) int {
-	box, positional, ok, parsed, dry := parseWrite("quarantine", rest, stderr)
+func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time, inv invocation) int {
+	box, positional, ok, parsed, dry := parseWrite("quarantine", rest, stderr, inv.getenv)
 	if !parsed {
 		return 2
 	}
@@ -633,7 +684,7 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time) int {
 		return 2
 	}
 
-	b, readErr := fuse.ReadBox(box)
+	b, readErr := fuse.ReadBox(boxFile(inv.wd, box))
 	if errors.Is(readErr, fuse.ErrNoBox) {
 		// Refuse, for the same reason as an unreadable box: with no box there every
 		// surface is refused, and a new box holding only this quarantine would clear
@@ -650,7 +701,7 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time) int {
 		return 2
 	}
 	b.Quarantine[surface] = fuse.Fuse{At: stamp(now), Reason: reason}
-	if err := writeOrPlan(dry, box, b); err != nil {
+	if err := writeOrPlan(dry, inv.wd, box, b); err != nil {
 		fmt.Fprintf(stderr, "QUARANTINE FAILED %s: could not write box: %s (the box was not replaced; stop reading that surface by hand and tell the person you work with)\n", oneline.Field(surface), oneline.Err(err))
 		return 1
 	}
@@ -665,7 +716,7 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time) int {
 	// announce its name and its old stamp under the new reason, a true claim about the wrong
 	// entry. Quarantined is the right question for the gate; here the question is whether
 	// this write landed.
-	after, err := fuse.ReadBox(box)
+	after, err := fuse.ReadBox(boxFile(inv.wd, box))
 	landed, ok2 := after.Quarantine[surface]
 	if err != nil || !ok2 {
 		fmt.Fprintf(stderr, "QUARANTINE FAILED %s: written but unverifiable (%s): do not trust it; stop reading that surface by hand and tell the person you work with\n", oneline.Field(surface), oneline.Err(err))
@@ -687,8 +738,8 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time) int {
 // only a lift, init or a hand-edit makes a surface clear, that init never
 // replaces a box and that a lockdown always blows (MCFuseBox*.cfg, five reversed
 // witnesses).
-func cmdInit(rest []string, stdout, stderr io.Writer) int {
-	box, positional, ok, parsed, dry := parseWrite("init", rest, stderr)
+func cmdInit(rest []string, stdout, stderr io.Writer, inv invocation) int {
+	box, positional, ok, parsed, dry := parseWrite("init", rest, stderr, inv.getenv)
 	if !parsed {
 		return 2
 	}
@@ -709,7 +760,7 @@ func cmdInit(rest []string, stdout, stderr io.Writer) int {
 	if dry {
 		create = fuse.PlanCreateBox
 	}
-	if err := create(box); err != nil {
+	if err := create(boxFile(inv.wd, box)); err != nil {
 		if errors.Is(err, fs.ErrExist) {
 			return exists()
 		}
@@ -721,7 +772,7 @@ func cmdInit(rest []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	// Re-read. The exit code of a remedy is not evidence the remedy worked.
-	after, err := fuse.ReadBox(box)
+	after, err := fuse.ReadBox(boxFile(inv.wd, box))
 	if err != nil || after.Lockdown != nil || len(after.Quarantine) != 0 {
 		fmt.Fprintf(stderr, "INIT FAILED box=%s: made but unverifiable (%s): do not trust it; tell the person you work with\n", oneline.Field(box), oneline.Err(err))
 		return 1
@@ -732,8 +783,8 @@ func cmdInit(rest []string, stdout, stderr io.Writer) int {
 
 // cmdPath echoes the box path this invocation would use. With no default paths anywhere,
 // this verb exists to verify plumbing: what one caller passes is what another sees.
-func cmdPath(rest []string, stdout, stderr io.Writer) int {
-	box, positional, ok, parsed := parseBox("path", rest, stderr)
+func cmdPath(rest []string, stdout, stderr io.Writer, inv invocation) int {
+	box, positional, ok, parsed := parseBox("path", rest, stderr, inv.getenv)
 	if !parsed {
 		return 2
 	}
@@ -802,7 +853,8 @@ func keepableReason(raw string) string {
 
 // writeOrPlan writes the box, or for a dry run makes every check the write
 // would and writes nothing, returning the error the write would.
-func writeOrPlan(dry bool, box string, b fuse.Box) error {
+func writeOrPlan(dry bool, wd, box string, b fuse.Box) error {
+	box = boxFile(wd, box)
 	if dry {
 		return fuse.PlanWriteBox(box)
 	}

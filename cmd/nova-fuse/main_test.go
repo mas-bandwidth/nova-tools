@@ -31,8 +31,17 @@ import (
 // capture runs the tool and returns the exit code plus both streams.
 func capture(t *testing.T, args []string, now time.Time) (int, string, string) {
 	t.Helper()
+	return captureWith(t, args, now, getenvNone, "")
+}
+
+// getenvNone is a test's own environment: nothing set. The process environment
+// is not this test's (docs/STANDARD.md section 8).
+func getenvNone(string) string { return "" }
+
+func captureWith(t *testing.T, args []string, now time.Time, getenv func(string) string, wd string) (int, string, string) {
+	t.Helper()
 	var stdout, stderr bytes.Buffer
-	code := run(args, &stdout, &stderr, now)
+	code := run(args, &stdout, &stderr, now, invocation{getenv: getenv, wd: wd, stamp: version})
 	return code, stdout.String(), stderr.String()
 }
 
@@ -134,6 +143,7 @@ func TestLiftLockdownRefusesBeforeReadingAnything(t *testing.T) {
 // takes it from --box; a missing flag is a refusal, never a fallback -- and NOVA_FUSE_BOX
 // or any other environment variable is NOT honoured as a substitute.
 func TestNoDefaultBoxRefusesToGuess(t *testing.T) {
+	t.Parallel()
 	decoy := boxIn(t) // a clear, readable box the env var points at
 	mustRunnable := [][]string{
 		{"status"},
@@ -144,9 +154,14 @@ func TestNoDefaultBoxRefusesToGuess(t *testing.T) {
 		{"lift", "quarantine", "discord"},
 		{"path"},
 	}
-	t.Setenv("NOVA_FUSE_BOX", decoy)
+	getenv := func(k string) string {
+		if k == "NOVA_FUSE_BOX" {
+			return decoy
+		}
+		return ""
+	}
 	for _, args := range mustRunnable {
-		code, out, errOut := capture(t, args, nowish())
+		code, out, errOut := captureWith(t, args, nowish(), getenv, "")
 		assert.Equal(t, 2, code, "%v: exit = %d, want 2 -- no flag and no env is a refusal", args, code)
 		assert.Contains(t, errOut, "refusing to guess", "%v: stderr = %q, want it to contain %q", args, errOut, "refusing to guess")
 		assert.Empty(t, out, "%v: a refusal must not print an OK line, got %q", args, out)
@@ -158,12 +173,19 @@ func TestNoDefaultBoxRefusesToGuess(t *testing.T) {
 // the caller's statement, not the environment's -- an env lever that could redirect the
 // check to a decoy would be a lift by another name.
 func TestEnvironmentCannotRedirectOrLiftAnything(t *testing.T) {
+	t.Parallel()
 	box := boxIn(t)
 	now := nowish()
 	mustRun(t, []string{"lockdown", "--box", box, "suspected compromise"}, now)
 
-	t.Setenv("NOVA_FUSE_BOX", boxIn(t)) // absent, i.e. clear
-	code, _, errOut := capture(t, []string{"check", "--box", box}, now)
+	decoy := boxIn(t) // absent, i.e. clear
+	getenv := func(k string) string {
+		if k == "NOVA_FUSE_BOX" {
+			return decoy
+		}
+		return ""
+	}
+	code, _, errOut := captureWith(t, []string{"check", "--box", box}, now, getenv, "")
 	require.Equal(t, 1, code, "exit = %d, want 1 -- the env var must not redirect the check to a clear box", code)
 	assert.Contains(t, errOut, "FUSE FAILED lockdown", "stderr = %q, want the lockdown failure", errOut)
 }
@@ -1163,6 +1185,10 @@ var fuseAudit = audit.Config{
 		// field through oneline.Field before it is returned.
 		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"strings"`, `"time"`,
+		// path/filepath joins a relative --box onto the injected working directory
+		// and reports whether a path is already absolute. It holds no writer and
+		// prints nothing, so it cannot write past the escape.
+		`"path/filepath"`,
 		// maps and slices sort the lifted surfaces' names (slices.Sorted(maps.Keys)):
 		// they return values and hold no writer.
 		`"maps"`, `"slices"`,
