@@ -177,7 +177,11 @@ func (a *Antigravity) Deliver(ctx context.Context, text string) (int, error) {
 		if err != nil {
 			return 1, err
 		}
-		if id = NewMessage(before, after); id == "" && !a.wait(ctx) {
+		id, err = a.newMessage(mailbox, before, after)
+		if err != nil {
+			return 1, err
+		}
+		if id == "" && !a.wait(ctx) {
 			return 1, fmt.Errorf("agentapi accepted the message for conversation %s but none appeared in its mailbox within %s", session, AntigravityReadBudget)
 		}
 	}
@@ -282,14 +286,26 @@ func NewestConversation(rows string, dirs ...string) (string, error) {
 	return "", fmt.Errorf("no antigravity conversation has %s open; open one there, or name one with --session", dirs[0])
 }
 
-// NewMessage is the one id in after that was not in before, "" when none.
-func NewMessage(before, after []string) string {
+// newMessage selects a new mailbox entry carrying our exact title. An unrelated
+// message appearing during send must not supply the read acknowledgement.
+func (a *Antigravity) newMessage(mailbox string, before, after []string) (string, error) {
 	for _, id := range after {
 		if !slices.Contains(before, id) {
-			return id
+			raw, err := fs.ReadFile(a.fsys(), path.Join(mailbox, id+".json"))
+			if err != nil {
+				return "", err
+			}
+			var message struct {
+				RenderDetails struct {
+					MessageTitle string `json:"messageTitle"`
+				} `json:"renderDetails"`
+			}
+			if json.Unmarshal(raw, &message) == nil && message.RenderDetails.MessageTitle == AntigravityTitle {
+				return id, nil
+			}
 		}
 	}
-	return ""
+	return "", nil
 }
 
 // Read says whether read.json (a map of message id to true) marks id read.

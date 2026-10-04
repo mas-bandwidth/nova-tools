@@ -120,7 +120,7 @@ does not.
 
 The ack: `agentapi` exits 0 on an error too (a wrong conversation, a missing
 token print `"error"` in its JSON), so the JSON is read and its exit code is
-not. The delivery is exit 0 once a new message has appeared in the mailbox
+not. The delivery is exit 0 once a new message titled exactly `nova-friend` has appeared in the mailbox
 and `read.json` marks it read, polled every half second for two minutes; past
 that it is exit 1 with the message id, the message still in the mailbox for
 the session's next turn, and the daemon redelivers (a duplicate, never a

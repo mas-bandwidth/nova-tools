@@ -55,7 +55,7 @@ func (e *agExec) run(_ context.Context, dir, name string, args []string, _ strin
 		if e.sendOut != "" {
 			return e.sendOut, 0, nil
 		}
-		e.fsys[agMailbox+"/m-2.json"] = &fstest.MapFile{Data: []byte(`{"id":"m-2","content":"` + args[5] + `"}`)}
+		e.fsys[agMailbox+"/m-2.json"] = &fstest.MapFile{Data: []byte(`{"id":"m-2","renderDetails":{"messageTitle":"nova-friend"},"content":"` + args[5] + `"}`)}
 		return `{"response": {"sendMessage": {"recipientId": "root-new"}}}`, 0, nil
 	}
 	return "", 1, nil
@@ -187,8 +187,6 @@ func TestAntigravityReadsTheServerTheListingAndTheReplies(t *testing.T) {
 	_, err = NewestConversation("nope", "/w/emma")
 	assert.ErrorContains(t, err, "not a JSON list")
 
-	assert.Equal(t, "m-2", NewMessage([]string{"m-1"}, []string{"m-1", "m-2"}))
-	assert.Equal(t, "", NewMessage([]string{"m-1"}, []string{"m-1"}))
 	assert.True(t, Read([]byte(`{"m-2":true}`), "m-2"))
 	assert.False(t, Read([]byte(`{"m-2":false}`), "m-2"))
 	assert.False(t, Read(nil, "m-2"))
@@ -203,4 +201,27 @@ func TestAntigravitySelectsOnlyTheDaemonsUser(t *testing.T) {
 	assert.Equal(t, "tok-1", token)
 	_, _, err = LanguageServer(ps, "absent")
 	assert.ErrorContains(t, err, "no antigravity language server")
+}
+
+func TestAntigravityIgnoresAnUnrelatedNewMailboxMessage(t *testing.T) {
+	t.Parallel()
+	e := newAgExec()
+	run := func(ctx context.Context, dir, name string, args []string, stdin string) (string, int, error) {
+		out, exit, err := e.run(ctx, dir, name, args, stdin)
+		if name == "/usr/bin/env" && len(args) > 3 && args[3] == "send-message" {
+			e.fsys[agMailbox+"/a-other.json"] = &fstest.MapFile{Data: []byte(`{"renderDetails":{"messageTitle":"other nova-friend message"}}`)}
+			e.fsys[agMailbox+"/read.json"] = &fstest.MapFile{Data: []byte(`{"a-other":true}`)}
+		}
+		return out, exit, err
+	}
+	waits := 0
+	a := &Antigravity{User: "emma", Dir: "/w/emma", Run: run, Home: "/home", FS: e.fsys, Wait: func(context.Context) bool {
+		waits++
+		e.fsys[agMailbox+"/read.json"] = &fstest.MapFile{Data: []byte(`{"a-other":true,"m-2":true}`)}
+		return waits <= 1
+	}}
+	exit, err := a.Deliver(context.Background(), "hello")
+	require.NoError(t, err)
+	assert.Zero(t, exit)
+	assert.Equal(t, 1, waits, "an unrelated read entry cannot acknowledge our unread message")
 }
