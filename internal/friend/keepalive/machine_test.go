@@ -137,7 +137,10 @@ func TestKeepaliveSeatChangeAndAuthorityLossResetProof(t *testing.T) {
 	require.Equal(t, seat, f.Seat)
 	a.ResetProof()
 	require.Zero(t, a.Status(testTime.Add(2*time.Second)).Outstanding)
-	newFrame := next(t, a, testTime.Add(2*time.Second), false)
+	_, due, err := a.Next(testTime.Add(2*time.Second), false)
+	require.NoError(t, err)
+	require.False(t, due, "authority reset must not allow a same-tick second emission")
+	newFrame := next(t, a, testTime.Add(3*time.Second), false)
 	require.Greater(t, newFrame.Seq, f.Seq)
 }
 
@@ -168,4 +171,32 @@ func TestKeepaliveCadenceSkipsMissedTicksAndLedgerStaysBounded(t *testing.T) {
 	b.Every = time.Millisecond
 	_, _, err = b.Next(testTime.Add(6*time.Second), false)
 	require.Error(t, err)
+}
+
+func TestPeerTransitionInvalidatesLargerPreTransitionAcknowledgement(t *testing.T) {
+	t.Parallel()
+	a, b := pair(t)
+	prove(t, a, b)
+	third := next(t, a, testTime.Add(2*time.Second), false)
+	fourth := next(t, a, testTime.Add(3*time.Second), false)
+	newPeer := Frame{Version: Version, From: "bob", To: "ada", Role: "friend", Seat: testSeat, Instance: "b2", Seq: 1, AckInstance: third.Instance, AckSeq: third.Seq}
+	ok, err := a.Observe(testTime.Add(3*time.Second), newPeer)
+	require.NoError(t, err)
+	require.True(t, ok)
+	oldPeer := newPeer
+	oldPeer.Instance = "b1"
+	oldPeer.Seq = 10
+	oldPeer.AckSeq = fourth.Seq
+	ok, err = a.Observe(testTime.Add(4*time.Second), oldPeer)
+	require.NoError(t, err)
+	require.False(t, ok)
+	require.Equal(t, "b2", a.Status(testTime.Add(4*time.Second)).PeerInstance)
+	postTransition := next(t, a, testTime.Add(4*time.Second), false)
+	require.Equal(t, "b2", postTransition.AckInstance, "rejected old proof must not poison the piggyback target")
+	require.Equal(t, uint64(1), postTransition.AckSeq)
+	newPeer.Seq = 2
+	newPeer.AckSeq = postTransition.Seq
+	ok, err = a.Observe(testTime.Add(5*time.Second), newPeer)
+	require.NoError(t, err)
+	require.True(t, ok)
 }

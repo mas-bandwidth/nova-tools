@@ -65,8 +65,7 @@ func (m *Machine) ResetProof() {
 	m.peerInstance, m.ackInstance = "", ""
 	m.peerSeq, m.ackSeq = 0, 0
 	m.lastPong = time.Time{}
-	// Permit immediate emission after authority is restored, not catch-up.
-	m.hasIssued = false
+	// Preserve cadence across authority resets: never emit twice in one tick.
 }
 
 func (m *Machine) SetSeat(seat Seat) error {
@@ -139,7 +138,7 @@ func (m *Machine) Observe(now time.Time, f Frame) (bool, error) {
 	if f.From != m.peer || f.To != m.local || f.Role != wantRole || f.Seat != m.seat {
 		return false, fmt.Errorf("keepalive frame does not match peer, role or current seat")
 	}
-	if f.Instance != m.ackInstance || f.Seq > m.ackSeq {
+	if (m.peerInstance == "" || f.Instance == m.peerInstance) && (f.Instance != m.ackInstance || f.Seq > m.ackSeq) {
 		m.ackInstance, m.ackSeq = f.Instance, f.Seq
 	}
 	if f.AckInstance != m.instance || f.AckSeq <= m.consumed {
@@ -163,13 +162,20 @@ func (m *Machine) Observe(now time.Time, f Frame) (bool, error) {
 		return false, nil
 	}
 	m.consumed = f.AckSeq
+	changedPeer := f.Instance != m.peerInstance
 	kept := m.issued[:0]
 	for _, challenge := range m.issued {
-		if challenge.seq > m.consumed {
+		if !changedPeer && challenge.seq > m.consumed {
 			kept = append(kept, challenge)
 		}
 	}
 	m.issued = kept
+	// First proof/peer change invalidates every pre-transition challenge,
+	// including larger sequences an old process might have answered in flight.
+	// Singleton peers cannot answer newly issued post-transition challenges.
+	if changedPeer {
+		m.ackInstance, m.ackSeq = f.Instance, f.Seq
+	}
 	m.peerInstance, m.peerSeq = f.Instance, f.Seq
 	m.lastPong, m.proved, m.asleep = now, true, f.Asleep
 	return true, nil
