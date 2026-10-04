@@ -1,11 +1,11 @@
 # Migrated counted package ledger; original row keys preserved.
 # ceiling: 9
 .github/workflows/ci.yml:batman 10
-.github/workflows/ci.yml:glenn 10
-.github/workflows/ci.yml:hulk 14
+.github/workflows/ci.yml:glenn 8
+.github/workflows/ci.yml:hulk 11
 .github/workflows/ci.yml:mini 1
 .github/workflows/ci.yml:rowan 1
 .github/workflows/ci.yml:space 28
-.github/workflows/ci.yml:studio 20
+.github/workflows/ci.yml:studio 17
 .github/workflows/ci.yml:superman 7
-.github/workflows/ci.yml:vision 6
+.github/workflows/ci.yml:vision 5
