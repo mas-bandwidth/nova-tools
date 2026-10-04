@@ -177,6 +177,19 @@ func (o *Out) Cap(max int) *Out {
 	return o
 }
 
+// lookedAtNothing reports whether o carries the fact that counts what the
+// verb read (Verb.Looks) at 0: a check that looked at nothing is not green
+// (STANDARD §2, exit codes tell the truth). A fact that is absent is no
+// count of 0; it is left to the verb's own tests.
+func (o *Out) lookedAtNothing(fact string) bool {
+	for _, f := range o.Facts {
+		if f.K == fact {
+			return fmt.Sprint(f.V) == "0"
+		}
+	}
+	return false
+}
+
 // Render writes o as typed lines, or as one JSON object when json is set, and
 // returns the exit that stands: o.Exit, or 1 when o is no JSON (a NaN or an
 // infinite float, a value of the verb's own that JSON cannot carry), which is
