@@ -3053,7 +3053,26 @@ tick: the one writer of the sprint, beside the store. A worker started with `nov
 own machine. A request is a batch: the worker's verbs, each the argument list it would give
 `nova-sprint`, in the order to run them. The server runs each through the verb's own code, in
 its own process, and answers with each verb's exit code and what it printed, one answer a verb,
-in order. One batch, and one tick, at a time: neither runs during the other. The server keeps
+in order. A write runs on the server's one line of control: one batch's writes, and one tick, at
+a time, neither during the other, each waiting its turn in the order it came. A friend's beat and
+a read do not take the line (the owner, 2026-10-04: "a verb is answered within 1 s whatever the
+tick or the lander is doing"; "a beat is a small write"). A friend's beat (`friend beat <friend>` and its report)
+writes one record outside every table, the friend's beat, and runs on the beat lane, beside the
+line and beside every other beat. A read (`where`, `card`, `log`, `check`, `routes`, `stats`,
+`needs`, `goal show`, `handover`, and `inbox` without `--read`) writes nothing and runs on the
+read lane: one read at a time on the lane's own process state, beside the line, as a client
+reading the store directly always has. `queue` records a reader's beat, `fleet beat` can write
+the fleet table and `inbox --read` moves the coordinator's cursor: each takes the line. A batch
+waits for the line only while its caller waits for the answer: a caller that has gone (its
+request ended: a client's deadline, a dropped connection) has the verbs of its batch not yet run
+answered exit 2, not run, and nothing is changed by them. On 2026-10-04 every verb took the line
+and a batch was run whenever its turn came: from 2:06 PM the line held the run loop's tick 10 to
+50 s, from 2:14 PM 36 to 151 s while each tick took 0.5 to 6 s, every friend's beat (two a second
+a friend) timed out at its 10 s deadline and was still run later, and the line never drained. On a
+twin file (`mem:<file>`), which the server writes whole after every verb, every verb takes the
+line. The server says what its batches cost once a minute when it answered any: `SERVE
+batches=<n> beat-lane=<n> read-lane=<n> on-line=<n> gone=<n> wait-max=<d> held-max=<d>
+held-by=<verb> over=<d>`. The model is `tla/ServerLanes.tla`. The server keeps
 nothing between requests.
 
 The server runs the workers' verbs only: `take`, `finish`, `read` and `queue`, each beginning
