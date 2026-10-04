@@ -14,7 +14,8 @@ func TestCommandCounterCountsAPing(t *testing.T) {
 
 	addr, count := CommandCounter(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
-	defer c.Close()
+	// ignored: a test's teardown; the test's own assertions are the report
+	defer func() { _ = c.Close() }()
 	if n := count(); n != 0 {
 		require.Equal(t, int64(0), n, "NewClient sent %d commands; want 0", n)
 	}
