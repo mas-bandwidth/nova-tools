@@ -3199,13 +3199,23 @@ access control is the fleet's private network, as for the workers' queue.
 With `run --land` the server lands what the readers passed, itself: every two seconds, when a
 stream has cards queued to merge, it runs `land` for them as the sprint's coordinator, one
 landing at a time, in its own process. Land's reads and its report take the server's line of
-control like any other step; its git (the fetch, the merges, the check, the push) runs outside
-it, so a tick or a worker's batch never waits on a push. A `land` run by itself beside a
-server is a second writer of the merge queue, and is what `--land` replaces. A round prints
-what landed and everything land said was wrong (a refused or failed batch, a refusal before any
+control like any other step; its git (the fetch, the merges, the ledgers' update runs, the
+tree gate, the check, the push) runs outside it, so a tick or a worker's batch never waits on
+a push or a gate (`tla/ServerLanes.tla`, LandHoldsTheLineOnlyForStoreSteps;
+`TestALandsGateLeavesTheLineFreeForTheTick`). A `land` run by itself beside a server is a
+second writer of the merge queue, and is what `--land` replaces; it refuses while the server's
+lander holds the land root's lock (section 7, one lander at a time). A round lands each stream
+with cards queued by a land of its own, and prints, as each stream's land ends, what landed
+and everything land said was wrong (a refused or failed batch, a refusal before any
 batch, its remedy); a round that could not read the merge queue prints `LAND FAILED` with why,
 since an unreadable queue is not an empty one, and the next round tries again. A failure is
-printed once, when it begins: the same failure again prints nothing until it changes or clears.
+printed once, when it begins: the same failure again (of the same stream) prints nothing until
+it changes or clears.
+
+The run loop gives up a tick past `--tick-deadline` (10 s), and the loop's first tick past
+`FirstTickDeadline` (2 minutes) when that is longer: the first tick after a start reads the
+sprint whole into a cold twin, and on 2026-10-04 (4:28-4:31 PM ET) that read alone ran past
+10 s on each of six restarts in a row, a crash loop with nothing wrong but the bound.
 
 With `run --decide <dir>` the server keeps the record of nova-decide's layer 2 (section 2,
 the attempt decision; section 5, the grade): `<dir>/attempt.jsonl` and `<dir>/grade.jsonl`,
