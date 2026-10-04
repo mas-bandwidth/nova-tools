@@ -1310,4 +1310,3 @@ deprecated/internal/workreconcile/reconcile_test.go deprecated/ removed 2026-10-
 deprecated/internal/workreconcile/sprint_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
 deprecated/internal/workreconcile/types_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
 internal/ci/sizetable_test.go dead: its only helper readSizeTable had no caller; the size tables it read are checked nowhere else (dead-code pass 2026-10-01)
-cmd/nova-update/examplelines_test.go TestHelpExampleLinesRunAsPrinted moved to examplelines_functional_test.go behind //go:build functional, the sleeps ledger's own remedy (nova-tools #4221): the test builds the binary and runs the pasted help lines, real work no injected clock removes
