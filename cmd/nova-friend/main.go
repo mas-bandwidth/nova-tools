@@ -58,6 +58,7 @@ type world struct {
 	open      func(ctx context.Context, addr string) (bus.Store, func(), error)
 	exec      friend.Exec
 	beat      func(ctx context.Context, server, friend string) (answer string, err error) // the FRIEND-BEAT line, which carries the friend's row
+	progress  func(ctx context.Context, server string, argv []string) error               // one progress verb to the sprint server (friend.ProgressArgv)
 	launchctl friend.Launchctl
 	now       func() time.Time
 	sleep     func(ctx context.Context, d time.Duration)
@@ -100,6 +101,21 @@ func realWorld() world {
 				return "", fmt.Errorf("friend beat refused: %s", strings.TrimSpace(res[0].Stderr))
 			}
 			return res[0].Stdout, nil
+		},
+		progress: func(ctx context.Context, server string, argv []string) error {
+			ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			defer cancel()
+			res, err := sprintwire.Client{Addr: server}.Do(ctx, argv)
+			if err != nil {
+				return err
+			}
+			if len(res) != 1 {
+				return fmt.Errorf("progress: the server answered %d results, want 1", len(res))
+			}
+			if res[0].Code != 0 {
+				return fmt.Errorf("progress refused: %s", strings.TrimSpace(res[0].Stderr))
+			}
+			return nil
 		},
 		lookPath: exec.LookPath,
 		binary: func() (string, error) {
@@ -460,6 +476,17 @@ func (w world) run(c *tool.Call) *tool.Out {
 			return rowMode, rowWidth
 		},
 		LoadLanes: func() (friend.LaneState, error) { return friend.ReadLanes(state) },
+		Progress: func(ctx context.Context, cards []friend.Card) error {
+			if w.progress == nil {
+				return nil // a world that sends none (a test's)
+			}
+			for _, argv := range friend.ProgressArgv(name, cards) {
+				if err := w.progress(ctx, server, argv); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
 		SaveLanes: func(s friend.LaneState) error { return friend.WriteLanes(state, s) },
 		CardDone: func(card, to string) string {
 			busBin, err := w.lookPath("nova-bus")
