@@ -1,4 +1,4 @@
-// Package friendservice owns the local receive-loop process and launchd configuration.
+// Package friendservice validates local routes and renders preparatory launchd configuration.
 // Libraries considered: encoding/json, encoding/xml, os/exec and context.
 package friendservice
 
@@ -50,7 +50,7 @@ func Parse(raw []byte) (Config, error) {
 }
 
 // Validate refuses a nonexistent or nonexecutable native delivery path.
-// Rowan client contract: explicit deliver executable, no unsupported adapter fallback.
+// Client design: explicit deliver executable, no unsupported adapter fallback.
 func (c Config) Validate() error {
 	var problems []string
 	if !name.MatchString(c.Friend) {
@@ -86,7 +86,7 @@ func (c Config) ReceiveArgs() []string {
 }
 
 // Plist renders one agent; writing/bootstrap is separate from rendering.
-// Rowan client contract: login launch and restart owned by launchd.
+// Client design: login launch and restart owned by launchd; the serve target is planned.
 func (c Config) Plist() ([]byte, error) {
 	if err := c.Validate(); err != nil {
 		return nil, err
