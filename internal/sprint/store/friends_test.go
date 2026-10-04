@@ -24,9 +24,10 @@ func TestFriendRowsReturnsNameWidthStatusOnly(t *testing.T) {
 	rows, err := h.st.FriendRows(h.ctx, h.now)
 	require.NoError(t, err)
 	require.Len(t, rows, 2)
-	// up first, then held (FleetOrder); the counts are all zero, never read
+	// up first, then held (FleetOrder); the counts are all zero, never read; her beat's time
+	// is carried (view coordinator reads how stale her report is)
 	assert.Equal(t, []FriendRow{
-		{Name: "amy", Width: 3, Status: sprint.Up},
+		{Name: "amy", Width: 3, Status: sprint.Up, Beat: h.now.UTC().Truncate(time.Second)},
 		{Name: "bob", Width: 1, Status: sprint.Held},
 	}, rows)
 }
