@@ -1208,9 +1208,11 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 	}
 	// Rule 20: report folds that the caller's own sources produce for one day, with the same
-	// sources and the same attribution as fold, and that includes what the fold SAYS about
-	// them: an unreadable file, a line that did not parse and a message with no id each
-	// leave a line here (rule 3: counted and printed, never skipped silently).
+	// sources and the same attribution as fold. That has to include what the fold SAYS about them.
+	// This verb counted only the unreadables, so a transcript line whose stamp does not
+	// parse and a message with no id -- both counted by the reader, both dropped before
+	// the body -- left no trace at all, and the friend pasted a short day onto the bus
+	// under REPORT OK (rule 3: counted and printed, never skipped silently).
 	unreadable, unparsed := 0, 0
 	for _, src := range sources {
 		for _, u := range src.Unreadables {
@@ -1350,10 +1352,10 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	s.fact("at", stamp(now))
 	s.fact("build", buildVersion())
 	s.fact("subject", tool.Text(subject))
-	// Rule 3 and the exit table: an unreadable declared source is exit 1, and a line that
-	// did not parse is the same wall under fold. The body still printed and --note still
-	// landed -- exit 1 still writes -- but a friend about to paste this onto the bus is
-	// told it does not cover what it claims.
+	// Rule 3, and the exit table: "a declared source with an unreadable file" is exit 1,
+	// and a line that did not parse is the same wall under fold. The body still printed and
+	// --note still landed -- exit 1 still writes -- but a friend about to paste this onto
+	// the bus is told it does not cover what it claims.
 	if unreadable > 0 || unparsed > 0 {
 		return s.done(1, *max)
 	}

@@ -266,7 +266,7 @@ func TestVanishingProcessESRCHDoesNotBlockLockCleanup(t *testing.T) {
 	require.True(t, err == nil && cleared, "a stale lock with only a vanishing process in the scan: cleared=%v err=%v, want removed", cleared, err)
 	{
 		_, statErr := os.Lstat(lock)
-		require.True(t, os.IsNotExist(statErr), "stale index.lock still present: %v", statErr)
+		require.False(t, !os.IsNotExist(statErr), "stale index.lock still present: %v", statErr)
 	}
 
 	// ESRCH is not a licence for every errno: a live process that denies the read
@@ -425,7 +425,7 @@ func TestForeignGitDirKeepsItsLock(t *testing.T) {
 	require.True(t, cerr == nil && cleared, "unrelated processes of another account beside a private checkout: cleared=%v err=%v, want removed", cleared, cerr)
 	{
 		_, statErr := os.Lstat(privateLock)
-		require.True(t, os.IsNotExist(statErr), "stale index.lock still present: %v", statErr)
+		require.False(t, !os.IsNotExist(statErr), "stale index.lock still present: %v", statErr)
 	}
 }
 

@@ -85,8 +85,8 @@ type nativeRunConfig struct {
 	// loop record), the name and email every commit carries; nil reads the pool's
 	// <root>/identity.tsv (swarm.LoadPoolIdentity).
 	identity *swarm.StagingIdentity
-	// usd is the dollar budget (--usd, a route's usd): the harness's reported cost at which
-	// the card is stopped, beside the token budget; nil for none (nova-tools #5094).
+	// usd is the dollar budget (--usd, a route's usd): the harness's reported cost
+	// at which the card is stopped beside the token budget; nil for none.
 	usd *big.Rat
 	// netAllow is the provider's loopback host:port, passed to the wall as --net-allow.
 	netAllow string
@@ -531,7 +531,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// GOCACHE. GOTOOLCHAIN=local keeps a card from fetching a toolchain behind the bench's
 	// back. The sharing is safe because Go's caches are concurrency-safe by design and the
 	// module cache is read-mostly. --no-shared-caches keeps today's behaviour exactly: no
-	// names set, the caches under HOME. swarm.EnsureCacheDirs (issue #1048, above) made both
+	// names set, the caches under HOME. swarm.EnsureCacheDirs above made both
 	// (swarm.GoModCacheDir, swarm.GoBuildCacheDir), under the same condition.
 	cacheDir := nativeCacheDir(cfg)
 

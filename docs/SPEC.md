@@ -128,17 +128,17 @@ SEND FAIL <path or (stdin)>: <reason>
 INBOX OK as=<name> carrying=<n> open=<n> notes=<n> receipts=<n> ...
 RECEIPT OK recorded=<n> already=<n> commit=<sha|-> pushed=<true|false> attempts=<n>
 BUS OK notes=<n> lanes=<n> receipts=<n> participants=<n>
-BUS FAIL <path, path:line, or lane>: <reason>
+BUS FAILED <path, path:line, or lane>: <reason>
 <TOKEN> MORE kind=<kind> shown=<n> total=<t> <remedy>
 ```
 
-`OK` lines go to stdout; `FAIL` lines and refusals go to stderr (except `nova-self-talk`'s `SELFTALK FAIL files=…` summary count line, which goes to stdout alongside the advisory note).
+`OK` lines go to stdout; `FAIL` and `FAILED` lines and refusals go to stderr (except `nova-self-talk`'s `SELFTALK FAIL files=…` summary count line, which goes to stdout alongside the advisory note).
 
 **One value, two renderings.** A tool built on `internal/tool` returns one result
 per verb and prints it as lines or, with `--json` (every verb takes it), as one
 JSON object on stdout holding the same value:
 `{"result":{"verb","status":"ok|failed|refused","exit","remedy","why"},"facts":{},"items":[{"kind","fields"}],"more":[{"kind","shown","total","remedy"}],"notes":[]}`.
-The lines are `<TOKEN> OK|FAIL|REFUSED k=v ...` first, then `<TOKEN> <KIND> k=v ...`
+The lines are `<TOKEN> OK|FAILED|REFUSED k=v ...` first, then `<TOKEN> <KIND> k=v ...`
 per item, the MORE line per capped kind, and `<TOKEN> NOTE <text>`; a refusal names
 every problem of the invocation at once, one line each,
 `<TOKEN> REFUSED: <what>; run: <remedy>`. The status follows the exit: ok 0,
@@ -2984,8 +2984,8 @@ CLOSE REFUSED: <reason>
 BUS SCOPE mode=<full|since> cursor=<sha|-> changed=<n>
 BUS INDEX lane=<lane> notes=<n>[ dry_run=true]
 BUS OK notes=<n> lanes=<n> receipts=<n> participants=<n> warn=<n>
-BUS WARN <path, path:line, or lane>: <reason>
-BUS FAIL <path, path:line, or lane>: <reason>
+BUS NOTE <path, path:line, or lane>: <reason>
+BUS FAILED <path, path:line, or lane>: <reason>
 BUS REFUSED: <reason>
 NAMES NAME name="<x>" lane=<lane|-> aliases="<a>";"<b>"
 NAMES GROUP name="<x>" members="<a>";"<b>"
@@ -3142,7 +3142,7 @@ per-file lines instead.
 `INBOX UNADDRESSED` names a note that parses and reaches no reader at all; see
 above.
 
-`BUS WARN` is a finding inside the legacy tolerance: reported, and not a failure.
+`BUS NOTE` is a finding inside the legacy tolerance: reported, and not a failure.
 It goes to **stdout**, with the rest of the informational lines, per the rule
 below: anything reading the two streams apart — which is what CI does — would
 otherwise see every clean-but-forgiving run as a failing one.
@@ -3236,7 +3236,7 @@ order:
    known name is itself a known name;
 7. a group expands to its members.
 
-Anything else is unresolved: **refused at send**, `BUS FAIL` at check, with the
+Anything else is unresolved: **refused at send**, `BUS FAILED` at check, with the
 token quoted. A misspelling silently reaching the wrong reader is the failure
 this exists to stop, so the list above is the whole of the tolerance and every
 item in it is pinned by a test.
@@ -3612,15 +3612,17 @@ whole walk, exactly as an uncapped run would say them. A run with no findings
 prints neither line.
 
 ```
-BUS FAIL <path>: <reason>                       (a gating finding, stderr)
-BUS WARN <path>: <reason>                       (a tolerated finding, stdout)
+BUS FAILED <path>: <reason>                       (a gating finding, stderr)
+BUS NOTE <path>: <reason>                       (a tolerated finding, stdout)
 BUS MORE kind=<class> shown=<n> total=<t> remedy="--max 0"   (stderr, one per class the cap held some of back)
 BUS CHECK findings=<t> fail=<x> warn=<w> <class>=<n> ...   (stderr, whenever there is a finding)
 ```
 
-`BUS MORE` and `BUS CHECK` go where the `BUS FAIL` lines go, on stderr, so a
+`BUS MORE` and `BUS CHECK` go where the `BUS FAILED` lines go, on stderr, so a
 count a caller could read as a pass never enters the stdout of a failing run.
 A capped `check` has no continuation token: `--max 0` prints every finding.
+`--fail-max <n>` is a compatibility alias of `--max <n>` for one release;
+using it prints `NOTE --fail-max is --max` on stderr.
 
 #### Replays
 
@@ -3654,9 +3656,9 @@ the roster does not hold, and a lane no participant owns:
 ```
 $ nova-bus check --bus ./bus --full --max 2
 BUS SCOPE mode=full cursor=- changed=0
-BUS FAIL from-ada/2026-09-01T1000Z-note-1.md: no Subject line, or an empty one
-BUS FAIL from-ada/2026-09-02T1000Z-note-2.md: no Subject line, or an empty one
-BUS FAIL from-zed: no participant in participants.json owns this lane
+BUS FAILED from-ada/2026-09-01T1000Z-note-1.md: no Subject line, or an empty one
+BUS FAILED from-ada/2026-09-02T1000Z-note-2.md: no Subject line, or an empty one
+BUS FAILED from-zed: no participant in participants.json owns this lane
 BUS MORE kind=header shown=2 total=5 remedy="--max 0"
 BUS CHECK findings=6 fail=6 warn=0 header=5 lane=1
 ```
@@ -4019,7 +4021,7 @@ and carry forever. The cursor cannot catch that: a v1 `OPEN` beside a counted
 cursor is exactly the state a healthy v2 reader is in. So the file says its own
 version, and an `OPEN` without it is `INBOX REFUSED`, exit 1, **naming
 `--full --advance`** — the same repair, and the same words, as an `OPEN` that
-went missing. `check` reports it as a `BUS FAIL` on the same file, so a bus
+went missing. `check` reports it as a `BUS FAILED` on the same file, so a bus
 carrying one is not a silence only its own reader ever meets. The **cursor**
 format is untouched: a two-token cursor still reads, and this version writes no
 token an older one would refuse.
@@ -4144,7 +4146,7 @@ being asked twice about a note somebody edited after I had answered it. The
 second is smaller than the first, and only the first grows.
 
 The catalogue is what `check --since` resolves a thread through, and
-`check --full` reports every note with no `INDEX` line as a `BUS WARN`,
+`check --full` reports every note with no `INDEX` line as a `BUS NOTE`,
 saying what a missing line costs, with `--rebuild-index` as the repair.
 
 **An open note whose FILE was deleted stays on the list**, printed from the
@@ -4757,8 +4759,8 @@ rule.
 
 Under `--full` it also holds the catalogue to the notes, in both directions. An
 `INDEX` line naming a note that is not there, or giving it an id the note does
-not carry, is a `BUS FAIL`: that one could resolve a thread to the wrong note. A
-note with an id and **no** `INDEX` line is a `BUS WARN`, at any date — the notes
+not carry, is a `BUS FAILED`: that one could resolve a thread to the wrong note. A
+note with an id and **no** `INDEX` line is a `BUS NOTE`, at any date — the notes
 are the record and the catalogue is a cache, and somebody who wrote a note by
 hand in a browser, which this bus's whole form exists to allow, has not broken
 anything. The warning says what it **costs**, because the cost is not the same
@@ -4785,9 +4787,9 @@ there are two honest ways in, and a bus must pick one:
   or an RFC 3339 UTC instant like `2026-09-09T18:07:00Z`, compared by instant. A
   finding about the HEADER of a note dated before it — it will not parse; its `From`, `To` or `Cc` names
   somebody the roster does not know; it has no `Subject`; its `Kind` is neither
-  word; its `Re:` names nothing — is reported as `BUS WARN` and does **not** fail
+  word; its `Re:` names nothing — is reported as `BUS NOTE` and does **not** fail
   the run. Everything on or after that date, and every finding that is not about
-  a header at any date, still `BUS FAIL`s. Without the flag there is no
+  a header at any date, still `BUS FAILED`s. Without the flag there is no
   tolerance: every finding fails, which is what CI on a bus only this tool has
   written should use.
 - **A one-time sweep**: fix the notes by hand and adopt the check with no
@@ -4798,7 +4800,7 @@ the thing being drawn really is a day — usually one months back — so the sha
 that goes quiet on `inbox` does not arise here.
 
 Either way, run `check --full --rebuild-index` once at adoption. Every note on
-the bus that has an id gets a catalogue line, the `BUS WARN`s about missing
+the bus that has an id gets a catalogue line, the `BUS NOTE`s about missing
 `INDEX` lines go, and the first `inbox --advance` for each reader gives them a
 cursor. From then on both verbs read the change and not the record.
 
@@ -5055,16 +5057,16 @@ This section is the part of the efficiency-card set that binds `nova-bus`.
 ### REPEATS: a git fetch per poll, and a whole-history walk on `check --full`
 
 `wait` polls on its own clock and **every poll is a git fetch** — the comment on
-`minWaitInterval` says so (`cmd/nova-bus/main.go:2423`), and the measured fetch
+`minWaitInterval` says so (`cmd/nova-bus/wait.go`, `minWaitInterval`), and the measured fetch
 was **0.98 s**:
 
 ```
 $ git -C <bus> fetch origin main     0.98 s
 ```
 
-At `defaultWaitInterval = 10 * time.Second` (`cmd/nova-bus/main.go:2404`) a
+At `defaultWaitInterval = 10 * time.Second` (`cmd/nova-bus/wait.go`, `defaultWaitInterval`) a
 60-minute wait is **360 fetches**, about **5m 53s** of the hour spent inside
-git. The same clock lives in `waitLoop` (`cmd/nova-bus/main.go:2443`).
+git. The same clock lives in `waitLoop` (`cmd/nova-bus/wait.go`, `waitLoop`).
 
 `check --full` re-walks everything every time it is run; `check --as` reads from
 the cursor and pays only for what changed:
@@ -5094,7 +5096,7 @@ on the bench: the carried list is behind `--full` and `--open`, not printed on
 every read.
 
 The `check --full` row is a historical measurement, taken before `check` had
-`--max`: 342 of 342 lines printed, 340 of them `BUS WARN` about one class of
+`--max`: 342 of 342 lines printed, 340 of them `BUS NOTE` about one class of
 missing `INDEX` entry, each carrying the same 220-byte remedy sentence. `check`
 now takes `--max <n>` (default 20, `0` for all) and prints at most that many
 findings of each class, then one `BUS MORE` line per capped class and one `BUS CHECK` count line by class
@@ -5414,7 +5416,7 @@ These are the umbrella **Conventions** (the Conventions section of docs/SPEC.md)
 289. `TestARefusalNamesEveryProblemOnItsOwnLine` — a refusal prints EVERY problem in the draft, one line per reason.
 290. `TestNamesPrintsSomethingASendWillAccept` — `NAMES` quotes rather than field-escapes, so a printed name is one `send` accepts.
 291. `TestSendRefusesASlugThatIsNotASlug` — a lane slug is lower-case letters, digits and hyphens, checked because it is the first half of every id.
-292. `TestResolveListToleratesTheShapesTheBusActuallyWrites` — a `To:`/`Cc:` line resolves against the roster through the enumerated tolerances (split on `;`,`,`, dashes, `and`, drop `for `, drop parentheticals, prefix-instance), unresolved refused at send / `BUS FAIL` at check.
+292. `TestResolveListToleratesTheShapesTheBusActuallyWrites` — a `To:`/`Cc:` line resolves against the roster through the enumerated tolerances (split on `;`,`,`, dashes, `and`, drop `for `, drop parentheticals, prefix-instance), unresolved refused at send / `BUS FAILED` at check.
 293. `TestAndIsASeparatorNotAQualifier` — `To: Ada and Bo` reaches both readers; a word separator is a separator.
 294. `TestAKnownNameFollowedByAKnownNameIsRefused` — a qualifier that is itself a known name is refused, not delivered to the first.
 295. `TestLongestKnownNameWins` — the longest known name wins the instance-qualifier prefix.
@@ -5468,8 +5470,8 @@ These are the umbrella **Conventions** (the Conventions section of docs/SPEC.md)
 343. `TestCheckRefusesToGuessItsBaseline` — `check` with none of `--full`/`--as`/`--since` is exit 2 `refusing to guess`; `TestCheckSinceChecksOnlyWhatChanged` — `--as`/`--since` check only the changed lane files, `Re:` and id from the catalogue.
 344. `TestCheckPassesACleanBus` / `TestCheckReportsEveryFailureNotTheFirst` — `check` asserts parse, header, lane, id well-formedness/uniqueness, `Re:` resolution, receipt lines, lane ownership, state-file parses, and lane contents, reporting every finding in one run.
 345. `TestALanesReadmeIsNotANote` — a lane may hold exactly one non-note file, `README.md`; dotfiles are tolerated; any other stray (a `NOTES.md`) is a finding.
-346. `TestCheckFullAgainstTheIndex` — under `--full` the catalogue is held to the notes in both directions: a forged/dangling `INDEX` line is `BUS FAIL`, a note with no `INDEX` line is `BUS WARN`; `TestRebuildLaneIndexFromTheNotes` — `--rebuild-index` rewrites every lane's catalogue.
-347. `TestLegacyBeforeWarnsOnOldNotesAndStillFailsOnNew` — `check --legacy-before` forgives a header finding dated before the line as `BUS WARN` and still fails everything on/after it; `TestTheHeaderFindingsAreInsideTheLegacyTolerance` — the tolerance covers a note's HEADER; `TestTheLegacyToleranceStillFailsOnWhatIsNotAHeader` — wrong lane, malformed/duplicate id, broken receipt, unowned lane and strays fail at any date.
+346. `TestCheckFullAgainstTheIndex` — under `--full` the catalogue is held to the notes in both directions: a forged/dangling `INDEX` line is `BUS FAILED`, a note with no `INDEX` line is `BUS NOTE`; `TestRebuildLaneIndexFromTheNotes` — `--rebuild-index` rewrites every lane's catalogue.
+347. `TestLegacyBeforeWarnsOnOldNotesAndStillFailsOnNew` — `check --legacy-before` forgives a header finding dated before the line as `BUS NOTE` and still fails everything on/after it; `TestTheHeaderFindingsAreInsideTheLegacyTolerance` — the tolerance covers a note's HEADER; `TestTheLegacyToleranceStillFailsOnWhatIsNotAHeader` — wrong lane, malformed/duplicate id, broken receipt, unowned lane and strays fail at any date.
 348. `TestLegacyToleranceNeedsADateItCanRead` — a note whose date cannot be read at all is never tolerated; `TestTheLegacyLineReadsTheDayAtTheFrontOfAFilename` — the wider `YYYY-MM-DD`-at-front read is used by the tolerance and the open list only.
 349. `TestANoteWithAnIDIsStillAnswerableByPath` — a note without an `Id:` is addressed by path everywhere, and a note WITH an id is still answerable by its path.
 350. `TestSendRefusesAWrongBranchOrADirtyCheckout` — `send` refuses a wrong branch or a dirty checkout (write drafts elsewhere); the `.nova-bus/` per-clone state is not such a change.

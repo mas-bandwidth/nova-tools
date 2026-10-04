@@ -32,7 +32,7 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	dryRun := f.fs.Bool("dry-run", false, "with --rebuild-index, print each lane's count and write nothing")
 	var maxFindings int
 	f.fs.IntVar(&maxFindings, "max", defaultCheckMax, "findings of each class to print before one BUS MORE line per class names the rest of it (default 20, 0 = all)")
-	// --fail-max is --max for one release (docs/STANDARD.md section 2). It sets the same value.
+	// --fail-max is --max for one release (docs/STANDARD.md section 2).
 	f.fs.IntVar(&maxFindings, "fail-max", defaultCheckMax, "alias of --max, accepted for one release")
 	gitSeconds := f.fs.Int("git-timeout", defaultGitTimeoutSeconds, "how long one git subprocess may take before this run gives up on it")
 	if !f.parse(args, stderr, map[string]*string{"bus": busDir}) {

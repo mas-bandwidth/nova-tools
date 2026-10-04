@@ -51,12 +51,18 @@ const usage = `nova-memory: search your own markdown notes, and check a draft ag
 how it works: each run reads the --root directories and builds its index in
 memory (bm25 words, trigrams); nothing is written. search prints the k best
 passages with file:line and the quoted text; check names the notes a draft
-repeats; verify gates links and frontmatter. The CAL line is the score a fixed
-unrelated probe gets here: a hit scoring at or below it is no better than noise.
+repeats; verify gates links and frontmatter.
 first run: quickstart --root on any folder of .md files, or create the small
 corpus in setup: and run the lines under example:.
-class is the top-level directory ("." for root files); name/type are frontmatter
-values, with "-" meaning absent.
+
+SEARCH CAL score=1.46 score-channel=bm25 probe=unrelated-control
+is the CAL line every retrieval run prints: the score a fixed unrelated
+probe gets here, and a hit's score= at or below it is no better than noise
+when the hit's score-channel= names the same channel. The example's search
+prints, as its rank 1 of 2:
+SEARCH HIT rank=1 score=0.99 score-channel=bm25 fused=0.01667 class=notes name=- type=- root=./corpus: notes/lantern.md:1 "The lantern glazing needs clean cloths for brass and glass."
+class is the top-level directory ("." for root files); name/type are
+frontmatter values, with "-" meaning absent.
 
 usage:
   nova-memory version    print this build identity (--version also accepted)
@@ -140,7 +146,12 @@ file or the query words; -- ends the flags, and a query word that starts
 with - goes after it. Every verb is an inspection: it reads the corpus and
 writes nothing (` + "`<verb> -h`" + ` says so, with the verb's flags).
 
-exit codes: 0 ran and passed, 1 ran and failed, 2 could not run (bad invocation).
+exit codes, by verb (each ran here): search, stats, boot: 0 ran; a search
+that finds nothing is still 0, and says so on its MISS line. check: 0 even
+when the draft repeats a note (the example's check does: it hands you
+receipts, and the verdict stays yours). verify: 0 clean, 1 a finding (a
+wikilink finding gates only under --links gate). eval: 0 at or above
+--floor, 1 recall@k under --floor. 2 could not run (bad invocation).
 
 setup:
   mkdir -p ./corpus/notes

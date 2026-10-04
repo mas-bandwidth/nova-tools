@@ -35,15 +35,22 @@ func cairnTool() *tool.Tool {
 		Stamp: version,
 		How: `a store is a directory you name (--store), plain files only, synced to disk before OK.
 open starts a session and records its --publish policy; append keeps an entry's exact words.
-The same entry id with the same words is a duplicate; with other words a conflict (exit 1).
+Same id, same words: duplicate (duplicate=true, exit 0); same id, other words: conflict (exit 1).
 --publish records your policy only: nothing is sent, and every line says published=false.
 first run: the four examples are one sitting: the open makes ./cairns, the rest read it back.`,
-		ExitTable: "0 ran and passed, 1 ran and failed (a conflict: an entry id holding other words, " +
-			"or a re-open naming another policy or source), 2 could not run (bad invocation, no such session or entry).",
+		ExitTable: "0 done, 2 usage or could not run, for every verb; by verb:\n" +
+			"  open: 0 the record stands (opened, or already matching); 1 a re-open naming\n" +
+			"    another policy or source; 2 usage, or a store that did not answer\n" +
+			"  append: 0 the words are written, or the entry already holds them\n" +
+			"    (duplicate=true); 1 the entry id holds other words; 2 usage, or a store that\n" +
+			"    did not answer\n" +
+			"  index: 0 listed; 2 usage, or a store that did not answer\n" +
+			"  receipt: 0 read; 2 usage, or no such session or entry",
 		Verbs: []tool.Verb{
 			{
-				Name:    "open",
-				Usage:   "open --store <dir> --session <id> [--source <ptr>] --publish <never|manual|deferred|immediate> [--now <rfc3339-utc>] [--dry-run]",
+				Name: "open",
+				Usage: "open --store <dir> --session <id> [--source <ptr>] --publish <never|manual|deferred|immediate> [--now <rfc3339-utc>] [--dry-run]\n" +
+					"NOTE: --publish is a recorded word, nothing more: never, manual, deferred and immediate are the four this tool accepts and it acts on none of them; append --publish records the entry's own word, and one that differs from the session's is recorded as given, not a conflict (exit 0).",
 				Example: "open --store ./cairns --session s1 --publish manual",
 				Effect:  tool.LocalWrite,
 				Detail: "A re-open naming the recorded policy (and source, when given) changes nothing; one naming\n" +

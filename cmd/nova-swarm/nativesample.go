@@ -260,7 +260,7 @@ func (s *liveSampler) fold(usage swarm.ProviderUsage, err error, turns int) {
 			return
 		}
 	}
-	// THE DOLLAR BUDGET (nova-tools #5094), asked before the token budget: it is the
+	// THE DOLLAR BUDGET, asked before the token budget: it is the
 	// budget the route bounds cost by, so a sample past both names it.
 	if s.overUSD(usage.Values["cost"]) {
 		s.reached = stoppedUSD

@@ -99,15 +99,10 @@ func realDeps() deps {
 	}
 }
 
-func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, realDeps())) }
+func main() { os.Exit(redisTool(realDeps()).Main()) }
 
 // usage is the banner, for the tests that read it directly.
 var usage = redisTool(deps{}).Banner()
-
-// run is the test seam: the tool built over d, run in process.
-func run(args []string, stdout, stderr io.Writer, d deps) int {
-	return redisTool(d).Run(args, os.Stdin, stdout, stderr)
-}
 
 // redisTool is nova-redis on internal/tool. The verbs' bodies live in their
 // own files; here is the one Tool and the shared login.
@@ -412,9 +407,12 @@ func connect(ctx context.Context, store login, d deps) (*redisconn.Conn, error) 
 
 // failed is a verb's one line for err, which is redisconn's (an Open
 // failure, or a command's error through Conn.Explain), so it names the
-// store, the login, what came back and the next step. A store that could not
-// be reached and a login it refused could not run at all: the line leads
-// with REFUSED at exit 2, the pairing internal/tool's Status states for a
+// store, the login, what came back and the next step. That text is the
+// line's reason, after the key and the class, printed as prose a person can
+// read (`: redis at <addr> as <user>: unreachable: <cause>; next: <step>`),
+// never as a typed field, which would hex-escape every blank in it. A store
+// that could not be reached and a login it refused could not run at all: the
+// line leads with REFUSED at exit 2, the pairing internal/tool's Status states for a
 // verb that could not run (STANDARD §2's exit table), and the fix is the
 // caller's. The store may still have taken the write: redisconn classes a
 // connection that dropped, or a reply that never came, as unreachable too,
@@ -426,7 +424,7 @@ func connect(ctx context.Context, store login, d deps) (*redisconn.Conn, error) 
 // the caller named none, and the operator needs to know which one to set.
 func failed(verb, key string, err error, store login, d deps) *tool.Out {
 	class := redisconn.Classify(err)
-	o := tool.Fail().Fact("key", key).Fact("class", fmt.Sprint(class)).Fact("err", oneline.Err(err))
+	o := tool.Fail(err.Error()).Fact("key", key).Fact("class", fmt.Sprint(class))
 	if class == redisconn.AuthRefused && d.getenv(*store.passwordEnv) == "" {
 		o.Fact("remedy", tool.Text("nova-redis reads the store's password from "+*store.passwordEnv+", which is not set: export it, holding the password of the default user"))
 	}

@@ -155,8 +155,12 @@ func TestTheHelpNamesTheLiveVerbsAndTheCardsRepoAndBase(t *testing.T) {
 func TestTheBannerNamesTheOneWayOutOfTheWall(t *testing.T) {
 	t.Parallel()
 	_, stdout, _ := runSwarm(t, "help")
-	claim := stdout[strings.Index(stdout, "EVERY JOB RUNS INSIDE nova-sandbox"):]
+	_, claim, found := strings.Cut(stdout, "Sandbox: ")
+	require.True(t, found, "the banner names its sandbox policy")
 	claim, _, _ = strings.Cut(claim, "\n\n")
-	assert.Contains(t, claim, "unless the caller types\n--no-wall", "the banner says every job is walled and does not name --no-wall:\n%s", claim)
+	assert.Contains(t, claim, "native and member use nova-sandbox unless --no-wall is explicit", "the banner names the caller's opt-out:\n%s", claim)
+	assert.Contains(t, claim, "no card can opt out")
+	assert.Contains(t, claim, "job directory, data home, temporary directory and\ndefault shared cache are writable")
+	assert.Contains(t, claim, "slot, harness and toolchain directories,\nworker read_roots and any borrowed Git objects are readable")
 	assert.Contains(t, claim, "sandbox="+swarm.SandboxNoneByFlag, "the banner does not name what the NATIVE line says of a no-wall run:\n%s", claim)
 }

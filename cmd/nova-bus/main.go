@@ -87,7 +87,7 @@ func main() {
 // run is the whole tool, with its streams and clock injected so the tests can drive it.
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time) (code int) {
 	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
-	// before anything is read, dialed or written: help is never a refusal.
+	// before anything is read, dialed or written (the CLI style's rule (b)).
 	defer verbflag.RecoverWith(stdout, "nova-bus", usage, &code, verbDetail)
 	if len(args) == 0 {
 		return refuse(stderr, "", "no verb given; the verbs are "+verbflag.List(verbs)+"; inbox only looks", "nova-bus help")

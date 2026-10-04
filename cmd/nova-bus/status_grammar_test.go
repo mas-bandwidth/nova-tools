@@ -284,7 +284,7 @@ func grammarBus(t *testing.T) string {
 }
 
 // grammarNoteBus is a git repository with the roster and the one note committed, so the
-// two write verbs that commit (send --no-push and receipt --no-push) run over a clean
+// write verbs and their dry runs (send, receipt, reply and close) run over a clean
 // tree. commit.gpgsign is off in this fixture's own config, so the write verb's commit
 // cannot hang on a signing key the runner's global git config set.
 func grammarNoteBus(t *testing.T) string {

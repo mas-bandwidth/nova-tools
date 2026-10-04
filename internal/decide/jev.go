@@ -52,12 +52,14 @@ func (j Jev) Ask(ctx context.Context, s Schema, state string) (map[string]Answer
 	return jevAnswers(raw)
 }
 
-// jevAnswers decodes a Jev response. A choice with no probabilities carries
-// its confidence as the chosen option's probability. An answer with no
-// probability at all (a noul with no noul, a choice with neither) is an error
-// naming the question: a missing number is never read as 0, which would be a
-// confident "no" (STANDARD.md section 2, nothing hidden). An unknown answer
-// type is an error naming it.
+// jevAnswers decodes a Jev response. A choice with probabilities is unchanged.
+// A choice with only a confidence records Value, that confidence, and method
+// wire, and leaves P empty: neither is promoted into a probability of
+// correctness (SPEC-NOVA-DECIDE section 3). An answer with no probability at
+// all (a noul with no noul, a choice with neither) is an error naming the
+// question: a missing number is never read as 0, which would be a confident
+// "no" (STANDARD.md section 2, nothing hidden). An unknown answer type is an
+// error naming it.
 func jevAnswers(raw []byte) (map[string]Answer, Usage, error) {
 	var wire struct {
 		Answers map[string]struct {
@@ -82,7 +84,7 @@ func jevAnswers(raw []byte) (map[string]Answer, Usage, error) {
 		case a.Type == Choice && len(a.Probabilities) > 0:
 			out[name] = Answer{Type: Choice, Value: a.Choice, P: a.Probabilities}
 		case a.Type == Choice && a.Confidence != nil:
-			out[name] = Answer{Type: Choice, Value: a.Choice, P: map[string]float64{a.Choice: *a.Confidence}}
+			out[name] = Answer{Type: Choice, Value: a.Choice, Confidence: *a.Confidence, Method: "wire"}
 		case a.Type == Noul || a.Type == Choice:
 			missing = append(missing, name)
 		default:
