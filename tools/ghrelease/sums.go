@@ -162,7 +162,10 @@ func fileSum(path string) (string, error) {
 
 // verifySums reads the checksum file back from disk and checks every line
 // against the file it names, printing "<name>: OK" or "<name>: FAILED" for
-// each, as sha256sum -c does.
+// each, as sha256sum -c does. It returns false when the stream cannot be read
+// fully: an unread tail is lines nobody checked, so the scan ends with a
+// diagnostic naming the read error instead of a true (docs/STANDARD.md section
+// 2: nothing fails silently).
 func verifySums(stdout, stderr io.Writer, dir, sumsPath string) bool {
 	f, err := os.Open(sumsPath)
 	if err != nil {
@@ -185,6 +188,10 @@ func verifySums(stdout, stderr io.Writer, dir, sumsPath string) bool {
 			continue
 		}
 		fmt.Fprintf(stdout, "%s: OK\n", name)
+	}
+	if err := sc.Err(); err != nil {
+		fmt.Fprintf(stderr, "sha256sum: SHA256SUMS: read stopped early, the tail is unchecked: %v\n", err)
+		return false
 	}
 	if !ok {
 		fmt.Fprintln(stderr, "sha256sum: WARNING: computed checksums did NOT match")

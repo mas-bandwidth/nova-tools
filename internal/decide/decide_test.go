@@ -125,7 +125,7 @@ func TestJevAsksThroughTheInjectedSend(t *testing.T) {
 	assert.Equal(t, Usage{InputTokens: 1200, OutputTokens: 40}, usage)
 	assert.Equal(t, "no", answers["defect"].Value)
 	assert.InDelta(t, 0.35, answers["defect"].Prob("yes"), 1e-9)
-	assert.Equal(t, Answer{Type: Choice, Value: Bounce, P: map[string]float64{Bounce: 0.6}}, answers["verdict"])
+	assert.Equal(t, Answer{Type: Choice, Value: Bounce, Confidence: 0.6, Method: "wire"}, answers["verdict"])
 }
 
 // What the transport or the backend gets wrong is an error, never an answer.

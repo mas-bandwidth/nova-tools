@@ -136,6 +136,16 @@ The frame reads the brief's **header only**: line 1 and the `key: value` lines t
 up to the first blank line or line of prose (`swarm.ReadCardBase`). A `base-repo:`, `BASE:` or
 clone URL in the body names nothing.
 
+The brief's header grammar also names two reading lines: `START: <files or packages to read
+first>` and `STOP: <the condition that ends the task>`. The card lint checks them beside `TEST:`
+(`internal/swarm/lintheader.go`, tokens `start-named` and `stop-named`): line 1's tier is the
+condition, read as the sprint writes it (`tier: flash` or `tier: pro`), and a tier flash brief
+missing either line is refused, the finding naming the missing line; for tier pro, or no tier,
+the same finding is advice, and the verdict stands. The lint decides that by tier before it
+consults its advisory set, so a tier flash brief's missing line cannot be downgraded to a note.
+A brief with no stopping condition lets a flash child read past its budget, which is what these
+two lines bound.
+
 **The head a stage checks out.** The stage checks out the frame's commit only when its tree is
 in the stage: else it fetches that head from origin by sha (`git fetch --refetch origin <sha>`:
 a plain fetch does nothing for a commit a stage ref already reaches), and once more after a short

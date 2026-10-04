@@ -85,13 +85,15 @@ var (
 	worktreeGUID  = newGUID
 )
 
-// The three sentinel failures the forge seam can report, which the verb turns
-// into reason=no_pr, reason=no_forge and reason=bad_origin. errBadOrigin is bad
-// input rather than an outage: nothing was asked of the forge at all.
+// The sentinel failures the forge seam can report, which the verb turns into
+// reason=no_pr, reason=no_forge, reason=bad_origin and reason=bad_head.
+// errBadOrigin and errBadHead are bad input rather than an outage: nothing was
+// asked of the forge at all.
 var (
 	errNoPR      = errors.New("the forge does not know this pull request")
 	errNoForge   = errors.New("the forge could not be reached")
 	errBadOrigin = errors.New("--repo wants an origin remote whose path names <owner>/<name>")
+	errBadHead   = errors.New("the forge reported a head that is not forty lowercase hex characters")
 )
 
 // badOrigin names the origin remote no owner and name could be read out of.
@@ -266,7 +268,37 @@ func forgeHead(forge worktreeForge, id int) (head, base string, err error) {
 	if err != nil {
 		return "", "", err
 	}
-	return strings.TrimSpace(pr.Head), strings.TrimSpace(pr.Base), nil
+	head, base = strings.TrimSpace(pr.Head), strings.TrimSpace(pr.Base)
+	if err := headShape(head); err != nil {
+		return "", "", err
+	}
+	return head, base, nil
+}
+
+// headShape refuses any head that is not a whole commit id: exactly forty
+// lowercase hex characters. A value of any other shape -- a branch name, a
+// short or uppercase string, or one beginning with "-" such as an
+// --upload-pack= option -- is refused here, before any git argv is built, so
+// git never reads it as an option.
+func headShape(head string) error {
+	if !isHeadSHA(head) {
+		return fmt.Errorf("%w, and the head reads %q", errBadHead, head)
+	}
+	return nil
+}
+
+// isHeadSHA is true only for exactly forty lowercase hex characters.
+func isHeadSHA(s string) bool {
+	if len(s) != 40 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // worktreeForgeRefuse tells the forge's own failures from the input the forge was
@@ -278,6 +310,8 @@ func worktreeForgeRefuse(stderr io.Writer, err error) int {
 		reason, detail = "no_pr", "the forge does not know this pull request"
 	case errors.Is(err, errBadOrigin):
 		reason, detail, remedy = "bad_origin", err.Error(), worktreeRemedy
+	case errors.Is(err, errBadHead):
+		reason, detail, remedy = "bad_head", err.Error(), worktreeRemedy
 	}
 	fmt.Fprintf(stderr, "WORKTREE REFUSED reason=%s: %s\n%s\n", oneline.Field(reason), oneline.Escape(detail), remedy)
 	return sandbox.ExitCannotRun
@@ -308,7 +342,7 @@ func addWorktree(repo, path, head string) error {
 	if err := fetchHead(worktreeGit, repo, head); err != nil {
 		return err
 	}
-	_, err := worktreeGit(repo, "worktree", "add", "--detach", path, head)
+	_, err := worktreeGit(repo, "worktree", "add", "--detach", "--", path, head)
 	return err
 }
 
@@ -316,7 +350,7 @@ func addWorktree(repo, path, head string) error {
 // here), except that a fetch that hit its deadline is reported: the add would otherwise
 // fail with only an "invalid reference" and no word that the network was the cause.
 func fetchHead(run gitRunner, repo, head string) error {
-	_, err := run(repo, "fetch", "origin", head)
+	_, err := run(repo, "fetch", "origin", "--", head)
 	var timedOut *subproc.TimeoutError
 	if errors.As(err, &timedOut) {
 		return fmt.Errorf("fetching %s from origin: %w", head, err)

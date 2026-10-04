@@ -1,3 +1,5 @@
+//go:build linux
+
 package sandbox
 
 import "path/filepath"
@@ -9,9 +11,9 @@ import "path/filepath"
 // It is the path unit of the resolver grant, not a Landlock call: on WSL2 the distro's
 // /etc/resolv.conf -> /mnt/wsl/resolv.conf, and /mnt/wsl sits outside every static
 // linux read root, so glibc inside the wall had no nameserver. The linux backend
-// grants this directory read-only and
-// skip-if-absent. The function lives here, without a linux build tag, so a
-// WSL2 fixture can prove the grant on Darwin.
+// grants this directory read-only and skip-if-absent. The file carries the linux
+// build tag because the linux roots table is the function's only caller: the
+// function is built only where the wall it serves is built.
 func resolverConfigDirectory(path string) string {
 	resolved, err := filepath.EvalSymlinks(path)
 	if err != nil {

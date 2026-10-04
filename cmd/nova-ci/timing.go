@@ -1,8 +1,8 @@
 //go:build ignore
 
 // timing.go is the committed script: it prints, for the
-// last 200 pull requests of mas-bandwidth/schema and
-// mas-bandwidth/nova-tools, the time from PR-open to all-green split into
+// last 200 pull requests of the organisation/schema and
+// the organisation/nova-tools, the time from PR-open to all-green split into
 // queue, setup and test per job -- one TSV row per job, its three spans in
 // whole seconds, and the envelope its PR opened under, "-" for a PR that
 // never went all-green. The script's purpose is the
@@ -16,9 +16,8 @@
 // thing this repository's tools never do.
 //
 // The script is a //go:build ignore file on purpose, the Go shape of a
-// scripts/ entry: it is run as a file, not built into the binary, because
-// wiring a `timing` verb into nova-ci's dispatch is one case line in
-// cmd/nova-ci/main.go, and this card's PATHS does not name that file. Run it
+// scripts/ entry: it is run as a file, not built into the nova-ci binary,
+// because it is a one-off measurement, not a verb of the command. Run it
 // from a checkout of the repo:
 //
 //	go run cmd/nova-ci/timing.go --log <events log>
@@ -50,7 +49,7 @@ usage:
   --log <path>   the harvested events log, one JSON object per line, one line
                  per CI job of one pull request; there is no default
   --repos <a,b>  the repositories to measure, comma-separated
-                 (default: mas-bandwidth/nova-tools,mas-bandwidth/schema)
+                 (default: the organisation/nova-tools,the organisation/schema)
   --last <n>     per repository, the last n pull requests the log holds
                  (default: 200)
 

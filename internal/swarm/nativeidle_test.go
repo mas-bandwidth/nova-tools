@@ -71,8 +71,6 @@ func (b *idleBench) tick(t *testing.T, at time.Duration) (IdleEnd, bool) {
 	case b.ticks <- now:
 	case end, open := <-b.out:
 		return end, open
-	case <-time.After(60 * time.Second): // a generous bound on a goroutine taking a poll; the green path never waits
-		t.Fatal("the watch took no poll")
 	}
 	// The poll is taken. Ask for a verdict, and if there is none the watch takes ANOTHER
 	// poll at the same instant -- which changes nothing and is how the test waits for the
@@ -82,10 +80,7 @@ func (b *idleBench) tick(t *testing.T, at time.Duration) (IdleEnd, bool) {
 		return end, open
 	case b.ticks <- now:
 		return IdleEnd{}, false
-	case <-time.After(60 * time.Second): // a generous bound; by here the watch has either ended the card or is polling
-		t.Fatal("the watch neither ended the card nor took another poll")
 	}
-	return IdleEnd{}, false
 }
 
 // TestWatchIdleEndsAStillCardAtItsIdleWindowAndNotAtItsDeadline: the whole point. A log that

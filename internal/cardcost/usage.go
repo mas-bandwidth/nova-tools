@@ -273,7 +273,10 @@ type Total struct {
 // NoTotal is the total of no record.
 func NoTotal() Total { return Total{Tokens: None(), Wait: Unreported, Run: Unreported} }
 
-// Add is the total with one more record in it, every sum exact.
+// Add is the total with one more record in it, every sum exact: only a valid
+// non-negative decimal amount is summed, counted and named as a reporter (Usage,
+// "a cost is never guessed"; the exact-cost contract in Total). A rejected amount
+// changes nothing, so it cannot stand in for or contaminate a valid one.
 func (t Total) Add(u Usage) Total {
 	add := func(to *int64, n int64) {
 		if n >= 0 {
@@ -285,6 +288,7 @@ func (t Total) Add(u Usage) Total {
 			*to = s
 		}
 	}
+	valid := func(v string) bool { _, err := amount(v); return err == nil }
 	t.Records++
 	add(&t.Tokens.Input, u.Tokens.Input)
 	add(&t.Tokens.CacheRead, u.Tokens.CacheRead)
@@ -295,11 +299,11 @@ func (t Total) Add(u Usage) Total {
 	t.Tokens.MaxPrompt = max(t.Tokens.MaxPrompt, u.Tokens.MaxPrompt)
 	add(&t.Wait, u.Wait)
 	add(&t.Run, u.Run)
-	if u.Predicted != "" {
+	if valid(u.Predicted) {
 		sum(&t.Predicted, u.Predicted)
 		t.PredOf++
 	}
-	if u.Actual != "" {
+	if valid(u.Actual) {
 		sum(&t.Actual, u.Actual)
 		t.ActualOf++
 		bys := Words(t.ActualBy)
@@ -307,8 +311,14 @@ func (t Total) Add(u Usage) Total {
 			t.ActualBy = strings.Join(append(bys, by), "+")
 		}
 	}
-	if c := cmp.Or(u.Actual, u.Predicted); c != "" {
-		sum(&t.Charged, c)
+	// The one figure is the record's actual where it is a valid amount, otherwise
+	// its valid prediction; an amount the exact sum rejects is neither.
+	charged := u.Predicted
+	if valid(u.Actual) {
+		charged = u.Actual
+	}
+	if valid(charged) {
+		sum(&t.Charged, charged)
 		t.ChargedOf++
 	}
 	return t

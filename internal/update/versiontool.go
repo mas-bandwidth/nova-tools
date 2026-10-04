@@ -15,7 +15,7 @@ func VersionTool(stamp string, env Environment) *tool.Tool {
 	if env.Now == nil {
 		env.Now = time.Now
 	}
-	manifest := "--file <manifest: " + manifestShape + ">"
+	manifest := "--file <manifest>"
 	return &tool.Tool{
 		Name:  "nova-version",
 		What:  "which version of each tool is installed, recorded and compared",
@@ -25,7 +25,17 @@ diff compares two snapshots; moved writes the note of what two commits' binaries
 It is one of two binaries sharing the manifest and report; latest and installing are nova-update's.
 THE MANIFEST is the file --file names, written by hand; report -h states its six rules.
 first run: the binary alone; the example lines write a one-tool manifest and read it.`,
-		ExitTable: "0 the verb ran and passed: a report whose every entry answered (under send, whose note nova-bus took), a snapshot whose tools all answer, a diff, a moved note written; 1 the tool said NO (a report or a snapshot with an UNKNOWN tool, a send that was refused or unconfirmed); 2 could not run (a refusal naming the remedy).",
+		NoJSON:    "report and send write the note body the bus carries, so they take no --json; report's first line is `REPORT OK checked=1 known=1 unknown=0 changed=- sent=-`",
+		UsageNote: "THE MANIFEST is the file --file names: " + manifestShape + "; report -h states its six rules.",
+		ExitTable: "0 done, 2 usage or could not run, for every verb; by verb:\n" +
+			"  report: 0 every entry answered; 1 an entry is UNKNOWN; 2 usage, or a\n" +
+			"    manifest that did not read\n" +
+			"  send: 0 nova-bus took the note; 1 an entry is UNKNOWN, or the send was\n" +
+			"    refused or unconfirmed; 2 usage, or a manifest that did not read\n" +
+			"  snapshot: 0 every tool answers; 1 a tool is UNKNOWN; 2 usage, or a\n" +
+			"    manifest or directory that did not read\n" +
+			"  diff: 0 the snapshots compared; 2 usage, or a snapshot that did not read\n" +
+			"  moved: 0 the note written; 2 usage, or a revision or build that did not run",
 		Verbs: []tool.Verb{
 			{
 				Name:    "example",
@@ -62,7 +72,12 @@ first run: the binary alone; the example lines write a one-tool manifest and rea
 					f.String("file", "", "manifest of adopted tools: count how many answer")
 					f.String("bin", "", "directory holding the binaries")
 					f.String("out", "", "TSV snapshot to write")
-					f.Duration("timeout", snapshotChildTimeout, "one binary's read deadline")
+					// The two shapes carry two real defaults: --bin reads one
+					// binary under snapshotChildTimeout (SPEC-VERSION rule 11)
+					// and --file probes one adopted tool under
+					// snapshotAdoptedTimeout (SPEC-UPDATE) unless --timeout is
+					// given, so the help names both rather than one.
+					f.Duration("timeout", snapshotChildTimeout, "one binary's read deadline: 30s with --bin, 5s with --file unless --timeout is given")
 					f.Duration("budget", snapshotBudget, "whole run deadline")
 					f.Bool("dry-run", false, "read every binary and list the rows; write no --out")
 					// Neither path is guessed: both are the caller's to name

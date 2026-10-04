@@ -11,71 +11,14 @@ import (
 // The primitive: an ordered set, a Redis ZSET. Every body cell is one, and
 // nothing here knows what a table is.
 
-// FnMove is the library function Move calls: ZREM from, ZADD to, in one
-// call, refused NOTMEMBER when the member is not in from
+// FnMove is the ordered-set move library function: ZREM from, ZADD to, in
+// one call, refused NOTMEMBER when the member is not in from
 // (internal/nsprint/fn/lua/table.lua).
 const FnMove = "ns_oset_move"
 
-// ErrNotMember is Move's refusal: the member is not in the set it would
-// leave.
+// ErrNotMember is the refusal of a move whose set does not hold the member
+// it would leave.
 var ErrNotMember = errors.New("NOTMEMBER")
-
-// Add puts member into the set at key with score (ZADD).
-func Add(ctx context.Context, c redis.Cmdable, key, member string, score float64) error {
-	if err := c.ZAdd(ctx, key, redis.Z{Score: score, Member: member}).Err(); err != nil {
-		return fmt.Errorf("zadd %q member %q: %w", key, member, err)
-	}
-	return nil
-}
-
-// Remove takes member out of the set at key (ZREM); a member not there is
-// not an error.
-func Remove(ctx context.Context, c redis.Cmdable, key, member string) error {
-	if err := c.ZRem(ctx, key, member).Err(); err != nil {
-		return fmt.Errorf("zrem %q member %q: %w", key, member, err)
-	}
-	return nil
-}
-
-// Move takes member from the set at from and puts it in the set at to, in
-// one library call, keeping its score unless keepScore is false, in which
-// case score is used. ErrNotMember when from does not hold it.
-func Move(ctx context.Context, c redis.Cmdable, from, to, member string, keepScore bool, score float64) error {
-	arg := ""
-	if !keepScore {
-		arg = fmt.Sprint(score)
-	}
-	reply, err := c.FCall(ctx, FnMove, []string{from, to}, member, arg).Slice()
-	if err != nil {
-		return fmt.Errorf("%s %s -> %s: %w", FnMove, from, to, err)
-	}
-	if len(reply) >= 2 && fmt.Sprint(reply[0]) == "REFUSED" {
-		if fmt.Sprint(reply[1]) == "NOTMEMBER" {
-			return fmt.Errorf("ordered set %q -> %q member %q: %w; inspect the source with ZRANGE before retrying the move", from, to, member, ErrNotMember)
-		}
-		return fmt.Errorf("%s: REFUSED %v", FnMove, reply[1])
-	}
-	return nil
-}
-
-// Card is the set's cardinality (ZCARD).
-func Card(ctx context.Context, c redis.Cmdable, key string) (int64, error) {
-	n, err := c.ZCard(ctx, key).Result()
-	if err != nil {
-		return 0, fmt.Errorf("zcard %s: %w", key, err)
-	}
-	return n, nil
-}
-
-// MembersOf is every member of the set at key in score order (ZRANGE
-// WITHSCORES).
-func MembersOf(ctx context.Context, c redis.Cmdable, key string) ([]Member, error) {
-	zs, err := c.ZRangeWithScores(ctx, key, 0, -1).Result()
-	if err != nil {
-		return nil, fmt.Errorf("zrange %s: %w", key, err)
-	}
-	return members(zs), nil
-}
 
 func members(zs []redis.Z) []Member {
 	out := make([]Member, 0, len(zs))
@@ -116,12 +59,6 @@ func (c *CountCmd) Result() (int64, error) {
 		n--
 	}
 	return n, nil
-}
-
-// Val is Result's count, 0 on an error.
-func (c *CountCmd) Val() int64 {
-	n, _ := c.Result()
-	return n
 }
 
 // membersCmd is one queued ZRANGE WITHSCORES of a cell, its excluded member
