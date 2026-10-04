@@ -53,6 +53,17 @@ func ResolveDSN(flagValue string, getenv func(string) string) (string, error) {
 		}
 		return "", fmt.Errorf("--pg: %v; want postgres://user@host:5432/nova", err)
 	}
+	// The parsed config is the second look, after any parse: the lexical
+	// check judges the flag's text, but net/url refuses a control byte the
+	// pgconn URI reader accepts, so a password it reads from such a flag is
+	// still on the command line and meets the same refusal, quoted by
+	// nothing (docs/nova-config/README.md, "Connecting"). A password pgconn
+	// takes from the process environment is refused by the same line: a
+	// caller that puts one there hands the flag a ps can read, and the
+	// environment path never reaches this check.
+	if flagValue != "" && cfg.Password != "" {
+		return "", refuseFlagPassword()
+	}
 	if cfg.Password != "" {
 		return dsn, nil
 	}

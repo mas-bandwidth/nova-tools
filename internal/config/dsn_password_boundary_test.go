@@ -82,6 +82,38 @@ func TestResolveDSNRefusesEveryFlagPassword(t *testing.T) {
 	}
 }
 
+// TestResolveDSNRefusesAFlagPasswordBesideAControlByte pins the parsed-side
+// boundary the lexical check cannot reach: net/url refuses a flag carrying a
+// control byte, so flagCarriesPassword's URL branch never sees its query,
+// while the pgconn URI reader trims only a literal space around a query key
+// and treats other bytes as data, parses the flag, and sets a password from
+// it. A flag whose parsed config carries a non-empty Password is refused with
+// refuseFlagPassword's text whatever the lexical check said, and neither the
+// flag nor its secret is ever returned or echoed
+// (docs/nova-config/README.md, "Connecting").
+func TestResolveDSNRefusesAFlagPasswordBesideAControlByte(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		flag string
+	}{
+		{name: "control byte beside a password query key", flag: "postgres://store@db.invalid:5432/nova? password=synthetic-secret&application_name=a\tb"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := ResolveDSN(tc.flag, envOf(nil))
+			require.Error(t, err, "a flag whose parsed config carries a password is refused")
+			assert.Equal(t, refuseFlagPassword().Error(), err.Error(), "the refusal is refuseFlagPassword's own text")
+			assert.NotContains(t, err.Error(), "synthetic-secret", "the refusal never echoes the secret")
+			assert.NotContains(t, err.Error(), tc.flag, "the refusal never echoes the DSN")
+			assert.NotEqual(t, tc.flag, got, "the flag text is never returned")
+			assert.Empty(t, got, "nothing resolves when the flag is refused")
+		})
+	}
+}
+
 // envOf is the getenv ResolveDSN reads: one lookup into the case's
 // variables, so a test never touches the process environment.
 func envOf(env map[string]string) func(string) string {
