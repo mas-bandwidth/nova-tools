@@ -423,7 +423,7 @@ func TestMergeNotesListsASubjectOnce(t *testing.T) {
 // through Put and Drop, which reset the table's index of cells and primaries.
 func TestNoExportedFieldOfATableGivesItsCardsOrRows(t *testing.T) {
 	t.Parallel()
-	typ := reflect.TypeOf(Table{})
+	typ := reflect.TypeFor[Table]()
 	var exported []string
 	for i := 0; i < typ.NumField(); i++ {
 		if f := typ.Field(i); f.IsExported() {

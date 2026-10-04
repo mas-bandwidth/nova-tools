@@ -14,7 +14,7 @@ import (
 func TestSystemReadsAreNotAFieldOnInputOrPolicy(t *testing.T) {
 	t.Parallel()
 
-	for _, typ := range []reflect.Type{reflect.TypeOf(Input{}), reflect.TypeOf(Policy{})} {
+	for _, typ := range []reflect.Type{reflect.TypeFor[Input](), reflect.TypeFor[Policy]()} {
 		for _, name := range []string{"SystemReads", "NoSystemReads"} {
 			f, ok := typ.FieldByName(name)
 			require.False(t, ok, "%s still carries %s: linuxReadRoots is the one enforced policy", typ, f.Name)
