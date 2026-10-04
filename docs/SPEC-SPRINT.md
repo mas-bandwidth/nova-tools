@@ -1998,8 +1998,8 @@ or a list file, never a directory, a Go file or a symlink), narrowed to a family
 owned by named tests: the generality family, the `.txt` shards under
 `internal/ci/testdata/generality-text/` and `internal/ci/testdata/generality/`
 and the generality text fixtures allowlist, owned by `TestGeneralityGuardrail`
-and `TestGeneralityText`; and the lint family, the `.txt` shards under
-`internal/ci/testdata/staticcheck/` and `internal/ci/testdata/errcheck/`, owned by
+and `TestGeneralityText`; and the lint family, the `.txt` package shards of
+the `staticcheck` and `errcheck` ledgers under `internal/ci/testdata/`, owned by
 `TestStaticcheckFindings` and `TestUncheckedErrors` (`-tags functional`; a base
 without them has no such shards). Such a ledger is shrink-only and a function of
 the tree: two cards that both delete rows and both move its ceiling line conflict
