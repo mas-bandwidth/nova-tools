@@ -104,6 +104,32 @@ still answered by the daemon at once, beating, and recording a push it
 cannot deliver; so the tool is honest, and the beat and the daemon pong are
 real for them.
 
+Grok, the Grok Build TUI (xAI's `grok`), is the second real adapter, by the
+only door the open window has. The harness has no deliver verb, no leader
+socket unless leader mode is on, and `grok -p <text> --resume <id>` runs the
+turn in a second process over the same transcript, not in the window the
+friend is in. What the window has is its monitor tool: a background task
+whose every new output line becomes a notification in the conversation and
+wakes the agent for a turn (the harness's guide, `20-background-tasks.md`).
+The friend's session runs one over a wake file, `tail -n 0 -F <file>.wake`,
+and a line appended to that file arrives as a `<monitor-event>` user turn
+(measured 2026-10-04 in a friend's session). The adapter finds the window open
+in `--dir` in the harness's `~/.grok/active_sessions.json` (pid and cwd), the
+`tail` under that pid in `ps -axww -o pid=,ppid=,args=`, and appends the text
+as one line, `nova-friend: <text>` with each newline shown as ` ⏎ ` (the
+monitor makes an event per line, and a flood of lines is how the harness
+stops a monitor). `--session`, for grok, names the wake file, which must be
+the one tailed. The monitor uses `tail -n 0 -F <file>.wake`; its wake path
+must be absolute and contain no whitespace. Since `ps` does not preserve
+argument boundaries, ambiguous or multiple operands refuse with
+`the monitor's wake path must be absolute` rather than selecting a truncated
+path. The delivery is accepted at exit 0 once the line is in the
+file under a running tail; the turn runs after the adapter returns, since
+nothing hands its end back, so a second message can land during a turn and
+is the next event. Refused, with the line to run in the session, when no
+window is open in the directory or the window runs no monitor over a wake
+file; a stale pid in `active_sessions.json` is no window.
+
 ## Identity
 
 The friend's name comes from one place, `install --as`, written into the
