@@ -272,3 +272,31 @@ func (st *Store) FriendNames(ctx context.Context) ([]string, error) {
 	}
 	return slices.Sorted(maps.Keys(r)), nil
 }
+
+// FriendBeats is every friend of the roster with her last beat (a zero beat
+// for one who never beat), for the seat check (nova-sprint machinery): the
+// ages the friends table derives its status from, read as beats.
+func (st *Store) FriendBeats(ctx context.Context) (map[string]sprint.Beat, error) {
+	r, kv, err := st.roster(ctx)
+	if kv == nil || err != nil || len(r) == 0 {
+		return map[string]sprint.Beat{}, err
+	}
+	names := slices.Sorted(maps.Keys(r))
+	keys := make([]string, 0, len(names))
+	for _, n := range names {
+		keys = append(keys, friendBeatKey(n))
+	}
+	vals, oks, err := getKeys(ctx, kv, keys)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]sprint.Beat, len(names))
+	for i, n := range names {
+		var b sprint.Beat
+		if i < len(oks) && oks[i] {
+			_ = json.Unmarshal([]byte(vals[i]), &b) // ignored: an unreadable record is no beat
+		}
+		out[n] = b
+	}
+	return out, nil
+}
