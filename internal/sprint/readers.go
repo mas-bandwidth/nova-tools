@@ -199,6 +199,25 @@ func liveReadsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 	return out
 }
 
+// ReadCardForAsk returns the read card ID to use when asking a reader of a primary
+// at an attempt: plain identity if no card exists yet, or second identity if an
+// away-retired card exists with the plain identity and no second card exists yet.
+// ok is true if the reader is eligible to be asked.
+func ReadCardForAsk(s *Snapshot, primary string, attempt int, reader string) (id string, ok bool) {
+	plain := ReadCardID(primary, attempt, reader)
+	existing := s.Readers.Card(plain)
+	if existing == nil {
+		return plain, true
+	}
+	if existing.F("retired_by") == "away" {
+		second := ReadCardSecondID(primary, attempt, reader)
+		if s.Readers.Card(second) == nil {
+			return second, true
+		}
+	}
+	return plain, false
+}
+
 // sweepReads is the readers' rebalance safety: every read asked or reading of a
 // reader that is not up is taken back, retired as the ask takes back a read
 // asked of a reader away
@@ -219,7 +238,7 @@ func sweepReads(s *Snapshot, p *Plan) {
 			return false
 		}
 		for _, rd := range up {
-			if s.Readers.Card(ReadCardID(c.F("primary"), c.Int("attempt"), rd)) == nil {
+			if _, ok := ReadCardForAsk(s, c.F("primary"), c.Int("attempt"), rd); ok {
 				return true
 			}
 		}
