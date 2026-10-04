@@ -34,7 +34,13 @@ func TestSuccessfulTurnRemainsRetryableAfterAcknowledgementFailure(t *testing.T)
 		store := &edgeAckStore{Fake: r.store}
 		r.d.Store = store
 		r.passive = true // the injected pause synchronizes the active worker below
-		r.d.Pause = func(context.Context, time.Duration) { synctest.Wait() }
+		r.d.Pause = func(context.Context, time.Duration) {
+			synctest.Wait()
+			select {
+			case <-r.gate: // consume the completed turn before another delivery uses the rig
+			default:
+			}
+		}
 		r.send(t, "ada", "hello", "retry the acknowledgement")
 		r.at[10] = func() { r.store.Advance(bus2.ClaimAfter) }
 		r.run(t, 40)
