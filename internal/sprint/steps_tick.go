@@ -100,6 +100,7 @@ const (
 	NReadLate  = "a read card is past its deadline"
 	NMergeLate = "a stream has had no merge step past its deadline"
 	NBound     = "a card reached its bound"
+	NStarving  = "the fleet is starving" // ready under twice the width while a wave is held (heldWave)
 	// NOverdue (notes.go) is the overdue line: a happened note, once per
 	// judgment, when the judgment passes its due time.
 
@@ -122,6 +123,7 @@ var TickDecisions = map[string][]string{
 	NCannotAsk:  {"reader add", "rework", "drop", "wait"},
 	NFewReaders: {"reader up", "reader add", "wait"},
 	NNoMember:   {"fleet beat", "fleet up", "wait"},
+	NStarving:   {"release", "wait"}, // the first held wave's sentinel, never a single card
 	NNoRoute:    {"route add", "look at the card", "drop", "wait"},
 	// a payment and a key are the owner's: no rework is offered (provider_funds.go)
 	NProviderFunds:  {"ack", "wait"}, // and "funded <provider>", named per provider (providerConds)
@@ -590,6 +592,27 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 		}
 		conds = append(conds, c)
 	}
+	if sentinel := heldWave(s); sentinel != nil && len(up) > 0 {
+		// A member holds up to DealAhead times its width, ready and working
+		// together (docs/SPEC-SPRINT.md section 5): under it while a wave is held
+		// behind a sentinel (section 16), the tick says so every tick and offers the wave,
+		// never a single card.
+		width, working, n := 0, 0, 0
+		for _, m := range up {
+			width += s.Width(m)
+			working += s.Fleet.Count(m, Working)
+			n += s.Fleet.Count(m, Ready)
+		}
+		for _, c := range s.Work.Column(Ready) {
+			if !IsSentinel(c) {
+				n++
+			}
+		}
+		if n+working < DealAhead*width {
+			conds = append(conds, cond{typ: NStarving, streamLevel: true, primaries: []string{sentinel.ID},
+				what: fmt.Sprintf("the fleet is starving: ready %d is under twice the width %d, working %d of width %d; release a wave: nova-sprint release %s --reason '<why>'", n, DealAhead*width, working, width, sentinel.ID)})
+		}
+	}
 	if len(up) > 0 {
 		room := widthRoom(s, up)
 		n := min(room, TickMaxDeal, len(ready))
@@ -609,7 +632,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	// a ready card dealt on a route that rests now is withdrawn, never taken there
 	p.Units = append(p.Units, restWithdrawals(s, r.who())...)
 	restWrites(&p, s, rests, r.who())
-	due += notify(&p, s, conds, []string{NNoMember, NBound, NNoRoute, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit}, r)
+	due += notify(&p, s, conds, []string{NNoMember, NStarving, NBound, NNoRoute, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit}, r)
 	// every provider out of credit: the binding stops the machine as the plan commits
 	p.Stop = stop
 	return p, due
@@ -1018,7 +1041,7 @@ type cond struct {
 // stays one condition, so they are keyed by their type and subject only.
 func condKey(typ, subject, card, what string) string {
 	switch typ {
-	case NNoMember, NCannotAsk, NNoRoute, NFewReaders, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit:
+	case NNoMember, NCannotAsk, NNoRoute, NFewReaders, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit, NStarving:
 		what = ""
 	case NWorkLate, NReadLate:
 		// a lateness is one per attempt's card and kind (not taken, not
@@ -1142,7 +1165,7 @@ func notify(p *Plan, s *Snapshot, conds []cond, types []string, r TickReq) int {
 			k := condKey(c.typ, sub, c.card, c.what)
 			holds[k] = true
 			fresh = fresh || !open[k]
-			if n, ok := judged[k]; ok && (c.typ == NWorkLate || c.typ == NReadLate || c.typ == NFewReaders) {
+			if n, ok := judged[k]; ok && (c.typ == NWorkLate || c.typ == NReadLate || c.typ == NFewReaders || c.typ == NStarving) {
 				update(n, c.what) // the latest facts, in place
 			}
 		}
@@ -1193,6 +1216,20 @@ func notify(p *Plan, s *Snapshot, conds []cond, types []string, r TickReq) int {
 		}
 	}
 	return due
+}
+
+// heldWave is the first held sentinel waiting that waits for nothing itself (a wave loads
+// behind a held sentinel with nothing before it, docs/SPEC-SPRINT.md section 16:
+// len(WaitsFor(s, c, nil)) == 0), in work order: the wave behind it is what
+// the tick offers when the fleet is starving (NStarving, docs/SPEC-SPRINT.md section 5),
+// since its release is what lets the wave through; nil when no such sentinel is held.
+func heldWave(s *Snapshot) *Card {
+	for _, c := range s.Work.Column(Waiting) {
+		if IsSentinel(c) && IsHeld(c) && len(WaitsFor(s, c, nil)) == 0 {
+			return c
+		}
+	}
+	return nil
 }
 
 // MovesDue is how many moves the tick would make on the snapshot's work and
