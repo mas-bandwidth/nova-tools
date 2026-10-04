@@ -3,6 +3,7 @@ package bus
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -341,7 +342,9 @@ func (g *gitStore) Find(ctx context.Context, id string) ([]byte, IndexEntry, boo
 }
 
 // writeCreateOnly writes one note and refuses to overwrite it: a note once written is not
-// rewritten, which is the bus's own rule and the reason a publish is safe to retry.
+// rewritten, which is the bus's own rule and the reason a publish is safe to retry. A note
+// whose bytes are already there with the same content is a retry after a write that was cut
+// short, not a second write, so it is left as it is and the rest of the change lands.
 func writeCreateOnly(root, rel string, data []byte) error {
 	full := filepath.Join(root, filepath.FromSlash(rel))
 	if err := insideRoot(root, full); err != nil {
@@ -352,6 +355,11 @@ func writeCreateOnly(root, rel string, data []byte) error {
 	}
 	f, err := os.OpenFile(full, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			if have, rerr := os.ReadFile(full); rerr == nil && bytes.Equal(have, data) {
+				return nil
+			}
+		}
 		return err
 	}
 	defer f.Close()

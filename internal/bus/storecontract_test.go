@@ -6,12 +6,25 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// peerOf builds a second bench over the same bus as st, so a case can publish from two
+// clones of one remote. The contract runs on gitStore, whose checkout names its remote; the
+// two-bench case is the one property that needs two checkouts of one bus.
+func peerOf(t *testing.T, st Store) Store {
+	t.Helper()
+	gs, ok := st.(*gitStore)
+	require.True(t, ok, "the two-bench case needs a store over a shared remote")
+	url, err := git(gs.dir, "remote", "get-url", gs.remote)
+	require.NoError(t, err)
+	return NewGitStore(cloneBus(t, strings.TrimSpace(url)), gs.remote, gs.branch, gs.attempts, gs.wait)
+}
 
 // TestGitStoreContract runs the Store contract on the git transport. It is functional
 // because it makes repositories and pushes; the logic it pins is the bus's own, stated
@@ -73,6 +86,32 @@ func runStoreContract(t *testing.T, newStore func(t *testing.T) Store) {
 		assert.ErrorIs(t, err, ErrConflict)
 	})
 
+	t.Run("a two-note retry with one note present lands the other", func(t *testing.T) {
+		st := newStore(t)
+		first := change(ada, noteText("Ada", "one", "body"), "from-ada/one.md")
+		_, err := st.Publish(ctx, first)
+		require.NoError(t, err)
+		both := Change{
+			Author: ada,
+			Notes: map[string][]byte{
+				"from-ada/one.md": []byte(noteText("Ada", "one", "body")),
+				"from-ada/two.md": []byte(noteText("Ada", "two", "body")),
+			},
+			Message: "ada: two notes",
+		}
+		res, err := st.Publish(ctx, both)
+		require.NoError(t, err, "the retry after a cut-short write lands the missing note")
+		assert.False(t, res.Already, "a change with a missing note is not Already")
+		head, err := st.Head(ctx)
+		require.NoError(t, err)
+		at, err := st.Read(ctx, head)
+		require.NoError(t, err)
+		_, err = fs.ReadFile(at, "from-ada/one.md")
+		assert.NoError(t, err, "the note already present survives")
+		_, err = fs.ReadFile(at, "from-ada/two.md")
+		assert.NoError(t, err, "the missing note lands")
+	})
+
 	t.Run("a refused publish changes nothing", func(t *testing.T) {
 		st := newStore(t)
 		c := change(ada, noteText("Ada", "one", "body"), "from-ada/one.md")
@@ -114,23 +153,54 @@ func runStoreContract(t *testing.T, newStore func(t *testing.T) Store) {
 	})
 
 	t.Run("two benches of one lane keep every INDEX and RECEIPTS line, the furthest cursor wins", func(t *testing.T) {
-		st := newStore(t)
+		a := newStore(t)
+		b := peerOf(t, a)
 		one := change(ada, noteText("Ada", "one", "body"), "from-ada/one.md")
 		one.Index = []IndexEntry{{ID: "ada-000000000001", Path: "from-ada/one.md", Lane: "from-ada"}}
 		one.Receipts = []string{"2026-09-07T00:00:00Z ada-000000000001"}
-		_, err := st.Publish(ctx, one)
+		_, err := a.Publish(ctx, one)
 		require.NoError(t, err)
 		two := change(ada, noteText("Ada", "two", "body"), "from-ada/two.md")
 		two.Index = []IndexEntry{{ID: "ada-000000000002", Path: "from-ada/two.md", Lane: "from-ada"}}
 		two.Receipts = []string{"2026-09-07T00:00:01Z ada-000000000002"}
-		_, err = st.Publish(ctx, two)
+		_, err = a.Publish(ctx, two)
 		require.NoError(t, err)
-		_, _, found, err := st.Find(ctx, "ada-000000000001")
+
+		_, _, found, err := a.Find(ctx, "ada-000000000001")
 		require.NoError(t, err)
 		assert.True(t, found, "the first bench's INDEX line is kept")
-		_, _, found, err = st.Find(ctx, "ada-000000000002")
+		_, _, found, err = a.Find(ctx, "ada-000000000002")
 		require.NoError(t, err)
 		assert.True(t, found, "the second bench's INDEX line is kept")
+
+		head, err := a.Head(ctx)
+		require.NoError(t, err)
+		at, err := a.Read(ctx, head)
+		require.NoError(t, err)
+		receipts, err := fs.ReadFile(at, "from-ada/RECEIPTS")
+		require.NoError(t, err)
+		assert.Contains(t, string(receipts), one.Receipts[0], "the first receipt line is kept")
+		assert.Contains(t, string(receipts), two.Receipts[0], "the second receipt line is kept")
+
+		// The further read is pushed first; the bench that cannot see it pushes an earlier
+		// one second, and the settlement keeps the further.
+		ahead := string(head)
+		behind, err := b.Head(ctx)
+		require.NoError(t, err)
+		require.NotEqual(t, ahead, string(behind), "the second bench is behind the first")
+		_, err = a.Publish(ctx, Change{Author: ada, Cursor: &Cursor{Commit: ahead}, Message: "ada: read ahead"})
+		require.NoError(t, err)
+		_, err = b.Publish(ctx, Change{Author: ada, Cursor: &Cursor{Commit: string(behind)}, Message: "ada: read behind"})
+		require.NoError(t, err, "two benches of one lane wedged the cursor")
+
+		final, _, err := b.Refresh(ctx)
+		require.NoError(t, err)
+		at, err = b.Read(ctx, final)
+		require.NoError(t, err)
+		cursor, err := fs.ReadFile(at, CursorPath("from-ada"))
+		require.NoError(t, err)
+		assert.Contains(t, string(cursor), ahead, "the settlement kept the nearer read")
+		assert.NotContains(t, string(cursor), string(behind), "the earlier read overwrote the further")
 	})
 
 	t.Run("a lost reply's retry is Already", func(t *testing.T) {
