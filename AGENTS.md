@@ -12,7 +12,7 @@ make map            # regenerate AGENTS.md and per-directory maps
 
 ## The standard: how a nova tool is built
 
-Every tool and module meets this standard. Each rule names its check in docs/SPEC-CI.md. Existing gaps have shrink-only allowlists under `internal/ci/testdata`: new rows are refused. The goal is minimal, performant, correct code, with tests that permit safe reduction.
+Every tool and module is built to this standard. Each rule names its check where one exists in docs/SPEC-CI.md. Existing gaps have shrink-only allowlists under `internal/ci/testdata`: new rows are refused. The goal is minimal, performant, correct code, with tests that permit safe reduction.
 
 ### Doing it right the first time
 
