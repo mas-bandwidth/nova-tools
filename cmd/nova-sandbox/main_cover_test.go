@@ -19,10 +19,10 @@ func TestMainCoverAsRefusalCarriesARefusalThroughAndLeavesTheRest(t *testing.T) 
 
 	refusal := sandbox.Refusal{Reason: "not_found", Text: "the command is not on this machine's PATH"}
 	cases := []struct {
-		name     string
-		err      error
-		want     bool
-		wantOut  sandbox.Refusal
+		name    string
+		err     error
+		want    bool
+		wantOut sandbox.Refusal
 	}{
 		{name: "main path: the error is a refusal", err: refusal, want: true, wantOut: refusal},
 		{name: "refusal: the error is no refusal", err: errors.New("fork/exec /no/such/binary: no such file or directory"), want: false},
