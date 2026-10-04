@@ -173,9 +173,10 @@ first, at most 32 messages or 256 KiB (`MaxBatch`, `BatchBytes`; the rest is
 the next turn): one envelope listing each message's id, from and subject, with
 the message as `nova-bus recv` prints it, the pong line first while a challenge
 is open, and the daemon's latest word about the coordinator; a single message
-with nothing else is its `recv` text alone. An adapter normally blocks for the
-whole turn; Codex queue acceptance is an admission result and can return before
-the model answers. Exit 0 acks every message it carried, together. Any other exit leaves
+with nothing else is its `recv` text alone. A synchronous adapter blocks for
+the whole turn. The Codex queue route waits for the exact user input to be
+recorded in the target session; this confirms delivery, not a completed model
+answer. Exit 0 acks every message it carried, together. Any other exit leaves
 them pending, handed in again when their claims open, and the third failure
 acks a message with `given_up=true` on the record, so a message the session
 cannot take never comes back for ever. A delivery the adapter defers,
@@ -243,16 +244,29 @@ lock is free, it tries
 an observation, not a reservation, and the text is a literal argument, never a
 shell command.
 
-Queue acceptance is recorded as "queued for open chat", explicitly "accepted,
-not answered"; the open app may defer it until its current turn ends. Resume
-success is recorded as "answered by resume, not by the open chat". If the first
-command fails, the adapter tries the other route once, and a successful
-fallback wins. Generic errors from both routes produce `Deferred`, keeping the
-bus messages pending and charging no failed delivery. If an actual resume
+A synchronous adapter blocks until its turn completes. The Codex queue route
+instead waits until the exact submitted text appears as a new user record in
+the resolved thread's rollout. A successful queue process alone proves only
+transport admission; it neither acknowledges the bus messages nor says that
+the model answered.
+
+After the queue command returns success, the adapter waits for an exact new
+user-input record after its pre-submit rollout boundary. Partial records and
+records for another session do not confirm delivery. Cancellation, an
+unreadable receipt, or an ambiguous queue command error returns `Deferred`
+without trying resume, because resubmission could duplicate an accepted turn.
+A definite queue refusal may try resume. Resume success is recorded as
+"answered by resume, not by the open chat". Generic errors from both routes
+produce `Deferred`, keeping the bus messages pending and charging no failed
+delivery. If an actual resume
 reports a recognized `ProviderRefused` and queue also fails, that typed session
 fault is preserved so repeated provider refusals can mark and report the broken
 session. No matching saved thread is a refusal with a remedy rather than
 delivery to a guessed thread.
+
+There is no durable exactly-once queue transaction: a process crash after the
+app records the user input but before the adapter observes it can cause the
+pending bus batch to be submitted again after restart or rebatching.
 
 Measured with codex-cli 0.153.4 and ChatGPT 26.930.21537 build 12776 on
 2026-10-04: queued text arrived in the same open thread after its active turn
