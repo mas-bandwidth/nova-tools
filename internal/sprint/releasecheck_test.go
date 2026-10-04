@@ -23,8 +23,8 @@ func fleetMove(at time.Time, card, from, to string, set map[string]string) Line 
 	return Line{Kind: LineMove, At: at, Table: Fleet, Card: card, Stream: "s1", From: from, To: to, Set: set}
 }
 
-// at is the clock t0 plus h hours.
-func at(h float64) time.Time { return t0.Add(time.Duration(h * float64(time.Hour))) }
+// hr is the clock t0 plus h hours.
+func hr(h float64) time.Time { return t0.Add(time.Duration(h * float64(time.Hour))) }
 
 func relFacts(now time.Time, lines ...Line) fakeRelease {
 	return fakeRelease{now: now, lines: lines, dealtMax: DealtMaxDefault}
@@ -37,13 +37,13 @@ func TestReleaseCheckFailsWhileAFriendWasStuckInTheLastFourHours(t *testing.T) {
 	t.Run("a friend's working card past its deadline fails, naming her and the time", func(t *testing.T) {
 		t.Parallel()
 		// taken at hour 0, deadline 2h, now hour 3: late since hour 2, inside the last four hours
-		f := relFacts(at(3), fleetMove(at(0), "s1-1.w1", "", amy+":working", map[string]string{"first_taken": stamp(at(0))}))
+		f := relFacts(hr(3), fleetMove(hr(0), "s1-1.w1", "", amy+":working", map[string]string{"first_taken": stamp(hr(0))}))
 		r := NoStuckFriend(f)
 		assert.False(t, r.OK)
 		assert.Equal(t, CheckNoStuckFriend, r.Name)
 		assert.Contains(t, r.Evidence, "friend amy")
 		assert.Contains(t, r.Evidence, "s1-1.w1")
-		assert.Contains(t, r.Evidence, stamp(at(2)), "the moment she became stuck")
+		assert.Contains(t, r.Evidence, stamp(hr(2)), "the moment she became stuck")
 		assert.Contains(t, r.Evidence, "nova-sprint card s1-1", "what to look at")
 		assert.Equal(t, "RELEASE CHECK no-stuck-friend fail "+r.Evidence, r.Line())
 	})
@@ -51,9 +51,9 @@ func TestReleaseCheckFailsWhileAFriendWasStuckInTheLastFourHours(t *testing.T) {
 	t.Run("a stuck spell that ended before the window is not a failure", func(t *testing.T) {
 		t.Parallel()
 		// late from hour 2 to hour 3 (finished), now hour 9: the window opens at hour 5
-		f := relFacts(at(9),
-			fleetMove(at(0), "s1-1.w1", "", amy+":working", nil),
-			fleetMove(at(3), "s1-1.w1", amy+":working", amy+":done_ok", nil))
+		f := relFacts(hr(9),
+			fleetMove(hr(0), "s1-1.w1", "", amy+":working", nil),
+			fleetMove(hr(3), "s1-1.w1", amy+":working", amy+":done_ok", nil))
 		r := NoStuckFriend(f)
 		assert.True(t, r.OK, r.Evidence)
 		assert.Equal(t, "RELEASE CHECK no-stuck-friend ok "+r.Evidence, r.Line())
@@ -61,70 +61,70 @@ func TestReleaseCheckFailsWhileAFriendWasStuckInTheLastFourHours(t *testing.T) {
 
 	t.Run("a spell that ended inside the window fails: stuck at any moment", func(t *testing.T) {
 		t.Parallel()
-		f := relFacts(at(6),
-			fleetMove(at(0), "s1-1.w1", "", amy+":working", nil),
-			fleetMove(at(3), "s1-1.w1", amy+":working", amy+":done_ok", nil))
+		f := relFacts(hr(6),
+			fleetMove(hr(0), "s1-1.w1", "", amy+":working", nil),
+			fleetMove(hr(3), "s1-1.w1", amy+":working", amy+":done_ok", nil))
 		r := NoStuckFriend(f)
 		assert.False(t, r.OK)
-		assert.Contains(t, r.Evidence, stamp(at(2)), "the spell began at hour 2, inside the window opened at hour 2")
+		assert.Contains(t, r.Evidence, stamp(hr(2)), "the spell began at hour 2, inside the window opened at hour 2")
 	})
 
 	t.Run("a card finished inside its deadline is never stuck", func(t *testing.T) {
 		t.Parallel()
-		f := relFacts(at(3),
-			fleetMove(at(0), "s1-1.w1", "", amy+":working", nil),
-			fleetMove(at(1), "s1-1.w1", amy+":working", amy+":done_ok", nil))
+		f := relFacts(hr(3),
+			fleetMove(hr(0), "s1-1.w1", "", amy+":working", nil),
+			fleetMove(hr(1), "s1-1.w1", amy+":working", amy+":done_ok", nil))
 		assert.True(t, NoStuckFriend(f).OK)
 	})
 
 	t.Run("her own longer deadline holds", func(t *testing.T) {
 		t.Parallel()
 		set := map[string]string{"friend_deadline": strconv.Itoa(5 * 3600)}
-		f := relFacts(at(4), fleetMove(at(0), "s1-1.w1", "", amy+":working", set))
+		f := relFacts(hr(4), fleetMove(hr(0), "s1-1.w1", "", amy+":working", set))
 		assert.True(t, NoStuckFriend(f).OK, "late only from hour 5")
-		f.now = at(6)
+		f.now = hr(6)
 		assert.False(t, NoStuckFriend(f).OK)
 	})
 
 	t.Run("a card dealt and never taken past the dealt bound fails", func(t *testing.T) {
 		t.Parallel()
-		f := relFacts(at(7), fleetMove(at(0), "s1-2.w1", "", amy+":ready", nil))
+		f := relFacts(hr(7), fleetMove(hr(0), "s1-2.w1", "", amy+":ready", nil))
 		r := NoStuckFriend(f)
 		assert.False(t, r.OK)
 		assert.Contains(t, r.Evidence, "dealt, never taken")
-		assert.Contains(t, r.Evidence, stamp(at(6)), "dealt at 0 and the dealt bound is 6h")
+		assert.Contains(t, r.Evidence, stamp(hr(6)), "dealt at 0 and the dealt bound is 6h")
 	})
 
 	t.Run("a card taken back from her stops the clock", func(t *testing.T) {
 		t.Parallel()
-		f := relFacts(at(9),
-			fleetMove(at(0), "s1-2.w1", "", amy+":ready", nil),
-			fleetMove(at(1), "s1-2.w1", amy+":ready", "m1:ready", nil))
+		f := relFacts(hr(9),
+			fleetMove(hr(0), "s1-2.w1", "", amy+":ready", nil),
+			fleetMove(hr(1), "s1-2.w1", amy+":ready", "m1:ready", nil))
 		assert.True(t, NoStuckFriend(f).OK, "it left her row")
 	})
 
 	t.Run("a machine's late card is not a friend's", func(t *testing.T) {
 		t.Parallel()
-		f := relFacts(at(9), fleetMove(at(0), "s1-1.w1", "", "m1:working", nil))
+		f := relFacts(hr(9), fleetMove(hr(0), "s1-1.w1", "", "m1:working", nil))
 		assert.True(t, NoStuckFriend(f).OK)
 	})
 
 	t.Run("no log is no stuck friend", func(t *testing.T) {
 		t.Parallel()
-		assert.True(t, NoStuckFriend(relFacts(at(9))).OK)
+		assert.True(t, NoStuckFriend(relFacts(hr(9))).OK)
 	})
 }
 
 func TestTheReleaseReportSaysOKOrNotReadyByTheChecksRun(t *testing.T) {
 	t.Parallel()
-	good := relFacts(at(1))
+	good := relFacts(hr(1))
 	rep, err := RunReleaseChecks(good, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "RELEASE OK checks=1", rep.Summary)
 	assert.Equal(t, 0, rep.ExitCode())
 	assert.Equal(t, 1, len(rep.Results))
 
-	bad := relFacts(at(3), fleetMove(at(0), "s1-1.w1", "", FriendRow("amy")+":working", nil))
+	bad := relFacts(hr(3), fleetMove(hr(0), "s1-1.w1", "", FriendRow("amy")+":working", nil))
 	rep, err = RunReleaseChecks(bad, []string{CheckNoStuckFriend})
 	require.NoError(t, err)
 	assert.Equal(t, "RELEASE NOT READY failed=1", rep.Summary)
@@ -150,9 +150,9 @@ func TestEveryReleaseCheckStatesItsBar(t *testing.T) {
 
 func TestReleaseStreamsFilterKeepsTheStreamsTheGlobNames(t *testing.T) {
 	t.Parallel()
-	a := fleetMove(at(0), "a-1.w1", "", FriendRow("amy")+":working", nil)
+	a := fleetMove(hr(0), "a-1.w1", "", FriendRow("amy")+":working", nil)
 	a.Stream = "alpha"
-	b := fleetMove(at(0), "b-1.w1", "", FriendRow("bob")+":working", nil)
+	b := fleetMove(hr(0), "b-1.w1", "", FriendRow("bob")+":working", nil)
 	b.Stream = "beta"
 	got, err := ReleaseStreamLines([]Line{a, b}, "al*")
 	require.NoError(t, err)
