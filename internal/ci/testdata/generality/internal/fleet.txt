@@ -1,6 +1,2 @@
 # Migrated counted package ledger; original row keys preserved.
-# ceiling: 4
-internal/fleet/registry.go:batman 2
-internal/fleet/registry.go:glenn 1
-internal/fleet/registry.go:hulk 1
-internal/fleet/registry.go:vision 1
+# ceiling: 0
