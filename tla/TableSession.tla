@@ -16,7 +16,7 @@
 \* history, kept so the invariants can say what happened and not only what
 \* is.
 \*
-\* The signals (Stella, stella-ba91222b58ce). SIGTERM is a stop wherever it
+\* The signals (a friend, a machine). SIGTERM is a stop wherever it
 \* arrives: the session ends and no line follows. SIGINT inside a watch is
 \* not a stop: it is how a watch is left, and the reader goes on to the next
 \* line. SIGINT at the prompt or inside a verb is a stop. A session ended by
@@ -49,7 +49,7 @@
 \*   "replay" a write whose reply was lost is sent again (ed959e1a3:
 \*            session.go:88 opens with go-redis's own command retries, and
 \*            error.go shouldRetry answers true for io.EOF on the reply;
-\*            found by Stella, stella-db2749edae17: code 0 and a second
+\*            found by a friend, a machine: code 0 and a second
 \*            receipt)
 \*   "on"     the session goes on after a failed line without --keep-going
 \*   "last"   the exit code is the last line's, not the highest
