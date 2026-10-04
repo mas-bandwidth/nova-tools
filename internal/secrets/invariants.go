@@ -21,7 +21,8 @@ func ExtractPublicKeyFromKeyFile(keyPath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
+	// ignored: the key-file handle was opened only for reading
+	defer func() { _ = f.Close() }()
 
 	scanner := bufio.NewScanner(f)
 	re := regexp.MustCompile(`^#\s*public key:\s*(age1[a-z0-9]+)`)
@@ -404,7 +405,8 @@ func CheckInvariant7(storeDir string, trackedFiles map[string]bool) []CheckFailu
 			failures = append(failures, unreadableFailure("untracked-plaintext", storeDir, path, err))
 			return nil
 		}
-		defer f.Close()
+		// ignored: the plaintext-check handle was opened only for reading
+		defer func() { _ = f.Close() }()
 
 		scanner := bufio.NewScanner(f)
 		scanner.Buffer(make([]byte, 64*1024), 1024*1024)

@@ -81,7 +81,8 @@ func ParseSopsConfig(storeDir string) (*SopsConfig, error) {
 	if err != nil {
 		return nil, fmt.Errorf(".sops.yaml is absent or unreadable: %w", err)
 	}
-	defer f.Close()
+	// ignored: the config handle was opened only for reading
+	defer func() { _ = f.Close() }()
 	return parseSopsConfig(f)
 }
 
@@ -249,7 +250,8 @@ func ParseStoreFileWithoutDecrypting(filePath string) (keys []StoreFileKey, reci
 	if err != nil {
 		return nil, nil, false, err
 	}
-	defer f.Close()
+	// ignored: the store-file handle was opened only for reading
+	defer func() { _ = f.Close() }()
 	return parseStoreFile(f)
 }
 
@@ -660,7 +662,8 @@ func ReadGitIndex(storeDir string) (*GitIndexData, error) {
 // GitBlobSHA1 computes the SHA1 hash of a git blob object for content.
 func GitBlobSHA1(content []byte) [20]byte {
 	h := sha1.New()
-	fmt.Fprintf(h, "blob %d\x00", len(content))
+	// ignored: a hash's write never fails
+	_, _ = fmt.Fprintf(h, "blob %d\x00", len(content))
 	h.Write(content)
 	var out [20]byte
 	copy(out[:], h.Sum(nil))

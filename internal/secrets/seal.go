@@ -44,7 +44,8 @@ func realExecCommand(stdin io.Reader, env []string, dir, name string, args ...st
 // say writes one progress line; never a value, only step names and public facts.
 func (o SealOptions) say(format string, a ...interface{}) {
 	if o.Progress != nil {
-		fmt.Fprintf(o.Progress, "seal: "+format+"\n", a...)
+		// ignored: the progress line is best effort; the verb's result still carries the outcome
+		_, _ = fmt.Fprintf(o.Progress, "seal: "+format+"\n", a...)
 	}
 }
 
@@ -482,12 +483,14 @@ func readSealFromTTY() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("no controlling terminal to read the value from; run with --stdin")
 	}
-	defer w.Close()
+	// ignored: the prompt is written and its error judged below; the close is best effort
+	defer func() { _ = w.Close() }()
 	r, err := os.OpenFile("/dev/tty", os.O_RDONLY, 0)
 	if err != nil {
 		return "", fmt.Errorf("no controlling terminal to read the value from; run with --stdin")
 	}
-	defer r.Close()
+	// ignored: the read handle was opened only for reading
+	defer func() { _ = r.Close() }()
 
 	if _, err := fmt.Fprint(w, "value: "); err != nil {
 		return "", err
@@ -536,7 +539,7 @@ func sealDecrypt(run execCommand, sopsPath, keyPath, filePath string) ([]byte, e
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temporary isolation directory: %w", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }() // ignored: the temporary directory may already be gone
 
 	out, err := run(nil, sealSopsEnv(keyPath, tmpDir), "", sopsPath, "-d", filePath)
 	if err != nil {
@@ -562,7 +565,7 @@ func sealEncrypt(run execCommand, sopsPath, keyPath, storeDir, seatFile string, 
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temporary isolation directory: %w", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }() // ignored: the temporary directory may already be gone
 
 	out, err := run(bytes.NewReader(plaintext), sealSopsEnv(keyPath, tmpDir), storeDir, sopsPath,
 		"-e", "--filename-override", seatFile, "--input-type", "yaml", "--output-type", "yaml", "/dev/stdin")
