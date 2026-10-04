@@ -1015,7 +1015,7 @@ const LanePathspec = ":(glob)from-*/**"
 //   - --no-renames, because git's rename detection is on by default and would report a
 //     renamed note as R, which AM excludes -- so a note that moved would go unread. With
 //     renames off it is a D and an A, and the A is the one that matters;
-//   - -z, because --name-only QUOTES a path holding a space or a non-ASCII byte, and a
+//   - -z, because --name-only QUOTES a path holding a blank or a non-ASCII byte, and a
 //     quoted path does not match a file on disk;
 //   - the pathspec, because the bus's own machinery -- a README, a CI file, the roster --
 //     is not a note, and reading one as a note would be a parse failure reported to every
