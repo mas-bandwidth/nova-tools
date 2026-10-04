@@ -285,7 +285,7 @@ $ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@examp
 HYGIENE FINDING reason=identity at=0a19082d2973: author someone@elsewhere.example and committer someone@elsewhere.example are not the pool's identity
 HYGIENE FINDING reason=out-of-path at=elsewhere.go: this path matches none of the card's declared PATHS: sign/**
 HYGIENE MORE kind=finding shown=2 total=4 nova-check hygiene --repo "." --base "main" --head "card" --identity "Ada <ada@example.com>" --paths "sign/**" --max 0
-HYGIENE NO base=main head=card paths=sign/** findings=4
+HYGIENE FAILED base=main head=card paths=sign/** findings=4
 ```
 
 The `MORE` line is the same run with the cap lifted, quoted so it can be pasted
@@ -298,7 +298,7 @@ HYGIENE FINDING reason=identity at=0a19082d2973: author someone@elsewhere.exampl
 HYGIENE FINDING reason=out-of-path at=elsewhere.go: this path matches none of the card's declared PATHS: sign/**
 HYGIENE FINDING reason=out-of-path at=elsewhere/x.go: this path matches none of the card's declared PATHS: sign/**
 HYGIENE FINDING reason=stray-file at=sign/RESULT.md: an added file matching the stray list's RESULT.md
-HYGIENE NO base=main head=card paths=sign/** findings=4
+HYGIENE FAILED base=main head=card paths=sign/** findings=4
 ```
 
 `--identity` takes one pair of angle brackets. A second pair is refused rather

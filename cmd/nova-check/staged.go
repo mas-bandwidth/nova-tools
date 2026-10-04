@@ -45,10 +45,10 @@ import (
 
 // stagedRun drives one `nova-check nocode --staged --dir <repo>` advisory and
 // returns the exit code: 0 with a count of what was classified when the index
-// stages no machinery, 1 with one `NOCODE FAIL <path>: <reason>` line per
+// stages no machinery, 1 with one `NOCODE FAILED <path>: <reason>` line per
 // finding on stderr, 2 for every refusal. --dir is required at the verb, on
 // the no-guessing law, and this function never sees it empty.
-func stagedRun(dir string, allow []string, deny []string, source string, failMax int, stdout, stderr io.Writer) int {
+func stagedRun(dir string, allow []string, deny []string, source string, maxFlag int, stdout, stderr io.Writer) int {
 	denySet := make(map[string]bool, len(deny))
 	for _, e := range deny {
 		denySet[strings.ToLower(e)] = true
@@ -182,15 +182,15 @@ func stagedRun(dir string, allow []string, deny []string, source string, failMax
 	}
 
 	if out, ok := stdout.(*jsonOutput); ok && *out.enabled {
-		return renderFailures(stdout, "nocode", findings, failMax, "dir", dir, "staged", classified, "deny-list", source)
+		return renderFailures(stdout, "nocode", findings, maxFlag, "dir", dir, "staged", classified, "deny-list", source)
 	}
 	if len(findings) > 0 {
-		list := bounded.Capped(stderr, failMax, "NOCODE", "path", failMaxRemedy)
+		list := bounded.Capped(stderr, maxFlag, "NOCODE", "path", maxRemedy)
 		for _, f := range findings {
-			list.Line(fmt.Sprintf("NOCODE FAIL %s: %s", oneline.Escape(f.Subject), oneline.Escape(oneline.Cap(f.Reason, oneline.TailBytes))))
+			list.Line(fmt.Sprintf("NOCODE FAILED %s: %s", oneline.Escape(f.Subject), oneline.Escape(oneline.Cap(f.Reason, oneline.TailBytes))))
 		}
 		list.More()
-		fmt.Fprintf(stderr, "NOCODE FAIL staged=%d findings=%d shown=%d deny-list=%s\n", classified, list.Total(), list.Shown(), oneline.Field(source))
+		fmt.Fprintf(stderr, "NOCODE FAILED staged=%d findings=%d shown=%d deny-list=%s\n", classified, list.Total(), list.Shown(), oneline.Field(source))
 		return 1
 	}
 	// A clean run prints the audit's OK line, with the count of the records
@@ -347,7 +347,7 @@ func parseDiffIndex(raw string) ([]stagedRecord, error) {
 func stagedPathReasons(rel string, denySet map[string]bool, source string, denyNames map[string]bool, denyPrefixes []string) []string {
 	// Every dynamic piece is escaped where it is built, the same shape
 	// main.go's own NOTHING warning uses, so a reason is one line whatever a
-	// staged path carries; the FAIL print site escapes again, and the double
+	// staged path carries; the FAILED print site escapes again, and the double
 	// escape is idempotent because oneline never escapes a backslash.
 	var reasons []string
 	if base := strings.TrimSpace(strings.ToLower(filepath.Base(rel))); denyNames[base] {
