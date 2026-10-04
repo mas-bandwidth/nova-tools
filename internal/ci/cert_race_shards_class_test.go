@@ -21,10 +21,10 @@ import (
 // 36357522017, 36357749379 and 36360296846 (2026-09-27).
 
 // certRaceMinShards is the shard count floor per hosted OS: at least one shard
-// for each certRaceHeavy package, now nine after run 37159703304.
+// for each certRaceHeavy package, now sixteen after run 37165758129.
 var certRaceMinShards = map[string]int{
-	"ubuntu-latest": 9,
-	"macos-latest":  9,
+	"ubuntu-latest": 16,
+	"macos-latest":  16,
 }
 
 // certRaceHeavy are the packages the race deal places first, one per shard:
@@ -36,11 +36,17 @@ var certRaceMinShards = map[string]int{
 // 75 s test timeout alongside internal/ci on macOS.
 // Run 37159703304 puts internal/sprint/store (65.470 s on Linux) alongside
 // cmd/nova-sandbox on a capped leg, so it also has a separate heavy slot.
+// Run 37165758129 caps Linux shard 1 with internal/ci 67.708 s,
+// internal/sprint/refmodel 60.236, cmd/nova-swarm 44.763 and internal/docs 18.834
+// together. Its completed legs also measure internal/sprint 15.951 s,
+// internal/redisconn 18.169, internal/config 17.741 and internal/secrets 15.577.
 // certification.yml's deal step spells the same list.
 var certRaceHeavy = []string{
 	"internal/ci", "cmd/nova-tokens", "cmd/nova-sandbox", "cmd/nova-self-talk",
 	"internal/update", "cmd/nova-secrets", "internal/bus", "cmd/nova-sprint",
-	"internal/sprint/store",
+	"internal/sprint/store", "cmd/nova-swarm", "internal/sprint/refmodel",
+	"internal/docs", "internal/sprint", "internal/redisconn", "internal/config",
+	"internal/secrets",
 }
 
 const certRaceDealStep = "deal this shard's packages"
