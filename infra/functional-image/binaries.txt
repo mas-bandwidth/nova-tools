@@ -1,6 +1,7 @@
 # Every program the functional tier runs by name, and what carries it.
 #
-# One row per name: `<name><TAB><how><TAB><provider or reason>`.
+# One row per name: `<name><TAB><how><TAB><provider or reason>`, each section's
+# rows in name order (internal/ci TestFunctionalImageListIsInNameOrder).
 #   apt     an apt package named in the Containerfile's apt-get install
 #   source  a pinned download or source build; the provider is a word the
 #           Containerfile must contain (a stage name or the binary's own name)
@@ -13,7 +14,6 @@
 # exec.CommandContext or exec.LookPath as a string literal or a package-level
 # constant, and holds this list to that set in both directions: a program run
 # and not listed is red, and a row that no file runs any more is red. The rows
-launchctl	absent	nova-sprint machinery reads it only on darwin (runtime.GOOS), where a friend down is a launchd agent to load; the functional tier is linux and the check says the agent was not measured
 # below `[unscanned]` are programs the tier needs that a name in a Go file does
 # not show (a script, a list of candidates, a path built at run time); the
 # Containerfile must still carry them.
@@ -31,6 +31,7 @@ go	source	fetch
 icacls	absent	Windows only; a Linux container has no Windows file ACLs
 iostat	absent	macOS only; hostload's darwin sampler runs it, the Linux sampler reads /proc/stat
 java	absent	runs the TLC model checker on a bench, not in the functional tier
+launchctl	absent	nova-sprint machinery reads it only on darwin (runtime.GOOS), where a friend down is a launchd agent to load; the functional tier is linux and the check says the agent was not measured
 log	absent	macOS unified logging; only the darwin sandbox tests read it
 lsof	apt	lsof
 make	apt	make
@@ -51,14 +52,14 @@ sqlite3	apt	sqlite3
 ssh	absent	only tlacheck run --bench reaches a TLC record machine with it, from a working machine; its tests drive a bench that is a temp dir
 ssh-keygen	absent	only the nova-secrets keygen path for ssh keys calls it and its tests use a stand-in
 stty	absent	reads a password from a terminal; the tier has no terminal
-tailscale	absent	machine self asks the tailnet for this host's name only where the program is installed; the tier has no tailnet, and the tests that resolve a name hand in the status
 sudo	absent	edits the darwin packet filter for the sandbox; not something a container does
 sysctl	apt	procps
+tailscale	absent	machine self asks the tailnet for this host's name only where the program is installed; the tier has no tailnet, and the tests that resolve a name hand in the status
 taskkill	absent	Windows only; a Linux container has no Windows tasks
 top	absent	macOS only; the process tests that read it are darwin tests
 
 [unscanned]
 initdb	apt	postgresql-16
+perl	base	perl-base
 postgres	apt	postgresql-16
 redis-cli	source	redis-build
-perl	base	perl-base

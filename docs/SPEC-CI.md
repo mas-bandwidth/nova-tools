@@ -1681,7 +1681,8 @@ Go file under `cmd`, `internal` or `tools` runs by name (a string literal, or a
 package-level constant holding one, given to `exec.Command`,
 `exec.CommandContext` or `exec.LookPath`) is a row of
 `infra/functional-image/binaries.txt`, and the image carries it or the row says
-why the tier does without it.
+why the tier does without it; each section of the list keeps its rows in name
+order, so a row is found by eye and never lands inside the header's comment.
 **The mistake it prevents.** A functional run inside a container that lacks a
 program the tests exec either fails on it or, worse, skips the test and stays
 green; an unpinned base, archive or toolchain makes two runs of one commit
@@ -1690,6 +1691,7 @@ different runs.
 `TestFunctionalImageGoIsTheModulesPin`, `TestFunctionalImageInputsArePinned`,
 `TestFunctionalImageRunsAsTheTierExpects`,
 `TestFunctionalImageCarriesEveryBinaryTheTierExecs`,
+`TestFunctionalImageListIsInNameOrder`,
 `TestFunctionalImageDownloadCheckSeesEveryWayAroundIt`,
 `TestFunctionalImageSourceCheckSeesADeletedInstall` and
 `TestFunctionalImageRuntimeAndReadmeAgree`
@@ -1729,7 +1731,8 @@ program, checked in both directions, so a program no file runs any more is a
 row to delete.
 **Its remedy line.** ``<name> is run by name and is not a row of
 infra/functional-image/binaries.txt: add a row and install it in the
-Containerfile, or say why the tier can do without it``.
+Containerfile, or say why the tier can do without it``; and ``the rows
+(unscanned=<bool>) are not in name order: <names>``.
 **Its narrowings.** It reads names, not scripts: a program run inside a `sh -c`
 string or through a variable is not seen, and the `[unscanned]` rows of the list
 carry the ones known to be needed. The rest is caught by a run of the tier in

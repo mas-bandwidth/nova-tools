@@ -525,6 +525,22 @@ func imageRows(t *testing.T, text string) []imageRow {
 	return rows
 }
 
+// TestFunctionalImageListIsInNameOrder holds binaries.txt to the order it
+// keeps: the rows of each section (the scanned names, then [unscanned]) in
+// name order, so a row is found by eye and never lands inside the header's
+// comment.
+func TestFunctionalImageListIsInNameOrder(t *testing.T) {
+	t.Parallel()
+	rows := imageRows(t, readFile(t, filepath.Join(repoRoot(t), filepath.FromSlash(functionalImageList))))
+	sections := map[bool][]string{}
+	for _, r := range rows {
+		sections[r.unscanned] = append(sections[r.unscanned], r.name)
+	}
+	for unscanned, names := range sections {
+		assert.True(t, sort.StringsAreSorted(names), "%s: the rows (unscanned=%v) are not in name order: %s", functionalImageList, unscanned, strings.Join(names, " "))
+	}
+}
+
 // TestFunctionalImageCarriesEveryBinaryTheTierExecs is the class test the
 // image is kept honest by.
 func TestFunctionalImageCarriesEveryBinaryTheTierExecs(t *testing.T) {
