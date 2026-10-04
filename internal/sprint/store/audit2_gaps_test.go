@@ -263,7 +263,7 @@ func TestAudit2ClosedAckedReminderFailureStaysOnTheGoal(t *testing.T) {
 	blocker := dir + "/file"
 	require.NoError(t, writeFileA2(blocker))
 	// the route's directory is a file: every delivery fails
-	_, _, err := h.st.SetGoal(h.ctx, "rowan", strp("keep going"), "file:"+blocker+"/reminder")
+	_, _, err := h.st.SetGoal(h.ctx, "rowan", new("keep going"), "file:"+blocker+"/reminder")
 	require.NoError(t, err)
 	h.startMachine()
 	h.machine()
@@ -496,7 +496,7 @@ func TestAudit2ClosedReminderDecisionsHaveNoCommands(t *testing.T) {
 	h := newHarness(t)
 	blocker := t.TempDir() + "/file"
 	require.NoError(t, writeFileA2(blocker))
-	_, _, err := h.st.SetGoal(h.ctx, "rowan", strp("keep going"), "file:"+blocker+"/reminder")
+	_, _, err := h.st.SetGoal(h.ctx, "rowan", new("keep going"), "file:"+blocker+"/reminder")
 	require.NoError(t, err)
 	h.startMachine()
 	h.machine()

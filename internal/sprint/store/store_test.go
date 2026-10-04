@@ -462,7 +462,7 @@ func TestMemRefusesAsTheBatchDoes(t *testing.T) {
 			Members: []ntable.BatchMemberEntry{{ID: p.ID, Expect: &ntable.MemberExpect{Place: place}, Set: map[string]string{"x": "1"}}}}},
 		{"member revision", "MEMBERREVISION", man("b", ntable.BatchMemberEntry{ID: p.ID, Expect: &ntable.MemberExpect{Revision: "99"}, Set: map[string]string{"x": "1"}})},
 		{"place", "PLACEGUARD", man("c", ntable.BatchMemberEntry{ID: p.ID, Expect: &ntable.MemberExpect{Place: &ntable.PlaceExpect{Row: "s1", Col: "review"}}, Set: map[string]string{"x": "1"}})},
-		{"field", "FIELDGUARD", man("d", ntable.BatchMemberEntry{ID: p.ID, Expect: &ntable.MemberExpect{Place: place, Fields: map[string]ntable.FieldGuard{"stream": {Equals: strp("s9")}}}, Set: map[string]string{"x": "1"}})},
+		{"field", "FIELDGUARD", man("d", ntable.BatchMemberEntry{ID: p.ID, Expect: &ntable.MemberExpect{Place: place, Fields: map[string]ntable.FieldGuard{"stream": {Equals: new("s9")}}}, Set: map[string]string{"x": "1"}})},
 		{"member exists", "MEMBEREXISTS", man("e", ntable.BatchMemberEntry{ID: p.ID, Expect: &ntable.MemberExpect{Absent: true}, Create: &ntable.MemberCreateOp{Row: "s1", Col: "ready", Score: 1}})},
 		{"no member", "NOTMEMBER", man("f", ntable.BatchMemberEntry{ID: "nobody", Expect: &ntable.MemberExpect{Revision: "1"}, Set: map[string]string{"x": "1"}})},
 		{"bound", "LIMIT", man("g", manyCreates(129)...)},
@@ -488,7 +488,8 @@ func TestMemRefusesAsTheBatchDoes(t *testing.T) {
 	require.Equal(t, "LIMIT", refusalCode(err), "a read set over the bound: %v", err)
 }
 
-func strp(s string) *string { return &s }
+//go:fix inline
+func strp(s string) *string { return new(s) }
 
 func manyCreates(n int) []ntable.BatchMemberEntry {
 	out := make([]ntable.BatchMemberEntry, n)

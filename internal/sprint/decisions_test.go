@@ -228,7 +228,8 @@ func TestD5AnswersDischargeOnlyWhatWasResolved(t *testing.T) {
 	require.Contains(t, p.Refused[0].Why, "resolves no obligation", "rank answering a failure: %+v", p.Refused)
 }
 
-func ptr(f float64) *float64 { return &f }
+//go:fix inline
+func ptr(f float64) *float64 { return new(f) }
 
 // D6: a cross-stream need is data on the stuck card; resume is refused naming
 // it until the needed card has landed (ranking it is not landing it); a stuck

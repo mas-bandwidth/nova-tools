@@ -76,13 +76,13 @@ func TestRedisCoverLastLineReportsTheFinalNonEmptyLineOrNothing(t *testing.T) {
 		content *string
 		want    string
 	}{
-		{name: "the last line of several", content: ptr("one\ntwo\nthree\n"), want: "three"},
-		{name: "blank lines between do not count", content: ptr("head\nbody\r\n \n\n"), want: "body"},
-		{name: "a line with no newline is whole", content: ptr("solo"), want: "solo"},
-		{name: "an empty file has no output", content: ptr(""), want: "no output"},
-		{name: "whitespace only has no output", content: ptr("  \n\t\n"), want: "no output"},
-		{name: "a line over two hundred bytes is cut at two hundred", content: ptr("a\n" + strings.Repeat("y", 250)), want: strings.Repeat("y", 200)},
-		{name: "a line of exactly two hundred bytes is whole", content: ptr(strings.Repeat("z", 200)), want: strings.Repeat("z", 200)},
+		{name: "the last line of several", content: new("one\ntwo\nthree\n"), want: "three"},
+		{name: "blank lines between do not count", content: new("head\nbody\r\n \n\n"), want: "body"},
+		{name: "a line with no newline is whole", content: new("solo"), want: "solo"},
+		{name: "an empty file has no output", content: new(""), want: "no output"},
+		{name: "whitespace only has no output", content: new("  \n\t\n"), want: "no output"},
+		{name: "a line over two hundred bytes is cut at two hundred", content: new("a\n" + strings.Repeat("y", 250)), want: strings.Repeat("y", 200)},
+		{name: "a line of exactly two hundred bytes is whole", content: new(strings.Repeat("z", 200)), want: strings.Repeat("z", 200)},
 		{name: "a file that is not there has no output", content: nil, want: "no output"},
 	}
 	for _, tc := range cases {
@@ -99,7 +99,8 @@ func TestRedisCoverLastLineReportsTheFinalNonEmptyLineOrNothing(t *testing.T) {
 	}
 }
 
-func ptr(s string) *string { return &s }
+//go:fix inline
+func ptr(s string) *string { return new(s) }
 
 func TestRedisCoverKillTakesTheExitedStoreAndDeletesItsDirectory(t *testing.T) {
 	t.Parallel()

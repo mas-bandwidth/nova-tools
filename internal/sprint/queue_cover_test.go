@@ -28,7 +28,9 @@ func queueWorld() *Snapshot {
 
 // qEntry is a queued change's entry as QueueOf carries it: the batch entry by
 // pointer.
-func qEntry(e ntable.BatchMemberEntry) *ntable.BatchMemberEntry { return &e }
+//
+//go:fix inline
+func qEntry(e ntable.BatchMemberEntry) *ntable.BatchMemberEntry { return new(e) }
 
 func TestQueueCoverQueueOfQueuesTheWorkTableAndKeepsTheRest(t *testing.T) {
 	t.Parallel()
@@ -129,8 +131,8 @@ func TestQueueCoverDrainComposesOneCardAndRefusesWhatDoesNotLineUp(t *testing.T)
 		{
 			name: "two changes of one card compose into one unit",
 			q: []QueuedChange{
-				{Entry: qEntry(setEntry(queueWorld().Work.Card("c1"), map[string]string{"ci": "green"})), Verb: "grade", Actor: "m1"},
-				{Entry: qEntry(moveEntry(queueWorld().Work.Card("c1"), "s1", Merging, nil)), Verb: "accept", Actor: "machine"},
+				{Entry: new(setEntry(queueWorld().Work.Card("c1"), map[string]string{"ci": "green"})), Verb: "grade", Actor: "m1"},
+				{Entry: new(moveEntry(queueWorld().Work.Card("c1"), "s1", Merging, nil)), Verb: "accept", Actor: "machine"},
 			},
 			units: 1,
 		},
@@ -150,14 +152,14 @@ func TestQueueCoverDrainComposesOneCardAndRefusesWhatDoesNotLineUp(t *testing.T)
 		},
 		{
 			name:    "a create of a card that is already there is refused",
-			q:       []QueuedChange{{Entry: qEntry(createEntry("c1", "s1", Waiting, 0, nil)), Verb: "add"}},
+			q:       []QueuedChange{{Entry: new(createEntry("c1", "s1", Waiting, 0, nil)), Verb: "add"}},
 			units:   0,
 			wantWhy: "it creates the card and the card is there already",
 		},
 		{
 			name: "a card created and taken off again requeues the removal",
 			q: []QueuedChange{
-				{Entry: qEntry(createEntry("c2", "s1", Ready, 1, nil)), Verb: "add"},
+				{Entry: new(createEntry("c2", "s1", Ready, 1, nil)), Verb: "add"},
 				{Entry: &ntable.BatchMemberEntry{ID: "c2", Expect: &ntable.MemberExpect{Place: &ntable.PlaceExpect{Row: "s1", Col: Ready}}, Remove: true}, Verb: "drop"},
 			},
 			units:   1,
@@ -188,8 +190,8 @@ func TestQueueCoverDrainComposesOneCardAndRefusesWhatDoesNotLineUp(t *testing.T)
 	// property keeping its last value, guarded on what the table holds.
 	s := queueWorld()
 	p := Drain(s, []QueuedChange{
-		{Entry: qEntry(setEntry(s.Work.Card("c1"), map[string]string{"ci": "green"})), Verb: "grade", Actor: "m1"},
-		{Entry: qEntry(moveEntry(s.Work.Card("c1"), "s1", Merging, nil)), Verb: "accept", Actor: "machine"},
+		{Entry: new(setEntry(s.Work.Card("c1"), map[string]string{"ci": "green"})), Verb: "grade", Actor: "m1"},
+		{Entry: new(moveEntry(s.Work.Card("c1"), "s1", Merging, nil)), Verb: "accept", Actor: "machine"},
 		{Prop: &PropWrite{Table: Work, Name: "deal_index", Value: "8"}, Verb: "deal"},
 		{Prop: &PropWrite{Table: Work, Name: "deal_index", Value: "9"}, Verb: "deal"},
 	}, "machine")
@@ -320,7 +322,7 @@ func TestQueueCoverWithQueueIsTheSnapshotTheDrainLeaves(t *testing.T) {
 			name: "every applied change shows: the field, the move, one revision each",
 			q: []QueuedChange{
 				{Entry: &graded, Verb: "grade", Actor: "m1"},
-				{Entry: qEntry(moveEntry(s.Work.Card("c1"), "s1", Merging, nil)), Verb: "accept", Actor: "machine"},
+				{Entry: new(moveEntry(s.Work.Card("c1"), "s1", Merging, nil)), Verb: "accept", Actor: "machine"},
 				{Prop: &PropWrite{Table: Work, Name: "deal_index", Value: "9"}, Verb: "deal"},
 			},
 			id: "c1", col: Merging, ci: "green", rev: 5,
@@ -335,7 +337,7 @@ func TestQueueCoverWithQueueIsTheSnapshotTheDrainLeaves(t *testing.T) {
 		{
 			name: "a create and its requeued removal apply over two passes",
 			q: []QueuedChange{
-				{Entry: qEntry(createEntry("c2", "s1", Ready, 1, nil)), Verb: "add"},
+				{Entry: new(createEntry("c2", "s1", Ready, 1, nil)), Verb: "add"},
 				{Entry: &ntable.BatchMemberEntry{ID: "c2", Expect: &ntable.MemberExpect{Place: &ntable.PlaceExpect{Row: "s1", Col: Ready}}, Remove: true}, Verb: "drop"},
 			},
 			id: "c2", col: "", ci: "", rev: 2,

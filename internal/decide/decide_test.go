@@ -19,7 +19,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func p(v float64) *float64 { return &v }
+//go:fix inline
+func p(v float64) *float64 { return new(v) }
 
 // A schema names every problem at once, so one fix is one turn.
 func TestParseSchemaNamesEveryProblem(t *testing.T) {
@@ -156,7 +157,7 @@ func TestFixedAnswersFromItsTable(t *testing.T) {
 	require.NoError(t, err)
 	_, _, err = f.Ask(context.Background(), ReadSchema(), "s")
 	assert.ErrorContains(t, err, "no answer to does_task, inside_paths, lines_changed")
-	f.Table["does_task"], f.Table["inside_paths"], f.Table["lines_changed"] = FixedAnswer{Noul: p(1)}, FixedAnswer{Noul: p(1)}, FixedAnswer{Noul: p(0.5)}
+	f.Table["does_task"], f.Table["inside_paths"], f.Table["lines_changed"] = FixedAnswer{Noul: p(1)}, FixedAnswer{Noul: p(1)}, FixedAnswer{Noul: new(0.5)}
 	a, _, err := Ask(context.Background(), f, ReadSchema(), "s")
 	require.NoError(t, err)
 	assert.Equal(t, "yes", a["lines_changed"].Value, "0.5 is yes")

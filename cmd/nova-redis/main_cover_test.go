@@ -20,7 +20,9 @@ import (
 )
 
 // coverStr returns a pointer to a copy of s, for a login's flag fields.
-func coverStr(s string) *string { return &s }
+//
+//go:fix inline
+func coverStr(s string) *string { return new(s) }
 
 // TestMainCoverUnconfirmedNamesTheLostTransaction pins unconfirmed's one line
 // for a transaction whose confirmation was lost: the UNCONFIRMED word at exit
@@ -49,9 +51,9 @@ func TestMainCoverUnconfirmedNamesTheLostTransaction(t *testing.T) {
 			err:   fmt.Errorf("redis: the connection dropped: %w", errors.New("EOF")),
 			cause: "EOF",
 			store: login{
-				addr:        coverStr("127.0.0.1:6379"),
-				user:        coverStr(""),
-				passwordEnv: coverStr(PasswordEnv),
+				addr:        new("127.0.0.1:6379"),
+				user:        new(""),
+				passwordEnv: new(PasswordEnv),
 				givenFn:     func(string) bool { return false },
 			},
 			owner:      "ada",
@@ -64,9 +66,9 @@ func TestMainCoverUnconfirmedNamesTheLostTransaction(t *testing.T) {
 			err:   errors.New("the reply did not come"),
 			cause: "the reply did not come",
 			store: login{
-				addr:        coverStr("127.0.0.1:6379"),
-				user:        coverStr("ada"),
-				passwordEnv: coverStr("STORE_PW"),
+				addr:        new("127.0.0.1:6379"),
+				user:        new("ada"),
+				passwordEnv: new("STORE_PW"),
 				givenFn:     func(string) bool { return true },
 			},
 			owner:      "a b",

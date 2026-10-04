@@ -11,7 +11,9 @@ import (
 
 // sptr is the pointer a field side needs: a present value is *string, absence is
 // nil, so a test's literal carries the address of its own string.
-func sptr(s string) *string { return &s }
+//
+//go:fix inline
+func sptr(s string) *string { return new(s) }
 
 // batchJSON renders the applied batch as one object: revisions, scores and the
 // epoch are decimal strings, an absent place or score is null, fields are
@@ -36,11 +38,11 @@ func TestBatchCoverBatchJSON(t *testing.T) {
 				OperationID: "op-1", SelectedCount: 1, ChangedCount: 1,
 				Members: []ntable.BatchMemberDelta{{
 					ID: "b1", BeforePlace: "", AfterPlace: "build.ready",
-					BeforeScoreText: sptr("0"), AfterScoreText: sptr("5"),
+					BeforeScoreText: new("0"), AfterScoreText: new("5"),
 					BeforeRev: "1", AfterRev: "2",
 					Fields: map[string]ntable.FieldChange{
-						"role": {Before: sptr("x"), After: sptr("y")},
-						"kept": {Before: sptr("k"), After: sptr("k")},
+						"role": {Before: new("x"), After: new("y")},
+						"kept": {Before: new("k"), After: new("k")},
 					},
 				}},
 			},
@@ -98,7 +100,7 @@ func TestBatchCoverScoreOrDash(t *testing.T) {
 		want string
 	}{
 		{"main path: a score is its own text", &five, "5"},
-		{"main path: a zero score is a score, not a dash", sptr("0"), "0"},
+		{"main path: a zero score is a score, not a dash", new("0"), "0"},
 		{"refusal: no score prints a dash", nil, "-"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -121,19 +123,19 @@ func TestBatchCoverFieldChanges(t *testing.T) {
 		{
 			name: "main path: a changed field is a pair and an equal one drops",
 			m: ntable.BatchMemberDelta{Fields: map[string]ntable.FieldChange{
-				"role": {Before: sptr("x"), After: sptr("y")},
-				"kept": {Before: sptr("k"), After: sptr("k")},
+				"role": {Before: new("x"), After: new("y")},
+				"kept": {Before: new("k"), After: new("k")},
 			}},
 			want: `{"role":["x","y"]}`,
 		},
 		{
 			name: "main path: a set-only field pairs null with its value",
-			m:    ntable.BatchMemberDelta{Fields: map[string]ntable.FieldChange{"k": {After: sptr("v")}}},
+			m:    ntable.BatchMemberDelta{Fields: map[string]ntable.FieldChange{"k": {After: new("v")}}},
 			want: `{"k":[null,"v"]}`,
 		},
 		{
 			name: "refusal: nothing changed is the empty object",
-			m:    ntable.BatchMemberDelta{Fields: map[string]ntable.FieldChange{"kept": {Before: sptr("k"), After: sptr("k")}}},
+			m:    ntable.BatchMemberDelta{Fields: map[string]ntable.FieldChange{"kept": {Before: new("k"), After: new("k")}}},
 			want: `{}`,
 		},
 	} {

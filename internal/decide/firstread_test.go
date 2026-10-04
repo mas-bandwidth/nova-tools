@@ -21,7 +21,7 @@ func (c *counted) Name() string { return "fake" }
 func (c *counted) Ask(ctx context.Context, s Schema, state string) (map[string]Answer, Usage, error) {
 	c.asks++
 	f := Fixed{Table: map[string]FixedAnswer{
-		"does_task": {Noul: p(0.8)}, "lines_changed": {Noul: p(0.9)}, "inside_paths": {Noul: p(0.95)}, "defect": {Noul: p(c.defect)},
+		"does_task": {Noul: new(0.8)}, "lines_changed": {Noul: new(0.9)}, "inside_paths": {Noul: new(0.95)}, "defect": {Noul: new(c.defect)},
 		"verdict": {Choice: Land, P: map[string]float64{Land: 0.7, Bounce: 0.2, Unsure: 0.1}},
 	}}
 	return f.Ask(ctx, s, state)

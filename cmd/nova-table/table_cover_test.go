@@ -20,12 +20,12 @@ func TestTableCoverOptsMainPath(t *testing.T) {
 	}{
 		{
 			name: "main path: the label width alone",
-			rf:   renderFlags{labelWidth: intp(25), widths: strp("")},
+			rf:   renderFlags{labelWidth: new(25), widths: new("")},
 			want: ntable.RenderOpts{LabelWidth: 25},
 		},
 		{
 			name: "main path: a width spec parses into the options",
-			rf:   renderFlags{labelWidth: intp(0), widths: strp("order=40,ready=12")},
+			rf:   renderFlags{labelWidth: new(0), widths: new("order=40,ready=12")},
 			want: ntable.RenderOpts{LabelWidth: 0, Widths: map[string]int{"order": 40, "ready": 12}},
 		},
 	} {
@@ -42,7 +42,7 @@ func TestTableCoverOptsMainPath(t *testing.T) {
 // label width is refused with what the flag wants.
 func TestTableCoverOptsRefusesNegativeLabelWidth(t *testing.T) {
 	t.Parallel()
-	_, err := (renderFlags{labelWidth: intp(-1)}).opts()
+	_, err := (renderFlags{labelWidth: new(-1)}).opts()
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "--label-width: -1 is negative")
 }
@@ -51,10 +51,13 @@ func TestTableCoverOptsRefusesNegativeLabelWidth(t *testing.T) {
 // grammar does not accept comes back wrapped under --width.
 func TestTableCoverOptsRefusesBadWidths(t *testing.T) {
 	t.Parallel()
-	_, err := (renderFlags{labelWidth: intp(0), widths: strp("order=none")}).opts()
+	_, err := (renderFlags{labelWidth: new(0), widths: new("order=none")}).opts()
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "--width: width")
 }
 
-func intp(n int) *int       { return &n }
-func strp(s string) *string { return &s }
+//go:fix inline
+func intp(n int) *int { return new(n) }
+
+//go:fix inline
+func strp(s string) *string { return new(s) }

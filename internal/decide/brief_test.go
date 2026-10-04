@@ -42,13 +42,13 @@ func (b *briefer) Ask(ctx context.Context, s Schema, state string) (map[string]A
 		}
 		conv = f
 	}
-	t := map[string]FixedAnswer{"converges": {Noul: p(conv)}, "minutes": {Choice: "20-45", P: map[string]float64{"20-45": 0.6, "10-20": 0.4}},
+	t := map[string]FixedAnswer{"converges": {Noul: new(conv)}, "minutes": {Choice: "20-45", P: map[string]float64{"20-45": 0.6, "10-20": 0.4}},
 		"ambiguous_step": {Choice: "none", P: map[string]float64{"none": 0.8}}}
 	for _, q := range briefNeeds {
-		t[q] = FixedAnswer{Noul: p(0.9)}
+		t[q] = FixedAnswer{Noul: new(0.9)}
 	}
 	if strings.Contains(state, "vague") {
-		t["commit_stated"] = FixedAnswer{Noul: p(0.2)}
+		t["commit_stated"] = FixedAnswer{Noul: new(0.2)}
 		t["ambiguous_step"] = FixedAnswer{Choice: "step-2", P: map[string]float64{"step-2": 0.7, "none": 0.3}}
 	}
 	return Fixed{Table: t}.Ask(ctx, s, state)

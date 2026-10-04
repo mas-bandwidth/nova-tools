@@ -109,7 +109,7 @@ func TestTimingSelectAndRender(t *testing.T) {
 
 	job := func(repo string, pr int, name, opened, queued, started, setup, done string, green bool) Event {
 		return Event{Repo: repo, PR: pr, Job: name, Opened: opened, Queued: queued,
-			Started: started, SetupDone: setup, Done: done, Green: greenPtr(green)}
+			Started: started, SetupDone: setup, Done: done, Green: new(green)}
 	}
 	events := []Event{
 		job("mas-bandwidth/schema", 700, "test", "2026-08-01T05:00:00Z", "2026-08-01T05:01:00Z", "2026-08-01T05:02:00Z", "2026-08-01T05:03:00Z", "2026-08-01T05:23:00Z", true),
@@ -171,4 +171,6 @@ func TestTimingSelectAndRender(t *testing.T) {
 }
 
 // greenPtr is the *bool a canned Event states its verdict with.
-func greenPtr(b bool) *bool { return &b }
+//
+//go:fix inline
+func greenPtr(b bool) *bool { return new(b) }
