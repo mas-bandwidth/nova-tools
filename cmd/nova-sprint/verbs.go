@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -26,6 +27,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
@@ -69,6 +71,7 @@ func init() {
 		{"move", "<id>... --stream <s> [--before <id> | --after <id> | --score <n>]", "move s1-4 s1-5 --stream s2", (*app).cmdMove},
 		{"merge", "--stream <s> [--batch <n>] [--conflict <id> [--conflict-kind file|ledger] [--conflict-path <p>...] | --cross <id>=<other> | --red [--suspect <id>...] | --rejected | --base-red <error>] [--note <text>]", "merge --stream s1 --batch 100", (*app).cmdMerge},
 		{"land", "[--stream <s>...] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]", "land --stream s1 --dry-run", (*app).cmdLand},
+		{"snapshot", "(--dir <dir> [--keep <n>] [--every <duration>] | --restore-drill <file>)", "snapshot --dir /tmp/nova-sprint-snapshots --keep 7", (*app).cmdSnapshot},
 		{"promote", "[--every <duration>] [--landings <n>] [--branch <name>] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]", "promote --dry-run", (*app).cmdPromote},
 		{"resume", "--stream <s> [--did <text>] [--answers <note>]", "resume --stream s1 --did 'land merges s1-4 again'", (*app).cmdResume},
 		{"fleet beat", "<member> [--load <percent>]", "fleet beat m1", (*app).cmdFleetBeat},
@@ -1853,7 +1856,11 @@ func (a *app) setVerb(verbName string, args []string, stdout, stderr io.Writer, 
 			return refuse(stderr, verbName, why)
 		}
 	}
+	before := a.judgedBefore(context.Background(), st, answers(flagValue(fs, "answers")))
 	stp := step(ids, &s, c) // first: a step may set what the verb does after it (c.after)
+	if len(before) > 0 {
+		c.after = a.afterAnswering(verbName, before, flagValue(fs, "reason"), flagValue(fs, "fix"), c.actor, c.after)
+	}
 	return a.runStep(verbName, *c, st, stp, stdout, stderr)
 }
 
@@ -2333,7 +2340,11 @@ func (a *app) cmdRank(args []string, stdout, stderr io.Writer) int {
 func (a *app) cmdMerge(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("merge")
 	stream := fs.String("stream", "", "the stream whose queued batches are selected to merge and land")
-	batch := fs.Int("batch", 10, "the batch: the head n of the stream's queue")
+	batch := fs.Int("batch", 10, "the batch: the head n of the stream's queue (the lander's selection; to record a landing name the cards with --landed)")
+	var landed listFlag
+	fs.Var(&landed, "landed", "the record by name: <id>@<head> of each card pushed, again or comma separated; each must be merging in --stream at that head and the head an ancestor of --base-ref in --repo, or all are refused and nothing is written")
+	repo := fs.String("repo", "", "with --landed: a clone whose --base-ref is fetched; git merge-base --is-ancestor runs there, once per card")
+	baseRef := fs.String("base-ref", "", "with --landed: the fetched tip of the base branch in --repo (origin/<base>)")
 	conflict := fs.String("conflict", "", "fact: this card of the batch did not merge")
 	cross := fs.String("cross", "", "fact: <card>=<other>: the card needs <other> first; <other> is on the table, in another stream, not landed")
 	red := fs.Bool("red", false, "fact: the stream branch went red on the batch")
@@ -2364,12 +2375,46 @@ func (a *app) cmdMerge(args []string, stdout, stderr io.Writer) int {
 	if *stream == "" || len(pos) > 0 || facts > 1 {
 		return refuse(stderr, "merge", "wants --stream <s> and at most one fact of --conflict, --cross, --red, --rejected, --base-red")
 	}
+	var pins []sprint.LandedPin
+	if len(landed) > 0 || *repo != "" || *baseRef != "" {
+		if len(landed) == 0 || *repo == "" || *baseRef == "" || facts > 0 {
+			return refuse(stderr, "merge", "the record by name wants --landed <id>@<head>... with --repo <dir> and --base-ref <ref>, and no fact flag; run: nova-sprint merge --stream "+*stream+" --landed <id>@<head> --repo <dir> --base-ref origin/<base>")
+		}
+		var err error
+		if pins, err = landedPins(context.Background(), landed, *repo, *baseRef); err != nil {
+			return refuse(stderr, "merge", err.Error())
+		}
+	}
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, "merge", err.Error())
 	}
-	return a.runStep("merge", *c, st, store.MergeStep(sprint.MergeReq{Stream: *stream, Batch: *batch, Conflict: *conflict, Cross: *cross,
+	return a.runStep("merge", *c, st, store.MergeStep(sprint.MergeReq{Stream: *stream, Batch: *batch, Landed: pins, Conflict: *conflict, Cross: *cross,
 		Red: *red, Suspects: suspects, Rejected: *rejected, BaseRed: *baseRed, ConflictKind: *conflictKind, ConflictPaths: conflictPaths, Note: *note, Who: c.actor}), stdout, stderr)
+}
+
+// landedPins reads the --landed pairs and runs, once per card, the one git merge-base
+// --is-ancestor of its head against the fetched base tip: the fact the step checks (docs/
+// SPEC-SPRINT.md section 8). Exit 1 is "not an ancestor", a fact; anything else (a head git
+// does not know, no repository) is a refusal naming the card, so nothing is recorded.
+func landedPins(ctx context.Context, pairs []string, repo, baseRef string) ([]sprint.LandedPin, error) {
+	var pins []sprint.LandedPin
+	for _, pair := range pairs {
+		id, head, ok := strings.Cut(pair, "@")
+		if !ok || id == "" || head == "" {
+			return nil, fmt.Errorf("--landed %s: wants <id>@<head>", oneline.Escape(pair))
+		}
+		err := subproc.Context(ctx, "git", "-C", repo, "merge-base", "--is-ancestor", head, baseRef).Run()
+		var exit *exec.ExitError
+		switch {
+		case err == nil:
+		case errors.As(err, &exit) && exit.ExitCode() == 1: // not an ancestor: the step refuses it, naming the card
+		default:
+			return nil, fmt.Errorf("--landed %s: git merge-base --is-ancestor %s %s in %s failed (%s); fetch the base and the head there, then run again", id, head, baseRef, repo, oneline.Err(err))
+		}
+		pins = append(pins, sprint.LandedPin{ID: id, Head: head, InBase: err == nil})
+	}
+	return pins, nil
 }
 
 func (a *app) cmdResume(args []string, stdout, stderr io.Writer) int {
@@ -2767,6 +2812,7 @@ func (a *app) cmdWait(args []string, stdout, stderr io.Writer) int {
 	if pos, err = unalias(context.Background(), st, pos); err != nil {
 		return refuse(stderr, "wait", err.Error())
 	}
+	before := a.judgedBefore(context.Background(), st, pos[:1])
 	res, held, err := st.Wait(context.Background(), pos[0], at)
 	if err == nil && len(res.Refused) > 0 {
 		err = fmt.Errorf("%s", res.Refused[0].Why)
@@ -2774,6 +2820,9 @@ func (a *app) cmdWait(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		fmt.Fprintf(stderr, "%s wait: %s\n", prog, oneline.Escape(err.Error()))
 		return 1
+	}
+	for _, say := range a.recordAnswers(context.Background(), st, "wait", before, store.Result{Moved: []string{pos[0]}}, "until "+at.UTC().Format(time.RFC3339), "", c.actor) {
+		fmt.Fprintf(stdout, "NOTE %s\n", say)
 	}
 	if _, stale := sprint.StaleStream(pos[0]); stale {
 		fmt.Fprintf(stdout, "WAIT OK note=%s quiet until=%s: the inbox shows the stream stale again then if it still has not moved\n", oneline.Escape(pos[0]), at.UTC().Format(time.RFC3339))
@@ -2818,6 +2867,9 @@ func (a *app) cmdAck(args []string, stdout, stderr io.Writer) int {
 	}
 	if notes, err = unalias(context.Background(), st, notes); err != nil {
 		return refuse(stderr, "ack", err.Error())
+	}
+	if before := a.judgedBefore(context.Background(), st, notes); len(before) > 0 {
+		c.after = a.afterAnswering("ack", before, *reason, "", c.actor, c.after)
 	}
 	return a.runStep("ack", *c, st, store.AckStep(sprint.AckReq{Notes: notes, Reason: *reason, Who: c.actor}), stdout, stderr)
 }
@@ -2988,4 +3040,16 @@ func (a *app) cmdReaderRetire(args []string, stdout, stderr io.Writer) int {
 	}
 	sayOK(stdout, c.json, "reader retire", "READER-RETIRE OK readers="+strings.Join(names, ","), map[string]any{"readers": names})
 	return 0
+}
+
+// afterAnswering is a verb's after hook with the judgment-answer record added (recordAnswers):
+// the verb's own hook runs first, and each record that failed is one more NOTE.
+func (a *app) afterAnswering(verb string, before []sprint.Open, reason, fix, actor string, prev func(context.Context, *store.Store, store.Result) []string) func(context.Context, *store.Store, store.Result) []string {
+	return func(ctx context.Context, st *store.Store, res store.Result) []string {
+		var said []string
+		if prev != nil {
+			said = prev(ctx, st, res)
+		}
+		return append(said, a.recordAnswers(ctx, st, verb, before, res, reason, fix, actor)...)
+	}
 }

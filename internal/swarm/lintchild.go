@@ -254,6 +254,34 @@ func childInsideJob(p string) bool {
 // childRulesHeadRE opens the RULES paragraph, where a card quotes what it forbids.
 var childRulesHeadRE = regexp.MustCompile(`^(?:#{1,6}[ \t]+)?RULES\b`)
 
+// PatternsBlockCheck is the finding a PATTERNS TO REFUSE paragraph draws in a card that names
+// no class test under internal/ci (docs/SPEC-CARD-CONTRACT.md, lint-allows-quoted-patterns-in-tests).
+const PatternsBlockCheck = "patterns-block-without-class-test"
+
+// PatternsBlockRemedy is what that token wants.
+const PatternsBlockRemedy = "a PATTERNS TO REFUSE. paragraph belongs to a card whose TEST or PATHS line names a class test, `internal/ci/<name>_class_test.go`; name the class test, or drop the paragraph and say the pattern in words"
+
+var (
+	// childPatternsHeadRE opens the PATTERNS TO REFUSE. paragraph of a class-test card.
+	childPatternsHeadRE = regexp.MustCompile(`^[ \t]*PATTERNS TO REFUSE\.`)
+	// childClassTestRE is a class test under internal/ci, the file a card's TEST or PATHS names.
+	childClassTestRE = regexp.MustCompile(`internal/ci/[A-Za-z0-9_-]+_class_test\.go\b`)
+	// childHeaderLineRE is a TEST or PATHS header line.
+	childHeaderLineRE = regexp.MustCompile(`^[ \t]*(?:TEST|PATHS):`)
+	// childQuotedRE is a backtick-quoted literal: inside it the text is a pattern, not a command.
+	childQuotedRE = regexp.MustCompile("`[^`\n]*`")
+)
+
+// childNamesClassTest reports whether a TEST or PATHS line of the card names a class test.
+func childNamesClassTest(raw []byte) bool {
+	for _, line := range strings.Split(string(raw), "\n") {
+		if childHeaderLineRE.MatchString(line) && childClassTestRE.MatchString(line) {
+			return true
+		}
+	}
+	return false
+}
+
 // CardChildRemedies is what each child-rule token of the default set wants, in the table
 // shape of CardHeaderRemedies, so `nova-swarm lint --rules` prints them beside the rest. It
 // is built from DefaultChildRules and childScans: one row each, never a second list. A rule
@@ -300,6 +328,8 @@ func ChildRemedy(rules []ChildRule, check string) string {
 		}
 	}
 	switch check {
+	case PatternsBlockCheck:
+		return PatternsBlockRemedy
 	case LibrariesConsideredRule:
 		return LibrariesConsideredRemedy
 	case EmptyCardCheck:
@@ -426,7 +456,19 @@ func LintCardChildWith(raw []byte, rules []ChildRule) []CardHeaderFinding {
 		}
 	}
 	builds, filled, unfilledAt, unfilled := false, false, 0, ""
+	classTest, inPatterns := childNamesClassTest(raw), false
 	childLines(raw, func(n int, line string) {
+		if strings.TrimSpace(line) == "" {
+			inPatterns = false
+		} else if childPatternsHeadRE.MatchString(line) {
+			inPatterns = true
+			if !classTest {
+				out = append(out, CardHeaderFinding{Check: PatternsBlockCheck, Line: n, Excerpt: line})
+			}
+		}
+		if inPatterns && classTest {
+			line = childQuotedRE.ReplaceAllString(line, "``") // a quoted literal is no command
+		}
 		builds = builds || childBuilds(line)
 		if m := childLibrariesLine.FindStringSubmatch(line); m != nil {
 			if childLibrariesFilled(m[1]) {

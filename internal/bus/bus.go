@@ -79,25 +79,72 @@ type Message struct {
 	CC      []string
 	Subject string
 	Re      string
+	Kind    string // one of Kinds; "" is status
 	At      time.Time
 	Body    string
+}
+
+// The kinds of a message (SPEC-BUS.md, the kind of a message): the bus's own
+// vocabulary, which a reader filters on; the bus gives none of them a meaning.
+const (
+	KindReport  = "report"
+	KindAck     = "ack"
+	KindStatus  = "status"
+	KindRequest = "request"
+	KindBlocker = "blocker"
+)
+
+// Kinds is every kind, in the order the help lists them.
+var Kinds = []string{KindReport, KindAck, KindStatus, KindRequest, KindBlocker}
+
+// CheckKinds says why ks are no kinds, "" when each is one.
+func CheckKinds(ks ...string) string {
+	for _, k := range ks {
+		if !slices.Contains(Kinds, k) {
+			return fmt.Sprintf("the kind %q is not one of %s", k, strings.Join(Kinds, ", "))
+		}
+	}
+	return ""
+}
+
+// KindName is the message's kind, status when it has none (a message sent
+// before kinds).
+func (m Message) KindName() string {
+	if m.Kind == "" {
+		return KindStatus
+	}
+	return m.Kind
+}
+
+// FilterKinds is the entries whose message is one of kinds; with no kinds, all of them.
+func FilterKinds(es []Entry, kinds []string) []Entry {
+	if len(kinds) == 0 {
+		return es
+	}
+	var out []Entry
+	for _, e := range es {
+		if slices.Contains(kinds, e.Message().KindName()) {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 // Fields is the message as the stream entry holds it.
 func (m Message) Fields() map[string]string {
 	return map[string]string{
 		"id": m.ID, "from": m.From, "to": strings.Join(m.To, ","), "cc": strings.Join(m.CC, ","),
-		"subject": m.Subject, "re": m.Re, "at": m.At.UTC().Format(time.RFC3339), "body": m.Body,
+		"subject": m.Subject, "re": m.Re, "kind": m.Kind, "at": m.At.UTC().Format(time.RFC3339), "body": m.Body,
 	}
 }
 
 // Parse is the message an entry's fields hold. A field that is not there is
-// empty; an `at` that is no instant is the zero time, never a refusal, so a
+// empty (a kind that is not there is read as status by KindName); an `at` that is no instant is the zero time, never a refusal, so a
 // log with one odd entry still reads.
 func Parse(fields map[string]string) Message {
 	at, _ := time.Parse(time.RFC3339, fields["at"]) // ignored: a bad stamp reads as the zero time, said above
 	return Message{
-		ID: fields["id"], From: fields["from"], To: list(fields["to"]), CC: list(fields["cc"]),
+		Kind: fields["kind"], ID: fields["id"], From: fields["from"], To: list(fields["to"]), CC: list(fields["cc"]),
 		Subject: fields["subject"], Re: fields["re"], At: at, Body: fields["body"],
 	}
 }
@@ -145,6 +192,10 @@ type Store interface {
 	// (XREADGROUP ... >), waiting up to block for one when block is above
 	// zero, else answering at once.
 	Read(ctx context.Context, stream, group, consumer string, block time.Duration, count int) ([]Entry, error)
+	// Release makes the entries pending for the group claimable at once
+	// (XCLAIM ... IDLE <ClaimAfter> JUSTID): what a reader that skipped them
+	// hands back, in one trip.
+	Release(ctx context.Context, stream, group string, entries ...string) error
 	// Ack acks entries for the group (XACK) and says how many were pending.
 	Ack(ctx context.Context, stream, group string, entries ...string) (int64, error)
 	// Pending is the entry ids pending for the group, up to count (XPENDING).
@@ -222,6 +273,12 @@ func (b *Bus) check(ctx context.Context, m Message) (Message, time.Time, error) 
 	case len(m.Body) > MaxBody:
 		problems = append(problems, fmt.Sprintf("the body is %d bytes, at most %d", len(m.Body), MaxBody))
 	}
+	if m.Kind == "" {
+		m.Kind = KindStatus
+	}
+	if p := CheckKinds(m.Kind); p != "" {
+		problems = append(problems, p)
+	}
 	if strings.TrimSpace(m.Subject) == "" {
 		problems = append(problems, "the subject is empty; it wants one line saying what the message is")
 	}
@@ -252,7 +309,19 @@ func (b *Bus) check(ctx context.Context, m Message) (Message, time.Time, error) 
 // refused, never given a stream to wait on. The group is made on first use.
 // (tla/Bus2.tla: Recv, PendingBeforeNew, HeldStaysHeld)
 func (b *Bus) Recv(ctx context.Context, as string, block time.Duration) (e Entry, ok bool, err error) {
+	return b.RecvKinds(ctx, as, block, nil)
+}
+
+// RecvKinds is Recv for the messages whose kind is one of kinds (none: any).
+// A message the filter skips is handed back to the group at once (Store.Release),
+// neither acked nor held, so a reader that asks for all gets it next; the skip
+// costs one round trip per message skipped, and one more to release a run of
+// them. (tla/Bus2.tla: Recv; a skipped message is back as a lost one)
+func (b *Bus) RecvKinds(ctx context.Context, as string, block time.Duration, kinds []string) (e Entry, ok bool, err error) {
 	if p := CheckName(as); p != "" {
+		return Entry{}, false, &Refusal{[]string{p}}
+	}
+	if p := CheckKinds(kinds...); p != "" {
 		return Entry{}, false, &Refusal{[]string{p}}
 	}
 	names, _, err := b.Store.Roster(ctx)
@@ -266,19 +335,45 @@ func (b *Bus) Recv(ctx context.Context, as string, block time.Duration) (e Entry
 	if err := b.Store.EnsureGroup(ctx, stream, as); err != nil {
 		return Entry{}, false, err
 	}
-	got, err := b.Store.Claim(ctx, stream, as, Consumer, ClaimAfter, 1)
-	if err != nil {
+	var skipped []string
+	release := func() error {
+		if len(skipped) == 0 {
+			return nil
+		}
+		err := b.Store.Release(ctx, stream, as, skipped...)
+		skipped = nil
+		return err
+	}
+	// the claimed ones first, as without a filter; a skipped one is fresh
+	// until released, so the claim runs out
+	for {
+		got, err := b.Store.Claim(ctx, stream, as, Consumer, ClaimAfter, 1)
+		if err != nil {
+			return Entry{}, false, err
+		}
+		if len(got) == 0 {
+			break
+		}
+		if len(FilterKinds(got, kinds)) > 0 {
+			return got[0], true, release()
+		}
+		skipped = append(skipped, got[0].Entry)
+	}
+	if err := release(); err != nil {
 		return Entry{}, false, err
 	}
-	if len(got) == 0 {
-		if got, err = b.Store.Read(ctx, stream, as, Consumer, block, 1); err != nil {
+	for {
+		got, err := b.Store.Read(ctx, stream, as, Consumer, block, 1)
+		if err != nil || len(got) == 0 {
+			return Entry{}, false, err
+		}
+		if len(FilterKinds(got, kinds)) > 0 {
+			return got[0], true, nil
+		}
+		if err := b.Store.Release(ctx, stream, as, got[0].Entry); err != nil {
 			return Entry{}, false, err
 		}
 	}
-	if len(got) == 0 {
-		return Entry{}, false, nil
-	}
-	return got[0], true, nil
 }
 
 // AckEntry acks one entry the recipient was handed (XACK); acking it again

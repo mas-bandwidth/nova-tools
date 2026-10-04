@@ -147,6 +147,24 @@ func (f *Fake) Read(_ context.Context, stream, group, _ string, _ time.Duration,
 	return out, nil
 }
 
+func (f *Fake) Release(_ context.Context, stream, group string, entries ...string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.trip(); err != nil {
+		return err
+	}
+	g, err := f.group(stream, group)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if _, pending := g.pending[e]; pending {
+			g.pending[e] = f.now.Add(-ClaimAfter)
+		}
+	}
+	return nil
+}
+
 func (f *Fake) Ack(_ context.Context, stream, group string, entries ...string) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -262,6 +262,18 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 			return a.readFailed("queue", err, stderr)
 		}
 		add(sprint.Merge, cs)
+		// a merge card carries no head: it is the primary's, read here with the queue
+		mg, err := st.ReadCells(ctx, sprint.Work, *stream, sprint.Merging)
+		if err != nil {
+			return a.readFailed("queue", err, stderr)
+		}
+		for _, m := range mg {
+			for i := range cards {
+				if cards[i].ID == m.ID {
+					cards[i].Head, cards[i].Attempt = m.F("head"), m.Int("attempt")
+				}
+			}
+		}
 	} else {
 		var mine []*sprint.Card
 		for _, t := range []struct{ table, a, b string }{{sprint.Readers, sprint.Asked, sprint.Reading}, {sprint.Fleet, sprint.Ready, sprint.Working}} {
@@ -480,7 +492,11 @@ type whereView struct {
 	// Cards and Judgments are where --json --cards's, read for the dashboard's pull routes
 	// (store.Dealt): every work card dealt to a fleet row and not finished, and the open
 	// judgments naming one of their primaries; absent without --cards.
-	Cards     []dealtCard   `json:"cards,omitempty"`
+	Cards []dealtCard `json:"cards,omitempty"`
+	// Merging is where --json --cards's merge queue with heads: every primary merging, its
+	// stream, its head and its attempt, so a program reads the queue and the heads in one call
+	// (merge --landed names a card by id@head); absent without --cards.
+	Merging   []mergingCard `json:"merging,omitempty"`
 	Judgments []judgmentRef `json:"judgments,omitempty"`
 	// Rows is where --json --rows's: every primary's row of the work table, in work
 	// order, its fields but the brief; absent without --rows.
@@ -511,6 +527,24 @@ type dealtCard struct {
 	Since    time.Time `json:"since,omitzero"`
 	Deadline time.Time `json:"deadline,omitzero"`
 	Branch   string    `json:"branch"`
+}
+
+// mergingCard is a primary merging: its stream, the head its merge would land, its attempt.
+type mergingCard struct {
+	ID      string `json:"id"`
+	Stream  string `json:"stream"`
+	Head    string `json:"head"`
+	Attempt int    `json:"attempt,omitempty"`
+}
+
+// mergingView is the merging primaries, by stream then id.
+func mergingView(cs []*sprint.Card) []mergingCard {
+	out := make([]mergingCard, 0, len(cs))
+	for _, c := range cs {
+		out = append(out, mergingCard{ID: c.ID, Stream: c.Row, Head: c.F("head"), Attempt: c.Int("attempt")})
+	}
+	slices.SortFunc(out, func(a, b mergingCard) int { return cmp.Or(cmp.Compare(a.Stream, b.Stream), cmp.Compare(a.ID, b.ID)) })
+	return out
 }
 
 // judgmentRef is an open judgment naming a dealt card's primary: its note and its kind.
@@ -657,6 +691,7 @@ func (a *app) whereLoop(ctx context.Context, r whereRun, stdout, stderr io.Write
 				return "", a.readFailed("where", err, stderr), false
 			}
 			v.Cards, v.Judgments = dealtView(d, st.Names.Prefix, v.Epoch)
+			v.Merging = mergingView(d.Merging)
 		}
 		if r.c.json && r.rows {
 			s, err := st.Load(ctx, []string{sprint.Work}, nil)

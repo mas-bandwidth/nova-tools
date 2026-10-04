@@ -78,6 +78,15 @@ func (r Redis) Read(ctx context.Context, stream, group, consumer string, block t
 	return out, nil
 }
 
+func (r Redis) Release(ctx context.Context, stream, group string, ids ...string) error {
+	args := []any{"XCLAIM", stream, group, Consumer, 0}
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	args = append(args, "IDLE", ClaimAfter.Milliseconds(), "JUSTID")
+	return r.C.Do(ctx, args...).Err()
+}
+
 func (r Redis) Ack(ctx context.Context, stream, group string, ids ...string) (int64, error) {
 	return r.C.XAck(ctx, stream, group, ids...).Result()
 }

@@ -18,8 +18,14 @@ type MergeReq struct {
 	// cards it pushed, never "the first n": the tick's accepts put cards in the queue
 	// by their order of work, often ahead of the ones a landing is building, and a
 	// report by place would then record cards that were not pushed (nova-sprint land).
-	Cards    []string
-	Conflict string // a card of the batch that did not merge
+	Cards []string
+	// Landed is the record by name and head (docs/SPEC-SPRINT.md section 8, merge --landed): each
+	// card the lander pushed with the head it pushed, and the caller's fact that the head is an
+	// ancestor of the base branch's tip. The step lands exactly these cards, and refuses all of
+	// them, naming each card and why, and writes nothing, unless every one is merging in the
+	// stream, at the head given, with that head in the base.
+	Landed   []LandedPin `json:",omitempty"`
+	Conflict string      // a card of the batch that did not merge
 	// ConflictKind and ConflictPaths are what the lander knows of a conflict: "file" when the
 	// paths that did not merge are files no generated ledger owns, "ledger" when one is, and
 	// the paths; written on the stream's control card with the stop (FieldConflictKind,
@@ -40,6 +46,45 @@ type MergeReq struct {
 	// section 7: the generated ledgers regenerated at the merge); written on its merge card
 	// as it lands, its note on the card's timeline.
 	Resolved map[string]string
+}
+
+// LandedPin is one card of a record by name: its id, the head the caller pushed, and the
+// caller's fact (one git merge-base --is-ancestor against a fetched tip, never run by the
+// tick) that the head is an ancestor of the base branch's tip.
+type LandedPin struct {
+	ID     string
+	Head   string
+	InBase bool
+}
+
+// landedRefusals is why each pin of a record by name is refused, in the pins' order: a card
+// not merging in the stream, named twice, given another head than the card's now (returned,
+// re-queued or re-cut since it was pushed), or whose head the base does not hold. Empty when
+// the record is lawful (docs/SPEC-SPRINT.md section 8, merge --landed).
+func landedRefusals(s *Snapshot, stream string, pins []LandedPin) []Refusal {
+	var out []Refusal
+	seen := map[string]bool{}
+	for _, pin := range pins {
+		pr, m := s.Work.Placed(pin.ID), s.Merge.Placed(pin.ID)
+		why := ""
+		switch {
+		case seen[pin.ID]:
+			why = "named twice in the record"
+		case pr == nil || pr.Row != stream || pr.Col != Merging || m == nil || m.Row != stream || m.Col != Queued:
+			why = "not merging in stream " + stream + " (it is " + placeWord(orEmpty(pr, pin.ID)) + ")"
+		case pin.Head == "":
+			why = "no head given; it wants <id>@<head>"
+		case pr.F("head") != pin.Head:
+			why = "head " + pin.Head + " given, the card is at head " + orDash(pr.F("head")) + " now (returned, re-queued or re-cut since it was pushed); nothing recorded for it"
+		case !pin.InBase:
+			why = "head " + pin.Head + " is not an ancestor of the base branch's tip; it was not landed"
+		}
+		seen[pin.ID] = true
+		if why != "" {
+			out = append(out, Refusal{pin.ID, why})
+		}
+	}
+	return out
 }
 
 // streamDone says every primary of the stream on the table has landed, given
@@ -134,6 +179,16 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		}
 		p.refuse(r.Stream, why)
 		return p
+	}
+	if len(r.Landed) > 0 {
+		if why := landedRefusals(s, r.Stream, r.Landed); len(why) > 0 {
+			p.Refused = append(p.Refused, why...)
+			return p
+		}
+		r.Cards = make([]string, len(r.Landed))
+		for i, pin := range r.Landed {
+			r.Cards[i] = pin.ID
+		}
 	}
 	n := r.Batch
 	if n <= 0 || n > len(queued) {
