@@ -547,7 +547,9 @@ func TestBannerMeetsTheOnboardingStandard(t *testing.T) {
 	t.Parallel()
 	banner := demo().Banner()
 	examples, err := onboarding.ExampleLines(banner, "nova-demo")
-	require.True(t, err == nil && len(examples) == 1 && examples[0] == "nova-demo put --store ./s --key k", "example lines %q (%v) from:\n%s", examples, err, banner)
+	require.True(t, err == nil, "example lines %q (%v) from:\n%s", examples, err, banner)
+	require.True(t, len(examples) == 1, "example lines %q (%v) from:\n%s", examples, err, banner)
+	require.True(t, examples[0] == "nova-demo put --store ./s --key k", "example lines %q (%v) from:\n%s", examples, err, banner)
 	for _, verb := range []string{"put", "who", "deny", "forget", "raw", "fn load", "fn ls", "careless", "version"} {
 		t.Run(verb, func(t *testing.T) {
 			t.Parallel()
