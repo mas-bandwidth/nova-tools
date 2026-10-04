@@ -26,7 +26,8 @@ func tripsStore(t *testing.T) *Store {
 		o.PoolSize, o.Dialer = 1, func(context.Context, string, string) (net.Conn, error) {
 			client, server := net.Pipe()
 			go func() {
-				defer server.Close()
+				// ignored: a test fixture's pipe; the test's own assertions are the report
+				defer func() { _ = server.Close() }()
 				r := bufio.NewReader(server)
 				for {
 					cmd, err := readCommand(r)

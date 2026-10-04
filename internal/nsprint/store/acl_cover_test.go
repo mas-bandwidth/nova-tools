@@ -33,7 +33,8 @@ type aclFake struct {
 func (f *aclFake) dial(context.Context, string, string) (net.Conn, error) {
 	client, server := net.Pipe()
 	go func() {
-		defer server.Close()
+		// ignored: a test fixture's pipe; the test's own assertions are the report
+		defer func() { _ = server.Close() }()
 		r := bufio.NewReader(server)
 		for {
 			cmd, err := readCommand(r)

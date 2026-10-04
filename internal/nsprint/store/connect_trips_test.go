@@ -33,7 +33,8 @@ func TestConnectIsHelloAlone(t *testing.T) {
 	dial := func(context.Context, string, string) (net.Conn, error) {
 		client, server := net.Pipe()
 		go func() {
-			defer server.Close()
+			// ignored: a test fixture's pipe; the test's own assertions are the report
+			defer func() { _ = server.Close() }()
 			r := bufio.NewReader(server)
 			for {
 				cmd, err := readCommand(r)
@@ -69,7 +70,8 @@ func TestConnectIsHelloAlone(t *testing.T) {
 	if err != nil {
 		require.NoError(t, err, err)
 	}
-	defer s.Close()
+	// ignored: a test's teardown; the test's own assertions are the report
+	defer func() { _ = s.Close() }()
 	if err := s.Client().Get(context.Background(), "k").Err(); err != redis.Nil {
 		require.True(t, err == redis.Nil, "get: %v", err)
 	}
