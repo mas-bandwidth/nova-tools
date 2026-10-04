@@ -2592,7 +2592,10 @@ func within(root, path string) bool {
 // dataHome/auth.json, mode 0600, and returns the refusal reason when the source is
 // looser than 0600 or the copy cannot end 0600. Both mode questions are asked of the
 // platform (authmode.go): windows reports 0666 for every readable file, so neither rule
-// refuses there.
+// refuses there. A refusal raised after the first write unlinks every copy it left --
+// dataHome/auth.json, and dataHome/opencode/auth.json once that one is written -- before
+// returning, so a refused copy leaves no plaintext key on the bench
+// (docs/SPEC-SECRETS.md, the dogfooding ten), and a failed unlink is named in the reason.
 func copyAuth(src, provider, dataHome string) string {
 	st, err := os.Stat(src)
 	if err != nil {
@@ -2616,18 +2619,29 @@ func copyAuth(src, provider, dataHome string) string {
 	}
 	body, _ := json.Marshal(one)
 	dst := filepath.Join(dataHome, "auth.json")
+	ocCopy := filepath.Join(dataHome, "opencode", "auth.json")
 	if err := os.WriteFile(dst, body, 0o600); err != nil {
 		return fmt.Sprintf("the auth copy %s could not be written: %s", oneline.Field(dst), oneline.Escape(err.Error()))
 	}
+	// The first write has landed, so every refusal below leaves no copy: drop unlinks the
+	// copies that exist and names one it cannot remove in the reason, never swallowing it.
+	drop := func(reason string, copies ...string) string {
+		for _, p := range copies {
+			if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+				reason = fmt.Sprintf("%s; the refused copy %s could not be removed: %s", reason, oneline.Field(p), oneline.Escape(err.Error()))
+			}
+		}
+		return reason
+	}
 	if dstSt, err := os.Stat(dst); err == nil && authModeNotOwnerOnly(runtime.GOOS, dstSt.Mode()) {
-		return fmt.Sprintf("the auth copy would not be 0600: %s ended mode %04o", oneline.Field(dst), dstSt.Mode().Perm())
+		return drop(fmt.Sprintf("the auth copy would not be 0600: %s ended mode %04o", oneline.Field(dst), dstSt.Mode().Perm()), dst)
 	}
 	ocDir := filepath.Join(dataHome, "opencode")
 	if err := os.MkdirAll(ocDir, 0o755); err != nil {
-		return fmt.Sprintf("the auth directory %s could not be made: %s", oneline.Field(ocDir), oneline.Escape(err.Error()))
+		return drop(fmt.Sprintf("the auth directory %s could not be made: %s", oneline.Field(ocDir), oneline.Escape(err.Error())), dst)
 	}
-	if err := os.WriteFile(filepath.Join(ocDir, "auth.json"), body, 0o600); err != nil {
-		return fmt.Sprintf("the auth copy %s could not be written: %s", oneline.Field(filepath.Join(ocDir, "auth.json")), oneline.Escape(err.Error()))
+	if err := os.WriteFile(ocCopy, body, 0o600); err != nil {
+		return drop(fmt.Sprintf("the auth copy %s could not be written: %s", oneline.Field(ocCopy), oneline.Escape(err.Error())), ocCopy, dst)
 	}
 	return ""
 }
