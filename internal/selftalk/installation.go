@@ -609,7 +609,7 @@ func habitualVerb(w string) bool {
 	if irregularPast[w] {
 		return false
 	}
-	return !(strings.HasSuffix(w, "ed") && !presentEd[w])
+	return !strings.HasSuffix(w, "ed") || presentEd[w]
 }
 
 func words(s string) map[string]bool {
