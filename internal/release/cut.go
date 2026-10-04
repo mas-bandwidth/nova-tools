@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"golang.org/x/mod/semver"
 )
 
 // prNumber matches the `(#123)` a squash merge puts at the end of the subject.
@@ -96,44 +97,23 @@ func green(runs []CheckRun) error {
 // previousTag picks the highest version tag in the repository. It is a semantic
 // comparison, not a lexical one: v0.15.10 comes after v0.15.3, which a sort by
 // string puts the other way round and which would make the changelog for a
-// patch release list seven releases' worth of work.
+// patch release list seven releases' worth of work. (STANDARD §7: library first.)
 func previousTag(tags []string) string {
-	best, bestParts := "", []int{}
+	versions := make([]string, 0, len(tags))
 	for _, tag := range tags {
-		if ValidVersion(tag) != nil {
+		// semver.IsValid refuses a tag without a leading v (e.g. "0.16.0")
+		// and a tag with a fourth number (e.g. "v0.16.0.1"), the same
+		// shapes the previous hand-rolled filter rejected.
+		if !semver.IsValid(tag) {
 			continue
 		}
-		parts := versionParts(tag)
-		if best == "" || lessVersion(bestParts, parts) {
-			best, bestParts = tag, parts
-		}
+		versions = append(versions, tag)
 	}
-	return best
-}
-
-func versionParts(tag string) []int {
-	out := make([]int, 3)
-	fields := strings.SplitN(strings.TrimPrefix(tag, "v"), ".", 3)
-	for i := range out {
-		if i >= len(fields) {
-			break
-		}
-		n := fields[i]
-		if c := strings.IndexAny(n, "-+"); c >= 0 {
-			n = n[:c]
-		}
-		out[i], _ = strconv.Atoi(n)
+	if len(versions) == 0 {
+		return ""
 	}
-	return out
-}
-
-func lessVersion(a, b []int) bool {
-	for i := range a {
-		if a[i] != b[i] {
-			return a[i] < b[i]
-		}
-	}
-	return false
+	semver.Sort(versions)
+	return versions[len(versions)-1]
 }
 
 // Section renders one changelog section. It is exported and pure so that the
