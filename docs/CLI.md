@@ -1681,7 +1681,11 @@ and only the files whose `SHA256SUMS` line differs are sent; `install` leaves a 
 holds the same bytes in place, so only the loops of the tools that changed restart. One `CYCLE
 BENCH host=<h> … version=<v> state=<s> installed=<n>` line per bench, then `CYCLE OK … check=<d>
 apply=<d> total=<d>`; both plays' output is kept under `<out>/<version>/`. `--dry-run` is the check
-alone. It runs in the inventory's environment, as the play does.
+alone. It runs in the inventory's environment, as the play does. It runs the inventory once with
+`--list` first and refuses before any play when it cannot list: a store with ACLs needs its login in
+the wrapper's environment (`NOVA_SPRINT_REDIS_USER`, and `NOVA_SPRINT_REDIS_PASSWORD_ENV` naming the
+variable that holds the password, never the password; [FLEET.md](FLEET.md) "An adopter's path" has
+the wrapper and the `nova-secrets exec` line).
 
 ## nova-version
 
