@@ -792,7 +792,7 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 	var p Plan
 	moves := roundMoves{}
 	ready := func(c *Card) string {
-		if _, ok := FriendCard(c); ok {
+		if OnlyFriend(c) {
 			return friendCardWhy
 		}
 		return inState(c, Ready)

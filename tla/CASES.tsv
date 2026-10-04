@@ -358,3 +358,5 @@ MCServerLanesBrokenBeatOnLine.cfg	MCServerLanes.tla	invariant	BeatNeverWaitsForT
 MCServerLanesBrokenReadOnLine.cfg	MCServerLanes.tla	invariant	ReadWaitsOnlyForReads|LanesHoldNoLine	ignore-terminal	serverlanes	required	-
 MCServerLanesBrokenRunGone.cfg	MCServerLanes.tla	invariant	GoneNeverRuns	ignore-terminal	serverlanes	required	-
 MCServerLanesBrokenLandGate.cfg	MCServerLanes.tla	invariant	LandHoldsTheLineOnlyForStoreSteps	ignore-terminal	serverlanes	required	-
+MCWhoPreference.cfg	MCWhoPreference.tla	pass	-	ignore-terminal	whopreference	required	-
+MCWhoPreferenceOnlyWrong.cfg	MCWhoPreference.tla	invariant	OnlyToItsFriend	ignore-terminal	whopreference	required	-

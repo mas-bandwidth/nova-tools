@@ -10,8 +10,8 @@ import (
 
 // A friend's card (docs/SPEC-SPRINT.md section 1; the owner, 2026-10-03: "doing parts on
 // friends where we would normally do friend work"): a brief whose header says WHO: friend
-// is dealt by the tick to a friend up below her width, on her own fleet row, straight into
-// working; a card with no WHO line is the machines' as before.
+// is offered by the tick to a friend with room, on her own fleet row. Only
+// an explicit "only friend" pin prevents fallback to another eligible worker.
 
 // friendBrief is a card brief whose header carries the WHO line who.
 func friendBrief(who string) string {
@@ -41,9 +41,9 @@ func dealWith(w *world, seats ...FriendSeat) Plan {
 
 func TestAFriendsCardIsDealtToTheFriendItNamesOnHerRowInWorking(t *testing.T) {
 	t.Parallel()
-	w := friendWorld(t, friendBrief("friend amy"))
+	w := friendWorld(t, friendBrief("only friend amy"))
 	pr := w.s.Primary("s1-1")
-	require.Equal(t, FriendRow("amy"), pr.F(FieldWho), "add writes the brief's WHO line on the card")
+	require.Equal(t, "only."+FriendRow("amy"), pr.F(FieldWho), "add writes the brief's WHO line on the card")
 
 	// not up, or no width: it waits ready, and no machine is dealt it
 	dealWith(w, FriendSeat{Name: "amy", Width: 2, Status: Down}, FriendSeat{Name: "bob", Width: 2, Status: Up})
@@ -64,7 +64,7 @@ func TestAFriendsCardIsDealtToTheFriendItNamesOnHerRowInWorking(t *testing.T) {
 	assert.Empty(t, Check(w.s, nil), "what is always true holds with her card dealt")
 
 	// the machines' deal verb refuses a friend's card by name
-	w2 := friendWorld(t, friendBrief("friend"))
+	w2 := friendWorld(t, friendBrief("only friend amy"))
 	p := Deal(w2.s, DealReq{Sel: Sel{IDs: []string{"s1-1"}}})
 	require.Len(t, p.Refused, 1)
 	assert.Contains(t, p.Refused[0].Why, "a friend's card")
@@ -72,8 +72,8 @@ func TestAFriendsCardIsDealtToTheFriendItNamesOnHerRowInWorking(t *testing.T) {
 
 func TestAFriendIsDealtHerRoomWorkingAtHerWidthAndReadyBehind(t *testing.T) {
 	t.Parallel()
-	w := friendWorld(t, friendBrief("friend amy"), friendBrief("friend amy"), friendBrief("friend amy"), friendBrief("friend amy"), friendBrief("friend amy"), friendBrief("friend"))
-	seats := []FriendSeat{{Name: "amy", Width: 2, Status: Up}, {Name: "bob", Width: 1, Status: Up}}
+	w := friendWorld(t, friendBrief("only friend amy"), friendBrief("only friend amy"), friendBrief("only friend amy"), friendBrief("only friend amy"), friendBrief("only friend amy"), friendBrief("friend"))
+	seats := []FriendSeat{{Name: "amy", Width: 2, Status: Up}, {Name: "bob", Width: 1, Status: Up, Class: "flash"}}
 	dealWith(w, seats...)
 	amy := FriendRow("amy")
 	assert.Equal(t, 2, w.s.Fleet.Count(amy, Working), "amy works her width")
@@ -110,7 +110,7 @@ func TestAFriendAtWidthEightWithThirtyCardsHasSixteenDealt(t *testing.T) {
 	t.Parallel()
 	briefs := make([]string, 30)
 	for i := range briefs {
-		briefs[i] = friendBrief("friend amy")
+		briefs[i] = friendBrief("only friend amy")
 	}
 	w := friendWorld(t, briefs...)
 	seat := FriendSeat{Name: "amy", Width: 8, Status: Up}
@@ -131,7 +131,7 @@ func TestWhoFriendGoesToTheUpFriendWithTheMostFreeWidth(t *testing.T) {
 	t.Parallel()
 	w := friendWorld(t, friendBrief("friend"), friendBrief("friend"), friendBrief("friend"))
 	// room is DealAhead times width: amy has two places, bob four
-	dealWith(w, FriendSeat{Name: "amy", Width: 1, Status: Up}, FriendSeat{Name: "bob", Width: 2, Status: Up}, FriendSeat{Name: "cat", Width: 8, Status: Held})
+	dealWith(w, FriendSeat{Name: "amy", Width: 1, Status: Up, Class: "flash"}, FriendSeat{Name: "bob", Width: 2, Status: Up, Class: "flash"}, FriendSeat{Name: "cat", Width: 8, Status: Held})
 	assert.Equal(t, FriendRow("bob"), w.s.Fleet.Card("s1-1.w1").Row, "bob has four free, amy two")
 	assert.Equal(t, FriendRow("bob"), w.s.Fleet.Card("s1-2.w1").Row, "bob still has three free")
 	assert.Equal(t, FriendRow("amy"), w.s.Fleet.Card("s1-3.w1").Row, "amy and bob have two each: amy is first by name")

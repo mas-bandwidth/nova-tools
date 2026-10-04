@@ -594,3 +594,11 @@ refused by c, the emptiest two below; only c3 is tried, and the call returns
 with c2 still able to go to c. NoSkip: c3 goes onto c, its refuser (the code
 before #5000).
 
+
+`WhoPreference.tla` isolates WHO preference selection and unpin from the
+larger deal models. Run `MCWhoPreference.cfg` against `WhoPreference`:
+`TypeOK`, `OnlyToItsFriend` and `WidthRespected` hold. The reversed
+`MCWhoPreferenceOnlyWrong.cfg` lets a full or down hard-pinned friend spill
+and must violate `OnlyToItsFriend`. Three cards, two friends and one fleet
+worker bound the model; both friends cover the example pro tier. Go tests
+also check tier exclusion, actual roster reads and the store's atomic notes.

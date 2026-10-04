@@ -210,25 +210,30 @@ down` by the seat alone, lifted by `friend up`. The model is
 `TestHealthReplayOrderBeatAndHold`, `TestSeatGenerationFromInitThroughHandovers`,
 `TestFriendHealthIsTheSeatsAndFencedByItsGeneration`.
 
-**A friend's card** (the owner, 2026-10-03: "Could we try expressing the work
-left for nova-tools-1.1.0 into cards, and doing it via the sprint, but doing
-parts on friends where we would normally do friend work."). A card whose
-brief's header carries `WHO: friend` (any friend) or `WHO: friend <name>` is a
-friend's card (docs/SPEC-CARD-CONTRACT.md, the WHO line; `cardhdr.ReadWho` is
-the one parser). `add` and `brief` refuse any other WHO value, a name that is
-no row of the friends table, and `WHO: friend` while the table has no row
-(exit 2, nothing written); the primary's field `who` is `friend` or
-`friend.<name>`, written with its brief, and `card` prints `who=` on its
-`CARD OK` line (`--json` `who`). A card with no WHO line is a machine's, dealt
-as before. The tick's deal deals a friend's card ready, in the deal's stream
-turns, to a friend up (the friends' rule: not held, a beat within 15 s) below
-her room, DealAhead (two) times her friends row's `width`, as the machines'
-rule fills a member (section 5; the cards on her row, ready and working, count
-against it; the owner, 2026-10-04: "Do it just like the fleet, you keep people
-busy by having 2X width queued up in ready per-friend"): the friend it names,
-or for `WHO: friend` the friend up with the most room free, the first by name
-among equals; with none it waits ready, held by the no-stall rule as waiting
-for a friend (`sprint.FriendDeal`). On her row the card is `working` while she
+**A friend's card and WHO preference.** `WHO: friend <name>` prefers that known
+friend while she is up and below her room (DealAhead times her width).
+`WHO: only friend <name>` hard-pins: while she is full or down, the card
+waits ready and the view says "waits for only friend <name>". Add and brief
+refuse unknown names with a remedy. The primary stores `friend.<name>` or
+`only.friend.<name>` in `who`; `WHO: friend` stores `friend`.
+Unpinned cards and preferences whose friend has no room go to subscription
+friends whose class covers the card tier, greatest free room first and name
+order on a tie, then to fleet members of the tier. The named friend has
+priority over that fallback ordering (`preferredFriend`). The tick reads friend
+capacity before its pump, including when queued changes make work ready during
+the tick.
+
+`nova-sprint unpin <id>... --reason <text>` or `unpin --stream <s>
+--reason <text>` removes the stored WHO value from waiting or ready primaries
+that have never been dealt, including while the machine runs. It changes no
+brief bytes. Each successful unpin records the actor, time, reason and
+removed WHO line in the card log; card and log show the record. Each started,
+finished or unknown card is refused separately with its remedy. An unpinned
+card is a reported no-op. `--dry-run` reports the plan without writing it.
+`WhoPreference.tla` checks hard pins and capacity; the reversed only witness
+permits fallback and violates `OnlyToItsFriend`.
+
+On her row the card is `working` while she
 has a lane free (her width less her working cards; dealt and taken at once)
 and `ready` behind her working cards otherwise, so her inbox holds her width
 working and as many again ready; her finish of a card takes the oldest ready
@@ -236,8 +241,8 @@ card on her row into working in the same step (`sprint.Finish`, `friendNext`),
 no tick between, as a machine's lane that frees takes its next; the next tick
 fills her room again (`TestAFriendAtWidthEightWithThirtyCardsHasSixteenDealt`:
 width 8 with 30 waiting is 8 working and 8 ready, and a 17th on a landing). The tick reads the
-friends' records (the roster, then the beats: two round trips) only when a
-friend's card is ready. Its work card, `<primary>.w<attempt>`, is placed on
+friends' records (the roster, then the beats: two round trips) before each
+tick's pump. Its work card, `<primary>.w<attempt>`, is placed on
 the friend's own fleet row, `friend.<name>` (a dot, which no member's name
 holds, so it is no machine's and no fleet verb names it), straight into
 `working` at generation 1, dealt and taken at once (nothing takes it), member

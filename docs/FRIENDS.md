@@ -26,11 +26,10 @@ into the friends table's `ready`, `working`, `done` and `ok%`.
 
 ## A sprint card
 
-A card of the sprint whose brief says `WHO: friend` or `WHO: friend <name>` is
-dealt to a friend (docs/SPEC-SPRINT.md section 1, a friend's card; the owner,
-2026-10-03: "Could we try expressing the work left for nova-tools-1.1.0 into
-cards, and doing it via the sprint, but doing parts on friends where we would
-normally do friend work."). It arrives as a job like any other:
+The sprint prefers subscription friends with room and tier coverage before
+the fleet. `WHO: friend <name>` prefers a particular friend;
+`WHO: only friend <name>` waits for that friend alone. A card assigned to a
+friend arrives as a job (docs/SPEC-SPRINT.md, WHO preference):
 `inbox/<card>/BRIEF.md` (after a clear, `<card>~<epoch>`), written by
 `nova-sprint friend sync`. Its first line is the STATUS line:
 
