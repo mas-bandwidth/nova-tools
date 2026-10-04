@@ -9,7 +9,6 @@ cmd/nova-sandbox 3
 cmd/nova-swarm 3
 internal/buildinfo 1
 internal/bus 16
-internal/cardhdr 10
 internal/ci/slowtests 2
 internal/dogfood 1
 internal/hygiene 1
