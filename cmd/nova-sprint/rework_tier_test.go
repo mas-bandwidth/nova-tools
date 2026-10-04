@@ -21,7 +21,7 @@ func TestReworkTakesATier(t *testing.T) {
 	code, _, errs := ta.do("rework --tier medium")
 	require.Equal(t, 2, code, "a bad tier is usage: %s", errs)
 	assert.Contains(t, errs, "wants ids")
-	assert.Contains(t, errs, "--tier wants frontier, pro or flash, found medium")
+	assert.Contains(t, errs, "--tier wants frontier, heavy, pro or flash, found medium")
 	assert.Equal(t, writes, ta.applies(), "a refused rework wrote")
 	out := ta.ok("rework s1-1 --fix again --tier pro")
 	assert.Contains(t, out, "tier pro")

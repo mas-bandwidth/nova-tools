@@ -42,6 +42,11 @@ type BriefReq struct {
 	ID, Brief, Who string
 	Rules          string   // the held rules file the new brief is held to by reference (FieldRules), "" when it carries its own
 	Needs          []string // the new brief's needs, as add reads its DEPENDS-ON: line (briefNeeds): a change to that line alone is taken in any state
+	// Tier, with no Brief, re-tiers the card (nova-sprint brief --tier): the tier every
+	// later deal of the card draws its route from, written on the primary as FieldTier
+	// as rework --tier writes it; taken in any state, on a RUNNING machine and for a card
+	// dealt (it applies to the next attempt).
+	Tier string
 }
 
 // Brief replaces a primary's brief (nova-sprint brief): on a STOPPED machine
@@ -51,6 +56,9 @@ type BriefReq struct {
 func Brief(s *Snapshot, r BriefReq) Plan {
 	var p Plan
 	p.on(s)
+	if r.Tier != "" {
+		return briefTier(s, p, r)
+	}
 	if c := s.Work.Placed(r.ID); c != nil && !IsSentinel(c) && dependsOnly(c.F("brief"), r.Brief) {
 		return briefDepends(s, p, c, r)
 	}
@@ -85,6 +93,42 @@ func Brief(s *Snapshot, r BriefReq) Plan {
 	}
 	p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, setEntry(c, set, unset...))},
 		Moved: fmt.Sprintf("%s brief replaced (%d bytes) stream=%s %s", c.ID, len(r.Brief), c.Row, c.Col)})
+	return p
+}
+
+// briefTier is a card re-tiered (nova-sprint brief <id> --tier <t>; the owner, 2026-10-04:
+// "If there are pro cards that are really heavy, then let's mark them as heavy"): its tier
+// pinned to the one named, as rework --tier pins it (FieldTier: every later deal and read
+// of the card draws from it, over its brief's line 1, and the machine never escalates it
+// past it), taken in any state, on a RUNNING machine and for a card dealt, since the
+// class of model a task needs is not a change of the task: a card working finishes its
+// attempt where it is and the next attempt is dealt on the tier. A card landed, a
+// sentinel, a card whose brief pins a model, and a tier that is no class are refused.
+func briefTier(s *Snapshot, p Plan, r BriefReq) Plan {
+	c := s.Work.Placed(r.ID)
+	switch {
+	case c == nil:
+		p.refuse(r.ID, "no primary "+r.ID+" on the work table; nothing was changed")
+		return p
+	case IsSentinel(c):
+		p.refuse(r.ID, r.ID+" is a sentinel, not a primary; nothing was changed")
+		return p
+	case !cardhdr.IsRoute(r.Tier):
+		p.refuse(c.ID, "--tier wants "+cardhdr.RouteList+", found "+r.Tier+"; nothing was changed")
+		return p
+	case c.Col == Landed:
+		p.refuse(c.ID, c.ID+" is landed: a card landed keeps its tier; nothing was changed")
+		return p
+	case c.F(FieldTier) == r.Tier:
+		p.refuse(c.ID, c.ID+" is pinned to tier "+r.Tier+" already; nothing was changed")
+		return p
+	}
+	if m, _ := cardhdr.ReadModel(c.F("brief")); m.Pin != "" {
+		p.refuse(c.ID, "its brief pins model "+m.Pin+", which it runs on whatever its tier; nothing was changed")
+		return p
+	}
+	p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, setEntry(c, map[string]string{FieldTier: r.Tier}))},
+		Moved: fmt.Sprintf("%s tier pinned to %s (was %s): its next deal draws from it stream=%s %s attempt=%d", c.ID, r.Tier, orDash(c.F(FieldTier)), c.Row, c.Col, c.Int("attempt"))})
 	return p
 }
 

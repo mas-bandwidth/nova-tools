@@ -290,7 +290,8 @@ type Packet struct {
 	Route    string `json:"route,omitempty"`
 	Model    string `json:"model,omitempty"`
 	Tokens   string `json:"tokens,omitempty"`
-	USD      string `json:"usd,omitempty"` // the dollar budget per card, a decimal; "" for none (#5094)
+	USD      string `json:"usd,omitempty"`     // the dollar budget per card, a decimal; "" for none (#5094)
+	Harness  string `json:"harness,omitempty"` // the harness the route names (internal/harness); "" is the member's --harness
 	Deadline int    `json:"deadline,omitempty"`
 	// Tier is the tier the route was drawn from when the sprint decided it (a read's
 	// read tier, a rework's --tier); empty when the brief's line 1 names it.

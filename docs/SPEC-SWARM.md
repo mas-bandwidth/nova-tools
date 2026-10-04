@@ -165,6 +165,7 @@ stamp is printed as a bounded, escaped excerpt.
 | `DOCTOR DRIFT path=<binary> stamp=<stamp>` and `DOCTOR DRIFT local=<binary> stamp=<stamp>` | the two stamps differ; both are printed | 2 | see the next line |
 | `DOCTOR REFUSED <path binary> shadows <local binary>; ...` | the PATH binary shadows the local one; the launch does not start | 2 | copy the `~/.local/bin` binary over the PATH one, or fix PATH so `~/.local/bin` comes first |
 | `DOCTOR UNREADABLE reading the version of <path or local>=<binary>: <cause>; <the other binary>; ...` | a binary the check compares could not be read; the launch does not start | 2 | run `<binary> version` by hand, then rebuild or remove that binary, then launch again |
+| `DOCTOR HARNESS kind=<claude\|codex\|grok> binary=<path\|-> version=<line\|-> login=<yes\|no\|-> [said=<line>]` | after an OK: one line per headless harness (the headless harnesses), where it is, what `--version` said, and whether its login verb says it is logged in; `-` for one not on PATH | 0 | log the harness in on this machine, or deal its cards elsewhere |
 
 The cause is one of `timed out after <deadline>`, `exited <n>`, `was killed (<signal>)`
 (a run ended by a signal), `printed nothing`, `printed a line longer than <n> bytes`,
@@ -178,6 +179,71 @@ When the check itself is the problem, the refusal's own next action is the way o
 named binary's `version` by hand to see what it does, then rebuild it or remove it.
 Removing the copy under `~/.local/bin` is tolerated: with no local copy there is nothing to
 shadow with, and the check passes on the PATH binary alone. No flag skips the check.
+
+## The headless harnesses
+
+The heavy tier (the owner, 2026-10-04: a class between pro and frontier, never a model
+name; the model stays on the route row) runs its cards through the subscription logins
+of one machine: `claude`, `codex` and `grok`, each a one-shot child (`internal/harness`
+names them; `internal/swarm/headless.go` is the logic, every function pure). A route row
+names the harness (`nova-config route add ... --harness claude|codex|grok`; `opencode`,
+the default, launches through the providers table as before), and its provider is `subscription-<harness>` (`subscription-claude`, `subscription-codex`,
+`subscription-grok`; `nova-config` refuses any other word, and migration 0027 holds it in the
+schema), because a rest is a provider's: one word shared by the three would rest all three for
+one login that expired, and one word each rests only its own. The deal writes the harness on the
+work card and its packet, and the member launches that program from its own PATH, so a
+member without it refuses the launch (`staging refused`) and the sprint deals the card to
+one that has it. `native` learns the harness from the binary's name.
+
+| harness | the child | the usage |
+|---|---|---|
+| `claude` | `claude -p --model <m> --output-format json --permission-mode bypassPermissions --disallowed-tools WebFetch,WebSearch -- <prompt>` | its one JSON result: `usage` (input, output, cache write, cache read), `total_cost_usd`, `modelUsage` names the model |
+| `codex` | `codex exec --skip-git-repo-check --json --ephemeral --dangerously-bypass-approvals-and-sandbox -c web_search="disabled" --model <m> -- <prompt>` | the last `turn.completed` event of its JSONL: input, cached input, cache write, output, reasoning; no cost and no model: the route's price sheet prices it |
+| `grok` | `grok --output-format json --permission-mode bypassPermissions --disable-web-search --model <m> --single=<prompt>` | its one JSON result, the same names as claude's with `reasoning_tokens` |
+
+The same wall, the same job directory, the same allowlist environment and the same
+deadline and idle watch as an opencode child; the permission mode is bypass because the
+wall is the boundary, as it is for an opencode child whose own fence allows every tool
+inside it, and the harness's own web tools are off (the opencode fence denies webfetch;
+the argv carries `--disallowed-tools WebFetch,WebSearch`, `-c web_search="disabled"`,
+`--disable-web-search`). The network is the opencode child's and no wider: the wall makes
+no network promise to either, and the one address it opens by name, a keyless provider's
+loopback (`--net-allow`), a headless child is never given.
+
+**What a card's shell can reach.** The harness runs from a private home under the data
+home (`<slot>/data/.claude`, `.codex`, `.grok`), which is the child's `HOME` and a write of
+the wall, and the child is pointed at it by name (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`) or,
+for grok, which reads `HOME` alone, by being where `HOME` puts it. Each launch empties it
+and copies in the harness's credential file and nothing else of the bench's own login:
+claude's `.credentials.json` (a machine that keeps it in the OS keychain has none to copy),
+codex's and grok's `auth.json`, mode 0600. The bench's own `~/.claude`, `~/.codex` and
+`~/.grok` are on no mount list, readable or writable, apart from the install the binary
+runs from: the binary is launched by its resolved path and the wall reads its directory
+and, when that is a `bin` directory, the install above it (`swarm.HeadlessProgramRoot`),
+read-only. So a card's shell can read and write the job, the data home and its private
+home, and can read the copy of the credential file there, which the harness itself needs
+inside the same wall (a shell inside the wall cannot be kept from the file the harness
+beside it reads); it cannot read the interactive history, the config, hooks or plugins of
+the bench's login, cannot write anything of it (a write there would run outside the wall
+the next time the login's owner started the harness), and cannot change the credential the
+bench keeps: the copy is the card's and is replaced at the next launch. A token the
+harness refreshes during a turn is refreshed in the copy only.
+
+There is no session database to sample: the usage is read once from `<job>/harness-output.log` when the child is
+gone, so the live sampler is not started, the budgets (`--tokens`, `--usd`) are asked of
+the final read, and the deadline is the live stop; a numeric budget needs no `sqlite3`.
+The usage row's `usage=none reason=` is `no-usage` when the harness printed no result
+and `unreadable` when its result would not parse, the path the capture's. A failure the
+harness itself reports (claude's `is_error` result, a `{"type":"error"}` line of codex or
+grok, codex's `turn.failed`) is the run's provider failure, classed as a provider's log
+line is: an expired login is `class=auth`, so the finish says `provider failure` and the
+provider rests (docs/SPEC-SPRINT.md section 5), never a mystery no-result. `nova-swarm
+doctor` prints one `DOCTOR HARNESS` line per headless harness: its binary, its version
+and whether its login verb (`claude auth status`, `codex login status`, `grok models`)
+says it is logged in. The functional test
+`TestHeadlessHarnessesRunAOneLineCard` (`NOVA_SWARM_HEADLESS=1`) runs one one-line card
+through each harness on the machine and prints the usage it read.
+
 
 ## Bench slot leases
 

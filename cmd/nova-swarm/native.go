@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"math/big"
 	"net"
 	"net/url"
@@ -28,6 +29,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/cardtree"
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
+	"github.com/mas-bandwidth/nova-tools/internal/harness"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
@@ -155,6 +157,16 @@ type nativeRunConfig struct {
 	// gateRun, when set, is the gate decision's test runner (nativegate.go): a test's; nil
 	// runs go test in the child's wall with the child's environment.
 	gateRun gateRunner
+}
+
+// headless is the headless harness this run's binary is (internal/harness: claude, codex
+// or grok, by the program's name), and "" for an opencode launch through the providers
+// table (docs/SPEC-SWARM.md, the headless harnesses).
+func (cfg nativeRunConfig) headless() string {
+	if k := harness.KindOf(cfg.binary); harness.IsHeadless(k) {
+		return k
+	}
+	return ""
 }
 
 // nativeRunResult is what one run records when the child has gone.
@@ -336,6 +348,14 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	if !isExecutable(bin) {
 		refuseNative(errOut, fmt.Sprintf("the harness binary %s is not executable", oneline.Field(bin)))
 		return nativeRunResult{}, 2
+	}
+	// A headless harness is launched by its resolved path: the wall reads its install, and
+	// never the bench's login directory the symlink chain to it may run through
+	// (swarm.HeadlessProgramRoot).
+	if cfg.headless() != "" {
+		if real, err := filepath.EvalSymlinks(bin); err == nil {
+			bin = real
+		}
 	}
 
 	// (2) THE MODEL. Native routes are named provider/model, and a model id with no
@@ -663,9 +683,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// The keyless provider's loopback host:port travels to the wall as --net-allow
 	// because `(allow network-outbound (remote ip))` does not reach 127.0.0.1: a
 	// local-model card runs and dies silently without the named grant.
-	if cfg.configFile != "" {
-		cfg.netAllow = providerLoopback(cfg.configFile, provider)
-	}
+	cfg.netAllow = nativeNetAllow(cfg, provider)
 
 	// The two hashes are recorded from the same bytes the run is about to use, so a
 	// caller can prove later that neither the card nor the binary changed under it.
@@ -723,7 +741,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			// STAGE UNSEEN even though staging already ended.
 			fmt.Fprintf(os.Stdout, "STAGE FAIL bench=%s repo=%s base=%s secs=%d reason=stage-timeout\n",
 				oneline.Field(bench), oneline.Field(stageRes.BaseRepo), oneline.Field(swarm.Version8(stageRes.BaseSha)), secs)
-			writeNativeUsage(cfg, dataHome, provider, cfg.model[len(provider)+1:], startTime, time.Now(), time.Time{}, -1, 1, "stage-timeout", errOut)
+			writeNativeUsage(cfg, dataHome, provider, cfg.model[len(provider)+1:], startTime, time.Now(), time.Time{}, -1, 1, "stage-timeout", nil, errOut)
 			res := nativeRunResult{
 				rc:           -1,
 				cardSHA256:   hex.EncodeToString(cardHash[:]),
@@ -885,6 +903,19 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		}
 	}
 	childEnv := nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell, toolPath)
+	// A headless harness runs from a private home under the data home, seeded with its credential
+	// file alone (swarm.HeadlessHomeOf), and is pointed at it by name where it reads one.
+	if k := cfg.headless(); k != "" {
+		h := swarm.HeadlessHomeOf(k, benchHome(cfg), dataHome)
+		for _, kv := range h.Env {
+			name, _, _ := strings.Cut(kv, "=")
+			childEnv = append(environWithoutName(childEnv, name), kv)
+		}
+		if err := seedHeadlessHome(h); err != nil {
+			refuseNative(errOut, fmt.Sprintf("%s the harness's private home could not be made under the data home: %s", oneline.Field(cfg.label), oneline.Err(err)))
+			return nativeRunResult{}, 2
+		}
+	}
 	if cfg.root != "" {
 		var id swarm.StagingIdentity
 		if cfg.identity != nil {
@@ -1054,7 +1085,9 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// card at their own instants whatever a read is doing (nativesample.go says why at
 	// length).
 	sampler := startLiveSampler("", 0, cfg, outLog)
-	if !cfg.unmetered && cfg.tokens > 0 || cfg.usd != nil || (cfg.worker != nil && cfg.worker.HasCardBudget()) {
+	// A headless child has no database to sample: it prints its usage once, when it ends,
+	// so its budgets are asked of the final read and the deadline is its live stop.
+	if (!cfg.unmetered && cfg.tokens > 0 || cfg.usd != nil || (cfg.worker != nil && cfg.worker.HasCardBudget())) && cfg.headless() == "" {
 		sampler = startLiveSampler(dataHome, cfg.usageInterval, cfg, outLog)
 	}
 	defer sampler.Stop()
@@ -1225,7 +1258,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		// attempt once, and a fast failure whose provider reported nothing keeps dashes.
 		var launchUsage swarm.ProviderUsage
 		launchEnd := time.Now()
-		launchUsage, res.usageReason, res.usageState, res.usage = writeNativeUsage(cfg, dataHome, provider, cfg.model[len(provider)+1:], attemptStart, launchEnd, previousLaunchEnd, res.rc, attempt, res.end, errOut)
+		launchUsage, res.usageReason, res.usageState, res.usage = writeNativeUsage(cfg, dataHome, provider, cfg.model[len(provider)+1:], attemptStart, launchEnd, previousLaunchEnd, res.rc, attempt, res.end, tail, errOut)
 		// The floor for the NEXT launch's window: its rows begin where this launch's ended,
 		// so that adding a job's rows counts each launch once.
 		previousLaunchEnd = launchEnd
@@ -1281,7 +1314,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		// SPEC-SPRINT section 5: a credit/key refusal rests its provider. A
 		// transient wrapper cannot buy another launch; read only this launch.
 		if !published && (failed || launchFailure) {
-			if refusal, ok := providerEnd(dataHome, providerBefore, attemptStart, res.rc, tail); ok &&
+			if refusal, ok := providerEnd(cfg.headless(), dataHome, providerBefore, attemptStart, res.rc, tail); ok &&
 				(refusal.Class == swarm.CauseCredit || refusal.Class == swarm.CauseAuth) {
 				break
 			}
@@ -1509,7 +1542,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	if !res.lost && !res.idled && !res.terminated && !handedBack && res.stopped == "" && res.wallReport == "" &&
 		(res.wallRefusal == swarm.WallRefusal{}) && (res.shellDenial == swarm.ShellDenial{}) {
 		if _, published := swarm.FindCardResult(jobDir); !published {
-			if cause, ok := providerEnd(dataHome, providerMark, runStart, res.rc, tailSince(outLog, captureMark)); ok {
+			if cause, ok := providerEnd(cfg.headless(), dataHome, providerMark, runStart, res.rc, tailSince(outLog, captureMark)); ok {
 				fmt.Fprintln(errOut, oneline.Escape(providerLine(cfg.label, res.wallSeconds, cfg.model, cause)))
 			}
 		}
@@ -1807,6 +1840,11 @@ func nativeSandboxArgv(launch []string, cfg nativeRunConfig, dataHome, jobDir, t
 	// Without the harness directory the wall denies even the resolver's own files, and
 	// without /opt/homebrew the common toolchain roots are invisible.
 	argv = append(argv, "--read", filepath.Dir(bin))
+	if cfg.headless() != "" {
+		if root := swarm.HeadlessProgramRoot(bin); root != filepath.Dir(bin) {
+			argv = append(argv, "--read", root)
+		}
+	}
 	if fi, err := os.Stat("/opt/homebrew"); err == nil && fi.IsDir() {
 		argv = append(argv, "--read", "/opt/homebrew")
 	}
@@ -2181,11 +2219,21 @@ func sameDir(a, b string) bool {
 // launches' own final reads -- "a job's rows are disjoint, so that adding them counts each
 // launch once", and two launches reported at 40 and 70 keep 40 and 70 here while the line
 // prints 110. The caller folds; this function never sees the job's running sum.
-func writeNativeUsage(cfg nativeRunConfig, dataHome, provider, model string, start, end, notBefore time.Time, rc, attempt int, endWord string, errOut io.Writer) (usage swarm.ProviderUsage, reason, path string, written swarm.UsageRow) {
+// A HEADLESS CHILD'S ROW IS READ FROM ITS CAPTURE (swarm.HeadlessUsage): what the launch
+// appended to `<job>/harness-output.log`, handed here as capture. The reason is `no-usage`
+// when it printed no result and `unreadable` when the result would not parse; the path is
+// the capture's.
+func writeNativeUsage(cfg nativeRunConfig, dataHome, provider, model string, start, end, notBefore time.Time, rc, attempt int, endWord string, capture []byte, errOut io.Writer) (usage swarm.ProviderUsage, reason, path string, written swarm.UsageRow) {
 	// notBefore is the EARLIER launch's end, and it is the floor that keeps this row
 	// disjoint from that one: without it the window's five-second widening reaches back over
 	// the previous launch's rows and counts them twice (usagecard.go says what that cost).
-	usage, note, storePath, rr := swarm.ReadCardUsageAfter(dataHome, start, end, notBefore)
+	var note, storePath, rr string
+	if k := cfg.headless(); k != "" {
+		usage, note, rr = headlessLaunchUsage(k, capture)
+		storePath = filepath.Join(cfg.slotDir, "jobs", cfg.label, "harness-output.log")
+	} else {
+		usage, note, storePath, rr = swarm.ReadCardUsageAfter(dataHome, start, end, notBefore)
+	}
 	rcCol := "-"
 	if rc >= 0 {
 		rcCol = strconv.Itoa(rc)
@@ -2229,6 +2277,47 @@ func writeNativeUsage(cfg nativeRunConfig, dataHome, provider, model string, sta
 		storePath = filepath.Join(dataHome, filepath.FromSlash(swarm.OpenCodeDB))
 	}
 	return usage, rr, storePath, row
+}
+
+// headlessLaunchUsage is one headless launch's usage read from its capture: the usage, a
+// note for errOut, and the usage=none reason ("" when the harness reported).
+func headlessLaunchUsage(kind string, capture []byte) (usage swarm.ProviderUsage, note, reason string) {
+	u, err := swarm.HeadlessUsage(kind, capture)
+	switch {
+	case err != nil:
+		return swarm.ProviderUsage{Values: map[string]string{}}, "the harness's usage could not be read from its output: " + err.Error(), "unreadable"
+	case !u.Observed:
+		return u, "", "no-usage"
+	}
+	return u, "", ""
+}
+
+// seedHeadlessHome makes the harness's private home (swarm.HeadlessHome): emptied of what
+// an earlier card of this slot left, then given a copy of the credential files the harness
+// needs, 0600, and nothing else of the bench's own login. A credential the bench has not got
+// is skipped: the harness then answers logged out, which the run classes as a provider
+// failure of class auth (swarm.HeadlessFailure). The bench's own files are only read, so
+// the card can write its copy and never the login.
+func seedHeadlessHome(h swarm.HeadlessHome) error {
+	if err := safepath.RemoveUnder(filepath.Dir(h.Dir), h.Dir); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(h.Dir, 0o700); err != nil {
+		return err
+	}
+	for _, name := range h.Login {
+		b, err := os.ReadFile(filepath.Join(h.Source, name))
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(h.Dir, name), b, 0o600); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // launchSpend is one launch's final read as a cost record (internal/cardcost): the five
@@ -2419,6 +2508,11 @@ var launchArgvFor = swarm.LaunchArgvFor
 // typed card, by the RESULT-FORMAT paragraph (swarm.CardPrompt). The
 // card's sha256 stays the sha of the card text alone.
 func nativeLaunchArgv(bin string, cfg nativeRunConfig, provider string) ([]string, error) {
+	// a headless harness has one argv shape of its own (swarm.HeadlessArgv), the model
+	// the part of the route after its provider
+	if k := cfg.headless(); k != "" {
+		return swarm.HeadlessArgv(k, bin, cfg.model[len(provider)+1:], nativePrompt(cfg))
+	}
 	return launchArgvFor(swarm.LaunchRow(provider), benchOS(cfg), swarm.LaunchRequest{
 		Harness: bin, Model: cfg.model, Title: cfg.label, Prompt: nativePrompt(cfg),
 	})
@@ -2905,4 +2999,16 @@ func fileSHA256(path string) (string, error) {
 	}
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:]), nil
+}
+
+// nativeNetAllow is the loopback host:port the wall opens back up for this run: the keyless
+// provider's the carried config names, for an opencode child. A headless harness reaches its
+// vendor by remote ip and carries no providers config, so it is granted no address at all:
+// its wall opens nothing an opencode child's does not (docs/SPEC-SWARM.md, what a card can
+// reach).
+func nativeNetAllow(cfg nativeRunConfig, provider string) string {
+	if cfg.configFile == "" || cfg.headless() != "" {
+		return ""
+	}
+	return providerLoopback(cfg.configFile, provider)
 }

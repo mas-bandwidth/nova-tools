@@ -205,6 +205,10 @@ var swarmAudit = audit.Config{
 		// cardhdr reads a card's header lines (its tier, a model: pin) into a value: the
 		// one parser the frame and the deal share. It holds no writer and prints nothing.
 		`"github.com/mas-bandwidth/nova-tools/internal/cardhdr"`,
+		// harness (doctor.go, member.go, native.go) is the harness words: which program a
+		// binary is (KindOf) and whether it is headless. Standard library only, no writer,
+		// prints nothing; a kind reaches a line only through oneline.Field.
+		`"github.com/mas-bandwidth/nova-tools/internal/harness"`,
 		// cardcost (native.go, member.go) folds what a run spent into a value and spells it
 		// as one word (SpendWord) or one record line (Usage.String); it holds no writer and
 		// prints nothing. The spend word reaches the NATIVE line only through oneline.Field.
