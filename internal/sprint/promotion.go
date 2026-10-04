@@ -141,6 +141,10 @@ func devBehindCond(s *Snapshot) []cond {
 type PromotedReq struct {
 	Sha string
 	Who string
+	// Returned is the landed cards dev or an audit returned with the promotion: each is
+	// marked (readtier.go, FieldReturnedByDev) and the tick asks to raise its stream's
+	// read tier.
+	Returned []string `json:",omitempty"`
 }
 
 var shaWord = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
@@ -165,8 +169,27 @@ func Promoted(s *Snapshot, r PromotedReq) Plan {
 		was, had := s.Work.Prop(kv[0])
 		p.Props = append(p.Props, PropWrite{Table: Work, Name: kv[0], Value: kv[1], Was: was, WasAbsent: !had})
 	}
+	for _, id := range r.Returned {
+		c := s.Work.Placed(id)
+		if c == nil {
+			p.refuse(id, "--returned names landed cards; no "+id+" on the table")
+			return p
+		}
+		if c.Col != Landed {
+			p.refuse(id, "--returned names landed cards; "+id+" is "+placeWord(c))
+			return p
+		}
+	}
 	cards, branch := LandedSince(s)
 	u := Unit{Key: "promoted", Moved: fmt.Sprintf("promoted %s into dev at %s (%s): %d cards landed since the last promotion", branch, now, sha, len(cards))}
+	for _, id := range r.Returned {
+		// returned by dev or an audit: the card's record, read by the tick (readtier.go)
+		c := s.Work.Placed(id)
+		u.Changes = append(u.Changes, change(Work, setEntry(c, map[string]string{FieldReturnedByDev: now, FieldReturnedByDevTier: s.readTierOf(c), FieldReturnedByDevSha: sha})))
+	}
+	if len(r.Returned) > 0 {
+		u.Moved += fmt.Sprintf("; returned by dev: %s", strings.Join(r.Returned, ", "))
+	}
 	for _, o := range s.Open {
 		if o.Note.Type == NDevBehind {
 			u.Closes = append(u.Closes, o)

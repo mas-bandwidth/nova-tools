@@ -1047,7 +1047,7 @@ nova-sprint reader away <reader>...
 nova-sprint reader up <reader>...
 nova-sprint reader remove <reader>...
 nova-sprint stream remove <stream>...
-nova-sprint stream set <stream>... [--read-tier <flash|pro|default>] [--attempts <n|default>]
+nova-sprint stream set <stream>... [--read-tier <flash|pro|heavy|default>] [--attempts <n|default>] [--reason <why>] [--answers <note>]   # a read tier never below the stream's work tier
 nova-sprint set [--read-tier <flash|pro|default>] [--dealt-max <duration|default>] [--attempts <n|default>]
 nova-sprint ci <id>... (--red | --green) --epoch <n> [--head <h>] [--run <id>] [--source <s>] [--note <text>]
 nova-sprint wait <note> (--for <duration> | --until <RFC3339>)
@@ -1062,6 +1062,7 @@ nova-sprint where [--watch] [--every <duration>] [--all] [--json [--cards]]   # 
 nova-sprint dashboard [--listen <address:port>[,...] | none] [--pull <address:port>[,...] | none] [--logo <file>] [--every <duration>]
 nova-sprint routes
 nova-sprint funded <provider> --reason <text>
+nova-sprint promoted --sha <merge sha> [--returned <id,...>]   # a landed card dev returned asks to raise its stream's read tier
 nova-sprint stats
 nova-sprint play [--simulation] [--seed <n>] [--every <duration>] [--broken <p>] [--fail <p>] [--stuck <p>] [--cross <p>] [--down <p>] [--up <p>] [--red <p>] [--flap <p>] [--batch <n>] [--hold] [--silent <member>@<from>+<for>]... [--ticks <n>]
 nova-sprint clear --confirm sprint

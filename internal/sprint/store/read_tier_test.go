@@ -84,7 +84,10 @@ func TestAReadTierSettingRaisesTheReadsAndNeverLowersThem(t *testing.T) {
 		h.addReady("s3", 1, briefOf("pro", ""))
 		h.setPrimary("s3-1", map[string]string{sprint.FieldTierNow: "pro"}) // a pro card on pro: escalated (flash first)
 		set(h, sprint.SetReq{Streams: []string{"s1"}, ReadTier: "pro"})
-		set(h, sprint.SetReq{Streams: []string{"s3"}, ReadTier: "flash"})
+		// a stream's read tier is never below its work tier (readtier.go): s3's pro card holds it at pro
+		res := h.run(SetStep(sprint.SetReq{Streams: []string{"s3"}, ReadTier: "flash", Who: h.st.Actor}))
+		require.Len(t, res.Refused, 1, "s3's read tier below its work tier: %+v", res)
+		assert.Equal(t, "s3's work tier is pro: its read tier is never below it; run: nova-sprint stream set s3 --read-tier pro", res.Refused[0].Why)
 		h.addReady("s2", 1, briefOf("flash", ""))
 		h.startMachine()
 		h.machine()

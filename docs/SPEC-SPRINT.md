@@ -1561,7 +1561,32 @@ id (`--op`) returns the original result, with no second counter or notification.
   stream's control card's `read_tier`) or else for the sprint (`set --read-tier
   <tier>`, the work table's `read_tier` property) when that is stronger, and
   never lowered (nova-tools#5096 item 27: a pro card's reads run on a tier at
-  least as strong as the writer's); its packet hands the reader that tier and
+  least as strong as the writer's). **The floor is per attempt** (the owner,
+  2026-10-04): a flash-first card whose third attempt runs on pro gets pro
+  reads whatever its stream's read tier, which is a floor over the attempt's
+  tier and never a cap, and the default read tier is the attempt's own; a
+  stream's read tier is never set below its work tier, the strongest tier its
+  open cards' briefs name (`sprint.StreamWorkTier`): `stream set <s>
+  --read-tier <t>` raises it and refuses to lower it with one line, `<s>'s
+  work tier is pro: its read tier is never below it; run: nova-sprint stream
+  set <s> --read-tier pro`; a stream read tier of heavy raises every read in
+  the stream (`TestTheReadTierFloorIsPerAttemptAndAStreamSettingOnlyRaises`).
+  **The escalation** (readtier.go): when a stream's landed card is returned by
+  dev or an audit (`promoted --sha <sha> --returned <ids>` marks each with
+  `returned_by_dev`, the tier its reads ran on and the sha), when two readers
+  at the stream's read tier disagree on one attempt (an ok and a broken read
+  standing at it), or when a card alternates broken and ok across attempts (a
+  reader passed an earlier attempt, `passed_head`, and the current one is
+  found broken), the tick raises one judgment per stream, `raise the read tier
+  of <s> to <next>? <why>`, with the decisions raise (the default: `stream set
+  <s> --read-tier <next> --reason '<why>' --answers <note>`, which records the
+  reason on the stream's control card, `read_tier_reason`, and closes the
+  judgment) and keep (`ack`, which holds it quiet); it is one per stream
+  whatever the cards, kept in place while a cause holds, closed when the
+  stream's read tier for the card has risen, and it never lowers; at the top
+  tier nothing is asked (`TestReadersDisagreeingRaiseOneJudgmentPerStream`,
+  `TestALandedCardReturnedByDevAsksToRaiseTheReadTierAndKeepHoldsIt`,
+  `TestACardAlternatingBrokenAndOkAsksToRaiseTheReadTier`); its packet hands the reader that tier and
   the reader's JOB.md names it. It is drawn at that tier's rolling index on the
   fleet table, which the deal and the reads share and the ask moves once a
   read (`internal/sprint/route.go`, readRouteOf;
@@ -1742,7 +1767,7 @@ the tick's where record: `critical: <id> <n> behind, <state>; ...`
 merges to dev are dirty, and should be done"; "We must merge into dev continually, at least
 in bursts"). The tick counts the primaries landed (sentinels aside, by their `landed` stamp)
 since the last promotion the store records (`promoted_at`, `promoted_sha`, the work table's
-properties, written by `nova-sprint promoted --sha <merge sha>`, the coordinator's; none
+properties, written by `nova-sprint promoted --sha <merge sha>` (with `--returned <ids>`, the landed cards dev or an audit returned, each marked for the read tier's escalation, section 6), the coordinator's; none
 recorded counts every landing), and raises the judgment "dev is behind" when the count
 reaches 25 (`sprint.PromoteCards`) or the oldest of them landed 30 minutes ago
 (`sprint.PromoteAge`), whichever comes first (`sprint.DevBehind`, internal/sprint/promotion.go,
@@ -1916,6 +1941,7 @@ the tick would make, no other open judgment on it).
 | the fleet is starving (ready, sentinels aside, is under twice the up members' width while a wave is held: `the fleet is starving: ready <n> is under twice the width <2w>; release a wave: nova-sprint release <sentinel> --reason '<why>'`, raised once and updated in place every tick while it holds, naming the first held sentinel in work order; closed when no wave is held; `TestTheTickRaisesStarvingWhileReadyIsUnderTwiceTheWidth`) | release (the wave's sentinel; never a single card), wait | no |
 | a member is overloaded (the owner, 2026-10-03: "the overload is defined as -- cards are timing out. not any CPU%": within the last 15 minutes, `sprint.OverloadWindow`, a member up has had three or more cards, `sprint.OverloadTimeouts`, end on a timeout of any kind, counted from the finishes it reported: a launch refused at staging on `stage-timeout` (the work card's staging take, on whatever row the card sits now), a failed finish `deadline: ...`, or one the budget rule ended because `the usage source stopped answering`; `sprint.TimeoutKind`, `sprint.MemberTimeouts`, `sprint.Overloaded` in internal/sprint/overload.go, one pure decision the tick and the seat check both read; no load number is in it, the beat's load stays a fact for the table): `<m> is overloaded: <k> cards ended on a timeout in the last 15m0s: <card> (<kind>), ...; halve its width: nova-sprint fleet up <m> --width <half>, or wait 15m`, one per member, updated in place every tick while it holds and closed when the window has no three (`TestTheTickRaisesOverloadedOnThreeTimeoutsInTheWindow`) | fleet up <m> --width <half of its width>, wait 15m | no |
 | the readers are behind (the owner, 2026-10-03: "This is another type of thing that should be escalated to you mechanically"; one night review held 75 cards while five readers read 44, their widths kept from before their machines were widened): a read has sat asked and not begun on a reader up for `sprint.ReadersWindow`, 10 minutes (`sprint.ReadersBehind` in internal/sprint/readers_behind.go, one pure decision beside `Overloaded`; the sprint knows no reader's own width, so a reader's width is what it reads while reads wait on it): `the readers are behind: review <n>, reads asked and not begun past 10m0s; the readers read <k> of width <w> (<reader> reads <k> of width <k> on a machine of width <m>, <a> waiting past the window[: its width lags its machine, restart its loop (nova-config loop show <reader>)][: away, run: nova-sprint reader up <reader>]; ...)`, one for the sprint, updated in place every tick while it holds and closed when no read has waited the window (`TestTheTickRaisesReadersBehindWhenReadsWaitTheWindow`) | reader up <r> (a reader not up holding reads), restart <r> (its width under its machine's: the loop record of its name in nova-config), wait 10m | no |
+| raise the read tier of the stream? (readtier.go: a landed card of the stream returned by dev or an audit, `promoted --returned`; two readers at the stream's read tier disagreeing on one attempt; a card alternating broken and ok across attempts; one judgment per stream, `raise the read tier of <s> to <next>? <why>`, updated in place while a cause holds and closed by the raise; section 6) | raise (`stream set <s> --read-tier <next> --reason '<why>'`, the default), keep (`ack`) | no |
 | a card reached its bound (at its ceiling tier, flash first, section 5: an attempt's work card redealt MaxRedeals, 3, times after takes that ended, the provider's failures among them, and a take of it ended again; the judgment names the provider and the last error line when the provider failed that take; or the second identical failure, section 2: two takes of the card, or two attempts of its primary, failed the same way, and the judgment names the class) | rework with a fix (a new attempt, on the next tier), drop, wait (at a redeal bound, wait only when the bound was a provider failure); when the attempt before also ended at its bound on the card's tier (section 5, the bound holds across attempts): rework with a fix on a higher tier (`--tier`, when the ladder has one), drop, and wait only when the bound was a provider failure and the provider's return has not yet lifted a bound on that tier | no |
 | a work card is past its deadline | fleet down (the member, only when it has held the card its own whole deadline: never the member a late card was just redealt to, nor one it was withdrawn from), wait, drop | no |
 | a read card is past its deadline | ask --another, wait, drop | no |
@@ -2371,7 +2397,7 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | reader away | holds readers away whatever they beat: no read is asked of them, and a read asked and not begun is asked of another at the next tick |
 | reader up | releases the hold; the reader's state is then its beat's |
 | reader remove | takes readers off the readers table; refused (exit 1, nothing written) when a named reader is no row or holds a read card, asked, reading, ok or broken, naming the reader and its read cards |
-| stream set | `stream set <s>... [--read-tier <flash|pro|heavy|default>] [--attempts <n|default>]`: the read tier of the streams named, their control cards' `read_tier`, over the sprint's (`set`), and their attempt cap, their control cards' `attempts`, over the sprint's (section 2, the attempt cap); `default` takes a stream's off; the coordinator's; refused whole, nothing written, for a stream that is no row, a tier that is not flash, pro or heavy, a cap that is not a whole number from 1 to 100, or another actor |
+| stream set | `stream set <s>... [--read-tier <flash|pro|heavy|default>] [--attempts <n|default>] [--reason <why>] [--answers <note>]`: the read tier of the streams named, their control cards' `read_tier`, over the sprint's (`set`), never below the stream's work tier (section 6, the floor; refused with one line), with `--reason` recorded as `read_tier_reason` and `--answers` answering the judgment `raise the read tier of the stream?`, and their attempt cap, their control cards' `attempts`, over the sprint's (section 2, the attempt cap); `default` takes a stream's off; the coordinator's; refused whole, nothing written, for a stream that is no row, a tier that is not flash, pro or heavy, a cap that is not a whole number from 1 to 100, or another actor |
 | set | `set [--read-tier <flash|pro|heavy|default>] [--dealt-max <duration|default>] [--attempts <n|default>]`: the sprint's settings, the work table's properties `read_tier` (every card's reads raised to it, never lowered), `dealt_max` (how long a work card may wait dealt and never taken before it is a judgment; default 3 times the take deadline, 6 hours) and `attempts` (the attempt cap: how many attempts one brief may run before the card is the coordinator's as a brief defect; default 4; section 2); the coordinator's; refused whole, nothing written, for a tier that is not flash, pro or heavy, a bound that is not a duration above zero, a cap that is not a whole number from 1 to 100, nothing to set, or another actor; a clear starts the next epoch with none |
 | stream remove | takes streams off the work and merge tables (the owner, 2026-10-01: "remove work streams a/b/c" / "you should have a verb to remove work streams" / "they should only succeed on a STOPPED sprint machine"): each stream's row of both tables, with the stream's control card, the one card `add` made for it, which the merge row's delete takes off the table (its record kept); refused (exit 1, nothing written) on a RUNNING machine (`nova-sprint stop` first), for a stream that is no row of either table, named, and for a stream that holds a card (a primary or a sentinel placed in any column of its work row, landed included, or a merge card in its merge row), naming how many of each and the remedy (`nova-sprint clear --confirm sprint`, or `drop`); all or none for the streams named. A clear keeps the streams and does not bring a removed one back. The table layer never places a removed member again within an epoch, so `add --stream <s>` of a stream removed in this epoch is refused, naming the clear, and adds it fresh after the next clear (`sprint.StreamRemove`, `sprint.RemovedStream`) |
 | ci | records a CI observation for primaries in any state |

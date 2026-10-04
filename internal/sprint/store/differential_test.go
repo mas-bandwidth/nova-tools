@@ -52,6 +52,13 @@ func onlyOpen(verb string, types ...string) func(dFinding) bool {
 }
 
 var dKnown = []dKnownDiff{
+	// ENGINE only (readtier.go, the owner 2026-10-04). The tick raises "raise the read
+	// tier of the stream?" when two readers disagree on one attempt, or a card
+	// alternates broken and ok across attempts; the model knows no read tiers and no
+	// such judgment. The spec names it (section 6); the model is owed it.
+	{"ENGINE the read tier's escalation judgment is the engine's, not the model's", func(f dFinding) bool {
+		return f.Kind == "state" && strings.Contains(f.Sig(), "open.other:raise the read tier of the stream?")
+	}},
 	// ENGINE or SPEC. Section 16: a sentinel inserted in line sends the
 	// ready cards behind it back to waiting; the engine treats a ready
 	// primary whose card was withdrawn (no member up) as in flight: it

@@ -50,6 +50,7 @@ var noteCarry = map[string]carried{
 	"Suspects":    {"attr", ""},
 	"Card":        {"card", ""},
 	"Other":       {"attr", ""},
+	"Tier":        {"attr", ""},
 	"OtherStream": {"attr", ""},
 	"StreamLevel": {"attr", ""},
 	"SprintLevel": {"attr", ""},

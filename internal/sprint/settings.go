@@ -85,7 +85,11 @@ type SetReq struct {
 	ReadTier string   `json:",omitempty"`
 	DealtMax string   `json:",omitempty"`
 	Attempts string   `json:",omitempty"`
-	Who      string
+	// Reason, with Streams and ReadTier, is why the read tier is set, recorded on the
+	// stream's control card (FieldReadTierReason); Answers the judgments this answers.
+	Reason  string   `json:",omitempty"`
+	Answers []string `json:",omitempty"`
+	Who     string
 }
 
 // Set writes the settings: refused whole, writing nothing, for an actor who is not
@@ -119,6 +123,11 @@ func Set(s *Snapshot, r SetReq) Plan {
 	for _, st := range r.Streams {
 		if s.StreamCtl(st) == nil {
 			why = append(why, "no stream "+st)
+			continue
+		}
+		// the floor: a stream's read tier is never below its work tier (readtier.go)
+		if work := StreamWorkTier(s, st); r.ReadTier != "" && r.ReadTier != ReadTierDefault && slices.Contains(readTiers, r.ReadTier) && stronger(work, r.ReadTier) != r.ReadTier {
+			why = append(why, st+"'s work tier is "+work+": its read tier is never below it; run: nova-sprint stream set "+st+" --read-tier "+work)
 		}
 	}
 	if len(why) > 0 {
@@ -130,13 +139,23 @@ func Set(s *Snapshot, r SetReq) Plan {
 			ctl := s.StreamCtl(st)
 			set, unset := map[string]string{}, []string{}
 			var moved []string
+			var closes []Open
 			if r.ReadTier != "" {
 				if r.ReadTier == ReadTierDefault {
-					unset = append(unset, FieldReadTier)
+					unset = append(unset, FieldReadTier, FieldReadTierReason)
 					moved = append(moved, "read-tier the sprint's")
 				} else {
 					set[FieldReadTier] = r.ReadTier
 					moved = append(moved, "read-tier "+r.ReadTier)
+					if r.Reason != "" {
+						set[FieldReadTierReason] = r.Reason
+					}
+					// a raise answers the stream's judgment that it should rise (readtier.go)
+					for _, o := range s.Open {
+						if o.Note.Type == NRaiseReadTier && o.Subject() == StreamSubject(st) {
+							closes = append(closes, o)
+						}
+					}
 				}
 			}
 			if r.Attempts != "" {
@@ -148,8 +167,9 @@ func Set(s *Snapshot, r SetReq) Plan {
 					moved = append(moved, "attempts "+r.Attempts)
 				}
 			}
-			p.Units = append(p.Units, Unit{Key: ctl.ID, Stream: st, Changes: []Change{change(Merge, setEntry(ctl, set, unset...))}, Moved: "stream " + st + " " + strings.Join(moved, ", ")})
+			p.Units = append(p.Units, Unit{Key: ctl.ID, Stream: st, Changes: []Change{change(Merge, setEntry(ctl, set, unset...))}, Moved: "stream " + st + " " + strings.Join(moved, ", "), Closes: closes})
 		}
+		answered(&p, s, r.Answers, r.Who)
 		return p
 	}
 	// a property is written with its word, default included: the readers take
