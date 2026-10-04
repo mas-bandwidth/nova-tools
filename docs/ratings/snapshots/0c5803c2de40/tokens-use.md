@@ -8,6 +8,8 @@ Score: 6.5/10
 
 ## Reasons
 
+This rates the USE of nova-tokens at 0c5803c2de40 (full SHA 0c5803c2de406c1b0b2b0841f579c9bf73406b1c).
+
 This is a strong command-line reader: the `help` banner is a model of the form, the
 refusals name every independent problem in one run with what each input wants and a
 `run:` breadcrumb, listings are bounded with `MORE shown=<n> total=<n>` and the exact
