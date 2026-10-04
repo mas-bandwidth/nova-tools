@@ -24,13 +24,14 @@ import (
 
 const restageCoverSha = "0123456789abcdef0123456789abcdef01234567"
 
-// restageCoverGit is the package's git seam backed by a binary exec cannot find,
-// so every call fails in exec's own lookup before a child is forked; each call's
-// git subcommand is recorded for the test to pin.
-func restageCoverGit(calls *[]string) func(context.Context, ...string) *exec.Cmd {
+// restageCoverGit is the package's git seam backed by a binary exec cannot find
+// (the name stage_cover_test.go's table holds), so every call fails in exec's own
+// lookup before a child is forked; each call's git subcommand is recorded for the
+// test to pin.
+func restageCoverGit(bin string, calls *[]string) func(context.Context, ...string) *exec.Cmd {
 	return func(ctx context.Context, args ...string) *exec.Cmd {
 		*calls = append(*calls, args[2])
-		return exec.CommandContext(ctx, "nova-swarm-no-such-git", args...)
+		return exec.CommandContext(ctx, bin, args...)
 	}
 }
 
@@ -79,7 +80,7 @@ func TestRestageCoverBaseThatNeverMoves(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			var calls []string
-			c, what, out, err := restageAtTip(context.Background(), restageCoverGit(&calls), t.TempDir(),
+			c, what, out, err := restageAtTip(context.Background(), restageCoverGit("nova-swarm-no-such-git", &calls), t.TempDir(),
 				"sprint/c1.g2.e1", tc.base, Rework{Prev: restageCoverSha, From: 1}, new(time.Duration), new(time.Duration))
 			require.NoError(t, err, "%s: a base that never moves stages without error", tc.name)
 			assert.Nil(t, c, "%s: the carry is nil, the checkout staying where the stage put it", tc.name)
@@ -99,7 +100,7 @@ func TestRestageCoverFetchFailureIsTheStagesFailure(t *testing.T) {
 	t.Parallel()
 
 	var calls []string
-	c, what, out, err := restageAtTip(context.Background(), restageCoverGit(&calls), t.TempDir(),
+	c, what, out, err := restageAtTip(context.Background(), restageCoverGit("nova-swarm-no-such-git", &calls), t.TempDir(),
 		"sprint/c1.g2.e1", "main", Rework{Prev: restageCoverSha, From: 1}, new(time.Duration), new(time.Duration))
 	assert.Nil(t, c, "a fetch that fails stages no carry")
 	assert.Nil(t, out, "a failed fetch answers no git output of its own")
