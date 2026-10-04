@@ -4,7 +4,7 @@ A card's author writes the task: what to change, the gate, what to report. Every
 the task is the sprint's: which repository, at which commit, on which branch, where the child
 works, how its commit leaves the machine, how its pull request is opened, and how its end is
 judged. The sprint writes that frame from the card's data, never from the brief's prose, and
-the child meets it through its JOB.md profile: a plain child commits and writes RESULT.md;
+the child meets it through its JOB.md profile: plain children write RESULT.md, and only work children commit;
 a command profile records `git push`, `gh pr create` finishes the card, and `gh pr review`
 finishes a read. The child pushes nothing and opens nothing;
 the member does both, outside the wall, with its own credential.
