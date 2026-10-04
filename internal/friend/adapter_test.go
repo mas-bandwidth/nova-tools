@@ -56,7 +56,7 @@ func TestOpenCodeDeliversIntoTheNewestSessionOfTheDirectory(t *testing.T) {
 
 func TestTheOtherHarnessesRefuseHonestlyAndAnUnknownOneIsNamed(t *testing.T) {
 	t.Parallel()
-	for _, h := range []string{"claude", "dsh"} {
+	for _, h := range []string{"claude"} {
 		t.Run(h, func(t *testing.T) {
 			t.Parallel()
 			d, err := NewDeliverer(h, "/w/bob", "", nil, nil)
@@ -66,5 +66,5 @@ func TestTheOtherHarnessesRefuseHonestlyAndAnUnknownOneIsNamed(t *testing.T) {
 		})
 	}
 	_, err := NewDeliverer("vim", "/w/bob", "", nil, nil)
-	assert.EqualError(t, err, `"vim" is no harness; the harnesses are opencode, codex, claude, antigravity, dsh, grok`)
+	assert.EqualError(t, err, `"vim" is no harness; the harnesses are opencode, codex, claude, antigravity, dsh, gemini, grok, copilot, cursor, amp, goose, kiro, cline, aider, roo, windsurf, zed, warp`)
 }

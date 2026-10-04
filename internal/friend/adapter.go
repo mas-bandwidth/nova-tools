@@ -13,9 +13,10 @@ import (
 )
 
 // Harnesses are the harness names run and install take, in the order the
-// help lists them; OpenCode, Codex, Antigravity and Grok have a deliver
-// command, the rest refuse honestly (Stub).
-var Harnesses = []string{"opencode", "codex", "claude", "antigravity", "dsh", "grok"}
+// help lists them; OpenCode, Codex, Antigravity, DSH, Gemini and Grok have a
+// deliver command, the rest refuse honestly (Stub), the surveyed ones with
+// their reason.
+var Harnesses = append([]string{"opencode", "codex", "claude", "antigravity", "dsh", "gemini", "grok"}, RefusedHarnesses...)
 
 // Deliverer pushes one text into the friend's running session as a turn
 // and blocks until the turn ends: its exit code is the harness's, 0 acking
@@ -98,8 +99,15 @@ func NewDeliverer(harness, dir, session string, run Exec, out io.Writer) (Delive
 		return &Grok{Dir: dir, Wake: session, Run: run, Out: out}, nil
 	case "antigravity":
 		return &Antigravity{Dir: dir, Session: session, Run: run, Out: out}, nil
-	case "claude", "dsh":
+	case "claude":
 		return Stub{Harness: harness}, nil
+	case "dsh":
+		return &DSH{Dir: dir, Session: session, Run: run, Out: out}, nil
+	case "gemini":
+		return &Gemini{Dir: dir, Session: session, Run: run, Out: out}, nil
+	}
+	if reason, ok := Refusals[harness]; ok {
+		return Stub{Harness: harness, Reason: reason}, nil
 	}
 	return nil, fmt.Errorf("%q is no harness; the harnesses are %s", harness, strings.Join(Harnesses, ", "))
 }
@@ -182,9 +190,12 @@ func Head(s string, n int) string {
 // is honest. It is Passive: the daemon takes nothing off the stream for it
 // (the session's own blocking read does), only peeks, so a ping is still
 // answered by the daemon at once and the beat is real.
-type Stub struct{ Harness string }
+type Stub struct{ Harness, Reason string }
 
 func (s Stub) Deliver(context.Context, string) (int, error) {
+	if s.Reason != "" {
+		return 0, fmt.Errorf("no deliver command for %s: %s; run the session's blocking read: nova-bus2 recv --as <friend>", s.Harness, s.Reason)
+	}
 	return 0, fmt.Errorf("no deliver command for %s yet; run the session's blocking read: nova-bus2 recv --as <friend>", s.Harness)
 }
 

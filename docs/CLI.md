@@ -790,7 +790,10 @@ pong came too), or `WAIT-PONG NONE` at exit 1. `status` prints `STATUS OK
 daemon=<up|down> ... connection= seat= challenge=<quiet|challenged|deaf>
 last_pong= queue= working= width=`, or `STATUS NONE` at exit 1 where no
 daemon ever ran. What a first run gets wrong: a `--harness` that is not one
-of opencode, codex, claude, antigravity, dsh, grok; a `pong --as` that is not the
+of opencode, codex, claude, antigravity, dsh, gemini, grok, copilot, cursor,
+amp, goose, kiro, cline, aider, roo, windsurf, zed, warp (the surveyed harnesses
+without a delivery route are known but passive, with their refusal reasons);
+a `pong --as` that is not the
 name the daemon whose state directory that is runs as (refused: the pong
 carries the daemon's name); no store named (`--redis` is required, or `NOVA_BUS_REDIS`); a `pong`
 with no `--to` before any ping has named a seat; a daemon whose record says
