@@ -257,7 +257,7 @@ func (p Prepared) Save(root string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // ignored: the write error is returned, and the explicit close on success is the one reported
 	if _, err := f.WriteString(p.Note.Render()); err != nil {
 		return err
 	}
@@ -356,7 +356,7 @@ func (plan ReceiptPlan) Append(root string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // ignored: the write error is returned, and the explicit close on success is the one reported
 	var b strings.Builder
 	for _, target := range plan.Record {
 		b.WriteString(plan.Stamp + " " + target + "\n")

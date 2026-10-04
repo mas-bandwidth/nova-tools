@@ -96,7 +96,7 @@ func readLaneFile(root, full string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // ignored: a file opened only for reading; io.ReadAll already has its bytes
 	return io.ReadAll(f)
 }
 
@@ -112,11 +112,11 @@ func openLaneFile(root, full string, flag int, perm os.FileMode) (*os.File, erro
 	}
 	fi, err := f.Stat()
 	if err != nil {
-		f.Close()
+		_ = f.Close() // ignored: the stat already failed and is the error returned
 		return nil, err
 	}
 	if !fi.Mode().IsRegular() {
-		f.Close()
+		_ = f.Close() // ignored: the non-regular refusal below is the error returned
 		return nil, notRegular(full, fi.Mode())
 	}
 	return f, nil
@@ -129,7 +129,7 @@ func writeLaneFile(root, full string, content []byte, perm os.FileMode) error {
 		return err
 	}
 	if _, err := f.Write(content); err != nil {
-		f.Close()
+		_ = f.Close() // ignored: the write already failed and is the error returned
 		return err
 	}
 	return f.Close()

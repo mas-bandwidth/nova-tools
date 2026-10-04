@@ -568,7 +568,7 @@ func TestALaneStateFileIsReplacedByRenameAndLeavesNoPartialFile(t *testing.T) {
 	// made the write fail.
 	held, holdable := openHeld(t, full)
 	if holdable {
-		defer held.Close()
+		defer func() { _ = held.Close() }() // ignored: a test handle on a file the test's temp dir removes
 	}
 
 	second := "2222222222222222222222222222222222222222"

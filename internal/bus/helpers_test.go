@@ -81,7 +81,7 @@ func identityOf(t *testing.T, path string) os.FileInfo {
 	t.Helper()
 	f, err := os.Open(path)
 	require.NoError(t, err)
-	defer f.Close()
+	defer func() { _ = f.Close() }() // ignored: a test handle on a file it only reads
 	fi, err := f.Stat()
 	require.NoError(t, err)
 	return fi
