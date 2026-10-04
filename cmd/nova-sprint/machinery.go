@@ -8,15 +8,19 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/seatcheck"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/mas-bandwidth/nova-tools/internal/testguard"
+	"github.com/mas-bandwidth/nova-tools/internal/workgh"
 )
 
 // The seat check (docs/SPEC-SPRINT.md, "The seat check"; the owner, 2026-10-03
@@ -39,8 +43,9 @@ const BusEnv = "NOVA_BUS_REDIS"
 
 // outside is every reach of the check past the store: each a function a test
 // replaces. A served check (self: the server answering coordinator or
-// handover in its single-threaded step) runs none of httpGet, ping and
-// launchdLoaded: the dashboard, the bus and the agents say not measured.
+// handover in its single-threaded step) runs none of httpGet, ping,
+// launchdLoaded, devMergeQueue and machineVersions: the dashboard, the bus,
+// the dev merge queue, machine versions and the agents say not measured.
 type outside struct {
 	// serverAddr is the sprint's server as this process knows it: the address
 	// NOVA_SPRINT_SERVER names, or self when this process is the server.
@@ -61,6 +66,12 @@ type outside struct {
 	// launchdLoaded says whether the launchd label is loaded in gui/<uid>;
 	// measured false where there is no launchd (not darwin).
 	launchdLoaded func(ctx context.Context, uid int, label string) (loaded, measured bool)
+	// devMergeQueue reads the dev merge queue: its entries, open green pull
+	// requests, and any pull request thrown out since the previous check.
+	devMergeQueue func(ctx context.Context) (seatcheck.QueueM, error)
+	// machineVersions reads each machine's nova-update version and dev's tip
+	// the same way (the version identity that verb prints).
+	machineVersions func(ctx context.Context, machines []string) (seatcheck.VersionsM, error)
 }
 
 // realOutside is the check as it runs on a machine.
@@ -138,6 +149,16 @@ func (a *app) realOutside() outside {
 			cmd, cancel := subproc.Command(ctx, subproc.Tool, "launchctl", "print", fmt.Sprintf("gui/%d/%s", uid, label))
 			defer cancel()
 			return cmd.Run() == nil, true
+		},
+		devMergeQueue: func(ctx context.Context) (seatcheck.QueueM, error) {
+			path, err := seatQueuePath()
+			if err != nil {
+				return seatcheck.QueueM{}, err
+			}
+			return readDevMergeQueue(ctx, a.ghQuery, path, a.now())
+		},
+		machineVersions: func(ctx context.Context, machines []string) (seatcheck.VersionsM, error) {
+			return readMachineVersions(ctx, machines, a.ghQuery, a.sshNovaUpdateVersion)
 		},
 	}
 }
@@ -282,11 +303,493 @@ func (a *app) machineryCheck(ctx context.Context, st *store.Store, redisAddr str
 			m.Inbox.Oldest = w
 		}
 	}
+
+	// 10. the dev merge queue, 11. each machine's installed version.
+	// Neither runs in the server: both are outside probes.
+	if !self {
+		measureQueueAndVersions(ctx, &m, o)
+	}
 	return seatcheck.Judge(m, now)
 }
 
-// cmdMachinery is `nova-sprint machinery`: the seat check on demand, read-only;
-// exit 1 when anything is DOWN.
+// measureQueueAndVersions fills the two outside rows. A nil probe is a missed
+// read, DOWN, never a silent green.
+func measureQueueAndVersions(ctx context.Context, m *seatcheck.Measures, o outside) {
+	switch {
+	case o.devMergeQueue == nil:
+		m.Errs[seatcheck.Queue] = "dev merge queue was not measured"
+	default:
+		q, err := o.devMergeQueue(ctx)
+		if err != nil {
+			m.Errs[seatcheck.Queue] = err.Error()
+		} else {
+			m.Queue = q
+		}
+	}
+	names := make([]string, len(m.Fleet))
+	for i, mm := range m.Fleet {
+		names[i] = mm.Name
+	}
+	switch {
+	case o.machineVersions == nil:
+		m.Errs[seatcheck.Versions] = "machine versions were not measured"
+	default:
+		v, err := o.machineVersions(ctx, names)
+		if err != nil {
+			m.Errs[seatcheck.Versions] = err.Error()
+		} else {
+			m.Versions = v
+		}
+	}
+}
+
+// devQueueOwner is nova-tools' dev merge queue, the one a pull request is
+// thrown out of. The seat check reads that queue and no other.
+const (
+	devQueueOwner  = "mas-bandwidth"
+	devQueueName   = "nova-tools"
+	devQueueBranch = "dev"
+)
+
+// devQueueQuery is one read of the queue, the open pull requests on dev, and
+// each one's removals from the queue. devTipQuery is dev's tip commit, whose
+// version identity is what nova-update version would print for a clean build
+// of it (buildinfo.Resolve).
+const devQueueQuery = `query($owner:String!,$name:String!,$branch:String!) {
+  repository(owner:$owner, name:$name) {
+    mergeQueue(branch:$branch) {
+      entries(first:100) {
+        pageInfo { hasNextPage }
+        nodes { pullRequest { number } }
+      }
+    }
+    pullRequests(states:OPEN, baseRefName:$branch, first:100, orderBy:{field:UPDATED_AT, direction:DESC}) {
+      pageInfo { hasNextPage }
+      nodes {
+        number
+        isDraft
+        mergeStateStatus
+        timelineItems(itemTypes:[REMOVED_FROM_MERGE_QUEUE_EVENT], first:10) {
+          nodes { ... on RemovedFromMergeQueueEvent { createdAt } }
+        }
+      }
+    }
+  }
+}`
+
+const devTipQuery = `query($owner:String!,$name:String!) {
+  repository(owner:$owner, name:$name) {
+    ref(qualifiedName:"refs/heads/dev") {
+      target { ... on Commit { oid committedDate } }
+    }
+  }
+}`
+
+// ghQuery is one read-only GitHub query. workgh refuses anything else.
+type ghQuery func(ctx context.Context, doc string, vars map[string]any) ([]byte, error)
+
+// queueSnap is the previous check's queue, so a later check can name what
+// left it. It is this probe's memory, not a write to the sprint store.
+type queueSnap struct {
+	At      time.Time `json:"at"`
+	Entries []string  `json:"entries"`
+}
+
+type ghMsg struct {
+	Message string `json:"message"`
+}
+
+type ghPR struct {
+	Number           int    `json:"number"`
+	IsDraft          bool   `json:"isDraft"`
+	MergeStateStatus string `json:"mergeStateStatus"`
+	TimelineItems    struct {
+		Nodes []struct {
+			CreatedAt time.Time `json:"createdAt"`
+		} `json:"nodes"`
+	} `json:"timelineItems"`
+}
+
+func (a *app) ghQuery(ctx context.Context, doc string, vars map[string]any) ([]byte, error) {
+	return workgh.GhQuery("gh")(ctx, doc, vars)
+}
+
+func devQueueVars() map[string]any {
+	return map[string]any{"owner": devQueueOwner, "name": devQueueName, "branch": devQueueBranch}
+}
+
+// readDevMergeQueue measures the queue. Thrown-out names only pull requests
+// that left, or were removed, since the snapshot of the previous check; the
+// first check has no previous one and names none. A merged pull request left
+// the queue by landing, which is not a throw.
+func readDevMergeQueue(ctx context.Context, gh ghQuery, path string, now time.Time) (seatcheck.QueueM, error) {
+	body, err := gh(ctx, devQueueQuery, devQueueVars())
+	if err != nil {
+		return seatcheck.QueueM{}, err
+	}
+	entries, prs, err := parseDevQueue(body)
+	if err != nil {
+		return seatcheck.QueueM{}, err
+	}
+	prev, hasPrev, err := loadQueueSnap(path)
+	if err != nil {
+		return seatcheck.QueueM{}, err
+	}
+	thrown, err := thrownOut(ctx, gh, entries, prs, prev, hasPrev)
+	if err != nil {
+		return seatcheck.QueueM{}, err
+	}
+	if err := saveQueueSnap(path, queueSnap{At: now, Entries: entries}); err != nil {
+		return seatcheck.QueueM{}, err
+	}
+	return seatcheck.QueueM{Entries: entries, Green: greenCount(prs), ThrownOut: thrown}, nil
+}
+
+type ghQueueBody struct {
+	Data struct {
+		Repository struct {
+			MergeQueue *struct {
+				Entries struct {
+					PageInfo ghPage         `json:"pageInfo"`
+					Nodes    []ghQueueEntry `json:"nodes"`
+				} `json:"entries"`
+			} `json:"mergeQueue"`
+			PullRequests struct {
+				PageInfo ghPage `json:"pageInfo"`
+				Nodes    []ghPR `json:"nodes"`
+			} `json:"pullRequests"`
+		} `json:"repository"`
+	} `json:"data"`
+	Errors []ghMsg `json:"errors"`
+}
+
+type ghPage struct {
+	HasNextPage bool `json:"hasNextPage"`
+}
+
+func parseDevQueue(body []byte) ([]string, []ghPR, error) {
+	var wrap ghQueueBody
+	if err := json.Unmarshal(body, &wrap); err != nil {
+		return nil, nil, err
+	}
+	if err := ghErrs(wrap.Errors); err != nil {
+		return nil, nil, err
+	}
+	repo := wrap.Data.Repository
+	if repo.MergeQueue == nil {
+		return nil, nil, fmt.Errorf("dev merge queue: dev has no merge queue")
+	}
+	if repo.MergeQueue.Entries.PageInfo.HasNextPage {
+		return nil, nil, fmt.Errorf("dev merge queue: more than 100 entries")
+	}
+	if repo.PullRequests.PageInfo.HasNextPage {
+		return nil, nil, fmt.Errorf("dev merge queue: more than 100 open pull requests")
+	}
+	return queueNumbers(repo.MergeQueue.Entries.Nodes), repo.PullRequests.Nodes, nil
+}
+
+type ghQueueEntry struct {
+	PullRequest struct {
+		Number int `json:"number"`
+	} `json:"pullRequest"`
+}
+
+func queueNumbers(nodes []ghQueueEntry) []string {
+	var entries []string
+	seen := map[string]bool{}
+	for _, n := range nodes {
+		s := strconv.Itoa(n.PullRequest.Number)
+		if n.PullRequest.Number == 0 || seen[s] {
+			continue
+		}
+		seen[s] = true
+		entries = append(entries, s)
+	}
+	return entries
+}
+
+func ghErrs(errs []ghMsg) error {
+	if len(errs) == 0 || errs[0].Message == "" {
+		return nil
+	}
+	return fmt.Errorf("github: %s", errs[0].Message)
+}
+
+func greenCount(prs []ghPR) int {
+	n := 0
+	for _, pr := range prs {
+		if !pr.IsDraft && pr.MergeStateStatus == "CLEAN" {
+			n++
+		}
+	}
+	return n
+}
+
+func thrownOut(ctx context.Context, gh ghQuery, entries []string, prs []ghPR, prev queueSnap, hasPrev bool) ([]string, error) {
+	if !hasPrev {
+		return nil, nil
+	}
+	var set throwSet
+	gone := goneFrom(prev.Entries, entries)
+	if len(gone) > 0 {
+		states, err := prStates(ctx, gh, gone)
+		if err != nil {
+			return nil, err
+		}
+		for _, n := range gone {
+			if states[n] == "OPEN" || states[n] == "CLOSED" {
+				set.add(n)
+			}
+		}
+	}
+	for _, pr := range prs {
+		if removedAfter(pr, prev.At) {
+			set.add(strconv.Itoa(pr.Number))
+		}
+	}
+	return set.list, nil
+}
+
+func removedAfter(pr ghPR, at time.Time) bool {
+	for _, ev := range pr.TimelineItems.Nodes {
+		if ev.CreatedAt.After(at) {
+			return true
+		}
+	}
+	return false
+}
+
+type throwSet struct {
+	list []string
+	seen map[string]bool
+}
+
+func (s *throwSet) add(n string) {
+	if n == "" || n == "0" || s.seen[n] {
+		return
+	}
+	if s.seen == nil {
+		s.seen = map[string]bool{}
+	}
+	s.seen[n] = true
+	s.list = append(s.list, n)
+}
+
+func goneFrom(prev, entries []string) []string {
+	in := map[string]bool{}
+	for _, e := range entries {
+		in[e] = true
+	}
+	var gone []string
+	for _, e := range prev {
+		if e != "" && !in[e] {
+			gone = append(gone, e)
+		}
+	}
+	return gone
+}
+
+func prStates(ctx context.Context, gh ghQuery, nums []string) (map[string]string, error) {
+	doc, err := prStateQuery(nums)
+	if err != nil {
+		return nil, err
+	}
+	body, err := gh(ctx, doc, nil)
+	if err != nil {
+		return nil, err
+	}
+	return parsePRStates(body)
+}
+
+func prStateQuery(nums []string) (string, error) {
+	var b strings.Builder
+	fmt.Fprintf(&b, `query { repository(owner:%q, name:%q) {`, devQueueOwner, devQueueName)
+	for _, n := range nums {
+		if _, err := strconv.Atoi(n); err != nil {
+			return "", fmt.Errorf("pull request %q is not a number", n)
+		}
+		fmt.Fprintf(&b, " n%s: pullRequest(number:%s) { number state }", n, n)
+	}
+	b.WriteString(" } }")
+	return b.String(), nil
+}
+
+func parsePRStates(body []byte) (map[string]string, error) {
+	var wrap struct {
+		Data struct {
+			Repository map[string]*struct {
+				Number int    `json:"number"`
+				State  string `json:"state"`
+			} `json:"repository"`
+		} `json:"data"`
+		Errors []ghMsg `json:"errors"`
+	}
+	if err := json.Unmarshal(body, &wrap); err != nil {
+		return nil, err
+	}
+	if err := ghErrs(wrap.Errors); err != nil {
+		return nil, err
+	}
+	out := map[string]string{}
+	for _, pr := range wrap.Data.Repository {
+		if pr == nil || pr.Number == 0 {
+			continue
+		}
+		out[strconv.Itoa(pr.Number)] = pr.State
+	}
+	return out, nil
+}
+
+func seatQueuePath() (string, error) {
+	dir, err := os.UserCacheDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "nova-sprint", "seatcheck-dev-queue.json"), nil
+}
+
+func loadQueueSnap(path string) (queueSnap, bool, error) {
+	b, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return queueSnap{}, false, nil
+	}
+	if err != nil {
+		return queueSnap{}, false, err
+	}
+	var s queueSnap
+	if err := json.Unmarshal(b, &s); err != nil {
+		return queueSnap{}, false, fmt.Errorf("remembering the dev merge queue: %w", err)
+	}
+	return s, true, nil
+}
+
+func saveQueueSnap(path string, s queueSnap) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("remembering the dev merge queue: %w", err)
+	}
+	b, err := json.Marshal(s)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, b, 0o644); err != nil {
+		return fmt.Errorf("remembering the dev merge queue: %w", err)
+	}
+	return nil
+}
+
+// readMachineVersions asks nova-update version on each machine and reads dev's
+// tip as the same version identity (buildinfo.Resolve's vcs stamp of that commit).
+func readMachineVersions(ctx context.Context, machines []string, gh ghQuery, ssh func(context.Context, string) (string, error)) (seatcheck.VersionsM, error) {
+	body, err := gh(ctx, devTipQuery, map[string]any{"owner": devQueueOwner, "name": devQueueName})
+	if err != nil {
+		return seatcheck.VersionsM{}, err
+	}
+	dev, err := parseDevTip(body)
+	if err != nil {
+		return seatcheck.VersionsM{}, err
+	}
+	out := make([]seatcheck.MachineVersionM, 0, len(machines))
+	for _, m := range machines {
+		out = append(out, seatcheck.MachineVersionM{Machine: m, Version: askedVersion(ctx, ssh, m)})
+	}
+	return seatcheck.VersionsM{Dev: dev, Machines: out}, nil
+}
+
+func parseDevTip(body []byte) (string, error) {
+	var wrap struct {
+		Data struct {
+			Repository struct {
+				Ref *struct {
+					Target struct {
+						Oid           string    `json:"oid"`
+						CommittedDate time.Time `json:"committedDate"`
+					} `json:"target"`
+				} `json:"ref"`
+			} `json:"repository"`
+		} `json:"data"`
+		Errors []ghMsg `json:"errors"`
+	}
+	if err := json.Unmarshal(body, &wrap); err != nil {
+		return "", err
+	}
+	if err := ghErrs(wrap.Errors); err != nil {
+		return "", err
+	}
+	ref := wrap.Data.Repository.Ref
+	if ref == nil || ref.Target.Oid == "" || ref.Target.CommittedDate.IsZero() {
+		return "", fmt.Errorf("dev tip: no commit")
+	}
+	return devStamp(ref.Target.CommittedDate, ref.Target.Oid), nil
+}
+
+// devStamp is the version identity nova-update version prints for a clean
+// build of that commit: buildinfo.Resolve's vcs stamp, UTC time then 12 hex.
+func devStamp(at time.Time, sha string) string {
+	if len(sha) > 12 {
+		sha = sha[:12]
+	}
+	return at.UTC().Format("20060102150405") + "-" + sha
+}
+
+func askedVersion(ctx context.Context, ssh func(context.Context, string) (string, error), machine string) string {
+	if !okMachine(machine) {
+		return "unread"
+	}
+	out, err := ssh(ctx, machine)
+	if err != nil {
+		return "unread"
+	}
+	id, err := versionIdentity(out)
+	if err != nil {
+		return "unread"
+	}
+	return id
+}
+
+// versionIdentity is field two of a nova-update version line, the field a
+// comparison reads (buildinfo.Parse).
+func versionIdentity(out string) (string, error) {
+	f, ok := buildinfo.Parse(out)
+	if !ok || f.Version == "" {
+		return "", fmt.Errorf("nova-update version: not a version line")
+	}
+	return f.Version, nil
+}
+
+// okMachine is a name safe to pass as an ssh destination: not empty, not a
+// flag, and only the characters a host name here uses.
+func okMachine(machine string) bool {
+	if machine == "" || machine[0] == '-' {
+		return false
+	}
+	for _, r := range machine {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '.' || r == '_' || r == '-' || r == '@':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// sshNovaUpdateVersion is `nova-update version` on the machine: the installed
+// nova-tools version, in that verb's own words.
+func (a *app) sshNovaUpdateVersion(ctx context.Context, machine string) (string, error) {
+	args := []string{"-o", "BatchMode=yes", "-o", "ConnectTimeout=8", machine, "nova-update", "version"}
+	testguard.RefuseHosts("ssh", args...)
+	cmd, cancel := subproc.Command(ctx, subproc.SSH, "ssh", args...)
+	defer cancel()
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("ssh %s nova-update version: %w", machine, err)
+	}
+	return string(out), nil
+}
+
+// cmdMachinery is `nova-sprint machinery`: the seat check on demand, read-only
+// of the sprint; exit 1 when anything is DOWN. The queue snapshot is the
+// probe's own memory of the previous check, not a store write.
 func (a *app) cmdMachinery(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("machinery")
 	if pos, err := parse(fs, args); err != nil || len(pos) > 0 {
