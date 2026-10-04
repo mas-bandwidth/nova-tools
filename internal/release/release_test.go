@@ -890,6 +890,56 @@ func TestInstallRefusesABinaryThatDoesNotMatchItsChecksum(t *testing.T) {
 	}
 }
 
+// TestInstallLeavesEveryToolAloneWhenOneStagingFails pins security#72 finding 4.
+// A directory planted at the predictable temp name fails the second tool. The
+// install must exit non-zero and leave every tool at the bytes it had, with
+// no temp this run created left behind.
+func TestInstallLeavesEveryToolAloneWhenOneStagingFails(t *testing.T) {
+	t.Parallel()
+
+	goos, _ := platformOf(t, "")
+	from := built(t, "v0.16.0", "", "nova-a", "nova-b")
+	bin := t.TempDir()
+	nameA := ToolFile("nova-a", goos)
+	nameB := ToolFile("nova-b", goos)
+	if err := testbin.WriteExecutable(filepath.Join(bin, nameA), []byte("old-a"), 0o755); err != nil {
+		require.NoError(t, err, err)
+	}
+	if err := testbin.WriteExecutable(filepath.Join(bin, nameB), []byte("old-b"), 0o755); err != nil {
+		require.NoError(t, err, err)
+	}
+	planted := "." + nameB + ".new"
+	if err := os.Mkdir(filepath.Join(bin, planted), 0o755); err != nil {
+		require.NoError(t, err, err)
+	}
+
+	var o, e bytes.Buffer
+	code := Run("nova-update", []string{"install", "--from", from, "--version", "v0.16.0", "--bin", bin},
+		&o, &e, Deps{VersionOf: func(context.Context, string) (string, error) {
+			return "", fmt.Errorf("absent")
+		}})
+	if code == 0 {
+		require.NotEqual(t, 0, code, "install succeeded despite a planted temp directory:\n%s%s", o.String(), e.String())
+	}
+	body, err := os.ReadFile(filepath.Join(bin, nameA))
+	if err != nil || string(body) != "old-a" {
+		require.FailNowf(t, "assertion failed", "%s holds %q (%v); a failed install must leave it old\n%s", nameA, body, err, e.String())
+	}
+	body, err = os.ReadFile(filepath.Join(bin, nameB))
+	if err != nil || string(body) != "old-b" {
+		require.FailNowf(t, "assertion failed", "%s holds %q (%v); a failed install must leave it old\n%s", nameB, body, err, e.String())
+	}
+	entries, err := os.ReadDir(bin)
+	if err != nil {
+		require.NoError(t, err, err)
+	}
+	for _, entry := range entries {
+		if strings.Contains(entry.Name(), ".new") && entry.Name() != planted {
+			require.FailNowf(t, "assertion failed", "a .new file this run created was left behind: %s", entry.Name())
+		}
+	}
+}
+
 func TestInstallRefusesAVersionThatWasNeverBuilt(t *testing.T) {
 	t.Parallel()
 
