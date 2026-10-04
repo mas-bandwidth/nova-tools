@@ -791,7 +791,10 @@ daemon ever ran. What a first run gets wrong: a `--harness` that is not one
 of opencode, codex, claude, antigravity, dsh; a `pong --as` that is not the
 name the daemon in `--dir` runs as (refused: the pong carries the daemon's
 name); no store named (`--redis` is required, or `NOVA_BUS_REDIS`); a `pong`
-with no `--to` before any ping has named a seat.
+with no `--to` before any ping has named a seat; a daemon whose record says
+"operation not permitted" on a removable volume, which is the system's
+privacy permission for background processes, granted to the binary by the
+person in the privacy settings and lost when the binary is rebuilt.
 
 ### The daemon
 

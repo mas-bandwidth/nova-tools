@@ -15,6 +15,10 @@ import (
 // loop's read block: one read of the stream per beat.
 const BeatEvery = time.Second
 
+// StatusErrorEvery bounds how often a status file that cannot be written
+// is said in the record: the loop goes on beating and delivering without it.
+const StatusErrorEvery = time.Minute
+
 // The subjects of the daemon's own messages on the bus.
 const (
 	DaemonPongSubject = "daemon-pong"
@@ -49,10 +53,11 @@ type Daemon struct {
 	// pushed in, so a small model has one line to run and nothing to fill in.
 	PongCommand func(nonce string) string
 
-	m        *Machine
-	status   Status
-	written  time.Time
-	written0 Status
+	m           *Machine
+	status      Status
+	written     time.Time
+	written0    Status
+	statusErrAt time.Time
 }
 
 // job is one thing owed to the session: a bus message (acked after exit 0)
@@ -242,14 +247,16 @@ func (d *Daemon) flush(now time.Time) {
 	s := d.status
 	s.Connection, s.LastPing, s.Seat, s.SeatSince = d.m.Connection, d.m.LastPing, d.m.Seat, d.m.SeatSince
 	s.Challenge, s.Nonce, s.LastPong, s.Pongs = d.m.Challenge, d.m.Nonce, d.m.LastPong, d.m.Pongs
-	s.At = time.Time{}
-	s.LastBeat = time.Time{}
+	s.At, s.LastBeat, s.Beats = time.Time{}, time.Time{}, 0 // what every beat changes is not a change
 	if s == d.written0 && now.Sub(d.written) < StatusEvery {
 		return
 	}
 	d.written0, d.written = s, now
-	s.At, s.LastBeat = now, d.status.LastBeat
+	s.At, s.LastBeat, s.Beats = now, d.status.LastBeat, d.status.Beats
 	if err := d.Status(s); err != nil {
-		d.Record(now.UTC().Format(time.RFC3339) + " status: " + err.Error())
+		if now.Sub(d.statusErrAt) >= StatusErrorEvery {
+			d.statusErrAt = now
+			d.Record(now.UTC().Format(time.RFC3339) + " status: " + err.Error() + " (said once per " + StatusErrorEvery.String() + "; the beat goes on)")
+		}
 	}
 }

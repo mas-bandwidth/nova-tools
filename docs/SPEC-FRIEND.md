@@ -100,6 +100,16 @@ beats whatever name it is sent.
 
 ## What is weak, and known
 
+A background process on this platform needs the user's permission to touch a
+removable volume (the TCC service for removable volumes; measured 2026-10-04:
+the daemon, and a plain `touch` launchd starts, both refused with "operation
+not permitted" where the same commands from a shell succeed, and tccd logged
+the access request). The permission is granted to the binary in the system's
+privacy settings, by the person, never by the tool, and a rebuilt binary is a
+new one to it. Until it is granted the daemon beats and answers the daemon
+pong but can neither write its state files on the volume nor run the harness
+there; the record says so once a minute.
+
 The server side of the ping (the coordinator pinging every friend each window
 from the sprint's run loop, and the table's `awake` and `deaf` columns) is not
 here; `ping` and `wait-pong` run the canary by hand. The beat carries no

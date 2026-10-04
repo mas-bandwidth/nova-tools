@@ -283,7 +283,8 @@ func TestAPassiveHarnessTakesNothingOffTheStreamAndStillAnswersTheDaemonPong(t *
 	s := r.last()
 	assert.Equal(t, Challenged, s.Challenge, "the machine saw the ping all the same")
 	assert.Equal(t, "ada", s.Seat)
-	assert.Equal(t, 4, s.Beats, "the beat is real")
+	assert.Equal(t, 4, r.beats, "the beat is real")
+	assert.GreaterOrEqual(t, s.Beats, 1, "the count in the file lags up to StatusEvery")
 }
 
 func TestAPassiveHarnessRecordsAPushItCannotDeliver(t *testing.T) {
@@ -295,4 +296,19 @@ func TestAPassiveHarnessRecordsAPushItCannotDeliver(t *testing.T) {
 	require.NotEmpty(t, r.records)
 	assert.Contains(t, r.records[0], "not delivered: codex has no deliver command: coordinator silent")
 	assert.Equal(t, Silent, r.last().Connection)
+}
+
+func TestAStatusFileThatCannotBeWrittenIsSaidOnceAMinuteAndTheBeatGoesOn(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.d.Status = func(Status) error { return errors.New("operation not permitted") }
+	r.run(t, 130)
+	assert.Equal(t, 130, r.beats)
+	said := 0
+	for _, line := range r.records {
+		if strings.Contains(line, "status: operation not permitted") {
+			said++
+		}
+	}
+	assert.Equal(t, 3, said, "at the start and once a minute: %v", r.records)
 }

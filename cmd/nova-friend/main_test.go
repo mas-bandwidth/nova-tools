@@ -222,7 +222,8 @@ func TestRunStopsOnASignalAndRefusesAStoreThatDoesNotAnswer(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, found)
 	assert.Equal(t, "bob", s.Friend)
-	assert.Equal(t, 3, s.Beats)
+	assert.Equal(t, 3, beats)
+	assert.GreaterOrEqual(t, s.Beats, 1, "the count in the file lags up to StatusEvery")
 
 	r.store.Fail = io.ErrUnexpectedEOF
 	code = run([]string{"run", "--as", "bob", "--harness", "claude", "--dir", dir}, strings.NewReader(""), &out, &errb, w)
