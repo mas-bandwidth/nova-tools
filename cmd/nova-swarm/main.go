@@ -84,6 +84,7 @@ usage:
                         --force frees it anyway and can oversubscribe the bench: an operator's act,
                         never a card's and never a manager's default)
   nova-swarm slots list --store <dir>
+  nova-swarm slots run --store <dir> --owner <o> [--n <k>] [--for <duration>] [--kind <kind>] [--label <text>] [--wait <duration>] -- <command> [args...]
   nova-swarm worker    check <description.json> [--env] [--max <n>]
 
 exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- a verification that
@@ -337,6 +338,15 @@ func (f *flags) parse(args []string, stderr io.Writer) bool {
 	}
 	if n := f.fs.NArg(); n > 0 {
 		refuse(stderr, " "+f.verb, fmt.Sprintf("takes no positional arguments, got %d: %q (every input is a flag)", n, f.fs.Args()))
+		return false
+	}
+	return true
+}
+
+// parseArgs parses flags without refusing positional arguments, for verbs that wrap a command.
+func (f *flags) parseArgs(args []string, stderr io.Writer) bool {
+	if err := verbflag.Parse(f.fs, args); err != nil {
+		refuse(stderr, " "+f.verb, oneline.Cap(verbflag.Explain(f.fs, err), oneline.TailBytes))
 		return false
 	}
 	return true

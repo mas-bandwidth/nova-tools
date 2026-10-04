@@ -1,14 +1,20 @@
 // slots are bench-wide leases with shares, reserve, expiry and live-pid
 // fencing (docs/SPEC-SWARM.md, "Bench slot leases"): `slots init` makes a store,
 // `slots take` grants (optional --kind charges the card's admission weight),
-// `slots release` frees, `slots list` prints one line per lease.
+// `slots release` frees, `slots list` prints one line per lease, `slots run`
+// wraps a command under a lease.
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
@@ -16,10 +22,10 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
-// cmdSlots dispatches the slots verb's subcommands: init, take, release, list.
+// cmdSlots dispatches the slots verb's subcommands: init, take, release, list, run.
 func cmdSlots(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		return refuse(stderr, " slots", "wants a subcommand: init (make a store), take (grant leases), release (free them) or list (print them)")
+		return refuse(stderr, " slots", "wants a subcommand: init (make a store), take (grant leases), release (free them), list (print them) or run (execute under a lease)")
 	}
 	verbflag.HelpIfAsked(args[:1], "slots")
 	switch args[0] {
@@ -31,8 +37,125 @@ func cmdSlots(args []string, stdout, stderr io.Writer) int {
 		return cmdSlotsRelease(args[1:], stdout, stderr)
 	case "list":
 		return cmdSlotsList(args[1:], stdout, stderr)
+	case "run":
+		return cmdSlotsRun(args[1:], stdout, stderr)
 	}
 	return refuse(stderr, " slots", fmt.Sprintf("unknown subcommand %q", args[0]))
+}
+
+func cmdSlotsRun(args []string, stdout, stderr io.Writer) int {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return cmdSlotsRunContext(ctx, args, stdout, stderr)
+}
+
+func cmdSlotsRunContext(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	f := newFlags("slots run")
+	store := f.fs.String("store", "", "required: the store `dir` holding shares.tsv and slots/")
+	owner := f.fs.String("owner", "", "required: whose share the leases count against")
+	n := f.fs.Int("n", 1, "how many leases to grant, at least 1 (default 1)")
+	forDur := f.fs.String("for", "1h", "how long the leases last, a positive `duration` such as 30m (default 1h)")
+	kind := f.fs.String("kind", "", "the card's `kind`, charged at its admission weight")
+	label := f.fs.String("label", "", "a `label` the leases carry (default: command name)")
+	waitDur := f.fs.String("wait", "", "how long to wait when capacity is occupied, a bounded `duration` such as 30s")
+	deadlineDur := f.fs.String("deadline", "", "alias for --wait: how long to wait when capacity is occupied")
+	timeoutDur := f.fs.String("timeout", "", "alias for --wait: how long to wait when capacity is occupied")
+
+	if !f.parseArgs(args, stderr) {
+		return 2
+	}
+	f.want(*store, "store", "the directory holding shares.tsv and slots/")
+	f.want(*owner, "owner", "whose share the leases count against")
+	f.wantCount(*n, "n", "how many leases to grant, at least 1")
+
+	dur := time.Hour
+	if *forDur != "" {
+		d, err := time.ParseDuration(*forDur)
+		if err != nil || d <= 0 {
+			f.add(fmt.Sprintf("--for wants a positive duration such as 30m, got %q", *forDur))
+		} else {
+			dur = d
+		}
+	}
+
+	waitStr := *waitDur
+	if waitStr == "" {
+		waitStr = *deadlineDur
+	}
+	if waitStr == "" {
+		waitStr = *timeoutDur
+	}
+	var wait time.Duration
+	if waitStr != "" {
+		d, err := time.ParseDuration(waitStr)
+		if err != nil || d < 0 {
+			f.add(fmt.Sprintf("--wait wants a duration such as 30s, got %q", waitStr))
+		} else {
+			wait = d
+		}
+	}
+
+	cmdArgs := f.fs.Args()
+	if len(cmdArgs) == 0 {
+		f.add("command is required; pass -- <command> [args...]")
+	}
+	if f.refused(stderr) {
+		return 2
+	}
+
+	effectiveLabel := *label
+	if effectiveLabel == "" {
+		effectiveLabel = filepath.Base(cmdArgs[0])
+	}
+
+	pid := os.Getpid()
+	ids, held, share, free, holders, ok, terr := swarm.TakeSlotLeasesWaiting(
+		ctx, *store, *owner, *n, *kind, dur, wait, effectiveLabel, pid)
+	if terr != nil {
+		if errors.Is(terr, context.Canceled) || errors.Is(terr, context.DeadlineExceeded) {
+			return 1
+		}
+		fmt.Fprintf(stderr, "nova-swarm slots run: %s\n", oneline.WithRemedy(oneline.Err(terr), "nova-swarm slots run -h"))
+		return 2
+	}
+	want := *n * swarm.SlotAdmissionWeight(*kind)
+	if !ok {
+		if holders == "" {
+			holders = "-"
+		}
+		fmt.Fprintf(stderr, "SLOTS REFUSED owner=%s want=%d held=%d share=%d free=%d holders=%s remedy=%q\n",
+			oneline.Field(*owner), want, held, share, free, oneline.Escape(holders), "nova-swarm slots list --store "+*store)
+		return 2
+	}
+
+	defer func() {
+		// ignored: a best-effort release of the slot lease IDs taken by this command
+		_, _ = swarm.ReleaseSlotLeasesByID(*store, ids, pid)
+	}()
+
+	cmd := exec.CommandContext(ctx, cmdArgs[0], cmdArgs[1:]...)
+	cmd.WaitDelay = 5 * time.Second
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	err := cmd.Run()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			if ws, ok := exitErr.Sys().(syscall.WaitStatus); ok {
+				if ws.Signaled() {
+					return 128 + int(ws.Signal())
+				}
+				return ws.ExitStatus()
+			}
+			return exitErr.ExitCode()
+		}
+		if errors.Is(ctx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return 1
+		}
+		fmt.Fprintf(stderr, "nova-swarm slots run: %s\n", oneline.Err(err))
+		return 2
+	}
+	return 0
 }
 
 // cmdSlotsInit makes a bench slot store: the directory, its `slots/` subdirectory and one
