@@ -518,7 +518,7 @@ func TestLoginFlagsEchoWhatWasGiven(t *testing.T) {
 		{[]string{"--addr", "127.0.0.1:6379"}, nil, "--addr 127.0.0.1:6379"},
 		{[]string{"--addr", "127.0.0.1:6379", "--user", ""}, map[string]string{UserEnv: "wronguser"}, "--addr 127.0.0.1:6379 --user ''"},
 		{[]string{"--addr", "127.0.0.1:6379", "--password-env", PasswordEnv}, map[string]string{PasswordEnvEnv: "OTHER_PW"}, "--addr 127.0.0.1:6379 --password-env NOVA_REDIS_PASSWORD"},
-		{[]string{"--addr", "127.0.0.1:6379", "--user", "fn'user"}, nil, `--addr 127.0.0.1:6379 --user 'fn'\''user'`},
+		{[]string{"--addr", "127.0.0.1:6379", "--user", "fn'user"}, nil, `--addr 127.0.0.1:6379 --user 'fn'"'"'user'`},
 		{[]string{"--addr", "127.0.0.1:6379"}, map[string]string{UserEnv: "coordinator", PasswordEnvEnv: "SEAT_PW"}, "--addr 127.0.0.1:6379 --user coordinator --password-env SEAT_PW"},
 		{[]string{"--addr", "[::1]:6379"}, nil, "--addr '[::1]:6379'"},
 	}
