@@ -79,9 +79,12 @@ origin's tip of that branch when the tip is that Head (one git ls-remote), and
 is refused, the card left working, when the tip is another sha (both named),
 when origin has no branch of that name, when the tip cannot be read, or when
 the card names no REPO: line; Verdict: HOLD, FAIL, FAILED or BROKEN is work
-that came back failed, and a LAND without a full sha, an empty report and any
-other verdict finish the card failed too, each with the report's first
-paragraph. card prints who=; where counts it on her friends row.`) + "\n"
+that came back failed, but one whose first paragraph names a brief defect (the
+label "brief defect") is the brief's: it counts on the stream and in neither
+done nor ok%, and its judgment asks to re-cut the brief; a LAND without a
+full sha, an empty report and any other verdict finish the card failed too,
+each with the report's first paragraph. card prints who=; where counts it
+on her friends row.`) + "\n"
 }
 
 // friendVerbWords is what friend beat, friend down, and friend up say on -h.

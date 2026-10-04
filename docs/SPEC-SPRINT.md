@@ -195,6 +195,24 @@ the deal first adds it), so the stored view `sprint` does not draw it either;
 as for any hidden row, its counts stay in that table's folded footer there,
 where `where` leaves them out.
 
+**A brief defect** (the owner, 2026-10-04: "trust but VERIFY"; "I want to trust the ok%";
+"Are they actually doing the work that is shown in the friend table? Really?"). A worker's
+failed finish whose report names a brief defect, with the label `brief defect` (a friend's
+`Verdict: HOLD` whose first paragraph carries it, or a member's failed report; "not a brief
+defect" and "no brief defect" are no label), is the brief's, never the worker's: no worker
+could do the card as cut (`sprint.BriefDefectOf`). Its reason is read from the words after
+the label: a duplicate of landed work (`duplicate`, `already landed`), the base lacking what
+the card builds on (a PATHS file, a function or a PR: `not on`, `lacks`, `missing`, `does not
+exist`), a decision not made (`decision`), else the worker's own words. The finish moves the
+work card to the member's hidden `defect` cell, never `ok` or `failed`, so `done` and `ok%`
+on the fleet and friends tables count only work the worker could do; the card and its
+primary carry `brief_defect` (the reason); the primary goes to review with result `failed`
+(no work came back, so nothing reads it) and its `failed` count unchanged, so no tier
+escalation or identical-failure bound counts it; the stream's control card counts it
+(`brief_defects`, one more per defect, a bump); and the judgment is `a brief defect`, whose
+decisions are `re-cut the brief` (drop the card, then add the re-cut card from what the worker
+found) and `drop`, never a redeal of the brief as cut. A route's stats do not count it.
+
 The frame of `where` and `where --watch` shows work, friends, fleet in that order: the
 readers and merge tables are hidden from it (the owner, 2026-10-02: "I feel like
 reading and merging is something you can handle now. it seems to work, so please
@@ -421,7 +439,9 @@ card holds its status, a hidden `withdrawn`
 column where a work card withdrawn because no member was up is kept (the table
 layer never places a removed member again), and hidden `ok` and `failed`
 columns that hold a member's finished work cards, finished ok and finished
-failed. `done` and `ok%` are the table's own formulas over those two cells,
+failed, and a hidden `defect` column that holds those that ended on a brief
+defect (section 1, a brief defect), counted in neither. `done` and `ok%` are
+the table's own formulas over the `ok` and `failed` cells,
 computed at render and never written: `done:sum(ok+failed)` and
 `okpct:pct(ok/ok+failed):pooled:ok%` (the column `okpct`, labelled `ok%`). A
 member with no finished card shows `0` and `0.0%`; the footer pools ok% over
@@ -1747,6 +1767,7 @@ the tick would make, no other open judgment on it).
 | notification | answered by | ack |
 |---|---|---|
 | work came back failed | rework (with a fix), drop | no |
+| a brief defect | re-cut the brief (drop, then add the re-cut card), drop | no |
 | a reader found it broken | rework (with the finding), ask --another, drop | no |
 | stream stopped: conflict on a card | resume (resolved), rework, drop | no |
 | stream stopped: stream branch red | return the suspect and resume, rework the suspect | no |

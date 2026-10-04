@@ -71,6 +71,7 @@ const (
 	NReadyToAccept   = "ready to accept"    // the readers it needs said ok at its head (ReadsNeeded)
 	NReturned        = "returned to review" // sent back from merging: the coordinator decides again
 	NWorkFailed      = "work came back failed"
+	NBriefDefect     = "a brief defect" // a HOLD naming the brief: re-cut it (brief_defect.go)
 	NReadBroken      = "a reader found it broken"
 	NReadReturned    = "a reader returned a read" // no verdict, not a read: asked again
 	NConflict        = "stream stopped: conflict on a card"
@@ -96,6 +97,7 @@ var Decisions = map[string][]string{
 	NReadyToAccept:   {"accept", "rework", "drop"},
 	NReturned:        {"rework", "accept", "drop"}, // accept only while its reads stand at its head
 	NWorkFailed:      {"rework with a fix", "drop"},
+	NBriefDefect:     {DecisionRecut, "drop"}, // never a redeal of the brief as cut
 	NReadBroken:      {"rework with the finding", "ask another reader", "drop"},
 	NConflict:        {"resolve and resume", "rework", "drop"},
 	NRed:             {"take the suspect off and resume", "rework the suspect"},
@@ -313,3 +315,8 @@ func (n Note) Bound() Note {
 	}
 	return n
 }
+
+// DecisionRecut is the decision a brief defect asks for: the card is dropped and its brief cut
+// again from the stream's generator, with what the worker found, as a new card; a redeal of
+// the same brief would hold the same way (docs/SPEC-SPRINT.md section 1, a brief defect).
+const DecisionRecut = "re-cut the brief"
