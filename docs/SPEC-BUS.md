@@ -96,6 +96,22 @@ Exit codes: 0 done; 1 the verb ran and said no (recv: nothing waiting; recv
 `--exec`: the command failed); 2 could not run (a flag, an input, a store that
 did not answer).
 
+### bus-message-kinds.w1: the kind of a message
+
+A message carries a kind, one of `report`, `ack`, `status`, `request`,
+`blocker`: the bus's own vocabulary, which it stores and filters on and gives
+no meaning. `send --kind <k>` sets it (default `status`; another word is
+refused with the list), the entry holds it as the field `kind`, and `recv`,
+`peek` and `log` print `kind=<k>` (left off the line of a status, so an absent
+`kind=` is a status and the common line is unchanged). A message with no `kind` field (sent
+before kinds) reads as `status`. `recv --kind <k>[,<k>]` (also `--all`,
+`--max`, `--forever`, `--dry-run`) and `peek --kind <k>[,<k>]` take only
+messages of those kinds. A message the filter skips is neither acked nor held:
+it is claimed with the filter's read and handed back at once (`XCLAIM ...
+IDLE` of `ClaimAfter`, `JUSTID`), so the next `recv` without the filter, or
+with another, gets it in its order; a skip costs a round trip, and a run of
+skipped claimed messages one more to hand them back.
+
 ## The identity
 
 Who a verb acts as is the user the connection logged in as, never a word on
