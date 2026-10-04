@@ -714,7 +714,7 @@ one: a `RECV OK id= from= to= cc= re= at= subject=` line, a blank line, the
 body; `RECV NONE` at exit 1 when nothing waits; the reader keeps the message for
 a minute. With `--exec '<command>'` the command reads that same text on its
 stdin and the message is acked when it exits 0 (`acked=true exec_exit=0`); a
-non-zero exit leaves it pending (`RECV FAIL ... exec_exit=<n>`, exit 1). `ack`
+non-zero exit leaves it pending (`RECV FAILED ... exec_exit=<n>`, exit 1). `ack`
 answers `acked=false` for an id that is not pending, at exit 0. What a first run
 gets wrong: a name that is not a nova-config friend or machine row (`send` and
 `recv` refuse it with the `nova-config friend add` line that adds one);

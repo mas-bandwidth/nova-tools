@@ -161,7 +161,7 @@ func TestRecvExecAcksOnZeroAndKeepsThePendingMessageOnFailure(t *testing.T) {
 	mid := id(t, cli.OK(t, "send", "--as", "ada", "--to", "bob", "--subject", "s", "--body", "the body").Stdout)
 
 	r.exec = func(string) int { return 3 }
-	cli.Do(t, "recv", "--as", "bob", "--exec", "deliver").Exit(1).Err("RECV FAIL id=" + mid + " exec_exit=3: --exec exited 3, so the message stays pending")
+	cli.Do(t, "recv", "--as", "bob", "--exec", "deliver").Exit(1).Err("RECV FAILED id=" + mid + " exec_exit=3: --exec exited 3, so the message stays pending")
 	require.Len(t, r.execIn, 1)
 	assert.Equal(t, "RECV OK id="+mid+" from=ada to=bob cc=- re=- at=2026-10-03T12:00:01Z subject=\"s\"\n\nthe body\n", r.execIn[0], "the command reads what recv prints, the body ending in a newline")
 	cli.Do(t, "peek", "--as", "bob").Exit(0).Out("PEEK OK pending=1 new=0")
