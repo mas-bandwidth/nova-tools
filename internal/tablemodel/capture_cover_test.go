@@ -2,6 +2,7 @@ package tablemodel
 
 import (
 	"context"
+	"maps"
 	"testing"
 
 	tassert "github.com/stretchr/testify/assert"
@@ -337,17 +338,6 @@ func TestCaptureCoverRevisionRefusesWhenContextIsDone(t *testing.T) {
 	tassert.ErrorContains(t, err, "ran out of time", "error should mention ran out of time")
 }
 
-// TestCaptureCoverRevisionRefusesWhenStoreReturnsNonInteger tests revision refusal on non-integer.
-func TestCaptureCoverRevisionRefusesWhenStoreReturnsNonInteger(t *testing.T) {
-	t.Parallel()
-	// This test would need a store that returns a non-integer for HGET.
-	// Since we can't easily mock Store.Cmd without a real Redis, we note this
-	// limitation and test the error path through guard.
-	// The revision function calls integer() on the reply, which panics on non-integer.
-	// We verify the panic message contains the expected text.
-	// Note: full testing of revision requires a live store (see report).
-}
-
 // TestCaptureCoverReceiptRefusesWhenContextIsDone tests receipt with cancelled context.
 func TestCaptureCoverReceiptRefusesWhenContextIsDone(t *testing.T) {
 	t.Parallel()
@@ -362,67 +352,42 @@ func TestCaptureCoverReceiptRefusesWhenContextIsDone(t *testing.T) {
 	tassert.ErrorContains(t, err, "ran out of time", "error should mention ran out of time")
 }
 
-// TestCaptureCoverExecuteReadEpochUpdatesSeen documents execute for read_epoch.
-// Full testing requires a live store; the function calls Store.Cmd (HGET) which needs Redis.
-func TestCaptureCoverExecuteReadEpochUpdatesSeen(t *testing.T) {
+// TestCaptureCoverExecuteRefusesEveryArmWhenTheStoreIsDone enters each arm of
+// execute — read_epoch, advance and a table verb — through the
+// cancelled-context seam the package's own Store checks before any command:
+// every arm reads the store first, so each refuses with the store's failure,
+// returns nothing and leaves the writer's seen epoch untouched. The main
+// paths (a recorded seen epoch, an incremented store epoch, a called verb
+// with its receipt) run against the live store in the functional replay.
+func TestCaptureCoverExecuteRefusesEveryArmWhenTheStoreIsDone(t *testing.T) {
 	t.Parallel()
-	// The execute function for read_epoch updates seen[actor] with the store's epoch.
-	// It calls r.Cmd("HGET", "replay:epoch", "n") which requires a live store.
-	// Unit testing without a live store is not feasible; see report.
-	require.True(t, true, "execute read_epoch requires live store - covered in functional tests")
-}
-
-// TestCaptureCoverExecuteAdvanceIncrementsEpoch documents execute for advance.
-// Full testing requires a live store; the function calls Store.Cmd (HGET, HSET) which needs Redis.
-func TestCaptureCoverExecuteAdvanceIncrementsEpoch(t *testing.T) {
-	t.Parallel()
-	// The execute function for advance increments the store's epoch.
-	// It calls r.Cmd("HGET", "replay:epoch", "n") and r.Cmd("HSET", "replay:epoch", "n", current+1).
-	// Unit testing without a live store is not feasible; see report.
-	require.True(t, true, "execute advance requires live store - covered in functional tests")
-}
-
-// TestCaptureCoverExecuteTableVerbRequiresLiveStore documents execute for table verbs.
-// Full testing requires a live store; the function calls call -> receipt -> validateDelta.
-func TestCaptureCoverExecuteTableVerbRequiresLiveStore(t *testing.T) {
-	t.Parallel()
-	// The execute function for table verbs runs the full call/receipt/validateDelta sequence.
-	// It makes multiple Store.Cmd calls (XLEN, HGET, FCALL, XREVRANGE) that require a live Redis.
-	// Unit testing without a live store is not feasible; see report.
-	require.True(t, true, "execute table verb requires live store - covered in functional tests")
-}
-
-// TestCaptureCoverExecuteRefusedCallReturnsTrueRefused tests execute refusal path.
-// This test documents the expected behavior; full verification requires a live store.
-func TestCaptureCoverExecuteRefusedCallReturnsTrueRefused(t *testing.T) {
-	t.Parallel()
-	// The execute function returns a pointer to bool for refused calls.
-	// When reply[0] == "REFUSED", it returns &refused where refused=true.
-	// We verify the logic structure here; full testing requires a live store (see report).
-	refusedVal := true
-	refusedPtr := &refusedVal
-	tassert.True(t, *refusedPtr, "refused pointer should be true")
-}
-
-// TestCaptureCoverExecuteWithSavedEventReplaysReceipt tests execute with saved event.
-// This test documents the expected behavior; full verification requires a live store.
-func TestCaptureCoverExecuteWithSavedEventReplaysReceipt(t *testing.T) {
-	t.Parallel()
-	// When saved != nil, execute replays the saved event's verb, args, and opts.
-	// It first checks continuity, then calls call with the saved event's data.
-	// We verify the logic structure here; full testing requires a live store (see report).
-	saved := Event{
-		"verb":       "cell_add",
-		"args":       `["t1", "r1", "c1", "1", "m1"]`,
-		"rev_before": "0",
-		"rev_after":  "1",
-		"epoch":      "1",
-		"actor":      "w1",
-		"fence":      "fixture-fence",
-		"idem":       "fixture-attempt",
+	tests := []struct {
+		name   string
+		action Action
+		seen   map[string]int
+	}{
+		{"read_epoch arm", Action{Verb: "read_epoch", Actor: "w1"}, map[string]int{}},
+		{"advance arm", Action{Verb: "advance", Actor: "w1"}, map[string]int{"w1": 1}},
+		{"table verb arm", Action{Verb: "cell_add", Args: []string{"t1", "r1", "c1", "1", "m1"}, Actor: "w1"}, map[string]int{"w1": 1}},
 	}
-	require.NotNil(t, saved)
-	tassert.Equal(t, "cell_add", saved["verb"])
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			r := &Store{ctx: ctx}
+			seen := maps.Clone(tc.seen)
+			var refused *bool
+			var event Event
+			err := guard(func() { refused, event = execute(r, tc.action, seen, nil) })
+			var f *Failure
+			require.ErrorAs(t, err, &f, "error = %v, want a failed check, not a hang or a raw panic", err)
+			require.ErrorContains(t, err, "ran out of time", "error = %v, want the store's done context named", err)
+			require.Equal(t, tc.seen, seen, "seen = %v, want it untouched: the arm reads the store before it records", seen)
+			require.Nil(t, refused, "a refused execute returned a refusal flag")
+			require.Nil(t, event, "a refused execute returned an event")
+		})
+	}
 }
 
 // TestCaptureCoverContinuityRefusesGap tests continuity.
@@ -442,46 +407,36 @@ func TestCaptureCoverContinuityRefusesGap(t *testing.T) {
 	tassert.Error(t, err, "continuity should fail for skipped revision")
 }
 
-// TestCaptureCoverSeedRequiresLiveStore documents that seed needs a live store.
-func TestCaptureCoverSeedRequiresLiveStore(t *testing.T) {
+// TestCaptureCoverSeedRefusesWhenTheStoreIsDone enters seed through the
+// cancelled-context seam: the epoch HSET is its first store command, so the
+// whole seeding refuses with the store's failure instead of half-seeding.
+// The seeded store itself (two tables, their rows, the member epochs and the
+// external set) is checked by the functional capture against a live store.
+func TestCaptureCoverSeedRefusesWhenTheStoreIsDone(t *testing.T) {
 	t.Parallel()
-	// The seed function initializes the store with tables, rows, members, and external set.
-	// It makes multiple Store.Cmd calls (HSET, FCALL, ZADD) that require a live Redis.
-	// Unit testing without a live store is not feasible; see report.
-	// This test exists to document the coverage gap and ensure the test runs.
-	require.True(t, true, "seed requires live store - covered in functional tests")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	r := &Store{ctx: ctx}
+	err := guard(func() { seed(r) })
+	var f *Failure
+	require.ErrorAs(t, err, &f, "error = %v, want a failed check, not a hang or a raw panic", err)
+	require.ErrorContains(t, err, "ran out of time", "error = %v, want the store's done context named", err)
 }
 
-// TestCaptureCoverSnapshotRequiresLiveStore documents that snapshot needs a live store.
-func TestCaptureCoverSnapshotRequiresLiveStore(t *testing.T) {
+// TestCaptureCoverSnapshotRefusesWhenTheStoreIsDone enters snapshot through
+// the cancelled-context seam: the active epoch is its first store read, so
+// snapshot refuses with the store's failure and hands back no state. The
+// read-back of a seeded store into the model's vocabulary is checked by the
+// functional capture against a live store.
+func TestCaptureCoverSnapshotRefusesWhenTheStoreIsDone(t *testing.T) {
 	t.Parallel()
-	// The snapshot function reads the entire store state into the model's vocabulary.
-	// It makes many Store.Cmd calls (HGET, HGETALL, ZRANGE) that require a live Redis.
-	// Unit testing without a live store is not feasible; see report.
-	require.True(t, true, "snapshot requires live store - covered in functional tests")
-}
-
-// TestCaptureCoverReceiptRequiresLiveStore documents that receipt needs a live store.
-func TestCaptureCoverReceiptRequiresLiveStore(t *testing.T) {
-	t.Parallel()
-	// The receipt function validates a reply against the store's change stream.
-	// It makes Store.Cmd calls (HGET, XREVRANGE) that require a live Redis.
-	// Unit testing without a live store is not feasible; see report.
-	require.True(t, true, "receipt requires live store - covered in functional tests")
-}
-
-// TestCaptureCoverCallRequiresLiveStore documents that call needs a live store for full testing.
-func TestCaptureCoverCallRequiresLiveStore(t *testing.T) {
-	t.Parallel()
-	// The call function sends an FCALL to the store.
-	// Full testing requires a live Redis; we test the cancelled context path above.
-	require.True(t, true, "call requires live store for full testing - context refusal tested above")
-}
-
-// TestCaptureCoverExecuteRequiresLiveStore documents that execute needs a live store for full testing.
-func TestCaptureCoverExecuteRequiresLiveStore(t *testing.T) {
-	t.Parallel()
-	// The execute function runs a full step including call, receipt, and validateDelta.
-	// Full testing requires a live Redis; we test the cancelled context path above.
-	require.True(t, true, "execute requires live store for full testing - context refusal tested above")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	r := &Store{ctx: ctx}
+	var s State
+	err := guard(func() { s = snapshot(r, map[string]int{"w1": 1}) })
+	var f *Failure
+	require.ErrorAs(t, err, &f, "error = %v, want a failed check, not a hang or a raw panic", err)
+	require.ErrorContains(t, err, "ran out of time", "error = %v, want the store's done context named", err)
+	require.Equal(t, State{}, s, "a refused snapshot returned a state")
 }
