@@ -93,11 +93,13 @@ func friendVerbWords(name string) string {
 	sync := "The name is one friend row of the friends table. friend sync copies those rows from nova-config; a name the table lacks is refused and the line names friend sync. friend sync exits 3 when the config cannot be read or holds no friend row. nova-sprint help friend says how the friends table is kept."
 	switch name {
 	case "friend beat":
-		return "friend beat records that this friend is present. The friend's own machinery runs it every " + every + ". The friend is up while the last beat is under " + down + " old, and down once that long has passed with no beat, or when the friend has never beaten. A beat wakes the friend at once. " + sync + "\n"
+		return "friend beat records that this friend is present. The friend's own machinery runs it every " + every + ". The friend is up while the last beat is under " + down + " old, and down once that long has passed with no beat, or when the friend has never beaten. A beat wakes the friend at once. Once the coordinator observes her (friend health), the observation decides her status and her beat no longer does. " + sync + "\n"
 	case "friend down":
-		return "friend down holds the named friend. The friend stays held whatever beat arrives, and where counts working as 0 while the friend is held. friend up releases the hold. " + sync + "\n"
+		return "friend down holds the named friend: held is the coordinator's decision alone, whatever she beats or the coordinator's daemon observes, and where counts working as 0 while the friend is held. --reason <text> and --until <RFC3339> say why and when you expect her back, shown in her status cell. friend up releases the hold. " + sync + "\n"
 	case "friend up":
 		return "friend up releases a hold that friend down set. It is not a beat: a friend released with no beat in the last " + down + " is down until the friend beats. " + sync + "\n"
+	case "friend health":
+		return "friend health is the coordinator's observation of the friend, written by the coordinator's daemon from its keepalive with hers: --state up (her session answered), asleep (her daemon answered, her session did not) or down; --seen, when the proof was seen; --generation, the seat's generation the daemon read with nova-sprint seat. The seat's holder alone writes it, at the seat's generation now: an observation from a seat that moved is refused, as is a proof not newer than the row holds, and nothing is written; the same observation again is answered as recorded (replayed=true). Once observed, the friend is up while the observation says up, under the seat's generation now, with its proof under " + sprint.FriendObservedDownAfter.String() + " old, and down otherwise (asleep is the daemon's word, kept on her row and shown as down; the table's words are up, held and down), with --reason and --until shown on her row; her own beat never makes her up again, and no observation holds her: held is the coordinator's friend down alone. " + sync + "\n"
 	default:
 		return ""
 	}
@@ -239,19 +241,42 @@ func (a *app) cmdFriendBeat(args []string, stdout, stderr io.Writer) int {
 func (a *app) cmdFriendHold(held bool, args []string, stdout, stderr io.Writer) int {
 	name := map[bool]string{true: "friend down", false: "friend up"}[held]
 	fs, c := a.verbSetup(name)
+	var reason, until *string
+	if held {
+		reason = fs.String("reason", "", "why she is held, shown on her row (her model allowance ran out)")
+		until = fs.String("until", "", "when you expect her back, RFC3339, shown on her row")
+	}
 	friend, code := oneFriend(name, fs, args, stderr)
 	if code != 0 {
 		return code
+	}
+	var why string
+	var back time.Time
+	if held {
+		why = strings.TrimSpace(*reason)
+		if *until != "" {
+			var err error
+			if back, err = time.Parse(time.RFC3339, *until); err != nil {
+				return refuse(stderr, name, "--until wants an RFC3339 time")
+			}
+		}
 	}
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, name, err.Error())
 	}
-	if err := st.SetFriendHeld(context.Background(), friend, held, c.actor); err != nil {
+	if err := st.SetFriendHeld(context.Background(), friend, held, c.actor, why, back); err != nil {
 		fmt.Fprintf(stderr, "%s %s: %s\n", prog, name, oneline.Escape(err.Error()))
 		return 1
 	}
-	sayOK(stdout, c.json, name, token(name)+" OK "+friend+" held="+fmt.Sprint(held), map[string]any{"friend": friend, "held": held})
+	line := token(name) + " OK " + friend + " held=" + fmt.Sprint(held)
+	if why != "" {
+		line += " reason=" + oneline.Field(why)
+	}
+	if !back.IsZero() {
+		line += " until=" + back.UTC().Format(time.RFC3339)
+	}
+	sayOK(stdout, c.json, name, line, map[string]any{"friend": friend, "held": held, "reason": why, "until": back.UTC()})
 	return 0
 }
 
@@ -276,4 +301,62 @@ func orEmpty(xs []string) []string {
 		return []string{}
 	}
 	return xs
+}
+
+// cmdFriendHealth is the coordinator's observation of a friend (docs/SPEC-SPRINT.md
+// section 1, "A friend's health"): the state word, the time of the proof it rests on,
+// and the seat generation the daemon read the seat at, fenced by the seat in the step's
+// own read (store.FriendHealth). The same observation again is answered as recorded,
+// nothing written.
+func (a *app) cmdFriendHealth(args []string, stdout, stderr io.Writer) int {
+	const name = "friend health"
+	fs, c := a.verbSetup(name)
+	state := fs.String("state", "", "what the keepalive saw: up (her session answered), asleep (her daemon answered, her session did not) or down")
+	seen := fs.String("seen", "", "when the proof this rests on was seen, RFC3339 (a session pong for up, a daemon pong for asleep, the judgment for down); a proof not newer than the row's is refused")
+	generation := fs.Uint64("generation", 0, "the seat's generation the daemon read (nova-sprint seat); any other than the seat's now is refused")
+	queue := fs.Int("queue", 0, "what her pong said she has queued")
+	working := fs.Int("working", 0, "what her pong said she is working")
+	width := fs.Int("width", 0, "what her pong said her width is")
+	reason := fs.String("reason", "", "why she is not up, shown on her row while the observation stands (her model allowance ran out)")
+	until := fs.String("until", "", "when the daemon expects her back, RFC3339, shown on her row")
+	friend, code := oneFriend(name, fs, args, stderr)
+	if code != 0 {
+		return code
+	}
+	if !slices.Contains(sprint.HealthStates, *state) {
+		return refuse(stderr, name, "--state wants one of "+strings.Join(sprint.HealthStates, ", ")+", found "+orDashStr(*state, "none"))
+	}
+	at, err := time.Parse(time.RFC3339, *seen)
+	if err != nil {
+		return refuse(stderr, name, "--seen wants an RFC3339 time, the proof's")
+	}
+	if *generation == 0 {
+		return refuse(stderr, name, "--generation wants the seat's generation the daemon read (nova-sprint seat prints it)")
+	}
+	if *queue < 0 || *working < 0 || *width < 0 {
+		return refuse(stderr, name, "--queue, --working and --width are counts")
+	}
+	st, err := a.store(*c)
+	if err != nil {
+		return refuse(stderr, name, err.Error())
+	}
+	obs := sprint.FriendHealth{State: *state, Seen: at.UTC(), Generation: *generation, Queue: *queue, Working: *working, Width: *width, Reason: strings.TrimSpace(*reason)}
+	if *until != "" {
+		if obs.Until, err = time.Parse(time.RFC3339, *until); err != nil {
+			return refuse(stderr, name, "--until wants an RFC3339 time")
+		}
+		obs.Until = obs.Until.UTC()
+	}
+	h, status, replayed, err := st.FriendHealth(context.Background(), friend, c.actor, obs, c.op)
+	if err != nil {
+		fmt.Fprintf(stderr, "%s %s: %s; nothing was changed\n", prog, name, oneline.Escape(err.Error()))
+		return 1
+	}
+	line := fmt.Sprintf("FRIEND-HEALTH OK %s state=%s seen=%s generation=%d status=%s", friend, h.State, h.Seen.Format(time.RFC3339), h.Generation, status)
+	if replayed {
+		line += " replayed=true"
+	}
+	sayOK(stdout, c.json, name, line, map[string]any{"friend": friend, "state": h.State, "seen": h.Seen, "generation": h.Generation,
+		"queue": h.Queue, "working": h.Working, "width": h.Width, "status": status, "replayed": replayed})
+	return 0
 }

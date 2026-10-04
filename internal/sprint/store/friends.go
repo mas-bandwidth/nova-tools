@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -30,6 +31,10 @@ const keyFriends = "friends"
 
 func friendBeatKey(friend string) string { return "friend-beat:" + friend }
 
+// friendHealthKey is the coordinator's last accepted observation of the friend
+// (sprint.FriendHealth; friend health), written by the health step's commit.
+func friendHealthKey(friend string) string { return "friend-health:" + friend }
+
 // friendEntry is a friend's entry in the roster: the coordinator's hold,
 // empty while released, and her width, how many jobs she works at once.
 type friendEntry struct {
@@ -37,6 +42,10 @@ type friendEntry struct {
 	At    time.Time `json:"at,omitempty"`
 	By    string    `json:"by,omitempty"`
 	Width int       `json:"width,omitempty"`
+	// Reason and Until are the hold's (friend down --reason --until): why,
+	// and when the coordinator expects her back.
+	Reason string    `json:"reason,omitempty"`
+	Until  time.Time `json:"until,omitzero"`
 }
 
 // FriendSpec is what friend sync knows of one friend: her name (a friend row
@@ -57,6 +66,13 @@ type FriendRow struct {
 	OK      int    `json:"ok"`
 	Failed  int    `json:"failed"`
 	Status  string `json:"status"`
+	// Health is the coordinator's last accepted observation of her (friend
+	// health), absent until the first.
+	Health *sprint.FriendHealth `json:"health,omitempty"`
+	// Reason and Until say why she is held or down and when she is expected
+	// back, when the hold or the observation said (friend down, friend health).
+	Reason string    `json:"reason,omitempty"`
+	Until  time.Time `json:"until,omitzero"`
 }
 
 // roster is the friends record, by name; empty when there is none.
@@ -139,7 +155,7 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 	if len(removed) > 0 {
 		keys := make([]string, 0, len(removed))
 		for _, n := range removed {
-			keys = append(keys, st.Names.Key(friendBeatKey(n)))
+			keys = append(keys, st.Names.Key(friendBeatKey(n)), st.Names.Key(friendHealthKey(n)))
 		}
 		if _, err := st.B.DeleteKeys(ctx, keys); err != nil {
 			return added, removed, updated, err
@@ -166,9 +182,10 @@ func (st *Store) FriendBeat(ctx context.Context, friend string) (sprint.Beat, er
 	return b, kv.SetKey(ctx, friendBeatKey(friend), string(out))
 }
 
-// SetFriendHeld holds the friend (friend down) or releases the hold (friend
-// up), by the coordinator who; a friend the roster lacks is refused.
-func (st *Store) SetFriendHeld(ctx context.Context, friend string, held bool, who string) error {
+// SetFriendHeld holds the friend (friend down, with why and until when the
+// coordinator expects her back, each "" or zero for none) or releases the hold
+// (friend up), by the coordinator who; a friend the roster lacks is refused.
+func (st *Store) SetFriendHeld(ctx context.Context, friend string, held bool, who, reason string, until time.Time) error {
 	r, kv, err := st.roster(ctx)
 	if err != nil {
 		return err
@@ -177,9 +194,9 @@ func (st *Store) SetFriendHeld(ctx context.Context, friend string, held bool, wh
 	if !ok {
 		return noFriend(r, friend)
 	}
-	e.Held, e.At, e.By = false, time.Time{}, ""
+	e.Held, e.At, e.By, e.Reason, e.Until = false, time.Time{}, "", "", time.Time{}
 	if held {
-		e.Held, e.At, e.By = true, st.now().UTC().Truncate(time.Second), who
+		e.Held, e.At, e.By, e.Reason, e.Until = true, st.now().UTC().Truncate(time.Second), who, reason, until.UTC().Truncate(time.Second)
 	}
 	r[friend] = e
 	return putRoster(ctx, kv, r)
@@ -187,11 +204,12 @@ func (st *Store) SetFriendHeld(ctx context.Context, friend string, held bool, wh
 
 // FriendRows is the friends table at now: every friend of the roster with her
 // width and her status (sprint.FriendStatus), in the fleet table's order
-// (FleetOrder: up, then held, then down, each by name). The counts (ready,
-// working, ok, failed) are her sprint cards', filled by where from her fleet
-// row (friend.<name>), never read or counted here: the store holds no job
-// record. Two reads: the roster, then every friend's beat in one exchange. A
-// store that keeps no records has no friends.
+// (FleetOrder: up, asleep, then held, then down, each by name). The counts
+// (ready, working, ok, failed) are her sprint cards', filled by where from her
+// fleet row (friend.<name>), never read or counted here: the store holds no
+// job record. Three reads: the roster, the seat's generation, then every
+// friend's beat and health in one exchange. A store that keeps no records has
+// no friends.
 func (st *Store) FriendRows(ctx context.Context, now time.Time) ([]FriendRow, error) {
 	r, kv, err := st.roster(ctx)
 	if kv == nil {
@@ -200,10 +218,14 @@ func (st *Store) FriendRows(ctx context.Context, now time.Time) ([]FriendRow, er
 	if err != nil || len(r) == 0 {
 		return nil, err
 	}
+	generation, err := st.seatGeneration(ctx)
+	if err != nil {
+		return nil, err
+	}
 	names := slices.Sorted(maps.Keys(r))
-	keys := make([]string, 0, len(names))
+	keys := make([]string, 0, 2*len(names))
 	for _, n := range names {
-		keys = append(keys, friendBeatKey(n))
+		keys = append(keys, friendBeatKey(n), friendHealthKey(n))
 	}
 	vals, oks, err := getKeys(ctx, kv, keys)
 	if err != nil {
@@ -213,11 +235,29 @@ func (st *Store) FriendRows(ctx context.Context, now time.Time) ([]FriendRow, er
 	status := map[string]string{}
 	for i, n := range names {
 		var b sprint.Beat
-		if i < len(oks) && oks[i] {
-			// ignored: an unreadable record is no beat, which the next beat replaces
-			_ = json.Unmarshal([]byte(vals[i]), &b)
+		var h sprint.FriendHealth
+		if 2*i+1 < len(oks) {
+			if oks[2*i] {
+				// ignored: an unreadable record is no beat, which the next beat replaces
+				_ = json.Unmarshal([]byte(vals[2*i]), &b)
+			}
+			if oks[2*i+1] {
+				// ignored: an unreadable record is no observation, which the next replaces
+				_ = json.Unmarshal([]byte(vals[2*i+1]), &h)
+			}
 		}
-		row := FriendRow{Name: n, Width: r[n].Width, Status: sprint.FriendStatus(r[n].Held, b, now)}
+		row := FriendRow{Name: n, Width: r[n].Width, Status: sprint.FriendStatus(sprint.FriendPresence{Held: r[n].Held, Beat: b, Health: h, Generation: generation}, now)}
+		if h.Observed() {
+			row.Health = &h
+		}
+		switch row.Status {
+		case sprint.Held:
+			row.Reason, row.Until = r[n].Reason, r[n].Until
+		case sprint.Down:
+			if h.Observed() && h.Generation == generation {
+				row.Reason, row.Until = h.Reason, h.Until
+			}
+		}
 		rows[n] = row
 		status[n] = row.Status
 	}
@@ -271,4 +311,57 @@ func (st *Store) FriendNames(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 	return slices.Sorted(maps.Keys(r)), nil
+}
+
+// HealthStep is the coordinator's observation of a friend written
+// (sprint.ObserveFriend): the step reads the seat in its own snapshot, so an
+// observation under a seat that moved is refused, and its commit writes her
+// record.
+func HealthStep(r sprint.HealthReq) Step {
+	return Step{Named: true, Args: ArgsOf(r), Verb: "friend health",
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.ObserveFriend(s, r) }}
+}
+
+// FriendHealth is one observation of a friend by who (the seat's holder):
+// her roster entry and her record are read, a replay of the record is
+// answered as recorded with nothing written (sprint.HealthReq.Replays), and
+// any other observation is the health step, refused under a seat that is
+// not the one it names, or with a proof not newer than the row's. The result
+// is the record as it stands after, her status by the friends' rule at the
+// store's clock, and whether the observation was the row's already.
+func (st *Store) FriendHealth(ctx context.Context, friend, who string, obs sprint.FriendHealth, callerOp string) (sprint.FriendHealth, string, bool, error) {
+	r, kv, err := st.roster(ctx)
+	if err != nil {
+		return sprint.FriendHealth{}, "", false, err
+	}
+	req := sprint.HealthReq{Friend: friend, Who: who, Obs: obs}
+	e, known := r[friend]
+	req.Known = known
+	if known {
+		raw, ok, err := kv.GetKey(ctx, friendHealthKey(friend))
+		if err != nil {
+			return sprint.FriendHealth{}, "", false, err
+		}
+		if ok {
+			// ignored: an unreadable record is no observation, which this one replaces
+			_ = json.Unmarshal([]byte(raw), &req.Prev)
+		}
+	}
+	generation, err := st.seatGeneration(ctx)
+	if err != nil {
+		return sprint.FriendHealth{}, "", false, err
+	}
+	if req.Replays() && req.Obs.Generation == generation {
+		return req.Prev, sprint.FriendStatus(sprint.FriendPresence{Held: e.Held, Health: req.Prev, Generation: generation}, st.now()), true, nil
+	}
+	step := HealthStep(req)
+	step.CallerOp = callerOp
+	res, err := st.Run(ctx, step)
+	if err != nil {
+		return sprint.FriendHealth{}, "", false, err
+	}
+	if len(res.Refused) > 0 {
+		return sprint.FriendHealth{}, "", false, errors.New(res.Refused[0].Why)
+	}
+	return obs, sprint.FriendStatus(sprint.FriendPresence{Held: e.Held, Health: obs, Generation: obs.Generation}, st.now()), false, nil
 }

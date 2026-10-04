@@ -2,6 +2,7 @@ package store
 
 import (
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/stretchr/testify/assert"
@@ -19,7 +20,7 @@ func TestFriendRowsReturnsNameWidthStatusOnly(t *testing.T) {
 	require.NoError(t, err)
 	_, err = h.st.FriendBeat(h.ctx, "amy")
 	require.NoError(t, err)
-	require.NoError(t, h.st.SetFriendHeld(h.ctx, "bob", true, "c"))
+	require.NoError(t, h.st.SetFriendHeld(h.ctx, "bob", true, "c", "", time.Time{}))
 	rows, err := h.st.FriendRows(h.ctx, h.now)
 	require.NoError(t, err)
 	require.Len(t, rows, 2)

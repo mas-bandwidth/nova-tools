@@ -246,3 +246,12 @@ func GradeStep(r sprint.GradeReq) Step {
 	return Step{Named: true, Args: ArgsOf(r), Verb: "grade", Actor: sprint.MachineActor, Load: tables(sprint.Work), Extras: sprint.NamedExtras(sprint.Work, ids),
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Grade(s, r) }}
 }
+
+// NoteStep writes one happened note and nothing else (friend sync: a friend
+// not told of her card): its commit appends it to the log and the inbox.
+func NoteStep(verb string, n sprint.Note) Step {
+	return Step{Verb: verb, Args: ArgsOf(n), Plan: func(s *sprint.Snapshot) sprint.Plan {
+		n.At = s.Now
+		return sprint.Plan{Notes: []sprint.Note{n}}
+	}}
+}

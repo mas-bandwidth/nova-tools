@@ -43,7 +43,7 @@ type Epochs struct {
 	// Readers is every reader of the readers table of every epoch: each may
 	// have a beat record and a hold (readers.go).
 	Readers []string
-	// Friends is every friend of the roster: each may have a beat record
+	// Friends is every friend of the roster: each may have a beat record and a health record
 	// (friends.go).
 	Friends []string
 }
@@ -100,7 +100,7 @@ func TeardownKeys(names sprint.Names, ids map[string][]string, epochs Epochs) []
 		keys = append(keys, names.Key(readerBeatKey(r)), names.Key(readerAwayKey(r)))
 	}
 	for _, f := range epochs.Friends {
-		keys = append(keys, names.Key(friendBeatKey(f)))
+		keys = append(keys, names.Key(friendBeatKey(f)), names.Key(friendHealthKey(f)))
 	}
 	return append(keys, names.EpochKey())
 }

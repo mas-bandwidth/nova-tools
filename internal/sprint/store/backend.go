@@ -200,6 +200,9 @@ type OpRecord struct {
 	// Seat is the seat's change (store/seat.go): its commit sets the
 	// coordinator to its holder and records it as the seat's last change.
 	Seat *sprint.SeatChange `json:"seat,omitempty"`
+	// Health is a friend's health observed (store/friends.go): its commit
+	// writes it as her friend-health record.
+	Health *sprint.FriendHealthWrite `json:"health,omitempty"`
 }
 
 // Tables is the stored table names of the record's manifests, in order.

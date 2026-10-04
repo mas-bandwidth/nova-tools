@@ -328,3 +328,9 @@ MCUpdateApply.cfg	MCUpdateApply.tla	pass	-	ignore-terminal	updateapply	required	
 MCUpdateApplyBrokenInstallOnVerdict.cfg	MCUpdateApply.tla	invariant	ApplyOnlyWhatIsNamed	ignore-terminal	updateapply	required	-
 MCUpdateApplyBrokenDryRunInstalls.cfg	MCUpdateApply.tla	invariant	DryRunInstallsNothing	ignore-terminal	updateapply	required	-
 MCUpdateApplyBrokenSentOnRefusal.cfg	MCUpdateApply.tla	invariant	SentOnlyOnOK	ignore-terminal	updateapply	required	-
+MCSeatHealth.cfg	MCSeatHealth.tla	pass	-	ignore-terminal	seathealth	required	-
+MCSeatHealthBrokenNoFence.cfg	MCSeatHealth.tla	action	AcceptedAtTheSeat	ignore-terminal	seathealth	required	-
+MCSeatHealthBrokenOlderProof.cfg	MCSeatHealth.tla	action	ProofNeverGoesBack	ignore-terminal	seathealth	required	-
+MCSeatHealthBrokenBeatWins.cfg	MCSeatHealth.tla	invariant	ObservedNeverUpByBeat	ignore-terminal	seathealth	required	-
+MCSeatHealthBrokenNoExpiry.cfg	MCSeatHealth.tla	invariant	UpOnlyOnFreshProof	ignore-terminal	seathealth	required	-
+MCSeatHealthBrokenSameGen.cfg	MCSeatHealth.tla	action	GenerationStepsWithTheSeat	ignore-terminal	seathealth	required	-

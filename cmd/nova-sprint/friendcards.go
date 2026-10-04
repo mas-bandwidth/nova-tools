@@ -7,6 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/bus2"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
+	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"io/fs"
 	"maps"
 	"os"
@@ -314,7 +317,11 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 			switch err := atomicfile.WriteFile(brief, []byte(friendBrief(name, p)), 0o644, atomicfile.NoReplace()); {
 			case err == nil:
 				delivered++
-				say(fmt.Sprintf("FRIEND-CARD DELIVERED friend=%s card=%s job=%s branch=%s", name, p.Card, oneline.Field(job), p.Branch))
+				line := fmt.Sprintf("FRIEND-CARD DELIVERED friend=%s card=%s job=%s branch=%s", name, p.Card, oneline.Field(job), p.Branch)
+				say(line)
+				if err := a.wakeFriend(ctx, st, name, p, brief, line, say); err != nil {
+					return delivered, finished, err
+				}
 			case !errors.Is(err, fs.ErrExist):
 				return delivered, finished, err
 			}
@@ -354,6 +361,62 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 		say(fmt.Sprintf("FRIEND-CARD FINISHED friend=%s card=%s result=%s head=%s: %s", name, p.Card, result, cmp.Or(r.Head, "-"), oneline.Escape(oneline.Cap(r.Report, 200))))
 	}
 	return delivered, finished, nil
+}
+
+// busRedisEnv names the friends' bus store (nova-bus2's), where friend sync
+// wakes a friend's daemon when it delivers her a card.
+const busRedisEnv = "NOVA_BUS_REDIS"
+
+// busSendFn sends one message on the friends' bus.
+type busSendFn func(ctx context.Context, m bus2.Message) error
+
+// sendBus is the real busSendFn: the bus store dialed as nova-bus2 dials it
+// (internal/redisconn, the fleet's login from the environment), one message
+// sent, the connection closed.
+func (a *app) sendBus(ctx context.Context, m bus2.Message) error {
+	addr := a.getenv(busRedisEnv)
+	if addr == "" {
+		return errors.New(busRedisEnv + " is not set: no bus to send on")
+	}
+	o := redisconn.Options{Addr: addr, Env: redisconn.Env{User: redisauth.UserEnv}}
+	if a.getenv(redisauth.UserEnv) != "" {
+		o.Env.PasswordEnv = redisauth.PasswordEnvEnv
+		if a.getenv(redisauth.PasswordEnvEnv) == "" {
+			o.PasswordEnv = redisauth.DefaultPasswordEnv
+		}
+	}
+	conn, err := redisconn.Open(ctx, o, a.getenv)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	_, err = (&bus2.Bus{Store: bus2.Redis{C: conn.Client()}}).Send(ctx, m)
+	return err
+}
+
+// wakeFriend tells the friend of the card just delivered, one bus message from
+// the coordinator (the store's actor) to her: her daemon pushes it into her
+// session, which the inbox file alone never does. The message is a
+// courtesy and the inbox file is the record: a send that fails never fails
+// the delivery; it is said on sync's line and written on the card's story as
+// one happened note (NFriendNotWoken), so the coordinator sees she was not
+// told.
+func (a *app) wakeFriend(ctx context.Context, st *store.Store, name string, p sprint.Packet, brief, line string, say func(string)) error {
+	m := bus2.Message{From: st.Actor, To: []string{name}, Subject: "card " + p.Card + " dealt: " + line,
+		Body: "Your sprint card " + p.Card + " (attempt " + strconv.Itoa(p.Attempt) + " of " + p.Primary + ") is in your inbox: " + brief + "\nRead it and start; its STATUS line says where to push and where to report."}
+	err := a.bus(ctx, m)
+	if err == nil {
+		return nil
+	}
+	why := oneline.Escape(err.Error())
+	say(fmt.Sprintf("FRIEND-CARD NOTE friend=%s card=%s: the bus message to her was not sent (%s); the inbox file stands, tell her by hand", name, p.Card, why))
+	n := sprint.Note{Kind: sprint.Happened, Type: sprint.NFriendNotWoken, Stream: p.Stream, Primaries: []string{p.Primary}, Who: st.Actor, Attempt: p.Attempt,
+		What: fmt.Sprintf("%s was dealt %s into %s, and the bus message to her failed: %s; tell her by hand: nova-bus2 send --as %s --to %s --subject 'card %s dealt' --body '%s'", name, p.Card, brief, why, st.Actor, name, p.Card, brief)}
+	res, err := st.Run(ctx, store.NoteStep("friend sync", n))
+	if err == nil && len(res.Refused) > 0 {
+		err = errors.New(res.Refused[0].Why)
+	}
+	return err
 }
 
 // queueFile is the friend's queue file under her working directory, nova-friend's

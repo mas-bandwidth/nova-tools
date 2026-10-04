@@ -36,7 +36,7 @@ var verbClasses = map[string]string{
 	"start": classCoordinator, "stop": classCoordinator, "ask": classCoordinator, "accept": classCoordinator,
 	"rework": classCoordinator, "return": classCoordinator, "drop": classCoordinator, "rank": classCoordinator, "brief": classCoordinator, "move": classCoordinator,
 	"resume": classCoordinator, "land": classCoordinator, "fleet up": classCoordinator, "fleet down": classCoordinator,
-	"fleet level": classCoordinator, "fleet sync": classCoordinator, "friend sync": classCoordinator, "friend down": classCoordinator, "friend up": classCoordinator, "reader add": classCoordinator, "reader away": classCoordinator, "reader up": classCoordinator, "reader remove": classCoordinator, "stream remove": classCoordinator, "stream set": classCoordinator, "set": classCoordinator, "funded": classCoordinator, "wait": classCoordinator,
+	"fleet level": classCoordinator, "fleet sync": classCoordinator, "friend sync": classCoordinator, "friend down": classCoordinator, "friend up": classCoordinator, "friend health": classCoordinator, "reader add": classCoordinator, "reader away": classCoordinator, "reader up": classCoordinator, "reader remove": classCoordinator, "stream remove": classCoordinator, "stream set": classCoordinator, "set": classCoordinator, "funded": classCoordinator, "wait": classCoordinator,
 	"ack": classCoordinator, "answer": classCoordinator, "clear": classCoordinator, "teardown": classCoordinator, "repair": classCoordinator,
 	"goal set": classCoordinator, "goal drop": classCoordinator, "play": classCoordinator,
 
@@ -47,7 +47,7 @@ var verbClasses = map[string]string{
 	"tick": classMachine, "run": classMachine, "friend clean": classMachine,
 
 	"queue": classRead, "inbox": classRead, "card": classRead, "log": classRead, "check": classRead, "where": classRead, "dashboard": classRead, "routes": classRead, "stats": classRead,
-	"goal show": classRead, "handover": classRead,
+	"goal show": classRead, "handover": classRead, "seat": classRead,
 
 	"coordinator": classSeat,
 }

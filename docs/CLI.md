@@ -1189,8 +1189,9 @@ nova-sprint fleet sync [--check] [--pg <dsn>]
 nova-sprint fleet level
 nova-sprint friend sync [--pg <dsn>]
 nova-sprint friend beat <friend>
-nova-sprint friend down <friend>
+nova-sprint friend down <friend> [--reason <text>] [--until <RFC3339>]
 nova-sprint friend up <friend>
+nova-sprint friend health <friend> --state up|asleep|down --seen <RFC3339> --generation <n> [--queue <n>] [--working <n>] [--width <n>] [--reason <text>] [--until <RFC3339>]
 nova-sprint reader add <reader>...
 nova-sprint reader away <reader>...
 nova-sprint reader up <reader>...
@@ -1207,6 +1208,7 @@ nova-sprint check
 nova-sprint repair
 nova-sprint where [--watch] [--every <duration>] [--all] [--json [--cards]]
 nova-sprint dashboard [--listen <address:port>[,...] | none] [--pull <address:port>[,...] | none] [--logo <file>] [--every <duration>]
+nova-sprint seat
 nova-sprint routes
 nova-sprint funded <provider> --reason <text>
 nova-sprint stats

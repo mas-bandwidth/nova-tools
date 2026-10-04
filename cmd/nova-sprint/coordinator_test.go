@@ -90,6 +90,7 @@ func TestEveryCoordinatorVerbIsTheCoordinators(t *testing.T) {
 		"friend sync":   "friend sync",
 		"friend down":   "friend down friend-a",
 		"friend up":     "friend up friend-a",
+		"friend health": "friend health friend-a --state up --seen 2026-10-04T15:00:00Z --generation 1",
 		"reader add":    "reader add reader-d",
 		"reader away":   "reader away reader-a",
 		"reader up":     "reader up reader-a",

@@ -759,7 +759,7 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 			friends[i].Working = 0 // down, she works nothing
 		}
 	}
-	ft := friendsTable(friends)
+	ft := a.friendsTable(friends, now)
 	v.Tables[sprint.Friends] = map[string]map[string]string{}
 	for _, r := range ft.Rows {
 		cells := map[string]string{}
@@ -839,7 +839,7 @@ func providersView(ctx context.Context, st *store.Store, shapes []ntable.Table, 
 // hidden ok and failed, her width and her status as text; done and ok% are the
 // table's own formulas over the counts (ntable.CellText), as the fleet
 // table's are.
-func friendsTable(friends []store.FriendRow) ntable.Table {
+func (a *app) friendsTable(friends []store.FriendRow, now time.Time) ntable.Table {
 	t := sprint.FriendsDef()
 	at := map[string]int{}
 	for j, c := range t.Columns {
@@ -852,7 +852,7 @@ func friendsTable(friends []store.FriendRow) ntable.Table {
 		cells[at[sprint.DoneOK]].Count = int64(f.OK)
 		cells[at[sprint.DoneFailed]].Count = int64(f.Failed)
 		t.Rows = append(t.Rows, ntable.Row{Key: f.Name, Cells: cells,
-			Texts: map[string]string{sprint.FieldWidth: strconv.Itoa(f.Width), sprint.Status: f.Status}})
+			Texts: map[string]string{sprint.FieldWidth: strconv.Itoa(f.Width), sprint.Status: a.statusCell(f, now)}})
 	}
 	return t
 }
@@ -1597,4 +1597,18 @@ func (a *app) cmdRoutes(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "ROUTES OK routes=%d\n", len(stats))
 	return 0
+}
+
+// statusCell is a friend's status as the table shows it: the word (up, held or
+// down), and for a friend held or down with a reason, the reason and when she
+// is expected back: `down (opus rate limited, until 6:00 PM)`.
+func (a *app) statusCell(f store.FriendRow, now time.Time) string {
+	if f.Reason == "" && f.Until.IsZero() {
+		return f.Status
+	}
+	why := f.Reason
+	if !f.Until.IsZero() {
+		why = strings.TrimPrefix(why+", until "+a.clock12(f.Until, now), ", ")
+	}
+	return f.Status + " (" + why + ")"
 }

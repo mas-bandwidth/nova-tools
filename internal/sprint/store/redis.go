@@ -658,6 +658,13 @@ func (r *Redis) commit(ctx context.Context, p redis.Pipeliner, op OpRecord) erro
 		p.Set(ctx, r.Names.Key(keyCoordinator), op.Seat.Holder, 0)
 		p.Set(ctx, r.Names.Key(keySeat), rec, 0)
 	}
+	if op.Health != nil {
+		rec, err := json.Marshal(op.Health.Health)
+		if err != nil {
+			return err
+		}
+		p.Set(ctx, r.Names.Key(friendHealthKey(op.Health.Friend)), string(rec), 0)
+	}
 	return nil
 }
 
@@ -1017,6 +1024,7 @@ func (r *Redis) ReadView(ctx context.Context, tables []string) (View, error) {
 	}
 	open := p.HGetAll(ctx, r.key(keyOpen))
 	coord := p.Get(ctx, r.Names.Key(keyCoordinator))
+	seat := p.Get(ctx, r.Names.Key(keySeat))
 	if _, err := p.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) && !isReply(err) {
 		return View{}, err
 	}
@@ -1036,6 +1044,13 @@ func (r *Redis) ReadView(ctx context.Context, tables []string) (View, error) {
 		return View{}, err
 	}
 	if v.Coordinator, err = coord.Result(); err != nil && !errors.Is(err, redis.Nil) {
+		return View{}, err
+	}
+	raw, err := seat.Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return View{}, err
+	}
+	if v.SeatGeneration, err = seatGenerationOf(raw, err == nil); err != nil {
 		return View{}, err
 	}
 	if v.Open, err = r.openOf(ctx, idx); err != nil {
