@@ -329,12 +329,12 @@ func readLooseTreeRecursive(gitDir, treeSHA, prefix string, out map[string]strin
 
 	offset := 0
 	for offset < len(data) {
-		spaceIdx := bytes.IndexByte(data[offset:], ' ')
-		if spaceIdx < 0 {
+		sepIdx := bytes.IndexByte(data[offset:], ' ')
+		if sepIdx < 0 {
 			break
 		}
-		mode := string(data[offset : offset+spaceIdx])
-		offset += spaceIdx + 1
+		mode := string(data[offset : offset+sepIdx])
+		offset += sepIdx + 1
 
 		nullIdx := bytes.IndexByte(data[offset:], 0)
 		if nullIdx < 0 {
