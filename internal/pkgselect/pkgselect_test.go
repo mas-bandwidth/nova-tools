@@ -452,10 +452,14 @@ func TestOrderHeavyFirstAndFunctional(t *testing.T) {
 	assert.Equal(t, "./cmd/a", ordered[1], "the rest in order")
 	g := Groups{Linux: "lin", Mac: "mac"}
 	got := MarshalLegs(Functional(ordered, g))
-	want := `[{"name":"1/4 lin","packages":"./cmd/nova-bus ./cmd/d"},{"name":"2/4 lin","packages":"./cmd/a ./cmd/e"},{"name":"3/4 lin","packages":"./cmd/b"},{"name":"4/4 lin","packages":"./cmd/c"}]`
-	assert.Equal(t, want, got, "Functional: the darwin-only packages have no Linux leg")
-	assert.Equal(t, `[{"name":"nothing","packages":""}]`, MarshalLegs(Functional(nil, g)), "Functional of nothing")
+	want := `[{"name":"1/4 lin","packages":"./cmd/nova-bus ./cmd/d","os":"linux","arch":"x64","group":"lin"},{"name":"2/4 lin","packages":"./cmd/a ./cmd/e","os":"linux","arch":"x64","group":"lin"},{"name":"3/4 lin","packages":"./cmd/b","os":"linux","arch":"x64","group":"lin"},{"name":"4/4 lin","packages":"./cmd/c","os":"linux","arch":"x64","group":"lin"},{"name":"1/1 darwin-arm64","packages":"./cmd/nova-sandbox ./internal/sandbox","os":"darwin","arch":"arm64","group":"mac"}]`
+	assert.Equal(t, want, got, "Functional: retain every package on its supported platform")
+	assert.Equal(t, `[{"name":"nothing","packages":"","os":"linux","arch":"x64","group":"lin"}]`, MarshalLegs(Functional(nil, g)), "Functional of nothing")
 	assert.Equal(t, `[{"name":"nothing","packages":"","os":"linux","arch":"x64","group":"lin"}]`, MarshalLegs([]Leg{NothingLeg(g)}), "the nothing leg")
+	darwin := Functional([]string{"./cmd/nova-sandbox", "./internal/sandbox"}, g)
+	require.Len(t, darwin, 1, "a Darwin-only selection must run, not become a nothing leg")
+	assert.Equal(t, "darwin", darwin[0].OS)
+	assert.Equal(t, "./cmd/nova-sandbox ./internal/sandbox", darwin[0].Packages)
 }
 
 func TestShardsFollowTheEvent(t *testing.T) {

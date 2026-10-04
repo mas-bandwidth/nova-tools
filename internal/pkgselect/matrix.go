@@ -120,6 +120,9 @@ func OrderHeavyFirst(pkgs []string) []string {
 type FunctionalLeg struct {
 	Name     string `json:"name"`
 	Packages string `json:"packages"`
+	OS       string `json:"os"`
+	Arch     string `json:"arch"`
+	Group    string `json:"group"`
 }
 
 // Leg is one entry of the unit tier's matrix. The leg name carries its
@@ -139,16 +142,18 @@ func NothingLeg(g Groups) Leg {
 	return Leg{Name: "nothing", Packages: "", OS: "linux", Arch: "x64", Group: g.Linux}
 }
 
-// Functional deals the packages into FunctionalShards Linux legs like a pull
-// request's unit legs (the darwin-only packages have no Linux leg). The
+// Functional deals portable packages into FunctionalShards Linux legs and
+// retains the darwin-only packages together on a Darwin arm64 leg. The
 // functional job reads it on merge_group, schedule and workflow_dispatch only;
 // each leg's `make test-functional` runs just the tests behind the functional
 // tag. With no package it is one empty leg.
 func Functional(pkgs []string, g Groups) []FunctionalLeg {
 	groups := make([][]string, FunctionalShards)
+	var darwin []string
 	f := 0
 	for _, p := range pkgs {
 		if IsDarwinOnly(p) {
+			darwin = append(darwin, p)
 			continue
 		}
 		groups[f%FunctionalShards] = append(groups[f%FunctionalShards], p)
@@ -159,10 +164,13 @@ func Functional(pkgs []string, g Groups) []FunctionalLeg {
 		if len(grp) == 0 {
 			continue
 		}
-		legs = append(legs, FunctionalLeg{Name: fmt.Sprintf("%d/%d %s", i+1, FunctionalShards, g.Linux), Packages: strings.Join(grp, " ")})
+		legs = append(legs, FunctionalLeg{Name: fmt.Sprintf("%d/%d %s", i+1, FunctionalShards, g.Linux), Packages: strings.Join(grp, " "), OS: "linux", Arch: "x64", Group: g.Linux})
+	}
+	if len(darwin) > 0 {
+		legs = append(legs, FunctionalLeg{Name: "1/1 darwin-arm64", Packages: strings.Join(darwin, " "), OS: "darwin", Arch: "arm64", Group: g.Mac})
 	}
 	if len(legs) == 0 {
-		legs = []FunctionalLeg{{Name: "nothing"}}
+		legs = []FunctionalLeg{{Name: "nothing", OS: "linux", Arch: "x64", Group: g.Linux}}
 	}
 	return legs
 }

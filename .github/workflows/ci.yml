@@ -802,8 +802,9 @@ jobs:
     # redis-server, a real binary, a real process. It runs on merge_group (the
     # queue's run of a stream PR into dev), on the nightly schedule and by hand,
     # and NEVER on pull_request: a card PR into a stream branch and a stream PR
-    # into dev both skip it. Same selected packages as the unit legs, four space
-    # shards, two cores a leg, the two-minute cap. ci-ok requires it when it ran.
+    # into dev both skip it. Same selected packages as the unit legs: four Linux
+    # shards and a Darwin arm64 leg for Darwin-only packages, two cores a leg,
+    # the two-minute cap. ci-ok requires it when it ran.
     # internal/ci: TestFunctionalTierRunsOnlyAsStreamsMerge.
     name: functional (${{ matrix.entry.name }})
     needs: test-packages
@@ -812,7 +813,7 @@ jobs:
       fail-fast: false
       matrix:
         entry: ${{ fromJSON(needs.test-packages.outputs.functional) }}
-    runs-on: [self-hosted, linux, x64, space]
+    runs-on: [self-hosted, "${{ matrix.entry.os }}", "${{ matrix.entry.arch }}", "${{ matrix.entry.group }}"]
     timeout-minutes: 2
     steps:
       - name: nothing to test for this change
@@ -910,8 +911,9 @@ jobs:
           "$RUNNER_TEMP/ci" install-redis-server
 
       - name: install postgres
-        if: matrix.entry.packages != ''
-        # nova-config's functional tests spawn a throwaway Postgres (initdb,
+        if: matrix.entry.packages != '' && matrix.entry.os == 'linux'
+        # The Darwin-only sandbox leg needs no Postgres. Linux includes nova-config,
+        # whose functional tests spawn a throwaway Postgres (initdb,
         # pg_ctl) on loopback under the test's directory
         # (internal/nsprint/testutil/pg); a runner without the binaries
         # FAILS them, never skips. It does not dial the fleet store.

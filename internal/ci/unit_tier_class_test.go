@@ -163,7 +163,7 @@ func TestUnitLegTakesAtMostTwoCores(t *testing.T) {
 
 // TestFunctionalTierRunsOnlyAsStreamsMerge: the functional job runs on
 // merge_group, schedule and workflow_dispatch and never on a pull request, on
-// the space pool under the two-minute cap, over test-packages' functional
+// the selected platform's pool under the two-minute cap, over test-packages' functional
 // list, through `make test-functional`; ci-ok requires it when it ran.
 func TestFunctionalTierRunsOnlyAsStreamsMerge(t *testing.T) {
 	t.Parallel()
@@ -176,8 +176,24 @@ func TestFunctionalTierRunsOnlyAsStreamsMerge(t *testing.T) {
 	}
 	assert.Falsef(t, strings.Contains(job.If, "pull_request") || strings.Contains(job.If, "!=") && strings.Contains(job.If, "event_name !="), "functional's if must name the events it runs on, never pull_request: %s", job.If)
 	assert.Equalf(t, 2, job.TimeoutMinutes, "functional timeout-minutes = %d, want 2", job.TimeoutMinutes)
-	runsOn, _ := yaml.Marshal(job.RunsOn)
-	assert.Containsf(t, string(runsOn), "space", "functional runs-on %s, want the space pool", runsOn)
+	assert.Equal(t, []any{"self-hosted", "${{ matrix.entry.os }}", "${{ matrix.entry.arch }}", "${{ matrix.entry.group }}"}, job.RunsOn, "functional must route only the selected platform's labels")
+	selected := pkgselect.Functional([]string{"./cmd/nova-bus", "./cmd/nova-sandbox", "./internal/sandbox"}, pkgselect.Groups{Linux: "space", Mac: "studio"})
+	seen := map[string]int{}
+	for _, leg := range selected {
+		for _, p := range strings.Fields(leg.Packages) {
+			seen[p]++
+			if pkgselect.IsDarwinOnly(p) {
+				assert.Equal(t, "darwin", leg.OS, "%s needs a Darwin functional leg", p)
+				assert.Equal(t, "arm64", leg.Arch)
+				assert.Equal(t, "studio", leg.Group)
+			} else {
+				assert.Equal(t, "linux", leg.OS)
+				assert.Equal(t, "x64", leg.Arch)
+				assert.Equal(t, "space", leg.Group)
+			}
+		}
+	}
+	assert.Equal(t, map[string]int{"./cmd/nova-bus": 1, "./cmd/nova-sandbox": 1, "./internal/sandbox": 1}, seen, "every selected functional package must run exactly once")
 	assert.Contains(t, jobs["test-packages"].Outputs["functional"], "steps.list.outputs.functional", "test-packages does not output the functional list")
 	assert.NotContainsf(t, jobs["test-packages"].If, "schedule", "test-packages must run on schedule for the nightly functional list: %s", jobs["test-packages"].If)
 	last := job.Steps[len(job.Steps)-1].Run

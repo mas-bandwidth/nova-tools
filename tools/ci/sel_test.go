@@ -341,7 +341,7 @@ func TestTestMatrixNothingToTestIsOneLegThatExitsZero(t *testing.T) {
 	if code != 0 || errb != "" {
 		t.Fatalf("exit %d, stderr %q\n%s", code, errb, out)
 	}
-	want := `functional=[{"name":"nothing","packages":""}]` + "\n" + `packages=[{"name":"nothing","packages":"","os":"linux","arch":"x64","group":"lin"}]` + "\n"
+	want := `functional=[{"name":"nothing","packages":"","os":"linux","arch":"x64","group":"lin"}]` + "\n" + `packages=[{"name":"nothing","packages":"","os":"linux","arch":"x64","group":"lin"}]` + "\n"
 	if got := selRead(t, gh); got != want {
 		t.Errorf("GITHUB_OUTPUT = %q, want %q", got, want)
 	}
