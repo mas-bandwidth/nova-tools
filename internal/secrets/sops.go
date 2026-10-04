@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
@@ -104,7 +105,7 @@ func DecryptFile(sopsPath, keyPath, filePath string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temporary isolation directory: %w", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer safepath.RemoveUnder(os.TempDir(), tmpDir)
 
 	cmd, cancel := subproc.Command(context.Background(), subproc.Tool, sopsPath, "-d", filePath)
 	defer cancel()
