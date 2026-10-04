@@ -121,37 +121,42 @@ func TestTwoConcurrentRunsSerialiseOnOneCheckout(t *testing.T) {
 	require.Equal(t, 1, most, "%d runs were inside the lock at once, want 1", most)
 }
 
-// LockFile can be called directly on any file path.
-func TestLockFileNonBlockingAndHolderStamping(t *testing.T) {
+// The checkout lock stamps its holder's pid into the lock file, a take with wait=0 fails
+// at once with ErrLockHeld and never consults the clock, and once the holder lets go the
+// lock is taken again.
+func TestTheCheckoutLockStampsItsHolderAndAWaitZeroTakeNeverWaits(t *testing.T) {
 	t.Parallel()
+	hermetic(t)
+	bare := bareBus(t)
+	clone := cloneBus(t, bare)
 
-	dir := t.TempDir()
-	lockPath := filepath.Join(dir, "test.lock")
-
-	release, err := LockFile(lockPath, 0)
-	require.NoError(t, err, "first LockFile failed: %v", err)
+	release, err := LockCheckout(clone, 0)
+	require.NoError(t, err, "the first take failed: %v", err)
 	defer release()
 
-	// Verify holder was stamped with our PID
+	// The holder is stamped with our PID, so a waiter and a refusal can name it.
+	gd, err := GitDir(clone)
+	require.NoError(t, err)
+	lockPath := filepath.Join(gd, LockName)
 	holder := ReadLockHolder(lockPath)
 	wantPID := strconv.Itoa(os.Getpid())
 	require.Equal(t, wantPID, holder, "holder = %q, want %q", holder, wantPID)
 
-	// Second LockFile with wait=0 must fail immediately with ErrLockHeld, and must not
+	// A second take with wait=0 must fail immediately with ErrLockHeld, and must not
 	// consult the clock at all: the fake records whether it slept.
 	clk := newLockStepClock()
 	_, err2 := lockFile(lockPath, 0, tryLockFile, clk)
-	require.False(t, err2 == nil, "second LockFile with wait=0 succeeded, want ErrLockHeld")
+	require.False(t, err2 == nil, "a second take with wait=0 succeeded, want ErrLockHeld")
 	require.True(t, errors.Is(err2, ErrLockHeld), "err = %v, want errors.Is(err, ErrLockHeld)", err2)
 	{
 		waited := clk.waited()
-		require.Equal(t, time.Duration(0), waited, "LockFile with wait=0 waited %v, want near-immediate return", waited)
+		require.Equal(t, time.Duration(0), waited, "a take with wait=0 waited %v, want near-immediate return", waited)
 	}
 
-	// Release first lock, second should succeed
+	// Release the lock; the next take succeeds.
 	release()
-	release2, err3 := LockFile(lockPath, 100*time.Millisecond)
-	require.Equal(t, nil, err3, "LockFile after release failed: %v", err3)
+	release2, err3 := LockCheckout(clone, time.Second)
+	require.Equal(t, nil, err3, "the take after release failed: %v", err3)
 	defer release2()
 }
 
